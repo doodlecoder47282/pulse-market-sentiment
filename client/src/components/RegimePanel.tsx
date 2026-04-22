@@ -9,10 +9,14 @@ import { Separator } from "@/components/ui/separator";
 import {
   Sparkle, TrendingUp, TrendingDown, Activity, Clock,
   AlertTriangle, ChevronRight, ChevronDown, Gauge as GaugeIcon,
-  Crown, Target, Zap,
+  Crown, Target, Zap, BarChart2, Shield, Calendar,
 } from "lucide-react";
 import SectorWeb from "./SectorWeb";
 import WefThemePanel from "./WefThemePanel";
+import ErrorBoundary from "./ErrorBoundary";
+import SeasonalityPanel from "./SeasonalityPanel";
+import JPMCollarPanel from "./JPMCollarPanel";
+import VolCalendarPanel from "./VolCalendarPanel";
 
 type WindowKey = "w4" | "w13" | "w52";
 
@@ -253,6 +257,50 @@ export default function RegimePanel() {
           )}
         </CardContent>
       </Card>
+
+      {/* ================================================================
+          NEW SECTIONS: Seasonality, JPM Collar, Vol Event Calendar
+          ================================================================ */}
+      <Separator className="my-2" />
+
+      {/* Section: Seasonality */}
+      <div>
+        <div className="mb-4 flex items-center gap-2">
+          <BarChart2 className="h-4 w-4 text-cyan-400" />
+          <h2 className="text-sm font-semibold uppercase tracking-wider">Seasonality</h2>
+          <span className="text-xs text-muted-foreground">20-year avg monthly &amp; weekly return patterns</span>
+        </div>
+        <ErrorBoundary label="Seasonality">
+          <SeasonalityPanel />
+        </ErrorBoundary>
+      </div>
+
+      {/* Section: JPM Collar + Vol Calendar side-by-side on lg */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {/* JPM Collar */}
+        <div>
+          <div className="mb-4 flex items-center gap-2">
+            <Shield className="h-4 w-4 text-amber-400" />
+            <h2 className="text-sm font-semibold uppercase tracking-wider">JPM Collar</h2>
+            <span className="text-xs text-muted-foreground">JHEQX quarterly hedge · SPX reference lines</span>
+          </div>
+          <ErrorBoundary label="JPM Collar">
+            <JPMCollarPanel />
+          </ErrorBoundary>
+        </div>
+
+        {/* Vol Event Calendar */}
+        <div>
+          <div className="mb-4 flex items-center gap-2">
+            <Calendar className="h-4 w-4 text-violet-400" />
+            <h2 className="text-sm font-semibold uppercase tracking-wider">Vol Event Calendar</h2>
+            <span className="text-xs text-muted-foreground">OPEX · VIX exp · FOMC · CPI · NFP · next 90 days</span>
+          </div>
+          <ErrorBoundary label="Vol Calendar">
+            <VolCalendarPanel />
+          </ErrorBoundary>
+        </div>
+      </div>
     </div>
   );
 }

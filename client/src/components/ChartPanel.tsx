@@ -18,6 +18,7 @@ import { Plus, X, Zap, CandlestickChart as CsIcon, Activity, Layers, Sigma, Flam
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import GammaLevelsStrip from "./GammaLevelsStrip";
 
 type Timeframe = "1D" | "5D" | "1M" | "3M" | "1Y" | "5Y";
 const TIMEFRAMES: Timeframe[] = ["1D", "5D", "1M", "3M", "1Y", "5Y"];
@@ -138,7 +139,7 @@ export default function ChartPanel() {
       {/* Flow strip above the chart for quick P/C read */}
       <FlowStrip />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[220px_1fr]" data-testid="chart-panel">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[220px_1fr_240px]" data-testid="chart-panel">
         {/* Watchlist sidebar */}
         <aside className="space-y-2 rounded-xl border border-border/60 bg-card/40 p-3 backdrop-blur">
           <div className="mb-1 flex items-center justify-between">
@@ -411,6 +412,11 @@ export default function ChartPanel() {
           </>
           )}
         </section>
+
+        {/* Gamma levels strip — right column (hidden on mobile, shown as chips above) */}
+        <aside className="space-y-3" data-testid="gamma-levels-sidebar">
+          <GammaLevelsStrip />
+        </aside>
       </div>
     </div>
   );

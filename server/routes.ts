@@ -24,6 +24,10 @@ import { buildNewsSnapshot, type NewsResponse } from "./news";
 import { buildModelsSnapshot, type ModelsResponse, type Horizon } from "./models";
 import type { Snapshot_Public, VolMetric } from "@shared/schema";
 import { readCache, writeCache, rthSessionKey } from "./sessionCache";
+import { buildSeasonalitySnapshot } from "./seasonality";
+import { buildJPMCollarSnapshot, getCachedSpxCloses } from "./jpmCollar";
+import { buildVolCalendar } from "./volCalendar";
+import { buildGammaLevelsEnhanced } from "./gammaLevels";
 
 function vm(symbol: string, name: string, last: number | null, prev: number | null): VolMetric {
   const changePct = last != null && prev ? ((last - prev) / prev) * 100 : null;
@@ -565,6 +569,60 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         });
       }
       res.status(500).json({ message: e?.message ?? "Failed to fetch quotes" });
+    }
+  });
+
+  // ---- Seasonality: 20-year monthly + weekly avg return patterns ----
+  // 24-hour cache (historical data doesn't change intraday). Heavy fetch.
+  app.get("/api/seasonality", async (_req, res) => {
+    try {
+      const data = await buildSeasonalitySnapshot();
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build seasonality" });
+    }
+  });
+
+  // ---- JPM Collar: hardcoded quarterly strikes + live SPX distance ----
+  // 1-hour in-memory cache (see jpmCollar.ts)
+  app.get("/api/jpm-collar", async (_req, res) => {
+    try {
+      const [collar, spxCloses] = await Promise.all([
+        buildJPMCollarSnapshot(),
+        getCachedSpxCloses(),
+      ]);
+      res.json({ ...collar, spxCloses });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build JPM collar" });
+    }
+  });
+
+  // ---- Vol Event Calendar: OPEX, VIX exp, quad witching, FOMC, CPI, NFP ----
+  // Computed per request (pure date math, no external calls).
+  app.get("/api/vol-calendar", (_req, res) => {
+    try {
+      const data = buildVolCalendar();
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build vol calendar" });
+    }
+  });
+
+  // ---- Enhanced gamma levels: computed + user weekly targets ----
+  // Augments the existing /api/gamma-levels with vanna/charm/vomma/zomma user targets.
+  app.get("/api/gamma-levels-enhanced", async (req, res) => {
+    try {
+      const symbol = String(req.query.symbol || "SPY").trim().toUpperCase();
+      if (symbol !== "SPY" && symbol !== "^GSPC" && symbol !== "SPX") {
+        return res.json({ symbol, supported: false, levels: null });
+      }
+      const snap = await getOrBuild(false);
+      const g = snap.gamma;
+      const spxNow = snap.spy.price ?? g.spot; // Use SPY price units to match computed chain levels
+      const enhanced = buildGammaLevelsEnhanced(g, spxNow);
+      res.json({ symbol: "SPY", supported: true, enhanced, asOf: snap.capturedAt });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build enhanced gamma levels" });
     }
   });
 
