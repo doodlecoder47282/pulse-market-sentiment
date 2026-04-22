@@ -93,8 +93,19 @@ export interface ModelAudit {
   charmPerDay: number;                     // $B/day signed
   vexPerVolPct: number;                    // $B / 1% vol (signed)
   vannaBias: "positive" | "negative";
+  vannaM: number;                          // vanna exposure in $M
   gammaZone: "y+" | "y-";                  // positive = dampening, negative = amplifying
   gammaZoneLabel: string;                  // "DAMPENING" / "AMPLIFYING"
+  gammaAtSpot: number;                     // raw gamma × OI at current spot (for DFI)
+  dfi: number;                             // Delta Flow Indicator — normalised DEX slope (signed, float)
+  dfiLabel: string;                        // "BULLISH" / "BEARISH" / "NEUTRAL"
+  dfiFlipped: boolean;                     // true if dfi sign changed vs prior reading
+  contractCount: number;                   // rows in the chain for this horizon
+  mainPivot: number | null;                // dominant magnet / zero-gamma — the primary intraday pivot
+  charmZero: number | null;               // zero-charm spot (drift target)
+  doubleZeroLow: number | null;           // lower bound of double-zero zone
+  doubleZeroHigh: number | null;          // upper bound of double-zero zone
+  scenarioProb: { bull: number; base: number; bear: number };  // percentages summing to 100
   nearby: {
     price: number;
     note: string;
@@ -110,6 +121,7 @@ export interface ModelHorizon {
   spot: number;
   spotAnchorDate: string;                  // "TUE 4/21"
   targetDate: string;                      // "FRI 4/24" (daily = same day; weekly = Fri; monthly = 3rd Friday of next month)
+  targetDateLong: string;                  // "Wed Apr 22, 2026"
   priceRange: [number, number];            // y-axis suggested bounds
   levels: ModelLevel[];
   paths: ModelPath[];
@@ -608,6 +620,45 @@ function midPath(spot: number, via: number, end: number, nAfter: number): number
 // Audit block — right-sized summary matching the screenshot's top-left panel
 // ──────────────────────────────────────────────────────────────────────────
 
+// ─── Scenario probabilities ──────────────────────────────────────────────────
+// Derived from gamma regime, DFI direction, and distance to gamma zero.
+//
+// heuristic:
+//   baseProb starts at 0.37 — positive GEX (dampening) boosts it, negative cuts it.
+//   dfi > 0 (bullish flow) adds a bull boost via tanh ramp.
+//   dfi < 0 (bearish flow) adds a bear boost.
+//   Normalise to sum = 100, clamp each to minimum 10%.
+function computeScenarioProb(
+  gammaZone: "y+" | "y-",
+  dfi: number,
+): { bull: number; base: number; bear: number } {
+  const rawBase = 0.37 + (gammaZone === "y+" ? 0.08 : -0.08);
+  const bullBoost = dfi > 0 ? 0.10 * Math.tanh(dfi / 3) : 0;
+  const bearBoost = dfi < 0 ? 0.10 * Math.tanh(-dfi / 3) : 0;
+
+  let bull = 0.20 + bullBoost - (bearBoost * 0.5);
+  let bear = 0.25 + bearBoost - (bullBoost * 0.5);
+  let base = rawBase;
+
+  // Normalise
+  const total = bull + bear + base;
+  bull /= total; bear /= total; base /= total;
+
+  // Clamp to minimum 10% each
+  const clamp = (v: number) => Math.max(0.10, Math.min(0.80, v));
+  bull = clamp(bull); base = clamp(base); bear = clamp(bear);
+
+  // Re-normalise after clamping
+  const total2 = bull + bear + base;
+  bull /= total2; bear /= total2; base /= total2;
+
+  return {
+    bull: Math.round(bull * 100),
+    base: Math.round(base * 100),
+    bear: Math.round(bear * 100),
+  };
+}
+
 function buildAudit(
   profile: ExposureProfile,
   levels: ModelLevel[],
@@ -648,9 +699,58 @@ function buildAudit(
     }));
 
   const vannaBias: "positive" | "negative" = cur.vex >= 0 ? "positive" : "negative";
+  // Vanna in $M (cur.vex is already $B * 0.01 per vol%, so scale: vex/$B * 100 = $M per 1% vol)
+  const vannaM = parseFloat((cur.vex / 1e6).toFixed(1));
+
   const spotChange = (intradayDelta.change != null && intradayDelta.windowMin != null)
     ? `${intradayDelta.change >= 0 ? "+" : ""}${intradayDelta.change.toFixed(1)} in ${intradayDelta.windowMin} min`
     : "";
+
+  // DFI — Delta Flow Indicator.
+  // We derive it from the normalised DEX slope across the curve:
+  // dDEX/dS evaluated at current spot, normalised to the GEX scale.
+  // Positive DFI = bullish delta accumulation. Negative = bearish.
+  // Range is roughly -5 to +5 in normal conditions.
+  let dfi = 0;
+  const curveLen = profile.curve.length;
+  if (curveLen >= 3) {
+    // Find index closest to spot in the curve
+    const idx = profile.curve.reduce((best, p, i) =>
+      Math.abs(p.spot - spot) < Math.abs(profile.curve[best].spot - spot) ? i : best, 0);
+    const lo = profile.curve[Math.max(0, idx - 1)];
+    const hi = profile.curve[Math.min(curveLen - 1, idx + 1)];
+    const dDex = hi.dex - lo.dex;
+    const dS = hi.spot - lo.spot;
+    // Normalise: divide by the absolute GEX to get a unit-less ratio
+    const gexAbs = Math.abs(cur.gex) || 1e6;
+    dfi = dS !== 0 ? (dDex / dS) / gexAbs * 1e9 : 0;
+    // Clamp to ±5
+    dfi = Math.max(-5, Math.min(5, dfi));
+    // Round to 2 decimals
+    dfi = parseFloat(dfi.toFixed(2));
+  }
+  const dfiLabel = dfi > 0.1 ? "BULLISH" : dfi < -0.1 ? "BEARISH" : "NEUTRAL";
+  // dfiFlipped: for real-time use — here we mark true when we're near the charm zero crossover
+  const charmZero = profile.zeroCharmSpot;
+  const dfiFlipped = charmZero != null && Math.abs(charmZero - spot) / spot < 0.003;
+
+  // Main pivot: zero-gamma if present, otherwise dominant magnet
+  const mainPivot = byKind("zeroGamma")?.price ?? byKind("dominantMag")?.price ?? null;
+
+  // Double Zero Zone: the band between zero-gamma and zero-charm (where both flip sign)
+  const zg = profile.zeroGammaSpot;
+  const zc = profile.zeroCharmSpot;
+  let doubleZeroLow: number | null = null;
+  let doubleZeroHigh: number | null = null;
+  if (zg != null && zc != null) {
+    doubleZeroLow = Math.min(zg, zc);
+    doubleZeroHigh = Math.max(zg, zc);
+  }
+
+  // Gamma at spot (signed GEX, for display)
+  const gammaAtSpot = parseFloat((cur.gex / 1e6).toFixed(0)); // $M
+
+  const scenarioProb = computeScenarioProb(gammaZone, dfi);
 
   return {
     asOf: Math.floor(Date.now() / 1000),
@@ -664,8 +764,19 @@ function buildAudit(
     charmPerDay: cur.charm / 1e9,
     vexPerVolPct: cur.vex / 1e9,
     vannaBias,
+    vannaM,
     gammaZone,
     gammaZoneLabel,
+    gammaAtSpot,
+    dfi,
+    dfiLabel,
+    dfiFlipped,
+    contractCount: profile.contractCount,
+    mainPivot,
+    charmZero,
+    doubleZeroLow,
+    doubleZeroHigh,
+    scenarioProb,
     nearby,
   };
 }
@@ -734,7 +845,7 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
     vix,
     input.experimental ?? false,
   );
-  const { spotAnchorDate, targetDate, waypointLabels } = buildHorizonDates(horizon);
+  const { spotAnchorDate, targetDate, targetDateLong, waypointLabels } = buildHorizonDates(horizon);
   const paths = generatePaths(levels, displaySpot, scaledProfile, horizon, waypointLabels);
   const audit = buildAudit(scaledProfile, levels, displaySpot, intradayChange ?? { change: null, windowMin: null });
 
@@ -761,6 +872,7 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
     spot: displaySpot,
     spotAnchorDate,
     targetDate,
+    targetDateLong,
     priceRange: [yMin, yMax],
     levels,
     paths,
@@ -837,19 +949,22 @@ function fmtK(n: number): string {
 function buildHorizonDates(h: Horizon): {
   spotAnchorDate: string;
   targetDate: string;
+  targetDateLong: string;
   waypointLabels: string[];
 } {
   const now = new Date();
   const dayNames = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
+  const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const mm = (d: Date) => d.getMonth() + 1;
   const dd = (d: Date) => d.getDate();
   const fmt = (d: Date) => `${dayNames[d.getDay()]} ${mm(d)}/${dd(d)}`;
+  const fmtLong = (d: Date) => `${dayNames[d.getDay()].toUpperCase()} ${monthNames[d.getMonth()].toUpperCase()} ${dd(d)}, ${d.getFullYear()}`;
 
   const spotAnchorDate = fmt(now);
 
   if (h === "daily") {
     const labels = ["OPEN", "10:30", "12:00", "14:00", "CLOSE"];
-    return { spotAnchorDate, targetDate: `${spotAnchorDate} CLOSE`, waypointLabels: labels };
+    return { spotAnchorDate, targetDate: `${spotAnchorDate} CLOSE`, targetDateLong: fmtLong(now), waypointLabels: labels };
   }
 
   if (h === "weekly") {
@@ -867,7 +982,7 @@ function buildHorizonDates(h: Horizon): {
       labels.push(fmt(d));
       if (labels.length >= 5) break;
     }
-    return { spotAnchorDate, targetDate: fmt(fri), waypointLabels: labels };
+    return { spotAnchorDate, targetDate: fmt(fri), targetDateLong: fmtLong(fri), waypointLabels: labels };
   }
 
   // monthly — target 3rd Friday of this month (or next if passed)
@@ -882,7 +997,7 @@ function buildHorizonDates(h: Horizon): {
     labels.push(fmt(d));
   }
   if (labels.length < 2) labels.push(fmt(target));
-  return { spotAnchorDate, targetDate: fmt(target), waypointLabels: labels };
+  return { spotAnchorDate, targetDate: fmt(target), targetDateLong: fmtLong(target), waypointLabels: labels };
 }
 
 function thirdFridayOf(ref: Date): Date {

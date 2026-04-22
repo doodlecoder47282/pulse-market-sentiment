@@ -237,12 +237,17 @@ export default function Dashboard() {
       {/* Header */}
       <header className="sticky top-0 z-10 border-b border-border bg-background/80 backdrop-blur">
         <div className="mx-auto flex max-w-[1400px] items-center justify-between px-4 py-3 md:px-8">
-          {/* Left: Logo + name + tagline */}
+          {/* Left: Logo + name + BATCAVE tag */}
           <div className="flex items-center gap-3">
             <div className="text-primary"><Logo className="h-7 w-7" /></div>
             <div>
               <div className="font-semibold leading-none">Pulse</div>
-              <div className="hidden text-xs text-muted-foreground xs:block">Market Sentiment · VIX · Gamma</div>
+              <div className="flex items-center gap-1">
+                <svg viewBox="0 0 100 50" fill="currentColor" xmlns="http://www.w3.org/2000/svg" className="h-3 w-5 text-amber-500" aria-hidden="true">
+                  <path d="M50,10 C45,15 40,10 35,12 C28,8 20,5 12,10 C8,15 5,20 8,25 C12,22 18,22 20,18 C22,22 20,28 25,30 C30,28 35,32 40,30 C45,33 50,30 50,35 C50,30 55,33 60,30 C65,32 70,28 75,30 C80,28 78,22 80,18 C82,22 88,22 92,25 C95,20 92,15 88,10 C80,5 72,8 65,12 C60,10 55,15 50,10 Z"/>
+                </svg>
+                <span className="font-mono text-[10px] uppercase tracking-widest text-amber-500/80">BATCAVE</span>
+              </div>
             </div>
           </div>
 
