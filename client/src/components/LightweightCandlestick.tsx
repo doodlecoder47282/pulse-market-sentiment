@@ -56,7 +56,7 @@ export default function LightweightCandlestick({
       layout: {
         background: { type: ColorType.Solid, color: "rgba(0,0,0,0)" },
         textColor: "rgba(228, 228, 231, 0.8)",
-        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+        fontFamily: "var(--font-mono)",
         fontSize: 11,
       },
       grid: {

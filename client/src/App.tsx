@@ -7,6 +7,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import { TickerProvider } from "@/components/TickerContext";
+import LaunchSplash from "@/components/LaunchSplash";
+import { useState } from "react";
 
 function AppRouter() {
   return (
@@ -18,14 +20,25 @@ function AppRouter() {
 }
 
 function App() {
+  const [showSplash, setShowSplash] = useState(true);
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
         <TickerProvider>
-          <Router hook={useHashLocation}>
-            <AppRouter />
-          </Router>
+          {showSplash && <LaunchSplash onExit={() => setShowSplash(false)} />}
+          <div
+            className={
+              showSplash
+                ? "opacity-0 pointer-events-none"
+                : "opacity-100 transition-opacity duration-700"
+            }
+          >
+            <Router hook={useHashLocation}>
+              <AppRouter />
+            </Router>
+          </div>
         </TickerProvider>
       </TooltipProvider>
     </QueryClientProvider>

@@ -659,7 +659,7 @@ function IntradayChart({
                 <CartesianGrid strokeDasharray="3 6" stroke="hsl(var(--border))" strokeOpacity={0.25} vertical={false} />
                 <XAxis
                   dataKey="label"
-                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9, fontFamily: "ui-monospace, monospace" }}
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9, fontFamily: "var(--font-mono)" }}
                   stroke="hsl(var(--border))"
                   minTickGap={40}
                   interval={range === "5d" ? 50 : 30}
@@ -667,7 +667,7 @@ function IntradayChart({
                 <YAxis
                   orientation="right"
                   domain={yDomain as any}
-                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10, fontFamily: "ui-monospace, monospace" }}
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10, fontFamily: "var(--font-mono)" }}
                   stroke="hsl(var(--border))"
                   width={55}
                   tickFormatter={(v) => v.toFixed(symbol === "^VIX" ? 2 : 1)}
@@ -678,7 +678,7 @@ function IntradayChart({
                     border: "1px solid hsl(var(--border))",
                     borderRadius: 4,
                     fontSize: 11,
-                    fontFamily: "ui-monospace, monospace",
+                    fontFamily: "var(--font-mono)",
                   }}
                   labelStyle={{ color: "hsl(var(--muted-foreground))" }}
                   formatter={(v: any) => [typeof v === "number" ? v.toFixed(2) : v, "Price"]}
@@ -712,7 +712,7 @@ function IntradayChart({
                         fillOpacity: Math.min(1, lv.intensity + 0.3),
                         fontSize: 9.5,
                         fontWeight: 600,
-                        fontFamily: "ui-monospace, monospace",
+                        fontFamily: "var(--font-mono)",
                         offset: 6,
                       } : undefined}
                     />
@@ -730,7 +730,7 @@ function IntradayChart({
                       position: "insideTopLeft",
                       fill: "hsl(var(--muted-foreground))",
                       fontSize: 9,
-                      fontFamily: "ui-monospace, monospace",
+                      fontFamily: "var(--font-mono)",
                     }}
                   />
                 )}
@@ -830,7 +830,7 @@ function GammaProfileCurve({
               dataKey="spot"
               type="number"
               domain={["dataMin", "dataMax"]}
-              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9, fontFamily: "ui-monospace, monospace" }}
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9, fontFamily: "var(--font-mono)" }}
               stroke="hsl(var(--border))"
               tickFormatter={(v) => v.toFixed(0)}
               minTickGap={50}
@@ -838,7 +838,7 @@ function GammaProfileCurve({
             <YAxis
               orientation="right"
               domain={[-maxAbs * 1.08, maxAbs * 1.08]}
-              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9, fontFamily: "ui-monospace, monospace" }}
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9, fontFamily: "var(--font-mono)" }}
               stroke="hsl(var(--border))"
               width={44}
               tickFormatter={(v) => (v >= 0 ? "+" : "") + v.toFixed(1) + "B"}
@@ -849,7 +849,7 @@ function GammaProfileCurve({
                 border: "1px solid hsl(var(--border))",
                 borderRadius: 4,
                 fontSize: 11,
-                fontFamily: "ui-monospace, monospace",
+                fontFamily: "var(--font-mono)",
               }}
               labelFormatter={(v: any) => `Spot ${Number(v).toFixed(2)}`}
               formatter={(v: any) => [
@@ -891,7 +891,7 @@ function GammaProfileCurve({
                   position: "insideTopRight",
                   fill: "#f59e0b",
                   fontSize: 9,
-                  fontFamily: "ui-monospace, monospace",
+                  fontFamily: "var(--font-mono)",
                 }}
               />
             )}
@@ -906,7 +906,7 @@ function GammaProfileCurve({
                   position: "insideBottomRight",
                   fill: "hsl(var(--muted-foreground))",
                   fontSize: 9,
-                  fontFamily: "ui-monospace, monospace",
+                  fontFamily: "var(--font-mono)",
                 }}
               />
             )}

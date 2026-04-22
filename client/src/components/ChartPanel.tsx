@@ -356,7 +356,7 @@ export default function ChartPanel() {
             <div className="rounded-md border border-violet-500/40 bg-violet-500/10 p-3 text-[11px]">
               <div className="font-semibold text-violet-300">Tick chart requires a paid feed</div>
               <div className="mt-0.5 text-muted-foreground">
-                Showing 1m candles as a placeholder. Wire up Schwab API (coming soon) to get true tick-by-tick streaming.
+                Displaying 1m candles. Connect a tick feed for true intraday streaming.
               </div>
             </div>
           )}

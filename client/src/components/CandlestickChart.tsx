@@ -225,7 +225,7 @@ export function CandlestickChart({
                 fontSize={10.5}
                 fill="currentColor"
                 fillOpacity={0.7}
-                fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+                fontFamily="var(--font-mono)"
                 style={{ fontVariantNumeric: "tabular-nums" }}
               >
                 {formatPriceAxis(v)}
@@ -267,7 +267,7 @@ export function CandlestickChart({
                 fontSize={11}
                 fill="#000"
                 fontWeight={700}
-                fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+                fontFamily="var(--font-mono)"
                 style={{ fontVariantNumeric: "tabular-nums" }}
               >
                 {formatPriceAxis(last.c)}
@@ -296,7 +296,7 @@ export function CandlestickChart({
               fontSize={9.5}
               fill="#ef4444"
               fontWeight={600}
-              fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+              fontFamily="var(--font-mono)"
               style={{ fontVariantNumeric: "tabular-nums" }}
             >
               CALL WALL {formatPriceAxis(gamma.callWall)}
@@ -319,7 +319,7 @@ export function CandlestickChart({
               fontSize={9.5}
               fill="#22c55e"
               fontWeight={600}
-              fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+              fontFamily="var(--font-mono)"
               style={{ fontVariantNumeric: "tabular-nums" }}
             >
               PUT WALL {formatPriceAxis(gamma.putWall)}
@@ -343,7 +343,7 @@ export function CandlestickChart({
                   y={priceToY(gamma.zeroGamma) - 3}
                   fontSize={9}
                   fill="#eab308"
-                  fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+                  fontFamily="var(--font-mono)"
                 >
                   0γ {formatPriceAxis(gamma.zeroGamma)}
                 </text>
@@ -368,7 +368,7 @@ export function CandlestickChart({
                   y={priceToY(gamma.maxPain) + 10}
                   fontSize={9}
                   fill="#a855f7"
-                  fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+                  fontFamily="var(--font-mono)"
                 >
                   MP {formatPriceAxis(gamma.maxPain)}
                 </text>
@@ -420,7 +420,7 @@ export function CandlestickChart({
                 fill="currentColor"
                 fillOpacity={0.55}
                 textAnchor="middle"
-                fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+                fontFamily="var(--font-mono)"
               >
                 {formatXTick(candles[i].t)}
               </text>

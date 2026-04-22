@@ -671,7 +671,7 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
                 borderRadius: 4,
                 fontSize: 10,
                 color: "#e2e8f0",
-                fontFamily: "ui-monospace, monospace",
+                fontFamily: "var(--font-mono)",
               }}
               formatter={(value: number, name: string) => [fmtK(value), name.toUpperCase()]}
               labelStyle={{ color: "#64748b" }}
@@ -732,7 +732,7 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
                       offset={4}
                       fill={color}
                       fontSize={9}
-                      style={{ fontFamily: "ui-monospace, monospace", opacity: 0.85 }}
+                      style={{ fontFamily: "var(--font-mono)", opacity: 0.85 }}
                     />
                   )}
                 </ReferenceLine>
