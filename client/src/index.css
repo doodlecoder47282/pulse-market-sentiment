@@ -1,0 +1,631 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* LIGHT MODE */
+:root {
+  --button-outline: rgba(0, 0, 0, 0.1);
+  --badge-outline: rgba(0, 0, 0, 0.05);
+  --opaque-button-border-intensity: -8;
+  --elevate-1: rgba(0, 0, 0, 0.03);
+  --elevate-2: rgba(0, 0, 0, 0.08);
+  --background: 0 0% 100%;
+  --foreground: 0 0% 9%;
+  --border: 0 0% 91%;
+  --card: 0 0% 98%;
+  --card-foreground: 0 0% 9%;
+  --card-border: 0 0% 94%;
+  --sidebar: 0 0% 96%;
+  --sidebar-foreground: 0 0% 9%;
+  --sidebar-border: 0 0% 92%;
+  --sidebar-primary: 38 92% 50%;
+  --sidebar-primary-foreground: 0 0% 9%;
+  --sidebar-accent: 0 0% 89%;
+  --sidebar-accent-foreground: 0 0% 9%;
+  --sidebar-ring: 38 92% 50%;
+  --popover: 0 0% 95%;
+  --popover-foreground: 0 0% 9%;
+  --popover-border: 0 0% 91%;
+  --primary: 38 92% 50%;
+  --primary-foreground: 0 0% 9%;
+  --secondary: 0 0% 92%;
+  --secondary-foreground: 0 0% 9%;
+  --muted: 0 0% 93%;
+  --muted-foreground: 0 0% 40%;
+  --accent: 220 14% 92%;
+  --accent-foreground: 0 0% 9%;
+  --destructive: 0 84% 42%;
+  --destructive-foreground: 0 0% 98%;
+  --input: 0 0% 75%;
+  --ring: 38 92% 50%;
+  --chart-1: 142 71% 45%;
+  --chart-2: 0 84% 60%;
+  --chart-3: 38 92% 50%;
+  --chart-4: 199 89% 48%;
+  --chart-5: 262 83% 58%;
+  --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+  --font-serif: Georgia, serif;
+  --font-mono: Menlo, monospace;
+  --radius: 0.5rem;
+  --shadow-2xs: 0px 2px 0px 0px hsl(0 0% 0% / 0);
+  --shadow-xs: 0px 2px 0px 0px hsl(0 0% 0% / 0);
+  --shadow-sm: 0px 2px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
+  --shadow: 0px 2px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
+  --shadow-md: 0px 2px 0px 0px hsl(0 0% 0% / 0), 0px 2px 4px -1px hsl(0 0% 0% / 0);
+  --shadow-lg: 0px 2px 0px 0px hsl(0 0% 0% / 0), 0px 4px 6px -1px hsl(0 0% 0% / 0);
+  --shadow-xl: 0px 2px 0px 0px hsl(0 0% 0% / 0), 0px 8px 10px -1px hsl(0 0% 0% / 0);
+  --shadow-2xl: 0px 2px 0px 0px hsl(0 0% 0% / 0);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+
+  /* Fallback for older browsers */
+  --sidebar-primary-border: hsl(var(--sidebar-primary));
+  --sidebar-primary-border: hsl(
+    from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
+  );
+
+  /* Fallback for older browsers */
+  --sidebar-accent-border: hsl(var(--sidebar-accent));
+  --sidebar-accent-border: hsl(
+    from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
+  );
+
+  /* Fallback for older browsers */
+  --primary-border: hsl(var(--primary));
+  --primary-border: hsl(
+    from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
+  );
+
+  /* Fallback for older browsers */
+  --secondary-border: hsl(var(--secondary));
+  --secondary-border: hsl(
+    from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
+  );
+
+  /* Fallback for older browsers */
+  --muted-border: hsl(var(--muted));
+  --muted-border: hsl(
+    from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
+  );
+
+  /* Fallback for older browsers */
+  --accent-border: hsl(var(--accent));
+  --accent-border: hsl(
+    from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
+  );
+
+  /* Fallback for older browsers */
+  --destructive-border: hsl(var(--destructive));
+  --destructive-border: hsl(
+    from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
+  );
+}
+
+.dark {
+  --button-outline: rgba(255, 255, 255, 0.1);
+  --badge-outline: rgba(255, 255, 255, 0.05);
+  --opaque-button-border-intensity: 9;
+  --elevate-1: rgba(255, 255, 255, 0.04);
+  --elevate-2: rgba(255, 255, 255, 0.09);
+  --background: 0 0% 7%;
+  --foreground: 0 0% 98%;
+  --border: 0 0% 16%;
+  --card: 0 0% 9%;
+  --card-foreground: 0 0% 98%;
+  --card-border: 0 0% 13%;
+  --sidebar: 0 0% 11%;
+  --sidebar-foreground: 0 0% 98%;
+  --sidebar-border: 0 0% 15%;
+  --sidebar-primary: 38 92% 55%;
+  --sidebar-primary-foreground: 0 0% 9%;
+  --sidebar-accent: 0 0% 16%;
+  --sidebar-accent-foreground: 0 0% 98%;
+  --sidebar-ring: 38 92% 55%;
+  --popover: 0 0% 13%;
+  --popover-foreground: 0 0% 98%;
+  --popover-border: 0 0% 17%;
+  --primary: 38 92% 55%;
+  --primary-foreground: 0 0% 9%;
+  --secondary: 0 0% 18%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 0 0% 19%;
+  --muted-foreground: 0 0% 65%;
+  --accent: 220 9% 17%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 84% 42%;
+  --destructive-foreground: 0 0% 98%;
+  --input: 0 0% 30%;
+  --ring: 38 92% 55%;
+  --chart-1: 142 71% 55%;
+  --chart-2: 0 84% 65%;
+  --chart-3: 38 92% 55%;
+  --chart-4: 199 89% 58%;
+  --chart-5: 262 83% 68%;
+  --shadow-2xs: 0px 2px 0px 0px hsl(0 0% 0% / 0);
+  --shadow-xs: 0px 2px 0px 0px hsl(0 0% 0% / 0);
+  --shadow-sm: 0px 2px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
+  --shadow: 0px 2px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
+  --shadow-md: 0px 2px 0px 0px hsl(0 0% 0% / 0), 0px 2px 4px -1px hsl(0 0% 0% / 0);
+  --shadow-lg: 0px 2px 0px 0px hsl(0 0% 0% / 0), 0px 4px 6px -1px hsl(0 0% 0% / 0);
+  --shadow-xl: 0px 2px 0px 0px hsl(0 0% 0% / 0), 0px 8px 10px -1px hsl(0 0% 0% / 0);
+  --shadow-2xl: 0px 2px 0px 0px hsl(0 0% 0% / 0);
+
+  /* Fallback for older browsers */
+  --sidebar-primary-border: hsl(var(--sidebar-primary));
+  --sidebar-primary-border: hsl(
+    from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
+  );
+
+  /* Fallback for older browsers */
+  --sidebar-accent-border: hsl(var(--sidebar-accent));
+  --sidebar-accent-border: hsl(
+    from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
+  );
+
+  /* Fallback for older browsers */
+  --primary-border: hsl(var(--primary));
+  --primary-border: hsl(
+    from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
+  );
+
+  /* Fallback for older browsers */
+  --secondary-border: hsl(var(--secondary));
+  --secondary-border: hsl(
+    from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
+  );
+
+  /* Fallback for older browsers */
+  --muted-border: hsl(var(--muted));
+  --muted-border: hsl(
+    from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
+  );
+
+  /* Fallback for older browsers */
+  --accent-border: hsl(var(--accent));
+  --accent-border: hsl(
+    from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
+  );
+
+  /* Fallback for older browsers */
+  --destructive-border: hsl(var(--destructive));
+  --destructive-border: hsl(
+    from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
+  );
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply font-sans antialiased bg-background text-foreground;
+  }
+}
+
+/**
+ * Using the elevate system.
+ * Automatic contrast adjustment.
+ *
+ * <element className="hover-elevate" />
+ * <element className="active-elevate-2" />
+ *
+ * // Using the tailwind utility when a data attribute is "on"
+ * <element className="toggle-elevate data-[state=on]:toggle-elevated" />
+ * // Or manually controlling the toggle state
+ * <element className="toggle-elevate toggle-elevated" />
+ *
+ * Elevation systems have to handle many states.
+ * - not-hovered, vs. hovered vs. active  (three mutually exclusive states)
+ * - toggled or not
+ * - focused or not (this is not handled with these utilities)
+ *
+ * Even without handling focused or not, this is six possible combinations that
+ * need to be distinguished from eachother visually.
+ */
+@layer utilities {
+  /* Hide ugly search cancel button in Chrome until we can style it properly */
+  input[type='search']::-webkit-search-cancel-button {
+    @apply hidden;
+  }
+
+  /* Placeholder styling for contentEditable div */
+  [contenteditable][data-placeholder]:empty::before {
+    content: attr(data-placeholder);
+    color: hsl(var(--muted-foreground));
+    pointer-events: none;
+  }
+
+  /* .no-default-hover-elevate/no-default-active-elevate is an escape hatch so consumers of
+   * buttons/badges can remove the automatic brightness adjustment on interactions
+   * and program their own. */
+  .no-default-hover-elevate {
+  }
+
+  .no-default-active-elevate {
+  }
+
+  /**
+   * Toggleable backgrounds go behind the content. Hoverable/active goes on top.
+   * This way they can stack/compound. Both will overlap the parent's borders!
+   * So borders will be automatically adjusted both on toggle, and hover/active,
+   * and they will be compounded.
+   */
+  .toggle-elevate::before,
+  .toggle-elevate-2::before {
+    content: '';
+    pointer-events: none;
+    position: absolute;
+    inset: 0px;
+    /*border-radius: inherit;   match rounded corners */
+    border-radius: inherit;
+    z-index: -1;
+    /* sits behind content but above backdrop */
+  }
+
+  .toggle-elevate.toggle-elevated::before {
+    background-color: var(--elevate-2);
+  }
+
+  /* If there's a 1px border, adjust the inset so that it covers that parent's border */
+  .border.toggle-elevate::before {
+    inset: -1px;
+  }
+
+  /* Does not work on elements with overflow:hidden! */
+  .hover-elevate:not(.no-default-hover-elevate),
+  .active-elevate:not(.no-default-active-elevate),
+  .hover-elevate-2:not(.no-default-hover-elevate),
+  .active-elevate-2:not(.no-default-active-elevate) {
+    position: relative;
+    z-index: 0;
+  }
+
+  .hover-elevate:not(.no-default-hover-elevate)::after,
+  .active-elevate:not(.no-default-active-elevate)::after,
+  .hover-elevate-2:not(.no-default-hover-elevate)::after,
+  .active-elevate-2:not(.no-default-active-elevate)::after {
+    content: '';
+    pointer-events: none;
+    position: absolute;
+    inset: 0px;
+    /*border-radius: inherit;   match rounded corners */
+    border-radius: inherit;
+    z-index: 999;
+    /* sits in front of content */
+  }
+
+  .hover-elevate:hover:not(.no-default-hover-elevate)::after,
+  .active-elevate:active:not(.no-default-active-elevate)::after {
+    background-color: var(--elevate-1);
+  }
+
+  .hover-elevate-2:hover:not(.no-default-hover-elevate)::after,
+  .active-elevate-2:active:not(.no-default-active-elevate)::after {
+    background-color: var(--elevate-2);
+  }
+
+  /* If there's a 1px border, adjust the inset so that it covers that parent's border */
+  .border.hover-elevate:not(.no-hover-interaction-elevate)::after,
+  .border.active-elevate:not(.no-active-interaction-elevate)::after,
+  .border.hover-elevate-2:not(.no-hover-interaction-elevate)::after,
+  .border.active-elevate-2:not(.no-active-interaction-elevate)::after,
+  .border.hover-elevate:not(.no-hover-interaction-elevate)::after {
+    inset: -1px;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────── */
+/* Tab list mobile-scroll: hide scrollbar but allow scroll                  */
+/* ──────────────────────────────────────────────────────────────────────── */
+.tabs-scroll-container::-webkit-scrollbar {
+  display: none;
+}
+.tabs-scroll-container {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ──────────────────────────────────────────────────────────────────────── */
+/* THE VAULT — money-green gangster Calendar theme                          */
+/* Used by NewsPanel > Calendar sub-tab. Background is deep money-green     */
+/* with a faint dollar-watermark + banknote pinstripe; cards carry a slow   */
+/* chrome RGB conic-gradient edge glow.                                     */
+/* ──────────────────────────────────────────────────────────────────────── */
+
+/* THE VAULT — acid-wash slime money, falling from the sky */
+.vault-shell {
+  position: relative;
+  border-radius: 0.85rem;
+  overflow: hidden;
+  /* Tie-dye acid-wash money-green wash: animated, moving blobs of toxic
+     emerald / slime-yellow / deep swamp over a near-black base */
+  background:
+    radial-gradient(circle at 18% 22%, rgba(57, 255, 20, 0.28), transparent 45%),
+    radial-gradient(circle at 82% 18%, rgba(212, 255, 0, 0.18), transparent 50%),
+    radial-gradient(circle at 70% 78%, rgba(0, 255, 136, 0.22), transparent 52%),
+    radial-gradient(circle at 25% 82%, rgba(173, 255, 47, 0.2), transparent 48%),
+    radial-gradient(circle at 50% 50%, rgba(16, 85, 45, 0.9), transparent 70%),
+    linear-gradient(160deg, #041a0c 0%, #062211 40%, #030f07 100%);
+  background-size: 180% 180%, 160% 160%, 200% 200%, 170% 170%, 140% 140%, 100% 100%;
+  animation: vault-acid-drift 28s ease-in-out infinite alternate;
+  box-shadow:
+    inset 0 0 140px rgba(0, 0, 0, 0.7),
+    inset 0 0 0 1px rgba(57, 255, 20, 0.25),
+    0 0 40px rgba(57, 255, 20, 0.08);
+}
+
+@keyframes vault-acid-drift {
+  0%   { background-position: 0% 0%, 100% 0%, 0% 100%, 100% 100%, 50% 50%, 0% 0%; }
+  50%  { background-position: 60% 40%, 40% 60%, 60% 40%, 40% 60%, 50% 50%, 0% 0%; }
+  100% { background-position: 100% 100%, 0% 100%, 100% 0%, 0% 0%, 50% 50%, 0% 0%; }
+}
+
+/* Falling-money rain layer (animated $ tile sweep) */
+.vault-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.12;
+  background-image:
+    url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='180' viewBox='0 0 140 180'%3E%3Cstyle%3Etext%7Bfont-family:'Bebas Neue',Impact,sans-serif;font-weight:900;fill:%2339ff14;%7D%3C/style%3E%3Ctext x='10' y='40' font-size='28'%3E%24%3C/text%3E%3Ctext x='80' y='80' font-size='36' fill='%23d4ff00'%3E%24%3C/text%3E%3Ctext x='30' y='130' font-size='24' fill='%2300ff88'%3E%24%3C/text%3E%3Ctext x='95' y='165' font-size='30' fill='%23adff2f'%3E%24%3C/text%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 140px 180px;
+  animation: vault-money-rain 14s linear infinite;
+  filter: drop-shadow(0 0 6px rgba(57, 255, 20, 0.5));
+}
+
+@keyframes vault-money-rain {
+  from { background-position: 0 0; }
+  to   { background-position: 0 180px; }
+}
+
+/* Slime drip edge — wet neon-green border glow */
+.vault-shell::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: 0.95rem;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--vault-angle, 0deg),
+    #39ff14,
+    #d4ff00,
+    #00ff88,
+    #adff2f,
+    #39ff14
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  animation: vault-rgb 22s linear infinite;
+  pointer-events: none;
+  opacity: 0.55;
+  z-index: 3;
+  filter: blur(0.3px);
+}
+
+@property --vault-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes vault-rgb {
+  from { --vault-angle: 0deg; }
+  to   { --vault-angle: 360deg; }
+}
+
+.vault-content {
+  position: relative;
+  z-index: 1;
+}
+
+/* Big drippy acid-green title with wet text-shadow */
+.vault-title {
+  font-family: "Bebas Neue", sans-serif;
+  letter-spacing: 0.1em;
+  color: #d4ff00;
+  background: linear-gradient(180deg, #eaff66 0%, #9eff2e 50%, #00e063 100%);
+  -webkit-background-clip: text;
+          background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow:
+    0 0 22px rgba(57, 255, 20, 0.55),
+    0 3px 0 rgba(0, 0, 0, 0.5);
+  filter: drop-shadow(0 2px 10px rgba(57, 255, 20, 0.4));
+}
+
+.vault-chip {
+  background: rgba(6, 28, 16, 0.75);
+  border: 1px solid rgba(57, 255, 20, 0.4);
+  color: #d4ff66;
+  backdrop-filter: blur(4px);
+}
+
+/* Slimed-out card — glassy, faintly reflective, acid-green edge */
+.vault-card {
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(12, 40, 24, 0.82) 0%, rgba(4, 18, 10, 0.88) 100%),
+    radial-gradient(circle at 80% 0%, rgba(57, 255, 20, 0.08), transparent 60%);
+  border: 1px solid rgba(57, 255, 20, 0.22);
+  box-shadow:
+    inset 0 1px 0 rgba(173, 255, 47, 0.12),
+    inset 0 -20px 30px -20px rgba(0, 255, 136, 0.08),
+    0 2px 14px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+  transition: border-color 180ms ease, box-shadow 220ms ease, transform 180ms ease;
+  text-decoration: none;
+  color: inherit;
+}
+
+.vault-card:hover {
+  border-color: rgba(57, 255, 20, 0.6);
+  box-shadow:
+    inset 0 1px 0 rgba(173, 255, 47, 0.25),
+    inset 0 -22px 32px -18px rgba(0, 255, 136, 0.18),
+    0 6px 22px rgba(57, 255, 20, 0.18),
+    0 0 0 1px rgba(57, 255, 20, 0.25);
+  transform: translateY(-1px);
+}
+
+.vault-card:focus-visible {
+  outline: none;
+  border-color: #39ff14;
+  box-shadow:
+    0 0 0 2px rgba(57, 255, 20, 0.4),
+    0 6px 22px rgba(57, 255, 20, 0.18);
+}
+
+.vault-card .vault-bio {
+  border-top: 1px dashed rgba(57, 255, 20, 0.2);
+}
+
+/* ──────────────────────────────────────────────────────────────────────── */
+/* TAKE FIVE — trippy, motivational break room                              */
+/* ──────────────────────────────────────────────────────────────────────── */
+
+.take5-shell {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at top left, rgba(107, 33, 168, 0.5), transparent 55%),
+    radial-gradient(ellipse at bottom right, rgba(190, 24, 93, 0.5), transparent 55%),
+    radial-gradient(ellipse at center, rgba(8, 145, 178, 0.25), transparent 70%),
+    #050510;
+  background-size: 200% 200%, 200% 200%, 150% 150%, auto;
+  animation: take5-drift 45s ease-in-out infinite;
+  color: #f7f5ff;
+}
+
+@keyframes take5-drift {
+  0%, 100% { background-position: 0% 0%, 100% 100%, 50% 50%, 0 0; }
+  25%      { background-position: 25% 75%, 75% 25%, 60% 30%, 0 0; }
+  50%      { background-position: 100% 50%, 0% 50%, 30% 70%, 0 0; }
+  75%      { background-position: 75% 25%, 25% 75%, 70% 40%, 0 0; }
+}
+
+.take5-title {
+  font-family: "Bebas Neue", sans-serif;
+  letter-spacing: 0.15em;
+  background: linear-gradient(90deg, #ffd000, #ff2d2d, #00ff88, #00d4ff, #ffd000);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+  animation: take5-title-shift 8s linear infinite;
+  text-shadow: 0 0 40px rgba(255, 208, 0, 0.15);
+}
+
+@keyframes take5-title-shift {
+  from { background-position: 0% 50%; }
+  to   { background-position: 300% 50%; }
+}
+
+.take5-panel {
+  background: linear-gradient(180deg, rgba(8, 8, 24, 0.55), rgba(8, 8, 24, 0.3));
+  border: 1px solid rgba(255, 208, 0, 0.18);
+  backdrop-filter: blur(8px);
+}
+
+.take5-panel.red {
+  border-color: rgba(255, 45, 45, 0.35);
+  background: linear-gradient(180deg, rgba(40, 8, 8, 0.55), rgba(24, 4, 4, 0.3));
+}
+
+.take5-panel.green {
+  border-color: rgba(0, 255, 136, 0.28);
+  background: linear-gradient(180deg, rgba(4, 30, 20, 0.55), rgba(2, 18, 12, 0.3));
+}
+
+.take5-quote {
+  font-family: "Space Mono", monospace;
+  font-size: 1.25rem;
+  line-height: 1.55;
+  letter-spacing: 0.01em;
+  opacity: 0;
+  animation: take5-fade 10s ease-in-out infinite;
+}
+
+@keyframes take5-fade {
+  0%, 12%   { opacity: 0; transform: translateY(6px); }
+  18%, 82%  { opacity: 1; transform: translateY(0); }
+  88%, 100% { opacity: 0; transform: translateY(-6px); }
+}
+
+/* 4-7-8 breathing pacer */
+.breath-circle {
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 255, 200, 0.55) 0%, rgba(107, 33, 168, 0.35) 60%, transparent 100%);
+  box-shadow:
+    0 0 60px rgba(0, 255, 200, 0.35),
+    inset 0 0 30px rgba(255, 255, 255, 0.1);
+  animation: breath-478 19s ease-in-out infinite;
+  filter: blur(0.5px);
+}
+
+@keyframes breath-478 {
+  0%             { transform: scale(0.55); box-shadow: 0 0 20px rgba(0, 255, 200, 0.2); }
+  21.1%          { transform: scale(1.0);  box-shadow: 0 0 80px rgba(0, 255, 200, 0.45); }  /* inhale 4s */
+  57.9%          { transform: scale(1.0);  box-shadow: 0 0 80px rgba(255, 208, 0, 0.35); }  /* hold 7s */
+  100%           { transform: scale(0.55); box-shadow: 0 0 20px rgba(190, 24, 93, 0.3); }   /* exhale 8s */
+}
+
+.breath-label {
+  font-family: "Bebas Neue", sans-serif;
+  letter-spacing: 0.3em;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+/* Floating Take Five launcher */
+.take5-fab {
+  position: fixed;
+  top: 14px;
+  right: 16px;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 9999px;
+  font-family: "Bebas Neue", sans-serif;
+  letter-spacing: 0.2em;
+  font-size: 0.75rem;
+  background: linear-gradient(90deg, #6b21a8, #0891b2, #be185d);
+  background-size: 200% 100%;
+  color: #fff;
+  border: 1px solid rgba(255, 208, 0, 0.35);
+  box-shadow: 0 4px 20px rgba(107, 33, 168, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  animation: take5-fab-shift 12s linear infinite;
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.take5-fab:hover {
+  transform: translateY(-1px) scale(1.03);
+  box-shadow: 0 6px 28px rgba(190, 24, 93, 0.5), 0 0 0 1px rgba(255, 208, 0, 0.5);
+}
+
+@keyframes take5-fab-shift {
+  from { background-position: 0% 50%; }
+  to   { background-position: 200% 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vault-shell,
+  .vault-shell::before,
+  .vault-shell::after,
+  .take5-shell,
+  .take5-title,
+  .take5-quote,
+  .breath-circle,
+  .take5-fab {
+    animation: none;
+  }
+}

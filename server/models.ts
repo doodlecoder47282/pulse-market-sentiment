@@ -1,0 +1,900 @@
+// server/models.ts
+//
+// Forward-model engine — Daily / Weekly / Monthly price paths for SPX & SPY,
+// anchored to the same dealer-exposure math the Trade Desk already uses.
+//
+// For each horizon:
+//   1. Build a dealer exposure profile out to the horizon's DTE window
+//      (Daily ≤2 DTE, Weekly ≤7 DTE, Monthly ≤45 DTE).
+//   2. From the GEX curve + OI distribution, derive structural anchors:
+//        callWall  → upside magnet / resistance
+//        putWall   → downside support
+//        zeroGamma → regime pivot (positive vs negative gamma)
+//        extremeVac → largest negative-GEX strike band (vacuum / tail risk)
+//        dominantMag → largest positive-GEX strike (primary magnet)
+//        strongMag → 2nd-largest positive-GEX strike
+//        mopexMaxPain → classic max-pain (min total $ value of OI)
+//        upsidePivot / downsidePivot → call wall + vanna flip / put wall + charm flip
+//        vommaPockets → zones where ∂Vega/∂σ spikes (tail IV churn)
+//   3. Produce three price paths to end of horizon:
+//        BASE path → spot → zeroGamma → dominantMag (gravity)
+//        BULL path → spot → dominantMag → callWall → upsidePivot
+//        BEAR path → spot → zeroGamma → putWall → downsidePivot
+//      Each path is a small number of ordered waypoints with % probability.
+//   4. Compute the AUDIT block: near/above/below exposures, slope, OPEX gravity,
+//      total GEX, DEX, charm. This matches the screenshot's top-left audit panel.
+//
+// Scope: SPX ("^GSPC") and SPY only for v1 (options chain is SPY-driven; SPX is
+// shown at SPX price scale using SPY's chain rescaled by the ratio — a common
+// approach since SPX·0.1 ≈ SPY to a few bps).
+
+import type { ExposureProfile, ExposureRow } from "./exposureProfile";
+import { buildExposureProfile } from "./exposureProfile";
+import { chainToRows } from "./exposures";
+import { getCboeChain } from "./cboeCache";
+import { computeGreeks } from "./greeks";
+
+export type Horizon = "daily" | "weekly" | "monthly";
+
+export interface ModelLevel {
+  label: string;
+  name: string;                            // short name (e.g. "UPSIDE PIVOT")
+  price: number;
+  kind:
+    | "callWall"
+    | "putWall"
+    | "zeroGamma"
+    | "dominantMag"
+    | "strongMag"
+    | "extremeVac"
+    | "mopexMaxPain"
+    | "upsidePivot"
+    | "downsidePivot"
+    | "spot"
+    | "vommaPocket"
+    | "t1Up" | "t2Up"
+    | "t1Down" | "t2Down"
+    // experimental dealer-map kinds (behind ?experimental=1)
+    | "vannaFlip"
+    | "zommaBridge"
+    | "charmTarget"
+    | "negGammaEntry"
+    | "upperVomma"
+    | "lowerVomma";
+  gex?: number;                            // $ per 1% (signed)
+  tag?: string;                            // "FLOOR" / "CEILING" / "VAC" / "FADES" etc.
+  note?: string;
+}
+
+export interface ModelPathWaypoint {
+  label: string;                           // e.g. "MON", "TUE", "WED 7,030"
+  t: number;                               // fractional x position 0..1 across horizon
+  price: number;
+}
+
+export interface ModelPath {
+  kind: "base" | "bull" | "bear";
+  name: string;
+  probability: number;                     // 0..1
+  target: number;                          // end-of-horizon price
+  waypoints: ModelPathWaypoint[];
+  color: "base" | "bull" | "bear";
+}
+
+export interface ModelAudit {
+  asOf: number;
+  spot: number;
+  spotChange: string;                      // e.g. "-40.6 in 14 min" — stubbed to intraday delta
+  slope: string;                           // "DN" / "UP" with degrees
+  path: string;                            // "liquid path down" / "range-bound"
+  opexGravity: string;                     // text describing pull direction
+  gexTotal: number;                        // absolute $ per 1%
+  dex: number;                             // $B signed
+  charmPerDay: number;                     // $B/day signed
+  vexPerVolPct: number;                    // $B / 1% vol (signed)
+  vannaBias: "positive" | "negative";
+  gammaZone: "y+" | "y-";                  // positive = dampening, negative = amplifying
+  gammaZoneLabel: string;                  // "DAMPENING" / "AMPLIFYING"
+  nearby: {
+    price: number;
+    note: string;
+    dir: "up" | "down";
+  }[];
+}
+
+export interface ModelHorizon {
+  horizon: Horizon;
+  label: string;                           // "SPX DAILY MODEL" etc.
+  symbol: string;                          // "^GSPC" | "SPY"
+  displaySymbol: string;                   // "SPX" | "SPY"
+  spot: number;
+  spotAnchorDate: string;                  // "TUE 4/21"
+  targetDate: string;                      // "FRI 4/24" (daily = same day; weekly = Fri; monthly = 3rd Friday of next month)
+  priceRange: [number, number];            // y-axis suggested bounds
+  levels: ModelLevel[];
+  paths: ModelPath[];
+  audit: ModelAudit;
+  vol: {
+    vix: number | null;
+    vixChangePct: number | null;
+    termRatio: number | null;              // vix3m / vix
+    termLabel: string;                     // "contango" / "backwardation"
+  };
+  vomma: "elevated" | "normal";
+  confidence: "HIGH" | "MODERATE" | "LOW";
+}
+
+export interface ModelsResponse {
+  asOf: number;
+  session: "live" | "last-close";          // persisted session vs. live
+  horizons: Record<Horizon, ModelHorizon | null>;
+  warnings: string[];
+  experimental?: boolean;                  // true when ?experimental=1 — client can surface extra dealer-map kinds
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Horizon DTE windows
+// ──────────────────────────────────────────────────────────────────────────
+
+const DTE_MAX: Record<Horizon, number> = {
+  daily: 2,      // 0DTE + next-day
+  weekly: 7,     // current week + front-week
+  monthly: 45,   // Include monthly OPEX
+};
+
+// ──────────────────────────────────────────────────────────────────────────
+// Per-strike aggregation — groups chain rows by strike, separates call/put
+// GEX, computes "dollars of OI" for max pain.
+// ──────────────────────────────────────────────────────────────────────────
+
+interface StrikeBucket {
+  strike: number;
+  callGex: number;
+  putGex: number;
+  netGex: number;
+  callOi: number;
+  putOi: number;
+  gamma: number;      // avg gamma (at current spot) across rows in bucket
+}
+
+function bucketByStrike(rows: ExposureRow[], spot: number, r: number, q: number): StrikeBucket[] {
+  const byStrike = new Map<number, StrikeBucket>();
+
+  for (const row of rows) {
+    const tradingDays = Math.max(1, Math.round(row.dte * (262 / 365)));
+    const T = tradingDays / 262;
+    const g = computeGreeks(spot, row.strike, row.iv, T, r, q, row.type);
+    const oiMult = row.oi * 100;
+    const gex = g.gamma * oiMult * spot * spot * 0.01; // positive magnitude
+
+    let b = byStrike.get(row.strike);
+    if (!b) {
+      b = { strike: row.strike, callGex: 0, putGex: 0, netGex: 0, callOi: 0, putOi: 0, gamma: 0 };
+      byStrike.set(row.strike, b);
+    }
+    if (row.type === "C") {
+      b.callGex += gex;          // calls contribute positive to net GEX
+      b.callOi  += row.oi;
+    } else {
+      b.putGex  += gex;
+      b.putOi   += row.oi;
+      // puts contribute negative to net GEX under the dealer-short convention
+    }
+    b.netGex = b.callGex - b.putGex;
+    b.gamma = Math.max(b.gamma, g.gamma);
+  }
+
+  return Array.from(byStrike.values()).sort((a, b) => a.strike - b.strike);
+}
+
+// Max-pain = strike where total intrinsic $ value across all OI is minimized.
+function maxPain(rows: ExposureRow[]): number | null {
+  const strikes = Array.from(new Set(rows.map(r => r.strike))).sort((a,b)=>a-b);
+  if (!strikes.length) return null;
+  let best = strikes[0], bestVal = Infinity;
+  for (const K of strikes) {
+    let total = 0;
+    for (const r of rows) {
+      if (r.type === "C") total += Math.max(0, K - r.strike) * r.oi * 100;
+      else                total += Math.max(0, r.strike - K) * r.oi * 100;
+    }
+    if (total < bestVal) { bestVal = total; best = K; }
+  }
+  return best;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Level extraction — finds the key magnets, walls, vacuum, pivots.
+// ──────────────────────────────────────────────────────────────────────────
+
+// sigmaBand — expected one-sigma move from VIX and horizon.
+// vix is in annualized %; returns a price delta.
+function sigmaBand(spot: number, vix: number | null, horizon: Horizon): number {
+  const vol = Math.max(8, Math.min(80, vix ?? 18)) / 100;  // clamp for sanity
+  const days = horizon === "daily" ? 1 : horizon === "weekly" ? 5 : 21;
+  return spot * vol * Math.sqrt(days / 252);
+}
+
+function extractLevels(
+  buckets: StrikeBucket[],
+  profile: ExposureProfile,
+  spot: number,
+  rows: ExposureRow[],
+  horizon: Horizon,
+  vix: number | null,
+  experimental: boolean,
+): ModelLevel[] {
+  const out: ModelLevel[] = [];
+
+  // ±2σ search window (constrains DOWNSIDE PIVOT + EXTREME VAC so they
+  // don't wander to far-OTM tail strikes with almost no OI).
+  const sigma = sigmaBand(spot, vix, horizon);
+  const twoSigmaUp = spot + 2 * sigma;
+  const twoSigmaDown = spot - 2 * sigma;
+
+  // Call wall — highest positive call GEX within reasonable band (±15%)
+  const band = buckets.filter((b) => Math.abs(b.strike - spot) / spot < 0.15);
+  // Tight band for vacuum / pivot searches — prevents wandering
+  const tight = buckets.filter((b) => b.strike >= twoSigmaDown && b.strike <= twoSigmaUp);
+  const callWall = band
+    .filter((b) => b.strike >= spot)
+    .sort((a, b) => b.callGex - a.callGex)[0];
+  if (callWall) {
+    out.push({
+      label: `CALL WALL ${fmtK(callWall.strike)}`,
+      name: "CALL WALL",
+      price: callWall.strike,
+      kind: "callWall",
+      gex: callWall.callGex,
+      tag: "CEILING",
+    });
+  }
+
+  // Put wall — highest put GEX below spot
+  const putWall = band
+    .filter((b) => b.strike <= spot)
+    .sort((a, b) => b.putGex - a.putGex)[0];
+  if (putWall) {
+    out.push({
+      label: `PUT WALL ${fmtK(putWall.strike)}`,
+      name: "PUT WALL",
+      price: putWall.strike,
+      kind: "putWall",
+      gex: -putWall.putGex,
+      tag: "FLOOR",
+    });
+  }
+
+  // Zero gamma from profile curve
+  if (profile.zeroGammaSpot) {
+    out.push({
+      label: `ZERO-Γ FLIP ${fmtK(profile.zeroGammaSpot)}`,
+      name: "ZERO-Γ FLIP",
+      price: profile.zeroGammaSpot,
+      kind: "zeroGamma",
+      tag: "FLIP",
+    });
+  }
+
+  // Dominant magnet — largest NET positive GEX near spot
+  const positive = band.filter((b) => b.netGex > 0).sort((a, b) => b.netGex - a.netGex);
+  if (positive[0]) {
+    out.push({
+      label: `DOMINANT MAG ${fmtK(positive[0].strike)}`,
+      name: "DOMINANT MAG",
+      price: positive[0].strike,
+      kind: "dominantMag",
+      gex: positive[0].netGex,
+      tag: "MAG",
+    });
+  }
+  if (positive[1]) {
+    out.push({
+      label: `STRONG MAG ${fmtK(positive[1].strike)}`,
+      name: "STRONG MAG",
+      price: positive[1].strike,
+      kind: "strongMag",
+      gex: positive[1].netGex,
+      tag: "MAG",
+    });
+  }
+
+  // Extreme vacuum — largest net NEGATIVE GEX band (zone of least hedging flow)
+  // Constrained to ±2σ so it stops snapping to far-OTM strikes.
+  const negative = tight.filter((b) => b.netGex < 0).sort((a, b) => a.netGex - b.netGex);
+  if (negative[0]) {
+    out.push({
+      label: `EXTREME VAC ${fmtK(negative[0].strike)}`,
+      name: "EXTREME VAC",
+      price: negative[0].strike,
+      kind: "extremeVac",
+      gex: negative[0].netGex,
+      tag: "VAC",
+      note: "Liquidity vacuum — moves extend here",
+    });
+  }
+
+  // MOPEX max pain (monthly exp bias)
+  const mp = maxPain(rows);
+  if (mp) {
+    out.push({
+      label: `MOPEX MAX PAIN ${fmtK(mp)}`,
+      name: "MOPEX MAX PAIN",
+      price: mp,
+      kind: "mopexMaxPain",
+      tag: "PIN",
+    });
+  }
+
+  // Upside pivot — just above call wall, where vanna flip sits if present
+  const upPivot = profile.zeroVannaSpot && callWall
+    ? (profile.zeroVannaSpot > callWall.strike ? profile.zeroVannaSpot : callWall.strike * 1.008)
+    : callWall ? callWall.strike * 1.005 : null;
+  if (upPivot) {
+    out.push({
+      label: `UPSIDE PIVOT ${fmtK(upPivot)}`,
+      name: "UPSIDE PIVOT",
+      price: upPivot,
+      kind: "upsidePivot",
+      tag: "VOMMA",
+    });
+  }
+
+  // Downside pivot — where charm flip sits, or just below put wall.
+  // Clamp to ±2σ window — without this, the charm zero-crossing often
+  // lands at a far-OTM strike (e.g. 6629) with no economic meaning.
+  let downPivotRaw = profile.zeroCharmSpot && putWall
+    ? (profile.zeroCharmSpot < putWall.strike ? profile.zeroCharmSpot : putWall.strike * 0.992)
+    : putWall ? putWall.strike * 0.995 : null;
+  if (downPivotRaw != null) {
+    const downPivot = Math.max(downPivotRaw, twoSigmaDown);
+    out.push({
+      label: `DOWNSIDE PIVOT ${fmtK(downPivot)}`,
+      name: "DOWNSIDE PIVOT",
+      price: downPivot,
+      kind: "downsidePivot",
+      tag: "VOMMA",
+    });
+  }
+
+  // ─── Experimental dealer-map levels (behind ?experimental=1) ───
+  // These replicate the @OptionsDepth / Green-Room output: vanna flip,
+  // zomma bridge, charm target, negative-gamma entry, upper/lower vomma.
+  if (experimental) {
+    // VANNA FLIP — the profile's zero-vanna spot, constrained to within 1σ
+    // of spot (otherwise it's not the "nearest-to-spot flip" traders watch).
+    if (profile.zeroVannaSpot && Math.abs(profile.zeroVannaSpot - spot) <= sigma * 1.5) {
+      out.push({
+        label: `VANNA FLIP ${fmtK(profile.zeroVannaSpot)}`,
+        name: "VANNA FLIP",
+        price: profile.zeroVannaSpot,
+        kind: "vannaFlip",
+        tag: "VANNA",
+        note: "Sign change in ∂Δ/∂σ — hedge direction flips here",
+      });
+    }
+
+    // ZOMMA BRIDGE — ∂Vega/∂σ peak at or below spot. We approximate this
+    // from the curve: find spot where gex slope (d gex / d spot) is most
+    // negative below current spot, i.e. the "shoulder" where γ compresses
+    // fastest when vol rises. Serves as a support shelf when dealers long γ.
+    const curveBelow = profile.curve.filter((p) => p.spot <= spot);
+    if (curveBelow.length >= 3) {
+      let bestIdx = -1, bestSlope = 0;
+      for (let i = 1; i < curveBelow.length; i++) {
+        const dGex = curveBelow[i].gex - curveBelow[i - 1].gex;
+        const dS = curveBelow[i].spot - curveBelow[i - 1].spot;
+        const slope = dS !== 0 ? dGex / dS : 0;
+        if (slope > bestSlope) { bestSlope = slope; bestIdx = i; }
+      }
+      if (bestIdx >= 0) {
+        const zStrike = curveBelow[bestIdx].spot;
+        if (zStrike >= twoSigmaDown) {
+          out.push({
+            label: `ZOMMA BRIDGE ${fmtK(zStrike)}`,
+            name: "ZOMMA BRIDGE",
+            price: zStrike,
+            kind: "zommaBridge",
+            tag: "SHELF",
+            note: "∂Vega/∂σ shelf — vol-expansion support",
+          });
+        }
+      }
+    }
+
+    // CHARM TARGET — where accumulated charm wants price to drift by expiry.
+    // Take the callWall-side charm magnet: if dealers are short-γ and
+    // long-charm above spot, charm decay pulls spot upward toward the strike
+    // with highest |charm × OI|. We approximate with the highest netGex
+    // strike above spot within 1σ.
+    const charmBand = buckets.filter((b) => b.strike > spot && b.strike <= spot + sigma * 1.5);
+    const charmTarget = charmBand.sort((a, b) => b.netGex - a.netGex)[0];
+    if (charmTarget) {
+      out.push({
+        label: `CHARM TGT ${fmtK(charmTarget.strike)}`,
+        name: "CHARM TARGET",
+        price: charmTarget.strike,
+        kind: "charmTarget",
+        gex: charmTarget.netGex,
+        tag: "DECAY",
+        note: "Charm-decay magnet — dealers re-hedge toward here into close",
+      });
+    }
+
+    // NEG γ ENTRY — first strike above spot where cumulative net-GEX flips
+    // negative. This is the price level where dealer hedging starts amplifying
+    // moves (the ignition point). Walk up from spot.
+    const above = buckets.filter((b) => b.strike >= spot).sort((a, b) => a.strike - b.strike);
+    let cum = 0;
+    let negEntry: number | null = null;
+    for (const b of above) {
+      cum += b.netGex;
+      if (cum < 0) { negEntry = b.strike; break; }
+    }
+    if (negEntry != null && negEntry <= twoSigmaUp) {
+      out.push({
+        label: `NEG γ ENTRY ${fmtK(negEntry)}`,
+        name: "NEG γ ENTRY",
+        price: negEntry,
+        kind: "negGammaEntry",
+        tag: "IGNITION",
+        note: "Cumulative γ turns negative — trend-extension zone starts here",
+      });
+    }
+
+    // UPPER VOMMA / LOWER VOMMA — far-OTM vomma peaks. Proxy: highest |netGex|
+    // strike in the 1σ→2.5σ zone on each side (tails where ∂Vega/∂σ spikes).
+    const upperBand = buckets.filter(
+      (b) => b.strike > spot + sigma && b.strike <= spot + sigma * 2.5,
+    );
+    const upperVomma = upperBand.sort((a, b) => Math.abs(b.netGex) - Math.abs(a.netGex))[0];
+    if (upperVomma) {
+      out.push({
+        label: `UPPER VOMMA ${fmtK(upperVomma.strike)}`,
+        name: "UPPER VOMMA",
+        price: upperVomma.strike,
+        kind: "upperVomma",
+        gex: upperVomma.netGex,
+        tag: "TAIL",
+        note: "Upside vomma pocket — IV-churn zone",
+      });
+    }
+
+    const lowerBand = buckets.filter(
+      (b) => b.strike < spot - sigma && b.strike >= spot - sigma * 2.5,
+    );
+    const lowerVomma = lowerBand.sort((a, b) => Math.abs(b.netGex) - Math.abs(a.netGex))[0];
+    if (lowerVomma) {
+      out.push({
+        label: `LOWER VOMMA ${fmtK(lowerVomma.strike)}`,
+        name: "LOWER VOMMA",
+        price: lowerVomma.strike,
+        kind: "lowerVomma",
+        gex: lowerVomma.netGex,
+        tag: "TAIL",
+        note: "Downside vomma pocket — IV-churn zone",
+      });
+    }
+  }
+
+  // T1/T2 up/down — simple ATR-ish targets from GEX profile range
+  const rng = profile.ranges.gex.max - profile.ranges.gex.min;
+  const spread = Math.abs(callWall && putWall ? callWall.strike - putWall.strike : spot * 0.02);
+  const t1Up = spot + spread * 0.8;
+  const t2Up = spot + spread * 1.6;
+  const t1Down = spot - spread * 0.8;
+  const t2Down = spot - spread * 1.6;
+  out.push({ label: `T1 UP ${fmtK(t1Up)}`, name: "T1 UP", price: t1Up, kind: "t1Up" });
+  out.push({ label: `T2 UP ${fmtK(t2Up)}`, name: "T2 UP", price: t2Up, kind: "t2Up" });
+  out.push({ label: `T1 DOWN ${fmtK(t1Down)}`, name: "T1 DOWN", price: t1Down, kind: "t1Down" });
+  out.push({ label: `T2 DOWN ${fmtK(t2Down)}`, name: "T2 DOWN", price: t2Down, kind: "t2Down" });
+
+  return out.sort((a, b) => b.price - a.price);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Path generation — BASE / BULL / BEAR waypoints across the horizon.
+// ──────────────────────────────────────────────────────────────────────────
+
+function generatePaths(
+  levels: ModelLevel[],
+  spot: number,
+  profile: ExposureProfile,
+  horizon: Horizon,
+  waypointDates: string[],
+): ModelPath[] {
+  const byKind = (k: string) => levels.find((l) => l.kind === k);
+  const callWall = byKind("callWall");
+  const putWall = byKind("putWall");
+  const dominantMag = byKind("dominantMag");
+  const strongMag = byKind("strongMag");
+  const zeroGamma = byKind("zeroGamma");
+  const upsidePivot = byKind("upsidePivot");
+  const downsidePivot = byKind("downsidePivot");
+  const t1Up = byKind("t1Up")!;
+  const t1Down = byKind("t1Down")!;
+
+  const totalGex = profile.current.gex;
+  const regime: "positive" | "negative" = totalGex > 0 ? "positive" : "negative";
+
+  // Probability split reflects regime:
+  //   positive GEX → dampening → BASE gets highest weight (range-bound drift to magnet)
+  //   negative GEX → amplifying → BULL / BEAR more likely (trends extend)
+  const probs = regime === "positive"
+    ? { base: 0.45, bull: 0.30, bear: 0.25 }
+    : { base: 0.30, bull: 0.30, bear: 0.40 };
+
+  const nWay = waypointDates.length;
+
+  function path(
+    kind: "base" | "bull" | "bear",
+    endPrice: number,
+    waypoints: number[],          // price at each intermediate date
+  ): ModelPath {
+    const wps: ModelPathWaypoint[] = waypointDates.map((d, i) => ({
+      label: i === nWay - 1 ? `${d} ${fmtK(endPrice)}` : d,
+      t: i / Math.max(1, nWay - 1),
+      price: waypoints[i] ?? endPrice,
+    }));
+    // Force first waypoint to spot, last to endPrice
+    wps[0].price = spot;
+    wps[nWay - 1].price = endPrice;
+    return {
+      kind,
+      name: kind === "base" ? "BASE" : kind === "bull" ? "BULL" : "BEAR",
+      probability: probs[kind],
+      target: endPrice,
+      waypoints: wps,
+      color: kind,
+    };
+  }
+
+  // BASE = gravitate toward dominant magnet (or zero-γ if no magnet)
+  const baseTarget = dominantMag?.price ?? zeroGamma?.price ?? spot;
+  const basePath = path(
+    "base",
+    baseTarget,
+    lerpPath(spot, baseTarget, nWay, 0.6),
+  );
+
+  // BULL = push through zero-γ → strong mag → call wall (capped at upside pivot)
+  const bullTarget = upsidePivot?.price ?? callWall?.price ?? spot * 1.01;
+  const bullVia = strongMag?.price ?? zeroGamma?.price ?? spot * 1.003;
+  const bullPath = path(
+    "bull",
+    bullTarget,
+    bullVia ? [spot, ...midPath(spot, bullVia, bullTarget, nWay - 1)] : lerpPath(spot, bullTarget, nWay, 1.0),
+  );
+
+  // BEAR = break below put wall → downside pivot. Cap distance to avoid nonsense
+  // multi-percent drops on weekly/monthly when the put wall sits right under spot.
+  let bearTarget = downsidePivot?.price ?? putWall?.price ?? spot * 0.99;
+  // Sanity clamp: bear target shouldn't exceed ~3% below spot for daily, ~5%
+  // for weekly, ~7% for monthly — otherwise the curve dominates the chart.
+  const maxDropPct = horizon === "daily" ? 0.03 : horizon === "weekly" ? 0.05 : 0.07;
+  if (bearTarget < spot * (1 - maxDropPct)) bearTarget = spot * (1 - maxDropPct);
+  const bearVia = zeroGamma?.price ?? t1Down.price;
+  const bearPath = path(
+    "bear",
+    bearTarget,
+    bearVia ? [spot, ...midPath(spot, bearVia, bearTarget, nWay - 1)] : lerpPath(spot, bearTarget, nWay, 1.0),
+  );
+
+  return [basePath, bullPath, bearPath];
+}
+
+function lerpPath(from: number, to: number, n: number, curve: number): number[] {
+  // curve 0→1 controls how fast the move happens. curve=1 → linear, curve<1 →
+  // front-loaded (fast move then drift), curve>1 → back-loaded.
+  const xs: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const t = i / Math.max(1, n - 1);
+    const eased = Math.pow(t, curve);
+    xs.push(from + (to - from) * eased);
+  }
+  return xs;
+}
+
+// 3-leg path: spot → via at midpoint → end
+function midPath(spot: number, via: number, end: number, nAfter: number): number[] {
+  if (nAfter < 2) return [end];
+  const half = Math.max(1, Math.floor(nAfter / 2));
+  const leg1 = lerpPath(spot, via, half + 1, 1.0).slice(1);
+  const leg2 = lerpPath(via, end, nAfter - half + 1, 1.0).slice(1);
+  return [...leg1, ...leg2];
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Audit block — right-sized summary matching the screenshot's top-left panel
+// ──────────────────────────────────────────────────────────────────────────
+
+function buildAudit(
+  profile: ExposureProfile,
+  levels: ModelLevel[],
+  spot: number,
+  intradayDelta: { change: number | null; windowMin: number | null },
+): ModelAudit {
+  const cur = profile.current;
+  const byKind = (k: string) => levels.find((l) => l.kind === k);
+
+  const slopeDir = cur.charm > 0 ? "UP" : "DN";
+  const slopeDeg = Math.min(2.0, Math.abs(cur.charm) / 1e9 * 0.5).toFixed(2);
+  const gammaZone = cur.gex >= 0 ? "y+" : "y-";
+  const gammaZoneLabel = cur.gex >= 0 ? "DAMPENING" : "AMPLIFYING";
+
+  // Path classification from GEX regime + charm direction
+  let path = "range-bound";
+  if (cur.gex < 0 && cur.charm < 0) path = "liquid path down";
+  else if (cur.gex < 0 && cur.charm > 0) path = "liquid path up";
+  else if (cur.gex > 0 && cur.charm < 0) path = "grind down into pin";
+  else if (cur.gex > 0 && cur.charm > 0) path = "grind up into pin";
+
+  // OPEX gravity — direction to nearest mopex max pain * distance in bps
+  const mp = byKind("mopexMaxPain")?.price;
+  let opexGravity = "—";
+  if (mp) {
+    const bps = Math.round((mp - spot) / spot * 10000);
+    const arrow = bps > 0 ? "↑" : bps < 0 ? "↓" : "→";
+    opexGravity = `${Math.abs(bps)}pt ${bps >= 0 ? "above" : "below"} ${fmtK(mp)} ${arrow} ${Math.abs(bps / 100).toFixed(1)}%`;
+  }
+
+  const nearby: ModelAudit["nearby"] = levels
+    .filter((l) => l.kind !== "t1Up" && l.kind !== "t2Up" && l.kind !== "t1Down" && l.kind !== "t2Down" && l.kind !== "vommaPocket")
+    .slice(0, 6)
+    .map((l) => ({
+      price: l.price,
+      note: `${Math.round((l.price - spot) / spot * 10000)}bp · ${l.name}`,
+      dir: l.price >= spot ? "up" : "down",
+    }));
+
+  const vannaBias: "positive" | "negative" = cur.vex >= 0 ? "positive" : "negative";
+  const spotChange = (intradayDelta.change != null && intradayDelta.windowMin != null)
+    ? `${intradayDelta.change >= 0 ? "+" : ""}${intradayDelta.change.toFixed(1)} in ${intradayDelta.windowMin} min`
+    : "";
+
+  return {
+    asOf: Math.floor(Date.now() / 1000),
+    spot,
+    spotChange,
+    slope: `${slopeDir} ${slopeDeg}° → ${cur.charm >= 0 ? "+" : ""}${(cur.charm / 1e9).toFixed(2)}`,
+    path,
+    opexGravity,
+    gexTotal: cur.gex,
+    dex: cur.dex / 1e9,
+    charmPerDay: cur.charm / 1e9,
+    vexPerVolPct: cur.vex / 1e9,
+    vannaBias,
+    gammaZone,
+    gammaZoneLabel,
+    nearby,
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Public entry: build a ModelHorizon for a single (symbol, horizon)
+// ──────────────────────────────────────────────────────────────────────────
+
+export interface ModelBuildInput {
+  horizon: Horizon;
+  symbol: "^GSPC" | "SPY";
+  chainSymbol: "SPY" | "SPX";              // CBOE source — SPY is always available
+  vix: number | null;
+  vixPrev: number | null;
+  vix3m: number | null;
+  intradayChange?: { change: number | null; windowMin: number | null };
+  experimental?: boolean;
+}
+
+// SPX is priced at ~10× SPY; we use SPY's chain rescaled for strike labels if
+// the user asks for SPX view. This is a shortcut — proper SPX chain is separate.
+const SPX_OVER_SPY_HINT = 10.0;   // recomputed from actual spot each call
+
+async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
+  const { horizon, symbol, chainSymbol, vix, vixPrev, vix3m, intradayChange } = input;
+
+  // Fetch SPY chain — used regardless of whether we're building SPY or SPX model
+  const chain = await getCboeChain(chainSymbol);
+  const { rows: allRows, spot: spySpot } = chainToRows(chain, DTE_MAX[horizon]);
+  if (!spySpot) throw new Error(`No spot in chain for ${chainSymbol}`);
+
+  // Map SPX spot to SPY if building SPX model
+  let displaySpot = spySpot;
+  let scale = 1;
+  if (symbol === "^GSPC") {
+    // Use actual SPX price: for now use 10× SPY (exact ratio can come from snapshot)
+    displaySpot = spySpot * SPX_OVER_SPY_HINT;
+    scale = SPX_OVER_SPY_HINT;
+  }
+
+  // Build exposure profile at SPY spot (real math), we'll rescale strikes for display
+  const profile = buildExposureProfile(chainSymbol, allRows, spySpot, { r: 0.05, q: 0.013 });
+
+  // Rescale buckets + levels to display spot
+  const spyBuckets = bucketByStrike(allRows, spySpot, 0.05, 0.013);
+  const displayBuckets: StrikeBucket[] = spyBuckets.map((b) => ({ ...b, strike: b.strike * scale }));
+  const displayRows: ExposureRow[] = allRows.map((r) => ({ ...r, strike: r.strike * scale }));
+
+  // Build scaled profile-lite with just what extractLevels needs
+  const scaledProfile: ExposureProfile = {
+    ...profile,
+    currentSpot: displaySpot,
+    curve: profile.curve.map((p) => ({ ...p, spot: p.spot * scale })),
+    current: { ...profile.current, spot: displaySpot },
+    zeroGammaSpot: profile.zeroGammaSpot != null ? profile.zeroGammaSpot * scale : null,
+    zeroCharmSpot: profile.zeroCharmSpot != null ? profile.zeroCharmSpot * scale : null,
+    zeroVannaSpot: profile.zeroVannaSpot != null ? profile.zeroVannaSpot * scale : null,
+  };
+
+  const levels = extractLevels(
+    displayBuckets,
+    scaledProfile,
+    displaySpot,
+    displayRows,
+    horizon,
+    vix,
+    input.experimental ?? false,
+  );
+  const { spotAnchorDate, targetDate, waypointLabels } = buildHorizonDates(horizon);
+  const paths = generatePaths(levels, displaySpot, scaledProfile, horizon, waypointLabels);
+  const audit = buildAudit(scaledProfile, levels, displaySpot, intradayChange ?? { change: null, windowMin: null });
+
+  // Price range: widest of call wall → put wall vs. ±2% of spot, padded
+  const cw = levels.find((l) => l.kind === "callWall")?.price ?? displaySpot * 1.02;
+  const pw = levels.find((l) => l.kind === "putWall")?.price ?? displaySpot * 0.98;
+  const t2Up = levels.find((l) => l.kind === "t2Up")?.price ?? displaySpot * 1.03;
+  const t2Dn = levels.find((l) => l.kind === "t2Down")?.price ?? displaySpot * 0.97;
+  const yMax = Math.max(cw, t2Up, displaySpot * 1.015);
+  const yMin = Math.min(pw, t2Dn, displaySpot * 0.985);
+
+  const termRatio = vix && vix3m ? vix3m / vix : null;
+  const termLabel = termRatio && termRatio > 1 ? "contango (calm front-end)" : "backwardation (stress front-end)";
+  const vixChangePct = vix && vixPrev ? ((vix - vixPrev) / vixPrev) * 100 : null;
+  const vomma: "elevated" | "normal" = (vix ?? 0) > 20 ? "elevated" : "normal";
+  const confidence: "HIGH" | "MODERATE" | "LOW" =
+    Math.abs(scaledProfile.current.gex) > 5e9 ? "HIGH" : Math.abs(scaledProfile.current.gex) > 1e9 ? "MODERATE" : "LOW";
+
+  return {
+    horizon,
+    label: `${symbol === "^GSPC" ? "SPX" : "SPY"} ${horizon.toUpperCase()} MODEL`,
+    symbol,
+    displaySymbol: symbol === "^GSPC" ? "SPX" : "SPY",
+    spot: displaySpot,
+    spotAnchorDate,
+    targetDate,
+    priceRange: [yMin, yMax],
+    levels,
+    paths,
+    audit,
+    vol: {
+      vix, vixChangePct,
+      termRatio,
+      termLabel,
+    },
+    vomma,
+    confidence,
+  };
+}
+
+export async function buildModelsSnapshot(input: {
+  vix: number | null;
+  vixPrev: number | null;
+  vix3m: number | null;
+  spxIntraday?: { change: number | null; windowMin: number | null };
+  spyIntraday?: { change: number | null; windowMin: number | null };
+  symbols?: Array<"^GSPC" | "SPY">;
+  horizons?: Horizon[];
+  experimental?: boolean;
+}): Promise<ModelsResponse> {
+  const warnings: string[] = [];
+  const symbols = input.symbols ?? ["^GSPC", "SPY"];
+  const horizons = input.horizons ?? (["daily", "weekly", "monthly"] as Horizon[]);
+
+  const out: ModelsResponse = {
+    asOf: Math.floor(Date.now() / 1000),
+    session: "live",
+    horizons: { daily: null, weekly: null, monthly: null },
+    warnings,
+    experimental: input.experimental ?? false,
+  };
+
+  // We build once per (symbol, horizon) but the UI currently picks one symbol at
+  // a time — so we return a horizons map, with each entry defaulting to the
+  // first requested symbol. The client can re-request with ?symbol= later.
+  const primarySymbol = symbols[0];
+
+  await Promise.all(
+    horizons.map(async (h) => {
+      try {
+        const mh = await buildHorizon({
+          horizon: h,
+          symbol: primarySymbol,
+          chainSymbol: "SPY",
+          vix: input.vix,
+          vixPrev: input.vixPrev,
+          vix3m: input.vix3m,
+          intradayChange: primarySymbol === "^GSPC" ? input.spxIntraday : input.spyIntraday,
+          experimental: input.experimental ?? false,
+        });
+        out.horizons[h] = mh;
+      } catch (e: any) {
+        warnings.push(`${h} model failed: ${e?.message ?? e}`);
+      }
+    }),
+  );
+
+  return out;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────────────────────
+
+function fmtK(n: number): string {
+  if (n >= 1000) return Math.round(n).toLocaleString();
+  return n.toFixed(2);
+}
+
+function buildHorizonDates(h: Horizon): {
+  spotAnchorDate: string;
+  targetDate: string;
+  waypointLabels: string[];
+} {
+  const now = new Date();
+  const dayNames = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
+  const mm = (d: Date) => d.getMonth() + 1;
+  const dd = (d: Date) => d.getDate();
+  const fmt = (d: Date) => `${dayNames[d.getDay()]} ${mm(d)}/${dd(d)}`;
+
+  const spotAnchorDate = fmt(now);
+
+  if (h === "daily") {
+    const labels = ["OPEN", "10:30", "12:00", "14:00", "CLOSE"];
+    return { spotAnchorDate, targetDate: `${spotAnchorDate} CLOSE`, waypointLabels: labels };
+  }
+
+  if (h === "weekly") {
+    const fri = new Date(now);
+    const dow = now.getDay();
+    const daysToFri = (5 - dow + 7) % 7 || 5;
+    fri.setDate(now.getDate() + daysToFri);
+    // Produce labels Mon/Tue/.../Fri covering the week
+    const labels: string[] = [];
+    const cur = new Date(now);
+    for (let i = 0; i < 5; i++) {
+      const d = new Date(cur);
+      d.setDate(cur.getDate() + i);
+      if (d.getDay() === 0 || d.getDay() === 6) continue;
+      labels.push(fmt(d));
+      if (labels.length >= 5) break;
+    }
+    return { spotAnchorDate, targetDate: fmt(fri), waypointLabels: labels };
+  }
+
+  // monthly — target 3rd Friday of this month (or next if passed)
+  const third = thirdFridayOf(now);
+  const target = now > third ? thirdFridayOf(new Date(now.getFullYear(), now.getMonth() + 1, 1)) : third;
+  const weeks = Math.max(1, Math.ceil((target.getTime() - now.getTime()) / (7 * 86400000)));
+  const labels: string[] = [];
+  for (let i = 0; i <= weeks; i++) {
+    const d = new Date(now);
+    d.setDate(now.getDate() + i * 7);
+    if (d > target) break;
+    labels.push(fmt(d));
+  }
+  if (labels.length < 2) labels.push(fmt(target));
+  return { spotAnchorDate, targetDate: fmt(target), waypointLabels: labels };
+}
+
+function thirdFridayOf(ref: Date): Date {
+  const d = new Date(ref.getFullYear(), ref.getMonth(), 1);
+  let fridays = 0;
+  while (d.getMonth() === ref.getMonth()) {
+    if (d.getDay() === 5) {
+      fridays += 1;
+      if (fridays === 3) return new Date(d);
+    }
+    d.setDate(d.getDate() + 1);
+  }
+  // Fallback — last day of month
+  return new Date(ref.getFullYear(), ref.getMonth() + 1, 0);
+}

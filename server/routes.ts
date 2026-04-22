@@ -1,0 +1,606 @@
+import type { Express } from "express";
+import type { Server } from "node:http";
+import { storage } from "./storage";
+import {
+  yahooQuote, cboeSpyChain, buildGammaStructure, cnnFearGreed,
+  gatherSocial, fetchHeadlines,
+} from "./sources";
+import { computeComposite } from "./composite";
+import { fetchAllVoices, factCheckItem, listVoices, computeVoicesBias } from "./voices";
+import { xEnabled } from "./x";
+import { fetchIntraday, fetchPrevDayOHLC } from "./quotes";
+import { buildPivotBundle } from "./pivots";
+import { buildGammaMap, computeSqueezeIndicator, buildDailyPlaybook } from "./playbook";
+import { buildRegimeSnapshot, type WindowKey } from "./regime";
+import { buildSectorWeb } from "./sector-web";
+import { buildWefThemes } from "./wef-themes";
+import { buildMacroSnapshot, type MacroResponse } from "./macro";
+import { fetchOHLC, type OHLCResponse, type Timeframe, type Interval } from "./ohlc";
+import { buildMag7Snapshot, type Mag7Response } from "./mag7";
+import { buildFlowSnapshot, type FlowResponse } from "./flow";
+import { buildExposuresSnapshot, type ExposuresResponse } from "./exposures";
+import { buildUnusualFlow, type UnusualFlowResponse } from "./unusualFlow";
+import { buildNewsSnapshot, type NewsResponse } from "./news";
+import { buildModelsSnapshot, type ModelsResponse, type Horizon } from "./models";
+import type { Snapshot_Public, VolMetric } from "@shared/schema";
+import { readCache, writeCache, rthSessionKey } from "./sessionCache";
+
+function vm(symbol: string, name: string, last: number | null, prev: number | null): VolMetric {
+  const changePct = last != null && prev ? ((last - prev) / prev) * 100 : null;
+  return { symbol, name, value: last, prev, changePct };
+}
+
+let inflight: Promise<Snapshot_Public> | null = null;
+let lastResult: { at: number; data: Snapshot_Public } | null = null;
+const CACHE_MS = 60_000; // refresh at most once per minute
+
+// Shared voices cache (used by both /api/voices and composite)
+let voicesCache: { at: number; data: any } | null = null;
+const VOICES_CACHE_MS = 15 * 60_000; // 15 min keeps us well under X 10k/mo quota
+
+async function buildSnapshot(): Promise<Snapshot_Public> {
+  const warnings: string[] = [];
+
+  const [vix, vvix, vix9d, vix3m, skew, spy, chain, fg, social, headlines] = await Promise.all([
+    yahooQuote("^VIX"),
+    yahooQuote("^VVIX"),
+    yahooQuote("^VIX9D"),
+    yahooQuote("^VIX3M"),
+    yahooQuote("^SKEW"),
+    yahooQuote("SPY"),
+    cboeSpyChain().catch((e) => { warnings.push(`CBOE chain: ${e.message}`); return null; }),
+    cnnFearGreed(),
+    gatherSocial().catch((e) => { warnings.push(`Social: ${e.message}`); return { score: 0, bullish: 0, bearish: 0, neutral: 0, posts: [] }; }),
+    fetchHeadlines(),
+  ]);
+
+  if (!chain) throw new Error("Options chain unavailable");
+
+  const gamma = buildGammaStructure(chain);
+  const term = {
+    vix9d: vix9d.last,
+    vix: vix.last,
+    vix3m: vix3m.last,
+    ratio9dOver30d: vix.last && vix9d.last ? vix9d.last / vix.last : null,
+    ratio30dOver3m: vix3m.last && vix.last ? vix.last / vix3m.last : null,
+  };
+
+  const partial: Omit<Snapshot_Public, "composite"> = {
+    capturedAt: Math.floor(Date.now() / 1000),
+    spy: {
+      price: spy.last ?? gamma.spot,
+      prevClose: spy.prev ?? 0,
+      changePct: spy.last && spy.prev ? ((spy.last - spy.prev) / spy.prev) * 100 : 0,
+    },
+    vol: {
+      vix:  vm("^VIX",  "VIX (30-day implied vol)", vix.last,  vix.prev),
+      vvix: vm("^VVIX", "VVIX (Vol-of-Vol)",        vvix.last, vvix.prev),
+      vix9d:vm("^VIX9D","VIX9D (9-day)",            vix9d.last,vix9d.prev),
+      vix3m:vm("^VIX3M","VIX3M (3-month)",          vix3m.last,vix3m.prev),
+      skew: vm("^SKEW", "CBOE SKEW",                skew.last, skew.prev),
+    },
+    term,
+    gamma,
+    social,
+    fearGreed: fg,
+    aaii: null, // could be wired later via Thursday-released CSV
+    headlines,
+    warnings,
+  };
+
+  // Pull a cheap voicesBias if we have a warm cache. Never force-fetch here
+  // — keeping snapshot + voices refreshes independent protects our X quota.
+  let voicesBias: { score: number; sampleSize: number } | null = null;
+  if (voicesCache?.data?.items) {
+    voicesBias = computeVoicesBias(voicesCache.data.items);
+  }
+  const composite = computeComposite(partial, voicesBias);
+  const full: Snapshot_Public = { ...partial, composite };
+  await storage.saveSnapshot({
+    capturedAt: full.capturedAt,
+    payload: JSON.stringify(full),
+  });
+  return full;
+}
+
+async function getOrBuild(force = false): Promise<Snapshot_Public> {
+  if (!force && lastResult && Date.now() - lastResult.at < CACHE_MS) return lastResult.data;
+  if (inflight) return inflight;
+  inflight = buildSnapshot()
+    .then((d) => { lastResult = { at: Date.now(), data: d }; inflight = null; return d; })
+    .catch(async (e) => {
+      inflight = null;
+      // Fallback to last stored snapshot
+      const last = await storage.getLatestSnapshot();
+      if (last) return JSON.parse(last.payload) as Snapshot_Public;
+      throw e;
+    });
+  return inflight;
+}
+
+export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  app.get("/api/snapshot", async (_req, res) => {
+    try {
+      const data = await getOrBuild(false);
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build snapshot" });
+    }
+  });
+
+  app.post("/api/snapshot/refresh", async (_req, res) => {
+    try {
+      const data = await getOrBuild(true);
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to refresh" });
+    }
+  });
+
+  // Voices — curated analyst feed with data-relevance ranking + live fact-check
+  app.get("/api/voices", async (_req, res) => {
+    try {
+      if (voicesCache && Date.now() - voicesCache.at < VOICES_CACHE_MS) {
+        return res.json(voicesCache.data);
+      }
+      const [{ voices, items }, snap] = await Promise.all([
+        fetchAllVoices(),
+        getOrBuild(false),
+      ]);
+      const liveMetrics = {
+        vix: snap.vol.vix.value ?? 0,
+        vvix: snap.vol.vvix.value ?? 0,
+        spy: snap.spy.price ?? 0,
+        skew: snap.vol.skew.value ?? 0,
+        pcr: snap.gamma.pcrOi ?? 0,
+      };
+      for (const it of items) factCheckItem(it, liveMetrics);
+      const bias = computeVoicesBias(items);
+      const payload = {
+        voices, items, liveMetrics,
+        xEnabled: xEnabled(),
+        voicesBias: bias,
+        capturedAt: Math.floor(Date.now() / 1000),
+      };
+      voicesCache = { at: Date.now(), data: payload };
+      res.json(payload);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to fetch voices" });
+    }
+  });
+
+  app.get("/api/voices/list", (_req, res) => {
+    res.json({ voices: listVoices() });
+  });
+
+  // Trade Desk — SPX/SPY/VIX intraday + pivots + gamma map + squeeze + playbook
+  let tradeCache: { at: number; range: "1d" | "5d"; data: any } | null = null;
+  const TRADE_CACHE_MS = 30_000;
+
+  app.get("/api/trade-desk", async (req, res) => {
+    try {
+      const range = (req.query.range === "5d" ? "5d" : "1d") as "1d" | "5d";
+      const interval = range === "5d" ? "5m" : "1m";
+      if (tradeCache && tradeCache.range === range && Date.now() - tradeCache.at < TRADE_CACHE_MS) {
+        return res.json(tradeCache.data);
+      }
+
+      // Fetch the three intraday series + prior-day OHLC for each (for pivots),
+      // plus the main snapshot (for gamma, term, vix, composite, voices bias).
+      const [spx, spy, vix, spxPrev, spyPrev, vixPrev, snap, voicesData] = await Promise.all([
+        fetchIntraday("^GSPC", range, interval).catch((e) => { console.warn("[trade-desk] SPX:", e.message); return null; }),
+        fetchIntraday("SPY",   range, interval).catch((e) => { console.warn("[trade-desk] SPY:", e.message); return null; }),
+        fetchIntraday("^VIX",  range, interval).catch((e) => { console.warn("[trade-desk] VIX:", e.message); return null; }),
+        fetchPrevDayOHLC("^GSPC").catch(() => null),
+        fetchPrevDayOHLC("SPY").catch(() => null),
+        fetchPrevDayOHLC("^VIX").catch(() => null),
+        getOrBuild(false),
+        Promise.resolve(voicesCache?.data ?? null),
+      ]);
+
+      const spxPivots = spxPrev ? buildPivotBundle("^GSPC", spxPrev) : null;
+      const spyPivots = spyPrev ? buildPivotBundle("SPY",   spyPrev) : null;
+      const vixPivots = vixPrev ? buildPivotBundle("^VIX",  vixPrev) : null;
+
+      // Gamma map is SPY-based (that's our options-chain source).
+      const spyLast = spy?.price ?? snap.spy.price;
+      const baseGammaMap = buildGammaMap(snap.gamma, spyLast);
+      // Pass through the Perfiliev gamma profile + legacy crossover strike so the
+      // Trade Desk UI can render the full curve.
+      const gammaMap = {
+        ...baseGammaMap,
+        gammaProfile: snap.gamma.gammaProfile,
+        gexCrossoverStrike: snap.gamma.gexCrossoverStrike,
+      };
+
+      const squeeze = computeSqueezeIndicator({
+        spot: spyLast,
+        gamma: snap.gamma,
+        term: snap.term,
+        vix: snap.vol.vix,
+        vvix: snap.vol.vvix,
+        skew: snap.vol.skew,
+      });
+
+      const playbook = buildDailyPlaybook({
+        spot: spyLast,
+        gamma: snap.gamma,
+        pivots: spyPivots,
+        term: snap.term,
+        vix: snap.vol.vix,
+        compositeScore: snap.composite.score,
+        compositeLabel: snap.composite.label,
+        voicesBiasScore: voicesData?.voicesBias?.score ?? null,
+        squeeze,
+      });
+
+      const payload = {
+        capturedAt: Math.floor(Date.now() / 1000),
+        range,
+        interval,
+        quotes: { spx, spy, vix },
+        pivots: { spx: spxPivots, spy: spyPivots, vix: vixPivots },
+        gammaMap,
+        squeeze,
+        playbook,
+        composite: { score: snap.composite.score, label: snap.composite.label },
+        voicesBias: voicesData?.voicesBias ?? null,
+      };
+      tradeCache = { at: Date.now(), range, data: payload };
+      res.json(payload);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build trade desk" });
+    }
+  });
+
+  // Regime Rotation Tracker — 4-axis emerging-theme engine with 30-min cache
+  let regimeCache: Map<WindowKey, { at: number; data: any }> = new Map();
+  const REGIME_CACHE_MS = 30 * 60_000;
+
+  // Macro carousel — cross-asset quotes grouped by category for ticker tape + carousel.
+  // 60s cache keeps us safe on Yahoo rate limits (we hit ~25 symbols per refresh).
+  let macroCache: { at: number; data: MacroResponse } | null = null;
+  const MACRO_CACHE_MS = 10_000; // 10s cache — near-realtime ticker tape
+  app.get("/api/macro", async (_req, res) => {
+    try {
+      if (macroCache && Date.now() - macroCache.at < MACRO_CACHE_MS) {
+        return res.json(macroCache.data);
+      }
+      const data = await buildMacroSnapshot();
+      macroCache = { at: Date.now(), data };
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build macro snapshot" });
+    }
+  });
+
+  // OHLC candlestick endpoint — 30s cache per (symbol, timeframe) pair.
+  // Real-time on the client via polling.
+  const ohlcCache = new Map<string, { at: number; data: OHLCResponse }>();
+  const OHLC_CACHE_MS = 15_000; // 15s cache — keeps candles near-realtime without hammering Yahoo
+  app.get("/api/ohlc", async (req, res) => {
+    try {
+      const symbol = String(req.query.symbol || "").trim().toUpperCase();
+      const tf = (String(req.query.tf || "1D").toUpperCase() as Timeframe);
+      const rawInterval = String(req.query.interval || "").trim().toLowerCase();
+      const validTfs: Timeframe[] = ["1D", "5D", "1M", "3M", "1Y", "5Y"];
+      const validIntervals: Interval[] = ["1m", "2m", "5m", "15m", "30m", "60m", "1h", "1d", "1wk", "1mo"];
+      if (!symbol) return res.status(400).json({ message: "symbol required" });
+      if (!validTfs.includes(tf)) return res.status(400).json({ message: "invalid tf" });
+      const interval = (rawInterval && validIntervals.includes(rawInterval as Interval))
+        ? (rawInterval as Interval) : undefined;
+      const key = `${symbol}::${tf}::${interval ?? "auto"}`;
+      const hit = ohlcCache.get(key);
+      if (hit && Date.now() - hit.at < OHLC_CACHE_MS) {
+        return res.json(hit.data);
+      }
+      const data = await fetchOHLC(symbol, tf, interval);
+      ohlcCache.set(key, { at: Date.now(), data });
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to fetch OHLC" });
+    }
+  });
+
+  // Put/Call flow ratio — index + Mag 7 aggregate, intraday ring buffer.
+  let flowCache: { at: number; data: FlowResponse } | null = null;
+  const FLOW_CACHE_MS = 10_000;
+  app.get("/api/flow", async (_req, res) => {
+    try {
+      if (flowCache && Date.now() - flowCache.at < FLOW_CACHE_MS) {
+        return res.json(flowCache.data);
+      }
+      const data = await buildFlowSnapshot();
+      flowCache = { at: Date.now(), data };
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build flow snapshot" });
+    }
+  });
+
+  // Forward-model engine — Daily / Weekly / Monthly projected price paths.
+  // Cached 5 minutes in-memory; persisted to disk on every successful build so
+  // the app can serve last-close snapshots after hours.
+  const modelsCache = new Map<string, { at: number; data: ModelsResponse }>();
+  const MODELS_CACHE_MS = 5 * 60_000;
+  app.get("/api/models", async (req, res) => {
+    try {
+      const symbol = (String(req.query.symbol ?? "^GSPC").toUpperCase() === "SPY" ? "SPY" : "^GSPC") as "SPY" | "^GSPC";
+      // ?experimental=1 unlocks dealer-map kinds (vanna flip, zomma bridge,
+      // charm target, neg-γ entry, upper/lower vomma). Cached separately so
+      // toggling the flag doesn't return stale non-experimental data.
+      const experimental = String(req.query.experimental ?? "") === "1";
+      const cacheKey = `${symbol}${experimental ? ":exp" : ""}`;
+      const cached = modelsCache.get(cacheKey);
+      if (cached && Date.now() - cached.at < MODELS_CACHE_MS) {
+        return res.json(cached.data);
+      }
+      // Need VIX context for vol header
+      const snap = await getOrBuild(false).catch(() => null);
+      const vix = snap?.vol.vix.value ?? null;
+      const vixPrev = snap?.vol.vix.prev ?? null;
+      const vix3m = snap?.vol.vix3m.value ?? null;
+
+      const data = await buildModelsSnapshot({
+        vix, vixPrev, vix3m,
+        symbols: [symbol],
+        experimental,
+      });
+
+      // Persist a snapshot keyed to today's RTH session date. Reads flip to live
+      // as soon as the next session starts returning fresh data.
+      await writeCache(`models-${symbol}${experimental ? "-exp" : ""}-${rthSessionKey()}`, data);
+
+      modelsCache.set(cacheKey, { at: Date.now(), data });
+      res.json(data);
+    } catch (e: any) {
+      // On failure — serve last persisted session snapshot for today, tagged.
+      try {
+        const symbol = (String(req.query.symbol ?? "^GSPC").toUpperCase() === "SPY" ? "SPY" : "^GSPC") as "SPY" | "^GSPC";
+        const experimental = String(req.query.experimental ?? "") === "1";
+        const stale = await readCache<ModelsResponse>(`models-${symbol}${experimental ? "-exp" : ""}-${rthSessionKey()}`);
+        if (stale) {
+          stale.session = "last-close";
+          stale.warnings = [...(stale.warnings ?? []), `Live build failed: ${e?.message ?? e} — serving last RTH close.`];
+          return res.json(stale);
+        }
+      } catch {}
+      res.status(503).json({ message: e?.message ?? "Failed to build models" });
+    }
+  });
+
+  // Dealer exposure profiles — DEX / GEX / VEX / Charm across ±10% spot band.
+  // Per-symbol cache with 5-minute TTL (exposures are structural, not tick-level).
+  // On upstream CBOE errors, serve stale data if we have it — keeps the UI useful
+  // even when CBOE is rate-limiting.
+  const exposuresCache = new Map<string, { at: number; data: ExposuresResponse }>();
+  const EXPOSURES_CACHE_MS = 5 * 60_000;
+  app.get("/api/exposures", async (req, res) => {
+    const symbol = String(req.query.symbol ?? "SPY").toUpperCase();
+    const cached = exposuresCache.get(symbol);
+    if (cached && Date.now() - cached.at < EXPOSURES_CACHE_MS) {
+      return res.json(cached.data);
+    }
+    try {
+      const data = await buildExposuresSnapshot(symbol);
+      exposuresCache.set(symbol, { at: Date.now(), data });
+      res.json(data);
+    } catch (e: any) {
+      // Stale-fallback: serve old cached data if we have any, tagged with warning.
+      if (cached) {
+        const staleMin = Math.round((Date.now() - cached.at) / 60_000);
+        const stale = {
+          ...cached.data,
+          meta: {
+            ...cached.data.meta,
+            warnings: [...cached.data.meta.warnings, `Upstream CBOE unavailable (${e?.message ?? "error"}); serving ${staleMin} min stale data.`],
+          },
+        };
+        return res.json(stale);
+      }
+      res.status(503).json({ message: e?.message ?? `Failed to build exposures for ${symbol}` });
+    }
+  });
+
+  // Unusual options flow — CBOE-derived, Schwab-ready stub.
+  const unusualFlowCache = new Map<string, { at: number; data: UnusualFlowResponse }>();
+  const UNUSUAL_FLOW_CACHE_MS = 60_000;
+  app.get("/api/flow/unusual", async (req, res) => {
+    const symbol = String(req.query.symbol ?? "SPY").toUpperCase();
+    const cached = unusualFlowCache.get(symbol);
+    if (cached && Date.now() - cached.at < UNUSUAL_FLOW_CACHE_MS) {
+      return res.json(cached.data);
+    }
+    try {
+      const data = await buildUnusualFlow(symbol);
+      unusualFlowCache.set(symbol, { at: Date.now(), data });
+      res.json(data);
+    } catch (e: any) {
+      if (cached) return res.json(cached.data);
+      res.status(503).json({ message: e?.message ?? `Failed to build unusual flow for ${symbol}` });
+    }
+  });
+
+  // News snapshot — RSS headlines + econ calendar merged.
+  let newsCache: { at: number; data: NewsResponse } | null = null;
+  const NEWS_CACHE_MS = 3 * 60_000;
+  app.get("/api/news", async (_req, res) => {
+    try {
+      if (newsCache && Date.now() - newsCache.at < NEWS_CACHE_MS) {
+        return res.json(newsCache.data);
+      }
+      const data = await buildNewsSnapshot();
+      newsCache = { at: Date.now(), data };
+      res.json(data);
+    } catch (e: any) {
+      if (newsCache) return res.json(newsCache.data);
+      res.status(503).json({ message: e?.message ?? "Failed to build news snapshot" });
+    }
+  });
+
+  // Mag 7 indicator — equal-weight basket vs SPY with breadth + 4W return.
+  let mag7Cache: { at: number; data: Mag7Response } | null = null;
+  const MAG7_CACHE_MS = 15_000;
+  app.get("/api/mag7", async (_req, res) => {
+    try {
+      if (mag7Cache && Date.now() - mag7Cache.at < MAG7_CACHE_MS) {
+        return res.json(mag7Cache.data);
+      }
+      const data = await buildMag7Snapshot();
+      mag7Cache = { at: Date.now(), data };
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build Mag7 snapshot" });
+    }
+  });
+
+  // Gamma levels extractor — pulls from the live SPY snapshot. Returns null levels
+  // for non-SPY symbols (options chain only wired for SPY right now).
+  app.get("/api/gamma-levels", async (req, res) => {
+    try {
+      const symbol = String(req.query.symbol || "SPY").trim().toUpperCase();
+      if (symbol !== "SPY" && symbol !== "^GSPC" && symbol !== "SPX") {
+        return res.json({ symbol, supported: false, levels: null });
+      }
+      const snap = await getOrBuild(false);
+      const g = snap.gamma;
+      res.json({
+        symbol: "SPY",
+        supported: true,
+        spot: snap.spy.price ?? g.spot,
+        levels: {
+          callWall: g.callWall,
+          callWallGex: g.callWallGex,
+          putWall: g.putWall,
+          putWallGex: g.putWallGex,
+          zeroGamma: g.zeroGamma,
+          flip: g.zeroGamma, // alias: zeroGamma IS the gamma-flip level (Perfiliev)
+          maxPain: g.maxPain,
+          totalGex: g.totalGex,
+          regime: g.totalGex >= 0 ? "positive" : "negative",
+          profile: g.profile, // strike-level GEX within ±$60
+        },
+        asOf: snap.capturedAt,
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to fetch gamma levels" });
+    }
+  });
+
+  app.get("/api/regime", async (req, res) => {
+    try {
+      const w = (req.query.window === "w13" ? "w13" : req.query.window === "w52" ? "w52" : "w4") as WindowKey;
+      const hit = regimeCache.get(w);
+      if (hit && Date.now() - hit.at < REGIME_CACHE_MS) {
+        return res.json(hit.data);
+      }
+      const data = await buildRegimeSnapshot(w);
+      regimeCache.set(w, { at: Date.now(), data });
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build regime snapshot" });
+    }
+  });
+
+  // Reactive sector web — 11 GICS sectors + leader satellites + correlation edges.
+  // Serves both the force-graph and the deep heatmap grid below it. 10-min cache.
+  app.get("/api/sector-web", async (_req, res) => {
+    try {
+      const data = await buildSectorWeb();
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build sector web" });
+    }
+  });
+
+  // WEF theme mapper — scans weforum.org content, maps themes to ticker baskets,
+  // filters each basket by 1M relative strength vs SPY to surface "stocks
+  // following the narrative." 2-hour cache.
+  app.get("/api/wef-themes", async (_req, res) => {
+    try {
+      const web = await buildSectorWeb();
+      // Feed WEF mapper a ticker→r1m map built from the sector web's nodes.
+      const r1m = new Map<string, number>();
+      for (const n of web.sectors) r1m.set(n.symbol, n.r1m);
+      for (const l of web.leaders) r1m.set(l.symbol, l.r1m);
+      r1m.set("SPY", web.spy.r1m);
+      const data = await buildWefThemes({ r1m, spy1m: web.spy.r1m });
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build WEF themes" });
+    }
+  });
+
+  // Lightweight live quotes endpoint — SPY + VIX, 5s poll-friendly.
+  // Reuses lastResult cache so it never triggers a full snapshot rebuild.
+  let quotesCache: { at: number; data: { spy: { price: number | null; changePct: number | null }; vix: { price: number | null; changePct: number | null }; timestamp: number } } | null = null;
+  const QUOTES_CACHE_MS = 4_000; // 4s so 5s client poll always gets fresh data
+  app.get("/api/quotes", async (_req, res) => {
+    try {
+      if (quotesCache && Date.now() - quotesCache.at < QUOTES_CACHE_MS) {
+        return res.json(quotesCache.data);
+      }
+      // Use parallel Yahoo fetches — fast, ~100ms each
+      const [spy, vix] = await Promise.all([
+        yahooQuote("SPY"),
+        yahooQuote("^VIX"),
+      ]);
+      const spyChangePct = spy.last && spy.prev ? ((spy.last - spy.prev) / spy.prev) * 100 : null;
+      const vixChangePct = vix.last && vix.prev ? ((vix.last - vix.prev) / vix.prev) * 100 : null;
+      const data = {
+        spy: { price: spy.last, changePct: spyChangePct },
+        vix: { price: vix.last, changePct: vixChangePct },
+        timestamp: Date.now(),
+      };
+      quotesCache = { at: Date.now(), data };
+      res.json(data);
+    } catch (e: any) {
+      // Fallback to snapshot cache
+      if (lastResult) {
+        const s = lastResult.data;
+        return res.json({
+          spy: { price: s.spy.price, changePct: s.spy.changePct },
+          vix: { price: s.vol.vix.value, changePct: s.vol.vix.changePct },
+          timestamp: lastResult.at,
+        });
+      }
+      res.status(500).json({ message: e?.message ?? "Failed to fetch quotes" });
+    }
+  });
+
+  // Background refresh cadence for voices (X-aware).
+  // 10 handles × ~10 tweets per refresh ≈ up to 10 reads/handle + 10 user lookups
+  // (cached 14d). With 15-min cache = 4/hr * 24 * 30 = 2880 refreshes/month.
+  // But since_id incremental + empty windows keep actual read count well below
+  // the 10k/mo limit on Basic. Warm the cache on boot.
+  (async () => {
+    try {
+      const [{ voices, items }, snap] = await Promise.all([
+        fetchAllVoices(),
+        getOrBuild(false).catch(() => null),
+      ]);
+      const liveMetrics = snap ? {
+        vix: snap.vol.vix.value ?? 0,
+        vvix: snap.vol.vvix.value ?? 0,
+        spy: snap.spy.price ?? 0,
+        skew: snap.vol.skew.value ?? 0,
+        pcr: snap.gamma.pcrOi ?? 0,
+      } : { vix: 0, vvix: 0, spy: 0, skew: 0, pcr: 0 };
+      for (const it of items) factCheckItem(it, liveMetrics);
+      voicesCache = {
+        at: Date.now(),
+        data: {
+          voices, items, liveMetrics,
+          xEnabled: xEnabled(),
+          voicesBias: computeVoicesBias(items),
+          capturedAt: Math.floor(Date.now() / 1000),
+        },
+      };
+      console.log(`[voices] warmed cache: ${items.length} items, X ${xEnabled() ? "enabled" : "disabled"}`);
+    } catch (e: any) {
+      console.warn("[voices] warmup failed:", e?.message || e);
+    }
+  })();
+
+  return httpServer;
+}
