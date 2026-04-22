@@ -17,7 +17,7 @@ import { buildWefThemes } from "./wef-themes";
 import { buildMacroSnapshot, type MacroResponse } from "./macro";
 import { fetchOHLC, type OHLCResponse, type Timeframe, type Interval } from "./ohlc";
 import { buildMag7Snapshot, type Mag7Response } from "./mag7";
-import { buildFlowSnapshot, type FlowResponse } from "./flow";
+import { buildFlowSnapshot, buildIntradayFlowSnapshot, type FlowResponse } from "./flow";
 import { buildExposuresSnapshot, type ExposuresResponse } from "./exposures";
 import { buildUnusualFlow, type UnusualFlowResponse } from "./unusualFlow";
 import { buildNewsSnapshot, type NewsResponse } from "./news";
@@ -322,6 +322,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Intraday call/put volume time-series — rolling sampler per ticker.
+  // Resets daily. Returns real data once 2+ samples accumulated, else synthesized.
+  let intradayFlowCache: { at: number; data: any } | null = null;
+  const INTRADAY_FLOW_CACHE_MS = 60_000; // 1 min cache
+  app.get("/api/flow-intraday", async (_req, res) => {
+    try {
+      if (intradayFlowCache && Date.now() - intradayFlowCache.at < INTRADAY_FLOW_CACHE_MS) {
+        return res.json(intradayFlowCache.data);
+      }
+      const data = await buildIntradayFlowSnapshot();
+      intradayFlowCache = { at: Date.now(), data };
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build intraday flow" });
+    }
+  });
+
   // Forward-model engine — Daily / Weekly / Monthly projected price paths.
   // Cached 5 minutes in-memory; persisted to disk on every successful build so
   // the app can serve last-close snapshots after hours.
@@ -574,9 +591,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ---- Seasonality: 20-year monthly + weekly avg return patterns ----
   // 24-hour cache (historical data doesn't change intraday). Heavy fetch.
-  app.get("/api/seasonality", async (_req, res) => {
+  app.get("/api/seasonality", async (req, res) => {
     try {
-      const data = await buildSeasonalitySnapshot();
+      const lookbackParam = req.query.lookback;
+      const lookback = lookbackParam ? Number(lookbackParam) : undefined;
+      const validLookback = lookback && [5, 10, 20].includes(lookback) ? lookback : undefined;
+      const data = await buildSeasonalitySnapshot(validLookback);
       res.json(data);
     } catch (e: any) {
       res.status(500).json({ message: e?.message ?? "Failed to build seasonality" });

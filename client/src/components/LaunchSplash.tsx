@@ -31,10 +31,19 @@ interface Bill {
   x: number;        // % from left
   delay: number;    // seconds
   duration: number; // seconds
-  size: number;     // em
+  size: number;     // px font-size
   rotation: number; // initial rotation deg
   rotationSpeed: number; // spin direction + speed
   emoji: string;
+  drift: number;    // horizontal drift px
+}
+
+/** Pick emoji: 70% 💵, 20% 💰, 10% 💴 */
+function pickEmoji(): string {
+  const r = Math.random();
+  if (r < 0.70) return "💵";
+  if (r < 0.90) return "💰";
+  return "💴";
 }
 
 function generateBills(count: number): Bill[] {
@@ -44,59 +53,116 @@ function generateBills(count: number): Bill[] {
       id: i,
       x: Math.random() * 100,
       delay: Math.random() * 6,
-      duration: 4 + Math.random() * 5,
-      size: 1.4 + Math.random() * 1.6,
-      rotation: Math.random() * 40 - 20,
-      rotationSpeed: (Math.random() - 0.5) * 360,
-      emoji: "💵",
+      duration: 2.5 + Math.random() * 3,      // 2.5s – 5.5s
+      size: 22 + Math.random() * 26,            // 22px – 48px
+      rotation: Math.random() * 60 - 30,        // -30° to +30°
+      rotationSpeed: (Math.random() - 0.5) * 720,
+      emoji: pickEmoji(),
+      drift: (Math.random() - 0.5) * 120,       // -60px to +60px horizontal drift
     });
   }
   return bills;
 }
 
-/* ─── Bat SVG (BATCAVE logo) ─────────────────────────────────────── */
+/** Burst wave bills — faster fall, more chaotic */
+function generateBurstBills(count: number, idOffset: number): Bill[] {
+  const bills: Bill[] = [];
+  for (let i = 0; i < count; i++) {
+    bills.push({
+      id: idOffset + i,
+      x: Math.random() * 100,
+      delay: Math.random() * 0.4,              // tight spawn window
+      duration: 1.2 + Math.random() * 0.6,     // 1.2s – 1.8s (fast)
+      size: 24 + Math.random() * 20,            // 24px – 44px
+      rotation: Math.random() * 90 - 45,
+      rotationSpeed: (Math.random() - 0.5) * 1080,
+      emoji: pickEmoji(),
+      drift: (Math.random() - 0.5) * 160,
+    });
+  }
+  return bills;
+}
+
+/* ─── Batman Movie Logo SVG ──────────────────────────────────────── */
+// 1989 Burton-era / Dark Knight silhouette: wide-wing oval bat emblem
 function BatIcon({ className = "" }: { className?: string }) {
   return (
     <svg
-      viewBox="0 0 120 60"
+      viewBox="0 0 200 100"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
+      aria-label="Batman Logo"
       className={className}
     >
-      {/* Body */}
-      <ellipse cx="60" cy="35" rx="10" ry="8" fill="currentColor" />
+      {/* Outer ellipse ring (the oval background of the movie emblem) */}
+      <ellipse
+        cx="100"
+        cy="52"
+        rx="96"
+        ry="44"
+        fill="currentColor"
+      />
+      {/* Cut-out inner bat silhouette using a mask — bat in dark on amber oval */}
+      {/* Body center */}
+      <ellipse cx="100" cy="52" rx="9" ry="11" fill="black" />
+      {/* Neck */}
+      <rect x="95" y="37" width="10" height="6" fill="black" />
       {/* Head */}
-      <ellipse cx="60" cy="25" rx="7" ry="6" fill="currentColor" />
-      {/* Ears */}
-      <polygon points="53,22 50,10 57,19" fill="currentColor" />
-      <polygon points="67,22 70,10 63,19" fill="currentColor" />
-      {/* Left wing */}
+      <ellipse cx="100" cy="34" rx="8" ry="7" fill="black" />
+      {/* Left ear */}
+      <polygon points="93,30 89,18 98,28" fill="black" />
+      {/* Right ear */}
+      <polygon points="107,30 111,18 102,28" fill="black" />
+      {/* Left wing — wide spread */}
       <path
-        d="M50,32 C40,28 20,20 5,30 C10,35 25,36 38,34 L50,38 Z"
-        fill="currentColor"
+        d="M91,50 C84,44 70,36 50,33 C32,30 14,34 4,42 C14,40 28,41 40,44 C30,46 20,50 14,56 C24,52 38,50 52,52 C44,56 38,62 36,68 C46,62 58,58 70,58 C78,58 86,56 91,54 Z"
+        fill="black"
       />
-      {/* Left wing inner membrane */}
+      {/* Right wing — wide spread */}
       <path
-        d="M50,34 C42,32 28,30 15,33 C22,36 36,36 50,38 Z"
-        fill="currentColor"
-        opacity="0.6"
+        d="M109,50 C116,44 130,36 150,33 C168,30 186,34 196,42 C186,40 172,41 160,44 C170,46 180,50 186,56 C176,52 162,50 148,52 C156,56 162,62 164,68 C154,62 142,58 130,58 C122,58 114,56 109,54 Z"
+        fill="black"
       />
-      {/* Right wing */}
+      {/* Wing membrane detail left */}
       <path
-        d="M70,32 C80,28 100,20 115,30 C110,35 95,36 82,34 L70,38 Z"
-        fill="currentColor"
+        d="M91,52 C82,50 66,48 52,52 C60,54 74,54 91,56 Z"
+        fill="black"
+        opacity="0.5"
       />
-      {/* Right wing inner membrane */}
+      {/* Wing membrane detail right */}
       <path
-        d="M70,34 C78,32 92,30 105,33 C98,36 84,36 70,38 Z"
-        fill="currentColor"
-        opacity="0.6"
+        d="M109,52 C118,50 134,48 148,52 C140,54 126,54 109,56 Z"
+        fill="black"
+        opacity="0.5"
       />
-      {/* Wing tips left */}
-      <path d="M38,34 C32,34 20,38 15,44 C20,42 32,40 40,38 Z" fill="currentColor" />
-      {/* Wing tips right */}
-      <path d="M82,34 C88,34 100,38 105,44 C100,42 88,40 80,38 Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+/* ─── Small bat for dashboard header (inline SVG) ────────────────── */
+export function BatIconSmall({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 200 100"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-label="Batman Logo"
+      className={className}
+    >
+      <ellipse cx="100" cy="52" rx="96" ry="44" fill="currentColor" />
+      <ellipse cx="100" cy="52" rx="9" ry="11" fill="black" />
+      <rect x="95" y="37" width="10" height="6" fill="black" />
+      <ellipse cx="100" cy="34" rx="8" ry="7" fill="black" />
+      <polygon points="93,30 89,18 98,28" fill="black" />
+      <polygon points="107,30 111,18 102,28" fill="black" />
+      <path
+        d="M91,50 C84,44 70,36 50,33 C32,30 14,34 4,42 C14,40 28,41 40,44 C30,46 20,50 14,56 C24,52 38,50 52,52 C44,56 38,62 36,68 C46,62 58,58 70,58 C78,58 86,56 91,54 Z"
+        fill="black"
+      />
+      <path
+        d="M109,50 C116,44 130,36 150,33 C168,30 186,34 196,42 C186,40 172,41 160,44 C170,46 180,50 186,56 C176,52 162,50 148,52 C156,56 162,62 164,68 C154,62 142,58 130,58 C122,58 114,56 109,54 Z"
+        fill="black"
+      />
     </svg>
   );
 }
@@ -144,8 +210,12 @@ export default function LaunchSplash({ onExit }: LaunchSplashProps) {
   );
   const [isMobile] = useState(() => window.innerWidth < 640);
 
-  const billCount = isMobile ? 20 : 40;
+  const billCount = isMobile ? 60 : 120;
   const [bills] = useState(() => generateBills(billCount));
+  // Burst wave bills — separate layer, starts with id offset to avoid collisions
+  const [burstBills, setBurstBills] = useState<Bill[]>([]);
+  const burstIdRef = useRef(billCount + 1000);
+
   const keyPressTimeRef = useRef<number | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const hasExitedRef = useRef(false);
@@ -162,6 +232,26 @@ export default function LaunchSplash({ onExit }: LaunchSplashProps) {
     }, 2500);
     return () => clearInterval(interval);
   }, [reducedMotion]);
+
+  /* ── Burst wave spawner — every 2 seconds ── */
+  useEffect(() => {
+    if (reducedMotion || exiting) return;
+    const spawnBurst = () => {
+      const count = 15 + Math.floor(Math.random() * 6); // 15–20 bills
+      const newBills = generateBurstBills(count, burstIdRef.current);
+      burstIdRef.current += count + 100;
+      setBurstBills(newBills);
+      // Clear burst after animation completes
+      setTimeout(() => setBurstBills([]), 2200);
+    };
+    // First burst at 0.5s, then every 2s
+    const initial = setTimeout(spawnBurst, 500);
+    const interval = setInterval(spawnBurst, 2000);
+    return () => {
+      clearTimeout(initial);
+      clearInterval(interval);
+    };
+  }, [reducedMotion, exiting]);
 
   /* ── Keyboard handler ── */
   const triggerExit = useCallback(() => {
@@ -261,7 +351,7 @@ export default function LaunchSplash({ onExit }: LaunchSplashProps) {
             </div>
           )}
 
-          {/* ── Falling money bills ── */}
+          {/* ── Falling money bills — main layer ── */}
           {!reducedMotion && (
             <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
               {bills.map((bill) => (
@@ -270,6 +360,15 @@ export default function LaunchSplash({ onExit }: LaunchSplashProps) {
                   bill={bill}
                   exploding={billsExploding}
                 />
+              ))}
+            </div>
+          )}
+
+          {/* ── Burst wave layer ── */}
+          {!reducedMotion && burstBills.length > 0 && (
+            <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
+              {burstBills.map((bill) => (
+                <BurstBill key={bill.id} bill={bill} />
               ))}
             </div>
           )}
@@ -297,7 +396,8 @@ export default function LaunchSplash({ onExit }: LaunchSplashProps) {
             transition={{ duration: 0.7, ease: "easeOut" }}
             style={{ zIndex: 10 }}
           >
-            <BatIcon className="w-24 h-12 sm:w-32 sm:h-16 text-amber-400 drop-shadow-[0_0_20px_rgba(245,158,11,0.6)]" />
+            {/* Movie bat logo — big, amber with glow */}
+            <BatIcon className="w-36 h-[72px] sm:w-52 sm:h-[104px] text-amber-400 drop-shadow-[0_0_24px_rgba(245,158,11,0.7)]" />
             <motion.h1
               className="mt-4 text-5xl sm:text-7xl font-black tracking-widest text-amber-400"
               style={{
@@ -434,7 +534,7 @@ export default function LaunchSplash({ onExit }: LaunchSplashProps) {
   );
 }
 
-/* ─── Falling Bill Sub-component ─────────────────────────────────── */
+/* ─── Falling Bill Sub-component (main rain layer) ───────────────── */
 interface FallingBillProps {
   bill: Bill;
   exploding: boolean;
@@ -453,7 +553,7 @@ function FallingBill({ bill, exploding }: FallingBillProps) {
         style={{
           left: `${bill.x}%`,
           top: "50%",
-          fontSize: `${bill.size}em`,
+          fontSize: `${bill.size}px`,
           lineHeight: 1,
         }}
         animate={{
@@ -476,10 +576,11 @@ function FallingBill({ bill, exploding }: FallingBillProps) {
       style={{
         left: `${bill.x}%`,
         top: "-80px",
-        fontSize: `${bill.size}em`,
+        fontSize: `${bill.size}px`,
         lineHeight: 1,
         animation: `bill-fall-${bill.id % 5} ${bill.duration}s linear ${bill.delay}s infinite`,
-      }}
+        "--bill-drift": `${bill.drift}px`,
+      } as React.CSSProperties}
     >
       <div
         style={{
@@ -490,5 +591,34 @@ function FallingBill({ bill, exploding }: FallingBillProps) {
         {bill.emoji}
       </div>
     </div>
+  );
+}
+
+/* ─── Burst Bill Sub-component (fast burst wave) ─────────────────── */
+function BurstBill({ bill }: { bill: Bill }) {
+  return (
+    <motion.div
+      className="absolute select-none pointer-events-none"
+      style={{
+        left: `${bill.x}%`,
+        top: "-60px",
+        fontSize: `${bill.size}px`,
+        lineHeight: 1,
+      }}
+      initial={{ y: 0, x: 0, opacity: 1, rotate: bill.rotation }}
+      animate={{
+        y: "120vh",
+        x: bill.drift,
+        opacity: [1, 1, 0.7, 0],
+        rotate: bill.rotation + bill.rotationSpeed / 2,
+      }}
+      transition={{
+        duration: bill.duration,
+        delay: bill.delay,
+        ease: "easeIn",
+      }}
+    >
+      {bill.emoji}
+    </motion.div>
   );
 }
