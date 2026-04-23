@@ -7,10 +7,10 @@
 import { db, schwabTokens } from "./storage";
 import { eq } from "drizzle-orm";
 
-// ─── Credentials from environment ────────────────────────────────────────────
-const CLIENT_ID = process.env.SCHWAB_CLIENT_ID ?? "";
-const CLIENT_SECRET = process.env.SCHWAB_CLIENT_SECRET ?? "";
-const REDIRECT_URI = process.env.SCHWAB_REDIRECT_URI ?? "https://127.0.0.1";
+// ─── Credentials from environment (read lazily to avoid import-order issues) ──
+const getClientId = () => process.env.SCHWAB_CLIENT_ID ?? "";
+const getClientSecret = () => process.env.SCHWAB_CLIENT_SECRET ?? "";
+const getRedirectUri = () => process.env.SCHWAB_REDIRECT_URI ?? "https://127.0.0.1";
 
 const SCHWAB_BASE = "https://api.schwabapi.com";
 const TOKEN_URL = `${SCHWAB_BASE}/v1/oauth/token`;
@@ -20,6 +20,8 @@ const MARKET_BASE = `${SCHWAB_BASE}/marketdata/v1`;
 
 /** Retrieve a valid access token, auto-refreshing if needed. Returns null if not connected. */
 export async function getAccessToken(): Promise<string | null> {
+  const CLIENT_ID = getClientId();
+  const CLIENT_SECRET = getClientSecret();
   if (!CLIENT_ID || !CLIENT_SECRET) return null;
   const row = db.select().from(schwabTokens).where(eq(schwabTokens.id, 1)).get();
   if (!row) return null;
@@ -67,6 +69,9 @@ export async function getAccessToken(): Promise<string | null> {
 
 /** Exchange an authorization code for tokens and persist them. */
 export async function exchangeCodeForTokens(code: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const CLIENT_ID = getClientId();
+  const CLIENT_SECRET = getClientSecret();
+  const REDIRECT_URI = getRedirectUri();
   if (!CLIENT_ID || !CLIENT_SECRET) return { ok: false, error: "Schwab credentials not configured" };
   try {
     const basic = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64");
@@ -135,8 +140,8 @@ export function getSchwabStatus(): {
 export function getAuthUrl(): string {
   const params = new URLSearchParams({
     response_type: "code",
-    client_id: CLIENT_ID,
-    redirect_uri: REDIRECT_URI,
+    client_id: getClientId(),
+    redirect_uri: getRedirectUri(),
   });
   return `${SCHWAB_BASE}/v1/oauth/authorize?${params.toString()}`;
 }
