@@ -247,7 +247,7 @@ export default function Dashboard() {
 
       {/* Header */}
       <header className="sticky top-0 z-10 border-b border-border bg-background/80 backdrop-blur">
-        <div className="mx-auto flex max-w-[1400px] items-center justify-between px-4 py-3 md:px-8">
+        <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-2 px-3 py-3 sm:px-4 md:px-8">
           {/* Left: Logo + name + BATCAVE tag */}
           <div className="flex items-center gap-3">
             <div className="text-primary"><Logo className="h-7 w-7" /></div>
@@ -296,9 +296,10 @@ export default function Dashboard() {
               onClick={() => refreshMut.mutate()}
               disabled={refreshMut.isPending}
               data-testid="button-refresh"
+              className="px-2 sm:px-3"
             >
-              <RefreshCw className={`mr-2 h-3.5 w-3.5 ${refreshMut.isPending ? "animate-spin" : ""}`} />
-              Refresh
+              <RefreshCw className={`h-3.5 w-3.5 sm:mr-2 ${refreshMut.isPending ? "animate-spin" : ""}`} />
+              <span className="hidden sm:inline">Refresh</span>
             </Button>
             {/* Schwab status pill */}
             <SchwabStatusPill onClick={() => setSettingsOpen(true)} />
@@ -331,7 +332,7 @@ export default function Dashboard() {
       {/* Ticker tape — flows across the top under the header on every tab */}
       <MacroTicker />
 
-      <main className="mx-auto max-w-[1400px] space-y-6 px-4 py-6 md:px-8">
+      <main className="mx-auto max-w-[1400px] space-y-4 px-3 py-4 sm:space-y-6 sm:px-4 sm:py-6 md:px-8">
         {/* Rotating macro carousel — always visible above the tabs */}
         <MacroCarousel />
 

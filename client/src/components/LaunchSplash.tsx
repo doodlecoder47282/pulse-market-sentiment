@@ -321,186 +321,187 @@ export default function LaunchSplash({ onExit }: LaunchSplashProps) {
             )}
           </AnimatePresence>
 
-          {/* ── Batman logo full-screen reveal ── */}
-          <AnimatePresence>
-            {showLogoFull && (
-              <motion.div
-                key="batman-logo-full"
-                className="absolute flex items-center justify-center"
-                style={{
-                  left: "50%",
-                  top: isReady || showTitle ? "18%" : "50%",
-                  transform: "translateX(-50%)",
-                  zIndex: 30,
-                }}
-                initial={{ opacity: 0, scale: 0.4 }}
-                animate={{
-                  opacity: 1,
-                  scale: 1,
-                  top: isReady || showTitle ? "18%" : "50%",
-                }}
-                exit={{ opacity: 0, scale: 0.8 }}
-                transition={{ duration: 0.5, ease: [0.19, 1, 0.22, 1] }}
-              >
-                <BatmanLogoFull
-                  className={`drop-shadow-[0_0_40px_rgba(250,204,21,0.9)] ${
-                    isReady ? "w-48 sm:w-72" : "w-56 sm:w-80"
-                  }`}
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* ── BATCAVE title + subtitle ── */}
-          <AnimatePresence>
-            {showTitle && (
-              <motion.div
-                key="batcave-title"
-                className="absolute flex flex-col items-center"
-                style={{
-                  left: "50%",
-                  top: "50%",
-                  transform: "translateX(-50%)",
-                  zIndex: 30,
-                  marginTop: -20,
-                  textAlign: "center",
-                  whiteSpace: "nowrap",
-                }}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.5, ease: "easeOut" }}
-              >
-                <motion.h1
-                  className="text-5xl sm:text-7xl font-black tracking-widest text-amber-400"
-                  style={{
-                    fontFamily: "'Bebas Neue', 'Impact', sans-serif",
-                    textShadow: "0 0 40px rgba(245,158,11,0.5), 0 0 80px rgba(245,158,11,0.25)",
-                    letterSpacing: "0.2em",
-                  }}
-                  initial={{ opacity: 0, scale: 0.85 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ duration: 0.5, delay: 0.1, ease: "backOut" }}
-                >
-                  BATCAVE
-                </motion.h1>
-                <motion.p
-                  className="mt-1 text-[10px] sm:text-sm tracking-[0.3em] sm:tracking-[0.4em] text-amber-400/50 font-mono uppercase"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.3, duration: 0.5 }}
-                >
-                  Market Intelligence Terminal
-                </motion.p>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* ── Rotating quote (ready state only) ── */}
-          <AnimatePresence>
-            {isReady && (
-              <motion.div
-                key="quote-area"
-                className="absolute flex flex-col items-center px-8 sm:px-16 max-w-2xl w-full"
-                style={{ zIndex: 30, top: "65%", left: "50%", transform: "translateX(-50%)" }}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.5, delay: 0.2 }}
-              >
-                <div className="w-16 h-px bg-amber-500/30 mb-4" />
-                <div className="min-h-[3.5rem] flex items-center justify-center text-center">
-                  <AnimatePresence mode="wait">
-                    <motion.p
-                      key={quoteIndex}
-                      className="text-sm sm:text-base font-mono text-white/70 italic tracking-wide leading-relaxed"
-                      style={{
-                        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                        textShadow: "0 0 20px rgba(16,185,129,0.15)",
-                      }}
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: quoteVisible ? 1 : 0, y: quoteVisible ? 0 : -8 }}
-                      exit={{ opacity: 0, y: -8 }}
-                      transition={{ duration: 0.35, ease: "easeInOut" }}
-                    >
-                      &ldquo;{QUOTES[quoteIndex]}&rdquo;
-                    </motion.p>
-                  </AnimatePresence>
-                </div>
-                <div className="w-16 h-px bg-amber-500/30 mt-4" />
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* ── CTA button (ready state only) ── */}
-          <AnimatePresence>
-            {showButton && (
-              <motion.div
-                key="cta-area"
-                className="absolute flex flex-col items-center"
-                style={{ zIndex: 30, bottom: "8%", left: "50%", transform: "translateX(-50%)", whiteSpace: "nowrap" }}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.5, delay: 0.3 }}
-              >
-                <motion.p
-                  className="text-xs text-white/25 font-mono tracking-widest mb-5 uppercase"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.5, duration: 0.5 }}
-                >
-                  Press Enter or click to continue
-                </motion.p>
-                <motion.button
-                  ref={buttonRef}
-                  data-testid="button-launch-batcave"
-                  aria-label="Launch BATCAVE"
-                  onClick={(e) => { e.stopPropagation(); triggerExit(); }}
-                  className="relative overflow-hidden font-black uppercase tracking-widest text-black cursor-pointer select-none"
-                  style={{
-                    background: "#10b981",
-                    fontSize: "clamp(0.85rem, 2.5vw, 1.25rem)",
-                    padding: "clamp(1rem, 3vw, 1.5rem) clamp(1.5rem, 6vw, 3rem)",
-                    borderRadius: "0.5rem",
-                    border: "none",
-                    fontFamily: "'Bebas Neue', 'Impact', sans-serif",
-                    letterSpacing: "0.12em",
-                    boxShadow: "0 0 30px rgba(16,185,129,0.4), 0 0 60px rgba(16,185,129,0.15)",
-                  }}
-                  whileHover={{
-                    scale: 1.04,
-                    boxShadow: "0 0 50px rgba(16,185,129,0.7), 0 0 100px rgba(16,185,129,0.3)",
-                  }}
-                  whileTap={{ scale: 1.15 }}
-                  animate={{
-                    scale: [1, 1.03, 1],
-                    boxShadow: [
-                      "0 0 30px rgba(16,185,129,0.4), 0 0 60px rgba(16,185,129,0.15)",
-                      "0 0 45px rgba(16,185,129,0.6), 0 0 80px rgba(16,185,129,0.25)",
-                      "0 0 30px rgba(16,185,129,0.4), 0 0 60px rgba(16,185,129,0.15)",
-                    ],
-                  }}
-                  transition={{
-                    scale: { duration: 2, repeat: Infinity, ease: "easeInOut" },
-                    boxShadow: { duration: 2, repeat: Infinity, ease: "easeInOut" },
-                  }}
-                >
-                  {/* Button shimmer */}
+          {/* ── Ready-state stack: logo + title + quote + button, naturally centered ── */}
+          {(showLogoFull || showTitle || isReady || showButton) && (
+            <div
+              className="relative flex h-full w-full flex-col items-center justify-center gap-[clamp(0.75rem,2vh,1.5rem)] px-[5vw] py-[clamp(1rem,4vh,2.5rem)] text-center"
+              style={{ zIndex: 30 }}
+            >
+              {/* Logo */}
+              <AnimatePresence>
+                {showLogoFull && (
                   <motion.div
-                    className="absolute inset-0 pointer-events-none"
-                    style={{
-                      background: "linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.25) 50%, transparent 60%)",
-                      backgroundSize: "200% 100%",
-                    }}
-                    animate={{ backgroundPosition: ["200% 0", "-200% 0"] }}
-                    transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
-                  />
-                  ARE YOU READY TO FUCKING PRINT
-                </motion.button>
-              </motion.div>
-            )}
-          </AnimatePresence>
+                    key="batman-logo-full"
+                    className="flex items-center justify-center"
+                    style={{ width: "clamp(8rem, 22vw, 18rem)" }}
+                    initial={{ opacity: 0, scale: 0.4 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.8 }}
+                    transition={{ duration: 0.5, ease: [0.19, 1, 0.22, 1] }}
+                  >
+                    <BatmanLogoFull className="w-full h-auto drop-shadow-[0_0_40px_rgba(250,204,21,0.9)]" />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Title */}
+              <AnimatePresence>
+                {showTitle && (
+                  <motion.div
+                    key="batcave-title"
+                    className="flex max-w-full flex-col items-center"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.5, ease: "easeOut" }}
+                  >
+                    <motion.h1
+                      className="font-black text-amber-400"
+                      style={{
+                        fontFamily: "'Bebas Neue', 'Impact', sans-serif",
+                        fontSize: "clamp(2rem, 8vw, 5rem)",
+                        textShadow: "0 0 40px rgba(245,158,11,0.5), 0 0 80px rgba(245,158,11,0.25)",
+                        letterSpacing: "0.2em",
+                        lineHeight: 1,
+                        margin: 0,
+                      }}
+                      initial={{ opacity: 0, scale: 0.85 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ duration: 0.5, delay: 0.1, ease: "backOut" }}
+                    >
+                      BATCAVE
+                    </motion.h1>
+                    <motion.p
+                      className="text-amber-400/50 font-mono uppercase"
+                      style={{
+                        marginTop: "0.5rem",
+                        fontSize: "clamp(0.6rem, 1.4vw, 0.875rem)",
+                        letterSpacing: "clamp(0.15em, 0.5vw, 0.4em)",
+                      }}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.3, duration: 0.5 }}
+                    >
+                      Market Intelligence Terminal
+                    </motion.p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Quote */}
+              <AnimatePresence>
+                {isReady && (
+                  <motion.div
+                    key="quote-area"
+                    className="flex w-full max-w-2xl flex-col items-center"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.5, delay: 0.2 }}
+                  >
+                    <div className="mb-3 h-px w-12 bg-amber-500/30 sm:mb-4 sm:w-16" />
+                    <div className="flex min-h-[3rem] items-center justify-center text-center sm:min-h-[3.5rem]">
+                      <AnimatePresence mode="wait">
+                        <motion.p
+                          key={quoteIndex}
+                          className="font-mono italic text-white/70"
+                          style={{
+                            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                            fontSize: "clamp(0.75rem, 1.8vw, 1rem)",
+                            lineHeight: 1.5,
+                            textShadow: "0 0 20px rgba(16,185,129,0.15)",
+                          }}
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: quoteVisible ? 1 : 0, y: quoteVisible ? 0 : -8 }}
+                          exit={{ opacity: 0, y: -8 }}
+                          transition={{ duration: 0.35, ease: "easeInOut" }}
+                        >
+                          &ldquo;{QUOTES[quoteIndex]}&rdquo;
+                        </motion.p>
+                      </AnimatePresence>
+                    </div>
+                    <div className="mt-3 h-px w-12 bg-amber-500/30 sm:mt-4 sm:w-16" />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* CTA button */}
+              <AnimatePresence>
+                {showButton && (
+                  <motion.div
+                    key="cta-area"
+                    className="flex w-full max-w-md flex-col items-center"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.5, delay: 0.3 }}
+                  >
+                    <motion.p
+                      className="font-mono uppercase text-white/25"
+                      style={{
+                        fontSize: "clamp(0.6rem, 1.2vw, 0.75rem)",
+                        letterSpacing: "0.2em",
+                        marginBottom: "clamp(0.75rem, 1.5vh, 1.25rem)",
+                      }}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.5, duration: 0.5 }}
+                    >
+                      Press Enter or click to continue
+                    </motion.p>
+                    <motion.button
+                      ref={buttonRef}
+                      data-testid="button-launch-batcave"
+                      aria-label="Launch BATCAVE"
+                      onClick={(e) => { e.stopPropagation(); triggerExit(); }}
+                      className="relative block w-full overflow-hidden text-center font-black uppercase text-black cursor-pointer select-none sm:w-auto"
+                      style={{
+                        background: "#10b981",
+                        fontSize: "clamp(0.72rem, 2vw, 1.15rem)",
+                        padding: "clamp(0.85rem, 2vh, 1.35rem) clamp(1rem, 4vw, 2.5rem)",
+                        borderRadius: "0.5rem",
+                        border: "none",
+                        fontFamily: "'Bebas Neue', 'Impact', sans-serif",
+                        letterSpacing: "0.1em",
+                        lineHeight: 1.2,
+                        boxShadow: "0 0 30px rgba(16,185,129,0.4), 0 0 60px rgba(16,185,129,0.15)",
+                        whiteSpace: "normal",
+                      }}
+                      whileHover={{
+                        scale: 1.04,
+                        boxShadow: "0 0 50px rgba(16,185,129,0.7), 0 0 100px rgba(16,185,129,0.3)",
+                      }}
+                      whileTap={{ scale: 1.15 }}
+                      animate={{
+                        scale: [1, 1.03, 1],
+                        boxShadow: [
+                          "0 0 30px rgba(16,185,129,0.4), 0 0 60px rgba(16,185,129,0.15)",
+                          "0 0 45px rgba(16,185,129,0.6), 0 0 80px rgba(16,185,129,0.25)",
+                          "0 0 30px rgba(16,185,129,0.4), 0 0 60px rgba(16,185,129,0.15)",
+                        ],
+                      }}
+                      transition={{
+                        scale: { duration: 2, repeat: Infinity, ease: "easeInOut" },
+                        boxShadow: { duration: 2, repeat: Infinity, ease: "easeInOut" },
+                      }}
+                    >
+                      {/* Button shimmer */}
+                      <motion.div
+                        className="pointer-events-none absolute inset-0"
+                        style={{
+                          background: "linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.25) 50%, transparent 60%)",
+                          backgroundSize: "200% 100%",
+                        }}
+                        animate={{ backgroundPosition: ["200% 0", "-200% 0"] }}
+                        transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+                      />
+                      ARE YOU READY TO FUCKING PRINT
+                    </motion.button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
 
           {/* ── Falling money bills — only in ready state ── */}
           {isReady && !reducedMotion && (
