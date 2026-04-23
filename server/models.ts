@@ -34,6 +34,26 @@ import { chainToRows } from "./exposures";
 import { getCboeChain } from "./cboeCache";
 import { computeGreeks } from "./greeks";
 import { storage } from "./storage";
+import { getQuotes as schwabGetQuotes } from "./schwab";
+import { fetchOHLC } from "./ohlc";
+
+// Resolve real SPX spot from Schwab `$SPX`, falling back to Yahoo `^GSPC`.
+// Never derive from SPY×10 — SPY price drifts vs SPX due to accumulated dividends.
+async function resolveRealSpxSpot(): Promise<number | null> {
+  // 1) Schwab $SPX quote
+  try {
+    const qs = await schwabGetQuotes(["$SPX"]);
+    const p = qs?.[0]?.last;
+    if (p != null && Number.isFinite(p) && p > 1000) return p;
+  } catch { /* fall through */ }
+  // 2) Yahoo ^GSPC (same source /api/ohlc uses)
+  try {
+    const ohlc = await fetchOHLC("^GSPC", "1D");
+    const p = ohlc?.price ?? ohlc?.candles?.[ohlc.candles.length - 1]?.c ?? null;
+    if (p != null && Number.isFinite(p) && p > 1000) return p;
+  } catch { /* fall through */ }
+  return null;
+}
 
 // America/New_York trade date YYYY-MM-DD
 function etTradeDate(d: Date): string {
@@ -927,13 +947,20 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
   const { rows: allRows, spot: spySpot } = chainToRows(chain, DTE_MAX[horizon]);
   if (!spySpot) throw new Error(`No spot in chain for ${chainSymbol}`);
 
-  // Map SPX spot to SPY if building SPX model
+  // Resolve real SPX spot from Schwab/Yahoo (NOT SPY×10 — SPY drifts vs SPX).
+  // Compute true scale = realSpx / spySpot each call so strike rescaling stays honest.
   let displaySpot = spySpot;
   let scale = 1;
   if (symbol === "^GSPC") {
-    // Use actual SPX price: for now use 10× SPY (exact ratio can come from snapshot)
-    displaySpot = spySpot * SPX_OVER_SPY_HINT;
-    scale = SPX_OVER_SPY_HINT;
+    const realSpx = await resolveRealSpxSpot();
+    if (realSpx != null && realSpx > 0 && spySpot > 0) {
+      displaySpot = realSpx;
+      scale = realSpx / spySpot;
+    } else {
+      // Fallback only if both Schwab + Yahoo failed
+      displaySpot = spySpot * SPX_OVER_SPY_HINT;
+      scale = SPX_OVER_SPY_HINT;
+    }
   }
 
   // Build exposure profile at SPY spot (real math), we'll rescale strikes for display

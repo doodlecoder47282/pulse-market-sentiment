@@ -1467,6 +1467,12 @@ function EodPlayMaker() {
     queryFn: async () => (await apiRequest("GET", "/api/models?symbol=%5EGSPC")).json(),
     refetchInterval: 30_000,
   });
+  // Real SPX spot source — Schwab-backed /api/ohlc returns true $SPX (not SPY×10)
+  const spxOhlc = useQuery<any>({
+    queryKey: ["/api/ohlc", "^GSPC"],
+    queryFn: async () => (await apiRequest("GET", "/api/ohlc?symbol=%5EGSPC&tf=1D")).json(),
+    refetchInterval: 15_000,
+  });
 
   // Derive live values from the two endpoints
   const live = useMemo(() => {
@@ -1475,7 +1481,9 @@ function EodPlayMaker() {
     const spy = snap.data?.spy || {};
     const comp = snap.data?.composite || {};
     const weekly = models.data?.horizons?.weekly || models.data?.horizons?.daily;
-    const spot = weekly?.spot ?? (spy.price != null ? spy.price * 10 : null);  // SPX ≈ SPY*10 fallback
+    // Priority: real $SPX from ohlc → models weekly.spot → null. Never SPY×10.
+    const realSpx = spxOhlc.data?.price ?? null;
+    const spot = (realSpx != null && realSpx > 1000) ? realSpx : (weekly?.spot ?? null);
 
     const vixVal = vol?.vix?.value ?? null;
     const iv1d = vixVal != null ? (vixVal / Math.sqrt(252)).toFixed(2) : null;
@@ -1505,7 +1513,7 @@ function EodPlayMaker() {
       mopex: lvl("mopexMaxPain") != null ? lvl("mopexMaxPain").toFixed(0) : null,
       pcRatio: g?.pcrOi != null ? g.pcrOi.toFixed(2) : null,
     } as Record<string, string | null>;
-  }, [snap.data, models.data]);
+  }, [snap.data, models.data, spxOhlc.data]);
 
   // —— override state: user-typed values shadow live values until cleared
   type OverrideMap = Record<string, string | undefined>;
