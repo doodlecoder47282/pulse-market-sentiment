@@ -253,20 +253,54 @@ export default function OdteContractChart({
             Waiting for tick history on {meta.strike.toFixed(0)}{meta.side === "call" ? "C" : "P"}…
           </div>
         ) : (
-          <div className="space-y-1">
-            {/* Price pane — compact */}
-            <div className="h-[150px] w-full">
+          <div className="space-y-2">
+            {/* Session mini-stats row above chart */}
+            {stats && (
+              <div className="grid grid-cols-4 gap-2 rounded-md border border-border/40 bg-muted/20 px-3 py-2 text-[10px]">
+                <div>
+                  <div className="text-[9px] uppercase tracking-wider text-muted-foreground">High</div>
+                  <div className="font-mono text-[12px] font-semibold text-emerald-400 tabular-nums">${stats.high.toFixed(2)}</div>
+                </div>
+                <div>
+                  <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Low</div>
+                  <div className="font-mono text-[12px] font-semibold text-rose-400 tabular-nums">${stats.low.toFixed(2)}</div>
+                </div>
+                <div>
+                  <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Buy vol</div>
+                  <div className="font-mono text-[12px] font-semibold text-emerald-400 tabular-nums">{stats.totalBuy.toLocaleString()}</div>
+                </div>
+                <div>
+                  <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Sell vol</div>
+                  <div className="font-mono text-[12px] font-semibold text-rose-400 tabular-nums">{stats.totalSell.toLocaleString()}</div>
+                </div>
+              </div>
+            )}
+
+            {/* Price pane — bigger */}
+            <div className="h-[280px] w-full rounded-md border border-border/30 bg-background/40 p-1">
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={rows} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.12} />
-                  <XAxis dataKey="time" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
+                <ComposedChart data={rows} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="priceFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="#38bdf8" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.25} />
+                  <XAxis
+                    dataKey="time"
+                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                    axisLine={false}
+                    tickLine={false}
+                    interval="preserveStartEnd"
+                  />
                   <YAxis
-                    tick={{ fontSize: 10 }}
+                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
                     axisLine={false}
                     tickLine={false}
                     domain={["auto", "auto"]}
                     tickFormatter={(v) => `$${Number(v).toFixed(2)}`}
-                    width={56}
+                    width={60}
                   />
                   <Tooltip
                     contentStyle={{
@@ -304,16 +338,25 @@ export default function OdteContractChart({
                     dataKey="hl"
                     stroke="none"
                     fill="#38bdf8"
-                    fillOpacity={0.16}
+                    fillOpacity={0.18}
                     isAnimationActive={false}
                     name="hl"
+                  />
+                  {/* Close fill — adds depth */}
+                  <Area
+                    type="monotone"
+                    dataKey="close"
+                    stroke="none"
+                    fill="url(#priceFill)"
+                    isAnimationActive={false}
+                    name="closeFill"
                   />
                   {/* Close line */}
                   <Line
                     type="monotone"
                     dataKey="close"
                     stroke="#38bdf8"
-                    strokeWidth={2}
+                    strokeWidth={2.25}
                     dot={false}
                     isAnimationActive={false}
                     name="close"
@@ -324,7 +367,7 @@ export default function OdteContractChart({
                       y={meta.last}
                       stroke="#38bdf8"
                       strokeDasharray="3 3"
-                      opacity={0.5}
+                      opacity={0.6}
                       label={{
                         value: `$${meta.last.toFixed(2)}`,
                         position: "right",
@@ -337,17 +380,26 @@ export default function OdteContractChart({
               </ResponsiveContainer>
             </div>
 
-            {/* Volume pane (split buy/sell, ToS style) — compact */}
-            <div className="h-[70px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={rows} margin={{ top: 2, right: 12, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
-                  <XAxis dataKey="time" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <YAxis
-                    tick={{ fontSize: 10 }}
+            {/* Volume pane (split buy/sell, ToS style) — bigger */}
+            <div className="h-[140px] w-full rounded-md border border-border/30 bg-background/40 p-1">
+              <div className="px-2 pt-1 text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
+                Volume · buy vs sell (Lee-Ready)
+              </div>
+              <ResponsiveContainer width="100%" height="92%">
+                <ComposedChart data={rows} margin={{ top: 4, right: 16, left: 0, bottom: 0 }} stackOffset="sign">
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.2} />
+                  <XAxis
+                    dataKey="time"
+                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
                     axisLine={false}
                     tickLine={false}
-                    width={56}
+                    interval="preserveStartEnd"
+                  />
+                  <YAxis
+                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                    axisLine={false}
+                    tickLine={false}
+                    width={60}
                     tickFormatter={(v) => Math.abs(Number(v)).toLocaleString()}
                   />
                   <Tooltip
@@ -357,6 +409,7 @@ export default function OdteContractChart({
                       borderRadius: 6,
                       fontSize: 11,
                     }}
+                    cursor={{ fill: "hsl(var(--muted))", opacity: 0.15 }}
                     formatter={(v: any, name: string) => {
                       const n = Math.abs(Number(v)).toLocaleString();
                       if (name === "buyVol") return [n, "buy vol"];
@@ -365,19 +418,20 @@ export default function OdteContractChart({
                       return [v, name];
                     }}
                   />
-                  <ReferenceLine y={0} stroke="hsl(var(--border))" />
-                  <Bar dataKey="buyVol" fill="#10b981" stackId="a" isAnimationActive={false} name="buyVol" />
-                  <Bar dataKey="otherVol" fill="hsl(var(--muted-foreground))" fillOpacity={0.35} stackId="a" isAnimationActive={false} name="otherVol" />
-                  <Bar dataKey="sellVolNeg" fill="#ef4444" stackId="b" isAnimationActive={false} name="sellVolNeg" />
+                  <ReferenceLine y={0} stroke="hsl(var(--border))" strokeWidth={1} />
+                  <Bar dataKey="buyVol" fill="#10b981" stackId="up" isAnimationActive={false} name="buyVol" maxBarSize={24} />
+                  <Bar dataKey="otherVol" fill="hsl(var(--muted-foreground))" fillOpacity={0.4} stackId="up" isAnimationActive={false} name="otherVol" maxBarSize={24} />
+                  <Bar dataKey="sellVolNeg" fill="#ef4444" stackId="down" isAnimationActive={false} name="sellVolNeg" maxBarSize={24} />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
 
-            <div className="flex items-center justify-between gap-2 pt-0.5 text-[9px] text-muted-foreground">
-              <div className="flex items-center gap-2">
-                <LegendDot color="#38bdf8" label="close" />
-                <LegendDot color="#10b981" label="buy" />
-                <LegendDot color="#ef4444" label="sell" />
+            <div className="flex items-center justify-between gap-2 pt-0.5 text-[9px] text-muted-foreground px-1">
+              <div className="flex items-center gap-3">
+                <LegendDot color="#38bdf8" label="close price" />
+                <LegendDot color="#10b981" label="buy vol" />
+                <LegendDot color="#ef4444" label="sell vol" />
+                <LegendDot color="hsl(var(--muted-foreground))" label="other" />
               </div>
               <button
                 type="button"

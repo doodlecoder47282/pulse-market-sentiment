@@ -23,7 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Radio, Crosshair, DollarSign, Flame, ArrowUp, ArrowDown, Activity } from "lucide-react";
+import { Radio, Crosshair, DollarSign, Flame, ArrowUp, ArrowDown, Activity, ChevronDown, ChevronUp, Minimize2, Maximize2 } from "lucide-react";
 import OdteContractChart from "./OdteContractChart";
 
 type Side = "call" | "put";
@@ -147,6 +147,7 @@ export default function LiveOdteTracker() {
   const [sizeMultiple, setSizeMultiple] = useState<number>(5);
   const [sideFilter, setSideFilter] = useState<"all" | "call" | "put">("all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<boolean>(false);
   const { toast } = useToast();
 
   const { data, isLoading, error } = useQuery<TrackerSnapshot>({
@@ -212,6 +213,10 @@ export default function LiveOdteTracker() {
     );
   }
 
+  if (collapsed) {
+    return <CollapsedTracker data={data} onExpand={() => setCollapsed(false)} />;
+  }
+
   return <LiveTrackerView
     data={data}
     sizeMultiple={sizeMultiple}
@@ -223,13 +228,81 @@ export default function LiveOdteTracker() {
     onArm={(key, minNotional) => armMut.mutate({ contractKey: key, minNotional })}
     onDisarm={(id) => disarmMut.mutate(id)}
     armPending={armMut.isPending}
+    onCollapse={() => setCollapsed(true)}
   />;
+}
+
+// ─── Collapsed mini card ──────────────────────────────────────────────────────
+function CollapsedTracker({ data, onExpand }: { data: TrackerSnapshot; onExpand: () => void }) {
+  // Quick stats for the mini view
+  const activeCount = data.tracked.filter(t => t.status === "active").length;
+  const buyFlags = data.contracts.filter(c => c.buyFlag).length;
+  const totalBuyNotional = data.contracts
+    .filter(c => c.classification === "buy")
+    .reduce((s, c) => s + c.notional, 0);
+  const totalSellNotional = data.contracts
+    .filter(c => c.classification === "sell")
+    .reduce((s, c) => s + c.notional, 0);
+  const netFlow = totalBuyNotional - totalSellNotional;
+  const tickTime = new Date(data.asOf).toLocaleTimeString("en-US", { hour12: false });
+
+  return (
+    <Card
+      className="cursor-pointer border-orange-500/20 transition-colors hover:border-orange-500/40 hover:bg-orange-500/5"
+      onClick={onExpand}
+      data-testid="card-odte-collapsed"
+    >
+      <CardContent className="flex flex-wrap items-center justify-between gap-3 py-3">
+        <div className="flex items-center gap-3">
+          <Radio className="h-4 w-4 animate-pulse text-orange-500" />
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-orange-400">
+              0DTE · {data.symbol}
+            </div>
+            <div className="text-[10px] text-muted-foreground">
+              {data.dte}DTE · exp {data.expiry ?? "—"} · tick {tickTime}
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-4 text-xs">
+          <div className="flex flex-col items-end">
+            <span className="text-[9px] uppercase tracking-wider text-muted-foreground">Spot</span>
+            <span className="font-mono text-sm font-bold tabular-nums">{data.spot.toFixed(2)}</span>
+          </div>
+          <div className="flex flex-col items-end">
+            <span className="text-[9px] uppercase tracking-wider text-muted-foreground">Net flow</span>
+            <span className={`font-mono text-sm font-bold tabular-nums ${netFlow >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+              {netFlow >= 0 ? "+" : ""}{fmtMoney(netFlow)}
+            </span>
+          </div>
+          <div className="flex flex-col items-end">
+            <span className="text-[9px] uppercase tracking-wider text-muted-foreground">Buy flags</span>
+            <span className="font-mono text-sm font-bold tabular-nums text-orange-400">{buyFlags}</span>
+          </div>
+          {activeCount > 0 && (
+            <Badge className="bg-emerald-500/20 text-emerald-400">
+              <Crosshair className="mr-1 h-3 w-3" />{activeCount} armed
+            </Badge>
+          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 gap-1 text-[11px]"
+            onClick={(e) => { e.stopPropagation(); onExpand(); }}
+            data-testid="button-expand-odte"
+          >
+            <Maximize2 className="h-3 w-3" /> expand
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 function LiveTrackerView({
   data, sizeMultiple, setSizeMultiple, sideFilter, setSideFilter,
   selectedKey, setSelectedKey,
-  onArm, onDisarm, armPending,
+  onArm, onDisarm, armPending, onCollapse,
 }: {
   data: TrackerSnapshot;
   sizeMultiple: number;
@@ -241,6 +314,7 @@ function LiveTrackerView({
   onArm: (key: string, minNotional: number) => void;
   onDisarm: (id: string) => void;
   armPending: boolean;
+  onCollapse: () => void;
 }) {
   // Implied "buy threshold" = sizeMultiple × typical contract price × 100
   // We approximate typical 0DTE premium as average last across visible rows
@@ -288,6 +362,15 @@ function LiveTrackerView({
           <div className="flex items-center gap-2 text-xs">
             <span className="text-muted-foreground">Spot</span>
             <span className="font-mono text-lg font-bold tabular-nums">{data.spot.toFixed(2)}</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 gap-1 text-[11px]"
+              onClick={onCollapse}
+              data-testid="button-collapse-odte"
+            >
+              <Minimize2 className="h-3 w-3" /> minimize
+            </Button>
           </div>
         </div>
 

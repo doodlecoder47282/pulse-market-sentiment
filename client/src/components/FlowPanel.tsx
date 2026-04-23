@@ -18,7 +18,7 @@ import { Activity, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceLine, Area, ComposedChart,
+  ReferenceLine, Area, ComposedChart, Bar, Cell,
 } from "recharts";
 import { FlowAlertsPanel } from "./FlowAlertsPanel";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -222,19 +222,109 @@ function FlowTile({ tick }: { tick: FlowTicker }) {
   );
 }
 
-// ─── Intraday Volume Chart ────────────────────────────────────────────────────
+// ─── Intraday Volume Chart (UW-style mirror bars) ──────────────────────────────
+type ViewMode = "bars" | "area" | "ratio";
+
+function StatBox({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "up" | "down" | "neutral" | "warn" }) {
+  const toneCls =
+    tone === "up" ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-400"
+    : tone === "down" ? "border-rose-500/30 bg-rose-500/5 text-rose-400"
+    : tone === "warn" ? "border-amber-500/30 bg-amber-500/5 text-amber-400"
+    : "border-border/40 bg-card/40 text-foreground";
+  return (
+    <div className={`rounded-md border px-2 py-1 ${toneCls}`}>
+      <div className="text-[9px] text-muted-foreground uppercase tracking-wider">{label}</div>
+      <div className="font-mono font-semibold text-[11px]">{value}</div>
+    </div>
+  );
+}
+
 function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; estimated: boolean }) {
+  const [view, setView] = useState<ViewMode>("bars");
   const series = ticker.series;
-  if (!series.length) return (
+
+  // Compute per-bucket deltas (UW-style flow)
+  const deltaSeries = useMemo(() => {
+    return series.map((s, i) => {
+      const prev = i > 0 ? series[i - 1] : null;
+      const callDelta = prev ? Math.max(0, s.callVolume - prev.callVolume) : s.callVolume;
+      const putDelta = prev ? Math.max(0, s.putVolume - prev.putVolume) : s.putVolume;
+      const netDelta = callDelta - putDelta;
+      return {
+        ...s,
+        callDelta,
+        putDelta,
+        putDeltaNeg: -putDelta,
+        netDelta,
+        absNet: Math.abs(netDelta),
+      };
+    });
+  }, [series]);
+
+  // Header stats
+  const stats = useMemo(() => {
+    if (!deltaSeries.length) return null;
+    const totalCall = deltaSeries.reduce((a, s) => a + s.callDelta, 0);
+    const totalPut = deltaSeries.reduce((a, s) => a + s.putDelta, 0);
+    const netDelta = totalCall - totalPut;
+    const total = totalCall + totalPut;
+    const dominancePct = total > 0 ? (Math.abs(netDelta) / total) * 100 : 0;
+    const spike = deltaSeries.reduce((best, s) => (s.absNet > best.absNet ? s : best), deltaSeries[0]);
+    const tail5 = deltaSeries.slice(-5);
+    const prev5 = deltaSeries.slice(-10, -5);
+    const tailAvg = tail5.length ? tail5.reduce((a, s) => a + s.netDelta, 0) / tail5.length : 0;
+    const prevAvg = prev5.length ? prev5.reduce((a, s) => a + s.netDelta, 0) / prev5.length : 0;
+    const skewMomentum = tailAvg - prevAvg;
+    const sessionRange = `${deltaSeries[0].timeLabel} → ${deltaSeries[deltaSeries.length - 1].timeLabel}`;
+    const meanAbs = deltaSeries.reduce((a, s) => a + s.absNet, 0) / deltaSeries.length;
+    return { totalCall, totalPut, netDelta, dominancePct, spike, skewMomentum, sessionRange, meanAbs };
+  }, [deltaSeries]);
+
+  if (!series.length || !stats) return (
     <div className="flex h-32 items-center justify-center text-xs text-muted-foreground">
       No intraday data yet — accumulating samples…
     </div>
   );
 
+  const maxDelta = Math.max(...deltaSeries.map((s) => Math.max(s.callDelta, s.putDelta)), 1);
   const maxVol = Math.max(...series.map((s) => Math.max(s.callVolume, s.putVolume)), 1);
+  const spikeThreshold = stats.meanAbs * 2;
 
-  // Tooltip
-  const CustomTip = ({ active, payload, label }: any) => {
+  // Tooltip for bars view
+  const BarsTip = ({ active, payload }: any) => {
+    if (!active || !payload?.length) return null;
+    const s = payload[0]?.payload;
+    if (!s) return null;
+    return (
+      <div className="rounded-lg border border-border bg-popover p-2 text-xs shadow-lg">
+        <div className="mb-1 font-semibold">{s.timeLabel}</div>
+        <div className="flex justify-between gap-4">
+          <span className="text-emerald-400">Δ Calls</span>
+          <span className="font-mono text-emerald-300">+{fmtVol(s.callDelta)}</span>
+        </div>
+        <div className="flex justify-between gap-4">
+          <span className="text-rose-400">Δ Puts</span>
+          <span className="font-mono text-rose-300">−{fmtVol(s.putDelta)}</span>
+        </div>
+        <div className="flex justify-between gap-4 mt-1 pt-1 border-t border-border/50">
+          <span className="text-muted-foreground">Net Δ</span>
+          <span className={`font-mono ${s.netDelta >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+            {s.netDelta >= 0 ? "+" : ""}{fmtVol(s.netDelta)}
+          </span>
+        </div>
+        {s.pcRatio != null && (
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">P/C</span>
+            <span className={`font-mono ${s.pcRatio > 1.05 ? "text-rose-400" : s.pcRatio < 0.75 ? "text-emerald-400" : "text-amber-400"}`}>
+              {s.pcRatio.toFixed(2)}
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const AreaTip = ({ active, payload }: any) => {
     if (!active || !payload?.length) return null;
     const s = payload[0]?.payload;
     if (!s) return null;
@@ -249,143 +339,172 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
           <span className="text-rose-400">Puts</span>
           <span className="font-mono text-rose-300">{fmtVol(s.putVolume)}</span>
         </div>
-        {s.pcRatio != null && (
-          <div className="flex justify-between gap-4 mt-1 pt-1 border-t border-border/50">
-            <span className="text-muted-foreground">P/C ratio</span>
-            <span className={`font-mono ${s.pcRatio > 1.05 ? "text-rose-400" : s.pcRatio < 0.75 ? "text-emerald-400" : "text-amber-400"}`}>
-              {s.pcRatio.toFixed(2)}
-            </span>
-          </div>
-        )}
       </div>
     );
   };
 
   return (
     <div className="space-y-3">
-      {/* Stats strip */}
-      <div className="flex flex-wrap gap-3 text-[10px]">
-        <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-1">
-          <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Total Calls</div>
-          <div className="font-mono font-semibold text-emerald-400">{fmtVol(ticker.currentCallVol)}</div>
+      {/* Header: view toggle + session range */}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-1 rounded-md border border-border/40 bg-card/40 p-0.5">
+          {(["bars", "area", "ratio"] as ViewMode[]).map((v) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              data-testid={`button-flow-view-${v}`}
+              className={`px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider transition-colors ${
+                view === v ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {v === "bars" ? "Bars" : v === "area" ? "Area" : "Ratio"}
+            </button>
+          ))}
         </div>
-        <div className="rounded-md border border-rose-500/30 bg-rose-500/5 px-2 py-1">
-          <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Total Puts</div>
-          <div className="font-mono font-semibold text-rose-400">{fmtVol(ticker.currentPutVol)}</div>
+        <div className="text-[9px] text-muted-foreground font-mono">
+          {stats.sessionRange}{estimated && <span className="ml-2 text-amber-400/70">· est dist</span>}
         </div>
-        <div className="rounded-md border border-border/40 bg-card/40 px-2 py-1">
-          <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Current P/C</div>
-          <div className={`font-mono font-semibold ${ticker.currentPcr != null && ticker.currentPcr > 1.05 ? "text-rose-400" : ticker.currentPcr != null && ticker.currentPcr < 0.75 ? "text-emerald-400" : "text-amber-400"}`}>
-            {fmtPcr(ticker.currentPcr)}
-          </div>
+      </div>
+
+      {/* Header stats grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <StatBox
+          label="Net Δ"
+          value={`${stats.netDelta >= 0 ? "+" : ""}${fmtVol(stats.netDelta)}`}
+          tone={stats.netDelta >= 0 ? "up" : "down"}
+        />
+        <StatBox
+          label="Dominance"
+          value={`${stats.dominancePct.toFixed(1)}% ${stats.netDelta >= 0 ? "C" : "P"}`}
+          tone={stats.netDelta >= 0 ? "up" : "down"}
+        />
+        <StatBox
+          label="Largest Spike"
+          value={`${stats.spike.netDelta >= 0 ? "+" : ""}${fmtVol(stats.spike.netDelta)} @ ${stats.spike.timeLabel}`}
+          tone="warn"
+        />
+        <StatBox
+          label="Skew momentum"
+          value={`${stats.skewMomentum >= 0 ? "+" : ""}${fmtVol(stats.skewMomentum)}`}
+          tone={stats.skewMomentum >= 0 ? "up" : "down"}
+        />
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <StatBox label="Total Calls" value={fmtVol(ticker.currentCallVol)} tone="up" />
+        <StatBox label="Total Puts" value={fmtVol(ticker.currentPutVol)} tone="down" />
+        <StatBox label="P/C" value={fmtPcr(ticker.currentPcr)} tone={ticker.currentPcr != null && ticker.currentPcr > 1.05 ? "down" : ticker.currentPcr != null && ticker.currentPcr < 0.75 ? "up" : "warn"} />
+      </div>
+
+      {/* Chart */}
+      {view === "bars" && (
+        <div className="h-[260px] sm:h-[300px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={deltaSeries} margin={{ top: 4, right: 40, left: 0, bottom: 4 }} stackOffset="sign">
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+              <XAxis
+                dataKey="timeLabel"
+                tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                axisLine={false}
+                tickLine={false}
+                interval="preserveStartEnd"
+              />
+              <YAxis
+                yAxisId="vol"
+                tickFormatter={(v) => fmtVol(Math.abs(v))}
+                tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                axisLine={false}
+                tickLine={false}
+                width={42}
+                domain={[-maxDelta * 1.1, maxDelta * 1.1]}
+              />
+              <YAxis
+                yAxisId="pcr"
+                orientation="right"
+                domain={[0, 2]}
+                tickFormatter={(v) => v.toFixed(1)}
+                tick={{ fontSize: 9, fill: "hsl(var(--amber-400, 245 158 11))" }}
+                axisLine={false}
+                tickLine={false}
+                width={32}
+              />
+              <Tooltip content={<BarsTip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.1 }} />
+              <ReferenceLine yAxisId="vol" y={0} stroke="hsl(var(--border))" strokeWidth={1} />
+              <Bar yAxisId="vol" dataKey="callDelta" stackId="flow" fill="#10b981" isAnimationActive={false}>
+                {deltaSeries.map((s, i) => (
+                  <Cell key={`c-${i}`} fill={s.absNet >= spikeThreshold && s.netDelta > 0 ? "#34d399" : "#10b981"} />
+                ))}
+              </Bar>
+              <Bar yAxisId="vol" dataKey="putDeltaNeg" stackId="flow" fill="#ef4444" isAnimationActive={false}>
+                {deltaSeries.map((s, i) => (
+                  <Cell key={`p-${i}`} fill={s.absNet >= spikeThreshold && s.netDelta < 0 ? "#fb7185" : "#ef4444"} />
+                ))}
+              </Bar>
+              <Line
+                yAxisId="pcr"
+                type="monotone"
+                dataKey="pcRatio"
+                stroke="#f59e0b"
+                strokeWidth={1.5}
+                dot={false}
+                connectNulls
+                name="P/C"
+                isAnimationActive={false}
+              />
+              <ReferenceLine yAxisId="pcr" y={1.0} stroke="#f59e0b" strokeDasharray="2 3" strokeWidth={1} opacity={0.3} />
+            </ComposedChart>
+          </ResponsiveContainer>
         </div>
-        <div className="rounded-md border border-border/40 bg-card/40 px-2 py-1">
-          <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Direction</div>
-          <div className={`font-mono font-semibold flex items-center gap-0.5 ${ticker.currentPcr != null && ticker.currentPcr < 0.75 ? "text-emerald-400" : ticker.currentPcr != null && ticker.currentPcr > 1.05 ? "text-rose-400" : "text-amber-400"}`}>
-            {ticker.currentPcr != null && ticker.currentPcr < 0.75
-              ? <><TrendingUp className="h-3 w-3" /> BULLISH</>
-              : ticker.currentPcr != null && ticker.currentPcr > 1.05
-              ? <><TrendingDown className="h-3 w-3" /> BEARISH</>
-              : <><Minus className="h-3 w-3" /> NEUTRAL</>
-            }
-          </div>
+      )}
+
+      {view === "area" && (
+        <div className="h-[260px] sm:h-[300px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={series} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.4} />
+              <XAxis dataKey="timeLabel" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+              <YAxis tickFormatter={(v) => fmtVol(v)} tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} width={42} domain={[0, maxVol * 1.1]} />
+              <Tooltip content={<AreaTip />} />
+              <Area type="monotone" dataKey="callVolume" stroke="#10b981" strokeWidth={2.5} fill="#10b981" fillOpacity={0.12} dot={false} name="Calls" isAnimationActive={false} />
+              <Area type="monotone" dataKey="putVolume" stroke="#ef4444" strokeWidth={2.5} fill="#ef4444" fillOpacity={0.12} dot={false} name="Puts" isAnimationActive={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
         </div>
-        {estimated && (
-          <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1 text-amber-400/70">
-            <div className="text-[9px] uppercase tracking-wider">Mode</div>
-            <div className="font-mono font-semibold text-[10px]">Estimated dist.</div>
-          </div>
+      )}
+
+      {view === "ratio" && (
+        <div className="h-[260px] sm:h-[300px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={series} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+              <XAxis dataKey="timeLabel" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+              <YAxis domain={[0, 2]} tickFormatter={(v) => v.toFixed(1)} tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} width={32} />
+              <Tooltip formatter={(v: any) => [typeof v === "number" ? v.toFixed(2) : "—", "P/C"]} />
+              <ReferenceLine y={0.7} stroke="#10b981" strokeDasharray="3 4" strokeWidth={1} opacity={0.5} label={{ value: "0.7 bullish", position: "right", fontSize: 8, fill: "#10b981", opacity: 0.6 }} />
+              <ReferenceLine y={1.0} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" strokeWidth={1} opacity={0.4} />
+              <ReferenceLine y={1.3} stroke="#ef4444" strokeDasharray="3 4" strokeWidth={1} opacity={0.5} label={{ value: "1.3 bearish", position: "right", fontSize: 8, fill: "#ef4444", opacity: 0.6 }} />
+              <Line type="monotone" dataKey="pcRatio" stroke="#f59e0b" strokeWidth={1.75} dot={false} connectNulls name="P/C" isAnimationActive={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Legend */}
+      <div className="flex items-center gap-4 text-[10px] text-muted-foreground px-2 flex-wrap">
+        {view === "bars" ? (
+          <>
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 bg-emerald-500" /> Calls Δ (buying)</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 bg-rose-500" /> Puts Δ (buying)</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-amber-500" /> P/C overlay</span>
+            <span className="text-muted-foreground/60">· brighter = spike (≥2× avg)</span>
+          </>
+        ) : view === "area" ? (
+          <>
+            <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-emerald-500" /> Calls (cumulative)</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-rose-500" /> Puts (cumulative)</span>
+          </>
+        ) : (
+          <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-amber-500" /> P/C ratio (bullish &lt; 0.7 · bearish &gt; 1.3)</span>
         )}
-      </div>
-
-      {/* Call / Put volume chart */}
-      <div className="h-[200px] sm:h-[240px]">
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={series} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.4} />
-            <XAxis
-              dataKey="timeLabel"
-              tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
-              axisLine={false}
-              tickLine={false}
-              interval="preserveStartEnd"
-            />
-            <YAxis
-              tickFormatter={(v) => fmtVol(v)}
-              tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
-              axisLine={false}
-              tickLine={false}
-              width={42}
-              domain={[0, maxVol * 1.1]}
-            />
-            <Tooltip content={<CustomTip />} />
-            {/* Fill under calls */}
-            <Area
-              type="monotone"
-              dataKey="callVolume"
-              stroke="#10b981"
-              strokeWidth={2.5}
-              fill="#10b981"
-              fillOpacity={0.12}
-              dot={false}
-              name="Calls"
-            />
-            {/* Fill under puts */}
-            <Area
-              type="monotone"
-              dataKey="putVolume"
-              stroke="#ef4444"
-              strokeWidth={2.5}
-              fill="#ef4444"
-              fillOpacity={0.12}
-              dot={false}
-              name="Puts"
-            />
-          </ComposedChart>
-        </ResponsiveContainer>
-      </div>
-      <div className="flex items-center gap-4 text-[10px] text-muted-foreground px-2">
-        <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-emerald-500" /> Calls (cumulative)</span>
-        <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-rose-500" /> Puts (cumulative)</span>
-      </div>
-
-      {/* P/C Ratio over time */}
-      <div className="h-[120px]">
-        <div className="mb-1 text-[9px] uppercase tracking-wider text-muted-foreground px-1">P/C Ratio Over Time</div>
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={series} margin={{ top: 2, right: 8, left: 0, bottom: 4 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
-            <XAxis
-              dataKey="timeLabel"
-              tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
-              axisLine={false}
-              tickLine={false}
-              interval="preserveStartEnd"
-            />
-            <YAxis
-              domain={[0, 2]}
-              tickFormatter={(v) => v.toFixed(1)}
-              tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
-              axisLine={false}
-              tickLine={false}
-              width={32}
-            />
-            <Tooltip formatter={(v: any) => [typeof v === "number" ? v.toFixed(2) : "—", "P/C"]} />
-            {/* Threshold reference lines */}
-            <ReferenceLine y={0.7} stroke="#10b981" strokeDasharray="3 4" strokeWidth={1} opacity={0.5} label={{ value: "0.7 bullish", position: "right", fontSize: 8, fill: "#10b981", opacity: 0.6 }} />
-            <ReferenceLine y={1.0} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" strokeWidth={1} opacity={0.4} />
-            <ReferenceLine y={1.3} stroke="#ef4444" strokeDasharray="3 4" strokeWidth={1} opacity={0.5} label={{ value: "1.3 bearish", position: "right", fontSize: 8, fill: "#ef4444", opacity: 0.6 }} />
-            <Line
-              type="monotone"
-              dataKey="pcRatio"
-              stroke="#f59e0b"
-              strokeWidth={1.75}
-              dot={false}
-              connectNulls
-              name="P/C"
-            />
-          </LineChart>
-        </ResponsiveContainer>
       </div>
     </div>
   );
