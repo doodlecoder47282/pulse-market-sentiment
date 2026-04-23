@@ -123,6 +123,32 @@ interface ModelAudit {
   nearby: { price: number; note: string; dir: "up" | "down" }[];
 }
 
+type MMRegime = "LONG_GAMMA" | "NEUTRAL" | "SHORT_GAMMA" | "VANNA_DRIVEN" | "CHARM_DRIVEN";
+type MMZone = "ABOVE_CALL" | "CW_TO_0G" | "AT_0G" | "0G_TO_PW" | "BELOW_PW";
+type DealerAction = "defend" | "accelerate" | "fade" | "pin" | "capitulate";
+
+interface MMCell {
+  regime: MMRegime;
+  zone: MMZone;
+  pUp: number;
+  pDown: number;
+  pPin: number;
+  magnitude: number;
+  action: DealerAction;
+  bias: number;
+  intensity: number;
+}
+
+interface MMMatrix {
+  asOf: number;
+  currentRegime: MMRegime;
+  currentZone: MMZone;
+  regimes: MMRegime[];
+  zones: MMZone[];
+  cells: MMCell[];
+  notes: { regime: string; zone: string; summary: string };
+}
+
 interface ModelHorizon {
   horizon: Horizon;
   label: string;
@@ -139,6 +165,7 @@ interface ModelHorizon {
   vol: { vix: number | null; vixChangePct: number | null; termRatio: number | null; termLabel: string };
   vomma: "elevated" | "normal";
   confidence: "HIGH" | "MODERATE" | "LOW";
+  mmMatrix?: MMMatrix;
 }
 
 interface ModelsResponse {
@@ -222,6 +249,31 @@ function levelColor(kind: string): string {
     case "upperVomma":    return "#84cc16";
     case "lowerVomma":    return "#f97316";
     default: return "#64748b";
+  }
+}
+
+function levelShortName(kind: string): string {
+  switch (kind) {
+    case "callWall":      return "CALL WALL";
+    case "putWall":       return "PUT WALL";
+    case "zeroGamma":     return "0-\u0393 FLIP";
+    case "dominantMag":   return "DOM MAG";
+    case "strongMag":     return "STRONG MAG";
+    case "extremeVac":    return "VAC";
+    case "mopexMaxPain":  return "MAX PAIN";
+    case "upsidePivot":   return "UP PIVOT";
+    case "downsidePivot": return "DN PIVOT";
+    case "t1Up":          return "T1 UP";
+    case "t2Up":          return "T2 UP";
+    case "t1Down":        return "T1 DN";
+    case "t2Down":        return "T2 DN";
+    case "vannaFlip":     return "VANNA";
+    case "zommaBridge":   return "ZOMMA";
+    case "charmTarget":   return "CHARM";
+    case "negGammaEntry": return "NEG-\u0393";
+    case "upperVomma":    return "UP VOMMA";
+    case "lowerVomma":    return "DN VOMMA";
+    default: return kind.toUpperCase();
   }
 }
 
@@ -593,6 +645,134 @@ function ScenarioLegend({ horizon }: { horizon: ModelHorizon }) {
   );
 }
 
+// ─── MM Probability Matrix — 5×5 regime × zone heatmap ─────────────────────
+
+const REGIME_LABEL: Record<MMRegime, string> = {
+  LONG_GAMMA:   "LONG Γ",
+  NEUTRAL:      "NEUTRAL",
+  SHORT_GAMMA:  "SHORT Γ",
+  VANNA_DRIVEN: "VANNA",
+  CHARM_DRIVEN: "CHARM",
+};
+const ZONE_LABEL: Record<MMZone, string> = {
+  ABOVE_CALL: "> CW",
+  CW_TO_0G:   "CW→0Γ",
+  AT_0G:      "AT 0Γ",
+  "0G_TO_PW": "0Γ→PW",
+  BELOW_PW:   "< PW",
+};
+const ACTION_COLOR: Record<DealerAction, string> = {
+  defend:     "#22c55e",
+  accelerate: "#f59e0b",
+  fade:       "#ef4444",
+  pin:        "#06b6d4",
+  capitulate: "#7f1d1d",
+};
+const ACTION_LABEL: Record<DealerAction, string> = {
+  defend:     "DEFEND",
+  accelerate: "CHASE",
+  fade:       "FADE",
+  pin:        "PIN",
+  capitulate: "STEP OUT",
+};
+
+function cellBg(c: MMCell): string {
+  // Color by bias direction + intensity. Green/red for directional, cyan for pin-heavy.
+  const pinDominant = c.pPin >= Math.max(c.pUp, c.pDown);
+  const alpha = Math.round(c.intensity * 70) + 10; // 10..80
+  const a = (alpha / 255).toFixed(2);
+  if (pinDominant) return `rgba(6,182,212,${a})`;       // cyan
+  if (c.bias > 0.05) return `rgba(34,197,94,${a})`;      // green
+  if (c.bias < -0.05) return `rgba(239,68,68,${a})`;     // red
+  return `rgba(148,163,184,${a})`;                        // slate
+}
+
+function MMMatrixHeatmap({ horizon }: { horizon: ModelHorizon }) {
+  const mm = horizon.mmMatrix;
+  if (!mm) return null;
+
+  const byKey = new Map<string, MMCell>();
+  for (const c of mm.cells) byKey.set(`${c.regime}:${c.zone}`, c);
+
+  return (
+    <div className="mt-3 border-t border-border/40 pt-2">
+      <div className="flex items-baseline justify-between mb-1.5">
+        <div className="text-[9px] uppercase tracking-widest text-muted-foreground/50 font-mono">
+          Market-maker probability matrix
+        </div>
+        <div className="font-mono text-[9px] text-muted-foreground/70">
+          <span className="text-amber-400">YOU ARE HERE:</span> {REGIME_LABEL[mm.currentRegime]} · {ZONE_LABEL[mm.currentZone]}
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="font-mono text-[9px] border-separate" style={{ borderSpacing: 2 }} data-testid="mm-matrix">
+          <thead>
+            <tr>
+              <th className="p-1 text-left text-muted-foreground/60 font-normal w-20"></th>
+              {mm.zones.map((z) => (
+                <th key={z} className="p-1 text-center text-muted-foreground/70 font-semibold uppercase tracking-wider">
+                  {ZONE_LABEL[z]}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {mm.regimes.map((r) => (
+              <tr key={r}>
+                <td className="p-1 text-right text-muted-foreground/80 font-semibold uppercase tracking-wider">
+                  {REGIME_LABEL[r]}
+                </td>
+                {mm.zones.map((z) => {
+                  const c = byKey.get(`${r}:${z}`);
+                  if (!c) return <td key={z} />;
+                  const isCurrent = r === mm.currentRegime && z === mm.currentZone;
+                  return (
+                    <td key={z} className="p-0" style={{ width: 80 }}>
+                      <UITooltip>
+                        <TooltipTrigger asChild>
+                          <div
+                            className={`relative rounded px-1.5 py-1 cursor-help border ${isCurrent ? "ring-2 ring-amber-400 border-amber-400/80" : "border-border/30"}`}
+                            style={{ background: cellBg(c) }}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold" style={{ color: ACTION_COLOR[c.action] }}>
+                                {ACTION_LABEL[c.action]}
+                              </span>
+                              <span className="text-foreground/80 text-[8px]">±{c.magnitude}</span>
+                            </div>
+                            <div className="mt-0.5 flex items-center gap-1 text-[8px]">
+                              <span className="text-green-300">↑{c.pUp}</span>
+                              <span className="text-cyan-300">·{c.pPin}</span>
+                              <span className="text-red-300">↓{c.pDown}</span>
+                            </div>
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="font-mono text-[10px] max-w-xs">
+                          <div className="font-semibold mb-1">{REGIME_LABEL[r]} · {ZONE_LABEL[z]}</div>
+                          <div>Action: <span style={{ color: ACTION_COLOR[c.action] }}>{ACTION_LABEL[c.action]}</span></div>
+                          <div>P(up): {c.pUp}% · P(pin): {c.pPin}% · P(down): {c.pDown}%</div>
+                          <div>Expected move: ±{c.magnitude}pt</div>
+                        </TooltipContent>
+                      </UITooltip>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-1.5 space-y-0.5 font-mono text-[9px] leading-tight">
+        <div className="text-muted-foreground/70"><span className="text-amber-400">Regime:</span> {mm.notes.regime}</div>
+        <div className="text-muted-foreground/70"><span className="text-amber-400">Zone:</span> {mm.notes.zone}</div>
+        <div className="text-foreground/90 font-semibold">→ {mm.notes.summary}</div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Bottom status strip ──────────────────────────────────────────────────────
 
 function StatusStrip({ horizon }: { horizon: ModelHorizon }) {
@@ -783,21 +963,32 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
               />
             ))}
 
-            {/* Level reference lines — NO text labels (they pile up and overlap).
-                Labels now live in the LevelsStrip below the chart. */}
+            {/* Primary pivots — thicker line + inline LEFT-edge label with price.
+                Labels are deduplicated (collision-aware via displayLevels.showLabel). */}
             {displayLevels.map((lv) => {
               if (["t1Up","t2Up","t1Down","t2Down"].includes(lv.kind)) return null;
               const color = levelColor(lv.kind);
-              const strong = ["callWall","putWall","zeroGamma","dominantMag"].includes(lv.kind);
+              const primary = ["callWall","putWall","zeroGamma","dominantMag","mopexMaxPain"].includes(lv.kind);
+              const showLabel = primary && (lv as any).showLabel !== false;
+              const shortName = levelShortName(lv.kind);
               return (
                 <ReferenceLine
                   key={`${lv.kind}-${lv.price}`}
                   y={lv.price}
                   stroke={color}
-                  strokeDasharray={strong ? "5 3" : "2 4"}
-                  strokeOpacity={strong ? 0.75 : 0.45}
-                  strokeWidth={strong ? 1.3 : 1}
+                  strokeDasharray={primary ? "5 3" : "2 4"}
+                  strokeOpacity={primary ? 0.8 : 0.4}
+                  strokeWidth={primary ? 1.4 : 1}
                   ifOverflow="extendDomain"
+                  label={showLabel ? {
+                    value: `${shortName} ${fmtK(lv.price)}`,
+                    position: "insideTopLeft",
+                    fill: color,
+                    fontSize: 10,
+                    fontWeight: 600,
+                    fontFamily: "var(--font-mono)",
+                    offset: 4,
+                  } : undefined}
                 />
               );
             })}
@@ -878,18 +1069,22 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
     rows.push({ name, price: lv.price, color, sub });
   };
 
-  push("t2Up",          "T2 UP",           COLORS.bear);
-  push("t1Up",          "T1 UP",           COLORS.bear);
-  push("strongMag",     "STRONG MAG",      "#14b8a6");
-  push("upsidePivot",   "UPSIDE PIVOT",    COLORS.bull);
-  push("callWall",      "CALL WALL",       COLORS.callWall, "gex");
-  push("dominantMag",   "DOM MAGNET",      "#14b8a6", "gex");
-  push("zeroGamma",     "ZERO-\u0393 FLIP",     COLORS.zeroGamma);
-  push("downsidePivot", "DOWNSIDE PIVOT",  COLORS.bear);
-  push("mopexMaxPain",  "MAX PAIN",        COLORS.amber);
-  push("putWall",       "PUT WALL",        COLORS.callWall, "gex");
-  push("t1Down",        "T1 DOWN",         COLORS.bull);
-  push("t2Down",        "T2 DOWN",         COLORS.bull);
+  // Primary pivots (callWall/putWall/zeroGamma/dominantMag/mopexMaxPain) are
+  // labeled directly on the chart. This strip focuses on SECONDARY pivots
+  // (T1/T2 extensions, directional pivots, dealer-map kinds) to avoid dupe.
+  push("t2Up",          "T2 UP",           "#ef4444");
+  push("t1Up",          "T1 UP",           "#f87171");
+  push("upsidePivot",   "UP PIVOT",        "#a855f7");
+  push("strongMag",     "STRONG MAG",      "#0ea5e9");
+  push("vannaFlip",     "VANNA",           "#06b6d4");
+  push("charmTarget",   "CHARM",           "#c084fc");
+  push("zommaBridge",   "ZOMMA",           "#fde047");
+  push("upperVomma",    "UP VOMMA",        "#84cc16");
+  push("lowerVomma",    "DN VOMMA",        "#f97316");
+  push("negGammaEntry", "NEG-\u0393",       "#fb7185");
+  push("downsidePivot", "DN PIVOT",        "#a855f7");
+  push("t1Down",        "T1 DN",           "#4ade80");
+  push("t2Down",        "T2 DN",           "#22c55e");
 
   const above = rows.filter(r => r.price > spot).sort((a, b) => b.price - a.price);
   const below = rows.filter(r => r.price <= spot).sort((a, b) => b.price - a.price);
@@ -907,7 +1102,7 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
   return (
     <div className="mt-2 space-y-1 border-t border-border/40 pt-2">
       <div className="text-[9px] uppercase tracking-widest text-muted-foreground/50 font-mono">
-        Levels in play
+        Secondary pivots
       </div>
       {above.length > 0 && (
         <div className="flex flex-wrap items-center gap-1">
@@ -1259,6 +1454,7 @@ function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; sessio
               <ModelChart horizon={horizon} />
               <LevelsStrip horizon={horizon} />
               <ScenarioLegend horizon={horizon} />
+              <MMMatrixHeatmap horizon={horizon} />
             </div>
           </div>
         </div>

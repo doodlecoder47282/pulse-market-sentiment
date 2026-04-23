@@ -36,6 +36,7 @@ import { computeGreeks } from "./greeks";
 import { storage } from "./storage";
 import { getQuotes as schwabGetQuotes } from "./schwab";
 import { fetchOHLC } from "./ohlc";
+import { buildMMMatrix } from "./mmMatrix";
 
 // Resolve real SPX spot from Schwab `$SPX`, falling back to Yahoo `^GSPC`.
 // Never derive from SPY×10 — SPY price drifts vs SPX due to accumulated dividends.
@@ -191,6 +192,7 @@ export interface ModelHorizon {
   };
   vomma: "elevated" | "normal";
   confidence: "HIGH" | "MODERATE" | "LOW";
+  mmMatrix?: import("./mmMatrix").MMMatrix;
 }
 
 export interface ModelsResponse {
@@ -1068,7 +1070,8 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
   const confidence: "HIGH" | "MODERATE" | "LOW" =
     Math.abs(scaledProfile.current.gex) > 5e9 ? "HIGH" : Math.abs(scaledProfile.current.gex) > 1e9 ? "MODERATE" : "LOW";
 
-  return {
+  const horizonDays = horizon === "daily" ? 1 : horizon === "weekly" ? 5 : horizon === "monthly" ? 21 : 63;
+  const horizonOut: ModelHorizon = {
     horizon,
     label: `${symbol === "^GSPC" ? "SPX" : "SPY"} ${horizon.toUpperCase()} MODEL`,
     symbol,
@@ -1089,6 +1092,15 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
     vomma,
     confidence,
   };
+
+  // MM probability matrix — 5×5 regime × zone grid with conditional probs + action tags
+  try {
+    horizonOut.mmMatrix = buildMMMatrix(horizonOut, horizonDays);
+  } catch (e) {
+    // Non-fatal — matrix is supplementary
+  }
+
+  return horizonOut;
 }
 
 export async function buildModelsSnapshot(input: {
