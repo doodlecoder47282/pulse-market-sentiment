@@ -2,6 +2,11 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Snapshot_Public } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Tooltip as UITooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -11,7 +16,7 @@ import { fmt, scoreBg, scoreColor } from "@/lib/format";
 import Gauge from "@/components/Gauge";
 import MetricCard from "@/components/MetricCard";
 import Logo from "@/components/Logo";
-import { BatIconSmall } from "@/components/LaunchSplash";
+import { BatmanLogoSmall } from "@/components/BatmanLogo";
 import VoicesPanel from "@/components/VoicesPanel";
 import NewsPanel from "@/components/NewsPanel";
 import TradeDesk from "@/components/TradeDesk";
@@ -31,8 +36,9 @@ import { useToast } from "@/hooks/use-toast";
 import {
   RefreshCw, ExternalLink, ArrowDownRight, ArrowUpRight, Zap,
   Activity, Waves, MessageSquare, Newspaper, AlertTriangle,
-  Keyboard,
+  Keyboard, Settings,
 } from "lucide-react";
+import SchwabSettings, { SchwabStatusPill } from "@/components/SchwabSettings";
 import { useEffect, useState, useRef, lazy, Suspense } from "react";
 
 // ── Lazy-loaded heavy components (code splitting) ──────────────────────────
@@ -128,6 +134,7 @@ function LiveClock() {
 export default function Dashboard() {
   // Take Five overlay state — shared by floating FAB and tab "peek" button.
   const [take5Open, setTake5Open] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Keyboard shortcuts help modal
   const [helpOpen, setHelpOpen] = useState(false);
   // PCR DTE bucket selector — drives which horizon of put/call ratio the KeyStat shows.
@@ -235,6 +242,9 @@ export default function Dashboard() {
       {/* Keyboard shortcuts help modal */}
       <ShortcutsModal open={helpOpen} onClose={() => setHelpOpen(false)} />
 
+      {/* Schwab settings dialog */}
+      <SchwabSettings open={settingsOpen} onOpenChange={setSettingsOpen} />
+
       {/* Header */}
       <header className="sticky top-0 z-10 border-b border-border bg-background/80 backdrop-blur">
         <div className="mx-auto flex max-w-[1400px] items-center justify-between px-4 py-3 md:px-8">
@@ -244,7 +254,7 @@ export default function Dashboard() {
             <div>
               <div className="font-semibold leading-none">Pulse</div>
               <div className="flex items-center gap-1">
-                <BatIconSmall className="h-3 w-6 text-amber-500" />
+                <BatmanLogoSmall className="h-3 w-6 text-amber-500" />
                 <span className="font-mono text-[10px] uppercase tracking-widest text-amber-500/80">BATCAVE</span>
               </div>
             </div>
@@ -290,6 +300,20 @@ export default function Dashboard() {
               <RefreshCw className={`mr-2 h-3.5 w-3.5 ${refreshMut.isPending ? "animate-spin" : ""}`} />
               Refresh
             </Button>
+            {/* Schwab status pill */}
+            <SchwabStatusPill onClick={() => setSettingsOpen(true)} />
+
+            {/* Settings gear */}
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              title="Schwab & Settings"
+              className="flex items-center rounded-md border border-border/60 p-1.5 text-muted-foreground/50 transition hover:border-border hover:text-muted-foreground"
+              data-testid="button-settings"
+            >
+              <Settings className="h-3.5 w-3.5" />
+            </button>
+
             {/* Shortcut hint */}
             <button
               type="button"
@@ -402,7 +426,7 @@ export default function Dashboard() {
 
             {/* Put/Call flow — prominent above composite */}
             <ErrorBoundary label="Flow Panel">
-              <FlowPanel />
+              <FlowPanel onOpenSettings={() => setSettingsOpen(true)} />
             </ErrorBoundary>
 
             {/* Top row: composite + SPY/VIX quick panel */}
@@ -804,6 +828,17 @@ export default function Dashboard() {
   );
 }
 
+const KEY_STAT_TOOLTIPS: Record<string, string> = {
+  "Net GEX": "Net Gamma Exposure: total dealer gamma in dollars per 1% move. Positive = dealers long gamma (stabilizing); negative = short gamma (amplifying moves).",
+  "Regime": "Gamma regime based on net dealer positioning. Positive gamma → mean-reversion / range-bound. Negative gamma → trend-following / breakout potential.",
+  "Call Wall": "Strike with the largest positive gamma exposure (call concentration). Acts as a ceiling — dealers sell rallies above this level to hedge.",
+  "Put Wall": "Strike with the largest negative gamma exposure (put concentration). Acts as a floor — dealers buy dips below this level.",
+  "Zero-Γ Flip": "Zero Gamma level: the price where net dealer gamma flips sign. Below = negative gamma (amplified moves); above = positive gamma (dampened).",
+  "Max Pain": "Options max pain: the strike price where the total value of outstanding options contracts is minimized. Price tends to gravitate here near expiry.",
+  "PCR (OI)": "Put/Call ratio by open interest. >1.5 = heavy put positioning (fear/hedging); <0.7 = call-heavy (complacency/bullish). DTE bucket selectable below.",
+  "Q-Score": "Quantitative composite sentiment score (0–100). <30 = pinned/fear, 30–60 = mixed, >60 = fragile/greed. Weights VIX, gamma, PCR, term structure, social, F&G.",
+};
+
 function KeyStat({
   label, value, sub, tone = "neutral", testId,
 }: { label: string; value: string; sub?: string; tone?: "bull" | "bear" | "warn" | "neutral"; testId?: string }) {
@@ -812,12 +847,20 @@ function KeyStat({
     : tone === "bear" ? "text-red-500"
     : tone === "warn" ? "text-amber-500"
     : "text-foreground";
-  return (
-    <div className="min-w-[90px] rounded-md border border-border bg-card/50 px-2.5 py-1.5" data-testid={testId}>
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+  const tooltip = KEY_STAT_TOOLTIPS[label];
+  const inner = (
+    <div className="min-w-[90px] rounded-md border border-border bg-card/50 px-2.5 py-1.5 cursor-default" data-testid={testId}>
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}{tooltip && <span className="ml-0.5 text-muted-foreground/40">?</span>}</div>
       <div className={`font-mono text-sm font-semibold ${toneClass}`}>{value}</div>
       {sub && <div className="text-[10px] text-muted-foreground">{sub}</div>}
     </div>
+  );
+  if (!tooltip) return inner;
+  return (
+    <UITooltip>
+      <TooltipTrigger asChild>{inner}</TooltipTrigger>
+      <TooltipContent side="top" className="max-w-xs text-xs">{tooltip}</TooltipContent>
+    </UITooltip>
   );
 }
 

@@ -1,5 +1,5 @@
-import { snapshots, xUsers, xTweets } from "@shared/schema";
-import type { Snapshot, InsertSnapshot, XUser, XTweet } from "@shared/schema";
+import { snapshots, xUsers, xTweets, schwabTokens } from "@shared/schema";
+import type { Snapshot, InsertSnapshot, XUser, XTweet, SchwabToken } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { desc, eq } from "drizzle-orm";
@@ -45,7 +45,17 @@ sqlite.exec(`
     PRIMARY KEY (symbol, date)
   );
   CREATE INDEX IF NOT EXISTS idx_daily_bars_symbol_date ON daily_bars(symbol, date DESC);
+  CREATE TABLE IF NOT EXISTS schwab_tokens (
+    id INTEGER PRIMARY KEY,
+    access_token TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    refresh_expires_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
 `);
+
+export { schwabTokens };
 
 export const db = drizzle(sqlite);
 

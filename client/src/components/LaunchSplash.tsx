@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { BatmanLogoFull, BatmanLogoSmall } from "./BatmanLogo";
 import { motion, AnimatePresence } from "framer-motion";
 
 /* ─── Prop Types ─────────────────────────────────────────────────── */
@@ -81,90 +82,6 @@ function generateBurstBills(count: number, idOffset: number): Bill[] {
     });
   }
   return bills;
-}
-
-/* ─── Batman Movie Logo SVG ──────────────────────────────────────── */
-// 1989 Burton-era / Dark Knight silhouette: wide-wing oval bat emblem
-function BatIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 200 100"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-label="Batman Logo"
-      className={className}
-    >
-      {/* Outer ellipse ring (the oval background of the movie emblem) */}
-      <ellipse
-        cx="100"
-        cy="52"
-        rx="96"
-        ry="44"
-        fill="currentColor"
-      />
-      {/* Cut-out inner bat silhouette using a mask — bat in dark on amber oval */}
-      {/* Body center */}
-      <ellipse cx="100" cy="52" rx="9" ry="11" fill="black" />
-      {/* Neck */}
-      <rect x="95" y="37" width="10" height="6" fill="black" />
-      {/* Head */}
-      <ellipse cx="100" cy="34" rx="8" ry="7" fill="black" />
-      {/* Left ear */}
-      <polygon points="93,30 89,18 98,28" fill="black" />
-      {/* Right ear */}
-      <polygon points="107,30 111,18 102,28" fill="black" />
-      {/* Left wing — wide spread */}
-      <path
-        d="M91,50 C84,44 70,36 50,33 C32,30 14,34 4,42 C14,40 28,41 40,44 C30,46 20,50 14,56 C24,52 38,50 52,52 C44,56 38,62 36,68 C46,62 58,58 70,58 C78,58 86,56 91,54 Z"
-        fill="black"
-      />
-      {/* Right wing — wide spread */}
-      <path
-        d="M109,50 C116,44 130,36 150,33 C168,30 186,34 196,42 C186,40 172,41 160,44 C170,46 180,50 186,56 C176,52 162,50 148,52 C156,56 162,62 164,68 C154,62 142,58 130,58 C122,58 114,56 109,54 Z"
-        fill="black"
-      />
-      {/* Wing membrane detail left */}
-      <path
-        d="M91,52 C82,50 66,48 52,52 C60,54 74,54 91,56 Z"
-        fill="black"
-        opacity="0.5"
-      />
-      {/* Wing membrane detail right */}
-      <path
-        d="M109,52 C118,50 134,48 148,52 C140,54 126,54 109,56 Z"
-        fill="black"
-        opacity="0.5"
-      />
-    </svg>
-  );
-}
-
-/* ─── Small bat for dashboard header (inline SVG) ────────────────── */
-export function BatIconSmall({ className = "" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 200 100"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-label="Batman Logo"
-      className={className}
-    >
-      <ellipse cx="100" cy="52" rx="96" ry="44" fill="currentColor" />
-      <ellipse cx="100" cy="52" rx="9" ry="11" fill="black" />
-      <rect x="95" y="37" width="10" height="6" fill="black" />
-      <ellipse cx="100" cy="34" rx="8" ry="7" fill="black" />
-      <polygon points="93,30 89,18 98,28" fill="black" />
-      <polygon points="107,30 111,18 102,28" fill="black" />
-      <path
-        d="M91,50 C84,44 70,36 50,33 C32,30 14,34 4,42 C14,40 28,41 40,44 C30,46 20,50 14,56 C24,52 38,50 52,52 C44,56 38,62 36,68 C46,62 58,58 70,58 C78,58 86,56 91,54 Z"
-        fill="black"
-      />
-      <path
-        d="M109,50 C116,44 130,36 150,33 C168,30 186,34 196,42 C186,40 172,41 160,44 C170,46 180,50 186,56 C176,52 162,50 148,52 C156,56 162,62 164,68 C154,62 142,58 130,58 C122,58 114,56 109,54 Z"
-        fill="black"
-      />
-    </svg>
-  );
 }
 
 /* ─── Fog blobs ──────────────────────────────────────────────────── */
@@ -397,7 +314,7 @@ export default function LaunchSplash({ onExit }: LaunchSplashProps) {
             style={{ zIndex: 10 }}
           >
             {/* Movie bat logo — big, amber with glow */}
-            <BatIcon className="w-36 h-[72px] sm:w-52 sm:h-[104px] text-amber-400 drop-shadow-[0_0_24px_rgba(245,158,11,0.7)]" />
+            <BatmanLogoFull className="w-48 sm:w-72 drop-shadow-[0_0_32px_rgba(250,204,21,0.8)]" />
             <motion.h1
               className="mt-4 text-5xl sm:text-7xl font-black tracking-widest text-amber-400"
               style={{

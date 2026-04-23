@@ -20,6 +20,8 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceLine, Area, ComposedChart,
 } from "recharts";
+import { FlowAlertsPanel } from "./FlowAlertsPanel";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type FlowTicker = {
   symbol: string;
@@ -453,7 +455,8 @@ function IntradayFlowSection() {
   );
 }
 
-export default function FlowPanel() {
+export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => void } = {}) {
+  const [chainSymbol, setChainSymbol] = useState("SPX");
   const { data, isLoading, isError } = useQuery<FlowResponse>({
     queryKey: ["/api/flow"],
     queryFn: async () => {
@@ -509,7 +512,28 @@ export default function FlowPanel() {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Top row: big aggregate read + sparkline */}
+        {/* ─── FLOW ALERTS — Schwab-driven, Flow tab only ─── */}
+      <div className="mb-4">
+        <FlowAlertsPanel symbol={chainSymbol} onOpenSettings={onOpenSettings} />
+      </div>
+
+      {/* Symbol selector for chain */}
+      <div className="mb-3 flex items-center gap-2">
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Chain Symbol</span>
+        <Select value={chainSymbol} onValueChange={setChainSymbol}>
+          <SelectTrigger className="h-6 w-24 text-[10px]" data-testid="chain-symbol-select">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="SPX">SPX</SelectItem>
+            <SelectItem value="SPY">SPY</SelectItem>
+            <SelectItem value="QQQ">QQQ</SelectItem>
+            <SelectItem value="IWM">IWM</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* Top row: big aggregate read + sparkline */}
         <div className="grid grid-cols-1 gap-3 md:grid-cols-[auto_1fr_auto]">
           {/* Big combined PCR */}
           <div className={`flex items-center gap-3 rounded-lg border ${color.border} ${color.bg} px-4 py-3`}>

@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -46,6 +46,17 @@ export const snapshotHistory = sqliteTable("snapshot_history", {
   pcrOi: integer("pcr_oi").notNull(),               // PCR * 100
 });
 export type SnapshotHistory = typeof snapshotHistory.$inferSelect;
+
+// ---- Schwab OAuth token storage (single row, id=1) ----
+export const schwabTokens = sqliteTable("schwab_tokens", {
+  id: integer("id").primaryKey(),
+  accessToken: text("access_token").notNull(),
+  refreshToken: text("refresh_token").notNull(),
+  expiresAt: integer("expires_at").notNull(),       // unix ms
+  refreshExpiresAt: integer("refresh_expires_at").notNull(), // unix ms (7 days)
+  updatedAt: integer("updated_at").notNull(),
+});
+export type SchwabToken = typeof schwabTokens.$inferSelect;
 
 // ---- Client-facing types (the shape /api/snapshot returns) ----
 

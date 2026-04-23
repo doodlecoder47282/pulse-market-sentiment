@@ -2,6 +2,12 @@ import type { Express } from "express";
 import type { Server } from "node:http";
 import { storage } from "./storage";
 import {
+  getAuthUrl, exchangeCodeForTokens, getSchwabStatus, clearTokens,
+  getQuotes as schwabGetQuotes, getPriceHistory as schwabGetPriceHistory,
+  getOptionChain as schwabGetOptionChain, computeGEXFromChain,
+  startTokenRefreshCycle,
+} from "./schwab";
+import {
   yahooQuote, cboeSpyChain, buildGammaStructure, cnnFearGreed,
   gatherSocial, fetchHeadlines,
 } from "./sources";
@@ -982,6 +988,97 @@ Sift this feed AND search the web for any critical developments in geopolitics, 
       console.warn("[voices] warmup failed:", e?.message || e);
     }
   })();
+
+
+  // ─── Schwab OAuth endpoints ───────────────────────────────────────────────
+
+  app.get("/api/schwab/auth-url", (_req, res) => {
+    try {
+      const url = getAuthUrl();
+      res.json({ url });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build auth URL" });
+    }
+  });
+
+  app.post("/api/schwab/callback", async (req, res) => {
+    try {
+      const { redirectedUrl } = req.body as { redirectedUrl?: string };
+      if (!redirectedUrl) return res.status(400).json({ message: "redirectedUrl required" });
+      const url = new URL(redirectedUrl);
+      const code = url.searchParams.get("code");
+      if (!code) return res.status(400).json({ message: "No code found in URL" });
+      const result = await exchangeCodeForTokens(code);
+      if (!result.ok) return res.status(400).json({ message: result.error });
+      res.json({ ok: true, status: getSchwabStatus() });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Callback failed" });
+    }
+  });
+
+  app.get("/api/schwab/status", (_req, res) => {
+    try {
+      res.json(getSchwabStatus());
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Status check failed" });
+    }
+  });
+
+  app.post("/api/schwab/disconnect", (_req, res) => {
+    try {
+      clearTokens();
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Disconnect failed" });
+    }
+  });
+
+  // ─── Market data endpoints (Schwab primary, Yahoo fallback) ───────────────
+
+  app.get("/api/market/quotes", async (req, res) => {
+    try {
+      const symbolsParam = String(req.query.symbols || "SPY,VIX");
+      const symbols = symbolsParam.split(",").map((s) => s.trim()).filter(Boolean);
+      const quotes = await schwabGetQuotes(symbols);
+      const source = quotes.length > 0 ? quotes[0].source : "yahoo";
+      res.json({ quotes, source, asOf: Date.now() });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Quotes fetch failed" });
+    }
+  });
+
+  app.get("/api/market/price-history/:symbol", async (req, res) => {
+    try {
+      const symbol = String(req.params.symbol).toUpperCase();
+      const periodType = (req.query.periodType as any) || "year";
+      const period = parseInt(String(req.query.period || "1"));
+      const frequencyType = (req.query.frequencyType as any) || "daily";
+      const frequency = parseInt(String(req.query.frequency || "1"));
+      const data = await schwabGetPriceHistory(symbol, periodType, period, frequencyType, frequency);
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Price history failed" });
+    }
+  });
+
+  app.get("/api/market/option-chain/:symbol", async (req, res) => {
+    try {
+      const symbol = String(req.params.symbol).toUpperCase();
+      const dte = req.query.dte !== undefined ? parseInt(String(req.query.dte)) : undefined;
+      const chain = await schwabGetOptionChain(symbol, dte);
+      if ("error" in chain) {
+        return res.status(503).json(chain);
+      }
+      // Augment with computed GEX levels
+      const gex = computeGEXFromChain(chain);
+      res.json({ ...chain, gex });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Option chain fetch failed" });
+    }
+  });
+
+  // ─── Start background token refresh cycle ─────────────────────────────────
+  startTokenRefreshCycle();
 
   return httpServer;
 }

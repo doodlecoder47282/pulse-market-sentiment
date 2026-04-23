@@ -35,24 +35,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { RefreshCw, AlertTriangle, Activity } from "lucide-react";
+import { BatmanLogo } from "./BatmanLogo";
 import { apiRequest } from "@/lib/queryClient";
 import ErrorBoundary from "@/components/ErrorBoundary";
-
-// ─── Bat SVG icon ─────────────────────────────────────────────────────────────
-
-function BatIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 100 50"
-      fill="currentColor"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-label="BATCAVE"
-      className={className}
-    >
-      <path d="M50,10 C45,15 40,10 35,12 C28,8 20,5 12,10 C8,15 5,20 8,25 C12,22 18,22 20,18 C22,22 20,28 25,30 C30,28 35,32 40,30 C45,33 50,30 50,35 C50,30 55,33 60,30 C65,32 70,28 75,30 C80,28 78,22 80,18 C82,22 88,22 92,25 C95,20 92,15 88,10 C80,5 72,8 65,12 C60,10 55,15 50,10 Z" />
-    </svg>
-  );
-}
 
 // ─── Types mirror server/models.ts ──────────────────────────────────────────
 
@@ -790,7 +775,7 @@ function ModelView({ horizon, session }: { horizon: ModelHorizon; session: "live
       {/* ── Top header strip ── */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-black/70 px-3 py-2 font-mono text-[10px]">
         <div className="flex flex-wrap items-center gap-2">
-          <BatIcon className="h-5 w-10 text-amber-500" />
+          <BatmanLogo className="h-5 w-10 text-amber-500" />
           <span className="font-bold text-amber-400 tracking-widest text-[11px]">BATCAVE</span>
           <span className="text-border">|</span>
           <span className="font-bold text-foreground tracking-wider" data-testid="text-model-label">
@@ -811,7 +796,7 @@ function ModelView({ horizon, session }: { horizon: ModelHorizon; session: "live
           </span>
         </div>
         <div className="flex items-center gap-2 text-muted-foreground/60 text-[9px]">
-          <BatIcon className="h-3 w-5 text-muted-foreground/40" />
+          <BatmanLogo className="h-3 w-5 text-muted-foreground/40" />
           <span>DATA: PULSE / BATCAVE MODEL</span>
         </div>
       </div>
@@ -891,7 +876,7 @@ export default function ModelsPanel() {
       {/* Control bar */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card/40 px-3 py-2">
         <Activity className="h-4 w-4 text-amber-400" />
-        <BatIcon className="h-4 w-8 text-amber-400" />
+        <BatmanLogo className="h-4 w-8 text-amber-400" />
         <span className="font-mono text-[10px] uppercase tracking-widest text-amber-400">Batcave Model</span>
         <span className="text-border/60 mx-1">·</span>
 

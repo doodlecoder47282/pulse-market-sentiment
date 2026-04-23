@@ -1,89 +1,208 @@
-# Pulse — Market Sentiment
+# BATCAVE · Pulse Market Intelligence Terminal
 
-Professional-grade market sentiment dashboard for traders. Live quotes, options flow, regime detection, sector heatmaps, and more — all in one place.
-
-![8 tabs](https://img.shields.io/badge/tabs-8-blue) ![realtime](https://img.shields.io/badge/quotes-5s%20poll-green) ![stack](https://img.shields.io/badge/stack-react%20%2B%20express-black)
-
-## Features
-
-- **Signals** — Mag7 live strip, options flow panel, macro ticker, metric cards
-- **Chart** — TradingView widget + custom candlestick charts with ticker search
-- **Models** — positioning/regime models with visual gauges
-- **Trade Desk** — ticker context, news, unusual flow per symbol
-- **Regime** — market regime classification with detail breakdowns
-- **News** — curated financial news feed
-- **Voices** — aggregated commentary and analyst opinions
-- **Take Five** — end-of-day 5-point market wrap
-
-Plus: live clock + market-open/closed pill in the header, keyboard shortcuts (press `?` to see them), SPY/VIX flashing on every tick, lazy-loaded heavy panels, error boundaries on every fetch, and full mobile responsive layout.
+> Institutional-grade market intelligence terminal — live options flow with Schwab integration, gamma levels, regime detection, dealer positioning, seasonality analysis, and AI-powered EOD setups.
 
 ---
 
-## Local development
+## Overview
 
-Requires Node.js 18+.
+BATCAVE is a full-stack market intelligence dashboard built for serious traders. It combines live market data (via Charles Schwab API), options flow analytics, gamma/dealer positioning models, sector correlation analysis, AI-powered trade setups, and curated market commentary into a single terminal.
 
-```bash
-npm install
-npm run dev
-```
+### Tabs (locked order)
 
-Opens on `http://localhost:5000`.
-
-## Production build
-
-```bash
-npm run build
-npm start
-```
-
----
-
-## Deploy to Railway (recommended — free tier)
-
-1. Sign in at [railway.app](https://railway.app) with your GitHub account
-2. Click **New Project → Deploy from GitHub repo**
-3. Select this repo
-4. Railway auto-detects Node, runs `npm install && npm run build`, and starts with `npm start`
-5. In **Settings → Networking**, click **Generate Domain** to get a public URL
-
-### Environment variables
-
-None required. The app uses Yahoo Finance public endpoints (no API key needed).
-
-If you later add a paid data feed (Polygon, IEX, etc.), drop keys into Railway's Variables tab — they'll be injected as env vars and read by `server/routes.ts`.
-
-### Build/start commands (Railway auto-detects these)
-
-- Build: `npm run build`
-- Start: `npm start`
-- Port: Railway provides `PORT` env var; app listens on `process.env.PORT || 5000`
-
----
-
-## Deploy to Render (alternative)
-
-Same idea. Pick "Web Service", connect repo, set build command to `npm run build` and start command to `npm start`. Free tier available.
-
----
-
-## Deploy to Vercel (frontend-only, NOT recommended for this app)
-
-Vercel works for static sites but this app has an Express backend (`/api/snapshot`, `/api/quotes`). Railway/Render/Fly are better fits.
+| Tab | Description |
+|-----|-------------|
+| **Signals** | Put/Call Flow Ratio, Flow Alerts (Schwab live), Index PCR, Mag 7 ratio |
+| **Chart** | Interactive price chart with technical overlays |
+| **Models** | BATCAVE Daily Model — SPX gamma levels, pivot zones, dealer positioning |
+| **Trade Desk** | AI-powered EOD trade setups and intraday scenarios |
+| **Regime** | Market regime detection, sector correlation constellation |
+| **News** | Curated market news with sentiment scoring |
+| **Voices** | Curated commentary from top traders and analysts |
+| **Take Five** | 5-minute briefings — macro themes and key levels |
 
 ---
 
 ## Stack
 
-- **Frontend:** React 18 + Vite + Tailwind CSS + shadcn/ui + TanStack Query + wouter
-- **Backend:** Express + better-sqlite3 + Drizzle ORM
-- **Data:** Yahoo Finance (unofficial, free) for quotes, options, fundamentals
-- **Deploy:** Railway / Render / Fly.io
+- **Frontend**: React 18, TypeScript, Vite, Tailwind CSS v3, shadcn/ui, TanStack Query v5, Framer Motion, Recharts
+- **Backend**: Express.js, SQLite (via Drizzle ORM), `tsx` for dev, `esbuild` for prod
+- **Data**: Charles Schwab API (live quotes, option chains), Yahoo Finance (fallback), CBOE (PCR)
+- **Fonts**: Bebas Neue (display), DM Sans (body), JetBrains Mono (data), Inter (UI)
 
-## Data source note
+---
 
-Yahoo Finance data is free for personal use. If you plan to **commercialize** this (charge users for access), you must switch to a licensed feed like [Polygon](https://polygon.io), [Databento](https://databento.com), or [IEX Cloud](https://iexcloud.io) first. Swap the helpers in `server/` accordingly.
+## Quick Start
+
+### Prerequisites
+- Node.js 20+
+- A Charles Schwab developer account (optional — Yahoo Finance fallback active when not connected)
+
+### Install & Run
+
+```bash
+git clone <repo>
+cd sentiment-app
+npm install
+
+# Create environment file (copy example and fill in your values)
+cp .env.local.example .env.local
+# Edit .env.local with your Schwab credentials
+
+# Development
+npm run dev          # Vite dev server + Express on port 5000
+
+# Production
+npm run build        # Build client + server bundles
+NODE_ENV=production node dist/index.cjs
+```
+
+The app runs on **http://localhost:5000**.
+
+---
+
+## Environment Variables
+
+Copy `.env.local.example` to `.env.local` and configure:
+
+```env
+SCHWAB_CLIENT_ID=your_schwab_client_id
+SCHWAB_CLIENT_SECRET=your_schwab_client_secret
+SCHWAB_REDIRECT_URI=https://127.0.0.1
+```
+
+> `.env.local` is gitignored and never committed. Credentials are stored only locally.
+
+### Obtaining Schwab API Credentials
+
+1. Register at [developer.schwab.com](https://developer.schwab.com)
+2. Create a new app — set the redirect URI to `https://127.0.0.1`
+3. Copy the Client ID and Client Secret into `.env.local`
+
+---
+
+## Schwab Integration
+
+### OAuth Flow
+
+Connect via the **Settings** dialog (gear icon in top-right header):
+
+1. Click **Open Schwab Login** — this opens the Schwab OAuth authorization page
+2. Log in and approve access
+3. You'll be redirected to `https://127.0.0.1/?code=...&session=...`
+4. Copy the **full redirect URL** and paste it into the Settings dialog
+5. Click **Complete Connection**
+
+The access token is stored in the local SQLite database (`data.db`) and auto-refreshes every 20 minutes. Tokens expire after 30 minutes; refresh tokens last 7 days.
+
+### Data Sources
+
+| Feature | Schwab Connected | Schwab Disconnected |
+|---------|-----------------|---------------------|
+| Quotes (SPY, VIX, indices) | Schwab LIVE | Yahoo Finance (delayed) |
+| Price History (charts) | Schwab LIVE | Yahoo Finance (delayed) |
+| Option Chains (flow alerts) | Schwab LIVE | **Not available** |
+| Gamma Levels (models) | Schwab LIVE | Yahoo Finance (delayed) |
+
+### Flow Alert Types
+
+When Schwab is connected, the Flow Alerts subsystem polls option chains every 30 seconds and flags:
+
+| Alert | Trigger |
+|-------|---------|
+| `UNUSUAL_VOL` | Volume > 3× open interest on any strike |
+| `BLOCK` | Single contract with premium > $1M notional |
+| `MAGNET` | Price within 0.5% of highest OI strike |
+| `PC_SHIFT` | 5-minute P/C ratio moves >20% |
+| `WALL` | Identified call/put wall formation |
+
+---
+
+## Architecture
+
+```
+sentiment-app/
+├── client/                  # React frontend (Vite)
+│   ├── src/
+│   │   ├── components/      # All UI components
+│   │   │   ├── BatmanLogo.tsx         # Batman SVG logo (BatmanLogo, BatmanLogoFull)
+│   │   │   ├── FlowPanel.tsx          # Options flow + alerts panel
+│   │   │   ├── FlowAlertsPanel.tsx    # Schwab-driven alerts subsystem
+│   │   │   ├── SchwabSettings.tsx     # Settings dialog + SchwabStatusPill
+│   │   │   ├── ModelsPanel.tsx        # BATCAVE daily model
+│   │   │   ├── LaunchSplash.tsx       # Animated entry screen
+│   │   │   └── ...
+│   │   ├── pages/
+│   │   │   └── dashboard.tsx          # Main dashboard layout
+│   │   └── lib/
+│   │       └── queryClient.ts         # TanStack Query v5 + apiRequest helper
+│   └── index.html
+├── server/
+│   ├── index.ts             # Express entry point
+│   ├── routes.ts            # All API endpoints
+│   ├── schwab.ts            # Schwab OAuth + token mgmt + market data helpers
+│   └── storage.ts           # SQLite schema + Drizzle ORM
+├── shared/
+│   └── schema.ts            # Shared types (Drizzle schema + TS types)
+├── .env.local               # Real credentials (gitignored, chmod 600)
+├── .env.local.example       # Safe template
+└── data.db                  # SQLite database (WAL mode)
+```
+
+### Key API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/schwab/status` | Connection status + token expiry |
+| `GET` | `/api/schwab/auth-url` | Get OAuth authorization URL |
+| `POST` | `/api/schwab/callback` | Exchange auth code for tokens |
+| `POST` | `/api/schwab/disconnect` | Revoke tokens |
+| `GET` | `/api/market/quotes` | Live quotes (Schwab or Yahoo fallback) |
+| `GET` | `/api/market/price-history/:symbol` | Price history for charts |
+| `GET` | `/api/market/option-chain/:symbol` | Option chain data (Schwab required) |
+
+### Design Decisions
+
+- **No localStorage/sessionStorage** — all state via TanStack Query + server API
+- **`apiRequest` wrapper** — all client-server calls use `@/lib/queryClient.apiRequest`, never raw `fetch`
+- **TanStack Query v5** — array query keys, object form throughout
+- **Single SQLite token row** — Schwab token stored as row id=1 in `schwab_tokens` table
+- **Yahoo Finance fallback** — quotes and price history gracefully degrade when Schwab disconnected
+- **No option chain fallback** — flow alerts require Schwab (returns `{error: "schwab_required"}`)
+
+---
+
+## Batman Logo
+
+The `BatmanLogo.tsx` component exports two variants:
+
+- **`BatmanLogoFull`** — full yellow oval with black bat silhouette (LaunchSplash hero, Models header)
+- **`BatmanLogo`** / **`BatmanLogoSmall`** — monochrome bat using `currentColor` (header nav, inline uses)
+
+The bat path is drawn on a 200×120 viewBox, matching the classic DC 1989 Burton-era/Dark Knight movie badge silhouette: wide outstretched wings with 3 scalloped trailing-edge curves per side, pointed ear tips, and a belly scallop pattern.
+
+---
+
+## Development
+
+```bash
+npm run dev     # Start dev server (hot reload)
+npm run build   # Production build
+npm run check   # TypeScript type checking
+```
+
+### Key Libraries
+
+- `@tanstack/react-query` v5 — server state management
+- `framer-motion` — animations (LaunchSplash, transitions)
+- `recharts` — charting (flow ratio, price history)
+- `drizzle-orm` — SQLite ORM
+- `better-sqlite3` — SQLite driver
+- `lucide-react` — icons
+- `shadcn/ui` — UI component library
+
+---
 
 ## License
 
-Personal use.
+Private — not for redistribution.
