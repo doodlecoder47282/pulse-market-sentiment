@@ -696,7 +696,7 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
     <div className="flex-1 min-w-0">
       <div className="h-[620px] xl:h-[700px] w-full" data-testid="batcave-chart">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 16, right: 12, left: 4, bottom: 20 }}>
+          <LineChart data={chartData} margin={{ top: 16, right: 24, left: 4, bottom: 20 }}>
             <XAxis
               dataKey="label"
               stroke="#64748b"
@@ -783,34 +783,22 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
               />
             ))}
 
-            {/* Level reference lines */}
+            {/* Level reference lines — NO text labels (they pile up and overlap).
+                Labels now live in the LevelsStrip below the chart. */}
             {displayLevels.map((lv) => {
-              // Skip t1/t2 targets — too many lines
               if (["t1Up","t2Up","t1Down","t2Down"].includes(lv.kind)) return null;
               const color = levelColor(lv.kind);
-              const dashed = !["callWall","putWall","zeroGamma","dominantMag"].includes(lv.kind);
+              const strong = ["callWall","putWall","zeroGamma","dominantMag"].includes(lv.kind);
               return (
                 <ReferenceLine
                   key={`${lv.kind}-${lv.price}`}
                   y={lv.price}
                   stroke={color}
-                  strokeDasharray={dashed ? "3 3" : "4 4"}
-                  strokeOpacity={lv.showLabel ? 0.95 : 0.5}
-                  strokeWidth={lv.showLabel ? 1.4 : 1}
+                  strokeDasharray={strong ? "5 3" : "2 4"}
+                  strokeOpacity={strong ? 0.75 : 0.45}
+                  strokeWidth={strong ? 1.3 : 1}
                   ifOverflow="extendDomain"
-                >
-                  {lv.showLabel && (
-                    <Label
-                      value={`${lv.name} ${fmtK(lv.price)}`}
-                      position="insideRight"
-                      offset={6}
-                      fill={color}
-                      fontSize={12}
-                      fontWeight={600}
-                      style={{ fontFamily: "var(--font-mono)", opacity: 1 }}
-                    />
-                  )}
-                </ReferenceLine>
+                />
               );
             })}
 
@@ -844,58 +832,290 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
               strokeWidth={2}
             />
 
-            {/* Selz #5 — discrete BULL / BASE / BEAR close labels on right edge */}
+            {/* Selz #5 — close targets render as colored marker dots at right edge only.
+                Full text moved to the ScenarioLegend strip below to prevent overlap. */}
             {a.closeTargets?.bull && (
-              <ReferenceLine
-                y={a.closeTargets.bull.price}
-                stroke="transparent"
-                ifOverflow="extendDomain"
-              >
-                <Label
-                  value={`BULL CLOSE ~${fmtK(a.closeTargets.bull.price)}  (${a.closeTargets.bull.prob}%)`}
-                  position="right"
-                  offset={8}
-                  fill={COLORS.bull}
-                  fontSize={11}
-                  fontWeight={700}
-                  style={{ fontFamily: "var(--font-mono)" }}
-                />
-              </ReferenceLine>
+              <ReferenceDot x={chartData[chartData.length - 1]?.label} y={a.closeTargets.bull.price}
+                r={5} fill={COLORS.bull} stroke="#000" strokeWidth={1.5} ifOverflow="extendDomain" />
             )}
             {a.closeTargets?.base && (
-              <ReferenceLine
-                y={a.closeTargets.base.price}
-                stroke="transparent"
-                ifOverflow="extendDomain"
-              >
-                <Label
-                  value={`BASE CLOSE ~${fmtK(a.closeTargets.base.price)}  (${a.closeTargets.base.prob}%)`}
-                  position="right"
-                  offset={8}
-                  fill={COLORS.base}
-                  fontSize={11}
-                  fontWeight={700}
-                  style={{ fontFamily: "var(--font-mono)" }}
-                />
-              </ReferenceLine>
+              <ReferenceDot x={chartData[chartData.length - 1]?.label} y={a.closeTargets.base.price}
+                r={5} fill={COLORS.base} stroke="#000" strokeWidth={1.5} ifOverflow="extendDomain" />
             )}
             {a.closeTargets?.bear && (
-              <ReferenceLine
-                y={a.closeTargets.bear.price}
-                stroke="transparent"
-                ifOverflow="extendDomain"
-              >
-                <Label
-                  value={`BEAR CLOSE ~${fmtK(a.closeTargets.bear.price)}  (${a.closeTargets.bear.prob}%)`}
-                  position="right"
-                  offset={8}
-                  fill={COLORS.bear}
-                  fontSize={11}
-                  fontWeight={700}
-                  style={{ fontFamily: "var(--font-mono)" }}
-                />
+              <ReferenceDot x={chartData[chartData.length - 1]?.label} y={a.closeTargets.bear.price}
+                r={5} fill={COLORS.bear} stroke="#000" strokeWidth={1.5} ifOverflow="extendDomain" />
+            )}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+// ─── Levels in play — inline grouped strip (replaces right-edge chart labels) ───
+
+function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
+  const spot = horizon.spot;
+  const a = horizon.audit;
+  const levels = horizon.levels;
+
+  const distPct = (p: number) => {
+    const d = ((p - spot) / spot) * 100;
+    const sign = d >= 0 ? "+" : "";
+    return `${sign}${d.toFixed(2)}%`;
+  };
+
+  type Row = { name: string; price: number; color: string; sub?: string };
+
+  const byKind = (k: string) => levels.find(l => l.kind === k);
+
+  const rows: Row[] = [];
+  const push = (kind: string, name: string, color: string, subKey?: "gex") => {
+    const lv = byKind(kind);
+    if (!lv) return;
+    const sub = subKey === "gex" && lv.gex != null ? `${(Math.abs(lv.gex)/1e6).toFixed(1)}M GEX` : undefined;
+    rows.push({ name, price: lv.price, color, sub });
+  };
+
+  push("t2Up",          "T2 UP",           COLORS.bear);
+  push("t1Up",          "T1 UP",           COLORS.bear);
+  push("strongMag",     "STRONG MAG",      "#14b8a6");
+  push("upsidePivot",   "UPSIDE PIVOT",    COLORS.bull);
+  push("callWall",      "CALL WALL",       COLORS.callWall, "gex");
+  push("dominantMag",   "DOM MAGNET",      "#14b8a6", "gex");
+  push("zeroGamma",     "ZERO-\u0393 FLIP",     COLORS.zeroGamma);
+  push("downsidePivot", "DOWNSIDE PIVOT",  COLORS.bear);
+  push("mopexMaxPain",  "MAX PAIN",        COLORS.amber);
+  push("putWall",       "PUT WALL",        COLORS.callWall, "gex");
+  push("t1Down",        "T1 DOWN",         COLORS.bull);
+  push("t2Down",        "T2 DOWN",         COLORS.bull);
+
+  const above = rows.filter(r => r.price > spot).sort((a, b) => b.price - a.price);
+  const below = rows.filter(r => r.price <= spot).sort((a, b) => b.price - a.price);
+
+  const Chip = ({ r }: { r: Row }) => (
+    <div className="inline-flex items-center gap-1.5 rounded border border-border/40 bg-black/30 px-1.5 py-0.5 font-mono text-[10px]">
+      <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: r.color }} />
+      <span className="text-muted-foreground/80 uppercase tracking-wide">{r.name}</span>
+      <span className="font-semibold text-foreground">{fmtK(r.price)}</span>
+      <span className="text-muted-foreground/60">{distPct(r.price)}</span>
+      {r.sub && <span className="text-muted-foreground/50">· {r.sub}</span>}
+    </div>
+  );
+
+  return (
+    <div className="mt-2 space-y-1 border-t border-border/40 pt-2">
+      <div className="text-[9px] uppercase tracking-widest text-muted-foreground/50 font-mono">
+        Levels in play
+      </div>
+      {above.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="font-mono text-[9px] uppercase tracking-wider text-red-400/70 w-16">Above ↑</span>
+          {above.map((r) => <Chip key={`a-${r.name}-${r.price}`} r={r} />)}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-1">
+        <span className="font-mono text-[9px] uppercase tracking-wider text-amber-400/80 w-16">Spot</span>
+        <div className="inline-flex items-center gap-1.5 rounded border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px]">
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />
+          <span className="font-bold text-amber-300">LIVE {fmtK(spot)}</span>
+        </div>
+        {a.charmZero != null && (
+          <div className="inline-flex items-center gap-1.5 rounded border border-purple-500/40 bg-purple-500/5 px-1.5 py-0.5 font-mono text-[10px]">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-purple-400" />
+            <span className="text-purple-300/80 uppercase tracking-wide">Charm 0</span>
+            <span className="font-semibold text-purple-200">{fmtK(a.charmZero)}</span>
+            <span className="text-purple-400/60">{distPct(a.charmZero)}</span>
+          </div>
+        )}
+        {a.charmZeros && a.charmZeros.length > 0 && a.charmZeros.map((cz, i) => (
+          <div key={`cz-${i}`} className="inline-flex items-center gap-1.5 rounded border border-purple-500/30 bg-purple-500/5 px-1.5 py-0.5 font-mono text-[10px]">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-purple-400/70" />
+            <span className="text-purple-300/70 uppercase tracking-wide">Charm·0</span>
+            <span className="font-semibold text-purple-200/90">{fmtK(cz)}</span>
+          </div>
+        ))}
+      </div>
+      {below.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="font-mono text-[9px] uppercase tracking-wider text-green-400/70 w-16">Below ↓</span>
+          {below.map((r) => <Chip key={`b-${r.name}-${r.price}`} r={r} />)}
+        </div>
+      )}
+
+      {a.closeTargets && (
+        <div className="mt-1 flex flex-wrap items-center gap-1 border-t border-border/20 pt-1">
+          <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60 w-16">Close</span>
+          {a.closeTargets.bull && (
+            <div className="inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 font-mono text-[10px]" style={{ borderColor: `${COLORS.bull}55`, background: `${COLORS.bull}10` }}>
+              <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: COLORS.bull }} />
+              <span className="uppercase tracking-wide" style={{ color: COLORS.bull }}>Bull</span>
+              <span className="font-semibold text-foreground">~{fmtK(a.closeTargets.bull.price)}</span>
+              <span className="text-muted-foreground/70">{a.closeTargets.bull.prob}%</span>
+            </div>
+          )}
+          {a.closeTargets.base && (
+            <div className="inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 font-mono text-[10px]" style={{ borderColor: `${COLORS.base}55`, background: `${COLORS.base}10` }}>
+              <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: COLORS.base }} />
+              <span className="uppercase tracking-wide" style={{ color: COLORS.base }}>Base</span>
+              <span className="font-semibold text-foreground">~{fmtK(a.closeTargets.base.price)}</span>
+              <span className="text-muted-foreground/70">{a.closeTargets.base.prob}%</span>
+            </div>
+          )}
+          {a.closeTargets.bear && (
+            <div className="inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 font-mono text-[10px]" style={{ borderColor: `${COLORS.bear}55`, background: `${COLORS.bear}10` }}>
+              <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: COLORS.bear }} />
+              <span className="uppercase tracking-wide" style={{ color: COLORS.bear }}>Bear</span>
+              <span className="font-semibold text-foreground">~{fmtK(a.closeTargets.bear.price)}</span>
+              <span className="text-muted-foreground/70">{a.closeTargets.bear.prob}%</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Schwab intraday SPX chart ───────────────────────────────────────────────
+
+function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelHorizon }) {
+  const { data, isLoading } = useQuery<{
+    symbol: string; candles: Array<{ t: number; o: number; h: number; l: number; c: number; v: number }>;
+    price?: number; prevClose?: number; change?: number; changePct?: number;
+  }>({
+    queryKey: ["/api/ohlc", symbol, "1D", "5m"],
+    queryFn: async () => {
+      const r = await apiRequest(
+        "GET",
+        `/api/ohlc?symbol=${encodeURIComponent(symbol)}&tf=1D&interval=5m`
+      );
+      return r.json();
+    },
+    refetchInterval: 15_000,
+    staleTime: 10_000,
+  });
+
+  const candles = data?.candles ?? [];
+  const spot = horizon.spot;
+  const prevClose = data?.prevClose;
+
+  const lineData = useMemo(() =>
+    candles.map(c => ({
+      t: c.t,
+      label: new Date(c.t * 1000).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }),
+      price: c.c,
+    })),
+  [candles]);
+
+  const cw = horizon.levels.find(l => l.kind === "callWall")?.price;
+  const pw = horizon.levels.find(l => l.kind === "putWall")?.price;
+  const zg = horizon.levels.find(l => l.kind === "zeroGamma")?.price;
+  const dm = horizon.levels.find(l => l.kind === "dominantMag")?.price;
+
+  const sessionHigh = candles.length ? Math.max(...candles.map(c => c.h)) : spot;
+  const sessionLow = candles.length ? Math.min(...candles.map(c => c.l)) : spot;
+  const yMin = Math.min(sessionLow, prevClose ?? sessionLow, pw ?? sessionLow, zg ?? sessionLow) - 5;
+  const yMax = Math.max(sessionHigh, prevClose ?? sessionHigh, cw ?? sessionHigh, zg ?? sessionHigh) + 5;
+
+  if (isLoading) {
+    return (
+      <div className="flex h-[180px] items-center justify-center border-b border-border/30 bg-black/40 font-mono text-[10px] text-muted-foreground">
+        loading intraday tape...
+      </div>
+    );
+  }
+
+  if (!candles.length) {
+    return (
+      <div className="flex h-[180px] items-center justify-center border-b border-border/30 bg-black/40 font-mono text-[10px] text-muted-foreground">
+        intraday tape unavailable (market closed or Schwab throttled)
+      </div>
+    );
+  }
+
+  const change = data?.change ?? 0;
+  const changePct = data?.changePct ?? 0;
+
+  return (
+    <div className="border-b border-border/30 bg-black/60 p-2">
+      <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 px-1 font-mono text-[9px] text-muted-foreground">
+        <span className="text-amber-400 font-semibold uppercase tracking-widest">SPX Intraday · 5m</span>
+        <span>SCHWAB TAPE</span>
+        {prevClose != null && <span>· PREV {fmtK(prevClose)}</span>}
+        <span>· HI {fmtK(sessionHigh)}</span>
+        <span>· LO {fmtK(sessionLow)}</span>
+        <span className={change >= 0 ? "text-green-400" : "text-red-400"}>
+          · {change >= 0 ? "+" : ""}{change.toFixed(2)} ({changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}%)
+        </span>
+        <span className="text-muted-foreground/50">· dashed lines = dealer levels from model</span>
+      </div>
+      <div className="h-[180px] w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={lineData} margin={{ top: 6, right: 60, left: 4, bottom: 4 }}>
+            <XAxis
+              dataKey="label"
+              stroke="#64748b"
+              tick={{ fontSize: 9, fill: "#64748b" }}
+              tickLine={false}
+              axisLine={{ stroke: "#1e293b" }}
+              interval={"preserveStartEnd"}
+              minTickGap={40}
+            />
+            <YAxis
+              domain={[yMin, yMax]}
+              stroke="#64748b"
+              tick={{ fontSize: 9, fill: "#64748b" }}
+              tickFormatter={(v) => fmtK(v)}
+              width={52}
+              tickLine={false}
+              axisLine={{ stroke: "#1e293b" }}
+            />
+            <Tooltip
+              contentStyle={{
+                background: "rgba(2,6,23,0.97)",
+                border: "1px solid #334155",
+                borderRadius: 4,
+                fontSize: 10,
+                color: "#f1f5f9",
+                fontFamily: "var(--font-mono)",
+              }}
+              formatter={(v: number) => [fmtK(v), "SPX"]}
+            />
+            {prevClose != null && (
+              <ReferenceLine y={prevClose} stroke="#64748b" strokeDasharray="2 4" strokeOpacity={0.6}>
+                <Label value={`PREV ${fmtK(prevClose)}`} position="right" offset={4} fill="#64748b" fontSize={9} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
+            {cw != null && (
+              <ReferenceLine y={cw} stroke={COLORS.callWall} strokeDasharray="4 3" strokeOpacity={0.55} strokeWidth={1}>
+                <Label value={`CW ${fmtK(cw)}`} position="right" offset={4} fill={COLORS.callWall} fontSize={9} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+              </ReferenceLine>
+            )}
+            {zg != null && (
+              <ReferenceLine y={zg} stroke={COLORS.zeroGamma} strokeDasharray="4 3" strokeOpacity={0.55} strokeWidth={1}>
+                <Label value={`0Γ ${fmtK(zg)}`} position="right" offset={4} fill={COLORS.zeroGamma} fontSize={9} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+              </ReferenceLine>
+            )}
+            {dm != null && dm !== cw && dm !== pw && (
+              <ReferenceLine y={dm} stroke="#14b8a6" strokeDasharray="4 3" strokeOpacity={0.45} strokeWidth={1}>
+                <Label value={`DM ${fmtK(dm)}`} position="right" offset={4} fill="#14b8a6" fontSize={9} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+              </ReferenceLine>
+            )}
+            {pw != null && (
+              <ReferenceLine y={pw} stroke={COLORS.putWall} strokeDasharray="4 3" strokeOpacity={0.55} strokeWidth={1}>
+                <Label value={`PW ${fmtK(pw)}`} position="right" offset={4} fill={COLORS.putWall} fontSize={9} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+              </ReferenceLine>
+            )}
+            <Line
+              type="monotone"
+              dataKey="price"
+              stroke="#fcd34d"
+              strokeWidth={1.6}
+              dot={false}
+              activeDot={{ r: 4, fill: "#fcd34d", stroke: "#000", strokeWidth: 1 }}
+              isAnimationActive={false}
+            />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -905,7 +1125,7 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
 
 // ─── Full model view ──────────────────────────────────────────────────────────
 
-function ModelView({ horizon, session }: { horizon: ModelHorizon; session: "live" | "last-close" }) {
+function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; session: "live" | "last-close"; symbol: string }) {
   const a = horizon.audit;
   const timeStr = etTime(a.asOf);
   const probs = a.scenarioProb;
@@ -1019,6 +1239,11 @@ function ModelView({ horizon, session }: { horizon: ModelHorizon; session: "live
         </div>
       )}
 
+      {/* ── Schwab intraday tape (SPX only, daily/weekly views) ── */}
+      {(horizon.horizon === "daily" || horizon.horizon === "weekly") && symbol === "^GSPC" && (
+        <SpxIntradayChart symbol={symbol} horizon={horizon} />
+      )}
+
       {/* ── Audit + chart + rail ── */}
       <div className="flex flex-col gap-0 xl:flex-row">
         {/* Left column: audit + chart + legend */}
@@ -1032,6 +1257,7 @@ function ModelView({ horizon, session }: { horizon: ModelHorizon; session: "live
           <div className="flex gap-0 overflow-hidden">
             <div className="flex-1 min-w-0 p-3">
               <ModelChart horizon={horizon} />
+              <LevelsStrip horizon={horizon} />
               <ScenarioLegend horizon={horizon} />
             </div>
           </div>
@@ -1170,7 +1396,7 @@ export default function ModelsPanel() {
       )}
       {active && (
         <ErrorBoundary label="BATCAVE Model View">
-          <ModelView horizon={active} session={data!.session} />
+          <ModelView horizon={active} session={data!.session} symbol={symbol} />
         </ErrorBoundary>
       )}
 
