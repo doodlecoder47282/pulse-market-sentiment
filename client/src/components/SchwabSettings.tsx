@@ -137,16 +137,28 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
     staleTime: Infinity,
   });
 
+  // Normalize whatever the user pastes into a full redirect URL the server understands.
+  // Accepts: full URL, code= fragment, or raw code string.
+  const normalizeInput = (raw: string): string => {
+    const s = raw.trim();
+    if (!s) return "";
+    if (s.startsWith("http")) return s;
+    if (s.includes("code=")) return `https://127.0.0.1/?${s.replace(/^[?&]/, "")}`;
+    // Assume raw code
+    return `https://127.0.0.1/?code=${encodeURIComponent(s)}`;
+  };
+
   // Connect mutation
   const connectMut = useMutation({
     mutationFn: async (url: string) => {
-      const r = await apiRequest("POST", "/api/schwab/callback", { redirectedUrl: url });
+      const normalized = normalizeInput(url);
+      const r = await apiRequest("POST", "/api/schwab/callback", { redirectedUrl: normalized });
       const data = await r.json();
       if (!r.ok) throw new Error(data.message ?? "Connection failed");
       return data;
     },
     onSuccess: () => {
-      toast({ title: "Schwab connected!", description: "Live market data is now active." });
+      toast({ title: "Schwab connected", description: "Live market data is now active." });
       setRedirectedUrl("");
       setStep("idle");
       queryClient.invalidateQueries({ queryKey: ["/api/schwab/status"] });
@@ -156,6 +168,19 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
       toast({ title: "Connection failed", description: e.message, variant: "destructive" });
     },
   });
+
+  // Auto-submit when a valid-looking URL is pasted
+  useEffect(() => {
+    const s = redirectedUrl.trim();
+    if (!s || connectMut.isPending) return;
+    const looksValid =
+      (s.startsWith("http") && s.includes("code=")) ||
+      (s.includes("code=") && s.length > 10);
+    if (looksValid) {
+      const t = setTimeout(() => connectMut.mutate(s), 250);
+      return () => clearTimeout(t);
+    }
+  }, [redirectedUrl]);
 
   // Disconnect mutation
   const disconnectMut = useMutation({
@@ -183,6 +208,20 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
       return;
     }
     connectMut.mutate(redirectedUrl.trim());
+  };
+
+  const handlePasteFromClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        setRedirectedUrl(text);
+        // effect will auto-submit if valid
+      } else {
+        toast({ title: "Clipboard is empty", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Can't read clipboard", description: "Paste manually into the box below.", variant: "destructive" });
+    }
   };
 
   const formatDuration = (seconds: number): string => {
@@ -316,35 +355,58 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
               </div>
 
               {/* Step 2 */}
-              <div className={`rounded-md border p-3 space-y-2 transition-opacity ${step === "waiting_for_paste" ? "border-amber-500/40 bg-amber-500/5 opacity-100" : "border-border/40 opacity-50"}`}>
-                <div className="flex items-center gap-2">
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-bold">2</span>
-                  <span className="text-xs font-medium">Paste the redirected URL</span>
+              <div className={`rounded-md border p-3 space-y-2 transition-opacity ${step === "waiting_for_paste" ? "border-amber-500/40 bg-amber-500/5 opacity-100" : "border-border/40 opacity-60"}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-bold">2</span>
+                    <span className="text-xs font-medium">Paste anywhere on the page</span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 text-[10px] px-2"
+                    onClick={handlePasteFromClipboard}
+                    disabled={connectMut.isPending}
+                    data-testid="paste-clipboard-btn"
+                  >
+                    Paste from clipboard
+                  </Button>
                 </div>
                 <div className="text-[10px] text-muted-foreground leading-snug">
-                  After logging in and approving access, Schwab will redirect your browser to a URL starting with{" "}
-                  <code className="rounded bg-muted px-1 text-amber-300">https://127.0.0.1/?code=...</code>
-                  {" "}— copy that entire URL and paste it here.
+                  After logging in, Schwab redirects to{" "}
+                  <code className="rounded bg-muted px-1 text-amber-300">https://127.0.0.1/?code=...</code>.{" "}
+                  Paste the full URL, just the code, or <span className="text-foreground">code=...</span> — we'll auto-connect.
                 </div>
                 <Textarea
                   value={redirectedUrl}
                   onChange={(e) => setRedirectedUrl(e.target.value)}
-                  placeholder="https://127.0.0.1/?code=C0...&session=..."
+                  onPaste={(e) => {
+                    // Immediate update from paste event for fastest auto-submit
+                    const text = e.clipboardData?.getData("text") ?? "";
+                    if (text) {
+                      e.preventDefault();
+                      setRedirectedUrl(text);
+                    }
+                  }}
+                  placeholder="Paste URL or code here — auto-connects"
                   className="font-mono text-[10px] resize-none h-16"
                   data-testid="schwab-callback-url-input"
                 />
+                {connectMut.isPending && (
+                  <div className="flex items-center gap-2 text-[10px] text-amber-300">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Connecting to Schwab...
+                  </div>
+                )}
                 <Button
                   size="sm"
-                  className="w-full text-xs"
+                  variant="ghost"
+                  className="w-full text-[10px] h-7"
                   onClick={handleConnect}
                   disabled={connectMut.isPending || !redirectedUrl.trim()}
                   data-testid="complete-connection-btn"
                 >
-                  {connectMut.isPending ? (
-                    <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Connecting...</>
-                  ) : (
-                    "Complete Connection"
-                  )}
+                  {connectMut.isPending ? "Connecting..." : "Connect manually"}
                 </Button>
               </div>
             </div>
