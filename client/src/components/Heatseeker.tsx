@@ -32,6 +32,7 @@ import {
   Legend,
 } from "recharts";
 import { Activity, AlertTriangle, Flame, Target, TrendingDown, TrendingUp } from "lucide-react";
+import LiveOdteTracker from "./LiveOdteTracker";
 
 // ─── User's locked SPX weekly targets (from session context) ───────────────
 const LOCKED_LEVELS: Array<{ value: number; label: string; kind: "upside" | "downside" | "pin" | "vomma" }> = [
@@ -190,6 +191,9 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
 
   return (
     <div className="space-y-5">
+      {/* Live 0DTE tracker card (Schwab feed) */}
+      <LiveOdteTracker />
+
       {/* ── Header strip ──────────────────────────────────────────────── */}
       <Card className="border-primary/20 bg-gradient-to-br from-background to-primary/5">
         <CardContent className="pt-6">

@@ -41,6 +41,10 @@ import { runBackfill, getBacktestSummary } from "./backtest";
 import { buildChainAudit } from "./chainAudit";
 import { buildHeatseeker } from "./heatseeker";
 import { masterAlphaRoute } from "./masterAlpha";
+import {
+  startOdteTracker, getOdteSnapshot, armPosition, disarmPosition,
+  getSparkline, getTracked,
+} from "./odteTracker";
 
 function vm(symbol: string, name: string, last: number | null, prev: number | null): VolMetric {
   const changePct = last != null && prev ? ((last - prev) / prev) * 100 : null;
@@ -1318,6 +1322,59 @@ Sift this feed AND search the web for any critical developments in geopolitics, 
       runBackfill(5).then(r => console.log("[backtest] initial backfill:", r))
                     .catch(e => console.error("[backtest] initial backfill failed:", e?.message || e));
   }, 8_000);
+
+  // ─── 0DTE live tracker ────────────────────────────────────────────────────
+  app.get("/api/odte-tracker", (_req, res) => {
+    try {
+      res.json(getOdteSnapshot());
+    } catch (e: any) {
+      res.status(500).json({ error: "odte_tracker_failed", message: e?.message });
+    }
+  });
+
+  app.get("/api/odte-tracker/sparkline", (req, res) => {
+    try {
+      const key = String(req.query.key || "");
+      const size = Math.max(1, Math.min(50, Number(req.query.size) || 5));
+      if (!key) return res.status(400).json({ error: "missing_key" });
+      res.json({ key, size, bars: getSparkline(key, size) });
+    } catch (e: any) {
+      res.status(500).json({ error: "spark_failed", message: e?.message });
+    }
+  });
+
+  app.post("/api/odte-tracker/arm", (req, res) => {
+    try {
+      const { contractKey, minNotional } = req.body ?? {};
+      if (!contractKey) return res.status(400).json({ error: "missing_contractKey" });
+      const result = armPosition({
+        contractKey: String(contractKey),
+        minNotional: typeof minNotional === "number" ? minNotional : undefined,
+      });
+      if (!result.ok) return res.status(400).json(result);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: "arm_failed", message: e?.message });
+    }
+  });
+
+  app.post("/api/odte-tracker/disarm", (req, res) => {
+    try {
+      const { id } = req.body ?? {};
+      if (!id) return res.status(400).json({ error: "missing_id" });
+      const ok = disarmPosition(String(id));
+      res.json({ ok });
+    } catch (e: any) {
+      res.status(500).json({ error: "disarm_failed", message: e?.message });
+    }
+  });
+
+  app.get("/api/odte-tracker/tracked", (_req, res) => {
+    res.json({ tracked: getTracked() });
+  });
+
+  // Kick off tracker poller
+  startOdteTracker(4_000);
 
   // ─── Start background token refresh cycle ─────────────────────────────────
   startTokenRefreshCycle();
