@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { BatmanLogoFull, BatmanLogoSmall } from "./BatmanLogo";
+import { BatmanLogoFull } from "./BatmanLogo";
 import { motion, AnimatePresence } from "framer-motion";
 
 /* ─── Prop Types ─────────────────────────────────────────────────── */
@@ -29,17 +29,16 @@ const QUOTES = [
 /* ─── Money bill config ──────────────────────────────────────────── */
 interface Bill {
   id: number;
-  x: number;        // % from left
-  delay: number;    // seconds
-  duration: number; // seconds
-  size: number;     // px font-size
-  rotation: number; // initial rotation deg
-  rotationSpeed: number; // spin direction + speed
+  x: number;
+  delay: number;
+  duration: number;
+  size: number;
+  rotation: number;
+  rotationSpeed: number;
   emoji: string;
-  drift: number;    // horizontal drift px
+  drift: number;
 }
 
-/** Pick emoji: 70% 💵, 20% 💰, 10% 💴 */
 function pickEmoji(): string {
   const r = Math.random();
   if (r < 0.70) return "💵";
@@ -54,27 +53,26 @@ function generateBills(count: number): Bill[] {
       id: i,
       x: Math.random() * 100,
       delay: Math.random() * 6,
-      duration: 2.5 + Math.random() * 3,      // 2.5s – 5.5s
-      size: 22 + Math.random() * 26,            // 22px – 48px
-      rotation: Math.random() * 60 - 30,        // -30° to +30°
+      duration: 2.5 + Math.random() * 3,
+      size: 22 + Math.random() * 26,
+      rotation: Math.random() * 60 - 30,
       rotationSpeed: (Math.random() - 0.5) * 720,
       emoji: pickEmoji(),
-      drift: (Math.random() - 0.5) * 120,       // -60px to +60px horizontal drift
+      drift: (Math.random() - 0.5) * 120,
     });
   }
   return bills;
 }
 
-/** Burst wave bills — faster fall, more chaotic */
 function generateBurstBills(count: number, idOffset: number): Bill[] {
   const bills: Bill[] = [];
   for (let i = 0; i < count; i++) {
     bills.push({
       id: idOffset + i,
       x: Math.random() * 100,
-      delay: Math.random() * 0.4,              // tight spawn window
-      duration: 1.2 + Math.random() * 0.6,     // 1.2s – 1.8s (fast)
-      size: 24 + Math.random() * 20,            // 24px – 44px
+      delay: Math.random() * 0.4,
+      duration: 1.2 + Math.random() * 0.6,
+      size: 24 + Math.random() * 20,
       rotation: Math.random() * 90 - 45,
       rotationSpeed: (Math.random() - 0.5) * 1080,
       emoji: pickEmoji(),
@@ -84,44 +82,24 @@ function generateBurstBills(count: number, idOffset: number): Bill[] {
   return bills;
 }
 
-/* ─── Fog blobs ──────────────────────────────────────────────────── */
-function FogBlob({
-  x, y, size, color, duration, delay
-}: { x: string; y: string; size: string; color: string; duration: number; delay: number }) {
-  return (
-    <motion.div
-      className="absolute rounded-full blur-3xl pointer-events-none"
-      style={{
-        left: x,
-        top: y,
-        width: size,
-        height: size,
-        background: color,
-      }}
-      animate={{
-        x: [0, 40, -30, 20, 0],
-        y: [0, -30, 20, -15, 0],
-        scale: [1, 1.15, 0.9, 1.1, 1],
-        opacity: [0.3, 0.5, 0.35, 0.45, 0.3],
-      }}
-      transition={{
-        duration,
-        delay,
-        repeat: Infinity,
-        ease: "easeInOut",
-      }}
-    />
-  );
-}
+/* ─── Cinematic phase enum ───────────────────────────────────────── */
+type Phase =
+  | "atmospheric"   // 0.0 – 0.8s  pure black + rain
+  | "tumbling"      // 0.8 – 2.0s  3D box spinning
+  | "slamming"      // 2.0 – 2.6s  box slams toward camera, logo takes over
+  | "revealing"     // 2.6 – 3.2s  BATCAVE title + subtitle fade in
+  | "ready"         // 3.2s+       button + money rain
+  | "exiting";      // user clicked — exit sequence
 
 /* ─── Main Component ─────────────────────────────────────────────── */
 export default function LaunchSplash({ onExit }: LaunchSplashProps) {
-  /* ── State ── */
+  const [phase, setPhase] = useState<Phase>("atmospheric");
   const [quoteIndex, setQuoteIndex] = useState(0);
   const [quoteVisible, setQuoteVisible] = useState(true);
-  const [exiting, setExiting] = useState(false);
   const [flashActive, setFlashActive] = useState(false);
+  const [shockwaveActive, setShockwaveActive] = useState(false);
   const [billsExploding, setBillsExploding] = useState(false);
+
   const [reducedMotion] = useState(
     () => window.matchMedia("(prefers-reduced-motion: reduce)").matches
   );
@@ -129,17 +107,37 @@ export default function LaunchSplash({ onExit }: LaunchSplashProps) {
 
   const billCount = isMobile ? 60 : 120;
   const [bills] = useState(() => generateBills(billCount));
-  // Burst wave bills — separate layer, starts with id offset to avoid collisions
   const [burstBills, setBurstBills] = useState<Bill[]>([]);
   const burstIdRef = useRef(billCount + 1000);
-
-  const keyPressTimeRef = useRef<number | null>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
   const hasExitedRef = useRef(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
-  /* ── Quote cycling ── */
+  /* ── Cinematic timeline (runs once on mount) ── */
   useEffect(() => {
-    if (reducedMotion) return;
+    if (reducedMotion) {
+      // Skip straight to ready state
+      setPhase("ready");
+      return;
+    }
+
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    timers.push(setTimeout(() => setPhase("tumbling"),  800));
+    timers.push(setTimeout(() => setPhase("slamming"),  2000));
+    timers.push(setTimeout(() => {
+      setShockwaveActive(true);
+      setFlashActive(true);
+      setTimeout(() => setFlashActive(false), 80);
+      setTimeout(() => setShockwaveActive(false), 800);
+    }, 2100));
+    timers.push(setTimeout(() => setPhase("revealing"), 2600));
+    timers.push(setTimeout(() => setPhase("ready"),     3200));
+
+    return () => timers.forEach(clearTimeout);
+  }, [reducedMotion]);
+
+  /* ── Quote cycling (only during ready) ── */
+  useEffect(() => {
+    if (phase !== "ready" || reducedMotion) return;
     const interval = setInterval(() => {
       setQuoteVisible(false);
       setTimeout(() => {
@@ -148,128 +146,364 @@ export default function LaunchSplash({ onExit }: LaunchSplashProps) {
       }, 400);
     }, 2500);
     return () => clearInterval(interval);
-  }, [reducedMotion]);
+  }, [phase, reducedMotion]);
 
-  /* ── Burst wave spawner — every 2 seconds ── */
+  /* ── Money burst wave (only during ready) ── */
   useEffect(() => {
-    if (reducedMotion || exiting) return;
+    if (phase !== "ready" || reducedMotion) return;
     const spawnBurst = () => {
-      const count = 15 + Math.floor(Math.random() * 6); // 15–20 bills
+      const count = 15 + Math.floor(Math.random() * 6);
       const newBills = generateBurstBills(count, burstIdRef.current);
       burstIdRef.current += count + 100;
       setBurstBills(newBills);
-      // Clear burst after animation completes
       setTimeout(() => setBurstBills([]), 2200);
     };
-    // First burst at 0.5s, then every 2s
-    const initial = setTimeout(spawnBurst, 500);
+    const initial = setTimeout(spawnBurst, 300);
     const interval = setInterval(spawnBurst, 2000);
     return () => {
       clearTimeout(initial);
       clearInterval(interval);
     };
-  }, [reducedMotion, exiting]);
+  }, [phase, reducedMotion]);
 
-  /* ── Keyboard handler ── */
+  /* ── Exit sequence ── */
   const triggerExit = useCallback(() => {
     if (hasExitedRef.current) return;
     hasExitedRef.current = true;
-    handleExit();
-  }, []); // eslint-disable-line
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" || e.key === "Enter" || e.key === " ") {
-        // Immediate exit on Escape
-        if (e.key === "Escape") {
-          triggerExit();
-          return;
-        }
-        // Any key after 1s
-        if (keyPressTimeRef.current === null) {
-          keyPressTimeRef.current = Date.now();
-        } else if (Date.now() - keyPressTimeRef.current > 1000) {
-          triggerExit();
-        } else {
-          triggerExit();
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [triggerExit]);
-
-  /* ── Exit sequence ── */
-  function handleExit() {
-    if (exiting) return;
-    setExiting(true);
 
     if (reducedMotion) {
-      // Skip animation entirely
       setTimeout(onExit, 300);
       return;
     }
 
-    // 1. Button pulse already handled by CSS
-    // 2. Bills explode
+    setPhase("exiting");
     setBillsExploding(true);
-    // 3. Flash
     setTimeout(() => setFlashActive(true), 120);
     setTimeout(() => setFlashActive(false), 420);
-    // 4. Fade to black + dissolve
-    // (handled by AnimatePresence exit animation)
-    setTimeout(() => {
-      onExit();
-    }, 1500);
-  }
+    setTimeout(onExit, 1500);
+  }, [reducedMotion, onExit]);
 
-  const handleButtonClick = () => {
-    if (hasExitedRef.current) return;
-    hasExitedRef.current = true;
-    handleExit();
-  };
+  /* ── Skip cinematic on any click/key during non-ready phases ── */
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" || e.key === "Enter" || e.key === " ") {
+        if (phase === "ready" || phase === "exiting") {
+          if (e.key === "Enter" || e.key === "Escape") triggerExit();
+        } else {
+          // Skip cinematic → jump to ready
+          setPhase("ready");
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [phase, triggerExit]);
+
+  const handleSkipOrExit = useCallback(() => {
+    if (phase === "ready") {
+      triggerExit();
+    } else if (phase !== "exiting") {
+      setPhase("ready");
+    }
+  }, [phase, triggerExit]);
+
+  const isReady = phase === "ready";
+  const isExiting = phase === "exiting";
+  const showCube = phase === "tumbling" || phase === "slamming";
+  const showLogoFull = phase === "slamming" || phase === "revealing" || phase === "ready" || phase === "exiting";
+  const showTitle = phase === "revealing" || phase === "ready" || phase === "exiting";
+  const showButton = phase === "ready" || phase === "exiting";
 
   return (
     <AnimatePresence>
-      {!exiting ? (
+      {phase !== "exiting" ? (
         <motion.div
           key="splash"
-          className="fixed inset-0 flex flex-col items-center justify-between overflow-hidden"
-          style={{
-            zIndex: 9999,
-            background: "#000",
-          }}
+          className="fixed inset-0 flex flex-col items-center justify-center overflow-hidden"
+          style={{ zIndex: 9999, background: "#000", cursor: showCube ? "default" : "pointer" }}
           initial={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.8, ease: "easeInOut" }}
+          onClick={handleSkipOrExit}
         >
-          {/* ── Dark fog background ── */}
-          {!reducedMotion && (
-            <div className="absolute inset-0 pointer-events-none overflow-hidden">
-              {/* Fog blobs */}
-              <FogBlob x="10%" y="5%" size="40vw" color="rgba(16, 185, 129, 0.08)" duration={18} delay={0} />
-              <FogBlob x="60%" y="10%" size="35vw" color="rgba(245, 158, 11, 0.07)" duration={22} delay={2} />
-              <FogBlob x="5%" y="50%" size="30vw" color="rgba(16, 185, 129, 0.06)" duration={25} delay={4} />
-              <FogBlob x="65%" y="55%" size="38vw" color="rgba(245, 158, 11, 0.06)" duration={20} delay={1} />
-              <FogBlob x="30%" y="30%" size="25vw" color="rgba(16, 185, 129, 0.05)" duration={30} delay={3} />
-              {/* Center glow */}
-              <div
-                className="absolute rounded-full blur-3xl pointer-events-none"
+          {/* ── Atmospheric background layers ── */}
+          <div className="absolute inset-0 pointer-events-none">
+            {/* Gotham radial vignette — subtle blue/gray glow */}
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                background: "radial-gradient(ellipse 80% 60% at 50% 50%, rgba(30,50,80,0.18) 0%, rgba(10,20,40,0.08) 40%, transparent 70%)",
+              }}
+            />
+            {/* Horizontal fog gradient */}
+            <motion.div
+              style={{
+                position: "absolute",
+                inset: 0,
+                background: "linear-gradient(90deg, rgba(16,185,129,0.03) 0%, rgba(245,158,11,0.04) 50%, rgba(16,185,129,0.03) 100%)",
+                backgroundSize: "200% 100%",
+              }}
+              animate={{ backgroundPosition: ["0% 0%", "100% 0%", "0% 0%"] }}
+              transition={{ duration: 12, repeat: Infinity, ease: "linear" }}
+            />
+            {/* Rain streaks — 40 thin vertical lines */}
+            {!reducedMotion && <RainStreaks />}
+          </div>
+
+          {/* ── Screen flash overlay (slam moment) ── */}
+          <AnimatePresence>
+            {flashActive && (
+              <motion.div
+                key="flash"
+                className="absolute inset-0 pointer-events-none"
+                style={{ background: "#fff", zIndex: 10001 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 0.15 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.08 }}
+              />
+            )}
+          </AnimatePresence>
+
+          {/* ── Shockwave ring (slam moment) ── */}
+          <AnimatePresence>
+            {shockwaveActive && (
+              <motion.div
+                key="shockwave"
+                className="absolute rounded-full pointer-events-none"
                 style={{
                   left: "50%",
                   top: "50%",
-                  transform: "translate(-50%, -50%)",
-                  width: "60vw",
-                  height: "60vh",
-                  background: "radial-gradient(circle, rgba(16,185,129,0.04) 0%, transparent 70%)",
+                  width: 4,
+                  height: 4,
+                  marginLeft: -2,
+                  marginTop: -2,
+                  border: "2px solid rgba(250,204,21,0.6)",
+                  zIndex: 10000,
                 }}
+                initial={{ scale: 0, opacity: 0.8 }}
+                animate={{ scale: 200, opacity: 0 }}
+                exit={{}}
+                transition={{ duration: 0.7, ease: "easeOut" }}
               />
-            </div>
-          )}
+            )}
+          </AnimatePresence>
 
-          {/* ── Falling money bills — main layer ── */}
-          {!reducedMotion && (
+          {/* ── 3D Cube scene ── */}
+          <AnimatePresence>
+            {showCube && !reducedMotion && (
+              <motion.div
+                key="cube-scene"
+                className="absolute"
+                style={{
+                  perspective: "1200px",
+                  perspectiveOrigin: "50% 50%",
+                  width: 280,
+                  height: 280,
+                  left: "50%",
+                  top: "50%",
+                  marginLeft: -140,
+                  marginTop: -140,
+                  zIndex: 20,
+                }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: phase === "slamming" ? 0 : 1 }}
+                exit={{ opacity: 0 }}
+                transition={{
+                  opacity: phase === "slamming"
+                    ? { duration: 0.4, delay: 0.15 }
+                    : { duration: 0.1 }
+                }}
+              >
+                <CSSCube phase={phase} />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* ── Batman logo full-screen reveal ── */}
+          <AnimatePresence>
+            {showLogoFull && (
+              <motion.div
+                key="batman-logo-full"
+                className="absolute flex items-center justify-center"
+                style={{
+                  left: "50%",
+                  top: isReady || showTitle ? "18%" : "50%",
+                  transform: "translateX(-50%)",
+                  zIndex: 30,
+                }}
+                initial={{ opacity: 0, scale: 0.4 }}
+                animate={{
+                  opacity: 1,
+                  scale: 1,
+                  top: isReady || showTitle ? "18%" : "50%",
+                }}
+                exit={{ opacity: 0, scale: 0.8 }}
+                transition={{ duration: 0.5, ease: [0.19, 1, 0.22, 1] }}
+              >
+                <BatmanLogoFull
+                  className={`drop-shadow-[0_0_40px_rgba(250,204,21,0.9)] ${
+                    isReady ? "w-48 sm:w-72" : "w-56 sm:w-80"
+                  }`}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* ── BATCAVE title + subtitle ── */}
+          <AnimatePresence>
+            {showTitle && (
+              <motion.div
+                key="batcave-title"
+                className="absolute flex flex-col items-center"
+                style={{
+                  left: "50%",
+                  top: "50%",
+                  transform: "translateX(-50%)",
+                  zIndex: 30,
+                  marginTop: -20,
+                  textAlign: "center",
+                  whiteSpace: "nowrap",
+                }}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.5, ease: "easeOut" }}
+              >
+                <motion.h1
+                  className="text-5xl sm:text-7xl font-black tracking-widest text-amber-400"
+                  style={{
+                    fontFamily: "'Bebas Neue', 'Impact', sans-serif",
+                    textShadow: "0 0 40px rgba(245,158,11,0.5), 0 0 80px rgba(245,158,11,0.25)",
+                    letterSpacing: "0.2em",
+                  }}
+                  initial={{ opacity: 0, scale: 0.85 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.5, delay: 0.1, ease: "backOut" }}
+                >
+                  BATCAVE
+                </motion.h1>
+                <motion.p
+                  className="mt-1 text-[10px] sm:text-sm tracking-[0.3em] sm:tracking-[0.4em] text-amber-400/50 font-mono uppercase"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.3, duration: 0.5 }}
+                >
+                  Market Intelligence Terminal
+                </motion.p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* ── Rotating quote (ready state only) ── */}
+          <AnimatePresence>
+            {isReady && (
+              <motion.div
+                key="quote-area"
+                className="absolute flex flex-col items-center px-8 sm:px-16 max-w-2xl w-full"
+                style={{ zIndex: 30, top: "65%", left: "50%", transform: "translateX(-50%)" }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.5, delay: 0.2 }}
+              >
+                <div className="w-16 h-px bg-amber-500/30 mb-4" />
+                <div className="min-h-[3.5rem] flex items-center justify-center text-center">
+                  <AnimatePresence mode="wait">
+                    <motion.p
+                      key={quoteIndex}
+                      className="text-sm sm:text-base font-mono text-white/70 italic tracking-wide leading-relaxed"
+                      style={{
+                        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                        textShadow: "0 0 20px rgba(16,185,129,0.15)",
+                      }}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: quoteVisible ? 1 : 0, y: quoteVisible ? 0 : -8 }}
+                      exit={{ opacity: 0, y: -8 }}
+                      transition={{ duration: 0.35, ease: "easeInOut" }}
+                    >
+                      &ldquo;{QUOTES[quoteIndex]}&rdquo;
+                    </motion.p>
+                  </AnimatePresence>
+                </div>
+                <div className="w-16 h-px bg-amber-500/30 mt-4" />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* ── CTA button (ready state only) ── */}
+          <AnimatePresence>
+            {showButton && (
+              <motion.div
+                key="cta-area"
+                className="absolute flex flex-col items-center"
+                style={{ zIndex: 30, bottom: "8%", left: "50%", transform: "translateX(-50%)", whiteSpace: "nowrap" }}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.5, delay: 0.3 }}
+              >
+                <motion.p
+                  className="text-xs text-white/25 font-mono tracking-widest mb-5 uppercase"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.5, duration: 0.5 }}
+                >
+                  Press Enter or click to continue
+                </motion.p>
+                <motion.button
+                  ref={buttonRef}
+                  data-testid="button-launch-batcave"
+                  aria-label="Launch BATCAVE"
+                  onClick={(e) => { e.stopPropagation(); triggerExit(); }}
+                  className="relative overflow-hidden font-black uppercase tracking-widest text-black cursor-pointer select-none"
+                  style={{
+                    background: "#10b981",
+                    fontSize: "clamp(0.85rem, 2.5vw, 1.25rem)",
+                    padding: "clamp(1rem, 3vw, 1.5rem) clamp(1.5rem, 6vw, 3rem)",
+                    borderRadius: "0.5rem",
+                    border: "none",
+                    fontFamily: "'Bebas Neue', 'Impact', sans-serif",
+                    letterSpacing: "0.12em",
+                    boxShadow: "0 0 30px rgba(16,185,129,0.4), 0 0 60px rgba(16,185,129,0.15)",
+                  }}
+                  whileHover={{
+                    scale: 1.04,
+                    boxShadow: "0 0 50px rgba(16,185,129,0.7), 0 0 100px rgba(16,185,129,0.3)",
+                  }}
+                  whileTap={{ scale: 1.15 }}
+                  animate={{
+                    scale: [1, 1.03, 1],
+                    boxShadow: [
+                      "0 0 30px rgba(16,185,129,0.4), 0 0 60px rgba(16,185,129,0.15)",
+                      "0 0 45px rgba(16,185,129,0.6), 0 0 80px rgba(16,185,129,0.25)",
+                      "0 0 30px rgba(16,185,129,0.4), 0 0 60px rgba(16,185,129,0.15)",
+                    ],
+                  }}
+                  transition={{
+                    scale: { duration: 2, repeat: Infinity, ease: "easeInOut" },
+                    boxShadow: { duration: 2, repeat: Infinity, ease: "easeInOut" },
+                  }}
+                >
+                  {/* Button shimmer */}
+                  <motion.div
+                    className="absolute inset-0 pointer-events-none"
+                    style={{
+                      background: "linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.25) 50%, transparent 60%)",
+                      backgroundSize: "200% 100%",
+                    }}
+                    animate={{ backgroundPosition: ["200% 0", "-200% 0"] }}
+                    transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+                  />
+                  ARE YOU READY TO FUCKING PRINT
+                </motion.button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* ── Falling money bills — only in ready state ── */}
+          {isReady && !reducedMotion && (
             <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
               {bills.map((bill) => (
                 <FallingBill
@@ -282,7 +516,7 @@ export default function LaunchSplash({ onExit }: LaunchSplashProps) {
           )}
 
           {/* ── Burst wave layer ── */}
-          {!reducedMotion && burstBills.length > 0 && (
+          {isReady && !reducedMotion && burstBills.length > 0 && (
             <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
               {burstBills.map((bill) => (
                 <BurstBill key={bill.id} bill={bill} />
@@ -290,151 +524,18 @@ export default function LaunchSplash({ onExit }: LaunchSplashProps) {
             </div>
           )}
 
-          {/* ── Flash overlay ── */}
-          <AnimatePresence>
-            {flashActive && (
-              <motion.div
-                key="flash"
-                className="absolute inset-0 pointer-events-none"
-                style={{ background: "#10b981", zIndex: 10000 }}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 0.6 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.15 }}
-              />
-            )}
-          </AnimatePresence>
-
-          {/* ── TOP: Logo ── */}
-          <motion.div
-            className="flex flex-col items-center pt-8 sm:pt-16"
-            initial={{ opacity: 0, y: -30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.7, ease: "easeOut" }}
-            style={{ zIndex: 10 }}
-          >
-            {/* Movie bat logo — big, amber with glow */}
-            <BatmanLogoFull className="w-48 sm:w-72 drop-shadow-[0_0_32px_rgba(250,204,21,0.8)]" />
-            <motion.h1
-              className="mt-4 text-5xl sm:text-7xl font-black tracking-widest text-amber-400"
-              style={{
-                fontFamily: "'Bebas Neue', 'Impact', sans-serif",
-                textShadow: "0 0 40px rgba(245,158,11,0.5), 0 0 80px rgba(245,158,11,0.25)",
-                letterSpacing: "0.2em",
-              }}
-              initial={{ opacity: 0, scale: 0.85 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.6, delay: 0.2, ease: "backOut" }}
-            >
-              BATCAVE
-            </motion.h1>
-            <motion.p
-              className="mt-1 text-[10px] sm:text-sm tracking-[0.3em] sm:tracking-[0.4em] text-amber-400/50 font-mono uppercase px-4 text-center"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.5, duration: 0.5 }}
-            >
-              Market Intelligence Terminal
-            </motion.p>
-          </motion.div>
-
-          {/* ── MIDDLE: Rotating quote ── */}
-          <motion.div
-            className="flex flex-col items-center px-8 sm:px-16 max-w-2xl w-full"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.4, duration: 0.5 }}
-            style={{ zIndex: 10 }}
-          >
-            <div className="w-16 h-px bg-amber-500/30 mb-6" />
-            <div className="min-h-[4rem] flex items-center justify-center text-center">
-              <AnimatePresence mode="wait">
-                <motion.p
-                  key={quoteIndex}
-                  className="text-base sm:text-lg font-mono text-white/70 italic tracking-wide leading-relaxed"
-                  style={{
-                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                    textShadow: "0 0 20px rgba(16,185,129,0.15)",
-                  }}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  transition={{ duration: 0.35, ease: "easeInOut" }}
-                >
-                  "{QUOTES[quoteIndex]}"
-                </motion.p>
-              </AnimatePresence>
-            </div>
-            <div className="w-16 h-px bg-amber-500/30 mt-6" />
-          </motion.div>
-
-          {/* ── BOTTOM: CTA button ── */}
-          <motion.div
-            className="flex flex-col items-center pb-8 sm:pb-16"
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.6, duration: 0.6, ease: "easeOut" }}
-            style={{ zIndex: 10 }}
-          >
-            <motion.p
-              className="text-xs text-white/25 font-mono tracking-widest mb-6 uppercase"
+          {/* ── Skip hint during cinematic ── */}
+          {!isReady && !isExiting && (
+            <motion.div
+              className="absolute bottom-6 text-white/20 text-[10px] font-mono tracking-widest uppercase select-none pointer-events-none"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 1, duration: 0.5 }}
+              style={{ zIndex: 50 }}
             >
-              Press Enter or click to continue
-            </motion.p>
-            <motion.button
-              ref={buttonRef}
-              data-testid="button-launch-batcave"
-              aria-label="Launch BATCAVE"
-              onClick={handleButtonClick}
-              className="relative overflow-hidden font-black uppercase tracking-widest text-black cursor-pointer select-none"
-              style={{
-                background: "#10b981",
-                fontSize: "clamp(0.85rem, 2.5vw, 1.25rem)",
-                padding: "clamp(1rem, 3vw, 1.5rem) clamp(1.5rem, 6vw, 3rem)",
-                borderRadius: "0.5rem",
-                border: "none",
-                fontFamily: "'Bebas Neue', 'Impact', sans-serif",
-                letterSpacing: "0.12em",
-                boxShadow: "0 0 30px rgba(16,185,129,0.4), 0 0 60px rgba(16,185,129,0.15)",
-              }}
-              whileHover={{
-                scale: 1.04,
-                boxShadow: "0 0 50px rgba(16,185,129,0.7), 0 0 100px rgba(16,185,129,0.3)",
-              }}
-              whileTap={{ scale: 1.15 }}
-              animate={
-                !exiting
-                  ? {
-                      scale: [1, 1.03, 1],
-                      boxShadow: [
-                        "0 0 30px rgba(16,185,129,0.4), 0 0 60px rgba(16,185,129,0.15)",
-                        "0 0 45px rgba(16,185,129,0.6), 0 0 80px rgba(16,185,129,0.25)",
-                        "0 0 30px rgba(16,185,129,0.4), 0 0 60px rgba(16,185,129,0.15)",
-                      ],
-                    }
-                  : {}
-              }
-              transition={{
-                scale: { duration: 2, repeat: Infinity, ease: "easeInOut" },
-                boxShadow: { duration: 2, repeat: Infinity, ease: "easeInOut" },
-              }}
-            >
-              {/* Button shimmer */}
-              <motion.div
-                className="absolute inset-0 pointer-events-none"
-                style={{
-                  background: "linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.25) 50%, transparent 60%)",
-                  backgroundSize: "200% 100%",
-                }}
-                animate={{ backgroundPosition: ["200% 0", "-200% 0"] }}
-                transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
-              />
-              ARE YOU READY TO FUCKING PRINT
-            </motion.button>
-          </motion.div>
+              Click or press any key to skip
+            </motion.div>
+          )}
         </motion.div>
       ) : (
         /* ── Exit fade-to-black ── */
@@ -448,6 +549,169 @@ export default function LaunchSplash({ onExit }: LaunchSplashProps) {
         />
       )}
     </AnimatePresence>
+  );
+}
+
+/* ─── Rain Streaks ───────────────────────────────────────────────── */
+function RainStreaks() {
+  const streaks = Array.from({ length: 40 }, (_, i) => ({
+    id: i,
+    left: `${(i / 40) * 100 + Math.random() * 2.5}%`,
+    height: `${40 + Math.random() * 60}px`,
+    delay: `${Math.random() * 3}s`,
+    duration: `${0.4 + Math.random() * 0.6}s`,
+    opacity: 0.04 + Math.random() * 0.08,
+  }));
+
+  return (
+    <div className="absolute inset-0 overflow-hidden pointer-events-none">
+      <style>{`
+        @keyframes rain-fall {
+          0% { transform: translateY(-100px); opacity: var(--rain-opacity); }
+          80% { opacity: var(--rain-opacity); }
+          100% { transform: translateY(110vh); opacity: 0; }
+        }
+      `}</style>
+      {streaks.map((s) => (
+        <div
+          key={s.id}
+          style={{
+            position: "absolute",
+            left: s.left,
+            top: 0,
+            width: "1px",
+            height: s.height,
+            background: "linear-gradient(to bottom, transparent, rgba(150,180,220,0.7), transparent)",
+            animation: `rain-fall ${s.duration} linear ${s.delay} infinite`,
+            "--rain-opacity": s.opacity,
+          } as React.CSSProperties}
+        />
+      ))}
+    </div>
+  );
+}
+
+/* ─── 3D CSS Cube ────────────────────────────────────────────────── */
+function CSSCube({ phase }: { phase: Phase }) {
+  return (
+    <>
+      <style>{`
+        .batcave-cube-wrapper {
+          transform-style: preserve-3d;
+          width: 280px;
+          height: 280px;
+          position: relative;
+          transform-origin: center center;
+        }
+
+        .batcave-cube-wrapper.phase-tumbling {
+          animation: cubeTumble 1.2s cubic-bezier(0.19, 1, 0.22, 1) forwards;
+        }
+
+        .batcave-cube-wrapper.phase-slamming {
+          animation: cubeSlam 0.5s cubic-bezier(0.19, 1, 0.22, 1) forwards;
+        }
+
+        @keyframes cubeTumble {
+          0% {
+            transform: scale(0.6) rotateX(0deg) rotateY(0deg) rotateZ(0deg);
+            opacity: 0;
+          }
+          15% { opacity: 1; }
+          100% {
+            transform: scale(1.0) rotateX(360deg) rotateY(720deg) rotateZ(0deg);
+            opacity: 1;
+          }
+        }
+
+        @keyframes cubeSlam {
+          0% {
+            transform: scale(1.0) rotateX(360deg) rotateY(720deg) rotateZ(0deg);
+            opacity: 1;
+          }
+          60% {
+            transform: scale(1.8) rotateX(360deg) rotateY(720deg) rotateZ(0deg);
+            opacity: 0.9;
+          }
+          100% {
+            transform: scale(2.5) rotateX(360deg) rotateY(720deg) rotateZ(0deg);
+            opacity: 0;
+          }
+        }
+
+        .cube-face {
+          position: absolute;
+          width: 280px;
+          height: 280px;
+          backface-visibility: hidden;
+          border: 1px solid rgba(250, 204, 21, 0.15);
+          background: #050505;
+          overflow: hidden;
+        }
+
+        .cube-face::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(135deg, rgba(250,204,21,0.06) 0%, transparent 50%, rgba(250,204,21,0.03) 100%);
+          pointer-events: none;
+        }
+
+        /* Chrome rim on edges */
+        .cube-face::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          box-shadow: inset 0 0 20px rgba(255,255,255,0.04), inset 1px 1px 0 rgba(255,255,255,0.08), inset -1px -1px 0 rgba(0,0,0,0.5);
+          pointer-events: none;
+        }
+
+        .cube-face.front  { transform: translateZ(140px); background: #060606; }
+        .cube-face.back   { transform: rotateY(180deg) translateZ(140px); }
+        .cube-face.right  { transform: rotateY(90deg) translateZ(140px); }
+        .cube-face.left   { transform: rotateY(-90deg) translateZ(140px); }
+        .cube-face.top    { transform: rotateX(90deg) translateZ(140px); }
+        .cube-face.bottom { transform: rotateX(-90deg) translateZ(140px); }
+
+        /* Tech-line texture on side faces */
+        .cube-face.right::before,
+        .cube-face.left::before,
+        .cube-face.top::before,
+        .cube-face.bottom::before {
+          background:
+            repeating-linear-gradient(
+              0deg,
+              transparent,
+              transparent 18px,
+              rgba(250,204,21,0.04) 18px,
+              rgba(250,204,21,0.04) 19px
+            ),
+            repeating-linear-gradient(
+              90deg,
+              transparent,
+              transparent 18px,
+              rgba(250,204,21,0.03) 18px,
+              rgba(250,204,21,0.03) 19px
+            );
+        }
+      `}</style>
+
+      <div className={`batcave-cube-wrapper phase-${phase}`}>
+        {/* Front face: Batman logo */}
+        <div className="cube-face front flex items-center justify-center">
+          <BatmanLogoFull className="w-48 drop-shadow-[0_0_24px_rgba(250,204,21,0.7)]" />
+        </div>
+        {/* Back face: also Batman */}
+        <div className="cube-face back flex items-center justify-center">
+          <BatmanLogoFull className="w-48 drop-shadow-[0_0_16px_rgba(250,204,21,0.4)]" />
+        </div>
+        {/* Side faces: matte tech grid */}
+        <div className="cube-face right" />
+        <div className="cube-face left" />
+        <div className="cube-face top" />
+        <div className="cube-face bottom" />
+      </div>
+    </>
   );
 }
 
@@ -511,7 +775,7 @@ function FallingBill({ bill, exploding }: FallingBillProps) {
   );
 }
 
-/* ─── Burst Bill Sub-component (fast burst wave) ─────────────────── */
+/* ─── Burst Bill Sub-component ───────────────────────────────────── */
 function BurstBill({ bill }: { bill: Bill }) {
   return (
     <motion.div

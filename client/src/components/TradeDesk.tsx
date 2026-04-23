@@ -21,8 +21,13 @@ import {
 import {
   Activity, Target, Zap, Gauge as GaugeIcon, TrendingUp, TrendingDown,
   AlertTriangle, Crosshair, LineChart as LineIcon, ChevronDown, ChevronUp,
-  Copy, Check,
+  Copy, Check, HelpCircle,
 } from "lucide-react";
+import {
+  Tooltip as UITooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -1090,10 +1095,28 @@ function GammaMapCard({ gammaMap, spot }: { gammaMap: GammaMap; spot: number | n
   );
 }
 
+const GAMMA_TILE_TOOLTIPS: Record<string, string> = {
+  "Net GEX": "Net Gamma Exposure: total dealer gamma in dollars per 1% SPX move. Positive = mean-reversion regime; negative = trend/breakout regime.",
+  "Zero-γ Flip": "Zero Gamma level: price where dealer net gamma crosses zero. Below this = negative gamma (moves amplify); above = positive gamma (moves dampen).",
+  "Spot Δ to Flip": "Distance in points from current SPX spot to the Zero Gamma flip level. Smaller = closer to regime change.",
+  "Regime": "Gamma regime based on current dealer positioning. Positive γ = stabilizing, mean-reversion. Negative γ = amplifying, trend-following.",
+};
+
 function GammaTile({ label, value, valueClass }: { label: string; value: React.ReactNode; valueClass?: string }) {
+  const tip = GAMMA_TILE_TOOLTIPS[label];
   return (
     <div className="rounded-sm border border-border bg-card/30 px-3 py-2">
-      <div className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="flex items-center gap-0.5 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {label}
+        {tip && (
+          <UITooltip>
+            <TooltipTrigger asChild>
+              <HelpCircle className="h-2 w-2 text-muted-foreground/40 cursor-help" />
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-xs text-xs">{tip}</TooltipContent>
+          </UITooltip>
+        )}
+      </div>
       <div className={`mt-0.5 ${valueClass ?? ""}`}>{value}</div>
     </div>
   );
@@ -1327,11 +1350,41 @@ function ModelOutputPanel({
   );
 }
 
+// ─── Tooltip definitions for EOD Play Maker fields ───────────────────────────
+const FIELD_TOOLTIPS: Record<string, string> = {
+  "Q-Score": "Quantitative composite sentiment score (0–100). <30 = Pinned/fear, 30–60 = Mixed, >60 = Fragile/greed. Weights VIX, gamma, PCR, term structure, social, and Fear & Greed.",
+  "Total GEX ($B)": "Total Gamma Exposure in billions. Dealer gamma in dollars per 1% move. Positive = dealers long gamma (stabilizing, mean-reversion). Negative = short gamma (amplifying, breakout).",
+  "Call Wall": "Strike with the largest positive gamma concentration (call OI). Dealers sell rallies above this level — acts as a ceiling or resistance zone.",
+  "Put Wall": "Strike with the largest negative gamma concentration (put OI). Dealers buy dips below this level — acts as a floor or support zone.",
+  "Zero Gamma": "The price level where net dealer gamma flips from positive to negative. Above = positive gamma (dampened moves); below = negative gamma (amplified moves).",
+  "HVL": "High Volatility Level: the strike where volatility positioning peaks. Price near HVL = choppy, high-vol conditions. Good reference for intraday range expectations.",
+  "Gamma Flip": "Price at which cumulative per-strike GEX flips sign — similar to Zero Gamma but uses the crossover centroid method. Regime boundary for positioning.",
+  "MOPEX": "Monthly OPEX strike: the max-pain level for the nearest monthly expiration. Price gravitates toward this level as expiry approaches due to dealer delta hedging.",
+  "Vanna": "Vanna exposure level: rate of change of delta with respect to vol (dΔ/dσ). Rising vol = dealers buy delta above Vanna strike; falling vol = they sell. Amplifies vol-driven moves.",
+  "Zomma": "Zomma level: rate of change of gamma with respect to vol (dΓ/dσ). High zomma = gamma changes significantly when vol moves. Used to anticipate dealer re-hedging flows.",
+  "Charm": "Charm (delta decay) level: rate of change of delta over time (dΔ/dt). Increases near expiry. Dealers must re-hedge as time passes — drives directional flows into close.",
+  "1D IV %": "Implied daily move derived from the nearest-expiry options chain. The market's priced-in ±1 standard deviation range for the session.",
+};
+
 // ─── EOD Play Maker form field helper ─────────────────────────────────────
 function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
+  const tip = FIELD_TOOLTIPS[label];
+  const labelEl = (
+    <span className="flex items-center gap-0.5 w-28 shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      {label}
+      {tip && (
+        <UITooltip>
+          <TooltipTrigger asChild>
+            <HelpCircle className="h-2.5 w-2.5 text-muted-foreground/40 cursor-help" />
+          </TooltipTrigger>
+          <TooltipContent side="left" className="max-w-xs text-xs">{tip}</TooltipContent>
+        </UITooltip>
+      )}
+    </span>
+  );
   return (
     <div className="flex items-center gap-2">
-      <span className="w-28 shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
+      {labelEl}
       <div className="flex-1">{children}</div>
     </div>
   );

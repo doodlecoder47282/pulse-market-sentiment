@@ -1,208 +1,141 @@
-# BATCAVE · Pulse Market Intelligence Terminal
+# Pulse — Market Intelligence Terminal (BATCAVE)
 
-> Institutional-grade market intelligence terminal — live options flow with Schwab integration, gamma levels, regime detection, dealer positioning, seasonality analysis, and AI-powered EOD setups.
+Pulse is an institutional-grade market intelligence terminal built for active equity and options traders. It aggregates live options flow, dealer gamma exposure, volatility term structure, regime detection, seasonality research, and AI-powered end-of-day trade setups into a single dark-mode dashboard with direct Charles Schwab integration.
 
----
-
-## Overview
-
-BATCAVE is a full-stack market intelligence dashboard built for serious traders. It combines live market data (via Charles Schwab API), options flow analytics, gamma/dealer positioning models, sector correlation analysis, AI-powered trade setups, and curated market commentary into a single terminal.
-
-### Tabs (locked order)
-
-| Tab | Description |
-|-----|-------------|
-| **Signals** | Put/Call Flow Ratio, Flow Alerts (Schwab live), Index PCR, Mag 7 ratio |
-| **Chart** | Interactive price chart with technical overlays |
-| **Models** | BATCAVE Daily Model — SPX gamma levels, pivot zones, dealer positioning |
-| **Trade Desk** | AI-powered EOD trade setups and intraday scenarios |
-| **Regime** | Market regime detection, sector correlation constellation |
-| **News** | Curated market news with sentiment scoring |
-| **Voices** | Curated commentary from top traders and analysts |
-| **Take Five** | 5-minute briefings — macro themes and key levels |
-
----
-
-## Stack
-
-- **Frontend**: React 18, TypeScript, Vite, Tailwind CSS v3, shadcn/ui, TanStack Query v5, Framer Motion, Recharts
-- **Backend**: Express.js, SQLite (via Drizzle ORM), `tsx` for dev, `esbuild` for prod
-- **Data**: Charles Schwab API (live quotes, option chains), Yahoo Finance (fallback), CBOE (PCR)
-- **Fonts**: Bebas Neue (display), DM Sans (body), JetBrains Mono (data), Inter (UI)
+**Core features:** Signals tab (composite sentiment gauge, dealer gamma structure, VIX term structure, social chatter, Fear & Greed), Chart tab (live candlestick with gamma level overlays), Models BATCAVE (AI model runners), Trade Desk (EOD Play Maker with AI narrative, gamma map, pivot table, squeeze detector), Regime (seasonality research + dark knight bat levels), News (ALPHA AI briefing), Voices (trader commentary), Take Five (rapid-fire analysis).
 
 ---
 
 ## Quick Start
 
-### Prerequisites
-- Node.js 20+
-- A Charles Schwab developer account (optional — Yahoo Finance fallback active when not connected)
-
-### Install & Run
-
 ```bash
-git clone <repo>
+git clone https://github.com/tankanthony6/sentiment-app.git
 cd sentiment-app
 npm install
+npm run dev
+```
 
-# Create environment file (copy example and fill in your values)
-cp .env.local.example .env.local
-# Edit .env.local with your Schwab credentials
+The app starts at `http://localhost:5000`. The backend (Express) and frontend (Vite/React) run on the same port.
 
-# Development
-npm run dev          # Vite dev server + Express on port 5000
+---
 
-# Production
-npm run build        # Build client + server bundles
+## Connecting Charles Schwab (Live Options Flow)
+
+The app supports live options flow data via the Schwab Individual Developer API.
+
+### Step 1 — Create a Schwab developer app
+
+1. Go to [developer.schwab.com](https://developer.schwab.com) and sign in with your Schwab brokerage account.
+2. Click **Create App** and fill in:
+   - **App Name**: anything (e.g. "Pulse Terminal")
+   - **Callback URL**: `http://localhost:5000/api/schwab/callback`
+   - **Order Execution**: not required — select read-only access only
+3. After approval (can take 1–3 business days), note your **App Key** (client ID) and **App Secret**.
+
+### Step 2 — Add credentials to `.env.local`
+
+Create `/home/user/workspace/sentiment-app/.env.local` (never committed):
+
+```env
+SCHWAB_CLIENT_ID=your_app_key_here
+SCHWAB_CLIENT_SECRET=your_app_secret_here
+SCHWAB_REDIRECT_URI=http://localhost:5000/api/schwab/callback
+```
+
+### Step 3 — Authorize in the app
+
+1. Start the dev server: `npm run dev`
+2. Open the dashboard and click the **YAHOO** / **SCHWAB** status pill in the header (top right).
+3. In the Settings dialog, click **Connect Schwab**.
+4. You'll be redirected to Schwab's OAuth page — log in and approve.
+5. The pill turns green (**SCHWAB LIVE**) once connected. Tokens auto-refresh.
+
+---
+
+## Connecting AI Models (EOD Play Maker + ALPHA)
+
+The **EOD Play Maker** (Trade Desk tab) and **ALPHA** (News tab) use LLM APIs to generate trade narratives and news briefings.
+
+### Required API keys
+
+Add to `.env.local`:
+
+```env
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+> **Note for Perplexity Computer deployments:** API credentials are injected automatically via the `api_credentials=["llm-api:website"]` preset — you do not need to provide keys manually. For standalone deployments outside Perplexity Computer, you will need your own OpenAI and Anthropic API keys as shown above.
+
+---
+
+## Environment Variables Reference
+
+| Variable | Required | Description |
+|---|---|---|
+| `SCHWAB_CLIENT_ID` | Optional | Schwab app key (enables live flow) |
+| `SCHWAB_CLIENT_SECRET` | Optional | Schwab app secret |
+| `SCHWAB_REDIRECT_URI` | Optional | OAuth callback URL |
+| `OPENAI_API_KEY` | Optional | OpenAI key (EOD Play Maker, ALPHA) |
+| `ANTHROPIC_API_KEY` | Optional | Anthropic key (EOD Play Maker, ALPHA) |
+
+The app runs fully without any of these — it falls back to Yahoo Finance for quote data and disables AI features.
+
+---
+
+## Running Locally
+
+```bash
+npm run dev        # Development — hot reload, Vite dev server on port 5000
+npm run build      # Production build → dist/
+npm run check      # TypeScript type check
+```
+
+---
+
+## Deploying
+
+### Static + backend (recommended)
+
+The backend runs Express on port 5000. Build and serve:
+
+```bash
+npm run build
 NODE_ENV=production node dist/index.cjs
 ```
 
-The app runs on **http://localhost:5000**.
+Set all environment variables in your hosting environment. The `dist/public` directory contains the compiled frontend.
 
----
+### Docker (optional)
 
-## Environment Variables
-
-Copy `.env.local.example` to `.env.local` and configure:
-
-```env
-SCHWAB_CLIENT_ID=your_schwab_client_id
-SCHWAB_CLIENT_SECRET=your_schwab_client_secret
-SCHWAB_REDIRECT_URI=https://127.0.0.1
+```dockerfile
+FROM node:20-slim
+WORKDIR /app
+COPY . .
+RUN npm ci && npm run build
+ENV NODE_ENV=production
+CMD ["node", "dist/index.cjs"]
+EXPOSE 5000
 ```
-
-> `.env.local` is gitignored and never committed. Credentials are stored only locally.
-
-### Obtaining Schwab API Credentials
-
-1. Register at [developer.schwab.com](https://developer.schwab.com)
-2. Create a new app — set the redirect URI to `https://127.0.0.1`
-3. Copy the Client ID and Client Secret into `.env.local`
-
----
-
-## Schwab Integration
-
-### OAuth Flow
-
-Connect via the **Settings** dialog (gear icon in top-right header):
-
-1. Click **Open Schwab Login** — this opens the Schwab OAuth authorization page
-2. Log in and approve access
-3. You'll be redirected to `https://127.0.0.1/?code=...&session=...`
-4. Copy the **full redirect URL** and paste it into the Settings dialog
-5. Click **Complete Connection**
-
-The access token is stored in the local SQLite database (`data.db`) and auto-refreshes every 20 minutes. Tokens expire after 30 minutes; refresh tokens last 7 days.
-
-### Data Sources
-
-| Feature | Schwab Connected | Schwab Disconnected |
-|---------|-----------------|---------------------|
-| Quotes (SPY, VIX, indices) | Schwab LIVE | Yahoo Finance (delayed) |
-| Price History (charts) | Schwab LIVE | Yahoo Finance (delayed) |
-| Option Chains (flow alerts) | Schwab LIVE | **Not available** |
-| Gamma Levels (models) | Schwab LIVE | Yahoo Finance (delayed) |
-
-### Flow Alert Types
-
-When Schwab is connected, the Flow Alerts subsystem polls option chains every 30 seconds and flags:
-
-| Alert | Trigger |
-|-------|---------|
-| `UNUSUAL_VOL` | Volume > 3× open interest on any strike |
-| `BLOCK` | Single contract with premium > $1M notional |
-| `MAGNET` | Price within 0.5% of highest OI strike |
-| `PC_SHIFT` | 5-minute P/C ratio moves >20% |
-| `WALL` | Identified call/put wall formation |
 
 ---
 
 ## Architecture
 
-```
-sentiment-app/
-├── client/                  # React frontend (Vite)
-│   ├── src/
-│   │   ├── components/      # All UI components
-│   │   │   ├── BatmanLogo.tsx         # Batman SVG logo (BatmanLogo, BatmanLogoFull)
-│   │   │   ├── FlowPanel.tsx          # Options flow + alerts panel
-│   │   │   ├── FlowAlertsPanel.tsx    # Schwab-driven alerts subsystem
-│   │   │   ├── SchwabSettings.tsx     # Settings dialog + SchwabStatusPill
-│   │   │   ├── ModelsPanel.tsx        # BATCAVE daily model
-│   │   │   ├── LaunchSplash.tsx       # Animated entry screen
-│   │   │   └── ...
-│   │   ├── pages/
-│   │   │   └── dashboard.tsx          # Main dashboard layout
-│   │   └── lib/
-│   │       └── queryClient.ts         # TanStack Query v5 + apiRequest helper
-│   └── index.html
-├── server/
-│   ├── index.ts             # Express entry point
-│   ├── routes.ts            # All API endpoints
-│   ├── schwab.ts            # Schwab OAuth + token mgmt + market data helpers
-│   └── storage.ts           # SQLite schema + Drizzle ORM
-├── shared/
-│   └── schema.ts            # Shared types (Drizzle schema + TS types)
-├── .env.local               # Real credentials (gitignored, chmod 600)
-├── .env.local.example       # Safe template
-└── data.db                  # SQLite database (WAL mode)
-```
-
-### Key API Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/schwab/status` | Connection status + token expiry |
-| `GET` | `/api/schwab/auth-url` | Get OAuth authorization URL |
-| `POST` | `/api/schwab/callback` | Exchange auth code for tokens |
-| `POST` | `/api/schwab/disconnect` | Revoke tokens |
-| `GET` | `/api/market/quotes` | Live quotes (Schwab or Yahoo fallback) |
-| `GET` | `/api/market/price-history/:symbol` | Price history for charts |
-| `GET` | `/api/market/option-chain/:symbol` | Option chain data (Schwab required) |
-
-### Design Decisions
-
-- **No localStorage/sessionStorage** — all state via TanStack Query + server API
-- **`apiRequest` wrapper** — all client-server calls use `@/lib/queryClient.apiRequest`, never raw `fetch`
-- **TanStack Query v5** — array query keys, object form throughout
-- **Single SQLite token row** — Schwab token stored as row id=1 in `schwab_tokens` table
-- **Yahoo Finance fallback** — quotes and price history gracefully degrade when Schwab disconnected
-- **No option chain fallback** — flow alerts require Schwab (returns `{error: "schwab_required"}`)
-
----
-
-## Batman Logo
-
-The `BatmanLogo.tsx` component exports two variants:
-
-- **`BatmanLogoFull`** — full yellow oval with black bat silhouette (LaunchSplash hero, Models header)
-- **`BatmanLogo`** / **`BatmanLogoSmall`** — monochrome bat using `currentColor` (header nav, inline uses)
-
-The bat path is drawn on a 200×120 viewBox, matching the classic DC 1989 Burton-era/Dark Knight movie badge silhouette: wide outstretched wings with 3 scalloped trailing-edge curves per side, pointed ear tips, and a belly scallop pattern.
-
----
-
-## Development
-
-```bash
-npm run dev     # Start dev server (hot reload)
-npm run build   # Production build
-npm run check   # TypeScript type checking
-```
-
-### Key Libraries
-
-- `@tanstack/react-query` v5 — server state management
-- `framer-motion` — animations (LaunchSplash, transitions)
-- `recharts` — charting (flow ratio, price history)
-- `drizzle-orm` — SQLite ORM
-- `better-sqlite3` — SQLite driver
-- `lucide-react` — icons
-- `shadcn/ui` — UI component library
+| Layer | Technology |
+|---|---|
+| Frontend | React 18 + Vite + TypeScript |
+| UI components | shadcn/ui + Tailwind CSS v3 |
+| State / data fetching | TanStack Query v5 |
+| Routing | wouter (hash-based) |
+| Backend | Express.js + TypeScript |
+| Database | SQLite via Drizzle ORM + better-sqlite3 |
+| Charts | Recharts + lightweight-charts |
+| Animation | Framer Motion |
+| Fonts | Bebas Neue (display), DM Sans (body), JetBrains Mono (data), Inter (UI) |
 
 ---
 
 ## License
 
-Private — not for redistribution.
+Private. All rights reserved.

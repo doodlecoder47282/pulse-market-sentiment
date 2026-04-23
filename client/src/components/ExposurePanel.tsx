@@ -12,10 +12,15 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Area, AreaChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
-import { Info, RefreshCw, Zap, TrendingUp, Clock, Activity } from "lucide-react";
+import { Info, RefreshCw, Zap, TrendingUp, Clock, Activity, HelpCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { apiRequest } from "@/lib/queryClient";
+import {
+  Tooltip as UITooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface ExposurePoint {
   spot: number;
@@ -177,14 +182,22 @@ export default function ExposurePanel({ symbol }: Props) {
 
 // ---------------------------------------------------------------------------
 
+const EXPOSURE_TOOLTIPS: Record<string, string> = {
+  "DEX": "Delta Exposure: total dealer delta in dollars. Positive = dealers are net long delta (bought calls/sold puts); negative = net short delta. Drives the directional hedging flow.",
+  "GEX": "Gamma Exposure: total dealer gamma in dollars per 1% move. Positive = dealers stabilize price (buy dips, sell rips); negative = dealers amplify moves.",
+  "VEX": "Vega Exposure: dealer sensitivity to implied volatility per 1% vol change. Negative VEX = dealers short vol (sell spikes); positive = long vol (buy spikes).",
+  "Charm": "Charm (delta decay) exposure: how dealer delta changes with time. Accelerates into expiry — can create persistent directional drift near OPEX.",
+};
+
 function CurrentBadge({
   icon, label, value, units,
 }: { icon: React.ReactNode; label: string; value: number; units: string }) {
   const positive = value >= 0;
-  return (
+  const tip = EXPOSURE_TOOLTIPS[label];
+  const badge = (
     <Badge
       variant="outline"
-      className={`gap-1 ${positive ? "border-emerald-500/40 text-emerald-500" : "border-rose-500/40 text-rose-500"}`}
+      className={`gap-1 cursor-default ${positive ? "border-emerald-500/40 text-emerald-500" : "border-rose-500/40 text-rose-500"}`}
       data-testid={`badge-${label.toLowerCase()}`}
     >
       {icon}
@@ -192,6 +205,13 @@ function CurrentBadge({
       <span className="tabular-nums">{fmtMoney(value)}</span>
       <span className="text-[10px] opacity-70">{units}</span>
     </Badge>
+  );
+  if (!tip) return badge;
+  return (
+    <UITooltip>
+      <TooltipTrigger asChild>{badge}</TooltipTrigger>
+      <TooltipContent side="top" className="max-w-xs text-xs">{tip}</TooltipContent>
+    </UITooltip>
   );
 }
 
