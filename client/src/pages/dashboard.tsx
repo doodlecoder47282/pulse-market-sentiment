@@ -45,6 +45,7 @@ import { useEffect, useState, useRef, lazy, Suspense } from "react";
 const ChartPanel = lazy(() => import("@/components/ChartPanel"));
 const ModelsPanel = lazy(() => import("@/components/ModelsPanel"));
 const GexChart = lazy(() => import("@/components/GexChart"));
+const Heatseeker = lazy(() => import("@/components/Heatseeker"));
 
 // These are lighter but still benefit from lazy loading on non-default tabs
 const ChartPanelEager = lazy(() => import("@/components/ChartPanel"));
@@ -344,6 +345,13 @@ export default function Dashboard() {
                 <TabsTrigger value="signals" data-testid="tab-signals" className="xl:px-5 xl:text-[15px] xl:font-semibold">Signals</TabsTrigger>
                 <TabsTrigger value="chart" data-testid="tab-chart" className="xl:px-5 xl:text-[15px] xl:font-semibold">Chart</TabsTrigger>
                 <TabsTrigger value="models" data-testid="tab-models" className="xl:px-5 xl:text-[15px] xl:font-semibold">Models</TabsTrigger>
+                <TabsTrigger
+                  value="heatseeker"
+                  data-testid="tab-heatseeker"
+                  className="xl:px-5 xl:text-[15px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500/30 data-[state=active]:to-rose-500/30 data-[state=active]:text-orange-50"
+                >
+                  Heatseeker
+                </TabsTrigger>
                 <TabsTrigger value="tradedesk" data-testid="tab-tradedesk" className="xl:px-5 xl:text-[15px] xl:font-semibold">Trade Desk</TabsTrigger>
                 <TabsTrigger value="regime" data-testid="tab-regime" className="xl:px-5 xl:text-[15px] xl:font-semibold">Regime</TabsTrigger>
                 <TabsTrigger value="news" data-testid="tab-news" className="xl:px-5 xl:text-[15px] xl:font-semibold">News</TabsTrigger>
@@ -375,6 +383,15 @@ export default function Dashboard() {
             <ErrorBoundary label="Models Panel">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
                 <ModelsPanel />
+              </Suspense>
+            </ErrorBoundary>
+          </TabsContent>
+
+          {/* ── Heatseeker tab (lazy) ─ 0DTE live Greeks + sticky zones ── */}
+          <TabsContent value="heatseeker" className="space-y-6">
+            <ErrorBoundary label="Heatseeker">
+              <Suspense fallback={<PanelSkeleton variant="chart" />}>
+                <Heatseeker />
               </Suspense>
             </ErrorBoundary>
           </TabsContent>

@@ -37,6 +37,7 @@ import { buildJPMCollarSnapshot, getCachedSpxCloses } from "./jpmCollar";
 import { buildVolCalendar } from "./volCalendar";
 import { buildGammaLevelsEnhanced } from "./gammaLevels";
 import { buildChainAudit } from "./chainAudit";
+import { buildHeatseeker } from "./heatseeker";
 
 function vm(symbol: string, name: string, last: number | null, prev: number | null): VolMetric {
   const changePct = last != null && prev ? ((last - prev) / prev) * 100 : null;
@@ -1148,6 +1149,67 @@ Sift this feed AND search the web for any critical developments in geopolitics, 
     } catch (e: any) {
       console.error("[chain-audit]", e?.message);
       res.status(500).json({ error: "internal", message: e?.message ?? "Chain audit failed" });
+    }
+  });
+
+  // ─── Heatseeker: 0DTE live Greeks + sticky zones ────────────────────────────
+  // 5-second cache — matches frontend polling cadence
+  const heatseekerCache = new Map<string, { at: number; data: any }>();
+  const HEATSEEKER_CACHE_MS = 5_000;
+
+  app.get("/api/heatseeker", async (req, res) => {
+    try {
+      const rawSymbol = String(req.query.symbol || "$SPX").trim();
+      const symbol = rawSymbol.toUpperCase();
+      const cacheKey = symbol;
+
+      const cached = heatseekerCache.get(cacheKey);
+      if (cached && Date.now() - cached.at < HEATSEEKER_CACHE_MS) {
+        return res.json(cached.data);
+      }
+
+      // Fetch chain with 2-day DTE window so we always catch 0DTE + next expiry
+      let chain = await schwabGetOptionChain(symbol, 2);
+      let usedSymbol = symbol;
+
+      if ("error" in chain) {
+        const isSPX = symbol.includes("SPX") || symbol === "$SPX" || symbol === "SPXW";
+        if (isSPX) {
+          const spyChain = await schwabGetOptionChain("SPY", 2);
+          if ("error" in spyChain) {
+            return res.status(503).json({
+              error: "schwab_required",
+              message: "Schwab connection required for heatseeker. Please connect Schwab in Settings.",
+            });
+          }
+          chain = spyChain;
+          usedSymbol = "SPY";
+        } else {
+          return res.status(503).json({
+            error: "schwab_required",
+            message: "Schwab connection required for heatseeker. Please connect Schwab in Settings.",
+          });
+        }
+      }
+
+      const spot = chain.underlying.last ??
+        (chain.underlying.bid && chain.underlying.ask
+          ? (chain.underlying.bid + chain.underlying.ask) / 2
+          : null);
+
+      if (!spot || spot <= 0) {
+        return res.status(503).json({
+          error: "no_spot",
+          message: "Unable to determine underlying spot price.",
+        });
+      }
+
+      const result = buildHeatseeker(chain, usedSymbol, spot);
+      heatseekerCache.set(cacheKey, { at: Date.now(), data: result });
+      res.json(result);
+    } catch (e: any) {
+      console.error("[heatseeker]", e?.message);
+      res.status(500).json({ error: "internal", message: e?.message ?? "Heatseeker failed" });
     }
   });
 

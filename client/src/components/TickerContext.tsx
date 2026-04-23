@@ -21,6 +21,7 @@ export type TabKey =
   | "signals"
   | "chart"
   | "models"
+  | "heatseeker"
   | "tradedesk"
   | "regime"
   | "news"
