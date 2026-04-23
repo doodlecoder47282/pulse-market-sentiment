@@ -333,7 +333,7 @@ export default function Dashboard() {
       {/* Ticker tape — flows across the top under the header on every tab */}
       <MacroTicker />
 
-      <main className="mx-auto max-w-[1800px] space-y-4 px-3 py-4 sm:space-y-6 sm:px-4 sm:py-6 md:px-8 xl:px-10 xl:text-[15px]">
+      <main className="mx-auto max-w-[1800px] space-y-4 px-3 py-4 sm:space-y-6 sm:px-4 sm:py-6 md:px-8 xl:px-10 xl:text-[16px]">
         {/* Rotating macro carousel — always visible above the tabs */}
         <MacroCarousel />
 
@@ -341,25 +341,25 @@ export default function Dashboard() {
           {/* Mobile-scrollable tab list with fade edge */}
           <div className="relative mb-4">
             <div className="tabs-scroll-container overflow-x-auto" style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
-              <TabsList className="inline-flex w-max min-w-full xl:h-11 xl:gap-1 xl:p-1.5" data-testid="tabs-dashboard">
-                <TabsTrigger value="signals" data-testid="tab-signals" className="xl:px-5 xl:text-[15px] xl:font-semibold">Signals</TabsTrigger>
-                <TabsTrigger value="chart" data-testid="tab-chart" className="xl:px-5 xl:text-[15px] xl:font-semibold">Chart</TabsTrigger>
-                <TabsTrigger value="models" data-testid="tab-models" className="xl:px-5 xl:text-[15px] xl:font-semibold">Models</TabsTrigger>
+              <TabsList className="inline-flex w-max min-w-full xl:h-12 xl:gap-1 xl:p-1.5" data-testid="tabs-dashboard">
+                <TabsTrigger value="signals" data-testid="tab-signals" className="xl:px-6 xl:text-[16px] xl:font-semibold">Signals</TabsTrigger>
+                <TabsTrigger value="chart" data-testid="tab-chart" className="xl:px-6 xl:text-[16px] xl:font-semibold">Chart</TabsTrigger>
+                <TabsTrigger value="models" data-testid="tab-models" className="xl:px-6 xl:text-[16px] xl:font-semibold">Models</TabsTrigger>
                 <TabsTrigger
                   value="heatseeker"
                   data-testid="tab-heatseeker"
-                  className="xl:px-5 xl:text-[15px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500/30 data-[state=active]:to-rose-500/30 data-[state=active]:text-orange-50"
+                  className="xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500/30 data-[state=active]:to-rose-500/30 data-[state=active]:text-orange-50"
                 >
                   Heatseeker
                 </TabsTrigger>
-                <TabsTrigger value="tradedesk" data-testid="tab-tradedesk" className="xl:px-5 xl:text-[15px] xl:font-semibold">Trade Desk</TabsTrigger>
-                <TabsTrigger value="regime" data-testid="tab-regime" className="xl:px-5 xl:text-[15px] xl:font-semibold">Regime</TabsTrigger>
-                <TabsTrigger value="news" data-testid="tab-news" className="xl:px-5 xl:text-[15px] xl:font-semibold">News</TabsTrigger>
-                <TabsTrigger value="voices" data-testid="tab-voices" className="xl:px-5 xl:text-[15px] xl:font-semibold">Voices</TabsTrigger>
+                <TabsTrigger value="tradedesk" data-testid="tab-tradedesk" className="xl:px-6 xl:text-[16px] xl:font-semibold">Trade Desk</TabsTrigger>
+                <TabsTrigger value="regime" data-testid="tab-regime" className="xl:px-6 xl:text-[16px] xl:font-semibold">Regime</TabsTrigger>
+                <TabsTrigger value="news" data-testid="tab-news" className="xl:px-6 xl:text-[16px] xl:font-semibold">News</TabsTrigger>
+                <TabsTrigger value="voices" data-testid="tab-voices" className="xl:px-6 xl:text-[16px] xl:font-semibold">Voices</TabsTrigger>
                 <TabsTrigger
                   value="takefive"
                   data-testid="tab-takefive"
-                  className="xl:px-5 xl:text-[15px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-fuchsia-600/40 data-[state=active]:via-cyan-500/30 data-[state=active]:to-amber-400/40 data-[state=active]:text-white"
+                  className="xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-fuchsia-600/40 data-[state=active]:via-cyan-500/30 data-[state=active]:to-amber-400/40 data-[state=active]:text-white"
                 >
                   Take Five
                 </TabsTrigger>
