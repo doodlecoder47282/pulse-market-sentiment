@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import GammaLevelsStrip from "./GammaLevelsStrip";
+import GammaContextBanner from "./GammaContextBanner";
 
 type Timeframe = "1D" | "5D" | "1M" | "3M" | "1Y" | "5Y";
 const TIMEFRAMES: Timeframe[] = ["1D", "5D", "1M", "3M", "1Y", "5Y"];
@@ -104,10 +105,17 @@ export default function ChartPanel() {
     enabled: engine !== "tv", // TV widget fetches its own data
   });
 
+  // Gamma query keyed on (symbol, timeframe) so future backend can return
+  // timeframe-specific expiry buckets (weekly vs monthly vs quarterly)
+  // without client churn. Today backend ignores tf and returns current
+  // snapshot; we pass it anyway so QueryClient refetches when user changes tf.
   const gammaQuery = useQuery<GammaResponse>({
-    queryKey: ["/api/gamma-levels", activeChart],
+    queryKey: ["/api/gamma-levels", activeChart, tf],
     queryFn: async () => {
-      const r = await apiRequest("GET", `/api/gamma-levels?symbol=${encodeURIComponent(activeChart)}`);
+      const r = await apiRequest(
+        "GET",
+        `/api/gamma-levels?symbol=${encodeURIComponent(activeChart)}&tf=${tf}`
+      );
       return r.json();
     },
     refetchInterval: 60_000,
@@ -316,39 +324,23 @@ export default function ChartPanel() {
             </div>
           )}
 
-          {/* Gamma context row (SPY only) */}
-          {viewMode === "price" && gammaSupported && showGamma && gamma?.levels && engine !== "tv" && (
-            <div className="flex flex-wrap items-center gap-2 text-[11px]">
-              <Badge
-                variant="outline"
-                className={gamma.levels.regime === "positive" ? "border-emerald-500/50 text-emerald-400" : "border-rose-500/50 text-rose-400"}
-              >
-                {gamma.levels.regime === "positive" ? "POS GAMMA · mean-revert" : "NEG GAMMA · trend / breakout"}
-              </Badge>
-              <span className="flex items-center gap-1 font-mono tabular-nums text-muted-foreground">
-                <span className="h-2 w-2 rounded-sm bg-rose-500" />
-                Call wall <span className="text-foreground">{gamma.levels.callWall.toFixed(0)}</span>
-              </span>
-              <span className="flex items-center gap-1 font-mono tabular-nums text-muted-foreground">
-                <span className="h-2 w-2 rounded-sm bg-emerald-500" />
-                Put wall <span className="text-foreground">{gamma.levels.putWall.toFixed(0)}</span>
-              </span>
-              {gamma.levels.zeroGamma != null && (
-                <span className="flex items-center gap-1 font-mono tabular-nums text-muted-foreground">
-                  <span className="h-2 w-2 rounded-sm bg-yellow-500" />
-                  0γ <span className="text-foreground">{gamma.levels.zeroGamma.toFixed(0)}</span>
-                </span>
-              )}
-              {gamma.levels.maxPain != null && (
-                <span className="flex items-center gap-1 font-mono tabular-nums text-muted-foreground">
-                  <span className="h-2 w-2 rounded-sm bg-violet-500" />
-                  Max pain <span className="text-foreground">{gamma.levels.maxPain.toFixed(0)}</span>
-                </span>
-              )}
-              <span className="ml-auto font-mono text-[10px] text-muted-foreground">
-                Updated {gamma.asOf ? new Date(gamma.asOf * 1000).toLocaleTimeString() : "—"}
-              </span>
-            </div>
+          {/* Engine-agnostic GEX banner — renders above every engine including
+              TV, so the user always has call wall / put wall / 0γ / max pain
+              context with distance-from-spot. */}
+          {viewMode === "price" && showGamma && (
+            <GammaContextBanner
+              spot={
+                engine === "tv"
+                  ? gamma?.spot ?? null
+                  : ohlc?.price ?? gamma?.spot ?? null
+              }
+              levels={gamma?.levels ?? null}
+              symbol={activeChart}
+              supported={!!gammaSupported}
+              asOf={gamma?.asOf}
+              timeframe={tf}
+              engine={engine}
+            />
           )}
 
           {/* Tick stub banner */}
