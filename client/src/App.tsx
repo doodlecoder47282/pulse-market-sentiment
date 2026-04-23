@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import { TickerProvider } from "@/components/TickerContext";
+import { ThemeProvider } from "@/components/ThemeContext";
 import LaunchSplash from "@/components/LaunchSplash";
 import { useState } from "react";
 
@@ -24,6 +25,7 @@ function App() {
 
   return (
     <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
       <TooltipProvider>
         <Toaster />
         <TickerProvider>
@@ -41,6 +43,7 @@ function App() {
           </div>
         </TickerProvider>
       </TooltipProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }

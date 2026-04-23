@@ -30,13 +30,15 @@ import { useTickers, type TabKey } from "@/components/TickerContext";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import LiveQuoteStrip from "@/components/LiveQuoteStrip";
 import ShortcutsModal from "@/components/ShortcutsModal";
+import { useTheme } from "@/components/ThemeContext";
+import { CollapsibleCard } from "@/components/CollapsibleCard";
 import { PanelSkeleton } from "@/components/ui/panel-skeleton";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { useToast } from "@/hooks/use-toast";
 import {
   RefreshCw, ExternalLink, ArrowDownRight, ArrowUpRight, Zap,
   Activity, Waves, MessageSquare, Newspaper, AlertTriangle,
-  Keyboard, Settings,
+  Keyboard, Settings, Sun, Moon, LayoutGrid, LayoutList,
 } from "lucide-react";
 import SchwabSettings, { SchwabStatusPill } from "@/components/SchwabSettings";
 import { useEffect, useState, useRef, lazy, Suspense } from "react";
@@ -133,6 +135,7 @@ function LiveClock() {
 }
 
 export default function Dashboard() {
+  const { theme, toggleTheme, compact, toggleCompact } = useTheme();
   // Take Five overlay state — shared by floating FAB and tab "peek" button.
   const [take5Open, setTake5Open] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -314,6 +317,34 @@ export default function Dashboard() {
               data-testid="button-settings"
             >
               <Settings className="h-3.5 w-3.5" />
+            </button>
+
+            {/* Theme toggle — light / dark */}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              aria-label="Toggle color theme"
+              className="flex items-center rounded-md border border-border/60 p-1.5 text-muted-foreground/60 transition hover:border-border hover:text-amber-500"
+              data-testid="button-theme-toggle"
+            >
+              {theme === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+            </button>
+
+            {/* Compact mode — shrinks all collapsible cards at once */}
+            <button
+              type="button"
+              onClick={toggleCompact}
+              title={compact ? "Expand all cards" : "Compact all cards"}
+              aria-label="Toggle compact mode"
+              className={`hidden items-center rounded-md border p-1.5 transition md:flex ${
+                compact
+                  ? "border-amber-500/70 text-amber-500 hover:border-amber-400"
+                  : "border-border/60 text-muted-foreground/60 hover:border-border hover:text-muted-foreground"
+              }`}
+              data-testid="button-compact-toggle"
+            >
+              {compact ? <LayoutGrid className="h-3.5 w-3.5" /> : <LayoutList className="h-3.5 w-3.5" />}
             </button>
 
             {/* Shortcut hint */}
@@ -527,46 +558,44 @@ export default function Dashboard() {
 
             {/* Second row: sub-gauges breakdown */}
             <section>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-semibold">
+              <CollapsibleCard
+                id="signal-breakdown"
+                title={
+                  <>
                     Signal Breakdown
                     <span className="ml-2 text-xs font-normal text-muted-foreground">weighted components · 0 fear → 100 greed</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-                    {composite.gauges.map((g) => (
-                      <div key={g.name} className="rounded-md border border-border bg-card/50 p-3" data-testid={`gauge-${g.name}`}>
-                        <div className="flex items-center justify-between">
-                          <div className="text-xs font-medium">{g.name}</div>
-                          <div className={`font-mono text-xs ${scoreColor(g.value)}`}>{Math.round(g.value)}</div>
-                        </div>
-                        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                          <div
-                            className={`h-full ${scoreBg(g.value)} transition-all`}
-                            style={{ width: `${g.value}%` }}
-                          />
-                        </div>
-                        <div className="mt-2 text-[11px] leading-snug text-muted-foreground">{g.interpretation}</div>
-                        <div className="mt-1 text-[10px] text-muted-foreground/70">weight {(g.weight * 100).toFixed(0)}%</div>
+                  </>
+                }
+              >
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  {composite.gauges.map((g) => (
+                    <div key={g.name} className="rounded-md border border-border bg-card/50 p-3" data-testid={`gauge-${g.name}`}>
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-medium">{g.name}</div>
+                        <div className={`font-mono text-xs ${scoreColor(g.value)}`}>{Math.round(g.value)}</div>
                       </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
+                      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                        <div
+                          className={`h-full ${scoreBg(g.value)} transition-all`}
+                          style={{ width: `${g.value}%` }}
+                        />
+                      </div>
+                      <div className="mt-2 text-[11px] leading-snug text-muted-foreground">{g.interpretation}</div>
+                      <div className="mt-1 text-[10px] text-muted-foreground/70">weight {(g.weight * 100).toFixed(0)}%</div>
+                    </div>
+                  ))}
+                </div>
+              </CollapsibleCard>
             </section>
 
             {/* Third row: Gamma structure chart + term structure */}
             <section className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-              <Card className="lg:col-span-8">
-                <CardHeader className="pb-2">
-                  <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-                    <Activity className="h-4 w-4" />
-                    Dealer Gamma Structure (SPY · 0-45 DTE)
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
+              <CollapsibleCard
+                id="gamma-structure"
+                className="lg:col-span-8"
+                title={<><Activity className="h-4 w-4" />Dealer Gamma Structure (SPY · 0-45 DTE)</>}
+              >
+                <>
                   <div className="mb-3 flex flex-wrap gap-3 text-xs">
                     <KeyStat
                       label="Net GEX"
@@ -629,19 +658,16 @@ export default function Dashboard() {
                     (amplifying). Computed from CBOE delayed options chain; calls contribute +, puts contribute − weighted by
                     Γ × OI × 100 × S² × 1%.
                   </p>
-                </CardContent>
-              </Card>
+                </>
+              </CollapsibleCard>
 
               {/* Term structure + top OI */}
               <div className="space-y-4 lg:col-span-4">
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-                      <Waves className="h-4 w-4" />
-                      VIX Term Structure
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
+                <CollapsibleCard
+                  id="vix-term"
+                  title={<><Waves className="h-4 w-4" />VIX Term Structure</>}
+                >
+                  <div className="space-y-3">
                     <TermBar label="VIX 9D"  value={term.vix9d}  max={40} />
                     <TermBar label="VIX 30D" value={term.vix}    max={40} highlight />
                     <TermBar label="VIX 3M"  value={term.vix3m}  max={40} />
@@ -659,14 +685,11 @@ export default function Dashboard() {
                         : "Backwardation — near-term stress priced in."
                       )}
                     </div>
-                  </CardContent>
-                </Card>
+                  </div>
+                </CollapsibleCard>
 
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-semibold">Top Open Interest</CardTitle>
-                  </CardHeader>
-                  <CardContent>
+                <CollapsibleCard id="top-oi" title="Top Open Interest">
+                  <>
                     <div className="grid grid-cols-2 gap-3 text-xs">
                       <div>
                         <div className="mb-1 font-medium text-emerald-500">Calls</div>
@@ -702,24 +725,27 @@ export default function Dashboard() {
                       </div>
                     </div>
                     <div className="mt-2 text-[10px] italic text-muted-foreground/70">Small text = dominant expiry for that strike (MM-DD·DTE)</div>
-                  </CardContent>
-                </Card>
+                  </>
+                </CollapsibleCard>
               </div>
             </section>
 
             {/* Fourth row: social + Fear&Greed + headlines */}
             <section className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-              <Card className="lg:col-span-6">
-                <CardHeader className="pb-2">
-                  <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+              <CollapsibleCard
+                id="social-chatter"
+                className="lg:col-span-6"
+                title={
+                  <>
                     <MessageSquare className="h-4 w-4" />
                     X &amp; Reddit Chatter
                     <Badge variant="secondary" className="ml-2 font-mono text-[10px]">
                       score {social.score >= 0 ? "+" : ""}{social.score}
                     </Badge>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
+                  </>
+                }
+              >
+                <>
                   <div className="mb-3 flex items-center gap-4 text-xs">
                     <span className="text-emerald-500">
                       <ArrowUpRight className="mr-1 inline h-3 w-3" />
@@ -759,15 +785,12 @@ export default function Dashboard() {
                       </div>
                     </ScrollArea>
                   )}
-                </CardContent>
-              </Card>
+                </>
+              </CollapsibleCard>
 
               <div className="space-y-4 lg:col-span-6">
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-semibold">CNN Fear &amp; Greed</CardTitle>
-                  </CardHeader>
-                  <CardContent>
+                <CollapsibleCard id="fear-greed" title="CNN Fear &amp; Greed">
+                  <>
                     {fearGreed ? (
                       <div className="flex items-center gap-4">
                         <div className={`font-mono text-4xl font-bold ${scoreColor(fearGreed.value)}`} data-testid="text-fg-value">
@@ -784,16 +807,14 @@ export default function Dashboard() {
                     ) : (
                       <div className="text-xs text-muted-foreground">CNN feed unreachable.</div>
                     )}
-                  </CardContent>
-                </Card>
+                  </>
+                </CollapsibleCard>
 
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-                      <Newspaper className="h-4 w-4" /> Market Headlines
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
+                <CollapsibleCard
+                  id="headlines"
+                  title={<><Newspaper className="h-4 w-4" /> Market Headlines</>}
+                >
+                  <>
                     {headlines.length === 0 ? (
                       <div className="text-xs text-muted-foreground">No headlines available.</div>
                     ) : (
@@ -817,8 +838,8 @@ export default function Dashboard() {
                         ))}
                       </ul>
                     )}
-                  </CardContent>
-                </Card>
+                  </>
+                </CollapsibleCard>
               </div>
             </section>
 
