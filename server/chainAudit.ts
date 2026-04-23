@@ -287,9 +287,12 @@ function computeDEX(contracts: Contract[], spot: number): DEXResult {
   const maxNegative = profile.reduce<DEXStrike | null>((best, p) =>
     p.netDex < (best?.netDex ?? Infinity) ? p : best, null);
 
-  // Flip strike: walking up from spot, first strike where cumulative net DEX flips sign
+  // Flip strike: walking up from spot, first strike where cumulative net DEX changes sign.
+  // Seed with total net DEX below spot so the cumulative reflects full dealer inventory, not just
+  // the strikes above. Without the seed, cumDex starts at 0 and often never "flips" (monotonic).
   const aboveSpot = profile.filter(p => p.strike >= spot);
-  let cumDex = 0;
+  const belowSpot = profile.filter(p => p.strike < spot);
+  let cumDex = belowSpot.reduce((s, p) => s + p.netDex, 0);
   let flipStrike: number | null = null;
   for (const p of aboveSpot) {
     const prev = cumDex;
@@ -298,6 +301,13 @@ function computeDEX(contracts: Contract[], spot: number): DEXResult {
       flipStrike = p.strike;
       break;
     }
+  }
+  // Fallback: if no sign-change above spot, use the peak |netDex| strike nearest spot as flip
+  // (interpret as "dealer inventory maxes here → likely turnaround").
+  if (flipStrike == null && aboveSpot.length > 0) {
+    const peak = aboveSpot.reduce<DEXStrike | null>((best, p) =>
+      Math.abs(p.netDex) > Math.abs(best?.netDex ?? -Infinity) ? p : best, null);
+    flipStrike = peak ? peak.strike : null;
   }
 
   const totalCallDex = profile.reduce((s, p) => s + p.callDex, 0);

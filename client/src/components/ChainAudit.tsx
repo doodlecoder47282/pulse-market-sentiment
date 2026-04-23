@@ -170,6 +170,22 @@ function timeAgo(ts: number): string {
   return `${mins}m ago`;
 }
 
+// HH:MM:SS ET (24h) from unix ms
+function fmtClockET(ts: number | undefined | null): string {
+  if (!ts || !isFinite(ts)) return "";
+  try {
+    return new Date(ts).toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+      timeZone: "America/New_York",
+    });
+  } catch {
+    return "";
+  }
+}
+
 // ─── Color helpers ────────────────────────────────────────────────────────────
 
 const CALL_COLOR = "#22c55e";
@@ -741,7 +757,14 @@ export default function ChainAudit() {
                                 {row.side.toUpperCase()}
                               </Badge>
                             </TableCell>
-                            <TableCell className="font-mono text-[10px] py-1.5 text-muted-foreground">{row.expiry}</TableCell>
+                            <TableCell className="font-mono text-[10px] py-1.5 text-muted-foreground">
+                              <div className="flex flex-col leading-tight">
+                                <span>{row.expiry}</span>
+                                {data?.asOf ? (
+                                  <span className="text-[9px] text-muted-foreground/50">loaded {fmtClockET(data.asOf)} ET</span>
+                                ) : null}
+                              </div>
+                            </TableCell>
                             <TableCell className="font-mono text-[10px] py-1.5 text-right">{row.dte}</TableCell>
                             <TableCell className="font-mono text-[10px] py-1.5 text-right">{fmtVolume(row.volume)}</TableCell>
                             <TableCell className="font-mono text-[10px] py-1.5 text-right text-muted-foreground">{fmtVolume(row.oi)}</TableCell>
@@ -766,6 +789,35 @@ export default function ChainAudit() {
           <Section title="Vol Risk Premium (VRP) — Theoretical vs Market IV" testId="section-vrp">
             <Card className="bg-card/60 border-border/40">
               <CardContent className="px-0 pb-2 pt-0">
+                {/* VRP reading guide — how to trade the signal */}
+                <div className="mx-3 my-2 rounded border border-border/40 bg-muted/20 px-3 py-2">
+                  <div className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/70 mb-1.5">
+                    How to read — your edge in one glance
+                  </div>
+                  <div className="grid grid-cols-1 gap-1.5 md:grid-cols-3 font-mono text-[10px] leading-snug">
+                    <div className="rounded border border-red-500/30 bg-red-500/5 px-2 py-1.5">
+                      <div className="text-red-400 font-semibold">VRP &gt; +2pp · Sell Vol</div>
+                      <div className="text-muted-foreground/80 text-[9px] mt-0.5">
+                        Market IV rich vs fair value. Short straddles, sell premium, credit spreads, iron condors.
+                      </div>
+                    </div>
+                    <div className="rounded border border-border/40 px-2 py-1.5">
+                      <div className="text-muted-foreground font-semibold">|VRP| ≤ 2pp · Fair</div>
+                      <div className="text-muted-foreground/80 text-[9px] mt-0.5">
+                        No edge on vol. Trade direction, not premium. Wait for skew.
+                      </div>
+                    </div>
+                    <div className="rounded border border-green-500/30 bg-green-500/5 px-2 py-1.5">
+                      <div className="text-green-400 font-semibold">VRP &lt; −2pp · Buy Vol</div>
+                      <div className="text-muted-foreground/80 text-[9px] mt-0.5">
+                        Market IV cheap vs fair value. Long straddles, long gamma, debit spreads, calendars.
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-1.5 font-mono text-[9px] text-muted-foreground/60 leading-snug">
+                    VRP = Market IV − Theoretical IV (bookdown realized-vol estimate). Positive = overpriced, negative = underpriced. Signal column auto-classifies per-expiry.
+                  </div>
+                </div>
                 <div className="overflow-x-auto" data-testid="table-vrp">
                   <Table>
                     <TableHeader>
@@ -781,7 +833,14 @@ export default function ChainAudit() {
                     <TableBody>
                       {audit.vrp.map((row, i) => (
                         <TableRow key={row.expiry} className="border-border/20" data-testid={`row-vrp-${i}`}>
-                          <TableCell className="font-mono text-[10px] py-1.5 px-3 text-muted-foreground">{row.expiry}</TableCell>
+                          <TableCell className="font-mono text-[10px] py-1.5 px-3 text-muted-foreground">
+                            <div className="flex flex-col leading-tight">
+                              <span>{row.expiry}</span>
+                              {data?.asOf && i === 0 ? (
+                                <span className="text-[9px] text-muted-foreground/50">loaded {fmtClockET(data.asOf)} ET</span>
+                              ) : null}
+                            </div>
+                          </TableCell>
                           <TableCell className="font-mono text-[10px] py-1.5 text-right">{row.dte}</TableCell>
                           <TableCell className="font-mono text-[10px] py-1.5 text-right">{fmtIV(row.marketIV)}</TableCell>
                           <TableCell className="font-mono text-[10px] py-1.5 text-right text-muted-foreground">

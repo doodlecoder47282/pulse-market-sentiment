@@ -1,0 +1,2 @@
+{"id":"2026-04-23-daily-1776958940","ts":1776958940,"sessionDate":"2026-04-23","horizon":"daily","regime":"CHARM_DRIVEN","zone":"AT_0G","pUp":5,"pDown":36,"pPin":59,"bias":-0.31,"action":"pin","spot":7142.94,"vixDelta":null,"charmDriftPct":-9.837572579477358,"dfi":-5,"kind":"snapshot"}
+{"id":"2026-04-23-weekly-1776958940","ts":1776958940,"sessionDate":"2026-04-23","horizon":"weekly","regime":"CHARM_DRIVEN","zone":"AT_0G","pUp":5,"pDown":36,"pPin":59,"bias":-0.31,"action":"pin","spot":7142.94,"vixDelta":null,"charmDriftPct":-9.565906694674966,"dfi":-5,"kind":"snapshot"}

@@ -413,7 +413,8 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
 
       <div className="mt-2 text-[8px] text-muted-foreground/40 leading-tight">
         Red = resistance · Green = support<br />
-        Cyan = pivot/data · Yellow = flip zone
+        Cyan = pivot/data · Yellow = flip zone<br />
+        <span className="text-emerald-400/70">POS Γ</span> = fade moves · <span className="text-rose-400/70">NEG Γ</span> = follow moves
       </div>
     </div>
   );
@@ -1073,19 +1074,23 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
     rows.push({ name, price: lv.price, color, sub });
   };
 
-  // Primary pivots (callWall/putWall/zeroGamma/dominantMag/mopexMaxPain) are
-  // labeled directly on the chart. This strip focuses on SECONDARY pivots
-  // (T1/T2 extensions, directional pivots, dealer-map kinds) to avoid dupe.
+  // Include all key reference levels — directional pivots, walls, vol-structure anchors.
+  // Zero gamma & call/put walls are added so traders see the full picture without
+  // having to cross-reference the chart.
   push("t2Up",          "T2 UP",           "#ef4444");
   push("t1Up",          "T1 UP",           "#f87171");
+  push("callWall",      "CALL WALL",       "#dc2626", "gex");
   push("upsidePivot",   "UP PIVOT",        "#a855f7");
   push("strongMag",     "STRONG MAG",      "#0ea5e9");
   push("vannaFlip",     "VANNA",           "#06b6d4");
   push("charmTarget",   "CHARM",           "#c084fc");
   push("zommaBridge",   "ZOMMA",           "#fde047");
   push("upperVomma",    "UP VOMMA",        "#84cc16");
+  push("zeroGamma",     "0\u0393 GAMMA",   "#fbbf24");
+  push("dominantMag",   "DOM MAG",         "#eab308");
   push("lowerVomma",    "DN VOMMA",        "#f97316");
   push("negGammaEntry", "NEG-\u0393",       "#fb7185");
+  push("putWall",       "PUT WALL",        "#16a34a", "gex");
   push("downsidePivot", "DN PIVOT",        "#a855f7");
   push("t1Down",        "T1 DN",           "#4ade80");
   push("t2Down",        "T2 DN",           "#22c55e");
@@ -1103,10 +1108,43 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
     </div>
   );
 
+  // Vol structure quick read — 3 bands that traders can scan in one glance.
+  const callWallPrice = byKind("callWall")?.price;
+  const putWallPrice  = byKind("putWall")?.price;
+  const zgPrice       = byKind("zeroGamma")?.price;
+  const regimeLabel   = a.gammaAtSpot >= 0
+    ? { text: "POS \u0393 · mean-revert", color: "text-emerald-400", dot: "bg-emerald-400" }
+    : { text: "NEG \u0393 · trend/breakout", color: "text-rose-400", dot: "bg-rose-400" };
+
   return (
     <div className="mt-2 space-y-1 border-t border-border/40 pt-2">
-      <div className="text-[9px] uppercase tracking-widest text-muted-foreground/50 font-mono">
-        Secondary pivots
+      <div className="flex items-baseline justify-between">
+        <div className="text-[9px] uppercase tracking-widest text-muted-foreground/50 font-mono">
+          Pivot Ladder — by horizon
+        </div>
+        <div className="flex items-center gap-1.5 font-mono text-[9px]">
+          <span className={`h-1.5 w-1.5 rounded-full ${regimeLabel.dot}`} />
+          <span className={regimeLabel.color}>{regimeLabel.text}</span>
+        </div>
+      </div>
+
+      {/* Vol structure quick-read — 3 bands */}
+      <div className="flex flex-wrap items-center gap-1.5 rounded border border-border/30 bg-muted/10 px-2 py-1 font-mono text-[9px]">
+        <span className="uppercase tracking-widest text-muted-foreground/60">Vol Structure</span>
+        <span className="text-border/60">|</span>
+        <span className="text-rose-400">
+          Sell zone {callWallPrice ? `≥ ${fmtK(callWallPrice)}` : "—"}
+        </span>
+        <span className="text-border/60">·</span>
+        <span className="text-amber-400">
+          Chop {zgPrice && callWallPrice && putWallPrice
+            ? `${fmtK(putWallPrice)}–${fmtK(callWallPrice)} (0Γ ${fmtK(zgPrice)})`
+            : "—"}
+        </span>
+        <span className="text-border/60">·</span>
+        <span className="text-emerald-400">
+          Buy zone {putWallPrice ? `≤ ${fmtK(putWallPrice)}` : "—"}
+        </span>
       </div>
       {above.length > 0 && (
         <div className="flex flex-wrap items-center gap-1">
