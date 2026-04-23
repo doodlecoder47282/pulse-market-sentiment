@@ -15,6 +15,7 @@ import SectorWeb from "./SectorWeb";
 import WefThemePanel from "./WefThemePanel";
 import ErrorBoundary from "./ErrorBoundary";
 import SeasonalityPanel from "./SeasonalityPanel";
+import SeasonalityResearch from "./SeasonalityResearch";
 import JPMCollarPanel from "./JPMCollarPanel";
 import VolCalendarPanel from "./VolCalendarPanel";
 
@@ -262,6 +263,13 @@ export default function RegimePanel() {
           NEW SECTIONS: Seasonality, JPM Collar, Vol Event Calendar
           ================================================================ */}
       <Separator className="my-2" />
+
+      {/* Section: Seasonality Research (any ticker) */}
+      <div>
+        <ErrorBoundary label="Seasonality Research">
+          <SeasonalityResearch />
+        </ErrorBoundary>
+      </div>
 
       {/* Section: Seasonality */}
       <div>

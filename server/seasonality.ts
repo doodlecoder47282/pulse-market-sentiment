@@ -117,7 +117,7 @@ function isoWeek(date: Date): number {
 
 interface DailyBar { t: number; c: number }
 
-async function fetchBars(yahooSymbol: string): Promise<DailyBar[]> {
+export async function fetchBars(yahooSymbol: string): Promise<DailyBar[]> {
   const enc = encodeURIComponent(yahooSymbol);
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${enc}?interval=1d&range=20y`;
   try {
@@ -291,7 +291,7 @@ function findOptimalWindow(
   };
 }
 
-function generateAnalysisText(
+export function generateAnalysisText(
   symbol: string,
   opt: OptimalWindow | null,
   yearly: Pick<YearlySeasonality, "fullYearAvg" | "fullYearWinRate" | "presidentialCycleYear" | "presidentialCycleAvg" | "lookbackYears">,
@@ -309,7 +309,7 @@ function generateAnalysisText(
 }
 
 // ─── Main compute ─────────────────────────────────────────────────────────
-function computeSeasonality(
+export function computeSeasonality(
   bars: DailyBar[],
   lookbackYearsOverride?: number,
 ): Omit<SeasonalityTicker, "symbol" | "displayName"> {

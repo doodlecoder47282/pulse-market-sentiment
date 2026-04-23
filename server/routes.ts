@@ -24,7 +24,9 @@ import { buildNewsSnapshot, type NewsResponse } from "./news";
 import { buildModelsSnapshot, type ModelsResponse, type Horizon } from "./models";
 import type { Snapshot_Public, VolMetric } from "@shared/schema";
 import { readCache, writeCache, rthSessionKey } from "./sessionCache";
-import { buildSeasonalitySnapshot } from "./seasonality";
+import { buildSeasonalitySnapshot, fetchBars, computeSeasonality, generateAnalysisText } from "./seasonality";
+import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { buildJPMCollarSnapshot, getCachedSpxCloses } from "./jpmCollar";
 import { buildVolCalendar } from "./volCalendar";
 import { buildGammaLevelsEnhanced } from "./gammaLevels";
@@ -600,6 +602,195 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json(data);
     } catch (e: any) {
       res.status(500).json({ message: e?.message ?? "Failed to build seasonality" });
+    }
+  });
+
+  // ---- Seasonality: per-symbol ticker lookup (any Yahoo symbol) ----
+  // In-memory cache: symbol -> { at, data }, 24hr TTL.
+  const symbolSeasonalityCache = new Map<string, { at: number; data: any }>();
+  const SYMBOL_SEASON_TTL = 24 * 60 * 60 * 1000;
+
+  app.get("/api/seasonality/:symbol", async (req, res) => {
+    try {
+      const rawSymbol = String(req.params.symbol ?? "").toUpperCase().trim();
+      // Allow: letters, digits, ^, -, ., =
+      if (!rawSymbol || rawSymbol.length > 20 || !/^[A-Z0-9^\-.=]+$/.test(rawSymbol)) {
+        return res.status(400).json({ message: "Invalid symbol" });
+      }
+      const lookbackParam = Number(req.query.lookback ?? 20);
+      const lookback = [5, 10, 20].includes(lookbackParam) ? lookbackParam : 20;
+      const cacheKey = `${rawSymbol}:${lookback}`;
+
+      // Check cache
+      const cached = symbolSeasonalityCache.get(cacheKey);
+      if (cached && Date.now() - cached.at < SYMBOL_SEASON_TTL) {
+        return res.json(cached.data);
+      }
+
+      // Fetch + compute
+      const bars = await fetchBars(rawSymbol);
+      if (bars.length < 50) {
+        return res.status(404).json({ message: `No historical data found for ${rawSymbol}` });
+      }
+
+      const computed = computeSeasonality(bars, lookback);
+      const yearly = { ...computed.yearly };
+      yearly.analysisText = generateAnalysisText(
+        rawSymbol,
+        yearly.optimalWindow,
+        { fullYearAvg: yearly.fullYearAvg, fullYearWinRate: yearly.fullYearWinRate, presidentialCycleYear: yearly.presidentialCycleYear, presidentialCycleAvg: yearly.presidentialCycleAvg, lookbackYears: computed.lookbackYears } as any,
+        computed.lookbackYears,
+      );
+
+      const ticker = { symbol: rawSymbol, displayName: rawSymbol, ...computed, yearly };
+      const response = { tickers: [ticker], asOf: new Date().toISOString() };
+
+      symbolSeasonalityCache.set(cacheKey, { at: Date.now(), data: response });
+      res.json(response);
+    } catch (e: any) {
+      console.error("[seasonality/:symbol]", e?.message);
+      res.status(500).json({ message: e?.message ?? "Failed to compute seasonality" });
+    }
+  });
+
+  // ---- EOD Setup: Claude + GPT parallel brief generation ----
+  const EOD_SYSTEM_PROMPT = `You are an institutional 0DTE SPX EOD trading assistant. You build end-of-day setups for SPX 0DTE options between 2:00 PM and 3:55 PM ET with a hard cutoff at 3:45 PM ET for new entries.
+
+CORE FRAMEWORK
+- Dealer gamma positioning drives intraday mean-reversion vs trend. Positive GEX = pinned/mean-reverting; Negative GEX = fragile/trending.
+- Key levels (in order): Call Wall, Put Wall, Zero Gamma (flip), HVL, Gamma Flip. Levels hold until they don't — watch for rejection or acceptance above/below.
+- Q-Score (0-100): 0-30 pinned regime, 30-60 mixed, 60-100 fragile. Use this to bias aggressiveness.
+- 1D Expected Move: SPX × IV / sqrt(252). Stay inside 1D EM unless fragile regime with catalyst.
+
+SESSION TIME MODEL (ET)
+- 2:00-2:30: Positioning window — read tape, identify dominant level.
+- 2:30-3:00: Setup window — best time to enter.
+- 3:00-3:45: Last-entry window — only high-conviction setups.
+- 3:45 HARD CUTOFF: No new entries. Manage only.
+- 3:55-4:00: Exit / let runner go.
+- Optional DTT prime roots: 2:09, 3:07, 3:53 PM (you may reference as confluence but not required).
+
+SETUP TYPES (pick ONE primary, note alternates)
+1. GAMMA PIN — Price stuck near high-gamma strike, positive GEX. Fade moves back to pin. Lower risk, lower reward.
+2. WALL REJECTION — Price tests Call Wall or Put Wall and fails. Fade back toward HVL or Zero Gamma.
+3. FLIP BREAKOUT — Price crosses Zero Gamma / Gamma Flip with momentum. Trade in direction of flip, targets next wall.
+4. MEAN REVERSION — Price extended from HVL in pinned regime. Fade to HVL.
+
+RISK RULES (non-negotiable)
+- Max loss per trade: 2% of account.
+- Hard 3:45 PM ET cutoff for new positions.
+- If VIX > 25: size down 50%.
+- If OPEX today: size down 30-50%.
+- No naked short options. Defined-risk only (verticals, condors, flies).
+
+OUTPUT FORMAT (use exactly these sections, markdown headers)
+
+## REGIME SUMMARY
+One paragraph: dealer positioning, Q-Score bucket, 1D EM, bias.
+
+## KEY LEVELS
+Markdown table with columns: Level | Strike | Role | Distance from spot.
+Include Call Wall, Put Wall, Zero Gamma, HVL, Gamma Flip, and user's weekly targets that are in-range.
+
+## PRIMARY SETUP
+- Type: [one of the 4 setups]
+- Direction: [long/short/neutral]
+- Structure: [specific spread, e.g. "SPX 7100/7110 call debit spread"]
+- Entry trigger: [price/time condition]
+- Target: [level and price]
+- Stop: [invalidation price]
+- Size: [% of account, respecting risk rules]
+- Time horizon: [enter window, exit plan]
+
+## INVALIDATION
+Bullet list of conditions that kill the setup.
+
+## CONFIDENCE
+HIGH / MEDIUM / LOW with one-sentence reason.
+
+## ALTERNATE SETUPS
+Briefly note 1-2 backup ideas if primary invalidates.
+
+Be precise. No hedging language. If inputs are insufficient, say so and stop — do not invent data.`;
+
+  app.post("/api/eod-setup", async (req, res) => {
+    try {
+      const {
+        spx, vix, iv, qscore,
+        gex, callWall, putWall, zeroGamma, hvl, gammaFlip,
+        upside = 7140, downside = 6950, t2up = 7270, t2down = 6885,
+        mopex = 7025, vanna = 7089, zomma = 7070, charm = 7128,
+        negGamma = 7100, upperVomma = 7265, lowerVomma = 6960,
+        pcRatio, opex = false,
+        regime,
+        notes = "",
+      } = req.body;
+
+      const now = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
+      const qBucket = Number(qscore) < 30 ? "PINNED" : Number(qscore) < 60 ? "MIXED" : "FRAGILE";
+
+      const userBrief = `CURRENT MARKET STATE (${now})
+
+SPX: ${spx}
+VIX: ${vix}
+1D IV: ${iv}%
+Q-Score: ${qscore} (${qBucket})
+
+DEALER POSITIONING
+Total GEX: $${gex}B
+Call Wall: ${callWall}
+Put Wall: ${putWall}
+Zero Gamma: ${zeroGamma}
+HVL: ${hvl}
+Gamma Flip: ${gammaFlip}
+
+USER WEEKLY TARGETS (locked)
+UPSIDE ${upside} / DOWNSIDE ${downside}
+T2 UP ${t2up} / T2 DOWN ${t2down}
+MOPEX ${mopex}
+VANNA ${vanna} / ZOMMA ${zomma} / CHARM ${charm}
+NEG \u03b3 ${negGamma}
+UPPER VOMMA ${upperVomma} / LOWER VOMMA ${lowerVomma}
+
+SESSION
+Intraday P/C: ${pcRatio}
+OPEX today: ${opex ? "YES \u2014 size down 30-50%" : "no"}
+
+TRADER NOTES
+${notes || "(none)"}
+
+Build the EOD setup brief.`;
+
+      const anthropic = new Anthropic();
+      const openai = new OpenAI();
+
+      const [claudeResult, gptResult] = await Promise.allSettled([
+        anthropic.messages.create({
+          model: "claude_sonnet_4_6",
+          max_tokens: 4096,
+          system: EOD_SYSTEM_PROMPT,
+          messages: [{ role: "user", content: userBrief }],
+        }).then((msg) => {
+          const block = msg.content.find((b) => b.type === "text");
+          return (block as any)?.text ?? "";
+        }),
+        (openai.responses as any).create({
+          model: "gpt_5_1",
+          input: `${EOD_SYSTEM_PROMPT}\n\n---\n\n${userBrief}`,
+        }).then((r: any) => r.output_text ?? ""),
+      ]);
+
+      res.json({
+        claude: claudeResult.status === "fulfilled" ? claudeResult.value : null,
+        gpt: gptResult.status === "fulfilled" ? gptResult.value : null,
+        errors: {
+          claude: claudeResult.status === "rejected" ? String(claudeResult.reason) : null,
+          gpt: gptResult.status === "rejected" ? String(gptResult.reason) : null,
+        },
+      });
+    } catch (e: any) {
+      console.error("[eod-setup]", e?.message);
+      res.status(500).json({ message: e?.message ?? "EOD setup failed" });
     }
   });
 

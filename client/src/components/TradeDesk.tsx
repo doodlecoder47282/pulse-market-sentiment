@@ -2,14 +2,17 @@
 // Bloomberg dark aesthetic: near-black background, amber accents, monospace data,
 // tight rows. Zero-decorative — every pixel carries information.
 
-import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useMemo, useRef, useCallback } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { GammaStructure } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { fmt } from "@/lib/format";
 import {
   LineChart, Line, XAxis, YAxis, ReferenceLine, ResponsiveContainer,
@@ -17,8 +20,11 @@ import {
 } from "recharts";
 import {
   Activity, Target, Zap, Gauge as GaugeIcon, TrendingUp, TrendingDown,
-  AlertTriangle, Crosshair, LineChart as LineIcon,
+  AlertTriangle, Crosshair, LineChart as LineIcon, ChevronDown, ChevronUp,
+  Copy, Check,
 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 // --- Types matching /api/trade-desk payload ----------------------------------
 
@@ -207,6 +213,11 @@ export default function TradeDesk() {
       {/* Gamma Map */}
       <section>
         <GammaMapCard gammaMap={data.gammaMap} spot={data.quotes.spy?.price ?? null} />
+      </section>
+
+      {/* EOD Play Maker */}
+      <section>
+        <EodPlayMaker />
       </section>
 
       {/* Footnote */}
@@ -1233,6 +1244,325 @@ function PivotTable({
         <span className="inline-block h-2 w-2 rounded-sm border border-emerald-500/50 bg-emerald-500/10 align-middle" />{" "}
         Level closest to spot · % shows distance from spot
       </div>
+    </div>
+  );
+}
+
+// ─── Bat SVG icon ──────────────────────────────────────────────────────────
+function BatIconSvg({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 100 50" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-label="BATCAVE" className={className}>
+      <path d="M50,10 C45,15 40,10 35,12 C28,8 20,5 12,10 C8,15 5,20 8,25 C12,22 18,22 20,18 C22,22 20,28 25,30 C30,28 35,32 40,30 C45,33 50,30 50,35 C50,30 55,33 60,30 C65,32 70,28 75,30 C80,28 78,22 80,18 C82,22 88,22 92,25 C95,20 92,15 88,10 C80,5 72,8 65,12 C60,10 55,15 50,10 Z" />
+    </svg>
+  );
+}
+
+// ─── Copy button helper ────────────────────────────────────────────────────
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [text]);
+  return (
+    <button
+      onClick={handleCopy}
+      className="inline-flex items-center gap-1 rounded border border-border/50 bg-card/40 px-2 py-0.5 text-[10px] text-muted-foreground transition hover:border-amber-500/40 hover:text-amber-400"
+      data-testid="button-copy-output"
+      title="Copy to clipboard"
+    >
+      {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
+// ─── Model output panel ────────────────────────────────────────────────────
+function ModelOutputPanel({
+  label, modelSlug, content, error, isLoading,
+}: {
+  label: string;
+  modelSlug: string;
+  content: string | null;
+  error: string | null;
+  isLoading: boolean;
+}) {
+  return (
+    <div className="flex-1 min-w-0">
+      <div className="mb-2 flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-400">{label}</span>
+          <Badge variant="outline" className="font-mono text-[9px] text-muted-foreground">{modelSlug}</Badge>
+        </div>
+        {content && <CopyButton text={content} />}
+      </div>
+      {isLoading && (
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-5/6" />
+          <Skeleton className="h-4 w-4/5" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-3/4" />
+          <Skeleton className="h-4 w-full" />
+        </div>
+      )}
+      {error && (
+        <div className="rounded border border-rose-500/30 bg-rose-500/5 p-3 text-[11px] text-rose-400">
+          {error}
+        </div>
+      )}
+      {content && !isLoading && (
+        <div className="prose prose-invert prose-xs max-w-none rounded border border-border/40 bg-card/30 p-3 text-[11px] leading-relaxed">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+        </div>
+      )}
+      {!content && !error && !isLoading && (
+        <div className="rounded border border-dashed border-border/40 bg-card/20 p-4 text-center text-[11px] text-muted-foreground">
+          Output appears here after generation.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── EOD Play Maker form field helper ─────────────────────────────────────
+function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-28 shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
+      <div className="flex-1">{children}</div>
+    </div>
+  );
+}
+
+// ─── EOD Play Maker ─────────────────────────────────────────────────────────
+function EodPlayMaker() {
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
+  // Form state — pre-filled with sensible defaults / locked weekly targets
+  const [spx, setSpx] = useState("7100");
+  const [vix, setVix] = useState("18.5");
+  const [iv, setIv] = useState("1.2");
+  const [qscore, setQscore] = useState("35");
+  const [gex, setGex] = useState("+2.1");
+  const [callWall, setCallWall] = useState("7150");
+  const [putWall, setPutWall] = useState("7000");
+  const [zeroGamma, setZeroGamma] = useState("7075");
+  const [hvl, setHvl] = useState("7100");
+  const [gammaFlip, setGammaFlip] = useState("7075");
+  // Locked weekly targets
+  const [upside, setUpside] = useState("7140");
+  const [downside, setDownside] = useState("6950");
+  const [t2up, setT2up] = useState("7270");
+  const [t2down, setT2down] = useState("6885");
+  const [mopex, setMopex] = useState("7025");
+  const [vanna, setVanna] = useState("7089");
+  const [zomma, setZomma] = useState("7070");
+  const [charm, setCharm] = useState("7128");
+  const [negGamma, setNegGamma] = useState("7100");
+  const [upperVomma, setUpperVomma] = useState("7265");
+  const [lowerVomma, setLowerVomma] = useState("6960");
+  const [pcRatio, setPcRatio] = useState("0.85");
+  const [opex, setOpex] = useState(false);
+  const [notes, setNotes] = useState("");
+
+  // Compute regime from qscore
+  const qNum = parseFloat(qscore) || 0;
+  const regimeBucket = qNum < 30 ? "Pinned" : qNum < 60 ? "Mixed" : "Fragile";
+
+  // Result state
+  const [result, setResult] = useState<{ claude: string | null; gpt: string | null; errors: { claude: string | null; gpt: string | null } } | null>(null);
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const body = {
+        spx, vix, iv, qscore, gex, callWall, putWall, zeroGamma, hvl, gammaFlip,
+        upside, downside, t2up, t2down, mopex, vanna, zomma, charm, negGamma, upperVomma, lowerVomma,
+        pcRatio, opex, notes,
+      };
+      const r = await apiRequest("POST", "/api/eod-setup", body);
+      return r.json();
+    },
+    onSuccess: (data) => setResult(data),
+  });
+
+  const inputCls = "h-7 font-mono text-xs bg-card/40 border-border/60";
+
+  return (
+    <div className="rounded-lg border border-amber-500/20 bg-gradient-to-br from-amber-500/5 via-transparent to-transparent" data-testid="eod-play-maker">
+      {/* Header */}
+      <button
+        className="flex w-full items-center justify-between px-4 py-3"
+        onClick={() => setIsCollapsed((v) => !v)}
+        data-testid="button-eod-toggle"
+      >
+        <div className="flex items-center gap-2">
+          <BatIconSvg className="h-5 w-5 text-amber-400" />
+          <span className="text-[11px] font-semibold uppercase tracking-[0.15em] text-amber-400">
+            EOD 0DTE SPX PLAY MAKER — BATCAVE
+          </span>
+          <Badge variant="outline" className="text-[9px] text-amber-500/60 border-amber-500/30">
+            Claude + GPT
+          </Badge>
+        </div>
+        {isCollapsed ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />}
+      </button>
+
+      {!isCollapsed && (
+        <div className="px-4 pb-4 space-y-4">
+          <Separator className="mb-1" />
+
+          {/* Form */}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {/* Market state */}
+            <div className="space-y-2">
+              <div className="text-[9px] font-semibold uppercase tracking-[0.15em] text-amber-400 mb-1">Market State</div>
+              <FieldRow label="SPX Spot">
+                <Input value={spx} onChange={(e) => setSpx(e.target.value)} className={inputCls} data-testid="input-spx" />
+              </FieldRow>
+              <FieldRow label="VIX">
+                <Input value={vix} onChange={(e) => setVix(e.target.value)} className={inputCls} data-testid="input-vix" />
+              </FieldRow>
+              <FieldRow label="1D IV %">
+                <Input value={iv} onChange={(e) => setIv(e.target.value)} className={inputCls} data-testid="input-iv" />
+              </FieldRow>
+              <FieldRow label="Q-Score">
+                <div className="flex items-center gap-2">
+                  <Input value={qscore} onChange={(e) => setQscore(e.target.value)} className={inputCls + " flex-1"} data-testid="input-qscore" />
+                  <Badge variant="outline" className={`shrink-0 text-[9px] ${
+                    qNum < 30 ? "border-emerald-500/40 text-emerald-400" :
+                    qNum < 60 ? "border-amber-500/40 text-amber-400" :
+                    "border-rose-500/40 text-rose-400"
+                  }`}>{regimeBucket}</Badge>
+                </div>
+              </FieldRow>
+              <FieldRow label="P/C Ratio">
+                <Input value={pcRatio} onChange={(e) => setPcRatio(e.target.value)} className={inputCls} data-testid="input-pc-ratio" />
+              </FieldRow>
+              <FieldRow label="OPEX Today">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={opex} onChange={(e) => setOpex(e.target.checked)} className="accent-amber-500" data-testid="checkbox-opex" />
+                  <span className="text-[10px] text-muted-foreground">{opex ? "YES — size down 30-50%" : "No"}</span>
+                </label>
+              </FieldRow>
+            </div>
+
+            {/* Dealer positioning */}
+            <div className="space-y-2">
+              <div className="text-[9px] font-semibold uppercase tracking-[0.15em] text-amber-400 mb-1">Dealer Positioning</div>
+              <FieldRow label="Total GEX ($B)">
+                <Input value={gex} onChange={(e) => setGex(e.target.value)} className={inputCls} placeholder="+2.1" data-testid="input-gex" />
+              </FieldRow>
+              <FieldRow label="Call Wall">
+                <Input value={callWall} onChange={(e) => setCallWall(e.target.value)} className={inputCls} data-testid="input-call-wall" />
+              </FieldRow>
+              <FieldRow label="Put Wall">
+                <Input value={putWall} onChange={(e) => setPutWall(e.target.value)} className={inputCls} data-testid="input-put-wall" />
+              </FieldRow>
+              <FieldRow label="Zero Gamma">
+                <Input value={zeroGamma} onChange={(e) => setZeroGamma(e.target.value)} className={inputCls} data-testid="input-zero-gamma" />
+              </FieldRow>
+              <FieldRow label="HVL">
+                <Input value={hvl} onChange={(e) => setHvl(e.target.value)} className={inputCls} data-testid="input-hvl" />
+              </FieldRow>
+              <FieldRow label="Gamma Flip">
+                <Input value={gammaFlip} onChange={(e) => setGammaFlip(e.target.value)} className={inputCls} data-testid="input-gamma-flip" />
+              </FieldRow>
+            </div>
+
+            {/* Weekly targets */}
+            <div className="space-y-2">
+              <div className="text-[9px] font-semibold uppercase tracking-[0.15em] text-amber-400 mb-1">Weekly Targets (Locked)</div>
+              <FieldRow label="Upside">
+                <Input value={upside} onChange={(e) => setUpside(e.target.value)} className={inputCls} data-testid="input-upside" />
+              </FieldRow>
+              <FieldRow label="Downside">
+                <Input value={downside} onChange={(e) => setDownside(e.target.value)} className={inputCls} data-testid="input-downside" />
+              </FieldRow>
+              <FieldRow label="T2 Up">
+                <Input value={t2up} onChange={(e) => setT2up(e.target.value)} className={inputCls} data-testid="input-t2up" />
+              </FieldRow>
+              <FieldRow label="T2 Down">
+                <Input value={t2down} onChange={(e) => setT2down(e.target.value)} className={inputCls} data-testid="input-t2down" />
+              </FieldRow>
+              <FieldRow label="MOPEX">
+                <Input value={mopex} onChange={(e) => setMopex(e.target.value)} className={inputCls} data-testid="input-mopex" />
+              </FieldRow>
+              <FieldRow label="VANNA">
+                <Input value={vanna} onChange={(e) => setVanna(e.target.value)} className={inputCls} data-testid="input-vanna" />
+              </FieldRow>
+              <FieldRow label="ZOMMA">
+                <Input value={zomma} onChange={(e) => setZomma(e.target.value)} className={inputCls} data-testid="input-zomma" />
+              </FieldRow>
+              <FieldRow label="CHARM">
+                <Input value={charm} onChange={(e) => setCharm(e.target.value)} className={inputCls} data-testid="input-charm" />
+              </FieldRow>
+              <FieldRow label="NEG γ">
+                <Input value={negGamma} onChange={(e) => setNegGamma(e.target.value)} className={inputCls} data-testid="input-neg-gamma" />
+              </FieldRow>
+              <FieldRow label="Upper Vomma">
+                <Input value={upperVomma} onChange={(e) => setUpperVomma(e.target.value)} className={inputCls} data-testid="input-upper-vomma" />
+              </FieldRow>
+              <FieldRow label="Lower Vomma">
+                <Input value={lowerVomma} onChange={(e) => setLowerVomma(e.target.value)} className={inputCls} data-testid="input-lower-vomma" />
+              </FieldRow>
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <div className="mb-1 text-[9px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">Trader Notes</div>
+            <Textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Current tape observations, catalyst, anything relevant to the setup..."
+              className="min-h-[60px] text-xs font-mono bg-card/40 border-border/60"
+              data-testid="input-notes"
+            />
+          </div>
+
+          {/* Generate button */}
+          <Button
+            onClick={() => mutation.mutate()}
+            disabled={mutation.isPending}
+            className="w-full h-9 text-xs font-semibold uppercase tracking-wider bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40"
+            variant="outline"
+            data-testid="button-generate-eod"
+          >
+            <BatIconSvg className="h-4 w-4 mr-2" />
+            {mutation.isPending ? "Generating Brief..." : "Generate EOD Brief"}
+          </Button>
+
+          {/* Error */}
+          {mutation.isError && (
+            <div className="rounded border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-400">
+              Request failed: {(mutation.error as Error)?.message ?? "Unknown error"}
+            </div>
+          )}
+
+          {/* Output columns */}
+          {(result || mutation.isPending) && (
+            <div className="flex flex-col gap-4 md:flex-row" data-testid="eod-output">
+              <ModelOutputPanel
+                label="CLAUDE"
+                modelSlug="claude_sonnet_4_6"
+                content={result?.claude ?? null}
+                error={result?.errors?.claude ?? null}
+                isLoading={mutation.isPending}
+              />
+              <ModelOutputPanel
+                label="GPT"
+                modelSlug="gpt_5_1"
+                content={result?.gpt ?? null}
+                error={result?.errors?.gpt ?? null}
+                isLoading={mutation.isPending}
+              />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
