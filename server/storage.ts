@@ -53,6 +53,35 @@ sqlite.exec(`
     refresh_expires_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS backtest_levels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    horizon TEXT NOT NULL,
+    level_kind TEXT NOT NULL,
+    sample_size INTEGER NOT NULL,
+    touch_rate REAL NOT NULL,
+    hold_rate REAL NOT NULL,
+    avg_abs_dist_bps REAL NOT NULL,
+    median_abs_dist_bps REAL NOT NULL,
+    breach_beyond_pct REAL NOT NULL,
+    computed_at INTEGER NOT NULL,
+    methodology TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_backtest_levels_h_k ON backtest_levels(horizon, level_kind);
+  CREATE TABLE IF NOT EXISTS backtest_observations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    horizon TEXT NOT NULL,
+    level_kind TEXT NOT NULL,
+    predicted_price REAL NOT NULL,
+    realized_close REAL NOT NULL,
+    realized_high REAL NOT NULL,
+    realized_low REAL NOT NULL,
+    touched INTEGER NOT NULL,
+    held INTEGER NOT NULL,
+    abs_dist_bps REAL NOT NULL,
+    breach_beyond_pct INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_backtest_obs_h_k_date ON backtest_observations(horizon, level_kind, date);
 `);
 
 export { schwabTokens };

@@ -36,6 +36,7 @@ import OpenAI from "openai";
 import { buildJPMCollarSnapshot, getCachedSpxCloses } from "./jpmCollar";
 import { buildVolCalendar } from "./volCalendar";
 import { buildGammaLevelsEnhanced } from "./gammaLevels";
+import { runBackfill, getBacktestSummary } from "./backtest";
 import { buildChainAudit } from "./chainAudit";
 import { buildHeatseeker } from "./heatseeker";
 
@@ -1212,6 +1213,33 @@ Sift this feed AND search the web for any critical developments in geopolitics, 
       res.status(500).json({ error: "internal", message: e?.message ?? "Heatseeker failed" });
     }
   });
+
+  // ─── Backtest accuracy overlay ────────────────────────────────────────────
+  app.get("/api/backtest/levels", async (_req, res) => {
+    try {
+      const summary = getBacktestSummary();
+      res.json(summary);
+    } catch (e: any) {
+      res.status(500).json({ error: "backtest_read_failed", message: e?.message || String(e) });
+    }
+  });
+
+  app.post("/api/backtest/rebuild", async (req, res) => {
+    try {
+      const years = Math.max(1, Math.min(10, Number(req.query.years) || 5));
+      const result = await runBackfill(years);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: "backtest_rebuild_failed", message: e?.message || String(e) });
+    }
+  });
+
+  // Kick off initial backfill in background on boot (non-blocking)
+  setTimeout(() => {
+    getBacktestSummary().byLevel && Object.keys(getBacktestSummary().byLevel).length === 0 &&
+      runBackfill(5).then(r => console.log("[backtest] initial backfill:", r))
+                    .catch(e => console.error("[backtest] initial backfill failed:", e?.message || e));
+  }, 8_000);
 
   // ─── Start background token refresh cycle ─────────────────────────────────
   startTokenRefreshCycle();

@@ -39,6 +39,7 @@ import { BatmanLogo } from "./BatmanLogo";
 import { apiRequest } from "@/lib/queryClient";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ChainAudit from "@/components/ChainAudit";
+import { BacktestBadge, BacktestPanel, type BacktestHorizon } from "@/components/BacktestOverlay";
 
 // ─── Types mirror server/models.ts ──────────────────────────────────────────
 
@@ -207,12 +208,16 @@ function RailRow({
   sub,
   color,
   highlight = false,
+  backtestKind,
+  backtestHorizon,
 }: {
   label: string;
   value: string;
   sub?: string;
   color: string;
   highlight?: boolean;
+  backtestKind?: string;
+  backtestHorizon?: BacktestHorizon;
 }) {
   return (
     <div
@@ -220,7 +225,10 @@ function RailRow({
         highlight ? "bg-yellow-400/10" : ""
       }`}
     >
-      <span className="uppercase tracking-wider text-muted-foreground/70">{label}</span>
+      <span className="uppercase tracking-wider text-muted-foreground/70">
+        {label}
+        {backtestKind && backtestHorizon && <BacktestBadge horizon={backtestHorizon} kind={backtestKind} />}
+      </span>
       <div className="text-right">
         <span className="font-semibold" style={{ color }}>{value}</span>
         {sub && <span className="ml-1 text-[9px] text-muted-foreground">({sub})</span>}
@@ -295,19 +303,19 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
 
       {/* Upside */}
       <RailDivider label="resistance" />
-      <RailRow label="CEILING" value={pFmt(callWall?.price)} sub={distPct(callWall?.price)} color={COLORS.bear} />
+      <RailRow label="CEILING" value={pFmt(callWall?.price)} sub={distPct(callWall?.price)} color={COLORS.bear} backtestKind="callWall" backtestHorizon={horizon.horizon as BacktestHorizon} />
       {upVomma && <RailRow label="ACCEL ZONE" value={pFmt(upVomma?.price)} sub={distPct(upVomma?.price)} color={COLORS.bear} />}
-      {callWall && <RailRow label="CALL WALL" value={pFmt(callWall.price)} sub={callWall.gex != null ? `${(callWall.gex/1e6).toFixed(1)}M GEX` : undefined} color={COLORS.callWall} />}
-      {upPivot  && <RailRow label="UPSIDE TARGET" value={pFmt(upPivot.price)} sub={distPct(upPivot.price)} color={COLORS.bull} />}
+      {callWall && <RailRow label="CALL WALL" value={pFmt(callWall.price)} sub={callWall.gex != null ? `${(callWall.gex/1e6).toFixed(1)}M GEX` : undefined} color={COLORS.callWall} backtestKind="callWall" backtestHorizon={horizon.horizon as BacktestHorizon} />}
+      {upPivot  && <RailRow label="UPSIDE TARGET" value={pFmt(upPivot.price)} sub={distPct(upPivot.price)} color={COLORS.bull} backtestKind="upsidePivot" backtestHorizon={horizon.horizon as BacktestHorizon} />}
       {vannaFlip && <RailRow label="VANNA FLIP" value={pFmt(vannaFlip.price)} sub={distPct(vannaFlip.price)} color={COLORS.vanna} />}
 
       {/* Double Zero Zone */}
       <RailDivider label="pivot zone" />
       {a.charmZero && <RailRow label="CHARM ZERO" value={fmtK(a.charmZero)} sub={distPct(a.charmZero)} color={COLORS.charm} />}
       <RailRow label="DOUBLE ZERO" value={dzStr} color={COLORS.dz} highlight />
-      {zeroGamma && <RailRow label="GAMMA ZERO" value={pFmt(zeroGamma.price)} sub={distPct(zeroGamma.price)} color={COLORS.zeroGamma} />}
+      {zeroGamma && <RailRow label="GAMMA ZERO" value={pFmt(zeroGamma.price)} sub={distPct(zeroGamma.price)} color={COLORS.zeroGamma} backtestKind="zeroGamma" backtestHorizon={horizon.horizon as BacktestHorizon} />}
       {charmPocketLow && <RailRow label="CHARM POCKET" value={charmPocketStr} color={COLORS.charm} />}
-      {domMag && <RailRow label="DOM MAGNET" value={pFmt(domMag.price)} sub={domMag.gex != null ? `${(domMag.gex/1e6).toFixed(1)}M` : undefined} color={COLORS.base} />}
+      {domMag && <RailRow label="DOM MAGNET" value={pFmt(domMag.price)} sub={domMag.gex != null ? `${(domMag.gex/1e6).toFixed(1)}M` : undefined} color={COLORS.base} backtestKind="dominantMag" backtestHorizon={horizon.horizon as BacktestHorizon} />}
       {a.mainPivot && <RailRow label="MAIN PIVOT" value={fmtK(a.mainPivot)} sub={distPct(a.mainPivot)} color={COLORS.amber} />}
 
       {/* Scenario projections */}
@@ -318,13 +326,13 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
 
       {/* Downside */}
       <RailDivider label="support" />
-      {dnPivot  && <RailRow label="DOWNSIDE PIVOT" value={pFmt(dnPivot.price)} sub={distPct(dnPivot.price)} color={COLORS.pivot} />}
-      {putWall  && <RailRow label="PUT WALL" value={pFmt(putWall.price)} sub={putWall.gex != null ? `${(Math.abs(putWall.gex)/1e6).toFixed(1)}M GEX` : undefined} color={COLORS.callWall} />}
+      {dnPivot  && <RailRow label="DOWNSIDE PIVOT" value={pFmt(dnPivot.price)} sub={distPct(dnPivot.price)} color={COLORS.pivot} backtestKind="downsidePivot" backtestHorizon={horizon.horizon as BacktestHorizon} />}
+      {putWall  && <RailRow label="PUT WALL" value={pFmt(putWall.price)} sub={putWall.gex != null ? `${(Math.abs(putWall.gex)/1e6).toFixed(1)}M GEX` : undefined} color={COLORS.callWall} backtestKind="putWall" backtestHorizon={horizon.horizon as BacktestHorizon} />}
       {loVomma  && <RailRow label="LOWER VOMMA" value={pFmt(loVomma.price)} sub={distPct(loVomma.price)} color={COLORS.negGamma} />}
       {negGamma && <RailRow label="NEG-Γ ENTRY" value={pFmt(negGamma.price)} sub={distPct(negGamma.price)} color={COLORS.bear} />}
-      {extVac   && <RailRow label="EXT VACUUM" value={pFmt(extVac.price)} sub={distPct(extVac.price)} color={COLORS.bear} />}
+      {extVac   && <RailRow label="EXT VACUUM" value={pFmt(extVac.price)} sub={distPct(extVac.price)} color={COLORS.bear} backtestKind="extremeVac" backtestHorizon={horizon.horizon as BacktestHorizon} />}
       {zomma    && <RailRow label="ZOMMA BRIDGE" value={pFmt(zomma.price)} sub={distPct(zomma.price)} color={COLORS.dz} />}
-      {byKind("mopexMaxPain") && <RailRow label="MAX PAIN" value={pFmt(byKind("mopexMaxPain")?.price)} color={COLORS.amber} />}
+      {byKind("mopexMaxPain") && <RailRow label="MAX PAIN" value={pFmt(byKind("mopexMaxPain")?.price)} color={COLORS.amber} backtestKind="mopexMaxPain" backtestHorizon={horizon.horizon as BacktestHorizon} />}
 
       <div className="mt-2 text-[8px] text-muted-foreground/40 leading-tight">
         Red = resistance · Green = support<br />
@@ -973,6 +981,9 @@ export default function ModelsPanel() {
           <ModelView horizon={active} session={data!.session} />
         </ErrorBoundary>
       )}
+
+      {/* ── Backtest accuracy overlay ── */}
+      <BacktestPanel defaultHorizon={horizon as BacktestHorizon} />
 
       {/* ── Live Chain Audit section ── */}
       <div

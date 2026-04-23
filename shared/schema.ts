@@ -47,6 +47,39 @@ export const snapshotHistory = sqliteTable("snapshot_history", {
 });
 export type SnapshotHistory = typeof snapshotHistory.$inferSelect;
 
+// ---- Backtest cache: one row per (horizon, level_kind) summarizing hit-rates across all dates ----
+export const backtestLevels = sqliteTable("backtest_levels", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  horizon: text("horizon").notNull(),              // "daily" | "weekly" | "monthly" | "quarterly"
+  levelKind: text("level_kind").notNull(),         // callWall | putWall | zeroGamma | dominantMag | upsidePivot | downsidePivot | mopexMaxPain | extremeVac | vommaPocket
+  sampleSize: integer("sample_size").notNull(),    // number of historical observations
+  touchRate: real("touch_rate").notNull(),         // fraction (0..1): price touched within tolerance before horizon end
+  holdRate: real("hold_rate").notNull(),           // fraction (0..1): price touched AND reversed at least 50% back within horizon
+  avgAbsDistBps: real("avg_abs_dist_bps").notNull(),  // avg |realized - predicted| at horizon end, basis points
+  medianAbsDistBps: real("median_abs_dist_bps").notNull(),
+  breachBeyondPct: real("breach_beyond_pct").notNull(), // fraction where realized went >1% past the level
+  computedAt: integer("computed_at").notNull(),    // unix sec
+  methodology: text("methodology").notNull(),      // "proxy-vol-regime-v1" etc
+});
+export type BacktestLevel = typeof backtestLevels.$inferSelect;
+
+// ---- Backtest observations: one row per (date, horizon, level_kind) - raw data for the aggregates above ----
+export const backtestObservations = sqliteTable("backtest_observations", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  date: text("date").notNull(),                    // YYYY-MM-DD trade date
+  horizon: text("horizon").notNull(),
+  levelKind: text("level_kind").notNull(),
+  predictedPrice: real("predicted_price").notNull(),
+  realizedClose: real("realized_close").notNull(),
+  realizedHigh: real("realized_high").notNull(),   // max close over horizon
+  realizedLow: real("realized_low").notNull(),     // min close over horizon
+  touched: integer("touched").notNull(),           // 0/1
+  held: integer("held").notNull(),                 // 0/1
+  absDistBps: real("abs_dist_bps").notNull(),
+  breachBeyondPct: integer("breach_beyond_pct").notNull(), // 0/1
+});
+export type BacktestObservation = typeof backtestObservations.$inferSelect;
+
 // ---- Schwab OAuth token storage (single row, id=1) ----
 export const schwabTokens = sqliteTable("schwab_tokens", {
   id: integer("id").primaryKey(),
