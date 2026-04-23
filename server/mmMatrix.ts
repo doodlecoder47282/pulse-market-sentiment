@@ -83,7 +83,10 @@ interface RegimeInputs {
   charmChopFlag: boolean;
   vixDelta: number | null;    // DoD change
   dteToOpex: number;          // days to nearest Friday
-  vannaM: number;
+  vannaM: number;             // signed $M (positive = IV↓ pulls spot up)
+  vannaBias: "positive" | "negative";
+  charmZero: number | null;   // primary charm-zero spot
+  dfi: number;                // delta flow indicator, signed
 }
 
 function classifyRegime(inp: RegimeInputs): { regime: MMRegime; note: string } {
@@ -130,33 +133,74 @@ function classifyRegime(inp: RegimeInputs): { regime: MMRegime; note: string } {
 // Classify current zone from spot vs levels
 // ──────────────────────────────────────────────────────────────────────────
 
-function classifyZone(spot: number, levels: ModelLevel[]): { zone: MMZone; note: string } {
+// Zone position — how deep inside the zone spot sits.
+// 0 = at lower boundary (closer to PW side), 1 = at upper boundary (closer to CW side).
+interface ZoneClassification {
+  zone: MMZone;
+  note: string;
+  positionInZone: number;     // 0..1 — where spot sits within its zone
+  distToNearestPct: number;   // % distance to nearest structural level
+}
+
+function classifyZone(spot: number, levels: ModelLevel[]): ZoneClassification {
   const cw = levels.find(l => l.kind === "callWall")?.price ?? null;
   const pw = levels.find(l => l.kind === "putWall")?.price ?? null;
   const zg = levels.find(l => l.kind === "zeroGamma")?.price ?? null;
 
+  const nearest = [cw, pw, zg].filter((x): x is number => x != null)
+    .reduce((best, x) => Math.abs(x - spot) < Math.abs(best - spot) ? x : best, Infinity);
+  const distToNearestPct = Number.isFinite(nearest) ? Math.abs((nearest - spot) / spot) * 100 : 0;
+
   if (cw != null && spot > cw) {
-    return { zone: "ABOVE_CALL", note: `Spot above Call Wall (${cw.toFixed(0)}) — breakout territory, dealers short calls` };
+    const overrun = (spot - cw) / spot;
+    return {
+      zone: "ABOVE_CALL",
+      note: `Spot ${overrun > 0.005 ? "well " : ""}above Call Wall (${cw.toFixed(0)}) — breakout, dealers short calls`,
+      positionInZone: Math.min(1, overrun / 0.01),
+      distToNearestPct,
+    };
   }
   if (pw != null && spot < pw) {
-    return { zone: "BELOW_PW", note: `Spot below Put Wall (${pw.toFixed(0)}) — vacuum zone, no dealer support` };
+    const underrun = (pw - spot) / spot;
+    return {
+      zone: "BELOW_PW",
+      note: `Spot ${underrun > 0.005 ? "well " : ""}below Put Wall (${pw.toFixed(0)}) — vacuum, no dealer support`,
+      positionInZone: 1 - Math.min(1, underrun / 0.01),
+      distToNearestPct,
+    };
   }
   if (zg != null && Math.abs(spot - zg) / spot < 0.0025) {
-    return { zone: "AT_0G", note: `Spot at 0-Γ flip (${zg.toFixed(0)}) — maximum dealer confusion, vol node` };
+    return {
+      zone: "AT_0G",
+      note: `Spot at 0-Γ flip (${zg.toFixed(0)}, ${((spot-zg)/spot*100).toFixed(2)}%) — max dealer confusion, vol node`,
+      positionInZone: 0.5 + ((spot - zg) / spot) * 100, // -0.25..0.25 → skew above/below 0.5
+      distToNearestPct,
+    };
   }
   if (zg != null && spot > zg && cw != null) {
-    return { zone: "CW_TO_0G", note: `Between 0-Γ (${zg.toFixed(0)}) and Call Wall (${cw.toFixed(0)}) — positive gamma pin` };
+    const pos = (spot - zg) / (cw - zg);
+    return {
+      zone: "CW_TO_0G",
+      note: `Between 0-Γ (${zg.toFixed(0)}) and Call Wall (${cw.toFixed(0)}) — ${pos > 0.7 ? "hugging CW" : pos < 0.3 ? "drifting to 0-Γ" : "mid-range"} positive gamma`,
+      positionInZone: Math.max(0, Math.min(1, pos)),
+      distToNearestPct,
+    };
   }
   if (zg != null && spot < zg && pw != null) {
-    return { zone: "0G_TO_PW", note: `Between Put Wall (${pw.toFixed(0)}) and 0-Γ (${zg.toFixed(0)}) — negative gamma pocket` };
+    const pos = (spot - pw) / (zg - pw);
+    return {
+      zone: "0G_TO_PW",
+      note: `Between Put Wall (${pw.toFixed(0)}) and 0-Γ (${zg.toFixed(0)}) — ${pos < 0.3 ? "hugging PW" : pos > 0.7 ? "drifting to 0-Γ" : "mid-range"} negative gamma`,
+      positionInZone: Math.max(0, Math.min(1, pos)),
+      distToNearestPct,
+    };
   }
-  // Fallbacks
   if (zg != null) {
     return spot > zg
-      ? { zone: "CW_TO_0G", note: `Above 0-Γ — positive gamma regime` }
-      : { zone: "0G_TO_PW", note: `Below 0-Γ — negative gamma regime` };
+      ? { zone: "CW_TO_0G", note: `Above 0-Γ — positive gamma regime`, positionInZone: 0.5, distToNearestPct }
+      : { zone: "0G_TO_PW", note: `Below 0-Γ — negative gamma regime`, positionInZone: 0.5, distToNearestPct };
   }
-  return { zone: "AT_0G", note: `Structure unclear — treating as flip zone` };
+  return { zone: "AT_0G", note: `Structure unclear — treating as flip zone`, positionInZone: 0.5, distToNearestPct };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -213,31 +257,76 @@ const BASE_TABLE: Record<MMRegime, Record<MMZone, BaseCell>> = {
 function tilt(
   base: BaseCell,
   regime: MMRegime,
+  zone: MMZone,
   inp: RegimeInputs,
+  isCurrentCell: boolean,
+  positionInZone: number,
+  spot: number,
 ): BaseCell {
   let pUp = base.pUp;
   let pDown = base.pDown;
   let pPin = base.pPin;
 
-  // VANNA tilt — sign of VIX delta flips up/down bias
-  if (regime === "VANNA_DRIVEN" && inp.vixDelta != null) {
-    if (inp.vixDelta < 0) {
-      // vol crushing → positive vanna → spot up
-      const shift = Math.min(12, Math.abs(inp.vixDelta) * 4);
+  // VANNA tilt — use both VIX delta AND live vanna sign at spot
+  if (regime === "VANNA_DRIVEN") {
+    // Sign of vanna exposure at spot tells us which direction IV moves pull spot
+    if (inp.vannaBias === "positive" && inp.vixDelta != null && inp.vixDelta < 0) {
+      const shift = Math.min(14, Math.abs(inp.vixDelta) * 5);
       pUp += shift; pDown -= shift;
-    } else {
-      // vol popping → negative vanna → spot down (already baked in base)
-      const shift = Math.min(8, inp.vixDelta * 3);
+    } else if (inp.vannaBias === "negative" && inp.vixDelta != null && inp.vixDelta > 0) {
+      const shift = Math.min(14, inp.vixDelta * 5);
       pDown += shift; pUp -= shift;
+    } else if (inp.vixDelta != null) {
+      // Countervailing vanna sign — smaller shift
+      const shift = Math.min(6, Math.abs(inp.vixDelta) * 2);
+      if (inp.vixDelta < 0) { pUp += shift; pDown -= shift; }
+      else { pDown += shift; pUp -= shift; }
     }
   }
 
-  // Charm tightening deepens pin probability
-  if (inp.charmChopFlag) {
-    const shift = Math.min(8, inp.charmTighteningRate * 3);
+  // CHARM tilt — spot vs charmZero tells us drift direction
+  if (regime === "CHARM_DRIVEN" && inp.charmZero != null) {
+    const drift = (inp.charmZero - spot) / spot;
+    if (Math.abs(drift) > 0.001) {
+      // Charm pulls spot toward charmZero into close
+      const shift = Math.min(10, Math.abs(drift) * 800);
+      if (drift > 0) { pUp += shift; pDown -= shift; }
+      else { pDown += shift; pUp -= shift; }
+    }
+    // Charm tightening — deepens the pin
+    if (inp.charmChopFlag) {
+      const pinBoost = Math.min(10, inp.charmTighteningRate * 3);
+      pPin += pinBoost;
+      pUp -= pinBoost / 2; pDown -= pinBoost / 2;
+    }
+  }
+
+  // DFI tilt — live delta flow direction nudges up/down across all regimes
+  if (Math.abs(inp.dfi) > 0.1) {
+    const shift = Math.min(6, Math.abs(inp.dfi) * 5);
+    if (inp.dfi > 0) { pUp += shift; pDown -= shift; }
+    else { pDown += shift; pUp -= shift; }
+  }
+
+  // Charm tightening across non-CHARM regimes — smaller pin boost
+  if (regime !== "CHARM_DRIVEN" && inp.charmChopFlag) {
+    const shift = Math.min(6, inp.charmTighteningRate * 2);
     pPin += shift;
     const half = shift / 2;
     pUp -= half; pDown -= half;
+  }
+
+  // CURRENT CELL — apply position-in-zone tilt
+  // Higher positionInZone = closer to upper level → reduces pUp, raises pDown (ceiling nearby)
+  // Lower positionInZone = closer to lower level → raises pUp, reduces pDown (floor nearby)
+  if (isCurrentCell) {
+    const zonePull = positionInZone - 0.5; // -0.5..+0.5
+    // In negative gamma zones, position-pull is amplified (dealers accelerate toward boundary)
+    const amplify = (zone === "0G_TO_PW" || zone === "BELOW_PW" || zone === "ABOVE_CALL") ? 14 : 8;
+    const posShift = zonePull * amplify;
+    // Near upper boundary (>0.7): headwind to upside
+    if (positionInZone > 0.65) { pDown += Math.abs(posShift); pUp -= Math.abs(posShift); }
+    else if (positionInZone < 0.35) { pUp += Math.abs(posShift); pDown -= Math.abs(posShift); }
   }
 
   // Clamp + renormalize
@@ -312,15 +401,19 @@ export function buildMMMatrix(horizon: ModelHorizon, horizonDays: number): MMMat
     vixDelta: a.termStructureDoD?.iv1dDelta ?? null,
     dteToOpex: daysToFriday(a.asOf),
     vannaM: a.vannaM,
+    vannaBias: a.vannaBias,
+    charmZero: a.charmZero,
+    dfi: a.dfi,
   };
 
   const { regime: currentRegime, note: regimeNote } = classifyRegime(inp);
-  const { zone: currentZone, note: zoneNote } = classifyZone(a.spot, horizon.levels);
+  const { zone: currentZone, note: zoneNote, positionInZone } = classifyZone(a.spot, horizon.levels);
 
   const cells: MMCell[] = [];
   for (const regime of REGIMES) {
     for (const zone of ZONES) {
-      const tilted = tilt(BASE_TABLE[regime][zone], regime, inp);
+      const isCurrent = regime === currentRegime && zone === currentZone;
+      const tilted = tilt(BASE_TABLE[regime][zone], regime, zone, inp, isCurrent, positionInZone, a.spot);
       const bias = (tilted.pUp - tilted.pDown) / 100;
       const magnitude = magnitudeFor(a.spot, horizon.vol?.vix ?? null, regime, zone, horizonDays);
       cells.push({

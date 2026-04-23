@@ -358,10 +358,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/models", async (req, res) => {
     try {
       const symbol = (String(req.query.symbol ?? "^GSPC").toUpperCase() === "SPY" ? "SPY" : "^GSPC") as "SPY" | "^GSPC";
-      // ?experimental=1 unlocks dealer-map kinds (vanna flip, zomma bridge,
-      // charm target, neg-γ entry, upper/lower vomma). Cached separately so
-      // toggling the flag doesn't return stale non-experimental data.
-      const experimental = String(req.query.experimental ?? "") === "1";
+      // Dealer-map kinds (vanna flip, zomma bridge, charm target, neg-γ
+      // entry, upper/lower vomma) are now always on — they're core levels,
+      // not experimental. ?experimental=0 can still disable them explicitly.
+      const experimental = String(req.query.experimental ?? "1") !== "0";
       const cacheKey = `${symbol}${experimental ? ":exp" : ""}`;
       const cached = modelsCache.get(cacheKey);
       if (cached && Date.now() - cached.at < MODELS_CACHE_MS) {

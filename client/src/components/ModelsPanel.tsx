@@ -852,8 +852,9 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
   const displayLevels = useMemo(() => {
     const gap = (yMax - yMin) * 0.018;
     const priority = (k: string) =>
-      ["callWall", "putWall", "zeroGamma", "dominantMag", "mopexMaxPain"].includes(k) ? 2
-      : ["strongMag", "upsidePivot", "downsidePivot", "vannaFlip", "charmTarget"].includes(k) ? 1
+      ["callWall", "putWall", "zeroGamma", "dominantMag", "mopexMaxPain"].includes(k) ? 3
+      : ["vannaFlip", "charmTarget", "zommaBridge", "negGammaEntry", "upperVomma", "lowerVomma"].includes(k) ? 2
+      : ["strongMag", "upsidePivot", "downsidePivot"].includes(k) ? 1
       : 0;
     const sorted = [...horizon.levels].sort((a, b) => {
       const pd = priority(b.kind) - priority(a.kind);
@@ -968,7 +969,10 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
             {displayLevels.map((lv) => {
               if (["t1Up","t2Up","t1Down","t2Down"].includes(lv.kind)) return null;
               const color = levelColor(lv.kind);
-              const primary = ["callWall","putWall","zeroGamma","dominantMag","mopexMaxPain"].includes(lv.kind);
+              const primary = [
+                "callWall","putWall","zeroGamma","dominantMag","mopexMaxPain",
+                "vannaFlip","charmTarget","zommaBridge","upperVomma","lowerVomma","negGammaEntry",
+              ].includes(lv.kind);
               const showLabel = primary && (lv as any).showLabel !== false;
               const shortName = levelShortName(lv.kind);
               return (
