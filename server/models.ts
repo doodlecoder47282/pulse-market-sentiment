@@ -34,7 +34,7 @@ import { chainToRows } from "./exposures";
 import { getCboeChain } from "./cboeCache";
 import { computeGreeks } from "./greeks";
 
-export type Horizon = "daily" | "weekly" | "monthly";
+export type Horizon = "daily" | "weekly" | "monthly" | "quarterly";
 
 export interface ModelLevel {
   label: string;
@@ -152,6 +152,7 @@ const DTE_MAX: Record<Horizon, number> = {
   daily: 2,      // 0DTE + next-day
   weekly: 7,     // current week + front-week
   monthly: 45,   // Include monthly OPEX
+  quarterly: 100, // 3-month OPEX window (captures next 3 monthly OPEX)
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -223,7 +224,11 @@ function maxPain(rows: ExposureRow[]): number | null {
 // vix is in annualized %; returns a price delta.
 function sigmaBand(spot: number, vix: number | null, horizon: Horizon): number {
   const vol = Math.max(8, Math.min(80, vix ?? 18)) / 100;  // clamp for sanity
-  const days = horizon === "daily" ? 1 : horizon === "weekly" ? 5 : 21;
+  const days =
+    horizon === "daily" ? 1
+      : horizon === "weekly" ? 5
+      : horizon === "monthly" ? 21
+      : 63; // quarterly = 63 trading days
   return spot * vol * Math.sqrt(days / 252);
 }
 
@@ -583,7 +588,11 @@ function generatePaths(
   let bearTarget = downsidePivot?.price ?? putWall?.price ?? spot * 0.99;
   // Sanity clamp: bear target shouldn't exceed ~3% below spot for daily, ~5%
   // for weekly, ~7% for monthly — otherwise the curve dominates the chart.
-  const maxDropPct = horizon === "daily" ? 0.03 : horizon === "weekly" ? 0.05 : 0.07;
+  const maxDropPct =
+    horizon === "daily" ? 0.03
+      : horizon === "weekly" ? 0.05
+      : horizon === "monthly" ? 0.07
+      : 0.12;  // quarterly allows wider drawdown range
   if (bearTarget < spot * (1 - maxDropPct)) bearTarget = spot * (1 - maxDropPct);
   const bearVia = zeroGamma?.price ?? t1Down.price;
   const bearPath = path(
@@ -899,12 +908,12 @@ export async function buildModelsSnapshot(input: {
 }): Promise<ModelsResponse> {
   const warnings: string[] = [];
   const symbols = input.symbols ?? ["^GSPC", "SPY"];
-  const horizons = input.horizons ?? (["daily", "weekly", "monthly"] as Horizon[]);
+  const horizons = input.horizons ?? (["daily", "weekly", "monthly", "quarterly"] as Horizon[]);
 
   const out: ModelsResponse = {
     asOf: Math.floor(Date.now() / 1000),
     session: "live",
-    horizons: { daily: null, weekly: null, monthly: null },
+    horizons: { daily: null, weekly: null, monthly: null, quarterly: null },
     warnings,
     experimental: input.experimental ?? false,
   };
@@ -985,18 +994,32 @@ function buildHorizonDates(h: Horizon): {
     return { spotAnchorDate, targetDate: fmt(fri), targetDateLong: fmtLong(fri), waypointLabels: labels };
   }
 
-  // monthly — target 3rd Friday of this month (or next if passed)
-  const third = thirdFridayOf(now);
-  const target = now > third ? thirdFridayOf(new Date(now.getFullYear(), now.getMonth() + 1, 1)) : third;
-  const weeks = Math.max(1, Math.ceil((target.getTime() - now.getTime()) / (7 * 86400000)));
-  const labels: string[] = [];
-  for (let i = 0; i <= weeks; i++) {
-    const d = new Date(now);
-    d.setDate(now.getDate() + i * 7);
-    if (d > target) break;
-    labels.push(fmt(d));
+  if (h === "monthly") {
+    // monthly — target 3rd Friday of this month (or next if passed)
+    const third = thirdFridayOf(now);
+    const target = now > third ? thirdFridayOf(new Date(now.getFullYear(), now.getMonth() + 1, 1)) : third;
+    const weeks = Math.max(1, Math.ceil((target.getTime() - now.getTime()) / (7 * 86400000)));
+    const labels: string[] = [];
+    for (let i = 0; i <= weeks; i++) {
+      const d = new Date(now);
+      d.setDate(now.getDate() + i * 7);
+      if (d > target) break;
+      labels.push(fmt(d));
+    }
+    if (labels.length < 2) labels.push(fmt(target));
+    return { spotAnchorDate, targetDate: fmt(target), targetDateLong: fmtLong(target), waypointLabels: labels };
   }
-  if (labels.length < 2) labels.push(fmt(target));
+
+  // quarterly — target 3rd Friday three months out
+  const m3 = new Date(now.getFullYear(), now.getMonth() + 3, 1);
+  const target = thirdFridayOf(m3);
+  // Waypoints: each monthly OPEX along the path (this month, +1mo, +2mo, +3mo)
+  const labels: string[] = [spotAnchorDate];
+  for (let i = 1; i <= 3; i++) {
+    const midMonth = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    const opex = thirdFridayOf(midMonth);
+    labels.push(fmt(opex));
+  }
   return { spotAnchorDate, targetDate: fmt(target), targetDateLong: fmtLong(target), waypointLabels: labels };
 }
 

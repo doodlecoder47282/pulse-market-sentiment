@@ -42,7 +42,7 @@ import ChainAudit from "@/components/ChainAudit";
 
 // ─── Types mirror server/models.ts ──────────────────────────────────────────
 
-type Horizon = "daily" | "weekly" | "monthly";
+type Horizon = "daily" | "weekly" | "monthly" | "quarterly";
 
 interface ModelLevel {
   label: string;
@@ -885,7 +885,7 @@ export default function ModelsPanel() {
 
         {/* Horizon pills */}
         <div className="flex gap-1 rounded border border-border/60 bg-black/30 p-0.5">
-          {(["daily", "weekly", "monthly"] as Horizon[]).map((h) => (
+          {(["daily", "weekly", "monthly", "quarterly"] as Horizon[]).map((h) => (
             <Button
               key={h}
               variant={horizon === h ? "default" : "ghost"}
@@ -894,7 +894,7 @@ export default function ModelsPanel() {
               onClick={() => setHorizon(h)}
               data-testid={`btn-horizon-${h}`}
             >
-              {h}
+              {h === "quarterly" ? "3M" : h}
             </Button>
           ))}
         </div>
