@@ -191,9 +191,6 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
 
   return (
     <div className="space-y-5">
-      {/* Live 0DTE tracker card (Schwab feed) */}
-      <LiveOdteTracker />
-
       {/* ── Header strip ──────────────────────────────────────────────── */}
       <Card className="border-primary/20 bg-gradient-to-br from-background to-primary/5">
         <CardContent className="pt-6">
@@ -304,6 +301,9 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
           </div>
         </CardContent>
       </Card>
+
+      {/* ── Live 0DTE tracker — directly under the Greek heatmap ───────── */}
+      <LiveOdteTracker />
 
       {/* ── Greek profile curves ──────────────────────────────────────── */}
       <Card>

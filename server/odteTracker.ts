@@ -113,6 +113,11 @@ const volHistory = new Map<string, Array<{ ts: number; dv: number }>>();
 // Per-contract sparkline of recent volume sticks with classification, for UI
 const sparkHistory = new Map<string, Array<{ ts: number; dv: number; cls: Classification; last: number | null }>>();
 
+// Per-contract long tick history for the ToS-style 5-min contract chart
+// (stores every poll's {ts, last, bid, ask, mid, dv, cls} for up to CHART_WINDOW_MS)
+interface ChartTick { ts: number; last: number | null; bid: number | null; ask: number | null; mid: number | null; dv: number; cls: Classification; }
+const chartHistory = new Map<string, ChartTick[]>();
+
 const events: TickEvent[] = [];
 const tracked: TrackedPosition[] = [];
 
@@ -122,6 +127,7 @@ const STRIKE_RADIUS = 20;         // ATM ±20 strikes
 const DEFAULT_MIN_NOTIONAL = 50_000;
 const SPARK_WINDOW_MS = 15 * 60_000;    // 15 min intraday sparkline window
 const VOL_HISTORY_MS = 5 * 60_000;      // 5 min decay window
+const CHART_WINDOW_MS = 6 * 60 * 60_000; // 6 hours of tick history per contract (whole session)
 
 // ─── Utilities ─────────────────────────────────────────────────────────────
 
@@ -284,6 +290,13 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
     while (spark.length && spark[0].ts < sparkCutoff) spark.shift();
     sparkHistory.set(key, spark);
 
+    // Long per-contract tick history for the ToS-style intraday chart
+    const chist = chartHistory.get(key) ?? [];
+    chist.push({ ts: nowTs, last, bid, ask, mid, dv: deltaVol, cls });
+    const chartCutoff = nowTs - CHART_WINDOW_MS;
+    while (chist.length && chist[0].ts < chartCutoff) chist.shift();
+    chartHistory.set(key, chist);
+
     // Fire a BUY tick event (visual marker) when a large buy print happens
     if (buyFlag) {
       pushEvent({
@@ -378,6 +391,83 @@ export function getSparkline(contractKey: string, sizeCons: number = 5) {
   const hist = sparkHistory.get(contractKey) ?? [];
   // sizeCons scales the per-bar display threshold on the client — we just return raw
   return hist.map(h => ({ ts: h.ts, dv: h.dv, cls: h.cls, last: h.last, sizeCons }));
+}
+
+// ─── ToS-style chart bars ──────────────────────────────────────────────────
+//
+// Builds OHLC + split buy/sell volume bars for a single contract, bucketed by
+// bucketMs (default 5 min). Used by the "Live contract chart" under the tracker.
+export interface ChartBar {
+  ts: number;        // bucket start (epoch ms)
+  timeLabel: string; // "10:35"
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  buyVol: number;    // sum of Δvol classified buy within bucket
+  sellVol: number;   // sum of Δvol classified sell within bucket
+  totalVol: number;  // sum of Δvol regardless of classification
+  bidLow: number | null;
+  askHigh: number | null;
+}
+
+export function getContractChart(
+  contractKey: string,
+  bucketMs: number = 5 * 60_000,
+): { key: string; bucketMs: number; bars: ChartBar[]; firstTs: number | null; lastTs: number | null } {
+  const ticks = chartHistory.get(contractKey) ?? [];
+  if (ticks.length === 0) {
+    return { key: contractKey, bucketMs, bars: [], firstTs: null, lastTs: null };
+  }
+  // Group ticks by floor(ts / bucketMs)
+  const buckets = new Map<number, ChartTick[]>();
+  for (const t of ticks) {
+    const k = Math.floor(t.ts / bucketMs) * bucketMs;
+    const arr = buckets.get(k) ?? [];
+    arr.push(t);
+    buckets.set(k, arr);
+  }
+  const bars: ChartBar[] = [];
+  const keys = [...buckets.keys()].sort((a, b) => a - b);
+  for (const k of keys) {
+    const group = buckets.get(k)!;
+    // Prices within this bucket
+    const prices = group.map(g => g.last).filter((x): x is number => x != null && x > 0);
+    const open = prices.length ? prices[0] : null;
+    const close = prices.length ? prices[prices.length - 1] : null;
+    const high = prices.length ? Math.max(...prices) : null;
+    const low = prices.length ? Math.min(...prices) : null;
+    // Bid/ask envelope (for ToS-style quote band)
+    const bids = group.map(g => g.bid).filter((x): x is number => x != null && x > 0);
+    const asks = group.map(g => g.ask).filter((x): x is number => x != null && x > 0);
+    const bidLow = bids.length ? Math.min(...bids) : null;
+    const askHigh = asks.length ? Math.max(...asks) : null;
+    // Split volume by classification
+    let buyVol = 0, sellVol = 0, totalVol = 0;
+    for (const g of group) {
+      if (g.dv <= 0) continue;
+      totalVol += g.dv;
+      if (g.cls === "buy") buyVol += g.dv;
+      else if (g.cls === "sell") sellVol += g.dv;
+    }
+    const d = new Date(k);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    bars.push({
+      ts: k,
+      timeLabel: `${hh}:${mm}`,
+      open, high, low, close,
+      buyVol, sellVol, totalVol,
+      bidLow, askHigh,
+    });
+  }
+  return {
+    key: contractKey,
+    bucketMs,
+    bars,
+    firstTs: ticks[0].ts,
+    lastTs: ticks[ticks.length - 1].ts,
+  };
 }
 
 export function armPosition(args: {

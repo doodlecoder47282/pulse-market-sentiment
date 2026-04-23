@@ -24,6 +24,7 @@ import { Slider } from "@/components/ui/slider";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { Radio, Crosshair, DollarSign, Flame, ArrowUp, ArrowDown, Activity } from "lucide-react";
+import OdteContractChart from "./OdteContractChart";
 
 type Side = "call" | "put";
 type Classification = "buy" | "sell" | "neutral";
@@ -145,6 +146,7 @@ function VolSpark({ contractKey, events, snapAt }: {
 export default function LiveOdteTracker() {
   const [sizeMultiple, setSizeMultiple] = useState<number>(5);
   const [sideFilter, setSideFilter] = useState<"all" | "call" | "put">("all");
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const { toast } = useToast();
 
   const { data, isLoading, error } = useQuery<TrackerSnapshot>({
@@ -216,6 +218,8 @@ export default function LiveOdteTracker() {
     setSizeMultiple={setSizeMultiple}
     sideFilter={sideFilter}
     setSideFilter={setSideFilter}
+    selectedKey={selectedKey}
+    setSelectedKey={setSelectedKey}
     onArm={(key, minNotional) => armMut.mutate({ contractKey: key, minNotional })}
     onDisarm={(id) => disarmMut.mutate(id)}
     armPending={armMut.isPending}
@@ -224,6 +228,7 @@ export default function LiveOdteTracker() {
 
 function LiveTrackerView({
   data, sizeMultiple, setSizeMultiple, sideFilter, setSideFilter,
+  selectedKey, setSelectedKey,
   onArm, onDisarm, armPending,
 }: {
   data: TrackerSnapshot;
@@ -231,6 +236,8 @@ function LiveTrackerView({
   setSizeMultiple: (n: number) => void;
   sideFilter: "all" | "call" | "put";
   setSideFilter: (s: "all" | "call" | "put") => void;
+  selectedKey: string | null;
+  setSelectedKey: (k: string | null) => void;
   onArm: (key: string, minNotional: number) => void;
   onDisarm: (id: string) => void;
   armPending: boolean;
@@ -249,6 +256,11 @@ function LiveTrackerView({
     if (sideFilter !== "all") rows = rows.filter(r => r.side === sideFilter);
     return [...rows].sort((a, b) => a.distance - b.distance || (a.side === "call" ? -1 : 1));
   }, [data.contracts, sideFilter]);
+
+  const selectedRow = useMemo(
+    () => selectedKey ? data.contracts.find(c => c.key === selectedKey) ?? null : null,
+    [selectedKey, data.contracts],
+  );
 
   const activeTracked = data.tracked.filter(t => t.status === "active");
   const exitedTracked = data.tracked.filter(t => t.status === "exited").slice(-5);
@@ -405,10 +417,13 @@ function LiveTrackerView({
               {shown.map(r => {
                 const isBuy = r.classification === "buy" && r.notional >= minNotional;
                 const isAlreadyTracked = data.tracked.some(t => t.contractKey === r.key && t.status === "active");
+                const isSelected = r.key === selectedKey;
                 return (
                   <tr
                     key={r.key}
-                    className={`border-b border-muted/20 font-mono hover:bg-muted/30 ${
+                    onClick={() => setSelectedKey(isSelected ? null : r.key)}
+                    className={`cursor-pointer border-b border-muted/20 font-mono hover:bg-muted/30 ${
+                      isSelected ? "bg-sky-500/15 ring-1 ring-sky-500/40" :
                       isBuy ? "bg-emerald-500/5" : r.classification === "sell" && r.deltaVol > 0 ? "bg-rose-500/5" : ""
                     }`}
                     data-testid={`row-odte-${r.key}`}
@@ -442,7 +457,7 @@ function LiveTrackerView({
                         variant={isAlreadyTracked ? "outline" : isBuy ? "default" : "ghost"}
                         disabled={isAlreadyTracked || armPending || r.last == null}
                         className="h-6 px-2 text-[10px]"
-                        onClick={() => onArm(r.key, minNotional)}
+                        onClick={(e) => { e.stopPropagation(); onArm(r.key, minNotional); }}
                         data-testid={`button-arm-${r.key}`}
                       >
                         {isAlreadyTracked ? "tracked" : isBuy ? <><Flame className="mr-1 h-3 w-3" />arm</> : "arm"}
@@ -458,6 +473,33 @@ function LiveTrackerView({
         {shown.length === 0 && (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
             <Activity className="h-4 w-4" /> waiting for first tick…
+          </div>
+        )}
+
+        {/* ▼ Selected-contract live chart (ToS-style 5-min, swipe for details) */}
+        {selectedRow && (
+          <div className="mt-3">
+            <OdteContractChart
+              meta={{
+                key: selectedRow.key,
+                label: `${selectedRow.strike.toFixed(0)}${selectedRow.side === "call" ? "C" : "P"} · ${selectedRow.symbol}`,
+                strike: selectedRow.strike,
+                side: selectedRow.side,
+                expiry: selectedRow.expiry,
+                last: selectedRow.last,
+                spot: data.spot,
+                bid: selectedRow.bid,
+                ask: selectedRow.ask,
+                mid: selectedRow.mid,
+                volume: selectedRow.volume,
+                openInterest: selectedRow.openInterest,
+                deltaVol: selectedRow.deltaVol,
+                notional: selectedRow.notional,
+                classification: selectedRow.classification,
+                distance: selectedRow.distance,
+              }}
+              onClose={() => setSelectedKey(null)}
+            />
           </div>
         )}
       </CardContent>

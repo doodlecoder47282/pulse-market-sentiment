@@ -43,7 +43,7 @@ import { buildHeatseeker } from "./heatseeker";
 import { masterAlphaRoute } from "./masterAlpha";
 import {
   startOdteTracker, getOdteSnapshot, armPosition, disarmPosition,
-  getSparkline, getTracked,
+  getSparkline, getTracked, getContractChart,
 } from "./odteTracker";
 
 function vm(symbol: string, name: string, last: number | null, prev: number | null): VolMetric {
@@ -1371,6 +1371,18 @@ Sift this feed AND search the web for any critical developments in geopolitics, 
 
   app.get("/api/odte-tracker/tracked", (_req, res) => {
     res.json({ tracked: getTracked() });
+  });
+
+  // ToS-style 5-min intraday chart for a single contract (key = contractKey)
+  app.get("/api/odte-tracker/chart", (req, res) => {
+    try {
+      const key = String(req.query.key || "");
+      const bucketMs = Math.max(15_000, Math.min(60 * 60_000, Number(req.query.bucketMs) || 5 * 60_000));
+      if (!key) return res.status(400).json({ error: "missing_key" });
+      res.json(getContractChart(key, bucketMs));
+    } catch (e: any) {
+      res.status(500).json({ error: "chart_failed", message: e?.message });
+    }
   });
 
   // Kick off tracker poller
