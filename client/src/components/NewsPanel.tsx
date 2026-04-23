@@ -3,14 +3,17 @@
 // Data: GET /api/news (3-min cache, free RSS + Nasdaq econ calendar).
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Newspaper, CalendarDays, ExternalLink, AlertTriangle, Search, Flame } from "lucide-react";
+import { Newspaper, CalendarDays, ExternalLink, AlertTriangle, Search, Flame, Sparkles, Copy, Check } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 type NewsTopic = "FED" | "INFLATION" | "JOBS" | "GROWTH" | "GEO" | "EARNINGS" | "RATES" | "OIL" | "OTHER";
 
@@ -241,6 +244,166 @@ function resolveEventBio(e: CalendarEvent): string {
   return "Scheduled market event. Check the release details for forecast vs. prior — surprises on either side typically produce the intraday vol.";
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// ALPHA Agent — helper components
+// ──────────────────────────────────────────────────────────────────────────
+
+function AlphaCopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      data-testid="button-alpha-copy"
+      className="h-6 gap-1 px-2 text-[10px] text-amber-300/70 hover:text-amber-300"
+      onClick={() => {
+        navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      }}
+    >
+      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      {copied ? "Copied" : "Copy"}
+    </Button>
+  );
+}
+
+function AlphaSkeleton() {
+  return (
+    <div className="space-y-2" data-testid="alpha-skeleton">
+      <div className="text-[10px] font-mono tracking-wider text-amber-400/60 animate-pulse">
+        ALPHA is analyzing the tape...
+      </div>
+      <Skeleton className="h-4 w-full bg-amber-500/10" />
+      <Skeleton className="h-4 w-5/6 bg-amber-500/10" />
+      <Skeleton className="h-4 w-4/5 bg-amber-500/10" />
+      <Skeleton className="h-8 w-full bg-amber-500/10" />
+      <Skeleton className="h-4 w-full bg-amber-500/10" />
+      <Skeleton className="h-4 w-3/4 bg-amber-500/10" />
+      <Skeleton className="h-4 w-full bg-amber-500/10" />
+    </div>
+  );
+}
+
+interface AlphaBriefResult {
+  brief: string;
+  mode: "with_search" | "knowledge_only";
+  error?: string;
+}
+
+function AlphaCard({ headlines }: { headlines: Headline[] }) {
+  const mutation = useMutation({
+    mutationFn: async (): Promise<AlphaBriefResult> => {
+      const newsItems = headlines.slice(0, 30).map((h) => ({
+        title: h.title,
+        source: h.source,
+        time: new Date(h.published * 1000).toLocaleTimeString("en-US", {
+          timeZone: "America/New_York",
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        summary: h.summary || undefined,
+        url: h.url || undefined,
+      }));
+      const res = await apiRequest("POST", "/api/alpha-brief", { newsItems });
+      return res.json() as Promise<AlphaBriefResult>;
+    },
+  });
+
+  return (
+    <Card
+      className="border-amber-500/30 bg-gradient-to-br from-amber-950/20 to-background"
+      data-testid="alpha-card"
+    >
+      <CardHeader className="flex flex-row items-start justify-between pb-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-amber-400 flex-shrink-0" />
+            <h3 className="font-mono tracking-wider text-amber-300 text-sm font-semibold">ALPHA</h3>
+            <Badge
+              variant="outline"
+              className="border-amber-500/40 text-amber-300/80 text-[10px]"
+            >
+              Claude Opus
+            </Badge>
+            {mutation.data?.mode === "with_search" && (
+              <Badge
+                variant="outline"
+                className="border-emerald-500/40 text-emerald-300/80 text-[9px]"
+              >
+                + web search
+              </Badge>
+            )}
+            {mutation.data?.mode === "knowledge_only" && (
+              <Badge
+                variant="outline"
+                className="border-amber-500/30 text-amber-400/60 text-[9px]"
+              >
+                knowledge only
+              </Badge>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            AI agent sifts geopolitics, rates, insider, sentiment. Ranks by market impact.
+          </p>
+        </div>
+        <Button
+          data-testid="button-alpha-generate"
+          onClick={() => mutation.mutate()}
+          disabled={mutation.isPending}
+          className="ml-3 flex-shrink-0 bg-amber-500 text-black hover:bg-amber-400 font-mono tracking-wider text-xs"
+        >
+          {mutation.isPending ? "ANALYZING..." : "RUN ALPHA"}
+        </Button>
+      </CardHeader>
+
+      {(mutation.isPending || mutation.data || mutation.isError) && (
+        <CardContent className="pt-0">
+          {mutation.isPending && <AlphaSkeleton />}
+
+          {mutation.isError && (
+            <div className="rounded border border-rose-500/30 bg-rose-500/5 p-3 text-[11px] text-rose-400">
+              ALPHA failed: {(mutation.error as Error)?.message ?? "Unknown error"}
+            </div>
+          )}
+
+          {mutation.data?.error && (
+            <div className="rounded border border-rose-500/30 bg-rose-500/5 p-3 text-[11px] text-rose-400">
+              ALPHA failed: {mutation.data.error}
+            </div>
+          )}
+
+          {mutation.data?.brief && !mutation.isPending && (
+            <div className="space-y-2">
+              {mutation.data.mode === "knowledge_only" && (
+                <div className="text-xs text-amber-400/70 border border-amber-500/20 rounded px-2 py-1">
+                  Live web search unavailable — brief based on news feed + model knowledge.
+                </div>
+              )}
+              <div
+                className="prose prose-invert prose-sm max-w-none rounded border border-amber-500/10 bg-card/30 p-3
+                  prose-headings:font-mono prose-headings:tracking-wider prose-headings:text-amber-300
+                  prose-headings:text-sm prose-headings:font-semibold
+                  prose-p:text-[11px] prose-p:leading-relaxed prose-p:text-foreground/90
+                  prose-li:text-[11px] prose-li:leading-relaxed prose-li:text-foreground/90
+                  prose-table:text-[10px] prose-td:py-1 prose-th:py-1
+                  prose-th:font-mono prose-th:tracking-wider prose-th:text-amber-300/80
+                  prose-strong:text-foreground"
+                data-testid="alpha-brief-output"
+              >
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{mutation.data.brief}</ReactMarkdown>
+              </div>
+              <div className="flex justify-end">
+                <AlphaCopyButton text={mutation.data.brief} />
+              </div>
+            </div>
+          )}
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
 // Week bucketing: ISO week-year string (e.g. "Week of Mon 4/21")
 function weekStart(epoch: number): number {
   const d = new Date(epoch * 1000);
@@ -346,6 +509,9 @@ export default function NewsPanel() {
       </TabsList>
 
       <TabsContent value="feed" className="mt-0">
+      <div className="mb-4">
+        <AlphaCard headlines={data.headlines} />
+      </div>
     <div className="grid gap-4 md:grid-cols-[1fr_360px]">
       {/* Left: headline feed */}
       <Card>

@@ -819,6 +819,118 @@ Build the EOD setup brief.`;
     }
   });
 
+  // ---- ALPHA: AI market-intelligence agent ----
+  // POST /api/alpha-brief — sifts news feed + web search, ranks by market impact.
+  // Uses Claude Opus with web_search tool (falls back to knowledge-only if tool unavailable).
+  const ALPHA_SYSTEM_PROMPT = `You are ALPHA — an institutional market-intelligence agent for active traders. Your job: sift the day's critical news and rank it by expected market impact.
+
+SCOPE (what matters)
+- Geopolitics: war, sanctions, OPEC decisions, trade disputes, major elections, terrorism affecting markets.
+- Rates / Fed: FOMC decisions, Fed speeches (esp. Powell, Williams, Waller), CPI/PCE/NFP prints, Treasury auctions, BOJ/ECB moves.
+- Insider activity: large Form 4 buys or sells, cluster buys in a single name, executive departures.
+- Sentiment / positioning: VIX regime shifts, funding spreads, AAII/NAAIM extremes, put-call extremes.
+- Corporate: mega-cap earnings (MAG7), guidance cuts, M&A announcements, major layoffs.
+
+SKIP
+- Opinion pieces with no new information.
+- Routine earnings from non-index-movers.
+- Re-hashed stories from last week.
+
+SCORING (Impact 1-10)
+10 = Immediate, broad-based index move (e.g. surprise Fed cut, major war escalation)
+8-9 = Strong sector rotation or index-level move within a day
+6-7 = Notable for specific names or sectors, may spill to index
+4-5 = Worth watching, developing story
+1-3 = Background noise
+
+DIRECTION: Bullish / Bearish / Two-sided / Mixed
+HORIZON: Intraday / Days / Weeks / Structural
+
+OUTPUT FORMAT (markdown, exactly these sections)
+
+## ALPHA BRIEF — [today's date, ET]
+
+One-paragraph tape summary: the single most important thing a trader needs to know right now.
+
+## RANKED IMPACT
+
+A markdown table with columns exactly:
+| Rank | Event | Category | Impact | Direction | Horizon | Tickers |
+
+Sort by Impact desc. Include at least 5 items, up to 12. Tickers = comma-separated (e.g. SPY, XLE, CL=F). Category = one of: GEOPOLITICS, RATES/FED, INSIDER, SENTIMENT, CORPORATE.
+
+## TRADE IMPLICATIONS
+
+3-5 bullets. Concrete. Reference specific levels, setups, or pairs if possible. Tie back to dealer gamma regime when relevant.
+
+## WATCH LIST
+
+- Upcoming catalysts in next 48h (date + event)
+- Key levels / prints traders need on the screen
+
+## CAVEATS
+
+1-2 lines on what's unclear or could flip the read.
+
+Be precise. No hedging language. No filler. If news feed is empty or stale, say so and work from live search only.`;
+
+  app.post("/api/alpha-brief", async (req, res) => {
+    try {
+      const { newsItems = [] } = req.body || {};
+
+      const now = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
+      const itemLines = (newsItems as Array<{ title: string; source?: string; time?: string; summary?: string; url?: string }>)
+        .slice(0, 30)
+        .map((n, i) => `${i + 1}. [${n.source ?? "?"}, ${n.time ?? "?"}] ${n.title}${n.summary ? " — " + n.summary : ""}`)
+        .join("\n");
+
+      const userBrief = `CURRENT TIME: ${now} ET
+
+EXISTING NEWS FEED (${(newsItems as any[]).length} items):
+${itemLines || "(empty)"}
+
+TASK
+Sift this feed AND search the web for any critical developments in geopolitics, rates/Fed, insider buys, and sentiment/positioning that the feed is missing or under-weighting. Produce the ALPHA brief.`;
+
+      const anthropicClient = new Anthropic();
+      let response: Awaited<ReturnType<typeof anthropicClient.messages.create>>;
+      let mode: "with_search" | "knowledge_only" = "with_search";
+
+      try {
+        response = await anthropicClient.messages.create({
+          model: "claude_opus_4_7",
+          max_tokens: 4096,
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 6 }] as any,
+          system: ALPHA_SYSTEM_PROMPT,
+          messages: [{ role: "user", content: userBrief }],
+        });
+        console.log("[alpha-brief] mode: with_search");
+      } catch (toolErr: any) {
+        // Fallback if web_search tool not supported by this proxy
+        mode = "knowledge_only";
+        console.warn("[alpha-brief] web_search unavailable, falling back to knowledge_only:", toolErr?.message);
+        response = await anthropicClient.messages.create({
+          model: "claude_opus_4_7",
+          max_tokens: 4096,
+          system: ALPHA_SYSTEM_PROMPT,
+          messages: [{ role: "user", content: userBrief + "\n\n(Note: live web search unavailable — use news feed + your knowledge.)" }],
+        });
+        console.log("[alpha-brief] mode: knowledge_only");
+      }
+
+      // Extract text blocks (Opus with tool use returns mixed blocks)
+      const brief = response.content
+        .filter((b: any) => b.type === "text")
+        .map((b: any) => b.text)
+        .join("\n\n");
+
+      res.json({ brief, mode });
+    } catch (err: any) {
+      console.error("[alpha-brief]", err?.message);
+      res.status(500).json({ error: err?.message ?? "ALPHA brief failed" });
+    }
+  });
+
   // ---- Enhanced gamma levels: computed + user weekly targets ----
   // Augments the existing /api/gamma-levels with vanna/charm/vomma/zomma user targets.
   app.get("/api/gamma-levels-enhanced", async (req, res) => {
