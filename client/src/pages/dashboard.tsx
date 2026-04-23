@@ -247,7 +247,7 @@ export default function Dashboard() {
 
       {/* Header */}
       <header className="sticky top-0 z-10 border-b border-border bg-background/80 backdrop-blur">
-        <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-2 px-3 py-3 sm:px-4 md:px-8">
+        <div className="mx-auto flex max-w-[1800px] items-center justify-between gap-2 px-3 py-3 sm:px-4 md:px-8 xl:px-10">
           {/* Left: Logo + name + BATCAVE tag */}
           <div className="flex items-center gap-3">
             <div className="text-primary"><Logo className="h-7 w-7" /></div>
@@ -332,7 +332,7 @@ export default function Dashboard() {
       {/* Ticker tape — flows across the top under the header on every tab */}
       <MacroTicker />
 
-      <main className="mx-auto max-w-[1400px] space-y-4 px-3 py-4 sm:space-y-6 sm:px-4 sm:py-6 md:px-8">
+      <main className="mx-auto max-w-[1800px] space-y-4 px-3 py-4 sm:space-y-6 sm:px-4 sm:py-6 md:px-8 xl:px-10 xl:text-[15px]">
         {/* Rotating macro carousel — always visible above the tabs */}
         <MacroCarousel />
 
@@ -340,18 +340,18 @@ export default function Dashboard() {
           {/* Mobile-scrollable tab list with fade edge */}
           <div className="relative mb-4">
             <div className="tabs-scroll-container overflow-x-auto" style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
-              <TabsList className="inline-flex w-max min-w-full" data-testid="tabs-dashboard">
-                <TabsTrigger value="signals" data-testid="tab-signals">Signals</TabsTrigger>
-                <TabsTrigger value="chart" data-testid="tab-chart">Chart</TabsTrigger>
-                <TabsTrigger value="models" data-testid="tab-models">Models</TabsTrigger>
-                <TabsTrigger value="tradedesk" data-testid="tab-tradedesk">Trade Desk</TabsTrigger>
-                <TabsTrigger value="regime" data-testid="tab-regime">Regime</TabsTrigger>
-                <TabsTrigger value="news" data-testid="tab-news">News</TabsTrigger>
-                <TabsTrigger value="voices" data-testid="tab-voices">Voices</TabsTrigger>
+              <TabsList className="inline-flex w-max min-w-full xl:h-11 xl:gap-1 xl:p-1.5" data-testid="tabs-dashboard">
+                <TabsTrigger value="signals" data-testid="tab-signals" className="xl:px-5 xl:text-[15px] xl:font-semibold">Signals</TabsTrigger>
+                <TabsTrigger value="chart" data-testid="tab-chart" className="xl:px-5 xl:text-[15px] xl:font-semibold">Chart</TabsTrigger>
+                <TabsTrigger value="models" data-testid="tab-models" className="xl:px-5 xl:text-[15px] xl:font-semibold">Models</TabsTrigger>
+                <TabsTrigger value="tradedesk" data-testid="tab-tradedesk" className="xl:px-5 xl:text-[15px] xl:font-semibold">Trade Desk</TabsTrigger>
+                <TabsTrigger value="regime" data-testid="tab-regime" className="xl:px-5 xl:text-[15px] xl:font-semibold">Regime</TabsTrigger>
+                <TabsTrigger value="news" data-testid="tab-news" className="xl:px-5 xl:text-[15px] xl:font-semibold">News</TabsTrigger>
+                <TabsTrigger value="voices" data-testid="tab-voices" className="xl:px-5 xl:text-[15px] xl:font-semibold">Voices</TabsTrigger>
                 <TabsTrigger
                   value="takefive"
                   data-testid="tab-takefive"
-                  className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-fuchsia-600/40 data-[state=active]:via-cyan-500/30 data-[state=active]:to-amber-400/40 data-[state=active]:text-white"
+                  className="xl:px-5 xl:text-[15px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-fuchsia-600/40 data-[state=active]:via-cyan-500/30 data-[state=active]:to-amber-400/40 data-[state=active]:text-white"
                 >
                   Take Five
                 </TabsTrigger>
@@ -886,7 +886,7 @@ function TermBar({ label, value, max, highlight }: { label: string; value: numbe
 function DashboardSkeleton() {
   return (
     <div className="min-h-screen bg-background p-4 md:p-8">
-      <div className="mx-auto max-w-[1400px] space-y-6">
+      <div className="mx-auto max-w-[1800px] space-y-6">
         <Skeleton className="h-14 w-full" />
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
           <Skeleton className="h-[420px] lg:col-span-5" />
