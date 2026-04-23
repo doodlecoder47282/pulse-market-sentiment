@@ -38,6 +38,7 @@ import { RefreshCw, AlertTriangle, Activity } from "lucide-react";
 import { BatmanLogo } from "./BatmanLogo";
 import { apiRequest } from "@/lib/queryClient";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import ChainAudit from "@/components/ChainAudit";
 
 // ─── Types mirror server/models.ts ──────────────────────────────────────────
 
@@ -873,6 +874,8 @@ export default function ModelsPanel() {
 
   return (
     <div className="space-y-3" data-testid="models-panel">
+      {/* ── Live Chain Audit — at the top, before existing controls ── */}
+      {/* Inserted as a collapsible section heading + ChainAudit */}
       {/* Control bar */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card/40 px-3 py-2">
         <Activity className="h-4 w-4 text-amber-400" />
@@ -970,6 +973,23 @@ export default function ModelsPanel() {
           <ModelView horizon={active} session={data!.session} />
         </ErrorBoundary>
       )}
+
+      {/* ── Live Chain Audit section ── */}
+      <div
+        className="rounded-lg border border-cyan-500/20 bg-black/30"
+        data-testid="chain-audit-section"
+      >
+        <div className="flex items-center gap-2 border-b border-cyan-500/20 px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-cyan-400/80">
+          <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
+          Live Chain Audit — Schwab
+          <span className="text-muted-foreground/40">· SPX / DEX / Vanna / Charm / Skew / Term / Vol / Dealer / GEX / Pin / VRP</span>
+        </div>
+        <div className="p-3">
+          <ErrorBoundary label="Chain Audit">
+            <ChainAudit />
+          </ErrorBoundary>
+        </div>
+      </div>
     </div>
   );
 }
