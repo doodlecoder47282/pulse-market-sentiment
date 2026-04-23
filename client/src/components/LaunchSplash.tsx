@@ -180,7 +180,9 @@ export default function LaunchSplash({ onExit }: LaunchSplashProps) {
     setBillsExploding(true);
     setTimeout(() => setFlashActive(true), 120);
     setTimeout(() => setFlashActive(false), 420);
-    setTimeout(onExit, 1500);
+    // Unmount splash faster so it never blocks dashboard interactions.
+    // Exit animation is purely visual — dashboard is ready underneath.
+    setTimeout(onExit, 600);
   }, [reducedMotion, onExit]);
 
   /* ── Skip cinematic on any click/key during non-ready phases ── */
@@ -539,14 +541,14 @@ export default function LaunchSplash({ onExit }: LaunchSplashProps) {
           )}
         </motion.div>
       ) : (
-        /* ── Exit fade-to-black ── */
+        /* ── Exit fade-to-black (pointer-events-none so it never blocks the dashboard) ── */
         <motion.div
           key="splash-exit"
-          className="fixed inset-0"
+          className="fixed inset-0 pointer-events-none"
           style={{ zIndex: 9999, background: "#000" }}
-          initial={{ opacity: 1 }}
+          initial={{ opacity: 0.9 }}
           animate={{ opacity: 0 }}
-          transition={{ duration: 0.5, delay: 0.8 }}
+          transition={{ duration: 0.4, delay: 0.1 }}
         />
       )}
     </AnimatePresence>
