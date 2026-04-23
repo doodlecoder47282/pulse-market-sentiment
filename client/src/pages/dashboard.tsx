@@ -369,35 +369,34 @@ export default function Dashboard() {
         <MacroCarousel />
 
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)} className="w-full">
-          {/* Mobile-scrollable tab list with fade edge */}
-          <div className="relative mb-4">
-            <div className="tabs-scroll-container overflow-x-auto" style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
-              <TabsList className="inline-flex w-max min-w-full xl:h-12 xl:gap-1 xl:p-1.5" data-testid="tabs-dashboard">
-                <TabsTrigger value="signals" data-testid="tab-signals" className="xl:px-6 xl:text-[16px] xl:font-semibold">Signals</TabsTrigger>
-                <TabsTrigger value="chart" data-testid="tab-chart" className="xl:px-6 xl:text-[16px] xl:font-semibold">Chart</TabsTrigger>
-                <TabsTrigger value="models" data-testid="tab-models" className="xl:px-6 xl:text-[16px] xl:font-semibold">Models</TabsTrigger>
-                <TabsTrigger
-                  value="heatseeker"
-                  data-testid="tab-heatseeker"
-                  className="xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500/30 data-[state=active]:to-rose-500/30 data-[state=active]:text-orange-50"
-                >
-                  Heatseeker
-                </TabsTrigger>
-                <TabsTrigger value="tradedesk" data-testid="tab-tradedesk" className="xl:px-6 xl:text-[16px] xl:font-semibold">Trade Desk</TabsTrigger>
-                <TabsTrigger value="regime" data-testid="tab-regime" className="xl:px-6 xl:text-[16px] xl:font-semibold">Regime</TabsTrigger>
-                <TabsTrigger value="news" data-testid="tab-news" className="xl:px-6 xl:text-[16px] xl:font-semibold">News</TabsTrigger>
-                <TabsTrigger value="voices" data-testid="tab-voices" className="xl:px-6 xl:text-[16px] xl:font-semibold">Voices</TabsTrigger>
-                <TabsTrigger
-                  value="takefive"
-                  data-testid="tab-takefive"
-                  className="xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-fuchsia-600/40 data-[state=active]:via-cyan-500/30 data-[state=active]:to-amber-400/40 data-[state=active]:text-white"
-                >
-                  Take Five
-                </TabsTrigger>
-              </TabsList>
-            </div>
-            {/* Fade-right edge for scroll hint */}
-            <div className="pointer-events-none absolute right-0 top-0 h-full w-8 bg-gradient-to-l from-background to-transparent sm:hidden" />
+          {/* Mobile: 3-col grid wraps to 3 rows so every tab is visible. Desktop: single inline row. */}
+          <div className="mb-4">
+            <TabsList
+              className="grid h-auto w-full grid-cols-3 gap-1 p-1 sm:grid-cols-5 md:flex md:h-10 md:w-full md:flex-nowrap md:items-center md:justify-center md:gap-0 md:p-1 xl:h-12 xl:gap-1 xl:p-1.5"
+              data-testid="tabs-dashboard"
+            >
+              <TabsTrigger value="signals" data-testid="tab-signals" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Signals</TabsTrigger>
+              <TabsTrigger value="chart" data-testid="tab-chart" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Chart</TabsTrigger>
+              <TabsTrigger value="models" data-testid="tab-models" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Models</TabsTrigger>
+              <TabsTrigger
+                value="heatseeker"
+                data-testid="tab-heatseeker"
+                className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500/30 data-[state=active]:to-rose-500/30 data-[state=active]:text-orange-50"
+              >
+                Heatseeker
+              </TabsTrigger>
+              <TabsTrigger value="tradedesk" data-testid="tab-tradedesk" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Trade Desk</TabsTrigger>
+              <TabsTrigger value="regime" data-testid="tab-regime" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Regime</TabsTrigger>
+              <TabsTrigger value="news" data-testid="tab-news" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">News</TabsTrigger>
+              <TabsTrigger value="voices" data-testid="tab-voices" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Voices</TabsTrigger>
+              <TabsTrigger
+                value="takefive"
+                data-testid="tab-takefive"
+                className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-fuchsia-600/40 data-[state=active]:via-cyan-500/30 data-[state=active]:to-amber-400/40 data-[state=active]:text-white"
+              >
+                Take Five
+              </TabsTrigger>
+            </TabsList>
           </div>
 
           {/* ── Chart tab (lazy) ── */}
