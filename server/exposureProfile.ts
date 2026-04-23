@@ -47,8 +47,10 @@ export interface ExposureProfile {
   curve: ExposurePoint[];       // spot levels from lowPct·S → highPct·S
   current: ExposurePoint;       // exposures evaluated at actual current spot
   zeroGammaSpot: number | null; // spot where GEX flips sign
-  zeroCharmSpot: number | null; // spot where Charm flips sign
+  zeroCharmSpot: number | null; // spot where Charm flips sign (primary — nearest to spot)
+  zeroCharmSpots: number[];     // ALL charm sign-flips across the curve (Selz #1 — charm-zero CLUSTER)
   zeroVannaSpot: number | null; // spot where VEX flips sign
+  charmSlope: number;           // dCharm/dS at spot — "tightening rate" (Selz #2)
   ranges: {
     dex:   { min: number; max: number };
     gex:   { min: number; max: number };
@@ -129,8 +131,23 @@ export function buildExposureProfile(
 
   // Zero-crossings for GEX / Charm / VEX.
   const zeroGammaSpot = findZeroCrossing(curve.map((p) => ({ x: p.spot, y: p.gex })));
-  const zeroCharmSpot = findZeroCrossing(curve.map((p) => ({ x: p.spot, y: p.charm })));
+  const charmPts = curve.map((p) => ({ x: p.spot, y: p.charm }));
+  const zeroCharmSpot = findZeroCrossing(charmPts);
+  const zeroCharmSpots = findAllZeroCrossings(charmPts);
   const zeroVannaSpot = findZeroCrossing(curve.map((p) => ({ x: p.spot, y: p.vex })));
+
+  // Charm slope at current spot — 1st-order finite difference on the curve window around spot.
+  let charmSlope = 0;
+  if (curve.length >= 3) {
+    let idx = 0;
+    for (let i = 1; i < curve.length; i++) {
+      if (Math.abs(curve[i].spot - spot) < Math.abs(curve[idx].spot - spot)) idx = i;
+    }
+    const lo = curve[Math.max(0, idx - 1)];
+    const hi = curve[Math.min(curve.length - 1, idx + 1)];
+    const dS = hi.spot - lo.spot;
+    if (dS !== 0) charmSlope = (hi.charm - lo.charm) / dS;
+  }
 
   // Exposures at actual current spot.
   const currentE = exposuresAt(precomputed, spot, r, q);
@@ -152,7 +169,9 @@ export function buildExposureProfile(
     current,
     zeroGammaSpot,
     zeroCharmSpot,
+    zeroCharmSpots,
     zeroVannaSpot,
+    charmSlope,
     ranges,
     contractCount: precomputed.length,
   };
@@ -168,6 +187,20 @@ function findZeroCrossing(points: { x: number; y: number }[]): number | null {
     }
   }
   return null;
+}
+
+// All sign-flips along the curve — used for Selz #1 charm-zero CLUSTER.
+function findAllZeroCrossings(points: { x: number; y: number }[]): number[] {
+  const zeros: number[] = [];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    if (a.y === 0) { zeros.push(a.x); continue; }
+    if (a.y * b.y < 0) {
+      zeros.push(a.x - a.y * (b.x - a.x) / (b.y - a.y));
+    }
+  }
+  return zeros;
 }
 
 function rangeOf(xs: number[]): { min: number; max: number } {

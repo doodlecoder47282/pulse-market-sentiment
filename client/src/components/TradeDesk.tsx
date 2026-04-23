@@ -1390,40 +1390,145 @@ function FieldRow({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
+// ─── EOD locked weekly targets (fall back when live feed is cold) ────────────
+const LOCKED_LEVELS: Record<string, string> = {
+  upside: "7140", downside: "6950", t2up: "7270", t2down: "6885",
+  mopex: "7025", vanna: "7089", zomma: "7070", charm: "7128",
+  negGamma: "7100", upperVomma: "7265", lowerVomma: "6960",
+};
+
+function isOpexToday(): boolean {
+  const now = new Date();
+  if (now.getDay() !== 5) return false; // Friday only
+  const d = now.getDate();
+  return d >= 15 && d <= 21; // 3rd Friday window
+}
+
+// ─── Live-aware input: green pulse when streaming, amber LOCK when hardcoded, violet clear when edited ──
+function LiveField({
+  value, onChange, onClear, status, placeholder, testId,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onClear: () => void;
+  status: "live" | "lock" | "edit" | "cold";
+  placeholder?: string;
+  testId: string;
+}) {
+  const ring =
+    status === "live" ? "border-emerald-500/40 focus-visible:ring-emerald-500/30" :
+    status === "lock" ? "border-amber-500/40 focus-visible:ring-amber-500/30" :
+    status === "edit" ? "border-violet-500/50 focus-visible:ring-violet-500/30" :
+    "border-border/60";
+  return (
+    <div className="relative flex items-center">
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={`h-7 pr-8 font-mono text-xs bg-card/40 ${ring}`}
+        data-testid={testId}
+      />
+      <div className="absolute right-1.5 flex items-center gap-1">
+        {status === "live" && (
+          <span className="relative inline-flex h-1.5 w-1.5" title="Live feed">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          </span>
+        )}
+        {status === "lock" && (
+          <span className="text-[8px] font-bold tracking-wider text-amber-400" title="Locked target">LOCK</span>
+        )}
+        {status === "edit" && (
+          <button
+            onClick={onClear}
+            className="text-[9px] font-bold text-violet-400 hover:text-violet-300"
+            title="Clear override, return to live/locked"
+            data-testid={`clear-${testId}`}
+          >✕</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── EOD Play Maker ─────────────────────────────────────────────────────────
 function EodPlayMaker() {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
-  // Form state — pre-filled with sensible defaults / locked weekly targets
-  const [spx, setSpx] = useState("7100");
-  const [vix, setVix] = useState("18.5");
-  const [iv, setIv] = useState("1.2");
-  const [qscore, setQscore] = useState("35");
-  const [gex, setGex] = useState("+2.1");
-  const [callWall, setCallWall] = useState("7150");
-  const [putWall, setPutWall] = useState("7000");
-  const [zeroGamma, setZeroGamma] = useState("7075");
-  const [hvl, setHvl] = useState("7100");
-  const [gammaFlip, setGammaFlip] = useState("7075");
-  // Locked weekly targets
-  const [upside, setUpside] = useState("7140");
-  const [downside, setDownside] = useState("6950");
-  const [t2up, setT2up] = useState("7270");
-  const [t2down, setT2down] = useState("6885");
-  const [mopex, setMopex] = useState("7025");
-  const [vanna, setVanna] = useState("7089");
-  const [zomma, setZomma] = useState("7070");
-  const [charm, setCharm] = useState("7128");
-  const [negGamma, setNegGamma] = useState("7100");
-  const [upperVomma, setUpperVomma] = useState("7265");
-  const [lowerVomma, setLowerVomma] = useState("6960");
-  const [pcRatio, setPcRatio] = useState("0.85");
-  const [opex, setOpex] = useState(false);
+  // —— live data pulls
+  const snap = useQuery<any>({
+    queryKey: ["/api/snapshot"],
+    queryFn: async () => (await apiRequest("GET", "/api/snapshot")).json(),
+    refetchInterval: 30_000,
+  });
+  const models = useQuery<any>({
+    queryKey: ["/api/models", "^GSPC"],
+    queryFn: async () => (await apiRequest("GET", "/api/models?symbol=%5EGSPC")).json(),
+    refetchInterval: 30_000,
+  });
+
+  // Derive live values from the two endpoints
+  const live = useMemo(() => {
+    const g = snap.data?.gamma || {};
+    const vol = snap.data?.vol || {};
+    const spy = snap.data?.spy || {};
+    const comp = snap.data?.composite || {};
+    const weekly = models.data?.horizons?.weekly || models.data?.horizons?.daily;
+    const spot = weekly?.spot ?? (spy.price != null ? spy.price * 10 : null);  // SPX ≈ SPY*10 fallback
+
+    const vixVal = vol?.vix?.value ?? null;
+    const iv1d = vixVal != null ? (vixVal / Math.sqrt(252)).toFixed(2) : null;
+
+    const lvl = (kind: string) => {
+      const l = weekly?.levels?.find((x: any) => x.kind === kind);
+      return l?.price ?? null;
+    };
+
+    const totalGexB = g?.totalGex != null ? (g.totalGex / 1e9).toFixed(2) : null;
+
+    return {
+      spx: spot != null ? spot.toFixed(0) : null,
+      vix: vixVal != null ? vixVal.toFixed(2) : null,
+      iv: iv1d,
+      qscore: comp?.score != null ? String(comp.score) : null,
+      gex: totalGexB != null ? (totalGexB.startsWith("-") ? totalGexB : `+${totalGexB}`) : null,
+      callWall: lvl("callWall") != null ? lvl("callWall").toFixed(0) : (g?.callWall != null ? String(g.callWall) : null),
+      putWall: lvl("putWall") != null ? lvl("putWall").toFixed(0) : (g?.putWall != null ? String(g.putWall) : null),
+      zeroGamma: lvl("zeroGamma") != null ? lvl("zeroGamma").toFixed(0) : (g?.zeroGamma != null ? String(g.zeroGamma) : null),
+      gammaFlip: lvl("zeroGamma") != null ? lvl("zeroGamma").toFixed(0) : null,
+      hvl: lvl("dominantMag") != null ? lvl("dominantMag").toFixed(0) : null,
+      t2up: lvl("t2Up") != null ? lvl("t2Up").toFixed(0) : null,
+      t2down: lvl("t2Down") != null ? lvl("t2Down").toFixed(0) : null,
+      upside: lvl("upsidePivot") != null ? lvl("upsidePivot").toFixed(0) : null,
+      downside: lvl("downsidePivot") != null ? lvl("downsidePivot").toFixed(0) : null,
+      mopex: lvl("mopexMaxPain") != null ? lvl("mopexMaxPain").toFixed(0) : null,
+      pcRatio: g?.pcrOi != null ? g.pcrOi.toFixed(2) : null,
+    } as Record<string, string | null>;
+  }, [snap.data, models.data]);
+
+  // —— override state: user-typed values shadow live values until cleared
+  type OverrideMap = Record<string, string | undefined>;
+  const [overrides, setOverrides] = useState<OverrideMap>({});
+  const setOverride = (k: string, v: string) => setOverrides((o) => ({ ...o, [k]: v }));
+  const clearOverride = (k: string) => setOverrides((o) => { const n = { ...o }; delete n[k]; return n; });
+
+  const resolve = (key: string): string => {
+    if (overrides[key] != null) return overrides[key]!;
+    if (live[key] != null) return live[key]!;
+    if ((LOCKED_LEVELS as any)[key] != null) return (LOCKED_LEVELS as any)[key];
+    return "";
+  };
+  const isOverridden = (key: string) => overrides[key] != null;
+  const isLive = (key: string) => overrides[key] == null && live[key] != null;
+  const isLocked = (key: string) => overrides[key] == null && live[key] == null && (LOCKED_LEVELS as any)[key] != null;
+
   const [notes, setNotes] = useState("");
 
-  // Compute regime from qscore
-  const qNum = parseFloat(qscore) || 0;
+  // Derived: regime bucket, OPEX flag
+  const qNum = parseFloat(resolve("qscore")) || 0;
   const regimeBucket = qNum < 30 ? "Pinned" : qNum < 60 ? "Mixed" : "Fragile";
+  const opex = isOpexToday();
 
   // Result state
   const [result, setResult] = useState<{ claude: string | null; gpt: string | null; errors: { claude: string | null; gpt: string | null } } | null>(null);
@@ -1431,9 +1536,15 @@ function EodPlayMaker() {
   const mutation = useMutation({
     mutationFn: async () => {
       const body = {
-        spx, vix, iv, qscore, gex, callWall, putWall, zeroGamma, hvl, gammaFlip,
-        upside, downside, t2up, t2down, mopex, vanna, zomma, charm, negGamma, upperVomma, lowerVomma,
-        pcRatio, opex, notes,
+        spx: resolve("spx"), vix: resolve("vix"), iv: resolve("iv"), qscore: resolve("qscore"),
+        gex: resolve("gex"), callWall: resolve("callWall"), putWall: resolve("putWall"),
+        zeroGamma: resolve("zeroGamma"), hvl: resolve("hvl"), gammaFlip: resolve("gammaFlip"),
+        upside: resolve("upside"), downside: resolve("downside"),
+        t2up: resolve("t2up"), t2down: resolve("t2down"),
+        mopex: resolve("mopex"), vanna: resolve("vanna"), zomma: resolve("zomma"),
+        charm: resolve("charm"), negGamma: resolve("negGamma"),
+        upperVomma: resolve("upperVomma"), lowerVomma: resolve("lowerVomma"),
+        pcRatio: resolve("pcRatio"), opex, notes,
       };
       const r = await apiRequest("POST", "/api/eod-setup", body);
       return r.json();
@@ -1473,17 +1584,17 @@ function EodPlayMaker() {
             <div className="space-y-2">
               <div className="text-[9px] font-semibold uppercase tracking-[0.15em] text-amber-400 mb-1">Market State</div>
               <FieldRow label="SPX Spot">
-                <Input value={spx} onChange={(e) => setSpx(e.target.value)} className={inputCls} data-testid="input-spx" />
+                <LiveField value={resolve("spx")} onChange={(v) => setOverride("spx", v)} onClear={() => clearOverride("spx")} status={isOverridden("spx") ? "edit" : isLive("spx") ? "live" : isLocked("spx") ? "lock" : "cold"} testId="input-spx" />
               </FieldRow>
               <FieldRow label="VIX">
-                <Input value={vix} onChange={(e) => setVix(e.target.value)} className={inputCls} data-testid="input-vix" />
+                <LiveField value={resolve("vix")} onChange={(v) => setOverride("vix", v)} onClear={() => clearOverride("vix")} status={isOverridden("vix") ? "edit" : isLive("vix") ? "live" : isLocked("vix") ? "lock" : "cold"} testId="input-vix" />
               </FieldRow>
               <FieldRow label="1D IV %">
-                <Input value={iv} onChange={(e) => setIv(e.target.value)} className={inputCls} data-testid="input-iv" />
+                <LiveField value={resolve("iv")} onChange={(v) => setOverride("iv", v)} onClear={() => clearOverride("iv")} status={isOverridden("iv") ? "edit" : isLive("iv") ? "live" : isLocked("iv") ? "lock" : "cold"} testId="input-iv" />
               </FieldRow>
               <FieldRow label="Q-Score">
                 <div className="flex items-center gap-2">
-                  <Input value={qscore} onChange={(e) => setQscore(e.target.value)} className={inputCls + " flex-1"} data-testid="input-qscore" />
+                  <div className="flex-1"><LiveField value={resolve("qscore")} onChange={(v) => setOverride("qscore", v)} onClear={() => clearOverride("qscore")} status={isOverridden("qscore") ? "edit" : isLive("qscore") ? "live" : isLocked("qscore") ? "lock" : "cold"} testId="input-qscore" /></div>
                   <Badge variant="outline" className={`shrink-0 text-[9px] ${
                     qNum < 30 ? "border-emerald-500/40 text-emerald-400" :
                     qNum < 60 ? "border-amber-500/40 text-amber-400" :
@@ -1492,13 +1603,10 @@ function EodPlayMaker() {
                 </div>
               </FieldRow>
               <FieldRow label="P/C Ratio">
-                <Input value={pcRatio} onChange={(e) => setPcRatio(e.target.value)} className={inputCls} data-testid="input-pc-ratio" />
+                <LiveField value={resolve("pcRatio")} onChange={(v) => setOverride("pcRatio", v)} onClear={() => clearOverride("pcRatio")} status={isOverridden("pcRatio") ? "edit" : isLive("pcRatio") ? "live" : isLocked("pcRatio") ? "lock" : "cold"} testId="input-pc-ratio" />
               </FieldRow>
               <FieldRow label="OPEX Today">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={opex} onChange={(e) => setOpex(e.target.checked)} className="accent-amber-500" data-testid="checkbox-opex" />
-                  <span className="text-[10px] text-muted-foreground">{opex ? "YES — size down 30-50%" : "No"}</span>
-                </label>
+                <div className="flex items-center gap-2" data-testid="checkbox-opex"><span className={`inline-flex h-3 w-3 items-center justify-center rounded border ${opex ? "border-amber-500 bg-amber-500/80 text-[8px] text-black" : "border-border/60 bg-transparent"}`}>{opex ? "✓" : ""}</span><span className="text-[10px] text-muted-foreground">{opex ? "YES — size down 30-50% (auto-detected)" : "No — normal sizing"}</span></div>
               </FieldRow>
             </div>
 
@@ -1506,22 +1614,22 @@ function EodPlayMaker() {
             <div className="space-y-2">
               <div className="text-[9px] font-semibold uppercase tracking-[0.15em] text-amber-400 mb-1">Dealer Positioning</div>
               <FieldRow label="Total GEX ($B)">
-                <Input value={gex} onChange={(e) => setGex(e.target.value)} className={inputCls} placeholder="+2.1" data-testid="input-gex" />
+                <LiveField value={resolve("gex")} onChange={(v) => setOverride("gex", v)} onClear={() => clearOverride("gex")} status={isOverridden("gex") ? "edit" : isLive("gex") ? "live" : isLocked("gex") ? "lock" : "cold"} testId="input-gex" placeholder="+2.1" />
               </FieldRow>
               <FieldRow label="Call Wall">
-                <Input value={callWall} onChange={(e) => setCallWall(e.target.value)} className={inputCls} data-testid="input-call-wall" />
+                <LiveField value={resolve("callWall")} onChange={(v) => setOverride("callWall", v)} onClear={() => clearOverride("callWall")} status={isOverridden("callWall") ? "edit" : isLive("callWall") ? "live" : isLocked("callWall") ? "lock" : "cold"} testId="input-call-wall" />
               </FieldRow>
               <FieldRow label="Put Wall">
-                <Input value={putWall} onChange={(e) => setPutWall(e.target.value)} className={inputCls} data-testid="input-put-wall" />
+                <LiveField value={resolve("putWall")} onChange={(v) => setOverride("putWall", v)} onClear={() => clearOverride("putWall")} status={isOverridden("putWall") ? "edit" : isLive("putWall") ? "live" : isLocked("putWall") ? "lock" : "cold"} testId="input-put-wall" />
               </FieldRow>
               <FieldRow label="Zero Gamma">
-                <Input value={zeroGamma} onChange={(e) => setZeroGamma(e.target.value)} className={inputCls} data-testid="input-zero-gamma" />
+                <LiveField value={resolve("zeroGamma")} onChange={(v) => setOverride("zeroGamma", v)} onClear={() => clearOverride("zeroGamma")} status={isOverridden("zeroGamma") ? "edit" : isLive("zeroGamma") ? "live" : isLocked("zeroGamma") ? "lock" : "cold"} testId="input-zero-gamma" />
               </FieldRow>
               <FieldRow label="HVL">
-                <Input value={hvl} onChange={(e) => setHvl(e.target.value)} className={inputCls} data-testid="input-hvl" />
+                <LiveField value={resolve("hvl")} onChange={(v) => setOverride("hvl", v)} onClear={() => clearOverride("hvl")} status={isOverridden("hvl") ? "edit" : isLive("hvl") ? "live" : isLocked("hvl") ? "lock" : "cold"} testId="input-hvl" />
               </FieldRow>
               <FieldRow label="Gamma Flip">
-                <Input value={gammaFlip} onChange={(e) => setGammaFlip(e.target.value)} className={inputCls} data-testid="input-gamma-flip" />
+                <LiveField value={resolve("gammaFlip")} onChange={(v) => setOverride("gammaFlip", v)} onClear={() => clearOverride("gammaFlip")} status={isOverridden("gammaFlip") ? "edit" : isLive("gammaFlip") ? "live" : isLocked("gammaFlip") ? "lock" : "cold"} testId="input-gamma-flip" />
               </FieldRow>
             </div>
 
@@ -1529,37 +1637,37 @@ function EodPlayMaker() {
             <div className="space-y-2">
               <div className="text-[9px] font-semibold uppercase tracking-[0.15em] text-amber-400 mb-1">Weekly Targets (Locked)</div>
               <FieldRow label="Upside">
-                <Input value={upside} onChange={(e) => setUpside(e.target.value)} className={inputCls} data-testid="input-upside" />
+                <LiveField value={resolve("upside")} onChange={(v) => setOverride("upside", v)} onClear={() => clearOverride("upside")} status={isOverridden("upside") ? "edit" : isLive("upside") ? "live" : isLocked("upside") ? "lock" : "cold"} testId="input-upside" />
               </FieldRow>
               <FieldRow label="Downside">
-                <Input value={downside} onChange={(e) => setDownside(e.target.value)} className={inputCls} data-testid="input-downside" />
+                <LiveField value={resolve("downside")} onChange={(v) => setOverride("downside", v)} onClear={() => clearOverride("downside")} status={isOverridden("downside") ? "edit" : isLive("downside") ? "live" : isLocked("downside") ? "lock" : "cold"} testId="input-downside" />
               </FieldRow>
               <FieldRow label="T2 Up">
-                <Input value={t2up} onChange={(e) => setT2up(e.target.value)} className={inputCls} data-testid="input-t2up" />
+                <LiveField value={resolve("t2up")} onChange={(v) => setOverride("t2up", v)} onClear={() => clearOverride("t2up")} status={isOverridden("t2up") ? "edit" : isLive("t2up") ? "live" : isLocked("t2up") ? "lock" : "cold"} testId="input-t2up" />
               </FieldRow>
               <FieldRow label="T2 Down">
-                <Input value={t2down} onChange={(e) => setT2down(e.target.value)} className={inputCls} data-testid="input-t2down" />
+                <LiveField value={resolve("t2down")} onChange={(v) => setOverride("t2down", v)} onClear={() => clearOverride("t2down")} status={isOverridden("t2down") ? "edit" : isLive("t2down") ? "live" : isLocked("t2down") ? "lock" : "cold"} testId="input-t2down" />
               </FieldRow>
               <FieldRow label="MOPEX">
-                <Input value={mopex} onChange={(e) => setMopex(e.target.value)} className={inputCls} data-testid="input-mopex" />
+                <LiveField value={resolve("mopex")} onChange={(v) => setOverride("mopex", v)} onClear={() => clearOverride("mopex")} status={isOverridden("mopex") ? "edit" : isLive("mopex") ? "live" : isLocked("mopex") ? "lock" : "cold"} testId="input-mopex" />
               </FieldRow>
               <FieldRow label="VANNA">
-                <Input value={vanna} onChange={(e) => setVanna(e.target.value)} className={inputCls} data-testid="input-vanna" />
+                <LiveField value={resolve("vanna")} onChange={(v) => setOverride("vanna", v)} onClear={() => clearOverride("vanna")} status={isOverridden("vanna") ? "edit" : isLive("vanna") ? "live" : isLocked("vanna") ? "lock" : "cold"} testId="input-vanna" />
               </FieldRow>
               <FieldRow label="ZOMMA">
-                <Input value={zomma} onChange={(e) => setZomma(e.target.value)} className={inputCls} data-testid="input-zomma" />
+                <LiveField value={resolve("zomma")} onChange={(v) => setOverride("zomma", v)} onClear={() => clearOverride("zomma")} status={isOverridden("zomma") ? "edit" : isLive("zomma") ? "live" : isLocked("zomma") ? "lock" : "cold"} testId="input-zomma" />
               </FieldRow>
               <FieldRow label="CHARM">
-                <Input value={charm} onChange={(e) => setCharm(e.target.value)} className={inputCls} data-testid="input-charm" />
+                <LiveField value={resolve("charm")} onChange={(v) => setOverride("charm", v)} onClear={() => clearOverride("charm")} status={isOverridden("charm") ? "edit" : isLive("charm") ? "live" : isLocked("charm") ? "lock" : "cold"} testId="input-charm" />
               </FieldRow>
               <FieldRow label="NEG γ">
-                <Input value={negGamma} onChange={(e) => setNegGamma(e.target.value)} className={inputCls} data-testid="input-neg-gamma" />
+                <LiveField value={resolve("negGamma")} onChange={(v) => setOverride("negGamma", v)} onClear={() => clearOverride("negGamma")} status={isOverridden("negGamma") ? "edit" : isLive("negGamma") ? "live" : isLocked("negGamma") ? "lock" : "cold"} testId="input-neg-gamma" />
               </FieldRow>
               <FieldRow label="Upper Vomma">
-                <Input value={upperVomma} onChange={(e) => setUpperVomma(e.target.value)} className={inputCls} data-testid="input-upper-vomma" />
+                <LiveField value={resolve("upperVomma")} onChange={(v) => setOverride("upperVomma", v)} onClear={() => clearOverride("upperVomma")} status={isOverridden("upperVomma") ? "edit" : isLive("upperVomma") ? "live" : isLocked("upperVomma") ? "lock" : "cold"} testId="input-upper-vomma" />
               </FieldRow>
               <FieldRow label="Lower Vomma">
-                <Input value={lowerVomma} onChange={(e) => setLowerVomma(e.target.value)} className={inputCls} data-testid="input-lower-vomma" />
+                <LiveField value={resolve("lowerVomma")} onChange={(v) => setOverride("lowerVomma", v)} onClear={() => clearOverride("lowerVomma")} status={isOverridden("lowerVomma") ? "edit" : isLive("lowerVomma") ? "live" : isLocked("lowerVomma") ? "lock" : "cold"} testId="input-lower-vomma" />
               </FieldRow>
             </div>
           </div>

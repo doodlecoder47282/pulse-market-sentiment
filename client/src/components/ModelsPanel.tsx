@@ -92,9 +92,34 @@ interface ModelAudit {
   contractCount: number;
   mainPivot: number | null;
   charmZero: number | null;
+  charmZeros?: number[];
+  charmTightening?: {
+    rate: number;
+    label: "DECEL" | "STEADY" | "EXPANDING";
+    chopFlag: boolean;
+    note: string;
+  };
   doubleZeroLow: number | null;
   doubleZeroHigh: number | null;
   scenarioProb: { bull: number; base: number; bear: number };
+  closeTargets?: {
+    bull: { price: number; prob: number } | null;
+    base: { price: number; prob: number } | null;
+    bear: { price: number; prob: number } | null;
+  };
+  lastRecal?: {
+    at: number;
+    dfi: number;
+    dfiDeltaSinceOpen: number | null;
+  } | null;
+  termStructureDoD?: {
+    iv1d: number | null;
+    iv1dPrev: number | null;
+    iv1dDelta: number | null;
+    charmNow: number;
+    charmPrev: number | null;
+    label: string;
+  };
   nearby: { price: number; note: string; dir: "up" | "down" }[];
 }
 
@@ -476,6 +501,36 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
         </div>
       )}
 
+      {/* Charm-zero CLUSTER (Selz #1) + tightening (Selz #2) */}
+      {((a.charmZeros && a.charmZeros.length > 1) || a.charmTightening) && (
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-border/20 pt-0.5">
+          {a.charmZeros && a.charmZeros.length > 0 && (
+            <span>
+              CHARM-ZERO CLUSTER:{" "}
+              <span className="text-purple-400">
+                {a.charmZeros.map((x) => fmtK(x)).join(" / ")}
+              </span>
+            </span>
+          )}
+          {a.charmZeros && a.charmZeros.length > 0 && a.charmTightening && <span>|</span>}
+          {a.charmTightening && (
+            <span>
+              SLOPE:{" "}
+              <span className={
+                a.charmTightening.label === "DECEL" ? "text-amber-400 font-semibold" :
+                a.charmTightening.label === "EXPANDING" ? "text-cyan-400" :
+                "text-muted-foreground"
+              }>
+                {a.charmTightening.label} {a.charmTightening.rate.toFixed(2)}
+              </span>
+              {a.charmTightening.chopFlag && (
+                <span className="ml-1 text-amber-400 font-semibold">• CHOP RISK</span>
+              )}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Line 7: Scenario probabilities */}
       <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-border/30 pt-0.5">
         <span className="text-green-400">BULL {probs.bull}%</span>
@@ -639,36 +694,36 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
 
   return (
     <div className="flex-1 min-w-0">
-      <div className="h-[460px] w-full" data-testid="batcave-chart">
+      <div className="h-[620px] xl:h-[700px] w-full" data-testid="batcave-chart">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 12, right: 8, left: 0, bottom: 16 }}>
+          <LineChart data={chartData} margin={{ top: 16, right: 12, left: 4, bottom: 20 }}>
             <XAxis
               dataKey="label"
-              stroke="#475569"
-              tick={{ fontSize: 10, fill: "#64748b" }}
+              stroke="#64748b"
+              tick={{ fontSize: 12, fill: "#94a3b8", fontWeight: 500 }}
               tickLine={false}
-              axisLine={{ stroke: "#1e293b" }}
+              axisLine={{ stroke: "#334155" }}
             />
             <YAxis
               domain={[yMin - yPad, yMax + yPad]}
-              stroke="#475569"
-              tick={{ fontSize: 10, fill: "#64748b" }}
+              stroke="#64748b"
+              tick={{ fontSize: 12, fill: "#94a3b8", fontWeight: 500 }}
               tickFormatter={(v) => fmtK(v)}
-              width={56}
+              width={64}
               tickLine={false}
-              axisLine={{ stroke: "#1e293b" }}
+              axisLine={{ stroke: "#334155" }}
             />
             <Tooltip
               contentStyle={{
                 background: "rgba(2,6,23,0.97)",
-                border: "1px solid #1e293b",
+                border: "1px solid #334155",
                 borderRadius: 4,
-                fontSize: 10,
-                color: "#e2e8f0",
+                fontSize: 12,
+                color: "#f1f5f9",
                 fontFamily: "var(--font-mono)",
               }}
               formatter={(value: number, name: string) => [fmtK(value), name.toUpperCase()]}
-              labelStyle={{ color: "#64748b" }}
+              labelStyle={{ color: "#94a3b8", fontWeight: 600 }}
             />
 
             {/* Gamma regime background */}
@@ -704,6 +759,30 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
               />
             )}
 
+            {/* Selz #1 — charm-zero CLUSTER band (min→max of all flips) */}
+            {a.charmZeros && a.charmZeros.length >= 2 && (
+              <ReferenceArea
+                y1={Math.min(...a.charmZeros)}
+                y2={Math.max(...a.charmZeros)}
+                fill="#c084fc"
+                fillOpacity={0.06}
+                stroke="#c084fc"
+                strokeOpacity={0.35}
+                strokeDasharray="4 4"
+              />
+            )}
+            {a.charmZeros && a.charmZeros.length > 0 && a.charmZeros.map((cz, i) => (
+              <ReferenceLine
+                key={`czc-${i}-${cz}`}
+                y={cz}
+                stroke="#c084fc"
+                strokeDasharray="2 4"
+                strokeOpacity={0.6}
+                strokeWidth={1}
+                ifOverflow="extendDomain"
+              />
+            ))}
+
             {/* Level reference lines */}
             {displayLevels.map((lv) => {
               // Skip t1/t2 targets — too many lines
@@ -716,24 +795,26 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
                   y={lv.price}
                   stroke={color}
                   strokeDasharray={dashed ? "3 3" : "4 4"}
-                  strokeOpacity={lv.showLabel ? 0.8 : 0.4}
+                  strokeOpacity={lv.showLabel ? 0.95 : 0.5}
+                  strokeWidth={lv.showLabel ? 1.4 : 1}
                   ifOverflow="extendDomain"
                 >
                   {lv.showLabel && (
                     <Label
                       value={`${lv.name} ${fmtK(lv.price)}`}
                       position="insideRight"
-                      offset={4}
+                      offset={6}
                       fill={color}
-                      fontSize={9}
-                      style={{ fontFamily: "var(--font-mono)", opacity: 0.85 }}
+                      fontSize={12}
+                      fontWeight={600}
+                      style={{ fontFamily: "var(--font-mono)", opacity: 1 }}
                     />
                   )}
                 </ReferenceLine>
               );
             })}
 
-            {/* Path lines */}
+            {/* Path lines — thicker + bigger dots for readability */}
             {horizon.paths.map(p => {
               const stroke = p.kind === "bull" ? COLORS.bull : p.kind === "base" ? COLORS.base : COLORS.bear;
               const prob = p.kind === "bull" ? probs.bull : p.kind === "base" ? probs.base : probs.bear;
@@ -743,25 +824,78 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
                   type="monotone"
                   dataKey={p.kind}
                   stroke={stroke}
-                  strokeWidth={p.kind === "base" ? 2 : 1.8}
-                  strokeDasharray={p.kind === "bear" ? "5 3" : p.kind === "bull" ? undefined : "7 3"}
-                  dot={{ r: 3, fill: stroke, strokeWidth: 0 }}
-                  activeDot={{ r: 4.5, fill: stroke, strokeWidth: 2, stroke: "#fff" }}
+                  strokeWidth={p.kind === "base" ? 3 : 2.6}
+                  strokeDasharray={p.kind === "bear" ? "6 3" : p.kind === "bull" ? undefined : "8 3"}
+                  dot={{ r: 4, fill: stroke, strokeWidth: 0 }}
+                  activeDot={{ r: 6, fill: stroke, strokeWidth: 2, stroke: "#fff" }}
                   isAnimationActive={false}
                   name={`${p.name} ${prob}%`}
                 />
               );
             })}
 
-            {/* Spot marker */}
+            {/* Spot marker — bigger, glowing */}
             <ReferenceDot
               x={chartData[0]?.label}
               y={horizon.spot}
-              r={5}
+              r={7}
               fill={COLORS.amber}
               stroke="#000"
-              strokeWidth={1.5}
+              strokeWidth={2}
             />
+
+            {/* Selz #5 — discrete BULL / BASE / BEAR close labels on right edge */}
+            {a.closeTargets?.bull && (
+              <ReferenceLine
+                y={a.closeTargets.bull.price}
+                stroke="transparent"
+                ifOverflow="extendDomain"
+              >
+                <Label
+                  value={`BULL CLOSE ~${fmtK(a.closeTargets.bull.price)}  (${a.closeTargets.bull.prob}%)`}
+                  position="right"
+                  offset={8}
+                  fill={COLORS.bull}
+                  fontSize={11}
+                  fontWeight={700}
+                  style={{ fontFamily: "var(--font-mono)" }}
+                />
+              </ReferenceLine>
+            )}
+            {a.closeTargets?.base && (
+              <ReferenceLine
+                y={a.closeTargets.base.price}
+                stroke="transparent"
+                ifOverflow="extendDomain"
+              >
+                <Label
+                  value={`BASE CLOSE ~${fmtK(a.closeTargets.base.price)}  (${a.closeTargets.base.prob}%)`}
+                  position="right"
+                  offset={8}
+                  fill={COLORS.base}
+                  fontSize={11}
+                  fontWeight={700}
+                  style={{ fontFamily: "var(--font-mono)" }}
+                />
+              </ReferenceLine>
+            )}
+            {a.closeTargets?.bear && (
+              <ReferenceLine
+                y={a.closeTargets.bear.price}
+                stroke="transparent"
+                ifOverflow="extendDomain"
+              >
+                <Label
+                  value={`BEAR CLOSE ~${fmtK(a.closeTargets.bear.price)}  (${a.closeTargets.bear.prob}%)`}
+                  position="right"
+                  offset={8}
+                  fill={COLORS.bear}
+                  fontSize={11}
+                  fontWeight={700}
+                  style={{ fontFamily: "var(--font-mono)" }}
+                />
+              </ReferenceLine>
+            )}
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -826,6 +960,64 @@ function ModelView({ horizon, session }: { horizon: ModelHorizon; session: "live
         <span>·</span>
         <span>BEAR {probs.bear}% / BASE {probs.base}% / BULL {probs.bull}%</span>
       </div>
+
+      {/* Selz #3 + #4 — recal tracking + DoD term structure strip */}
+      {(a.lastRecal || a.termStructureDoD) && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border/30 bg-black/50 px-3 py-1 font-mono text-[9px]" data-testid="recal-dod-strip">
+          {a.lastRecal && (
+            <>
+              <span className="text-muted-foreground/60">LAST RECAL</span>
+              <span className="text-foreground">{etTime(a.lastRecal.at)} ET</span>
+              <span className="text-muted-foreground/40">·</span>
+              <span>
+                DFI{" "}
+                <span className={a.lastRecal.dfi >= 0 ? "text-green-400" : "text-red-400"}>
+                  {a.lastRecal.dfi >= 0 ? "+" : ""}{a.lastRecal.dfi.toFixed(2)}
+                </span>
+                {a.lastRecal.dfiDeltaSinceOpen != null && (
+                  <span className="ml-1 text-muted-foreground/60">
+                    ({a.lastRecal.dfiDeltaSinceOpen >= 0 ? "+" : ""}{a.lastRecal.dfiDeltaSinceOpen.toFixed(2)} since open)
+                  </span>
+                )}
+              </span>
+            </>
+          )}
+          {a.lastRecal && a.termStructureDoD && <span className="text-border/60">|</span>}
+          {a.termStructureDoD && (
+            <>
+              <span className="text-muted-foreground/60">1D IV</span>
+              <span className="text-foreground">
+                {a.termStructureDoD.iv1d != null ? `${a.termStructureDoD.iv1d.toFixed(2)}%` : "—"}
+              </span>
+              {a.termStructureDoD.iv1dDelta != null && (
+                <span className={a.termStructureDoD.iv1dDelta >= 0 ? "text-amber-400" : "text-cyan-400"}>
+                  ({a.termStructureDoD.iv1dDelta >= 0 ? "+" : ""}{a.termStructureDoD.iv1dDelta.toFixed(2)}%)
+                </span>
+              )}
+              <span className="text-muted-foreground/40">·</span>
+              <span className="text-muted-foreground/60">CHARM</span>
+              <span className={a.termStructureDoD.charmNow >= 0 ? "text-green-400" : "text-red-400"}>
+                {a.termStructureDoD.charmNow >= 0 ? "+" : ""}{a.termStructureDoD.charmNow.toFixed(2)}B
+              </span>
+              {a.termStructureDoD.charmPrev != null && (
+                <span className="text-muted-foreground/60">
+                  (was {a.termStructureDoD.charmPrev >= 0 ? "+" : ""}{a.termStructureDoD.charmPrev.toFixed(2)}B)
+                </span>
+              )}
+              <span className="text-muted-foreground/40">·</span>
+              <span className={
+                a.termStructureDoD.label === "Vol Bid Up" ? "text-amber-400 font-semibold" :
+                a.termStructureDoD.label === "Vol Offered" ? "text-cyan-400 font-semibold" :
+                a.termStructureDoD.label === "Charm Lifting" ? "text-green-400 font-semibold" :
+                a.termStructureDoD.label === "Charm Pressing" ? "text-red-400 font-semibold" :
+                "text-muted-foreground"
+              }>
+                {a.termStructureDoD.label}
+              </span>
+            </>
+          )}
+        </div>
+      )}
 
       {/* ── Audit + chart + rail ── */}
       <div className="flex flex-col gap-0 xl:flex-row">

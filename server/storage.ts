@@ -82,6 +82,20 @@ sqlite.exec(`
     breach_beyond_pct INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_backtest_obs_h_k_date ON backtest_observations(horizon, level_kind, date);
+  CREATE TABLE IF NOT EXISTS model_recals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,          -- ^GSPC / SPY
+    horizon TEXT NOT NULL,         -- daily / weekly / monthly / quarterly
+    captured_at INTEGER NOT NULL,  -- epoch seconds
+    trade_date TEXT NOT NULL,      -- YYYY-MM-DD America/New_York
+    spot REAL NOT NULL,
+    dfi REAL NOT NULL,
+    charm_per_day REAL NOT NULL,   -- $B/day signed
+    iv_1d REAL,                    -- today's 1D IV %
+    charm_zero REAL,
+    zero_gamma REAL
+  );
+  CREATE INDEX IF NOT EXISTS idx_model_recals_sym_h_date ON model_recals(symbol, horizon, trade_date, captured_at DESC);
 `);
 
 export { schwabTokens };
@@ -107,6 +121,20 @@ export interface IStorage {
   saveXTweets(rows: XTweetInsert[]): Promise<void>;
   getAllRecentXTweets(handles: string[], limitPerHandle: number): Promise<XTweet[]>;
 }
+
+export type ModelRecalRow = {
+  id: number;
+  symbol: string;
+  horizon: string;
+  capturedAt: number;
+  tradeDate: string;
+  spot: number;
+  dfi: number;
+  charmPerDay: number;
+  iv1d: number | null;
+  charmZero: number | null;
+  zeroGamma: number | null;
+};
 
 export type SnapshotHistoryRow = {
   date: string;
@@ -236,6 +264,55 @@ export class DatabaseStorage implements IStorage {
       `SELECT date FROM daily_bars WHERE symbol = ? ORDER BY date DESC LIMIT 1`,
     ).get(symbol) as { date: string } | undefined;
     return row?.date ?? null;
+  }
+
+  // ---- Model recal snapshots (Selz #3 — intraday recal tracking) ----
+  insertModelRecal(r: {
+    symbol: string; horizon: string; capturedAt: number; tradeDate: string;
+    spot: number; dfi: number; charmPerDay: number; iv1d: number | null;
+    charmZero: number | null; zeroGamma: number | null;
+  }): void {
+    sqlite.prepare(
+      `INSERT INTO model_recals
+         (symbol, horizon, captured_at, trade_date, spot, dfi, charm_per_day, iv_1d, charm_zero, zero_gamma)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(r.symbol, r.horizon, r.capturedAt, r.tradeDate, r.spot, r.dfi, r.charmPerDay, r.iv1d, r.charmZero, r.zeroGamma);
+  }
+
+  getLatestRecal(symbol: string, horizon: string): ModelRecalRow | undefined {
+    return sqlite.prepare(
+      `SELECT id, symbol, horizon, captured_at as capturedAt, trade_date as tradeDate,
+              spot, dfi, charm_per_day as charmPerDay, iv_1d as iv1d,
+              charm_zero as charmZero, zero_gamma as zeroGamma
+       FROM model_recals
+       WHERE symbol = ? AND horizon = ?
+       ORDER BY captured_at DESC
+       LIMIT 1`,
+    ).get(symbol, horizon) as ModelRecalRow | undefined;
+  }
+
+  getTodayOpenRecal(symbol: string, horizon: string, tradeDate: string): ModelRecalRow | undefined {
+    return sqlite.prepare(
+      `SELECT id, symbol, horizon, captured_at as capturedAt, trade_date as tradeDate,
+              spot, dfi, charm_per_day as charmPerDay, iv_1d as iv1d,
+              charm_zero as charmZero, zero_gamma as zeroGamma
+       FROM model_recals
+       WHERE symbol = ? AND horizon = ? AND trade_date = ?
+       ORDER BY captured_at ASC
+       LIMIT 1`,
+    ).get(symbol, horizon, tradeDate) as ModelRecalRow | undefined;
+  }
+
+  getPrevTradeDayRecal(symbol: string, horizon: string, todayTradeDate: string): ModelRecalRow | undefined {
+    return sqlite.prepare(
+      `SELECT id, symbol, horizon, captured_at as capturedAt, trade_date as tradeDate,
+              spot, dfi, charm_per_day as charmPerDay, iv_1d as iv1d,
+              charm_zero as charmZero, zero_gamma as zeroGamma
+       FROM model_recals
+       WHERE symbol = ? AND horizon = ? AND trade_date < ?
+       ORDER BY trade_date DESC, captured_at DESC
+       LIMIT 1`,
+    ).get(symbol, horizon, todayTradeDate) as ModelRecalRow | undefined;
   }
 
   getSnapshotHistory(limit = 400): SnapshotHistoryRow[] {

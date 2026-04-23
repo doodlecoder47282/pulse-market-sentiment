@@ -33,6 +33,18 @@ import { buildExposureProfile } from "./exposureProfile";
 import { chainToRows } from "./exposures";
 import { getCboeChain } from "./cboeCache";
 import { computeGreeks } from "./greeks";
+import { storage } from "./storage";
+
+// America/New_York trade date YYYY-MM-DD
+function etTradeDate(d: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(d);
+  const y = parts.find((p) => p.type === "year")?.value ?? "1970";
+  const m = parts.find((p) => p.type === "month")?.value ?? "01";
+  const da = parts.find((p) => p.type === "day")?.value ?? "01";
+  return `${y}-${m}-${da}`;
+}
 
 export type Horizon = "daily" | "weekly" | "monthly" | "quarterly";
 
@@ -102,10 +114,35 @@ export interface ModelAudit {
   dfiFlipped: boolean;                     // true if dfi sign changed vs prior reading
   contractCount: number;                   // rows in the chain for this horizon
   mainPivot: number | null;                // dominant magnet / zero-gamma — the primary intraday pivot
-  charmZero: number | null;               // zero-charm spot (drift target)
+  charmZero: number | null;               // zero-charm spot (drift target — primary)
+  charmZeros: number[];                   // Selz #1 — full charm-zero CLUSTER (within ±3% of spot)
+  charmTightening: {                      // Selz #2 — 2nd-derivative / slope based chop flag
+    rate: number;                         // |charmSlope| normalised (unitless, >0)
+    label: "DECEL" | "STEADY" | "EXPANDING";
+    chopFlag: boolean;                    // true when tightening crosses threshold
+    note: string;                         // human-readable: "DECEL above 1.5 — chop risk"
+  };
   doubleZeroLow: number | null;           // lower bound of double-zero zone
   doubleZeroHigh: number | null;          // upper bound of double-zero zone
   scenarioProb: { bull: number; base: number; bear: number };  // percentages summing to 100
+  closeTargets: {                         // Selz #5 — discrete BULL / BASE / BEAR close targets (chart right edge)
+    bull:  { price: number; prob: number } | null;
+    base:  { price: number; prob: number } | null;
+    bear:  { price: number; prob: number } | null;
+  };
+  lastRecal: {                            // Selz #3 — intraday recal snapshots
+    at: number;                           // epoch seconds
+    dfi: number;                          // DFI at recal time
+    dfiDeltaSinceOpen: number | null;     // change vs first snapshot of the day
+  } | null;
+  termStructureDoD: {                     // Selz #4 — term structure day-over-day
+    iv1d: number | null;                  // today's 1D IV %
+    iv1dPrev: number | null;               // yesterday's 1D IV %
+    iv1dDelta: number | null;             // iv1d - iv1dPrev
+    charmNow: number;                     // current $B
+    charmPrev: number | null;              // yesterday's $B
+    label: string;                        // e.g. "Vol Bid Up" / "Vol Offered" / "Flat"
+  };
   nearby: {
     price: number;
     note: string;
@@ -673,6 +710,14 @@ function buildAudit(
   levels: ModelLevel[],
   spot: number,
   intradayDelta: { change: number | null; windowMin: number | null },
+  extras: {
+    paths: ModelPath[];
+    scenarioProbIn?: { bull: number; base: number; bear: number };
+    iv1d: number | null;
+    iv1dPrev: number | null;
+    charmPrev: number | null;
+    lastRecal: { at: number; dfi: number; dfiDeltaSinceOpen: number | null } | null;
+  },
 ): ModelAudit {
   const cur = profile.current;
   const byKind = (k: string) => levels.find((l) => l.kind === k);
@@ -759,7 +804,67 @@ function buildAudit(
   // Gamma at spot (signed GEX, for display)
   const gammaAtSpot = parseFloat((cur.gex / 1e6).toFixed(0)); // $M
 
-  const scenarioProb = computeScenarioProb(gammaZone, dfi);
+  const scenarioProb = extras.scenarioProbIn ?? computeScenarioProb(gammaZone, dfi);
+
+  // Selz #1 — charm-zero CLUSTER filtered to ±3% of spot
+  const charmZeros = profile.zeroCharmSpots.filter((x) => Math.abs(x - spot) / spot <= 0.03);
+
+  // Selz #2 — charm tightening: normalise |dCharm/dS| against the curve's own
+  // charm range and spot range, giving a unitless "tightening index".
+  // rate ≈ 1 means charm traverses its full range over the full spot window.
+  // rate >> 1 means the slope at spot is much steeper than the avg slope —
+  // charm is tightening fast around current spot (chop risk).
+  const charmRange = Math.max(1, profile.ranges.charm.max - profile.ranges.charm.min);
+  const spotRange = Math.max(1, spot * 0.1); // ±5% spot window baseline
+  const avgSlope = charmRange / spotRange;
+  const rawRate = avgSlope > 0 ? Math.abs(profile.charmSlope) / avgSlope : 0;
+  const rate = parseFloat(rawRate.toFixed(2));
+  // Thresholds tuned for this index: >3 = meaningful tightening near spot,
+  // <0.8 = slope shallower than average (charm expanding), middle = steady.
+  const CHOP_THRESHOLD = 3;
+  let tightenLabel: "DECEL" | "STEADY" | "EXPANDING" = "STEADY";
+  if (rate > CHOP_THRESHOLD) tightenLabel = "DECEL";
+  else if (rate < 0.8) tightenLabel = "EXPANDING";
+  const charmTightening = {
+    rate,
+    label: tightenLabel,
+    chopFlag: tightenLabel === "DECEL",
+    note: tightenLabel === "DECEL"
+      ? `DECEL above ${CHOP_THRESHOLD} — charm tightening fast, chop risk into close`
+      : tightenLabel === "EXPANDING"
+        ? "Charm slope slackening — directional path easier"
+        : "Charm slope steady — range-bound drift",
+  };
+
+  // Selz #5 — discrete BULL / BASE / BEAR close targets pulled straight from paths
+  const bullPath = extras.paths.find((p) => p.kind === "bull");
+  const basePath = extras.paths.find((p) => p.kind === "base");
+  const bearPath = extras.paths.find((p) => p.kind === "bear");
+  const closeTargets = {
+    bull: bullPath ? { price: bullPath.target, prob: scenarioProb.bull } : null,
+    base: basePath ? { price: basePath.target, prob: scenarioProb.base } : null,
+    bear: bearPath ? { price: bearPath.target, prob: scenarioProb.bear } : null,
+  };
+
+  // Selz #4 — term structure DoD
+  const iv1dNow = extras.iv1d;
+  const iv1dDelta = (iv1dNow != null && extras.iv1dPrev != null) ? iv1dNow - extras.iv1dPrev : null;
+  const charmNow = cur.charm / 1e9;
+  const charmDelta = extras.charmPrev != null ? charmNow - extras.charmPrev : null;
+  let dodLabel = "Flat";
+  if (iv1dDelta != null && Math.abs(iv1dDelta) >= 0.25) {
+    dodLabel = iv1dDelta > 0 ? "Vol Bid Up" : "Vol Offered";
+  } else if (charmDelta != null && Math.abs(charmDelta) >= 0.5) {
+    dodLabel = charmDelta > 0 ? "Charm Lifting" : "Charm Pressing";
+  }
+  const termStructureDoD = {
+    iv1d: iv1dNow,
+    iv1dPrev: extras.iv1dPrev,
+    iv1dDelta,
+    charmNow: parseFloat(charmNow.toFixed(2)),
+    charmPrev: extras.charmPrev,
+    label: dodLabel,
+  };
 
   return {
     asOf: Math.floor(Date.now() / 1000),
@@ -786,6 +891,11 @@ function buildAudit(
     doubleZeroLow,
     doubleZeroHigh,
     scenarioProb,
+    closeTargets,
+    lastRecal: extras.lastRecal,
+    termStructureDoD,
+    charmZeros,
+    charmTightening,
     nearby,
   };
 }
@@ -842,7 +952,9 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
     current: { ...profile.current, spot: displaySpot },
     zeroGammaSpot: profile.zeroGammaSpot != null ? profile.zeroGammaSpot * scale : null,
     zeroCharmSpot: profile.zeroCharmSpot != null ? profile.zeroCharmSpot * scale : null,
+    zeroCharmSpots: profile.zeroCharmSpots.map((x) => x * scale),
     zeroVannaSpot: profile.zeroVannaSpot != null ? profile.zeroVannaSpot * scale : null,
+    charmSlope: profile.charmSlope,
   };
 
   const levels = extractLevels(
@@ -856,7 +968,63 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
   );
   const { spotAnchorDate, targetDate, targetDateLong, waypointLabels } = buildHorizonDates(horizon);
   const paths = generatePaths(levels, displaySpot, scaledProfile, horizon, waypointLabels);
-  const audit = buildAudit(scaledProfile, levels, displaySpot, intradayChange ?? { change: null, windowMin: null });
+
+  // ---- Selz #3/#4: intraday recal + DoD lookups ----
+  const tradeDate = etTradeDate(new Date());
+  const iv1dNow = vix != null ? vix / Math.sqrt(252) : null;
+  const prevDay = storage.getPrevTradeDayRecal(symbol, horizon, tradeDate);
+  const lastRecalRow = storage.getLatestRecal(symbol, horizon);
+  const openRecal = storage.getTodayOpenRecal(symbol, horizon, tradeDate);
+
+  // Compute DFI FIRST (duplicates logic from buildAudit — we need it for snapshot storage)
+  let dfiForSnap = 0;
+  const curveLen = scaledProfile.curve.length;
+  if (curveLen >= 3) {
+    let idx = 0;
+    for (let i = 1; i < curveLen; i++) {
+      if (Math.abs(scaledProfile.curve[i].spot - displaySpot) < Math.abs(scaledProfile.curve[idx].spot - displaySpot)) idx = i;
+    }
+    const lo = scaledProfile.curve[Math.max(0, idx - 1)];
+    const hi = scaledProfile.curve[Math.min(curveLen - 1, idx + 1)];
+    const dDex = hi.dex - lo.dex;
+    const dS = hi.spot - lo.spot;
+    const gexAbs = Math.abs(scaledProfile.current.gex) || 1e6;
+    dfiForSnap = dS !== 0 ? Math.max(-5, Math.min(5, (dDex / dS) / gexAbs * 1e9)) : 0;
+    dfiForSnap = parseFloat(dfiForSnap.toFixed(2));
+  }
+
+  // Record the recal — throttle to at most one write per 30 minutes per (symbol, horizon)
+  const nowS = Math.floor(Date.now() / 1000);
+  const MIN_RECAL_GAP = 30 * 60;
+  if (!lastRecalRow || nowS - lastRecalRow.capturedAt >= MIN_RECAL_GAP) {
+    try {
+      storage.insertModelRecal({
+        symbol, horizon, capturedAt: nowS, tradeDate,
+        spot: displaySpot, dfi: dfiForSnap,
+        charmPerDay: scaledProfile.current.charm / 1e9,
+        iv1d: iv1dNow,
+        charmZero: scaledProfile.zeroCharmSpot,
+        zeroGamma: scaledProfile.zeroGammaSpot,
+      });
+    } catch { /* table may not exist in legacy DB — swallow */ }
+  }
+
+  const latestForDisplay = storage.getLatestRecal(symbol, horizon);
+  const lastRecalOut = latestForDisplay
+    ? {
+        at: latestForDisplay.capturedAt,
+        dfi: latestForDisplay.dfi,
+        dfiDeltaSinceOpen: openRecal ? parseFloat((latestForDisplay.dfi - openRecal.dfi).toFixed(2)) : null,
+      }
+    : null;
+
+  const audit = buildAudit(scaledProfile, levels, displaySpot, intradayChange ?? { change: null, windowMin: null }, {
+    paths,
+    iv1d: iv1dNow,
+    iv1dPrev: prevDay?.iv1d ?? null,
+    charmPrev: prevDay?.charmPerDay ?? null,
+    lastRecal: lastRecalOut,
+  });
 
   // Price range: widest of call wall → put wall vs. ±2% of spot, padded
   const cw = levels.find((l) => l.kind === "callWall")?.price ?? displaySpot * 1.02;
