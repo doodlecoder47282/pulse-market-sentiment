@@ -22,6 +22,7 @@ import { buildSectorWeb } from "./sector-web";
 import { buildWefThemes } from "./wef-themes";
 import { buildMacroSnapshot, type MacroResponse } from "./macro";
 import { fetchOHLC, type OHLCResponse, type Timeframe, type Interval } from "./ohlc";
+import { snapshotHorizon, gradeOutcomes, empiricalStats } from "./mmPredictions";
 import { buildMag7Snapshot, type Mag7Response } from "./mag7";
 import { buildFlowSnapshot, buildIntradayFlowSnapshot, type FlowResponse } from "./flow";
 import { buildExposuresSnapshot, type ExposuresResponse } from "./exposures";
@@ -39,6 +40,7 @@ import { buildGammaLevelsEnhanced } from "./gammaLevels";
 import { runBackfill, getBacktestSummary } from "./backtest";
 import { buildChainAudit } from "./chainAudit";
 import { buildHeatseeker } from "./heatseeker";
+import { masterAlphaRoute } from "./masterAlpha";
 
 function vm(symbol: string, name: string, last: number | null, prev: number | null): VolMetric {
   const changePct = last != null && prev ? ((last - prev) / prev) * 100 : null;
@@ -400,6 +402,82 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.status(503).json({ message: e?.message ?? "Failed to build models" });
     }
   });
+
+  // ───── MM-matrix prediction logger ─────
+  // POST /api/mm-snapshot — capture current cell probabilities for each horizon.
+  // Reuses the /api/models cache if fresh to avoid rebuilding.
+  app.post("/api/mm-snapshot", async (req, res) => {
+    try {
+      const symbol = (String(req.body?.symbol ?? "^GSPC").toUpperCase() === "SPY" ? "SPY" : "^GSPC") as "SPY" | "^GSPC";
+      const requested: string[] = Array.isArray(req.body?.horizons) ? req.body.horizons : ["daily", "weekly"];
+
+      // Pull cached models build if fresh, otherwise build now
+      const cacheKey = `${symbol}:exp`;
+      const cached = modelsCache.get(cacheKey);
+      let models: ModelsResponse;
+      if (cached && Date.now() - cached.at < MODELS_CACHE_MS) {
+        models = cached.data;
+      } else {
+        const snap = await getOrBuild(false).catch(() => null);
+        models = await buildModelsSnapshot({
+          vix: snap?.vol.vix.value ?? null,
+          vixPrev: snap?.vol.vix.prev ?? null,
+          vix3m: snap?.vol.vix3m.value ?? null,
+          symbols: [symbol],
+          experimental: true,
+        });
+        modelsCache.set(cacheKey, { at: Date.now(), data: models });
+      }
+
+      const snaps: any[] = [];
+      for (const h of requested) {
+        const horizon = (models.horizons as any)[h];
+        if (!horizon) continue;
+        const row = await snapshotHorizon(horizon, h);
+        if (row) snaps.push(row);
+      }
+      res.json({ ok: true, snapshots: snaps });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "snapshot failed" });
+    }
+  });
+
+  // POST /api/mm-grade — fill forward outcomes for any ungraded snapshots whose
+  // session has closed. Pulls daily ^GSPC closes from Yahoo via fetchOHLC.
+  app.post("/api/mm-grade", async (_req, res) => {
+    try {
+      const daily = await fetchOHLC("^GSPC", "1Y", "1d");
+      const closeByDate = new Map<string, number>();
+      for (const bar of daily.candles ?? []) {
+        const d = new Date(bar.t * 1000);
+        const nyDate = new Intl.DateTimeFormat("en-CA", {
+          timeZone: "America/New_York",
+          year: "numeric", month: "2-digit", day: "2-digit",
+        }).format(d);
+        closeByDate.set(nyDate, bar.c);
+      }
+      const result = await gradeOutcomes(async (sessionDate) => closeByDate.get(sessionDate) ?? null);
+      res.json({ ok: true, ...result, coveredDates: closeByDate.size });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "grade failed" });
+    }
+  });
+
+  // GET /api/mm-stats — empirical (regime, zone) stats vs priors
+  app.get("/api/mm-stats", async (_req, res) => {
+    try {
+      const stats = await empiricalStats();
+      res.json(stats);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "stats failed" });
+    }
+  });
+
+  // Master Alpha — unified formula r̂ = TW · regimeMult · Σ wᵢ·rᵢ
+  // Integrates charm (BLW β·z·sd), vanna amplifier, GEX regime, GTBR, overnight drift.
+  // Calibrated per horizon (daily/weekly/monthly/quarterly) against user's pivot bundle.
+  app.post("/api/master-alpha", masterAlphaRoute);
+  app.get("/api/master-alpha", masterAlphaRoute);
 
   // Dealer exposure profiles — DEX / GEX / VEX / Charm across ±10% spot band.
   // Per-symbol cache with 5-minute TTL (exposures are structural, not tick-level).
