@@ -34,7 +34,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ChevronDown, ChevronRight, Flame, TrendingUp, TrendingDown, Zap, HelpCircle, X, ArrowDown, ArrowUp, ChevronsUpDown, Clock } from "lucide-react";
+import { ChevronDown, ChevronRight, Flame, TrendingUp, TrendingDown, Zap, HelpCircle, X, ArrowDown, ArrowUp, ChevronsUpDown, Clock, Activity, Layers } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -219,6 +219,198 @@ function sortContracts(contracts: UnusualContract[], key: SortKey): UnusualContr
     });
     default:            return arr;
   }
+}
+
+// ─── Build view: aggregate by strike + side ──────────────────────────────────
+//
+// Groups individual prints into a cumulative picture of where size is loading.
+// Each row is a unique (strike, type, expiration) bucket showing:
+//   - total premium $ across all prints
+//   - total volume
+//   - number of prints
+//   - average fill price
+//   - dominant tape side (most frequent tag weighted by premium)
+//   - net sentiment (bullish $ − bearish $ within the bucket)
+//
+// Sorted by total premium descending so the heaviest accumulation floats to top.
+// Eye tracking: rows don't jump around — the same 7140C row stays in roughly
+// the same place, just with updated numbers.
+
+interface BuildRow {
+  key: string;          // `${strike}-${type}-${expiration}`
+  strike: number;
+  type: "C" | "P";
+  expiration: string;
+  dte: number;
+  totalPremium: number;
+  totalVolume: number;
+  printCount: number;
+  avgPrice: number;
+  openInterest: number;
+  volOiRatio: number;
+  isNewStrike: boolean;
+  dominantTag: FlowTag;
+  netSentiment: number; // bullish $ − bearish $ in this bucket
+}
+
+function aggregateByStrike(contracts: UnusualContract[]): BuildRow[] {
+  const map = new Map<string, {
+    strike: number; type: "C" | "P"; expiration: string; dte: number;
+    premiumSum: number; volumeSum: number; priceWeightSum: number; printCount: number;
+    openInterest: number; volOiRatio: number; isNewStrike: boolean;
+    tagPremium: Record<FlowTag, number>;
+    bullPremium: number; bearPremium: number;
+  }>();
+
+  for (const c of contracts) {
+    const key = `${c.strike}-${c.type}-${c.expiration}`;
+    let b = map.get(key);
+    if (!b) {
+      b = {
+        strike: c.strike, type: c.type, expiration: c.expiration, dte: c.dte,
+        premiumSum: 0, volumeSum: 0, priceWeightSum: 0, printCount: 0,
+        openInterest: c.openInterest, volOiRatio: c.volOiRatio, isNewStrike: !!c.isNewStrike,
+        tagPremium: { ABOVE_ASK: 0, AT_ASK: 0, AT_BID: 0, BELOW_BID: 0, MID: 0 },
+        bullPremium: 0, bearPremium: 0,
+      };
+      map.set(key, b);
+    }
+    b.premiumSum += c.notional;
+    b.volumeSum += c.volume;
+    b.priceWeightSum += (c.last > 0 ? c.last : c.mid) * c.volume;
+    b.printCount += 1;
+    b.tagPremium[c.tag] += c.notional;
+    if (c.sentiment === "BULLISH") b.bullPremium += c.notional;
+    else if (c.sentiment === "BEARISH") b.bearPremium += c.notional;
+    // Prefer the latest OI snapshot (contracts are same-key so usually identical)
+    b.openInterest = c.openInterest;
+    b.volOiRatio = c.volOiRatio;
+    b.isNewStrike = !!c.isNewStrike;
+  }
+
+  return Array.from(map.entries()).map(([key, b]) => {
+    // Premium-weighted dominant tape side
+    let dominantTag: FlowTag = "MID";
+    let dominantPremium = 0;
+    for (const [tag, prem] of Object.entries(b.tagPremium) as [FlowTag, number][]) {
+      if (prem > dominantPremium) { dominantPremium = prem; dominantTag = tag; }
+    }
+    const avgPrice = b.volumeSum > 0 ? b.priceWeightSum / b.volumeSum : 0;
+    return {
+      key,
+      strike: b.strike,
+      type: b.type,
+      expiration: b.expiration,
+      dte: b.dte,
+      totalPremium: b.premiumSum,
+      totalVolume: b.volumeSum,
+      printCount: b.printCount,
+      avgPrice,
+      openInterest: b.openInterest,
+      volOiRatio: b.volOiRatio,
+      isNewStrike: b.isNewStrike,
+      dominantTag,
+      netSentiment: b.bullPremium - b.bearPremium,
+    };
+  }).sort((a, b) => b.totalPremium - a.totalPremium);
+}
+
+// Map total premium to a bar-width percentage relative to the biggest row.
+function premiumBarPct(row: BuildRow, maxPremium: number): number {
+  if (maxPremium <= 0) return 0;
+  return Math.min(100, (row.totalPremium / maxPremium) * 100);
+}
+
+function BuildTable({ rows, onRowClick }: {
+  rows: BuildRow[];
+  onRowClick: (row: BuildRow) => void;
+}) {
+  const maxPremium = rows.length > 0 ? rows[0].totalPremium : 0;
+  return (
+    <div className="overflow-x-auto rounded-md border border-border/40">
+      <table className="w-full text-[11px]">
+        <thead className="border-b border-border/40 bg-muted/20 sticky top-0 z-10">
+          <tr className="text-left text-[9px] uppercase tracking-wider text-muted-foreground">
+            <th className="px-2 py-1.5">Type</th>
+            <th className="px-2 py-1.5">Strike</th>
+            <th className="px-2 py-1.5">Expiry</th>
+            <th className="px-2 py-1.5 text-right">
+              <MathTip content="Total premium $ built up on this strike-side across all prints in the current window. This is the 'where size is loading' signal.">Built $</MathTip>
+            </th>
+            <th className="px-2 py-1.5 text-right">Vol</th>
+            <th className="px-2 py-1.5 text-right">
+              <MathTip content="Number of individual prints that hit this strike-side.">Prints</MathTip>
+            </th>
+            <th className="px-2 py-1.5 text-right">
+              <MathTip content="Volume-weighted average fill price across all prints in this bucket.">Avg fill</MathTip>
+            </th>
+            <th className="px-2 py-1.5 text-right">OI</th>
+            <th className="px-2 py-1.5 text-right">Vol/OI</th>
+            <th className="px-2 py-1.5">
+              <MathTip content="Dominant tape side weighted by premium — where most of the money crossed.">Dom. side</MathTip>
+            </th>
+            <th className="px-2 py-1.5">
+              <MathTip content="Net bullish minus bearish premium within this bucket. Bullish calls + bearish puts score positive; bearish calls + bullish puts score negative.">Net lean</MathTip>
+            </th>
+          </tr>
+        </thead>
+        <tbody className="font-mono tabular-nums">
+          {rows.map((row) => {
+            const ts = tagStyle(row.dominantTag);
+            const barPct = premiumBarPct(row, maxPremium);
+            const isCall = row.type === "C";
+            const leanPositive = row.netSentiment > 0;
+            const leanColor = row.netSentiment === 0
+              ? "text-muted-foreground"
+              : leanPositive ? "text-emerald-300" : "text-rose-300";
+            return (
+              <tr
+                key={row.key}
+                onClick={() => onRowClick(row)}
+                className="relative border-b border-border/20 last:border-b-0 hover:bg-muted/30 cursor-pointer"
+                data-testid={`build-row-${row.key}`}
+              >
+                <td className="px-2 py-1.5">
+                  <span className={`inline-block rounded border px-1.5 py-0.5 text-[9px] font-semibold ${typeStyle(row.type)}`}>
+                    {isCall ? "CALL" : "PUT"}
+                  </span>
+                </td>
+                <td className="px-2 py-1.5 font-semibold">{row.strike.toFixed(2)}</td>
+                <td className="px-2 py-1.5">
+                  <span className="text-[10px] text-muted-foreground">{fmtExpiryShort(row.expiration)}</span>
+                  <span className="ml-1 inline-block rounded bg-muted/40 px-1 py-0.5 text-[9px] text-muted-foreground">{row.dte}d</span>
+                </td>
+                {/* Built $ cell — premium bar behind the value */}
+                <td className="relative px-2 py-1.5 text-right font-semibold">
+                  <div
+                    className={`absolute inset-y-1 right-0 rounded-sm ${isCall ? "bg-emerald-500/15" : "bg-rose-500/15"}`}
+                    style={{ width: `${barPct}%` }}
+                    aria-hidden
+                  />
+                  <span className="relative z-10">{fmtMoney(row.totalPremium)}</span>
+                </td>
+                <td className="px-2 py-1.5 text-right">{fmtNum(row.totalVolume)}</td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">{row.printCount}</td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">{row.avgPrice > 0 ? row.avgPrice.toFixed(2) : "—"}</td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">{fmtNum(row.openInterest)}</td>
+                <td className="px-2 py-1.5 text-right text-amber-300">
+                  {row.isNewStrike ? (
+                    <span className="inline-block rounded bg-violet-500/20 border border-violet-500/40 px-1.5 py-0.5 text-[9px] text-violet-300 font-semibold">NEW</span>
+                  ) : `${row.volOiRatio.toFixed(1)}×`}
+                </td>
+                <td className="px-2 py-1.5">
+                  <span className={`inline-block rounded border px-1.5 py-0.5 text-[9px] font-semibold ${ts.border} ${ts.bg} ${ts.text}`}>{ts.label}</span>
+                </td>
+                <td className={`px-2 py-1.5 font-semibold ${leanColor}`}>
+                  {row.netSentiment === 0 ? "—" : `${leanPositive ? "+" : ""}${fmtMoney(row.netSentiment)}`}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 // ─── Group by expiry ──────────────────────────────────────────────────────────
@@ -639,6 +831,11 @@ export default function UnusualFlowPanel({ symbol }: Props) {
   const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>("ALL");
   const [groupByExp, setGroupByExp] = useState(false);
   const [openModalFor, setOpenModalFor] = useState<UnusualContract | null>(null);
+  // View mode: 'live' = streaming per-print list (tape view), 'build' = cumulative by strike+side
+  const [viewMode, setViewMode] = useState<"live" | "build">("live");
+  // When user selects 0DTE for the first time, default to Build view (where-size-loads).
+  // After that, respect whatever they've picked.
+  const [viewModeTouched, setViewModeTouched] = useState(false);
 
   const { data, isLoading, isError } = useQuery<UnusualResponse>({
     queryKey: ["/api/flow/unusual", sym],
@@ -658,6 +855,32 @@ export default function UnusualFlowPanel({ symbol }: Props) {
   }, [data, expiryFilter, sortKey]);
 
   const expGroups = useMemo(() => groupByExpiry(processedContracts), [processedContracts]);
+
+  // Build-view rows: aggregate by strike+type+expiration across the filtered set
+  const buildRows = useMemo(() => aggregateByStrike(processedContracts), [processedContracts]);
+
+  // Auto-default to Build view the first time the user selects 0DTE.
+  // Doesn't override manual toggles afterwards.
+  const handleExpiryFilter = useCallback((f: ExpiryFilter) => {
+    setExpiryFilter(f);
+    if (!viewModeTouched && f === "0DTE") {
+      setViewMode("build");
+    }
+  }, [viewModeTouched]);
+
+  const handleViewModeChange = useCallback((m: "live" | "build") => {
+    setViewMode(m);
+    setViewModeTouched(true);
+  }, []);
+
+  // Clicking a Build row opens the modal filtered to that strike-side-expiration
+  const handleBuildRowClick = useCallback((row: BuildRow) => {
+    // Find the first matching contract to seed the modal with a representative print
+    const match = processedContracts.find((c) =>
+      c.strike === row.strike && c.type === row.type && c.expiration === row.expiration,
+    );
+    if (match) setOpenModalFor(match);
+  }, [processedContracts]);
 
   if (isLoading && !data) {
     return (
@@ -767,7 +990,7 @@ export default function UnusualFlowPanel({ symbol }: Props) {
                           ? "border-primary bg-primary/20 text-primary"
                           : "border-border/40 bg-muted/10 text-muted-foreground hover:border-border hover:text-foreground"
                       }`}
-                      onClick={() => setExpiryFilter(f.value)}
+                      onClick={() => handleExpiryFilter(f.value)}
                       data-testid={`pill-expiry-${f.value}`}
                       aria-pressed={expiryFilter === f.value}
                     >
@@ -780,6 +1003,61 @@ export default function UnusualFlowPanel({ symbol }: Props) {
                 </Tooltip>
               </TooltipProvider>
             ))}
+          </div>
+
+          {/* View-mode toggle: Live (streaming prints) vs Build (cumulative by strike) */}
+          <div
+            className="flex items-center rounded-md border border-border/40 bg-muted/10 p-0.5"
+            role="tablist"
+            aria-label="Flow view mode"
+            data-testid="view-mode-toggle"
+          >
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    role="tab"
+                    aria-selected={viewMode === "live"}
+                    onClick={() => handleViewModeChange("live")}
+                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium transition-colors ${
+                      viewMode === "live"
+                        ? "bg-primary/20 text-primary"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    data-testid="view-mode-live"
+                  >
+                    <Activity className="h-3 w-3" />
+                    Live
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="text-[11px]">
+                  Streaming per-print tape — newest prints on top.
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    role="tab"
+                    aria-selected={viewMode === "build"}
+                    onClick={() => handleViewModeChange("build")}
+                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium transition-colors ${
+                      viewMode === "build"
+                        ? "bg-primary/20 text-primary"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    data-testid="view-mode-build"
+                  >
+                    <Layers className="h-3 w-3" />
+                    Build
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="text-[11px]">
+                  Cumulative by strike + side — where size is loading.
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
 
           {/* Sort dropdown — collapses cleanly on mobile */}
@@ -804,19 +1082,21 @@ export default function UnusualFlowPanel({ symbol }: Props) {
               </SelectContent>
             </Select>
 
-            {/* Group by expiry toggle */}
-            <div className="flex items-center gap-1.5 rounded-md border border-border/40 bg-muted/10 px-2.5 py-1">
-              <Checkbox
-                id="group-by-exp"
-                checked={groupByExp}
-                onCheckedChange={(v) => setGroupByExp(!!v)}
-                className="h-3.5 w-3.5"
-                data-testid="checkbox-group-by-expiry"
-              />
-              <Label htmlFor="group-by-exp" className="cursor-pointer text-[10px] text-muted-foreground">
-                Group by expiry
-              </Label>
-            </div>
+            {/* Group by expiry toggle — only meaningful in Live view */}
+            {viewMode === "live" && (
+              <div className="flex items-center gap-1.5 rounded-md border border-border/40 bg-muted/10 px-2.5 py-1">
+                <Checkbox
+                  id="group-by-exp"
+                  checked={groupByExp}
+                  onCheckedChange={(v) => setGroupByExp(!!v)}
+                  className="h-3.5 w-3.5"
+                  data-testid="checkbox-group-by-expiry"
+                />
+                <Label htmlFor="group-by-exp" className="cursor-pointer text-[10px] text-muted-foreground">
+                  Group by expiry
+                </Label>
+              </div>
+            )}
           </div>
         </div>
 
@@ -834,6 +1114,13 @@ export default function UnusualFlowPanel({ symbol }: Props) {
             No unusual flow matching <strong>{EXPIRY_FILTERS.find((f) => f.value === expiryFilter)?.label}</strong>{" "}
             filter for {sym}. Try "ALL" or another expiry bucket.
           </div>
+        ) : viewMode === "build" ? (
+          <>
+            <div className="text-[10px] text-muted-foreground">
+              Build view: {buildRows.length} unique strike-side bucket{buildRows.length !== 1 ? "s" : ""} · sorted by total premium
+            </div>
+            <BuildTable rows={buildRows} onRowClick={handleBuildRowClick} />
+          </>
         ) : groupByExp ? (
           <GroupedTable groups={expGroups} sortKey={sortKey} onSort={setSortKey} onRowClick={setOpenModalFor} />
         ) : (
