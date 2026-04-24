@@ -124,6 +124,7 @@ export interface ModelAudit {
   gexTotal: number;                        // absolute $ per 1%
   dex: number;                             // $B signed
   charmPerDay: number;                     // $B/day signed
+  netCTrue: number;                        // Σ charm_strike × OI_strike × 100 (dealer-signed, Perfiliev Table VIII)
   vexPerVolPct: number;                    // $B / 1% vol (signed)
   vannaBias: "positive" | "negative";
   vannaM: number;                          // vanna exposure in $M
@@ -898,6 +899,7 @@ function buildAudit(
     gexTotal: cur.gex,
     dex: cur.dex / 1e9,
     charmPerDay: cur.charm / 1e9,
+    netCTrue: profile.netCTrue,
     vexPerVolPct: cur.vex / 1e9,
     vannaBias,
     vannaM,

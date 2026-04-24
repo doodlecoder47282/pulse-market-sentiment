@@ -620,8 +620,13 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
   const riskBudget = riskBudget_M ?? 1.0;
 
   // --- Pull dealer net-greeks directly from the audit block (source of truth) ---
-  // charmPerDay is in $B/day, signed. Convert to $M for charm component math.
-  const netCharm_M   = audit.charmPerDay * 1000;
+  // netCTrue is Σ charm_strike × OI_strike × 100 per Perfiliev Table VIII — the
+  // standardised net-C against which NETC_SD_M = $80M is calibrated. Falls back
+  // to legacy charmPerDay * 1000 for older audit blocks that predate netCTrue.
+  // Scale to $M (netCTrue is in raw $, divide by 1e6).
+  const netCharm_M = audit.netCTrue != null
+    ? audit.netCTrue / 1e6
+    : audit.charmPerDay * 1000;
   const netVanna_M   = audit.vannaM;              // already $M, signed
   const gexTotal_M   = audit.gexTotal / 1e6;       // gexTotal is signed $ per 1%
   const gammaAtSpot_M = audit.gammaAtSpot;         // already $M

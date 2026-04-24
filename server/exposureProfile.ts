@@ -51,6 +51,10 @@ export interface ExposureProfile {
   zeroCharmSpots: number[];     // ALL charm sign-flips across the curve (Selz #1 — charm-zero CLUSTER)
   zeroVannaSpot: number | null; // spot where VEX flips sign
   charmSlope: number;           // dCharm/dS at spot — "tightening rate" (Selz #2)
+  // True net-C per Perfiliev Table VIII: Σ charm_strike × OI_strike × 100, NO spot factor,
+  // NO /365 normalisation. Signed with dealer convention (calls +, puts −). Units: shares of
+  // delta decay per trading year. Used by masterAlpha for standardised charm z-score.
+  netCTrue: number;
   ranges: {
     dex:   { min: number; max: number };
     gex:   { min: number; max: number };
@@ -158,6 +162,16 @@ export function buildExposureProfile(
   const currentE = exposuresAt(precomputed, spot, r, q);
   const current: ExposurePoint = { spot, ...currentE };
 
+  // True net-C aggregate per locked formula: Σ charm_strike × OI_strike × 100.
+  // No spot factor, no /365 — this matches Perfiliev Table VIII / paper Table IX inputs
+  // against which the β_C regression and NETC_SD_M = $80M stdev are calibrated.
+  // Dealer sign convention: calls +1, puts −1 (dealers short customer OI).
+  let netCTrue = 0;
+  for (const row of precomputed) {
+    const g: GreekSet = computeGreeks(spot, row.strike, row.iv, row.T, r, q, row.type);
+    netCTrue += row.sign * g.charm * row.oi * 100;
+  }
+
   const ranges = {
     dex:   rangeOf(curve.map((p) => p.dex)),
     gex:   rangeOf(curve.map((p) => p.gex)),
@@ -177,6 +191,7 @@ export function buildExposureProfile(
     zeroCharmSpots,
     zeroVannaSpot,
     charmSlope,
+    netCTrue,
     ranges,
     contractCount: precomputed.length,
   };
