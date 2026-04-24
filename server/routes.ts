@@ -23,6 +23,7 @@ import { buildWefThemes } from "./wef-themes";
 import { buildMacroSnapshot, type MacroResponse } from "./macro";
 import { fetchOHLC, type OHLCResponse, type Timeframe, type Interval } from "./ohlc";
 import { snapshotHorizon, gradeOutcomes, empiricalStats } from "./mmPredictions";
+import { startMmScheduler } from "./mmScheduler";
 import { buildMag7Snapshot, type Mag7Response } from "./mag7";
 import { buildFlowSnapshot, buildIntradayFlowSnapshot, type FlowResponse } from "./flow";
 import { buildExposuresSnapshot, type ExposuresResponse } from "./exposures";
@@ -1387,6 +1388,9 @@ Sift this feed AND search the web for any critical developments in geopolitics, 
 
   // Kick off tracker poller
   startOdteTracker(4_000);
+
+  // Kick off MM-matrix scheduler (10/13/15:30 ET snapshots, 16:30 grading)
+  startMmScheduler();
 
   // ─── Start background token refresh cycle ─────────────────────────────────
   startTokenRefreshCycle();
