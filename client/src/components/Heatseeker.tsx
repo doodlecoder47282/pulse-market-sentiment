@@ -185,6 +185,10 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
   // Drill-down selection: which strike + which side are we viewing as a contract chart?
   const [selected, setSelected] = useState<{ strike: number; side: "call" | "put" } | null>(null);
 
+  // Hide strikes with zero session volume by default — keeps the heatmap focused
+  // on strikes that actually traded today. Toggle lets user bring them back.
+  const [hideZeroVol, setHideZeroVol] = useState(true);
+
   // Snapshot of the live odte-tracker — provides bid/ask/volume/OI/notional per contract key.
   // Separate 4s poll (matches tracker poll cadence). Paused while nothing is selected.
   const { data: odteSnap } = useQuery<{ contracts: OdteContract[] }>({
@@ -204,8 +208,21 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
   const maxAbsVanna = useMemo(() => Math.max(...strikes.map((s) => Math.abs(s.netVanna)), 1), [strikes]);
   const maxAbsCharm = useMemo(() => Math.max(...strikes.map((s) => Math.abs(s.netCharm)), 1), [strikes]);
 
-  // Strikes sorted descending so higher strikes appear at top of heatmap (price chart convention)
-  const rows = useMemo(() => [...strikes].sort((a, b) => b.strike - a.strike), [strikes]);
+  // Strikes sorted descending so higher strikes appear at top of heatmap (price chart convention).
+  // Optionally drop rows with zero session volume on both sides (no activity today).
+  // We always keep the spot row + any locked-level row so the spatial reference stays intact.
+  const rows = useMemo(() => {
+    const base = [...strikes].sort((a, b) => b.strike - a.strike);
+    if (!hideZeroVol) return base;
+    return base.filter((s) => {
+      const hasVolume = (s.callVol ?? 0) + (s.putVol ?? 0) > 0 || (s.totalVol ?? 0) > 0;
+      const isSpotRow = Math.abs(s.strike - spot) < 2.5;
+      const isLockedLevel = LOCKED_LEVELS.some((l) => Math.abs(l.value - s.strike) < 2.5);
+      return hasVolume || isSpotRow || isLockedLevel;
+    });
+  }, [strikes, hideZeroVol, spot]);
+
+  const hiddenCount = strikes.length - rows.length;
 
   // Chart data — ascending for x-axis
   const chartData = useMemo(
@@ -275,13 +292,35 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
       {/* ── Heatmap grid ─────────────────────────────────────────────── */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Target className="h-4 w-4 text-primary" />
-            Greek Heatmap · strike × metric
-          </CardTitle>
-          <div className="text-xs text-muted-foreground">
-            Emerald = positive (dealers long / supportive) · Rose = negative (dealers short / accelerant).
-            Horizontal guides = your locked weekly targets. Tap any strike to open the contract chart.
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Target className="h-4 w-4 text-primary" />
+                Greek Heatmap · strike × metric
+              </CardTitle>
+              <div className="mt-1 text-xs text-muted-foreground">
+                Emerald = positive (dealers long / supportive) · Rose = negative (dealers short / accelerant).
+                Horizontal guides = your locked weekly targets. Tap any strike to open the contract chart.
+              </div>
+            </div>
+            {/* Zero-volume filter toggle — hides strikes with no session prints
+                so the grid stays focused on strikes that actually traded today. */}
+            <button
+              type="button"
+              onClick={() => setHideZeroVol((v) => !v)}
+              data-testid="toggle-hide-zero-vol"
+              className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-mono transition-colors ${
+                hideZeroVol
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+                  : "border-border text-muted-foreground hover:bg-muted/40"
+              }`}
+              title={hideZeroVol ? "Showing only strikes with session volume" : "Showing all strikes"}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${hideZeroVol ? "bg-emerald-400" : "bg-muted-foreground/50"}`} />
+              {hideZeroVol
+                ? `traded only${hiddenCount > 0 ? ` · ${hiddenCount} hidden` : ""}`
+                : "all strikes"}
+            </button>
           </div>
         </CardHeader>
         <CardContent>

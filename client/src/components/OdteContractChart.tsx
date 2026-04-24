@@ -180,6 +180,18 @@ export default function OdteContractChart({
                 {stats.change >= 0 ? "+" : ""}{stats.change.toFixed(2)} ({stats.changePct >= 0 ? "+" : ""}{stats.changePct.toFixed(1)}%)
               </span>
             )}
+            {/* Cumulative session volume (from Schwab snapshot, not live delta bars).
+                Shown even after hours when deltaVol is 0 and signed-volume pane is empty. */}
+            {meta.volume != null && meta.volume > 0 && (
+              <Badge variant="outline" className="h-5 font-mono text-[10px] text-muted-foreground">
+                vol {meta.volume.toLocaleString()}
+              </Badge>
+            )}
+            {meta.openInterest != null && meta.openInterest > 0 && (
+              <Badge variant="outline" className="h-5 font-mono text-[10px] text-muted-foreground">
+                OI {meta.openInterest.toLocaleString()}
+              </Badge>
+            )}
           </CardTitle>
 
           <div className="flex items-center gap-1">
@@ -380,10 +392,17 @@ export default function OdteContractChart({
               </ResponsiveContainer>
             </div>
 
-            {/* Volume pane (split buy/sell, ToS style) — bigger */}
+            {/* Volume pane (split buy/sell, ToS style) — bigger.
+                When every bar's totalVol is 0 (after-hours or no new prints yet)
+                we swap in an empty-state hint so it doesn't look broken. */}
             <div className="h-[140px] w-full rounded-md border border-border/30 bg-background/40 p-1">
-              <div className="px-2 pt-1 text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
-                Volume · buy vs sell (Lee-Ready)
+              <div className="flex items-center justify-between px-2 pt-1 text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
+                <span>Volume · buy vs sell (Lee-Ready)</span>
+                {stats && stats.totalBuy + stats.totalSell === 0 && meta.volume != null && meta.volume > 0 && (
+                  <span className="text-[9px] text-amber-400/80 normal-case tracking-normal">
+                    no new prints · session total {meta.volume.toLocaleString()}
+                  </span>
+                )}
               </div>
               <ResponsiveContainer width="100%" height="92%">
                 <ComposedChart data={rows} margin={{ top: 4, right: 16, left: 0, bottom: 0 }} stackOffset="sign">
