@@ -173,6 +173,35 @@ export interface IntradayVolSample {
   callVolume: number;    // cumulative calls from open
   putVolume: number;     // cumulative puts from open
   pcRatio: number | null;
+  // Aggressor-classified cumulative volumes (Lee-Ready-style from bid/ask/last)
+  boughtCallVol: number;
+  soldCallVol: number;
+  unknownCallVol: number;
+  boughtPutVol: number;
+  soldPutVol: number;
+  unknownPutVol: number;
+  // Cumulative premium paid ($) — dollar-weighted conviction
+  boughtCallPrem: number;
+  soldCallPrem: number;
+  boughtPutPrem: number;
+  soldPutPrem: number;
+}
+
+export interface AggressorBreakdown {
+  // Volumes
+  boughtCallVol: number;
+  soldCallVol: number;
+  unknownCallVol: number;
+  boughtPutVol: number;
+  soldPutVol: number;
+  unknownPutVol: number;
+  // Premium in $ (volume * last * 100)
+  boughtCallPrem: number;
+  soldCallPrem: number;
+  boughtPutPrem: number;
+  soldPutPrem: number;
+  // Classified percentage (share of vol we could classify vs unknown)
+  classifiedPct: number;
 }
 
 export interface IntradayFlowTicker {
@@ -183,6 +212,14 @@ export interface IntradayFlowTicker {
   currentPutVol: number;
   currentPcr: number | null;
   isEstimated: boolean; // true until real rolling sampler kicks in
+  // Classification of the snapshot
+  aggressor: AggressorBreakdown;
+  // Convenience: total overall contract volume (calls + puts)
+  totalVol: number;
+  totalPrem: number;
+  // Net aggressor score: (boughtCall + soldPut) - (soldCall + boughtPut)
+  // positive = bullish aggression, negative = bearish aggression (premium $)
+  netAggressorPrem: number;
 }
 
 export interface IntradayFlowResponse {
@@ -198,6 +235,7 @@ interface VolBuffer {
   samples: IntradayVolSample[];
   lastCallVol: number;
   lastPutVol: number;
+  lastAggressor: AggressorBreakdown | null;
 }
 const volBuffers = new Map<string, VolBuffer>();
 
@@ -234,6 +272,7 @@ function getTimeLabel(epochSecs: number): string {
 function synthesizeIntradaySeries(
   totalCallVol: number,
   totalPutVol: number,
+  agg: AggressorBreakdown | null,
   now: Date,
 ): IntradayVolSample[] {
   const samples: IntradayVolSample[] = [];
@@ -245,8 +284,6 @@ function synthesizeIntradaySeries(
   // U-curve weights for each 30-min bucket (higher at open/close)
   const weights = [0.15, 0.09, 0.07, 0.06, 0.06, 0.06, 0.06, 0.07, 0.08, 0.09, 0.10, 0.08, 0.07];
   const totalWeight = weights.reduce((a, b) => a + b, 0);
-  let cumCall = 0, cumPut = 0;
-  const epochBase = Math.floor(now.getTime() / 1000);
   const marketOpenEpoch = (() => {
     const d = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
     d.setHours(9, 30, 0, 0);
@@ -261,19 +298,79 @@ function synthesizeIntradaySeries(
     const fraction = weights.slice(0, i + 1).reduce((a, b) => a + b, 0) / totalWeight;
     // Scale by how far into the day we are
     const dayFraction = Math.min(1, (nowMins - marketOpenH) / (marketCloseH - marketOpenH));
-    cumCall = totalCallVol * fraction * dayFraction + totalCallVol * (1 - dayFraction) * fraction;
-    cumPut = totalPutVol * fraction * dayFraction + totalPutVol * (1 - dayFraction) * fraction;
-    cumCall = Math.round(cumCall);
-    cumPut = Math.round(cumPut);
+    const cumCall = Math.round(totalCallVol * fraction * dayFraction + totalCallVol * (1 - dayFraction) * fraction);
+    const cumPut = Math.round(totalPutVol * fraction * dayFraction + totalPutVol * (1 - dayFraction) * fraction);
     samples.push({
       t,
       timeLabel: getTimeLabel(t),
       callVolume: cumCall,
       putVolume: cumPut,
       pcRatio: cumCall > 0 ? cumPut / cumCall : null,
+      boughtCallVol: Math.round(cumCall * (agg && agg.boughtCallVol + agg.soldCallVol + agg.unknownCallVol > 0 ? agg.boughtCallVol / (agg.boughtCallVol + agg.soldCallVol + agg.unknownCallVol) : 0.5)),
+      soldCallVol: Math.round(cumCall * (agg && agg.boughtCallVol + agg.soldCallVol + agg.unknownCallVol > 0 ? agg.soldCallVol / (agg.boughtCallVol + agg.soldCallVol + agg.unknownCallVol) : 0.5)),
+      unknownCallVol: agg && agg.boughtCallVol + agg.soldCallVol + agg.unknownCallVol > 0 ? Math.round(cumCall * agg.unknownCallVol / (agg.boughtCallVol + agg.soldCallVol + agg.unknownCallVol)) : 0,
+      boughtPutVol: Math.round(cumPut * (agg && agg.boughtPutVol + agg.soldPutVol + agg.unknownPutVol > 0 ? agg.boughtPutVol / (agg.boughtPutVol + agg.soldPutVol + agg.unknownPutVol) : 0.5)),
+      soldPutVol: Math.round(cumPut * (agg && agg.boughtPutVol + agg.soldPutVol + agg.unknownPutVol > 0 ? agg.soldPutVol / (agg.boughtPutVol + agg.soldPutVol + agg.unknownPutVol) : 0.5)),
+      unknownPutVol: agg && agg.boughtPutVol + agg.soldPutVol + agg.unknownPutVol > 0 ? Math.round(cumPut * agg.unknownPutVol / (agg.boughtPutVol + agg.soldPutVol + agg.unknownPutVol)) : 0,
+      boughtCallPrem: agg ? Math.round(agg.boughtCallPrem * fraction * dayFraction) : 0,
+      soldCallPrem: agg ? Math.round(agg.soldCallPrem * fraction * dayFraction) : 0,
+      boughtPutPrem: agg ? Math.round(agg.boughtPutPrem * fraction * dayFraction) : 0,
+      soldPutPrem: agg ? Math.round(agg.soldPutPrem * fraction * dayFraction) : 0,
     });
   }
   return samples;
+}
+
+// ─── Aggressor classifier (Lee-Ready-style quote rule) ────────────────────
+// For each contract with volume > 0, classify today's volume as
+// buyer-initiated, seller-initiated, or unknown using bid/ask/last price.
+//   - last >= ask - eps  → BUY  (paid the offer)
+//   - last <= bid + eps  → SELL (hit the bid)
+//   - bid < last < ask   → midpoint tiebreak
+//   - missing data       → UNKNOWN
+// eps = max(0.01, 0.02 * spread). Dollar volume = volume * last * 100.
+export function classifyAggressor(options: any[]): AggressorBreakdown {
+  const out: AggressorBreakdown = {
+    boughtCallVol: 0, soldCallVol: 0, unknownCallVol: 0,
+    boughtPutVol: 0, soldPutVol: 0, unknownPutVol: 0,
+    boughtCallPrem: 0, soldCallPrem: 0, boughtPutPrem: 0, soldPutPrem: 0,
+    classifiedPct: 0,
+  };
+  for (const o of options) {
+    const side = parseSide(String(o?.option || ""));
+    if (!side) continue;
+    const vol = Number(o.volume || 0);
+    if (!vol || vol <= 0) continue;
+    const bid = Number(o.bid);
+    const ask = Number(o.ask);
+    const last = Number(o.last_trade_price);
+    const prem = Number.isFinite(last) && last > 0 ? vol * last * 100 : 0;
+    let tag: "buy" | "sell" | "unknown" = "unknown";
+    if (Number.isFinite(bid) && Number.isFinite(ask) && ask > 0 && ask >= bid && Number.isFinite(last) && last > 0) {
+      const spread = Math.max(0, ask - bid);
+      const eps = Math.max(0.01, 0.02 * spread);
+      const mid = (bid + ask) / 2;
+      if (last >= ask - eps) tag = "buy";
+      else if (last <= bid + eps) tag = "sell";
+      else if (last > mid + eps) tag = "buy";
+      else if (last < mid - eps) tag = "sell";
+      else tag = "unknown";
+    }
+    if (side === "C") {
+      if (tag === "buy")   { out.boughtCallVol += vol; out.boughtCallPrem += prem; }
+      else if (tag === "sell") { out.soldCallVol += vol; out.soldCallPrem += prem; }
+      else out.unknownCallVol += vol;
+    } else {
+      if (tag === "buy")   { out.boughtPutVol += vol; out.boughtPutPrem += prem; }
+      else if (tag === "sell") { out.soldPutVol += vol; out.soldPutPrem += prem; }
+      else out.unknownPutVol += vol;
+    }
+  }
+  const totalVol = out.boughtCallVol + out.soldCallVol + out.unknownCallVol +
+                   out.boughtPutVol + out.soldPutVol + out.unknownPutVol;
+  const classifiedVol = totalVol - out.unknownCallVol - out.unknownPutVol;
+  out.classifiedPct = totalVol > 0 ? (classifiedVol / totalVol) * 100 : 0;
+  return out;
 }
 
 export async function buildIntradayFlowSnapshot(): Promise<IntradayFlowResponse> {
@@ -286,6 +383,7 @@ export async function buildIntradayFlowSnapshot(): Promise<IntradayFlowResponse>
   for (const tk of INTRADAY_TICKERS) {
     // Fetch current snapshot from CBOE
     let callVol = 0, putVol = 0;
+    let agg: AggressorBreakdown | null = null;
     try {
       const d = await cboeFetch(tk.cboeSymbol, 8_000);
       const opts: any[] = d?.data?.options || [];
@@ -295,6 +393,7 @@ export async function buildIntradayFlowSnapshot(): Promise<IntradayFlowResponse>
         if (side === "C") callVol += v;
         else if (side === "P") putVol += v;
       }
+      agg = classifyAggressor(opts);
     } catch (_) {
       // fallback to buffer if available
     }
@@ -302,7 +401,7 @@ export async function buildIntradayFlowSnapshot(): Promise<IntradayFlowResponse>
     let buf = volBuffers.get(tk.symbol);
     // Reset buffer daily
     if (!buf || buf.lastResetDay !== today) {
-      buf = { lastResetDay: today, samples: [], lastCallVol: 0, lastPutVol: 0 };
+      buf = { lastResetDay: today, samples: [], lastCallVol: 0, lastPutVol: 0, lastAggressor: null };
       volBuffers.set(tk.symbol, buf);
     }
 
@@ -320,12 +419,23 @@ export async function buildIntradayFlowSnapshot(): Promise<IntradayFlowResponse>
           callVolume: callVol,
           putVolume: putVol,
           pcRatio,
+          boughtCallVol: agg?.boughtCallVol ?? 0,
+          soldCallVol: agg?.soldCallVol ?? 0,
+          unknownCallVol: agg?.unknownCallVol ?? 0,
+          boughtPutVol: agg?.boughtPutVol ?? 0,
+          soldPutVol: agg?.soldPutVol ?? 0,
+          unknownPutVol: agg?.unknownPutVol ?? 0,
+          boughtCallPrem: agg?.boughtCallPrem ?? 0,
+          soldCallPrem: agg?.soldCallPrem ?? 0,
+          boughtPutPrem: agg?.boughtPutPrem ?? 0,
+          soldPutPrem: agg?.soldPutPrem ?? 0,
         });
         // Keep max 390 samples (1 per minute for 6.5h session)
         if (buf.samples.length > 390) buf.samples.shift();
       }
       buf.lastCallVol = callVol;
       buf.lastPutVol = putVol;
+      if (agg) buf.lastAggressor = agg;
     }
 
     // Use real samples if we have them, else synthesize
@@ -338,13 +448,26 @@ export async function buildIntradayFlowSnapshot(): Promise<IntradayFlowResponse>
       // Synthesize from cumulative total
       const totalCall = hasRealData ? callVol : buf.lastCallVol;
       const totalPut = hasRealData ? putVol : buf.lastPutVol;
-      series = synthesizeIntradaySeries(totalCall, totalPut, now);
+      series = synthesizeIntradaySeries(totalCall, totalPut, agg ?? buf.lastAggressor, now);
       isEstimated = true;
       anyEstimated = true;
     }
 
     const currentCall = hasRealData ? callVol : buf.lastCallVol;
     const currentPut = hasRealData ? putVol : buf.lastPutVol;
+    const effectiveAgg: AggressorBreakdown = agg ?? buf.lastAggressor ?? {
+      boughtCallVol: 0, soldCallVol: 0, unknownCallVol: 0,
+      boughtPutVol: 0, soldPutVol: 0, unknownPutVol: 0,
+      boughtCallPrem: 0, soldCallPrem: 0, boughtPutPrem: 0, soldPutPrem: 0,
+      classifiedPct: 0,
+    };
+    const totalVol = currentCall + currentPut;
+    const totalPrem = effectiveAgg.boughtCallPrem + effectiveAgg.soldCallPrem + effectiveAgg.boughtPutPrem + effectiveAgg.soldPutPrem;
+    // Bullish aggression = bought calls + sold puts (premium paid for upside / premium collected on downside)
+    // Bearish aggression = sold calls + bought puts
+    const netAggressorPrem = (effectiveAgg.boughtCallPrem + effectiveAgg.soldPutPrem)
+                           - (effectiveAgg.soldCallPrem + effectiveAgg.boughtPutPrem);
+
     tickers.push({
       symbol: tk.symbol,
       label: tk.label,
@@ -353,6 +476,10 @@ export async function buildIntradayFlowSnapshot(): Promise<IntradayFlowResponse>
       currentPutVol: currentPut,
       currentPcr: currentCall > 0 ? currentPut / currentCall : null,
       isEstimated,
+      aggressor: effectiveAgg,
+      totalVol,
+      totalPrem,
+      netAggressorPrem,
     });
   }
 

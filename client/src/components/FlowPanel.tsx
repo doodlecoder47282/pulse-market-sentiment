@@ -65,6 +65,30 @@ interface IntradayVolSample {
   callVolume: number;
   putVolume: number;
   pcRatio: number | null;
+  boughtCallVol: number;
+  soldCallVol: number;
+  unknownCallVol: number;
+  boughtPutVol: number;
+  soldPutVol: number;
+  unknownPutVol: number;
+  boughtCallPrem: number;
+  soldCallPrem: number;
+  boughtPutPrem: number;
+  soldPutPrem: number;
+}
+
+interface AggressorBreakdown {
+  boughtCallVol: number;
+  soldCallVol: number;
+  unknownCallVol: number;
+  boughtPutVol: number;
+  soldPutVol: number;
+  unknownPutVol: number;
+  boughtCallPrem: number;
+  soldCallPrem: number;
+  boughtPutPrem: number;
+  soldPutPrem: number;
+  classifiedPct: number;
 }
 
 interface IntradayFlowTicker {
@@ -75,6 +99,10 @@ interface IntradayFlowTicker {
   currentPutVol: number;
   currentPcr: number | null;
   isEstimated: boolean;
+  aggressor: AggressorBreakdown;
+  totalVol: number;
+  totalPrem: number;
+  netAggressorPrem: number;
 }
 
 interface IntradayFlowResponse {
@@ -119,6 +147,17 @@ function fmtVol(v: number): string {
   if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
   if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
   return String(v);
+}
+
+// Compact dollar formatter for option premium ($). Handles negatives, rounds to 1dp.
+function fmtDollar(v: number): string {
+  if (!Number.isFinite(v)) return "$0";
+  const sign = v < 0 ? "-" : "";
+  const a = Math.abs(v);
+  if (a >= 1_000_000_000) return `${sign}$${(a / 1_000_000_000).toFixed(2)}B`;
+  if (a >= 1_000_000) return `${sign}$${(a / 1_000_000).toFixed(1)}M`;
+  if (a >= 1_000) return `${sign}$${(a / 1_000).toFixed(0)}K`;
+  return `${sign}$${a.toFixed(0)}`;
 }
 
 // Mini inline SVG sparkline for intraday combined P/C.
@@ -223,7 +262,9 @@ function FlowTile({ tick }: { tick: FlowTicker }) {
 }
 
 // ─── Intraday Volume Chart (UW-style mirror bars) ──────────────────────────────
-type ViewMode = "bars" | "area" | "ratio";
+// "flow" view is the new default: mirror-stacked bars separating
+// bought vs sold calls and bought vs sold puts (aggressor-classified).
+type ViewMode = "flow" | "bars" | "area" | "ratio";
 
 function StatBox({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "up" | "down" | "neutral" | "warn" }) {
   const toneCls =
@@ -240,7 +281,7 @@ function StatBox({ label, value, tone = "neutral" }: { label: string; value: str
 }
 
 function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; estimated: boolean }) {
-  const [view, setView] = useState<ViewMode>("bars");
+  const [view, setView] = useState<ViewMode>("flow");
   const series = ticker.series;
 
   // Compute per-bucket deltas (UW-style flow)
@@ -250,6 +291,21 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
       const callDelta = prev ? Math.max(0, s.callVolume - prev.callVolume) : s.callVolume;
       const putDelta = prev ? Math.max(0, s.putVolume - prev.putVolume) : s.putVolume;
       const netDelta = callDelta - putDelta;
+      // Aggressor-side deltas (Lee-Ready estimate)
+      const boughtCallDelta = prev ? Math.max(0, s.boughtCallVol - prev.boughtCallVol) : s.boughtCallVol;
+      const soldCallDelta   = prev ? Math.max(0, s.soldCallVol   - prev.soldCallVol)   : s.soldCallVol;
+      const boughtPutDelta  = prev ? Math.max(0, s.boughtPutVol  - prev.boughtPutVol)  : s.boughtPutVol;
+      const soldPutDelta    = prev ? Math.max(0, s.soldPutVol    - prev.soldPutVol)    : s.soldPutVol;
+      // Mirror-sign versions for stacked bars (calls above zero, puts below zero)
+      const boughtPutDeltaNeg = -boughtPutDelta;
+      const soldPutDeltaNeg   = -soldPutDelta;
+      // Bullish-bearish premium net per bucket
+      const bullPrem = (s.boughtCallPrem - (prev?.boughtCallPrem ?? 0))
+                     + (s.soldPutPrem    - (prev?.soldPutPrem    ?? 0));
+      const bearPrem = (s.soldCallPrem   - (prev?.soldCallPrem   ?? 0))
+                     + (s.boughtPutPrem  - (prev?.boughtPutPrem  ?? 0));
+      const netBias = bullPrem - bearPrem;
+      const totalVol = s.callVolume + s.putVolume;
       return {
         ...s,
         callDelta,
@@ -257,6 +313,16 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
         putDeltaNeg: -putDelta,
         netDelta,
         absNet: Math.abs(netDelta),
+        boughtCallDelta,
+        soldCallDelta,
+        boughtPutDelta,
+        soldPutDelta,
+        boughtPutDeltaNeg,
+        soldPutDeltaNeg,
+        bullPrem,
+        bearPrem,
+        netBias,
+        totalVol,
       };
     });
   }, [series]);
@@ -348,7 +414,7 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
       {/* Header: view toggle + session range */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-1 rounded-md border border-border/40 bg-card/40 p-0.5">
-          {(["bars", "area", "ratio"] as ViewMode[]).map((v) => (
+          {(["flow", "bars", "area", "ratio"] as ViewMode[]).map((v) => (
             <button
               key={v}
               onClick={() => setView(v)}
@@ -357,7 +423,7 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
                 view === v ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              {v === "bars" ? "Bars" : v === "area" ? "Area" : "Ratio"}
+              {v === "flow" ? "Flow" : v === "bars" ? "Bars" : v === "area" ? "Area" : "Ratio"}
             </button>
           ))}
         </div>
@@ -395,7 +461,166 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
         <StatBox label="P/C" value={fmtPcr(ticker.currentPcr)} tone={ticker.currentPcr != null && ticker.currentPcr > 1.05 ? "down" : ticker.currentPcr != null && ticker.currentPcr < 0.75 ? "up" : "warn"} />
       </div>
 
+      {/* ─── AGGRESSOR BREAKDOWN: bought vs sold, classified via bid/ask vs last ─── */}
+      <div className="rounded-md border border-border/40 bg-card/20 p-2">
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Aggressor Flow · who paid up?</span>
+          <span className="text-[9px] font-mono text-muted-foreground" data-testid="aggressor-classified-pct">
+            classified {ticker.aggressor.classifiedPct.toFixed(0)}% · bid/ask rule
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <StatBox
+            label="Bought Calls $"
+            value={fmtDollar(ticker.aggressor.boughtCallPrem)}
+            tone="up"
+          />
+          <StatBox
+            label="Sold Calls $"
+            value={fmtDollar(ticker.aggressor.soldCallPrem)}
+            tone="down"
+          />
+          <StatBox
+            label="Bought Puts $"
+            value={fmtDollar(ticker.aggressor.boughtPutPrem)}
+            tone="down"
+          />
+          <StatBox
+            label="Sold Puts $"
+            value={fmtDollar(ticker.aggressor.soldPutPrem)}
+            tone="up"
+          />
+        </div>
+        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <StatBox
+            label="Net Bias"
+            value={`${ticker.netAggressorPrem >= 0 ? "+" : ""}${fmtDollar(ticker.netAggressorPrem)} ${ticker.netAggressorPrem >= 0 ? "BULL" : "BEAR"}`}
+            tone={ticker.netAggressorPrem >= 0 ? "up" : "down"}
+          />
+          <StatBox
+            label="Overall Vol"
+            value={fmtVol(ticker.totalVol)}
+            tone="neutral"
+          />
+          <StatBox
+            label="Total Prem"
+            value={fmtDollar(ticker.totalPrem)}
+            tone="neutral"
+          />
+        </div>
+      </div>
+
       {/* Chart */}
+      {view === "flow" && (
+        <div className="h-[280px] sm:h-[320px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={deltaSeries} margin={{ top: 4, right: 44, left: 0, bottom: 4 }} stackOffset="sign">
+              <defs>
+                <linearGradient id="bought-call-grad" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0%"  stopColor="#34d399" stopOpacity={1} />
+                  <stop offset="100%" stopColor="#10b981" stopOpacity={0.85} />
+                </linearGradient>
+                <linearGradient id="sold-call-grad" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0%"  stopColor="#059669" stopOpacity={0.5} />
+                  <stop offset="100%" stopColor="#065f46" stopOpacity={0.5} />
+                </linearGradient>
+                <linearGradient id="bought-put-grad" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0%"  stopColor="#b91c1c" stopOpacity={0.85} />
+                  <stop offset="100%" stopColor="#ef4444" stopOpacity={1} />
+                </linearGradient>
+                <linearGradient id="sold-put-grad" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0%"  stopColor="#7f1d1d" stopOpacity={0.5} />
+                  <stop offset="100%" stopColor="#991b1b" stopOpacity={0.5} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.25} />
+              <XAxis
+                dataKey="timeLabel"
+                tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                axisLine={false}
+                tickLine={false}
+                interval="preserveStartEnd"
+              />
+              <YAxis
+                yAxisId="vol"
+                tickFormatter={(v) => fmtVol(Math.abs(v))}
+                tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                axisLine={false}
+                tickLine={false}
+                width={46}
+              />
+              <YAxis
+                yAxisId="total"
+                orientation="right"
+                tickFormatter={(v) => fmtVol(v)}
+                tick={{ fontSize: 9, fill: "#94a3b8" }}
+                axisLine={false}
+                tickLine={false}
+                width={40}
+              />
+              <Tooltip
+                cursor={{ fill: "hsl(var(--muted))", opacity: 0.08 }}
+                content={({ active, payload }: any) => {
+                  if (!active || !payload?.length) return null;
+                  const s = payload[0]?.payload;
+                  if (!s) return null;
+                  return (
+                    <div className="rounded-lg border border-border bg-popover p-2 text-xs shadow-lg space-y-0.5 min-w-[180px]">
+                      <div className="mb-1 font-semibold">{s.timeLabel}</div>
+                      <div className="flex justify-between gap-4">
+                        <span className="text-emerald-400">Bought Calls</span>
+                        <span className="font-mono text-emerald-300">{fmtVol(s.boughtCallDelta)}</span>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <span className="text-emerald-700">Sold Calls</span>
+                        <span className="font-mono text-emerald-300/70">{fmtVol(s.soldCallDelta)}</span>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <span className="text-rose-400">Bought Puts</span>
+                        <span className="font-mono text-rose-300">{fmtVol(s.boughtPutDelta)}</span>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <span className="text-rose-700">Sold Puts</span>
+                        <span className="font-mono text-rose-300/70">{fmtVol(s.soldPutDelta)}</span>
+                      </div>
+                      <div className="mt-1 pt-1 border-t border-border/50 flex justify-between gap-4">
+                        <span className="text-muted-foreground">Net bias $</span>
+                        <span className={`font-mono ${s.netBias >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                          {s.netBias >= 0 ? "+" : ""}{fmtDollar(s.netBias)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <span className="text-muted-foreground">Overall vol</span>
+                        <span className="font-mono text-slate-300">{fmtVol(s.totalVol)}</span>
+                      </div>
+                    </div>
+                  );
+                }}
+              />
+              <ReferenceLine yAxisId="vol" y={0} stroke="hsl(var(--border))" strokeWidth={1.25} />
+              {/* Above zero = call activity, stacked: bought on bottom (bright), sold on top (dim) */}
+              <Bar yAxisId="vol" dataKey="boughtCallDelta" stackId="calls" fill="url(#bought-call-grad)" name="Bought Calls" isAnimationActive={false} />
+              <Bar yAxisId="vol" dataKey="soldCallDelta"   stackId="calls" fill="url(#sold-call-grad)"   name="Sold Calls"   isAnimationActive={false} />
+              {/* Below zero = put activity */}
+              <Bar yAxisId="vol" dataKey="boughtPutDeltaNeg" stackId="puts" fill="url(#bought-put-grad)" name="Bought Puts" isAnimationActive={false} />
+              <Bar yAxisId="vol" dataKey="soldPutDeltaNeg"   stackId="puts" fill="url(#sold-put-grad)"   name="Sold Puts"   isAnimationActive={false} />
+              {/* Overall vol overlay line (grey, right axis) */}
+              <Line
+                yAxisId="total"
+                type="monotone"
+                dataKey="totalVol"
+                stroke="#94a3b8"
+                strokeWidth={1.5}
+                strokeDasharray="4 3"
+                dot={false}
+                name="Overall vol"
+                isAnimationActive={false}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
       {view === "bars" && (
         <div className="h-[260px] sm:h-[300px]">
           <ResponsiveContainer width="100%" height="100%">
@@ -489,8 +714,17 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
       )}
 
       {/* Legend */}
-      <div className="flex items-center gap-4 text-[10px] text-muted-foreground px-2 flex-wrap">
-        {view === "bars" ? (
+      <div className="flex items-center gap-3 text-[10px] text-muted-foreground px-2 flex-wrap">
+        {view === "flow" ? (
+          <>
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-emerald-400" /> Bought calls</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-emerald-800/70" /> Sold calls</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-rose-500" /> Bought puts</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-rose-900/70" /> Sold puts</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-slate-400" style={{ backgroundImage: "repeating-linear-gradient(90deg, #94a3b8 0 3px, transparent 3px 6px)" }} /> Overall vol</span>
+            <span className="text-muted-foreground/60">· aggressor from bid/ask rule</span>
+          </>
+        ) : view === "bars" ? (
           <>
             <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 bg-emerald-500" /> Calls Δ (buying)</span>
             <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 bg-rose-500" /> Puts Δ (buying)</span>
@@ -541,7 +775,7 @@ function IntradayFlowSection() {
       <div className="border-t border-border/40" />
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Intraday Call/Put Volume</span>
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Intraday Call/Put Flow · Bought vs Sold</span>
           {!data.marketOpen && (
             <Badge variant="outline" className="text-[9px] text-muted-foreground border-border/50">After Hours</Badge>
           )}
