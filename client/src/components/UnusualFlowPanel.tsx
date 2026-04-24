@@ -32,7 +32,9 @@ import {
 } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { ChevronDown, ChevronRight, Flame, TrendingUp, TrendingDown, Zap, HelpCircle } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { ChevronDown, ChevronRight, Flame, TrendingUp, TrendingDown, Zap, HelpCircle, X, ArrowDown, ArrowUp, ChevronsUpDown, Clock } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -79,7 +81,7 @@ interface UnusualResponse {
 
 // ─── Sort & Filter types ─────────────────────────────────────────────────────
 
-type SortKey = "notional" | "expiryAsc" | "expiryDesc" | "strikeAsc" | "volume" | "volOiRatio" | "midPct";
+type SortKey = "notional" | "expiryAsc" | "expiryDesc" | "strikeAsc" | "strikeDesc" | "volume" | "volOiRatio" | "midPct" | "lastDesc" | "ivDesc" | "sideAsc" | "typeAsc";
 type ExpiryFilter = "ALL" | "0DTE" | "THIS_WEEK" | "NEXT_WEEK" | "MONTHLY" | "QUARTERLY" | "LEAPS";
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
@@ -196,7 +198,12 @@ function sortContracts(contracts: UnusualContract[], key: SortKey): UnusualContr
     case "expiryAsc":   return arr.sort((a, b) => a.expiration.localeCompare(b.expiration) || a.strike - b.strike);
     case "expiryDesc":  return arr.sort((a, b) => b.expiration.localeCompare(a.expiration) || a.strike - b.strike);
     case "strikeAsc":   return arr.sort((a, b) => a.strike - b.strike);
+    case "strikeDesc":  return arr.sort((a, b) => b.strike - a.strike);
     case "volume":      return arr.sort((a, b) => b.volume - a.volume);
+    case "lastDesc":    return arr.sort((a, b) => (b.last ?? 0) - (a.last ?? 0));
+    case "ivDesc":      return arr.sort((a, b) => (b.iv ?? 0) - (a.iv ?? 0));
+    case "sideAsc":     return arr.sort((a, b) => a.tag.localeCompare(b.tag));
+    case "typeAsc":     return arr.sort((a, b) => a.type.localeCompare(b.type) || b.notional - a.notional);
     case "volOiRatio":  return arr.sort((a, b) => {
       // isNewStrike (OI=0) sorts highest — they are definitively high ratio
       const aNew = a.isNewStrike ? 1 : 0;
@@ -264,12 +271,13 @@ function MathTip({ content, children }: { content: string; children: React.React
 
 // ─── Contract row (shared) ────────────────────────────────────────────────────
 
-function ContractRow({ c }: { c: UnusualContract }) {
+function ContractRow({ c, onClick }: { c: UnusualContract; onClick?: (c: UnusualContract) => void }) {
   const ts = tagStyle(c.tag);
   return (
     <tr
       key={c.occ}
-      className="border-b border-border/20 last:border-b-0 hover:bg-muted/10"
+      onClick={onClick ? () => onClick(c) : undefined}
+      className={`border-b border-border/20 last:border-b-0 hover:bg-muted/30 ${onClick ? "cursor-pointer" : ""}`}
       data-testid={`flow-row-${c.occ}`}
     >
       {/* Time stub — CBOE chain doesn't carry per-contract time; show expiry short */}
@@ -338,39 +346,73 @@ function ContractRow({ c }: { c: UnusualContract }) {
 
 // ─── Table headers ────────────────────────────────────────────────────────────
 
-function TableHead() {
+// Map a header column to its asc/desc pair so successive clicks toggle.
+function cycleSort(current: SortKey, asc: SortKey, desc: SortKey): SortKey {
+  if (current === desc) return asc;
+  if (current === asc) return desc;
+  return desc;
+}
+
+function SortIcon({ active, asc }: { active: boolean; asc: boolean }) {
+  if (!active) return <ChevronsUpDown className="h-3 w-3 shrink-0 opacity-40" />;
+  return asc ? <ArrowUp className="h-3 w-3 shrink-0" /> : <ArrowDown className="h-3 w-3 shrink-0" />;
+}
+
+interface FlowTableHeadProps {
+  sortKey: SortKey;
+  onSort: (k: SortKey) => void;
+}
+
+function TableHead({ sortKey, onSort }: FlowTableHeadProps) {
+  const clickable = (label: React.ReactNode, asc: SortKey, desc: SortKey, align: "left" | "right" = "left", testId?: string) => {
+    const active = sortKey === asc || sortKey === desc;
+    const isAsc = sortKey === asc;
+    const alignCls = align === "right" ? "justify-end" : "justify-start";
+    return (
+      <button
+        type="button"
+        onClick={() => onSort(cycleSort(sortKey, asc, desc))}
+        className={`inline-flex w-full items-center gap-1 ${alignCls} transition-colors hover:text-foreground ${active ? "text-foreground" : ""} select-none`}
+        data-testid={testId}
+      >
+        <span>{label}</span>
+        <SortIcon active={active} asc={isAsc} />
+      </button>
+    );
+  };
   return (
     <thead className="border-b border-border/40 bg-muted/20 sticky top-0 z-10">
       <tr className="text-left text-[9px] uppercase tracking-wider text-muted-foreground">
         <th className="px-2 py-1.5">Time</th>
-        <th className="px-2 py-1.5">Type</th>
+        <th className="px-2 py-1.5">{clickable("Type", "typeAsc", "typeAsc", "left", "sort-flow-type")}</th>
         <th className="px-2 py-1.5">
-          <MathTip content="Strike price of the option contract (in $).">Strike</MathTip>
+          {clickable(<MathTip content="Strike price of the option contract (in $).">Strike</MathTip>, "strikeAsc", "strikeDesc", "left", "sort-flow-strike")}
         </th>
         <th className="px-2 py-1.5">
-          <MathTip content="Expiration date · days-to-expiry chip shows calendar days remaining.">
-            Expiry
-          </MathTip>
+          {clickable(
+            <MathTip content="Expiration date · days-to-expiry chip shows calendar days remaining.">Expiry</MathTip>,
+            "expiryAsc", "expiryDesc", "left", "sort-flow-expiry",
+          )}
         </th>
-        <th className="px-2 py-1.5">Side</th>
-        <th className="px-2 py-1.5 text-right">Vol</th>
+        <th className="px-2 py-1.5">{clickable("Side", "sideAsc", "sideAsc", "left", "sort-flow-side")}</th>
+        <th className="px-2 py-1.5 text-right">{clickable("Vol", "volume", "volume", "right", "sort-flow-vol")}</th>
         <th className="px-2 py-1.5 text-right">OI</th>
         <th className="px-2 py-1.5 text-right">
-          <MathTip content="Vol/OI ratio: Volume ÷ Open Interest. Ratio ≥ 2× flags unusual positioning (fresh money, not existing OI). 'NEW' = OI is zero — brand-new opening position.">
-            Vol/OI
-          </MathTip>
+          {clickable(
+            <MathTip content="Vol/OI ratio: Volume ÷ Open Interest. Ratio ≥ 2× flags unusual positioning (fresh money, not existing OI). 'NEW' = OI is zero — brand-new opening position.">Vol/OI</MathTip>,
+            "volOiRatio", "volOiRatio", "right", "sort-flow-voloi",
+          )}
         </th>
         <th className="px-2 py-1.5 text-right">
-          <MathTip content="Bid × Ask market. Mid price = last if it falls in the spread, else (bid+ask)/2.">
-            Bid×Ask
-          </MathTip>
+          <MathTip content="Bid × Ask market. Mid price = last if it falls in the spread, else (bid+ask)/2.">Bid×Ask</MathTip>
         </th>
-        <th className="px-2 py-1.5 text-right">Last</th>
-        <th className="px-2 py-1.5 text-right">IV</th>
+        <th className="px-2 py-1.5 text-right">{clickable("Last", "lastDesc", "lastDesc", "right", "sort-flow-last")}</th>
+        <th className="px-2 py-1.5 text-right">{clickable("IV", "ivDesc", "ivDesc", "right", "sort-flow-iv")}</th>
         <th className="px-2 py-1.5 text-right">
-          <MathTip content="Notional = Volume × Mid Price × 100. The ×100 is the OCC standard contract multiplier (1 equity option = 100 shares). Mid price uses last-trade if it falls inside the spread, otherwise (bid+ask)/2.">
-            Notional
-          </MathTip>
+          {clickable(
+            <MathTip content="Notional = Volume × Mid Price × 100.">Notional</MathTip>,
+            "notional", "notional", "right", "sort-flow-notional",
+          )}
         </th>
         <th className="px-2 py-1.5">Sentiment</th>
       </tr>
@@ -380,7 +422,7 @@ function TableHead() {
 
 // ─── Grouped view ─────────────────────────────────────────────────────────────
 
-function GroupedTable({ groups, sortKey }: { groups: ExpiryGroup[]; sortKey: SortKey }) {
+function GroupedTable({ groups, sortKey, onSort, onRowClick }: { groups: ExpiryGroup[]; sortKey: SortKey; onSort: (k: SortKey) => void; onRowClick: (c: UnusualContract) => void }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const toggle = useCallback((exp: string) => {
@@ -395,7 +437,7 @@ function GroupedTable({ groups, sortKey }: { groups: ExpiryGroup[]; sortKey: Sor
   return (
     <div className="overflow-x-auto rounded-md border border-border/40">
       <table className="w-full text-[11px]">
-        <TableHead />
+        <TableHead sortKey={sortKey} onSort={onSort} />
         <tbody className="font-mono tabular-nums">
           {groups.map((g) => {
             const isOpen = !collapsed.has(g.expiration);
@@ -438,7 +480,7 @@ function GroupedTable({ groups, sortKey }: { groups: ExpiryGroup[]; sortKey: Sor
                   </td>
                 </tr>
                 {/* Contract rows */}
-                {isOpen && sorted.map((c) => <ContractRow key={c.occ} c={c} />)}
+                {isOpen && sorted.map((c) => <ContractRow key={c.occ} c={c} onClick={onRowClick} />)}
               </>
             );
           })}
@@ -450,20 +492,140 @@ function GroupedTable({ groups, sortKey }: { groups: ExpiryGroup[]; sortKey: Sor
 
 // ─── Flat table view ──────────────────────────────────────────────────────────
 
-function FlatTable({ contracts }: { contracts: UnusualContract[] }) {
+function FlatTable({ contracts, sortKey, onSort, onRowClick }: { contracts: UnusualContract[]; sortKey: SortKey; onSort: (k: SortKey) => void; onRowClick: (c: UnusualContract) => void }) {
   return (
     <div className="overflow-x-auto rounded-md border border-border/40">
       <table className="w-full text-[11px]">
-        <TableHead />
+        <TableHead sortKey={sortKey} onSort={onSort} />
         <tbody className="font-mono tabular-nums">
-          {contracts.map((c) => <ContractRow key={c.occ} c={c} />)}
+          {contracts.map((c) => <ContractRow key={c.occ} c={c} onClick={onRowClick} />)}
         </tbody>
       </table>
     </div>
   );
 }
 
-// ─── Props & main export ──────────────────────────────────────────────────────
+// ─── Unusual flow detail modal ───────────────────────────────────────────────
+
+function UnusualFlowModal({
+  clicked, allContracts, asOf, symbol, spot, onClose, onRowClick,
+}: {
+  clicked: UnusualContract | null;
+  allContracts: UnusualContract[];
+  asOf: number;
+  symbol: string;
+  spot: number | null;
+  onClose: () => void;
+  onRowClick: (c: UnusualContract) => void;
+}) {
+  const open = clicked !== null;
+  // API returns asOf in seconds (CBOE) or ms — detect and normalize
+  const asOfMs = asOf < 1e12 ? asOf * 1000 : asOf;
+  const tsFmt = new Date(asOfMs).toLocaleString("en-US", { hour12: false, timeZoneName: "short" });
+
+  // Totals across the full visible flow list
+  const totalNotional = allContracts.reduce((s, c) => s + c.notional, 0);
+  const bullishNotional = allContracts.filter(c => c.sentiment === "BULLISH").reduce((s, c) => s + c.notional, 0);
+  const bearishNotional = allContracts.filter(c => c.sentiment === "BEARISH").reduce((s, c) => s + c.notional, 0);
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-5xl p-0 overflow-hidden" data-testid="flow-detail-modal">
+        <DialogHeader className="px-4 pt-4 pb-2 border-b border-border/40">
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <Flame className="h-4 w-4 text-amber-400" />
+            Unusual Flow · {symbol}
+            {clicked && (
+              <span className="ml-2 inline-flex items-center gap-1.5 rounded border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-mono tabular-nums">
+                clicked: {clicked.type === "C" ? "CALL" : "PUT"} {clicked.strike} · exp {clicked.expiration}
+              </span>
+            )}
+          </DialogTitle>
+          <DialogDescription className="flex flex-wrap items-center gap-3 pt-1 text-[11px]">
+            <span className="inline-flex items-center gap-1 text-muted-foreground">
+              <Clock className="h-3 w-3" />
+              {tsFmt}
+            </span>
+            {spot != null && (
+              <span className="text-muted-foreground">Spot <span className="font-mono tabular-nums text-foreground">{spot.toFixed(2)}</span></span>
+            )}
+            <span className="text-muted-foreground">Total <span className="font-mono tabular-nums text-foreground">{fmtMoney(totalNotional)}</span></span>
+            <span className="text-emerald-300">Bull {fmtMoney(bullishNotional)}</span>
+            <span className="text-rose-300">Bear {fmtMoney(bearishNotional)}</span>
+            <span className="ml-auto text-[10px] text-muted-foreground/80">{allContracts.length} prints in view</span>
+          </DialogDescription>
+        </DialogHeader>
+        <ScrollArea className="max-h-[70vh]">
+          <table className="w-full text-[11px]">
+            <thead className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border/40">
+              <tr className="text-left text-[9px] uppercase tracking-wider text-muted-foreground">
+                <th className="px-3 py-1.5">Timestamp</th>
+                <th className="px-2 py-1.5">Type</th>
+                <th className="px-2 py-1.5">Strike</th>
+                <th className="px-2 py-1.5">Expiry</th>
+                <th className="px-2 py-1.5">Side</th>
+                <th className="px-2 py-1.5 text-right">Vol</th>
+                <th className="px-2 py-1.5 text-right">Vol/OI</th>
+                <th className="px-2 py-1.5 text-right">Last</th>
+                <th className="px-2 py-1.5 text-right">Premium $</th>
+                <th className="px-2 py-1.5">Sentiment</th>
+              </tr>
+            </thead>
+            <tbody className="font-mono tabular-nums">
+              {allContracts.map((c) => {
+                const ts = tagStyle(c.tag);
+                const isClicked = clicked && c.occ === clicked.occ;
+                return (
+                  <tr
+                    key={c.occ}
+                    onClick={() => onRowClick(c)}
+                    className={`cursor-pointer border-b border-border/20 hover:bg-muted/30 ${isClicked ? "bg-sky-500/15 ring-1 ring-inset ring-sky-500/40" : ""}`}
+                    data-testid={`flow-modal-row-${c.occ}`}
+                  >
+                    <td className="px-3 py-1.5 text-[10px] text-muted-foreground whitespace-nowrap">
+                      {new Date(asOfMs).toLocaleTimeString("en-US", { hour12: false })}
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <span className={`inline-block rounded border px-1.5 py-0.5 text-[9px] font-semibold ${typeStyle(c.type)}`}>
+                        {c.type === "C" ? "CALL" : "PUT"}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1.5 font-semibold">{c.strike.toFixed(2)}</td>
+                    <td className="px-2 py-1.5 text-[10px] text-muted-foreground">
+                      {fmtExpiryShort(c.expiration)}
+                      <span className="ml-1 inline-block rounded bg-muted/40 px-1 py-0.5 text-[9px]">{c.dte}d</span>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <span className={`inline-block rounded border px-1.5 py-0.5 text-[9px] font-semibold ${ts.border} ${ts.bg} ${ts.text}`}>
+                        {ts.label}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1.5 text-right">{fmtNum(c.volume)}</td>
+                    <td className="px-2 py-1.5 text-right text-amber-300">
+                      {c.isNewStrike ? (
+                        <span className="inline-block rounded bg-violet-500/20 border border-violet-500/40 px-1.5 py-0.5 text-[9px] text-violet-300 font-semibold">NEW</span>
+                      ) : `${c.volOiRatio.toFixed(1)}×`}
+                    </td>
+                    <td className="px-2 py-1.5 text-right">{c.last > 0 ? c.last.toFixed(2) : "—"}</td>
+                    <td className="px-2 py-1.5 text-right font-semibold text-foreground">{fmtMoney(c.notional)}</td>
+                    <td className={`px-2 py-1.5 font-semibold ${sentStyle(c.sentiment)}`}>
+                      {c.sentiment === "BULLISH" ? "BULL" : c.sentiment === "BEARISH" ? "BEAR" : "NEUT"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </ScrollArea>
+        <div className="border-t border-border/40 px-4 py-2 text-[10px] text-muted-foreground">
+          click any row to inspect that print · premium = volume × mid × 100
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Props & main export ──────────────────────────────────────────────
 
 interface Props {
   symbol: string;
@@ -476,6 +638,7 @@ export default function UnusualFlowPanel({ symbol }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("notional");
   const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>("ALL");
   const [groupByExp, setGroupByExp] = useState(false);
+  const [openModalFor, setOpenModalFor] = useState<UnusualContract | null>(null);
 
   const { data, isLoading, isError } = useQuery<UnusualResponse>({
     queryKey: ["/api/flow/unusual", sym],
@@ -672,10 +835,20 @@ export default function UnusualFlowPanel({ symbol }: Props) {
             filter for {sym}. Try "ALL" or another expiry bucket.
           </div>
         ) : groupByExp ? (
-          <GroupedTable groups={expGroups} sortKey={sortKey} />
+          <GroupedTable groups={expGroups} sortKey={sortKey} onSort={setSortKey} onRowClick={setOpenModalFor} />
         ) : (
-          <FlatTable contracts={processedContracts} />
+          <FlatTable contracts={processedContracts} sortKey={sortKey} onSort={setSortKey} onRowClick={setOpenModalFor} />
         )}
+
+        <UnusualFlowModal
+          clicked={openModalFor}
+          allContracts={processedContracts}
+          asOf={data.asOf}
+          symbol={sym}
+          spot={data.spot}
+          onClose={() => setOpenModalFor(null)}
+          onRowClick={setOpenModalFor}
+        />
 
         <div className="text-[9px] text-muted-foreground space-y-0.5">
           <div>

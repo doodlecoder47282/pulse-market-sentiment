@@ -25,6 +25,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { Radio, Crosshair, DollarSign, Flame, ArrowUp, ArrowDown, Activity, ChevronDown, ChevronUp, Minimize2, Maximize2 } from "lucide-react";
 import OdteContractChart from "./OdteContractChart";
+import { SortableTh, sortRows, type SortState } from "./SortableTh";
+
+type OdteSortKey = "strike" | "side" | "bid" | "ask" | "last" | "volume" | "deltaVol" | "openInterest" | "notional";
 
 type Side = "call" | "put";
 type Classification = "buy" | "sell" | "neutral";
@@ -324,12 +327,17 @@ function LiveTrackerView({
   }, [data.contracts]);
   const minNotional = Math.max(5_000, Math.round(sizeMultiple * avgLast * 100));
 
+  const [sort, setSort] = useState<SortState<OdteSortKey>>({ key: null, dir: "desc" });
+
   // Filter + sort
   const shown = useMemo(() => {
     let rows = data.contracts;
     if (sideFilter !== "all") rows = rows.filter(r => r.side === sideFilter);
-    return [...rows].sort((a, b) => a.distance - b.distance || (a.side === "call" ? -1 : 1));
-  }, [data.contracts, sideFilter]);
+    if (sort.key == null) {
+      return [...rows].sort((a, b) => a.distance - b.distance || (a.side === "call" ? -1 : 1));
+    }
+    return sortRows(rows, sort, (r, k) => r[k as keyof ContractRow]);
+  }, [data.contracts, sideFilter, sort]);
 
   const selectedRow = useMemo(
     () => selectedKey ? data.contracts.find(c => c.key === selectedKey) ?? null : null,
@@ -482,15 +490,15 @@ function LiveTrackerView({
           <table className="w-full min-w-[780px] text-[11px]">
             <thead>
               <tr className="border-b text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-                <th className="py-1 pr-2 text-left">Strike</th>
-                <th className="py-1 pr-2 text-left">Side</th>
-                <th className="py-1 pr-2 text-right">Bid</th>
-                <th className="py-1 pr-2 text-right">Ask</th>
-                <th className="py-1 pr-2 text-right">Last</th>
-                <th className="py-1 pr-2 text-right">Vol</th>
-                <th className="py-1 pr-2 text-right">Δvol</th>
-                <th className="py-1 pr-2 text-right">OI</th>
-                <th className="py-1 pr-2 text-right">Notional</th>
+                <SortableTh sortKey="strike" label="Strike" state={sort} onSort={setSort} defaultDir="asc" className="py-1 pr-2" align="left" testId="sort-odte-strike" />
+                <SortableTh sortKey="side" label="Side" state={sort} onSort={setSort} defaultDir="asc" className="py-1 pr-2" align="left" testId="sort-odte-side" />
+                <SortableTh sortKey="bid" label="Bid" state={sort} onSort={setSort} className="py-1 pr-2" align="right" testId="sort-odte-bid" />
+                <SortableTh sortKey="ask" label="Ask" state={sort} onSort={setSort} className="py-1 pr-2" align="right" testId="sort-odte-ask" />
+                <SortableTh sortKey="last" label="Last" state={sort} onSort={setSort} className="py-1 pr-2" align="right" testId="sort-odte-last" />
+                <SortableTh sortKey="volume" label="Vol" state={sort} onSort={setSort} className="py-1 pr-2" align="right" testId="sort-odte-vol" />
+                <SortableTh sortKey="deltaVol" label="Δvol" state={sort} onSort={setSort} className="py-1 pr-2" align="right" testId="sort-odte-dvol" />
+                <SortableTh sortKey="openInterest" label="OI" state={sort} onSort={setSort} className="py-1 pr-2" align="right" testId="sort-odte-oi" />
+                <SortableTh sortKey="notional" label="Notional" state={sort} onSort={setSort} className="py-1 pr-2" align="right" testId="sort-odte-notional" />
                 <th className="py-1 pr-2 text-center">Flow</th>
                 <th className="py-1 pr-2 text-center">Spark</th>
                 <th className="py-1 pr-2 text-center">Arm</th>
