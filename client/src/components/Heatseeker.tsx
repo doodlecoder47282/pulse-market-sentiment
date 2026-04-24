@@ -33,6 +33,7 @@ import {
 } from "recharts";
 import { Activity, AlertTriangle, Flame, Target, TrendingDown, TrendingUp } from "lucide-react";
 import LiveOdteTracker from "./LiveOdteTracker";
+import DepthSkewFlow from "./DepthSkewFlow";
 
 // ─── User's locked SPX weekly targets (from session context) ───────────────
 const LOCKED_LEVELS: Array<{ value: number; label: string; kind: "upside" | "downside" | "pin" | "vomma" }> = [
@@ -301,6 +302,9 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
           </div>
         </CardContent>
       </Card>
+
+      {/* ── Depth · Skew · Flow — 3 synchronized real-time views ─────── */}
+      <DepthSkewFlow />
 
       {/* ── Live 0DTE tracker — directly under the Greek heatmap ───────── */}
       <LiveOdteTracker />
