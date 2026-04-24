@@ -755,7 +755,262 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  // ---- EOD Setup: Claude + GPT parallel brief generation ----
+  // ---- EOD Setup: deterministic brief (always) + optional LLM enhancers ----
+  //
+  // DESIGN:
+  //   1. Deterministic brief is ALWAYS computed from live dealer-gamma inputs
+  //      (same data the rest of the app uses). No external API calls, no keys,
+  //      no 500s. This is the source of truth — "strongest power of financial
+  //      calcs" principle: trust the numbers we already compute.
+  //   2. LLM paths (Claude / GPT) are OPTIONAL enhancers. They only run when
+  //      their respective env keys are present. Missing keys = null output,
+  //      never a 500.
+  //   3. Response shape: { deterministic, claude, gpt, errors } so the UI can
+  //      show all three side-by-side or fall back to deterministic alone.
+
+  // --- Deterministic brief builder ---
+  // Pure function of the inputs — NO network, NO keys, NO randomness.
+  // Produces the same markdown structure the LLMs are prompted to emit,
+  // so the UI doesn't have to switch layouts based on which engine ran.
+  function buildDeterministicEodBrief(input: {
+    spx: number; vix: number; iv: number; qscore: number;
+    gex: number; callWall: number; putWall: number;
+    zeroGamma: number; hvl: number; gammaFlip: number;
+    upside: number; downside: number; t2up: number; t2down: number;
+    mopex: number; vanna: number; zomma: number; charm: number;
+    negGamma: number; upperVomma: number; lowerVomma: number;
+    pcRatio: number; opex: boolean;
+    regime?: string; notes?: string;
+  }): string {
+    const {
+      spx, vix, iv, qscore, gex, callWall, putWall, zeroGamma, hvl, gammaFlip,
+      upside, downside, t2up, t2down, mopex, vanna, zomma, charm,
+      negGamma, upperVomma, lowerVomma, pcRatio, opex, notes,
+    } = input;
+
+    const qBucket = qscore < 30 ? "PINNED" : qscore < 60 ? "MIXED" : "FRAGILE";
+    // 1-day expected move: SPX * IV / sqrt(252). IV is in percent.
+    const oneDayEm = spx > 0 && iv > 0 ? (spx * (iv / 100)) / Math.sqrt(252) : 0;
+    const emUpper = spx + oneDayEm;
+    const emLower = spx - oneDayEm;
+
+    // GEX regime classification
+    const gexRegime = gex > 0 ? "POSITIVE (pinned/mean-reverting)" : gex < 0 ? "NEGATIVE (fragile/trending)" : "FLAT";
+
+    // Directional bias from zero-gamma relationship
+    const aboveZg = spx > zeroGamma;
+    const zgDist = spx - zeroGamma;
+    const bias = qBucket === "PINNED"
+      ? `mean-reversion toward HVL/${hvl.toFixed(0)}`
+      : aboveZg
+        ? `long-bias while above zero-\u03b3 ${zeroGamma.toFixed(0)}, momentum accelerates on break below`
+        : `short-bias while below zero-\u03b3 ${zeroGamma.toFixed(0)}, covering risk on break above`;
+
+    // Pick the PRIMARY setup from the 4 archetypes using the gamma regime + distances
+    const distToCallWall = callWall - spx;
+    const distToPutWall = spx - putWall;
+    const distToZg = Math.abs(zgDist);
+
+    type Setup = {
+      type: string; direction: string; structure: string;
+      trigger: string; target: string; stop: string; size: string; horizon: string;
+    };
+
+    let primary: Setup;
+    const alternates: Setup[] = [];
+
+    // Helper to format a vertical spread string
+    const verticalBuy = (long: number, short: number, side: "call" | "put") =>
+      `SPX ${long.toFixed(0)}/${short.toFixed(0)} ${side} debit spread`;
+    const verticalSell = (short: number, long: number, side: "call" | "put") =>
+      `SPX ${short.toFixed(0)}/${long.toFixed(0)} ${side} credit spread`;
+
+    if (qBucket === "PINNED" && distToZg <= Math.max(5, oneDayEm * 0.4)) {
+      // GAMMA PIN — price is inside the dealer-pin zone
+      primary = {
+        type: "GAMMA PIN",
+        direction: aboveZg ? "short fade" : "long fade",
+        structure: aboveZg
+          ? verticalSell(Math.round(spx + 5), Math.round(spx + 15), "call")
+          : verticalSell(Math.round(spx - 5), Math.round(spx - 15), "put"),
+        trigger: `price rotates away from zero-\u03b3 ${zeroGamma.toFixed(0)} by \u2265 3 pts then stalls`,
+        target: `back to HVL ${hvl.toFixed(0)} / zero-\u03b3 ${zeroGamma.toFixed(0)}`,
+        stop: aboveZg
+          ? `close above ${Math.round(spx + 20)} (invalidates pin)`
+          : `close below ${Math.round(spx - 20)} (invalidates pin)`,
+        size: opex ? "0.5-1% (OPEX haircut)" : vix > 25 ? "1% (VIX>25 haircut)" : "2% max",
+        horizon: "enter 2:30-3:00 ET, close by 3:55 ET",
+      };
+      alternates.push({
+        type: "MEAN REVERSION",
+        direction: aboveZg ? "short" : "long",
+        structure: `fade to ${hvl.toFixed(0)} via same-side credit spread`,
+        trigger: "1D EM extension hit", target: `HVL ${hvl.toFixed(0)}`,
+        stop: "break of 1D EM band", size: "1%", horizon: "intraday",
+      });
+    } else if (distToCallWall > 0 && distToCallWall < Math.max(8, oneDayEm * 0.6) && qBucket !== "FRAGILE") {
+      // WALL REJECTION @ call wall — approaching from below
+      primary = {
+        type: "WALL REJECTION",
+        direction: "short",
+        structure: verticalSell(Math.round(callWall), Math.round(callWall + 15), "call"),
+        trigger: `tag of call wall ${callWall.toFixed(0)} with fail to close above`,
+        target: `zero-\u03b3 ${zeroGamma.toFixed(0)} / HVL ${hvl.toFixed(0)}`,
+        stop: `close above ${Math.round(callWall + 5)}`,
+        size: opex ? "1% (OPEX)" : vix > 25 ? "1% (VIX>25)" : "2%",
+        horizon: "enter on rejection wick, exit by 3:55",
+      };
+      alternates.push({
+        type: "FLIP BREAKOUT", direction: "long",
+        structure: verticalBuy(Math.round(callWall), Math.round(callWall + 20), "call"),
+        trigger: `break + hold above ${callWall.toFixed(0)}`,
+        target: `T2 UP ${t2up.toFixed(0)}`, stop: `close back below ${Math.round(callWall - 3)}`,
+        size: "1%", horizon: "intraday runner",
+      });
+    } else if (distToPutWall > 0 && distToPutWall < Math.max(8, oneDayEm * 0.6) && qBucket !== "FRAGILE") {
+      // WALL REJECTION @ put wall — approaching from above
+      primary = {
+        type: "WALL REJECTION",
+        direction: "long",
+        structure: verticalSell(Math.round(putWall), Math.round(putWall - 15), "put"),
+        trigger: `tag of put wall ${putWall.toFixed(0)} with fail to close below`,
+        target: `zero-\u03b3 ${zeroGamma.toFixed(0)} / HVL ${hvl.toFixed(0)}`,
+        stop: `close below ${Math.round(putWall - 5)}`,
+        size: opex ? "1% (OPEX)" : vix > 25 ? "1% (VIX>25)" : "2%",
+        horizon: "enter on rejection wick, exit by 3:55",
+      };
+      alternates.push({
+        type: "FLIP BREAKOUT", direction: "short",
+        structure: verticalBuy(Math.round(putWall), Math.round(putWall - 20), "put"),
+        trigger: `break + hold below ${putWall.toFixed(0)}`,
+        target: `T2 DOWN ${t2down.toFixed(0)}`, stop: `close back above ${Math.round(putWall + 3)}`,
+        size: "1%", horizon: "intraday runner",
+      });
+    } else if (qBucket === "FRAGILE" || gex < 0) {
+      // FLIP BREAKOUT — negative or fragile gamma = momentum regime
+      primary = {
+        type: "FLIP BREAKOUT",
+        direction: aboveZg ? "long" : "short",
+        structure: aboveZg
+          ? verticalBuy(Math.round(spx), Math.round(callWall), "call")
+          : verticalBuy(Math.round(spx), Math.round(putWall), "put"),
+        trigger: aboveZg
+          ? `break + hold above gamma-flip ${gammaFlip.toFixed(0)}`
+          : `break + hold below gamma-flip ${gammaFlip.toFixed(0)}`,
+        target: aboveZg ? `call wall ${callWall.toFixed(0)}` : `put wall ${putWall.toFixed(0)}`,
+        stop: `close back through gamma-flip ${gammaFlip.toFixed(0)}`,
+        size: opex ? "0.5% (fragile + OPEX)" : vix > 25 ? "1% (fragile + VIX>25)" : "1.5%",
+        horizon: "enter 2:00-3:00, hard exit 3:55",
+      };
+      alternates.push({
+        type: "MEAN REVERSION", direction: aboveZg ? "short" : "long",
+        structure: `fade any extension past 1D EM (${emLower.toFixed(0)} / ${emUpper.toFixed(0)})`,
+        trigger: "EM-band tag + stall", target: `HVL ${hvl.toFixed(0)}`,
+        stop: "continuation through EM", size: "0.5%", horizon: "quick scalp",
+      });
+    } else {
+      // MIXED regime default — mean reversion back to HVL
+      primary = {
+        type: "MEAN REVERSION",
+        direction: spx > hvl ? "short fade" : "long fade",
+        structure: spx > hvl
+          ? verticalSell(Math.round(spx + 5), Math.round(spx + 20), "call")
+          : verticalSell(Math.round(spx - 5), Math.round(spx - 20), "put"),
+        trigger: `SPX at \u22651D EM extension from HVL ${hvl.toFixed(0)}`,
+        target: `HVL ${hvl.toFixed(0)} / zero-\u03b3 ${zeroGamma.toFixed(0)}`,
+        stop: spx > hvl ? `close above ${emUpper.toFixed(0)} (1D EM upper)` : `close below ${emLower.toFixed(0)} (1D EM lower)`,
+        size: opex ? "1% (OPEX)" : vix > 25 ? "1% (VIX>25)" : "2%",
+        horizon: "enter 2:30-3:00 ET, manage into close",
+      };
+      alternates.push({
+        type: "WALL REJECTION",
+        direction: distToCallWall < distToPutWall ? "short" : "long",
+        structure: distToCallWall < distToPutWall
+          ? verticalSell(Math.round(callWall), Math.round(callWall + 15), "call")
+          : verticalSell(Math.round(putWall), Math.round(putWall - 15), "put"),
+        trigger: "nearest wall tag",
+        target: `HVL ${hvl.toFixed(0)}`, stop: "close through the wall",
+        size: "1%", horizon: "intraday",
+      });
+    }
+
+    // Confidence: tighter when regime is clear, looser when mixed or late
+    const confidence =
+      qBucket === "PINNED" && distToZg <= 5 ? "HIGH" :
+      qBucket === "FRAGILE" ? "MEDIUM" :
+      qBucket === "MIXED" ? "MEDIUM" :
+      "MEDIUM";
+    const confidenceReason =
+      qBucket === "PINNED" ? `dealer positioning pins spot inside the gamma zone (Q ${qscore})` :
+      qBucket === "FRAGILE" ? `fragile regime (Q ${qscore}) \u2014 direction-of-break matters more than level` :
+      `mixed regime (Q ${qscore}) \u2014 scale position accordingly`;
+
+    // Build the KEY LEVELS table. Only include weekly targets within ~1.5x EM of spot.
+    const bandRange = Math.max(40, oneDayEm * 1.5);
+    const weeklyTargets: Array<{ name: string; strike: number; role: string }> = [
+      { name: "UPSIDE T1", strike: upside, role: "weekly upper target" },
+      { name: "DOWNSIDE T1", strike: downside, role: "weekly lower target" },
+      { name: "T2 UP", strike: t2up, role: "secondary upper" },
+      { name: "T2 DOWN", strike: t2down, role: "secondary lower" },
+      { name: "MOPEX", strike: mopex, role: "monthly OPEX pin" },
+      { name: "VANNA", strike: vanna, role: "vanna level" },
+      { name: "ZOMMA", strike: zomma, role: "zomma level" },
+      { name: "CHARM", strike: charm, role: "charm pin" },
+      { name: "NEG \u03b3", strike: negGamma, role: "neg-gamma threshold" },
+      { name: "UPPER VOMMA", strike: upperVomma, role: "upper vomma" },
+      { name: "LOWER VOMMA", strike: lowerVomma, role: "lower vomma" },
+    ].filter((t) => Math.abs(t.strike - spx) <= bandRange)
+      .sort((a, b) => Math.abs(a.strike - spx) - Math.abs(b.strike - spx));
+
+    const levelRows: string[] = [
+      `| Call Wall | ${callWall.toFixed(0)} | dealer call-side wall | ${(callWall - spx).toFixed(1)} |`,
+      `| Put Wall | ${putWall.toFixed(0)} | dealer put-side wall | ${(putWall - spx).toFixed(1)} |`,
+      `| Zero Gamma | ${zeroGamma.toFixed(1)} | dealer gamma flip | ${(zeroGamma - spx).toFixed(1)} |`,
+      `| HVL | ${hvl.toFixed(0)} | highest gamma-vol strike | ${(hvl - spx).toFixed(1)} |`,
+      `| Gamma Flip | ${gammaFlip.toFixed(1)} | sign-change threshold | ${(gammaFlip - spx).toFixed(1)} |`,
+      ...weeklyTargets.map((t) => `| ${t.name} | ${t.strike.toFixed(0)} | ${t.role} | ${(t.strike - spx).toFixed(1)} |`),
+    ];
+
+    // Compose the markdown brief matching the LLM OUTPUT FORMAT contract.
+    const brief = [
+      `## REGIME SUMMARY`,
+      `SPX ${spx.toFixed(2)} \u00b7 VIX ${vix.toFixed(2)} \u00b7 1D IV ${iv.toFixed(2)}% \u00b7 1D EM \u00b1${oneDayEm.toFixed(1)} (${emLower.toFixed(0)}\u2013${emUpper.toFixed(0)}). Dealer GEX ${gex > 0 ? "+" : ""}${gex.toFixed(2)}B \u2014 ${gexRegime}. Q-Score ${qscore} (${qBucket}). Spot is ${aboveZg ? "above" : "below"} zero-\u03b3 by ${Math.abs(zgDist).toFixed(1)} pts. Bias: ${bias}. Intraday P/C ${pcRatio.toFixed(2)}${opex ? " \u2014 OPEX today, size down 30-50%" : ""}${vix > 25 ? " \u2014 VIX>25, size down 50%" : ""}.`,
+      ``,
+      `## KEY LEVELS`,
+      `| Level | Strike | Role | Distance |`,
+      `|---|---|---|---|`,
+      ...levelRows,
+      ``,
+      `## PRIMARY SETUP`,
+      `- Type: ${primary.type}`,
+      `- Direction: ${primary.direction}`,
+      `- Structure: ${primary.structure}`,
+      `- Entry trigger: ${primary.trigger}`,
+      `- Target: ${primary.target}`,
+      `- Stop: ${primary.stop}`,
+      `- Size: ${primary.size}`,
+      `- Time horizon: ${primary.horizon}`,
+      ``,
+      `## INVALIDATION`,
+      `- Close beyond the stop level above.`,
+      `- Hard cutoff 3:45 PM ET \u2014 no new entries, manage only.`,
+      `- Regime flip (Q-Score crosses ${qBucket === "PINNED" ? "above 30 into MIXED" : qBucket === "MIXED" ? "below 30 (PINNED) or above 60 (FRAGILE)" : "below 60 into MIXED"}).`,
+      gex > 0
+        ? `- Total GEX flips negative intraday (positive \u2192 fragile regime).`
+        : `- Total GEX flips positive intraday (fragile \u2192 pinned).`,
+      `- VIX spike above 25 \u2192 cut size 50%.`,
+      ``,
+      `## CONFIDENCE`,
+      `${confidence} \u2014 ${confidenceReason}.`,
+      ``,
+      `## ALTERNATE SETUPS`,
+      ...alternates.map((a, i) => `${i + 1}. ${a.type} (${a.direction}): ${a.structure}. Trigger: ${a.trigger}. Target: ${a.target}. Stop: ${a.stop}. Size: ${a.size}.`),
+      notes && notes.trim() ? `\n_Trader notes: ${notes.trim()}_` : "",
+    ].join("\n").trim();
+
+    return brief;
+  }
+
   const EOD_SYSTEM_PROMPT = `You are an institutional 0DTE SPX EOD trading assistant. You build end-of-day setups for SPX 0DTE options between 2:00 PM and 3:55 PM ET with a hard cutoff at 3:45 PM ET for new entries.
 
 CORE FRAMEWORK
@@ -863,31 +1118,87 @@ ${notes || "(none)"}
 
 Build the EOD setup brief.`;
 
-      const anthropic = new Anthropic();
-      const openai = new OpenAI();
+      // ---- DETERMINISTIC BRIEF (always runs, always returns) ----
+      // This is the source of truth. Built from the exact same dealer-gamma
+      // inputs the rest of the app uses. No external API, no key, no failure mode.
+      const deterministic = buildDeterministicEodBrief({
+        spx: Number(spx) || 0,
+        vix: Number(vix) || 0,
+        iv: Number(iv) || 0,
+        qscore: Number(qscore) || 0,
+        gex: Number(gex) || 0,
+        callWall: Number(callWall) || 0,
+        putWall: Number(putWall) || 0,
+        zeroGamma: Number(zeroGamma) || 0,
+        hvl: Number(hvl) || 0,
+        gammaFlip: Number(gammaFlip) || 0,
+        upside: Number(upside), downside: Number(downside),
+        t2up: Number(t2up), t2down: Number(t2down),
+        mopex: Number(mopex), vanna: Number(vanna),
+        zomma: Number(zomma), charm: Number(charm),
+        negGamma: Number(negGamma),
+        upperVomma: Number(upperVomma), lowerVomma: Number(lowerVomma),
+        pcRatio: Number(pcRatio) || 0,
+        opex: Boolean(opex),
+        regime,
+        notes,
+      });
 
-      const [claudeResult, gptResult] = await Promise.allSettled([
-        anthropic.messages.create({
-          model: "claude_sonnet_4_6",
-          max_tokens: 4096,
-          system: EOD_SYSTEM_PROMPT,
-          messages: [{ role: "user", content: userBrief }],
-        }).then((msg) => {
-          const block = msg.content.find((b) => b.type === "text");
-          return (block as any)?.text ?? "";
-        }),
-        (openai.responses as any).create({
-          model: "gpt_5_1",
-          input: `${EOD_SYSTEM_PROMPT}\n\n---\n\n${userBrief}`,
-        }).then((r: any) => r.output_text ?? ""),
-      ]);
+      // ---- OPTIONAL LLM ENHANCERS ----
+      // Only run when keys are present. Never throw — swallow errors into the
+      // `errors` field so the client still gets the deterministic brief.
+      //
+      // To enable these, set OPENAI_API_KEY and/or ANTHROPIC_API_KEY in the
+      // server environment. Neither is required for EOD setup to work.
+      const hasAnthropicKey = !!process.env.ANTHROPIC_API_KEY;
+      const hasOpenAiKey = !!process.env.OPENAI_API_KEY;
+
+      const claudePromise = hasAnthropicKey
+        ? (async () => {
+            try {
+              const anthropic = new Anthropic();
+              const msg = await anthropic.messages.create({
+                model: "claude_sonnet_4_6",
+                max_tokens: 4096,
+                system: EOD_SYSTEM_PROMPT,
+                messages: [{ role: "user", content: userBrief }],
+              });
+              const block = msg.content.find((b) => b.type === "text");
+              return (block as any)?.text ?? "";
+            } catch (e: any) {
+              throw new Error(e?.message ?? "claude call failed");
+            }
+          })()
+        : Promise.reject(new Error("ANTHROPIC_API_KEY not configured"));
+
+      const gptPromise = hasOpenAiKey
+        ? (async () => {
+            try {
+              const openai = new OpenAI();
+              const r: any = await (openai.responses as any).create({
+                model: "gpt_5_1",
+                input: `${EOD_SYSTEM_PROMPT}\n\n---\n\n${userBrief}`,
+              });
+              return r.output_text ?? "";
+            } catch (e: any) {
+              throw new Error(e?.message ?? "gpt call failed");
+            }
+          })()
+        : Promise.reject(new Error("OPENAI_API_KEY not configured"));
+
+      const [claudeResult, gptResult] = await Promise.allSettled([claudePromise, gptPromise]);
 
       res.json({
+        deterministic,
         claude: claudeResult.status === "fulfilled" ? claudeResult.value : null,
         gpt: gptResult.status === "fulfilled" ? gptResult.value : null,
         errors: {
-          claude: claudeResult.status === "rejected" ? String(claudeResult.reason) : null,
-          gpt: gptResult.status === "rejected" ? String(gptResult.reason) : null,
+          claude: claudeResult.status === "rejected" ? String((claudeResult as any).reason?.message ?? claudeResult.reason) : null,
+          gpt: gptResult.status === "rejected" ? String((gptResult as any).reason?.message ?? gptResult.reason) : null,
+        },
+        meta: {
+          llmEnhancersEnabled: { claude: hasAnthropicKey, gpt: hasOpenAiKey },
+          generatedAt: new Date().toISOString(),
         },
       });
     } catch (e: any) {

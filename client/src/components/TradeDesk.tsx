@@ -1539,7 +1539,13 @@ function EodPlayMaker() {
   const opex = isOpexToday();
 
   // Result state
-  const [result, setResult] = useState<{ claude: string | null; gpt: string | null; errors: { claude: string | null; gpt: string | null } } | null>(null);
+  const [result, setResult] = useState<{
+    deterministic?: string | null;
+    claude: string | null;
+    gpt: string | null;
+    errors: { claude: string | null; gpt: string | null };
+    meta?: { llmEnhancersEnabled?: { claude?: boolean; gpt?: boolean }; generatedAt?: string };
+  } | null>(null);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -1711,23 +1717,48 @@ function EodPlayMaker() {
             </div>
           )}
 
-          {/* Output columns */}
+          {/* Output columns. Deterministic brief is primary (always works, no
+              keys required). Claude/GPT panels only render when their key is
+              enabled on the server — otherwise they're hidden so the layout
+              doesn't show two permanent error cards. */}
           {(result || mutation.isPending) && (
-            <div className="flex flex-col gap-4 md:flex-row" data-testid="eod-output">
+            <div className="flex flex-col gap-4" data-testid="eod-output">
+              {/* Primary: deterministic brief from dealer-gamma inputs */}
               <ModelOutputPanel
-                label="CLAUDE"
-                modelSlug="claude_sonnet_4_6"
-                content={result?.claude ?? null}
-                error={result?.errors?.claude ?? null}
+                label="DETERMINISTIC BRIEF"
+                modelSlug="pulse-calc"
+                content={result?.deterministic ?? null}
+                error={null}
                 isLoading={mutation.isPending}
               />
-              <ModelOutputPanel
-                label="GPT"
-                modelSlug="gpt_5_1"
-                content={result?.gpt ?? null}
-                error={result?.errors?.gpt ?? null}
-                isLoading={mutation.isPending}
-              />
+              {/* Optional LLM enhancers — only show when enabled server-side */}
+              {(result?.meta?.llmEnhancersEnabled?.claude || result?.meta?.llmEnhancersEnabled?.gpt) && (
+                <div className="flex flex-col gap-4 md:flex-row">
+                  {result?.meta?.llmEnhancersEnabled?.claude && (
+                    <ModelOutputPanel
+                      label="CLAUDE (enhancer)"
+                      modelSlug="claude_sonnet_4_6"
+                      content={result?.claude ?? null}
+                      error={result?.errors?.claude ?? null}
+                      isLoading={mutation.isPending}
+                    />
+                  )}
+                  {result?.meta?.llmEnhancersEnabled?.gpt && (
+                    <ModelOutputPanel
+                      label="GPT (enhancer)"
+                      modelSlug="gpt_5_1"
+                      content={result?.gpt ?? null}
+                      error={result?.errors?.gpt ?? null}
+                      isLoading={mutation.isPending}
+                    />
+                  )}
+                </div>
+              )}
+              {result && !result?.meta?.llmEnhancersEnabled?.claude && !result?.meta?.llmEnhancersEnabled?.gpt && (
+                <div className="rounded-md border border-border/40 bg-muted/10 px-3 py-2 text-[11px] text-muted-foreground">
+                  LLM enhancers disabled — set OPENAI_API_KEY or ANTHROPIC_API_KEY on the server to add a narrative layer on top of the deterministic brief.
+                </div>
+              )}
             </div>
           )}
         </div>
