@@ -1159,7 +1159,12 @@ Sift this feed AND search the web for any critical developments in geopolitics, 
 
   app.get("/api/market/option-chain/:symbol", async (req, res) => {
     try {
-      const symbol = String(req.params.symbol).toUpperCase();
+      const rawParam = String(req.params.symbol).toUpperCase();
+      // Schwab expects "$SPX" (not "SPX" or "$SPX.X") for the cash index option chain.
+      const symbol =
+        rawParam === "SPX" || rawParam === "^GSPC" || rawParam === "$SPX.X"
+          ? "$SPX"
+          : rawParam;
       const dte = req.query.dte !== undefined ? parseInt(String(req.query.dte)) : undefined;
       const chain = await schwabGetOptionChain(symbol, dte);
       if ("error" in chain) {

@@ -788,7 +788,15 @@ import { getQuotes as schwabGetQuotes } from "./schwab";
 export async function masterAlphaRoute(req: any, res: any) {
   try {
     const horizonKey = (req.query?.horizon ?? req.body?.horizon ?? "daily") as Horizon;
-    const symbol = (req.query?.symbol ?? req.body?.symbol ?? "^GSPC") as "^GSPC" | "SPY";
+    // Normalize SPX aliases to ^GSPC so buildModelsSnapshot/buildHorizon hits the SPX spot path.
+    // Without this, symbol="SPX" silently falls through to SPY math (spot ~708 instead of ~7108).
+    const rawSymbol = String(req.query?.symbol ?? req.body?.symbol ?? "^GSPC").toUpperCase();
+    const symbol: "^GSPC" | "SPY" =
+      rawSymbol === "SPX" || rawSymbol === "$SPX" || rawSymbol === "$SPX.X" || rawSymbol === "^GSPC"
+        ? "^GSPC"
+        : rawSymbol === "SPY"
+          ? "SPY"
+          : "^GSPC";
     const prevCloseImbalance_M = req.body?.prevCloseImbalance_M as number | undefined;
     const realisedVol = req.body?.realisedVol as number | undefined;
     const riskBudget_M = req.body?.riskBudget_M as number | undefined;
