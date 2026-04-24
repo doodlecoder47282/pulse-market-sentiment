@@ -634,9 +634,14 @@ function generatePaths(
     lerpPath(spot, baseTarget, nWay, 0.6),
   );
 
-  // BULL = push through zero-γ → strong mag → call wall (capped at upside pivot)
+  // BULL = push through zero-γ → strong mag → call wall (capped at upside pivot).
+  // Via waypoint must sit ABOVE spot AND BELOW the bull target — otherwise
+  // midPath would send the bull path through a pivot on the wrong side
+  // (e.g. a magnet that sits under spot) before arcing up to the target,
+  // which produces a non-monotonic curve that dips below spot first.
   const bullTarget = upsidePivot?.price ?? callWall?.price ?? spot * 1.01;
-  const bullVia = strongMag?.price ?? zeroGamma?.price ?? spot * 1.003;
+  const bullViaRaw = strongMag?.price ?? zeroGamma?.price ?? spot * 1.003;
+  const bullVia = bullViaRaw > spot && bullViaRaw < bullTarget ? bullViaRaw : null;
   const bullPath = path(
     "bull",
     bullTarget,
@@ -654,7 +659,13 @@ function generatePaths(
       : horizon === "monthly" ? 0.07
       : 0.12;  // quarterly allows wider drawdown range
   if (bearTarget < spot * (1 - maxDropPct)) bearTarget = spot * (1 - maxDropPct);
-  const bearVia = zeroGamma?.price ?? t1Down.price;
+  // Via waypoint must sit BELOW spot AND ABOVE the bear target. Without this
+  // check, if zero-gamma is above spot (common in positive gamma regimes),
+  // the bear curve is forced UP through it before collapsing — so the 12:00
+  // bear waypoint ends up higher than the bull waypoint. Hard fallback to
+  // a monotone linear path when no valid downside pivot is available.
+  const bearViaRaw = zeroGamma?.price ?? t1Down.price;
+  const bearVia = bearViaRaw && bearViaRaw < spot && bearViaRaw > bearTarget ? bearViaRaw : null;
   const bearPath = path(
     "bear",
     bearTarget,
