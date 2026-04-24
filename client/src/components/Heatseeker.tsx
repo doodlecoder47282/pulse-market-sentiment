@@ -32,6 +32,8 @@ import {
   Legend,
 } from "recharts";
 import { Activity, AlertTriangle, Flame, Target, TrendingDown, TrendingUp } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import LiveOdteTracker from "./LiveOdteTracker";
 import DepthSkewFlow from "./DepthSkewFlow";
 import OdteContractChart from "./OdteContractChart";
@@ -136,8 +138,21 @@ function cellColor(value: number, max: number): string {
 }
 
 // ─── Main component ────────────────────────────────────────────────────────
+
+// Preset tickers. SPX/NDX/RUT = cash index (Schwab wants `$SPX` style),
+// SPY/QQQ/IWM = the tradeable ETF equivalents. Users can type anything else.
+const PRESETS = ["$SPX", "SPY", "QQQ", "IWM", "NDX", "RUT"] as const;
+
 export default function Heatseeker() {
-  const [symbol] = useState("$SPX");
+  const [symbol, setSymbol] = useState("$SPX");
+  const [draft, setDraft] = useState("");
+
+  const commitDraft = () => {
+    const cleaned = draft.trim().toUpperCase();
+    if (!cleaned) return;
+    setSymbol(cleaned);
+    setDraft("");
+  };
 
   const { data, isLoading, error } = useQuery<HeatseekerData>({
     queryKey: ["/api/heatseeker", symbol],
@@ -150,9 +165,49 @@ export default function Heatseeker() {
     staleTime: 4_000,
   });
 
+  const picker = (
+    <div
+      className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border/40 bg-card/40 px-2 py-1.5"
+      data-testid="heatseeker-ticker-picker"
+    >
+      <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">ticker</span>
+      <div className="flex gap-1">
+        {PRESETS.map((p) => (
+          <Button
+            key={p}
+            variant={symbol === p ? "default" : "ghost"}
+            size="sm"
+            className="h-6 px-2 text-[10px] font-mono"
+            onClick={() => setSymbol(p)}
+            data-testid={`btn-heatseeker-symbol-${p}`}
+          >
+            {p}
+          </Button>
+        ))}
+      </div>
+      <Input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commitDraft();
+        }}
+        onBlur={commitDraft}
+        placeholder="custom…"
+        className="h-6 w-24 px-2 font-mono text-[10px] uppercase placeholder:normal-case"
+        data-testid="input-heatseeker-symbol"
+      />
+      {!PRESETS.includes(symbol as any) && (
+        <Badge variant="outline" className="border-cyan-500/40 font-mono text-[9px] text-cyan-400">
+          custom · {symbol}
+        </Badge>
+      )}
+    </div>
+  );
+
   if (isLoading) {
     return (
       <div className="space-y-4">
+        {picker}
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-96 w-full" />
         <Skeleton className="h-64 w-full" />
@@ -163,19 +218,27 @@ export default function Heatseeker() {
   if (error || !data || (data as any).error) {
     const msg = (data as any)?.message ?? (error as Error)?.message ?? "Unable to load heatseeker";
     return (
-      <Card className="border-amber-500/30 bg-amber-500/5">
-        <CardContent className="flex items-center gap-3 pt-6">
-          <AlertTriangle className="h-5 w-5 text-amber-500" />
-          <div>
-            <div className="font-semibold text-amber-400">Schwab connection needed</div>
-            <div className="text-sm text-muted-foreground">{msg}</div>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="space-y-4">
+        {picker}
+        <Card className="border-amber-500/30 bg-amber-500/5">
+          <CardContent className="flex items-center gap-3 pt-6">
+            <AlertTriangle className="h-5 w-5 text-amber-500" />
+            <div>
+              <div className="font-semibold text-amber-400">Schwab connection needed</div>
+              <div className="text-sm text-muted-foreground">{msg}</div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
-  return <HeatseekerView data={data} />;
+  return (
+    <div className="space-y-4">
+      {picker}
+      <HeatseekerView data={data} />
+    </div>
+  );
 }
 
 // ─── View (data guaranteed) ────────────────────────────────────────────────
@@ -238,10 +301,15 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
 
   const tickTime = new Date(asOf).toLocaleTimeString("en-US", { hour12: false });
 
-  // Filter locked levels to those visible in the strike window
+  // Filter locked levels to those visible in the strike window.
+  // Locked weekly targets are SPX-specific — skip them for any other symbol.
   const minStrike = Math.min(...strikes.map((s) => s.strike));
   const maxStrike = Math.max(...strikes.map((s) => s.strike));
-  const visibleLevels = LOCKED_LEVELS.filter((l) => l.value >= minStrike && l.value <= maxStrike);
+  const upper = symbol.toUpperCase();
+  const isSpx = upper === "$SPX" || upper === "SPX" || upper === "SPXW";
+  const visibleLevels = isSpx
+    ? LOCKED_LEVELS.filter((l) => l.value >= minStrike && l.value <= maxStrike)
+    : [];
 
   return (
     <div className="space-y-5">
