@@ -292,12 +292,12 @@ export default function DepthSkewFlow() {
         <div className="mt-3 flex flex-wrap gap-4 text-[11px]">
           {mode === "depth" && (
             <>
-              <Stat label="Call OI" value={fmtK(totalCallOI)} tone="rose" />
-              <Stat label="Put OI" value={fmtK(totalPutOI)} tone="emerald" />
+              <Stat label="Call OI" value={fmtK(totalCallOI)} tone="emerald" />
+              <Stat label="Put OI" value={fmtK(totalPutOI)} tone="rose" />
               <Stat
                 label="PCR (OI)"
                 value={pcrOI.toFixed(2)}
-                tone={pcrOI > 1.05 ? "emerald" : pcrOI < 0.95 ? "rose" : "muted"}
+                tone={pcrOI > 1.05 ? "rose" : pcrOI < 0.95 ? "emerald" : "muted"}
               />
             </>
           )}
@@ -419,13 +419,13 @@ export default function DepthSkewFlow() {
                 <Bar
                   dataKey="putOINeg"
                   name="Put OI"
-                  fill="hsl(142 76% 45%)"
+                  fill="hsl(350 82% 60%)"
                   stackId="a"
                 />
                 <Bar
                   dataKey="callOI"
                   name="Call OI"
-                  fill="hsl(350 82% 60%)"
+                  fill="hsl(142 76% 45%)"
                   stackId="a"
                 />
               </BarChart>
