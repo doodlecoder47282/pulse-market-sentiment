@@ -25,6 +25,7 @@ import { Network, Grid3x3, AlertTriangle, Waves, Maximize2, MousePointerClick } 
 import * as d3 from "d3-force";
 import type { SectorWebResponse, SectorNode, LeaderNode, SectorEdge, SectorGridRow } from "@shared/schema";
 import { useTickers } from "./TickerContext";
+import ConstellationPulse from "./ConstellationPulse";
 
 type WindowKey = "r1d" | "r1w" | "r1m";
 const WINDOW_LABEL: Record<WindowKey, string> = { r1d: "1D", r1w: "1W", r1m: "1M" };
@@ -209,6 +210,8 @@ export default function SectorWeb() {
           </div>
         </div>
       </div>
+
+      <ConstellationPulse data={data} />
 
       <Card className="overflow-hidden">
         <CardHeader className="pb-2">
