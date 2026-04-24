@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Newspaper, CalendarDays, ExternalLink, AlertTriangle, Search, Flame, Sparkles, Copy, Check } from "lucide-react";
+import { Newspaper, CalendarDays, ExternalLink, AlertTriangle, Search, Flame, Sparkles, Copy, Check, TrendingUp, Sunrise, Moon, Clock, DollarSign } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -287,7 +287,12 @@ function AlphaSkeleton() {
 
 interface AlphaBriefResult {
   brief: string;
-  mode: "with_search" | "knowledge_only";
+  mode: "with_search" | "knowledge_only" | "deterministic";
+  deterministic?: string;
+  claude?: string | null;
+  gpt?: string | null;
+  llmEnhancersEnabled?: boolean;
+  errors?: { claude: string | null; gpt: string | null };
   error?: string;
 }
 
@@ -324,7 +329,7 @@ function AlphaCard({ headlines }: { headlines: Headline[] }) {
               variant="outline"
               className="border-amber-500/40 text-amber-300/80 text-[10px]"
             >
-              Claude Opus
+              Impact Engine
             </Badge>
             {mutation.data?.mode === "with_search" && (
               <Badge
@@ -340,6 +345,14 @@ function AlphaCard({ headlines }: { headlines: Headline[] }) {
                 className="border-amber-500/30 text-amber-400/60 text-[9px]"
               >
                 knowledge only
+              </Badge>
+            )}
+            {mutation.data?.mode === "deterministic" && (
+              <Badge
+                variant="outline"
+                className="border-cyan-500/40 text-cyan-300/80 text-[9px]"
+              >
+                rules engine
               </Badge>
             )}
           </div>
@@ -378,6 +391,11 @@ function AlphaCard({ headlines }: { headlines: Headline[] }) {
               {mutation.data.mode === "knowledge_only" && (
                 <div className="text-xs text-amber-400/70 border border-amber-500/20 rounded px-2 py-1">
                   Live web search unavailable — brief based on news feed + model knowledge.
+                </div>
+              )}
+              {mutation.data.mode === "deterministic" && (
+                <div className="text-xs text-cyan-400/70 border border-cyan-500/20 rounded px-2 py-1">
+                  Rules-based brief — set ANTHROPIC_API_KEY or OPENAI_API_KEY for LLM-enhanced narrative.
                 </div>
               )}
               <div
@@ -505,6 +523,9 @@ export default function NewsPanel() {
           <Badge variant="outline" className="ml-1 border-amber-500/40 px-1 py-0 text-[8.5px] text-amber-300">
             {data.calendar.length}
           </Badge>
+        </TabsTrigger>
+        <TabsTrigger value="earnings" className="gap-1.5" data-testid="news-tab-earnings">
+          <TrendingUp className="h-3.5 w-3.5" /> Earnings
         </TabsTrigger>
       </TabsList>
 
@@ -671,7 +692,423 @@ export default function NewsPanel() {
       <TabsContent value="calendar" className="mt-0">
         <FullCalendar events={data.calendar} asOf={data.asOf} />
       </TabsContent>
+
+      <TabsContent value="earnings" className="mt-0">
+        <EarningsTab />
+      </TabsContent>
     </Tabs>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Earnings Tab — weekly / monthly upcoming earnings calendar
+// Earnings Whispers style: grouped by day, importance-sorted, big-cap highlights
+// ──────────────────────────────────────────────────────────────────────────
+
+type EarningsTiming = "BMO" | "AMC" | "DMH" | "UNK";
+
+interface EarningsRow {
+  date: string;
+  ticker: string;
+  company: string;
+  marketCap: number | null;
+  marketCapBucket: "MEGA" | "LARGE" | "MID" | "SMALL" | null;
+  fiscalQuarter: string;
+  epsForecast: number | null;
+  lastYearEps: number | null;
+  numEstimates: number | null;
+  timing: EarningsTiming;
+  timingLabel: string;
+  lastYearReportDate: string | null;
+  importance: "HIGH" | "MED" | "LOW";
+  isMag7: boolean;
+}
+
+interface EarningsDay {
+  date: string;
+  label: string;
+  count: number;
+  highImpact: number;
+  rows: EarningsRow[];
+}
+
+interface EarningsWeek {
+  weekStart: string;
+  label: string;
+  count: number;
+  highImpact: number;
+  megaCapCount: number;
+  days: EarningsDay[];
+}
+
+interface EarningsResponse {
+  asOf: number;
+  range: { from: string; to: string };
+  totalReports: number;
+  highImpactCount: number;
+  megaCapCount: number;
+  mag7Reports: EarningsRow[];
+  weeks: EarningsWeek[];
+  warnings: string[];
+}
+
+function formatMarketCap(cap: number | null): string {
+  if (cap == null) return "—";
+  if (cap >= 1e12) return `$${(cap / 1e12).toFixed(2)}T`;
+  if (cap >= 1e9) return `$${(cap / 1e9).toFixed(1)}B`;
+  if (cap >= 1e6) return `$${(cap / 1e6).toFixed(0)}M`;
+  return `$${cap.toFixed(0)}`;
+}
+
+function formatEps(v: number | null): string {
+  if (v == null) return "—";
+  return v >= 0 ? `$${v.toFixed(2)}` : `-$${Math.abs(v).toFixed(2)}`;
+}
+
+const TIMING_STYLE: Record<EarningsTiming, { bg: string; icon: any; label: string }> = {
+  BMO: { bg: "border-amber-500/50 bg-amber-500/10 text-amber-300", icon: Sunrise, label: "BMO" },
+  AMC: { bg: "border-violet-500/50 bg-violet-500/10 text-violet-300", icon: Moon, label: "AMC" },
+  DMH: { bg: "border-sky-500/50 bg-sky-500/10 text-sky-300", icon: Clock, label: "DMH" },
+  UNK: { bg: "border-border/40 bg-muted/20 text-muted-foreground", icon: Clock, label: "?" },
+};
+
+const IMPORTANCE_STYLE: Record<EarningsRow["importance"], string> = {
+  HIGH: "border-rose-500/60 bg-rose-500/10 text-rose-300",
+  MED: "border-amber-500/50 bg-amber-500/10 text-amber-300",
+  LOW: "border-border/40 bg-muted/20 text-muted-foreground",
+};
+
+function EarningsTab() {
+  const [horizon, setHorizon] = useState<"weekly" | "monthly">("weekly");
+  const [importanceFilter, setImportanceFilter] = useState<"HIGH" | "MED" | "ALL">("ALL");
+  const [timingFilter, setTimingFilter] = useState<EarningsTiming | "ALL">("ALL");
+  const [query, setQuery] = useState("");
+
+  const { data, isLoading, isError } = useQuery<EarningsResponse>({
+    queryKey: ["/api/earnings", horizon],
+    queryFn: async () => {
+      const r = await apiRequest("GET", `/api/earnings?horizon=${horizon}`);
+      return r.json();
+    },
+    refetchInterval: 30 * 60_000, // 30 min
+    staleTime: 20 * 60_000,
+  });
+
+  const filteredWeeks = useMemo(() => {
+    if (!data) return [] as EarningsWeek[];
+    const q = query.trim().toLowerCase();
+    return data.weeks
+      .map((w) => ({
+        ...w,
+        days: w.days
+          .map((d) => ({
+            ...d,
+            rows: d.rows.filter((r) => {
+              if (importanceFilter === "HIGH" && r.importance !== "HIGH") return false;
+              if (importanceFilter === "MED" && r.importance === "LOW") return false;
+              if (timingFilter !== "ALL" && r.timing !== timingFilter) return false;
+              if (q && !r.ticker.toLowerCase().includes(q) && !r.company.toLowerCase().includes(q)) return false;
+              return true;
+            }),
+          }))
+          .filter((d) => d.rows.length > 0),
+      }))
+      .filter((w) => w.days.length > 0);
+  }, [data, importanceFilter, timingFilter, query]);
+
+  if (isLoading && !data) {
+    return (
+      <div className="space-y-2">
+        <Skeleton className="h-8 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  if (isError || !data) {
+    return (
+      <Card>
+        <CardContent className="p-4 text-sm text-muted-foreground">
+          Earnings calendar unavailable. Nasdaq's API may be rate-limited — try again shortly.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-4" data-testid="earnings-tab">
+      {/* Header + horizon toggle + stats */}
+      <Card className="border-emerald-500/30 bg-gradient-to-br from-emerald-950/20 to-background">
+        <CardHeader className="pb-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <TrendingUp className="h-5 w-5 text-emerald-400" />
+                <h3 className="font-mono tracking-wider text-emerald-300 text-sm font-semibold">
+                  EARNINGS CALENDAR
+                </h3>
+                <Badge
+                  variant="outline"
+                  className="border-emerald-500/40 text-emerald-300/80 text-[10px]"
+                >
+                  Nasdaq
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Upcoming reports {horizon === "weekly" ? "(next 7 days)" : "(next 30 days)"} · consensus EPS, market cap, timing. Refresh 30m.
+              </p>
+            </div>
+
+            <div className="flex gap-1">
+              <button
+                onClick={() => setHorizon("weekly")}
+                className={`rounded border px-3 py-1 text-[10px] font-semibold uppercase tracking-wider transition ${horizon === "weekly" ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-200" : "border-border/40 text-muted-foreground hover:text-foreground"}`}
+                data-testid="earnings-horizon-weekly"
+              >
+                Weekly
+              </button>
+              <button
+                onClick={() => setHorizon("monthly")}
+                className={`rounded border px-3 py-1 text-[10px] font-semibold uppercase tracking-wider transition ${horizon === "monthly" ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-200" : "border-border/40 text-muted-foreground hover:text-foreground"}`}
+                data-testid="earnings-horizon-monthly"
+              >
+                Monthly
+              </button>
+            </div>
+          </div>
+
+          {/* Stat strip */}
+          <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2">
+            <StatTile label="Total Reports" value={data.totalReports.toString()} />
+            <StatTile label="High Impact" value={data.highImpactCount.toString()} accent="rose" />
+            <StatTile label="Mega Caps" value={data.megaCapCount.toString()} accent="amber" />
+            <StatTile label="MAG7" value={data.mag7Reports.length.toString()} accent="violet" />
+          </div>
+
+          {/* MAG7 highlight reel */}
+          {data.mag7Reports.length > 0 && (
+            <div className="mt-3 rounded border border-violet-500/30 bg-violet-500/5 p-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-violet-300 mb-1.5">
+                MAG7 in Window
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {data.mag7Reports.map((r) => (
+                  <div
+                    key={`mag7-${r.ticker}-${r.date}`}
+                    className="rounded border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-[10px]"
+                    data-testid={`mag7-${r.ticker}`}
+                  >
+                    <span className="font-mono font-semibold text-violet-200">{r.ticker}</span>
+                    <span className="ml-1.5 text-violet-300/70">{r.date}</span>
+                    <span className="ml-1.5 text-violet-200/80">{r.timingLabel}</span>
+                    {r.epsForecast != null && (
+                      <span className="ml-1.5 text-violet-300/60">est {formatEps(r.epsForecast)}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardHeader>
+      </Card>
+
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[180px] max-w-sm">
+          <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            className="h-7 pl-7 text-xs"
+            placeholder="Ticker or company…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            data-testid="earnings-search"
+          />
+        </div>
+
+        <div className="flex gap-1">
+          {("ALL HIGH MED".split(" ") as Array<"ALL" | "HIGH" | "MED">).map((v) => (
+            <button
+              key={v}
+              onClick={() => setImportanceFilter(v)}
+              className={`rounded border px-2 py-1 text-[9px] font-semibold uppercase tracking-wider transition ${importanceFilter === v ? "border-rose-500/60 bg-rose-500/15 text-rose-200" : "border-border/40 text-muted-foreground hover:text-foreground"}`}
+              data-testid={`earnings-importance-${v.toLowerCase()}`}
+            >
+              {v === "ALL" ? "All" : v === "HIGH" ? "High" : "Med+"}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex gap-1">
+          {(["ALL", "BMO", "AMC"] as Array<"ALL" | EarningsTiming>).map((v) => (
+            <button
+              key={v}
+              onClick={() => setTimingFilter(v)}
+              className={`rounded border px-2 py-1 text-[9px] font-semibold uppercase tracking-wider transition ${timingFilter === v ? "border-amber-500/60 bg-amber-500/15 text-amber-200" : "border-border/40 text-muted-foreground hover:text-foreground"}`}
+              data-testid={`earnings-timing-${v.toLowerCase()}`}
+            >
+              {v === "ALL" ? "Any Time" : v === "BMO" ? "Before Open" : "After Close"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Weeks */}
+      {filteredWeeks.length === 0 ? (
+        <Card>
+          <CardContent className="p-4 text-center text-sm text-muted-foreground">
+            No earnings match your filter.
+          </CardContent>
+        </Card>
+      ) : (
+        filteredWeeks.map((week) => (
+          <div key={week.weekStart} data-testid={`earnings-week-${week.weekStart}`}>
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-xs font-mono uppercase tracking-wider text-emerald-300">
+                {week.label}
+              </div>
+              <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                <span>{week.count} reports</span>
+                {week.highImpact > 0 && (
+                  <span className="text-rose-300">{week.highImpact} high impact</span>
+                )}
+                {week.megaCapCount > 0 && (
+                  <span className="text-amber-300">{week.megaCapCount} mega cap</span>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {week.days.map((day) => (
+                <div
+                  key={`${week.weekStart}-${day.date}`}
+                  className="rounded-md border border-border/40 bg-card/40 p-3"
+                  data-testid={`earnings-day-${day.date}`}
+                >
+                  <div className="mb-2 flex items-center gap-2">
+                    <CalendarDays className="h-3.5 w-3.5 text-emerald-400" />
+                    <span className="text-sm font-semibold text-foreground">{day.label}</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      ({day.rows.length} {day.rows.length === 1 ? "report" : "reports"})
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[11px]">
+                      <thead>
+                        <tr className="border-b border-border/40 text-left text-[9.5px] font-mono uppercase tracking-wider text-muted-foreground">
+                          <th className="pb-1.5 pr-2">Ticker</th>
+                          <th className="pb-1.5 pr-2">Company</th>
+                          <th className="pb-1.5 pr-2 text-right">Mkt Cap</th>
+                          <th className="pb-1.5 pr-2">Timing</th>
+                          <th className="pb-1.5 pr-2 text-right">EPS Est</th>
+                          <th className="pb-1.5 pr-2 text-right">LY EPS</th>
+                          <th className="pb-1.5 pr-2 text-center">Impact</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {day.rows.map((r) => {
+                          const timing = TIMING_STYLE[r.timing];
+                          const TimingIcon = timing.icon;
+                          const surprise =
+                            r.epsForecast != null && r.lastYearEps != null && r.lastYearEps !== 0
+                              ? ((r.epsForecast - r.lastYearEps) / Math.abs(r.lastYearEps)) * 100
+                              : null;
+                          return (
+                            <tr
+                              key={`${r.date}-${r.ticker}`}
+                              className="border-b border-border/20 transition hover:bg-muted/30"
+                              data-testid={`earnings-row-${r.ticker}-${r.date}`}
+                            >
+                              <td className="py-1.5 pr-2">
+                                <a
+                                  href={`https://finance.yahoo.com/quote/${encodeURIComponent(r.ticker)}/`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="font-mono font-semibold text-emerald-300 hover:text-emerald-200"
+                                >
+                                  {r.ticker}
+                                </a>
+                                {r.isMag7 && (
+                                  <Badge
+                                    variant="outline"
+                                    className="ml-1 border-violet-500/50 bg-violet-500/10 px-1 py-0 text-[8px] text-violet-300"
+                                  >
+                                    MAG7
+                                  </Badge>
+                                )}
+                              </td>
+                              <td className="py-1.5 pr-2 text-muted-foreground truncate max-w-[180px]">
+                                {r.company}
+                              </td>
+                              <td className="py-1.5 pr-2 text-right font-mono text-foreground/80">
+                                {formatMarketCap(r.marketCap)}
+                              </td>
+                              <td className="py-1.5 pr-2">
+                                <span
+                                  className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase ${timing.bg}`}
+                                >
+                                  <TimingIcon className="h-2.5 w-2.5" />
+                                  {timing.label}
+                                </span>
+                              </td>
+                              <td className="py-1.5 pr-2 text-right font-mono">
+                                <span className={r.epsForecast != null && r.epsForecast < 0 ? "text-rose-400" : "text-foreground"}>
+                                  {formatEps(r.epsForecast)}
+                                </span>
+                                {r.numEstimates != null && r.numEstimates > 0 && (
+                                  <span className="ml-1 text-[9px] text-muted-foreground">({r.numEstimates})</span>
+                                )}
+                              </td>
+                              <td className="py-1.5 pr-2 text-right font-mono text-muted-foreground">
+                                {formatEps(r.lastYearEps)}
+                                {surprise != null && Math.abs(surprise) >= 5 && (
+                                  <span
+                                    className={`ml-1 text-[9px] ${surprise > 0 ? "text-emerald-400" : "text-rose-400"}`}
+                                  >
+                                    {surprise > 0 ? "+" : ""}{surprise.toFixed(0)}%
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-1.5 pr-2 text-center">
+                                <Badge
+                                  variant="outline"
+                                  className={`px-1.5 py-0 text-[9px] ${IMPORTANCE_STYLE[r.importance]}`}
+                                >
+                                  {r.importance}
+                                </Badge>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))
+      )}
+
+      <div className="text-[10px] text-muted-foreground text-center pt-2">
+        Data: Nasdaq earnings calendar · consensus EPS from analyst estimates · LY EPS = same fiscal quarter prior year
+      </div>
+    </div>
+  );
+}
+
+function StatTile({ label, value, accent }: { label: string; value: string; accent?: "rose" | "amber" | "violet" | "emerald" }) {
+  const color =
+    accent === "rose" ? "text-rose-300"
+    : accent === "amber" ? "text-amber-300"
+    : accent === "violet" ? "text-violet-300"
+    : accent === "emerald" ? "text-emerald-300"
+    : "text-foreground";
+  return (
+    <div className="rounded border border-border/40 bg-card/60 p-2">
+      <div className="text-[9.5px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className={`font-mono text-lg font-semibold ${color}`}>{value}</div>
+    </div>
   );
 }
 

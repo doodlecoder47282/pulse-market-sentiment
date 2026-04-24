@@ -59,6 +59,8 @@ import {
   startOdteTracker, getOdteSnapshot, armPosition, disarmPosition,
   getSparkline, getTracked, getContractChart,
 } from "./odteTracker";
+import { buildDeterministicAlphaBrief } from "./alphaEngine";
+import { getEarnings } from "./earnings";
 
 function vm(symbol: string, name: string, last: number | null, prev: number | null): VolMetric {
   const changePct = last != null && prev ? ((last - prev) / prev) * 100 : null;
@@ -1303,57 +1305,124 @@ Be precise. No hedging language. No filler. If news feed is empty or stale, say 
   app.post("/api/alpha-brief", async (req, res) => {
     try {
       const { newsItems = [] } = req.body || {};
+      const items = Array.isArray(newsItems) ? newsItems : [];
+
+      // 1) Deterministic brief — ALWAYS runs, always returns content.
+      const deterministic = buildDeterministicAlphaBrief(items);
+
+      // 2) LLM enhancers — opt-in based on env keys. Never throw.
+      const hasAnthropicKey = !!process.env.ANTHROPIC_API_KEY;
+      const hasOpenAiKey = !!process.env.OPENAI_API_KEY;
 
       const now = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
-      const itemLines = (newsItems as Array<{ title: string; source?: string; time?: string; summary?: string; url?: string }>)
+      const itemLines = (items as Array<{ title: string; source?: string; time?: string; summary?: string; url?: string }>)
         .slice(0, 30)
         .map((n, i) => `${i + 1}. [${n.source ?? "?"}, ${n.time ?? "?"}] ${n.title}${n.summary ? " — " + n.summary : ""}`)
         .join("\n");
 
       const userBrief = `CURRENT TIME: ${now} ET
 
-EXISTING NEWS FEED (${(newsItems as any[]).length} items):
+EXISTING NEWS FEED (${items.length} items):
 ${itemLines || "(empty)"}
 
+DETERMINISTIC BASELINE:
+${deterministic}
+
 TASK
-Sift this feed AND search the web for any critical developments in geopolitics, rates/Fed, insider buys, and sentiment/positioning that the feed is missing or under-weighting. Produce the ALPHA brief.`;
+Refine the brief above. Search the web for any critical developments the feed is missing — geopolitics, rates/Fed, insider buys, sentiment/positioning. Tighten the tape summary. Re-rank if needed. Return the FULL brief in the same markdown structure. Be concrete, no filler.`;
 
-      const anthropicClient = new Anthropic();
-      let response: Awaited<ReturnType<typeof anthropicClient.messages.create>>;
-      let mode: "with_search" | "knowledge_only" = "with_search";
+      const claudePromise = hasAnthropicKey
+        ? (async () => {
+            try {
+              const anthropic = new Anthropic();
+              let response: Awaited<ReturnType<typeof anthropic.messages.create>>;
+              let mode: "with_search" | "knowledge_only" = "with_search";
+              try {
+                response = await anthropic.messages.create({
+                  model: "claude_opus_4_7",
+                  max_tokens: 4096,
+                  tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 6 }] as any,
+                  system: ALPHA_SYSTEM_PROMPT,
+                  messages: [{ role: "user", content: userBrief }],
+                });
+              } catch (toolErr: any) {
+                mode = "knowledge_only";
+                response = await anthropic.messages.create({
+                  model: "claude_opus_4_7",
+                  max_tokens: 4096,
+                  system: ALPHA_SYSTEM_PROMPT,
+                  messages: [{ role: "user", content: userBrief + "\n\n(Note: live web search unavailable — use news feed + knowledge.)" }],
+                });
+              }
+              const text = response.content
+                .filter((b: any) => b.type === "text")
+                .map((b: any) => b.text)
+                .join("\n\n");
+              return { text, mode };
+            } catch (e: any) {
+              throw new Error(e?.message ?? "claude call failed");
+            }
+          })()
+        : Promise.reject(new Error("ANTHROPIC_API_KEY not configured"));
 
-      try {
-        response = await anthropicClient.messages.create({
-          model: "claude_opus_4_7",
-          max_tokens: 4096,
-          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 6 }] as any,
-          system: ALPHA_SYSTEM_PROMPT,
-          messages: [{ role: "user", content: userBrief }],
-        });
-        console.log("[alpha-brief] mode: with_search");
-      } catch (toolErr: any) {
-        // Fallback if web_search tool not supported by this proxy
+      const gptPromise = hasOpenAiKey
+        ? (async () => {
+            try {
+              const openai = new OpenAI();
+              const r: any = await (openai.responses as any).create({
+                model: "gpt_5_1",
+                input: `${ALPHA_SYSTEM_PROMPT}\n\n---\n\n${userBrief}`,
+              });
+              return r.output_text ?? "";
+            } catch (e: any) {
+              throw new Error(e?.message ?? "gpt call failed");
+            }
+          })()
+        : Promise.reject(new Error("OPENAI_API_KEY not configured"));
+
+      const [claudeResult, gptResult] = await Promise.allSettled([claudePromise, gptPromise]);
+
+      // Legacy shape (brief + mode) preserved for back-compat. The deterministic
+      // brief becomes the "brief" field when no LLM is configured; otherwise
+      // Claude's version wins (with web_search if available), then GPT, then
+      // deterministic fallback.
+      let brief = deterministic;
+      let mode: "with_search" | "knowledge_only" | "deterministic" = "deterministic";
+      if (claudeResult.status === "fulfilled") {
+        brief = claudeResult.value.text || deterministic;
+        mode = claudeResult.value.mode;
+      } else if (gptResult.status === "fulfilled" && gptResult.value) {
+        brief = gptResult.value;
         mode = "knowledge_only";
-        console.warn("[alpha-brief] web_search unavailable, falling back to knowledge_only:", toolErr?.message);
-        response = await anthropicClient.messages.create({
-          model: "claude_opus_4_7",
-          max_tokens: 4096,
-          system: ALPHA_SYSTEM_PROMPT,
-          messages: [{ role: "user", content: userBrief + "\n\n(Note: live web search unavailable — use news feed + your knowledge.)" }],
-        });
-        console.log("[alpha-brief] mode: knowledge_only");
       }
 
-      // Extract text blocks (Opus with tool use returns mixed blocks)
-      const brief = response.content
-        .filter((b: any) => b.type === "text")
-        .map((b: any) => b.text)
-        .join("\n\n");
-
-      res.json({ brief, mode });
+      res.json({
+        brief,
+        mode,
+        deterministic,
+        claude: claudeResult.status === "fulfilled" ? claudeResult.value.text : null,
+        gpt: gptResult.status === "fulfilled" ? gptResult.value : null,
+        llmEnhancersEnabled: hasAnthropicKey || hasOpenAiKey,
+        errors: {
+          claude: claudeResult.status === "rejected" ? String((claudeResult as any).reason?.message ?? claudeResult.reason) : null,
+          gpt: gptResult.status === "rejected" ? String((gptResult as any).reason?.message ?? gptResult.reason) : null,
+        },
+      });
     } catch (err: any) {
       console.error("[alpha-brief]", err?.message);
       res.status(500).json({ error: err?.message ?? "ALPHA brief failed" });
+    }
+  });
+
+  // ---- Earnings calendar — weekly + monthly ----
+  app.get("/api/earnings", async (req, res) => {
+    try {
+      const horizon = String(req.query.horizon ?? "weekly").toLowerCase() === "monthly" ? "monthly" : "weekly";
+      const out = await getEarnings(horizon);
+      res.json(out);
+    } catch (err: any) {
+      console.error("[earnings]", err?.message);
+      res.status(500).json({ error: err?.message ?? "earnings fetch failed" });
     }
   });
 
