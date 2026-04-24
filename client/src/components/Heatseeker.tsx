@@ -34,6 +34,26 @@ import {
 import { Activity, AlertTriangle, Flame, Target, TrendingDown, TrendingUp } from "lucide-react";
 import LiveOdteTracker from "./LiveOdteTracker";
 import DepthSkewFlow from "./DepthSkewFlow";
+import OdteContractChart from "./OdteContractChart";
+
+// Contract snapshot shape from /api/odte-tracker (used to enrich drill-down meta)
+interface OdteContract {
+  key: string;
+  symbol: string;
+  strike: number;
+  side: "call" | "put";
+  expiry: string;
+  bid: number | null;
+  ask: number | null;
+  mid: number | null;
+  last: number | null;
+  volume: number;
+  deltaVol: number;
+  openInterest: number;
+  notional: number;
+  classification: "buy" | "sell" | "neutral";
+  distance: number;
+}
 
 // ─── User's locked SPX weekly targets (from session context) ───────────────
 const LOCKED_LEVELS: Array<{ value: number; label: string; kind: "upside" | "downside" | "pin" | "vomma" }> = [
@@ -162,6 +182,22 @@ export default function Heatseeker() {
 function HeatseekerView({ data }: { data: HeatseekerData }) {
   const { strikes, stickyZones, totals, spot, expiry, dte, symbol, asOf } = data;
 
+  // Drill-down selection: which strike + which side are we viewing as a contract chart?
+  const [selected, setSelected] = useState<{ strike: number; side: "call" | "put" } | null>(null);
+
+  // Snapshot of the live odte-tracker — provides bid/ask/volume/OI/notional per contract key.
+  // Separate 4s poll (matches tracker poll cadence). Paused while nothing is selected.
+  const { data: odteSnap } = useQuery<{ contracts: OdteContract[] }>({
+    queryKey: ["/api/odte-tracker"],
+    queryFn: async () => {
+      const r = await apiRequest("GET", "/api/odte-tracker");
+      return r.json();
+    },
+    refetchInterval: selected ? 4_000 : false,
+    enabled: !!selected,
+    staleTime: 3_500,
+  });
+
   // Max absolute values for heatmap normalization
   const maxAbsGex = useMemo(() => Math.max(...strikes.map((s) => Math.abs(s.netGex)), 1), [strikes]);
   const maxAbsDex = useMemo(() => Math.max(...strikes.map((s) => Math.abs(s.netDex)), 1), [strikes]);
@@ -245,7 +281,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
           </CardTitle>
           <div className="text-xs text-muted-foreground">
             Emerald = positive (dealers long / supportive) · Rose = negative (dealers short / accelerant).
-            Horizontal guides = your locked weekly targets.
+            Horizontal guides = your locked weekly targets. Tap any strike to open the contract chart.
           </div>
         </CardHeader>
         <CardContent>
@@ -263,11 +299,24 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
               {rows.map((s) => {
                 const isSpotRow = Math.abs(s.strike - spot) < 2.5;
                 const lockedHit = visibleLevels.find((l) => Math.abs(l.value - s.strike) < 2.5);
+                const isSelectedRow = selected != null && selected.strike === s.strike;
+                // Default drill-down side: above spot → call, below spot → put
+                const defaultSide: "call" | "put" = s.strike >= spot ? "call" : "put";
+                const handleRowClick = () => {
+                  // Toggle: click same row again to close. Otherwise open with the default side.
+                  if (selected && selected.strike === s.strike) setSelected(null);
+                  else setSelected({ strike: s.strike, side: defaultSide });
+                };
                 return (
                   <div
                     key={s.strike}
-                    className={`grid grid-cols-[92px_repeat(4,1fr)_96px] gap-px border-b border-border/30 py-1 ${
-                      isSpotRow ? "bg-primary/10 ring-1 ring-primary/30" : ""
+                    onClick={handleRowClick}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleRowClick(); } }}
+                    data-testid={`row-heatmap-${s.strike}`}
+                    className={`grid cursor-pointer grid-cols-[92px_repeat(4,1fr)_96px] gap-px border-b border-border/30 py-1 transition-colors hover:bg-sky-500/10 ${
+                      isSelectedRow ? "bg-sky-500/15 ring-1 ring-sky-500/40" : isSpotRow ? "bg-primary/10 ring-1 ring-primary/30" : ""
                     }`}
                   >
                     <div className="flex items-center gap-1.5 font-mono text-sm tabular-nums">
@@ -302,6 +351,82 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
           </div>
         </CardContent>
       </Card>
+
+      {/* ── Contract drill-down — appears when a heatmap row is selected ──── */}
+      {selected && (() => {
+        const contractKey = `${symbol}_${selected.strike.toFixed(0)}${selected.side === "call" ? "C" : "P"}_${expiry}`;
+        const c = odteSnap?.contracts.find((x) => x.key === contractKey);
+        return (
+          <div className="space-y-2">
+            {/* Call/Put tab toggle */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Target className="h-3.5 w-3.5 text-sky-400" />
+                Drill-down — strike {selected.strike.toFixed(0)} · {dte}DTE · exp {expiry}
+              </div>
+              <div className="flex overflow-hidden rounded-md border" role="tablist" aria-label="Contract side">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={selected.side === "call"}
+                  onClick={() => setSelected({ strike: selected.strike, side: "call" })}
+                  className={`h-7 px-3 font-mono text-[11px] font-semibold transition-colors ${
+                    selected.side === "call"
+                      ? "bg-emerald-500/20 text-emerald-400"
+                      : "text-muted-foreground hover:bg-muted/50"
+                  }`}
+                  data-testid="tab-call"
+                >
+                  {selected.strike.toFixed(0)}C
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={selected.side === "put"}
+                  onClick={() => setSelected({ strike: selected.strike, side: "put" })}
+                  className={`h-7 px-3 font-mono text-[11px] font-semibold transition-colors ${
+                    selected.side === "put"
+                      ? "bg-rose-500/20 text-rose-400"
+                      : "text-muted-foreground hover:bg-muted/50"
+                  }`}
+                  data-testid="tab-put"
+                >
+                  {selected.strike.toFixed(0)}P
+                </button>
+              </div>
+            </div>
+
+            <OdteContractChart
+              key={contractKey}
+              meta={{
+                key: contractKey,
+                label: `${selected.strike.toFixed(0)}${selected.side === "call" ? "C" : "P"} · ${symbol}`,
+                strike: selected.strike,
+                side: selected.side,
+                expiry,
+                last: c?.last ?? null,
+                spot,
+                bid: c?.bid ?? null,
+                ask: c?.ask ?? null,
+                mid: c?.mid ?? null,
+                volume: c?.volume,
+                openInterest: c?.openInterest,
+                deltaVol: c?.deltaVol,
+                notional: c?.notional,
+                classification: c?.classification,
+                distance: c?.distance,
+              }}
+              onClose={() => setSelected(null)}
+            />
+            {!c && (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-400">
+                Strike {selected.strike.toFixed(0)} is outside the tracker’s ATM ±20 window — live tick history
+                will begin collecting once price drifts into range. Quote snapshot still reflects the current chain.
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── Depth · Skew · Flow — 3 synchronized real-time views ─────── */}
       <DepthSkewFlow />
