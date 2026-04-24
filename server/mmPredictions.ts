@@ -20,6 +20,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { ModelHorizon } from "./models";
 import type { MMMatrix } from "./mmMatrix";
+import { runMasterAlpha } from "./masterAlpha";
 
 const LOG_DIR = path.resolve(process.cwd(), "data", "mm-predictions");
 const LOG_FILE = path.join(LOG_DIR, "predictions.jsonl");
@@ -29,6 +30,16 @@ const PIN_THRESHOLD_PCT = 0.15; // < 0.15% forward move = pinned
 // ──────────────────────────────────────────────────────────────────────────
 // Row types
 // ──────────────────────────────────────────────────────────────────────────
+
+export interface MasterAlphaSnap {
+  compositeEdgeBps: number;            // predicted bps forward return
+  compositeSignal: string;             // STRONG_LONG..STRONG_SHORT
+  compositeConfidence: number;         // 0..1
+  gexRegime: string;
+  nearestPivotName: string | null;
+  nearestPivotDistBps: number | null;
+  lockedAlignment: string;             // confirms_upside | confirms_downside | mixed | n/a
+}
 
 export interface SnapshotRow {
   id: string;                 // `${sessionDate}-${horizon}-${tsISO}`
@@ -47,6 +58,7 @@ export interface SnapshotRow {
   vixDelta: number | null;
   charmDriftPct: number | null; // (charmZero - spot) / spot
   dfi: number | null;
+  masterAlpha?: MasterAlphaSnap; // unified composite prediction for backtesting
   kind: "snapshot";
 }
 
@@ -111,6 +123,25 @@ export async function snapshotHorizon(horizon: ModelHorizon, horizonKey: string)
 
   // Re-derive positionInZone from the zone note if present (the classifyZone note
   // encodes this descriptively — we store a numeric approximation from mmMatrix).
+  // Run masterAlpha alongside MM snapshot so the unified composite is captured
+  // at the same moment and can be graded against the same forward outcome.
+  let masterAlpha: MasterAlphaSnap | undefined;
+  try {
+    const ma = await runMasterAlpha({ horizon });
+    masterAlpha = {
+      compositeEdgeBps: Number((ma.compositeEdgeBps ?? 0).toFixed(2)),
+      compositeSignal: ma.compositeSignal,
+      compositeConfidence: Number((ma.compositeConfidence ?? 0).toFixed(3)),
+      gexRegime: ma.gexRegime,
+      nearestPivotName: ma.nearestPivot?.name ?? null,
+      nearestPivotDistBps: ma.nearestPivot?.distBps ?? null,
+      lockedAlignment: ma.lockedTargetAlignment?.bias ?? "n/a",
+    };
+  } catch (e: any) {
+    // non-fatal — MM snapshot still logged without masterAlpha
+    console.warn(`[mmPredictions] masterAlpha enrichment failed: ${e?.message ?? e}`);
+  }
+
   const row: SnapshotRow = {
     id,
     ts,
@@ -127,10 +158,147 @@ export async function snapshotHorizon(horizon: ModelHorizon, horizonKey: string)
     vixDelta: a.termStructureDoD?.iv1dDelta ?? null,
     charmDriftPct: a.charmZero != null ? ((a.charmZero - a.spot) / a.spot) * 100 : null,
     dfi: a.dfi ?? null,
+    masterAlpha,
     kind: "snapshot",
   };
   await appendRow(row);
   return row;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// MasterAlpha backtest stats: aggregate composite-signal accuracy vs graded outcomes
+// ─────────────────────────────────────────────────────────────────────
+
+export interface MasterAlphaBucket {
+  signal: string;
+  n: number;
+  hitRate: number;         // % of time signal's direction matched outcome
+  avgMovePct: number;      // average forward move %
+  avgPredEdgeBps: number;  // average predicted edge in bps
+  avgConfidence: number;
+}
+
+export interface MasterAlphaStats {
+  total: number;
+  graded: number;
+  buckets: MasterAlphaBucket[];     // per compositeSignal
+  correlation: number | null;        // Pearson(predBps, realizedBps)
+  recent: Array<{
+    id: string;
+    ts: number;
+    signal: string;
+    predBps: number;
+    realisedPct: number | null;
+    outcome: string | null;
+    hit: boolean | null;
+  }>;
+}
+
+export async function masterAlphaStats(): Promise<MasterAlphaStats> {
+  const rows = await readAllRows();
+  const snaps = rows.filter(
+    (r): r is SnapshotRow => r.kind === "snapshot" && !!r.masterAlpha,
+  );
+  const outcomes = new Map<string, OutcomeRow>();
+  for (const r of rows) if (r.kind === "outcome") outcomes.set(r.id, r);
+
+  type Bkt = {
+    n: number;
+    hits: number;
+    sumAbsMove: number;
+    sumPred: number;
+    sumConf: number;
+  };
+  const buckets = new Map<string, Bkt>();
+
+  const preds: number[] = [];
+  const reals: number[] = [];
+
+  for (const s of snaps) {
+    const o = outcomes.get(s.id);
+    if (!o) continue;
+    const ma = s.masterAlpha!;
+    const sig = ma.compositeSignal;
+    let b = buckets.get(sig);
+    if (!b) { b = { n: 0, hits: 0, sumAbsMove: 0, sumPred: 0, sumConf: 0 }; buckets.set(sig, b); }
+    b.n++;
+    b.sumAbsMove += Math.abs(o.tPlusClosePct);
+    b.sumPred += ma.compositeEdgeBps;
+    b.sumConf += ma.compositeConfidence;
+
+    // hit = signal direction matches outcome
+    const isLong = sig.includes("LONG");
+    const isShort = sig.includes("SHORT");
+    if (isLong && o.outcome === "up") b.hits++;
+    else if (isShort && o.outcome === "down") b.hits++;
+    else if (!isLong && !isShort && o.outcome === "pin") b.hits++;
+
+    preds.push(ma.compositeEdgeBps);
+    reals.push(o.tPlusClosePct * 100); // % → bps
+  }
+
+  const bucketArr: MasterAlphaBucket[] = [];
+  for (const [sig, b] of buckets.entries()) {
+    bucketArr.push({
+      signal: sig,
+      n: b.n,
+      hitRate: Math.round((b.hits / b.n) * 100),
+      avgMovePct: Number((b.sumAbsMove / b.n).toFixed(3)),
+      avgPredEdgeBps: Number((b.sumPred / b.n).toFixed(2)),
+      avgConfidence: Number((b.sumConf / b.n).toFixed(3)),
+    });
+  }
+  bucketArr.sort((a, b) => b.n - a.n);
+
+  // Pearson correlation between pred and realised
+  let correlation: number | null = null;
+  if (preds.length >= 3) {
+    const n = preds.length;
+    const meanP = preds.reduce((a, b) => a + b, 0) / n;
+    const meanR = reals.reduce((a, b) => a + b, 0) / n;
+    let num = 0, dp = 0, dr = 0;
+    for (let i = 0; i < n; i++) {
+      const p = preds[i] - meanP;
+      const r = reals[i] - meanR;
+      num += p * r;
+      dp += p * p;
+      dr += r * r;
+    }
+    if (dp > 0 && dr > 0) {
+      correlation = Number((num / Math.sqrt(dp * dr)).toFixed(3));
+    }
+  }
+
+  const recent = snaps.slice(-25).reverse().map((s) => {
+    const o = outcomes.get(s.id);
+    const ma = s.masterAlpha!;
+    let hit: boolean | null = null;
+    if (o) {
+      const isLong = ma.compositeSignal.includes("LONG");
+      const isShort = ma.compositeSignal.includes("SHORT");
+      hit =
+        (isLong && o.outcome === "up") ||
+        (isShort && o.outcome === "down") ||
+        (!isLong && !isShort && o.outcome === "pin");
+    }
+    return {
+      id: s.id,
+      ts: s.ts,
+      signal: ma.compositeSignal,
+      predBps: ma.compositeEdgeBps,
+      realisedPct: o?.tPlusClosePct ?? null,
+      outcome: o?.outcome ?? null,
+      hit,
+    };
+  });
+
+  return {
+    total: snaps.length,
+    graded: snaps.filter((s) => outcomes.has(s.id)).length,
+    buckets: bucketArr,
+    correlation,
+    recent,
+  };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -22,7 +22,7 @@ import { buildSectorWeb } from "./sector-web";
 import { buildWefThemes } from "./wef-themes";
 import { buildMacroSnapshot, type MacroResponse } from "./macro";
 import { fetchOHLC, type OHLCResponse, type Timeframe, type Interval } from "./ohlc";
-import { snapshotHorizon, gradeOutcomes, empiricalStats } from "./mmPredictions";
+import { snapshotHorizon, gradeOutcomes, empiricalStats, masterAlphaStats } from "./mmPredictions";
 import { startMmScheduler } from "./mmScheduler";
 import { buildMag7Snapshot, type Mag7Response } from "./mag7";
 import { buildFlowSnapshot, buildIntradayFlowSnapshot, type FlowResponse } from "./flow";
@@ -475,6 +475,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json(stats);
     } catch (e: any) {
       res.status(500).json({ message: e?.message ?? "stats failed" });
+    }
+  });
+
+  // GET /api/master-alpha-stats — backtest aggregates of masterAlpha signals vs realized moves
+  app.get("/api/master-alpha-stats", async (_req, res) => {
+    try {
+      const stats = await masterAlphaStats();
+      res.json(stats);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "master-alpha stats failed" });
     }
   });
 
