@@ -21,6 +21,8 @@ export interface HeatseekerStrike {
   distancePct: number;        // % from spot
   // Per-strike Greek exposures (net = call - put, dealer convention)
   netGex: number;             // $ / 1% move
+  callGex: number;            // call-side GEX (always >= 0)
+  putGex: number;             // put-side GEX (always >= 0, contributes negatively to net)
   netDex: number;             // $ delta exposure
   netVanna: number;           // $ / 1% vol move
   netCharm: number;           // $ / day
@@ -129,6 +131,8 @@ export function buildHeatseeker(
         strike,
         distancePct: ((strike - spot) / spot) * 100,
         netGex: 0,
+        callGex: 0,
+        putGex: 0,
         netDex: 0,
         netVanna: 0,
         netCharm: 0,
@@ -189,6 +193,7 @@ export function buildHeatseeker(
         if (side === "call") {
           s.callOI += oi;
           s.callVol += vol;
+          s.callGex += gex;
           s.netGex += gex;
           s.netDex += dexContrib;
           s.netVanna += vannaContrib;
@@ -197,7 +202,8 @@ export function buildHeatseeker(
         } else {
           s.putOI += oi;
           s.putVol += vol;
-          // Puts contribute negatively to dealer net gamma (dealers long puts)
+          s.putGex += gex;
+          // Puts contribute negatively to dealer net gamma (GEXbot convention).
           s.netGex -= gex;
           s.netDex -= dexContrib;
           s.netVanna -= vannaContrib;

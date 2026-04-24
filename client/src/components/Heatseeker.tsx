@@ -77,6 +77,8 @@ interface Strike {
   strike: number;
   distancePct: number;
   netGex: number;
+  callGex: number;
+  putGex: number;
   netDex: number;
   netVanna: number;
   netCharm: number;
@@ -378,8 +380,9 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                 Greek Heatmap · strike × metric
               </CardTitle>
               <div className="mt-1 text-xs text-muted-foreground">
-                Emerald = positive (dealers long / supportive) · Rose = negative (dealers short / accelerant).
-                Horizontal guides = your locked weekly targets. Tap any strike to open the contract chart.
+                GEX column: emerald = call-side gamma (dealers long / supportive), rose = put-side gamma (dealers short / accelerant) —
+                net printed in the middle. DEX/Vanna/Charm show net. Horizontal guides = your locked weekly targets.
+                Tap any strike to open the contract chart.
               </div>
             </div>
             {/* Zero-volume filter toggle — hides strikes with no session prints
@@ -408,7 +411,11 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
               {/* Header row */}
               <div className="grid grid-cols-[92px_repeat(4,1fr)_96px] gap-px border-b pb-1 text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
                 <div>Strike</div>
-                <div className="text-center">GEX</div>
+                <div className="text-center">
+                  <span className="text-emerald-400">call</span>
+                  <span className="mx-1">GEX</span>
+                  <span className="text-rose-400">put</span>
+                </div>
                 <div className="text-center">DEX</div>
                 <div className="text-center">Vanna</div>
                 <div className="text-center">Charm</div>
@@ -455,7 +462,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                         </span>
                       )}
                     </div>
-                    <HeatCell value={s.netGex} max={maxAbsGex} />
+                    <GexCell callGex={s.callGex} putGex={s.putGex} max={maxAbsGex} />
                     <HeatCell value={s.netDex} max={maxAbsDex} />
                     <HeatCell value={s.netVanna} max={maxAbsVanna} />
                     <HeatCell value={s.netCharm} max={maxAbsCharm} />
@@ -713,6 +720,36 @@ function HeatCell({ value, max }: { value: number; max: number }) {
       title={fmtM(value)}
     >
       {fmtM(value)}
+    </div>
+  );
+}
+
+// GEX cell — GEXbot style split bar: call GEX (green) left of center,
+// put GEX (red) right of center, both scaled to the global max absolute GEX.
+// Net value printed in the middle so the numeric readout stays glanceable.
+function GexCell({ callGex, putGex, max }: { callGex: number; putGex: number; max: number }) {
+  const net = callGex - putGex;
+  const callPct = max > 0 ? Math.min((callGex / max) * 100, 100) : 0;
+  const putPct = max > 0 ? Math.min((putGex / max) * 100, 100) : 0;
+  const labelColor = net >= 0 ? "text-emerald-300" : "text-rose-300";
+  return (
+    <div
+      className="relative flex h-7 items-center justify-center overflow-hidden rounded-sm bg-slate-500/5 font-mono text-[10px] tabular-nums"
+      title={`calls +${fmtM(callGex)} · puts -${fmtM(putGex)} · net ${fmtM(net)}`}
+    >
+      {/* Call half — emerald bar fills from center to the LEFT (above-net territory) */}
+      <div
+        className="absolute right-1/2 top-0 h-full bg-emerald-500/55"
+        style={{ width: `${callPct / 2}%` }}
+      />
+      {/* Put half — rose bar fills from center to the RIGHT */}
+      <div
+        className="absolute left-1/2 top-0 h-full bg-rose-500/55"
+        style={{ width: `${putPct / 2}%` }}
+      />
+      {/* Center divider */}
+      <div className="absolute left-1/2 top-0 h-full w-px bg-border/60" />
+      <span className={`relative z-10 ${labelColor}`}>{fmtM(net)}</span>
     </div>
   );
 }
