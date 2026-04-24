@@ -126,6 +126,8 @@ export interface MasterAlphaOutput {
   spot:                number;
   daysTo3rdFriday:     number;
   is3rdThursday:       boolean;
+  isThirdFriday:       boolean;       // today IS the monthly 3rd-Friday OPEX (distinct from weekly OPEX)
+  isWeeklyOpex:        boolean;       // today is Friday AND today is NOT the 3rd Friday
   isTripleWitching:    boolean;
   settlementType:      "AM_SOQ" | "PM";
 
@@ -216,7 +218,13 @@ function getCalendarContext(d: Date) {
   const isTripleWitching = [2, 5, 8, 11].includes(target.month);
   // 3rd-Thursday: today is Thursday AND expiry is tomorrow
   const is3rdThursday = weekday === 4 && daysAway === 1;
-  return { daysAway, isTripleWitching, is3rdThursday, targetMonth: target.month };
+  // 3rd-Friday: today IS the monthly OPEX day (daysAway === 0 on a Friday).
+  // Distinct from weekly OPEX — 3rd-Friday brings monthly/quarterly SPX SOQ settlement,
+  // massive gamma unwind, and the paper's entire overnight-drift regression is anchored
+  // to 3rd-Thu close → 3rd-Fri AM settle. Weekly OPEX is every other Friday (1st/2nd/4th/5th).
+  const isThirdFriday = weekday === 5 && daysAway === 0;
+  const isWeeklyOpex  = weekday === 5 && !isThirdFriday;
+  return { daysAway, isTripleWitching, is3rdThursday, isThirdFriday, isWeeklyOpex, targetMonth: target.month };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -616,7 +624,7 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
   const h = horizon.horizon;
 
   const now = new Date();
-  const { daysAway, isTripleWitching, is3rdThursday } = getCalendarContext(now);
+  const { daysAway, isTripleWitching, is3rdThursday, isThirdFriday, isWeeklyOpex } = getCalendarContext(now);
   const riskBudget = riskBudget_M ?? 1.0;
 
   // --- Pull dealer net-greeks directly from the audit block (source of truth) ---
@@ -680,6 +688,8 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
     spot: r2(spot),
     daysTo3rdFriday: daysAway,
     is3rdThursday,
+    isThirdFriday,
+    isWeeklyOpex,
     isTripleWitching,
     masterFormula: "r̂_final = TW · regimeMult · Σ wᵢ · rᵢ",
     tripleWitchingMultiplier: (isTripleWitching && daysAway <= 1) ? TW_MULT : 1.0,
@@ -741,6 +751,8 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
     spot,
     daysTo3rdFriday: daysAway,
     is3rdThursday,
+    isThirdFriday,
+    isWeeklyOpex,
     isTripleWitching,
     settlementType: "AM_SOQ",
     components,
