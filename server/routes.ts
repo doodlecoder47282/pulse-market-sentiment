@@ -43,6 +43,16 @@ import { buildChainAudit } from "./chainAudit";
 import { buildHeatseeker } from "./heatseeker";
 import { masterAlphaRoute } from "./masterAlpha";
 import {
+  buildCosmosSnapshot,
+  fetchNoaaKp,
+  taxonomyLiveStates,
+  TAXONOMY,
+  BOOKS,
+  ACADEMIC_PAPERS,
+  EDGE_RULES,
+  HONEST_EDGE_ASSESSMENT,
+} from "./cosmos";
+import {
   startOdteTracker, getOdteSnapshot, armPosition, disarmPosition,
   getSparkline, getTracked, getContractChart,
 } from "./odteTracker";
@@ -1709,6 +1719,37 @@ Sift this feed AND search the web for any critical developments in geopolitics, 
       res.json(getContractChart(key, bucketMs));
     } catch (e: any) {
       res.status(500).json({ error: "chart_failed", message: e?.message });
+    }
+  });
+
+  // ─── Cosmos: astrology/astronomy intel brief + live engine ────────────────
+  // GET /api/cosmos — unified snapshot (positions, aspects, phase, natal
+  // transits, daily brief) + NOAA Kp live + taxonomy + live-lit taxonomy states
+  // + books + academic papers + edge rules. All pure/deterministic except Kp.
+  app.get("/api/cosmos", async (req, res) => {
+    try {
+      const dateParam = typeof req.query.date === "string" ? new Date(req.query.date) : new Date();
+      const date = isNaN(dateParam.getTime()) ? new Date() : dateParam;
+      const snapshot = buildCosmosSnapshot(date);
+      let kp = null as Awaited<ReturnType<typeof fetchNoaaKp>> | null;
+      try {
+        kp = await fetchNoaaKp();
+      } catch (e) {
+        kp = null;
+      }
+      const live = taxonomyLiveStates(snapshot, kp);
+      res.json({
+        snapshot,
+        kp,
+        taxonomy: TAXONOMY,
+        taxonomyLive: live,
+        books: BOOKS,
+        papers: ACADEMIC_PAPERS,
+        rules: EDGE_RULES,
+        honestEdge: HONEST_EDGE_ASSESSMENT,
+      });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
     }
   });
 

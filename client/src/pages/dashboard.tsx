@@ -53,6 +53,7 @@ const Heatseeker = lazy(() => import("@/components/Heatseeker"));
 const ChartPanelEager = lazy(() => import("@/components/ChartPanel"));
 const TradeDeskPanel = lazy(() => import("@/components/TradeDesk"));
 const RegimePanelLazy = lazy(() => import("@/components/RegimePanel"));
+const CosmosPanelLazy = lazy(() => import("@/components/CosmosPanel"));
 
 // ── Market status helpers ──────────────────────────────────────────────────
 type MarketStatus = "OPEN" | "PRE-MARKET" | "AFTER-HOURS" | "CLOSED";
@@ -387,6 +388,13 @@ export default function Dashboard() {
               </TabsTrigger>
               <TabsTrigger value="tradedesk" data-testid="tab-tradedesk" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Trade Desk</TabsTrigger>
               <TabsTrigger value="regime" data-testid="tab-regime" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Regime</TabsTrigger>
+              <TabsTrigger
+                value="cosmos"
+                data-testid="tab-cosmos"
+                className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-amber-600/30 data-[state=active]:via-indigo-500/20 data-[state=active]:to-emerald-500/25 data-[state=active]:text-amber-100"
+              >
+                Cosmos
+              </TabsTrigger>
               <TabsTrigger value="news" data-testid="tab-news" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">News</TabsTrigger>
               <TabsTrigger value="voices" data-testid="tab-voices" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Voices</TabsTrigger>
               <TabsTrigger
@@ -440,6 +448,15 @@ export default function Dashboard() {
             <ErrorBoundary label="Regime Panel">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
                 <RegimePanelLazy />
+              </Suspense>
+            </ErrorBoundary>
+          </TabsContent>
+
+          {/* ── Cosmos tab (lazy) — astrology intel brief + live sky engine ── */}
+          <TabsContent value="cosmos" className="space-y-6">
+            <ErrorBoundary label="Cosmos Panel">
+              <Suspense fallback={<PanelSkeleton variant="chart" />}>
+                <CosmosPanelLazy />
               </Suspense>
             </ErrorBoundary>
           </TabsContent>
