@@ -272,6 +272,17 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
   const maxAbsCharm = useMemo(() => Math.max(...strikes.map((s) => Math.abs(s.netCharm)), 1), [strikes]);
 
   // Strikes sorted descending so higher strikes appear at top of heatmap (price chart convention).
+  // The single ATM strike — closest row to spot. Used for spot-row highlight
+  // across every ticker (SPX has 5-wide strikes, TSLA/AAPL have 1-wide, so a
+  // fixed dollar window over-matches on dollar-wide chains).
+  const atmStrike = useMemo(() => {
+    if (strikes.length === 0) return spot;
+    return strikes.reduce((best, s) =>
+      Math.abs(s.strike - spot) < Math.abs(best - spot) ? s.strike : best,
+      strikes[0].strike,
+    );
+  }, [strikes, spot]);
+
   // Optionally drop rows with zero session volume on both sides (no activity today).
   // We always keep the spot row + any locked-level row so the spatial reference stays intact.
   const rows = useMemo(() => {
@@ -279,11 +290,11 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
     if (!hideZeroVol) return base;
     return base.filter((s) => {
       const hasVolume = (s.callVol ?? 0) + (s.putVol ?? 0) > 0 || (s.totalVol ?? 0) > 0;
-      const isSpotRow = Math.abs(s.strike - spot) < 2.5;
+      const isSpotRow = s.strike === atmStrike;
       const isLockedLevel = LOCKED_LEVELS.some((l) => Math.abs(l.value - s.strike) < 2.5);
       return hasVolume || isSpotRow || isLockedLevel;
     });
-  }, [strikes, hideZeroVol, spot]);
+  }, [strikes, hideZeroVol, atmStrike]);
 
   const hiddenCount = strikes.length - rows.length;
 
@@ -404,7 +415,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                 <div className="text-right">OI · Vol</div>
               </div>
               {rows.map((s) => {
-                const isSpotRow = Math.abs(s.strike - spot) < 2.5;
+                const isSpotRow = s.strike === atmStrike;
                 const lockedHit = visibleLevels.find((l) => Math.abs(l.value - s.strike) < 2.5);
                 const isSelectedRow = selected != null && selected.strike === s.strike;
                 // Default drill-down side: above spot → call, below spot → put
