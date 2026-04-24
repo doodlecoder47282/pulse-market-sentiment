@@ -132,8 +132,13 @@ export function buildExposureProfile(
   // Zero-crossings for GEX / Charm / VEX.
   const zeroGammaSpot = findZeroCrossing(curve.map((p) => ({ x: p.spot, y: p.gex })));
   const charmPts = curve.map((p) => ({ x: p.spot, y: p.charm }));
-  const zeroCharmSpot = findZeroCrossing(charmPts);
+  // Primary charmZero must be the dealer-relevant root — the crossing NEAREST to spot,
+  // restricted to ±1.5% band. Far-out crossings at the wings (±10%) are numerical artifacts,
+  // not actionable drift targets. Full cluster (zeroCharmSpots) keeps every crossing for Selz #1.
   const zeroCharmSpots = findAllZeroCrossings(charmPts);
+  const zeroCharmSpot = pickNearestWithin(zeroCharmSpots, spot, 0.015)
+                     ?? pickNearestWithin(zeroCharmSpots, spot, 0.03)
+                     ?? null;
   const zeroVannaSpot = findZeroCrossing(curve.map((p) => ({ x: p.spot, y: p.vex })));
 
   // Charm slope at current spot — 1st-order finite difference on the curve window around spot.
@@ -187,6 +192,24 @@ function findZeroCrossing(points: { x: number; y: number }[]): number | null {
     }
   }
   return null;
+}
+
+// Pick the root nearest to spot within a percentage band (e.g. 0.015 = ±1.5%).
+// Returns null if no root lies inside the band. Used for charmZero to restrict
+// selection to the dealer-hedging-relevant region around current spot.
+function pickNearestWithin(roots: number[], spot: number, bandPct: number): number | null {
+  if (!roots.length || !(spot > 0)) return null;
+  const maxDist = spot * bandPct;
+  let best: number | null = null;
+  let bestDist = Infinity;
+  for (const r of roots) {
+    const d = Math.abs(r - spot);
+    if (d <= maxDist && d < bestDist) {
+      best = r;
+      bestDist = d;
+    }
+  }
+  return best;
 }
 
 // All sign-flips along the curve — used for Selz #1 charm-zero CLUSTER.
