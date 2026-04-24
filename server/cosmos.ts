@@ -1146,6 +1146,334 @@ function buildDailyBriefMarkdown(ctx: {
   return lines.join("\n");
 }
 
+// ─── Forward-looking weekly + monthly outlook builders ─────────────────────
+// Scan ahead day-by-day through the geocentric engine; collect moon-phase
+// changes, Mercury station flips, sign ingresses, aspect peaks, Bradley
+// zone changes. All deterministic — zero network, zero LLM required.
+
+export interface OutlookEvent {
+  date: string;            // ISO
+  dayOffset: number;       // 0 = today, 1 = tomorrow, ...
+  type:
+    | "new_moon"
+    | "full_moon"
+    | "first_quarter"
+    | "last_quarter"
+    | "mercury_rx_start"
+    | "mercury_rx_end"
+    | "planet_rx_start"
+    | "planet_rx_end"
+    | "ingress"
+    | "bradley_high"
+    | "bradley_low"
+    | "aspect_peak"
+    | "void_of_course";
+  headline: string;
+  detail: string;
+  severity: "high" | "medium" | "low";
+  bias: "bullish" | "bearish" | "neutral" | "volatile";
+}
+
+function scanForwardEvents(startDate: Date, days: number): OutlookEvent[] {
+  const events: OutlookEvent[] = [];
+  const phaseNames: Record<string, OutlookEvent["type"]> = {
+    "New Moon": "new_moon",
+    "Full Moon": "full_moon",
+    "First Quarter": "first_quarter",
+    "Last Quarter": "last_quarter",
+  };
+  // Previous day state — for edge detection
+  let prevPhase = lunarPhase(startDate).name;
+  let prevBradZone = bradleySiderograph(startDate).zone;
+  const prevRx: Record<string, boolean> = {};
+  const startPositions = planetPositions(startDate);
+  for (const p of startPositions) prevRx[p.id] = p.retrograde;
+  const prevSigns: Record<string, string> = {};
+  for (const p of startPositions) prevSigns[p.id] = p.sign;
+
+  for (let d = 1; d <= days; d++) {
+    const probe = new Date(startDate.getTime() + d * 86_400_000);
+    const iso = probe.toISOString();
+    const phase = lunarPhase(probe);
+    const brad = bradleySiderograph(probe);
+    const positions = planetPositions(probe);
+    const byId = Object.fromEntries(positions.map((p) => [p.id, p]));
+
+    // Moon phase transitions
+    if (phase.name !== prevPhase && phaseNames[phase.name]) {
+      const severity: OutlookEvent["severity"] =
+        phase.name === "Full Moon" || phase.name === "New Moon" ? "high" : "low";
+      const bias: OutlookEvent["bias"] =
+        phase.name === "Full Moon" ? "bearish"
+        : phase.name === "New Moon" ? "bullish"
+        : "neutral";
+      const detail =
+        phase.name === "Full Moon" ? "Reversal-risk peak. U.Mich study: returns statistically lower in Full Moon window globally. Fade conviction."
+        : phase.name === "New Moon" ? "Trend-initiation window. 15-day lunar effect peaks here. Trust breakouts more than usual for next 3 trading days."
+        : phase.name === "First Quarter" ? "Mid-cycle — typically neutral. Use as a pulse check, not a signal."
+        : "Approaching New Moon. Begin trimming longs if SAD-season alignment.";
+      events.push({
+        date: iso,
+        dayOffset: d,
+        type: phaseNames[phase.name],
+        headline: `${phase.name} in ${byId.moon.sign}`,
+        detail,
+        severity,
+        bias,
+      });
+    }
+
+    // Bradley zone changes
+    if (brad.zone !== prevBradZone) {
+      if (brad.zone === "high") {
+        events.push({
+          date: iso,
+          dayOffset: d,
+          type: "bradley_high",
+          headline: `Bradley siderograph enters HIGH zone (${brad.value.toFixed(2)})`,
+          detail: "Risk-on exhaustion. Tighten stops on longs, watch for distribution. Not a top-tick signal — a warning zone.",
+          severity: "medium",
+          bias: "bearish",
+        });
+      } else if (brad.zone === "low") {
+        events.push({
+          date: iso,
+          dayOffset: d,
+          type: "bradley_low",
+          headline: `Bradley siderograph enters LOW zone (${brad.value.toFixed(2)})`,
+          detail: "Risk-off exhaustion. Contrarian longs favored on technical confirmation. Historical inflection region.",
+          severity: "medium",
+          bias: "bullish",
+        });
+      }
+    }
+
+    // Planet retrograde flips
+    for (const p of positions) {
+      if (p.retrograde !== prevRx[p.id]) {
+        const isMerc = p.id === "mercury";
+        const nowRx = p.retrograde;
+        const baseType: OutlookEvent["type"] =
+          isMerc
+            ? (nowRx ? "mercury_rx_start" : "mercury_rx_end")
+            : (nowRx ? "planet_rx_start" : "planet_rx_end");
+        const detail = isMerc
+          ? (nowRx
+              ? "Mercury stations retrograde. Station date itself is the high-probability reversal window (±3 days). Avoid initiating new tech/comm positions until direct."
+              : "Mercury stations direct. Reversal-watch window closes. Tech/NASDAQ often reverse trend around station dates.")
+          : (nowRx
+              ? `${p.label} stations retrograde in ${p.sign}. Watch sector associations.`
+              : `${p.label} stations direct in ${p.sign}. End of reversal-watch window.`);
+        events.push({
+          date: iso,
+          dayOffset: d,
+          type: baseType,
+          headline: `${p.glyph} ${p.label} stations ${nowRx ? "RETROGRADE" : "DIRECT"}`,
+          detail,
+          severity: isMerc ? "high" : "medium",
+          bias: "volatile",
+        });
+      }
+      prevRx[p.id] = p.retrograde;
+    }
+
+    // Major sign ingresses (only for slower bodies — sun, mars, jupiter, saturn, outer)
+    const slowBodies: PlanetId[] = ["sun", "mars", "jupiter", "saturn", "uranus", "neptune", "pluto"];
+    for (const id of slowBodies) {
+      const p = byId[id];
+      if (!p) continue;
+      if (p.sign !== prevSigns[id]) {
+        events.push({
+          date: iso,
+          dayOffset: d,
+          type: "ingress",
+          headline: `${p.glyph} ${p.label} enters ${p.signGlyph} ${p.sign}`,
+          detail:
+            id === "sun" ? `Solar ingress into ${p.sign} shifts seasonal tone.`
+            : id === "jupiter" ? `Jupiter ingress — year-long sector/theme shift. Growth-sector rotation signal.`
+            : id === "saturn" ? `Saturn ingress — multi-year structural shift. Value/utility-sector implications.`
+            : `${p.label} ingress to ${p.sign}. Background regime shift.`,
+          severity: id === "sun" ? "low" : id === "jupiter" || id === "saturn" ? "high" : "medium",
+          bias: "neutral",
+        });
+        prevSigns[id] = p.sign;
+      }
+    }
+
+    prevPhase = phase.name;
+    prevBradZone = brad.zone;
+  }
+
+  return events;
+}
+
+export interface Outlook {
+  horizon: "weekly" | "monthly";
+  startDate: string;
+  endDate: string;
+  events: OutlookEvent[];
+  netBias: "bullish" | "bearish" | "mixed" | "neutral";
+  keyDates: string[];           // ISO dates of high-severity events
+  markdown: string;
+}
+
+function summarizeBias(events: OutlookEvent[]): Outlook["netBias"] {
+  let bull = 0;
+  let bear = 0;
+  for (const e of events) {
+    const w = e.severity === "high" ? 3 : e.severity === "medium" ? 2 : 1;
+    if (e.bias === "bullish") bull += w;
+    else if (e.bias === "bearish") bear += w;
+  }
+  if (bull === 0 && bear === 0) return "neutral";
+  if (bull > bear * 1.5) return "bullish";
+  if (bear > bull * 1.5) return "bearish";
+  return "mixed";
+}
+
+function buildOutlookMarkdown(
+  horizon: "weekly" | "monthly",
+  startDate: Date,
+  endDate: Date,
+  events: OutlookEvent[],
+  netBias: Outlook["netBias"],
+  snapshot: CosmosSnapshot,
+): string {
+  const fmtDate = (d: Date) => d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  const fmtRange = `${fmtDate(startDate)} → ${fmtDate(endDate)}`;
+  const label = horizon === "weekly" ? "7-DAY OUTLOOK" : "30-DAY OUTLOOK";
+  const byId = Object.fromEntries(snapshot.positions.map((p) => [p.id, p]));
+
+  const biasLine =
+    netBias === "bullish" ? "Net astro bias: **BULLISH** — supportive lunar/bradley alignment. Use confluence with technicals."
+    : netBias === "bearish" ? "Net astro bias: **BEARISH** — cautionary lunar/bradley alignment. Favor defensive posture."
+    : netBias === "mixed" ? "Net astro bias: **MIXED** — offsetting bullish/bearish pulls. Range-bound probability elevated."
+    : "Net astro bias: **NEUTRAL** — no strong directional astro signals. Trade your system.";
+
+  const openingContext = horizon === "weekly"
+    ? `Week opens with Moon in ${byId.moon.sign}, ${snapshot.lunarPhase.name} (${(snapshot.lunarPhase.illumination * 100).toFixed(0)}% illum). Sun in ${byId.sun.sign}. Bradley ${snapshot.bradley.value.toFixed(2)} ${snapshot.bradley.trend}. ${byId.mercury.retrograde ? "Mercury RETROGRADE — reversal-watch active." : "Mercury direct."}`
+    : `Month opens with Sun in ${byId.sun.sign}, Moon in ${byId.moon.sign} (${snapshot.lunarPhase.name}). Jupiter in ${byId.jupiter.sign}, Saturn in ${byId.saturn.sign} — the two slow outer anchors frame the macro regime. Bradley ${snapshot.bradley.value.toFixed(2)} ${snapshot.bradley.trend}.`;
+
+  const lines: string[] = [
+    `## ${label} — ${fmtRange}`,
+    ``,
+    biasLine,
+    ``,
+    openingContext,
+    ``,
+  ];
+
+  // Group events by day for scannability
+  const highEvents = events.filter((e) => e.severity === "high");
+  const medEvents = events.filter((e) => e.severity === "medium");
+
+  if (highEvents.length > 0) {
+    lines.push(`### KEY DATES (HIGH IMPACT)`);
+    for (const e of highEvents) {
+      const dstr = new Date(e.date).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+      const biasEmoji = e.bias === "bullish" ? "↑" : e.bias === "bearish" ? "↓" : e.bias === "volatile" ? "↕" : "•";
+      lines.push(`- **${dstr}** ${biasEmoji} **${e.headline}** — ${e.detail}`);
+    }
+    lines.push(``);
+  }
+
+  if (medEvents.length > 0) {
+    lines.push(`### SECONDARY SIGNALS`);
+    for (const e of medEvents) {
+      const dstr = new Date(e.date).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+      const biasEmoji = e.bias === "bullish" ? "↑" : e.bias === "bearish" ? "↓" : e.bias === "volatile" ? "↕" : "•";
+      lines.push(`- ${dstr} ${biasEmoji} ${e.headline} — ${e.detail}`);
+    }
+    lines.push(``);
+  }
+
+  if (events.length === 0) {
+    lines.push(`### EVENT CALENDAR`);
+    lines.push(`No major astro inflections in this window. Baseline regime — trade your system, no cosmic overrides.`);
+    lines.push(``);
+  }
+
+  // Trading disposition
+  lines.push(`### TRADING DISPOSITION`);
+  if (horizon === "weekly") {
+    if (netBias === "bullish") {
+      lines.push(`- Size longs normally on technical confirmation. Bradley + lunar alignment supportive.`);
+      lines.push(`- Use key dates above as entry windows, not exit triggers.`);
+    } else if (netBias === "bearish") {
+      lines.push(`- Tighten stops on longs. Consider put spreads around key dates (Full Moon / Bradley high).`);
+      lines.push(`- Fade rips into resistance if multiple bearish events cluster within 3 trading days.`);
+    } else if (netBias === "mixed") {
+      lines.push(`- Range-bound probability high. Iron condors / defined-risk neutral strategies favored.`);
+      lines.push(`- Wait for technical confirmation before committing direction.`);
+    } else {
+      lines.push(`- No astro override. Trade your system with normal sizing.`);
+    }
+  } else {
+    if (netBias === "bullish") {
+      lines.push(`- Swing-long bias: scale-in on pullbacks to technical support.`);
+      lines.push(`- Sector rotation: watch for themes suggested by any Jupiter/Saturn ingresses above.`);
+    } else if (netBias === "bearish") {
+      lines.push(`- Reduce gross exposure. Hedge via longer-dated puts (30-60 DTE).`);
+      lines.push(`- Rotate toward defensive sectors (XLU, XLP, cash).`);
+    } else if (netBias === "mixed") {
+      lines.push(`- Choppy macro window. Reduce position size by 25-33%. Shorter swing holding periods.`);
+    } else {
+      lines.push(`- Macro-neutral month. Focus on sector/stock alpha rather than beta.`);
+    }
+  }
+  lines.push(``);
+  lines.push(`---`);
+  lines.push(`*Generated from VSOP87/Meeus forward projection. Events filtered for trading relevance. Confluence with technical + fundamentals required — not a standalone trade signal.*`);
+
+  return lines.join("\n");
+}
+
+export function buildWeeklyOutlook(date: Date = new Date()): Outlook {
+  const events = scanForwardEvents(date, 7);
+  const endDate = new Date(date.getTime() + 7 * 86_400_000);
+  const netBias = summarizeBias(events);
+  const snapshot = buildCosmosSnapshot(date);
+  const keyDates = events.filter((e) => e.severity === "high").map((e) => e.date);
+  return {
+    horizon: "weekly",
+    startDate: date.toISOString(),
+    endDate: endDate.toISOString(),
+    events,
+    netBias,
+    keyDates,
+    markdown: buildOutlookMarkdown("weekly", date, endDate, events, netBias, snapshot),
+  };
+}
+
+export function buildMonthlyOutlook(date: Date = new Date()): Outlook {
+  const events = scanForwardEvents(date, 30);
+  const endDate = new Date(date.getTime() + 30 * 86_400_000);
+  const netBias = summarizeBias(events);
+  const snapshot = buildCosmosSnapshot(date);
+  const keyDates = events.filter((e) => e.severity === "high").map((e) => e.date);
+  return {
+    horizon: "monthly",
+    startDate: date.toISOString(),
+    endDate: endDate.toISOString(),
+    events,
+    netBias,
+    keyDates,
+    markdown: buildOutlookMarkdown("monthly", date, endDate, events, netBias, snapshot),
+  };
+}
+
+// System prompt shipped to LLM enhancers when keys are present
+export const OUTLOOK_SYSTEM_PROMPT = `You are a senior market astrologer + macro strategist writing for a sophisticated trader. You receive a deterministic astro outlook covering either the next 7 days (weekly) or next 30 days (monthly), including every major astro event in the window.
+
+Your job:
+1. Keep the factual astro dates + events EXACTLY as given — never invent or omit.
+2. Translate the raw events into a cohesive narrative (2-4 paragraphs) in the voice of a veteran trader, not a mystic. Reference the academic backing where relevant (Krivelyova/Robotti Fed Atlanta geomagnetic; Yuan/Zheng/Zhu U.Mich lunar; Kamstra SAD).
+3. Weight your confidence to the academically-backed signals (lunar, geomagnetic, SAD) and treat Bradley/planetary stations as secondary confluence.
+4. End with a concrete trade playbook for the window (sizing, sector tilts, hedging, specific setups to watch).
+5. Tone: direct, zero woo-woo, zero hedging filler. Use markdown. Keep it tight — no longer than 400 words.
+
+Never give investment advice or guarantee returns. Frame everything as probabilistic tide-chart information.`;
+
 // ─── NOAA Kp-index (geomagnetic storm) fetcher ──────────────────────────────
 // Pulls from NOAA SWPC free endpoints (no key). Cached 60min.
 // Kp 0-4 = quiet, 5 = G1 storm, 6 = G2, 7 = G3, 8 = G4, 9 = G5.

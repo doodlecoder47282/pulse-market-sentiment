@@ -51,6 +51,9 @@ import {
   ACADEMIC_PAPERS,
   EDGE_RULES,
   HONEST_EDGE_ASSESSMENT,
+  buildWeeklyOutlook,
+  buildMonthlyOutlook,
+  OUTLOOK_SYSTEM_PROMPT,
 } from "./cosmos";
 import {
   startOdteTracker, getOdteSnapshot, armPosition, disarmPosition,
@@ -1723,6 +1726,77 @@ Sift this feed AND search the web for any critical developments in geopolitics, 
   });
 
   // ─── Cosmos: astrology/astronomy intel brief + live engine ────────────────
+  // GET /api/cosmos/outlook — weekly (7d) + monthly (30d) forward astro
+  // outlook. Deterministic baseline always returned. If ANTHROPIC_API_KEY /
+  // OPENAI_API_KEY are set, LLM-enhanced narrative returned alongside.
+  app.get("/api/cosmos/outlook", async (req, res) => {
+    try {
+      const dateParam = typeof req.query.date === "string" ? new Date(req.query.date) : new Date();
+      const date = isNaN(dateParam.getTime()) ? new Date() : dateParam;
+      const weekly = buildWeeklyOutlook(date);
+      const monthly = buildMonthlyOutlook(date);
+
+      const hasAnthropicKey = !!process.env.ANTHROPIC_API_KEY;
+      const hasOpenAiKey = !!process.env.OPENAI_API_KEY;
+
+      async function enhanceWithClaude(markdown: string): Promise<string> {
+        if (!hasAnthropicKey) throw new Error("ANTHROPIC_API_KEY not configured");
+        const anthropic = new Anthropic();
+        const msg = await anthropic.messages.create({
+          model: "claude_sonnet_4_6",
+          max_tokens: 1800,
+          system: OUTLOOK_SYSTEM_PROMPT,
+          messages: [{ role: "user", content: markdown }],
+        });
+        const block = msg.content.find((b) => b.type === "text");
+        return (block as any)?.text ?? "";
+      }
+
+      async function enhanceWithGpt(markdown: string): Promise<string> {
+        if (!hasOpenAiKey) throw new Error("OPENAI_API_KEY not configured");
+        const openai = new OpenAI();
+        const r: any = await (openai.responses as any).create({
+          model: "gpt_5_1",
+          input: `${OUTLOOK_SYSTEM_PROMPT}\n\n---\n\n${markdown}`,
+        });
+        return r.output_text ?? "";
+      }
+
+      const [wClaude, wGpt, mClaude, mGpt] = await Promise.allSettled([
+        enhanceWithClaude(weekly.markdown),
+        enhanceWithGpt(weekly.markdown),
+        enhanceWithClaude(monthly.markdown),
+        enhanceWithGpt(monthly.markdown),
+      ]);
+
+      const pick = (r: PromiseSettledResult<string>): string | null =>
+        r.status === "fulfilled" ? r.value : null;
+      const err = (r: PromiseSettledResult<string>): string | null =>
+        r.status === "rejected" ? String((r as any).reason?.message ?? r.reason) : null;
+
+      res.json({
+        weekly: {
+          ...weekly,
+          claude: pick(wClaude),
+          gpt: pick(wGpt),
+          errors: { claude: err(wClaude), gpt: err(wGpt) },
+        },
+        monthly: {
+          ...monthly,
+          claude: pick(mClaude),
+          gpt: pick(mGpt),
+          errors: { claude: err(mClaude), gpt: err(mGpt) },
+        },
+        meta: {
+          llmEnhancersEnabled: { claude: hasAnthropicKey, gpt: hasOpenAiKey },
+          generatedAt: new Date().toISOString(),
+        },
+      });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
   // GET /api/cosmos — unified snapshot (positions, aspects, phase, natal
   // transits, daily brief) + NOAA Kp live + taxonomy + live-lit taxonomy states
   // + books + academic papers + edge rules. All pure/deterministic except Kp.

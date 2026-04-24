@@ -62,6 +62,38 @@ type CosmosResponse = {
 
 type SubTab = "live" | "taxonomy" | "academic" | "edge" | "books";
 
+type OutlookEvent = {
+  date: string;
+  dayOffset: number;
+  type: string;
+  headline: string;
+  detail: string;
+  severity: "high" | "medium" | "low";
+  bias: "bullish" | "bearish" | "neutral" | "volatile";
+};
+
+type OutlookHorizon = {
+  horizon: "weekly" | "monthly";
+  startDate: string;
+  endDate: string;
+  events: OutlookEvent[];
+  netBias: "bullish" | "bearish" | "mixed" | "neutral";
+  keyDates: string[];
+  markdown: string;
+  claude: string | null;
+  gpt: string | null;
+  errors: { claude: string | null; gpt: string | null };
+};
+
+type OutlookResponse = {
+  weekly: OutlookHorizon;
+  monthly: OutlookHorizon;
+  meta: {
+    llmEnhancersEnabled: { claude: boolean; gpt: boolean };
+    generatedAt: string;
+  };
+};
+
 // ─── Palette tokens (match intel brief HTML) ────────────────────────────────
 const ACCENT_GOLD = "#c8a96e";
 const ACCENT_BLUE = "#7eb8d4";
@@ -295,6 +327,224 @@ export default function CosmosPanel() {
 }
 
 // ─── LIVE SKY — real-time planetary engine ──────────────────────────────────
+// ─── AI OUTLOOK — weekly + monthly forward astro narrative ────────────────
+function OutlookPanel() {
+  const { data, isLoading, error } = useQuery<OutlookResponse>({
+    queryKey: ["/api/cosmos/outlook"],
+    queryFn: async () => {
+      const r = await apiRequest("GET", "/api/cosmos/outlook");
+      return r.json();
+    },
+    staleTime: 60 * 60 * 1000, // 1h — astro events don't move fast
+  });
+  const [horizon, setHorizon] = useState<"weekly" | "monthly">("weekly");
+  const [source, setSource] = useState<"deterministic" | "claude" | "gpt">("deterministic");
+
+  if (isLoading) {
+    return (
+      <Card className="cm-card">
+        <CardContent className="p-5">
+          <Skeleton className="h-5 w-40 mb-3" />
+          <Skeleton className="h-3 w-full mb-2" />
+          <Skeleton className="h-3 w-5/6 mb-2" />
+          <Skeleton className="h-3 w-4/6" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <Card className="cm-card">
+        <CardContent className="p-5 text-sm" style={{ color: ACCENT_DANGER }}>
+          Could not load outlook. {(error as Error | undefined)?.message ?? ""}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const active = data[horizon];
+  const biasColor =
+    active.netBias === "bullish" ? ACCENT_GREEN
+    : active.netBias === "bearish" ? ACCENT_DANGER
+    : active.netBias === "mixed" ? ACCENT_GOLD
+    : MUTED;
+
+  // Pick body content based on source toggle
+  const bodyText =
+    source === "claude" ? active.claude
+    : source === "gpt" ? active.gpt
+    : active.markdown;
+
+  const claudeAvailable = !!active.claude;
+  const gptAvailable = !!active.gpt;
+
+  const startFmt = new Date(active.startDate).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const endFmt = new Date(active.endDate).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+  const highCount = active.events.filter((e) => e.severity === "high").length;
+  const medCount = active.events.filter((e) => e.severity === "medium").length;
+
+  return (
+    <Card className="cm-card" data-testid="cosmos-outlook-panel" style={{ borderColor: biasColor, borderWidth: 1, borderStyle: "solid", boxShadow: `0 0 24px ${biasColor}22` }}>
+      <CardContent className="p-0">
+        {/* Header bar */}
+        <div className="flex items-center justify-between gap-3 px-5 py-3 border-b flex-wrap" style={{ borderColor: BORDER_COL, background: BG3 }}>
+          <div className="flex items-center gap-3 flex-wrap">
+            <div style={{ fontFamily: "monospace", fontSize: 11, color: ACCENT_GOLD, letterSpacing: "0.08em" }}>AI MARKET OUTLOOK</div>
+            <div style={{ fontFamily: "monospace", fontSize: 10, color: MUTED }}>{startFmt} → {endFmt}</div>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              data-testid="outlook-horizon-weekly"
+              onClick={() => setHorizon("weekly")}
+              style={{
+                padding: "4px 12px", fontSize: 10, fontFamily: "monospace", letterSpacing: "0.06em",
+                background: horizon === "weekly" ? `${ACCENT_GOLD}22` : "transparent",
+                color: horizon === "weekly" ? ACCENT_GOLD : MUTED,
+                border: `1px solid ${horizon === "weekly" ? ACCENT_GOLD : BORDER_COL}`,
+                borderRadius: 2, cursor: "pointer",
+              }}
+            >
+              WEEKLY
+            </button>
+            <button
+              data-testid="outlook-horizon-monthly"
+              onClick={() => setHorizon("monthly")}
+              style={{
+                padding: "4px 12px", fontSize: 10, fontFamily: "monospace", letterSpacing: "0.06em",
+                background: horizon === "monthly" ? `${ACCENT_GOLD}22` : "transparent",
+                color: horizon === "monthly" ? ACCENT_GOLD : MUTED,
+                border: `1px solid ${horizon === "monthly" ? ACCENT_GOLD : BORDER_COL}`,
+                borderRadius: 2, cursor: "pointer",
+              }}
+            >
+              MONTHLY
+            </button>
+          </div>
+        </div>
+
+        {/* Bias strip + stats */}
+        <div className="flex items-center justify-between gap-4 px-5 py-3 border-b flex-wrap" style={{ borderColor: BORDER_COL }}>
+          <div className="flex items-center gap-6 flex-wrap">
+            <div>
+              <div style={{ fontFamily: "monospace", fontSize: 9, color: MUTED, letterSpacing: "0.08em" }}>NET BIAS</div>
+              <div style={{ fontFamily: "monospace", fontSize: 15, color: biasColor, fontWeight: "bold", letterSpacing: "0.04em" }}>
+                {active.netBias.toUpperCase()}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontFamily: "monospace", fontSize: 9, color: MUTED, letterSpacing: "0.08em" }}>KEY DATES</div>
+              <div style={{ fontFamily: "monospace", fontSize: 15, color: ACCENT_GOLD, fontWeight: "bold" }}>{highCount}</div>
+            </div>
+            <div>
+              <div style={{ fontFamily: "monospace", fontSize: 9, color: MUTED, letterSpacing: "0.08em" }}>SECONDARY</div>
+              <div style={{ fontFamily: "monospace", fontSize: 15, color: ACCENT_BLUE, fontWeight: "bold" }}>{medCount}</div>
+            </div>
+          </div>
+          {/* Source toggle */}
+          <div className="flex items-center gap-1">
+            <button
+              data-testid="outlook-source-deterministic"
+              onClick={() => setSource("deterministic")}
+              title="Rule-based astro calculation"
+              style={{
+                padding: "3px 10px", fontSize: 9, fontFamily: "monospace", letterSpacing: "0.06em",
+                background: source === "deterministic" ? `${ACCENT_GOLD}22` : "transparent",
+                color: source === "deterministic" ? ACCENT_GOLD : MUTED,
+                border: `1px solid ${source === "deterministic" ? ACCENT_GOLD : BORDER_COL}`,
+                borderRadius: 2, cursor: "pointer",
+              }}
+            >
+              ENGINE
+            </button>
+            <button
+              data-testid="outlook-source-claude"
+              onClick={() => claudeAvailable && setSource("claude")}
+              disabled={!claudeAvailable}
+              title={claudeAvailable ? "Claude Sonnet narrative" : "ANTHROPIC_API_KEY not configured"}
+              style={{
+                padding: "3px 10px", fontSize: 9, fontFamily: "monospace", letterSpacing: "0.06em",
+                background: source === "claude" ? `${ACCENT_GREEN}22` : "transparent",
+                color: !claudeAvailable ? "#444" : source === "claude" ? ACCENT_GREEN : MUTED,
+                border: `1px solid ${source === "claude" ? ACCENT_GREEN : BORDER_COL}`,
+                borderRadius: 2, cursor: claudeAvailable ? "pointer" : "not-allowed",
+                opacity: claudeAvailable ? 1 : 0.4,
+              }}
+            >
+              CLAUDE
+            </button>
+            <button
+              data-testid="outlook-source-gpt"
+              onClick={() => gptAvailable && setSource("gpt")}
+              disabled={!gptAvailable}
+              title={gptAvailable ? "GPT-5 narrative" : "OPENAI_API_KEY not configured"}
+              style={{
+                padding: "3px 10px", fontSize: 9, fontFamily: "monospace", letterSpacing: "0.06em",
+                background: source === "gpt" ? `${ACCENT_BLUE}22` : "transparent",
+                color: !gptAvailable ? "#444" : source === "gpt" ? ACCENT_BLUE : MUTED,
+                border: `1px solid ${source === "gpt" ? ACCENT_BLUE : BORDER_COL}`,
+                borderRadius: 2, cursor: gptAvailable ? "pointer" : "not-allowed",
+                opacity: gptAvailable ? 1 : 0.4,
+              }}
+            >
+              GPT
+            </button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="px-5 py-4" style={{ fontFamily: "Georgia, serif", fontSize: 13, lineHeight: 1.65, color: TEXT, maxHeight: 380, overflowY: "auto" }}>
+          <OutlookMarkdown text={bodyText ?? active.markdown} />
+        </div>
+
+        {/* Footer note if LLM unavailable */}
+        {!claudeAvailable && !gptAvailable && (
+          <div className="px-5 py-2 border-t text-center" style={{ borderColor: BORDER_COL, fontSize: 9, fontFamily: "monospace", color: MUTED, letterSpacing: "0.06em" }}>
+            LLM NARRATIVE LOCKED — SET ANTHROPIC_API_KEY OR OPENAI_API_KEY TO ENABLE CLAUDE/GPT TABS
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Lightweight markdown-to-styled renderer for outlook body
+function OutlookMarkdown({ text }: { text: string }) {
+  const lines = text.split("\n");
+  return (
+    <div>
+      {lines.map((ln, i) => {
+        if (ln.startsWith("## ")) {
+          return <div key={i} style={{ fontFamily: "monospace", fontSize: 12, color: ACCENT_GOLD, letterSpacing: "0.08em", margin: "8px 0 6px", fontWeight: "bold" }}>{ln.slice(3)}</div>;
+        }
+        if (ln.startsWith("### ")) {
+          return <div key={i} style={{ fontFamily: "monospace", fontSize: 11, color: ACCENT_BLUE, letterSpacing: "0.06em", margin: "10px 0 4px", fontWeight: "bold" }}>{ln.slice(4)}</div>;
+        }
+        if (ln.startsWith("- ")) {
+          return <div key={i} style={{ marginLeft: 6, paddingLeft: 8, position: "relative", margin: "3px 0 3px 6px" }}><span style={{ color: ACCENT_GOLD, marginRight: 6 }}>•</span><span dangerouslySetInnerHTML={{ __html: mdInline(ln.slice(2)) }} /></div>;
+        }
+        if (ln === "---") {
+          return <hr key={i} style={{ border: "none", borderTop: `1px solid ${BORDER_COL}`, margin: "8px 0" }} />;
+        }
+        if (ln.trim() === "") {
+          return <div key={i} style={{ height: 6 }} />;
+        }
+        if (ln.startsWith("*") && ln.endsWith("*") && !ln.startsWith("**")) {
+          return <div key={i} style={{ fontSize: 11, color: MUTED, fontStyle: "italic", marginTop: 6 }}>{ln.slice(1, -1)}</div>;
+        }
+        return <div key={i} style={{ margin: "3px 0" }} dangerouslySetInnerHTML={{ __html: mdInline(ln) }} />;
+      })}
+    </div>
+  );
+}
+
+function mdInline(s: string): string {
+  // bold + escape minimal
+  const escaped = s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return escaped.replace(/\*\*([^*]+)\*\*/g, `<strong style="color: ${ACCENT_GOLD}">$1</strong>`);
+}
+
 function LiveSkyTab({ data }: { data: CosmosResponse }) {
   const s = data.snapshot;
   const kp = data.kp;
@@ -304,6 +554,9 @@ function LiveSkyTab({ data }: { data: CosmosResponse }) {
 
   return (
     <div className="space-y-6">
+      {/* AI Outlook (weekly/monthly) */}
+      <OutlookPanel />
+
       {/* Stat strip */}
       <div className="cm-stat-grid">
         <div className="cm-stat">
