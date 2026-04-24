@@ -108,24 +108,52 @@ const BORDER_COL = "rgba(42, 42, 53, 0.8)";
 // ─── Solar-system SVG diagram ───────────────────────────────────────────────
 // Real planetary longitudes placed on orbital rings. Scaled so outer planets
 // fit without distortion. Saturn+Uranus+Neptune+Pluto use log-ish compression.
-function SolarSystemDiagram({ positions }: { positions: CosmosResponse["snapshot"]["positions"] }) {
-  const size = 560;
+// Deterministic starfield — same seed every render so the stars don't jitter.
+function seededStars(count: number, w: number, h: number, seed = 1) {
+  const out: Array<{ x: number; y: number; r: number; o: number }> = [];
+  let s = seed;
+  const rand = () => {
+    s = (s * 9301 + 49297) % 233280;
+    return s / 233280;
+  };
+  for (let i = 0; i < count; i++) {
+    const r = rand();
+    out.push({
+      x: rand() * w,
+      y: rand() * h,
+      r: r < 0.85 ? 0.4 + rand() * 0.6 : 0.9 + rand() * 1.1,
+      o: 0.25 + rand() * 0.7,
+    });
+  }
+  return out;
+}
+
+function SolarSystemDiagram({
+  positions,
+  aspects,
+}: {
+  positions: CosmosResponse["snapshot"]["positions"];
+  aspects: CosmosResponse["snapshot"]["aspects"];
+}) {
+  const size = 640;
   const cx = size / 2;
   const cy = size / 2;
+  const [hoverId, setHoverId] = useState<string | null>(null);
+  const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
 
-  // Orbital radii in px. Tuned to fit nicely. Earth is invisible (we're
-  // geocentric) but Sun sits at cx,cy.
-  const RINGS: Record<string, { r: number; color: string; size: number }> = {
-    moon:    { r:  45, color: "#d8d8d8", size: 5 },
-    mercury: { r:  75, color: "#b8b0a0", size: 5 },
-    venus:   { r: 105, color: "#e8c178", size: 7 },
-    sun:     { r:   0, color: "#ffcc4a", size: 14 }, // center
-    mars:    { r: 145, color: "#cc6a4a", size: 6 },
-    jupiter: { r: 190, color: "#d8b878", size: 11 },
-    saturn:  { r: 225, color: "#c8a074", size: 10 },
-    uranus:  { r: 250, color: "#78c0d0", size: 8 },
-    neptune: { r: 268, color: "#4a78c8", size: 8 },
-    pluto:   { r: 282, color: "#a88078", size: 5 },
+  // Orbital radii in px. Tuned to fit the larger 640x640 canvas. Earth is
+  // invisible (we're geocentric) but Sun sits at cx,cy.
+  const RINGS: Record<string, { r: number; color: string; size: number; hi: string; lo: string }> = {
+    moon:    { r:  52, color: "#d8d8d8", size: 7,  hi: "#f2f2f2", lo: "#8a8a8a" },
+    mercury: { r:  86, color: "#b8b0a0", size: 6,  hi: "#d5ccb7", lo: "#6e695f" },
+    venus:   { r: 120, color: "#e8c178", size: 9,  hi: "#ffdb98", lo: "#8c7240" },
+    sun:     { r:   0, color: "#ffcc4a", size: 18, hi: "#fff1a8", lo: "#cc7a00" }, // center
+    mars:    { r: 160, color: "#cc6a4a", size: 8,  hi: "#e88a6a", lo: "#7a3a24" },
+    jupiter: { r: 208, color: "#d8b878", size: 14, hi: "#f2d8a2", lo: "#8a6e44" },
+    saturn:  { r: 244, color: "#c8a074", size: 12, hi: "#e8c498", lo: "#7a5c40" },
+    uranus:  { r: 272, color: "#78c0d0", size: 9,  hi: "#a8e0ee", lo: "#446a78" },
+    neptune: { r: 292, color: "#4a78c8", size: 9,  hi: "#7aa0e8", lo: "#2a4478" },
+    pluto:   { r: 308, color: "#a88078", size: 6,  hi: "#c8a098", lo: "#604040" },
   };
 
   const glyphs: Record<string, string> = {
@@ -133,64 +161,370 @@ function SolarSystemDiagram({ positions }: { positions: CosmosResponse["snapshot
     jupiter: "♃", saturn: "♄", uranus: "♅", neptune: "♆", pluto: "♇",
   };
 
+  const labels: Record<string, string> = {
+    sun: "Sun", moon: "Moon", mercury: "Mercury", venus: "Venus", mars: "Mars",
+    jupiter: "Jupiter", saturn: "Saturn", uranus: "Uranus", neptune: "Neptune", pluto: "Pluto",
+  };
+
+  // Compute planet screen positions once for aspect lines + hover lookup
+  const screen: Record<string, { x: number; y: number }> = {};
+  for (const p of positions) {
+    const ring = RINGS[p.id];
+    if (!ring) continue;
+    if (p.id === "sun") {
+      screen[p.id] = { x: cx, y: cy };
+      continue;
+    }
+    const ang = (p.longitude - 90) * (Math.PI / 180);
+    screen[p.id] = { x: cx + Math.cos(ang) * ring.r, y: cy + Math.sin(ang) * ring.r };
+  }
+
+  const stars = seededStars(220, size, size, 42);
+  const stars2 = seededStars(80, size, size, 91);
+
+  const hoverPlanet = hoverId ? positions.find((p) => p.id === hoverId) ?? null : null;
+  const hoverAspects = hoverId
+    ? aspects.filter((a) => a.a === hoverId || a.b === hoverId).slice(0, 5)
+    : [];
+
+  const signs = ["♈", "♉", "♊", "♋", "♌", "♍", "♎", "♏", "♐", "♑", "♒", "♓"];
+  const signNames = ["Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo", "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"];
+
   return (
-    <svg viewBox={`0 0 ${size} ${size}`} className="w-full h-auto" style={{ background: "radial-gradient(circle at center, #0d0d12 0%, #050507 100%)" }}>
-      <defs>
-        <radialGradient id="sunGlow">
-          <stop offset="0%" stopColor="#ffeaa0" stopOpacity="1" />
-          <stop offset="40%" stopColor="#ffcc4a" stopOpacity="0.8" />
-          <stop offset="100%" stopColor="#ff8800" stopOpacity="0" />
-        </radialGradient>
-      </defs>
+    <div style={{ position: "relative", width: "100%" }}>
+      <svg
+        viewBox={`0 0 ${size} ${size}`}
+        className="w-full h-auto"
+        style={{ display: "block", borderRadius: 6, overflow: "hidden" }}
+        onMouseLeave={() => { setHoverId(null); setHoverPos(null); }}
+      >
+        <defs>
+          {/* Deep space background — navy to black with nebula smear */}
+          <radialGradient id="spaceBg" cx="50%" cy="50%" r="75%">
+            <stop offset="0%" stopColor="#0a0618" />
+            <stop offset="40%" stopColor="#06030e" />
+            <stop offset="100%" stopColor="#020106" />
+          </radialGradient>
+          {/* Nebula clouds */}
+          <radialGradient id="nebulaPurple" cx="35%" cy="30%" r="40%">
+            <stop offset="0%" stopColor="#6a2a9a" stopOpacity="0.22" />
+            <stop offset="60%" stopColor="#3a1464" stopOpacity="0.08" />
+            <stop offset="100%" stopColor="#000000" stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id="nebulaBlue" cx="72%" cy="68%" r="38%">
+            <stop offset="0%" stopColor="#1e4a8a" stopOpacity="0.20" />
+            <stop offset="60%" stopColor="#0a1e42" stopOpacity="0.06" />
+            <stop offset="100%" stopColor="#000000" stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id="nebulaRose" cx="22%" cy="80%" r="32%">
+            <stop offset="0%" stopColor="#a04068" stopOpacity="0.14" />
+            <stop offset="100%" stopColor="#000000" stopOpacity="0" />
+          </radialGradient>
 
-      {/* Zodiac rim with sign divisions */}
-      <circle cx={cx} cy={cy} r={size / 2 - 8} fill="none" stroke={BORDER_COL} strokeWidth="1" />
-      {Array.from({ length: 12 }).map((_, i) => {
-        const ang = (i * 30 - 90) * (Math.PI / 180);
-        const x1 = cx + Math.cos(ang) * (size / 2 - 20);
-        const y1 = cy + Math.sin(ang) * (size / 2 - 20);
-        const x2 = cx + Math.cos(ang) * (size / 2 - 8);
-        const y2 = cy + Math.sin(ang) * (size / 2 - 8);
-        const tx = cx + Math.cos(ang + (15 * Math.PI / 180)) * (size / 2 - 14);
-        const ty = cy + Math.sin(ang + (15 * Math.PI / 180)) * (size / 2 - 14);
-        const signs = ["♈", "♉", "♊", "♋", "♌", "♍", "♎", "♏", "♐", "♑", "♒", "♓"];
-        return (
-          <g key={i}>
-            <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={BORDER_COL} strokeWidth="0.5" />
-            <text x={tx} y={ty} textAnchor="middle" dominantBaseline="middle" fontSize="11" fill={MUTED}>{signs[i]}</text>
-          </g>
-        );
-      })}
+          {/* Sun radial glow */}
+          <radialGradient id="sunGlow">
+            <stop offset="0%" stopColor="#fff5c4" stopOpacity="1" />
+            <stop offset="30%" stopColor="#ffcc4a" stopOpacity="0.9" />
+            <stop offset="70%" stopColor="#ff8800" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="#ff6600" stopOpacity="0" />
+          </radialGradient>
 
-      {/* Orbital rings */}
-      {Object.entries(RINGS).filter(([id]) => id !== "sun").map(([id, ring]) => (
-        <circle key={id} cx={cx} cy={cy} r={ring.r} fill="none" stroke={BORDER_COL} strokeWidth="0.5" strokeDasharray="2 4" />
-      ))}
+          {/* Planet sphere gradients — built dynamically per planet */}
+          {Object.entries(RINGS).map(([id, ring]) => (
+            <radialGradient key={id} id={`planet-${id}`} cx="35%" cy="35%" r="75%">
+              <stop offset="0%" stopColor={ring.hi} stopOpacity="1" />
+              <stop offset="55%" stopColor={ring.color} stopOpacity="1" />
+              <stop offset="100%" stopColor={ring.lo} stopOpacity="1" />
+            </radialGradient>
+          ))}
 
-      {/* Sun glow */}
-      <circle cx={cx} cy={cy} r={34} fill="url(#sunGlow)" />
+          {/* Glow filter used on hover + retrograde */}
+          <filter id="planetGlow" x="-60%" y="-60%" width="220%" height="220%">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+          <filter id="bigGlow" x="-120%" y="-120%" width="340%" height="340%">
+            <feGaussianBlur stdDeviation="6" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
 
-      {/* Planets */}
-      {positions.map((p) => {
-        const ring = RINGS[p.id];
-        if (!ring) return null;
-        // Astronomical convention: 0° = Aries (east), counterclockwise. We
-        // draw with SVG y-axis inverted, so use sin/-cos.
-        const lon = p.longitude;
-        const ang = (lon - 90) * (Math.PI / 180); // rotate so 0° Aries is at 3 o'clock
-        const x = cx + Math.cos(ang) * ring.r;
-        const y = cy + Math.sin(ang) * ring.r;
-        return (
-          <g key={p.id}>
-            <circle cx={x} cy={y} r={ring.size} fill={ring.color} opacity={p.retrograde ? 0.6 : 1} stroke={p.retrograde ? ACCENT_DANGER : "none"} strokeWidth="1.5" />
-            <text x={x} y={y + 1} textAnchor="middle" dominantBaseline="middle" fontSize={ring.size + 4} fill="#0d0d12" fontWeight="bold">{glyphs[p.id]}</text>
-            {p.retrograde && (
-              <text x={x + ring.size + 3} y={y - ring.size - 1} fontSize="8" fill={ACCENT_DANGER} fontFamily="monospace">℞</text>
+          {/* Milky-way band gradient */}
+          <linearGradient id="milkyWay" x1="0%" y1="15%" x2="100%" y2="85%">
+            <stop offset="0%" stopColor="#5a4a8a" stopOpacity="0" />
+            <stop offset="45%" stopColor="#6a5a9a" stopOpacity="0.10" />
+            <stop offset="55%" stopColor="#6a5a9a" stopOpacity="0.10" />
+            <stop offset="100%" stopColor="#5a4a8a" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+
+        {/* 1. Space background */}
+        <rect x="0" y="0" width={size} height={size} fill="url(#spaceBg)" />
+
+        {/* 2. Milky-way band across */}
+        <rect x="0" y="0" width={size} height={size} fill="url(#milkyWay)" />
+
+        {/* 3. Nebula clouds */}
+        <rect x="0" y="0" width={size} height={size} fill="url(#nebulaPurple)" />
+        <rect x="0" y="0" width={size} height={size} fill="url(#nebulaBlue)" />
+        <rect x="0" y="0" width={size} height={size} fill="url(#nebulaRose)" />
+
+        {/* 4. Starfield — small faint stars */}
+        {stars.map((st, i) => (
+          <circle key={`s-${i}`} cx={st.x} cy={st.y} r={st.r} fill="#e8e4dc" opacity={st.o} />
+        ))}
+        {/* Brighter/bigger stars with subtle glow */}
+        {stars2.map((st, i) => (
+          <circle key={`b-${i}`} cx={st.x} cy={st.y} r={st.r * 1.3} fill="#ffffff" opacity={Math.min(0.95, st.o + 0.2)} filter="url(#planetGlow)" />
+        ))}
+
+        {/* 5. Zodiac rim — subtle outer ring + sign glyphs */}
+        <circle cx={cx} cy={cy} r={size / 2 - 10} fill="none" stroke="rgba(200,169,110,0.25)" strokeWidth="1" />
+        <circle cx={cx} cy={cy} r={size / 2 - 28} fill="none" stroke="rgba(200,169,110,0.10)" strokeWidth="0.5" />
+        {Array.from({ length: 12 }).map((_, i) => {
+          const ang = (i * 30 - 90) * (Math.PI / 180);
+          const x1 = cx + Math.cos(ang) * (size / 2 - 28);
+          const y1 = cy + Math.sin(ang) * (size / 2 - 28);
+          const x2 = cx + Math.cos(ang) * (size / 2 - 10);
+          const y2 = cy + Math.sin(ang) * (size / 2 - 10);
+          const tx = cx + Math.cos(ang + (15 * Math.PI / 180)) * (size / 2 - 19);
+          const ty = cy + Math.sin(ang + (15 * Math.PI / 180)) * (size / 2 - 19);
+          return (
+            <g key={`z-${i}`}>
+              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="rgba(200,169,110,0.30)" strokeWidth="0.75" />
+              <text x={tx} y={ty} textAnchor="middle" dominantBaseline="middle" fontSize="13" fill={ACCENT_GOLD} opacity="0.75">{signs[i]}</text>
+            </g>
+          );
+        })}
+
+        {/* 6. Orbital rings — glowing very subtle */}
+        {Object.entries(RINGS).filter(([id]) => id !== "sun").map(([id, ring]) => (
+          <circle
+            key={`ring-${id}`}
+            cx={cx} cy={cy} r={ring.r}
+            fill="none"
+            stroke={hoverId === id ? "rgba(200,169,110,0.6)" : "rgba(200,169,110,0.15)"}
+            strokeWidth={hoverId === id ? 0.8 : 0.5}
+            strokeDasharray="2 5"
+          />
+        ))}
+
+        {/* 7. Active aspect lines (dashed, faint) when hovering a planet */}
+        {hoverId && hoverAspects.map((a, i) => {
+          const other = a.a === hoverId ? a.b : a.a;
+          const src = screen[hoverId];
+          const dst = screen[other];
+          if (!src || !dst) return null;
+          const aspectColor =
+            a.quality === "hard" ? ACCENT_DANGER
+            : a.quality === "soft" ? ACCENT_GREEN
+            : ACCENT_GOLD;
+          return (
+            <line
+              key={`asp-${i}`}
+              x1={src.x} y1={src.y} x2={dst.x} y2={dst.y}
+              stroke={aspectColor}
+              strokeWidth="1"
+              strokeDasharray="3 4"
+              opacity="0.55"
+            />
+          );
+        })}
+
+        {/* 8. Sun corona + disc */}
+        <circle cx={cx} cy={cy} r={52} fill="url(#sunGlow)" filter="url(#bigGlow)" />
+        <circle cx={cx} cy={cy} r={RINGS.sun.size} fill="url(#planet-sun)" stroke="#ffdd66" strokeWidth="0.5" filter="url(#planetGlow)" />
+        <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize="15" fill="#4a2800" fontWeight="bold" style={{ pointerEvents: "none" }}>{glyphs.sun}</text>
+
+        {/* Invisible hover zone for sun */}
+        <circle
+          cx={cx} cy={cy} r={RINGS.sun.size + 6}
+          fill="transparent"
+          style={{ cursor: "pointer" }}
+          onMouseEnter={(e) => { setHoverId("sun"); setHoverPos({ x: cx, y: cy }); }}
+        />
+
+        {/* 9. Planets */}
+        {positions.filter((p) => p.id !== "sun").map((p) => {
+          const ring = RINGS[p.id];
+          if (!ring) return null;
+          const pt = screen[p.id];
+          if (!pt) return null;
+          const isHovered = hoverId === p.id;
+          const r = isHovered ? ring.size + 2 : ring.size;
+
+          return (
+            <g key={p.id}>
+              {/* Saturn ring detail */}
+              {p.id === "saturn" && (
+                <ellipse
+                  cx={pt.x} cy={pt.y}
+                  rx={ring.size * 1.9} ry={ring.size * 0.55}
+                  fill="none"
+                  stroke="#d8b878"
+                  strokeWidth="1.2"
+                  opacity="0.75"
+                  transform={`rotate(-18 ${pt.x} ${pt.y})`}
+                />
+              )}
+
+              {/* Retrograde outer halo */}
+              {p.retrograde && (
+                <circle
+                  cx={pt.x} cy={pt.y} r={r + 3.5}
+                  fill="none"
+                  stroke={ACCENT_DANGER}
+                  strokeWidth="1.2"
+                  strokeDasharray="2 2"
+                  opacity="0.75"
+                />
+              )}
+
+              {/* Planet disc w/ sphere gradient */}
+              <circle
+                cx={pt.x} cy={pt.y} r={r}
+                fill={`url(#planet-${p.id})`}
+                stroke={isHovered ? ACCENT_GOLD : "rgba(0,0,0,0.4)"}
+                strokeWidth={isHovered ? 1.5 : 0.5}
+                filter="url(#planetGlow)"
+                style={{ pointerEvents: "none" }}
+              />
+
+              {/* Planet glyph */}
+              <text
+                x={pt.x} y={pt.y + 1}
+                textAnchor="middle" dominantBaseline="middle"
+                fontSize={Math.max(9, ring.size + 2)}
+                fill="#0d0d12" fontWeight="bold"
+                style={{ pointerEvents: "none" }}
+              >
+                {glyphs[p.id]}
+              </text>
+
+              {/* Retrograde marker */}
+              {p.retrograde && (
+                <text
+                  x={pt.x + ring.size + 5} y={pt.y - ring.size - 2}
+                  fontSize="9" fill={ACCENT_DANGER} fontFamily="monospace" fontWeight="bold"
+                  style={{ pointerEvents: "none" }}
+                >℞</text>
+              )}
+
+              {/* Invisible enlarged hover hit area */}
+              <circle
+                cx={pt.x} cy={pt.y} r={ring.size + 8}
+                fill="transparent"
+                style={{ cursor: "pointer" }}
+                onMouseEnter={() => { setHoverId(p.id); setHoverPos(pt); }}
+              />
+            </g>
+          );
+        })}
+
+        {/* 10. Constant planet-name labels placed at edge — always visible */}
+        {positions.filter((p) => p.id !== "sun").map((p) => {
+          const ring = RINGS[p.id];
+          if (!ring) return null;
+          const pt = screen[p.id];
+          if (!pt) return null;
+          const angRad = Math.atan2(pt.y - cy, pt.x - cx);
+          // Push label outward from the planet a few px
+          const lx = pt.x + Math.cos(angRad) * (ring.size + 12);
+          const ly = pt.y + Math.sin(angRad) * (ring.size + 12);
+          const anchor =
+            Math.cos(angRad) > 0.3 ? "start"
+            : Math.cos(angRad) < -0.3 ? "end"
+            : "middle";
+          return (
+            <text
+              key={`lbl-${p.id}`}
+              x={lx} y={ly}
+              textAnchor={anchor}
+              dominantBaseline="middle"
+              fontSize="9.5"
+              fontFamily="monospace"
+              fill={hoverId === p.id ? ACCENT_GOLD : MUTED}
+              opacity={hoverId && hoverId !== p.id ? 0.3 : 1}
+              style={{ pointerEvents: "none", letterSpacing: "0.05em" }}
+            >
+              {labels[p.id].toUpperCase()}
+            </text>
+          );
+        })}
+      </svg>
+
+      {/* Hover tooltip — absolutely positioned div for HTML formatting */}
+      {hoverPlanet && hoverPos && (
+        <div
+          data-testid={`planet-tooltip-${hoverPlanet.id}`}
+          style={{
+            position: "absolute",
+            // Position relative to SVG's viewBox-to-pixel mapping. We use %.
+            left: `${(hoverPos.x / size) * 100}%`,
+            top: `${(hoverPos.y / size) * 100}%`,
+            transform: `translate(${hoverPos.x > size / 2 ? "-110%" : "10%"}, -50%)`,
+            background: "rgba(10, 8, 18, 0.96)",
+            border: `1px solid ${hoverPlanet.retrograde ? ACCENT_DANGER : ACCENT_GOLD}`,
+            borderRadius: 4,
+            padding: "10px 14px",
+            fontFamily: "monospace",
+            fontSize: 11,
+            color: TEXT,
+            boxShadow: `0 4px 20px rgba(0,0,0,0.8), 0 0 16px ${hoverPlanet.retrograde ? "rgba(212,110,110,0.25)" : "rgba(200,169,110,0.25)"}`,
+            pointerEvents: "none",
+            minWidth: 210,
+            zIndex: 10,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <span style={{ fontSize: 22, color: RINGS[hoverPlanet.id]?.hi ?? ACCENT_GOLD }}>{glyphs[hoverPlanet.id]}</span>
+            <span style={{ fontSize: 13, color: ACCENT_GOLD, fontWeight: "bold", letterSpacing: "0.04em" }}>
+              {labels[hoverPlanet.id].toUpperCase()}
+            </span>
+            {hoverPlanet.retrograde && (
+              <span style={{ fontSize: 9, color: ACCENT_DANGER, border: `1px solid ${ACCENT_DANGER}`, padding: "1px 5px", borderRadius: 2 }}>℞ RETRO</span>
             )}
-          </g>
-        );
-      })}
-    </svg>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "2px 10px", fontSize: 10.5 }}>
+            <span style={{ color: MUTED }}>SIGN</span>
+            <span style={{ color: TEXT }}>{hoverPlanet.signGlyph ?? ""} {hoverPlanet.sign}</span>
+            <span style={{ color: MUTED }}>DEGREE</span>
+            <span style={{ color: TEXT }}>{hoverPlanet.degInSign.toFixed(2)}°</span>
+            <span style={{ color: MUTED }}>LONGITUDE</span>
+            <span style={{ color: TEXT }}>{hoverPlanet.longitude.toFixed(2)}° ecl</span>
+            {hoverPlanet.id !== "sun" && hoverPlanet.id !== "moon" && (
+              <>
+                <span style={{ color: MUTED }}>MOTION</span>
+                <span style={{ color: hoverPlanet.retrograde ? ACCENT_DANGER : ACCENT_GREEN }}>
+                  {hoverPlanet.retrograde ? "retrograde" : "direct"}
+                </span>
+              </>
+            )}
+          </div>
+          {hoverAspects.length > 0 && (
+            <div style={{ marginTop: 8, paddingTop: 6, borderTop: `1px solid ${BORDER_COL}` }}>
+              <div style={{ fontSize: 9, color: MUTED, letterSpacing: "0.08em", marginBottom: 3 }}>ACTIVE ASPECTS</div>
+              {hoverAspects.map((a, i) => {
+                const other = a.a === hoverPlanet.id ? a.b : a.a;
+                const color = a.quality === "hard" ? ACCENT_DANGER : a.quality === "soft" ? ACCENT_GREEN : ACCENT_GOLD;
+                return (
+                  <div key={i} style={{ fontSize: 10, color: TEXT, marginBottom: 1 }}>
+                    <span style={{ color, marginRight: 4 }}>{a.aspect}</span>
+                    <span>{glyphs[other]} {labels[other]}</span>
+                    <span style={{ color: MUTED, marginLeft: 6 }}>orb {a.orb.toFixed(1)}°</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -204,8 +538,9 @@ export default function CosmosPanel() {
       const res = await apiRequest("GET", "/api/cosmos");
       return res.json();
     },
-    refetchInterval: 5 * 60_000, // 5 minutes
-    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,   // 5 min auto-refresh while tab is open
+    staleTime: 60_000,              // 1 min before considered stale
+    refetchOnWindowFocus: true,     // grab fresh data when user returns
   });
 
   return (
@@ -335,7 +670,9 @@ function OutlookPanel() {
       const r = await apiRequest("GET", "/api/cosmos/outlook");
       return r.json();
     },
-    staleTime: 60 * 60 * 1000, // 1h — astro events don't move fast
+    refetchInterval: 60 * 60 * 1000, // refetch every 1h while tab is open
+    staleTime: 55 * 60 * 1000,       // treat cached response fresh for 55 min
+    refetchOnWindowFocus: true,       // grab fresh data when user returns
   });
   const [horizon, setHorizon] = useState<"weekly" | "monthly">("weekly");
   const [source, setSource] = useState<"deterministic" | "claude" | "gpt">("deterministic");
@@ -393,6 +730,9 @@ function OutlookPanel() {
           <div className="flex items-center gap-3 flex-wrap">
             <div style={{ fontFamily: "monospace", fontSize: 11, color: ACCENT_GOLD, letterSpacing: "0.08em" }}>AI MARKET OUTLOOK</div>
             <div style={{ fontFamily: "monospace", fontSize: 10, color: MUTED }}>{startFmt} → {endFmt}</div>
+            <div style={{ fontFamily: "monospace", fontSize: 9, color: MUTED, letterSpacing: "0.06em" }}>
+              UPDATED {new Date(data.meta.generatedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+            </div>
           </div>
           <div className="flex items-center gap-1">
             <button
@@ -582,7 +922,7 @@ function LiveSkyTab({ data }: { data: CosmosResponse }) {
         <div>
           <div className="cm-section-label mb-3">Solar System — Geocentric (today)</div>
           <div className="cm-card p-2">
-            <SolarSystemDiagram positions={s.positions} />
+            <SolarSystemDiagram positions={s.positions} aspects={s.aspects} />
             <div className="px-2 pb-2 pt-1 text-[10px]" style={{ color: MUTED, fontFamily: "monospace" }}>
               Planets drawn at live ecliptic longitudes. Red outline = retrograde. Zodiac rim shows sign boundaries.
             </div>
