@@ -23,7 +23,7 @@ import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   LineChart, Line, ReferenceLine, ReferenceDot, ReferenceArea,
-  ResponsiveContainer, XAxis, YAxis, Tooltip, Label,
+  ResponsiveContainer, XAxis, YAxis, Tooltip, Label, LabelList,
 } from "recharts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -851,7 +851,9 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
 
   // Build a filtered + deduplicated level set for the chart
   const displayLevels = useMemo(() => {
-    const gap = (yMax - yMin) * 0.018;
+    // Increased from 0.018 → 0.030 so left-edge level labels (PUT WALL / DN VOMMA / 0Γ
+    // / ZOMMA) stop colliding when the price band is dense.
+    const gap = (yMax - yMin) * 0.030;
     const priority = (k: string) =>
       ["callWall", "putWall", "zeroGamma", "dominantMag", "mopexMaxPain"].includes(k) ? 3
       : ["vannaFlip", "charmTarget", "zommaBridge", "negGammaEntry", "upperVomma", "lowerVomma"].includes(k) ? 2
@@ -878,7 +880,7 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
     <div className="flex-1 min-w-0">
       <div className="h-[620px] xl:h-[700px] w-full" data-testid="batcave-chart">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 16, right: 24, left: 4, bottom: 20 }}>
+          <LineChart data={chartData} margin={{ top: 28, right: 24, left: 4, bottom: 20 }}>
             <XAxis
               dataKey="label"
               stroke="#64748b"
@@ -998,10 +1000,17 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
               );
             })}
 
-            {/* Path lines — thicker + bigger dots for readability */}
+            {/* Path lines — thicker + bigger dots for readability.
+                Weekly view: per-day price prints at each waypoint via <LabelList>.
+                Bull labels go above the line, bear below, base above-but-offset so they
+                don't collide. The last point is skipped because the right-edge close-target
+                dots already render the final price. */}
             {horizon.paths.map(p => {
               const stroke = p.kind === "bull" ? COLORS.bull : p.kind === "base" ? COLORS.base : COLORS.bear;
               const prob = p.kind === "bull" ? probs.bull : p.kind === "base" ? probs.base : probs.bear;
+              const showPrints = horizon.horizon === "weekly";
+              const labelPos: "top" | "bottom" = p.kind === "bear" ? "bottom" : "top";
+              const labelDy = p.kind === "base" ? -14 : (p.kind === "bull" ? -4 : 4);
               return (
                 <Line
                   key={p.kind}
@@ -1014,7 +1023,35 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
                   activeDot={{ r: 6, fill: stroke, strokeWidth: 2, stroke: "#fff" }}
                   isAnimationActive={false}
                   name={`${p.name} ${prob}%`}
-                />
+                >
+                  {showPrints && (
+                    <LabelList
+                      dataKey={p.kind}
+                      position={labelPos}
+                      offset={8}
+                      content={(props: any) => {
+                        const { x, y, value, index } = props;
+                        if (value == null || x == null || y == null) return null;
+                        // Skip the last waypoint — the close-target dot covers it.
+                        if (index === chartData.length - 1) return null;
+                        return (
+                          <text
+                            x={x}
+                            y={y + labelDy}
+                            fill={stroke}
+                            fontSize={10}
+                            fontWeight={600}
+                            fontFamily="var(--font-mono)"
+                            textAnchor="middle"
+                            opacity={0.95}
+                          >
+                            {fmtK(value)}
+                          </text>
+                        );
+                      }}
+                    />
+                  )}
+                </Line>
               );
             })}
 
@@ -1044,6 +1081,126 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
             )}
           </LineChart>
         </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+// ─── Event Band — top strip showing FOMC / econ / earnings per weekday ─────────
+//
+// Renders a 5-column grid (MON–FRI) above the weekly chart. Each column lists
+// the day's events as small colored chips, color-coded by importance:
+//   HIGH = amber  (FOMC, NFP, CPI, PCE, GDP)
+//   MED  = cyan   (jobless, ISM, retail sales, FOMC day-1, MAG7 earnings)
+//   LOW  = muted  (lower-tier prints)
+//
+// Pulls from /api/econ-week which fans out across Nasdaq + synthetic macro +
+// FOMC schedule + earnings — so the band stays populated even when one
+// upstream source rate-limits.
+
+interface EconChip {
+  id: string;
+  kind: string;
+  title: string;
+  longTitle?: string;
+  importance: "HIGH" | "MED" | "LOW";
+  when: number;
+  timeLabel: string;
+  ticker?: string;
+  note?: string;
+}
+interface EconDay { label: string; iso: string; events: EconChip[]; }
+interface EconWeek {
+  weekOfMon: string;
+  weekLabel: string;
+  asOf: number;
+  days: EconDay[];
+  source: string;
+}
+
+function chipTone(imp: "HIGH" | "MED" | "LOW"): { fg: string; bg: string; border: string } {
+  switch (imp) {
+    case "HIGH": return { fg: "text-amber-300",        bg: "bg-amber-500/10",  border: "border-amber-500/50" };
+    case "MED":  return { fg: "text-cyan-300",         bg: "bg-cyan-500/10",   border: "border-cyan-500/40" };
+    default:     return { fg: "text-muted-foreground", bg: "bg-muted/20",      border: "border-border/40" };
+  }
+}
+
+function EventBand({ horizon }: { horizon: ModelHorizon }) {
+  // Match each waypoint label ("MON 4/27") to a day in /api/econ-week. We use
+  // the chart's own labels as the source of truth for which 5 columns to render —
+  // that way the band never drifts out of sync with the path lines below.
+  // The chart's last weekly waypoint label has the target price baked in
+  // (e.g. "FRI 5/1 7,176"). Strip everything after the date so it matches
+  // the day labels returned by /api/econ-week ("FRI 5/1").
+  const dayLabels = useMemo(() => {
+    const longest = horizon.paths.reduce((a, b) => a.waypoints.length >= b.waypoints.length ? a : b);
+    return longest.waypoints.map(w => {
+      const m = w.label.match(/^([A-Z]{3}\s+\d{1,2}\/\d{1,2})/);
+      return m ? m[1] : w.label;
+    });
+  }, [horizon]);
+
+  const { data, isLoading, isError } = useQuery<EconWeek>({
+    queryKey: ["/api/econ-week", dayLabels[0]],
+    queryFn: async () => {
+      const r = await apiRequest("GET", "/api/econ-week");
+      return r.json();
+    },
+    staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
+  });
+
+  const dayMap = useMemo(() => {
+    const m = new Map<string, EconChip[]>();
+    if (!data) return m;
+    for (const d of data.days) m.set(d.label, d.events);
+    return m;
+  }, [data]);
+
+  return (
+    <div className="mb-2 rounded border border-border/40 bg-black/30">
+      <div className="flex items-center justify-between border-b border-border/30 px-2 py-1">
+        <div className="flex items-center gap-2 font-mono text-[9px] uppercase tracking-widest text-muted-foreground/70">
+          <span className="inline-block h-1 w-1 rounded-full bg-amber-400" />
+          <span>Catalysts · Week</span>
+          {data && <span className="text-muted-foreground/50">{data.weekLabel}</span>}
+        </div>
+        <div className="font-mono text-[9px] text-muted-foreground/40">
+          {isLoading ? "loading…" : isError ? "feed error" : data ? data.source : ""}
+        </div>
+      </div>
+      <div className="grid grid-cols-5 divide-x divide-border/30">
+        {dayLabels.map((label) => {
+          const events = dayMap.get(label) ?? [];
+          return (
+            <div key={label} className="flex flex-col gap-1 p-2 min-h-[64px]">
+              <div className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+                {label}
+              </div>
+              <div className="flex flex-col gap-1">
+                {events.length === 0 && (
+                  <span className="font-mono text-[9px] text-muted-foreground/30">—</span>
+                )}
+                {events.slice(0, 4).map((e) => {
+                  const tone = chipTone(e.importance);
+                  return (
+                    <div
+                      key={e.id}
+                      title={e.longTitle ?? e.title}
+                      className={`inline-flex items-center gap-1 rounded border ${tone.border} ${tone.bg} px-1.5 py-0.5 font-mono text-[9px] leading-tight ${tone.fg}`}
+                    >
+                      <span className="truncate">{e.title}</span>
+                    </div>
+                  );
+                })}
+                {events.length > 4 && (
+                  <span className="font-mono text-[9px] text-muted-foreground/40">+{events.length - 4} more</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -1493,6 +1650,7 @@ function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; sessio
           {/* Chart */}
           <div className="flex gap-0 overflow-hidden">
             <div className="flex-1 min-w-0 p-3">
+              {horizon.horizon === "weekly" && <EventBand horizon={horizon} />}
               <ModelChart horizon={horizon} />
               <LevelsStrip horizon={horizon} />
               <ScenarioLegend horizon={horizon} />

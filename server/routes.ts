@@ -29,6 +29,7 @@ import { buildFlowSnapshot, buildIntradayFlowSnapshot, type FlowResponse } from 
 import { buildExposuresSnapshot, type ExposuresResponse } from "./exposures";
 import { buildUnusualFlow, type UnusualFlowResponse } from "./unusualFlow";
 import { buildNewsSnapshot, type NewsResponse } from "./news";
+import { buildEconWeek, type EconWeek } from "./econWeek";
 import { buildModelsSnapshot, type ModelsResponse, type Horizon } from "./models";
 import type { Snapshot_Public, VolMetric } from "@shared/schema";
 import { readCache, writeCache, rthSessionKey } from "./sessionCache";
@@ -575,6 +576,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (e: any) {
       if (newsCache) return res.json(newsCache.data);
       res.status(503).json({ message: e?.message ?? "Failed to build news snapshot" });
+    }
+  });
+
+  // Per-week macro + earnings event grid for the Models chart's top event band.
+  // Cached 5 min — events don't move often.
+  const econWeekCache = new Map<string, { at: number; data: EconWeek }>();
+  const ECON_WEEK_CACHE_MS = 5 * 60_000;
+  app.get("/api/econ-week", async (req, res) => {
+    try {
+      const monParam = typeof req.query.from === "string" ? req.query.from : undefined;
+      const cacheKey = monParam ?? "auto";
+      const cached = econWeekCache.get(cacheKey);
+      if (cached && Date.now() - cached.at < ECON_WEEK_CACHE_MS) {
+        return res.json(cached.data);
+      }
+      const data = await buildEconWeek(monParam);
+      econWeekCache.set(cacheKey, { at: Date.now(), data });
+      res.json(data);
+    } catch (e: any) {
+      res.status(503).json({ message: e?.message ?? "Failed to build econ week" });
     }
   });
 

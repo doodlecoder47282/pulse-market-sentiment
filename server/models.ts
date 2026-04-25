@@ -1197,20 +1197,23 @@ function buildHorizonDates(h: Horizon): {
   }
 
   if (h === "weekly") {
-    const fri = new Date(now);
-    const dow = now.getDay();
-    const daysToFri = (5 - dow + 7) % 7 || 5;
-    fri.setDate(now.getDate() + daysToFri);
-    // Produce labels Mon/Tue/.../Fri covering the week
+    // Find the Monday of the target week. If today is Sat/Sun, that's the upcoming
+    // Monday. If we're already mid-week (Mon–Fri), use the current week's Monday so
+    // historical+forward path stays anchored to the same trading week.
+    const dow = now.getDay(); // 0=Sun..6=Sat
+    const mon = new Date(now);
+    if (dow === 0) mon.setDate(now.getDate() + 1);          // Sun → next Mon
+    else if (dow === 6) mon.setDate(now.getDate() + 2);     // Sat → next Mon
+    else mon.setDate(now.getDate() - (dow - 1));            // Mon..Fri → this Mon
+    // Build full Mon–Fri label set (5 trading days)
     const labels: string[] = [];
-    const cur = new Date(now);
     for (let i = 0; i < 5; i++) {
-      const d = new Date(cur);
-      d.setDate(cur.getDate() + i);
-      if (d.getDay() === 0 || d.getDay() === 6) continue;
+      const d = new Date(mon);
+      d.setDate(mon.getDate() + i);
       labels.push(fmt(d));
-      if (labels.length >= 5) break;
     }
+    const fri = new Date(mon);
+    fri.setDate(mon.getDate() + 4);
     return { spotAnchorDate, targetDate: fmt(fri), targetDateLong: fmtLong(fri), waypointLabels: labels };
   }
 
