@@ -12,7 +12,11 @@ import path from "node:path";
 
 const UA = "Mozilla/5.0 (compatible; PulseDashboard/1.0)";
 const FRESH_MS = 2 * 60_000;
-const STALE_MAX_MS = 30 * 60_000;
+// Extended from 30 min → 7 days so the model still renders on weekends and
+// holidays when CBOE rate-limits (429s). A stale Friday chain is fine for
+// scenario projection — the asOf timestamp and session pill make staleness
+// visible to the user.
+const STALE_MAX_MS = 7 * 24 * 60 * 60_000;
 const DISK_DIR = path.resolve(process.cwd(), "data", "cboe");
 
 interface Entry {
