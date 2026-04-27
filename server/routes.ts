@@ -42,6 +42,64 @@ import { buildGammaLevelsEnhanced } from "./gammaLevels";
 import { runBackfill, getBacktestSummary } from "./backtest";
 import { buildChainAudit } from "./chainAudit";
 import { buildHeatseeker } from "./heatseeker";
+import { getCboeChain } from "./cboeCache";
+
+// ─── CBOE → Schwab chain shape adapter ─────────────────────────────────
+// Heatseeker (and other consumers) expect Schwab's callExpDateMap /
+// putExpDateMap format. CBOE returns a flat options[] array with OCC
+// option symbols (e.g. "SPY260427C00500000"). This adapter parses the
+// OCC symbol, infers expiry + strike + side, and rebuilds the Schwab
+// shape so a stale CBOE chain can power Heatseeker on weekends/holidays
+// when Schwab is not connected.
+function cboeChainToSchwab(cboe: any, symbol: string): any {
+  const inner = cboe?.data?.data ?? cboe?.data ?? cboe;
+  const opts: any[] = inner?.options ?? [];
+  const spot = inner?.current_price ?? inner?.close ?? null;
+  const callExpDateMap: Record<string, Record<string, any[]>> = {};
+  const putExpDateMap: Record<string, Record<string, any[]>> = {};
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  for (const o of opts) {
+    // OCC: ROOT (var) + YYMMDD (6) + C/P (1) + STRIKE*1000 (8)
+    const occ: string = String(o.option || "");
+    const m = occ.match(/^([A-Z]+)(\d{6})([CP])(\d{8})$/);
+    if (!m) continue;
+    const [, , yymmdd, cp, strikeRaw] = m;
+    const yy = parseInt(yymmdd.slice(0, 2), 10);
+    const mm = parseInt(yymmdd.slice(2, 4), 10);
+    const dd = parseInt(yymmdd.slice(4, 6), 10);
+    const expDate = new Date(Date.UTC(2000 + yy, mm - 1, dd));
+    const dte = Math.max(0, Math.round((expDate.getTime() - today.getTime()) / 86_400_000));
+    const isoDate = `${2000 + yy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+    const expKey = `${isoDate}:${dte}`;
+    const strike = parseInt(strikeRaw, 10) / 1000;
+    const strikeKey = strike.toFixed(2).replace(/\.?0+$/, (s) => s.includes(".") ? s : "");
+    // Schwab contract shape that buildHeatseeker reads
+    const contract = {
+      strikePrice: strike,
+      openInterest: Number(o.open_interest) || 0,
+      totalVolume: Number(o.volume) || 0,
+      volatility: (Number(o.iv) || 0) * 100, // CBOE iv is decimal, Schwab is %
+      gamma: Number(o.gamma) || 0,
+      delta: Number(o.delta) || 0,
+      vega: Number(o.vega) || 0,
+      theta: Number(o.theta) || 0,
+      bid: Number(o.bid) || 0,
+      ask: Number(o.ask) || 0,
+      last: Number(o.last_trade_price) || 0,
+    };
+    const target = cp === "C" ? callExpDateMap : putExpDateMap;
+    if (!target[expKey]) target[expKey] = {};
+    if (!target[expKey][strikeKey]) target[expKey][strikeKey] = [];
+    target[expKey][strikeKey].push(contract);
+  }
+  return {
+    symbol,
+    underlying: { last: spot, bid: inner?.bid ?? null, ask: inner?.ask ?? null },
+    callExpDateMap,
+    putExpDateMap,
+  };
+}
 import { masterAlphaRoute } from "./masterAlpha";
 import {
   buildCosmosSnapshot,
@@ -1681,27 +1739,44 @@ Refine the brief above. Search the web for any critical developments the feed is
         return res.json(cached.data);
       }
 
-      // Fetch chain with 2-day DTE window so we always catch 0DTE + next expiry
-      let chain = await schwabGetOptionChain(symbol, 2);
+      // Fetch chain with 2-day DTE window so we always catch 0DTE + next expiry.
+      // Schwab is the live source; CBOE (cached on disk, weekend-tolerant) is
+      // the fallback so Heatseeker stays useful when Schwab isn't connected
+      // or Schwab API is rate-limiting after hours.
+      let chain: any = await schwabGetOptionChain(symbol, 2);
       let usedSymbol = symbol;
 
       if ("error" in chain) {
         const isSPX = symbol.includes("SPX") || symbol === "$SPX" || symbol === "SPXW";
         if (isSPX) {
           const spyChain = await schwabGetOptionChain("SPY", 2);
-          if ("error" in spyChain) {
+          if (!("error" in spyChain)) {
+            chain = spyChain;
+            usedSymbol = "SPY";
+          } else {
+            // Schwab failed for both — try CBOE cached chain
+            const cboeRaw = await getCboeChain("SPY").catch(() => null);
+            if (cboeRaw) {
+              chain = cboeChainToSchwab(cboeRaw, "SPY");
+              usedSymbol = "SPY";
+            } else {
+              return res.status(503).json({
+                error: "data_unavailable",
+                message: "No options chain available from Schwab or CBOE. Try again later.",
+              });
+            }
+          }
+        } else {
+          // Non-SPX symbol: try CBOE for the same ticker
+          const cboeRaw = await getCboeChain(symbol).catch(() => null);
+          if (cboeRaw) {
+            chain = cboeChainToSchwab(cboeRaw, symbol);
+          } else {
             return res.status(503).json({
-              error: "schwab_required",
-              message: "Schwab connection required for heatseeker. Please connect Schwab in Settings.",
+              error: "data_unavailable",
+              message: `No options chain available for ${symbol}. Try again later.`,
             });
           }
-          chain = spyChain;
-          usedSymbol = "SPY";
-        } else {
-          return res.status(503).json({
-            error: "schwab_required",
-            message: "Schwab connection required for heatseeker. Please connect Schwab in Settings.",
-          });
         }
       }
 
