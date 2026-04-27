@@ -9,6 +9,7 @@ import Dashboard from "@/pages/dashboard";
 import { TickerProvider } from "@/components/TickerContext";
 import { ThemeProvider } from "@/components/ThemeContext";
 import LaunchSplash from "@/components/LaunchSplash";
+import PreMarketGate from "@/components/PreMarketGate";
 import { useState } from "react";
 
 function AppRouter() {
@@ -22,6 +23,8 @@ function AppRouter() {
 
 function App() {
   const [showSplash, setShowSplash] = useState(true);
+  const [showPremarket, setShowPremarket] = useState(true);
+  const gateActive = showSplash || showPremarket;
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -30,9 +33,12 @@ function App() {
         <Toaster />
         <TickerProvider>
           {showSplash && <LaunchSplash onExit={() => setShowSplash(false)} />}
+          {!showSplash && showPremarket && (
+            <PreMarketGate onAcknowledge={() => setShowPremarket(false)} />
+          )}
           <div
             className={
-              showSplash
+              gateActive
                 ? "opacity-0 pointer-events-none"
                 : "opacity-100 transition-opacity duration-700"
             }
