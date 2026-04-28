@@ -1745,20 +1745,24 @@ Refine the brief above. Search the web for any critical developments the feed is
       // or Schwab API is rate-limiting after hours.
       let chain: any = await schwabGetOptionChain(symbol, 2);
       let usedSymbol = symbol;
+      let scaleToSPX = false; // when true, SPY-derived chain rescaled ×10 to SPX values
+
+      const isSPX = symbol.includes("SPX") || symbol === "$SPX" || symbol === "SPXW";
 
       if ("error" in chain) {
-        const isSPX = symbol.includes("SPX") || symbol === "$SPX" || symbol === "SPXW";
         if (isSPX) {
           const spyChain = await schwabGetOptionChain("SPY", 2);
           if (!("error" in spyChain)) {
             chain = spyChain;
-            usedSymbol = "SPY";
+            usedSymbol = "$SPX"; // keep SPX label, rescale below
+            scaleToSPX = true;
           } else {
             // Schwab failed for both — try CBOE cached chain
             const cboeRaw = await getCboeChain("SPY").catch(() => null);
             if (cboeRaw) {
               chain = cboeChainToSchwab(cboeRaw, "SPY");
-              usedSymbol = "SPY";
+              usedSymbol = "$SPX";
+              scaleToSPX = true;
             } else {
               return res.status(503).json({
                 error: "data_unavailable",
@@ -1778,6 +1782,40 @@ Refine the brief above. Search the web for any critical developments the feed is
             });
           }
         }
+      }
+
+      // Rescale SPY-derived chain to SPX values (×10 strikes + spot)
+      if (scaleToSPX) {
+        const scaleStrikeMap = (m: any) => {
+          if (!m || typeof m !== "object") return m;
+          const out: any = {};
+          for (const expKey of Object.keys(m)) {
+            const exp = m[expKey];
+            const newExp: any = {};
+            for (const strikeKey of Object.keys(exp)) {
+              const newStrikeKey = String(parseFloat(strikeKey) * 10);
+              newExp[newStrikeKey] = exp[strikeKey];
+            }
+            out[expKey] = newExp;
+          }
+          return out;
+        };
+        const u = chain.underlying || {};
+        chain = {
+          ...chain,
+          symbol: "$SPX",
+          underlying: {
+            ...u,
+            symbol: "$SPX",
+            last: u.last != null ? u.last * 10 : u.last,
+            bid: u.bid != null ? u.bid * 10 : u.bid,
+            ask: u.ask != null ? u.ask * 10 : u.ask,
+            mark: u.mark != null ? u.mark * 10 : u.mark,
+            close: u.close != null ? u.close * 10 : u.close,
+          },
+          callExpDateMap: scaleStrikeMap(chain.callExpDateMap),
+          putExpDateMap: scaleStrikeMap(chain.putExpDateMap),
+        };
       }
 
       const spot = chain.underlying.last ??
