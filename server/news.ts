@@ -485,6 +485,44 @@ function syntheticBaseline(): CalendarEvent[] {
 
 // ---- Aggregator ----
 
+// Pull MAG7 + high-importance earnings from getEarnings() and convert into
+// CalendarEvent shape so they appear in the unified News tab calendar.
+async function fetchEarningsCalendar(): Promise<CalendarEvent[]> {
+  // Lazy import to avoid circular load issues at module init time.
+  const { getEarnings } = await import("./earnings.js").catch(
+    () => import("./earnings"),
+  );
+  const data = await getEarnings("monthly"); // 30-day window
+  const out: CalendarEvent[] = [];
+  for (const week of data.weeks) {
+    for (const day of week.days) {
+      for (const r of day.rows) {
+        // Only include MAG7 + HIGH-impact mega caps to keep payload tight.
+        if (!r.isMag7 && r.importance !== "HIGH") continue;
+        // Time-of-day from BMO/AMC/DMH timing
+        const hourEt = r.timing === "BMO" ? 7 : r.timing === "AMC" ? 16 : r.timing === "DMH" ? 12 : 16;
+        const minEt = r.timing === "BMO" ? 30 : 30;
+        const dayDate = new Date(`${r.date}T00:00:00Z`);
+        const when = makeUtcEvent(dayDate, hourEt, minEt);
+        out.push({
+          id: `earn:${r.date}:${r.ticker}`,
+          kind: "EARNINGS",
+          title: `${r.ticker} ${r.fiscalQuarter} Earnings${r.isMag7 ? " (MAG7)" : ""}`,
+          when,
+          whenLabel: formatEtLabel(when),
+          importance: r.isMag7 ? "HIGH" : r.importance,
+          source: "Nasdaq Earnings",
+          ticker: r.ticker,
+          forecast: r.epsForecast != null ? `EPS est ${r.epsForecast}` : undefined,
+          previous: r.lastYearEps != null ? `LY EPS ${r.lastYearEps}` : undefined,
+          notes: `${r.company} · ${r.timingLabel}${r.marketCapBucket ? " · " + r.marketCapBucket : ""}`,
+        });
+      }
+    }
+  }
+  return out;
+}
+
 export async function buildNewsSnapshot(): Promise<NewsResponse> {
   const warnings: string[] = [];
 
@@ -498,9 +536,15 @@ export async function buildNewsSnapshot(): Promise<NewsResponse> {
     warnings.push(`Calendar: ${e?.message ?? "failed"}`);
     return syntheticBaseline();
   });
+  const earnPromise = fetchEarningsCalendar().catch((e) => {
+    warnings.push(`Earnings calendar: ${e?.message ?? "failed"}`);
+    return [] as CalendarEvent[];
+  });
 
   const rssAll = await Promise.all(rssPromises);
-  const calendar = await calPromise;
+  const [calendar, earningsEvents] = await Promise.all([calPromise, earnPromise]);
+  // Merge earnings into calendar feed (deduped by id below).
+  for (const ev of earningsEvents) calendar.push(ev);
 
   // Merge + dedupe by normalized title
   const allHeadlines: Headline[] = [];
@@ -533,10 +577,16 @@ export async function buildNewsSnapshot(): Promise<NewsResponse> {
   const now = Math.floor(Date.now() / 1000);
   const cutoff = now - 6 * 3600;
   const forwardLimit = now + 210 * 86400; // ~7 months
+  // Dedupe by id (earnings + econ + opex unique by id).
+  const seenIds = new Set<string>();
   const calFiltered = calendar
-    .filter((e) => e.when >= cutoff && e.when <= forwardLimit)
+    .filter((e) => {
+      if (seenIds.has(e.id)) return false;
+      seenIds.add(e.id);
+      return e.when >= cutoff && e.when <= forwardLimit;
+    })
     .sort((a, b) => a.when - b.when)
-    .slice(0, 200);
+    .slice(0, 400);
 
   return {
     asOf: now,
