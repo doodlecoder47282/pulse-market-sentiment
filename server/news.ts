@@ -261,13 +261,8 @@ async function fetchEconCalendar(): Promise<CalendarEvent[]> {
     }
   }
 
-  // Curated baseline for FOMC + big prints
-  for (const ev of syntheticBaseline()) {
-    if (!seenIds.has(ev.id)) {
-      seenIds.add(ev.id);
-      events.push(ev);
-    }
-  }
+  // NOTE: syntheticBaseline() removed — buildVolCalendar() now provides the
+  // canonical FOMC/CPI/NFP rhythm via fetchVolEventCalendar() below.
 
   // Derived market-structure events: OPEX, VIX expirations, triple witching,
   // Treasury auctions. These are math-based so they can't fail.
@@ -485,6 +480,76 @@ function syntheticBaseline(): CalendarEvent[] {
 
 // ---- Aggregator ----
 
+// Pull deterministic vol-event calendar (OPEX/VIX/quad witch/FOMC/CPI/NFP)
+// from volCalendar.ts and convert into unified CalendarEvent shape. This is
+// the data the Regime tab's old VolCalendar panel used to render — it carries
+// the explicit FOMC/CPI/NFP rhythm with HIGH importance flags.
+async function fetchVolEventCalendar(): Promise<CalendarEvent[]> {
+  const { buildVolCalendar } = await import("./volCalendar.js").catch(
+    () => import("./volCalendar"),
+  );
+  const data = buildVolCalendar();
+  const out: CalendarEvent[] = [];
+  for (const ev of data.events) {
+    // Map vol-calendar event → news CalendarEvent
+    const day = new Date(`${ev.date}T00:00:00Z`);
+    let kind: CalendarKind;
+    let hourEt = 9, minEt = 30;
+    let title = ev.label;
+    let notes: string | undefined;
+    let source = "VolCalendar (computed)";
+    switch (ev.type) {
+      case "fomc":
+        kind = "FED"; hourEt = 14; minEt = 0;
+        notes = "FOMC rate decision @ 2pm ET, Powell presser @ 2:30pm ET. Largest single-day vol catalyst.";
+        source = "Federal Reserve";
+        break;
+      case "cpi":
+        kind = "ECON"; hourEt = 8; minEt = 30;
+        title = `${ev.label} (CPI)`;
+        notes = "Inflation print @ 8:30am ET. Hot read = bond selloff + risk-off; cool = rally.";
+        source = "BLS";
+        break;
+      case "nfp":
+        kind = "ECON"; hourEt = 8; minEt = 30;
+        notes = "Jobs print @ 8:30am ET. Watch headline + average hourly earnings + revisions.";
+        source = "BLS";
+        break;
+      case "monthly_opex":
+        kind = "OPEX"; hourEt = 16; minEt = 0;
+        notes = "Monthly options expiration. Gamma roll-off after 4pm — dealer hedging unwinds.";
+        source = "CBOE";
+        break;
+      case "vix_exp":
+        kind = "VIX_EXP"; hourEt = 9; minEt = 0;
+        notes = "VIX SOQ print @ 9am ET. VX futures + VIX options settle.";
+        source = "CBOE";
+        break;
+      case "quad_witching":
+        kind = "WITCH"; hourEt = 16; minEt = 0;
+        notes = "Quad witching — index futures, index options, single-stock futures, equity options ALL expire. Historically the highest-volume day of the quarter.";
+        source = "CBOE";
+        break;
+      default:
+        kind = "ECON";
+    }
+    const when = makeUtcEvent(day, hourEt, minEt);
+    const importance: CalendarEvent["importance"] =
+      ev.importance === "high" ? "HIGH" : ev.importance === "medium" ? "MED" : "LOW";
+    out.push({
+      id: `vol:${ev.type}:${ev.date}`,
+      kind,
+      title,
+      when,
+      whenLabel: formatEtLabel(when),
+      importance,
+      source,
+      notes,
+    });
+  }
+  return out;
+}
+
 // Pull MAG7 + high-importance earnings from getEarnings() and convert into
 // CalendarEvent shape so they appear in the unified News tab calendar.
 async function fetchEarningsCalendar(): Promise<CalendarEvent[]> {
@@ -534,16 +599,27 @@ export async function buildNewsSnapshot(): Promise<NewsResponse> {
   );
   const calPromise = fetchEconCalendar().catch((e) => {
     warnings.push(`Calendar: ${e?.message ?? "failed"}`);
-    return syntheticBaseline();
+    return [] as CalendarEvent[]; // vol calendar fills the gap below
   });
   const earnPromise = fetchEarningsCalendar().catch((e) => {
     warnings.push(`Earnings calendar: ${e?.message ?? "failed"}`);
     return [] as CalendarEvent[];
   });
+  const volPromise = fetchVolEventCalendar().catch((e) => {
+    warnings.push(`Vol calendar: ${e?.message ?? "failed"}`);
+    return [] as CalendarEvent[];
+  });
 
   const rssAll = await Promise.all(rssPromises);
-  const [calendar, earningsEvents] = await Promise.all([calPromise, earnPromise]);
-  // Merge earnings into calendar feed (deduped by id below).
+  const [calendar, earningsEvents, volEvents] = await Promise.all([
+    calPromise,
+    earnPromise,
+    volPromise,
+  ]);
+  // Merge earnings + vol-calendar events. Vol events go FIRST so their richer
+  // metadata (FOMC presser notes, CPI/NFP context) wins de-dup against any
+  // overlapping econ rows from the Nasdaq feed.
+  for (const ev of volEvents) calendar.unshift(ev);
   for (const ev of earningsEvents) calendar.push(ev);
 
   // Merge + dedupe by normalized title
@@ -577,13 +653,25 @@ export async function buildNewsSnapshot(): Promise<NewsResponse> {
   const now = Math.floor(Date.now() / 1000);
   const cutoff = now - 6 * 3600;
   const forwardLimit = now + 210 * 86400; // ~7 months
-  // Dedupe by id (earnings + econ + opex unique by id).
+  // Dedupe by id AND by (kind + same-day) so e.g. tentative FOMC "next meeting"
+  // gets superseded by the canonical hardcoded FOMC date when both exist.
+  // Vol-calendar events were unshifted to the FRONT so they win the dup race.
   const seenIds = new Set<string>();
+  const seenKindDay = new Set<string>();
+  const isoDay = (whenSec: number) => new Date(whenSec * 1000).toISOString().slice(0, 10);
   const calFiltered = calendar
     .filter((e) => {
       if (seenIds.has(e.id)) return false;
       seenIds.add(e.id);
-      return e.when >= cutoff && e.when <= forwardLimit;
+      if (e.when < cutoff || e.when > forwardLimit) return false;
+      // Same kind + same date → keep the first (vol-calendar wins).
+      // Earnings are excluded from this dedup because multiple companies report same day.
+      if (e.kind !== "EARNINGS" && e.kind !== "TREASURY") {
+        const k = `${e.kind}:${isoDay(e.when)}`;
+        if (seenKindDay.has(k)) return false;
+        seenKindDay.add(k);
+      }
+      return true;
     })
     .sort((a, b) => a.when - b.when)
     .slice(0, 400);
