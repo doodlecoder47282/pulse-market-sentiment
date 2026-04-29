@@ -55,6 +55,24 @@ export type GammaMap = {
   narrative: string;
 };
 
+export type TradeSide = "long" | "short" | "either";
+
+export type TradeLevels = {
+  side: TradeSide;
+  /** Specific entry price (tick-precise). null if conditional/wait. */
+  entry: number | null;
+  /** Hard stop. */
+  stop: number | null;
+  /** First profit target. */
+  target1: number | null;
+  /** Stretch target. */
+  target2: number | null;
+  /** Risk:reward at T1 (computed). */
+  rr1: number | null;
+  /** One-line trade instruction — "buy 7128, stop 7124, T1 7144 / T2 7158". */
+  instruction: string;
+};
+
 export type DailyPlaybook = {
   headline: string;
   bias: "bullish" | "bearish" | "neutral" | "volatile";
@@ -62,16 +80,29 @@ export type DailyPlaybook = {
   summary: string;
   scenarios: Array<{
     name: string;
+    /** Conditional framing — "If breaks 7165 with vol…". */
     trigger: string;
+    /** Outcome description — "…expect 7180 then 7195". */
     target: string;
+    /** What kills the thesis. */
     invalidation: string;
     odds: "primary" | "secondary" | "tail";
+    /** NEW: explicit tick-precise levels. */
+    levels: TradeLevels;
+    /** NEW: news catalysts that drive this scenario, if any. */
+    catalysts?: Array<{ label: string; impact: "bull" | "bear" | "both" }>;
   }>;
   keyLevels: {
     resistance: Array<{ level: number; label: string }>;
     support: Array<{ level: number; label: string }>;
   };
   gameplan: string[];        // actionable bullets
+  /** NEW: today's news playbook — per-event reaction map. */
+  newsPlaybook?: Array<{
+    event: string;            // e.g. "FOMC 2pm"
+    bullScenario: string;     // "hot print > 0.4% → break 7165 → sell 7178 stop 7185"
+    bearScenario: string;     // "cool print < 0.2% → hold 7165 → buy 7170 stop 7163"
+  }>;
 };
 
 // ---- Gamma Squeeze Indicator ------------------------------------------------
@@ -276,7 +307,143 @@ type PlaybookInputs = {
   compositeLabel: string;
   voicesBiasScore?: number | null;  // -100..+100
   squeeze: SqueezeIndicator;
+  /** Optional: today's catalyst events from the news calendar (FOMC/CPI/PCE/NFP/earnings). */
+  todaysEvents?: Array<{ kind: string; label: string; timeLabel?: string }>;
 };
+
+// ---- helpers for tick-precise level synthesis ------------------------------
+
+function tick(spot: number): number {
+  // SPX-scale uses 5-pt tick increments for clean human levels;
+  // SPY uses 0.50; default to a fraction of spot.
+  if (spot > 1000) return 5;
+  if (spot > 100) return 0.5;
+  return 0.05;
+}
+
+function roundToTick(price: number, t: number): number {
+  return Math.round(price / t) * t;
+}
+
+function fmtPrice(p: number | null, t: number): string {
+  if (p == null || !isFinite(p)) return "—";
+  if (t >= 1) return p.toFixed(0);
+  if (t >= 0.5) return p.toFixed(1);
+  return p.toFixed(2);
+}
+
+function buildLevels(
+  side: TradeSide,
+  entry: number | null,
+  stop: number | null,
+  target1: number | null,
+  target2: number | null,
+  spot: number,
+): TradeLevels {
+  const t = tick(spot);
+  const e = entry != null ? roundToTick(entry, t) : null;
+  const s = stop != null ? roundToTick(stop, t) : null;
+  const t1 = target1 != null ? roundToTick(target1, t) : null;
+  const t2 = target2 != null ? roundToTick(target2, t) : null;
+  let rr1: number | null = null;
+  if (e != null && s != null && t1 != null) {
+    const risk = Math.abs(e - s);
+    const reward = Math.abs(t1 - e);
+    rr1 = risk > 0 ? +(reward / risk).toFixed(2) : null;
+  }
+  const verb = side === "long" ? "BUY" : side === "short" ? "SELL" : "WAIT";
+  let instruction = "";
+  if (e == null) {
+    instruction = `${verb} — wait for confirmation`;
+  } else {
+    const parts = [`${verb} ${fmtPrice(e, t)}`];
+    if (s != null) parts.push(`stop ${fmtPrice(s, t)}`);
+    if (t1 != null) parts.push(`T1 ${fmtPrice(t1, t)}`);
+    if (t2 != null) parts.push(`T2 ${fmtPrice(t2, t)}`);
+    if (rr1 != null) parts.push(`R:R ${rr1}`);
+    instruction = parts.join(" · ");
+  }
+  return { side, entry: e, stop: s, target1: t1, target2: t2, rr1, instruction };
+}
+
+function noLevels(side: TradeSide = "either"): TradeLevels {
+  return { side, entry: null, stop: null, target1: null, target2: null, rr1: null, instruction: "WAIT — conditional setup, no entry yet" };
+}
+
+// Build a per-event news playbook from today's catalysts + key gamma levels.
+function buildNewsPlaybook(
+  events: Array<{ kind: string; label: string; timeLabel?: string }>,
+  spot: number,
+  cw: number,
+  pw: number,
+): DailyPlaybook["newsPlaybook"] {
+  if (!events?.length) return undefined;
+  const t = tick(spot);
+  const out: NonNullable<DailyPlaybook["newsPlaybook"]> = [];
+
+  for (const ev of events) {
+    const tag = `${ev.label}${ev.timeLabel ? " · " + ev.timeLabel : ""}`;
+    const k = ev.kind.toUpperCase();
+    const lc = ev.label.toLowerCase();
+
+    // Hot/cool framing tied to actual call wall / put wall levels
+    const breakUp = roundToTick(cw, t);
+    const targetUp1 = roundToTick(cw + (cw - pw) * 0.4, t);
+    const targetUp2 = roundToTick(cw + (cw - pw) * 0.8, t);
+    const stopUp = roundToTick(cw - (cw - pw) * 0.15, t);
+    const breakDn = roundToTick(pw, t);
+    const targetDn1 = roundToTick(pw - (cw - pw) * 0.4, t);
+    const targetDn2 = roundToTick(pw - (cw - pw) * 0.8, t);
+    const stopDn = roundToTick(pw + (cw - pw) * 0.15, t);
+
+    if (k === "FOMC" || lc.includes("fomc") || lc.includes("powell")) {
+      out.push({
+        event: tag,
+        bullScenario: `Dovish read → break ${fmtPrice(breakUp, t)} → BUY ${fmtPrice(roundToTick(breakUp + t, t), t)} · stop ${fmtPrice(stopUp, t)} · T1 ${fmtPrice(targetUp1, t)} · T2 ${fmtPrice(targetUp2, t)}`,
+        bearScenario: `Hawkish read → reject ${fmtPrice(breakUp, t)} or break ${fmtPrice(breakDn, t)} → SELL ${fmtPrice(roundToTick(breakDn - t, t), t)} · stop ${fmtPrice(stopDn, t)} · T1 ${fmtPrice(targetDn1, t)} · T2 ${fmtPrice(targetDn2, t)}`,
+      });
+    } else if (lc.includes("cpi") || lc.includes("ppi")) {
+      out.push({
+        event: tag,
+        bullScenario: `Cool print (below consensus) → hold ${fmtPrice(breakDn, t)} → BUY ${fmtPrice(roundToTick(breakDn + 2 * t, t), t)} · stop ${fmtPrice(stopDn, t)} · T1 ${fmtPrice(breakUp, t)} · T2 ${fmtPrice(targetUp1, t)}`,
+        bearScenario: `Hot print (above consensus) → break ${fmtPrice(breakDn, t)} → SELL ${fmtPrice(roundToTick(breakDn - t, t), t)} · stop ${fmtPrice(stopDn, t)} · T1 ${fmtPrice(targetDn1, t)} · T2 ${fmtPrice(targetDn2, t)}`,
+      });
+    } else if (lc.includes("pce")) {
+      out.push({
+        event: tag,
+        bullScenario: `Cool core PCE → grind to ${fmtPrice(breakUp, t)} → BUY pullback ${fmtPrice(roundToTick(spot - 2 * t, t), t)} · stop ${fmtPrice(stopDn, t)} · T1 ${fmtPrice(targetUp1, t)} · T2 ${fmtPrice(targetUp2, t)}`,
+        bearScenario: `Hot core PCE → fail ${fmtPrice(breakUp, t)} → SELL ${fmtPrice(roundToTick(breakUp - t, t), t)} · stop ${fmtPrice(roundToTick(breakUp + 2 * t, t), t)} · T1 ${fmtPrice(breakDn, t)} · T2 ${fmtPrice(targetDn1, t)}`,
+      });
+    } else if (lc.includes("nfp") || lc.includes("payroll") || lc.includes("jobs")) {
+      out.push({
+        event: tag,
+        bullScenario: `Strong jobs → break ${fmtPrice(breakUp, t)} → BUY ${fmtPrice(roundToTick(breakUp + t, t), t)} · stop ${fmtPrice(stopUp, t)} · T1 ${fmtPrice(targetUp1, t)} · T2 ${fmtPrice(targetUp2, t)}`,
+        bearScenario: `Weak jobs (recession fear) → break ${fmtPrice(breakDn, t)} → SELL ${fmtPrice(roundToTick(breakDn - t, t), t)} · stop ${fmtPrice(stopDn, t)} · T1 ${fmtPrice(targetDn1, t)} · T2 ${fmtPrice(targetDn2, t)}`,
+      });
+    } else if (k === "EARN" || lc.includes("earn") || /\b(MSFT|AAPL|GOOGL|GOOG|META|AMZN|TSLA|NVDA)\b/.test(ev.label)) {
+      out.push({
+        event: tag,
+        bullScenario: `Beat → gap up + hold open → BUY ${fmtPrice(roundToTick(spot + 2 * t, t), t)} · stop ${fmtPrice(roundToTick(spot - 2 * t, t), t)} · T1 ${fmtPrice(breakUp, t)} · T2 ${fmtPrice(targetUp1, t)}`,
+        bearScenario: `Miss → gap fill + reject → SELL ${fmtPrice(roundToTick(spot - 2 * t, t), t)} · stop ${fmtPrice(roundToTick(spot + 3 * t, t), t)} · T1 ${fmtPrice(breakDn, t)} · T2 ${fmtPrice(targetDn1, t)}`,
+      });
+    } else if (lc.includes("jobless") || lc.includes("claims")) {
+      out.push({
+        event: tag,
+        bullScenario: `Low claims (tight labor) → hold open range → BUY breakout above prior high · T1 ${fmtPrice(breakUp, t)} · T2 ${fmtPrice(targetUp1, t)}`,
+        bearScenario: `Spike in claims (slowdown) → SELL break ${fmtPrice(breakDn, t)} · stop ${fmtPrice(stopDn, t)} · T1 ${fmtPrice(targetDn1, t)}`,
+      });
+    } else {
+      // generic econ / treasury / other
+      out.push({
+        event: tag,
+        bullScenario: `Risk-on reaction → hold ${fmtPrice(spot, t)} → BUY ${fmtPrice(roundToTick(spot + t, t), t)} · stop ${fmtPrice(roundToTick(spot - 3 * t, t), t)} · T1 ${fmtPrice(breakUp, t)} · T2 ${fmtPrice(targetUp1, t)}`,
+        bearScenario: `Risk-off reaction → fail ${fmtPrice(spot, t)} → SELL ${fmtPrice(roundToTick(spot - t, t), t)} · stop ${fmtPrice(roundToTick(spot + 3 * t, t), t)} · T1 ${fmtPrice(breakDn, t)} · T2 ${fmtPrice(targetDn1, t)}`,
+      });
+    }
+  }
+
+  return out;
+}
 
 export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
   const { spot, gamma, pivots, term, vix, compositeScore, voicesBiasScore, squeeze } = inp;
@@ -314,58 +481,120 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
   const scenarios: DailyPlaybook["scenarios"] = [];
   const cw = gamma.callWall, pw = gamma.putWall, zg = gamma.zeroGamma;
 
+  const tk = tick(spot);
+  const range = cw - pw;
+  const mid = (cw + pw) / 2;
+
   if (gamma.regime === "positive") {
+    // Pin & fade: short the call wall touch, long the put wall touch
     scenarios.push({
       name: "Base Case — Pin & Fade",
-      trigger: `Opens between ${pw.toFixed(0)} and ${cw.toFixed(0)}`,
-      target: `Drift toward max pain ${gamma.maxPain.toFixed(0)}; fade touches of ${cw.toFixed(0)} and ${pw.toFixed(0)}`,
-      invalidation: `Close above ${cw.toFixed(0)} or below ${pw.toFixed(0)}`,
+      trigger: `If price opens between ${fmtPrice(pw, tk)} and ${fmtPrice(cw, tk)} and accepts above ${fmtPrice(mid, tk)}`,
+      target: `Drift toward max pain ${fmtPrice(gamma.maxPain, tk)}; fade ${fmtPrice(cw, tk)} top, fade ${fmtPrice(pw, tk)} bottom`,
+      invalidation: `15-min close above ${fmtPrice(cw, tk)} or below ${fmtPrice(pw, tk)}`,
       odds: "primary",
+      levels: buildLevels(
+        "either",
+        roundToTick(cw - tk, tk),                     // SELL near call wall touch
+        roundToTick(cw + 2 * tk, tk),                 // stop just over call wall
+        roundToTick(mid, tk),                         // T1 = mid
+        roundToTick(pw + range * 0.2, tk),            // T2 = upper-put-wall area
+        spot,
+      ),
     });
     scenarios.push({
       name: "Upside Break — Call Wall Roll",
-      trigger: `Breach and 15-min close above ${cw.toFixed(0)}`,
-      target: `Next call-wall strike or +1% extension`,
-      invalidation: `Reclaim below ${cw.toFixed(0)}`,
+      trigger: `If 15-min closes above ${fmtPrice(cw, tk)} on rising volume`,
+      target: `Roll to next call-wall strike; expect ${fmtPrice(roundToTick(cw + range * 0.4, tk), tk)} then ${fmtPrice(roundToTick(cw + range * 0.8, tk), tk)}`,
+      invalidation: `Reclaim below ${fmtPrice(cw, tk)} within 30 min of break`,
       odds: "secondary",
+      levels: buildLevels(
+        "long",
+        roundToTick(cw + tk, tk),
+        roundToTick(cw - 2 * tk, tk),
+        roundToTick(cw + range * 0.4, tk),
+        roundToTick(cw + range * 0.8, tk),
+        spot,
+      ),
     });
     scenarios.push({
       name: "Downside Break — Put Wall Fail",
-      trigger: `Breach and 15-min close below ${pw.toFixed(0)}`,
-      target: zg != null ? `Test zero-gamma ${zg.toFixed(1)}, then ${(pw - (cw - pw) * 0.5).toFixed(0)}` : `−1% extension`,
-      invalidation: `Reclaim above ${pw.toFixed(0)}`,
+      trigger: `If 15-min closes below ${fmtPrice(pw, tk)} (failed put wall)`,
+      target: zg != null ? `Test zero-gamma ${fmtPrice(zg, tk)} then ${fmtPrice(roundToTick(pw - range * 0.5, tk), tk)}` : `Extend ${fmtPrice(roundToTick(pw - range * 0.5, tk), tk)}`,
+      invalidation: `Reclaim above ${fmtPrice(pw, tk)}`,
       odds: "tail",
+      levels: buildLevels(
+        "short",
+        roundToTick(pw - tk, tk),
+        roundToTick(pw + 2 * tk, tk),
+        zg != null ? roundToTick(zg, tk) : roundToTick(pw - range * 0.3, tk),
+        roundToTick(pw - range * 0.5, tk),
+        spot,
+      ),
     });
   } else if (gamma.regime === "negative") {
     scenarios.push({
       name: "Base Case — Trend Day",
-      trigger: `Direction of first 30-min range extension`,
-      target: `Fast trip to the opposite wall (${cw.toFixed(0)} / ${pw.toFixed(0)}); range-expansion day`,
+      trigger: `Take direction of first 30-min range extension; chase the break of ${fmtPrice(cw, tk)} (long) or ${fmtPrice(pw, tk)} (short)`,
+      target: `Fast trip to the opposite wall — ${fmtPrice(cw, tk)} from below or ${fmtPrice(pw, tk)} from above`,
       invalidation: `Mid-session reversal of 50%+ of morning range`,
       odds: "primary",
+      levels: buildLevels(
+        "either",
+        null,
+        null,
+        roundToTick(spot + range * 0.5 * Math.sign(spot - mid || 1), tk),
+        roundToTick(spot + range * Math.sign(spot - mid || 1), tk),
+        spot,
+      ),
     });
     scenarios.push({
       name: "Short-Gamma Cascade Down",
-      trigger: `Rejection at ${(zg ?? cw).toFixed(0)} and close below ${pw.toFixed(0)}`,
-      target: pivots ? `${pivots.classic.s2.toFixed(1)} / ${pivots.camarilla.l5.toFixed(1)}` : "−1.5% extension",
-      invalidation: `Reclaim put wall ${pw.toFixed(0)}`,
+      trigger: `Rejection at ${fmtPrice(zg ?? cw, tk)} AND 15-min close below ${fmtPrice(pw, tk)}`,
+      target: pivots ? `${fmtPrice(pivots.classic.s2, tk)} then ${fmtPrice(pivots.camarilla.l5, tk)}` : `${fmtPrice(roundToTick(pw - range, tk), tk)} extension`,
+      invalidation: `Reclaim put wall ${fmtPrice(pw, tk)}`,
       odds: "secondary",
+      levels: buildLevels(
+        "short",
+        roundToTick(pw - tk, tk),
+        roundToTick(pw + 3 * tk, tk),
+        pivots ? roundToTick(pivots.classic.s2, tk) : roundToTick(pw - range * 0.5, tk),
+        pivots ? roundToTick(pivots.camarilla.l5, tk) : roundToTick(pw - range, tk),
+        spot,
+      ),
     });
     scenarios.push({
       name: "Reflex Short Squeeze",
-      trigger: `Reclaim zero-gamma ${zg?.toFixed(1) ?? "flip"} with vol crush`,
-      target: `Mean-revert to ${cw.toFixed(0)} as dealers flip to long gamma`,
-      invalidation: `Fails ${zg?.toFixed(1) ?? "flip"} on retest`,
+      trigger: `Reclaim zero-gamma ${fmtPrice(zg ?? mid, tk)} with VIX crushing > 5%`,
+      target: `Mean-revert to ${fmtPrice(cw, tk)} as dealers flip to long gamma`,
+      invalidation: `Fails ${fmtPrice(zg ?? mid, tk)} on retest within 30 min`,
       odds: "tail",
+      levels: buildLevels(
+        "long",
+        zg != null ? roundToTick(zg + tk, tk) : roundToTick(mid + tk, tk),
+        zg != null ? roundToTick(zg - 2 * tk, tk) : roundToTick(mid - 2 * tk, tk),
+        roundToTick(mid + range * 0.3, tk),
+        roundToTick(cw, tk),
+        spot,
+      ),
     });
   } else {
-    // Near gamma flip
+    // Near gamma flip — unstable regime
+    const flip = zg ?? mid;
     scenarios.push({
       name: "Unstable Regime — Trade the Flip",
-      trigger: `First 30-min closes decide: above ${zg?.toFixed(1) ?? cw.toFixed(0)} = positive gamma day, below = short-gamma trend day`,
-      target: `Follow the first-30min direction; size conservatively`,
-      invalidation: `Chop back through the flip`,
+      trigger: `First 30-min close decides: above ${fmtPrice(flip, tk)} = long-gamma pin day; below = short-gamma trend day`,
+      target: `Long: drift to ${fmtPrice(cw, tk)}. Short: cascade to ${fmtPrice(pw, tk)} then ${fmtPrice(roundToTick(pw - range * 0.4, tk), tk)}`,
+      invalidation: `Chop back through ${fmtPrice(flip, tk)} — stand aside`,
       odds: "primary",
+      levels: buildLevels(
+        "either",
+        null,
+        null,
+        roundToTick(spot > flip ? cw : pw, tk),
+        roundToTick(spot > flip ? cw + range * 0.3 : pw - range * 0.3, tk),
+        spot,
+      ),
     });
   }
 
@@ -441,12 +670,16 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
   resistance.sort((a, b) => a.level - b.level);
   support.sort((a, b) => b.level - a.level);
 
+  // News playbook: per-event reaction map for today's catalysts
+  const newsPlaybook = buildNewsPlaybook(inp.todaysEvents ?? [], spot, cw, pw);
+
   return {
     headline,
     bias,
     conviction,
     summary,
     scenarios,
+    newsPlaybook,
     keyLevels: { resistance, support },
     gameplan,
   };

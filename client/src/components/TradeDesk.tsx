@@ -83,14 +83,36 @@ type Squeeze = {
   timeHorizon: string;
 };
 
+type TradeLevels = {
+  side: "long" | "short" | "either";
+  entry: number | null;
+  stop: number | null;
+  target1: number | null;
+  target2: number | null;
+  rr1: number | null;
+  instruction: string;
+};
+
 type Playbook = {
   headline: string;
   bias: "bullish" | "bearish" | "neutral" | "volatile";
   conviction: "high" | "moderate" | "low";
   summary: string;
-  scenarios: Array<{ name: string; trigger: string; target: string; invalidation: string; odds: "primary" | "secondary" | "tail" }>;
+  scenarios: Array<{
+    name: string;
+    trigger: string;
+    target: string;
+    invalidation: string;
+    odds: "primary" | "secondary" | "tail";
+    levels?: TradeLevels;
+  }>;
   keyLevels: { resistance: Array<{ level: number; label: string }>; support: Array<{ level: number; label: string }> };
   gameplan: string[];
+  newsPlaybook?: Array<{
+    event: string;
+    bullScenario: string;
+    bearScenario: string;
+  }>;
 };
 
 type TradeDeskPayload = {
@@ -337,10 +359,60 @@ function PlaybookCard({ playbook }: { playbook: Playbook }) {
                 <Row k="trigger" v={s.trigger} />
                 <Row k="target" v={s.target} />
                 <Row k="invalid" v={s.invalidation} />
+                {s.levels?.instruction && (
+                  <div
+                    className={
+                      "mt-2 rounded-sm border px-2 py-1.5 font-mono text-[11px] font-semibold tracking-tight " +
+                      (s.levels.side === "long"
+                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                        : s.levels.side === "short"
+                        ? "border-red-500/40 bg-red-500/10 text-red-300"
+                        : "border-amber-500/40 bg-amber-500/10 text-amber-300")
+                    }
+                    data-testid={`scenario-levels-${i}`}
+                  >
+                    {s.levels.instruction}
+                  </div>
+                )}
               </div>
             ))}
           </div>
         </div>
+
+        {/* News Playbook — per-event reaction map */}
+        {playbook.newsPlaybook && playbook.newsPlaybook.length > 0 && (
+          <div className="mt-4">
+            <div className="mb-2 flex items-center gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-400">
+                News Playbook — Today's Catalysts
+              </span>
+              <span className="text-[9px] text-muted-foreground">if/then per release</span>
+            </div>
+            <div className="space-y-2">
+              {playbook.newsPlaybook.map((np, i) => (
+                <div
+                  key={i}
+                  className="rounded-sm border border-cyan-500/20 bg-cyan-500/5 p-2.5"
+                  data-testid={`news-playbook-${i}`}
+                >
+                  <div className="mb-1.5 font-mono text-[11px] font-semibold uppercase tracking-wider text-cyan-300">
+                    ▸ {np.event}
+                  </div>
+                  <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
+                    <div className="rounded-sm border border-emerald-500/30 bg-emerald-500/5 px-2 py-1.5 font-mono text-[10.5px] leading-snug text-emerald-200">
+                      <span className="mr-1 font-bold text-emerald-400">BULL</span>
+                      {np.bullScenario}
+                    </div>
+                    <div className="rounded-sm border border-red-500/30 bg-red-500/5 px-2 py-1.5 font-mono text-[10.5px] leading-snug text-red-200">
+                      <span className="mr-1 font-bold text-red-400">BEAR</span>
+                      {np.bearScenario}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Gameplan */}
         <div className="mt-4">

@@ -318,6 +318,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         skew: snap.vol.skew,
       });
 
+      // Pull today's catalyst events for news-aware playbook (best-effort)
+      let todaysEvents: Array<{ kind: string; label: string; timeLabel?: string }> = [];
+      try {
+        const { buildNewsSnapshot } = await import("./news");
+        const news = await buildNewsSnapshot();
+        const todayIso = new Date().toISOString().slice(0, 10);
+        todaysEvents = (news.calendar ?? [])
+          .filter((e: any) => e.date === todayIso)
+          .map((e: any) => ({
+            kind: e.kind,
+            label: e.label || e.title || "",
+            timeLabel: e.timeLabel || "",
+          }));
+      } catch (e) {
+        // non-fatal
+      }
+
       const playbook = buildDailyPlaybook({
         spot: spyLast,
         gamma: snap.gamma,
@@ -328,6 +345,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         compositeLabel: snap.composite.label,
         voicesBiasScore: voicesData?.voicesBias?.score ?? null,
         squeeze,
+        todaysEvents,
       });
 
       const payload = {

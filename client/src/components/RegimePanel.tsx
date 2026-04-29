@@ -17,7 +17,6 @@ import ErrorBoundary from "./ErrorBoundary";
 import SeasonalityPanel from "./SeasonalityPanel";
 import SeasonalityResearch from "./SeasonalityResearch";
 import JPMCollarPanel from "./JPMCollarPanel";
-import VolCalendarPanel from "./VolCalendarPanel";
 
 type WindowKey = "w4" | "w13" | "w52";
 
@@ -297,17 +296,6 @@ export default function RegimePanel() {
           </ErrorBoundary>
         </div>
 
-        {/* Vol Event Calendar */}
-        <div>
-          <div className="mb-4 flex items-center gap-2">
-            <Calendar className="h-4 w-4 text-violet-400" />
-            <h2 className="text-sm font-semibold uppercase tracking-wider">Vol Event Calendar</h2>
-            <span className="text-xs text-muted-foreground">OPEX · VIX exp · FOMC · CPI · NFP · next 90 days</span>
-          </div>
-          <ErrorBoundary label="Vol Calendar">
-            <VolCalendarPanel />
-          </ErrorBoundary>
-        </div>
       </div>
     </div>
   );
