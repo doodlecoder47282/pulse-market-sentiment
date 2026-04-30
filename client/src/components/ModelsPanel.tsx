@@ -19,7 +19,7 @@
 //
 // Data source: GET /api/models?symbol=^GSPC|SPY
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   LineChart, Line, ReferenceLine, ReferenceDot, ReferenceArea,
@@ -1688,9 +1688,29 @@ export default function ModelsPanel() {
       const r = await apiRequest("GET", `/api/models?${qs.toString()}`);
       return r.json();
     },
-    refetchInterval: 5 * 60_000,
-    staleTime: 4 * 60_000,
+    // 30-min refresh — BULL / BASE / BEAR scenarios re-roll every half hour so the
+    // user sees current price, current dealer levels, and live scenario targets.
+    refetchInterval: 30 * 60_000,
+    staleTime: 25 * 60_000,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
   });
+
+  // Live "updated Xm ago" ticker — re-renders every 30s so the badge counts up.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  const updatedAgo = useMemo(() => {
+    if (!data?.asOf) return null;
+    const ageSec = Math.max(0, Math.floor((now - data.asOf * 1000) / 1000));
+    if (ageSec < 60) return `${ageSec}s ago`;
+    const m = Math.floor(ageSec / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    return `${h}h ${m % 60}m ago`;
+  }, [data?.asOf, now]);
 
   const active = data?.horizons[horizon];
 
@@ -1748,8 +1768,21 @@ export default function ModelsPanel() {
                 ? "border-green-500/40 font-mono text-[9px] text-green-400"
                 : "border-amber-500/40 font-mono text-[9px] text-amber-300"
             }
+            data-testid="badge-models-session"
           >
             {data.session === "live" ? "● LIVE" : "◌ LAST SESSION"}
+          </Badge>
+        )}
+
+        {updatedAgo && (
+          <Badge
+            variant="outline"
+            className="border-cyan-500/30 font-mono text-[9px] text-cyan-300/90"
+            data-testid="badge-models-updated"
+            title="Bull / Base / Bear scenarios refresh every 30 minutes"
+          >
+            <span className={`mr-1 inline-block h-1.5 w-1.5 rounded-full bg-cyan-400 ${isFetching ? "animate-pulse" : ""}`} />
+            UPDATED {updatedAgo} · NEXT 30M
           </Badge>
         )}
 

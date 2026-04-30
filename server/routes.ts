@@ -453,7 +453,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Cached 5 minutes in-memory; persisted to disk on every successful build so
   // the app can serve last-close snapshots after hours.
   const modelsCache = new Map<string, { at: number; data: ModelsResponse }>();
-  const MODELS_CACHE_MS = 5 * 60_000;
+  // 30-min refresh cadence — model rebuilds every half hour during RTH so the
+  // BULL / BASE / BEAR scenarios stay near-real-time without thrashing the
+  // options chain (Schwab/CBOE are rate-limited).
+  const MODELS_CACHE_MS = 30 * 60_000;
   app.get("/api/models", async (req, res) => {
     try {
       const symbol = (String(req.query.symbol ?? "^GSPC").toUpperCase() === "SPY" ? "SPY" : "^GSPC") as "SPY" | "^GSPC";
