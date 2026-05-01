@@ -21,6 +21,16 @@ export interface VolEvent {
 export interface VolCalendarResponse {
   events: VolEvent[];
   asOf: string;
+  warnings?: string[];
+  // Last hardcoded date in each schedule — used by clients to know when the
+  // calendar will go stale. If today > lastFomc / lastCpi, we won't surface
+  // events of that type and a warning is emitted.
+  bounds: {
+    lastFomc: string;
+    lastCpi: string;
+    fomcStale: boolean;
+    cpiStale: boolean;
+  };
 }
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -110,6 +120,25 @@ export function buildVolCalendar(): VolCalendarResponse {
   const cutoffDate = new Date(today);
   cutoffDate.setDate(cutoffDate.getDate() + 90);
   const cutoffStr = toDateStr(cutoffDate);
+
+  // #7: bounds check — hardcoded FOMC/CPI lists eventually run out.
+  // If today is past the last hardcoded date, log + surface a warning so
+  // callers know the calendar is stale and the lists need to be refreshed.
+  const lastFomc = FOMC_DATES[FOMC_DATES.length - 1];
+  const lastCpi = CPI_DATES[CPI_DATES.length - 1];
+  const fomcStale = todayStr > lastFomc;
+  const cpiStale = todayStr > lastCpi;
+  const warnings: string[] = [];
+  if (fomcStale) {
+    const msg = `FOMC schedule stale: last hardcoded date ${lastFomc} is past today (${todayStr}). Refresh FOMC_DATES with the next FOMC calendar.`;
+    warnings.push(msg);
+    console.warn(`[volCalendar] ${msg}`);
+  }
+  if (cpiStale) {
+    const msg = `CPI schedule stale: last hardcoded date ${lastCpi} is past today (${todayStr}). Refresh CPI_DATES with the next BLS release schedule.`;
+    warnings.push(msg);
+    console.warn(`[volCalendar] ${msg}`);
+  }
 
   const events: VolEvent[] = [];
 
@@ -209,5 +238,12 @@ export function buildVolCalendar(): VolCalendarResponse {
   return {
     events: sorted,
     asOf: new Date().toISOString(),
+    warnings: warnings.length > 0 ? warnings : undefined,
+    bounds: {
+      lastFomc,
+      lastCpi,
+      fomcStale,
+      cpiStale,
+    },
   };
 }
