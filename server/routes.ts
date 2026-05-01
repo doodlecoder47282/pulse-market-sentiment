@@ -26,6 +26,7 @@ import { snapshotHorizon, gradeOutcomes, empiricalStats, masterAlphaStats } from
 import { startMmScheduler } from "./mmScheduler";
 import { startDiscordScheduler } from "./discordScheduler";
 import { fireTestCard, postDailyModelCard } from "./discord";
+import { postSelzDailyCard } from "./discordSelzCard";
 import { buildMag7Snapshot, type Mag7Response } from "./mag7";
 import { buildFlowSnapshot, buildIntradayFlowSnapshot, type FlowResponse } from "./flow";
 import { buildExposuresSnapshot, type ExposuresResponse } from "./exposures";
@@ -2073,6 +2074,16 @@ Refine the brief above. Search the web for any critical developments the feed is
     try {
       const ok = await postDailyModelCard();
       res.json({ ok });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, note: e?.message ?? "failed" });
+    }
+  });
+
+  // Manual fire SelzTrades-format card
+  app.post("/api/discord/selz", async (_req, res) => {
+    try {
+      const r = await postSelzDailyCard();
+      res.json(r);
     } catch (e: any) {
       res.status(500).json({ ok: false, note: e?.message ?? "failed" });
     }

@@ -15,11 +15,11 @@
 // fires on TRANSITIONS, not on absolute states.
 
 import {
-  postDailyModelCard,
   postLevelBreakAlert,
   postGammaFlipAlert,
   postNewsAlert,
 } from "./discord";
+import { postSelzDailyCard } from "./discordSelzCard";
 
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -63,8 +63,8 @@ async function maybeFireDaily(): Promise<void> {
   if (hh !== tH || mm !== tM) return;
   if (dailyFired.has(date)) return;
   dailyFired.add(date);
-  console.log(`[discordScheduler] firing daily SPX card at ${date} ${DAILY_HHMM} ET`);
-  await postDailyModelCard();
+  console.log(`[discordScheduler] firing daily SPX card (Selz format) at ${date} ${DAILY_HHMM} ET`);
+  await postSelzDailyCard();
 }
 
 // ─── 2. Level / gamma flip alerts ───────────────────────────────────────

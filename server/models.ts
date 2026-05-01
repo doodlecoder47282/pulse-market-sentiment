@@ -154,6 +154,7 @@ export interface ModelAudit {
   doubleZeroLow: number | null;           // lower bound of double-zero zone
   doubleZeroHigh: number | null;          // upper bound of double-zero zone
   scenarioProb: { bull: number; base: number; bear: number };  // percentages summing to 100
+  scenarioTargets: { bull: number; base: number; bear: number; oneDayEM: number }; // close-by-EOD price targets per scenario
   closeTargets: {                         // Selz #5 — discrete BULL / BASE / BEAR close targets (chart right edge)
     bull:  { price: number; prob: number } | null;
     base:  { price: number; prob: number } | null;
@@ -826,6 +827,7 @@ function buildAudit(
     charmPrev: number | null;
     lastRecal: { at: number; dfi: number; dfiDeltaSinceOpen: number | null } | null;
     vixTermRatio?: number | null;
+    vixForEM?: number | null;
   },
 ): ModelAudit {
   const cur = profile.current;
@@ -928,6 +930,57 @@ function buildAudit(
     putWallDistBps,
   });
 
+  // ─── Scenario TARGETS (close-by-EOD price levels per scenario) ─────────
+  // Mirrors @SelzTrades-style daily print. Pulls strictly from already-
+  // computed levels + charm — no LLM, no external feed.
+  //   BULL  = nearest structural resistance above spot, capped to spot+1d EM
+  //   BASE  = spot drifted by charmPerDay (charm decay drift) over 1 session
+  //   BEAR  = first structural support below spot that fails (strongMag /
+  //           zeroGamma / putWall), capped to spot-1d EM
+  // 1-day EM uses VIX-style annualized IV (extras.vixForEM, scale 0..100 in
+  // percent annualised) on the standard formula spot × iv × √(1/252). For an
+  // EOD-print target we want the close-by-end-of-session move, so we scale
+  // by 0.55 to approximate the residual session move from the start of the
+  // window when we publish the card (charm/theta has already burned some).
+  // If VIX feed is missing, fall back to ~1.0% fixed EM — conservative.
+  const vixForEM = extras.vixForEM ?? null;
+  const fullDayEM = vixForEM != null && vixForEM > 0
+    ? spot * (vixForEM / 100) * Math.sqrt(1 / 252)
+    : spot * 0.010;
+  const oneDayEM = fullDayEM * 0.55;
+
+  const resistAbove = levels
+    .filter((l) => l.side === "resistance" && l.price > spot)
+    .sort((a, b) => a.price - b.price);
+  const supportBelow = levels
+    .filter((l) => l.side === "support" && l.price < spot)
+    .sort((a, b) => b.price - a.price);
+
+  // Bull target: nearest resistance, capped to spot + EM. If no resistance,
+  // fall back to spot + EM.
+  const bullCap = spot + oneDayEM;
+  const bullRaw = resistAbove[0]?.price ?? bullCap;
+  const bullTarget = Math.min(bullRaw, bullCap);
+
+  // Base target: spot drifted by charm. charmPerDay is small per-share value
+  // — normalise against spot to get a pct drift, capped at ±50bps.
+  const charmDrift = cur.charmPerDay
+    ? Math.max(-0.005, Math.min(0.005, cur.charmPerDay / 1_000))
+    : 0;
+  const baseTarget = spot * (1 + charmDrift);
+
+  // Bear target: first failing support below, capped to spot - EM.
+  const bearCap = spot - oneDayEM;
+  const bearRaw = supportBelow[0]?.price ?? bearCap;
+  const bearTarget = Math.max(bearRaw, bearCap);
+
+  const scenarioTargets = {
+    bull: parseFloat(bullTarget.toFixed(2)),
+    base: parseFloat(baseTarget.toFixed(2)),
+    bear: parseFloat(bearTarget.toFixed(2)),
+    oneDayEM: parseFloat(oneDayEM.toFixed(2)),
+  };
+
   // Selz #1 — charm-zero CLUSTER filtered to ±3% of spot
   const charmZeros = profile.zeroCharmSpots.filter((x) => Math.abs(x - spot) / spot <= 0.03);
 
@@ -1014,6 +1067,7 @@ function buildAudit(
     doubleZeroLow,
     doubleZeroHigh,
     scenarioProb,
+    scenarioTargets,
     closeTargets,
     lastRecal: extras.lastRecal,
     termStructureDoD,
@@ -1158,6 +1212,7 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
     charmPrev: prevDay?.charmPerDay ?? null,
     lastRecal: lastRecalOut,
     vixTermRatio: vixTermRatioForAudit,
+    vixForEM: vix ?? null,
   });
 
   // Price range: widest of call wall → put wall vs. ±2% of spot, padded
