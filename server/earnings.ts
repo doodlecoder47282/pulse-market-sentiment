@@ -257,23 +257,35 @@ export async function getEarnings(horizon: "weekly" | "monthly" = "weekly"): Pro
   const warnings: string[] = [];
   const dayResults = await Promise.allSettled(dates.map((d) => fetchNasdaqEarnings(d)));
 
+  // #6: prefer real Nasdaq data over MAG7_BASELINE.
+  // Track which dates the API successfully covered so synthetic MAG7 rows are
+  // ONLY injected for dates we have no upstream data for. Previously we
+  // always pushed synthetic baseline regardless and relied on dedup ordering
+  // to suppress duplicates, but that meant a synthetic MAG7 print would still
+  // appear on a date when the live feed (correctly) showed no MAG7 reporting.
   const allRows: EarningsRow[] = [];
+  const failedDates: string[] = [];
   for (let i = 0; i < dayResults.length; i++) {
     const r = dayResults[i];
+    const date = dates[i];
     if (r.status === "fulfilled") {
       allRows.push(...r.value);
     } else {
-      warnings.push(`${dates[i]}: ${(r.reason as Error)?.message ?? "failed"}`);
+      failedDates.push(date);
+      warnings.push(`${date}: ${(r.reason as Error)?.message ?? "failed"}`);
     }
   }
 
-  // Always inject synthetic MAG7 baseline so the big tentpole prints are
-  // present in the calendar even when Nasdaq is rate-limited / 403'd.
-  // De-duplication later (by ticker+date) will prefer Nasdaq rows when both exist.
-  const fromIso = todayIso;
-  const toIso = addDaysIso(todayIso, days - 1);
-  for (const row of syntheticMag7Earnings(fromIso, toIso)) {
-    allRows.push(row);
+  // Inject synthetic MAG7 baseline ONLY for dates where Nasdaq failed.
+  // If every date succeeded, we trust the upstream entirely.
+  if (failedDates.length > 0) {
+    const failedSet = new Set(failedDates);
+    const fromIso = failedDates[0];
+    const toIso = failedDates[failedDates.length - 1];
+    for (const row of syntheticMag7Earnings(fromIso, toIso)) {
+      if (failedSet.has(row.date)) allRows.push(row);
+    }
+    warnings.push(`mag7 baseline injected for ${failedDates.length} failed date(s)`);
   }
 
   // Deduplicate by ticker+date (sometimes Nasdaq repeats)
