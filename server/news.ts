@@ -297,14 +297,31 @@ function thirdFriday(year: number, monthIndex: number /* 0-11 */): Date {
   return new Date(firstFriday.getTime() + 14 * 86400 * 1000);
 }
 
+// Returns true when the given date falls in US Eastern Daylight Time (UTC-4).
+// EST (UTC-5) runs roughly Nov 1st Sunday → Mar 2nd Sunday. We let Intl do
+// the heavy lifting so DST transitions are exact for whatever year we're in.
+function isEdt(day: Date): boolean {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    timeZoneName: "short",
+  });
+  const parts = fmt.formatToParts(day);
+  const tzName = parts.find((p) => p.type === "timeZoneName")?.value ?? "";
+  return tzName === "EDT";
+}
+
 function makeUtcEvent(day: Date, hourEt: number, minEt: number): number {
-  // Convert ET wall-clock to UTC. Approximate UTC-4 (EDT). For a trader
-  // dashboard running year-round this is close enough—DST boundary days
-  // may be off by 1 hour but the actual date/label is still correct.
+  // Convert an ET wall-clock time to UTC epoch seconds. Honors EDT (UTC-4)
+  // vs EST (UTC-5) automatically so 2:00 PM ET FOMC events land at the right
+  // UTC instant year-round, including across DST transitions.
   const y = day.getUTCFullYear();
   const m = day.getUTCMonth();
   const d = day.getUTCDate();
-  const iso = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}T${String(hourEt + 4).padStart(2, "0")}:${String(minEt).padStart(2, "0")}:00Z`;
+  const offset = isEdt(day) ? 4 : 5; // hours west of UTC
+  const utcHour = hourEt + offset;
+  // utcHour can be 24+ if event is late-evening ET; Date constructor handles
+  // overflow correctly by rolling forward to the next day.
+  const iso = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}T${String(utcHour).padStart(2, "0")}:${String(minEt).padStart(2, "0")}:00Z`;
   return Math.floor(new Date(iso).getTime() / 1000);
 }
 
