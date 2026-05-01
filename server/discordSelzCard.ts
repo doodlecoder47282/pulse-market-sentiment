@@ -145,25 +145,34 @@ const DISPLAY_NAME: Record<string, string> = {
 const displayName = (kind: string, fallback: string) =>
   DISPLAY_NAME[kind] ?? fallback;
 
-// Pick the top 3 most-relevant levels per side, in order of importance
-// (closest to spot, structural anchors first).
+// Tactical band: levels within ±TACTICAL_BAND of spot are far more relevant
+// to intraday trading than far structural anchors. Selz-style prints stay
+// inside this band almost exclusively. Fill from outside only if tactical
+// pool is short.
+const TACTICAL_BAND = 40; // $40 ≈ ~0.55% on SPX 7250
+
+// Pick the top n most-relevant levels per side. Strategy:
+//   1. Take all dedup'd levels in the tactical band, sorted by distance to spot
+//   2. If we still need more, fill from outside the band (closest first)
 function pickTopLevels(side: "resistance" | "support", levels: any[], spot: number, n = 3): any[] {
   const filtered = levels.filter((l) => l.side === side);
-  if (side === "resistance") {
-    filtered.sort((a, b) => a.price - b.price); // closest above first
-  } else {
-    filtered.sort((a, b) => b.price - a.price); // closest below first
-  }
-  // Dedupe by price so stacked levels don't all print
+  const dist = (p: number) => Math.abs(p - spot);
+  // Sort by distance to spot — closest first regardless of side
+  filtered.sort((a, b) => dist(a.price) - dist(b.price));
+
+  // Dedupe by integer price
   const seen = new Set<string>();
-  const out: any[] = [];
+  const dedup: any[] = [];
   for (const l of filtered) {
     const key = l.price.toFixed(0);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(l);
-    if (out.length >= n) break;
+    dedup.push(l);
   }
+
+  const tactical = dedup.filter((l) => dist(l.price) <= TACTICAL_BAND);
+  const structural = dedup.filter((l) => dist(l.price) > TACTICAL_BAND);
+  const out = [...tactical, ...structural].slice(0, n);
   return out;
 }
 
@@ -209,7 +218,10 @@ export async function postSelzDailyCard(): Promise<{ ok: boolean; preview: strin
   const audit = daily.audit ?? {};
   const sp = audit.scenarioProb ?? { bull: 0, base: 0, bear: 0 };
   const st = audit.scenarioTargets ?? { bull: spot, base: spot, bear: spot, oneDayEM: spot * 0.005 };
-  const dfi = (audit.dfi ?? 0) * 100; // Selz scales DFI ×100 for display
+  // DFI: audit.dfi is normalized to [-5, +5]-ish. Multiply by 100 for display
+  // but cap at ±499 so we don't pin at the visual ceiling on every print.
+  const dfiRaw = (audit.dfi ?? 0) * 100;
+  const dfi = Math.max(-499, Math.min(499, dfiRaw));
   const dfiLabel = dfi >= 100 ? "BULLISH" : dfi <= -100 ? "BEARISH" : "NEUTRAL";
   const rb = daily.rangeBox;
   const rbStatus = rb?.status ?? "contained";
