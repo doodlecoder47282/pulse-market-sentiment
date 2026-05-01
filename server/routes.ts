@@ -453,10 +453,44 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Cached 5 minutes in-memory; persisted to disk on every successful build so
   // the app can serve last-close snapshots after hours.
   const modelsCache = new Map<string, { at: number; data: ModelsResponse }>();
+  // In-flight build deduplication. When the cache is cold and N concurrent
+  // requests arrive, we only run the expensive Schwab chain pull + dealer-map
+  // computation ONCE; the rest await the same promise. Prevents cache
+  // stampedes that would otherwise rate-limit our upstream feeds.
+  const modelsInFlight = new Map<string, Promise<ModelsResponse>>();
   // 30-min refresh cadence — model rebuilds every half hour during RTH so the
   // BULL / BASE / BEAR scenarios stay near-real-time without thrashing the
   // options chain (Schwab/CBOE are rate-limited).
   const MODELS_CACHE_MS = 30 * 60_000;
+
+  async function buildModelsForKey(symbol: "SPY" | "^GSPC", experimental: boolean): Promise<ModelsResponse> {
+    const cacheKey = `${symbol}${experimental ? ":exp" : ""}`;
+    // Cache hit
+    const cached = modelsCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < MODELS_CACHE_MS) return cached.data;
+    // Existing build in flight
+    const pending = modelsInFlight.get(cacheKey);
+    if (pending) return pending;
+    // Start a new build
+    const buildPromise = (async () => {
+      const snap = await getOrBuild(false).catch(() => null);
+      const data = await buildModelsSnapshot({
+        vix: snap?.vol.vix.value ?? null,
+        vixPrev: snap?.vol.vix.prev ?? null,
+        vix3m: snap?.vol.vix3m.value ?? null,
+        symbols: [symbol],
+        experimental,
+      });
+      await writeCache(`models-${symbol}${experimental ? "-exp" : ""}-${rthSessionKey()}`, data);
+      modelsCache.set(cacheKey, { at: Date.now(), data });
+      return data;
+    })().finally(() => {
+      // Always clear the in-flight slot so the NEXT cold miss can run
+      modelsInFlight.delete(cacheKey);
+    });
+    modelsInFlight.set(cacheKey, buildPromise);
+    return buildPromise;
+  }
   app.get("/api/models", async (req, res) => {
     try {
       const symbol = (String(req.query.symbol ?? "^GSPC").toUpperCase() === "SPY" ? "SPY" : "^GSPC") as "SPY" | "^GSPC";
@@ -464,28 +498,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // entry, upper/lower vomma) are now always on — they're core levels,
       // not experimental. ?experimental=0 can still disable them explicitly.
       const experimental = String(req.query.experimental ?? "1") !== "0";
-      const cacheKey = `${symbol}${experimental ? ":exp" : ""}`;
-      const cached = modelsCache.get(cacheKey);
-      if (cached && Date.now() - cached.at < MODELS_CACHE_MS) {
-        return res.json(cached.data);
-      }
-      // Need VIX context for vol header
-      const snap = await getOrBuild(false).catch(() => null);
-      const vix = snap?.vol.vix.value ?? null;
-      const vixPrev = snap?.vol.vix.prev ?? null;
-      const vix3m = snap?.vol.vix3m.value ?? null;
-
-      const data = await buildModelsSnapshot({
-        vix, vixPrev, vix3m,
-        symbols: [symbol],
-        experimental,
-      });
-
-      // Persist a snapshot keyed to today's RTH session date. Reads flip to live
-      // as soon as the next session starts returning fresh data.
-      await writeCache(`models-${symbol}${experimental ? "-exp" : ""}-${rthSessionKey()}`, data);
-
-      modelsCache.set(cacheKey, { at: Date.now(), data });
+      const data = await buildModelsForKey(symbol, experimental);
       res.json(data);
     } catch (e: any) {
       // On failure — serve last persisted session snapshot for today, tagged.
@@ -511,23 +524,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const symbol = (String(req.body?.symbol ?? "^GSPC").toUpperCase() === "SPY" ? "SPY" : "^GSPC") as "SPY" | "^GSPC";
       const requested: string[] = Array.isArray(req.body?.horizons) ? req.body.horizons : ["daily", "weekly"];
 
-      // Pull cached models build if fresh, otherwise build now
-      const cacheKey = `${symbol}:exp`;
-      const cached = modelsCache.get(cacheKey);
-      let models: ModelsResponse;
-      if (cached && Date.now() - cached.at < MODELS_CACHE_MS) {
-        models = cached.data;
-      } else {
-        const snap = await getOrBuild(false).catch(() => null);
-        models = await buildModelsSnapshot({
-          vix: snap?.vol.vix.value ?? null,
-          vixPrev: snap?.vol.vix.prev ?? null,
-          vix3m: snap?.vol.vix3m.value ?? null,
-          symbols: [symbol],
-          experimental: true,
-        });
-        modelsCache.set(cacheKey, { at: Date.now(), data: models });
-      }
+      // Reuse the shared cache + in-flight dedup helper
+      const models = await buildModelsForKey(symbol, true);
 
       const snaps: any[] = [];
       for (const h of requested) {
