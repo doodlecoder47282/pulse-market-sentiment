@@ -67,6 +67,32 @@ async function maybeFireDaily(): Promise<void> {
   await postSelzDailyCard();
 }
 
+// ─── 1b. 30-min Selz cadence ────────────────────────────────────────────
+//
+// Fires postSelzDailyCard() every 30 min during RTH (9:30–16:00 ET) on
+// trading days. Skips the 9:30 slot — the daily cron owns that fire so we
+// don't double-post. Slots: 10:00, 10:30, ..., 15:30, 16:00 (13 fires/day).
+const HALFHOUR_FIRED = new Set<string>(); // YYYY-MM-DD HH:MM entries
+
+async function maybeFireHalfHour(): Promise<void> {
+  const { date, hh, mm, dow } = etNow();
+  if (!isTradingDay(dow, date)) return;
+  // Only on the :00 / :30 mark
+  if (mm !== 0 && mm !== 30) return;
+  // Window: 09:30 ≤ t ≤ 16:00 — but skip 09:30 (daily card)
+  const minutes = hh * 60 + mm;
+  if (minutes < 9 * 60 + 30 || minutes > 16 * 60) return;
+  if (hh === 9 && mm === 30) return;
+
+  const key = `${date} ${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+  if (HALFHOUR_FIRED.has(key)) return;
+  HALFHOUR_FIRED.add(key);
+  console.log(`[discordScheduler] firing 30-min Selz card at ${key} ET`);
+  await postSelzDailyCard().catch((e) => {
+    console.error(`[discordScheduler] half-hour fire failed: ${e}`);
+  });
+}
+
 // ─── 2. Level / gamma flip alerts ───────────────────────────────────────
 //
 // Compare current /api/models response to the last seen one. Fire on:
@@ -222,6 +248,7 @@ async function pollNewsAlerts(): Promise<void> {
 // ─── Tick ───────────────────────────────────────────────────────────────
 async function tick(): Promise<void> {
   await maybeFireDaily();
+  await maybeFireHalfHour();
   await pollLevelAndGammaAlerts();
   await pollNewsAlerts();
 
@@ -230,6 +257,13 @@ async function tick(): Promise<void> {
     const today = etNow().date;
     for (const k of Array.from(dailyFired)) {
       if (k !== today) dailyFired.delete(k);
+    }
+  }
+  // GC HALFHOUR_FIRED — keep only today's entries
+  if (HALFHOUR_FIRED.size > 20) {
+    const today = etNow().date;
+    for (const k of Array.from(HALFHOUR_FIRED)) {
+      if (!k.startsWith(today)) HALFHOUR_FIRED.delete(k);
     }
   }
 }
@@ -241,7 +275,7 @@ export function startDiscordScheduler(): void {
   timer = setInterval(() => { tick().catch(() => {}); }, 60_000);
   // First tick after 5s so server has a moment to warm
   setTimeout(() => { tick().catch(() => {}); }, 5_000);
-  console.log(`[discordScheduler] started — daily card 9:30 ET, alerts on level breaks + gamma flips + macro news`);
+  console.log(`[discordScheduler] started — daily 9:30 ET + 30-min cadence (10:00–16:00 ET), alerts on level breaks + gamma flips + macro news`);
 }
 
 export function stopDiscordScheduler(): void {
