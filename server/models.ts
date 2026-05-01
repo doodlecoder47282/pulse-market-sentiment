@@ -722,24 +722,77 @@ function midPath(spot: number, via: number, end: number, nAfter: number): number
 // ──────────────────────────────────────────────────────────────────────────
 
 // ─── Scenario probabilities ──────────────────────────────────────────────────
-// Derived from gamma regime, DFI direction, and distance to gamma zero.
+// Derived from gamma regime, DFI direction, distance to gamma zero,
+// VIX term structure, and proximity to call/put walls.
 //
 // heuristic:
 //   baseProb starts at 0.37 — positive GEX (dampening) boosts it, negative cuts it.
 //   dfi > 0 (bullish flow) adds a bull boost via tanh ramp.
 //   dfi < 0 (bearish flow) adds a bear boost.
+//   #5: VIX term ratio < 1 (backwardation/inversion) = stress → bear weight up,
+//   base weight cut. Term ratio >> 1 (steep contango) = calm → base weight up.
+//   #5: spot within 50bps of call wall caps bull (gamma resistance overhead);
+//   spot within 50bps of put wall caps bear (gamma support below). Within 15bps
+//   the cap is harder still — scenarios collapse toward base.
 //   Normalise to sum = 100, clamp each to minimum 10%.
 function computeScenarioProb(
   gammaZone: "y+" | "y-",
   dfi: number,
+  ctx?: {
+    vixTermRatio: number | null;
+    callWallDistBps: number | null;   // signed: + means wall above spot
+    putWallDistBps: number | null;    // signed: - means wall below spot
+  },
 ): { bull: number; base: number; bear: number } {
   const rawBase = 0.37 + (gammaZone === "y+" ? 0.08 : -0.08);
   const bullBoost = dfi > 0 ? 0.10 * Math.tanh(dfi / 3) : 0;
   const bearBoost = dfi < 0 ? 0.10 * Math.tanh(-dfi / 3) : 0;
 
+  // #5a: VIX term structure tilt
+  // term < 1 = backwardation (front-month richer than 3m) = stress
+  // term > 1 = contango (calm)
+  // map to a [-0.06, +0.04] tilt range; 1.0 = neutral
+  let termBearTilt = 0;
+  let termBaseTilt = 0;
+  const term = ctx?.vixTermRatio ?? null;
+  if (term != null) {
+    if (term < 1) {
+      // stress regime: punish base, reward bear
+      const stress = Math.min(1, (1 - term) / 0.10); // 0..1 ramp; full at 0.90
+      termBearTilt = 0.06 * stress;
+      termBaseTilt = -0.04 * stress;
+    } else {
+      // calm regime: reward base modestly
+      const calm = Math.min(1, (term - 1) / 0.15); // full at 1.15
+      termBaseTilt = 0.04 * calm;
+    }
+  }
+
   let bull = 0.20 + bullBoost - (bearBoost * 0.5);
-  let bear = 0.25 + bearBoost - (bullBoost * 0.5);
-  let base = rawBase;
+  let bear = 0.25 + bearBoost - (bullBoost * 0.5) + termBearTilt;
+  let base = rawBase + termBaseTilt;
+
+  // #5b: γ-wall distance caps. When spot is right under a call wall, upside
+  // gets blocked by gamma resistance — shrink bull. When right above put wall,
+  // downside is cushioned — shrink bear. The closer, the harder the cap.
+  const callDist = ctx?.callWallDistBps ?? null;
+  const putDist = ctx?.putWallDistBps ?? null;
+  // Only matters when wall is on the relevant side of spot (call above, put below)
+  if (callDist != null && callDist > 0 && callDist < 50) {
+    // 0bps = full damp, 50bps = none
+    const damp = (50 - callDist) / 50;            // 0..1
+    const shrink = 0.40 * damp;                   // up to 40% bull haircut
+    const moved = bull * shrink;
+    bull -= moved;
+    base += moved;
+  }
+  if (putDist != null && putDist < 0 && Math.abs(putDist) < 50) {
+    const damp = (50 - Math.abs(putDist)) / 50;
+    const shrink = 0.40 * damp;
+    const moved = bear * shrink;
+    bear -= moved;
+    base += moved;
+  }
 
   // Normalise
   const total = bull + bear + base;
@@ -772,6 +825,7 @@ function buildAudit(
     iv1dPrev: number | null;
     charmPrev: number | null;
     lastRecal: { at: number; dfi: number; dfiDeltaSinceOpen: number | null } | null;
+    vixTermRatio?: number | null;
   },
 ): ModelAudit {
   const cur = profile.current;
@@ -859,7 +913,20 @@ function buildAudit(
   // Gamma at spot (signed GEX, for display)
   const gammaAtSpot = parseFloat((cur.gex / 1e6).toFixed(0)); // $M
 
-  const scenarioProb = extras.scenarioProbIn ?? computeScenarioProb(gammaZone, dfi);
+  // #5: γ-wall distances (signed bps from spot) for scenario weighting
+  const callWallPrice = byKind("callWall")?.price ?? null;
+  const putWallPrice = byKind("putWall")?.price ?? null;
+  const callWallDistBps = callWallPrice != null
+    ? Math.round(((callWallPrice - spot) / spot) * 10_000)
+    : null;
+  const putWallDistBps = putWallPrice != null
+    ? Math.round(((putWallPrice - spot) / spot) * 10_000)
+    : null;
+  const scenarioProb = extras.scenarioProbIn ?? computeScenarioProb(gammaZone, dfi, {
+    vixTermRatio: extras.vixTermRatio ?? null,
+    callWallDistBps,
+    putWallDistBps,
+  });
 
   // Selz #1 — charm-zero CLUSTER filtered to ±3% of spot
   const charmZeros = profile.zeroCharmSpots.filter((x) => Math.abs(x - spot) / spot <= 0.03);
@@ -1081,12 +1148,16 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
       }
     : null;
 
+  // #5: VIX term ratio fed into scenario weighting
+  const vixTermRatioForAudit = vix && vix3m ? vix3m / vix : null;
+
   const audit = buildAudit(scaledProfile, levels, displaySpot, intradayChange ?? { change: null, windowMin: null }, {
     paths,
     iv1d: iv1dNow,
     iv1dPrev: prevDay?.iv1d ?? null,
     charmPrev: prevDay?.charmPerDay ?? null,
     lastRecal: lastRecalOut,
+    vixTermRatio: vixTermRatioForAudit,
   });
 
   // Price range: widest of call wall → put wall vs. ±2% of spot, padded
