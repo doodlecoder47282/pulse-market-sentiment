@@ -24,6 +24,8 @@ import { buildMacroSnapshot, type MacroResponse } from "./macro";
 import { fetchOHLC, type OHLCResponse, type Timeframe, type Interval } from "./ohlc";
 import { snapshotHorizon, gradeOutcomes, empiricalStats, masterAlphaStats } from "./mmPredictions";
 import { startMmScheduler } from "./mmScheduler";
+import { startDiscordScheduler } from "./discordScheduler";
+import { fireTestCard, postDailyModelCard } from "./discord";
 import { buildMag7Snapshot, type Mag7Response } from "./mag7";
 import { buildFlowSnapshot, buildIntradayFlowSnapshot, type FlowResponse } from "./flow";
 import { buildExposuresSnapshot, type ExposuresResponse } from "./exposures";
@@ -2054,6 +2056,27 @@ Refine the brief above. Search the web for any critical developments the feed is
 
   // Kick off MM-matrix scheduler (10/13/15:30 ET snapshots, 16:30 grading)
   startMmScheduler();
+  startDiscordScheduler();
+
+  // Manual test endpoint for Discord webhook
+  app.post("/api/discord/test", async (_req, res) => {
+    try {
+      const r = await fireTestCard();
+      res.json(r);
+    } catch (e: any) {
+      res.status(500).json({ ok: false, note: e?.message ?? "failed" });
+    }
+  });
+
+  // Manual fire daily card (used by `curl` while wiring + verifying)
+  app.post("/api/discord/daily", async (_req, res) => {
+    try {
+      const ok = await postDailyModelCard();
+      res.json({ ok });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, note: e?.message ?? "failed" });
+    }
+  });
 
   // ─── Start background token refresh cycle ─────────────────────────────────
   startTokenRefreshCycle();
