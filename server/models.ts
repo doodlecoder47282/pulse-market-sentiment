@@ -97,6 +97,13 @@ export interface ModelLevel {
   gex?: number;                            // $ per 1% (signed)
   tag?: string;                            // "FLOOR" / "CEILING" / "VAC" / "FADES" etc.
   note?: string;
+  // Live status vs current spot — server-computed so alert engines and UI
+  // share one source of truth instead of each reimplementing the comparator.
+  status?: "held" | "approaching" | "broken";
+  // Side: "resistance" if level is above spot, "support" if below, "at" if within 0.05%.
+  side?: "resistance" | "support" | "at";
+  // Distance from current spot in basis points (signed: + means above spot).
+  distBps?: number;
 }
 
 export interface ModelPathWaypoint {
@@ -182,6 +189,20 @@ export interface ModelHorizon {
   targetDate: string;                      // "FRI 4/24" (daily = same day; weekly = Fri; monthly = 3rd Friday of next month)
   targetDateLong: string;                  // "Wed Apr 22, 2026"
   priceRange: [number, number];            // y-axis suggested bounds
+  // Compression band the market is currently sitting in — derived from the
+  // nearest support and resistance to spot. Used by alerts and the daily
+  // brief to surface explicit breakout / breakdown trigger prices.
+  rangeBox: {
+    low: number;
+    high: number;
+    width: number;                         // high - low
+    widthPct: number;                      // (high - low) / spot * 100
+    breakoutTrigger: number;               // price that flips bias bullish if exceeded (== high)
+    breakdownTrigger: number;              // price that flips bias bearish if broken (== low)
+    status: "contained" | "breakout" | "breakdown";  // where spot sits vs the band
+    anchorHigh: { name: string; kind: ModelLevel["kind"] } | null;  // which level seeds the high
+    anchorLow:  { name: string; kind: ModelLevel["kind"] } | null;  // which level seeds the low
+  } | null;
   levels: ModelLevel[];
   paths: ModelPath[];
   audit: ModelAudit;
@@ -1084,6 +1105,71 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
     Math.abs(scaledProfile.current.gex) > 5e9 ? "HIGH" : Math.abs(scaledProfile.current.gex) > 1e9 ? "MODERATE" : "LOW";
 
   const horizonDays = horizon === "daily" ? 1 : horizon === "weekly" ? 5 : horizon === "monthly" ? 21 : 63;
+
+  // ── #4: per-level live status vs spot (held / approaching / broken) ────
+  // "approaching" threshold is 15bps (0.15%) which corresponds to ~SPX 11pt
+  // or ~SPY 1.05 — tight enough to catch real tags, loose enough not to
+  // flicker on quote noise. Sides: levels above spot are resistance, below
+  // are support. Status flips based on whether the most recent traded spot
+  // has crossed (broken) or merely touched (approaching) the level.
+  const APPROACH_BPS = 15;
+  const enrichedLevels: ModelLevel[] = levels.map((lv) => {
+    const distBps = ((lv.price - displaySpot) / displaySpot) * 10_000;
+    const absBps = Math.abs(distBps);
+    let side: ModelLevel["side"] = distBps > 5 ? "resistance" : distBps < -5 ? "support" : "at";
+    let status: ModelLevel["status"];
+    if (side === "resistance") {
+      // Above spot — still HELD as ceiling; BROKEN if spot crossed it (won't usually fire here since side=='resistance' means level > spot)
+      status = absBps <= APPROACH_BPS ? "approaching" : "held";
+    } else if (side === "support") {
+      // Below spot — HELD as floor; APPROACHING if within threshold
+      status = absBps <= APPROACH_BPS ? "approaching" : "held";
+    } else {
+      // At spot — currently being tested
+      status = "approaching";
+    }
+    return { ...lv, distBps: Math.round(distBps), side, status };
+  });
+
+  // ── #3: derive rangeBox from nearest resistance + nearest support ──────
+  // Prefers structural levels (charm-zero, vanna flip, dominant magnet,
+  // pivots, walls) over T1/T2 targets so the band reflects DEALER mechanics,
+  // not just ATR projections. Skips kinds that are themselves price targets
+  // rather than supply/demand structure.
+  const STRUCTURAL_KINDS = new Set<ModelLevel["kind"]>([
+    "callWall", "putWall", "zeroGamma", "dominantMag", "strongMag",
+    "upsidePivot", "downsidePivot", "charmTarget", "vannaFlip",
+    "negGammaEntry", "upperVomma", "lowerVomma",
+  ]);
+  const structural = enrichedLevels.filter((lv) => STRUCTURAL_KINDS.has(lv.kind));
+  const aboveSpot = structural
+    .filter((lv) => lv.price > displaySpot)
+    .sort((a, b) => a.price - b.price);
+  const belowSpot = structural
+    .filter((lv) => lv.price < displaySpot)
+    .sort((a, b) => b.price - a.price);
+  const nearestUp = aboveSpot[0] ?? null;
+  const nearestDn = belowSpot[0] ?? null;
+
+  let rangeBox: ModelHorizon["rangeBox"] = null;
+  if (nearestUp && nearestDn) {
+    const high = nearestUp.price;
+    const low = nearestDn.price;
+    const width = high - low;
+    const widthPct = (width / displaySpot) * 100;
+    let status: "contained" | "breakout" | "breakdown" = "contained";
+    if (displaySpot > high) status = "breakout";
+    else if (displaySpot < low) status = "breakdown";
+    rangeBox = {
+      low, high, width, widthPct,
+      breakoutTrigger: high,
+      breakdownTrigger: low,
+      status,
+      anchorHigh: { name: nearestUp.name, kind: nearestUp.kind },
+      anchorLow:  { name: nearestDn.name, kind: nearestDn.kind },
+    };
+  }
+
   const horizonOut: ModelHorizon = {
     horizon,
     label: `${symbol === "^GSPC" ? "SPX" : "SPY"} ${horizon.toUpperCase()} MODEL`,
@@ -1094,7 +1180,8 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
     targetDate,
     targetDateLong,
     priceRange: [yMin, yMax],
-    levels,
+    rangeBox,
+    levels: enrichedLevels,
     paths,
     audit,
     vol: {
