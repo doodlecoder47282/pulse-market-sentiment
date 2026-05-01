@@ -67,20 +67,10 @@ async function postToDiscord(payload: DiscordPayload): Promise<boolean> {
   }
 }
 
-// ─── Internal API fetchers ──────────────────────────────────────────────
-async function fetchModels(symbol = "SPX"): Promise<any | null> {
+// ─── Internal API fetchers ──────────────────────────────────
+async function fetchJSON(path: string): Promise<any | null> {
   try {
-    const res = await fetch(`${BASE}/api/models?symbol=${symbol}`);
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
-async function fetchNews(): Promise<any | null> {
-  try {
-    const res = await fetch(`${BASE}/api/news`);
+    const res = await fetch(`${BASE}${path}`);
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -122,7 +112,13 @@ function gammaZoneLabel(zone: string): string {
 // /api/models — spot, scenarioProb, levels (with #4 status), rangeBox (#3),
 // gammaZone, dfi, vix term ratio. All data, no LLM.
 export async function postDailyModelCard(): Promise<boolean> {
-  const data = await fetchModels("SPX");
+  // Pull all three feeds in parallel — models for spot/levels/scenarios,
+  // quotes for current VIX, sentiment for VIX term ratio (vix3m / vix).
+  const [data, quotes, sentiment] = await Promise.all([
+    fetchJSON(`/api/models?symbol=SPX`),
+    fetchJSON(`/api/quotes`),
+    fetchJSON(`/api/sentiment`),
+  ]);
   if (!data) {
     console.warn("[discord] daily card: /api/models returned null");
     return false;
@@ -138,9 +134,15 @@ export async function postDailyModelCard(): Promise<boolean> {
   const scen = audit.scenarioProb ?? { bull: 0, base: 0, bear: 0 };
   const gammaZone = audit.gammaZone ?? "y+";
   const dfi = audit.dfi ?? 0;
-  const vix = data.vol?.vix ?? null;
-  const termRatio = data.vol?.termRatio ?? null;
-  const termLabel = data.vol?.termLabel ?? "";
+  const vix = quotes?.vix?.price ?? null;
+  // termRatio in /api/sentiment is vix/vix3m (front-over-back). Invert so
+  // > 1 = contango (calm), < 1 = backwardation (stress) — matches our copy.
+  const ratioFrontOverBack = sentiment?.ratio30dOver3m ?? null;
+  const termRatio = ratioFrontOverBack ? 1 / ratioFrontOverBack : null;
+  const termLabel = termRatio == null ? ""
+    : termRatio < 1 ? "backwardation (stress)"
+    : termRatio > 1.05 ? "contango (calm)"
+    : "flat";
 
   // Pick scenario color from highest-weight outcome
   const top = scen.bull >= scen.bear && scen.bull >= scen.base
@@ -150,21 +152,41 @@ export async function postDailyModelCard(): Promise<boolean> {
     top === "bull" ? COLOR_BULL :
     top === "bear" ? COLOR_BEAR : COLOR_NEUTRAL;
 
-  // Levels — show top 4 nearest to spot
-  const levels = (daily.levels ?? []) as Array<any>;
-  const sortedLevels = [...levels]
-    .filter((l) => l.price != null)
-    .sort((a, b) => Math.abs((a.distBps ?? 0)) - Math.abs((b.distBps ?? 0)))
+  // Levels — dedupe by rounded price so stacked levels (call wall + strong
+  // mag + charm target all at the same strike) render once with combined
+  // names, then show top 4 unique prices nearest to spot.
+  const rawLevels = ((daily.levels ?? []) as Array<any>).filter((l) => l.price != null);
+  const byPrice = new Map<string, { names: string[]; price: number; distBps: number; status: string; side: string }>();
+  for (const l of rawLevels) {
+    const key = l.price.toFixed(2);
+    const ex = byPrice.get(key);
+    if (ex) {
+      ex.names.push(l.name ?? l.kind ?? "");
+      // Worst-case status wins (broken > approaching > held)
+      const rank = (s: string) => s === "broken" ? 2 : s === "approaching" ? 1 : 0;
+      if (rank(l.status ?? "held") > rank(ex.status)) ex.status = l.status;
+    } else {
+      byPrice.set(key, {
+        names: [l.name ?? l.kind ?? ""],
+        price: l.price,
+        distBps: l.distBps ?? 0,
+        status: l.status ?? "held",
+        side: l.side ?? "at",
+      });
+    }
+  }
+  const uniqLevels = [...byPrice.values()]
+    .sort((a, b) => Math.abs(a.distBps) - Math.abs(b.distBps))
     .slice(0, 4);
 
-  const levelsBlock = sortedLevels.length > 0
-    ? sortedLevels.map((l) => {
-        const sym = statusEmoji(l.status ?? "held");
-        const name = (l.name ?? l.kind ?? "").padEnd(14);
-        const px = fmtPrice(l.price);
-        const dist = fmtBps(l.distBps);
-        return `\`${sym} ${name} ${px}  ${dist}\``;
-      }).join("\n")
+  const levelsBlock = uniqLevels.length > 0
+    ? "```\n" + uniqLevels.map((l) => {
+        const sym = statusEmoji(l.status);
+        // Combined names, comma-joined, truncated for line fit
+        let label = l.names.join(" + ");
+        if (label.length > 22) label = label.slice(0, 21) + "…";
+        return `${sym} ${label.padEnd(22)} ${fmtPrice(l.price).padStart(8)}  ${fmtBps(l.distBps).padStart(7)}`;
+      }).join("\n") + "\n```"
     : "_no levels_";
 
   // Range box (#3)
@@ -175,15 +197,19 @@ export async function postDailyModelCard(): Promise<boolean> {
       `status: \`${rb.status?.toUpperCase() ?? "—"}\``
     : "_no range_";
 
-  // Scenario bar (visual, deterministic)
+  // Scenario bar (visual, deterministic). Use ASCII inside one fenced code
+  // block — Discord renders the whole block in true monospace, fixing the
+  // jagged kerning we saw with shaded unicode blocks.
   const bar = (pct: number) => {
-    const n = Math.max(0, Math.min(10, Math.round(pct / 10)));
-    return "█".repeat(n) + "░".repeat(10 - n);
+    const n = Math.max(0, Math.min(20, Math.round(pct / 5)));
+    return "[" + "#".repeat(n) + "-".repeat(20 - n) + "]";
   };
   const scenarioBlock =
-    `\`bull ${String(scen.bull).padStart(2)}% ${bar(scen.bull)}\`\n` +
-    `\`base ${String(scen.base).padStart(2)}% ${bar(scen.base)}\`\n` +
-    `\`bear ${String(scen.bear).padStart(2)}% ${bar(scen.bear)}\``;
+    "```\n" +
+    `bull ${String(scen.bull).padStart(2)}%  ${bar(scen.bull)}\n` +
+    `base ${String(scen.base).padStart(2)}%  ${bar(scen.base)}\n` +
+    `bear ${String(scen.bear).padStart(2)}%  ${bar(scen.bear)}\n` +
+    "```";
 
   // Vol context line
   const volLine =
