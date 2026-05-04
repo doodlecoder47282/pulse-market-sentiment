@@ -99,6 +99,10 @@ const ANNOTATIONS: Record<string, AnnFn> = {
     return `charm drag ceiling — break opens to ${next ? fmt0(next.price) : "upside"}`;
   },
   zommaBridge: () => "zomma bridge — gamma curvature transition",
+  negGammaEntry: ({ resistAbove }) => {
+    const next = resistAbove.find((l) => l.kind === "zeroGamma" || l.kind === "callWall");
+    return `negative-gamma entry — break opens to ${next ? fmt0(next.price) : "upside"}`;
+  },
 
   // gamma flip (reused both sides)
   zeroGamma: ({ level, resistAbove, supportBelow }) => {
@@ -152,6 +156,7 @@ const DISPLAY_NAME: Record<string, string> = {
   upsidePivot: "UPSIDE PIVOT",
   upperVomma: "UPPER VOMMA",
   zommaBridge: "ZOMMA BRIDGE",
+  negGammaEntry: "NEG Γ ENTRY",
   extremeVac: "EXTREME VAC",
   mopexMaxPain: "MOPEX MAX PAIN",
   lowerVomma: "LOWER VOMMA",
@@ -276,25 +281,58 @@ export async function postSelzDailyCard(): Promise<{ ok: boolean; preview: strin
   }
   const levels = baseLevels;
 
-  // Filter out levels that ARE the range boundary — those are the box itself,
-  // not separate resistance/support entries (avoids double-counting rb.high/low).
+  // Range boundary identification — used for de-dup logic, NOT for blanket
+  // exclusion. The breakout/breakdown anchor IS the most important tactical
+  // level (it's literally the trigger line) and must show at the top of the
+  // ladder. We only want to dedupe if MULTIPLE level kinds collapse onto the
+  // same boundary price (e.g. callWall + strongMag both at rb.high).
   const RANGE_TOL = 0.6;
-  const isRangeBoundary = (price: number): boolean => {
-    if (!rb) return false;
-    return Math.abs(price - rb.high) < RANGE_TOL || Math.abs(price - rb.low) < RANGE_TOL;
-  };
+  const isAtPrice = (a: number, b: number) => Math.abs(a - b) < RANGE_TOL;
 
   const resistAbove = levels
-    .filter((l) => l.side === "resistance" && l.price > spot && !isRangeBoundary(l.price))
+    .filter((l) => l.side === "resistance" && l.price > spot)
     .sort((a, b) => a.price - b.price);
   const supportBelow = levels
-    .filter((l) => l.side === "support" && l.price < spot && !isRangeBoundary(l.price))
+    .filter((l) => l.side === "support" && l.price < spot)
     .sort((a, b) => b.price - a.price);
 
-  // Same filtering for the displayed top-3 ladders
-  const ladderLevels = levels.filter((l) => !isRangeBoundary(l.price));
-  const topResist = pickTopLevels("resistance", ladderLevels, spot, 3);
-  const topSupport = pickTopLevels("support", ladderLevels, spot, 3);
+  // For the displayed top-3 ladders we want the structural anchor first.
+  // Pick top-3 normally, then if rb.high (breakout anchor) isn't in the
+  // resistance ladder, prepend it; same for rb.low on support side.
+  const topResist = pickTopLevels("resistance", levels, spot, 3);
+  const topSupport = pickTopLevels("support", levels, spot, 3);
+
+  // Promote the range-anchor level to the top of its ladder when missing.
+  // Anchor is identified by rb.anchorHigh.kind / rb.anchorLow.kind so the
+  // displayed name and annotation come from the canonical kind, not a
+  // synthesized stub.
+  const promoteAnchor = (
+    side: "resistance" | "support",
+    ladder: any[],
+    anchorPrice: number | undefined,
+    anchorKind: string | undefined,
+  ): any[] => {
+    if (anchorPrice == null || !anchorKind) return ladder;
+    const already = ladder.some((l) => isAtPrice(l.price, anchorPrice));
+    if (already) return ladder;
+    const anchorLevel = levels.find(
+      (l) => l.side === side && isAtPrice(l.price, anchorPrice) && l.kind === anchorKind,
+    ) ?? levels.find((l) => l.side === side && isAtPrice(l.price, anchorPrice));
+    if (!anchorLevel) return ladder;
+    return [anchorLevel, ...ladder].slice(0, 3);
+  };
+  const topResistFinal = promoteAnchor(
+    "resistance",
+    topResist,
+    rb?.high,
+    rb?.anchorHigh?.kind,
+  );
+  const topSupportFinal = promoteAnchor(
+    "support",
+    topSupport,
+    rb?.low,
+    rb?.anchorLow?.kind,
+  );
 
   // calls / puts trigger lines: γ-zero crossings if available, else range edges
   // Fall back through audit.gammaZero (numeric) if level lookup fails.
@@ -400,14 +438,14 @@ export async function postSelzDailyCard(): Promise<{ ok: boolean; preview: strin
 
   const resistBlock =
     sectionRule("RESISTANCE") + "\n" +
-    (topResist.length
-      ? topResist.map((l) => formatLevel(l, "resistance")).join("\n")
+    (topResistFinal.length
+      ? topResistFinal.map((l) => formatLevel(l, "resistance")).join("\n")
       : "  no structural resistance above spot");
 
   const supportBlock =
     sectionRule("SUPPORT") + "\n" +
-    (topSupport.length
-      ? topSupport.map((l) => formatLevel(l, "support")).join("\n")
+    (topSupportFinal.length
+      ? topSupportFinal.map((l) => formatLevel(l, "support")).join("\n")
       : "  no structural support below spot");
 
   // Calls / puts trigger lines. Trigger is the first element; rest are
