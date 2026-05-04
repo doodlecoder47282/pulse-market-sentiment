@@ -69,25 +69,29 @@ async function maybeFireDaily(): Promise<void> {
 
 // ─── 1b. 30-min Selz cadence ────────────────────────────────────────────
 //
-// Fires postSelzDailyCard() every 30 min during RTH (9:30–16:00 ET) on
-// trading days. Skips the 9:30 slot — the daily cron owns that fire so we
-// don't double-post. Slots: 10:00, 10:30, ..., 15:30, 16:00 (13 fires/day).
+// Fires postSelzDailyCard() every 30 min during RTH (10:00–16:00 ET) on
+// trading days. The 9:30 slot is owned by the daily cron — we don't
+// double-post. Slots: 10:00, 10:30, ..., 15:30, 16:00 (13 fires/day).
+//
+// We track the last half-hour SLOT we fired and trigger whenever we land
+// in a new slot, instead of requiring the tick to land exactly on :00/:30.
+// This is robust to setInterval drift (60s timer can land at :29 then :31
+// and miss the boundary entirely with strict integer matching).
 const HALFHOUR_FIRED = new Set<string>(); // YYYY-MM-DD HH:MM entries
 
 async function maybeFireHalfHour(): Promise<void> {
   const { date, hh, mm, dow } = etNow();
   if (!isTradingDay(dow, date)) return;
-  // Only on the :00 / :30 mark
-  if (mm !== 0 && mm !== 30) return;
-  // Window: 09:30 ≤ t ≤ 16:00 — but skip 09:30 (daily card)
+  // Window: 10:00 ≤ t ≤ 16:00 (skip 9:30, owned by daily card)
   const minutes = hh * 60 + mm;
-  if (minutes < 9 * 60 + 30 || minutes > 16 * 60) return;
-  if (hh === 9 && mm === 30) return;
+  if (minutes < 10 * 60 || minutes > 16 * 60) return;
 
-  const key = `${date} ${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+  // Snap to the most recent :00 / :30 boundary at-or-before now.
+  const slotMM = mm < 30 ? 0 : 30;
+  const key = `${date} ${String(hh).padStart(2, "0")}:${String(slotMM).padStart(2, "0")}`;
   if (HALFHOUR_FIRED.has(key)) return;
   HALFHOUR_FIRED.add(key);
-  console.log(`[discordScheduler] firing 30-min Selz card at ${key} ET`);
+  console.log(`[discordScheduler] firing 30-min Selz card for slot ${key} ET (tick at ${hh}:${String(mm).padStart(2,"0")})`);
   await postSelzDailyCard().catch((e) => {
     console.error(`[discordScheduler] half-hour fire failed: ${e}`);
   });
