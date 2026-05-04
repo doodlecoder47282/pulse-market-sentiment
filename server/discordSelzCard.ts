@@ -82,6 +82,22 @@ const ANNOTATIONS: Record<string, AnnFn> = {
     level.side === "resistance"
       ? "charm drag pulls price up into pin"
       : "charm drag loses grip — downside opens",
+  charmFlip: ({ level, resistAbove, supportBelow }) => {
+    if (level.side === "resistance") {
+      const next = resistAbove.find((l) => l.price > level.price);
+      return `momentum accelerates — path opens to ${next ? fmt0(next.price) : "open road"}`;
+    }
+    const next = supportBelow.find((l) => l.price < level.price);
+    return `charm drag loses grip — downside opens${next ? ` to ${fmt0(next.price)}` : ""}`;
+  },
+  charmFloor: ({ supportBelow }) => {
+    const next = supportBelow[0];
+    return `charm drag floor — break opens to ${next ? fmt0(next.price) : "downside"}`;
+  },
+  charmCeiling: ({ resistAbove }) => {
+    const next = resistAbove[0];
+    return `charm drag ceiling — break opens to ${next ? fmt0(next.price) : "upside"}`;
+  },
   zommaBridge: () => "zomma bridge — gamma curvature transition",
 
   // gamma flip (reused both sides)
@@ -128,6 +144,9 @@ const DISPLAY_NAME: Record<string, string> = {
   zeroGamma: "γ-ZERO",
   mainPivot: "MAIN PIVOT",
   charmTarget: "CHARM TARGET",
+  charmFlip: "CHARM FLIP",
+  charmFloor: "CHARM FLOOR",
+  charmCeiling: "CHARM CEILING",
   strongMag: "STRONG MAG",
   dominantMag: "DOMINANT MAG",
   upsidePivot: "UPSIDE PIVOT",
@@ -230,24 +249,74 @@ export async function postSelzDailyCard(): Promise<{ ok: boolean; preview: strin
     : rbStatus === "breakdown" ? "BREAKDOWN"
     : "VOL CONTAINED";
 
-  const levels = (daily.levels ?? []) as any[];
-  const resistAbove = levels.filter((l) => l.side === "resistance" && l.price > spot)
+  // Synthesize charm-flip levels from audit.charmZeros (upper = resistance,
+  // lower = support). Only synthesize when within tactical band of spot —
+  // far charm zeros aren't tradeable intraday landmarks.
+  const baseLevels = ((daily.levels ?? []) as any[]).slice();
+  const charmZeros = (audit.charmZeros ?? []) as number[];
+  for (const cz of charmZeros) {
+    if (Math.abs(cz - spot) > 200) continue; // skip far charm zeros
+    if (cz > spot) {
+      baseLevels.push({
+        kind: "charmFlip",
+        side: "resistance",
+        price: cz,
+        status: "held",
+        name: "CHARM FLIP",
+      });
+    } else {
+      baseLevels.push({
+        kind: "charmFloor",
+        side: "support",
+        price: cz,
+        status: "held",
+        name: "CHARM FLOOR",
+      });
+    }
+  }
+  const levels = baseLevels;
+
+  // Filter out levels that ARE the range boundary — those are the box itself,
+  // not separate resistance/support entries (avoids double-counting rb.high/low).
+  const RANGE_TOL = 0.6;
+  const isRangeBoundary = (price: number): boolean => {
+    if (!rb) return false;
+    return Math.abs(price - rb.high) < RANGE_TOL || Math.abs(price - rb.low) < RANGE_TOL;
+  };
+
+  const resistAbove = levels
+    .filter((l) => l.side === "resistance" && l.price > spot && !isRangeBoundary(l.price))
     .sort((a, b) => a.price - b.price);
-  const supportBelow = levels.filter((l) => l.side === "support" && l.price < spot)
+  const supportBelow = levels
+    .filter((l) => l.side === "support" && l.price < spot && !isRangeBoundary(l.price))
     .sort((a, b) => b.price - a.price);
 
-  const topResist = pickTopLevels("resistance", levels, spot, 3);
-  const topSupport = pickTopLevels("support", levels, spot, 3);
+  // Same filtering for the displayed top-3 ladders
+  const ladderLevels = levels.filter((l) => !isRangeBoundary(l.price));
+  const topResist = pickTopLevels("resistance", ladderLevels, spot, 3);
+  const topSupport = pickTopLevels("support", ladderLevels, spot, 3);
 
   // calls / puts trigger lines: γ-zero crossings if available, else range edges
-  const gammaZeroAbove = resistAbove.find((l) => l.kind === "zeroGamma")?.price ?? null;
-  const gammaZeroBelow = supportBelow.find((l) => l.kind === "zeroGamma")?.price ?? null;
+  // Fall back through audit.gammaZero (numeric) if level lookup fails.
+  const auditGammaZero = (audit.gammaZero ?? null) as number | null;
+  const gammaZeroAbove =
+    resistAbove.find((l) => l.kind === "zeroGamma")?.price ??
+    (auditGammaZero != null && auditGammaZero > spot ? auditGammaZero : null);
+  const gammaZeroBelow =
+    supportBelow.find((l) => l.kind === "zeroGamma")?.price ??
+    (auditGammaZero != null && auditGammaZero < spot ? auditGammaZero : null);
+
+  // EM-based hard fallback so triggers are NEVER null/0
+  const oneDayEM = (st.oneDayEM ?? spot * 0.005) as number;
 
   // Calls path: γ-zero+ trigger, then 2 ascending resistances above it, then
   // call wall as terminal target — only if wall is genuinely above the last
   // mid-path price (otherwise wall is the trigger itself or behind us).
   const callWallPx = resistAbove.find((l) => l.kind === "callWall")?.price ?? null;
-  const callsTrigger = gammaZeroAbove ?? callWallPx ?? (rb?.high ?? spot);
+  let callsTrigger = gammaZeroAbove ?? callWallPx ?? (rb?.high ?? null);
+  if (callsTrigger == null || callsTrigger <= spot) {
+    callsTrigger = spot + oneDayEM;
+  }
   const callsMidPath = resistAbove
     .filter((l) => l.kind !== "zeroGamma" && l.kind !== "callWall" && l.price > callsTrigger)
     .slice(0, 2)
@@ -267,15 +336,21 @@ export async function postSelzDailyCard(): Promise<{ ok: boolean; preview: strin
   // Puts path: γ-zero- trigger, then 2 descending supports below, then main
   // pivot / put wall as terminal. Dedupe similarly.
   const putWallPx = supportBelow.find((l) => l.kind === "putWall")?.price ?? null;
-  const mainPivotPx = audit.mainPivot ?? null;
-  const putsTrigger = gammaZeroBelow ?? mainPivotPx ?? (rb?.low ?? spot);
+  // mainPivot is only useful as a downside trigger if it's BELOW spot;
+  // when above spot it's a resistance landmark, not a put trigger.
+  const auditMainPivot = (audit.mainPivot ?? null) as number | null;
+  const mainPivotBelow = auditMainPivot != null && auditMainPivot < spot ? auditMainPivot : null;
+  let putsTrigger = gammaZeroBelow ?? mainPivotBelow ?? (rb?.low ?? null);
+  if (putsTrigger == null || putsTrigger >= spot || putsTrigger <= 0) {
+    putsTrigger = spot - oneDayEM;
+  }
   const putsMidPath = supportBelow
     .filter((l) => l.kind !== "zeroGamma" && l.kind !== "putWall" && l.price < putsTrigger)
     .slice(0, 2)
     .map((l) => l.price)
     .sort((a, b) => b - a); // descending
   const putsLastMid = putsMidPath.length ? putsMidPath[putsMidPath.length - 1] : putsTrigger;
-  const putsTerminalRaw = putWallPx ?? mainPivotPx ?? null;
+  const putsTerminalRaw = putWallPx ?? mainPivotBelow ?? null;
   const putsTerminal = (putsTerminalRaw != null && putsTerminalRaw < putsLastMid - 0.5) ? putsTerminalRaw : null;
   const putsPathRaw = [putsTrigger, ...putsMidPath, ...(putsTerminal ? [putsTerminal] : [])];
   const putsPath: number[] = [];
