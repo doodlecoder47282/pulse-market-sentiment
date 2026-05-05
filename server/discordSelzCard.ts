@@ -33,6 +33,7 @@
 
 import { recordPrediction } from "./calibration";
 import { formatDecisionBlock } from "./decisionSupport";
+import { chainAbove, chainBelow, playbookCopy } from "./levelPlaybook";
 
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -517,6 +518,42 @@ export async function postSelzDailyCard(opts?: { dryRun?: boolean }): Promise<{ 
     return `  ${name} ${px}\n    ${status} → ${ann}`;
   };
 
+  // ─── PIVOT AREAS block — dedicated up/down pivot summary with playbook ───
+  // Pulled from the levels[] chain, NOT synthesized: the model already emits
+  // upsidePivot / downsidePivot kinds. We grab the closest of each on the
+  // correct side of spot and build a deterministic 'how to play' line using
+  // the chain context (next level above / below the pivot).
+  const upsidePivotLevel = levels
+    .filter((l: any) => l.kind === "upsidePivot" && l.price > spot)
+    .sort((a: any, b: any) => a.price - b.price)[0] ?? null;
+  const downsidePivotLevel = levels
+    .filter((l: any) => l.kind === "downsidePivot" && l.price < spot)
+    .sort((a: any, b: any) => b.price - a.price)[0] ?? null;
+
+  const pivotChain = (levels as any[]).map((l: any) => ({
+    name: l.name, kind: l.kind, price: l.price, side: l.side, status: l.status,
+  }));
+
+  const buildPivotLine = (
+    label: string,
+    level: any | null,
+    side: "resistance" | "support",
+  ): string => {
+    if (!level) return `  ${label}  —  not in tactical range`;
+    const upChain = chainAbove(level.price, pivotChain, 2);
+    const dnChain = chainBelow(level.price, pivotChain, 2);
+    const distPts = Math.abs(level.price - spot).toFixed(0);
+    const distPctStr = ((Math.abs(level.price - spot) / spot) * 100).toFixed(2);
+    const dirArrow = side === "resistance" ? "↑" : "↓";
+    const playbook = playbookCopy(level.kind, side, "approaching", upChain, dnChain);
+    return `  ${label}  ${fmt0(level.price)}  (${dirArrow} ${distPts} pts · ${distPctStr}%)\n    HOW TO PLAY → ${playbook}`;
+  };
+
+  const pivotBlock =
+    sectionRule("PIVOT AREAS") + "\n" +
+    buildPivotLine("UPSIDE PIVOT  ", upsidePivotLevel, "resistance") + "\n" +
+    buildPivotLine("DOWNSIDE PIVOT", downsidePivotLevel, "support");
+
   const resistBlock =
     sectionRule("RESISTANCE") + "\n" +
     (topResistFinal.length
@@ -595,6 +632,8 @@ export async function postSelzDailyCard(opts?: { dryRun?: boolean }): Promise<{ 
     "",
     ...(decisionBlock ? [decisionBlock, ""] : []),
     range,
+    "",
+    pivotBlock,
     "",
     resistBlock,
     "",
