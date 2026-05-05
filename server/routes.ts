@@ -28,7 +28,10 @@ import { startDiscordScheduler } from "./discordScheduler";
 import { fireTestCard, postDailyModelCard } from "./discord";
 import { postSelzDailyCard } from "./discordSelzCard";
 import { postCalibrationCard } from "./calibrationCard";
-import { rollingBrier, settleDay } from "./calibration";
+import { rollingBrier, settleDay, recentForecastProbs } from "./calibration";
+import { resolutionScore, gradeResolution } from "./stats";
+import { watchdogStatus } from "./cusumWatchdog";
+import { formatDecisionBlock } from "./decisionSupport";
 import { buildMag7Snapshot, type Mag7Response } from "./mag7";
 import { buildFlowSnapshot, buildIntradayFlowSnapshot, type FlowResponse } from "./flow";
 import { buildExposuresSnapshot, type ExposuresResponse } from "./exposures";
@@ -2109,6 +2112,69 @@ Refine the brief above. Search the web for any critical developments the feed is
       const days = Number(req.query.days ?? 30);
       const r = rollingBrier(isFinite(days) && days > 0 ? days : 30);
       res.json(r ?? { n: 0, note: "no settled days yet" });
+    } catch (e: any) {
+      res.status(500).json({ note: e?.message ?? "failed" });
+    }
+  });
+
+  // Calibration watchdog — CUSUM on edge-vs-trivial. Read-only observer.
+  app.get("/api/calibration/watchdog", (req, res) => {
+    try {
+      const days = Number(req.query.days ?? 60);
+      const w = watchdogStatus(isFinite(days) && days > 0 ? days : 60);
+      res.json(w);
+    } catch (e: any) {
+      res.status(500).json({ note: e?.message ?? "failed" });
+    }
+  });
+
+  // Resolution score per scenario — variance of forecast probabilities over
+  // the last N settled days. Pure read of pulse_outcomes ⋈ pulse_predictions.
+  app.get("/api/calibration/resolution", (req, res) => {
+    try {
+      const days = Number(req.query.days ?? 30);
+      const fp = recentForecastProbs(isFinite(days) && days > 0 ? days : 30);
+      const bull = resolutionScore(fp.bull);
+      const base = resolutionScore(fp.base);
+      const bear = resolutionScore(fp.bear);
+      res.json({
+        n: fp.bull.length,
+        bull: { score: bull, grade: gradeResolution(bull) },
+        base: { score: base, grade: gradeResolution(base) },
+        bear: { score: bear, grade: gradeResolution(bear) },
+      });
+    } catch (e: any) {
+      res.status(500).json({ note: e?.message ?? "failed" });
+    }
+  });
+
+  // On-demand decision-support block preview. Caller supplies the inputs
+  // via query params; we just format the four-line block.
+  // GET /api/decision-support?spot=5800&probBull=0.4&probBase=0.4&probBear=0.2&oneDayEM=30&realizedSigma20d=0.18
+  app.get("/api/decision-support", (req, res) => {
+    try {
+      const num = (k: string, fallback?: number) => {
+        const v = Number(req.query[k]);
+        return isFinite(v) ? v : fallback;
+      };
+      const spot = num("spot");
+      const probBull = num("probBull");
+      const probBase = num("probBase");
+      const probBear = num("probBear");
+      const oneDayEM = num("oneDayEM");
+      const realizedSigma20d = num("realizedSigma20d");
+      if (
+        spot == null || probBull == null || probBase == null ||
+        probBear == null || oneDayEM == null
+      ) {
+        return res.status(400).json({
+          note: "need ?spot, ?probBull, ?probBase, ?probBear, ?oneDayEM (and optional ?realizedSigma20d)",
+        });
+      }
+      const block = formatDecisionBlock({
+        spot, probBull, probBase, probBear, oneDayEM, realizedSigma20d,
+      });
+      res.json({ block, lines: block.split("\n") });
     } catch (e: any) {
       res.status(500).json({ note: e?.message ?? "failed" });
     }

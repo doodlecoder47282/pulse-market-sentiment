@@ -32,6 +32,7 @@
 // `level.kind × status`, formatted with neighbor prices when needed.
 
 import { recordPrediction } from "./calibration";
+import { formatDecisionBlock } from "./decisionSupport";
 
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -490,11 +491,31 @@ export async function postSelzDailyCard(): Promise<{ ok: boolean; preview: strin
     sectionRule("CALLS / PUTS") + "\n" +
     [callsLine, neutralLine, putsLine].filter(Boolean).join("\n");
 
+  // Decision-support block (additive, never modifies existing card on failure)
+  // Source: MASTER_SYNTHESIS Tier 1 — Kelly tile, base-rate strip, vol-drag,
+  // P5/P95 close band. All four lines wrapped in their own try/catch inside
+  // formatDecisionBlock, and the call itself is wrapped here so any throw
+  // simply omits the block.
+  let decisionBlock = "";
+  try {
+    decisionBlock = formatDecisionBlock({
+      spot,
+      probBull: (sp.bull ?? 0) / 100,
+      probBase: (sp.base ?? 0) / 100,
+      probBear: (sp.bear ?? 0) / 100,
+      oneDayEM,
+      // realizedSigma20d not in scope — formatter handles undefined gracefully
+    });
+  } catch {
+    decisionBlock = "";
+  }
+
   // Stitch the print
   const body = [
     "```",
     close,
     "",
+    ...(decisionBlock ? [decisionBlock, ""] : []),
     range,
     "",
     resistBlock,

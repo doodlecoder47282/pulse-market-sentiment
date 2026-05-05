@@ -287,6 +287,41 @@ export function rollingBrier(days: number = 30): {
   };
 }
 
+// Pull the morning-card forecast probabilities for the last N settled days.
+// Used to compute the resolution score (Mauboussin footnote 45) — we need
+// the variance of forecast probs ACROSS days, not within a single day.
+export function recentForecastProbs(days: number = 30): {
+  bull: number[];
+  base: number[];
+  bear: number[];
+} {
+  const rows = sqlite
+    .prepare(
+      `SELECT p.prob_bull, p.prob_base, p.prob_bear
+       FROM pulse_outcomes o
+       JOIN pulse_predictions p
+         ON p.date = o.date
+         AND p.id = (
+           SELECT id FROM pulse_predictions
+           WHERE date = o.date
+           ORDER BY captured_at ASC
+           LIMIT 1
+         )
+       ORDER BY o.date DESC
+       LIMIT ?`,
+    )
+    .all(days) as Array<{
+    prob_bull: number;
+    prob_base: number;
+    prob_bear: number;
+  }>;
+  return {
+    bull: rows.map((r) => r.prob_bull),
+    base: rows.map((r) => r.prob_base),
+    bear: rows.map((r) => r.prob_bear),
+  };
+}
+
 // Lightweight grade letter from a Brier — for the user-facing card.
 // Reference: 0.06–0.12 = top forecaster, <0.20 good, <0.25 ok, >0.25 weak.
 export function gradeBrier(b: number): { letter: string; label: string } {

@@ -26,7 +26,9 @@
 // Reference for grades (Brier score thresholds):
 //   <0.06 elite | <0.10 excellent | <0.15 good | <0.20 fair | <0.25 weak | else poor
 
-import { rollingBrier, gradeBrier, beatsTrivial } from "./calibration";
+import { rollingBrier, gradeBrier, beatsTrivial, recentForecastProbs } from "./calibration";
+import { resolutionScore, gradeResolution } from "./stats";
+import { watchdogStatus } from "./cusumWatchdog";
 
 const WEBHOOK_URL =
   process.env.PULSE_DISCORD_WEBHOOK ??
@@ -123,6 +125,47 @@ export async function postCalibrationCard(days: number = 7): Promise<{
   lines.push(sectionRule("REALIZED OUTCOME MIX"));
   lines.push(`  BULL  ${pct(rB)}  |  BASE  ${pct(rM)}  |  BEAR  ${pct(rR)}`);
   lines.push(realizedProse);
+
+  // ─── Resolution & Watchdog (Tier 1/2) ─ additive observers, never modify calc
+  // Resolution = variance of forecast probs (3-Min Data Science). High variance
+  // means the model meaningfully differentiates days; low variance means it's
+  // basically constant.
+  // Watchdog = CUSUM on (brier_total - trivial_total). If the model stops
+  // beating trivial, this trips and the user sees DRIFTING/BROKEN.
+  try {
+    const fp = recentForecastProbs(30);
+    const rsBull = resolutionScore(fp.bull);
+    const rsBase = resolutionScore(fp.base);
+    const rsBear = resolutionScore(fp.bear);
+    const gBullR = gradeResolution(rsBull);
+    const gBaseR = gradeResolution(rsBase);
+    const gBearR = gradeResolution(rsBear);
+    lines.push("");
+    lines.push(sectionRule("RESOLUTION (variance of forecast — higher = sharper discrim)"));
+    const fmtRes = (name: string, r: number, g: { letter: string; label: string }) =>
+      `  ${pad(name, 8)} ${fmt3(r)}  (${g.letter}, ${pad(g.label, 14)})`;
+    lines.push(fmtRes("BULL", rsBull, gBullR));
+    lines.push(fmtRes("BASE", rsBase, gBaseR));
+    lines.push(fmtRes("BEAR", rsBear, gBearR));
+  } catch (e) {
+    // resolution section is optional — omit silently if anything throws
+  }
+
+  try {
+    const w = watchdogStatus(60);
+    const badge =
+      w.status === "HEALTHY" ? "● HEALTHY" :
+      w.status === "DRIFTING" ? "● DRIFTING" :
+      w.status === "BROKEN" ? "● BROKEN" :
+      "● WARMING UP";
+    lines.push("");
+    lines.push(sectionRule("WATCHDOG (CUSUM on edge-vs-trivial)"));
+    lines.push(`  ${badge}   c=${w.cValue.toFixed(3)}   baseline=${w.baseline.toFixed(3)}   n=${w.n}`);
+    lines.push(`  ${w.reason}`);
+  } catch (e) {
+    // watchdog section optional too
+  }
+
   lines.push("```");
   lines.push(`*Pulse Batcave  |  measurement only  |  no calc changes*`);
   const final = lines.join("\n");
