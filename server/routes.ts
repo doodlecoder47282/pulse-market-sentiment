@@ -2021,6 +2021,22 @@ Refine the brief above. Search the web for any critical developments the feed is
     }
   });
 
+  // ─── Multi-timeframe SMA/EMA stack — for the Exit Brain ─────────────
+  // GET /api/mtf-stack?symbol=$SPX (default)
+  // Returns 6 timeframes (1m/5m/15m/30m/1h/4h) with 13EMA + 15/20/21 SMAs,
+  // alignment, slope, health-for-long, health-for-short, and a composite
+  // score weighted toward shorter TFs for 0DTE. Read-only.
+  app.get("/api/mtf-stack", async (req, res) => {
+    try {
+      const { getMtfStack } = await import("./mtfStack");
+      const symbol = String(req.query.symbol || "$SPX");
+      const stack = await getMtfStack(symbol);
+      res.json(stack);
+    } catch (e: any) {
+      res.status(500).json({ error: "mtf_stack_failed", message: e?.message ?? String(e), stack: String(e?.stack ?? "").split("\n").slice(0, 6) });
+    }
+  });
+
   // ToS-style 5-min intraday chart for a single contract (key = contractKey)
   app.get("/api/odte-tracker/chart", (req, res) => {
     try {
