@@ -58,13 +58,14 @@ export function formatDecisionBlock(inp: DecisionInputs): string {
     // skip
   }
 
-  // 3. Vol drag — only displayed when 20-day σ is elevated (>20% annualized).
+  // 3. Vol drag — only displayed when 20-day σ is elevated (>25% annualized).
+  //    Spec from MASTER_SYNTHESIS Tier 1 #3 — Mauboussin p. 20 rule of thumb.
   //    The arithmetic-vs-geometric gap matters most when vol is large.
   try {
     if (
       typeof inp.realizedSigma20d === "number" &&
       isFinite(inp.realizedSigma20d) &&
-      inp.realizedSigma20d > 0.20
+      inp.realizedSigma20d > 0.25
     ) {
       const drag = volDrag(inp.realizedSigma20d);
       lines.push(`  Vol drag:          -${(drag * 100).toFixed(1)}%   (σ = ${(inp.realizedSigma20d * 100).toFixed(0)}%)`);

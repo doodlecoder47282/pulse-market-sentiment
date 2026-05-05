@@ -2,6 +2,8 @@
 // Yahoo Finance chart API adapters for SPX (^GSPC), SPY, VIX intraday + daily OHLC.
 // Yahoo returns delayed quotes but updates every ~30-60s for major indices.
 
+import { observeQuote } from "./quoteShield";
+
 export type Bar = {
   t: number;     // epoch seconds
   o: number | null;
@@ -114,6 +116,12 @@ export async function fetchIntraday(
   const meta = result.meta || {};
   const price: number | null = meta.regularMarketPrice ?? bars[bars.length - 1]?.c ?? null;
   const prevClose: number | null = meta.chartPreviousClose ?? meta.previousClose ?? null;
+
+  // Quote-shield observer (flag-only — never alters returned data).
+  // Source: MASTER_SYNTHESIS Tier 2 #6 (statisticsbyjim outliers reference).
+  try {
+    if (price != null && isFinite(price)) observeQuote(symbol, price);
+  } catch { /* shield must never break ingest */ }
   const change = price != null && prevClose != null ? price - prevClose : null;
   const changePct = change != null && prevClose ? (change / prevClose) * 100 : null;
   return {

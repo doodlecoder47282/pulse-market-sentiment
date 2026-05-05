@@ -6,6 +6,7 @@
 
 import { db, schwabTokens } from "./storage";
 import { eq } from "drizzle-orm";
+import { observeQuote } from "./quoteShield";
 
 // ─── Credentials from environment (read lazily to avoid import-order issues) ──
 const getClientId = () => process.env.SCHWAB_CLIENT_ID ?? "";
@@ -220,9 +221,14 @@ export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
           if (!q) continue;
           // Schwab returns either "quote" (regular) or "reference" depending on type
           const qd = q.quote ?? q.fundamental ?? {};
+          const last = qd.lastPrice ?? qd.mark ?? null;
+          // Quote-shield observer (flag-only — see MASTER_SYNTHESIS Tier 2 #6)
+          try {
+            if (last != null && isFinite(last)) observeQuote(sym, last);
+          } catch { /* shield must never break ingest */ }
           results.push({
             symbol: sym,
-            last: qd.lastPrice ?? qd.mark ?? null,
+            last,
             change: qd.netChange ?? null,
             changePercent: qd.netPercentChangeInDouble ?? null,
             bid: qd.bidPrice ?? null,
@@ -255,9 +261,13 @@ async function yahooGetQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
         const d = await r.json();
         const meta = d?.chart?.result?.[0]?.meta;
         if (!meta) return;
+        const last = meta.regularMarketPrice ?? null;
+        try {
+          if (last != null && isFinite(last)) observeQuote(sym, last);
+        } catch { /* shield must never break ingest */ }
         results.push({
           symbol: sym,
-          last: meta.regularMarketPrice ?? null,
+          last,
           change: meta.regularMarketPrice && meta.chartPreviousClose
             ? meta.regularMarketPrice - meta.chartPreviousClose : null,
           changePercent: meta.regularMarketPrice && meta.chartPreviousClose

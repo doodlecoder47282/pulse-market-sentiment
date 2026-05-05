@@ -192,6 +192,9 @@ export function rollingBrier(days: number = 30): {
   trivialTotal: number;
   // Hit rate = fraction of days where the highest-prob scenario realized.
   topPickHitRate: number;
+  // Raw counts for Beta-Binomial credible interval on the hit rate.
+  topPickHits: number;
+  topPickN: number;
   // Outcome distribution actually realized (helps spot whether base is
   // structurally over/under-weighted).
   realized: { bull: number; base: number; bear: number };
@@ -283,6 +286,8 @@ export function rollingBrier(days: number = 30): {
     trivialBear,
     trivialTotal,
     topPickHitRate,
+    topPickHits: hits,
+    topPickN: hitRows.length,
     realized: { bull: realizedBull, base: realizedBase, bear: realizedBear },
   };
 }

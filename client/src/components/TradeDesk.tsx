@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { fmt } from "@/lib/format";
+import { DecisionSupportCard } from "./DecisionSupportCard";
 import {
   LineChart, Line, XAxis, YAxis, ReferenceLine, ResponsiveContainer,
   Tooltip as RTooltip, CartesianGrid, Area, AreaChart,
@@ -203,6 +204,11 @@ export default function TradeDesk() {
         <div className="lg:col-span-4">
           <SqueezeDial squeeze={data.squeeze} />
         </div>
+      </section>
+
+      {/* Decision Support — Tier 1/2 quant edge tile (read-only observers) */}
+      <section>
+        <DecisionSupportCard />
       </section>
 
       {/* Three intraday charts with pivot overlays */}

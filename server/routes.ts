@@ -32,6 +32,19 @@ import { rollingBrier, settleDay, recentForecastProbs } from "./calibration";
 import { resolutionScore, gradeResolution } from "./stats";
 import { watchdogStatus } from "./cusumWatchdog";
 import { formatDecisionBlock } from "./decisionSupport";
+import { shieldStatus } from "./quoteShield";
+import { computeRND, type CallStrike } from "./breedenLitzenberger";
+import { fitOUBand, shouldShowOUBand } from "./ouBand";
+import { flagTailEvent } from "./stableTail";
+import { fetchDailyCloses } from "./quotes";
+import {
+  initParticles,
+  stepFilter,
+  directionalProbFromPosterior,
+  type Particle,
+} from "./particleFilterDFI";
+import * as fs from "fs";
+import * as path from "path";
 import { buildMag7Snapshot, type Mag7Response } from "./mag7";
 import { buildFlowSnapshot, buildIntradayFlowSnapshot, type FlowResponse } from "./flow";
 import { buildExposuresSnapshot, type ExposuresResponse } from "./exposures";
@@ -2117,6 +2130,175 @@ Refine the brief above. Search the web for any critical developments the feed is
     }
   });
 
+  // ─── Tier 3 experiments (Brier-gated shadow forecasters) ─────────────
+  // Each is read-only and never alters the existing scenario calc. They emit
+  // their own probabilities so we can score them against actuals over 30+
+  // days and decide whether they earn promotion to the live ladder.
+
+  // Tier 3.1: Breeden-Litzenberger implied PDF from SPY chain.
+  app.get("/api/experimental/bl-pdf", async (_req, res) => {
+    try {
+      const chainPath = path.join(process.cwd(), "data/cboe/SPY.json");
+      const raw = fs.readFileSync(chainPath, "utf-8");
+      const j = JSON.parse(raw);
+      const opts: any[] = j?.data?.data?.options ?? j?.data?.options ?? [];
+      // Group by expiry (encoded in the OCC symbol — SPY{YYMMDD}{C|P}{strike})
+      const byExpiry = new Map<string, CallStrike[]>();
+      for (const o of opts) {
+        const sym: string = o.option ?? "";
+        const m = /^[A-Z]+(\d{6})([CP])(\d{8})$/.exec(sym);
+        if (!m) continue;
+        if (m[2] !== "C") continue; // only calls
+        const exp = m[1];
+        const strike = Number(m[3]) / 1000;
+        const bid = Number(o.bid ?? 0);
+        const ask = Number(o.ask ?? 0);
+        const mid = bid > 0 && ask > 0 ? (bid + ask) / 2 : Number(o.last_trade_price ?? 0);
+        if (!isFinite(mid) || mid <= 0) continue;
+        const arr = byExpiry.get(exp) ?? [];
+        arr.push({ strike, callMid: mid });
+        byExpiry.set(exp, arr);
+      }
+      // Pick the nearest expiry that has ≥15 strikes
+      const candidates = [...byExpiry.entries()]
+        .filter(([, arr]) => arr.length >= 15)
+        .sort(([a], [b]) => a.localeCompare(b));
+      if (candidates.length === 0) {
+        return res.status(503).json({ note: "no expiry with sufficient call strikes" });
+      }
+      const [exp, chain] = candidates[0];
+      const yy = 2000 + Number(exp.slice(0, 2));
+      const mm = Number(exp.slice(2, 4));
+      const dd = Number(exp.slice(4, 6));
+      const expDate = new Date(Date.UTC(yy, mm - 1, dd));
+      const T = Math.max(
+        1 / 365,
+        (expDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24 * 365),
+      );
+      // Spot from /api/quotes
+      const PORT = Number(process.env.PORT ?? 5000);
+      const q = await fetch(`http://127.0.0.1:${PORT}/api/quotes`)
+        .then((r) => r.ok ? r.json() : null)
+        .catch(() => null);
+      const spot = q?.spy?.price ?? q?.spx?.price ?? 0;
+      if (!spot) return res.status(503).json({ note: "no spot available" });
+      const m = await fetch(`http://127.0.0.1:${PORT}/api/models?symbol=SPX`)
+        .then((r) => r.ok ? r.json() : null)
+        .catch(() => null);
+      const oneDayEM = m?.horizons?.daily?.audit?.scenarioTargets?.oneDayEM ?? spot * 0.005;
+      const r = 0.045; // approximate risk-free; not life-or-death for shape
+      const out = computeRND(chain, spot, r, T, oneDayEM);
+      res.json({
+        expiry: `${yy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`,
+        T_years: T,
+        spot,
+        strikes: chain.length,
+        ...out,
+      });
+    } catch (e: any) {
+      res.status(500).json({ note: e?.message ?? "failed" });
+    }
+  });
+
+  // Tier 3.2: OU mean-reversion band on SPX daily closes (regime-gated).
+  app.get("/api/experimental/ou-band", async (_req, res) => {
+    try {
+      const bars = await fetchDailyCloses("^GSPC", 120);
+      const closes: number[] = (bars ?? [])
+        .map((b: any) => b.close ?? b.c)
+        .filter((c: any) => typeof c === "number" && isFinite(c));
+      // Compute realized 20d sigma from same series
+      let sigma20d: number | null = null;
+      if (closes.length >= 21) {
+        const recent = closes.slice(-21);
+        const rets: number[] = [];
+        for (let i = 1; i < recent.length; i++) {
+          rets.push(Math.log(recent[i] / recent[i - 1]));
+        }
+        const mean = rets.reduce((s, x) => s + x, 0) / rets.length;
+        const v = rets.reduce((s, x) => s + (x - mean) * (x - mean), 0) / rets.length;
+        sigma20d = Math.sqrt(v) * Math.sqrt(252);
+      }
+      const fit = fitOUBand(closes);
+      const showByRegime = sigma20d != null ? shouldShowOUBand(sigma20d) : false;
+      res.json({
+        ...fit,
+        regimeGate: {
+          realizedSigma20d: sigma20d,
+          showBand: fit.ok && showByRegime,
+          gate: "σ_20d ≤ 18% required",
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ note: e?.message ?? "failed" });
+    }
+  });
+
+  // Tier 3.3: Stable-distribution tail z-score on today's return.
+  app.get("/api/experimental/tail-z", async (_req, res) => {
+    try {
+      const bars = await fetchDailyCloses("^GSPC", 120);
+      const closes: number[] = (bars ?? [])
+        .map((b: any) => b.close ?? b.c)
+        .filter((c: any) => typeof c === "number" && isFinite(c));
+      if (closes.length < 31) {
+        return res.status(503).json({ note: "need ≥31 daily closes" });
+      }
+      const returns: number[] = [];
+      for (let i = 1; i < closes.length; i++) {
+        returns.push((closes[i] - closes[i - 1]) / closes[i - 1]);
+      }
+      const todayReturn = returns[returns.length - 1];
+      const recent = returns.slice(0, -1);
+      const flag = flagTailEvent(todayReturn, recent);
+      res.json({ todayReturn, ...flag });
+    } catch (e: any) {
+      res.status(500).json({ note: e?.message ?? "failed" });
+    }
+  });
+
+  // Tier 3.4: Particle filter on DFI — stateful shadow forecaster.
+  // We keep the cloud in module-scope so it persists across requests
+  // until server restart. On each call: ingest the current DFI value,
+  // step the filter, return posterior + directional prob.
+  let dfiCloud: Particle[] = initParticles(200);
+  app.get("/api/experimental/particle-dfi", async (_req, res) => {
+    try {
+      const PORT = Number(process.env.PORT ?? 5000);
+      const m = await fetch(`http://127.0.0.1:${PORT}/api/models?symbol=SPX`)
+        .then((r) => r.ok ? r.json() : null)
+        .catch(() => null);
+      const dfiRaw = m?.horizons?.daily?.audit?.dfi;
+      if (typeof dfiRaw !== "number" || !isFinite(dfiRaw)) {
+        return res.status(503).json({ note: "no live DFI value" });
+      }
+      const stepped = stepFilter(dfiCloud, dfiRaw);
+      dfiCloud = stepped.particles;
+      const probs = directionalProbFromPosterior(stepped.step.posteriorMean);
+      res.json({
+        observation: dfiRaw,
+        posterior: stepped.step,
+        shadowProbs: {
+          bull: probs.pUp,
+          base: probs.pBase,
+          bear: probs.pDown,
+        },
+        note: "shadow forecaster — not used in live calc; promote only after Brier-better-than-trivial across 30+ days",
+      });
+    } catch (e: any) {
+      res.status(500).json({ note: e?.message ?? "failed" });
+    }
+  });
+
+  // Quote-shield diagnostics — read-only flag history per symbol.
+  app.get("/api/quote-shield", (_req, res) => {
+    try {
+      res.json({ symbols: shieldStatus() });
+    } catch (e: any) {
+      res.status(500).json({ note: e?.message ?? "failed" });
+    }
+  });
+
   // Calibration watchdog — CUSUM on edge-vs-trivial. Read-only observer.
   app.get("/api/calibration/watchdog", (req, res) => {
     try {
@@ -2148,33 +2330,66 @@ Refine the brief above. Search the web for any critical developments the feed is
     }
   });
 
-  // On-demand decision-support block preview. Caller supplies the inputs
-  // via query params; we just format the four-line block.
-  // GET /api/decision-support?spot=5800&probBull=0.4&probBase=0.4&probBear=0.2&oneDayEM=30&realizedSigma20d=0.18
-  app.get("/api/decision-support", (req, res) => {
+  // On-demand decision-support block preview. With no params, auto-pulls
+  // from /api/models (same source the daily card uses) so the React Trade
+  // Desk panel can display the same Tier-1 numbers without duplicating logic.
+  // GET /api/decision-support  → auto-pulls live SPX values
+  // GET /api/decision-support?spot=5800&probBull=0.4&...  → manual override
+  app.get("/api/decision-support", async (req, res) => {
     try {
-      const num = (k: string, fallback?: number) => {
+      const num = (k: string) => {
         const v = Number(req.query[k]);
-        return isFinite(v) ? v : fallback;
+        return isFinite(v) ? v : undefined;
       };
-      const spot = num("spot");
-      const probBull = num("probBull");
-      const probBase = num("probBase");
-      const probBear = num("probBear");
-      const oneDayEM = num("oneDayEM");
-      const realizedSigma20d = num("realizedSigma20d");
+      let spot = num("spot");
+      let probBull = num("probBull");
+      let probBase = num("probBase");
+      let probBear = num("probBear");
+      let oneDayEM = num("oneDayEM");
+      let realizedSigma20d = num("realizedSigma20d");
+
+      // Auto-pull from /api/models when params absent.
+      if (
+        spot == null || probBull == null || probBase == null ||
+        probBear == null || oneDayEM == null
+      ) {
+        try {
+          const PORT = Number(process.env.PORT ?? 5000);
+          const m = await fetch(`http://127.0.0.1:${PORT}/api/models?symbol=SPX`)
+            .then((r) => r.ok ? r.json() : null)
+            .catch(() => null);
+          const d = m?.horizons?.daily;
+          if (d) {
+            const sp = d.audit?.scenarioProb ?? null;
+            const st = d.audit?.scenarioTargets ?? null;
+            if (spot == null) spot = d.spot ?? undefined;
+            if (probBull == null && sp) probBull = (sp.bull ?? 0) / 100;
+            if (probBase == null && sp) probBase = (sp.base ?? 0) / 100;
+            if (probBear == null && sp) probBear = (sp.bear ?? 0) / 100;
+            if (oneDayEM == null && st) oneDayEM = st.oneDayEM ?? undefined;
+            if (realizedSigma20d == null && d.audit?.realizedSigma20d != null) {
+              realizedSigma20d = d.audit.realizedSigma20d;
+            }
+          }
+        } catch { /* fall through to error below */ }
+      }
+
       if (
         spot == null || probBull == null || probBase == null ||
         probBear == null || oneDayEM == null
       ) {
         return res.status(400).json({
-          note: "need ?spot, ?probBull, ?probBase, ?probBear, ?oneDayEM (and optional ?realizedSigma20d)",
+          note: "need ?spot, ?probBull, ?probBase, ?probBear, ?oneDayEM (and optional ?realizedSigma20d) — or wait for /api/models to return live values",
         });
       }
       const block = formatDecisionBlock({
         spot, probBull, probBase, probBear, oneDayEM, realizedSigma20d,
       });
-      res.json({ block, lines: block.split("\n") });
+      res.json({
+        block,
+        lines: block.split("\n"),
+        inputs: { spot, probBull, probBase, probBear, oneDayEM, realizedSigma20d },
+      });
     } catch (e: any) {
       res.status(500).json({ note: e?.message ?? "failed" });
     }

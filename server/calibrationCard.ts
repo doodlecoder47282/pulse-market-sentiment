@@ -27,7 +27,7 @@
 //   <0.06 elite | <0.10 excellent | <0.15 good | <0.20 fair | <0.25 weak | else poor
 
 import { rollingBrier, gradeBrier, beatsTrivial, recentForecastProbs } from "./calibration";
-import { resolutionScore, gradeResolution } from "./stats";
+import { resolutionScore, gradeResolution, betaBinomialCI } from "./stats";
 import { watchdogStatus } from "./cusumWatchdog";
 
 const WEBHOOK_URL =
@@ -120,7 +120,20 @@ export async function postCalibrationCard(days: number = 7): Promise<{
   lines.push(sectionRule("HIT RATE"));
   const hitPct = pct(r.topPickHitRate);
   const hitBeats = r.topPickHitRate > 0.34 ? "ABOVE" : "AT/BELOW";
-  lines.push(`  Top-pick scenario realized  ${hitPct}  (${hitBeats} 33% random baseline)`);
+  // Beta-Binomial 95% credible interval (MASTER_SYNTHESIS Tier 2 #8 — Very Normal).
+  // Replaces the bare percentage with an honest "how confident are we" band.
+  try {
+    if (r.topPickN > 0) {
+      const ci = betaBinomialCI(r.topPickHits, r.topPickN);
+      lines.push(
+        `  Top-pick realized  ${r.topPickHits}/${r.topPickN} = ${hitPct}   95% CI [${pct(ci.lower95)}, ${pct(ci.upper95)}]   (${hitBeats} 33% baseline)`,
+      );
+    } else {
+      lines.push(`  Top-pick scenario realized  ${hitPct}  (${hitBeats} 33% random baseline)`);
+    }
+  } catch {
+    lines.push(`  Top-pick scenario realized  ${hitPct}  (${hitBeats} 33% random baseline)`);
+  }
   lines.push("");
   lines.push(sectionRule("REALIZED OUTCOME MIX"));
   lines.push(`  BULL  ${pct(rB)}  |  BASE  ${pct(rM)}  |  BEAR  ${pct(rR)}`);
