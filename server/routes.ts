@@ -1961,7 +1961,7 @@ Refine the brief above. Search the web for any critical developments the feed is
   // what the model is watching. Read-only: never posts to Discord.
   app.get("/api/odte-alert/preview", async (_req, res) => {
     try {
-      const { evaluateOdte, formatOdteAlert, FIRE_GATE } = await import("./odteAlertEngine");
+      const { evaluateOdte, formatOdteAlert, diagnoseOdte, FIRE_GATE, BANGER_MIN_PCT } = await import("./odteAlertEngine");
       const { getOdteSnapshot } = await import("./odteTracker");
 
       // Snapshot models via local /api/models (re-uses cache + in-flight dedup)
@@ -2004,17 +2004,28 @@ Refine the brief above. Search the web for any critical developments the feed is
         expiry: odte.expiry ?? null,
       };
 
-      const fireable = evaluateOdte(args);
-      const previews = fireable.map((a) => ({
+      const diag = diagnoseOdte(args);
+      const previews = diag.fireable.map((a) => ({
         ...a,
         formatted: formatOdteAlert(a).content,
       }));
+      const rejectedSummary = diag.rejected.map(({ alert, reason }) => ({
+        setup: alert.setup,
+        side: alert.side,
+        score: alert.grade.score,
+        grade: alert.grade.letter,
+        t1EstPct: alert.t1?.estPctGain ?? 0,
+        t2EstPct: alert.t2?.estPctGain ?? 0,
+        reason,
+      }));
       res.json({
         fireGate: FIRE_GATE,
+        bangerMinPct: BANGER_MIN_PCT,
         spot, oneDayEM,
         audit: args.audit,
         fireable: previews,
-        note: "Read-only preview. No alerts posted to Discord.",
+        rejected: rejectedSummary,
+        note: "Read-only preview. Shows ALL candidates with reject reasons. No alerts posted to Discord.",
       });
     } catch (e: any) {
       res.status(500).json({ error: "odte_preview_failed", message: e?.message ?? String(e), stack: String(e?.stack ?? "").split("\n").slice(0, 6) });
@@ -2199,6 +2210,27 @@ Refine the brief above. Search the web for any critical developments the feed is
   // Kick off MM-matrix scheduler (10/13/15:30 ET snapshots, 16:30 grading)
   startMmScheduler();
   startDiscordScheduler();
+
+  // Kick off Exit Brain (30s confluence eval over tracked 0DTE positions)
+  try {
+    const { startExitBrain, getExitBrainSnapshot, evaluateOnce } = await import("./exitBrain");
+    startExitBrain();
+    app.get("/api/exit-brain/snapshot", (_req, res) => {
+      try { res.json(getExitBrainSnapshot()); }
+      catch (e: any) { res.status(500).json({ error: "exit_brain_snapshot_failed", message: e?.message ?? String(e) }); }
+    });
+    app.get("/api/exit-brain/eval/:id", async (req, res) => {
+      try {
+        const out = await evaluateOnce(String(req.params.id));
+        if (!out) return res.status(404).json({ error: "position_not_found_or_inactive" });
+        res.json(out);
+      } catch (e: any) {
+        res.status(500).json({ error: "exit_brain_eval_failed", message: e?.message ?? String(e) });
+      }
+    });
+  } catch (e: any) {
+    console.warn(`[exitBrain] failed to start: ${e?.message ?? e}`);
+  }
 
   // Manual test endpoint for Discord webhook
   app.post("/api/discord/test", async (_req, res) => {

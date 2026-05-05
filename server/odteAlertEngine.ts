@@ -392,6 +392,88 @@ export interface EvalArgs {
 }
 
 export const FIRE_GATE = 80;  // A− or better — banger-only
+export const BANGER_MIN_PCT = 30;  // T1 estimated %-gain floor — user spec: 30%+ only
+
+/**
+ * Diagnostic surface — returns ALL candidates pre-filter, with per-candidate
+ * pass/reject reasons. Used by /api/odte-alert/preview for visibility.
+ * Does NOT consume rate limiter / daily cap / cooldowns.
+ */
+export function diagnoseOdte(args: EvalArgs): {
+  fireable: OdteAlert[];
+  rejected: Array<{ alert: OdteAlert; reason: string }>;
+  fireGate: number;
+  bangerMinPct: number;
+} {
+  // We reuse the same buildAlert pipeline by calling evaluateOdte but
+  // rely on the alerts it produces (which already include grade.reasoning
+  // appended by the BANGER filter when rejected). Then we re-bucket from
+  // the raw `out` set by reading internal state via a side-channel.
+  //
+  // Simplest path: duplicate the orchestration here, mirroring evaluateOdte
+  // but stopping before the cooldown/cap stage.
+  const out: OdteAlert[] = [];
+  recordSpot(args.asOf, args.spot);
+  if (spotHistory.length < 3) {
+    return { fireable: [], rejected: [], fireGate: FIRE_GATE, bangerMinPct: BANGER_MIN_PCT };
+  }
+  const sortedLevels = [...args.levels].sort((a, b) => a.price - b.price);
+  const meaningfulKinds = new Set([
+    "callWall", "putWall", "mainPivot", "charmFlip", "charmZero",
+    "vanna", "vannaPeak", "t1Up", "t1Dn", "downsideTarget", "upsideTarget",
+  ]);
+  for (const lv of args.levels) {
+    if (!meaningfulKinds.has(lv.kind)) continue;
+    if (Math.abs(args.spot - lv.price) > 30) continue;
+    if (detectFailedBreak(lv.price, "above").detected) {
+      const a = buildAlert(args, lv, "FAILED_BREAK", "call", sortedLevels);
+      if (a) out.push(a);
+    }
+    if (detectFailedBreak(lv.price, "below").detected) {
+      const a = buildAlert(args, lv, "FAILED_BREAK", "put", sortedLevels);
+      if (a) out.push(a);
+    }
+  }
+  const pivot = args.audit.mainPivot;
+  if (typeof pivot === "number" && isFinite(pivot)) {
+    const lv = args.levels.find((l) => Math.abs(l.price - pivot) < 1) ??
+               { name: "MAIN PIVOT", kind: "mainPivot", price: pivot, side: "support" as const };
+    if (detectFailedBreak(pivot, "above").detected) {
+      const a = buildAlert(args, lv, "PIVOT_RECLAIM", "call", sortedLevels);
+      if (a) out.push(a);
+    }
+    if (detectFailedBreak(pivot, "below").detected) {
+      const a = buildAlert(args, lv, "PIVOT_RECLAIM", "put", sortedLevels);
+      if (a) out.push(a);
+    }
+  }
+  const callWall = args.levels.find((l) => l.kind === "callWall");
+  if (callWall && detectWallReject(callWall.price, "ceiling").detected) {
+    const a = buildAlert(args, callWall, "WALL_REJECT", "put", sortedLevels);
+    if (a) out.push(a);
+  }
+  const putWall = args.levels.find((l) => l.kind === "putWall");
+  if (putWall && detectWallReject(putWall.price, "floor").detected) {
+    const a = buildAlert(args, putWall, "WALL_REJECT", "call", sortedLevels);
+    if (a) out.push(a);
+  }
+  const fireable: OdteAlert[] = [];
+  const rejected: Array<{ alert: OdteAlert; reason: string }> = [];
+  for (const a of out) {
+    if (a.grade.score < FIRE_GATE) {
+      rejected.push({ alert: a, reason: `grade ${a.grade.score} < FIRE_GATE ${FIRE_GATE}` });
+      continue;
+    }
+    const t1Gain = a.t1?.estPctGain ?? 0;
+    if (t1Gain < BANGER_MIN_PCT) {
+      rejected.push({ alert: a, reason: `BANGER FILTER: T1 +${t1Gain.toFixed(0)}% < ${BANGER_MIN_PCT}% floor` });
+      continue;
+    }
+    fireable.push(a);
+  }
+  fireable.sort((a, b) => b.grade.score - a.grade.score);
+  return { fireable, rejected, fireGate: FIRE_GATE, bangerMinPct: BANGER_MIN_PCT };
+}
 
 export function evaluateOdte(args: EvalArgs): OdteAlert[] {
   const out: OdteAlert[] = [];
@@ -460,10 +542,25 @@ export function evaluateOdte(args: EvalArgs): OdteAlert[] {
     }
   }
 
-  // ─── Filter: gate + per-setup cooldown + global hourly + daily cap ───
+  // ─── Filter: gate + BANGERS ONLY + per-setup cooldown + global hourly + daily cap ───
   // Sort highest-grade first so if multiple setups qualify the same tick,
   // the strongest wins the rate-limit slot.
-  const passed = out.filter((a) => a.grade.score >= FIRE_GATE)
+  //
+  // BANGERS ONLY (user spec):
+  //   "we need to target 30% or more trades nothing less 50-100% is ideal"
+  // We require T1's estimated %-gain to be ≥ BANGER_MIN_PCT (30%). T2 already
+  // earns more, so we additionally bonus alerts whose T2 ≥ 50% by leaving them
+  // through; the floor is enforced on T1 to guarantee the *minimum* take.
+  const passed = out
+    .filter((a) => a.grade.score >= FIRE_GATE)
+    .filter((a) => {
+      const t1Gain = a.t1?.estPctGain ?? 0;
+      if (t1Gain < BANGER_MIN_PCT) {
+        a.grade.reasoning.push(`BANGER FILTER: T1 +${t1Gain.toFixed(0)}% < ${BANGER_MIN_PCT}% floor — rejected`);
+        return false;
+      }
+      return true;
+    })
     .sort((a, b) => b.grade.score - a.grade.score);
 
   const fireable: OdteAlert[] = [];
