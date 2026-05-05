@@ -19,7 +19,9 @@ import {
   postLevelClusterAlert,
   postGammaFlipAlert,
   postNewsAlert,
+  postOdteBangerAlert,
 } from "./discord";
+import { evaluateOdte, type EvalArgs } from "./odteAlertEngine";
 import { postSelzDailyCard } from "./discordSelzCard";
 import { settleDay } from "./calibration";
 import { postCalibrationCard } from "./calibrationCard";
@@ -247,6 +249,82 @@ async function pollLevelAndGammaAlerts(): Promise<void> {
   }
 }
 
+// ─── 2c. 0DTE banger alerts (B+ gate, max 3/day) ────────────────────
+//
+// Polls /api/models (audit + levels) and /api/odte-tracker (live chain) once
+// per scheduler tick during RTH. Engine handles all gating internally — we
+// just hand it the snapshot and post anything it returns.
+
+async function pollOdteBangerAlerts(): Promise<void> {
+  const { dow, date, hh, mm } = etNow();
+  if (!isTradingDay(dow, date)) return;
+  // Only during RTH — 9:45 ET to 15:45 ET (engine also has a time-of-day score)
+  const tod = hh * 60 + mm;
+  if (tod < 9 * 60 + 45 || tod > 15 * 60 + 45) return;
+
+  let modelsRes: Response, odteRes: Response;
+  try {
+    [modelsRes, odteRes] = await Promise.all([
+      fetch(`${BASE}/api/models?symbol=^GSPC&experimental=1`),
+      fetch(`${BASE}/api/odte-tracker`),
+    ]);
+  } catch {
+    return;
+  }
+  if (!modelsRes.ok || !odteRes.ok) return;
+  const models = await modelsRes.json().catch(() => null);
+  const odte = await odteRes.json().catch(() => null);
+  if (!models || !odte) return;
+
+  const daily = models.horizons?.daily;
+  if (!daily) return;
+
+  const audit = daily.audit ?? {};
+  const levels = (daily.levels ?? []) as any[];
+  const spot = odte.spot ?? daily.spot ?? 0;
+  const oneDayEM = daily.expectedMove ?? daily.oneDayEM ?? audit?.oneDayEM ?? 0;
+  if (!spot || spot <= 0) return;
+
+  const args: EvalArgs = {
+    spot,
+    asOf: Date.now(),
+    hourET: hh,
+    minuteET: mm,
+    audit: {
+      slope: audit.slope, dfi: audit.dfi, gammaZone: audit.gammaZone,
+      vannaBias: audit.vannaBias, mainPivot: audit.mainPivot, charmZero: audit.charmZero,
+    },
+    levels: levels.map((l: any) => ({
+      name: l.name, kind: l.kind, price: l.price, side: l.side,
+      status: l.status, tag: l.tag,
+    })),
+    contracts: (odte.contracts ?? []).map((c: any) => ({
+      key: c.key, strike: c.strike, side: c.side,
+      bid: c.bid, ask: c.ask, mid: c.mid, last: c.last,
+      volume: c.volume, openInterest: c.openInterest, expiry: c.expiry,
+    })),
+    oneDayEM: typeof oneDayEM === "number" ? oneDayEM : 0,
+    expiry: odte.expiry ?? null,
+  };
+
+  let alerts = [];
+  try {
+    alerts = evaluateOdte(args);
+  } catch (e: any) {
+    console.warn(`[discordScheduler] odte engine threw: ${e?.message ?? e}`);
+    return;
+  }
+
+  for (const a of alerts) {
+    console.log(`[discordScheduler] 0DTE banger: ${a.side} ${a.setup} grade=${a.grade.letter} (${a.grade.score})`);
+    try {
+      await postOdteBangerAlert(a);
+    } catch (e: any) {
+      console.warn(`[discordScheduler] postOdteBangerAlert failed: ${e?.message ?? e}`);
+    }
+  }
+}
+
 // ─── 3. News alerts ─────────────────────────────────────────────────────
 //
 // Poll /api/news every 5 min. Fire when a high-impact macro event (FOMC, CPI,
@@ -365,6 +443,7 @@ async function tick(): Promise<void> {
   await maybeFireWeeklyCalibration();
   await pollLevelAndGammaAlerts();
   await pollNewsAlerts();
+  await pollOdteBangerAlerts();
 
   // GC dailyFired weekly (small set, but keep tidy)
   if (dailyFired.size > 14) {

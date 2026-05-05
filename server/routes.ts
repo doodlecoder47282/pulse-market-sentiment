@@ -1956,6 +1956,71 @@ Refine the brief above. Search the web for any critical developments the feed is
     res.json({ tracked: getTracked() });
   });
 
+  // 0DTE banger preview — evaluates the engine against current snapshots
+  // and returns ALL candidate setups (gated and ungated) so the user can see
+  // what the model is watching. Read-only: never posts to Discord.
+  app.get("/api/odte-alert/preview", async (_req, res) => {
+    try {
+      const { evaluateOdte, formatOdteAlert, FIRE_GATE } = await import("./odteAlertEngine");
+      const { getOdteSnapshot } = await import("./odteTracker");
+
+      // Snapshot models via local /api/models (re-uses cache + in-flight dedup)
+      const port = process.env.PORT || "5000";
+      const modelsResp = await fetch(`http://127.0.0.1:${port}/api/models?symbol=^GSPC&experimental=1`).catch(() => null);
+      const models: any = modelsResp && modelsResp.ok ? await modelsResp.json().catch(() => null) : null;
+      const odte = getOdteSnapshot();
+      if (!models?.horizons?.daily) {
+        return res.status(503).json({ error: "models_unavailable" });
+      }
+      const daily = models.horizons.daily;
+      const audit = daily.audit ?? {};
+      const levels = (daily.levels ?? []).map((l: any) => ({
+        name: l.name, kind: l.kind, price: l.price, side: l.side,
+        status: l.status, tag: l.tag,
+      }));
+      const spot = odte.spot ?? daily.spot ?? 0;
+      const oneDayEM = daily.expectedMove ?? daily.oneDayEM ?? 0;
+
+      const now = new Date();
+      const etParts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false,
+      }).formatToParts(now);
+      const hh = parseInt(etParts.find((p) => p.type === "hour")?.value ?? "12", 10);
+      const mm = parseInt(etParts.find((p) => p.type === "minute")?.value ?? "0", 10);
+
+      const args = {
+        spot, asOf: Date.now(), hourET: hh, minuteET: mm,
+        audit: {
+          slope: audit.slope, dfi: audit.dfi, gammaZone: audit.gammaZone,
+          vannaBias: audit.vannaBias, mainPivot: audit.mainPivot, charmZero: audit.charmZero,
+        },
+        levels,
+        contracts: (odte.contracts ?? []).map((c: any) => ({
+          key: c.key, strike: c.strike, side: c.side,
+          bid: c.bid, ask: c.ask, mid: c.mid, last: c.last,
+          volume: c.volume, openInterest: c.openInterest, expiry: c.expiry,
+        })),
+        oneDayEM: typeof oneDayEM === "number" ? oneDayEM : 0,
+        expiry: odte.expiry ?? null,
+      };
+
+      const fireable = evaluateOdte(args);
+      const previews = fireable.map((a) => ({
+        ...a,
+        formatted: formatOdteAlert(a).content,
+      }));
+      res.json({
+        fireGate: FIRE_GATE,
+        spot, oneDayEM,
+        audit: args.audit,
+        fireable: previews,
+        note: "Read-only preview. No alerts posted to Discord.",
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: "odte_preview_failed", message: e?.message ?? String(e), stack: String(e?.stack ?? "").split("\n").slice(0, 6) });
+    }
+  });
+
   // ToS-style 5-min intraday chart for a single contract (key = contractKey)
   app.get("/api/odte-tracker/chart", (req, res) => {
     try {

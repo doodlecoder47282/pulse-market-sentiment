@@ -259,6 +259,7 @@ export async function postDailyModelCard(): Promise<boolean> {
 // Optional context the scheduler can pass in to enrich the embed. All fields
 // are optional — alert still fires cleanly with just the bare minimum.
 import { chainAbove, chainBelow, fmtChain, playbookCopy, type LevelLite } from "./levelPlaybook";
+import { formatOdteAlert, type OdteAlert } from "./odteAlertEngine";
 
 export type LevelAlertContext = {
   dfi?: number | null;            // current DFI value
@@ -473,6 +474,35 @@ export async function postLevelClusterAlert(args: {
     color,
     footer: { text: "Pulse Batcave · level cluster (#4·coalesced)" },
     timestamp: new Date().toISOString(),
+  };
+
+  return await postToDiscord({
+    username: "Pulse Batcave",
+    embeds: [embed],
+  });
+}
+
+// ─── Card 2c: 0DTE banger alert (B+ or better only) ──────────────────
+export async function postOdteBangerAlert(a: OdteAlert): Promise<boolean> {
+  const { content } = formatOdteAlert(a);
+  // Color by side and grade. A-tier = stronger fill, B-tier = warning amber.
+  const isCall = a.side === "call";
+  const color =
+    a.grade.score >= 80 ? (isCall ? COLOR_BULL : COLOR_BEAR) :
+    COLOR_WARNING;
+
+  const setupLabel =
+    a.setup === "FAILED_BREAK" ? "FAILED BREAK" :
+    a.setup === "PIVOT_RECLAIM" ? "PIVOT RECLAIM" :
+    "WALL REJECT";
+
+  // Embed wraps the formatted code-block content. Title gives the at-a-glance.
+  const embed: DiscordEmbed = {
+    title: `0DTE BANGER · ${a.side.toUpperCase()} · ${setupLabel} · ${a.grade.letter}`,
+    description: content,
+    color,
+    footer: { text: `Pulse Batcave · 0DTE banger · ${a.grade.score}/100 · max 3/day` },
+    timestamp: new Date(a.asOf).toISOString(),
   };
 
   return await postToDiscord({
