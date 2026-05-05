@@ -2037,6 +2037,22 @@ Refine the brief above. Search the web for any critical developments the feed is
     }
   });
 
+  // ─── Reversion vs Extension classifier — for the Exit Brain ──────────
+  // GET /api/rev-ext?symbol=$SPX (default)
+  // Returns session VWAP + std-dev bands, RSI(2) on 1m & 5m, tape-state
+  // classifier (EXTENDED_HIGH/LOW, MEAN_REVERTING_*, TRENDING_*, CHOP),
+  // and reversionRisk-for-long / for-short scores 0..100. Read-only.
+  app.get("/api/rev-ext", async (req, res) => {
+    try {
+      const { getRevExtSnapshot } = await import("./revExtClassifier");
+      const symbol = String(req.query.symbol || "$SPX");
+      const snap = await getRevExtSnapshot(symbol);
+      res.json(snap);
+    } catch (e: any) {
+      res.status(500).json({ error: "rev_ext_failed", message: e?.message ?? String(e), stack: String(e?.stack ?? "").split("\n").slice(0, 6) });
+    }
+  });
+
   // ToS-style 5-min intraday chart for a single contract (key = contractKey)
   app.get("/api/odte-tracker/chart", (req, res) => {
     try {
@@ -2179,9 +2195,20 @@ Refine the brief above. Search the web for any critical developments the feed is
   });
 
   // Manual fire SelzTrades-format card
-  app.post("/api/discord/selz", async (_req, res) => {
+  app.post("/api/discord/selz", async (req, res) => {
     try {
-      const r = await postSelzDailyCard();
+      const dryRun = String(req.query.dryRun ?? "") === "1";
+      const r = await postSelzDailyCard({ dryRun });
+      res.json(r);
+    } catch (e: any) {
+      res.status(500).json({ ok: false, note: e?.message ?? "failed" });
+    }
+  });
+
+  // Read-only preview of the SPX Daily Model card — same data, no Discord post.
+  app.get("/api/discord/selz/preview", async (_req, res) => {
+    try {
+      const r = await postSelzDailyCard({ dryRun: true });
       res.json(r);
     } catch (e: any) {
       res.status(500).json({ ok: false, note: e?.message ?? "failed" });

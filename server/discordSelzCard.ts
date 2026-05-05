@@ -132,10 +132,32 @@ const ANNOTATIONS: Record<string, AnnFn> = {
   mopexMaxPain: () => "max pain anchor — strikes pulling toward expiry",
   lowerVomma: () => "vomma cluster — vol-of-vol pin below",
   downsidePivot: () => "downside pivot — structure breaks below",
-  t1Down: () => "T1 downside extension — momentum target",
-  t2Down: () => "T2 downside extension — high-IV target",
-  t1Up: () => "T1 upside extension — momentum target",
-  t2Up: () => "T2 upside extension — high-IV target",
+  t1Down: ({ supportBelow }) => {
+    const next = supportBelow[0];
+    return next
+      ? `first downside target — break + hold opens path to ${fmt0(next.price)}`
+      : "first downside target — break opens path lower";
+  },
+  t2Down: () => "deeper downside extension — high-IV flush target",
+  t1Up: ({ resistAbove }) => {
+    const next = resistAbove[0];
+    return next
+      ? `first upside target — clean tag opens path to ${fmt0(next.price)}`
+      : "first upside target — momentum extension";
+  },
+  t2Up: () => "deeper upside extension — high-IV squeeze target",
+  gammaZero: ({ level, supportBelow, resistAbove }) => {
+    if (level.side === "support") {
+      const next = supportBelow[0];
+      return next
+        ? `gamma flips negative below — vol expansion → ${fmt0(next.price)}`
+        : "gamma flips negative below — vol expansion starts";
+    }
+    const next = resistAbove[0];
+    return next
+      ? `gamma flip line — reclaim above unlocks ${fmt0(next.price)}`
+      : "gamma flip line — reclaim opens upside";
+  },
 };
 
 function annotate(a: AnnArgs): string {
@@ -164,10 +186,12 @@ const DISPLAY_NAME: Record<string, string> = {
   mopexMaxPain: "MOPEX MAX PAIN",
   lowerVomma: "LOWER VOMMA",
   downsidePivot: "DOWNSIDE PIVOT",
-  t1Up: "T1 UP",
-  t2Up: "T2 UP",
-  t1Down: "T1 DOWN",
-  t2Down: "T2 DOWN",
+  t1Up: "UPSIDE TARGET",
+  t2Up: "T2 UPSIDE",
+  t1Down: "DOWNSIDE TARGET",
+  t2Down: "T2 DOWNSIDE",
+  mainPivot: "MAIN PIVOT",
+  gammaZero: "\u03b3-ZERO",
 };
 const displayName = (kind: string, fallback: string) =>
   DISPLAY_NAME[kind] ?? fallback;
@@ -232,7 +256,7 @@ function etTime(): string {
 }
 
 // ─── main poster ─────────────────────────────────────────────────────────
-export async function postSelzDailyCard(): Promise<{ ok: boolean; preview: string }> {
+export async function postSelzDailyCard(opts?: { dryRun?: boolean }): Promise<{ ok: boolean; preview: string }> {
   const [data, quotes] = await Promise.all([
     fetchJSON("/api/models?symbol=SPX"),
     fetchJSON("/api/quotes"),
@@ -282,6 +306,43 @@ export async function postSelzDailyCard(): Promise<{ ok: boolean; preview: strin
       });
     }
   }
+  // Synthesize MAIN PIVOT from audit.mainPivot — the model's bull/bear line.
+  // Add as resistance if above spot, support if below. Only if not already
+  // present in the chain (avoid double-listing the dominantMag if they collide).
+  const mp = (audit.mainPivot ?? null) as number | null;
+  if (mp != null && Math.abs(mp - spot) <= TACTICAL_BAND * 2) {
+    const collide = baseLevels.some(
+      (l: any) => Math.abs((l.price ?? 0) - mp) < 1 && (l.kind === "dominantMag" || l.kind === "strongMag"),
+    );
+    if (!collide) {
+      baseLevels.push({
+        kind: "mainPivot",
+        side: mp >= spot ? "resistance" : "support",
+        price: mp,
+        status: "held",
+        name: "MAIN PIVOT",
+      });
+    }
+  }
+
+  // Synthesize γ-ZERO from audit.charmZero (the singular gamma-flip line).
+  // Only add if it's clearly distinct from the charmZeros already pushed.
+  const gz = (audit.charmZero ?? null) as number | null;
+  if (gz != null && Math.abs(gz - spot) <= TACTICAL_BAND * 2) {
+    const collide = baseLevels.some(
+      (l: any) => Math.abs((l.price ?? 0) - gz) < 1 && (l.kind === "charmFlip" || l.kind === "charmFloor"),
+    );
+    if (!collide) {
+      baseLevels.push({
+        kind: "gammaZero",
+        side: gz >= spot ? "resistance" : "support",
+        price: gz,
+        status: "held",
+        name: "\u03b3-ZERO",
+      });
+    }
+  }
+
   const levels = baseLevels;
 
   // Range boundary identification — used for de-dup logic, NOT for blanket
@@ -571,8 +632,11 @@ export async function postSelzDailyCard(): Promise<{ ok: boolean; preview: strin
     console.warn(`[discordSelzCard] recordPrediction failed: ${e?.message ?? e}`);
   }
 
-  // Post
+  // Post (skipped in dry-run)
   let ok = false;
+  if (opts?.dryRun) {
+    return { ok: true, preview: final };
+  }
   try {
     const res = await fetch(WEBHOOK_URL, {
       method: "POST",
