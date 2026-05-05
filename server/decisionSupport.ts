@@ -1,16 +1,24 @@
 // server/decisionSupport.ts
 //
-// Formats the new "decision support" block that lives below CLOSE TARGETS on
-// every Pulse Selz daily card. ADDITIVE only — never modifies the existing
-// card body. If anything throws, callers should fall back to omitting this
-// block entirely.
+// Formats the "decision support" block that lives below CLOSE TARGETS on
+// the Pulse Batcave SPX Daily Model card. ADDITIVE only — never modifies
+// the existing card body. If anything throws, callers should fall back to
+// omitting this block entirely.
 //
-// Five lines, each one source-attributed in MASTER_SYNTHESIS.md:
-//   1. Kelly (frac):   X%        ← Mauboussin footnote 73
-//   2. Base rate up:   d/w/m/y   ← Mauboussin p. 24
-//   3. Vol drag:       -X.X%     ← Mauboussin p. 20 (rule of thumb)
-//   4. P5 / P95 close: L / H     ← 3-Min Data Science PPF
-//   5. (Resolution metric is rendered on the WEEKLY calibration card, not here)
+// Layout (tightened May 2026 — right-aligned column for at-a-glance read):
+//
+//   ─── decision support ───
+//     STANCE              long-leaning · half-Kelly · 7126–7276
+//     Kelly ½ (long)                                       4.2%
+//     Base rate up                          55 / 59 / 63 / 73%
+//     Vol drag (σ=27%)                                    -3.6%
+//     Close band  P5 / P95                         7126 / 7276
+//
+// Sources:
+//   Kelly                ← Mauboussin footnote 73 (half-Kelly stable variance)
+//   Base rates           ← Mauboussin p. 24 (SPX d/w/m/y up-rates)
+//   Vol drag             ← Mauboussin p. 20 (σ²/2 rule of thumb, gated >25%)
+//   P5 / P95             ← 3-Min Data Science (PPF on EM≈1σ daily band)
 
 import {
   kellyFraction,
@@ -28,38 +36,69 @@ export type DecisionInputs = {
   realizedSigma20d?: number; // annualized 20-day σ in decimal (e.g. 0.18) — optional
 };
 
+// Right-pad label, right-align value to total width = 56 chars (matches the
+// other card sections). Label gets 32 chars, value gets 22 chars right-aligned.
+const LABEL_W = 32;
+const VAL_W = 22;
+function row(label: string, value: string): string {
+  const lbl = label.length >= LABEL_W ? label.slice(0, LABEL_W) : label + " ".repeat(LABEL_W - label.length);
+  const val = value.length >= VAL_W ? value : " ".repeat(VAL_W - value.length) + value;
+  return `  ${lbl}${val}`;
+}
+
 export function formatDecisionBlock(inp: DecisionInputs): string {
   const lines: string[] = [];
 
-  // 1. Kelly. Display half-Kelly because full Kelly is famously volatile
-  //    (Mauboussin p. 19). User sees the number, never executes anything.
-  //    We use the dominant scenario's prob: the max of (bull, bear) framed
-  //    as the directional bet; if base wins, we show 0% (no directional edge).
+  // Pre-compute the pieces we need for the STANCE verdict line and the
+  // individual rows. Any individual try/catch keeps the block partially
+  // functional even if one piece blows up.
+  let kellyPct = 0;
+  let kellySide: "long" | "short" | "flat" = "flat";
   try {
     const directional = Math.max(inp.probBull, inp.probBear);
     if (directional > inp.probBase) {
-      const f = kellyFraction(directional, 0.5);
-      const side = inp.probBull >= inp.probBear ? "long" : "short";
-      lines.push(`  Kelly ½ (${side}):  ${(f * 100).toFixed(1)}%`);
-    } else {
-      lines.push(`  Kelly ½:           0.0%  (no directional edge)`);
+      kellyPct = kellyFraction(directional, 0.5) * 100;
+      kellySide = inp.probBull >= inp.probBear ? "long" : "short";
     }
-  } catch {
-    // skip line on any error
-  }
+  } catch { /* keep defaults */ }
 
-  // 2. Base-rate strip (Mauboussin p. 24)
+  let p05 = NaN, p95 = NaN;
+  try {
+    const dailySigma = inp.oneDayEM; // EM ≈ 1σ daily (Schwab/cboe convention)
+    p05 = normPpf(0.05, inp.spot, dailySigma);
+    p95 = normPpf(0.95, inp.spot, dailySigma);
+  } catch { /* keep NaN */ }
+
+  // 1. STANCE — one-glance verdict. Combines side, Kelly size, and band.
+  try {
+    const sideLabel =
+      kellySide === "long" ? "long-leaning" :
+      kellySide === "short" ? "short-leaning" :
+      "neutral";
+    const kellyTag = kellyPct > 0 ? `½-Kelly ${kellyPct.toFixed(1)}%` : "no edge";
+    const bandTag = isFinite(p05) && isFinite(p95)
+      ? `${Math.round(p05)}–${Math.round(p95)}`
+      : "—";
+    lines.push(row("STANCE", `${sideLabel} · ${kellyTag} · ${bandTag}`));
+  } catch { /* skip */ }
+
+  // 2. Kelly ½ row (broken out so the user sees the raw number too)
+  try {
+    if (kellySide === "flat") {
+      lines.push(row("Kelly ½", "0.0%  (no edge)"));
+    } else {
+      lines.push(row(`Kelly ½ (${kellySide})`, `${kellyPct.toFixed(1)}%`));
+    }
+  } catch { /* skip */ }
+
+  // 3. Base-rate strip (Mauboussin p. 24) — d/w/m/y SPX up-rates
   try {
     const r = SPX_BASE_RATES_UP;
-    lines.push(
-      `  Base rate up:      ${(r.daily * 100).toFixed(0)}% / ${(r.weekly * 100).toFixed(0)}% / ${(r.monthly * 100).toFixed(0)}% / ${(r.yearly * 100).toFixed(0)}%   (d/w/m/y)`,
-    );
-  } catch {
-    // skip
-  }
+    const strip = `${(r.daily * 100).toFixed(0)} / ${(r.weekly * 100).toFixed(0)} / ${(r.monthly * 100).toFixed(0)} / ${(r.yearly * 100).toFixed(0)}%`;
+    lines.push(row("Base rate up  d/w/m/y", strip));
+  } catch { /* skip */ }
 
-  // 3. Vol drag — only displayed when 20-day σ is elevated (>25% annualized).
-  //    Spec from MASTER_SYNTHESIS Tier 1 #3 — Mauboussin p. 20 rule of thumb.
+  // 4. Vol drag — only when 20-day σ is elevated (>25% annualized).
   //    The arithmetic-vs-geometric gap matters most when vol is large.
   try {
     if (
@@ -68,22 +107,16 @@ export function formatDecisionBlock(inp: DecisionInputs): string {
       inp.realizedSigma20d > 0.25
     ) {
       const drag = volDrag(inp.realizedSigma20d);
-      lines.push(`  Vol drag:          -${(drag * 100).toFixed(1)}%   (σ = ${(inp.realizedSigma20d * 100).toFixed(0)}%)`);
+      lines.push(row(`Vol drag  (σ=${(inp.realizedSigma20d * 100).toFixed(0)}%)`, `-${(drag * 100).toFixed(1)}%`));
     }
-  } catch {
-    // skip
-  }
+  } catch { /* skip */ }
 
-  // 4. P5 / P95 close bands. Convert one-day EM to a daily σ via EM ≈ 0.84·σ
-  //    (the standard option-implied 1σ ≈ EM relationship — see Schwab/cboe).
+  // 5. P5 / P95 close band (PPF)
   try {
-    const dailySigma = inp.oneDayEM; // EM is already roughly 1σ in price units
-    const p05 = normPpf(0.05, inp.spot, dailySigma);
-    const p95 = normPpf(0.95, inp.spot, dailySigma);
-    lines.push(`  P5 / P95 close:    ${Math.round(p05)} / ${Math.round(p95)}`);
-  } catch {
-    // skip
-  }
+    if (isFinite(p05) && isFinite(p95)) {
+      lines.push(row("Close band  P5 / P95", `${Math.round(p05)} / ${Math.round(p95)}`));
+    }
+  } catch { /* skip */ }
 
   if (lines.length === 0) return "";
   return ["─── decision support ───", ...lines].join("\n");

@@ -106,6 +106,24 @@ function gammaZoneLabel(zone: string): string {
   return zone === "y+" ? "γ+ (dampened)" : "γ− (volatile)";
 }
 
+// Word-wrap a string to ~maxChars per line. Used for the playbook copy in
+// level alerts so long sentences don't sprawl across the embed.
+function wrapText(s: string, maxChars: number): string[] {
+  const words = s.split(/\s+/);
+  const lines: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    if ((cur + (cur ? " " : "") + w).length > maxChars) {
+      if (cur) lines.push(cur);
+      cur = w;
+    } else {
+      cur = cur ? `${cur} ${w}` : w;
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
 // ─── Card 1: SPX daily model ─────────────────────────────────────────────
 //
 // Mirrors the SelzTrades-style mockup the user approved. Pulls strictly from
@@ -238,13 +256,25 @@ export async function postDailyModelCard(): Promise<boolean> {
 }
 
 // ─── Card 2: level break alert ───────────────────────────────────────────
+// Optional context the scheduler can pass in to enrich the embed. All fields
+// are optional — alert still fires cleanly with just the bare minimum.
+import { chainAbove, chainBelow, fmtChain, playbookCopy, type LevelLite } from "./levelPlaybook";
+
+export type LevelAlertContext = {
+  dfi?: number | null;            // current DFI value
+  gammaZone?: string | null;      // "y+" | "y-" | null
+  downstreamLevels?: Array<{ name: string; price: number }>; // legacy field, kept for back-compat
+  allLevels?: LevelLite[];        // full level chain so we can build upside/downside targets + playbook
+};
+
 export async function postLevelBreakAlert(args: {
   level: { name: string; kind: string; price: number; side: string };
   prevStatus: string;
   newStatus: string;
   spot: number;
+  context?: LevelAlertContext;
 }): Promise<boolean> {
-  const { level, prevStatus, newStatus, spot } = args;
+  const { level, prevStatus, newStatus, spot, context } = args;
   const direction =
     newStatus === "broken"
       ? (level.side === "resistance" ? "BROKEN UP through" : "BROKEN DOWN through")
@@ -253,11 +283,195 @@ export async function postLevelBreakAlert(args: {
     ? (level.side === "resistance" ? COLOR_BULL : COLOR_BEAR)
     : COLOR_WARNING;
 
+  // Distance to level — points + percent. Sign indicates which side spot is on.
+  const dist = spot - level.price;
+  const distPct = level.price !== 0 ? (dist / level.price) * 100 : 0;
+  const sideWord = dist >= 0 ? "above" : "below";
+  const distLine = `Spot **${fmtPrice(spot)}**  ·  ${Math.abs(dist).toFixed(2)} ${sideWord} ${level.kind} **${fmtPrice(level.price)}**  (${fmtPct(distPct)})`;
+
+  // Regime context line (DFI + γ-zone) — both optional, fall back gracefully.
+  let regimeLine = "";
+  if (context) {
+    const parts: string[] = [];
+    if (typeof context.dfi === "number" && isFinite(context.dfi)) {
+      const dfiTag = context.dfi >= 200 ? "BULLISH" : context.dfi <= -200 ? "BEARISH" : "NEUTRAL";
+      const dfiSign = context.dfi >= 0 ? "+" : "";
+      parts.push(`DFI \`${dfiSign}${Math.round(context.dfi)}\` (${dfiTag})`);
+    }
+    if (context.gammaZone) {
+      parts.push(`γ-zone \`${gammaZoneLabel(context.gammaZone)}\``);
+    }
+    if (parts.length) regimeLine = parts.join("  ·  ");
+  }
+
+  // Build UPSIDE / DOWNSIDE targets + HOW TO PLAY block from the level chain.
+  // Falls back to the legacy downstreamLevels field if allLevels not provided.
+  let targetsBlock = "";
+  try {
+    const all: LevelLite[] = context?.allLevels ?? [];
+    let upChain: LevelLite[] = [];
+    let dnChain: LevelLite[] = [];
+    if (all.length) {
+      upChain = chainAbove(level.price, all, 3);
+      dnChain = chainBelow(level.price, all, 3);
+    } else if (context?.downstreamLevels?.length) {
+      // legacy fallback — only one direction available
+      const legacy = context.downstreamLevels.map((d) => ({
+        name: d.name, kind: "", price: d.price, side: level.side as any,
+      }));
+      if (level.side === "resistance") upChain = legacy as LevelLite[];
+      else dnChain = legacy as LevelLite[];
+    }
+    const playbook = playbookCopy(level.kind, level.side, newStatus, upChain, dnChain);
+    const upTarget = upChain[0];
+    const dnTarget = dnChain[0];
+    const blockLines: string[] = ["```"];
+    if (upTarget) {
+      blockLines.push(`UPSIDE TARGET   ${upTarget.name} ${fmtPrice(upTarget.price)}  (+${(upTarget.price - level.price).toFixed(0)} pts from level)`);
+    }
+    if (dnTarget) {
+      blockLines.push(`DOWNSIDE TARGET ${dnTarget.name} ${fmtPrice(dnTarget.price)}  (-${(level.price - dnTarget.price).toFixed(0)} pts from level)`);
+    }
+    if (playbook) {
+      blockLines.push("");
+      blockLines.push(`HOW TO PLAY`);
+      // wrap playbook copy to ~70 chars per line for readability
+      const wrapped = wrapText(playbook, 70).map((s) => `  ${s}`);
+      blockLines.push(...wrapped);
+    }
+    blockLines.push("```");
+    if (blockLines.length > 2) targetsBlock = blockLines.join("\n");
+  } catch {
+    targetsBlock = "";
+  }
+
+  const lines = [
+    distLine,
+    `status: \`${prevStatus}\` → \`${newStatus}\``,
+    ...(regimeLine ? [regimeLine] : []),
+    ...(targetsBlock ? [targetsBlock] : []),
+  ];
+
   const embed: DiscordEmbed = {
     title: `SPX · ${level.name} · ${direction}`,
-    description: `Spot **${fmtPrice(spot)}** vs ${level.kind} **${fmtPrice(level.price)}**\nstatus: \`${prevStatus}\` → \`${newStatus}\``,
+    description: lines.join("\n"),
     color,
     footer: { text: "Pulse Batcave · level status (#4)" },
+    timestamp: new Date().toISOString(),
+  };
+
+  return await postToDiscord({
+    username: "Pulse Batcave",
+    embeds: [embed],
+  });
+}
+
+// ─── Card 2b: clustered level alert (≥2 levels within 5 SPX pts flip in same tick) ──
+//
+// When several levels converge and flip status together, posting 3 separate
+// embeds creates noise. Coalesce into ONE embed that summarizes the cluster.
+export async function postLevelClusterAlert(args: {
+  spot: number;
+  cluster: Array<{
+    level: { name: string; kind: string; price: number; side: string };
+    prevStatus: string;
+    newStatus: string;
+  }>;
+  context?: LevelAlertContext;
+}): Promise<boolean> {
+  const { spot, cluster, context } = args;
+  if (cluster.length === 0) return false;
+
+  // Cluster center = mean price. Direction inferred from majority side.
+  const meanPrice = cluster.reduce((s, c) => s + c.level.price, 0) / cluster.length;
+  const minPrice = Math.min(...cluster.map((c) => c.level.price));
+  const maxPrice = Math.max(...cluster.map((c) => c.level.price));
+  const anyBroken = cluster.some((c) => c.newStatus === "broken");
+  const allResistance = cluster.every((c) => c.level.side === "resistance");
+  const allSupport = cluster.every((c) => c.level.side === "support");
+
+  const headline = anyBroken
+    ? (allResistance ? "CLUSTER BROKEN UP" : allSupport ? "CLUSTER BROKEN DOWN" : "MIXED CLUSTER BREAK")
+    : "CLUSTER APPROACHING";
+  const color = anyBroken
+    ? (allResistance ? COLOR_BULL : allSupport ? COLOR_BEAR : COLOR_ALERT)
+    : COLOR_WARNING;
+
+  // Build the per-level mini-table (kind · price · status transition)
+  const rows = cluster
+    .sort((a, b) => a.level.price - b.level.price)
+    .map((c) => `  ${statusEmoji(c.newStatus)} ${c.level.name.padEnd(14)} ${fmtPrice(c.level.price)}  \`${c.prevStatus}→${c.newStatus}\``)
+    .join("\n");
+
+  const dist = spot - meanPrice;
+  const distPct = meanPrice !== 0 ? (dist / meanPrice) * 100 : 0;
+  const sideWord = dist >= 0 ? "above" : "below";
+  const summary =
+    `Spot **${fmtPrice(spot)}**  ·  ${Math.abs(dist).toFixed(2)} ${sideWord} cluster mid **${fmtPrice(meanPrice)}**  (${fmtPct(distPct)})\n` +
+    `band  ${fmtPrice(minPrice)}–${fmtPrice(maxPrice)}  ·  ${cluster.length} levels`;
+
+  let regimeLine = "";
+  if (context) {
+    const parts: string[] = [];
+    if (typeof context.dfi === "number" && isFinite(context.dfi)) {
+      const dfiTag = context.dfi >= 200 ? "BULLISH" : context.dfi <= -200 ? "BEARISH" : "NEUTRAL";
+      const dfiSign = context.dfi >= 0 ? "+" : "";
+      parts.push(`DFI \`${dfiSign}${Math.round(context.dfi)}\` (${dfiTag})`);
+    }
+    if (context.gammaZone) {
+      parts.push(`γ-zone \`${gammaZoneLabel(context.gammaZone)}\``);
+    }
+    if (parts.length) regimeLine = parts.join("  ·  ");
+  }
+
+  // Cluster-level UPSIDE / DOWNSIDE targets — measured from the cluster mid.
+  // Pull from full chain if provided, otherwise omit gracefully.
+  let clusterTargets = "";
+  try {
+    const all: LevelLite[] = context?.allLevels ?? [];
+    if (all.length) {
+      // Exclude levels already in the cluster from the upside/downside chains
+      const clusterPrices = new Set(cluster.map((c) => c.level.price));
+      const filtered = all.filter((l) => !clusterPrices.has(l.price));
+      const upChain = chainAbove(maxPrice, filtered, 2);
+      const dnChain = chainBelow(minPrice, filtered, 2);
+      const lns: string[] = [];
+      if (upChain.length) lns.push(`UPSIDE   ${fmtChain(upChain)}`);
+      if (dnChain.length) lns.push(`DOWNSIDE ${fmtChain(dnChain)}`);
+      // Cluster-level playbook: pick the most-impactful kind in the cluster
+      const lead = cluster.find((c) => c.level.kind?.toLowerCase().includes("wall"))
+        ?? cluster.find((c) => c.level.kind?.toLowerCase().includes("vanna"))
+        ?? cluster.find((c) => c.level.kind?.toLowerCase().includes("charm"))
+        ?? cluster[0];
+      if (lead) {
+        const play = playbookCopy(lead.level.kind, lead.level.side, lead.newStatus, upChain, dnChain);
+        if (play) {
+          lns.push("");
+          lns.push(`HOW TO PLAY`);
+          lns.push(...wrapText(play, 70).map((s) => `  ${s}`));
+        }
+      }
+      if (lns.length) clusterTargets = ["```", ...lns, "```"].join("\n");
+    }
+  } catch {
+    clusterTargets = "";
+  }
+
+  const description = [
+    summary,
+    "",
+    "```",
+    rows,
+    "```",
+    ...(clusterTargets ? [clusterTargets] : []),
+    ...(regimeLine ? [regimeLine] : []),
+  ].join("\n");
+
+  const embed: DiscordEmbed = {
+    title: `SPX · ${headline} · ${cluster.length} levels`,
+    description,
+    color,
+    footer: { text: "Pulse Batcave · level cluster (#4·coalesced)" },
     timestamp: new Date().toISOString(),
   };
 

@@ -16,6 +16,7 @@
 
 import {
   postLevelBreakAlert,
+  postLevelClusterAlert,
   postGammaFlipAlert,
   postNewsAlert,
 } from "./discord";
@@ -171,28 +172,78 @@ async function pollLevelAndGammaAlerts(): Promise<void> {
   }
   alertState.gammaZone = newGammaZone;
 
-  // Level status transitions
+  // Level status transitions — collect all meaningful transitions in this tick,
+  // then either coalesce (≥2 levels within 5 SPX pts) or fire individually.
   const levels = (daily.levels ?? []) as any[];
+  const dfi = audit.dfi ?? daily.dfi ?? null;
+  const allLevels = levels.map((l: any) => ({
+    name: l.name, kind: l.kind, price: l.price, side: l.side,
+    status: l.status, tag: l.tag,
+  }));
+  const ctx = {
+    dfi: typeof dfi === "number" ? dfi : null,
+    gammaZone: newGammaZone,
+    allLevels,
+  };
+
+  type Pending = {
+    level: { name: string; kind: string; price: number; side: string };
+    prevStatus: string;
+    newStatus: string;
+  };
+  const pending: Pending[] = [];
+
   for (const lv of levels) {
     if (!lv?.name || !lv.status) continue;
     const prev = alertState.levels[lv.name];
     const newStatus = lv.status as string;
     if (prev && prev.status !== newStatus) {
-      // Only post on meaningful transitions: anything → broken, or held → approaching
       const meaningful =
         newStatus === "broken" ||
         (prev.status === "held" && newStatus === "approaching");
       if (meaningful && shouldFire(`level:${lv.name}:${newStatus}`)) {
-        console.log(`[discordScheduler] level ${lv.name} ${prev.status} → ${newStatus}`);
-        await postLevelBreakAlert({
+        pending.push({
           level: { name: lv.name, kind: lv.kind, price: lv.price, side: lv.side },
           prevStatus: prev.status,
           newStatus,
-          spot,
         });
       }
     }
     alertState.levels[lv.name] = { status: newStatus };
+  }
+
+  // Cluster pass: group pending by 5-SPX-pt proximity. If a cluster has ≥2
+  // members, fire one cluster embed; otherwise fire individual embeds.
+  if (pending.length === 0) return;
+  const sorted = [...pending].sort((a, b) => a.level.price - b.level.price);
+  const clusters: Pending[][] = [];
+  let cur: Pending[] = [sorted[0]];
+  for (let i = 1; i < sorted.length; i++) {
+    const last = cur[cur.length - 1];
+    if (Math.abs(sorted[i].level.price - last.level.price) <= 5) {
+      cur.push(sorted[i]);
+    } else {
+      clusters.push(cur);
+      cur = [sorted[i]];
+    }
+  }
+  clusters.push(cur);
+
+  for (const c of clusters) {
+    if (c.length >= 2) {
+      console.log(`[discordScheduler] cluster of ${c.length} levels firing (${c.map((x) => x.level.name).join(", ")})`);
+      await postLevelClusterAlert({ spot, cluster: c, context: ctx });
+    } else {
+      const one = c[0];
+      console.log(`[discordScheduler] level ${one.level.name} ${one.prevStatus} → ${one.newStatus}`);
+      await postLevelBreakAlert({
+        level: one.level,
+        prevStatus: one.prevStatus,
+        newStatus: one.newStatus,
+        spot,
+        context: ctx,
+      });
+    }
   }
 }
 
