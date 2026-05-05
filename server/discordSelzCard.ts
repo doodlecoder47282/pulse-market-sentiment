@@ -306,14 +306,14 @@ export async function postSelzDailyCard(opts?: { dryRun?: boolean }): Promise<{ 
       });
     }
   }
-  // Synthesize MAIN PIVOT from audit.mainPivot — the model's bull/bear line.
-  // Add as resistance if above spot, support if below. Only if not already
-  // present in the chain (avoid double-listing the dominantMag if they collide).
+  // Synthesize MAIN PIVOT only when not already represented by an existing
+  // level kind. audit.mainPivot frequently coincides with `zeroGamma` (same
+  // numeric price) — in that case we'd rather just promote zeroGamma into
+  // the ladder (handled below in promoteNamedPivots), so check for collision
+  // against ALL level kinds at that price first.
   const mp = (audit.mainPivot ?? null) as number | null;
-  if (mp != null && Math.abs(mp - spot) <= TACTICAL_BAND * 2) {
-    const collide = baseLevels.some(
-      (l: any) => Math.abs((l.price ?? 0) - mp) < 1 && (l.kind === "dominantMag" || l.kind === "strongMag"),
-    );
+  if (mp != null && Math.abs(mp - spot) <= TACTICAL_BAND * 3) {
+    const collide = baseLevels.some((l: any) => Math.abs((l.price ?? 0) - mp) < 1);
     if (!collide) {
       baseLevels.push({
         kind: "mainPivot",
@@ -321,24 +321,6 @@ export async function postSelzDailyCard(opts?: { dryRun?: boolean }): Promise<{ 
         price: mp,
         status: "held",
         name: "MAIN PIVOT",
-      });
-    }
-  }
-
-  // Synthesize γ-ZERO from audit.charmZero (the singular gamma-flip line).
-  // Only add if it's clearly distinct from the charmZeros already pushed.
-  const gz = (audit.charmZero ?? null) as number | null;
-  if (gz != null && Math.abs(gz - spot) <= TACTICAL_BAND * 2) {
-    const collide = baseLevels.some(
-      (l: any) => Math.abs((l.price ?? 0) - gz) < 1 && (l.kind === "charmFlip" || l.kind === "charmFloor"),
-    );
-    if (!collide) {
-      baseLevels.push({
-        kind: "gammaZero",
-        side: gz >= spot ? "resistance" : "support",
-        price: gz,
-        status: "held",
-        name: "\u03b3-ZERO",
       });
     }
   }
@@ -385,18 +367,53 @@ export async function postSelzDailyCard(opts?: { dryRun?: boolean }): Promise<{ 
     if (!anchorLevel) return ladder;
     return [anchorLevel, ...ladder].slice(0, 3);
   };
-  const topResistFinal = promoteAnchor(
+  const topResistFinal0 = promoteAnchor(
     "resistance",
     topResist,
     rb?.high,
     rb?.anchorHigh?.kind,
   );
-  const topSupportFinal = promoteAnchor(
+  const topSupportFinal0 = promoteAnchor(
     "support",
     topSupport,
     rb?.low,
     rb?.anchorLow?.kind,
   );
+
+  // Promote NAMED PIVOTS (mainPivot / zeroGamma / upsidePivot / downsidePivot)
+  // into the top-3 ladder when present. These are anchor levels traders
+  // expect to see by name on every card — they should never get filtered
+  // out by tactical-band logic alone. We append them, sort by distance from
+  // spot, then trim to 3.
+  // Named pivots are reserved seats. mainPivot and zeroGamma always render
+  // when present; upsidePivot/downsidePivot show when within 2x tactical band.
+  // We reserve up to 2 of the 3 ladder slots for named pivots, and fill the
+  // remainder with the closest non-named tactical levels.
+  const NAMED_PIVOT_KINDS = new Set(["mainPivot", "zeroGamma", "upsidePivot", "downsidePivot"]);
+  const promoteNamedPivots = (
+    side: "resistance" | "support",
+    ladder: any[],
+  ): any[] => {
+    const namedFromAll = levels.filter((l: any) =>
+      l.side === side && NAMED_PIVOT_KINDS.has(l.kind) &&
+      (side === "resistance" ? l.price > spot : l.price < spot),
+    );
+    if (!namedFromAll.length) return ladder;
+    // Sort named pivots by distance ascending, take up to 2 reserved seats
+    namedFromAll.sort((a: any, b: any) => Math.abs(a.price - spot) - Math.abs(b.price - spot));
+    const reserved = namedFromAll.slice(0, 2);
+    const reservedKeys = new Set(reserved.map((l: any) => Math.round(l.price * 100)));
+    // Fill remaining slot(s) with non-named tactical levels from the ladder
+    const fillers = ladder.filter((l: any) => !reservedKeys.has(Math.round(l.price * 100)));
+    const needed = Math.max(0, 3 - reserved.length);
+    const merged = [...reserved, ...fillers.slice(0, needed)];
+    // Final sort: ascending price for resistance, descending for support
+    return merged.sort((a, b) =>
+      side === "resistance" ? a.price - b.price : b.price - a.price,
+    );
+  };
+  const topResistFinal = promoteNamedPivots("resistance", topResistFinal0);
+  const topSupportFinal = promoteNamedPivots("support", topSupportFinal0);
 
   // calls / puts trigger lines: γ-zero crossings if available, else range edges
   // Fall back through audit.gammaZero (numeric) if level lookup fails.
