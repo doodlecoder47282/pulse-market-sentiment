@@ -27,6 +27,8 @@ import { startMmScheduler } from "./mmScheduler";
 import { startDiscordScheduler } from "./discordScheduler";
 import { fireTestCard, postDailyModelCard } from "./discord";
 import { postSelzDailyCard } from "./discordSelzCard";
+import { postCalibrationCard } from "./calibrationCard";
+import { rollingBrier, settleDay } from "./calibration";
 import { buildMag7Snapshot, type Mag7Response } from "./mag7";
 import { buildFlowSnapshot, buildIntradayFlowSnapshot, type FlowResponse } from "./flow";
 import { buildExposuresSnapshot, type ExposuresResponse } from "./exposures";
@@ -2084,6 +2086,44 @@ Refine the brief above. Search the web for any critical developments the feed is
     try {
       const r = await postSelzDailyCard();
       res.json(r);
+    } catch (e: any) {
+      res.status(500).json({ ok: false, note: e?.message ?? "failed" });
+    }
+  });
+
+  // ─── Calibration endpoints (read-only observer of pulse predictions) ─────
+  // Manual fire weekly calibration card
+  app.post("/api/discord/calibration", async (req, res) => {
+    try {
+      const days = Number(req.query.days ?? 7);
+      const r = await postCalibrationCard(isFinite(days) && days > 0 ? days : 7);
+      res.json(r);
+    } catch (e: any) {
+      res.status(500).json({ ok: false, note: e?.message ?? "failed" });
+    }
+  });
+
+  // Inspect rolling Brier without posting to Discord
+  app.get("/api/calibration/rolling", (req, res) => {
+    try {
+      const days = Number(req.query.days ?? 30);
+      const r = rollingBrier(isFinite(days) && days > 0 ? days : 30);
+      res.json(r ?? { n: 0, note: "no settled days yet" });
+    } catch (e: any) {
+      res.status(500).json({ note: e?.message ?? "failed" });
+    }
+  });
+
+  // Manual settle (for testing or replay) — idempotent.
+  // POST /api/calibration/settle  body { date: "YYYY-MM-DD", close: number }
+  app.post("/api/calibration/settle", async (req, res) => {
+    try {
+      const { date, close } = req.body ?? {};
+      if (!date || typeof close !== "number") {
+        return res.status(400).json({ ok: false, note: "need {date, close}" });
+      }
+      const r = settleDay(String(date), Number(close));
+      res.json(r ?? { ok: false, note: "no prediction recorded for that date" });
     } catch (e: any) {
       res.status(500).json({ ok: false, note: e?.message ?? "failed" });
     }

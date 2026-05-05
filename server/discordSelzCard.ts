@@ -31,6 +31,8 @@
 // No LLM, no external API calls. Annotations are a fixed lookup keyed by
 // `level.kind × status`, formatted with neighbor prices when needed.
 
+import { recordPrediction } from "./calibration";
+
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
 
@@ -510,6 +512,43 @@ export async function postSelzDailyCard(): Promise<{ ok: boolean; preview: strin
   // Discord enforces 2000 char limit per message content. Truncate or split
   // if we exceed (rare given our compact format).
   const final = content.length > 1990 ? content.slice(0, 1985) + "\n…```" : content;
+
+  // Record this prediction for calibration tracking. Read-only against the
+  // calc — we just observe what was already computed and shipped.
+  try {
+    const etDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date()); // YYYY-MM-DD
+    const etHour = parseInt(
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York", hour: "2-digit", hour12: false,
+      }).format(new Date()),
+      10,
+    );
+    const etMin = parseInt(
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York", minute: "2-digit",
+      }).format(new Date()),
+      10,
+    );
+    const isDailySlot = etHour === 9 && etMin === 30;
+    recordPrediction({
+      date: etDate,
+      capturedAt: Math.floor(Date.now() / 1000),
+      spot,
+      targetBull: st.bull as number,
+      targetBase: st.base as number,
+      targetBear: st.bear as number,
+      probBull: (sp.bull as number) / 100,
+      probBase: (sp.base as number) / 100,
+      probBear: (sp.bear as number) / 100,
+      oneDayEm: oneDayEM,
+      source: isDailySlot ? "daily" : "halfhour",
+    });
+  } catch (e: any) {
+    console.warn(`[discordSelzCard] recordPrediction failed: ${e?.message ?? e}`);
+  }
 
   // Post
   let ok = false;

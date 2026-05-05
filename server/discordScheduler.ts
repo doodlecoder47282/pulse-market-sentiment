@@ -20,6 +20,8 @@ import {
   postNewsAlert,
 } from "./discord";
 import { postSelzDailyCard } from "./discordSelzCard";
+import { settleDay } from "./calibration";
+import { postCalibrationCard } from "./calibrationCard";
 
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -249,10 +251,67 @@ async function pollNewsAlerts(): Promise<void> {
   if (newsFired.size > 200) newsFired.clear();
 }
 
-// ─── Tick ───────────────────────────────────────────────────────────────
+// ─── 1c. Settle previous trading day @ 16:01 ET ─────────────────────────
+//
+// Pulls today's SPX close from /api/quotes and runs settleDay() against
+// the morning prediction. Idempotent — re-running is safe (INSERT OR
+// REPLACE keyed on date).
+const SETTLE_FIRED = new Set<string>(); // YYYY-MM-DD
+
+async function maybeSettleDay(): Promise<void> {
+  const { date, hh, mm, dow } = etNow();
+  if (!isTradingDay(dow, date)) return;
+  // Settle at 16:01 ET (one minute past close — gives prints a moment to land)
+  if (hh !== 16 || mm !== 1) return;
+  if (SETTLE_FIRED.has(date)) return;
+  SETTLE_FIRED.add(date);
+  try {
+    const res = await fetch(`${BASE}/api/quotes`);
+    if (!res.ok) {
+      console.warn(`[discordScheduler] settle: /api/quotes ${res.status}`);
+      return;
+    }
+    const q = await res.json();
+    const spxClose = q?.SPX?.last ?? q?.spx?.last ?? q?.spx?.price ?? null;
+    if (spxClose == null || !isFinite(spxClose)) {
+      console.warn(`[discordScheduler] settle: no SPX close in quotes`);
+      return;
+    }
+    const result = settleDay(date, spxClose);
+    if (result) {
+      console.log(`[discordScheduler] settled ${date}: close=${spxClose} outcome=${JSON.stringify(result.outcome)} brier=${result.brier.total.toFixed(3)}`);
+    }
+  } catch (e: any) {
+    console.warn(`[discordScheduler] settle failed: ${e?.message ?? e}`);
+  }
+}
+
+// ─── 1d. Weekly calibration card @ Sunday 20:00 ET ───────────────────────
+//
+// Runs on Sundays (dow === 0) at 20:00 ET. Posts a 7-day rolling Brier
+// card to Discord. Pure observer — no calc changes.
+const WEEKLY_CAL_FIRED = new Set<string>(); // YYYY-MM-DD (Sunday)
+
+async function maybeFireWeeklyCalibration(): Promise<void> {
+  const { date, hh, mm, dow } = etNow();
+  if (dow !== 0) return; // Sunday only
+  if (hh !== 20 || mm !== 0) return;
+  if (WEEKLY_CAL_FIRED.has(date)) return;
+  WEEKLY_CAL_FIRED.add(date);
+  console.log(`[discordScheduler] firing weekly calibration card for ${date}`);
+  try {
+    await postCalibrationCard(7);
+  } catch (e: any) {
+    console.warn(`[discordScheduler] weekly calibration card failed: ${e?.message ?? e}`);
+  }
+}
+
+// ─── Tick ──────────────────────────────────────────────────────────────────────
 async function tick(): Promise<void> {
   await maybeFireDaily();
   await maybeFireHalfHour();
+  await maybeSettleDay();
+  await maybeFireWeeklyCalibration();
   await pollLevelAndGammaAlerts();
   await pollNewsAlerts();
 
