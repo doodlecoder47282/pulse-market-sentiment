@@ -22,7 +22,7 @@ import {
   postOdteBangerAlert,
 } from "./discord";
 import { evaluateOdte, type EvalArgs } from "./odteAlertEngine";
-import { postSelzDailyCard } from "./discordSelzCard";
+import { postBatcaveDailyCard } from "./discordBatcaveCard";
 import { settleDay } from "./calibration";
 import { postCalibrationCard } from "./calibrationCard";
 
@@ -68,13 +68,13 @@ async function maybeFireDaily(): Promise<void> {
   if (hh !== tH || mm !== tM) return;
   if (dailyFired.has(date)) return;
   dailyFired.add(date);
-  console.log(`[discordScheduler] firing daily SPX card (Selz format) at ${date} ${DAILY_HHMM} ET`);
-  await postSelzDailyCard();
+  console.log(`[discordScheduler] firing daily SPX card (Batcave format) at ${date} ${DAILY_HHMM} ET`);
+  await postBatcaveDailyCard();
 }
 
-// ─── 1b. 30-min Selz cadence ────────────────────────────────────────────
+// ─── 1b. 30-min Batcave cadence ────────────────────────────────────────────
 //
-// Fires postSelzDailyCard() every 30 min during RTH (10:00–16:00 ET) on
+// Fires postBatcaveDailyCard() every 30 min during RTH (10:00–16:00 ET) on
 // trading days. The 9:30 slot is owned by the daily cron — we don't
 // double-post. Slots: 10:00, 10:30, ..., 15:30, 16:00 (13 fires/day).
 //
@@ -96,8 +96,8 @@ async function maybeFireHalfHour(): Promise<void> {
   const key = `${date} ${String(hh).padStart(2, "0")}:${String(slotMM).padStart(2, "0")}`;
   if (HALFHOUR_FIRED.has(key)) return;
   HALFHOUR_FIRED.add(key);
-  console.log(`[discordScheduler] firing 30-min Selz card for slot ${key} ET (tick at ${hh}:${String(mm).padStart(2,"0")})`);
-  await postSelzDailyCard().catch((e) => {
+  console.log(`[discordScheduler] firing 30-min Batcave card for slot ${key} ET (tick at ${hh}:${String(mm).padStart(2,"0")})`);
+  await postBatcaveDailyCard().catch((e) => {
     console.error(`[discordScheduler] half-hour fire failed: ${e}`);
   });
 }

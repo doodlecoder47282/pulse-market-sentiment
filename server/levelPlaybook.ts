@@ -5,7 +5,7 @@
 // the SPX daily card. NO LLM, NO external calls — pure lookup + interpolation
 // against the level chain we already computed.
 //
-// Source of language: the SelzTrades-style copy patterns the user approved
+// Source of language: the Batcave-style copy patterns the user approved
 // in the daily card spec ("path opens to X then γ-WALL Y", "dealer long
 // premium max — hard ceiling", "charm drag loses grip", etc).
 

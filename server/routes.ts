@@ -26,7 +26,7 @@ import { snapshotHorizon, gradeOutcomes, empiricalStats, masterAlphaStats } from
 import { startMmScheduler } from "./mmScheduler";
 import { startDiscordScheduler } from "./discordScheduler";
 import { fireTestCard, postDailyModelCard } from "./discord";
-import { postSelzDailyCard } from "./discordSelzCard";
+import { postBatcaveDailyCard } from "./discordBatcaveCard";
 import { postCalibrationCard } from "./calibrationCard";
 import { rollingBrier, settleDay, recentForecastProbs } from "./calibration";
 import { resolutionScore, gradeResolution } from "./stats";
@@ -2053,6 +2053,32 @@ Refine the brief above. Search the web for any critical developments the feed is
     }
   });
 
+  // ─── Real-time CLOSE TARGETS compression ────────────────────────────
+  // GET /api/realtime-targets?symbol=^GSPC
+  // Blends sqrt-time decay, spot reanchor, and range-aware (HOD/LOD) methods,
+  // weighted by regime (TREND vs CHOP via dfi/gammaZone/slope). Read-only.
+  app.get("/api/realtime-targets", async (req, res) => {
+    try {
+      const { computeRealtimeTargets } = await import("./realtimeTargets");
+      const symbol = String(req.query.symbol || "^GSPC");
+      // Pull live SPX models from local endpoint
+      const port = Number(process.env.PORT ?? 5000);
+      const r = await fetch(`http://127.0.0.1:${port}/api/models?symbol=${encodeURIComponent(symbol)}&experimental=1`);
+      const data: any = await r.json();
+      const daily = data?.horizons?.daily;
+      if (!daily) return res.status(503).json({ error: "no_daily_horizon" });
+      const out = await computeRealtimeTargets({
+        spot: daily.spot,
+        scenarioTargets: daily.audit?.scenarioTargets ?? { bull: daily.spot, base: daily.spot, bear: daily.spot, oneDayEM: 0 },
+        audit: daily.audit ?? {},
+        symbol,
+      });
+      res.json(out);
+    } catch (e: any) {
+      res.status(500).json({ error: "realtime_targets_failed", message: e?.message ?? String(e) });
+    }
+  });
+
   // ToS-style 5-min intraday chart for a single contract (key = contractKey)
   app.get("/api/odte-tracker/chart", (req, res) => {
     try {
@@ -2194,11 +2220,11 @@ Refine the brief above. Search the web for any critical developments the feed is
     }
   });
 
-  // Manual fire SelzTrades-format card
-  app.post("/api/discord/selz", async (req, res) => {
+  // Manual fire Batcave-format card
+  app.post("/api/discord/batcave", async (req, res) => {
     try {
       const dryRun = String(req.query.dryRun ?? "") === "1";
-      const r = await postSelzDailyCard({ dryRun });
+      const r = await postBatcaveDailyCard({ dryRun });
       res.json(r);
     } catch (e: any) {
       res.status(500).json({ ok: false, note: e?.message ?? "failed" });
@@ -2206,9 +2232,9 @@ Refine the brief above. Search the web for any critical developments the feed is
   });
 
   // Read-only preview of the SPX Daily Model card — same data, no Discord post.
-  app.get("/api/discord/selz/preview", async (_req, res) => {
+  app.get("/api/discord/batcave/preview", async (_req, res) => {
     try {
-      const r = await postSelzDailyCard({ dryRun: true });
+      const r = await postBatcaveDailyCard({ dryRun: true });
       res.json(r);
     } catch (e: any) {
       res.status(500).json({ ok: false, note: e?.message ?? "failed" });

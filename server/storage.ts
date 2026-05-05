@@ -266,7 +266,7 @@ export class DatabaseStorage implements IStorage {
     return row?.date ?? null;
   }
 
-  // ---- Model recal snapshots (Selz #3 — intraday recal tracking) ----
+  // ---- Model recal snapshots (Batcave #3 — intraday recal tracking) ----
   insertModelRecal(r: {
     symbol: string; horizon: string; capturedAt: number; tradeDate: string;
     spot: number; dfi: number; charmPerDay: number; iv1d: number | null;

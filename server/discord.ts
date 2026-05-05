@@ -126,7 +126,7 @@ function wrapText(s: string, maxChars: number): string[] {
 
 // ─── Card 1: SPX daily model ─────────────────────────────────────────────
 //
-// Mirrors the SelzTrades-style mockup the user approved. Pulls strictly from
+// Mirrors the Batcave-style mockup the user approved. Pulls strictly from
 // /api/models — spot, scenarioProb, levels (with #4 status), rangeBox (#3),
 // gammaZone, dfi, vix term ratio. All data, no LLM.
 export async function postDailyModelCard(): Promise<boolean> {

@@ -1,6 +1,6 @@
-// server/discordSelzCard.ts
+// server/discordBatcaveCard.ts
 //
-// SelzTrades-format daily SPX print for Pulse Batcave.
+// Batcave-format daily SPX print for Pulse Batcave.
 //
 // Mirrors the user's reference print verbatim:
 //
@@ -34,6 +34,7 @@
 import { recordPrediction } from "./calibration";
 import { formatDecisionBlock } from "./decisionSupport";
 import { chainAbove, chainBelow, playbookCopy } from "./levelPlaybook";
+import { computeRealtimeTargets } from "./realtimeTargets";
 
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -167,7 +168,7 @@ function annotate(a: AnnArgs): string {
   return a.level.side === "resistance" ? "structural resistance" : "structural support";
 }
 
-// Display name & icon per kind — Selz uses γ-WALL, MAIN PIVOT, CHARM FLOOR etc.
+// Display name & icon per kind — Batcave uses γ-WALL, MAIN PIVOT, CHARM FLOOR etc.
 const DISPLAY_NAME: Record<string, string> = {
   callWall: "γ-WALL",
   putWall: "γ-PUT WALL",
@@ -198,7 +199,7 @@ const displayName = (kind: string, fallback: string) =>
   DISPLAY_NAME[kind] ?? fallback;
 
 // Tactical band: levels within ±TACTICAL_BAND of spot are far more relevant
-// to intraday trading than far structural anchors. Selz-style prints stay
+// to intraday trading than far structural anchors. Batcave-style prints stay
 // inside this band almost exclusively. Fill from outside only if tactical
 // pool is short.
 const TACTICAL_BAND = 40; // $40 ≈ ~0.55% on SPX 7250
@@ -257,7 +258,7 @@ function etTime(): string {
 }
 
 // ─── main poster ─────────────────────────────────────────────────────────
-export async function postSelzDailyCard(opts?: { dryRun?: boolean }): Promise<{ ok: boolean; preview: string }> {
+export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise<{ ok: boolean; preview: string }> {
   const [data, quotes] = await Promise.all([
     fetchJSON("/api/models?symbol=SPX"),
     fetchJSON("/api/quotes"),
@@ -484,11 +485,38 @@ export async function postSelzDailyCard(opts?: { dryRun?: boolean }): Promise<{ 
   const header =
     `**SPX DAILY MODEL  |  ${etDate()}  |  ${etTime()}  |  SPOT ${fmt0(spot)}  |  DFI ${dfi >= 0 ? "+" : ""}${fmt0(dfi)} (${dfiLabel})**`;
 
+  // Real-time CLOSE TARGETS compression — collapses bull/bear toward base as
+  // session ages. Blended (sqrt-time decay + spot reanchor + range-aware HOD/LOD),
+  // regime-weighted via dfi/gammaZone/slope. Falls back to raw EOD on any error.
+  let liveTargets = { bull: st.bull as number, base: st.base as number, bear: st.bear as number };
+  let liveDiagLine = "";
+  try {
+    const rt = await computeRealtimeTargets({
+      spot,
+      scenarioTargets: st as any,
+      audit,
+      symbol: "^GSPC",
+    });
+    liveTargets = rt.compressed;
+    const minsLeft = rt.diag.minutesRemaining;
+    const compBullPct = Math.round(rt.diag.compressionPct.bull * 100);
+    const compBearPct = Math.round(rt.diag.compressionPct.bear * 100);
+    if (minsLeft < 380) {
+      // Only show diag during RTH — not before open or after close
+      liveDiagLine =
+        `\n  LIVE — ${rt.diag.regime.toLowerCase()} • ${minsLeft}m left • ` +
+        `bull −${compBullPct}% / bear −${compBearPct}% vs eod`;
+    }
+  } catch {
+    // silent fallback to raw EOD targets
+  }
+
   const close =
     `CLOSE TARGETS\n` +
-    `  BULL ${pad(String(sp.bull) + "%", 4)}  →  ~${fmt0(st.bull)}\n` +
-    `  BASE ${pad(String(sp.base) + "%", 4)}  →  ~${fmt0(st.base)}\n` +
-    `  BEAR ${pad(String(sp.bear) + "%", 4)}  →  ~${fmt0(st.bear)}`;
+    `  BULL ${pad(String(sp.bull) + "%", 4)}  →  ~${fmt0(liveTargets.bull)}  (eod ~${fmt0(st.bull)})\n` +
+    `  BASE ${pad(String(sp.base) + "%", 4)}  →  ~${fmt0(liveTargets.base)}\n` +
+    `  BEAR ${pad(String(sp.bear) + "%", 4)}  →  ~${fmt0(liveTargets.bear)}  (eod ~${fmt0(st.bear)})` +
+    liveDiagLine;
 
   const rangeProse = (() => {
     if (!rb) return "  Spot is mid-range; no clear compression.";
@@ -685,7 +713,7 @@ export async function postSelzDailyCard(opts?: { dryRun?: boolean }): Promise<{ 
       source: isDailySlot ? "daily" : "halfhour",
     });
   } catch (e: any) {
-    console.warn(`[discordSelzCard] recordPrediction failed: ${e?.message ?? e}`);
+    console.warn(`[discordBatcaveCard] recordPrediction failed: ${e?.message ?? e}`);
   }
 
   // Post (skipped in dry-run)
@@ -702,10 +730,10 @@ export async function postSelzDailyCard(opts?: { dryRun?: boolean }): Promise<{ 
     ok = res.ok;
     if (!ok) {
       const txt = await res.text().catch(() => "");
-      console.warn(`[discordSelzCard] webhook ${res.status}: ${txt.slice(0, 200)}`);
+      console.warn(`[discordBatcaveCard] webhook ${res.status}: ${txt.slice(0, 200)}`);
     }
   } catch (e: any) {
-    console.warn(`[discordSelzCard] webhook failed: ${e?.message ?? e}`);
+    console.warn(`[discordBatcaveCard] webhook failed: ${e?.message ?? e}`);
   }
 
   return { ok, preview: final };

@@ -554,7 +554,7 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
         </div>
       )}
 
-      {/* Charm-zero CLUSTER (Selz #1) + tightening (Selz #2) */}
+      {/* Charm-zero CLUSTER (Batcave #1) + tightening (Batcave #2) */}
       {((a.charmZeros && a.charmZeros.length > 1) || a.charmTightening) && (
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-border/20 pt-0.5">
           {a.charmZeros && a.charmZeros.length > 0 && (
@@ -943,7 +943,7 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
               />
             )}
 
-            {/* Selz #1 — charm-zero CLUSTER band (min→max of all flips) */}
+            {/* Batcave #1 — charm-zero CLUSTER band (min→max of all flips) */}
             {a.charmZeros && a.charmZeros.length >= 2 && (
               <ReferenceArea
                 y1={Math.min(...a.charmZeros)}
@@ -1065,7 +1065,7 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
               strokeWidth={2}
             />
 
-            {/* Selz #5 — close targets render as colored marker dots at right edge only.
+            {/* Batcave #5 — close targets render as colored marker dots at right edge only.
                 Full text moved to the ScenarioLegend strip below to prevent overlap. */}
             {a.closeTargets?.bull && (
               <ReferenceDot x={chartData[chartData.length - 1]?.label} y={a.closeTargets.bull.price}
@@ -1575,7 +1575,7 @@ function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; sessio
         <span>BEAR {probs.bear}% / BASE {probs.base}% / BULL {probs.bull}%</span>
       </div>
 
-      {/* Selz #3 + #4 — recal tracking + DoD term structure strip */}
+      {/* Batcave #3 + #4 — recal tracking + DoD term structure strip */}
       {(a.lastRecal || a.termStructureDoD) && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border/30 bg-black/50 px-3 py-1 font-mono text-[9px]" data-testid="recal-dod-strip">
           {a.lastRecal && (

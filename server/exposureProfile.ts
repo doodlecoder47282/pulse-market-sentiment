@@ -48,9 +48,9 @@ export interface ExposureProfile {
   current: ExposurePoint;       // exposures evaluated at actual current spot
   zeroGammaSpot: number | null; // spot where GEX flips sign
   zeroCharmSpot: number | null; // spot where Charm flips sign (primary — nearest to spot)
-  zeroCharmSpots: number[];     // ALL charm sign-flips across the curve (Selz #1 — charm-zero CLUSTER)
+  zeroCharmSpots: number[];     // ALL charm sign-flips across the curve (Batcave #1 — charm-zero CLUSTER)
   zeroVannaSpot: number | null; // spot where VEX flips sign
-  charmSlope: number;           // dCharm/dS at spot — "tightening rate" (Selz #2)
+  charmSlope: number;           // dCharm/dS at spot — "tightening rate" (Batcave #2)
   // True net-C per Perfiliev Table VIII: Σ charm_strike × OI_strike × 100, NO spot factor,
   // NO /365 normalisation. Signed with dealer convention (calls +, puts −). Units: shares of
   // delta decay per trading year. Used by masterAlpha for standardised charm z-score.
@@ -138,7 +138,7 @@ export function buildExposureProfile(
   const charmPts = curve.map((p) => ({ x: p.spot, y: p.charm }));
   // Primary charmZero must be the dealer-relevant root — the crossing NEAREST to spot,
   // restricted to ±1.5% band. Far-out crossings at the wings (±10%) are numerical artifacts,
-  // not actionable drift targets. Full cluster (zeroCharmSpots) keeps every crossing for Selz #1.
+  // not actionable drift targets. Full cluster (zeroCharmSpots) keeps every crossing for Batcave #1.
   const zeroCharmSpots = findAllZeroCrossings(charmPts);
   const zeroCharmSpot = pickNearestWithin(zeroCharmSpots, spot, 0.015)
                      ?? pickNearestWithin(zeroCharmSpots, spot, 0.03)
@@ -227,7 +227,7 @@ function pickNearestWithin(roots: number[], spot: number, bandPct: number): numb
   return best;
 }
 
-// All sign-flips along the curve — used for Selz #1 charm-zero CLUSTER.
+// All sign-flips along the curve — used for Batcave #1 charm-zero CLUSTER.
 function findAllZeroCrossings(points: { x: number; y: number }[]): number[] {
   const zeros: number[] = [];
   for (let i = 1; i < points.length; i++) {

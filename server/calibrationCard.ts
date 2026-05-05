@@ -4,7 +4,7 @@
 //
 // Pure observer of pulse_outcomes. Does not touch any calc.
 //
-// Layout (locked, top-tier readable, matches Selz card aesthetic):
+// Layout (locked, top-tier readable, matches Batcave card aesthetic):
 //
 //   **PULSE CALIBRATION  |  WEEK OF YYYY-MM-DD  |  N TRADING DAYS**
 //   ```

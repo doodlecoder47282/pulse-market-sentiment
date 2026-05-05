@@ -4,7 +4,7 @@
 // triple we publish and scores them against the actual SPX close at 4pm ET.
 //
 // CRITICAL DESIGN PRINCIPLE: this module is READ-ONLY against existing calcs.
-// It does not touch models.ts, discordSelzCard.ts, or any pricing logic.
+// It does not touch models.ts, discordBatcaveCard.ts, or any pricing logic.
 // It only observes outputs and computes calibration metrics.
 //
 // Scoring methodology:
@@ -77,7 +77,7 @@ export type PredictionRow = {
   source: "daily" | "halfhour";
 };
 
-// Record a prediction. Called from postSelzDailyCard right before it sends.
+// Record a prediction. Called from postBatcaveDailyCard right before it sends.
 export function recordPrediction(p: PredictionRow): void {
   try {
     sqlite
