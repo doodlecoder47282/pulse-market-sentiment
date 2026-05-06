@@ -41,6 +41,7 @@ import {
   Keyboard, Settings, Sun, Moon, LayoutGrid, LayoutList,
 } from "lucide-react";
 import SchwabSettings, { SchwabStatusPill } from "@/components/SchwabSettings";
+import WhaleFlowPanel from "@/components/WhaleFlowPanel";
 import { useEffect, useState, useRef, lazy, Suspense } from "react";
 
 // ── Lazy-loaded heavy components (code splitting) ──────────────────────────
@@ -484,6 +485,11 @@ export default function Dashboard() {
 
           {/* ── Signals tab (eager — primary tab) ── */}
           <TabsContent value="signals" className="space-y-6">
+            {/* Whale Flow panel — fresh detections + tracking + closed */}
+            <ErrorBoundary label="Whale Flow">
+              <WhaleFlowPanel />
+            </ErrorBoundary>
+
             {/* Mag 7 quick read — strip above composite */}
             <ErrorBoundary compact label="Mag7 Strip">
               <Mag7Strip />
