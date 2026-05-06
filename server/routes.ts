@@ -2367,6 +2367,16 @@ Refine the brief above. Search the web for any critical developments the feed is
     console.warn(`[dbBackup] failed to start: ${e?.message ?? e}`);
   }
 
+  // Kick off stock daily-bars refresher (6h cadence). Extends daily_bars beyond
+  // the regime ETF universe so the closed-loop grader can score whale alerts on
+  // individual names (TSLA/NVDA/AAPL/META/GOOGL/etc.).
+  try {
+    const { startStockBarsRefresher } = await import("./stockBarsCache");
+    startStockBarsRefresher();
+  } catch (e: any) {
+    console.warn(`[stockBars] failed to start: ${e?.message ?? e}`);
+  }
+
   // Kick off Exit Brain (30s confluence eval over tracked 0DTE positions)
   try {
     const { startExitBrain, getExitBrainSnapshot, evaluateOnce } = await import("./exitBrain");
