@@ -95,6 +95,12 @@ export interface Audit {
   } | null;
   wire9JumpBoost?: number;              // +3 for PIVOT_RECLAIM in jump regime
   wire9JumpPenalty?: number;            // -2 for WALL_REJECT / FAILED_BREAK in jump regime
+  // Wire 10 — Paper C re-engineered: chop regime
+  chopRegime?: boolean;                  // true when failedBreakCount60min >= 3
+  chopFailedBreakCount?: number;         // count of FAILED_BREAK detections in last 60min
+  chopPivotReclaimCount?: number;        // count of PIVOT_RECLAIM detections in last 60min
+  wire10ChopMomentumPenalty?: number;    // -4 for PIVOT_RECLAIM in chop regime
+  wire10ChopMeanRevBoost?: number;       // +3 for WALL_REJECT/FAILED_BREAK in chop regime
 }
 
 export interface ContractRow {
@@ -136,6 +142,32 @@ export interface OdteAlert {
   regime: string;                   // e.g. "NEUTRAL" | "DAMPENED γ+" | "VOLATILE γ-"
   grade: { score: number; letter: string; coldBootOverride?: boolean };
   reasoning: string[];              // breakdown of where points came from
+}
+
+// ─── Wire 10: detection history ring buffer (60-min GC) ─────────────────
+type DetectionEvent = { ts: number; type: 'FAILED_BREAK' | 'PIVOT_RECLAIM' | 'WALL_REJECT' };
+const detectionHistory: DetectionEvent[] = [];
+const DETECTION_HISTORY_MAX_MS = 60 * 60 * 1000; // 60 min
+
+export function recordDetection(ts: number, type: DetectionEvent['type']): void {
+  detectionHistory.push({ ts, type });
+  // GC older than 60min
+  const cutoff = Date.now() - DETECTION_HISTORY_MAX_MS;
+  while (detectionHistory.length && detectionHistory[0].ts < cutoff) {
+    detectionHistory.shift();
+  }
+}
+
+export function getChopRegime(): { isChop: boolean; failedBreakCount60min: number; pivotReclaimCount60min: number } {
+  const cutoff = Date.now() - DETECTION_HISTORY_MAX_MS;
+  const recent = detectionHistory.filter(e => e.ts >= cutoff);
+  const failedBreakCount60min = recent.filter(e => e.type === 'FAILED_BREAK').length;
+  const pivotReclaimCount60min = recent.filter(e => e.type === 'PIVOT_RECLAIM').length;
+  return {
+    isChop: failedBreakCount60min >= 3,
+    failedBreakCount60min,
+    pivotReclaimCount60min,
+  };
 }
 
 // ─── In-memory state for transition detection ────────────────────────────
@@ -867,6 +899,30 @@ function scoreSetup(args: {
     reasoning.push("Wire 9 jump regime: error, skipped");
   }
 
+  // ─── WIRE 10 — Paper C re-engineered: chop regime regime-flip ─────────────────────
+  // 3+ failed breaks in 60min = chop regime → mean-reversion outperforms
+  try {
+    if (args.audit.chopRegime === true) {
+      if (args.setup === 'PIVOT_RECLAIM') {
+        score -= 4;  // momentum gets crushed in chop
+        args.audit.wire10ChopMomentumPenalty = -4;
+        reasoning.push(
+          `Wire 10 chop regime (Paper C): PIVOT_RECLAIM (momentum) crushed in chop ` +
+          `(failed breaks 60m=${args.audit.chopFailedBreakCount ?? '?'}): -4`,
+        );
+      } else if (args.setup === 'WALL_REJECT' || args.setup === 'FAILED_BREAK') {
+        score += 3;  // mean-reversion flourishes
+        args.audit.wire10ChopMeanRevBoost = 3;
+        reasoning.push(
+          `Wire 10 chop regime (Paper C): ${args.setup} (mean-reversion) flourishes in chop ` +
+          `(failed breaks 60m=${args.audit.chopFailedBreakCount ?? '?'}): +3`,
+        );
+      }
+    }
+  } catch (_) {
+    reasoning.push("Wire 10 chop regime: error, skipped");
+  }
+
   return { score: Math.round(score), reasoning };
 }
 
@@ -926,10 +982,12 @@ export function diagnoseOdte(args: EvalArgs): {
     if (!meaningfulKinds.has(lv.kind)) continue;
     if (Math.abs(args.spot - lv.price) > 30) continue;
     if (detectFailedBreak(lv.price, "above").detected) {
+      recordDetection(args.asOf, "FAILED_BREAK");
       const a = buildAlert(args, lv, "FAILED_BREAK", "call", sortedLevels);
       if (a) out.push(a);
     }
     if (detectFailedBreak(lv.price, "below").detected) {
+      recordDetection(args.asOf, "FAILED_BREAK");
       const a = buildAlert(args, lv, "FAILED_BREAK", "put", sortedLevels);
       if (a) out.push(a);
     }
@@ -939,21 +997,25 @@ export function diagnoseOdte(args: EvalArgs): {
     const lv = args.levels.find((l) => Math.abs(l.price - pivot) < 1) ??
                { name: "MAIN PIVOT", kind: "mainPivot", price: pivot, side: "support" as const };
     if (detectFailedBreak(pivot, "above").detected) {
+      recordDetection(args.asOf, "PIVOT_RECLAIM");
       const a = buildAlert(args, lv, "PIVOT_RECLAIM", "call", sortedLevels);
       if (a) out.push(a);
     }
     if (detectFailedBreak(pivot, "below").detected) {
+      recordDetection(args.asOf, "PIVOT_RECLAIM");
       const a = buildAlert(args, lv, "PIVOT_RECLAIM", "put", sortedLevels);
       if (a) out.push(a);
     }
   }
   const callWall = args.levels.find((l) => l.kind === "callWall");
   if (callWall && detectWallReject(callWall.price, "ceiling").detected) {
+    recordDetection(args.asOf, "WALL_REJECT");
     const a = buildAlert(args, callWall, "WALL_REJECT", "put", sortedLevels);
     if (a) out.push(a);
   }
   const putWall = args.levels.find((l) => l.kind === "putWall");
   if (putWall && detectWallReject(putWall.price, "floor").detected) {
+    recordDetection(args.asOf, "WALL_REJECT");
     const a = buildAlert(args, putWall, "WALL_REJECT", "call", sortedLevels);
     if (a) out.push(a);
   }
@@ -1020,11 +1082,13 @@ export function evaluateOdte(args: EvalArgs): OdteAlert[] {
     // CALL trade — failed break to the downside (was above, dipped below, came back up)
     const fbCall = detectFailedBreak(lv.price, "above");
     if (fbCall.detected) {
+      recordDetection(args.asOf, "FAILED_BREAK");
       const alert = buildAlert(args, lv, "FAILED_BREAK", "call", sortedLevels);
       if (alert) out.push(alert);
     }
     const fbPut = detectFailedBreak(lv.price, "below");
     if (fbPut.detected) {
+      recordDetection(args.asOf, "FAILED_BREAK");
       const alert = buildAlert(args, lv, "FAILED_BREAK", "put", sortedLevels);
       if (alert) out.push(alert);
     }
@@ -1037,11 +1101,13 @@ export function evaluateOdte(args: EvalArgs): OdteAlert[] {
                { name: "MAIN PIVOT", kind: "mainPivot", price: pivot, side: "support" as const };
     const reclaimUp = detectFailedBreak(pivot, "above"); // identical pattern, semantics differ
     if (reclaimUp.detected) {
+      recordDetection(args.asOf, "PIVOT_RECLAIM");
       const alert = buildAlert(args, lv, "PIVOT_RECLAIM", "call", sortedLevels);
       if (alert) out.push(alert);
     }
     const reclaimDn = detectFailedBreak(pivot, "below");
     if (reclaimDn.detected) {
+      recordDetection(args.asOf, "PIVOT_RECLAIM");
       const alert = buildAlert(args, lv, "PIVOT_RECLAIM", "put", sortedLevels);
       if (alert) out.push(alert);
     }
@@ -1052,6 +1118,7 @@ export function evaluateOdte(args: EvalArgs): OdteAlert[] {
   if (callWall) {
     const rej = detectWallReject(callWall.price, "ceiling");
     if (rej.detected) {
+      recordDetection(args.asOf, "WALL_REJECT");
       const alert = buildAlert(args, callWall, "WALL_REJECT", "put", sortedLevels);
       if (alert) out.push(alert);
     }
@@ -1060,6 +1127,7 @@ export function evaluateOdte(args: EvalArgs): OdteAlert[] {
   if (putWall) {
     const rej = detectWallReject(putWall.price, "floor");
     if (rej.detected) {
+      recordDetection(args.asOf, "WALL_REJECT");
       const alert = buildAlert(args, putWall, "WALL_REJECT", "call", sortedLevels);
       if (alert) out.push(alert);
     }

@@ -703,6 +703,18 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     return `JUMP REGIME=true (score=${scoreStr}${featStr})`;
   })();
 
+  // Wire 10: CHOP REGIME block (Paper C re-engineered)
+  // Only renders when chopRegime === true.
+  const chopRegimeBlock = (() => {
+    const cr = (audit as any).chopRegime;
+    const fb = (audit as any).chopFailedBreakCount;
+    const pr = (audit as any).chopPivotReclaimCount;
+    if (cr !== true) return "";
+    const fbStr = fb != null ? fb : "?";
+    const prStr = pr != null ? pr : "?";
+    return `CHOP REGIME (failed breaks 60m=${fbStr}, pivot reclaims=${prStr})`;
+  })();
+
   // Stitch the print
   const body = [
     "```",
@@ -721,6 +733,7 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     ...(wickBlock ? ["", wickBlock] : []),
     ...(vwapBlock ? ["", vwapBlock] : []),
     ...(jumpRegimeBlock ? ["", jumpRegimeBlock] : []),
+    ...(chopRegimeBlock ? ["", chopRegimeBlock] : []),
     "```",
   ].join("\n");
 

@@ -2077,8 +2077,9 @@ Refine the brief above. Search the web for any critical developments the feed is
       const models: any = modelsResp && modelsResp.ok ? await modelsResp.json().catch(() => null) : null;
       const daily = models?.horizons?.daily;
       const audit = daily?.audit ?? {};
-      const { getSpotHistoryInfo } = await import("./odteAlertEngine");
+      const { getSpotHistoryInfo, getChopRegime } = await import("./odteAlertEngine");
       const spotInfo = getSpotHistoryInfo();
+      const chopResult = getChopRegime();
       res.json({
         asOf: Date.now(),
         spot: daily?.spot ?? null,
@@ -2087,6 +2088,10 @@ Refine the brief above. Search the web for any critical developments the feed is
         jumpRegime: audit.jumpRegime ?? null,
         jumpScore: audit.jumpScore ?? null,
         jumpFeatures: audit.jumpFeatures ?? null,
+        // Wire 10 fields
+        chopRegime: audit.chopRegime ?? chopResult.isChop,
+        chopFailedBreakCount: audit.chopFailedBreakCount ?? chopResult.failedBreakCount60min,
+        chopPivotReclaimCount: audit.chopPivotReclaimCount ?? chopResult.pivotReclaimCount60min,
         // Additional audit context
         gex: audit.gex ?? null,
         vwapProfile: audit.vwapProfile ? {
@@ -2094,6 +2099,7 @@ Refine the brief above. Search the web for any critical developments the feed is
           poc: audit.vwapProfile.poc,
         } : null,
         wire9Present: audit.jumpRegime !== undefined,
+        wire10Present: true,
       });
     } catch (e: any) {
       res.status(500).json({ error: "odte_diagnose_failed", message: e?.message ?? String(e) });

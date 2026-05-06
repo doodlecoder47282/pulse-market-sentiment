@@ -31,6 +31,7 @@ import Database from "better-sqlite3";
 import { getOdteSnapshot } from "./odteTracker";
 import { computeVolumeProfile } from "./volumeProfile";
 import type { Candle } from "./ohlc";
+import { getChopRegime } from "./odteAlertEngine";
 
 export interface VommaPocket {
   strike: number;
@@ -656,6 +657,10 @@ export async function enrichAudit(
       console.warn(`[auditEnrich] computeJumpRegime error: ${e?.message ?? e}`);
     }
 
+    // 9. Wire 10: chop regime (Paper C re-engineered)
+    //    Read from in-memory detectionHistory ring buffer in odteAlertEngine.
+    const chopResult = getChopRegime();
+
     // Mutate audit
     daily.audit = {
       ...audit,
@@ -672,6 +677,10 @@ export async function enrichAudit(
       jumpRegime: jumpRegimeResult ? jumpRegimeResult.jumpRegime : null,
       jumpScore: jumpRegimeResult ? jumpRegimeResult.jumpScore : null,
       jumpFeatures: jumpRegimeResult ? jumpRegimeResult.features : null,
+      // Wire 10 chop regime fields
+      chopRegime: chopResult.isChop,
+      chopFailedBreakCount: chopResult.failedBreakCount60min,
+      chopPivotReclaimCount: chopResult.pivotReclaimCount60min,
     };
 
     return result;
