@@ -2092,6 +2092,11 @@ Refine the brief above. Search the web for any critical developments the feed is
         chopRegime: audit.chopRegime ?? chopResult.isChop,
         chopFailedBreakCount: audit.chopFailedBreakCount ?? chopResult.failedBreakCount60min,
         chopPivotReclaimCount: audit.chopPivotReclaimCount ?? chopResult.pivotReclaimCount60min,
+        // Wire 11 fields (Paper L re-engineered: VIX/SPX correlation breakdown)
+        vixPctChange5m: audit.vixPctChange5m ?? null,
+        spxPctChange5m: audit.spxPctChange5m ?? null,
+        correlationBreakdown: audit.correlationBreakdown ?? false,
+        correlationBreakdownDirection: audit.correlationBreakdownDirection ?? null,
         // Additional audit context
         gex: audit.gex ?? null,
         vwapProfile: audit.vwapProfile ? {
@@ -2100,6 +2105,9 @@ Refine the brief above. Search the web for any critical developments the feed is
         } : null,
         wire9Present: audit.jumpRegime !== undefined,
         wire10Present: true,
+        wire11Present: audit.correlationBreakdown !== undefined,
+        // Full audit for deeper inspection
+        audit,
       });
     } catch (e: any) {
       res.status(500).json({ error: "odte_diagnose_failed", message: e?.message ?? String(e) });

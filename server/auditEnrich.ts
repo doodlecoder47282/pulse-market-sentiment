@@ -31,7 +31,7 @@ import Database from "better-sqlite3";
 import { getOdteSnapshot } from "./odteTracker";
 import { computeVolumeProfile } from "./volumeProfile";
 import type { Candle } from "./ohlc";
-import { getChopRegime } from "./odteAlertEngine";
+import { getChopRegime, getSpotPriceAtTs } from "./odteAlertEngine";
 
 export interface VommaPocket {
   strike: number;
@@ -58,6 +58,88 @@ interface DailyBar {
 let spyBarsCache: { ts: number; bars: DailyBar[] } | null = null;
 const SPY_CACHE_MS = 5 * 60_000;
 let roDb: Database.Database | null = null;
+
+// ─── Wire 11: VIX in-memory ring buffer (15-min GC) ───────────────────────────────────
+interface VixPoint { ts: number; price: number; }
+const vixHistory: VixPoint[] = [];
+const VIX_HISTORY_MAX_MS = 15 * 60_000; // 15-min GC window
+// VIX spot cache: 30s TTL to avoid hammering Yahoo on every enrichAudit call
+let vixSpotCache: { ts: number; price: number } | null = null;
+const VIX_SPOT_CACHE_MS = 30_000;
+
+/**
+ * Fetch current VIX spot price from Yahoo Finance (^VIX).
+ * Returns regularMarketPrice; caches 30 seconds.
+ * Reuses the same Yahoo v8/chart endpoint pattern as yahooQuote() in sources.ts.
+ */
+async function fetchVixSpot(): Promise<number | null> {
+  if (vixSpotCache && Date.now() - vixSpotCache.ts < VIX_SPOT_CACHE_MS) {
+    return vixSpotCache.price;
+  }
+  try {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 8_000);
+    const r = await fetch(
+      "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1m&range=1d",
+      {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; PulseDashboard/1.0)",
+          Accept: "application/json",
+        },
+        signal: ctrl.signal,
+      },
+    );
+    clearTimeout(to);
+    if (!r.ok) return null;
+    const d = await r.json();
+    const meta = d?.chart?.result?.[0]?.meta ?? {};
+    const price: number | null = meta.regularMarketPrice ?? null;
+    if (price != null && isFinite(price) && price > 0) {
+      vixSpotCache = { ts: Date.now(), price };
+      return price;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Record current VIX into the ring buffer and GC entries older than 15min.
+ */
+function recordVix(ts: number, price: number): void {
+  if (!isFinite(price) || price <= 0) return;
+  vixHistory.push({ ts, price });
+  const cutoff = ts - VIX_HISTORY_MAX_MS;
+  while (vixHistory.length > 0 && vixHistory[0].ts < cutoff) vixHistory.shift();
+}
+
+/**
+ * Get the VIX price closest to targetTs where the age difference is
+ * between minMs and maxMs (to enforce 4-6 min lookback window).
+ * Returns null if no entry qualifies.
+ */
+function getVixPriceAtTs(
+  nowTs: number,
+  minMs: number,
+  maxMs: number,
+): number | null {
+  let bestDist = Infinity;
+  let best: number | null = null;
+  for (const p of vixHistory) {
+    const age = nowTs - p.ts;
+    if (age < minMs || age > maxMs) continue;
+    if (age < bestDist) { bestDist = age; best = p.price; }
+  }
+  return best;
+}
+
+export interface CorrelationBreakdownResult {
+  vixPctChange5m: number | null;
+  spxPctChange5m: number | null;
+  correlationBreakdown: boolean;
+  correlationBreakdownDirection: 'TOP_SIGNAL' | 'BOTTOM_SIGNAL' | null;
+}
 
 // ─── Wire 9: jump regime cache (5-min TTL) ───────────────────────────────────
 export interface JumpRegimeResult {
@@ -542,6 +624,69 @@ export async function computeJumpRegime(currentGex?: number | null): Promise<Jum
 }
 
 /**
+ * Wire 11 — Paper L re-engineered: VIX/SPX correlation breakdown.
+ *
+ * Fetches current VIX, records it in vixHistory, then computes 5-min
+ * percentage changes for both VIX and SPX.
+ *
+ * correlationBreakdown = true when:
+ *   TOP_SIGNAL:    VIX +2%+ AND SPX +0.3%+ (both up — institutions hedging into rally)
+ *   BOTTOM_SIGNAL: VIX -2%  AND SPX -0.3%  (both down — panic exhausting, bottom signal)
+ *
+ * Returns null fields gracefully when the buffers aren’t yet warm (< 5 min uptime).
+ */
+async function computeCorrelationBreakdown(
+  spxSpotNow: number,
+): Promise<CorrelationBreakdownResult> {
+  const now = Date.now();
+  const FOUR_MIN_MS  = 4 * 60_000;
+  const SIX_MIN_MS   = 6 * 60_000;
+
+  // Fetch + record VIX now
+  const vixNow = await fetchVixSpot();
+  if (vixNow != null) recordVix(now, vixNow);
+
+  // 5-min lookback: age between 4-6 min
+  const vix5mAgo  = getVixPriceAtTs(now, FOUR_MIN_MS, SIX_MIN_MS);
+  const spx5mAgoTs = now - 5 * 60_000;
+  const spx5mAgo  = getSpotPriceAtTs(spx5mAgoTs, 60_000);
+
+  // % changes
+  const vixPctChange5m = (vixNow != null && vix5mAgo != null && vix5mAgo > 0)
+    ? ((vixNow - vix5mAgo) / vix5mAgo) * 100
+    : null;
+  const spxPctChange5m = (spxSpotNow > 0 && spx5mAgo != null && spx5mAgo > 0)
+    ? ((spxSpotNow - spx5mAgo) / spx5mAgo) * 100
+    : null;
+
+  // Classify
+  let correlationBreakdown = false;
+  let correlationBreakdownDirection: 'TOP_SIGNAL' | 'BOTTOM_SIGNAL' | null = null;
+
+  if (vixPctChange5m != null && spxPctChange5m != null) {
+    if (vixPctChange5m >= 2 && spxPctChange5m >= 0.3) {
+      // Both up: institutions hedging into rally — TOP_SIGNAL
+      correlationBreakdown = true;
+      correlationBreakdownDirection = 'TOP_SIGNAL';
+    } else if (vixPctChange5m <= -2 && spxPctChange5m <= -0.3) {
+      // Both down: panic/complacency dropping into selloff — BOTTOM_SIGNAL
+      correlationBreakdown = true;
+      correlationBreakdownDirection = 'BOTTOM_SIGNAL';
+    }
+  }
+
+  console.log(
+    `[auditEnrich] Wire 11 correlationBreakdown: vixNow=${vixNow?.toFixed(2) ?? 'null'} ` +
+    `vix5mAgo=${vix5mAgo?.toFixed(2) ?? 'null'} vixPct=${vixPctChange5m?.toFixed(2) ?? 'null'}% ` +
+    `spxNow=${spxSpotNow.toFixed(1)} spx5mAgo=${spx5mAgo?.toFixed(1) ?? 'null'} ` +
+    `spxPct=${spxPctChange5m?.toFixed(3) ?? 'null'}% ` +
+    `breakdown=${correlationBreakdown} dir=${correlationBreakdownDirection ?? 'null'}`,
+  );
+
+  return { vixPctChange5m, spxPctChange5m, correlationBreakdown, correlationBreakdownDirection };
+}
+
+/**
  * Main entry — augments daily horizon audit with the 5 missing fields.
  * Returns the same response object (mutated in place).
  *
@@ -661,6 +806,14 @@ export async function enrichAudit(
     //    Read from in-memory detectionHistory ring buffer in odteAlertEngine.
     const chopResult = getChopRegime();
 
+    // 10. Wire 11: VIX/SPX correlation breakdown (Paper L re-engineered)
+    let corrBreakdown: CorrelationBreakdownResult | null = null;
+    try {
+      corrBreakdown = await computeCorrelationBreakdown(spot);
+    } catch (e: any) {
+      console.warn(`[auditEnrich] computeCorrelationBreakdown error: ${e?.message ?? e}`);
+    }
+
     // Mutate audit
     daily.audit = {
       ...audit,
@@ -681,6 +834,11 @@ export async function enrichAudit(
       chopRegime: chopResult.isChop,
       chopFailedBreakCount: chopResult.failedBreakCount60min,
       chopPivotReclaimCount: chopResult.pivotReclaimCount60min,
+      // Wire 11 VIX/SPX correlation breakdown fields
+      vixPctChange5m: corrBreakdown ? corrBreakdown.vixPctChange5m : null,
+      spxPctChange5m: corrBreakdown ? corrBreakdown.spxPctChange5m : null,
+      correlationBreakdown: corrBreakdown ? corrBreakdown.correlationBreakdown : false,
+      correlationBreakdownDirection: corrBreakdown ? corrBreakdown.correlationBreakdownDirection : null,
     };
 
     return result;

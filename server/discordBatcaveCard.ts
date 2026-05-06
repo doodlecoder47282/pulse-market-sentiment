@@ -715,6 +715,19 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     return `CHOP REGIME (failed breaks 60m=${fbStr}, pivot reclaims=${prStr})`;
   })();
 
+  // Wire 11: VIX/SPX CORRELATION BREAKDOWN block (Paper L re-engineered)
+  // Only renders when correlationBreakdown === true.
+  const corrBreakdownBlock = (() => {
+    const cb  = (audit as any).correlationBreakdown;
+    const dir = (audit as any).correlationBreakdownDirection;
+    const vp  = (audit as any).vixPctChange5m;
+    const sp  = (audit as any).spxPctChange5m;
+    if (cb !== true || dir == null) return "";
+    const vixStr = vp != null ? `VIX ${vp >= 0 ? '+' : ''}${vp.toFixed(1)}%` : 'VIX n/a';
+    const spxStr = sp != null ? `SPX ${sp >= 0 ? '+' : ''}${sp.toFixed(2)}%` : 'SPX n/a';
+    return `VIX/SPX BREAKDOWN: ${dir} (${vixStr}, ${spxStr} over 5m)`;
+  })();
+
   // Stitch the print
   const body = [
     "```",
@@ -734,6 +747,7 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     ...(vwapBlock ? ["", vwapBlock] : []),
     ...(jumpRegimeBlock ? ["", jumpRegimeBlock] : []),
     ...(chopRegimeBlock ? ["", chopRegimeBlock] : []),
+    ...(corrBreakdownBlock ? ["", corrBreakdownBlock] : []),
     "```",
   ].join("\n");
 

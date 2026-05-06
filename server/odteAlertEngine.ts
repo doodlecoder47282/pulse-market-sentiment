@@ -101,6 +101,13 @@ export interface Audit {
   chopPivotReclaimCount?: number;        // count of PIVOT_RECLAIM detections in last 60min
   wire10ChopMomentumPenalty?: number;    // -4 for PIVOT_RECLAIM in chop regime
   wire10ChopMeanRevBoost?: number;       // +3 for WALL_REJECT/FAILED_BREAK in chop regime
+  // Wire 11 — Paper L re-engineered: VIX/SPX correlation breakdown
+  vixPctChange5m?: number | null;        // VIX % change over last 5 min
+  spxPctChange5m?: number | null;        // SPX % change over last 5 min
+  correlationBreakdown?: boolean;        // true when VIX and SPX move same direction (breakdown)
+  correlationBreakdownDirection?: 'TOP_SIGNAL' | 'BOTTOM_SIGNAL' | null; // TOP: both up (rally fading); BOTTOM: both down (panic exhausting)
+  wire11CorrelationBreakdownPenalty?: number;  // -4 when breakdown penalizes trade side
+  wire11CorrelationBreakdownBoost?: number;    // +4 when breakdown boosts trade side
 }
 
 export interface ContractRow {
@@ -200,6 +207,24 @@ let tenAmRegime: TenAmRegimeSnapshot | null = null;
 
 export function setTenAmRegime(snapshot: TenAmRegimeSnapshot): void {
   tenAmRegime = snapshot;
+}
+
+/**
+ * Returns the spot price closest to targetTs within toleranceMs.
+ * Used by Wire 11 to look up SPX 5-min ago from the spotHistory ring buffer.
+ */
+export function getSpotPriceAtTs(targetTs: number, toleranceMs: number = 60_000): number | null {
+  if (spotHistory.length === 0) return null;
+  let bestDist = Infinity;
+  let bestPrice: number | null = null;
+  for (const p of spotHistory) {
+    const dist = Math.abs(p.ts - targetTs);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestPrice = p.spot;
+    }
+  }
+  return bestDist <= toleranceMs ? bestPrice : null;
 }
 
 /** Returns current spotHistory length and first/last timestamps for diagnostics. */
@@ -921,6 +946,56 @@ function scoreSetup(args: {
     }
   } catch (_) {
     reasoning.push("Wire 10 chop regime: error, skipped");
+  }
+
+  // ─── WIRE 11 — Paper L re-engineered: VIX/SPX correlation breakdown ────────
+  // VIX up + SPX up = institutions hedging into rally (TOP_SIGNAL: rally about to fail)
+  // VIX down + SPX down = panic exhausting (BOTTOM_SIGNAL: selloff losing fear)
+  try {
+    if (args.audit.correlationBreakdown === true) {
+      const isCallSide = args.side === 'call';
+      if (args.audit.correlationBreakdownDirection === 'TOP_SIGNAL') {
+        // Long entries are chasing a rally smart money is fading
+        if (isCallSide) {
+          score -= 4;
+          args.audit.wire11CorrelationBreakdownPenalty = -4;
+          reasoning.push(
+            `Wire 11 corr-breakdown (Paper L): TOP_SIGNAL — VIX+SPX both up, smart money hedging rally. ` +
+            `Call side chasing rally smart money fades: -4 ` +
+            `(vix5m=${args.audit.vixPctChange5m?.toFixed(2) ?? '?'}% spx5m=${args.audit.spxPctChange5m?.toFixed(2) ?? '?'}%)`,
+          );
+        } else {
+          score += 4;
+          args.audit.wire11CorrelationBreakdownBoost = 4;
+          reasoning.push(
+            `Wire 11 corr-breakdown (Paper L): TOP_SIGNAL — VIX+SPX both up, institutions hedging into rally. ` +
+            `Put side aligned with smart money fade: +4 ` +
+            `(vix5m=${args.audit.vixPctChange5m?.toFixed(2) ?? '?'}% spx5m=${args.audit.spxPctChange5m?.toFixed(2) ?? '?'}%)`,
+          );
+        }
+      } else if (args.audit.correlationBreakdownDirection === 'BOTTOM_SIGNAL') {
+        // Short entries chasing a selloff that is losing fear
+        if (!isCallSide) {
+          score -= 4;
+          args.audit.wire11CorrelationBreakdownPenalty = -4;
+          reasoning.push(
+            `Wire 11 corr-breakdown (Paper L): BOTTOM_SIGNAL — VIX+SPX both down, panic exhausting. ` +
+            `Put side chasing selloff that is losing fear: -4 ` +
+            `(vix5m=${args.audit.vixPctChange5m?.toFixed(2) ?? '?'}% spx5m=${args.audit.spxPctChange5m?.toFixed(2) ?? '?'}%)`,
+          );
+        } else {
+          score += 4;
+          args.audit.wire11CorrelationBreakdownBoost = 4;
+          reasoning.push(
+            `Wire 11 corr-breakdown (Paper L): BOTTOM_SIGNAL — VIX+SPX both down, capitulation exhausting. ` +
+            `Call side aligned with bottom signal: +4 ` +
+            `(vix5m=${args.audit.vixPctChange5m?.toFixed(2) ?? '?'}% spx5m=${args.audit.spxPctChange5m?.toFixed(2) ?? '?'}%)`,
+          );
+        }
+      }
+    }
+  } catch (_) {
+    reasoning.push("Wire 11 correlation breakdown: error, skipped");
   }
 
   return { score: Math.round(score), reasoning };
