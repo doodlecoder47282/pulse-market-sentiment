@@ -21,7 +21,7 @@ import {
   postNewsAlert,
   postOdteBangerAlert,
 } from "./discord";
-import { evaluateOdte, type EvalArgs } from "./odteAlertEngine";
+import { evaluateOdte, setTenAmRegime, type EvalArgs } from "./odteAlertEngine";
 import { postBatcaveDailyCard } from "./discordBatcaveCard";
 import { settleDay } from "./calibration";
 import { postCalibrationCard } from "./calibrationCard";
@@ -61,6 +61,7 @@ function isTradingDay(dow: number, date: string): boolean {
 const DAILY_HHMM = "09:30";
 const dailyFired = new Set<string>(); // YYYY-MM-DD entries
 const preOpenScanFired = new Set<string>(); // YYYY-MM-DD entries — 9:30 ET 0DTE pre-open scan guard
+const tenAmFired = new Set<string>(); // YYYY-MM-DD entries — 10:00 ET regime snapshot guard
 
 async function maybeFireDaily(): Promise<void> {
   const { date, hh, mm, dow } = etNow();
@@ -552,10 +553,65 @@ async function maybeFireWeeklyCalibration(): Promise<void> {
   }
 }
 
+// ─── 2e. 10:00 ET regime snapshot ───────────────────────────────────────────
+//
+// Once-per-trading-day at 10:00 ET, capture the model's DFI / gammaZone /
+// vannaBias / spot / mainPivot from /api/models and hand it to the 0DTE
+// engine via setTenAmRegime(). The engine's Upgrade 3 (Vilkov tilt) consumes
+// this from 10:00–11:30 ET to bias scoreSetup ±5/±7 based on alignment.
+// Cap at 10:14 ET so we don't fire late if the tick drifts.
+
+async function maybeFireTenAmRegime(): Promise<void> {
+  const { dow, date, hh, mm } = etNow();
+  if (!isTradingDay(dow, date)) return;
+  if (tenAmFired.has(date)) return;
+  const nowMin = hh * 60 + mm;
+  const tgtMin = 10 * 60; // 10:00 ET
+  if (nowMin < tgtMin) return;
+  if (nowMin > tgtMin + 14) return;
+  tenAmFired.add(date);
+
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/api/models?symbol=^GSPC&experimental=1`);
+  } catch (e: any) {
+    console.warn(`[discordScheduler] 10AM regime fetch failed: ${e?.message ?? e}`);
+    return;
+  }
+  if (!res.ok) {
+    console.warn(`[discordScheduler] 10AM regime: models=${res.status}`);
+    return;
+  }
+  const models = await res.json().catch(() => null);
+  const daily = models?.horizons?.daily;
+  if (!daily) return;
+  const audit = daily.audit ?? {};
+  const spot = daily.spot ?? 0;
+  const mainPivot = audit.mainPivot ?? daily.mainPivot ?? 0;
+  if (!spot || !mainPivot) {
+    console.warn(`[discordScheduler] 10AM regime: bad spot=${spot} mainPivot=${mainPivot}`);
+    return;
+  }
+  try {
+    setTenAmRegime({
+      date,
+      dfi: Number(audit.dfi ?? 0),
+      gammaZone: String(audit.gammaZone ?? ""),
+      vannaBias: String(audit.vannaBias ?? ""),
+      spot: Number(spot),
+      mainPivot: Number(mainPivot),
+    });
+    console.log(`[discordScheduler] 10AM regime snapshot set: dfi=${audit.dfi} gammaZone=${audit.gammaZone} vannaBias=${audit.vannaBias} spot=${spot} pivot=${mainPivot}`);
+  } catch (e: any) {
+    console.warn(`[discordScheduler] 10AM regime setTenAmRegime threw: ${e?.message ?? e}`);
+  }
+}
+
 // ─── Tick ──────────────────────────────────────────────────────────────────────
 async function tick(): Promise<void> {
   await maybeFireDaily();
   await maybePreOpenOdteScan();
+  await maybeFireTenAmRegime();
   await maybeFireHalfHour();
   await maybeSettleDay();
   await maybeFireWeeklyCalibration();
@@ -577,6 +633,13 @@ async function tick(): Promise<void> {
       if (k !== today) preOpenScanFired.delete(k);
     }
   }
+  // GC tenAmFired — keep only today
+  if (tenAmFired.size > 14) {
+    const today = etNow().date;
+    for (const k of Array.from(tenAmFired)) {
+      if (k !== today) tenAmFired.delete(k);
+    }
+  }
   // GC HALFHOUR_FIRED — keep only today's entries
   if (HALFHOUR_FIRED.size > 20) {
     const today = etNow().date;
@@ -593,7 +656,7 @@ export function startDiscordScheduler(): void {
   timer = setInterval(() => { tick().catch(() => {}); }, 60_000);
   // First tick after 5s so server has a moment to warm
   setTimeout(() => { tick().catch(() => {}); }, 5_000);
-  console.log(`[discordScheduler] started — daily 9:30 ET + 9:30 0DTE pre-open scan + 30-min cadence (10:00–16:00 ET) + 0DTE bangers (9:45–15:45 ET), alerts on level breaks + gamma flips + macro news`);
+  console.log(`[discordScheduler] started — daily 9:30 ET + 9:30 0DTE pre-open scan + 10:00 regime snapshot + 30-min cadence (10:00–16:00 ET) + 0DTE bangers (9:45–15:45 ET), alerts on level breaks + gamma flips + macro news`);
 }
 
 export function stopDiscordScheduler(): void {

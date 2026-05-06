@@ -155,6 +155,111 @@ const regimeLogThrottle = new Map<string, number>(); // key -> last log epoch ms
 let voicesCache: { at: number; data: any } | null = null;
 const VOICES_CACHE_MS = 15 * 60_000; // 15 min keeps us well under X 10k/mo quota
 
+// ─── VIX cache for term-structure EM rescaling ───────────────────────────────
+// Fetched once per 60s to avoid hammering Yahoo on every /api/models call.
+let vixTermCache: {
+  at: number;
+  vix: number | null;
+  vix9d: number | null;
+  vix3m: number | null;
+} | null = null;
+const VIX_TERM_CACHE_MS = 60_000;
+
+async function fetchVixTermData(): Promise<{ vix: number | null; vix9d: number | null; vix3m: number | null }> {
+  if (vixTermCache && Date.now() - vixTermCache.at < VIX_TERM_CACHE_MS) {
+    return { vix: vixTermCache.vix, vix9d: vixTermCache.vix9d, vix3m: vixTermCache.vix3m };
+  }
+  try {
+    const [vixQ, vix9dQ, vix3mQ] = await Promise.all([
+      yahooQuote("^VIX"),
+      yahooQuote("^VIX9D"),
+      yahooQuote("^VIX3M"),
+    ]);
+    const data = { vix: vixQ.last, vix9d: vix9dQ.last, vix3m: vix3mQ.last };
+    vixTermCache = { at: Date.now(), ...data };
+    return data;
+  } catch {
+    return { vix: null, vix9d: null, vix3m: null };
+  }
+}
+
+/**
+ * Post-processor: rescale non-daily horizon scenarioTargets to reflect the
+ * proper term-structure expected move for each horizon window.
+ *
+ * - daily:     unchanged (0DTE/1DTE stays as-is)
+ * - weekly:    7-day cone using VIX9D (or sqrt(5) fallback)
+ * - monthly:   21-day cone using VIX30 (or sqrt(21) fallback)
+ * - quarterly: 63-day cone with 0.85 mean-reversion damp
+ *
+ * Pure function. try/catch guard: any error returns the original result.
+ */
+function applyTermStructureRescale(
+  result: ModelsResponse,
+  vixData: { vix: number | null; vix9d: number | null; vix3m: number | null },
+): ModelsResponse {
+  try {
+    const dailyHorizon = result.horizons["daily"];
+    if (!dailyHorizon) return result; // nothing to anchor from
+
+    const dailyEM = dailyHorizon.audit?.scenarioTargets?.oneDayEM;
+    const spot = dailyHorizon.spot;
+    if (!dailyEM || !spot || spot <= 0) return result;
+
+    const { vix, vix9d } = vixData;
+
+    // Compute horizon EMs
+    // weekly (7 calendar days ≈ 5 trading days)
+    let weeklyEM: number;
+    if (vix9d && vix9d > 0) {
+      weeklyEM = spot * (vix9d / 100) * Math.sqrt(7 / 365);
+    } else {
+      weeklyEM = dailyEM * Math.sqrt(5);
+    }
+
+    // monthly (21 trading days)
+    let monthlyEM: number;
+    if (vix && vix > 0) {
+      monthlyEM = spot * (vix / 100) * Math.sqrt(21 / 252);
+    } else {
+      monthlyEM = dailyEM * Math.sqrt(21);
+    }
+
+    // quarterly (63 trading days, mean-reversion damped)
+    let quarterlyEM: number;
+    if (vix && vix > 0) {
+      quarterlyEM = spot * (vix / 100) * Math.sqrt(63 / 252) * 0.85;
+    } else {
+      quarterlyEM = dailyEM * Math.sqrt(63) * 0.85;
+    }
+
+    const horizonEMs: Record<string, number> = {
+      weekly: weeklyEM,
+      monthly: monthlyEM,
+      quarterly: quarterlyEM,
+    };
+
+    for (const hKey of ["weekly", "monthly", "quarterly"] as const) {
+      const h = result.horizons[hKey];
+      if (!h || !h.audit?.scenarioTargets) continue;
+      const hSpot = h.spot ?? spot;
+      const hEM = horizonEMs[hKey];
+      const st = h.audit.scenarioTargets;
+      h.audit.scenarioTargets = {
+        ...st,
+        bull: parseFloat((hSpot + hEM).toFixed(2)),
+        base: parseFloat(hSpot.toFixed(2)),  // neutral drift (base = spot, no drift)
+        bear: parseFloat((hSpot - hEM).toFixed(2)),
+        oneDayEM: st.oneDayEM,               // preserve original per-day EM input
+        horizonEM: parseFloat(hEM.toFixed(2)),
+      } as any;
+    }
+    return result;
+  } catch {
+    return result;
+  }
+}
+
 async function buildSnapshot(): Promise<Snapshot_Public> {
   const warnings: string[] = [];
 
@@ -520,7 +625,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // not experimental. ?experimental=0 can still disable them explicitly.
       const experimental = String(req.query.experimental ?? "1") !== "0";
       const data = await buildModelsForKey(symbol, experimental);
-      res.json(data);
+      // Post-process: rescale non-daily horizons to proper term-structure EMs
+      const vixData = await fetchVixTermData().catch(() => ({ vix: null, vix9d: null, vix3m: null }));
+      res.json(applyTermStructureRescale(data, vixData));
     } catch (e: any) {
       // On failure — serve last persisted session snapshot for today, tagged.
       try {

@@ -51,8 +51,11 @@ export interface Audit {
   dfi?: number | null;              // positive = bull, negative = bear
   gammaZone?: string | null;        // "y+" (dampened) | "y-" (volatile)
   vannaBias?: number | null;
+  vannaM?: number | null;           // vanna $M magnitude (upgrade 2)
+  vommaPockets?: number[] | null;   // strike prices of volga/vomma pockets (upgrade 2)
   mainPivot?: number | null;
   charmZero?: number | null;
+  realizedSigma20d?: number | null; // 20-day realized vol (upgrade 1 VRP gate)
 }
 
 export interface ContractRow {
@@ -66,6 +69,7 @@ export interface ContractRow {
   volume: number;
   openInterest: number;
   expiry: string;
+  iv?: number | null;               // implied vol (annualized, e.g. 0.18 = 18%) for VRP gate
 }
 
 export interface OdteAlert {
@@ -110,6 +114,22 @@ const HOURLY_GAP_MS = 60 * 60_000;               // ≥1 hour between any two al
 const DAILY_CAP = 3;                             // max alerts per ET day
 let lastAnyFireAt = 0;
 const dailyFireCount: Record<string, number> = {}; // YYYY-MM-DD -> count
+
+// ─── Upgrade 3: 10:00 AM regime snapshot (Vilkov) ───────────────────────────
+// discordScheduler calls setTenAmRegime() at 10:00 ET each day.
+interface TenAmRegimeSnapshot {
+  date: string;        // ET date "YYYY-MM-DD" — ensures we only apply for today
+  dfi: number;
+  gammaZone: string;
+  vannaBias: string;
+  spot: number;
+  mainPivot: number;
+}
+let tenAmRegime: TenAmRegimeSnapshot | null = null;
+
+export function setTenAmRegime(snapshot: TenAmRegimeSnapshot): void {
+  tenAmRegime = snapshot;
+}
 
 function etDateStr(ts: number): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -319,14 +339,32 @@ function scoreSetup(args: {
     }
   }
 
-  const vb = args.audit.vannaBias;
-  if (typeof vb === "number" && isFinite(vb) && Math.abs(vb) > 0.05) {
-    if (Math.sign(vb) === wantSign) {
-      momScore += 10; momAligned += 1;
-      momReasons.push(`vanna bias aligned: +10`);
-    } else {
-      momReasons.push(`vanna bias opposed: +0`);
+  // Upgrade 2: Vanna magnitude (log-scaled, replaces binary +10)
+  try {
+    const vb = args.audit.vannaBias;
+    const vannaM = args.audit.vannaM;
+    if (typeof vb === "number" && isFinite(vb) && Math.abs(vb) > 0.05) {
+      const vannaAligned = Math.sign(vb) === wantSign;
+      let vannaBonus: number;
+      if (typeof vannaM === "number" && isFinite(vannaM) && vannaM !== 0) {
+        // Log-scaled magnitude: sign(aligned) * min(8, log(1+|vannaM|)*2)
+        const raw = Math.min(8, Math.log(1 + Math.abs(vannaM)) * 2);
+        vannaBonus = vannaAligned ? raw : -raw;
+      } else {
+        // Fallback to flat ±8 if no magnitude data
+        vannaBonus = vannaAligned ? 8 : -8;
+      }
+      // Bound to ±10
+      vannaBonus = Math.max(-10, Math.min(10, vannaBonus));
+      if (vannaAligned) {
+        momScore += vannaBonus; momAligned += 1;
+        momReasons.push(`vanna bias aligned (mag ${vannaM != null ? Math.abs(vannaM).toFixed(1) : "?"} $M): +${vannaBonus.toFixed(1)}`);
+      } else {
+        momReasons.push(`vanna bias opposed: ${vannaBonus.toFixed(1)}`);
+      }
     }
+  } catch (_) {
+    reasoning.push("vannaM unavailable, skipped");
   }
 
   if (momAligned >= 2) {
@@ -338,6 +376,21 @@ function scoreSetup(args: {
     reasoning.push(...momReasons);
     reasoning.push(`momentum confluence: ${momAligned}/3 aligned (BANGER GATE FAILED — −2 of 3 required)`);
     score -= 30;
+  }
+
+  // Upgrade 2 (cont): Volga-pocket adjacency bonus
+  try {
+    const pockets = args.audit.vommaPockets;
+    if (Array.isArray(pockets) && pockets.length > 0) {
+      const nearPocket = pockets.some((p) => Math.abs(args.contract.strike - p) <= 5);
+      if (nearPocket) {
+        const volgaDelta = Math.max(-10, Math.min(10, 4));
+        score += volgaDelta;
+        reasoning.push(`volga pocket adjacency at strike ${args.contract.strike}: +${volgaDelta}`);
+      }
+    }
+  } catch (_) {
+    reasoning.push("vommaPockets unavailable, skipped");
   }
 
   // 6. Risk:reward
@@ -373,6 +426,115 @@ function scoreSetup(args: {
     reasoning.push(`time-of-day prime: +5`);
   } else if (tod >= 15 * 60 + 31 && tod <= 15 * 60 + 59) {
     reasoning.push(`time-of-day late chop: +0`);
+  }
+
+  // ─── UPGRADE 1: VRP gate (vol risk premium) ─────────────────────────────────
+  try {
+    const realizedSigma = args.audit.realizedSigma20d;
+    const impliedIV = args.contract.iv;
+    if (
+      typeof realizedSigma === "number" && isFinite(realizedSigma) && realizedSigma > 0 &&
+      typeof impliedIV === "number" && isFinite(impliedIV) && impliedIV > 0
+    ) {
+      // Both are already annualized fractions (e.g. 0.18 = 18%); convert to pp
+      const vrp = (impliedIV - realizedSigma) * 100;
+      let vrpDelta = 0;
+      let vrpDesc = "neutral";
+      if (args.setup === "WALL_REJECT") {
+        // Fades favored when IV rich
+        if (vrp > 5)       { vrpDelta = +6; vrpDesc = "IV rich, fades favored"; }
+        else if (vrp < -2) { vrpDelta = -6; vrpDesc = "RV rich, walls likely to break"; }
+      } else {
+        // FAILED_BREAK / PIVOT_RECLAIM: momentum flips
+        if (vrp > 5)       { vrpDelta = -6; vrpDesc = "IV rich, momentum headwind"; }
+        else if (vrp < -2) { vrpDelta = +6; vrpDesc = "RV rich, momentum favored"; }
+      }
+      // Bound ±10
+      vrpDelta = Math.max(-10, Math.min(10, vrpDelta));
+      if (vrpDelta !== 0) score += vrpDelta;
+      reasoning.push(
+        `VRP gate: IV-RV=${vrp.toFixed(1)}pp, ${vrpDesc} for ${args.setup}` +
+        (vrpDelta !== 0 ? ` (${vrpDelta > 0 ? "+" : ""}${vrpDelta})` : " (neutral, no tilt)"),
+      );
+    } else {
+      reasoning.push("VRP gate: realizedSigma or IV unavailable, skipped");
+    }
+  } catch (_) {
+    reasoning.push("VRP gate: error computing VRP, skipped");
+  }
+
+  // ─── UPGRADE 3: 10:00 AM regime tilt (Vilkov) ─────────────────────────────
+  try {
+    const todMin = args.hourET * 60 + args.minuteET;
+    const inVilkovWindow = todMin >= 10 * 60 && todMin <= 11 * 60 + 30; // 10:00–11:30 ET
+    if (tenAmRegime !== null && inVilkovWindow) {
+      // Derive regime direction: DFI positive = bullish; spot above mainPivot = bullish
+      const regimeBullByDfi  = typeof tenAmRegime.dfi === "number" && tenAmRegime.dfi > 0;
+      const regimeBullByPivot = typeof tenAmRegime.spot === "number" &&
+                                typeof tenAmRegime.mainPivot === "number" &&
+                                tenAmRegime.spot > tenAmRegime.mainPivot;
+      // Require both signals to agree to apply a tilt (single disagreement = neutral)
+      const regimeBull  = regimeBullByDfi && regimeBullByPivot;
+      const regimeBear  = !regimeBullByDfi && !regimeBullByPivot;
+      if (regimeBull || regimeBear) {
+        const regimeWantSign = regimeBull ? 1 : -1;
+        const alertSign      = args.side === "call" ? 1 : -1;
+        const aligned        = regimeWantSign === alertSign;
+        const regimeDelta    = aligned ? +5 : -7;
+        // Bound ±10
+        const clampedRegimeDelta = Math.max(-10, Math.min(10, regimeDelta));
+        score += clampedRegimeDelta;
+        reasoning.push(
+          `10AM regime tilt: ${aligned ? "aligned" : "fighting"} 10AM snapshot ` +
+          `(DFI ${tenAmRegime.dfi.toFixed(0)}, spot ${tenAmRegime.spot.toFixed(1)} vs pivot ${tenAmRegime.mainPivot.toFixed(1)}): ` +
+          `${clampedRegimeDelta > 0 ? "+" : ""}${clampedRegimeDelta}`,
+        );
+      } else {
+        reasoning.push("10AM regime tilt: regime signals mixed, no tilt applied");
+      }
+    } else if (tenAmRegime === null) {
+      reasoning.push("10AM regime tilt: no 10AM snapshot yet, skipped");
+    }
+    // Outside 10:00–11:30 window — silent (no bullet cluttering late-day alerts)
+  } catch (_) {
+    reasoning.push("10AM regime tilt: error applying regime tilt, skipped");
+  }
+
+  // ─── UPGRADE 4: Jump-zone window adjustment (Bozovic) ────────────────────────
+  try {
+    const todMin = args.hourET * 60 + args.minuteET;
+    // Open jump zone:   9:45–10:30 (585–630)
+    const inOpenJump   = todMin >= 585 && todMin <= 630;
+    // Close jump zone: 15:00–15:45 (900–945)
+    const inCloseJump  = todMin >= 900 && todMin <= 945;
+    // Diffusion window: 11:30–14:00 (690–840)
+    const inDiffusion  = todMin >= 690 && todMin <= 840;
+
+    if (inOpenJump || inCloseJump) {
+      const zone = inOpenJump ? "open jump zone" : "close jump zone";
+      if (args.setup === "WALL_REJECT") {
+        const jzDelta = Math.max(-10, Math.min(10, -3));
+        score += jzDelta;
+        reasoning.push(`jump-zone window: ${zone} disfavors WALL_REJECT (${jzDelta})`);
+      } else {
+        const jzDelta = Math.max(-10, Math.min(10, +5));
+        score += jzDelta;
+        reasoning.push(`jump-zone window: ${zone} favors ${args.setup} (+${jzDelta})`);
+      }
+    } else if (inDiffusion) {
+      if (args.setup === "WALL_REJECT") {
+        const jzDelta = Math.max(-10, Math.min(10, +5));
+        score += jzDelta;
+        reasoning.push(`jump-zone window: diffusion window favors WALL_REJECT fades (+${jzDelta})`);
+      } else {
+        const jzDelta = Math.max(-10, Math.min(10, -3));
+        score += jzDelta;
+        reasoning.push(`jump-zone window: diffusion window disfavors ${args.setup} (${jzDelta})`);
+      }
+    }
+    // Outside all zones — no bullet (quiet)
+  } catch (_) {
+    reasoning.push("jump-zone window: error computing window tilt, skipped");
   }
 
   return { score: Math.round(score), reasoning };
