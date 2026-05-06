@@ -70,6 +70,16 @@ export interface Audit {
     source: string;
     asOfMin: number;
   } | null;
+  vwapProfile?: {
+    vwap: number;
+    poc: number;
+    vah: number;
+    val: number;
+    spotVsVwap: number;
+    inValueArea: boolean;
+    aboveVwap: boolean;
+    pocDist: number;
+  } | null;
 }
 
 export interface ContractRow {
@@ -659,6 +669,57 @@ function scoreSetup(args: {
       }
     }
   } catch (_) { reasoning.push("GTBR gate: skipped"); }
+
+  // ─── WIRE 7: VWAP/POC Confluence (Maróy 2025 + arxiv 2406.17198) ─────────────────────
+  // Paper F: VWAP as trailing-stop discipline; fighting VWAP = -8 (skewness flip)
+  // Paper O: Volume profile POC/VAH/VAL as confluence anchors
+  try {
+    const vp = args.audit.vwapProfile;
+    if (vp && typeof vp.vwap === "number" && isFinite(vp.vwap) && vp.vwap > 0) {
+      const isMomentum = args.setup === "PIVOT_RECLAIM";
+      const wantSign = args.side === "call" ? 1 : -1;
+      const aboveAligned = wantSign === 1 ? vp.aboveVwap : !vp.aboveVwap;
+      const atVwap = Math.abs(vp.spotVsVwap) < 0.0005;          // <0.05% from VWAP
+      const extremeDeviation = Math.abs(vp.spotVsVwap) > 0.003;  // >0.3%
+      const pocProximity = vp.pocDist <= 1.0;                    // within 1 pt
+      let vpDelta = 0;
+      const vpReasons: string[] = [];
+
+      if (atVwap || pocProximity) {
+        vpReasons.push(`VWAP/POC neutral zone (Δ ${(vp.spotVsVwap * 100).toFixed(2)}%, POC dist ${vp.pocDist.toFixed(1)}): 0`);
+      } else if (isMomentum) {
+        if (aboveAligned) {
+          vpDelta = +5;
+          vpReasons.push(`VWAP momentum aligned (spot ${vp.aboveVwap ? "above" : "below"} VWAP ${vp.vwap.toFixed(1)}): +5`);
+        } else if (vp.inValueArea) {
+          // Paper F asymmetric penalty: fighting VWAP inside value area = worst case
+          vpDelta = -8;
+          vpReasons.push(`VWAP trap (Maróy): ${args.side.toUpperCase()} fighting VWAP ${vp.vwap.toFixed(1)} inside value area: -8`);
+        } else {
+          vpDelta = -4;
+          vpReasons.push(`VWAP fighting outside value area (Δ ${(vp.spotVsVwap * 100).toFixed(2)}%): -4`);
+        }
+      } else { // reversion (FAILED_BREAK or WALL_REJECT)
+        if (vp.inValueArea) {
+          vpDelta = +4;
+          vpReasons.push(`reversion to POC ${vp.poc.toFixed(1)} inside value area [${vp.val.toFixed(1)}-${vp.vah.toFixed(1)}]: +4`);
+        } else if (extremeDeviation) {
+          vpDelta = +2;
+          vpReasons.push(`extreme VWAP deviation (${(vp.spotVsVwap * 100).toFixed(2)}%) — mean reversion: +2`);
+        } else {
+          vpDelta = -2;
+          vpReasons.push(`reversion outside value area, modest deviation (${(vp.spotVsVwap * 100).toFixed(2)}%): -2`);
+        }
+      }
+      vpDelta = Math.max(-8, Math.min(6, vpDelta));   // cap matches per VERDICT.md
+      score += vpDelta;
+      reasoning.push(...vpReasons);
+    } else {
+      reasoning.push("VWAP/POC wire: vwapProfile unavailable, skipped");
+    }
+  } catch (_) {
+    reasoning.push("VWAP/POC wire: error, skipped");
+  }
 
   return { score: Math.round(score), reasoning };
 }

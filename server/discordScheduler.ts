@@ -317,6 +317,7 @@ async function pollOdteBangerAlerts(): Promise<void> {
       gex: audit.gex ?? null,
       sessionOpen: audit.sessionOpen ?? null,
       atmIV: audit.atmIV ?? null,
+      vwapProfile: audit.vwapProfile ?? null,
     },
     levels: levels.map((l: any) => ({
       name: l.name, kind: l.kind, price: l.price, side: l.side,
@@ -427,6 +428,7 @@ async function maybePreOpenOdteScan(): Promise<void> {
       gex: audit.gex ?? null,
       sessionOpen: audit.sessionOpen ?? null,
       atmIV: audit.atmIV ?? null,
+      vwapProfile: audit.vwapProfile ?? null,
     },
     levels: levels.map((l: any) => ({
       name: l.name, kind: l.kind, price: l.price, side: l.side,

@@ -29,6 +29,8 @@
 import type { ModelsResponse } from "./routes";
 import Database from "better-sqlite3";
 import { getOdteSnapshot } from "./odteTracker";
+import { computeVolumeProfile } from "./volumeProfile";
+import type { Candle } from "./ohlc";
 
 export interface VommaPocket {
   strike: number;
@@ -56,6 +58,15 @@ let spyBarsCache: { ts: number; bars: DailyBar[] } | null = null;
 const SPY_CACHE_MS = 5 * 60_000;
 let roDb: Database.Database | null = null;
 
+// Intraday bars cache (1-min or fallback resolution) — refreshed every 2 min
+interface IntradayBarsCache {
+  ts: number;
+  bars: Candle[];
+  resolution: string; // "1-min" | "5-min" | "ohlc_minute" | "none"
+}
+let intradayBarsCache: IntradayBarsCache | null = null;
+const INTRADAY_CACHE_MS = 2 * 60_000;
+
 function getReadOnlyDb(): Database.Database {
   if (roDb) return roDb;
   // Open read-only handle to avoid lock contention with the main writer
@@ -81,6 +92,97 @@ function getSpyBars(): DailyBar[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Fetch intraday SPX bars for the current RTH session (9:30 ET to now).
+ *
+ * Resolution priority:
+ *   1. ohlc_minute table in data.db (1-min bars, if the table exists)
+ *   2. Yahoo Finance 1-min via fetchOHLC (live, RTH session only)
+ *   3. Yahoo Finance 5-min via fetchOHLC (fallback — coarser POC/VAH/VAL)
+ *   4. null (no bars available — Wire 7 skips gracefully)
+ *
+ * Bars are filtered to current RTH session: today after 09:30 ET (UTC-5/4).
+ * Returns cached result if less than INTRADAY_CACHE_MS old.
+ */
+async function getIntradayBars(): Promise<{ bars: Candle[]; resolution: string }> {
+  if (intradayBarsCache && Date.now() - intradayBarsCache.ts < INTRADAY_CACHE_MS) {
+    return { bars: intradayBarsCache.bars, resolution: intradayBarsCache.resolution };
+  }
+
+  // ── Attempt 1: ohlc_minute in data.db ────────────────────────────────────
+  try {
+    const db = getReadOnlyDb();
+    const etDateNow = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+    // Unix seconds for today 09:30 ET
+    // We compute it by parsing date and adjusting for ET offset
+    const open930Ms = Date.parse(`${etDateNow}T09:30:00-05:00`);
+    const open930s = Math.floor((isNaN(open930Ms) ?
+      Date.parse(`${etDateNow}T14:30:00Z`) : open930Ms) / 1000);
+    const nowS = Math.floor(Date.now() / 1000);
+    const rows = db
+      .prepare(
+        "SELECT ts, open AS o, high AS h, low AS l, close AS c, volume AS v " +
+        "FROM ohlc_minute WHERE symbol = ? AND ts >= ? AND ts <= ? ORDER BY ts ASC"
+      )
+      .all("SPX", open930s, nowS) as Array<{ ts: number; o: number; h: number; l: number; c: number; v: number | null }>;
+    if (rows.length >= 5) {
+      const bars: Candle[] = rows.map((r) => ({
+        t: r.ts, o: r.o, h: r.h, l: r.l, c: r.c, v: r.v ?? 0,
+      }));
+      intradayBarsCache = { ts: Date.now(), bars, resolution: "ohlc_minute" };
+      return { bars, resolution: "ohlc_minute" };
+    }
+  } catch {
+    // ohlc_minute table not available in this deployment — expected
+  }
+
+  // ── Attempt 2: Yahoo 1-min live bars ─────────────────────────────────────
+  try {
+    const { fetchOHLC } = await import("./ohlc");
+    const ohlc = await fetchOHLC("^GSPC", "1D", "1m");
+    if (ohlc.candles.length >= 5) {
+      // Filter to RTH (9:30 ET → now): Yahoo includePrePost=false already filters
+      // but double-check by epoch: open is t >= 9:30 ET today.
+      const etDateNow = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+      }).format(new Date());
+      const open930s = Math.floor(Date.parse(`${etDateNow}T09:30:00-05:00`) / 1000);
+      const rthBars = ohlc.candles.filter((b) => b.t >= open930s && (b.v ?? 0) > 0);
+      if (rthBars.length >= 5) {
+        intradayBarsCache = { ts: Date.now(), bars: rthBars, resolution: "1-min" };
+        return { bars: rthBars, resolution: "1-min" };
+      }
+    }
+  } catch {
+    // Yahoo 1-min unavailable
+  }
+
+  // ── Attempt 3: Yahoo 5-min fallback ──────────────────────────────────────
+  try {
+    const { fetchOHLC } = await import("./ohlc");
+    const ohlc5 = await fetchOHLC("^GSPC", "1D", "5m");
+    if (ohlc5.candles.length >= 3) {
+      const etDateNow = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+      }).format(new Date());
+      const open930s = Math.floor(Date.parse(`${etDateNow}T09:30:00-05:00`) / 1000);
+      const rthBars5 = ohlc5.candles.filter((b) => b.t >= open930s && (b.v ?? 0) > 0);
+      if (rthBars5.length >= 3) {
+        intradayBarsCache = { ts: Date.now(), bars: rthBars5, resolution: "5-min" };
+        return { bars: rthBars5, resolution: "5-min" };
+      }
+    }
+  } catch {
+    // Yahoo 5-min unavailable
+  }
+
+  // ── No bars available ─────────────────────────────────────────────────────
+  intradayBarsCache = { ts: Date.now(), bars: [], resolution: "none" };
+  return { bars: [], resolution: "none" };
 }
 
 /**
@@ -263,10 +365,10 @@ function etMinutesNow(): number {
  * IMPORTANT: This must run AFTER applyTermStructureRescale so the
  * scenarioTargets are already proper for non-daily horizons.
  */
-export function enrichAudit(
+export async function enrichAudit(
   result: ModelsResponse,
   vixData: { vix: number | null; vix9d: number | null; vix3m: number | null },
-): ModelsResponse {
+): Promise<ModelsResponse> {
   try {
     const daily = result.horizons["daily"] as any;
     if (!daily) return result;
@@ -340,6 +442,29 @@ export function enrichAudit(
       }
     } catch { /* leave null */ }
 
+    // 7. vwapProfile: intraday VWAP + POC/VAH/VAL from current RTH session bars
+    //    tickSize=0.25 for SPX index-point space (spot ~5500-7500)
+    //    Falls back gracefully to null if no bars are available
+    let vwapProfile: ReturnType<typeof computeVolumeProfile> = null;
+    try {
+      const { bars: intradayBars, resolution } = await getIntradayBars();
+      if (intradayBars.length > 0) {
+        // Determine tickSize: SPX point-space (spot ~5000-8000) → 0.25;
+        // SPY ETF space (spot ~500-800) → 0.01
+        const tickSize = spot > 1000 ? 0.25 : 0.01;
+        vwapProfile = computeVolumeProfile(intradayBars, spot, tickSize);
+        console.log(
+          `[auditEnrich] vwapProfile computed from ${intradayBars.length} ${resolution} bars: ` +
+          `vwap=${vwapProfile?.vwap?.toFixed(1)} poc=${vwapProfile?.poc?.toFixed(1)} ` +
+          `val=${vwapProfile?.val?.toFixed(1)} vah=${vwapProfile?.vah?.toFixed(1)}`
+        );
+      } else {
+        console.log("[auditEnrich] vwapProfile: no intraday bars available, will be null");
+      }
+    } catch (e: any) {
+      console.warn(`[auditEnrich] vwapProfile error: ${e?.message ?? e}`);
+    }
+
     // Mutate audit
     daily.audit = {
       ...audit,
@@ -351,6 +476,7 @@ export function enrichAudit(
       gex,
       sessionOpen,
       atmIV,
+      vwapProfile: vwapProfile ?? null,
     };
 
     return result;

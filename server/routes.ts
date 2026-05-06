@@ -631,7 +631,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const vixData = await fetchVixTermData().catch(() => ({ vix: null, vix9d: null, vix3m: null }));
       const rescaled = applyTermStructureRescale(data, vixData);
       const { enrichAudit } = await import("./auditEnrich");
-      const enriched = enrichAudit(rescaled, vixData);
+      const enriched = await enrichAudit(rescaled, vixData);
       res.json(enriched);
     } catch (e: any) {
       // On failure — serve last persisted session snapshot for today, tagged.
@@ -2122,6 +2122,8 @@ Refine the brief above. Search the web for any critical developments the feed is
           gex: audit.gex ?? null,
           sessionOpen: audit.sessionOpen ?? null,
           atmIV: audit.atmIV ?? null,
+          // Paper F+O Wire 7:
+          vwapProfile: audit.vwapProfile ?? null,
         },
         levels,
         contracts: (odte.contracts ?? []).map((c: any) => ({

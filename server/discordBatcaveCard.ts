@@ -655,6 +655,22 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     ? `EVENT DAY: ${todayEvKind} - expected move ~${todayEvBps}bps annualized`
     : "";
 
+  // VWAP/POC block (Paper F+O Wire 7 — Maróy 2025 + arxiv 2406.17198)
+  // Only renders when vwapProfile is present and valid. ASCII only, no emojis.
+  const vwapBlock = (() => {
+    const vp = (audit as any).vwapProfile;
+    if (!vp || typeof vp.vwap !== "number" || !isFinite(vp.vwap) || vp.vwap <= 0) return "";
+    const spotN = Number(spot);
+    const pctStr = (vp.spotVsVwap * 100).toFixed(2);
+    const dir = vp.aboveVwap ? "above" : "below";
+    const sign = vp.spotVsVwap >= 0 ? "+" : "";
+    return (
+      `VWAP/POC: VWAP=${vp.vwap.toFixed(1)} POC=${vp.poc.toFixed(1)} ` +
+      `[VA ${vp.val.toFixed(1)}-${vp.vah.toFixed(1)}] ` +
+      `spot ${spotN.toFixed(1)} (${sign}${pctStr}% ${dir})`
+    );
+  })();
+
   // Stitch the print
   const body = [
     "```",
@@ -671,6 +687,7 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     "",
     callsPutsBlock,
     ...(wickBlock ? ["", wickBlock] : []),
+    ...(vwapBlock ? ["", vwapBlock] : []),
     "```",
   ].join("\n");
 
