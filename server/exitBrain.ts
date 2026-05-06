@@ -261,24 +261,31 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
     // skip silently
   }
 
-  // ─── Category 5a: VIX SPIKE AGAINST SIDE ───────────────────────────
+  // ─── Category 5a: VIX MOVE AGAINST SIDE ────────────────────────────
+  // CRITICAL: VIX up is BAD for calls (longs), GOOD for puts (shorts).
+  // We score EXIT PRESSURE, so only penalize the ADVERSE direction:
+  //   - calls/longs:  adverse = +dv  (VIX rising hurts)
+  //   - puts/shorts:  adverse = -dv  (VIX falling hurts — VIX rising HELPS, no exit pressure)
+  // adverse is clamped at 0 so favorable VIX moves never add exit pressure.
   let vixScore = 0;
   let vixReason = "";
   try {
     const v = await getVix();
     if (v != null && mem.vixAtEntry != null && mem.vixAtEntry > 0) {
       const dv = (v - mem.vixAtEntry) / mem.vixAtEntry;
-      // For longs (calls) — VIX spike is bad. For shorts (puts) — VIX crash is bad.
       const adverse = underlyingSide === "long" ? dv : -dv;
+      // Honest VIX direction text (regardless of side) for the reason
+      const vixDirText = `VIX ${dv >= 0 ? "+" : ""}${(dv * 100).toFixed(0)}% since entry`;
       if (adverse >= 0.10) {
         vixScore = 100;
-        vixReason = `VIX ${adverse > 0 ? "+" : ""}${(adverse * 100).toFixed(0)}% since entry`;
+        vixReason = `${vixDirText} (adverse for ${underlyingSide === "long" ? "calls" : "puts"})`;
       } else if (adverse >= 0.05) {
         vixScore = 60;
-        vixReason = `VIX ${(adverse * 100).toFixed(0)}% since entry`;
+        vixReason = `${vixDirText} (adverse for ${underlyingSide === "long" ? "calls" : "puts"})`;
       } else if (adverse >= 0.03) {
         vixScore = 30;
       }
+      // Favorable VIX (adverse < 0) → vixScore stays 0 (puts benefit from VIX up)
     }
   } catch {
     // skip silently

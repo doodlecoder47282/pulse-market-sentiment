@@ -170,6 +170,59 @@ const REGIME_WEIGHTS: Record<
   CHOP_STRONG: { reanchor: 0.05, sqrt: 0.30, range: 0.65 },
 };
 
+// ─── Regime hysteresis ─────────────────────────────────────────────────
+// Audit fix: prevent regime flapping at the boundary (e.g. dfi oscillating
+// 1.95↔2.05 between TREND_WEAK and NEUTRAL) from rapidly re-weighting targets
+// every tick. Require the candidate regime to be stable for STABILITY_TICKS
+// consecutive observations before applying it. Until then, keep using the
+// last *applied* regime.
+const STABILITY_TICKS = 3;
+let _appliedRegime: RegimeBucket | null = null;
+let _candidateRegime: RegimeBucket | null = null;
+let _candidateStreak = 0;
+
+function applyRegimeHysteresis(rawRegime: RegimeBucket): {
+  applied: RegimeBucket;
+  raw: RegimeBucket;
+  streak: number;
+  switched: boolean;
+} {
+  // First-ever observation — lock in immediately
+  if (_appliedRegime == null) {
+    _appliedRegime = rawRegime;
+    _candidateRegime = rawRegime;
+    _candidateStreak = STABILITY_TICKS;
+    return { applied: rawRegime, raw: rawRegime, streak: STABILITY_TICKS, switched: true };
+  }
+  // Same as currently applied — reset candidate streak (no transition pending)
+  if (rawRegime === _appliedRegime) {
+    _candidateRegime = rawRegime;
+    _candidateStreak = STABILITY_TICKS;
+    return { applied: _appliedRegime, raw: rawRegime, streak: STABILITY_TICKS, switched: false };
+  }
+  // Different from applied — build/extend candidate streak
+  if (rawRegime === _candidateRegime) {
+    _candidateStreak += 1;
+  } else {
+    _candidateRegime = rawRegime;
+    _candidateStreak = 1;
+  }
+  if (_candidateStreak >= STABILITY_TICKS) {
+    const prev = _appliedRegime;
+    _appliedRegime = rawRegime;
+    return { applied: rawRegime, raw: rawRegime, streak: _candidateStreak, switched: prev !== rawRegime };
+  }
+  // Not stable yet — stick with last applied regime
+  return { applied: _appliedRegime, raw: rawRegime, streak: _candidateStreak, switched: false };
+}
+
+/** Test/dev hook — reset hysteresis state. */
+export function _resetRegimeHysteresis(): void {
+  _appliedRegime = null;
+  _candidateRegime = null;
+  _candidateStreak = 0;
+}
+
 // ─── Three method primitives ───────────────────────────────────────────
 
 interface Triple {
@@ -256,6 +309,12 @@ export interface RealtimeTargetsOutput {
   /** Diagnostic detail */
   diag: {
     regime: RegimeBucket;
+    /** Raw regime detected this tick (before hysteresis filter) */
+    regimeRaw: RegimeBucket;
+    /** Stability streak of the raw regime; weights re-apply only at >= 3 */
+    regimeStreak: number;
+    /** True if hysteresis just transitioned applied regime this tick */
+    regimeSwitched: boolean;
     weights: { reanchor: number; sqrt: number; range: number };
     fracRemaining: number;
     minutesRemaining: number;
@@ -292,7 +351,9 @@ export async function computeRealtimeTargets(
   const m_reanchor = spotReanchorDecay(eod, input.spot, fracRemaining);
   const m_range = rangeAware(eod, input.spot, oneDayEM, fracRemaining, sessionRange);
 
-  const regime = detectRegime(input.audit ?? {});
+  const rawRegime = detectRegime(input.audit ?? {});
+  const hyst = applyRegimeHysteresis(rawRegime);
+  const regime = hyst.applied;
   const w = REGIME_WEIGHTS[regime];
 
   const blend = (a: number, b: number, c: number) =>
@@ -321,6 +382,9 @@ export async function computeRealtimeTargets(
     eod,
     diag: {
       regime,
+      regimeRaw: hyst.raw,
+      regimeStreak: hyst.streak,
+      regimeSwitched: hyst.switched,
       weights: w,
       fracRemaining,
       minutesRemaining,

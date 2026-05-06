@@ -393,6 +393,12 @@ export interface EvalArgs {
 
 export const FIRE_GATE = 80;  // A− or better — banger-only
 export const BANGER_MIN_PCT = 30;  // T1 estimated %-gain floor — user spec: 30%+ only
+// Independent BANGERS gate delta floor — kills lottery tickets even if pickContract loosens.
+// Range chosen to bracket realistic intraday "big premium" plays:
+//   < 0.20 = lotto / OTM tail. Not a banger — too dependent on miracle move.
+//   > 0.70 = deep ITM hedge. Not a banger — capital-heavy, no leverage.
+export const BANGER_DELTA_MIN = 0.20;
+export const BANGER_DELTA_MAX = 0.70;
 
 /**
  * Diagnostic surface — returns ALL candidates pre-filter, with per-candidate
@@ -462,6 +468,15 @@ export function diagnoseOdte(args: EvalArgs): {
   for (const a of out) {
     if (a.grade.score < FIRE_GATE) {
       rejected.push({ alert: a, reason: `grade ${a.grade.score} < FIRE_GATE ${FIRE_GATE}` });
+      continue;
+    }
+    // BANGERS delta floor — kills lottos and deep-ITM hedges
+    const d = a.contract.delta;
+    if (d != null && (d < BANGER_DELTA_MIN || d > BANGER_DELTA_MAX)) {
+      rejected.push({
+        alert: a,
+        reason: `BANGER DELTA GATE: Δ ${d.toFixed(2)} outside [${BANGER_DELTA_MIN}, ${BANGER_DELTA_MAX}] — ${d < BANGER_DELTA_MIN ? "lotto" : "deep-ITM hedge"}`,
+      });
       continue;
     }
     const t1Gain = a.t1?.estPctGain ?? 0;
@@ -553,6 +568,17 @@ export function evaluateOdte(args: EvalArgs): OdteAlert[] {
   // through; the floor is enforced on T1 to guarantee the *minimum* take.
   const passed = out
     .filter((a) => a.grade.score >= FIRE_GATE)
+    .filter((a) => {
+      // BANGERS delta floor — kills lottos (Δ<0.20) and deep-ITM hedges (Δ>0.70)
+      const d = a.contract.delta;
+      if (d != null && (d < BANGER_DELTA_MIN || d > BANGER_DELTA_MAX)) {
+        a.grade.reasoning.push(
+          `BANGER DELTA GATE: Δ ${d.toFixed(2)} outside [${BANGER_DELTA_MIN}, ${BANGER_DELTA_MAX}] — rejected`,
+        );
+        return false;
+      }
+      return true;
+    })
     .filter((a) => {
       const t1Gain = a.t1?.estPctGain ?? 0;
       if (t1Gain < BANGER_MIN_PCT) {
