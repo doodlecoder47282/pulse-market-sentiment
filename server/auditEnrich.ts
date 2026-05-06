@@ -34,6 +34,7 @@ import type { Candle } from "./ohlc";
 import { getChopRegime, getSpotPriceAtTs } from "./odteAlertEngine";
 import { detectSDZones } from "./sdZones.js";
 import { computeOfiTrend } from "./leeReadyOfi.js";
+import { computeWickTiming } from "./wickTiming.js";
 
 export interface VommaPocket {
   strike: number;
@@ -813,6 +814,36 @@ export async function enrichAudit(
       ofiTrendSummary = null;
     }
 
+    // 13. Wire 14: T_high/T_low timing inference (Bloomberg OHLC paper)
+    let wickTimingSummary: {
+      last3Inference: "BULLISH" | "BEARISH" | "MIXED" | "INDETERMINATE";
+      strongCount15m: number;
+      strongDirection15m: "BULLISH" | "BEARISH" | "BALANCED";
+      latestBar: {
+        inference: "BULLISH" | "BEARISH" | "INDETERMINATE";
+        confluence: "STRONG_BULLISH" | "STRONG_BEARISH" | "WEAK_BULLISH" | "WEAK_BEARISH" | "NEUTRAL";
+        highTiming: "EARLY" | "LATE" | "INDETERMINATE";
+        lowTiming: "EARLY" | "LATE" | "INDETERMINATE";
+      } | null;
+    } | null = null;
+    try {
+      const wt = await computeWickTiming();
+      wickTimingSummary = {
+        last3Inference: wt.last3Inference,
+        strongCount15m: wt.strongCount15m,
+        strongDirection15m: wt.strongDirection15m,
+        latestBar: wt.bars.length > 0 ? {
+          inference: wt.bars[wt.bars.length - 1].inference,
+          confluence: wt.bars[wt.bars.length - 1].confluence,
+          highTiming: wt.bars[wt.bars.length - 1].highTiming,
+          lowTiming: wt.bars[wt.bars.length - 1].lowTiming,
+        } : null,
+      };
+    } catch (e: any) {
+      console.warn(`[auditEnrich] computeWickTiming error: ${e?.message ?? e}`);
+      wickTimingSummary = null;
+    }
+
     // Mutate audit
     daily.audit = {
       ...audit,
@@ -842,6 +873,8 @@ export async function enrichAudit(
       sdZones,
       // Wire 13 Lee-Ready OFI trend
       ofiTrend: ofiTrendSummary,
+      // Wire 14 T_high/T_low timing inference
+      wickTiming: wickTimingSummary,
     };
 
     return result;

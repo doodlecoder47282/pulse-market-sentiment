@@ -747,6 +747,22 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     );
   })();
 
+  // Wire 14: WICK TIMING block (T_high/T_low Bloomberg OHLC paper inference)
+  const wickTimingBlock = (() => {
+    const wt = (audit as any).wickTiming;
+    if (!wt || typeof wt.last3Inference !== "string") return "";
+    const lb = wt.latestBar;
+    // Show latestBar timing pair when inference is clear
+    let lbStr = "";
+    if (lb && lb.inference !== "INDETERMINATE") {
+      lbStr = ` latest=H_${lb.highTiming}+L_${lb.lowTiming}\u2192${lb.inference}`;
+    }
+    const countStr = wt.strongCount15m != null ? ` ${wt.strongCount15m}` : "";
+    return (
+      `WICK TIMING: last3=${wt.last3Inference} strong15m=${wt.strongDirection15m}${countStr}${lbStr}`
+    );
+  })();
+
   // Wire 12: S/D ZONE block (1-min Schwab bars, volume+freshness)
   // Shows nearest active DEMAND/SUPPLY zone relative to spot.
   // Renders a compact line per side: type, status, vol confirm tag, distance.
@@ -804,6 +820,7 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     ...(corrBreakdownBlock ? ["", corrBreakdownBlock] : []),
     ...(sdZoneBlock ? ["", sdZoneBlock] : []),
     ...(ofiBlock ? ["", ofiBlock] : []),
+    ...(wickTimingBlock ? ["", wickTimingBlock] : []),
     "```",
   ].join("\n");
 

@@ -2116,6 +2116,11 @@ Refine the brief above. Search the web for any critical developments the feed is
         wire13OfiBoost: audit.wire13OfiBoost ?? null,
         wire13OfiPenalty: audit.wire13OfiPenalty ?? null,
         wire13Present: true,
+        // Wire 14 T_high/T_low timing inference fields
+        wickTiming: audit.wickTiming ?? null,
+        wire14WickTimingBoost: audit.wire14WickTimingBoost ?? null,
+        wire14WickTimingPenalty: audit.wire14WickTimingPenalty ?? null,
+        wire14Present: true,
         // Full audit for deeper inspection
         audit,
       });

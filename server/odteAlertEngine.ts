@@ -132,6 +132,20 @@ export interface Audit {
   } | null;
   wire13OfiBoost?: number;
   wire13OfiPenalty?: number;
+  // Wire 14 — T_high/T_low timing inference (Bloomberg OHLC paper, OHLC-derived)
+  wickTiming?: {
+    last3Inference: "BULLISH" | "BEARISH" | "MIXED" | "INDETERMINATE";
+    strongCount15m: number;
+    strongDirection15m: "BULLISH" | "BEARISH" | "BALANCED";
+    latestBar: {
+      inference: "BULLISH" | "BEARISH" | "INDETERMINATE";
+      confluence: "STRONG_BULLISH" | "STRONG_BEARISH" | "WEAK_BULLISH" | "WEAK_BEARISH" | "NEUTRAL";
+      highTiming: "EARLY" | "LATE" | "INDETERMINATE";
+      lowTiming: "EARLY" | "LATE" | "INDETERMINATE";
+    } | null;
+  } | null;
+  wire14WickTimingBoost?: number;
+  wire14WickTimingPenalty?: number;
 }
 
 export interface ContractRow {
@@ -1120,6 +1134,91 @@ function scoreSetup(args: {
     }
   } catch (_) {
     reasoning.push("Wire 13 OFI trend: error, skipped");
+  }
+
+  // ─── WIRE 14 — T_high/T_low timing inference (Bloomberg OHLC paper, OHLC-derived) ────────
+  // Infer high/low formation order from open/close as bar endpoints.
+  // Scoring per candidate:
+  //   strong15m aligned + last3 confirms + 3+ strong bars → +3
+  //   strong15m aligned + 3+ strong bars                  → +2
+  //   last3 aligned                                       → +1
+  //   Symmetric penalties for opposed.
+  //   BALANCED / MIXED / INDETERMINATE → no signal
+  try {
+    if (args.audit.wickTiming) {
+      const wt = args.audit.wickTiming;
+      const isCall = args.side === "call";
+
+      // Three confluence signals at descending strength:
+      // 1. strongDirection15m (last-15-min STRONG bars majority)
+      // 2. last3Inference (3-bar consensus)
+      // 3. latestBar.confluence (single most-recent bar)
+
+      const strongAligned15 = (isCall && wt.strongDirection15m === "BULLISH") ||
+                              (!isCall && wt.strongDirection15m === "BEARISH");
+      const strongOpposed15 = (isCall && wt.strongDirection15m === "BEARISH") ||
+                              (!isCall && wt.strongDirection15m === "BULLISH");
+
+      const last3Aligned = (isCall && wt.last3Inference === "BULLISH") ||
+                           (!isCall && wt.last3Inference === "BEARISH");
+      const last3Opposed = (isCall && wt.last3Inference === "BEARISH") ||
+                           (!isCall && wt.last3Inference === "BULLISH");
+
+      if (strongAligned15 && last3Aligned && wt.strongCount15m >= 3) {
+        const boost = 3;
+        score += boost;
+        args.audit.wire14WickTimingBoost = boost;
+        reasoning.push(
+          `Wire 14 wick timing: strong15m=${wt.strongDirection15m} last3=${wt.last3Inference} ` +
+          `strongCount=${wt.strongCount15m} aligned with ${args.side}: +${boost}`,
+        );
+      } else if (strongAligned15 && wt.strongCount15m >= 3) {
+        const boost = 2;
+        score += boost;
+        args.audit.wire14WickTimingBoost = boost;
+        reasoning.push(
+          `Wire 14 wick timing: strong15m=${wt.strongDirection15m} strongCount=${wt.strongCount15m} ` +
+          `aligned with ${args.side}: +${boost}`,
+        );
+      } else if (last3Aligned) {
+        const boost = 1;
+        score += boost;
+        args.audit.wire14WickTimingBoost = boost;
+        reasoning.push(
+          `Wire 14 wick timing: last3=${wt.last3Inference} aligned with ${args.side}: +${boost}`,
+        );
+      } else if (strongOpposed15 && last3Opposed && wt.strongCount15m >= 3) {
+        const penalty = -3;
+        score += penalty;
+        args.audit.wire14WickTimingPenalty = penalty;
+        reasoning.push(
+          `Wire 14 wick timing: strong15m=${wt.strongDirection15m} last3=${wt.last3Inference} ` +
+          `strongCount=${wt.strongCount15m} opposed to ${args.side}: ${penalty}`,
+        );
+      } else if (strongOpposed15 && wt.strongCount15m >= 3) {
+        const penalty = -2;
+        score += penalty;
+        args.audit.wire14WickTimingPenalty = penalty;
+        reasoning.push(
+          `Wire 14 wick timing: strong15m=${wt.strongDirection15m} strongCount=${wt.strongCount15m} ` +
+          `opposed to ${args.side}: ${penalty}`,
+        );
+      } else if (last3Opposed) {
+        const penalty = -1;
+        score += penalty;
+        args.audit.wire14WickTimingPenalty = penalty;
+        reasoning.push(
+          `Wire 14 wick timing: last3=${wt.last3Inference} opposed to ${args.side}: ${penalty}`,
+        );
+      } else {
+        // BALANCED / MIXED / INDETERMINATE → no signal
+        reasoning.push(
+          `Wire 14 wick timing: ${wt.strongDirection15m}/${wt.last3Inference} → no signal`,
+        );
+      }
+    }
+  } catch (_) {
+    reasoning.push("Wire 14 wick timing: error, skipped");
   }
 
   return { score: Math.round(score), reasoning };
