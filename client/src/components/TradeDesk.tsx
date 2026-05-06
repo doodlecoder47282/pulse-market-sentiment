@@ -7,6 +7,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import ExitBrainPanel from "@/components/ExitBrainPanel";
 import { PositionSizer } from "@/components/PositionSizer";
+import RegimePredictPanel from "@/components/RegimePredictPanel";
 import type { GammaStructure } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -172,6 +173,12 @@ export default function TradeDesk() {
 
       {/* Position sizer — risk-first contract sizing for banger trades */}
       <PositionSizer />
+
+      {/* Regime transition forecast — forward-looking probability scoring */}
+      <RegimePredictPanel />
+
+      {/* Color legend — what each tone means across this tab */}
+      <TradeDeskColorLegend />
 
       {/* Command bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/20 bg-gradient-to-r from-amber-500/5 to-transparent px-4 py-2.5">
@@ -1857,16 +1864,117 @@ function EodPlayMaker() {
 
 function TradeDeskSkeleton() {
   return (
-    <div className="space-y-4">
-      <Skeleton className="h-12 w-full" />
+    <div className="space-y-4" data-testid="trade-desk-skeleton">
+      {/* Command bar placeholder */}
+      <div className="flex items-center justify-between rounded-md border border-amber-500/10 bg-gradient-to-r from-amber-500/5 to-transparent px-4 py-2.5">
+        <div className="flex items-center gap-2">
+          <Crosshair className="h-4 w-4 text-amber-500/40" />
+          <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-500/60">Loading Trade Desk…</span>
+        </div>
+        <Skeleton className="h-5 w-32" />
+      </div>
+      {/* Playbook + squeeze */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <Skeleton className="h-64 lg:col-span-8" />
         <Skeleton className="h-64 lg:col-span-4" />
       </div>
+      {/* Decision support */}
+      <Skeleton className="h-32 w-full" />
+      {/* 3 charts */}
       <Skeleton className="h-64 w-full" />
       <Skeleton className="h-64 w-full" />
       <Skeleton className="h-64 w-full" />
+      {/* Gamma map */}
       <Skeleton className="h-80 w-full" />
     </div>
+  );
+}
+
+// --- Color Legend --------------------------------------------------------
+
+const LEGEND_GROUPS: Array<{
+  group: string;
+  items: Array<{ swatch: string; label: string; meaning: string }>;
+}> = [
+  {
+    group: "Bias / Direction",
+    items: [
+      { swatch: "bg-emerald-500/30 border-emerald-500/60", label: "Bullish / Long", meaning: "Upside scenario, support, long entry" },
+      { swatch: "bg-red-500/30 border-red-500/60", label: "Bearish / Short", meaning: "Downside scenario, resistance, short entry" },
+      { swatch: "bg-amber-500/30 border-amber-500/60", label: "Volatile / Pin", meaning: "Two-sided risk, chop, pin pressure" },
+      { swatch: "bg-muted border-border", label: "Neutral", meaning: "No bias, awaiting trigger" },
+    ],
+  },
+  {
+    group: "Conviction / Probability",
+    items: [
+      { swatch: "bg-amber-500/20 border-amber-500/40", label: "Primary scenario", meaning: "Highest-odds path on the playbook" },
+      { swatch: "bg-card/30 border-border", label: "Secondary", meaning: "Plausible alt path" },
+      { swatch: "bg-card/10 border-border/50 opacity-80", label: "Tertiary", meaning: "Tail / low-odds" },
+    ],
+  },
+  {
+    group: "Gamma / Regime",
+    items: [
+      { swatch: "bg-purple-500/20 border-purple-500/40", label: "Regime forecast", meaning: "Forward-looking transition probabilities" },
+      { swatch: "bg-cyan-500/20 border-cyan-500/40", label: "News / catalyst", meaning: "Per-event reaction map" },
+      { swatch: "bg-emerald-500/40", label: "Positive γ", meaning: "Dampening — pin to walls" },
+      { swatch: "bg-red-500/40", label: "Negative γ", meaning: "Acceleration — moves extend" },
+    ],
+  },
+];
+
+function TradeDeskColorLegend() {
+  const [open, setOpen] = useState(false);
+  return (
+    <Card className="border-border/60" data-testid="card-color-legend">
+      <CardContent className="p-3">
+        <button
+          onClick={() => setOpen((o) => !o)}
+          className="flex w-full items-center justify-between text-left"
+          data-testid="button-toggle-legend"
+        >
+          <div className="flex items-center gap-2">
+            <div className="flex gap-0.5">
+              <span className="h-2 w-2 rounded-sm bg-emerald-500" />
+              <span className="h-2 w-2 rounded-sm bg-amber-500" />
+              <span className="h-2 w-2 rounded-sm bg-red-500" />
+              <span className="h-2 w-2 rounded-sm bg-purple-500" />
+            </div>
+            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              Color Legend
+            </span>
+            <span className="text-[9px] text-muted-foreground/70">
+              {open ? "hide" : "what each tone means"}
+            </span>
+          </div>
+          <span className="font-mono text-[10px] text-muted-foreground">{open ? "−" : "+"}</span>
+        </button>
+        {open && (
+          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+            {LEGEND_GROUPS.map((g) => (
+              <div key={g.group}>
+                <div className="mb-1.5 text-[9px] font-semibold uppercase tracking-wider text-amber-500">
+                  {g.group}
+                </div>
+                <div className="space-y-1">
+                  {g.items.map((it) => (
+                    <div key={it.label} className="flex items-start gap-2" data-testid={`legend-${it.label}`}>
+                      <div className={`mt-0.5 h-3 w-3 flex-shrink-0 rounded-sm border ${it.swatch}`} />
+                      <div className="min-w-0">
+                        <div className="font-mono text-[10px] uppercase tracking-wider text-foreground">
+                          {it.label}
+                        </div>
+                        <div className="text-[9.5px] leading-snug text-muted-foreground">{it.meaning}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
