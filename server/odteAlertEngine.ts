@@ -60,6 +60,7 @@ export interface Audit {
   gex?: number | null;            // net GEX in $M (negative = dealers short gamma)
   sessionOpen?: number | null;    // SPX print at 09:30 ET open (for GTBR distance)
   atmIV?: number | null;          // closest-to-spot contract IV at score time (for GTBR formula)
+  coldBootOverride?: boolean;     // A- override: fired despite spotHistory.length < 5
   wickZones?: {
     pivot: number;
     upperEntry: number;
@@ -119,7 +120,7 @@ export interface OdteAlert {
   t2TrailingStopLevel: number;      // SPX-level the stop trails to after T1 hits
   greekSignals: string;             // e.g. "SLOPE UP" or "SLOPE UP · VANNA BULL"
   regime: string;                   // e.g. "NEUTRAL" | "DAMPENED γ+" | "VOLATILE γ-"
-  grade: { score: number; letter: string };
+  grade: { score: number; letter: string; coldBootOverride?: boolean };
   reasoning: string[];              // breakdown of where points came from
 }
 
@@ -155,6 +156,14 @@ export function setTenAmRegime(snapshot: TenAmRegimeSnapshot): void {
   tenAmRegime = snapshot;
 }
 
+/** Returns current spotHistory length and first/last timestamps for diagnostics. */
+export function getSpotHistoryInfo(): { length: number; oldestTs: number | null; newestTs: number | null } {
+  const length = spotHistory.length;
+  const oldestTs = length > 0 ? spotHistory[0].ts : null;
+  const newestTs = length > 0 ? spotHistory[length - 1].ts : null;
+  return { length, oldestTs, newestTs };
+}
+
 function etDateStr(ts: number): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
@@ -168,6 +177,76 @@ export function recordSpot(ts: number, spot: number): void {
   const cutoff = ts - HISTORY_MAX_MS;
   while (spotHistory.length > 0 && spotHistory[0].ts < cutoff) spotHistory.shift();
   while (spotHistory.length > HISTORY_MAX_PTS) spotHistory.shift();
+}
+
+/**
+ * seedSpotHistory — backfill spotHistory from Yahoo 1-min SPX bars at startup.
+ *
+ * Reads today's intraday bars (^GSPC, 1D, 1m) and calls recordSpot() for the
+ * last 30 minutes worth of bars. Idempotent: if spotHistory already has >= 5
+ * entries, skips seeding entirely.
+ *
+ * Returns { seeded, oldestTs, newestTs } for startup logging.
+ */
+export async function seedSpotHistory(): Promise<{
+  seeded: number;
+  oldestTs: number | null;
+  newestTs: number | null;
+}> {
+  if (spotHistory.length >= 5) {
+    console.log(`[seedSpotHistory] spotHistory already warm (length=${spotHistory.length}), skipping seed`);
+    return { seeded: 0, oldestTs: null, newestTs: null };
+  }
+
+  let bars: Array<{ t: number; c: number }> = [];
+
+  // Attempt 1: Yahoo 1-min bars for ^GSPC
+  try {
+    const { fetchOHLC } = await import("./ohlc");
+    const ohlc = await fetchOHLC("^GSPC", "1D", "1m");
+    if (ohlc.candles.length >= 3) {
+      // Filter to last 30 minutes
+      const now = Date.now();
+      const cutoff30m = Math.floor((now - 30 * 60_000) / 1000); // seconds
+      const recent = ohlc.candles.filter((b) => b.t >= cutoff30m && b.c > 0);
+      bars = recent.map((b) => ({ t: b.t, c: b.c }));
+    }
+  } catch (e: any) {
+    console.warn(`[seedSpotHistory] Yahoo 1-min fetch failed: ${e?.message ?? e}`);
+  }
+
+  // Attempt 2: fallback to 5-min bars if 1-min yielded < 3
+  if (bars.length < 3) {
+    try {
+      const { fetchOHLC } = await import("./ohlc");
+      const ohlc5 = await fetchOHLC("^GSPC", "1D", "5m");
+      if (ohlc5.candles.length >= 3) {
+        const now = Date.now();
+        const cutoff30m = Math.floor((now - 30 * 60_000) / 1000);
+        const recent = ohlc5.candles.filter((b) => b.t >= cutoff30m && b.c > 0);
+        bars = recent.map((b) => ({ t: b.t, c: b.c }));
+      }
+    } catch (e: any) {
+      console.warn(`[seedSpotHistory] Yahoo 5-min fallback failed: ${e?.message ?? e}`);
+    }
+  }
+
+  if (bars.length === 0) {
+    console.warn(`[seedSpotHistory] no bars available, spotHistory not seeded`);
+    return { seeded: 0, oldestTs: null, newestTs: null };
+  }
+
+  let seeded = 0;
+  for (const bar of bars) {
+    // bar.t is epoch seconds; recordSpot expects ms
+    recordSpot(bar.t * 1000, bar.c);
+    seeded++;
+  }
+
+  const oldest = spotHistory.length > 0 ? spotHistory[0].ts : null;
+  const newest = spotHistory.length > 0 ? spotHistory[spotHistory.length - 1].ts : null;
+  console.log(`[seedSpotHistory] seeded ${seeded} bars into spotHistory (length=${spotHistory.length}), oldest=${oldest}, newest=${newest}`);
+  return { seeded, oldestTs: oldest, newestTs: newest };
 }
 
 // Has spot crossed `level` from `fromSide` to the other side at any point in
@@ -814,6 +893,20 @@ export function diagnoseOdte(args: EvalArgs): {
   const fireable: OdteAlert[] = [];
   const rejected: Array<{ alert: OdteAlert; reason: string }> = [];
   for (const a of out) {
+    // Maturity gate (cold-boot lookback check)
+    if (spotHistory.length < 5 && a.grade.score < 85) {
+      rejected.push({
+        alert: a,
+        reason: `INSUFFICIENT_LOOKBACK_NEEDS_A_MINUS: spotHistory.length=${spotHistory.length} < 5 AND score ${a.grade.score} < 85`,
+      });
+      continue;
+    }
+    if (spotHistory.length < 5 && a.grade.score >= 85) {
+      a.grade.coldBootOverride = true;
+      a.grade.reasoning.push(
+        `MATURITY GATE: cold-boot override — spotHistory.length=${spotHistory.length} but score ${a.grade.score} >= 85`,
+      );
+    }
     if (a.grade.score < FIRE_GATE) {
       rejected.push({ alert: a, reason: `grade ${a.grade.score} < FIRE_GATE ${FIRE_GATE}` });
       continue;
@@ -915,6 +1008,27 @@ export function evaluateOdte(args: EvalArgs): OdteAlert[] {
   // earns more, so we additionally bonus alerts whose T2 ≥ 50% by leaving them
   // through; the floor is enforced on T1 to guarantee the *minimum* take.
   const passed = out
+    // ─── Maturity gate: cold-boot lookback check ─────────────────────────────
+    // spotHistory.length < 5 = cold boot. Score < 85 (below A) → reject with
+    // INSUFFICIENT_LOOKBACK_NEEDS_A_MINUS. Score >= 85 → fire with
+    // coldBootOverride = true so downstream knows.
+    .filter((a) => {
+      if (spotHistory.length < 5) {
+        if (a.grade.score < 85) {
+          a.grade.reasoning.push(
+            `MATURITY GATE: spotHistory.length=${spotHistory.length} < 5 AND score ${a.grade.score} < 85 — INSUFFICIENT_LOOKBACK_NEEDS_A_MINUS`,
+          );
+          return false; // reject — cold-boot, sub-A grade
+        }
+        // A- override: score >= 85, flag and let through
+        console.log(`[odteAlertEngine] A- override fired with spotHistory.length=${spotHistory.length} score=${a.grade.score}`);
+        a.grade.coldBootOverride = true;
+        a.grade.reasoning.push(
+          `MATURITY GATE: cold-boot override — spotHistory.length=${spotHistory.length} but score ${a.grade.score} >= 85 (A or better)`,
+        );
+      }
+      return true;
+    })
     .filter((a) => a.grade.score >= FIRE_GATE)
     .filter((a) => {
       // BANGERS delta floor — kills lottos (Δ<0.20) and deep-ITM hedges (Δ>0.70)

@@ -21,7 +21,7 @@ import {
   postNewsAlert,
   postOdteBangerAlert,
 } from "./discord";
-import { evaluateOdte, setTenAmRegime, type EvalArgs } from "./odteAlertEngine";
+import { evaluateOdte, setTenAmRegime, seedSpotHistory, type EvalArgs } from "./odteAlertEngine";
 import { postBatcaveDailyCard } from "./discordBatcaveCard";
 import { settleDay } from "./calibration";
 import { postCalibrationCard } from "./calibrationCard";
@@ -680,6 +680,20 @@ let timer: ReturnType<typeof setInterval> | null = null;
 
 export function startDiscordScheduler(): void {
   if (timer) return;
+
+  // Seed spotHistory from Yahoo 1-min bars before starting the poll loop.
+  // This prevents the engine from being blind on cold boot / redeployment.
+  // Errors are swallowed — don't block scheduler startup.
+  seedSpotHistory()
+    .then((result) => {
+      console.log(
+        `[scheduler] seedSpotHistory: seeded=${result.seeded} oldestTs=${result.oldestTs} newestTs=${result.newestTs}`,
+      );
+    })
+    .catch((e) => {
+      console.warn(`[scheduler] seedSpotHistory failed (non-fatal): ${e?.message ?? e}`);
+    });
+
   timer = setInterval(() => { tick().catch(() => {}); }, 60_000);
   // First tick after 5s so server has a moment to warm
   setTimeout(() => { tick().catch(() => {}); }, 5_000);

@@ -2068,6 +2068,24 @@ Refine the brief above. Search the web for any critical developments the feed is
     res.json({ tracked: getTracked() });
   });
 
+  // 0DTE spotHistory audit — returns current in-memory spotHistory metadata
+  // Used for deployment verification (seed worked?) and ops diagnostics.
+  app.get("/api/odte/audit", async (_req, res) => {
+    try {
+      const { getSpotHistoryInfo } = await import("./odteAlertEngine");
+      const info = getSpotHistoryInfo();
+      res.json({
+        spotHistoryLength: info.length,
+        oldestTs: info.oldestTs,
+        newestTs: info.newestTs,
+        warm: info.length >= 5,
+        asOf: Date.now(),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: "odte_audit_failed", message: e?.message });
+    }
+  });
+
   // 0DTE banger preview — evaluates the engine against current snapshots
   // and returns ALL candidate setups (gated and ungated) so the user can see
   // what the model is watching. Read-only: never posts to Discord.
