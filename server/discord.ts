@@ -48,7 +48,7 @@ interface DiscordPayload {
 }
 
 // ─── Webhook poster ──────────────────────────────────────────────────────
-async function postToDiscord(payload: DiscordPayload): Promise<boolean> {
+export async function postToDiscord(payload: DiscordPayload): Promise<boolean> {
   try {
     const res = await fetch(WEBHOOK_URL, {
       method: "POST",

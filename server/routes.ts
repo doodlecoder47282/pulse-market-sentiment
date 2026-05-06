@@ -2232,6 +2232,39 @@ Refine the brief above. Search the web for any critical developments the feed is
     console.warn(`[exitBrain] failed to start: ${e?.message ?? e}`);
   }
 
+  // Kick off WHALE-ONLY flow alerts (30s eval, 60s coalesce, $1M+/10x OI/ABOVE_ASK)
+  try {
+    const { startFlowAlerts, getFlowSnapshot, previewFlow } = await import("./flowAlertEngine");
+    startFlowAlerts();
+    app.get("/api/flow/snapshot", (_req, res) => {
+      try { res.json(getFlowSnapshot()); }
+      catch (e: any) { res.status(500).json({ error: "flow_snapshot_failed", message: e?.message ?? String(e) }); }
+    });
+    app.get("/api/flow/preview", async (_req, res) => {
+      try { res.json(await previewFlow()); }
+      catch (e: any) { res.status(500).json({ error: "flow_preview_failed", message: e?.message ?? String(e) }); }
+    });
+    // Manual fire to test webhook formatting end-to-end
+    app.post("/api/flow/test-fire", async (req, res) => {
+      try {
+        const symbol = String(req.query.symbol ?? "SPY").toUpperCase();
+        const { previewFlow: pf } = await import("./flowAlertEngine");
+        const { postWhaleFlowAlert } = await import("./discordFlowCard");
+        const data = await pf();
+        const bucket = data.byTicker[symbol];
+        if (!bucket || bucket.whales.length === 0) {
+          return res.json({ ok: false, note: `no whales found for ${symbol} right now` });
+        }
+        const ok = await postWhaleFlowAlert(symbol, bucket.whales);
+        res.json({ ok, fired: bucket.whales.length });
+      } catch (e: any) {
+        res.status(500).json({ ok: false, note: e?.message ?? "failed" });
+      }
+    });
+  } catch (e: any) {
+    console.warn(`[flowAlerts] failed to start: ${e?.message ?? e}`);
+  }
+
   // Manual test endpoint for Discord webhook
   app.post("/api/discord/test", async (_req, res) => {
     try {
