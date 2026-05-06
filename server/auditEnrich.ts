@@ -35,6 +35,7 @@ import { getChopRegime, getSpotPriceAtTs } from "./odteAlertEngine";
 import { detectSDZones } from "./sdZones.js";
 import { computeOfiTrend } from "./leeReadyOfi.js";
 import { computeWickTiming } from "./wickTiming.js";
+import { getPriceHistory, getOptionChain } from "./schwab.js";
 
 export interface VommaPocket {
   strike: number;
@@ -655,6 +656,125 @@ async function computeCorrelationBreakdown(
   return { vixPctChange5m, spxPctChange5m, correlationBreakdown, correlationBreakdownDirection };
 }
 
+// ─── Session 9:30 ET open cache (60s) ──────────────────────────────
+let sessionOpenCache: { date: string; open: number | null; ts: number } | null = null;
+const SESSION_OPEN_CACHE_MS = 60_000;
+
+function getETDateString(d: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(d);
+}
+
+async function getSessionOpen930ET(): Promise<number | null> {
+  const today = getETDateString();
+  // Cache hit?
+  if (sessionOpenCache && sessionOpenCache.date === today &&
+      Date.now() - sessionOpenCache.ts < SESSION_OPEN_CACHE_MS) {
+    return sessionOpenCache.open;
+  }
+
+  try {
+    const history = await getPriceHistory("$SPX.X", "day", 1, "minute", 1);
+    if (!history.candles || history.candles.length === 0) {
+      sessionOpenCache = { date: today, open: null, ts: Date.now() };
+      return null;
+    }
+
+    // Find the first bar at or after 9:30 ET today.
+    // Schwab returns datetime as Unix ms. Convert each to ET HH:MM and check.
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York", hour: "2-digit", minute: "2-digit",
+      hour12: false, year: "numeric", month: "2-digit", day: "2-digit",
+    });
+
+    let firstRTH: number | null = null;
+    for (const c of history.candles) {
+      const parts = fmt.formatToParts(new Date(c.datetime));
+      const hh = parts.find(p => p.type === "hour")?.value ?? "00";
+      const mm = parts.find(p => p.type === "minute")?.value ?? "00";
+      const yyyy = parts.find(p => p.type === "year")?.value ?? "0000";
+      const mo = parts.find(p => p.type === "month")?.value ?? "00";
+      const dd = parts.find(p => p.type === "day")?.value ?? "00";
+      const barDate = `${yyyy}-${mo}-${dd}`;
+      if (barDate !== today) continue;
+      const totalMin = parseInt(hh) * 60 + parseInt(mm);
+      // 9:30 ET = 570 minutes. RTH first bar = 9:30:00 (totalMin === 570)
+      if (totalMin >= 570 && totalMin < 600) {
+        firstRTH = c.open;
+        break;
+      }
+    }
+
+    sessionOpenCache = { date: today, open: firstRTH, ts: Date.now() };
+    return firstRTH;
+  } catch (e: any) {
+    console.warn("[getSessionOpen930ET]", e?.message ?? e);
+    sessionOpenCache = { date: today, open: null, ts: Date.now() };
+    return null;
+  }
+}
+
+// ─── ATM IV cache (60s) ────────────────────────────────────────────
+let atmIVCache: { ts: number; spot: number; iv: number | null } | null = null;
+const ATM_IV_CACHE_MS = 60_000;
+
+async function getAtmIV(spot: number): Promise<number | null> {
+  // Cache hit if same minute and spot within 5pt
+  if (atmIVCache && Date.now() - atmIVCache.ts < ATM_IV_CACHE_MS &&
+      Math.abs(atmIVCache.spot - spot) < 5) {
+    return atmIVCache.iv;
+  }
+
+  try {
+    // Pull SPX 0DTE chain (current trading day)
+    const chain = await getOptionChain("$SPX.X");
+    if (!chain || (chain as any).error) {
+      atmIVCache = { ts: Date.now(), spot, iv: null };
+      return null;
+    }
+
+    const c = chain as any;
+    const callMap = c.callExpDateMap ?? {};
+    const expKeys = Object.keys(callMap);
+    if (expKeys.length === 0) {
+      atmIVCache = { ts: Date.now(), spot, iv: null };
+      return null;
+    }
+
+    // Find the nearest expiration (0DTE = first key when sorted)
+    expKeys.sort();
+    const firstExp = expKeys[0];
+    const strikesObj = callMap[firstExp] ?? {};
+
+    // Find strike closest to spot, take its IV
+    let bestDist = Infinity;
+    let bestIv: number | null = null;
+    for (const strikeKey of Object.keys(strikesObj)) {
+      const strike = parseFloat(strikeKey);
+      if (!isFinite(strike)) continue;
+      const dist = Math.abs(strike - spot);
+      if (dist >= bestDist) continue;
+      const arr = strikesObj[strikeKey];
+      if (!Array.isArray(arr) || arr.length === 0) continue;
+      const contract = arr[0];
+      // Schwab contract IV field: "volatility" (in percent, e.g. 18.5)
+      const ivRaw = contract?.volatility;
+      if (typeof ivRaw !== "number" || !isFinite(ivRaw) || ivRaw <= 0) continue;
+      bestDist = dist;
+      // Convert percent to decimal (18.5 → 0.185) for the GTBR formula
+      bestIv = ivRaw / 100;
+    }
+
+    atmIVCache = { ts: Date.now(), spot, iv: bestIv };
+    return bestIv;
+  } catch (e: any) {
+    console.warn("[getAtmIV]", e?.message ?? e);
+    atmIVCache = { ts: Date.now(), spot, iv: null };
+    return null;
+  }
+}
+
 /**
  * Main entry — augments daily horizon audit with the 5 missing fields.
  * Returns the same response object (mutated in place).
@@ -705,38 +825,19 @@ export async function enrichAudit(
       }
     } catch { /* leave null */ }
 
-    // 5. sessionOpen: SPX 09:30 ET bar. Try ohlc_minute, fallback to null.
-    //    Table ohlc_minute is not present in this deployment — sessionOpen = null.
+    // 5. sessionOpen: SPX 09:30 ET RTH open from Schwab 1-min pricehistory
+    //    Cached 60s — same RTH session value once set. Falls back to null if pre-9:30
+    //    or if Schwab returns nothing.
     let sessionOpen: number | null = null;
     try {
-      const db = getReadOnlyDb();
-      // Attempt ohlc_minute with the canonical 9:30 ET open bar
-      const etDateNow = new Intl.DateTimeFormat("en-CA", {
-        timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
-      }).format(new Date());
-      // Compute Unix timestamp of today's 9:30 ET in seconds
-      const open930 = Date.parse(`${etDateNow}T09:30:00`) - (new Date().getTimezoneOffset() * 60_000);
-      // ohlc_minute approach (table may not exist — wrapped in try)
-      try {
-        const row = db
-          .prepare("SELECT close FROM ohlc_minute WHERE symbol = ? AND ts >= ? AND ts < ? ORDER BY ts ASC LIMIT 1")
-          .get("SPX", Math.floor(open930 / 1000), Math.floor(open930 / 1000) + 120) as { close: number } | undefined;
-        if (row && isFinite(row.close) && row.close > 0) sessionOpen = row.close;
-      } catch { /* ohlc_minute not available */ }
+      sessionOpen = await getSessionOpen930ET();
     } catch { /* leave null */ }
 
-    // 6. atmIV: from live 0DTE contract snapshot — closest-to-spot IV > 0
+    // 6. atmIV: closest-to-spot SPX 0DTE call IV from Schwab option chain
+    //    Cached 60s. Falls back to null if no chain or no IVs available.
     let atmIV: number | null = null;
     try {
-      const snap = getOdteSnapshot();
-      const contracts = snap.contracts ?? [];
-      let bestDist = Infinity;
-      for (const c of contracts) {
-        const iv = (c as any).iv ?? null;
-        if (typeof iv !== "number" || !isFinite(iv) || iv <= 0) continue;
-        const dist = Math.abs((c as any).strike - spot);
-        if (dist < bestDist) { bestDist = dist; atmIV = iv; }
-      }
+      atmIV = await getAtmIV(spot);
     } catch { /* leave null */ }
 
     // 7. vwapProfile: intraday VWAP + POC/VAH/VAL from current RTH session bars

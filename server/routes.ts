@@ -2121,6 +2121,10 @@ Refine the brief above. Search the web for any critical developments the feed is
         wire14WickTimingBoost: audit.wire14WickTimingBoost ?? null,
         wire14WickTimingPenalty: audit.wire14WickTimingPenalty ?? null,
         wire14Present: true,
+        // Paper H GTBR gate inputs
+        sessionOpen: audit.sessionOpen ?? null,
+        atmIV: audit.atmIV ?? null,
+        gtbrEligible: (audit.sessionOpen != null && audit.atmIV != null),
         // Full audit for deeper inspection
         audit,
       });
