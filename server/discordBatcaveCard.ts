@@ -32,7 +32,6 @@
 // `level.kind × status`, formatted with neighbor prices when needed.
 
 import { recordPrediction } from "./calibration";
-import { formatDecisionBlock } from "./decisionSupport";
 import { chainAbove, chainBelow, playbookCopy } from "./levelPlaybook";
 import { computeRealtimeTargets } from "./realtimeTargets";
 
@@ -634,31 +633,16 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     sectionRule("CALLS / PUTS") + "\n" +
     [callsLine, neutralLine, putsLine].filter(Boolean).join("\n");
 
-  // Decision-support block (additive, never modifies existing card on failure)
-  // Source: MASTER_SYNTHESIS Tier 1 — Kelly tile, base-rate strip, vol-drag,
-  // P5/P95 close band. All four lines wrapped in their own try/catch inside
-  // formatDecisionBlock, and the call itself is wrapped here so any throw
-  // simply omits the block.
-  let decisionBlock = "";
-  try {
-    decisionBlock = formatDecisionBlock({
-      spot,
-      probBull: (sp.bull ?? 0) / 100,
-      probBase: (sp.base ?? 0) / 100,
-      probBear: (sp.bear ?? 0) / 100,
-      oneDayEM,
-      // realizedSigma20d not in scope — formatter handles undefined gracefully
-    });
-  } catch {
-    decisionBlock = "";
-  }
+  // Decision-support block (suggested size / stance / base rates / close band)
+  // REMOVED per user 0DTE bot rules: no position sizing, no stance, alerts
+  // only fire on actual setup triggers. Levels + structure + what to do at
+  // each level — that's it.
 
   // Stitch the print
   const body = [
     "```",
     close,
     "",
-    ...(decisionBlock ? [decisionBlock, ""] : []),
     range,
     "",
     pivotBlock,
