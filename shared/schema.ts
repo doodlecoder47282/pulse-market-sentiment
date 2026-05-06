@@ -137,6 +137,42 @@ export interface GammaStructure {
   gammaProfile: { spot: number; gex: number }[];  // 60-pt Perfiliev curve, 0.9 · S → 1.1 · S
 }
 
+// ---- Whale alert history: every detection logged for auditability + /api/flow/history ----
+export const whaleAlerts = sqliteTable("whale_alerts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  occ: text("occ").notNull(),
+  symbol: text("symbol").notNull(),
+  type: text("type").notNull(),                       // "C" | "P"
+  strike: real("strike").notNull(),
+  expiration: text("expiration").notNull(),
+  dte: integer("dte").notNull(),
+  premium: real("premium").notNull(),                  // notional dollars
+  volOiRatio: real("vol_oi_ratio").notNull(),
+  isNewStrike: integer("is_new_strike").notNull(),     // 0/1
+  tag: text("tag").notNull(),                          // "ABOVE_ASK" etc
+  sentiment: text("sentiment").notNull(),              // BULLISH | BEARISH | NEUTRAL
+  delta: real("delta").notNull(),
+  detectedAt: integer("detected_at").notNull(),        // epoch ms
+  reason: text("reason").notNull(),                    // why it qualified (e.g. "premium=$1.2M, vol/oi=12x, new-strike")
+});
+export type WhaleAlert = typeof whaleAlerts.$inferSelect;
+
+// ---- Whale follow-through state (one row per OCC, upserted on every tick) ----
+export const whaleFollows = sqliteTable("whale_follows", {
+  occ: text("occ").primaryKey(),
+  symbol: text("symbol").notNull(),
+  type: text("type").notNull(),                        // "C" | "P"
+  strike: real("strike").notNull(),
+  expiration: text("expiration").notNull(),
+  side: text("side").notNull(),                        // BULLISH | BEARISH | NEUTRAL
+  entryJson: text("entry_json").notNull(),             // FollowPosition.entry serialized
+  currentLiveJson: text("current_live_json").notNull(),// FollowPosition.live serialized
+  status: text("status").notNull(),                    // OPEN | TRIMMING | CLOSING | CLOSED | EXPIRED
+  statusAt: integer("status_at").notNull(),            // epoch ms
+  closingPrintJson: text("closing_print_json"),        // nullable
+});
+export type WhaleFollow = typeof whaleFollows.$inferSelect;
+
 // ----- Sector Web (reactive force-graph + deep heatmap grid) -----
 
 export interface SectorNode {

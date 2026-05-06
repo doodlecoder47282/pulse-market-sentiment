@@ -96,6 +96,39 @@ sqlite.exec(`
     zero_gamma REAL
   );
   CREATE INDEX IF NOT EXISTS idx_model_recals_sym_h_date ON model_recals(symbol, horizon, trade_date, captured_at DESC);
+  CREATE TABLE IF NOT EXISTS whale_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    occ TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    type TEXT NOT NULL,
+    strike REAL NOT NULL,
+    expiration TEXT NOT NULL,
+    dte INTEGER NOT NULL,
+    premium REAL NOT NULL,
+    vol_oi_ratio REAL NOT NULL,
+    is_new_strike INTEGER NOT NULL,
+    tag TEXT NOT NULL,
+    sentiment TEXT NOT NULL,
+    delta REAL NOT NULL,
+    detected_at INTEGER NOT NULL,
+    reason TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_whale_alerts_symbol_detected ON whale_alerts(symbol, detected_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_whale_alerts_detected ON whale_alerts(detected_at DESC);
+  CREATE TABLE IF NOT EXISTS whale_follows (
+    occ TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    type TEXT NOT NULL,
+    strike REAL NOT NULL,
+    expiration TEXT NOT NULL,
+    side TEXT NOT NULL,
+    entry_json TEXT NOT NULL,
+    current_live_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    status_at INTEGER NOT NULL,
+    closing_print_json TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_whale_follows_status_at ON whale_follows(status, status_at DESC);
 `);
 
 export { schwabTokens };

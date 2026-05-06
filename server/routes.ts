@@ -2235,6 +2235,14 @@ Refine the brief above. Search the web for any critical developments the feed is
   // Kick off WHALE-ONLY flow alerts (30s eval, 60s coalesce, $1M+/10x OI/ABOVE_ASK)
   try {
     const { startFlowAlerts, getFlowSnapshot, previewFlow } = await import("./flowAlertEngine");
+    // Hydrate any in-flight whale follow-through state from SQLite before tracker starts ticking.
+    try {
+      const { hydrateFromDb } = await import("./whaleFollowThrough");
+      const { loaded } = hydrateFromDb();
+      if (loaded > 0) console.log(`[whaleFollowThrough] hydrated ${loaded} positions from db`);
+    } catch (e: any) {
+      console.warn(`[whaleFollowThrough] hydration skipped: ${e?.message ?? e}`);
+    }
     startFlowAlerts();
     app.get("/api/flow/snapshot", (_req, res) => {
       try { res.json(getFlowSnapshot()); }
@@ -2285,6 +2293,20 @@ Refine the brief above. Search the web for any critical developments the feed is
         res.json(getFollowSnapshot(filter));
       } catch (e: any) {
         res.status(500).json({ error: "followups_failed", message: e?.message ?? String(e) });
+      }
+    });
+    // Whale alert history (durable audit log of every detection)
+    app.get("/api/flow/history", async (req, res) => {
+      try {
+        const { getWhaleAlertHistory, getWhaleAlertDailyStats } = await import("./whalePersistence");
+        const days = req.query.days ? Math.max(1, Math.min(parseInt(String(req.query.days), 10) || 7, 90)) : 7;
+        const limit = req.query.limit ? Math.max(1, Math.min(parseInt(String(req.query.limit), 10) || 500, 5000)) : 500;
+        const symbol = req.query.symbol ? String(req.query.symbol).toUpperCase() : undefined;
+        const alerts = getWhaleAlertHistory({ days, symbol, limit });
+        const daily = getWhaleAlertDailyStats(days);
+        res.json({ asOf: Date.now(), days, count: alerts.length, alerts, daily });
+      } catch (e: any) {
+        res.status(500).json({ error: "history_failed", message: e?.message ?? String(e) });
       }
     });
     // Manual fire to test webhook formatting end-to-end

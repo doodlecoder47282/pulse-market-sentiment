@@ -26,6 +26,24 @@
 import type { WhaleHit } from "./flowAlertEngine";
 import { buildSchwabFlow, type SchwabFlowContract } from "./schwabFlow";
 
+// Lazy persistence import — fail-soft, never let DB hiccups break tracking.
+function safePersistFollow(p: FollowPosition): void {
+  try {
+    const mod = require("./whalePersistence");
+    if (typeof mod.persistFollowState === "function") mod.persistFollowState(p);
+  } catch {
+    /* swallow */
+  }
+}
+function safePersistAlert(hit: WhaleHit): void {
+  try {
+    const mod = require("./whalePersistence");
+    if (typeof mod.persistWhaleAlert === "function") mod.persistWhaleAlert(hit);
+  } catch {
+    /* swallow */
+  }
+}
+
 export type FollowStatus = "OPEN" | "TRIMMING" | "CLOSING" | "CLOSED" | "EXPIRED";
 
 export interface FollowPosition {
@@ -84,12 +102,15 @@ const STALE_AFTER_MS = 90 * 24 * 60 * 60_000;   // GC after 90 days
 
 /** Called by flowAlertEngine when a new whale fires. */
 export function registerWhale(hit: WhaleHit): void {
+  // Always log to alert history (audit trail) — even on re-fires of the same OCC.
+  safePersistAlert(hit);
   if (positions.has(hit.occ)) {
     // Already tracking — flowAlertEngine premium-tier dedup handles re-fires;
     // we just bump the entry premium on the existing record.
     const p = positions.get(hit.occ)!;
     if (hit.premium > p.entry.premium) {
       p.entry.premium = hit.premium;       // tier increased = more conviction
+      safePersistFollow(p);
     }
     return;
   }
@@ -136,6 +157,7 @@ export function registerWhale(hit: WhaleHit): void {
     status: "OPEN",
     statusAt: hit.detectedAt,
   });
+  safePersistFollow(positions.get(hit.occ)!);
 }
 
 /** Re-price every open position from a fresh chain pull. Called by flowAlertEngine after each eval. */
@@ -183,11 +205,13 @@ export async function updateAll(): Promise<{
           // Contract dropped from chain — likely expired
           if (isExpired(p.expiration)) {
             transitionToTerminal(p, "EXPIRED", "expiration date passed", now);
+            safePersistFollow(p);
             closed++;
           }
           continue;
         }
         applyTick(p, live, now);
+        safePersistFollow(p);
         updated++;
         if (p.status === "CLOSED" || p.status === "EXPIRED") closed++;
       }
@@ -359,4 +383,53 @@ export function getFollowSnapshot(filter?: {
 /** For tests / debug: clear all tracking. */
 export function _clearFollows(): void {
   positions.clear();
+}
+
+/** Hydrate in-memory positions from SQLite on boot. Fail-soft. */
+export function hydrateFromDb(): { loaded: number } {
+  try {
+    const mod = require("./whalePersistence");
+    if (typeof mod.loadAllFollows !== "function") return { loaded: 0 };
+    const rows = mod.loadAllFollows() as Array<{
+      occ: string;
+      symbol: string;
+      type: string;
+      strike: number;
+      expiration: string;
+      side: string;
+      entryJson: string;
+      currentLiveJson: string;
+      status: string;
+      statusAt: number;
+      closingPrintJson: string | null;
+    }>;
+    let loaded = 0;
+    for (const r of rows) {
+      try {
+        const entry = JSON.parse(r.entryJson);
+        const live = JSON.parse(r.currentLiveJson);
+        const closing = r.closingPrintJson ? JSON.parse(r.closingPrintJson) : undefined;
+        const status = r.status as FollowStatus;
+        positions.set(r.occ, {
+          occ: r.occ,
+          symbol: r.symbol,
+          type: r.type as "C" | "P",
+          strike: r.strike,
+          expiration: r.expiration,
+          side: r.side as FollowPosition["side"],
+          entry,
+          live,
+          status,
+          statusAt: r.statusAt,
+          closingPrint: closing,
+        });
+        loaded++;
+      } catch {
+        /* corrupt row — skip */
+      }
+    }
+    return { loaded };
+  } catch {
+    return { loaded: 0 };
+  }
 }
