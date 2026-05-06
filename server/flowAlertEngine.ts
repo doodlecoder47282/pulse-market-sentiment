@@ -201,6 +201,17 @@ function queueHit(hit: WhaleHit): void {
     buf.push(hit);
     pendingByTicker.set(ticker, buf);
 
+    // Register with follow-through tracker so we can re-price tick-by-tick
+    // and detect closing positions. Failure here must NEVER block alert flow.
+    try {
+      // Lazy import — keeps a clean dep boundary
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { registerWhale } = require("./whaleFollowThrough");
+      registerWhale(hit);
+    } catch (e: any) {
+      console.warn(`[flowAlerts] follow-through register failed: ${e?.message ?? e}`);
+    }
+
     // Schedule a flush if not already scheduled
     if (!flushTimers.has(ticker)) {
       const t = setTimeout(() => {
@@ -255,6 +266,14 @@ async function evalCycle(): Promise<void> {
     const cutoff = Date.now() - DEDUP_WINDOW_MS;
     for (const [key, ts] of recentlySeen.entries()) {
       if (ts < cutoff) recentlySeen.delete(key);
+    }
+    // Re-price every tracked whale from fresh chains — captures closing prints,
+    // peak P&L, drawdowns. Read-only; never throws to outer cycle.
+    try {
+      const { updateAll } = await import("./whaleFollowThrough");
+      await updateAll();
+    } catch (e: any) {
+      console.warn(`[flowAlerts] follow-through update failed: ${e?.message ?? e}`);
     }
   } catch (e: any) {
     console.warn(`[flowAlerts] evalCycle failed: ${e?.message ?? e}`);

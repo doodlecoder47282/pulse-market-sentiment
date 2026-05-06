@@ -2244,6 +2244,21 @@ Refine the brief above. Search the web for any critical developments the feed is
       try { res.json(await previewFlow()); }
       catch (e: any) { res.status(500).json({ error: "flow_preview_failed", message: e?.message ?? String(e) }); }
     });
+    // Whale follow-through tracker — see closing positions, peak P&L, status
+    app.get("/api/flow/followups", async (req, res) => {
+      try {
+        const { getFollowSnapshot } = await import("./whaleFollowThrough");
+        const status = req.query.status ? String(req.query.status).toUpperCase() : undefined;
+        const symbol = req.query.symbol ? String(req.query.symbol).toUpperCase() : undefined;
+        const validStatuses = new Set(["OPEN", "TRIMMING", "CLOSING", "CLOSED", "EXPIRED", "ACTIVE", "TERMINAL"]);
+        const filter: any = {};
+        if (status && validStatuses.has(status)) filter.status = status;
+        if (symbol) filter.symbol = symbol;
+        res.json(getFollowSnapshot(filter));
+      } catch (e: any) {
+        res.status(500).json({ error: "followups_failed", message: e?.message ?? String(e) });
+      }
+    });
     // Manual fire to test webhook formatting end-to-end
     app.post("/api/flow/test-fire", async (req, res) => {
       try {
