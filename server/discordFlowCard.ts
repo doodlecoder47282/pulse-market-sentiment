@@ -6,7 +6,7 @@
 // Color: bullish=green / bearish=red / mixed=blue
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { postToDiscord } from "./discord";
+import { postToDiscord, WHALE_WEBHOOK_URL } from "./discord";
 import type { WhaleHit } from "./flowAlertEngine";
 
 const COLOR_BULL = 0x16a34a;
@@ -80,7 +80,7 @@ export async function postWhaleFlowAlert(
         footer: { text: `whale gate: $1M+ premium • vol/OI 10x+ OR new-strike • ABOVE_ASK • dte≥1` },
         timestamp: new Date().toISOString(),
       }],
-    });
+    }, WHALE_WEBHOOK_URL);
   } catch (e: any) {
     console.warn(`[discordFlowCard] post ${ticker} failed: ${e?.message ?? e}`);
     return false;

@@ -17,8 +17,14 @@
 
 const WEBHOOK_URL =
   process.env.PULSE_DISCORD_WEBHOOK ??
-  // Hardcoded fallback for the user's channel. Override via env in prod.
+  // Hardcoded fallback for the user's main Batcave channel. Override via env in prod.
   "https://discord.com/api/webhooks/1318055174576803860/egM4Fx5DcOnxX3fOkbCxmywkgvwgmJWC2B7O1geDKkF-6cFjpN4mspLlPWCZkrBn4Li6";
+
+// Dedicated whale-flow webhook. Only postWhaleFlowAlert routes here so the
+// $1M+ institutional flow stream stays separate from the rest of Batcave.
+export const WHALE_WEBHOOK_URL =
+  process.env.PULSE_DISCORD_WHALE_WEBHOOK ??
+  "https://discord.com/api/webhooks/1501707594199466076/uupxpODoD2fu5JoySqKLbYXgazBm0LFiNH6AOSTthJzXrUdDEnYngMcACS-1kDKq65-M";
 
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -48,21 +54,23 @@ interface DiscordPayload {
 }
 
 // ─── Webhook poster ──────────────────────────────────────────────────────
-export async function postToDiscord(payload: DiscordPayload): Promise<boolean> {
+export async function postToDiscord(payload: DiscordPayload, urlOverride?: string): Promise<boolean> {
+  const url = urlOverride ?? WEBHOOK_URL;
+  const tag = urlOverride ? "discord:whale" : "discord";
   try {
-    const res = await fetch(WEBHOOK_URL, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const txt = await res.text().catch(() => "");
-      console.warn(`[discord] webhook HTTP ${res.status}: ${txt.slice(0, 200)}`);
+      console.warn(`[${tag}] webhook HTTP ${res.status}: ${txt.slice(0, 200)}`);
       return false;
     }
     return true;
   } catch (e: any) {
-    console.warn(`[discord] webhook failed: ${e?.message ?? e}`);
+    console.warn(`[${tag}] webhook failed: ${e?.message ?? e}`);
     return false;
   }
 }
