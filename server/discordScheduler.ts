@@ -338,7 +338,7 @@ async function pollOdteBangerAlerts(): Promise<void> {
 
   let alerts = [];
   try {
-    alerts = evaluateOdte(args);
+    alerts = await evaluateOdte(args);
   } catch (e: any) {
     console.warn(`[discordScheduler] odte engine threw: ${e?.message ?? e}`);
     return;
@@ -449,7 +449,7 @@ async function maybePreOpenOdteScan(): Promise<void> {
 
   let alerts: any[] = [];
   try {
-    alerts = evaluateOdte(args);
+    alerts = await evaluateOdte(args);
   } catch (e: any) {
     console.warn(`[discordScheduler] pre-open scan engine threw: ${e?.message ?? e}`);
     return;

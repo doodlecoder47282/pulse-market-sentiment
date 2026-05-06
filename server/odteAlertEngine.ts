@@ -61,6 +61,30 @@ export interface Audit {
   sessionOpen?: number | null;    // SPX print at 09:30 ET open (for GTBR distance)
   atmIV?: number | null;          // closest-to-spot contract IV at score time (for GTBR formula)
   coldBootOverride?: boolean;     // A- override: fired despite spotHistory.length < 5
+  // ─── Wire 15 fields ──────────────────────────────────────────────────────
+  // Gate 1 (ENV veto)
+  envVetoReason?: string | null;          // "ENV_VETO_<reason>" or null if passed
+  vix?: number | null;                    // VIX at gate eval time (context only — no cap)
+  // Gate 2 (Contract picker)
+  contractStrike?: number | null;
+  contractDelta?: number | null;          // abs value
+  contractMidPrice?: number | null;
+  contractGamma?: number | null;
+  contractTheta?: number | null;
+  contractVega?: number | null;
+  contractIv?: number | null;
+  // Gate 3 (Projected return)
+  projReturnPctT1?: number | null;        // decimal (e.g. 0.80 = 80%)
+  projReturnPctT2?: number | null;
+  projMinutesToClose?: number | null;
+  // Gate 4 (IV richness)
+  rv5d?: number | null;                   // 5-day realized vol (annualized, decimal)
+  ivRichRatio?: number | null;            // atmIV / rv5d
+  ivRichDegrade?: boolean;                // true when ratio > 1.5 (degraded by 0.7x)
+  // Gate 5 (Greek slope confirmation)
+  gammaSlope5m?: number | null;           // (currentDealerGex - dealerGexFiveMinAgo) / 5
+  // Overall gate rejection reason (null = all gates passed)
+  gateRejectReason?: string | null;
   wickZones?: {
     pivot: number;
     upperEntry: number;
@@ -175,6 +199,12 @@ export interface OdteAlert {
     delta: number | null;           // approximate from distance/EM
     key: string;
     expiry: string;
+    // Wire 15 fields from contract picker
+    gamma?: number | null;
+    theta?: number | null;
+    vega?: number | null;
+    iv?: number | null;
+    midPrice?: number | null;
   };
   reversionFrom: { name: string; price: number };  // level we just bounced off
   t1: { name: string; price: number; estPctGain: number };
@@ -184,9 +214,22 @@ export interface OdteAlert {
   t2TriggerLevel: number;           // SPX-level that activates T2
   t2TrailingStopLevel: number;      // SPX-level the stop trails to after T1 hits
   greekSignals: string;             // e.g. "SLOPE UP" or "SLOPE UP · VANNA BULL"
-  regime: string;                   // e.g. "NEUTRAL" | "DAMPENED γ+" | "VOLATILE γ-"
-  grade: { score: number; letter: string; coldBootOverride?: boolean };
+  regime: string;                   // e.g. "NEUTRAL" | "DAMPENED \u03b3+" | "VOLATILE \u03b3-"
+  grade: { score: number; letter: string; coldBootOverride?: boolean; reasoning: string[] };
   reasoning: string[];              // breakdown of where points came from
+  // Wire 15 gate audit fields
+  wire15?: {
+    projReturnPctT1: number | null;  // decimal (0.80 = 80%)
+    projReturnPctT2: number | null;
+    rv5d: number | null;
+    ivRichRatio: number | null;
+    ivRichDegrade: boolean;
+    gammaSlope5m: number | null;
+    envVetoReason: string | null;
+    gateRejectReason: string | null;
+    contractStrike: number | null;
+    contractDelta: number | null;
+  };
 }
 
 // ─── Wire 10: detection history ring buffer (60-min GC) ─────────────────
@@ -277,6 +320,50 @@ function etDateStr(ts: number): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
   }).format(new Date(ts));
+}
+
+// ─── Wire 15: Dealer GEX 5-min history for gamma slope ─────────────────────────
+// Ring buffer of (ts, gex) snapshots. Capped at 20 entries (covers >1 hour of
+// 5-min polling). Used by Gate 5 to compute gammaSlope5m.
+interface GexPoint { ts: number; gex: number; }
+const dealerGexHistory: GexPoint[] = [];
+const GEX_HISTORY_MAX = 20;
+const GEX_HISTORY_MAX_MS = 70 * 60_000; // 70 min
+
+/**
+ * Called by the 0DTE alert loop each tick with the current net GEX value.
+ * Maintains a capped ring buffer of GEX snapshots.
+ */
+export function recordDealerGex(ts: number, gex: number): void {
+  if (!isFinite(gex)) return;
+  dealerGexHistory.push({ ts, gex });
+  const cutoff = ts - GEX_HISTORY_MAX_MS;
+  while (dealerGexHistory.length > 0 && dealerGexHistory[0].ts < cutoff) {
+    dealerGexHistory.shift();
+  }
+  while (dealerGexHistory.length > GEX_HISTORY_MAX) dealerGexHistory.shift();
+}
+
+/**
+ * Compute gammaSlope5m = (currentGex - gexFiveMinAgo) / 5.
+ * Returns null if no data available from ~5 min ago (within ±90s tolerance).
+ */
+export function computeGammaSlope5m(currentGex: number): number | null {
+  if (!isFinite(currentGex) || dealerGexHistory.length < 2) return null;
+  const now = dealerGexHistory[dealerGexHistory.length - 1].ts;
+  const target = now - 5 * 60_000;
+  const tol = 90_000; // ±90s
+  let bestDist = Infinity;
+  let bestGex: number | null = null;
+  for (const p of dealerGexHistory) {
+    const dist = Math.abs(p.ts - target);
+    if (dist < bestDist && dist <= tol) {
+      bestDist = dist;
+      bestGex = p.gex;
+    }
+  }
+  if (bestGex === null) return null;
+  return (currentGex - bestGex) / 5;
 }
 
 export function recordSpot(ts: number, spot: number): void {
@@ -1225,6 +1312,29 @@ function scoreSetup(args: {
 }
 
 // ─── Main entry: evaluate a snapshot, return alerts that pass the gate ────
+
+/**
+ * Wire 15: pre-fetched async gate data passed into the sync buildAlert loop.
+ * Populated by evaluateOdte / diagnoseOdte before the per-setup loop.
+ */
+export interface Wire15GateContext {
+  // Gate 1: ENV veto pre-check (time-based, computed synchronously in evaluateOdte)
+  // (passed in directly via args.hourET/minuteET/eventDayKind — no stored field needed)
+
+  // Gate 2: Schwab 0DTE chain (fetched once, used per-side per-alert)
+  schwabChain: any | null;              // raw Schwab OptionChainResponse or null
+  todayExpKey: string | null;          // key into callExpDateMap / putExpDateMap
+
+  // Gate 4: 5-day realized vol for IV richness gate
+  rv5d: number | null;                 // annualized decimal (e.g. 0.18 = 18%)
+
+  // Gate 5: computed gammaSlope5m (requires gex ring buffer)
+  gammaSlope5m: number | null;
+
+  // Gate 1d: vanna/charm pin levels (from args.levels filtered by kind)
+  pinLevels: Array<{ price: number; kind: string }>;  // pre-filtered from args.levels
+}
+
 export interface EvalArgs {
   spot: number;
   asOf: number;            // ms timestamp
@@ -1237,6 +1347,7 @@ export interface EvalArgs {
   expiry: string | null;
   eventDayKind?: string | null;          // "FOMC" | "NFP" | "CPI" | null
   eventGateActions?: string[];           // copy of EventGateAction strings
+  wire15?: Wire15GateContext | null;     // Wire 15 pre-fetched gate data
 }
 
 export const FIRE_GATE = 80;  // A− or better — banger-only
@@ -1249,16 +1360,88 @@ export const BANGER_DELTA_MIN = 0.20;
 export const BANGER_DELTA_MAX = 0.70;
 
 /**
+ * Wire 15: Pre-fetch the async gate data needed by buildAlert.
+ * Called once per evaluateOdte / diagnoseOdte invocation, before the setup loop.
+ */
+async function buildWire15Context(args: EvalArgs): Promise<Wire15GateContext> {
+  // Pin levels from args.levels
+  const pinKinds = new Set(["vanna", "vannaPeak", "charmTarget", "charmFlip", "charmZero"]);
+  const pinLevels = args.levels
+    .filter((l) => pinKinds.has(l.kind))
+    .map((l) => ({ price: l.price, kind: l.kind }));
+
+  // Gate 4: compute rv5d from Schwab daily SPX bars
+  let rv5d: number | null = null;
+  try {
+    const { computeRv5d } = await import("./contractPicker");
+    rv5d = await computeRv5d();
+  } catch { /* leave null */ }
+
+  // Gate 2 + Gate 1d: fetch Schwab 0DTE chain once
+  let schwabChain: any | null = null;
+  let todayExpKey: string | null = null;
+  try {
+    const { getOptionChain } = await import("./schwab");
+    const chain = await getOptionChain("$SPX.X", 0);
+    if (chain && !("error" in chain)) {
+      schwabChain = chain;
+      // Find the 0DTE expiry key (same logic as contractPicker.ts)
+      const etNow = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        year: "numeric", month: "2-digit", day: "2-digit",
+      }).format(new Date(args.asOf));
+      const [etM, etD, etY] = etNow.split("/");
+      const todayEt = `${etY}-${etM}-${etD}`;
+      // Find min-DTE key that starts with today's date
+      const expMap = chain.callExpDateMap ?? {};
+      const expKeys = Object.keys(expMap);
+      let minDte = Infinity;
+      for (const k of expKeys) {
+        const parts = k.split(":");
+        const dte = parseInt(parts[1] ?? "999", 10);
+        if (parts[0] === todayEt && dte < minDte) {
+          todayExpKey = k;
+          minDte = dte;
+        }
+      }
+      // Fallback: any min-DTE key
+      if (!todayExpKey) {
+        for (const k of expKeys) {
+          const parts = k.split(":");
+          const dte = parseInt(parts[1] ?? "999", 10);
+          if (dte < minDte) {
+            todayExpKey = k;
+            minDte = dte;
+          }
+        }
+      }
+    }
+  } catch { /* leave null */ }
+
+  // Gate 5: gammaSlope5m from ring buffer
+  const currentGex = args.audit.gex;
+  const gammaSlope5m = (typeof currentGex === "number" && isFinite(currentGex))
+    ? computeGammaSlope5m(currentGex)
+    : null;
+  // Also record this tick
+  if (typeof currentGex === "number" && isFinite(currentGex)) {
+    recordDealerGex(args.asOf, currentGex);
+  }
+
+  return { schwabChain, todayExpKey, rv5d, gammaSlope5m, pinLevels };
+}
+
+/**
  * Diagnostic surface — returns ALL candidates pre-filter, with per-candidate
  * pass/reject reasons. Used by /api/odte-alert/preview for visibility.
  * Does NOT consume rate limiter / daily cap / cooldowns.
  */
-export function diagnoseOdte(args: EvalArgs): {
+export async function diagnoseOdte(args: EvalArgs): Promise<{
   fireable: OdteAlert[];
   rejected: Array<{ alert: OdteAlert; reason: string }>;
   fireGate: number;
   bangerMinPct: number;
-} {
+}> {
   // We reuse the same buildAlert pipeline by calling evaluateOdte but
   // rely on the alerts it produces (which already include grade.reasoning
   // appended by the BANGER filter when rejected). Then we re-bucket from
@@ -1271,6 +1454,9 @@ export function diagnoseOdte(args: EvalArgs): {
   if (spotHistory.length < 3) {
     return { fireable: [], rejected: [], fireGate: FIRE_GATE, bangerMinPct: BANGER_MIN_PCT };
   }
+  // Wire 15: pre-fetch async gate data
+  const w15 = args.wire15 ?? await buildWire15Context(args);
+  const argsWithW15: EvalArgs = { ...args, wire15: w15 };
   const sortedLevels = [...args.levels].sort((a, b) => a.price - b.price);
   const meaningfulKinds = new Set([
     "callWall", "putWall", "mainPivot", "charmFlip", "charmZero",
@@ -1281,12 +1467,12 @@ export function diagnoseOdte(args: EvalArgs): {
     if (Math.abs(args.spot - lv.price) > 30) continue;
     if (detectFailedBreak(lv.price, "above").detected) {
       recordDetection(args.asOf, "FAILED_BREAK");
-      const a = buildAlert(args, lv, "FAILED_BREAK", "call", sortedLevels);
+      const a = buildAlert(argsWithW15, lv, "FAILED_BREAK", "call", sortedLevels);
       if (a) out.push(a);
     }
     if (detectFailedBreak(lv.price, "below").detected) {
       recordDetection(args.asOf, "FAILED_BREAK");
-      const a = buildAlert(args, lv, "FAILED_BREAK", "put", sortedLevels);
+      const a = buildAlert(argsWithW15, lv, "FAILED_BREAK", "put", sortedLevels);
       if (a) out.push(a);
     }
   }
@@ -1296,25 +1482,25 @@ export function diagnoseOdte(args: EvalArgs): {
                { name: "MAIN PIVOT", kind: "mainPivot", price: pivot, side: "support" as const };
     if (detectFailedBreak(pivot, "above").detected) {
       recordDetection(args.asOf, "PIVOT_RECLAIM");
-      const a = buildAlert(args, lv, "PIVOT_RECLAIM", "call", sortedLevels);
+      const a = buildAlert(argsWithW15, lv, "PIVOT_RECLAIM", "call", sortedLevels);
       if (a) out.push(a);
     }
     if (detectFailedBreak(pivot, "below").detected) {
       recordDetection(args.asOf, "PIVOT_RECLAIM");
-      const a = buildAlert(args, lv, "PIVOT_RECLAIM", "put", sortedLevels);
+      const a = buildAlert(argsWithW15, lv, "PIVOT_RECLAIM", "put", sortedLevels);
       if (a) out.push(a);
     }
   }
   const callWall = args.levels.find((l) => l.kind === "callWall");
   if (callWall && detectWallReject(callWall.price, "ceiling").detected) {
     recordDetection(args.asOf, "WALL_REJECT");
-    const a = buildAlert(args, callWall, "WALL_REJECT", "put", sortedLevels);
+    const a = buildAlert(argsWithW15, callWall, "WALL_REJECT", "put", sortedLevels);
     if (a) out.push(a);
   }
   const putWall = args.levels.find((l) => l.kind === "putWall");
   if (putWall && detectWallReject(putWall.price, "floor").detected) {
     recordDetection(args.asOf, "WALL_REJECT");
-    const a = buildAlert(args, putWall, "WALL_REJECT", "call", sortedLevels);
+    const a = buildAlert(argsWithW15, putWall, "WALL_REJECT", "call", sortedLevels);
     if (a) out.push(a);
   }
   const fireable: OdteAlert[] = [];
@@ -1358,10 +1544,14 @@ export function diagnoseOdte(args: EvalArgs): {
   return { fireable, rejected, fireGate: FIRE_GATE, bangerMinPct: BANGER_MIN_PCT };
 }
 
-export function evaluateOdte(args: EvalArgs): OdteAlert[] {
+export async function evaluateOdte(args: EvalArgs): Promise<OdteAlert[]> {
   const out: OdteAlert[] = [];
   recordSpot(args.asOf, args.spot);
   if (spotHistory.length < 3) return out;
+
+  // Wire 15: pre-fetch async gate data (chain, rv5d, gammaSlope5m)
+  const w15 = args.wire15 ?? await buildWire15Context(args);
+  const argsWithW15: EvalArgs = { ...args, wire15: w15 };
 
   // Find candidate levels for each setup type
   const sortedLevels = [...args.levels].sort((a, b) => a.price - b.price);
@@ -1381,13 +1571,13 @@ export function evaluateOdte(args: EvalArgs): OdteAlert[] {
     const fbCall = detectFailedBreak(lv.price, "above");
     if (fbCall.detected) {
       recordDetection(args.asOf, "FAILED_BREAK");
-      const alert = buildAlert(args, lv, "FAILED_BREAK", "call", sortedLevels);
+      const alert = buildAlert(argsWithW15, lv, "FAILED_BREAK", "call", sortedLevels);
       if (alert) out.push(alert);
     }
     const fbPut = detectFailedBreak(lv.price, "below");
     if (fbPut.detected) {
       recordDetection(args.asOf, "FAILED_BREAK");
-      const alert = buildAlert(args, lv, "FAILED_BREAK", "put", sortedLevels);
+      const alert = buildAlert(argsWithW15, lv, "FAILED_BREAK", "put", sortedLevels);
       if (alert) out.push(alert);
     }
   }
@@ -1400,13 +1590,13 @@ export function evaluateOdte(args: EvalArgs): OdteAlert[] {
     const reclaimUp = detectFailedBreak(pivot, "above"); // identical pattern, semantics differ
     if (reclaimUp.detected) {
       recordDetection(args.asOf, "PIVOT_RECLAIM");
-      const alert = buildAlert(args, lv, "PIVOT_RECLAIM", "call", sortedLevels);
+      const alert = buildAlert(argsWithW15, lv, "PIVOT_RECLAIM", "call", sortedLevels);
       if (alert) out.push(alert);
     }
     const reclaimDn = detectFailedBreak(pivot, "below");
     if (reclaimDn.detected) {
       recordDetection(args.asOf, "PIVOT_RECLAIM");
-      const alert = buildAlert(args, lv, "PIVOT_RECLAIM", "put", sortedLevels);
+      const alert = buildAlert(argsWithW15, lv, "PIVOT_RECLAIM", "put", sortedLevels);
       if (alert) out.push(alert);
     }
   }
@@ -1417,7 +1607,7 @@ export function evaluateOdte(args: EvalArgs): OdteAlert[] {
     const rej = detectWallReject(callWall.price, "ceiling");
     if (rej.detected) {
       recordDetection(args.asOf, "WALL_REJECT");
-      const alert = buildAlert(args, callWall, "WALL_REJECT", "put", sortedLevels);
+      const alert = buildAlert(argsWithW15, callWall, "WALL_REJECT", "put", sortedLevels);
       if (alert) out.push(alert);
     }
   }
@@ -1426,7 +1616,7 @@ export function evaluateOdte(args: EvalArgs): OdteAlert[] {
     const rej = detectWallReject(putWall.price, "floor");
     if (rej.detected) {
       recordDetection(args.asOf, "WALL_REJECT");
-      const alert = buildAlert(args, putWall, "WALL_REJECT", "call", sortedLevels);
+      const alert = buildAlert(argsWithW15, putWall, "WALL_REJECT", "call", sortedLevels);
       if (alert) out.push(alert);
     }
   }
@@ -1526,75 +1716,385 @@ function buildAlert(
   side: Side,
   sortedLevels: LevelLite[],
 ): OdteAlert | null {
-  const c = pickContract(args.contracts, args.spot, side, args.oneDayEM);
-  if (!c) return null;
+  // ─── Wire 15: GATE 1 — Environmental veto ─────────────────────────────────────────
+  // (binary skip — returns null with reason logged to audit)
+  const todMinET = args.hourET * 60 + args.minuteET;
+  let envVetoReason: string | null = null;
 
-  // T1 = next level in the trade direction
+  // Gate 1a: FOMC / CPI / NFP event day — skip until 30min after release.
+  // We detect "event day" when eventDayKind is set (magnitude >= 45bps from Londono & Samadi 2025).
+  // "30min after release" heuristic: FOMC at 14:00 ET = skip before 14:30; CPI/NFP at 08:30 ET
+  // are pre-market so RTH is fine after 09:30. We use a simple rule: skip all day if event
+  // hasn't "cleared" yet (FOMC at 14:00 = skip before 14:30; CPI/NFP at 08:30 = always clear by RTH open).
+  if (!envVetoReason && args.eventDayKind) {
+    const ek = args.eventDayKind.toUpperCase();
+    if (ek === "FOMC" && todMinET < 14 * 60 + 30) {
+      // FOMC release at 14:00 ET. Block until 14:30.
+      envVetoReason = "ENV_VETO_EVENT_DAY";
+    } else if ((ek === "CPI" || ek === "NFP") && todMinET < 9 * 60 + 35) {
+      // Pre-market release: block only first 5 min of RTH if we somehow fire before 9:35
+      envVetoReason = "ENV_VETO_EVENT_DAY";
+    } else if (ek !== "FOMC" && ek !== "CPI" && ek !== "NFP") {
+      // Unknown high-impact event: be conservative, skip
+      envVetoReason = "ENV_VETO_EVENT_DAY";
+    }
+  }
+
+  // Gate 1b: Last 90 min of session (after 14:30 ET), unless PIVOT_RECLAIM
+  if (!envVetoReason && todMinET >= 14 * 60 + 30 && setup !== "PIVOT_RECLAIM") {
+    envVetoReason = "ENV_VETO_END_OF_DAY";
+  }
+
+  // Gate 1c: First 5 min of session (9:30:00 – 9:34:59 ET)
+  if (!envVetoReason && todMinET < 9 * 60 + 35) {
+    envVetoReason = "ENV_VETO_OPEN_AUCTION";
+  }
+
+  // Gate 1d: Spot pinned within 3 SPX pts of a vanna/charm pin with >70% delta concentration
+  if (!envVetoReason && args.wire15) {
+    for (const pl of args.wire15.pinLevels) {
+      if (Math.abs(args.spot - pl.price) <= 3) {
+        // Check 0DTE delta concentration at that strike in the chain
+        let deltaConc = 0;
+        if (args.wire15.schwabChain && args.wire15.todayExpKey) {
+          const chainSide = side === "call" ? args.wire15.schwabChain.callExpDateMap : args.wire15.schwabChain.putExpDateMap;
+          const strikesObj = chainSide?.[args.wire15.todayExpKey] ?? {};
+          let totalOI = 0;
+          let pinOI = 0;
+          for (const [strikeStr, contracts] of Object.entries(strikesObj as Record<string, any[]>)) {
+            const sk = parseFloat(strikeStr);
+            const oi = (contracts as any[])[0]?.openInterest ?? 0;
+            totalOI += oi;
+            if (Math.abs(sk - pl.price) <= 2.5) pinOI += oi;
+          }
+          if (totalOI > 0) deltaConc = pinOI / totalOI;
+        }
+        if (deltaConc > 0.70) {
+          envVetoReason = "ENV_VETO_PIN";
+          break;
+        }
+      }
+    }
+  }
+
+  if (envVetoReason) {
+    // Return a "rejected" alert (null return) — gate reason surfaced in audit
+    // We store the veto reason but since buildAlert must return OdteAlert | null,
+    // we return null. The reason is logged in the gate context.
+    console.log(`[wire15:gate1] ${setup}/${side} rejected: ${envVetoReason} (tod=${args.hourET}:${String(args.minuteET).padStart(2,'0')} eventDay=${args.eventDayKind ?? 'none'})`);
+    return null;
+  }
+
+  // ─── Wire 15: GATE 2 — Contract picker (delta 0.35–0.50 band) ─────────────────────
+  // T1/T2 levels needed first for strike preference.
   const above = sortedLevels.filter((l) => l.price > args.spot + 1);
   const below = sortedLevels.filter((l) => l.price < args.spot - 1).reverse();
   const t1Lv = side === "call" ? above[0] : below[0];
   const t2Lv = side === "call" ? above[1] : below[1];
   if (!t1Lv) return null;
 
+  // Try picking from Schwab chain via wire15 context
+  let pickedContract: {
+    strike: number; delta: number; gamma: number; theta: number; vega: number;
+    midPrice: number; iv: number; bid: number | null; ask: number | null;
+    key: string; expiry: string; openInterest: number; volume: number;
+  } | null = null;
+
+  if (args.wire15?.schwabChain && args.wire15.todayExpKey) {
+    const expMap = (side === "call"
+      ? args.wire15.schwabChain.callExpDateMap
+      : args.wire15.schwabChain.putExpDateMap) ?? {};
+    const strikesObj = expMap[args.wire15.todayExpKey] ?? {};
+    const bandCandidates: typeof pickedContract[] = [];
+    for (const [strikeStr, contracts] of Object.entries(strikesObj as Record<string, any[]>)) {
+      const sk = parseFloat(strikeStr);
+      if (!isFinite(sk)) continue;
+      const c0 = (contracts as any[])[0];
+      if (!c0) continue;
+      const delta: number = typeof c0.delta === "number" ? c0.delta : 0;
+      const absDelta = Math.abs(delta);
+      if (absDelta < 0.35 || absDelta > 0.50) continue;
+      const bid: number | null = typeof c0.bid === "number" ? c0.bid : null;
+      const ask: number | null = typeof c0.ask === "number" ? c0.ask : null;
+      const last: number | null = typeof c0.last === "number" ? c0.last
+                                : typeof c0.lastPrice === "number" ? c0.lastPrice : null;
+      const mid = bid != null && ask != null ? (bid + ask) / 2 : last ?? 0;
+      if (mid <= 0) continue;
+      const iv: number = typeof c0.volatility === "number" ? c0.volatility / 100
+                       : typeof c0.iv === "number" ? c0.iv : 0;
+      const key = c0.symbol ?? `SPX_${sk}_${side.toUpperCase()[0]}_${args.wire15.todayExpKey.split(':')[0]}`;
+      const expiry = args.wire15.todayExpKey.split(':')[0] ?? "";
+      bandCandidates.push({
+        strike: sk, delta, gamma: c0.gamma ?? 0, theta: c0.theta ?? 0, vega: c0.vega ?? 0,
+        midPrice: mid, iv, bid, ask, key, expiry,
+        openInterest: c0.openInterest ?? 0, volume: c0.totalVolume ?? c0.volume ?? 0,
+      });
+    }
+    if (bandCandidates.length === 0) {
+      console.log(`[wire15:gate2] ${setup}/${side} rejected: CONTRACT_NO_STRIKE_IN_DELTA_BAND`);
+      return null; // Gate 2 reject
+    }
+    // Prefer between spot and T1
+    const lo = Math.min(args.spot, t1Lv.price);
+    const hi = Math.max(args.spot, t1Lv.price);
+    const betweenCands = bandCandidates.filter((c) => c !== null && c!.strike > lo && c!.strike < hi);
+    const pool = betweenCands.length > 0 ? betweenCands : bandCandidates;
+    pickedContract = (pool as NonNullable<typeof pickedContract>[]).reduce((a, b) =>
+      Math.abs(a.strike - args.spot) <= Math.abs(b.strike - args.spot) ? a : b,
+    );
+  }
+
+  // Fallback: use legacy pickContract if no chain available
+  let legacyContract: ReturnType<typeof pickContract> | null = null;
+  let effectiveDelta: number;
+  let effectiveMid: number;
+  let contractForScoring: ContractRow;
+
+  if (pickedContract) {
+    // Build a ContractRow compatible shape for scoreSetup
+    contractForScoring = {
+      key: pickedContract.key,
+      strike: pickedContract.strike,
+      side: side as "call" | "put",
+      bid: pickedContract.bid,
+      ask: pickedContract.ask,
+      mid: pickedContract.midPrice,
+      last: null,
+      volume: pickedContract.volume,
+      openInterest: pickedContract.openInterest,
+      expiry: pickedContract.expiry,
+      iv: pickedContract.iv,
+    };
+    effectiveDelta = Math.abs(pickedContract.delta);
+    effectiveMid = pickedContract.midPrice;
+  } else {
+    legacyContract = pickContract(args.contracts, args.spot, side, args.oneDayEM);
+    if (!legacyContract) return null;
+    contractForScoring = legacyContract;
+    effectiveDelta = approxDelta(legacyContract.strike, args.spot, args.oneDayEM, side);
+    effectiveMid = legacyContract.mid ?? legacyContract.last ?? 0;
+  }
+
+  // ─── Wire 15: GATE 3 — Projected return >= +50% to T1 ───────────────────────────────
+  let projReturnPctT1: number | null = null;
+  let projReturnPctT2: number | null = null;
+  let ivRichDegrade = false;
+  let ivRichRatio: number | null = null;
+  const rv5d: number | null = args.wire15?.rv5d ?? null;
+
+  if (pickedContract) {
+    const minutesToClose = computeMinutesToCloseSync(args.asOf, args.hourET, args.minuteET);
+    const gamma = pickedContract.gamma;
+    const theta = pickedContract.theta; // per-day, negative
+    const absDelta = Math.abs(pickedContract.delta);
+    const mid = pickedContract.midPrice;
+
+    function bsProj(targetPrice: number): number {
+      const move = side === "call" ? targetPrice - args.spot : args.spot - targetPrice;
+      const projDeltaPnl = absDelta * move;
+      const projGammaBoost = 0.5 * gamma * move * move;
+      const projThetaCost = (theta / 390) * minutesToClose; // theta is negative, so this is negative
+      const projPnl = projDeltaPnl + projGammaBoost + projThetaCost;
+      return mid > 0 ? projPnl / mid : 0;
+    }
+
+    projReturnPctT1 = bsProj(t1Lv.price);
+    projReturnPctT2 = t2Lv ? bsProj(t2Lv.price) : bsProj(t1Lv.price + (side === "call" ? 5 : -5));
+
+    // ─── Wire 15: GATE 4 — IV richness ──────────────────────────────────────────────
+    // atmIV: use the picked contract's IV; rv5d from wire15 context
+    const atmIV = pickedContract.iv > 0 ? pickedContract.iv : (args.audit.atmIV ?? null);
+    if (atmIV && rv5d && rv5d > 0) {
+      ivRichRatio = atmIV / rv5d;
+      if (ivRichRatio > 2.0) {
+        console.log(`[wire15:gate4] ${setup}/${side} rejected: IV_RICH_RATIO_GT_2 ratio=${ivRichRatio.toFixed(2)}`);
+        return null; // Gate 4 hard reject
+      }
+      if (ivRichRatio > 1.5) {
+        // Degrade projected return by 0.7x BEFORE the 50% gate
+        ivRichDegrade = true;
+        projReturnPctT1 = projReturnPctT1 * 0.7;
+        if (projReturnPctT2 !== null) projReturnPctT2 = projReturnPctT2 * 0.7;
+      }
+    }
+
+    // Now enforce the 50% gate (after IV degrade applied)
+    const coldBoot = spotHistory.length < 5;
+    const score85Override = false; // We don't have the score yet — compute it below.
+    // We'll do a two-pass: build the alert, compute score, THEN apply cold-boot override.
+    // For the gate check here, we skip if projReturnPctT1 < 0.50 AND not A-(85).
+    // Since we don't have the score yet, we'll defer the cold-boot check and only
+    // hard-reject when projReturnPctT1 < 0.50 (score check happens after scoring).
+    if (projReturnPctT1 !== null && projReturnPctT1 < 0.50) {
+      // Will be enforced post-scoring with cold-boot override logic
+      // Save the state for post-score enforcement
+    }
+  }
+
+  // ─── Wire 15: GATE 5 — Greek slope confirmation ───────────────────────────────────
+  const gammaSlope5m: number | null = args.wire15?.gammaSlope5m ?? null;
+  let gate5RejectReason: string | null = null;
+
+  // 5a: OFI trend gate
+  if (args.audit.ofiTrend) {
+    const ofi = args.audit.ofiTrend;
+    const ofiTrend = ofi.trend; // "BULLISH" | "BEARISH" | "NEUTRAL"
+    // For CALL: OFI must be BULLISH (BUY) or NEUTRAL. Reject if BEARISH (SELL).
+    // For PUT: OFI must be BEARISH (SELL) or NEUTRAL. Reject if BULLISH (BUY).
+    if (side === "call" && ofiTrend === "BEARISH") {
+      gate5RejectReason = "OFI_CONTRADICTS_SIDE";
+    } else if (side === "put" && ofiTrend === "BULLISH") {
+      gate5RejectReason = "OFI_CONTRADICTS_SIDE";
+    }
+  }
+
+  // 5b: Wick timing gate (only if OFI didn't already reject)
+  if (!gate5RejectReason && args.audit.wickTiming) {
+    const wt = args.audit.wickTiming;
+    const last3 = wt.last3Inference;
+    // CALL: must NOT be CLOSED_DOWN_FROM_HIGH; PUT: must NOT be CLOSED_UP_FROM_LOW.
+    // The actual values from wickTiming are: "BULLISH" | "BEARISH" | "MIXED" | "INDETERMINATE".
+    // The spec says: for CALL reject CLOSED_DOWN_FROM_HIGH; for PUT reject CLOSED_UP_FROM_LOW.
+    // Map: BEARISH on last3 for CALL is analogous to CLOSED_DOWN_FROM_HIGH.
+    //       BULLISH on last3 for PUT is analogous to CLOSED_UP_FROM_LOW.
+    // INDETERMINATE passes always.
+    if (side === "call" && last3 === "BEARISH") {
+      gate5RejectReason = "WICK_TIMING_CONTRADICTS";
+    } else if (side === "put" && last3 === "BULLISH") {
+      gate5RejectReason = "WICK_TIMING_CONTRADICTS";
+    }
+  }
+
+  if (gate5RejectReason) {
+    console.log(`[wire15:gate5] ${setup}/${side} rejected: ${gate5RejectReason}`);
+    return null;
+  }
+
+  // ─── Existing scoring path ───────────────────────────────────────────────────────────
   const t1Pts = Math.abs(t1Lv.price - args.spot);
-  // Stop = invalidation level on the other side of reversionLevel + 3pt buffer
   const stopLevel = side === "call"
     ? reversionLevel.price - 3
     : reversionLevel.price + 3;
   const stopPts = Math.abs(args.spot - stopLevel);
 
-  const delta = approxDelta(c.strike, args.spot, args.oneDayEM, side);
-  const mid = c.mid ?? c.last ?? 0;
-  const t1EstPct = estPctGainAtTarget(args.spot, t1Lv.price, mid, delta, side);
-  const t2EstPct = t2Lv ? estPctGainAtTarget(args.spot, t2Lv.price, mid, delta, side) : 0;
-
-  // T2 trailing stop = just past T1 in trade direction
-  const t2TrailingStopLevel = side === "call" ? t1Lv.price - 3 : t1Lv.price + 3;
-  const t2TriggerLevel = t1Lv.price;
-
-  const score = scoreSetup({
-    setup, side, spot: args.spot, audit: args.audit, contract: c,
+  const scoreResult = scoreSetup({
+    setup, side, spot: args.spot, audit: args.audit, contract: contractForScoring,
     t1Pts, stopPts, hourET: args.hourET, minuteET: args.minuteET,
     eventDayKind: args.eventDayKind ?? null,
     eventGateActions: args.eventGateActions ?? [],
   });
 
-  // Greek signals string
-  const greekParts: string[] = [];
-  if (typeof args.audit.slope === "number") {
-    greekParts.push(args.audit.slope > 0 ? "SLOPE UP" : args.audit.slope < 0 ? "SLOPE DOWN" : "SLOPE FLAT");
+  // ─── Gate 3 post-score: enforce 50% return UNLESS score >= 85 (cold-boot A- override) ─
+  if (projReturnPctT1 !== null && projReturnPctT1 < 0.50) {
+    const isColdBootOverride = scoreResult.score >= 85;
+    if (!isColdBootOverride) {
+      console.log(`[wire15:gate3] ${setup}/${side} rejected: PROJ_RETURN_BELOW_50_PCT projT1=${(projReturnPctT1*100).toFixed(0)}%`);
+      return null;
+    }
+    // Score >= 85 (A-): override passes, note in reasoning
+    scoreResult.reasoning.push(`Wire 15 Gate 3: PROJ_RETURN_BELOW_50_PCT overridden by A-(85) cold-boot: projT1=${(projReturnPctT1*100).toFixed(0)}%`);
   }
-  if (typeof args.audit.vannaBias === "number" && Math.abs(args.audit.vannaBias) > 0.05) {
-    greekParts.push(args.audit.vannaBias > 0 ? "VANNA BULL" : "VANNA BEAR");
-  }
-  const greekSignals = greekParts.length ? greekParts.join(" · ") : "—";
 
-  const regime = args.audit.gammaZone === "y+" ? "DAMPENED γ+"
-              : args.audit.gammaZone === "y-" ? "VOLATILE γ−"
-              : "NEUTRAL";
+  const t1EstPct = pickedContract
+    ? Math.round((projReturnPctT1 ?? 0) * 100)  // use BS projection
+    : estPctGainAtTarget(args.spot, t1Lv.price, effectiveMid, effectiveDelta, side);
+  const t2EstPct = pickedContract
+    ? Math.round((projReturnPctT2 ?? 0) * 100)
+    : (t2Lv ? estPctGainAtTarget(args.spot, t2Lv.price, effectiveMid, effectiveDelta, side) : 0);
+
+  const t2TrailingStopLevel = side === "call" ? t1Lv.price - 3 : t1Lv.price + 3;
+  const t2TriggerLevel = t1Lv.price;
+
+  // OFI label for card
+  const ofiTrendVal = args.audit.ofiTrend?.trend ?? null;
+  const ofiLabel = ofiTrendVal === "BULLISH" ? "SLOPE UP"
+                 : ofiTrendVal === "BEARISH" ? "SLOPE DOWN"
+                 : "FLAT";
+
+  // gammaSlope label for card
+  const gammaSlopeLabel = gammaSlope5m === null || gammaSlope5m === 0 ? "FLAT"
+                        : gammaSlope5m > 0 ? "UP" : "DOWN";
+
+  // Greek signals line: OFI primary + gamma slope secondary
+  const greekSignals = `OFI ${ofiLabel}  ·  γ-slope ${gammaSlopeLabel}`;
+
+  // Regime tag: compose gamma-zone + chop/jump/corr flags
+  const gzLabel = args.audit.gammaZone === "y+" ? "\u03b3+ DAMPENED"
+                : args.audit.gammaZone === "y-" ? "\u03b3\u2212 VOLATILE"
+                : "NEUTRAL";
+  const regimeParts = [gzLabel];
+  if (args.audit.chopRegime) regimeParts.push("CHOP");
+  if (args.audit.jumpRegime) regimeParts.push("JUMP");
+  if (args.audit.correlationBreakdown) regimeParts.push("CORR-BREAK");
+  const regime = regimeParts.join(" · ");
+
+  const wire15Audit = {
+    projReturnPctT1,
+    projReturnPctT2,
+    rv5d,
+    ivRichRatio,
+    ivRichDegrade,
+    gammaSlope5m,
+    envVetoReason,
+    gateRejectReason: null as string | null,
+    contractStrike: pickedContract?.strike ?? null,
+    contractDelta: pickedContract ? Math.abs(pickedContract.delta) : null,
+  };
+
+  const contractOut = pickedContract ? {
+    strike: pickedContract.strike,
+    last: null as number | null,
+    bid: pickedContract.bid,
+    ask: pickedContract.ask,
+    delta: Math.abs(pickedContract.delta),
+    key: pickedContract.key,
+    expiry: pickedContract.expiry,
+    gamma: pickedContract.gamma,
+    theta: pickedContract.theta,
+    vega: pickedContract.vega,
+    iv: pickedContract.iv,
+    midPrice: pickedContract.midPrice,
+  } : {
+    strike: legacyContract!.strike,
+    last: legacyContract!.last,
+    bid: legacyContract!.bid,
+    ask: legacyContract!.ask,
+    delta: effectiveDelta,
+    key: legacyContract!.key,
+    expiry: legacyContract!.expiry,
+  };
 
   return {
     setup, side, spot: args.spot, asOf: args.asOf,
-    contract: {
-      strike: c.strike, last: c.last, bid: c.bid, ask: c.ask,
-      delta, key: c.key, expiry: c.expiry,
-    },
+    contract: contractOut,
     reversionFrom: { name: reversionLevel.name, price: reversionLevel.price },
     t1: { name: t1Lv.name, price: t1Lv.price, estPctGain: t1EstPct },
     t2: t2Lv ? { name: t2Lv.name, price: t2Lv.price, estPctGain: t2EstPct } : undefined,
-    stopPct: 20,                  // standard -20% on contract for 0DTE
+    stopPct: 20,
     stopLevel,
     t2TriggerLevel,
     t2TrailingStopLevel,
     greekSignals, regime,
-    grade: { score: score.score, letter: letterGrade(score.score) },
-    reasoning: score.reasoning,
+    grade: { score: scoreResult.score, letter: letterGrade(scoreResult.score), reasoning: [] },
+    reasoning: scoreResult.reasoning,
+    wire15: wire15Audit,
   };
+}
+
+/**
+ * Synchronous helper: compute minutesToClose from known hourET/minuteET.
+ * Used in buildAlert (which must remain sync).
+ */
+function computeMinutesToCloseSync(nowMs: number, hourET: number, minuteET: number): number {
+  const todMinET = hourET * 60 + minuteET;
+  const closeMinET = 16 * 60; // 16:00 ET
+  return Math.max(1, closeMinET - todMinET);
 }
 
 // ─── Format the alert as the user's mockup ────────────────────────────────
 export function formatOdteAlert(a: OdteAlert): { content: string } {
   const sideUpper = a.side.toUpperCase();
+  const contractType = a.side === "call" ? "C" : "P";
   const setupLabel =
     a.setup === "FAILED_BREAK" ? "FAILED BREAK" :
     a.setup === "PIVOT_RECLAIM" ? "PIVOT RECLAIM" :
@@ -1604,27 +2104,46 @@ export function formatOdteAlert(a: OdteAlert): { content: string } {
     timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false,
   }).format(new Date(a.asOf));
 
+  // delta: abs value, 2dp
+  const deltaStr = a.contract.delta != null
+    ? Math.abs(a.contract.delta).toFixed(2)
+    : "—";
+
+  // projected returns from Wire 15 (decimal → percent, rounded)
+  const projT1Pct = a.wire15?.projReturnPctT1 != null
+    ? Math.round(a.wire15.projReturnPctT1 * 100)
+    : Math.round(a.t1.estPctGain);
+  const projT2Pct = a.wire15?.projReturnPctT2 != null
+    ? Math.round(a.wire15.projReturnPctT2 * 100)
+    : (a.t2 ? Math.round(a.t2.estPctGain) : null);
+
+  // NEW_STOP per spec: CALL = T1-3, PUT = T1+3
+  const newStop = a.side === "call"
+    ? Math.round(a.t1.price) - 3
+    : Math.round(a.t1.price) + 3;
+
   const lines: string[] = [];
   lines.push(`SPX 0DTE TRADE ALERT  |  ${etTime} ET`);
-  lines.push("─".repeat(52));
+  lines.push("─".repeat(40));
   lines.push(`${sideUpper} ALERT  |  ${setupLabel}  |  CONFIDENCE ${a.grade.letter}  (${a.grade.score}/100)`);
   lines.push("");
-  const lastStr = a.contract.last != null ? a.contract.last.toFixed(2) : "—";
-  lines.push(`CONTRACT:  SPX ${a.contract.strike} ${sideUpper}  |  SPX @ ${a.spot.toFixed(1)}  (delta ${a.contract.delta?.toFixed(2) ?? "—"})  mid ${lastStr}`);
+  lines.push(`CONTRACT:  SPX ${a.contract.strike} ${contractType}  |  SPX @ ${a.spot.toFixed(1)}  (delta ${deltaStr})`);
   lines.push("");
-  lines.push(`REVERSION:  ${a.reversionFrom.name} ${Math.round(a.reversionFrom.price)}  →  ${a.t1.name} ${Math.round(a.t1.price)}`);
+  const reversionLine = `${a.reversionFrom.name} ${Math.round(a.reversionFrom.price)}  →  ${a.t1.name} ${Math.round(a.t1.price)}`;
   const entryDesc = a.setup === "FAILED_BREAK"
     ? `Was ${a.side === "call" ? "below" : "above"} ${Math.round(a.reversionFrom.price)}, broke ${a.side === "call" ? "above" : "below"} — trap confirmed. Trade ${sideUpper} back toward ${Math.round(a.t1.price)}.`
     : a.setup === "PIVOT_RECLAIM"
     ? `${a.side === "call" ? "Reclaimed" : "Lost"} pivot ${Math.round(a.reversionFrom.price)} — momentum trade toward ${Math.round(a.t1.price)}.`
     : `Tagged ${a.reversionFrom.name} ${Math.round(a.reversionFrom.price)} and rejected — fade toward ${Math.round(a.t1.price)}.`;
+  lines.push(`REVERSION:  ${reversionLine}`);
   lines.push(`ENTRY:  ${entryDesc}`);
   lines.push("");
-  lines.push(`STOP:  -${a.stopPct}%  OR  5-min close ${a.side === "call" ? "BELOW" : "ABOVE"} ${Math.round(a.stopLevel)}`);
-  lines.push(`T1:  ${Math.round(a.t1.price)}  (${a.t1.name})  +${Math.round(a.t1.estPctGain)}% est`);
+  lines.push(`STOP:  -20%  OR  5-min close ${a.side === "call" ? "BELOW" : "ABOVE"} ${Math.round(a.stopLevel)}`);
+  lines.push(`T1:  ${Math.round(a.t1.price)}  (${a.t1.name})  +${projT1Pct}% est`);
   if (a.t2) {
-    lines.push(`  IF T1 BREAKS: stop → ${a.side === "call" ? "BELOW" : "ABOVE"} ${Math.round(a.t2TrailingStopLevel)}  |  T2: ${Math.round(a.t2.price)} (${a.t2.name}) +${Math.round(a.t2.estPctGain)}% est`);
-    lines.push(`  T2 activates on: 5-min candle close ${a.side === "call" ? "ABOVE" : "BELOW"} ${Math.round(a.t2TriggerLevel)}`);
+    const t2ProjStr = projT2Pct != null ? `+${projT2Pct}% est` : "+—% est";
+    lines.push(`  IF T1 BREAKS: stop -> ${a.side === "call" ? "BELOW" : "ABOVE"} ${newStop}  |  T2: ${Math.round(a.t2.price)} (${a.t2.name}) ${t2ProjStr}`);
+    lines.push(`  T2 activates on: 5-min candle close ${a.side === "call" ? "ABOVE" : "BELOW"} ${Math.round(a.t1.price)}`);
   }
   lines.push("");
   lines.push(`Greek signals:  ${a.greekSignals}`);

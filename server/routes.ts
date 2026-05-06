@@ -2125,6 +2125,19 @@ Refine the brief above. Search the web for any critical developments the feed is
         sessionOpen: audit.sessionOpen ?? null,
         atmIV: audit.atmIV ?? null,
         gtbrEligible: (audit.sessionOpen != null && audit.atmIV != null),
+        // Wire 15 contract gate fields
+        contractStrike: audit.contractStrike ?? null,
+        contractDelta: audit.contractDelta ?? null,
+        contractMidPrice: audit.contractMidPrice ?? null,
+        projReturnPctT1: audit.projReturnPctT1 ?? null,
+        projReturnPctT2: audit.projReturnPctT2 ?? null,
+        rv5d: audit.rv5d ?? null,
+        ivRichRatio: audit.ivRichRatio ?? null,
+        ivRichDegrade: audit.ivRichDegrade ?? null,
+        gammaSlope5m: audit.gammaSlope5m ?? null,
+        envVetoReason: audit.envVetoReason ?? null,
+        gateRejectReason: audit.gateRejectReason ?? null,
+        wire15Present: true,
         // Full audit for deeper inspection
         audit,
       });
@@ -2226,7 +2239,7 @@ Refine the brief above. Search the web for any critical developments the feed is
         eventGateActions,
       };
 
-      const diag = diagnoseOdte(args);
+      const diag = await diagnoseOdte(args);
       const previews = diag.fireable.map((a) => ({
         ...a,
         formatted: formatOdteAlert(a).content,

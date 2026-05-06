@@ -512,8 +512,8 @@ export async function postLevelClusterAlert(args: {
 // ─── Card 2c: 0DTE banger alert (B+ or better only) ──────────────────
 export async function postOdteBangerAlert(a: OdteAlert): Promise<boolean> {
   const { content } = formatOdteAlert(a);
-  // Color by side and grade. A-tier = stronger fill, B-tier = warning amber.
   const isCall = a.side === "call";
+  // A-tier (score >= 80) = directional color; below = warning amber
   const color =
     a.grade.score >= 80 ? (isCall ? COLOR_BULL : COLOR_BEAR) :
     COLOR_WARNING;
@@ -523,12 +523,13 @@ export async function postOdteBangerAlert(a: OdteAlert): Promise<boolean> {
     a.setup === "PIVOT_RECLAIM" ? "PIVOT RECLAIM" :
     "WALL REJECT";
 
-  // Embed wraps the formatted code-block content. Title gives the at-a-glance.
+  const projT1Pct = Math.round((a.wire15?.projReturnPctT1 ?? 0) * 100);
+
   const embed: DiscordEmbed = {
-    title: `0DTE BANGER · ${a.side.toUpperCase()} · ${setupLabel} · ${a.grade.letter}`,
+    title: `SPX 0DTE · ${a.side.toUpperCase()} · ${setupLabel} · ${a.grade.letter}`,
     description: content,
     color,
-    footer: { text: `Pulse Batcave · 0DTE banger · ${a.grade.score}/100 · max 3/day` },
+    footer: { text: `Pulse Batcave · 0DTE banger · ${a.grade.score}/100 · max 3/day · projected +${projT1Pct}%` },
     timestamp: new Date(a.asOf).toISOString(),
   };
 
