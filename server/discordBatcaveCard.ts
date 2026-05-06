@@ -39,9 +39,11 @@ import { getTodayEventContext } from "./volCalendar";
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
 
+// Model channel webhook — every-30-min refined-area card lands here.
+// PULSE_DISCORD_MODEL_WEBHOOK overrides; falls back to dedicated model channel.
 const WEBHOOK_URL =
-  process.env.PULSE_DISCORD_WEBHOOK ??
-  "https://discord.com/api/webhooks/1318055174576803860/egM4Fx5DcOnxX3fOkbCxmywkgvwgmJWC2B7O1geDKkF-6cFjpN4mspLlPWCZkrBn4Li6";
+  process.env.PULSE_DISCORD_MODEL_WEBHOOK ??
+  "https://discord.com/api/webhooks/1501708521010499735/dltDgL_xkY_e5dImY_oYZW8B-d7HCpbnHGAwgMVdIBCuyN58ld04ptSNsr1xfdywtg5T";
 
 // ─── helpers ─────────────────────────────────────────────────────────────
 function fmt0(n: number | null | undefined): string {
@@ -883,10 +885,10 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     ok = res.ok;
     if (!ok) {
       const txt = await res.text().catch(() => "");
-      console.warn(`[discordBatcaveCard] webhook ${res.status}: ${txt.slice(0, 200)}`);
+      console.warn(`[discord:model] batcave card webhook ${res.status}: ${txt.slice(0, 200)}`);
     }
   } catch (e: any) {
-    console.warn(`[discordBatcaveCard] webhook failed: ${e?.message ?? e}`);
+    console.warn(`[discord:model] batcave card webhook failed: ${e?.message ?? e}`);
   }
 
   return { ok, preview: final };

@@ -32,6 +32,14 @@ export const ODTE_WEBHOOK_URL =
   process.env.PULSE_DISCORD_ODTE_WEBHOOK ??
   "https://discord.com/api/webhooks/1501708117929492530/WSQOta_mLBadBwJytdCX12NmXKbYQodl13Zb3-S5cB1g9RaKDB4dbpEH-njTGsFddQxb";
 
+// Dedicated SPX model webhook. Receives the 9:30 ET opening-bias kickoff
+// (postDailyModelCard) and the every-30-min refined-area cards
+// (postBatcaveDailyCard) on RTH trading days. Carries Trade Desk major
+// levels, GEX/γ-zone, scenarios, and the Wire 7-14 audit context.
+export const MODEL_WEBHOOK_URL =
+  process.env.PULSE_DISCORD_MODEL_WEBHOOK ??
+  "https://discord.com/api/webhooks/1501708521010499735/dltDgL_xkY_e5dImY_oYZW8B-d7HCpbnHGAwgMVdIBCuyN58ld04ptSNsr1xfdywtg5T";
+
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
 
@@ -65,6 +73,7 @@ export async function postToDiscord(payload: DiscordPayload, urlOverride?: strin
   const tag =
     urlOverride === WHALE_WEBHOOK_URL ? "discord:whale" :
     urlOverride === ODTE_WEBHOOK_URL ? "discord:odte" :
+    urlOverride === MODEL_WEBHOOK_URL ? "discord:model" :
     urlOverride ? "discord:override" :
     "discord";
   try {
@@ -270,7 +279,7 @@ export async function postDailyModelCard(): Promise<boolean> {
   return await postToDiscord({
     username: "Pulse Batcave",
     embeds: [embed],
-  });
+  }, MODEL_WEBHOOK_URL);
 }
 
 // ─── Card 2: level break alert ───────────────────────────────────────────
