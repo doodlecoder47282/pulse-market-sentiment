@@ -1,6 +1,9 @@
 // server/ohlc.ts
-// Unified OHLC endpoint for candlestick charts. Wraps Yahoo chart API with
-// sensible range/interval combos + in-memory cache keyed by symbol+timeframe.
+// Unified OHLC endpoint for candlestick charts. Wraps Schwab price history
+// with sensible range/interval combos + in-memory cache keyed by symbol+timeframe.
+// Schwab-only mode: no Yahoo fallback.
+
+import { getPriceHistory } from "./schwab";
 
 export type Candle = {
   t: number;   // epoch seconds (bar open time)
@@ -29,117 +32,144 @@ export type OHLCResponse = {
   asOf: number;
 };
 
-const UA = "Mozilla/5.0 (compatible; PulseDashboard/1.0)";
-
-async function yFetch(url: string, timeoutMs = 10_000): Promise<any> {
-  const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const r = await fetch(url, {
-      headers: { "User-Agent": UA, Accept: "application/json" },
-      signal: ctrl.signal,
-    });
-    if (!r.ok) throw new Error(`Yahoo ${r.status}`);
-    return await r.json();
-  } finally {
-    clearTimeout(to);
-  }
+// Map Yahoo-style symbols to Schwab equivalents
+function toSchwabSymbol(symbol: string): string {
+  const map: Record<string, string> = {
+    "^VIX": "$VIX.X",
+    "^VIX9D": "$VIX9D.X",
+    "^VIX3M": "$VIX3M.X",
+    "^VVIX": "$VVIX.X",
+    "^SKEW": "$SKEW.X",
+    "^GSPC": "$SPX.X",
+    "^SPX": "$SPX.X",
+  };
+  return map[symbol] ?? symbol;
 }
 
-// Default timeframe → (range, interval). Intraday timeframes accept an interval override.
-function tfToYahoo(tf: Timeframe, intervalOverride?: Interval): { range: string; interval: string } {
-  // If caller explicitly requests an intraday interval, adjust range to satisfy
-  // Yahoo's constraints (1m: ≤7d, 2m: ≤60d, 5m: ≤60d, 15m: ≤60d, 30m: ≤60d, 60m/1h: ≤730d).
+type SchwabParams = {
+  periodType: "day" | "month" | "year";
+  period: number;
+  frequencyType: "minute" | "daily" | "weekly" | "monthly";
+  frequency: number;
+  intervalLabel: string;  // for OHLCResponse.interval
+};
+
+/**
+ * Convert Yahoo-style Timeframe + Interval override to Schwab pricehistory params.
+ * Schwab supports:
+ *   frequencyType=minute  → frequencyType=day,  period=1..10
+ *   frequencyType=daily   → periodType=day/month/year
+ *   frequencyType=weekly  → periodType=month/year
+ *   frequencyType=monthly → periodType=year
+ */
+function tfToSchwab(tf: Timeframe, intervalOverride?: Interval): SchwabParams {
   if (intervalOverride) {
     switch (intervalOverride) {
       case "1m":
-        // 1m requires range ≤ 7d. Map 1D→1d, 5D→5d (cap), anything else→5d.
-        if (tf === "1D") return { range: "1d", interval: "1m" };
-        return { range: "5d", interval: "1m" };
+        // 1-minute bars: use day periodType
+        if (tf === "1D") return { periodType: "day", period: 1, frequencyType: "minute", frequency: 1, intervalLabel: "1m" };
+        return { periodType: "day", period: 5, frequencyType: "minute", frequency: 1, intervalLabel: "1m" };
       case "2m":
+        if (tf === "1D") return { periodType: "day", period: 1, frequencyType: "minute", frequency: 1, intervalLabel: "2m" };
+        return { periodType: "day", period: 5, frequencyType: "minute", frequency: 1, intervalLabel: "2m" };
       case "5m":
+        if (tf === "1D") return { periodType: "day", period: 1, frequencyType: "minute", frequency: 5, intervalLabel: "5m" };
+        return { periodType: "day", period: 5, frequencyType: "minute", frequency: 5, intervalLabel: "5m" };
       case "15m":
+        if (tf === "1D") return { periodType: "day", period: 1, frequencyType: "minute", frequency: 15, intervalLabel: "15m" };
+        return { periodType: "day", period: 5, frequencyType: "minute", frequency: 15, intervalLabel: "15m" };
       case "30m":
-        if (tf === "1D") return { range: "1d", interval: intervalOverride };
-        if (tf === "5D") return { range: "5d", interval: intervalOverride };
-        return { range: "1mo", interval: intervalOverride };
+        if (tf === "1D") return { periodType: "day", period: 1, frequencyType: "minute", frequency: 30, intervalLabel: "30m" };
+        return { periodType: "day", period: 5, frequencyType: "minute", frequency: 30, intervalLabel: "30m" };
       case "60m":
       case "1h":
-        if (tf === "1D") return { range: "1d", interval: "60m" };
-        if (tf === "5D") return { range: "5d", interval: "60m" };
-        if (tf === "1M") return { range: "1mo", interval: "60m" };
-        return { range: "3mo", interval: "60m" };
+        if (tf === "1D") return { periodType: "day", period: 1, frequencyType: "minute", frequency: 30, intervalLabel: "60m" };
+        if (tf === "5D") return { periodType: "day", period: 5, frequencyType: "minute", frequency: 30, intervalLabel: "60m" };
+        return { periodType: "month", period: 1, frequencyType: "daily", frequency: 1, intervalLabel: "60m" };
       case "1d":
-        return { range: tf === "1Y" ? "1y" : tf === "3M" ? "3mo" : "1mo", interval: "1d" };
+        if (tf === "1Y") return { periodType: "year", period: 1, frequencyType: "daily", frequency: 1, intervalLabel: "1d" };
+        if (tf === "3M") return { periodType: "month", period: 3, frequencyType: "daily", frequency: 1, intervalLabel: "1d" };
+        if (tf === "5D") return { periodType: "day", period: 5, frequencyType: "daily", frequency: 1, intervalLabel: "1d" };
+        return { periodType: "month", period: 1, frequencyType: "daily", frequency: 1, intervalLabel: "1d" };
       case "1wk":
-        return { range: "5y", interval: "1wk" };
+        return { periodType: "year", period: 5, frequencyType: "weekly", frequency: 1, intervalLabel: "1wk" };
       case "1mo":
-        return { range: "5y", interval: "1mo" };
+        return { periodType: "year", period: 5, frequencyType: "monthly", frequency: 1, intervalLabel: "1mo" };
     }
   }
-  // Default behavior (no override)
+  // Default behavior (no interval override)
   switch (tf) {
-    case "1D": return { range: "1d", interval: "5m" };
-    case "5D": return { range: "5d", interval: "30m" };
-    case "1M": return { range: "1mo", interval: "1d" };
-    case "3M": return { range: "3mo", interval: "1d" };
-    case "1Y": return { range: "1y", interval: "1d" };
-    case "5Y": return { range: "5y", interval: "1wk" };
+    case "1D": return { periodType: "day", period: 1, frequencyType: "minute", frequency: 5, intervalLabel: "5m" };
+    case "5D": return { periodType: "day", period: 5, frequencyType: "minute", frequency: 30, intervalLabel: "30m" };
+    case "1M": return { periodType: "month", period: 1, frequencyType: "daily", frequency: 1, intervalLabel: "1d" };
+    case "3M": return { periodType: "month", period: 3, frequencyType: "daily", frequency: 1, intervalLabel: "1d" };
+    case "1Y": return { periodType: "year", period: 1, frequencyType: "daily", frequency: 1, intervalLabel: "1d" };
+    case "5Y": return { periodType: "year", period: 5, frequencyType: "weekly", frequency: 1, intervalLabel: "1wk" };
   }
-}
-
-function normalizeCandles(result: any): Candle[] {
-  const ts: number[] = result?.timestamp || [];
-  const q = result?.indicators?.quote?.[0] || {};
-  const out: Candle[] = [];
-  for (let i = 0; i < ts.length; i++) {
-    const o = q.open?.[i], h = q.high?.[i], l = q.low?.[i], c = q.close?.[i], v = q.volume?.[i];
-    if (o == null || h == null || l == null || c == null) continue;
-    out.push({ t: ts[i], o, h, l, c, v: v ?? null });
-  }
-  return out;
 }
 
 export async function fetchOHLC(symbol: string, tf: Timeframe, intervalOverride?: Interval): Promise<OHLCResponse> {
-  const { range, interval } = tfToYahoo(tf, intervalOverride);
-  const enc = encodeURIComponent(symbol);
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${enc}?interval=${interval}&range=${range}&includePrePost=false`;
-  let result: any = null;
+  const schwabSym = toSchwabSymbol(symbol);
+  const params = tfToSchwab(tf, intervalOverride);
+
+  let candles: Candle[] = [];
   try {
-    const d = await yFetch(url);
-    result = d?.chart?.result?.[0];
-  } catch (e) {
-    // fall through
+    const resp = await getPriceHistory(
+      schwabSym,
+      params.periodType,
+      params.period,
+      params.frequencyType,
+      params.frequency,
+    );
+    // Schwab candles: { datetime (ms), open, high, low, close, volume }
+    candles = resp.candles
+      .map((c) => ({
+        t: Math.floor(c.datetime / 1000),  // convert ms → epoch seconds
+        o: c.open,
+        h: c.high,
+        l: c.low,
+        c: c.close,
+        v: c.volume ?? null,
+      }))
+      .filter((c) => c.o > 0 && c.c > 0);
+  } catch {
+    // fall through — returns empty candles
   }
-  if (!result) {
+
+  if (!candles.length) {
     return {
       symbol,
       displayName: symbol,
       timeframe: tf,
-      interval,
+      interval: params.intervalLabel,
       price: null, prevClose: null, change: null, changePct: null,
       sessionHigh: null, sessionLow: null,
       candles: [],
       asOf: Math.floor(Date.now() / 1000),
     };
   }
-  const candles = normalizeCandles(result);
-  const meta = result.meta || {};
-  const price: number | null = meta.regularMarketPrice ?? candles[candles.length - 1]?.c ?? null;
-  const prevClose: number | null = meta.chartPreviousClose ?? meta.previousClose ?? null;
+
+  const price = candles[candles.length - 1]?.c ?? null;
+  // prevClose: close of the second-to-last daily bar, or first bar for intraday
+  const prevClose = candles.length >= 2
+    ? candles[candles.length - 2].c
+    : null;
   const change = price != null && prevClose != null ? price - prevClose : null;
   const changePct = change != null && prevClose ? (change / prevClose) * 100 : null;
+  const sessionHighs = candles.map((c) => c.h).filter((v) => v != null && v > 0);
+  const sessionLows = candles.map((c) => c.l).filter((v) => v != null && v > 0);
+
   return {
     symbol,
-    displayName: meta.shortName || meta.longName || symbol,
+    displayName: symbol,
     timeframe: tf,
-    interval,
+    interval: params.intervalLabel,
     price,
     prevClose,
     change,
     changePct,
-    sessionHigh: meta.regularMarketDayHigh ?? null,
-    sessionLow: meta.regularMarketDayLow ?? null,
+    sessionHigh: sessionHighs.length > 0 ? Math.max(...sessionHighs) : null,
+    sessionLow: sessionLows.length > 0 ? Math.min(...sessionLows) : null,
     candles,
     asOf: Math.floor(Date.now() / 1000),
   };

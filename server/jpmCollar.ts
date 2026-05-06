@@ -91,7 +91,7 @@ export async function buildJPMCollarSnapshot(): Promise<JPMCollarResponse> {
   }
 
   // Fetch current SPX price
-  const spxQuote = await yahooQuote("^GSPC").catch(() => ({ last: null, prev: null }));
+  const spxQuote = await yahooQuote("^GSPC").catch(() => ({ last: null, prev: null })); // yahooQuote uses Schwab internally
   const spxNow = spxQuote.last ?? 5800; // fallback if feed unavailable
 
   // Current quarter is the first entry (most recent)
@@ -122,41 +122,18 @@ export async function buildJPMCollarSnapshot(): Promise<JPMCollarResponse> {
   return data;
 }
 
-// Also export 90-day SPX daily closes for the JPM chart
-// (reuses the quotes module pattern)
+// Also export 90-day SPX daily closes for the JPM chart via Schwab
+// TODO: Schwab-only mode — Yahoo source removed, using Schwab getPriceHistory.
 export async function fetchSpxDailyCloses90d(): Promise<Array<{ t: number; c: number }>> {
-  const UA = "Mozilla/5.0 (compatible; PulseDashboard/1.0)";
-  const enc = encodeURIComponent("^GSPC");
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${enc}?interval=1d&range=6mo`;
   try {
-    const ctrl = new AbortController();
-    const to = setTimeout(() => ctrl.abort(), 10_000);
-    let data: any;
-    try {
-      const r = await fetch(url, {
-        headers: { "User-Agent": UA, Accept: "application/json" },
-        signal: ctrl.signal,
-      });
-      if (!r.ok) throw new Error(`Yahoo ${r.status}`);
-      data = await r.json();
-    } finally {
-      clearTimeout(to);
-    }
-    const result = data?.chart?.result?.[0];
-    if (!result) return [];
-    const ts: number[] = result.timestamp || [];
-    const closes: (number | null)[] = result.indicators?.quote?.[0]?.close ?? [];
-    const bars: Array<{ t: number; c: number }> = [];
-    for (let i = 0; i < ts.length; i++) {
-      const c = closes[i];
-      if (c != null && isFinite(c) && c > 0) {
-        bars.push({ t: ts[i], c });
-      }
-    }
-    // Return last 90 trading days
+    const { getPriceHistory } = await import("./schwab");
+    const resp = await getPriceHistory("$SPX.X", "month", 6, "daily", 1);
+    const bars = resp.candles
+      .filter((c) => c.close != null && isFinite(c.close) && c.close > 0)
+      .map((c) => ({ t: Math.floor(c.datetime / 1000), c: c.close }));
     return bars.slice(-90);
   } catch (e: any) {
-    console.warn("[jpmCollar] SPX 90d fetch failed:", e?.message);
+    console.warn("[jpmCollar] Schwab SPX 90d fetch failed:", e?.message);
     return [];
   }
 }

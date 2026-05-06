@@ -30,7 +30,7 @@ export type FlowTicker = {
 };
 
 export type FlowResponse = {
-  provider: "cboe" | "yahoo" | "schwab";
+  provider: "cboe" | "schwab"; // TODO: Schwab-only mode — yahoo provider removed
   indexGroup: FlowTicker[];
   mag7Group: FlowTicker[];
   aggregate: {

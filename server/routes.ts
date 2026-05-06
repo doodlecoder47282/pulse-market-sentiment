@@ -1753,14 +1753,14 @@ Refine the brief above. Search the web for any critical developments the feed is
     }
   });
 
-  // ─── Market data endpoints (Schwab primary, Yahoo fallback) ───────────────
+  // ─── Market data endpoints (Schwab-only) ───────────────
 
   app.get("/api/market/quotes", async (req, res) => {
     try {
       const symbolsParam = String(req.query.symbols || "SPY,VIX");
       const symbols = symbolsParam.split(",").map((s) => s.trim()).filter(Boolean);
       const quotes = await schwabGetQuotes(symbols);
-      const source = quotes.length > 0 ? quotes[0].source : "yahoo";
+      const source = quotes.length > 0 ? quotes[0].source : "schwab";
       res.json({ quotes, source, asOf: Date.now() });
     } catch (e: any) {
       res.status(500).json({ message: e?.message ?? "Quotes fetch failed" });

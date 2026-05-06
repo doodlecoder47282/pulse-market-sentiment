@@ -1,5 +1,5 @@
 /**
- * Data source adapters: Yahoo Finance (indices), CBOE (SPY options chain),
+ * Data source adapters: Schwab (quotes), CBOE (SPY options chain),
  * CNN Fear & Greed, AAII (via fallback), and web-based X/Reddit sentiment
  * aggregated from public search pages (no login / no API key).
  */
@@ -22,23 +22,38 @@ async function fetchText(url: string, headers: Record<string, string> = {}) {
   return res.text();
 }
 
-/** Yahoo chart endpoint: last-close + previous-close. */
+/** Quote endpoint: last-close + previous-close via Schwab getQuotes.
+ *  Symbol mapping: Yahoo ^ prefix → Schwab $ prefix (e.g. ^VIX → $VIX.X, ^GSPC → $SPX.X).
+ */
 export async function yahooQuote(symbol: string): Promise<{ last: number | null; prev: number | null; }> {
   try {
-    const enc = encodeURIComponent(symbol);
-    const d = await fetchJson(`https://query1.finance.yahoo.com/v8/finance/chart/${enc}?interval=1d&range=5d`);
-    const r = d?.chart?.result?.[0];
-    if (!r) return { last: null, prev: null };
-    const closes: (number | null)[] = r.indicators?.quote?.[0]?.close ?? [];
-    const validCloses = closes.filter((v): v is number => v != null);
-    // Prev = the close BEFORE the most recent (yesterday), not the start of the range.
-    const lastClose = validCloses[validCloses.length - 1] ?? null;
-    const priorClose = validCloses.length >= 2 ? validCloses[validCloses.length - 2] : (r.meta?.chartPreviousClose ?? null);
-    const price = r.meta?.regularMarketPrice ?? lastClose;
-    return { last: price ?? null, prev: priorClose ?? null };
+    // Map Yahoo-style symbols to Schwab equivalents
+    const schwabSymbol = toSchwabSymbol(symbol);
+    const { getQuotes } = await import("./schwab");
+    const quotes = await getQuotes([schwabSymbol]);
+    const q = quotes.find((q) => q.symbol === schwabSymbol);
+    if (!q || q.last == null) return { last: null, prev: null };
+    // changePercent is vs prev close; back-calculate prev from last + change
+    const last = q.last;
+    const prev = (q.change != null && isFinite(q.change)) ? last - q.change : null;
+    return { last, prev };
   } catch {
     return { last: null, prev: null };
   }
+}
+
+/** Map Yahoo-style symbols to Schwab equivalents. */
+function toSchwabSymbol(symbol: string): string {
+  const map: Record<string, string> = {
+    "^VIX": "$VIX.X",
+    "^VIX9D": "$VIX9D.X",
+    "^VIX3M": "$VIX3M.X",
+    "^VVIX": "$VVIX.X",
+    "^SKEW": "$SKEW.X",
+    "^GSPC": "$SPX.X",
+    "^SPX": "$SPX.X",
+  };
+  return map[symbol] ?? symbol;
 }
 
 /** CBOE delayed options chain for SPY (includes per-contract Greeks). */
@@ -348,20 +363,10 @@ export async function gatherSocial(): Promise<SocialSentiment> {
   return { score, bullish, bearish, neutral, posts: posts.slice(0, 40) };
 }
 
-/** Market news headlines relevant to SPX/SPY. */
+/** Market news headlines relevant to SPX/SPY.
+ *  // TODO: Schwab-only mode — Yahoo source removed, awaiting Schwab equivalent.
+ *  Returns empty array gracefully.
+ */
 export async function fetchHeadlines(): Promise<{ title: string; url: string; source: string; publishedAt?: string }[]> {
-  try {
-    const d = await fetchJson(
-      "https://query1.finance.yahoo.com/v1/finance/search?q=SPY&newsCount=8&enableFuzzyQuery=false",
-    );
-    const news = d?.news ?? [];
-    return news.slice(0, 8).map((n: any) => ({
-      title: n.title,
-      url: n.link,
-      source: n.publisher || "Yahoo",
-      publishedAt: n.providerPublishTime ? new Date(n.providerPublishTime * 1000).toISOString() : undefined,
-    }));
-  } catch {
-    return [];
-  }
+  return [];
 }

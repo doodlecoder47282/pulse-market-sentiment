@@ -1,7 +1,7 @@
 /**
  * server/schwab.ts
  * Charles Schwab API integration: OAuth token management + market data helpers.
- * All data functions fall back to Yahoo Finance when Schwab is disconnected.
+ * Schwab is the sole market-data source. No Yahoo fallback.
  */
 
 import { db, schwabTokens } from "./storage";
@@ -204,158 +204,88 @@ export type NormalizedQuote = {
   bid: number | null;
   ask: number | null;
   volume: number | null;
-  source: "schwab" | "yahoo";
+  source: "schwab";
 };
 
-/** Get quotes for multiple symbols. Falls back to Yahoo if Schwab disconnected. */
+/** Get quotes for multiple symbols via Schwab. Returns empty array if not authenticated. */
 export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
   if (!symbols.length) return [];
   const token = await getAccessToken();
-  if (token) {
-    try {
-      const data = await schwabFetch("marketdata/v1/quotes", { symbols: symbols.join(",") });
-      if (data && typeof data === "object") {
-        const results: NormalizedQuote[] = [];
-        for (const sym of symbols) {
-          const q = data[sym];
-          if (!q) continue;
-          // Schwab returns either "quote" (regular) or "reference" depending on type
-          const qd = q.quote ?? q.fundamental ?? {};
-          const last = qd.lastPrice ?? qd.mark ?? null;
-          // Quote-shield observer (flag-only — see MASTER_SYNTHESIS Tier 2 #6)
-          try {
-            if (last != null && isFinite(last)) observeQuote(sym, last);
-          } catch { /* shield must never break ingest */ }
-          results.push({
-            symbol: sym,
-            last,
-            change: qd.netChange ?? null,
-            changePercent: qd.netPercentChangeInDouble ?? null,
-            bid: qd.bidPrice ?? null,
-            ask: qd.askPrice ?? null,
-            volume: qd.totalVolume ?? null,
-            source: "schwab",
-          });
-        }
-        if (results.length > 0) return results;
-      }
-    } catch (e: any) {
-      console.warn("[schwab] getQuotes error:", e?.message);
-    }
+  if (!token) {
+    console.warn("[schwab] not authenticated, returning empty quotes");
+    return [];
   }
-  // Yahoo fallback
-  return yahooGetQuotes(symbols);
-}
-
-async function yahooGetQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
-  const results: NormalizedQuote[] = [];
-  await Promise.allSettled(
-    symbols.map(async (sym) => {
-      try {
-        const enc = encodeURIComponent(sym);
-        const r = await fetch(
-          `https://query1.finance.yahoo.com/v8/finance/chart/${enc}?interval=1m&range=1d`,
-          { headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json" } }
-        );
-        if (!r.ok) return;
-        const d = await r.json();
-        const meta = d?.chart?.result?.[0]?.meta;
-        if (!meta) return;
-        const last = meta.regularMarketPrice ?? null;
+  try {
+    const data = await schwabFetch("marketdata/v1/quotes", { symbols: symbols.join(",") });
+    if (data && typeof data === "object") {
+      const results: NormalizedQuote[] = [];
+      for (const sym of symbols) {
+        const q = data[sym];
+        if (!q) continue;
+        // Schwab returns either "quote" (regular) or "reference" depending on type
+        const qd = q.quote ?? q.fundamental ?? {};
+        const last = qd.lastPrice ?? qd.mark ?? null;
+        // Quote-shield observer (flag-only — see MASTER_SYNTHESIS Tier 2 #6)
         try {
           if (last != null && isFinite(last)) observeQuote(sym, last);
         } catch { /* shield must never break ingest */ }
         results.push({
           symbol: sym,
           last,
-          change: meta.regularMarketPrice && meta.chartPreviousClose
-            ? meta.regularMarketPrice - meta.chartPreviousClose : null,
-          changePercent: meta.regularMarketPrice && meta.chartPreviousClose
-            ? ((meta.regularMarketPrice - meta.chartPreviousClose) / meta.chartPreviousClose) * 100 : null,
-          bid: null,
-          ask: null,
-          volume: meta.regularMarketVolume ?? null,
-          source: "yahoo",
+          change: qd.netChange ?? null,
+          changePercent: qd.netPercentChangeInDouble ?? null,
+          bid: qd.bidPrice ?? null,
+          ask: qd.askPrice ?? null,
+          volume: qd.totalVolume ?? null,
+          source: "schwab",
         });
-      } catch { /* skip */ }
-    })
-  );
-  return results;
+      }
+      return results;
+    }
+  } catch (e: any) {
+    console.warn("[schwab] getQuotes error:", e?.message);
+  }
+  return [];
 }
 
 export type PriceHistoryResponse = {
   symbol: string;
   candles: { datetime: number; open: number; high: number; low: number; close: number; volume: number }[];
-  source: "schwab" | "yahoo";
+  source: "schwab";
 };
 
-/** Get price history. Falls back to Yahoo. */
+/** Get price history via Schwab. Returns empty candles if not authenticated or on error.
+ *  @param needExtendedHours - pass true for pre/post market data (default false)
+ */
 export async function getPriceHistory(
   symbol: string,
   periodType: "day" | "month" | "year" = "year",
   period: number = 1,
   frequencyType: "minute" | "daily" | "weekly" | "monthly" = "daily",
   frequency: number = 1,
+  needExtendedHours: boolean = false,
 ): Promise<PriceHistoryResponse> {
   const token = await getAccessToken();
-  if (token) {
-    try {
-      const data = await schwabFetch("marketdata/v1/pricehistory", {
-        symbol,
-        periodType,
-        period,
-        frequencyType,
-        frequency,
-        needExtendedHoursData: "false",
-      });
-      if (data?.candles?.length) {
-        return { symbol, candles: data.candles, source: "schwab" };
-      }
-    } catch (e: any) {
-      console.warn("[schwab] getPriceHistory error:", e?.message);
-    }
+  if (!token) {
+    console.warn("[schwab] not authenticated, returning empty candles");
+    return { symbol, candles: [], source: "schwab" };
   }
-  // Yahoo fallback
-  return yahooPriceHistory(symbol, periodType, period);
-}
-
-async function yahooPriceHistory(
-  symbol: string,
-  periodType: "day" | "month" | "year",
-  period: number,
-): Promise<PriceHistoryResponse> {
-  const rangeMap: Record<string, string> = {
-    "day-1": "1d", "day-5": "5d",
-    "month-1": "1mo", "month-3": "3mo", "month-6": "6mo",
-    "year-1": "1y", "year-2": "2y", "year-5": "5y",
-  };
-  const range = rangeMap[`${periodType}-${period}`] ?? "1y";
-  const interval = periodType === "day" ? "5m" : "1d";
   try {
-    const enc = encodeURIComponent(symbol);
-    const r = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${enc}?interval=${interval}&range=${range}`,
-      { headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json" } }
-    );
-    const d = await r.json();
-    const result = d?.chart?.result?.[0];
-    if (!result) return { symbol, candles: [], source: "yahoo" };
-    const ts: number[] = result.timestamp ?? [];
-    const q = result.indicators?.quote?.[0] ?? {};
-    const candles = ts
-      .map((t, i) => ({
-        datetime: t * 1000,
-        open: q.open?.[i] ?? 0,
-        high: q.high?.[i] ?? 0,
-        low: q.low?.[i] ?? 0,
-        close: q.close?.[i] ?? 0,
-        volume: q.volume?.[i] ?? 0,
-      }))
-      .filter((c) => c.open > 0);
-    return { symbol, candles, source: "yahoo" };
-  } catch {
-    return { symbol, candles: [], source: "yahoo" };
+    const data = await schwabFetch("marketdata/v1/pricehistory", {
+      symbol,
+      periodType,
+      period,
+      frequencyType,
+      frequency,
+      needExtendedHoursData: needExtendedHours ? "true" : "false",
+    });
+    if (data?.candles?.length) {
+      return { symbol, candles: data.candles, source: "schwab" };
+    }
+  } catch (e: any) {
+    console.warn("[schwab] getPriceHistory error:", e?.message);
   }
+  return { symbol, candles: [], source: "schwab" };
 }
 
 export type OptionChainResponse = {

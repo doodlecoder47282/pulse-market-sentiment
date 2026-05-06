@@ -63,43 +63,31 @@ let roDb: Database.Database | null = null;
 interface VixPoint { ts: number; price: number; }
 const vixHistory: VixPoint[] = [];
 const VIX_HISTORY_MAX_MS = 15 * 60_000; // 15-min GC window
-// VIX spot cache: 30s TTL to avoid hammering Yahoo on every enrichAudit call
+// VIX spot cache: 30s TTL (Schwab-only mode)
 let vixSpotCache: { ts: number; price: number } | null = null;
 const VIX_SPOT_CACHE_MS = 30_000;
 
 /**
- * Fetch current VIX spot price from Yahoo Finance (^VIX).
- * Returns regularMarketPrice; caches 30 seconds.
- * Reuses the same Yahoo v8/chart endpoint pattern as yahooQuote() in sources.ts.
+ * Fetch current VIX spot price via Schwab getQuotes([$VIX.X]).
+ * Returns last price; caches 30 seconds.
  */
 async function fetchVixSpot(): Promise<number | null> {
   if (vixSpotCache && Date.now() - vixSpotCache.ts < VIX_SPOT_CACHE_MS) {
     return vixSpotCache.price;
   }
   try {
-    const ctrl = new AbortController();
-    const to = setTimeout(() => ctrl.abort(), 8_000);
-    const r = await fetch(
-      "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1m&range=1d",
-      {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (compatible; PulseDashboard/1.0)",
-          Accept: "application/json",
-        },
-        signal: ctrl.signal,
-      },
-    );
-    clearTimeout(to);
-    if (!r.ok) return null;
-    const d = await r.json();
-    const meta = d?.chart?.result?.[0]?.meta ?? {};
-    const price: number | null = meta.regularMarketPrice ?? null;
+    const { getQuotes } = await import("./schwab");
+    const quotes = await getQuotes(["$VIX.X"]);
+    const q = quotes.find((q) => q.symbol === "$VIX.X");
+    const price: number | null = q?.last ?? null;
     if (price != null && isFinite(price) && price > 0) {
+      console.log(`[schwab] fetchVixSpot: ${price}`);
       vixSpotCache = { ts: Date.now(), price };
       return price;
     }
     return null;
-  } catch {
+  } catch (e: any) {
+    console.warn("[auditEnrich] fetchVixSpot error:", e?.message);
     return null;
   }
 }
@@ -237,12 +225,12 @@ async function getIntradayBars(): Promise<{ bars: Candle[]; resolution: string }
     // ohlc_minute table not available in this deployment — expected
   }
 
-  // ── Attempt 2: Yahoo 1-min live bars ─────────────────────────────────────
+  // ── Attempt 2: Schwab 1-min bars via fetchOHLC ──────────────────────────────
   try {
     const { fetchOHLC } = await import("./ohlc");
     const ohlc = await fetchOHLC("^GSPC", "1D", "1m");
     if (ohlc.candles.length >= 5) {
-      // Filter to RTH (9:30 ET → now): Yahoo includePrePost=false already filters
+      // Filter to RTH (9:30 ET → now): fetchOHLC includePrePost=false already filters
       // but double-check by epoch: open is t >= 9:30 ET today.
       const etDateNow = new Intl.DateTimeFormat("en-CA", {
         timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
@@ -255,10 +243,10 @@ async function getIntradayBars(): Promise<{ bars: Candle[]; resolution: string }
       }
     }
   } catch {
-    // Yahoo 1-min unavailable
+    // 1-min bars unavailable
   }
 
-  // ── Attempt 3: Yahoo 5-min fallback ──────────────────────────────────────
+  // ── Attempt 3: Schwab 5-min bars via fetchOHLC ──────────────────────────────
   try {
     const { fetchOHLC } = await import("./ohlc");
     const ohlc5 = await fetchOHLC("^GSPC", "1D", "5m");
@@ -274,7 +262,7 @@ async function getIntradayBars(): Promise<{ bars: Candle[]; resolution: string }
       }
     }
   } catch {
-    // Yahoo 5-min unavailable
+    // 5-min bars unavailable
   }
 
   // ── No bars available ─────────────────────────────────────────────────────
@@ -482,76 +470,56 @@ export async function computeJumpRegime(currentGex?: number | null): Promise<Jum
   };
 
   // ── Feature 1 + 2: overnight gap and pre-market range ───────────────────
-  // Fetch ^GSPC with includePrePost=true, 1D range, 1m interval.
-  // Extract prevClose from meta, today's first RTH bar open for gap,
-  // and 04:00-09:30 ET bars for pre-market range.
+  // Fetch $SPX.X from Schwab with needExtendedHours=true to get pre-market bars.
+  // periodType="day", period=1, frequencyType="minute", frequency=1.
   try {
-    const { fetchOHLC } = await import("./ohlc");
-    // 5d range to get today's pre-market + yesterday's close
+    const { getPriceHistory } = await import("./schwab");
     const etDateNow = new Intl.DateTimeFormat("en-CA", {
       timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
     }).format(new Date());
 
-    // Fetch 1d range with 1m interval — includePrePost=true to get pre-market bars
-    // We manually fetch with prePost since fetchOHLC uses includePrePost=false
-    const enc = encodeURIComponent("^GSPC");
-    const preMktUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${enc}?interval=1m&range=1d&includePrePost=true`;
-    let preMktData: any = null;
-    try {
-      const ctrl = new AbortController();
-      const to = setTimeout(() => ctrl.abort(), 10_000);
-      const r = await fetch(preMktUrl, {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; PulseDashboard/1.0)", Accept: "application/json" },
-        signal: ctrl.signal,
-      });
-      clearTimeout(to);
-      if (r.ok) preMktData = await r.json();
-    } catch { /* network or parse error */ }
+    // Fetch 1-day 1-min bars with extended hours (pre-market)
+    const resp = await getPriceHistory("$SPX.X", "day", 1, "minute", 1, true);
+    const candles = resp.candles;
 
-    if (preMktData) {
-      const result = preMktData?.chart?.result?.[0];
-      const meta = result?.meta ?? {};
-      const timestamps: number[] = result?.timestamp ?? [];
-      const quote = result?.indicators?.quote?.[0] ?? {};
-      const opens: number[] = quote.open ?? [];
-      const highs: number[] = quote.high ?? [];
-      const lows: number[] = quote.low ?? [];
+    if (candles.length > 0) {
+      // today 9:30 ET in epoch milliseconds
+      const open930Ms = Date.parse(`${etDateNow}T09:30:00-05:00`);
+      const open930ms = isNaN(open930Ms) ? 0 : open930Ms;
+      // pre-market window: 4:00 ET to 9:29 ET
+      const pm400Ms = Date.parse(`${etDateNow}T04:00:00-05:00`);
+      const pm400ms = isNaN(pm400Ms) ? open930ms - 330 * 60_000 : pm400Ms;
 
-      // prevClose from meta
-      const prevClose: number | null = meta.chartPreviousClose ?? meta.previousClose ?? null;
+      // Schwab candles use datetime in milliseconds
+      // Find prevClose: last candle before today's RTH open (or use the earliest candle's prior)
+      // We'll use the last candle before 4:00 ET (prior session) as prevClose proxy
+      // More reliably: find close of last bar before 4:00 AM ET
+      const preSessionBars = candles.filter((c) => c.datetime < pm400ms && c.close > 0);
+      const rthBars = candles.filter((c) => c.datetime >= open930ms && c.open > 0);
+      const preMktBars = candles.filter((c) => c.datetime >= pm400ms && c.datetime < open930ms);
 
-      if (prevClose && isFinite(prevClose) && prevClose > 0 && timestamps.length > 0) {
-        // today 9:30 ET in epoch seconds
-        const open930Ms = Date.parse(`${etDateNow}T09:30:00-05:00`);
-        const open930s = isNaN(open930Ms) ? 0 : Math.floor(open930Ms / 1000);
-        // pre-market window: 4:00 ET to 9:29 ET
-        const pm400s = isNaN(Date.parse(`${etDateNow}T04:00:00-05:00`))
-          ? open930s - 330 * 60
-          : Math.floor(Date.parse(`${etDateNow}T04:00:00-05:00`) / 1000);
+      let prevClose: number | null = null;
+      if (preSessionBars.length > 0) {
+        prevClose = preSessionBars[preSessionBars.length - 1].close;
+      } else if (preMktBars.length > 0) {
+        // If no prior-session bar, use first pre-mkt bar's open as proxy
+        prevClose = null;
+      }
 
-        // First RTH bar (>= 9:30 ET) open for overnight gap
-        let todayOpen: number | null = null;
-        for (let i = 0; i < timestamps.length; i++) {
-          if (timestamps[i] >= open930s && opens[i] != null && isFinite(opens[i]) && opens[i] > 0) {
-            todayOpen = opens[i];
-            break;
-          }
-        }
-
-        if (todayOpen !== null) {
+      if (prevClose && isFinite(prevClose) && prevClose > 0) {
+        // Overnight gap: first RTH bar open vs prev close
+        const todayOpen = rthBars.length > 0 ? rthBars[0].open : null;
+        if (todayOpen !== null && isFinite(todayOpen) && todayOpen > 0) {
           features.overnightGapPct = ((todayOpen - prevClose) / prevClose) * 100;
         }
 
-        // Pre-market range: bars between 4:00-9:29 ET
+        // Pre-market range from 4:00-9:29 ET bars
         let pmHigh = -Infinity;
         let pmLow = Infinity;
         let pmCount = 0;
-        for (let i = 0; i < timestamps.length; i++) {
-          if (timestamps[i] >= pm400s && timestamps[i] < open930s) {
-            const h = highs[i], l = lows[i];
-            if (h != null && isFinite(h) && h > 0) { pmHigh = Math.max(pmHigh, h); pmCount++; }
-            if (l != null && isFinite(l) && l > 0) pmLow = Math.min(pmLow, l);
-          }
+        for (const c of preMktBars) {
+          if (c.high > 0 && isFinite(c.high)) { pmHigh = Math.max(pmHigh, c.high); pmCount++; }
+          if (c.low > 0 && isFinite(c.low)) pmLow = Math.min(pmLow, c.low);
         }
         if (pmCount >= 3 && pmHigh > pmLow && pmLow > 0) {
           features.preMktRangePct = ((pmHigh - pmLow) / prevClose) * 100;
@@ -583,19 +551,17 @@ export async function computeJumpRegime(currentGex?: number | null): Promise<Jum
   } catch { /* snapshot_history unavailable or query failed */ }
 
   // ── Feature 4: VIX 1-day change ──────────────────────────────────
-  // Yahoo daily for ^VIX (5d), compute (lastClose - prevClose) / prevClose * 100.
+  // Schwab getPriceHistory($VIX.X, day, 5, daily, 1) — 5 daily bars, compute 1d change.
   try {
-    const { fetchOHLC } = await import("./ohlc");
-    const vixOhlc = await fetchOHLC("^VIX", "5D", "1d");
-    const candles = vixOhlc.candles.filter((b) => b.c > 0);
-    if (candles.length >= 2) {
-      const vixNow = candles[candles.length - 1].c;
-      const vixPrev = candles[candles.length - 2].c;
+    const { getPriceHistory } = await import("./schwab");
+    const vixResp = await getPriceHistory("$VIX.X", "day", 5, "daily", 1);
+    const vixCandles = vixResp.candles.filter((c) => c.close > 0);
+    if (vixCandles.length >= 2) {
+      const vixNow = vixCandles[vixCandles.length - 1].close;
+      const vixPrev = vixCandles[vixCandles.length - 2].close;
       if (vixPrev > 0) {
         features.vix1dChangePct = ((vixNow - vixPrev) / vixPrev) * 100;
       }
-    } else if (vixOhlc.prevClose && vixOhlc.price && vixOhlc.prevClose > 0) {
-      features.vix1dChangePct = ((vixOhlc.price - vixOhlc.prevClose) / vixOhlc.prevClose) * 100;
     }
   } catch { /* VIX fetch failed */ }
 

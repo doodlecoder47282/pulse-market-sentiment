@@ -99,21 +99,27 @@ function toYmd(unixSec: number): string {
   return `${y}-${m}-${day}`;
 }
 
+// TODO: Schwab-only mode — Yahoo source removed, using Schwab getPriceHistory.
 async function fetchDailyBars(symbol: string, years: number): Promise<Bar[]> {
-  const enc = encodeURIComponent(symbol);
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${enc}?interval=1d&range=${years}y&includePrePost=false`;
-  const d = await yFetch(url);
-  const r = d?.chart?.result?.[0];
-  if (!r) return [];
-  const ts: number[] = r.timestamp || [];
-  const q = r.indicators?.quote?.[0] || {};
-  const out: Bar[] = [];
-  for (let i = 0; i < ts.length; i++) {
-    const o = q.open?.[i], h = q.high?.[i], l = q.low?.[i], c = q.close?.[i];
-    if (o == null || h == null || l == null || c == null) continue;
-    out.push({ date: toYmd(ts[i]), t: ts[i], o, h, l, c });
+  try {
+    const { getPriceHistory } = await import("./schwab");
+    const schwabSymMap: Record<string, string> = {
+      "^GSPC": "$SPX.X", "^SPX": "$SPX.X", "^VIX": "$VIX.X",
+      "SPY": "SPY", "QQQ": "QQQ",
+    };
+    const schwabSym = schwabSymMap[symbol] ?? symbol;
+    const period = Math.min(years, 10);
+    const resp = await getPriceHistory(schwabSym, "year", period, "daily", 1);
+    return resp.candles
+      .filter((c) => c.open != null && c.close != null && c.open > 0 && c.close > 0)
+      .map((c) => ({
+        date: toYmd(Math.floor(c.datetime / 1000)),
+        t: Math.floor(c.datetime / 1000),
+        o: c.open, h: c.high, l: c.low, c: c.close,
+      }));
+  } catch {
+    return [];
   }
-  return out;
 }
 
 // ---- indicator helpers ----

@@ -182,26 +182,24 @@ async function yFetch(url: string, timeoutMs = 15_000): Promise<any> {
 }
 
 /**
- * Fetch 2Y of daily closes for one symbol from Yahoo. Returns ALL rows
+ * Fetch 2Y of daily closes for one symbol via Schwab. Returns ALL rows
  * (not merged with cache).
  */
 async function fetchSymbol2Y(symbol: string): Promise<DailyRow[]> {
-  const enc = encodeURIComponent(symbol);
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${enc}?interval=1d&range=2y`;
+  // TODO: Schwab-only mode — Yahoo source removed, using Schwab getPriceHistory.
+  const schwabSymMap: Record<string, string> = {
+    "^VIX": "$VIX.X", "^GSPC": "$SPX.X", "^SPX": "$SPX.X",
+    "^VIX9D": "$VIX9D.X", "^VIX3M": "$VIX3M.X",
+  };
+  const schwabSym = schwabSymMap[symbol] ?? symbol;
   try {
-    const d = await yFetch(url);
-    const r = d?.chart?.result?.[0];
-    if (!r) return [];
-    const ts: number[] = r.timestamp || [];
-    const q = r.indicators?.quote?.[0] || {};
-    const ac = r.indicators?.adjclose?.[0]?.adjclose || q.close;
-    const rows: DailyRow[] = [];
-    for (let i = 0; i < ts.length; i++) {
-      const c = ac?.[i] ?? q.close?.[i];
-      if (c == null || !isFinite(c)) continue;
-      rows.push({ date: etDateString(ts[i]), close: c, t: ts[i] });
-    }
-    // Dedupe by date (Yahoo sometimes emits dupes near current session).
+    const { getPriceHistory } = await import("./schwab");
+    const resp = await getPriceHistory(schwabSym, "year", 2, "daily", 1);
+    if (!resp.candles.length) return [];
+    const rows: DailyRow[] = resp.candles
+      .filter((c) => c.close != null && isFinite(c.close))
+      .map((c) => ({ date: etDateString(Math.floor(c.datetime / 1000)), close: c.close, t: Math.floor(c.datetime / 1000) }));
+    // Dedupe by date
     const seen = new Set<string>();
     const dedup: DailyRow[] = [];
     for (const r of rows) {

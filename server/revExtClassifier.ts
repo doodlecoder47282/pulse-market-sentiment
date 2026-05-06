@@ -33,7 +33,7 @@ export type Bar = {
 export type RevExtSnapshot = {
   symbol: string;
   asOf: number;
-  source: "schwab" | "yahoo";
+  source: "schwab";
 
   spot: number | null;
   vwap: number | null;
@@ -191,11 +191,11 @@ function computeVwapAndSigma(bars: Bar[]): {
 
 // ─── 1m bar fetcher (cached, separate from mtfStack to avoid coupling) ──
 
-type CacheEntry = { at: number; bars: Bar[]; source: "schwab" | "yahoo" };
+type CacheEntry = { at: number; bars: Bar[]; source: "schwab" };
 const CACHE_MS = 30_000;
 const cache = new Map<string, CacheEntry>();
 
-async function fetch1mBars(symbol: string): Promise<{ bars: Bar[]; source: "schwab" | "yahoo" }> {
+async function fetch1mBars(symbol: string): Promise<{ bars: Bar[]; source: "schwab" }> {
   const cached = cache.get(symbol);
   const now = Date.now();
   if (cached && now - cached.at < CACHE_MS) {
@@ -208,7 +208,7 @@ async function fetch1mBars(symbol: string): Promise<{ bars: Bar[]; source: "schw
     resp = null;
   }
   if (!resp || !resp.candles?.length) {
-    return { bars: [], source: "yahoo" };
+    return { bars: [], source: "schwab" };
   }
   const bars: Bar[] = resp.candles.map((c: any) => ({
     t: c.datetime,

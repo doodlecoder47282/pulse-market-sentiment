@@ -43,27 +43,18 @@ async function yFetch(url: string, timeoutMs = 15_000): Promise<any> {
 }
 
 /**
- * Fetch 2Y of daily closes for one symbol from Yahoo. Returns adjusted closes
- * when available, falling back to raw closes. Mirrors the shape produced by
- * regime.ts so daily_bars stays homogeneous.
+ * Fetch 2Y of daily closes for one symbol via Schwab.
+ * Mirrors the shape produced by regime.ts so daily_bars stays homogeneous.
+ * // TODO: Schwab-only mode — Yahoo source removed, using Schwab getPriceHistory.
  */
 export async function fetchStockSymbol2Y(symbol: string): Promise<DailyRow[]> {
-  const enc = encodeURIComponent(symbol);
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${enc}?range=2y&interval=1d&events=div,split`;
   try {
-    const data = await yFetch(url);
-    const result = data?.chart?.result?.[0];
-    if (!result) return [];
-    const ts: number[] = result.timestamp ?? [];
-    const q = result.indicators?.quote?.[0] ?? {};
-    const ac: number[] | undefined = result.indicators?.adjclose?.[0]?.adjclose;
-    const rows: DailyRow[] = [];
-    for (let i = 0; i < ts.length; i++) {
-      const c = ac?.[i] ?? q.close?.[i];
-      if (c == null || !isFinite(c)) continue;
-      rows.push({ date: etDateString(ts[i]), close: c, t: ts[i] });
-    }
-    // Dedupe by date
+    const { getPriceHistory } = await import("./schwab");
+    const resp = await getPriceHistory(symbol, "year", 2, "daily", 1);
+    if (!resp.candles.length) return [];
+    const rows: DailyRow[] = resp.candles
+      .filter((c) => c.close != null && isFinite(c.close))
+      .map((c) => ({ date: etDateString(Math.floor(c.datetime / 1000)), close: c.close, t: Math.floor(c.datetime / 1000) }));
     const seen = new Set<string>();
     const dedup: DailyRow[] = [];
     for (const r of rows) {

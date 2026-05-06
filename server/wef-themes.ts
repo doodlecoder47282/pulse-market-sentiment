@@ -179,32 +179,20 @@ export interface QuotesLike {
 }
 
 // Fallback fetcher for theme-only tickers not covered by the sector-web universe.
+// TODO: Schwab-only mode — Yahoo source removed, awaiting Schwab equivalent.
 async function yChart(symbol: string): Promise<number | null> {
-  const enc = encodeURIComponent(symbol);
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${enc}?interval=1d&range=3mo`;
-  const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), 10_000);
   try {
-    const r = await fetch(url, { headers: { "User-Agent": UA }, signal: ctrl.signal });
-    if (!r.ok) return null;
-    const d = await r.json();
-    const res = d?.chart?.result?.[0];
-    const ts: number[] = res?.timestamp || [];
-    const q = res?.indicators?.quote?.[0] || {};
-    const ac = res?.indicators?.adjclose?.[0]?.adjclose || q.close;
-    const closes: number[] = [];
-    for (let i = 0; i < ts.length; i++) {
-      const c = ac?.[i] ?? q.close?.[i];
-      if (c == null || !isFinite(c)) continue;
-      closes.push(c);
-    }
+    const { getPriceHistory } = await import("./schwab");
+    const resp = await getPriceHistory(symbol, "month", 3, "daily", 1);
+    const closes = resp.candles
+      .map((c) => c.close)
+      .filter((c) => c != null && isFinite(c) && c > 0);
     if (closes.length < 5) return null;
     const last = closes[closes.length - 1];
     const mIdx = Math.max(0, closes.length - 22);
     if (!closes[mIdx]) return null;
     return ((last - closes[mIdx]) / closes[mIdx]) * 100;
   } catch { return null; }
-  finally { clearTimeout(to); }
 }
 
 async function ensureQuotes(base: QuotesLike): Promise<QuotesLike> {

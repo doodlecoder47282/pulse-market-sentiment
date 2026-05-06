@@ -86,7 +86,7 @@ export function sessionFractionRemaining(nowMs: number = Date.now()): number {
 interface SessionRange {
   hod: number | null;
   lod: number | null;
-  source: "schwab" | "yahoo" | "none";
+  source: "schwab" | "none";
   barCount: number;
 }
 
@@ -128,7 +128,7 @@ async function fetchSessionRange(symbol: string): Promise<SessionRange> {
     const out: SessionRange = {
       hod,
       lod,
-      source: ((resp as any).source as "schwab" | "yahoo") ?? "schwab",
+      source: ((resp as any).source as "schwab") ?? "schwab",
       barCount: n,
     };
     _rangeCache = { ts: now, payload: out };

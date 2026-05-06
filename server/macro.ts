@@ -1,6 +1,6 @@
 // server/macro.ts
 // Macro carousel — categorized cross-asset quotes for the top-of-page ticker tape
-// + rotating carousel. Pulls Yahoo chart API for all symbols in parallel.
+// + rotating carousel. Pulls via Schwab API (through quotes.ts wrappers).
 //
 // Categories: Equities / Bonds / Credit / Commods / FX / Crypto
 // All quotes show last price, day change, day change%, plus a small 1M sparkline
@@ -74,7 +74,7 @@ const UNIVERSE: TickerDef[] = [
   { symbol: "CORN", label: "Corn", category: "commods" },
   { symbol: "WEAT", label: "Wheat", category: "commods" },
 
-  // FX (Yahoo uses =X suffix)
+  // FX
   { symbol: "DX-Y.NYB", label: "DXY", category: "fx" },
   { symbol: "EURUSD=X", label: "EUR/USD", category: "fx" },
   { symbol: "USDJPY=X", label: "USD/JPY", category: "fx" },
@@ -132,7 +132,7 @@ async function fetchOne(def: TickerDef): Promise<MacroQuote | null> {
 }
 
 export async function buildMacroSnapshot(): Promise<MacroResponse> {
-  // Fire everything in parallel; Yahoo tolerates ~25 concurrent requests fine.
+  // Fire everything in parallel.
   const results = await Promise.all(UNIVERSE.map(fetchOne));
   const quotes = results.filter((q): q is MacroQuote => q != null);
 

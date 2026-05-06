@@ -71,24 +71,15 @@ async function yFetch(url: string, timeoutMs = 15_000): Promise<any> {
   } finally { clearTimeout(to); }
 }
 
-/** Pull ~90 days of daily closes for one symbol (enough for 1M returns + 60d corr). */
+/** Pull ~90 days of daily closes for one symbol via Schwab. */
 async function fetchDaily(symbol: string): Promise<DailyBar[]> {
-  const enc = encodeURIComponent(symbol);
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${enc}?interval=1d&range=3mo`;
+  // TODO: Schwab-only mode — Yahoo source removed, using Schwab getPriceHistory.
   try {
-    const d = await yFetch(url);
-    const r = d?.chart?.result?.[0];
-    if (!r) return [];
-    const ts: number[] = r.timestamp || [];
-    const q = r.indicators?.quote?.[0] || {};
-    const ac = r.indicators?.adjclose?.[0]?.adjclose || q.close;
-    const rows: DailyBar[] = [];
-    for (let i = 0; i < ts.length; i++) {
-      const c = ac?.[i] ?? q.close?.[i];
-      if (c == null || !isFinite(c)) continue;
-      rows.push({ t: ts[i], close: c });
-    }
-    return rows;
+    const { getPriceHistory } = await import("./schwab");
+    const resp = await getPriceHistory(symbol, "month", 3, "daily", 1);
+    return resp.candles
+      .filter((c) => c.close != null && isFinite(c.close))
+      .map((c) => ({ t: Math.floor(c.datetime / 1000), close: c.close }));
   } catch {
     return [];
   }

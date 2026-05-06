@@ -251,10 +251,11 @@ export function recordSpot(ts: number, spot: number): void {
 }
 
 /**
- * seedSpotHistory — backfill spotHistory from Yahoo 1-min SPX bars at startup.
+ * seedSpotHistory — backfill spotHistory from Schwab 1-min SPX bars at startup.
  *
- * Reads today's intraday bars (^GSPC, 1D, 1m) and calls recordSpot() for the
- * last 30 minutes worth of bars. Idempotent: if spotHistory already has >= 5
+ * Uses Schwab getPriceHistory("$SPX.X", "day", 1, "minute", 1) and maps
+ * candles (datetime ms, close) into recordSpot calls.
+ * Filters to last 30 minutes. Idempotent: if spotHistory already has >= 5
  * entries, skips seeding entirely.
  *
  * Returns { seeded, oldestTs, newestTs } for startup logging.
@@ -271,39 +272,24 @@ export async function seedSpotHistory(): Promise<{
 
   let bars: Array<{ t: number; c: number }> = [];
 
-  // Attempt 1: Yahoo 1-min bars for ^GSPC
+  // Schwab 1-min bars for $SPX.X
   try {
-    const { fetchOHLC } = await import("./ohlc");
-    const ohlc = await fetchOHLC("^GSPC", "1D", "1m");
-    if (ohlc.candles.length >= 3) {
-      // Filter to last 30 minutes
+    const { getPriceHistory } = await import("./schwab");
+    const resp = await getPriceHistory("$SPX.X", "day", 1, "minute", 1);
+    if (resp.candles.length >= 3) {
+      // Filter to last 30 minutes; Schwab datetime is in milliseconds
       const now = Date.now();
-      const cutoff30m = Math.floor((now - 30 * 60_000) / 1000); // seconds
-      const recent = ohlc.candles.filter((b) => b.t >= cutoff30m && b.c > 0);
-      bars = recent.map((b) => ({ t: b.t, c: b.c }));
+      const cutoff30m = now - 30 * 60_000;
+      const recent = resp.candles.filter((c) => c.datetime >= cutoff30m && c.close > 0);
+      bars = recent.map((c) => ({ t: Math.floor(c.datetime / 1000), c: c.close }));
+      console.log(`[seedSpotHistory] Schwab returned ${resp.candles.length} candles, ${recent.length} in last 30m`);
     }
   } catch (e: any) {
-    console.warn(`[seedSpotHistory] Yahoo 1-min fetch failed: ${e?.message ?? e}`);
-  }
-
-  // Attempt 2: fallback to 5-min bars if 1-min yielded < 3
-  if (bars.length < 3) {
-    try {
-      const { fetchOHLC } = await import("./ohlc");
-      const ohlc5 = await fetchOHLC("^GSPC", "1D", "5m");
-      if (ohlc5.candles.length >= 3) {
-        const now = Date.now();
-        const cutoff30m = Math.floor((now - 30 * 60_000) / 1000);
-        const recent = ohlc5.candles.filter((b) => b.t >= cutoff30m && b.c > 0);
-        bars = recent.map((b) => ({ t: b.t, c: b.c }));
-      }
-    } catch (e: any) {
-      console.warn(`[seedSpotHistory] Yahoo 5-min fallback failed: ${e?.message ?? e}`);
-    }
+    console.warn(`[seedSpotHistory] Schwab 1-min fetch failed: ${e?.message ?? e}`);
   }
 
   if (bars.length === 0) {
-    console.warn(`[seedSpotHistory] no bars available, spotHistory not seeded`);
+    console.warn(`[seedSpotHistory] no bars available from Schwab, spotHistory not seeded`);
     return { seeded: 0, oldestTs: null, newestTs: null };
   }
 
@@ -316,7 +302,7 @@ export async function seedSpotHistory(): Promise<{
 
   const oldest = spotHistory.length > 0 ? spotHistory[0].ts : null;
   const newest = spotHistory.length > 0 ? spotHistory[spotHistory.length - 1].ts : null;
-  console.log(`[seedSpotHistory] seeded ${seeded} bars into spotHistory (length=${spotHistory.length}), oldest=${oldest}, newest=${newest}`);
+  console.log(`[seedSpotHistory] seeded ${seeded} bars into spotHistory via Schwab (length=${spotHistory.length}), oldest=${oldest}, newest=${newest}`);
   return { seeded, oldestTs: oldest, newestTs: newest };
 }
 

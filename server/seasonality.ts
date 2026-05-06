@@ -117,23 +117,24 @@ function isoWeek(date: Date): number {
 
 interface DailyBar { t: number; c: number }
 
+// TODO: Schwab-only mode — Yahoo source removed, using Schwab getPriceHistory.
+// Note: Schwab max history is ~10 years for daily; 20y range truncated to available history.
 export async function fetchBars(yahooSymbol: string): Promise<DailyBar[]> {
-  const enc = encodeURIComponent(yahooSymbol);
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${enc}?interval=1d&range=20y`;
+  // Map legacy Yahoo symbols to Schwab equivalents
+  const schwabSymMap: Record<string, string> = {
+    "^VIX": "$VIX.X", "^GSPC": "$SPX.X", "^SPX": "$SPX.X",
+    "BTC-USD": "BTC/USD",
+  };
+  const schwabSym = schwabSymMap[yahooSymbol] ?? yahooSymbol;
   try {
-    const d = await yFetch(url);
-    const r = d?.chart?.result?.[0];
-    if (!r) return [];
-    const ts: number[] = r.timestamp || [];
-    const closes: (number | null)[] = r.indicators?.quote?.[0]?.close ?? [];
-    const bars: DailyBar[] = [];
-    for (let i = 0; i < ts.length; i++) {
-      const c = closes[i];
-      if (c != null && isFinite(c) && c > 0) bars.push({ t: ts[i], c });
-    }
-    return bars;
+    const { getPriceHistory } = await import("./schwab");
+    // Use max supported period (10 years daily)
+    const resp = await getPriceHistory(schwabSym, "year", 10, "daily", 1);
+    return resp.candles
+      .filter((c) => c.close != null && isFinite(c.close) && c.close > 0)
+      .map((c) => ({ t: Math.floor(c.datetime / 1000), c: c.close }));
   } catch (e: any) {
-    console.warn(`[seasonality] fetch failed for ${yahooSymbol}: ${e?.message}`);
+    console.warn(`[seasonality] Schwab fetch failed for ${yahooSymbol}: ${e?.message}`);
     return [];
   }
 }

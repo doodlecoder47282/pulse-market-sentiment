@@ -39,7 +39,7 @@ type FlowTicker = {
 };
 
 type FlowResponse = {
-  provider: "yahoo" | "schwab";
+  provider: "schwab"; // TODO: Schwab-only mode — yahoo provider removed
   indexGroup: FlowTicker[];
   mag7Group: FlowTicker[];
   aggregate: {

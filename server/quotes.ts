@@ -1,6 +1,6 @@
 // server/quotes.ts
-// Yahoo Finance chart API adapters for SPX (^GSPC), SPY, VIX intraday + daily OHLC.
-// Yahoo returns delayed quotes but updates every ~30-60s for major indices.
+// SPX/SPY/VIX intraday + daily OHLC adapters.
+// Schwab-only mode: all data via Schwab getPriceHistory. No Yahoo.
 
 import { observeQuote } from "./quoteShield";
 
@@ -49,22 +49,9 @@ export type PeriodOHLC = {
   c: number;
 };
 
-const UA = "Mozilla/5.0 (compatible; PulseDashboard/1.0)";
-
-async function yFetch(url: string, timeoutMs = 10_000): Promise<any> {
-  const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const r = await fetch(url, {
-      headers: { "User-Agent": UA, Accept: "application/json" },
-      signal: ctrl.signal,
-    });
-    if (!r.ok) throw new Error(`Yahoo ${r.status} for ${url}`);
-    return await r.json();
-  } finally {
-    clearTimeout(to);
-  }
-}
+// TODO: Schwab-only mode — Yahoo source removed, awaiting Schwab equivalent.
+// yFetch helper removed. Using Schwab getPriceHistory for all data.
+import { getPriceHistory } from "./schwab";
 
 /** Normalize Yahoo chart -> Bar[] */
 function normalizeBars(result: any): Bar[] {
@@ -84,96 +71,97 @@ function normalizeBars(result: any): Bar[] {
   return bars;
 }
 
-/** Fetch an intraday chart. Default: 1d range, 1m interval. */
+// Map Yahoo-style symbols to Schwab equivalents
+function toSchwabSymbol(symbol: string): string {
+  const map: Record<string, string> = {
+    "^VIX": "$VIX.X", "^VIX9D": "$VIX9D.X", "^VIX3M": "$VIX3M.X",
+    "^VVIX": "$VVIX.X", "^SKEW": "$SKEW.X",
+    "^GSPC": "$SPX.X", "^SPX": "$SPX.X",
+  };
+  return map[symbol] ?? symbol;
+}
+
+/** Fetch an intraday chart via Schwab. Default: 1d range, 1m interval. */
 export async function fetchIntraday(
   symbol: string,
   range: "1d" | "5d" = "1d",
   interval: "1m" | "5m" | "15m" = "1m",
 ): Promise<QuoteSeries> {
-  // For 5d we need 5m bars (Yahoo rejects 1m + 5d).
-  const eff = range === "5d" && interval === "1m" ? "5m" : interval;
-  const enc = encodeURIComponent(symbol);
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${enc}?interval=${eff}&range=${range}&includePrePost=false`;
-  let result: any = null;
+  const schwabSym = toSchwabSymbol(symbol);
+  // Map to Schwab params
+  const period = range === "5d" ? 5 : 1;
+  const frequencyMap: Record<string, number> = { "1m": 1, "5m": 5, "15m": 15 };
+  const frequency = frequencyMap[interval] ?? 1;
+
+  let bars: Bar[] = [];
+  let price: number | null = null;
+  let prevClose: number | null = null;
+
   try {
-    const d = await yFetch(url);
-    result = d?.chart?.result?.[0];
-  } catch (e) {
-    // fall through to empty
-  }
-  if (!result) {
-    return {
-      symbol,
-      displayName: symbol,
-      currency: "USD",
-      price: null, prevClose: null, change: null, changePct: null,
-      sessionOpen: null, sessionHigh: null, sessionLow: null,
-      bars: [], interval: eff, range,
-      asOf: Math.floor(Date.now() / 1000),
-    };
-  }
-  const bars = normalizeBars(result);
-  const meta = result.meta || {};
-  const price: number | null = meta.regularMarketPrice ?? bars[bars.length - 1]?.c ?? null;
-  const prevClose: number | null = meta.chartPreviousClose ?? meta.previousClose ?? null;
+    const resp = await getPriceHistory(schwabSym, "day", period, "minute", frequency);
+    if (resp.candles.length > 0) {
+      bars = resp.candles
+        .map((c) => ({
+          t: Math.floor(c.datetime / 1000),
+          o: c.open ?? null,
+          h: c.high ?? null,
+          l: c.low ?? null,
+          c: c.close ?? null,
+          v: c.volume ?? null,
+        }))
+        .filter((b) => b.c != null && (b.c as number) > 0);
+      price = bars[bars.length - 1]?.c ?? null;
+      prevClose = bars.length >= 2 ? bars[0]?.c ?? null : null;
+    }
+  } catch { /* fall through to empty */ }
 
   // Quote-shield observer (flag-only — never alters returned data).
-  // Source: MASTER_SYNTHESIS Tier 2 #6 (statisticsbyjim outliers reference).
   try {
     if (price != null && isFinite(price)) observeQuote(symbol, price);
   } catch { /* shield must never break ingest */ }
+
   const change = price != null && prevClose != null ? price - prevClose : null;
   const changePct = change != null && prevClose ? (change / prevClose) * 100 : null;
+  const sessionHighs = bars.map((b) => b.h).filter((v): v is number => v != null);
+  const sessionLows = bars.map((b) => b.l).filter((v): v is number => v != null);
+
   return {
     symbol,
-    displayName: meta.shortName || meta.longName || symbol,
-    currency: meta.currency || "USD",
+    displayName: symbol,
+    currency: "USD",
     price,
     prevClose,
     change,
     changePct,
-    sessionOpen: meta.regularMarketDayRange ? null : bars[0]?.o ?? null,
-    sessionHigh: meta.regularMarketDayHigh ?? null,
-    sessionLow: meta.regularMarketDayLow ?? null,
+    sessionOpen: bars[0]?.o ?? null,
+    sessionHigh: sessionHighs.length > 0 ? Math.max(...sessionHighs) : null,
+    sessionLow: sessionLows.length > 0 ? Math.min(...sessionLows) : null,
     bars,
-    interval: eff,
+    interval,
     range,
     asOf: Math.floor(Date.now() / 1000),
   };
 }
 
 /**
- * Fetch prior trading day's OHLC. Pulls 10-day daily bars and returns the most
- * recent COMPLETED session (excludes today if market hasn't closed). This is
- * what feeds the pivot math.
+ * Fetch prior trading day's OHLC via Schwab. Pulls 10 daily bars and returns the most
+ * recent COMPLETED session (excludes today if market hasn't closed).
  */
 export async function fetchPrevDayOHLC(symbol: string): Promise<DailyOHLC | null> {
-  const enc = encodeURIComponent(symbol);
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${enc}?interval=1d&range=10d`;
+  const schwabSym = toSchwabSymbol(symbol);
   try {
-    const d = await yFetch(url);
-    const r = d?.chart?.result?.[0];
-    if (!r) return null;
-    const ts: number[] = r.timestamp || [];
-    const q = r.indicators?.quote?.[0] || {};
-    const rows: DailyOHLC[] = [];
-    for (let i = 0; i < ts.length; i++) {
-      const o = q.open?.[i], h = q.high?.[i], l = q.low?.[i], c = q.close?.[i];
-      if (o != null && h != null && l != null && c != null) {
-        rows.push({ t: ts[i], o, h, l, c });
-      }
-    }
+    const resp = await getPriceHistory(schwabSym, "day", 10, "daily", 1);
+    if (!resp.candles.length) return null;
+    const rows: DailyOHLC[] = resp.candles
+      .map((c) => ({ t: Math.floor(c.datetime / 1000), o: c.open, h: c.high, l: c.low, c: c.close }))
+      .filter((r) => r.o > 0 && r.c > 0);
     if (!rows.length) return null;
-    // Pick the most recent completed session. Yahoo marks today even mid-session
-    // with partial data; we use the session BEFORE the latest available (yesterday)
-    // once the market is open. Heuristic: if most recent bar's date == today in
-    // America/New_York, use rows[len-2]; otherwise use rows[len-1].
+    // Pick the most recent completed session.
     const nowEt = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
     const todayEt = `${nowEt.getFullYear()}-${nowEt.getMonth() + 1}-${nowEt.getDate()}`;
     const last = rows[rows.length - 1];
     const lastEt = new Date(new Date(last.t * 1000).toLocaleString("en-US", { timeZone: "America/New_York" }));
     const lastDate = `${lastEt.getFullYear()}-${lastEt.getMonth() + 1}-${lastEt.getDate()}`;
-    // If the most recent bar is "today" and it's during US market hours, use prior.
     const hourEt = nowEt.getHours();
     const marketOpen = hourEt >= 9 && hourEt < 16;
     if (lastDate === todayEt && marketOpen && rows.length >= 2) {
@@ -186,28 +174,19 @@ export async function fetchPrevDayOHLC(symbol: string): Promise<DailyOHLC | null
 }
 
 /**
- * Fetch N days of daily closes. Used for realized-vol computation (need ~60 days
- * for a stable 20D HV + 60D HV blend).
+ * Fetch N days of daily closes via Schwab. Used for realized-vol computation.
  */
 export async function fetchDailyCloses(symbol: string, days = 120): Promise<DailyOHLC[]> {
-  const enc = encodeURIComponent(symbol);
-  // Yahoo range syntax: 3mo/6mo/1y. Pick the smallest that covers `days`.
-  const range = days <= 30 ? "1mo" : days <= 90 ? "3mo" : days <= 180 ? "6mo" : "1y";
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${enc}?interval=1d&range=${range}`;
+  const schwabSym = toSchwabSymbol(symbol);
+  // Map days to Schwab period: use month periods for up to 6mo, year for longer
+  const period = days <= 30 ? 1 : days <= 90 ? 3 : days <= 180 ? 6 : 12;
+  const periodType = days <= 180 ? "month" as const : "year" as const;
+  const actualPeriod = days <= 180 ? period : 1;
   try {
-    const d = await yFetch(url);
-    const r = d?.chart?.result?.[0];
-    if (!r) return [];
-    const ts: number[] = r.timestamp || [];
-    const q = r.indicators?.quote?.[0] || {};
-    const rows: DailyOHLC[] = [];
-    for (let i = 0; i < ts.length; i++) {
-      const o = q.open?.[i], h = q.high?.[i], l = q.low?.[i], c = q.close?.[i];
-      if (o != null && h != null && l != null && c != null) {
-        rows.push({ t: ts[i], o, h, l, c });
-      }
-    }
-    return rows;
+    const resp = await getPriceHistory(schwabSym, periodType, actualPeriod, "daily", 1);
+    return resp.candles
+      .map((c) => ({ t: Math.floor(c.datetime / 1000), o: c.open, h: c.high, l: c.low, c: c.close }))
+      .filter((r) => r.o > 0 && r.c > 0);
   } catch {
     return [];
   }

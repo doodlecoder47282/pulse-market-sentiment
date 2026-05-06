@@ -192,7 +192,7 @@ async function fetchRss(url: string, sourceName: string, timeoutMs = 8000): Prom
 
 const RSS_SOURCES: { name: string; url: string }[] = [
   { name: "MarketWatch", url: "https://feeds.content.dj-n.com/public/rss/mw_topstories" },
-  { name: "Yahoo Finance", url: "https://finance.yahoo.com/news/rssindex" },
+  // TODO: Schwab-only mode — Yahoo Finance RSS removed, awaiting Schwab equivalent.
   { name: "Reuters Business", url: "https://news.google.com/rss/search?q=when:1d+site:reuters.com+business&hl=en-US&gl=US&ceid=US:en" },
   { name: "CNBC Markets", url: "https://www.cnbc.com/id/100003114/device/rss/rss.html" },
   { name: "FT Markets", url: "https://www.ft.com/markets?format=rss" },

@@ -55,7 +55,7 @@ export type TfSnapshot = {
 export type MtfStack = {
   symbol: string;
   asOf: number;
-  source: "schwab" | "yahoo" | "mixed";
+  source: "schwab" | "mixed";
   tfs: Record<TfKey, TfSnapshot>;
   // Composite scores weighted toward shorter TFs for 0DTE:
   //   1m:0.30 · 5m:0.30 · 15m:0.20 · 30m:0.10 · 1h:0.07 · 4h:0.03
@@ -212,11 +212,11 @@ function snapshotForTf(tf: TfKey, bars: Bar[]): TfSnapshot {
 
 // ─── Schwab fetch + 30s cache ───────────────────────────────────────────
 
-type CacheEntry = { at: number; bars: Bar[]; source: "schwab" | "yahoo" };
+type CacheEntry = { at: number; bars: Bar[]; source: "schwab" };
 const CACHE_MS = 30_000;
 const cache = new Map<string, CacheEntry>();
 
-async function fetch1mBars(symbol: string): Promise<{ bars: Bar[]; source: "schwab" | "yahoo" }> {
+async function fetch1mBars(symbol: string): Promise<{ bars: Bar[]; source: "schwab" }> {
   const cached = cache.get(symbol);
   const now = Date.now();
   if (cached && now - cached.at < CACHE_MS) {
@@ -232,7 +232,7 @@ async function fetch1mBars(symbol: string): Promise<{ bars: Bar[]; source: "schw
     resp = null;
   }
   if (!resp || !resp.candles?.length) {
-    return { bars: [], source: "yahoo" };
+    return { bars: [], source: "schwab" };
   }
 
   const bars: Bar[] = resp.candles.map((c: any) => ({
