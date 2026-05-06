@@ -728,6 +728,41 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     return `VIX/SPX BREAKDOWN: ${dir} (${vixStr}, ${spxStr} over 5m)`;
   })();
 
+  // Wire 12: S/D ZONE block (1-min Schwab bars, volume+freshness)
+  // Shows nearest active DEMAND/SUPPLY zone relative to spot.
+  // Renders a compact line per side: type, status, vol confirm tag, distance.
+  const sdZoneBlock = (() => {
+    const zones = (audit as any).sdZones;
+    if (!Array.isArray(zones) || zones.length === 0) return "";
+    const spotN = Number(spot);
+    const lines: string[] = [];
+    // Find nearest DEMAND below spot and nearest SUPPLY above spot
+    const demandZones = zones.filter((z: any) => z.type === "DEMAND" && z.proximal < spotN && z.distal < spotN);
+    const supplyZones = zones.filter((z: any) => z.type === "SUPPLY" && z.proximal > spotN && z.distal > spotN);
+    const nearest = (arr: any[], side: "call" | "put") => {
+      if (!arr.length) return null;
+      const sorted = arr.slice().sort((a: any, b: any) => {
+        const dA = side === "call" ? spotN - a.proximal : a.proximal - spotN;
+        const dB = side === "call" ? spotN - b.proximal : b.proximal - spotN;
+        return dA - dB;
+      });
+      return sorted[0];
+    };
+    const nearDemand = nearest(demandZones, "call");
+    const nearSupply = nearest(supplyZones, "put");
+    if (nearDemand) {
+      const dist = (spotN - nearDemand.proximal).toFixed(1);
+      const volTag = nearDemand.volumeConfirmed ? "+VOL" : "";
+      lines.push(`SD ZONE: DEMAND ${nearDemand.status}${volTag ? " " + volTag : ""} (-${dist}pt away)`);
+    }
+    if (nearSupply) {
+      const dist = (nearSupply.proximal - spotN).toFixed(1);
+      const volTag = nearSupply.volumeConfirmed ? "+VOL" : "";
+      lines.push(`SD ZONE: SUPPLY ${nearSupply.status}${volTag ? " " + volTag : ""} (+${dist}pt away)`);
+    }
+    return lines.join("\n");
+  })();
+
   // Stitch the print
   const body = [
     "```",
@@ -748,6 +783,7 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     ...(jumpRegimeBlock ? ["", jumpRegimeBlock] : []),
     ...(chopRegimeBlock ? ["", chopRegimeBlock] : []),
     ...(corrBreakdownBlock ? ["", corrBreakdownBlock] : []),
+    ...(sdZoneBlock ? ["", sdZoneBlock] : []),
     "```",
   ].join("\n");
 

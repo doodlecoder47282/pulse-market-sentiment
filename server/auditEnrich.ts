@@ -32,6 +32,7 @@ import { getOdteSnapshot } from "./odteTracker";
 import { computeVolumeProfile } from "./volumeProfile";
 import type { Candle } from "./ohlc";
 import { getChopRegime, getSpotPriceAtTs } from "./odteAlertEngine";
+import { detectSDZones } from "./sdZones.js";
 
 export interface VommaPocket {
   strike: number;
@@ -780,6 +781,15 @@ export async function enrichAudit(
       console.warn(`[auditEnrich] computeCorrelationBreakdown error: ${e?.message ?? e}`);
     }
 
+    // 11. Wire 12: S/D zones (1-min Schwab bars, volume+freshness)
+    let sdZones: any[] = [];
+    try {
+      sdZones = await detectSDZones();
+    } catch (e: any) {
+      console.warn(`[auditEnrich] detectSDZones error: ${e?.message ?? e}`);
+      sdZones = [];
+    }
+
     // Mutate audit
     daily.audit = {
       ...audit,
@@ -805,6 +815,8 @@ export async function enrichAudit(
       spxPctChange5m: corrBreakdown ? corrBreakdown.spxPctChange5m : null,
       correlationBreakdown: corrBreakdown ? corrBreakdown.correlationBreakdown : false,
       correlationBreakdownDirection: corrBreakdown ? corrBreakdown.correlationBreakdownDirection : null,
+      // Wire 12 S/D zones
+      sdZones,
     };
 
     return result;

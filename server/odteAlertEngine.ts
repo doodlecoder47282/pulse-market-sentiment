@@ -108,6 +108,20 @@ export interface Audit {
   correlationBreakdownDirection?: 'TOP_SIGNAL' | 'BOTTOM_SIGNAL' | null; // TOP: both up (rally fading); BOTTOM: both down (panic exhausting)
   wire11CorrelationBreakdownPenalty?: number;  // -4 when breakdown penalizes trade side
   wire11CorrelationBreakdownBoost?: number;    // +4 when breakdown boosts trade side
+  // Wire 12 — 1-min S/D zones with volume confirm + retest tracking
+  sdZones?: Array<{
+    type: "DEMAND" | "SUPPLY";
+    distal: number;
+    proximal: number;
+    baseTimeMs: number;
+    ageMin: number;
+    fresh: boolean;
+    volumeConfirmed: boolean;
+    retests: number;
+    status: "UNTESTED" | "HELD" | "BREACHED";
+  }>;
+  wire12SdZoneBoost?: number;
+  wire12SdZoneInfo?: { type: string; status: string; volumeConfirmed: boolean; distance: number };
 }
 
 export interface ContractRow {
@@ -982,6 +996,76 @@ function scoreSetup(args: {
     }
   } catch (_) {
     reasoning.push("Wire 11 correlation breakdown: error, skipped");
+  }
+
+  // ─── WIRE 12 — S/D zones with volume + freshness gating ──────────────────────────────────
+  // Drop-base-rally / rally-base-drop pattern on 1-min Schwab bars.
+  // Scoring per nearest zone (per-candidate based on args.side):
+  //   UNTESTED + vol confirmed + fresh (<15min) → +3
+  //   UNTESTED + vol confirmed                 → +2
+  //   HELD once + vol confirmed                → +2
+  //   HELD once (no vol)                       → +1
+  //   HELD 2+ or no nearby zone                →  0
+  try {
+    if (args.audit.sdZones && args.audit.sdZones.length > 0) {
+      const zones = args.audit.sdZones as any[];
+      const isCall = args.side === "call";
+      const candidates = zones.filter(z => {
+        if (isCall) return z.type === "DEMAND" && z.proximal < args.spot && z.distal < args.spot;
+        return z.type === "SUPPLY" && z.proximal > args.spot && z.distal > args.spot;
+      });
+      const maxDist = args.spot * 0.003;
+      const inRange = candidates.filter(z => {
+        const distance = isCall ? args.spot - z.proximal : z.proximal - args.spot;
+        return distance > 0 && distance <= maxDist;
+      });
+      if (inRange.length) {
+        const nearest = inRange.sort((a: any, b: any) => {
+          const dA = isCall ? args.spot - a.proximal : a.proximal - args.spot;
+          const dB = isCall ? args.spot - b.proximal : b.proximal - args.spot;
+          return dA - dB;
+        })[0];
+
+        let boost = 0;
+        if (nearest.status === "UNTESTED" && nearest.volumeConfirmed && nearest.fresh) {
+          boost = 3;
+        } else if (nearest.status === "UNTESTED" && nearest.volumeConfirmed) {
+          boost = 2;
+        } else if (nearest.status === "HELD" && nearest.volumeConfirmed && nearest.retests === 1) {
+          boost = 2;
+        } else if (nearest.status === "HELD" && nearest.retests === 1) {
+          boost = 1;
+        } else {
+          boost = 0;
+        }
+
+        if (boost > 0) {
+          score += boost;
+          args.audit.wire12SdZoneBoost = boost;
+          args.audit.wire12SdZoneInfo = {
+            type: nearest.type,
+            status: nearest.status,
+            volumeConfirmed: nearest.volumeConfirmed,
+            distance: isCall ? args.spot - nearest.proximal : nearest.proximal - args.spot,
+          };
+          const volTag = nearest.volumeConfirmed ? "+VOL" : "";
+          reasoning.push(
+            `Wire 12 S/D zone (${nearest.type} ${nearest.status}${volTag} fresh=${nearest.fresh} ` +
+            `dist=${isCall ? args.spot - nearest.proximal : nearest.proximal - args.spot}pt): +${boost}`,
+          );
+        } else {
+          reasoning.push(
+            `Wire 12 S/D zone: nearest ${nearest.type} ${nearest.status} (retests=${nearest.retests}, volConf=${nearest.volumeConfirmed}) → no boost`,
+          );
+        }
+      } else {
+        reasoning.push("Wire 12 S/D zone: no zone within 0.3% of spot");
+      }
+    } else {
+      reasoning.push("Wire 12 S/D zone: sdZones empty or unavailable, skipped");
+    }
+  } catch (_) {
+    reasoning.push("Wire 12 S/D zone: error, skipped");
   }
 
   return { score: Math.round(score), reasoning };

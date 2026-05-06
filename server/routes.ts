@@ -2106,6 +2106,11 @@ Refine the brief above. Search the web for any critical developments the feed is
         wire9Present: audit.jumpRegime !== undefined,
         wire10Present: true,
         wire11Present: audit.correlationBreakdown !== undefined,
+        // Wire 12 S/D zones fields
+        sdZonesCount: Array.isArray(audit.sdZones) ? audit.sdZones.length : 0,
+        wire12SdZoneBoost: audit.wire12SdZoneBoost ?? null,
+        wire12SdZoneInfo: audit.wire12SdZoneInfo ?? null,
+        wire12Present: true,
         // Full audit for deeper inspection
         audit,
       });
