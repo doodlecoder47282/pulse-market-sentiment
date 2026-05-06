@@ -172,7 +172,7 @@ function EvalRow({ ev }: { ev: ExitBrainEval }) {
       )}
 
       {/* Row 4: category mini-bars */}
-      <div className="grid grid-cols-5 gap-2 pt-1" data-testid={`eval-categories-${ev.positionId}`}>
+      <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 pt-1" data-testid={`eval-categories-${ev.positionId}`}>
         <MiniBar label="stack" value={ev.categories.stackCollapse} />
         <MiniBar label="revert" value={ev.categories.reversion} />
         <MiniBar label="targets" value={ev.categories.targetsHit} />
