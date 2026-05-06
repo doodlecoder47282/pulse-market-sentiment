@@ -2232,6 +2232,26 @@ Refine the brief above. Search the web for any critical developments the feed is
     console.warn(`[exitBrain] failed to start: ${e?.message ?? e}`);
   }
 
+  // Position sizer — risk-first contract sizing for banger trades
+  app.post("/api/position-sizer", async (req, res) => {
+    try {
+      const { sizePosition } = await import("./positionSizer");
+      const body = req.body ?? {};
+      const result = sizePosition({
+        accountSize: Number(body.accountSize),
+        maxRiskPct: body.maxRiskPct != null ? Number(body.maxRiskPct) : undefined,
+        entryPrice: Number(body.entryPrice),
+        stopPrice: Number(body.stopPrice),
+        gradeScore: Number(body.gradeScore),
+        targetPct: body.targetPct != null ? Number(body.targetPct) : undefined,
+        kellyFraction: body.kellyFraction != null ? Number(body.kellyFraction) : undefined,
+      });
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: "position_sizer_failed", message: e?.message ?? String(e) });
+    }
+  });
+
   // Kick off WHALE-ONLY flow alerts (30s eval, 60s coalesce, $1M+/10x OI/ABOVE_ASK)
   try {
     const { startFlowAlerts, getFlowSnapshot, previewFlow } = await import("./flowAlertEngine");

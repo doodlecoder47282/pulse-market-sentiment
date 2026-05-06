@@ -6,6 +6,7 @@ import { useState, useMemo, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import ExitBrainPanel from "@/components/ExitBrainPanel";
+import { PositionSizer } from "@/components/PositionSizer";
 import type { GammaStructure } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -168,6 +169,9 @@ export default function TradeDesk() {
     <div className="space-y-4">
       {/* Exit Brain panel — real-time 0DTE exit scoring */}
       <ExitBrainPanel />
+
+      {/* Position sizer — risk-first contract sizing for banger trades */}
+      <PositionSizer />
 
       {/* Command bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/20 bg-gradient-to-r from-amber-500/5 to-transparent px-4 py-2.5">
