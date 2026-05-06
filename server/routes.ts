@@ -2095,6 +2095,27 @@ Refine the brief above. Search the web for any critical developments the feed is
     }
   });
 
+  // POST /api/backtest/whale-alerts
+  // Replays past whale_alerts from SQLite against underlying price history
+  // to estimate hypothetical P&L. Body: { from, to, symbol?, type?, notional?, maxDte? }
+  app.post("/api/backtest/whale-alerts", async (req, res) => {
+    try {
+      const { runBacktest } = await import("./whaleBacktest");
+      const params = (req.body ?? {}) as any;
+      const summary = await runBacktest({
+        from: params.from,
+        to: params.to,
+        symbol: params.symbol,
+        type: params.type,
+        notional: params.notional,
+        maxDte: params.maxDte,
+      });
+      res.json(summary);
+    } catch (e: any) {
+      res.status(500).json({ error: "backtest_failed", message: e?.message ?? String(e) });
+    }
+  });
+
   // GET /api/regime/predict?symbol=^GSPC&horizonMinutes=20
   // Forward-looking regime transition probabilities. Pulls live audit from
   // /api/models, scores candidate regimes via dfi slope + IV term + gamma
