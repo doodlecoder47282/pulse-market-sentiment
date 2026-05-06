@@ -625,9 +625,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // not experimental. ?experimental=0 can still disable them explicitly.
       const experimental = String(req.query.experimental ?? "1") !== "0";
       const data = await buildModelsForKey(symbol, experimental);
-      // Post-process: rescale non-daily horizons to proper term-structure EMs
+      // Post-process pipeline (order matters):
+      //   1. Term-structure rescale: 1W/1M/3M EMs from VIX9D/VIX
+      //   2. Audit enrichment: vommaPockets, realizedSigma20d, intradayPivot, wickZones
       const vixData = await fetchVixTermData().catch(() => ({ vix: null, vix9d: null, vix3m: null }));
-      res.json(applyTermStructureRescale(data, vixData));
+      const rescaled = applyTermStructureRescale(data, vixData);
+      const { enrichAudit } = await import("./auditEnrich");
+      const enriched = enrichAudit(rescaled, vixData);
+      res.json(enriched);
     } catch (e: any) {
       // On failure — serve last persisted session snapshot for today, tagged.
       try {
@@ -2105,12 +2110,19 @@ Refine the brief above. Search the web for any critical developments the feed is
         audit: {
           slope: audit.slope, dfi: audit.dfi, gammaZone: audit.gammaZone,
           vannaBias: audit.vannaBias, mainPivot: audit.mainPivot, charmZero: audit.charmZero,
+          // 5-wire engine inputs (was being stripped, now forwarded):
+          vannaM: audit.vannaM,
+          vommaPockets: audit.vommaPockets,
+          realizedSigma20d: audit.realizedSigma20d,
+          intradayPivot: audit.intradayPivot,
+          wickZones: audit.wickZones,
         },
         levels,
         contracts: (odte.contracts ?? []).map((c: any) => ({
           key: c.key, strike: c.strike, side: c.side,
           bid: c.bid, ask: c.ask, mid: c.mid, last: c.last,
           volume: c.volume, openInterest: c.openInterest, expiry: c.expiry,
+          iv: c.iv ?? c.impliedVolatility ?? null,
         })),
         oneDayEM: typeof oneDayEM === "number" ? oneDayEM : 0,
         expiry: odte.expiry ?? null,

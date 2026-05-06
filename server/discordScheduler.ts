@@ -308,6 +308,9 @@ async function pollOdteBangerAlerts(): Promise<void> {
     audit: {
       slope: audit.slope, dfi: audit.dfi, gammaZone: audit.gammaZone,
       vannaBias: audit.vannaBias, mainPivot: audit.mainPivot, charmZero: audit.charmZero,
+      vannaM: audit.vannaM, vommaPockets: audit.vommaPockets,
+      realizedSigma20d: audit.realizedSigma20d,
+      intradayPivot: audit.intradayPivot, wickZones: audit.wickZones,
     },
     levels: levels.map((l: any) => ({
       name: l.name, kind: l.kind, price: l.price, side: l.side,
@@ -317,6 +320,7 @@ async function pollOdteBangerAlerts(): Promise<void> {
       key: c.key, strike: c.strike, side: c.side,
       bid: c.bid, ask: c.ask, mid: c.mid, last: c.last,
       volume: c.volume, openInterest: c.openInterest, expiry: c.expiry,
+      iv: c.iv ?? c.impliedVolatility ?? null,
     })),
     oneDayEM: typeof oneDayEM === "number" ? oneDayEM : 0,
     expiry: odte.expiry ?? null,
@@ -406,6 +410,9 @@ async function maybePreOpenOdteScan(): Promise<void> {
     audit: {
       slope: audit.slope, dfi: audit.dfi, gammaZone: audit.gammaZone,
       vannaBias: audit.vannaBias, mainPivot: audit.mainPivot, charmZero: audit.charmZero,
+      vannaM: audit.vannaM, vommaPockets: audit.vommaPockets,
+      realizedSigma20d: audit.realizedSigma20d,
+      intradayPivot: audit.intradayPivot, wickZones: audit.wickZones,
     },
     levels: levels.map((l: any) => ({
       name: l.name, kind: l.kind, price: l.price, side: l.side,
@@ -415,6 +422,7 @@ async function maybePreOpenOdteScan(): Promise<void> {
       key: c.key, strike: c.strike, side: c.side,
       bid: c.bid, ask: c.ask, mid: c.mid, last: c.last,
       volume: c.volume, openInterest: c.openInterest, expiry: c.expiry,
+      iv: c.iv ?? c.impliedVolatility ?? null,
     })),
     oneDayEM: typeof oneDayEM === "number" ? oneDayEM : 0,
     expiry: odte.expiry ?? null,

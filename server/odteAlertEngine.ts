@@ -56,6 +56,17 @@ export interface Audit {
   mainPivot?: number | null;
   charmZero?: number | null;
   realizedSigma20d?: number | null; // 20-day realized vol (upgrade 1 VRP gate)
+  intradayPivot?: number | null;    // session-aware pivot (Wire 6)
+  wickZones?: {
+    pivot: number;
+    upperEntry: number;
+    upperExit: number;
+    lowerEntry: number;
+    lowerExit: number;
+    halfWidth: number;
+    source: string;
+    asOfMin: number;
+  } | null;
 }
 
 export interface ContractRow {
@@ -535,6 +546,50 @@ function scoreSetup(args: {
     // Outside all zones — no bullet (quiet)
   } catch (_) {
     reasoning.push("jump-zone window: error computing window tilt, skipped");
+  }
+
+  // ─── UPGRADE 6: Wick-zone proximity (intraday session pivot) ────────────────
+  // Spot inside wick band → reversion setups get a boost (FAILED_BREAK,
+  // WALL_REJECT). Spot outside band → momentum setups (PIVOT_RECLAIM) get a
+  // boost. Within ±halfWidth/2 of pivot exactly = neutral chop, neutral.
+  try {
+    const wz = args.audit.wickZones;
+    if (wz && typeof wz.pivot === "number" && typeof wz.halfWidth === "number" && wz.halfWidth > 0) {
+      const dist = Math.abs(args.spot - wz.pivot);
+      const inBand = dist <= wz.halfWidth;
+      const inDeepInner = dist <= wz.halfWidth * 0.45; // dead-center chop
+      const isReversionSetup = args.setup === "FAILED_BREAK" || args.setup === "WALL_REJECT";
+
+      if (inDeepInner) {
+        // Right at pivot — neutral, slight penalty for reversion (no edge to fade)
+        if (isReversionSetup) {
+          const wickDelta = -2;
+          score += wickDelta;
+          reasoning.push(`wick-zone deep inner (Δ${dist.toFixed(1)}pt from pivot ${wz.pivot}): no fade edge, ${wickDelta}`);
+        }
+      } else if (inBand) {
+        // In the wick band but off center → prime reversion territory
+        if (isReversionSetup) {
+          const wickDelta = Math.max(-10, Math.min(10, +6));
+          score += wickDelta;
+          reasoning.push(`wick-zone hit (${wz.source}, Δ${dist.toFixed(1)}pt of ${wz.halfWidth}pt half-width): +${wickDelta}`);
+        } else {
+          // Momentum setup inside band = fighting the magnet
+          const wickDelta = -3;
+          score += wickDelta;
+          reasoning.push(`wick-zone trap (momentum inside ${wz.source} band): ${wickDelta}`);
+        }
+      } else {
+        // Outside band → favor momentum (PIVOT_RECLAIM)
+        if (!isReversionSetup) {
+          const wickDelta = +4;
+          score += wickDelta;
+          reasoning.push(`outside wick-band (${dist.toFixed(1)}pt from ${wz.source} pivot ${wz.pivot}): +${wickDelta}`);
+        }
+      }
+    }
+  } catch (_) {
+    reasoning.push("wick-zone proximity: error computing, skipped");
   }
 
   return { score: Math.round(score), reasoning };

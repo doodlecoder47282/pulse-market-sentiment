@@ -638,6 +638,16 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
   // only fire on actual setup triggers. Levels + structure + what to do at
   // each level — that's it.
 
+  // Wick-zone block (intraday session-aware pivot for wick entries/exits)
+  const wz = (audit as any).wickZones;
+  const wickBlock = (wz && typeof wz.pivot === "number" && typeof wz.halfWidth === "number")
+    ? sectionRule("WICK ZONES") + "\n" +
+      `  PIVOT          ${fmt0(wz.pivot)}  (${wz.source})\n` +
+      `  FADE-RIP from  ${fmt0(wz.upperEntry)} – ${fmt0(wz.upperExit)}  (sell calls / buy puts)\n` +
+      `  BUY-DIP from   ${fmt0(wz.lowerEntry)} – ${fmt0(wz.lowerExit)}  (sell puts / buy calls)\n` +
+      `  HALF-WIDTH     ±${wz.halfWidth.toFixed(1)}pt  (shrinks toward close)`
+    : "";
+
   // Stitch the print
   const body = [
     "```",
@@ -652,6 +662,7 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     supportBlock,
     "",
     callsPutsBlock,
+    ...(wickBlock ? ["", wickBlock] : []),
     "```",
   ].join("\n");
 
