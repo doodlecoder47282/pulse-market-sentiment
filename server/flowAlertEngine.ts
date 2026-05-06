@@ -19,8 +19,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { buildSchwabFlow, type SchwabFlowContract } from "./schwabFlow";
+import { getFlowConfig } from "./flowConfig";
 
-// ─── Config — WHALE bar ──────────────────────────────────────────────────────
+// ─── Config — WHALE bar (live values come from flowConfig at runtime) ──────────────────────────────────────────────────────
 export const WHALE_PREMIUM_FLOOR = 1_000_000;   // $1M notional minimum
 export const WHALE_VOL_OI_RATIO  = 10;          // 10x or higher
 export const WHALE_MIN_DTE       = 1;           // no 0DTE
@@ -107,28 +108,29 @@ const flushTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 // ─── Whale gate — single contract test ────────────────────────────────────────
 export function isWhale(c: SchwabFlowContract): { whale: boolean; reason: string } {
+  const cfg = getFlowConfig();
   // Premium floor
-  if (c.notional < WHALE_PREMIUM_FLOOR) {
-    return { whale: false, reason: `premium $${(c.notional / 1000).toFixed(0)}K < $${WHALE_PREMIUM_FLOOR / 1_000_000}M` };
+  if (c.notional < cfg.premiumFloor) {
+    return { whale: false, reason: `premium $${(c.notional / 1000).toFixed(0)}K < $${(cfg.premiumFloor / 1_000_000).toFixed(2)}M` };
   }
   // Aggressor side
-  if (c.tag !== WHALE_REQUIRED_TAG) {
-    return { whale: false, reason: `tag=${c.tag} (need ABOVE_ASK)` };
+  if (cfg.requiredTag !== "ANY" && c.tag !== cfg.requiredTag) {
+    return { whale: false, reason: `tag=${c.tag} (need ${cfg.requiredTag})` };
   }
-  // DTE — exclude 0DTE
-  if (c.dte < WHALE_MIN_DTE) {
-    return { whale: false, reason: `dte=${c.dte} (0DTE excluded)` };
+  // DTE — runtime min
+  if (c.dte < cfg.minDte) {
+    return { whale: false, reason: `dte=${c.dte} < min ${cfg.minDte}` };
   }
   // Delta sanity — kill lotto tickets and deep ITM hedges (only when delta is real)
   const absDelta = Math.abs(c.delta ?? 0);
-  if (absDelta > 0 && (absDelta < WHALE_DELTA_MIN || absDelta > WHALE_DELTA_MAX)) {
-    return { whale: false, reason: `|delta|=${absDelta.toFixed(2)} outside [${WHALE_DELTA_MIN}, ${WHALE_DELTA_MAX}]` };
+  if (absDelta > 0 && (absDelta < cfg.deltaMin || absDelta > cfg.deltaMax)) {
+    return { whale: false, reason: `|delta|=${absDelta.toFixed(2)} outside [${cfg.deltaMin}, ${cfg.deltaMax}]` };
   }
   // OI ratio OR brand-new strike
-  const ratioOk = c.volOiRatio >= WHALE_VOL_OI_RATIO;
+  const ratioOk = c.volOiRatio >= cfg.volOiRatio;
   const newStrikeOk = c.isNewStrike && c.openInterest === 0;
   if (!ratioOk && !newStrikeOk) {
-    return { whale: false, reason: `vol/OI=${c.volOiRatio.toFixed(1)}x < ${WHALE_VOL_OI_RATIO}x and not new strike` };
+    return { whale: false, reason: `vol/OI=${c.volOiRatio.toFixed(1)}x < ${cfg.volOiRatio}x and not new strike` };
   }
   // Build why-fired reason
   const reasonParts: string[] = [];
@@ -253,7 +255,8 @@ async function evalCycle(): Promise<void> {
   const t0 = Date.now();
   try {
     // Priority first, then watchlist — sequential is fine on Schwab (no 429 risk)
-    const universe = [...FLOW_PRIORITY, ...FLOW_WATCHLIST];
+    const cfg = getFlowConfig();
+    const universe = [...cfg.priority, ...cfg.watchlist];
     let cycleErrors = 0;
     for (const sym of universe) {
       const { hits, error } = await scanTicker(sym);
@@ -323,15 +326,18 @@ export function getFlowSnapshot(): FlowSnapshot {
     lastCycleErrors,
     pendingByTicker: pending,
     recentFired: [...recentFired],
-    config: {
-      premiumFloor: WHALE_PREMIUM_FLOOR,
-      volOiRatio: WHALE_VOL_OI_RATIO,
-      minDte: WHALE_MIN_DTE,
-      deltaMin: WHALE_DELTA_MIN,
-      deltaMax: WHALE_DELTA_MAX,
-      requiredTag: WHALE_REQUIRED_TAG,
-      universe: [...FLOW_PRIORITY, ...FLOW_WATCHLIST],
-    },
+    config: ((): FlowSnapshot["config"] => {
+      const cfg = getFlowConfig();
+      return {
+        premiumFloor: cfg.premiumFloor,
+        volOiRatio: cfg.volOiRatio,
+        minDte: cfg.minDte,
+        deltaMin: cfg.deltaMin,
+        deltaMax: cfg.deltaMax,
+        requiredTag: cfg.requiredTag,
+        universe: [...cfg.priority, ...cfg.watchlist],
+      };
+    })(),
   };
 }
 
@@ -342,7 +348,8 @@ export async function previewFlow(): Promise<{
   totalScanned: number;
   totalWhales: number;
 }> {
-  const universe = [...FLOW_PRIORITY, ...FLOW_WATCHLIST];
+  const cfg = getFlowConfig();
+  const universe = [...cfg.priority, ...cfg.watchlist];
   const byTicker: Record<string, { whales: WhaleHit[]; rejected: Array<{ occ: string; reason: string }> }> = {};
   let totalScanned = 0;
   let totalWhales = 0;
@@ -384,12 +391,12 @@ export async function previewFlow(): Promise<{
   return {
     source: "schwab" as const,
     config: {
-      premiumFloor: WHALE_PREMIUM_FLOOR,
-      volOiRatio: WHALE_VOL_OI_RATIO,
-      minDte: WHALE_MIN_DTE,
-      deltaMin: WHALE_DELTA_MIN,
-      deltaMax: WHALE_DELTA_MAX,
-      requiredTag: WHALE_REQUIRED_TAG,
+      premiumFloor: cfg.premiumFloor,
+      volOiRatio: cfg.volOiRatio,
+      minDte: cfg.minDte,
+      deltaMin: cfg.deltaMin,
+      deltaMax: cfg.deltaMax,
+      requiredTag: cfg.requiredTag,
       universe,
     },
     byTicker,

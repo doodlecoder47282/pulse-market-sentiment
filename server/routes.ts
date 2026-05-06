@@ -2244,6 +2244,34 @@ Refine the brief above. Search the web for any critical developments the feed is
       try { res.json(await previewFlow()); }
       catch (e: any) { res.status(500).json({ error: "flow_preview_failed", message: e?.message ?? String(e) }); }
     });
+    // Runtime flow config — watchlist, thresholds, delta floor
+    app.get("/api/flow/config", async (_req, res) => {
+      try {
+        const { getFlowConfig } = await import("./flowConfig");
+        res.json({ ok: true, config: getFlowConfig() });
+      } catch (e: any) {
+        res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      }
+    });
+    app.patch("/api/flow/config", async (req, res) => {
+      try {
+        const { setFlowConfig } = await import("./flowConfig");
+        const body = req.body ?? {};
+        const result = setFlowConfig(body);
+        if (!result.ok) return res.status(400).json(result);
+        res.json(result);
+      } catch (e: any) {
+        res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      }
+    });
+    app.post("/api/flow/config/reset", async (_req, res) => {
+      try {
+        const { resetFlowConfig } = await import("./flowConfig");
+        res.json({ ok: true, config: resetFlowConfig() });
+      } catch (e: any) {
+        res.status(500).json({ ok: false, error: e?.message ?? String(e) });
+      }
+    });
     // Whale follow-through tracker — see closing positions, peak P&L, status
     app.get("/api/flow/followups", async (req, res) => {
       try {
