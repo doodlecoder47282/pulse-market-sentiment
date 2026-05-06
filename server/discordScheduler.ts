@@ -311,6 +311,9 @@ async function pollOdteBangerAlerts(): Promise<void> {
       vannaM: audit.vannaM, vommaPockets: audit.vommaPockets,
       realizedSigma20d: audit.realizedSigma20d,
       intradayPivot: audit.intradayPivot, wickZones: audit.wickZones,
+      gex: audit.gex ?? null,
+      sessionOpen: audit.sessionOpen ?? null,
+      atmIV: audit.atmIV ?? null,
     },
     levels: levels.map((l: any) => ({
       name: l.name, kind: l.kind, price: l.price, side: l.side,
@@ -413,6 +416,9 @@ async function maybePreOpenOdteScan(): Promise<void> {
       vannaM: audit.vannaM, vommaPockets: audit.vommaPockets,
       realizedSigma20d: audit.realizedSigma20d,
       intradayPivot: audit.intradayPivot, wickZones: audit.wickZones,
+      gex: audit.gex ?? null,
+      sessionOpen: audit.sessionOpen ?? null,
+      atmIV: audit.atmIV ?? null,
     },
     levels: levels.map((l: any) => ({
       name: l.name, kind: l.kind, price: l.price, side: l.side,

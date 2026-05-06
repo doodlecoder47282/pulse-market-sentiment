@@ -28,6 +28,7 @@
 
 import type { ModelsResponse } from "./routes";
 import Database from "better-sqlite3";
+import { getOdteSnapshot } from "./odteTracker";
 
 export interface VommaPocket {
   strike: number;
@@ -295,6 +296,50 @@ export function enrichAudit(
       etMinutes: etMinutesNow(),
     });
 
+    // 4. gex: net GEX in $M — read from audit.gexTotal (signed $ per 1%),
+    //    divide by 1e6. Negative = dealers short gamma (amplifying regime).
+    let gex: number | null = null;
+    try {
+      const rawGex = audit.gexTotal;
+      if (typeof rawGex === "number" && isFinite(rawGex)) {
+        gex = parseFloat((rawGex / 1e6).toFixed(1));
+      }
+    } catch { /* leave null */ }
+
+    // 5. sessionOpen: SPX 09:30 ET bar. Try ohlc_minute, fallback to null.
+    //    Table ohlc_minute is not present in this deployment — sessionOpen = null.
+    let sessionOpen: number | null = null;
+    try {
+      const db = getReadOnlyDb();
+      // Attempt ohlc_minute with the canonical 9:30 ET open bar
+      const etDateNow = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+      }).format(new Date());
+      // Compute Unix timestamp of today's 9:30 ET in seconds
+      const open930 = Date.parse(`${etDateNow}T09:30:00`) - (new Date().getTimezoneOffset() * 60_000);
+      // ohlc_minute approach (table may not exist — wrapped in try)
+      try {
+        const row = db
+          .prepare("SELECT close FROM ohlc_minute WHERE symbol = ? AND ts >= ? AND ts < ? ORDER BY ts ASC LIMIT 1")
+          .get("SPX", Math.floor(open930 / 1000), Math.floor(open930 / 1000) + 120) as { close: number } | undefined;
+        if (row && isFinite(row.close) && row.close > 0) sessionOpen = row.close;
+      } catch { /* ohlc_minute not available */ }
+    } catch { /* leave null */ }
+
+    // 6. atmIV: from live 0DTE contract snapshot — closest-to-spot IV > 0
+    let atmIV: number | null = null;
+    try {
+      const snap = getOdteSnapshot();
+      const contracts = snap.contracts ?? [];
+      let bestDist = Infinity;
+      for (const c of contracts) {
+        const iv = (c as any).iv ?? null;
+        if (typeof iv !== "number" || !isFinite(iv) || iv <= 0) continue;
+        const dist = Math.abs((c as any).strike - spot);
+        if (dist < bestDist) { bestDist = dist; atmIV = iv; }
+      }
+    } catch { /* leave null */ }
+
     // Mutate audit
     daily.audit = {
       ...audit,
@@ -303,6 +348,9 @@ export function enrichAudit(
       realizedSigma20d: realizedSigma20d != null ? parseFloat(realizedSigma20d.toFixed(4)) : null,
       intradayPivot: wickZone ? wickZone.pivot : (audit.mainPivot ?? null),
       wickZones: wickZone,
+      gex,
+      sessionOpen,
+      atmIV,
     };
 
     return result;

@@ -57,6 +57,9 @@ export interface Audit {
   charmZero?: number | null;
   realizedSigma20d?: number | null; // 20-day realized vol (upgrade 1 VRP gate)
   intradayPivot?: number | null;    // session-aware pivot (Wire 6)
+  gex?: number | null;            // net GEX in $M (negative = dealers short gamma)
+  sessionOpen?: number | null;    // SPX print at 09:30 ET open (for GTBR distance)
+  atmIV?: number | null;          // closest-to-spot contract IV at score time (for GTBR formula)
   wickZones?: {
     pivot: number;
     upperEntry: number;
@@ -315,6 +318,9 @@ function scoreSetup(args: {
     if ((isReversion && gz === "y+") || (!isReversion && gz === "y-")) {
       score += 15;
       reasoning.push(`γ-zone ${gz} aligned: +15`);
+    } else if (!isReversion && gz === "y+") {
+      score -= 5;
+      reasoning.push(`γ-zone y+ dampening headwind for ${args.setup} (Adams 2025: MM counter-directional hedging): -5`);
     } else if (gz) {
       score += 5;
       reasoning.push(`γ-zone ${gz} mixed: +5`);
@@ -591,6 +597,51 @@ function scoreSetup(args: {
   } catch (_) {
     reasoning.push("wick-zone proximity: error computing, skipped");
   }
+
+  // ─── UPGRADE 7: EOD-GEX gate (Baltussen JFE 2021) ─────────────────────────────────────
+  try {
+    const todMin = args.hourET * 60 + args.minuteET;
+    const eodWindow = todMin >= 15 * 60 + 30 && todMin <= 15 * 60 + 55;
+    const gex = args.audit.gex;
+    if (eodWindow && typeof gex === "number" && isFinite(gex)) {
+      const gexNeg = gex < 0;
+      if (gexNeg) {
+        if (!isReversion) { score += 7; reasoning.push(`EOD GEX ${gex.toFixed(0)}M < 0: dealer short-γ momentum window — ${args.setup} +7`); }
+        else { score -= 5; reasoning.push(`EOD GEX ${gex.toFixed(0)}M < 0 favors momentum, not reversion ${args.setup}: -5`); }
+      } else {
+        if (isReversion) { score += 7; reasoning.push(`EOD GEX ${gex.toFixed(0)}M ≥ 0: dealer long-γ reversion window — ${args.setup} +7`); }
+        else { score -= 5; reasoning.push(`EOD GEX ${gex.toFixed(0)}M ≥ 0 favors dampening, not momentum ${args.setup}: -5`); }
+      }
+    }
+  } catch (_) { reasoning.push("EOD-GEX gate: skipped"); }
+
+  // ─── UPGRADE 8: GTBR state gate (Park & Zhao UTDallas 2025) ─────────────────────
+  try {
+    const gex = args.audit.gex;
+    const sessionOpen = args.audit.sessionOpen;
+    const atmIV = args.audit.atmIV;
+    if (typeof gex === "number" && isFinite(gex) &&
+        typeof sessionOpen === "number" && isFinite(sessionOpen) && sessionOpen > 0 &&
+        typeof atmIV === "number" && isFinite(atmIV) && atmIV > 0) {
+      const todMin = args.hourET * 60 + args.minuteET;
+      const minutesElapsed = Math.max(1, todMin - (9 * 60 + 30));
+      const sessionFraction = Math.min(0.99, minutesElapsed / 390);
+      const gtbrBase = args.spot * atmIV * Math.sqrt(1 / 252);
+      const gtbrAdj = gtbrBase * Math.sqrt(1 - sessionFraction);
+      const sessionMove = Math.abs(args.spot - sessionOpen);
+      const outsideGTBR = sessionMove >= gtbrAdj;
+      const shortGamma = gex < 0;
+      if (shortGamma && outsideGTBR) {
+        if (!isReversion) { score += 8; reasoning.push(`GTBR breached (move ${sessionMove.toFixed(1)} ≥ ${gtbrAdj.toFixed(1)}pt) + short-γ: forced-hedge momentum +8`); }
+        else { score -= 6; reasoning.push(`GTBR breached + short-γ: reversion ${args.setup} fighting forced-hedge momentum -6`); }
+      } else if (shortGamma && !outsideGTBR) {
+        if (!isReversion) { score -= 5; reasoning.push(`GTBR inside (move ${sessionMove.toFixed(1)} < ${gtbrAdj.toFixed(1)}pt): theta covers γ losses, momentum dormant -5`); }
+      } else if (!shortGamma && outsideGTBR) {
+        if (isReversion) { score += 7; reasoning.push(`GTBR breached + long-γ: reversion confirmed +7`); }
+        else { score -= 5; reasoning.push(`GTBR breached + long-γ: momentum disfavored -5`); }
+      }
+    }
+  } catch (_) { reasoning.push("GTBR gate: skipped"); }
 
   return { score: Math.round(score), reasoning };
 }

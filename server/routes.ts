@@ -2116,6 +2116,10 @@ Refine the brief above. Search the web for any critical developments the feed is
           realizedSigma20d: audit.realizedSigma20d,
           intradayPivot: audit.intradayPivot,
           wickZones: audit.wickZones,
+          // Papers G+H+K fields:
+          gex: audit.gex ?? null,
+          sessionOpen: audit.sessionOpen ?? null,
+          atmIV: audit.atmIV ?? null,
         },
         levels,
         contracts: (odte.contracts ?? []).map((c: any) => ({
