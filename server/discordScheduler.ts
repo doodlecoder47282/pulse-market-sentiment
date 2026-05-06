@@ -64,11 +64,17 @@ const dailyFired = new Set<string>(); // YYYY-MM-DD entries
 async function maybeFireDaily(): Promise<void> {
   const { date, hh, mm, dow } = etNow();
   if (!isTradingDay(dow, date)) return;
-  const [tH, tM] = DAILY_HHMM.split(":").map((x) => parseInt(x, 10));
-  if (hh !== tH || mm !== tM) return;
   if (dailyFired.has(date)) return;
+  const [tH, tM] = DAILY_HHMM.split(":").map((x) => parseInt(x, 10));
+  // Robust to 60s timer drift: fire as soon as the ET clock is at OR past
+  // the daily target minute on a trading day, but not after RTH start drift
+  // gets too wide (cap at 9:45 — past that, skip and wait for tomorrow).
+  const nowMin = hh * 60 + mm;
+  const tgtMin = tH * 60 + tM;
+  if (nowMin < tgtMin) return;
+  if (nowMin > tgtMin + 15) return;
   dailyFired.add(date);
-  console.log(`[discordScheduler] firing daily SPX card (Batcave format) at ${date} ${DAILY_HHMM} ET`);
+  console.log(`[discordScheduler] firing daily SPX card (Batcave format) at ${date} ${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")} ET (target ${DAILY_HHMM})`);
   await postBatcaveDailyCard();
 }
 
