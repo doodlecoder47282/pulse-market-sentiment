@@ -62,6 +62,12 @@ export interface WhaleHit {
   delta: number;
   detectedAt: number;    // ms epoch
   reason: string;        // human-readable why-this-fired
+  // Closed-loop edge-conditioned conviction (read-only metadata, additive).
+  // Computed at queueHit time from rolling 45d edge stats. Never alters
+  // gating, sizing, or any decision — surfaces in alert metadata only.
+  convictionMultiplier?: number;   // e.g. 0.5 … 1.5 (1.0 = neutral)
+  convictionRationale?: string;
+  regimeAtFire?: string | null;
 }
 
 export interface FlowSnapshot {
@@ -96,9 +102,13 @@ let lastCycleErrors = 0;
 // pending hits per ticker, awaiting coalesce flush
 const pendingByTicker = new Map<string, WhaleHit[]>();
 
-// dedup cache — same OCC + same minute won't refire
-const recentlySeen = new Map<string, number>();  // occ -> ms epoch
-const DEDUP_WINDOW_MS = 5 * 60 * 1000;  // 5min
+// dedup cache — same OCC + same premium tier won't refire within window
+const recentlySeen = new Map<string, number>();  // dedupKey -> ms epoch
+const DEDUP_WINDOW_MS = 10 * 60 * 1000;  // 10min (hardened from 5min)
+const DEDUP_MAX_ENTRIES = 5_000;          // hard cap so the map can't grow unbounded
+// Coarser fallback dedup: same contract surface (sym|type|strike|exp), shorter window.
+// Catches OCC format variations or feed mid-stream symbol changes.
+const DEDUP_COARSE_WINDOW_MS = 3 * 60 * 1000; // 3min
 
 // fired log — last 20 ticker flushes
 const recentFired: Array<{ ticker: string; hits: number; firedAt: number }> = [];
@@ -161,12 +171,19 @@ async function scanTicker(symbol: string): Promise<{ hits: WhaleHit[]; error: st
       const { whale, reason } = isWhale(c);
       if (!whale) continue;
 
-      // Dedup keyed on (occ, premium-tier in $M) — whale doublings re-fire
+      // Primary dedup keyed on (occ, premium-tier in $M) — whale doublings re-fire
       const tier = Math.ceil(c.notional / 1_000_000);
       const dedupKey = `${c.occ}|t${tier}`;
       const lastSeen = recentlySeen.get(dedupKey);
       if (lastSeen && now - lastSeen < DEDUP_WINDOW_MS) continue;
+
+      // Fallback dedup catches OCC format drift (same contract surface, different occ string).
+      const coarseKey = `coarse|${symbol}|${c.type}|${c.strike}|${c.expiration}|t${tier}`;
+      const coarseLast = recentlySeen.get(coarseKey);
+      if (coarseLast && now - coarseLast < DEDUP_COARSE_WINDOW_MS) continue;
+
       recentlySeen.set(dedupKey, now);
+      recentlySeen.set(coarseKey, now);
 
       hits.push({
         symbol,
@@ -212,6 +229,73 @@ function queueHit(hit: WhaleHit): void {
       registerWhale(hit);
     } catch (e: any) {
       console.warn(`[flowAlerts] follow-through register failed: ${e?.message ?? e}`);
+    }
+
+    // Read current regime (if available) and decorate the hit with edge-conditioned
+    // conviction. Pure read-only — NEVER throws to alert flow, NEVER changes gating.
+    let regimeAtFire: string | null = null;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { getRegimeSnapshot } = require("./regimeStateCache");
+      const snap = getRegimeSnapshot();
+      regimeAtFire = snap?.topCandidate ? String(snap.topCandidate) : null;
+    } catch {
+      // best-effort only
+    }
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { regimeConvictionMultiplier } = require("./edgeStats");
+      if (regimeAtFire && typeof regimeConvictionMultiplier === "function") {
+        const result = regimeConvictionMultiplier(hit.symbol, regimeAtFire, 45);
+        const mult = result?.multiplier;
+        if (typeof mult === "number" && isFinite(mult)) {
+          hit.convictionMultiplier = mult;
+          hit.regimeAtFire = regimeAtFire;
+          if (mult >= 1.2) {
+            hit.convictionRationale = `${regimeAtFire} historically lifts ${hit.symbol} hit-rate by ${((mult - 1) * 100).toFixed(0)}% (n=${result.n})`;
+          } else if (mult <= 0.8) {
+            hit.convictionRationale = `${regimeAtFire} historically reduces ${hit.symbol} hit-rate by ${((1 - mult) * 100).toFixed(0)}% (n=${result.n})`;
+          } else {
+            hit.convictionRationale = `${regimeAtFire} hit-rate near baseline for ${hit.symbol} (n=${result.n})`;
+          }
+        }
+      }
+    } catch {
+      // Never block alert flow on edge-stats failures
+    }
+
+    // Closed-loop edge tracking: log this prediction for grading later.
+    // Pure read-only writer — never throws to alert flow.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { logWhaleAlertPrediction } = require("./outcomeLogger");
+      const cfg = getFlowConfig();
+      logWhaleAlertPrediction({
+        occ: hit.occ,
+        symbol: hit.symbol,
+        type: hit.type as any,
+        strike: hit.strike,
+        expiration: hit.expiration,
+        dte: hit.dte,
+        premium: hit.premium,
+        volOiRatio: hit.volOiRatio,
+        isNewStrike: !!hit.isNewStrike,
+        tag: hit.tag,
+        delta: hit.delta,
+        sentiment: hit.sentiment as any,
+        gates: {
+          premiumFloor: cfg.premiumFloor,
+          volOiRatio: cfg.volOiRatio,
+          minDte: cfg.minDte,
+          requiredTag: cfg.requiredTag,
+          deltaMin: cfg.deltaMin,
+          deltaMax: cfg.deltaMax,
+        },
+        regimeAtFire,
+        detectedAt: hit.detectedAt,
+      });
+    } catch (e: any) {
+      // Never block alert flow on logging failures
     }
 
     // Schedule a flush if not already scheduled
@@ -265,10 +349,17 @@ async function evalCycle(): Promise<void> {
     }
     lastCycleErrors = cycleErrors;
 
-    // Sweep dedup cache
+    // Sweep dedup cache (use longest window so coarse entries don't survive past primary)
     const cutoff = Date.now() - DEDUP_WINDOW_MS;
     for (const [key, ts] of recentlySeen.entries()) {
       if (ts < cutoff) recentlySeen.delete(key);
+    }
+    // Hard cap: if the map ever exceeds the limit, drop oldest half.
+    if (recentlySeen.size > DEDUP_MAX_ENTRIES) {
+      const sorted = Array.from(recentlySeen.entries()).sort((a, b) => a[1] - b[1]);
+      const drop = Math.floor(sorted.length / 2);
+      for (let i = 0; i < drop; i++) recentlySeen.delete(sorted[i][0]);
+      console.warn(`[flowAlerts] dedup cache hit cap ${DEDUP_MAX_ENTRIES} — evicted ${drop} oldest`);
     }
     // Re-price every tracked whale from fresh chains — captures closing prints,
     // peak P&L, drawdowns. Read-only; never throws to outer cycle.

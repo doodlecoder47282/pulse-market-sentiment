@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { desc, eq } from "drizzle-orm";
 
 const sqlite = new Database("data.db");
+export { sqlite };
 sqlite.pragma("journal_mode = WAL");
 
 // Create tables if they don't exist
@@ -129,6 +130,27 @@ sqlite.exec(`
     closing_print_json TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_whale_follows_status_at ON whale_follows(status, status_at DESC);
+  CREATE TABLE IF NOT EXISTS prediction_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    prediction_id TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    captured_at INTEGER NOT NULL,
+    grading_due_at INTEGER NOT NULL,
+    inputs_json TEXT NOT NULL,
+    prediction_json TEXT NOT NULL,
+    outcome_json TEXT,
+    pct_return REAL,
+    hit_30 INTEGER,
+    hit_50 INTEGER,
+    hit_100 INTEGER,
+    graded INTEGER NOT NULL DEFAULT 0,
+    graded_at INTEGER,
+    grade_version INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE INDEX IF NOT EXISTS idx_pred_outcomes_kind_captured ON prediction_outcomes(kind, captured_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_pred_outcomes_due ON prediction_outcomes(graded, grading_due_at);
+  CREATE INDEX IF NOT EXISTS idx_pred_outcomes_symbol ON prediction_outcomes(symbol, captured_at DESC);
 `);
 
 export { schwabTokens };

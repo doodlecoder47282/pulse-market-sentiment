@@ -8,6 +8,9 @@ data.db-shm
 data.db-wal
 data.db-journal
 
+# Local DB snapshots produced by dbBackup cron — never commit
+backups/
+
 .env
 .env.*
 !.env.example

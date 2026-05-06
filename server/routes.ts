@@ -150,6 +150,7 @@ function vm(symbol: string, name: string, last: number | null, prev: number | nu
 let inflight: Promise<Snapshot_Public> | null = null;
 let lastResult: { at: number; data: Snapshot_Public } | null = null;
 const CACHE_MS = 60_000; // refresh at most once per minute
+const regimeLogThrottle = new Map<string, number>(); // key -> last log epoch ms
 
 // Shared voices cache (used by both /api/voices and composite)
 let voicesCache: { at: number; data: any } | null = null;
@@ -2095,6 +2096,53 @@ Refine the brief above. Search the web for any critical developments the feed is
     }
   });
 
+  // GET /api/edge/stats?windowDays=30
+  // Closed-loop edge tracking: rolling hit-rates, calibration, threshold suggestions.
+  app.get("/api/edge/stats", async (req, res) => {
+    try {
+      const { computeEdgeStats } = await import("./edgeStats");
+      const windowDays = Math.max(7, Math.min(730, Number(req.query.windowDays) || 30));
+      const stats = computeEdgeStats(windowDays);
+      res.json(stats);
+    } catch (e: any) {
+      res.status(500).json({ error: "edge_stats_failed", message: e?.message ?? String(e) });
+    }
+  });
+
+  // POST /api/edge/grade-now
+  // Manually trigger the grader (debug / on-demand). Idempotent.
+  app.post("/api/edge/grade-now", async (_req, res) => {
+    try {
+      const { runGrader } = await import("./outcomeLogger");
+      const summary = await runGrader(Date.now());
+      res.json(summary);
+    } catch (e: any) {
+      res.status(500).json({ error: "grade_failed", message: e?.message ?? String(e) });
+    }
+  });
+
+  // GET /api/edge/backups
+  // List local DB backup snapshots with sizes + capture timestamps.
+  app.get("/api/edge/backups", async (_req, res) => {
+    try {
+      const { listBackups } = await import("./dbBackup");
+      res.json({ backups: listBackups() });
+    } catch (e: any) {
+      res.status(500).json({ error: "backups_list_failed", message: e?.message ?? String(e) });
+    }
+  });
+
+  // POST /api/edge/backup-now
+  // Force an immediate DB snapshot (admin/debug).
+  app.post("/api/edge/backup-now", async (_req, res) => {
+    try {
+      const { runBackup } = await import("./dbBackup");
+      res.json(runBackup());
+    } catch (e: any) {
+      res.status(500).json({ error: "backup_failed", message: e?.message ?? String(e) });
+    }
+  });
+
   // POST /api/backtest/whale-alerts
   // Replays past whale_alerts from SQLite against underlying price history
   // to estimate hypothetical P&L. Body: { from, to, symbol?, type?, notional?, maxDte? }
@@ -2135,6 +2183,47 @@ Refine the brief above. Search the web for any critical developments the feed is
         spot: daily.spot,
         horizonMinutes,
       });
+      // Closed-loop edge tracking (throttled).
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { logRegimeCallPrediction } = require("./outcomeLogger");
+        const key = `${symbol}|${horizonMinutes}`;
+        const last = regimeLogThrottle.get(key) ?? 0;
+        const now = Date.now();
+        const top = (out as any)?.candidates?.[0];
+        // Always refresh the in-memory regime cache so flow alerts can decorate.
+        if (top) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { setRegimeSnapshot } = require("./regimeStateCache");
+            setRegimeSnapshot({
+              symbol,
+              topCandidate: top.regime,
+              topProbability: top.probability,
+              currentRegime: (out as any).currentRegime ?? null,
+              confidence: (out as any).confidence ?? 0,
+              capturedAt: now,
+            });
+          } catch {}
+        }
+        if (now - last >= 5 * 60 * 1000) {
+          regimeLogThrottle.set(key, now);
+          if (top) {
+            logRegimeCallPrediction({
+              symbol,
+              currentRegime: (out as any).currentRegime,
+              topCandidate: top.regime,
+              topProbability: top.probability,
+              confidence: (out as any).confidence ?? 0,
+              drivers: (out as any).drivers ?? [],
+              horizonMinutes,
+              capturedAt: now,
+            });
+          }
+        }
+      } catch {
+        // never block route on logging
+      }
       res.json({ symbol, ...out });
     } catch (e: any) {
       res.status(500).json({ error: "regime_predict_failed", message: e?.message ?? String(e) });
@@ -2261,6 +2350,22 @@ Refine the brief above. Search the web for any critical developments the feed is
   // Kick off MM-matrix scheduler (10/13/15:30 ET snapshots, 16:30 grading)
   startMmScheduler();
   startDiscordScheduler();
+
+  // Kick off closed-loop edge grader (30-min cadence, idempotent)
+  try {
+    const { startGraderScheduler } = await import("./outcomeLogger");
+    startGraderScheduler();
+  } catch (e: any) {
+    console.warn(`[outcomeGrader] failed to start: ${e?.message ?? e}`);
+  }
+
+  // Kick off DB backup cron (nightly snapshot, keep last 7)
+  try {
+    const { startDbBackup } = await import("./dbBackup");
+    startDbBackup();
+  } catch (e: any) {
+    console.warn(`[dbBackup] failed to start: ${e?.message ?? e}`);
+  }
 
   // Kick off Exit Brain (30s confluence eval over tracked 0DTE positions)
   try {

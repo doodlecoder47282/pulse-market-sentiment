@@ -173,6 +173,29 @@ export const whaleFollows = sqliteTable("whale_follows", {
 });
 export type WhaleFollow = typeof whaleFollows.$inferSelect;
 
+// ---- Prediction outcomes: closed-loop edge tracking ----
+// Every whale alert + regime call writes here at fire time.
+// Grader cron at 16:30 ET grades anything past grading_due_at.
+export const predictionOutcomes = sqliteTable("prediction_outcomes", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  predictionId: text("prediction_id").notNull().unique(),  // uuid
+  kind: text("kind").notNull(),                            // 'whale_alert' | 'regime_call'
+  symbol: text("symbol").notNull(),
+  capturedAt: integer("captured_at").notNull(),            // epoch ms
+  gradingDueAt: integer("grading_due_at").notNull(),       // when to grade (expiration / 1d ahead)
+  inputsJson: text("inputs_json").notNull(),               // gates, thresholds, drivers at fire time
+  predictionJson: text("prediction_json").notNull(),       // predicted regime / alert metadata
+  outcomeJson: text("outcome_json"),                       // null until graded
+  pctReturn: real("pct_return"),                           // null until graded
+  hit30: integer("hit_30"),                                // 0/1, null until graded
+  hit50: integer("hit_50"),                                // 0/1, null until graded
+  hit100: integer("hit_100"),                              // 0/1, null until graded
+  graded: integer("graded").notNull().default(0),          // 0/1
+  gradedAt: integer("graded_at"),                          // null until graded
+  gradeVersion: integer("grade_version").notNull().default(1),
+});
+export type PredictionOutcome = typeof predictionOutcomes.$inferSelect;
+
 // ----- Sector Web (reactive force-graph + deep heatmap grid) -----
 
 export interface SectorNode {

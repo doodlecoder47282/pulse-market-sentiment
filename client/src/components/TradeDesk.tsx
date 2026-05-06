@@ -8,6 +8,7 @@ import { apiRequest } from "@/lib/queryClient";
 import ExitBrainPanel from "@/components/ExitBrainPanel";
 import { PositionSizer } from "@/components/PositionSizer";
 import RegimePredictPanel from "@/components/RegimePredictPanel";
+import EdgeStatsPanel from "@/components/EdgeStatsPanel";
 import type { GammaStructure } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -176,6 +177,9 @@ export default function TradeDesk() {
 
       {/* Regime transition forecast — forward-looking probability scoring */}
       <RegimePredictPanel />
+
+      {/* Closed-loop edge tracking — rolling hit-rates + threshold tuning suggestions */}
+      <EdgeStatsPanel />
 
       {/* Color legend — what each tone means across this tab */}
       <TradeDeskColorLegend />
