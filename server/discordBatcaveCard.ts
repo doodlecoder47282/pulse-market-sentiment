@@ -664,10 +664,15 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     const pctStr = (vp.spotVsVwap * 100).toFixed(2);
     const dir = vp.aboveVwap ? "above" : "below";
     const sign = vp.spotVsVwap >= 0 ? "+" : "";
+    const stretchZ = vp.vwapStretchZ;
+    const stretchSuffix =
+      stretchZ != null && Math.abs(stretchZ) >= 1.5
+        ? ` (stretchZ=${stretchZ.toFixed(2)})`
+        : "";
     return (
       `VWAP/POC: VWAP=${vp.vwap.toFixed(1)} POC=${vp.poc.toFixed(1)} ` +
       `[VA ${vp.val.toFixed(1)}-${vp.vah.toFixed(1)}] ` +
-      `spot ${spotN.toFixed(1)} (${sign}${pctStr}% ${dir})`
+      `spot ${spotN.toFixed(1)} (${sign}${pctStr}% ${dir}${stretchSuffix})`
     );
   })();
 

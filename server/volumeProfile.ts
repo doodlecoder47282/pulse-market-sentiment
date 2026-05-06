@@ -25,6 +25,7 @@ export interface VolumeProfileResult {
   inValueArea: boolean;
   aboveVwap: boolean;
   pocDist: number;
+  vwapStretchZ: number | null; // Wire 8 — Paper E re-engineered: z-score of (spot-vwap)/vwap vs today's bar stdev. null when <10 bars.
 }
 
 /**
@@ -67,6 +68,29 @@ export function computeVolumeProfile(
 
   if (cumV === 0) return null;
   const vwap = cumPV / cumV;
+
+  // ── 1b. VWAP stretch z-score (Wire 8 — Paper E re-engineered) ────────────
+  // For each bar, compute relative deviation = (close - vwap) / vwap.
+  // stdev of all bar deviations → current stretch z = (spot - vwap)/vwap / stdev.
+  // null when <10 bars (insufficient sample for reliable stdev).
+  let vwapStretchZ: number | null = null;
+  {
+    const deviations: number[] = [];
+    for (const b of bars) {
+      if ((b.v ?? 0) <= 0) continue;
+      const dev = (b.c - vwap) / vwap;
+      deviations.push(dev);
+    }
+    if (deviations.length >= 10) {
+      const mean = deviations.reduce((s, d) => s + d, 0) / deviations.length;
+      const variance = deviations.reduce((s, d) => s + (d - mean) ** 2, 0) / deviations.length;
+      const stdev = Math.sqrt(variance);
+      if (stdev > 0) {
+        const currentDev = (spot - vwap) / vwap;
+        vwapStretchZ = currentDev / stdev;
+      }
+    }
+  }
 
   // ── 2. POC = price bucket with maximum volume ─────────────────────────────
   let poc = 0;
@@ -120,5 +144,6 @@ export function computeVolumeProfile(
     inValueArea: spot >= val && spot <= vah,
     aboveVwap: spot > vwap,
     pocDist: Math.abs(spot - poc),
+    vwapStretchZ,
   };
 }

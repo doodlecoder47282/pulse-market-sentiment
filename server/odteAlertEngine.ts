@@ -80,7 +80,10 @@ export interface Audit {
     inValueArea: boolean;
     aboveVwap: boolean;
     pocDist: number;
+    vwapStretchZ?: number | null;  // Wire 8 — Paper E re-engineered
   } | null;
+  wire8VwapExhaustionPenalty?: number;  // Wire 8 audit: -3 when exhaustion fired
+  wire8VwapStretchZ?: number;           // Wire 8 audit: z-score that triggered penalty
 }
 
 export interface ContractRow {
@@ -798,6 +801,35 @@ function scoreSetup(args: {
     }
   } catch (_) {
     reasoning.push("VWAP/POC wire: error, skipped");
+  }
+
+  // ─── WIRE 8: Paper E re-engineered — VWAP exhaustion entry penalty ──────────────────────
+  // Zarattini (2024) originally used VWAP stretch as an exit discipline.
+  // Re-engineered as entry filter: spot stretched ≥2σ from VWAP in entry direction
+  // = chasing exhaustion territory. Penalise momentum setups (PIVOT_RECLAIM) only.
+  try {
+    const vp = args.audit.vwapProfile;
+    if (vp && vp.vwapStretchZ != null && Math.abs(vp.vwapStretchZ) >= 2) {
+      const isMomentumSetup = args.setup === "PIVOT_RECLAIM";
+      if (isMomentumSetup) {
+        // call = long entry; put = short entry
+        const stretchedAbove = vp.vwapStretchZ >= 2;   // spot high above VWAP
+        const stretchedBelow = vp.vwapStretchZ <= -2;  // spot deep below VWAP
+        const isCallEntry = args.side === "call";
+        const isPutEntry  = args.side === "put";
+        if ((isCallEntry && stretchedAbove) || (isPutEntry && stretchedBelow)) {
+          score -= 3;
+          args.audit.wire8VwapExhaustionPenalty = -3;
+          args.audit.wire8VwapStretchZ = vp.vwapStretchZ;
+          reasoning.push(
+            `Wire 8 VWAP exhaustion (Paper E): ${args.side.toUpperCase()} entry ` +
+            `stretched ${vp.vwapStretchZ.toFixed(2)}σ ${stretchedAbove ? "above" : "below"} VWAP — chasing exhaustion: -3`,
+          );
+        }
+      }
+    }
+  } catch (_) {
+    reasoning.push("Wire 8 VWAP exhaustion: error, skipped");
   }
 
   return { score: Math.round(score), reasoning };
