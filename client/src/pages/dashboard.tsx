@@ -42,6 +42,7 @@ import {
 } from "lucide-react";
 import SchwabSettings, { SchwabStatusPill } from "@/components/SchwabSettings";
 import WhaleFlowPanel from "@/components/WhaleFlowPanel";
+import { ThresholdTuner } from "@/components/ThresholdTuner";
 import { useEffect, useState, useRef, lazy, Suspense } from "react";
 
 // ── Lazy-loaded heavy components (code splitting) ──────────────────────────
@@ -488,6 +489,11 @@ export default function Dashboard() {
             {/* Whale Flow panel — fresh detections + tracking + closed */}
             <ErrorBoundary label="Whale Flow">
               <WhaleFlowPanel />
+            </ErrorBoundary>
+
+            {/* Runtime threshold tuner — adjust whale gate without redeploy */}
+            <ErrorBoundary label="Threshold Tuner">
+              <ThresholdTuner />
             </ErrorBoundary>
 
             {/* Mag 7 quick read — strip above composite */}
