@@ -2084,9 +2084,39 @@ Refine the brief above. Search the web for any critical developments the feed is
         audit: daily.audit ?? {},
         symbol,
       });
+      // Side-effect: feed raw regime into predictor history (fail-soft)
+      try {
+        const { recordRawRegime } = await import("./regimePredictor");
+        recordRawRegime(out.diag.regimeRaw as any, Number(daily.audit?.dfi ?? 0));
+      } catch {}
       res.json(out);
     } catch (e: any) {
       res.status(500).json({ error: "realtime_targets_failed", message: e?.message ?? String(e) });
+    }
+  });
+
+  // GET /api/regime/predict?symbol=^GSPC&horizonMinutes=20
+  // Forward-looking regime transition probabilities. Pulls live audit from
+  // /api/models, scores candidate regimes via dfi slope + IV term + gamma
+  // flip proximity + session time + recent flip frequency. Read-only.
+  app.get("/api/regime/predict", async (req, res) => {
+    try {
+      const { predictTransition } = await import("./regimePredictor");
+      const symbol = String(req.query.symbol || "^GSPC");
+      const horizonMinutes = Math.max(5, Math.min(120, Number(req.query.horizonMinutes) || 20));
+      const port = Number(process.env.PORT ?? 5000);
+      const r = await fetch(`http://127.0.0.1:${port}/api/models?symbol=${encodeURIComponent(symbol)}&experimental=1`);
+      const data: any = await r.json();
+      const daily = data?.horizons?.daily;
+      if (!daily) return res.status(503).json({ error: "no_daily_horizon" });
+      const out = predictTransition({
+        audit: daily.audit ?? {},
+        spot: daily.spot,
+        horizonMinutes,
+      });
+      res.json({ symbol, ...out });
+    } catch (e: any) {
+      res.status(500).json({ error: "regime_predict_failed", message: e?.message ?? String(e) });
     }
   });
 
