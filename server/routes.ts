@@ -31,7 +31,6 @@ import { postCalibrationCard } from "./calibrationCard";
 import { rollingBrier, settleDay, recentForecastProbs } from "./calibration";
 import { resolutionScore, gradeResolution } from "./stats";
 import { watchdogStatus } from "./cusumWatchdog";
-import { formatDecisionBlock } from "./decisionSupport";
 import { shieldStatus } from "./quoteShield";
 import { computeRND, type CallStrike } from "./breedenLitzenberger";
 import { fitOUBand, shouldShowOUBand } from "./ouBand";
@@ -1980,7 +1979,12 @@ Refine the brief above. Search the web for any critical developments the feed is
         status: l.status, tag: l.tag,
       }));
       const spot = odte.spot ?? daily.spot ?? 0;
-      const oneDayEM = daily.expectedMove ?? daily.oneDayEM ?? 0;
+      const oneDayEM =
+        daily.expectedMove ??
+        daily.oneDayEM ??
+        daily.audit?.scenarioTargets?.oneDayEM ??
+        daily.audit?.oneDayEM ??
+        0;
 
       const now = new Date();
       const etParts = new Intl.DateTimeFormat("en-US", {
@@ -2398,25 +2402,7 @@ Refine the brief above. Search the web for any critical developments the feed is
     console.warn(`[exitBrain] failed to start: ${e?.message ?? e}`);
   }
 
-  // Position sizer — risk-first contract sizing for banger trades
-  app.post("/api/position-sizer", async (req, res) => {
-    try {
-      const { sizePosition } = await import("./positionSizer");
-      const body = req.body ?? {};
-      const result = sizePosition({
-        accountSize: Number(body.accountSize),
-        maxRiskPct: body.maxRiskPct != null ? Number(body.maxRiskPct) : undefined,
-        entryPrice: Number(body.entryPrice),
-        stopPrice: Number(body.stopPrice),
-        gradeScore: Number(body.gradeScore),
-        targetPct: body.targetPct != null ? Number(body.targetPct) : undefined,
-        kellyFraction: body.kellyFraction != null ? Number(body.kellyFraction) : undefined,
-      });
-      res.json(result);
-    } catch (e: any) {
-      res.status(500).json({ error: "position_sizer_failed", message: e?.message ?? String(e) });
-    }
-  });
+  // Position sizer endpoint REMOVED per 0DTE bot rules: no sizing math anywhere.
 
   // Kick off WHALE-ONLY flow alerts (30s eval, 60s coalesce, $1M+/10x OI/ABOVE_ASK)
   try {

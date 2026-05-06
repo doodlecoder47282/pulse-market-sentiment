@@ -6,7 +6,6 @@ import { useState, useMemo, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import ExitBrainPanel from "@/components/ExitBrainPanel";
-import { PositionSizer } from "@/components/PositionSizer";
 import RegimePredictPanel from "@/components/RegimePredictPanel";
 import EdgeStatsPanel from "@/components/EdgeStatsPanel";
 import type { GammaStructure } from "@shared/schema";
@@ -18,7 +17,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { fmt } from "@/lib/format";
-import { DecisionSupportCard } from "./DecisionSupportCard";
 import {
   LineChart, Line, XAxis, YAxis, ReferenceLine, ResponsiveContainer,
   Tooltip as RTooltip, CartesianGrid, Area, AreaChart,
@@ -172,9 +170,6 @@ export default function TradeDesk() {
       {/* Exit Brain panel — real-time 0DTE exit scoring */}
       <ExitBrainPanel />
 
-      {/* Position sizer — risk-first contract sizing for banger trades */}
-      <PositionSizer />
-
       {/* Regime transition forecast — forward-looking probability scoring */}
       <RegimePredictPanel />
 
@@ -223,11 +218,6 @@ export default function TradeDesk() {
         <div className="lg:col-span-4">
           <SqueezeDial squeeze={data.squeeze} />
         </div>
-      </section>
-
-      {/* Decision Support — Tier 1/2 quant edge tile (read-only observers) */}
-      <section>
-        <DecisionSupportCard />
       </section>
 
       {/* Three intraday charts with pivot overlays */}

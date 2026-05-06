@@ -288,7 +288,14 @@ async function pollOdteBangerAlerts(): Promise<void> {
   const audit = daily.audit ?? {};
   const levels = (daily.levels ?? []) as any[];
   const spot = odte.spot ?? daily.spot ?? 0;
-  const oneDayEM = daily.expectedMove ?? daily.oneDayEM ?? audit?.oneDayEM ?? 0;
+  // EM lives at audit.scenarioTargets.oneDayEM in the live model output;
+  // top-level expectedMove / oneDayEM are not populated on the daily horizon.
+  const oneDayEM =
+    daily.expectedMove ??
+    daily.oneDayEM ??
+    audit?.scenarioTargets?.oneDayEM ??
+    audit?.oneDayEM ??
+    0;
   if (!spot || spot <= 0) return;
 
   const args: EvalArgs = {
