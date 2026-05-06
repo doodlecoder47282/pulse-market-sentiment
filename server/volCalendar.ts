@@ -10,12 +10,19 @@
 export type EventType = "monthly_opex" | "vix_exp" | "quad_witching" | "fomc" | "cpi" | "nfp";
 export type Importance = "high" | "medium" | "low";
 
+export type EventGateAction =
+  | "SUPPRESS_VRP_GATE"
+  | "EXPIRE_VILKOV_AT_1330"
+  | "ANNOTATE_WHALE_EVENT_DAY";
+
 export interface VolEvent {
   date: string;        // YYYY-MM-DD
   type: EventType;
   label: string;
   daysAway: number;
   importance: Importance;
+  expectedMoveBps?: number;          // Londono & Samadi 2025 Table 1
+  gateActions?: EventGateAction[];
 }
 
 export interface VolCalendarResponse {
@@ -114,6 +121,30 @@ const CPI_DATES: string[] = [
   "2026-09-09", "2026-10-14", "2026-11-12", "2026-12-09",
 ];
 
+// ─── Event-day context helper (Papers I+J) ─────────────────────────────────
+// Returns the most significant macro event today (by expectedMoveBps), or
+// null fields if today is not an event day. Consumed by odteAlertEngine via
+// routes.ts and discordScheduler.ts to suppress VRP gate + expire Vilkov tilt.
+export function getTodayEventContext(): {
+  eventDayKind: string | null;
+  eventGateActions: string[];
+  expectedMoveBps: number;
+} {
+  const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
+  const cal = buildVolCalendar();
+  const todayEvents = (cal.events ?? []).filter((e) => e.date === todayStr);
+  // Priority by expectedMoveBps (highest = most market-moving); gate threshold = 45
+  const sig = todayEvents
+    .filter((e) => typeof e.expectedMoveBps === "number" && (e.expectedMoveBps as number) >= 45)
+    .sort((a, b) => (b.expectedMoveBps ?? 0) - (a.expectedMoveBps ?? 0))[0];
+  if (!sig) return { eventDayKind: null, eventGateActions: [], expectedMoveBps: 0 };
+  return {
+    eventDayKind: String(sig.type ?? "EVENT").toUpperCase(),
+    eventGateActions: (sig.gateActions ?? []) as string[],
+    expectedMoveBps: sig.expectedMoveBps ?? 0,
+  };
+}
+
 export function buildVolCalendar(): VolCalendarResponse {
   const today = new Date();
   const todayStr = toDateStr(today);
@@ -187,6 +218,8 @@ export function buildVolCalendar(): VolCalendarResponse {
         label: `${MONTH_NAMES[month]} Jobs Report (NFP)`,
         daysAway: daysAway(nfpStr, today),
         importance: "medium",
+        expectedMoveBps: 53,
+        gateActions: ["SUPPRESS_VRP_GATE", "ANNOTATE_WHALE_EVENT_DAY"],
       });
     }
   }
@@ -200,6 +233,8 @@ export function buildVolCalendar(): VolCalendarResponse {
         label: "FOMC Decision",
         daysAway: daysAway(dateStr, today),
         importance: "high",
+        expectedMoveBps: 49,
+        gateActions: ["SUPPRESS_VRP_GATE", "EXPIRE_VILKOV_AT_1330", "ANNOTATE_WHALE_EVENT_DAY"],
       });
     }
   }
@@ -213,6 +248,8 @@ export function buildVolCalendar(): VolCalendarResponse {
         label: "CPI Release",
         daysAway: daysAway(dateStr, today),
         importance: "medium",
+        expectedMoveBps: 45,
+        gateActions: ["SUPPRESS_VRP_GATE", "ANNOTATE_WHALE_EVENT_DAY"],
       });
     }
   }

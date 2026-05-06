@@ -57,7 +57,7 @@ import { buildSeasonalitySnapshot, fetchBars, computeSeasonality, generateAnalys
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { buildJPMCollarSnapshot, getCachedSpxCloses } from "./jpmCollar";
-import { buildVolCalendar } from "./volCalendar";
+import { buildVolCalendar, getTodayEventContext } from "./volCalendar";
 import { buildGammaLevelsEnhanced } from "./gammaLevels";
 import { runBackfill, getBacktestSummary } from "./backtest";
 import { buildChainAudit } from "./chainAudit";
@@ -2105,6 +2105,8 @@ Refine the brief above. Search the web for any critical developments the feed is
       const hh = parseInt(etParts.find((p) => p.type === "hour")?.value ?? "12", 10);
       const mm = parseInt(etParts.find((p) => p.type === "minute")?.value ?? "0", 10);
 
+      const { eventDayKind, eventGateActions, expectedMoveBps: evtMoveBps } = getTodayEventContext();
+
       const args = {
         spot, asOf: Date.now(), hourET: hh, minuteET: mm,
         audit: {
@@ -2130,6 +2132,9 @@ Refine the brief above. Search the web for any critical developments the feed is
         })),
         oneDayEM: typeof oneDayEM === "number" ? oneDayEM : 0,
         expiry: odte.expiry ?? null,
+        // Papers I+J: event-day gate
+        eventDayKind,
+        eventGateActions,
       };
 
       const diag = diagnoseOdte(args);
@@ -2150,6 +2155,9 @@ Refine the brief above. Search the web for any critical developments the feed is
         fireGate: FIRE_GATE,
         bangerMinPct: BANGER_MIN_PCT,
         spot, oneDayEM,
+        eventDayKind,
+        eventGateActions,
+        expectedMoveBps: evtMoveBps,
         audit: args.audit,
         fireable: previews,
         rejected: rejectedSummary,

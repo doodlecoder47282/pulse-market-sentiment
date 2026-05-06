@@ -34,6 +34,7 @@
 import { recordPrediction } from "./calibration";
 import { chainAbove, chainBelow, playbookCopy } from "./levelPlaybook";
 import { computeRealtimeTargets } from "./realtimeTargets";
+import { getTodayEventContext } from "./volCalendar";
 
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -648,9 +649,16 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
       `  HALF-WIDTH     ±${wz.halfWidth.toFixed(1)}pt  (shrinks toward close)`
     : "";
 
+  // EVENT DAY annotation (Papers I+J — Wright 2020 + Londono & Samadi 2025)
+  const { eventDayKind: todayEvKind, expectedMoveBps: todayEvBps } = getTodayEventContext();
+  const eventDayLine = todayEvKind
+    ? `EVENT DAY: ${todayEvKind} - expected move ~${todayEvBps}bps annualized`
+    : "";
+
   // Stitch the print
   const body = [
     "```",
+    ...(eventDayLine ? [eventDayLine, ""] : []),
     close,
     "",
     range,

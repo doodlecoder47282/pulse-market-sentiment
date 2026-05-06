@@ -301,6 +301,8 @@ function scoreSetup(args: {
   stopPts: number;        // distance to stop in SPX points
   hourET: number;         // 0-23 ET
   minuteET: number;
+  eventDayKind?: string | null;
+  eventGateActions?: string[];
 }): { score: number; reasoning: string[] } {
   const reasoning: string[] = [];
   let score = 0;
@@ -445,74 +447,89 @@ function scoreSetup(args: {
     reasoning.push(`time-of-day late chop: +0`);
   }
 
-  // ─── UPGRADE 1: VRP gate (vol risk premium) ─────────────────────────────────
+  // ─── UPGRADE 1: VRP gate (vol risk premium) ───────────────────────────────────
   try {
-    const realizedSigma = args.audit.realizedSigma20d;
-    const impliedIV = args.contract.iv;
-    if (
-      typeof realizedSigma === "number" && isFinite(realizedSigma) && realizedSigma > 0 &&
-      typeof impliedIV === "number" && isFinite(impliedIV) && impliedIV > 0
-    ) {
-      // Both are already annualized fractions (e.g. 0.18 = 18%); convert to pp
-      const vrp = (impliedIV - realizedSigma) * 100;
-      let vrpDelta = 0;
-      let vrpDesc = "neutral";
-      if (args.setup === "WALL_REJECT") {
-        // Fades favored when IV rich
-        if (vrp > 5)       { vrpDelta = +6; vrpDesc = "IV rich, fades favored"; }
-        else if (vrp < -2) { vrpDelta = -6; vrpDesc = "RV rich, walls likely to break"; }
-      } else {
-        // FAILED_BREAK / PIVOT_RECLAIM: momentum flips
-        if (vrp > 5)       { vrpDelta = -6; vrpDesc = "IV rich, momentum headwind"; }
-        else if (vrp < -2) { vrpDelta = +6; vrpDesc = "RV rich, momentum favored"; }
-      }
-      // Bound ±10
-      vrpDelta = Math.max(-10, Math.min(10, vrpDelta));
-      if (vrpDelta !== 0) score += vrpDelta;
-      reasoning.push(
-        `VRP gate: IV-RV=${vrp.toFixed(1)}pp, ${vrpDesc} for ${args.setup}` +
-        (vrpDelta !== 0 ? ` (${vrpDelta > 0 ? "+" : ""}${vrpDelta})` : " (neutral, no tilt)"),
-      );
+    const suppressVRP = !!args.eventDayKind &&
+      (args.eventGateActions ?? []).includes("SUPPRESS_VRP_GATE");
+    if (suppressVRP) {
+      reasoning.push(`VRP gate: SUPPRESSED — ${args.eventDayKind} event day (Wright 2020). IV inflated by risk premium.`);
+      // skip VRP scoring entirely; do NOT add/subtract anything
     } else {
-      reasoning.push("VRP gate: realizedSigma or IV unavailable, skipped");
+      const realizedSigma = args.audit.realizedSigma20d;
+      const impliedIV = args.contract.iv;
+      if (
+        typeof realizedSigma === "number" && isFinite(realizedSigma) && realizedSigma > 0 &&
+        typeof impliedIV === "number" && isFinite(impliedIV) && impliedIV > 0
+      ) {
+        // Both are already annualized fractions (e.g. 0.18 = 18%); convert to pp
+        const vrp = (impliedIV - realizedSigma) * 100;
+        let vrpDelta = 0;
+        let vrpDesc = "neutral";
+        if (args.setup === "WALL_REJECT") {
+          // Fades favored when IV rich
+          if (vrp > 5)       { vrpDelta = +6; vrpDesc = "IV rich, fades favored"; }
+          else if (vrp < -2) { vrpDelta = -6; vrpDesc = "RV rich, walls likely to break"; }
+        } else {
+          // FAILED_BREAK / PIVOT_RECLAIM: momentum flips
+          if (vrp > 5)       { vrpDelta = -6; vrpDesc = "IV rich, momentum headwind"; }
+          else if (vrp < -2) { vrpDelta = +6; vrpDesc = "RV rich, momentum favored"; }
+        }
+        // Bound ±10
+        vrpDelta = Math.max(-10, Math.min(10, vrpDelta));
+        if (vrpDelta !== 0) score += vrpDelta;
+        reasoning.push(
+          `VRP gate: IV-RV=${vrp.toFixed(1)}pp, ${vrpDesc} for ${args.setup}` +
+          (vrpDelta !== 0 ? ` (${vrpDelta > 0 ? "+" : ""}${vrpDelta})` : " (neutral, no tilt)"),
+        );
+      } else {
+        reasoning.push("VRP gate: realizedSigma or IV unavailable, skipped");
+      }
     }
   } catch (_) {
     reasoning.push("VRP gate: error computing VRP, skipped");
   }
 
-  // ─── UPGRADE 3: 10:00 AM regime tilt (Vilkov) ─────────────────────────────
+  // ─── UPGRADE 3: 10:00 AM regime tilt (Vilkov) ────────────────────────────
   try {
     const todMin = args.hourET * 60 + args.minuteET;
-    const inVilkovWindow = todMin >= 10 * 60 && todMin <= 11 * 60 + 30; // 10:00–11:30 ET
-    if (tenAmRegime !== null && inVilkovWindow) {
-      // Derive regime direction: DFI positive = bullish; spot above mainPivot = bullish
-      const regimeBullByDfi  = typeof tenAmRegime.dfi === "number" && tenAmRegime.dfi > 0;
-      const regimeBullByPivot = typeof tenAmRegime.spot === "number" &&
-                                typeof tenAmRegime.mainPivot === "number" &&
-                                tenAmRegime.spot > tenAmRegime.mainPivot;
-      // Require both signals to agree to apply a tilt (single disagreement = neutral)
-      const regimeBull  = regimeBullByDfi && regimeBullByPivot;
-      const regimeBear  = !regimeBullByDfi && !regimeBullByPivot;
-      if (regimeBull || regimeBear) {
-        const regimeWantSign = regimeBull ? 1 : -1;
-        const alertSign      = args.side === "call" ? 1 : -1;
-        const aligned        = regimeWantSign === alertSign;
-        const regimeDelta    = aligned ? +5 : -7;
-        // Bound ±10
-        const clampedRegimeDelta = Math.max(-10, Math.min(10, regimeDelta));
-        score += clampedRegimeDelta;
-        reasoning.push(
-          `10AM regime tilt: ${aligned ? "aligned" : "fighting"} 10AM snapshot ` +
-          `(DFI ${tenAmRegime.dfi.toFixed(0)}, spot ${tenAmRegime.spot.toFixed(1)} vs pivot ${tenAmRegime.mainPivot.toFixed(1)}): ` +
-          `${clampedRegimeDelta > 0 ? "+" : ""}${clampedRegimeDelta}`,
-        );
-      } else {
-        reasoning.push("10AM regime tilt: regime signals mixed, no tilt applied");
+    const expireVilkov = !!args.eventDayKind &&
+      (args.eventGateActions ?? []).includes("EXPIRE_VILKOV_AT_1330");
+    const vilkovExpired = expireVilkov && todMin >= 13 * 60 + 30;
+    if (vilkovExpired) {
+      reasoning.push(`10AM Vilkov tilt: EXPIRED — FOMC at 14:00 invalidates morning regime read.`);
+      // skip Vilkov tilt scoring
+    } else {
+      const inVilkovWindow = todMin >= 10 * 60 && todMin <= 11 * 60 + 30; // 10:00–11:30 ET
+      if (tenAmRegime !== null && inVilkovWindow) {
+        // Derive regime direction: DFI positive = bullish; spot above mainPivot = bullish
+        const regimeBullByDfi  = typeof tenAmRegime.dfi === "number" && tenAmRegime.dfi > 0;
+        const regimeBullByPivot = typeof tenAmRegime.spot === "number" &&
+                                  typeof tenAmRegime.mainPivot === "number" &&
+                                  tenAmRegime.spot > tenAmRegime.mainPivot;
+        // Require both signals to agree to apply a tilt (single disagreement = neutral)
+        const regimeBull  = regimeBullByDfi && regimeBullByPivot;
+        const regimeBear  = !regimeBullByDfi && !regimeBullByPivot;
+        if (regimeBull || regimeBear) {
+          const regimeWantSign = regimeBull ? 1 : -1;
+          const alertSign      = args.side === "call" ? 1 : -1;
+          const aligned        = regimeWantSign === alertSign;
+          const regimeDelta    = aligned ? +5 : -7;
+          // Bound ±10
+          const clampedRegimeDelta = Math.max(-10, Math.min(10, regimeDelta));
+          score += clampedRegimeDelta;
+          reasoning.push(
+            `10AM regime tilt: ${aligned ? "aligned" : "fighting"} 10AM snapshot ` +
+            `(DFI ${tenAmRegime.dfi.toFixed(0)}, spot ${tenAmRegime.spot.toFixed(1)} vs pivot ${tenAmRegime.mainPivot.toFixed(1)}): ` +
+            `${clampedRegimeDelta > 0 ? "+" : ""}${clampedRegimeDelta}`,
+          );
+        } else {
+          reasoning.push("10AM regime tilt: regime signals mixed, no tilt applied");
+        }
+      } else if (tenAmRegime === null) {
+        reasoning.push("10AM regime tilt: no 10AM snapshot yet, skipped");
       }
-    } else if (tenAmRegime === null) {
-      reasoning.push("10AM regime tilt: no 10AM snapshot yet, skipped");
+      // Outside 10:00–11:30 window — silent (no bullet cluttering late-day alerts)
     }
-    // Outside 10:00–11:30 window — silent (no bullet cluttering late-day alerts)
   } catch (_) {
     reasoning.push("10AM regime tilt: error applying regime tilt, skipped");
   }
@@ -657,6 +674,8 @@ export interface EvalArgs {
   contracts: ContractRow[];
   oneDayEM: number;
   expiry: string | null;
+  eventDayKind?: string | null;          // "FOMC" | "NFP" | "CPI" | null
+  eventGateActions?: string[];           // copy of EventGateAction strings
 }
 
 export const FIRE_GATE = 80;  // A− or better — banger-only
@@ -928,6 +947,8 @@ function buildAlert(
   const score = scoreSetup({
     setup, side, spot: args.spot, audit: args.audit, contract: c,
     t1Pts, stopPts, hourET: args.hourET, minuteET: args.minuteET,
+    eventDayKind: args.eventDayKind ?? null,
+    eventGateActions: args.eventGateActions ?? [],
   });
 
   // Greek signals string

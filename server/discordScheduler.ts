@@ -25,6 +25,7 @@ import { evaluateOdte, setTenAmRegime, type EvalArgs } from "./odteAlertEngine";
 import { postBatcaveDailyCard } from "./discordBatcaveCard";
 import { settleDay } from "./calibration";
 import { postCalibrationCard } from "./calibrationCard";
+import { getTodayEventContext } from "./volCalendar";
 
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -300,6 +301,8 @@ async function pollOdteBangerAlerts(): Promise<void> {
     0;
   if (!spot || spot <= 0) return;
 
+  const { eventDayKind: evDayKind, eventGateActions: evGateActions } = getTodayEventContext();
+
   const args: EvalArgs = {
     spot,
     asOf: Date.now(),
@@ -327,6 +330,9 @@ async function pollOdteBangerAlerts(): Promise<void> {
     })),
     oneDayEM: typeof oneDayEM === "number" ? oneDayEM : 0,
     expiry: odte.expiry ?? null,
+    // Papers I+J: event-day gate
+    eventDayKind: evDayKind,
+    eventGateActions: evGateActions,
   };
 
   let alerts = [];
@@ -405,6 +411,8 @@ async function maybePreOpenOdteScan(): Promise<void> {
     return;
   }
 
+  const { eventDayKind: preEvDayKind, eventGateActions: preEvGateActions } = getTodayEventContext();
+
   const args: EvalArgs = {
     spot,
     asOf: Date.now(),
@@ -432,6 +440,9 @@ async function maybePreOpenOdteScan(): Promise<void> {
     })),
     oneDayEM: typeof oneDayEM === "number" ? oneDayEM : 0,
     expiry: odte.expiry ?? null,
+    // Papers I+J: event-day gate
+    eventDayKind: preEvDayKind,
+    eventGateActions: preEvGateActions,
   };
 
   let alerts: any[] = [];
