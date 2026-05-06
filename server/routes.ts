@@ -2068,6 +2068,38 @@ Refine the brief above. Search the web for any critical developments the feed is
     res.json({ tracked: getTracked() });
   });
 
+  // ─── Wire 9: jump regime diagnose — returns current jumpRegime state ───────────────
+  // Quick health-check endpoint to verify Wire 9 fields are populated.
+  app.get("/api/odte/diagnose", async (_req, res) => {
+    try {
+      const port = process.env.PORT || "5000";
+      const modelsResp = await fetch(`http://127.0.0.1:${port}/api/models?symbol=^GSPC&experimental=1`).catch(() => null);
+      const models: any = modelsResp && modelsResp.ok ? await modelsResp.json().catch(() => null) : null;
+      const daily = models?.horizons?.daily;
+      const audit = daily?.audit ?? {};
+      const { getSpotHistoryInfo } = await import("./odteAlertEngine");
+      const spotInfo = getSpotHistoryInfo();
+      res.json({
+        asOf: Date.now(),
+        spot: daily?.spot ?? null,
+        spotHistoryLength: spotInfo.length,
+        // Wire 9 fields
+        jumpRegime: audit.jumpRegime ?? null,
+        jumpScore: audit.jumpScore ?? null,
+        jumpFeatures: audit.jumpFeatures ?? null,
+        // Additional audit context
+        gex: audit.gex ?? null,
+        vwapProfile: audit.vwapProfile ? {
+          vwap: audit.vwapProfile.vwap,
+          poc: audit.vwapProfile.poc,
+        } : null,
+        wire9Present: audit.jumpRegime !== undefined,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: "odte_diagnose_failed", message: e?.message ?? String(e) });
+    }
+  });
+
   // 0DTE spotHistory audit — returns current in-memory spotHistory metadata
   // Used for deployment verification (seed worked?) and ops diagnostics.
   app.get("/api/odte/audit", async (_req, res) => {
@@ -2142,6 +2174,10 @@ Refine the brief above. Search the web for any critical developments the feed is
           atmIV: audit.atmIV ?? null,
           // Paper F+O Wire 7:
           vwapProfile: audit.vwapProfile ?? null,
+          // Wire 9 — Paper M jump regime:
+          jumpRegime: audit.jumpRegime ?? null,
+          jumpScore: audit.jumpScore ?? null,
+          jumpFeatures: audit.jumpFeatures ?? null,
         },
         levels,
         contracts: (odte.contracts ?? []).map((c: any) => ({

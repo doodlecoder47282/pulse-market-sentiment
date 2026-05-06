@@ -58,6 +58,20 @@ let spyBarsCache: { ts: number; bars: DailyBar[] } | null = null;
 const SPY_CACHE_MS = 5 * 60_000;
 let roDb: Database.Database | null = null;
 
+// ─── Wire 9: jump regime cache (5-min TTL) ───────────────────────────────────
+export interface JumpRegimeResult {
+  jumpRegime: boolean;
+  jumpScore: number;  // 0-4, count of triggered features
+  features: {
+    overnightGapPct: number | null;  // (todayOpen - prevClose) / prevClose * 100
+    preMktRangePct: number | null;   // (preMktHigh - preMktLow) / prevClose * 100
+    gexSignFlip: boolean | null;     // true if gex sign flipped vs prior day close gex
+    vix1dChangePct: number | null;   // (vixNow - vixPrevClose) / vixPrevClose * 100
+  };
+}
+let jumpRegimeCache: { ts: number; result: JumpRegimeResult } | null = null;
+const JUMP_REGIME_CACHE_MS = 5 * 60_000;
+
 // Intraday bars cache (1-min or fallback resolution) — refreshed every 2 min
 interface IntradayBarsCache {
   ts: number;
@@ -359,6 +373,174 @@ function etMinutesNow(): number {
 }
 
 /**
+ * Wire 9 — Paper M re-engineered: jump regime tag.
+ *
+ * Uses 4 univariate features as a confluence count:
+ *   1. |overnight gap| >= 0.4%
+ *   2. pre-market range >= 0.5% of prevClose
+ *   3. GEX sign flip vs prior trading day
+ *   4. |VIX 1d change| >= 5%
+ *
+ * jumpRegime = true when jumpScore >= 3.
+ *
+ * Gracefully degrades: any feature that cannot be computed → null,
+ * contributes 0 to score. Result cached 5 minutes.
+ */
+export async function computeJumpRegime(currentGex?: number | null): Promise<JumpRegimeResult> {
+  if (jumpRegimeCache && Date.now() - jumpRegimeCache.ts < JUMP_REGIME_CACHE_MS) {
+    return jumpRegimeCache.result;
+  }
+
+  const features: JumpRegimeResult["features"] = {
+    overnightGapPct: null,
+    preMktRangePct: null,
+    gexSignFlip: null,
+    vix1dChangePct: null,
+  };
+
+  // ── Feature 1 + 2: overnight gap and pre-market range ───────────────────
+  // Fetch ^GSPC with includePrePost=true, 1D range, 1m interval.
+  // Extract prevClose from meta, today's first RTH bar open for gap,
+  // and 04:00-09:30 ET bars for pre-market range.
+  try {
+    const { fetchOHLC } = await import("./ohlc");
+    // 5d range to get today's pre-market + yesterday's close
+    const etDateNow = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+
+    // Fetch 1d range with 1m interval — includePrePost=true to get pre-market bars
+    // We manually fetch with prePost since fetchOHLC uses includePrePost=false
+    const enc = encodeURIComponent("^GSPC");
+    const preMktUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${enc}?interval=1m&range=1d&includePrePost=true`;
+    let preMktData: any = null;
+    try {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), 10_000);
+      const r = await fetch(preMktUrl, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; PulseDashboard/1.0)", Accept: "application/json" },
+        signal: ctrl.signal,
+      });
+      clearTimeout(to);
+      if (r.ok) preMktData = await r.json();
+    } catch { /* network or parse error */ }
+
+    if (preMktData) {
+      const result = preMktData?.chart?.result?.[0];
+      const meta = result?.meta ?? {};
+      const timestamps: number[] = result?.timestamp ?? [];
+      const quote = result?.indicators?.quote?.[0] ?? {};
+      const opens: number[] = quote.open ?? [];
+      const highs: number[] = quote.high ?? [];
+      const lows: number[] = quote.low ?? [];
+
+      // prevClose from meta
+      const prevClose: number | null = meta.chartPreviousClose ?? meta.previousClose ?? null;
+
+      if (prevClose && isFinite(prevClose) && prevClose > 0 && timestamps.length > 0) {
+        // today 9:30 ET in epoch seconds
+        const open930Ms = Date.parse(`${etDateNow}T09:30:00-05:00`);
+        const open930s = isNaN(open930Ms) ? 0 : Math.floor(open930Ms / 1000);
+        // pre-market window: 4:00 ET to 9:29 ET
+        const pm400s = isNaN(Date.parse(`${etDateNow}T04:00:00-05:00`))
+          ? open930s - 330 * 60
+          : Math.floor(Date.parse(`${etDateNow}T04:00:00-05:00`) / 1000);
+
+        // First RTH bar (>= 9:30 ET) open for overnight gap
+        let todayOpen: number | null = null;
+        for (let i = 0; i < timestamps.length; i++) {
+          if (timestamps[i] >= open930s && opens[i] != null && isFinite(opens[i]) && opens[i] > 0) {
+            todayOpen = opens[i];
+            break;
+          }
+        }
+
+        if (todayOpen !== null) {
+          features.overnightGapPct = ((todayOpen - prevClose) / prevClose) * 100;
+        }
+
+        // Pre-market range: bars between 4:00-9:29 ET
+        let pmHigh = -Infinity;
+        let pmLow = Infinity;
+        let pmCount = 0;
+        for (let i = 0; i < timestamps.length; i++) {
+          if (timestamps[i] >= pm400s && timestamps[i] < open930s) {
+            const h = highs[i], l = lows[i];
+            if (h != null && isFinite(h) && h > 0) { pmHigh = Math.max(pmHigh, h); pmCount++; }
+            if (l != null && isFinite(l) && l > 0) pmLow = Math.min(pmLow, l);
+          }
+        }
+        if (pmCount >= 3 && pmHigh > pmLow && pmLow > 0) {
+          features.preMktRangePct = ((pmHigh - pmLow) / prevClose) * 100;
+        }
+      }
+    }
+  } catch { /* graceful: features remain null */ }
+
+  // ── Feature 3: GEX sign flip vs prior trading day ─────────────────────
+  // Query snapshot_history for the most recent prior-day net_gex.
+  // If table missing or no rows, set null (contributes 0). DO NOT create tables.
+  try {
+    if (typeof currentGex === "number" && isFinite(currentGex)) {
+      const db = getReadOnlyDb();
+      const etDateNow = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+      }).format(new Date());
+      const row = db
+        .prepare("SELECT net_gex FROM snapshot_history WHERE date < ? ORDER BY date DESC LIMIT 1")
+        .get(etDateNow) as { net_gex: number } | undefined;
+      if (row && typeof row.net_gex === "number" && isFinite(row.net_gex)) {
+        const prevGex = row.net_gex;
+        // Sign flip: signs differ (not both zero)
+        const curSign = currentGex >= 0 ? 1 : -1;
+        const prevSign = prevGex >= 0 ? 1 : -1;
+        features.gexSignFlip = curSign !== prevSign;
+      }
+    }
+  } catch { /* snapshot_history unavailable or query failed */ }
+
+  // ── Feature 4: VIX 1-day change ──────────────────────────────────
+  // Yahoo daily for ^VIX (5d), compute (lastClose - prevClose) / prevClose * 100.
+  try {
+    const { fetchOHLC } = await import("./ohlc");
+    const vixOhlc = await fetchOHLC("^VIX", "5D", "1d");
+    const candles = vixOhlc.candles.filter((b) => b.c > 0);
+    if (candles.length >= 2) {
+      const vixNow = candles[candles.length - 1].c;
+      const vixPrev = candles[candles.length - 2].c;
+      if (vixPrev > 0) {
+        features.vix1dChangePct = ((vixNow - vixPrev) / vixPrev) * 100;
+      }
+    } else if (vixOhlc.prevClose && vixOhlc.price && vixOhlc.prevClose > 0) {
+      features.vix1dChangePct = ((vixOhlc.price - vixOhlc.prevClose) / vixOhlc.prevClose) * 100;
+    }
+  } catch { /* VIX fetch failed */ }
+
+  // ── Score and classify ─────────────────────────────────────────────────
+  let jumpScore = 0;
+  if (features.overnightGapPct !== null && Math.abs(features.overnightGapPct) >= 0.4) jumpScore++;
+  if (features.preMktRangePct !== null && features.preMktRangePct >= 0.5) jumpScore++;
+  if (features.gexSignFlip === true) jumpScore++;
+  if (features.vix1dChangePct !== null && Math.abs(features.vix1dChangePct) >= 5) jumpScore++;
+
+  const result: JumpRegimeResult = {
+    jumpRegime: jumpScore >= 3,
+    jumpScore,
+    features,
+  };
+
+  jumpRegimeCache = { ts: Date.now(), result };
+  console.log(
+    `[auditEnrich] computeJumpRegime: score=${jumpScore}/4 regime=${result.jumpRegime} ` +
+    `gap=${features.overnightGapPct?.toFixed(2) ?? "null"}% ` +
+    `range=${features.preMktRangePct?.toFixed(2) ?? "null"}% ` +
+    `gexFlip=${features.gexSignFlip ?? "null"} ` +
+    `vix1d=${features.vix1dChangePct?.toFixed(2) ?? "null"}%`,
+  );
+  return result;
+}
+
+/**
  * Main entry — augments daily horizon audit with the 5 missing fields.
  * Returns the same response object (mutated in place).
  *
@@ -465,6 +647,15 @@ export async function enrichAudit(
       console.warn(`[auditEnrich] vwapProfile error: ${e?.message ?? e}`);
     }
 
+    // 8. Wire 9: jump regime (Paper M re-engineered)
+    //    Pass current gex (already computed above) so gexSignFlip can use it.
+    let jumpRegimeResult: JumpRegimeResult | null = null;
+    try {
+      jumpRegimeResult = await computeJumpRegime(gex);
+    } catch (e: any) {
+      console.warn(`[auditEnrich] computeJumpRegime error: ${e?.message ?? e}`);
+    }
+
     // Mutate audit
     daily.audit = {
       ...audit,
@@ -477,6 +668,10 @@ export async function enrichAudit(
       sessionOpen,
       atmIV,
       vwapProfile: vwapProfile ?? null,
+      // Wire 9 jump regime fields
+      jumpRegime: jumpRegimeResult ? jumpRegimeResult.jumpRegime : null,
+      jumpScore: jumpRegimeResult ? jumpRegimeResult.jumpScore : null,
+      jumpFeatures: jumpRegimeResult ? jumpRegimeResult.features : null,
     };
 
     return result;

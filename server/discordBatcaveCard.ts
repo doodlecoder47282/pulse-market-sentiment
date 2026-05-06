@@ -676,6 +676,33 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     );
   })();
 
+  // Wire 9: JUMP REGIME block (Paper M re-engineered)
+  // Only renders when jumpRegime === true. Shows only the features that triggered.
+  const jumpRegimeBlock = (() => {
+    const jr = (audit as any).jumpRegime;
+    const js = (audit as any).jumpScore;
+    const jf = (audit as any).jumpFeatures;
+    if (jr !== true || !jf) return "";
+    const parts: string[] = [];
+    if (jf.overnightGapPct != null && Math.abs(jf.overnightGapPct) >= 0.4) {
+      const sign = jf.overnightGapPct >= 0 ? "+" : "";
+      parts.push(`gap=${sign}${jf.overnightGapPct.toFixed(2)}%`);
+    }
+    if (jf.preMktRangePct != null && jf.preMktRangePct >= 0.5) {
+      parts.push(`range=${jf.preMktRangePct.toFixed(2)}%`);
+    }
+    if (jf.gexSignFlip === true) {
+      parts.push("gex_flip");
+    }
+    if (jf.vix1dChangePct != null && Math.abs(jf.vix1dChangePct) >= 5) {
+      const sign = jf.vix1dChangePct >= 0 ? "+" : "";
+      parts.push(`vix=${sign}${jf.vix1dChangePct.toFixed(1)}%`);
+    }
+    const scoreStr = js != null ? `${js}/4` : "?/4";
+    const featStr = parts.length > 0 ? `: ` + parts.join(" ") : "";
+    return `JUMP REGIME=true (score=${scoreStr}${featStr})`;
+  })();
+
   // Stitch the print
   const body = [
     "```",
@@ -693,6 +720,7 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     callsPutsBlock,
     ...(wickBlock ? ["", wickBlock] : []),
     ...(vwapBlock ? ["", vwapBlock] : []),
+    ...(jumpRegimeBlock ? ["", jumpRegimeBlock] : []),
     "```",
   ].join("\n");
 

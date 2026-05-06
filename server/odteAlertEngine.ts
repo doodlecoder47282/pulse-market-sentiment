@@ -84,6 +84,17 @@ export interface Audit {
   } | null;
   wire8VwapExhaustionPenalty?: number;  // Wire 8 audit: -3 when exhaustion fired
   wire8VwapStretchZ?: number;           // Wire 8 audit: z-score that triggered penalty
+  // Wire 9 — Paper M re-engineered: jump regime
+  jumpRegime?: boolean | null;          // true when 3+ of 4 jump features triggered
+  jumpScore?: number | null;            // 0-4 count of triggered features
+  jumpFeatures?: {
+    overnightGapPct: number | null;
+    preMktRangePct: number | null;
+    gexSignFlip: boolean | null;
+    vix1dChangePct: number | null;
+  } | null;
+  wire9JumpBoost?: number;              // +3 for PIVOT_RECLAIM in jump regime
+  wire9JumpPenalty?: number;            // -2 for WALL_REJECT / FAILED_BREAK in jump regime
 }
 
 export interface ContractRow {
@@ -830,6 +841,30 @@ function scoreSetup(args: {
     }
   } catch (_) {
     reasoning.push("Wire 8 VWAP exhaustion: error, skipped");
+  }
+
+  // ─── WIRE 9 — Paper M re-engineered: jump regime momentum boost ─────────────────────────
+  // When 3+ jump features trigger, momentum setups outperform mean-reversion
+  try {
+    if (args.audit.jumpRegime === true) {
+      if (args.setup === "PIVOT_RECLAIM") {
+        score += 3;
+        args.audit.wire9JumpBoost = 3;
+        reasoning.push(
+          `Wire 9 jump regime (Paper M): PIVOT_RECLAIM (momentum) in jump regime ` +
+          `(score ${args.audit.jumpScore ?? "?"}/4): +3`,
+        );
+      } else if (args.setup === "WALL_REJECT" || args.setup === "FAILED_BREAK") {
+        score -= 2;
+        args.audit.wire9JumpPenalty = -2;
+        reasoning.push(
+          `Wire 9 jump regime (Paper M): ${args.setup} (mean-reversion) underperforms ` +
+          `in jump regime (score ${args.audit.jumpScore ?? "?"}/4): -2`,
+        );
+      }
+    }
+  } catch (_) {
+    reasoning.push("Wire 9 jump regime: error, skipped");
   }
 
   return { score: Math.round(score), reasoning };
