@@ -122,6 +122,16 @@ export interface Audit {
   }>;
   wire12SdZoneBoost?: number;
   wire12SdZoneInfo?: { type: string; status: string; volumeConfirmed: boolean; distance: number };
+  // Wire 13 — Lee-Ready OFI session-cumulative trend
+  ofiTrend?: {
+    cumulative: number;
+    slope15m: number;
+    slope5m: number;
+    trend: "BULLISH" | "BEARISH" | "NEUTRAL";
+    acceleration: "ACCELERATING" | "DECELERATING" | "FLAT";
+  } | null;
+  wire13OfiBoost?: number;
+  wire13OfiPenalty?: number;
 }
 
 export interface ContractRow {
@@ -1066,6 +1076,50 @@ function scoreSetup(args: {
     }
   } catch (_) {
     reasoning.push("Wire 12 S/D zone: error, skipped");
+  }
+
+  // ─── WIRE 13 — Lee-Ready OFI session-cumulative trend confluence ───────────────────────
+  // Bar-level tick rule (zero-tick = persist last sign). Scoring per candidate:
+  //   Aligned + accelerating  → +3
+  //   Aligned                 → +2
+  //   Opposed                 → -3
+  //   Opposed + accelerating  → -4
+  //   Neutral trend           →  0
+  try {
+    if (args.audit.ofiTrend) {
+      const ofi = args.audit.ofiTrend;
+      const isCall = args.side === "call";
+
+      // Aligned: call + bullish trend, or put + bearish trend
+      const aligned = (isCall && ofi.trend === "BULLISH") || (!isCall && ofi.trend === "BEARISH");
+      // Opposed: call + bearish trend, or put + bullish trend
+      const opposed = (isCall && ofi.trend === "BEARISH") || (!isCall && ofi.trend === "BULLISH");
+
+      if (aligned) {
+        // Base aligned boost = +2, bumped to +3 if accelerating
+        const boost = ofi.acceleration === "ACCELERATING" ? 3 : 2;
+        score += boost;
+        args.audit.wire13OfiBoost = boost;
+        reasoning.push(
+          `Wire 13 OFI trend (Lee-Ready): ${ofi.trend} ${ofi.acceleration} aligned with ${args.side} ` +
+          `(cum=${(ofi.cumulative / 1000).toFixed(1)}k 15m=${(ofi.slope15m / 1000).toFixed(1)}k ` +
+          `5m=${(ofi.slope5m / 1000).toFixed(1)}k): +${boost}`,
+        );
+      } else if (opposed) {
+        // Base opposed penalty = -3, bumped to -4 if accelerating against us
+        const penalty = ofi.acceleration === "ACCELERATING" ? -4 : -3;
+        score += penalty;
+        args.audit.wire13OfiPenalty = penalty;
+        reasoning.push(
+          `Wire 13 OFI trend (Lee-Ready): ${ofi.trend} ${ofi.acceleration} opposed to ${args.side} ` +
+          `(cum=${(ofi.cumulative / 1000).toFixed(1)}k 15m=${(ofi.slope15m / 1000).toFixed(1)}k ` +
+          `5m=${(ofi.slope5m / 1000).toFixed(1)}k): ${penalty}`,
+        );
+      }
+      // NEUTRAL trend: no signal, no score change
+    }
+  } catch (_) {
+    reasoning.push("Wire 13 OFI trend: error, skipped");
   }
 
   return { score: Math.round(score), reasoning };

@@ -33,6 +33,7 @@ import { computeVolumeProfile } from "./volumeProfile";
 import type { Candle } from "./ohlc";
 import { getChopRegime, getSpotPriceAtTs } from "./odteAlertEngine";
 import { detectSDZones } from "./sdZones.js";
+import { computeOfiTrend } from "./leeReadyOfi.js";
 
 export interface VommaPocket {
   strike: number;
@@ -790,6 +791,28 @@ export async function enrichAudit(
       sdZones = [];
     }
 
+    // 12. Wire 13: Lee-Ready OFI session trend
+    let ofiTrendSummary: {
+      cumulative: number;
+      slope15m: number;
+      slope5m: number;
+      trend: "BULLISH" | "BEARISH" | "NEUTRAL";
+      acceleration: "ACCELERATING" | "DECELERATING" | "FLAT";
+    } | null = null;
+    try {
+      const ofi = await computeOfiTrend();
+      ofiTrendSummary = {
+        cumulative: ofi.cumulativeNow,
+        slope15m: ofi.slope15m,
+        slope5m: ofi.slope5m,
+        trend: ofi.trend,
+        acceleration: ofi.acceleration,
+      };
+    } catch (e: any) {
+      console.warn(`[auditEnrich] computeOfiTrend error: ${e?.message ?? e}`);
+      ofiTrendSummary = null;
+    }
+
     // Mutate audit
     daily.audit = {
       ...audit,
@@ -817,6 +840,8 @@ export async function enrichAudit(
       correlationBreakdownDirection: corrBreakdown ? corrBreakdown.correlationBreakdownDirection : null,
       // Wire 12 S/D zones
       sdZones,
+      // Wire 13 Lee-Ready OFI trend
+      ofiTrend: ofiTrendSummary,
     };
 
     return result;

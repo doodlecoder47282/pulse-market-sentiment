@@ -728,6 +728,25 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     return `VIX/SPX BREAKDOWN: ${dir} (${vixStr}, ${spxStr} over 5m)`;
   })();
 
+  // Wire 13: OFI block (Lee-Ready 1-min session-cumulative trend)
+  // One-line summary: trend + acceleration + key numbers in thousands.
+  const ofiBlock = (() => {
+    const ofi = (audit as any).ofiTrend;
+    if (!ofi || typeof ofi.cumulative !== "number") return "";
+    const fmtK = (n: number) => {
+      const k = n / 1000;
+      return (k >= 0 ? "+" : "") + k.toFixed(1) + "k";
+    };
+    if (ofi.trend === "NEUTRAL") {
+      return `OFI: NEUTRAL (cum=${fmtK(ofi.cumulative)})`;
+    }
+    const accel = ofi.acceleration !== "FLAT" ? ` ${ofi.acceleration}` : "";
+    return (
+      `OFI: ${ofi.trend}${accel} ` +
+      `(cum=${fmtK(ofi.cumulative)}, 15m=${fmtK(ofi.slope15m)}, 5m=${fmtK(ofi.slope5m)})`
+    );
+  })();
+
   // Wire 12: S/D ZONE block (1-min Schwab bars, volume+freshness)
   // Shows nearest active DEMAND/SUPPLY zone relative to spot.
   // Renders a compact line per side: type, status, vol confirm tag, distance.
@@ -784,6 +803,7 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     ...(chopRegimeBlock ? ["", chopRegimeBlock] : []),
     ...(corrBreakdownBlock ? ["", corrBreakdownBlock] : []),
     ...(sdZoneBlock ? ["", sdZoneBlock] : []),
+    ...(ofiBlock ? ["", ofiBlock] : []),
     "```",
   ].join("\n");
 

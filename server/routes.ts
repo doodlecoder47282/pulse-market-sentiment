@@ -2111,6 +2111,11 @@ Refine the brief above. Search the web for any critical developments the feed is
         wire12SdZoneBoost: audit.wire12SdZoneBoost ?? null,
         wire12SdZoneInfo: audit.wire12SdZoneInfo ?? null,
         wire12Present: true,
+        // Wire 13 Lee-Ready OFI trend fields
+        ofiTrend: audit.ofiTrend ?? null,
+        wire13OfiBoost: audit.wire13OfiBoost ?? null,
+        wire13OfiPenalty: audit.wire13OfiPenalty ?? null,
+        wire13Present: true,
         // Full audit for deeper inspection
         audit,
       });
