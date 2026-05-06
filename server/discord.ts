@@ -26,6 +26,12 @@ export const WHALE_WEBHOOK_URL =
   process.env.PULSE_DISCORD_WHALE_WEBHOOK ??
   "https://discord.com/api/webhooks/1501707594199466076/uupxpODoD2fu5JoySqKLbYXgazBm0LFiNH6AOSTthJzXrUdDEnYngMcACS-1kDKq65-M";
 
+// Dedicated SPX 0DTE banger webhook. Only postOdteBangerAlert routes here.
+// Keeps the bangers-only stream isolated from whale flow + main Batcave.
+export const ODTE_WEBHOOK_URL =
+  process.env.PULSE_DISCORD_ODTE_WEBHOOK ??
+  "https://discord.com/api/webhooks/1501708117929492530/WSQOta_mLBadBwJytdCX12NmXKbYQodl13Zb3-S5cB1g9RaKDB4dbpEH-njTGsFddQxb";
+
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
 
@@ -56,7 +62,11 @@ interface DiscordPayload {
 // ─── Webhook poster ──────────────────────────────────────────────────────
 export async function postToDiscord(payload: DiscordPayload, urlOverride?: string): Promise<boolean> {
   const url = urlOverride ?? WEBHOOK_URL;
-  const tag = urlOverride ? "discord:whale" : "discord";
+  const tag =
+    urlOverride === WHALE_WEBHOOK_URL ? "discord:whale" :
+    urlOverride === ODTE_WEBHOOK_URL ? "discord:odte" :
+    urlOverride ? "discord:override" :
+    "discord";
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -516,7 +526,7 @@ export async function postOdteBangerAlert(a: OdteAlert): Promise<boolean> {
   return await postToDiscord({
     username: "Pulse Batcave",
     embeds: [embed],
-  });
+  }, ODTE_WEBHOOK_URL);
 }
 
 // ─── Card 3: gamma flip alert ────────────────────────────────────────────
