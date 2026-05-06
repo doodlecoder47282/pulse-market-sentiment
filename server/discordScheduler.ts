@@ -60,6 +60,7 @@ function isTradingDay(dow: number, date: string): boolean {
 // ─── 1. Daily card cron ─────────────────────────────────────────────────
 const DAILY_HHMM = "09:30";
 const dailyFired = new Set<string>(); // YYYY-MM-DD entries
+const preOpenScanFired = new Set<string>(); // YYYY-MM-DD entries — 9:30 ET 0DTE pre-open scan guard
 
 async function maybeFireDaily(): Promise<void> {
   const { date, hh, mm, dow } = etNow();
@@ -338,6 +339,109 @@ async function pollOdteBangerAlerts(): Promise<void> {
   }
 }
 
+// ─── 2d. 9:30 ET 0DTE pre-open scan ──────────────────────────────
+//
+// One-shot scan at 9:30 ET on every trading day, BEFORE the live window opens
+// at 9:45. Same data sources (live SPX 0DTE chain + daily model), same
+// engine (FAILED_BREAK / PIVOT_RECLAIM / WALL_REJECT detection), same gates
+// (score ≥ 80, T1 ≥ 30%, Δ 0.20–0.70, max 3/day, 1hr global gap, 45min
+// per-setup cooldown). Stays silent if nothing qualifies.
+//
+// Fires only on the FIRST tick where ET clock is ≥ 09:30 with a 14-min cap
+// (we want this BEFORE pollOdteBangerAlerts opens at 9:45). Per-day guard
+// via preOpenScanFired Set ensures it can't double-fire even if the tick
+// lands twice in the 9:30 minute.
+
+async function maybePreOpenOdteScan(): Promise<void> {
+  const { dow, date, hh, mm } = etNow();
+  if (!isTradingDay(dow, date)) return;
+  if (preOpenScanFired.has(date)) return;
+  const nowMin = hh * 60 + mm;
+  const tgtMin = 9 * 60 + 30; // 9:30 ET
+  if (nowMin < tgtMin) return;
+  if (nowMin > tgtMin + 14) return; // cap before live window at 9:45
+  preOpenScanFired.add(date);
+  console.log(`[discordScheduler] 9:30 pre-open 0DTE scan firing at ${date} ${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")} ET`);
+
+  let modelsRes: Response, odteRes: Response;
+  try {
+    [modelsRes, odteRes] = await Promise.all([
+      fetch(`${BASE}/api/models?symbol=^GSPC&experimental=1`),
+      fetch(`${BASE}/api/odte-tracker`),
+    ]);
+  } catch (e: any) {
+    console.warn(`[discordScheduler] pre-open scan fetch failed: ${e?.message ?? e}`);
+    return;
+  }
+  if (!modelsRes.ok || !odteRes.ok) {
+    console.warn(`[discordScheduler] pre-open scan: models=${modelsRes.status} odte=${odteRes.status}`);
+    return;
+  }
+  const models = await modelsRes.json().catch(() => null);
+  const odte = await odteRes.json().catch(() => null);
+  if (!models || !odte) return;
+
+  const daily = models.horizons?.daily;
+  if (!daily) return;
+  const audit = daily.audit ?? {};
+  const levels = (daily.levels ?? []) as any[];
+  const spot = odte.spot ?? daily.spot ?? 0;
+  const oneDayEM =
+    daily.expectedMove ??
+    daily.oneDayEM ??
+    audit?.scenarioTargets?.oneDayEM ??
+    audit?.oneDayEM ??
+    0;
+  if (!spot || spot <= 0) {
+    console.warn(`[discordScheduler] pre-open scan: bad spot ${spot}`);
+    return;
+  }
+
+  const args: EvalArgs = {
+    spot,
+    asOf: Date.now(),
+    hourET: hh,
+    minuteET: mm,
+    audit: {
+      slope: audit.slope, dfi: audit.dfi, gammaZone: audit.gammaZone,
+      vannaBias: audit.vannaBias, mainPivot: audit.mainPivot, charmZero: audit.charmZero,
+    },
+    levels: levels.map((l: any) => ({
+      name: l.name, kind: l.kind, price: l.price, side: l.side,
+      status: l.status, tag: l.tag,
+    })),
+    contracts: (odte.contracts ?? []).map((c: any) => ({
+      key: c.key, strike: c.strike, side: c.side,
+      bid: c.bid, ask: c.ask, mid: c.mid, last: c.last,
+      volume: c.volume, openInterest: c.openInterest, expiry: c.expiry,
+    })),
+    oneDayEM: typeof oneDayEM === "number" ? oneDayEM : 0,
+    expiry: odte.expiry ?? null,
+  };
+
+  let alerts: any[] = [];
+  try {
+    alerts = evaluateOdte(args);
+  } catch (e: any) {
+    console.warn(`[discordScheduler] pre-open scan engine threw: ${e?.message ?? e}`);
+    return;
+  }
+
+  if (alerts.length === 0) {
+    console.log(`[discordScheduler] 9:30 pre-open 0DTE scan: no qualifying setups (silent)`);
+    return;
+  }
+
+  for (const a of alerts) {
+    console.log(`[discordScheduler] 9:30 pre-open 0DTE banger: ${a.side} ${a.setup} grade=${a.grade.letter} (${a.grade.score})`);
+    try {
+      await postOdteBangerAlert(a);
+    } catch (e: any) {
+      console.warn(`[discordScheduler] pre-open postOdteBangerAlert failed: ${e?.message ?? e}`);
+    }
+  }
+}
+
 // ─── 3. News alerts ─────────────────────────────────────────────────────
 //
 // Poll /api/news every 5 min. Fire when a high-impact macro event (FOMC, CPI,
@@ -451,6 +555,7 @@ async function maybeFireWeeklyCalibration(): Promise<void> {
 // ─── Tick ──────────────────────────────────────────────────────────────────────
 async function tick(): Promise<void> {
   await maybeFireDaily();
+  await maybePreOpenOdteScan();
   await maybeFireHalfHour();
   await maybeSettleDay();
   await maybeFireWeeklyCalibration();
@@ -463,6 +568,13 @@ async function tick(): Promise<void> {
     const today = etNow().date;
     for (const k of Array.from(dailyFired)) {
       if (k !== today) dailyFired.delete(k);
+    }
+  }
+  // GC preOpenScanFired — keep only today
+  if (preOpenScanFired.size > 14) {
+    const today = etNow().date;
+    for (const k of Array.from(preOpenScanFired)) {
+      if (k !== today) preOpenScanFired.delete(k);
     }
   }
   // GC HALFHOUR_FIRED — keep only today's entries
@@ -481,7 +593,7 @@ export function startDiscordScheduler(): void {
   timer = setInterval(() => { tick().catch(() => {}); }, 60_000);
   // First tick after 5s so server has a moment to warm
   setTimeout(() => { tick().catch(() => {}); }, 5_000);
-  console.log(`[discordScheduler] started — daily 9:30 ET + 30-min cadence (10:00–16:00 ET), alerts on level breaks + gamma flips + macro news`);
+  console.log(`[discordScheduler] started — daily 9:30 ET + 9:30 0DTE pre-open scan + 30-min cadence (10:00–16:00 ET) + 0DTE bangers (9:45–15:45 ET), alerts on level breaks + gamma flips + macro news`);
 }
 
 export function stopDiscordScheduler(): void {
