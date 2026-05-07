@@ -3095,6 +3095,14 @@ Refine the brief above. Search the web for any critical developments the feed is
     }
   });
 
+  // ─── ML service health (Wires 17–20) ────────────────────────────────────
+  app.get("/api/ml/health", async (_req, res) => {
+    const { mlHealth } = await import("./mlBridge");
+    const health = await mlHealth();
+    if (!health) return res.status(503).json({ ok: false, error: "ML service unreachable" });
+    res.json({ ok: true, ...health });
+  });
+
   // ─── Start background token refresh cycle ─────────────────────────────────
   startTokenRefreshCycle();
 

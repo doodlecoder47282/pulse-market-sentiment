@@ -26,9 +26,133 @@ import { postBatcaveDailyCard } from "./discordBatcaveCard";
 import { settleDay } from "./calibration";
 import { postCalibrationCard } from "./calibrationCard";
 import { getTodayEventContext } from "./volCalendar";
+import { persistOdteAuditOnFire } from "./odteAuditDb";
+import { mlQuantileOverlay } from "./mlBridge";
 
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
+
+// ─── ML helpers (Wires 17–20) ─────────────────────────────────────────
+// GEX tier ordinal map: THIN=-1, LIGHT=0, SOFT=1, FULL=2
+const GEX_TIER_ORD: Record<string, number> = {
+  THIN: -1, LIGHT: 0, SOFT: 1, FULL: 2,
+};
+
+/**
+ * Build the ML feature dict from an OdteAlert + NY time context.
+ * Features that require live 1-min bars (realized_vol_5min, realized_vol_30min,
+ * bar_return_1min, momentum_15min) are approximated from available alert data.
+ * Features we cannot compute (vix_level, vix_pct_of_5d_avg) are omitted —
+ * the predictor fills them from training_medians.
+ */
+function _buildMlFeatures(
+  a: { asOf: number; side: string; spot: number; wire15?: any; grade?: any },
+  audit: { gexTier?: string | null; gex?: number | null; sessionOpen?: number | null },
+  hh: number,
+  mm: number,
+  dow: number,
+): Record<string, number> {
+  const isBull = a.side === "call";
+
+  // Time features
+  const hour_of_day = hh + mm / 60;
+  const minute_of_hour = mm;
+  const day_of_week = dow;
+
+  // GEX features
+  const gexTierStr = (a.wire15?.gexTier ?? audit?.gexTier ?? "").toUpperCase();
+  const gex_regime_ord = GEX_TIER_ORD[gexTierStr] ?? 0;
+  // net_gex_b: signed billions. Use raw GEX from audit (in $M), convert to $B.
+  // Negative = dealers short gamma.
+  const rawGexM = audit?.gex ?? null;
+  const net_gex_b = rawGexM != null ? rawGexM / 1000 : 0;
+
+  // Volatility proxies — best-effort from available fields.
+  // wire15.rv5d is 5-day realized vol (annualized decimal). Use as a proxy for
+  // realized_vol_30min. realized_vol_5min ≋ realized_vol_30min (no 1-min bars).
+  const rv5d = a.wire15?.rv5d ?? null;
+  const realized_vol_30min = rv5d != null ? rv5d / Math.sqrt(252 * 6.5 * 2) : 0;
+  const realized_vol_5min = realized_vol_30min; // best proxy available without bars
+
+  // Return / momentum — no 1-min bar buffer here; default to 0
+  const bar_return_1min = 0;
+  const momentum_15min = 0;
+
+  // Distance from open
+  const sessionOpen = audit?.sessionOpen ?? null;
+  const distance_from_open_pct =
+    sessionOpen != null && sessionOpen > 0
+      ? (a.spot - sessionOpen) / sessionOpen
+      : 0;
+
+  // Time-of-day flags
+  const todMin = hh * 60 + mm;
+  const is_first_30min = todMin < 10 * 60 ? 1 : 0; // before 10:00
+  const is_post_lunch = todMin >= 13 * 60 ? 1 : 0; // 13:00+ ET
+  const is_last_30min = todMin >= 15 * 60 + 30 ? 1 : 0; // 15:30+ ET
+
+  return {
+    hour_of_day,
+    minute_of_hour,
+    day_of_week,
+    gex_regime_ord,
+    net_gex_b,
+    realized_vol_5min,
+    realized_vol_30min,
+    bar_return_1min,
+    momentum_15min,
+    distance_from_open_pct,
+    is_post_lunch,
+    is_first_30min,
+    is_last_30min,
+  };
+}
+
+/**
+ * Build an ML augmentation line for the Discord card.
+ * - Calls mlQuantileOverlay (30min horizon only for 0DTE).
+ * - Returns null on any ML failure — never throws.
+ * - Models A (score_calibrator=BOOTSTRAP) and C (whale_follow=low_signal) are
+ *   gated off — only Model B (quantile_overlay, status=TRAINED) is surfaced.
+ */
+async function _buildMlLine(
+  a: { asOf: number; side: string; spot: number; wire15?: any; grade?: any },
+  audit: { gexTier?: string | null; gex?: number | null; sessionOpen?: number | null },
+  hh: number,
+  mm: number,
+  dow: number,
+): Promise<string | undefined> {
+  try {
+    const features = _buildMlFeatures(a, audit, hh, mm, dow);
+    const overlay = await mlQuantileOverlay(features, [30]);
+    // Null or non-TRAINED → no line
+    if (!overlay || overlay.status !== "TRAINED") return undefined;
+    const band30 = overlay.bands["30"];
+    if (!band30) return undefined;
+
+    const q50 = band30.q50;
+    const q90 = band30.q90;
+    const q10 = band30.q10;
+
+    const isCallSide = a.side === "call";
+    // Directional sign check: BULLISH alert expects positive q50, BEARISH expects negative q50
+    const counter = isCallSide ? q50 < 0 : q50 > 0;
+
+    const fmt = (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
+    const q50Sign = q50 >= 0 ? "+" : "";
+    const q50Pct = `${q50Sign}${(q50 * 100).toFixed(2)}%`;
+
+    if (counter) {
+      return `ML 30m: median move ${q50Pct} (counter-trend — consider passing)`;
+    } else {
+      const q90Pct = `+${(q90 * 100).toFixed(2)}%`;
+      const q10Pct = `${(q10 * 100).toFixed(2)}%`;
+      return `ML 30m: q50 ${q50Pct} · q90 ${q90Pct} / q10 ${q10Pct}`;
+    }
+  } catch {
+    return undefined;
+  }
+}
 
 // Match mmScheduler holiday list
 const HOLIDAYS_2026 = new Set([
@@ -346,8 +470,11 @@ async function pollOdteBangerAlerts(): Promise<void> {
 
   for (const a of alerts) {
     console.log(`[discordScheduler] 0DTE banger: ${a.side} ${a.setup} grade=${a.grade.letter} (${a.grade.score})`);
+    persistOdteAuditOnFire(a);
+    // Wires 17–20: compute ML quantile overlay line (null on any failure — never blocks)
+    const mlLine = await _buildMlLine(a, audit, hh, mm, dow).catch(() => undefined);
     try {
-      await postOdteBangerAlert(a);
+      await postOdteBangerAlert(a, mlLine);
     } catch (e: any) {
       console.warn(`[discordScheduler] postOdteBangerAlert failed: ${e?.message ?? e}`);
     }
@@ -462,8 +589,11 @@ async function maybePreOpenOdteScan(): Promise<void> {
 
   for (const a of alerts) {
     console.log(`[discordScheduler] 9:30 pre-open 0DTE banger: ${a.side} ${a.setup} grade=${a.grade.letter} (${a.grade.score})`);
+    persistOdteAuditOnFire(a);
+    // Wires 17–20: compute ML quantile overlay line (null on any failure — never blocks)
+    const mlLine = await _buildMlLine(a, audit, hh, mm, dow).catch(() => undefined);
     try {
-      await postOdteBangerAlert(a);
+      await postOdteBangerAlert(a, mlLine);
     } catch (e: any) {
       console.warn(`[discordScheduler] pre-open postOdteBangerAlert failed: ${e?.message ?? e}`);
     }

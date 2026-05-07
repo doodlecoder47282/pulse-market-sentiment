@@ -510,7 +510,9 @@ export async function postLevelClusterAlert(args: {
 }
 
 // ─── Card 2c: 0DTE banger alert (B+ or better only) ──────────────────
-export async function postOdteBangerAlert(a: OdteAlert): Promise<boolean> {
+// mlLine is an optional augmentation line (Wires 17–20). If provided,
+// it is appended below the formatted alert body. Card still fires without it.
+export async function postOdteBangerAlert(a: OdteAlert, mlLine?: string): Promise<boolean> {
   const { content } = formatOdteAlert(a);
   const isCall = a.side === "call";
   // A-tier (score >= 80) = directional color; below = warning amber
@@ -528,9 +530,12 @@ export async function postOdteBangerAlert(a: OdteAlert): Promise<boolean> {
   // Wire 16: include tier tag in footer
   const tierLabel = a.wire15?.projTier ?? null;
 
+  // Wires 17–20: append ML line if provided (never replaces core content)
+  const description = mlLine ? `${content}\n${mlLine}` : content;
+
   const embed: DiscordEmbed = {
     title: `SPX 0DTE · ${a.side.toUpperCase()} · ${setupLabel} · ${a.grade.letter}`,
-    description: content,
+    description,
     color,
     footer: { text: `Pulse Batcave · 0DTE banger · ${a.grade.score}/100 · ${tierLabel ?? "STANDARD"} · max 3/day` },
     timestamp: new Date(a.asOf).toISOString(),

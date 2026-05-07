@@ -18,3 +18,5 @@ backups/
 
 *.log
 .DS_Store
+ml_service/.venv/
+ml_service/__pycache__/
