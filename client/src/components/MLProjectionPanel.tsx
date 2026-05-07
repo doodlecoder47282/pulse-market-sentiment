@@ -1,25 +1,44 @@
-// MLProjectionPanel.tsx — SPX candles (today RTH) + ML forward projected price path
-// Batcave ML Lab — replaces abstract quantile fan with a real price chart
+// MLProjectionPanel.tsx — SPX Gamma-Aware Path Projector
+//
+// Live SPX 5-min tape vs dealer levels + Greek-aware forward projection.
+// Replaces the prior candle/quantile fan panel.
+//
+// Honest disclosures (also documented in code comments + tooltip):
+//   • The training set used SYNTHETIC distance-to-level features. The model
+//     learned the SHAPE of the response (pinning under +gamma, acceleration
+//     under -gamma) but absolute calibration is approximate until we
+//     accumulate live Greek snapshots and retrain.
+//   • Gamma-snap is a DETERMINISTIC POST-PROCESS — the LightGBM model returns
+//     raw q50, then the client biases the path toward (or away from) the
+//     nearest dealer wall based on net GEX sign.
+//   • Extrapolation past 60min is LINEAR — the model is only trained to 60min,
+//     the dashed extension is the 30→60 slope projected forward, capped ±1.2%.
+//
+// No localStorage / sessionStorage / cookies. No emojis.
 
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import {
   ComposedChart,
-  Area,
   Line,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
-  Customized,
 } from "recharts";
 import { AlertTriangle, RefreshCw, Activity } from "lucide-react";
 
@@ -31,14 +50,6 @@ interface QuantileBand {
   q50: number;
   q75: number;
   q90: number;
-}
-
-interface ProjectionResponse {
-  ok: boolean;
-  bands: Record<string, QuantileBand>;
-  status: string;
-  version: string;
-  error?: string;
 }
 
 interface MLModelHealth {
@@ -60,7 +71,7 @@ interface HealthResponse {
 }
 
 interface OHLCCandle {
-  t: number;  // epoch seconds
+  t: number;
   o: number;
   h: number;
   l: number;
@@ -68,137 +79,100 @@ interface OHLCCandle {
   v: number | null;
 }
 
-interface OHLCResponse {
-  symbol: string;
-  displayName: string;
-  timeframe: string;
-  interval: string;
-  price: number | null;
-  prevClose: number | null;
-  change: number | null;
-  changePct: number | null;
-  sessionHigh: number | null;
-  sessionLow: number | null;
+interface GammaLevelEntry {
+  value: number;
+  source: "computed" | "user_targets";
+}
+
+interface GammaLevels {
+  gammaFlip: GammaLevelEntry | null;
+  callWall: GammaLevelEntry;
+  putWall: GammaLevelEntry;
+  topGexStrikes: Array<{ strike: number; gex: number }>;
+  vanna: GammaLevelEntry | null;
+  charm: GammaLevelEntry | null;
+  vommaUpper: GammaLevelEntry | null;
+  vommaLower: GammaLevelEntry | null;
+  zomma: GammaLevelEntry | null;
+  negGamma: GammaLevelEntry | null;
+  mopex: GammaLevelEntry | null;
+  weeklyTargets: {
+    upside: GammaLevelEntry;
+    downside: GammaLevelEntry;
+    t2Up: GammaLevelEntry;
+    t2Down: GammaLevelEntry;
+  };
+  spxNow: number;
+  asOf: string;
+}
+
+interface ProjectionSpxResponse {
+  ok: boolean;
   candles: OHLCCandle[];
-  asOf: number;
-}
-
-interface SnapshotPublic {
-  spy: { price: number; prevClose: number; changePct: number };
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/** Build the ET feature object the projection model wants. */
-function getEtFeatures() {
-  const now = new Date();
-  const etFmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    hour: "numeric",
-    minute: "numeric",
-    weekday: "short",
-    hour12: false,
-  });
-  const parts = etFmt.formatToParts(now);
-  const h = parseInt(parts.find((p) => p.type === "hour")?.value ?? "10", 10);
-  const m = parseInt(parts.find((p) => p.type === "minute")?.value ?? "0", 10);
-  const wd = parts.find((p) => p.type === "weekday")?.value ?? "Mon";
-  const weekdayMap: Record<string, number> = {
-    Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+  spot: number | null;
+  prevClose: number | null;
+  levels: GammaLevels | null;
+  projection: {
+    bands: Record<string, QuantileBand> | null;
+    status: string;
+    version: string;
   };
-
-  const hour_of_day = h + m / 60;
-  const minute_of_hour = m;
-  const day_of_week = weekdayMap[wd] ?? 1;
-  const minutesFromOpen = (h - 9) * 60 + m - 30;
-  const is_first_30min = minutesFromOpen >= 0 && minutesFromOpen < 30 ? 1 : 0;
-  const is_post_lunch = h >= 13 ? 1 : 0;
-  const minutesToClose = (16 - h) * 60 - m;
-  const is_last_30min = minutesToClose >= 0 && minutesToClose <= 30 ? 1 : 0;
-
-  return {
-    hour_of_day,
-    minute_of_hour,
-    day_of_week,
-    is_first_30min,
-    is_post_lunch,
-    is_last_30min,
-  };
+  features: Record<string, number>;
+  asOf: string;
 }
 
-function isRTH(): boolean {
-  const now = new Date();
-  const etFmt = new Intl.DateTimeFormat("en-US", {
+// ─── Constants & helpers ─────────────────────────────────────────────────────
+
+const RTH_OPEN_MIN = 0;       // 9:30 ET = 0
+const RTH_CLOSE_MIN = 390;    // 16:00 ET = 390 minutes after open
+const COLOR_REALIZED = "#f59e0b";
+const COLOR_PROJ = "#22d3ee";
+const COLOR_EXT = "#22d3ee";
+const COLOR_RIBBON = "#22d3ee";
+
+/** Convert epoch seconds to "minutes from 9:30 ET today". */
+function epochToMinuteOfDay(epochSec: number): number {
+  const d = new Date(epochSec * 1000);
+  // Get ET hour/minute via Intl
+  const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
-    hour: "numeric",
-    minute: "numeric",
-    weekday: "short",
     hour12: false,
-  });
-  const parts = etFmt.formatToParts(now);
-  const h = parseInt(parts.find((p) => p.type === "hour")?.value ?? "0", 10);
-  const m = parseInt(parts.find((p) => p.type === "minute")?.value ?? "0", 10);
-  const wd = parts.find((p) => p.type === "weekday")?.value ?? "Sat";
-  // Mon-Fri 9:30 - 16:00 ET
-  if (wd === "Sat" || wd === "Sun") return false;
-  const totalMin = h * 60 + m;
-  return totalMin >= 9 * 60 + 30 && totalMin < 16 * 60;
-}
-
-/**
- * Compute today's 9:30 ET market open as epoch SECONDS.
- * Uses an offset trick: ET wall clock - UTC wall clock = ET offset.
- */
-function todaysOpenEpochSec(): number {
-  const now = new Date();
-  // Get ET y/m/d
-  const etDateFmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric", month: "2-digit", day: "2-digit",
-  });
-  const parts = etDateFmt.formatToParts(now);
-  const y = parts.find((p) => p.type === "year")?.value ?? "1970";
-  const mo = parts.find((p) => p.type === "month")?.value ?? "01";
-  const d = parts.find((p) => p.type === "day")?.value ?? "01";
-
-  // Build "YYYY-MM-DDT09:30:00" in ET, then convert to UTC by computing offset
-  // Trick: format the same instant in both UTC and ET, diff to get offset
-  const candidate = new Date(`${y}-${mo}-${d}T09:30:00Z`); // pretend UTC
-  // What's that instant in ET?
-  const etHourFmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    hour: "numeric", minute: "numeric", hour12: false,
-  });
-  const etParts = etHourFmt.formatToParts(candidate);
-  const etH = parseInt(etParts.find((p) => p.type === "hour")?.value ?? "0", 10);
-  const etM = parseInt(etParts.find((p) => p.type === "minute")?.value ?? "0", 10);
-  // diff from 9:30 ET — shift candidate by that many minutes
-  const diffMin = (9 * 60 + 30) - (etH * 60 + etM);
-  const opened = new Date(candidate.getTime() + diffMin * 60_000);
-  return Math.floor(opened.getTime() / 1000);
-}
-
-const RTH_MINUTES = 390; // 9:30 → 16:00
-
-/** Format epoch seconds as "HH:MM" ET. */
-function fmtEt(tSec: number): string {
-  const f = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
     hour: "2-digit",
     minute: "2-digit",
-    hour12: false,
-  });
-  return f.format(new Date(tSec * 1000));
+  }).formatToParts(d);
+  const h = Number(parts.find((p) => p.type === "hour")?.value ?? "9");
+  const m = Number(parts.find((p) => p.type === "minute")?.value ?? "30");
+  return (h - 9) * 60 + m - 30;
 }
 
-const HORIZONS = [5, 15, 30, 60];
+/** Current ET minute-of-day (since 9:30). Negative pre-market, >390 after-hours. */
+function nowMinuteOfDay(): number {
+  return epochToMinuteOfDay(Math.floor(Date.now() / 1000));
+}
 
-// ─── Status strip (preserved verbatim from original) ────────────────────────
+function fmtPrice(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtPct(n: number | null | undefined, digits = 2): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${(n * 100).toFixed(digits)}%`;
+}
+
+function fmtMinuteAxis(min: number): string {
+  const h = Math.floor((min + 9 * 60 + 30) / 60);
+  const m = (min + 30) % 60;
+  const hh = ((h - 1) % 12) + 1;
+  return `${hh}:${m.toString().padStart(2, "0")}`;
+}
+
+// ─── Status strip (preserved) ────────────────────────────────────────────────
 
 function statusVariant(s: string): "default" | "secondary" | "destructive" | "outline" {
   if (s === "TRAINED") return "default";
   if (s === "BOOTSTRAP") return "secondary";
-  if (s === "INSUFFICIENT_DATA") return "outline";
   return "outline";
 }
 
@@ -231,7 +205,12 @@ function MLStatusStrip() {
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <AlertTriangle className="w-3 h-3" />
         <span>ML health unreachable</span>
-        <Button variant="ghost" size="sm" className="h-5 px-2 text-xs" onClick={() => refetch()}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-5 px-2 text-xs"
+          onClick={() => refetch()}
+        >
           retry
         </Button>
       </div>
@@ -248,9 +227,7 @@ function MLStatusStrip() {
           {score_calibrator?.status ?? "—"}
         </Badge>
       </div>
-
       <Separator orientation="vertical" className="h-4 self-center" />
-
       <div className="flex items-center gap-1.5" data-testid="text-ml-status-quantile_overlay">
         <span className="text-muted-foreground font-medium">quantile_overlay</span>
         <Badge variant={statusVariant(quantile_overlay?.status ?? "")} className={`text-xs h-5 ${statusColor(quantile_overlay?.status ?? "")}`}>
@@ -263,9 +240,7 @@ function MLStatusStrip() {
           <span className="text-muted-foreground">n={quantile_overlay.n_train}</span>
         )}
       </div>
-
       <Separator orientation="vertical" className="h-4 self-center" />
-
       <div className="flex items-center gap-1.5" data-testid="text-ml-status-whale_follow">
         <span className="text-muted-foreground font-medium">whale_follow</span>
         <Badge variant={statusVariant(whale_follow?.status ?? "")} className={`text-xs h-5 ${statusColor(whale_follow?.status ?? "")}`}>
@@ -276,653 +251,717 @@ function MLStatusStrip() {
   );
 }
 
-// ─── Custom candle layer (rendered via Recharts <Customized>) ───────────────
+// ─── Chart math ──────────────────────────────────────────────────────────────
 
-type ChartRow = {
-  // x is minutes from market open (0..390)
-  minute: number;
-  // candle fields (only present on candle rows)
-  o?: number; h?: number; l?: number; c?: number; v?: number | null; t?: number;
-  // projection fields (present on projection rows)
-  proj?: number;       // q50 path price
-  projQ10?: number;    // q10 price
-  projQ90?: number;    // q90 price
-  ribbonLo?: number;   // for stacked area fill (= projQ10)
-  ribbonHi?: number;   // for stacked area fill (= projQ90 - projQ10)
-  // dashed extrapolation past 60min
-  ext?: number;
-  kind: "candle" | "anchor" | "proj" | "ext";
-};
-
-function CandleLayer(props: any) {
-  const { xAxisMap, yAxisMap, formattedGraphicalItems, data } = props;
-  if (!xAxisMap || !yAxisMap || !data) return null;
-  const xAxis = (Object.values(xAxisMap)[0] as any);
-  const yAxis = (Object.values(yAxisMap)[0] as any);
-  if (!xAxis?.scale || !yAxis?.scale) return null;
-  const xScale = xAxis.scale;
-  const yScale = yAxis.scale;
-
-  const candles = (data as ChartRow[]).filter((r) => r.kind === "candle" && r.o != null);
-  if (!candles.length) return null;
-
-  // bar width: scale 5 minutes
-  const minuteUnit = Math.abs(xScale(5) - xScale(0));
-  const bodyW = Math.max(2, minuteUnit * 0.7);
-  const wickW = 1;
-
-  return (
-    <g>
-      {candles.map((r, i) => {
-        const x = xScale(r.minute);
-        const o = yScale(r.o!);
-        const h = yScale(r.h!);
-        const l = yScale(r.l!);
-        const c = yScale(r.c!);
-        const up = (r.c ?? 0) >= (r.o ?? 0);
-        const color = up ? "#22c55e" : "#ef4444";
-        const bodyTop = Math.min(o, c);
-        const bodyH = Math.max(1, Math.abs(c - o));
-        return (
-          <g key={i}>
-            {/* wick */}
-            <rect
-              x={x - wickW / 2}
-              y={h}
-              width={wickW}
-              height={Math.max(1, l - h)}
-              fill={color}
-              opacity={0.85}
-            />
-            {/* body */}
-            <rect
-              x={x - bodyW / 2}
-              y={bodyTop}
-              width={bodyW}
-              height={bodyH}
-              fill={color}
-              opacity={0.9}
-            />
-          </g>
-        );
-      })}
-    </g>
-  );
+interface LevelSpec {
+  key: string;
+  label: string;
+  value: number;
+  color: string;
+  dash?: string;
+  weight: number;
+  emphasis?: boolean;
 }
 
-// ─── Tooltip ─────────────────────────────────────────────────────────────────
-
-function ChartTooltip({ active, payload }: any) {
-  if (!active || !payload?.length) return null;
-  const d: ChartRow = payload[0]?.payload;
-  if (!d) return null;
-
-  if (d.kind === "candle" && d.o != null) {
-    const t = d.t ? fmtEt(d.t) : "—";
-    return (
-      <div className="bg-background border border-border rounded-md p-2 text-xs shadow-md min-w-[180px]">
-        <div className="font-semibold mb-1 text-foreground">{t} ET</div>
-        <div className="space-y-0.5">
-          <div className="flex justify-between gap-4"><span className="text-muted-foreground">open</span><span className="tabular-nums">{d.o?.toFixed(2)}</span></div>
-          <div className="flex justify-between gap-4"><span className="text-muted-foreground">high</span><span className="tabular-nums">{d.h?.toFixed(2)}</span></div>
-          <div className="flex justify-between gap-4"><span className="text-muted-foreground">low</span><span className="tabular-nums">{d.l?.toFixed(2)}</span></div>
-          <div className="flex justify-between gap-4 font-semibold"><span>close</span><span className="tabular-nums">{d.c?.toFixed(2)}</span></div>
-          {d.v != null && (
-            <div className="flex justify-between gap-4"><span className="text-muted-foreground">vol</span><span className="tabular-nums">{d.v.toLocaleString()}</span></div>
-          )}
-        </div>
-      </div>
-    );
+/**
+ * Pick the nearest gamma level value to a given price, within a band.
+ * Used by the gamma-snap heuristic. Returns null if nothing close enough.
+ */
+function nearestLevel(
+  price: number,
+  levels: LevelSpec[],
+  bandPct = 0.005,
+): LevelSpec | null {
+  if (!levels.length) return null;
+  let best: LevelSpec | null = null;
+  let bestDist = Infinity;
+  for (const l of levels) {
+    const d = Math.abs(l.value - price) / price;
+    if (d < bandPct && Math.abs(l.value - price) < Math.abs((best?.value ?? Infinity) - price)) {
+      best = l;
+      bestDist = d;
+    }
   }
-
-  if (d.kind === "proj" || d.kind === "anchor") {
-    const t = d.t ? fmtEt(d.t) : "—";
-    const lo = d.projQ10;
-    const hi = d.projQ90;
-    const range = lo != null && hi != null ? (hi - lo).toFixed(2) : "—";
-    return (
-      <div className="bg-background border border-border rounded-md p-2 text-xs shadow-md min-w-[200px]">
-        <div className="font-semibold mb-1 text-foreground">{t} ET — projection</div>
-        <div className="space-y-0.5">
-          {d.proj != null && (
-            <div className="flex justify-between gap-4 font-semibold text-sky-500"><span>q50 price</span><span className="tabular-nums">${d.proj.toFixed(2)}</span></div>
-          )}
-          {lo != null && hi != null && (
-            <div className="flex justify-between gap-4"><span className="text-muted-foreground">q10–q90</span><span className="tabular-nums">${lo.toFixed(2)}–${hi.toFixed(2)}</span></div>
-          )}
-          <div className="flex justify-between gap-4"><span className="text-muted-foreground">band width</span><span className="tabular-nums">${range}</span></div>
-        </div>
-      </div>
-    );
+  // also need to consider all-level nearest if within bandPct
+  for (const l of levels) {
+    const d = Math.abs(l.value - price) / price;
+    if (d < bandPct && d < bestDist) {
+      best = l;
+      bestDist = d;
+    }
   }
-
-  if (d.kind === "ext") {
-    const t = d.t ? fmtEt(d.t) : "—";
-    return (
-      <div className="bg-background border border-border rounded-md p-2 text-xs shadow-md min-w-[200px]">
-        <div className="font-semibold mb-1 text-foreground">{t} ET — extrapolated</div>
-        <div className="text-muted-foreground">model trained to 60min — past that is linear extrapolation</div>
-        {d.ext != null && (
-          <div className="flex justify-between gap-4 mt-1 font-semibold"><span>est. price</span><span className="tabular-nums">${d.ext.toFixed(2)}</span></div>
-        )}
-      </div>
-    );
-  }
-
-  return null;
+  return best;
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
+// ─── Main panel ──────────────────────────────────────────────────────────────
 
 export default function MLProjectionPanel() {
-  const features = getEtFeatures();
-  const refetchInterval = isRTH() ? 60_000 : 5 * 60_000;
+  // RTH detection — refresh 60s during RTH, 5min outside
+  const isRth = useMemo(() => {
+    const m = nowMinuteOfDay();
+    return m >= 0 && m <= 390;
+  }, []);
 
-  // SPX 5min candles (today RTH)
-  const {
-    data: ohlc,
-    isLoading: ohlcLoading,
-    isError: ohlcError,
-    refetch: refetchOhlc,
-  } = useQuery<OHLCResponse>({
-    queryKey: ["/api/ohlc", "^SPX", "1D", "5m"],
+  const { data, isLoading, error, refetch, isRefetching } = useQuery<ProjectionSpxResponse>({
+    queryKey: ["/api/ml/projection-spx"],
     queryFn: () =>
-      apiRequest("GET", "/api/ohlc?symbol=^SPX&tf=1D&interval=5m").then((r) => r.json()),
-    refetchInterval,
+      apiRequest("GET", "/api/ml/projection-spx").then((r) => r.json()),
+    refetchInterval: isRth ? 60_000 : 5 * 60_000,
     retry: false,
-    staleTime: 30_000,
   });
 
-  // Snapshot fallback (SPY → 10x as crude SPX proxy if SPX missing)
-  const { data: snap } = useQuery<SnapshotPublic>({
-    queryKey: ["/api/snapshot"],
-    queryFn: () => apiRequest("GET", "/api/snapshot").then((r) => r.json()),
-    refetchInterval,
-    retry: false,
-    staleTime: 30_000,
-  });
+  const candles = data?.candles ?? [];
+  const levels = data?.levels ?? null;
+  const projection = data?.projection ?? null;
+  const features = data?.features ?? {};
+  const spot =
+    data?.spot ??
+    candles[candles.length - 1]?.c ??
+    null;
 
-  // SPX spot — last candle close, or fallback
-  const spxFromOhlc = ohlc?.price ?? null;
-  const spxFallback = snap?.spy?.price ? snap.spy.price * 10 : null; // crude proxy
-  const currentSpot = spxFromOhlc ?? spxFallback;
-  const usingFallback = spxFromOhlc == null && spxFallback != null;
-
-  // ML projection (anchored to currentSpot)
-  const {
-    data: proj,
-    isLoading: projLoading,
-    isError: projError,
-    refetch: refetchProj,
-    error: projErr,
-  } = useQuery<ProjectionResponse>({
-    queryKey: ["/api/ml/projection", currentSpot],
-    queryFn: () =>
-      apiRequest("POST", "/api/ml/projection", {
-        features,
-        horizons: HORIZONS,
-      }).then((r) => r.json()),
-    refetchInterval,
-    retry: false,
-    staleTime: 30_000,
-    enabled: currentSpot != null,
-  });
-
-  const isLoading = ohlcLoading || projLoading;
-
-  // ── compute chart rows ──────────────────────────────────────────────────────
-  const { rows, lastCandleClose, lastCandleT, openMin, projTarget60, q60Lo, q60Hi, q60q50Pct } = useMemo(() => {
-    const openSec = todaysOpenEpochSec();
-    const candles = ohlc?.candles ?? [];
-
-    // candle rows — minutes from open
-    const candleRows: ChartRow[] = candles.map((c) => ({
-      minute: Math.max(0, Math.round((c.t - openSec) / 60)),
-      o: c.o, h: c.h, l: c.l, c: c.c, v: c.v, t: c.t,
-      kind: "candle",
-    })).filter((r) => r.minute >= 0 && r.minute <= RTH_MINUTES);
-
-    const lastCandle = candleRows.length ? candleRows[candleRows.length - 1] : null;
-    const anchorPrice = lastCandle?.c ?? currentSpot ?? null;
-    const anchorMin = lastCandle?.minute ?? 0;
-    const anchorT = lastCandle?.t ?? Math.floor(Date.now() / 1000);
-
-    if (anchorPrice == null) {
-      return { rows: [], lastCandleClose: null, lastCandleT: null, openMin: 0, projTarget60: null, q60Lo: null, q60Hi: null, q60q50Pct: null };
+  // Build LevelSpec list
+  const levelSpecs = useMemo<LevelSpec[]>(() => {
+    if (!levels) return [];
+    const specs: LevelSpec[] = [];
+    const push = (
+      key: string,
+      label: string,
+      v: number | null | undefined,
+      color: string,
+      dash: string | undefined,
+      weight: number,
+      emphasis = false,
+    ) => {
+      if (v == null || !Number.isFinite(v) || v <= 0) return;
+      specs.push({ key, label, value: v, color, dash, weight, emphasis });
+    };
+    push("upVomma", "UP VOMMA", levels.vommaUpper?.value, "#22c55e", "6 4", 1);
+    push("callWall", "CALL WALL", levels.callWall?.value, "#22c55e", undefined, 2.5, true);
+    push("zomma", "ZOMMA", levels.zomma?.value, "#22d3ee", "6 4", 1);
+    push("flip", "0-Γ FLIP", levels.gammaFlip?.value, "#ef4444", "6 4", 2.5, true);
+    push("maxPain", "MAX PAIN", levels.mopex?.value, "#facc15", "4 4", 1);
+    push("putWall", "PUT WALL", levels.putWall?.value, "#ef4444", undefined, 2.5, true);
+    push("dnVomma", "DN VOMMA", levels.vommaLower?.value, "#fb923c", "6 4", 1);
+    // Top GEX strikes — thin grey
+    for (let i = 0; i < (levels.topGexStrikes ?? []).slice(0, 3).length; i++) {
+      const s = levels.topGexStrikes[i];
+      push(`gex-${i}`, `GEX ${s.strike}`, s.strike, "#94a3b8", "2 4", 0.6);
     }
+    // Weekly targets — thin cyan/red
+    push("upside", "UPSIDE", levels.weeklyTargets?.upside?.value, "#67e8f9", "2 4", 0.6);
+    push("downside", "DOWNSIDE", levels.weeklyTargets?.downside?.value, "#fca5a5", "2 4", 0.6);
+    push("t2Up", "T2 UP", levels.weeklyTargets?.t2Up?.value, "#67e8f9", "2 4", 0.6);
+    push("t2Down", "T2 DOWN", levels.weeklyTargets?.t2Down?.value, "#fca5a5", "2 4", 0.6);
+    return specs;
+  }, [levels]);
 
-    // projection rows
-    const bands = proj?.bands ?? {};
-    const projRows: ChartRow[] = [];
+  // Realized path — minute-of-day → close
+  const realizedRows = useMemo(
+    () =>
+      candles
+        .map((c) => ({
+          minute: epochToMinuteOfDay(c.t),
+          realized: c.c,
+          o: c.o,
+          h: c.h,
+          l: c.l,
+          c: c.c,
+          v: c.v,
+          t: c.t,
+        }))
+        .filter((r) => r.minute >= -10 && r.minute <= 400),
+    [candles],
+  );
 
-    // anchor point at "now" (last candle close) so the line connects cleanly
-    projRows.push({
-      minute: anchorMin,
+  const lastRealized = realizedRows[realizedRows.length - 1] ?? null;
+  const anchorMinute = lastRealized?.minute ?? nowMinuteOfDay();
+  const anchorPrice = lastRealized?.realized ?? spot ?? 0;
+
+  // Forward projection rows (5/15/30/60min after anchor)
+  const HORIZONS = [5, 15, 30, 60];
+  const projRows = useMemo(() => {
+    if (!projection?.bands || !anchorPrice || anchorPrice <= 0) return [];
+    const allLevels = levelSpecs;
+    const netGexSign = features.net_gex_sign ?? 0;
+    const rows: Array<{
+      minute: number;
+      proj: number;
+      projQ10: number;
+      projQ90: number;
+      ribbonLo: number;
+      ribbonHi: number;
+      snapApplied: boolean;
+      nearest: string | null;
+      pct: number;
+      bandWidth: number;
+    }> = [];
+    // Anchor row (so projection line starts from realized close)
+    rows.push({
+      minute: anchorMinute,
       proj: anchorPrice,
       projQ10: anchorPrice,
       projQ90: anchorPrice,
       ribbonLo: anchorPrice,
       ribbonHi: 0,
-      kind: "anchor",
-      t: anchorT,
+      snapApplied: false,
+      nearest: null,
+      pct: 0,
+      bandWidth: 0,
     });
-
-    let q50_60: number | null = null;
-    let q50_30: number | null = null;
-    let q10_60: number | null = null;
-    let q90_60: number | null = null;
-
     for (const h of HORIZONS) {
-      const b = bands[String(h)] ?? bands[`${h}min`];
-      if (!b) continue;
-      const p50 = anchorPrice * (1 + (b.q50 ?? 0));
-      const p10 = anchorPrice * (1 + (b.q10 ?? 0));
-      const p90 = anchorPrice * (1 + (b.q90 ?? 0));
-      const m = Math.min(RTH_MINUTES, anchorMin + h);
-      projRows.push({
-        minute: m,
-        proj: p50,
-        projQ10: p10,
-        projQ90: p90,
-        ribbonLo: p10,
-        ribbonHi: Math.max(0, p90 - p10),
-        kind: "proj",
-        t: anchorT + h * 60,
-      });
-      if (h === 60) { q50_60 = p50; q10_60 = p10; q90_60 = p90; }
-      if (h === 30) { q50_30 = p50; }
-    }
+      const band = projection.bands[String(h)];
+      if (!band) continue;
+      const q50Pct = band.q50;
+      const q10Pct = band.q10;
+      const q90Pct = band.q90;
+      let q50Price = anchorPrice * (1 + q50Pct);
+      const q10Price = anchorPrice * (1 + q10Pct);
+      const q90Price = anchorPrice * (1 + q90Pct);
 
-    // dashed extrapolation past 60min using 30→60 slope, capped ±1%
-    const extRows: ChartRow[] = [];
-    if (q50_60 != null && q50_30 != null) {
-      const slopePerMin = (q50_60 - q50_30) / 30; // price per minute
-      // start where projection ends
-      const endMin = Math.min(RTH_MINUTES, anchorMin + 60);
-      // anchor extrapolation at the q50 60min point
-      extRows.push({
-        minute: endMin,
-        ext: q50_60,
-        kind: "ext",
-        t: anchorT + 60 * 60,
-      });
-      // step every 5 minutes to 4:00 ET
-      const cap = anchorPrice * 0.01; // ±1%
-      let stepMin = endMin + 5;
-      let extPrice = q50_60;
-      while (stepMin <= RTH_MINUTES) {
-        extPrice = q50_60 + slopePerMin * (stepMin - endMin);
-        // cap drift relative to anchorPrice
-        const drift = extPrice - anchorPrice;
-        const clamped = anchorPrice + Math.max(-cap, Math.min(cap, drift));
-        extRows.push({
-          minute: stepMin,
-          ext: clamped,
-          kind: "ext",
-          t: anchorT + (stepMin - anchorMin) * 60,
-        });
-        stepMin += 5;
+      // Gamma-snap heuristic (deterministic post-process). Documented above.
+      let snapApplied = false;
+      let nearestKey: string | null = null;
+      const distFromAnyWallPct =
+        allLevels.length > 0
+          ? Math.min(...allLevels.map((l) => Math.abs(l.value - q50Price) / q50Price))
+          : 1;
+      if (distFromAnyWallPct < 0.007) {
+        // Within 0.7% of some wall — apply gravity rule
+        const near = nearestLevel(q50Price, allLevels, 0.005);
+        if (near) {
+          nearestKey = near.label;
+          if (netGexSign > 0 && (near.key === "callWall" || near.key === "putWall")) {
+            // pin regime — pull 30% toward wall
+            q50Price = q50Price + (near.value - q50Price) * 0.3;
+            snapApplied = true;
+          } else if (
+            netGexSign < 0 &&
+            (near.key === "callWall" || near.key === "putWall")
+          ) {
+            // vol regime — push 20% AWAY from wall
+            q50Price = q50Price - (near.value - q50Price) * 0.2;
+            snapApplied = true;
+          }
+        }
       }
+
+      rows.push({
+        minute: anchorMinute + h,
+        proj: q50Price,
+        projQ10: q10Price,
+        projQ90: q90Price,
+        ribbonLo: q10Price,
+        ribbonHi: q90Price - q10Price,
+        snapApplied,
+        nearest: nearestKey,
+        pct: q50Pct,
+        bandWidth: q90Price - q10Price,
+      });
     }
+    return rows;
+  }, [projection, levelSpecs, anchorPrice, anchorMinute, features.net_gex_sign]);
 
-    const all: ChartRow[] = [...candleRows, ...projRows, ...extRows].sort((a, b) => a.minute - b.minute);
-    return {
-      rows: all,
-      lastCandleClose: anchorPrice,
-      lastCandleT: anchorT,
-      openMin: 0,
-      projTarget60: q50_60,
-      q60Lo: q10_60,
-      q60Hi: q90_60,
-      q60q50Pct: bands["60"]?.q50 ?? bands["60min"]?.q50 ?? null,
+  // Linear extrapolation from 30→60 slope, capped ±1.2%
+  const extRows = useMemo(() => {
+    if (projRows.length < 3) return [];
+    const last = projRows[projRows.length - 1]; // t+60
+    const prev = projRows[projRows.length - 2]; // t+30
+    if (!last || !prev) return [];
+    const slopePerMin =
+      (last.proj - prev.proj) / Math.max(1, last.minute - prev.minute);
+    const startMin = last.minute;
+    const startPx = last.proj;
+    const cap = anchorPrice * 0.012;
+    const out: Array<{ minute: number; ext: number }> = [
+      { minute: startMin, ext: startPx },
+    ];
+    for (let m = startMin + 5; m <= RTH_CLOSE_MIN; m += 5) {
+      const raw = startPx + slopePerMin * (m - startMin);
+      const clamped =
+        raw > anchorPrice + cap
+          ? anchorPrice + cap
+          : raw < anchorPrice - cap
+            ? anchorPrice - cap
+            : raw;
+      out.push({ minute: m, ext: clamped });
+    }
+    return out;
+  }, [projRows, anchorPrice]);
+
+  // Combined chart data — keyed on minute
+  const chartData = useMemo(() => {
+    const byMin = new Map<number, any>();
+    const ensure = (m: number) => {
+      if (!byMin.has(m)) byMin.set(m, { minute: m });
+      return byMin.get(m);
     };
-  }, [ohlc, proj, currentSpot]);
+    for (const r of realizedRows) {
+      const row = ensure(r.minute);
+      Object.assign(row, r);
+    }
+    for (const p of projRows) {
+      const row = ensure(p.minute);
+      row.proj = p.proj;
+      row.projQ10 = p.projQ10;
+      row.projQ90 = p.projQ90;
+      row.ribbonLo = p.ribbonLo;
+      row.ribbonHi = p.ribbonHi;
+      row.snapApplied = p.snapApplied;
+      row.nearest = p.nearest;
+      row.bandWidth = p.bandWidth;
+      row.pct = p.pct;
+    }
+    for (const e of extRows) {
+      const row = ensure(e.minute);
+      row.ext = e.ext;
+    }
+    return Array.from(byMin.values()).sort((a, b) => a.minute - b.minute);
+  }, [realizedRows, projRows, extRows]);
 
-  // y-domain: from candles + projection band, with 0.3% padding
+  // Y-axis domain
   const yDomain = useMemo<[number, number]>(() => {
     const vals: number[] = [];
-    rows.forEach((r) => {
-      if (r.kind === "candle") {
-        if (r.l != null) vals.push(r.l);
-        if (r.h != null) vals.push(r.h);
-      } else {
-        if (r.projQ10 != null) vals.push(r.projQ10);
-        if (r.projQ90 != null) vals.push(r.projQ90);
-        if (r.proj != null) vals.push(r.proj);
-        if (r.ext != null) vals.push(r.ext);
-      }
-    });
-    if (!vals.length && lastCandleClose != null) {
-      return [lastCandleClose * 0.997, lastCandleClose * 1.003];
+    for (const r of realizedRows) {
+      if (r.h != null) vals.push(r.h);
+      if (r.l != null) vals.push(r.l);
     }
-    if (!vals.length) return [0, 1];
+    for (const p of projRows) {
+      vals.push(p.projQ10);
+      vals.push(p.projQ90);
+      vals.push(p.proj);
+    }
+    for (const l of levelSpecs) vals.push(l.value);
+    if (vals.length === 0) return [0, 1];
     const lo = Math.min(...vals);
     const hi = Math.max(...vals);
-    const pad = (hi - lo) * 0.15 || (lastCandleClose ?? hi) * 0.003;
+    const pad = (hi - lo) * 0.05 || 5;
     return [lo - pad, hi + pad];
-  }, [rows, lastCandleClose]);
+  }, [realizedRows, projRows, levelSpecs]);
 
-  const projStatus = proj?.status;
-  const isUntrained =
-    projStatus === "BOOTSTRAP" ||
-    projStatus === "INSUFFICIENT_DATA" ||
-    projStatus === "NOT_TRAINED";
+  const nowMin = nowMinuteOfDay();
+  const status = projection?.status ?? "UNAVAILABLE";
 
-  // current "now" minute marker — last candle, or current ET minute clamped
-  const nowMin = useMemo(() => {
-    if (rows.length) {
-      const lastCandle = [...rows].reverse().find((r) => r.kind === "candle");
-      if (lastCandle) return lastCandle.minute;
-    }
-    const openSec = todaysOpenEpochSec();
-    return Math.max(0, Math.min(RTH_MINUTES, Math.floor((Date.now() / 1000 - openSec) / 60)));
-  }, [rows]);
+  // Banner detection
+  const hasBands = !!projection?.bands;
+  const hasLevels = !!levels;
+  const hasCandles = candles.length > 0;
+  const isBootstrap = status === "BOOTSTRAP" || status === "INSUFFICIENT_DATA";
 
-  // x ticks every 30min
-  const xTicks = useMemo(() => {
-    const arr: number[] = [];
-    for (let m = 0; m <= RTH_MINUTES; m += 30) arr.push(m);
-    return arr;
-  }, []);
+  // ── Render ────────────────────────────────────────────────────────────────
 
-  const fmtTickMin = (m: number) => {
-    // 0 = 9:30 ET
-    const total = 9 * 60 + 30 + m;
-    const hh = Math.floor(total / 60);
-    const mm = total % 60;
-    const h12 = ((hh + 11) % 12) + 1;
-    return `${h12}:${mm.toString().padStart(2, "0")}`;
-  };
+  if (isLoading) {
+    return (
+      <Card data-testid="panel-ml-projection" className="border-border/60">
+        <CardHeader>
+          <CardTitle>SPX Gamma-Aware Path Projector</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Skeleton className="h-[480px] w-full" />
+        </CardContent>
+      </Card>
+    );
+  }
 
-  // ── interpretation text ──────────────────────────────────────────────────
-  const q50Pct = q60q50Pct != null ? q60q50Pct * 100 : null;
-  const bandWidthDollars = q60Lo != null && q60Hi != null ? q60Hi - q60Lo : null;
-  const bandWidthPct = bandWidthDollars != null && lastCandleClose ? (bandWidthDollars / lastCandleClose) * 100 : null;
+  if (error || !data) {
+    return (
+      <Card data-testid="panel-ml-projection" className="border-border/60">
+        <CardHeader>
+          <CardTitle>SPX Gamma-Aware Path Projector</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm">
+            <span className="text-muted-foreground">
+              projection endpoint unreachable
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => refetch()}
+              data-testid="button-refresh-ml-projection"
+            >
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+              retry
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
-  const direction = useMemo(() => {
-    if (q50Pct == null) return null;
-    if (q50Pct > 0.1) return { tone: "bullish", text: `model leans bullish: +${q50Pct.toFixed(2)}% over 60min` };
-    if (q50Pct < -0.1) return { tone: "bearish", text: `model leans bearish: ${q50Pct.toFixed(2)}% over 60min` };
-    return { tone: "flat", text: "no directional edge — flat projection. trade range, not direction." };
-  }, [q50Pct]);
+  // Distance + interpretation helpers
+  const callDistPct =
+    levels?.callWall?.value && spot
+      ? (levels.callWall.value - spot) / spot
+      : null;
+  const putDistPct =
+    levels?.putWall?.value && spot
+      ? (levels.putWall.value - spot) / spot
+      : null;
+  const flipDistPct =
+    levels?.gammaFlip?.value && spot
+      ? (levels.gammaFlip.value - spot) / spot
+      : null;
+  const netGexSign = features.net_gex_sign ?? 0;
+  const regimeLabel =
+    netGexSign > 0 ? "positive" : netGexSign < 0 ? "negative" : "neutral";
 
-  const conviction = useMemo(() => {
-    if (bandWidthPct == null) return null;
-    if (bandWidthPct > 1.0) return "low conviction — wide range";
-    if (bandWidthPct < 0.4) return "tight range — high conviction";
-    return "moderate conviction";
-  }, [bandWidthPct]);
+  const proj60 = projRows[projRows.length - 1] ?? null;
+  const proj60Price = proj60?.proj ?? null;
+  const proj60Pct = proj60 && spot ? (proj60.proj - spot) / spot : null;
+  const proj60Band = proj60 ? proj60.projQ90 - proj60.projQ10 : 0;
+  const snapCount = projRows.filter((p) => p.snapApplied).length;
+  const confidence =
+    proj60Band && spot
+      ? proj60Band / spot < 0.004
+        ? "narrow"
+        : "wide"
+      : "—";
 
-  // ── render ────────────────────────────────────────────────────────────────
-
-  const onRefreshAll = () => {
-    refetchOhlc();
-    refetchProj();
-  };
+  // Plain-English interpretation lines
+  const interpretations: string[] = [];
+  if (regimeLabel === "positive") {
+    interpretations.push(
+      "positive gamma regime — dealers buy dips, sell rips. expect chop between dealer levels.",
+    );
+  } else if (regimeLabel === "negative") {
+    interpretations.push(
+      "negative gamma regime — dealers chase. moves accelerate. wider range likely.",
+    );
+  } else {
+    interpretations.push(
+      "neutral regime — spot near gamma flip, no dominant dealer hedging bias.",
+    );
+  }
+  if (callDistPct != null && Math.abs(callDistPct) < 0.005) {
+    interpretations.push(
+      `near call wall (${fmtPrice(levels?.callWall?.value)}) — pinning bias if positive gamma.`,
+    );
+  }
+  if (putDistPct != null && Math.abs(putDistPct) < 0.005) {
+    interpretations.push(
+      `near put wall (${fmtPrice(levels?.putWall?.value)}) — bounce / pin candidate.`,
+    );
+  }
+  if (flipDistPct != null && flipDistPct > 0 && spot && levels?.gammaFlip?.value) {
+    interpretations.push(
+      `below flip (${fmtPrice(levels.gammaFlip.value)}) — momentum down has tailwind.`,
+    );
+  } else if (flipDistPct != null && flipDistPct < 0) {
+    interpretations.push(
+      `above flip (${fmtPrice(levels?.gammaFlip?.value)}) — buy-the-dip hedging supports the floor.`,
+    );
+  }
+  const topInterps = interpretations.slice(0, 3);
 
   return (
     <Card data-testid="panel-ml-projection" className="border-border/60">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div>
-            <CardTitle className="text-sm font-semibold flex items-center gap-2">
-              <Activity className="w-4 h-4 text-primary" />
-              SPX — projected path (next 60min)
+      <CardHeader className="space-y-2">
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1">
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="w-4 h-4" />
+              SPX Gamma-Aware Path Projector
             </CardTitle>
-            <div className="text-[11px] text-muted-foreground mt-0.5">
-              live $SPX 5min bars + ML forward projection. extrapolated dashed past 60min to EOD.
-            </div>
+            <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
+              live SPX 5min tape vs dealer levels + Greek-aware forward
+              projection. updates 60s RTH. paths shift as dealers re-hedge,
+              IV moves, and Greeks roll. training used synthetic Greek
+              distances — model learns the shape, calibration sharpens with
+              live data.
+            </p>
           </div>
-          {currentSpot != null && (
-            <span className="text-xs text-muted-foreground tabular-nums">
-              spot ${currentSpot.toFixed(2)}{usingFallback && " (fallback)"}
-            </span>
-          )}
           <Button
-            variant="ghost"
             size="sm"
-            className="h-6 px-2 text-xs"
-            onClick={onRefreshAll}
+            variant="outline"
+            onClick={() => refetch()}
+            disabled={isRefetching}
             data-testid="button-refresh-ml-projection"
-            title="refresh"
           >
-            <RefreshCw className="w-3 h-3 mr-1" />
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isRefetching ? "animate-spin" : ""}`} />
             refresh
           </Button>
         </div>
-
-        <div className="mt-2">
-          <MLStatusStrip />
-        </div>
+        <MLStatusStrip />
       </CardHeader>
 
-      <CardContent className="pt-0 space-y-3">
-        {/* training banner — show but don't hide chart */}
-        {!isLoading && proj?.ok && isUntrained && (
-          <div className="text-xs text-amber-500 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1">
-            model retraining — projection may be unreliable
+      <CardContent className="space-y-4">
+        {/* Banners */}
+        {!hasCandles && (
+          <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
+            SPX 5min tape unavailable — chart will populate when data returns.
           </div>
         )}
-
-        {/* ML 503 — show banner but try to render candles still */}
-        {projError && !isLoading && (
-          <div className="flex items-center justify-between gap-2 text-xs bg-destructive/10 border border-destructive/20 rounded px-2 py-1">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="w-3 h-3 text-destructive" />
-              <span className="text-muted-foreground">ML service unreachable — showing candles only</span>
-            </div>
-            <Button variant="ghost" size="sm" className="h-5 px-2 text-xs" onClick={() => refetchProj()}>
-              <RefreshCw className="w-3 h-3 mr-1" /> retry
-            </Button>
+        {hasCandles && !hasLevels && (
+          <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
+            gamma levels loading — chart shows realized tape only.
           </div>
         )}
-
-        {/* OHLC empty / off-hours hint */}
-        {!isLoading && ohlc && ohlc.candles.length === 0 && (
-          <div className="text-xs text-muted-foreground bg-muted/30 border border-border rounded px-2 py-1">
-            market closed — last session shown. projection anchored on current spot.
-          </div>
-        )}
-
-        {/* loading skeleton */}
-        {isLoading && (
-          <div className="space-y-2">
-            <Skeleton className="h-4 w-3/4" />
-            <Skeleton className="h-[360px] w-full" />
-            <div className="grid grid-cols-2 gap-2">
-              <Skeleton className="h-20 w-full" />
-              <Skeleton className="h-20 w-full" />
-            </div>
-          </div>
-        )}
-
-        {/* both errored — full empty state */}
-        {!isLoading && ohlcError && projError && (
-          <div className="flex flex-col items-center gap-3 py-8 text-center">
-            <AlertTriangle className="w-8 h-8 text-muted-foreground" />
-            <div className="text-sm text-muted-foreground">
-              {(projErr as Error)?.message ?? "ML + OHLC services unreachable"}
-            </div>
-            <Button variant="outline" size="sm" onClick={onRefreshAll}>
-              <RefreshCw className="w-3 h-3 mr-2" />
+        {hasCandles && !hasBands && (
+          <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-muted-foreground">
+            projection unavailable — realized tape and dealer levels still rendering.
+            <Button
+              size="sm"
+              variant="ghost"
+              className="ml-2 h-6 px-2"
+              onClick={() => refetch()}
+            >
               retry
             </Button>
           </div>
         )}
-
-        {/* main chart */}
-        {!isLoading && !(ohlcError && projError) && (
-          <>
-            <div
-              data-testid="chart-spx-projection"
-              className="w-full"
-              style={{ height: 360 }}
-            >
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart
-                  data={rows}
-                  margin={{ top: 8, right: 16, bottom: 4, left: 8 }}
-                >
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="hsl(var(--border))"
-                    opacity={0.35}
-                  />
-                  <XAxis
-                    type="number"
-                    dataKey="minute"
-                    domain={[0, RTH_MINUTES]}
-                    ticks={xTicks}
-                    tickFormatter={fmtTickMin}
-                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    domain={yDomain}
-                    tickFormatter={(v) => v.toFixed(0)}
-                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                    axisLine={false}
-                    tickLine={false}
-                    width={56}
-                    allowDecimals={false}
-                  />
-                  <Tooltip content={<ChartTooltip />} />
-
-                  {/* lastClose reference */}
-                  {lastCandleClose != null && (
-                    <ReferenceLine
-                      y={lastCandleClose}
-                      stroke="hsl(var(--muted-foreground))"
-                      strokeDasharray="3 3"
-                      opacity={0.4}
-                      label={{
-                        value: rows.find((r) => r.kind === "candle" && r.minute === 0)
-                          ? "open"
-                          : "last close",
-                        position: "right",
-                        fill: "hsl(var(--muted-foreground))",
-                        fontSize: 10,
-                      }}
-                    />
-                  )}
-
-                  {/* "now" vertical line */}
-                  <ReferenceLine
-                    x={nowMin}
-                    stroke="hsl(var(--primary))"
-                    strokeDasharray="2 4"
-                    opacity={0.6}
-                    label={{ value: "now", position: "top", fill: "hsl(var(--primary))", fontSize: 10 }}
-                  />
-
-                  {/* q10/q90 ribbon — stacked area trick: ribbonLo (transparent) + ribbonHi (filled) */}
-                  <Area
-                    type="monotone"
-                    dataKey="ribbonLo"
-                    stroke="none"
-                    fill="transparent"
-                    stackId="ribbon"
-                    isAnimationActive={false}
-                    legendType="none"
-                    connectNulls
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="ribbonHi"
-                    stroke="none"
-                    fill="#0ea5e9"
-                    fillOpacity={0.12}
-                    stackId="ribbon"
-                    isAnimationActive={false}
-                    legendType="none"
-                    connectNulls
-                  />
-
-                  {/* candles via custom layer */}
-                  <Customized component={CandleLayer} />
-
-                  {/* q50 projection line — bold cyan */}
-                  <Line
-                    type="monotone"
-                    dataKey="proj"
-                    stroke="#0ea5e9"
-                    strokeWidth={2.5}
-                    dot={{ r: 3, fill: "#0ea5e9", strokeWidth: 0 }}
-                    activeDot={{ r: 5 }}
-                    isAnimationActive={false}
-                    connectNulls
-                    legendType="none"
-                  />
-
-                  {/* dashed extrapolation past 60min */}
-                  <Line
-                    type="monotone"
-                    dataKey="ext"
-                    stroke="#0ea5e9"
-                    strokeWidth={1.5}
-                    strokeDasharray="4 4"
-                    dot={false}
-                    isAnimationActive={false}
-                    connectNulls
-                    legendType="none"
-                    opacity={0.7}
-                  />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-
-            {/* below-chart pair: key levels + interpretation */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div
-                data-testid="box-ml-keylevels"
-                className="border border-border/60 rounded-md p-3 bg-muted/20 text-xs space-y-1.5"
-              >
-                <div className="font-semibold text-foreground mb-1">key levels</div>
-                <div className="flex justify-between gap-3">
-                  <span className="text-muted-foreground">current SPX</span>
-                  <span className="tabular-nums">{currentSpot != null ? `$${currentSpot.toFixed(2)}` : "—"}</span>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <span className="text-muted-foreground">60min target (q50)</span>
-                  <span className="tabular-nums font-semibold text-sky-500">{projTarget60 != null ? `$${projTarget60.toFixed(2)}` : "—"}</span>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <span className="text-muted-foreground">implied 60min move</span>
-                  <span className="tabular-nums">{q50Pct != null ? `${q50Pct >= 0 ? "+" : ""}${q50Pct.toFixed(2)}%` : "—"}</span>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <span className="text-muted-foreground">band width (q90−q10)</span>
-                  <span className="tabular-nums">{bandWidthDollars != null ? `$${bandWidthDollars.toFixed(2)}` : "—"}</span>
-                </div>
-              </div>
-
-              <div
-                data-testid="box-ml-interpretation"
-                className="border border-border/60 rounded-md p-3 bg-muted/20 text-xs space-y-1.5"
-              >
-                <div className="font-semibold text-foreground mb-1">interpretation</div>
-                {direction ? (
-                  <div className={
-                    direction.tone === "bullish" ? "text-green-500" :
-                    direction.tone === "bearish" ? "text-red-500" :
-                    "text-muted-foreground"
-                  }>
-                    {direction.text}
-                  </div>
-                ) : (
-                  <div className="text-muted-foreground">awaiting projection…</div>
-                )}
-                {conviction && (
-                  <div className="text-muted-foreground">{conviction}</div>
-                )}
-                {usingFallback && (
-                  <div className="text-amber-500 text-[11px]">note: SPX feed unavailable — using SPY×10 proxy</div>
-                )}
-              </div>
-            </div>
-          </>
+        {isBootstrap && (
+          <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
+            model retraining — projection may be unreliable until next training cycle completes.
+          </div>
         )}
+
+        {/* Chart */}
+        <div
+          className="w-full"
+          style={{ height: 480 }}
+          data-testid="chart-spx-gamma-projection"
+        >
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart
+              data={chartData}
+              margin={{ top: 10, right: 90, bottom: 30, left: 10 }}
+            >
+              <CartesianGrid strokeDasharray="2 4" stroke="#334155" opacity={0.25} />
+              <XAxis
+                dataKey="minute"
+                type="number"
+                domain={[RTH_OPEN_MIN, RTH_CLOSE_MIN]}
+                ticks={[0, 60, 120, 180, 240, 300, 390]}
+                tickFormatter={fmtMinuteAxis}
+                stroke="#64748b"
+                fontSize={11}
+              />
+              <YAxis
+                domain={yDomain}
+                tickFormatter={(v) => Number(v).toFixed(0)}
+                stroke="#64748b"
+                fontSize={11}
+                width={70}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: "#0f172a",
+                  border: "1px solid #334155",
+                  borderRadius: 6,
+                  fontSize: 12,
+                }}
+                labelFormatter={(min) => `${fmtMinuteAxis(Number(min))} ET`}
+                formatter={(value: any, name: any, ctx: any) => {
+                  if (value == null) return ["—", String(name)];
+                  const row = ctx?.payload;
+                  if (name === "realized") {
+                    return [
+                      `${fmtPrice(row?.c)}  (O ${fmtPrice(row?.o)} H ${fmtPrice(row?.h)} L ${fmtPrice(row?.l)})`,
+                      "realized",
+                    ];
+                  }
+                  if (name === "proj") {
+                    const tag = row?.snapApplied
+                      ? ` (gamma-snap → ${row?.nearest ?? "wall"})`
+                      : "";
+                    return [
+                      `${fmtPrice(value)}  ${fmtPct(row?.pct)} band ±$${(row?.bandWidth ?? 0).toFixed(2)}${tag}`,
+                      "projected",
+                    ];
+                  }
+                  if (name === "ext") {
+                    return [
+                      `${fmtPrice(value)} (linear extrapolation past 60min — model trained to 60min only)`,
+                      "extrapolated",
+                    ];
+                  }
+                  return [fmtPrice(Number(value)), String(name)];
+                }}
+              />
+
+              {/* q10/q90 ribbon (faint) */}
+              <Area
+                type="monotone"
+                dataKey="ribbonLo"
+                stackId="ribbon"
+                stroke="none"
+                fill="transparent"
+                isAnimationActive={false}
+                legendType="none"
+              />
+              <Area
+                type="monotone"
+                dataKey="ribbonHi"
+                stackId="ribbon"
+                stroke="none"
+                fill={COLOR_RIBBON}
+                fillOpacity={0.10}
+                isAnimationActive={false}
+                legendType="none"
+              />
+
+              {/* Horizontal level lines */}
+              {levelSpecs.map((l) => (
+                <ReferenceLine
+                  key={l.key}
+                  y={l.value}
+                  stroke={l.color}
+                  strokeWidth={l.weight}
+                  strokeDasharray={l.dash}
+                  label={{
+                    value: `${l.label}  ${l.value.toFixed(0)}`,
+                    position: "right",
+                    fill: l.color,
+                    fontSize: l.emphasis ? 11 : 10,
+                    fontWeight: l.emphasis ? 600 : 400,
+                  }}
+                  ifOverflow="extendDomain"
+                />
+              ))}
+
+              {/* Now line */}
+              <ReferenceLine
+                x={nowMin}
+                stroke="#64748b"
+                strokeDasharray="3 3"
+                label={{ value: "now", position: "top", fill: "#94a3b8", fontSize: 10 }}
+              />
+              {/* Anchor (last close) horizontal */}
+              {anchorPrice > 0 && (
+                <ReferenceLine
+                  y={anchorPrice}
+                  stroke="#64748b"
+                  strokeDasharray="1 5"
+                  strokeOpacity={0.5}
+                />
+              )}
+
+              {/* Realized intraday SPX (orange snake) */}
+              <Line
+                type="monotone"
+                dataKey="realized"
+                stroke={COLOR_REALIZED}
+                strokeWidth={2.5}
+                dot={{ r: 1.5, fill: COLOR_REALIZED }}
+                activeDot={{ r: 4 }}
+                isAnimationActive={false}
+                connectNulls={false}
+              />
+
+              {/* Forward projected path (cyan, solid) */}
+              <Line
+                type="monotone"
+                dataKey="proj"
+                stroke={COLOR_PROJ}
+                strokeWidth={2}
+                dot={{ r: 3, fill: COLOR_PROJ, stroke: "#0f172a", strokeWidth: 1 }}
+                isAnimationActive={false}
+                connectNulls={false}
+              />
+
+              {/* Linear extrapolation (cyan, dashed) */}
+              <Line
+                type="monotone"
+                dataKey="ext"
+                stroke={COLOR_EXT}
+                strokeWidth={1.5}
+                strokeDasharray="6 4"
+                dot={false}
+                isAnimationActive={false}
+                connectNulls={false}
+                strokeOpacity={0.7}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Three-column info grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div
+            className="rounded-md border border-border/60 bg-muted/10 p-3 space-y-1.5"
+            data-testid="box-ml-keylevels"
+          >
+            <div className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">
+              key levels
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">spot</span>
+              <span className="font-mono">{fmtPrice(spot)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">to call wall</span>
+              <span className="font-mono text-emerald-400">{fmtPct(callDistPct)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">to put wall</span>
+              <span className="font-mono text-rose-400">{fmtPct(putDistPct)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">to flip</span>
+              <span className="font-mono">{fmtPct(flipDistPct)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">net gex regime</span>
+              <Badge
+                variant={netGexSign > 0 ? "default" : netGexSign < 0 ? "destructive" : "secondary"}
+                className="h-5 text-xs"
+              >
+                {regimeLabel}
+              </Badge>
+            </div>
+          </div>
+
+          <div
+            className="rounded-md border border-border/60 bg-muted/10 p-3 space-y-1.5"
+            data-testid="box-ml-projection-summary"
+          >
+            <div className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">
+              projection (60min)
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">target</span>
+              <span className="font-mono">{fmtPrice(proj60Price)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">implied move</span>
+              <span className="font-mono">{fmtPct(proj60Pct)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">band width</span>
+              <span className="font-mono">${proj60Band.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">gamma-snap</span>
+              <span className="font-mono">{snapCount} pts</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">confidence</span>
+              <Badge variant="outline" className="h-5 text-xs">
+                {confidence}
+              </Badge>
+            </div>
+          </div>
+
+          <div
+            className="rounded-md border border-border/60 bg-muted/10 p-3 space-y-1.5"
+            data-testid="box-ml-interpretation"
+          >
+            <div className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">
+              interpretation
+            </div>
+            <ul className="space-y-1.5 text-sm leading-relaxed">
+              {topInterps.length === 0 ? (
+                <li className="text-muted-foreground">building reading…</li>
+              ) : (
+                topInterps.map((s, i) => (
+                  <li key={i} className="text-foreground/90">
+                    {s}
+                  </li>
+                ))
+              )}
+            </ul>
+          </div>
+        </div>
       </CardContent>
     </Card>
   );

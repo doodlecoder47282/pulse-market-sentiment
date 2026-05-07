@@ -3096,14 +3096,107 @@ Refine the brief above. Search the web for any critical developments the feed is
   });
 
   // ─── ML quantile projection (ML Lab) ───────────────────────────────────
+  // Helper: resolve live inputs for the Greek feature builder.
+  // Captured here so mlGreekFeatures.ts stays free of circular imports on
+  // routes.ts (it cannot reach getOrBuild directly).
+  const resolveMlFeatureInputs = async () => {
+    const { buildGammaLevelsEnhanced } = await import("./gammaLevels");
+    let levels: any = null;
+    let spxNow: number | null = null;
+    let vix: number | null = null;
+    let vixPrev: number | null = null;
+    try {
+      const snap = await getOrBuild(false);
+      const g = snap.gamma;
+      const spy = snap.spy.price ?? g.spot;
+      levels = buildGammaLevelsEnhanced(g, spy);
+      // SPX cash spot: prefer ^SPX 5min last close from the OHLC fetcher.
+      try {
+        const { fetchOHLC } = await import("./ohlc");
+        const ohlc = await fetchOHLC("^SPX", "1D", "5m");
+        spxNow = ohlc?.price ?? null;
+      } catch { /* leave null */ }
+      vix = snap.vol.vix.value ?? null;
+      vixPrev = snap.vol.vix.prev ?? null;
+    } catch { /* fall through with nulls */ }
+    return { levels, spxNow, vix, vixPrev };
+  };
+
   app.post("/api/ml/projection", async (req, res) => {
     const { mlQuantileOverlay } = await import("./mlBridge");
-    const features = (req.body?.features ?? {}) as Record<string, number>;
+    const { buildMlFeatures } = await import("./mlGreekFeatures");
+    const clientFeatures = (req.body?.features ?? {}) as Record<string, number>;
     const horizons = (req.body?.horizons ?? [5, 15, 30, 60]) as number[];
+
+    // If client sent a sparse / empty feature dict, build from server state.
+    // If client sent features, MERGE — server features as base, client overrides.
+    // This preserves the Discord card path where Discord supplies its own features.
+    let features = clientFeatures;
+    const isSparse = !clientFeatures || Object.keys(clientFeatures).length < 3;
+    if (isSparse) {
+      try {
+        features = await buildMlFeatures(resolveMlFeatureInputs);
+      } catch { features = clientFeatures; }
+    } else {
+      try {
+        const serverFeatures = await buildMlFeatures(resolveMlFeatureInputs);
+        features = { ...serverFeatures, ...clientFeatures };
+      } catch { /* keep client features */ }
+    }
+
     // UI route — user tolerates latency. 2500ms covers FastAPI cold-start; hot-path Discord still 100ms.
     const result = await mlQuantileOverlay(features, horizons, { timeoutMs: 2500 });
     if (!result) return res.status(503).json({ ok: false, error: "ML service unreachable" });
     res.json({ ok: true, ...result });
+  });
+
+  // ─── ML Lab unified SPX endpoint ───────────────────────────────────────
+  // Single payload the ML Lab panel consumes: candles + dealer levels +
+  // forward projection bands + the feature dict that produced the projection.
+  app.get("/api/ml/projection-spx", async (_req, res) => {
+    try {
+      const { mlQuantileOverlay } = await import("./mlBridge");
+      const { buildMlFeatures } = await import("./mlGreekFeatures");
+      const { fetchOHLC } = await import("./ohlc");
+      const { buildGammaLevelsEnhanced } = await import("./gammaLevels");
+
+      const features = await buildMlFeatures(resolveMlFeatureInputs);
+      const horizons = [5, 15, 30, 60];
+      const projection = await mlQuantileOverlay(features, horizons, { timeoutMs: 2500 });
+
+      // Today's RTH SPX 5min bars
+      let candles: any[] = [];
+      let spot: number | null = null;
+      let prevClose: number | null = null;
+      try {
+        const ohlc = await fetchOHLC("^SPX", "1D", "5m");
+        candles = ohlc?.candles ?? [];
+        spot = ohlc?.price ?? null;
+        prevClose = ohlc?.prevClose ?? null;
+      } catch { /* empty */ }
+
+      // Levels (re-build cheaply — getOrBuild is cached internally)
+      let levels: any = null;
+      try {
+        const snap = await getOrBuild(false);
+        levels = buildGammaLevelsEnhanced(snap.gamma, snap.spy.price ?? snap.gamma.spot);
+      } catch { /* null levels */ }
+
+      res.json({
+        ok: true,
+        candles,
+        spot,
+        prevClose,
+        levels,
+        projection: projection
+          ? { bands: projection.bands, status: projection.status, version: projection.version }
+          : { bands: null, status: "UNAVAILABLE", version: "-" },
+        features,
+        asOf: new Date().toISOString(),
+      });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? "projection-spx failed" });
+    }
   });
 
   // ─── ML service health (Wires 17–20) ────────────────────────────────────
