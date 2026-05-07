@@ -1,18 +1,23 @@
-// MLProjectionPanel.tsx — SPX Gamma-Aware Path Projector
+// MLProjectionPanel.tsx — TOS-style SPY Forward Projection
 //
-// Live SPX 5-min tape vs dealer levels + Greek-aware forward projection.
-// Replaces the prior candle/quantile fan panel.
+// Live SPY 5min candles + dealer levels (rescaled SPX/10) + 3 forward path
+// scenarios drawn into the future space (right of "now") in the style of a
+// ThinkOrSwim chart: bull (q90) green dashed, base (q50) bold white, bear
+// (q10) red dashed. All anchored at the last candle close, extended through
+// the 60min ML horizon and linearly extrapolated to the 4:00 ET close,
+// capped ±1.5%.
 //
-// Honest disclosures (also documented in code comments + tooltip):
-//   • The training set used SYNTHETIC distance-to-level features. The model
-//     learned the SHAPE of the response (pinning under +gamma, acceleration
-//     under -gamma) but absolute calibration is approximate until we
-//     accumulate live Greek snapshots and retrain.
-//   • Gamma-snap is a DETERMINISTIC POST-PROCESS — the LightGBM model returns
-//     raw q50, then the client biases the path toward (or away from) the
-//     nearest dealer wall based on net GEX sign.
-//   • Extrapolation past 60min is LINEAR — the model is only trained to 60min,
-//     the dashed extension is the 30→60 slope projected forward, capped ±1.2%.
+// When the Schwab tape is empty the server hands back a deterministic
+// synthetic GBM walk anchored on /api/snapshot — those candles are greyed
+// out with a "TAPE SYNTHETIC" watermark and a banner above the chart so the
+// distinction is unambiguous.
+//
+// Honesty rules:
+//   • Gamma-snap is applied to the BASE line only (it is a deterministic
+//     post-process). Bull/bear are scenarios, not predictions, and stay
+//     untouched.
+//   • Linear extrapolation past 60min uses the 30→60 slope, capped ±1.5%,
+//     and ends at 16:00 ET.
 //
 // No localStorage / sessionStorage / cookies. No emojis.
 
@@ -32,13 +37,13 @@ import { Separator } from "@/components/ui/separator";
 import {
   ComposedChart,
   Line,
-  Area,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
+  Customized,
 } from "recharts";
 import { AlertTriangle, RefreshCw, Activity } from "lucide-react";
 
@@ -77,6 +82,7 @@ interface OHLCCandle {
   l: number;
   c: number;
   v: number | null;
+  synthetic?: boolean;
 }
 
 interface GammaLevelEntry {
@@ -106,7 +112,7 @@ interface GammaLevels {
   asOf: string;
 }
 
-interface ProjectionSpxResponse {
+interface ProjectionSpyResponse {
   ok: boolean;
   candles: OHLCCandle[];
   spot: number | null;
@@ -118,22 +124,32 @@ interface ProjectionSpxResponse {
     version: string;
   };
   features: Record<string, number>;
+  synthetic?: boolean;
+  syntheticReason?: string | null;
   asOf: string;
 }
 
-// ─── Constants & helpers ─────────────────────────────────────────────────────
+// ─── Constants ───────────────────────────────────────────────────────────────
 
-const RTH_OPEN_MIN = 0;       // 9:30 ET = 0
-const RTH_CLOSE_MIN = 390;    // 16:00 ET = 390 minutes after open
-const COLOR_REALIZED = "#f59e0b";
-const COLOR_PROJ = "#22d3ee";
-const COLOR_EXT = "#22d3ee";
-const COLOR_RIBBON = "#22d3ee";
+const RTH_OPEN_MIN = 0;       // 9:30 ET
+const RTH_CLOSE_MIN = 390;    // 16:00 ET (390 minutes after open)
+const HORIZONS = [5, 15, 30, 60];
 
-/** Convert epoch seconds to "minutes from 9:30 ET today". */
+const COLOR_BULL = "#10b981";   // green
+const COLOR_BEAR = "#ef4444";   // red
+const COLOR_BASE = "#ffffff";   // white bold
+const COLOR_UP_BODY = "#10b981";
+const COLOR_UP_BORDER = "#047857";
+const COLOR_DN_BODY = "#ef4444";
+const COLOR_DN_BORDER = "#b91c1c";
+const COLOR_SYNTH_UP = "#6b7280";
+const COLOR_SYNTH_DN = "#4b5563";
+const COLOR_SYNTH_BORDER = "#374151";
+
+// ─── Time helpers ────────────────────────────────────────────────────────────
+
 function epochToMinuteOfDay(epochSec: number): number {
   const d = new Date(epochSec * 1000);
-  // Get ET hour/minute via Intl
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
     hour12: false,
@@ -145,7 +161,6 @@ function epochToMinuteOfDay(epochSec: number): number {
   return (h - 9) * 60 + m - 30;
 }
 
-/** Current ET minute-of-day (since 9:30). Negative pre-market, >390 after-hours. */
 function nowMinuteOfDay(): number {
   return epochToMinuteOfDay(Math.floor(Date.now() / 1000));
 }
@@ -162,13 +177,14 @@ function fmtPct(n: number | null | undefined, digits = 2): string {
 }
 
 function fmtMinuteAxis(min: number): string {
-  const h = Math.floor((min + 9 * 60 + 30) / 60);
-  const m = (min + 30) % 60;
-  const hh = ((h - 1) % 12) + 1;
-  return `${hh}:${m.toString().padStart(2, "0")}`;
+  // min is minutes from 9:30 ET
+  const totalMin = 9 * 60 + 30 + min;
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return `${h}:${m.toString().padStart(2, "0")}`;
 }
 
-// ─── Status strip (preserved) ────────────────────────────────────────────────
+// ─── Status strip (preserved testids) ────────────────────────────────────────
 
 function statusVariant(s: string): "default" | "secondary" | "destructive" | "outline" {
   if (s === "TRAINED") return "default";
@@ -251,7 +267,7 @@ function MLStatusStrip() {
   );
 }
 
-// ─── Chart math ──────────────────────────────────────────────────────────────
+// ─── Chart math helpers ──────────────────────────────────────────────────────
 
 interface LevelSpec {
   key: string;
@@ -263,10 +279,6 @@ interface LevelSpec {
   emphasis?: boolean;
 }
 
-/**
- * Pick the nearest gamma level value to a given price, within a band.
- * Used by the gamma-snap heuristic. Returns null if nothing close enough.
- */
 function nearestLevel(
   price: number,
   levels: LevelSpec[],
@@ -277,14 +289,6 @@ function nearestLevel(
   let bestDist = Infinity;
   for (const l of levels) {
     const d = Math.abs(l.value - price) / price;
-    if (d < bandPct && Math.abs(l.value - price) < Math.abs((best?.value ?? Infinity) - price)) {
-      best = l;
-      bestDist = d;
-    }
-  }
-  // also need to consider all-level nearest if within bandPct
-  for (const l of levels) {
-    const d = Math.abs(l.value - price) / price;
     if (d < bandPct && d < bestDist) {
       best = l;
       bestDist = d;
@@ -293,19 +297,100 @@ function nearestLevel(
   return best;
 }
 
+// ─── Custom candle layer (Customized component) ──────────────────────────────
+
+function CandlesLayer(props: any) {
+  const { xAxisMap, yAxisMap, candleData } = props;
+  if (!candleData || candleData.length === 0) return null;
+  const xAxis = xAxisMap?.[Object.keys(xAxisMap)[0]];
+  const yAxis = yAxisMap?.[Object.keys(yAxisMap)[0]];
+  if (!xAxis || !yAxis) return null;
+
+  // Recharts axes provide a `scale` function (d3 scale) to map data → pixel.
+  const xScale: (v: number) => number = xAxis.scale;
+  const yScale: (v: number) => number = yAxis.scale;
+
+  const bodyW = 4;
+  return (
+    <g>
+      {candleData.map((c: any, i: number) => {
+        const x = xScale(c.minute);
+        if (!Number.isFinite(x)) return null;
+        const yO = yScale(c.o);
+        const yC = yScale(c.c);
+        const yH = yScale(c.h);
+        const yL = yScale(c.l);
+        if (![yO, yC, yH, yL].every(Number.isFinite)) return null;
+        const isUp = c.c >= c.o;
+        const synth = !!c.synthetic;
+        const fill = synth
+          ? (isUp ? COLOR_SYNTH_UP : COLOR_SYNTH_DN)
+          : (isUp ? COLOR_UP_BODY : COLOR_DN_BODY);
+        const stroke = synth
+          ? COLOR_SYNTH_BORDER
+          : (isUp ? COLOR_UP_BORDER : COLOR_DN_BORDER);
+        const opacity = synth ? 0.55 : 1;
+        const top = Math.min(yO, yC);
+        const h = Math.max(1, Math.abs(yC - yO));
+        return (
+          <g key={`cdl-${i}`} opacity={opacity}>
+            <line
+              x1={x}
+              x2={x}
+              y1={yH}
+              y2={yL}
+              stroke={stroke}
+              strokeWidth={1}
+              strokeDasharray={synth ? "2 2" : undefined}
+            />
+            <rect
+              x={x - bodyW / 2}
+              y={top}
+              width={bodyW}
+              height={h}
+              fill={fill}
+              stroke={stroke}
+              strokeWidth={1}
+            />
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+// Synthetic watermark
+function SyntheticWatermark(props: any) {
+  const { offset } = props;
+  const { left = 60, top = 10, width = 600 } = offset || {};
+  return (
+    <text
+      x={left + width - 10}
+      y={top + 22}
+      textAnchor="end"
+      fontSize={11}
+      fontWeight={700}
+      fill="#f59e0b"
+      opacity={0.85}
+      style={{ letterSpacing: "0.12em" }}
+    >
+      SYNTHETIC
+    </text>
+  );
+}
+
 // ─── Main panel ──────────────────────────────────────────────────────────────
 
 export default function MLProjectionPanel() {
-  // RTH detection — refresh 60s during RTH, 5min outside
   const isRth = useMemo(() => {
     const m = nowMinuteOfDay();
     return m >= 0 && m <= 390;
   }, []);
 
-  const { data, isLoading, error, refetch, isRefetching } = useQuery<ProjectionSpxResponse>({
-    queryKey: ["/api/ml/projection-spx"],
+  const { data, isLoading, error, refetch, isRefetching } = useQuery<ProjectionSpyResponse>({
+    queryKey: ["/api/ml/projection-spy"],
     queryFn: () =>
-      apiRequest("GET", "/api/ml/projection-spx").then((r) => r.json()),
+      apiRequest("GET", "/api/ml/projection-spy").then((r) => r.json()),
     refetchInterval: isRth ? 60_000 : 5 * 60_000,
     retry: false,
   });
@@ -314,10 +399,9 @@ export default function MLProjectionPanel() {
   const levels = data?.levels ?? null;
   const projection = data?.projection ?? null;
   const features = data?.features ?? {};
-  const spot =
-    data?.spot ??
-    candles[candles.length - 1]?.c ??
-    null;
+  const synthetic = !!data?.synthetic;
+  const syntheticReason = data?.syntheticReason ?? null;
+  const spot = data?.spot ?? candles[candles.length - 1]?.c ?? null;
 
   // Build LevelSpec list
   const levelSpecs = useMemo<LevelSpec[]>(() => {
@@ -336,224 +420,222 @@ export default function MLProjectionPanel() {
       specs.push({ key, label, value: v, color, dash, weight, emphasis });
     };
     push("upVomma", "UP VOMMA", levels.vommaUpper?.value, "#22c55e", "6 4", 1);
-    push("callWall", "CALL WALL", levels.callWall?.value, "#22c55e", undefined, 2.5, true);
+    push("callWall", "CALL WALL", levels.callWall?.value, "#22c55e", undefined, 2, true);
     push("zomma", "ZOMMA", levels.zomma?.value, "#22d3ee", "6 4", 1);
-    push("flip", "0-Γ FLIP", levels.gammaFlip?.value, "#ef4444", "6 4", 2.5, true);
+    push("flip", "0-Γ FLIP", levels.gammaFlip?.value, "#ef4444", "6 4", 2, true);
     push("maxPain", "MAX PAIN", levels.mopex?.value, "#facc15", "4 4", 1);
-    push("putWall", "PUT WALL", levels.putWall?.value, "#ef4444", undefined, 2.5, true);
+    push("putWall", "PUT WALL", levels.putWall?.value, "#ef4444", undefined, 2, true);
     push("dnVomma", "DN VOMMA", levels.vommaLower?.value, "#fb923c", "6 4", 1);
-    // Top GEX strikes — thin grey
     for (let i = 0; i < (levels.topGexStrikes ?? []).slice(0, 3).length; i++) {
       const s = levels.topGexStrikes[i];
-      push(`gex-${i}`, `GEX ${s.strike}`, s.strike, "#94a3b8", "2 4", 0.6);
+      push(`gex-${i}`, `GEX ${s.strike.toFixed(0)}`, s.strike, "#94a3b8", "2 4", 0.6);
     }
-    // Weekly targets — thin cyan/red
     push("upside", "UPSIDE", levels.weeklyTargets?.upside?.value, "#67e8f9", "2 4", 0.6);
     push("downside", "DOWNSIDE", levels.weeklyTargets?.downside?.value, "#fca5a5", "2 4", 0.6);
-    push("t2Up", "T2 UP", levels.weeklyTargets?.t2Up?.value, "#67e8f9", "2 4", 0.6);
-    push("t2Down", "T2 DOWN", levels.weeklyTargets?.t2Down?.value, "#fca5a5", "2 4", 0.6);
     return specs;
   }, [levels]);
 
-  // Realized path — minute-of-day → close
-  const realizedRows = useMemo(
+  // Candle rows enriched with minute-of-day for chart x positioning.
+  const candleRows = useMemo(
     () =>
       candles
         .map((c) => ({
           minute: epochToMinuteOfDay(c.t),
-          realized: c.c,
           o: c.o,
           h: c.h,
           l: c.l,
           c: c.c,
           v: c.v,
+          synthetic: c.synthetic,
           t: c.t,
         }))
         .filter((r) => r.minute >= -10 && r.minute <= 400),
     [candles],
   );
 
-  const lastRealized = realizedRows[realizedRows.length - 1] ?? null;
-  const anchorMinute = lastRealized?.minute ?? nowMinuteOfDay();
-  const anchorPrice = lastRealized?.realized ?? spot ?? 0;
+  const lastCandle = candleRows[candleRows.length - 1] ?? null;
+  const anchorMinute = lastCandle?.minute ?? nowMinuteOfDay();
+  const anchorPrice = lastCandle?.c ?? spot ?? 0;
 
-  // Forward projection rows (5/15/30/60min after anchor)
-  const HORIZONS = [5, 15, 30, 60];
-  const projRows = useMemo(() => {
-    if (!projection?.bands || !anchorPrice || anchorPrice <= 0) return [];
-    const allLevels = levelSpecs;
+  // Forward projection rows for bull/base/bear at 5/15/30/60min + linear ext.
+  const pathRows = useMemo(() => {
+    if (!projection?.bands || !anchorPrice || anchorPrice <= 0) {
+      return [] as Array<{
+        minute: number;
+        bull: number;
+        base: number;
+        bear: number;
+        snapApplied: boolean;
+        nearest: string | null;
+      }>;
+    }
     const netGexSign = features.net_gex_sign ?? 0;
-    const rows: Array<{
+    const out: Array<{
       minute: number;
-      proj: number;
-      projQ10: number;
-      projQ90: number;
-      ribbonLo: number;
-      ribbonHi: number;
+      bull: number;
+      base: number;
+      bear: number;
       snapApplied: boolean;
       nearest: string | null;
-      pct: number;
-      bandWidth: number;
     }> = [];
-    // Anchor row (so projection line starts from realized close)
-    rows.push({
+
+    // Anchor row so paths start exactly at last close.
+    out.push({
       minute: anchorMinute,
-      proj: anchorPrice,
-      projQ10: anchorPrice,
-      projQ90: anchorPrice,
-      ribbonLo: anchorPrice,
-      ribbonHi: 0,
+      bull: anchorPrice,
+      base: anchorPrice,
+      bear: anchorPrice,
       snapApplied: false,
       nearest: null,
-      pct: 0,
-      bandWidth: 0,
     });
+
     for (const h of HORIZONS) {
       const band = projection.bands[String(h)];
       if (!band) continue;
-      const q50Pct = band.q50;
-      const q10Pct = band.q10;
-      const q90Pct = band.q90;
-      let q50Price = anchorPrice * (1 + q50Pct);
-      const q10Price = anchorPrice * (1 + q10Pct);
-      const q90Price = anchorPrice * (1 + q90Pct);
+      const bullPx = anchorPrice * (1 + band.q90);
+      const bearPx = anchorPrice * (1 + band.q10);
+      let basePx = anchorPrice * (1 + band.q50);
 
-      // Gamma-snap heuristic (deterministic post-process). Documented above.
+      // Gamma-snap to BASE only.
       let snapApplied = false;
       let nearestKey: string | null = null;
-      const distFromAnyWallPct =
-        allLevels.length > 0
-          ? Math.min(...allLevels.map((l) => Math.abs(l.value - q50Price) / q50Price))
-          : 1;
-      if (distFromAnyWallPct < 0.007) {
-        // Within 0.7% of some wall — apply gravity rule
-        const near = nearestLevel(q50Price, allLevels, 0.005);
-        if (near) {
-          nearestKey = near.label;
-          if (netGexSign > 0 && (near.key === "callWall" || near.key === "putWall")) {
-            // pin regime — pull 30% toward wall
-            q50Price = q50Price + (near.value - q50Price) * 0.3;
-            snapApplied = true;
-          } else if (
-            netGexSign < 0 &&
-            (near.key === "callWall" || near.key === "putWall")
-          ) {
-            // vol regime — push 20% AWAY from wall
-            q50Price = q50Price - (near.value - q50Price) * 0.2;
-            snapApplied = true;
-          }
+      const near = nearestLevel(basePx, levelSpecs, 0.005);
+      if (near) {
+        nearestKey = near.label;
+        if (netGexSign > 0) {
+          basePx = basePx + (near.value - basePx) * 0.25;
+          snapApplied = true;
+        } else if (netGexSign < 0) {
+          basePx = basePx - (near.value - basePx) * 0.15;
+          snapApplied = true;
         }
       }
 
-      rows.push({
+      out.push({
         minute: anchorMinute + h,
-        proj: q50Price,
-        projQ10: q10Price,
-        projQ90: q90Price,
-        ribbonLo: q10Price,
-        ribbonHi: q90Price - q10Price,
+        bull: bullPx,
+        base: basePx,
+        bear: bearPx,
         snapApplied,
         nearest: nearestKey,
-        pct: q50Pct,
-        bandWidth: q90Price - q10Price,
       });
     }
-    return rows;
+    return out;
   }, [projection, levelSpecs, anchorPrice, anchorMinute, features.net_gex_sign]);
 
-  // Linear extrapolation from 30→60 slope, capped ±1.2%
+  // Linear extrapolation of each path's 30→60 slope to RTH close, capped ±1.5%.
   const extRows = useMemo(() => {
-    if (projRows.length < 3) return [];
-    const last = projRows[projRows.length - 1]; // t+60
-    const prev = projRows[projRows.length - 2]; // t+30
-    if (!last || !prev) return [];
-    const slopePerMin =
-      (last.proj - prev.proj) / Math.max(1, last.minute - prev.minute);
-    const startMin = last.minute;
-    const startPx = last.proj;
-    const cap = anchorPrice * 0.012;
-    const out: Array<{ minute: number; ext: number }> = [
-      { minute: startMin, ext: startPx },
+    if (pathRows.length < 3) return [] as Array<{
+      minute: number;
+      bullExt: number;
+      baseExt: number;
+      bearExt: number;
+    }>;
+    const last = pathRows[pathRows.length - 1];
+    const prev = pathRows[pathRows.length - 2];
+    if (!last || !prev || last.minute >= RTH_CLOSE_MIN) return [];
+    const dm = Math.max(1, last.minute - prev.minute);
+    const slopeBull = (last.bull - prev.bull) / dm;
+    const slopeBase = (last.base - prev.base) / dm;
+    const slopeBear = (last.bear - prev.bear) / dm;
+    const cap = anchorPrice * 0.015;
+    const cl = (raw: number) =>
+      raw > anchorPrice + cap
+        ? anchorPrice + cap
+        : raw < anchorPrice - cap
+          ? anchorPrice - cap
+          : raw;
+    const out: Array<{ minute: number; bullExt: number; baseExt: number; bearExt: number }> = [
+      { minute: last.minute, bullExt: last.bull, baseExt: last.base, bearExt: last.bear },
     ];
-    for (let m = startMin + 5; m <= RTH_CLOSE_MIN; m += 5) {
-      const raw = startPx + slopePerMin * (m - startMin);
-      const clamped =
-        raw > anchorPrice + cap
-          ? anchorPrice + cap
-          : raw < anchorPrice - cap
-            ? anchorPrice - cap
-            : raw;
-      out.push({ minute: m, ext: clamped });
+    for (let m = last.minute + 5; m <= RTH_CLOSE_MIN; m += 5) {
+      const dt = m - last.minute;
+      out.push({
+        minute: m,
+        bullExt: cl(last.bull + slopeBull * dt),
+        baseExt: cl(last.base + slopeBase * dt),
+        bearExt: cl(last.bear + slopeBear * dt),
+      });
     }
     return out;
-  }, [projRows, anchorPrice]);
+  }, [pathRows, anchorPrice]);
 
-  // Combined chart data — keyed on minute
+  // Chart data — keyed on minute. Lines pull from this; candles render via custom layer.
   const chartData = useMemo(() => {
     const byMin = new Map<number, any>();
     const ensure = (m: number) => {
       if (!byMin.has(m)) byMin.set(m, { minute: m });
       return byMin.get(m);
     };
-    for (const r of realizedRows) {
-      const row = ensure(r.minute);
-      Object.assign(row, r);
+    // Seed full RTH range so x-axis is stable even with tiny data.
+    for (let m = 0; m <= RTH_CLOSE_MIN; m += 5) ensure(m);
+    for (const c of candleRows) {
+      const row = ensure(c.minute);
+      row.o = c.o;
+      row.h = c.h;
+      row.l = c.l;
+      row.c = c.c;
+      row.v = c.v;
+      row.synthetic = c.synthetic;
     }
-    for (const p of projRows) {
+    for (const p of pathRows) {
       const row = ensure(p.minute);
-      row.proj = p.proj;
-      row.projQ10 = p.projQ10;
-      row.projQ90 = p.projQ90;
-      row.ribbonLo = p.ribbonLo;
-      row.ribbonHi = p.ribbonHi;
+      row.bull = p.bull;
+      row.base = p.base;
+      row.bear = p.bear;
       row.snapApplied = p.snapApplied;
       row.nearest = p.nearest;
-      row.bandWidth = p.bandWidth;
-      row.pct = p.pct;
     }
     for (const e of extRows) {
       const row = ensure(e.minute);
-      row.ext = e.ext;
+      row.bullExt = e.bullExt;
+      row.baseExt = e.baseExt;
+      row.bearExt = e.bearExt;
     }
     return Array.from(byMin.values()).sort((a, b) => a.minute - b.minute);
-  }, [realizedRows, projRows, extRows]);
+  }, [candleRows, pathRows, extRows]);
 
-  // Y-axis domain
+  // Y-axis SAFETY — never default to 0..N
   const yDomain = useMemo<[number, number]>(() => {
-    const vals: number[] = [];
-    for (const r of realizedRows) {
-      if (r.h != null) vals.push(r.h);
-      if (r.l != null) vals.push(r.l);
+    const candlePrices: number[] = [];
+    for (const r of candleRows) {
+      if (r.l != null && r.l > 0) candlePrices.push(r.l);
+      if (r.h != null && r.h > 0) candlePrices.push(r.h);
     }
-    for (const p of projRows) {
-      vals.push(p.projQ10);
-      vals.push(p.projQ90);
-      vals.push(p.proj);
+    const projPrices: number[] = [];
+    for (const p of pathRows) {
+      projPrices.push(p.bull, p.base, p.bear);
     }
-    for (const l of levelSpecs) vals.push(l.value);
-    if (vals.length === 0) return [0, 1];
-    const lo = Math.min(...vals);
-    const hi = Math.max(...vals);
-    const pad = (hi - lo) * 0.05 || 5;
+    for (const e of extRows) {
+      projPrices.push(e.bullExt, e.baseExt, e.bearExt);
+    }
+    const levelPrices = levelSpecs
+      .map((l) => l.value)
+      .filter((v) => v != null && Number.isFinite(v) && v > 0);
+    const all = [...candlePrices, ...projPrices, ...levelPrices].filter(
+      (v) => Number.isFinite(v) && v > 0,
+    );
+    if (all.length === 0 && spot && spot > 0) all.push(spot);
+    if (all.length === 0) {
+      // Last-resort safe default — never 0..N
+      return [400, 600];
+    }
+    const lo = Math.min(...all);
+    const hi = Math.max(...all);
+    const pad = Math.max((hi - lo) * 0.1, lo * 0.003);
     return [lo - pad, hi + pad];
-  }, [realizedRows, projRows, levelSpecs]);
+  }, [candleRows, pathRows, extRows, levelSpecs, spot]);
 
   const nowMin = nowMinuteOfDay();
   const status = projection?.status ?? "UNAVAILABLE";
 
-  // Banner detection
-  const hasBands = !!projection?.bands;
-  const hasLevels = !!levels;
-  const hasCandles = candles.length > 0;
-  const isBootstrap = status === "BOOTSTRAP" || status === "INSUFFICIENT_DATA";
-
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render branches ──────────────────────────────────────────────────────
 
   if (isLoading) {
     return (
       <Card data-testid="panel-ml-projection" className="border-border/60">
         <CardHeader>
-          <CardTitle>SPX Gamma-Aware Path Projector</CardTitle>
+          <CardTitle>SPY — Projected Path (60min ML + extrapolation to close)</CardTitle>
         </CardHeader>
         <CardContent>
           <Skeleton className="h-[480px] w-full" />
@@ -566,12 +648,12 @@ export default function MLProjectionPanel() {
     return (
       <Card data-testid="panel-ml-projection" className="border-border/60">
         <CardHeader>
-          <CardTitle>SPX Gamma-Aware Path Projector</CardTitle>
+          <CardTitle>SPY — Projected Path (60min ML + extrapolation to close)</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-between rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm">
             <span className="text-muted-foreground">
-              projection endpoint unreachable
+              ML service unreachable
             </span>
             <Button
               size="sm"
@@ -588,6 +670,10 @@ export default function MLProjectionPanel() {
     );
   }
 
+  const hasCandles = candleRows.length > 0;
+  const hasBands = !!projection?.bands;
+  const isBootstrap = status === "BOOTSTRAP" || status === "INSUFFICIENT_DATA";
+
   // Distance + interpretation helpers
   const callDistPct =
     levels?.callWall?.value && spot
@@ -601,55 +687,63 @@ export default function MLProjectionPanel() {
     levels?.gammaFlip?.value && spot
       ? (levels.gammaFlip.value - spot) / spot
       : null;
+  const callDistDollar =
+    levels?.callWall?.value && spot ? levels.callWall.value - spot : null;
+  const putDistDollar =
+    levels?.putWall?.value && spot ? levels.putWall.value - spot : null;
+  const flipDistDollar =
+    levels?.gammaFlip?.value && spot ? levels.gammaFlip.value - spot : null;
+
   const netGexSign = features.net_gex_sign ?? 0;
   const regimeLabel =
-    netGexSign > 0 ? "positive" : netGexSign < 0 ? "negative" : "neutral";
+    netGexSign > 0 ? "positive gamma" : netGexSign < 0 ? "negative gamma" : "neutral";
 
-  const proj60 = projRows[projRows.length - 1] ?? null;
-  const proj60Price = proj60?.proj ?? null;
-  const proj60Pct = proj60 && spot ? (proj60.proj - spot) / spot : null;
-  const proj60Band = proj60 ? proj60.projQ90 - proj60.projQ10 : 0;
-  const snapCount = projRows.filter((p) => p.snapApplied).length;
-  const confidence =
-    proj60Band && spot
-      ? proj60Band / spot < 0.004
-        ? "narrow"
-        : "wide"
-      : "—";
+  const proj60 = pathRows[pathRows.length - 1] ?? null;
+  const bullPrice = proj60?.bull ?? null;
+  const basePrice = proj60?.base ?? null;
+  const bearPrice = proj60?.bear ?? null;
+  const bandWidth = proj60 ? proj60.bull - proj60.bear : 0;
+  const snapApplied = pathRows.some((p) => p.snapApplied);
 
-  // Plain-English interpretation lines
+  const pctVsAnchor = (px: number | null) =>
+    px != null && anchorPrice ? (px - anchorPrice) / anchorPrice : null;
+
+  // Plain-English interpretation
   const interpretations: string[] = [];
-  if (regimeLabel === "positive") {
+  if (synthetic) {
     interpretations.push(
-      "positive gamma regime — dealers buy dips, sell rips. expect chop between dealer levels.",
+      "tape simulated — read interpretation as rough regime context, not real intraday flow.",
     );
-  } else if (regimeLabel === "negative") {
-    interpretations.push(
-      "negative gamma regime — dealers chase. moves accelerate. wider range likely.",
-    );
+  }
+  if (regimeLabel === "positive gamma") {
+    interpretations.push("positive gamma — pin behavior. dealers buy dips, sell rips.");
+  } else if (regimeLabel === "negative gamma") {
+    interpretations.push("negative gamma — vol regime, moves accelerate.");
   } else {
-    interpretations.push(
-      "neutral regime — spot near gamma flip, no dominant dealer hedging bias.",
-    );
+    interpretations.push("neutral — near gamma flip, no dominant dealer hedging bias.");
   }
-  if (callDistPct != null && Math.abs(callDistPct) < 0.005) {
+  if (callDistPct != null && Math.abs(callDistPct) < 0.005 && levels?.callWall?.value) {
     interpretations.push(
-      `near call wall (${fmtPrice(levels?.callWall?.value)}) — pinning bias if positive gamma.`,
+      `near call wall ($${fmtPrice(levels.callWall.value)}) — pin risk.`,
     );
+  } else if (flipDistPct != null && flipDistPct > 0 && levels?.gammaFlip?.value) {
+    interpretations.push(
+      `below flip ($${fmtPrice(levels.gammaFlip.value)}) — momentum down has tailwind.`,
+    );
+  } else if (flipDistPct != null && flipDistPct < 0 && levels?.gammaFlip?.value) {
+    interpretations.push(
+      `above flip ($${fmtPrice(levels.gammaFlip.value)}) — buy-the-dip hedging supports floor.`,
+    );
+  } else if (callDistPct != null && putDistPct != null) {
+    interpretations.push("between walls — directional flow drives the print.");
   }
-  if (putDistPct != null && Math.abs(putDistPct) < 0.005) {
-    interpretations.push(
-      `near put wall (${fmtPrice(levels?.putWall?.value)}) — bounce / pin candidate.`,
-    );
-  }
-  if (flipDistPct != null && flipDistPct > 0 && spot && levels?.gammaFlip?.value) {
-    interpretations.push(
-      `below flip (${fmtPrice(levels.gammaFlip.value)}) — momentum down has tailwind.`,
-    );
-  } else if (flipDistPct != null && flipDistPct < 0) {
-    interpretations.push(
-      `above flip (${fmtPrice(levels?.gammaFlip?.value)}) — buy-the-dip hedging supports the floor.`,
-    );
+  if (bandWidth > 0 && spot) {
+    const widthPct = bandWidth / spot;
+    if (widthPct < 0.004) {
+      interpretations.push(`tight band ($${bandWidth.toFixed(2)} width) — high conviction.`);
+    } else {
+      interpretations.push(`wide band ($${bandWidth.toFixed(2)}) — low conviction, trade levels not direction.`);
+    }
   }
   const topInterps = interpretations.slice(0, 3);
 
@@ -660,14 +754,10 @@ export default function MLProjectionPanel() {
           <div className="space-y-1">
             <CardTitle className="flex items-center gap-2">
               <Activity className="w-4 h-4" />
-              SPX Gamma-Aware Path Projector
+              SPY — Projected Path (60min ML + extrapolation to close)
             </CardTitle>
             <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
-              live SPX 5min tape vs dealer levels + Greek-aware forward
-              projection. updates 60s RTH. paths shift as dealers re-hedge,
-              IV moves, and Greeks roll. training used synthetic Greek
-              distances — model learns the shape, calibration sharpens with
-              live data.
+              live SPY 5min candles + dealer levels + 3 model forward scenarios. updates 60s RTH.
             </p>
           </div>
           <Button
@@ -685,20 +775,28 @@ export default function MLProjectionPanel() {
       </CardHeader>
 
       <CardContent className="space-y-4">
-        {/* Banners */}
-        {!hasCandles && (
-          <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
-            SPX 5min tape unavailable — chart will populate when data returns.
+        {/* Synthetic banner */}
+        {synthetic && (
+          <div className="rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-200 font-medium">
+            TAPE SYNTHETIC — Schwab intraday unavailable. Candles simulated from current spot. Refresh when token resumes.
+            {syntheticReason ? <span className="text-amber-300/70 font-normal ml-2">({syntheticReason})</span> : null}
           </div>
         )}
-        {hasCandles && !hasLevels && (
+
+        {/* Empty-state banners */}
+        {!hasCandles && spot == null && (
+          <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-muted-foreground">
+            tape and spot unavailable — diagnostic: check Schwab token + snapshot service.
+          </div>
+        )}
+        {!hasCandles && spot != null && !synthetic && (
           <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
-            gamma levels loading — chart shows realized tape only.
+            no intraday yet — pre-market. dealer levels still rendering.
           </div>
         )}
         {hasCandles && !hasBands && (
           <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-muted-foreground">
-            projection unavailable — realized tape and dealer levels still rendering.
+            forward projection unavailable — tape and dealer levels still rendering.
             <Button
               size="sm"
               variant="ghost"
@@ -717,14 +815,14 @@ export default function MLProjectionPanel() {
 
         {/* Chart */}
         <div
-          className="w-full"
-          style={{ height: 480 }}
-          data-testid="chart-spx-gamma-projection"
+          className="w-full relative"
+          style={{ height: 500 }}
+          data-testid="chart-spy-projection"
         >
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
               data={chartData}
-              margin={{ top: 10, right: 90, bottom: 30, left: 10 }}
+              margin={{ top: 14, right: 110, bottom: 30, left: 10 }}
             >
               <CartesianGrid strokeDasharray="2 4" stroke="#334155" opacity={0.25} />
               <XAxis
@@ -738,10 +836,11 @@ export default function MLProjectionPanel() {
               />
               <YAxis
                 domain={yDomain}
-                tickFormatter={(v) => Number(v).toFixed(0)}
+                tickFormatter={(v) => Number(v).toFixed(2)}
                 stroke="#64748b"
                 fontSize={11}
                 width={70}
+                allowDataOverflow={false}
               />
               <Tooltip
                 contentStyle={{
@@ -754,53 +853,33 @@ export default function MLProjectionPanel() {
                 formatter={(value: any, name: any, ctx: any) => {
                   if (value == null) return ["—", String(name)];
                   const row = ctx?.payload;
-                  if (name === "realized") {
-                    return [
-                      `${fmtPrice(row?.c)}  (O ${fmtPrice(row?.o)} H ${fmtPrice(row?.h)} L ${fmtPrice(row?.l)})`,
-                      "realized",
-                    ];
+                  if (name === "bull") {
+                    const p = pctVsAnchor(Number(value));
+                    return [`$${fmtPrice(Number(value))}  ${fmtPct(p)}`, "bull (q90)"];
                   }
-                  if (name === "proj") {
-                    const tag = row?.snapApplied
-                      ? ` (gamma-snap → ${row?.nearest ?? "wall"})`
-                      : "";
-                    return [
-                      `${fmtPrice(value)}  ${fmtPct(row?.pct)} band ±$${(row?.bandWidth ?? 0).toFixed(2)}${tag}`,
-                      "projected",
-                    ];
+                  if (name === "base") {
+                    const p = pctVsAnchor(Number(value));
+                    const tag = row?.snapApplied ? ` (snap → ${row?.nearest ?? "wall"})` : "";
+                    return [`$${fmtPrice(Number(value))}  ${fmtPct(p)}${tag}`, "base (q50)"];
                   }
-                  if (name === "ext") {
-                    return [
-                      `${fmtPrice(value)} (linear extrapolation past 60min — model trained to 60min only)`,
-                      "extrapolated",
-                    ];
+                  if (name === "bear") {
+                    const p = pctVsAnchor(Number(value));
+                    return [`$${fmtPrice(Number(value))}  ${fmtPct(p)}`, "bear (q10)"];
+                  }
+                  if (name === "bullExt") {
+                    return [`$${fmtPrice(Number(value))} (linear ext)`, "bull ext"];
+                  }
+                  if (name === "baseExt") {
+                    return [`$${fmtPrice(Number(value))} (linear ext)`, "base ext"];
+                  }
+                  if (name === "bearExt") {
+                    return [`$${fmtPrice(Number(value))} (linear ext)`, "bear ext"];
                   }
                   return [fmtPrice(Number(value)), String(name)];
                 }}
               />
 
-              {/* q10/q90 ribbon (faint) */}
-              <Area
-                type="monotone"
-                dataKey="ribbonLo"
-                stackId="ribbon"
-                stroke="none"
-                fill="transparent"
-                isAnimationActive={false}
-                legendType="none"
-              />
-              <Area
-                type="monotone"
-                dataKey="ribbonHi"
-                stackId="ribbon"
-                stroke="none"
-                fill={COLOR_RIBBON}
-                fillOpacity={0.10}
-                isAnimationActive={false}
-                legendType="none"
-              />
-
-              {/* Horizontal level lines */}
+              {/* Layer 1 — Horizontal level lines */}
               {levelSpecs.map((l) => (
                 <ReferenceLine
                   key={l.key}
@@ -809,7 +888,7 @@ export default function MLProjectionPanel() {
                   strokeWidth={l.weight}
                   strokeDasharray={l.dash}
                   label={{
-                    value: `${l.label}  ${l.value.toFixed(0)}`,
+                    value: `${l.label}  ${l.value.toFixed(2)}`,
                     position: "right",
                     fill: l.color,
                     fontSize: l.emphasis ? 11 : 10,
@@ -819,64 +898,114 @@ export default function MLProjectionPanel() {
                 />
               ))}
 
-              {/* Now line */}
-              <ReferenceLine
-                x={nowMin}
-                stroke="#64748b"
-                strokeDasharray="3 3"
-                label={{ value: "now", position: "top", fill: "#94a3b8", fontSize: 10 }}
-              />
-              {/* Anchor (last close) horizontal */}
+              {/* Anchor (last close) horizontal — subtle */}
               {anchorPrice > 0 && (
                 <ReferenceLine
                   y={anchorPrice}
                   stroke="#64748b"
                   strokeDasharray="1 5"
-                  strokeOpacity={0.5}
+                  strokeOpacity={0.4}
                 />
               )}
 
-              {/* Realized intraday SPX (orange snake) */}
-              <Line
-                type="monotone"
-                dataKey="realized"
-                stroke={COLOR_REALIZED}
-                strokeWidth={2.5}
-                dot={{ r: 1.5, fill: COLOR_REALIZED }}
-                activeDot={{ r: 4 }}
-                isAnimationActive={false}
-                connectNulls={false}
+              {/* Layer 2 — Real candles via Customized SVG layer */}
+              <Customized
+                component={(p: any) => (
+                  <CandlesLayer {...p} candleData={candleRows} />
+                )}
               />
 
-              {/* Forward projected path (cyan, solid) */}
+              {/* Now line */}
+              <ReferenceLine
+                x={nowMin}
+                stroke="#94a3b8"
+                strokeDasharray="3 3"
+                label={{ value: "NOW", position: "top", fill: "#cbd5e1", fontSize: 10, fontWeight: 600 }}
+              />
+
+              {/* Layer 4 — Forward projection paths (drawn right of "now") */}
+              {/* Bull (green dashed) */}
               <Line
                 type="monotone"
-                dataKey="proj"
-                stroke={COLOR_PROJ}
+                dataKey="bull"
+                stroke={COLOR_BULL}
                 strokeWidth={2}
-                dot={{ r: 3, fill: COLOR_PROJ, stroke: "#0f172a", strokeWidth: 1 }}
+                strokeDasharray="4 4"
+                dot={{ r: 3, fill: COLOR_BULL, stroke: "#0f172a", strokeWidth: 1 }}
+                activeDot={{ r: 5 }}
                 isAnimationActive={false}
-                connectNulls={false}
+                connectNulls
               />
-
-              {/* Linear extrapolation (cyan, dashed) */}
+              {/* Bear (red dashed) */}
               <Line
                 type="monotone"
-                dataKey="ext"
-                stroke={COLOR_EXT}
+                dataKey="bear"
+                stroke={COLOR_BEAR}
+                strokeWidth={2}
+                strokeDasharray="4 4"
+                dot={{ r: 3, fill: COLOR_BEAR, stroke: "#0f172a", strokeWidth: 1 }}
+                activeDot={{ r: 5 }}
+                isAnimationActive={false}
+                connectNulls
+              />
+              {/* Base (white bold) */}
+              <Line
+                type="monotone"
+                dataKey="base"
+                stroke={COLOR_BASE}
+                strokeWidth={2.5}
+                dot={{ r: 3.5, fill: COLOR_BASE, stroke: "#0f172a", strokeWidth: 1 }}
+                activeDot={{ r: 5 }}
+                isAnimationActive={false}
+                connectNulls
+              />
+
+              {/* Linear extrapolations — same colors, thinner + dashed */}
+              <Line
+                type="monotone"
+                dataKey="bullExt"
+                stroke={COLOR_BULL}
                 strokeWidth={1.5}
-                strokeDasharray="6 4"
+                strokeDasharray="2 4"
+                strokeOpacity={0.7}
                 dot={false}
                 isAnimationActive={false}
-                connectNulls={false}
-                strokeOpacity={0.7}
+                connectNulls
               />
+              <Line
+                type="monotone"
+                dataKey="bearExt"
+                stroke={COLOR_BEAR}
+                strokeWidth={1.5}
+                strokeDasharray="2 4"
+                strokeOpacity={0.7}
+                dot={false}
+                isAnimationActive={false}
+                connectNulls
+              />
+              <Line
+                type="monotone"
+                dataKey="baseExt"
+                stroke={COLOR_BASE}
+                strokeWidth={1.75}
+                strokeDasharray="2 4"
+                strokeOpacity={0.85}
+                dot={false}
+                isAnimationActive={false}
+                connectNulls
+              />
+
+              {/* Synthetic watermark */}
+              {synthetic && (
+                <Customized component={(p: any) => <SyntheticWatermark {...p} />} />
+              )}
             </ComposedChart>
           </ResponsiveContainer>
         </div>
 
         {/* Three-column info grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {/* KEY LEVELS */}
           <div
             className="rounded-md border border-border/60 bg-muted/10 p-3 space-y-1.5"
             data-testid="box-ml-keylevels"
@@ -886,22 +1015,36 @@ export default function MLProjectionPanel() {
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">spot</span>
-              <span className="font-mono">{fmtPrice(spot)}</span>
+              <span className="font-mono">
+                ${fmtPrice(spot)}{" "}
+                <span className={`text-xs ${synthetic ? "text-amber-400" : "text-emerald-400"}`}>
+                  {synthetic ? "synthetic" : "live"}
+                </span>
+              </span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">to call wall</span>
-              <span className="font-mono text-emerald-400">{fmtPct(callDistPct)}</span>
+              <span className="font-mono text-emerald-400">
+                {fmtPct(callDistPct)}
+                {callDistDollar != null ? ` ($${callDistDollar.toFixed(2)})` : ""}
+              </span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">to put wall</span>
-              <span className="font-mono text-rose-400">{fmtPct(putDistPct)}</span>
+              <span className="font-mono text-rose-400">
+                {fmtPct(putDistPct)}
+                {putDistDollar != null ? ` ($${putDistDollar.toFixed(2)})` : ""}
+              </span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">to flip</span>
-              <span className="font-mono">{fmtPct(flipDistPct)}</span>
+              <span className="font-mono">
+                {fmtPct(flipDistPct)}
+                {flipDistDollar != null ? ` ($${flipDistDollar.toFixed(2)})` : ""}
+              </span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">net gex regime</span>
+              <span className="text-muted-foreground">regime</span>
               <Badge
                 variant={netGexSign > 0 ? "default" : netGexSign < 0 ? "destructive" : "secondary"}
                 className="h-5 text-xs"
@@ -911,37 +1054,45 @@ export default function MLProjectionPanel() {
             </div>
           </div>
 
+          {/* SCENARIOS */}
           <div
             className="rounded-md border border-border/60 bg-muted/10 p-3 space-y-1.5"
             data-testid="box-ml-projection-summary"
           >
             <div className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">
-              projection (60min)
+              scenarios (60min)
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">target</span>
-              <span className="font-mono">{fmtPrice(proj60Price)}</span>
+              <span className="text-emerald-400">bull (q90)</span>
+              <span className="font-mono text-emerald-400">
+                ${fmtPrice(bullPrice)} ({fmtPct(pctVsAnchor(bullPrice))})
+              </span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">implied move</span>
-              <span className="font-mono">{fmtPct(proj60Pct)}</span>
+              <span className="text-foreground font-semibold">base (q50)</span>
+              <span className="font-mono text-foreground font-semibold">
+                ${fmtPrice(basePrice)} ({fmtPct(pctVsAnchor(basePrice))})
+              </span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-rose-400">bear (q10)</span>
+              <span className="font-mono text-rose-400">
+                ${fmtPrice(bearPrice)} ({fmtPct(pctVsAnchor(bearPrice))})
+              </span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">band width</span>
-              <span className="font-mono">${proj60Band.toFixed(2)}</span>
+              <span className="font-mono">${bandWidth.toFixed(2)}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">gamma-snap</span>
-              <span className="font-mono">{snapCount} pts</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">confidence</span>
-              <Badge variant="outline" className="h-5 text-xs">
-                {confidence}
+              <Badge variant={snapApplied ? "default" : "outline"} className="h-5 text-xs">
+                {snapApplied ? "applied" : "not applied"}
               </Badge>
             </div>
           </div>
 
+          {/* INTERPRETATION */}
           <div
             className="rounded-md border border-border/60 bg-muted/10 p-3 space-y-1.5"
             data-testid="box-ml-interpretation"

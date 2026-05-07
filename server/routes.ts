@@ -340,6 +340,49 @@ async function getOrBuild(force = false): Promise<Snapshot_Public> {
   return inflight;
 }
 
+/**
+ * Rescale a GammaLevels object built at SPX scale into SPY scale.
+ * SPY ≈ SPX/10, so every numeric "value" + topGexStrikes.strike + spxNow gets
+ * divided by `factor` (10). Preserves nullable entries and source tags.
+ */
+function rescaleLevelsForSpy(input: any, factor = 10): any {
+  if (!input || typeof input !== "object") return input;
+  const div = (n: number | null | undefined) =>
+    n == null || !Number.isFinite(n) ? n : n / factor;
+  const rescaleEntry = (e: any) =>
+    e && typeof e === "object" && "value" in e
+      ? { ...e, value: div(e.value) }
+      : e;
+  return {
+    ...input,
+    gammaFlip: rescaleEntry(input.gammaFlip),
+    callWall: rescaleEntry(input.callWall),
+    putWall: rescaleEntry(input.putWall),
+    vanna: rescaleEntry(input.vanna),
+    charm: rescaleEntry(input.charm),
+    vommaUpper: rescaleEntry(input.vommaUpper),
+    vommaLower: rescaleEntry(input.vommaLower),
+    zomma: rescaleEntry(input.zomma),
+    negGamma: rescaleEntry(input.negGamma),
+    mopex: rescaleEntry(input.mopex),
+    weeklyTargets: input.weeklyTargets
+      ? {
+          upside: rescaleEntry(input.weeklyTargets.upside),
+          downside: rescaleEntry(input.weeklyTargets.downside),
+          t2Up: rescaleEntry(input.weeklyTargets.t2Up),
+          t2Down: rescaleEntry(input.weeklyTargets.t2Down),
+        }
+      : input.weeklyTargets,
+    topGexStrikes: Array.isArray(input.topGexStrikes)
+      ? input.topGexStrikes.map((s: any) => ({
+          ...s,
+          strike: div(s.strike),
+        }))
+      : input.topGexStrikes,
+    spxNow: typeof input.spxNow === "number" ? div(input.spxNow) : input.spxNow,
+  };
+}
+
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   app.get("/api/snapshot", async (_req, res) => {
     try {
@@ -3196,6 +3239,180 @@ Refine the brief above. Search the web for any critical developments the feed is
       });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e?.message ?? "projection-spx failed" });
+    }
+  });
+
+  // ─── ML Lab unified SPY endpoint ───────────────────────────────────────
+  // SPY-scale variant of projection-spx: live SPY 5min candles + dealer levels
+  // (rescaled SPX→SPY by /10) + 60min projection bands. When the Schwab tape is
+  // unavailable the route synthesizes a deterministic GBM walk anchored on the
+  // current snapshot price so the panel still renders end-to-end.
+  app.get("/api/ml/projection-spy", async (_req, res) => {
+    try {
+      const { mlQuantileOverlay } = await import("./mlBridge");
+      const { buildMlFeatures } = await import("./mlGreekFeatures");
+      const { fetchOHLC } = await import("./ohlc");
+      const { buildGammaLevelsEnhanced } = await import("./gammaLevels");
+
+      const features = await buildMlFeatures(resolveMlFeatureInputs);
+      const horizons = [5, 15, 30, 60];
+      const projection = await mlQuantileOverlay(features, horizons, { timeoutMs: 2500 });
+
+      // Today's RTH SPY 5min bars
+      let candles: any[] = [];
+      let spot: number | null = null;
+      let prevClose: number | null = null;
+      try {
+        const ohlc = await fetchOHLC("SPY", "1D", "5m");
+        candles = (ohlc?.candles ?? []).map((c: any) => ({ ...c, synthetic: false }));
+        spot = ohlc?.price ?? null;
+        prevClose = ohlc?.prevClose ?? null;
+      } catch { /* empty */ }
+
+      // Snapshot fallback for spot/prevClose + synthetic candle generation.
+      let snapSpy: { price: number | null; prevClose: number | null; changePct: number | null } = {
+        price: null, prevClose: null, changePct: null,
+      };
+      try {
+        const snap = await getOrBuild(false);
+        snapSpy = {
+          price: snap.spy?.price ?? null,
+          prevClose: snap.spy?.prevClose ?? null,
+          changePct: snap.spy?.changePct ?? null,
+        };
+        if (spot == null) spot = snapSpy.price;
+        if (prevClose == null) prevClose = snapSpy.prevClose;
+      } catch { /* leave nulls */ }
+
+      // Levels — fetch SPX-scale and divide every numeric value by 10 for SPY.
+      let levels: any = null;
+      try {
+        const snap = await getOrBuild(false);
+        const spxLevels = buildGammaLevelsEnhanced(snap.gamma, snap.spy.price ?? snap.gamma.spot);
+        levels = rescaleLevelsForSpy(spxLevels, 10);
+      } catch { /* null levels */ }
+
+      // Synthetic candle synthesis when tape empty AND we have a spot anchor.
+      let synthetic = false;
+      let syntheticReason: string | null = null;
+      if (candles.length === 0 && spot != null && spot > 0) {
+        // Determine current ET minute-of-day (0..1439).
+        const fmt = new Intl.DateTimeFormat("en-US", {
+          timeZone: "America/New_York",
+          hour12: false,
+          hour: "2-digit",
+          minute: "2-digit",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        });
+        const parts = fmt.formatToParts(new Date());
+        const h = Number(parts.find((p) => p.type === "hour")?.value ?? "9");
+        const mn = Number(parts.find((p) => p.type === "minute")?.value ?? "30");
+        const yyyy = parts.find((p) => p.type === "year")?.value ?? "1970";
+        const mm = parts.find((p) => p.type === "month")?.value ?? "01";
+        const dd = parts.find((p) => p.type === "day")?.value ?? "01";
+        const etMinutes = h * 60 + mn;
+        const RTH_OPEN = 570; // 9:30
+        const RTH_CLOSE = 960; // 16:00
+        const minsSinceOpen = Math.max(0, Math.min(RTH_CLOSE, etMinutes) - RTH_OPEN);
+        const nBars = Math.floor(minsSinceOpen / 5);
+        if (nBars > 0) {
+          const anchor = spot;
+          const pctChange = snapSpy.changePct ?? 0;
+          const prevC = prevClose ?? anchor / (1 + pctChange / 100);
+          const dailyDrift = anchor - prevC;
+          const perBarDrift = dailyDrift / nBars;
+          const stdev = anchor * 0.0008;
+
+          // Deterministic seed = today's epoch day (ET)
+          const epochDay = Math.floor(
+            Date.UTC(Number(yyyy), Number(mm) - 1, Number(dd)) / 86_400_000,
+          );
+          let seed = epochDay >>> 0;
+          const rng = () => {
+            // mulberry32
+            seed = (seed + 0x6D2B79F5) >>> 0;
+            let t = seed;
+            t = Math.imul(t ^ (t >>> 15), t | 1);
+            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+          };
+          // Box-Muller normal
+          const norm = () => {
+            const u = Math.max(1e-9, rng());
+            const v = rng();
+            return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+          };
+
+          // Build candles 9:30 ET → now, 5min steps.
+          // Open of bar 0 = prevClose; subsequent opens = previous close.
+          const dayStartUtc = Date.UTC(Number(yyyy), Number(mm) - 1, Number(dd));
+          // Convert ET 9:30 to UTC epoch for that day. America/New_York can be UTC-5 (EST) or UTC-4 (EDT).
+          // Simple approach: format the dayStart and shift; easier — just trust local epoch math by
+          // taking now() - (etMinutes - currentBarMinute) minutes for each bar timestamp.
+          const nowMs = Date.now();
+          const minutesIntoSession = etMinutes - RTH_OPEN; // current minute since 9:30
+          let prevC2 = prevC;
+          let lastClose = prevC2;
+          const synth: any[] = [];
+          for (let i = 0; i < nBars; i++) {
+            const open = lastClose;
+            const drift = perBarDrift;
+            const noise = stdev * norm();
+            const close = open + drift + noise;
+            const move = Math.abs(close - open);
+            const buf = stdev * 0.5;
+            const high = Math.max(open, close) + move * 0.25 + buf;
+            const low = Math.min(open, close) - move * 0.25 - buf;
+            const vol = 100_000 + Math.floor(rng() * 400_000);
+            // Bar timestamp = open time in epoch seconds. Bar i opens at minute (i*5) since 9:30.
+            // Using nowMs adjusted backward by (minutesIntoSession - i*5) minutes.
+            const t = Math.floor((nowMs - (minutesIntoSession - i * 5) * 60_000) / 1000);
+            synth.push({
+              t,
+              o: Number(open.toFixed(2)),
+              h: Number(high.toFixed(2)),
+              l: Number(low.toFixed(2)),
+              c: Number(close.toFixed(2)),
+              v: vol,
+              synthetic: true,
+            });
+            lastClose = close;
+          }
+          // Force last close to anchor exactly so the chart agrees with the spot.
+          if (synth.length > 0) {
+            const last = synth[synth.length - 1];
+            last.c = Number(anchor.toFixed(2));
+            last.h = Number(Math.max(last.h, last.o, last.c).toFixed(2));
+            last.l = Number(Math.min(last.l, last.o, last.c).toFixed(2));
+          }
+          candles = synth;
+          synthetic = true;
+          syntheticReason = "Schwab intraday tape unavailable; deterministic GBM walk anchored on snapshot spot.";
+        } else {
+          syntheticReason = "pre-market — no bars yet";
+        }
+      } else if (candles.length === 0) {
+        syntheticReason = "no tape and no snapshot spot";
+      }
+
+      res.json({
+        ok: true,
+        candles,
+        spot,
+        prevClose,
+        levels,
+        projection: projection
+          ? { bands: projection.bands, status: projection.status, version: projection.version }
+          : { bands: null, status: "UNAVAILABLE", version: "-" },
+        features,
+        synthetic,
+        syntheticReason,
+        asOf: new Date().toISOString(),
+      });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e?.message ?? "projection-spy failed" });
     }
   });
 
