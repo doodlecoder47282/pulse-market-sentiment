@@ -341,18 +341,23 @@ async function getOrBuild(force = false): Promise<Snapshot_Public> {
 }
 
 /**
- * Rescale a GammaLevels object built at SPX scale into SPY scale.
- * SPY ≈ SPX/10, so every numeric "value" + topGexStrikes.strike + spxNow gets
- * divided by `factor` (10). Preserves nullable entries and source tags.
+ * Source-aware rescale of GammaLevels into SPY scale.
+ * The buildGammaLevelsEnhanced output mixes scales:
+ *   - source: "computed"     → already SPY-scale (callWall, putWall, gammaFlip, topGexStrikes)
+ *   - source: "user_targets" → SPX-scale (vanna, charm, vomma, zomma, mopex, weeklyTargets)
+ * We only divide the SPX-scale entries. Computed SPY entries pass through untouched.
  */
 function rescaleLevelsForSpy(input: any, factor = 10): any {
   if (!input || typeof input !== "object") return input;
   const div = (n: number | null | undefined) =>
     n == null || !Number.isFinite(n) ? n : n / factor;
-  const rescaleEntry = (e: any) =>
-    e && typeof e === "object" && "value" in e
-      ? { ...e, value: div(e.value) }
-      : e;
+  // Only rescale entries flagged as SPX-scale via source: "user_targets".
+  // Computed entries are already SPY-scale and pass through.
+  const rescaleEntry = (e: any) => {
+    if (!e || typeof e !== "object" || !("value" in e)) return e;
+    if (e.source === "user_targets") return { ...e, value: div(e.value) };
+    return e;
+  };
   return {
     ...input,
     gammaFlip: rescaleEntry(input.gammaFlip),
@@ -374,11 +379,13 @@ function rescaleLevelsForSpy(input: any, factor = 10): any {
         }
       : input.weeklyTargets,
     topGexStrikes: Array.isArray(input.topGexStrikes)
-      ? input.topGexStrikes.map((s: any) => ({
-          ...s,
-          strike: div(s.strike),
-        }))
+      ? input.topGexStrikes.map((s: any) =>
+          s?.source === "user_targets"
+            ? { ...s, strike: div(s.strike) }
+            : s,
+        )
       : input.topGexStrikes,
+    // spxNow is SPX-scale by definition — always divide
     spxNow: typeof input.spxNow === "number" ? div(input.spxNow) : input.spxNow,
   };
 }
