@@ -5,7 +5,6 @@
 import { useState, useMemo, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import ExitBrainPanel from "@/components/ExitBrainPanel";
 import RegimePredictPanel from "@/components/RegimePredictPanel";
 import EdgeStatsPanel from "@/components/EdgeStatsPanel";
 import type { GammaStructure } from "@shared/schema";
@@ -167,9 +166,6 @@ export default function TradeDesk() {
 
   return (
     <div className="space-y-4">
-      {/* Exit Brain panel — real-time 0DTE exit scoring */}
-      <ExitBrainPanel />
-
       {/* Regime transition forecast — forward-looking probability scoring */}
       <RegimePredictPanel />
 
