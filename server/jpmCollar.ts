@@ -33,23 +33,26 @@ export interface JPMCollarResponse {
   asOf: string;
 }
 
-// Hardcoded collar strikes — current + last 4 quarters.
-// Source: market knowledge / approximate from JHEQX 13F disclosures.
-// Q2 2026 is current; strikes estimated from prevailing SPX levels.
+// Hardcoded collar strikes — current + history.
+// Sources: VolSignals (Q2 2026 confirmed), Tickmill institutional note,
+// SpotGamma, JHEQX 13F disclosures. Strikes are exact at the roll.
+//
+// Q2 2026: 5,210 / 6,180 put spread vs 6,865 short call (live as of Mar 31 2026 close)
+// Executed via CME SME (Month-End) product, BTIC at 4pm fix.
 const COLLAR_DATA: CollarQuarter[] = [
   {
     quarter: "Q2 2026",
     rollDate: "2026-06-30",
-    longPut: 6650,
-    shortPut: 5540,
-    shortCall: 7335,
+    longPut: 6180,
+    shortPut: 5210,
+    shortCall: 6865,
   },
   {
     quarter: "Q1 2026",
     rollDate: "2026-03-31",
-    longPut: 6250,
-    shortPut: 5190,
-    shortCall: 6980,
+    longPut: 6475,
+    shortPut: 5310,
+    shortCall: 7155,
   },
   {
     quarter: "Q4 2025",
@@ -68,9 +71,9 @@ const COLLAR_DATA: CollarQuarter[] = [
   {
     quarter: "Q2 2025",
     rollDate: "2025-06-30",
-    longPut: 5200,
-    shortPut: 4450,
-    shortCall: 5950,
+    longPut: 5290,
+    shortPut: 4460,
+    shortCall: 5880,
   },
 ];
 
