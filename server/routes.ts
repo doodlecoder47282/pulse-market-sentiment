@@ -3095,6 +3095,16 @@ Refine the brief above. Search the web for any critical developments the feed is
     }
   });
 
+  // ─── ML quantile projection (ML Lab) ───────────────────────────────────
+  app.post("/api/ml/projection", async (req, res) => {
+    const { mlQuantileOverlay } = await import("./mlBridge");
+    const features = (req.body?.features ?? {}) as Record<string, number>;
+    const horizons = (req.body?.horizons ?? [5, 15, 30, 60]) as number[];
+    const result = await mlQuantileOverlay(features, horizons);
+    if (!result) return res.status(503).json({ ok: false, error: "ML service unreachable" });
+    res.json({ ok: true, ...result });
+  });
+
   // ─── ML service health (Wires 17–20) ────────────────────────────────────
   app.get("/api/ml/health", async (_req, res) => {
     const { mlHealth } = await import("./mlBridge");

@@ -50,6 +50,7 @@ const ChartPanel = lazy(() => import("@/components/ChartPanel"));
 const ModelsPanel = lazy(() => import("@/components/ModelsPanel"));
 const GexChart = lazy(() => import("@/components/GexChart"));
 const Heatseeker = lazy(() => import("@/components/Heatseeker"));
+const MLProjectionPanel = lazy(() => import("@/components/MLProjectionPanel"));
 
 // These are lighter but still benefit from lazy loading on non-default tabs
 const ChartPanelEager = lazy(() => import("@/components/ChartPanel"));
@@ -423,6 +424,15 @@ export default function Dashboard() {
             <ErrorBoundary label="Models Panel">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
                 <ModelsPanel />
+              </Suspense>
+            </ErrorBoundary>
+
+            {/* ── ML Lab ── */}
+            <Separator className="my-2" />
+            <h2 className="text-xl font-semibold">ML Lab</h2>
+            <ErrorBoundary label="ML Lab">
+              <Suspense fallback={<div className="text-sm text-muted-foreground">loading ml lab...</div>}>
+                <MLProjectionPanel />
               </Suspense>
             </ErrorBoundary>
           </TabsContent>
