@@ -2481,10 +2481,40 @@ Refine the brief above. Search the web for any critical developments the feed is
       const data: any = await r.json();
       const daily = data?.horizons?.daily;
       if (!daily) return res.status(503).json({ error: "no_daily_horizon" });
+
+      // Macro snapshot — fail-soft
+      let macro: { vixTermRatio: number | null; dxyDelta: number | null; tnxDelta: number | null } | null = null;
+      try {
+        const v = await fetchVixTermData();
+        const ratio = v.vix9d != null && v.vix != null && v.vix > 0 ? v.vix9d / v.vix : null;
+        macro = { vixTermRatio: ratio, dxyDelta: null, tnxDelta: null };
+      } catch { macro = null; }
+
+      // Whale pressure last 30min — net signed premium normalized
+      let whalePressure: number | null = null;
+      try {
+        const { getWhaleAlertHistory } = await import("./whalePersistence");
+        const cutoff = Date.now() - 30 * 60_000;
+        const recent = getWhaleAlertHistory({ days: 1, symbol: "SPY", limit: 100 })
+          .filter((w: any) => w.detectedAt >= cutoff);
+        if (recent.length >= 3) {
+          let netSigned = 0;
+          let totalAbs = 0;
+          for (const w of recent) {
+            const sign = w.type === "C" ? 1 : -1;
+            netSigned += sign * w.premium;
+            totalAbs += w.premium;
+          }
+          whalePressure = totalAbs > 0 ? Math.max(-1, Math.min(1, netSigned / totalAbs)) : 0;
+        }
+      } catch { whalePressure = null; }
+
       const out = predictTransition({
         audit: daily.audit ?? {},
         spot: daily.spot,
         horizonMinutes,
+        macro,
+        whalePressure,
       });
       // Closed-loop edge tracking (throttled).
       try {

@@ -136,6 +136,14 @@ export interface RegimePredictorInput {
   nowMs?: number;
   /** Forward horizon in minutes (default 20) */
   horizonMinutes?: number;
+  /** Optional macro snapshot (vix term, dxy, tnx). Neutral fallback if absent. */
+  macro?: {
+    vixTermRatio?: number | null; // VIX9D / VIX, <1 = backwardation = stress
+    dxyDelta?: number | null;     // intraday %
+    tnxDelta?: number | null;     // intraday %
+  } | null;
+  /** Optional whale herding signal: net signed pressure last 30min, normalized -1..+1. */
+  whalePressure?: number | null;
 }
 
 export interface RegimeCandidate {
@@ -149,6 +157,12 @@ export interface RegimePredictorOutput {
   candidates: RegimeCandidate[];
   horizonMinutes: number;
   confidence: number; // 0..1
+  /** "warming" when historySamples<5; "ready" when ok; "degraded" when missing audit fields. */
+  status: "ready" | "warming" | "degraded";
+  /** Plain-English headline for the UI (already synthesized server-side). */
+  headline: string;
+  /** Plain-English bullets explaining the top drivers right now. */
+  driverNotes: string[];
   drivers: {
     dfi: number;
     dfiSlopePerMin: number;
@@ -159,10 +173,16 @@ export interface RegimePredictorOutput {
     ivTermLabel: string;
     /** Spot distance to mainPivot, fraction of one-day expected move */
     gammaFlipProxFrac: number;
+    /** Spot distance to charmZero, fraction of one-day EM. null if charmZero absent. */
+    charmZeroProxFrac: number | null;
     sessionFracRemaining: number;
     flipRatePerMin: number;
     flipsObserved: number;
     historySamples: number;
+    vannaBias: "positive" | "negative" | "neutral";
+    vixTermRatio: number | null;
+    macroStress: "calm" | "normal" | "stress";
+    whalePressure: number; // -1..+1
   };
   generatedAt: number;
 }
@@ -326,6 +346,61 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
     }
   }
 
+  // 9) Vanna bias — positive vanna stabilizes trend continuation, negative destabilizes
+  const vannaBiasRaw = String(audit.vannaBias ?? "").toLowerCase();
+  let vannaBias: "positive" | "negative" | "neutral" = "neutral";
+  if (vannaBiasRaw === "positive") {
+    vannaBias = "positive";
+    scores.TREND_STRONG += 0.3;
+    scores.TREND_WEAK += 0.2;
+    scores.CHOP_STRONG -= 0.2;
+  } else if (vannaBiasRaw === "negative") {
+    vannaBias = "negative";
+    scores.CHOP_STRONG += 0.3;
+    scores.CHOP_WEAK += 0.2;
+    scores.TREND_STRONG -= 0.2;
+  }
+
+  // 10) Charm zero proximity — second pivot, similar pin pressure as mainPivot
+  const charmZero = Number(audit.charmZero ?? NaN);
+  let charmZeroProxFrac: number | null = null;
+  if (Number.isFinite(charmZero) && charmZero > 0 && spot > 0) {
+    charmZeroProxFrac = clamp(Math.abs(spot - charmZero) / oneDayEM, 0, 5);
+    if (charmZeroProxFrac < 0.20) {
+      scores.CHOP_STRONG += 0.4;
+      scores.NEUTRAL += 0.3;
+      scores.TREND_STRONG -= 0.3;
+    }
+  }
+
+  // 11) Macro regime — VIX term backwardation = stress, biases CHOP_STRONG/NEUTRAL
+  const vixTermRatio = input.macro?.vixTermRatio ?? null;
+  let macroStress: "calm" | "normal" | "stress" = "normal";
+  if (vixTermRatio != null && Number.isFinite(vixTermRatio)) {
+    if (vixTermRatio < 0.95) {
+      macroStress = "stress";
+      // VIX9D > VIX = front stress = vol expansion likely = TREND or NEUTRAL chop
+      scores.TREND_STRONG += 0.3;
+      scores.NEUTRAL += 0.3;
+      scores.CHOP_WEAK -= 0.2;
+    } else if (vixTermRatio > 1.10) {
+      macroStress = "calm";
+      // Steep contango = vol bleed = chop favored
+      scores.CHOP_STRONG += 0.3;
+      scores.CHOP_WEAK += 0.2;
+      scores.TREND_STRONG -= 0.2;
+    }
+  }
+
+  // 12) Whale herding pressure — net signed flow last 30min reinforces directional regimes
+  const whalePressure = clamp(Number(input.whalePressure ?? 0), -1, 1);
+  if (Math.abs(whalePressure) > 0.4) {
+    // Strong directional whale flow — reinforces TREND, weakens CHOP
+    scores.TREND_STRONG += 0.4 * Math.abs(whalePressure);
+    scores.TREND_WEAK += 0.2 * Math.abs(whalePressure);
+    scores.CHOP_STRONG -= 0.2 * Math.abs(whalePressure);
+  }
+
   // ─── Convert scores to probabilities ───
   const probs = softmax(scores);
 
@@ -340,11 +415,57 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
     isCurrent: r === currentRaw,
   })).sort((a, b) => b.probability - a.probability);
 
+  // ─── Status gating ─── warming-up if not enough samples
+  let status: "ready" | "warming" | "degraded" = "ready";
+  if (histSamples < 5) status = "warming";
+  if (!Number.isFinite(dfi) || !audit.gammaZone) status = "degraded";
+
+  // ─── Plain-English synthesis ───
+  const top = candidates[0];
+  const second = candidates[1];
+  const isTransition = top && top.regime !== currentRaw;
+  const headline = (() => {
+    if (status === "warming") {
+      return `collecting data — ${histSamples}/5 samples needed before forecast is reliable.`;
+    }
+    if (status === "degraded") {
+      return "audit incomplete — predictor running on partial data.";
+    }
+    if (!top) return "no signal yet.";
+    const pct = Math.round(top.probability * 100);
+    if (isTransition) {
+      return `${prettyRegime(top.regime)} likely next (${pct}%) — flipping from ${prettyRegime(currentRaw)} in next ${horizonMinutes}min.`;
+    }
+    return `${prettyRegime(currentRaw)} holds (${pct}%) — no transition expected in next ${horizonMinutes}min.`;
+  })();
+
+  const driverNotes: string[] = [];
+  if (Math.abs(dfiSlopePerMin) > 0.05) {
+    const dir = dfiSlopePerMin > 0 ? "rising" : "falling";
+    driverNotes.push(`DFI ${dir} ${Math.abs(dfiSlopePerMin).toFixed(2)}/min toward ${nextBoundary ?? "—"}.`);
+  }
+  if (gammaFlipProxFrac < 0.25) driverNotes.push(`spot near gamma flip (${(gammaFlipProxFrac * 100).toFixed(0)}% of 1-day EM) — pin pressure.`);
+  else if (gammaFlipProxFrac > 1.0) driverNotes.push(`spot far from pivot — trend has room.`);
+  if (charmZeroProxFrac != null && charmZeroProxFrac < 0.20) driverNotes.push(`spot near charm zero — second pin.`);
+  if (vannaBias === "positive") driverNotes.push(`vanna positive — supports trend continuation.`);
+  else if (vannaBias === "negative") driverNotes.push(`vanna negative — destabilizes trend, favors chop.`);
+  if (ivTermDelta > 0.02) driverNotes.push(`IV expanding (${ivTermLabel}) — vol regime.`);
+  else if (ivTermDelta < -0.02) driverNotes.push(`IV bleeding (${ivTermLabel}) — chop drift.`);
+  if (macroStress === "stress") driverNotes.push(`VIX backwardation — macro stress active.`);
+  else if (macroStress === "calm") driverNotes.push(`steep contango — vol-bleed environment.`);
+  if (Math.abs(whalePressure) > 0.4) driverNotes.push(`whale flow ${whalePressure > 0 ? "bullish" : "bearish"} (${(whalePressure * 100).toFixed(0)}%) — herding pressure.`);
+  if (sessionFrac < 0.25) driverNotes.push(`<1.5hr to close — pin/chop bias rising.`);
+  else if (sessionFrac > 0.75) driverNotes.push(`first 1.5hr of RTH — direction-setting window.`);
+  if (flipRate > 0.3) driverNotes.push(`high flip rate (${flipRate.toFixed(2)}/min) — uncertain regime.`);
+
   return {
     currentRegime: currentRaw,
     candidates,
     horizonMinutes,
     confidence,
+    status,
+    headline,
+    driverNotes,
     drivers: {
       dfi,
       dfiSlopePerMin,
@@ -353,11 +474,26 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
       ivTermDelta,
       ivTermLabel,
       gammaFlipProxFrac,
+      charmZeroProxFrac,
       sessionFracRemaining: sessionFrac,
       flipRatePerMin: flipRate,
       flipsObserved: flips,
       historySamples: histSamples,
+      vannaBias,
+      vixTermRatio,
+      macroStress,
+      whalePressure,
     },
     generatedAt: nowMs,
   };
+}
+
+function prettyRegime(r: RegimeBucket): string {
+  switch (r) {
+    case "TREND_STRONG": return "strong trend";
+    case "TREND_WEAK":   return "weak trend";
+    case "NEUTRAL":      return "neutral";
+    case "CHOP_WEAK":    return "light chop";
+    case "CHOP_STRONG":  return "heavy chop";
+  }
 }
