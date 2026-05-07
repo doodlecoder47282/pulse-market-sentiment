@@ -3100,7 +3100,8 @@ Refine the brief above. Search the web for any critical developments the feed is
     const { mlQuantileOverlay } = await import("./mlBridge");
     const features = (req.body?.features ?? {}) as Record<string, number>;
     const horizons = (req.body?.horizons ?? [5, 15, 30, 60]) as number[];
-    const result = await mlQuantileOverlay(features, horizons);
+    // UI route — user tolerates latency. 2500ms covers FastAPI cold-start; hot-path Discord still 100ms.
+    const result = await mlQuantileOverlay(features, horizons, { timeoutMs: 2500 });
     if (!result) return res.status(503).json({ ok: false, error: "ML service unreachable" });
     res.json({ ok: true, ...result });
   });
@@ -3108,7 +3109,8 @@ Refine the brief above. Search the web for any critical developments the feed is
   // ─── ML service health (Wires 17–20) ────────────────────────────────────
   app.get("/api/ml/health", async (_req, res) => {
     const { mlHealth } = await import("./mlBridge");
-    const health = await mlHealth();
+    // UI route — longer timeout for dashboard consumption.
+    const health = await mlHealth({ timeoutMs: 2500 });
     if (!health) return res.status(503).json({ ok: false, error: "ML service unreachable" });
     res.json({ ok: true, ...health });
   });

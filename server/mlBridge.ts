@@ -10,7 +10,9 @@
  */
 
 const ML_URL = () => process.env.PULSE_ML_URL ?? "http://127.0.0.1:5001";
-const TIMEOUT_MS = 100;
+// Hot-path default: 100ms (Wire 20 contract — Discord card / 0DTE gate cannot block).
+// UI / dashboard routes pass an explicit override (e.g. 2500ms) since users tolerate latency.
+const DEFAULT_TIMEOUT_MS = 100;
 
 // ─── Response types ──────────────────────────────────────────────────────────
 
@@ -63,9 +65,10 @@ async function _post<T>(
   path: string,
   body: unknown,
   label: string,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<T | null> {
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
     const res = await fetch(`${ML_URL()}${path}`, {
       method: "POST",
@@ -88,9 +91,9 @@ async function _post<T>(
   }
 }
 
-async function _get<T>(path: string, label: string): Promise<T | null> {
+async function _get<T>(path: string, label: string, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<T | null> {
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
     const res = await fetch(`${ML_URL()}${path}`, {
       method: "GET",
@@ -159,12 +162,13 @@ export async function mlWhaleFollow(
 export async function mlQuantileOverlay(
   features: Record<string, number>,
   horizons: number[],
+  opts?: { timeoutMs?: number },
 ): Promise<MLQuantileOverlayResponse | null> {
   const raw = await _post<{
     bands: Record<string, MLQuantileBand>;
     status: string;
     version: number | string;
-  }>("/quantile/overlay", { features, horizons }, "mlQuantileOverlay");
+  }>("/quantile/overlay", { features, horizons }, "mlQuantileOverlay", opts?.timeoutMs);
 
   if (!raw || !raw.bands || Object.keys(raw.bands).length === 0) return null;
   return {
@@ -177,6 +181,6 @@ export async function mlQuantileOverlay(
 /**
  * GET /health — returns ML service health or null.
  */
-export async function mlHealth(): Promise<MLHealthResponse | null> {
-  return _get<MLHealthResponse>("/health", "mlHealth");
+export async function mlHealth(opts?: { timeoutMs?: number }): Promise<MLHealthResponse | null> {
+  return _get<MLHealthResponse>("/health", "mlHealth", opts?.timeoutMs);
 }
