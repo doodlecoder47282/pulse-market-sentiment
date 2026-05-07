@@ -525,11 +525,14 @@ export async function postOdteBangerAlert(a: OdteAlert): Promise<boolean> {
 
   const projT1Pct = Math.round((a.wire15?.projReturnPctT1 ?? 0) * 100);
 
+  // Wire 16: include tier tag in footer
+  const tierLabel = a.wire15?.projTier ?? null;
+
   const embed: DiscordEmbed = {
     title: `SPX 0DTE · ${a.side.toUpperCase()} · ${setupLabel} · ${a.grade.letter}`,
     description: content,
     color,
-    footer: { text: `Pulse Batcave · 0DTE banger · ${a.grade.score}/100 · max 3/day · projected +${projT1Pct}%` },
+    footer: { text: `Pulse Batcave · 0DTE banger · ${a.grade.score}/100 · ${tierLabel ?? "STANDARD"} · max 3/day` },
     timestamp: new Date(a.asOf).toISOString(),
   };
 

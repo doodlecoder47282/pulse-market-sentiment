@@ -4,7 +4,13 @@
 // any existing calc. Watches /api/models (levels, audit, scenarioProbs) and
 // /api/odte-tracker (live contract chain) for high-conviction setups.
 //
-// Fires only when total grade ≥ 70 (B+). Below that → silent.
+// Wire 15: pre-gate filters (env veto, contract picker, projected return, IV richness,
+//           Greek slope confirmation).
+// Wire 16: useless-alert killers (score floor B-(72), projection floor +30%, projection
+//           tiers, GEX magnitude gate, anti-chase rule, bid-ask spread gate,
+//           spread-aware projection).
+//
+// Fires only when total grade ≥ 72 (B-). Below that → silent.
 //
 // Three setup patterns supported (highest-conviction only — "dime setups"):
 //   1. FAILED BREAK   — spot pierced a level, closed back through → trade reversion
@@ -21,8 +27,9 @@
 //   liquidity              10
 //   time-of-day             5
 //
-// Letter grades: A+ ≥ 90, A ≥ 85, A− ≥ 80 ← FIRE GATE (banger-only),
-//                B+ ≥ 70, B ≥ 65, B− ≥ 60, C ≥ 50, else F
+// Letter grades: A+ ≥ 90, A ≥ 85, A− ≥ 80,
+//                B+ ≥ 75, B ≥ 72 (B-), C ≥ 50, else F
+// Wire 16 score floor: MIN_FIRE_SCORE = 72 (was 75/B+)
 //
 // HARD CAPS to keep this rare:
 //   - Max 3 alerts per ET trading day
@@ -85,6 +92,26 @@ export interface Audit {
   gammaSlope5m?: number | null;           // (currentDealerGex - dealerGexFiveMinAgo) / 5
   // Overall gate rejection reason (null = all gates passed)
   gateRejectReason?: string | null;
+  // ─── Wire 16 fields ──────────────────────────────────────────────────────
+  // Contract spread gate + spread-aware projection (Gate 2b)
+  contractBid?: number | null;
+  contractAsk?: number | null;
+  contractEntryPrice?: number | null;     // midPrice + halfSpread (honest fill)
+  contractSpreadPct?: number | null;      // (ask - bid) / midPrice
+  // GEX magnitude gate (Gate 4 Wire 16)
+  absGex?: number | null;                 // abs(dealerGex) in dollars
+  gexTier?: "THIN" | "LIGHT" | "SOFT" | "FULL" | null;
+  gexLightDegrade?: boolean;              // true when SOFT tier degrades projection by 0.85x
+  gexLightOverride?: boolean;             // true when A-(85) lets LIGHT tier through
+  // Anti-chase rule (Gate 5 Wire 16)
+  realized15mMove?: number | null;        // abs(spot_now - spot_15min_ago)
+  distanceToT1?: number | null;           // abs(t1Level - spot_now)
+  chaseRatio?: number | null;             // realized15mMove / distanceToT1
+  chaseOverride?: boolean;                // true when A-(85) overrides anti-chase rejection
+  // Projection tier
+  projTier?: "STANDARD" | "BANGER" | "MOONSHOT" | null;
+  // Cold-boot projection override (renamed from Wire 15 coldBootOverride; scoped to +30% gate)
+  coldBootProjOverride?: boolean;
   wickZones?: {
     pivot: number;
     upperEntry: number;
@@ -229,6 +256,24 @@ export interface OdteAlert {
     gateRejectReason: string | null;
     contractStrike: number | null;
     contractDelta: number | null;
+    // Wire 16 additions (surfaced in diagnose alongside wire15 fields)
+    contractMidPrice: number | null;
+    contractBid: number | null;
+    contractAsk: number | null;
+    contractEntryPrice: number | null;
+    contractSpreadPct: number | null;
+    absGex: number | null;
+    gexTier: "THIN" | "LIGHT" | "SOFT" | "FULL" | null;
+    gexLightDegrade: boolean;
+    gexLightOverride: boolean;
+    realized15mMove: number | null;
+    distanceToT1: number | null;
+    chaseRatio: number | null;
+    chaseOverride: boolean;
+    projTier: "STANDARD" | "BANGER" | "MOONSHOT" | null;
+    coldBootProjOverride: boolean;
+    wire15Present: boolean;
+    wire16Present: boolean;
   };
 }
 
@@ -551,13 +596,16 @@ function estPctGainAtTarget(
 }
 
 // ─── Scoring ──────────────────────────────────────────────────────────────
+// Wire 16: MIN_FIRE_SCORE = 72 (B-). Was 75 (B+) in Wire 15.
+// Letter mapping: 72-74 -> B-, 75-79 -> B+, 80-84 -> A-, 85-89 -> A, 90+ -> A+
+export const MIN_FIRE_SCORE = 72;  // Wire 16: lowered from 75 (B+) to 72 (B-)
+
 function letterGrade(score: number): string {
   if (score >= 90) return "A+";
   if (score >= 85) return "A";
   if (score >= 80) return "A−";
-  if (score >= 70) return "B+";
-  if (score >= 65) return "B";
-  if (score >= 60) return "B−";
+  if (score >= 75) return "B+";
+  if (score >= 72) return "B−";   // Wire 16: B- fire band
   if (score >= 50) return "C";
   return "F";
 }
@@ -1350,8 +1398,9 @@ export interface EvalArgs {
   wire15?: Wire15GateContext | null;     // Wire 15 pre-fetched gate data
 }
 
-export const FIRE_GATE = 80;  // A− or better — banger-only
-export const BANGER_MIN_PCT = 30;  // T1 estimated %-gain floor — user spec: 30%+ only
+export const FIRE_GATE = 80;  // A− or better — original gate score (not the fire floor)
+export const MIN_FIRE_SCORE_ALIAS = MIN_FIRE_SCORE;  // Wire 16: 72 (B-) is the real fire floor
+export const BANGER_MIN_PCT = 30;  // T1 projected return floor — Wire 16: 30% (was 50%)
 // Independent BANGERS gate delta floor — kills lottery tickets even if pickContract loosens.
 // Range chosen to bracket realistic intraday "big premium" plays:
 //   < 0.20 = lotto / OTM tail. Not a banger — too dependent on miracle move.
@@ -1520,8 +1569,8 @@ export async function diagnoseOdte(args: EvalArgs): Promise<{
         `MATURITY GATE: cold-boot override — spotHistory.length=${spotHistory.length} but score ${a.grade.score} >= 85`,
       );
     }
-    if (a.grade.score < FIRE_GATE) {
-      rejected.push({ alert: a, reason: `grade ${a.grade.score} < FIRE_GATE ${FIRE_GATE}` });
+    if (a.grade.score < MIN_FIRE_SCORE) {
+      rejected.push({ alert: a, reason: `grade ${a.grade.score} < MIN_FIRE_SCORE ${MIN_FIRE_SCORE}` });
       continue;
     }
     // BANGERS delta floor — kills lottos and deep-ITM hedges
@@ -1652,7 +1701,7 @@ export async function evaluateOdte(args: EvalArgs): Promise<OdteAlert[]> {
       }
       return true;
     })
-    .filter((a) => a.grade.score >= FIRE_GATE)
+    .filter((a) => a.grade.score >= MIN_FIRE_SCORE)  // Wire 16: 72 (B-) floor
     .filter((a) => {
       // BANGERS delta floor — kills lottos (Δ<0.20) and deep-ITM hedges (Δ>0.70)
       const d = a.contract.delta;
@@ -1793,6 +1842,77 @@ function buildAlert(
   const t2Lv = side === "call" ? above[1] : below[1];
   if (!t1Lv) return null;
 
+  // ─── Wire 16: GEX MAGNITUDE GATE (4-tier) ─────────────────────────────────────────
+  // audit.gex is in $M (e.g. 500 = $500M). Thresholds in spec are raw dollars:
+  //   THIN  < $300M   → hard reject (no A-(85) override)
+  //   LIGHT < $750M   → reject unless score >= 85 (checked post-scoring)
+  //   SOFT  < $1.5B   → pass with 0.85x projection degrade
+  //   FULL  >= $1.5B  → clean pass
+  let w16GexTier: "THIN" | "LIGHT" | "SOFT" | "FULL" | null = null;
+  let w16AbsGex: number | null = null;
+  let w16GexLightDegrade = false;
+  let w16GexLightOverride = false;
+  let w16GexLightPending = false; // LIGHT tier: final check happens post-scoring
+
+  {
+    const rawGexM = typeof args.audit.gex === "number" && isFinite(args.audit.gex) ? args.audit.gex : null;
+    if (rawGexM !== null) {
+      // Convert $M to raw dollars
+      const absGexDollars = Math.abs(rawGexM) * 1_000_000;
+      w16AbsGex = absGexDollars;
+      if (absGexDollars < 300_000_000) {
+        w16GexTier = "THIN";
+      } else if (absGexDollars < 750_000_000) {
+        w16GexTier = "LIGHT";
+        w16GexLightPending = true;
+      } else if (absGexDollars < 1_500_000_000) {
+        w16GexTier = "SOFT";
+      } else {
+        w16GexTier = "FULL";
+      }
+    } else {
+      // No GEX data available: treat as FULL (no block)
+      w16GexTier = "FULL";
+    }
+  }
+
+  // THIN: hard reject, NO override for any score
+  if (w16GexTier === "THIN") {
+    console.log(`[wire16:gex_thin] ${setup}/${side} hard rejected: GEX_TOO_THIN_LT_300M absGex=${w16AbsGex}`);
+    return null;
+  }
+
+  // ─── Wire 16: ANTI-CHASE RULE ─────────────────────────────────────────────────────
+  // Reject if 15-min realized move >= 60% of T1 distance AND move direction matches side.
+  // A-(85) override allowed (checked post-scoring).
+  let w16Realized15mMove: number | null = null;
+  let w16DistanceToT1: number | null = null;
+  let w16ChaseRatio: number | null = null;
+  let w16ChaseOverride = false;
+  let w16ChasePending = false; // pending A-(85) override check
+
+  {
+    const spot15mAgo = getSpotPriceAtTs(args.asOf - 15 * 60_000, 90_000);
+    if (spot15mAgo !== null) {
+      const realized15m = Math.abs(args.spot - spot15mAgo);
+      const distToT1 = Math.abs(t1Lv.price - args.spot);
+      w16Realized15mMove = realized15m;
+      w16DistanceToT1 = distToT1;
+      if (distToT1 >= 1) {
+        const chaseRatio = realized15m / distToT1;
+        w16ChaseRatio = chaseRatio;
+        if (chaseRatio >= 0.60) {
+          const moveUp = args.spot > spot15mAgo;
+          const moveMatchesSide = (side === "call" && moveUp) || (side === "put" && !moveUp);
+          if (moveMatchesSide) {
+            w16ChasePending = true; // will reject unless score >= 85
+          }
+        }
+      }
+    }
+  }
+
+
   // Try picking from Schwab chain via wire15 context
   let pickedContract: {
     strike: number; delta: number; gamma: number; theta: number; vega: number;
@@ -1875,12 +1995,18 @@ function buildAlert(
     effectiveMid = legacyContract.mid ?? legacyContract.last ?? 0;
   }
 
-  // ─── Wire 15: GATE 3 — Projected return >= +50% to T1 ───────────────────────────────
+  // ─── Wire 15: GATE 3 — Projected return >= +30% to T1 (Wire 16: was 50%) ──────────
   let projReturnPctT1: number | null = null;
   let projReturnPctT2: number | null = null;
   let ivRichDegrade = false;
   let ivRichRatio: number | null = null;
   const rv5d: number | null = args.wire15?.rv5d ?? null;
+  // Wire 16: spread-aware entry price fields (from picked contract)
+  let w16ContractBid: number | null = null;
+  let w16ContractAsk: number | null = null;
+  let w16ContractMidPrice: number | null = null;
+  let w16ContractEntryPrice: number | null = null;
+  let w16ContractSpreadPct: number | null = null;
 
   if (pickedContract) {
     const minutesToClose = computeMinutesToCloseSync(args.asOf, args.hourET, args.minuteET);
@@ -1889,13 +2015,35 @@ function buildAlert(
     const absDelta = Math.abs(pickedContract.delta);
     const mid = pickedContract.midPrice;
 
+    // Wire 16: spread-aware entry price (paying near ask = honest fill)
+    w16ContractBid = pickedContract.bid;
+    w16ContractAsk = pickedContract.ask;
+    w16ContractMidPrice = mid;
+    const halfSpread = (pickedContract.bid != null && pickedContract.ask != null)
+      ? (pickedContract.ask - pickedContract.bid) / 2
+      : 0;
+    const entryPrice = mid + halfSpread;
+    w16ContractEntryPrice = entryPrice;
+    w16ContractSpreadPct = (pickedContract.bid != null && pickedContract.ask != null && mid > 0)
+      ? (pickedContract.ask - pickedContract.bid) / mid
+      : 0;
+
+    // Wire 16: bid-ask spread gate (>5% spread → reject)
+    if (w16ContractSpreadPct > 0.05) {
+      console.log(`[wire16:spread] ${setup}/${side} rejected: CONTRACT_SPREAD_TOO_WIDE_GT_5_PCT spreadPct=${(w16ContractSpreadPct*100).toFixed(1)}%`);
+      return null;
+    }
+
+    // Wire 16: use entryPrice (mid + halfSpread) as denominator for honest fill projection
     function bsProj(targetPrice: number): number {
       const move = side === "call" ? targetPrice - args.spot : args.spot - targetPrice;
       const projDeltaPnl = absDelta * move;
       const projGammaBoost = 0.5 * gamma * move * move;
       const projThetaCost = (theta / 390) * minutesToClose; // theta is negative, so this is negative
       const projPnl = projDeltaPnl + projGammaBoost + projThetaCost;
-      return mid > 0 ? projPnl / mid : 0;
+      // Wire 16: use entryPrice (honest fill) as denominator
+      const denom = entryPrice > 0 ? entryPrice : mid;
+      return denom > 0 ? projPnl / denom : 0;
     }
 
     projReturnPctT1 = bsProj(t1Lv.price);
@@ -1911,24 +2059,20 @@ function buildAlert(
         return null; // Gate 4 hard reject
       }
       if (ivRichRatio > 1.5) {
-        // Degrade projected return by 0.7x BEFORE the 50% gate
+        // Degrade projected return by 0.7x BEFORE the 30% gate
         ivRichDegrade = true;
         projReturnPctT1 = projReturnPctT1 * 0.7;
         if (projReturnPctT2 !== null) projReturnPctT2 = projReturnPctT2 * 0.7;
       }
     }
 
-    // Now enforce the 50% gate (after IV degrade applied)
-    const coldBoot = spotHistory.length < 5;
-    const score85Override = false; // We don't have the score yet — compute it below.
-    // We'll do a two-pass: build the alert, compute score, THEN apply cold-boot override.
-    // For the gate check here, we skip if projReturnPctT1 < 0.50 AND not A-(85).
-    // Since we don't have the score yet, we'll defer the cold-boot check and only
-    // hard-reject when projReturnPctT1 < 0.50 (score check happens after scoring).
-    if (projReturnPctT1 !== null && projReturnPctT1 < 0.50) {
-      // Will be enforced post-scoring with cold-boot override logic
-      // Save the state for post-score enforcement
+    // Wire 16 SOFT GEX: apply 0.85x degrade BEFORE the 30% gate
+    if (w16GexTier === "SOFT") {
+      w16GexLightDegrade = true;
+      if (projReturnPctT1 !== null) projReturnPctT1 = projReturnPctT1 * 0.85;
+      if (projReturnPctT2 !== null) projReturnPctT2 = projReturnPctT2 * 0.85;
     }
+    // Note: 30% floor enforcement happens post-scoring (allows A-(85) cold-boot override)
   }
 
   // ─── Wire 15: GATE 5 — Greek slope confirmation ───────────────────────────────────
@@ -1984,19 +2128,63 @@ function buildAlert(
     eventGateActions: args.eventGateActions ?? [],
   });
 
-  // ─── Gate 3 post-score: enforce 50% return UNLESS score >= 85 (cold-boot A- override) ─
-  if (projReturnPctT1 !== null && projReturnPctT1 < 0.50) {
-    const isColdBootOverride = scoreResult.score >= 85;
-    if (!isColdBootOverride) {
-      console.log(`[wire15:gate3] ${setup}/${side} rejected: PROJ_RETURN_BELOW_50_PCT projT1=${(projReturnPctT1*100).toFixed(0)}%`);
-      return null;
-    }
-    // Score >= 85 (A-): override passes, note in reasoning
-    scoreResult.reasoning.push(`Wire 15 Gate 3: PROJ_RETURN_BELOW_50_PCT overridden by A-(85) cold-boot: projT1=${(projReturnPctT1*100).toFixed(0)}%`);
+  // ─── Wire 16: Score floor (>= 72 = B-) — enforce AFTER scoring ───────────────────
+  if (scoreResult.score < MIN_FIRE_SCORE) {
+    console.log(`[wire16:score] ${setup}/${side} rejected: SCORE_BELOW_B_MINUS score=${scoreResult.score} < ${MIN_FIRE_SCORE}`);
+    return null;
   }
 
+  // ─── Wire 16: GEX LIGHT band post-score check ──────────────────────────────────────
+  // LIGHT tier (300M-750M): reject unless score >= 85
+  if (w16GexTier === "LIGHT") {
+    if (scoreResult.score >= 85) {
+      w16GexLightOverride = true;
+      scoreResult.reasoning.push(`Wire 16 GEX LIGHT override: score ${scoreResult.score} >= 85 (A-), passes through GEX_LIGHT_NEEDS_A_MINUS`);
+    } else {
+      console.log(`[wire16:gex_light] ${setup}/${side} rejected: GEX_LIGHT_NEEDS_A_MINUS score=${scoreResult.score} < 85 absGex=${w16AbsGex}`);
+      return null;
+    }
+  }
+
+  // ─── Wire 16: Anti-chase post-score check ──────────────────────────────────────────
+  // Pending chase rejection: reject unless score >= 85 (A-) override
+  if (w16ChasePending) {
+    if (scoreResult.score >= 85) {
+      w16ChaseOverride = true;
+      scoreResult.reasoning.push(`Wire 16 anti-chase override: score ${scoreResult.score} >= 85 (A-), passes through CHASE_PRIOR_15M_COVERED_60_PCT (chaseRatio=${w16ChaseRatio?.toFixed(2)})`);
+    } else {
+      console.log(`[wire16:chase] ${setup}/${side} rejected: CHASE_PRIOR_15M_COVERED_60_PCT chaseRatio=${w16ChaseRatio} score=${scoreResult.score}`);
+      return null;
+    }
+  }
+
+  // ─── Gate 3 post-score: enforce +30% return UNLESS score >= 85 (A- cold-boot override) ─
+  let coldBootProjOverride = false;
+  if (projReturnPctT1 !== null && projReturnPctT1 < 0.30) {
+    const isColdBootOverride = scoreResult.score >= 85;
+    if (!isColdBootOverride) {
+      console.log(`[wire16:gate3] ${setup}/${side} rejected: PROJ_RETURN_BELOW_30_PCT projT1=${(projReturnPctT1*100).toFixed(0)}%`);
+      return null;
+    }
+    // Score >= 85 (A-): cold-boot projection override
+    coldBootProjOverride = true;
+    scoreResult.reasoning.push(`Wire 16 Gate 3: PROJ_RETURN_BELOW_30_PCT overridden by A-(85): projT1=${(projReturnPctT1*100).toFixed(0)}%`);
+  }
+
+  // ─── Wire 16: Projection tier tagging ──────────────────────────────────────────────
+  const projT1ForTier = projReturnPctT1 ?? 0;
+  let w16ProjTier: "STANDARD" | "BANGER" | "MOONSHOT" | null = null;
+  if (projT1ForTier >= 1.00) {
+    w16ProjTier = "MOONSHOT";
+  } else if (projT1ForTier >= 0.50) {
+    w16ProjTier = "BANGER";
+  } else if (projT1ForTier >= 0.30) {
+    w16ProjTier = "STANDARD";
+  }
+  // Below 0.30 won't reach here unless coldBootProjOverride (score >= 85)
+
   const t1EstPct = pickedContract
-    ? Math.round((projReturnPctT1 ?? 0) * 100)  // use BS projection
+    ? Math.round((projReturnPctT1 ?? 0) * 100)  // use BS projection (spread-aware)
     : estPctGainAtTarget(args.spot, t1Lv.price, effectiveMid, effectiveDelta, side);
   const t2EstPct = pickedContract
     ? Math.round((projReturnPctT2 ?? 0) * 100)
@@ -2039,6 +2227,24 @@ function buildAlert(
     gateRejectReason: null as string | null,
     contractStrike: pickedContract?.strike ?? null,
     contractDelta: pickedContract ? Math.abs(pickedContract.delta) : null,
+    // Wire 16 fields
+    contractMidPrice: w16ContractMidPrice,
+    contractBid: w16ContractBid,
+    contractAsk: w16ContractAsk,
+    contractEntryPrice: w16ContractEntryPrice,
+    contractSpreadPct: w16ContractSpreadPct,
+    absGex: w16AbsGex,
+    gexTier: w16GexTier,
+    gexLightDegrade: w16GexLightDegrade,
+    gexLightOverride: w16GexLightOverride,
+    realized15mMove: w16Realized15mMove,
+    distanceToT1: w16DistanceToT1,
+    chaseRatio: w16ChaseRatio,
+    chaseOverride: w16ChaseOverride,
+    projTier: w16ProjTier,
+    coldBootProjOverride,
+    wire15Present: true,
+    wire16Present: true,
   };
 
   const contractOut = pickedContract ? {
@@ -2139,7 +2345,10 @@ export function formatOdteAlert(a: OdteAlert): { content: string } {
   lines.push(`ENTRY:  ${entryDesc}`);
   lines.push("");
   lines.push(`STOP:  -20%  OR  5-min close ${a.side === "call" ? "BELOW" : "ABOVE"} ${Math.round(a.stopLevel)}`);
-  lines.push(`T1:  ${Math.round(a.t1.price)}  (${a.t1.name})  +${projT1Pct}% est`);
+  // Wire 16: projection tier tag
+  const projTier = a.wire15?.projTier ?? null;
+  const tierTag = projTier ? `  [${projTier}]` : "";
+  lines.push(`T1:  ${Math.round(a.t1.price)}  (${a.t1.name})  +${projT1Pct}% est${tierTag}`);
   if (a.t2) {
     const t2ProjStr = projT2Pct != null ? `+${projT2Pct}% est` : "+—% est";
     lines.push(`  IF T1 BREAKS: stop -> ${a.side === "call" ? "BELOW" : "ABOVE"} ${newStop}  |  T2: ${Math.round(a.t2.price)} (${a.t2.name}) ${t2ProjStr}`);

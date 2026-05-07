@@ -1,6 +1,7 @@
 // server/contractPicker.ts
 //
 // Wire 15 — Deterministic contract picker for 0DTE SPX bangers.
+// Wire 16 — Bid-ask spread gate + spread-aware projection.
 //
 // Reads the full Schwab 0DTE option chain via getOptionChain("$SPX.X"),
 // selects the best strike in the delta band [0.35, 0.50], computes a
@@ -13,8 +14,16 @@
 //     (so the path crosses the strike). If no candidate between, take
 //     closest-to-ATM in the band.
 //   - No strike in band → reject alert (reason: CONTRACT_NO_STRIKE_IN_DELTA_BAND)
-//   - Projected return >= +50% to T1 is a HARD GATE (Gate 3 in engine)
+//   - Projected return >= +30% to T1 is a HARD GATE (Gate 3 in engine) [Wire 16: was 50%]
 //   - A-(85) cold-boot override applies on Gate 3 only
+//
+// Wire 16 additions:
+//   - Bid-ask spread gate: spreadPct = (ask - bid) / midPrice > 5% → reject.
+//     Try next-best strike; if none passes → CONTRACT_SPREAD_TOO_WIDE_GT_5_PCT
+//   - Spread-aware projection: entryPrice = midPrice + halfSpread (paying near ask).
+//     projReturnPctT1 = projPnl / entryPrice (replaces midPrice denominator).
+//   - New audit fields: contractBid, contractAsk, contractMidPrice, contractEntryPrice,
+//     contractSpreadPct
 //
 // This module ONLY picks and prices. It does NOT fire alerts.
 // All gate logic lives in odteAlertEngine.ts.
@@ -29,6 +38,8 @@ export interface ContractDetails {
   theta: number;        // per-day (negative)
   vega: number;
   midPrice: number;
+  entryPrice: number;   // Wire 16: midPrice + halfSpread (honest fill estimate)
+  spreadPct: number;    // Wire 16: (ask - bid) / midPrice
   iv: number;           // decimal (e.g. 0.20 = 20%)
   openInterest: number;
   volume: number;
@@ -40,17 +51,23 @@ export interface ContractDetails {
 
 export interface ContractPickResult {
   contract: ContractDetails;
-  projReturnPctT1: number;   // e.g. 0.80 = 80% projected return to T1
+  projReturnPctT1: number;   // e.g. 0.80 = 80% projected return to T1 (Wire 16: uses entryPrice)
   projReturnPctT2: number;   // e.g. 1.30 = 130% projected return to T2
   projDeltaPnl: number;
   projGammaBoost: number;
   projThetaCost: number;
   projPnl: number;           // dollar-value on per-share basis
   minutesToClose: number;
+  // Wire 16 audit fields
+  contractBid: number | null;
+  contractAsk: number | null;
+  contractMidPrice: number;
+  contractEntryPrice: number;
+  contractSpreadPct: number;
 }
 
 export type ContractPickError = {
-  reason: "CONTRACT_NO_STRIKE_IN_DELTA_BAND" | "CHAIN_UNAVAILABLE" | "NO_CANDIDATES";
+  reason: "CONTRACT_NO_STRIKE_IN_DELTA_BAND" | "CHAIN_UNAVAILABLE" | "NO_CANDIDATES" | "CONTRACT_SPREAD_TOO_WIDE_GT_5_PCT";
   detail?: string;
 };
 
@@ -62,6 +79,9 @@ export type ContractPickError = {
 /**
  * Pick the best 0DTE SPX contract for the given side + spot + T1 target.
  * Returns ContractPickResult or ContractPickError.
+ *
+ * Wire 16: applies bid-ask spread gate (>5% → reject, try next-best) and
+ * uses spread-aware entry price in projection denominator.
  *
  * @param side          "call" | "put"
  * @param spot          current SPX spot price
@@ -153,9 +173,13 @@ export async function pickContractForSide(
     openInterest: number;
     volume: number;
     key: string;
+    // Wire 16 fields
+    entryPrice: number;    // midPrice + halfSpread
+    spreadPct: number;     // (ask - bid) / midPrice
+    halfSpread: number;    // (ask - bid) / 2
   }
 
-  const candidates: Candidate[] = [];
+  const allBandCandidates: Candidate[] = [];
 
   for (const [strikeStr, contracts] of Object.entries(strikesObj)) {
     const strike = parseFloat(strikeStr);
@@ -191,38 +215,57 @@ export async function pickContractForSide(
 
     const key = c.symbol ?? `SPX_${strike}_${side.toUpperCase()[0]}_${todayEt}`;
 
-    candidates.push({ strike, delta, gamma, theta, vega, iv, midPrice: mid, bid, ask, openInterest: oi, volume: vol, key });
+    // Wire 16: compute spread metrics
+    const halfSpread: number = (bid != null && ask != null) ? (ask - bid) / 2 : 0;
+    const entryPrice: number = mid + halfSpread;  // paying near ask — honest fill
+    const spreadPct: number = (bid != null && ask != null && mid > 0) ? (ask - bid) / mid : 0;
+
+    allBandCandidates.push({ strike, delta, gamma, theta, vega, iv, midPrice: mid, bid, ask,
+      openInterest: oi, volume: vol, key, entryPrice, spreadPct, halfSpread });
   }
 
-  if (candidates.length === 0) {
+  if (allBandCandidates.length === 0) {
     return { reason: "CONTRACT_NO_STRIKE_IN_DELTA_BAND" };
   }
 
-  // ─── Strike selection ─────────────────────────────────────────────────────
-  // Prefer strike BETWEEN spot and T1 (path-crossing).
+  // ─── Strike selection (path-crossing preference) ──────────────────────────
   const loPath = Math.min(spot, t1Price);
   const hiPath = Math.max(spot, t1Price);
-  const betweenCandidates = candidates.filter(
-    (c) => c.strike > loPath && c.strike < hiPath,
-  );
 
-  let best: Candidate;
-  if (betweenCandidates.length > 0) {
-    // Among between-candidates, pick closest to ATM (smallest |strike - spot|)
-    best = betweenCandidates.reduce((a, b) =>
-      Math.abs(a.strike - spot) <= Math.abs(b.strike - spot) ? a : b,
-    );
-  } else {
-    // No between-candidates — pick closest-to-ATM among all band candidates
-    best = candidates.reduce((a, b) =>
-      Math.abs(a.strike - spot) <= Math.abs(b.strike - spot) ? a : b,
-    );
+  // Sort candidates: between-path preferred, then closest to ATM
+  function sortByPathAndAtm(cands: Candidate[]): Candidate[] {
+    const between = cands.filter(c => c.strike > loPath && c.strike < hiPath);
+    const fallback = cands;
+    const pool = between.length > 0 ? between : fallback;
+    return [...pool].sort((a, b) => Math.abs(a.strike - spot) - Math.abs(b.strike - spot));
+  }
+
+  const sorted = sortByPathAndAtm(allBandCandidates);
+
+  // Wire 16: bid-ask spread gate — try candidates in order; pick first with spreadPct <= 5%
+  const MAX_SPREAD_PCT = 0.05;
+  let best: Candidate | null = null;
+
+  for (const cand of sorted) {
+    if (cand.spreadPct <= MAX_SPREAD_PCT) {
+      best = cand;
+      break;
+    }
+  }
+
+  if (!best) {
+    // No candidate has a tight-enough spread
+    return {
+      reason: "CONTRACT_SPREAD_TOO_WIDE_GT_5_PCT",
+      detail: `All ${allBandCandidates.length} delta-band candidates have spreadPct > 5%`,
+    };
   }
 
   // ─── Projected return calculation (BS approximation) ─────────────────────
   // minutesToClose = minutes until 16:00 ET
   const minutesToClose = computeMinutesToClose(nowMs);
 
+  // Wire 16: use entryPrice (midPrice + halfSpread) as denominator for honest fill
   function projReturn(targetPrice: number): {
     projDeltaPnl: number;
     projGammaBoost: number;
@@ -237,20 +280,23 @@ export async function pickContractForSide(
 
     // Use abs(delta) for the projection — delta is already signed by convention but
     // we want the raw magnitude times the directional move.
-    const absDelta = Math.abs(best.delta);
+    const absDelta = Math.abs(best!.delta);
     const projDeltaPnl = absDelta * move;
 
     // gamma boost uses signed move^2 (always positive addend)
-    const projGammaBoost = 0.5 * best.gamma * move * move;
+    const projGammaBoost = 0.5 * best!.gamma * move * move;
 
     // theta is per-day (negative). Theta cost = portion of day remaining.
     // theta_per_day / 390 minutes * minutesToClose
-    const thetaPerDay = best.theta; // already negative, e.g. -2.50
+    const thetaPerDay = best!.theta; // already negative, e.g. -2.50
     const projThetaCost = (thetaPerDay / 390) * minutesToClose;
     // projThetaCost is negative; we subtract it (add theta cost back as positive cost)
 
     const projPnl = projDeltaPnl + projGammaBoost + projThetaCost; // thetaCost already negative
-    const projReturnPct = best.midPrice > 0 ? projPnl / best.midPrice : 0;
+
+    // Wire 16: use entryPrice (honest fill = mid + halfSpread) in denominator
+    const denominator = best!.entryPrice > 0 ? best!.entryPrice : best!.midPrice;
+    const projReturnPct = denominator > 0 ? projPnl / denominator : 0;
 
     return { projDeltaPnl, projGammaBoost, projThetaCost, projPnl, projReturnPct };
   }
@@ -269,6 +315,8 @@ export async function pickContractForSide(
       theta: best.theta,
       vega: best.vega,
       midPrice: best.midPrice,
+      entryPrice: best.entryPrice,
+      spreadPct: best.spreadPct,
       iv: best.iv,
       openInterest: best.openInterest,
       volume: best.volume,
@@ -284,6 +332,12 @@ export async function pickContractForSide(
     projThetaCost: t1Proj.projThetaCost,
     projPnl: t1Proj.projPnl,
     minutesToClose,
+    // Wire 16 audit fields
+    contractBid: best.bid,
+    contractAsk: best.ask,
+    contractMidPrice: best.midPrice,
+    contractEntryPrice: best.entryPrice,
+    contractSpreadPct: best.spreadPct,
   };
 }
 

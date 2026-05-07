@@ -2138,6 +2138,22 @@ Refine the brief above. Search the web for any critical developments the feed is
         envVetoReason: audit.envVetoReason ?? null,
         gateRejectReason: audit.gateRejectReason ?? null,
         wire15Present: true,
+        // Wire 16 fields
+        contractBid: audit.contractBid ?? null,
+        contractAsk: audit.contractAsk ?? null,
+        contractEntryPrice: audit.contractEntryPrice ?? null,
+        contractSpreadPct: audit.contractSpreadPct ?? null,
+        absGex: audit.absGex ?? null,
+        gexTier: audit.gexTier ?? null,
+        gexLightDegrade: audit.gexLightDegrade ?? false,
+        gexLightOverride: audit.gexLightOverride ?? false,
+        realized15mMove: audit.realized15mMove ?? null,
+        distanceToT1: audit.distanceToT1 ?? null,
+        chaseRatio: audit.chaseRatio ?? null,
+        chaseOverride: audit.chaseOverride ?? false,
+        projTier: audit.projTier ?? null,
+        coldBootProjOverride: audit.coldBootProjOverride ?? false,
+        wire16Present: true,
         // Full audit for deeper inspection
         audit,
       });
