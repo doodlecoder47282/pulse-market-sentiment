@@ -190,3 +190,43 @@ export function loadAllFollows(): WhaleFollow[] {
     return [];
   }
 }
+
+/**
+ * Persistent dedup hydration. Returns the most recent fire timestamp per
+ * (occ, premiumTierMillions) within the lookback window so the in-memory
+ * dedup map can be seeded after a process restart — prevents the same
+ * whale flow from being re-alerted just because the runtime cache was
+ * wiped on redeploy.
+ *
+ * Window default 24h covers overnight redeploys + after-hours rebroadcasts.
+ */
+export function loadRecentDedupKeys(windowMs = 24 * 60 * 60 * 1000): Array<{
+  dedupKey: string;
+  detectedAt: number;
+}> {
+  try {
+    const cutoff = Date.now() - windowMs;
+    const rows = db
+      .select()
+      .from(whaleAlerts)
+      .where(gte(whaleAlerts.detectedAt, cutoff))
+      .orderBy(desc(whaleAlerts.detectedAt))
+      .all() as WhaleAlert[];
+    // Collapse to most-recent-detection per dedup key.
+    const seen = new Map<string, number>();
+    for (const r of rows) {
+      const tier = Math.ceil(r.premium / 1_000_000);
+      const key = `${r.occ}|t${tier}`;
+      if (!seen.has(key)) seen.set(key, r.detectedAt);
+      const coarse = `coarse|${r.symbol}|${r.type}|${r.strike}|${r.expiration}|t${tier}`;
+      if (!seen.has(coarse)) seen.set(coarse, r.detectedAt);
+    }
+    return Array.from(seen.entries()).map(([dedupKey, detectedAt]) => ({
+      dedupKey,
+      detectedAt,
+    }));
+  } catch (e) {
+    console.warn("[whalePersistence] dedup hydration failed:", (e as Error).message);
+    return [];
+  }
+}

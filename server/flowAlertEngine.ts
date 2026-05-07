@@ -20,6 +20,7 @@
 
 import { buildSchwabFlow, type SchwabFlowContract } from "./schwabFlow";
 import { getFlowConfig } from "./flowConfig";
+import { loadRecentDedupKeys } from "./whalePersistence";
 
 // ─── Config — WHALE bar (live values come from flowConfig at runtime) ──────────────────────────────────────────────────────
 export const WHALE_PREMIUM_FLOOR = 1_000_000;   // $1M notional minimum
@@ -102,13 +103,50 @@ let lastCycleErrors = 0;
 // pending hits per ticker, awaiting coalesce flush
 const pendingByTicker = new Map<string, WhaleHit[]>();
 
-// dedup cache — same OCC + same premium tier won't refire within window
+// dedup cache — same OCC + same premium tier won't refire within window.
+// Hydrated from whale_alerts SQLite table on boot so process restarts and
+// redeploys do NOT cause the same flow to re-alert. Window is per-day so
+// the same contract+tier never alerts more than once on the same trading day.
 const recentlySeen = new Map<string, number>();  // dedupKey -> ms epoch
-const DEDUP_WINDOW_MS = 10 * 60 * 1000;  // 10min (hardened from 5min)
-const DEDUP_MAX_ENTRIES = 5_000;          // hard cap so the map can't grow unbounded
-// Coarser fallback dedup: same contract surface (sym|type|strike|exp), shorter window.
+const DEDUP_WINDOW_MS = 18 * 60 * 60 * 1000;  // 18h — covers full RTH + AH + overnight
+const DEDUP_MAX_ENTRIES = 20_000;             // wider cap with longer window
+// Coarser fallback dedup: same contract surface (sym|type|strike|exp), same window.
 // Catches OCC format variations or feed mid-stream symbol changes.
-const DEDUP_COARSE_WINDOW_MS = 3 * 60 * 1000; // 3min
+const DEDUP_COARSE_WINDOW_MS = 18 * 60 * 60 * 1000;
+
+// ET market hours guard — flow scanner runs ONLY during RTH on trading days.
+// Without this, Schwab can return stale snapshots / late prints / rebroadcast
+// the same day's flow after 16:00 ET, causing apparent re-alerts.
+const HOLIDAYS_2026 = new Set([
+  "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25",
+  "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
+]);
+function isRthNow(): boolean {
+  const now = new Date();
+  const etStr = now.toLocaleString("en-US", { timeZone: "America/New_York" });
+  const et = new Date(etStr);
+  const day = et.getDay();
+  if (day === 0 || day === 6) return false;
+  const dateStr = et.toISOString().slice(0, 10);
+  if (HOLIDAYS_2026.has(dateStr)) return false;
+  const totalMins = et.getHours() * 60 + et.getMinutes();
+  return totalMins >= 9 * 60 + 30 && totalMins < 16 * 60;
+}
+
+// Hydration flag — ensures the dedup map is populated from SQLite exactly
+// once on first eval cycle after process boot.
+let dedupHydrated = false;
+function hydrateDedupOnce(): void {
+  if (dedupHydrated) return;
+  dedupHydrated = true;
+  try {
+    const keys = loadRecentDedupKeys(DEDUP_WINDOW_MS);
+    for (const k of keys) recentlySeen.set(k.dedupKey, k.detectedAt);
+    console.log(`[flowAlerts] dedup hydrated — ${keys.length} keys from whale_alerts (last 18h)`);
+  } catch (e: any) {
+    console.warn(`[flowAlerts] dedup hydrate failed: ${e?.message ?? e}`);
+  }
+}
 
 // fired log — last 20 ticker flushes
 const recentFired: Array<{ ticker: string; hits: number; firedAt: number }> = [];
@@ -337,6 +375,20 @@ async function flushTicker(ticker: string): Promise<void> {
 // ─── Eval loop ────────────────────────────────────────────────────────────────
 async function evalCycle(): Promise<void> {
   const t0 = Date.now();
+  // Hydrate dedup from SQLite on first cycle so a process restart cannot
+  // cause the same whale flow to re-alert just because the in-memory map
+  // was wiped by the redeploy.
+  hydrateDedupOnce();
+
+  // RTH guard — do not scan or fire outside regular trading hours. Schwab
+  // post-close behavior includes stale snapshots and late prints that
+  // appear novel to a fresh dedup window. Skip eval entirely when closed.
+  if (!isRthNow()) {
+    lastEvalAt = Date.now();
+    lastEvalDurationMs = Date.now() - t0;
+    return;
+  }
+
   try {
     // Priority first, then watchlist — sequential is fine on Schwab (no 429 risk)
     const cfg = getFlowConfig();
