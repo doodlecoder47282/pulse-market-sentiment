@@ -3256,10 +3256,11 @@ Refine the brief above. Search the web for any critical developments the feed is
   // current snapshot price so the panel still renders end-to-end.
   app.get("/api/ml/projection-spy", async (_req, res) => {
     try {
-      const { mlQuantileOverlay } = await import("./mlBridge");
+      const { mlQuantileOverlay, mlQuantileMorning } = await import("./mlBridge");
       const { buildMlFeatures } = await import("./mlGreekFeatures");
       const { fetchOHLC } = await import("./ohlc");
       const { buildGammaLevelsEnhanced } = await import("./gammaLevels");
+      const { buildMorningFingerprint, computeMorningBlendWeight, blendBands } = await import("./mlMorningFingerprint");
 
       const features = await buildMlFeatures(resolveMlFeatureInputs);
       const horizons = [5, 15, 30, 60];
@@ -3404,6 +3405,51 @@ Refine the brief above. Search the web for any critical developments the feed is
         syntheticReason = "no tape and no snapshot spot";
       }
 
+      // ─── Model D Morning Anchor blend ─────────────────────────────
+      // Compute morning fingerprint from SPY tape; fold into features dict;
+      // call /quantile/morning; blend with v3 by time-of-day weight.
+      let morningFp: any = { ready: false };
+      let morningProjection: any = null;
+      let blendWeight = 0;
+      let blendedBands: any = projection?.bands ?? null;
+      try {
+        const atr5m = Number(features?.atr_5m ?? 0);
+        morningFp = await buildMorningFingerprint({
+          symbol: "SPY",
+          prevClose,
+          atr5m,
+          spot: Number(spot ?? 0),
+        });
+        if (morningFp.ready) {
+          const morningFeatures = {
+            ...features,
+            morn_orb_range_atr: morningFp.morn_orb_range_atr,
+            morn_orb_hi_pct: morningFp.morn_orb_hi_pct,
+            morn_orb_lo_pct: morningFp.morn_orb_lo_pct,
+            morn_open_drive_atr: morningFp.morn_open_drive_atr,
+            morn_opening_vol_z: morningFp.morn_opening_vol_z,
+            morn_gap_atr: morningFp.morn_gap_atr,
+            morn_vwap_dev_atr: morningFp.morn_vwap_dev_atr,
+            bars_since_anchor: morningFp.bars_since_anchor,
+            spot_vs_anchor_atr: morningFp.spot_vs_anchor_atr,
+          };
+          morningProjection = await mlQuantileMorning(
+            morningFeatures,
+            [30, 60, 120, 180, 240],
+            { timeoutMs: 2500 },
+          );
+          blendWeight = computeMorningBlendWeight();
+          blendedBands = blendBands(
+            projection?.bands ?? null,
+            morningProjection?.bands ?? null,
+            blendWeight,
+          );
+        }
+      } catch (err) {
+        // Morning model is optional — v3 stays as the floor. Never block.
+        console.warn("[ml:projection-spy] morning blend skipped:", (err as any)?.message);
+      }
+
       res.json({
         ok: true,
         candles,
@@ -3413,6 +3459,33 @@ Refine the brief above. Search the web for any critical developments the feed is
         projection: projection
           ? { bands: projection.bands, status: projection.status, version: projection.version }
           : { bands: null, status: "UNAVAILABLE", version: "-" },
+        morning: {
+          ready: !!morningFp?.ready,
+          reason: morningFp?.reason ?? null,
+          anchorClose: morningFp?.anchor_close ?? null,
+          anchorTimeEt: morningFp?.anchor_time_et ?? null,
+          barsSinceAnchor: morningFp?.bars_since_anchor ?? 0,
+          fingerprint: morningFp?.ready
+            ? {
+                orb_range_atr: morningFp.morn_orb_range_atr,
+                orb_hi_pct: morningFp.morn_orb_hi_pct,
+                orb_lo_pct: morningFp.morn_orb_lo_pct,
+                open_drive_atr: morningFp.morn_open_drive_atr,
+                opening_vol_z: morningFp.morn_opening_vol_z,
+                gap_atr: morningFp.morn_gap_atr,
+                vwap_dev_atr: morningFp.morn_vwap_dev_atr,
+              }
+            : null,
+          projection: morningProjection
+            ? { bands: morningProjection.bands, status: morningProjection.status, version: morningProjection.version }
+            : null,
+        },
+        blend: {
+          weight: blendWeight,
+          activeModel:
+            blendWeight <= 0 ? "v3" : blendWeight >= 0.5 ? "morning" : "blend",
+          bands: blendedBands,
+        },
         features,
         synthetic,
         syntheticReason,

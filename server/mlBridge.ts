@@ -179,6 +179,29 @@ export async function mlQuantileOverlay(
 }
 
 /**
+ * POST /quantile/morning — Model D Morning Anchor bands.
+ * Same response shape as mlQuantileOverlay; horizons default to [30,60,120,180,240].
+ */
+export async function mlQuantileMorning(
+  features: Record<string, number>,
+  horizons: number[] = [30, 60, 120, 180, 240],
+  opts?: { timeoutMs?: number },
+): Promise<MLQuantileOverlayResponse | null> {
+  const raw = await _post<{
+    bands: Record<string, MLQuantileBand>;
+    status: string;
+    version: number | string;
+  }>("/quantile/morning", { features, horizons }, "mlQuantileMorning", opts?.timeoutMs);
+
+  if (!raw || !raw.bands || Object.keys(raw.bands).length === 0) return null;
+  return {
+    bands: raw.bands,
+    status: String(raw.status),
+    version: String(raw.version),
+  };
+}
+
+/**
  * GET /health — returns ML service health or null.
  */
 export async function mlHealth(opts?: { timeoutMs?: number }): Promise<MLHealthResponse | null> {

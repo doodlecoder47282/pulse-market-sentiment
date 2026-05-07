@@ -37,6 +37,7 @@ import { Separator } from "@/components/ui/separator";
 import {
   ComposedChart,
   Line,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -112,6 +113,23 @@ interface GammaLevels {
   asOf: string;
 }
 
+interface MorningPayload {
+  ready: boolean;
+  anchorTimeEt: string | null;
+  fingerprint: Record<string, number> | null;
+  projection: {
+    bands: Record<string, QuantileBand> | null;
+    status: string;
+    version: string;
+  } | null;
+}
+
+interface BlendPayload {
+  weight: number;
+  activeModel: "v3" | "blend" | "morning";
+  bands: Record<string, QuantileBand> | null;
+}
+
 interface ProjectionSpyResponse {
   ok: boolean;
   candles: OHLCCandle[];
@@ -123,6 +141,8 @@ interface ProjectionSpyResponse {
     status: string;
     version: string;
   };
+  morning?: MorningPayload;
+  blend?: BlendPayload;
   features: Record<string, number>;
   synthetic?: boolean;
   syntheticReason?: string | null;
@@ -133,7 +153,8 @@ interface ProjectionSpyResponse {
 
 const RTH_OPEN_MIN = 0;       // 9:30 ET
 const RTH_CLOSE_MIN = 390;    // 16:00 ET (390 minutes after open)
-const HORIZONS = [5, 15, 30, 60];
+const HORIZONS_V3 = [5, 15, 30, 60];
+const HORIZONS_MORNING = [30, 60, 120, 180, 240];
 
 const COLOR_BULL = "#10b981";   // green
 const COLOR_BEAR = "#ef4444";   // red
@@ -381,6 +402,40 @@ function SyntheticWatermark(props: any) {
 
 // ─── Main panel ──────────────────────────────────────────────────────────────
 
+// Model status pill (which model is producing the projection now)
+function ModelStatusPill({
+  activeModel,
+  weight,
+  morningReady,
+}: {
+  activeModel: "v3" | "blend" | "morning";
+  weight: number;
+  morningReady: boolean;
+}) {
+  let label = "v3 (intraday)";
+  let cls = "bg-slate-700/60 text-slate-200 border-slate-600";
+  if (activeModel === "morning") {
+    label = `morning anchor ${(weight * 100).toFixed(0)}%`;
+    cls = "bg-cyan-500/15 text-cyan-200 border-cyan-500/40";
+  } else if (activeModel === "blend") {
+    label = `blend (morning ${(weight * 100).toFixed(0)}%)`;
+    cls = "bg-violet-500/15 text-violet-200 border-violet-500/40";
+  } else if (morningReady) {
+    label = "v3 (morning warmup)";
+    cls = "bg-amber-500/15 text-amber-200 border-amber-500/40";
+  }
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium font-mono ${cls}`}
+      data-testid="badge-ml-active-model"
+      title="Active model producing the forward projection"
+    >
+      <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+      {label}
+    </span>
+  );
+}
+
 export default function MLProjectionPanel() {
   const isRth = useMemo(() => {
     const m = nowMinuteOfDay();
@@ -391,17 +446,37 @@ export default function MLProjectionPanel() {
     queryKey: ["/api/ml/projection-spy"],
     queryFn: () =>
       apiRequest("GET", "/api/ml/projection-spy").then((r) => r.json()),
-    refetchInterval: isRth ? 60_000 : 5 * 60_000,
+    // RTH: 5s chart re-render cadence per user spec. Off-hours: 5min.
+    refetchInterval: isRth ? 5_000 : 5 * 60_000,
     retry: false,
   });
 
   const candles = data?.candles ?? [];
   const levels = data?.levels ?? null;
-  const projection = data?.projection ?? null;
+  const v3Projection = data?.projection ?? null;
+  const morning = data?.morning ?? null;
+  const blend = data?.blend ?? null;
   const features = data?.features ?? {};
   const synthetic = !!data?.synthetic;
   const syntheticReason = data?.syntheticReason ?? null;
   const spot = data?.spot ?? candles[candles.length - 1]?.c ?? null;
+
+  // Choose effective bands: blended if available, else v3.
+  const effectiveBands = blend?.bands && Object.keys(blend.bands).length > 0
+    ? blend.bands
+    : v3Projection?.bands ?? null;
+  const activeModel = blend?.activeModel ?? "v3";
+  const blendWeight = blend?.weight ?? 0;
+  const projection = effectiveBands
+    ? { bands: effectiveBands, status: v3Projection?.status ?? "UNAVAILABLE", version: v3Projection?.version ?? "" }
+    : v3Projection;
+
+  // Horizons available depend on which model produced the bands.
+  const activeHorizons = useMemo(() => {
+    if (!effectiveBands) return HORIZONS_V3;
+    const hs = Object.keys(effectiveBands).map(Number).filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
+    return hs.length > 0 ? hs : HORIZONS_V3;
+  }, [effectiveBands]);
 
   // Build LevelSpec list
   const levelSpecs = useMemo<LevelSpec[]>(() => {
@@ -489,7 +564,7 @@ export default function MLProjectionPanel() {
       nearest: null,
     });
 
-    for (const h of HORIZONS) {
+    for (const h of activeHorizons) {
       const band = projection.bands[String(h)];
       if (!band) continue;
       const bullPx = anchorPrice * (1 + band.q90);
@@ -521,7 +596,7 @@ export default function MLProjectionPanel() {
       });
     }
     return out;
-  }, [projection, levelSpecs, anchorPrice, anchorMinute, features.net_gex_sign]);
+  }, [projection, levelSpecs, anchorPrice, anchorMinute, features.net_gex_sign, activeHorizons]);
 
   // Linear extrapolation of each path's 30→60 slope to RTH close, capped ±1.5%.
   const extRows = useMemo(() => {
@@ -585,12 +660,17 @@ export default function MLProjectionPanel() {
       row.bear = p.bear;
       row.snapApplied = p.snapApplied;
       row.nearest = p.nearest;
+      // Stacked area pair: bear as base, (bull - bear) as the band thickness.
+      row.bandLo = p.bear;
+      row.bandHi = p.bull;
     }
     for (const e of extRows) {
       const row = ensure(e.minute);
       row.bullExt = e.bullExt;
       row.baseExt = e.baseExt;
       row.bearExt = e.bearExt;
+      row.bandLoExt = e.bearExt;
+      row.bandHiExt = e.bullExt;
     }
     return Array.from(byMin.values()).sort((a, b) => a.minute - b.minute);
   }, [candleRows, pathRows, extRows]);
@@ -712,8 +792,20 @@ export default function MLProjectionPanel() {
   const interpretations: string[] = [];
   if (synthetic) {
     interpretations.push(
-      "tape simulated — read interpretation as rough regime context, not real intraday flow.",
+      "tape simulated - read interpretation as rough regime context, not real intraday flow.",
     );
+  }
+  if (activeModel === "morning" || activeModel === "blend") {
+    const fp = morning?.fingerprint;
+    if (fp) {
+      const orb = fp.morn_orb_range_atr;
+      const drive = fp.morn_open_drive_atr;
+      const volz = fp.morn_opening_vol_z;
+      const driveDir = drive != null ? (drive > 0.3 ? "strong up drive" : drive < -0.3 ? "strong down drive" : "flat open") : "unknown drive";
+      const volTag = volz != null && volz > 0.8 ? "hot opening volume" : volz != null && volz < -0.5 ? "cold opening volume" : "normal opening volume";
+      const orbTag = orb != null ? `ORB ${orb.toFixed(2)} ATR` : "ORB n/a";
+      interpretations.push(`morning anchor: ${driveDir}, ${volTag}, ${orbTag}.`);
+    }
   }
   if (regimeLabel === "positive gamma") {
     interpretations.push("positive gamma — pin behavior. dealers buy dips, sell rips.");
@@ -757,19 +849,22 @@ export default function MLProjectionPanel() {
               SPY — Projected Path (60min ML + extrapolation to close)
             </CardTitle>
             <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
-              live SPY 5min candles + dealer levels + 3 model forward scenarios. updates 60s RTH.
+              live SPY 5min candles + dealer levels + 3 model forward scenarios. updates every 5s during RTH. morning anchor (Model D) blends in 9:45-16:00 ET when the opening fingerprint is ready.
             </p>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => refetch()}
-            disabled={isRefetching}
-            data-testid="button-refresh-ml-projection"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isRefetching ? "animate-spin" : ""}`} />
-            refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <ModelStatusPill activeModel={activeModel} weight={blendWeight} morningReady={!!morning?.ready} />
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => refetch()}
+              disabled={isRefetching}
+              data-testid="button-refresh-ml-projection"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isRefetching ? "animate-spin" : ""}`} />
+              refresh
+            </Button>
+          </div>
         </div>
         <MLStatusStrip />
       </CardHeader>
@@ -824,6 +919,25 @@ export default function MLProjectionPanel() {
               data={chartData}
               margin={{ top: 14, right: 110, bottom: 30, left: 10 }}
             >
+              <defs>
+                <linearGradient id="bandGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={COLOR_BULL} stopOpacity={0.18} />
+                  <stop offset="50%" stopColor="#94a3b8" stopOpacity={0.06} />
+                  <stop offset="100%" stopColor={COLOR_BEAR} stopOpacity={0.18} />
+                </linearGradient>
+                <linearGradient id="bandGradientExt" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={COLOR_BULL} stopOpacity={0.10} />
+                  <stop offset="50%" stopColor="#94a3b8" stopOpacity={0.04} />
+                  <stop offset="100%" stopColor={COLOR_BEAR} stopOpacity={0.10} />
+                </linearGradient>
+                <filter id="baseGlow">
+                  <feGaussianBlur stdDeviation="1.4" result="blur" />
+                  <feMerge>
+                    <feMergeNode in="blur" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+              </defs>
               <CartesianGrid strokeDasharray="2 4" stroke="#334155" opacity={0.25} />
               <XAxis
                 dataKey="minute"
@@ -898,13 +1012,23 @@ export default function MLProjectionPanel() {
                 />
               ))}
 
-              {/* Anchor (last close) horizontal — subtle */}
+              {/* Anchor (last close) horizontal — pulsing cyan, current price reference */}
               {anchorPrice > 0 && (
                 <ReferenceLine
                   y={anchorPrice}
-                  stroke="#64748b"
-                  strokeDasharray="1 5"
-                  strokeOpacity={0.4}
+                  stroke="#22d3ee"
+                  strokeDasharray="4 3"
+                  strokeWidth={1.25}
+                  strokeOpacity={0.85}
+                  ifOverflow="extendDomain"
+                  className="animate-pulse"
+                  label={{
+                    value: `NOW $${anchorPrice.toFixed(2)}`,
+                    position: "left",
+                    fill: "#67e8f9",
+                    fontSize: 10,
+                    fontWeight: 600,
+                  }}
                 />
               )}
 
@@ -921,6 +1045,53 @@ export default function MLProjectionPanel() {
                 stroke="#94a3b8"
                 strokeDasharray="3 3"
                 label={{ value: "NOW", position: "top", fill: "#cbd5e1", fontSize: 10, fontWeight: 600 }}
+              />
+
+              {/* Layer 3 — Gradient band fill (bear→bull envelope), 60-min path */}
+              <Area
+                type="monotone"
+                dataKey="bandLo"
+                stroke="none"
+                fill="transparent"
+                isAnimationActive={false}
+                connectNulls
+                stackId="band"
+                legendType="none"
+              />
+              <Area
+                type="monotone"
+                dataKey={(d: any) =>
+                  d.bandLo != null && d.bandHi != null ? d.bandHi - d.bandLo : null
+                }
+                stroke="none"
+                fill="url(#bandGradient)"
+                isAnimationActive={false}
+                connectNulls
+                stackId="band"
+                legendType="none"
+              />
+              {/* Extrapolated band fill, lighter */}
+              <Area
+                type="monotone"
+                dataKey="bandLoExt"
+                stroke="none"
+                fill="transparent"
+                isAnimationActive={false}
+                connectNulls
+                stackId="bandExt"
+                legendType="none"
+              />
+              <Area
+                type="monotone"
+                dataKey={(d: any) =>
+                  d.bandLoExt != null && d.bandHiExt != null ? d.bandHiExt - d.bandLoExt : null
+                }
+                stroke="none"
+                fill="url(#bandGradientExt)"
+                isAnimationActive={false}
+                connectNulls
+                stackId="bandExt"
+                legendType="none"
               />
 
               {/* Layer 4 — Forward projection paths (drawn right of "now") */}
@@ -948,14 +1119,16 @@ export default function MLProjectionPanel() {
                 isAnimationActive={false}
                 connectNulls
               />
-              {/* Base (white bold) */}
+              {/* Base (white bold, glow) */}
               <Line
                 type="monotone"
                 dataKey="base"
                 stroke={COLOR_BASE}
-                strokeWidth={2.5}
-                dot={{ r: 3.5, fill: COLOR_BASE, stroke: "#0f172a", strokeWidth: 1 }}
-                activeDot={{ r: 5 }}
+                strokeWidth={3.25}
+                strokeOpacity={1}
+                filter="url(#baseGlow)"
+                dot={{ r: 4, fill: COLOR_BASE, stroke: "#0f172a", strokeWidth: 1.25 }}
+                activeDot={{ r: 6 }}
                 isAnimationActive={false}
                 connectNulls
               />
@@ -1059,8 +1232,11 @@ export default function MLProjectionPanel() {
             className="rounded-md border border-border/60 bg-muted/10 p-3 space-y-1.5"
             data-testid="box-ml-projection-summary"
           >
-            <div className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">
-              scenarios (60min)
+            <div className="text-xs font-semibold uppercase text-muted-foreground tracking-wider flex items-center justify-between">
+              <span>scenarios ({activeHorizons[activeHorizons.length - 1] ?? 60}min)</span>
+              {(activeModel === "morning" || activeModel === "blend") && morning?.anchorTimeEt && (
+                <span className="font-mono normal-case text-[10px] text-cyan-300/80">anchor {morning.anchorTimeEt}</span>
+              )}
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-emerald-400">bull (q90)</span>

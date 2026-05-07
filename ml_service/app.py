@@ -32,6 +32,11 @@ class QuantileRequest(BaseModel):
     horizons: List[int] = [5, 15, 30, 60]
 
 
+class MorningQuantileRequest(BaseModel):
+    features: Dict[str, float]
+    horizons: List[int] = [30, 60, 120, 180, 240]
+
+
 class RetrainRequest(BaseModel):
     models: List[str] = ["score_calibrator", "quantile_overlay", "whale_follow"]
 
@@ -113,6 +118,22 @@ def quantile_overlay(req: QuantileRequest):
     try:
         bands = registry.predict_quantile_overlay(req.features, req.horizons)
         meta = registry.get_meta("quantile_overlay") or {}
+        status = meta.get("status", "INSUFFICIENT_DATA")
+        version = meta.get("version", 0)
+    except Exception:
+        bands = {}
+        status = "INSUFFICIENT_DATA"
+        version = 0
+    return {"bands": bands, "status": status, "version": version}
+
+
+# ─── /quantile/morning — Model D Morning Anchor ───────────────────────
+
+@app.post("/quantile/morning")
+def quantile_morning(req: MorningQuantileRequest):
+    try:
+        bands = registry.predict_quantile_morning(req.features, req.horizons)
+        meta = registry.get_meta("quantile_overlay_morning") or {}
         status = meta.get("status", "INSUFFICIENT_DATA")
         version = meta.get("version", 0)
     except Exception:

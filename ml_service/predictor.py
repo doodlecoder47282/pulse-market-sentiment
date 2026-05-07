@@ -239,6 +239,22 @@ class ModelRegistry:
         features: Dict[str, float],
         horizons: List[int],
     ) -> Dict[str, Dict[str, Optional[float]]]:
+        return self._predict_quantile_named("quantile_overlay", features, horizons)
+
+    def predict_quantile_morning(
+        self,
+        features: Dict[str, float],
+        horizons: List[int],
+    ) -> Dict[str, Dict[str, Optional[float]]]:
+        """Morning Anchor (Model D). Same return contract as predict_quantile_overlay."""
+        return self._predict_quantile_named("quantile_overlay_morning", features, horizons)
+
+    def _predict_quantile_named(
+        self,
+        model_name: str,
+        features: Dict[str, float],
+        horizons: List[int],
+    ) -> Dict[str, Dict[str, Optional[float]]]:
         """
         Returns { "5": {q10, q25, q50, q75, q90}, "15": {...}, ... }.
         Model is a joblib dict keyed by (horizon, quantile) -> LGBMRegressor.
@@ -248,7 +264,7 @@ class ModelRegistry:
         try:
             import numpy as np
 
-            entry = self._maybe_load_joblib_dict("quantile_overlay")
+            entry = self._maybe_load_joblib_dict(model_name)
             if entry is None:
                 return {}
             meta = entry.meta
@@ -302,6 +318,13 @@ def predict_quantile_overlay(
     horizons: List[int],
 ) -> Dict[str, Dict[str, Optional[float]]]:
     return _default_registry.predict_quantile_overlay(features, horizons)
+
+
+def predict_quantile_morning(
+    features: Dict[str, float],
+    horizons: List[int],
+) -> Dict[str, Dict[str, Optional[float]]]:
+    return _default_registry.predict_quantile_morning(features, horizons)
 
 
 def predict_whale_follow(features: Dict[str, float]) -> Optional[float]:
