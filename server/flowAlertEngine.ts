@@ -21,11 +21,33 @@
 import { buildSchwabFlow, type SchwabFlowContract } from "./schwabFlow";
 import { getFlowConfig } from "./flowConfig";
 import { loadRecentDedupKeys } from "./whalePersistence";
+import { ingestContract as ingestUoaContract, getUoaSnapshot } from "./uoaScanner";
+
+// Fire-once Discord poster for UOA. Imported lazily to avoid a hard
+// dependency when running without webhook env (e.g. tests).
+async function fireUoaDiscord(symbol: string, occ: string): Promise<void> {
+  try {
+    const snap = getUoaSnapshot();
+    const list = snap.byTicker[symbol] ?? [];
+    // Find the cluster that just fired by matching the most recent OCC into hits
+    // (cluster is keyed by surface, so any cluster that includes this occ)
+    const target = list.find(cl => cl.fired && cl.firedAt && Date.now() - cl.firedAt < 10_000);
+    if (!target || !target.tier?.discordEnabled) return;
+    const { postUoaClusterAlert } = await import("./discordUoaCard");
+    await postUoaClusterAlert(target);
+  } catch (e: any) {
+    console.warn(`[uoa] discord post failed: ${e?.message ?? e}`);
+  }
+}
 
 // ─── Config — WHALE bar (live values come from flowConfig at runtime) ──────────────────────────────────────────────────────
-export const WHALE_PREMIUM_FLOOR = 1_000_000;   // $1M notional minimum
-export const WHALE_VOL_OI_RATIO  = 10;          // 10x or higher
+// SURGICAL TIER (locked 2026-05-08): only the cleanest aggressor prints with
+// 1-3 DTE urgency. Discord + UI use the SAME gate. UOA scanner runs separately
+// for any-ticker any-DTE clustering.
+export const WHALE_PREMIUM_FLOOR = 2_500_000;   // $2.5M notional minimum
+export const WHALE_VOL_OI_RATIO  = 15;          // 15x or higher
 export const WHALE_MIN_DTE       = 1;           // no 0DTE
+export const WHALE_MAX_DTE       = 3;           // 1–3DTE only — urgency money
 export const WHALE_REQUIRED_TAG  = "ABOVE_ASK"; // aggressive buyer only
 
 // Delta floor — kill lottery tickets (deep OTM gamma plays) and deep ITM hedges
@@ -63,6 +85,19 @@ export interface WhaleHit {
   delta: number;
   detectedAt: number;    // ms epoch
   reason: string;        // human-readable why-this-fired
+  // Extended contract context — surfaces in expanded UI row, never gates
+  bid?: number;
+  ask?: number;
+  mid?: number;
+  spreadPct?: number;     // (ask-bid)/mid — tighter = more liquid
+  iv?: number;            // 0..1
+  gamma?: number;
+  theta?: number;
+  vega?: number;
+  spot?: number | null;
+  distFromSpotPct?: number;  // (strike - spot) / spot * 100
+  breakeven?: number;        // C: strike + mid ; P: strike - mid
+  breakevenPct?: number;     // (breakeven - spot) / spot * 100
   // Closed-loop edge-conditioned conviction (read-only metadata, additive).
   // Computed at queueHit time from rolling 45d edge stats. Never alters
   // gating, sizing, or any decision — surfaces in alert metadata only.
@@ -85,6 +120,7 @@ export interface FlowSnapshot {
     premiumFloor: number;
     volOiRatio: number;
     minDte: number;
+    maxDte: number;
     deltaMin: number;
     deltaMax: number;
     requiredTag: string;
@@ -154,6 +190,30 @@ const recentFired: Array<{ ticker: string; hits: number; firedAt: number }> = []
 // flush timers per ticker
 const flushTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+// ─── Contract enrichment — attach extended fields for UI/Discord context ──────────────────
+export function enrichHit(hit: WhaleHit, c: SchwabFlowContract, spot: number | null): WhaleHit {
+  const mid = (c as any).mid > 0 ? (c as any).mid : ((c.bid + c.ask) / 2);
+  const spreadPct = mid > 0 && c.ask > 0 && c.bid > 0 ? ((c.ask - c.bid) / mid) * 100 : 0;
+  const breakeven = c.type === "C" ? c.strike + mid : c.strike - mid;
+  const distFromSpotPct = spot && spot > 0 ? ((c.strike - spot) / spot) * 100 : undefined;
+  const breakevenPct = spot && spot > 0 ? ((breakeven - spot) / spot) * 100 : undefined;
+  return {
+    ...hit,
+    bid: c.bid,
+    ask: c.ask,
+    mid,
+    spreadPct,
+    iv: c.iv,
+    gamma: (c as any).gamma,
+    theta: (c as any).theta,
+    vega: (c as any).vega,
+    spot: spot ?? null,
+    distFromSpotPct,
+    breakeven,
+    breakevenPct,
+  };
+}
+
 // ─── Whale gate — single contract test ────────────────────────────────────────
 export function isWhale(c: SchwabFlowContract): { whale: boolean; reason: string } {
   const cfg = getFlowConfig();
@@ -165,9 +225,12 @@ export function isWhale(c: SchwabFlowContract): { whale: boolean; reason: string
   if (cfg.requiredTag !== "ANY" && c.tag !== cfg.requiredTag) {
     return { whale: false, reason: `tag=${c.tag} (need ${cfg.requiredTag})` };
   }
-  // DTE — runtime min
+  // DTE band — surgical 1–3DTE window kills hedges/LEAPS, keeps urgency money
   if (c.dte < cfg.minDte) {
     return { whale: false, reason: `dte=${c.dte} < min ${cfg.minDte}` };
+  }
+  if (c.dte > cfg.maxDte) {
+    return { whale: false, reason: `dte=${c.dte} > max ${cfg.maxDte}` };
   }
   // Delta sanity — kill lotto tickets and deep ITM hedges (only when delta is real)
   const absDelta = Math.abs(c.delta ?? 0);
@@ -206,6 +269,12 @@ async function scanTicker(symbol: string): Promise<{ hits: WhaleHit[]; error: st
     const hits: WhaleHit[] = [];
     const now = Date.now();
     for (const c of flow.contracts) {
+      // UOA observer — piggybacks on this Schwab pull. Independent of whale gate.
+      try {
+        const out = ingestUoaContract(c, symbol, flow.spot ?? null);
+        if (out.fired) { void fireUoaDiscord(symbol, c.occ); }
+      } catch { /* never blocks whale path */ }
+
       const { whale, reason } = isWhale(c);
       if (!whale) continue;
 
@@ -223,7 +292,7 @@ async function scanTicker(symbol: string): Promise<{ hits: WhaleHit[]; error: st
       recentlySeen.set(dedupKey, now);
       recentlySeen.set(coarseKey, now);
 
-      hits.push({
+      const baseHit: WhaleHit = {
         symbol,
         occ: c.occ,
         type: c.type,
@@ -240,7 +309,8 @@ async function scanTicker(symbol: string): Promise<{ hits: WhaleHit[]; error: st
         delta: c.delta,
         detectedAt: now,
         reason,
-      });
+      };
+      hits.push(enrichHit(baseHit, c, flow.spot ?? null));
     }
     return { hits, error: null };
   } catch (e: any) {
@@ -475,6 +545,7 @@ export function getFlowSnapshot(): FlowSnapshot {
         premiumFloor: cfg.premiumFloor,
         volOiRatio: cfg.volOiRatio,
         minDte: cfg.minDte,
+        maxDte: cfg.maxDte,
         deltaMin: cfg.deltaMin,
         deltaMax: cfg.deltaMax,
         requiredTag: cfg.requiredTag,
@@ -510,21 +581,28 @@ export async function previewFlow(): Promise<{
       const now = Date.now();
       for (const c of flow.contracts) {
         totalScanned++;
+        // UOA piggyback in preview path too — keeps cluster state warm
+        try {
+          const out = ingestUoaContract(c, sym, flow.spot ?? null);
+          if (out.fired) { void fireUoaDiscord(sym, c.occ); }
+        } catch { /* */ }
         const { whale, reason } = isWhale(c);
         if (whale) {
-          whales.push({
+          const base: WhaleHit = {
             symbol: sym, occ: c.occ, type: c.type, strike: c.strike,
             expiration: c.expiration, dte: c.dte, volume: c.volume,
             openInterest: c.openInterest, volOiRatio: c.volOiRatio,
             isNewStrike: c.isNewStrike, premium: c.notional, tag: c.tag,
             sentiment: c.sentiment, delta: c.delta, detectedAt: now, reason,
-          });
+          };
+          whales.push(enrichHit(base, c, flow.spot ?? null));
         } else {
           // Only show top rejects to keep response readable
           if (rejected.length < 5) rejected.push({ occ: c.occ, reason });
         }
       }
-      whales.sort((a, b) => b.premium - a.premium);
+      // Sort: premium DESC, then volume DESC (tiebreaker)
+      whales.sort((a, b) => (b.premium - a.premium) || (b.volume - a.volume));
       byTicker[sym] = { whales, rejected };
       totalWhales += whales.length;
     } catch (e: any) {
@@ -537,6 +615,7 @@ export async function previewFlow(): Promise<{
       premiumFloor: cfg.premiumFloor,
       volOiRatio: cfg.volOiRatio,
       minDte: cfg.minDte,
+      maxDte: cfg.maxDte,
       deltaMin: cfg.deltaMin,
       deltaMax: cfg.deltaMax,
       requiredTag: cfg.requiredTag,

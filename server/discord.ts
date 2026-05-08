@@ -26,6 +26,11 @@ export const WHALE_WEBHOOK_URL =
   process.env.PULSE_DISCORD_WHALE_WEBHOOK ??
   "https://discord.com/api/webhooks/1501707594199466076/uupxpODoD2fu5JoySqKLbYXgazBm0LFiNH6AOSTthJzXrUdDEnYngMcACS-1kDKq65-M";
 
+// UOA webhook — separate stream for clustered unusual activity (any-ticker,
+// market-cap-tiered). Falls back to whale webhook unless user sets a dedicated one.
+export const UOA_WEBHOOK_URL =
+  process.env.PULSE_DISCORD_UOA_WEBHOOK ?? WHALE_WEBHOOK_URL;
+
 // Dedicated SPX 0DTE banger webhook. Only postOdteBangerAlert routes here.
 // Keeps the bangers-only stream isolated from whale flow + main Batcave.
 export const ODTE_WEBHOOK_URL =
@@ -71,6 +76,7 @@ interface DiscordPayload {
 export async function postToDiscord(payload: DiscordPayload, urlOverride?: string): Promise<boolean> {
   const url = urlOverride ?? WEBHOOK_URL;
   const tag =
+    urlOverride === UOA_WEBHOOK_URL && UOA_WEBHOOK_URL !== WHALE_WEBHOOK_URL ? "discord:uoa" :
     urlOverride === WHALE_WEBHOOK_URL ? "discord:whale" :
     urlOverride === ODTE_WEBHOOK_URL ? "discord:odte" :
     urlOverride === MODEL_WEBHOOK_URL ? "discord:model" :

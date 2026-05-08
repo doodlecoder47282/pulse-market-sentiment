@@ -103,13 +103,13 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
         subLine: whaleSummary,
         bullets: [
           "Signals tab shows fresh whale detections, tracked positions, and recently-closed plays.",
-          "Whale criteria: $1M+ premium, vol/OI 10x or new strike, ABOVE_ASK, dte≥1.",
+          "Whale criteria: $2.5M+ premium, vol/OI 15x, ABOVE_ASK, 1–3DTE only.",
           tone === "bull" ? "Trend regime — call-heavy whale herding reinforces direction." :
           tone === "warning" ? "Chop regime — whale flow is noisier, weight CLV not P&L." :
           "Neutral regime — only act on highest-conviction whales.",
         ],
         asOf: Date.now(),
-        whatThisIs: "Whale flow — $1M+ option blocks that hit unusual size, with tracking and outcomes.",
+        whatThisIs: "Whale flow — $2.5M+ surgical option blocks (1–3DTE) plus a separate UOA scanner with cap-tiered clustering for any-ticker, any-date alerts.",
       };
 
     case "chart":

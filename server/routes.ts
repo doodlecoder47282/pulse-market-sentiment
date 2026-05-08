@@ -2938,6 +2938,17 @@ Refine the brief above. Search the web for any critical developments the feed is
       try { res.json(await previewFlow()); }
       catch (e: any) { res.status(500).json({ error: "flow_preview_failed", message: e?.message ?? String(e) }); }
     });
+    // UOA scanner — separate from whale engine. Returns clustered prints across
+    // any-ticker/any-DTE with market-cap-tiered thresholds. State is fed from
+    // whale eval cycles (no extra Schwab calls).
+    app.get("/api/uoa/preview", async (_req, res) => {
+      try {
+        const { getUoaSnapshot } = await import("./uoaScanner");
+        res.json(getUoaSnapshot());
+      } catch (e: any) {
+        res.status(500).json({ error: "uoa_preview_failed", message: e?.message ?? String(e) });
+      }
+    });
     // Runtime flow config — watchlist, thresholds, delta floor
     app.get("/api/flow/config", async (_req, res) => {
       try {

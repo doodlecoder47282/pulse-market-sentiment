@@ -24,6 +24,8 @@ export interface FlowConfig {
   volOiRatio: number;
   /** Minimum DTE (0 = include 0DTE) */
   minDte: number;
+  /** Maximum DTE — kills hedges/leaps, keeps urgency money */
+  maxDte: number;
   /** Required aggressor tag */
   requiredTag: "ABOVE_ASK" | "AT_ASK" | "ANY";
   /** Delta filter window (|delta|) */
@@ -62,9 +64,10 @@ function parseTag(raw: string | undefined, fallback: FlowConfig["requiredTag"]):
 let _config: FlowConfig = {
   priority: parseSymbolList(process.env.FLOW_PRIORITY, DEFAULT_PRIORITY),
   watchlist: parseSymbolList(process.env.FLOW_WATCHLIST, DEFAULT_WATCHLIST),
-  premiumFloor: parseNum(process.env.FLOW_PREMIUM_FLOOR, 1_000_000),
-  volOiRatio: parseNum(process.env.FLOW_VOL_OI_RATIO, 10),
+  premiumFloor: parseNum(process.env.FLOW_PREMIUM_FLOOR, 2_500_000),
+  volOiRatio: parseNum(process.env.FLOW_VOL_OI_RATIO, 15),
   minDte: parseNum(process.env.FLOW_MIN_DTE, 1),
+  maxDte: parseNum(process.env.FLOW_MAX_DTE, 3),
   requiredTag: parseTag(process.env.FLOW_REQUIRED_TAG, "ABOVE_ASK"),
   deltaMin: parseNum(process.env.FLOW_DELTA_MIN, 0.20),
   deltaMax: parseNum(process.env.FLOW_DELTA_MAX, 0.80),
@@ -79,6 +82,7 @@ export function getFlowConfig(): FlowConfig {
     premiumFloor: _config.premiumFloor,
     volOiRatio: _config.volOiRatio,
     minDte: _config.minDte,
+    maxDte: _config.maxDte,
     requiredTag: _config.requiredTag,
     deltaMin: _config.deltaMin,
     deltaMax: _config.deltaMax,
@@ -125,6 +129,16 @@ export function setFlowConfig(patch: Partial<FlowConfig>): { ok: boolean; config
         return { ok: false, error: "minDte must be integer in [0, 60]" };
       }
       next.minDte = n;
+    }
+    if (patch.maxDte !== undefined) {
+      const n = Number(patch.maxDte);
+      if (!Number.isInteger(n) || n < 1 || n > 365) {
+        return { ok: false, error: "maxDte must be integer in [1, 365]" };
+      }
+      next.maxDte = n;
+    }
+    if (next.minDte > next.maxDte) {
+      return { ok: false, error: "minDte must be <= maxDte" };
     }
     if (patch.requiredTag !== undefined) {
       const v = String(patch.requiredTag).toUpperCase();
