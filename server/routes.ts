@@ -1762,6 +1762,73 @@ Refine the brief above. Search the web for any critical developments the feed is
 
   // ─── Schwab OAuth endpoints ───────────────────────────────────────────────
 
+  // ─── Plain-English headlines (per-tab synthesis) ────────────────────────
+
+  app.get("/api/headline", async (req, res) => {
+    try {
+      const tab = String(req.query.tab || "global").toLowerCase();
+      const allowed = ["signals", "chart", "models", "heatseeker", "tradedesk", "regime", "cosmos", "news", "voices", "takefive", "global"];
+      if (!allowed.includes(tab)) {
+        return res.status(400).json({ error: `tab must be one of: ${allowed.join(", ")}` });
+      }
+      const { buildHeadline } = await import("./headline");
+      const port = Number(process.env.PORT || 5000);
+      const headline = await buildHeadline({ tab: tab as any, port });
+      res.json(headline);
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e) });
+    }
+  });
+
+  // ─── Daily Playbook ────────────────────────────────────────────────────────
+
+  // Server-synthesized 3-path scenario plan for SPY/SPX, additive to ML projection.
+  // Locked at 9:00 ET; drift overlay shows live deviation from morning lock.
+  app.get("/api/playbook/daily", async (req, res) => {
+    try {
+      const symbol = (String(req.query.symbol || "SPY").toUpperCase() === "SPX" ? "SPX" : "SPY") as "SPY" | "SPX";
+      const { buildDailyPlaybook } = await import("./dailyPlaybook");
+      const pb = await buildDailyPlaybook(symbol);
+      res.json(pb);
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e) });
+    }
+  });
+
+  // The 9:00 ET locked playbook (immutable for the day; null until first lock fires)
+  app.get("/api/playbook/daily/locked", async (_req, res) => {
+    try {
+      const { getLockedPlaybook } = await import("./dailyPlaybook");
+      res.json(getLockedPlaybook() ?? { hasLock: false });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e) });
+    }
+  });
+
+  // Force a lock now (manual override, useful before 9:00 ET on weekends/dev)
+  app.post("/api/playbook/daily/lock", async (req, res) => {
+    try {
+      const symbol = (String(req.body?.symbol || "SPY").toUpperCase() === "SPX" ? "SPX" : "SPY") as "SPY" | "SPX";
+      const { lockPlaybookAtOpen } = await import("./dailyPlaybook");
+      const pb = await lockPlaybookAtOpen(symbol);
+      res.json(pb);
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e) });
+    }
+  });
+
+  // Live drift vs the morning lock (probability shifts, trigger hits, vol expansion)
+  app.get("/api/playbook/daily/drift", async (req, res) => {
+    try {
+      const symbol = (String(req.query.symbol || "SPY").toUpperCase() === "SPX" ? "SPX" : "SPY") as "SPY" | "SPX";
+      const { getDriftFromLocked } = await import("./dailyPlaybook");
+      const drift = await getDriftFromLocked(symbol);
+      res.json(drift);
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e) });
+    }
+  });
+
   // Schwab diagnostics: cache size, request budget, active cooldowns
   app.get("/api/schwab/diag", async (_req, res) => {
     try {
@@ -2710,6 +2777,16 @@ Refine the brief above. Search the web for any critical developments the feed is
     startDbBackup();
   } catch (e: any) {
     console.warn(`[dbBackup] failed to start: ${e?.message ?? e}`);
+  }
+
+  // Kick off Daily Playbook scheduler (9:00 ET lock + 5min drift refresh)
+  try {
+    const { setSnapshotProvider } = await import("./dailyPlaybook");
+    setSnapshotProvider(() => getOrBuild(false) as any);
+    const { startPlaybookScheduler } = await import("./playbookScheduler");
+    startPlaybookScheduler();
+  } catch (e: any) {
+    console.warn(`[playbookScheduler] failed to start: ${e?.message ?? e}`);
   }
 
   // Kick off stock daily-bars refresher (6h cadence). Extends daily_bars beyond

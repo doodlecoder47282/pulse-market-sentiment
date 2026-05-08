@@ -48,6 +48,8 @@ import { useEffect, useState, useRef, lazy, Suspense } from "react";
 // ── Lazy-loaded heavy components (code splitting) ──────────────────────────
 const ChartPanel = lazy(() => import("@/components/ChartPanel"));
 const ModelsPanel = lazy(() => import("@/components/ModelsPanel"));
+const DailyPlaybookChart = lazy(() => import("@/components/DailyPlaybookChart"));
+const TabHeadline = lazy(() => import("@/components/TabHeadline"));
 const GexChart = lazy(() => import("@/components/GexChart"));
 const Heatseeker = lazy(() => import("@/components/Heatseeker"));
 const MLProjectionPanel = lazy(() => import("@/components/MLProjectionPanel"));
@@ -414,6 +416,7 @@ export default function Dashboard() {
 
           {/* ── Chart tab (lazy) ── */}
           <TabsContent value="chart" className="space-y-6">
+            <Suspense fallback={null}><TabHeadline tab="chart" /></Suspense>
             <ErrorBoundary label="Chart Panel">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
                 <ChartPanelEager />
@@ -423,6 +426,7 @@ export default function Dashboard() {
 
           {/* ── Models tab (lazy) ── */}
           <TabsContent value="models" className="space-y-6">
+            <Suspense fallback={null}><TabHeadline tab="models" /></Suspense>
             <ErrorBoundary label="Models Panel">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
                 <ModelsPanel />
@@ -437,10 +441,20 @@ export default function Dashboard() {
                 <MLProjectionPanel />
               </Suspense>
             </ErrorBoundary>
+
+            {/* ── Daily Playbook (additive) ── */}
+            <Separator className="my-2" />
+            <h2 className="text-xl font-semibold">Daily Playbook</h2>
+            <ErrorBoundary label="Daily Playbook">
+              <Suspense fallback={<div className="text-sm text-muted-foreground">loading playbook...</div>}>
+                <DailyPlaybookChart symbol="SPY" />
+              </Suspense>
+            </ErrorBoundary>
           </TabsContent>
 
           {/* ── Heatseeker tab (lazy) ─ 0DTE live Greeks + sticky zones ── */}
           <TabsContent value="heatseeker" className="space-y-6">
+            <Suspense fallback={null}><TabHeadline tab="heatseeker" /></Suspense>
             <ErrorBoundary label="Heatseeker">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
                 <Heatseeker />
@@ -450,6 +464,7 @@ export default function Dashboard() {
 
           {/* ── Trade Desk tab (lazy) ── */}
           <TabsContent value="tradedesk" className="space-y-6">
+            <Suspense fallback={null}><TabHeadline tab="tradedesk" /></Suspense>
             <ErrorBoundary label="Trade Desk">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
                 <TradeDeskPanel />
@@ -459,6 +474,7 @@ export default function Dashboard() {
 
           {/* ── Regime tab (lazy) ── */}
           <TabsContent value="regime" className="space-y-6">
+            <Suspense fallback={null}><TabHeadline tab="regime" /></Suspense>
             <ErrorBoundary label="Regime Panel">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
                 <RegimePanelLazy />
@@ -468,6 +484,7 @@ export default function Dashboard() {
 
           {/* ── Cosmos tab (lazy) — astrology intel brief + live sky engine ── */}
           <TabsContent value="cosmos" className="space-y-6">
+            <Suspense fallback={null}><TabHeadline tab="cosmos" /></Suspense>
             <ErrorBoundary label="Cosmos Panel">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
                 <CosmosPanelLazy />
@@ -477,6 +494,7 @@ export default function Dashboard() {
 
           {/* ── News tab ── */}
           <TabsContent value="news" className="space-y-6">
+            <Suspense fallback={null}><TabHeadline tab="news" /></Suspense>
             <ErrorBoundary label="News Panel">
               <NewsPanel />
             </ErrorBoundary>
@@ -484,6 +502,7 @@ export default function Dashboard() {
 
           {/* ── Voices tab ── */}
           <TabsContent value="voices" className="space-y-6">
+            <Suspense fallback={null}><TabHeadline tab="voices" /></Suspense>
             <ErrorBoundary label="Voices Panel">
               <VoicesPanel />
             </ErrorBoundary>
@@ -491,6 +510,7 @@ export default function Dashboard() {
 
           {/* ── Take Five tab ── */}
           <TabsContent value="takefive" className="space-y-6">
+            <Suspense fallback={null}><TabHeadline tab="takefive" /></Suspense>
             <ErrorBoundary label="Take Five">
               <TakeFive mode="embedded" />
             </ErrorBoundary>
@@ -498,6 +518,7 @@ export default function Dashboard() {
 
           {/* ── Signals tab (eager — primary tab) ── */}
           <TabsContent value="signals" className="space-y-6">
+            <Suspense fallback={null}><TabHeadline tab="signals" /></Suspense>
             {/* Whale Flow panel — fresh detections + tracking + closed */}
             <ErrorBoundary label="Whale Flow">
               <WhaleFlowPanel />
