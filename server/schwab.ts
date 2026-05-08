@@ -158,9 +158,15 @@ export function clearTokens(): void {
 const _cache = new Map<string, { data: any; expiresAt: number }>();
 
 // Per-endpoint TTL (ms). Anything not listed = no cache.
-function cacheTtlMs(path: string): number {
+// pricehistory differentiates by frequencyType: minute bars need a short TTL
+// during RTH so live charts don't sit on 10-min-old data.
+function cacheTtlMs(path: string, params?: Record<string, string | number>): number {
   if (path.startsWith("marketdata/v1/quotes")) return 30_000;
-  if (path.startsWith("marketdata/v1/pricehistory")) return 300_000; // 5min
+  if (path.startsWith("marketdata/v1/pricehistory")) {
+    const ft = params ? String(params.frequencyType ?? "").toLowerCase() : "";
+    if (ft === "minute") return 20_000;   // 20s for intraday tape
+    return 300_000;                        // 5min for daily/weekly/monthly
+  }
   if (path.startsWith("marketdata/v1/chains")) return 60_000;
   if (path.startsWith("marketdata/v1/markets")) return 300_000;
   return 0;
@@ -221,10 +227,17 @@ export async function schwabFetch(
   const token = await getAccessToken();
   if (!token) return null;
 
-  // Build cache key
-  const paramStr = params ? Object.entries(params).sort().map(([k, v]) => `${k}=${v}`).join("&") : "";
+  // Build cache key — exclude endDate from key for pricehistory minute bars
+  // because we use endDate=now() to force Schwab to return today's tape, but
+  // we still want all in-flight callers within a TTL window to share the same
+  // cache slot (otherwise every 20s bucket misses cache and burns rate budget).
+  const cacheParams = params ? { ...params } : undefined;
+  if (cacheParams && path.startsWith("marketdata/v1/pricehistory") && String(cacheParams.frequencyType ?? "").toLowerCase() === "minute") {
+    delete cacheParams.endDate;
+  }
+  const paramStr = cacheParams ? Object.entries(cacheParams).sort().map(([k, v]) => `${k}=${v}`).join("&") : "";
   const cacheKey = `${path}|${paramStr}`;
-  const ttl = cacheTtlMs(path);
+  const ttl = cacheTtlMs(path, params);
 
   // Cache hit
   if (!opts?.skipCache && ttl > 0) {
@@ -465,14 +478,24 @@ export async function getPriceHistory(
     return { symbol, candles: [], source: "schwab" };
   }
   try {
-    const data = await schwabFetch("marketdata/v1/pricehistory", {
+    // CRITICAL: Schwab returns the PREVIOUS business day when endDate is omitted.
+    // Pass endDate=now (epoch ms) so intraday tape includes the current session.
+    const params: Record<string, string | number> = {
       symbol: wireSymbol,
       periodType,
       period,
       frequencyType,
       frequency,
       needExtendedHoursData: needExtendedHours ? "true" : "false",
-    });
+    };
+    // Only add endDate for minute bars where intraday freshness matters.
+    // Daily/weekly/monthly already include latest completed bar without it.
+    // Round to 20s buckets so the cache key stays stable within the TTL window
+    // and we don't bypass _cache on every call.
+    if (frequencyType === "minute") {
+      params.endDate = Math.floor(Date.now() / 20_000) * 20_000;
+    }
+    const data = await schwabFetch("marketdata/v1/pricehistory", params);
     if (data?.candles?.length) {
       return { symbol, candles: data.candles, source: "schwab" };
     }
