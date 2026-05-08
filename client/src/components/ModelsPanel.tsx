@@ -178,8 +178,11 @@ interface TrajectoryWeek {
   bull: number;
   base: number;
   bear: number;
-  sigmaWeek: number;
-  driftPct: number;
+  sigmaWeek: number;          // INCREMENTAL one-week σ (event bumps visible here)
+  sigmaCum?: number;          // CUMULATIVE σ thru week k — drives the cone
+  cumDriftPct?: number;       // cumulative drift % vs spot
+  /** @deprecated renamed to cumDriftPct — kept for one release for old payloads */
+  driftPct?: number;
   events?: string[];
   vixSegment?: "VIX9D" | "VIX" | "VIX3M" | "BLEND";
 }
@@ -1586,19 +1589,23 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
   const chartData = useMemo(() => {
     const rows: Array<{
       wk: string; date: string; bull: number; base: number; bear: number;
-      sigma: number; drift: number; events: string; segment: string;
+      sigma: number; sigmaIncr?: number; drift: number; events: string; segment: string;
     }> = [
-      { wk: "NOW", date: "today", bull: traj.spot, base: traj.spot, bear: traj.spot, sigma: 0, drift: 0, events: "", segment: "" },
+      { wk: "NOW", date: "today", bull: traj.spot, base: traj.spot, bear: traj.spot, sigma: 0, sigmaIncr: 0, drift: 0, events: "", segment: "" },
     ];
     for (const w of traj.weeks) {
+      // Prefer cumulative σ (drives the cone). Fall back to incremental for old payloads.
+      const sigmaForCone = w.sigmaCum ?? w.sigmaWeek;
+      const cumDrift = w.cumDriftPct ?? w.driftPct ?? 0;
       rows.push({
         wk: w.weekLabel,
         date: w.weekEndDate,
         bull: w.bull,
         base: w.base,
         bear: w.bear,
-        sigma: w.sigmaWeek,
-        drift: w.driftPct,
+        sigma: sigmaForCone,
+        sigmaIncr: w.sigmaWeek,  // exposed in tooltip so user sees this week's piece
+        drift: cumDrift,
         events: (w.events ?? []).join(","),
         segment: w.vixSegment ?? "",
       });
@@ -1812,7 +1819,7 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
             <span className="text-red-400">BEAR <span className="font-bold">{fmtPrice(traj.endpoint.bear)}</span></span>
           </div>
           <div className="mt-1 text-[9px] text-muted-foreground">
-            ±1σ cone ±{fmtPrice(traj.weeks[12]?.sigmaWeek ?? 0)} · ±2σ ±{fmtPrice((traj.weeks[12]?.sigmaWeek ?? 0) * 2)}
+            ±1σ cone ±{fmtPrice(traj.weeks[12]?.sigmaCum ?? traj.weeks[12]?.sigmaWeek ?? 0)} · ±2σ ±{fmtPrice((traj.weeks[12]?.sigmaCum ?? traj.weeks[12]?.sigmaWeek ?? 0) * 2)} (cumulative thru WK13)
           </div>
         </div>
 

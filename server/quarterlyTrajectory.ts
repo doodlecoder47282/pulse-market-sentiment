@@ -36,8 +36,9 @@ export interface WeeklyPoint {
   bull: number;
   base: number;
   bear: number;
-  sigmaWeek: number;       // σ at this week (post all scaling)
-  driftPct: number;        // cumulative drift % (base vs spot)
+  sigmaWeek: number;       // INCREMENTAL σ for this single week (events visible here)
+  sigmaCum: number;        // CUMULATIVE σ thru week k = sqrt(Σ σ_i² for i=1..k) — drives bull/bear cone
+  cumDriftPct: number;     // cumulative drift % (base vs spot)
   events?: string[];       // ["OPEX"], ["FOMC"], ["OPEX","FOMC"], etc.
   vixSegment?: "VIX9D" | "VIX" | "VIX3M" | "BLEND";
 }
@@ -309,9 +310,14 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
   }
 
   // ─── Build weekly points ───
+  // Two-pass: first compute per-week INCREMENTAL σ, then accumulate variance for
+  // the cone. This guarantees monotonic cone growth (no inversions on event
+  // weeks) and makes event bumps additive in variance space (correct).
   const weeks: WeeklyPoint[] = [];
   let cumMagnetPull = 0;
   let eventWeeksCount = 0;
+  let varianceAccum = 0;  // Σ σ_i²
+  // Pre-compute baseline σ ladder for the magnet check (cumulative)
   for (let k = 1; k <= WEEKS; k++) {
     // NEW v2: segmented IV per week
     const { iv: ivK, segment } = pickSegmentedVix(k, vix, vix9d, vix3m);
@@ -324,19 +330,26 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
     const eventBump = events.length > 0 ? 1.12 : 1.0;
     if (events.length > 0) eventWeeksCount++;
 
-    // σ(k) = spot · (segmented_vix/100) · √(k/52) · vrpScale · damp · eventBump
-    const sigmaRaw = spot * (ivK / 100) * SQRT_WEEK_FRAC(k);
-    const sigmaK = sigmaRaw * vrpScale * damp(k) * eventBump;
+    // INCREMENTAL one-week σ — spot · (iv/100) · √(1/52) · vrpScale · damp · eventBump.
+    // The damp uses the cumulative week index so longer-horizon increments are
+    // mean-reverted, but each week's piece is still one-week sized.
+    const sigmaWeekIncr = spot * (ivK / 100) * Math.sqrt(1 / WEEKS_PER_YEAR)
+      * vrpScale * damp(k) * eventBump;
+
+    // Accumulate variance → cumulative σ for the cone
+    varianceAccum += sigmaWeekIncr * sigmaWeekIncr;
+    const sigmaCum = Math.sqrt(varianceAccum);
 
     const driftK = totalDriftPerWeek * k;
     const unmagBase = spot * (1 + driftK);
 
-    const weeklyPull = computeMagnetPull(unmagBase, sigmaK, spot, anchorList);
+    // Magnet pull uses the cumulative σ — anchors only relevant when within reach
+    const weeklyPull = computeMagnetPull(unmagBase, sigmaCum, spot, anchorList);
     cumMagnetPull += weeklyPull / WEEKS;
     const base = unmagBase + cumMagnetPull;
 
-    const bull = base + sigmaK;
-    const bear = base - sigmaK;
+    const bull = base + sigmaCum;
+    const bear = base - sigmaCum;
 
     weeks.push({
       weekIndex: k,
@@ -345,21 +358,26 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
       bull: parseFloat(bull.toFixed(2)),
       base: parseFloat(base.toFixed(2)),
       bear: parseFloat(bear.toFixed(2)),
-      sigmaWeek: parseFloat(sigmaK.toFixed(2)),
-      driftPct: parseFloat((driftK * 100).toFixed(3)),
+      sigmaWeek: parseFloat(sigmaWeekIncr.toFixed(2)),
+      sigmaCum: parseFloat(sigmaCum.toFixed(2)),
+      cumDriftPct: parseFloat((driftK * 100).toFixed(3)),
       events: events.length > 0 ? events : undefined,
       vixSegment: segment,
     });
   }
 
-  // Count active magnets
+  // Count active magnets — use cumulative σ (the actual cone width) for the gate
   let activeMagnets = 0;
   for (const a of anchorList) {
-    const ok = weeks.some((w) => Math.abs(a.level - w.base) <= 2 * w.sigmaWeek);
+    const ok = weeks.some((w) => Math.abs(a.level - w.base) <= 2 * w.sigmaCum);
     if (ok) activeMagnets++;
   }
 
-  // Anchor list for client
+  // Anchor list for client.
+  // JPM collar strikes far below spot (>15%) get filtered — they're real
+  // structural levels but won't magnetize the 13wk cone, so they're noise on
+  // the chart. Walls / flip / max pain always show.
+  const jpmRangeLimit = 0.15 * spot;
   const anchors: QuarterlyAnchor[] = [
     { level: callWall, label: "Call Wall", kind: "callWall", strength: "primary" },
     { level: putWall,  label: "Put Wall",  kind: "putWall",  strength: "primary" },
@@ -367,9 +385,15 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
     { level: maxPain,  label: "Max Pain",  kind: "maxPain",  strength: "secondary" },
   ];
   if (jpmStrikes) {
-    if (jpmStrikes.shortPut) anchors.push({ level: jpmStrikes.shortPut, label: "JPM Short Put", kind: "jpmShortPut", strength: "secondary" });
-    if (jpmStrikes.longPut)  anchors.push({ level: jpmStrikes.longPut, label: "JPM Long Put",  kind: "jpmLongPut",  strength: "secondary" });
-    if (jpmStrikes.shortCall) anchors.push({ level: jpmStrikes.shortCall, label: "JPM Short Call", kind: "jpmShortCall", strength: "secondary" });
+    if (jpmStrikes.shortPut && Math.abs(jpmStrikes.shortPut - spot) <= jpmRangeLimit) {
+      anchors.push({ level: jpmStrikes.shortPut, label: "JPM Short Put", kind: "jpmShortPut", strength: "secondary" });
+    }
+    if (jpmStrikes.longPut && Math.abs(jpmStrikes.longPut - spot) <= jpmRangeLimit) {
+      anchors.push({ level: jpmStrikes.longPut, label: "JPM Long Put", kind: "jpmLongPut", strength: "secondary" });
+    }
+    if (jpmStrikes.shortCall && Math.abs(jpmStrikes.shortCall - spot) <= jpmRangeLimit) {
+      anchors.push({ level: jpmStrikes.shortCall, label: "JPM Short Call", kind: "jpmShortCall", strength: "secondary" });
+    }
   }
 
   return {
@@ -398,9 +422,9 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
       realizedVol20d: realizedVol20d ?? null,
     },
     methodology:
-      "13-week σ-cone built from VIX-segmented term structure (wk1-4 VIX9D, wk5-8 VIX, wk9-13 VIX3M, " +
-      "blended at boundaries). σ scaled by VRP (RV/IV clamped 0.7-1.3) and bumped +12% on OPEX/FOMC weeks. " +
-      "Drift = composite + GEX regime + VIX term + CBOE SKEW. Anchored by call/put walls, gamma flip, max pain, " +
-      "JPM collar (within ±2σ, capped ±4%/wk per anchor). Mean-reversion damp grows from 1.00 (wk1) to 0.85 (wk13).",
+      "13-week σ-cone. Per-week incremental σ from VIX-segmented term structure (wk1-3 VIX9D, wk4 BLEND, " +
+      "wk5-7 VIX, wk8 BLEND, wk9-13 VIX3M), scaled by VRP (RV/IV clamped 0.7-1.3) and ×1.12 on OPEX/FOMC weeks. " +
+      "Cumulative σ(k) = √(Σ σ_i²) for monotonic cone growth. Drift = composite + GEX regime + VIX term + " +
+      "CBOE SKEW. Anchored by walls, gamma flip, max pain, JPM collar (within ±15% of spot, ±2σ reach, capped ±4%/wk).",
   };
 }

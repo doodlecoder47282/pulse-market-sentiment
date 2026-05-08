@@ -2081,16 +2081,16 @@ Refine the brief above. Search the web for any critical developments the feed is
         return res.json(cached.data);
       }
 
-      // DTE window: enough days to include the requested expiry. If the caller
-      // asked for a far-dated expiry, widen the chain pull. Default 2-day for
-      // 0DTE/weekly to keep the payload small.
+      // DTE window: enough days to include the requested expiry. Schwab's toDate
+      // can be exclusive in practice, so we add a 7-day buffer past the target.
+      // Default 2-day for 0DTE/weekly to keep the payload small.
       let chainDteWindow = 2;
       if (targetExpiry) {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const tgt = new Date(targetExpiry + "T00:00:00");
         const days = Math.ceil((tgt.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-        chainDteWindow = Math.max(2, Math.min(days + 1, 120)); // cap at 120 days
+        chainDteWindow = Math.max(2, Math.min(days + 7, 180)); // cap at 180 days
       }
 
       let chain: any = await schwabGetOptionChain(symbol, chainDteWindow);

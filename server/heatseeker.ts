@@ -123,20 +123,30 @@ export function buildHeatseeker(
     };
   }
 
-  // 2. Pick target expiry. If caller specified one, find exact match (or closest dte≥target).
-  // Otherwise default to nearest (preserves legacy 0DTE behavior).
+  // 2. Pick target expiry. Caller-supplied date → exact match if present, else
+  // closest available expiry by absolute calendar distance (prefer on/after when
+  // distances tie). No target → nearest expiry (preserves legacy 0DTE behavior).
   let picked = sortedExps[0];
   if (targetExpiry) {
     const exact = sortedExps.find((e) => e.date === targetExpiry);
     if (exact) {
       picked = exact;
     } else {
-      // Closest expiry on/after the target date — fall back to nearest if all earlier
       const target = new Date(targetExpiry + "T00:00:00Z").getTime();
-      const onOrAfter = sortedExps.filter(
-        (e) => new Date(e.date + "T00:00:00Z").getTime() >= target,
-      );
-      if (onOrAfter.length > 0) picked = onOrAfter[0];
+      let best = sortedExps[0];
+      let bestDist = Infinity;
+      for (const e of sortedExps) {
+        const t = new Date(e.date + "T00:00:00Z").getTime();
+        const dist = Math.abs(t - target);
+        // Tiebreak: prefer expiries on/after the target.
+        const onAfter = t >= target;
+        const bestOnAfter = new Date(best.date + "T00:00:00Z").getTime() >= target;
+        if (dist < bestDist || (dist === bestDist && onAfter && !bestOnAfter)) {
+          best = e;
+          bestDist = dist;
+        }
+      }
+      picked = best;
     }
   }
 
