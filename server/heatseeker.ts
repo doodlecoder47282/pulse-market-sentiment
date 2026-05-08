@@ -68,6 +68,8 @@ export interface HeatseekerResult {
     putWall: number | null;   // max negative GEX strike below spot
     zeroGamma: number | null; // strike where cum net GEX flips
   };
+  availableExpiries: { date: string; dte: number }[]; // every expiry present in chain
+  requestedExpiry: string | null; // what the caller asked for (null = nearest auto-pick)
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -90,16 +92,23 @@ export function buildHeatseeker(
   chain: Chain,
   symbol: string,
   spot: number,
+  targetExpiry?: string | null, // YYYY-MM-DD; null/undef = nearest
 ): HeatseekerResult {
   const mult = dollarMult(symbol);
 
-  // 1. Find nearest expiry across both call & put maps
+  // 1. Inventory every expiry present in chain (used for picker UI)
   const allExpKeys = new Set<string>([
     ...Object.keys(chain.callExpDateMap || {}),
     ...Object.keys(chain.putExpDateMap || {}),
   ]);
 
-  if (allExpKeys.size === 0) {
+  const sortedExps = Array.from(allExpKeys)
+    .map((k) => ({ key: k, ...parseExpiry(k) }))
+    .sort((a, b) => a.dte - b.dte);
+
+  const availableExpiries = sortedExps.map((e) => ({ date: e.date, dte: e.dte }));
+
+  if (sortedExps.length === 0) {
     return {
       symbol,
       spot,
@@ -109,17 +118,31 @@ export function buildHeatseeker(
       strikes: [],
       stickyZones: [],
       totals: { netGex: 0, netDex: 0, netVanna: 0, netCharm: 0, callWall: null, putWall: null, zeroGamma: null },
+      availableExpiries: [],
+      requestedExpiry: targetExpiry ?? null,
     };
   }
 
-  const sortedExps = Array.from(allExpKeys)
-    .map((k) => ({ key: k, ...parseExpiry(k) }))
-    .sort((a, b) => a.dte - b.dte);
+  // 2. Pick target expiry. If caller specified one, find exact match (or closest dte≥target).
+  // Otherwise default to nearest (preserves legacy 0DTE behavior).
+  let picked = sortedExps[0];
+  if (targetExpiry) {
+    const exact = sortedExps.find((e) => e.date === targetExpiry);
+    if (exact) {
+      picked = exact;
+    } else {
+      // Closest expiry on/after the target date — fall back to nearest if all earlier
+      const target = new Date(targetExpiry + "T00:00:00Z").getTime();
+      const onOrAfter = sortedExps.filter(
+        (e) => new Date(e.date + "T00:00:00Z").getTime() >= target,
+      );
+      if (onOrAfter.length > 0) picked = onOrAfter[0];
+    }
+  }
 
-  const nearest = sortedExps[0];
-  const expKey = nearest.key;
-  const expiry = nearest.date;
-  const dte = nearest.dte;
+  const expKey = picked.key;
+  const expiry = picked.date;
+  const dte = picked.dte;
 
   // 2. Aggregate per-strike
   const strikeMap = new Map<number, HeatseekerStrike>();
@@ -217,8 +240,10 @@ export function buildHeatseeker(
   processSide(chain.callExpDateMap || {}, "call");
   processSide(chain.putExpDateMap || {}, "put");
 
-  // 3. Trim to strikes within ±5% of spot (0DTE only cares about near-money)
-  const windowPct = 5;
+  // 3. Trim to strikes within an adaptive window — wider on longer-dated expiries
+  // because dealer hedging clusters spread out as DTE grows.
+  // 0DTE: ±5%, weekly: ±7%, monthly+: ±10%
+  const windowPct = dte <= 1 ? 5 : dte <= 14 ? 7 : 10;
   const strikes = Array.from(strikeMap.values())
     .filter((s) => Math.abs(s.distancePct) <= windowPct)
     .map((s) => ({ ...s, totalOI: s.callOI + s.putOI, totalVol: s.callVol + s.putVol }))
@@ -313,5 +338,7 @@ export function buildHeatseeker(
     strikes,
     stickyZones,
     totals,
+    availableExpiries,
+    requestedExpiry: targetExpiry ?? null,
   };
 }

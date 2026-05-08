@@ -2070,18 +2070,30 @@ Refine the brief above. Search the web for any critical developments the feed is
     try {
       const rawSymbol = String(req.query.symbol || "$SPX").trim();
       const symbol = rawSymbol.toUpperCase();
-      const cacheKey = symbol;
+      // Forward-looking expiry slice: caller passes ?expiry=YYYY-MM-DD
+      // Empty/missing → nearest expiry (legacy 0DTE behavior).
+      const rawExpiry = String(req.query.expiry || "").trim();
+      const targetExpiry = /^\d{4}-\d{2}-\d{2}$/.test(rawExpiry) ? rawExpiry : null;
+      const cacheKey = `${symbol}|${targetExpiry ?? ""}`;
 
       const cached = heatseekerCache.get(cacheKey);
       if (cached && Date.now() - cached.at < HEATSEEKER_CACHE_MS) {
         return res.json(cached.data);
       }
 
-      // Fetch chain with 2-day DTE window so we always catch 0DTE + next expiry.
-      // Schwab is the live source; CBOE (cached on disk, weekend-tolerant) is
-      // the fallback so Heatseeker stays useful when Schwab isn't connected
-      // or Schwab API is rate-limiting after hours.
-      let chain: any = await schwabGetOptionChain(symbol, 2);
+      // DTE window: enough days to include the requested expiry. If the caller
+      // asked for a far-dated expiry, widen the chain pull. Default 2-day for
+      // 0DTE/weekly to keep the payload small.
+      let chainDteWindow = 2;
+      if (targetExpiry) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const tgt = new Date(targetExpiry + "T00:00:00");
+        const days = Math.ceil((tgt.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+        chainDteWindow = Math.max(2, Math.min(days + 1, 120)); // cap at 120 days
+      }
+
+      let chain: any = await schwabGetOptionChain(symbol, chainDteWindow);
       let usedSymbol = symbol;
       let scaleToSPX = false; // when true, SPY-derived chain rescaled ×10 to SPX values
 
@@ -2089,7 +2101,7 @@ Refine the brief above. Search the web for any critical developments the feed is
 
       if ("error" in chain) {
         if (isSPX) {
-          const spyChain = await schwabGetOptionChain("SPY", 2);
+          const spyChain = await schwabGetOptionChain("SPY", chainDteWindow);
           if (!("error" in spyChain)) {
             chain = spyChain;
             usedSymbol = "$SPX"; // keep SPX label, rescale below
@@ -2168,7 +2180,7 @@ Refine the brief above. Search the web for any critical developments the feed is
         });
       }
 
-      const result = buildHeatseeker(chain, usedSymbol, spot);
+      const result = buildHeatseeker(chain, usedSymbol, spot, targetExpiry);
       heatseekerCache.set(cacheKey, { at: Date.now(), data: result });
       res.json(result);
     } catch (e: any) {

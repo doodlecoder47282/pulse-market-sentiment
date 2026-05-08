@@ -118,6 +118,67 @@ interface HeatseekerData {
     putWall: number | null;
     zeroGamma: number | null;
   };
+  availableExpiries?: { date: string; dte: number }[];
+  requestedExpiry?: string | null;
+}
+
+// ─── Expiry picker helpers ─────────────────────────────────────────────────
+// All math in ET. We don't need second-level precision — these are calendar
+// dates used to filter the chain.
+function toYMD(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function nextWeekday(from: Date, targetDow: number): Date {
+  // targetDow: 0=Sun..6=Sat. Returns the next occurrence on/after `from`.
+  const d = new Date(from);
+  const cur = d.getDay();
+  let delta = (targetDow - cur + 7) % 7;
+  if (delta === 0) delta = 0; // include today if it matches
+  d.setDate(d.getDate() + delta);
+  return d;
+}
+
+function monthlyOpex(year: number, month: number): Date {
+  // 3rd Friday of (year, month) — month is 0-indexed.
+  const first = new Date(year, month, 1);
+  const firstFridayOffset = (5 - first.getDay() + 7) % 7;
+  return new Date(year, month, 1 + firstFridayOffset + 14);
+}
+
+function buildExpiryQuickPicks(today: Date): { label: string; date: string; tag?: string }[] {
+  const out: { label: string; date: string; tag?: string }[] = [];
+  const t = new Date(today);
+  t.setHours(0, 0, 0, 0);
+
+  // 0DTE if today is Mon-Fri
+  const dow = t.getDay();
+  if (dow >= 1 && dow <= 5) out.push({ label: "Today (0DTE)", date: toYMD(t), tag: "0DTE" });
+
+  // This Friday (skip if today is Friday — already covered as 0DTE)
+  const thisFri = nextWeekday(t, 5);
+  if (toYMD(thisFri) !== toYMD(t)) out.push({ label: "This Friday", date: toYMD(thisFri) });
+
+  // Next Friday
+  const nextFri = new Date(thisFri);
+  nextFri.setDate(nextFri.getDate() + 7);
+  out.push({ label: "Next Friday", date: toYMD(nextFri) });
+
+  // Monthly OPEX (3rd Fri of current or next month)
+  const opexThis = monthlyOpex(t.getFullYear(), t.getMonth());
+  if (opexThis.getTime() >= t.getTime()) {
+    out.push({ label: `Monthly OPEX · ${opexThis.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`, date: toYMD(opexThis), tag: "OPEX" });
+  } else {
+    const opexNext = monthlyOpex(t.getFullYear(), t.getMonth() + 1);
+    out.push({ label: `Monthly OPEX · ${opexNext.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`, date: toYMD(opexNext), tag: "OPEX" });
+  }
+
+  // Dedupe by date
+  const seen = new Set<string>();
+  return out.filter((e) => (seen.has(e.date) ? false : (seen.add(e.date), true)));
 }
 
 // ─── Formatters ────────────────────────────────────────────────────────────
@@ -148,6 +209,8 @@ const PRESETS = ["$SPX", "SPY", "QQQ", "IWM", "NDX", "RUT"] as const;
 export default function Heatseeker() {
   const [symbol, setSymbol] = useState("$SPX");
   const [draft, setDraft] = useState("");
+  // null = nearest expiry (0DTE behavior). Otherwise YYYY-MM-DD.
+  const [pickedExpiry, setPickedExpiry] = useState<string | null>(null);
 
   const commitDraft = () => {
     const cleaned = draft.trim().toUpperCase();
@@ -156,10 +219,14 @@ export default function Heatseeker() {
     setDraft("");
   };
 
+  const quickPicks = useMemo(() => buildExpiryQuickPicks(new Date()), []);
+
   const { data, isLoading, error } = useQuery<HeatseekerData>({
-    queryKey: ["/api/heatseeker", symbol],
+    queryKey: ["/api/heatseeker", symbol, pickedExpiry ?? "nearest"],
     queryFn: async () => {
-      const res = await apiRequest("GET", `/api/heatseeker?symbol=${encodeURIComponent(symbol)}`);
+      const qs = new URLSearchParams({ symbol });
+      if (pickedExpiry) qs.set("expiry", pickedExpiry);
+      const res = await apiRequest("GET", `/api/heatseeker?${qs.toString()}`);
       return res.json();
     },
     refetchInterval: 5_000,        // 5-second live tick
@@ -206,10 +273,66 @@ export default function Heatseeker() {
     </div>
   );
 
+  // Expiry picker: quick picks (Today/This Fri/Next Fri/Monthly OPEX) + dropdown
+  // of every expiry actually present in the chain. "Auto" = nearest expiry (legacy).
+  const availableExpiries = data?.availableExpiries ?? [];
+  const expiryPicker = (
+    <div
+      className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border/40 bg-card/40 px-2 py-1.5"
+      data-testid="heatseeker-expiry-picker"
+    >
+      <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">expiry</span>
+      <div className="flex flex-wrap gap-1">
+        <Button
+          variant={pickedExpiry === null ? "default" : "ghost"}
+          size="sm"
+          className="h-6 px-2 text-[10px] font-mono"
+          onClick={() => setPickedExpiry(null)}
+          data-testid="btn-expiry-auto"
+          title="Nearest expiry (0DTE if available today)"
+        >
+          auto
+        </Button>
+        {quickPicks.map((q) => (
+          <Button
+            key={q.date}
+            variant={pickedExpiry === q.date ? "default" : "ghost"}
+            size="sm"
+            className="h-6 px-2 text-[10px] font-mono"
+            onClick={() => setPickedExpiry(q.date)}
+            data-testid={`btn-expiry-${q.date}`}
+            title={q.date}
+          >
+            {q.label}
+            {q.tag && (
+              <span className="ml-1 rounded-sm bg-amber-500/20 px-1 text-[8px] text-amber-400">{q.tag}</span>
+            )}
+          </Button>
+        ))}
+      </div>
+      {availableExpiries.length > 0 && (
+        <select
+          value={pickedExpiry ?? ""}
+          onChange={(e) => setPickedExpiry(e.target.value || null)}
+          data-testid="select-expiry-custom"
+          className="h-6 rounded-md border border-border/60 bg-background px-2 font-mono text-[10px] text-foreground"
+          title="Pick any expiry from the chain"
+        >
+          <option value="">custom…</option>
+          {availableExpiries.map((e) => (
+            <option key={e.date} value={e.date}>
+              {e.date} · {e.dte}DTE
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+
   if (isLoading) {
     return (
       <div className="space-y-4">
-        {picker}
+        <div className="flex flex-wrap gap-2">{picker}{expiryPicker}</div>
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-96 w-full" />
         <Skeleton className="h-64 w-full" />
@@ -221,7 +344,7 @@ export default function Heatseeker() {
     const msg = (data as any)?.message ?? (error as Error)?.message ?? "Unable to load heatseeker";
     return (
       <div className="space-y-4">
-        {picker}
+        <div className="flex flex-wrap gap-2">{picker}{expiryPicker}</div>
         <Card className="border-amber-500/30 bg-amber-500/5">
           <CardContent className="flex items-center gap-3 pt-6">
             <AlertTriangle className="h-5 w-5 text-amber-500" />
@@ -237,7 +360,7 @@ export default function Heatseeker() {
 
   return (
     <div className="space-y-4">
-      {picker}
+      <div className="flex flex-wrap gap-2">{picker}{expiryPicker}</div>
       <HeatseekerView data={data} />
     </div>
   );
