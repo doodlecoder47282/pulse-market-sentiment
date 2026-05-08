@@ -423,7 +423,7 @@ export function recordSpot(ts: number, spot: number): void {
 /**
  * seedSpotHistory — backfill spotHistory from Schwab 1-min SPX bars at startup.
  *
- * Uses Schwab getPriceHistory("$SPX.X", "day", 1, "minute", 1) and maps
+ * Uses Schwab getPriceHistory("$SPX", "day", 1, "minute", 1) and maps
  * candles (datetime ms, close) into recordSpot calls.
  * Filters to last 30 minutes. Idempotent: if spotHistory already has >= 5
  * entries, skips seeding entirely.
@@ -445,7 +445,7 @@ export async function seedSpotHistory(): Promise<{
   // Schwab 1-min bars for $SPX.X
   try {
     const { getPriceHistory } = await import("./schwab");
-    const resp = await getPriceHistory("$SPX.X", "day", 1, "minute", 1);
+    const resp = await getPriceHistory("$SPX", "day", 1, "minute", 1);
     if (resp.candles.length >= 3) {
       // Filter to last 30 minutes; Schwab datetime is in milliseconds
       const now = Date.now();
@@ -1431,7 +1431,7 @@ async function buildWire15Context(args: EvalArgs): Promise<Wire15GateContext> {
   let todayExpKey: string | null = null;
   try {
     const { getOptionChain } = await import("./schwab");
-    const chain = await getOptionChain("$SPX.X", 0);
+    const chain = await getOptionChain("$SPX", 0);
     if (chain && !("error" in chain)) {
       schwabChain = chain;
       // Find the 0DTE expiry key (same logic as contractPicker.ts)

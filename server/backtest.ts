@@ -103,8 +103,9 @@ function toYmd(unixSec: number): string {
 async function fetchDailyBars(symbol: string, years: number): Promise<Bar[]> {
   try {
     const { getPriceHistory } = await import("./schwab");
+    // Schwab cash indexes use "$" prefix WITHOUT ".X" suffix.
     const schwabSymMap: Record<string, string> = {
-      "^GSPC": "$SPX.X", "^SPX": "$SPX.X", "^VIX": "$VIX.X",
+      "^GSPC": "$SPX", "^SPX": "$SPX", "^VIX": "$VIX",
       "SPY": "SPY", "QQQ": "QQQ",
     };
     const schwabSym = schwabSymMap[symbol] ?? symbol;

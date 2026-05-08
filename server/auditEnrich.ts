@@ -81,8 +81,8 @@ async function fetchVixSpot(): Promise<number | null> {
   }
   try {
     const { getQuotes } = await import("./schwab");
-    const quotes = await getQuotes(["$VIX.X"]);
-    const q = quotes.find((q) => q.symbol === "$VIX.X");
+    const quotes = await getQuotes(["$VIX"]);
+    const q = quotes.find((q) => q.symbol === "$VIX");
     const price: number | null = q?.last ?? null;
     if (price != null && isFinite(price) && price > 0) {
       console.log(`[schwab] fetchVixSpot: ${price}`);

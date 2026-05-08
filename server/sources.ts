@@ -42,19 +42,30 @@ export async function yahooQuote(symbol: string): Promise<{ last: number | null;
   }
 }
 
-/** Map Yahoo-style symbols to Schwab equivalents. */
+/** Map Yahoo-style symbols to Schwab equivalents.
+ *  Schwab cash indexes use "$" prefix WITHOUT ".X" suffix (verified empirically:
+ *  $VIX returns 17.08, $VIX.X returns nothing). For SPX option chains the param
+ *  is also "$SPX" (see routes.ts:1870 comment).
+ */
 function toSchwabSymbol(symbol: string): string {
   const map: Record<string, string> = {
-    "^VIX": "$VIX.X",
-    "^VIX9D": "$VIX9D.X",
-    "^VIX3M": "$VIX3M.X",
-    "^VVIX": "$VVIX.X",
-    "^SKEW": "$SKEW.X",
-    "^GSPC": "$SPX.X",
-    "^SPX": "$SPX.X",
+    "^VIX": "$VIX",
+    "^VIX9D": "$VIX9D",
+    "^VIX3M": "$VIX3M",
+    "^VVIX": "$VVIX",
+    "^SKEW": "$SKEW",
+    "^GSPC": "$SPX",
+    "^SPX": "$SPX",
+    "^VXN": "$VXN",
+    "^RVX": "$RVX",
+    "^DJI": "$DJI",
+    "^IXIC": "$COMPX",
+    "^RUT": "$RUT",
   };
   return map[symbol] ?? symbol;
 }
+
+export { toSchwabSymbol };
 
 /** CBOE delayed options chain for SPY (includes per-contract Greeks). */
 export async function cboeSpyChain(): Promise<any> {

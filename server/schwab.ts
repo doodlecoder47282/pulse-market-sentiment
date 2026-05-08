@@ -152,31 +152,181 @@ export function clearTokens(): void {
   db.delete(schwabTokens).where(eq(schwabTokens.id, 1)).run();
 }
 
-// ─── Generic Schwab fetch ─────────────────────────────────────────────────────
+// ─── Generic Schwab fetch with cache + 429 backoff + self-throttle ────────────
 
-export async function schwabFetch(path: string, params?: Record<string, string | number>): Promise<any | null> {
+// Per-endpoint cache. Key = path|sortedParams. Value = { data, expiresAt }.
+const _cache = new Map<string, { data: any; expiresAt: number }>();
+
+// Per-endpoint TTL (ms). Anything not listed = no cache.
+function cacheTtlMs(path: string): number {
+  if (path.startsWith("marketdata/v1/quotes")) return 30_000;
+  if (path.startsWith("marketdata/v1/pricehistory")) return 300_000; // 5min
+  if (path.startsWith("marketdata/v1/chains")) return 60_000;
+  if (path.startsWith("marketdata/v1/markets")) return 300_000;
+  return 0;
+}
+
+// Self-throttle: track requests in last 60s. Schwab limit ~120/min on marketdata.
+// We cap at 100/min to leave headroom.
+const _reqLog: number[] = [];
+const MAX_REQ_PER_MIN = 100;
+
+function _trimReqLog() {
+  const cutoff = Date.now() - 60_000;
+  while (_reqLog.length && _reqLog[0] < cutoff) _reqLog.shift();
+}
+
+// Per-endpoint cooldown after 429. Map<endpoint-prefix, expiresAt>.
+const _cooldown = new Map<string, number>();
+// Per-endpoint 403 streak counter — reset on success.
+const _403Streak = new Map<string, number>();
+function _endpointKey(path: string): string {
+  // Bucket by first 3 path segments (e.g. "marketdata/v1/pricehistory")
+  return path.split("?")[0].split("/").slice(0, 3).join("/");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+export async function schwabFetch(
+  path: string,
+  params?: Record<string, string | number>,
+  opts?: { skipCache?: boolean },
+): Promise<any | null> {
   const token = await getAccessToken();
   if (!token) return null;
+
+  // Build cache key
+  const paramStr = params ? Object.entries(params).sort().map(([k, v]) => `${k}=${v}`).join("&") : "";
+  const cacheKey = `${path}|${paramStr}`;
+  const ttl = cacheTtlMs(path);
+
+  // Cache hit
+  if (!opts?.skipCache && ttl > 0) {
+    const hit = _cache.get(cacheKey);
+    if (hit && hit.expiresAt > Date.now()) {
+      return hit.data;
+    }
+  }
+
+  // Endpoint cooldown check
+  const epKey = _endpointKey(path);
+  const coolUntil = _cooldown.get(epKey);
+  if (coolUntil && coolUntil > Date.now()) {
+    const stale = _cache.get(cacheKey);
+    if (stale) return stale.data; // serve stale during cooldown
+    return null;
+  }
+
+  // Self-throttle
+  _trimReqLog();
+  if (_reqLog.length >= MAX_REQ_PER_MIN) {
+    const stale = _cache.get(cacheKey);
+    if (stale) return stale.data;
+    // Wait until oldest request ages out
+    const waitMs = Math.max(0, _reqLog[0] + 60_000 - Date.now()) + 50;
+    if (waitMs < 5000) {
+      await sleep(waitMs);
+      _trimReqLog();
+    } else {
+      console.warn("[schwab] self-throttle hit, skipping:", path);
+      return null;
+    }
+  }
+
   const url = new URL(`${SCHWAB_BASE}/${path}`);
   if (params) {
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v)));
   }
-  try {
-    const res = await fetch(url.toString(), {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-      },
-    });
-    if (!res.ok) {
+
+  // Retry loop for 429 + transient 5xx
+  const maxAttempts = 3;
+  let lastStatus = 0;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    _reqLog.push(Date.now());
+    try {
+      const res = await fetch(url.toString(), {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+      });
+      lastStatus = res.status;
+      if (res.ok) {
+        // Reset 403 streak on success
+        _403Streak.delete(epKey);
+        const data = await res.json();
+        if (ttl > 0) _cache.set(cacheKey, { data, expiresAt: Date.now() + ttl });
+        return data;
+      }
+      // 401 → token issue, no retry
+      if (res.status === 401) {
+        console.warn("[schwab] 401 unauthorized:", path);
+        return null;
+      }
+      // 403 → may be permission OR transient (Schwab returns 403 for rate-adjacent
+      // refusals). Cool down endpoint 60s, no retry. Track 403 streak — if 3 in a row
+      // on same endpoint, escalate to 5min.
+      if (res.status === 403) {
+        const streak = (_403Streak.get(epKey) ?? 0) + 1;
+        _403Streak.set(epKey, streak);
+        const coolMs = streak >= 3 ? 5 * 60_000 : 60_000;
+        console.warn(`[schwab] 403 forbidden: ${path} (cooldown ${Math.round(coolMs / 1000)}s, streak ${streak})`);
+        _cooldown.set(epKey, Date.now() + coolMs);
+        return _cache.get(cacheKey)?.data ?? null;
+      }
+      // 429 → backoff with Retry-After if present
+      if (res.status === 429) {
+        const retryAfterHdr = res.headers.get("Retry-After");
+        const retryAfterSec = retryAfterHdr ? parseInt(retryAfterHdr, 10) : 0;
+        const backoffMs = retryAfterSec > 0
+          ? Math.min(retryAfterSec * 1000, 30_000)
+          : Math.min(1000 * Math.pow(2, attempt - 1), 8000);
+        if (attempt < maxAttempts) {
+          await sleep(backoffMs);
+          continue;
+        }
+        // Final 429 → cool down endpoint
+        console.warn("[schwab] 429 rate-limited:", path, "(cooldown 60s)");
+        _cooldown.set(epKey, Date.now() + 60_000);
+        return _cache.get(cacheKey)?.data ?? null;
+      }
+      // 5xx → retry
+      if (res.status >= 500 && attempt < maxAttempts) {
+        await sleep(500 * attempt);
+        continue;
+      }
       console.warn("[schwab] fetch failed:", res.status, path);
-      return null;
+      return _cache.get(cacheKey)?.data ?? null;
+    } catch (e: any) {
+      console.warn("[schwab] fetch exception:", e?.message, path);
+      if (attempt < maxAttempts) {
+        await sleep(500 * attempt);
+        continue;
+      }
+      return _cache.get(cacheKey)?.data ?? null;
     }
-    return await res.json();
-  } catch (e: any) {
-    console.warn("[schwab] fetch exception:", e?.message, path);
-    return null;
   }
+  console.warn("[schwab] all retries exhausted:", path, "last:", lastStatus);
+  return null;
+}
+
+/** Diagnostic snapshot for /api/schwab/diag. */
+export function getSchwabDiagnostics() {
+  _trimReqLog();
+  const now = Date.now();
+  return {
+    cacheEntries: _cache.size,
+    requestsLastMinute: _reqLog.length,
+    maxPerMinute: MAX_REQ_PER_MIN,
+    cooldowns: Array.from(_cooldown.entries())
+      .filter(([_, exp]) => exp > now)
+      .map(([ep, exp]) => ({ endpoint: ep, secondsRemaining: Math.round((exp - now) / 1000) })),
+    forbiddenStreaks: Array.from(_403Streak.entries())
+      .filter(([_, n]) => n > 0)
+      .map(([ep, n]) => ({ endpoint: ep, count: n })),
+  };
 }
 
 // ─── Background token refresh ─────────────────────────────────────────────────
@@ -207,30 +357,47 @@ export type NormalizedQuote = {
   source: "schwab";
 };
 
+/** Normalize legacy `.X` suffix on cash-index symbols. Schwab requires `$VIX`, `$SPX`,
+ *  `$VIX9D`, `$VIX3M`, `$VVIX`, `$SKEW`, etc. WITHOUT the `.X` suffix. Some legacy
+ *  callers (incl. locked files) still pass `$VIX.X` — silently fix here.
+ */
+function _normalizeIndexSymbol(sym: string): string {
+  if (sym.startsWith("$") && sym.endsWith(".X")) {
+    return sym.slice(0, -2);
+  }
+  return sym;
+}
+
 /** Get quotes for multiple symbols via Schwab. Returns empty array if not authenticated. */
 export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
   if (!symbols.length) return [];
+  // Normalize legacy .X suffix on cash indexes; preserve original-→-wire mapping
+  // so callers that filter by their original symbol still find the quote.
+  const wireSymbols = symbols.map(_normalizeIndexSymbol);
+  const wireToOriginal = new Map<string, string>();
+  symbols.forEach((orig, i) => wireToOriginal.set(wireSymbols[i], orig));
   const token = await getAccessToken();
   if (!token) {
     console.warn("[schwab] not authenticated, returning empty quotes");
     return [];
   }
   try {
-    const data = await schwabFetch("marketdata/v1/quotes", { symbols: symbols.join(",") });
+    const data = await schwabFetch("marketdata/v1/quotes", { symbols: wireSymbols.join(",") });
     if (data && typeof data === "object") {
       const results: NormalizedQuote[] = [];
-      for (const sym of symbols) {
-        const q = data[sym];
+      for (const wireSym of wireSymbols) {
+        const q = data[wireSym];
         if (!q) continue;
+        const origSym = wireToOriginal.get(wireSym) ?? wireSym;
         // Schwab returns either "quote" (regular) or "reference" depending on type
         const qd = q.quote ?? q.fundamental ?? {};
         const last = qd.lastPrice ?? qd.mark ?? null;
         // Quote-shield observer (flag-only — see MASTER_SYNTHESIS Tier 2 #6)
         try {
-          if (last != null && isFinite(last)) observeQuote(sym, last);
+          if (last != null && isFinite(last)) observeQuote(origSym, last);
         } catch { /* shield must never break ingest */ }
         results.push({
-          symbol: sym,
+          symbol: origSym,
           last,
           change: qd.netChange ?? null,
           changePercent: qd.netPercentChangeInDouble ?? null,
@@ -265,6 +432,8 @@ export async function getPriceHistory(
   frequency: number = 1,
   needExtendedHours: boolean = false,
 ): Promise<PriceHistoryResponse> {
+  // Normalize legacy .X suffix on cash indexes (silent fix for locked callers)
+  const wireSymbol = _normalizeIndexSymbol(symbol);
   const token = await getAccessToken();
   if (!token) {
     console.warn("[schwab] not authenticated, returning empty candles");
@@ -272,7 +441,7 @@ export async function getPriceHistory(
   }
   try {
     const data = await schwabFetch("marketdata/v1/pricehistory", {
-      symbol,
+      symbol: wireSymbol,
       periodType,
       period,
       frequencyType,
@@ -300,11 +469,13 @@ export async function getOptionChain(
   symbol: string,
   dte?: number,
 ): Promise<OptionChainResponse> {
+  // Normalize legacy .X suffix on cash indexes (silent fix for locked callers)
+  const wireSymbol = _normalizeIndexSymbol(symbol);
   const token = await getAccessToken();
   if (!token) return { error: "schwab_required", source: null };
   try {
     const params: Record<string, string | number> = {
-      symbol,
+      symbol: wireSymbol,
       contractType: "ALL",
       strikeCount: 60,
       includeUnderlyingQuote: "true",

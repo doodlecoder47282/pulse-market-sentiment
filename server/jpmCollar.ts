@@ -130,7 +130,7 @@ export async function buildJPMCollarSnapshot(): Promise<JPMCollarResponse> {
 export async function fetchSpxDailyCloses90d(): Promise<Array<{ t: number; c: number }>> {
   try {
     const { getPriceHistory } = await import("./schwab");
-    const resp = await getPriceHistory("$SPX.X", "month", 6, "daily", 1);
+    const resp = await getPriceHistory("$SPX", "month", 6, "daily", 1);
     const bars = resp.candles
       .filter((c) => c.close != null && isFinite(c.close) && c.close > 0)
       .map((c) => ({ t: Math.floor(c.datetime / 1000), c: c.close }));

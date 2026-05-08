@@ -121,8 +121,9 @@ interface DailyBar { t: number; c: number }
 // Note: Schwab max history is ~10 years for daily; 20y range truncated to available history.
 export async function fetchBars(yahooSymbol: string): Promise<DailyBar[]> {
   // Map legacy Yahoo symbols to Schwab equivalents
+  // Schwab cash indexes use "$" prefix WITHOUT ".X" suffix.
   const schwabSymMap: Record<string, string> = {
-    "^VIX": "$VIX.X", "^GSPC": "$SPX.X", "^SPX": "$SPX.X",
+    "^VIX": "$VIX", "^GSPC": "$SPX", "^SPX": "$SPX",
     "BTC-USD": "BTC/USD",
   };
   const schwabSym = schwabSymMap[yahooSymbol] ?? yahooSymbol;

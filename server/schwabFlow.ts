@@ -82,7 +82,8 @@ export async function buildSchwabFlow(
 
   // Schwab uses '$SPX.X' for the S&P 500 cash index options chain.
   // User passes 'SPX' — normalize here so the rest of the system stays clean.
-  const schwabSymbol = symbol === "SPX" ? "$SPX.X" : symbol;
+  // Schwab cash indexes use "$" prefix WITHOUT ".X" suffix.
+  const schwabSymbol = symbol === "SPX" ? "$SPX" : symbol;
   const chain = await getOptionChain(schwabSymbol, maxDte);
   if ("error" in chain) {
     return { error: chain.error, symbol };

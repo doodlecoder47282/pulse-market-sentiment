@@ -1762,6 +1762,18 @@ Refine the brief above. Search the web for any critical developments the feed is
 
   // ─── Schwab OAuth endpoints ───────────────────────────────────────────────
 
+  // Schwab diagnostics: cache size, request budget, active cooldowns
+  app.get("/api/schwab/diag", async (_req, res) => {
+    try {
+      const { getSchwabDiagnostics, getAccessToken } = await import("./schwab");
+      const tokenOk = !!(await getAccessToken());
+      const diag = getSchwabDiagnostics();
+      res.json({ tokenOk, ...diag, asOf: Math.floor(Date.now() / 1000) });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e) });
+    }
+  });
+
   app.get("/api/schwab/auth-url", (_req, res) => {
     try {
       const url = getAuthUrl();

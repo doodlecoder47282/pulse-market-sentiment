@@ -32,16 +32,19 @@ export type OHLCResponse = {
   asOf: number;
 };
 
-// Map Yahoo-style symbols to Schwab equivalents
+// Map Yahoo-style symbols to Schwab equivalents.
+// Schwab cash indexes use "$" prefix WITHOUT ".X" suffix.
 function toSchwabSymbol(symbol: string): string {
   const map: Record<string, string> = {
-    "^VIX": "$VIX.X",
-    "^VIX9D": "$VIX9D.X",
-    "^VIX3M": "$VIX3M.X",
-    "^VVIX": "$VVIX.X",
-    "^SKEW": "$SKEW.X",
-    "^GSPC": "$SPX.X",
-    "^SPX": "$SPX.X",
+    "^VIX": "$VIX",
+    "^VIX9D": "$VIX9D",
+    "^VIX3M": "$VIX3M",
+    "^VVIX": "$VVIX",
+    "^SKEW": "$SKEW",
+    "^GSPC": "$SPX",
+    "^SPX": "$SPX",
+    "^VXN": "$VXN",
+    "^RVX": "$RVX",
   };
   return map[symbol] ?? symbol;
 }
