@@ -1,32 +1,32 @@
 /**
- * quarterlyTrajectory.ts
+ * quarterlyTrajectory.ts  —  v2 (precision pass)
  *
  * Builds a week-by-week (13-week) bull/base/bear trajectory for the 3-month
  * horizon — instead of just the endpoint targets that applyTermStructureRescale
  * produces.
  *
+ * v2 upgrades over v1:
+ *   1. VRP scaling — σ damped by realized-vol / implied-vol ratio (clamped 0.7–1.3).
+ *   2. Term-structure σ segmentation — wk1-4 use VIX9D, wk5-8 VIX, wk9-13 VIX3M.
+ *      Smooth weighted blend at boundaries so the cone doesn't kink.
+ *   3. Skew-adjusted drift — CBOE SKEW (100-150) drives an extra bearish drift
+ *      component when tail-hedging demand is elevated.
+ *   4. OPEX/FOMC σ bumps — event-week sigma expands +12% on monthly OPEX (3rd
+ *      Fri) and FOMC weeks; tagged in the weekly output.
+ *
  * For each week k ∈ [1..13]:
- *   - σ(k) = spot · (vix/100) · √(k/52)            (annualized → k weeks)
- *   - drift(k) = (driftPerWeek) · k                (linear; sums composite, GEX, VIX term)
+ *   - σ(k) = spot · (vixSegmented(k)/100) · √(k/52) · vrpScale · damp(k) · eventBump(k)
+ *   - drift(k) = (driftPerWeek) · k     (linear; sums composite + GEX + VIX term + skew)
  *   - mean(k)  = spot · (1 + drift(k)) - magnetPull(k)
- *   - bull(k)  = mean(k) + σ(k) · damp(k)
- *   - bear(k)  = mean(k) - σ(k) · damp(k)
- *   - damp(k)  = 1 - 0.15·(k/13)                   (mean-reversion damping growing
- *                                                    with horizon; matches existing
- *                                                    0.85 quarterly damp at week 13)
+ *   - bull(k)  = mean(k) + σ(k)
+ *   - bear(k)  = mean(k) - σ(k)
+ *   - damp(k)  = 1 - 0.15·(k/13)
  *
- * driftPerWeek is the sum of three normalized signals:
- *   - composite tilt: (composite-50)/250 / 13   →  ±0.30%/wk max at composite ±100
- *   - GEX regime: positive GEX = mean-revert toward gammaFlip → 0; negative GEX
- *     amplifies trend → adds momentum from spotVsFlip
- *   - VIX term: backwardation (vix3m < vix < vix9d) = bearish drift; deep contango = bullish
- *
- * Anchor magnets pull the BASE path toward call wall / put wall / JPM strikes
- * that lie within the cone. Pull strength = 0.05 per anchor per week, capped
- * at 0.40 cumulative. Bull/bear paths still extend through anchors.
+ * Anchors pull the BASE path. Walls/flip = primary (weight 1.0); max pain +
+ * JPM = secondary (weight 0.4–0.6). Pull capped at ±4%/wk per anchor.
  *
  * Returns a structure the client renders as a 3-line fan chart with anchor
- * horizontals.
+ * horizontals + event markers.
  */
 
 export interface WeeklyPoint {
@@ -36,8 +36,10 @@ export interface WeeklyPoint {
   bull: number;
   base: number;
   bear: number;
-  sigmaWeek: number;       // σ at this week
+  sigmaWeek: number;       // σ at this week (post all scaling)
   driftPct: number;        // cumulative drift % (base vs spot)
+  events?: string[];       // ["OPEX"], ["FOMC"], ["OPEX","FOMC"], etc.
+  vixSegment?: "VIX9D" | "VIX" | "VIX3M" | "BLEND";
 }
 
 export interface QuarterlyAnchor {
@@ -57,9 +59,13 @@ export interface QuarterlyTrajectory {
     compositeTilt: number;       // weekly drift contribution from composite (decimal)
     gexTilt: number;             // weekly drift contribution from GEX regime (decimal)
     vixTermTilt: number;         // weekly drift contribution from VIX term (decimal)
+    skewTilt: number;            // weekly drift contribution from CBOE SKEW (decimal)  [NEW v2]
     totalDriftPerWeek: number;   // sum of above (decimal)
     annualizedDrift: number;     // total*52 for display
     magnetCount: number;         // anchors actively pulling
+    vrpRatio: number | null;     // RV / IV ratio (decimal, null if RV unknown)  [NEW v2]
+    vrpScale: number;            // σ multiplier from VRP (clamped 0.7-1.3)  [NEW v2]
+    eventWeeks: number;          // count of weeks with event bumps  [NEW v2]
   };
   inputs: {
     vix: number;
@@ -71,6 +77,8 @@ export interface QuarterlyTrajectory {
     maxPain: number;
     totalGex: number;
     composite: number;
+    skew: number | null;            // CBOE SKEW value 100-150  [NEW v2]
+    realizedVol20d: number | null;  // 20D RV annualized decimal  [NEW v2]
   };
   methodology: string;
 }
@@ -87,6 +95,8 @@ interface BuildInputs {
   totalGex: number;              // sign drives regime
   composite: number;             // 0..100
   jpmStrikes?: { shortPut: number; longPut: number; shortCall: number } | null;
+  skew?: number | null;          // CBOE SKEW 100-150 (tail-hedging demand)
+  realizedVol20d?: number | null;  // 20D realized vol, annualized decimal (e.g. 0.18)
 }
 
 const WEEKS = 13;
@@ -112,14 +122,113 @@ function weekEndDateET(k: number): string {
   }).format(target);
 }
 
+/** Parse YYYY-MM-DD into a Date at midnight ET (using UTC math is fine here for date arithmetic). */
+function parseISO(iso: string): Date {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
+
+/**
+ * Is this date within an OPEX week? OPEX = 3rd Friday of the month.
+ * A "week" here = Mon-Fri of that calendar week (the week ending on Friday).
+ */
+function isOpexWeek(weekEndISO: string): boolean {
+  const d = parseISO(weekEndISO);
+  // weekEndISO is always a Friday. Is it the 3rd Friday of its month?
+  const dayOfMonth = d.getUTCDate();
+  return dayOfMonth >= 15 && dayOfMonth <= 21;
+}
+
+/**
+ * Hardcoded FOMC meeting schedule for next ~12 months from May 2026 baseline.
+ * Source: Fed published calendar. Two-day meetings; we tag the WEEK containing
+ * the announcement Wednesday.
+ *
+ * As of May 2026, remaining FY26 meetings: Jun 16-17, Jul 28-29, Sep 15-16,
+ * Oct 27-28, Dec 8-9. FY27: Jan 26-27, Mar 16-17, Apr 27-28, Jun 15-16, Jul 27-28.
+ *
+ * We list the Wednesday announcement date (the day market reacts).
+ */
+const FOMC_DATES_ET = [
+  "2026-06-17",
+  "2026-07-29",
+  "2026-09-16",
+  "2026-10-28",
+  "2026-12-09",
+  "2027-01-27",
+  "2027-03-17",
+  "2027-04-28",
+];
+
+/**
+ * Is this week-ending Friday in a week that contains an FOMC announcement?
+ * Friday ISO covers the work week Mon-Fri ending on that Friday.
+ */
+function isFomcWeek(weekEndISO: string): boolean {
+  const friday = parseISO(weekEndISO);
+  const monday = new Date(friday); monday.setUTCDate(friday.getUTCDate() - 4);
+  return FOMC_DATES_ET.some((iso) => {
+    const fomc = parseISO(iso);
+    return fomc >= monday && fomc <= friday;
+  });
+}
+
+/**
+ * Pick segmented IV for a given week index k (1..13).
+ *   k 1..4   → VIX9D heavy
+ *   k 5..8   → VIX
+ *   k 9..13  → VIX3M
+ * Returns { iv, segmentLabel } in percent (e.g. 17.3 not 0.173).
+ *
+ * Smooth blend across boundaries to avoid kinks: 80/20 blend at boundary weeks.
+ * Falls back gracefully when VIX9D or VIX3M missing.
+ */
+function pickSegmentedVix(
+  k: number,
+  vix: number,
+  vix9d: number | null,
+  vix3m: number | null,
+): { iv: number; segment: WeeklyPoint["vixSegment"] } {
+  // Defaults if specific segment unavailable
+  const v9 = vix9d ?? vix;
+  const v3 = vix3m ?? vix;
+
+  if (k <= 3) return { iv: v9, segment: "VIX9D" };
+  if (k === 4) return { iv: 0.6 * v9 + 0.4 * vix, segment: "BLEND" };
+  if (k <= 7) return { iv: vix, segment: "VIX" };
+  if (k === 8) return { iv: 0.4 * vix + 0.6 * v3, segment: "BLEND" };
+  return { iv: v3, segment: "VIX3M" };
+}
+
+/**
+ * Compute VRP scale: realized vol / implied vol ratio, clamped to [0.7, 1.3].
+ * RV<IV → calmer than implied → narrow cone (typical: ratio 0.75-0.90).
+ * RV>IV → realized is exceeding implied → widen cone (rare, regime change).
+ *
+ * Returns { ratio, scale } — ratio is the raw RV/IV (or null if RV unknown),
+ * scale is the clamped multiplier applied to σ.
+ */
+function computeVrpScale(
+  realizedVol20d: number | null | undefined,
+  vix: number,
+): { ratio: number | null; scale: number } {
+  if (realizedVol20d == null || !isFinite(realizedVol20d) || realizedVol20d <= 0) {
+    return { ratio: null, scale: 1.0 };
+  }
+  const iv = vix / 100; // VIX 17.3 → 0.173 (annualized fraction)
+  if (iv <= 0) return { ratio: null, scale: 1.0 };
+  const ratio = realizedVol20d / iv;
+  const scale = Math.max(0.7, Math.min(1.3, ratio));
+  return { ratio, scale };
+}
+
 /**
  * Magnet pull from anchors that lie within the cone at week k.
  * Returns the signed adjustment to BASE price (negative = pull down, positive = up).
  *
  * Logic: each anchor within ±2σ(k) of the un-magneted base contributes a
- * pull = 0.05 * spot * sign(anchor - base) per week, capped at 0.40 * spot
- * cumulative across all anchors. This way close anchors dominate but no
- * single anchor warps the path.
+ * pull = strength * 0.005 * spot per week, capped at 4% of spot per week
+ * cumulative.
  */
 function computeMagnetPull(
   unmagBase: number,
@@ -128,57 +237,65 @@ function computeMagnetPull(
   anchors: { level: number; weight: number }[],
 ): number {
   let totalPull = 0;
-  const cap = 0.04 * spot; // 4% of spot, hard cap (per week)
+  const cap = 0.04 * spot;
   for (const a of anchors) {
     const dist = a.level - unmagBase;
     const distSigmas = sigmaK > 0 ? Math.abs(dist) / sigmaK : 999;
-    if (distSigmas > 2) continue; // outside cone, no pull
-    // Strength decays with distance: full at 0σ, zero at 2σ
+    if (distSigmas > 2) continue;
     const strength = (1 - distSigmas / 2) * a.weight;
     const pull = Math.sign(dist) * strength * 0.005 * spot;
     totalPull += pull;
   }
-  // Cap
   if (Math.abs(totalPull) > cap) totalPull = Math.sign(totalPull) * cap;
   return totalPull;
 }
 
 export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajectory {
-  const { spot, vix, vix9d, vix3m, callWall, putWall, gammaFlip, maxPain, totalGex, composite, jpmStrikes } = input;
+  const {
+    spot, vix, vix9d, vix3m, callWall, putWall, gammaFlip, maxPain,
+    totalGex, composite, jpmStrikes, skew, realizedVol20d,
+  } = input;
   const asOf = Math.floor(Date.now() / 1000);
 
   // ─── Drift components (per week, decimal) ───
-  // 1. Composite tilt: ±25 composite points → ±0.04% per week → ±2% annualized cap
+  // 1. Composite tilt
   const compositeTilt = ((composite - 50) / 250) / 13;
 
-  // 2. GEX regime tilt:
-  //    Positive GEX → market mean-reverts toward gammaFlip. If spot above flip,
-  //    that's a downward drift; below flip = upward. Magnitude = 0.10% per week
-  //    weighted by spot-vs-flip distance (capped at 1σ_quarterly equivalent).
-  //    Negative GEX → momentum regime, drift extends current spot-vs-flip direction.
-  const sigmaQ = spot * (vix / 100) * Math.sqrt(63 / 252); // 3M σ
+  // 2. GEX regime tilt
+  const sigmaQ = spot * (vix / 100) * Math.sqrt(63 / 252);
   const spotVsFlip = (spot - gammaFlip) / Math.max(1, sigmaQ);
   const spotVsFlipClamped = Math.max(-1, Math.min(1, spotVsFlip));
   const gexTilt = totalGex >= 0
-    ? -0.0008 * spotVsFlipClamped              // pull toward flip (mean-revert)
-    : +0.0012 * spotVsFlipClamped;             // amplify away from flip (momentum)
+    ? -0.0008 * spotVsFlipClamped
+    : +0.0012 * spotVsFlipClamped;
 
-  // 3. VIX term tilt:
-  //    Backwardation (vix9d > vix > vix3m) → fear → bearish drift, ~-0.15%/wk
-  //    Steep contango (vix9d < vix < vix3m, ratios <0.95) → calm → mild bullish, +0.10%/wk
-  //    Otherwise neutral
+  // 3. VIX term tilt
   let vixTermTilt = 0;
   if (vix9d != null && vix3m != null && vix > 0) {
     const r9 = vix9d / vix;
     const r3 = vix / vix3m;
-    if (r9 > 1.05 && r3 > 1.05) vixTermTilt = -0.0015;        // backwardation
-    else if (r9 < 0.95 && r3 < 0.95) vixTermTilt = +0.0010;   // steep contango
+    if (r9 > 1.05 && r3 > 1.05) vixTermTilt = -0.0015;
+    else if (r9 < 0.95 && r3 < 0.95) vixTermTilt = +0.0010;
   }
 
-  const totalDriftPerWeek = compositeTilt + gexTilt + vixTermTilt;
+  // 4. NEW v2: Skew-adjusted drift
+  //    CBOE SKEW measures cost of OTM puts vs OTM calls. 100=neutral, 130=normal,
+  //    150+=elevated tail hedging demand. High skew = institutions paying up for
+  //    crash insurance = bearish prior. Cap contribution at ±0.0006/wk.
+  let skewTilt = 0;
+  if (skew != null && isFinite(skew)) {
+    if (skew > 145) skewTilt = -0.0006;
+    else if (skew > 135) skewTilt = -0.0004;
+    else if (skew > 125) skewTilt = -0.0002;
+    else if (skew < 115) skewTilt = +0.0002;
+  }
+
+  const totalDriftPerWeek = compositeTilt + gexTilt + vixTermTilt + skewTilt;
+
+  // ─── NEW v2: VRP scaling ───
+  const { ratio: vrpRatio, scale: vrpScale } = computeVrpScale(realizedVol20d, vix);
 
   // ─── Anchor list (with weights) ───
-  // Walls/flip = primary (weight 1.0); max pain + JPM = secondary (weight 0.5)
   const anchorList: { level: number; weight: number }[] = [
     { level: callWall, weight: 1.0 },
     { level: putWall,  weight: 1.0 },
@@ -194,40 +311,55 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
   // ─── Build weekly points ───
   const weeks: WeeklyPoint[] = [];
   let cumMagnetPull = 0;
+  let eventWeeksCount = 0;
   for (let k = 1; k <= WEEKS; k++) {
-    const sigmaK = spot * (vix / 100) * SQRT_WEEK_FRAC(k);
-    const driftK = totalDriftPerWeek * k; // cumulative
+    // NEW v2: segmented IV per week
+    const { iv: ivK, segment } = pickSegmentedVix(k, vix, vix9d, vix3m);
+
+    // NEW v2: event week σ bump
+    const weekEnd = weekEndDateET(k);
+    const events: string[] = [];
+    if (isOpexWeek(weekEnd)) events.push("OPEX");
+    if (isFomcWeek(weekEnd)) events.push("FOMC");
+    const eventBump = events.length > 0 ? 1.12 : 1.0;
+    if (events.length > 0) eventWeeksCount++;
+
+    // σ(k) = spot · (segmented_vix/100) · √(k/52) · vrpScale · damp · eventBump
+    const sigmaRaw = spot * (ivK / 100) * SQRT_WEEK_FRAC(k);
+    const sigmaK = sigmaRaw * vrpScale * damp(k) * eventBump;
+
+    const driftK = totalDriftPerWeek * k;
     const unmagBase = spot * (1 + driftK);
 
-    // Cumulative magnet pull (each week adds incremental pull)
     const weeklyPull = computeMagnetPull(unmagBase, sigmaK, spot, anchorList);
-    cumMagnetPull += weeklyPull / WEEKS; // amortize across all weeks
+    cumMagnetPull += weeklyPull / WEEKS;
     const base = unmagBase + cumMagnetPull;
 
-    const sigmaAdj = sigmaK * damp(k);
-    const bull = base + sigmaAdj;
-    const bear = base - sigmaAdj;
+    const bull = base + sigmaK;
+    const bear = base - sigmaK;
 
     weeks.push({
       weekIndex: k,
       weekLabel: `WK${k}`,
-      weekEndDate: weekEndDateET(k),
+      weekEndDate: weekEnd,
       bull: parseFloat(bull.toFixed(2)),
       base: parseFloat(base.toFixed(2)),
       bear: parseFloat(bear.toFixed(2)),
-      sigmaWeek: parseFloat(sigmaAdj.toFixed(2)),
+      sigmaWeek: parseFloat(sigmaK.toFixed(2)),
       driftPct: parseFloat((driftK * 100).toFixed(3)),
+      events: events.length > 0 ? events : undefined,
+      vixSegment: segment,
     });
   }
 
-  // Count active magnets (within 2σ of any week's base)
+  // Count active magnets
   let activeMagnets = 0;
   for (const a of anchorList) {
     const ok = weeks.some((w) => Math.abs(a.level - w.base) <= 2 * w.sigmaWeek);
     if (ok) activeMagnets++;
   }
 
-  // Anchor list for client (kind labels)
+  // Anchor list for client
   const anchors: QuarterlyAnchor[] = [
     { level: callWall, label: "Call Wall", kind: "callWall", strength: "primary" },
     { level: putWall,  label: "Put Wall",  kind: "putWall",  strength: "primary" },
@@ -252,14 +384,23 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
       compositeTilt,
       gexTilt,
       vixTermTilt,
+      skewTilt,
       totalDriftPerWeek,
       annualizedDrift: totalDriftPerWeek * WEEKS_PER_YEAR,
       magnetCount: activeMagnets,
+      vrpRatio,
+      vrpScale,
+      eventWeeks: eventWeeksCount,
     },
-    inputs: { vix, vix9d, vix3m, callWall, putWall, gammaFlip, maxPain, totalGex, composite },
+    inputs: {
+      vix, vix9d, vix3m, callWall, putWall, gammaFlip, maxPain, totalGex, composite,
+      skew: skew ?? null,
+      realizedVol20d: realizedVol20d ?? null,
+    },
     methodology:
-      "13-week σ-cone built from VIX (annualized → √k/52). Drift = composite tilt + GEX regime + VIX term, " +
-      "anchored by call/put walls, gamma flip, max pain, JPM collar. Mean-reversion damp grows from 1.00 (wk1) to 0.85 (wk13). " +
-      "Anchors within ±2σ of base pull the path; pull capped at ±4%/wk per anchor.",
+      "13-week σ-cone built from VIX-segmented term structure (wk1-4 VIX9D, wk5-8 VIX, wk9-13 VIX3M, " +
+      "blended at boundaries). σ scaled by VRP (RV/IV clamped 0.7-1.3) and bumped +12% on OPEX/FOMC weeks. " +
+      "Drift = composite + GEX regime + VIX term + CBOE SKEW. Anchored by call/put walls, gamma flip, max pain, " +
+      "JPM collar (within ±2σ, capped ±4%/wk per anchor). Mean-reversion damp grows from 1.00 (wk1) to 0.85 (wk13).",
   };
 }

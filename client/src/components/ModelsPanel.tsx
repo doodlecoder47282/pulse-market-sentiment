@@ -180,6 +180,8 @@ interface TrajectoryWeek {
   bear: number;
   sigmaWeek: number;
   driftPct: number;
+  events?: string[];
+  vixSegment?: "VIX9D" | "VIX" | "VIX3M" | "BLEND";
 }
 interface TrajectoryAnchor {
   level: number;
@@ -197,9 +199,13 @@ interface WeeklyTrajectory {
     compositeTilt: number;
     gexTilt: number;
     vixTermTilt: number;
+    skewTilt?: number;
     totalDriftPerWeek: number;
     annualizedDrift: number;
     magnetCount: number;
+    vrpRatio?: number | null;
+    vrpScale?: number;
+    eventWeeks?: number;
   };
   inputs: {
     vix: number | null;
@@ -211,6 +217,8 @@ interface WeeklyTrajectory {
     maxPain: number | null;
     totalGex: number | null;
     composite: number;
+    skew?: number | null;
+    realizedVol20d?: number | null;
   };
   methodology?: string;
 }
@@ -1576,8 +1584,11 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
 
   // Build chart data ─ prepend WK0 (today, all three lines = spot)
   const chartData = useMemo(() => {
-    const rows: Array<{ wk: string; date: string; bull: number; base: number; bear: number; sigma: number; drift: number }> = [
-      { wk: "NOW", date: "today", bull: traj.spot, base: traj.spot, bear: traj.spot, sigma: 0, drift: 0 },
+    const rows: Array<{
+      wk: string; date: string; bull: number; base: number; bear: number;
+      sigma: number; drift: number; events: string; segment: string;
+    }> = [
+      { wk: "NOW", date: "today", bull: traj.spot, base: traj.spot, bear: traj.spot, sigma: 0, drift: 0, events: "", segment: "" },
     ];
     for (const w of traj.weeks) {
       rows.push({
@@ -1588,6 +1599,8 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
         bear: w.bear,
         sigma: w.sigmaWeek,
         drift: w.driftPct,
+        events: (w.events ?? []).join(","),
+        segment: w.vixSegment ?? "",
       });
     }
     return rows;
@@ -1653,6 +1666,14 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
         {row.sigma > 0 && (
           <div className="mt-1 text-[9px] text-muted-foreground">
             ±1σ ±{fmtPrice(row.sigma)} · cum drift {(row.drift * 100).toFixed(2)}%
+          </div>
+        )}
+        {row.segment && (
+          <div className="text-[9px] text-cyan-400/70">σ source: {row.segment}</div>
+        )}
+        {row.events && (
+          <div className="mt-1 inline-block rounded border border-amber-500/50 bg-amber-500/10 px-1 text-[9px] font-bold text-amber-400">
+            {row.events.replace(/,/g, " + ")}
           </div>
         )}
       </div>
@@ -1726,6 +1747,20 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
               strokeOpacity={0.6}
             />
 
+            {/* Event-week vertical markers (OPEX / FOMC) */}
+            {traj.weeks.filter(w => w.events && w.events.length > 0).map(w => {
+              const isFomc = w.events!.includes("FOMC");
+              return (
+                <ReferenceLine
+                  key={`evt-${w.weekIndex}`}
+                  x={w.weekLabel}
+                  stroke={isFomc ? "#f97316" : "#a855f7"}
+                  strokeDasharray="3 2"
+                  strokeOpacity={0.4}
+                />
+              );
+            })}
+
             {/* Bull / Base / Bear lines */}
             <Line
               type="monotone"
@@ -1781,16 +1816,16 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
           </div>
         </div>
 
-        {/* Drivers */}
+        {/* Drivers — v2 with 4 components */}
         <div className="rounded border border-cyan-500/20 bg-black/50 p-2 font-mono text-[10px]">
           <div className="mb-1 text-[9px] uppercase tracking-widest text-cyan-400/80">DRIFT DRIVERS (PER WEEK)</div>
-          <div className="grid grid-cols-3 gap-2 text-[10px]">
+          <div className="grid grid-cols-4 gap-2 text-[10px]">
             <div>
               <div className="text-[8px] text-muted-foreground/70">COMPOSITE</div>
               <div className={traj.drivers.compositeTilt >= 0 ? "text-green-400" : "text-red-400"}>
                 {(traj.drivers.compositeTilt * 100).toFixed(3)}%
               </div>
-              <div className="text-[8px] text-muted-foreground/50">score {traj.inputs.composite}</div>
+              <div className="text-[8px] text-muted-foreground/50">{traj.inputs.composite}</div>
             </div>
             <div>
               <div className="text-[8px] text-muted-foreground/70">GEX</div>
@@ -1807,7 +1842,16 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
                 {(traj.drivers.vixTermTilt * 100).toFixed(3)}%
               </div>
               <div className="text-[8px] text-muted-foreground/50">
-                vix {traj.inputs.vix?.toFixed(1) ?? "\u2014"}
+                v {traj.inputs.vix?.toFixed(1) ?? "\u2014"}
+              </div>
+            </div>
+            <div>
+              <div className="text-[8px] text-muted-foreground/70">SKEW</div>
+              <div className={(traj.drivers.skewTilt ?? 0) >= 0 ? "text-green-400" : "text-red-400"}>
+                {((traj.drivers.skewTilt ?? 0) * 100).toFixed(3)}%
+              </div>
+              <div className="text-[8px] text-muted-foreground/50">
+                {traj.inputs.skew?.toFixed(1) ?? "\u2014"}
               </div>
             </div>
           </div>
@@ -1821,9 +1865,57 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
         </div>
       </div>
 
+      {/* v2: σ scaling row — VRP + event weeks + segments */}
+      <div className="mt-2 rounded border border-purple-500/20 bg-black/50 p-2 font-mono text-[10px]">
+        <div className="mb-1 text-[9px] uppercase tracking-widest text-purple-400/80">σ SCALING (— cone width drivers)</div>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 text-[10px]">
+          <div>
+            <div className="text-[8px] text-muted-foreground/70">VRP RATIO</div>
+            <div className={
+              (traj.drivers.vrpRatio ?? 1) < 0.85 ? "text-cyan-400" :
+              (traj.drivers.vrpRatio ?? 1) > 1.05 ? "text-amber-400" :
+              "text-foreground"
+            }>
+              {traj.drivers.vrpRatio != null ? traj.drivers.vrpRatio.toFixed(2) : "\u2014"}
+              <span className="text-[8px] text-muted-foreground/60"> RV/IV</span>
+            </div>
+            <div className="text-[8px] text-muted-foreground/50">
+              rv {traj.inputs.realizedVol20d != null ? (traj.inputs.realizedVol20d * 100).toFixed(1) + "%" : "\u2014"} / iv {traj.inputs.vix?.toFixed(1) ?? "\u2014"}%
+            </div>
+          </div>
+          <div>
+            <div className="text-[8px] text-muted-foreground/70">VRP SCALE</div>
+            <div className={
+              (traj.drivers.vrpScale ?? 1) < 0.95 ? "text-cyan-400" :
+              (traj.drivers.vrpScale ?? 1) > 1.05 ? "text-amber-400" :
+              "text-foreground"
+            }>
+              ×{(traj.drivers.vrpScale ?? 1).toFixed(2)}
+            </div>
+            <div className="text-[8px] text-muted-foreground/50">cone narrow/wide</div>
+          </div>
+          <div>
+            <div className="text-[8px] text-muted-foreground/70">EVENT WEEKS</div>
+            <div className={(traj.drivers.eventWeeks ?? 0) > 0 ? "text-amber-400" : "text-foreground"}>
+              {traj.drivers.eventWeeks ?? 0}
+              <span className="text-[8px] text-muted-foreground/60"> /13</span>
+            </div>
+            <div className="text-[8px] text-muted-foreground/50">σ +12% on OPEX/FOMC</div>
+          </div>
+          <div>
+            <div className="text-[8px] text-muted-foreground/70">TERM SEG</div>
+            <div className="text-cyan-400 text-[10px]">VIX9D → VIX → VIX3M</div>
+            <div className="text-[8px] text-muted-foreground/50">
+              {traj.inputs.vix9d?.toFixed(1) ?? "\u2014"} → {traj.inputs.vix?.toFixed(1) ?? "\u2014"} → {traj.inputs.vix3m?.toFixed(1) ?? "\u2014"}
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="mt-2 text-[9px] text-muted-foreground/50 font-mono">
-        Drift-tilted GBM cone with magnet pull toward dealer levels (call wall, put wall, gamma flip, max pain, JPM collar).
-        σ(k) = spot · (vix/100) · √(k/52) damped 1.00→0.85 over 13 weeks. NOT a forecast — a probability cone.
+        Drift-tilted GBM cone with magnet pull toward dealer levels. σ segmented across VIX9D/VIX/VIX3M, scaled by
+        VRP (RV÷IV clamped 0.7-1.3), bumped +12% on OPEX/FOMC weeks. Drift = composite + GEX + VIX term + SKEW.
+        Walls/flip pull primary, max pain + JPM secondary, capped ±4%/wk per anchor. NOT a forecast — a probability cone.
       </div>
     </div>
   );

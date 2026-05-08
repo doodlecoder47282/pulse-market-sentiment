@@ -709,6 +709,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             };
           } catch { /* JPM optional */ }
 
+          // v2 precision inputs:
+          //   - skew: CBOE SKEW (100-150) from snap, drives skew-adjusted drift
+          //   - realizedVol20d: 20D realized vol from daily horizon audit, drives VRP scaling
+          const skewVal = snap.vol?.skew?.value ?? null;
+          const dailyAudit = (enriched.horizons?.daily as any)?.audit;
+          const realizedVol20d: number | null = dailyAudit?.realizedSigma20d ?? null;
+
           const { buildQuarterlyTrajectory } = await import("./quarterlyTrajectory");
           const traj = buildQuarterlyTrajectory({
             spot: q.spot,
@@ -722,6 +729,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             totalGex: snap.gamma.totalGex,
             composite,
             jpmStrikes,
+            skew: skewVal,
+            realizedVol20d,
           });
           q.weeklyTrajectory = traj;
         }
