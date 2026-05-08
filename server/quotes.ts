@@ -152,7 +152,10 @@ export async function fetchIntraday(
 export async function fetchPrevDayOHLC(symbol: string): Promise<DailyOHLC | null> {
   const schwabSym = toSchwabSymbol(symbol);
   try {
-    const resp = await getPriceHistory(schwabSym, "day", 10, "daily", 1);
+    // Schwab API: periodType=day only supports frequencyType=minute. For DAILY bars
+    // we must use periodType=month + frequencyType=daily. 1 month gives ~22 sessions,
+    // plenty to pick the most recent completed one.
+    const resp = await getPriceHistory(schwabSym, "month", 1, "daily", 1);
     if (!resp.candles.length) return null;
     const rows: DailyOHLC[] = resp.candles
       .map((c) => ({ t: Math.floor(c.datetime / 1000), o: c.open, h: c.high, l: c.low, c: c.close }))

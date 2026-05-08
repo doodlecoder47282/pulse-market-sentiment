@@ -2595,6 +2595,14 @@ Refine the brief above. Search the web for any critical developments the feed is
         macro,
         whalePressure,
       });
+      // Side-effect: feed predictor's rolling history so it exits "warming" within
+      // a few polls. Without this, the panel stays at 0/5 samples forever.
+      try {
+        const { recordRawRegime } = await import("./regimePredictor");
+        const rawNow = (out as any).currentRegime;
+        const dfiNow = Number(daily.audit?.dfi ?? 0);
+        if (rawNow) recordRawRegime(rawNow, dfiNow);
+      } catch {}
       // Closed-loop edge tracking (throttled).
       try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -2787,6 +2795,15 @@ Refine the brief above. Search the web for any critical developments the feed is
     startPlaybookScheduler();
   } catch (e: any) {
     console.warn(`[playbookScheduler] failed to start: ${e?.message ?? e}`);
+  }
+
+  // Regime history ticker — keeps /api/regime/predict warm so the panel never
+  // sits at "0/5 samples needed" when the UI hasn't been polling.
+  try {
+    const { startRegimeHistoryTicker } = await import("./regimeHistoryTicker");
+    startRegimeHistoryTicker();
+  } catch (e: any) {
+    console.warn(`[regimeHistoryTicker] failed to start: ${e?.message ?? e}`);
   }
 
   // Kick off stock daily-bars refresher (6h cadence). Extends daily_bars beyond
