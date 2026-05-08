@@ -38,14 +38,25 @@ async function tick() {
 
     const today = _todayET();
 
-    // 9:00 ET (any tick from 09:00–09:14) → lock if not already
+    const mins = hh * 60 + mm;
+
+    // Primary lock window: 9:00–9:14 ET (pre-open)
     if (hh === 9 && mm >= 0 && mm < 15 && _lockedToday !== today) {
       await lockPlaybookAtOpen("SPY");
       _lockedToday = today;
     }
 
+    // Catch-up lock: if server boots after 9:14 ET on a weekday and we have no
+    // lock for today yet, lock now using current snapshot. Drift then anchors
+    // to the moment we caught the day, not 9:00 — which is honest and useful.
+    // Only catches up during 9:15–16:00 ET.
+    if (mins >= 9 * 60 + 15 && mins <= 16 * 60 && _lockedToday !== today) {
+      await lockPlaybookAtOpen("SPY");
+      _lockedToday = today;
+      console.log("[playbookScheduler] catch-up lock fired (server booted post-9:00 ET)");
+    }
+
     // 9:30–16:00 ET → keep snapshot warm (cheap, uses existing snapshot cache)
-    const mins = hh * 60 + mm;
     if (mins >= 9 * 60 + 30 && mins <= 16 * 60) {
       // Pre-warm so /drift returns instantly
       await buildDailyPlaybook("SPY");

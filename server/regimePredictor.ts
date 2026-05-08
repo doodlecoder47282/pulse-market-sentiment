@@ -138,7 +138,7 @@ export interface RegimePredictorInput {
   horizonMinutes?: number;
   /** Optional macro snapshot (vix term, dxy, tnx). Neutral fallback if absent. */
   macro?: {
-    vixTermRatio?: number | null; // VIX9D / VIX, <1 = backwardation = stress
+    vixTermRatio?: number | null; // VIX9D / VIX30D. >1 = backwardation = stress; <0.95 = steep contango = calm
     dxyDelta?: number | null;     // intraday %
     tnxDelta?: number | null;     // intraday %
   } | null;
@@ -373,19 +373,24 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
     }
   }
 
-  // 11) Macro regime — VIX term backwardation = stress, biases CHOP_STRONG/NEUTRAL
+  // 11) Macro regime — vixTermRatio = VIX9D / VIX30D.
+  //   ratio > 1   → backwardation (front IV > 30d IV) → STRESS, vol expansion → TREND/NEUTRAL
+  //   ratio < 0.95 → steep contango (front much cheaper than 30d) → CALM, vol bleed → CHOP
+  //   0.95–1.10 → normal
+  // (Bug fix 2026-05-08: prior version had inverted thresholds — it labeled
+  //  contango as stress and ignored real backwardation entirely.)
   const vixTermRatio = input.macro?.vixTermRatio ?? null;
   let macroStress: "calm" | "normal" | "stress" = "normal";
   if (vixTermRatio != null && Number.isFinite(vixTermRatio)) {
-    if (vixTermRatio < 0.95) {
+    if (vixTermRatio > 1.05) {
+      // VIX9D > VIX30D → backwardation → vol expansion likely
       macroStress = "stress";
-      // VIX9D > VIX = front stress = vol expansion likely = TREND or NEUTRAL chop
       scores.TREND_STRONG += 0.3;
       scores.NEUTRAL += 0.3;
       scores.CHOP_WEAK -= 0.2;
-    } else if (vixTermRatio > 1.10) {
+    } else if (vixTermRatio < 0.95) {
+      // Steep contango → vol bleed → chop favored
       macroStress = "calm";
-      // Steep contango = vol bleed = chop favored
       scores.CHOP_STRONG += 0.3;
       scores.CHOP_WEAK += 0.2;
       scores.TREND_STRONG -= 0.2;
