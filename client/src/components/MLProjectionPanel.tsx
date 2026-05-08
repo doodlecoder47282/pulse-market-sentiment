@@ -675,7 +675,7 @@ export default function MLProjectionPanel() {
     return Array.from(byMin.values()).sort((a, b) => a.minute - b.minute);
   }, [candleRows, pathRows, extRows]);
 
-  // Y-axis SAFETY — never default to 0..N
+  // Y-axis SAFETY — never default to 0..N. Always tight around the action.
   const yDomain = useMemo<[number, number]>(() => {
     const candlePrices: number[] = [];
     for (const r of candleRows) {
@@ -684,10 +684,14 @@ export default function MLProjectionPanel() {
     }
     const projPrices: number[] = [];
     for (const p of pathRows) {
-      projPrices.push(p.bull, p.base, p.bear);
+      if (p.bull > 0) projPrices.push(p.bull);
+      if (p.base > 0) projPrices.push(p.base);
+      if (p.bear > 0) projPrices.push(p.bear);
     }
     for (const e of extRows) {
-      projPrices.push(e.bullExt, e.baseExt, e.bearExt);
+      if (e.bullExt > 0) projPrices.push(e.bullExt);
+      if (e.baseExt > 0) projPrices.push(e.baseExt);
+      if (e.bearExt > 0) projPrices.push(e.bearExt);
     }
     const levelPrices = levelSpecs
       .map((l) => l.value)
@@ -695,16 +699,55 @@ export default function MLProjectionPanel() {
     const all = [...candlePrices, ...projPrices, ...levelPrices].filter(
       (v) => Number.isFinite(v) && v > 0,
     );
-    if (all.length === 0 && spot && spot > 0) all.push(spot);
+    // If we only have spot, build a tight ±1.5% window so the chart shows real range.
+    if (all.length === 0 && spot && spot > 0) {
+      const half = spot * 0.015;
+      return [spot - half, spot + half];
+    }
     if (all.length === 0) {
       // Last-resort safe default — never 0..N
       return [400, 600];
     }
-    const lo = Math.min(...all);
-    const hi = Math.max(...all);
-    const pad = Math.max((hi - lo) * 0.1, lo * 0.003);
+    let lo = Math.min(...all);
+    let hi = Math.max(...all);
+    // Keep spot in view even if levels/projection drift
+    if (spot && spot > 0) {
+      lo = Math.min(lo, spot);
+      hi = Math.max(hi, spot);
+    }
+    // Floor the window to at least ±0.5% around midpoint so a flat day still reads.
+    const mid = (lo + hi) / 2;
+    const minHalf = mid * 0.005;
+    if ((hi - lo) / 2 < minHalf) {
+      lo = mid - minHalf;
+      hi = mid + minHalf;
+    }
+    const pad = Math.max((hi - lo) * 0.08, mid * 0.002);
     return [lo - pad, hi + pad];
   }, [candleRows, pathRows, extRows, levelSpecs, spot]);
+
+  // Explicit y-axis ticks — recharts auto-ticks fail when domain is small
+  const yTicks = useMemo<number[]>(() => {
+    const [lo, hi] = yDomain;
+    if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return [];
+    const span = hi - lo;
+    // Aim for 6 ticks. Pick a step that's a nice round number.
+    const rawStep = span / 6;
+    const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const norm = rawStep / mag;
+    let step: number;
+    if (norm < 1.5) step = 1 * mag;
+    else if (norm < 3) step = 2 * mag;
+    else if (norm < 7) step = 5 * mag;
+    else step = 10 * mag;
+    const start = Math.ceil(lo / step) * step;
+    const ticks: number[] = [];
+    for (let v = start; v <= hi + 1e-9; v += step) {
+      ticks.push(Number(v.toFixed(6)));
+      if (ticks.length > 12) break;
+    }
+    return ticks;
+  }, [yDomain]);
 
   const nowMin = nowMinuteOfDay();
   const status = projection?.status ?? "UNAVAILABLE";
@@ -950,11 +993,13 @@ export default function MLProjectionPanel() {
               />
               <YAxis
                 domain={yDomain}
+                ticks={yTicks.length > 0 ? yTicks : undefined}
                 tickFormatter={(v) => Number(v).toFixed(2)}
                 stroke="#64748b"
                 fontSize={11}
                 width={70}
-                allowDataOverflow={false}
+                allowDataOverflow={true}
+                scale="linear"
               />
               <Tooltip
                 contentStyle={{
