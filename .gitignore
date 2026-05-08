@@ -20,3 +20,6 @@ backups/
 .DS_Store
 ml_service/.venv/
 ml_service/__pycache__/
+
+# CBOE delayed chain disk cache (regenerated at runtime)
+data/cboe/

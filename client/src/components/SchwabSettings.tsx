@@ -33,6 +33,68 @@ interface SchwabStatus {
   needsReauth: boolean;
 }
 
+interface SchwabDiag {
+  tokenOk: boolean;
+  cacheEntries: number;
+  requestsLastMinute: number;
+  maxPerMinute: number;
+  cooldowns: { endpoint: string; secondsRemaining: number }[];
+  forbiddenStreaks: { endpoint: string; count: number }[];
+  cboeFallbackHits?: { symbol: string; count: number; secondsAgo: number }[];
+  asOf: number;
+}
+
+type SourceState = "schwab_live" | "schwab_cached" | "cboe_fallback" | "yahoo" | "offline";
+
+/** Map a UI data-source row to its real live state from the diag feed. */
+function deriveEndpointState(
+  key: "quotes" | "history" | "chains" | "gamma",
+  isConnected: boolean,
+  diag: SchwabDiag | undefined,
+): { source: SourceState; detail: string } {
+  if (!isConnected) {
+    if (key === "chains") return { source: "cboe_fallback", detail: "CBOE delayed (~15min)" };
+    return { source: "yahoo", detail: "Yahoo delayed" };
+  }
+
+  // Endpoint name in cooldown/forbidden maps (matches schwabFetch path keys)
+  const ep =
+    key === "quotes"  ? "quotes"
+    : key === "history" ? "pricehistory"
+    : key === "chains" ? "chains"
+    : "chains"; // gamma piggybacks on chains
+
+  const cool = diag?.cooldowns?.find((c) => c.endpoint.toLowerCase().includes(ep));
+  const streak = diag?.forbiddenStreaks?.find((s) => s.endpoint.toLowerCase().includes(ep));
+
+  // Chains: if we've actually fallen back to CBOE in the last 5 min, that's the real source
+  if (key === "chains" || key === "gamma") {
+    const cboeHits = diag?.cboeFallbackHits ?? [];
+    if (cboeHits.length > 0) {
+      const total = cboeHits.reduce((acc, h) => acc + h.count, 0);
+      const symbols = cboeHits.slice(0, 3).map((h) => h.symbol).join(", ");
+      const more = cboeHits.length > 3 ? ` +${cboeHits.length - 3} more` : "";
+      return { source: "cboe_fallback", detail: `CBOE delayed · ${total} hits (${symbols}${more})` };
+    }
+    if (streak && streak.count >= 2) {
+      return { source: "cboe_fallback", detail: `CBOE delayed (Schwab 403 x${streak.count})` };
+    }
+    if (cool) {
+      return { source: "cboe_fallback", detail: `CBOE delayed (Schwab cooldown ${cool.secondsRemaining}s)` };
+    }
+    return { source: "schwab_live", detail: "Schwab live" };
+  }
+
+  // Quotes / history: cooldown means we're serving cached
+  if (cool) {
+    return { source: "schwab_cached", detail: `Cached (cooldown ${cool.secondsRemaining}s)` };
+  }
+  if (streak && streak.count >= 2) {
+    return { source: "schwab_cached", detail: `Cached (403 x${streak.count})` };
+  }
+  return { source: "schwab_live", detail: "Schwab live" };
+}
+
 // ─── Status pill (used in header) ────────────────────────────────────────────
 
 export function SchwabStatusPill({ onClick }: { onClick: () => void }) {
@@ -79,27 +141,22 @@ export function SchwabStatusPill({ onClick }: { onClick: () => void }) {
 
 // ─── Source badge ─────────────────────────────────────────────────────────────
 
-function SourceBadge({ source }: { source: "schwab" | "yahoo" | "offline" }) {
-  if (source === "schwab") {
-    return (
-      <span className="flex items-center gap-1 text-[10px] text-emerald-400">
-        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-        Schwab LIVE
-      </span>
-    );
-  }
-  if (source === "yahoo") {
-    return (
-      <span className="flex items-center gap-1 text-[10px] text-amber-400">
-        <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-        Yahoo (fallback)
-      </span>
-    );
-  }
+function SourceBadge({ source, detail }: { source: SourceState; detail?: string }) {
+  const styles: Record<SourceState, { color: string; dot: string; pulse: boolean; label: string }> = {
+    schwab_live:    { color: "#34d399", dot: "bg-emerald-400", pulse: true,  label: "Schwab LIVE" },
+    schwab_cached:  { color: "#a3e635", dot: "bg-lime-400",     pulse: false, label: "Schwab cached" },
+    cboe_fallback:  { color: "#fbbf24", dot: "bg-amber-400",    pulse: false, label: "CBOE delayed" },
+    yahoo:          { color: "#fb923c", dot: "bg-orange-400",   pulse: false, label: "Yahoo delayed" },
+    offline:        { color: "#f87171", dot: "bg-red-500",      pulse: false, label: "Offline" },
+  };
+  const s = styles[source];
   return (
-    <span className="flex items-center gap-1 text-[10px] text-red-400">
-      <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-      Offline
+    <span className="flex items-center gap-1 text-[10px]" style={{ color: s.color }} title={detail}>
+      <span className={`h-1.5 w-1.5 rounded-full ${s.dot} ${s.pulse ? "animate-pulse" : ""}`} />
+      <span>{s.label}</span>
+      {detail && source !== "schwab_live" && (
+        <span className="text-muted-foreground/70 ml-0.5 truncate max-w-[140px]">· {detail}</span>
+      )}
     </span>
   );
 }
@@ -124,6 +181,16 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
     },
     refetchInterval: open ? 10_000 : false,
     staleTime: 8_000,
+    enabled: open,
+  });
+
+  const { data: diag } = useQuery<SchwabDiag>({
+    queryKey: ["/api/schwab/diag"],
+    queryFn: async () => {
+      const r = await apiRequest("GET", "/api/schwab/diag");
+      return r.json();
+    },
+    refetchInterval: open ? 5_000 : false,
     enabled: open,
   });
 
@@ -420,28 +487,54 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
               Data Sources
             </div>
             <div className="grid grid-cols-1 gap-1.5">
-              {[
-                { label: "Quotes (SPY, VIX, indices)", key: "quotes" },
-                { label: "Price History (charts)", key: "history" },
-                { label: "Option Chains (flow)", key: "chains" },
-                { label: "Gamma Levels (models)", key: "gamma" },
-              ].map(({ label, key }) => (
-                <div
-                  key={key}
-                  className="flex items-center justify-between rounded-md border border-border/30 bg-muted/10 px-3 py-1.5"
-                  data-testid={`datasource-${key}`}
-                >
-                  <span className="text-[11px] text-muted-foreground">{label}</span>
-                  <SourceBadge
-                    source={
-                      key === "chains"
-                        ? (isConnected ? "schwab" : "offline")
-                        : (isConnected ? "schwab" : "yahoo")
-                    }
-                  />
-                </div>
-              ))}
+              {([
+                { label: "Quotes (SPY, VIX, indices)", key: "quotes" as const },
+                { label: "Price History (charts)", key: "history" as const },
+                { label: "Option Chains (flow)", key: "chains" as const },
+                { label: "Gamma Levels (models)", key: "gamma" as const },
+              ]).map(({ label, key }) => {
+                const { source, detail } = deriveEndpointState(key, isConnected, diag);
+                return (
+                  <div
+                    key={key}
+                    className="flex items-center justify-between rounded-md border border-border/30 bg-muted/10 px-3 py-1.5"
+                    data-testid={`datasource-${key}`}
+                  >
+                    <span className="text-[11px] text-muted-foreground">{label}</span>
+                    <SourceBadge source={source} detail={detail} />
+                  </div>
+                );
+              })}
             </div>
+
+            {/* Live cooldown / rate-budget banner */}
+            {diag && (diag.cooldowns.length > 0 || diag.forbiddenStreaks.length > 0 || diag.requestsLastMinute > diag.maxPerMinute * 0.8) && (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[10px] text-amber-200/90 leading-snug space-y-0.5">
+                {diag.cooldowns.length > 0 && (
+                  <div>
+                    <span className="font-semibold">Active cooldowns:</span>{" "}
+                    {diag.cooldowns.map((c) => `${c.endpoint} (${c.secondsRemaining}s)`).join(", ")}
+                  </div>
+                )}
+                {diag.forbiddenStreaks.length > 0 && (
+                  <div>
+                    <span className="font-semibold">403 streaks:</span>{" "}
+                    {diag.forbiddenStreaks.map((s) => `${s.endpoint} x${s.count}`).join(", ")}
+                    <span className="text-muted-foreground"> · check Schwab Developer entitlement</span>
+                  </div>
+                )}
+                {diag.requestsLastMinute > diag.maxPerMinute * 0.8 && (
+                  <div>
+                    <span className="font-semibold">Rate budget:</span> {diag.requestsLastMinute}/{diag.maxPerMinute} req/min
+                  </div>
+                )}
+              </div>
+            )}
+            {diag && diag.cooldowns.length === 0 && diag.forbiddenStreaks.length === 0 && (
+              <div className="text-[10px] text-muted-foreground/70">
+                Cache: {diag.cacheEntries} entries · Budget: {diag.requestsLastMinute}/{diag.maxPerMinute} req/min
+              </div>
+            )}
           </div>
 
           {/* Help text */}

@@ -180,6 +180,30 @@ function _trimReqLog() {
 const _cooldown = new Map<string, number>();
 // Per-endpoint 403 streak counter — reset on success.
 const _403Streak = new Map<string, number>();
+
+/** Tracks how often we've fallen back to CBOE for chains, per symbol. Reset every 60s. */
+const _cboeFallbackHits = new Map<string, { count: number; lastTs: number }>();
+function _recordCboeFallback(symbol: string) {
+  const now = Date.now();
+  const cur = _cboeFallbackHits.get(symbol);
+  if (!cur || now - cur.lastTs > 60_000) {
+    _cboeFallbackHits.set(symbol, { count: 1, lastTs: now });
+  } else {
+    _cboeFallbackHits.set(symbol, { count: cur.count + 1, lastTs: now });
+  }
+}
+export function _getCboeFallbackHits() {
+  const now = Date.now();
+  // Drop entries older than 5 min
+  for (const [k, v] of _cboeFallbackHits) {
+    if (now - v.lastTs > 300_000) _cboeFallbackHits.delete(k);
+  }
+  return Array.from(_cboeFallbackHits.entries()).map(([symbol, v]) => ({
+    symbol,
+    count: v.count,
+    secondsAgo: Math.round((now - v.lastTs) / 1000),
+  }));
+}
 function _endpointKey(path: string): string {
   // Bucket by first 3 path segments (e.g. "marketdata/v1/pricehistory")
   return path.split("?")[0].split("/").slice(0, 3).join("/");
@@ -326,6 +350,7 @@ export function getSchwabDiagnostics() {
     forbiddenStreaks: Array.from(_403Streak.entries())
       .filter(([_, n]) => n > 0)
       .map(([ep, n]) => ({ endpoint: ep, count: n })),
+    cboeFallbackHits: _getCboeFallbackHits(),
   };
 }
 
@@ -461,10 +486,15 @@ export type OptionChainResponse = {
   underlying: { last: number | null; bid: number | null; ask: number | null };
   callExpDateMap: Record<string, Record<string, any[]>>;
   putExpDateMap: Record<string, Record<string, any[]>>;
-  source: "schwab";
-} | { error: "schwab_required"; source: null };
+  source: "schwab" | "cboe";
+  lagSeconds?: number;
+} | { error: "schwab_required" | "cboe_unavailable"; source: null };
 
-/** Get option chain from Schwab. NO Yahoo fallback (Yahoo chains are unreliable). */
+/** Get option chain. Tries Schwab first; on 403/null falls back to CBOE delayed (~15min lag).
+ *  CBOE response is normalized to Schwab's callExpDateMap/putExpDateMap shape so all
+ *  downstream consumers (gamma walls, GEX, exposures, whale detection) work unchanged.
+ *  The `source` field on the response indicates which feed was used.
+ */
 export async function getOptionChain(
   symbol: string,
   dte?: number,
@@ -472,35 +502,55 @@ export async function getOptionChain(
   // Normalize legacy .X suffix on cash indexes (silent fix for locked callers)
   const wireSymbol = _normalizeIndexSymbol(symbol);
   const token = await getAccessToken();
-  if (!token) return { error: "schwab_required", source: null };
-  try {
-    const params: Record<string, string | number> = {
-      symbol: wireSymbol,
-      contractType: "ALL",
-      strikeCount: 60,
-      includeUnderlyingQuote: "true",
-    };
-    if (dte !== undefined) {
-      const now = new Date();
-      const to = new Date(now);
-      to.setDate(to.getDate() + Math.max(dte, 1));
-      params.fromDate = now.toISOString().split("T")[0];
-      params.toDate = to.toISOString().split("T")[0];
+
+  // Try Schwab first if authenticated
+  if (token) {
+    try {
+      const params: Record<string, string | number> = {
+        symbol: wireSymbol,
+        contractType: "ALL",
+        strikeCount: 60,
+        includeUnderlyingQuote: "true",
+      };
+      if (dte !== undefined) {
+        const now = new Date();
+        const to = new Date(now);
+        to.setDate(to.getDate() + Math.max(dte, 1));
+        params.fromDate = now.toISOString().split("T")[0];
+        params.toDate = to.toISOString().split("T")[0];
+      }
+      const data = await schwabFetch("marketdata/v1/chains", params);
+      if (data && (data.callExpDateMap || data.putExpDateMap)) {
+        return {
+          underlying: {
+            last: data.underlying?.last ?? null,
+            bid: data.underlying?.bid ?? null,
+            ask: data.underlying?.ask ?? null,
+          },
+          callExpDateMap: data.callExpDateMap ?? {},
+          putExpDateMap: data.putExpDateMap ?? {},
+          source: "schwab",
+        };
+      }
+      // null/empty from Schwab → fall through to CBOE
+    } catch (e: any) {
+      console.warn("[schwab] getOptionChain error, trying CBOE fallback:", e?.message);
     }
-    const data = await schwabFetch("marketdata/v1/chains", params);
-    if (!data) return { error: "schwab_required", source: null };
-    return {
-      underlying: {
-        last: data.underlying?.last ?? null,
-        bid: data.underlying?.bid ?? null,
-        ask: data.underlying?.ask ?? null,
-      },
-      callExpDateMap: data.callExpDateMap ?? {},
-      putExpDateMap: data.putExpDateMap ?? {},
-      source: "schwab",
-    };
+  }
+
+  // Fallback: CBOE delayed (~15min lag). Same shape, source="cboe".
+  try {
+    const { getCboeOptionChain } = await import("./cboeChainAdapter");
+    const cboeChain = await getCboeOptionChain(symbol, dte);
+    if ("error" in cboeChain) {
+      console.warn("[schwab] CBOE fallback failed:", cboeChain.error);
+      return { error: "schwab_required", source: null };
+    }
+    console.log(`[schwab] using CBOE fallback for ${symbol} (lag ${cboeChain.lagSeconds}s)`);
+    _recordCboeFallback(symbol);
+    return cboeChain;
   } catch (e: any) {
-    console.warn("[schwab] getOptionChain error:", e?.message);
+    console.warn("[schwab] CBOE fallback exception:", e?.message);
     return { error: "schwab_required", source: null };
   }
 }

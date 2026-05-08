@@ -309,27 +309,29 @@ export default function Dashboard() {
               <RefreshCw className={`h-3.5 w-3.5 sm:mr-2 ${refreshMut.isPending ? "animate-spin" : ""}`} />
               <span className="hidden sm:inline">Refresh</span>
             </Button>
-            {/* Schwab status pill */}
-            <SchwabStatusPill onClick={() => setSettingsOpen(true)} />
+            {/* Schwab status pill — hide on the very narrowest phones; gear opens same dialog */}
+            <div className="hidden xs:flex sm:flex">
+              <SchwabStatusPill onClick={() => setSettingsOpen(true)} />
+            </div>
 
-            {/* Settings gear */}
+            {/* Settings gear — always visible (44px tap target on mobile) */}
             <button
               type="button"
               onClick={() => setSettingsOpen(true)}
               title="Schwab & Settings"
-              className="flex items-center rounded-md border border-border/60 p-1.5 text-muted-foreground/50 transition hover:border-border hover:text-muted-foreground"
+              className="flex items-center justify-center rounded-md border border-border/60 h-9 w-9 sm:h-auto sm:w-auto sm:p-1.5 text-muted-foreground/50 transition hover:border-border hover:text-muted-foreground"
               data-testid="button-settings"
             >
-              <Settings className="h-3.5 w-3.5" />
+              <Settings className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
             </button>
 
-            {/* Theme toggle — light / dark */}
+            {/* Theme toggle — hidden on small screens to free up nav space */}
             <button
               type="button"
               onClick={toggleTheme}
               title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
               aria-label="Toggle color theme"
-              className="flex items-center rounded-md border border-border/60 p-1.5 text-muted-foreground/60 transition hover:border-border hover:text-amber-500"
+              className="hidden sm:flex items-center rounded-md border border-border/60 p-1.5 text-muted-foreground/60 transition hover:border-border hover:text-amber-500"
               data-testid="button-theme-toggle"
             >
               {theme === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
