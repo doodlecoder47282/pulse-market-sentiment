@@ -2806,6 +2806,16 @@ Refine the brief above. Search the web for any critical developments the feed is
     console.warn(`[regimeHistoryTicker] failed to start: ${e?.message ?? e}`);
   }
 
+  // ML service autostart — spawns FastAPI on port 5001 if not already running.
+  // Without this, /api/ml/projection-spy returns status=UNAVAILABLE and the
+  // Models tab forward projection chart can't render its bands.
+  try {
+    const { startMlService } = await import("./mlServiceManager");
+    await startMlService();
+  } catch (e: any) {
+    console.warn(`[ml-service] autostart failed: ${e?.message ?? e}`);
+  }
+
   // Kick off stock daily-bars refresher (6h cadence). Extends daily_bars beyond
   // the regime ETF universe so the closed-loop grader can score whale alerts on
   // individual names (TSLA/NVDA/AAPL/META/GOOGL/etc.).
