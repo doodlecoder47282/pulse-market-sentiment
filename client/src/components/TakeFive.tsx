@@ -12,7 +12,7 @@
 // This component is purely presentational. No API calls. No storage.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { X, Pause, Play, Zap } from "lucide-react";
+import { X, Zap, CheckCircle2, Circle, Lock, Unlock } from "lucide-react";
 
 // ──────────────────────────────────────────────────────────────────────
 // Quotes — Mark Douglas (Trading in the Zone, Disciplined Trader) + trader wisdom
@@ -131,20 +131,24 @@ interface TakeFiveProps {
 }
 
 export default function TakeFive({ mode = "embedded", open = true, onClose }: TakeFiveProps) {
-  const [motion, setMotion] = useState<boolean>(true);
   const [quoteIdx, setQuoteIdx] = useState(0);
   const timerRef = useRef<number | null>(null);
 
-  // Rotate quotes every 10s when motion is on
+  // Pre-trade checklist state — session-only, no persistence (sandboxed iframe).
+  // All items must be ticked to reach CLEARED TO TRADE state.
+  const [checked, setChecked] = useState<boolean[]>(() => BEFORE_I_TRADE.map(() => false));
+  const allCleared = checked.every(Boolean);
+  const clearedCount = checked.filter(Boolean).length;
+
+  // Rotate quotes every 10s
   useEffect(() => {
-    if (!motion) return;
     timerRef.current = window.setInterval(() => {
       setQuoteIdx((i) => (i + 1) % QUOTES.length);
     }, 10_000);
     return () => {
       if (timerRef.current) window.clearInterval(timerRef.current);
     };
-  }, [motion]);
+  }, []);
 
   // Escape key closes overlay
   useEffect(() => {
@@ -162,7 +166,7 @@ export default function TakeFive({ mode = "embedded", open = true, onClose }: Ta
 
   const body = (
     <div
-      className={`take5-shell ${motion ? "" : "[&_*]:!animate-none"}`}
+      className="take5-shell"
       data-testid="take5-root"
       style={mode === "overlay" ? { minHeight: "100vh" } : { borderRadius: "0.75rem", padding: "2rem" }}
     >
@@ -182,22 +186,6 @@ export default function TakeFive({ mode = "embedded", open = true, onClose }: Ta
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setMotion((m) => !m)}
-              className="take5-panel rounded-md px-3 py-1.5 text-[11px] uppercase tracking-wider hover:bg-white/5"
-              data-testid="btn-toggle-motion"
-              aria-label={motion ? "Pause animations" : "Resume animations"}
-            >
-              {motion ? (
-                <span className="inline-flex items-center gap-1.5">
-                  <Pause className="h-3 w-3" /> Pause motion
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5">
-                  <Play className="h-3 w-3" /> Resume motion
-                </span>
-              )}
-            </button>
             {mode === "overlay" && onClose && (
               <button
                 onClick={onClose}
@@ -259,7 +247,7 @@ export default function TakeFive({ mode = "embedded", open = true, onClose }: Ta
               4 · 7 · 8 breathing pacer
             </div>
             <div className="relative flex h-[200px] w-[200px] items-center justify-center">
-              <div className={`breath-circle ${motion ? "" : "!animation-none"}`} />
+              <div className="breath-circle" />
               <div className="breath-label absolute select-none text-[#f7f5ff]">
                 BREATHE
               </div>
@@ -296,19 +284,69 @@ export default function TakeFive({ mode = "embedded", open = true, onClose }: Ta
           </div>
         </div>
 
-        {/* Before I trade */}
-        <div className="mb-4 take5-panel rounded-lg p-5">
-          <div className="mb-3 text-[10px] uppercase tracking-[0.25em] text-[#ffd000]">
-            Before I Trade
+        {/* Before I Trade — INTERACTIVE pre-trade checklist with session lock */}
+        <div
+          className={`mb-4 take5-panel rounded-lg p-5 ${allCleared ? "green ring-2 ring-[#00ff88]/40" : ""}`}
+          data-testid="checklist-section"
+        >
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="text-[10px] uppercase tracking-[0.25em] text-[#ffd000]">
+              Before I Trade — tick each, every session
+            </div>
+            <div
+              className={`flex items-center gap-2 rounded-md px-2 py-1 font-mono text-[10px] uppercase tracking-wider ${
+                allCleared
+                  ? "bg-[#00ff88]/15 text-[#00ff88]"
+                  : "bg-[#ff2d2d]/10 text-[#ff2d2d]"
+              }`}
+              data-testid="checklist-status"
+            >
+              {allCleared ? <Unlock className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+              {allCleared ? "CLEARED TO TRADE" : `LOCKED · ${clearedCount}/${BEFORE_I_TRADE.length}`}
+            </div>
           </div>
-          <ul className="grid grid-cols-1 gap-2 font-mono text-[13px] md:grid-cols-2">
+          <ul className="space-y-2 font-mono text-[13px]">
             {BEFORE_I_TRADE.map((t, i) => (
-              <li key={i} className="flex gap-3">
-                <span className="select-none font-bold text-[#ffd000]">{String(i + 1).padStart(2, "0")}</span>
-                <span className="text-[#f7f5ff]/95">{t}</span>
+              <li key={i}>
+                <button
+                  type="button"
+                  onClick={() => setChecked((arr) => arr.map((v, k) => (k === i ? !v : v)))}
+                  className={`flex w-full items-start gap-3 rounded-md border px-3 py-2.5 text-left transition min-h-[44px] ${
+                    checked[i]
+                      ? "border-[#00ff88]/40 bg-[#00ff88]/10"
+                      : "border-white/10 bg-white/[0.02] hover:border-[#ffd000]/40 hover:bg-white/[0.04]"
+                  }`}
+                  data-testid={`checklist-item-${i}`}
+                  aria-pressed={checked[i]}
+                >
+                  {checked[i] ? (
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#00ff88]" />
+                  ) : (
+                    <Circle className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#f7f5ff]/40" />
+                  )}
+                  <span className={checked[i] ? "text-[#f7f5ff]" : "text-[#f7f5ff]/85"}>
+                    <span className="mr-2 font-bold text-[#ffd000]">{String(i + 1).padStart(2, "0")}</span>
+                    {t}
+                  </span>
+                </button>
               </li>
             ))}
           </ul>
+          {allCleared && (
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <div className="text-[11px] text-[#00ff88]/90">
+                All checks pass. Trade your plan, not your feelings.
+              </div>
+              <button
+                type="button"
+                onClick={() => setChecked(BEFORE_I_TRADE.map(() => false))}
+                className="rounded border border-white/15 px-2 py-1 text-[10px] uppercase tracking-wider text-[#f7f5ff]/70 hover:bg-white/5"
+                data-testid="checklist-reset"
+              >
+                Reset for next trade
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Hard Rules + Stop Conditions */}
@@ -355,10 +393,7 @@ export default function TakeFive({ mode = "embedded", open = true, onClose }: Ta
             className="take5-title text-3xl font-bold md:text-4xl"
             data-testid="take5-signoff"
           >
-            — PATIENTS PAYS —
-          </div>
-          <div className="mt-1 text-[10px] uppercase tracking-[0.3em] text-[#ffd000]/60">
-            (yes, we know — but that's how it's written and that's how we keep it)
+            — PATIENCE PAYS —
           </div>
         </div>
       </div>

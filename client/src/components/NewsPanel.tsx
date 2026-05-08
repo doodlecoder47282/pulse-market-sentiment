@@ -533,7 +533,7 @@ export default function NewsPanel() {
       <div className="mb-4">
         <AlphaCard headlines={data.headlines} />
       </div>
-    <div className="grid gap-4 md:grid-cols-[1fr_360px]">
+    <div className="grid gap-4">
       {/* Left: headline feed */}
       <Card>
         <CardHeader className="pb-3">
@@ -626,66 +626,7 @@ export default function NewsPanel() {
         </CardContent>
       </Card>
 
-      {/* Right: calendar */}
-      <div className="space-y-4">
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <CalendarDays className="h-4 w-4 text-amber-400" /> Calendar
-              <Badge variant="outline" className="ml-1 border-amber-500/40 text-[9px] text-amber-300">
-                {data.calendar.length} events
-              </Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-1.5">
-            {data.calendar.length === 0 ? (
-              <div className="text-xs text-muted-foreground">No upcoming events.</div>
-            ) : (
-              data.calendar.map((e) => (
-                <div
-                  key={e.id}
-                  className={`rounded-md border p-2 ${IMPORTANCE_COLOR[e.importance]}`}
-                  data-testid={`cal-event-${e.id}`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1">
-                      <div className="text-xs font-semibold text-foreground">{e.title}</div>
-                      <div className="text-[9px] text-muted-foreground">
-                        {e.whenLabel} · {timeUntil(e.when)}
-                      </div>
-                    </div>
-                    <Badge variant="outline" className={`text-[8px] ${IMPORTANCE_COLOR[e.importance]}`}>
-                      {e.importance}
-                    </Badge>
-                  </div>
-                  {(e.forecast || e.previous || e.actual) && (
-                    <div className="mt-1 flex gap-2 text-[9px] text-muted-foreground">
-                      {e.previous && <span>Prev: <span className="font-mono text-foreground">{e.previous}</span></span>}
-                      {e.forecast && <span>Est: <span className="font-mono text-foreground">{e.forecast}</span></span>}
-                      {e.actual && <span>Act: <span className="font-mono text-foreground">{e.actual}</span></span>}
-                    </div>
-                  )}
-                  <div className="mt-0.5 text-[9px] text-muted-foreground">{e.source}</div>
-                </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
-
-        {data.warnings.length > 0 && (
-          <Card>
-            <CardContent className="flex items-start gap-2 p-3 text-[10px] text-amber-400/80">
-              <AlertTriangle className="h-3 w-3 flex-shrink-0" />
-              <div>
-                <div className="font-semibold">Feed warnings</div>
-                {data.warnings.map((w, i) => (
-                  <div key={i}>· {w}</div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-      </div>
+      {/* Compact calendar dupe + Feed warnings nuked — use Calendar tab for full event grid */}
     </div>
       </TabsContent>
 
@@ -777,6 +718,40 @@ const IMPORTANCE_STYLE: Record<EarningsRow["importance"], string> = {
   MED: "border-amber-500/50 bg-amber-500/10 text-amber-300",
   LOW: "border-border/40 bg-muted/20 text-muted-foreground",
 };
+
+// Lazy per-row IV implied move cell. Hits /api/earnings-iv (10-min cache server-side).
+// Only fetches for HIGH importance rows (or MAG7) to keep request count modest.
+interface IvMoveResp {
+  ticker: string;
+  impliedMove: number | null;
+  impliedMovePct: number | null;
+  expiry: string | null;
+  source: string | null;
+}
+function ImpliedMoveCell({ ticker, enabled }: { ticker: string; enabled: boolean }) {
+  const { data, isLoading, isError } = useQuery<IvMoveResp>({
+    queryKey: ["/api/earnings-iv", ticker],
+    queryFn: async () => {
+      const r = await apiRequest("GET", `/api/earnings-iv?ticker=${encodeURIComponent(ticker)}`);
+      return r.json();
+    },
+    enabled,
+    staleTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  if (!enabled) return <span className="text-muted-foreground">—</span>;
+  if (isLoading) return <span className="text-muted-foreground/50">…</span>;
+  if (isError || !data || data.impliedMove == null || data.impliedMovePct == null) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return (
+    <span className="font-mono text-sky-300" title={`ATM straddle expiry ${data.expiry ?? "—"} · ${data.source ?? "—"}`}>
+      ±${data.impliedMove.toFixed(2)}
+      <span className="ml-1 text-[9px] text-muted-foreground">({data.impliedMovePct.toFixed(1)}%)</span>
+    </span>
+  );
+}
 
 function EarningsTab() {
   const [horizon, setHorizon] = useState<"weekly" | "monthly">("weekly");
@@ -1002,6 +977,7 @@ function EarningsTab() {
                           <th className="pb-1.5 pr-2">Timing</th>
                           <th className="pb-1.5 pr-2 text-right">EPS Est</th>
                           <th className="pb-1.5 pr-2 text-right">LY EPS</th>
+                          <th className="pb-1.5 pr-2 text-right" title="ATM straddle implied move (post-earnings expiry)">Impl Move</th>
                           <th className="pb-1.5 pr-2 text-center">Impact</th>
                         </tr>
                       </thead>
@@ -1068,6 +1044,9 @@ function EarningsTab() {
                                     {surprise > 0 ? "+" : ""}{surprise.toFixed(0)}%
                                   </span>
                                 )}
+                              </td>
+                              <td className="py-1.5 pr-2 text-right" data-testid={`earnings-iv-${r.ticker}`}>
+                                <ImpliedMoveCell ticker={r.ticker} enabled={r.importance === "HIGH" || r.isMag7} />
                               </td>
                               <td className="py-1.5 pr-2 text-center">
                                 <Badge

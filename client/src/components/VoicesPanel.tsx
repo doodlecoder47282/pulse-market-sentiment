@@ -387,10 +387,7 @@ export default function VoicesPanel() {
         })}
       </div>
 
-      <p className="text-center text-[11px] text-muted-foreground">
-        Feeds aggregated from Google News, Substack, podcast RSS{data.xEnabled ? ", and native X posts via the X API v2" : " — X timelines require API auth"}.
-        Data-richness = tickers + numeric claims + market keywords{data.xEnabled ? " + engagement" : ""}. Fact-check compares numeric claims to live VIX/VVIX/SPY/SKEW/PCR.
-      </p>
+
     </div>
   );
 }

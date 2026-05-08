@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import SectorWeb from "./SectorWeb";
 import WefThemePanel from "./WefThemePanel";
+import { CollapsibleCard } from "./CollapsibleCard";
 import ErrorBoundary from "./ErrorBoundary";
 import SeasonalityPanel from "./SeasonalityPanel";
 import SeasonalityResearch from "./SeasonalityResearch";
@@ -135,9 +136,6 @@ export default function RegimePanel() {
       {/* Reactive sector web — the new "market constellation" view */}
       <SectorWeb />
 
-      {/* WEF narrative→ticker basket mapper */}
-      <WefThemePanel />
-
       {/* Window selector */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -232,20 +230,11 @@ export default function RegimePanel() {
         </div>
       </div>
 
-      {/* Methodology + warnings */}
-      <Card>
-        <CardContent className="p-5">
-          <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Methodology</div>
-          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-            For each axis pair (e.g. SPY/TLT), we compute the ratio's rolling rate-of-change over the selected window,
-            then z-score against its own trailing 2-year distribution. A z of +2 means the current rotation is in the
-            top-2.5% of the past two years. <span className="text-foreground">Fresh</span> = newly crossed ±2σ in last
-            5 days. <span className="text-foreground">Durable</span> = held same-sign |z|≥1.5 for 30+ trading days (6+ weeks).
-            Stage is based on persistence: ≤10 days early · 11-30 days mid · 30+ days mature. Data from Yahoo 2Y daily
-            closes, 30-min server-side cache.
-          </p>
-          {data.warnings.length > 0 && (
-            <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+      {/* Warnings only (methodology collapsed into help link) */}
+      {data.warnings.length > 0 && (
+        <Card>
+          <CardContent className="p-3">
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
               <div className="mb-1 flex items-center gap-1.5 text-amber-500">
                 <AlertTriangle className="h-3 w-3" />
                 <span className="text-[11px] uppercase tracking-wider">Warnings</span>
@@ -254,9 +243,18 @@ export default function RegimePanel() {
                 {data.warnings.map((w, i) => <li key={i}>{w}</li>)}
               </ul>
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
+
+      <details className="rounded-md border border-border/40 bg-card/30 px-3 py-2 text-[11px] text-muted-foreground">
+        <summary className="cursor-pointer select-none text-[10px] uppercase tracking-wider">Methodology</summary>
+        <p className="mt-2 leading-relaxed">
+          For each axis pair (e.g. SPY/TLT), we compute the ratio's rolling rate-of-change over the selected window,
+          then z-score against its own trailing 2-year distribution. Fresh = newly crossed ±2σ in last 5 days.
+          Durable = held same-sign |z|≥1.5 for 30+ trading days. Stage: ≤10d early · 11-30d mid · 30+d mature.
+        </p>
+      </details>
 
       {/* ================================================================
           NEW SECTIONS: Seasonality, JPM Collar, Vol Event Calendar
@@ -270,33 +268,36 @@ export default function RegimePanel() {
         </ErrorBoundary>
       </div>
 
-      {/* Section: Seasonality */}
-      <div>
-        <div className="mb-4 flex items-center gap-2">
-          <BarChart2 className="h-4 w-4 text-cyan-400" />
-          <h2 className="text-sm font-semibold uppercase tracking-wider">Seasonality</h2>
-          <span className="text-xs text-muted-foreground">20-year avg monthly &amp; weekly return patterns</span>
-        </div>
+      {/* Section: Seasonality — collapsible (collapsed below the fold to keep tab scannable on iPad) */}
+      <CollapsibleCard
+        id="regime-seasonality"
+        title={<><BarChart2 className="h-4 w-4 text-cyan-400" />Seasonality<span className="ml-2 text-xs font-normal text-muted-foreground">20-year avg monthly &amp; weekly return patterns</span></>}
+        defaultSize="collapsed"
+      >
         <ErrorBoundary label="Seasonality">
           <SeasonalityPanel />
         </ErrorBoundary>
-      </div>
+      </CollapsibleCard>
 
-      {/* Section: JPM Collar + Vol Calendar side-by-side on lg */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* JPM Collar */}
-        <div>
-          <div className="mb-4 flex items-center gap-2">
-            <Shield className="h-4 w-4 text-amber-400" />
-            <h2 className="text-sm font-semibold uppercase tracking-wider">JPM Collar</h2>
-            <span className="text-xs text-muted-foreground">JHEQX quarterly hedge · SPX reference lines</span>
-          </div>
-          <ErrorBoundary label="JPM Collar">
-            <JPMCollarPanel />
-          </ErrorBoundary>
-        </div>
+      {/* Section: JPM Collar */}
+      <CollapsibleCard
+        id="regime-jpm-collar"
+        title={<><Shield className="h-4 w-4 text-amber-400" />JPM Collar<span className="ml-2 text-xs font-normal text-muted-foreground">JHEQX quarterly hedge · SPX reference lines</span></>}
+        defaultSize="collapsed"
+      >
+        <ErrorBoundary label="JPM Collar">
+          <JPMCollarPanel />
+        </ErrorBoundary>
+      </CollapsibleCard>
 
-      </div>
+      {/* WEF narrative→ticker basket mapper — collapsible context */}
+      <CollapsibleCard
+        id="regime-wef-themes"
+        title={<>WEF Themes<span className="ml-2 text-xs font-normal text-muted-foreground">narrative → ticker basket mapper</span></>}
+        defaultSize="collapsed"
+      >
+        <WefThemePanel />
+      </CollapsibleCard>
     </div>
   );
 }

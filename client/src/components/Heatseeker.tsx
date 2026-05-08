@@ -13,12 +13,15 @@
  * unconnected.
  */
 
-import { useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   ComposedChart,
   Line,
@@ -32,8 +35,6 @@ import {
   Legend,
 } from "recharts";
 import { Activity, AlertTriangle, Flame, Target, TrendingDown, TrendingUp } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import LiveOdteTracker from "./LiveOdteTracker";
 import DepthSkewFlow from "./DepthSkewFlow";
 import OdteContractChart from "./OdteContractChart";
@@ -367,6 +368,159 @@ export default function Heatseeker() {
 }
 
 // ─── View (data guaranteed) ────────────────────────────────────────────────
+interface ServerLevel {
+  id: string;
+  value: number;
+  label: string;
+  kind: "upside" | "downside" | "pin" | "vomma";
+  updatedAt: number;
+}
+interface ServerLevelsResp {
+  version: number;
+  updatedAt: number;
+  levels: ServerLevel[];
+}
+
+// ─── Edit dialog: add/edit/delete sticky levels (server-persisted) ─────────
+function LevelsEditor({
+  open,
+  onOpenChange,
+  initial,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  initial: ServerLevel[];
+}) {
+  const [draft, setDraft] = useState<ServerLevel[]>(initial);
+  // Reset draft when dialog opens with fresh data
+  useEffect(() => {
+    if (open) setDraft(initial);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const save = useMutation({
+    mutationFn: async (levels: ServerLevel[]) => {
+      const r = await apiRequest("POST", "/api/heatseeker/levels", { levels });
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/heatseeker/levels"] });
+      onOpenChange(false);
+    },
+  });
+
+  const updateRow = (idx: number, patch: Partial<ServerLevel>) => {
+    setDraft((d) => d.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+  };
+  const removeRow = (idx: number) => setDraft((d) => d.filter((_, i) => i !== idx));
+  const addRow = () => {
+    setDraft((d) => [
+      ...d,
+      {
+        id: `lvl-new-${Math.random().toString(36).slice(2, 7)}`,
+        value: 0,
+        label: "NEW",
+        kind: "pin",
+        updatedAt: Date.now(),
+      },
+    ]);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl" data-testid="dialog-levels-editor">
+        <DialogHeader>
+          <DialogTitle>Edit sticky levels</DialogTitle>
+        </DialogHeader>
+        <div className="max-h-[60vh] overflow-y-auto">
+          <table className="w-full text-xs">
+            <thead className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+              <tr>
+                <th className="pb-2 text-left">Label</th>
+                <th className="pb-2 text-right">Strike</th>
+                <th className="pb-2 text-left pl-3">Kind</th>
+                <th className="pb-2 text-right"> </th>
+              </tr>
+            </thead>
+            <tbody>
+              {draft.map((r, idx) => (
+                <tr key={r.id} className="border-t border-border/40">
+                  <td className="py-1 pr-2">
+                    <Input
+                      value={r.label}
+                      onChange={(e) => updateRow(idx, { label: e.target.value })}
+                      className="h-7 font-mono"
+                      data-testid={`input-level-label-${idx}`}
+                    />
+                  </td>
+                  <td className="py-1 pr-2 text-right">
+                    <Input
+                      type="number"
+                      step="0.5"
+                      value={r.value}
+                      onChange={(e) => updateRow(idx, { value: Number(e.target.value) })}
+                      className="h-7 text-right font-mono"
+                      data-testid={`input-level-value-${idx}`}
+                    />
+                  </td>
+                  <td className="py-1 pr-2 pl-3">
+                    <select
+                      value={r.kind}
+                      onChange={(e) => updateRow(idx, { kind: e.target.value as ServerLevel["kind"] })}
+                      className="h-7 rounded border border-border bg-background px-2 text-[11px] font-mono"
+                      data-testid={`select-level-kind-${idx}`}
+                    >
+                      <option value="upside">upside</option>
+                      <option value="downside">downside</option>
+                      <option value="pin">pin</option>
+                      <option value="vomma">vomma</option>
+                    </select>
+                  </td>
+                  <td className="py-1 text-right">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeRow(idx)}
+                      className="h-7 px-2 text-rose-400 hover:text-rose-300"
+                      data-testid={`button-level-remove-${idx}`}
+                    >
+                      remove
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="mt-3">
+            <Button type="button" size="sm" variant="outline" onClick={addRow} data-testid="button-level-add">
+              + Add level
+            </Button>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => onOpenChange(false)}
+            data-testid="button-levels-cancel"
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            onClick={() => save.mutate(draft)}
+            disabled={save.isPending}
+            data-testid="button-levels-save"
+          >
+            {save.isPending ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function HeatseekerView({ data }: { data: HeatseekerData }) {
   const { strikes, stickyZones, totals, spot, expiry, dte, symbol, asOf } = data;
 
@@ -376,6 +530,25 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
   // Hide strikes with zero session volume by default — keeps the heatmap focused
   // on strikes that actually traded today. Toggle lets user bring them back.
   const [hideZeroVol, setHideZeroVol] = useState(true);
+
+  // Server-persisted user-editable sticky levels. Falls back to LOCKED_LEVELS
+  // when the API hasn't responded yet or returns an empty list.
+  const [editOpen, setEditOpen] = useState(false);
+  const { data: serverLevels } = useQuery<ServerLevelsResp>({
+    queryKey: ["/api/heatseeker/levels"],
+    queryFn: async () => {
+      const r = await apiRequest("GET", "/api/heatseeker/levels");
+      return r.json();
+    },
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const effectiveLevels = useMemo(() => {
+    if (serverLevels?.levels?.length) {
+      return serverLevels.levels.map((l) => ({ value: l.value, label: l.label, kind: l.kind }));
+    }
+    return LOCKED_LEVELS;
+  }, [serverLevels]);
 
   // Snapshot of the live odte-tracker — provides bid/ask/volume/OI/notional per contract key.
   // Separate 4s poll (matches tracker poll cadence). Paused while nothing is selected.
@@ -416,10 +589,10 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
     return base.filter((s) => {
       const hasVolume = (s.callVol ?? 0) + (s.putVol ?? 0) > 0 || (s.totalVol ?? 0) > 0;
       const isSpotRow = s.strike === atmStrike;
-      const isLockedLevel = LOCKED_LEVELS.some((l) => Math.abs(l.value - s.strike) < 2.5);
+      const isLockedLevel = effectiveLevels.some((l) => Math.abs(l.value - s.strike) < 2.5);
       return hasVolume || isSpotRow || isLockedLevel;
     });
-  }, [strikes, hideZeroVol, atmStrike]);
+  }, [strikes, hideZeroVol, atmStrike, effectiveLevels]);
 
   const hiddenCount = strikes.length - rows.length;
 
@@ -444,7 +617,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
   const upper = symbol.toUpperCase();
   const isSpx = upper === "$SPX" || upper === "SPX" || upper === "SPXW";
   const visibleLevels = isSpx
-    ? LOCKED_LEVELS.filter((l) => l.value >= minStrike && l.value <= maxStrike)
+    ? effectiveLevels.filter((l) => l.value >= minStrike && l.value <= maxStrike)
     : [];
 
   return (
@@ -488,10 +661,36 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                 </Badge>
               )}
               <Badge variant="outline" className="font-mono">last {tickTime}</Badge>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-6 px-2 text-[10px] font-mono uppercase tracking-wider"
+                onClick={() => setEditOpen(true)}
+                data-testid="button-edit-levels"
+              >
+                Edit levels
+              </Button>
             </div>
           </div>
         </CardContent>
       </Card>
+
+      <LevelsEditor
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        initial={
+          serverLevels?.levels?.length
+            ? serverLevels.levels
+            : LOCKED_LEVELS.map((l, i) => ({
+                id: `seed-${i}`,
+                value: l.value,
+                label: l.label,
+                kind: l.kind,
+                updatedAt: 0,
+              }))
+        }
+      />
 
       {/* ── Heatmap grid ─────────────────────────────────────────────── */}
       <Card>
@@ -503,9 +702,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                 Greek Heatmap · strike × metric
               </CardTitle>
               <div className="mt-1 text-xs text-muted-foreground">
-                GEX column: emerald = call-side gamma (dealers long / supportive), rose = put-side gamma (dealers short / accelerant) —
-                net printed in the middle. DEX/Vanna/Charm show net. Horizontal guides = your locked weekly targets.
-                Tap any strike to open the contract chart.
+                Tap any strike to open the contract chart. Hover GEX cells for call/put split.
               </div>
             </div>
             {/* Zero-volume filter toggle — hides strikes with no session prints
@@ -585,7 +782,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                         </span>
                       )}
                     </div>
-                    <GexCell callGex={s.callGex} putGex={s.putGex} max={maxAbsGex} />
+                    <GexCell callGex={s.callGex} putGex={s.putGex} max={maxAbsGex} symbol={symbol} strike={s.strike} />
                     <HeatCell value={s.netDex} max={maxAbsDex} />
                     <HeatCell value={s.netVanna} max={maxAbsVanna} />
                     <HeatCell value={s.netCharm} max={maxAbsCharm} />
@@ -690,8 +887,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
             Greek Profile · exposures across strikes
           </CardTitle>
           <div className="text-xs text-muted-foreground">
-            GEX bars (left axis, $ per 1% move) · DEX / Vanna / Charm lines (right axis, $).
-            Dashed vertical = your locked targets · solid vertical = spot.
+            GEX bars (left, $ per 1% move) · DEX/Vanna/Charm (right). Dashed = locked targets · solid = spot.
           </div>
         </CardHeader>
         <CardContent>
@@ -847,32 +1043,80 @@ function HeatCell({ value, max }: { value: number; max: number }) {
   );
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// GEX session-baseline tracker (TIER A #4 — intraday GEX delta arrows)
+// Captures the first-observed netGex per (symbol, strike, dateKey) and exposes
+// a tiny arrow + magnitude readout next to the GEX cell. Module-level so it
+// persists across re-renders without needing localStorage (sandbox rule).
+// ────────────────────────────────────────────────────────────────────────────
+type BaselineKey = string; // `${dateKey}|${symbol}|${strike}`
+const gexBaselines = new Map<BaselineKey, number>();
+
+function sessionDateKey(): string {
+  // ET session date — New York time, YYYY-MM-DD
+  const d = new Date();
+  // toLocaleDateString with en-CA gives ISO YYYY-MM-DD
+  return d.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+}
+
+function getOrSeedBaseline(symbol: string, strike: number, currentNet: number): number {
+  const k = `${sessionDateKey()}|${symbol}|${strike}`;
+  const existing = gexBaselines.get(k);
+  if (existing != null) return existing;
+  gexBaselines.set(k, currentNet);
+  return currentNet;
+}
+
 // GEX cell — GEXbot style split bar: call GEX (green) left of center,
 // put GEX (red) right of center, both scaled to the global max absolute GEX.
 // Net value printed in the middle so the numeric readout stays glanceable.
-function GexCell({ callGex, putGex, max }: { callGex: number; putGex: number; max: number }) {
+// Delta arrow on the right shows session change (TIER A #4).
+function GexCell({ callGex, putGex, max, symbol, strike }: { callGex: number; putGex: number; max: number; symbol?: string; strike?: number }) {
   const net = callGex - putGex;
   const callPct = max > 0 ? Math.min((callGex / max) * 100, 100) : 0;
   const putPct = max > 0 ? Math.min((putGex / max) * 100, 100) : 0;
   const labelColor = net >= 0 ? "text-emerald-300" : "text-rose-300";
+
+  // Session baseline (only when we have symbol + strike context)
+  let arrow: { dir: "up" | "down" | "flat"; pct: number } | null = null;
+  if (symbol && strike != null) {
+    const baseline = getOrSeedBaseline(symbol, strike, net);
+    const delta = net - baseline;
+    const refMag = Math.max(Math.abs(baseline), Math.abs(net), 1);
+    const pct = (Math.abs(delta) / refMag) * 100;
+    if (pct >= 5) {
+      arrow = { dir: delta > 0 ? "up" : "down", pct };
+    } else {
+      arrow = { dir: "flat", pct };
+    }
+  }
+
   return (
     <div
       className="relative flex h-7 items-center justify-center overflow-hidden rounded-sm bg-slate-500/5 font-mono text-[10px] tabular-nums"
-      title={`calls +${fmtM(callGex)} · puts -${fmtM(putGex)} · net ${fmtM(net)}`}
+      title={`calls +${fmtM(callGex)} · puts -${fmtM(putGex)} · net ${fmtM(net)}${arrow && arrow.dir !== "flat" ? ` · Δ ${arrow.dir === "up" ? "+" : "-"}${arrow.pct.toFixed(0)}% from open` : ""}`}
+      data-testid={symbol && strike != null ? `gex-cell-${strike}` : undefined}
     >
-      {/* Call half — emerald bar fills from center to the LEFT (above-net territory) */}
       <div
         className="absolute right-1/2 top-0 h-full bg-emerald-500/55"
         style={{ width: `${callPct / 2}%` }}
       />
-      {/* Put half — rose bar fills from center to the RIGHT */}
       <div
         className="absolute left-1/2 top-0 h-full bg-rose-500/55"
         style={{ width: `${putPct / 2}%` }}
       />
-      {/* Center divider */}
       <div className="absolute left-1/2 top-0 h-full w-px bg-border/60" />
       <span className={`relative z-10 ${labelColor}`}>{fmtM(net)}</span>
+      {arrow && arrow.dir !== "flat" && (
+        <span
+          className={`absolute right-1 top-1/2 z-10 -translate-y-1/2 text-[8px] font-semibold ${
+            arrow.dir === "up" ? "text-emerald-400" : "text-rose-400"
+          }`}
+          aria-label={`gex ${arrow.dir} ${arrow.pct.toFixed(0)} percent since open`}
+        >
+          {arrow.dir === "up" ? "▲" : "▼"}{arrow.pct.toFixed(0)}
+        </span>
+      )}
     </div>
   );
 }

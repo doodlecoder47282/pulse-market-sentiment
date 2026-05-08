@@ -798,38 +798,38 @@ function OutlookPanel() {
             >
               ENGINE
             </button>
-            <button
-              data-testid="outlook-source-claude"
-              onClick={() => claudeAvailable && setSource("claude")}
-              disabled={!claudeAvailable}
-              title={claudeAvailable ? "Claude Sonnet narrative" : "ANTHROPIC_API_KEY not configured"}
-              style={{
-                padding: "3px 10px", fontSize: 9, fontFamily: "monospace", letterSpacing: "0.06em",
-                background: source === "claude" ? `${ACCENT_GREEN}22` : "transparent",
-                color: !claudeAvailable ? "#444" : source === "claude" ? ACCENT_GREEN : MUTED,
-                border: `1px solid ${source === "claude" ? ACCENT_GREEN : BORDER_COL}`,
-                borderRadius: 2, cursor: claudeAvailable ? "pointer" : "not-allowed",
-                opacity: claudeAvailable ? 1 : 0.4,
-              }}
-            >
-              CLAUDE
-            </button>
-            <button
-              data-testid="outlook-source-gpt"
-              onClick={() => gptAvailable && setSource("gpt")}
-              disabled={!gptAvailable}
-              title={gptAvailable ? "GPT-5 narrative" : "OPENAI_API_KEY not configured"}
-              style={{
-                padding: "3px 10px", fontSize: 9, fontFamily: "monospace", letterSpacing: "0.06em",
-                background: source === "gpt" ? `${ACCENT_BLUE}22` : "transparent",
-                color: !gptAvailable ? "#444" : source === "gpt" ? ACCENT_BLUE : MUTED,
-                border: `1px solid ${source === "gpt" ? ACCENT_BLUE : BORDER_COL}`,
-                borderRadius: 2, cursor: gptAvailable ? "pointer" : "not-allowed",
-                opacity: gptAvailable ? 1 : 0.4,
-              }}
-            >
-              GPT
-            </button>
+            {claudeAvailable && (
+              <button
+                data-testid="outlook-source-claude"
+                onClick={() => setSource("claude")}
+                title="Claude Sonnet narrative"
+                style={{
+                  padding: "3px 10px", fontSize: 9, fontFamily: "monospace", letterSpacing: "0.06em",
+                  background: source === "claude" ? `${ACCENT_GREEN}22` : "transparent",
+                  color: source === "claude" ? ACCENT_GREEN : MUTED,
+                  border: `1px solid ${source === "claude" ? ACCENT_GREEN : BORDER_COL}`,
+                  borderRadius: 2, cursor: "pointer",
+                }}
+              >
+                CLAUDE
+              </button>
+            )}
+            {gptAvailable && (
+              <button
+                data-testid="outlook-source-gpt"
+                onClick={() => setSource("gpt")}
+                title="GPT-5 narrative"
+                style={{
+                  padding: "3px 10px", fontSize: 9, fontFamily: "monospace", letterSpacing: "0.06em",
+                  background: source === "gpt" ? `${ACCENT_BLUE}22` : "transparent",
+                  color: source === "gpt" ? ACCENT_BLUE : MUTED,
+                  border: `1px solid ${source === "gpt" ? ACCENT_BLUE : BORDER_COL}`,
+                  borderRadius: 2, cursor: "pointer",
+                }}
+              >
+                GPT
+              </button>
+            )}
           </div>
         </div>
 
@@ -889,7 +889,7 @@ function LiveSkyTab({ data }: { data: CosmosResponse }) {
   const s = data.snapshot;
   const kp = data.kp;
 
-  const topNatal = s.natalTransits.slice(0, 8);
+  // topNatal removed (Natal Transits section nuked per audit)
   const topAspects = s.aspects.filter((a) => a.score > 0.4).slice(0, 8);
 
   return (
@@ -917,17 +917,8 @@ function LiveSkyTab({ data }: { data: CosmosResponse }) {
         </div>
       </div>
 
-      {/* Solar system + planet table side by side */}
-      <div className="grid md:grid-cols-2 gap-6">
-        <div>
-          <div className="cm-section-label mb-3">Solar System — Geocentric (today)</div>
-          <div className="cm-card p-2">
-            <SolarSystemDiagram positions={s.positions} aspects={s.aspects} />
-            <div className="px-2 pb-2 pt-1 text-[10px]" style={{ color: MUTED, fontFamily: "monospace" }}>
-              Planets drawn at live ecliptic longitudes. Red outline = retrograde. Zodiac rim shows sign boundaries.
-            </div>
-          </div>
-        </div>
+      {/* Planet table only — solar system SVG nuked (decorative, not actionable) */}
+      <div>
         <div>
           <div className="cm-section-label mb-3">Planet Positions</div>
           <div className="cm-card p-4">
@@ -1017,55 +1008,7 @@ function LiveSkyTab({ data }: { data: CosmosResponse }) {
         </div>
       )}
 
-      {/* Natal transits for market tickers */}
-      <div>
-        <div className="cm-section-label mb-3">Natal Transits — Today's Sky vs. Ticker Birth Charts</div>
-        <div className="cm-card p-4">
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {topNatal.map((t) => {
-              const scoreColor = t.score > 0.3 ? ACCENT_GREEN : t.score < -0.3 ? ACCENT_DANGER : MUTED;
-              const disp = t.score > 0.3 ? "supportive" : t.score < -0.3 ? "stressed" : "neutral";
-              return (
-                <div key={t.symbol} className="p-3 rounded" style={{ background: BG3, border: `1px solid ${BORDER_COL}` }}>
-                  <div className="flex items-baseline justify-between mb-1">
-                    <span style={{ fontFamily: "monospace", fontSize: 13, color: ACCENT_GOLD, fontWeight: 600 }}>{t.symbol}</span>
-                    <span style={{ fontFamily: "monospace", fontSize: 13, color: scoreColor, fontWeight: 600 }}>
-                      {t.score > 0 ? "+" : ""}{t.score.toFixed(2)}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 10, color: MUTED, fontFamily: "monospace", marginBottom: 6 }}>{t.natalName} · {disp}</div>
-                  {t.aspects.slice(0, 2).map((a, i) => (
-                    <div key={i} style={{ fontSize: 10.5, color: MUTED, lineHeight: 1.4 }}>
-                      {a.transitingPlanet} {a.aspect} natal {a.natalPlanet}
-                    </div>
-                  ))}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* Zodiac readings */}
-      <div>
-        <div className="cm-section-label mb-3">Trader Zodiac — Per-Sign Tone Today</div>
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-2">
-          {s.zodiacReadings.map((r) => {
-            const toneColor = r.tone === "bullish" ? ACCENT_GREEN : r.tone === "bearish" ? ACCENT_DANGER : r.tone === "volatile" ? ACCENT_GOLD : MUTED;
-            return (
-              <div key={r.sign} className="cm-card p-3">
-                <div className="flex items-center gap-2 mb-1.5">
-                  <span style={{ fontSize: 16, color: ACCENT_GOLD }}>{r.glyph}</span>
-                  <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 600, color: TEXT }}>{r.sign}</span>
-                  <span style={{ fontFamily: "monospace", fontSize: 9, color: toneColor, marginLeft: "auto", textTransform: "uppercase", letterSpacing: "0.08em" }}>{r.tone}</span>
-                </div>
-                <div style={{ fontSize: 11, color: MUTED, marginBottom: 4 }}>{r.element} · ruled by {r.rulingPlanet}</div>
-                <div style={{ fontSize: 11.5, color: TEXT, lineHeight: 1.5 }}>{r.reading}</div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      {/* Natal transits + Zodiac readings nuked — not actionable for intraday decisions */}
 
       {/* NOAA Kp chart */}
       {kp && (kp.recent.length > 0 || kp.forecast.length > 0) && (

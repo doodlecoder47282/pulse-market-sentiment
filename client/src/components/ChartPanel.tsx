@@ -18,21 +18,21 @@ import { Plus, X, Zap, CandlestickChart as CsIcon, Activity, Layers, Sigma, Flam
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import GammaLevelsStrip from "./GammaLevelsStrip";
 import GammaContextBanner from "./GammaContextBanner";
+import OfiHistogram from "./OfiHistogram";
 
 type Timeframe = "1D" | "5D" | "1M" | "3M" | "1Y" | "5Y";
 const TIMEFRAMES: Timeframe[] = ["1D", "5D", "1M", "3M", "1Y", "5Y"];
 
-type Interval = "1m" | "5m" | "15m" | "30m" | "60m" | "1d" | "1wk" | "tick";
+type Interval = "1m" | "5m" | "15m" | "30m" | "60m" | "1d" | "1wk";
 type Engine = "svg" | "lightweight" | "tv";
 type ViewMode = "price" | "greeks" | "flow";
 
-// Allowed intraday intervals per timeframe (Yahoo constraints)
+// Allowed intraday intervals per timeframe (Schwab/CBOE constraints)
 const INTERVAL_OPTIONS: Record<Timeframe, Interval[]> = {
-  "1D": ["1m", "5m", "15m", "30m", "60m", "tick"],
-  "5D": ["5m", "15m", "30m", "60m", "tick"],
-  "1M": ["60m", "1d", "tick"],
+  "1D": ["1m", "5m", "15m", "30m", "60m"],
+  "5D": ["5m", "15m", "30m", "60m"],
+  "1M": ["60m", "1d"],
   "3M": ["1d"],
   "1Y": ["1d"],
   "5Y": ["1wk"],
@@ -86,13 +86,10 @@ export default function ChartPanel() {
     setIntervalState(DEFAULT_INTERVAL[newTf]);
   };
 
-  // Tick chart is a stub — requires Schwab feed
-  const tickStub = interval === "tick";
-
   const ohlcQuery = useQuery<OHLCResponse>({
     queryKey: ["/api/ohlc", activeChart, tf, interval],
     queryFn: async () => {
-      const iv = interval === "tick" ? "1m" : interval; // fallback for tick stub
+      const iv = interval;
       const r = await apiRequest(
         "GET",
         `/api/ohlc?symbol=${encodeURIComponent(activeChart)}&tf=${tf}&interval=${iv}`
@@ -147,7 +144,10 @@ export default function ChartPanel() {
       {/* Flow strip above the chart for quick P/C read */}
       <FlowStrip />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[220px_1fr_240px]" data-testid="chart-panel">
+      {/* Lee-Ready order-flow imbalance — 1-min signed vol histogram */}
+      <OfiHistogram />
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[220px_1fr]" data-testid="chart-panel">
         {/* Watchlist sidebar */}
         <aside className="space-y-2 rounded-xl border border-border/60 bg-card/40 p-3 backdrop-blur">
           <div className="mb-1 flex items-center justify-between">
@@ -200,9 +200,6 @@ export default function ChartPanel() {
             })}
           </div>
 
-          <div className="pt-2 text-[10px] leading-tight text-muted-foreground">
-            <Zap className="inline h-2.5 w-2.5 text-amber-400" /> = gamma walls available
-          </div>
         </aside>
 
         {/* Main chart area */}
@@ -300,27 +297,21 @@ export default function ChartPanel() {
           {viewMode === "price" && INTERVAL_OPTIONS[tf].length > 1 && (
             <div className="flex flex-wrap items-center gap-1 text-[10px]">
               <span className="pr-1 uppercase tracking-wider text-muted-foreground">Granularity</span>
-              {INTERVAL_OPTIONS[tf].map((iv) => {
-                const isTick = iv === "tick";
-                const label = isTick ? "Tick" : iv;
-                return (
-                  <button
-                    key={iv}
-                    onClick={() => setIntervalState(iv)}
-                    className={[
-                      "rounded border px-1.5 py-0.5 font-mono uppercase tracking-wider transition",
-                      interval === iv
-                        ? isTick
-                          ? "border-violet-500/60 bg-violet-500/10 text-violet-300"
-                          : "border-cyan-500/50 bg-cyan-500/10 text-cyan-300"
-                        : "border-border/40 text-muted-foreground hover:text-foreground",
-                    ].join(" ")}
-                    data-testid={`iv-${iv}`}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
+              {INTERVAL_OPTIONS[tf].map((iv) => (
+                <button
+                  key={iv}
+                  onClick={() => setIntervalState(iv)}
+                  className={[
+                    "rounded border px-1.5 py-0.5 font-mono uppercase tracking-wider transition",
+                    interval === iv
+                      ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300"
+                      : "border-border/40 text-muted-foreground hover:text-foreground",
+                  ].join(" ")}
+                  data-testid={`iv-${iv}`}
+                >
+                  {iv}
+                </button>
+              ))}
             </div>
           )}
 
@@ -341,16 +332,6 @@ export default function ChartPanel() {
               timeframe={tf}
               engine={engine}
             />
-          )}
-
-          {/* Tick stub banner */}
-          {viewMode === "price" && tickStub && (
-            <div className="rounded-md border border-violet-500/40 bg-violet-500/10 p-3 text-[11px]">
-              <div className="font-semibold text-violet-300">Tick chart requires a paid feed</div>
-              <div className="mt-0.5 text-muted-foreground">
-                Displaying 1m candles. Connect a tick feed for true intraday streaming.
-              </div>
-            </div>
           )}
 
           {/* Greeks view: exposure profile panel */}
@@ -391,12 +372,10 @@ export default function ChartPanel() {
             />
           )}
 
-          {/* Footer stats */}
+          {/* Footer stats — operator-relevant only */}
           {ohlc && ohlc.candles.length > 0 && engine !== "tv" && (
-            <div className="grid grid-cols-2 gap-2 border-t border-border/40 pt-2 text-[11px] md:grid-cols-5">
+            <div className="grid grid-cols-2 gap-2 border-t border-border/40 pt-2 text-[11px] md:grid-cols-3">
               <Stat label="Range" value={`${ohlc.sessionLow?.toFixed(2) ?? "—"} – ${ohlc.sessionHigh?.toFixed(2) ?? "—"}`} />
-              <Stat label="Candles" value={String(ohlc.candles.length)} />
-              <Stat label="Interval" value={ohlc.interval} />
               <Stat label="Prev close" value={ohlc.prevClose?.toFixed(2) ?? "—"} />
               <Stat label="Updated" value={new Date(ohlc.asOf * 1000).toLocaleTimeString()} />
             </div>
@@ -404,11 +383,6 @@ export default function ChartPanel() {
           </>
           )}
         </section>
-
-        {/* Gamma levels strip — right column (hidden on mobile, shown as chips above) */}
-        <aside className="space-y-3" data-testid="gamma-levels-sidebar">
-          <GammaLevelsStrip />
-        </aside>
       </div>
     </div>
   );

@@ -58,6 +58,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { buildJPMCollarSnapshot, getCachedSpxCloses } from "./jpmCollar";
 import { buildVolCalendar, getTodayEventContext } from "./volCalendar";
+import { computeOfiTrend } from "./leeReadyOfi";
 import { buildGammaLevelsEnhanced } from "./gammaLevels";
 import { runBackfill, getBacktestSummary } from "./backtest";
 import { buildChainAudit } from "./chainAudit";
@@ -916,6 +917,31 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Lee-Ready order-flow imbalance — 1-min session-cumulative SPX trend.
+  // Returns last 60 bars for histogram rendering on Chart + Trade Desk.
+  app.get("/api/ofi", async (_req, res) => {
+    try {
+      const trend = await computeOfiTrend();
+      // Trim payload — client only needs last 60 bars for the histogram
+      const tail = trend.bars.slice(-60).map(b => ({
+        ts: b.ts,
+        signedVolume: b.signedVolume,
+        cumulative: b.cumulative,
+      }));
+      res.json({
+        bars: tail,
+        cumulativeNow: trend.cumulativeNow,
+        slope15m: trend.slope15m,
+        slope5m: trend.slope5m,
+        trend: trend.trend,
+        acceleration: trend.acceleration,
+        capturedAt: Math.floor(Date.now() / 1000),
+      });
+    } catch (e: any) {
+      res.status(503).json({ message: e?.message ?? "Failed to compute OFI" });
+    }
+  });
+
   // Mag 7 indicator — equal-weight basket vs SPY with breadth + 4W return.
   let mag7Cache: { at: number; data: Mag7Response } | null = null;
   const MAG7_CACHE_MS = 15_000;
@@ -1761,6 +1787,101 @@ Refine the brief above. Search the web for any critical developments the feed is
     } catch (err: any) {
       console.error("[earnings]", err?.message);
       res.status(500).json({ error: err?.message ?? "earnings fetch failed" });
+    }
+  });
+
+  // ---- Heatseeker user-editable sticky levels (server-persisted, NO localStorage) ----
+  app.get("/api/heatseeker/levels", async (_req, res) => {
+    try {
+      const { readLevels } = await import("./heatseekerLevels");
+      const out = await readLevels();
+      res.json(out);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "failed to read heatseeker levels" });
+    }
+  });
+  app.post("/api/heatseeker/levels", async (req, res) => {
+    try {
+      const { writeLevels, sanitizeLevels } = await import("./heatseekerLevels");
+      const body = req.body;
+      const list = Array.isArray(body) ? body : (body?.levels ?? []);
+      const sanitized = sanitizeLevels(list);
+      const out = await writeLevels(sanitized);
+      res.json(out);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "failed to save heatseeker levels" });
+    }
+  });
+
+  // ---- Earnings IV implied move (ATM straddle pricing) ----
+  // Returns ±$ expected move and percent for next post-earnings expiry.
+  // Cached 10 min per ticker. NEVER blocks earnings render — UI calls this lazily per row.
+  const _ivMoveCache = new Map<string, { ts: number; data: any }>();
+  app.get("/api/earnings-iv", async (req, res) => {
+    const ticker = String(req.query.ticker ?? "").trim().toUpperCase();
+    if (!ticker || !/^[A-Z.\-]{1,8}$/.test(ticker)) {
+      return res.status(400).json({ error: "invalid ticker" });
+    }
+    const cached = _ivMoveCache.get(ticker);
+    const now = Date.now();
+    if (cached && (now - cached.ts) < 10 * 60_000) {
+      return res.json(cached.data);
+    }
+    try {
+      // Pull front-month chain (~14 day window covers post-earnings weekly)
+      const chain: any = await schwabGetOptionChain(ticker, 14);
+      if (!chain || chain.error || (!chain.callExpDateMap && !chain.putExpDateMap)) {
+        const out = { ticker, impliedMove: null, impliedMovePct: null, expiry: null, source: null };
+        _ivMoveCache.set(ticker, { ts: now, data: out });
+        return res.json(out);
+      }
+      const spot = chain.underlying?.last ?? chain.underlying?.bid ?? null;
+      if (!spot || spot <= 0) {
+        const out = { ticker, impliedMove: null, impliedMovePct: null, expiry: null, source: chain.source ?? null };
+        _ivMoveCache.set(ticker, { ts: now, data: out });
+        return res.json(out);
+      }
+      // Find earliest expiry with valid ATM quotes
+      const callMap = chain.callExpDateMap ?? {};
+      const putMap = chain.putExpDateMap ?? {};
+      const expiryKeys = Array.from(new Set([...Object.keys(callMap), ...Object.keys(putMap)])).sort();
+      let pickedExpiry: string | null = null;
+      let straddle: number | null = null;
+      for (const expKey of expiryKeys) {
+        const calls = callMap[expKey] ?? {};
+        const puts = putMap[expKey] ?? {};
+        const strikes = Array.from(new Set([...Object.keys(calls), ...Object.keys(puts)]))
+          .map((s) => Number(s))
+          .filter((n) => Number.isFinite(n) && n > 0)
+          .sort((a, b) => Math.abs(a - spot) - Math.abs(b - spot));
+        if (!strikes.length) continue;
+        const atm = strikes[0];
+        const callArr = calls[String(atm)] ?? calls[atm.toFixed(1)] ?? [];
+        const putArr = puts[String(atm)] ?? puts[atm.toFixed(1)] ?? [];
+        const c = callArr[0];
+        const p = putArr[0];
+        const cMid = c ? (typeof c.mark === "number" ? c.mark : ((c.bid ?? 0) + (c.ask ?? 0)) / 2) : null;
+        const pMid = p ? (typeof p.mark === "number" ? p.mark : ((p.bid ?? 0) + (p.ask ?? 0)) / 2) : null;
+        if (cMid != null && pMid != null && cMid > 0 && pMid > 0) {
+          straddle = cMid + pMid;
+          pickedExpiry = expKey.split(":")[0]; // strip DTE suffix
+          break;
+        }
+      }
+      const out = straddle != null && pickedExpiry
+        ? {
+            ticker,
+            impliedMove: Number(straddle.toFixed(2)),
+            impliedMovePct: Number(((straddle / spot) * 100).toFixed(2)),
+            expiry: pickedExpiry,
+            source: chain.source ?? null,
+          }
+        : { ticker, impliedMove: null, impliedMovePct: null, expiry: null, source: chain.source ?? null };
+      _ivMoveCache.set(ticker, { ts: now, data: out });
+      res.json(out);
+    } catch (err: any) {
+      console.error("[earnings-iv]", ticker, err?.message);
+      res.status(500).json({ error: err?.message ?? "earnings iv fetch failed" });
     }
   });
 

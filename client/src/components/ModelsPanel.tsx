@@ -21,6 +21,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { RegimeChip } from "@/components/RegimeChip";
 import {
   LineChart, Line, ReferenceLine, ReferenceDot, ReferenceArea,
   ResponsiveContainer, XAxis, YAxis, Tooltip, Label, LabelList,
@@ -515,12 +516,6 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
         <span>{horizon.spotAnchorDate}</span>
         <span>|</span>
         <span>{timeStr} ET</span>
-        {a.contractCount > 0 && (
-          <>
-            <span>|</span>
-            <span>{a.contractCount.toLocaleString()} ROWS (CBOE)</span>
-          </>
-        )}
       </div>
 
       {/* Line 2: pivot levels */}
@@ -2132,6 +2127,11 @@ export default function ModelsPanel() {
 
   return (
     <div className="space-y-3" data-testid="models-panel">
+      {/* Cross-tab regime conditioning chip */}
+      <div className="flex items-center gap-2">
+        <RegimeChip origin="models" />
+      </div>
+
       {/* ── Live Chain Audit — at the top, before existing controls ── */}
       {/* Inserted as a collapsible section heading + ChainAudit */}
       {/* Control bar */}

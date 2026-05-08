@@ -14,15 +14,15 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { fmt, scoreBg, scoreColor } from "@/lib/format";
 import Gauge from "@/components/Gauge";
-import MetricCard from "@/components/MetricCard";
 import Logo from "@/components/Logo";
 import { BatmanLogoSmall } from "@/components/BatmanLogo";
 import VoicesPanel from "@/components/VoicesPanel";
 import NewsPanel from "@/components/NewsPanel";
 import TradeDesk from "@/components/TradeDesk";
 import RegimePanel from "@/components/RegimePanel";
-import { Mag7Strip } from "@/components/Mag7Panel";
 import FlowPanel from "@/components/FlowPanel";
+import GlobalEdgeBanner from "@/components/GlobalEdgeBanner";
+import { RegimeChip } from "@/components/RegimeChip";
 import TakeFive, { TakeFiveFab } from "@/components/TakeFive";
 import { MacroTicker, MacroCarousel } from "@/components/MacroCarousel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -36,8 +36,8 @@ import { PanelSkeleton } from "@/components/ui/panel-skeleton";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { useToast } from "@/hooks/use-toast";
 import {
-  RefreshCw, ExternalLink, ArrowDownRight, ArrowUpRight, Zap,
-  Activity, Waves, MessageSquare, Newspaper, AlertTriangle,
+  RefreshCw, ArrowDownRight, ArrowUpRight, Zap,
+  Activity, Waves, MessageSquare, AlertTriangle,
   Keyboard, Settings, Sun, Moon, LayoutGrid, LayoutList,
 } from "lucide-react";
 import SchwabSettings, { SchwabStatusPill } from "@/components/SchwabSettings";
@@ -61,6 +61,31 @@ const CosmosPanelLazy = lazy(() => import("@/components/CosmosPanel"));
 
 // ── Market status helpers ──────────────────────────────────────────────────
 type MarketStatus = "OPEN" | "PRE-MARKET" | "AFTER-HOURS" | "CLOSED";
+
+// ── Composite delta-since-open chip ────────────────────────────────────────
+function CompositeDeltaChip({ score }: { score: number }) {
+  // Capture the first composite score we see this session (proxy for 9:30 open).
+  // Sandboxed iframe blocks localStorage, so this is session-life only.
+  const baselineRef = useRef<number | null>(null);
+  if (baselineRef.current === null && typeof score === "number" && Number.isFinite(score)) {
+    baselineRef.current = score;
+  }
+  if (baselineRef.current === null) return null;
+  const delta = Math.round(score - baselineRef.current);
+  if (Math.abs(delta) < 1) return null;
+  const tone = delta > 0 ? "text-emerald-400" : "text-red-400";
+  const arrow = delta > 0 ? "▲" : "▼";
+  return (
+    <span
+      className={`rounded-md border bg-current/5 px-1.5 py-0.5 font-mono text-[11px] ${tone}`}
+      style={{ borderColor: "currentColor" }}
+      title="Change since first read this session (proxy for 9:30 open)"
+      data-testid="composite-delta-chip"
+    >
+      {arrow} {delta > 0 ? "+" : ""}{delta}
+    </span>
+  );
+}
 
 function getMarketStatus(): MarketStatus {
   // Convert to Eastern Time
@@ -240,7 +265,7 @@ export default function Dashboard() {
     );
   }
 
-  const { composite, vol, spy, gamma, term, social, fearGreed, headlines } = data;
+  const { composite, vol, spy, gamma, term, social, fearGreed } = data;
 
   return (
     <div className="min-h-screen bg-background">
@@ -416,6 +441,14 @@ export default function Dashboard() {
           {/* ── Chart tab (lazy) ── */}
           <TabsContent value="chart" className="space-y-6">
             <Suspense fallback={null}><TabHeadline tab="chart" /></Suspense>
+            <GlobalEdgeBanner
+              vix={vol.vix.value}
+              vix9d={vol.vix9d.value}
+              vvix={vol.vvix.value}
+              ratio9dOver30d={term.ratio9dOver30d}
+              spot={spy.price ? spy.price * 10 : null}
+              zeroGamma={gamma.zeroGamma ?? null}
+            />
             <ErrorBoundary label="Chart Panel">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
                 <ChartPanelEager />
@@ -426,6 +459,14 @@ export default function Dashboard() {
           {/* ── Models tab (lazy) ── */}
           <TabsContent value="models" className="space-y-6">
             <Suspense fallback={null}><TabHeadline tab="models" /></Suspense>
+            <GlobalEdgeBanner
+              vix={vol.vix.value}
+              vix9d={vol.vix9d.value}
+              vvix={vol.vvix.value}
+              ratio9dOver30d={term.ratio9dOver30d}
+              spot={spy.price ? spy.price * 10 : null}
+              zeroGamma={gamma.zeroGamma ?? null}
+            />
             <ErrorBoundary label="Models Panel">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
                 <ModelsPanel />
@@ -464,6 +505,14 @@ export default function Dashboard() {
           {/* ── Trade Desk tab (lazy) ── */}
           <TabsContent value="tradedesk" className="space-y-6">
             <Suspense fallback={null}><TabHeadline tab="tradedesk" /></Suspense>
+            <GlobalEdgeBanner
+              vix={vol.vix.value}
+              vix9d={vol.vix9d.value}
+              vvix={vol.vvix.value}
+              ratio9dOver30d={term.ratio9dOver30d}
+              spot={spy.price ? spy.price * 10 : null}
+              zeroGamma={gamma.zeroGamma ?? null}
+            />
             <ErrorBoundary label="Trade Desk">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
                 <TradeDeskPanel />
@@ -518,14 +567,25 @@ export default function Dashboard() {
           {/* ── Signals tab (eager — primary tab) ── */}
           <TabsContent value="signals" className="space-y-6">
             <Suspense fallback={null}><TabHeadline tab="signals" /></Suspense>
-            {/* Whale Flow panel — fresh detections + tracking + closed */}
+
+            {/* Regime conditioning chip — pulled from /api/regime, shared across tabs */}
+            <div className="flex items-center gap-2">
+              <RegimeChip origin="signals" />
+            </div>
+
+            {/* Sticky alert strip — surfaces VIX9D inversion / VVIX spike / Kp storm / GEX flip */}
+            <GlobalEdgeBanner
+              vix={vol.vix.value}
+              vix9d={vol.vix9d.value}
+              vvix={vol.vvix.value}
+              ratio9dOver30d={term.ratio9dOver30d}
+              spot={spy.price ? spy.price * 10 : null}
+              zeroGamma={gamma.zeroGamma ?? null}
+            />
+
+            {/* Whale Flow panel — fresh detections + tracking + closed (with CONFLUX highlighting) */}
             <ErrorBoundary label="Whale Flow">
               <WhaleFlowPanel />
-            </ErrorBoundary>
-
-            {/* Mag 7 quick read — strip above composite */}
-            <ErrorBoundary compact label="Mag7 Strip">
-              <Mag7Strip />
             </ErrorBoundary>
 
             {/* Put/Call flow — prominent above composite */}
@@ -533,83 +593,34 @@ export default function Dashboard() {
               <FlowPanel onOpenSettings={() => setSettingsOpen(true)} />
             </ErrorBoundary>
 
-            {/* Top row: composite + SPY/VIX quick panel */}
-            <section className="grid grid-cols-1 items-start gap-4 lg:grid-cols-12">
-              {/* Composite */}
-              <Card className="lg:col-span-5" data-testid="card-composite">
-                <CardContent className="p-6">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="text-xs uppercase tracking-widest text-muted-foreground">Composite Sentiment</div>
-                      <h2 className="mt-1 text-lg font-semibold">{composite.label}</h2>
-                    </div>
+            {/* Composite gauge — hero panel, full width */}
+            <Card data-testid="card-composite">
+              <CardContent className="p-6">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-xs uppercase tracking-widest text-muted-foreground">Composite Sentiment</div>
+                    <h2 className="mt-1 text-lg font-semibold">{composite.label}</h2>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <CompositeDeltaChip score={composite.score} />
                     <Badge variant="outline" className={`${scoreColor(composite.score)} border-current`}>
                       {composite.score}/100
                     </Badge>
                   </div>
-                  <div className="mt-2 flex justify-center">
-                    <Gauge value={composite.score} label={composite.label} size={280} />
+                </div>
+                <div className="mt-2 flex justify-center">
+                  <Gauge value={composite.score} label={composite.label} size={280} />
+                </div>
+                <p className="mt-4 text-sm text-muted-foreground" data-testid="text-takeaway">{composite.takeaway}</p>
+                <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
+                  <div className="flex items-center gap-2 text-amber-500">
+                    <Zap className="h-3.5 w-3.5" />
+                    <span className="text-[11px] uppercase tracking-widest">Trading Regime</span>
                   </div>
-                  <p className="mt-4 text-sm text-muted-foreground" data-testid="text-takeaway">{composite.takeaway}</p>
-                  <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
-                    <div className="flex items-center gap-2 text-amber-500">
-                      <Zap className="h-3.5 w-3.5" />
-                      <span className="text-[11px] uppercase tracking-widest">Trading Regime</span>
-                    </div>
-                    <div className="mt-1 text-foreground" data-testid="text-regime">{composite.tradingRegime}</div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Quick metrics */}
-              <div className="grid auto-rows-min content-start grid-cols-2 gap-3 md:grid-cols-3 lg:col-span-7 lg:grid-cols-3">
-                <MetricCard
-                  testId="metric-spy"
-                  label="SPY"
-                  value={fmt.usd(spy.price)}
-                  changePct={spy.changePct}
-                  sub={`Prev ${fmt.usd(spy.prevClose)}`}
-                  accent={spy.changePct >= 0 ? "bull" : "bear"}
-                />
-                <MetricCard
-                  testId="metric-vix"
-                  label="VIX"
-                  value={fmt.num(vol.vix.value)}
-                  changePct={vol.vix.changePct}
-                  sub={vol.vix.value != null && vol.vix.value > 20 ? "Above stress line" : "Normal range"}
-                  accent={vol.vix.value != null && vol.vix.value > 20 ? "warn" : "neutral"}
-                />
-                <MetricCard
-                  testId="metric-vvix"
-                  label="VVIX"
-                  value={fmt.num(vol.vvix.value)}
-                  changePct={vol.vvix.changePct}
-                  sub="Vol-of-Vol"
-                />
-                <MetricCard
-                  testId="metric-vix9d"
-                  label="VIX 9D"
-                  value={fmt.num(vol.vix9d.value)}
-                  changePct={vol.vix9d.changePct}
-                  sub="Front-end"
-                />
-                <MetricCard
-                  testId="metric-vix3m"
-                  label="VIX 3M"
-                  value={fmt.num(vol.vix3m.value)}
-                  changePct={vol.vix3m.changePct}
-                  sub="Longer tenor"
-                />
-                <MetricCard
-                  testId="metric-skew"
-                  label="SKEW"
-                  value={fmt.num(vol.skew.value, 1)}
-                  changePct={vol.skew.changePct}
-                  sub={vol.skew.value != null && vol.skew.value > 150 ? "Tail hedging elevated" : "Tail risk pricing"}
-                  accent={vol.skew.value != null && vol.skew.value > 150 ? "warn" : "neutral"}
-                />
-              </div>
-            </section>
+                  <div className="mt-1 text-foreground" data-testid="text-regime">{composite.tradingRegime}</div>
+                </div>
+              </CardContent>
+            </Card>
 
             {/* Second row: sub-gauges breakdown */}
             <section>
@@ -785,7 +796,7 @@ export default function Dashboard() {
               </div>
             </section>
 
-            {/* Fourth row: social + Fear&Greed + headlines */}
+            {/* Fourth row: social + Fear&Greed (Headlines moved to dedicated News tab) */}
             <section className="grid grid-cols-1 gap-4 lg:grid-cols-12">
               <CollapsibleCard
                 id="social-chatter"
@@ -843,7 +854,7 @@ export default function Dashboard() {
                 </>
               </CollapsibleCard>
 
-              <div className="space-y-4 lg:col-span-6">
+              <div className="lg:col-span-6">
                 <CollapsibleCard id="fear-greed" title="CNN Fear &amp; Greed">
                   <>
                     {fearGreed ? (
@@ -864,57 +875,9 @@ export default function Dashboard() {
                     )}
                   </>
                 </CollapsibleCard>
-
-                <CollapsibleCard
-                  id="headlines"
-                  title={<><Newspaper className="h-4 w-4" /> Market Headlines</>}
-                >
-                  <>
-                    {headlines.length === 0 ? (
-                      <div className="text-xs text-muted-foreground">No headlines available.</div>
-                    ) : (
-                      <ul className="space-y-2">
-                        {headlines.map((h, i) => (
-                          <li key={i}>
-                            <a
-                              href={h.url}
-                              target="_blank"
-                              rel="noreferrer noopener"
-                              className="flex items-start gap-2 rounded-md p-1.5 text-xs hover-elevate"
-                              data-testid={`headline-${i}`}
-                            >
-                              <ExternalLink className="mt-0.5 h-3 w-3 flex-shrink-0 text-muted-foreground" />
-                              <div>
-                                <div className="leading-snug">{h.title}</div>
-                                <div className="text-[10px] text-muted-foreground">{h.source}</div>
-                              </div>
-                            </a>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </>
-                </CollapsibleCard>
               </div>
             </section>
 
-            {/* Footer / methodology */}
-            <footer className="pb-10 pt-4 text-[11px] text-muted-foreground">
-              <Separator className="mb-4" />
-              <div className="space-y-1 leading-relaxed">
-                <div>
-                  <span className="font-medium text-foreground">Methodology.</span> Composite = weighted average of
-                  VIX level (22%), dealer gamma regime (15%), put/call OI (12%), 9D/30D term structure (12%), social tone (10%),
-                  VVIX (8%), SKEW (8%), Fear &amp; Greed (8%), AAII spread (5%). GEX proxy: Γ × OI × 100 × S² × 1% from CBOE
-                  delayed chain, 0-45 DTE. Social: StockTwits cashtag streams for $SPY and $VIX (explicit bull/bear tags when posters
-                  mark them, lexicon scoring otherwise) combined with r/options hot posts. Transparent and auditable, not ML.
-                </div>
-                <div>
-                  <span className="font-medium text-foreground">Data.</span> Yahoo (indices), CBOE (SPY options chain), CNN
-                  (F&amp;G). Delayed quotes. Not investment advice.
-                </div>
-              </div>
-            </footer>
           </TabsContent>
         </Tabs>
       </main>

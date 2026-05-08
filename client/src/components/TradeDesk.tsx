@@ -7,6 +7,8 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import RegimePredictPanel from "@/components/RegimePredictPanel";
 import EdgeStatsPanel from "@/components/EdgeStatsPanel";
+import OfiHistogram from "@/components/OfiHistogram";
+import { RegimeChip } from "@/components/RegimeChip";
 import type { GammaStructure } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -136,7 +138,7 @@ type PivotSystem = "classic" | "fib" | "cam" | "all";
 
 export default function TradeDesk() {
   const [range, setRange] = useState<"1d" | "5d">("1d");
-  const [pivotSystem, setPivotSystem] = useState<PivotSystem>("all");
+  const [pivotSystem, setPivotSystem] = useState<PivotSystem>("classic");
 
   const { data, isLoading, isError, error } = useQuery<TradeDeskPayload>({
     queryKey: ["/api/trade-desk", range],
@@ -166,14 +168,16 @@ export default function TradeDesk() {
 
   return (
     <div className="space-y-4">
+      {/* Cross-tab regime conditioning chip */}
+      <div className="flex items-center gap-2">
+        <RegimeChip origin="tradedesk" />
+      </div>
+
       {/* Regime transition forecast — forward-looking probability scoring */}
       <RegimePredictPanel />
 
       {/* Closed-loop edge tracking — rolling hit-rates + threshold tuning suggestions */}
       <EdgeStatsPanel />
-
-      {/* Color legend — what each tone means across this tab */}
-      <TradeDeskColorLegend />
 
       {/* Command bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/20 bg-gradient-to-r from-amber-500/5 to-transparent px-4 py-2.5">
@@ -197,7 +201,6 @@ export default function TradeDesk() {
             value={pivotSystem}
             onChange={(v) => setPivotSystem(v as PivotSystem)}
             options={[
-              { v: "all", l: "All" },
               { v: "classic", l: "Classic" },
               { v: "fib", l: "Fib" },
               { v: "cam", l: "Cam" },
@@ -236,6 +239,7 @@ export default function TradeDesk() {
           accent="emerald"
           range={range}
         />
+        <OfiHistogram />
         <IntradayChart
           title="CBOE Volatility Index"
           symbol="^VIX"
@@ -258,15 +262,7 @@ export default function TradeDesk() {
         <EodPlayMaker />
       </section>
 
-      {/* Footnote */}
-      <footer className="pb-6 pt-2 text-[10px] leading-relaxed text-muted-foreground">
-        <Separator className="mb-3" />
-        <div>
-          Pivot math from prior session OHLC. Classic floor-trader, Fibonacci (0.382/0.618/1.000), Camarilla (1.1/12 → 1.1×1.168).
-          Gamma map derived from CBOE SPY chain (0-45 DTE) — delayed. Squeeze indicator is rules-based from dealer gamma,
-          VIX term, SKEW, and wall distance; not ML. Not investment advice.
-        </div>
-      </footer>
+
     </div>
   );
 }

@@ -12,6 +12,13 @@ import { Activity, TrendingUp, TrendingDown, Target, ChevronDown, ChevronRight, 
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+// CONFLUX context: keys present in BOTH whale list AND UOA list at the same time.
+// Format: `${symbol}-${type}-${strike}-${expiration}`.
+// The convergence is the highest-conviction setup the system can produce.
+import { createContext, useContext } from "react";
+const ConfluxContext = createContext<Set<string>>(new Set());
+const confluxKey = (s: string, t: string, k: number, e: string) => `${s}-${t}-${k}-${e}`;
+
 interface WhaleHit {
   symbol: string;
   occ: string;
@@ -203,8 +210,14 @@ function SectionHeader({ icon, label, count }: { icon: React.ReactNode; label: s
 // Whale row — compact summary line + expandable detail
 function WhaleRow({ hit }: { hit: WhaleHit }) {
   const [open, setOpen] = useState(false);
+  const conflux = useContext(ConfluxContext);
+  const isConflux = conflux.has(confluxKey(hit.symbol, hit.type, hit.strike, hit.expiration));
   return (
-    <div className="rounded-md border border-border/30 bg-card/40 text-xs" data-testid={`whale-row-${hit.occ}`}>
+    <div
+      className={`rounded-md border text-xs ${isConflux ? "border-fuchsia-500/60 bg-fuchsia-500/10 ring-1 ring-fuchsia-500/30" : "border-border/30 bg-card/40"}`}
+      data-testid={`whale-row-${hit.occ}`}
+      data-conflux={isConflux ? "true" : "false"}
+    >
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
@@ -219,6 +232,11 @@ function WhaleRow({ hit }: { hit: WhaleHit }) {
         <span className={`font-semibold ${sentimentColor(hit.sentiment)}`} data-testid={`whale-sentiment-${hit.occ}`}>
           {hit.sentiment}
         </span>
+        {isConflux && (
+          <Badge variant="outline" className="border-fuchsia-500/60 bg-fuchsia-500/15 text-fuchsia-300 text-[9px] font-bold" data-testid={`whale-conflux-${hit.occ}`}>
+            CONFLUX
+          </Badge>
+        )}
         {hit.isNewStrike ? (
           <Badge variant="outline" className="border-cyan-500/50 bg-cyan-500/10 text-cyan-400 text-[9px]" data-testid={`whale-newstrike-${hit.occ}`}>
             NEW STRIKE
@@ -344,8 +362,14 @@ function ClosedRow({ pos }: { pos: FollowPosition }) {
 // UOA cluster row (similar shape, hit-count instead of single-print)
 function UoaRow({ cl }: { cl: UoaCluster }) {
   const [open, setOpen] = useState(false);
+  const conflux = useContext(ConfluxContext);
+  const isConflux = conflux.has(confluxKey(cl.symbol, cl.type, cl.strike, cl.expiration));
   return (
-    <div className="rounded-md border border-border/30 bg-card/40 text-xs" data-testid={`uoa-row-${cl.key}`}>
+    <div
+      className={`rounded-md border text-xs ${isConflux ? "border-fuchsia-500/60 bg-fuchsia-500/10 ring-1 ring-fuchsia-500/30" : "border-border/30 bg-card/40"}`}
+      data-testid={`uoa-row-${cl.key}`}
+      data-conflux={isConflux ? "true" : "false"}
+    >
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
@@ -481,7 +505,25 @@ export default function WhaleFlowPanel() {
   const closedPositions = terminalQuery.data?.positions ?? [];
   const cfg = previewQuery.data?.config;
 
+  // Compute CONFLUX set: contracts present in BOTH active whale fires AND active UOA clusters.
+  // This is the highest-conviction signal the platform can surface.
+  const confluxSet = (() => {
+    const whaleKeys = new Set<string>();
+    for (const g of whaleGroups) {
+      for (const w of g.whales) whaleKeys.add(confluxKey(w.symbol, w.type, w.strike, w.expiration));
+    }
+    const intersection = new Set<string>();
+    for (const g of uoaGroups) {
+      for (const c of g.clusters) {
+        const k = confluxKey(c.symbol, c.type, c.strike, c.expiration);
+        if (whaleKeys.has(k)) intersection.add(k);
+      }
+    }
+    return intersection;
+  })();
+
   return (
+    <ConfluxContext.Provider value={confluxSet}>
     <Card className="border-cyan-500/20 bg-gradient-to-br from-card to-cyan-950/5" data-testid="card-whale-flow">
       <CardHeader className="pb-3">
         <div className="flex flex-wrap items-center gap-3">
@@ -581,5 +623,6 @@ export default function WhaleFlowPanel() {
         </section>
       </CardContent>
     </Card>
+    </ConfluxContext.Provider>
   );
 }
