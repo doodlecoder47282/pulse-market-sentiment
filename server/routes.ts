@@ -678,10 +678,58 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Post-process pipeline (order matters):
       //   1. Term-structure rescale: 1W/1M/3M EMs from VIX9D/VIX
       //   2. Audit enrichment: vommaPockets, realizedSigma20d, intradayPivot, wickZones
+      //   3. Quarterly weekly trajectory: 13-week bull/base/bear cone w/ anchors
       const vixData = await fetchVixTermData().catch(() => ({ vix: null, vix9d: null, vix3m: null }));
       const rescaled = applyTermStructureRescale(data, vixData);
       const { enrichAudit } = await import("./auditEnrich");
       const enriched = await enrichAudit(rescaled, vixData);
+
+      // Attach 13-week trajectory to the quarterly horizon (additive only).
+      try {
+        const q = enriched.horizons?.quarterly as any;
+        if (q && q.spot) {
+          const snap = await getOrBuild(false);
+          const composite = snap.composite?.score ?? 50;
+          // Scale-aware level mapping:
+          //  snap.gamma.* are SPY-scale (gamma chain built from SPY chain).
+          //  JPM collar strikes are SPX-scale (5000s range).
+          //  q.spot is whichever the caller asked for.
+          const isSPX = symbol === "^GSPC";
+          const gammaScale = isSPX ? 10 : 1;     // SPY → SPX: ×10
+          const jpmScale   = isSPX ? 1  : 0.1;   // SPX strikes → SPY: ÷10
+
+          let jpmStrikes: { shortPut: number; longPut: number; shortCall: number } | null = null;
+          try {
+            const { buildJPMCollarSnapshot } = await import("./jpmCollar");
+            const jpm = await buildJPMCollarSnapshot();
+            jpmStrikes = {
+              shortPut: jpm.current.shortPut * jpmScale,
+              longPut: jpm.current.longPut * jpmScale,
+              shortCall: jpm.current.shortCall * jpmScale,
+            };
+          } catch { /* JPM optional */ }
+
+          const { buildQuarterlyTrajectory } = await import("./quarterlyTrajectory");
+          const traj = buildQuarterlyTrajectory({
+            spot: q.spot,
+            vix: vixData.vix ?? 16,
+            vix9d: vixData.vix9d,
+            vix3m: vixData.vix3m,
+            callWall: snap.gamma.callWall * gammaScale,
+            putWall: snap.gamma.putWall * gammaScale,
+            gammaFlip: snap.gamma.zeroGamma * gammaScale,
+            maxPain: snap.gamma.maxPain * gammaScale,
+            totalGex: snap.gamma.totalGex,
+            composite,
+            jpmStrikes,
+          });
+          q.weeklyTrajectory = traj;
+        }
+      } catch (err: any) {
+        // Trajectory is purely additive; failure must not break /api/models
+        console.warn("[models] quarterly trajectory build failed:", err?.message ?? err);
+      }
+
       res.json(enriched);
     } catch (e: any) {
       // On failure — serve last persisted session snapshot for today, tagged.

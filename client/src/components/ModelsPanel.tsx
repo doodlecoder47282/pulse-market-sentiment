@@ -24,6 +24,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   LineChart, Line, ReferenceLine, ReferenceDot, ReferenceArea,
   ResponsiveContainer, XAxis, YAxis, Tooltip, Label, LabelList,
+  ComposedChart, Area, Legend,
 } from "recharts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -166,6 +167,52 @@ interface ModelHorizon {
   vomma: "elevated" | "normal";
   confidence: "HIGH" | "MODERATE" | "LOW";
   mmMatrix?: MMMatrix;
+  weeklyTrajectory?: WeeklyTrajectory;
+}
+
+// ─── 13-week trajectory (quarterly horizon only) ─────────────────────────────
+interface TrajectoryWeek {
+  weekIndex: number;
+  weekLabel: string;
+  weekEndDate: string;
+  bull: number;
+  base: number;
+  bear: number;
+  sigmaWeek: number;
+  driftPct: number;
+}
+interface TrajectoryAnchor {
+  level: number;
+  label: string;
+  kind: string;
+  strength: "primary" | "secondary";
+}
+interface WeeklyTrajectory {
+  spot: number;
+  asOf: number;
+  weeks: TrajectoryWeek[];
+  endpoint: { bull: number; base: number; bear: number };
+  anchors: TrajectoryAnchor[];
+  drivers: {
+    compositeTilt: number;
+    gexTilt: number;
+    vixTermTilt: number;
+    totalDriftPerWeek: number;
+    annualizedDrift: number;
+    magnetCount: number;
+  };
+  inputs: {
+    vix: number | null;
+    vix9d: number | null;
+    vix3m: number | null;
+    callWall: number | null;
+    putWall: number | null;
+    gammaFlip: number | null;
+    maxPain: number | null;
+    totalGex: number | null;
+    composite: number;
+  };
+  methodology?: string;
 }
 
 interface ModelsResponse {
@@ -1519,6 +1566,269 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
 
 // ─── Full model view ──────────────────────────────────────────────────────────
 
+// ─── 13-Week Trajectory Panel (quarterly only) ──────────────────────────────
+function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbol: string }) {
+  const isSpx = symbol === "^GSPC";
+  const fmtPrice = (n: number | null | undefined): string => {
+    if (n == null || !isFinite(n)) return "\u2014";
+    return isSpx ? Math.round(n).toLocaleString() : n.toFixed(2);
+  };
+
+  // Build chart data ─ prepend WK0 (today, all three lines = spot)
+  const chartData = useMemo(() => {
+    const rows: Array<{ wk: string; date: string; bull: number; base: number; bear: number; sigma: number; drift: number }> = [
+      { wk: "NOW", date: "today", bull: traj.spot, base: traj.spot, bear: traj.spot, sigma: 0, drift: 0 },
+    ];
+    for (const w of traj.weeks) {
+      rows.push({
+        wk: w.weekLabel,
+        date: w.weekEndDate,
+        bull: w.bull,
+        base: w.base,
+        bear: w.bear,
+        sigma: w.sigmaWeek,
+        drift: w.driftPct,
+      });
+    }
+    return rows;
+  }, [traj]);
+
+  // y-domain: pad 1.5% above highest bull / below lowest bear
+  const [yMin, yMax] = useMemo(() => {
+    let lo = Infinity, hi = -Infinity;
+    for (const w of traj.weeks) {
+      if (w.bear < lo) lo = w.bear;
+      if (w.bull > hi) hi = w.bull;
+    }
+    if (traj.spot < lo) lo = traj.spot;
+    if (traj.spot > hi) hi = traj.spot;
+    // Include only anchors that fall within (or near) the cone ─ within 1.5x cone width of spot
+    const coneRange = Math.max(hi - lo, traj.spot * 0.05);
+    for (const a of traj.anchors) {
+      if (Math.abs(a.level - traj.spot) <= coneRange * 1.2) {
+        if (a.level < lo) lo = a.level;
+        if (a.level > hi) hi = a.level;
+      }
+    }
+    const pad = (hi - lo) * 0.05;
+    return [lo - pad, hi + pad];
+  }, [traj]);
+
+  // Anchors that are visible in the y-domain
+  const visibleAnchors = useMemo(
+    () => traj.anchors.filter(a => a.level >= yMin && a.level <= yMax),
+    [traj.anchors, yMin, yMax],
+  );
+
+  const anchorColor = (kind: string): string => {
+    if (kind === "callWall") return "#ef4444"; // red ceiling
+    if (kind === "putWall") return "#10b981"; // green floor
+    if (kind === "gammaFlip") return "#a855f7"; // purple
+    if (kind === "maxPain") return "#f59e0b"; // amber
+    if (kind.startsWith("jpm")) return "#06b6d4"; // cyan
+    return "#64748b";
+  };
+
+  const driftDirLabel = traj.drivers.totalDriftPerWeek > 0.0005
+    ? "BULLISH TILT"
+    : traj.drivers.totalDriftPerWeek < -0.0005
+      ? "BEARISH TILT"
+      : "NEUTRAL";
+  const driftDirColor = traj.drivers.totalDriftPerWeek > 0.0005
+    ? "text-green-400"
+    : traj.drivers.totalDriftPerWeek < -0.0005
+      ? "text-red-400"
+      : "text-muted-foreground";
+
+  const TooltipFmt = ({ active, payload, label }: any) => {
+    if (!active || !payload || !payload.length) return null;
+    const row = payload[0]?.payload;
+    if (!row) return null;
+    return (
+      <div className="rounded border border-amber-500/40 bg-black/95 px-3 py-2 font-mono text-[10px] shadow-lg">
+        <div className="font-bold text-amber-400 mb-1">{label} · <span className="text-muted-foreground">{row.date}</span></div>
+        <div className="text-yellow-400">BULL {fmtPrice(row.bull)}</div>
+        <div className="text-foreground">BASE {fmtPrice(row.base)}</div>
+        <div className="text-red-400">BEAR {fmtPrice(row.bear)}</div>
+        {row.sigma > 0 && (
+          <div className="mt-1 text-[9px] text-muted-foreground">
+            ±1σ ±{fmtPrice(row.sigma)} · cum drift {(row.drift * 100).toFixed(2)}%
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div
+      className="border-t border-amber-500/30 bg-black/40 p-3"
+      data-testid="weekly-trajectory-panel"
+    >
+      <div className="mb-2 flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-widest">
+        <span className="text-amber-400 font-bold">13-WEEK TRAJECTORY</span>
+        <span className="text-border">|</span>
+        <span className="text-muted-foreground">BULL / BASE / BEAR · WEEK BY WEEK</span>
+        <span className="text-border">|</span>
+        <span className={driftDirColor + " font-bold"}>{driftDirLabel}</span>
+        <span className="text-border">|</span>
+        <span className="text-cyan-400/80">
+          DRIFT {(traj.drivers.annualizedDrift * 100).toFixed(1)}%/yr
+        </span>
+        <span className="text-border">|</span>
+        <span className="text-muted-foreground">{traj.drivers.magnetCount} ANCHORS PULLING</span>
+      </div>
+
+      <div className="h-[280px] w-full" data-testid="weekly-trajectory-chart">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={chartData} margin={{ top: 10, right: 60, bottom: 10, left: 10 }}>
+            <XAxis
+              dataKey="wk"
+              tick={{ fill: "#94a3b8", fontSize: 10, fontFamily: "monospace" }}
+              axisLine={{ stroke: "#334155" }}
+              tickLine={{ stroke: "#334155" }}
+            />
+            <YAxis
+              domain={[yMin, yMax]}
+              tickFormatter={(v) => fmtPrice(v)}
+              tick={{ fill: "#94a3b8", fontSize: 10, fontFamily: "monospace" }}
+              axisLine={{ stroke: "#334155" }}
+              tickLine={{ stroke: "#334155" }}
+              width={60}
+            />
+            <Tooltip content={<TooltipFmt />} />
+
+            {/* Anchor reference lines */}
+            {visibleAnchors.map((a) => (
+              <ReferenceLine
+                key={a.kind}
+                y={a.level}
+                stroke={anchorColor(a.kind)}
+                strokeDasharray={a.strength === "primary" ? "4 2" : "2 4"}
+                strokeWidth={a.strength === "primary" ? 1.5 : 1}
+                strokeOpacity={a.strength === "primary" ? 0.7 : 0.45}
+              >
+                <Label
+                  value={`${a.label} ${fmtPrice(a.level)}`}
+                  position="right"
+                  fill={anchorColor(a.kind)}
+                  fontSize={9}
+                  fontFamily="monospace"
+                  offset={5}
+                />
+              </ReferenceLine>
+            ))}
+
+            {/* Spot reference */}
+            <ReferenceLine
+              y={traj.spot}
+              stroke="#fbbf24"
+              strokeDasharray="1 3"
+              strokeOpacity={0.6}
+            />
+
+            {/* Bull / Base / Bear lines */}
+            <Line
+              type="monotone"
+              dataKey="bull"
+              name="BULL"
+              stroke="#facc15"
+              strokeWidth={2}
+              dot={{ r: 2.5, fill: "#facc15" }}
+              activeDot={{ r: 4 }}
+              isAnimationActive={false}
+            />
+            <Line
+              type="monotone"
+              dataKey="base"
+              name="BASE"
+              stroke="#f1f5f9"
+              strokeWidth={2.5}
+              dot={{ r: 3, fill: "#f1f5f9" }}
+              activeDot={{ r: 4.5 }}
+              isAnimationActive={false}
+            />
+            <Line
+              type="monotone"
+              dataKey="bear"
+              name="BEAR"
+              stroke="#ef4444"
+              strokeWidth={2}
+              dot={{ r: 2.5, fill: "#ef4444" }}
+              activeDot={{ r: 4 }}
+              isAnimationActive={false}
+            />
+
+            <Legend
+              wrapperStyle={{ fontFamily: "monospace", fontSize: 10 }}
+              iconSize={8}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Endpoint summary + drivers footer */}
+      <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+        {/* Endpoint */}
+        <div className="rounded border border-amber-500/20 bg-black/50 p-2 font-mono text-[10px]">
+          <div className="mb-1 text-[9px] uppercase tracking-widest text-amber-400/80">3-MONTH ENDPOINT (WK13 · {traj.weeks[12]?.weekEndDate})</div>
+          <div className="flex items-center gap-3">
+            <span className="text-yellow-400">BULL <span className="font-bold">{fmtPrice(traj.endpoint.bull)}</span></span>
+            <span className="text-foreground">BASE <span className="font-bold">{fmtPrice(traj.endpoint.base)}</span></span>
+            <span className="text-red-400">BEAR <span className="font-bold">{fmtPrice(traj.endpoint.bear)}</span></span>
+          </div>
+          <div className="mt-1 text-[9px] text-muted-foreground">
+            ±1σ cone ±{fmtPrice(traj.weeks[12]?.sigmaWeek ?? 0)} · ±2σ ±{fmtPrice((traj.weeks[12]?.sigmaWeek ?? 0) * 2)}
+          </div>
+        </div>
+
+        {/* Drivers */}
+        <div className="rounded border border-cyan-500/20 bg-black/50 p-2 font-mono text-[10px]">
+          <div className="mb-1 text-[9px] uppercase tracking-widest text-cyan-400/80">DRIFT DRIVERS (PER WEEK)</div>
+          <div className="grid grid-cols-3 gap-2 text-[10px]">
+            <div>
+              <div className="text-[8px] text-muted-foreground/70">COMPOSITE</div>
+              <div className={traj.drivers.compositeTilt >= 0 ? "text-green-400" : "text-red-400"}>
+                {(traj.drivers.compositeTilt * 100).toFixed(3)}%
+              </div>
+              <div className="text-[8px] text-muted-foreground/50">score {traj.inputs.composite}</div>
+            </div>
+            <div>
+              <div className="text-[8px] text-muted-foreground/70">GEX</div>
+              <div className={traj.drivers.gexTilt >= 0 ? "text-green-400" : "text-red-400"}>
+                {(traj.drivers.gexTilt * 100).toFixed(3)}%
+              </div>
+              <div className="text-[8px] text-muted-foreground/50">
+                {traj.inputs.totalGex != null ? `${(traj.inputs.totalGex / 1e9).toFixed(1)}B` : "\u2014"}
+              </div>
+            </div>
+            <div>
+              <div className="text-[8px] text-muted-foreground/70">VIX TERM</div>
+              <div className={traj.drivers.vixTermTilt >= 0 ? "text-green-400" : "text-red-400"}>
+                {(traj.drivers.vixTermTilt * 100).toFixed(3)}%
+              </div>
+              <div className="text-[8px] text-muted-foreground/50">
+                vix {traj.inputs.vix?.toFixed(1) ?? "\u2014"}
+              </div>
+            </div>
+          </div>
+          <div className="mt-1 border-t border-cyan-500/15 pt-1 text-[9px]">
+            <span className="text-muted-foreground/70">TOTAL </span>
+            <span className={traj.drivers.totalDriftPerWeek >= 0 ? "text-green-400 font-bold" : "text-red-400 font-bold"}>
+              {(traj.drivers.totalDriftPerWeek * 100).toFixed(3)}%/wk
+            </span>
+            <span className="text-muted-foreground/50"> · {(traj.drivers.annualizedDrift * 100).toFixed(1)}%/yr</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-2 text-[9px] text-muted-foreground/50 font-mono">
+        Drift-tilted GBM cone with magnet pull toward dealer levels (call wall, put wall, gamma flip, max pain, JPM collar).
+        σ(k) = spot · (vix/100) · √(k/52) damped 1.00→0.85 over 13 weeks. NOT a forecast — a probability cone.
+      </div>
+    </div>
+  );
+}
+
 function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; session: "live" | "last-close"; symbol: string }) {
   const a = horizon.audit;
   const timeStr = etTime(a.asOf);
@@ -1662,6 +1972,13 @@ function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; sessio
         {/* Right rail */}
         <RightRail horizon={horizon} />
       </div>
+
+      {/* ── 13-Week Trajectory (quarterly horizon only) ── */}
+      {horizon.horizon === "quarterly" && horizon.weeklyTrajectory && (
+        <ErrorBoundary label="Weekly Trajectory">
+          <WeeklyTrajectoryPanel traj={horizon.weeklyTrajectory} symbol={symbol} />
+        </ErrorBoundary>
+      )}
 
       {/* ── Bottom status strip ── */}
       <StatusStrip horizon={horizon} />
