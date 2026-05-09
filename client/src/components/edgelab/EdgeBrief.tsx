@@ -4,6 +4,7 @@
  */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sparkles, RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
@@ -27,7 +28,7 @@ export interface EdgeBriefData {
 }
 
 interface Props {
-  panel: "clv" | "iv-rv" | "gamma-curve" | "cross-asset" | "skew" | "macro-flow" | "anomaly" | "backtest";
+  panel: "clv" | "iv-rv" | "gamma-curve" | "cross-asset" | "skew" | "macro-flow" | "anomaly" | "backtest" | "edge-synthesis";
   symbol?: string;
   /** when true, brief is fetched on demand only (button click). useful for backtest. */
   manual?: boolean;
@@ -66,12 +67,9 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
     queryKey: ["/api/edgelab/brief", panel, symbol ?? "_", JSON.stringify(extra ?? null)],
     queryFn: async () => {
       const useBody = !!extra;
-      const res = await fetch(useBody ? "/api/edgelab/brief" : `/api/edgelab/brief?panel=${panel}${symbol ? `&symbol=${encodeURIComponent(symbol)}` : ""}`, {
-        method: useBody ? "POST" : "GET",
-        headers: useBody ? { "Content-Type": "application/json" } : undefined,
-        body: useBody ? JSON.stringify({ panel, symbol, extra }) : undefined,
-      });
-      if (!res.ok) throw new Error(await res.text());
+      const res = useBody
+        ? await apiRequest("POST", "/api/edgelab/brief", { panel, symbol, extra })
+        : await apiRequest("GET", `/api/edgelab/brief?panel=${panel}${symbol ? `&symbol=${encodeURIComponent(symbol)}` : ""}`);
       return res.json();
     },
     enabled,

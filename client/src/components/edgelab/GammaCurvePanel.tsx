@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -50,8 +51,7 @@ export default function GammaCurvePanel() {
   const q = useQuery<GammaCurveResult | { error: string }>({
     queryKey: ["/api/gamma-curve", active],
     queryFn: async () => {
-      const res = await fetch(`/api/gamma-curve?symbol=${encodeURIComponent(active)}`);
-      if (!res.ok) throw new Error(await res.text());
+      const res = await apiRequest("GET", `/api/gamma-curve?symbol=${encodeURIComponent(active)}`);
       return res.json();
     },
     refetchInterval: 60000,

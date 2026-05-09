@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -36,8 +37,7 @@ export default function IvRvPanel() {
   const q = useQuery<IvRvSnapshot>({
     queryKey: ["/api/iv-rv", active],
     queryFn: async () => {
-      const res = await fetch(`/api/iv-rv?symbol=${encodeURIComponent(active)}`);
-      if (!res.ok) throw new Error(await res.text());
+      const res = await apiRequest("GET", `/api/iv-rv?symbol=${encodeURIComponent(active)}`);
       return res.json();
     },
     refetchInterval: 60000,

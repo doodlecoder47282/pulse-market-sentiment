@@ -16,7 +16,6 @@ import { fmt, scoreBg, scoreColor } from "@/lib/format";
 import Gauge from "@/components/Gauge";
 import Logo from "@/components/Logo";
 import { BatmanLogoSmall } from "@/components/BatmanLogo";
-import VoicesPanel from "@/components/VoicesPanel";
 import NewsPanel from "@/components/NewsPanel";
 import TradeDesk from "@/components/TradeDesk";
 import RegimePanel from "@/components/RegimePanel";
@@ -429,7 +428,6 @@ export default function Dashboard() {
                 Cosmos
               </TabsTrigger>
               <TabsTrigger value="news" data-testid="tab-news" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">News</TabsTrigger>
-              <TabsTrigger value="voices" data-testid="tab-voices" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Voices</TabsTrigger>
               <TabsTrigger
                 value="takefive"
                 data-testid="tab-takefive"
@@ -554,14 +552,6 @@ export default function Dashboard() {
             <Suspense fallback={null}><TabHeadline tab="news" /></Suspense>
             <ErrorBoundary label="News Panel">
               <NewsPanel />
-            </ErrorBoundary>
-          </TabsContent>
-
-          {/* ── Voices tab ── */}
-          <TabsContent value="voices" className="space-y-6">
-            <Suspense fallback={null}><TabHeadline tab="voices" /></Suspense>
-            <ErrorBoundary label="Voices Panel">
-              <VoicesPanel />
             </ErrorBoundary>
           </TabsContent>
 

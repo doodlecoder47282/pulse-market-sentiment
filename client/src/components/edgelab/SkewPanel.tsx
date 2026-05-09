@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -49,8 +50,7 @@ export default function SkewPanel() {
   const q = useQuery<SkewSnapshot | { error: string }>({
     queryKey: ["/api/skew", active],
     queryFn: async () => {
-      const res = await fetch(`/api/skew?symbol=${encodeURIComponent(active)}`);
-      if (!res.ok) throw new Error(await res.text());
+      const res = await apiRequest("GET", `/api/skew?symbol=${encodeURIComponent(active)}`);
       return res.json();
     },
     refetchInterval: 90000,

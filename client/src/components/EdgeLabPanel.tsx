@@ -8,18 +8,14 @@ import SkewPanel from "./edgelab/SkewPanel";
 import MacroFlowPanel from "./edgelab/MacroFlowPanel";
 import AnomalyPanel from "./edgelab/AnomalyPanel";
 import BacktestPanel from "./edgelab/BacktestPanel";
-import EdgeBrief from "./edgelab/EdgeBrief";
+import EdgeBriefing from "./edgelab/EdgeBriefing";
 
 export default function EdgeLabPanel() {
   const [sub, setSub] = useState("ivrv");
   return (
     <div className="space-y-3" data-testid="edge-lab-panel">
-      {/* Fused edge brief — synthesis across all 7 panels at the top */}
-      <EdgeBrief
-        panel="edge-synthesis"
-        symbol="SPY"
-        title="edge synthesis · fused read"
-      />
+      {/* Fused daily/weekly briefing — cross-asset + regime + news + models + trade desk + levels */}
+      <EdgeBriefing defaultSymbol="SPY" />
 
       <Card>
         <CardHeader className="pb-2">

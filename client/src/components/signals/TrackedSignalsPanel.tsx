@@ -7,6 +7,7 @@
  */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -183,8 +184,7 @@ export default function TrackedSignalsPanel() {
   const q = useQuery<TrackedResponse>({
     queryKey: ["/api/signals/tracked", sourceFilter, statusFilter],
     queryFn: async () => {
-      const r = await fetch(url);
-      if (!r.ok) throw new Error("failed");
+      const r = await apiRequest("GET", url);
       return r.json();
     },
     refetchInterval: 30_000,

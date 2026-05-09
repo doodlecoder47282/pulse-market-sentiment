@@ -2113,6 +2113,18 @@ Refine the brief above. Search the web for any critical developments the feed is
   app.get("/api/edgelab/brief", briefHandler);
   app.post("/api/edgelab/brief", briefHandler);
 
+  // ---- Edge briefing: fused daily/weekly preview across regime, cross-asset, playbook, news, models, levels ----
+  app.get("/api/edgelab/briefing", async (req, res) => {
+    try {
+      const symbol = String(req.query.symbol ?? "SPY").toUpperCase();
+      const { buildBriefing } = await import("./edgeBriefing");
+      const payload = await buildBriefing(symbol);
+      res.json(payload);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "briefing failed" });
+    }
+  });
+
   // ---- Enhanced gamma levels: computed + user weekly targets ----
   // Augments the existing /api/gamma-levels with vanna/charm/vomma/zomma user targets.
   app.get("/api/gamma-levels-enhanced", async (req, res) => {

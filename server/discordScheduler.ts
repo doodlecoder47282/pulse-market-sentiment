@@ -612,6 +612,10 @@ const NEWS_POLL_MS = 5 * 60_000;
 const NEWS_WINDOW_MS = 30 * 60_000;       // 30min look-ahead
 
 async function pollNewsAlerts(): Promise<void> {
+  // Gate: only fire macro news alerts on actual trading days (weekday + non-holiday)
+  const { dow, date } = etNow();
+  if (!isTradingDay(dow, date)) return;
+
   const now = Date.now();
   if (now - lastNewsPoll < NEWS_POLL_MS) return;
   lastNewsPoll = now;
