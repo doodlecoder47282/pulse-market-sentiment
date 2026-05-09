@@ -5,7 +5,6 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import EdgeBrief from "./EdgeBrief";
 
 const SIGNAL_KINDS: { v: string; label: string; p1: string; p2: string }[] = [
   { v: "price_above_sma", label: "price above SMA", p1: "SMA window", p2: "—" },
@@ -68,14 +67,6 @@ export default function BacktestPanel() {
 
   return (
     <div className="space-y-3" data-testid="backtest-panel">
-      {r && (
-        <EdgeBrief
-          panel="backtest"
-          manual
-          extra={{ lastRun: { kind, symbol: symbol.toUpperCase(), holdDays: Number(holdDays), side, costBps: r.costsBps, win_rate: r.win_rate, mean_ret_bps: r.mean_ret_bps, sharpe: r.sharpe, sortino: r.sortino, trades_count: r.trades_count, max_dd_pct: r.max_dd_pct, total_ret_pct: r.total_ret_pct } }}
-        />
-      )}
-
       {/* Signal builder */}
       <div className="rounded border border-border p-3 space-y-2">
         <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">signal builder</div>

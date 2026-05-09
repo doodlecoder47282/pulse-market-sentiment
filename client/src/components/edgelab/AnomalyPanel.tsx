@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
-import EdgeBrief from "./EdgeBrief";
 
 interface AnomalyResult {
   date: string;
@@ -44,7 +43,6 @@ export default function AnomalyPanel() {
 
   return (
     <div className="space-y-3" data-testid="anomaly-panel">
-      <EdgeBrief panel="anomaly" />
 
       {q.isLoading && <div className="text-xs text-muted-foreground">scoring today…</div>}
       {q.isError && <div className="text-xs text-rose-500">error: {(q.error as any)?.message}</div>}

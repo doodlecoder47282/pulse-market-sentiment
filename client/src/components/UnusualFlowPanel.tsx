@@ -35,6 +35,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ChevronDown, ChevronRight, Flame, TrendingUp, TrendingDown, Zap, HelpCircle, X, ArrowDown, ArrowUp, ChevronsUpDown, Clock, Activity, Layers } from "lucide-react";
+import TrackButton from "@/components/signals/TrackButton";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -463,8 +464,12 @@ function MathTip({ content, children }: { content: string; children: React.React
 
 // ─── Contract row (shared) ────────────────────────────────────────────────────
 
-function ContractRow({ c, onClick }: { c: UnusualContract; onClick?: (c: UnusualContract) => void }) {
+function ContractRow({ c, onClick, symbol, trackedIds }: { c: UnusualContract; onClick?: (c: UnusualContract) => void; symbol: string; trackedIds: Set<string> }) {
   const ts = tagStyle(c.tag);
+  // Tracking id matches server signalTracker.makeId format
+  const trackId = `unusual-flow:${symbol.toUpperCase()}:${c.type}:${c.strike}:${c.expiration}`;
+  const isTracked = trackedIds.has(trackId);
+  const sideForTrack: "BULLISH" | "BEARISH" | "NEUTRAL" = c.sentiment;
   return (
     <tr
       key={c.occ}
@@ -531,6 +536,22 @@ function ContractRow({ c, onClick }: { c: UnusualContract; onClick?: (c: Unusual
         ) : (
           "NEUT"
         )}
+      </td>
+      {/* Track button — stops row click via onClick stopPropagation inside TrackButton */}
+      <td className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
+        <TrackButton
+          source="unusual-flow"
+          symbol={symbol}
+          type={c.type}
+          strike={c.strike}
+          expiration={c.expiration}
+          side={sideForTrack}
+          label={`${symbol} ${c.strike}${c.type} ${c.expiration}`}
+          entry={{ mark: c.mid, premium: c.notional, iv: c.iv }}
+          isTracked={isTracked}
+          trackedId={trackId}
+          size="xs"
+        />
       </td>
     </tr>
   );
@@ -607,6 +628,7 @@ function TableHead({ sortKey, onSort }: FlowTableHeadProps) {
           )}
         </th>
         <th className="px-2 py-1.5">Sentiment</th>
+        <th className="px-2 py-1.5">Track</th>
       </tr>
     </thead>
   );
@@ -614,7 +636,7 @@ function TableHead({ sortKey, onSort }: FlowTableHeadProps) {
 
 // ─── Grouped view ─────────────────────────────────────────────────────────────
 
-function GroupedTable({ groups, sortKey, onSort, onRowClick }: { groups: ExpiryGroup[]; sortKey: SortKey; onSort: (k: SortKey) => void; onRowClick: (c: UnusualContract) => void }) {
+function GroupedTable({ groups, sortKey, onSort, onRowClick, symbol, trackedIds }: { groups: ExpiryGroup[]; sortKey: SortKey; onSort: (k: SortKey) => void; onRowClick: (c: UnusualContract) => void; symbol: string; trackedIds: Set<string> }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const toggle = useCallback((exp: string) => {
@@ -643,7 +665,7 @@ function GroupedTable({ groups, sortKey, onSort, onRowClick }: { groups: ExpiryG
                   onClick={() => toggle(g.expiration)}
                   data-testid={`expiry-group-${g.expiration}`}
                 >
-                  <td colSpan={13} className="px-2 py-2">
+                  <td colSpan={14} className="px-2 py-2">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         {isOpen ? (
@@ -672,7 +694,7 @@ function GroupedTable({ groups, sortKey, onSort, onRowClick }: { groups: ExpiryG
                   </td>
                 </tr>
                 {/* Contract rows */}
-                {isOpen && sorted.map((c) => <ContractRow key={c.occ} c={c} onClick={onRowClick} />)}
+                {isOpen && sorted.map((c) => <ContractRow key={c.occ} c={c} onClick={onRowClick} symbol={symbol} trackedIds={trackedIds} />)}
               </>
             );
           })}
@@ -684,13 +706,13 @@ function GroupedTable({ groups, sortKey, onSort, onRowClick }: { groups: ExpiryG
 
 // ─── Flat table view ──────────────────────────────────────────────────────────
 
-function FlatTable({ contracts, sortKey, onSort, onRowClick }: { contracts: UnusualContract[]; sortKey: SortKey; onSort: (k: SortKey) => void; onRowClick: (c: UnusualContract) => void }) {
+function FlatTable({ contracts, sortKey, onSort, onRowClick, symbol, trackedIds }: { contracts: UnusualContract[]; sortKey: SortKey; onSort: (k: SortKey) => void; onRowClick: (c: UnusualContract) => void; symbol: string; trackedIds: Set<string> }) {
   return (
     <div className="overflow-x-auto rounded-md border border-border/40">
       <table className="w-full text-[11px]">
         <TableHead sortKey={sortKey} onSort={onSort} />
         <tbody className="font-mono tabular-nums">
-          {contracts.map((c) => <ContractRow key={c.occ} c={c} onClick={onRowClick} />)}
+          {contracts.map((c) => <ContractRow key={c.occ} c={c} onClick={onRowClick} symbol={symbol} trackedIds={trackedIds} />)}
         </tbody>
       </table>
     </div>
@@ -836,6 +858,26 @@ export default function UnusualFlowPanel({ symbol }: Props) {
   // When user selects 0DTE for the first time, default to Build view (where-size-loads).
   // After that, respect whatever they've picked.
   const [viewModeTouched, setViewModeTouched] = useState(false);
+
+  // Tracked signal ids (so rows can show their current track state)
+  const trackedQ = useQuery<any>({
+    queryKey: ["/api/signals/tracked"],
+    queryFn: async () => {
+      const r = await apiRequest("GET", "/api/signals/tracked");
+      return r.json();
+    },
+    refetchInterval: 30_000,
+    staleTime: 25_000,
+  });
+  const trackedIds = useMemo(() => {
+    const s = new Set<string>();
+    ((trackedQ.data?.groups ?? []) as any[]).forEach((g: any) => {
+      (g.items ?? []).forEach((i: any) => {
+        if (i?.id && i?.status === "OPEN") s.add(i.id);
+      });
+    });
+    return s;
+  }, [trackedQ.data]);
 
   const { data, isLoading, isError } = useQuery<UnusualResponse>({
     queryKey: ["/api/flow/unusual", sym],
@@ -1122,9 +1164,9 @@ export default function UnusualFlowPanel({ symbol }: Props) {
             <BuildTable rows={buildRows} onRowClick={handleBuildRowClick} />
           </>
         ) : groupByExp ? (
-          <GroupedTable groups={expGroups} sortKey={sortKey} onSort={setSortKey} onRowClick={setOpenModalFor} />
+          <GroupedTable groups={expGroups} sortKey={sortKey} onSort={setSortKey} onRowClick={setOpenModalFor} symbol={symbol} trackedIds={trackedIds} />
         ) : (
-          <FlatTable contracts={processedContracts} sortKey={sortKey} onSort={setSortKey} onRowClick={setOpenModalFor} />
+          <FlatTable contracts={processedContracts} sortKey={sortKey} onSort={setSortKey} onRowClick={setOpenModalFor} symbol={symbol} trackedIds={trackedIds} />
         )}
 
         <UnusualFlowModal

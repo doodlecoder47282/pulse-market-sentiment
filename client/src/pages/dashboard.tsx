@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 import SchwabSettings, { SchwabStatusPill } from "@/components/SchwabSettings";
 import WhaleFlowPanel from "@/components/WhaleFlowPanel";
+import TrackedSignalsPanel from "@/components/signals/TrackedSignalsPanel";
 import { useEffect, useState, useRef, lazy, Suspense } from "react";
 
 // ── Lazy-loaded heavy components (code splitting) ──────────────────────────
@@ -603,6 +604,11 @@ export default function Dashboard() {
             {/* Whale Flow panel — fresh detections + tracking + closed (with CONFLUX highlighting) */}
             <ErrorBoundary label="Whale Flow">
               <WhaleFlowPanel />
+            </ErrorBoundary>
+
+            {/* Tracked Signals — manual tracking across flow alerts, unusual flow, and whale hits */}
+            <ErrorBoundary label="Tracked Signals">
+              <TrackedSignalsPanel />
             </ErrorBoundary>
 
             {/* Put/Call flow — prominent above composite */}

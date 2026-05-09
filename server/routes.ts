@@ -2100,7 +2100,7 @@ Refine the brief above. Search the web for any critical developments the feed is
       const panel = String(req.query.panel || req.body?.panel || "").toLowerCase();
       const symbol = req.query.symbol ? String(req.query.symbol).toUpperCase() : (req.body?.symbol ?? null);
       const extra = req.body?.extra ?? null;
-      const valid = ["clv", "iv-rv", "gamma-curve", "cross-asset", "skew", "macro-flow", "anomaly", "backtest"];
+      const valid = ["clv", "iv-rv", "gamma-curve", "cross-asset", "skew", "macro-flow", "anomaly", "backtest", "edge-synthesis"];
       if (!valid.includes(panel)) {
         return res.status(400).json({ error: `panel must be one of ${valid.join(", ")}` });
       }
@@ -3365,6 +3365,78 @@ Refine the brief above. Search the web for any critical developments the feed is
         res.status(500).json({ error: "followups_failed", message: e?.message ?? String(e) });
       }
     });
+    // ─── Manual signal tracker — for any flow alert / unusual activity ─────
+    // GET /api/signals/tracked?source=&status=  → grouped by ticker
+    // POST /api/signals/track  body: { source, symbol, type?, strike?, expiration?, side?, entry?, label?, meta? }
+    // POST /api/signals/close  body: { id }
+    // POST /api/signals/untrack  body: { id }
+    app.get("/api/signals/tracked", async (req, res) => {
+      try {
+        const { getGroupedByTicker, refreshLiveMarks } = await import("./signalTracker");
+        const source = req.query.source ? String(req.query.source) as any : undefined;
+        const status = req.query.status ? String(req.query.status).toUpperCase() as any : undefined;
+        // Refresh live marks on read so UI sees fresh data
+        await refreshLiveMarks().catch(() => {});
+        const filter: any = {};
+        if (source) filter.source = source;
+        if (status) filter.status = status;
+        res.json({ asOf: Date.now(), ...getGroupedByTicker(filter) });
+      } catch (e: any) {
+        res.status(500).json({ error: "signals_tracked_failed", message: e?.message ?? String(e) });
+      }
+    });
+    app.post("/api/signals/track", async (req, res) => {
+      try {
+        const { track } = await import("./signalTracker");
+        const body = req.body ?? {};
+        if (!body.source || !body.symbol) {
+          return res.status(400).json({ error: "missing_fields", message: "source and symbol are required" });
+        }
+        const validSources = ["flow-alert", "unusual-flow", "whale", "manual"];
+        if (!validSources.includes(body.source)) {
+          return res.status(400).json({ error: "invalid_source", message: `source must be one of ${validSources.join(", ")}` });
+        }
+        const sig = track({
+          source: body.source,
+          symbol: String(body.symbol).toUpperCase(),
+          type: body.type,
+          strike: body.strike != null ? Number(body.strike) : undefined,
+          expiration: body.expiration,
+          side: body.side,
+          label: body.label,
+          entry: body.entry ?? { at: Date.now() },
+          meta: body.meta,
+        });
+        res.json({ ok: true, signal: sig });
+      } catch (e: any) {
+        res.status(500).json({ error: "track_failed", message: e?.message ?? String(e) });
+      }
+    });
+    app.post("/api/signals/close", async (req, res) => {
+      try {
+        const { close } = await import("./signalTracker");
+        const id = String(req.body?.id ?? "");
+        if (!id) return res.status(400).json({ error: "missing_id" });
+        const sig = close(id);
+        if (!sig) return res.status(404).json({ error: "not_found" });
+        res.json({ ok: true, signal: sig });
+      } catch (e: any) {
+        res.status(500).json({ error: "close_failed", message: e?.message ?? String(e) });
+      }
+    });
+    app.post("/api/signals/untrack", async (req, res) => {
+      try {
+        const { untrack } = await import("./signalTracker");
+        const id = String(req.body?.id ?? "");
+        if (!id) return res.status(400).json({ error: "missing_id" });
+        const removed = untrack(id);
+        if (!removed) return res.status(404).json({ error: "not_found" });
+        res.json({ ok: true });
+      } catch (e: any) {
+        res.status(500).json({ error: "untrack_failed", message: e?.message ?? String(e) });
+      }
+    });
+
     // Whale alert history (durable audit log of every detection)
     app.get("/api/flow/history", async (req, res) => {
       try {

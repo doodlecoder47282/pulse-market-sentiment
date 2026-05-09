@@ -12,6 +12,7 @@ import { Bell, X, ChevronDown, ChevronUp, AlertTriangle, Wifi, WifiOff } from "l
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import TrackButton from "@/components/signals/TrackButton";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -217,7 +218,7 @@ const TYPE_LABELS: Record<FlowAlertType, string> = {
   WALL: "WALL BUILD",
 };
 
-function AlertRow({ alert, onDismiss }: { alert: FlowAlert; onDismiss: (id: string) => void }) {
+function AlertRow({ alert, onDismiss, trackedIds }: { alert: FlowAlert; onDismiss: (id: string) => void; trackedIds: Set<string> }) {
   const s = SEVERITY_CLASSES[alert.severity];
   const time = new Date(alert.ts).toLocaleTimeString("en-US", {
     hour12: false,
@@ -226,6 +227,15 @@ function AlertRow({ alert, onDismiss }: { alert: FlowAlert; onDismiss: (id: stri
     second: "2-digit",
     timeZone: "America/New_York",
   });
+
+  // Build deterministic tracking id matching server signalTracker.makeId format:
+  // ${source}:${symbol}:${type?}:${strike?}:${expiration?}
+  const parts = ["flow-alert", alert.symbol];
+  if (alert.side) parts.push(alert.side);
+  if (alert.strike != null) parts.push(String(alert.strike));
+  if (alert.expiry) parts.push(alert.expiry);
+  const trackId = parts.join(":");
+  const isTracked = trackedIds.has(trackId);
 
   return (
     <div
@@ -251,15 +261,28 @@ function AlertRow({ alert, onDismiss }: { alert: FlowAlert; onDismiss: (id: stri
         {/* Message */}
         <div className="text-[10px] leading-snug text-muted-foreground">{alert.message}</div>
       </div>
-      {/* Dismiss */}
-      <button
-        onClick={() => onDismiss(alert.id)}
-        className="mt-0.5 flex-shrink-0 rounded p-0.5 text-muted-foreground/50 hover:text-muted-foreground transition"
-        aria-label="Dismiss alert"
-        data-testid={`dismiss-alert-${alert.id}`}
-      >
-        <X className="h-3 w-3" />
-      </button>
+      {/* Track + Dismiss */}
+      <div className="flex flex-shrink-0 items-center gap-1">
+        <TrackButton
+          source="flow-alert"
+          symbol={alert.symbol}
+          type={alert.side}
+          strike={alert.strike}
+          expiration={alert.expiry}
+          label={alert.message}
+          isTracked={isTracked}
+          trackedId={trackId}
+          size="xs"
+        />
+        <button
+          onClick={() => onDismiss(alert.id)}
+          className="mt-0.5 rounded p-0.5 text-muted-foreground/50 hover:text-muted-foreground transition"
+          aria-label="Dismiss alert"
+          data-testid={`dismiss-alert-${alert.id}`}
+        >
+          <X className="h-3 w-3" />
+        </button>
+      </div>
     </div>
   );
 }
@@ -276,6 +299,23 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
   const [isOpen, setIsOpen] = useState(true);
   const prevPcrRef = useRef<number | null>(null);
   const prevChainRef = useRef<any>(null);
+
+  // Tracked signals — get set of tracked ids so AlertRow can highlight already-tracked
+  const trackedQ = useQuery<any>({
+    queryKey: ["/api/signals/tracked"],
+    queryFn: async () => {
+      const r = await apiRequest("GET", "/api/signals/tracked");
+      return r.json();
+    },
+    refetchInterval: 30_000,
+    staleTime: 25_000,
+  });
+  const trackedIds = new Set<string>();
+  ((trackedQ.data?.groups ?? []) as any[]).forEach((g: any) => {
+    (g.items ?? []).forEach((i: any) => {
+      if (i?.id && i?.status === "OPEN") trackedIds.add(i.id);
+    });
+  });
 
   // Check Schwab connection
   const { data: statusData } = useQuery<SchwabStatus>({
@@ -454,7 +494,7 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
               /* Alert rows */
               <div className="space-y-1.5 max-h-60 overflow-y-auto">
                 {alerts.map((alert) => (
-                  <AlertRow key={alert.id} alert={alert} onDismiss={dismissAlert} />
+                  <AlertRow key={alert.id} alert={alert} onDismiss={dismissAlert} trackedIds={trackedIds} />
                 ))}
               </div>
             )}

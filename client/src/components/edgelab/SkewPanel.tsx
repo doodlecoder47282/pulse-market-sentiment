@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import EdgeBrief from "./EdgeBrief";
 
 interface SkewPoint {
   tenorDays: number;
@@ -63,7 +62,6 @@ export default function SkewPanel() {
 
   return (
     <div className="space-y-3" data-testid="skew-panel">
-      <EdgeBrief panel="skew" symbol={active} />
 
       <div className="flex gap-2 items-end">
         <div className="space-y-1">

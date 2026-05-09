@@ -40,7 +40,8 @@ export type PanelName =
   | "skew"
   | "macro-flow"
   | "anomaly"
-  | "backtest";
+  | "backtest"
+  | "edge-synthesis";
 
 export interface EdgeBrief {
   verdict: string;
@@ -378,6 +379,41 @@ function deterministicFallback(panel: PanelName, ctx: any): EdgeBrief {
       base.invalidation = "out-of-sample win rate drops below 50% over 30+ trades.";
       base.counterargument = "backtest fit is half the story. live execution friction (slippage, missed fills) eats edge fast.";
       base.bullets = [`trades: ${trades}`, `win: ${(winRate * 100).toFixed(0)}%`, `PF: ${pf.toFixed(2)}`];
+    } else if (panel === "edge-synthesis") {
+      const sigs: any[] = ctx?.signals ?? [];
+      const conf = ctx?.confluence ?? { bullish: 0, bearish: 0, neutral: 0, total: 0 };
+      const sym = ctx?.symbol ?? "SPY";
+      const total = sigs.length || 1;
+      const bullPct = (conf.bullish / total) * 100;
+      const bearPct = (conf.bearish / total) * 100;
+      const dominant = conf.bullish > conf.bearish + 1 ? "bullish" : conf.bearish > conf.bullish + 1 ? "bearish" : "mixed";
+      const strong = Math.max(conf.bullish, conf.bearish) >= 4;
+
+      base.verdict = strong ? (dominant === "bullish" ? "strong bull" : dominant === "bearish" ? "strong bear" : "mixed") : dominant === "bullish" ? "lean bull" : dominant === "bearish" ? "lean bear" : "no edge";
+      base.verdictColor = dominant === "bullish" ? "emerald" : dominant === "bearish" ? "rose" : "amber";
+      base.edgeType = strong ? "environmental" : conf.neutral > total / 2 ? "none" : "analytical";
+      base.confidence = strong ? 70 : dominant === "mixed" ? 35 : 55;
+
+      // Build summary listing the cross-panel reads
+      const sigSummaries = sigs.map(s => `${s.label}: ${s.bias}`).join(" · ");
+      base.summary = `${sym} fused read across ${total} edge panels — ${conf.bullish} bullish, ${conf.bearish} bearish, ${conf.neutral} neutral/mixed. ${dominant === "mixed" ? "signals are split — no clean confluence, sit on hands or trade smaller." : strong ? `${dominant} confluence is real — ${conf.bullish > conf.bearish ? conf.bullish : conf.bearish} of ${total} panels confirming.` : `${dominant} lean but not strong enough for size — wait for more confirmation.`}`;
+
+      base.baseCase = { thesis: dominant === "mixed" ? "chop continues until a panel breaks the tie" : `${dominant} read holds, current confluence stays intact`, prob: 55 };
+      base.bullCase = { thesis: dominant === "bullish" ? "more panels flip bullish, confluence strengthens" : dominant === "bearish" ? "contrarian setup pays — crowd is wrong" : "a clean bull catalyst breaks the tie", prob: 25 };
+      base.bearCase = { thesis: dominant === "bearish" ? "bearish confluence accelerates into a real downside event" : dominant === "bullish" ? "a tail event flips multiple panels at once" : "chop persists, theta bleed wins for premium sellers", prob: 20 };
+
+      base.actionable = strong
+        ? (dominant === "bullish" ? "size up directional longs / sell put spreads. tight stops on bonds." : "reduce equity beta / buy downside / sell call spreads. defined risk only.")
+        : dominant === "mixed"
+          ? "sit on hands or take small defined-risk plays. wait for confluence."
+          : `lean ${dominant === "bullish" ? "long" : "short"} with 25-50% normal size. add only if more panels align.`;
+
+      base.invalidation = "two or more panels flip direction — the fused read inverts, exit and reassess.";
+      base.counterargument = strong
+        ? "confluence reads are vulnerable to single-event reversals. macro shock or liquidity event can flip everything in one print."
+        : "mixed signals can resolve sharply in either direction — don't assume chop persists if a major catalyst is on the calendar.";
+
+      base.bullets = sigs.slice(0, 6).map(s => `${s.label}: ${s.bias} (${s.value})`);
     } else {
       base.summary = "data loaded — no rule-based read available for this panel.";
       base.actionable = "read the panel data directly.";
@@ -496,6 +532,119 @@ function buildAnomalyContext(): any {
   };
 }
 
+// Edge synthesis: fuse all 7 market-edge panels into one combined view.
+// Each panel produces a tagged signal (edge: bull/bear/neutral, weight, summary line).
+// Confluence = multiple signals pointing the same direction = high confidence read.
+async function buildEdgeSynthesisContext(symbol: string): Promise<any> {
+  const sym = symbol || "SPY";
+  // Run all panel context builders in parallel
+  const [ivrv, gamma, cross, skew, macro, anomaly] = await Promise.all([
+    buildIvRvContext(sym).catch((e: any) => ({ error: e?.message })),
+    buildGammaContext(sym).catch((e: any) => ({ error: e?.message })),
+    Promise.resolve(buildCrossAssetContext()).catch((e: any) => ({ error: e?.message })),
+    buildSkewContext(sym).catch((e: any) => ({ error: e?.message })),
+    Promise.resolve(buildMacroContext()).catch((e: any) => ({ error: e?.message })),
+    Promise.resolve(buildAnomalyContext()).catch((e: any) => ({ error: e?.message })),
+  ]);
+
+  // Distill each panel into a normalized signal
+  const signals: any[] = [];
+
+  // 1) IV/RV — premium rich/cheap signal
+  try {
+    const r = ivrv?.ratio;
+    const ratioRaw = typeof r === "number" ? r : (r?.iv30_rv20 ?? r?.iv30_rv30 ?? r?.iv60_rv60);
+    const ratio = Number(ratioRaw) || 0;
+    if (ratio > 0) {
+      const bias = ratio > 1.25 ? "sell-vol" : ratio < 0.85 ? "buy-vol" : "neutral";
+      signals.push({ key: "iv-rv", label: "IV vs RV", bias, value: ratio.toFixed(2) + "x", note: bias === "sell-vol" ? "options pricing more vol than realized — premium sellers paid" : bias === "buy-vol" ? "options underpricing actual movement — long premium edge" : "options fair vs realized" });
+    } else {
+      signals.push({ key: "iv-rv", label: "IV vs RV", bias: "insufficient", value: "n/a", note: "chain too thin to grade" });
+    }
+  } catch {}
+
+  // 2) Gamma curve — dealer regime
+  try {
+    if (!gamma?.error) {
+      const spot = Number(gamma?.spot ?? 0);
+      const zg = Number(gamma?.zeroGamma ?? 0);
+      const above = spot > zg && zg > 0;
+      const bias = above ? "mean-revert" : "trending";
+      const wall = gamma?.walls?.[0];
+      signals.push({ key: "gamma-curve", label: "dealer gamma", bias, value: spot.toFixed(2) + " vs " + zg.toFixed(2), note: above ? "positive gamma — dealers fade moves, expect chop/pinning" : "negative gamma — dealers chase, expect trend acceleration", wall: wall?.strike ?? null });
+    } else {
+      signals.push({ key: "gamma-curve", label: "dealer gamma", bias: "insufficient", value: "n/a", note: gamma?.error });
+    }
+  } catch {}
+
+  // 3) Cross-asset regime
+  try {
+    const rv = cross?.regimeVerdict;
+    const verdictLabel = typeof rv === "string" ? rv : (rv?.label ?? rv?.risk ?? "mixed");
+    const isRisk = /risk-?on/i.test(verdictLabel);
+    const isOff = /risk-?off/i.test(verdictLabel);
+    const bias = isRisk ? "risk-on" : isOff ? "risk-off" : "mixed";
+    signals.push({ key: "cross-asset", label: "cross-asset", bias, value: verdictLabel, note: isRisk ? "stocks/credit/cyclicals confirming" : isOff ? "safe-haven bid, equities lagging" : "correlations decoupled — regime in transition" });
+  } catch {}
+
+  // 4) Skew — behavioral fear/greed
+  try {
+    if (!skew?.error) {
+      const rr = Number(skew?.riskReversalNow ?? 0);
+      // negative RR = puts richer = fear. positive RR = calls richer = greed
+      const bias = rr < -1.5 ? "fear-priced" : rr > 1.5 ? "greed-priced" : "balanced";
+      signals.push({ key: "skew", label: "skew RR", bias, value: rr.toFixed(2), note: bias === "fear-priced" ? "crowd paying up for puts — contrarian fade setup if catalyst lines up" : bias === "greed-priced" ? "calls richer than puts — speculative bid, watch for reversal" : "skew balanced, no behavioral extreme" });
+    } else {
+      signals.push({ key: "skew", label: "skew RR", bias: "insufficient", value: "n/a", note: skew?.error });
+    }
+  } catch {}
+
+  // 5) Macro flow — regime context
+  try {
+    const fred = Array.isArray(macro?.fred) ? macro.fred : [];
+    const findVal = (id: string) => {
+      const f = fred.find((x: any) => (x?.seriesId ?? x?.id ?? "").toUpperCase() === id);
+      return Number(f?.value ?? f?.latest ?? NaN);
+    };
+    const vix = findVal("VIXCLS");
+    const dgs10 = findVal("DGS10");
+    const dxy = findVal("DTWEXBGS");
+    const parts: string[] = [];
+    if (isFinite(vix)) parts.push(`VIX ${vix.toFixed(1)}`);
+    if (isFinite(dgs10)) parts.push(`10y ${dgs10.toFixed(2)}%`);
+    if (isFinite(dxy)) parts.push(`DXY ${dxy.toFixed(1)}`);
+    const bias = isFinite(vix) && vix > 22 ? "risk-off" : isFinite(vix) && vix < 14 ? "risk-on" : "mixed";
+    signals.push({ key: "macro-flow", label: "macro", bias, value: parts.join(" · ") || "loading", note: "macro plumbing — regime input only, not standalone signal" });
+  } catch {}
+
+  // 6) Anomaly — timing/regime stability
+  try {
+    const a = anomaly?.anomaly ?? {};
+    const pct = Number(a?.pctileVsHistory ?? 0);
+    const isAnom = !!a?.isAnomaly || pct >= 95;
+    const bias = isAnom ? "anomalous" : pct > 80 ? "elevated" : "baseline";
+    signals.push({ key: "anomaly", label: "anomaly", bias, value: pct.toFixed(0) + "th pctile", note: isAnom ? "tape statistically unusual — model didn't expect this — tighten risk" : pct > 80 ? "mildly elevated — keep eyes open" : "normal regime, indicators baseline" });
+  } catch {}
+
+  // Confluence scoring
+  const bullishSignals = signals.filter(s => /buy-vol|mean-revert|risk-on|greed-priced/.test(s.bias)).length;
+  const bearishSignals = signals.filter(s => /sell-vol|trending|risk-off|fear-priced|anomalous/.test(s.bias)).length;
+  const neutralSignals = signals.filter(s => /neutral|mixed|balanced|baseline|elevated|insufficient/.test(s.bias)).length;
+
+  return {
+    panel: "edge-synthesis",
+    description: "fused read across IV/RV, dealer gamma, cross-asset, skew, macro, anomaly. confluence = multiple signals same direction = high conviction.",
+    symbol: sym,
+    signals,
+    confluence: {
+      bullish: bullishSignals,
+      bearish: bearishSignals,
+      neutral: neutralSignals,
+      total: signals.length,
+    },
+  };
+}
+
 function buildBacktestContext(extra: any): any {
   // backtest is interactive, brief is for the LAST run if provided
   return {
@@ -524,6 +673,7 @@ export async function generateEdgeBrief(
       case "macro-flow": ctx = buildMacroContext(); break;
       case "anomaly": ctx = buildAnomalyContext(); break;
       case "backtest": ctx = buildBacktestContext(extra); break;
+      case "edge-synthesis": ctx = await buildEdgeSynthesisContext(symbol || "SPY"); break;
       default: ctx = { panel, error: "unknown panel" };
     }
   } catch (e: any) {
