@@ -151,6 +151,67 @@ sqlite.exec(`
   CREATE INDEX IF NOT EXISTS idx_pred_outcomes_kind_captured ON prediction_outcomes(kind, captured_at DESC);
   CREATE INDEX IF NOT EXISTS idx_pred_outcomes_due ON prediction_outcomes(graded, grading_due_at);
   CREATE INDEX IF NOT EXISTS idx_pred_outcomes_symbol ON prediction_outcomes(symbol, captured_at DESC);
+  CREATE TABLE IF NOT EXISTS trade_log (
+    id TEXT PRIMARY KEY,
+    captured_at INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    instrument TEXT NOT NULL,
+    occ TEXT,
+    strike REAL,
+    opt_type TEXT,
+    expiry TEXT,
+    qty REAL NOT NULL,
+    entry_price REAL NOT NULL,
+    mid_at_entry REAL,
+    signal_source TEXT,
+    notes TEXT,
+    graded INTEGER NOT NULL DEFAULT 0,
+    closing_mid REAL,
+    close_time INTEGER,
+    clv_bps REAL,
+    clv_dollars REAL,
+    exit_price REAL,
+    exit_time INTEGER,
+    pnl_dollars REAL
+  );
+  CREATE INDEX IF NOT EXISTS idx_trade_log_captured ON trade_log(captured_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_trade_log_symbol ON trade_log(symbol, captured_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_trade_log_graded ON trade_log(graded, captured_at);
+  CREATE TABLE IF NOT EXISTS fred_series (
+    series_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    value REAL,
+    refreshed_at INTEGER NOT NULL,
+    PRIMARY KEY (series_id, date)
+  );
+  CREATE INDEX IF NOT EXISTS idx_fred_series_date ON fred_series(series_id, date DESC);
+  CREATE TABLE IF NOT EXISTS cot_reports (
+    market TEXT NOT NULL,
+    report_date TEXT NOT NULL,
+    commercial_net REAL,
+    non_commercial_net REAL,
+    small_specs_net REAL,
+    oi REAL,
+    payload TEXT,
+    PRIMARY KEY (market, report_date)
+  );
+  CREATE INDEX IF NOT EXISTS idx_cot_reports_date ON cot_reports(market, report_date DESC);
+  CREATE TABLE IF NOT EXISTS iv_rv_daily (
+    symbol TEXT NOT NULL,
+    date TEXT NOT NULL,
+    rv_5 REAL,
+    rv_10 REAL,
+    rv_20 REAL,
+    rv_30 REAL,
+    rv_60 REAL,
+    iv_30 REAL,
+    iv_60 REAL,
+    iv_90 REAL,
+    captured_at INTEGER NOT NULL,
+    PRIMARY KEY (symbol, date)
+  );
+  CREATE INDEX IF NOT EXISTS idx_iv_rv_daily_date ON iv_rv_daily(symbol, date DESC);
 `);
 
 export { schwabTokens };

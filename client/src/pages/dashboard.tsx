@@ -24,6 +24,7 @@ import FlowPanel from "@/components/FlowPanel";
 import GlobalEdgeBanner from "@/components/GlobalEdgeBanner";
 import { RegimeChip } from "@/components/RegimeChip";
 import TakeFive, { TakeFiveFab } from "@/components/TakeFive";
+import EdgeLabPanel from "@/components/EdgeLabPanel";
 import { MacroTicker, MacroCarousel } from "@/components/MacroCarousel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTickers, type TabKey } from "@/components/TickerContext";
@@ -435,6 +436,13 @@ export default function Dashboard() {
               >
                 Take Five
               </TabsTrigger>
+              <TabsTrigger
+                value="edgelab"
+                data-testid="tab-edgelab"
+                className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-600/30 data-[state=active]:via-cyan-500/25 data-[state=active]:to-indigo-500/30 data-[state=active]:text-emerald-100"
+              >
+                Edge Lab
+              </TabsTrigger>
             </TabsList>
           </div>
 
@@ -561,6 +569,15 @@ export default function Dashboard() {
             <Suspense fallback={null}><TabHeadline tab="takefive" /></Suspense>
             <ErrorBoundary label="Take Five">
               <TakeFive mode="embedded" />
+            </ErrorBoundary>
+          </TabsContent>
+
+          {/* ── Edge Lab tab ── */}
+          <TabsContent value="edgelab" className="space-y-6">
+            <ErrorBoundary label="Edge Lab">
+              <Suspense fallback={<div className="text-xs text-muted-foreground">loading edge lab…</div>}>
+                <EdgeLabPanel />
+              </Suspense>
             </ErrorBoundary>
           </TabsContent>
 

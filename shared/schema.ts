@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, primaryKey } from "drizzle-orm/sqlite-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -309,6 +309,82 @@ export interface Composite {
   takeaway: string;             // short human summary
   tradingRegime: string;        // "positive gamma / mean reversion", etc.
 }
+
+// ----- CLV Tracker (trade log + closing-line value) -----
+export const tradeLog = sqliteTable("trade_log", {
+  id: text("id").primaryKey(),                            // uuid
+  capturedAt: integer("captured_at").notNull(),           // epoch ms
+  symbol: text("symbol").notNull(),
+  side: text("side").notNull(),                           // 'BUY' | 'SELL'
+  instrument: text("instrument").notNull(),               // 'EQUITY' | 'OPTION'
+  occ: text("occ"),                                       // for OPTION instruments
+  strike: real("strike"),
+  optType: text("opt_type"),                              // 'C'|'P' for OPTION
+  expiry: text("expiry"),                                 // ISO yyyy-mm-dd for OPTION
+  qty: real("qty").notNull(),
+  entryPrice: real("entry_price").notNull(),              // user fill
+  midAtEntry: real("mid_at_entry"),                       // mid price at the time of entry
+  signalSource: text("signal_source"),                    // free-text — which Batcave signal
+  notes: text("notes"),
+  // grading (closing-line value)
+  graded: integer("graded").notNull().default(0),         // 0/1
+  closingMid: real("closing_mid"),                        // EOD mid (or expiry intrinsic)
+  closeTime: integer("close_time"),                       // epoch ms when graded
+  clvBps: real("clv_bps"),                                // (closing - entry)/entry * 10000, sign-adjusted by side
+  clvDollars: real("clv_dollars"),                        // (closing - entry) * qty * mult, sign by side
+  exitPrice: real("exit_price"),                          // optional realized exit (separate from CLV grade)
+  exitTime: integer("exit_time"),
+  pnlDollars: real("pnl_dollars"),                        // realized P&L if exit was logged
+});
+export type TradeLog = typeof tradeLog.$inferSelect;
+
+export const insertTradeLogSchema = createInsertSchema(tradeLog).omit({
+  id: true,
+  graded: true,
+  closingMid: true,
+  closeTime: true,
+  clvBps: true,
+  clvDollars: true,
+  exitPrice: true,
+  exitTime: true,
+  pnlDollars: true,
+});
+export type InsertTradeLog = z.infer<typeof insertTradeLogSchema>;
+
+// ----- Free macro/flow caches -----
+export const fredSeries = sqliteTable("fred_series", {
+  seriesId: text("series_id").notNull(),
+  date: text("date").notNull(),                           // yyyy-mm-dd
+  value: real("value"),
+  refreshedAt: integer("refreshed_at").notNull(),
+}, (t) => ({ pk: primaryKey({ columns: [t.seriesId, t.date] }) }));
+export type FredSeriesRow = typeof fredSeries.$inferSelect;
+
+export const cotReports = sqliteTable("cot_reports", {
+  market: text("market").notNull(),                       // canonical market key
+  reportDate: text("report_date").notNull(),              // yyyy-mm-dd Tuesday
+  commercialNet: real("commercial_net"),
+  nonCommercialNet: real("non_commercial_net"),
+  smallSpecsNet: real("small_specs_net"),
+  oi: real("oi"),
+  payload: text("payload"),                                // JSON for raw
+}, (t) => ({ pk: primaryKey({ columns: [t.market, t.reportDate] }) }));
+export type CotReportRow = typeof cotReports.$inferSelect;
+
+export const ivRvDaily = sqliteTable("iv_rv_daily", {
+  symbol: text("symbol").notNull(),
+  date: text("date").notNull(),                           // yyyy-mm-dd ET
+  rv5: real("rv_5"),
+  rv10: real("rv_10"),
+  rv20: real("rv_20"),
+  rv30: real("rv_30"),
+  rv60: real("rv_60"),
+  iv30: real("iv_30"),
+  iv60: real("iv_60"),
+  iv90: real("iv_90"),
+  capturedAt: integer("captured_at").notNull(),
+}, (t) => ({ pk: primaryKey({ columns: [t.symbol, t.date] }) }));
+export type IvRvRow = typeof ivRvDaily.$inferSelect;
 
 export interface Snapshot_Public {
   capturedAt: number;

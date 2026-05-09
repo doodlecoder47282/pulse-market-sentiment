@@ -1885,6 +1885,212 @@ Refine the brief above. Search the web for any critical developments the feed is
     }
   });
 
+  // ===== Tier-1/2 advancement modules =====
+
+  // ---- CLV Tracker ----
+  app.get("/api/clv/trades", async (req, res) => {
+    try {
+      const { listTrades } = await import("./clvTracker");
+      const limit = Math.min(parseInt(String(req.query.limit ?? "100"), 10) || 100, 500);
+      const symbol = req.query.symbol ? String(req.query.symbol) : undefined;
+      const gradedOnly = String(req.query.gradedOnly ?? "") === "1";
+      res.json({ trades: listTrades({ limit, symbol, gradedOnly }) });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "clv list failed" });
+    }
+  });
+  app.post("/api/clv/trades", async (req, res) => {
+    try {
+      const { logTrade } = await import("./clvTracker");
+      const body = req.body ?? {};
+      const required = ["symbol", "side", "instrument", "qty", "entryPrice"];
+      for (const k of required) {
+        if (body[k] == null || body[k] === "") {
+          return res.status(400).json({ error: `missing field: ${k}` });
+        }
+      }
+      const trade = logTrade({
+        symbol: String(body.symbol).toUpperCase(),
+        side: body.side === "SELL" ? "SELL" : "BUY",
+        instrument: body.instrument === "OPTION" ? "OPTION" : "EQUITY",
+        qty: Number(body.qty),
+        entryPrice: Number(body.entryPrice),
+        occ: body.occ ? String(body.occ) : undefined,
+        strike: body.strike != null ? Number(body.strike) : undefined,
+        optType: body.optType === "P" ? "P" : body.optType === "C" ? "C" : undefined,
+        expiry: body.expiry ? String(body.expiry) : undefined,
+        midAtEntry: body.midAtEntry != null ? Number(body.midAtEntry) : undefined,
+        signalSource: body.signalSource ? String(body.signalSource) : undefined,
+        notes: body.notes ? String(body.notes) : undefined,
+      });
+      res.json({ trade });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "clv log failed" });
+    }
+  });
+  app.delete("/api/clv/trades/:id", async (req, res) => {
+    try {
+      const { deleteTrade } = await import("./clvTracker");
+      const ok = deleteTrade(String(req.params.id));
+      res.json({ ok });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "clv delete failed" });
+    }
+  });
+  app.post("/api/clv/trades/:id/exit", async (req, res) => {
+    try {
+      const { logExit } = await import("./clvTracker");
+      const exitPrice = Number(req.body?.exitPrice);
+      if (!Number.isFinite(exitPrice)) return res.status(400).json({ error: "exitPrice required" });
+      const trade = logExit(String(req.params.id), exitPrice);
+      res.json({ trade });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "clv exit failed" });
+    }
+  });
+  app.post("/api/clv/trades/:id/grade", async (req, res) => {
+    try {
+      const { gradeTrade } = await import("./clvTracker");
+      const trade = await gradeTrade(String(req.params.id));
+      res.json({ trade });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "clv grade failed" });
+    }
+  });
+  app.post("/api/clv/grade-all", async (_req, res) => {
+    try {
+      const { gradePending } = await import("./clvTracker");
+      const out = await gradePending();
+      res.json(out);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "clv grade-all failed" });
+    }
+  });
+  app.get("/api/clv/summary", async (_req, res) => {
+    try {
+      const { getClvSummary } = await import("./clvTracker");
+      res.json(getClvSummary());
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "clv summary failed" });
+    }
+  });
+
+  // ---- IV/RV ----
+  app.get("/api/iv-rv", async (req, res) => {
+    try {
+      const { computeIvRvSnapshot } = await import("./ivRv");
+      const sym = String(req.query.symbol ?? "SPY").toUpperCase();
+      const snap = await computeIvRvSnapshot(sym);
+      res.json(snap);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "iv-rv failed" });
+    }
+  });
+
+  // ---- Full gamma curve ----
+  app.get("/api/gamma-curve", async (req, res) => {
+    try {
+      const { buildGammaCurve } = await import("./gammaCurve");
+      const sym = String(req.query.symbol ?? "SPY").toUpperCase();
+      const out = await buildGammaCurve(sym);
+      res.json(out);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "gamma-curve failed" });
+    }
+  });
+
+  // ---- Cross-asset confirmation matrix ----
+  app.get("/api/cross-asset", async (_req, res) => {
+    try {
+      const { buildCrossAssetMatrix } = await import("./crossAsset");
+      res.json(buildCrossAssetMatrix());
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "cross-asset failed" });
+    }
+  });
+
+  // ---- Skew engine ----
+  app.get("/api/skew", async (req, res) => {
+    try {
+      const { computeSkew } = await import("./skewEngine");
+      const sym = String(req.query.symbol ?? "SPY").toUpperCase();
+      const out = await computeSkew(sym);
+      res.json(out);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "skew failed" });
+    }
+  });
+
+  // ---- FRED macro ----
+  app.get("/api/fred", async (_req, res) => {
+    try {
+      const { getFredSnapshot } = await import("./fredClient");
+      res.json({ series: getFredSnapshot() });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "fred failed" });
+    }
+  });
+  app.post("/api/fred/refresh", async (_req, res) => {
+    try {
+      const { refreshAll } = await import("./fredClient");
+      res.json(await refreshAll());
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "fred refresh failed" });
+    }
+  });
+
+  // ---- COT ----
+  app.get("/api/cot", async (_req, res) => {
+    try {
+      const { getCotSnapshot } = await import("./cotClient");
+      res.json({ markets: getCotSnapshot() });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "cot failed" });
+    }
+  });
+  app.post("/api/cot/refresh", async (_req, res) => {
+    try {
+      const { refreshAllCot } = await import("./cotClient");
+      res.json(await refreshAllCot());
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "cot refresh failed" });
+    }
+  });
+
+  // ---- Anomaly + drift ----
+  app.get("/api/anomaly", async (_req, res) => {
+    try {
+      const { scoreAnomalyToday, computeDrift } = await import("./anomalyDetector");
+      res.json({ anomaly: scoreAnomalyToday(), drift: computeDrift() });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "anomaly failed" });
+    }
+  });
+
+  // ---- Signal backtest ----
+  app.post("/api/backtest/run", async (req, res) => {
+    try {
+      const { runSignal } = await import("./signalBacktest");
+      const spec = req.body?.spec;
+      if (!spec || !spec.kind || !spec.symbol) {
+        return res.status(400).json({ error: "spec.kind and spec.symbol required" });
+      }
+      const costBps = Number(req.body?.costBps);
+      const out = runSignal(spec, Number.isFinite(costBps) ? costBps : undefined);
+      res.json(out);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "backtest failed" });
+    }
+  });
+  app.get("/api/backtest/symbols", async (_req, res) => {
+    try {
+      const { listAvailableSymbols } = await import("./signalBacktest");
+      res.json({ symbols: listAvailableSymbols() });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "symbols failed" });
+    }
+  });
+
   // ---- Enhanced gamma levels: computed + user weekly targets ----
   // Augments the existing /api/gamma-levels with vanna/charm/vomma/zomma user targets.
   app.get("/api/gamma-levels-enhanced", async (req, res) => {
@@ -3014,6 +3220,30 @@ Refine the brief above. Search the web for any critical developments the feed is
     startStockBarsRefresher();
   } catch (e: any) {
     console.warn(`[stockBars] failed to start: ${e?.message ?? e}`);
+  }
+
+  // FRED macro refresher (6h cadence)
+  try {
+    const { startFredRefresher } = await import("./fredClient");
+    startFredRefresher();
+  } catch (e: any) {
+    console.warn(`[fred] failed to start: ${e?.message ?? e}`);
+  }
+
+  // COT refresher (24h cadence — reports drop weekly)
+  try {
+    const { startCotRefresher } = await import("./cotClient");
+    startCotRefresher();
+  } catch (e: any) {
+    console.warn(`[cot] failed to start: ${e?.message ?? e}`);
+  }
+
+  // CLV grader (every 6h: regrade against latest close / chain mid)
+  try {
+    const { gradePending } = await import("./clvTracker");
+    setInterval(() => { gradePending().catch(() => {}); }, 6 * 60 * 60 * 1000);
+  } catch (e: any) {
+    console.warn(`[clv] grader start failed: ${e?.message ?? e}`);
   }
 
   // Kick off Exit Brain (30s confluence eval over tracked 0DTE positions)

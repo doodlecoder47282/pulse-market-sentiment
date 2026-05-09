@@ -134,6 +134,7 @@ export const TAB_LABELS: Record<TabKey, string> = {
   news: "News",
   voices: "Voices",
   takefive: "Take Five",
+  edgelab: "Edge Lab",
 };
 
 export const SHORTCUT_DOCS = [
