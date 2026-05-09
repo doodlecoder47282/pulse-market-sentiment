@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import EdgeBrief from "./EdgeBrief";
 
 interface TradeRow {
   id: string;
@@ -104,6 +105,8 @@ export default function ClvPanel() {
 
   return (
     <div className="space-y-3" data-testid="clv-panel">
+      <EdgeBrief panel="clv" />
+
       {/* Edge KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <Kpi label="trades" value={s ? `${s.gradedCount}/${s.count}` : "—"} hint="graded/total" />

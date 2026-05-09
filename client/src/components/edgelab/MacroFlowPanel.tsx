@@ -2,6 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import EdgeBrief from "./EdgeBrief";
 
 interface FredObservation {
   seriesId: string;
@@ -60,6 +61,8 @@ export default function MacroFlowPanel() {
 
   return (
     <div className="space-y-3" data-testid="macro-flow-panel">
+      <EdgeBrief panel="macro-flow" />
+
       {/* FRED */}
       <div className="rounded border border-border p-3">
         <div className="flex items-center justify-between mb-2">

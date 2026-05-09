@@ -2091,6 +2091,28 @@ Refine the brief above. Search the web for any critical developments the feed is
     }
   });
 
+  // ---- Edge Lab AI brief ----
+  // GET /api/edgelab/brief?panel=<name>[&symbol=SPY]
+  // POST /api/edgelab/brief (body: { panel, symbol?, extra? }) for backtest run context
+  const briefHandler = async (req: any, res: any) => {
+    try {
+      const { generateEdgeBrief } = await import("./edgeLabBrief");
+      const panel = String(req.query.panel || req.body?.panel || "").toLowerCase();
+      const symbol = req.query.symbol ? String(req.query.symbol).toUpperCase() : (req.body?.symbol ?? null);
+      const extra = req.body?.extra ?? null;
+      const valid = ["clv", "iv-rv", "gamma-curve", "cross-asset", "skew", "macro-flow", "anomaly", "backtest"];
+      if (!valid.includes(panel)) {
+        return res.status(400).json({ error: `panel must be one of ${valid.join(", ")}` });
+      }
+      const brief = await generateEdgeBrief(panel as any, symbol, extra);
+      res.json(brief);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "brief failed" });
+    }
+  };
+  app.get("/api/edgelab/brief", briefHandler);
+  app.post("/api/edgelab/brief", briefHandler);
+
   // ---- Enhanced gamma levels: computed + user weekly targets ----
   // Augments the existing /api/gamma-levels with vanna/charm/vomma/zomma user targets.
   app.get("/api/gamma-levels-enhanced", async (req, res) => {

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import EdgeBrief from "./EdgeBrief";
 
 interface GammaCurveResult {
   symbol: string;
@@ -63,6 +64,8 @@ export default function GammaCurvePanel() {
 
   return (
     <div className="space-y-3" data-testid="gamma-curve-panel">
+      <EdgeBrief panel="gamma-curve" symbol={active} />
+
       <div className="flex gap-2 items-end">
         <div className="space-y-1">
           <label className="text-xs text-muted-foreground">symbol</label>

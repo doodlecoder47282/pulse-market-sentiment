@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
+import EdgeBrief from "./EdgeBrief";
 
 interface CrossAssetTickerRow {
   symbol: string;
@@ -58,6 +59,8 @@ export default function CrossAssetPanel() {
 
   return (
     <div className="space-y-3" data-testid="cross-asset-panel">
+      <EdgeBrief panel="cross-asset" />
+
       {q.isLoading && <div className="text-xs text-muted-foreground">loading cross-asset matrix…</div>}
       {q.isError && <div className="text-xs text-rose-500">error: {(q.error as any)?.message}</div>}
 
