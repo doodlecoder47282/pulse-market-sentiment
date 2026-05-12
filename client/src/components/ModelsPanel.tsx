@@ -42,6 +42,7 @@ import { apiRequest } from "@/lib/queryClient";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ChainAudit from "@/components/ChainAudit";
 import { BacktestBadge, BacktestPanel, type BacktestHorizon } from "@/components/BacktestOverlay";
+import PivotProjection from "@/components/models/PivotProjection";
 
 // ─── Types mirror server/models.ts ──────────────────────────────────────────
 
@@ -2247,6 +2248,11 @@ export default function ModelsPanel() {
 
       {/* ── Backtest accuracy overlay ── */}
       <BacktestPanel defaultHorizon={horizon as BacktestHorizon} />
+
+      {/* ── Pivot Point Projection ─ 1-2 month directional outlook ── */}
+      <ErrorBoundary label="Pivot Projection">
+        <PivotProjection defaultSymbol={symbol} />
+      </ErrorBoundary>
 
       {/* ── Live Chain Audit section ── */}
       <div

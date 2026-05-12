@@ -31,17 +31,19 @@ export interface SectorDef {
 }
 
 export const SECTORS: SectorDef[] = [
-  { id: "tech",   etf: "XLK",  name: "Technology",             hue: 210, leaders: ["AAPL", "MSFT", "NVDA", "AVGO", "ORCL", "CRM", "ADBE"] },
-  { id: "comm",   etf: "XLC",  name: "Communication Services", hue: 270, leaders: ["META", "GOOGL", "NFLX", "TMUS", "DIS",  "CMCSA"] },
-  { id: "disc",   etf: "XLY",  name: "Consumer Discretionary", hue: 330, leaders: ["AMZN", "TSLA", "HD",   "MCD",  "LOW",  "NKE",  "SBUX"] },
-  { id: "stap",   etf: "XLP",  name: "Consumer Staples",       hue: 140, leaders: ["COST", "WMT",  "PG",   "KO",   "PEP",  "PM",   "MDLZ"] },
-  { id: "fin",    etf: "XLF",  name: "Financials",             hue: 200, leaders: ["JPM",  "BRK-B","V",    "MA",   "BAC",  "WFC",  "GS"] },
-  { id: "hlth",   etf: "XLV",  name: "Health Care",            hue: 160, leaders: ["LLY",  "UNH",  "JNJ",  "ABBV", "MRK",  "TMO",  "ABT"] },
-  { id: "ind",    etf: "XLI",  name: "Industrials",            hue: 30,  leaders: ["GE",   "CAT",  "RTX",  "HON",  "UBER", "UNP",  "ETN"] },
-  { id: "enrg",   etf: "XLE",  name: "Energy",                 hue: 15,  leaders: ["XOM",  "CVX",  "COP",  "SLB",  "EOG",  "PSX"] },
-  { id: "util",   etf: "XLU",  name: "Utilities",              hue: 55,  leaders: ["NEE",  "SO",   "DUK",  "CEG",  "VST",  "AEP"] },
-  { id: "mat",    etf: "XLB",  name: "Materials",              hue: 85,  leaders: ["LIN",  "SHW",  "APD",  "ECL",  "FCX",  "NEM"] },
-  { id: "reit",   etf: "XLRE", name: "Real Estate",            hue: 300, leaders: ["PLD",  "AMT",  "EQIX", "WELL", "SPG",  "O"] },
+  { id: "tech",   etf: "XLK",  name: "Technology",             hue: 210, leaders: ["AAPL","MSFT","NVDA","AVGO","ORCL","CRM","ADBE","AMD","MU","SMCI","ARM","PLTR","NOW","INTC","QCOM"] },
+  { id: "comm",   etf: "XLC",  name: "Communication Services", hue: 270, leaders: ["META","GOOGL","NFLX","TMUS","DIS","CMCSA","WBD","CHTR","T","VZ","EA","TTWO"] },
+  { id: "disc",   etf: "XLY",  name: "Consumer Discretionary", hue: 330, leaders: ["AMZN","TSLA","HD","MCD","LOW","NKE","SBUX","BKNG","CMG","ABNB","MAR","F","GM"] },
+  { id: "stap",   etf: "XLP",  name: "Consumer Staples",       hue: 140, leaders: ["COST","WMT","PG","KO","PEP","PM","MDLZ","MO","CL","KMB","TGT","KR"] },
+  { id: "fin",    etf: "XLF",  name: "Financials",             hue: 200, leaders: ["JPM","BRK-B","V","MA","BAC","WFC","GS","MS","C","AXP","SCHW","BLK","COIN","HOOD"] },
+  { id: "hlth",   etf: "XLV",  name: "Health Care",            hue: 160, leaders: ["LLY","UNH","JNJ","ABBV","MRK","TMO","ABT","PFE","DHR","BMY","AMGN","GILD","VRTX"] },
+  { id: "ind",    etf: "XLI",  name: "Industrials",            hue: 30,  leaders: ["GE","CAT","RTX","HON","UBER","UNP","ETN","BA","LMT","DE","UPS","FDX","NOC"] },
+  { id: "enrg",   etf: "XLE",  name: "Energy",                 hue: 15,  leaders: ["XOM","CVX","COP","SLB","EOG","PSX","MPC","OXY","VLO","HES","FANG","PXD"] },
+  { id: "util",   etf: "XLU",  name: "Utilities",              hue: 55,  leaders: ["NEE","SO","DUK","CEG","VST","AEP","D","EXC","SRE","XEL","PCG","ED"] },
+  { id: "mat",    etf: "XLB",  name: "Materials",              hue: 85,  leaders: ["LIN","SHW","APD","ECL","FCX","NEM","DOW","DD","NUE","CTVA","MLM","VMC"] },
+  { id: "reit",   etf: "XLRE", name: "Real Estate",            hue: 300, leaders: ["PLD","AMT","EQIX","WELL","SPG","O","PSA","CCI","DLR","VICI","EXR","AVB"] },
+  // High-beta / thematic basket — not a real GICS sector, but surfaces names you actually trade
+  { id: "theme",  etf: "QQQ",  name: "High-Beta / Thematic",   hue: 290, leaders: ["COIN","PLTR","SMCI","MSTR","HOOD","AFRM","SOFI","RIVN","LCID","DKNG","RBLX","SNOW","NET","CRWD","ZS"] },
 ];
 
 /** Flat list of every ticker we need to fetch (ETFs + leaders + SPY benchmark). */
@@ -71,16 +73,22 @@ async function yFetch(url: string, timeoutMs = 15_000): Promise<any> {
   } finally { clearTimeout(to); }
 }
 
-/** Pull ~90 days of daily closes for one symbol via Schwab. */
+/** Pull ~90 days of daily closes for one symbol via Schwab. Logs failures (don't silent-swallow). */
 async function fetchDaily(symbol: string): Promise<DailyBar[]> {
-  // TODO: Schwab-only mode — Yahoo source removed, using Schwab getPriceHistory.
   try {
     const { getPriceHistory } = await import("./schwab");
-    const resp = await getPriceHistory(symbol, "month", 3, "daily", 1);
-    return resp.candles
+    // Schwab uses dotted suffix for share classes (e.g. BRK.B not BRK-B)
+    const schwabSym = symbol.replace("-", ".");
+    const resp = await getPriceHistory(schwabSym, "month", 3, "daily", 1);
+    const bars = resp.candles
       .filter((c) => c.close != null && isFinite(c.close))
       .map((c) => ({ t: Math.floor(c.datetime / 1000), close: c.close }));
-  } catch {
+    if (bars.length === 0) {
+      console.warn(`[sector-web] no bars for ${symbol} (schwab returned empty candles)`);
+    }
+    return bars;
+  } catch (e: any) {
+    console.warn(`[sector-web] fetch failed for ${symbol}: ${e?.message ?? e}`);
     return [];
   }
 }
@@ -151,13 +159,22 @@ function pearson(a: number[], b: number[]): number {
 // ----- Public builder -----
 
 let _cache: { t: number; data: SectorWebResponse } | null = null;
+let _dailyCache: { t: number; data: Map<string, DailyBar[]> } | null = null;
 const TTL_MS = 10 * 60_000; // 10 minutes
+
+/** Returns the raw daily-bar map used to compute the sector web. Caches in lockstep with buildSectorWeb. */
+export async function getCachedDaily(): Promise<Map<string, DailyBar[]>> {
+  if (_dailyCache && Date.now() - _dailyCache.t < TTL_MS) return _dailyCache.data;
+  await buildSectorWeb();
+  return _dailyCache?.data ?? new Map();
+}
 
 export async function buildSectorWeb(): Promise<SectorWebResponse> {
   if (_cache && Date.now() - _cache.t < TTL_MS) return _cache.data;
 
   const tickers = allSectorTickers();
   const daily = await fetchAllDaily(tickers);
+  _dailyCache = { t: Date.now(), data: daily };
 
   const spyBars = daily.get("SPY") || [];
   const spy = computeReturns(spyBars);

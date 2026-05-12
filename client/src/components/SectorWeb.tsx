@@ -138,6 +138,8 @@ const LEADER_DESC: Record<string, string> = {
 };
 
 // ----- Color math -----
+// RS heat: yellow → green for outperformers, yellow → red for underperformers.
+// Used at 1W / 1M horizons where relative strength vs SPY is the meaningful signal.
 function heatColor(rs: number, opacity = 1): string {
   const clamp = Math.max(-4, Math.min(4, rs));
   if (clamp >= 0) {
@@ -151,6 +153,26 @@ function heatColor(rs: number, opacity = 1): string {
     const h = 45 - t * 45;
     const s = 90;
     const l = 55;
+    return `hsla(${h}, ${s}%, ${l}%, ${opacity})`;
+  }
+}
+
+// Pure day-change color: red if down today, green if up today, intensity scaled by magnitude.
+// Used at the 1D window so a glance at the board immediately tells you red/green tape.
+function dayChangeColor(r1d: number, opacity = 1): string {
+  const clamp = Math.max(-5, Math.min(5, r1d));
+  if (clamp >= 0) {
+    // Green: 142° (mint) at 0 → 142° (deep emerald) at +5%
+    const t = clamp / 5;
+    const l = 58 - t * 18;       // 58% → 40% (more saturated as it climbs)
+    const s = 55 + t * 30;       // 55% → 85%
+    return `hsla(142, ${s}%, ${l}%, ${opacity})`;
+  } else {
+    // Red: 6° (warm coral) at 0 → 0° (deep crimson) at -5%
+    const t = -clamp / 5;
+    const h = 6 - t * 6;
+    const l = 58 - t * 18;
+    const s = 60 + t * 30;
     return `hsla(${h}, ${s}%, ${l}%, ${opacity})`;
   }
 }
@@ -329,8 +351,13 @@ function ForceGraph({ data, winKey }: { data: SectorWebResponse; winKey: WindowK
       fx: W / 2, fy: H / 2,
     };
 
+    // Coloring rule: 1D window = pure red/green by absolute day return;
+    // 1W/1M = relative strength vs SPY (yellow-green outperform, yellow-red underperform).
+    const useDayColor = winKey === "r1d";
+
     const sectorSim: SimNode[] = data.sectors.map((s: SectorNode) => {
       const rs = (s as any)[winRsKey] as number;
+      const r = s[winKey];
       const size = 14 + Math.min(14, Math.abs(rs) * 3.5);
       return {
         id: s.id,
@@ -339,14 +366,15 @@ function ForceGraph({ data, winKey }: { data: SectorWebResponse; winKey: WindowK
         name: s.name,
         hue: s.hue,
         rs,
-        r: s[winKey],
+        r,
         size,
-        heat: heatColor(rs),
+        heat: useDayColor ? dayChangeColor(r) : heatColor(rs),
       };
     });
 
     const leaderSim: SimNode[] = data.leaders.map((l: LeaderNode) => {
       const rs = (l as any)[winRsKey] as number;
+      const r = l[winKey];
       const size = 5 + Math.min(9, Math.abs(rs) * 1.6);
       return {
         id: l.id,
@@ -356,9 +384,9 @@ function ForceGraph({ data, winKey }: { data: SectorWebResponse; winKey: WindowK
         name: l.name,
         hue: l.hue,
         rs,
-        r: l[winKey],
+        r,
         size,
-        heat: heatColor(rs, 0.9),
+        heat: useDayColor ? dayChangeColor(r, 0.92) : heatColor(rs, 0.9),
       };
     });
 

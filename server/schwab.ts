@@ -44,7 +44,9 @@ export async function getAccessToken(): Promise<string | null> {
       }),
     });
     if (!res.ok) {
-      console.warn("[schwab] token refresh failed:", res.status, await res.text().catch(() => ""));
+      const errTxt = await res.text().catch(() => "");
+      console.warn("[schwab] token refresh failed:", res.status, errTxt);
+      _lastRefreshError = { at: now, status: res.status, message: errTxt.slice(0, 200) };
       return null;
     }
     const data = await res.json();
@@ -61,9 +63,11 @@ export async function getAccessToken(): Promise<string | null> {
       .where(eq(schwabTokens.id, 1))
       .run();
     console.log("[schwab] token refreshed successfully");
+    _lastRefreshError = null;
     return data.access_token;
   } catch (e: any) {
     console.warn("[schwab] token refresh exception:", e?.message);
+    _lastRefreshError = { at: Date.now(), status: 0, message: e?.message ?? "unknown" };
     return null;
   }
 }
@@ -117,23 +121,55 @@ export async function exchangeCodeForTokens(code: string): Promise<{ ok: true } 
   }
 }
 
-/** Returns the current Schwab connection status. */
+// In-memory last-refresh-error tracker. Cleared on successful refresh.
+let _lastRefreshError: { at: number; status: number; message: string } | null = null;
+
+/** Returns the current Schwab connection status.
+ *  needsReauth fires when:
+ *    • no tokens stored, OR
+ *    • refresh token expired, OR
+ *    • last refresh attempt failed AND access token already expired
+ *  The third case fixes the silent-death bug where the row sat with a valid
+ *  refreshExpiresAt but every refresh attempt was 401’ing.
+ */
 export function getSchwabStatus(): {
   connected: boolean;
   expiresIn: number;
   refreshExpiresIn: number;
   needsReauth: boolean;
+  staleAccessToken: boolean;
+  lastRefreshError: { at: number; status: number; message: string } | null;
 } {
   const row = db.select().from(schwabTokens).where(eq(schwabTokens.id, 1)).get();
-  if (!row) return { connected: false, expiresIn: 0, refreshExpiresIn: 0, needsReauth: false };
+  if (!row) {
+    return {
+      connected: false,
+      expiresIn: 0,
+      refreshExpiresIn: 0,
+      needsReauth: true,
+      staleAccessToken: false,
+      lastRefreshError: _lastRefreshError,
+    };
+  }
   const now = Date.now();
-  const needsReauth = row.refreshExpiresAt < now;
+  const refreshExpired = row.refreshExpiresAt < now;
+  const accessExpired = row.expiresAt < now;
+  // If access token is expired AND the most recent refresh attempt failed,
+  // we're effectively dead even if refreshExpiresAt looks fine. This is the bug
+  // that lets the dashboard sit silent for hours.
+  const refreshKnownBad =
+    _lastRefreshError != null &&
+    _lastRefreshError.at > row.updatedAt &&
+    accessExpired;
+  const needsReauth = refreshExpired || refreshKnownBad;
   const connected = !needsReauth && row.expiresAt > 0;
   return {
     connected,
     expiresIn: Math.max(0, Math.floor((row.expiresAt - now) / 1000)),
     refreshExpiresIn: Math.max(0, Math.floor((row.refreshExpiresAt - now) / 1000)),
     needsReauth,
+    staleAccessToken: accessExpired && !refreshExpired,
+    lastRefreshError: _lastRefreshError,
   };
 }
 

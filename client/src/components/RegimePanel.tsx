@@ -12,6 +12,7 @@ import {
   Crown, Target, Zap, BarChart2, Shield, Calendar,
 } from "lucide-react";
 import SectorWeb from "./SectorWeb";
+import UnderperformerWatcher from "./regime/UnderperformerWatcher";
 import WefThemePanel from "./WefThemePanel";
 import { CollapsibleCard } from "./CollapsibleCard";
 import ErrorBoundary from "./ErrorBoundary";
@@ -135,6 +136,11 @@ export default function RegimePanel() {
     <div className="space-y-6" data-testid="regime-panel">
       {/* Reactive sector web — the new "market constellation" view */}
       <SectorWeb />
+
+      {/* Prime Underperformer Watcher — today's bounce candidates */}
+      <ErrorBoundary label="Prime Underperformer Watcher">
+        <UnderperformerWatcher />
+      </ErrorBoundary>
 
       {/* Window selector */}
       <div className="flex flex-wrap items-center justify-between gap-3">

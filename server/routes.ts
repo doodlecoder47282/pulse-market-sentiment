@@ -1017,6 +1017,79 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Prime Underperformer Watcher — today's biggest pullback candidates,
+  // filtered for mean-reversion bounce setups (not falling knives).
+  // Reuses the daily bars already cached by sector-web → essentially free.
+  app.get("/api/underperformers", async (req, res) => {
+    try {
+      const { getCachedDaily } = await import("./sector-web");
+      const { buildUnderperformers } = await import("./underperformers");
+      const mode = (String(req.query.mode ?? "bounce") as "bounce" | "all");
+      const maxRows = Math.max(5, Math.min(50, Number(req.query.limit ?? 25)));
+      const daily = await getCachedDaily();
+      const data = buildUnderperformers(daily, { mode, maxRows });
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build underperformers" });
+    }
+  });
+
+  // Pivot Point Projection — monthly classic + quarterly fib pivots, layered
+  // with gamma walls, SMAs, volume nodes. Confluence scoring + pattern tags.
+  // 1-2 month directional outlook with named setup recognition.
+  app.get("/api/pivot-projection", async (req, res) => {
+    try {
+      const symbol = String(req.query.symbol ?? "SPY").toUpperCase();
+      const { getPriceHistory } = await import("./schwab");
+      const { buildPivotProjection } = await import("./pivotProjection");
+      // Pull 6 months of daily bars
+      const resp = await getPriceHistory(symbol, "month", 6, "daily", 1);
+      const bars = (resp.candles || [])
+        .filter((c: any) => c.close != null && isFinite(c.close))
+        .map((c: any) => ({
+          t: Math.floor(c.datetime / 1000),
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+          volume: c.volume,
+        }));
+      if (bars.length < 30) {
+        return res.status(503).json({ message: `Insufficient bars for ${symbol} (${bars.length})` });
+      }
+      const spot = bars[bars.length - 1].close;
+      // Try to fetch gamma walls (SPY-only) — pivots still work without them
+      let gammaWalls: any = null;
+      if (symbol === "SPY" || symbol === "^GSPC") {
+        try {
+          const port = Number(process.env.PORT ?? 5000);
+          const r = await fetch(`http://127.0.0.1:${port}/api/gamma-levels-enhanced`);
+          if (r.ok) {
+            const g = await r.json();
+            gammaWalls = {
+              callWall: g?.callWall?.value ?? null,
+              putWall: g?.putWall?.value ?? null,
+              gammaFlip: g?.gammaFlip?.value ?? null,
+              zeroGamma: g?.gammaFlip?.value ?? null,
+            };
+          }
+        } catch { /* gamma optional */ }
+      }
+      const projection = buildPivotProjection({ symbol, spot, bars, gammaWalls });
+      // Also return a thin recent-bars window for the chart
+      const chartBars = bars.slice(-90).map((b) => ({
+        t: b.t,
+        o: b.open,
+        h: b.high,
+        l: b.low,
+        c: b.close,
+      }));
+      res.json({ ...projection, chartBars });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build pivot projection" });
+    }
+  });
+
   // WEF theme mapper — scans weforum.org content, maps themes to ticker baskets,
   // filters each basket by 1M relative strength vs SPY to surface "stocks
   // following the narrative." 2-hour cache.
