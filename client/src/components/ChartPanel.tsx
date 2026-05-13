@@ -3,7 +3,7 @@
 // overlay + intraday granularity + P/C flow strip.
 // Engines: "svg" (our custom), "lightweight" (TV open-source), "tv" (full TV widget).
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { CandlestickChart, type Candle, type GammaLevels } from "./CandlestickChart";
@@ -79,6 +79,14 @@ export default function ChartPanel() {
   const [showGamma, setShowGamma] = useState(true);
   const [newSymbol, setNewSymbol] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("price");
+  // Track whether the user has manually picked a view this session.
+  // If not, we auto-flip to "flow" when gamma is unsupported and the ticker
+  // has flagged unusual contracts (B). Manual pick locks the view per ticker.
+  const userTouchedViewRef = useRef<Set<string>>(new Set());
+  const pickView = (mode: ViewMode) => {
+    userTouchedViewRef.current.add(activeChart);
+    setViewMode(mode);
+  };
 
   const onTfChange = (newTf: Timeframe) => {
     setTf(newTf);
@@ -119,9 +127,45 @@ export default function ChartPanel() {
     staleTime: 50_000,
   });
 
+  // Lightweight peek at unusual flow contract count — drives the FLOW
+  // button badge (C) and the auto-flip decision (B). Keyed by symbol only;
+  // staleTime keeps this cheap when user toggles timeframes.
+  const unusualPeek = useQuery<{ contracts: Array<unknown>; note?: string }>({
+    queryKey: ["/api/flow/unusual", activeChart],
+    queryFn: async () => {
+      const r = await apiRequest(
+        "GET",
+        `/api/flow/unusual?symbol=${encodeURIComponent(activeChart)}`
+      );
+      return r.json();
+    },
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+  const unusualCount = unusualPeek.data?.contracts?.length ?? 0;
+
   const ohlc = ohlcQuery.data;
   const gamma = gammaQuery.data;
   const gammaSupported = gamma?.supported && gamma.levels;
+
+  // B: Auto-flip to Flow view when this ticker has no gamma walls but
+  // does have flagged unusual contracts — and the user hasn't manually
+  // picked a view for this ticker yet. Fires once gamma response lands.
+  useEffect(() => {
+    if (!activeChart) return;
+    if (userTouchedViewRef.current.has(activeChart)) return;
+    if (gammaQuery.isLoading || unusualPeek.isLoading) return;
+    if (!gammaSupported && unusualCount > 0 && viewMode !== "flow") {
+      setViewMode("flow");
+    }
+    // If gamma IS supported, we want price view by default — reset only if
+    // we previously auto-flipped to flow without user intent.
+    if (gammaSupported && viewMode === "flow") {
+      setViewMode("price");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeChart, gammaSupported, unusualCount, gammaQuery.isLoading, unusualPeek.isLoading]);
 
   const handleAdd = () => {
     if (!newSymbol.trim()) return;
@@ -250,9 +294,15 @@ export default function ChartPanel() {
             {/* View mode + Engine selector */}
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex rounded-md border border-border/40 p-0.5" data-testid="view-selector">
-                <EngineButton active={viewMode === "price"} onClick={() => setViewMode("price")} icon={<CsIcon className="h-3 w-3" />} label="Price" />
-                <EngineButton active={viewMode === "greeks"} onClick={() => setViewMode("greeks")} icon={<Sigma className="h-3 w-3" />} label="Greeks" />
-                <EngineButton active={viewMode === "flow"} onClick={() => setViewMode("flow")} icon={<Flame className="h-3 w-3" />} label="Flow" />
+                <EngineButton active={viewMode === "price"} onClick={() => pickView("price")} icon={<CsIcon className="h-3 w-3" />} label="Price" />
+                <EngineButton active={viewMode === "greeks"} onClick={() => pickView("greeks")} icon={<Sigma className="h-3 w-3" />} label="Greeks" />
+                <EngineButton
+                  active={viewMode === "flow"}
+                  onClick={() => pickView("flow")}
+                  icon={<Flame className="h-3 w-3" />}
+                  label="Flow"
+                  badge={unusualCount > 0 ? unusualCount : undefined}
+                />
               </div>
               {viewMode === "price" && (
               <div className="flex rounded-md border border-border/40 p-0.5" data-testid="engine-selector">
@@ -389,8 +439,8 @@ export default function ChartPanel() {
 }
 
 function EngineButton({
-  active, onClick, icon, label,
-}: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
+  active, onClick, icon, label, badge,
+}: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; badge?: number }) {
   return (
     <button
       onClick={onClick}
@@ -401,6 +451,19 @@ function EngineButton({
       data-testid={`engine-${label.toLowerCase()}`}
     >
       {icon} {label}
+      {badge != null && badge > 0 && (
+        <span
+          className={[
+            "ml-0.5 rounded-full px-1 py-px font-mono text-[9px] tabular-nums leading-none",
+            active
+              ? "bg-amber-500/30 text-amber-200"
+              : "bg-amber-500/20 text-amber-300",
+          ].join(" ")}
+          data-testid={`badge-${label.toLowerCase()}`}
+        >
+          {badge > 99 ? "99+" : badge}
+        </span>
+      )}
     </button>
   );
 }
