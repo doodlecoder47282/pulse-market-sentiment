@@ -328,6 +328,8 @@ export interface FollowSnapshot {
 export function getFollowSnapshot(filter?: {
   status?: FollowStatus | "ACTIVE" | "TERMINAL";
   symbol?: string;
+  /** If true, include EXPIRED positions that are genuinely past expiry. Default false (auto-purge from view). */
+  includeExpired?: boolean;
 }): FollowSnapshot {
   const all = Array.from(positions.values());
   // GC very old terminal records
@@ -347,6 +349,13 @@ export function getFollowSnapshot(filter?: {
   for (const p of all) byStatus[p.status]++;
 
   let filtered = all;
+  // Auto-purge expired contracts from view unless explicitly requested.
+  // Keep in DB for 90d (rollup endpoint uses includeExpired=true).
+  if (!filter?.includeExpired) {
+    filtered = filtered.filter(
+      (p) => !(p.status === "EXPIRED" && isExpired(p.expiration)),
+    );
+  }
   if (filter?.status) {
     if (filter.status === "ACTIVE") {
       filtered = filtered.filter(
@@ -383,6 +392,100 @@ export function getFollowSnapshot(filter?: {
 /** For tests / debug: clear all tracking. */
 export function _clearFollows(): void {
   positions.clear();
+}
+
+// ─── Performance rollup ──────────────────────────────────────────────────────
+
+export interface PerformanceRow {
+  source: string;
+  count: number;
+  wins: number;
+  losses: number;
+  burns: number;     // peak ≥+50% but closed flat/negative (left money on table)
+  winRate: number;   // wins / (wins+losses)
+  avgPct: number;    // mean closingPrint.pctChange
+  totalPnLPct: number;
+  avgPeakPct: number;
+  bestPct: number;
+  worstPct: number;
+}
+
+export interface PerformanceSnapshot {
+  asOf: number;
+  windowDays: number;
+  totalTerminal: number;
+  bySource: PerformanceRow[];
+  /** Aggregate across all sources */
+  overall: PerformanceRow;
+}
+
+/**
+ * Aggregate terminal positions (CLOSED + EXPIRED) by source.
+ * Whale follow positions always have source = "whale".
+ * windowDays filters by statusAt within the last N days. Default 7.
+ */
+export function getPerformanceSnapshot(opts?: { windowDays?: number }): PerformanceSnapshot {
+  const windowDays = opts?.windowDays ?? 7;
+  const cutoff = Date.now() - windowDays * 24 * 60 * 60_000;
+  const all = Array.from(positions.values());
+  const terminal = all.filter(
+    (p) =>
+      (p.status === "CLOSED" || p.status === "EXPIRED") &&
+      p.statusAt >= cutoff &&
+      p.closingPrint != null,
+  );
+
+  const groups = new Map<string, FollowPosition[]>();
+  for (const p of terminal) {
+    const src = "whale"; // whaleFollowThrough only tracks whale-source positions
+    if (!groups.has(src)) groups.set(src, []);
+    groups.get(src)!.push(p);
+  }
+
+  const buildRow = (source: string, list: FollowPosition[]): PerformanceRow => {
+    let wins = 0, losses = 0, burns = 0;
+    let sumPct = 0, sumPeakPct = 0;
+    let bestPct = -Infinity, worstPct = Infinity;
+    for (const p of list) {
+      const pct = p.closingPrint!.pctChange;
+      const peakPct = p.closingPrint!.peakPctChange;
+      if (pct > 0) wins++;
+      else losses++;
+      // burn = peak ≥+50% but closed ≤0% (left money on table)
+      if (peakPct >= 0.5 && pct <= 0) burns++;
+      sumPct += pct;
+      sumPeakPct += peakPct;
+      if (pct > bestPct) bestPct = pct;
+      if (pct < worstPct) worstPct = pct;
+    }
+    const decided = wins + losses;
+    return {
+      source,
+      count: list.length,
+      wins,
+      losses,
+      burns,
+      winRate: decided > 0 ? wins / decided : 0,
+      avgPct: list.length > 0 ? sumPct / list.length : 0,
+      totalPnLPct: sumPct,
+      avgPeakPct: list.length > 0 ? sumPeakPct / list.length : 0,
+      bestPct: bestPct === -Infinity ? 0 : bestPct,
+      worstPct: worstPct === Infinity ? 0 : worstPct,
+    };
+  };
+
+  const bySource: PerformanceRow[] = [];
+  for (const [src, list] of groups) bySource.push(buildRow(src, list));
+  bySource.sort((a, b) => b.count - a.count);
+  const overall = buildRow("overall", terminal);
+
+  return {
+    asOf: Date.now(),
+    windowDays,
+    totalTerminal: terminal.length,
+    bySource,
+    overall,
+  };
 }
 
 /** Hydrate in-memory positions from SQLite on boot. Fail-soft. */

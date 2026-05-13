@@ -238,3 +238,15 @@ export async function refreshLiveMarks(): Promise<void> {
 export function _clearAll(): void {
   tracked.clear();
 }
+
+/** All tracked signals (any status) — for performance rollup. */
+export function getAllTracked(): TrackedSignal[] {
+  return Array.from(tracked.values());
+}
+
+/** Terminal signals only (CLOSED + EXPIRED), filtered by statusAt window. */
+export function getTerminalSince(cutoffMs: number): TrackedSignal[] {
+  return Array.from(tracked.values()).filter(
+    (s) => (s.status === "CLOSED" || s.status === "EXPIRED") && s.statusAt >= cutoffMs,
+  );
+}

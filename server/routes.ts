@@ -3441,13 +3441,115 @@ Refine the brief above. Search the web for any critical developments the feed is
         const { getFollowSnapshot } = await import("./whaleFollowThrough");
         const status = req.query.status ? String(req.query.status).toUpperCase() : undefined;
         const symbol = req.query.symbol ? String(req.query.symbol).toUpperCase() : undefined;
+        const includeExpired = String(req.query.includeExpired ?? "").toLowerCase() === "true";
         const validStatuses = new Set(["OPEN", "TRIMMING", "CLOSING", "CLOSED", "EXPIRED", "ACTIVE", "TERMINAL"]);
-        const filter: any = {};
+        const filter: any = { includeExpired };
         if (status && validStatuses.has(status)) filter.status = status;
         if (symbol) filter.symbol = symbol;
         res.json(getFollowSnapshot(filter));
       } catch (e: any) {
         res.status(500).json({ error: "followups_failed", message: e?.message ?? String(e) });
+      }
+    });
+    // ── Performance rollup ── W/L by source over a rolling window (default 7d).
+    // Aggregates: whale follow positions (whaleFollowThrough) + manual tracked signals (signalTracker).
+    app.get("/api/whales/performance", async (req, res) => {
+      try {
+        const windowRaw = String(req.query.window ?? "7d");
+        const m = windowRaw.match(/^(\d+)d$/i);
+        const windowDays = m ? Math.max(1, Math.min(90, parseInt(m[1], 10))) : 7;
+        const cutoff = Date.now() - windowDays * 24 * 60 * 60_000;
+
+        const { getPerformanceSnapshot } = await import("./whaleFollowThrough");
+        const whaleSnap = getPerformanceSnapshot({ windowDays });
+
+        // Pull tracked signals for non-whale sources (flow-alert, unusual-flow, manual)
+        const { getTerminalSince } = await import("./signalTracker");
+        const trackedTerminals = getTerminalSince(cutoff);
+
+        // Group tracked terminals by source
+        const trackedBySource = new Map<string, any[]>();
+        for (const s of trackedTerminals) {
+          if (s.source === "whale") continue; // whale source already covered by whaleSnap
+          if (!trackedBySource.has(s.source)) trackedBySource.set(s.source, []);
+          trackedBySource.get(s.source)!.push(s);
+        }
+
+        const buildTrackedRow = (source: string, list: any[]) => {
+          let wins = 0, losses = 0, burns = 0;
+          let sumPct = 0, sumPeak = 0;
+          let bestPct = -Infinity, worstPct = Infinity;
+          for (const s of list) {
+            const pct = (s.live?.pctChange ?? 0) as number;
+            const peakPct = (s.live?.peakPctChange ?? 0) as number;
+            if (pct > 0) wins++; else losses++;
+            if (peakPct >= 0.5 && pct <= 0) burns++;
+            sumPct += pct;
+            sumPeak += peakPct;
+            if (pct > bestPct) bestPct = pct;
+            if (pct < worstPct) worstPct = pct;
+          }
+          const decided = wins + losses;
+          return {
+            source,
+            count: list.length,
+            wins, losses, burns,
+            winRate: decided > 0 ? wins / decided : 0,
+            avgPct: list.length > 0 ? sumPct / list.length : 0,
+            totalPnLPct: sumPct,
+            avgPeakPct: list.length > 0 ? sumPeak / list.length : 0,
+            bestPct: bestPct === -Infinity ? 0 : bestPct,
+            worstPct: worstPct === Infinity ? 0 : worstPct,
+          };
+        };
+
+        const bySource = [...whaleSnap.bySource];
+        for (const [src, list] of trackedBySource) bySource.push(buildTrackedRow(src, list));
+        bySource.sort((a, b) => b.count - a.count);
+
+        // Recompute overall across both sources
+        let totalCount = whaleSnap.totalTerminal;
+        let oWins = whaleSnap.overall.wins;
+        let oLosses = whaleSnap.overall.losses;
+        let oBurns = whaleSnap.overall.burns;
+        let oSumPct = whaleSnap.overall.totalPnLPct;
+        let oSumPeak = whaleSnap.overall.avgPeakPct * whaleSnap.totalTerminal;
+        let oBest = whaleSnap.overall.bestPct;
+        let oWorst = whaleSnap.overall.worstPct;
+        for (const list of trackedBySource.values()) {
+          totalCount += list.length;
+          for (const s of list) {
+            const pct = (s.live?.pctChange ?? 0) as number;
+            const peakPct = (s.live?.peakPctChange ?? 0) as number;
+            if (pct > 0) oWins++; else oLosses++;
+            if (peakPct >= 0.5 && pct <= 0) oBurns++;
+            oSumPct += pct;
+            oSumPeak += peakPct;
+            if (pct > oBest) oBest = pct;
+            if (pct < oWorst) oWorst = pct;
+          }
+        }
+        const oDecided = oWins + oLosses;
+        const overall = {
+          source: "overall",
+          count: totalCount,
+          wins: oWins, losses: oLosses, burns: oBurns,
+          winRate: oDecided > 0 ? oWins / oDecided : 0,
+          avgPct: totalCount > 0 ? oSumPct / totalCount : 0,
+          totalPnLPct: oSumPct,
+          avgPeakPct: totalCount > 0 ? oSumPeak / totalCount : 0,
+          bestPct: oBest, worstPct: oWorst,
+        };
+
+        res.json({
+          asOf: Date.now(),
+          windowDays,
+          totalTerminal: totalCount,
+          bySource,
+          overall,
+        });
+      } catch (e: any) {
+        res.status(500).json({ error: "performance_failed", message: e?.message ?? String(e) });
       }
     });
     // ─── Manual signal tracker — for any flow alert / unusual activity ─────

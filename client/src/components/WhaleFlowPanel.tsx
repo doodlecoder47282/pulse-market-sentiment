@@ -8,7 +8,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Activity, TrendingUp, TrendingDown, Target, ChevronDown, ChevronRight, Zap } from "lucide-react";
+import { Activity, TrendingUp, TrendingDown, Target, ChevronDown, ChevronRight, Zap, BarChart3, Archive } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -635,7 +635,205 @@ function UoaTickerGroup({ ticker, clusters }: { ticker: string; clusters: UoaClu
   );
 }
 
-// ─── Main Panel ──────────────────────────────────────────────────────────────
+// ─── Performance Rollup Card ─────────────────────────────────────────────────
+
+interface PerformanceRow {
+  source: string;
+  count: number;
+  wins: number;
+  losses: number;
+  burns: number;
+  winRate: number;
+  avgPct: number;
+  totalPnLPct: number;
+  avgPeakPct: number;
+  bestPct: number;
+  worstPct: number;
+}
+interface PerformanceSnapshot {
+  asOf: number;
+  windowDays: number;
+  totalTerminal: number;
+  bySource: PerformanceRow[];
+  overall: PerformanceRow;
+}
+
+function sourceLabel(s: string): string {
+  if (s === "flow-alert") return "Flow Alerts";
+  if (s === "unusual-flow") return "UOA";
+  if (s === "whale") return "Whale";
+  if (s === "manual") return "Manual";
+  if (s === "overall") return "Overall";
+  return s;
+}
+
+function winRateColor(rate: number, count: number): string {
+  if (count < 3) return "text-muted-foreground";
+  if (rate >= 0.55) return "text-emerald-400";
+  if (rate >= 0.45) return "text-amber-400";
+  return "text-red-400";
+}
+
+function PerformanceCard() {
+  const [windowDays, setWindowDays] = useState<7 | 30>(7);
+  const perfQuery = useQuery<PerformanceSnapshot>({
+    queryKey: ["/api/whales/performance", windowDays],
+    queryFn: async () => {
+      const r = await apiRequest("GET", `/api/whales/performance?window=${windowDays}d`);
+      return r.json();
+    },
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+
+  const snap = perfQuery.data;
+  const rows = snap?.bySource ?? [];
+  const showRows = rows.filter((r) => r.count > 0);
+
+  return (
+    <section data-testid="section-performance">
+      <div className="flex items-center justify-between border-b border-border/40 pb-2 mb-3">
+        <div className="flex items-center gap-2">
+          <span className="text-amber-500"><BarChart3 className="h-3.5 w-3.5" /></span>
+          <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+            Performance
+          </span>
+          {snap && (
+            <span className="text-[10px] text-muted-foreground font-mono">
+              {snap.totalTerminal} closed · last {snap.windowDays}d
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-1" data-testid="performance-window-toggle">
+          {[7, 30].map((d) => (
+            <button
+              key={d}
+              onClick={() => setWindowDays(d as 7 | 30)}
+              className={`px-2 py-0.5 text-[10px] rounded border transition-colors ${
+                windowDays === d
+                  ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300"
+                  : "border-border/40 text-muted-foreground hover:text-foreground"
+              }`}
+              data-testid={`button-perf-window-${d}d`}
+            >
+              {d}d
+            </button>
+          ))}
+        </div>
+      </div>
+      {perfQuery.isLoading ? (
+        <div className="space-y-1.5">
+          <Skeleton className="h-7 w-full" />
+          <Skeleton className="h-7 w-full" />
+        </div>
+      ) : showRows.length === 0 ? (
+        <div className="rounded-md border border-dashed border-border/30 py-3 text-center text-xs text-muted-foreground" data-testid="performance-empty">
+          no closed positions in the last {windowDays}d — closes show up here after expiration or fade
+        </div>
+      ) : (
+        <div className="rounded-md border border-border/40 overflow-hidden" data-testid="performance-table">
+          <div className="grid grid-cols-[1.4fr_0.5fr_0.9fr_0.7fr_0.8fr_0.5fr] gap-2 px-3 py-1.5 bg-muted/20 text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
+            <div>source</div>
+            <div className="text-right">n</div>
+            <div className="text-right">W / L</div>
+            <div className="text-right">win%</div>
+            <div className="text-right">avg %</div>
+            <div className="text-right" title="peak ≥+50% but closed flat/red">burn</div>
+          </div>
+          {showRows.map((r) => (
+            <div
+              key={r.source}
+              className="grid grid-cols-[1.4fr_0.5fr_0.9fr_0.7fr_0.8fr_0.5fr] gap-2 px-3 py-1.5 text-xs border-t border-border/30 items-center"
+              data-testid={`row-perf-${r.source}`}
+            >
+              <div className="font-medium">{sourceLabel(r.source)}</div>
+              <div className="text-right font-mono text-muted-foreground">{r.count}</div>
+              <div className="text-right font-mono">
+                <span className="text-emerald-400">{r.wins}</span>
+                <span className="text-muted-foreground/60"> / </span>
+                <span className="text-red-400">{r.losses}</span>
+              </div>
+              <div className={`text-right font-mono font-semibold ${winRateColor(r.winRate, r.count)}`}>
+                {(r.winRate * 100).toFixed(0)}%
+              </div>
+              <div className={`text-right font-mono ${pctColor(r.avgPct * 100)}`}>
+                {fmtPct(r.avgPct * 100)}
+              </div>
+              <div className="text-right font-mono">
+                {r.burns > 0 ? <span className="text-amber-400">{r.burns}</span> : <span className="text-muted-foreground">0</span>}
+              </div>
+            </div>
+          ))}
+          {snap && snap.overall.count > 0 && showRows.length > 1 && (
+            <div
+              className="grid grid-cols-[1.4fr_0.5fr_0.9fr_0.7fr_0.8fr_0.5fr] gap-2 px-3 py-1.5 text-xs border-t-2 border-border/60 bg-muted/10 items-center"
+              data-testid="row-perf-overall"
+            >
+              <div className="font-semibold text-foreground">Overall</div>
+              <div className="text-right font-mono text-muted-foreground">{snap.overall.count}</div>
+              <div className="text-right font-mono">
+                <span className="text-emerald-400">{snap.overall.wins}</span>
+                <span className="text-muted-foreground/60"> / </span>
+                <span className="text-red-400">{snap.overall.losses}</span>
+              </div>
+              <div className={`text-right font-mono font-semibold ${winRateColor(snap.overall.winRate, snap.overall.count)}`}>
+                {(snap.overall.winRate * 100).toFixed(0)}%
+              </div>
+              <div className={`text-right font-mono ${pctColor(snap.overall.avgPct * 100)}`}>
+                {fmtPct(snap.overall.avgPct * 100)}
+              </div>
+              <div className="text-right font-mono">
+                {snap.overall.burns > 0 ? <span className="text-amber-400">{snap.overall.burns}</span> : <span className="text-muted-foreground">0</span>}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ─── Closed Archive (collapsed by default) ───────────────────────────────────────
+
+function ClosedArchive({ positions }: { positions: FollowPosition[] }) {
+  const [open, setOpen] = useState(false);
+  const groups = groupPositionsByTicker(positions, "closed");
+  return (
+    <section data-testid="section-closed-archive">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-2 border-b border-border/40 pb-2 mb-3 text-left hover:bg-muted/10 transition-colors rounded px-1"
+        data-testid="button-toggle-archive"
+      >
+        <span className="text-amber-500"><Archive className="h-3.5 w-3.5" /></span>
+        <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+          Closed Archive
+        </span>
+        <span className="text-[10px] text-muted-foreground font-mono">
+          {positions.length}
+        </span>
+        <span className="ml-auto text-muted-foreground">
+          {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        </span>
+      </button>
+      {open && (
+        <div className="space-y-2" data-testid="closed-list">
+          {groups.map((g) => (
+            <ClosedTickerGroup
+              key={g.ticker}
+              ticker={g.ticker}
+              positions={g.positions}
+              defaultOpen={false}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ─── Main Panel ──────────────────────────────────────────────────────
 
 export default function WhaleFlowPanel() {
   const previewQuery = useQuery<FlowPreview>({
@@ -687,7 +885,11 @@ export default function WhaleFlowPanel() {
   }
 
   const trackingPositions = activeQuery.data?.positions ?? [];
-  const closedPositions = terminalQuery.data?.positions ?? [];
+  // Filter out EXPIRED entirely from the Closed section. EXPIRED contracts are
+  // auto-purged from view (the rollup endpoint still sees them for stats).
+  const closedPositions = (terminalQuery.data?.positions ?? []).filter(
+    (p) => p.status === "CLOSED",
+  );
   const cfg = previewQuery.data?.config;
 
   // Compute CONFLUX set: contracts present in BOTH active whale fires AND active UOA clusters.
@@ -771,6 +973,9 @@ export default function WhaleFlowPanel() {
           )}
         </section>
 
+        {/* ── PERFORMANCE ── */}
+        <PerformanceCard />
+
         {/* ── TRACKING ── */}
         <section data-testid="section-tracking">
           <SectionHeader icon={<Target className="h-3.5 w-3.5" />} label="Tracking" count={trackingPositions.length} />
@@ -796,30 +1001,10 @@ export default function WhaleFlowPanel() {
           )}
         </section>
 
-        {/* ── CLOSED ── */}
-        <section data-testid="section-closed">
-          <SectionHeader icon={<TrendingDown className="h-3.5 w-3.5" />} label="Closed" count={closedPositions.length} />
-          {terminalQuery.isLoading ? (
-            <div className="space-y-2">
-              {[1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
-            </div>
-          ) : closedPositions.length === 0 ? (
-            <div className="rounded-md border border-dashed border-border/30 py-4 text-center text-xs text-muted-foreground" data-testid="closed-empty">
-              no closed positions today
-            </div>
-          ) : (
-            <div className="space-y-2" data-testid="closed-list">
-              {groupPositionsByTicker(closedPositions, "closed").map((g, idx) => (
-                <ClosedTickerGroup
-                  key={g.ticker}
-                  ticker={g.ticker}
-                  positions={g.positions}
-                  defaultOpen={idx === 0}
-                />
-              ))}
-            </div>
-          )}
-        </section>
+        {/* ── CLOSED ARCHIVE ── collapsed by default, hidden when empty */}
+        {closedPositions.length > 0 && (
+          <ClosedArchive positions={closedPositions} />
+        )}
       </CardContent>
     </Card>
     </ConfluxContext.Provider>
