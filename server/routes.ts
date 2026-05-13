@@ -861,22 +861,183 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  // Unusual options flow — CBOE-derived, Schwab-ready stub.
-  const unusualFlowCache = new Map<string, { at: number; data: UnusualFlowResponse }>();
+  // Unusual options flow — CBOE primary, Schwab fallback for index/cash symbols
+  // and when CBOE is rate-limited (429) or doesn't carry the symbol (403/404).
+  // Always returns 200 so the panel never hard-fails — empty result with a
+  // human-readable `note` instead of 503.
+  const unusualFlowCache = new Map<string, { at: number; data: UnusualFlowResponse & { note?: string } }>();
   const UNUSUAL_FLOW_CACHE_MS = 60_000;
+
+  // CBOE's CDN doesn't host options chains for cash-settled indexes under their
+  // common tickers. Route these symbols directly to Schwab using the $-prefix form.
+  const CASH_INDEX_TO_SCHWAB: Record<string, string> = {
+    SPX: "$SPX",
+    NDX: "$NDX",
+    RUT: "$RUT",
+    VIX: "$VIX",
+  };
+
+  // Normalize SchwabFlowResponse into the UnusualFlowResponse shape the UI expects.
+  function schwabToUnusual(
+    schwab: any,
+    symbol: string,
+  ): UnusualFlowResponse {
+    const contracts = (schwab.contracts ?? []).map((c: any) => ({
+      occ: c.occ,
+      type: c.type,
+      strike: c.strike,
+      expiration: c.expiration,
+      dte: c.dte,
+      volume: c.volume,
+      openInterest: c.openInterest,
+      volOiRatio: c.volOiRatio === 999 ? 0 : c.volOiRatio,
+      isNewStrike: c.isNewStrike,
+      bid: c.bid,
+      ask: c.ask,
+      last: c.last,
+      mid: c.mid,
+      notional: c.notional,
+      iv: c.iv,
+      tag: c.tag,
+      sentiment: c.sentiment,
+    }));
+    const callNotional = contracts.filter((c: any) => c.type === "C").reduce((a: number, b: any) => a + b.notional, 0);
+    const putNotional = contracts.filter((c: any) => c.type === "P").reduce((a: number, b: any) => a + b.notional, 0);
+    const aboveAskNotional = contracts.filter((c: any) => c.tag === "ABOVE_ASK" || c.tag === "AT_ASK").reduce((a: number, b: any) => a + b.notional, 0);
+    const belowBidNotional = contracts.filter((c: any) => c.tag === "BELOW_BID" || c.tag === "AT_BID").reduce((a: number, b: any) => a + b.notional, 0);
+    // Sentiment-weighted notional: bullish minus bearish, all sources combined.
+    let bullishNotional = 0, bearishNotional = 0;
+    for (const c of contracts) {
+      if (c.sentiment === "BULLISH") bullishNotional += c.notional;
+      else if (c.sentiment === "BEARISH") bearishNotional += c.notional;
+    }
+    const tagCounts: Record<string, number> = {};
+    for (const c of contracts) tagCounts[c.tag] = (tagCounts[c.tag] ?? 0) + 1;
+    const topTag = (Object.entries(tagCounts).sort((a, b) => b[1] - a[1])[0]?.[0] as any) ?? null;
+    return {
+      provider: "schwab",
+      symbol,
+      spot: schwab.spot ?? null,
+      contracts,
+      summary: {
+        flaggedCount: contracts.length,
+        callNotional,
+        putNotional,
+        callPutNotionalRatio: putNotional > 0 ? callNotional / putNotional : null,
+        aboveAskNotional,
+        belowBidNotional,
+        netSentimentNotional: bullishNotional - bearishNotional,
+        topTag,
+      },
+      // Normalize to seconds (CBOE uses seconds; Schwab returns ms).
+      asOf: schwab.asOf ? Math.floor(schwab.asOf / 1000) : Math.floor(Date.now() / 1000),
+    };
+  }
+
   app.get("/api/flow/unusual", async (req, res) => {
-    const symbol = String(req.query.symbol ?? "SPY").toUpperCase();
-    const cached = unusualFlowCache.get(symbol);
+    const symbolRaw = String(req.query.symbol ?? "SPY").toUpperCase();
+    // Normalize hyphenated tickers (BRK-B → BRK.B for CBOE; Schwab uses BRK/B).
+    const symbol = symbolRaw.replace(/-/g, ".");
+    const cacheKey = symbol;
+    const cached = unusualFlowCache.get(cacheKey);
     if (cached && Date.now() - cached.at < UNUSUAL_FLOW_CACHE_MS) {
       return res.json(cached.data);
     }
+
+    // Cash indexes go straight to Schwab — CBOE CDN doesn't host them.
+    const isCashIndex = CASH_INDEX_TO_SCHWAB[symbol] != null;
+    if (isCashIndex) {
+      try {
+        const { buildSchwabFlow } = await import("./schwabFlow");
+        const schwabSym = CASH_INDEX_TO_SCHWAB[symbol];
+        const sf = await buildSchwabFlow(schwabSym);
+        if ("error" in sf) {
+          const data: any = {
+            provider: "schwab",
+            symbol,
+            spot: null,
+            contracts: [],
+            summary: {
+              flaggedCount: 0, callNotional: 0, putNotional: 0,
+              callPutNotionalRatio: null, aboveAskNotional: 0, belowBidNotional: 0,
+              netSentimentNotional: 0, topTag: null,
+            },
+            asOf: Math.floor(Date.now() / 1000),
+            note: `Schwab unavailable for ${symbol}: ${sf.error}`,
+          };
+          return res.json(data);
+        }
+        const data = schwabToUnusual(sf, symbol);
+        unusualFlowCache.set(cacheKey, { at: Date.now(), data });
+        return res.json(data);
+      } catch (e: any) {
+        if (cached) return res.json(cached.data);
+        const data: any = {
+          provider: "schwab",
+          symbol,
+          spot: null,
+          contracts: [],
+          summary: {
+            flaggedCount: 0, callNotional: 0, putNotional: 0,
+            callPutNotionalRatio: null, aboveAskNotional: 0, belowBidNotional: 0,
+            netSentimentNotional: 0, topTag: null,
+          },
+          asOf: Math.floor(Date.now() / 1000),
+          note: `Cash index chain temporarily unavailable: ${e?.message ?? e}`,
+        };
+        return res.json(data);
+      }
+    }
+
+    // Equities/ETFs — CBOE primary, Schwab fallback on any error.
     try {
       const data = await buildUnusualFlow(symbol);
-      unusualFlowCache.set(symbol, { at: Date.now(), data });
+      unusualFlowCache.set(cacheKey, { at: Date.now(), data });
       res.json(data);
-    } catch (e: any) {
-      if (cached) return res.json(cached.data);
-      res.status(503).json({ message: e?.message ?? `Failed to build unusual flow for ${symbol}` });
+    } catch (cboeErr: any) {
+      // CBOE failed — try Schwab fallback.
+      try {
+        const { buildSchwabFlow } = await import("./schwabFlow");
+        const sf = await buildSchwabFlow(symbol);
+        if ("error" in sf) {
+          if (cached) return res.json(cached.data);
+          const data: any = {
+            provider: "cboe",
+            symbol,
+            spot: null,
+            contracts: [],
+            summary: {
+              flaggedCount: 0, callNotional: 0, putNotional: 0,
+              callPutNotionalRatio: null, aboveAskNotional: 0, belowBidNotional: 0,
+              netSentimentNotional: 0, topTag: null,
+            },
+            asOf: Math.floor(Date.now() / 1000),
+            note: `Chain temporarily unavailable for ${symbol} (CBOE: ${cboeErr?.message ?? "error"}; Schwab: ${sf.error}). Showing empty result — try again shortly.`,
+          };
+          return res.json(data);
+        }
+        const data = schwabToUnusual(sf, symbol);
+        // Attach a note so the UI can show the source switch.
+        (data as any).note = `CBOE rate-limited — using Schwab fallback for ${symbol}.`;
+        unusualFlowCache.set(cacheKey, { at: Date.now(), data });
+        return res.json(data);
+      } catch (schwabErr: any) {
+        if (cached) return res.json(cached.data);
+        const data: any = {
+          provider: "cboe",
+          symbol,
+          spot: null,
+          contracts: [],
+          summary: {
+            flaggedCount: 0, callNotional: 0, putNotional: 0,
+            callPutNotionalRatio: null, aboveAskNotional: 0, belowBidNotional: 0,
+            netSentimentNotional: 0, topTag: null,
+          },
+          asOf: Math.floor(Date.now() / 1000),
+          note: `Chain temporarily unavailable for ${symbol}. CBOE: ${cboeErr?.message ?? "error"}. Schwab: ${schwabErr?.message ?? "error"}.`,
+        };
+        return res.json(data);
+      }
     }
   });
 

@@ -67,6 +67,8 @@ interface UnusualResponse {
   symbol: string;
   spot: number | null;
   contracts: UnusualContract[];
+  /** Optional human-readable note (e.g. "CBOE rate-limited — using Schwab fallback"). */
+  note?: string;
   summary: {
     flaggedCount: number;
     callNotional: number;
@@ -941,9 +943,14 @@ export default function UnusualFlowPanel({ symbol }: Props) {
 
   if (isError || !data) {
     return (
-      <Card>
+      <Card data-testid="unusual-flow-panel-error">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Flame className="h-4 w-4 text-amber-400" /> Unusual Options Flow — {sym}
+          </CardTitle>
+        </CardHeader>
         <CardContent className="p-4 text-sm text-muted-foreground">
-          Unusual flow unavailable for {sym}. The CBOE chain may not cover this symbol.
+          Chain temporarily unavailable for {sym}. Retrying in the background — the panel will refresh automatically.
         </CardContent>
       </Card>
     );
@@ -973,6 +980,16 @@ export default function UnusualFlowPanel({ symbol }: Props) {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {data.note && (
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-300" data-testid="unusual-flow-note">
+            {data.note}
+          </div>
+        )}
+        {data.contracts.length === 0 && !data.note && (
+          <div className="rounded-md border border-dashed border-border/40 bg-card/20 px-3 py-6 text-center text-xs text-muted-foreground" data-testid="unusual-flow-empty">
+            No unusual flow detected for {sym} — chain loaded but no contracts cleared Vol/OI ≥ 2 and $25K notional filters.
+          </div>
+        )}
         {/* Summary row */}
         <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
           <div className="rounded-md border border-border/40 bg-card/40 p-3">
