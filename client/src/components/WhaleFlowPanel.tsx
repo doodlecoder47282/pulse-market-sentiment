@@ -309,11 +309,47 @@ function TickerGroup({ ticker, whales, defaultOpen }: { ticker: string; whales: 
   );
 }
 
+// ─── Freshness / staleness classification ──────────────────────────────────
+// Three tiers driven entirely by `lastVolumeBumpAt`, `fadeStreak`, and entry-vs-now
+// premium delta. No backend changes required.
+//   HOT   — last volume tick within 30 min, still being printed → fresh smart money
+//   WARM  — bump within last 2 hours
+//   STALE — no fresh prints for >2h
+//   SOLD  — high conviction at entry, now bleeding: fadeStreak ≥3 AND down >25% from peak
+// Lets you eyeball which sold-off plays are dead weight vs which are fresh accumulation.
+type FreshnessTier = "HOT" | "WARM" | "STALE" | "SOLD";
+function freshnessTier(pos: FollowPosition): FreshnessTier {
+  const peakPct = pos.live.peakPctChange ?? 0;
+  const pct = pos.live.pctChange ?? 0;
+  const fadedFromPeak = peakPct > 30 && pct < peakPct - 25;
+  if (pos.live.fadeStreak >= 3 && fadedFromPeak) return "SOLD";
+  const bumpMs = new Date(pos.live.lastVolumeBumpAt).getTime();
+  if (!isFinite(bumpMs) || bumpMs <= 0) return "STALE";
+  const ageMin = (Date.now() - bumpMs) / 60_000;
+  if (ageMin <= 30) return "HOT";
+  if (ageMin <= 120) return "WARM";
+  return "STALE";
+}
+function freshnessBadgeClass(t: FreshnessTier): string {
+  if (t === "HOT") return "border-cyan-500/50 bg-cyan-500/15 text-cyan-300";
+  if (t === "WARM") return "border-amber-500/40 bg-amber-500/10 text-amber-300";
+  if (t === "SOLD") return "border-rose-500/50 bg-rose-500/15 text-rose-300";
+  return "border-muted-foreground/30 bg-muted/20 text-muted-foreground";
+}
+function freshnessLabel(t: FreshnessTier, pos: FollowPosition): string {
+  if (t === "SOLD") return `SOLD · fade×${pos.live.fadeStreak}`;
+  const bumpMs = new Date(pos.live.lastVolumeBumpAt).getTime();
+  if (!isFinite(bumpMs) || bumpMs <= 0) return t.toLowerCase();
+  const ageMin = (Date.now() - bumpMs) / 60_000;
+  if (ageMin < 60) return `${t} · ${Math.max(1, Math.round(ageMin))}m`;
+  return `${t} · ${(ageMin / 60).toFixed(1)}h`;
+}
+
 function TrackingRow({ pos }: { pos: FollowPosition }) {
+  const fresh = freshnessTier(pos);
   return (
     <div className="rounded-md border border-border/30 bg-card/40 px-3 py-2 text-xs space-y-1" data-testid={`tracking-row-${pos.occ}`}>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-bold text-foreground text-sm" data-testid={`tracking-ticker-${pos.occ}`}>{pos.symbol}</span>
         <span className="font-mono text-muted-foreground" data-testid={`tracking-contract-${pos.occ}`}>
           {pos.strike}{pos.type === "C" ? "C" : "P"} {pos.expiration.slice(5)}
         </span>
@@ -323,15 +359,164 @@ function TrackingRow({ pos }: { pos: FollowPosition }) {
         <span className={`font-semibold ${sentimentColor(pos.side)}`} data-testid={`tracking-side-${pos.occ}`}>
           {pos.side}
         </span>
+        <Badge variant="outline" className={`text-[9px] uppercase tracking-wider ${freshnessBadgeClass(fresh)}`} data-testid={`tracking-fresh-${pos.occ}`}>
+          {freshnessLabel(fresh, pos)}
+        </Badge>
       </div>
       <div className="flex flex-wrap items-center gap-3 font-mono">
         <span className="text-muted-foreground" data-testid={`tracking-entry-${pos.occ}`}>entry ${pos.entry.mark.toFixed(2)}</span>
         <span data-testid={`tracking-mark-${pos.occ}`}>mark ${pos.live.mark.toFixed(2)}</span>
         <span className={pctColor(pos.live.pctChange)} data-testid={`tracking-pct-${pos.occ}`}>{fmtPct(pos.live.pctChange)}</span>
         <span className="text-emerald-400/70" data-testid={`tracking-peak-${pos.occ}`}>peak +{pos.live.peakPctChange.toFixed(1)}%</span>
+        <span className="text-muted-foreground/70" data-testid={`tracking-volse-${pos.occ}`}>volSE {pos.live.volumeSinceEntry.toLocaleString()}</span>
       </div>
     </div>
   );
+}
+
+function ClosedRowGrouped({ pos }: { pos: FollowPosition }) {
+  return <ClosedRow pos={pos} />;
+}
+
+// Per-ticker group of tracked positions. Collapsible. Header shows roll-up:
+// position count, total combined %, hot count, sold count, dominant sentiment.
+function TrackedTickerGroup({
+  ticker,
+  positions,
+  defaultOpen,
+}: {
+  ticker: string;
+  positions: FollowPosition[];
+  defaultOpen: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const hotCount = positions.filter((p) => freshnessTier(p) === "HOT").length;
+  const soldCount = positions.filter((p) => freshnessTier(p) === "SOLD").length;
+  const bull = positions.filter((p) => p.side === "BULLISH").length;
+  const bear = positions.filter((p) => p.side === "BEARISH").length;
+  const dominant = bull > bear ? "BULLISH" : bear > bull ? "BEARISH" : "MIXED";
+  const avgPct = positions.length
+    ? positions.reduce((a, p) => a + (p.live.pctChange ?? 0), 0) / positions.length
+    : 0;
+  return (
+    <div className="rounded-md border border-border/40 bg-card/30" data-testid={`tracked-group-${ticker}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-3 px-3 py-2 text-left rounded-t-md hover:bg-muted/20 transition-colors"
+        data-testid={`tracked-toggle-${ticker}`}
+      >
+        {open ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
+        <span className="font-bold text-base text-foreground">{ticker}</span>
+        <Badge variant="outline" className="text-[9px] border-amber-500/40 bg-amber-500/10 text-amber-400">
+          {positions.length} {positions.length === 1 ? "pos" : "posns"}
+        </Badge>
+        <span className={`text-[10px] font-semibold uppercase tracking-wider ${sentimentColor(dominant)}`}>
+          {dominant}
+        </span>
+        {hotCount > 0 && (
+          <Badge variant="outline" className="text-[9px] border-cyan-500/50 bg-cyan-500/15 text-cyan-300" data-testid={`tracked-hot-${ticker}`}>
+            {hotCount} hot
+          </Badge>
+        )}
+        {soldCount > 0 && (
+          <Badge variant="outline" className="text-[9px] border-rose-500/50 bg-rose-500/15 text-rose-300" data-testid={`tracked-sold-${ticker}`}>
+            {soldCount} sold
+          </Badge>
+        )}
+        <span className={`ml-auto font-mono text-sm ${pctColor(avgPct)}`}>{fmtPct(avgPct)} avg</span>
+      </button>
+      {open && (
+        <div className="space-y-1.5 px-2 pb-2 pt-1">
+          {positions.map((p) => <TrackingRow key={p.occ} pos={p} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Per-ticker group for closed positions — simpler, no freshness (closed already).
+function ClosedTickerGroup({
+  ticker,
+  positions,
+  defaultOpen,
+}: {
+  ticker: string;
+  positions: FollowPosition[];
+  defaultOpen: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const wins = positions.filter((p) => (p.closingPrint?.pctChange ?? 0) > 0).length;
+  const losses = positions.length - wins;
+  const avgPct = positions.length
+    ? positions.reduce((a, p) => a + (p.closingPrint?.pctChange ?? 0), 0) / positions.length
+    : 0;
+  return (
+    <div className="rounded-md border border-border/30 bg-card/20" data-testid={`closed-group-${ticker}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-3 px-3 py-2 text-left rounded-t-md hover:bg-muted/20 transition-colors opacity-90"
+        data-testid={`closed-toggle-${ticker}`}
+      >
+        {open ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
+        <span className="font-bold text-sm text-foreground">{ticker}</span>
+        <Badge variant="outline" className="text-[9px] border-muted-foreground/30 text-muted-foreground">
+          {positions.length} closed
+        </Badge>
+        {wins > 0 && (
+          <span className="text-[10px] text-emerald-400/80">{wins}W</span>
+        )}
+        {losses > 0 && (
+          <span className="text-[10px] text-rose-400/80">{losses}L</span>
+        )}
+        <span className={`ml-auto font-mono text-xs ${pctColor(avgPct)}`}>{fmtPct(avgPct)} avg</span>
+      </button>
+      {open && (
+        <div className="space-y-1.5 px-2 pb-2 pt-1">
+          {positions.map((p) => <ClosedRowGrouped key={p.occ} pos={p} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Group an array of FollowPositions by symbol. Sort groups by SOLD desc, HOT desc,
+// then position count desc — so the most-actionable stuff floats to top.
+function groupPositionsByTicker(
+  positions: FollowPosition[],
+  scoreForSort: "tracking" | "closed",
+): Array<{ ticker: string; positions: FollowPosition[] }> {
+  const map = new Map<string, FollowPosition[]>();
+  for (const p of positions) {
+    const arr = map.get(p.symbol) ?? [];
+    arr.push(p);
+    map.set(p.symbol, arr);
+  }
+  // Sort items within each group by freshness (HOT/WARM first, SOLD last) then by entry recency desc
+  const order: Record<FreshnessTier, number> = { HOT: 0, WARM: 1, STALE: 2, SOLD: 3 };
+  for (const arr of map.values()) {
+    arr.sort((a, b) => {
+      const ta = freshnessTier(a);
+      const tb = freshnessTier(b);
+      if (ta !== tb) return order[ta] - order[tb];
+      const da = new Date(a.entry.detectedAt).getTime();
+      const db = new Date(b.entry.detectedAt).getTime();
+      return db - da;
+    });
+  }
+  const groups = Array.from(map.entries()).map(([ticker, positions]) => ({ ticker, positions }));
+  if (scoreForSort === "tracking") {
+    groups.sort((a, b) => {
+      const aHot = a.positions.filter((p) => freshnessTier(p) === "HOT").length;
+      const bHot = b.positions.filter((p) => freshnessTier(p) === "HOT").length;
+      if (aHot !== bHot) return bHot - aHot;
+      return b.positions.length - a.positions.length;
+    });
+  } else {
+    groups.sort((a, b) => b.positions.length - a.positions.length);
+  }
+  return groups;
 }
 
 function ClosedRow({ pos }: { pos: FollowPosition }) {
@@ -599,7 +784,14 @@ export default function WhaleFlowPanel() {
             </div>
           ) : (
             <div className="space-y-2" data-testid="tracking-list">
-              {trackingPositions.map((pos) => <TrackingRow key={pos.occ} pos={pos} />)}
+              {groupPositionsByTicker(trackingPositions, "tracking").map((g, idx) => (
+                <TrackedTickerGroup
+                  key={g.ticker}
+                  ticker={g.ticker}
+                  positions={g.positions}
+                  defaultOpen={idx === 0}
+                />
+              ))}
             </div>
           )}
         </section>
@@ -617,7 +809,14 @@ export default function WhaleFlowPanel() {
             </div>
           ) : (
             <div className="space-y-2" data-testid="closed-list">
-              {closedPositions.map((pos) => <ClosedRow key={pos.occ} pos={pos} />)}
+              {groupPositionsByTicker(closedPositions, "closed").map((g, idx) => (
+                <ClosedTickerGroup
+                  key={g.ticker}
+                  ticker={g.ticker}
+                  positions={g.positions}
+                  defaultOpen={idx === 0}
+                />
+              ))}
             </div>
           )}
         </section>
