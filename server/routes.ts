@@ -4534,6 +4534,21 @@ Refine the brief above. Search the web for any critical developments the feed is
     res.json({ ok: true, ...health });
   });
 
+  // ─── ML accuracy history — "is the agent getting better" ────────────────
+  // Grades every entry in predictions.jsonl against realized SPX/SPY closes,
+  // returns rolling hit-rate, Brier score, calibration deciles, and a
+  // sparkline-friendly trail. Powers the MLAccuracyCard in Models tab.
+  app.get("/api/ml/accuracy-history", async (req, res) => {
+    try {
+      const symbol = String(req.query.symbol ?? "^GSPC").toUpperCase();
+      const { buildAccuracySummary } = await import("./mlAccuracy");
+      const summary = await buildAccuracySummary(symbol);
+      res.json(summary);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build ML accuracy summary" });
+    }
+  });
+
   // ─── Start background token refresh cycle ─────────────────────────────────
   startTokenRefreshCycle();
 

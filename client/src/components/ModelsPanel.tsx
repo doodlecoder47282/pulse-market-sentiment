@@ -43,6 +43,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import ChainAudit from "@/components/ChainAudit";
 import { BacktestBadge, BacktestPanel, type BacktestHorizon } from "@/components/BacktestOverlay";
 import PivotProjection from "@/components/models/PivotProjection";
+import MLAccuracyCard from "@/components/models/MLAccuracyCard";
 
 // ─── Types mirror server/models.ts ──────────────────────────────────────────
 
@@ -2248,6 +2249,11 @@ export default function ModelsPanel() {
 
       {/* ── Backtest accuracy overlay ── */}
       <BacktestPanel defaultHorizon={horizon as BacktestHorizon} />
+
+      {/* ── ML Agent Scorecard ─ honest accuracy history ── */}
+      <ErrorBoundary label="ML Accuracy">
+        <MLAccuracyCard defaultSymbol={symbol} />
+      </ErrorBoundary>
 
       {/* ── Pivot Point Projection ─ 1-2 month directional outlook ── */}
       <ErrorBoundary label="Pivot Projection">
