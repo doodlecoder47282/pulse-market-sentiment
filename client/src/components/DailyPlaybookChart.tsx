@@ -23,7 +23,7 @@ import { apiRequest } from "@/lib/queryClient";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { TrendingUp, Minus, TrendingDown, Lock, Activity, Info } from "lucide-react";
+import { TrendingUp, Minus, TrendingDown, Lock, Activity, Info, AlertTriangle, Zap, Heart, HeartCrack, Flame, Snowflake } from "lucide-react";
 
 // ─── Types (mirror server/dailyPlaybook.ts) ─────────────────────────────────
 
@@ -57,6 +57,13 @@ interface InputManifest {
   calibration?: string;
 }
 
+interface CurrentRegime {
+  kind: "long-gamma" | "short-gamma";
+  label: string;
+  spotVsFlip: number;
+  totalGexB: number;
+}
+
 interface DailyPlaybook {
   symbol: string;
   spot: number;
@@ -67,6 +74,25 @@ interface DailyPlaybook {
   expectedRange: { low: number; high: number; method: string };
   headline: string;
   inputs: InputManifest[];
+  currentRegime?: CurrentRegime;
+}
+
+type PathHealth = "alive" | "weakening" | "dead";
+interface PathHealthEntry {
+  path: PathKey;
+  health: PathHealth;
+  reason: string;
+  distanceToInvalidation?: number;
+}
+
+interface RegimeOverlay {
+  current: "long-gamma" | "short-gamma";
+  locked: "long-gamma" | "short-gamma";
+  flipped: boolean;
+  flipDirection?: "toShort" | "toLong";
+  spotVsFlip: number;
+  totalGexB: number;
+  label: string;
 }
 
 interface PlaybookDrift {
@@ -77,6 +103,8 @@ interface PlaybookDrift {
   triggerHits?: { path: PathKey; hit: boolean; closeness: number }[];
   rangeExpansion?: number;
   notes: string[];
+  pathHealth?: PathHealthEntry[];
+  regime?: RegimeOverlay;
 }
 
 // ─── Color palette (peer-to-peer, not retail) ───────────────────────────────
@@ -176,9 +204,27 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
     );
   }
 
-  const { paths, magnets, expectedRange, headline, inputs } = pb;
+  const { paths, magnets, expectedRange, headline, inputs, currentRegime } = pb;
   const ordered: PathKey[] = ["bull", "base", "bear"]; // visual order top→bottom
   const winningPath = ordered.reduce((acc, k) => paths[k].probability > paths[acc].probability ? k : acc, "base" as PathKey);
+
+  // Path health lookup (from drift); falls back to alive when no lock
+  const healthByPath: Record<PathKey, PathHealthEntry | undefined> = {
+    bull: drift?.pathHealth?.find(h => h.path === "bull"),
+    base: drift?.pathHealth?.find(h => h.path === "base"),
+    bear: drift?.pathHealth?.find(h => h.path === "bear"),
+  };
+
+  // Regime: prefer drift.regime (compares current vs locked) else fall back to live currentRegime
+  const regimeKind = drift?.regime?.current ?? currentRegime?.kind ?? "long-gamma";
+  const regimeLabel = drift?.regime?.label ?? currentRegime?.label ?? "";
+  const regimeFlipped = drift?.regime?.flipped ?? false;
+  const isLongGamma = regimeKind === "long-gamma";
+
+  // Regime accent: long-gamma = cool blue, short-gamma = hot amber
+  const regimeAccent = isLongGamma ? "#60a5fa" : "#f59e0b";
+  const regimeBg = isLongGamma ? "rgba(96,165,250,0.06)" : "rgba(245,158,11,0.08)";
+  const regimeBorder = isLongGamma ? "rgba(96,165,250,0.30)" : "rgba(245,158,11,0.40)";
 
   // y-axis bounds: pad below put wall and above call wall
   const minLevel = Math.min(...magnets.map(m => m.level), expectedRange.low);
@@ -199,8 +245,19 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
             <div className="text-[13px] text-foreground/90 leading-snug max-w-2xl">{headline}</div>
           </div>
 
-          {/* Lock + drift status */}
+          {/* Lock + drift status + regime badge */}
           <div className="flex flex-col items-end gap-1">
+            {/* Regime badge — always shown */}
+            <Badge
+              variant="outline"
+              className="text-[10px] gap-1 font-mono"
+              style={{ borderColor: regimeBorder, background: regimeBg, color: regimeAccent }}
+              data-testid={`badge-regime-${regimeKind}`}
+            >
+              {isLongGamma ? <Snowflake className="h-3 w-3" /> : <Flame className="h-3 w-3" />}
+              {regimeLabel}
+            </Badge>
+
             {drift?.hasLock ? (
               <Badge variant="outline" className="border-amber-500/40 bg-amber-500/5 text-amber-300 text-[10px] gap-1">
                 <Lock className="h-3 w-3" />
@@ -222,31 +279,85 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
           </div>
         </div>
 
-        {/* Path summary cards (mobile-first, taps to expand) */}
+        {/* Regime flip alert — prominent banner when regime changed since lock */}
+        {regimeFlipped && drift?.regime && (
+          <div
+            className="rounded-md border p-2.5 flex items-center gap-2 animate-pulse"
+            style={{
+              borderColor: "rgba(245,158,11,0.50)",
+              background: "rgba(245,158,11,0.08)",
+            }}
+            data-testid="alert-regime-flip"
+          >
+            <Zap className="h-4 w-4 text-amber-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="text-[11px] font-semibold text-amber-300">
+                Regime flip detected since 9:00 ET lock
+              </div>
+              <div className="text-[10px] text-amber-200/80 leading-snug">
+                {drift.regime.flipDirection === "toShort"
+                  ? "Long→short gamma. Pin regime broken. Expect momentum, wider intraday range, dealer hedging amplifies moves."
+                  : "Short→long gamma. Momentum regime ending. Expect mean-reversion, range contraction, dealer hedging dampens moves."}
+              </div>
+              <div className="text-[10px] font-mono text-amber-200/60 mt-0.5">
+                spot vs flip: {drift.regime.spotVsFlip >= 0 ? "+" : ""}${drift.regime.spotVsFlip.toFixed(2)} · GEX {drift.regime.totalGexB >= 0 ? "+" : ""}{drift.regime.totalGexB.toFixed(2)}B
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Path summary cards — with health re-grade against locked invalidation */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           {ordered.map(k => {
             const p = paths[k];
             const isWinner = k === winningPath;
+            const h = healthByPath[k];
+            const isDead = h?.health === "dead";
+            const isWeak = h?.health === "weakening";
+
+            // Card styling: dead = greyed + strikethrough, weak = amber border, winner = amber
+            const cardClass = isDead
+              ? "border-red-500/30 bg-red-500/5 opacity-50"
+              : isWeak
+              ? "border-amber-500/40 bg-amber-500/5"
+              : isWinner
+              ? "border-amber-500/50 bg-amber-500/5"
+              : "border-border/40 bg-background/40";
+
             return (
               <div
                 key={k}
-                className={`rounded-md border p-2.5 space-y-1.5 transition ${
-                  isWinner
-                    ? "border-amber-500/50 bg-amber-500/5"
-                    : "border-border/40 bg-background/40"
-                }`}
+                className={`rounded-md border p-2.5 space-y-1.5 transition ${cardClass}`}
                 data-testid={`path-card-${k}`}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5" style={{ color: PATH_COLORS[k] }}>
                     {pathIcon(k)}
-                    <span className="text-[11px] font-semibold uppercase tracking-wider">{p.label}</span>
+                    <span
+                      className={`text-[11px] font-semibold uppercase tracking-wider ${isDead ? "line-through" : ""}`}
+                    >
+                      {p.label}
+                    </span>
+                    {/* Health pill */}
+                    {h && drift?.hasLock && (
+                      <span
+                        className="ml-1 text-[8px] font-mono uppercase px-1 py-0.5 rounded"
+                        style={{
+                          color: isDead ? "#fca5a5" : isWeak ? "#fcd34d" : "#86efac",
+                          background: isDead ? "rgba(239,68,68,0.15)" : isWeak ? "rgba(245,158,11,0.15)" : "rgba(16,185,129,0.10)",
+                        }}
+                        data-testid={`health-${k}`}
+                      >
+                        {isDead ? <HeartCrack className="h-2.5 w-2.5 inline" /> : <Heart className="h-2.5 w-2.5 inline" />}
+                        {" "}{h.health}
+                      </span>
+                    )}
                   </div>
-                  <span className="font-mono text-[12px] font-bold" style={{ color: PATH_COLORS[k] }}>
+                  <span className="font-mono text-[12px] font-bold" style={{ color: PATH_COLORS[k], textDecoration: isDead ? "line-through" : "none" }}>
                     {Math.round(p.probability * 100)}%
                   </span>
                 </div>
-                <div className="text-[11px] text-foreground/80 leading-snug">{p.oneLiner}</div>
+                <div className={`text-[11px] leading-snug ${isDead ? "text-muted-foreground" : "text-foreground/80"}`}>{p.oneLiner}</div>
                 <div className="grid grid-cols-2 gap-1 text-[10px] text-muted-foreground border-t border-border/20 pt-1.5">
                   <div>Trigger: <span className="font-mono text-foreground">${fmt$(p.trigger.level)}</span></div>
                   <div>Target: <span className="font-mono text-foreground">${fmt$(p.target.low)}–${fmt$(p.target.high)}</span></div>
@@ -254,6 +365,13 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
                 {p.invalidation > 0 && (
                   <div className="text-[10px] text-muted-foreground">
                     Invalidates: <span className="font-mono text-red-400/80">${fmt$(p.invalidation)}</span>
+                  </div>
+                )}
+                {/* Health reason — one-liner why thesis is dead/weak/alive */}
+                {h && drift?.hasLock && (isDead || isWeak) && (
+                  <div className="text-[10px] italic leading-snug pt-1 border-t border-border/20"
+                       style={{ color: isDead ? "#fca5a5" : "#fcd34d" }}>
+                    {h.reason}
                   </div>
                 )}
               </div>
@@ -343,6 +461,32 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
                   />
                 </ReferenceLine>
               ))}
+
+              {/* Trigger lines — tinted by current regime (long gamma = cool, short = hot) */}
+              {ordered.map(k => {
+                const trig = paths[k].trigger.level;
+                if (!trig || trig === paths[k].invalidation) return null;
+                const isAlive = !drift?.hasLock || healthByPath[k]?.health !== "dead";
+                return (
+                  <ReferenceLine
+                    key={`trig-${k}`}
+                    y={trig}
+                    stroke={regimeAccent}
+                    strokeDasharray="6 3"
+                    strokeWidth={k === winningPath ? 1.5 : 1}
+                    strokeOpacity={isAlive ? 0.55 : 0.2}
+                  >
+                    <Label
+                      value={`${k} trigger`}
+                      position="insideLeft"
+                      fill={regimeAccent}
+                      fontSize={8}
+                      offset={4}
+                      opacity={isAlive ? 0.85 : 0.4}
+                    />
+                  </ReferenceLine>
+                );
+              })}
 
               {/* Spot dot at t=0 */}
               <ReferenceDot x={0} y={pb.spot} r={4} fill="#60a5fa" stroke="#1e40af" />

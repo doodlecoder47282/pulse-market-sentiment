@@ -88,6 +88,13 @@ export interface DailyPlaybook {
   expectedRange: { low: number; high: number; method: string };  // 1-sigma daily
   headline: string;                // one-line plain-English summary
   inputs: InputManifest[];         // full calibration footer
+  // Always-on regime classification (for UI tinting, even without lock)
+  currentRegime?: {
+    kind: "long-gamma" | "short-gamma";
+    label: string;                 // "Long Gamma · Pin Regime"
+    spotVsFlip: number;            // spot - gammaFlip
+    totalGexB: number;             // billions (signed)
+  };
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -305,6 +312,12 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
     expectedRange,
     headline,
     inputs,
+    currentRegime: {
+      kind: isPositiveGamma ? "long-gamma" : "short-gamma",
+      label: isPositiveGamma ? "Long Gamma · Pin Regime" : "Short Gamma · Momentum Regime",
+      spotVsFlip: spot - gammaFlip,
+      totalGexB: totalGex / 1e9,
+    },
   };
 }
 
@@ -335,6 +348,27 @@ export function getLockedPlaybook(): DailyPlaybook | null {
   return _locked;
 }
 
+/** Per-path health re-grade against the locked invalidation. */
+export type PathHealth = "alive" | "weakening" | "dead";
+export interface PathHealthEntry {
+  path: PathKey;
+  health: PathHealth;
+  reason: string;        // plain-English why
+  distanceToInvalidation?: number;  // signed: positive = still alive
+}
+
+/** Live regime classification (drives UI tinting). */
+export type GammaRegime = "long-gamma" | "short-gamma";
+export interface RegimeOverlay {
+  current: GammaRegime;
+  locked: GammaRegime;
+  flipped: boolean;                 // crossed since lock?
+  flipDirection?: "toShort" | "toLong";
+  spotVsFlip: number;               // current spot - gamma flip
+  totalGexB: number;                // in billions, sign matters
+  label: string;                    // "Long Gamma · Pin Regime"
+}
+
 /** Drift = current vs locked. Caller renders this as an overlay. */
 export interface PlaybookDrift {
   hasLock: boolean;
@@ -344,6 +378,8 @@ export interface PlaybookDrift {
   triggerHits?: { path: PathKey; hit: boolean; closeness: number }[]; // closeness=0 means at trigger
   rangeExpansion?: number;        // current sigma / locked sigma
   notes: string[];
+  pathHealth?: PathHealthEntry[]; // alive/weakening/dead per path
+  regime?: RegimeOverlay;         // current vs locked gamma regime
 }
 
 export async function getDriftFromLocked(symbol: "SPY" | "SPX" = "SPY"): Promise<PlaybookDrift> {
@@ -387,7 +423,80 @@ export async function getDriftFromLocked(symbol: "SPY" | "SPX" = "SPY"): Promise
   if (Math.abs(probabilityShift.bear) > 0.1)
     notes.push(`Bear odds ${probabilityShift.bear >= 0 ? "+" : ""}${(probabilityShift.bear * 100).toFixed(0)}pp`);
   triggerHits.filter(h => h.hit).forEach(h => notes.push(`${h.path.toUpperCase()} trigger HIT`));
+
+  // ─── Per-path health re-grade against LOCKED invalidations ────────────────
+  // A path is dead when spot has crossed the LOCKED invalidation level.
+  // This is the honest re-grade: thesis was set at 9:00 ET, market has moved,
+  // does the original thesis still survive?
+  const pathHealth: PathHealthEntry[] = (["bull", "base", "bear"] as PathKey[]).map(k => {
+    const lockedPath = locked.paths[k];
+    const inv = lockedPath.invalidation;
+    const livePrice = live.spot;
+    const sigma = Math.max(1, liveSigma / 2); // 1σ of the live range
+
+    if (k === "base") {
+      // Base case dies when EITHER wing's trigger is decisively breached
+      const bullTrig = locked.paths.bull.trigger.level;
+      const bearTrig = locked.paths.bear.trigger.level;
+      const aboveBull = bullTrig > 0 && livePrice > bullTrig;
+      const belowBear = bearTrig > 0 && livePrice < bearTrig;
+      if (aboveBull) {
+        return { path: k, health: "dead", reason: `spot ${livePrice.toFixed(2)} pierced bull trigger ${bullTrig.toFixed(2)}` };
+      }
+      if (belowBear) {
+        return { path: k, health: "dead", reason: `spot ${livePrice.toFixed(2)} pierced bear trigger ${bearTrig.toFixed(2)}` };
+      }
+      // Weakening if vol expanded materially (pin thesis fragile in expanding vol)
+      if (rangeExpansion > 1.20) {
+        return { path: k, health: "weakening", reason: `vol expanding ${((rangeExpansion - 1) * 100).toFixed(0)}% — pin fragile` };
+      }
+      return { path: k, health: "alive", reason: "spot inside both wing triggers" };
+    }
+
+    // Bull: dies when spot drops back below gamma flip (locked invalidation)
+    // Bear: dies when spot pops back above gamma flip
+    if (k === "bull") {
+      const dist = livePrice - inv; // positive = above invalidation = alive
+      if (dist <= 0) return { path: k, health: "dead", reason: `spot ${livePrice.toFixed(2)} below locked invalidation ${inv.toFixed(2)}`, distanceToInvalidation: dist };
+      if (dist < sigma * 0.25) return { path: k, health: "weakening", reason: `only ${dist.toFixed(2)} above invalidation (<0.25σ)`, distanceToInvalidation: dist };
+      return { path: k, health: "alive", reason: `${dist.toFixed(2)} clear of invalidation`, distanceToInvalidation: dist };
+    }
+    // bear
+    const dist = inv - livePrice; // positive = below invalidation = alive
+    if (dist <= 0) return { path: k, health: "dead", reason: `spot ${livePrice.toFixed(2)} above locked invalidation ${inv.toFixed(2)}`, distanceToInvalidation: dist };
+    if (dist < sigma * 0.25) return { path: k, health: "weakening", reason: `only ${dist.toFixed(2)} below invalidation (<0.25σ)`, distanceToInvalidation: dist };
+    return { path: k, health: "alive", reason: `${dist.toFixed(2)} clear of invalidation`, distanceToInvalidation: dist };
+  });
+
+  pathHealth.filter(h => h.health === "dead").forEach(h => notes.push(`${h.path.toUpperCase()} thesis DEAD — ${h.reason}`));
+
+  // ─── Regime overlay: long vs short gamma + flip crossing detection ────────
+  const currentRegime: GammaRegime = live.inputs.find(i => i.key === "totalGex")?.calibration?.includes("Positive") ? "long-gamma" : "short-gamma";
+  const lockedRegime: GammaRegime = locked.inputs.find(i => i.key === "totalGex")?.calibration?.includes("Positive") ? "long-gamma" : "short-gamma";
+  const gammaFlipLevel = Number(live.inputs.find(i => i.key === "gammaFlip")?.value ?? 0);
+  const totalGexBStr = String(live.inputs.find(i => i.key === "totalGex")?.value ?? "0B");
+  const totalGexB = parseFloat(totalGexBStr.replace(/B$/, "")) || 0;
+  const flipped = currentRegime !== lockedRegime;
+  const regimeLabel = currentRegime === "long-gamma"
+    ? "Long Gamma · Pin Regime"
+    : "Short Gamma · Momentum Regime";
+
+  if (flipped) {
+    const dir = lockedRegime === "long-gamma" ? "pin→momentum" : "momentum→pin";
+    notes.unshift(`REGIME FLIP since lock: ${dir}`);
+  }
+
+  const regime: RegimeOverlay = {
+    current: currentRegime,
+    locked: lockedRegime,
+    flipped,
+    flipDirection: flipped ? (currentRegime === "short-gamma" ? "toShort" : "toLong") : undefined,
+    spotVsFlip: live.spot - gammaFlipLevel,
+    totalGexB,
+    label: regimeLabel,
+  };
+
   if (notes.length === 0) notes.push("Tracking inside morning expectations");
 
-  return { hasLock: true, spotDrift, spotDriftPct, probabilityShift, triggerHits, rangeExpansion, notes };
+  return { hasLock: true, spotDrift, spotDriftPct, probabilityShift, triggerHits, rangeExpansion, notes, pathHealth, regime };
 }
