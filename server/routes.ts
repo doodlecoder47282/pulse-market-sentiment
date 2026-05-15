@@ -1200,7 +1200,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // 1-2 month directional outlook with named setup recognition.
   app.get("/api/pivot-projection", async (req, res) => {
     try {
-      const symbol = String(req.query.symbol ?? "SPY").toUpperCase();
+      const rawSymbol = String(req.query.symbol ?? "SPY").toUpperCase();
+      // Schwab uses $SPX for the S&P 500 cash index, not ^GSPC (Yahoo's symbol).
+      // Map up-front so Models tab's ^GSPC default doesn't 503.
+      const symbol = rawSymbol === "^GSPC" ? "$SPX" : rawSymbol;
       const { getPriceHistory } = await import("./schwab");
       const { buildPivotProjection } = await import("./pivotProjection");
       // Pull 6 months of daily bars
@@ -1219,24 +1222,31 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(503).json({ message: `Insufficient bars for ${symbol} (${bars.length})` });
       }
       const spot = bars[bars.length - 1].close;
-      // Try to fetch gamma walls (SPY-only) — pivots still work without them
+      // Try to fetch gamma walls — pivots still work without them.
+      // SPY/SPX share the same underlying; SPX is ~10x SPY price, so scale walls.
       let gammaWalls: any = null;
-      if (symbol === "SPY" || symbol === "^GSPC") {
+      const isIndex = symbol === "$SPX";
+      if (symbol === "SPY" || isIndex) {
         try {
           const port = Number(process.env.PORT ?? 5000);
           const r = await fetch(`http://127.0.0.1:${port}/api/gamma-levels-enhanced`);
           if (r.ok) {
             const g = await r.json();
+            const scale = isIndex ? 10 : 1;
+            const cw = g?.callWall?.value;
+            const pw = g?.putWall?.value;
+            const gf = g?.gammaFlip?.value;
             gammaWalls = {
-              callWall: g?.callWall?.value ?? null,
-              putWall: g?.putWall?.value ?? null,
-              gammaFlip: g?.gammaFlip?.value ?? null,
-              zeroGamma: g?.gammaFlip?.value ?? null,
+              callWall: cw != null ? cw * scale : null,
+              putWall: pw != null ? pw * scale : null,
+              gammaFlip: gf != null ? gf * scale : null,
+              zeroGamma: gf != null ? gf * scale : null,
             };
           }
         } catch { /* gamma optional */ }
       }
-      const projection = buildPivotProjection({ symbol, spot, bars, gammaWalls });
+      // Echo the user-requested symbol on the response so the UI label stays consistent
+      const projection = buildPivotProjection({ symbol: rawSymbol, spot, bars, gammaWalls });
       // Also return a thin recent-bars window for the chart
       const chartBars = bars.slice(-90).map((b) => ({
         t: b.t,
