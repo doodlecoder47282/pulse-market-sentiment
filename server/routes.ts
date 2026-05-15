@@ -4534,6 +4534,20 @@ Refine the brief above. Search the web for any critical developments the feed is
     res.json({ ok: true, ...health });
   });
 
+  // ─── Multi-day forward vol cone — honest, NOT a trained ML model ────────
+  // Realized vol cone with regime adjustment. 10 forward sessions, quantile
+  // bands at q10/q25/q50/q75/q90, drift dampened 0.5x, VIX/realized blowup.
+  app.get("/api/projection/multiday", async (req, res) => {
+    try {
+      const symbol = String(req.query.symbol ?? "^GSPC").toUpperCase();
+      const { buildMultiDayCone } = await import("./multiDayProjection");
+      const cone = await buildMultiDayCone(symbol);
+      res.json(cone);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build multi-day cone" });
+    }
+  });
+
   // ─── ML accuracy history — "is the agent getting better" ────────────────
   // Grades every entry in predictions.jsonl against realized SPX/SPY closes,
   // returns rolling hit-rate, Brier score, calibration deciles, and a

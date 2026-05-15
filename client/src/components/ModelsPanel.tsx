@@ -44,6 +44,7 @@ import ChainAudit from "@/components/ChainAudit";
 import { BacktestBadge, BacktestPanel, type BacktestHorizon } from "@/components/BacktestOverlay";
 import PivotProjection from "@/components/models/PivotProjection";
 import MLAccuracyCard from "@/components/models/MLAccuracyCard";
+import MultiDayCone from "@/components/models/MultiDayCone";
 
 // ─── Types mirror server/models.ts ──────────────────────────────────────────
 
@@ -2253,6 +2254,11 @@ export default function ModelsPanel() {
       {/* ── ML Agent Scorecard ─ honest accuracy history ── */}
       <ErrorBoundary label="ML Accuracy">
         <MLAccuracyCard defaultSymbol={symbol} />
+      </ErrorBoundary>
+
+      {/* ── Multi-Day Forward Cone ─ vol-based, 10 sessions ── */}
+      <ErrorBoundary label="Multi-Day Cone">
+        <MultiDayCone defaultSymbol={symbol} />
       </ErrorBoundary>
 
       {/* ── Pivot Point Projection ─ 1-2 month directional outlook ── */}
