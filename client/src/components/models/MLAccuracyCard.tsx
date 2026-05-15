@@ -88,6 +88,14 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
     },
     refetchInterval: 30 * 60_000,
     staleTime: 25 * 60_000,
+    // Transparent retry on 503 (Schwab throttle race during Models tab load).
+    retry: (failureCount, error: any) => {
+      const msg = String(error?.message ?? "");
+      const isThrottle = msg.includes("503") || msg.toLowerCase().includes("schwab");
+      return isThrottle && failureCount < 3;
+    },
+    retryDelay: (attemptIndex) => Math.min(1500 * 2 ** attemptIndex, 10_000),
+    placeholderData: (prev) => prev, // keep last good scorecard on transient fail
   });
 
   if (isLoading) {

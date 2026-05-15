@@ -1195,6 +1195,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // In-memory cache for pivot bars — prevents Models tab refresh from hitting
+  // Schwab pricehistory N times in parallel (one per panel). 5min TTL is more
+  // than enough for daily-bar pivots; intraday spot is fetched separately.
+  const _pivotBarsCache = new Map<string, { ts: number; bars: any[] }>();
+  const PIVOT_BARS_TTL_MS = 5 * 60 * 1000;
+
   // Pivot Point Projection — monthly classic + quarterly fib pivots, layered
   // with gamma walls, SMAs, volume nodes. Confluence scoring + pattern tags.
   // 1-2 month directional outlook with named setup recognition.
@@ -1206,20 +1212,46 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const symbol = rawSymbol === "^GSPC" ? "$SPX" : rawSymbol;
       const { getPriceHistory } = await import("./schwab");
       const { buildPivotProjection } = await import("./pivotProjection");
-      // Pull 6 months of daily bars
-      const resp = await getPriceHistory(symbol, "month", 6, "daily", 1);
-      const bars = (resp.candles || [])
-        .filter((c: any) => c.close != null && isFinite(c.close))
-        .map((c: any) => ({
-          t: Math.floor(c.datetime / 1000),
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-          volume: c.volume,
-        }));
+
+      // Use cached bars if fresh; else fetch from Schwab; on failure, fall back
+      // to stale cache so a transient throttle doesn't blank the panel.
+      let bars: any[];
+      const cached = _pivotBarsCache.get(symbol);
+      if (cached && Date.now() - cached.ts < PIVOT_BARS_TTL_MS) {
+        bars = cached.bars;
+      } else {
+        try {
+          const resp = await getPriceHistory(symbol, "month", 6, "daily", 1);
+          bars = (resp.candles || [])
+            .filter((c: any) => c.close != null && isFinite(c.close))
+            .map((c: any) => ({
+              t: Math.floor(c.datetime / 1000),
+              open: c.open,
+              high: c.high,
+              low: c.low,
+              close: c.close,
+              volume: c.volume,
+            }));
+          if (bars.length >= 30) {
+            _pivotBarsCache.set(symbol, { ts: Date.now(), bars });
+          }
+        } catch (fetchErr: any) {
+          if (cached) {
+            console.log(`[pivot] Schwab fetch failed for ${symbol}, using stale cache (${cached.bars.length} bars)`);
+            bars = cached.bars;
+          } else {
+            return res.status(503).json({ message: `Schwab fetch failed for ${symbol}: ${fetchErr?.message ?? fetchErr}` });
+          }
+        }
+      }
+
       if (bars.length < 30) {
-        return res.status(503).json({ message: `Insufficient bars for ${symbol} (${bars.length})` });
+        // Last-resort fallback to any stale cache before giving up
+        if (cached && cached.bars.length >= 30) {
+          bars = cached.bars;
+        } else {
+          return res.status(503).json({ message: `Insufficient bars for ${symbol} (${bars.length})` });
+        }
       }
       const spot = bars[bars.length - 1].close;
       // Try to fetch gamma walls — pivots still work without them.

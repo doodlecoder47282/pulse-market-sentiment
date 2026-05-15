@@ -105,23 +105,47 @@ async function loadPredictions(): Promise<PredEntry[]> {
   }
 }
 
+/** Cache the closeMap across requests — prevents pivot-projection + accuracy-history
+ *  from both hitting Schwab pricehistory concurrently when Models tab loads. */
+const _closeMapCache = new Map<string, { ts: number; map: Map<string, number> }>();
+const CLOSEMAP_TTL_MS = 5 * 60 * 1000; // 5 min
+
 /** Fetch a map of YYYY-MM-DD -> close from Schwab daily bars for the symbol.
- *  Pulls 6 months back to cover the entire prediction window comfortably. */
+ *  Pulls 6 months back to cover the entire prediction window comfortably.
+ *  Falls back to last cached map if the live call fails (throttle/auth) so
+ *  the UI doesn't blank out on a transient Schwab hiccup. */
 async function fetchCloseMap(symbol: string): Promise<Map<string, number>> {
+  const cached = _closeMapCache.get(symbol);
+  if (cached && Date.now() - cached.ts < CLOSEMAP_TTL_MS) {
+    return cached.map;
+  }
   const { getPriceHistory } = await import("./schwab");
   // Map ^GSPC -> $SPX for Schwab
   const wireSym = symbol === "^GSPC" ? "$SPX" : symbol;
-  const resp = await getPriceHistory(wireSym, "month", 6, "daily", 1);
-  const map = new Map<string, number>();
-  for (const c of (resp?.candles || []) as any[]) {
-    if (c.close == null || !isFinite(c.close)) continue;
-    const d = new Date(c.datetime);
-    const yyyy = d.getUTCFullYear();
-    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-    const dd = String(d.getUTCDate()).padStart(2, "0");
-    map.set(`${yyyy}-${mm}-${dd}`, c.close);
+  try {
+    const resp = await getPriceHistory(wireSym, "month", 6, "daily", 1);
+    const map = new Map<string, number>();
+    for (const c of (resp?.candles || []) as any[]) {
+      if (c.close == null || !isFinite(c.close)) continue;
+      const d = new Date(c.datetime);
+      const yyyy = d.getUTCFullYear();
+      const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const dd = String(d.getUTCDate()).padStart(2, "0");
+      map.set(`${yyyy}-${mm}-${dd}`, c.close);
+    }
+    if (map.size > 0) {
+      _closeMapCache.set(symbol, { ts: Date.now(), map });
+    }
+    return map;
+  } catch (e) {
+    // Schwab throttled / auth blip — return stale cache rather than empty.
+    if (cached) {
+      console.log(`[mlAccuracy] Schwab fetch failed for ${wireSym}, using stale cache (${cached.map.size} entries)`);
+      return cached.map;
+    }
+    console.warn(`[mlAccuracy] Schwab fetch failed for ${wireSym} with no cache fallback:`, e);
+    return new Map();
   }
-  return map;
 }
 
 /** Get the close N trading sessions after (or on) the given date.

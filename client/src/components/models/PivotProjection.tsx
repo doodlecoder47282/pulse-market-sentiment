@@ -136,6 +136,15 @@ export default function PivotProjection({
     },
     refetchInterval: 30 * 60_000,
     staleTime: 25 * 60_000,
+    // Transparent retry on 503 (Schwab throttle race when Models tab loads).
+    // 3 retries with exponential backoff. Keeps previous data visible meanwhile.
+    retry: (failureCount, error: any) => {
+      const msg = String(error?.message ?? "");
+      const isThrottle = msg.includes("503") || msg.toLowerCase().includes("schwab");
+      return isThrottle && failureCount < 3;
+    },
+    retryDelay: (attemptIndex) => Math.min(1500 * 2 ** attemptIndex, 10_000),
+    placeholderData: (prev) => prev, // stale-while-error — keep last good chart
   });
 
   const { yMin, yMax, barPath, candles, projectionX, lineY } = useMemo(() => {

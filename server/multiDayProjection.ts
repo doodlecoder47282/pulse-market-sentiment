@@ -65,19 +65,48 @@ function std(arr: number[]): number {
   return Math.sqrt(sq / (arr.length - 1));
 }
 
+// 5min in-memory bars cache — keeps Models tab from racing pivot, ML accuracy,
+// and multi-day cone for the same /pricehistory call when Schwab is saturated.
+const _coneBarsCache = new Map<string, { ts: number; bars: { t: number; c: number }[] }>();
+const CONE_BARS_TTL_MS = 5 * 60 * 1000;
+
 export async function buildMultiDayCone(symbol: string): Promise<MultiDayConeResp> {
   const { getPriceHistory, getQuotes } = await import("./schwab");
   // Schwab uses $SPX for SPX
   const wireSym = symbol === "^GSPC" ? "$SPX" : symbol;
 
-  // Pull 2 months of daily bars for σ estimation
-  const resp = await getPriceHistory(wireSym, "month", 2, "daily", 1);
-  const bars = (resp?.candles || [])
-    .filter((c: any) => c.close != null && isFinite(c.close))
-    .map((c: any) => ({ t: c.datetime, c: c.close }));
+  // Pull 2 months of daily bars for σ estimation — cached with stale fallback
+  // so a transient Schwab throttle doesn't blank the cone panel.
+  let bars: { t: number; c: number }[] = [];
+  const cached = _coneBarsCache.get(wireSym);
+  if (cached && Date.now() - cached.ts < CONE_BARS_TTL_MS) {
+    bars = cached.bars;
+  } else {
+    try {
+      const resp = await getPriceHistory(wireSym, "month", 2, "daily", 1);
+      bars = (resp?.candles || [])
+        .filter((c: any) => c.close != null && isFinite(c.close))
+        .map((c: any) => ({ t: c.datetime, c: c.close }));
+      if (bars.length >= 15) {
+        _coneBarsCache.set(wireSym, { ts: Date.now(), bars });
+      }
+    } catch (fetchErr: any) {
+      if (cached) {
+        console.log(`[multiDayCone] Schwab fetch failed for ${wireSym}, using stale cache (${cached.bars.length} bars)`);
+        bars = cached.bars;
+      } else {
+        throw new Error(`Schwab fetch failed for ${symbol}: ${fetchErr?.message ?? fetchErr}`);
+      }
+    }
+  }
 
   if (bars.length < 15) {
-    throw new Error(`insufficient bars for ${symbol} (${bars.length})`);
+    // Last-resort fallback to any stale cache before throwing
+    if (cached && cached.bars.length >= 15) {
+      bars = cached.bars;
+    } else {
+      throw new Error(`insufficient bars for ${symbol} (${bars.length})`);
+    }
   }
 
   // Log returns

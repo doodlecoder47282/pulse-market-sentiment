@@ -59,6 +59,14 @@ export default function MultiDayCone({ defaultSymbol = "^GSPC" }: { defaultSymbo
     },
     refetchInterval: 15 * 60_000,
     staleTime: 10 * 60_000,
+    // Transparent retry on Schwab throttle 503
+    retry: (failureCount, error: any) => {
+      const msg = String(error?.message ?? "");
+      const isThrottle = msg.includes("503") || msg.toLowerCase().includes("schwab");
+      return isThrottle && failureCount < 3;
+    },
+    retryDelay: (attemptIndex) => Math.min(1500 * 2 ** attemptIndex, 10_000),
+    placeholderData: (prev) => prev,
   });
 
   const geom = useMemo(() => {
