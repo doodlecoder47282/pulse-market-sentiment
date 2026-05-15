@@ -418,24 +418,54 @@ function ForceGraph({ data, winKey }: { data: SectorWebResponse; winKey: WindowK
   // Run the simulation headlessly to settle, then PIN every node so the
   // constellation is rock-steady. Drag still overrides fx/fy on its node.
   // A new simulation runs whenever nodes/links change (window flip).
+  //
+  // Layout rebuild: sectors live on a ring around SPY (forceRadial), leaders
+  // hug their sector tight (short SL link distance + strong link force),
+  // sector-to-sector charges weaker so no orphaning to corners. Center
+  // gravity stronger to prevent dead space.
   useEffect(() => {
+    const ringR = Math.min(W, H) * 0.36;
     const sim = d3
       .forceSimulation<SimNode>(nodes)
       .force(
         "link",
         d3.forceLink<SimNode, SimLink>(links)
           .id((n) => n.id)
-          .distance((l) => l.kind === "sl" ? 38 : 120 * (1 - Math.abs(l.corr) * 0.5))
-          .strength((l) => l.kind === "sl" ? 0.9 : Math.min(1, Math.abs(l.corr))),
+          .distance((l) => l.kind === "sl" ? 28 : 90 * (1 - Math.abs(l.corr) * 0.4))
+          .strength((l) => l.kind === "sl" ? 1.0 : Math.min(0.8, Math.abs(l.corr) * 0.9)),
       )
-      .force("charge", d3.forceManyBody<SimNode>().strength((n) => n.kind === "leader" ? -50 : -380))
-      .force("center", d3.forceCenter(W / 2, H / 2).strength(0.05))
-      .force("collide", d3.forceCollide<SimNode>().radius((n) => n.size + 4))
+      .force(
+        "charge",
+        d3.forceManyBody<SimNode>().strength((n) =>
+          n.kind === "leader" ? -28 : n.kind === "sector" ? -220 : -120,
+        ),
+      )
+      .force("center", d3.forceCenter(W / 2, H / 2).strength(0.12))
+      // Sectors pinned to a ring around SPY — kills the orphan-corner problem.
+      .force(
+        "radial",
+        d3.forceRadial<SimNode>(
+          (n) => (n.kind === "sector" ? ringR : 0),
+          W / 2,
+          H / 2,
+        ).strength((n) => (n.kind === "sector" ? 0.55 : 0)),
+      )
+      .force("collide", d3.forceCollide<SimNode>().radius((n) => n.size + (n.kind === "leader" ? 2 : 6)))
       .stop();  // don't auto-tick on RAF
 
-    // Run 400 ticks synchronously — enough to settle layout.
+    // Run 400 ticks synchronously — enough to settle layout. Clamp every
+    // node inside the viewport on each tick so leaders don't fly off-canvas.
     const N = 400;
-    for (let i = 0; i < N; i++) sim.tick();
+    const padX = 24, padY = 24;
+    for (let i = 0; i < N; i++) {
+      sim.tick();
+      for (const n of nodes) {
+        if (n.kind === "market") continue;
+        const r = n.size + 2;
+        if (n.x != null) n.x = Math.max(padX + r, Math.min(W - padX - r, n.x));
+        if (n.y != null) n.y = Math.max(padY + r, Math.min(H - padY - r, n.y));
+      }
+    }
 
     // Freeze: pin every node at its settled position. The layout is now
     // permanent until nodes/links change (window flip triggers re-layout).
@@ -666,7 +696,8 @@ function ForceGraph({ data, winKey }: { data: SectorWebResponse; winKey: WindowK
                   onMouseEnter={() => setHover(n)}
                   onMouseLeave={() => setHover(null)}
                 >
-                  {hot && <circle r={pulseR} fill={`url(#${haloId})`} />}
+                  {hot && n.kind !== "leader" && <circle r={pulseR} fill={`url(#${haloId})`} />}
+                  {hot && n.kind === "leader" && <circle r={pulseR * 0.65} fill={`url(#${haloId})`} opacity={0.6} />}
                   {isFocus && (
                     <circle
                       r={n.size + 6}
@@ -688,18 +719,26 @@ function ForceGraph({ data, winKey }: { data: SectorWebResponse; winKey: WindowK
                       transition: "fill 380ms ease, filter 380ms ease",
                     }}
                   />
-                  <text
-                    textAnchor="middle"
-                    y={n.kind === "leader" ? -n.size - 3 : 4}
-                    fontSize={n.kind === "market" ? 12 : n.kind === "sector" ? 11 : 9}
-                    fontWeight={n.kind === "leader" ? 500 : 700}
-                    fill={n.kind === "market" ? "#1e293b"
-                      : n.kind === "sector" ? "rgba(15, 23, 42, 0.9)"
-                      : "rgba(226, 232, 240, 0.85)"}
-                    style={{ pointerEvents: "none", userSelect: "none" }}
-                  >
-                    {n.symbol}
-                  </text>
+                  {/* Progressive label reveal:
+                     - SPY + sectors: always labeled.
+                     - Leaders: only when hot (|RS|>=1.5), focused, or zoomed in (k>=1.4). */}
+                  {(n.kind !== "leader" || hot || isFocus || zoom.k >= 1.4) && (
+                    <text
+                      textAnchor="middle"
+                      y={n.kind === "leader" ? -n.size - 3 : 4}
+                      fontSize={n.kind === "market" ? 12 : n.kind === "sector" ? 11 : 9}
+                      fontWeight={n.kind === "leader" ? 500 : 700}
+                      fill={n.kind === "market" ? "#1e293b"
+                        : n.kind === "sector" ? "rgba(15, 23, 42, 0.95)"
+                        : "rgba(226, 232, 240, 0.92)"}
+                      stroke={n.kind === "leader" ? "rgba(10, 15, 25, 0.85)" : "none"}
+                      strokeWidth={n.kind === "leader" ? 2.5 : 0}
+                      paintOrder="stroke fill"
+                      style={{ pointerEvents: "none", userSelect: "none" }}
+                    >
+                      {n.symbol}
+                    </text>
+                  )}
                 </g>
               );
             })}
@@ -714,7 +753,7 @@ function ForceGraph({ data, winKey }: { data: SectorWebResponse; winKey: WindowK
           <text x={40} y={9} fontSize={9.5} fill="rgba(226,232,240,0.8)">positive</text>
           <line x1={92} y1={6} x2={122} y2={6} stroke="rgba(248,113,113,0.9)" strokeWidth={2.2} strokeDasharray="5 3" />
           <text x={128} y={9} fontSize={9.5} fill="rgba(226,232,240,0.8)">divergent</text>
-          <text x={4} y={24} fontSize={9.5} fill="rgba(226,232,240,0.7)">Node halo = hot rotation (|RS|&gt;1.5%)</text>
+          <text x={4} y={24} fontSize={9.5} fill="rgba(226,232,240,0.7)">Leader labels reveal on zoom or |RS|&gt;1.5%</text>
         </g>
       </svg>
 
