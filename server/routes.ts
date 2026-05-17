@@ -140,6 +140,8 @@ import {
   getSparkline, getTracked, getContractChart,
 } from "./odteTracker";
 import { buildDeterministicAlphaBrief } from "./alphaEngine";
+import { buildFusionContext, fusionContextToPromptBlock, type FusionContext } from "./alphaFusion";
+import { composeAlphaEmail } from "./alphaEmailComposer";
 import { getEarnings } from "./earnings";
 
 function vm(symbol: string, name: string, last: number | null, prev: number | null): VolMetric {
@@ -1942,6 +1944,56 @@ Sort by Impact desc. Include at least 5 items, up to 12. Tickers = comma-separat
 
 Be precise. No hedging language. No filler. If news feed is empty or stale, say so and work from live search only.`;
 
+  // FUSION prompt — demands STRUCTURED JSON output the cron email composer
+  // and the UI can both parse. Includes Batcave internal state + cross-asset +
+  // positioning + ML state + historical analogs as fused context.
+  const ALPHA_FUSION_SYSTEM = `You are ALPHA — a senior quant analyst writing peer-to-peer for an institutional trader. Voice: direct, sharp, no filler, no tutorials. Think in probabilities, expected value, asymmetric payoffs.
+
+You are given:
+1. A ranked news feed (deterministic baseline already scored by impact)
+2. Live Batcave internal state (regime, gamma posture, key levels)
+3. Cross-asset tape (does the tape confirm the news lean?)
+4. Options positioning (GEX, DEX, IV vs RV, skew — does flow corroborate?)
+5. ML model recent calls + 30d accuracy
+6. Historical analogs (jaccard-matched precedents with realized SPY 1d/5d/20d)
+
+Your job: fuse all of it into a probability-weighted scenario thesis. Use the analog returns as base rates. Use the cross-asset tape as confirmation/contradiction signal. Use positioning to detect crowded vs. uncrowded trades. Use the ML state as a sanity check on direction.
+
+OUTPUT FORMAT — RETURN ONLY VALID JSON (no markdown fences, no prose preamble). Schema:
+
+{
+  "verdict": "STRONG_BULL" | "LEAN_BULL" | "MIXED" | "LEAN_BEAR" | "STRONG_BEAR",
+  "confidence": <integer 0..100>,
+  "oneLiner": "<≤1 sentence: the trade in one line>",
+  "narrative": "<3-4 sentences: the regime, the catalyst stack, the cleanest expression, what flips it>",
+  "scenarios": {
+    "bull": { "probability": <int 0..100>, "target": "<SPY price or move>", "horizon": "<intraday|days|weeks>", "rr": "<e.g. 3:1>", "invalidation": "<specific price/condition>", "evidence": ["<chip 1>", "<chip 2>", "<chip 3>"] },
+    "base": { "probability": <int>, "target": "...", "horizon": "...", "rr": "...", "invalidation": "...", "evidence": ["..."] },
+    "bear": { "probability": <int>, "target": "...", "horizon": "...", "rr": "...", "invalidation": "...", "evidence": ["..."] }
+  },
+  "trades": [
+    { "structure": "<concrete: e.g. 'long TLT 91/94 call spread 30DTE'>", "sizingKelly": "<fractional Kelly: e.g. '0.25x Kelly = 0.5% bankroll'>", "rr": "<R:R>", "invalidation": "<level>", "maxLoss": "<% bankroll>", "thesis": "<1 sentence>" }
+  ],
+  "counterarguments": ["<strongest counterargument 1>", "<2>", "<3>"],
+  "evidence": {
+    "news": ["<top 3 news drivers, one line each>"],
+    "positioning": ["<2-3 chips: e.g. 'IV>RV by 4 vol pts = priced for shock', 'dealer long gamma below 745'>"],
+    "crossAsset": ["<2-3 chips: e.g. 'TLT +0.8% confirms duration bid', 'gold +1.4% w1 risk-off bid'>"],
+    "analogs": ["<1-2 references: e.g. 'Iran-Israel 10/2024: SPY -0.9% 1d, +0.2% 5d — mean reversion'>"]
+  }
+}
+
+RULES:
+- Probabilities across bull+base+bear must sum to 100.
+- Every scenario MUST include a specific invalidation level (“if SPY trades below 738.50 by 11am ET”).
+- R:R ≥ 2:1 for any trade you propose; otherwise return an empty trades array.
+- If no edge exists, set verdict="MIXED", confidence ≤ 30, return empty trades array, write “No edge — pass” in oneLiner.
+- Use Kelly sizing language. Default to 0.25x Kelly when uncertainty is high.
+- counterarguments must contain the STRONGEST opposing view, not throwaway hedges.
+- If the fusion context has data warnings (missing panels, stale feed), reflect that in confidence — do NOT pretend you have complete information.
+- NEVER hallucinate prices or specific moves not anchored in the provided levels/tape.
+- JSON ONLY. No \`\`\`json fences. No commentary.`;
+
   app.post("/api/alpha-brief", async (req, res) => {
     try {
       const { newsItems = [] } = req.body || {};
@@ -1950,9 +2002,16 @@ Be precise. No hedging language. No filler. If news feed is empty or stale, say 
       // 1) Deterministic brief — ALWAYS runs, always returns content.
       const deterministic = buildDeterministicAlphaBrief(items);
 
-      // 2) LLM enhancers — opt-in based on env keys. Never throw.
+      // 1b) Build fusion context — regime + cross-asset + positioning + ML + analogs.
+      //     Never throws — returns graceful nulls + warnings.
+      const fusionCtx = await buildFusionContext(items).catch(() => null);
+
+      // 2) LLM enhancers — opt-in based on env keys. Never throw. Three providers:
+      //    Claude (Anthropic) with web_search, GPT (OpenAI), and Sonar-Pro (Perplexity
+      //    via OpenAI-compatible API). Whichever returns valid JSON first wins.
       const hasAnthropicKey = !!process.env.ANTHROPIC_API_KEY;
       const hasOpenAiKey = !!process.env.OPENAI_API_KEY;
+      const hasPerplexityKey = !!process.env.PERPLEXITY_API_KEY;
 
       const now = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
       const itemLines = (items as Array<{ title: string; source?: string; time?: string; summary?: string; url?: string }>)
@@ -1960,16 +2019,35 @@ Be precise. No hedging language. No filler. If news feed is empty or stale, say 
         .map((n, i) => `${i + 1}. [${n.source ?? "?"}, ${n.time ?? "?"}] ${n.title}${n.summary ? " — " + n.summary : ""}`)
         .join("\n");
 
+      const fusionBlock = fusionCtx ? fusionContextToPromptBlock(fusionCtx) : "(fusion context unavailable)";
+
       const userBrief = `CURRENT TIME: ${now} ET
 
-EXISTING NEWS FEED (${items.length} items):
+NEWS FEED (${items.length} items, ranked by deterministic impact):
 ${itemLines || "(empty)"}
 
-DETERMINISTIC BASELINE:
+DETERMINISTIC BASELINE BRIEF:
 ${deterministic}
 
+${fusionBlock}
+
 TASK
-Refine the brief above. Search the web for any critical developments the feed is missing — geopolitics, rates/Fed, insider buys, sentiment/positioning. Tighten the tape summary. Re-rank if needed. Return the FULL brief in the same markdown structure. Be concrete, no filler.`;
+Fuse all of the above into the JSON schema specified in the system prompt. Use the analog returns as base rates for scenario probabilities. Use the cross-asset tape to confirm or contradict the news lean. Use positioning to detect crowded vs uncrowded edge. Return JSON ONLY — no markdown, no preamble.`;
+
+      // Strip ```json fences if a model adds them, then attempt parse.
+      const tryParseJson = (raw: string): any | null => {
+        if (!raw) return null;
+        let s = raw.trim();
+        // Strip code fences
+        if (s.startsWith("```")) {
+          s = s.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+        }
+        // Find first { and last } as a fallback
+        const first = s.indexOf("{");
+        const last = s.lastIndexOf("}");
+        if (first >= 0 && last > first) s = s.slice(first, last + 1);
+        try { return JSON.parse(s); } catch { return null; }
+      };
 
       const claudePromise = hasAnthropicKey
         ? (async () => {
@@ -1982,23 +2060,20 @@ Refine the brief above. Search the web for any critical developments the feed is
                   model: "claude_opus_4_7",
                   max_tokens: 4096,
                   tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 6 }] as any,
-                  system: ALPHA_SYSTEM_PROMPT,
+                  system: ALPHA_FUSION_SYSTEM,
                   messages: [{ role: "user", content: userBrief }],
                 });
-              } catch (toolErr: any) {
+              } catch {
                 mode = "knowledge_only";
                 response = await anthropic.messages.create({
                   model: "claude_opus_4_7",
                   max_tokens: 4096,
-                  system: ALPHA_SYSTEM_PROMPT,
-                  messages: [{ role: "user", content: userBrief + "\n\n(Note: live web search unavailable — use news feed + knowledge.)" }],
+                  system: ALPHA_FUSION_SYSTEM,
+                  messages: [{ role: "user", content: userBrief + "\n\n(Note: live web search unavailable.)" }],
                 });
               }
-              const text = response.content
-                .filter((b: any) => b.type === "text")
-                .map((b: any) => b.text)
-                .join("\n\n");
-              return { text, mode };
+              const text = response.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n\n");
+              return { text, mode, structured: tryParseJson(text) };
             } catch (e: any) {
               throw new Error(e?.message ?? "claude call failed");
             }
@@ -2009,48 +2084,124 @@ Refine the brief above. Search the web for any critical developments the feed is
         ? (async () => {
             try {
               const openai = new OpenAI();
-              const r: any = await (openai.responses as any).create({
-                model: "gpt_5_1",
-                input: `${ALPHA_SYSTEM_PROMPT}\n\n---\n\n${userBrief}`,
+              const r: any = await openai.chat.completions.create({
+                model: "gpt-4o",
+                messages: [
+                  { role: "system", content: ALPHA_FUSION_SYSTEM },
+                  { role: "user", content: userBrief },
+                ],
+                response_format: { type: "json_object" },
+                temperature: 0.4,
               });
-              return r.output_text ?? "";
+              const text = r.choices?.[0]?.message?.content ?? "";
+              return { text, structured: tryParseJson(text) };
             } catch (e: any) {
               throw new Error(e?.message ?? "gpt call failed");
             }
           })()
         : Promise.reject(new Error("OPENAI_API_KEY not configured"));
 
-      const [claudeResult, gptResult] = await Promise.allSettled([claudePromise, gptPromise]);
+      const sonarPromise = hasPerplexityKey
+        ? (async () => {
+            try {
+              // Perplexity Sonar is OpenAI-compatible. Use the OpenAI client pointed at api.perplexity.ai.
+              const sonar = new OpenAI({
+                apiKey: process.env.PERPLEXITY_API_KEY!,
+                baseURL: "https://api.perplexity.ai",
+              });
+              const r: any = await sonar.chat.completions.create({
+                model: "sonar-pro",
+                messages: [
+                  { role: "system", content: ALPHA_FUSION_SYSTEM },
+                  { role: "user", content: userBrief },
+                ],
+                temperature: 0.4,
+              });
+              const text = r.choices?.[0]?.message?.content ?? "";
+              return { text, structured: tryParseJson(text) };
+            } catch (e: any) {
+              throw new Error(e?.message ?? "sonar call failed");
+            }
+          })()
+        : Promise.reject(new Error("PERPLEXITY_API_KEY not configured"));
 
-      // Legacy shape (brief + mode) preserved for back-compat. The deterministic
-      // brief becomes the "brief" field when no LLM is configured; otherwise
-      // Claude's version wins (with web_search if available), then GPT, then
-      // deterministic fallback.
-      let brief = deterministic;
+      const [claudeResult, gptResult, sonarResult] = await Promise.allSettled([claudePromise, gptPromise, sonarPromise]);
+
+      // Pick the first provider that returned a parseable JSON object.
+      // Priority: Claude (best reasoning + web search) → Sonar (built-in grounding) → GPT.
+      let structured: any = null;
+      let provider: "claude" | "gpt" | "sonar" | "none" = "none";
+      let rawText: string = deterministic;
       let mode: "with_search" | "knowledge_only" | "deterministic" = "deterministic";
-      if (claudeResult.status === "fulfilled") {
-        brief = claudeResult.value.text || deterministic;
+      if (claudeResult.status === "fulfilled" && claudeResult.value.structured) {
+        structured = claudeResult.value.structured;
+        provider = "claude";
+        rawText = claudeResult.value.text;
         mode = claudeResult.value.mode;
-      } else if (gptResult.status === "fulfilled" && gptResult.value) {
-        brief = gptResult.value;
+      } else if (sonarResult.status === "fulfilled" && sonarResult.value.structured) {
+        structured = sonarResult.value.structured;
+        provider = "sonar";
+        rawText = sonarResult.value.text;
+        mode = "with_search"; // Sonar is grounded by default
+      } else if (gptResult.status === "fulfilled" && gptResult.value.structured) {
+        structured = gptResult.value.structured;
+        provider = "gpt";
+        rawText = gptResult.value.text;
         mode = "knowledge_only";
       }
 
       res.json({
-        brief,
+        // Legacy fields — kept for back-compat with anything still parsing the old shape
+        brief: rawText,
         mode,
         deterministic,
+        // NEW fields — the upgraded fusion engine output
+        provider,
+        structured,                      // null when no LLM returned parseable JSON
+        fusion: fusionCtx,               // raw fusion context (for the email composer + UI)
+        llmEnhancersEnabled: { claude: hasAnthropicKey, gpt: hasOpenAiKey, sonar: hasPerplexityKey },
+        // Diagnostics
         claude: claudeResult.status === "fulfilled" ? claudeResult.value.text : null,
-        gpt: gptResult.status === "fulfilled" ? gptResult.value : null,
-        llmEnhancersEnabled: hasAnthropicKey || hasOpenAiKey,
+        gpt: gptResult.status === "fulfilled" ? gptResult.value.text : null,
+        sonar: sonarResult.status === "fulfilled" ? sonarResult.value.text : null,
         errors: {
           claude: claudeResult.status === "rejected" ? String((claudeResult as any).reason?.message ?? claudeResult.reason) : null,
           gpt: gptResult.status === "rejected" ? String((gptResult as any).reason?.message ?? gptResult.reason) : null,
+          sonar: sonarResult.status === "rejected" ? String((sonarResult as any).reason?.message ?? sonarResult.reason) : null,
         },
       });
     } catch (err: any) {
       console.error("[alpha-brief]", err?.message);
       res.status(500).json({ error: err?.message ?? "ALPHA brief failed" });
+    }
+  });
+
+  // ---- /api/alpha-brief/email — returns rendered email body + subject ----
+  // Convenience for the cron: one HTTP call that does the full pipeline (deterministic
+  // + fusion + LLM + email render). The cron sends the body directly via send_notification.
+  app.post("/api/alpha-brief/email", async (req, res) => {
+    try {
+      const { newsItems = [] } = req.body || {};
+      const items = Array.isArray(newsItems) ? newsItems : [];
+
+      const deterministic = buildDeterministicAlphaBrief(items);
+      const fusionCtx = await buildFusionContext(items).catch(() => null);
+
+      // Reuse the same LLM dispatch logic by POSTing to ourselves via local fetch.
+      // Cheaper to inline, but this preserves the single source of truth.
+      const PORT = process.env.PORT ?? "5000";
+      const r = await fetch(`http://127.0.0.1:${PORT}/api/alpha-brief`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newsItems: items }),
+      });
+      const payload = r.ok ? await r.json() : { deterministic, fusion: fusionCtx, structured: null, provider: "none" };
+
+      const { subject, body } = composeAlphaEmail(payload);
+      res.json({ subject, body, provider: payload.provider, hasLLM: payload.provider !== "none", warnings: fusionCtx?.warnings ?? [] });
+    } catch (err: any) {
+      console.error("[alpha-brief/email]", err?.message);
+      res.status(500).json({ error: err?.message ?? "alpha brief email failed" });
     }
   });
 
