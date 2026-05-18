@@ -10,12 +10,25 @@ import {
   HistogramSeries,
   CrosshairMode,
   ColorType,
+  createSeriesMarkers,
   type IChartApi,
   type ISeriesApi,
   type IPriceLine,
   type UTCTimestamp,
+  type ISeriesMarkersPluginApi,
+  type SeriesMarker,
+  type Time,
   LineStyle,
 } from "lightweight-charts";
+
+export type NewsMarker = {
+  id: string;
+  time: number; // epoch seconds
+  direction: "BULL" | "BEAR" | "NEUTRAL";
+  tier: "TIER_1" | "TIER_2" | "SENTIMENT_SHIFT";
+  category: string;
+  title: string;
+};
 
 type Candle = { t: number; o: number; h: number; l: number; c: number; v: number | null };
 type GammaLevels = {
@@ -33,6 +46,8 @@ export default function LightweightCandlestick({
   height = 460,
   showVolume = true,
   showGamma = true,
+  newsMarkers,
+  onMarkerClick,
 }: {
   candles: Candle[];
   gamma: GammaLevels | null;
@@ -40,12 +55,18 @@ export default function LightweightCandlestick({
   height?: number;
   showVolume?: boolean;
   showGamma?: boolean;
+  newsMarkers?: NewsMarker[];
+  onMarkerClick?: (markerId: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const gammaLinesRef = useRef<IPriceLine[]>([]);
+  const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const markerIdByTimeRef = useRef<Map<number, string>>(new Map());
+  const onMarkerClickRef = useRef(onMarkerClick);
+  onMarkerClickRef.current = onMarkerClick;
 
   // Init + cleanup
   useEffect(() => {
@@ -100,6 +121,14 @@ export default function LightweightCandlestick({
       volRef.current = vol;
     }
 
+    // Click handler for news markers — detect which marker (if any) was clicked.
+    chart.subscribeClick((param) => {
+      const t = (param.time as number | undefined);
+      if (t == null) return;
+      const id = markerIdByTimeRef.current.get(t);
+      if (id && onMarkerClickRef.current) onMarkerClickRef.current(id);
+    });
+
     const onResize = () => {
       if (containerRef.current && chartRef.current) {
         chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
@@ -113,6 +142,8 @@ export default function LightweightCandlestick({
       candleRef.current = null;
       volRef.current = null;
       gammaLinesRef.current = [];
+      markersPluginRef.current = null;
+      markerIdByTimeRef.current.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [height, showVolume]);
@@ -176,6 +207,95 @@ export default function LightweightCandlestick({
     if (gamma.zeroGamma != null) add(gamma.zeroGamma, "#f59e0b", `0γ ${gamma.zeroGamma.toFixed(0)}`);
     if (gamma.maxPain != null) add(gamma.maxPain, "#8b5cf6", `Max Pain ${gamma.maxPain.toFixed(0)}`, 1);
   }, [gamma, showGamma]);
+
+  // Push news markers — maps each event to a chart marker color-coded by direction,
+  // shaped by tier. Multiple events at the same minute would collide so we snap
+  // each marker's `time` to the nearest candle bucket and track id<->time.
+  useEffect(() => {
+    if (!candleRef.current || !chartRef.current) return;
+
+    // Lazily attach the markers plugin once. Plugin is destroyed with the chart.
+    if (!markersPluginRef.current) {
+      try {
+        markersPluginRef.current = createSeriesMarkers(candleRef.current, []);
+      } catch (e) {
+        // older lightweight-charts: fall back to deprecated setMarkers if available
+        // (we keep going — markers just won't render)
+        // eslint-disable-next-line no-console
+        console.warn("[lightweightChart] markers plugin unavailable:", (e as any)?.message);
+      }
+    }
+    if (!markersPluginRef.current) return;
+
+    markerIdByTimeRef.current.clear();
+    const items: NewsMarker[] = newsMarkers ?? [];
+    if (!items.length || candles.length === 0) {
+      markersPluginRef.current.setMarkers([]);
+      return;
+    }
+
+    // Build sorted candle times for snapping
+    const candleTimes = candles.map((c) => c.t).sort((a, b) => a - b);
+    const minT = candleTimes[0];
+    const maxT = candleTimes[candleTimes.length - 1];
+
+    function snap(t: number): number {
+      if (t <= minT) return minT;
+      if (t >= maxT) return maxT;
+      // binary search for nearest
+      let lo = 0, hi = candleTimes.length - 1;
+      while (lo + 1 < hi) {
+        const mid = (lo + hi) >> 1;
+        if (candleTimes[mid] <= t) lo = mid; else hi = mid;
+      }
+      return Math.abs(candleTimes[lo] - t) <= Math.abs(candleTimes[hi] - t) ? candleTimes[lo] : candleTimes[hi];
+    }
+
+    const colorFor = (d: NewsMarker["direction"]) =>
+      d === "BULL" ? "#10b981" : d === "BEAR" ? "#f43f5e" : "#f59e0b";
+    const shapeFor = (tier: NewsMarker["tier"]): SeriesMarker<Time>["shape"] =>
+      tier === "TIER_1" ? "circle" : tier === "TIER_2" ? "square" : "arrowDown";
+    const sizeFor = (tier: NewsMarker["tier"]) =>
+      tier === "TIER_1" ? 2 : tier === "TIER_2" ? 1.5 : 1;
+    const textFor = (m: NewsMarker) => {
+      const label = m.category === "SENTIMENT_CLUSTER" ? "∇" :
+                    m.category === "EARNINGS" ? "E" :
+                    m.category === "GUIDANCE" ? "G" :
+                    m.category === "M&A" ? "M" :
+                    m.category === "FDA" ? "R" :
+                    m.category === "FED" ? "F" :
+                    m.category === "RATING" ? "↑↓" :
+                    m.category === "FLOW" ? "♦" :
+                    "●";
+      return label;
+    };
+
+    // Snap, dedupe by snapped time keeping highest priority (TIER_1 > TIER_2 > SENTIMENT_SHIFT)
+    const tierWeight: Record<NewsMarker["tier"], number> = { TIER_1: 3, TIER_2: 2, SENTIMENT_SHIFT: 1 };
+    const byTime = new Map<number, NewsMarker>();
+    for (const m of items) {
+      const snapped = snap(m.time);
+      const existing = byTime.get(snapped);
+      if (!existing || tierWeight[m.tier] > tierWeight[existing.tier]) {
+        byTime.set(snapped, m);
+      }
+    }
+
+    const markers: SeriesMarker<Time>[] = [];
+    for (const [snapped, m] of byTime.entries()) {
+      markerIdByTimeRef.current.set(snapped, m.id);
+      markers.push({
+        time: snapped as UTCTimestamp,
+        position: m.direction === "BEAR" ? "aboveBar" : "belowBar",
+        color: colorFor(m.direction),
+        shape: shapeFor(m.tier),
+        text: textFor(m),
+        size: sizeFor(m.tier),
+      });
+    }
+    markers.sort((a, b) => (a.time as number) - (b.time as number));
+    markersPluginRef.current.setMarkers(markers);
+  }, [newsMarkers, candles]);
 
   return (
     <div className="relative rounded-lg border border-border/40 bg-black/20 p-2" data-testid={`lightweight-${symbol}`}>

@@ -49,6 +49,7 @@ import { buildFlowSnapshot, buildIntradayFlowSnapshot, type FlowResponse } from 
 import { buildExposuresSnapshot, type ExposuresResponse } from "./exposures";
 import { buildUnusualFlow, type UnusualFlowResponse } from "./unusualFlow";
 import { buildNewsSnapshot, type NewsResponse } from "./news";
+import { getAlphaEventsForTicker, getAlphaVerdict } from "./alphaNews";
 import { buildEconWeek, type EconWeek } from "./econWeek";
 import { buildModelsSnapshot, type ModelsResponse, type Horizon } from "./models";
 import type { Snapshot_Public, VolMetric } from "@shared/schema";
@@ -1057,6 +1058,51 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (e: any) {
       if (newsCache) return res.json(newsCache.data);
       res.status(503).json({ message: e?.message ?? "Failed to build news snapshot" });
+    }
+  });
+
+  // Alpha news indicator — ticker-scoped, tier-1/2/sentiment-shift filter, AI verdict.
+  // GET /api/alpha-news?ticker=NVDA — returns ranked alpha events for the ticker.
+  // POST /api/alpha-news/verdict { eventId, ticker, context? } — returns AI positioning verdict.
+  // Events cached 2 min per ticker to avoid hammering RSS feeds.
+  const alphaEventsCache = new Map<string, { at: number; data: any }>();
+  const ALPHA_EVENTS_TTL_MS = 2 * 60_000;
+  app.get("/api/alpha-news", async (req, res) => {
+    try {
+      const ticker = typeof req.query.ticker === "string" && req.query.ticker.trim()
+        ? req.query.ticker.trim().toUpperCase()
+        : "SPY";
+      const cached = alphaEventsCache.get(ticker);
+      if (cached && Date.now() - cached.at < ALPHA_EVENTS_TTL_MS) {
+        return res.json(cached.data);
+      }
+      const data = await getAlphaEventsForTicker(ticker);
+      alphaEventsCache.set(ticker, { at: Date.now(), data });
+      res.json(data);
+    } catch (e: any) {
+      res.status(503).json({ message: e?.message ?? "Failed to fetch alpha news" });
+    }
+  });
+
+  app.post("/api/alpha-news/verdict", async (req, res) => {
+    try {
+      const body = req.body ?? {};
+      const eventId = String(body.eventId ?? "");
+      const ticker = String(body.ticker ?? "").toUpperCase();
+      if (!eventId || !ticker) {
+        return res.status(400).json({ message: "eventId and ticker are required" });
+      }
+      // Re-fetch the event list to pin the event object (cache prevents re-cost)
+      const list = await getAlphaEventsForTicker(ticker);
+      const event = list.events.find((e: any) => e.id === eventId);
+      if (!event) {
+        return res.status(404).json({ message: "Event not found for this ticker. The news flow may have rolled over \u2014 reload the chart." });
+      }
+      const context = body.context && typeof body.context === "object" ? body.context : undefined;
+      const verdict = await getAlphaVerdict(event, context, !!body.force);
+      res.json({ event, verdict });
+    } catch (e: any) {
+      res.status(503).json({ message: e?.message ?? "Failed to generate alpha verdict" });
     }
   });
 

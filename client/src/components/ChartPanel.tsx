@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import GammaContextBanner from "./GammaContextBanner";
 import OfiHistogram from "./OfiHistogram";
+import { useAlphaNewsMarkers, AlphaNewsPanel, AlphaNewsToggle } from "./AlphaNewsOverlay";
 
 type Timeframe = "1D" | "5D" | "1M" | "3M" | "1Y" | "5Y";
 const TIMEFRAMES: Timeframe[] = ["1D", "5D", "1M", "3M", "1Y", "5Y"];
@@ -79,6 +80,12 @@ export default function ChartPanel() {
   const [showGamma, setShowGamma] = useState(true);
   const [newSymbol, setNewSymbol] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("price");
+  // Alpha News indicator state — toggle, selected event, scoped to active ticker.
+  const [showAlphaNews, setShowAlphaNews] = useState(true);
+  const [selectedAlphaId, setSelectedAlphaId] = useState<string | null>(null);
+  const alphaNews = useAlphaNewsMarkers(activeChart, showAlphaNews && viewMode === "price" && engine !== "tv");
+  // Clear selection when ticker changes — events are ticker-scoped.
+  useEffect(() => { setSelectedAlphaId(null); }, [activeChart]);
   // Track whether the user has manually picked a view this session.
   // If not, we auto-flip to "flow" when gamma is unsupported and the ticker
   // has flagged unusual contracts (B). Manual pick locks the view per ticker.
@@ -323,6 +330,13 @@ export default function ChartPanel() {
                   <Zap className="h-3 w-3" /> Gamma {showGamma ? "On" : "Off"}
                 </button>
               )}
+              {viewMode === "price" && engine !== "tv" && (
+                <AlphaNewsToggle
+                  enabled={showAlphaNews}
+                  count={alphaNews.markers.length}
+                  onToggle={() => setShowAlphaNews((v) => !v)}
+                />
+              )}
               {viewMode === "price" && (
               <div className="flex rounded-md border border-border/40 p-0.5">
                 {TIMEFRAMES.map((t) => (
@@ -403,14 +417,26 @@ export default function ChartPanel() {
               Failed to load candles. Try another ticker.
             </div>
           ) : engine === "lightweight" ? (
-            <LightweightCandlestick
-              candles={ohlc?.candles ?? []}
-              gamma={gammaSupported && showGamma ? gamma!.levels : null}
-              symbol={activeChart}
-              height={460}
-              showVolume
-              showGamma={showGamma}
-            />
+            <div className="relative">
+              <LightweightCandlestick
+                candles={ohlc?.candles ?? []}
+                gamma={gammaSupported && showGamma ? gamma!.levels : null}
+                symbol={activeChart}
+                height={460}
+                showVolume
+                showGamma={showGamma}
+                newsMarkers={showAlphaNews ? alphaNews.markers : []}
+                onMarkerClick={(id) => setSelectedAlphaId(id)}
+              />
+              {showAlphaNews && selectedAlphaId && (
+                <AlphaNewsPanel
+                  ticker={activeChart}
+                  selectedEventId={selectedAlphaId}
+                  events={alphaNews.events}
+                  onClose={() => setSelectedAlphaId(null)}
+                />
+              )}
+            </div>
           ) : (
             <CandlestickChart
               candles={ohlc?.candles ?? []}
