@@ -21,12 +21,12 @@ import {
   postNewsAlert,
   postOdteBangerAlert,
 } from "./discord";
-import { evaluateOdte, setTenAmRegime, seedSpotHistory, type EvalArgs } from "./odteAlertEngine";
+import { evaluateOdte, diagnoseOdte, setTenAmRegime, seedSpotHistory, type EvalArgs } from "./odteAlertEngine";
 import { postBatcaveDailyCard } from "./discordBatcaveCard";
 import { settleDay } from "./calibration";
 import { postCalibrationCard } from "./calibrationCard";
 import { getTodayEventContext } from "./volCalendar";
-import { persistOdteAuditOnFire } from "./odteAuditDb";
+import { persistOdteAuditOnFire, persistOdteAuditOnReject } from "./odteAuditDb";
 import { mlQuantileOverlay } from "./mlBridge";
 
 const PORT = Number(process.env.PORT ?? 5000);
@@ -460,15 +460,28 @@ async function pollOdteBangerAlerts(): Promise<void> {
     eventGateActions: evGateActions,
   };
 
-  let alerts = [];
+  // Use diagnoseOdte so we get BOTH fireable + rejected lists.
+  // Audit-on-reject lets us debug why no trades fired in production — without
+  // this, an empty audit table is ambiguous (no setups detected vs all gated out).
+  let diag: { fireable: any[]; rejected: Array<{ alert: any; reason: string }> };
   try {
-    alerts = await evaluateOdte(args);
+    diag = await diagnoseOdte(args);
   } catch (e: any) {
     console.warn(`[discordScheduler] odte engine threw: ${e?.message ?? e}`);
     return;
   }
 
-  for (const a of alerts) {
+  // Persist rejects for postmortem analysis (cheap — sqlite local)
+  for (const { alert, reason } of diag.rejected) {
+    persistOdteAuditOnReject(alert, reason);
+  }
+  if (diag.rejected.length > 0) {
+    const byReason = diag.rejected.reduce((m, r) => { m[r.reason] = (m[r.reason] || 0) + 1; return m; }, {} as Record<string, number>);
+    console.log(`[discordScheduler] 0DTE rejects: ${JSON.stringify(byReason)}`);
+  }
+
+  // Fire only the ones that passed all gates
+  for (const a of diag.fireable) {
     console.log(`[discordScheduler] 0DTE banger: ${a.side} ${a.setup} grade=${a.grade.letter} (${a.grade.score})`);
     persistOdteAuditOnFire(a);
     // Wires 17–20: compute ML quantile overlay line (null on any failure — never blocks)

@@ -1511,9 +1511,12 @@ export async function diagnoseOdte(args: EvalArgs): Promise<{
     "callWall", "putWall", "mainPivot", "charmFlip", "charmZero",
     "vanna", "vannaPeak", "t1Up", "t1Dn", "downsideTarget", "upsideTarget",
   ]);
+  // Scaled proximity window — mirror evaluateOdte (max 30pt floor, 0.55% of spot)
+  const DIAG_PROXIMITY_PCT = 0.0055;
+  const diagProximityWindow = Math.max(30, args.spot * DIAG_PROXIMITY_PCT);
   for (const lv of args.levels) {
     if (!meaningfulKinds.has(lv.kind)) continue;
-    if (Math.abs(args.spot - lv.price) > 30) continue;
+    if (Math.abs(args.spot - lv.price) > diagProximityWindow) continue;
     if (detectFailedBreak(lv.price, "above").detected) {
       recordDetection(args.asOf, "FAILED_BREAK");
       const a = buildAlert(argsWithW15, lv, "FAILED_BREAK", "call", sortedLevels);
@@ -1612,9 +1615,16 @@ export async function evaluateOdte(args: EvalArgs): Promise<OdteAlert[]> {
     "callWall", "putWall", "mainPivot", "charmFlip", "charmZero",
     "vanna", "vannaPeak", "t1Up", "t1Dn", "downsideTarget", "upsideTarget",
   ]);
+  // Level-proximity window: was hard-coded 30pt (calibrated for ~5500 SPX = ~0.55%).
+  // At 7400 SPX, 30pt is 0.4% — too tight; intraday rarely touches a wall before
+  // something else fires. Scale to max(30pt, 0.55% of spot) so the relative
+  // proximity stays roughly constant across regimes. Floor at 30pt so we never
+  // narrow the window when spot drops below ~5500.
+  const PROXIMITY_PCT = 0.0055;
+  const proximityWindow = Math.max(30, args.spot * PROXIMITY_PCT);
   for (const lv of args.levels) {
     if (!meaningfulKinds.has(lv.kind)) continue;
-    if (Math.abs(args.spot - lv.price) > 30) continue;  // only near levels
+    if (Math.abs(args.spot - lv.price) > proximityWindow) continue;  // only near levels
 
     // CALL trade — failed break to the downside (was above, dipped below, came back up)
     const fbCall = detectFailedBreak(lv.price, "above");

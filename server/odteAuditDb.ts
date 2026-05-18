@@ -151,3 +151,73 @@ export function persistOdteAuditOnFire(alert: any): void {
     console.warn(`[odte:audit] persistOdteAuditOnFire error: ${err?.message ?? err}`);
   }
 }
+
+/**
+ * Persist a rejected 0DTE setup to audit log with the gate reason.
+ *
+ * Lets us debug WHY trades aren't firing in production. Without this, an empty
+ * audit table is ambiguous (no setups detected vs all rejected). With it, we
+ * can see exact reject distribution per setup type.
+ *
+ * Tier is forced to "REJECTED" so dashboards can split fires from rejects.
+ */
+export function persistOdteAuditOnReject(alert: any, reason: string): void {
+  try {
+    const now = Date.now();
+    const score: number = alert?.grade?.score ?? 0;
+    const setup: string = alert?.setup ?? "UNKNOWN";
+    const side: string = alert?.side ?? "unknown";
+    const alertId: string =
+      alert?.id ?? alert?.alertId ?? `REJ-${setup}-${side}-${now}-${randomUUID().slice(0, 8)}`;
+
+    const features: Record<string, unknown> = {
+      rejectReason: reason,
+      score,
+      letter: alert?.grade?.letter,
+      reasoning: alert?.grade?.reasoning,
+      trendScore: alert?.grade?.trendScore,
+      momentumScore: alert?.grade?.momentumScore,
+      structureScore: alert?.grade?.structureScore,
+      regimeScore: alert?.grade?.regimeScore,
+      envVetoReason: alert?.envVetoReason,
+      t1EstPct: alert?.t1?.estPctGain,
+      t2EstPct: alert?.t2?.estPctGain,
+      projReturnPctT1: alert?.projReturnPctT1,
+      gateRejectReason: alert?.gateRejectReason,
+      coldBootProjOverride: alert?.coldBootProjOverride,
+      gexTier: alert?.gexTier,
+      projTier: alert?.projTier,
+    };
+
+    const contract: Record<string, unknown> = {
+      strike: alert?.contract?.strike,
+      expiry: alert?.contract?.expiry,
+      delta: alert?.contract?.delta,
+      iv: alert?.contract?.iv,
+      optionType: side,
+      bid: alert?.contract?.bid,
+      ask: alert?.contract?.ask,
+      midpoint: alert?.contract?.midpoint,
+    };
+
+    const stmt = sqlite.prepare(`
+      INSERT OR IGNORE INTO odte_alert_audit
+        (alert_id, detected_at, score, tier, setup, side, features_json, contract_json, t1_target, entry_price)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(
+      alertId,
+      now,
+      score,
+      "REJECTED",
+      setup,
+      side,
+      JSON.stringify(features),
+      JSON.stringify(contract),
+      0,
+      alert?.contract?.midpoint ?? 0,
+    );
+  } catch (err: any) {
+    console.warn(`[odte:audit] persistOdteAuditOnReject error: ${err?.message ?? err}`);
+  }
+}

@@ -3166,6 +3166,103 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     }
   });
 
+  // 0DTE audit row reader — returns recent rows from odte_alert_audit table.
+  // ?limit=N (default 50, max 500). ?tier=REJECTED filters to rejects only.
+  // Used for postmortem analysis of why trades did/didn't fire.
+  app.get("/api/odte/audit-rows", async (req, res) => {
+    try {
+      const { sqlite } = await import("./storage");
+      const limit = Math.min(Math.max(1, parseInt(String(req.query.limit ?? "50"), 10) || 50), 500);
+      const tier = req.query.tier ? String(req.query.tier) : null;
+      let sql = "SELECT alert_id, detected_at, score, tier, setup, side, t1_target, entry_price, features_json FROM odte_alert_audit";
+      const params: any[] = [];
+      if (tier) { sql += " WHERE tier = ?"; params.push(tier); }
+      sql += " ORDER BY detected_at DESC LIMIT ?";
+      params.push(limit);
+      const rows = (sqlite as any).prepare(sql).all(...params);
+      // Tally reject reasons for quick visibility
+      const rejectReasonCounts: Record<string, number> = {};
+      for (const r of rows) {
+        if (r.tier === "REJECTED") {
+          try {
+            const f = JSON.parse(r.features_json);
+            const k = f.rejectReason || "unknown";
+            rejectReasonCounts[k] = (rejectReasonCounts[k] || 0) + 1;
+          } catch {}
+        }
+      }
+      res.json({ count: rows.length, rows, rejectReasonCounts });
+    } catch (e: any) {
+      res.status(500).json({ error: "odte_audit_rows_failed", message: e?.message });
+    }
+  });
+
+  // 0DTE manual tick — force-runs the scheduler's pollOdteBangerAlerts logic
+  // synchronously so you can verify gates without waiting 60s. Read-only diagnostic.
+  app.post("/api/odte/manual-tick", async (_req, res) => {
+    try {
+      const { diagnoseOdte } = await import("./odteAlertEngine");
+      const { persistOdteAuditOnReject } = await import("./odteAuditDb");
+      const port = process.env.PORT || "5000";
+      const [modelsResp, odteResp] = await Promise.all([
+        fetch(`http://127.0.0.1:${port}/api/models?symbol=^GSPC&experimental=1`),
+        fetch(`http://127.0.0.1:${port}/api/odte-tracker`),
+      ]);
+      if (!modelsResp.ok || !odteResp.ok) {
+        return res.status(503).json({ error: "upstream_unavailable", models: modelsResp.status, odte: odteResp.status });
+      }
+      const models: any = await modelsResp.json();
+      const odte: any = await odteResp.json();
+      const daily = models.horizons?.daily;
+      if (!daily) return res.status(503).json({ error: "models_no_daily" });
+      const audit = daily.audit ?? {};
+      const spot = odte.spot ?? daily.spot ?? 0;
+      const oneDayEM = daily.expectedMove ?? daily.oneDayEM ?? audit?.scenarioTargets?.oneDayEM ?? audit?.oneDayEM ?? 0;
+      const now = new Date();
+      const etParts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(now);
+      const hh = parseInt(etParts.find((p) => p.type === "hour")?.value ?? "12", 10);
+      const mm = parseInt(etParts.find((p) => p.type === "minute")?.value ?? "0", 10);
+      const { eventDayKind, eventGateActions } = getTodayEventContext();
+      const args: any = {
+        spot, asOf: Date.now(), hourET: hh, minuteET: mm,
+        audit: {
+          slope: audit.slope, dfi: audit.dfi, gammaZone: audit.gammaZone,
+          vannaBias: audit.vannaBias, mainPivot: audit.mainPivot, charmZero: audit.charmZero,
+          vannaM: audit.vannaM, vommaPockets: audit.vommaPockets,
+          realizedSigma20d: audit.realizedSigma20d, intradayPivot: audit.intradayPivot,
+          wickZones: audit.wickZones, gex: audit.gex ?? null,
+          sessionOpen: audit.sessionOpen ?? null, atmIV: audit.atmIV ?? null,
+          vwapProfile: audit.vwapProfile ?? null,
+          jumpRegime: audit.jumpRegime ?? null, jumpScore: audit.jumpScore ?? null,
+          jumpFeatures: audit.jumpFeatures ?? null,
+        },
+        levels: (daily.levels ?? []).map((l: any) => ({ name: l.name, kind: l.kind, price: l.price, side: l.side, status: l.status, tag: l.tag })),
+        contracts: (odte.contracts ?? []).map((c: any) => ({
+          key: c.key, strike: c.strike, side: c.side,
+          bid: c.bid, ask: c.ask, mid: c.mid, last: c.last,
+          volume: c.volume, openInterest: c.openInterest, expiry: c.expiry,
+          iv: c.iv ?? c.impliedVolatility ?? null,
+        })),
+        oneDayEM: typeof oneDayEM === "number" ? oneDayEM : 0,
+        expiry: odte.expiry ?? null,
+        eventDayKind, eventGateActions,
+      };
+      const diag = await diagnoseOdte(args);
+      for (const { alert, reason } of diag.rejected) {
+        persistOdteAuditOnReject(alert, reason);
+      }
+      res.json({
+        spot, expiry: odte.expiry, levelsCount: args.levels.length, contractsCount: args.contracts.length,
+        fireableCount: diag.fireable.length,
+        rejectedCount: diag.rejected.length,
+        rejected: diag.rejected.slice(0, 20).map((r: any) => ({ setup: r.alert.setup, side: r.alert.side, score: r.alert.grade.score, grade: r.alert.grade.letter, t1Pct: r.alert.t1?.estPctGain, reason: r.reason })),
+        fireable: diag.fireable.slice(0, 5).map((a: any) => ({ setup: a.setup, side: a.side, score: a.grade.score, grade: a.grade.letter, t1Pct: a.t1?.estPctGain })),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: "manual_tick_failed", message: e?.message, stack: e?.stack?.split("\n").slice(0, 3) });
+    }
+  });
+
   // 0DTE banger preview — evaluates the engine against current snapshots
   // and returns ALL candidate setups (gated and ungated) so the user can see
   // what the model is watching. Read-only: never posts to Discord.
