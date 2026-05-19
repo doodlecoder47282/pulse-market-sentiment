@@ -1256,6 +1256,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Single-name forward projection — realized vol cone, N sessions out.
+  // Default 60 sessions. Returns q10/q25/q50/q75/q90 bands for the Outlook chart.
+  // HONEST: this is NOT a trained ML model. See honestyNote in the response.
+  app.get("/api/ticker-projection", async (req, res) => {
+    try {
+      const symbol = String(req.query.symbol || "").trim().toUpperCase();
+      if (!symbol) return res.status(400).json({ message: "symbol required" });
+      const sessions = Math.max(5, Math.min(120, Number(req.query.days ?? 60)));
+      const { buildTickerProjection } = await import("./tickerProjection");
+      const data = await buildTickerProjection(symbol, sessions);
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build ticker projection" });
+    }
+  });
+
+  // Single-name catalyst calendar — next earnings (date/timing/EPS est) + closest
+  // macro events. Cross-mounts into the Outlook card so users see catalysts up top.
+  app.get("/api/ticker-calendar", async (req, res) => {
+    try {
+      const symbol = String(req.query.symbol || "").trim().toUpperCase();
+      if (!symbol) return res.status(400).json({ message: "symbol required" });
+      const { buildTickerCalendar } = await import("./tickerCalendar");
+      const data = await buildTickerCalendar(symbol);
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build ticker calendar" });
+    }
+  });
+
   app.get("/api/regime", async (req, res) => {
     try {
       const w = (req.query.window === "w13" ? "w13" : req.query.window === "w52" ? "w52" : "w4") as WindowKey;

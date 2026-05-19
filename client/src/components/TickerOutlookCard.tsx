@@ -1,15 +1,39 @@
 // TickerOutlookCard.tsx
-// Bottom-of-chart card for the active ticker. Fuses news + social + positioning
-// into a verdict (provider tag — anthropic / openai / deterministic) with R:R,
-// Kelly, invalidation, and three-path scenarios. Click triggered: only renders
-// when a ticker is selected on the Chart tab.
+//
+// HERO single-name outlook card — appears at the bottom of the Chart tab when
+// a ticker is selected. Restructured for the overnight build:
+//
+//   1. AI HEADLINE: huge verdict (BULL/BEAR/NEUTRAL) + confidence + edge type +
+//      a single plain-English thesis sentence (15-year-old reading level).
+//   2. CATALYSTS ROW: next earnings (date, days-out, EPS est, IV expected move
+//      if available), closest macro events (FOMC/CPI/NFP/OPEX). This is the
+//      first thing under the headline so users see what's coming.
+//   3. KEY LEVELS: target / invalidation / R:R / Kelly.
+//   4. 60-DAY FORWARD PROJECTION: realized-vol cone chart (q10/q25/q50/q75/q90)
+//      with spot, target, and invalidation overlaid. Honest — not an ML model.
+//   5. SCENARIOS: bull/base/bear with probability bars.
+//   6. POSITIONING: gamma walls, GEX, IV skew, max pain.
+//   7. NEWS + SOCIAL: stacked side-by-side on desktop, stacked vertically on
+//      mobile. Tier badges. Click-through to source.
+//   8. PIVOT MAGNETS + TRIGGERS.
 //
 // Locked rules: no localStorage, no emojis, peer-to-peer voice, no "scrape".
-// Apparels TanStack v5 object form + array query keys + apiRequest.
+// TanStack v5 object form + array query keys + apiRequest.
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import {
+  ResponsiveContainer,
+  ComposedChart,
+  Area,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ReferenceLine,
+  CartesianGrid,
+} from "recharts";
 
 type Direction = "BULL" | "BEAR" | "NEUTRAL";
 
@@ -56,7 +80,7 @@ interface AlphaEvent {
 }
 
 interface SocialPost {
-  source: "stocktwits" | "reddit" | "x";
+  source: "stocktwits" | "reddit" | "x" | string;
   text: string;
   url?: string;
   tone: "bullish" | "bearish" | "neutral";
@@ -76,7 +100,7 @@ interface TickerOutlookResponse {
       score: number;
       messageCount: number;
       volumeZ: number;
-      bySource: { stocktwits: number; reddit: number; x: number };
+      bySource?: { stocktwits: number; reddit: number; x: number };
       topPosts: SocialPost[];
     };
     positioning: {
@@ -98,23 +122,96 @@ interface TickerOutlookResponse {
       socialBias: number;
       positioningBias: number;
       composite: number;
-      edgeType: "informational" | "analytical" | "behavioral" | "environmental" | "none";
+      edgeType: OutlookVerdict["edgeType"];
     };
   };
   pivots: { spot: number; levels: PivotLevel[] } | null;
   warnings: string[];
 }
 
-function dirColor(d: Direction): string {
-  if (d === "BULL") return "text-emerald-300 border-emerald-500/40 bg-emerald-500/10";
-  if (d === "BEAR") return "text-rose-300 border-rose-500/40 bg-rose-500/10";
-  return "text-amber-300 border-amber-500/40 bg-amber-500/10";
+interface TickerCalendarResponse {
+  ticker: string;
+  asOf: string;
+  nextEarnings: {
+    date: string;
+    daysOut: number;
+    timing: string;
+    timingLabel: string;
+    fiscalQuarter: string;
+    epsForecast: number | null;
+    lastYearEps: number | null;
+    numEstimates: number | null;
+    importance: "HIGH" | "MED" | "LOW";
+    isMag7: boolean;
+  } | null;
+  macro: Array<{
+    date: string;
+    daysOut: number;
+    label: string;
+    importance: "HIGH" | "MED" | "LOW";
+    category: "macro" | "fed" | "opex" | "earnings_macro";
+  }>;
+  warnings: string[];
+}
+
+interface TickerProjectionResponse {
+  symbol: string;
+  spot: number;
+  sessionsForward: number;
+  sigmaDaily: number;
+  sigmaAnnualizedPct: number;
+  driftDaily: number;
+  volBlowupFactor: number;
+  bands: Array<{
+    day: number;
+    date: string;
+    q10: number;
+    q25: number;
+    q50: number;
+    q75: number;
+    q90: number;
+  }>;
+  honestyNote: string;
+}
+
+interface EarningsIvResponse {
+  ticker: string;
+  expectedMoveAbs?: number;
+  expectedMovePct?: number;
+  expiry?: string;
+  warnings?: string[];
+}
+
+// ────────────────────── helpers ──────────────────────
+
+function dirGradient(d: Direction): string {
+  if (d === "BULL") return "from-emerald-500/30 via-emerald-500/10 to-transparent";
+  if (d === "BEAR") return "from-rose-500/30 via-rose-500/10 to-transparent";
+  return "from-amber-500/30 via-amber-500/10 to-transparent";
+}
+
+function dirText(d: Direction): string {
+  if (d === "BULL") return "text-emerald-300";
+  if (d === "BEAR") return "text-rose-300";
+  return "text-amber-300";
+}
+
+function dirBorder(d: Direction): string {
+  if (d === "BULL") return "border-emerald-500/50";
+  if (d === "BEAR") return "border-rose-500/50";
+  return "border-amber-500/50";
 }
 
 function tierBadge(tier: AlphaEvent["tier"]): string {
   if (tier === "TIER_1") return "bg-cyan-500/20 text-cyan-300 border-cyan-500/40";
   if (tier === "TIER_2") return "bg-violet-500/20 text-violet-300 border-violet-500/40";
   return "bg-amber-500/20 text-amber-300 border-amber-500/40";
+}
+
+function importanceColor(i: "HIGH" | "MED" | "LOW"): string {
+  if (i === "HIGH") return "border-rose-500/50 bg-rose-500/15 text-rose-200";
+  if (i === "MED") return "border-amber-500/40 bg-amber-500/10 text-amber-200";
+  return "border-border/60 bg-muted/30 text-muted-foreground";
 }
 
 function ago(ts: number): string {
@@ -139,9 +236,28 @@ function fmtGex(n: number | null | undefined): string {
   return n.toFixed(0);
 }
 
+function plainEnglishThesis(v: OutlookVerdict, ticker: string, calendar: TickerCalendarResponse | undefined): string {
+  // 15-year-old reading level summary. Always one sentence, blunt.
+  const dirWord = v.direction === "BULL" ? "going up" : v.direction === "BEAR" ? "going down" : "stuck sideways";
+  const conf =
+    v.confidence >= 70 ? "high-confidence" :
+    v.confidence >= 55 ? "lean" :
+    v.confidence >= 45 ? "low-conviction" : "no edge";
+  const ern = calendar?.nextEarnings;
+  const ernNote = ern && ern.daysOut <= 7
+    ? ` Earnings in ${ern.daysOut}d — sizing should respect that.`
+    : "";
+  const target = v.targetPrice != null ? ` toward ${fmtMoney(v.targetPrice)}` : "";
+  const stop = v.invalidation != null ? `, kill thesis below ${fmtMoney(v.invalidation)}` : "";
+  return `${ticker} is a ${conf} ${dirWord} call${target}${stop}.${ernNote}`;
+}
+
+// ────────────────────── component ──────────────────────
+
 export default function TickerOutlookCard({ ticker }: { ticker: string }) {
   const [expanded, setExpanded] = useState(true);
   const enabled = !!ticker && ticker.trim().length > 0;
+
   const q = useQuery<TickerOutlookResponse>({
     queryKey: ["/api/ticker-outlook", ticker],
     queryFn: async () => {
@@ -153,6 +269,40 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
     refetchInterval: 120_000,
   });
 
+  const cal = useQuery<TickerCalendarResponse>({
+    queryKey: ["/api/ticker-calendar", ticker],
+    queryFn: async () => {
+      const r = await apiRequest("GET", `/api/ticker-calendar?symbol=${encodeURIComponent(ticker)}`);
+      return r.json();
+    },
+    enabled,
+    staleTime: 5 * 60_000,
+    refetchInterval: 10 * 60_000,
+  });
+
+  const proj = useQuery<TickerProjectionResponse>({
+    queryKey: ["/api/ticker-projection", ticker, 60],
+    queryFn: async () => {
+      const r = await apiRequest("GET", `/api/ticker-projection?symbol=${encodeURIComponent(ticker)}&days=60`);
+      return r.json();
+    },
+    enabled,
+    staleTime: 5 * 60_000,
+    refetchInterval: 15 * 60_000,
+  });
+
+  // IV expected move — lazy, only fires if there's an upcoming earnings
+  const hasEarnings = !!cal.data?.nextEarnings;
+  const ivMove = useQuery<EarningsIvResponse>({
+    queryKey: ["/api/earnings-iv", ticker],
+    queryFn: async () => {
+      const r = await apiRequest("GET", `/api/earnings-iv?ticker=${encodeURIComponent(ticker)}`);
+      return r.json();
+    },
+    enabled: enabled && hasEarnings,
+    staleTime: 10 * 60_000,
+  });
+
   const sortedPivots = useMemo(() => {
     if (!q.data?.pivots) return [];
     return [...q.data.pivots.levels]
@@ -160,55 +310,158 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
       .slice(0, 6);
   }, [q.data]);
 
+  // Build chart data — anchor with current spot at day 0
+  const chartData = useMemo(() => {
+    if (!proj.data?.bands?.length) return [];
+    const spot = proj.data.spot;
+    const rows: Array<{
+      day: number;
+      date: string;
+      q10: number;
+      q25: number;
+      q50: number;
+      q75: number;
+      q90: number;
+      band_lo: number;   // q10 absolute
+      band_hi_inner: number; // q25 - q10 stack
+      band_mid_inner: number; // q75 - q25 stack (the inner box)
+      band_hi_outer: number;  // q90 - q75 stack
+    }>[] = [] as any;
+    const out: any[] = [];
+    out.push({
+      day: 0,
+      date: "now",
+      q10: spot, q25: spot, q50: spot, q75: spot, q90: spot,
+    });
+    for (const b of proj.data.bands) {
+      out.push({
+        day: b.day,
+        date: b.date,
+        q10: b.q10,
+        q25: b.q25,
+        q50: b.q50,
+        q75: b.q75,
+        q90: b.q90,
+      });
+    }
+    return out;
+  }, [proj.data]);
+
   if (!enabled) return null;
+
+  const v = q.data?.verdict;
+  const dir: Direction = v?.direction ?? "NEUTRAL";
 
   return (
     <div
-      className="mt-3 rounded-lg border border-border/40 bg-card/40 p-3"
+      className="mt-3 overflow-hidden rounded-xl border border-border/60 bg-card/60 shadow-lg"
       data-testid="card-ticker-outlook"
     >
+      {/* ────── HERO HEADLINE ────── */}
       <button
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center justify-between gap-3"
+        onClick={() => setExpanded((x) => !x)}
+        className={`relative w-full bg-gradient-to-br ${dirGradient(dir)} p-4 text-left transition-colors hover:bg-opacity-90`}
         data-testid="button-toggle-outlook"
       >
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            single-name outlook
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                ai outlook
+              </span>
+              <span className="font-mono text-base font-bold text-foreground">{ticker}</span>
+              {q.data?.spot != null && (
+                <span className="font-mono text-xs text-muted-foreground">
+                  ${fmtMoney(q.data.spot)}
+                </span>
+              )}
+              {v?.provider && (
+                <span className="rounded border border-border/60 bg-muted/40 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                  {v.provider}
+                </span>
+              )}
+            </div>
+
+            {v && (
+              <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span
+                  className={`font-mono text-3xl font-black tracking-tight sm:text-4xl ${dirText(dir)}`}
+                  data-testid="text-headline-direction"
+                >
+                  {v.direction}
+                </span>
+                <span className="font-mono text-2xl font-bold text-foreground">
+                  {v.confidence}%
+                </span>
+                <span className="text-xs uppercase tracking-wider text-muted-foreground">
+                  confidence
+                </span>
+                {v.edgeType && v.edgeType !== "none" && (
+                  <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider ${dirBorder(dir)} ${dirText(dir)}`}>
+                    {v.edgeType} edge
+                  </span>
+                )}
+              </div>
+            )}
+
+            {v && (
+              <p
+                className="mt-2 max-w-3xl text-sm font-medium leading-snug text-foreground/90"
+                data-testid="text-plain-thesis"
+              >
+                {plainEnglishThesis(v, ticker, cal.data)}
+              </p>
+            )}
+          </div>
+
+          <span className="shrink-0 rounded border border-border/60 px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+            {expanded ? "hide" : "show"}
           </span>
-          <span className="font-mono text-sm font-bold text-foreground">{ticker}</span>
-          {q.data?.verdict && (
-            <span
-              className={`rounded border px-1.5 py-0.5 font-mono text-[10px] font-bold tracking-wider ${dirColor(
-                q.data.verdict.direction,
-              )}`}
-              data-testid="badge-direction"
-            >
-              {q.data.verdict.direction} · {q.data.verdict.confidence}%
-            </span>
-          )}
-          {q.data?.verdict?.edgeType && q.data.verdict.edgeType !== "none" && (
-            <span
-              className="rounded border border-border/60 bg-muted/40 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground"
-              data-testid="badge-edge-type"
-            >
-              {q.data.verdict.edgeType}
-            </span>
-          )}
-          {q.data?.verdict?.provider && (
-            <span
-              className="rounded border border-border/60 bg-muted/20 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground"
-              data-testid="badge-provider"
-            >
-              {q.data.verdict.provider}
-            </span>
-          )}
         </div>
-        <span className="text-[10px] text-muted-foreground">{expanded ? "hide" : "show"}</span>
+
+        {/* CATALYSTS — earnings + macro in the hero */}
+        {(cal.data?.nextEarnings || (cal.data?.macro?.length ?? 0) > 0) && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {cal.data?.nextEarnings && (
+              <div
+                className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[11px] ${importanceColor(cal.data.nextEarnings.importance)}`}
+                data-testid="catalyst-earnings"
+              >
+                <span className="font-mono font-bold uppercase tracking-wider">earnings</span>
+                <span className="text-foreground">
+                  {cal.data.nextEarnings.date} · {cal.data.nextEarnings.timingLabel}
+                </span>
+                <span className="font-mono">
+                  {cal.data.nextEarnings.daysOut}d out
+                </span>
+                {cal.data.nextEarnings.epsForecast != null && (
+                  <span className="font-mono text-foreground/70">
+                    EPS est ${cal.data.nextEarnings.epsForecast.toFixed(2)}
+                  </span>
+                )}
+                {ivMove.data?.expectedMovePct != null && (
+                  <span className="font-mono text-foreground/70">
+                    · IV ±{ivMove.data.expectedMovePct.toFixed(1)}%
+                  </span>
+                )}
+              </div>
+            )}
+            {cal.data?.macro?.map((m) => (
+              <div
+                key={m.date + m.label}
+                className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] ${importanceColor(m.importance)}`}
+                data-testid={`catalyst-macro-${m.label}`}
+              >
+                <span className="font-mono uppercase tracking-wider">{m.label}</span>
+                <span className="font-mono opacity-80">{m.daysOut}d</span>
+              </div>
+            ))}
+          </div>
+        )}
       </button>
 
       {expanded && (
-        <div className="mt-3 space-y-3">
+        <div className="space-y-3 p-3 sm:p-4">
           {q.isLoading && !q.data && (
             <div className="flex h-16 items-center justify-center text-xs text-muted-foreground">
               building outlook…
@@ -219,50 +472,150 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
               Failed to build outlook for {ticker}. {(q.error as any)?.message ?? ""}
             </div>
           )}
-          {q.data && (
+
+          {q.data && v && (
             <>
               {/* Key levels strip */}
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <KV label="spot" value={fmtMoney(q.data.spot)} />
                 <KV
                   label="target"
-                  value={fmtMoney(q.data.verdict.targetPrice)}
+                  value={fmtMoney(v.targetPrice)}
                   hint={
-                    q.data.verdict.expectedMovePct != null
-                      ? `${q.data.verdict.expectedMovePct >= 0 ? "+" : ""}${q.data.verdict.expectedMovePct.toFixed(2)}%`
+                    v.expectedMovePct != null
+                      ? `${v.expectedMovePct >= 0 ? "+" : ""}${v.expectedMovePct.toFixed(2)}%`
                       : undefined
                   }
                 />
                 <KV
                   label="invalidation"
-                  value={fmtMoney(q.data.verdict.invalidation)}
-                  hint={
-                    q.data.verdict.rr != null ? `R:R ${q.data.verdict.rr.toFixed(2)}x` : undefined
-                  }
+                  value={fmtMoney(v.invalidation)}
+                  hint={v.rr != null ? `R:R ${v.rr.toFixed(2)}x` : undefined}
                 />
                 <KV
                   label="kelly"
-                  value={`${(q.data.verdict.kellyFrac * 100).toFixed(1)}%`}
+                  value={`${(v.kellyFrac * 100).toFixed(1)}%`}
                   hint="quarter-Kelly"
                 />
               </div>
 
-              {/* Thesis + counter */}
-              <div className="rounded border border-border/40 bg-muted/10 p-2 text-xs">
-                <div className="text-foreground" data-testid="text-thesis">
-                  {q.data.verdict.thesis}
+              {/* 60-day forward projection cone */}
+              <div className="rounded-lg border border-border/40 bg-muted/10 p-2 sm:p-3">
+                <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      60-session forward cone
+                    </span>
+                    {proj.data && (
+                      <span className="font-mono text-[10px] text-muted-foreground">
+                        σ {proj.data.sigmaAnnualizedPct.toFixed(1)}% ann · vol×{proj.data.volBlowupFactor.toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                  <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                    realized vol · not ML
+                  </span>
                 </div>
-                <div className="mt-1 text-muted-foreground" data-testid="text-counter">
+                {proj.isLoading && (
+                  <div className="flex h-32 items-center justify-center text-xs text-muted-foreground">
+                    building cone…
+                  </div>
+                )}
+                {proj.isError && (
+                  <div className="text-[11px] text-amber-300/80">
+                    cone unavailable: {(proj.error as any)?.message ?? "unknown"}
+                  </div>
+                )}
+                {proj.data && chartData.length > 0 && (
+                  <div className="h-44 sm:h-56" data-testid="chart-projection">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+                        <CartesianGrid stroke="rgba(255,255,255,0.04)" strokeDasharray="3 3" />
+                        <XAxis
+                          dataKey="day"
+                          stroke="rgba(255,255,255,0.4)"
+                          fontSize={9}
+                          tickLine={false}
+                          ticks={[0, 10, 20, 30, 40, 50, 60]}
+                          tickFormatter={(d: number) => d === 0 ? "now" : `+${d}d`}
+                        />
+                        <YAxis
+                          stroke="rgba(255,255,255,0.4)"
+                          fontSize={9}
+                          tickLine={false}
+                          width={40}
+                          domain={[(min: number) => min * 0.96, (max: number) => max * 1.04]}
+                          tickFormatter={(n: number) => n.toFixed(0)}
+                        />
+                        <Tooltip
+                          contentStyle={{ background: "rgba(15,15,20,0.95)", border: "1px solid rgba(255,255,255,0.15)", fontSize: 11 }}
+                          labelStyle={{ color: "rgba(255,255,255,0.7)" }}
+                          formatter={(val: any, name: string) => [`$${Number(val).toFixed(2)}`, name]}
+                          labelFormatter={(d: number) => d === 0 ? "today" : `+${d} sessions`}
+                        />
+                        {/* 80% band: q10-q90 outer */}
+                        <Area dataKey="q90" stroke="none" fill={dir === "BULL" ? "#10b98140" : dir === "BEAR" ? "#f43f5e40" : "#f59e0b40"} fillOpacity={0.18} isAnimationActive={false} />
+                        <Area dataKey="q10" stroke="none" fill="#0a0a0a" fillOpacity={1} isAnimationActive={false} />
+                        {/* 50% band: q25-q75 inner */}
+                        <Area dataKey="q75" stroke="none" fill={dir === "BULL" ? "#10b98180" : dir === "BEAR" ? "#f43f5e80" : "#f59e0b80"} fillOpacity={0.30} isAnimationActive={false} />
+                        <Area dataKey="q25" stroke="none" fill="#0a0a0a" fillOpacity={1} isAnimationActive={false} />
+                        {/* drift median */}
+                        <Line type="monotone" dataKey="q50" stroke={dir === "BULL" ? "#10b981" : dir === "BEAR" ? "#f43f5e" : "#f59e0b"} strokeWidth={2} dot={false} isAnimationActive={false} />
+                        {/* target / invalidation */}
+                        {v.targetPrice != null && (
+                          <ReferenceLine
+                            y={v.targetPrice}
+                            stroke="#22d3ee"
+                            strokeDasharray="3 3"
+                            label={{ value: `target ${fmtMoney(v.targetPrice)}`, position: "right", fill: "#22d3ee", fontSize: 9 }}
+                          />
+                        )}
+                        {v.invalidation != null && (
+                          <ReferenceLine
+                            y={v.invalidation}
+                            stroke="#f59e0b"
+                            strokeDasharray="3 3"
+                            label={{ value: `stop ${fmtMoney(v.invalidation)}`, position: "right", fill: "#f59e0b", fontSize: 9 }}
+                          />
+                        )}
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+                {proj.data && (
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <span className={`inline-block h-2 w-3 rounded-sm ${dir === "BULL" ? "bg-emerald-500/60" : dir === "BEAR" ? "bg-rose-500/60" : "bg-amber-500/60"}`} />
+                      50% band (q25–q75)
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className={`inline-block h-2 w-3 rounded-sm ${dir === "BULL" ? "bg-emerald-500/25" : dir === "BEAR" ? "bg-rose-500/25" : "bg-amber-500/25"}`} />
+                      80% band (q10–q90)
+                    </span>
+                    <span className="opacity-70">drift dampened 0.5x</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Thesis + counter (detailed) */}
+              <div className="rounded border border-border/40 bg-muted/10 p-2 text-xs">
+                <div className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  detailed thesis
+                </div>
+                <div className="mt-0.5 text-foreground" data-testid="text-thesis">
+                  {v.thesis}
+                </div>
+                <div className="mt-1.5 text-muted-foreground" data-testid="text-counter">
                   <span className="text-[9px] font-semibold uppercase tracking-wider">counter:</span>{" "}
-                  {q.data.verdict.counterargument}
+                  {v.counterargument}
                 </div>
               </div>
 
               {/* Scenarios */}
-              <div className="grid grid-cols-3 gap-2">
-                <ScenarioBar label="bull" color="emerald" s={q.data.verdict.scenarios.bull} />
-                <ScenarioBar label="base" color="slate" s={q.data.verdict.scenarios.base} />
-                <ScenarioBar label="bear" color="rose" s={q.data.verdict.scenarios.bear} />
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <ScenarioBar label="bull" color="emerald" s={v.scenarios.bull} />
+                <ScenarioBar label="base" color="slate" s={v.scenarios.base} />
+                <ScenarioBar label="bear" color="rose" s={v.scenarios.bear} />
               </div>
 
               {/* Positioning row */}
@@ -270,7 +623,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                 <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                   positioning
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-6">
+                <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 md:grid-cols-6">
                   <KV
                     label="regime"
                     value={q.data.alpha.positioning.regime}
@@ -295,22 +648,14 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                     }
                   />
                 </div>
-                <div className="mt-1.5 grid grid-cols-3 gap-2 text-xs">
+                <div className="mt-1.5 grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
                   <KV
                     label="pcr oi"
-                    value={
-                      q.data.alpha.positioning.pcrOi != null
-                        ? q.data.alpha.positioning.pcrOi.toFixed(2)
-                        : "—"
-                    }
+                    value={q.data.alpha.positioning.pcrOi != null ? q.data.alpha.positioning.pcrOi.toFixed(2) : "—"}
                   />
                   <KV
                     label="pcr vol"
-                    value={
-                      q.data.alpha.positioning.pcrVol != null
-                        ? q.data.alpha.positioning.pcrVol.toFixed(2)
-                        : "—"
-                    }
+                    value={q.data.alpha.positioning.pcrVol != null ? q.data.alpha.positioning.pcrVol.toFixed(2) : "—"}
                   />
                   <KV
                     label="atm iv"
@@ -323,7 +668,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                 </div>
               </div>
 
-              {/* Two-column: news + social */}
+              {/* News + Social */}
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 {/* News */}
                 <div className="rounded border border-border/40 bg-muted/10 p-2">
@@ -346,9 +691,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                       <li key={e.id} className="text-xs" data-testid={`news-event-${e.id}`}>
                         <div className="flex items-start gap-1.5">
                           <span
-                            className={`mt-0.5 shrink-0 rounded border px-1 py-0 font-mono text-[9px] uppercase tracking-wider ${tierBadge(
-                              e.tier,
-                            )}`}
+                            className={`mt-0.5 shrink-0 rounded border px-1 py-0 font-mono text-[9px] uppercase tracking-wider ${tierBadge(e.tier)}`}
                           >
                             {e.tier === "SENTIMENT_SHIFT" ? "shift" : e.tier.replace("TIER_", "T")}
                           </span>
@@ -399,9 +742,9 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                     </div>
                   </div>
                   <div className="mb-1.5 grid grid-cols-3 gap-1 text-[10px] text-muted-foreground">
-                    <KV label="stocktwits" value={String(q.data.alpha.social.bySource.stocktwits ?? 0)} />
-                    <KV label="reddit" value={String(q.data.alpha.social.bySource.reddit ?? 0)} />
-                    <KV label="x" value={String(q.data.alpha.social.bySource.x ?? 0)} />
+                    <KV label="stocktwits" value={String(q.data.alpha.social.bySource?.stocktwits ?? 0)} />
+                    <KV label="reddit" value={String(q.data.alpha.social.bySource?.reddit ?? 0)} />
+                    <KV label="x" value={String(q.data.alpha.social.bySource?.x ?? 0)} />
                   </div>
                   <ul className="space-y-1">
                     {q.data.alpha.social.topPosts.slice(0, 3).map((p, i) => (
@@ -478,13 +821,13 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
               )}
 
               {/* Triggers */}
-              {q.data.verdict.triggers.length > 0 && (
+              {v.triggers.length > 0 && (
                 <div className="rounded border border-border/40 bg-muted/10 p-2">
                   <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     triggers
                   </div>
                   <ul className="space-y-0.5 text-xs text-foreground/90">
-                    {q.data.verdict.triggers.map((t, i) => (
+                    {v.triggers.map((t, i) => (
                       <li key={i} className="flex items-start gap-1.5" data-testid={`trigger-${i}`}>
                         <span className="mt-0.5 text-muted-foreground">›</span>
                         <span>{t}</span>

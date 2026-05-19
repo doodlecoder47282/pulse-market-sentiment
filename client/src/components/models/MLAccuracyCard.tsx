@@ -137,9 +137,45 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
         .join(" ")
     : "";
 
+  // Honesty banner — fires when Brier > 0.27 (mis-calibrated). The ML model is
+  // not gaming users with false confidence: it tells you it's currently noise.
+  const isMisCalibrated = data.brierScore != null && data.brierScore > 0.27;
+  const isWeak = data.brierScore != null && data.brierScore > 0.22 && !isMisCalibrated;
+
   return (
     <Card className="border-cyan-500/20 bg-gradient-to-b from-cyan-950/10 to-card">
       <CardContent className="p-4">
+        {/* Honesty banner — only renders when the model is failing calibration */}
+        {isMisCalibrated && (
+          <div
+            className="mb-3 flex items-start gap-2 rounded-md border border-rose-500/50 bg-rose-500/10 p-3"
+            data-testid="banner-ml-miscalibrated"
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" />
+            <div>
+              <div className="text-[11px] font-bold uppercase tracking-wider text-rose-200">
+                model abstaining · mis-calibrated
+              </div>
+              <div className="mt-0.5 text-[11px] leading-snug text-rose-100/90">
+                Brier {data.brierScore!.toFixed(3)} · above 0.27 threshold. Treat ML probabilities as noise this regime —
+                fade or ignore until hit rate recovers. Position size from your own thesis, not from this output.
+              </div>
+            </div>
+          </div>
+        )}
+        {isWeak && (
+          <div
+            className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2"
+            data-testid="banner-ml-weak"
+          >
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" />
+            <div className="text-[11px] leading-snug text-amber-100/90">
+              <strong>weak edge.</strong> Brier {data.brierScore!.toFixed(3)} — usable but barely above coin flip.
+              Quarter-Kelly size at most. Cross-check with positioning + flow before sizing up.
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <Brain className="h-4 w-4 text-cyan-400" />

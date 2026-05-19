@@ -591,18 +591,49 @@ function ForceGraph({ data, winKey }: { data: SectorWebResponse; winKey: WindowK
     return !(a === focusedId || b === focusedId);
   };
 
+  // ── Immersive cosmos background — procedural starfield + grid + nebulae ─────
+  // Generated once per component mount (seeded by W/H) so stars don't twinkle
+  // randomly on every render. Stars cluster around center; far stars dim and
+  // small, near stars bright and large. Three nebula blooms add depth.
+  const stars = useMemo(() => {
+    const arr: Array<{ cx: number; cy: number; r: number; o: number; hue: number }> = [];
+    // Deterministic PRNG so the field is stable across re-renders
+    let s = 1337;
+    const rand = () => {
+      s = (s * 16807) % 2147483647;
+      return s / 2147483647;
+    };
+    for (let i = 0; i < 220; i++) {
+      const cx = rand() * W;
+      const cy = rand() * H;
+      // Bias size: most stars small, a few bright
+      const z = rand();
+      const r = z < 0.85 ? 0.5 + rand() * 0.8 : 1.2 + rand() * 1.6;
+      const o = z < 0.85 ? 0.25 + rand() * 0.35 : 0.55 + rand() * 0.4;
+      // Hue: mostly cool white, occasional cyan/purple flash
+      const h = rand() < 0.15 ? (rand() < 0.5 ? 195 : 270) : 220;
+      arr.push({ cx, cy, r, o, hue: h });
+    }
+    return arr;
+  }, []);
+
   return (
     <div className="relative">
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
-        className="h-[520px] w-full touch-none select-none bg-[radial-gradient(ellipse_at_center,rgba(40,40,60,0.28),transparent_70%)]"
+        className="h-[520px] w-full touch-none select-none"
         onMouseDown={onSvgDown}
         onMouseMove={onMove}
         onMouseUp={onUp}
         onMouseLeave={onUp}
         onWheel={onWheel}
-        style={{ cursor: drag.current.mode === "pan" ? "grabbing" : "default" }}
+        style={{
+          cursor: drag.current.mode === "pan" ? "grabbing" : "default",
+          // Layered cosmic background: deep navy base + radial bloom
+          background:
+            "radial-gradient(ellipse 60% 50% at 50% 50%, rgba(56, 89, 161, 0.18) 0%, rgba(20, 24, 48, 0.4) 40%, rgba(6, 8, 20, 1) 80%)",
+        }}
       >
         <defs>
           <radialGradient id="haloGreen" cx="50%" cy="50%" r="50%">
@@ -618,7 +649,44 @@ function ForceGraph({ data, winKey }: { data: SectorWebResponse; winKey: WindowK
             <stop offset="70%" stopColor="rgba(125, 211, 252, 0.35)" />
             <stop offset="100%" stopColor="rgba(125, 211, 252, 0)" />
           </radialGradient>
+          <radialGradient id="nebulaPurple" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="rgba(147, 51, 234, 0.18)" />
+            <stop offset="100%" stopColor="rgba(147, 51, 234, 0)" />
+          </radialGradient>
+          <radialGradient id="nebulaCyan" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="rgba(34, 211, 238, 0.16)" />
+            <stop offset="100%" stopColor="rgba(34, 211, 238, 0)" />
+          </radialGradient>
+          <pattern id="cosmosGrid" width="60" height="60" patternUnits="userSpaceOnUse">
+            <path d="M 60 0 L 0 0 0 60" fill="none" stroke="rgba(125, 145, 200, 0.05)" strokeWidth="1" />
+          </pattern>
         </defs>
+
+        {/* Background layer — fixed (no zoom/pan) for parallax depth */}
+        <g pointerEvents="none">
+          <rect x={0} y={0} width={W} height={H} fill="url(#cosmosGrid)" opacity={0.6} />
+          <ellipse cx={W * 0.25} cy={H * 0.35} rx={180} ry={120} fill="url(#nebulaPurple)" />
+          <ellipse cx={W * 0.78} cy={H * 0.72} rx={220} ry={140} fill="url(#nebulaCyan)" />
+          {stars.map((st, i) => (
+            <circle
+              key={`st-${i}`}
+              cx={st.cx}
+              cy={st.cy}
+              r={st.r}
+              fill={`hsl(${st.hue}, 70%, 85%)`}
+              opacity={st.o}
+            >
+              {st.r > 1.2 && (
+                <animate
+                  attributeName="opacity"
+                  values={`${st.o};${Math.max(0.15, st.o - 0.3)};${st.o}`}
+                  dur={`${3 + (i % 5)}s`}
+                  repeatCount="indefinite"
+                />
+              )}
+            </circle>
+          ))}
+        </g>
 
         {/* Zoom+pan group */}
         <g transform={`translate(${zoom.x}, ${zoom.y}) scale(${zoom.k})`}>

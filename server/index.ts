@@ -9,6 +9,16 @@ import { serveStatic } from "./static";
 import { createServer } from "node:http";
 import { startMlRetrainCron } from "./mlRetrainCron";
 
+// Global safety nets — do NOT let a stray promise reject or exception kill the
+// long-running server process. Crashes here previously took down /api/* during
+// background scheduler hiccups.
+process.on("unhandledRejection", (reason: any) => {
+  console.error("[fatal-guard] unhandledRejection:", reason?.message ?? reason);
+});
+process.on("uncaughtException", (err: any) => {
+  console.error("[fatal-guard] uncaughtException:", err?.message ?? err, err?.stack);
+});
+
 const app = express();
 const httpServer = createServer(app);
 
