@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import GammaContextBanner from "./GammaContextBanner";
 import OfiHistogram from "./OfiHistogram";
 import { useAlphaNewsMarkers, AlphaNewsPanel, AlphaNewsToggle } from "./AlphaNewsOverlay";
+import TickerOutlookCard from "./TickerOutlookCard";
 
 type Timeframe = "1D" | "5D" | "1M" | "3M" | "1Y" | "5Y";
 const TIMEFRAMES: Timeframe[] = ["1D", "5D", "1M", "3M", "1Y", "5Y"];
@@ -456,6 +457,9 @@ export default function ChartPanel() {
               <Stat label="Updated" value={new Date(ohlc.asOf * 1000).toLocaleTimeString()} />
             </div>
           )}
+
+          {/* Single-name outlook — news + social + positioning fusion w/ LLM verdict */}
+          {activeChart && <TickerOutlookCard ticker={activeChart} />}
           </>
           )}
         </section>

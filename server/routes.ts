@@ -50,6 +50,8 @@ import { buildExposuresSnapshot, type ExposuresResponse } from "./exposures";
 import { buildUnusualFlow, type UnusualFlowResponse } from "./unusualFlow";
 import { buildNewsSnapshot, type NewsResponse } from "./news";
 import { getAlphaEventsForTicker, getAlphaVerdict } from "./alphaNews";
+import { buildTickerOutlook } from "./tickerOutlook";
+import { gatherPositioningForTicker } from "./tickerAlpha";
 import { buildEconWeek, type EconWeek } from "./econWeek";
 import { buildModelsSnapshot, type ModelsResponse, type Horizon } from "./models";
 import type { Snapshot_Public, VolMetric } from "@shared/schema";
@@ -1167,36 +1169,90 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  // Gamma levels extractor — pulls from the live SPY snapshot. Returns null levels
-  // for non-SPY symbols (options chain only wired for SPY right now).
+  // Gamma levels extractor — SPY/SPX uses the live snapshot, all other optionable
+  // tickers fall through to the per-ticker Schwab chain builder via tickerAlpha.
   app.get("/api/gamma-levels", async (req, res) => {
     try {
       const symbol = String(req.query.symbol || "SPY").trim().toUpperCase();
-      if (symbol !== "SPY" && symbol !== "^GSPC" && symbol !== "SPX") {
-        return res.json({ symbol, supported: false, levels: null });
+      const isSpy = symbol === "SPY" || symbol === "^GSPC" || symbol === "SPX";
+      if (isSpy) {
+        const snap = await getOrBuild(false);
+        const g = snap.gamma;
+        return res.json({
+          symbol: "SPY",
+          supported: true,
+          spot: snap.spy.price ?? g.spot,
+          levels: {
+            callWall: g.callWall,
+            callWallGex: g.callWallGex,
+            putWall: g.putWall,
+            putWallGex: g.putWallGex,
+            zeroGamma: g.zeroGamma,
+            flip: g.zeroGamma,
+            maxPain: g.maxPain,
+            totalGex: g.totalGex,
+            regime: g.totalGex >= 0 ? "positive" : "negative",
+            profile: g.profile,
+          },
+          asOf: snap.capturedAt,
+        });
       }
-      const snap = await getOrBuild(false);
-      const g = snap.gamma;
+      // Per-ticker path — builds gamma from Schwab callExpDateMap/putExpDateMap
+      const pos = await gatherPositioningForTicker(symbol);
+      const supported = !!(pos.spot && (pos.callWall || pos.putWall || typeof pos.totalGex === "number"));
       res.json({
-        symbol: "SPY",
-        supported: true,
-        spot: snap.spy.price ?? g.spot,
-        levels: {
-          callWall: g.callWall,
-          callWallGex: g.callWallGex,
-          putWall: g.putWall,
-          putWallGex: g.putWallGex,
-          zeroGamma: g.zeroGamma,
-          flip: g.zeroGamma, // alias: zeroGamma IS the gamma-flip level (Perfiliev)
-          maxPain: g.maxPain,
-          totalGex: g.totalGex,
-          regime: g.totalGex >= 0 ? "positive" : "negative",
-          profile: g.profile, // strike-level GEX within ±$60
-        },
-        asOf: snap.capturedAt,
+        symbol,
+        supported,
+        spot: pos.spot ?? null,
+        levels: supported
+          ? {
+              callWall: pos.callWall ?? null,
+              callWallGex: pos.callWallGex ?? null,
+              putWall: pos.putWall ?? null,
+              putWallGex: pos.putWallGex ?? null,
+              zeroGamma: pos.gammaFlip ?? null,
+              flip: pos.gammaFlip ?? null,
+              maxPain: pos.maxPain ?? null,
+              totalGex: pos.totalGex ?? null,
+              regime: pos.regime ?? "unknown",
+              profile: pos.profile ?? [],
+            }
+          : null,
+        warnings: pos.warnings ?? [],
+        asOf: new Date().toISOString(),
       });
     } catch (e: any) {
       res.status(500).json({ message: e?.message ?? "Failed to fetch gamma levels" });
+    }
+  });
+
+  // Single-name Outlook — fuses news + social + positioning + pivots into a verdict card.
+  // Surfaces in the Chart tab's bottom card on ticker selection.
+  app.get("/api/ticker-outlook", async (req, res) => {
+    try {
+      const symbol = String(req.query.symbol || "").trim().toUpperCase();
+      if (!symbol) {
+        return res.status(400).json({ message: "symbol required" });
+      }
+      const force = String(req.query.force || "") === "1";
+      const data = await buildTickerOutlook(symbol, { forceVerdict: force });
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to build ticker outlook" });
+    }
+  });
+
+  // Force LLM synthesis re-run (skips verdict cache). Body or query supports symbol.
+  app.post("/api/ticker-outlook/synthesis", async (req, res) => {
+    try {
+      const symbol = String((req.body?.symbol || req.query.symbol || "")).trim().toUpperCase();
+      if (!symbol) {
+        return res.status(400).json({ message: "symbol required" });
+      }
+      const data = await buildTickerOutlook(symbol, { forceVerdict: true });
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "Failed to force synthesis" });
     }
   });
 
