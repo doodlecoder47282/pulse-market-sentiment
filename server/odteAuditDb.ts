@@ -33,6 +33,29 @@ sqlite.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_odte_audit_detected ON odte_alert_audit(detected_at DESC);
   CREATE INDEX IF NOT EXISTS idx_odte_audit_graded ON odte_alert_audit(graded, detected_at DESC);
+
+  -- Wire 21 (Bug Fix Night 6/3): odte_evaluation_log captures EVERY engine
+  -- invocation, even when spotHistory is cold or no candidates are produced.
+  -- This is the visibility layer that solves "why no alerts?" mystery —
+  -- distinguishes silence-due-to-bug vs silence-due-to-no-setup.
+  CREATE TABLE IF NOT EXISTS odte_evaluation_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts INTEGER NOT NULL,
+    spot REAL,
+    spot_history_len INTEGER,
+    candidates_seen INTEGER NOT NULL DEFAULT 0,
+    fireable_count INTEGER NOT NULL DEFAULT 0,
+    rejected_count INTEGER NOT NULL DEFAULT 0,
+    bail_reason TEXT,
+    reject_breakdown_json TEXT,
+    near_miss_top_score INTEGER,
+    near_miss_setup TEXT,
+    near_miss_side TEXT,
+    gex REAL,
+    regime TEXT,
+    pcr_oi REAL
+  );
+  CREATE INDEX IF NOT EXISTS idx_odte_eval_log_ts ON odte_evaluation_log(ts DESC);
 `);
 
 // ─── Tier classifier ──────────────────────────────────────────────────────────
@@ -221,3 +244,63 @@ export function persistOdteAuditOnReject(alert: any, reason: string): void {
     console.warn(`[odte:audit] persistOdteAuditOnReject error: ${err?.message ?? err}`);
   }
 }
+
+// ─── Wire 21: Evaluation log persist ─────────────────────────────────────────
+//
+// Called from discordScheduler after every diagnoseOdte invocation, regardless
+// of result. Captures engine state for postmortem visibility.
+
+export interface EvalLogInput {
+  ts: number;
+  spot?: number | null;
+  spotHistoryLen?: number;
+  candidatesSeen?: number;
+  fireableCount?: number;
+  rejectedCount?: number;
+  bailReason?: string | null;
+  rejectBreakdown?: Record<string, number>;
+  nearMiss?: { score: number; setup: string; side: string } | null;
+  gex?: number | null;
+  regime?: string | null;
+  pcrOi?: number | null;
+}
+
+export function persistOdteEvaluationLog(input: EvalLogInput): void {
+  try {
+    const stmt = sqlite.prepare(`
+      INSERT INTO odte_evaluation_log
+        (ts, spot, spot_history_len, candidates_seen, fireable_count, rejected_count,
+         bail_reason, reject_breakdown_json, near_miss_top_score, near_miss_setup,
+         near_miss_side, gex, regime, pcr_oi)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(
+      input.ts,
+      input.spot ?? null,
+      input.spotHistoryLen ?? null,
+      input.candidatesSeen ?? 0,
+      input.fireableCount ?? 0,
+      input.rejectedCount ?? 0,
+      input.bailReason ?? null,
+      input.rejectBreakdown ? JSON.stringify(input.rejectBreakdown) : null,
+      input.nearMiss?.score ?? null,
+      input.nearMiss?.setup ?? null,
+      input.nearMiss?.side ?? null,
+      input.gex ?? null,
+      input.regime ?? null,
+      input.pcrOi ?? null,
+    );
+  } catch (err: any) {
+    console.warn(`[odte:audit] persistOdteEvaluationLog error: ${err?.message ?? err}`);
+  }
+}
+
+/** Trim eval log to last 30 days to keep DB lean. Called once at startup. */
+export function trimOdteEvaluationLog(): void {
+  try {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    sqlite.prepare(`DELETE FROM odte_evaluation_log WHERE ts < ?`).run(cutoff);
+  } catch {}
+}
+
+trimOdteEvaluationLog();

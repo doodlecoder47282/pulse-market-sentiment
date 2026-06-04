@@ -26,7 +26,7 @@ import { postBatcaveDailyCard } from "./discordBatcaveCard";
 import { settleDay } from "./calibration";
 import { postCalibrationCard } from "./calibrationCard";
 import { getTodayEventContext } from "./volCalendar";
-import { persistOdteAuditOnFire, persistOdteAuditOnReject } from "./odteAuditDb";
+import { persistOdteAuditOnFire, persistOdteAuditOnReject, persistOdteEvaluationLog } from "./odteAuditDb";
 import { mlQuantileOverlay } from "./mlBridge";
 
 const PORT = Number(process.env.PORT ?? 5000);
@@ -475,9 +475,39 @@ async function pollOdteBangerAlerts(): Promise<void> {
   for (const { alert, reason } of diag.rejected) {
     persistOdteAuditOnReject(alert, reason);
   }
+  const byReason: Record<string, number> = diag.rejected.length
+    ? diag.rejected.reduce((m, r) => { m[r.reason] = (m[r.reason] || 0) + 1; return m; }, {} as Record<string, number>)
+    : {};
   if (diag.rejected.length > 0) {
-    const byReason = diag.rejected.reduce((m, r) => { m[r.reason] = (m[r.reason] || 0) + 1; return m; }, {} as Record<string, number>);
     console.log(`[discordScheduler] 0DTE rejects: ${JSON.stringify(byReason)}`);
+  }
+  // Wire 21 (Bug Fix Night 6/3): persist evaluation telemetry on EVERY run
+  // even when fireable=0 and rejected=0 (i.e. cold boot bail). This is the
+  // visibility layer that answers "is the engine working?" honestly.
+  try {
+    const topReject = diag.rejected
+      .slice()
+      .sort((a, b) => (b.alert?.grade?.score ?? 0) - (a.alert?.grade?.score ?? 0))[0];
+    persistOdteEvaluationLog({
+      ts: Date.now(),
+      spot: args.spot,
+      spotHistoryLen: (diag as any).spotHistoryLen,
+      candidatesSeen: diag.fireable.length + diag.rejected.length,
+      fireableCount: diag.fireable.length,
+      rejectedCount: diag.rejected.length,
+      bailReason: (diag as any).bailReason ?? null,
+      rejectBreakdown: byReason,
+      nearMiss: topReject ? {
+        score: topReject.alert?.grade?.score ?? 0,
+        setup: topReject.alert?.setup ?? "?",
+        side: topReject.alert?.side ?? "?",
+      } : null,
+      gex: audit?.gex?.totalGex ?? null,
+      regime: audit?.gex?.regime ?? null,
+      pcrOi: audit?.pcr?.oi ?? null,
+    });
+  } catch (e: any) {
+    console.warn(`[discordScheduler] eval log persist failed: ${e?.message ?? e}`);
   }
 
   // Fire only the ones that passed all gates

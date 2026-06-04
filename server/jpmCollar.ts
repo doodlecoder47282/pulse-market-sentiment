@@ -8,7 +8,7 @@
 // Dealers must hedge the short put and short call exposure, creating
 // pin/support/resistance at those levels.
 
-import { yahooQuote } from "./sources";
+import { getQuote } from "./sources";
 
 export interface CollarQuarter {
   quarter: string;   // "Q2 2026"
@@ -94,7 +94,7 @@ export async function buildJPMCollarSnapshot(): Promise<JPMCollarResponse> {
   }
 
   // Fetch current SPX price
-  const spxQuote = await yahooQuote("^GSPC").catch(() => ({ last: null, prev: null })); // yahooQuote uses Schwab internally
+  const spxQuote = await getQuote("^GSPC").catch(() => ({ last: null, prev: null })); // getQuote is Schwab-backed
   const spxNow = spxQuote.last ?? 5800; // fallback if feed unavailable
 
   // Current quarter is the first entry (most recent)

@@ -19,6 +19,7 @@
 // Result is cached for 30s to keep DB / chain pulls reasonable.
 
 import type { GammaLevelsEnhanced } from "./gammaLevels";
+import type { ChainAuditResult } from "./chainAudit";
 import { fetchOHLC } from "./ohlc";
 
 // ─── Cache ──────────────────────────────────────────────────────────────────
@@ -83,6 +84,14 @@ export interface MlFeatureInputs {
   vix: number | null;
   /** Previous-session VIX close (for intraday change pct). */
   vixPrev: number | null;
+  /**
+   * Optional live chain audit. When present, zomma + vomma peak strikes are
+   * sourced from real dealer-positioning compute (chainAudit.ts) instead of
+   * the static USER_TARGETS in gammaLevels.ts. This is the fix for Bug #3:
+   * we no longer rely on the hardcoded 7070/7265/6960 placeholders when live
+   * peaks are available from Schwab chain data.
+   */
+  chainAudit?: ChainAuditResult | null;
 }
 
 /**
@@ -154,11 +163,23 @@ export async function buildMlFeaturesFromInputs(
   const putWall = _safe(levels?.putWall?.value);
   const flip = _safe(levels?.gammaFlip?.value ?? spot); // fall back to spot
   const maxPain = _safe(levels?.mopex?.value);
-  const zomma = _safe(levels?.zomma?.value);
-  const upVomma = _safe(levels?.vommaUpper?.value);
-  const dnVomma = _safe(levels?.vommaLower?.value);
-  const vannaLvl = _safe(levels?.vanna?.value);
-  const charmLvl = _safe(levels?.charm?.value);
+
+  // ── Live-greek preference (Bug #3 fix) ──
+  // When chainAudit is supplied, prefer the live-computed peak strikes for
+  // zomma / vomma over the static USER_TARGETS dealer-target placeholders.
+  // This keeps the ML feature set anchored to actual dealer positioning rather
+  // than a frozen 7070/7265/6960 snapshot from manual entry.
+  const liveZommaPeak = inputs.chainAudit?.zomma?.peakZommaStrike ?? null;
+  const liveVommaPeak = inputs.chainAudit?.vomma?.peakVommaStrike ?? null;
+  const zomma = _safe(liveZommaPeak ?? levels?.zomma?.value);
+  // For vomma we still have upper / lower hardcoded targets; if live peak exists,
+  // collapse both legs to the live peak (single strike is honest — a 1-strike
+  // peak doesn't have an "upper" / "lower" leg from the audit). When live is
+  // absent, retain the legacy two-leg user targets so existing models don't drift.
+  const upVomma = _safe(liveVommaPeak ?? levels?.vommaUpper?.value);
+  const dnVomma = _safe(liveVommaPeak ?? levels?.vommaLower?.value);
+  const vannaLvl = _safe(inputs.chainAudit?.vanna?.peakVannaStrike ?? levels?.vanna?.value);
+  const charmLvl = _safe(inputs.chainAudit?.charm?.peakCharmStrike ?? levels?.charm?.value);
 
   const distAtr = (lvl: number) => (lvl > 0 ? (lvl - spot) / atrDen : 0);
 

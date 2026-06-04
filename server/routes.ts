@@ -8,7 +8,7 @@ import {
   startTokenRefreshCycle,
 } from "./schwab";
 import {
-  yahooQuote, cboeSpyChain, buildGammaStructure, cnnFearGreed,
+  getQuote, cboeSpyChain, buildGammaStructure, cnnFearGreed,
   gatherSocial, fetchHeadlines,
 } from "./sources";
 import { computeComposite } from "./composite";
@@ -177,9 +177,9 @@ async function fetchVixTermData(): Promise<{ vix: number | null; vix9d: number |
   }
   try {
     const [vixQ, vix9dQ, vix3mQ] = await Promise.all([
-      yahooQuote("^VIX"),
-      yahooQuote("^VIX9D"),
-      yahooQuote("^VIX3M"),
+      getQuote("^VIX"),
+      getQuote("^VIX9D"),
+      getQuote("^VIX3M"),
     ]);
     const data = { vix: vixQ.last, vix9d: vix9dQ.last, vix3m: vix3mQ.last };
     vixTermCache = { at: Date.now(), ...data };
@@ -270,12 +270,12 @@ async function buildSnapshot(): Promise<Snapshot_Public> {
   const warnings: string[] = [];
 
   const [vix, vvix, vix9d, vix3m, skew, spy, chain, fg, social, headlines] = await Promise.all([
-    yahooQuote("^VIX"),
-    yahooQuote("^VVIX"),
-    yahooQuote("^VIX9D"),
-    yahooQuote("^VIX3M"),
-    yahooQuote("^SKEW"),
-    yahooQuote("SPY"),
+    getQuote("^VIX"),
+    getQuote("^VVIX"),
+    getQuote("^VIX9D"),
+    getQuote("^VIX3M"),
+    getQuote("^SKEW"),
+    getQuote("SPY"),
     cboeSpyChain().catch((e) => { warnings.push(`CBOE chain: ${e.message}`); return null; }),
     cnnFearGreed(),
     gatherSocial().catch((e) => { warnings.push(`Social: ${e.message}`); return { score: 0, bullish: 0, bearish: 0, neutral: 0, posts: [] }; }),
@@ -1456,8 +1456,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
       // Use parallel Yahoo fetches — fast, ~100ms each
       const [spy, vix] = await Promise.all([
-        yahooQuote("SPY"),
-        yahooQuote("^VIX"),
+        getQuote("SPY"),
+        getQuote("^VIX"),
       ]);
       const spyChangePct = spy.last && spy.prev ? ((spy.last - spy.prev) / spy.prev) * 100 : null;
       const vixChangePct = vix.last && vix.prev ? ((vix.last - vix.prev) / vix.prev) * 100 : null;
@@ -3326,6 +3326,55 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       res.json({ count: rows.length, rows, rejectReasonCounts });
     } catch (e: any) {
       res.status(500).json({ error: "odte_audit_rows_failed", message: e?.message });
+    }
+  });
+
+  // Wire 21 (Bug Fix Night 6/3): 0DTE evaluation log reader.
+  // Captures every engine invocation — even cold-boot bails. Answers the
+  // "why no alerts?" question with structured telemetry instead of guessing.
+  // ?limit=N (default 100, max 1000). ?hours=N to restrict window.
+  app.get("/api/odte/evaluation-log", async (req, res) => {
+    try {
+      const { sqlite } = await import("./storage");
+      const limit = Math.min(Math.max(1, parseInt(String(req.query.limit ?? "100"), 10) || 100), 1000);
+      const hours = req.query.hours ? parseInt(String(req.query.hours), 10) : null;
+      let sql = `SELECT id, ts, spot, spot_history_len, candidates_seen, fireable_count,
+                        rejected_count, bail_reason, reject_breakdown_json,
+                        near_miss_top_score, near_miss_setup, near_miss_side,
+                        gex, regime, pcr_oi
+                 FROM odte_evaluation_log`;
+      const params: any[] = [];
+      if (hours && hours > 0) {
+        sql += " WHERE ts >= ?";
+        params.push(Date.now() - hours * 60 * 60 * 1000);
+      }
+      sql += " ORDER BY ts DESC LIMIT ?";
+      params.push(limit);
+      const rows = (sqlite as any).prepare(sql).all(...params);
+      // Roll up by bail reason for quick visibility
+      const bailReasonCounts: Record<string, number> = {};
+      let totalEvaluations = 0;
+      let totalCandidates = 0;
+      let totalFires = 0;
+      let totalRejects = 0;
+      let topNearMissScore = 0;
+      for (const r of rows) {
+        totalEvaluations++;
+        totalCandidates += r.candidates_seen || 0;
+        totalFires += r.fireable_count || 0;
+        totalRejects += r.rejected_count || 0;
+        if (r.bail_reason) {
+          bailReasonCounts[r.bail_reason] = (bailReasonCounts[r.bail_reason] || 0) + 1;
+        }
+        if (r.near_miss_top_score > topNearMissScore) topNearMissScore = r.near_miss_top_score;
+      }
+      res.json({
+        count: rows.length,
+        summary: { totalEvaluations, totalCandidates, totalFires, totalRejects, topNearMissScore, bailReasonCounts },
+        rows,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: "odte_eval_log_failed", message: e?.message });
     }
   });
 

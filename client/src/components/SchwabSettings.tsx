@@ -44,7 +44,9 @@ interface SchwabDiag {
   asOf: number;
 }
 
-type SourceState = "schwab_live" | "schwab_cached" | "cboe_fallback" | "yahoo" | "offline";
+// Bug #6 fix: removed misleading "yahoo" state. The disconnected fallback is
+// either cached Schwab snapshots or CBOE delayed chains — never Yahoo data.
+type SourceState = "schwab_live" | "schwab_cached" | "cboe_fallback" | "disconnected" | "offline";
 
 /** Map a UI data-source row to its real live state from the diag feed. */
 function deriveEndpointState(
@@ -54,7 +56,9 @@ function deriveEndpointState(
 ): { source: SourceState; detail: string } {
   if (!isConnected) {
     if (key === "chains") return { source: "cboe_fallback", detail: "CBOE delayed (~15min)" };
-    return { source: "yahoo", detail: "Yahoo delayed" };
+    // Bug #6: quotes/history have no Yahoo fallback — they're cached Schwab
+    // snapshots or stale. Surface the truth, not a fake Yahoo label.
+    return { source: "disconnected", detail: "Schwab disconnected — cached / stale" };
   }
 
   // Endpoint name in cooldown/forbidden maps (matches schwabFetch path keys)
@@ -133,7 +137,7 @@ export function SchwabStatusPill({ onClick }: { onClick: () => void }) {
         className="font-mono text-[9px] font-semibold uppercase tracking-wider"
         style={{ color: isConnected ? "#34d399" : "#fbbf24" }}
       >
-        {isConnected ? "SCHWAB LIVE" : data.connected ? "SCHWAB" : "YAHOO"}
+        {isConnected ? "SCHWAB LIVE" : data.connected ? "SCHWAB" : "DISCONNECTED"}
       </span>
     </button>
   );
@@ -146,7 +150,7 @@ function SourceBadge({ source, detail }: { source: SourceState; detail?: string 
     schwab_live:    { color: "#34d399", dot: "bg-emerald-400", pulse: true,  label: "Schwab LIVE" },
     schwab_cached:  { color: "#a3e635", dot: "bg-lime-400",     pulse: false, label: "Schwab cached" },
     cboe_fallback:  { color: "#fbbf24", dot: "bg-amber-400",    pulse: false, label: "CBOE delayed" },
-    yahoo:          { color: "#fb923c", dot: "bg-orange-400",   pulse: false, label: "Yahoo delayed" },
+    disconnected:   { color: "#fb923c", dot: "bg-orange-400",   pulse: false, label: "Schwab disconnected" },
     offline:        { color: "#f87171", dot: "bg-red-500",      pulse: false, label: "Offline" },
   };
   const s = styles[source];
@@ -390,7 +394,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                 <WifiOff className="h-4 w-4 text-muted-foreground" />
                 <div>
                   <div className="text-sm font-medium">Not connected</div>
-                  <div className="text-[11px] text-muted-foreground">Data sourced from Yahoo Finance (delayed). Connect Schwab for live data.</div>
+                  <div className="text-[11px] text-muted-foreground">Schwab disconnected — serving cached snapshots or CBOE delayed data. Connect Schwab for live data.</div>
                 </div>
               </div>
             )}

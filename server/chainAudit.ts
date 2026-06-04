@@ -82,6 +82,32 @@ export interface CharmResult {
   totalCharmPerDay: number;
 }
 
+// Vomma: vega's sensitivity to IV (∂vega/∂σ). Tells you how vol-of-vol
+// scales your vega P&L. High |vomma| = vega itself moves a lot in vol shocks.
+export interface VommaStrike {
+  strike: number;
+  vommaExposure: number;
+}
+
+export interface VommaResult {
+  profile: VommaStrike[];
+  peakVommaStrike: number | null;
+  totalVommaDollarPerVolPct: number;  // $/1% vol move on vega
+}
+
+// Zomma: gamma's sensitivity to IV (∂gamma/∂σ). Tells you how dealer pinning
+// strength flexes when vol regime shifts. Critical for 0DTE GEX modeling.
+export interface ZommaStrike {
+  strike: number;
+  zommaExposure: number;
+}
+
+export interface ZommaResult {
+  profile: ZommaStrike[];
+  peakZommaStrike: number | null;
+  totalZommaDollarPerVolPct: number;  // $-gamma change per 1% vol move
+}
+
 export interface SkewEntry {
   expiry: string;
   dte: number;
@@ -163,6 +189,10 @@ export interface ChainAuditResult {
   vanna: VannaResult;
   // 3
   charm: CharmResult;
+  // 3b
+  vomma: VommaResult;
+  // 3c
+  zomma: ZommaResult;
   // 4
   skew: SkewEntry[];
   // 5
@@ -380,6 +410,124 @@ function computeCharm(contracts: Contract[], spot: number): CharmResult {
   const totalCharmPerDay = profile.reduce((s, p) => s + p.charmExposure, 0);
 
   return { profile, peakCharmStrike, totalCharmPerDay };
+}
+
+// ─── 3b/3c helpers: derive d1/d2 from Schwab greeks ──────────────────────────
+//
+// Schwab provides delta directly. For a call: delta = N(d1), so d1 = N⁻¹(delta).
+// For a put: delta = N(d1) - 1, so d1 = N⁻¹(delta + 1). Then d2 = d1 - σ√T.
+// This lets us compute vomma and zomma without re-implementing Black-Scholes
+// from scratch — we ride on Schwab's own pricing model.
+
+/** Beasley-Springer-Moro approximation of inverse normal CDF. Accurate to ~1e-7 over (0,1). */
+function invNormCDF(p: number): number {
+  if (p <= 0 || p >= 1 || !isFinite(p)) return 0;
+  // Coefficients
+  const a = [-3.969683028665376e1, 2.209460984245205e2, -2.759285104469687e2, 1.383577518672690e2, -3.066479806614716e1, 2.506628277459239];
+  const b = [-5.447609879822406e1, 1.615858368580409e2, -1.556989798598866e2, 6.680131188771972e1, -1.328068155288572e1];
+  const c = [-7.784894002430293e-3, -3.223964580411365e-1, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
+  const d = [7.784695709041462e-3, 3.224671290700398e-1, 2.445134137142996, 3.754408661907416];
+  const pLow = 0.02425;
+  const pHigh = 1 - pLow;
+  let q: number, r: number;
+  if (p < pLow) {
+    q = Math.sqrt(-2 * Math.log(p));
+    return (((((c[0]*q + c[1])*q + c[2])*q + c[3])*q + c[4])*q + c[5]) /
+           ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1);
+  }
+  if (p <= pHigh) {
+    q = p - 0.5;
+    r = q * q;
+    return (((((a[0]*r + a[1])*r + a[2])*r + a[3])*r + a[4])*r + a[5])*q /
+           (((((b[0]*r + b[1])*r + b[2])*r + b[3])*r + b[4])*r + 1);
+  }
+  q = Math.sqrt(-2 * Math.log(1 - p));
+  return -(((((c[0]*q + c[1])*q + c[2])*q + c[3])*q + c[4])*q + c[5]) /
+           ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1);
+}
+
+/** Recover d1, d2 from contract using its delta and IV. Returns null if unrecoverable. */
+function recoverD1D2(c: Contract): { d1: number; d2: number } | null {
+  if (c.iv <= 0 || c.dte <= 0) return null;
+  const T = c.dte / 365;
+  const sigmaRootT = c.iv * Math.sqrt(T);
+  if (sigmaRootT <= 0 || !isFinite(sigmaRootT)) return null;
+  let probability: number;
+  if (c.side === "call") {
+    if (c.delta <= 0 || c.delta >= 1) return null;
+    probability = c.delta;
+  } else {
+    // put delta is in (-1, 0). d1 = N⁻¹(delta + 1)
+    if (c.delta >= 0 || c.delta <= -1) return null;
+    probability = c.delta + 1;
+  }
+  const d1 = invNormCDF(probability);
+  const d2 = d1 - sigmaRootT;
+  if (!isFinite(d1) || !isFinite(d2)) return null;
+  return { d1, d2 };
+}
+
+// ─── 3b. Vomma (∂vega/∂σ) ─────────────────────────────────────────────────────
+
+function computeVomma(contracts: Contract[], spot: number): VommaResult {
+  const strikeMap = new Map<number, number>();
+
+  for (const c of contracts) {
+    if (c.oi <= 0 || c.iv <= 0 || c.vega === 0) continue;
+    const dd = recoverD1D2(c);
+    if (!dd) continue;
+    // Vomma per contract = vega · (d1 · d2) / σ. Units: dollars per 1.0 vol unit per contract.
+    const vomma = safeDivide(c.vega * dd.d1 * dd.d2, c.iv);
+    // Aggregate exposure for a 1% (0.01) vol move: vomma × OI × 100 × 0.01.
+    // Note: vega is already in $/contract per 1.0 vol unit (Schwab convention), so this
+    // gives $ change in *vega P&L* per 1% vol move — i.e. convexity of vol exposure.
+    const vommaExp = vomma * c.oi * 100 * 0.01;
+    strikeMap.set(c.strike, (strikeMap.get(c.strike) ?? 0) + vommaExp);
+  }
+
+  const profile: VommaStrike[] = Array.from(strikeMap.entries())
+    .map(([strike, vommaExposure]) => ({ strike, vommaExposure }))
+    .sort((a, b) => a.strike - b.strike);
+
+  const peakVommaStrike = profile.reduce<VommaStrike | null>(
+    (best, p) => Math.abs(p.vommaExposure) > Math.abs(best?.vommaExposure ?? 0) ? p : best,
+    null,
+  )?.strike ?? null;
+
+  const totalVommaDollarPerVolPct = profile.reduce((s, p) => s + p.vommaExposure, 0);
+
+  return { profile, peakVommaStrike, totalVommaDollarPerVolPct };
+}
+
+// ─── 3c. Zomma (∂gamma/∂σ) ─────────────────────────────────────────────────────
+
+function computeZomma(contracts: Contract[], spot: number): ZommaResult {
+  const strikeMap = new Map<number, number>();
+
+  for (const c of contracts) {
+    if (c.oi <= 0 || c.iv <= 0 || c.gamma === 0) continue;
+    const dd = recoverD1D2(c);
+    if (!dd) continue;
+    // Zomma per contract = gamma · (d1 · d2 − 1) / σ. Units: gamma-units per 1.0 vol unit.
+    const zomma = safeDivide(c.gamma * (dd.d1 * dd.d2 - 1), c.iv);
+    // $-gamma exposure change per 1% vol move = zomma × OI × 100 × S² × 0.01.
+    // (Gamma P&L is per S²; sign convention matches dealer net-gamma convention via OI.)
+    const zommaExp = zomma * c.oi * 100 * spot * spot * 0.01;
+    strikeMap.set(c.strike, (strikeMap.get(c.strike) ?? 0) + zommaExp);
+  }
+
+  const profile: ZommaStrike[] = Array.from(strikeMap.entries())
+    .map(([strike, zommaExposure]) => ({ strike, zommaExposure }))
+    .sort((a, b) => a.strike - b.strike);
+
+  const peakZommaStrike = profile.reduce<ZommaStrike | null>(
+    (best, p) => Math.abs(p.zommaExposure) > Math.abs(best?.zommaExposure ?? 0) ? p : best,
+    null,
+  )?.strike ?? null;
+
+  const totalZommaDollarPerVolPct = profile.reduce((s, p) => s + p.zommaExposure, 0);
+
+  return { profile, peakZommaStrike, totalZommaDollarPerVolPct };
 }
 
 // ─── 4. IV Skew per expiry ────────────────────────────────────────────────────
@@ -724,6 +872,8 @@ export function buildChainAudit(
     dex: computeDEX(contracts, spot),
     vanna: computeVanna(contracts, spot),
     charm: computeCharm(contracts, spot),
+    vomma: computeVomma(contracts, spot),
+    zomma: computeZomma(contracts, spot),
     skew: computeIVSkew(contracts),
     termStructure: computeTermStructure(contracts, spot),
     unusualVolume: computeUnusualVolume(contracts, spot),

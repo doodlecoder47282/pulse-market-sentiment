@@ -23,9 +23,12 @@ async function fetchText(url: string, headers: Record<string, string> = {}) {
 }
 
 /** Quote endpoint: last-close + previous-close via Schwab getQuotes.
- *  Symbol mapping: Yahoo ^ prefix → Schwab $ prefix (e.g. ^VIX → $VIX.X, ^GSPC → $SPX.X).
+ *  Symbol mapping: Yahoo ^ prefix → Schwab $ prefix (e.g. ^VIX → $VIX, ^GSPC → $SPX).
+ *  Bug #4 fix: renamed from yahooQuote → getQuote. Function was never calling
+ *  Yahoo — the implementation has always been Schwab-only. The misleading name
+ *  was a vestige from the pre-Schwab era.
  */
-export async function yahooQuote(symbol: string): Promise<{ last: number | null; prev: number | null; }> {
+export async function getQuote(symbol: string): Promise<{ last: number | null; prev: number | null; }> {
   try {
     // Map Yahoo-style symbols to Schwab equivalents
     const schwabSymbol = toSchwabSymbol(symbol);
@@ -66,6 +69,12 @@ function toSchwabSymbol(symbol: string): string {
 }
 
 export { toSchwabSymbol };
+
+/**
+ * @deprecated Use getQuote instead. Kept as alias to avoid touching every legacy
+ * callsite in one PR — function body lives in getQuote.
+ */
+export const yahooQuote = getQuote;
 
 /** CBOE delayed options chain for SPY (includes per-contract Greeks). */
 export async function cboeSpyChain(): Promise<any> {

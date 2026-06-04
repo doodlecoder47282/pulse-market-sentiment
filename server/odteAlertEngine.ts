@@ -1490,6 +1490,8 @@ export async function diagnoseOdte(args: EvalArgs): Promise<{
   rejected: Array<{ alert: OdteAlert; reason: string }>;
   fireGate: number;
   bangerMinPct: number;
+  bailReason?: string;
+  spotHistoryLen?: number;
 }> {
   // We reuse the same buildAlert pipeline by calling evaluateOdte but
   // rely on the alerts it produces (which already include grade.reasoning
@@ -1501,7 +1503,17 @@ export async function diagnoseOdte(args: EvalArgs): Promise<{
   const out: OdteAlert[] = [];
   recordSpot(args.asOf, args.spot);
   if (spotHistory.length < 3) {
-    return { fireable: [], rejected: [], fireGate: FIRE_GATE, bangerMinPct: BANGER_MIN_PCT };
+    // Wire 21: surface the bail so telemetry knows we DID try, but couldn't
+    // evaluate due to insufficient bar history. Distinguishes silence-from-bug
+    // vs silence-from-cold-boot vs silence-from-no-setup.
+    return {
+      fireable: [],
+      rejected: [],
+      fireGate: FIRE_GATE,
+      bangerMinPct: BANGER_MIN_PCT,
+      bailReason: `COLD_BOOT_SPOT_HISTORY_LEN_${spotHistory.length}_LT_3`,
+      spotHistoryLen: spotHistory.length,
+    };
   }
   // Wire 15: pre-fetch async gate data
   const w15 = args.wire15 ?? await buildWire15Context(args);
@@ -1593,7 +1605,7 @@ export async function diagnoseOdte(args: EvalArgs): Promise<{
     fireable.push(a);
   }
   fireable.sort((a, b) => b.grade.score - a.grade.score);
-  return { fireable, rejected, fireGate: FIRE_GATE, bangerMinPct: BANGER_MIN_PCT };
+  return { fireable, rejected, fireGate: FIRE_GATE, bangerMinPct: BANGER_MIN_PCT, spotHistoryLen: spotHistory.length };
 }
 
 export async function evaluateOdte(args: EvalArgs): Promise<OdteAlert[]> {
