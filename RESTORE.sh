@@ -47,15 +47,22 @@ SCHWAB_REDIRECT_URI=${SCHWAB_REDIRECT_URI:-https://127.0.0.1}
 EOF
     chmod 600 "$APP/.env.local"
     echo "[restore] .env.local created from environment variables"
+  elif [ -f "$WORKSPACE/.pulse-secrets/.env.local" ]; then
+    # Primary backup: inside workspace (survives sandbox wipes that preserve workspace)
+    cp "$WORKSPACE/.pulse-secrets/.env.local" "$APP/.env.local"
+    chmod 600 "$APP/.env.local"
+    echo "[restore] .env.local restored from workspace/.pulse-secrets backup"
   elif [ -f "$HOME/.pulse-secrets/.env.local" ]; then
+    # Secondary backup: home dir (rarely survives sandbox recycle, but try anyway)
     cp "$HOME/.pulse-secrets/.env.local" "$APP/.env.local"
     chmod 600 "$APP/.env.local"
     echo "[restore] .env.local restored from ~/.pulse-secrets backup"
   else
     echo "[restore] WARNING: .env.local missing and no credential source available"
     echo "[restore]   - Set SCHWAB_CLIENT_ID + SCHWAB_CLIENT_SECRET env vars, OR"
-    echo "[restore]   - Place creds at ~/.pulse-secrets/.env.local, OR"
-    echo "[restore]   - Ask the agent: memory_search 'Schwab credentials'"
+    echo "[restore]   - Place creds at $WORKSPACE/.pulse-secrets/.env.local (primary), OR"
+    echo "[restore]   - Place creds at ~/.pulse-secrets/.env.local (secondary), OR"
+    echo "[restore]   - Ask the agent: memory_search 'Schwab credentials recovery'"
   fi
 else
   echo "[restore] .env.local already present — leaving alone"
