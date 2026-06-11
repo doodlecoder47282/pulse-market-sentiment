@@ -29,8 +29,59 @@ import { getTodayEventContext } from "./volCalendar";
 import { persistOdteAuditOnFire, persistOdteAuditOnReject, persistOdteEvaluationLog } from "./odteAuditDb";
 import { mlQuantileOverlay } from "./mlBridge";
 
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
+
+// ─── Persisted dedup state (Bug fix: stop boot-spam on server restart) ───
+//
+// All four "X_FIRED" sets used to live in-memory only. On restart they reset
+// to empty, so the next tick thought the most-recent 30-min slot hadn't fired
+// yet and re-posted it. Persisting to a JSON file inside workspace fixes that
+// without adding a DB table.
+const SCHEDULER_STATE_PATH = "/home/user/workspace/sentiment-app/.discord-scheduler-state.json";
+
+interface SchedulerPersistedState {
+  dailyFired: string[];
+  preOpenScanFired: string[];
+  tenAmFired: string[];
+  HALFHOUR_FIRED: string[];
+  savedAt: number;
+}
+
+function loadSchedulerState(): Partial<SchedulerPersistedState> {
+  try {
+    if (!existsSync(SCHEDULER_STATE_PATH)) return {};
+    const raw = readFileSync(SCHEDULER_STATE_PATH, "utf8");
+    const parsed = JSON.parse(raw) as SchedulerPersistedState;
+    // Ignore state older than 48h to avoid resurrecting stale entries
+    if (parsed.savedAt && Date.now() - parsed.savedAt > 48 * 3600_000) return {};
+    return parsed;
+  } catch (e) {
+    console.warn(`[scheduler] loadSchedulerState failed (non-fatal): ${e}`);
+    return {};
+  }
+}
+
+function saveSchedulerState(): void {
+  try {
+    const dir = dirname(SCHEDULER_STATE_PATH);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const payload: SchedulerPersistedState = {
+      dailyFired: Array.from(dailyFired),
+      preOpenScanFired: Array.from(preOpenScanFired),
+      tenAmFired: Array.from(tenAmFired),
+      HALFHOUR_FIRED: Array.from(HALFHOUR_FIRED),
+      savedAt: Date.now(),
+    };
+    writeFileSync(SCHEDULER_STATE_PATH, JSON.stringify(payload, null, 2));
+  } catch (e) {
+    // Non-fatal — worst case we re-fire on next restart (same as before this fix)
+    console.warn(`[scheduler] saveSchedulerState failed (non-fatal): ${e}`);
+  }
+}
 
 // ─── ML helpers (Wires 17–20) ─────────────────────────────────────────
 // GEX tier ordinal map: THIN=-1, LIGHT=0, SOFT=1, FULL=2
@@ -201,6 +252,7 @@ async function maybeFireDaily(): Promise<void> {
   if (nowMin < tgtMin) return;
   if (nowMin > tgtMin + 15) return;
   dailyFired.add(date);
+  saveSchedulerState();
   console.log(`[discordScheduler] firing daily SPX card (Batcave format) at ${date} ${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")} ET (target ${DAILY_HHMM})`);
   await postBatcaveDailyCard();
 }
@@ -229,6 +281,7 @@ async function maybeFireHalfHour(): Promise<void> {
   const key = `${date} ${String(hh).padStart(2, "0")}:${String(slotMM).padStart(2, "0")}`;
   if (HALFHOUR_FIRED.has(key)) return;
   HALFHOUR_FIRED.add(key);
+  saveSchedulerState();
   console.log(`[discordScheduler] firing 30-min Batcave card for slot ${key} ET (tick at ${hh}:${String(mm).padStart(2,"0")})`);
   await postBatcaveDailyCard().catch((e) => {
     console.error(`[discordScheduler] half-hour fire failed: ${e}`);
@@ -546,6 +599,7 @@ async function maybePreOpenOdteScan(): Promise<void> {
   if (nowMin < tgtMin) return;
   if (nowMin > tgtMin + 14) return; // cap before live window at 9:45
   preOpenScanFired.add(date);
+  saveSchedulerState();
   console.log(`[discordScheduler] 9:30 pre-open 0DTE scan firing at ${date} ${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")} ET`);
 
   let modelsRes: Response, odteRes: Response;
@@ -774,6 +828,7 @@ async function maybeFireTenAmRegime(): Promise<void> {
   if (nowMin < tgtMin) return;
   if (nowMin > tgtMin + 14) return;
   tenAmFired.add(date);
+  saveSchedulerState();
 
   let res: Response;
   try {
@@ -824,39 +879,51 @@ async function tick(): Promise<void> {
   await pollOdteBangerAlerts();
 
   // GC dailyFired weekly (small set, but keep tidy)
+  let gcDirty = false;
   if (dailyFired.size > 14) {
     const today = etNow().date;
     for (const k of Array.from(dailyFired)) {
-      if (k !== today) dailyFired.delete(k);
+      if (k !== today) { dailyFired.delete(k); gcDirty = true; }
     }
   }
   // GC preOpenScanFired — keep only today
   if (preOpenScanFired.size > 14) {
     const today = etNow().date;
     for (const k of Array.from(preOpenScanFired)) {
-      if (k !== today) preOpenScanFired.delete(k);
+      if (k !== today) { preOpenScanFired.delete(k); gcDirty = true; }
     }
   }
   // GC tenAmFired — keep only today
   if (tenAmFired.size > 14) {
     const today = etNow().date;
     for (const k of Array.from(tenAmFired)) {
-      if (k !== today) tenAmFired.delete(k);
+      if (k !== today) { tenAmFired.delete(k); gcDirty = true; }
     }
   }
   // GC HALFHOUR_FIRED — keep only today's entries
   if (HALFHOUR_FIRED.size > 20) {
     const today = etNow().date;
     for (const k of Array.from(HALFHOUR_FIRED)) {
-      if (!k.startsWith(today)) HALFHOUR_FIRED.delete(k);
+      if (!k.startsWith(today)) { HALFHOUR_FIRED.delete(k); gcDirty = true; }
     }
   }
+  if (gcDirty) saveSchedulerState();
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;
 
 export function startDiscordScheduler(): void {
   if (timer) return;
+
+  // ── Restore dedup state from disk so we don't re-fire on restart ──
+  const persisted = loadSchedulerState();
+  if (persisted.dailyFired)       for (const k of persisted.dailyFired)       dailyFired.add(k);
+  if (persisted.preOpenScanFired) for (const k of persisted.preOpenScanFired) preOpenScanFired.add(k);
+  if (persisted.tenAmFired)       for (const k of persisted.tenAmFired)       tenAmFired.add(k);
+  if (persisted.HALFHOUR_FIRED)   for (const k of persisted.HALFHOUR_FIRED)   HALFHOUR_FIRED.add(k);
+  if (persisted.savedAt) {
+    console.log(`[scheduler] restored dedup state from disk — daily=${dailyFired.size} preOpen=${preOpenScanFired.size} tenAm=${tenAmFired.size} halfHour=${HALFHOUR_FIRED.size}`);
+  }
 
   // Seed spotHistory from Yahoo 1-min bars before starting the poll loop.
   // This prevents the engine from being blind on cold boot / redeployment.
@@ -872,7 +939,9 @@ export function startDiscordScheduler(): void {
     });
 
   timer = setInterval(() => { tick().catch(() => {}); }, 60_000);
-  // First tick after 5s so server has a moment to warm
+  // First tick after 5s so server has a moment to warm.
+  // Dedup state was just restored from disk above, so any slot that already
+  // fired in the last 48h is suppressed here — no more boot-spam on restart.
   setTimeout(() => { tick().catch(() => {}); }, 5_000);
   console.log(`[discordScheduler] started — daily 9:30 ET + 9:30 0DTE pre-open scan + 10:00 regime snapshot + 30-min cadence (10:00–16:00 ET) + 0DTE bangers (9:45–15:45 ET), alerts on level breaks + gamma flips + macro news`);
 }
