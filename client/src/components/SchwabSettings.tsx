@@ -176,6 +176,11 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
   const { toast } = useToast();
   const [redirectedUrl, setRedirectedUrl] = useState("");
   const [step, setStep] = useState<"idle" | "waiting_for_paste">("idle");
+  // Sandbox-blocked auth: when window.open is silently refused (iframe sandbox,
+  // iOS Safari popup blocker, etc.) we surface the URL as a tappable fallback
+  // link the user can long-press / open manually. This is the fix for the
+  // "Connect button does nothing" bug on iPhone inside the Perplexity webview.
+  const [authBlockedFallback, setAuthBlockedFallback] = useState(false);
 
   const { data: status, isLoading: statusLoading, refetch: refetchStatus } = useQuery<SchwabStatus>({
     queryKey: ["/api/schwab/status"],
@@ -267,10 +272,22 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
   });
 
   const handleOpenAuth = () => {
-    if (authUrlData?.url) {
-      window.open(authUrlData.url, "_blank", "noopener,noreferrer");
-      setStep("waiting_for_paste");
+    if (!authUrlData?.url) return;
+    // window.open returns null when blocked (sandboxed iframe, popup blocker,
+    // iOS WebView). Detect that and fall back to surfacing the URL inline so
+    // the user can long-press it / open it in a real Safari tab.
+    let win: Window | null = null;
+    try {
+      win = window.open(authUrlData.url, "_blank", "noopener,noreferrer");
+    } catch {
+      win = null;
     }
+    if (!win) {
+      setAuthBlockedFallback(true);
+    }
+    // Either way, advance to paste step — if the popup did open, user logs in;
+    // if it didn't, user opens manually via the fallback link.
+    setStep("waiting_for_paste");
   };
 
   const handleConnect = () => {
@@ -423,6 +440,36 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                   <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
                   Open Schwab Login
                 </Button>
+                {authBlockedFallback && authUrlData?.url && (
+                  <div className="mt-2 rounded border border-amber-500/40 bg-amber-500/5 p-2 space-y-1.5">
+                    <div className="text-[10px] font-semibold text-amber-300 uppercase tracking-wider">
+                      Popup blocked — tap the link directly
+                    </div>
+                    <a
+                      href={authUrlData.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block break-all text-[10px] text-blue-300 underline underline-offset-2"
+                      data-testid="schwab-auth-fallback-link"
+                    >
+                      {authUrlData.url}
+                    </a>
+                    <button
+                      type="button"
+                      className="text-[10px] text-muted-foreground hover:text-foreground underline"
+                      onClick={() => {
+                        if (authUrlData?.url) {
+                          navigator.clipboard.writeText(authUrlData.url).then(
+                            () => toast({ title: "Copied auth URL" }),
+                            () => toast({ title: "Copy failed — long-press the link instead", variant: "destructive" })
+                          );
+                        }
+                      }}
+                    >
+                      Copy URL
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Step 2 */}
