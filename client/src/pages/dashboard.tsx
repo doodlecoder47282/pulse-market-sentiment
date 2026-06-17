@@ -280,7 +280,7 @@ export default function Dashboard() {
       <SchwabSettings open={settingsOpen} onOpenChange={setSettingsOpen} />
 
       {/* Header */}
-      <header className="sticky top-0 z-10 border-b border-border bg-background/80 backdrop-blur">
+      <header className="sticky top-0 z-10 border-b border-border bg-background md:bg-background/80 md:backdrop-blur">
         <div className="mx-auto flex max-w-[1800px] items-center justify-between gap-2 px-3 py-3 sm:px-4 md:px-8 xl:px-10">
           {/* Left: Logo + name + BATCAVE tag */}
           <div className="flex items-center gap-3">

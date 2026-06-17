@@ -338,7 +338,7 @@ export default function Heatseeker() {
       <button
         data-testid="heatseeker-view-live"
         onClick={() => setView("live")}
-        className={`px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest transition-colors ${
+        className={`inline-flex min-h-[44px] items-center px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest transition-colors sm:min-h-0 ${
           view === "live" ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground"
         }`}
       >
@@ -347,7 +347,7 @@ export default function Heatseeker() {
       <button
         data-testid="heatseeker-view-killbox"
         onClick={() => setView("killbox")}
-        className={`px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest transition-colors ${
+        className={`inline-flex min-h-[44px] items-center px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest transition-colors sm:min-h-0 ${
           view === "killbox" ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground"
         }`}
       >
@@ -687,7 +687,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
               <Stat label="Net Vanna" value={fmtM(totals.netVanna)} positive={totals.netVanna >= 0} />
               <Stat label="Net Charm" value={fmtM(totals.netCharm)} positive={totals.netCharm >= 0} />
             </div>
-            <div className="flex gap-2 text-xs">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
               {totals.callWall !== null && (
                 <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/5 text-emerald-400">
                   Call Wall {totals.callWall.toFixed(0)}
@@ -708,7 +708,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                 type="button"
                 size="sm"
                 variant="outline"
-                className="h-6 px-2 text-[10px] font-mono uppercase tracking-wider"
+                className="h-11 px-3 text-[10px] font-mono uppercase tracking-wider sm:h-6 sm:px-2"
                 onClick={() => setEditOpen(true)}
                 data-testid="button-edit-levels"
               >
