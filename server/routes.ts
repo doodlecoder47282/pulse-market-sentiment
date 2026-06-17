@@ -67,6 +67,13 @@ import { runBackfill, getBacktestSummary } from "./backtest";
 import { buildChainAudit } from "./chainAudit";
 import { buildHeatseeker } from "./heatseeker";
 import { getCboeChain } from "./cboeCache";
+import {
+  insertGreekSnapshot,
+  fetchGradient,
+  pruneOldSnapshots,
+  getGradientStats,
+  type GreekSnapshotRow,
+} from "./greekGradientDb";
 
 // ─── CBOE → Schwab chain shape adapter ─────────────────────────────────
 // Heatseeker (and other consumers) expect Schwab's callExpDateMap /
@@ -2965,6 +2972,36 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
       const audit = buildChainAudit(chain, spot);
 
+      // KILLBOX snapshot write — fire-and-forget. Persist per-strike greek
+      // exposure so the time-series gradient heatmap has history to render.
+      // Never let a DB failure (or empty chain) break the audit response.
+      try {
+        if (audit.dataQuality !== "minimal") {
+          const ts = Date.now();
+          const rows: GreekSnapshotRow[] = [];
+          for (const p of audit.vanna.profile) {
+            if (Number.isFinite(p.vannaExposure)) rows.push({ symbol: usedSymbol, spot, strike: p.strike, greekType: "vanna", exposure: p.vannaExposure });
+          }
+          for (const p of audit.charm.profile) {
+            if (Number.isFinite(p.charmExposure)) rows.push({ symbol: usedSymbol, spot, strike: p.strike, greekType: "charm", exposure: p.charmExposure });
+          }
+          for (const p of audit.vomma.profile) {
+            if (Number.isFinite(p.vommaExposure)) rows.push({ symbol: usedSymbol, spot, strike: p.strike, greekType: "vomma", exposure: p.vommaExposure });
+          }
+          for (const p of audit.zomma.profile) {
+            if (Number.isFinite(p.zommaExposure)) rows.push({ symbol: usedSymbol, spot, strike: p.strike, greekType: "zomma", exposure: p.zommaExposure });
+          }
+          // Per-strike net GEX (separate compute — not part of the audit shape).
+          const gexProfile = computeGEXFromChain(chain).profile;
+          for (const p of gexProfile) {
+            if (Number.isFinite(p.netGex)) rows.push({ symbol: usedSymbol, spot, strike: p.strike, greekType: "gex", exposure: p.netGex });
+          }
+          if (rows.length > 0) insertGreekSnapshot(ts, rows);
+        }
+      } catch (e: any) {
+        console.warn(`[killbox] snapshot write failed: ${e?.message ?? e}`);
+      }
+
       const payload = {
         symbol: usedSymbol,
         requestedSymbol: symbol,
@@ -2978,6 +3015,43 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     } catch (e: any) {
       console.error("[chain-audit]", e?.message);
       res.status(500).json({ error: "internal", message: e?.message ?? "Chain audit failed" });
+    }
+  });
+
+  // ─── KILLBOX: time-series greek-gradient heatmap ────────────────────────────
+  // Reads the rolling snapshot table written by the chain-audit route above.
+  app.get("/api/killbox/gradient", (req, res) => {
+    try {
+      const symbol = String(req.query.symbol || "SPY").trim().toUpperCase() || "SPY";
+      const greekRaw = String(req.query.greek || "charm").trim().toLowerCase();
+      const allowed = ["vanna", "charm", "vomma", "zomma", "gex"] as const;
+      const greek = (allowed as readonly string[]).includes(greekRaw)
+        ? (greekRaw as (typeof allowed)[number])
+        : "charm";
+      const hoursReq = Number(req.query.hours);
+      const hours = Number.isFinite(hoursReq) ? Math.min(Math.max(hoursReq, 0.25), 6) : 2;
+      const sinceMs = Date.now() - hours * 60 * 60 * 1000;
+
+      const points = fetchGradient(symbol, greek, sinceMs);
+      const stats = {
+        count: points.length,
+        oldestTs: points.length > 0 ? points[0].ts : null,
+        newestTs: points.length > 0 ? points[points.length - 1].ts : null,
+      };
+      res.json({ symbol, greek, hours, points, stats });
+    } catch (e: any) {
+      console.error("[killbox/gradient]", e?.message);
+      res.status(500).json({ error: "internal", message: e?.message ?? "Killbox gradient failed" });
+    }
+  });
+
+  app.get("/api/killbox/stats", (req, res) => {
+    try {
+      const symbol = String(req.query.symbol || "SPY").trim().toUpperCase() || "SPY";
+      res.json(getGradientStats(symbol));
+    } catch (e: any) {
+      console.error("[killbox/stats]", e?.message);
+      res.status(500).json({ error: "internal", message: e?.message ?? "Killbox stats failed" });
     }
   });
 
@@ -3984,6 +4058,11 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   } catch (e: any) {
     console.warn(`[clv] grader start failed: ${e?.message ?? e}`);
   }
+
+  // KILLBOX greek-gradient pruner — keep the snapshot table to a 6h rolling window.
+  setInterval(() => {
+    try { pruneOldSnapshots(); } catch (e: any) { console.warn(`[killbox] prune failed: ${e?.message ?? e}`); }
+  }, 30 * 60 * 1000);
 
   // Kick off Exit Brain (30s confluence eval over tracked 0DTE positions)
   try {

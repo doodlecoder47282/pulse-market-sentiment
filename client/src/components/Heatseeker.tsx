@@ -21,6 +21,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import LivenessBadge from "@/components/LivenessBadge";
+import Killbox from "@/components/Killbox";
 import { useMemo, useState, useEffect } from "react";
 import {
   ComposedChart,
@@ -212,6 +214,7 @@ export default function Heatseeker() {
   const [draft, setDraft] = useState("");
   // null = nearest expiry (0DTE behavior). Otherwise YYYY-MM-DD.
   const [pickedExpiry, setPickedExpiry] = useState<string | null>(null);
+  const [view, setView] = useState<"live" | "killbox">("live");
 
   const commitDraft = () => {
     const cleaned = draft.trim().toUpperCase();
@@ -330,10 +333,50 @@ export default function Heatseeker() {
     </div>
   );
 
+  const viewToggle = (
+    <div className="inline-flex rounded-lg border border-border/40 bg-card/40 overflow-hidden">
+      <button
+        data-testid="heatseeker-view-live"
+        onClick={() => setView("live")}
+        className={`px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest transition-colors ${
+          view === "live" ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground"
+        }`}
+      >
+        live
+      </button>
+      <button
+        data-testid="heatseeker-view-killbox"
+        onClick={() => setView("killbox")}
+        className={`px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest transition-colors ${
+          view === "killbox" ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground"
+        }`}
+      >
+        killbox
+      </button>
+    </div>
+  );
+
+  const header = (
+    <div className="flex flex-wrap items-center gap-2">
+      {picker}
+      {view === "live" && expiryPicker}
+      <div className="ml-auto">{viewToggle}</div>
+    </div>
+  );
+
+  if (view === "killbox") {
+    return (
+      <div className="space-y-4">
+        {header}
+        <Killbox symbol={symbol} />
+      </div>
+    );
+  }
+
   if (isLoading) {
     return (
       <div className="space-y-4">
-        <div className="flex flex-wrap gap-2">{picker}{expiryPicker}</div>
+        {header}
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-96 w-full" />
         <Skeleton className="h-64 w-full" />
@@ -345,7 +388,7 @@ export default function Heatseeker() {
     const msg = (data as any)?.message ?? (error as Error)?.message ?? "Unable to load heatseeker";
     return (
       <div className="space-y-4">
-        <div className="flex flex-wrap gap-2">{picker}{expiryPicker}</div>
+        {header}
         <Card className="border-amber-500/30 bg-amber-500/5">
           <CardContent className="flex items-center gap-3 pt-6">
             <AlertTriangle className="h-5 w-5 text-amber-500" />
@@ -361,7 +404,7 @@ export default function Heatseeker() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">{picker}{expiryPicker}</div>
+      {header}
       <HeatseekerView data={data} />
     </div>
   );
@@ -630,11 +673,11 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
               <Flame className="h-7 w-7 text-orange-500" />
               <div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <span className="flex h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+                  <LivenessBadge feedName="heatseeker" value={spot} />
                   HEATSEEKER · {symbol} · {dte}DTE · exp {expiry}
                 </div>
                 <div className="mt-0.5 font-mono text-2xl font-bold tabular-nums">
-                  {spot.toFixed(2)}
+                  {Number.isFinite(spot) && spot > 0 ? spot.toFixed(2) : "—"}
                 </div>
               </div>
             </div>
