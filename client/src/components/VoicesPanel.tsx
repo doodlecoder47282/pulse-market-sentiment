@@ -301,7 +301,7 @@ export default function VoicesPanel() {
       {/* Items list */}
       <div className="space-y-3" data-testid="list-voice-items">
         {items.length === 0 && (
-          <Card><CardContent className="p-8 text-center text-sm text-muted-foreground">No items match the current filter.</CardContent></Card>
+          <Card><CardContent className="p-8 text-center text-sm text-muted-foreground">no voices match this filter — try a broader tag</CardContent></Card>
         )}
         {items.map((it, idx) => {
           const isTweet = it.native === "x";

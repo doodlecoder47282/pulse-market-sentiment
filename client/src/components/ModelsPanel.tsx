@@ -1479,7 +1479,7 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
   if (!candles.length) {
     return (
       <div className="flex h-[180px] items-center justify-center border-b border-border/30 bg-black/40 font-mono text-[10px] text-muted-foreground">
-        intraday tape unavailable (market closed or Schwab throttled)
+        tape offline — market closed or Schwab throttled
       </div>
     );
   }

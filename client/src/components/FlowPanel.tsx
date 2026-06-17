@@ -859,7 +859,7 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
     return (
       <Card>
         <CardContent className="p-4 text-sm text-muted-foreground">
-          Put/Call flow unavailable.
+          P/C flow offline — Schwab chain unavailable. Reconnect to see ratio.
         </CardContent>
       </Card>
     );

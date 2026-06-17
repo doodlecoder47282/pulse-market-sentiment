@@ -924,17 +924,17 @@ export default function MLProjectionPanel() {
         {/* Empty-state banners */}
         {!hasCandles && spot == null && (
           <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-muted-foreground">
-            tape and spot unavailable — diagnostic: check Schwab token + snapshot service.
+            tape and spot offline — check Schwab token + snapshot service
           </div>
         )}
         {!hasCandles && spot != null && !synthetic && (
           <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
-            no intraday yet — pre-market. dealer levels still rendering.
+            pre-market — no intraday yet. dealer levels loading.
           </div>
         )}
         {hasCandles && !hasBands && (
           <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-muted-foreground">
-            forward projection unavailable — tape and dealer levels still rendering.
+            projection pending — waiting for dealer levels to settle
             <Button
               size="sm"
               variant="ghost"

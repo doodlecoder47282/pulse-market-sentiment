@@ -104,7 +104,7 @@ function correlationDispersion(edges: SectorEdge[]): {
   tone: string;
 } {
   if (!edges.length) {
-    return { mean: 0, std: 0, pct: 0, label: "No data", tone: "text-muted-foreground" };
+    return { mean: 0, std: 0, pct: 0, label: "no correlation data", tone: "text-muted-foreground" };
   }
   const n = edges.length;
   const mean = edges.reduce((a, e) => a + e.corr, 0) / n;
@@ -238,7 +238,7 @@ export default function ConstellationPulse({
             </div>
             <ul className="mt-1.5 space-y-0.5" data-testid="pulse-pairs">
               {pairs.length === 0 && (
-                <li className="text-[11px] text-muted-foreground">No edges</li>
+                <li className="text-[11px] text-muted-foreground">no pair edges — market open will populate</li>
               )}
               {pairs.map((p, i) => (
                 <li
@@ -269,7 +269,7 @@ export default function ConstellationPulse({
             </div>
             <ul className="mt-1.5 space-y-0.5" data-testid="pulse-decouplers">
               {decouplers.length === 0 && (
-                <li className="text-[11px] text-muted-foreground">No data</li>
+                <li className="text-[11px] text-muted-foreground">no movers yet — waiting for prices</li>
               )}
               {decouplers.map((d) => (
                 <li

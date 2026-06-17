@@ -79,7 +79,7 @@ export default function JPMCollarPanel() {
     return (
       <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-400 flex items-center gap-2">
         <AlertTriangle className="h-4 w-4 shrink-0" />
-        JPM collar data unavailable.
+        JPM collar offline — chain data unavailable for this expiry
       </div>
     );
   }

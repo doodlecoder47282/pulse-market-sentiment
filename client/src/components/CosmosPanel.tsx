@@ -1028,7 +1028,7 @@ function KpStrip({ recent, forecast }: { recent: Array<{ time: string; kp: numbe
     ...recent.map((r) => ({ ...r, observed: true })),
     ...forecast.map((r) => ({ ...r, observed: false })),
   ];
-  if (combined.length === 0) return <div style={{ color: MUTED, fontSize: 11 }}>no data</div>;
+  if (combined.length === 0) return <div style={{ color: MUTED, fontSize: 11 }}>Kp feed offline — NOAA data pending</div>;
   const max = Math.max(9, ...combined.map((c) => c.kp));
   const chartW = 700;
   const chartH = 110;

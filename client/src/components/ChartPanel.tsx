@@ -420,8 +420,8 @@ export default function ChartPanel() {
             </div>
           ) : (ohlc?.candles?.length ?? 0) === 0 ? (
             <div className="flex h-[440px] flex-col items-center justify-center gap-1 rounded-lg border border-border/40 bg-muted/10 text-center">
-              <span className="text-sm font-medium text-muted-foreground">Live tape unavailable</span>
-              <span className="text-xs text-muted-foreground/70">Schwab feed is disconnected — no candles for {activeChart}.</span>
+              <span className="text-sm font-medium text-muted-foreground">tape offline — Schwab feed down</span>
+              <span className="text-xs text-muted-foreground/70">reconnect Schwab to see candles for {activeChart}</span>
             </div>
           ) : engine === "lightweight" ? (
             <div className="relative">

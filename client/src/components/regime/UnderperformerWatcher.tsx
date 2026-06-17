@@ -76,7 +76,7 @@ export default function UnderperformerWatcher() {
               Prime Underperformer Watcher
             </div>
             <div className="text-[10px] text-muted-foreground">
-              today's biggest pullbacks · {data?.notes ?? "loading..."}
+              today's biggest pullbacks · {data?.notes ?? "scanning..."}
             </div>
           </div>
 

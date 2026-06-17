@@ -506,7 +506,7 @@ export default function NewsPanel() {
     return (
       <Card>
         <CardContent className="p-4 text-sm text-muted-foreground">
-          News feed unavailable. Try again in a moment.
+          news feed down — retry in a moment
         </CardContent>
       </Card>
     );
@@ -804,7 +804,7 @@ function EarningsTab() {
     return (
       <Card>
         <CardContent className="p-4 text-sm text-muted-foreground">
-          Earnings calendar unavailable. Nasdaq's API may be rate-limited — try again shortly.
+          earnings calendar offline — Nasdaq rate-limited, try again shortly
         </CardContent>
       </Card>
     );

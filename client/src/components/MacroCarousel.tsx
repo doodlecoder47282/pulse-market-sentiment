@@ -202,7 +202,7 @@ export function MacroCarousel() {
   if (isError || !data || !active) {
     return (
       <div className="rounded-xl border border-border/60 bg-card/50 p-4 text-sm text-muted-foreground">
-        Macro feed unavailable
+        macro quotes offline — Schwab feed down, try again shortly
       </div>
     );
   }

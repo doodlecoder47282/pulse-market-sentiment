@@ -112,7 +112,7 @@ export default function Mag7Panel() {
   if (isError || !data) {
     return (
       <div className="rounded-xl border border-border/60 bg-card/40 p-4 text-sm text-muted-foreground">
-        Mag 7 feed unavailable
+        Mag 7 quotes offline — Schwab feed down
       </div>
     );
   }

@@ -215,7 +215,7 @@ function ThemeCard({ theme, maxMentions }: { theme: WefTheme; maxMentions: numbe
           RS leaders (1M vs SPY)
         </div>
         {theme.leaders.length === 0 ? (
-          <div className="text-[11px] italic text-muted-foreground">No basket members outperforming SPY on 1M</div>
+          <div className="text-[11px] italic text-muted-foreground">no basket members outperforming SPY on 1M</div>
         ) : (
           <div className="flex flex-wrap gap-1">
             {theme.leaders.map((l) => (

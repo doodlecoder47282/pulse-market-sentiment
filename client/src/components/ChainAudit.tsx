@@ -415,7 +415,7 @@ export default function ChainAudit() {
       )}
 
       {!isLoading && !isError && !audit && (
-        <AuditError message="No chain data returned. The market may be closed or the symbol unsupported." />
+        <AuditError message="chain empty — market may be closed or symbol unsupported" />
       )}
 
       {/* ── Main content ── */}
@@ -580,7 +580,7 @@ export default function ChainAudit() {
                 <Card className="bg-card/60 border-border/40">
                   <CardContent className="px-2 pt-3 pb-2">
                     {audit.dex.profile.length === 0 ? (
-                      <div className="font-mono text-[11px] text-muted-foreground text-center py-8">No DEX data</div>
+                      <div className="font-mono text-[11px] text-muted-foreground text-center py-8">no DEX data for this expiry</div>
                     ) : (
                       <div className="h-44" data-testid="chart-dex">
                         <ResponsiveContainer width="100%" height="100%">
@@ -665,7 +665,7 @@ export default function ChainAudit() {
           {/* Row 5: Pinning Probability */}
           <Section title="Pinning Probability — Nearest Expiry" testId="section-pinning">
             {audit.pinning.length === 0 ? (
-              <div className="font-mono text-[11px] text-muted-foreground text-center py-4">No pinning data available</div>
+              <div className="font-mono text-[11px] text-muted-foreground text-center py-4">no pinning data — chain may be thin</div>
             ) : (
               <Card className="bg-card/60 border-border/40">
                 <CardContent className="px-2 pt-3 pb-2">
@@ -719,7 +719,7 @@ export default function ChainAudit() {
           {/* Row 6: Unusual Volume Table */}
           <Section title="Unusual Volume — Vol/OI Ratio > 2x" testId="section-unusual-vol">
             {audit.unusualVolume.length === 0 ? (
-              <div className="font-mono text-[11px] text-muted-foreground text-center py-4">No unusual volume detected</div>
+              <div className="font-mono text-[11px] text-muted-foreground text-center py-4">no unusual volume — flow is quiet at current thresholds</div>
             ) : (
               <Card className="bg-card/60 border-border/40">
                 <CardContent className="px-0 pb-2 pt-0">
@@ -882,7 +882,7 @@ export default function ChainAudit() {
                 </CardHeader>
                 <CardContent className="px-2 pb-3">
                   {audit.vanna.profile.length === 0 ? (
-                    <div className="font-mono text-[11px] text-muted-foreground text-center py-8">No vanna data</div>
+                    <div className="font-mono text-[11px] text-muted-foreground text-center py-8">no vanna data for this expiry</div>
                   ) : (
                     <div className="h-36" data-testid="chart-vanna">
                       <ResponsiveContainer width="100%" height="100%">
@@ -939,7 +939,7 @@ export default function ChainAudit() {
                 </CardHeader>
                 <CardContent className="px-2 pb-3">
                   {audit.charm.profile.length === 0 ? (
-                    <div className="font-mono text-[11px] text-muted-foreground text-center py-8">No charm data</div>
+                    <div className="font-mono text-[11px] text-muted-foreground text-center py-8">no charm data for this expiry</div>
                   ) : (
                     <div className="h-36" data-testid="chart-charm">
                       <ResponsiveContainer width="100%" height="100%">

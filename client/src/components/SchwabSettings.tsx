@@ -410,7 +410,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
               <div className="flex items-center gap-2">
                 <WifiOff className="h-4 w-4 text-muted-foreground" />
                 <div>
-                  <div className="text-sm font-medium">Not connected</div>
+                  <div className="text-sm font-medium">Schwab offline</div>
                   <div className="text-[11px] text-muted-foreground">Schwab disconnected — serving cached snapshots or CBOE delayed data. Connect Schwab for live data.</div>
                 </div>
               </div>
@@ -524,7 +524,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                   disabled={connectMut.isPending || !redirectedUrl.trim()}
                   data-testid="complete-connection-btn"
                 >
-                  {connectMut.isPending ? "Connecting..." : "Connect manually"}
+                  {connectMut.isPending ? "connecting..." : "Connect manually"}
                 </Button>
               </div>
             </div>

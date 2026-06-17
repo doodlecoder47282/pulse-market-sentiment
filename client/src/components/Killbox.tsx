@@ -230,7 +230,7 @@ export default function Killbox({ symbol = "SPY" }: { symbol?: string }) {
               key={g.key}
               data-testid={`killbox-greek-${g.key}`}
               onClick={() => setGreek(g.key)}
-              className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+              className={`inline-flex min-h-[44px] items-center px-3 py-1 text-xs font-medium transition-colors sm:min-h-0 sm:px-2.5 ${
                 greek === g.key
                   ? "bg-foreground/10 text-foreground"
                   : "text-muted-foreground hover:text-foreground"
@@ -247,7 +247,7 @@ export default function Killbox({ symbol = "SPY" }: { symbol?: string }) {
               key={w.hours}
               data-testid={`killbox-window-${w.label}`}
               onClick={() => setHours(w.hours)}
-              className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+              className={`inline-flex min-h-[44px] items-center px-3 py-1 text-xs font-medium transition-colors sm:min-h-0 sm:px-2.5 ${
                 hours === w.hours
                   ? "bg-foreground/10 text-foreground"
                   : "text-muted-foreground hover:text-foreground"
@@ -272,10 +272,9 @@ export default function Killbox({ symbol = "SPY" }: { symbol?: string }) {
             </div>
           ) : points.length === 0 ? (
             <div className="h-[360px] flex flex-col items-center justify-center gap-1.5 text-center px-6">
-              <div className="text-sm font-semibold text-foreground">No snapshots yet</div>
+              <div className="text-sm font-semibold text-foreground">no snapshots yet</div>
               <div className="text-xs text-muted-foreground max-w-xs leading-relaxed">
-                Killbox collects when the Schwab feed is live. It comes online once the option
-                surface is reauthed — then this fills in left-to-right as snapshots land.
+                Schwab feed needs to be live. Reconnect Schwab — snapshots fill left-to-right as the chain comes in.
               </div>
             </div>
           ) : (

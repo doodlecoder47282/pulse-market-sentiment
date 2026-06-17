@@ -462,7 +462,7 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
               <div className="flex flex-col items-center gap-3 py-4 text-center">
                 <WifiOff className="h-8 w-8 text-muted-foreground/40" />
                 <div>
-                  <div className="text-sm font-medium text-muted-foreground">Connect Schwab for live flow alerts</div>
+                  <div className="text-sm font-medium text-muted-foreground">Schwab offline — connect to watch flow alerts</div>
                   <div className="text-xs text-muted-foreground/60 mt-1">
                     Real-time option chain data required to detect unusual volume, block trades, and wall formation.
                   </div>
@@ -484,7 +484,7 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
               <div className="flex flex-col items-center gap-2 py-4 text-center">
                 <Bell className="h-6 w-6 text-muted-foreground/30" />
                 <div className="text-xs text-muted-foreground/60">
-                  Monitoring {symbol} flow — no alerts yet
+                  {symbol} flow is quiet — no alerts yet
                 </div>
                 <div className="text-[9px] text-muted-foreground/40">
                   Polling every 30s · alerts fire on unusual volume, block trades, P/C shifts, wall formation

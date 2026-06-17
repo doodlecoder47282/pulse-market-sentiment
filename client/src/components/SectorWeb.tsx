@@ -195,7 +195,7 @@ export default function SectorWeb() {
         <CardContent className="p-6">
           <div className="flex items-center gap-2 text-amber-500">
             <AlertTriangle className="h-4 w-4" />
-            <span className="text-sm font-medium">Sector web unavailable</span>
+            <span className="text-sm font-medium">sector web offline — correlation build failed</span>
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
             {(error as Error)?.message ?? "Could not build the reactive sector web."}

@@ -129,7 +129,7 @@ function HitMatrix({ w }: { w: WhaleEdge }) {
         <div key={section.title} className="rounded-md border border-border/50 bg-card/40 p-2.5">
           <div className="text-[11px] uppercase text-muted-foreground tracking-wider mb-1.5 px-2">{section.title}</div>
           {section.rows.length === 0 ? (
-            <div className="px-2 py-1.5 text-xs text-muted-foreground">no data</div>
+            <div className="px-2 py-1.5 text-xs text-muted-foreground">no graded setups yet — take trades to build history</div>
           ) : (
             <div className="space-y-0.5">
               <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-2 text-[10px] text-muted-foreground">
@@ -194,7 +194,7 @@ function CalibrationPlot({ r }: { r: RegimeEdge }) {
           ))}
           <div className="text-[11px] uppercase text-muted-foreground tracking-wider pt-2">By Regime</div>
           {r.byRegime.length === 0 ? (
-            <div className="text-xs text-muted-foreground">no data</div>
+            <div className="text-xs text-muted-foreground">no regime splits yet</div>
           ) : (
             r.byRegime.map((rg, i) => (
               <div key={i} className="flex justify-between items-baseline">

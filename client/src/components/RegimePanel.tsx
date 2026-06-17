@@ -122,7 +122,7 @@ export default function RegimePanel() {
         <CardContent className="p-6">
           <div className="flex items-center gap-2 text-amber-500">
             <AlertTriangle className="h-4 w-4" />
-            <span className="text-sm font-medium">Regime data unavailable</span>
+            <span className="text-sm font-medium">regime data offline — rotation snapshot failed</span>
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
             {(error as Error)?.message ?? "Could not build the rotation snapshot."}
