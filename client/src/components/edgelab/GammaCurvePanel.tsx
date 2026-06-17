@@ -60,6 +60,7 @@ export default function GammaCurvePanel() {
   const d = q.data;
   const isError = d && "error" in d;
   const data = !isError ? (d as GammaCurveResult | undefined) : undefined;
+  const spotUsable = !!data && Number.isFinite(data.spot) && data.spot > 0;
 
   return (
     <div className="space-y-3" data-testid="gamma-curve-panel">
@@ -81,7 +82,13 @@ export default function GammaCurvePanel() {
       {q.isLoading && <div className="text-xs text-muted-foreground">loading gamma curve for {active}…</div>}
       {isError && <div className="text-xs text-rose-500">error: {(d as any).error}</div>}
 
-      {data && (
+      {data && !spotUsable && !q.isLoading && (
+        <div className="rounded border border-border p-4 text-xs text-muted-foreground">
+          no live spot for {data.symbol} — Schwab feed is disconnected, so the gamma curve can't anchor to a price.
+        </div>
+      )}
+
+      {data && spotUsable && (
         <>
           <div className="flex items-center justify-between">
             <div className="text-sm font-semibold">
@@ -112,6 +119,7 @@ export default function GammaCurvePanel() {
             {data.walls.length === 0 ? (
               <div className="text-xs text-muted-foreground">no walls detected</div>
             ) : (
+              <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead className="text-muted-foreground">
                   <tr className="border-b border-border">
@@ -138,6 +146,7 @@ export default function GammaCurvePanel() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
 
@@ -147,6 +156,7 @@ export default function GammaCurvePanel() {
             {data.vacuums.length === 0 ? (
               <div className="text-xs text-muted-foreground">no clear vacuums detected</div>
             ) : (
+              <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead className="text-muted-foreground">
                   <tr className="border-b border-border">
@@ -169,6 +179,7 @@ export default function GammaCurvePanel() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
 

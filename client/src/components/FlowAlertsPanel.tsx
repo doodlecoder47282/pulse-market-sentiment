@@ -403,7 +403,7 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
         {/* Header */}
         <CollapsibleTrigger asChild>
           <button
-            className="flex w-full items-center justify-between px-4 py-3 text-left"
+            className="flex min-h-[44px] w-full items-center justify-between px-4 py-3 text-left"
             data-testid="flow-alerts-toggle"
           >
             <div className="flex items-center gap-2">
@@ -471,7 +471,7 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
                   <Button
                     size="sm"
                     variant="outline"
-                    className="border-amber-500/40 text-amber-300 hover:bg-amber-500/10"
+                    className="min-h-[44px] border-amber-500/40 text-amber-300 hover:bg-amber-500/10"
                     onClick={onOpenSettings}
                     data-testid="connect-schwab-flow-btn"
                   >

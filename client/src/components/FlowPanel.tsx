@@ -15,12 +15,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Activity, TrendingUp, TrendingDown, Minus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useLayoutEffect } from "react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceLine, Area, ComposedChart, Bar, Cell,
 } from "recharts";
 import { FlowAlertsPanel } from "./FlowAlertsPanel";
+import LivenessBadge from "./LivenessBadge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type FlowTicker = {
@@ -172,6 +173,23 @@ function PcrSparkline({
   width?: number;
   showAxis?: boolean;
 }) {
+  // Measure the container so the sparkline fills it without overflowing on
+  // narrow (mobile) viewports. The `width` prop is the desktop fallback/cap.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [measuredW, setMeasuredW] = useState(width);
+  useLayoutEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const update = () => {
+      const w = el.clientWidth;
+      if (w > 0) setMeasuredW(Math.min(width, w));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [width]);
+  width = measuredW;
   const base = { min: 0.5, max: 1.5 };
   const ys = series.map((s) => s.combined).filter((v) => Number.isFinite(v));
   const yMin = ys.length ? Math.min(base.min, ...ys) : base.min;
@@ -205,7 +223,8 @@ function PcrSparkline({
     : "";
 
   return (
-    <svg width={width} height={height} className="overflow-visible">
+    <div ref={wrapRef} className="w-full overflow-hidden">
+    <svg width={width} height={height} className="max-w-full">
       <rect x={leftPad} y={yTop} width={innerW} height={Math.max(0, yBullTop - yTop)} fill="#10b981" opacity={0.08} />
       <rect x={leftPad} y={yBullTop} width={innerW} height={Math.max(0, yBearBot - yBullTop)} fill="#f59e0b" opacity={0.08} />
       <rect x={leftPad} y={yBearBot} width={innerW} height={Math.max(0, yBot - yBearBot)} fill="#f43f5e" opacity={0.08} />
@@ -232,6 +251,7 @@ function PcrSparkline({
         </>
       )}
     </svg>
+    </div>
   );
 }
 
@@ -773,8 +793,8 @@ function IntradayFlowSection() {
     <div className="space-y-3 pt-1">
       {/* Separator */}
       <div className="border-t border-border/40" />
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Intraday Call/Put Flow · Bought vs Sold</span>
           {!data.marketOpen && (
             <Badge variant="outline" className="text-[9px] text-muted-foreground border-border/50">After Hours</Badge>
@@ -784,14 +804,14 @@ function IntradayFlowSection() {
           )}
         </div>
         {/* Ticker pills */}
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
           {data.tickers.map((t) => (
             <button
               key={t.symbol}
               onClick={() => setSelectedTicker(t.symbol)}
               data-testid={`flow-intraday-ticker-${t.symbol}`}
               className={[
-                "rounded-full border px-2 py-0.5 text-[10px] font-semibold transition",
+                "inline-flex min-h-[44px] items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold transition sm:min-h-0",
                 selectedTicker === t.symbol
                   ? "border-cyan-500/60 bg-cyan-500/15 text-cyan-300"
                   : "border-border/50 text-muted-foreground hover:border-cyan-500/30",
@@ -855,9 +875,7 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
           <CardTitle className="flex items-center gap-2 text-sm">
             <Activity className="h-4 w-4 text-cyan-400" />
             Put / Call Flow Ratio
-            <Badge variant="outline" className="ml-1 border-cyan-500/40 text-[9px] text-cyan-300">
-              LIVE · 10s
-            </Badge>
+            <LivenessBadge feedName="flow" value={agg.combinedPcr} className="ml-1" />
           </CardTitle>
           <div className="text-[10px] text-muted-foreground">
             Provider: {data.provider.toUpperCase()} · {new Date(data.asOf * 1000).toLocaleTimeString()}
@@ -874,7 +892,7 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
       <div className="mb-3 flex items-center gap-2">
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Chain Symbol</span>
         <Select value={chainSymbol} onValueChange={setChainSymbol}>
-          <SelectTrigger className="h-6 w-24 text-[10px]" data-testid="chain-symbol-select">
+          <SelectTrigger className="h-11 w-24 text-[10px] sm:h-6" data-testid="chain-symbol-select">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

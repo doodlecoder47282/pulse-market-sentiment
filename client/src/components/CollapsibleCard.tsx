@@ -63,7 +63,7 @@ export function CollapsibleCard({
             title={size === "full" ? "Size down" : size === "compact" ? "Collapse" : "Expand"}
             aria-label="Resize card"
             data-testid={`button-card-size-${id}`}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground/60 transition hover:bg-muted hover:text-foreground"
+            className="flex h-11 w-11 sm:h-6 sm:w-6 items-center justify-center rounded-md text-muted-foreground/60 transition hover:bg-muted hover:text-foreground"
           >
             {size === "full" ? (
               <Minimize2 className="h-3.5 w-3.5" />
@@ -79,7 +79,7 @@ export function CollapsibleCard({
             title={size === "collapsed" ? "Open" : "Close"}
             aria-label={size === "collapsed" ? "Expand card" : "Collapse card"}
             data-testid={`button-card-toggle-${id}`}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground/60 transition hover:bg-muted hover:text-foreground"
+            className="flex h-11 w-11 sm:h-6 sm:w-6 items-center justify-center rounded-md text-muted-foreground/60 transition hover:bg-muted hover:text-foreground"
           >
             <ChevronDown
               className={cn(

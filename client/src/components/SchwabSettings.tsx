@@ -119,7 +119,7 @@ export function SchwabStatusPill({ onClick }: { onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="flex items-center gap-1.5 rounded-full border px-2 py-0.5 transition hover:opacity-80"
+      className="flex min-h-[44px] items-center gap-1.5 rounded-full border px-2 py-0.5 transition hover:opacity-80 sm:min-h-0"
       style={{
         borderColor: isConnected ? "rgb(16 185 129 / 0.4)" : "rgb(245 158 11 / 0.4)",
         background: isConnected ? "rgb(16 185 129 / 0.08)" : "rgb(245 158 11 / 0.08)",

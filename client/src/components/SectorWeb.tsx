@@ -968,11 +968,21 @@ function SectorHeatmap({ grid, winKey, spy }: { grid: SectorGridRow[]; winKey: W
   const winRsKey = winKey === "r1d" ? "rs1d" : winKey === "r1w" ? "rs1w" : "rs1m";
   const sorted = [...grid].sort((a, b) => (b as any)[winRsKey] - (a as any)[winRsKey]);
 
+  if (grid.length === 0) {
+    return (
+      <div className="rounded-md border border-border/40 bg-card/20 p-6 text-center text-xs text-muted-foreground">
+        No sector data right now — the relative-strength feed came back empty.
+      </div>
+    );
+  }
+
+  const spyR = spy && Number.isFinite(spy[winKey]) ? spy[winKey] : null;
+
   return (
     <div className="space-y-2">
       <div className="mb-2 flex items-center justify-between text-[11px]">
         <span className="text-muted-foreground">
-          SPY {WINDOW_LABEL[winKey]}: <span className={spy[winKey] >= 0 ? "text-emerald-400" : "text-red-400"}>{spy[winKey] >= 0 ? "+" : ""}{spy[winKey].toFixed(2)}%</span>
+          SPY {WINDOW_LABEL[winKey]}: {spyR == null ? <span className="text-muted-foreground">—</span> : <span className={spyR >= 0 ? "text-emerald-400" : "text-red-400"}>{spyR >= 0 ? "+" : ""}{spyR.toFixed(2)}%</span>}
         </span>
         <span className="text-muted-foreground">Click any ticker → chart tab</span>
       </div>

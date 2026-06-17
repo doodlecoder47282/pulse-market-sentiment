@@ -17,8 +17,6 @@ import Gauge from "@/components/Gauge";
 import Logo from "@/components/Logo";
 import { BatmanLogoSmall } from "@/components/BatmanLogo";
 import NewsPanel from "@/components/NewsPanel";
-import TradeDesk from "@/components/TradeDesk";
-import RegimePanel from "@/components/RegimePanel";
 import FlowPanel from "@/components/FlowPanel";
 import GlobalEdgeBanner from "@/components/GlobalEdgeBanner";
 import { RegimeChip } from "@/components/RegimeChip";
@@ -46,7 +44,6 @@ import TrackedSignalsPanel from "@/components/signals/TrackedSignalsPanel";
 import { useEffect, useState, useRef, lazy, Suspense } from "react";
 
 // ── Lazy-loaded heavy components (code splitting) ──────────────────────────
-const ChartPanel = lazy(() => import("@/components/ChartPanel"));
 const ModelsPanel = lazy(() => import("@/components/ModelsPanel"));
 const DailyPlaybookChart = lazy(() => import("@/components/DailyPlaybookChart"));
 const TabHeadline = lazy(() => import("@/components/TabHeadline"));
@@ -188,7 +185,9 @@ export default function Dashboard() {
   const { data, isLoading, isError, error, dataUpdatedAt } = useQuery<Snapshot_Public>({
     queryKey: ["/api/snapshot"],
     refetchInterval: 60_000,  // auto-refresh every 60s
-    refetchOnWindowFocus: true,
+    // No refetchOnWindowFocus: the 60s interval already keeps data fresh, and on
+    // mobile every app-foreground would otherwise fire a redundant network round
+    // trip + full-tree re-render. Inherits the queryClient default (false).
     staleTime: 30_000,
   });
 
@@ -331,7 +330,7 @@ export default function Dashboard() {
               onClick={() => refreshMut.mutate()}
               disabled={refreshMut.isPending}
               data-testid="button-refresh"
-              className="px-2 sm:px-3"
+              className="min-h-[44px] px-3 sm:min-h-0 sm:px-3"
             >
               <RefreshCw className={`h-3.5 w-3.5 sm:mr-2 ${refreshMut.isPending ? "animate-spin" : ""}`} />
               <span className="hidden sm:inline">Refresh</span>
@@ -346,7 +345,7 @@ export default function Dashboard() {
               type="button"
               onClick={() => setSettingsOpen(true)}
               title="Schwab & Settings"
-              className="flex items-center justify-center rounded-md border border-border/60 h-9 w-9 sm:h-auto sm:w-auto sm:p-1.5 text-muted-foreground/50 transition hover:border-border hover:text-muted-foreground"
+              className="flex items-center justify-center rounded-md border border-border/60 h-11 w-11 sm:h-auto sm:w-auto sm:p-1.5 text-muted-foreground/50 transition hover:border-border hover:text-muted-foreground"
               data-testid="button-settings"
             >
               <Settings className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
@@ -408,37 +407,37 @@ export default function Dashboard() {
               className="grid h-auto w-full grid-cols-3 gap-1 p-1 sm:grid-cols-5 md:flex md:h-10 md:w-full md:flex-nowrap md:items-center md:justify-center md:gap-0 md:p-1 xl:h-12 xl:gap-1 xl:p-1.5"
               data-testid="tabs-dashboard"
             >
-              <TabsTrigger value="signals" data-testid="tab-signals" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Signals</TabsTrigger>
-              <TabsTrigger value="chart" data-testid="tab-chart" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Chart</TabsTrigger>
-              <TabsTrigger value="models" data-testid="tab-models" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Models</TabsTrigger>
+              <TabsTrigger value="signals" data-testid="tab-signals" className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Signals</TabsTrigger>
+              <TabsTrigger value="chart" data-testid="tab-chart" className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Chart</TabsTrigger>
+              <TabsTrigger value="models" data-testid="tab-models" className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Models</TabsTrigger>
               <TabsTrigger
                 value="heatseeker"
                 data-testid="tab-heatseeker"
-                className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500/30 data-[state=active]:to-rose-500/30 data-[state=active]:text-orange-50"
+                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500/30 data-[state=active]:to-rose-500/30 data-[state=active]:text-orange-50"
               >
                 Heatseeker
               </TabsTrigger>
-              <TabsTrigger value="tradedesk" data-testid="tab-tradedesk" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Trade Desk</TabsTrigger>
-              <TabsTrigger value="regime" data-testid="tab-regime" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Regime</TabsTrigger>
+              <TabsTrigger value="tradedesk" data-testid="tab-tradedesk" className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Trade Desk</TabsTrigger>
+              <TabsTrigger value="regime" data-testid="tab-regime" className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Regime</TabsTrigger>
               <TabsTrigger
                 value="cosmos"
                 data-testid="tab-cosmos"
-                className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-amber-600/30 data-[state=active]:via-indigo-500/20 data-[state=active]:to-emerald-500/25 data-[state=active]:text-amber-100"
+                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-amber-600/30 data-[state=active]:via-indigo-500/20 data-[state=active]:to-emerald-500/25 data-[state=active]:text-amber-100"
               >
                 Cosmos
               </TabsTrigger>
-              <TabsTrigger value="news" data-testid="tab-news" className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">News</TabsTrigger>
+              <TabsTrigger value="news" data-testid="tab-news" className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">News</TabsTrigger>
               <TabsTrigger
                 value="takefive"
                 data-testid="tab-takefive"
-                className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-fuchsia-600/40 data-[state=active]:via-cyan-500/30 data-[state=active]:to-amber-400/40 data-[state=active]:text-white"
+                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-fuchsia-600/40 data-[state=active]:via-cyan-500/30 data-[state=active]:to-amber-400/40 data-[state=active]:text-white"
               >
                 Take Five
               </TabsTrigger>
               <TabsTrigger
                 value="edgelab"
                 data-testid="tab-edgelab"
-                className="w-full text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-600/30 data-[state=active]:via-cyan-500/25 data-[state=active]:to-indigo-500/30 data-[state=active]:text-emerald-100"
+                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-600/30 data-[state=active]:via-cyan-500/25 data-[state=active]:to-indigo-500/30 data-[state=active]:text-emerald-100"
               >
                 Edge Lab
               </TabsTrigger>
@@ -676,6 +675,10 @@ export default function Dashboard() {
               >
                 <>
                   <div className="mb-3 flex flex-wrap gap-3 text-xs">
+                    {/* TODO(threshold-context): no baseline for Net GEX in the API. To satisfy
+                        North Star rule 5 ("$1.2B (vs 30D avg $0.8B, p25 ...)"), GammaStructure
+                        (shared/schema.ts) needs e.g. totalGexAvg30d / totalGexPctile — computed
+                        server-side in composite.ts (locked). Render baseline here once present. */}
                     <KeyStat
                       label="Net GEX"
                       value={fmt.bn(gamma.totalGex)}
@@ -698,6 +701,10 @@ export default function Dashboard() {
                         ? gamma.pcrByBucket
                         : [{ label: "0-45D", dteMax: 45, pcrOi: gamma.pcrOi, pcrVol: gamma.pcrVol, callOi: 0, putOi: 0 }];
                       const active = buckets.find((b) => b.label === pcrBucket) ?? buckets[buckets.length - 1];
+                      // TODO(threshold-context): PCR shows the current ratio + DTE bucket + raw P/C,
+                      // but no normal range. North Star rule 5 wants "0.82 (avg 0.90, p25 0.78)".
+                      // pcrByBucket rows (shared/schema.ts) would need pcrOiAvg / pcrOiP25 / pcrOiP75
+                      // from composite.ts (locked). Add the baseline to `sub` once the API returns it.
                       return (
                         <div className="flex flex-col gap-1" data-testid="pcr-selector">
                           <KeyStat
@@ -713,7 +720,7 @@ export default function Dashboard() {
                                 type="button"
                                 onClick={() => setPcrBucket(b.label)}
                                 data-testid={`pcr-bucket-${b.label}`}
-                                className={`rounded-md border px-1.5 py-0.5 text-[10px] font-mono transition ${
+                                className={`inline-flex min-h-[44px] items-center rounded-md border px-2 py-0.5 text-[10px] font-mono transition sm:min-h-0 ${
                                   b.label === active.label
                                     ? "border-amber-400 bg-amber-400/20 text-amber-200"
                                     : "border-border bg-muted/30 text-muted-foreground hover:bg-muted/60"

@@ -885,17 +885,17 @@ export default function MLProjectionPanel() {
   return (
     <Card data-testid="panel-ml-projection" className="border-border/60">
       <CardHeader className="space-y-2">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col items-start gap-3 sm:flex-row sm:justify-between">
           <div className="space-y-1">
             <CardTitle className="flex items-center gap-2">
-              <Activity className="w-4 h-4" />
+              <Activity className="w-4 h-4 shrink-0" />
               SPY — Projected Path (60min ML + extrapolation to close)
             </CardTitle>
             <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
               live SPY 5min candles + dealer levels + 3 model forward scenarios. updates every 5s during RTH. morning anchor (Model D) blends in 9:45-16:00 ET when the opening fingerprint is ready.
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <ModelStatusPill activeModel={activeModel} weight={blendWeight} morningReady={!!morning?.ready} />
             <Button
               size="sm"

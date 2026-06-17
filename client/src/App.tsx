@@ -8,9 +8,15 @@ import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import { TickerProvider } from "@/components/TickerContext";
 import { ThemeProvider } from "@/components/ThemeContext";
-import LaunchSplash from "@/components/LaunchSplash";
 import PreMarketGate from "@/components/PreMarketGate";
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
+
+// LaunchSplash is the only framer-motion consumer (~4MB on disk → big gzip).
+// Lazy-load it so framer-motion lands in its own chunk instead of the
+// critical-path entry bundle — the dashboard no longer waits on the animation
+// lib to download. The fallback is a plain black fill matching the splash's
+// own #000 background, so there is no visible flash before the chunk arrives.
+const LaunchSplash = lazy(() => import("@/components/LaunchSplash"));
 
 function AppRouter() {
   return (
@@ -32,7 +38,11 @@ function App() {
       <TooltipProvider>
         <Toaster />
         <TickerProvider>
-          {showSplash && <LaunchSplash onExit={() => setShowSplash(false)} />}
+          {showSplash && (
+            <Suspense fallback={<div className="fixed inset-0 z-[9999] bg-black" />}>
+              <LaunchSplash onExit={() => setShowSplash(false)} />
+            </Suspense>
+          )}
           {!showSplash && showPremarket && (
             <PreMarketGate onAcknowledge={() => setShowPremarket(false)} />
           )}

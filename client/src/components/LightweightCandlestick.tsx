@@ -302,7 +302,7 @@ export default function LightweightCandlestick({
       <div ref={containerRef} style={{ height, width: "100%" }} />
       <div className="mt-1 flex items-center justify-between text-[9px] text-muted-foreground">
         <span>Lightweight Charts · TradingView open-source</span>
-        <span>{candles.length} candles</span>
+        {candles.length > 0 && <span>{candles.length} candles</span>}
       </div>
     </div>
   );

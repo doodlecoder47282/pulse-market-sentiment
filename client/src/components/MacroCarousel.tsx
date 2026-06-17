@@ -223,7 +223,7 @@ export function MacroCarousel() {
                 key={g.category}
                 onClick={() => setActiveIdx(i)}
                 className={[
-                  "rounded-full border px-2.5 py-0.5 text-[11px] uppercase tracking-wider transition",
+                  "inline-flex min-h-[44px] items-center rounded-full border px-3 py-0.5 text-[11px] uppercase tracking-wider transition sm:min-h-0",
                   isActive
                     ? `${accent} bg-background/80 font-semibold`
                     : "border-border/40 text-muted-foreground hover:text-foreground",

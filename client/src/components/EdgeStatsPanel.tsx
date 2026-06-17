@@ -334,15 +334,15 @@ export default function EdgeStatsPanel() {
   return (
     <Card data-testid="card-edge-stats">
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="flex items-center gap-2 text-base">
-            <Target className="h-4 w-4 text-amber-400" />
+            <Target className="h-4 w-4 shrink-0 text-amber-400" />
             Edge Loop
             <Badge variant="outline" className="ml-2 text-[10px] border-border/50 bg-card/30">
               {data.windowDays}d window
             </Badge>
           </CardTitle>
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             {[14, 30, 60, 90].map(d => (
               <Button
                 key={d}

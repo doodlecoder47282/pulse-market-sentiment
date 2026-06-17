@@ -147,7 +147,7 @@ function GroupCard({ group, defaultOpen }: { group: TrackedGroup; defaultOpen: b
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-card/50"
+        className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2 text-left hover:bg-card/50"
         data-testid={`tracked-toggle-${group.symbol}`}
       >
         {open ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
@@ -210,7 +210,7 @@ export default function TrackedSignalsPanel() {
               key={s}
               type="button"
               onClick={() => setSourceFilter(s)}
-              className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-wider transition-colors ${
+              className={`inline-flex min-h-[44px] items-center rounded border px-2.5 py-0.5 text-[10px] uppercase tracking-wider transition-colors sm:min-h-0 ${
                 sourceFilter === s
                   ? "border-foreground/60 bg-foreground/10 text-foreground"
                   : "border-border bg-transparent text-muted-foreground hover:bg-card/50"
@@ -226,7 +226,7 @@ export default function TrackedSignalsPanel() {
               key={s}
               type="button"
               onClick={() => setStatusFilter(s)}
-              className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-wider transition-colors ${
+              className={`inline-flex min-h-[44px] items-center rounded border px-2.5 py-0.5 text-[10px] uppercase tracking-wider transition-colors sm:min-h-0 ${
                 statusFilter === s
                   ? "border-foreground/60 bg-foreground/10 text-foreground"
                   : "border-border bg-transparent text-muted-foreground hover:bg-card/50"

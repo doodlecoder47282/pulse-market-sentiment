@@ -78,6 +78,12 @@ const verdictPill = (c: VerdictColor) => {
 const fmtPct = (n: number, signed = true) =>
   `${signed && n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
 
+function PctCell({ v }: { v: number }) {
+  if (!Number.isFinite(v)) return <>—</>;
+  const cls = v > 0 ? "text-emerald-400" : v < 0 ? "text-rose-400" : "text-muted-foreground";
+  return <span className={cls}>{fmtPct(v)}</span>;
+}
+
 const fmtMoney = (n: number | null | undefined) =>
   n == null || !Number.isFinite(n) ? "—" : `$${n.toFixed(2)}`;
 
@@ -199,6 +205,13 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
 
         {d && (
           <>
+            {d.spot == null && (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 text-[11px] text-amber-400 flex items-center gap-2" data-testid="briefing-offline-banner">
+                <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+                no live spot for {d.symbol} — Schwab feed is down. CBOE-derived levels and models below are still good; price-anchored reads are stale.
+              </div>
+            )}
+
             {/* Levels strip */}
             <div className="space-y-1">
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">key levels · {d.symbol}{d.spot != null ? ` · spot ${d.spot.toFixed(2)}` : ""}</div>
@@ -251,15 +264,18 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
                         </tr>
                       </thead>
                       <tbody className="font-mono tabular-nums">
-                        {d.crossAsset.rows.map((r) => (
-                          <tr key={r.symbol} className="border-b border-border/10 last:border-b-0">
-                            <td className="py-1 pr-2 font-semibold">{r.symbol}</td>
-                            <td className="py-1 pr-2 text-right">{r.last.toFixed(2)}</td>
-                            <td className={`py-1 pr-2 text-right ${r.d1Pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{fmtPct(r.d1Pct)}</td>
-                            <td className={`py-1 pr-2 text-right ${r.w1Pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{fmtPct(r.w1Pct)}</td>
-                            <td className={`py-1 text-right ${r.m1Pct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{fmtPct(r.m1Pct)}</td>
-                          </tr>
-                        ))}
+                        {d.crossAsset.rows.map((r) => {
+                          const lastUsable = Number.isFinite(r.last) && r.last !== 0;
+                          return (
+                            <tr key={r.symbol} className="border-b border-border/10 last:border-b-0">
+                              <td className="py-1 pr-2 font-semibold">{r.symbol}</td>
+                              <td className="py-1 pr-2 text-right">{lastUsable ? r.last.toFixed(2) : "—"}</td>
+                              <td className="py-1 pr-2 text-right">{lastUsable ? <PctCell v={r.d1Pct} /> : "—"}</td>
+                              <td className="py-1 pr-2 text-right">{lastUsable ? <PctCell v={r.w1Pct} /> : "—"}</td>
+                              <td className="py-1 text-right">{lastUsable ? <PctCell v={r.m1Pct} /> : "—"}</td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

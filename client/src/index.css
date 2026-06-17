@@ -592,7 +592,8 @@
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.4rem 0.75rem;
+  min-height: 44px;
+  padding: 0.4rem 0.9rem;
   border-radius: 9999px;
   font-family: "Bebas Neue", sans-serif;
   letter-spacing: 0.2em;

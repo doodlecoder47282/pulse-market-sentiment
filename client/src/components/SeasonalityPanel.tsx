@@ -789,6 +789,8 @@ export default function SeasonalityPanel() {
   const ticker = data.tickers.find((t) => t.symbol === activeTicker) ?? data.tickers[0];
   if (!ticker) return null;
 
+  const hasHistory = ticker.lookbackYears > 0 && ticker.yearsCovered.length > 0;
+
   return (
     <div className="space-y-3" data-testid="seasonality-panel">
       {/* Controls row: ticker selector + lookback + view toggle */}
@@ -853,15 +855,23 @@ export default function SeasonalityPanel() {
       </div>
 
       {/* View content */}
-      {activeView === "yearly" && <YearlyView ticker={ticker} lookback={lookback} />}
-      {activeView === "monthly" && <MonthlyView ticker={ticker} />}
-      {activeView === "weekly" && <WeeklyView ticker={ticker} />}
+      {!hasHistory ? (
+        <div className="rounded-lg border border-border/40 bg-card/20 p-6 text-center text-sm text-muted-foreground">
+          No history for {ticker.symbol} yet — the Yahoo backfill hasn't returned any years for this lookback.
+        </div>
+      ) : (
+        <>
+          {activeView === "yearly" && <YearlyView ticker={ticker} lookback={lookback} />}
+          {activeView === "monthly" && <MonthlyView ticker={ticker} />}
+          {activeView === "weekly" && <WeeklyView ticker={ticker} />}
 
-      {/* Footer */}
-      <div className="text-[9px] text-muted-foreground/50">
-        Lookback: {ticker.yearsCovered[0]}–{ticker.yearsCovered[ticker.yearsCovered.length - 1]} ({ticker.lookbackYears} years) ·
-        Source: Yahoo Finance daily closes · Not dividend-adjusted · Updated: {new Date(data.asOf).toLocaleDateString()}
-      </div>
+          {/* Footer */}
+          <div className="text-[9px] text-muted-foreground/50">
+            Lookback: {ticker.yearsCovered[0]}–{ticker.yearsCovered[ticker.yearsCovered.length - 1]} ({ticker.lookbackYears} years) ·
+            Source: Yahoo Finance daily closes · Not dividend-adjusted · Updated: {new Date(data.asOf).toLocaleDateString()}
+          </div>
+        </>
+      )}
     </div>
   );
 }

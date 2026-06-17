@@ -132,6 +132,7 @@ const MAGNET_COLORS: Record<LevelMagnet["kind"], string> = {
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function fmt$(n: number): string {
+  if (!Number.isFinite(n)) return "—";
   return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 

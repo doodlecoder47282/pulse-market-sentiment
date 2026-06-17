@@ -241,10 +241,11 @@ export default function ChartPanel() {
                     )}
                     <button
                       onClick={(e) => { e.stopPropagation(); removeTicker(w.symbol); }}
-                      className="text-muted-foreground/40 opacity-0 hover:text-rose-400 group-hover:opacity-100"
+                      aria-label={`Remove ${w.label}`}
+                      className="flex h-11 w-11 items-center justify-center text-muted-foreground/60 opacity-100 hover:text-rose-400 sm:h-auto sm:w-auto sm:opacity-0 sm:group-hover:opacity-100"
                       data-testid={`remove-${w.symbol}`}
                     >
-                      <X className="h-3 w-3" />
+                      <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 </div>
@@ -416,6 +417,11 @@ export default function ChartPanel() {
           ) : ohlcQuery.isError ? (
             <div className="flex h-[440px] items-center justify-center rounded-lg border border-rose-500/40 bg-rose-500/5 text-sm text-rose-400">
               Failed to load candles. Try another ticker.
+            </div>
+          ) : (ohlc?.candles?.length ?? 0) === 0 ? (
+            <div className="flex h-[440px] flex-col items-center justify-center gap-1 rounded-lg border border-border/40 bg-muted/10 text-center">
+              <span className="text-sm font-medium text-muted-foreground">Live tape unavailable</span>
+              <span className="text-xs text-muted-foreground/70">Schwab feed is disconnected — no candles for {activeChart}.</span>
             </div>
           ) : engine === "lightweight" ? (
             <div className="relative">

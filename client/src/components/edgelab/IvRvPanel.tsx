@@ -67,6 +67,12 @@ export default function IvRvPanel() {
 
       {data && (
         <>
+          {(data.verdict === "insufficient" || (data.iv.iv30 == null && data.iv.iv60 == null && data.iv.iv90 == null)) && (
+            <div className="rounded border border-amber-500/30 bg-amber-500/5 p-2.5 text-[11px] text-amber-400" data-testid="ivrv-offline-banner">
+              no live implied vol for {data.symbol} — Schwab option surface is down. Realized-vol cones below are still good; IV/RV ratios need the option feed.
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             <div className="text-sm font-semibold">
               {data.symbol} <span className="text-muted-foreground font-normal">spot ${data.spot?.toFixed(2) ?? "—"}</span>

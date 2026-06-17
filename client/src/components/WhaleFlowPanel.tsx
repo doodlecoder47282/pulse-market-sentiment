@@ -285,7 +285,7 @@ function TickerGroup({ ticker, whales, defaultOpen }: { ticker: string; whales: 
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-muted/20 transition-colors rounded-t-md"
+        className="w-full flex min-h-[44px] items-center gap-3 px-3 py-2 text-left hover:bg-muted/20 transition-colors rounded-t-md"
         data-testid={`ticker-toggle-${ticker}`}
       >
         {open ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
@@ -403,7 +403,7 @@ function TrackedTickerGroup({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-3 px-3 py-2 text-left rounded-t-md hover:bg-muted/20 transition-colors"
+        className="flex min-h-[44px] w-full items-center gap-3 px-3 py-2 text-left rounded-t-md hover:bg-muted/20 transition-colors"
         data-testid={`tracked-toggle-${ticker}`}
       >
         {open ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
@@ -456,7 +456,7 @@ function ClosedTickerGroup({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-3 px-3 py-2 text-left rounded-t-md hover:bg-muted/20 transition-colors opacity-90"
+        className="flex min-h-[44px] w-full items-center gap-3 px-3 py-2 text-left rounded-t-md hover:bg-muted/20 transition-colors opacity-90"
         data-testid={`closed-toggle-${ticker}`}
       >
         {open ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
@@ -611,7 +611,7 @@ function UoaTickerGroup({ ticker, clusters }: { ticker: string; clusters: UoaClu
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-muted/20 transition-colors rounded-t-md"
+        className="w-full flex min-h-[44px] items-center gap-3 px-3 py-2 text-left hover:bg-muted/20 transition-colors rounded-t-md"
         data-testid={`uoa-ticker-toggle-${ticker}`}
       >
         {open ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
@@ -709,7 +709,7 @@ function PerformanceCard() {
             <button
               key={d}
               onClick={() => setWindowDays(d as 7 | 30)}
-              className={`px-2 py-0.5 text-[10px] rounded border transition-colors ${
+              className={`inline-flex min-h-[44px] items-center px-2.5 py-0.5 text-[10px] rounded border transition-colors sm:min-h-0 ${
                 windowDays === d
                   ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300"
                   : "border-border/40 text-muted-foreground hover:text-foreground"
@@ -803,7 +803,7 @@ function ClosedArchive({ positions }: { positions: FollowPosition[] }) {
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 border-b border-border/40 pb-2 mb-3 text-left hover:bg-muted/10 transition-colors rounded px-1"
+        className="flex min-h-[44px] w-full items-center gap-2 border-b border-border/40 pb-2 mb-3 text-left hover:bg-muted/10 transition-colors rounded px-1"
         data-testid="button-toggle-archive"
       >
         <span className="text-amber-500"><Archive className="h-3.5 w-3.5" /></span>
@@ -940,6 +940,10 @@ export default function WhaleFlowPanel() {
             <div className="space-y-2">
               {[1, 2, 3].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
             </div>
+          ) : previewQuery.isError ? (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/5 py-4 text-center text-xs text-amber-400" data-testid="fresh-whales-error">
+              whale feed didn't load — couldn't reach the flow scanner
+            </div>
           ) : whaleGroups.length === 0 ? (
             <div className="rounded-md border border-dashed border-border/30 py-4 text-center text-xs text-muted-foreground" data-testid="fresh-whales-empty">
               no whales pass the surgical gate right now — scan runs every 30s
@@ -959,6 +963,10 @@ export default function WhaleFlowPanel() {
           {uoaQuery.isLoading ? (
             <div className="space-y-2">
               {[1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
+            </div>
+          ) : uoaQuery.isError ? (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/5 py-4 text-center text-xs text-amber-400" data-testid="uoa-error">
+              UOA feed didn't load — couldn't reach the cluster scanner
             </div>
           ) : uoaGroups.length === 0 ? (
             <div className="rounded-md border border-dashed border-border/30 py-4 text-center text-xs text-muted-foreground" data-testid="uoa-empty">
@@ -982,6 +990,10 @@ export default function WhaleFlowPanel() {
           {activeQuery.isLoading ? (
             <div className="space-y-2">
               {[1, 2].map((i) => <Skeleton key={i} className="h-14 w-full" />)}
+            </div>
+          ) : activeQuery.isError ? (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/5 py-4 text-center text-xs text-amber-400" data-testid="tracking-error">
+              tracking feed didn't load — couldn't reach the followups service
             </div>
           ) : trackingPositions.length === 0 ? (
             <div className="rounded-md border border-dashed border-border/30 py-4 text-center text-xs text-muted-foreground" data-testid="tracking-empty">

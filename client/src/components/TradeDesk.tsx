@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { fmt } from "@/lib/format";
+import LivenessBadge from "@/components/LivenessBadge";
 import {
   LineChart, Line, XAxis, YAxis, ReferenceLine, ResponsiveContainer,
   Tooltip as RTooltip, CartesianGrid, Area, AreaChart,
@@ -185,8 +186,9 @@ export default function TradeDesk() {
           <Crosshair className="h-4 w-4 text-amber-500" />
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-500">Trade Desk</div>
           <Separator orientation="vertical" className="mx-1 h-4" />
+          <LivenessBadge feedName="quotes" value={data.quotes.spy?.price ?? null} />
           <div className="font-mono text-[11px] text-muted-foreground">
-            LIVE · {fmt.ts(data.capturedAt)} · {data.interval} bars
+            {fmt.ts(data.capturedAt)} · {data.interval} bars
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -1116,8 +1118,9 @@ function GammaMapCard({ gammaMap, spot }: { gammaMap: GammaMap; spot: number | n
             {zones.map((z, i) => {
               const barWidth = Math.min(100, (Math.abs(z.gex) / maxAbs) * 100);
               const isCall = z.gex >= 0;
-              const distPct = spot ? ((z.strike - spot) / spot) * 100 : 0;
-              const isSpotRow = spot && Math.abs(distPct) < 0.05;
+              const spotUsable = spot != null && Number.isFinite(spot) && spot > 0;
+              const distPct = spotUsable ? ((z.strike - spot!) / spot!) * 100 : 0;
+              const isSpotRow = spotUsable && Math.abs(distPct) < 0.05;
               return (
                 <div
                   key={i}
@@ -1150,17 +1153,21 @@ function GammaMapCard({ gammaMap, spot }: { gammaMap: GammaMap; spot: number | n
                     {zoneLabel[z.zone] ?? z.zone}
                   </span>
                   <span className={`text-right font-mono tabular-nums text-[10.5px] ${
-                    distPct >= 0 ? "text-red-400/80" : "text-emerald-400/80"
+                    !spotUsable ? "text-muted-foreground" : distPct >= 0 ? "text-red-400/80" : "text-emerald-400/80"
                   }`}>
-                    {distPct >= 0 ? "+" : ""}{distPct.toFixed(2)}%
+                    {!spotUsable ? "—" : `${distPct >= 0 ? "+" : ""}${distPct.toFixed(2)}%`}
                   </span>
                 </div>
               );
             })}
-            {/* spot marker row if no zone is near spot */}
-            {spot && (
+            {/* spot marker row, or offline note when spot is unavailable */}
+            {spot != null && Number.isFinite(spot) && spot > 0 ? (
               <div className="border-t border-amber-500/30 bg-amber-500/5 px-3 py-1 text-center font-mono text-[10px] uppercase tracking-wider text-amber-500">
                 ● Spot {spot.toFixed(2)}
+              </div>
+            ) : (
+              <div className="border-t border-border/40 px-3 py-1 text-center font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                spot unavailable — Schwab down, distances hidden
               </div>
             )}
           </div>
@@ -1614,9 +1621,12 @@ function EodPlayMaker() {
 
   const [notes, setNotes] = useState("");
 
-  // Derived: regime bucket, OPEX flag
-  const qNum = parseFloat(resolve("qscore")) || 0;
-  const regimeBucket = qNum < 30 ? "Pinned" : qNum < 60 ? "Mixed" : "Fragile";
+  // Derived: regime bucket, OPEX flag.
+  // Null-preserving parse — an absent qscore must NOT coerce to 0 (which would
+  // fabricate a "Pinned" verdict). No qscore → no bucket.
+  const qParsed = parseFloat(resolve("qscore"));
+  const qNum = Number.isFinite(qParsed) ? qParsed : null;
+  const regimeBucket = qNum == null ? null : qNum < 30 ? "Pinned" : qNum < 60 ? "Mixed" : "Fragile";
   const opex = isOpexToday();
 
   // Result state
@@ -1691,10 +1701,11 @@ function EodPlayMaker() {
                 <div className="flex items-center gap-2">
                   <div className="flex-1"><LiveField value={resolve("qscore")} onChange={(v) => setOverride("qscore", v)} onClear={() => clearOverride("qscore")} status={isOverridden("qscore") ? "edit" : isLive("qscore") ? "live" : isLocked("qscore") ? "lock" : "cold"} testId="input-qscore" /></div>
                   <Badge variant="outline" className={`shrink-0 text-[9px] ${
+                    qNum == null ? "border-border/40 text-muted-foreground" :
                     qNum < 30 ? "border-emerald-500/40 text-emerald-400" :
                     qNum < 60 ? "border-amber-500/40 text-amber-400" :
                     "border-rose-500/40 text-rose-400"
-                  }`}>{regimeBucket}</Badge>
+                  }`}>{regimeBucket ?? "no q-score"}</Badge>
                 </div>
               </FieldRow>
               <FieldRow label="P/C Ratio">

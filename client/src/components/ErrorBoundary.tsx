@@ -66,8 +66,18 @@ export default class ErrorBoundary extends Component<Props, State> {
         <div className="flex items-start gap-3">
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-amber-400">{label} failed to render</div>
-            <div className="mt-1 text-xs text-muted-foreground truncate">{msg}</div>
+            <div className="text-sm font-semibold text-amber-400">{label} hit an error</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              Refresh the tab. If it keeps failing, check the diagnostics panel.
+            </div>
+            <details className="mt-2">
+              <summary className="cursor-pointer text-[11px] text-muted-foreground/70 hover:text-muted-foreground">
+                error detail
+              </summary>
+              <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded border border-border/40 bg-background/40 p-2 text-[10px] font-mono text-muted-foreground/80">
+                {msg}
+              </pre>
+            </details>
           </div>
           <Button
             variant="outline"
