@@ -28,17 +28,11 @@ for f in "${LOCKED[@]}"; do
   fi
 done
 
-# Only stage tracked-source changes + additive new files under safe roots.
-git add -A \
-  ':!node_modules' \
-  ':!dist' \
-  ':!.vite' \
-  ':!data/cboe' \
-  ':!backups' \
-  ':!*.log' \
-  ':!.env' ':!.env.*' \
-  ':!data.db*' \
-  ':!.discord-scheduler-state.json'
+# Only stage tracked-source changes + additive new files. .gitignore already
+# blocks node_modules/, dist/, .env*, data.db*, backups/, *.log, data/cboe/.
+# We still explicitly unstage the scheduler state file so it doesn't churn.
+git add -A
+git reset -- .discord-scheduler-state.json 2>/dev/null || true
 
 # Nothing to commit? exit clean.
 if git diff --cached --quiet; then
