@@ -53,9 +53,18 @@ STAMP="$(date -u +%Y-%m-%dT%H:%MZ)"
 MSG="${COMMIT_MSG:-chore(auto): sync $STAMP}"
 git -c user.name="batcave-autopush" -c user.email="tankanthony6@gmail.com" commit -m "$MSG"
 
-# Rebase on remote to avoid non-fast-forward.
+# Rebase on remote to avoid non-fast-forward. Stash any unstaged churn first.
 git fetch origin "$BRANCH" >/dev/null
-git rebase "origin/$BRANCH" || { echo "[auto-push] rebase conflict, aborting" >&2; git rebase --abort; exit 3; }
-
+STASHED=0
+if ! git diff --quiet; then
+  git stash push -u -m "auto-push-tmp" >/dev/null && STASHED=1 || true
+fi
+if ! git rebase "origin/$BRANCH"; then
+  echo "[auto-push] rebase conflict, aborting" >&2
+  git rebase --abort || true
+  [ "$STASHED" = "1" ] && git stash pop >/dev/null 2>&1 || true
+  exit 3
+fi
 git push origin "$BRANCH"
+[ "$STASHED" = "1" ] && git stash pop >/dev/null 2>&1 || true
 echo "[auto-push] pushed $(git rev-parse --short HEAD)"
