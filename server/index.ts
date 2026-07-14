@@ -8,6 +8,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
 import { startMlRetrainCron } from "./mlRetrainCron";
+import { applySecurity } from "./security";
 
 // Global safety nets — do NOT let a stray promise reject or exception kill the
 // long-running server process. Crashes here previously took down /api/* during
@@ -37,6 +38,9 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+
+// Batcave hardening: helmet + rate-limit + /api/health JSON. Additive only.
+applySecurity(app);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
