@@ -71,8 +71,8 @@ export function useAlphaNewsMarkers(ticker: string, enabled: boolean) {
       return (await r.json()) as AlphaNewsResponse;
     },
     enabled: enabled && !!ticker,
-    staleTime: 90_000,
-    refetchInterval: 120_000,
+    staleTime: 15_000,
+    refetchInterval: 25_000,
   });
 
   const markers: NewsMarker[] = useMemo(() => {

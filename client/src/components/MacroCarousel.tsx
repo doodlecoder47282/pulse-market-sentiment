@@ -212,9 +212,9 @@ export function MacroCarousel() {
       className="rounded-xl border border-border/60 bg-card/60 p-4 backdrop-blur-md"
       data-testid="macro-carousel"
     >
-      {/* Category selector */}
-      <div className="mb-3 flex items-center justify-between">
-        <div className="flex flex-wrap gap-1.5">
+      {/* Category selector — horizontally-scrollable on mobile, wraps on desktop */}
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="-mx-1 flex flex-1 gap-1.5 overflow-x-auto px-1 pb-0.5 md:flex-wrap md:overflow-visible scrollbar-none">
           {groups.map((g, i) => {
             const isActive = i === activeIdx;
             const accent = CATEGORY_ACCENT[g.category];
@@ -223,7 +223,7 @@ export function MacroCarousel() {
                 key={g.category}
                 onClick={() => setActiveIdx(i)}
                 className={[
-                  "inline-flex min-h-[44px] items-center rounded-full border px-3 py-0.5 text-[11px] uppercase tracking-wider transition sm:min-h-0",
+                  "inline-flex shrink-0 items-center rounded-full border px-3 py-1.5 text-[11px] uppercase tracking-wider transition",
                   isActive
                     ? `${accent} bg-background/80 font-semibold`
                     : "border-border/40 text-muted-foreground hover:text-foreground",
@@ -235,12 +235,15 @@ export function MacroCarousel() {
             );
           })}
         </div>
-        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-          Auto-rotating · {new Date(data.asOf * 1000).toLocaleTimeString()}
+        <div className="hidden shrink-0 text-right text-[10px] uppercase leading-tight tracking-wider text-muted-foreground sm:block">
+          Auto-rotating
+          <div className="font-mono normal-case tracking-normal">
+            {new Date(data.asOf * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          </div>
         </div>
       </div>
 
-      {/* Active category grid */}
+      {/* Active category grid — ticker symbol leads, label is secondary */}
       <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-4">
         {active.quotes.map((q) => {
           const up = q.changePct != null ? q.changePct > 0 : null;
@@ -254,22 +257,24 @@ export function MacroCarousel() {
           return (
             <div
               key={q.symbol}
-              className={`group flex items-center justify-between rounded-lg border border-border/40 bg-gradient-to-br ${bgTint} px-3 py-2 transition hover:border-border`}
+              className={`group flex flex-col gap-1 rounded-lg border border-border/40 bg-gradient-to-br ${bgTint} px-3 py-2 transition hover:border-border`}
               data-testid={`carousel-quote-${q.symbol}`}
             >
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold tracking-tight">{q.label}</div>
-                <div className="font-mono text-[11px] tabular-nums text-muted-foreground">
-                  {formatPrice(q)}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Sparkline data={q.spark} positive={up} />
-                <div className={`font-mono text-xs tabular-nums ${color}`}>
+              {/* Row 1: ticker symbol (lead) + % change */}
+              <div className="flex items-center justify-between gap-2">
+                <div className="truncate font-mono text-[13px] font-bold tracking-tight" title={q.symbol}>{q.label}</div>
+                <div className={`shrink-0 font-mono text-xs tabular-nums ${color}`}>
                   {q.changePct != null
                     ? `${q.changePct >= 0 ? "+" : ""}${q.changePct.toFixed(2)}%`
                     : "—"}
                 </div>
+              </div>
+              {/* Row 2: price + sparkline */}
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                  {formatPrice(q)}
+                </div>
+                <Sparkline data={q.spark} positive={up} />
               </div>
             </div>
           );

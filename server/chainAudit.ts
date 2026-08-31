@@ -361,9 +361,14 @@ function computeVanna(contracts: Contract[], spot: number): VannaResult {
   const strikeMap = new Map<number, number>();
 
   for (const c of contracts) {
-    if (c.oi <= 0 || c.iv <= 0 || c.vega === 0) continue;
-    // vanna ≈ vega × delta / (S × IV) — approximation from greeks Schwab provides
-    const vanna = safeDivide(c.vega * c.delta, spot * c.iv);
+    if (c.oi <= 0 || c.iv <= 0 || c.vega === 0 || c.dte <= 0) continue;
+    const dd = recoverD1D2(c);
+    if (!dd) continue;
+    const T = c.dte / 365;
+    const sigmaRootT = c.iv * Math.sqrt(T);
+    if (sigmaRootT <= 0 || !isFinite(sigmaRootT)) continue;
+    // Institutional vanna = -vega * d2 / (S * sigma * sqrt(T))  (Black-Scholes ∂Δ/∂σ)
+    const vanna = safeDivide(-c.vega * dd.d2, spot * sigmaRootT);
     // Vanna exposure in $ per 1% vol move = vanna × OI × 100 × S × 0.01
     const vannaExp = vanna * c.oi * 100 * spot * 0.01;
     strikeMap.set(c.strike, (strikeMap.get(c.strike) ?? 0) + vannaExp);
@@ -389,12 +394,20 @@ function computeCharm(contracts: Contract[], spot: number): CharmResult {
   const strikeMap = new Map<number, number>();
 
   for (const c of contracts) {
-    if (c.oi <= 0 || c.dte <= 0) continue;
-    const T = c.dte / 365; // years to expiry
-    // charm ≈ -theta × delta / (S × T)
-    const charm = safeDivide(-c.theta * c.delta, spot * T);
-    // charmExposure = charm × OI × 100 × S
-    const charmExp = charm * c.oi * 100 * spot;
+    if (c.oi <= 0 || c.dte <= 0 || c.iv <= 0) continue;
+    const dd = recoverD1D2(c);
+    if (!dd) continue;
+    const T = c.dte / 365;
+    const sigmaRootT = c.iv * Math.sqrt(T);
+    if (sigmaRootT <= 0 || !isFinite(sigmaRootT)) continue;
+    // Institutional charm = -phi(d1) * d2 / (2*T*sigma*sqrt(T))  for r=q=0
+    // Sign flip for puts: charm_put = charm_call - q*N(-d1); with q=0, charm_call = charm_put.
+    // phi = standard normal pdf.
+    const phiD1 = Math.exp(-0.5 * dd.d1 * dd.d1) / Math.sqrt(2 * Math.PI);
+    const charm = safeDivide(-phiD1 * dd.d2, 2 * T * sigmaRootT);
+    // charm is in (delta units / year). Convert to per-day by /365.
+    // Exposure in $/day per 1pt move = charm × OI × 100 × S / 365
+    const charmExp = (charm * c.oi * 100 * spot) / 365;
     strikeMap.set(c.strike, (strikeMap.get(c.strike) ?? 0) + charmExp);
   }
 

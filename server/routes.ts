@@ -1055,7 +1055,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // News snapshot — RSS headlines + econ calendar merged.
   let newsCache: { at: number; data: NewsResponse } | null = null;
-  const NEWS_CACHE_MS = 3 * 60_000;
+  const NEWS_CACHE_MS = 25_000;
   app.get("/api/news", async (_req, res) => {
     try {
       if (newsCache && Date.now() - newsCache.at < NEWS_CACHE_MS) {
@@ -1075,7 +1075,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // POST /api/alpha-news/verdict { eventId, ticker, context? } — returns AI positioning verdict.
   // Events cached 2 min per ticker to avoid hammering RSS feeds.
   const alphaEventsCache = new Map<string, { at: number; data: any }>();
-  const ALPHA_EVENTS_TTL_MS = 2 * 60_000;
+  const ALPHA_EVENTS_TTL_MS = 20_000;
   app.get("/api/alpha-news", async (req, res) => {
     try {
       const ticker = typeof req.query.ticker === "string" && req.query.ticker.trim()
@@ -1866,14 +1866,106 @@ Briefly note 1-2 backup ideas if primary invalidates.
 
 Be precise. No hedging language. If inputs are insufficient, say so and stop — do not invent data.`;
 
+  /**
+   * Third-order greek strikes computed LIVE from the Schwab chain.
+   * Replaces the old hardcoded literals (vanna 7089 / zomma 7070 / charm 7128 /
+   * vomma 7265-6960) which were frozen from a ~7000 SPX regime and had drifted
+   * ~700 points stale. Returns null on any failure so callers fall back cleanly.
+   */
+  async function computeThirdOrderStrikes(symbol = "$SPX"): Promise<{
+    vanna: number | null; zomma: number | null; charm: number | null;
+    upperVomma: number | null; lowerVomma: number | null;
+    negGamma: number | null; spot: number | null; asOf: string;
+  } | null> {
+    try {
+      const { getOptionChain } = await import("./schwab");
+      const chain = await getOptionChain(symbol, 3);
+      if ("error" in chain) return null;
+      const u = chain.underlying;
+      const spot = u.last ?? (u.bid && u.ask ? (u.bid + u.ask) / 2 : null);
+      if (!spot || spot <= 0) return null;
+      const audit = buildChainAudit(chain as any, spot);
+      if (audit.dataQuality === "minimal") return null;
+
+      const peak = (prof: any[], key: string): number | null => {
+        let best: number | null = null, bv = 0;
+        for (const p of prof || []) {
+          const v = Math.abs(Number(p?.[key]));
+          if (!Number.isFinite(v) || v <= bv) continue;
+          if (Math.abs(p.strike - spot) / spot > 0.06) continue; // ignore far tails
+          bv = v; best = p.strike;
+        }
+        return best;
+      };
+      // vomma pockets: strongest above and strongest below spot
+      const sidePeak = (prof: any[], key: string, above: boolean): number | null => {
+        let best: number | null = null, bv = 0;
+        for (const p of prof || []) {
+          const v = Math.abs(Number(p?.[key]));
+          if (!Number.isFinite(v) || v <= bv) continue;
+          if (above ? p.strike <= spot : p.strike >= spot) continue;
+          if (Math.abs(p.strike - spot) / spot > 0.08) continue;
+          bv = v; best = p.strike;
+        }
+        return best;
+      };
+      // charm zero-crossing beats charm peak — it is where pinning pressure flips
+      const charmZero = (prof: any[]): number | null => {
+        const s = [...(prof || [])].sort((a, b) => a.strike - b.strike);
+        for (let i = 1; i < s.length; i++) {
+          const a = Number(s[i - 1]?.charmExposure), b = Number(s[i]?.charmExposure);
+          if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+          if (a === 0) return s[i - 1].strike;
+          if (a * b < 0) {
+            const t = Math.abs(a) / (Math.abs(a) + Math.abs(b));
+            return +(s[i - 1].strike + t * (s[i].strike - s[i - 1].strike)).toFixed(0);
+          }
+        }
+        return null;
+      };
+
+      return {
+        vanna: peak(audit.vanna?.profile as any, "vannaExposure"),
+        zomma: peak(audit.zomma?.profile as any, "zommaExposure"),
+        charm: charmZero(audit.charm?.profile as any) ?? peak(audit.charm?.profile as any, "charmExposure"),
+        upperVomma: sidePeak(audit.vomma?.profile as any, "vommaExposure", true),
+        lowerVomma: sidePeak(audit.vomma?.profile as any, "vommaExposure", false),
+        // negGamma = the gamma flip: below it dealers are short gamma and amplify moves
+        negGamma:
+          (audit as any).gexDecay?.combined?.zeroGamma ??
+          (audit as any).gexDecay?.zerodte?.zeroGamma ??
+          (audit as any).zeroGamma ?? null,
+        spot, asOf: new Date().toISOString(),
+      };
+    } catch (e: any) {
+      console.warn("[thirdOrder] compute failed:", e?.message ?? e);
+      return null;
+    }
+  }
+
+  // Expose the computed third-order map so the killbox UI can read it directly.
+  app.get("/api/killbox/third-order", async (req, res) => {
+    const symbol = String(req.query.symbol || "$SPX").trim().toUpperCase() || "$SPX";
+    const t = await computeThirdOrderStrikes(symbol);
+    if (!t) return res.status(503).json({ error: "unavailable", message: "chain or greeks unavailable" });
+    res.json({ symbol, source: "computed", ...t });
+  });
+
   app.post("/api/eod-setup", async (req, res) => {
     try {
+      // Compute live third-order strikes; body values still win if explicitly passed.
+      const to = await computeThirdOrderStrikes(String(req.body?.symbol || "$SPX"));
       const {
         spx, vix, iv, qscore,
         gex, callWall, putWall, zeroGamma, hvl, gammaFlip,
         upside = 7140, downside = 6950, t2up = 7270, t2down = 6885,
-        mopex = 7025, vanna = 7089, zomma = 7070, charm = 7128,
-        negGamma = 7100, upperVomma = 7265, lowerVomma = 6960,
+        mopex = 7025,
+        vanna = to?.vanna ?? 7089,
+        zomma = to?.zomma ?? 7070,
+        charm = to?.charm ?? 7128,
+        negGamma = to?.negGamma ?? 7100,
+        upperVomma = to?.upperVomma ?? 7265,
+        lowerVomma = to?.lowerVomma ?? 6960,
         pcRatio, opex = false,
         regime,
         notes = "",
@@ -3045,6 +3137,820 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     }
   });
 
+  // ─── REGIME HEADLINE: one-sentence read on current market state ─────────────
+  // Pulls VIX term structure ($VIX9D, $VIX, $VIX3M) + live Net GEX via Schwab.
+  // Computes:
+  //   - termSlope = (VIX3M - VIX9D) / VIX  → contango (+) vs backwardation (−)
+  //   - netGexShare = current Net GEX / total |GEX|  → dealer regime intensity
+  //   - gexTrend24h = slope of last-N GEX snapshots (sign + magnitude)
+  // Classifies into 6 regimes with a one-sentence verdict + color tier.
+  app.get("/api/regime/headline", async (_req, res) => {
+    try {
+      const { getOptionChain } = await import("./schwab");
+      const { getQuote } = await import("./sources");
+
+      // 1) VIX term structure — Schwab cash indexes via getQuote (returns {last, prev})
+      const [v9d, v, v3m, vv] = await Promise.all([
+        getQuote("^VIX9D"),
+        getQuote("^VIX"),
+        getQuote("^VIX3M"),
+        getQuote("^VVIX"),
+      ]);
+      const vix9d = v9d.last;
+      const vix = v.last;
+      const vix3m = v3m.last;
+      const vvix = vv.last;
+      const vixChg = (v.last != null && v.prev != null && v.prev > 0)
+        ? ((v.last - v.prev) / v.prev) * 100
+        : null;
+
+      // 2) Term-structure slope
+      let termSlope: number | null = null;        // (VIX3M - VIX9D) / VIX
+      let termState: "contango" | "backwardation" | "flat" | "unknown" = "unknown";
+      if (vix && vix > 0 && vix9d != null && vix3m != null) {
+        termSlope = (vix3m - vix9d) / vix;
+        if (termSlope > 0.05) termState = "contango";
+        else if (termSlope < -0.02) termState = "backwardation";
+        else termState = "flat";
+      }
+
+      // 3) Live Net GEX — compute directly from chain (matches /api/killbox/forward)
+      let netGex = 0;
+      let totalAbsGex = 0;
+      let gexRegime: "long_gamma" | "short_gamma" | "unknown" = "unknown";
+      let gexShare = 0;
+      let spot: number | null = null;
+      let weightMode: "oi" | "volume" | "hybrid" = "oi";
+      try {
+        const chain = await getOptionChain("$SPX", 30);
+        if (!("error" in chain)) {
+          spot = chain.underlying.last ?? null;
+          let totalOI = 0, totalVol = 0;
+          const sides: Array<{ side: "C" | "P"; map: any }> = [
+            { side: "C", map: chain.callExpDateMap },
+            { side: "P", map: chain.putExpDateMap },
+          ];
+          for (const { map } of sides) {
+            for (const ek of Object.keys(map || {})) {
+              for (const sk of Object.keys(map[ek] || {})) {
+                for (const c of map[ek][sk] || []) {
+                  totalOI += (c.openInterest || 0);
+                  totalVol += (c.totalVolume || 0);
+                }
+              }
+            }
+          }
+          const useVolume = totalOI < 1000 && totalVol > 1000;
+          weightMode = useVolume ? "volume" : (totalOI > 0 && totalVol > totalOI * 5 ? "hybrid" : "oi");
+          if (spot && spot > 0) {
+            for (const { side, map } of sides) {
+              for (const ek of Object.keys(map || {})) {
+                for (const sk of Object.keys(map[ek] || {})) {
+                  for (const c of map[ek][sk] || []) {
+                    const oi = c.openInterest || 0;
+                    const vol = c.totalVolume || 0;
+                    if (oi === 0 && vol === 0) continue;
+                    const gamma = c.gamma ?? 0;
+                    let w = 0;
+                    if (weightMode === "oi") w = oi;
+                    else if (weightMode === "volume") w = vol;
+                    else w = oi + vol * 0.25;
+                    if (w <= 0) continue;
+                    const sign = side === "C" ? 1 : -1;
+                    const contrib = sign * gamma * w * spot * spot * 0.01;
+                    netGex += contrib;
+                    totalAbsGex += Math.abs(contrib);
+                  }
+                }
+              }
+            }
+          }
+          gexRegime = netGex > 0 ? "long_gamma" : "short_gamma";
+          gexShare = totalAbsGex > 0 ? netGex / totalAbsGex : 0; // -1..+1
+        }
+      } catch (e: any) {
+        console.warn("[regime/headline] gex fetch failed:", e?.message);
+      }
+
+      // 4) GEX trend: last 24h slope from greek_gradient db
+      let gexTrend: "rising" | "falling" | "flat" | "unknown" = "unknown";
+      let gexTrendPct: number | null = null;
+      try {
+        const sinceMs = Date.now() - 24 * 60 * 60 * 1000;
+        const pts = fetchGradient("$SPX", "gex", sinceMs);
+        // Aggregate to per-snapshot net gex
+        const byTs = new Map<number, number>();
+        for (const p of pts) byTs.set(p.ts, (byTs.get(p.ts) || 0) + p.exposure);
+        const series = Array.from(byTs.entries()).sort((a, b) => a[0] - b[0]);
+        if (series.length >= 3) {
+          const first = series[0][1];
+          const last = series[series.length - 1][1];
+          const denom = Math.max(1, Math.abs(first), Math.abs(last));
+          gexTrendPct = (last - first) / denom;
+          if (gexTrendPct > 0.15) gexTrend = "rising";
+          else if (gexTrendPct < -0.15) gexTrend = "falling";
+          else gexTrend = "flat";
+        }
+      } catch (e: any) {
+        console.warn("[regime/headline] gex trend failed:", e?.message);
+      }
+
+      // 5) CLASSIFY — six institutional regimes
+      // priority order matters: severe vol expansion overrides pinning, etc.
+      type RegimeKey =
+        | "vol_expansion"
+        | "gamma_squeeze"
+        | "pinning"
+        | "mean_reversion"
+        | "trend_continuation"
+        | "neutral";
+
+      let regime: RegimeKey = "neutral";
+      let confidence: "high" | "medium" | "low" = "low";
+      let headline = "Neutral regime — no clear edge, size down.";
+      let tier: "bullish" | "bearish" | "neutral" | "warning" = "neutral";
+
+      const vixPct = vixChg ?? 0;
+      const absShare = Math.abs(gexShare);
+
+      // Volatility expansion — backwardation + VIX up + dealers short gamma
+      if (termState === "backwardation" && vixPct > 3 && gexRegime === "short_gamma") {
+        regime = "vol_expansion";
+        confidence = "high";
+        tier = "warning";
+        headline = `Volatility expansion — VIX backwardation (${vix9d?.toFixed(1)}/${vix?.toFixed(1)}/${vix3m?.toFixed(1)}) + dealers short gamma, expect wider ranges and gap risk.`;
+      }
+      // Gamma squeeze — strong long gamma + GEX rising + VIX falling
+      else if (gexRegime === "long_gamma" && absShare > 0.25 && gexTrend === "rising" && vixPct < -1) {
+        regime = "gamma_squeeze";
+        confidence = "high";
+        tier = "bullish";
+        headline = `Gamma squeeze — net GEX rising, dealers deep long gamma (${(gexShare * 100).toFixed(0)}% share), VIX bleeding, drift up into call walls.`;
+      }
+      // Pinning — strong long gamma + contango + low VIX move
+      else if (gexRegime === "long_gamma" && absShare > 0.15 && termState === "contango" && Math.abs(vixPct) < 2) {
+        regime = "pinning";
+        confidence = "medium";
+        tier = "neutral";
+        headline = `Pinning mode — dealers long gamma (${(gexShare * 100).toFixed(0)}% share) damping moves, VIX contango steady, expect range trade.`;
+      }
+      // Mean reversion — short gamma + flat term + VIX cooling
+      else if (gexRegime === "short_gamma" && termState !== "backwardation" && vixPct < -1) {
+        regime = "mean_reversion";
+        confidence = "medium";
+        tier = "neutral";
+        headline = `Mean reversion — dealers short gamma but VIX cooling, expect chop and fade extremes.`;
+      }
+      // Trend continuation — short gamma + GEX trending + VIX bid but not panicking
+      else if (gexRegime === "short_gamma" && gexTrend !== "flat" && Math.abs(vixPct) > 1) {
+        regime = "trend_continuation";
+        confidence = "medium";
+        tier = vixPct > 0 ? "bearish" : "bullish";
+        headline = `Trend continuation — dealers short gamma amplifying ${vixPct > 0 ? "downside" : "upside"}, follow the tape until vol structure flips.`;
+      }
+      // Default neutral with detail
+      else if (gexRegime !== "unknown" && termState !== "unknown") {
+        regime = "neutral";
+        confidence = "low";
+        tier = "neutral";
+        const gexLabel = gexRegime === "long_gamma" ? "long gamma" : "short gamma";
+        const termLabel = termState === "contango" ? "contango" : termState === "backwardation" ? "backwardation" : "flat term";
+        headline = `Neutral — ${gexLabel} (${(gexShare * 100).toFixed(0)}%), VIX ${termLabel}, no decisive edge.`;
+      }
+
+      res.json({
+        regime,
+        headline,
+        confidence,
+        tier,
+        asOf: Date.now(),
+        inputs: {
+          vix9d, vix, vix3m, vvix, vixChangePct: vixChg,
+          termSlope, termState,
+          netGex, totalAbsGex, gexShare, gexRegime,
+          gexTrend, gexTrendPct,
+          spot, weightMode,
+        },
+      });
+    } catch (e: any) {
+      console.error("[regime/headline]", e?.message, e?.stack);
+      res.status(500).json({ error: "internal", message: e?.message ?? "Regime headline failed" });
+    }
+  });
+
+  // ─── KILLBOX FORWARD: live dealer positioning by strike ─────────────────────
+  // Builds the forward dealer map directly from the LIVE option chain.
+  //   exposure(strike) = sum over contracts of greek × weight × sign × scale
+  //   weight = openInterest when fresh; falls back to totalVolume when OI is
+  //   stale (after-hours OCC lag). sign: call = +, put = − for gamma/gex;
+  //   higher-order greeks use institutional formulas matching chainAudit.ts.
+  // Returns: per-greek profile + callWall/putWall/gammaFlip + 0..1 stability.
+  app.get("/api/heatmap/thermal", async (req, res) => {
+    try {
+      const symbol = String(req.query.symbol || "$SPX").trim().toUpperCase() || "$SPX";
+      const dte = req.query.dte ? Math.max(1, parseInt(String(req.query.dte), 10) || 60) : 60;
+      const greek = String(req.query.greek || "gex").toLowerCase() as "gex" | "vanna" | "charm" | "vomma" | "zomma";
+
+      const { getOptionChain } = await import("./schwab");
+      const chain = await getOptionChain(symbol, dte);
+      if ("error" in chain) {
+        return res.status(503).json({ error: chain.error, message: "Option chain unavailable" });
+      }
+      const spot = chain.underlying.last ?? null;
+      if (!spot || spot <= 0) {
+        return res.status(503).json({ error: "no_spot", message: "Spot price unavailable" });
+      }
+
+      // First pass: totals for weighting mode
+      let totalOI = 0, totalVol = 0;
+      const passes: Array<{ side: "C" | "P"; map: any }> = [
+        { side: "C", map: chain.callExpDateMap },
+        { side: "P", map: chain.putExpDateMap },
+      ];
+      for (const { map } of passes) {
+        for (const ek of Object.keys(map || {})) {
+          for (const sk of Object.keys(map[ek] || {})) {
+            for (const c of map[ek][sk] || []) {
+              totalOI += (c.openInterest || 0);
+              totalVol += (c.totalVolume || 0);
+            }
+          }
+        }
+      }
+      const useVolume = totalOI < 1000 && totalVol > 1000;
+      const weightMode: "oi" | "volume" | "hybrid" = useVolume ? "volume" : (totalOI > 0 && totalVol > totalOI * 5 ? "hybrid" : "oi");
+
+      const SQRT_2PI = Math.sqrt(2 * Math.PI);
+      const phi = (x: number) => Math.exp(-0.5 * x * x) / SQRT_2PI;
+      const invN = (p: number): number => {
+        const a = [-39.6968302866538, 220.946098424521, -275.928510446969, 138.357751867269, -30.6647980661472, 2.50662827745924];
+        const b = [-54.4760987982241, 161.585836858041, -155.698979859887, 66.8013118877197, -13.2806815528857];
+        const c = [-0.00778489400243029, -0.322396458041136, -2.40075827716184, -2.54973253934373, 4.37466414146497, 2.93816398269878];
+        const d = [0.00778469570904146, 0.32246712907004, 2.445134137143, 3.75440866190742];
+        const plow = 0.02425, phigh = 1 - plow;
+        let q: number, r: number;
+        const clamped = Math.max(1e-6, Math.min(1 - 1e-6, p));
+        if (clamped < plow) { q = Math.sqrt(-2 * Math.log(clamped)); return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
+        if (clamped > phigh) { q = Math.sqrt(-2 * Math.log(1 - clamped)); return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
+        q = clamped - 0.5; r = q * q;
+        return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+      };
+
+      // matrix[expiryKey][strike] = exposure for selected greek
+      // Also compute all-greek exposure for tooltip
+      type Cell = { gex: number; vanna: number; charm: number; vomma: number; zomma: number; callOI: number; putOI: number };
+      const matrix = new Map<string, Map<number, Cell>>();
+      const expiryDTE = new Map<string, number>();
+      const strikeSet = new Set<number>();
+
+      const getCell = (ek: string, k: number): Cell => {
+        let em = matrix.get(ek);
+        if (!em) { em = new Map(); matrix.set(ek, em); }
+        let c = em.get(k);
+        if (!c) { c = { gex: 0, vanna: 0, charm: 0, vomma: 0, zomma: 0, callOI: 0, putOI: 0 }; em.set(k, c); }
+        return c;
+      };
+
+      for (const { side, map } of passes) {
+        for (const ek of Object.keys(map || {})) {
+          const dteStr = ek.split(":")[1] || "30";
+          const dteDays = Math.max(1 / 365, parseFloat(dteStr) || 30);
+          expiryDTE.set(ek, dteDays);
+          const T = dteDays / 365;
+          const sqrtT = Math.sqrt(T);
+          for (const sk of Object.keys(map[ek] || {})) {
+            const strike = parseFloat(sk);
+            if (!isFinite(strike)) continue;
+            strikeSet.add(strike);
+            const cell = getCell(ek, strike);
+            for (const c of map[ek][sk] || []) {
+              const oi = c.openInterest || 0;
+              const vol = c.totalVolume || 0;
+              if (oi === 0 && vol === 0) continue;
+              const ivPct = c.volatility || 0;
+              const sigma = ivPct > 0 ? ivPct / 100 : 0;
+              const delta = c.delta ?? 0;
+              const gamma = c.gamma ?? 0;
+              if (side === "C") cell.callOI += oi; else cell.putOI += oi;
+
+              let weight = 0;
+              if (weightMode === "oi") weight = oi;
+              else if (weightMode === "volume") weight = vol;
+              else weight = oi + vol * 0.25;
+              if (weight <= 0) continue;
+
+              const sign = side === "C" ? 1 : -1;
+              cell.gex += sign * gamma * weight * spot * spot * 0.01;
+
+              if (sigma > 0 && Math.abs(delta) > 1e-6 && Math.abs(delta) < 1 - 1e-6) {
+                const callDelta = side === "C" ? Math.abs(delta) : 1 - Math.abs(delta);
+                const d1 = invN(callDelta);
+                const d2 = d1 - sigma * sqrtT;
+                const phid1 = phi(d1);
+                const vegaPerContract = spot * phid1 * sqrtT;
+                const vanna = -vegaPerContract * d2 / (spot * sigma * sqrtT);
+                const charm = -phid1 * d2 / (2 * T * sigma * sqrtT) / 365;
+                const vomma = vegaPerContract * d1 * d2 / sigma;
+                const zomma = gamma * (d1 * d2 - 1) / sigma;
+                cell.vanna += sign * vanna * weight * 100;
+                cell.charm += sign * charm * weight * 100;
+                cell.vomma += sign * vomma * weight * 100;
+                cell.zomma += sign * zomma * weight * 100;
+              }
+            }
+          }
+        }
+      }
+
+      // Filter strikes to ±15% band around spot to keep the grid tight
+      const strikeMin = spot * 0.85;
+      const strikeMax = spot * 1.15;
+      const strikes = Array.from(strikeSet)
+        .filter(s => s >= strikeMin && s <= strikeMax)
+        .sort((a, b) => a - b);
+
+      const expiries = Array.from(matrix.keys())
+        .map(ek => ({ key: ek, dte: expiryDTE.get(ek) || 30, label: ek.split(":")[0] }))
+        .sort((a, b) => a.dte - b.dte)
+        .slice(0, 12); // cap at 12 expiries for readable columns
+
+      // Build flat cell array with selected greek exposure
+      const cells: Array<{ expIdx: number; strikeIdx: number; expiry: string; dte: number; strike: number; exposure: number; gex: number; vanna: number; charm: number; vomma: number; zomma: number; callOI: number; putOI: number }> = [];
+      let maxAbs = 0;
+      for (let ei = 0; ei < expiries.length; ei++) {
+        const ek = expiries[ei].key;
+        const em = matrix.get(ek);
+        if (!em) continue;
+        for (let si = 0; si < strikes.length; si++) {
+          const strike = strikes[si];
+          const cell = em.get(strike);
+          if (!cell) continue;
+          const exposure = cell[greek] || 0;
+          if (Math.abs(exposure) < 1e-9 && cell.callOI + cell.putOI === 0) continue;
+          if (Math.abs(exposure) > maxAbs) maxAbs = Math.abs(exposure);
+          cells.push({
+            expIdx: ei, strikeIdx: si,
+            expiry: expiries[ei].label, dte: expiries[ei].dte, strike,
+            exposure,
+            gex: cell.gex, vanna: cell.vanna, charm: cell.charm, vomma: cell.vomma, zomma: cell.zomma,
+            callOI: cell.callOI, putOI: cell.putOI,
+          });
+        }
+      }
+
+      // Compute per-strike totals (across all expiries) for the side rail
+      const strikeTotals = strikes.map(strike => {
+        let total = 0, totalAbs = 0;
+        for (const em of matrix.values()) {
+          const cell = em.get(strike);
+          if (cell) { total += cell[greek] || 0; totalAbs += Math.abs(cell[greek] || 0); }
+        }
+        return { strike, total, totalAbs };
+      });
+
+      // Key levels reused from killbox math (call wall, put wall, gamma flip on gex)
+      let callWall: number | null = null, callWallValue = 0;
+      let putWall: number | null = null, putWallValue = 0;
+      let gammaFlip: number | null = null;
+      if (greek === "gex") {
+        for (const st of strikeTotals) {
+          if (st.strike >= spot && st.total > callWallValue) { callWallValue = st.total; callWall = st.strike; }
+          if (st.strike <= spot && st.total < putWallValue) { putWallValue = st.total; putWall = st.strike; }
+        }
+        let cum = 0, prevCum = 0, prevStrike = strikeTotals[0]?.strike ?? 0;
+        for (const st of strikeTotals) {
+          prevCum = cum; cum += st.total;
+          if ((prevCum <= 0 && cum > 0) || (prevCum >= 0 && cum < 0)) {
+            gammaFlip = (prevStrike + st.strike) / 2; break;
+          }
+          prevStrike = st.strike;
+        }
+      }
+
+      res.json({
+        symbol,
+        asOf: Date.now(),
+        spot,
+        greek,
+        weightMode,
+        strikes,
+        expiries: expiries.map(e => ({ label: e.label, dte: e.dte })),
+        cells,
+        maxAbs,
+        strikeTotals,
+        levels: { callWall, callWallValue, putWall, putWallValue, gammaFlip },
+        source: chain.source,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: "server_error", message: e?.message || String(e) });
+    }
+  });
+
+
+  // ── 0DTE Forward — same-day sigma cone + 0DTE-only GEX levels + charm drift ──
+  // Method: nearest-expiry chain only. ATM IV → minute-scaled sigma bands to the close
+  // (sqrt(t/98280), 252d × 390min). Median path = spot + pin gravity (long gamma only,
+  // capped) + charm tilt. Deterministic, no Monte Carlo — same philosophy as killbox 13w.
+  app.get("/api/odte/forward", async (req, res) => {
+    try {
+      const symbol = String(req.query.symbol || "$SPX").trim().toUpperCase() || "$SPX";
+      const { getOptionChain, getPriceHistory } = await import("./schwab");
+      const proj = await import("./odteProjection");
+      const [chain, hist] = await Promise.all([
+        getOptionChain(symbol, 1),
+        getPriceHistory(symbol, "day", 2, "minute", 5, false).catch(() => ({ candles: [] as any[] })),
+      ]);
+      if ("error" in chain) {
+        return res.status(503).json({ error: (chain as any).error, message: "Option chain unavailable" });
+      }
+      const spot = chain.underlying.last ?? null;
+      if (!spot || spot <= 0) return res.status(503).json({ error: "no_spot" });
+
+      // ── nearest expiry (min DTE) across both maps ──
+      const dteOf = (ek: string) => { const n = parseFloat(ek.split(":")[1] || "99"); return isFinite(n) ? n : 99; };
+      const allKeys = [...Object.keys(chain.callExpDateMap || {}), ...Object.keys(chain.putExpDateMap || {})];
+      if (allKeys.length === 0) return res.status(503).json({ error: "no_expiries" });
+      const nearestKey = allKeys.sort((a, b) => dteOf(a) - dteOf(b))[0];
+      const nearestDte = dteOf(nearestKey);
+      const expiryDate = nearestKey.split(":")[0];
+
+      // ── ET session math ──
+      const etParts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour12: false, hour: "2-digit", minute: "2-digit", weekday: "short" }).formatToParts(new Date());
+      const get = (t: string) => etParts.find(p => p.type === t)?.value || "";
+      const etHour = parseInt(get("hour"), 10) % 24;
+      const etMin = parseInt(get("minute"), 10);
+      const nowMin = etHour * 60 + etMin;
+      const OPEN = 9 * 60 + 30, CLOSE = 16 * 60;
+      let sessionState: "preopen" | "intraday" | "closed";
+      let startMin: number; // minutes-from-open where projection starts
+      if (nowMin < OPEN) { sessionState = "preopen"; startMin = 0; }
+      else if (nowMin < CLOSE) { sessionState = "intraday"; startMin = nowMin - OPEN; }
+      else { sessionState = "closed"; startMin = 0; }
+      const projMinutes = 390 - startMin; // projection window length
+      const minutesToClose = sessionState === "intraday" ? CLOSE - nowMin : 390;
+
+      // ── aggregate 0DTE-only per-strike GEX + charm ──
+      const SQRT_2PI = Math.sqrt(2 * Math.PI);
+      const phi = (x: number) => Math.exp(-0.5 * x * x) / SQRT_2PI;
+      const invN = (p: number): number => {
+        const a = [-39.6968302866538, 220.946098424521, -275.928510446969, 138.357751867269, -30.6647980661472, 2.50662827745924];
+        const b = [-54.4760987982241, 161.585836858041, -155.698979859887, 66.8013118877197, -13.2806815528857];
+        const c = [-0.00778489400243029, -0.322396458041136, -2.40075827716184, -2.54973253934373, 4.37466414146497, 2.93816398269878];
+        const d = [0.00778469570904146, 0.32246712907004, 2.445134137143, 3.75440866190742];
+        const plow = 0.02425, phigh = 1 - plow;
+        const cl = Math.max(1e-6, Math.min(1 - 1e-6, p));
+        let q: number, r: number;
+        if (cl < plow) { q = Math.sqrt(-2 * Math.log(cl)); return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
+        if (cl > phigh) { q = Math.sqrt(-2 * Math.log(1 - cl)); return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
+        q = cl - 0.5; r = q * q;
+        return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+      };
+
+      type Row = { strike: number; gex: number; charm: number; callOI: number; putOI: number; callMid: number; putMid: number; callIV: number; putIV: number };
+      const agg = new Map<number, Row>();
+      const getRow = (k: number): Row => {
+        let r = agg.get(k);
+        if (!r) { r = { strike: k, gex: 0, charm: 0, callOI: 0, putOI: 0, callMid: 0, putMid: 0, callIV: 0, putIV: 0 }; agg.set(k, r); }
+        return r;
+      };
+      const T = Math.max(nearestDte, 0.5) / 365; // floor half-day to keep greeks finite
+      const sqrtT = Math.sqrt(T);
+      const passes: Array<{ side: "C" | "P"; map: any }> = [
+        { side: "C", map: chain.callExpDateMap },
+        { side: "P", map: chain.putExpDateMap },
+      ];
+      let totalOI = 0, totalVol = 0, validGammaCount = 0;
+      for (const { side, map } of passes) {
+        const strikes = map?.[nearestKey] || {};
+        for (const sk of Object.keys(strikes)) {
+          const strike = parseFloat(sk);
+          if (!isFinite(strike)) continue;
+          const row = getRow(strike);
+          for (const c of strikes[sk] || []) {
+            const oi = c.openInterest || 0;
+            const vol = c.totalVolume || 0;
+            totalOI += oi; totalVol += vol;
+            const mid = c.bid != null && c.ask != null && c.ask > 0 ? (c.bid + c.ask) / 2 : (c.last || 0);
+            // Schwab returns -999 sentinels for greeks/IV when market is closed — sanitize hard
+            const rawIV = c.volatility || 0;
+            const ivPct = rawIV > 0 && rawIV < 500 ? rawIV : 0;
+            if (side === "C") { row.callOI += oi; row.callMid = mid; row.callIV = ivPct; }
+            else { row.putOI += oi; row.putMid = mid; row.putIV = ivPct; }
+            const weight = oi + vol * 0.25; // hybrid: 0DTE OI is stale by design, volume carries intraday info
+            if (weight <= 0) continue;
+            const rawGamma = c.gamma ?? 0;
+            const gamma = rawGamma > 0 && rawGamma <= 1 ? rawGamma : 0; // vanilla gamma is (0,1]
+            const rawDelta = c.delta ?? 0;
+            const delta = Math.abs(rawDelta) > 0 && Math.abs(rawDelta) < 1 ? rawDelta : 0;
+            const sigma = ivPct > 0 ? ivPct / 100 : 0;
+            const sign = side === "C" ? 1 : -1;
+            if (gamma > 0) { row.gex += sign * gamma * weight * spot * spot * 0.01; validGammaCount++; }
+            if (sigma > 0 && Math.abs(delta) > 1e-6 && Math.abs(delta) < 1 - 1e-6) {
+              const callDelta = side === "C" ? Math.abs(delta) : 1 - Math.abs(delta);
+              const d1 = invN(callDelta);
+              const d2 = d1 - sigma * sqrtT;
+              // charm per day, dealer-signed, weighted
+              const charm = -phi(d1) * d2 / (2 * T * sigma * sqrtT) / 365;
+              row.charm += sign * charm * weight * spot * 0.01;
+            }
+          }
+        }
+      }
+
+      const rows = [...agg.values()].filter(r => Math.abs(r.strike - spot) / spot <= 0.03).sort((a, b) => a.strike - b.strike);
+      if (rows.length === 0) return res.status(503).json({ error: "no_strikes" });
+      const netGex = rows.reduce((s, r) => s + r.gex, 0);
+      const netCharm = rows.reduce((s, r) => s + r.charm, 0);
+      const totalAbsGex = rows.reduce((s, r) => s + Math.abs(r.gex), 0) || 1;
+
+      // levels — 0DTE-only walls, flip, pin
+      let callWall: number | null = null, putWall: number | null = null, maxPos = 0, maxNeg = 0;
+      for (const r of rows) {
+        if (r.gex > maxPos) { maxPos = r.gex; callWall = r.strike; }
+        if (r.gex < maxNeg) { maxNeg = r.gex; putWall = r.strike; }
+      }
+      // gamma flip: cumulative-gex zero crossing across the band
+      let gammaFlip: number | null = null;
+      let cum = 0; let prevCum = 0; let prevStrike: number | null = null;
+      for (const r of rows) {
+        prevCum = cum; cum += r.gex;
+        if (prevStrike != null && prevCum !== 0 && Math.sign(prevCum) !== Math.sign(cum) && cum !== 0) {
+          const f = Math.abs(prevCum) / (Math.abs(prevCum) + Math.abs(cum));
+          gammaFlip = prevStrike + (r.strike - prevStrike) * f;
+        }
+        prevStrike = r.strike;
+      }
+      // pin candidate: max |gex| strike within ±1.5% of spot
+      let pin: number | null = null, pinMag = 0;
+      for (const r of rows) {
+        if (Math.abs(r.strike - spot) / spot <= 0.015 && Math.abs(r.gex) > pinMag) { pinMag = Math.abs(r.gex); pin = r.strike; }
+      }
+
+      // ── ATM IV + straddle expected move ──
+      let atmRow = rows[0];
+      for (const r of rows) if (Math.abs(r.strike - spot) < Math.abs(atmRow.strike - spot)) atmRow = r;
+      let atmIVPct = (atmRow.callIV > 0 && atmRow.putIV > 0) ? (atmRow.callIV + atmRow.putIV) / 2 : (atmRow.callIV || atmRow.putIV || 0);
+      const straddle = (atmRow.callMid || 0) + (atmRow.putMid || 0);
+      const MIN_PER_YEAR = 252 * 390;
+      let atmIVSource: "chain" | "straddle" = "chain";
+      if (atmIVPct <= 0 && straddle > 0) {
+        // Closed-market fallback: ATM straddle ~= 0.8 * S * sigma * sqrt(T) -> invert for sigma
+        const tYears = 390 / MIN_PER_YEAR; // full session
+        atmIVPct = (straddle / (0.8 * spot * Math.sqrt(tYears))) * 100;
+        atmIVSource = "straddle";
+      }
+      const atmIV = atmIVPct / 100;
+      const emSigma = atmIV > 0 ? spot * atmIV * Math.sqrt(projMinutes / MIN_PER_YEAR) : null;
+
+      // ── path: 27 points (~every 15 min) ──
+      const gexValid = validGammaCount >= 10; // need a real greek surface to trust regime/levels
+      const regime = !gexValid ? "indeterminate" : netGex >= 0 ? "long_gamma" : "short_gamma";
+      const pinPullMax = regime === "long_gamma" && pin != null ? Math.min(0.6, pinMag / totalAbsGex) : 0;
+      const charmNorm = totalAbsGex > 0 ? Math.max(-0.15, Math.min(0.15, netCharm / totalAbsGex)) : 0;
+      const coneWiden = regime === "short_gamma" ? 1.15 : 1.0;
+      const N = 26;
+      const path: any[] = [];
+      for (let i = 0; i <= N; i++) {
+        const tMin = (projMinutes * i) / N;
+        const prog = i / N;
+        const sig = atmIV > 0 ? spot * atmIV * Math.sqrt(Math.max(tMin, 0.01) / MIN_PER_YEAR) * coneWiden : 0;
+        const pinPull = pin != null ? (pin - spot) * pinPullMax * Math.pow(prog, 0.7) : 0;
+        const charmTilt = charmNorm * sig;
+        const median = spot + pinPull + charmTilt;
+        const absMin = (sessionState === "intraday" ? nowMin : OPEN) + tMin;
+        const hh = Math.floor(absMin / 60), mm = Math.round(absMin % 60);
+        path.push({
+          minute: Math.round(tMin),
+          et: `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`,
+          median: +median.toFixed(2),
+          up1: +(median + sig).toFixed(2), dn1: +(median - sig).toFixed(2),
+          up2: +(median + 2 * sig).toFixed(2), dn2: +(median - 2 * sig).toFixed(2),
+        });
+      }
+
+      // ── session anchors + level map + projected candles ──
+      const bars = proj.deriveSessionBars((hist as any)?.candles || []);
+      const sigmaToClose = emSigma ?? 0;
+      const levelObj = gexValid
+        ? { callWall, putWall, gammaFlip: gammaFlip != null ? +gammaFlip.toFixed(0) : null, pin }
+        : { callWall: null, putWall: null, gammaFlip: null, pin: null };
+      const levelMap = proj.buildLevelMap({
+        spot, sigmaToClose, levels: levelObj,
+        gexPeaks: rows.map(r => ({ strike: r.strike, gex: r.gex })),
+        bars, totalAbsGex,
+      });
+      const candles = proj.projectCandles({
+        spot, atmIV, projMinutes,
+        startAbsMin: sessionState === "intraday" ? nowMin : OPEN,
+        regime, pin: levelObj.pin, gammaFlip: levelObj.gammaFlip,
+        callWall: levelObj.callWall, putWall: levelObj.putWall,
+        pinPullMax, charmNorm, seed: proj.sessionSeed(),
+      });
+
+      res.json({
+        symbol, asOf: new Date().toISOString(), spot, source: (chain as any).source || "schwab",
+        expiry: expiryDate, dte: nearestDte,
+        bars, levelMap, candles,
+        session: { state: sessionState, minutesToClose, projMinutes },
+        atmIV: +(atmIVPct).toFixed(2), atmIVSource, gexValid,
+        expectedMove: { sigma: emSigma != null ? +emSigma.toFixed(2) : null, straddle: straddle > 0 ? +straddle.toFixed(2) : null },
+        netGex: gexValid ? +netGex.toFixed(0) : null, netCharm: gexValid ? +netCharm.toFixed(0) : null, regime,
+        levels: gexValid ? { callWall, putWall, gammaFlip: gammaFlip != null ? +gammaFlip.toFixed(0) : null, pin } : { callWall: null, putWall: null, gammaFlip: null, pin: null },
+        weightTotals: { oi: totalOI, volume: totalVol },
+        path,
+        strikes: rows.map(r => ({ strike: r.strike, gex: +r.gex.toFixed(0), callOI: r.callOI, putOI: r.putOI })),
+      });
+    } catch (e: any) {
+      console.error("[odte/forward]", e?.message);
+      res.status(500).json({ error: "internal", message: e?.message });
+    }
+  });
+
+  app.get("/api/killbox/forward", async (req, res) => {
+    try {
+      const symbol = String(req.query.symbol || "$SPX").trim().toUpperCase() || "$SPX";
+      const dte = req.query.dte ? Math.max(1, parseInt(String(req.query.dte), 10) || 30) : 30;
+
+      const { getOptionChain } = await import("./schwab");
+      const chain = await getOptionChain(symbol, dte);
+      if ("error" in chain) {
+        return res.status(503).json({ error: chain.error, message: "Option chain unavailable" });
+      }
+      const spot = chain.underlying.last ?? null;
+      if (!spot || spot <= 0) {
+        return res.status(503).json({ error: "no_spot", message: "Spot price unavailable" });
+      }
+
+      type StrikeAgg = {
+        strike: number;
+        gex: number; vanna: number; charm: number; vomma: number; zomma: number;
+        callOI: number; putOI: number; callVol: number; putVol: number;
+      };
+      const agg = new Map<number, StrikeAgg>();
+      const getRow = (k: number): StrikeAgg => {
+        let r = agg.get(k);
+        if (!r) { r = { strike: k, gex: 0, vanna: 0, charm: 0, vomma: 0, zomma: 0, callOI: 0, putOI: 0, callVol: 0, putVol: 0 }; agg.set(k, r); }
+        return r;
+      };
+
+      // First pass: totals to decide weighting mode.
+      let totalOI = 0, totalVol = 0;
+      const passes: Array<{ side: "C" | "P"; map: any }> = [
+        { side: "C", map: chain.callExpDateMap },
+        { side: "P", map: chain.putExpDateMap },
+      ];
+      for (const { map } of passes) {
+        for (const ek of Object.keys(map || {})) {
+          for (const sk of Object.keys(map[ek] || {})) {
+            for (const c of map[ek][sk] || []) {
+              totalOI += (c.openInterest || 0);
+              totalVol += (c.totalVolume || 0);
+            }
+          }
+        }
+      }
+      const useVolume = totalOI < 1000 && totalVol > 1000;
+      const weightMode: "oi" | "volume" | "hybrid" = useVolume ? "volume" : (totalOI > 0 && totalVol > totalOI * 5 ? "hybrid" : "oi");
+
+      const SQRT_2PI = Math.sqrt(2 * Math.PI);
+      const phi = (x: number) => Math.exp(-0.5 * x * x) / SQRT_2PI;
+      // Acklam inverse normal CDF for recovering d1 from delta
+      const invN = (p: number): number => {
+        const a = [-39.6968302866538, 220.946098424521, -275.928510446969, 138.357751867269, -30.6647980661472, 2.50662827745924];
+        const b = [-54.4760987982241, 161.585836858041, -155.698979859887, 66.8013118877197, -13.2806815528857];
+        const c = [-0.00778489400243029, -0.322396458041136, -2.40075827716184, -2.54973253934373, 4.37466414146497, 2.93816398269878];
+        const d = [0.00778469570904146, 0.32246712907004, 2.445134137143, 3.75440866190742];
+        const plow = 0.02425, phigh = 1 - plow;
+        let q: number, r: number;
+        const clamped = Math.max(1e-6, Math.min(1 - 1e-6, p));
+        if (clamped < plow) { q = Math.sqrt(-2 * Math.log(clamped)); return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
+        if (clamped > phigh) { q = Math.sqrt(-2 * Math.log(1 - clamped)); return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
+        q = clamped - 0.5; r = q * q;
+        return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+      };
+
+      // Second pass: per-strike across all expiries.
+      const nowMs = Date.now();
+      for (const { side, map } of passes) {
+        for (const ek of Object.keys(map || {})) {
+          const dteStr = ek.split(":")[1] || "30";
+          const dteDays = Math.max(1 / 365, parseFloat(dteStr) || 30);
+          const T = dteDays / 365;
+          const sqrtT = Math.sqrt(T);
+          for (const sk of Object.keys(map[ek] || {})) {
+            const strike = parseFloat(sk);
+            if (!isFinite(strike)) continue;
+            const row = getRow(strike);
+            for (const c of map[ek][sk] || []) {
+              const oi = c.openInterest || 0;
+              const vol = c.totalVolume || 0;
+              if (oi === 0 && vol === 0) continue;
+              const ivPct = c.volatility || 0;
+              const sigma = ivPct > 0 ? ivPct / 100 : 0;
+              const delta = c.delta ?? 0;
+              const gamma = c.gamma ?? 0;
+              if (side === "C") { row.callOI += oi; row.callVol += vol; }
+              else { row.putOI += oi; row.putVol += vol; }
+
+              let weight = 0;
+              if (weightMode === "oi") weight = oi;
+              else if (weightMode === "volume") weight = vol;
+              else weight = oi + vol * 0.25;
+              if (weight <= 0) continue;
+
+              const sign = side === "C" ? 1 : -1;
+              // GEX: gamma × weight × S² × 0.01 × 100 (per 1% move, $ notional)
+              row.gex += sign * gamma * weight * spot * spot * 0.01;
+
+              if (sigma > 0 && Math.abs(delta) > 1e-6 && Math.abs(delta) < 1 - 1e-6) {
+                // Recover d1 from delta
+                const callDelta = side === "C" ? Math.abs(delta) : 1 - Math.abs(delta);
+                const d1 = invN(callDelta);
+                const d2 = d1 - sigma * sqrtT;
+                const phid1 = phi(d1);
+                const vegaPerContract = spot * phid1 * sqrtT;
+                // Match chainAudit.ts institutional formulas
+                const vanna = -vegaPerContract * d2 / (spot * sigma * sqrtT);
+                const charm = -phid1 * d2 / (2 * T * sigma * sqrtT) / 365;
+                const vomma = vegaPerContract * d1 * d2 / sigma;
+                const zomma = gamma * (d1 * d2 - 1) / sigma;
+                row.vanna += sign * vanna * weight * 100;
+                row.charm += sign * charm * weight * 100;
+                row.vomma += sign * vomma * weight * 100;
+                row.zomma += sign * zomma * weight * 100;
+              }
+            }
+          }
+        }
+      }
+
+      const allStrikes = Array.from(agg.values()).sort((a, b) => a.strike - b.strike);
+
+      const profile = (key: "gex" | "vanna" | "charm" | "vomma" | "zomma") =>
+        allStrikes.filter(r => Math.abs(r[key]) > 1e-9).map(r => ({ strike: r.strike, exposure: r[key] }));
+
+      const profiles = {
+        gex: profile("gex"),
+        vanna: profile("vanna"),
+        charm: profile("charm"),
+        vomma: profile("vomma"),
+        zomma: profile("zomma"),
+      };
+
+      const gexProfile = profiles.gex;
+      let callWall: number | null = null, callWallValue = 0;
+      let putWall: number | null = null, putWallValue = 0;
+      let gammaFlip: number | null = null;
+
+      if (gexProfile.length > 0) {
+        for (const p of gexProfile) {
+          if (p.strike >= spot && p.exposure > callWallValue) { callWallValue = p.exposure; callWall = p.strike; }
+          if (p.strike <= spot && p.exposure < putWallValue) { putWallValue = p.exposure; putWall = p.strike; }
+        }
+        const sorted = [...gexProfile].sort((a, b) => a.strike - b.strike);
+        let cum = 0, prevCum = 0, prevStrike = sorted[0]?.strike ?? 0;
+        for (const p of sorted) {
+          prevCum = cum; cum += p.exposure;
+          if ((prevCum <= 0 && cum > 0) || (prevCum >= 0 && cum < 0)) {
+            gammaFlip = (prevStrike + p.strike) / 2; break;
+          }
+          prevStrike = p.strike;
+        }
+      }
+
+      let stability = 0.5;
+      if (gexProfile.length > 0) {
+        const totalAbs = gexProfile.reduce((s, p) => s + Math.abs(p.exposure), 0);
+        if (totalAbs > 0) {
+          const band = spot * 0.02;
+          const netNear = gexProfile.filter(p => Math.abs(p.strike - spot) <= band).reduce((s, p) => s + p.exposure, 0);
+          stability = Math.max(0, Math.min(1, 0.5 + netNear / (totalAbs * 2)));
+        }
+      }
+
+      const totalNetGex = gexProfile.reduce((s, p) => s + p.exposure, 0);
+      const regime = totalNetGex > 0 ? "long_gamma" : "short_gamma";
+
+      res.json({
+        symbol,
+        asOf: nowMs,
+        spot,
+        weightMode,
+        totalOI,
+        totalVolume: totalVol,
+        profiles,
+        levels: { callWall, callWallValue, putWall, putWallValue, gammaFlip },
+        stability,
+        regime,
+        strikeCount: allStrikes.length,
+        source: chain.source,
+      });
+    } catch (e: any) {
+      console.error("[killbox/forward]", e?.message, e?.stack);
+      res.status(500).json({ error: "internal", message: e?.message ?? "Killbox forward failed" });
+    }
+  });
+
   app.get("/api/killbox/stats", (req, res) => {
     try {
       const symbol = String(req.query.symbol || "SPY").trim().toUpperCase() || "SPY";
@@ -4035,6 +4941,24 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     console.warn(`[stockBars] failed to start: ${e?.message ?? e}`);
   }
 
+  // Commodity/cross-asset canary module — z-scored divergence detection with
+  // Discord alerts. Read-only consumer of quotes + daily_bars; never touches
+  // the locked engines.
+  app.get("/api/canary", async (_req, res) => {
+    try {
+      const { buildCanarySnapshot } = await import("./canary");
+      res.json(await buildCanarySnapshot());
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message ?? "canary snapshot failed" });
+    }
+  });
+  try {
+    const { startCanaryWatch } = await import("./canary");
+    startCanaryWatch();
+  } catch (e: any) {
+    console.warn(`[canary] failed to start: ${e?.message ?? e}`);
+  }
+
   // FRED macro refresher (6h cadence)
   try {
     const { startFredRefresher } = await import("./fredClient");
@@ -4063,6 +4987,74 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   setInterval(() => {
     try { pruneOldSnapshots(); } catch (e: any) { console.warn(`[killbox] prune failed: ${e?.message ?? e}`); }
   }, 30 * 60 * 1000);
+
+  // KILLBOX auto-seeder — keeps the gradient table populated even when no UI is open.
+  // Fires chain-audit for $SPX every 5 minutes during US market hours (9:30am-4:00pm ET).
+  // The chain-audit endpoint already writes per-strike vanna/charm/vomma/zomma/gex into
+  // greek_gradient on every call (lines ~2978-3003), so we just invoke it.
+  async function killboxAutoSeed() {
+    try {
+      // Time gate — only during regular US market hours.
+      const nowEt = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+      const day = nowEt.getDay(); // 0=Sun, 6=Sat
+      if (day === 0 || day === 6) return;
+      const mins = nowEt.getHours() * 60 + nowEt.getMinutes();
+      if (mins < 9 * 60 + 30 || mins > 16 * 60) return;
+
+      // Mimic the chain-audit handler inline — write directly into the table.
+      const symbol = "$SPX";
+      const dte = 60;
+      let chain = await schwabGetOptionChain(symbol, dte);
+      let usedSymbol = symbol;
+      if ("error" in chain) {
+        const spy = await schwabGetOptionChain("SPY", dte);
+        if ("error" in spy) {
+          console.warn(`[killbox-seed] schwab unavailable, skipping tick`);
+          return;
+        }
+        chain = spy;
+        usedSymbol = "SPY";
+      }
+      const spot = chain.underlying.last ??
+        (chain.underlying.bid && chain.underlying.ask
+          ? (chain.underlying.bid + chain.underlying.ask) / 2
+          : null);
+      if (!spot || spot <= 0) return;
+
+      const audit = buildChainAudit(chain, spot);
+      if (audit.dataQuality === "minimal") return;
+
+      const ts = Date.now();
+      const rows: GreekSnapshotRow[] = [];
+      for (const p of audit.vanna.profile) {
+        if (Number.isFinite(p.vannaExposure)) rows.push({ symbol: usedSymbol, spot, strike: p.strike, greekType: "vanna", exposure: p.vannaExposure });
+      }
+      for (const p of audit.charm.profile) {
+        if (Number.isFinite(p.charmExposure)) rows.push({ symbol: usedSymbol, spot, strike: p.strike, greekType: "charm", exposure: p.charmExposure });
+      }
+      for (const p of audit.vomma.profile) {
+        if (Number.isFinite(p.vommaExposure)) rows.push({ symbol: usedSymbol, spot, strike: p.strike, greekType: "vomma", exposure: p.vommaExposure });
+      }
+      for (const p of audit.zomma.profile) {
+        if (Number.isFinite(p.zommaExposure)) rows.push({ symbol: usedSymbol, spot, strike: p.strike, greekType: "zomma", exposure: p.zommaExposure });
+      }
+      try {
+        const gexProfile = computeGEXFromChain(chain).profile;
+        for (const p of gexProfile) {
+          if (Number.isFinite(p.netGex)) rows.push({ symbol: usedSymbol, spot, strike: p.strike, greekType: "gex", exposure: p.netGex });
+        }
+      } catch {}
+      if (rows.length > 0) {
+        insertGreekSnapshot(ts, rows);
+        console.log(`[killbox-seed] ${usedSymbol} +${rows.length} rows @ ${new Date(ts).toISOString()}`);
+      }
+    } catch (e: any) {
+      console.warn(`[killbox-seed] failed: ${e?.message ?? e}`);
+    }
+  }
+  // Fire once 10s after boot, then every 5 minutes
+  setTimeout(() => { killboxAutoSeed().catch(() => {}); }, 10_000);
+  setInterval(() => { killboxAutoSeed().catch(() => {}); }, 5 * 60 * 1000);
 
   // Kick off Exit Brain (30s confluence eval over tracked 0DTE positions)
   try {

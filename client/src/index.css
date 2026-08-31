@@ -198,8 +198,22 @@
     @apply border-border;
   }
 
+  html, body, #root {
+    background-color: hsl(var(--background));
+    min-height: 100%;
+  }
+
+  html {
+    /* Kills the white rubber-band void on iOS Safari when overscrolling */
+    overscroll-behavior-y: none;
+    background-color: hsl(var(--background));
+  }
+
   body {
     @apply font-sans antialiased bg-background text-foreground;
+    overscroll-behavior-y: none;
+    min-height: 100vh;
+    min-height: 100dvh;
   }
 }
 
@@ -586,6 +600,7 @@
 /* Floating Take Five launcher */
 .take5-fab {
   position: fixed;
+  /* Desktop: top-right under header. Mobile: above bottom-nav so it never overlaps header chips. */
   top: 14px;
   right: 16px;
   z-index: 40;
@@ -606,6 +621,23 @@
   cursor: pointer;
   animation: take5-fab-shift 12s linear infinite;
   transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+/* Mobile: park FAB above the bottom-nav (which is ~64px tall + safe-area) so the header is free. */
+@media (max-width: 767px) {
+  .take5-fab {
+    top: auto;
+    right: 12px;
+    bottom: calc(76px + env(safe-area-inset-bottom));
+    min-height: 44px;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    gap: 0;
+    justify-content: center;
+    font-size: 0;
+    z-index: 60;
+  }
 }
 
 .take5-fab:hover {
@@ -683,4 +715,13 @@
   .bill-spin {
     animation: none;
   }
+}
+
+/* Mobile: hide scrollbars on horizontally-scrolling rows (bottom-nav, macro category pills) */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
 }

@@ -430,8 +430,8 @@ export function TakeFiveFab({ onClick }: { onClick: () => void }) {
       aria-label="Open Take Five"
       title="Step off. Breathe. Come back sharp."
     >
-      <Zap className="h-3.5 w-3.5" />
-      <span>TAKE 5</span>
+      <Zap className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
+      <span className="hidden sm:inline">TAKE 5</span>
     </button>
   );
 }

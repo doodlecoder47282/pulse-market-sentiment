@@ -16,6 +16,8 @@ import { fmt, scoreBg, scoreColor } from "@/lib/format";
 import Gauge from "@/components/Gauge";
 import Logo from "@/components/Logo";
 import { BatmanLogoSmall } from "@/components/BatmanLogo";
+import RegimeHeadline from "@/components/RegimeHeadline";
+import ThermalHeatmap from "@/components/ThermalHeatmap";
 import NewsPanel from "@/components/NewsPanel";
 import FlowPanel from "@/components/FlowPanel";
 import GlobalEdgeBanner from "@/components/GlobalEdgeBanner";
@@ -49,6 +51,8 @@ const DailyPlaybookChart = lazy(() => import("@/components/DailyPlaybookChart"))
 const TabHeadline = lazy(() => import("@/components/TabHeadline"));
 const GexChart = lazy(() => import("@/components/GexChart"));
 const Heatseeker = lazy(() => import("@/components/Heatseeker"));
+const OdteForward = lazy(() => import("@/components/OdteForward"));
+const CanaryStrip = lazy(() => import("@/components/CanaryStrip"));
 const MLProjectionPanel = lazy(() => import("@/components/MLProjectionPanel"));
 
 // These are lighter but still benefit from lazy loading on non-default tabs
@@ -287,7 +291,7 @@ export default function Dashboard() {
             <div className="text-primary"><Logo className="h-7 w-7" /></div>
             <div>
               <div className="font-semibold leading-none">Pulse</div>
-              <div className="flex items-center gap-1">
+              <div className="hidden items-center gap-1 xs:flex">
                 <BatmanLogoSmall className="h-3 w-6 text-amber-500" />
                 <span className="font-mono text-[10px] uppercase tracking-widest text-amber-500/80">BATCAVE</span>
               </div>
@@ -302,7 +306,7 @@ export default function Dashboard() {
           </div>
 
           {/* Right: Clock + market status + last-update + refresh */}
-          <div className="flex items-center gap-2 md:gap-3">
+          <div className="flex items-center gap-1.5 md:gap-3">
             {/* Clock + market status: stacked, visible on md+ */}
             <div className="hidden items-end gap-2 md:flex">
               <div className="flex flex-col items-end gap-0.5">
@@ -330,13 +334,13 @@ export default function Dashboard() {
               onClick={() => refreshMut.mutate()}
               disabled={refreshMut.isPending}
               data-testid="button-refresh"
-              className="min-h-[44px] px-3 sm:min-h-0 sm:px-3"
+              className="h-10 w-10 min-h-0 p-0 sm:h-auto sm:w-auto sm:px-3"
             >
               <RefreshCw className={`h-3.5 w-3.5 sm:mr-2 ${refreshMut.isPending ? "animate-spin" : ""}`} />
               <span className="hidden sm:inline">Refresh</span>
             </Button>
-            {/* Schwab status pill — hide on the very narrowest phones; gear opens same dialog */}
-            <div className="hidden xs:flex sm:flex">
+            {/* Schwab status pill — desktop only; mobile uses the gear icon (same dialog) */}
+            <div className="hidden md:flex">
               <SchwabStatusPill onClick={() => setSettingsOpen(true)} />
             </div>
 
@@ -345,7 +349,7 @@ export default function Dashboard() {
               type="button"
               onClick={() => setSettingsOpen(true)}
               title="Schwab & Settings"
-              className="flex items-center justify-center rounded-md border border-border/60 h-11 w-11 sm:h-auto sm:w-auto sm:p-1.5 text-muted-foreground/50 transition hover:border-border hover:text-muted-foreground"
+              className="flex items-center justify-center rounded-md border border-border/60 h-10 w-10 sm:h-auto sm:w-auto sm:p-1.5 text-muted-foreground/50 transition hover:border-border hover:text-muted-foreground"
               data-testid="button-settings"
             >
               <Settings className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
@@ -393,18 +397,23 @@ export default function Dashboard() {
         </div>
       </header>
 
+      {/* Regime headline — one-sentence read on current market state */}
+      <ErrorBoundary compact label="RegimeHeadline">
+        <RegimeHeadline />
+      </ErrorBoundary>
+
       {/* Ticker tape — flows across the top under the header on every tab */}
       <MacroTicker />
 
-      <main className="mx-auto max-w-[1800px] space-y-4 px-3 py-4 sm:space-y-6 sm:px-4 sm:py-6 md:px-8 xl:px-10 xl:text-[16px]">
+      <main className="mx-auto max-w-[1800px] space-y-4 px-3 py-4 pb-24 text-[14px] sm:space-y-6 sm:px-4 sm:py-6 sm:text-[14px] md:pb-6 md:px-8 md:text-[15px] xl:px-10 xl:text-[16px]">
         {/* Rotating macro carousel — always visible above the tabs */}
         <MacroCarousel />
 
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)} className="w-full">
-          {/* Mobile: 3-col grid wraps to 3 rows so every tab is visible. Desktop: single inline row. */}
-          <div className="mb-4">
+          {/* Desktop tab bar — single inline row. Hidden on mobile (replaced by bottom-nav). */}
+          <div className="mb-4 hidden md:block">
             <TabsList
-              className="grid h-auto w-full grid-cols-3 gap-1 p-1 sm:grid-cols-5 md:flex md:h-10 md:w-full md:flex-nowrap md:items-center md:justify-center md:gap-0 md:p-1 xl:h-12 xl:gap-1 xl:p-1.5"
+              className="flex h-10 w-full flex-nowrap items-center justify-center gap-0 p-1 xl:h-12 xl:gap-1 xl:p-1.5"
               data-testid="tabs-dashboard"
             >
               <TabsTrigger value="signals" data-testid="tab-signals" className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Signals</TabsTrigger>
@@ -501,6 +510,11 @@ export default function Dashboard() {
           {/* ── Heatseeker tab (lazy) ─ 0DTE live Greeks + sticky zones ── */}
           <TabsContent value="heatseeker" className="space-y-6">
             <Suspense fallback={null}><TabHeadline tab="heatseeker" /></Suspense>
+            <ErrorBoundary compact label="OdteForward">
+              <Suspense fallback={<PanelSkeleton variant="chart" />}>
+                <OdteForward />
+              </Suspense>
+            </ErrorBoundary>
             <ErrorBoundary label="Heatseeker">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
                 <Heatseeker />
@@ -529,6 +543,14 @@ export default function Dashboard() {
           {/* ── Regime tab (lazy) ── */}
           <TabsContent value="regime" className="space-y-6">
             <Suspense fallback={null}><TabHeadline tab="regime" /></Suspense>
+            <ErrorBoundary compact label="Canary">
+              <Suspense fallback={<PanelSkeleton variant="chart" />}>
+                <CanaryStrip />
+              </Suspense>
+            </ErrorBoundary>
+            <ErrorBoundary compact label="ThermalHeatmap">
+              <ThermalHeatmap />
+            </ErrorBoundary>
             <ErrorBoundary label="Regime Panel">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
                 <RegimePanelLazy />
@@ -849,15 +871,15 @@ export default function Dashboard() {
                       VIX, gamma, and Fear &amp; Greed signals.
                     </div>
                   ) : (
-                    <ScrollArea className="h-[300px] pr-3">
-                      <div className="space-y-2">
+                    <ScrollArea className="h-[300px] pr-3 [&>div>div]:!block">
+                      <div className="min-w-0 space-y-2">
                         {social.posts.map((p, i) => (
                           <a
                             key={i}
                             href={p.url}
                             target="_blank"
                             rel="noreferrer noopener"
-                            className="block rounded-md border border-border p-2.5 text-xs hover-elevate"
+                            className="block w-full max-w-full overflow-hidden rounded-md border border-border p-2.5 text-xs hover-elevate"
                             data-testid={`post-${i}`}
                           >
                             <div className="mb-1 flex items-center gap-2">
@@ -865,7 +887,7 @@ export default function Dashboard() {
                               {p.author && <span className="font-mono text-muted-foreground">{p.author}</span>}
                               <span className={`ml-auto text-[10px] ${fmt.toneColor(p.tone)}`}>{p.tone}</span>
                             </div>
-                            <div className="leading-snug">{p.text}</div>
+                            <div className="break-words leading-snug">{p.text}</div>
                           </a>
                         ))}
                       </div>
@@ -901,6 +923,48 @@ export default function Dashboard() {
           </TabsContent>
         </Tabs>
       </main>
+
+      {/* Mobile bottom-nav — fixed, horizontally scrollable, 10 tabs in locked order */}
+      <nav
+        className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:hidden"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        data-testid="mobile-bottom-nav"
+        aria-label="Mobile tab navigation"
+      >
+        {/* Right-edge fade hints there's more to scroll */}
+        <div className="pointer-events-none absolute right-0 top-0 bottom-0 z-10 w-6 bg-gradient-to-l from-background to-transparent" />
+        <div className="flex overflow-x-auto scrollbar-none">
+          {([
+            { key: "signals", label: "Signals" },
+            { key: "chart", label: "Chart" },
+            { key: "models", label: "Models" },
+            { key: "heatseeker", label: "Heat" },
+            { key: "tradedesk", label: "Desk" },
+            { key: "regime", label: "Regime" },
+            { key: "cosmos", label: "Cosmos" },
+            { key: "news", label: "News" },
+            { key: "takefive", label: "Take5" },
+            { key: "edgelab", label: "Edge" },
+          ] as { key: TabKey; label: string }[]).map((t) => {
+            const isActive = activeTab === t.key;
+            return (
+              <button
+                key={t.key}
+                onClick={() => setActiveTab(t.key)}
+                data-testid={`bottomnav-${t.key}`}
+                className={
+                  "flex min-w-[72px] flex-1 shrink-0 flex-col items-center justify-center gap-0.5 px-3 py-2 text-[11px] font-medium transition-colors min-h-[56px] " +
+                  (isActive
+                    ? "text-foreground bg-muted/60 border-t-2 border-primary"
+                    : "text-muted-foreground hover:text-foreground border-t-2 border-transparent")
+                }
+              >
+                <span className="whitespace-nowrap">{t.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
     </div>
   );
 }

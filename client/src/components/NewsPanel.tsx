@@ -399,17 +399,28 @@ function AlphaCard({ headlines }: { headlines: Headline[] }) {
                 </div>
               )}
               <div
-                className="prose prose-invert prose-sm max-w-none rounded border border-amber-500/10 bg-card/30 p-3
+                className="prose prose-invert prose-sm max-w-none overflow-x-auto rounded border border-amber-500/10 bg-card/30 p-3
                   prose-headings:font-mono prose-headings:tracking-wider prose-headings:text-amber-300
                   prose-headings:text-sm prose-headings:font-semibold
                   prose-p:text-[11px] prose-p:leading-relaxed prose-p:text-foreground/90
                   prose-li:text-[11px] prose-li:leading-relaxed prose-li:text-foreground/90
-                  prose-table:text-[10px] prose-td:py-1 prose-th:py-1
+                  prose-table:text-[10px] prose-table:my-2 prose-td:py-1 prose-td:px-1.5 prose-th:py-1 prose-th:px-1.5
                   prose-th:font-mono prose-th:tracking-wider prose-th:text-amber-300/80
                   prose-strong:text-foreground"
                 data-testid="alpha-brief-output"
               >
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{mutation.data.brief}</ReactMarkdown>
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    table: ({ children }) => (
+                      <div className="-mx-3 my-2 overflow-x-auto px-3">
+                        <table className="min-w-full whitespace-nowrap">{children}</table>
+                      </div>
+                    ),
+                  }}
+                >
+                  {mutation.data.brief}
+                </ReactMarkdown>
               </div>
               <div className="flex justify-end">
                 <AlphaCopyButton text={mutation.data.brief} />
@@ -465,8 +476,8 @@ export default function NewsPanel() {
       const r = await apiRequest("GET", "/api/news");
       return r.json();
     },
-    refetchInterval: 120_000,
-    staleTime: 90_000,
+    refetchInterval: 25_000,
+    staleTime: 15_000,
   });
 
   const [topicFilter, setTopicFilter] = useState<NewsTopic | null>(null);

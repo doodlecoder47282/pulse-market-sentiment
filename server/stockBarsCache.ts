@@ -18,6 +18,9 @@ export const STOCK_BARS_UNIVERSE = [
   "AMD", "AVGO", "PLTR", "COIN", "MSTR",
   // Optional: a few more high-flow names that show up in alerts
   "NFLX", "BAC", "JPM", "F",
+  // Canary module proxies (AUDJPY = FXA/FXY, copper/gold = CPER/GLD, crude, DXY)
+  // GLD/TLT/HYG/UUP/SPY already covered by the regime ETF universe.
+  "CPER", "USO", "FXA", "FXY",
 ];
 
 function etDateString(epochSec: number): string {
