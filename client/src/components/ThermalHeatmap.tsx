@@ -60,6 +60,10 @@ function fmtNum(n: number): string {
 export default function ThermalHeatmap() {
   const [greek, setGreek] = useState<Greek>("gex");
   const [symbol] = useState("$SPX");
+  // per-date: each expiry column normalizes to its own max, so every date lights
+  // up green at its hottest strike and shades out from there. global: one scale
+  // across the whole grid (near-dated OI dominates and far dates look dead).
+  const [scaleMode, setScaleMode] = useState<"per-date" | "global">("per-date");
   const [hover, setHover] = useState<Cell | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -80,6 +84,17 @@ export default function ThermalHeatmap() {
   const marginLeft = 70;
   const marginRight = 90;
   const marginBottom = 26;
+
+  // Max |exposure| per expiry column — drives per-date shading
+  const colMax = useMemo(() => {
+    if (!data) return [] as number[];
+    const m = new Array<number>(data.expiries.length).fill(0);
+    for (const c of data.cells) {
+      const a = Math.abs(c.exposure);
+      if (a > m[c.expIdx]) m[c.expIdx] = a;
+    }
+    return m;
+  }, [data]);
 
   const grid = useMemo(() => {
     if (!data) return null;
@@ -120,7 +135,8 @@ export default function ThermalHeatmap() {
       // strikes are ascending low→high; flip so high strikes on top
       const yIdx = grid.nStrikes - 1 - c.strikeIdx;
       const y = marginTop + yIdx * rowH;
-      ctx.fillStyle = colorFor(c.exposure, data.maxAbs);
+      const norm = scaleMode === "per-date" ? (colMax[c.expIdx] || data.maxAbs) : data.maxAbs;
+      ctx.fillStyle = colorFor(c.exposure, norm);
       ctx.fillRect(x + 0.5, y + 0.5, grid.cellW - 1, rowH - 1);
     }
 
@@ -189,8 +205,8 @@ export default function ThermalHeatmap() {
     ctx.fillStyle = "rgba(226,232,240,0.85)";
     ctx.font = "10px ui-monospace, monospace";
     ctx.textAlign = "left";
-    ctx.fillText(`${greek.toUpperCase()} · strike × expiry · weight ${data.weightMode}`, marginLeft, marginTop - 18);
-  }, [data, grid, greek]);
+    ctx.fillText(`${greek.toUpperCase()} notional · strike × expiry · ${scaleMode} scale · weight ${data.weightMode}`, marginLeft, marginTop - 18);
+  }, [data, grid, greek, scaleMode, colMax]);
 
   // Hover handler
   function onMove(ev: React.MouseEvent<HTMLCanvasElement>) {
@@ -216,6 +232,22 @@ export default function ThermalHeatmap() {
           <div className="text-slate-100 font-semibold text-sm tracking-wide">Thermal · dealer gamma map</div>
         </div>
         <div className="flex items-center gap-1" data-testid="thermal-greek-selector">
+          {(["per-date", "global"] as const).map(m => (
+            <button
+              key={m}
+              data-testid={`thermal-scale-${m}`}
+              onClick={() => setScaleMode(m)}
+              className={`px-2 py-0.5 text-[10px] rounded font-mono uppercase tracking-wider transition ${
+                scaleMode === m
+                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                  : "text-slate-400 hover:text-slate-200 border border-transparent"
+              }`}
+              title={m === "per-date" ? "Each expiry date normalizes to its own max — hottest strike lights up green, shading out within that date" : "One scale across the whole grid"}
+            >
+              {m}
+            </button>
+          ))}
+          <span className="mx-1 h-3 w-px bg-slate-700" />
           {GREEKS.map(g => (
             <button
               key={g.key}
@@ -261,6 +293,11 @@ export default function ThermalHeatmap() {
               <div className={`mt-1 ${hover.exposure >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
                 {greek}: {fmtNum(hover.exposure)}
               </div>
+              {colMax[hover.expIdx] > 0 && (
+                <div className="text-[10px] text-slate-400">
+                  {((Math.abs(hover.exposure) / colMax[hover.expIdx]) * 100).toFixed(0)}% of this date's max
+                </div>
+              )}
               <div className="text-[10px] text-slate-500 mt-1">OI c/{hover.callOI} p/{hover.putOI}</div>
             </div>
           )}

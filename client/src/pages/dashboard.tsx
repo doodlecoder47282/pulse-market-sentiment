@@ -18,6 +18,7 @@ import Logo from "@/components/Logo";
 import { BatmanLogoSmall } from "@/components/BatmanLogo";
 import RegimeHeadline from "@/components/RegimeHeadline";
 import ThermalHeatmap from "@/components/ThermalHeatmap";
+import OfiHistogram from "@/components/OfiHistogram";
 import NewsPanel from "@/components/NewsPanel";
 import FlowPanel from "@/components/FlowPanel";
 import GlobalEdgeBanner from "@/components/GlobalEdgeBanner";
@@ -562,6 +563,10 @@ export default function Dashboard() {
             </ErrorBoundary>
             <ErrorBoundary compact label="ThermalHeatmap">
               <ThermalHeatmap />
+            </ErrorBoundary>
+            {/* Order flow lives directly under the heat map — same eye path: where gamma sits, then how tape is hitting it */}
+            <ErrorBoundary compact label="OrderFlow">
+              <OfiHistogram />
             </ErrorBoundary>
             <ErrorBoundary label="Regime Panel">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
