@@ -50,7 +50,7 @@ export function computeRND(
   r: number,
   T: number,
   oneDayEM: number,
-): { curve: BLDensityPoint[]; probs: BLProbabilities | null } {
+): { curve: BLDensityPoint[]; probs: BLProbabilities | null; coverage?: number } {
   if (!chain || chain.length < 5) return { curve: [], probs: null };
 
   // Sort defensively, drop any non-finite mids
@@ -87,13 +87,16 @@ export function computeRND(
 
   if (curve.length === 0) return { curve, probs: null };
 
-  // Trapezoidal normalize to integrate to 1
+  // Trapezoidal area BEFORE normalising = how much probability mass the chain
+  // actually covers. Renormalising a low-coverage chain scales interior
+  // probabilities up and misleads — only renormalise when coverage ≥ 0.9.
   let area = 0;
   for (let i = 1; i < curve.length; i++) {
     const dx = curve[i].strike - curve[i - 1].strike;
     area += 0.5 * (curve[i].density + curve[i - 1].density) * dx;
   }
-  if (area > 0) {
+  const coverage = area;
+  if (area >= 0.9) {
     for (const p of curve) p.density = p.density / area;
   }
 
@@ -125,5 +128,5 @@ export function computeRND(
     pInOneEM: integrate(spot - oneDayEM, spot + oneDayEM),
   };
 
-  return { curve, probs };
+  return { curve, probs, coverage };
 }

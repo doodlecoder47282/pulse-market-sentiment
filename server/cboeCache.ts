@@ -71,10 +71,16 @@ async function fetchFresh(symbol: string, timeoutMs = 10_000, retries = 2): Prom
         }
         throw lastErr;
       }
-      if (!r.ok) throw new Error(`CBOE ${r.status}`);
+      if (!r.ok) {
+        // Other 4xx (403 blocks, 404 unknown symbol) will not heal on
+        // immediate retry — the old code hammered these 3x with no sleep.
+        const err: any = new Error(`CBOE ${r.status}`);
+        err.noRetry = true;
+        throw err;
+      }
       return await r.json();
     } catch (e: any) {
-      if (attempt === retries) throw e;
+      if (e?.noRetry || attempt === retries) throw e;
       lastErr = e;
     } finally {
       clearTimeout(to);
@@ -82,6 +88,10 @@ async function fetchFresh(symbol: string, timeoutMs = 10_000, retries = 2): Prom
   }
   throw lastErr ?? new Error("CBOE unreachable");
 }
+
+// Negative cache: after a failed fetch, don't hit CBOE again for this symbol
+// for 60s (pollers otherwise re-trigger the same doomed request every cycle).
+const failUntil = new Map<string, number>();
 
 export async function getCboeChain(symbol: string): Promise<any> {
   const key = symbol.toUpperCase();
@@ -103,14 +113,21 @@ export async function getCboeChain(symbol: string): Promise<any> {
         return disk.data;
       }
     }
-    // Fetch
+    // Fetch (skip entirely while inside the 60s negative-cache window)
+    if (Date.now() < (failUntil.get(key) ?? 0)) {
+      const fallback = m ?? (await readDisk(key));
+      if (fallback && Date.now() - fallback.at < STALE_MAX_MS) return fallback.data;
+      throw new Error(`CBOE ${key}: backing off after recent failure`);
+    }
     try {
       const data = await fetchFresh(key);
+      failUntil.delete(key);
       const entry: Entry = { at: Date.now(), data };
       mem.set(key, entry);
       await writeDisk(key, entry);
       return data;
     } catch (e) {
+      failUntil.set(key, Date.now() + 60_000);
       // Stale fallback — either memory or disk, up to STALE_MAX_MS
       const fallback = m ?? (await readDisk(key));
       if (fallback && Date.now() - fallback.at < STALE_MAX_MS) {

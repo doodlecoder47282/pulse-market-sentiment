@@ -117,8 +117,10 @@ export function charm(S: number, K: number, sigma: number, T: number, r: number,
   const sqrtT = Math.sqrt(T);
   const e_qT = Math.exp(-q * T);
   const term = e_qT * normPdf(_d1) * (2 * (r - q) * T - _d2 * sigma * sqrtT) / (2 * T * sigma * sqrtT);
-  if (type === "C") return -term - q * e_qT * normCdf(_d1);
-  return -term + q * e_qT * normCdf(-_d1);
+  // Standard closed form: charm_call = +q·e^{-qT}·N(d1) − term; charm_put = −q·e^{-qT}·N(−d1) − term.
+  // (q-terms previously had flipped signs — negligible at q≤1.3% but now matches the reference.)
+  if (type === "C") return q * e_qT * normCdf(_d1) - term;
+  return -q * e_qT * normCdf(-_d1) - term;
 }
 
 /** Speed = ∂Γ/∂S. Third derivative. */

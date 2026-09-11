@@ -345,15 +345,16 @@ function buildSyntheticMacro(days: Date[]): EconChip[] {
 // Source 3: FOMC schedule (curated; refresh annually)
 // ---------------------------------------------------------------------------
 const FOMC_2026: string[] = [
-  // Source: federalreserve.gov FOMC calendar (placeholder — confirm yearly)
+  // Decision days per federalreserve.gov FOMC calendar (verified Sep 2026).
+  // Old list had 11-04 and 12-16, which are not FOMC dates.
   "2026-01-28",
   "2026-03-18",
   "2026-04-29",
   "2026-06-17",
   "2026-07-29",
   "2026-09-16",
-  "2026-11-04",
-  "2026-12-16",
+  "2026-10-28",
+  "2026-12-09",
 ];
 
 function buildFomcSchedule(days: Date[]): EconChip[] {
@@ -469,10 +470,14 @@ function formatWeekLabel(mon: Date, fri: Date): string {
 }
 
 function nextMonday(from: Date): Date {
+  // Monday of the CURRENT trading week. The old `8 - dow` jumped to NEXT
+  // week's Monday on Tue-Sat, so without an explicit `from` the econ strip
+  // showed next week and the client's day-label matching found nothing —
+  // econ chips were silently empty four days out of five.
   const d = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
   const dow = d.getUTCDay();
   if (dow === 1) return d;
-  const offset = dow === 0 ? 1 : 8 - dow;
+  const offset = dow === 0 ? 1 : 1 - dow;
   d.setUTCDate(d.getUTCDate() + offset);
   return d;
 }

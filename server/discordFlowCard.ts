@@ -8,6 +8,7 @@
 
 import { postToDiscord, WHALE_WEBHOOK_URL } from "./discord";
 import type { WhaleHit } from "./flowAlertEngine";
+import { getFlowConfig } from "./flowConfig";
 
 const COLOR_BULL = 0x16a34a;
 const COLOR_BEAR = 0xdc2626;
@@ -22,7 +23,8 @@ function fmtMoney(n: number): string {
 function fmtHit(h: WhaleHit): string {
   // e.g. "$NVDA 145C 5/16 (11d) — $1.84M • vol/OI 14.2x • ABOVE_ASK"
   const side = h.type === "C" ? "C" : "P";
-  const exp = h.expiration.slice(5).replace("-", "/"); // "05-16" -> "5/16"
+  // "05-16" -> "5/16" (strip the leading zero so it matches the UI's formatting)
+  const exp = h.expiration.slice(5).replace("-", "/").replace(/^0/, "");
   const ratioPart = h.isNewStrike && h.openInterest === 0
     ? "NEW STRIKE"
     : `vol/OI ${h.volOiRatio.toFixed(1)}x`;
@@ -77,7 +79,13 @@ export async function postWhaleFlowAlert(
         title: `WHALE FLOW — $${ticker}`,
         description,
         color,
-        footer: { text: `whale gate: $1M+ premium • vol/OI 10x+ OR new-strike • ABOVE_ASK • dte≥1` },
+        // Footer built from the live config; it was hardcoded "$1M / 10x / ABOVE_ASK / dte>=1"
+        // while the runtime gate was $2.5M / 15x / 1-3 DTE.
+        footer: { text: (() => {
+          const cfg = getFlowConfig();
+          const tag = cfg.requiredTag === "AT_ASK" ? "AT/ABOVE_ASK" : cfg.requiredTag;
+          return `whale gate: ${fmtMoney(cfg.premiumFloor)}+ premium • vol/OI ${cfg.volOiRatio}x+ OR new-strike • ${tag} • dte ${cfg.minDte}-${cfg.maxDte}`;
+        })() },
         timestamp: new Date().toISOString(),
       }],
     }, WHALE_WEBHOOK_URL);

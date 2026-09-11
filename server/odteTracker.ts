@@ -3,10 +3,12 @@
  *
  * Live 0DTE SPX contract tracker.
  *
- * Polls Schwab option chain every 4s for $SPX with 0DTE window. Keeps ATM ±20
- * strikes (up to ~40 contracts mixing calls + puts — user-configurable).
- * For each poll, per contract:
- *   · deltaVol        = current.volume − prev.volume  (prints since last poll)
+ * Polls the Schwab option chain for $SPX with a 0DTE window. The chain layer caches
+ * chains for 60 s, so the effective resolution is one snapshot per minute regardless
+ * of the requested interval (the tracker clamps its cadence to that TTL rather than
+ * hammering the token/CBOE layers with no-op polls). Keeps ATM ±20 strikes on each
+ * side (up to ~80 rows). For each poll, per contract:
+ *   · deltaVol        = current.volume − prev.volume  (prints since last snapshot)
  *   · notional        = deltaVol × last × 100
  *   · classification  = Lee-Ready (last vs midpoint → buyer/seller; midpoint
  *                       trades fall back to tick-rule vs previous last)
@@ -14,13 +16,35 @@
  *
  * When a user ARMS a contract, the tracker opens an active position snapshot.
  * Exit inference: volume rate decays below ½ of the post-buy rolling 5-min
- * average AND the contract's OI drops below a baseline (previous close OI +
- * logged buy volume) → emit SELL_INFERRED.
+ * average AND last trades below the entry price, OR a sell-classified print at
+ * or above the armed notional → emit SELL_INFERRED. (OI is settled overnight and
+ * never changes intraday, so the old "OI drops below baseline" clause never fired.)
  *
  * Events are kept in a ring buffer for the front-end volume-stick markers.
  */
 
 import { getOptionChain, type OptionChainResponse } from "./schwab";
+import { isRthOpen } from "./sessionCache";
+
+// getOptionChain caches chains for 60 s (schwab.ts), so polling faster than that only
+// returns the identical snapshot. Cadence is clamped to this TTL.
+const CHAIN_CACHE_TTL_MS = 60_000;
+const OFF_HOURS_POLL_MS = 60_000;
+
+// Session window for live polling: 09:25-16:15 ET on weekdays (a few minutes of margin
+// around RTH). Outside it the tracker idles at the off-hours cadence and never falls
+// back to SPY, which had the side effect of hammering a dead Schwab token + CBOE 24/7.
+function inTrackerSession(now = new Date()): boolean {
+  if (isRthOpen(now)) return true;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(now);
+  const g = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  const wday = g("weekday");
+  if (wday === "Sat" || wday === "Sun") return false;
+  const mod = Number(g("hour")) * 60 + Number(g("minute"));
+  return mod >= 9 * 60 + 25 && mod <= 16 * 60 + 15;
+}
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -121,7 +145,7 @@ const chartHistory = new Map<string, ChartTick[]>();
 const events: TickEvent[] = [];
 const tracked: TrackedPosition[] = [];
 
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let POLL_MS = 4_000;
 const STRIKE_RADIUS = 20;         // ATM ±20 strikes
 const DEFAULT_MIN_NOTIONAL = 50_000;
@@ -163,8 +187,24 @@ function rollingAvg(win: Array<{ ts: number; dv: number }>, nowTs: number): numb
 
 async function poll() {
   try {
+    const inSession = inTrackerSession();
     const chain: OptionChainResponse = await getOptionChain("$SPX", 0);
     if ("error" in chain) {
+      // SPX unavailable. Off-hours, or when the failure is an auth failure
+      // ("schwab_required" = no token / CBOE also failed), do NOT try SPY: it just
+      // repeats the same failing token refresh and CBOE request every poll.
+      // Note the SPY rows are keyed SPY_..., so armed $SPX positions do not update
+      // during a fallback anyway.
+      const authFailure = String((chain as any).error ?? "").includes("schwab_required");
+      if (!inSession || authFailure) {
+        lastSnapshot = {
+          ...lastSnapshot,
+          asOf: Date.now(),
+          connected: false,
+          note: authFailure ? "Schwab connection required for 0DTE tracker" : "0DTE tracker idle (outside session)",
+        };
+        return;
+      }
       // Try SPY fallback for context if SPX unavailable
       const spy = await getOptionChain("SPY", 0);
       if ("error" in spy) {
@@ -333,15 +373,16 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
     const lastDv = row.deltaVol;
     // Decay: latest Δvol < avg/2 for two consecutive slow polls
     const decayed = avgDv > 0 && lastDv < avgDv / 2;
-    // OI drop: current OI below baseline by > 25% of buyVolume logged
-    const expectedOI = t.baselineOI + Math.max(0, t.buyVolume * 0.25);
-    const oiDropped = row.openInterest < t.baselineOI;
+    // OI is prior-day settled and never changes intraday, so "OI < baselineOI" was never
+    // true during RTH and the decay branch could never fire. Use "last below entry"
+    // as the confirming condition for a decayed contract instead.
+    const priceBelowEntry = row.last != null && t.buyPrice > 0 && row.last < t.buyPrice;
 
     // Secondary exit hint: classification flipped to sell with notional ≥ minNotional
     const sellClassified = row.classification === "sell" && row.notional >= t.minNotional;
 
-    // Score: need EITHER (decay + oi drop) OR a big sell-classified print
-    if ((decayed && oiDropped) || sellClassified) {
+    // Score: need EITHER (decay + price below entry) OR a big sell-classified print
+    if ((decayed && priceBelowEntry) || sellClassified) {
       t.status = "exited";
       t.estExitPrice = row.last;
       t.estExitTs = nowTs;
@@ -376,11 +417,23 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
 
 export function startOdteTracker(intervalMs = 4_000) {
   if (pollTimer) return;
-  POLL_MS = intervalMs;
-  // Kick off immediately, then on interval
-  poll().catch(() => {});
-  pollTimer = setInterval(() => { poll().catch(() => {}); }, POLL_MS);
-  console.log(`[odteTracker] started, polling every ${POLL_MS}ms for ATM ±${STRIKE_RADIUS} 0DTE $SPX contracts`);
+  // Clamp to the chain cache TTL: a 4 s request interval returned the same 60 s snapshot
+  // 14 of every 15 polls (deltaVol = 0) while still costing a token check per call.
+  POLL_MS = Math.max(intervalMs, CHAIN_CACHE_TTL_MS);
+  const onErr = (e: any) => console.warn(`[odteTracker] poll failed: ${e?.message ?? e}`);
+  // Self-scheduling loop so the cadence can differ in/out of session.
+  const loop = async () => {
+    try {
+      await poll();
+    } catch (e) {
+      onErr(e);
+    } finally {
+      const next = inTrackerSession() ? POLL_MS : OFF_HOURS_POLL_MS;
+      pollTimer = setTimeout(loop, next);
+    }
+  };
+  pollTimer = setTimeout(loop, 0);
+  console.log(`[odteTracker] started, polling every ${POLL_MS}ms in session (${OFF_HOURS_POLL_MS}ms off-hours) for ATM ±${STRIKE_RADIUS} 0DTE $SPX contracts`);
 }
 
 export function getOdteSnapshot(): TrackerSnapshot {
@@ -450,9 +503,13 @@ export function getContractChart(
       if (g.cls === "buy") buyVol += g.dv;
       else if (g.cls === "sell") sellVol += g.dv;
     }
-    const d = new Date(k);
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mm = String(d.getMinutes()).padStart(2, "0");
+    // ET labels: getHours() is server-local (UTC on the host), which put UTC times
+    // on the ToS-style chart axis.
+    const etHm = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+    }).formatToParts(new Date(k));
+    const hh = etHm.find(p => p.type === "hour")?.value ?? "00";
+    const mm = etHm.find(p => p.type === "minute")?.value ?? "00";
     bars.push({
       ts: k,
       timeLabel: `${hh}:${mm}`,

@@ -133,7 +133,9 @@ function rsi14(closes: number[]): number | null {
 function volumeNodes(
   bars: Array<{ close: number; volume?: number }>,
   n: number,
-  binPct = 0.005,
+  // 0.05 → ~20 bins across the range; the old 0.005 gave ~200 bins, so the
+  // "top volume nodes" were just the 3 single highest-volume days.
+  binPct = 0.05,
 ): number[] {
   const prices = bars.map((b) => b.close);
   if (prices.length === 0) return [];
@@ -205,7 +207,9 @@ function computeConfluence(
       label: me.label,
       source: me.source,
       price: me.price,
-      confluence: 1 + stacked.length,
+      // +1 per independent SYSTEM agreeing, not per level (two quarterly-fib
+      // lines in one band are one system, not two votes)
+      confluence: 1 + new Set(others.map((o) => o.source)).size,
       stackedWith: stacked,
       distPct: 0, // filled later
       side: "at",
@@ -227,10 +231,12 @@ function countHistoricalReactions(
   for (let i = 0; i < slice.length - 5; i++) {
     const dist = Math.abs(slice[i] - levelPrice) / levelPrice;
     if (dist > toleranceBps / 10000) continue;
-    // Look 5 bars forward — did price reverse ≥ reversalBps?
+    // Look 5 bars forward — did price move AWAY from the level (bounce/reject)?
+    // Counting |move| in either direction made every touch a "reaction".
     const future = slice.slice(i + 1, i + 6);
     if (future.length < 3) continue;
-    const maxMove = Math.max(...future.map((p) => Math.abs(p - slice[i]) / slice[i]));
+    const side = Math.sign(slice[i] - levelPrice) || 1;
+    const maxMove = Math.max(...future.map((p) => (side * (p - slice[i])) / slice[i]));
     if (maxMove >= reversalBps / 10000) touches++;
   }
   return touches;
@@ -260,9 +266,14 @@ export interface PivotProjectionInputs {
 export function buildPivotProjection(
   inp: PivotProjectionInputs,
 ): PivotProjectionResponse {
-  const { symbol, spot, bars } = inp;
+  const { symbol, bars } = inp;
   const closes = bars.map((b) => b.close);
-  const last = closes[closes.length - 1] ?? spot;
+  // Use the LIVE spot for distances/sides when available; the last daily close
+  // can be a day stale intraday.
+  const last =
+    Number.isFinite(inp.spot) && inp.spot > 0
+      ? inp.spot
+      : closes[closes.length - 1] ?? 0;
 
   // Anchor OHLC: prior calendar month + prior quarter
   const mOhlc =

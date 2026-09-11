@@ -13,23 +13,6 @@
 
 import { readCache, writeCache } from "./sessionCache";
 
-const UA = "Mozilla/5.0 (compatible; PulseDashboard/1.0)";
-
-async function yFetch(url: string, timeoutMs = 25_000): Promise<any> {
-  const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const r = await fetch(url, {
-      headers: { "User-Agent": UA, Accept: "application/json" },
-      signal: ctrl.signal,
-    });
-    if (!r.ok) throw new Error(`Yahoo ${r.status} for ${url}`);
-    return await r.json();
-  } finally {
-    clearTimeout(to);
-  }
-}
-
 // ─── Enriched per-month/week stat ─────────────────────────────────────────
 export interface SeasonalityBar {
   month?: number;
@@ -187,33 +170,6 @@ function presidentialCycleYear(year: number): 1 | 2 | 3 | 4 {
   if (cycle === 1) return 1;
   if (cycle === 2) return 2;
   return 3;
-}
-
-// ─── Day-of-year (trading day index within year) ──────────────────────────
-// Build a map: year → { date → trading day index (0-based) }
-function buildTradingDayIndexes(bars: DailyBar[]): Map<number, Map<string, number>> {
-  // Group bars by year, sort, then assign sequential index
-  const byYear = new Map<number, DailyBar[]>();
-  for (const bar of bars) {
-    const d = new Date(bar.t * 1000);
-    const yr = d.getUTCFullYear();
-    const arr = byYear.get(yr) ?? [];
-    arr.push(bar);
-    byYear.set(yr, arr);
-  }
-  const result = new Map<number, Map<string, number>>();
-  for (const [yr, yearBars] of byYear) {
-    const sorted = [...yearBars].sort((a, b) => a.t - b.t);
-    const map = new Map<string, number>();
-    sorted.forEach((b, idx) => {
-      const d = new Date(b.t * 1000);
-      const key = `${d.getUTCMonth()}-${d.getUTCDate()}`;
-      map.set(String(idx), b.t as any); // idx → timestamp
-      map.set(`t${b.t}`, idx);          // timestamp → idx
-    });
-    result.set(yr, map);
-  }
-  return result;
 }
 
 // ─── Optimal window finder ────────────────────────────────────────────────
@@ -392,7 +348,14 @@ export function computeSeasonality(
   for (const bar of filteredBars) {
     const d = new Date(bar.t * 1000);
     const wk = isoWeek(d);
-    const key = `${d.getUTCFullYear()}-${String(wk).padStart(2, "0")}`;
+    // Key by ISO week-YEAR (year of that week's Thursday), not calendar year —
+    // otherwise Dec 29-31 land in "week 1" of the wrong year and pollute the
+    // first-week stats with a whole year's return.
+    const thu = new Date(Date.UTC(
+      d.getUTCFullYear(), d.getUTCMonth(),
+      d.getUTCDate() + 3 - ((d.getUTCDay() + 6) % 7),
+    ));
+    const key = `${thu.getUTCFullYear()}-${String(wk).padStart(2, "0")}`;
     const arr = weekGroups.get(key) ?? [];
     arr.push(bar);
     weekGroups.set(key, arr);
@@ -466,21 +429,10 @@ export function computeSeasonality(
   if (currentYearSorted.length >= 2) {
     const startClose = currentYearSorted[0].c;
     const rawPath = currentYearSorted.map((b) => ((b.c - startClose) / startClose) * 100);
-    const todayDayCount = currentYearSorted.length;
-    // Map to target days
-    for (let d = 0; d <= Math.min(todayDayCount - 1, TARGET_DAYS - 1); d++) {
-      const rawIdx = (d / (TARGET_DAYS - 1)) * (rawPath.length - 1);
-      const lo = Math.floor(rawIdx);
-      const hi = Math.ceil(rawIdx);
-      const frac = rawIdx - lo;
-      const val = rawPath[lo] * (1 - frac) + rawPath[Math.min(hi, rawPath.length - 1)] * frac;
-      currentYearCumPath[d] = val;
-    }
-    // Only fill up to current trading day equivalent
-    const currentDayFraction = todayDayCount / TARGET_DAYS;
-    const currentDayIdx = Math.floor(currentDayFraction * TARGET_DAYS);
-    for (let d = currentDayIdx; d < TARGET_DAYS; d++) {
-      currentYearCumPath[d] = null;
+    // Trading day d of THIS year plots at slot d — no stretching a partial YTD
+    // across all 252 slots (that made the line lag the calendar).
+    for (let d = 0; d < Math.min(rawPath.length, TARGET_DAYS); d++) {
+      currentYearCumPath[d] = rawPath[d];
     }
   }
 

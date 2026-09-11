@@ -4,7 +4,7 @@
 
 import { sqlite } from "./storage";
 
-type Sym = "SPY" | "TLT" | "HYG" | "LQD" | "UUP" | "GLD" | "TIP" | "VIX";
+type Sym = "SPY" | "TLT" | "HYG" | "LQD" | "UUP" | "GLD" | "TIP";
 
 const TICKERS: Sym[] = ["SPY", "TLT", "HYG", "LQD", "UUP", "GLD", "TIP"];
 
@@ -25,13 +25,27 @@ function pctChange(bars: DailyBar[], offset: number): number | null {
   return ((b - a) / a) * 100;
 }
 
-function logReturns(bars: DailyBar[]): number[] {
-  const r: number[] = [];
+// Returns keyed by bar date so correlations compare the SAME days.
+// (Unkeyed arrays silently misalign when one symbol is missing a session,
+// which biases the correlation toward zero.)
+function logReturnsByDate(bars: DailyBar[]): Map<string, number> {
+  const r = new Map<string, number>();
   for (let i = 1; i < bars.length; i++) {
     const a = bars[i - 1].close, b = bars[i].close;
-    if (a > 0 && b > 0) r.push(Math.log(b / a));
+    if (a > 0 && b > 0) r.set(bars[i].date, Math.log(b / a));
   }
   return r;
+}
+
+// Date-aligned Pearson over the last `window` shared dates.
+function alignedPearson(
+  a: Map<string, number>,
+  b: Map<string, number>,
+  window: number,
+): number | null {
+  const shared = [...a.keys()].filter((d) => b.has(d)).sort().slice(-window);
+  if (shared.length < 5) return null;
+  return pearson(shared.map((d) => a.get(d)!), shared.map((d) => b.get(d)!));
 }
 
 function pearson(a: number[], b: number[]): number | null {
@@ -78,7 +92,7 @@ const CORR_LOOSE = 0.2;
 
 export function buildCrossAssetMatrix(): CrossAssetMatrix {
   const spyBars = loadBars("SPY", 90);
-  const spyRets = logReturns(spyBars);
+  const spyRets = logReturnsByDate(spyBars);
   const rows: CrossAssetTickerRow[] = [];
 
   for (const sym of TICKERS) {
@@ -91,9 +105,9 @@ export function buildCrossAssetMatrix(): CrossAssetMatrix {
     let corr60: number | null = null;
     let regime: CrossAssetTickerRow["corrRegime"] = "n/a";
     if (sym !== "SPY") {
-      const rets = logReturns(bars);
-      corr20 = pearson(rets.slice(-20), spyRets.slice(-20));
-      corr60 = pearson(rets.slice(-60), spyRets.slice(-60));
+      const rets = logReturnsByDate(bars);
+      corr20 = alignedPearson(rets, spyRets, 20);
+      corr60 = alignedPearson(rets, spyRets, 60);
       if (corr20 != null && corr60 != null) {
         const drift = Math.abs(corr20 - corr60);
         if (drift > 0.4) regime = "broken";
@@ -112,6 +126,9 @@ export function buildCrossAssetMatrix(): CrossAssetMatrix {
 
   // ----- Regime verdict from cross-asset state -----
   const map = Object.fromEntries(rows.map(r => [r.symbol, r]));
+  const missingLegs = ["SPY", "TLT", "HYG", "UUP"].filter(
+    (s) => map[s]?.d1Pct == null,
+  );
   const spyD = map.SPY?.d1Pct ?? 0;
   const tltD = map.TLT?.d1Pct ?? 0;
   const hygD = map.HYG?.d1Pct ?? 0;
@@ -147,6 +164,13 @@ export function buildCrossAssetMatrix(): CrossAssetMatrix {
     notes.push("stocks and bonds both selling, dollar bid — duration + risk de-grossing");
   } else {
     notes.push("no clean cross-asset confluence — defer to fundamentals/regime tab");
+  }
+
+  // A missing leg means "no data", not "0.0% move" — downgrade rather than
+  // let a silent zero masquerade as confirmation.
+  if (missingLegs.length > 0) {
+    confidence = "low";
+    notes.push(`missing data for ${missingLegs.join(", ")} — verdict downgraded`);
   }
 
   if (gldD > 0.5 && tipD > 0.2) notes.push("gold + TIPS bid → inflation re-pricing input");

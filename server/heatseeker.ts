@@ -13,6 +13,7 @@
  */
 
 import type { OptionChainResponse } from "./schwab";
+import { invNormCDF } from "./chainAudit";
 
 type Chain = Exclude<OptionChainResponse, { error: string }>;
 
@@ -154,6 +155,19 @@ export function buildHeatseeker(
   const expiry = picked.date;
   const dte = picked.dte;
 
+  // Fractional years to expiry. For 0DTE use remaining minutes to 16:00 ET
+  // (15-minute floor) so vanna/charm don't blow up or vanish at T=0.
+  let T: number;
+  if (dte >= 1) {
+    T = dte / 365;
+  } else {
+    const nowEt = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+    const close = new Date(nowEt);
+    close.setHours(16, 0, 0, 0);
+    const mins = Math.max(15, (close.getTime() - nowEt.getTime()) / 60000);
+    T = mins / (365 * 24 * 60);
+  }
+
   // 2. Aggregate per-strike
   const strikeMap = new Map<number, HeatseekerStrike>();
 
@@ -208,20 +222,26 @@ export function buildHeatseeker(
         // Dealer convention: dealers short calls (-), long puts (+) for gamma
         // net GEX at strike = callGEX - putGEX (positive = dealers long gamma)
         const gex = gamma * oi * mult * spot * spot * 0.01;
-        // Vanna ≈ -delta × (1 - |delta|) / IV (approximation when not provided)
-        // Better: vanna = vega × delta / spot — but we use dvega/dspot proxy
-        const vanna = vega && ivDec > 0 ? (vega * delta) / Math.max(ivDec, 0.01) : 0;
-        // Charm = d(delta)/d(time) — Schwab sometimes provides `charm`, else proxy
-        const charmRaw = Number(c.charm);
-        const charm = isFinite(charmRaw)
-          ? charmRaw
-          : theta && ivDec > 0
-            ? (-theta * delta * 2) / Math.max(ivDec * 100, 1)
-            : 0;
+
+        // True Black-Scholes vanna/charm recovered from delta + IV (same d1
+        // recovery as chainAudit). Replaces the old vega*delta/iv and
+        // -theta*delta*2/iv proxies, which had the wrong shape across strikes.
+        let vanna = 0;
+        let charm = 0;
+        if (ivDec > 0 && T > 0) {
+          const prob = side === "call" ? delta : delta + 1;
+          if (prob > 0 && prob < 1) {
+            const d1v = invNormCDF(prob);
+            const d2v = d1v - ivDec * Math.sqrt(T);
+            const phi = Math.exp(-0.5 * d1v * d1v) / Math.sqrt(2 * Math.PI);
+            vanna = (-phi * d2v) / ivDec;   // dDelta per 1.0 vol move
+            charm = (phi * d2v) / (2 * T);  // dDelta per year (r=q=0)
+          }
+        }
 
         const dexContrib = delta * oi * mult * spot;
-        const vannaContrib = vanna * oi * mult;
-        const charmContrib = charm * oi * mult;
+        const vannaContrib = vanna * oi * mult * spot * 0.01; // $ per 1% vol move
+        const charmContrib = (charm * oi * mult * spot) / 365; // $ per calendar day
 
         if (side === "call") {
           s.callOI += oi;

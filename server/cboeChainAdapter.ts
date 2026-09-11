@@ -15,6 +15,7 @@
  * staleness indicator.
  */
 import { getCboeChain } from "./cboeCache";
+import { etToday } from "./etTime";
 
 // Match the OptionChainResponse shape from schwab.ts but with extended source tag
 export type CboeChainResponse = {
@@ -98,8 +99,10 @@ export async function getCboeOptionChain(
     const bidU = Number(data.bid) || null;
     const askU = Number(data.ask) || null;
 
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
+    // DTE must be computed against the ET trading date. UTC midnight is
+    // 8 PM ET the prior evening, so evening sessions rolled DTE a day early
+    // (0DTE contracts looked like -1 DTE and were dropped).
+    const today = new Date(`${etToday()}T00:00:00Z`);
 
     const callExpDateMap: Record<string, Record<string, any[]>> = {};
     const putExpDateMap: Record<string, Record<string, any[]>> = {};

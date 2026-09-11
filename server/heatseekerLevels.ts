@@ -4,6 +4,7 @@
 // Single user, single file: data/heatseeker-levels.json
 
 import fs from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const FILE = path.resolve(process.cwd(), "data", "heatseeker-levels.json");
@@ -50,6 +51,19 @@ export async function readLevels(): Promise<LevelsFile> {
     return parsed;
   } catch {
     // Seed with defaults
+    return { version: 1, updatedAt: 0, levels: DEFAULT_LEVELS };
+  }
+}
+
+// Sync snapshot for callers that can't await (e.g. gammaLevels user targets).
+// Same fallback semantics as readLevels.
+export function readLevelsSync(): LevelsFile {
+  try {
+    const raw = readFileSync(FILE, "utf8");
+    const parsed = JSON.parse(raw) as LevelsFile;
+    if (!parsed || !Array.isArray(parsed.levels)) throw new Error("invalid levels file");
+    return parsed;
+  } catch {
     return { version: 1, updatedAt: 0, levels: DEFAULT_LEVELS };
   }
 }

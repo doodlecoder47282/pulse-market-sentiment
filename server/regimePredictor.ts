@@ -285,13 +285,15 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   scores[currentRaw] += 1.8;
 
   // 3) IV term direction
-  if (ivTermDelta > 0.02) {
+  // iv1dDelta is in VOL POINTS (models.ts convention: |Δ| >= 0.25 is a real move).
+  // The old 0.02 threshold fired on tick noise.
+  if (ivTermDelta > 0.25) {
     // vol expansion → favor TREND
     scores.TREND_STRONG += 0.6;
     scores.TREND_WEAK += 0.4;
     scores.CHOP_STRONG -= 0.4;
     scores.CHOP_WEAK -= 0.2;
-  } else if (ivTermDelta < -0.02) {
+  } else if (ivTermDelta < -0.25) {
     // vol bleed → favor CHOP
     scores.CHOP_STRONG += 0.6;
     scores.CHOP_WEAK += 0.4;

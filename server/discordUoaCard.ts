@@ -30,9 +30,11 @@ export async function postUoaClusterAlert(c: UoaCluster): Promise<boolean> {
     const distStr = c.distFromSpotPct !== undefined ? `${c.distFromSpotPct >= 0 ? "+" : ""}${c.distFromSpotPct.toFixed(1)}%` : "—";
     const beStr = c.breakevenPct !== undefined ? `${c.breakevenPct >= 0 ? "+" : ""}${c.breakevenPct.toFixed(1)}%` : "—";
 
+    // avgIv is already in percent (Schwab chain volatility, and the CBOE adapter
+    // normalises to percent too). Multiplying by 100 again printed "IV 1850%".
     const fields = [
       { name: "Cluster",  value: `${c.hitCount} hits • ${fmtPrem(c.totalPremium)} total\n${c.sentiment} • ${c.bucket} cap tier`, inline: true },
-      { name: "Contract", value: `${c.symbol} ${c.strike}${c.type} ${c.expiration.slice(5)}\n${c.dte}DTE • Δ${(c.avgDelta || 0).toFixed(2)} • IV ${(c.avgIv * 100).toFixed(0)}%`, inline: true },
+      { name: "Contract", value: `${c.symbol} ${c.strike}${c.type} ${c.expiration.slice(5)}\n${c.dte}DTE • Δ${(c.avgDelta || 0).toFixed(2)} • IV ${(c.avgIv || 0).toFixed(0)}%`, inline: true },
       { name: "Levels",   value: `bid/ask ${c.bid.toFixed(2)}/${c.ask.toFixed(2)} (mid ${c.mid.toFixed(2)})\nspread ${c.spreadPct.toFixed(1)}% • spot ${c.spot ? c.spot.toFixed(2) : "—"}`, inline: true },
       { name: "Strike vs spot", value: distStr, inline: true },
       { name: "Breakeven %",    value: beStr, inline: true },

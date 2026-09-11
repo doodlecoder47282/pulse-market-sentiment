@@ -75,21 +75,6 @@ const TOUCH_BPS: Record<LevelKind, number> = {
 
 interface Bar { date: string; t: number; o: number; h: number; l: number; c: number; }
 
-async function yFetch(url: string, timeoutMs = 20_000): Promise<any> {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
-  try {
-    const r = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" },
-      signal: ac.signal,
-    });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return await r.json();
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 function toYmd(unixSec: number): string {
   const d = new Date(unixSec * 1000);
   // Use UTC for Yahoo timestamps (they're already normalized to trade-date UTC)
@@ -272,6 +257,7 @@ function scoreLevel(
   predicted: number,
   startClose: number,
   forwardBars: Bar[],
+  atr: number,
 ): Observation | null {
   if (forwardBars.length === 0) return null;
   let hi = -Infinity, lo = Infinity;
@@ -285,13 +271,16 @@ function scoreLevel(
   const tol = (tolBps / 10000) * predicted;
   const touched = (lo <= predicted + tol && hi >= predicted - tol) ? 1 : 0;
 
-  // Held: touched AND reversed ≥50% of the initial distance (startClose→predicted) back
+  // Held: touched AND reversed away from the level by a meaningful amount.
+  // Reversal distance is floored at 0.5·ATR — for near-spot levels (EMA20,
+  // round-25 max pain) "halfway back" was pennies, so held was trivially true.
   let held = 0;
   if (touched) {
     const initDist = Math.abs(predicted - startClose);
+    const revDist = Math.max(0.5 * initDist, 0.5 * (atr > 0 ? atr : initDist));
     const reversalTarget = predicted > startClose
-      ? predicted - 0.5 * initDist   // resistance: price should fall back to halfway
-      : predicted + 0.5 * initDist;  // support:   price should rise back to halfway
+      ? predicted - revDist   // resistance: price should fall back off the level
+      : predicted + revDist;  // support:    price should bounce off the level
     if (predicted > startClose) {
       // after touching resistance, did any subsequent low come back down?
       let touchedIdx = -1;
@@ -377,7 +366,7 @@ export async function runBackfill(yearsLookback = 5): Promise<{
         if (fwd.length === 0) return;
 
         const pushObs = (kind: LevelKind, pred: number) => {
-          const o = scoreLevel(date, h, kind, pred, lv.close, fwd);
+          const o = scoreLevel(date, h, kind, pred, lv.close, fwd, atr20[i] ?? 0);
           if (o) observations.push(o);
         };
 

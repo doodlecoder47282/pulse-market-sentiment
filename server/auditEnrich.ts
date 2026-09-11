@@ -36,6 +36,7 @@ import { detectSDZones } from "./sdZones.js";
 import { computeOfiTrend } from "./leeReadyOfi.js";
 import { computeWickTiming } from "./wickTiming.js";
 import { getPriceHistory, getOptionChain } from "./schwab.js";
+import { etEpochMs } from "./etTime.js";
 
 export interface VommaPocket {
   strike: number;
@@ -188,8 +189,8 @@ function getSpyBars(): DailyBar[] {
  *
  * Resolution priority:
  *   1. ohlc_minute table in data.db (1-min bars, if the table exists)
- *   2. Yahoo Finance 1-min via fetchOHLC (live, RTH session only)
- *   3. Yahoo Finance 5-min via fetchOHLC (fallback — coarser POC/VAH/VAL)
+ *   2. Schwab 1-min via fetchOHLC (live, RTH session only)
+ *   3. Schwab 5-min via fetchOHLC (fallback — coarser POC/VAH/VAL)
  *   4. null (no bars available — Wire 7 skips gracefully)
  *
  * Bars are filtered to current RTH session: today after 09:30 ET (UTC-5/4).
@@ -206,11 +207,8 @@ async function getIntradayBars(): Promise<{ bars: Candle[]; resolution: string }
     const etDateNow = new Intl.DateTimeFormat("en-CA", {
       timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
     }).format(new Date());
-    // Unix seconds for today 09:30 ET
-    // We compute it by parsing date and adjusting for ET offset
-    const open930Ms = Date.parse(`${etDateNow}T09:30:00-05:00`);
-    const open930s = Math.floor((isNaN(open930Ms) ?
-      Date.parse(`${etDateNow}T14:30:00Z`) : open930Ms) / 1000);
+    // Unix seconds for today 09:30 ET (DST-aware)
+    const open930s = Math.floor(etEpochMs(etDateNow, 9, 30) / 1000);
     const nowS = Math.floor(Date.now() / 1000);
     const rows = db
       .prepare(
@@ -239,7 +237,7 @@ async function getIntradayBars(): Promise<{ bars: Candle[]; resolution: string }
       const etDateNow = new Intl.DateTimeFormat("en-CA", {
         timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
       }).format(new Date());
-      const open930s = Math.floor(Date.parse(`${etDateNow}T09:30:00-05:00`) / 1000);
+      const open930s = Math.floor(etEpochMs(etDateNow, 9, 30) / 1000);
       const rthBars = ohlc.candles.filter((b) => b.t >= open930s && (b.v ?? 0) > 0);
       if (rthBars.length >= 5) {
         intradayBarsCache = { ts: Date.now(), bars: rthBars, resolution: "1-min" };
@@ -258,7 +256,7 @@ async function getIntradayBars(): Promise<{ bars: Candle[]; resolution: string }
       const etDateNow = new Intl.DateTimeFormat("en-CA", {
         timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
       }).format(new Date());
-      const open930s = Math.floor(Date.parse(`${etDateNow}T09:30:00-05:00`) / 1000);
+      const open930s = Math.floor(etEpochMs(etDateNow, 9, 30) / 1000);
       const rthBars5 = ohlc5.candles.filter((b) => b.t >= open930s && (b.v ?? 0) > 0);
       if (rthBars5.length >= 3) {
         intradayBarsCache = { ts: Date.now(), bars: rthBars5, resolution: "5-min" };
@@ -488,11 +486,9 @@ export async function computeJumpRegime(currentGex?: number | null): Promise<Jum
 
     if (candles.length > 0) {
       // today 9:30 ET in epoch milliseconds
-      const open930Ms = Date.parse(`${etDateNow}T09:30:00-05:00`);
-      const open930ms = isNaN(open930Ms) ? 0 : open930Ms;
-      // pre-market window: 4:00 ET to 9:29 ET
-      const pm400Ms = Date.parse(`${etDateNow}T04:00:00-05:00`);
-      const pm400ms = isNaN(pm400Ms) ? open930ms - 330 * 60_000 : pm400Ms;
+      const open930ms = etEpochMs(etDateNow, 9, 30);
+      // pre-market window: 4:00 ET to 9:29 ET (DST-aware)
+      const pm400ms = etEpochMs(etDateNow, 4, 0);
 
       // Schwab candles use datetime in milliseconds
       // Find prevClose: last candle before today's RTH open (or use the earliest candle's prior)

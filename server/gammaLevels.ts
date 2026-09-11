@@ -35,21 +35,32 @@ export interface GammaLevelsEnhanced {
   asOf: string;
 }
 
-// User's locked weekly SPX reference targets (from user context).
-// These will be refreshed when the user posts new targets.
-const USER_TARGETS = {
-  upside: 7140,
-  downside: 6950,
-  t2Up: 7270,
-  t2Down: 6885,
-  mopex: 7025,
-  vanna: 7089,
-  zomma: 7070,
-  charm: 7128,
-  negGamma: 7100,
-  vommaUpper: 7265,
-  vommaLower: 6960,
-};
+// User's weekly SPX reference targets — sourced from the single editable store
+// (heatseeker-levels.json via heatseekerLevels). Previously duplicated as a
+// hard-coded constant here, which drifted from the Heatseeker tab edits.
+import { readLevelsSync } from "./heatseekerLevels";
+
+const TARGET_IDS = {
+  upside: "upside",
+  downside: "downside",
+  t2Up: "t2-up",
+  t2Down: "t2-down",
+  mopex: "mopex",
+  vanna: "vanna",
+  zomma: "zomma",
+  charm: "charm",
+  negGamma: "neg-gamma",
+  vommaUpper: "upper-vomma",
+  vommaLower: "lower-vomma",
+} as const;
+
+function userTargets(): Record<keyof typeof TARGET_IDS, number> {
+  const levels = readLevelsSync().levels;
+  const byId = new Map(levels.map((l) => [l.id, l.value]));
+  const out: any = {};
+  for (const [key, id] of Object.entries(TARGET_IDS)) out[key] = byId.get(id) ?? 0;
+  return out;
+}
 
 export function buildGammaLevelsEnhanced(
   // The GammaStructure from the existing snapshot
@@ -79,6 +90,8 @@ export function buildGammaLevelsEnhanced(
   // and note the user targets are in SPX terms.
   // We'll show both: computed (SPY) and user targets (SPX).
 
+  const targets = userTargets();
+
   return {
     gammaFlip: gamma.zeroGamma != null
       ? { value: gamma.zeroGamma, source: "computed" }
@@ -87,18 +100,18 @@ export function buildGammaLevelsEnhanced(
     putWall: { value: gamma.putWall, source: "computed" },
     topGexStrikes,
     // Second-order Greek levels — from user targets (not computed from chain)
-    vanna: { value: USER_TARGETS.vanna, source: "user_targets" },
-    charm: { value: USER_TARGETS.charm, source: "user_targets" },
-    vommaUpper: { value: USER_TARGETS.vommaUpper, source: "user_targets" },
-    vommaLower: { value: USER_TARGETS.vommaLower, source: "user_targets" },
-    zomma: { value: USER_TARGETS.zomma, source: "user_targets" },
-    negGamma: { value: USER_TARGETS.negGamma, source: "user_targets" },
-    mopex: { value: USER_TARGETS.mopex, source: "user_targets" },
+    vanna: { value: targets.vanna, source: "user_targets" },
+    charm: { value: targets.charm, source: "user_targets" },
+    vommaUpper: { value: targets.vommaUpper, source: "user_targets" },
+    vommaLower: { value: targets.vommaLower, source: "user_targets" },
+    zomma: { value: targets.zomma, source: "user_targets" },
+    negGamma: { value: targets.negGamma, source: "user_targets" },
+    mopex: { value: targets.mopex, source: "user_targets" },
     weeklyTargets: {
-      upside:   { value: USER_TARGETS.upside,   source: "user_targets" },
-      downside: { value: USER_TARGETS.downside, source: "user_targets" },
-      t2Up:     { value: USER_TARGETS.t2Up,     source: "user_targets" },
-      t2Down:   { value: USER_TARGETS.t2Down,   source: "user_targets" },
+      upside:   { value: targets.upside,   source: "user_targets" },
+      downside: { value: targets.downside, source: "user_targets" },
+      t2Up:     { value: targets.t2Up,     source: "user_targets" },
+      t2Down:   { value: targets.t2Down,   source: "user_targets" },
     },
     spxNow,
     asOf: new Date().toISOString(),

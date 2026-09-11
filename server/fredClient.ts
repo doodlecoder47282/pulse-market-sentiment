@@ -24,7 +24,8 @@ export const FRED_SERIES = {
   ICSA: "Initial Jobless Claims",
   // Credit / liquidity stress
   BAMLH0A0HYM2: "ICE BofA HY OAS",
-  TEDRATE: "TED Spread (legacy)",
+  // TEDRATE removed: FRED discontinued the series in 2022 (LIBOR retired) —
+  // it fetched nothing on every refresh cycle.
   SOFR: "SOFR Overnight",
   // Money supply / dollar
   M2SL: "M2 Money Supply",
@@ -159,8 +160,10 @@ let fredRefreshTimer: NodeJS.Timeout | null = null;
 export function startFredRefresher(intervalMs = 6 * 60 * 60 * 1000): void {
   if (fredRefreshTimer) return;
   // Fire once on boot, then every 6h.
-  refreshAll().catch(() => {});
-  fredRefreshTimer = setInterval(() => { refreshAll().catch(() => {}); }, intervalMs);
+  refreshAll().catch((e) => console.warn(`[fred] boot refresh failed: ${e?.message ?? e}`));
+  fredRefreshTimer = setInterval(() => {
+    refreshAll().catch((e) => console.warn(`[fred] refresh failed: ${e?.message ?? e}`));
+  }, intervalMs);
 }
 export function stopFredRefresher(): void {
   if (fredRefreshTimer) { clearInterval(fredRefreshTimer); fredRefreshTimer = null; }

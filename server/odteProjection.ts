@@ -301,7 +301,7 @@ export function projectCandles(args: {
     const wickDn = sigBucket * (0.45 + rng() * 0.45);
 
     const absMin = startAbsMin + tMin;
-    const hh = Math.floor(absMin / 60), mm = Math.round(absMin % 60);
+    const hh = Math.floor(absMin / 60), mm = Math.floor(absMin % 60);
 
     out.push({
       minute: Math.round(tMin),

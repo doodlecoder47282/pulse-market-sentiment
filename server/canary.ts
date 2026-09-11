@@ -17,6 +17,16 @@ import { sqlite } from "./storage";
 import { getQuotes, type NormalizedQuote } from "./schwab";
 import { postToDiscord } from "./discord";
 
+// Partial-session variance scaling: intraday returns are compared against a
+// FULL-day σ, which understates |z| ~3.6× at 10:00 ET. Scale σ by the elapsed
+// fraction of daily variance (~25% overnight + 75% pro-rata through RTH).
+function elapsedVarianceFrac(): number {
+  const et = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const min = et.getHours() * 60 + et.getMinutes();
+  const elapsedMin = Math.min(390, Math.max(0, min - 570)); // since 9:30
+  return Math.max(0.15, 0.25 + 0.75 * (elapsedMin / 390));
+}
+
 // ── config ──────────────────────────────────────────────────────────────────
 
 interface CanaryDef {
@@ -139,7 +149,8 @@ export async function buildCanarySnapshot(): Promise<CanarySnapshot> {
   const spyRet = liveRet("SPY");
   const spyBars = loadBars("SPY", 26);
   const spyVol = dailyVol(spyBars.map(b => b.close));
-  const spyZ = spyRet != null && spyVol ? spyRet / spyVol : null;
+  const volScale = Math.sqrt(elapsedVarianceFrac());
+  const spyZ = spyRet != null && spyVol ? spyRet / (spyVol * volScale) : null;
 
   const rows: CanaryRow[] = [];
   for (const c of CANARIES) {
@@ -158,10 +169,10 @@ export async function buildCanarySnapshot(): Promise<CanarySnapshot> {
       value = pa != null && pb != null && pb > 0 ? pa / pb : null;
       const ra = liveRet(a), rb = liveRet(b);
       ret = ra != null && rb != null ? (1 + ra) / (1 + rb) - 1 : null;
-      vol = dailyVol(ratioSeries(loadBars(a, 30), loadBars(b, 30)));
+      vol = dailyVol(ratioSeries(loadBars(a, 26), loadBars(b, 26)));
     }
 
-    const z = ret != null && vol ? ret / vol : null;
+    const z = ret != null && vol ? ret / (vol * volScale) : null;
     const riskOffZ = z != null ? z * c.riskOffSign : null;
     // crude special case: a big SPIKE is an inflation shock — also risk-off
     const effRiskOff = c.id === "crude" && z != null && z >= 2 ? Math.abs(z) : riskOffZ;

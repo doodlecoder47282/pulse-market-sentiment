@@ -1404,7 +1404,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           const port = Number(process.env.PORT ?? 5000);
           const r = await fetch(`http://127.0.0.1:${port}/api/gamma-levels-enhanced`);
           if (r.ok) {
-            const g = await r.json();
+            // Endpoint shape is { symbol, supported, enhanced: { callWall, ... } }
+            const g = (await r.json())?.enhanced;
             const scale = isIndex ? 10 : 1;
             const cw = g?.callWall?.value;
             const pw = g?.putWall?.value;
@@ -1461,7 +1462,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (quotesCache && Date.now() - quotesCache.at < QUOTES_CACHE_MS) {
         return res.json(quotesCache.data);
       }
-      // Use parallel Yahoo fetches — fast, ~100ms each
+      // Parallel Schwab quote fetches — fast, ~100ms each
       const [spy, vix] = await Promise.all([
         getQuote("SPY"),
         getQuote("^VIX"),
@@ -3613,7 +3614,14 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         if (!r) { r = { strike: k, gex: 0, charm: 0, callOI: 0, putOI: 0, callMid: 0, putMid: 0, callIV: 0, putIV: 0 }; agg.set(k, r); }
         return r;
       };
-      const T = Math.max(nearestDte, 0.5) / 365; // floor half-day to keep greeks finite
+      // RTH-minute time basis — matches odteProjection's MIN_PER_YEAR=252·390
+      // convention (the old calendar half-day floor was ~2.5× larger at 14:00,
+      // so panel greeks disagreed with the projection on the same screen).
+      const etNowOdte = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+      const minNowOdte = etNowOdte.getHours() * 60 + etNowOdte.getMinutes();
+      const remainingTodayMin = minNowOdte < 570 ? 390 : Math.max(15, 960 - Math.min(960, minNowOdte));
+      const remainingMinOdte = remainingTodayMin + Math.max(0, nearestDte) * 390 * (252 / 365);
+      const T = remainingMinOdte / (252 * 390);
       const sqrtT = Math.sqrt(T);
       const passes: Array<{ side: "C" | "P"; map: any }> = [
         { side: "C", map: chain.callExpDateMap },
@@ -3718,7 +3726,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         const charmTilt = charmNorm * sig;
         const median = spot + pinPull + charmTilt;
         const absMin = (sessionState === "intraday" ? nowMin : OPEN) + tMin;
-        const hh = Math.floor(absMin / 60), mm = Math.round(absMin % 60);
+        const hh = Math.floor(absMin / 60), mm = Math.floor(absMin % 60);
         path.push({
           minute: Math.round(tMin),
           et: `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`,
@@ -4408,7 +4416,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         expiry: odte.expiry ?? null,
         eventDayKind, eventGateActions,
       };
-      const diag = await diagnoseOdte(args);
+      // readOnly: a manual HTTP tick must not push into the engine's spotHistory /
+      // detectionHistory (it skewed the chop regime and transition detectors).
+      const diag = await diagnoseOdte(args, { readOnly: true });
       for (const { alert, reason } of diag.rejected) {
         persistOdteAuditOnReject(alert, reason);
       }
@@ -4499,7 +4509,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         eventGateActions,
       };
 
-      const diag = await diagnoseOdte(args);
+      // readOnly: the preview endpoint is polled by the UI and must not mutate engine state.
+      const diag = await diagnoseOdte(args, { readOnly: true });
       const previews = diag.fireable.map((a) => ({
         ...a,
         formatted: formatOdteAlert(a).content,
@@ -4634,7 +4645,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   app.post("/api/edge/backup-now", async (_req, res) => {
     try {
       const { runBackup } = await import("./dbBackup");
-      res.json(runBackup());
+      res.json(await runBackup());
     } catch (e: any) {
       res.status(500).json({ error: "backup_failed", message: e?.message ?? String(e) });
     }
@@ -4975,10 +4986,11 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     console.warn(`[cot] failed to start: ${e?.message ?? e}`);
   }
 
-  // CLV grader (every 6h: regrade against latest close / chain mid)
+  // CLV grader (every 6h; gradePending itself only grades after 16:15 ET or prior-day rows)
   try {
     const { gradePending } = await import("./clvTracker");
-    setInterval(() => { gradePending().catch(() => {}); }, 6 * 60 * 60 * 1000);
+    // Log failures instead of swallowing them with .catch(() => {}).
+    setInterval(() => { gradePending().catch((e: any) => console.warn(`[clv] gradePending failed: ${e?.message ?? e}`)); }, 6 * 60 * 60 * 1000);
   } catch (e: any) {
     console.warn(`[clv] grader start failed: ${e?.message ?? e}`);
   }
@@ -5053,8 +5065,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     }
   }
   // Fire once 10s after boot, then every 5 minutes
-  setTimeout(() => { killboxAutoSeed().catch(() => {}); }, 10_000);
-  setInterval(() => { killboxAutoSeed().catch(() => {}); }, 5 * 60 * 1000);
+  // Log failures instead of swallowing them with .catch(() => {}).
+  const onSeedErr = (e: any) => console.warn(`[killbox-seed] failed: ${e?.message ?? e}`);
+  setTimeout(() => { killboxAutoSeed().catch(onSeedErr); }, 10_000);
+  setInterval(() => { killboxAutoSeed().catch(onSeedErr); }, 5 * 60 * 1000);
 
   // Kick off Exit Brain (30s confluence eval over tracked 0DTE positions)
   try {
@@ -5466,7 +5480,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const yy = 2000 + Number(exp.slice(0, 2));
       const mm = Number(exp.slice(2, 4));
       const dd = Number(exp.slice(4, 6));
-      const expDate = new Date(Date.UTC(yy, mm - 1, dd));
+      // Options expire ~16:00 ET (~20:00 UTC), not midnight UTC — midnight cut
+      // T ~20h short on the front expiry.
+      const expDate = new Date(Date.UTC(yy, mm - 1, dd, 20));
       const T = Math.max(
         1 / 365,
         (expDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24 * 365),
@@ -5481,7 +5497,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const m = await fetch(`http://127.0.0.1:${PORT}/api/models?symbol=SPX`)
         .then((r) => r.ok ? r.json() : null)
         .catch(() => null);
-      const oneDayEM = m?.horizons?.daily?.audit?.scenarioTargets?.oneDayEM ?? spot * 0.005;
+      // Models EM is in SPX points; this density is built on the SPY chain,
+      // so scale by 10 (otherwise pInOneEM pins at ~1.0).
+      const emSpx = m?.horizons?.daily?.audit?.scenarioTargets?.oneDayEM;
+      const oneDayEM = emSpx != null && isFinite(emSpx) ? emSpx / 10 : spot * 0.005;
       const r = 0.045; // approximate risk-free; not life-or-death for shape
       const out = computeRND(chain, spot, r, T, oneDayEM);
       res.json({

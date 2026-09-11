@@ -61,17 +61,26 @@ function parseTag(raw: string | undefined, fallback: FlowConfig["requiredTag"]):
 }
 
 // ─── State ───────────────────────────────────────────────────────────────────
-let _config: FlowConfig = {
-  priority: parseSymbolList(process.env.FLOW_PRIORITY, DEFAULT_PRIORITY),
-  watchlist: parseSymbolList(process.env.FLOW_WATCHLIST, DEFAULT_WATCHLIST),
-  premiumFloor: parseNum(process.env.FLOW_PREMIUM_FLOOR, 2_500_000),
-  volOiRatio: parseNum(process.env.FLOW_VOL_OI_RATIO, 15),
-  minDte: parseNum(process.env.FLOW_MIN_DTE, 1),
-  maxDte: parseNum(process.env.FLOW_MAX_DTE, 3),
-  requiredTag: parseTag(process.env.FLOW_REQUIRED_TAG, "ABOVE_ASK"),
-  deltaMin: parseNum(process.env.FLOW_DELTA_MIN, 0.20),
-  deltaMax: parseNum(process.env.FLOW_DELTA_MAX, 0.80),
-};
+// Single source of defaults shared by boot and resetFlowConfig(). Previously reset used
+// different numbers ($1M / 10x) than boot ($2.5M / 15x) and omitted maxDte entirely,
+// which disabled the DTE gate after POST /api/flow/config/reset.
+// requiredTag default is AT_ASK, which isWhale() treats as "ask side" (AT_ASK or
+// ABOVE_ASK): tags derive from a stale last vs the live NBBO, so real lifts show as
+// AT_ASK and ABOVE_ASK alone mostly caught quote-moved artifacts.
+function buildDefaultConfig(): FlowConfig {
+  return {
+    priority: parseSymbolList(process.env.FLOW_PRIORITY, DEFAULT_PRIORITY),
+    watchlist: parseSymbolList(process.env.FLOW_WATCHLIST, DEFAULT_WATCHLIST),
+    premiumFloor: parseNum(process.env.FLOW_PREMIUM_FLOOR, 2_500_000),
+    volOiRatio: parseNum(process.env.FLOW_VOL_OI_RATIO, 15),
+    minDte: parseNum(process.env.FLOW_MIN_DTE, 1),
+    maxDte: parseNum(process.env.FLOW_MAX_DTE, 3),
+    requiredTag: parseTag(process.env.FLOW_REQUIRED_TAG, "AT_ASK"),
+    deltaMin: parseNum(process.env.FLOW_DELTA_MIN, 0.20),
+    deltaMax: parseNum(process.env.FLOW_DELTA_MAX, 0.80),
+  };
+}
+let _config: FlowConfig = buildDefaultConfig();
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 export function getFlowConfig(): FlowConfig {
@@ -173,15 +182,6 @@ export function setFlowConfig(patch: Partial<FlowConfig>): { ok: boolean; config
 
 /** Reset to compiled defaults (useful for tests). */
 export function resetFlowConfig(): FlowConfig {
-  _config = {
-    priority: parseSymbolList(process.env.FLOW_PRIORITY, DEFAULT_PRIORITY),
-    watchlist: parseSymbolList(process.env.FLOW_WATCHLIST, DEFAULT_WATCHLIST),
-    premiumFloor: parseNum(process.env.FLOW_PREMIUM_FLOOR, 1_000_000),
-    volOiRatio: parseNum(process.env.FLOW_VOL_OI_RATIO, 10),
-    minDte: parseNum(process.env.FLOW_MIN_DTE, 1),
-    requiredTag: parseTag(process.env.FLOW_REQUIRED_TAG, "ABOVE_ASK"),
-    deltaMin: parseNum(process.env.FLOW_DELTA_MIN, 0.20),
-    deltaMax: parseNum(process.env.FLOW_DELTA_MAX, 0.80),
-  };
+  _config = buildDefaultConfig(); // same defaults as boot, including maxDte
   return getFlowConfig();
 }

@@ -25,22 +25,24 @@
 
 import type { WhaleHit } from "./flowAlertEngine";
 import { buildSchwabFlow, type SchwabFlowContract } from "./schwabFlow";
+// Static import instead of bare require(): the package is ESM and under `tsx` dev every
+// require() threw inside its try/catch, so nothing persisted and hydrateFromDb loaded 0
+// rows, silently. whalePersistence only imports a *type* from this file, so no cycle.
+import { persistFollowState, persistWhaleAlert, loadAllFollows } from "./whalePersistence";
 
-// Lazy persistence import — fail-soft, never let DB hiccups break tracking.
+// Persistence wrappers — fail-soft, never let DB hiccups break tracking.
 function safePersistFollow(p: FollowPosition): void {
   try {
-    const mod = require("./whalePersistence");
-    if (typeof mod.persistFollowState === "function") mod.persistFollowState(p);
-  } catch {
-    /* swallow */
+    persistFollowState(p);
+  } catch (e: any) {
+    console.warn(`[whaleFollow] persistFollowState failed: ${e?.message ?? e}`);
   }
 }
 function safePersistAlert(hit: WhaleHit): void {
   try {
-    const mod = require("./whalePersistence");
-    if (typeof mod.persistWhaleAlert === "function") mod.persistWhaleAlert(hit);
-  } catch {
-    /* swallow */
+    persistWhaleAlert(hit);
+  } catch (e: any) {
+    console.warn(`[whaleFollow] persistWhaleAlert failed: ${e?.message ?? e}`);
   }
 }
 
@@ -226,8 +228,9 @@ function isExpired(expiration: string): boolean {
   // expiration shape varies; treat anything parseable
   const d = Date.parse(expiration);
   if (!isFinite(d)) return false;
-  // Past 4:30 PM ET on the expiry date is expired
-  return Date.now() > d + 16.5 * 60 * 60_000;
+  // Date.parse("YYYY-MM-DD") is UTC midnight, so "+16.5h" was 16:30 UTC = 12:30 ET and
+  // positions were stamped EXPIRED (P&L frozen) 3.5 h early. 21.5 h = 16:30 ET (17:30 EDT).
+  return Date.now() > d + 21.5 * 60 * 60_000;
 }
 
 function applyTick(p: FollowPosition, live: SchwabFlowContract, now: number): void {
@@ -262,9 +265,10 @@ function applyTick(p: FollowPosition, live: SchwabFlowContract, now: number): vo
   };
 
   // ─── Status transitions ──────────────────────────────────────────────────
-  // CLOSED: mark went to ~0 (essentially worthless / closed out)
+  // CLOSED: mark went to ~0. Note this is "premium blew up / worthless", not evidence of
+  // a voluntary exit; the reason string says so (status enum kept for UI/schema compat).
   if (newMark <= 0.05 || (p.entry.mark > 0 && newMark / p.entry.mark <= 0.05)) {
-    transitionToTerminal(p, "CLOSED", `mark ${newMark.toFixed(2)} → ~0`, now);
+    transitionToTerminal(p, "CLOSED", `mark ${newMark.toFixed(2)} → ~0 (premium blown, not a voluntary exit)`, now);
     return;
   }
   // EXPIRED: contract expired today
@@ -491,9 +495,7 @@ export function getPerformanceSnapshot(opts?: { windowDays?: number }): Performa
 /** Hydrate in-memory positions from SQLite on boot. Fail-soft. */
 export function hydrateFromDb(): { loaded: number } {
   try {
-    const mod = require("./whalePersistence");
-    if (typeof mod.loadAllFollows !== "function") return { loaded: 0 };
-    const rows = mod.loadAllFollows() as Array<{
+    const rows = loadAllFollows() as unknown as Array<{
       occ: string;
       symbol: string;
       type: string;

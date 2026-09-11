@@ -19,8 +19,21 @@ const MARKET_BASE = `${SCHWAB_BASE}/marketdata/v1`;
 
 // ─── Token management ─────────────────────────────────────────────────────────
 
+// Refresh-storm guards: when a refresh fails, every caller used to retry on
+// its own poll cycle (thousands of doomed refresh POSTs per day, which also
+// trips Akamai 403s). One in-flight refresh is shared, failures back off 60s,
+// and an invalid_grant response stops attempts until the user re-auths.
+let _refreshInflight: Promise<string | null> | null = null;
+let _refreshFailUntil = 0;
+let _refreshDead = false; // invalid_grant: refresh token revoked/expired
+
+export function clearRefreshBackoff(): void {
+  _refreshFailUntil = 0;
+  _refreshDead = false;
+}
+
 /** Retrieve a valid access token, auto-refreshing if needed. Returns null if not connected. */
-export async function getAccessToken(): Promise<string | null> {
+export async function getAccessToken(lookaheadMs = 60_000): Promise<string | null> {
   const CLIENT_ID = getClientId();
   const CLIENT_SECRET = getClientSecret();
   if (!CLIENT_ID || !CLIENT_SECRET) return null;
@@ -28,8 +41,21 @@ export async function getAccessToken(): Promise<string | null> {
   if (!row) return null;
   const now = Date.now();
   if (row.refreshExpiresAt < now) return null; // refresh token expired — needs full re-auth
-  if (row.expiresAt > now + 60_000) return row.accessToken; // still valid (>1 min left)
-  // Attempt silent refresh
+  if (row.expiresAt > now + lookaheadMs) return row.accessToken; // still valid
+  if (_refreshDead || now < _refreshFailUntil) return null; // backing off
+  if (_refreshInflight) return _refreshInflight; // coalesce concurrent callers
+  _refreshInflight = doRefresh(row, CLIENT_ID, CLIENT_SECRET).finally(() => {
+    _refreshInflight = null;
+  });
+  return _refreshInflight;
+}
+
+async function doRefresh(
+  row: { refreshToken: string; refreshExpiresAt: number },
+  CLIENT_ID: string,
+  CLIENT_SECRET: string,
+): Promise<string | null> {
+  const now = Date.now();
   try {
     const basic = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64");
     const res = await fetch(TOKEN_URL, {
@@ -47,11 +73,21 @@ export async function getAccessToken(): Promise<string | null> {
       const errTxt = await res.text().catch(() => "");
       console.warn("[schwab] token refresh failed:", res.status, errTxt);
       _lastRefreshError = { at: now, status: res.status, message: errTxt.slice(0, 200) };
+      if (/invalid_grant/i.test(errTxt)) {
+        _refreshDead = true; // refresh token is gone; retrying is pointless until re-auth
+      } else {
+        _refreshFailUntil = Date.now() + 60_000;
+      }
       return null;
     }
     const data = await res.json();
     const newExpiresAt = now + (data.expires_in ?? 1800) * 1000;
-    const newRefreshExpiresAt = now + 7 * 24 * 60 * 60 * 1000; // Schwab refresh tokens live 7 days
+    // Only extend the 7-day refresh-token clock when Schwab actually issues a
+    // NEW refresh token. Extending it on every access refresh hid the real
+    // expiry: status showed days left while every refresh was 401'ing.
+    const newRefreshExpiresAt = data.refresh_token
+      ? now + 7 * 24 * 60 * 60 * 1000
+      : row.refreshExpiresAt;
     db.update(schwabTokens)
       .set({
         accessToken: data.access_token,
@@ -68,6 +104,7 @@ export async function getAccessToken(): Promise<string | null> {
   } catch (e: any) {
     console.warn("[schwab] token refresh exception:", e?.message);
     _lastRefreshError = { at: Date.now(), status: 0, message: e?.message ?? "unknown" };
+    _refreshFailUntil = Date.now() + 60_000;
     return null;
   }
 }
@@ -115,6 +152,7 @@ export async function exchangeCodeForTokens(code: string): Promise<{ ok: true } 
         .run();
     }
     console.log("[schwab] tokens persisted — connected!");
+    clearRefreshBackoff(); // fresh tokens: forget any invalid_grant dead state
     return { ok: true };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? "Unknown error" };
@@ -409,13 +447,15 @@ let _refreshInterval: ReturnType<typeof setInterval> | null = null;
 
 export function startTokenRefreshCycle(): void {
   if (_refreshInterval) return;
+  // 10-min cadence with a 25-min lookahead: tokens live 30 min, so the old
+  // 20-min timer + 1-min lookahead could let a token lapse between ticks and
+  // leave a dead window for every poller in between.
   _refreshInterval = setInterval(async () => {
     const status = getSchwabStatus();
-    if (status.connected) {
-      await getAccessToken(); // will refresh if within 1-min window
-    }
-  }, 20 * 60 * 1000); // every 20 minutes
-  console.log("[schwab] background token refresh cycle started (20min interval)");
+    if (!status.connected) return;
+    await getAccessToken(25 * 60 * 1000); // refresh when <25 min left
+  }, 10 * 60 * 1000); // every 10 minutes
+  console.log("[schwab] background token refresh cycle started (10min interval)");
 }
 
 // ─── Market data helpers ──────────────────────────────────────────────────────
@@ -474,7 +514,9 @@ export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
           symbol: origSym,
           last,
           change: qd.netChange ?? null,
-          changePercent: qd.netPercentChangeInDouble ?? null,
+          // Schwab field is netPercentChange; netPercentChangeInDouble was the
+          // old TDA name and is always undefined here (left canary dead).
+          changePercent: qd.netPercentChange ?? qd.netPercentChangeInDouble ?? null,
           bid: qd.bidPrice ?? null,
           ask: qd.askPrice ?? null,
           volume: qd.totalVolume ?? null,
@@ -630,7 +672,9 @@ export function computeGEXFromChain(chain: Exclude<OptionChainResponse, { error:
         const strike = parseFloat(strikeStr);
         if (!isFinite(strike)) continue;
         for (const c of contracts) {
-          const gamma = c.gamma ?? 0;
+          // Schwab uses -999 as a "no greek" sentinel — drop it, don't sum it
+          const rawGamma = c.gamma ?? 0;
+          const gamma = rawGamma <= -999 || !isFinite(rawGamma) ? 0 : rawGamma;
           const oi = c.openInterest ?? 0;
           const gex = gamma * oi * 100 * spotPrice * spotPrice * 0.01;
           if (!strikeMap.has(strike)) {

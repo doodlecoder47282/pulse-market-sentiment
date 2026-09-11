@@ -224,19 +224,21 @@ export function rollingBrier(days: number = 30): {
   const meanBear = rows.reduce((s, r) => s + r.brier_bear, 0) / n;
   const meanTotal = rows.reduce((s, r) => s + r.brier_total, 0) / n;
 
-  // Trivial forecaster (1/3, 1/3, 1/3) Brier on the same outcomes
-  const trivialBull =
-    rows.reduce((s, r) => s + Math.pow(1 / 3 - r.outcome_bull, 2), 0) / n;
-  const trivialBase =
-    rows.reduce((s, r) => s + Math.pow(1 / 3 - r.outcome_base, 2), 0) / n;
-  const trivialBear =
-    rows.reduce((s, r) => s + Math.pow(1 / 3 - r.outcome_bear, 2), 0) / n;
-  const trivialTotal = trivialBull + trivialBase + trivialBear;
-
-  // Realized outcome distribution
+  // Realized outcome distribution (climatology)
   const realizedBull = rows.reduce((s, r) => s + r.outcome_bull, 0) / n;
   const realizedBase = rows.reduce((s, r) => s + r.outcome_base, 0) / n;
   const realizedBear = rows.reduce((s, r) => s + r.outcome_bear, 0) / n;
+
+  // Baseline forecaster = CLIMATOLOGY (always predicts the realized frequency),
+  // not uniform 1/3. Base is structurally the most likely bucket (±0.5 EM
+  // middle), so uniform was a straw man any constant forecast could beat.
+  const trivialBull =
+    rows.reduce((s, r) => s + Math.pow(realizedBull - r.outcome_bull, 2), 0) / n;
+  const trivialBase =
+    rows.reduce((s, r) => s + Math.pow(realizedBase - r.outcome_base, 2), 0) / n;
+  const trivialBear =
+    rows.reduce((s, r) => s + Math.pow(realizedBear - r.outcome_bear, 2), 0) / n;
+  const trivialTotal = trivialBull + trivialBase + trivialBear;
 
   // Top-pick hit rate. We need the original prediction to know which scenario
   // was the top pick that day. JOIN to pulse_predictions for the morning row.

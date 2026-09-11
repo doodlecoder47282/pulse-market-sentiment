@@ -68,7 +68,9 @@ export interface GammaProfile {
  * We receive dte in CALENDAR days, so convert: ~262/365 ≈ 0.7178 to get trading days.
  */
 function toTradingYears(dteCalendar: number): number {
-  const tradingDays = Math.max(1, Math.round(dteCalendar * (262 / 365)));
+  // No whole-day rounding: rounding put 0/1/2 DTE all at T=1/262, flattening
+  // near-dated gamma. Quarter-day floor keeps 0DTE greeks finite.
+  const tradingDays = Math.max(0.25, dteCalendar * (262 / 365));
   return tradingDays / 262;
 }
 

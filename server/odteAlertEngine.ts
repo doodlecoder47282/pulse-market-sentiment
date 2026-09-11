@@ -282,7 +282,18 @@ type DetectionEvent = { ts: number; type: 'FAILED_BREAK' | 'PIVOT_RECLAIM' | 'WA
 const detectionHistory: DetectionEvent[] = [];
 const DETECTION_HISTORY_MAX_MS = 60 * 60 * 1000; // 60 min
 
+// One record per distinct episode. Detections persist for up to 10 min (detectFailedBreak
+// window), so the 60 s scheduler used to push ~10 records for ONE failed break and flip
+// getChopRegime() to CHOP after a single event. Ignore repeats within 10 min per type.
+const DETECTION_EPISODE_MS = 10 * 60 * 1000;
 export function recordDetection(ts: number, type: DetectionEvent['type']): void {
+  for (let i = detectionHistory.length - 1; i >= 0; i--) {
+    const e = detectionHistory[i];
+    if (e.type === type) {
+      if (ts - e.ts < DETECTION_EPISODE_MS) return; // same episode, already counted
+      break;
+    }
+  }
   detectionHistory.push({ ts, type });
   // GC older than 60min
   const cutoff = Date.now() - DETECTION_HISTORY_MAX_MS;
@@ -490,12 +501,17 @@ function detectFailedBreak(
 
   let pierceTs: number | null = null;
   let reclaimTs: number | null = null;
+  // A "failed break" requires spot to have been on the ORIGINAL side before the pierce.
+  // Without this check a clean below->above breakout satisfied the pattern and
+  // FAILED_BREAK / PIVOT_RECLAIM fired on plain trend moves ("trap confirmed" was false).
+  let seenOriginalBeforePierce = false;
 
   for (const p of spotHistory) {
     if (p.ts < cutoff) continue;
     const onOther = fromSide === "above" ? p.spot < level : p.spot > level;
     const onOriginal = fromSide === "above" ? p.spot > level : p.spot < level;
-    if (onOther && pierceTs === null) pierceTs = p.ts;
+    if (onOriginal && pierceTs === null) seenOriginalBeforePierce = true;
+    if (onOther && pierceTs === null && seenOriginalBeforePierce) pierceTs = p.ts;
     if (onOriginal && pierceTs !== null && reclaimTs === null) reclaimTs = p.ts;
   }
   // Confirm current spot is back on original side
@@ -1398,7 +1414,10 @@ export interface EvalArgs {
   wire15?: Wire15GateContext | null;     // Wire 15 pre-fetched gate data
 }
 
-export const FIRE_GATE = 80;  // A− or better — original gate score (not the fire floor)
+// FIRE_GATE is echoed to /api/odte-alert/preview as "fireGate". It used to be 80 while the
+// real floor enforced in buildAlert/evaluateOdte is MIN_FIRE_SCORE (72), so the UI showed
+// the wrong gate. Align it with the real floor.
+export const FIRE_GATE = MIN_FIRE_SCORE;
 export const MIN_FIRE_SCORE_ALIAS = MIN_FIRE_SCORE;  // Wire 16: 72 (B-) is the real fire floor
 export const BANGER_MIN_PCT = 30;  // T1 projected return floor — Wire 16: 30% (was 50%)
 // Independent BANGERS gate delta floor — kills lottery tickets even if pickContract loosens.
@@ -1485,7 +1504,7 @@ async function buildWire15Context(args: EvalArgs): Promise<Wire15GateContext> {
  * pass/reject reasons. Used by /api/odte-alert/preview for visibility.
  * Does NOT consume rate limiter / daily cap / cooldowns.
  */
-export async function diagnoseOdte(args: EvalArgs): Promise<{
+export async function diagnoseOdte(args: EvalArgs, opts?: { readOnly?: boolean }): Promise<{
   fireable: OdteAlert[];
   rejected: Array<{ alert: OdteAlert; reason: string }>;
   fireGate: number;
@@ -1493,6 +1512,12 @@ export async function diagnoseOdte(args: EvalArgs): Promise<{
   bailReason?: string;
   spotHistoryLen?: number;
 }> {
+  // readOnly: HTTP preview / manual-tick callers must not mutate engine state.
+  // Previously every hit of /api/odte-alert/preview pushed into spotHistory and
+  // detectionHistory, skewing the chop regime and the transition detectors.
+  const readOnly = opts?.readOnly === true;
+  const recordDet = readOnly ? (_ts: number, _t: DetectionEvent['type']) => {} : recordDetection;
+  gateRejects = []; // fresh collector for this evaluation (see gateReject)
   // We reuse the same buildAlert pipeline by calling evaluateOdte but
   // rely on the alerts it produces (which already include grade.reasoning
   // appended by the BANGER filter when rejected). Then we re-bucket from
@@ -1501,7 +1526,7 @@ export async function diagnoseOdte(args: EvalArgs): Promise<{
   // Simplest path: duplicate the orchestration here, mirroring evaluateOdte
   // but stopping before the cooldown/cap stage.
   const out: OdteAlert[] = [];
-  recordSpot(args.asOf, args.spot);
+  if (!readOnly) recordSpot(args.asOf, args.spot);
   if (spotHistory.length < 3) {
     // Wire 21: surface the bail so telemetry knows we DID try, but couldn't
     // evaluate due to insufficient bar history. Distinguishes silence-from-bug
@@ -1530,12 +1555,12 @@ export async function diagnoseOdte(args: EvalArgs): Promise<{
     if (!meaningfulKinds.has(lv.kind)) continue;
     if (Math.abs(args.spot - lv.price) > diagProximityWindow) continue;
     if (detectFailedBreak(lv.price, "above").detected) {
-      recordDetection(args.asOf, "FAILED_BREAK");
+      recordDet(args.asOf, "FAILED_BREAK");
       const a = buildAlert(argsWithW15, lv, "FAILED_BREAK", "call", sortedLevels);
       if (a) out.push(a);
     }
     if (detectFailedBreak(lv.price, "below").detected) {
-      recordDetection(args.asOf, "FAILED_BREAK");
+      recordDet(args.asOf, "FAILED_BREAK");
       const a = buildAlert(argsWithW15, lv, "FAILED_BREAK", "put", sortedLevels);
       if (a) out.push(a);
     }
@@ -1545,25 +1570,25 @@ export async function diagnoseOdte(args: EvalArgs): Promise<{
     const lv = args.levels.find((l) => Math.abs(l.price - pivot) < 1) ??
                { name: "MAIN PIVOT", kind: "mainPivot", price: pivot, side: "support" as const };
     if (detectFailedBreak(pivot, "above").detected) {
-      recordDetection(args.asOf, "PIVOT_RECLAIM");
+      recordDet(args.asOf, "PIVOT_RECLAIM");
       const a = buildAlert(argsWithW15, lv, "PIVOT_RECLAIM", "call", sortedLevels);
       if (a) out.push(a);
     }
     if (detectFailedBreak(pivot, "below").detected) {
-      recordDetection(args.asOf, "PIVOT_RECLAIM");
+      recordDet(args.asOf, "PIVOT_RECLAIM");
       const a = buildAlert(argsWithW15, lv, "PIVOT_RECLAIM", "put", sortedLevels);
       if (a) out.push(a);
     }
   }
   const callWall = args.levels.find((l) => l.kind === "callWall");
   if (callWall && detectWallReject(callWall.price, "ceiling").detected) {
-    recordDetection(args.asOf, "WALL_REJECT");
+    recordDet(args.asOf, "WALL_REJECT");
     const a = buildAlert(argsWithW15, callWall, "WALL_REJECT", "put", sortedLevels);
     if (a) out.push(a);
   }
   const putWall = args.levels.find((l) => l.kind === "putWall");
   if (putWall && detectWallReject(putWall.price, "floor").detected) {
-    recordDetection(args.asOf, "WALL_REJECT");
+    recordDet(args.asOf, "WALL_REJECT");
     const a = buildAlert(argsWithW15, putWall, "WALL_REJECT", "call", sortedLevels);
     if (a) out.push(a);
   }
@@ -1604,6 +1629,10 @@ export async function diagnoseOdte(args: EvalArgs): Promise<{
     }
     fireable.push(a);
   }
+  // Surface the Wire 15/16 gate rejects collected inside buildAlert. Before this,
+  // `rejected` only held maturity/delta/T1 rejects and telemetry read ~0 candidates
+  // even when a dozen setups were seen and gated out.
+  for (const r of gateRejects) rejected.push(r as { alert: OdteAlert; reason: string });
   fireable.sort((a, b) => b.grade.score - a.grade.score);
   return { fireable, rejected, fireGate: FIRE_GATE, bangerMinPct: BANGER_MIN_PCT, spotHistoryLen: spotHistory.length };
 }
@@ -1745,8 +1774,20 @@ export async function evaluateOdte(args: EvalArgs): Promise<OdteAlert[]> {
     })
     .sort((a, b) => b.grade.score - a.grade.score);
 
+  return applyFireLimits(passed, args.asOf);
+}
+
+/**
+ * Daily cap / hourly gap / per-setup cooldown. Consumes the limiter state.
+ * Extracted from evaluateOdte so the live scheduler (which calls diagnoseOdte
+ * for telemetry) can apply the same limits. Before this, only evaluateOdte
+ * enforced them and evaluateOdte was never called in production, so the
+ * scheduler re-posted the same setup every minute for up to 10 minutes.
+ * `passed` must be sorted highest score first.
+ */
+export function applyFireLimits(passed: OdteAlert[], asOf: number): OdteAlert[] {
   const fireable: OdteAlert[] = [];
-  const today = etDateStr(args.asOf);
+  const today = etDateStr(asOf);
   let countToday = dailyFireCount[today] ?? 0;
 
   for (const a of passed) {
@@ -1754,20 +1795,20 @@ export async function evaluateOdte(args: EvalArgs): Promise<OdteAlert[]> {
       // Daily cap reached — stop firing for the rest of the day
       break;
     }
-    if ((args.asOf - lastAnyFireAt) < HOURLY_GAP_MS) {
+    if ((asOf - lastAnyFireAt) < HOURLY_GAP_MS) {
       // Global hourly gap not satisfied — must wait
       continue;
     }
     const key = `${a.setup}|${a.side}`;
     const last = lastFireAt[key] ?? 0;
     const lastG = lastFireGrade[key] ?? 0;
-    const cooldownActive = (args.asOf - last) < SUPPRESS_MS;
+    const cooldownActive = (asOf - last) < SUPPRESS_MS;
     // Bypass per-setup cooldown only if grade jumped ≥10 points
     if (cooldownActive && a.grade.score < lastG + 10) continue;
 
-    lastFireAt[key] = args.asOf;
+    lastFireAt[key] = asOf;
     lastFireGrade[key] = a.grade.score;
-    lastAnyFireAt = args.asOf;
+    lastAnyFireAt = asOf;
     countToday += 1;
     dailyFireCount[today] = countToday;
     fireable.push(a);
@@ -1778,6 +1819,36 @@ export async function evaluateOdte(args: EvalArgs): Promise<OdteAlert[]> {
     break;
   }
   return fireable;
+}
+
+// ─── Gate-reject collector ────────────────────────────────────────────────
+// buildAlert used to `return null` at every Wire 15/16 gate with only a console.log,
+// so diagnoseOdte.rejected (and the persisted evaluation telemetry) never saw them.
+// Each gate now records a stub "alert" here; diagnoseOdte drains it into `rejected`.
+let gateRejects: Array<{ alert: any; reason: string }> = [];
+function gateReject(
+  args: EvalArgs,
+  setup: OdteSetupKind,
+  side: Side,
+  level: LevelLite,
+  reason: string,
+  extra?: { score?: number; letter?: string; reasoning?: string[]; contract?: any; projReturnPctT1?: number | null },
+): null {
+  gateRejects.push({
+    reason,
+    alert: {
+      setup, side, spot: args.spot, asOf: args.asOf,
+      reversionFrom: { name: level.name, price: level.price },
+      contract: extra?.contract ?? null,
+      t1: null, t2: null,
+      grade: { score: extra?.score ?? 0, letter: extra?.letter ?? "n/a", reasoning: extra?.reasoning ?? [reason] },
+      reasoning: [reason],
+      gateRejectReason: reason,
+      projReturnPctT1: extra?.projReturnPctT1 ?? null,
+      gateReject: true,
+    },
+  });
+  return null;
 }
 
 function buildAlert(
@@ -1853,7 +1924,7 @@ function buildAlert(
     // We store the veto reason but since buildAlert must return OdteAlert | null,
     // we return null. The reason is logged in the gate context.
     console.log(`[wire15:gate1] ${setup}/${side} rejected: ${envVetoReason} (tod=${args.hourET}:${String(args.minuteET).padStart(2,'0')} eventDay=${args.eventDayKind ?? 'none'})`);
-    return null;
+    return gateReject(args, setup, side, reversionLevel, `ENV_VETO: ${envVetoReason}`);
   }
 
   // ─── Wire 15: GATE 2 — Contract picker (delta 0.35–0.50 band) ─────────────────────
@@ -1862,7 +1933,7 @@ function buildAlert(
   const below = sortedLevels.filter((l) => l.price < args.spot - 1).reverse();
   const t1Lv = side === "call" ? above[0] : below[0];
   const t2Lv = side === "call" ? above[1] : below[1];
-  if (!t1Lv) return null;
+  if (!t1Lv) return gateReject(args, setup, side, reversionLevel, "NO_T1_LEVEL");
 
   // ─── Wire 16: GEX MAGNITUDE GATE (4-tier) ─────────────────────────────────────────
   // audit.gex is in $M (e.g. 500 = $500M). Thresholds in spec are raw dollars:
@@ -1901,7 +1972,7 @@ function buildAlert(
   // THIN: hard reject, NO override for any score
   if (w16GexTier === "THIN") {
     console.log(`[wire16:gex_thin] ${setup}/${side} hard rejected: GEX_TOO_THIN_LT_300M absGex=${w16AbsGex}`);
-    return null;
+    return gateReject(args, setup, side, reversionLevel, "GEX_TOO_THIN_LT_300M");
   }
 
   // ─── Wire 16: ANTI-CHASE RULE ─────────────────────────────────────────────────────
@@ -1974,7 +2045,7 @@ function buildAlert(
     }
     if (bandCandidates.length === 0) {
       console.log(`[wire15:gate2] ${setup}/${side} rejected: CONTRACT_NO_STRIKE_IN_DELTA_BAND`);
-      return null; // Gate 2 reject
+      return gateReject(args, setup, side, reversionLevel, "CONTRACT_NO_STRIKE_IN_DELTA_BAND"); // Gate 2 reject
     }
     // Prefer between spot and T1
     const lo = Math.min(args.spot, t1Lv.price);
@@ -2011,7 +2082,7 @@ function buildAlert(
     effectiveMid = pickedContract.midPrice;
   } else {
     legacyContract = pickContract(args.contracts, args.spot, side, args.oneDayEM);
-    if (!legacyContract) return null;
+    if (!legacyContract) return gateReject(args, setup, side, reversionLevel, "LEGACY_NO_CONTRACT");
     contractForScoring = legacyContract;
     effectiveDelta = approxDelta(legacyContract.strike, args.spot, args.oneDayEM, side);
     effectiveMid = legacyContract.mid ?? legacyContract.last ?? 0;
@@ -2053,7 +2124,7 @@ function buildAlert(
     // Wire 16: bid-ask spread gate (>5% spread → reject)
     if (w16ContractSpreadPct > 0.05) {
       console.log(`[wire16:spread] ${setup}/${side} rejected: CONTRACT_SPREAD_TOO_WIDE_GT_5_PCT spreadPct=${(w16ContractSpreadPct*100).toFixed(1)}%`);
-      return null;
+      return gateReject(args, setup, side, reversionLevel, `CONTRACT_SPREAD_TOO_WIDE_GT_5_PCT ${(w16ContractSpreadPct*100).toFixed(1)}%`, { contract: contractForScoring });
     }
 
     // Wire 16: use entryPrice (mid + halfSpread) as denominator for honest fill projection
@@ -2078,7 +2149,7 @@ function buildAlert(
       ivRichRatio = atmIV / rv5d;
       if (ivRichRatio > 2.0) {
         console.log(`[wire15:gate4] ${setup}/${side} rejected: IV_RICH_RATIO_GT_2 ratio=${ivRichRatio.toFixed(2)}`);
-        return null; // Gate 4 hard reject
+        return gateReject(args, setup, side, reversionLevel, `IV_RICH_RATIO_GT_2 ${ivRichRatio.toFixed(2)}`, { contract: contractForScoring, projReturnPctT1 }); // Gate 4 hard reject
       }
       if (ivRichRatio > 1.5) {
         // Degrade projected return by 0.7x BEFORE the 30% gate
@@ -2133,7 +2204,7 @@ function buildAlert(
 
   if (gate5RejectReason) {
     console.log(`[wire15:gate5] ${setup}/${side} rejected: ${gate5RejectReason}`);
-    return null;
+    return gateReject(args, setup, side, reversionLevel, gate5RejectReason, { contract: contractForScoring, projReturnPctT1 });
   }
 
   // ─── Existing scoring path ───────────────────────────────────────────────────────────
@@ -2153,7 +2224,8 @@ function buildAlert(
   // ─── Wire 16: Score floor (>= 72 = B-) — enforce AFTER scoring ───────────────────
   if (scoreResult.score < MIN_FIRE_SCORE) {
     console.log(`[wire16:score] ${setup}/${side} rejected: SCORE_BELOW_B_MINUS score=${scoreResult.score} < ${MIN_FIRE_SCORE}`);
-    return null;
+    return gateReject(args, setup, side, reversionLevel, `SCORE_BELOW_B_MINUS ${scoreResult.score} < ${MIN_FIRE_SCORE}`,
+      { score: scoreResult.score, letter: letterGrade(scoreResult.score), reasoning: scoreResult.reasoning, contract: contractForScoring, projReturnPctT1 });
   }
 
   // ─── Wire 16: GEX LIGHT band post-score check ──────────────────────────────────────
@@ -2164,7 +2236,8 @@ function buildAlert(
       scoreResult.reasoning.push(`Wire 16 GEX LIGHT override: score ${scoreResult.score} >= 85 (A-), passes through GEX_LIGHT_NEEDS_A_MINUS`);
     } else {
       console.log(`[wire16:gex_light] ${setup}/${side} rejected: GEX_LIGHT_NEEDS_A_MINUS score=${scoreResult.score} < 85 absGex=${w16AbsGex}`);
-      return null;
+      return gateReject(args, setup, side, reversionLevel, `GEX_LIGHT_NEEDS_A_MINUS score=${scoreResult.score}`,
+        { score: scoreResult.score, letter: letterGrade(scoreResult.score), reasoning: scoreResult.reasoning, contract: contractForScoring, projReturnPctT1 });
     }
   }
 
@@ -2176,7 +2249,8 @@ function buildAlert(
       scoreResult.reasoning.push(`Wire 16 anti-chase override: score ${scoreResult.score} >= 85 (A-), passes through CHASE_PRIOR_15M_COVERED_60_PCT (chaseRatio=${w16ChaseRatio?.toFixed(2)})`);
     } else {
       console.log(`[wire16:chase] ${setup}/${side} rejected: CHASE_PRIOR_15M_COVERED_60_PCT chaseRatio=${w16ChaseRatio} score=${scoreResult.score}`);
-      return null;
+      return gateReject(args, setup, side, reversionLevel, `CHASE_PRIOR_15M_COVERED_60_PCT ratio=${w16ChaseRatio?.toFixed(2)}`,
+        { score: scoreResult.score, letter: letterGrade(scoreResult.score), reasoning: scoreResult.reasoning, contract: contractForScoring, projReturnPctT1 });
     }
   }
 
@@ -2186,7 +2260,8 @@ function buildAlert(
     const isColdBootOverride = scoreResult.score >= 85;
     if (!isColdBootOverride) {
       console.log(`[wire16:gate3] ${setup}/${side} rejected: PROJ_RETURN_BELOW_30_PCT projT1=${(projReturnPctT1*100).toFixed(0)}%`);
-      return null;
+      return gateReject(args, setup, side, reversionLevel, `PROJ_RETURN_BELOW_30_PCT projT1=${(projReturnPctT1*100).toFixed(0)}%`,
+        { score: scoreResult.score, letter: letterGrade(scoreResult.score), reasoning: scoreResult.reasoning, contract: contractForScoring, projReturnPctT1 });
     }
     // Score >= 85 (A-): cold-boot projection override
     coldBootProjOverride = true;

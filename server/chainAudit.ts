@@ -17,6 +17,7 @@
  */
 
 import type { OptionChainResponse } from "./schwab";
+import { etEpochMs } from "./etTime";
 
 // ─── Internal contract shape ──────────────────────────────────────────────────
 
@@ -148,7 +149,7 @@ export interface DealerScoreResult {
   score: number;               // -100..+100
   rawLong: number;
   rawShort: number;
-  regime: "long_gamma" | "short_gamma" | "neutral";
+  regime: "call_dominant" | "put_dominant" | "neutral";
 }
 
 export interface GEXBucket {
@@ -224,7 +225,7 @@ function parseExpiryKey(key: string): string {
 /** Parse DTE from expiry string "YYYY-MM-DD" vs today */
 function parseDTE(expiryDate: string): number {
   const now = new Date();
-  const exp = new Date(expiryDate + "T16:00:00-05:00"); // treat as 4pm ET
+  const exp = new Date(etEpochMs(expiryDate, 16, 0)); // 4pm ET, DST-aware
   const diff = (exp.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
   return Math.max(0, Math.round(diff));
 }
@@ -400,11 +401,12 @@ function computeCharm(contracts: Contract[], spot: number): CharmResult {
     const T = c.dte / 365;
     const sigmaRootT = c.iv * Math.sqrt(T);
     if (sigmaRootT <= 0 || !isFinite(sigmaRootT)) continue;
-    // Institutional charm = -phi(d1) * d2 / (2*T*sigma*sqrt(T))  for r=q=0
-    // Sign flip for puts: charm_put = charm_call - q*N(-d1); with q=0, charm_call = charm_put.
-    // phi = standard normal pdf.
+    // Black-Scholes charm with r=q=0: charm = phi(d1) * d2 / (2*T), in delta/year.
+    // (Previous version had a sign flip and an extra sigma*sqrt(T) in the denominator,
+    // which inverted the drift direction and over-weighted short-dated expiries.)
+    // With q=0, charm_call = charm_put. phi = standard normal pdf.
     const phiD1 = Math.exp(-0.5 * dd.d1 * dd.d1) / Math.sqrt(2 * Math.PI);
-    const charm = safeDivide(-phiD1 * dd.d2, 2 * T * sigmaRootT);
+    const charm = safeDivide(phiD1 * dd.d2, 2 * T);
     // charm is in (delta units / year). Convert to per-day by /365.
     // Exposure in $/day per 1pt move = charm × OI × 100 × S / 365
     const charmExp = (charm * c.oi * 100 * spot) / 365;
@@ -433,7 +435,7 @@ function computeCharm(contracts: Contract[], spot: number): CharmResult {
 // from scratch — we ride on Schwab's own pricing model.
 
 /** Beasley-Springer-Moro approximation of inverse normal CDF. Accurate to ~1e-7 over (0,1). */
-function invNormCDF(p: number): number {
+export function invNormCDF(p: number): number {
   if (p <= 0 || p >= 1 || !isFinite(p)) return 0;
   // Coefficients
   const a = [-3.969683028665376e1, 2.209460984245205e2, -2.759285104469687e2, 1.383577518672690e2, -3.066479806614716e1, 2.506628277459239];
@@ -690,8 +692,9 @@ function computeDealerScore(contracts: Contract[], spot: number): DealerScoreRes
     else putScore += weight * deltaCont;
   }
 
-  // Positive = dealers long delta (calls dominate near ATM)
-  // Negative = dealers short delta (puts dominate near ATM)
+  // Positive = call delta dominates near ATM; negative = put delta dominates.
+  // NOTE: this is a DELTA-dominance score, not a gamma regime — true gamma regime
+  // comes from net GEX sign (gexDecay). Labels renamed to match what it measures.
   const rawScore = callScore - putScore;
   const maxRaw = callScore + putScore;
   const normalised = maxRaw > 0 ? (rawScore / maxRaw) * 100 : 0;
@@ -700,8 +703,8 @@ function computeDealerScore(contracts: Contract[], spot: number): DealerScoreRes
     score: Math.round(normalised * 10) / 10,
     rawLong: callScore,
     rawShort: putScore,
-    regime: normalised > 10 ? "long_gamma"
-           : normalised < -10 ? "short_gamma"
+    regime: normalised > 10 ? "call_dominant"
+           : normalised < -10 ? "put_dominant"
            : "neutral",
   };
 }

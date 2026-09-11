@@ -284,10 +284,13 @@ function synthesizeIntradaySeries(
   // U-curve weights for each 30-min bucket (higher at open/close)
   const weights = [0.15, 0.09, 0.07, 0.06, 0.06, 0.06, 0.06, 0.07, 0.08, 0.09, 0.10, 0.08, 0.07];
   const totalWeight = weights.reduce((a, b) => a + b, 0);
+  // ET-aware 09:30 open epoch. The old version re-parsed an ET wall-clock string as
+  // server-local time, so on a UTC host every sample stamp was shifted by the ET offset.
   const marketOpenEpoch = (() => {
-    const d = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
-    d.setHours(9, 30, 0, 0);
-    return Math.floor(d.getTime() / 1000);
+    // ET offset from UTC in ms (negative), independent of the host zone.
+    const etOffsetMs = nowEt.getTime() - new Date(now.toLocaleString("en-US", { timeZone: "UTC" })).getTime();
+    const openAsIfUtc = Date.UTC(nowEt.getFullYear(), nowEt.getMonth(), nowEt.getDate(), 9, 30, 0, 0);
+    return Math.floor((openAsIfUtc - etOffsetMs) / 1000);
   })();
 
   for (let i = 0; i < weights.length; i++) {
@@ -296,10 +299,13 @@ function synthesizeIntradaySeries(
     const elapsed = (bucketMins - marketOpenH) / 30;
     const t = marketOpenEpoch + elapsed * 1800;
     const fraction = weights.slice(0, i + 1).reduce((a, b) => a + b, 0) / totalWeight;
-    // Scale by how far into the day we are
+    // The old "dayFraction" blend was algebraically x*f*d + x*(1-d)*f = x*f, i.e. a no-op.
+    // These samples are a synthetic U-curve backfill of today's cumulative volume, not
+    // observed intraday prints.
+    const cumCall = Math.round(totalCallVol * fraction);
+    const cumPut = Math.round(totalPutVol * fraction);
+    // Still used (as a genuine scale) by the premium backfill below.
     const dayFraction = Math.min(1, (nowMins - marketOpenH) / (marketCloseH - marketOpenH));
-    const cumCall = Math.round(totalCallVol * fraction * dayFraction + totalCallVol * (1 - dayFraction) * fraction);
-    const cumPut = Math.round(totalPutVol * fraction * dayFraction + totalPutVol * (1 - dayFraction) * fraction);
     samples.push({
       t,
       timeLabel: getTimeLabel(t),
@@ -465,6 +471,9 @@ export async function buildIntradayFlowSnapshot(): Promise<IntradayFlowResponse>
     const totalPrem = effectiveAgg.boughtCallPrem + effectiveAgg.soldCallPrem + effectiveAgg.boughtPutPrem + effectiveAgg.soldPutPrem;
     // Bullish aggression = bought calls + sold puts (premium paid for upside / premium collected on downside)
     // Bearish aggression = sold calls + bought puts
+    // HEURISTIC: classifyAggressor tags a contract's ENTIRE day volume by where its most
+    // recent print sat vs the current bid/ask, so this is a last-print proxy, not a
+    // trade-by-trade aggressor sum. Treat as directional colour only.
     const netAggressorPrem = (effectiveAgg.boughtCallPrem + effectiveAgg.soldPutPrem)
                            - (effectiveAgg.soldCallPrem + effectiveAgg.boughtPutPrem);
 
@@ -508,14 +517,18 @@ export async function buildFlowSnapshot(): Promise<FlowResponse> {
   ]);
 
   // Exclude VIX from the index aggregate (its options behave differently).
-  const indexPcr = mean(
-    indexGroup.filter((t) => t.symbol !== "^VIX").map((t) => t.pcrVolume),
-  );
-  const mag7Pcr = mean(mag7Group.map((t) => t.pcrVolume));
-  const combinedPcr =
-    indexPcr != null && mag7Pcr != null
-      ? (indexPcr + mag7Pcr) / 2
-      : indexPcr ?? mag7Pcr ?? null;
+  // Aggregate PCR = sum(puts) / sum(calls) across the group. The old mean-of-ratios let a
+  // thin name with 3 puts / 1 call (PCR 3.0) swamp SPX, and it dropped tickers whose
+  // pcrVolume was null while still counting the rest.
+  const volumePcr = (group: FlowTicker[]): number | null => {
+    let puts = 0, calls = 0;
+    for (const t of group) { puts += t.putVol || 0; calls += t.callVol || 0; }
+    return calls > 0 ? puts / calls : null;
+  };
+  const indexTickers = indexGroup.filter((t) => t.symbol !== "^VIX");
+  const indexPcr = volumePcr(indexTickers);
+  const mag7Pcr = volumePcr(mag7Group);
+  const combinedPcr = volumePcr([...indexTickers, ...mag7Group]);
 
   if (indexPcr != null && mag7Pcr != null && combinedPcr != null) {
     const now = Math.floor(Date.now() / 1000);

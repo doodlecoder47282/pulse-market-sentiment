@@ -79,7 +79,7 @@ interface DealerScoreResult {
   score: number;
   rawLong: number;
   rawShort: number;
-  regime: "long_gamma" | "short_gamma" | "neutral";
+  regime: "call_dominant" | "put_dominant" | "neutral";
 }
 
 interface GEXBucket {
@@ -252,7 +252,7 @@ function GEXBucketCard({ label, bucket, testId }: { label: string; bucket: GEXBu
 function DealerGauge({ score, regime }: { score: number; regime: string }) {
   const pct = ((score + 100) / 200) * 100; // map -100..+100 to 0..100%
   const color = score > 10 ? "#22c55e" : score < -10 ? "#ef4444" : "#f59e0b";
-  const regimeLabel = regime === "long_gamma" ? "Long Gamma" : regime === "short_gamma" ? "Short Gamma" : "Neutral";
+  const regimeLabel = regime === "call_dominant" ? "Call Delta Dominant" : regime === "put_dominant" ? "Put Delta Dominant" : "Neutral";
   return (
     <div className="flex flex-col gap-1" data-testid="dealer-gauge">
       <div className="flex justify-between font-mono text-[10px] text-muted-foreground">

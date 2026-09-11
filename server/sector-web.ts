@@ -11,7 +11,6 @@
 
 import type { SectorWebResponse, SectorNode, LeaderNode, SectorEdge, SectorGridRow } from "@shared/schema";
 
-const UA = "Mozilla/5.0 (compatible; PulseDashboard/1.0)";
 
 // ----- Universe -----
 // 11 GICS sectors (SPDR ETFs) + 5-8 top components each. Chosen by 2025 weight
@@ -56,22 +55,7 @@ export function allSectorTickers(): string[] {
   return Array.from(set);
 }
 
-// ----- Yahoo batch fetcher -----
-
 type DailyBar = { t: number; close: number };
-
-async function yFetch(url: string, timeoutMs = 15_000): Promise<any> {
-  const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const r = await fetch(url, {
-      headers: { "User-Agent": UA, Accept: "application/json" },
-      signal: ctrl.signal,
-    });
-    if (!r.ok) throw new Error(`Yahoo ${r.status}`);
-    return await r.json();
-  } finally { clearTimeout(to); }
-}
 
 /** Pull ~90 days of daily closes for one symbol via Schwab. Logs failures (don't silent-swallow). */
 async function fetchDaily(symbol: string): Promise<DailyBar[]> {

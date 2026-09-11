@@ -21,7 +21,7 @@ import {
   postNewsAlert,
   postOdteBangerAlert,
 } from "./discord";
-import { evaluateOdte, diagnoseOdte, setTenAmRegime, seedSpotHistory, type EvalArgs } from "./odteAlertEngine";
+import { evaluateOdte, diagnoseOdte, applyFireLimits, setTenAmRegime, seedSpotHistory, type EvalArgs } from "./odteAlertEngine";
 import { postBatcaveDailyCard } from "./discordBatcaveCard";
 import { settleDay } from "./calibration";
 import { postCalibrationCard } from "./calibrationCard";
@@ -34,6 +34,14 @@ import { dirname } from "node:path";
 
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
+// Internal self-fetches used to have no timeout, so one hung /api/models (seen up to
+// 114 s in logs) stalled the whole tick and pushed exact-minute jobs past their slot.
+// Light endpoints get 4 s; /api/models is a heavy recompute so it gets a looser bound.
+const FETCH_TIMEOUT_MS = 4_000;
+const MODELS_FETCH_TIMEOUT_MS = 30_000;
+function ifetch(url: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<Response> {
+  return fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+}
 
 // ─── Persisted dedup state (Bug fix: stop boot-spam on server restart) ───
 //
@@ -327,7 +335,7 @@ async function pollLevelAndGammaAlerts(): Promise<void> {
 
   let res: Response;
   try {
-    res = await fetch(`${BASE}/api/models?symbol=SPX`);
+    res = await ifetch(`${BASE}/api/models?symbol=SPX`, MODELS_FETCH_TIMEOUT_MS);
   } catch {
     return;
   }
@@ -451,8 +459,8 @@ async function pollOdteBangerAlerts(): Promise<void> {
   let modelsRes: Response, odteRes: Response;
   try {
     [modelsRes, odteRes] = await Promise.all([
-      fetch(`${BASE}/api/models?symbol=^GSPC&experimental=1`),
-      fetch(`${BASE}/api/odte-tracker`),
+      ifetch(`${BASE}/api/models?symbol=^GSPC&experimental=1`, MODELS_FETCH_TIMEOUT_MS),
+      ifetch(`${BASE}/api/odte-tracker`),
     ]);
   } catch {
     return;
@@ -555,16 +563,25 @@ async function pollOdteBangerAlerts(): Promise<void> {
         setup: topReject.alert?.setup ?? "?",
         side: topReject.alert?.side ?? "?",
       } : null,
-      gex: audit?.gex?.totalGex ?? null,
-      regime: audit?.gex?.regime ?? null,
+      // audit.gex is a plain number ($M) from auditEnrich, not an object; the old
+      // `.totalGex` / `.regime` reads were always null in the telemetry table.
+      gex: typeof audit?.gex === "number" ? audit.gex : (audit?.gex?.totalGex ?? null),
+      regime: audit?.gex?.regime ?? audit?.gammaZone ?? null,
       pcrOi: audit?.pcr?.oi ?? null,
     });
   } catch (e: any) {
     console.warn(`[discordScheduler] eval log persist failed: ${e?.message ?? e}`);
   }
 
-  // Fire only the ones that passed all gates
-  for (const a of diag.fireable) {
+  // Fire only the ones that passed all gates AND the rate limits.
+  // diagnoseOdte is read-only w.r.t. daily cap / hourly gap / per-setup cooldown, and a
+  // detection stays true for up to 10 min, so this loop used to re-post the same alert
+  // every minute. applyFireLimits consumes the same limiter evaluateOdte uses (max 3/day).
+  const toFire = applyFireLimits(diag.fireable, args.asOf);
+  if (diag.fireable.length > 0 && toFire.length === 0) {
+    console.log(`[discordScheduler] 0DTE: ${diag.fireable.length} fireable suppressed by cap/cooldown`);
+  }
+  for (const a of toFire) {
     console.log(`[discordScheduler] 0DTE banger: ${a.side} ${a.setup} grade=${a.grade.letter} (${a.grade.score})`);
     persistOdteAuditOnFire(a);
     // Wires 17–20: compute ML quantile overlay line (null on any failure — never blocks)
@@ -595,9 +612,11 @@ async function maybePreOpenOdteScan(): Promise<void> {
   if (!isTradingDay(dow, date)) return;
   if (preOpenScanFired.has(date)) return;
   const nowMin = hh * 60 + mm;
-  const tgtMin = 9 * 60 + 30; // 9:30 ET
+  // Was 9:30, but buildAlert Gate 1c vetoes everything before 09:35, so the scan
+  // fired at 09:30/09:31 and every candidate was vetoed -> dead code every day.
+  const tgtMin = 9 * 60 + 35; // 9:35 ET (first minute the engine can actually fire)
   if (nowMin < tgtMin) return;
-  if (nowMin > tgtMin + 14) return; // cap before live window at 9:45
+  if (nowMin > tgtMin + 9) return; // cap before live window at 9:45
   preOpenScanFired.add(date);
   saveSchedulerState();
   console.log(`[discordScheduler] 9:30 pre-open 0DTE scan firing at ${date} ${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")} ET`);
@@ -605,8 +624,8 @@ async function maybePreOpenOdteScan(): Promise<void> {
   let modelsRes: Response, odteRes: Response;
   try {
     [modelsRes, odteRes] = await Promise.all([
-      fetch(`${BASE}/api/models?symbol=^GSPC&experimental=1`),
-      fetch(`${BASE}/api/odte-tracker`),
+      ifetch(`${BASE}/api/models?symbol=^GSPC&experimental=1`, MODELS_FETCH_TIMEOUT_MS),
+      ifetch(`${BASE}/api/odte-tracker`),
     ]);
   } catch (e: any) {
     console.warn(`[discordScheduler] pre-open scan fetch failed: ${e?.message ?? e}`);
@@ -719,7 +738,7 @@ async function pollNewsAlerts(): Promise<void> {
 
   let res: Response;
   try {
-    res = await fetch(`${BASE}/api/news`);
+    res = await ifetch(`${BASE}/api/news`);
   } catch {
     return;
   }
@@ -766,12 +785,15 @@ const SETTLE_FIRED = new Set<string>(); // YYYY-MM-DD
 async function maybeSettleDay(): Promise<void> {
   const { date, hh, mm, dow } = etNow();
   if (!isTradingDay(dow, date)) return;
-  // Settle at 16:01 ET (one minute past close — gives prints a moment to land)
-  if (hh !== 16 || mm !== 1) return;
+  // Settle window 16:01-16:30 ET (one minute past close gives prints a moment to land).
+  // Was an exact `mm === 1` match on a 60 s timer whose body awaits slow internal
+  // fetches, so one slow /api/models pushed the tick past :01 and the day never settled.
+  const nowMin = hh * 60 + mm;
+  if (nowMin < 16 * 60 + 1 || nowMin > 16 * 60 + 30) return;
   if (SETTLE_FIRED.has(date)) return;
   SETTLE_FIRED.add(date);
   try {
-    const res = await fetch(`${BASE}/api/quotes`);
+    const res = await ifetch(`${BASE}/api/quotes`);
     if (!res.ok) {
       console.warn(`[discordScheduler] settle: /api/quotes ${res.status}`);
       return;
@@ -800,7 +822,9 @@ const WEEKLY_CAL_FIRED = new Set<string>(); // YYYY-MM-DD (Sunday)
 async function maybeFireWeeklyCalibration(): Promise<void> {
   const { date, hh, mm, dow } = etNow();
   if (dow !== 0) return; // Sunday only
-  if (hh !== 20 || mm !== 0) return;
+  // Window 20:00-20:30 ET instead of exact-minute match (see maybeSettleDay).
+  const nowMin = hh * 60 + mm;
+  if (nowMin < 20 * 60 || nowMin > 20 * 60 + 30) return;
   if (WEEKLY_CAL_FIRED.has(date)) return;
   WEEKLY_CAL_FIRED.add(date);
   console.log(`[discordScheduler] firing weekly calibration card for ${date}`);
@@ -832,7 +856,7 @@ async function maybeFireTenAmRegime(): Promise<void> {
 
   let res: Response;
   try {
-    res = await fetch(`${BASE}/api/models?symbol=^GSPC&experimental=1`);
+    res = await ifetch(`${BASE}/api/models?symbol=^GSPC&experimental=1`, MODELS_FETCH_TIMEOUT_MS);
   } catch (e: any) {
     console.warn(`[discordScheduler] 10AM regime fetch failed: ${e?.message ?? e}`);
     return;
@@ -867,16 +891,38 @@ async function maybeFireTenAmRegime(): Promise<void> {
 }
 
 // ─── Tick ──────────────────────────────────────────────────────────────────────
+// Each step is isolated: one throwing step used to abort the rest of the tick for
+// that minute (via tick().catch(() => {})) and the error was never logged.
+async function runStep(name: string, fn: () => Promise<void>): Promise<void> {
+  try {
+    await fn();
+  } catch (e: any) {
+    console.warn(`[discordScheduler] step ${name} failed: ${e?.message ?? e}`);
+  }
+}
+
+// Re-entrancy guard: a tick hung on a slow internal fetch must not overlap the next one.
+let tickInFlight = false;
+
 async function tick(): Promise<void> {
-  await maybeFireDaily();
-  await maybePreOpenOdteScan();
-  await maybeFireTenAmRegime();
-  await maybeFireHalfHour();
-  await maybeSettleDay();
-  await maybeFireWeeklyCalibration();
-  await pollLevelAndGammaAlerts();
-  await pollNewsAlerts();
-  await pollOdteBangerAlerts();
+  if (tickInFlight) {
+    console.warn(`[discordScheduler] previous tick still running, skipping this minute`);
+    return;
+  }
+  tickInFlight = true;
+  try {
+    await runStep("daily", maybeFireDaily);
+    await runStep("preOpenOdteScan", maybePreOpenOdteScan);
+    await runStep("tenAmRegime", maybeFireTenAmRegime);
+    await runStep("halfHour", maybeFireHalfHour);
+    await runStep("settleDay", maybeSettleDay);
+    await runStep("weeklyCalibration", maybeFireWeeklyCalibration);
+    await runStep("levelGammaAlerts", pollLevelAndGammaAlerts);
+    await runStep("newsAlerts", pollNewsAlerts);
+    await runStep("odteBangers", pollOdteBangerAlerts);
+  } finally {
+    tickInFlight = false;
+  }
 
   // GC dailyFired weekly (small set, but keep tidy)
   let gcDirty = false;
@@ -925,7 +971,7 @@ export function startDiscordScheduler(): void {
     console.log(`[scheduler] restored dedup state from disk — daily=${dailyFired.size} preOpen=${preOpenScanFired.size} tenAm=${tenAmFired.size} halfHour=${HALFHOUR_FIRED.size}`);
   }
 
-  // Seed spotHistory from Yahoo 1-min bars before starting the poll loop.
+  // Seed spotHistory from Schwab 1-min bars before starting the poll loop.
   // This prevents the engine from being blind on cold boot / redeployment.
   // Errors are swallowed — don't block scheduler startup.
   seedSpotHistory()
@@ -938,11 +984,13 @@ export function startDiscordScheduler(): void {
       console.warn(`[scheduler] seedSpotHistory failed (non-fatal): ${e?.message ?? e}`);
     });
 
-  timer = setInterval(() => { tick().catch(() => {}); }, 60_000);
+  // Log instead of swallowing: a silent .catch(() => {}) hid every scheduler failure.
+  const onTickErr = (e: any) => console.warn(`[discordScheduler] tick failed: ${e?.message ?? e}`);
+  timer = setInterval(() => { tick().catch(onTickErr); }, 60_000);
   // First tick after 5s so server has a moment to warm.
   // Dedup state was just restored from disk above, so any slot that already
   // fired in the last 48h is suppressed here — no more boot-spam on restart.
-  setTimeout(() => { tick().catch(() => {}); }, 5_000);
+  setTimeout(() => { tick().catch(onTickErr); }, 5_000);
   console.log(`[discordScheduler] started — daily 9:30 ET + 9:30 0DTE pre-open scan + 10:00 regime snapshot + 30-min cadence (10:00–16:00 ET) + 0DTE bangers (9:45–15:45 ET), alerts on level breaks + gamma flips + macro news`);
 }
 

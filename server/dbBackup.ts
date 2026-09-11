@@ -1,8 +1,9 @@
 // DB backup cron. Snapshots data.db nightly, keeps last 7.
 // Pure file-system; never throws to caller.
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { sqlite } from "./storage";
 
 const DB_PATH = "./data.db";
 const BACKUP_DIR = "./backups";
@@ -19,7 +20,7 @@ export function startDbBackup() {
   console.log("[dbBackup] started — daily snapshots, retention 7");
 }
 
-export function runBackup(): { ok: boolean; path?: string; error?: string } {
+export async function runBackup(): Promise<{ ok: boolean; path?: string; error?: string }> {
   try {
     if (!existsSync(DB_PATH)) {
       return { ok: false, error: "db_not_found" };
@@ -27,7 +28,9 @@ export function runBackup(): { ok: boolean; path?: string; error?: string } {
     if (!existsSync(BACKUP_DIR)) mkdirSync(BACKUP_DIR, { recursive: true });
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     const dest = join(BACKUP_DIR, `data.${ts}.db`);
-    copyFileSync(DB_PATH, dest);
+    // WAL-safe online backup. A raw file copy ignores the -wal file, so any
+    // writes since the last checkpoint were missing (or the copy was torn).
+    await sqlite.backup(dest);
     pruneOldBackups();
     const sizeMb = (statSync(dest).size / 1024 / 1024).toFixed(2);
     console.log(`[dbBackup] snapshot saved: ${dest} (${sizeMb}MB)`);

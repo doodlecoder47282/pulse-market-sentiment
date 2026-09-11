@@ -21,18 +21,23 @@
 import { buildSchwabFlow, type SchwabFlowContract } from "./schwabFlow";
 import { getFlowConfig } from "./flowConfig";
 import { loadRecentDedupKeys } from "./whalePersistence";
-import { ingestContract as ingestUoaContract, getUoaSnapshot } from "./uoaScanner";
+import { ingestContract as ingestUoaContract, clusterToPublic, type ClusterEntry } from "./uoaScanner";
+// Static imports instead of bare require(): this package is ESM ("type":"module") and
+// `tsx` dev runs made every require() throw inside its try/catch, so follow-through
+// registration, regime conviction and outcome logging silently never ran in dev.
+// None of these modules import flowAlertEngine at runtime (type-only), so no cycle.
+import { registerWhale } from "./whaleFollowThrough";
+import { getRegimeSnapshot } from "./regimeStateCache";
+import { regimeConvictionMultiplier } from "./edgeStats";
+import { logWhaleAlertPrediction } from "./outcomeLogger";
 
-// Fire-once Discord poster for UOA. Imported lazily to avoid a hard
-// dependency when running without webhook env (e.g. tests).
-async function fireUoaDiscord(symbol: string, occ: string): Promise<void> {
+// Fire-once Discord poster for UOA. Posts the exact cluster returned by ingestContract.
+// It used to look up "any cluster for this ticker fired in the last 10 s", which posted
+// the wrong / duplicate cluster when two contracts fired close together.
+async function fireUoaDiscord(cluster: ClusterEntry): Promise<void> {
   try {
-    const snap = getUoaSnapshot();
-    const list = snap.byTicker[symbol] ?? [];
-    // Find the cluster that just fired by matching the most recent OCC into hits
-    // (cluster is keyed by surface, so any cluster that includes this occ)
-    const target = list.find(cl => cl.fired && cl.firedAt && Date.now() - cl.firedAt < 10_000);
-    if (!target || !target.tier?.discordEnabled) return;
+    const target = clusterToPublic(cluster);
+    if (!target.tier?.discordEnabled) return;
     const { postUoaClusterAlert } = await import("./discordUoaCard");
     await postUoaClusterAlert(target);
   } catch (e: any) {
@@ -221,9 +226,13 @@ export function isWhale(c: SchwabFlowContract): { whale: boolean; reason: string
   if (c.notional < cfg.premiumFloor) {
     return { whale: false, reason: `premium $${(c.notional / 1000).toFixed(0)}K < $${(cfg.premiumFloor / 1_000_000).toFixed(2)}M` };
   }
-  // Aggressor side
-  if (cfg.requiredTag !== "ANY" && c.tag !== cfg.requiredTag) {
-    return { whale: false, reason: `tag=${c.tag} (need ${cfg.requiredTag})` };
+  // Aggressor side. Tags come from a stale `last` vs the live NBBO: real lifts of the
+  // offer land as AT_ASK and ABOVE_ASK is mostly a quote-moved artifact, so requiring
+  // exactly ABOVE_ASK excluded real buyers. AT_ASK now means "ask side" (AT or ABOVE).
+  if (cfg.requiredTag !== "ANY") {
+    const askSide = c.tag === "AT_ASK" || c.tag === "ABOVE_ASK";
+    const tagOk = cfg.requiredTag === "AT_ASK" ? askSide : c.tag === cfg.requiredTag;
+    if (!tagOk) return { whale: false, reason: `tag=${c.tag} (need ${cfg.requiredTag === "AT_ASK" ? "AT_ASK/ABOVE_ASK" : cfg.requiredTag})` };
   }
   // DTE band — surgical 1–3DTE window kills hedges/LEAPS, keeps urgency money
   if (c.dte < cfg.minDte) {
@@ -268,24 +277,28 @@ async function scanTicker(symbol: string): Promise<{ hits: WhaleHit[]; error: st
     }
     const hits: WhaleHit[] = [];
     const now = Date.now();
+    const cfg = getFlowConfig();
     for (const c of flow.contracts) {
       // UOA observer — piggybacks on this Schwab pull. Independent of whale gate.
       try {
         const out = ingestUoaContract(c, symbol, flow.spot ?? null);
-        if (out.fired) { void fireUoaDiscord(symbol, c.occ); }
+        if (out.fired && out.cluster) { void fireUoaDiscord(out.cluster); }
       } catch { /* never blocks whale path */ }
 
       const { whale, reason } = isWhale(c);
       if (!whale) continue;
 
-      // Primary dedup keyed on (occ, premium-tier in $M) — whale doublings re-fire
-      const tier = Math.ceil(c.notional / 1_000_000);
+      // Primary dedup keyed on (occ, premium-tier) — only whale DOUBLINGS re-fire.
+      // The old tier was ceil(notional / $1M), so a $4.99M -> $5.01M mark oscillation with
+      // zero new volume refired every +$1M. log2 of notional/floor changes only on doublings.
+      const tier = Math.floor(Math.log2(Math.max(1, c.notional / Math.max(1, cfg.premiumFloor))));
       const dedupKey = `${c.occ}|t${tier}`;
       const lastSeen = recentlySeen.get(dedupKey);
       if (lastSeen && now - lastSeen < DEDUP_WINDOW_MS) continue;
 
       // Fallback dedup catches OCC format drift (same contract surface, different occ string).
-      const coarseKey = `coarse|${symbol}|${c.type}|${c.strike}|${c.expiration}|t${tier}`;
+      // Intentionally NOT tiered: with the tier it was identical to the primary key.
+      const coarseKey = `coarse|${symbol}|${c.type}|${c.strike}|${c.expiration}`;
       const coarseLast = recentlySeen.get(coarseKey);
       if (coarseLast && now - coarseLast < DEDUP_COARSE_WINDOW_MS) continue;
 
@@ -331,9 +344,6 @@ function queueHit(hit: WhaleHit): void {
     // Register with follow-through tracker so we can re-price tick-by-tick
     // and detect closing positions. Failure here must NEVER block alert flow.
     try {
-      // Lazy import — keeps a clean dep boundary
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { registerWhale } = require("./whaleFollowThrough");
       registerWhale(hit);
     } catch (e: any) {
       console.warn(`[flowAlerts] follow-through register failed: ${e?.message ?? e}`);
@@ -343,16 +353,12 @@ function queueHit(hit: WhaleHit): void {
     // conviction. Pure read-only — NEVER throws to alert flow, NEVER changes gating.
     let regimeAtFire: string | null = null;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { getRegimeSnapshot } = require("./regimeStateCache");
       const snap = getRegimeSnapshot();
       regimeAtFire = snap?.topCandidate ? String(snap.topCandidate) : null;
     } catch {
       // best-effort only
     }
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { regimeConvictionMultiplier } = require("./edgeStats");
       if (regimeAtFire && typeof regimeConvictionMultiplier === "function") {
         const result = regimeConvictionMultiplier(hit.symbol, regimeAtFire, 45);
         const mult = result?.multiplier;
@@ -375,8 +381,6 @@ function queueHit(hit: WhaleHit): void {
     // Closed-loop edge tracking: log this prediction for grading later.
     // Pure read-only writer — never throws to alert flow.
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { logWhaleAlertPrediction } = require("./outcomeLogger");
       const cfg = getFlowConfig();
       logWhaleAlertPrediction({
         occ: hit.occ,
@@ -504,10 +508,12 @@ async function evalCycle(): Promise<void> {
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 export function startFlowAlerts(): void {
   if (intervalHandle) return;
+  // Log the live runtime config, not the compile-time constants (they can differ via env).
+  const cfg0 = getFlowConfig();
   console.log(
     `[flowAlerts] started — ${EVAL_INTERVAL_MS / 1000}s eval, WHALE-ONLY ` +
-    `(prem≥$${WHALE_PREMIUM_FLOOR / 1_000_000}M, vol/OI≥${WHALE_VOL_OI_RATIO}x OR new-strike, ` +
-    `${WHALE_REQUIRED_TAG}, dte≥${WHALE_MIN_DTE}), ${COALESCE_WINDOW_MS / 1000}s coalesce`
+    `(prem≥$${cfg0.premiumFloor / 1_000_000}M, vol/OI≥${cfg0.volOiRatio}x OR new-strike, ` +
+    `${cfg0.requiredTag}, dte ${cfg0.minDte}-${cfg0.maxDte}), ${COALESCE_WINDOW_MS / 1000}s coalesce`
   );
   // Kick first eval immediately so snapshot is meaningful right away
   void evalCycle();
@@ -584,7 +590,7 @@ export async function previewFlow(): Promise<{
         // UOA piggyback in preview path too — keeps cluster state warm
         try {
           const out = ingestUoaContract(c, sym, flow.spot ?? null);
-          if (out.fired) { void fireUoaDiscord(sym, c.occ); }
+          if (out.fired && out.cluster) { void fireUoaDiscord(out.cluster); }
         } catch { /* */ }
         const { whale, reason } = isWhale(c);
         if (whale) {

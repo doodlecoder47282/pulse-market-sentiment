@@ -16,6 +16,8 @@
 // Everything is merged into a unified timeline the client can filter by topic.
 // Macro filter buckets headlines into: FED / INFLATION / JOBS / GROWTH / GEO / EARNINGS / OTHER
 
+import { etEpochMs } from "./etTime";
+
 const UA = "Mozilla/5.0 (compatible; PulseDashboard/1.0)";
 
 export type NewsTopic = "FED" | "INFLATION" | "JOBS" | "GROWTH" | "GEO" | "EARNINGS" | "RATES" | "OIL" | "OTHER";
@@ -218,6 +220,9 @@ async function fetchEconCalendar(): Promise<CalendarEvent[]> {
       const url = `https://api.nasdaq.com/api/calendar/economicevents?date=${date}`;
       const r = await fetch(url, {
         headers: { "User-Agent": UA, Accept: "application/json" },
+        // One hung Nasdaq socket used to hang the whole news snapshot
+        // (and every route awaiting it). Bound each fetch.
+        signal: AbortSignal.timeout(4000),
       });
       if (!r.ok) return [] as CalendarEvent[];
       const j: any = await r.json();
@@ -228,8 +233,13 @@ async function fetchEconCalendar(): Promise<CalendarEvent[]> {
         const countryCode = String(row.gsi ?? row.country ?? "");
         if (countryCode && !/US|United States/i.test(countryCode)) continue;
         const t = String(row.time ?? "");
-        const iso = `${date}T${t || "13:30"}:00Z`;
-        const when = Math.floor(new Date(iso).getTime() / 1000);
+        // Nasdaq times are EASTERN wall-clock. Building them with a Z suffix
+        // treated 08:30 ET as 08:30 UTC (= 04:30 ET), which made T-30min
+        // Discord news alerts fire around 4 AM.
+        const [hhS, mmS] = (t || "08:30").split(":");
+        const when = Math.floor(
+          etEpochMs(date, Number(hhS) || 8, Number(mmS) || 30) / 1000,
+        );
         if (!Number.isFinite(when)) continue;
         const importanceRaw = Number(row.impactLevel ?? row.impact ?? 0);
         const importance: CalendarEvent["importance"] =
@@ -436,65 +446,6 @@ function formatEtLabel(whenSec: number): string {
   return `${fmt.format(d)} ET`;
 }
 
-function addDays(d: Date, n: number): Date {
-  const x = new Date(d);
-  x.setUTCDate(x.getUTCDate() + n);
-  return x;
-}
-
-function nextWeekday(from: Date, weekday: number /* 0=Sun .. 6=Sat */): Date {
-  const x = new Date(from);
-  const diff = (weekday - x.getUTCDay() + 7) % 7 || 7;
-  x.setUTCDate(x.getUTCDate() + diff);
-  return x;
-}
-
-// Baseline curated list so the panel always has content even if the Nasdaq
-// endpoint is down. Hand-maintained for the standard monthly cadence.
-function syntheticBaseline(): CalendarEvent[] {
-  const now = new Date();
-  const mk = (d: Date, h: number, m: number): number => {
-    // 8:30 ET = 12:30 UTC (during EDT) or 13:30 UTC (during EST). Approximate as UTC-4 for EDT.
-    const iso = `${d.toISOString().slice(0, 10)}T${String(h + 4).padStart(2, "0")}:${String(m).padStart(2, "0")}:00Z`;
-    return Math.floor(new Date(iso).getTime() / 1000);
-  };
-  // Next Fed meeting assumed ~6 weeks out (placeholder — refresh yearly)
-  // Next NFP = first Friday of next month
-  const firstOfNext = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-  const nextNfp = nextWeekday(firstOfNext, 5);
-  nextNfp.setUTCDate(nextNfp.getUTCDate() - (nextNfp.getUTCDay() === 5 ? 0 : 0));
-  const nextCpi = addDays(firstOfNext, 9); // mid-month-ish placeholder
-  return [
-    {
-      id: `base:nfp:${nextNfp.toISOString().slice(0, 10)}`,
-      kind: "ECON",
-      title: "Nonfarm Payrolls",
-      when: mk(nextNfp, 8, 30),
-      whenLabel: formatEtLabel(mk(nextNfp, 8, 30)),
-      importance: "HIGH",
-      source: "BLS (tentative)",
-    },
-    {
-      id: `base:cpi:${nextCpi.toISOString().slice(0, 10)}`,
-      kind: "ECON",
-      title: "CPI (YoY)",
-      when: mk(nextCpi, 8, 30),
-      whenLabel: formatEtLabel(mk(nextCpi, 8, 30)),
-      importance: "HIGH",
-      source: "BLS (tentative)",
-    },
-    {
-      id: `base:fomc:next`,
-      kind: "FED",
-      title: "FOMC Rate Decision (next meeting)",
-      when: mk(addDays(now, 42), 14, 0),
-      whenLabel: formatEtLabel(mk(addDays(now, 42), 14, 0)),
-      importance: "HIGH",
-      source: "Federal Reserve (tentative)",
-    },
-  ];
-}
-
 // ---- Aggregator ----
 
 // Pull deterministic vol-event calendar (OPEX/VIX/quad witch/FOMC/CPI/NFP)
@@ -682,8 +633,10 @@ export async function buildNewsSnapshot(): Promise<NewsResponse> {
       seenIds.add(e.id);
       if (e.when < cutoff || e.when > forwardLimit) return false;
       // Same kind + same date → keep the first (vol-calendar wins).
-      // Earnings are excluded from this dedup because multiple companies report same day.
-      if (e.kind !== "EARNINGS" && e.kind !== "TREASURY") {
+      // Earnings excluded because multiple companies report the same day;
+      // ECON excluded because one day routinely has several distinct prints
+      // (CPI + claims + retail sales) and this dedupe was dropping all but one.
+      if (e.kind !== "EARNINGS" && e.kind !== "TREASURY" && e.kind !== "ECON") {
         const k = `${e.kind}:${isoDay(e.when)}`;
         if (seenKindDay.has(k)) return false;
         seenKindDay.add(k);

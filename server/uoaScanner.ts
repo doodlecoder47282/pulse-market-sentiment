@@ -49,7 +49,7 @@ const MARKET_CAP: Record<string, number> = {
   CHWY: 10e9, DASH: 50e9, ABNB: 90e9, RBLX: 30e9, CRWD: 80e9, NET: 40e9,
   ZM: 20e9, DOCU: 12e9, SNAP: 20e9, PINS: 25e9, HOOD: 30e9, SOFI: 15e9,
   AFRM: 15e9, RKT: 30e9, MARA: 8e9, RIOT: 4e9, CLSK: 4e9, IONQ: 5e9,
-  RGTI: 3e9, QBTS: 2e9, LAES: 100e6, SEALSQ: 200e6,
+  RGTI: 3e9, QBTS: 2e9, LAES: 200e6, // "SEALSQ" is the company name, LAES is its ticker (dup entry removed)
   // Index proxies — treat as MEGA (no per-name mcap)
   SPX: 1e15, SPY: 1e15, QQQ: 1e15, IWM: 1e15, NDX: 1e15, RUT: 1e15,
   DIA: 1e15, VIX: 1e15,
@@ -99,7 +99,7 @@ const UOA_ALLOWED_TAGS = new Set(["ABOVE_ASK", "AT_ASK"]);
 // ─── Cluster accumulator ─────────────────────────────────────────────────────
 // Keyed by (symbol|type|strike|expiration) — same contract surface across the
 // trading day, regardless of OCC variant. Hits expire after 4h.
-interface ClusterEntry {
+export interface ClusterEntry {
   symbol: string;
   type: "C" | "P";
   strike: number;
@@ -125,14 +125,19 @@ interface ClusterEntry {
   lastSeenAt: number;
   fired: boolean;
   firedAt?: number;
+  spot: number | null;   // underlying spot at last ingest (so public view works without a spot map)
 }
 
 const CLUSTER_TTL_MS = 4 * 60 * 60 * 1000;  // 4h
 const clusters = new Map<string, ClusterEntry>();
 
-// Dedup per OCC — same exact print won't double-count in same cluster
-const seenOcc = new Map<string, number>();
-const SEEN_OCC_TTL_MS = 30 * 60 * 1000;     // 30min — each print contributes once
+// Last observation per OCC. Chain data is a cumulative-volume snapshot, not a print
+// feed. The old 30-min `seenOcc` TTL re-ingested the same contract every 30 min and
+// summed its CUMULATIVE notional again ($3M seen 3x -> "$9M MEGA cluster" with zero new
+// volume). Now a new hit is counted only when volume actually increased since the last
+// observation, and only the incremental notional (deltaVol x mark x 100) is added.
+const lastObs = new Map<string, { volume: number; at: number }>();
+const LAST_OBS_TTL_MS = CLUSTER_TTL_MS;
 
 function clusterKey(c: SchwabFlowContract, symbol: string): string {
   return `${symbol}|${c.type}|${c.strike}|${c.expiration}`;
@@ -142,8 +147,8 @@ function pruneStale(now: number): void {
   for (const [k, v] of clusters) {
     if (now - v.lastSeenAt > CLUSTER_TTL_MS) clusters.delete(k);
   }
-  for (const [k, t] of seenOcc) {
-    if (now - t > SEEN_OCC_TTL_MS) seenOcc.delete(k);
+  for (const [k, o] of lastObs) {
+    if (now - o.at > LAST_OBS_TTL_MS) lastObs.delete(k);
   }
 }
 
@@ -186,9 +191,24 @@ export function ingestContract(c: SchwabFlowContract, symbol: string, spot: numb
     const q = qualifiesForUoa(c, symbol);
     if (!q.ok) return { fired: false, cluster: null };
 
-    // Per-OCC dedup so the same print doesn't accumulate twice
-    if (seenOcc.has(c.occ)) return { fired: false, cluster: null };
-    seenOcc.set(c.occ, now);
+    const mid = (c as any).mid > 0 ? (c as any).mid : ((c.bid + c.ask) / 2);
+
+    // Delta-volume gate: only count a hit when this OCC printed new volume since the
+    // last observation. Same snapshot re-observed -> refresh the quote, no new hit.
+    const prev = lastObs.get(c.occ);
+    const deltaVol = prev ? c.volume - prev.volume : c.volume;
+    lastObs.set(c.occ, { volume: Math.max(c.volume, prev?.volume ?? 0), at: now });
+    const hitNotional = prev ? Math.max(0, deltaVol) * mid * 100 : c.notional;
+    if (prev) {
+      const existing = clusters.get(clusterKey(c, symbol));
+      if (existing) {
+        existing.spot = spot ?? existing.spot;
+        const lastHit = existing.hits[existing.hits.length - 1];
+        if (lastHit) { lastHit.bid = c.bid; lastHit.ask = c.ask; lastHit.mid = mid; }
+      }
+      // Follow-on print must itself be a qualifying-size print to count as a hit
+      if (deltaVol <= 0 || hitNotional < q.tier.premiumFloor) return { fired: false, cluster: null };
+    }
 
     const key = clusterKey(c, symbol);
     let cl = clusters.get(key);
@@ -204,15 +224,16 @@ export function ingestContract(c: SchwabFlowContract, symbol: string, spot: numb
         firstSeenAt: now,
         lastSeenAt: now,
         fired: false,
+        spot: spot ?? null,
       };
       clusters.set(key, cl);
     }
+    cl.spot = spot ?? cl.spot;
 
-    const mid = (c as any).mid > 0 ? (c as any).mid : ((c.bid + c.ask) / 2);
     cl.hits.push({
       occ: c.occ,
-      notional: c.notional,
-      volume: c.volume,
+      notional: hitNotional,
+      volume: prev ? deltaVol : c.volume,
       volOiRatio: c.volOiRatio,
       isNewStrike: c.isNewStrike,
       delta: c.delta,
@@ -273,7 +294,7 @@ export interface UoaCluster {
   tier: UoaTier;
 }
 
-function clusterToPublic(cl: ClusterEntry, spotByTicker: Map<string, number | null>): UoaCluster {
+export function clusterToPublic(cl: ClusterEntry, spotByTicker?: Map<string, number | null>): UoaCluster {
   const totalPremium = cl.hits.reduce((s, h) => s + h.notional, 0);
   const totalVolume = cl.hits.reduce((s, h) => s + h.volume, 0);
   const avgVolOi = cl.hits.reduce((s, h) => s + (isFinite(h.volOiRatio) ? h.volOiRatio : 0), 0) / Math.max(1, cl.hits.length);
@@ -283,7 +304,9 @@ function clusterToPublic(cl: ClusterEntry, spotByTicker: Map<string, number | nu
   const last = cl.hits[cl.hits.length - 1];
   const spreadPct = last.mid > 0 && last.ask > 0 && last.bid > 0 ? ((last.ask - last.bid) / last.mid) * 100 : 0;
   const breakeven = cl.type === "C" ? cl.strike + last.mid : cl.strike - last.mid;
-  const spot = spotByTicker.get(cl.symbol) ?? null;
+  // Prefer the caller's spot map, else the spot stored at ingest. getUoaSnapshot() is
+  // called without a map from routes, so spot/dist/breakeven were always "--" before.
+  const spot = spotByTicker?.get(cl.symbol) ?? cl.spot ?? null;
   const distFromSpotPct = spot && spot > 0 ? ((cl.strike - spot) / spot) * 100 : undefined;
   const breakevenPct = spot && spot > 0 ? ((breakeven - spot) / spot) * 100 : undefined;
 
@@ -389,5 +412,5 @@ export function getUoaSnapshot(spotByTicker?: Map<string, number | null>): UoaSn
 // Reset hook (tests)
 export function _resetUoaState(): void {
   clusters.clear();
-  seenOcc.clear();
+  lastObs.clear();
 }

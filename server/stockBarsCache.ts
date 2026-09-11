@@ -7,8 +7,6 @@
 
 import { storage } from "./storage";
 
-const UA = "Mozilla/5.0 (compatible; PulseDashboard/1.0)";
-
 interface DailyRow { date: string; close: number; t: number }
 
 // Stocks the closed-loop grader needs coverage for. Mirrors flowConfig defaults
@@ -32,19 +30,6 @@ function etDateString(epochSec: number): string {
   return `${y}-${m}-${dd}`;
 }
 
-async function yFetch(url: string, timeoutMs = 15_000): Promise<any> {
-  const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const r = await fetch(url, {
-      headers: { "User-Agent": UA, Accept: "application/json" },
-      signal: ctrl.signal,
-    });
-    if (!r.ok) throw new Error(`Yahoo ${r.status}`);
-    return await r.json();
-  } finally { clearTimeout(to); }
-}
-
 /**
  * Fetch 2Y of daily closes for one symbol via Schwab.
  * Mirrors the shape produced by regime.ts so daily_bars stays homogeneous.
@@ -66,7 +51,9 @@ export async function fetchStockSymbol2Y(symbol: string): Promise<DailyRow[]> {
       dedup.push(r);
     }
     return dedup;
-  } catch {
+  } catch (e: any) {
+    // Was a silent catch: a symbol could stop backfilling forever with no trace.
+    console.warn(`[stockBars] daily-bar fetch failed: ${e?.message ?? e}`);
     return [];
   }
 }

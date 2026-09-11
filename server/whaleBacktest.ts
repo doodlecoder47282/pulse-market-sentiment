@@ -1,10 +1,14 @@
-// server/backtest.ts
+// server/whaleBacktest.ts
 //
 // Whale alert backtester. Replays past whale_alerts from SQLite against
 // underlying price history to estimate hypothetical P&L assuming you'd
-// entered each alert at the close of its detection bar and exited at:
+// entered each alert at the close of its detection day and exited at:
 //   - end of expiration day for non-0DTE
-//   - 15:55 ET for 0DTE
+//   - 0DTE: daily bars cannot simulate an intraday exit, so 0DTE alerts are
+//     reported as "no_exit_bar" with 0 P&L (not 15:55 ET as older notes claimed)
+//
+// The "pctReturn" fields are an underlying-move x leverage proxy (|delta|/0.05,
+// clamped 4-25x), NOT option P&L. Premium and gamma are ignored.
 //
 // Approximation model (read-only, simple, transparent):
 //   - Use the alert's recorded delta as the option's price sensitivity.
@@ -115,14 +119,18 @@ interface Candle {
   close: number;
 }
 
-const _historyCache = new Map<string, Candle[]>();
+// Cache with a TTL. It used to never expire, so after the first call the process served
+// the same candles forever and every alert after the fill reported "no_exit_bar".
+const _historyCache = new Map<string, { candles: Candle[]; at: number }>();
+const HISTORY_TTL_MS = 6 * 60 * 60 * 1000; // 6 h
 
 async function fetchDailyHistory(symbol: string): Promise<Candle[]> {
-  if (_historyCache.has(symbol)) return _historyCache.get(symbol)!;
+  const cached = _historyCache.get(symbol);
+  if (cached && Date.now() - cached.at < HISTORY_TTL_MS) return cached.candles;
   try {
     const r = await getPriceHistory(symbol, "year", 1, "daily", 1);
     const candles = ((r as any)?.candles ?? []) as Candle[];
-    _historyCache.set(symbol, candles);
+    if (candles.length > 0) _historyCache.set(symbol, { candles, at: Date.now() });
     return candles;
   } catch {
     return [];
@@ -229,12 +237,15 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestSumma
         continue;
       }
       const detectedAt = Number(r.detectedAt);
-      // Try at-or-after first; if none, fall back to most recent prior bar (alert detected after market close)
-      let { bar: entryBar, idx: entryIdx } = closeOnOrAfter(candles, detectedAt);
+      // Entry = close of the DETECTION day. Schwab daily candle `datetime` is the start of
+      // the day (early UTC) and alerts fire intra-RTH, so "first bar >= detectedAt" was
+      // tomorrow's bar: 1-DTE alerts all became no_exit_bar and 2-3 DTE lost a day.
+      // The detection day's bar is the last bar whose start is <= detectedAt.
+      let { bar: entryBar, idx: entryIdx } = closeOnOrBefore(candles, detectedAt);
       if (!entryBar) {
-        const prior = closeOnOrBefore(candles, detectedAt);
-        entryBar = prior.bar;
-        entryIdx = prior.idx;
+        const next = closeOnOrAfter(candles, detectedAt);
+        entryBar = next.bar;
+        entryIdx = next.idx;
       }
       if (!entryBar) {
         trades.push(makeTradeStub(r, "no_history"));

@@ -1,7 +1,7 @@
 // server/mag7.ts
 // Magnificent 7 indicator: AAPL, MSFT, NVDA, GOOGL, META, AMZN, TSLA.
 // Computes per-stock day change + equal-weight aggregate vs SPY (breadth proxy).
-// Pulls from Yahoo in parallel; matches the macro.ts caching pattern.
+// Pulls from Schwab (via quotes.ts) in parallel; matches the macro.ts caching pattern.
 
 import { fetchIntraday, fetchDailyCloses } from "./quotes";
 

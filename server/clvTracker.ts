@@ -4,7 +4,32 @@
 
 import { sqlite } from "./storage";
 import { randomUUID } from "node:crypto";
-import { getQuotes, getOptionChain } from "./schwab";
+import { getQuotes, getOptionChain, getPriceHistory } from "./schwab";
+
+// ET helpers. Grading must only happen against a CLOSING line, so we need the ET date
+// and ET clock rather than server-local / UTC time.
+function etParts(ts: number = Date.now()): { date: string; minutes: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York", hourCycle: "h23",
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  }).formatToParts(new Date(ts));
+  const g = (t: string) => parts.find(p => p.type === t)?.value ?? "00";
+  return { date: `${g("year")}-${g("month")}-${g("day")}`, minutes: Number(g("hour")) * 60 + Number(g("minute")) };
+}
+const CLOSE_GRADE_MINUTES = 16 * 60 + 15; // 16:15 ET
+
+/** Underlying daily close on a specific ET date (YYYY-MM-DD), or null. */
+async function dailyCloseOn(symbol: string, isoDate: string): Promise<number | null> {
+  try {
+    const r = await getPriceHistory(symbol, "month", 1, "daily", 1);
+    const candles = ((r as any)?.candles ?? []) as Array<{ datetime: number; close: number }>;
+    // Daily candle datetime is start-of-day; match on its ET calendar date.
+    const hit = candles.find(c => etParts(c.datetime).date === isoDate);
+    return hit && Number.isFinite(hit.close) ? hit.close : null;
+  } catch {
+    return null;
+  }
+}
 
 export type Side = "BUY" | "SELL";
 export type Instrument = "EQUITY" | "OPTION";
@@ -161,13 +186,17 @@ export async function gradeTrade(id: string): Promise<TradeRow | undefined> {
       if (q && Number.isFinite(q.last)) closingMid = q.last;
     } catch {}
   } else if (t.instrument === "OPTION" && t.expiry && t.strike != null && t.optType) {
-    // Past expiry → grade as intrinsic at underlying close.
-    const today = new Date().toISOString().slice(0, 10);
+    // Past expiry → grade as intrinsic at the underlying's close ON THE EXPIRY DATE.
+    // Previously used the current quote, which is wrong for anything graded a day late.
+    const today = etParts().date;
     if (t.expiry < today) {
       try {
-        const quotes = await getQuotes([t.symbol]);
-        const q = quotes.find(x => x.symbol === t.symbol.toUpperCase());
-        const px = q?.last;
+        let px: number | null | undefined = await dailyCloseOn(t.symbol, t.expiry);
+        if (px == null) {
+          const quotes = await getQuotes([t.symbol]);
+          const q = quotes.find(x => x.symbol === t.symbol.toUpperCase());
+          px = q?.last;
+        }
         if (Number.isFinite(px)) {
           const intrinsic = t.optType === "C"
             ? Math.max(0, (px as number) - t.strike)
@@ -286,9 +315,16 @@ export function getClvSummary(): ClvSummary {
 
 // Cron-callable: grade every ungraded trade that has a closing reference available.
 export async function gradePending(): Promise<{ graded: number; skipped: number }> {
-  const rows = sqlite.prepare(`SELECT id FROM trade_log WHERE graded = 0`).all() as { id: string }[];
+  const rows = sqlite.prepare(`SELECT id, captured_at FROM trade_log WHERE graded = 0`).all() as { id: string; captured_at: number }[];
   let graded = 0, skipped = 0;
-  for (const { id } of rows) {
+  // Closing-line gate: this used to run on a 6 h timer from process start with no time
+  // check, so a 10:00 trade could be "graded" at 11:30 against an intraday mark and was
+  // then graded=1 forever. Only grade rows captured on a prior ET day, or after 16:15 ET.
+  const now = etParts();
+  const afterClose = now.minutes >= CLOSE_GRADE_MINUTES;
+  for (const { id, captured_at } of rows) {
+    const capturedDate = etParts(Number(captured_at)).date;
+    if (capturedDate >= now.date && !afterClose) { skipped++; continue; }
     const out = await gradeTrade(id);
     if (out?.graded) graded++; else skipped++;
   }

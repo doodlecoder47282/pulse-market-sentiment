@@ -367,12 +367,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   getDailyBars(symbol: string, limit = 520): { date: string; close: number; t: number }[] {
-    return sqlite.prepare(
+    // Take the MOST RECENT `limit` bars, then return ascending. The old
+    // ASC+LIMIT grabbed the OLDEST rows, so once history exceeded the limit
+    // every consumer (incl. regime) was computing on a window that ended
+    // months in the past.
+    const rows = sqlite.prepare(
       `SELECT date, close, t FROM daily_bars
        WHERE symbol = ?
-       ORDER BY date ASC
+       ORDER BY date DESC
        LIMIT ?`,
     ).all(symbol, limit) as { date: string; close: number; t: number }[];
+    return rows.reverse();
   }
 
   getLatestBarDate(symbol: string): string | null {

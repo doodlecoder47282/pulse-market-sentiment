@@ -229,6 +229,14 @@ function aggregateRegimeCalls(rows: any[]): RegimeCallEdge {
 
 // ─── Threshold suggestion engine ─────────────────────────────────────────────
 
+// Minimum lift required before a threshold suggestion fires: at least 5pp AND
+// 2 standard errors of the hit-rate difference. Prevents suggestions appearing
+// by chance from small samples (SE at n=10 is ~15pp).
+function liftBar(hit: number, n: number, baseHit: number, baseN: number): number {
+  const se = Math.sqrt((hit * (1 - hit)) / Math.max(1, n) + (baseHit * (1 - baseHit)) / Math.max(1, baseN));
+  return Math.max(0.05, 2 * se);
+}
+
 function deriveSuggestions(whaleRows: any[]): ThresholdSuggestion[] {
   const suggestions: ThresholdSuggestion[] = [];
   const graded = whaleRows.filter((r) => r.graded === 1 && r.pctReturn != null);
@@ -246,7 +254,7 @@ function deriveSuggestions(whaleRows: any[]): ThresholdSuggestion[] {
     const hit = filtered.filter((r) => r.hit30 === 1).length / filtered.length;
     const lift = hit - overallHit30;
     const reduction = 1 - filtered.length / graded.length;
-    if (lift >= 0.05) {
+    if (lift >= liftBar(hit, filtered.length, overallHit30, graded.length)) {
       suggestions.push({
         field: "premiumFloor",
         currentNote: "$1M",
@@ -269,7 +277,7 @@ function deriveSuggestions(whaleRows: any[]): ThresholdSuggestion[] {
     const hit = filtered.filter((r) => r.hit30 === 1).length / filtered.length;
     const lift = hit - overallHit30;
     const reduction = 1 - filtered.length / graded.length;
-    if (lift >= 0.05) {
+    if (lift >= liftBar(hit, filtered.length, overallHit30, graded.length)) {
       suggestions.push({
         field: "volOiRatio",
         currentNote: "10x",
@@ -292,7 +300,7 @@ function deriveSuggestions(whaleRows: any[]): ThresholdSuggestion[] {
     const hit = filtered.filter((r) => r.hit30 === 1).length / filtered.length;
     const lift = hit - overallHit30;
     const reduction = 1 - filtered.length / graded.length;
-    if (lift >= 0.05) {
+    if (lift >= liftBar(hit, filtered.length, overallHit30, graded.length)) {
       suggestions.push({
         field: "deltaMin",
         currentNote: "0.20",
@@ -338,7 +346,10 @@ export function regimeConvictionMultiplier(
       return inputs.regimeAtFire === currentRegime;
     });
     if (inRegime.length < 3) return { multiplier: 1.0, n: rows.length, baseHitRate: baseHit, regimeHitRate: 0 };
-    const regHit = inRegime.filter((r) => r.hit30 === 1).length / inRegime.length;
+    // Shrink toward the base rate (pseudo-count of 10) so a 3-for-3 streak
+    // can't swing live conviction 1.5x on noise.
+    const regHit =
+      (inRegime.filter((r) => r.hit30 === 1).length + 10 * baseHit) / (inRegime.length + 10);
     // Multiplier in [0.5, 1.5]; 1.0 = neutral
     const ratio = baseHit > 0 ? regHit / baseHit : 1.0;
     const multiplier = Math.max(0.5, Math.min(1.5, ratio));

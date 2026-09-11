@@ -18,17 +18,21 @@ interface SocrataRow {
   nonrept_positions_short_all?: string;
 }
 
-// Canonical -> CFTC contract name fragment
+// Canonical -> EXACT CFTC market_and_exchange_names (verified against the
+// live Socrata dataset, Sep 2026). The old LIKE-fragment matching collapsed
+// full-size and MICRO contracts onto one key (GC/ES coin-flip), returned
+// zero rows for NQ (CFTC name is "NASDAQ MINI"), and left ZN/ZT frozen on
+// 2022 rows after CFTC renamed them to "UST 10Y/2Y NOTE".
 export const COT_MARKETS: Record<string, string> = {
-  ES: "E-MINI S&P 500",
-  NQ: "NASDAQ-100 E-MINI",
-  ZN: "10-YEAR U.S. TREASURY",
-  ZT: "2-YEAR U.S. TREASURY",
-  GC: "GOLD",
-  CL: "WTI-PHYSICAL",
-  EUR: "EURO FX",
-  JPY: "JAPANESE YEN",
-  VIX: "VIX FUTURES",
+  ES: "E-MINI S&P 500 - CHICAGO MERCANTILE EXCHANGE",
+  NQ: "NASDAQ MINI - CHICAGO MERCANTILE EXCHANGE",
+  ZN: "UST 10Y NOTE - CHICAGO BOARD OF TRADE",
+  ZT: "UST 2Y NOTE - CHICAGO BOARD OF TRADE",
+  GC: "GOLD - COMMODITY EXCHANGE INC.",
+  CL: "WTI-PHYSICAL - NEW YORK MERCANTILE EXCHANGE",
+  EUR: "EURO FX - CHICAGO MERCANTILE EXCHANGE",
+  JPY: "JAPANESE YEN - CHICAGO MERCANTILE EXCHANGE",
+  VIX: "VIX FUTURES - CBOE FUTURES EXCHANGE",
 };
 
 const ONE_WEEK_MS = 7 * 86_400_000;
@@ -40,9 +44,10 @@ function n(s: string | undefined): number | null {
 }
 
 async function fetchCotForFragment(fragment: string, limit = 12): Promise<SocrataRow[]> {
-  // CFTC legacy futures-only commitments via socrata (jun74-fxsl)
+  // CFTC legacy futures-only commitments via socrata (6dca-aqww).
+  // Exact-name equality: LIKE fragments mixed micro/full-size contracts.
   const upper = fragment.replace(/'/g, "''");
-  const where = `upper(market_and_exchange_names) like '%${upper.toUpperCase()}%'`;
+  const where = `upper(market_and_exchange_names) = '${upper.toUpperCase()}'`;
   const url = `https://publicreporting.cftc.gov/resource/6dca-aqww.json?$where=${encodeURIComponent(where)}&$order=report_date_as_yyyy_mm_dd DESC&$limit=${limit}`;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 20_000);
@@ -102,13 +107,18 @@ function isStale(market: string): boolean {
 export async function refreshAllCot(): Promise<Record<string, { ok: boolean; rows: number; error?: string }>> {
   const out: Record<string, { ok: boolean; rows: number; error?: string }> = {};
   for (const [market, fragment] of Object.entries(COT_MARKETS)) {
-    if (!isStale(market)) { out[market] = { ok: true, rows: 0 }; continue; }
+    // Always refresh (9 tiny Socrata calls per 24h cycle). The old isStale()
+    // skip could keep polluted rows forever: a "fresh" MICRO GOLD row made GC
+    // look current, so the exact-name fix would never get a chance to
+    // overwrite it. Correct rows land via INSERT OR REPLACE on the same keys.
+    void isStale;
     try {
       const rows = await fetchCotForFragment(fragment);
       persist(market, rows);
       out[market] = { ok: true, rows: rows.length };
     } catch (e: any) {
       out[market] = { ok: false, rows: 0, error: e?.message ?? String(e) };
+      console.warn(`[cot] refresh failed for ${market}: ${e?.message ?? e}`);
     }
     await new Promise(r => setTimeout(r, 400));
   }
@@ -171,8 +181,10 @@ export function getCotSnapshot(): CotSnapshotRow[] {
 let cotTimer: NodeJS.Timeout | null = null;
 export function startCotRefresher(intervalMs = 24 * 60 * 60 * 1000): void {
   if (cotTimer) return;
-  refreshAllCot().catch(() => {});
-  cotTimer = setInterval(() => { refreshAllCot().catch(() => {}); }, intervalMs);
+  refreshAllCot().catch((e) => console.warn(`[cot] boot refresh failed: ${e?.message ?? e}`));
+  cotTimer = setInterval(() => {
+    refreshAllCot().catch((e) => console.warn(`[cot] refresh failed: ${e?.message ?? e}`));
+  }, intervalMs);
 }
 export function stopCotRefresher(): void {
   if (cotTimer) { clearInterval(cotTimer); cotTimer = null; }
