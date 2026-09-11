@@ -92,6 +92,26 @@ export default function LightweightCandlestick({
         borderColor: "rgba(255,255,255,0.15)",
         timeVisible: true,
         secondsVisible: false,
+        // ET axis labels — lightweight-charts renders epoch time as UTC by
+        // default, which put SPX afternoon bars at "17:00-19:00". Format all
+        // tick marks in America/New_York so the axis matches the tape.
+        tickMarkFormatter: (time: number, tickMarkType: number) => {
+          const d = new Date(time * 1000);
+          // 0=year 1=month 2=day-of-month — date-level marks get dates, not clock times
+          if (tickMarkType <= 2) {
+            return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
+          }
+          return d.toLocaleTimeString("en-US", {
+            hour: "numeric", minute: "2-digit", hour12: false, timeZone: "America/New_York",
+          });
+        },
+      },
+      localization: {
+        timeFormatter: (time: number) =>
+          new Date(time * 1000).toLocaleString("en-US", {
+            month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+            hour12: false, timeZone: "America/New_York",
+          }) + " ET",
       },
       crosshair: {
         mode: CrosshairMode.Normal,

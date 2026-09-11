@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { Flame, Activity, AlertTriangle } from "lucide-react";
 
 type Cell = {
@@ -65,8 +66,8 @@ export default function ThermalHeatmap() {
   const { data, isLoading, error } = useQuery<ThermalResp>({
     queryKey: ["/api/heatmap/thermal", symbol, greek],
     queryFn: async () => {
-      const r = await fetch(`/api/heatmap/thermal?symbol=${encodeURIComponent(symbol)}&greek=${greek}`);
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      // apiRequest, NOT raw fetch — raw fetch bypasses the deploy proxy and 404s on the hosted app
+      const r = await apiRequest("GET", `/api/heatmap/thermal?symbol=${encodeURIComponent(symbol)}&greek=${greek}`);
       return r.json();
     },
     refetchInterval: 60_000,

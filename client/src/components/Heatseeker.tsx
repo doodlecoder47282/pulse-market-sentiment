@@ -58,6 +58,7 @@ interface OdteContract {
   notional: number;
   classification: "buy" | "sell" | "neutral";
   distance: number;
+  lastTradeTime?: number | null;
 }
 
 // ─── User's locked SPX weekly targets (from session context) ───────────────
@@ -567,6 +568,13 @@ function LevelsEditor({
 function HeatseekerView({ data }: { data: HeatseekerData }) {
   const { strikes, stickyZones, totals, spot, expiry, dte, symbol, asOf } = data;
 
+  // Dead-chain guard: overnight (or feed-down) the fresh 0DTE expiry has zero
+  // OI and zero volume everywhere, so every exposure and sticky score is 0.
+  // Ranking #1-#5 off all-zero inputs is noise dressed as edge — flag it.
+  const chainDead = strikes.length > 0 && strikes.every(
+    (s) => !s.netGex && !s.totalOI && !s.netCharm && !s.netDex,
+  );
+
   // Drill-down selection: which strike + which side are we viewing as a contract chart?
   const [selected, setSelected] = useState<{ strike: number; side: "call" | "put" } | null>(null);
 
@@ -903,6 +911,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                 notional: c?.notional,
                 classification: c?.classification,
                 distance: c?.distance,
+                lastTradeTime: c?.lastTradeTime ?? null,
               }}
               onClose={() => setSelected(null)}
             />
@@ -934,6 +943,13 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
           </div>
         </CardHeader>
         <CardContent>
+          {chainDead ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-12 text-xs text-muted-foreground" data-testid="greek-profile-empty">
+              <Activity className="h-5 w-5 opacity-60" />
+              <div className="font-mono text-amber-400/90">chain empty — no OI or volume posted for {expiry} yet</div>
+              <div>exposures populate once today's session prints · nothing to read overnight</div>
+            </div>
+          ) : (
           <div className="h-[380px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
@@ -1029,6 +1045,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
               </ComposedChart>
             </ResponsiveContainer>
           </div>
+          )}
         </CardContent>
       </Card>
 
@@ -1045,11 +1062,19 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {stickyZones.map((z) => (
-              <StickyCard key={z.strike} zone={z} spot={spot} />
-            ))}
-          </div>
+          {chainDead ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-10 text-xs text-muted-foreground" data-testid="sticky-zones-empty">
+              <Flame className="h-5 w-5 opacity-60" />
+              <div className="font-mono text-amber-400/90">no rankable zones — chain has zero GEX, OI, and charm right now</div>
+              <div>scores return when {expiry} posts OI (morning) or live volume · a rank built on zeros is not edge</div>
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+              {stickyZones.map((z) => (
+                <StickyCard key={z.strike} zone={z} spot={spot} />
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

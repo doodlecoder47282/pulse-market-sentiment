@@ -50,6 +50,7 @@ interface ContractRow {
   classification: Classification;
   buyFlag: boolean;
   distance: number;
+  lastTradeTime?: number | null;
 }
 
 interface TrackedPosition {
@@ -588,6 +589,7 @@ function LiveTrackerView({
                 notional: selectedRow.notional,
                 classification: selectedRow.classification,
                 distance: selectedRow.distance,
+                lastTradeTime: selectedRow.lastTradeTime ?? null,
               }}
               onClose={() => setSelectedKey(null)}
             />

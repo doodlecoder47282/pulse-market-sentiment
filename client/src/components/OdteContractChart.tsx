@@ -70,6 +70,14 @@ interface SelectedMeta {
   notional?: number;
   classification?: "buy" | "sell" | "neutral";
   distance?: number;
+  lastTradeTime?: number | null;
+}
+
+function fmtTradeTime(ms: number): string {
+  return new Date(ms).toLocaleString("en-US", {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit",
+    hour12: true, timeZone: "America/New_York",
+  }) + " ET";
 }
 
 const BUCKETS: Array<{ label: string; ms: number }> = [
@@ -288,6 +296,14 @@ export default function OdteContractChart({
               </div>
             )}
 
+            {/* Flat-tape banner — marks-only history (no prints, no range) is not a session read */}
+            {stats && stats.high === stats.low && stats.totalBuy + stats.totalSell === 0 && (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-[10px] text-amber-400" data-testid="text-flat-tape">
+                flat tape — these bars are quote marks only, no trades printed while tracking
+                {meta.lastTradeTime ? ` · last actual trade ${fmtTradeTime(meta.lastTradeTime)}` : ""}
+              </div>
+            )}
+
             {/* Price pane — bigger */}
             <div className="h-[280px] w-full rounded-md border border-border/30 bg-background/40 p-1">
               <ResponsiveContainer width="100%" height="100%">
@@ -399,8 +415,9 @@ export default function OdteContractChart({
               <div className="flex items-center justify-between px-2 pt-1 text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
                 <span>Volume · buy vs sell (Lee-Ready)</span>
                 {stats && stats.totalBuy + stats.totalSell === 0 && meta.volume != null && meta.volume > 0 && (
-                  <span className="text-[9px] text-amber-400/80 normal-case tracking-normal">
-                    no new prints · session total {meta.volume.toLocaleString()}
+                  <span className="text-[9px] text-amber-400/80 normal-case tracking-normal" data-testid="text-no-new-prints">
+                    no new prints since tracking began · session total {meta.volume.toLocaleString()}
+                    {meta.lastTradeTime ? ` · last trade ${fmtTradeTime(meta.lastTradeTime)}` : ""}
                   </span>
                 )}
               </div>
@@ -533,6 +550,10 @@ function DetailsPane({
           tone={meta.classification === "buy" ? "up" : meta.classification === "sell" ? "down" : undefined}
         />
 
+        <DetailRow
+          label="Last trade"
+          value={meta.lastTradeTime ? fmtTradeTime(meta.lastTradeTime) : "—"}
+        />
         <DetailRow label="Volume" value={meta.volume != null ? meta.volume.toLocaleString() : "—"} />
         <DetailRow
           label="Δ Volume"

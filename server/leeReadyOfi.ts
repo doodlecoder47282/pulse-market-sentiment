@@ -1,6 +1,6 @@
 // server/leeReadyOfi.ts
 //
-// Wire 13 — 1-min Lee-Ready OFI session-cumulative trend.
+// Wire 13 — 1-min Lee-Ready OFI session-cumulative trend (SPY volume proxy).
 //
 // Deterministic bar-level tick-rule approximation:
 //   close > prev.close  → buy  (direction = +1), signed volume = +volume
@@ -56,7 +56,10 @@ const NEUTRAL_TREND: OfiTrend = {
 export async function computeOfiTrend(): Promise<OfiTrend> {
   if (cache && Date.now() - cache.ts < CACHE_MS) return cache.trend;
 
-  const history = await getPriceHistory("$SPX.X", "day", 1, "minute", 1);
+  // SPY, not $SPX.X — Schwab reports zero volume on index candles, which made
+  // every signed-volume bar 0 and the panel permanently NEUTRAL/FLAT. SPY is
+  // the liquid tradable proxy so the Lee-Ready tick rule actually has volume.
+  const history = await getPriceHistory("SPY", "day", 1, "minute", 1);
   if (!history.candles || history.candles.length < 2) {
     cache = { ts: Date.now(), trend: NEUTRAL_TREND };
     return NEUTRAL_TREND;

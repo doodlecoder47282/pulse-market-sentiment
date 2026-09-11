@@ -121,6 +121,22 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
     );
   }
 
+  // Honest zero-graded state — the log has predictions but none could be graded
+  // (realized closes unavailable). Say that plainly instead of a "no data" badge.
+  if (data.gradedPredictions === 0) {
+    return (
+      <Card className="border-amber-500/30 bg-amber-500/5">
+        <CardContent className="p-4">
+          <div className="flex items-center gap-2 text-[11px] text-amber-300" data-testid="text-ml-grading-paused">
+            <AlertTriangle className="h-3 w-3" />
+            grading paused — {data.totalPredictions} predictions logged but no realized closes to grade against yet.
+            backfills automatically once daily bars update.
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   const brier = brierBadge(data.brierScore);
   const trend = trendDelta(data.trail);
 

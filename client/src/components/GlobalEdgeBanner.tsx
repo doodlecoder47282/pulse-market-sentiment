@@ -14,6 +14,7 @@
  */
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { AlertTriangle, X, Zap, Activity, Wifi } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -50,8 +51,8 @@ export default function GlobalEdgeBanner({
   const { data: kp } = useQuery<{ kpNow?: number; kpMax24h?: number }>({
     queryKey: ["/api/cosmos/kp-summary"],
     queryFn: async () => {
-      const r = await fetch("/api/cosmos/sky");
-      if (!r.ok) return {};
+      const r = await apiRequest("GET", "/api/cosmos/sky").catch(() => null);
+      if (!r || !r.ok) return {};
       const j = await r.json();
       return {
         kpNow: j?.kp?.now ?? j?.kp?.current ?? null,

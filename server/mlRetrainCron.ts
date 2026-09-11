@@ -109,4 +109,25 @@ export function startMlRetrainCron(): void {
 
   // Boot-time backfill (opt-in)
   scheduleBootBackfill();
+
+  // Boot-time staleness check: the Sunday cron only fires while the server is
+  // awake, so after a long sleep the models can sit months out of date. If any
+  // model's trained_at is older than 7 days, kick a retrain over the full
+  // logged history 45s after boot (non-blocking, skipped if sidecar is down).
+  setTimeout(async () => {
+    try {
+      const res = await fetch(`${ML_URL()}/health`, { signal: AbortSignal.timeout(3000) });
+      if (!res.ok) return;
+      const h = await res.json() as { models?: Record<string, { trained_at?: number }> };
+      const staleSec = 7 * 24 * 60 * 60;
+      const nowSec = Math.floor(Date.now() / 1000);
+      const oldest = Math.min(...Object.values(h.models ?? {}).map(m => m.trained_at ?? 0));
+      if (oldest > 0 && nowSec - oldest > staleSec) {
+        console.log(`[ml:retrain] models stale (oldest trained ${Math.round((nowSec - oldest) / 86400)}d ago) — kicking boot retrain`);
+        kickRetrain().catch((e) => console.error(`[ml:retrain:failed] boot: ${e?.message ?? e}`));
+      }
+    } catch {
+      // sidecar unreachable — nothing to do
+    }
+  }, 45_000);
 }

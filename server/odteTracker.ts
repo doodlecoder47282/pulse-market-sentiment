@@ -69,6 +69,7 @@ export interface ContractRow {
   classification: Classification;
   buyFlag: boolean;             // large notional + buy-classified
   distance: number;             // abs(strike − spot)
+  lastTradeTime: number | null; // epoch ms of the contract's last actual print (Schwab tradeTimeInLong)
 }
 
 export interface TickEvent {
@@ -293,6 +294,7 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
     const cls = deltaVol > 0 ? classify(last, bid, ask, prevLast) : "neutral";
     const notional = deltaVol > 0 && last != null ? deltaVol * last * 100 : 0;
     const buyFlag = cls === "buy" && notional >= DEFAULT_MIN_NOTIONAL;
+    const lastTradeTime = typeof c.tradeTimeInLong === "number" && c.tradeTimeInLong > 0 ? c.tradeTimeInLong : null;
 
     rows.push({
       key,
@@ -309,6 +311,7 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
       classification: cls,
       buyFlag,
       distance: Math.abs(strike - spot),
+      lastTradeTime,
     });
 
     prevByKey.set(key, { volume, last });

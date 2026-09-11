@@ -996,6 +996,26 @@ export function FlowStrip() {
   const agg = data.aggregate;
   const color = zoneColor(agg.zone);
 
+  // Honest offline state — no index/mag7 PCR means the options feed has nothing
+  // to say right now. A flat sparkline with dashes reads like a broken signal.
+  const feedDead = agg.indexPcr == null && agg.mag7Pcr == null;
+  if (feedDead) {
+    return (
+      <div className="flex flex-wrap items-center gap-3 rounded-md border border-border/40 bg-card/40 px-3 py-2 backdrop-blur" data-testid="flow-strip">
+        <div className="flex items-center gap-2">
+          <Activity className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">P/C Flow</span>
+        </div>
+        <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider text-amber-300">
+          feed offline
+        </span>
+        <span className="ml-auto font-mono text-[9px] text-muted-foreground">
+          no options prints — resumes with live session
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div className={`flex flex-wrap items-center gap-3 rounded-md border ${color.border} ${color.bg} px-3 py-2 backdrop-blur`} data-testid="flow-strip">
       <div className="flex items-center gap-2">

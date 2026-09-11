@@ -58,6 +58,27 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
 
   if (isLoading || !data || data.bars.length < 5) return null;
 
+  // Dead-feed guard: if every bar is zero there is no flow to read — render an
+  // honest one-liner instead of an empty chart pretending to be a signal.
+  const allZero = data.bars.every(b => b.signedVolume === 0 && b.cumulative === 0);
+  if (allZero) {
+    return (
+      <div className="rounded-md border border-border/60 bg-card/40 p-2.5" data-testid="ofi-histogram">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+            Order Flow · 1m signed volume (SPY proxy)
+          </span>
+          <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider text-amber-300">
+            no prints
+          </span>
+          <span className="ml-auto font-mono text-[9px] text-muted-foreground">
+            feed idle — resumes with live session volume
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   const trendColor =
     data.trend === "BULLISH" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
     : data.trend === "BEARISH" ? "border-rose-500/40 bg-rose-500/10 text-rose-300"
@@ -85,7 +106,7 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
     <div className="rounded-md border border-border/60 bg-card/40 p-2.5" data-testid="ofi-histogram">
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-          Order Flow · 1m signed volume (SPX)
+          Order Flow · 1m signed volume (SPY proxy)
         </span>
         <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${trendColor}`}>
           <TrendIcon className="h-2.5 w-2.5" /> {data.trend}

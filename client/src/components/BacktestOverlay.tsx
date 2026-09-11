@@ -199,7 +199,14 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
-        <span className="ml-auto text-muted-foreground/50">computed {computedStr}</span>
+        <span className="ml-auto text-muted-foreground/50">
+          {data?.computedAt != null && Date.now() - data.computedAt * 1000 > 7 * 24 * 60 * 60 * 1000 && (
+            <Badge variant="outline" className="mr-1.5 border-rose-500/40 font-mono text-[8px] text-rose-300" data-testid="badge-backtest-stale">
+              STALE · REBUILDING
+            </Badge>
+          )}
+          computed {computedStr}
+        </span>
       </button>
 
       {open && (

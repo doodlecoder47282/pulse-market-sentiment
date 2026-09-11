@@ -4119,11 +4119,19 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     }
   });
 
-  // Kick off initial backfill in background on boot (non-blocking)
+  // Kick off backfill in background on boot (non-blocking).
+  // Rebuild when empty OR stale (>7 days old) — the summary card was showing
+  // "computed Jun 23" months later because it only ever ran on an empty table.
   setTimeout(() => {
-    getBacktestSummary().byLevel && Object.keys(getBacktestSummary().byLevel).length === 0 &&
-      runBackfill(5).then(r => console.log("[backtest] initial backfill:", r))
-                    .catch(e => console.error("[backtest] initial backfill failed:", e?.message || e));
+    const s = getBacktestSummary();
+    const empty = !s.byLevel || Object.keys(s.byLevel).length === 0;
+    const staleMs = 7 * 24 * 60 * 60 * 1000;
+    const stale = s.computedAt != null && Date.now() - s.computedAt * 1000 > staleMs;
+    if (empty || stale) {
+      console.log(`[backtest] boot rebuild (${empty ? "empty" : "stale"})…`);
+      runBackfill(5).then(r => console.log("[backtest] boot backfill:", r))
+                    .catch(e => console.error("[backtest] boot backfill failed:", e?.message || e));
+    }
   }, 8_000);
 
   // ─── 0DTE live tracker ────────────────────────────────────────────────────
