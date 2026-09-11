@@ -21,6 +21,7 @@
 //   app.post("/api/master-alpha", masterAlphaRoute);
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { vixToAtmPct } from "@shared/vol";
 import Anthropic from "@anthropic-ai/sdk";
 import type { ModelHorizon, Horizon } from "./models";
 import type { PivotBundle } from "./pivots";
@@ -387,7 +388,7 @@ function gtbrComponent(
   // dt scales by horizon
   const dtDays = horizon === "daily" ? 1 : horizon === "weekly" ? 5 : horizon === "monthly" ? 21 : 63;
   const dt = dtDays / 252;
-  const sigma = vix / 100;
+  const sigma = vixToAtmPct(vix) / 100; // VIX → true ATM vol
   // 1σ move, then scale inversely by |gamma| (more gamma → tighter trigger)
   const sigma1pt = spot * sigma * Math.sqrt(dt);
   // Dealer-trigger factor: empirical — tighter when gamma is concentrated
@@ -489,7 +490,7 @@ function sizePosition(
   const R = rHat_bps / 10000;
   const pnl_M = 50 * Math.abs(dollarGamma_M) * R * R;
   // ATM-equivalent per-contract $Γ
-  const sigma = Math.max(0.08, (vix ?? 20) / 100);
+  const sigma = Math.max(0.08, vixToAtmPct(vix ?? 20) / 100);
   const dtDays = horizon === "daily" ? 1 : horizon === "weekly" ? 5 : horizon === "monthly" ? 21 : 63;
   const T = Math.max(1/365, dtDays / 252);
   const gammaATM = 1 / (spot * sigma * Math.sqrt(T) * Math.sqrt(2 * Math.PI));
@@ -646,7 +647,7 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
   const charmC = charmComponent(netCharm_M, daysAway, h);
 
   // --- Component 2: Vanna (amplifier on charm, not standalone) ---
-  const iv = vix != null ? vix / 100 : null;
+  const iv = vix != null ? vixToAtmPct(vix) / 100 : null; // true ATM vol for honest IV/RV comparison
   const hv = realisedVol ?? null;
   const vannaC = vannaComponent(netVanna_M, charmC.directionBps, iv, hv, daysAway, h);
 

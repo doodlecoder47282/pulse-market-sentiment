@@ -1,3 +1,4 @@
+import { vixToAtmPct } from "@shared/vol";
 /**
  * dailyPlaybook.ts
  *
@@ -119,9 +120,10 @@ function sessionET(): "premarket" | "rth" | "afterhours" | "closed" {
   return "closed";
 }
 
-/** 1-sigma daily move from VIX: sigma_daily = VIX/100 / sqrt(252) */
+/** 1-sigma daily move from VIX: convert VIX to true ATM vol first (VIX
+ * prices the put wing and overstates ATM by ~1.146x), then scale to daily. */
 function impliedDailySigma(vix: number, spot: number): number {
-  const v = Math.max(8, Math.min(80, vix)) / 100;
+  const v = vixToAtmPct(Math.max(8, Math.min(80, vix))) / 100;
   return spot * v / Math.sqrt(252);
 }
 

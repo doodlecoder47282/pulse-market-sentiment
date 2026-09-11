@@ -28,6 +28,7 @@
 // shown at SPX price scale using SPY's chain rescaled by the ratio — a common
 // approach since SPX·0.1 ≈ SPY to a few bps).
 
+import { vixToAtmPct } from "@shared/vol";
 import type { ExposureProfile, ExposureRow } from "./exposureProfile";
 import { buildExposureProfile } from "./exposureProfile";
 import { chainToRows } from "./exposures";
@@ -304,8 +305,10 @@ function maxPain(rows: ExposureRow[]): number | null {
 
 // sigmaBand — expected one-sigma move from VIX and horizon.
 // vix is in annualized %; returns a price delta.
+// VIX overstates true ATM vol (it prices the whole put wing), so convert
+// via VIX_TO_ATM before building the band — otherwise "1σ" is really ~1.15σ.
 function sigmaBand(spot: number, vix: number | null, horizon: Horizon): number {
-  const vol = Math.max(8, Math.min(80, vix ?? 18)) / 100;  // clamp for sanity
+  const vol = vixToAtmPct(Math.max(8, Math.min(80, vix ?? 18))) / 100;  // clamp for sanity
   const days =
     horizon === "daily" ? 1
       : horizon === "weekly" ? 5
@@ -944,8 +947,9 @@ function buildAudit(
   // window when we publish the card (charm/theta has already burned some).
   // If VIX feed is missing, fall back to ~1.0% fixed EM — conservative.
   const vixForEM = extras.vixForEM ?? null;
+  // vixForEM is a VIX-style level — convert to true ATM vol before the EM.
   const fullDayEM = vixForEM != null && vixForEM > 0
-    ? spot * (vixForEM / 100) * Math.sqrt(1 / 252)
+    ? spot * (vixToAtmPct(vixForEM) / 100) * Math.sqrt(1 / 252)
     : spot * 0.010;
   const oneDayEM = fullDayEM * 0.55;
 
@@ -1155,7 +1159,7 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
 
   // ---- Selz #3/#4: intraday recal + DoD lookups ----
   const tradeDate = etTradeDate(new Date());
-  const iv1dNow = vix != null ? vix / Math.sqrt(252) : null;
+  const iv1dNow = vix != null ? vixToAtmPct(vix) / Math.sqrt(252) : null;
   const prevDay = storage.getPrevTradeDayRecal(symbol, horizon, tradeDate);
   const lastRecalRow = storage.getLatestRecal(symbol, horizon);
   const openRecal = storage.getTodayOpenRecal(symbol, horizon, tradeDate);

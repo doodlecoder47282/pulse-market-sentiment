@@ -1,3 +1,4 @@
+import { vixToAtmPct } from "@shared/vol";
 import type { Express } from "express";
 import type { Server } from "node:http";
 import { storage } from "./storage";
@@ -225,7 +226,8 @@ function applyTermStructureRescale(
     // weekly (7 calendar days ≈ 5 trading days)
     let weeklyEM: number;
     if (vix9d && vix9d > 0) {
-      weeklyEM = spot * (vix9d / 100) * Math.sqrt(7 / 365);
+      // VIX9D is variance-swap style like VIX — same put-wing contamination.
+      weeklyEM = spot * (vixToAtmPct(vix9d) / 100) * Math.sqrt(7 / 365);
     } else {
       weeklyEM = dailyEM * Math.sqrt(5);
     }
@@ -233,7 +235,7 @@ function applyTermStructureRescale(
     // monthly (21 trading days)
     let monthlyEM: number;
     if (vix && vix > 0) {
-      monthlyEM = spot * (vix / 100) * Math.sqrt(21 / 252);
+      monthlyEM = spot * (vixToAtmPct(vix) / 100) * Math.sqrt(21 / 252);
     } else {
       monthlyEM = dailyEM * Math.sqrt(21);
     }
@@ -241,7 +243,7 @@ function applyTermStructureRescale(
     // quarterly (63 trading days, mean-reversion damped)
     let quarterlyEM: number;
     if (vix && vix > 0) {
-      quarterlyEM = spot * (vix / 100) * Math.sqrt(63 / 252) * 0.85;
+      quarterlyEM = spot * (vixToAtmPct(vix) / 100) * Math.sqrt(63 / 252) * 0.85;
     } else {
       quarterlyEM = dailyEM * Math.sqrt(63) * 0.85;
     }

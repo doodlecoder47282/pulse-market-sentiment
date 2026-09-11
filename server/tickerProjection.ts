@@ -1,3 +1,4 @@
+import { vixToAtmPct } from "@shared/vol";
 // server/tickerProjection.ts
 //
 // Forward vol cone for ANY ticker. Generalizes multiDayProjection.ts to N
@@ -143,7 +144,8 @@ export async function buildTickerProjection(
     ]) as any[];
     const vix = quotes.find((q: any) => q.symbol === "$VIX")?.last;
     if (vix && sigmaAnnualizedPct > 0) {
-      const ratio = vix / sigmaAnnualizedPct;
+      // true ATM vol vs realized — raw VIX overstates the blowup ratio ~1.15x
+      const ratio = vixToAtmPct(vix) / sigmaAnnualizedPct;
       volBlowupFactor = Math.max(0.7, Math.min(2.0, ratio));
     }
   } catch {}

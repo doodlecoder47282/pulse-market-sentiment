@@ -1,3 +1,4 @@
+import { vixToAtmPct } from "@shared/vol";
 // server/multiDayProjection.ts
 //
 // Multi-day forward vol cone for SPX / SPY.
@@ -129,7 +130,8 @@ export async function buildMultiDayCone(symbol: string): Promise<MultiDayConeRes
     const quotes = await getQuotes(["$VIX"]);
     const vix = quotes.find((q) => q.symbol === "$VIX")?.last;
     if (vix && sigmaAnnualizedPct > 0) {
-      const ratio = vix / sigmaAnnualizedPct;
+      // true ATM vol vs realized — raw VIX overstates the blowup ratio ~1.15x
+      const ratio = vixToAtmPct(vix) / sigmaAnnualizedPct;
       volBlowupFactor = Math.max(0.7, Math.min(2.0, ratio));
     }
   } catch {

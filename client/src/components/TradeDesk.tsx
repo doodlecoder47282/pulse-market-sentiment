@@ -10,6 +10,7 @@ import EdgeStatsPanel from "@/components/EdgeStatsPanel";
 import OfiHistogram from "@/components/OfiHistogram";
 import { RegimeChip } from "@/components/RegimeChip";
 import type { GammaStructure } from "@shared/schema";
+import { vixToAtmPct } from "@shared/vol";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -1574,7 +1575,8 @@ function EodPlayMaker() {
     const spot = (realSpx != null && realSpx > 1000) ? realSpx : (weekly?.spot ?? null);
 
     const vixVal = vol?.vix?.value ?? null;
-    const iv1d = vixVal != null ? (vixVal / Math.sqrt(252)).toFixed(2) : null;
+    // VIX → true ATM vol before scaling to 1d (VIX prices the put wing, ~1.146x rich)
+    const iv1d = vixVal != null ? (vixToAtmPct(vixVal) / Math.sqrt(252)).toFixed(2) : null;
 
     const lvl = (kind: string) => {
       const l = weekly?.levels?.find((x: any) => x.kind === kind);

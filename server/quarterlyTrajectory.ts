@@ -1,3 +1,4 @@
+import { vixToAtmPct } from "@shared/vol";
 /**
  * quarterlyTrajectory.ts  —  v2 (precision pass)
  *
@@ -216,7 +217,7 @@ function computeVrpScale(
   if (realizedVol20d == null || !isFinite(realizedVol20d) || realizedVol20d <= 0) {
     return { ratio: null, scale: 1.0 };
   }
-  const iv = vix / 100; // VIX 17.3 → 0.173 (annualized fraction)
+  const iv = vixToAtmPct(vix) / 100; // VIX → true ATM vol (annualized fraction)
   if (iv <= 0) return { ratio: null, scale: 1.0 };
   const ratio = realizedVol20d / iv;
   const scale = Math.max(0.7, Math.min(1.3, ratio));
@@ -263,7 +264,7 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
   const compositeTilt = ((composite - 50) / 250) / 13;
 
   // 2. GEX regime tilt
-  const sigmaQ = spot * (vix / 100) * Math.sqrt(63 / 252);
+  const sigmaQ = spot * (vixToAtmPct(vix) / 100) * Math.sqrt(63 / 252);
   const spotVsFlip = (spot - gammaFlip) / Math.max(1, sigmaQ);
   const spotVsFlipClamped = Math.max(-1, Math.min(1, spotVsFlip));
   const gexTilt = totalGex >= 0

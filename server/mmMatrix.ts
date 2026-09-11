@@ -25,6 +25,7 @@
 //   action                dealer action tag: defend | accelerate | fade | pin | capitulate
 //   bias                  net directional bias (−1 .. +1)
 
+import { vixToAtmPct } from "@shared/vol";
 import type { ModelHorizon, ModelLevel } from "./models";
 
 export type MMRegime =
@@ -353,7 +354,7 @@ function magnitudeFor(
   horizonDays: number,
 ): number {
   if (!vix) return 0;
-  const iv = vix / 100;
+  const iv = vixToAtmPct(vix) / 100; // VIX → true ATM vol
   const sigma1 = spot * iv * Math.sqrt(Math.max(1, horizonDays) / 252);
 
   const regimeMult: Record<MMRegime, number> = {
