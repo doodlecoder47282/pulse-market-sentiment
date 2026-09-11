@@ -207,6 +207,42 @@
     /* Kills the white rubber-band void on iOS Safari when overscrolling */
     overscroll-behavior-y: none;
     background-color: hsl(var(--background));
+    /* No gray flash on iOS taps — we provide our own press feedback */
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Interactive elements: no double-tap-zoom delay, no accidental text
+     selection mid-swipe, GPU-composited press feedback. */
+  button, [role="button"], [role="tab"], a, label, summary {
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Soft press — every button/tab sinks slightly under the finger and
+     springs back. transform-only so it never triggers layout. */
+  button:active:not(:disabled),
+  [role="button"]:active,
+  [role="tab"]:active {
+    transform: scale(0.97);
+  }
+  button, [role="button"], [role="tab"] {
+    transition: transform 120ms cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  /* Horizontal scrollers glide with momentum on touch devices */
+  .scrollbar-none, .tabs-scroll-container {
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+    overscroll-behavior-x: contain;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 
   body {
@@ -307,6 +343,9 @@
     border-radius: inherit;
     z-index: 999;
     /* sits in front of content */
+    /* fade in/out instead of snapping — soft hover, soft release */
+    background-color: transparent;
+    transition: background-color 140ms ease-out;
   }
 
   .hover-elevate:hover:not(.no-default-hover-elevate)::after,

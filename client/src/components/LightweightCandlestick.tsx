@@ -98,6 +98,21 @@ export default function LightweightCandlestick({
         vertLine: { color: "rgba(34,211,238,0.4)", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#0891b2" },
         horzLine: { color: "rgba(34,211,238,0.4)", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#0891b2" },
       },
+      // Buttery gestures — pinch to zoom, momentum glide after a flick,
+      // drag anywhere (chart or axes) to pan/scale.
+      handleScale: {
+        pinch: true,
+        mouseWheel: true,
+        axisPressedMouseMove: { time: true, price: true },
+        axisDoubleClickReset: { time: true, price: true },
+      },
+      handleScroll: {
+        mouseWheel: false, // wheel = zoom, not scroll (matches trading platforms)
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: false, // leave vertical swipes to the page
+      },
+      kineticScroll: { touch: true, mouse: true },
     });
     const candle = chart.addSeries(CandlestickSeries, {
       upColor: "#10b981",
@@ -129,14 +144,21 @@ export default function LightweightCandlestick({
       if (id && onMarkerClickRef.current) onMarkerClickRef.current(id);
     });
 
-    const onResize = () => {
-      if (containerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
-      }
-    };
-    window.addEventListener("resize", onResize);
+    // Double-click/double-tap on the chart body resets the view.
+    const el = containerRef.current;
+    const onDblClick = () => chart.timeScale().fitContent();
+    el.addEventListener("dblclick", onDblClick);
+
+    // ResizeObserver — follows container size (rotation, layout shifts,
+    // sidebar toggles) without waiting for a window resize event.
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect?.width;
+      if (w && chartRef.current) chartRef.current.applyOptions({ width: Math.floor(w) });
+    });
+    ro.observe(el);
     return () => {
-      window.removeEventListener("resize", onResize);
+      ro.disconnect();
+      el.removeEventListener("dblclick", onDblClick);
       chart.remove();
       chartRef.current = null;
       candleRef.current = null;

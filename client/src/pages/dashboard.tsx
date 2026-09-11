@@ -217,6 +217,18 @@ export default function Dashboard() {
     return () => clearInterval(id);
   }, []);
 
+  // Keep the active tab centered in both scrollable nav strips — the strip
+  // follows the finger instead of leaving the selection off-screen.
+  useEffect(() => {
+    for (const sel of [`[data-testid="tab-${activeTab}"]`, `[data-testid="bottomnav-${activeTab}"]`]) {
+      const btn = document.querySelector<HTMLElement>(sel);
+      const strip = btn?.closest<HTMLElement>(".tabs-scroll-container, .scrollbar-none");
+      if (btn && strip && strip.scrollWidth > strip.clientWidth) {
+        strip.scrollTo({ left: btn.offsetLeft - (strip.clientWidth - btn.offsetWidth) / 2, behavior: "smooth" });
+      }
+    }
+  }, [activeTab]);
+
   // Toast on snapshot fetch error
   useEffect(() => {
     if (isError) {
