@@ -1,5 +1,6 @@
 import { vixToAtmPct } from "@shared/vol";
 import { getWidgetLayout, saveWidgetLayout, resetWidgetLayout } from "./widgetLayouts";
+import { buildTradeEnvironment, startTradeEnvironmentWatch } from "./tradeEnvironment";
 import type { Express } from "express";
 import type { Server } from "node:http";
 import { storage } from "./storage";
@@ -4006,6 +4007,16 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   const heatseekerCache = new Map<string, { at: number; data: any }>();
   const HEATSEEKER_CACHE_MS = 5_000;
 
+  // Trade environment — fused no-trade/chop/normal/loaded/strike classifier
+  app.get("/api/trade-environment", async (_req, res) => {
+    try {
+      const env = await buildTradeEnvironment();
+      res.json(env);
+    } catch (e: any) {
+      res.status(503).json({ message: e?.message ?? "Failed to build trade environment" });
+    }
+  });
+
   app.get("/api/heatseeker", async (req, res) => {
     try {
       const rawSymbol = String(req.query.symbol || "$SPX").trim();
@@ -4936,6 +4947,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   // Kick off MM-matrix scheduler (10/13/15:30 ET snapshots, 16:30 grading)
   startMmScheduler();
   startDiscordScheduler();
+  startTradeEnvironmentWatch();
 
   // Kick off closed-loop edge grader (30-min cadence, idempotent)
   try {

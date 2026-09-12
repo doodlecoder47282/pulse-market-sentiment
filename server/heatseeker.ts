@@ -52,6 +52,18 @@ export interface StickyZone {
   interpretation: string;     // human-readable
 }
 
+export interface PivotBand {
+  center: number;          // volume/gamma-weighted centroid — sub-strike precision
+  low: number;             // tight band bounds
+  high: number;
+  role: "pin" | "exhaust-high" | "exhaust-low" | "accelerant" | "flip";
+  strength: number;        // 0-100 composite intensity at the peak
+  freshness: number;       // 0-100 — today's volume vs standing OI (fresh positioning)
+  side: "above" | "below" | "at";
+  distancePct: number;     // centroid distance from spot, %
+  read: string;            // plain-language one-liner
+}
+
 export interface HeatseekerResult {
   symbol: string;
   spot: number;
@@ -60,6 +72,7 @@ export interface HeatseekerResult {
   asOf: number;
   strikes: HeatseekerStrike[];
   stickyZones: StickyZone[];  // top 5 ranked
+  pivotBands: PivotBand[];    // tight confluence bands, sorted by price
   totals: {
     netGex: number;
     netDex: number;
@@ -118,6 +131,7 @@ export function buildHeatseeker(
       asOf: Date.now(),
       strikes: [],
       stickyZones: [],
+      pivotBands: [],
       totals: { netGex: 0, netDex: 0, netVanna: 0, netCharm: 0, callWall: null, putWall: null, zeroGamma: null },
       availableExpiries: [],
       requestedExpiry: targetExpiry ?? null,
@@ -359,6 +373,95 @@ export function buildHeatseeker(
     .slice(0, 5)
     .map((z, i) => ({ ...z, rank: i + 1 }));
 
+  // 6. Pivot bands — tight, defined levels with sub-strike precision.
+  //
+  // Sticky zones answer "which strikes matter". Pivot bands answer "exactly
+  // where does price stall or accelerate" — by finding local peaks of a
+  // composite intensity (gamma notional 45%, today's volume 25%, OI 15%,
+  // charm 15%), then computing a volume+gamma-weighted centroid across the
+  // peak and its adjacent strikes. Band width = weighted dispersion around
+  // the centroid, clamped tight (0DTE: max ±0.12% of spot).
+  const maxVol = Math.max(...strikes.map((s) => s.totalVol), 1);
+  const intensity = strikes.map((s) =>
+    (Math.abs(s.netGex) / maxAbsGex) * 45 +
+    (s.totalVol / maxVol) * 25 +
+    (s.totalOI / maxOI) * 15 +
+    (Math.abs(s.netCharm) / maxAbsCharm) * 15,
+  );
+
+  const maxBandHalf = spot * (dte <= 1 ? 0.0012 : dte <= 14 ? 0.0025 : 0.005);
+  const minBandHalf = spot * 0.0003;
+
+  const rawBands: PivotBand[] = [];
+  for (let i = 0; i < strikes.length; i++) {
+    const iv = intensity[i];
+    if (iv < 22) continue;
+    const prev = intensity[i - 1] ?? -1;
+    const next = intensity[i + 1] ?? -1;
+    if (iv < prev || iv < next) continue; // local peak only
+
+    // Weighted centroid across peak ±1 strike — weight blends intensity with
+    // today's volume so fresh flow drags the pivot toward where it's trading.
+    let wSum = 0, cSum = 0;
+    for (let j = Math.max(0, i - 1); j <= Math.min(strikes.length - 1, i + 1); j++) {
+      const w = intensity[j] * (1 + strikes[j].totalVol / maxVol);
+      wSum += w;
+      cSum += strikes[j].strike * w;
+    }
+    const center = wSum > 0 ? cSum / wSum : strikes[i].strike;
+    let varSum = 0;
+    for (let j = Math.max(0, i - 1); j <= Math.min(strikes.length - 1, i + 1); j++) {
+      const w = intensity[j] * (1 + strikes[j].totalVol / maxVol);
+      varSum += w * (strikes[j].strike - center) ** 2;
+    }
+    const spread = wSum > 0 ? Math.sqrt(varSum / wSum) : 0;
+    const half = Math.min(maxBandHalf, Math.max(minBandHalf, spread * 0.6));
+
+    const s = strikes[i];
+    const distPct = ((center - spot) / spot) * 100;
+    const side: PivotBand["side"] = Math.abs(distPct) < 0.05 ? "at" : distPct > 0 ? "above" : "below";
+    const freshness = Math.round(Math.min(100, (s.totalVol / Math.max(1, s.totalOI)) * 50));
+
+    let role: PivotBand["role"];
+    if (zeroGamma !== null && Math.abs(s.strike - zeroGamma) < spot * 0.001) role = "flip";
+    else if (s.netGex < 0) role = "accelerant";
+    else if (side === "at") role = "pin";
+    else if (side === "above") role = "exhaust-high";
+    else role = "exhaust-low";
+
+    const c = center.toFixed(1);
+    const read =
+      role === "flip" ? `gamma flips sign near ${c} — crossing it changes the whole tape from damped to amplified` :
+      role === "accelerant" ? `dealers are short gamma at ${c} — a push through this band speeds up, don't fade the first touch` :
+      role === "pin" ? `heavy long-gamma directly ${side === "at" ? "at spot" : "nearby"} — price gets pulled back to ${c}, moves away stall` :
+      role === "exhaust-high" ? `rallies run out of fuel into ${c} — dealers sell here; look for volume exhaustion before fading` :
+      `flushes find a floor near ${c} — dealers buy here; watch for the bounce unless volume keeps expanding`;
+
+    rawBands.push({
+      center: Math.round(center * 10) / 10,
+      low: Math.round((center - half) * 10) / 10,
+      high: Math.round((center + half) * 10) / 10,
+      role,
+      strength: Math.round(iv),
+      freshness,
+      side,
+      distancePct: Math.round(distPct * 100) / 100,
+      read,
+    });
+  }
+
+  // Merge overlapping bands (keep the stronger), cap at 7 closest to spot.
+  rawBands.sort((a, b) => b.strength - a.strength);
+  const merged: PivotBand[] = [];
+  for (const b of rawBands) {
+    if (merged.some((m) => b.low <= m.high && b.high >= m.low)) continue;
+    merged.push(b);
+  }
+  const pivotBands = merged
+    .sort((a, b) => Math.abs(a.distancePct) - Math.abs(b.distancePct))
+    .slice(0, 7)
+    .sort((a, b) => b.center - a.center);
+
   return {
     symbol,
     spot,
@@ -367,6 +470,7 @@ export function buildHeatseeker(
     asOf: Date.now(),
     strikes,
     stickyZones,
+    pivotBands,
     totals,
     availableExpiries,
     requestedExpiry: targetExpiry ?? null,

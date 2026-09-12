@@ -17,6 +17,7 @@ import Gauge from "@/components/Gauge";
 import Logo from "@/components/Logo";
 import { BatmanLogoSmall } from "@/components/BatmanLogo";
 import RegimeHeadline from "@/components/RegimeHeadline";
+import TradeEnvironmentStrip from "@/components/TradeEnvironmentStrip";
 import ThermalHeatmap from "@/components/ThermalHeatmap";
 import OfiHistogram from "@/components/OfiHistogram";
 import NewsPanel from "@/components/NewsPanel";
@@ -414,6 +415,9 @@ export default function Dashboard() {
       {/* Regime headline — one-sentence read on current market state */}
       <ErrorBoundary compact label="RegimeHeadline">
         <RegimeHeadline />
+      </ErrorBoundary>
+      <ErrorBoundary compact label="TradeEnvironmentStrip">
+        <TradeEnvironmentStrip />
       </ErrorBoundary>
 
       {/* Ticker tape — flows across the top under the header on every tab */}

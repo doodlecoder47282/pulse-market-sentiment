@@ -37,7 +37,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import { Activity, AlertTriangle, Flame, Target, TrendingDown, TrendingUp } from "lucide-react";
+import { Activity, AlertTriangle, Crosshair, Flame, Target, TrendingDown, TrendingUp } from "lucide-react";
 import LiveOdteTracker from "./LiveOdteTracker";
 import DepthSkewFlow from "./DepthSkewFlow";
 import OdteContractChart from "./OdteContractChart";
@@ -114,6 +114,7 @@ interface HeatseekerData {
   asOf: number;
   strikes: Strike[];
   stickyZones: StickyZone[];
+  pivotBands?: PivotBand[];
   totals: {
     netGex: number;
     netDex: number;
@@ -566,8 +567,111 @@ function LevelsEditor({
   );
 }
 
+type PivotBand = {
+  center: number;
+  low: number;
+  high: number;
+  role: "pin" | "exhaust-high" | "exhaust-low" | "accelerant" | "flip";
+  strength: number;
+  freshness: number;
+  side: "above" | "below" | "at";
+  distancePct: number;
+  read: string;
+};
+
+const BAND_STYLE: Record<PivotBand["role"], { chip: string; label: string; bar: string }> = {
+  "pin":          { chip: "bg-amber-950/60 text-amber-400 border-amber-900",   label: "PIN",       bar: "bg-amber-500" },
+  "exhaust-high": { chip: "bg-rose-950/60 text-rose-400 border-rose-900",      label: "EXHAUST",   bar: "bg-rose-500" },
+  "exhaust-low":  { chip: "bg-emerald-950/60 text-emerald-400 border-emerald-900", label: "EXHAUST", bar: "bg-emerald-500" },
+  "accelerant":   { chip: "bg-fuchsia-950/60 text-fuchsia-400 border-fuchsia-900", label: "ACCEL",  bar: "bg-fuchsia-500" },
+  "flip":         { chip: "bg-sky-950/60 text-sky-400 border-sky-900",         label: "FLIP",      bar: "bg-sky-500" },
+};
+
+function PivotBandsLadder({ bands, spot, expiry, dte, degraded }: { bands: PivotBand[]; spot: number; expiry: string; dte: number; degraded?: boolean }) {
+  if (!bands.length) return null;
+  // Insert the spot marker between the bands above and below current price.
+  const rows: Array<{ type: "band"; band: PivotBand } | { type: "spot" }> = [];
+  let spotInserted = false;
+  for (const b of bands) {
+    if (!spotInserted && b.center < spot) {
+      rows.push({ type: "spot" });
+      spotInserted = true;
+    }
+    rows.push({ type: "band", band: b });
+  }
+  if (!spotInserted) rows.push({ type: "spot" });
+
+  return (
+    <Card data-testid="pivot-bands-card">
+      <CardHeader className="pb-3">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Crosshair className="h-4 w-4 text-primary" />
+              Pivot Bands · defined levels
+              <EdgeInfo id="pivot-bands" />
+            </CardTitle>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {dte === 0 ? "0DTE" : `${dte}DTE`} · {expiry} — weighted centers of gamma, volume, OI and charm. Tight zones, not wide ranges.
+            </div>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-1.5">
+        {degraded && (
+          <div className="rounded border border-amber-900/60 bg-amber-950/30 px-2 py-1.5 text-[11px] text-amber-300/90" data-testid="pivot-bands-degraded">
+            greeks and OI are offline (feed idle) — these bands are volume-only estimates. full precision returns when the chain is live.
+          </div>
+        )}
+        {rows.map((r, i) =>
+          r.type === "spot" ? (
+            <div key={`spot-${i}`} className="flex items-center gap-2 py-0.5" data-testid="pivot-bands-spot">
+              <div className="h-px flex-1 bg-primary/40" />
+              <span className="font-mono text-[10px] font-bold tracking-widest text-primary">
+                SPOT {spot.toFixed(1)}
+              </span>
+              <div className="h-px flex-1 bg-primary/40" />
+            </div>
+          ) : (
+            <div
+              key={r.band.center}
+              className="rounded-md border border-border/50 bg-card/60 px-2.5 py-2"
+              data-testid={`pivot-band-${r.band.center}`}
+            >
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[9px] font-bold tracking-widest ${BAND_STYLE[r.band.role].chip}`}>
+                  {BAND_STYLE[r.band.role].label}
+                </span>
+                <span className="font-mono text-sm font-bold">
+                  {r.band.center.toFixed(1)}
+                  <span className="ml-2 text-[10px] font-normal text-muted-foreground">
+                    {r.band.low.toFixed(1)} – {r.band.high.toFixed(1)}
+                  </span>
+                </span>
+                <span className={`font-mono text-[10px] ${r.band.distancePct > 0 ? "text-emerald-400" : r.band.distancePct < 0 ? "text-rose-400" : "text-muted-foreground"}`}>
+                  {r.band.distancePct > 0 ? "+" : ""}{r.band.distancePct.toFixed(2)}%
+                </span>
+                <span className="ml-auto flex shrink-0 items-center gap-2">
+                  <span className="h-1.5 w-12 overflow-hidden rounded-full bg-slate-800" title={`strength ${r.band.strength}/100`}>
+                    <span className={`block h-full ${BAND_STYLE[r.band.role].bar}`} style={{ width: `${r.band.strength}%` }} />
+                  </span>
+                  <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                    fresh {r.band.freshness}
+                  </span>
+                </span>
+              </div>
+              <p className="mt-1 text-[11px] leading-snug text-slate-400">{r.band.read}</p>
+            </div>
+          ),
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function HeatseekerView({ data }: { data: HeatseekerData }) {
   const { strikes, stickyZones, totals, spot, expiry, dte, symbol, asOf } = data;
+  const pivotBands = data.pivotBands ?? [];
 
   // Dead-chain guard: overnight (or feed-down) the fresh 0DTE expiry has zero
   // OI and zero volume everywhere, so every exposure and sticky score is 0.
@@ -744,6 +848,9 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
               }))
         }
       />
+
+      {/* ── Pivot bands — tight defined levels for the selected expiry ─── */}
+      <PivotBandsLadder bands={pivotBands} spot={spot} expiry={expiry} dte={dte} degraded={chainDead} />
 
       {/* ── Heatmap grid ─────────────────────────────────────────────── */}
       <Card>

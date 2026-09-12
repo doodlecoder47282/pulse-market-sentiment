@@ -116,6 +116,27 @@ const INFO: Record<string, InfoEntry> = {
     how: "Treat an alarm as a caution flag on new risk \u2014 tighten stops, skip marginal entries. It is not an instant reversal call.",
     edge: "Canaries chirp before the mine floods. This is cheap insurance on every open position \u2014 the cost of listening is zero.",
   },
+  "pivot-bands": {
+    title: "Pivot Bands",
+    what: "Tight, machine-computed pivot zones for the selected expiry \u2014 each band is a weighted center of gamma notional, today's option volume, open interest, and charm, with sub-strike precision instead of a wide strike-to-strike range.",
+    how: "Each band has a role. EXHAUST bands are where rallies or flushes run out of fuel \u2014 fade zones once volume dries up. ACCELERANT bands are short-gamma zones \u2014 breaks through them speed up, never fade the first touch. PIN means price gets pulled back. FLIP is the line where the whole tape changes character. FRESH shows how much of the positioning is today's flow versus stale open interest.",
+    edge: "Everyone sees the same wide walls. The edge is precision: knowing the exact 3\u20135 point zone where dealer hedging actually kicks in lets you enter closer, stop tighter, and fade or follow with structure instead of vibes.",
+    risk: "Bands move as flow updates \u2014 a band that was exhaust in the morning can flip to accelerant after a big print. Re-check before every entry, and volume expansion through a band overrides its label.",
+  },
+  "trade-environment": {
+    title: "Trade Environment",
+    what: "One fused 0\u2013100 convexity index built from seven independent reads: dealer gamma posture, the VIX term structure, realized range expansion, order-flow impulse, cross-asset canaries, whale clustering, and wall proximity.",
+    how: "Five states. STAND DOWN and CHOP mean no edge \u2014 don't force trades. NORMAL means standard playbook. LOADED means the ingredients for a big move are stacking \u2014 pre-plan both directions and set alerts. STRIKE means convexity is live: short gamma plus expanding range plus directional flow \u2014 the flushes and squeezes happen here.",
+    edge: "Most losses come from trading the wrong days. Knowing when NOT to trade \u2014 and being fully ready the moment conditions flip \u2014 is worth more than any single entry signal. The strip tells you which day type you're in before you commit capital.",
+    risk: "A quiet score can jump inside one bar on a headline. LOADED is not a trade signal \u2014 it's a readiness signal. Wait for the trigger.",
+  },
+  "ml-forecast": {
+    title: "Projected Path",
+    what: "A machine-learned forecast of where SPY goes over the next hour, drawn as three paths: base (best guess), bull (realistic best case), and bear (realistic worst case), extended to the close.",
+    how: "Read the verdict strip first \u2014 it says lean up, lean down, or flat in one sentence. Then check band width: a tight band means the model is confident, a wide band means direction is a coin-flip and you should trade the levels instead. The dealer lines on the chart (walls, flip) are where the path is most likely to stall or accelerate.",
+    edge: "The forecast is not a crystal ball \u2014 the edge is knowing when the model is confident versus guessing. Tight band + a clear lean + gamma regime agreeing is the highest-probability window this panel produces.",
+    risk: "Forecasts decay fast after news or a regime break. If price rips through a wall the whole projection re-anchors \u2014 never hold a trade just because the old path said so.",
+  },
   "trade-desk": {
     title: "Trade Desk",
     what: "Position sizing, exit rules, and risk gates in one place, driven by the same data feeding every other panel.",

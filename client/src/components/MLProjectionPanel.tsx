@@ -47,6 +47,7 @@ import {
   Customized,
 } from "recharts";
 import { AlertTriangle, RefreshCw, Activity } from "lucide-react";
+import EdgeInfo from "./EdgeInfo";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -882,6 +883,22 @@ export default function MLProjectionPanel() {
   }
   const topInterps = interpretations.slice(0, 3);
 
+  // One-glance verdict — the single sentence a normal person needs.
+  const leanPct = basePrice != null && spot ? (basePrice - spot) / spot : null;
+  const lean: "UP" | "DOWN" | "FLAT" =
+    leanPct == null ? "FLAT" : leanPct > 0.0008 ? "UP" : leanPct < -0.0008 ? "DOWN" : "FLAT";
+  const convictionTight = bandWidth > 0 && spot ? bandWidth / spot < 0.004 : false;
+  const verdictText =
+    basePrice == null || spot == null
+      ? "projection warming up — verdict when the model has enough tape."
+      : lean === "FLAT"
+        ? `model sees a flat drift — expected close near $${fmtPrice(basePrice)}. ${convictionTight ? "tight band: the model is confident price stays contained." : "wide band: low conviction, trade the levels, not a direction."}`
+        : `model leans ${lean === "UP" ? "HIGHER" : "LOWER"} — base path to $${fmtPrice(basePrice)} (${fmtPct(leanPct)}). bull case $${fmtPrice(bullPrice)}, bear case $${fmtPrice(bearPrice)}. ${convictionTight ? "tight band = higher confidence in the path." : "wide band = direction is a coin-flip, respect both scenarios."}`;
+  const verdictStyle =
+    lean === "UP" ? "border-emerald-800 bg-emerald-950/40 text-emerald-200"
+    : lean === "DOWN" ? "border-rose-800 bg-rose-950/40 text-rose-200"
+    : "border-slate-700 bg-slate-900/60 text-slate-200";
+
   return (
     <Card data-testid="panel-ml-projection" className="border-border/60">
       <CardHeader className="space-y-2">
@@ -889,10 +906,11 @@ export default function MLProjectionPanel() {
           <div className="space-y-1">
             <CardTitle className="flex items-center gap-2">
               <Activity className="w-4 h-4 shrink-0" />
-              SPY — Projected Path (60min ML + extrapolation to close)
+              SPY — Projected Path
+              <EdgeInfo id="ml-forecast" />
             </CardTitle>
             <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
-              live SPY 5min candles + dealer levels + 3 model forward scenarios. updates every 5s during RTH. morning anchor (Model D) blends in 9:45-16:00 ET when the opening fingerprint is ready.
+              live candles, dealer levels, and three forward paths: where the model thinks price goes, best case and worst case. updates every 5s during market hours.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -950,6 +968,17 @@ export default function MLProjectionPanel() {
             model retraining — projection may be unreliable until next training cycle completes.
           </div>
         )}
+
+        {/* Verdict strip — one-glance read */}
+        <div
+          className={`flex items-center gap-3 rounded-md border px-3 py-2 ${verdictStyle}`}
+          data-testid="ml-verdict-strip"
+        >
+          <span className="shrink-0 rounded bg-black/30 px-2 py-0.5 font-mono text-[10px] font-bold tracking-widest">
+            {lean === "UP" ? "LEAN UP" : lean === "DOWN" ? "LEAN DOWN" : "FLAT"}
+          </span>
+          <span className="text-xs leading-snug">{verdictText}</span>
+        </div>
 
         {/* Chart */}
         <div
@@ -1231,6 +1260,9 @@ export default function MLProjectionPanel() {
             <div className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">
               key levels
             </div>
+            <p className="text-[10px] leading-snug text-muted-foreground/70">
+              how far price sits from the walls and the flip — small distances mean the level is in play right now.
+            </p>
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">spot</span>
               <span className="font-mono">
@@ -1279,10 +1311,13 @@ export default function MLProjectionPanel() {
           >
             <div className="text-xs font-semibold uppercase text-muted-foreground tracking-wider flex items-center justify-between">
               <span>scenarios ({activeHorizons[activeHorizons.length - 1] ?? 60}min)</span>
-              {(activeModel === "morning" || activeModel === "blend") && morning?.anchorTimeEt && (
-                <span className="font-mono normal-case text-[10px] text-cyan-300/80">anchor {morning.anchorTimeEt}</span>
-              )}
             </div>
+            <p className="text-[10px] leading-snug text-muted-foreground/70">
+              three paths: base is the model's best guess, bull and bear are the realistic best and worst cases.
+            </p>
+            {(activeModel === "morning" || activeModel === "blend") && morning?.anchorTimeEt && (
+              <div className="font-mono text-[10px] text-cyan-300/80">anchor {morning.anchorTimeEt}</div>
+            )}
             <div className="flex justify-between text-sm">
               <span className="text-emerald-400">bull (q90)</span>
               <span className="font-mono text-emerald-400">
@@ -1321,6 +1356,9 @@ export default function MLProjectionPanel() {
             <div className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">
               interpretation
             </div>
+            <p className="text-[10px] leading-snug text-muted-foreground/70">
+              what the numbers mean in plain language — read this first, then check the levels.
+            </p>
             <ul className="space-y-1.5 text-sm leading-relaxed">
               {topInterps.length === 0 ? (
                 <li className="text-muted-foreground">building reading…</li>
