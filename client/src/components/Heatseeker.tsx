@@ -1,3 +1,4 @@
+import EdgeInfo from "@/components/EdgeInfo";
 /**
  * Heatseeker.tsx — 0DTE live Greeks heatseeker view.
  *
@@ -683,6 +684,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <LivenessBadge feedName="heatseeker" value={spot} />
                   HEATSEEKER · {symbol} · {dte}DTE · exp {expiry}
+                  <EdgeInfo id="heatseeker-map" className="h-6 w-6" />
                 </div>
                 <div className="mt-0.5 font-mono text-2xl font-bold tabular-nums">
                   {Number.isFinite(spot) && spot > 0 ? spot.toFixed(2) : "—"}
@@ -937,6 +939,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
           <CardTitle className="flex items-center gap-2 text-base">
             <Activity className="h-4 w-4 text-primary" />
             Greek Profile · exposures across strikes
+            <EdgeInfo id="greek-profile" />
           </CardTitle>
           <div className="text-xs text-muted-foreground">
             GEX bars (left, $ per 1% move) · DEX/Vanna/Charm (right). Dashed = locked targets · solid = spot.
@@ -1055,6 +1058,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
           <CardTitle className="flex items-center gap-2 text-base">
             <Flame className="h-4 w-4 text-orange-500" />
             Sticky Zones · top 5 ranked by composite score
+            <EdgeInfo id="sticky-zones" />
           </CardTitle>
           <div className="text-xs text-muted-foreground">
             Score = 50% |GEX| + 30% OI density + 20% charm acceleration.

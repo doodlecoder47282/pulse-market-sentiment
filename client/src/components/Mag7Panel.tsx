@@ -1,3 +1,4 @@
+import EdgeInfo from "@/components/EdgeInfo";
 // Mag7Panel.tsx
 // Magnificent 7 indicator panel. Two variants exported:
 //   - <Mag7Panel />         full card with 7 member tiles + aggregate header
@@ -134,6 +135,7 @@ export default function Mag7Panel() {
         <div className="flex items-center gap-2">
           <Users className="h-4 w-4 text-cyan-400" />
           <div className="text-sm font-semibold uppercase tracking-wider">Mag 7</div>
+          <EdgeInfo id="mag7" />
           <Badge variant="outline" className="border-cyan-500/40 text-[10px] text-cyan-300">
             Equal-weight basket
           </Badge>

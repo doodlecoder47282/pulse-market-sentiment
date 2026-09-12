@@ -1,3 +1,4 @@
+import EdgeInfo from "@/components/EdgeInfo";
 // FlowPanel.tsx — Put/Call flow ratio dashboard panel.
 // Renders:
 //   1. Aggregate gauge (big read: combined PCR + zone badge)
@@ -876,6 +877,7 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
             <Activity className="h-4 w-4 text-cyan-400" />
             Put / Call Flow Ratio
             <LivenessBadge feedName="flow" value={agg.combinedPcr} className="ml-1" />
+            <EdgeInfo id="pc-flow" />
           </CardTitle>
           <div className="text-[10px] text-muted-foreground">
             Provider: {data.provider.toUpperCase()} · {new Date(data.asOf * 1000).toLocaleTimeString()}

@@ -1,3 +1,4 @@
+import EdgeInfo from "@/components/EdgeInfo";
 // client/src/components/models/MLAccuracyCard.tsx
 //
 // Honest, peer-to-peer ML accuracy card for the Models tab.
@@ -196,8 +197,9 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <Brain className="h-4 w-4 text-cyan-400" />
           <div>
-            <div className="text-[11px] uppercase tracking-[0.2em] text-cyan-300/80">
+            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-cyan-300/80">
               ML Agent Scorecard
+              <EdgeInfo id="ml-accuracy" className="h-6 w-6" />
             </div>
             <div className="text-[10px] text-muted-foreground">
               grades every prediction vs realized closes · honest, no inflation

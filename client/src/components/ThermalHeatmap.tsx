@@ -1,3 +1,4 @@
+import EdgeInfo from "@/components/EdgeInfo";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -230,6 +231,7 @@ export default function ThermalHeatmap() {
         <div className="flex items-center gap-2">
           <Flame className="w-4 h-4 text-amber-400" />
           <div className="text-slate-100 font-semibold text-sm tracking-wide">Thermal · dealer gamma map</div>
+          <EdgeInfo id="thermal-heatmap" />
         </div>
         <div className="flex items-center gap-1" data-testid="thermal-greek-selector">
           {(["per-date", "global"] as const).map(m => (

@@ -29,6 +29,7 @@ import { MacroTicker, MacroCarousel } from "@/components/MacroCarousel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTickers, type TabKey } from "@/components/TickerContext";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import WidgetStack from "@/components/WidgetStack";
 import LiveQuoteStrip from "@/components/LiveQuoteStrip";
 import ShortcutsModal from "@/components/ShortcutsModal";
 import { useTheme } from "@/components/ThemeContext";
@@ -556,23 +557,8 @@ export default function Dashboard() {
           {/* ── Regime tab (lazy) ── */}
           <TabsContent value="regime" className="space-y-6">
             <Suspense fallback={null}><TabHeadline tab="regime" /></Suspense>
-            <ErrorBoundary compact label="Canary">
-              <Suspense fallback={<PanelSkeleton variant="chart" />}>
-                <CanaryStrip />
-              </Suspense>
-            </ErrorBoundary>
-            <ErrorBoundary compact label="ThermalHeatmap">
-              <ThermalHeatmap />
-            </ErrorBoundary>
-            {/* Order flow lives directly under the heat map — same eye path: where gamma sits, then how tape is hitting it */}
-            <ErrorBoundary compact label="OrderFlow">
-              <OfiHistogram />
-            </ErrorBoundary>
-            <ErrorBoundary label="Regime Panel">
-              <Suspense fallback={<PanelSkeleton variant="chart" />}>
-                <RegimePanelLazy />
-              </Suspense>
-            </ErrorBoundary>
+            {/* Customizable widget stack — canary, thermal, order flow, regime engine by default */}
+            <WidgetStack tab="regime" defaults={["canary", "thermal-heatmap", "order-flow", "regime-panel"]} />
           </TabsContent>
 
           {/* ── Cosmos tab (lazy) — astrology intel brief + live sky engine ── */}
@@ -629,20 +615,8 @@ export default function Dashboard() {
               zeroGamma={gamma.zeroGamma ?? null}
             />
 
-            {/* Whale Flow panel — fresh detections + tracking + closed (with CONFLUX highlighting) */}
-            <ErrorBoundary label="Whale Flow">
-              <WhaleFlowPanel />
-            </ErrorBoundary>
-
-            {/* Tracked Signals — manual tracking across flow alerts, unusual flow, and whale hits */}
-            <ErrorBoundary label="Tracked Signals">
-              <TrackedSignalsPanel />
-            </ErrorBoundary>
-
-            {/* Put/Call flow — prominent above composite */}
-            <ErrorBoundary label="Flow Panel">
-              <FlowPanel onOpenSettings={() => setSettingsOpen(true)} />
-            </ErrorBoundary>
+            {/* Customizable widget stack — reorder, hide, or add widgets from anywhere */}
+            <WidgetStack tab="signals" defaults={["whale-flow", "tracked-signals", "pc-flow"]} />
 
             {/* Composite gauge — hero panel, full width */}
             <Card data-testid="card-composite">

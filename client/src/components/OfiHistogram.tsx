@@ -1,3 +1,4 @@
+import EdgeInfo from "@/components/EdgeInfo";
 // OfiHistogram.tsx
 // 1-min Lee-Ready signed-volume bars + session-cumulative line.
 // Compact sub-panel for Chart + Trade Desk (SPX feed).
@@ -108,6 +109,7 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
         <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
           Order Flow · 1m signed volume (SPY proxy)
         </span>
+        <EdgeInfo id="order-flow" className="h-6 w-6" />
         <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${trendColor}`}>
           <TrendIcon className="h-2.5 w-2.5" /> {data.trend}
         </span>

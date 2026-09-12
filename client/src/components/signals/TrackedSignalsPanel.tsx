@@ -1,3 +1,4 @@
+import EdgeInfo from "@/components/EdgeInfo";
 /**
  * TrackedSignalsPanel — shows all manually-tracked signals, grouped by ticker.
  *
@@ -199,6 +200,7 @@ export default function TrackedSignalsPanel() {
       <CardHeader className="pb-2">
         <div className="flex items-center gap-2 flex-wrap">
           <CardTitle className="text-sm font-semibold tracking-tight">Tracked Signals · grouped per ticker</CardTitle>
+          <EdgeInfo id="tracked-signals" />
           <Badge variant="outline" className="text-[10px]">
             {data?.open ?? 0} open · {data?.closed ?? 0} closed
           </Badge>

@@ -1,3 +1,4 @@
+import EdgeInfo from "@/components/EdgeInfo";
 // WhaleFlowPanel — surgical whale prints + UOA clusters, all collapsible.
 // Ticker rows roll up by default; click to expand for full contract context.
 // Backend gate is the source of truth — NO adjusters in this panel.
@@ -917,6 +918,7 @@ export default function WhaleFlowPanel() {
           <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-cyan-400" data-testid="header-whale-flow">
             <Activity className="h-4 w-4" />
             WHALE FLOW
+            <EdgeInfo id="whale-flow" />
           </CardTitle>
           <span className="text-muted-foreground text-xs" data-testid="whale-flow-tracking-count">
             {trackingPositions.length} tracking

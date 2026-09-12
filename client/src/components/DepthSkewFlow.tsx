@@ -1,3 +1,4 @@
+import EdgeInfo from "@/components/EdgeInfo";
 /**
  * DepthSkewFlow.tsx — three synchronized real-time views of the 0DTE chain
  *   1. Depth    — call OI vs put OI per strike (bipolar horizontal DOM)
@@ -257,6 +258,7 @@ export default function DepthSkewFlow() {
             <CardTitle className="flex items-center gap-2 text-base">
               {modeMeta[mode].icon}
               {modeMeta[mode].label} · {heat.data?.symbol} 0DTE
+              <EdgeInfo id="depth-skew-flow" />
             </CardTitle>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {modeMeta[mode].blurb}

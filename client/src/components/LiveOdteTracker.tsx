@@ -1,3 +1,4 @@
+import EdgeInfo from "@/components/EdgeInfo";
 /**
  * LiveOdteTracker.tsx
  *
@@ -358,6 +359,7 @@ function LiveTrackerView({
             <CardTitle className="flex items-center gap-2 text-base">
               <Radio className="h-4 w-4 animate-pulse text-orange-500" />
               Live 0DTE Tracker · {data.symbol}
+              <EdgeInfo id="odte-tracker" />
               <Badge variant="outline" className="ml-2 font-mono text-[10px]">
                 {data.dte}DTE · exp {data.expiry ?? "—"}
               </Badge>

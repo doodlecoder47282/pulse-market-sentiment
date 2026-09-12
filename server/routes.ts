@@ -1,4 +1,5 @@
 import { vixToAtmPct } from "@shared/vol";
+import { getWidgetLayout, saveWidgetLayout, resetWidgetLayout } from "./widgetLayouts";
 import type { Express } from "express";
 import type { Server } from "node:http";
 import { storage } from "./storage";
@@ -406,6 +407,35 @@ function rescaleLevelsForSpy(input: any, factor = 10): any {
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  // ── Widget layout persistence (customizable dashboard stacks) ──
+  app.get("/api/layout/:tab", (req, res) => {
+    try {
+      res.json(getWidgetLayout(String(req.params.tab)) ?? null);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "layout read failed" });
+    }
+  });
+  app.put("/api/layout/:tab", (req, res) => {
+    try {
+      const body = req.body as { order?: unknown; hidden?: unknown };
+      const order = Array.isArray(body?.order) ? body.order.filter((x) => typeof x === "string").slice(0, 40) : null;
+      const hidden = Array.isArray(body?.hidden) ? body.hidden.filter((x) => typeof x === "string").slice(0, 40) : [];
+      if (!order) return res.status(400).json({ message: "order must be a string array" });
+      saveWidgetLayout(String(req.params.tab), { order, hidden: hidden as string[] });
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "layout save failed" });
+    }
+  });
+  app.delete("/api/layout/:tab", (req, res) => {
+    try {
+      resetWidgetLayout(String(req.params.tab));
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message ?? "layout reset failed" });
+    }
+  });
+
   app.get("/api/snapshot", async (_req, res) => {
     try {
       const data = await getOrBuild(false);

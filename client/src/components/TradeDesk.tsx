@@ -1,3 +1,4 @@
+import EdgeInfo from "@/components/EdgeInfo";
 // Trade Desk — SPX/SPY/VIX intraday charts + pivots + gamma map + squeeze + playbook
 // Bloomberg dark aesthetic: near-black background, amber accents, monospace data,
 // tight rows. Zero-decorative — every pixel carries information.
@@ -186,6 +187,7 @@ export default function TradeDesk() {
         <div className="flex items-center gap-2">
           <Crosshair className="h-4 w-4 text-amber-500" />
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-500">Trade Desk</div>
+          <EdgeInfo id="trade-desk" className="h-6 w-6" />
           <Separator orientation="vertical" className="mx-1 h-4" />
           <LivenessBadge feedName="quotes" value={data.quotes.spy?.price ?? null} />
           <div className="font-mono text-[11px] text-muted-foreground">

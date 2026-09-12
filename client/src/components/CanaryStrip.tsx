@@ -1,3 +1,4 @@
+import EdgeInfo from "@/components/EdgeInfo";
 /**
  * CanaryStrip.tsx — commodity / cross-asset canary panel (Regime tab).
  *
@@ -74,6 +75,7 @@ export default function CanaryStrip() {
     <div className="rounded border border-border bg-card/40 p-3" data-testid="canary-panel">
       <div className="flex flex-wrap items-center gap-2 mb-1.5">
         <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-amber-300">Canary</span>
+        <EdgeInfo id="canary" className="h-6 w-6" />
         <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">cross-asset divergence · z vs own 20d vol</span>
         <span className={`text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border ${rs.cls}`} data-testid="canary-read">
           {rs.label}
