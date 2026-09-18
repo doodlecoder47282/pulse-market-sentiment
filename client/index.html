@@ -27,6 +27,21 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // Boot watchdog — iOS webviews cache a stale index.html whose hashed
+      // chunks were replaced by a newer deploy, leaving a permanent black
+      // screen. If the app hasn't mounted within 8s, force ONE cache-busted
+      // reload (guarded by a query param so it can never loop).
+      (function () {
+        var busted = /(^|[?&])wdbust=/.test(window.location.search);
+        setTimeout(function () {
+          if (window.__APP_BOOTED__ || busted) return;
+          var loc = window.location;
+          var q = loc.search ? loc.search + "&" : "?";
+          loc.replace(loc.pathname + q + "wdbust=" + Date.now() + loc.hash);
+        }, 8000);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

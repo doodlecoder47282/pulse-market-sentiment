@@ -207,8 +207,11 @@
     /* Kills the white rubber-band void on iOS Safari when overscrolling */
     overscroll-behavior-y: none;
     /* Wide tables (heatmap strike ladder) must scroll INSIDE their own
-       container — never pan the whole page sideways on a phone swipe. */
+       container — never pan the whole page sideways on a phone swipe.
+       clip > hidden: clip doesn't create a scroll container (iOS quirk where
+       hidden can hijack page scrolling). hidden kept as fallback. */
     overflow-x: hidden;
+    overflow-x: clip;
     background-color: hsl(var(--background));
     /* No gray flash on iOS taps — we provide our own press feedback */
     -webkit-tap-highlight-color: transparent;
@@ -252,6 +255,7 @@
     @apply font-sans antialiased bg-background text-foreground;
     overscroll-behavior-y: none;
     overflow-x: hidden;
+    overflow-x: clip;
     overscroll-behavior-x: none;
     min-height: 100vh;
     min-height: 100dvh;
