@@ -56,6 +56,7 @@ const GexChart = lazy(() => import("@/components/GexChart"));
 const Heatseeker = lazy(() => import("@/components/Heatseeker"));
 const OdteForward = lazy(() => import("@/components/OdteForward"));
 const CanaryStrip = lazy(() => import("@/components/CanaryStrip"));
+const BreadthCard = lazy(() => import("@/components/BreadthCard"));
 const MLProjectionPanel = lazy(() => import("@/components/MLProjectionPanel"));
 
 // These are lighter but still benefit from lazy loading on non-default tabs
@@ -621,6 +622,9 @@ export default function Dashboard() {
 
             {/* Customizable widget stack — reorder, hide, or add widgets from anywhere */}
             <WidgetStack tab="signals" defaults={["whale-flow", "tracked-signals", "pc-flow"]} />
+
+            {/* MISSION FIX #6 — sampled participation breadth from cached daily bars */}
+            <Suspense fallback={null}><BreadthCard /></Suspense>
 
             {/* Composite gauge — hero panel, full width */}
             <Card data-testid="card-composite">

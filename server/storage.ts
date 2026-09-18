@@ -216,6 +216,17 @@ sqlite.exec(`
 
 export { schwabTokens };
 
+// MISSION FIX #5 — additive migration: whale intent columns. ALTER TABLE is
+// idempotent-guarded (duplicate column error swallowed) so existing DBs keep
+// their rows and new DBs get the columns via a follow-up ALTER after CREATE.
+for (const stmt of [
+  `ALTER TABLE whale_alerts ADD COLUMN opening_prob REAL`,
+  `ALTER TABLE whale_alerts ADD COLUMN spread_leg_likely INTEGER`,
+  `ALTER TABLE whale_alerts ADD COLUMN directional_confidence REAL`,
+]) {
+  try { sqlite.exec(stmt); } catch { /* column already exists */ }
+}
+
 export const db = drizzle(sqlite);
 
 type XTweetInsert = {

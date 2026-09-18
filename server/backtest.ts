@@ -44,7 +44,13 @@ export type LevelKind =
   | "downsidePivot"
   | "mopexMaxPain"
   | "extremeVac"
-  | "vommaPocket";
+  | "vommaPocket"
+  // MISSION FIX #8 — baseline reality checks: pseudo-levels every real level
+  // must beat. baselineSpot = today's close projected forward (persistence);
+  // baselineRandom = close +/- a random 0.5-1.5 ATR offset (deterministic
+  // seed per date so reruns are reproducible).
+  | "baselineSpot"
+  | "baselineRandom";
 
 const HORIZON_DAYS: Record<BacktestHorizon, number> = {
   daily: 1,
@@ -71,7 +77,17 @@ const TOUCH_BPS: Record<LevelKind, number> = {
   mopexMaxPain: 25,
   extremeVac: 50,
   vommaPocket: 40,
+  baselineSpot: 30,     // middle-of-the-road tolerance — fair comparison band
+  baselineRandom: 30,
 };
+
+// Deterministic per-date pseudo-random in [0,1) — keeps baselineRandom stable
+// across reruns so the comparison table doesn't wobble.
+function seededRand(date: string): number {
+  let hsh = 2166136261;
+  for (let i = 0; i < date.length; i++) { hsh ^= date.charCodeAt(i); hsh = Math.imul(hsh, 16777619); }
+  return ((hsh >>> 0) % 100000) / 100000;
+}
 
 interface Bar { date: string; t: number; o: number; h: number; l: number; c: number; }
 
@@ -380,6 +396,14 @@ export async function runBackfill(yearsLookback = 5): Promise<{
         // extremeVac / vommaPocket: score the nearer side to spot
         pushObs("extremeVac",    lv.extremeVac.dn);  // downside vacuum tested more
         pushObs("vommaPocket",   lv.vommaPocket.dn);
+        // MISSION FIX #8 — baselines scored through the IDENTICAL pipeline.
+        // If a real level's touch/hold rates don't beat these, it carries no
+        // information — it's just "price is near price".
+        const r = seededRand(date + h);
+        const off = (0.5 + r) * (atr20[i] ?? lv.close * 0.01);       // 0.5-1.5 ATR
+        const sign = r < 0.5 ? -1 : 1;
+        pushObs("baselineSpot",   lv.close);
+        pushObs("baselineRandom", lv.close + sign * off);
       });
     }
 
@@ -470,4 +494,85 @@ export function getBacktestSummary(): BacktestSummary {
     computedAt: maxComputed || null,
     byLevel,
   };
+}
+
+// ─── MISSION FIX #4 — walk-forward (non-overlapping) summary ─────────────────
+//
+// The pooled numbers above score EVERY trading day with multi-day forward
+// windows, so consecutive observations share most of their bars. One trending
+// month becomes ~21 highly-correlated "samples" — effective sample size is far
+// smaller than reported, and touch rates are flattered by autocorrelation.
+//
+// This summary re-aggregates the SAME observations but strides the calendar:
+// for each horizon it keeps every Nth distinct date (N = horizon days), so no
+// two kept observations share forward bars. Sample sizes drop hard — that's
+// the honest number.
+
+export interface WalkForwardRow {
+  horizon: BacktestHorizon;
+  levelKind: LevelKind;
+  pooledN: number;
+  pooledTouchRate: number;
+  wfN: number;
+  wfTouchRate: number | null;
+  wfHoldRate: number | null;
+  wfMedianAbsDistBps: number | null;
+}
+
+export interface WalkForwardSummary {
+  computedAt: number;
+  methodology: string;
+  rows: WalkForwardRow[];
+  note: string;
+}
+
+let _wfCache: { at: number; data: WalkForwardSummary } | null = null;
+
+export function getWalkForwardSummary(force = false): WalkForwardSummary {
+  const now = Date.now();
+  if (!force && _wfCache && now - _wfCache.at < 10 * 60_000) return _wfCache.data;
+
+  const obs = db.select().from(backtestObservations).all() as Array<{
+    date: string; horizon: string; levelKind: string;
+    touched: number; held: number; absDistBps: number;
+  }>;
+
+  const rows: WalkForwardRow[] = [];
+  const horizons: BacktestHorizon[] = ["daily", "weekly", "monthly", "quarterly"];
+
+  for (const h of horizons) {
+    const stride = HORIZON_DAYS[h];
+    const hObs = obs.filter((o) => o.horizon === h);
+    if (hObs.length === 0) continue;
+
+    // Distinct sorted dates for this horizon; keep every `stride`-th date.
+    const dates = Array.from(new Set(hObs.map((o) => o.date))).sort();
+    const kept = new Set(dates.filter((_, i) => i % stride === 0));
+
+    const kinds = Array.from(new Set(hObs.map((o) => o.levelKind)));
+    for (const k of kinds) {
+      const pooled = hObs.filter((o) => o.levelKind === k);
+      const wf = pooled.filter((o) => kept.has(o.date));
+      const pooledTouch = pooled.reduce((s, o) => s + o.touched, 0) / pooled.length;
+      rows.push({
+        horizon: h,
+        levelKind: k as LevelKind,
+        pooledN: pooled.length,
+        pooledTouchRate: Number(pooledTouch.toFixed(3)),
+        wfN: wf.length,
+        wfTouchRate: wf.length > 0 ? Number((wf.reduce((s, o) => s + o.touched, 0) / wf.length).toFixed(3)) : null,
+        wfHoldRate: wf.length > 0 ? Number((wf.reduce((s, o) => s + o.held, 0) / wf.length).toFixed(3)) : null,
+        wfMedianAbsDistBps: wf.length > 0 ? Number(median(wf.map((o) => o.absDistBps)).toFixed(1)) : null,
+      });
+    }
+  }
+
+  const data: WalkForwardSummary = {
+    computedAt: now,
+    methodology: "stride-sampled walk-forward: every Nth distinct date per horizon (N = horizon days) so forward windows never overlap. Pooled numbers shown for contrast are autocorrelated and overstate effective sample size — treat them as deprecated.",
+    rows,
+    note: "compare each level against baselineSpot and baselineRandom rows: a level only carries information if it beats both at the same horizon.",
+  };
+  _wfCache = { at: now, data };
+  return data;
 }

@@ -867,7 +867,10 @@ function buildAudit(
     }));
 
   const vannaBias: "positive" | "negative" = cur.vex >= 0 ? "positive" : "negative";
-  // Vanna in $M (cur.vex is already $B * 0.01 per vol%, so scale: vex/$B * 100 = $M per 1% vol)
+  // Vanna in $M. cur.vex is raw dollars of delta-notional change per 1 vol pt
+  // (vanna · OI · 100 · S · 0.01, summed) — so $M is simply vex / 1e6.
+  // MISSION FIX audit note: scale verified against exposureProfile.ts:92; the
+  // old comment implied a different unit chain but the math was already right.
   const vannaM = parseFloat((cur.vex / 1e6).toFixed(1));
 
   const spotChange = (intradayDelta.change != null && intradayDelta.windowMin != null)

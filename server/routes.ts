@@ -4674,9 +4674,100 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     try {
       const { runGrader } = await import("./outcomeLogger");
       const summary = await runGrader(Date.now());
-      res.json(summary);
+      const { gradeOdteAlerts } = await import("./odteGrader");
+      const odte = await gradeOdteAlerts(Date.now());
+      res.json({ ...summary, odte });
     } catch (e: any) {
       res.status(500).json({ error: "grade_failed", message: e?.message ?? String(e) });
+    }
+  });
+
+  // POST /api/position-sizer — risk-first contract sizing (the UI card existed
+  // but this route was never registered; sizePosition only ran inside the alert
+  // engine). Wired as part of MISSION FIX #2.
+  app.post("/api/position-sizer", async (req, res) => {
+    try {
+      const { sizePosition } = await import("./positionSizer");
+      const b = req.body ?? {};
+      const accountSize = Number(b.accountSize), entryPrice = Number(b.entryPrice), stopPrice = Number(b.stopPrice), gradeScore = Number(b.gradeScore);
+      if (!isFinite(accountSize) || accountSize <= 0 || !isFinite(entryPrice) || entryPrice <= 0 || !isFinite(stopPrice) || !isFinite(gradeScore)) {
+        return res.status(400).json({ error: "bad_input", message: "accountSize, entryPrice, stopPrice, gradeScore required (positive numbers)" });
+      }
+      res.json(sizePosition({
+        accountSize, entryPrice, stopPrice, gradeScore,
+        maxRiskPct: b.maxRiskPct != null ? Number(b.maxRiskPct) : undefined,
+        targetPct: b.targetPct != null ? Number(b.targetPct) : undefined,
+        kellyFraction: b.kellyFraction != null ? Number(b.kellyFraction) : undefined,
+      }));
+    } catch (e: any) {
+      res.status(500).json({ error: "sizer_failed", message: e?.message ?? String(e) });
+    }
+  });
+
+  // MISSION FIX #1 — GET /api/edge/calibration
+  // Empirical grade->win-probability calibration (isotonic fit + Wilson CIs).
+  app.get("/api/edge/calibration", async (_req, res) => {
+    try {
+      const { getCalibrationReport } = await import("./gradeCalibration");
+      res.json(getCalibrationReport());
+    } catch (e: any) {
+      res.status(500).json({ error: "calibration_failed", message: e?.message ?? String(e) });
+    }
+  });
+
+  // MISSION FIX #2 — POST /api/edge/survival
+  // Net-EV waterfall: does the edge survive spread, slippage, theta, and
+  // model uncertainty? body: { gradeScore, bid, ask, targetPct, stopPct, theta?, expectedHoldMin? }
+  app.post("/api/edge/survival", async (req, res) => {
+    try {
+      const { computeEdgeSurvival } = await import("./edgeSurvival");
+      const b = req.body ?? {};
+      const gradeScore = Number(b.gradeScore);
+      const bid = Number(b.bid), ask = Number(b.ask);
+      const targetPct = Number(b.targetPct), stopPct = Number(b.stopPct);
+      if (!isFinite(gradeScore) || !isFinite(bid) || !isFinite(ask) || !isFinite(targetPct) || !isFinite(stopPct)) {
+        return res.status(400).json({ error: "bad_input", message: "gradeScore, bid, ask, targetPct, stopPct required (numbers)" });
+      }
+      res.json(computeEdgeSurvival({
+        gradeScore, bid, ask, targetPct, stopPct,
+        theta: b.theta != null ? Number(b.theta) : null,
+        expectedHoldMin: b.expectedHoldMin != null ? Number(b.expectedHoldMin) : undefined,
+      }));
+    } catch (e: any) {
+      res.status(500).json({ error: "survival_failed", message: e?.message ?? String(e) });
+    }
+  });
+
+  // MISSION FIX #4 — GET /api/edge/walkforward
+  // Non-overlapping stride-sampled backtest aggregates + baseline comparison.
+  app.get("/api/edge/walkforward", async (_req, res) => {
+    try {
+      const { getWalkForwardSummary } = await import("./backtest");
+      res.json(getWalkForwardSummary());
+    } catch (e: any) {
+      res.status(500).json({ error: "walkforward_failed", message: e?.message ?? String(e) });
+    }
+  });
+
+  // MISSION FIX #7 — GET /api/edge/orthogonality
+  // Which whale-gate features carry independent information (v1 marginal lift).
+  app.get("/api/edge/orthogonality", async (_req, res) => {
+    try {
+      const { getOrthogonalityReport } = await import("./orthogonality");
+      res.json(getOrthogonalityReport());
+    } catch (e: any) {
+      res.status(500).json({ error: "orthogonality_failed", message: e?.message ?? String(e) });
+    }
+  });
+
+  // MISSION FIX #6 — GET /api/breadth
+  // Sampled participation breadth from the Schwab daily-bars cache.
+  app.get("/api/breadth", async (_req, res) => {
+    try {
+      const { getBreadthSnapshot } = await import("./breadth");
+      res.json(getBreadthSnapshot());
+    } catch (e: any) {
+      res.status(500).json({ error: "breadth_failed", message: e?.message ?? String(e) });
     }
   });
 

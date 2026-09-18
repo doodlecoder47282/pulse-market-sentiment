@@ -172,22 +172,46 @@ export default function OdteForward() {
       ctx.setLineDash([]); ctx.globalAlpha = 1;
       tagged.push({ y, price: L.price, color, p: L.pTouch });
     }
-    // right-axis price tags, de-overlapped
+    // right-axis price tags — MISSION FIX: nudge instead of drop. old code
+    // silently skipped any label within 10px of the previous one, so clustered
+    // levels (wall+pin+sigma stacked tight) lost their tags. now every level
+    // keeps a tag: greedy push-down with a second pass pulling the stack back
+    // up if it overflows the chart bottom. leader line connects tag to its
+    // true level y when nudged.
     tagged.sort((a, b) => a.y - b.y);
-    let lastY = -99;
+    const TAG_H = 11;
+    const minY = padT + TAG_H / 2;
+    const maxY = padT + ih - TAG_H / 2 + 8;
+    const yAdj: number[] = [];
+    for (let i = 0; i < tagged.length; i++) {
+      const want = Math.max(tagged[i].y, minY);
+      yAdj.push(i === 0 ? want : Math.max(want, yAdj[i - 1] + TAG_H));
+    }
+    for (let i = tagged.length - 1; i >= 0; i--) {
+      const cap = i === tagged.length - 1 ? maxY : yAdj[i + 1] - TAG_H;
+      if (yAdj[i] > cap) yAdj[i] = cap;
+    }
     ctx.font = "8px ui-monospace, monospace";
     ctx.textAlign = "left";
-    for (const t of tagged) {
-      if (t.y - lastY < 10) continue;
-      lastY = t.y;
+    for (let i = 0; i < tagged.length; i++) {
+      const t = tagged[i];
+      const ty = yAdj[i];
       const label = `${t.price}`;
       const w = ctx.measureText(label).width + 6;
+      if (Math.abs(ty - t.y) > 1.5) {
+        // leader line from level to displaced tag
+        ctx.strokeStyle = t.color;
+        ctx.globalAlpha = 0.5;
+        ctx.lineWidth = 0.8;
+        ctx.beginPath(); ctx.moveTo(padL + iw, t.y); ctx.lineTo(padL + iw + 3, ty); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
       ctx.fillStyle = t.color;
       ctx.globalAlpha = 0.85;
-      ctx.fillRect(padL + iw + 3, t.y - 5.5, w, 11);
+      ctx.fillRect(padL + iw + 3, ty - 5.5, w, 11);
       ctx.globalAlpha = 1;
       ctx.fillStyle = "#0a0a0a";
-      ctx.fillText(label, padL + iw + 6, t.y + 2.5);
+      ctx.fillText(label, padL + iw + 6, ty + 2.5);
     }
 
     // ── projected candles ──

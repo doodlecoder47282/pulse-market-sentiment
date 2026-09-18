@@ -43,6 +43,9 @@ export function persistWhaleAlert(hit: WhaleHit): void {
         delta: hit.delta,
         detectedAt: hit.detectedAt,
         reason: hit.reason,
+        openingProb: hit.openingProb ?? null,
+        spreadLegLikely: hit.spreadLegLikely == null ? null : (hit.spreadLegLikely ? 1 : 0),
+        directionalConfidence: hit.directionalConfidence ?? null,
       })
       .run();
   } catch (e) {
@@ -105,6 +108,9 @@ export interface WhaleAlertHistoryRow {
   delta: number;
   detectedAt: number;
   reason: string;
+  openingProb: number | null;
+  spreadLegLikely: boolean | null;
+  directionalConfidence: number | null;
 }
 
 /** Pull recent whale alerts. days=1 → last 24h. limit caps result size. */
@@ -143,6 +149,9 @@ export function getWhaleAlertHistory(opts: {
       delta: r.delta,
       detectedAt: r.detectedAt,
       reason: r.reason,
+      openingProb: r.openingProb ?? null,
+      spreadLegLikely: r.spreadLegLikely == null ? null : r.spreadLegLikely === 1,
+      directionalConfidence: r.directionalConfidence ?? null,
     }));
   } catch (e) {
     console.warn("[whalePersistence] history read failed:", (e as Error).message);

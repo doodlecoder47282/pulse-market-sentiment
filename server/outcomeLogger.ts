@@ -171,8 +171,17 @@ function gradeWhaleAlert(row: any, now: number): boolean {
   // Get entry bar (close on or before captured_at) and exit bar (close on or before due).
   const entryBar = closeOnOrBefore(symbol, row.capturedAt);
   const exitBar = closeOnOrBefore(symbol, row.gradingDueAt);
+  // MISSION FIX — pipeline leak: grading comes due at expiry, but the daily
+  // bar for that session lands in the cache hours later. The old code graded
+  // immediately, found exit == entry bar, and permanently stamped
+  // no_holding_period — 537 of 640 whale rows died that way, starving every
+  // downstream edge analysis. Now: DEFER (leave ungraded) inside a 4-day grace
+  // window so a later tick regrades once the bar exists; only stamp the
+  // terminal result after grace expires.
+  const GRACE_MS = 4 * 24 * 3600_000;
+  const inGrace = now - row.gradingDueAt < GRACE_MS;
   if (!entryBar || !exitBar) {
-    // mark graded with insufficient_history so we don't keep retrying
+    if (inGrace) return false; // retry on a later tick
     markGraded(row.predictionId, {
       result: "insufficient_history",
       pctReturn: null,
@@ -183,6 +192,7 @@ function gradeWhaleAlert(row: any, now: number): boolean {
     return false;
   }
   if (exitBar.t <= entryBar.t) {
+    if (inGrace) return false; // bar not cached yet — retry later
     markGraded(row.predictionId, {
       result: "no_holding_period",
       pctReturn: null,
@@ -340,6 +350,15 @@ export function startGraderScheduler() {
         console.log(
           `[outcomeGrader] ran — whales=${s.whalesGraded} regimes=${s.regimesGraded} errors=${s.errors}`,
         );
+      }
+      // MISSION FIX #0 — grade 0DTE alert fires + rejects (first-touch minute
+      // bars). This is the feed for empirical grade calibration.
+      const { gradeOdteAlerts } = await import("./odteGrader");
+      const og = await gradeOdteAlerts(Date.now());
+      if (og.graded > 0 || og.insufficient > 0) {
+        console.log(`[odteGrader] ran — graded=${og.graded} wins=${og.wins} losses=${og.losses} insufficient=${og.insufficient}`);
+        const { invalidateCalibrationCache } = await import("./gradeCalibration");
+        invalidateCalibrationCache();
       }
     } catch (e: any) {
       console.error("[outcomeGrader] tick failed:", e?.message ?? e);

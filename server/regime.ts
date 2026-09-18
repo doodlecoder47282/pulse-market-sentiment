@@ -157,7 +157,6 @@ export const AXIS_PAIRS: AxisPair[] = [
 
 type DailyRow = { date: string; close: number; t: number };
 
-const UA = "Mozilla/5.0 (compatible; PulseDashboard/1.0)";
 
 function etDateString(epochSec: number): string {
   const d = new Date(epochSec * 1000);
@@ -168,25 +167,15 @@ function etDateString(epochSec: number): string {
   return `${y}-${m}-${dd}`;
 }
 
-async function yFetch(url: string, timeoutMs = 15_000): Promise<any> {
-  const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const r = await fetch(url, {
-      headers: { "User-Agent": UA, Accept: "application/json" },
-      signal: ctrl.signal,
-    });
-    if (!r.ok) throw new Error(`Yahoo ${r.status}`);
-    return await r.json();
-  } finally { clearTimeout(to); }
-}
+// MISSION FIX #13 — dead yahoo fetch helper deleted. Schwab-only data policy;
+// all history flows through getPriceHistory below.
 
 /**
  * Fetch 2Y of daily closes for one symbol via Schwab. Returns ALL rows
  * (not merged with cache).
  */
 async function fetchSymbol2Y(symbol: string): Promise<DailyRow[]> {
-  // TODO: Schwab-only mode — Yahoo source removed, using Schwab getPriceHistory.
+  // Schwab-only mode — all daily history via Schwab getPriceHistory.
   const schwabSymMap: Record<string, string> = {
     "^VIX": "$VIX.X", "^GSPC": "$SPX.X", "^SPX": "$SPX.X",
     "^VIX9D": "$VIX9D.X", "^VIX3M": "$VIX3M.X",
@@ -216,7 +205,7 @@ async function fetchSymbol2Y(symbol: string): Promise<DailyRow[]> {
 /**
  * Refresh the cache for the full universe in parallel batches. Uses the most
  * recent cached date to skip symbols that already have today's data, minimizing
- * Yahoo calls. Caller should invoke this before computing regime.
+ * Schwab calls. Caller should invoke this before computing regime.
  */
 export async function ensureUniverseCached(): Promise<{ fetched: string[]; cached: string[]; failed: string[] }> {
   const today = etDateString(Math.floor(Date.now() / 1000));
@@ -234,7 +223,7 @@ export async function ensureUniverseCached(): Promise<{ fetched: string[]; cache
   }
 
   const failed: string[] = [];
-  // Batches of 6 parallel fetches to be polite to Yahoo.
+  // Batches of 6 parallel fetches to stay inside the Schwab rate budget.
   const BATCH = 6;
   for (let i = 0; i < needFetch.length; i += BATCH) {
     const slice = needFetch.slice(i, i + BATCH);

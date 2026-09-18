@@ -19,6 +19,21 @@ export const STOCK_BARS_UNIVERSE = [
   // Canary module proxies (AUDJPY = FXA/FXY, copper/gold = CPER/GLD, crude, DXY)
   // GLD/TLT/HYG/UUP/SPY already covered by the regime ETF universe.
   "CPER", "USO", "FXA", "FXY",
+  // MISSION FIX #6 — breadth sample widening: mega/large caps across sectors so
+  // the breadth engine isn't just a tech-flow echo. Daily-cached, cheap.
+  "LLY", "XOM", "UNH", "WMT", "JNJ", "V", "MA", "PG", "HD", "CVX",
+  "KO", "MRK", "ORCL", "CRM", "COST", "ABBV", "PEP", "MCD", "CAT", "GE",
+  // Equal-weight vs cap-weight ratio input
+  "RSP",
+];
+
+/** MISSION FIX #6 — symbols the breadth engine treats as single stocks
+ *  (excludes ETFs / FX / commodity proxies in the universe above). */
+export const BREADTH_STOCKS = [
+  "TSLA", "NVDA", "AAPL", "MSFT", "META", "GOOGL", "AMZN",
+  "AMD", "AVGO", "PLTR", "COIN", "MSTR", "NFLX", "BAC", "JPM", "F",
+  "LLY", "XOM", "UNH", "WMT", "JNJ", "V", "MA", "PG", "HD", "CVX",
+  "KO", "MRK", "ORCL", "CRM", "COST", "ABBV", "PEP", "MCD", "CAT", "GE",
 ];
 
 function etDateString(epochSec: number): string {

@@ -8,6 +8,7 @@ import SkewPanel from "./edgelab/SkewPanel";
 import MacroFlowPanel from "./edgelab/MacroFlowPanel";
 import AnomalyPanel from "./edgelab/AnomalyPanel";
 import BacktestPanel from "./edgelab/BacktestPanel";
+import TruthPanel from "./edgelab/TruthPanel";
 import EdgeBriefing from "./edgelab/EdgeBriefing";
 
 export default function EdgeLabPanel() {
@@ -35,6 +36,7 @@ export default function EdgeLabPanel() {
               <TabsTrigger value="macro" data-testid="edgelab-tab-macro" className="text-xs">Macro/COT</TabsTrigger>
               <TabsTrigger value="anomaly" data-testid="edgelab-tab-anomaly" className="text-xs">Anomaly</TabsTrigger>
               <TabsTrigger value="backtest" data-testid="edgelab-tab-backtest" className="text-xs">Backtest</TabsTrigger>
+              <TabsTrigger value="truth" data-testid="edgelab-tab-truth" className="text-xs">Truth</TabsTrigger>
             </TabsList>
             <TabsContent value="ivrv" className="mt-3"><IvRvPanel /></TabsContent>
             <TabsContent value="gamma" className="mt-3"><GammaCurvePanel /></TabsContent>
@@ -43,6 +45,7 @@ export default function EdgeLabPanel() {
             <TabsContent value="macro" className="mt-3"><MacroFlowPanel /></TabsContent>
             <TabsContent value="anomaly" className="mt-3"><AnomalyPanel /></TabsContent>
             <TabsContent value="backtest" className="mt-3"><BacktestPanel /></TabsContent>
+            <TabsContent value="truth" className="mt-3"><TruthPanel /></TabsContent>
           </Tabs>
         </CardContent>
       </Card>

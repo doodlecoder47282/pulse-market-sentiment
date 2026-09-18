@@ -8,6 +8,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import RegimePredictPanel from "@/components/RegimePredictPanel";
 import EdgeStatsPanel from "@/components/EdgeStatsPanel";
+import { PositionSizer } from "@/components/PositionSizer";
 import OfiHistogram from "@/components/OfiHistogram";
 import { RegimeChip } from "@/components/RegimeChip";
 import type { GammaStructure } from "@shared/schema";
@@ -181,6 +182,9 @@ export default function TradeDesk() {
 
       {/* Closed-loop edge tracking — rolling hit-rates + threshold tuning suggestions */}
       <EdgeStatsPanel />
+
+      {/* MISSION FIX #2 — risk-first sizer + net-EV survival waterfall */}
+      <PositionSizer />
 
       {/* Command bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/20 bg-gradient-to-r from-amber-500/5 to-transparent px-4 py-2.5">

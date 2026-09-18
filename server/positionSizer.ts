@@ -55,22 +55,27 @@ export interface SizingResult {
   reasoning: string[];
 }
 
-const FIRE_GATE = 80;       // grade floor, mirrors odteAlertEngine
-const BANGER_MIN_PCT = 30;   // T1 floor, mirrors odteAlertEngine
+// MISSION FIX #9 — single source of truth: the sizer gates at the SAME grade
+// floor as the alert engine. It used to hardcode 80 while the engine fired at
+// 72 (Wire 16), so alerts in the 72-79 band could fire but never size.
+import { FIRE_GATE as ENGINE_FIRE_GATE, BANGER_MIN_PCT as ENGINE_BANGER_MIN_PCT } from "./odteAlertEngine";
+import { getWinProb } from "./gradeCalibration";
+
+const FIRE_GATE = ENGINE_FIRE_GATE;
+const BANGER_MIN_PCT = ENGINE_BANGER_MIN_PCT;
 
 function clamp(x: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, x));
 }
 
-/** Convert a 0-100 grade into a win-probability proxy (0..1).
- *  Calibrated so 80=0.50, 90=0.62, 95=0.70, 100=0.78 — banger-zone trades
- *  imply an edge but never near-certainty.
+/** Convert a 0-100 grade into a win probability (0..1).
+ *  MISSION FIX #1 — now served by gradeCalibration: empirical isotonic fit
+ *  over graded fires when the ledger has enough samples, legacy linear prior
+ *  (80=0.50 .. 100=0.78) until then. Source is surfaced in reasoning.
  */
-function gradeToWinProb(score: number): number {
-  if (score < FIRE_GATE) return 0.45;  // below banger floor
-  // Linear from (80 → 0.50) to (100 → 0.78)
-  const p = 0.50 + (score - 80) * (0.28 / 20);
-  return clamp(p, 0.45, 0.85);
+function gradeToWinProb(score: number): { p: number; source: "fitted" | "prior" } {
+  const r = getWinProb(score);
+  return { p: clamp(r.p, 0.30, 0.92), source: r.source };
 }
 
 /** Conviction tier multiplier on the size envelope. */
@@ -78,6 +83,7 @@ function tierMultiplier(score: number): number {
   if (score >= 95) return 1.00;
   if (score >= 85) return 0.85;
   if (score >= 80) return 0.70;
+  if (score >= FIRE_GATE) return 0.50;  // 72-79 band: engine fires, sizer sizes small
   return 0;
 }
 
@@ -154,8 +160,10 @@ export function sizePosition(input: SizingInput): SizingResult {
   );
 
   // ── (2) Kelly cap ────────────────────────────────────────────────────────
-  const p = gradeToWinProb(grade);
+  const wp = gradeToWinProb(grade);
+  const p = wp.p;
   const q = 1 - p;
+  reasoning.push(`win probability: ${(p * 100).toFixed(0)}% (${wp.source === "fitted" ? "empirically fitted from graded fires" : "prior — ledger still filling, not yet fitted"})`);
   const b = target / 100;  // payoff ratio at T1 (e.g. +50% → b=0.5; loss = 100% premium)
   // Standard Kelly assumes loss = full premium. Our stop limits loss to (entry-stop)/entry.
   // Use stop-adjusted Kelly: lossFrac = (entry - stop) / entry per contract

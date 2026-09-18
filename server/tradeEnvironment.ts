@@ -70,19 +70,26 @@ function sessionET(): TradeEnvironment["session"] {
 }
 
 // ── whale conflux from whale_alerts (units-agnostic on detected_at) ──────────
+// MISSION FIX #5 — conflux is now confidence-weighted: a block classified as
+// a likely spread leg or closing flow counts fractionally, not as a full vote.
+// Rows without intent data (legacy) count 0.75 — the old behavior, mildly
+// discounted for unknown intent.
 function whaleConflux60m(): { bull: number; bear: number } {
   try {
     const rows = sqlite
-      .prepare("SELECT sentiment, detected_at FROM whale_alerts ORDER BY detected_at DESC LIMIT 300")
-      .all() as Array<{ sentiment: string; detected_at: number }>;
+      .prepare("SELECT sentiment, detected_at, directional_confidence FROM whale_alerts ORDER BY detected_at DESC LIMIT 300")
+      .all() as Array<{ sentiment: string; detected_at: number; directional_confidence: number | null }>;
     const nowMs = Date.now();
     let bull = 0, bear = 0;
     for (const r of rows) {
       const ts = r.detected_at > 1e12 ? r.detected_at : r.detected_at * 1000;
       if (nowMs - ts > 60 * 60_000) continue;
+      const w = r.directional_confidence != null && isFinite(r.directional_confidence)
+        ? Math.max(0.2, Math.min(1, r.directional_confidence))
+        : 0.75;
       const s = (r.sentiment || "").toUpperCase();
-      if (s.includes("BULL")) bull++;
-      else if (s.includes("BEAR")) bear++;
+      if (s.includes("BULL")) bull += w;
+      else if (s.includes("BEAR")) bear += w;
     }
     return { bull, bear };
   } catch {
@@ -221,15 +228,15 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
 
   // 6. Whale conflux
   const wc = whaleConflux60m();
-  const confluxN = Math.max(wc.bull, wc.bear);
-  const whalePts = confluxN >= 3 ? 10 : confluxN === 2 ? 5 : 0;
+  const confluxN = Math.max(wc.bull, wc.bear);  // confidence-weighted sum, not raw count
+  const whalePts = confluxN >= 2.5 ? 10 : confluxN >= 1.5 ? 5 : 0;
   drivers.push({
     key: "whales", label: "whale conflux", points: whalePts, max: 10,
-    note: confluxN >= 3
-      ? `${confluxN} same-direction whale blocks (${wc.bull >= wc.bear ? "bullish" : "bearish"}) in the last hour — informed money is positioned for a move.`
-      : confluxN === 2
-        ? "a couple of same-direction whales in the last hour — watch for a third."
-        : "no whale clustering in the last hour.",
+    note: confluxN >= 2.5
+      ? `${confluxN.toFixed(1)} confidence-weighted same-direction whale votes (${wc.bull >= wc.bear ? "bullish" : "bearish"}) in the last hour — informed money looks positioned for a move.`
+      : confluxN >= 1.5
+        ? "some same-direction whale weight in the last hour — watch for more."
+        : "no meaningful whale clustering in the last hour.",
   });
 
   // 7. Wall proximity (only matters when short gamma — that's when breaks travel)

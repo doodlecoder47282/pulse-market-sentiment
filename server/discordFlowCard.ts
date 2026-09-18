@@ -28,12 +28,22 @@ function fmtHit(h: WhaleHit): string {
   const ratioPart = h.isNewStrike && h.openInterest === 0
     ? "NEW STRIKE"
     : `vol/OI ${h.volOiRatio.toFixed(1)}x`;
-  return [
+  const parts = [
     `**${h.strike}${side}** ${exp} (${h.dte}d)`,
     `${fmtMoney(h.premium)}`,
     ratioPart,
     `${h.tag}`,
-  ].join(" • ");
+  ];
+  // MISSION FIX #5 — intent read: opening probability + spread-leg flag +
+  // directional confidence. Heuristic, but far better than assuming every
+  // block is directional conviction.
+  if (h.openingProb != null) {
+    const intent = h.openingProb >= 0.75 ? "likely opening" : h.openingProb >= 0.5 ? "lean opening" : "closing risk";
+    parts.push(`${intent} ${(h.openingProb * 100).toFixed(0)}%`);
+  }
+  if (h.spreadLegLikely) parts.push("spread leg?");
+  if (h.directionalConfidence != null) parts.push(`dir conf ${(h.directionalConfidence * 100).toFixed(0)}%`);
+  return parts.join(" • ");
 }
 
 /**

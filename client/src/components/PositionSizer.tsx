@@ -23,6 +23,19 @@ interface SizingResult {
   reasoning: string[];
 }
 
+// MISSION FIX #2 — edge survival waterfall (POST /api/edge/survival)
+interface SurvivalRow { label: string; pct: number; note: string }
+interface SurvivalResult {
+  grossEvPct: number;
+  rows: SurvivalRow[];
+  netEvPct: number;
+  adverseNetEvPct: number;
+  verdict: "EXPRESS" | "MARGINAL" | "STAND_DOWN";
+  pUsed: number;
+  pSource: "fitted" | "prior";
+  note: string;
+}
+
 function fmtDollar(n: number): string {
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
@@ -35,6 +48,8 @@ export function PositionSizer() {
   const [gradeScore, setGradeScore] = useState("85");
   const [targetPct, setTargetPct] = useState("50");
   const [kellyFraction, setKellyFraction] = useState("25");
+  const [spreadDollars, setSpreadDollars] = useState("0.10");
+  const [holdMin, setHoldMin] = useState("45");
 
   const sizeMut = useMutation({
     mutationFn: async (): Promise<SizingResult> => {
@@ -51,7 +66,37 @@ export function PositionSizer() {
     },
   });
 
+  const survMut = useMutation({
+    mutationFn: async (): Promise<SurvivalResult> => {
+      const mid = Number(entryPrice);
+      const half = Math.max(0, Number(spreadDollars)) / 2;
+      const stopPctLoss = Math.abs((mid - Number(stopPrice)) / mid) * 100;
+      const res = await apiRequest("POST", "/api/edge/survival", {
+        gradeScore: Number(gradeScore),
+        bid: mid - half,
+        ask: mid + half,
+        targetPct: Number(targetPct),
+        stopPct: stopPctLoss,
+        expectedHoldMin: Number(holdMin) || 45,
+      });
+      return await res.json();
+    },
+  });
+
+  const runBoth = () => {
+    sizeMut.mutate();
+    if (Number(entryPrice) > 0 && Number(stopPrice) > 0) survMut.mutate();
+  };
+
   const r = sizeMut.data;
+  const s = survMut.data;
+
+  const verdictStyle = (v: SurvivalResult["verdict"]) =>
+    v === "EXPRESS"
+      ? "border-green-500/30 bg-green-500/5 text-green-500"
+      : v === "MARGINAL"
+        ? "border-amber-500/30 bg-amber-500/5 text-amber-500"
+        : "border-red-500/30 bg-red-500/5 text-red-500";
 
   return (
     <Card data-testid="card-position-sizer">
@@ -131,15 +176,35 @@ export function PositionSizer() {
               data-testid="input-kelly-fraction"
             />
           </label>
+          <label className="space-y-1">
+            <span className="text-xs text-muted-foreground">bid-ask spread ($)</span>
+            <Input
+              type="number"
+              value={spreadDollars}
+              onChange={(e) => setSpreadDollars(e.target.value)}
+              step="0.05"
+              data-testid="input-spread"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-muted-foreground">expected hold (min)</span>
+            <Input
+              type="number"
+              value={holdMin}
+              onChange={(e) => setHoldMin(e.target.value)}
+              step="5"
+              data-testid="input-hold-min"
+            />
+          </label>
           <div className="flex items-end">
             <Button
-              onClick={() => sizeMut.mutate()}
-              disabled={sizeMut.isPending}
+              onClick={runBoth}
+              disabled={sizeMut.isPending || survMut.isPending}
               size="sm"
               className="w-full"
               data-testid="button-calculate-size"
             >
-              {sizeMut.isPending ? "..." : "size it"}
+              {sizeMut.isPending || survMut.isPending ? "..." : "size it"}
             </Button>
           </div>
         </div>
@@ -211,9 +276,43 @@ export function PositionSizer() {
           </div>
         )}
 
+        {s && (
+          <div className={`rounded-md border p-3 space-y-2 ${verdictStyle(s.verdict)}`} data-testid="card-edge-survival">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="text-sm font-semibold" data-testid="text-survival-verdict">
+                edge survival: {s.verdict.replace("_", " ")}
+              </div>
+              <div className="text-xs opacity-90">
+                p(win) {(s.pUsed * 100).toFixed(0)}% ({s.pSource})
+              </div>
+            </div>
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs font-mono tabular-nums">
+                <span className="text-foreground">gross EV</span>
+                <span>{s.grossEvPct >= 0 ? "+" : ""}{s.grossEvPct.toFixed(1)}%</span>
+              </div>
+              {s.rows.map((row, i) => (
+                <div key={i} className="flex justify-between text-xs font-mono tabular-nums text-muted-foreground" data-testid={`row-survival-${i}`}>
+                  <span>− {row.label}</span>
+                  <span>−{Math.abs(row.pct).toFixed(1)}%</span>
+                </div>
+              ))}
+              <div className="flex justify-between text-xs font-mono tabular-nums font-semibold border-t border-current/20 pt-1 text-foreground">
+                <span>net EV</span>
+                <span data-testid="text-net-ev">{s.netEvPct >= 0 ? "+" : ""}{s.netEvPct.toFixed(1)}%</span>
+              </div>
+              <div className="flex justify-between text-xs font-mono tabular-nums text-muted-foreground">
+                <span>adverse scenario</span>
+                <span data-testid="text-adverse-ev">{s.adverseNetEvPct >= 0 ? "+" : ""}{s.adverseNetEvPct.toFixed(1)}%</span>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground leading-snug">{s.note}</p>
+          </div>
+        )}
+
         {!r && !sizeMut.isPending && (
           <p className="text-xs text-muted-foreground" data-testid="text-sizer-empty">
-            risk-floor + Kelly cap + conviction tier — most conservative wins
+            risk-floor + Kelly cap + conviction tier — most conservative wins. now also runs the net-EV waterfall: does the edge survive spread, slippage, and theta?
           </p>
         )}
       </CardContent>

@@ -154,6 +154,10 @@ export const whaleAlerts = sqliteTable("whale_alerts", {
   delta: real("delta").notNull(),
   detectedAt: integer("detected_at").notNull(),        // epoch ms
   reason: text("reason").notNull(),                    // why it qualified (e.g. "premium=$1.2M, vol/oi=12x, new-strike")
+  // MISSION FIX #5 — intent classification (heuristic, additive, nullable)
+  openingProb: real("opening_prob"),                   // 0..1 P(opening positioning)
+  spreadLegLikely: integer("spread_leg_likely"),       // 0/1
+  directionalConfidence: real("directional_confidence"), // 0..1
 });
 export type WhaleAlert = typeof whaleAlerts.$inferSelect;
 

@@ -109,6 +109,15 @@ export interface WhaleHit {
   convictionMultiplier?: number;   // e.g. 0.5 … 1.5 (1.0 = neutral)
   convictionRationale?: string;
   regimeAtFire?: string | null;
+  // MISSION FIX #5 — transaction-intent classification. A $2.5M block is not
+  // automatically directional conviction: it can be closing, rolling, a spread
+  // leg, or a hedge. These fields turn the binary bull/bear tag into a
+  // probabilistic read. All heuristic (no trade-condition codes on the feed),
+  // disclosed as such, and additive — nothing gates on them.
+  openingProb?: number;            // 0..1 — P(this is opening positioning), from vol-vs-OI
+  spreadLegLikely?: boolean;       // same-scan sibling contract on the same expiry
+  incrementalPremium?: number;     // $ premium since the previous scan (delta-volume based)
+  directionalConfidence?: number;  // 0..1 — opening prob x aggressor clarity x spread discount
 }
 
 export interface FlowSnapshot {
@@ -219,6 +228,63 @@ export function enrichHit(hit: WhaleHit, c: SchwabFlowContract, spot: number | n
   };
 }
 
+// ─── MISSION FIX #5 — whale intent classifier ──────────────────────────
+// Per-contract volume memory across scans — lets us convert cumulative daily
+// volume into incremental prints (same pattern as odteTracker deltaVol).
+const volMemory = new Map<string, { volume: number; ts: number }>();
+const VOL_MEMORY_TTL = 12 * 3600_000;
+
+function pruneVolMemory(now: number): void {
+  if (volMemory.size < 4000) return;
+  for (const [k, v] of volMemory) if (now - v.ts > VOL_MEMORY_TTL) volMemory.delete(k);
+}
+
+/** P(opening) from volume-vs-OI structure. Heuristic, disclosed. */
+function openingProbability(c: SchwabFlowContract): number {
+  if (c.isNewStrike && c.openInterest === 0) return 0.92;      // nothing to close
+  if (c.volOiRatio >= 8) return 0.85;                          // volume dwarfs existing OI
+  if (c.volOiRatio >= 4) return 0.75;
+  if (c.volOiRatio >= 2) return 0.65;
+  if (c.volOiRatio >= 1) return 0.50;                          // could be closing existing
+  return 0.35;                                                 // volume < OI — closing risk high
+}
+
+/** Aggressor clarity: ask-side lift or bid-side hit = clear; mid prints = murky. */
+function aggressorClarity(tag: string): number {
+  if (tag === "ABOVE_ASK" || tag === "AT_ASK") return 0.9;
+  if (tag === "BELOW_BID" || tag === "AT_BID") return 0.9;
+  return 0.55;
+}
+
+/** Compute intent fields for a batch of hits from one ticker scan.
+ *  Spread detection: two same-expiry contracts firing in the same scan with
+ *  notional within 2.5x of each other reads as a spread/roll structure. */
+function classifyIntent(hits: WhaleHit[], contracts: SchwabFlowContract[], now: number): void {
+  pruneVolMemory(now);
+  const byOcc = new Map(contracts.map((c) => [c.occ, c]));
+  for (const h of hits) {
+    const c = byOcc.get(h.occ);
+    if (!c) continue;
+    // Incremental premium since last scan
+    const prev = volMemory.get(h.occ);
+    const mid = h.mid && h.mid > 0 ? h.mid : 0;
+    if (prev && c.volume >= prev.volume && mid > 0) {
+      h.incrementalPremium = Math.round((c.volume - prev.volume) * mid * 100);
+    }
+    volMemory.set(h.occ, { volume: c.volume, ts: now });
+
+    h.openingProb = openingProbability(c);
+    // Same-expiry sibling in this same batch = likely spread leg or roll
+    h.spreadLegLikely = hits.some(
+      (o) => o !== h && o.expiration === h.expiration
+        && Math.max(o.premium, h.premium) / Math.max(1, Math.min(o.premium, h.premium)) <= 2.5,
+    );
+    const clarity = aggressorClarity(h.tag);
+    const spreadDiscount = h.spreadLegLikely ? 0.5 : 1.0;
+    h.directionalConfidence = Number((h.openingProb * clarity * spreadDiscount).toFixed(2));
+  }
+}
+
 // ─── Whale gate — single contract test ────────────────────────────────────────
 export function isWhale(c: SchwabFlowContract): { whale: boolean; reason: string } {
   const cfg = getFlowConfig();
@@ -325,6 +391,7 @@ async function scanTicker(symbol: string): Promise<{ hits: WhaleHit[]; error: st
       };
       hits.push(enrichHit(baseHit, c, flow.spot ?? null));
     }
+    classifyIntent(hits, flow.contracts, now);
     return { hits, error: null };
   } catch (e: any) {
     const msg = String(e?.message ?? e);

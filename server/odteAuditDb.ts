@@ -91,6 +91,19 @@ export function persistOdteAuditOnFire(alert: any): void {
 
     // Wire 15/16 audit fields — pull everything available
     const features: Record<string, unknown> = {
+      // MISSION FIX — grading + conditional-edge context (spot/stop for the
+      // first-touch grader; regime/time context for the regime-conditioned
+      // edge database). All additive, all optional.
+      spot: alert?.spot ?? null,
+      stopLevel: alert?.stopLevel ?? null,
+      stopPct: alert?.stopPct ?? null,
+      t1Price: alert?.t1?.price ?? null,
+      t1EstPct: alert?.t1?.estPctGain ?? null,
+      t2Price: alert?.t2?.price ?? null,
+      t2TriggerLevel: alert?.t2TriggerLevel ?? null,
+      regimeText: alert?.regime ?? null,
+      greekSignals: alert?.greekSignals ?? null,
+      fireHourEt: Number(new Date(now).toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false })),
       // Grade fields
       score,
       letter: alert?.grade?.letter,
