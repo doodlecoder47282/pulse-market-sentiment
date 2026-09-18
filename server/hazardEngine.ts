@@ -109,7 +109,15 @@ export async function backfillSpxMinuteBars(maxDaysBack = 185): Promise<typeof l
           if (chunksEmpty >= 3 && chunksOk > 0) break; // past the history horizon
         }
       } catch (e: any) {
-        console.warn(`[hazard] backfill chunk ${back}d failed: ${e?.message ?? e}`);
+        // Schwab throws 400 for windows past its minute-history horizon —
+        // that's the same signal as an empty chunk, not a transient error.
+        // Without counting it, the loop probes all 19 windows into the
+        // self-throttle on every boot.
+        chunksEmpty++;
+        if (chunksEmpty >= 3 && chunksOk > 0) break;
+        if (!String(e?.message ?? "").includes("400")) {
+          console.warn(`[hazard] backfill chunk ${back}d failed: ${e?.message ?? e}`);
+        }
       }
       await new Promise((r) => setTimeout(r, 400)); // rate-friendly spacing
     }

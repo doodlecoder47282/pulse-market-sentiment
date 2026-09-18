@@ -111,7 +111,14 @@ async function fetchDailyBars(symbol: string, years: number): Promise<Bar[]> {
     };
     const schwabSym = schwabSymMap[symbol] ?? symbol;
     const period = Math.min(years, 10);
-    const resp = await getPriceHistory(schwabSym, "year", period, "daily", 1);
+    // The self-throttle starves one-shot calls when background pollers have
+    // the per-minute budget saturated (returns empty, not an error). A rebuild
+    // is a patient admin task — retry with breathing room instead of dying.
+    let resp = await getPriceHistory(schwabSym, "year", period, "daily", 1);
+    for (let attempt = 0; attempt < 4 && resp.candles.length === 0; attempt++) {
+      await new Promise((r) => setTimeout(r, 15_000));
+      resp = await getPriceHistory(schwabSym, "year", period, "daily", 1);
+    }
     return resp.candles
       .filter((c) => c.open != null && c.close != null && c.open > 0 && c.close > 0)
       .map((c) => ({
