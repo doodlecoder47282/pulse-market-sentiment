@@ -886,11 +886,11 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="relative overflow-x-auto">
+          <div className="relative hscroll-contain">
             <div className="min-w-[640px]">
               {/* Header row */}
               <div className="grid grid-cols-[92px_repeat(4,1fr)_96px] gap-px border-b pb-1 text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
-                <div>Strike</div>
+                <div className="sticky left-0 z-10 bg-card pr-1">Strike</div>
                 <div className="text-center">
                   <span className="text-emerald-400">call</span>
                   <span className="mx-1">GEX</span>
@@ -924,7 +924,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                       isSelectedRow ? "bg-sky-500/15 ring-1 ring-sky-500/40" : isSpotRow ? "bg-primary/10 ring-1 ring-primary/30" : ""
                     }`}
                   >
-                    <div className="flex items-center gap-1.5 font-mono text-sm tabular-nums">
+                    <div className="sticky left-0 z-10 flex items-center gap-1.5 bg-card pr-1 font-mono text-sm tabular-nums">
                       <span className={isSpotRow ? "font-bold text-primary" : ""}>{fmtStrike(s.strike)}</span>
                       {lockedHit && (
                         <span

@@ -506,7 +506,7 @@ function ResearchResults({ ticker, lookback }: { ticker: SeasonalityTicker; look
       </Card>
 
       {/* Monthly stats table */}
-      <div className="overflow-x-auto">
+      <div className="hscroll-contain">
         <table className="w-full text-[10px] border-collapse">
           <thead>
             <tr className="border-b border-border/50">

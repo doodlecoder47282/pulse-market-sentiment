@@ -166,7 +166,7 @@ export function CandlestickChart({
     // On phones the 1200-unit viewBox stretched to ~360px crushes candles/labels
     // (preserveAspectRatio="none"). Let it scroll horizontally at a readable
     // min-width on small screens; fill the container normally from sm: up.
-    <div className="w-full overflow-x-auto" data-testid="candlestick-chart">
+    <div className="w-full hscroll-contain" data-testid="candlestick-chart">
       <svg
         viewBox={`0 0 ${width} ${height}`}
         className="w-full min-w-[640px] sm:min-w-0"

@@ -617,7 +617,7 @@ export default function CosmosPanel() {
       </div>
 
       {/* ── Sub-tabs ── */}
-      <div className="flex gap-0 border-b mb-6 overflow-x-auto" style={{ borderColor: BORDER_COL }}>
+      <div className="flex gap-0 border-b mb-6 hscroll-contain" style={{ borderColor: BORDER_COL }}>
         {([
           { id: "live", label: "LIVE SKY" },
           { id: "taxonomy", label: "SIGNAL TAXONOMY" },

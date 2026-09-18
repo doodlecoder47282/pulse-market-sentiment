@@ -176,7 +176,7 @@ export default function MultiDayCone({ defaultSymbol = "^GSPC" }: { defaultSymbo
         </div>
 
         {/* Chart */}
-        <div className="overflow-x-auto rounded border border-border/40 bg-black/40">
+        <div className="hscroll-contain rounded border border-border/40 bg-black/40">
           <svg
             viewBox={`0 0 ${CHART_W} ${CHART_H}`}
             className="block w-full"
@@ -273,7 +273,7 @@ export default function MultiDayCone({ defaultSymbol = "^GSPC" }: { defaultSymbo
         </div>
 
         {/* Day-by-day table strip (compact) */}
-        <div className="mt-2 overflow-x-auto">
+        <div className="mt-2 hscroll-contain">
           <table className="w-full font-mono text-[9px]">
             <thead className="text-muted-foreground/60">
               <tr>

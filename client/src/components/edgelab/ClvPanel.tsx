@@ -210,7 +210,7 @@ export default function ClvPanel() {
         {!s || s.recent.length === 0 ? (
           <div className="text-xs text-muted-foreground py-4 text-center">no trades logged yet — CLV will populate as you log fills</div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="hscroll-contain">
             <table className="w-full text-xs">
               <thead className="text-muted-foreground">
                 <tr className="border-b border-border">

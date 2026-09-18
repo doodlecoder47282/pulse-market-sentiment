@@ -177,7 +177,7 @@ export default function BacktestPanel() {
 
           {/* Trades */}
           {r.trades.length > 0 && (
-            <div className="rounded border border-border p-3 overflow-x-auto">
+            <div className="rounded border border-border p-3 hscroll-contain">
               <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">last 25 trades</div>
               <table className="w-full text-xs">
                 <thead className="text-muted-foreground">

@@ -82,7 +82,7 @@ export default function CrossAssetPanel() {
           </div>
 
           {/* table */}
-          <div className="rounded border border-border p-3 overflow-x-auto">
+          <div className="rounded border border-border p-3 hscroll-contain">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">cross-asset matrix</div>
             <table className="w-full text-xs">
               <thead className="text-muted-foreground">

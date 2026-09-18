@@ -1113,7 +1113,7 @@ function GammaMapCard({ gammaMap, spot }: { gammaMap: GammaMap; spot: number | n
         )}
 
         {/* Ladder */}
-        <div className="rounded-sm border border-border overflow-x-auto">
+        <div className="rounded-sm border border-border hscroll-contain">
           <div className="min-w-[420px]">
           <div className="grid grid-cols-[70px_1fr_90px_80px] gap-2 border-b border-border bg-card/30 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
             <span>Strike</span>

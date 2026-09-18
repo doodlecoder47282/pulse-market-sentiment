@@ -259,7 +259,7 @@ export default function ChartPanel() {
         <section className="space-y-3 rounded-xl border border-border/60 bg-card/40 p-4 backdrop-blur">
           {/* Recents strip — quick-flip between tickers you clicked from elsewhere */}
           {recents.length > 0 && (
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+            <div className="flex items-center gap-1.5 hscroll-contain pb-1">
               <span className="shrink-0 text-[9px] uppercase tracking-wider text-muted-foreground">Recent</span>
               {recents.map((sym) => (
                 <button

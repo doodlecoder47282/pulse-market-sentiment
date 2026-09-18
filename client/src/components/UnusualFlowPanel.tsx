@@ -330,7 +330,7 @@ function BuildTable({ rows, onRowClick }: {
 }) {
   const maxPremium = rows.length > 0 ? rows[0].totalPremium : 0;
   return (
-    <div className="overflow-x-auto rounded-md border border-border/40">
+    <div className="hscroll-contain rounded-md border border-border/40">
       <table className="w-full text-[11px]">
         <thead className="border-b border-border/40 bg-muted/20 sticky top-0 z-10">
           <tr className="text-left text-[9px] uppercase tracking-wider text-muted-foreground">
@@ -651,7 +651,7 @@ function GroupedTable({ groups, sortKey, onSort, onRowClick, symbol, trackedIds 
   }, []);
 
   return (
-    <div className="overflow-x-auto rounded-md border border-border/40">
+    <div className="hscroll-contain rounded-md border border-border/40">
       <table className="w-full text-[11px]">
         <TableHead sortKey={sortKey} onSort={onSort} />
         <tbody className="font-mono tabular-nums">
@@ -710,7 +710,7 @@ function GroupedTable({ groups, sortKey, onSort, onRowClick, symbol, trackedIds 
 
 function FlatTable({ contracts, sortKey, onSort, onRowClick, symbol, trackedIds }: { contracts: UnusualContract[]; sortKey: SortKey; onSort: (k: SortKey) => void; onRowClick: (c: UnusualContract) => void; symbol: string; trackedIds: Set<string> }) {
   return (
-    <div className="overflow-x-auto rounded-md border border-border/40">
+    <div className="hscroll-contain rounded-md border border-border/40">
       <table className="w-full text-[11px]">
         <TableHead sortKey={sortKey} onSort={onSort} />
         <tbody className="font-mono tabular-nums">

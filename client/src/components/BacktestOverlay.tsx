@@ -258,7 +258,7 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
 
           {!empty && !isLoading && (
             <>
-              <div className="overflow-x-auto rounded border border-border/40">
+              <div className="hscroll-contain rounded border border-border/40">
                 <table className="w-full border-collapse font-mono text-[10px]">
                   <thead className="bg-black/50 text-muted-foreground/70">
                     <tr className="border-b border-border/40">

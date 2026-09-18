@@ -723,7 +723,7 @@ export default function ChainAudit() {
             ) : (
               <Card className="bg-card/60 border-border/40">
                 <CardContent className="px-0 pb-2 pt-0">
-                  <div className="overflow-x-auto" data-testid="table-unusual-volume">
+                  <div className="hscroll-contain" data-testid="table-unusual-volume">
                     <Table>
                       <TableHeader>
                         <TableRow className="border-border/30">
@@ -818,7 +818,7 @@ export default function ChainAudit() {
                     VRP = Market IV − Theoretical IV (bookdown realized-vol estimate). Positive = overpriced, negative = underpriced. Signal column auto-classifies per-expiry.
                   </div>
                 </div>
-                <div className="overflow-x-auto" data-testid="table-vrp">
+                <div className="hscroll-contain" data-testid="table-vrp">
                   <Table>
                     <TableHeader>
                       <TableRow className="border-border/30">

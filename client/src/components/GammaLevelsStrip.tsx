@@ -231,7 +231,7 @@ export default function GammaLevelsStrip() {
       </button>
 
       {/* Mobile: horizontal chips */}
-      <div className="lg:hidden px-2 pb-2 overflow-x-auto">
+      <div className="lg:hidden px-2 pb-2 hscroll-contain">
         <div className="flex gap-1.5 min-w-max">
           {mobileRows.map((row) => {
             // Computed levels are in SPY units; user targets are in SPX units — don't mix distances

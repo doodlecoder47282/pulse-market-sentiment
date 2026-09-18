@@ -264,7 +264,7 @@ export default function PivotProjection({
             )}
 
             {/* Chart */}
-            <div className="overflow-x-auto rounded border border-border/40 bg-black/40">
+            <div className="hscroll-contain rounded border border-border/40 bg-black/40">
               <svg
                 viewBox={`0 0 ${CHART_W} ${CHART_H}`}
                 className="block w-full"

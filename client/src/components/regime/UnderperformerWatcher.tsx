@@ -122,7 +122,7 @@ export default function UnderperformerWatcher() {
         )}
 
         {data && data.rows.length > 0 && (
-          <div className="overflow-x-auto">
+          <div className="hscroll-contain">
             <table className="w-full font-mono text-[10px]">
               <thead className="text-[9px] uppercase tracking-wider text-muted-foreground/60">
                 <tr className="border-b border-border/40">

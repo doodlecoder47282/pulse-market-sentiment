@@ -489,7 +489,7 @@ function LiveTrackerView({
         )}
 
         {/* Contract table */}
-        <div className="overflow-x-auto">
+        <div className="hscroll-contain">
           <table className="w-full min-w-[780px] text-[11px]">
             <thead>
               <tr className="border-b text-[10px] font-mono uppercase tracking-wider text-muted-foreground">

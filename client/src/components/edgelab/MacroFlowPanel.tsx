@@ -110,7 +110,7 @@ export default function MacroFlowPanel() {
           <div className="text-xs text-muted-foreground">no COT data yet — hit refresh</div>
         )}
         {cotQ.data && cotQ.data.markets.length > 0 && (
-          <div className="overflow-x-auto">
+          <div className="hscroll-contain">
             <table className="w-full text-xs">
               <thead className="text-muted-foreground">
                 <tr className="border-b border-border">

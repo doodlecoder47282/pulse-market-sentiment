@@ -214,7 +214,7 @@ export function MacroCarousel() {
     >
       {/* Category selector — horizontally-scrollable on mobile, wraps on desktop */}
       <div className="mb-3 flex items-start justify-between gap-3">
-        <div className="-mx-1 flex flex-1 gap-1.5 overflow-x-auto px-1 pb-0.5 md:flex-wrap md:overflow-visible scrollbar-none">
+        <div className="-mx-1 flex flex-1 gap-1.5 hscroll-contain px-1 pb-0.5 md:flex-wrap md:overflow-visible scrollbar-none">
           {groups.map((g, i) => {
             const isActive = i === activeIdx;
             const accent = CATEGORY_ACCENT[g.category];

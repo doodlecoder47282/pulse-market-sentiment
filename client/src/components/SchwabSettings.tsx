@@ -4,7 +4,7 @@
  * Opened via the gear icon in the header.
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
@@ -21,7 +21,7 @@ import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import {
   CheckCircle, XCircle, AlertTriangle, ExternalLink, RefreshCw,
-  Wifi, WifiOff, Loader2, Settings, Clock,
+  Wifi, WifiOff, Loader2, Settings, Clock, Copy,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -284,10 +284,58 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
     }
     if (!win) {
       setAuthBlockedFallback(true);
+      // Same user gesture — piggyback the copy so the link is already on the
+      // clipboard by the time the fallback UI appears.
+      void copyAuthUrl();
     }
     // Either way, advance to paste step — if the popup did open, user logs in;
     // if it didn't, user opens manually via the fallback link.
     setStep("waiting_for_paste");
+  };
+
+  // iOS webview reality: window.open is blocked, target="_blank" anchors are
+  // silently eaten by the iframe sandbox, and navigator.clipboard often throws.
+  // Layered copy: async clipboard -> execCommand on a hidden textarea ->
+  // select the visible textarea so the native iOS Copy menu appears.
+  const authUrlBoxRef = useRef<HTMLTextAreaElement | null>(null);
+  const copyAuthUrl = async () => {
+    const url = authUrlData?.url;
+    if (!url) return;
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(url);
+      ok = true;
+    } catch {
+      /* blocked in sandboxed iframe */
+    }
+    if (!ok) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = url;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        ta.setSelectionRange(0, url.length);
+        ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch {
+        ok = false;
+      }
+    }
+    if (ok) {
+      toast({ title: "Login link copied", description: "Open Safari, paste it in the address bar, log in, then come back and paste the redirect URL below." });
+    } else {
+      const box = authUrlBoxRef.current;
+      if (box) {
+        box.focus();
+        box.select();
+        box.setSelectionRange(0, url.length);
+      }
+      toast({ title: "Text selected — tap Copy in the iOS menu", description: "Then open Safari and paste it in the address bar." });
+    }
   };
 
   const handleConnect = () => {
@@ -441,33 +489,41 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                   Open Schwab Login
                 </Button>
                 {authBlockedFallback && authUrlData?.url && (
-                  <div className="mt-2 rounded border border-amber-500/40 bg-amber-500/5 p-2 space-y-1.5">
+                  <div className="mt-2 rounded border border-amber-500/40 bg-amber-500/5 p-2 space-y-2">
                     <div className="text-[10px] font-semibold text-amber-300 uppercase tracking-wider">
-                      Popup blocked — tap the link directly
+                      Popup blocked here — copy the link, open it in Safari
+                    </div>
+                    <Button
+                      size="sm"
+                      className="w-full bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs"
+                      onClick={copyAuthUrl}
+                      data-testid="copy-schwab-auth-btn"
+                    >
+                      <Copy className="mr-1.5 h-3.5 w-3.5" />
+                      Copy login link
+                    </Button>
+                    <textarea
+                      ref={authUrlBoxRef}
+                      readOnly
+                      value={authUrlData.url}
+                      rows={3}
+                      onFocus={(e) => e.currentTarget.select()}
+                      onClick={(e) => e.currentTarget.select()}
+                      className="w-full resize-none rounded border border-border/40 bg-background/60 p-1.5 font-mono text-[10px] leading-tight text-blue-300 [user-select:text] [-webkit-user-select:text]"
+                      data-testid="schwab-auth-url-box"
+                    />
+                    <div className="text-[10px] leading-snug text-muted-foreground">
+                      1. Copy · 2. Paste in Safari's address bar · 3. Log in at Schwab · 4. Copy the https://127.0.0.1/?code=... URL it lands on · 5. Come back here and paste it in step 2 below
                     </div>
                     <a
                       href={authUrlData.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="block break-all text-[10px] text-blue-300 underline underline-offset-2"
+                      className="block text-[10px] text-muted-foreground underline underline-offset-2"
                       data-testid="schwab-auth-fallback-link"
                     >
-                      {authUrlData.url}
+                      or try opening it directly (may be blocked in this app)
                     </a>
-                    <button
-                      type="button"
-                      className="text-[10px] text-muted-foreground hover:text-foreground underline"
-                      onClick={() => {
-                        if (authUrlData?.url) {
-                          navigator.clipboard.writeText(authUrlData.url).then(
-                            () => toast({ title: "Copied auth URL" }),
-                            () => toast({ title: "Copy failed — long-press the link instead", variant: "destructive" })
-                          );
-                        }
-                      }}
-                    >
-                      Copy URL
-                    </button>
                   </div>
                 )}
               </div>

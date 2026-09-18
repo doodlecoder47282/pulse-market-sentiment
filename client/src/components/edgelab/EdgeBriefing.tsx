@@ -252,7 +252,7 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
                       <span className="text-[10px] font-mono">vix {d.crossAsset.vix.toFixed(2)}</span>
                     )}
                   </div>
-                  <div className="overflow-x-auto">
+                  <div className="hscroll-contain">
                     <table className="w-full text-[11px]">
                       <thead>
                         <tr className="text-left text-[9px] uppercase tracking-wider text-muted-foreground border-b border-border/30">

@@ -932,7 +932,7 @@ export default function Dashboard() {
       >
         {/* Right-edge fade hints there's more to scroll */}
         <div className="pointer-events-none absolute right-0 top-0 bottom-0 z-10 w-6 bg-gradient-to-l from-background to-transparent" />
-        <div className="flex overflow-x-auto scrollbar-none">
+        <div className="flex hscroll-contain scrollbar-none">
           {([
             { key: "signals", label: "Signals" },
             { key: "chart", label: "Chart" },

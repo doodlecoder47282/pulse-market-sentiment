@@ -43,7 +43,7 @@ function CalibrationCard() {
         {q.isLoading && <p className="text-xs text-muted-foreground">loading…</p>}
         {r && (
           <>
-            <div className="overflow-x-auto">
+            <div className="hscroll-contain">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="text-muted-foreground border-b border-border">
@@ -108,7 +108,7 @@ function WalkForwardCard() {
           return (
             <div key={h}>
               <p className="text-xs font-semibold mb-1 uppercase tracking-wide text-muted-foreground">{h}</p>
-              <div className="overflow-x-auto">
+              <div className="hscroll-contain">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="text-muted-foreground border-b border-border">

@@ -762,7 +762,7 @@ function MMMatrixHeatmap({ horizon }: { horizon: ModelHorizon }) {
         </div>
       </div>
 
-      <div className="overflow-x-auto">
+      <div className="hscroll-contain">
         <table className="font-mono text-[9px] border-separate" style={{ borderSpacing: 2 }} data-testid="mm-matrix">
           <thead>
             <tr>

@@ -277,7 +277,7 @@ export default function ThermalHeatmap() {
         </div>
       )}
       {data && grid && (
-        <div className="relative overflow-x-auto">
+        <div className="relative hscroll-contain">
           <canvas
             ref={canvasRef}
             onMouseMove={onMove}

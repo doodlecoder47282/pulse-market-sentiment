@@ -119,7 +119,7 @@ export default function GammaCurvePanel() {
             {data.walls.length === 0 ? (
               <div className="text-xs text-muted-foreground">no walls detected</div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="hscroll-contain">
               <table className="w-full text-xs">
                 <thead className="text-muted-foreground">
                   <tr className="border-b border-border">
@@ -156,7 +156,7 @@ export default function GammaCurvePanel() {
             {data.vacuums.length === 0 ? (
               <div className="text-xs text-muted-foreground">no clear vacuums detected</div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="hscroll-contain">
               <table className="w-full text-xs">
                 <thead className="text-muted-foreground">
                   <tr className="border-b border-border">

@@ -399,7 +399,7 @@ function AlphaCard({ headlines }: { headlines: Headline[] }) {
                 </div>
               )}
               <div
-                className="prose prose-invert prose-sm max-w-none overflow-x-auto rounded border border-amber-500/10 bg-card/30 p-3
+                className="prose prose-invert prose-sm max-w-none hscroll-contain rounded border border-amber-500/10 bg-card/30 p-3
                   prose-headings:font-mono prose-headings:tracking-wider prose-headings:text-amber-300
                   prose-headings:text-sm prose-headings:font-semibold
                   prose-p:text-[11px] prose-p:leading-relaxed prose-p:text-foreground/90
@@ -413,7 +413,7 @@ function AlphaCard({ headlines }: { headlines: Headline[] }) {
                   remarkPlugins={[remarkGfm]}
                   components={{
                     table: ({ children }) => (
-                      <div className="-mx-3 my-2 overflow-x-auto px-3">
+                      <div className="-mx-3 my-2 hscroll-contain px-3">
                         <table className="min-w-full whitespace-nowrap">{children}</table>
                       </div>
                     ),
@@ -978,7 +978,7 @@ function EarningsTab() {
                     </span>
                   </div>
 
-                  <div className="overflow-x-auto">
+                  <div className="hscroll-contain">
                     <table className="w-full text-[11px]">
                       <thead>
                         <tr className="border-b border-border/40 text-left text-[9.5px] font-mono uppercase tracking-wider text-muted-foreground">
