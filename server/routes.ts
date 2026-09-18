@@ -4704,6 +4704,72 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     }
   });
 
+  // TIER 4 — POST /api/edge/hazard
+  // 0DTE hazard engine: p(target before stop) + conditional survival curve,
+  // fitted on synthetic entries over real SPX minute candles.
+  // body: { entryPrice, delta?, strike?, spot?, side ("call"|"put"), targetPct?, stopPct?, entryTimeET? ("HH:MM"), minutesHeld? }
+  app.post("/api/edge/hazard", async (req, res) => {
+    try {
+      const hz = await import("./hazardEngine");
+      const b = req.body ?? {};
+      const entryPrice = Number(b.entryPrice);
+      const side = b.side === "put" ? "put" : "call";
+      const targetPct = Number.isFinite(Number(b.targetPct)) ? Number(b.targetPct) : 50;
+      const stopPct = Number.isFinite(Number(b.stopPct)) ? Number(b.stopPct) : 20;
+      const minutesHeld = Math.max(0, Number(b.minutesHeld) || 0);
+      if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+        return res.status(400).json({ error: "bad_input", message: "entryPrice (positive number) required" });
+      }
+      // Entry minute-of-day: explicit HH:MM ET, else now minus minutesHeld
+      let entryMod: number;
+      if (typeof b.entryTimeET === "string" && /^\d{1,2}:\d{2}$/.test(b.entryTimeET)) {
+        const [hh, mm] = b.entryTimeET.split(":").map(Number);
+        entryMod = (hh - 9) * 60 + mm - 30;
+      } else {
+        const nowET = new Date().toLocaleString("en-US", { timeZone: "America/New_York", hour12: false, hour: "2-digit", minute: "2-digit" });
+        const [hh, mm] = nowET.split(":").map(Number);
+        entryMod = (hh - 9) * 60 + mm - 30 - minutesHeld;
+      }
+      entryMod = Math.max(0, Math.min(374, entryMod));
+      // Delta: explicit, or estimated from strike+spot, or ATM default 0.5
+      let absDelta = Number(b.delta);
+      if (!Number.isFinite(absDelta) || absDelta <= 0) {
+        const strike = Number(b.strike), spot = Number(b.spot);
+        if (Number.isFinite(strike) && Number.isFinite(spot) && strike > 0 && spot > 0) {
+          absDelta = hz.estimateOdteDelta({ spot, strike, side: side === "call" ? "C" : "P", minutesRemaining: Math.max(1, 390 - entryMod - minutesHeld), dayUnitPts: hz.currentDayUnit() });
+        } else {
+          absDelta = 0.5;
+        }
+      }
+      absDelta = Math.min(0.9, Math.max(0.1, Math.abs(absDelta)));
+      const targetPts = hz.optionPctToPoints(targetPct, entryPrice, absDelta);
+      const stopPts = hz.optionPctToPoints(stopPct, entryPrice, absDelta);
+      const result = hz.computeHazard({ entryMod, targetPts, stopPts, direction: side === "call" ? "up" : "down" });
+      if ("error" in result) return res.status(422).json(result);
+      const breakevenP = stopPct / (targetPct + stopPct) + 0.04; // + friction pad
+      const step = result.curve.reduce((best, p) => (Math.abs(p.minute - minutesHeld) < Math.abs(best.minute - minutesHeld) ? p : best), result.curve[0]);
+      const condPWin = step?.condPWin ?? null;
+      res.json({
+        ...result,
+        breakevenP,
+        inputs: { entryPrice, side, targetPct, stopPct, absDelta: Number(absDelta.toFixed(2)), targetPts: Number(targetPts.toFixed(1)), stopPts: Number(stopPts.toFixed(1)), entryMod, minutesHeld },
+        now: { minutesHeld, condPWin, verdict: condPWin == null ? "INSUFFICIENT" : condPWin >= breakevenP ? "HOLD" : "EXIT" },
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: "hazard_failed", message: e?.message ?? String(e) });
+    }
+  });
+
+  // TIER 4 — GET /api/edge/hazard/status — coverage + empirical refit readiness
+  app.get("/api/edge/hazard/status", async (_req, res) => {
+    try {
+      const hz = await import("./hazardEngine");
+      res.json(hz.hazardStatus());
+    } catch (e: any) {
+      res.status(500).json({ error: "hazard_status_failed", message: e?.message ?? String(e) });
+    }
+  });
+
   // MISSION FIX #1 — GET /api/edge/calibration
   // Empirical grade->win-probability calibration (isotonic fit + Wilson CIs).
   app.get("/api/edge/calibration", async (_req, res) => {
@@ -5093,6 +5159,14 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     startStockBarsRefresher();
   } catch (e: any) {
     console.warn(`[stockBars] failed to start: ${e?.message ?? e}`);
+  }
+
+  // Hazard engine minute-bar backfiller (SPX 1-min, ~6 months, 6h freshness)
+  try {
+    const { startHazardBackfill } = await import("./hazardEngine");
+    startHazardBackfill();
+  } catch (e: any) {
+    console.warn(`[hazard] failed to start: ${e?.message ?? e}`);
   }
 
   // Commodity/cross-asset canary module — z-scored divergence detection with

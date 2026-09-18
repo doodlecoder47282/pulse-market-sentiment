@@ -18,6 +18,7 @@ interface ExitCategories {
   targetsHit: number;
   vixSpike: number;
   gammaFlip: number;
+  hazard?: number;
 }
 
 interface ExitBrainEval {
@@ -178,6 +179,7 @@ function EvalRow({ ev }: { ev: ExitBrainEval }) {
         <MiniBar label="targets" value={ev.categories.targetsHit} />
         <MiniBar label="vix" value={ev.categories.vixSpike} />
         <MiniBar label="gamma" value={ev.categories.gammaFlip} />
+        <MiniBar label="hazard" value={ev.categories.hazard ?? 0} />
       </div>
     </div>
   );

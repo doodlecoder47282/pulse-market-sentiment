@@ -71,6 +71,7 @@ export interface ExitBrainEval {
     targetsHit: number;      // 0/40/100 — at/past compressed bull or bear
     vixSpike: number;        // 0..100 based on VIX move % since entry
     gammaFlip: number;       // 0/60/100 — wall broken against side
+    hazard: number;          // 0..100 — conditional win prob below breakeven (hazard engine)
   };
   /** Top 1–3 reasons in plain English */
   reasons: string[];
@@ -119,6 +120,7 @@ const W = {
   targetsHit: 0.20,
   vixSpike: 0.15,
   gammaFlip: 0.10,
+  hazard: 0.20,          // survival-curve pressure from the hazard engine
 } as const;
 
 // ─── In-memory state ──────────────────────────────────────────────────
@@ -321,6 +323,61 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
   }
 
   // ─── Composite score ──────────────────────────────────────────────
+  // ── Category 6: HAZARD ENGINE (survival curve) ──
+  // Conditional p(target before stop | still alive N minutes in) vs the
+  // breakeven probability for a +50%/-20% option-space bracket. When the
+  // tape says remaining win probability has decayed below breakeven,
+  // holding is -EV regardless of how it feels.
+  let hazardScore = 0;
+  let hazardReason = "";
+  try {
+    const hz = await import("./hazardEngine");
+    const snap = getOdteSnapshot();
+    const spot = snap?.spot;
+    if (spot && spot > 0 && entry > 0) {
+      const nowET = new Date(asOf).toLocaleString("en-US", { timeZone: "America/New_York", hour12: false, hour: "2-digit", minute: "2-digit" });
+      const [hh, mm] = nowET.split(":").map(Number);
+      const nowMod = (hh - 9) * 60 + mm - 30;
+      const heldMin = Math.max(0, Math.round((asOf - pos.buyTimestamp) / 60_000));
+      const entryMod = Math.max(0, Math.min(389, nowMod - heldMin));
+      const minutesRemaining = Math.max(1, 390 - nowMod);
+      const dayUnit = hz.currentDayUnit();
+      const optSide = pos.side === "call" ? "C" as const : "P" as const;
+      const absDelta = hz.estimateOdteDelta({ spot, strike: pos.strike, side: optSide, minutesRemaining, dayUnitPts: dayUnit });
+      const TGT_PCT = 50, STP_PCT = 20; // matches sizer + hard stop convention
+      const targetPts = hz.optionPctToPoints(TGT_PCT, entry, absDelta);
+      const stopPts = hz.optionPctToPoints(STP_PCT, entry, absDelta);
+      const res = hz.computeHazard({
+        entryMod,
+        targetPts,
+        stopPts,
+        direction: underlyingSide === "long" ? "up" : "down",
+      });
+      if (!("error" in res)) {
+        const breakeven = STP_PCT / (TGT_PCT + STP_PCT); // ~0.286, then friction pad
+        const pad = 0.04; // spread/slippage friction
+        const pStar = breakeven + pad;
+        const step = res.curve.reduce((best, p) =>
+          Math.abs(p.minute - heldMin) < Math.abs(best.minute - heldMin) ? p : best, res.curve[0]);
+        const entryPWin = res.curve[0]?.condPWin;
+        if (step?.condPWin != null && entryPWin != null) {
+          const pWin = step.condPWin;
+          // Fire ONLY on decay: survival curves here typically RISE with time
+          // (early minutes are stop-dominated), so absolute base-rate pressure
+          // at entry would be backwards. Pressure = below breakeven AND below
+          // what the entry minute implied — i.e. surviving has made it WORSE.
+          if (pWin < pStar && pWin < entryPWin) {
+            const decay = (entryPWin - pWin) / Math.max(0.05, entryPWin);
+            hazardScore = Math.round(Math.min(100, decay * 200 + ((pStar - pWin) / pStar) * 60));
+            hazardReason = `hazard: cond win ${(pWin * 100).toFixed(0)}% — decayed from ${(entryPWin * 100).toFixed(0)}% at entry, breakeven ${(pStar * 100).toFixed(0)}% (${heldMin}min, n=${step.alive})`;
+          }
+        }
+      }
+    }
+  } catch {
+    // skip silently — hazard is additive, never blocking
+  }
+
   // Hard stop SHORT-CIRCUITS — if hit, score = 100 regardless.
   let exitScore = 0;
   if (hardStop >= 100) {
@@ -331,9 +388,10 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
       reversionScore * W.reversion +
       targetsScore * W.targetsHit +
       vixScore * W.vixSpike +
-      gammaScore * W.gammaFlip;
+      gammaScore * W.gammaFlip +
+      hazardScore * W.hazard;
     const den =
-      W.stackCollapse + W.reversion + W.targetsHit + W.vixSpike + W.gammaFlip;
+      W.stackCollapse + W.reversion + W.targetsHit + W.vixSpike + W.gammaFlip + W.hazard;
     exitScore = Math.round(num / den);
   }
 
@@ -372,6 +430,7 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
   if (targetsReason) reasons.push(targetsReason);
   if (vixReason) reasons.push(vixReason);
   if (gammaReason) reasons.push(gammaReason);
+  if (hazardReason) reasons.push(hazardReason);
 
   mem.lastEvalScore = exitScore;
 
@@ -392,6 +451,7 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
       targetsHit: targetsScore,
       vixSpike: vixScore,
       gammaFlip: gammaScore,
+      hazard: hazardScore,
     },
     reasons: reasons.slice(0, 3),
     asOf,
