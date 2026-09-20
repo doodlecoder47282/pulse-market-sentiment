@@ -782,3 +782,12 @@
 .scrollbar-none::-webkit-scrollbar {
   display: none;
 }
+
+/* Recharts surfaces must never paint outside their plot container.
+   iOS Safari rendered out-of-domain bars across the whole panel (IMG_0906) —
+   hard-clip every chart svg regardless of what the library sets inline. */
+.recharts-wrapper,
+.recharts-wrapper svg,
+.recharts-surface {
+  overflow: hidden !important;
+}

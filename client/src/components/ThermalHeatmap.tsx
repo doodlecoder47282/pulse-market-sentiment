@@ -42,12 +42,22 @@ function colorFor(exposure: number, maxAbs: number): string {
   // log-scale intensity so mid values still show
   const intensity = Math.pow(t, 0.55);
   if (exposure >= 0) {
-    // emerald hot
-    return `rgba(16, 185, 129, ${0.15 + intensity * 0.85})`;
+    // emerald hot — saturated floor so the field reads at a glance (IMG_0905 ref)
+    return `rgba(16, 185, 129, ${0.28 + intensity * 0.72})`;
   } else {
     // rose hot
-    return `rgba(244, 63, 94, ${0.15 + intensity * 0.85})`;
+    return `rgba(244, 63, 94, ${0.28 + intensity * 0.72})`;
   }
+}
+
+// Compact in-cell dollar label: +$15.1M / -$530.9K / -$1.2B
+function fmtCell(n: number): string {
+  const abs = Math.abs(n);
+  const sign = n >= 0 ? "+" : "-";
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(1)}B`;
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
+  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(0)}K`;
+  return `${sign}$${abs.toFixed(0)}`;
 }
 
 function fmtNum(n: number): string {
@@ -68,7 +78,7 @@ export default function ThermalHeatmap() {
   const [hover, setHover] = useState<Cell | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const { data, isLoading, error } = useQuery<ThermalResp>({
+  const { data: raw, isLoading, error } = useQuery<ThermalResp>({
     queryKey: ["/api/heatmap/thermal", symbol, greek],
     queryFn: async () => {
       // apiRequest, NOT raw fetch — raw fetch bypasses the deploy proxy and 404s on the hosted app
@@ -79,12 +89,41 @@ export default function ThermalHeatmap() {
     staleTime: 30_000,
   });
 
-  // Layout constants
-  const rowH = 14;
+  // Layout constants — cells sized to carry their dollar value (hover-free
+  // reading on mobile; the reference grid puts the number in the cell)
+  const rowH = 18;
   const marginTop = 30;
-  const marginLeft = 70;
+  const marginLeft = 56;
   const marginRight = 90;
   const marginBottom = 26;
+
+  // Drop strikes where every expiry is dead (far-OTM zero rows were 60% of
+  // the grid — all signal lives near spot). Keep a small context window
+  // around spot regardless so the yellow line always has a home.
+  const view = useMemo(() => {
+    if (!raw) return null;
+    const rowHasSignal = new Array<boolean>(raw.strikes.length).fill(false);
+    for (const c of raw.cells) {
+      if (Math.abs(c.exposure) > 1e-9) rowHasSignal[c.strikeIdx] = true;
+    }
+    const spotIdx = raw.strikes.findIndex((s) => s >= raw.spot);
+    const keep: number[] = [];
+    for (let i = 0; i < raw.strikes.length; i++) {
+      const nearSpot = spotIdx >= 0 && Math.abs(i - spotIdx) <= 2;
+      if (rowHasSignal[i] || nearSpot) keep.push(i);
+    }
+    if (keep.length === 0 || keep.length === raw.strikes.length) return raw;
+    const remap = new Map<number, number>();
+    keep.forEach((oldIdx, newIdx) => remap.set(oldIdx, newIdx));
+    return {
+      ...raw,
+      strikes: keep.map((i) => raw.strikes[i]),
+      cells: raw.cells
+        .filter((c) => remap.has(c.strikeIdx))
+        .map((c) => ({ ...c, strikeIdx: remap.get(c.strikeIdx)! })),
+    };
+  }, [raw]);
+  const data = view;
 
   // Max |exposure| per expiry column — drives per-date shading
   const colMax = useMemo(() => {
@@ -103,7 +142,7 @@ export default function ThermalHeatmap() {
     const nExps = data.expiries.length;
     if (!nStrikes || !nExps) return null;
     const height = marginTop + nStrikes * rowH + marginBottom;
-    const cellW = 42;
+    const cellW = 64;
     const width = marginLeft + nExps * cellW + marginRight;
     return { height, width, cellW, nStrikes, nExps };
   }, [data]);
@@ -130,16 +169,39 @@ export default function ThermalHeatmap() {
       }
     }
 
-    // Cells
+    // Global extreme cell — gets the standout treatment (ref: blue cell in IMG_0905)
+    let extreme: Cell | null = null;
+    for (const c of data.cells) {
+      if (!extreme || Math.abs(c.exposure) > Math.abs(extreme.exposure)) extreme = c;
+    }
+
+    // Cells: saturated fill + in-cell dollar value
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
     for (const c of data.cells) {
       const x = marginLeft + c.expIdx * grid.cellW;
       // strikes are ascending low→high; flip so high strikes on top
       const yIdx = grid.nStrikes - 1 - c.strikeIdx;
       const y = marginTop + yIdx * rowH;
       const norm = scaleMode === "per-date" ? (colMax[c.expIdx] || data.maxAbs) : data.maxAbs;
-      ctx.fillStyle = colorFor(c.exposure, norm);
+      const isExtreme = extreme != null && c === extreme && Math.abs(c.exposure) > 0;
+      ctx.fillStyle = isExtreme ? "rgba(14, 165, 233, 0.95)" : colorFor(c.exposure, norm);
       ctx.fillRect(x + 0.5, y + 0.5, grid.cellW - 1, rowH - 1);
+
+      // In-cell value — the number IS the map on touch devices (no hover)
+      if (Math.abs(c.exposure) >= 1e-9) {
+        const t = Math.min(1, Math.abs(c.exposure) / (norm || 1));
+        const hot = Math.pow(t, 0.55) > 0.45;
+        ctx.font = isExtreme ? "bold 8.5px ui-monospace, monospace" : "8.5px ui-monospace, monospace";
+        ctx.fillStyle = isExtreme
+          ? "rgba(255,255,255,0.98)"
+          : hot
+            ? "rgba(255,255,255,0.92)"
+            : c.exposure >= 0 ? "rgba(167, 243, 208, 0.85)" : "rgba(253, 164, 175, 0.85)";
+        ctx.fillText(fmtCell(c.exposure), x + grid.cellW / 2, y + rowH / 2 + 0.5);
+      }
     }
+    ctx.textBaseline = "alphabetic";
 
     // Spot line
     const spotIdx = data.strikes.findIndex(s => s >= data.spot);
@@ -181,12 +243,13 @@ export default function ThermalHeatmap() {
       }
     }
 
-    // Strike labels (Y axis, every 4th)
-    ctx.fillStyle = "rgba(148,163,184,0.75)";
+    // Strike labels (Y axis — every row at 18px pitch; every 2nd beyond 40 strikes)
+    const strikeStep = grid.nStrikes > 40 ? 2 : 1;
+    ctx.fillStyle = "rgba(203,213,225,0.85)";
     ctx.font = "9px ui-monospace, monospace";
     ctx.textAlign = "right";
     for (let i = 0; i < grid.nStrikes; i++) {
-      if (i % 4 !== 0) continue;
+      if (i % strikeStep !== 0) continue;
       const strike = data.strikes[i];
       const yIdx = grid.nStrikes - 1 - i;
       const y = marginTop + yIdx * rowH + rowH / 2 + 3;
@@ -281,6 +344,7 @@ export default function ThermalHeatmap() {
           <canvas
             ref={canvasRef}
             onMouseMove={onMove}
+            onClick={onMove}
             onMouseLeave={() => setHover(null)}
             data-testid="thermal-heatmap-canvas"
             className="cursor-crosshair"

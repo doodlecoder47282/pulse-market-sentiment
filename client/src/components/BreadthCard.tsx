@@ -21,19 +21,23 @@ interface BreadthSnapshot {
   note: string;
 }
 
-const pct = (x: number | null) => (x == null ? "—" : `${(x * 100).toFixed(0)}%`);
+// Server emits PERCENT form (44.4), not fractions (0.444) — do not multiply.
+const pct = (x: number | null) => (x == null ? "—" : `${x.toFixed(0)}%`);
 
 function MiniBars({ history }: { history: { date: string; pctAbove20: number }[] }) {
   if (!history || history.length < 5) return null;
   const recent = history.slice(-40);
   return (
-    <div className="flex items-end gap-px h-8" aria-label="pct above 20dma, last 40 sessions">
+    <div className="flex h-8 items-end gap-px overflow-hidden" aria-label="pct above 20dma, last 40 sessions">
       {recent.map((h, i) => (
+        // pctAbove20 arrives as 0-100 percent. The old fraction assumption
+        // rendered 3,900%-tall bars that bled across the whole Signals panel
+        // (IMG_0906) and painted every bar green (48 >= 0.55). Clamp regardless.
         <div
           key={h.date + i}
-          className={`flex-1 rounded-sm ${h.pctAbove20 >= 0.55 ? "bg-emerald-500/60" : h.pctAbove20 >= 0.45 ? "bg-amber-500/50" : "bg-rose-500/60"}`}
-          style={{ height: `${Math.max(8, h.pctAbove20 * 100)}%` }}
-          title={`${h.date}: ${(h.pctAbove20 * 100).toFixed(0)}%`}
+          className={`flex-1 rounded-sm ${h.pctAbove20 >= 55 ? "bg-emerald-500/60" : h.pctAbove20 >= 45 ? "bg-amber-500/50" : "bg-rose-500/60"}`}
+          style={{ height: `${Math.min(100, Math.max(8, h.pctAbove20))}%` }}
+          title={`${h.date}: ${h.pctAbove20.toFixed(0)}%`}
         />
       ))}
     </div>

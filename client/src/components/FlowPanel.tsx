@@ -309,14 +309,17 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
   const deltaSeries = useMemo(() => {
     return series.map((s, i) => {
       const prev = i > 0 ? series[i - 1] : null;
-      const callDelta = prev ? Math.max(0, s.callVolume - prev.callVolume) : s.callVolume;
-      const putDelta = prev ? Math.max(0, s.putVolume - prev.putVolume) : s.putVolume;
+      // First bucket has no prior sample: its "delta" would be the FULL cumulative
+      // day volume — a monster bar 100x the real per-bucket flow that blows the
+      // Y domain and (on iOS) bled bars across the whole panel. Zero it instead.
+      const callDelta = prev ? Math.max(0, s.callVolume - prev.callVolume) : 0;
+      const putDelta = prev ? Math.max(0, s.putVolume - prev.putVolume) : 0;
       const netDelta = callDelta - putDelta;
       // Aggressor-side deltas (Lee-Ready estimate)
-      const boughtCallDelta = prev ? Math.max(0, s.boughtCallVol - prev.boughtCallVol) : s.boughtCallVol;
-      const soldCallDelta   = prev ? Math.max(0, s.soldCallVol   - prev.soldCallVol)   : s.soldCallVol;
-      const boughtPutDelta  = prev ? Math.max(0, s.boughtPutVol  - prev.boughtPutVol)  : s.boughtPutVol;
-      const soldPutDelta    = prev ? Math.max(0, s.soldPutVol    - prev.soldPutVol)    : s.soldPutVol;
+      const boughtCallDelta = prev ? Math.max(0, s.boughtCallVol - prev.boughtCallVol) : 0;
+      const soldCallDelta   = prev ? Math.max(0, s.soldCallVol   - prev.soldCallVol)   : 0;
+      const boughtPutDelta  = prev ? Math.max(0, s.boughtPutVol  - prev.boughtPutVol)  : 0;
+      const soldPutDelta    = prev ? Math.max(0, s.soldPutVol    - prev.soldPutVol)    : 0;
       // Mirror-sign versions for stacked bars (calls above zero, puts below zero)
       const boughtPutDeltaNeg = -boughtPutDelta;
       const soldPutDeltaNeg   = -soldPutDelta;
@@ -533,7 +536,7 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
 
       {/* Chart */}
       {view === "flow" && (
-        <div className="h-[280px] sm:h-[320px]">
+        <div className="h-[280px] overflow-hidden sm:h-[320px]">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={deltaSeries} margin={{ top: 4, right: 44, left: 0, bottom: 4 }} stackOffset="sign">
               <defs>
@@ -643,7 +646,7 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
       )}
 
       {view === "bars" && (
-        <div className="h-[260px] sm:h-[300px]">
+        <div className="h-[260px] overflow-hidden sm:h-[300px]">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={deltaSeries} margin={{ top: 4, right: 40, left: 0, bottom: 4 }} stackOffset="sign">
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
@@ -703,7 +706,7 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
       )}
 
       {view === "area" && (
-        <div className="h-[260px] sm:h-[300px]">
+        <div className="h-[260px] overflow-hidden sm:h-[300px]">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={series} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.4} />
@@ -718,7 +721,7 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
       )}
 
       {view === "ratio" && (
-        <div className="h-[260px] sm:h-[300px]">
+        <div className="h-[260px] overflow-hidden sm:h-[300px]">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={series} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
