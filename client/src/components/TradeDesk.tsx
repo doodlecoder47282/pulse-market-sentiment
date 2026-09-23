@@ -1638,8 +1638,16 @@ function EodPlayMaker() {
   const opex = isOpexToday();
 
   // Result state
+  type DerivedTgt = {
+    name: string; price: number; adjProb: number; distPts: number;
+    wfTouchRate: number; basis: string;
+  } | null;
   const [result, setResult] = useState<{
     deterministic?: string | null;
+    derivedTargets?: {
+      up: { t1: DerivedTgt; t2: DerivedTgt; caveats: string[] };
+      down: { t1: DerivedTgt; t2: DerivedTgt; caveats: string[] };
+    } | null;
     claude: string | null;
     gpt: string | null;
     errors: { claude: string | null; gpt: string | null };
@@ -1823,6 +1831,33 @@ function EodPlayMaker() {
               doesn't show two permanent error cards. */}
           {(result || mutation.isPending) && (
             <div className="flex flex-col gap-4" data-testid="eod-output">
+              {/* Derived T1/T2 — walk-forward touch-rate basis. These are the
+                  targets that make fires gradeable (calibration + hazard refit
+                  both feed on them). */}
+              {result?.derivedTargets && (
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" data-testid="eod-derived-targets">
+                  {([["UP", result.derivedTargets.up], ["DOWN", result.derivedTargets.down]] as const).map(([dir, side]) => (
+                    <div key={dir} className={`rounded-md border p-2.5 ${dir === "UP" ? "border-emerald-500/25 bg-emerald-500/5" : "border-rose-500/25 bg-rose-500/5"}`}>
+                      <div className={`text-[10px] font-semibold uppercase tracking-[0.15em] ${dir === "UP" ? "text-emerald-400" : "text-rose-400"}`}>
+                        {dir} targets · walk-forward derived
+                      </div>
+                      {[["T1", side.t1], ["T2", side.t2]].map(([lbl, t]: any) => (
+                        <div key={lbl} className="mt-1.5 flex items-baseline justify-between gap-2">
+                          <span className="text-[10px] text-muted-foreground">{lbl}</span>
+                          {t ? (
+                            <span className="font-mono text-xs tabular-nums" data-testid={`text-derived-${dir.toLowerCase()}-${String(lbl).toLowerCase()}`}>
+                              {t.name} <span className="font-semibold">{t.price.toFixed(0)}</span>
+                              <span className="ml-1.5 text-muted-foreground">{Math.round(t.adjProb * 100)}% adj touch</span>
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground">none viable</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
               {/* Primary: deterministic brief from dealer-gamma inputs */}
               <ModelOutputPanel
                 label="DETERMINISTIC BRIEF"

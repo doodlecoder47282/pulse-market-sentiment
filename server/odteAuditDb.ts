@@ -157,7 +157,12 @@ export function persistOdteAuditOnFire(alert: any): void {
       volume: alert?.contract?.volume,
     };
 
-    const t1Target: number = alert?.t1Target ?? alert?.projectionT1 ?? 0;
+    // BUG FIX (T1/T2 derivation build): engine alerts carry `t1: {name, price}`,
+    // NOT `t1Target`/`projectionT1` — the old chain always fell through to 0,
+    // so every fire graded "insufficient_inputs — no t1_target". Fall back to
+    // the level price the engine actually selected.
+    const t1Target: number =
+      alert?.t1Target ?? alert?.projectionT1 ?? alert?.t1?.price ?? 0;
     const entryPrice: number =
       alert?.entryPrice ??
       alert?.contract?.midpoint ??

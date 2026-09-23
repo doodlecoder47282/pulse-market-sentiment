@@ -67,6 +67,7 @@ import { buildVolCalendar, getTodayEventContext } from "./volCalendar";
 import { computeOfiTrend } from "./leeReadyOfi";
 import { buildGammaLevelsEnhanced } from "./gammaLevels";
 import { runBackfill, getBacktestSummary } from "./backtest";
+import { deriveTargets, deriveBothSides, type CandidateLevel } from "./targetDerivation";
 import { buildChainAudit } from "./chainAudit";
 import { buildHeatseeker } from "./heatseeker";
 import { getCboeChain } from "./cboeCache";
@@ -2110,8 +2111,45 @@ Build the EOD setup brief.`;
 
       const [claudeResult, gptResult] = await Promise.allSettled([claudePromise, gptPromise]);
 
+      // ---- T1/T2 AUTO-DERIVATION (walk-forward touch rates) ----
+      // Derive principled targets from the same level stack the brief uses.
+      // Never throws; failures land in caveats. This is what makes eod-setup
+      // fires gradeable — audit rows persist a real t1_target instead of 0.
+      let derivedTargets: ReturnType<typeof deriveBothSides> | null = null;
+      try {
+        const lvls: CandidateLevel[] = [
+          { kind: "callWall", name: "Call Wall", price: Number(callWall) || 0 },
+          { kind: "putWall", name: "Put Wall", price: Number(putWall) || 0 },
+          { kind: "zeroGamma", name: "Zero Gamma", price: Number(zeroGamma) || 0 },
+          { kind: "gammaFlip", name: "Gamma Flip", price: Number(gammaFlip) || 0 },
+          { kind: "hvl", name: "HVL", price: Number(hvl) || 0 },
+          { kind: "upside", name: "Weekly Upside", price: Number(upside) || 0 },
+          { kind: "downside", name: "Weekly Downside", price: Number(downside) || 0 },
+          { kind: "t2up", name: "T2 Up", price: Number(t2up) || 0 },
+          { kind: "t2down", name: "T2 Down", price: Number(t2down) || 0 },
+          { kind: "mopex", name: "MOPEX Max Pain", price: Number(mopex) || 0 },
+          { kind: "upperVomma", name: "Upper Vomma", price: Number(upperVomma) || 0 },
+          { kind: "lowerVomma", name: "Lower Vomma", price: Number(lowerVomma) || 0 },
+          // third-order strikes intentionally passed too — derivation excludes
+          // kinds without walk-forward stats and reports them honestly
+          { kind: "vanna", name: "Vanna", price: Number(vanna) || 0 },
+          { kind: "zomma", name: "Zomma", price: Number(zomma) || 0 },
+          { kind: "charm", name: "Charm", price: Number(charm) || 0 },
+        ];
+        derivedTargets = deriveBothSides(Number(spx) || 0, lvls);
+      } catch (e: any) {
+        console.warn(`[eod-setup] target derivation failed: ${e?.message ?? e}`);
+      }
+
+      const fmtTgt = (t: any) =>
+        t ? `${t.name} ${t.price.toFixed(0)} (${(t.adjProb * 100).toFixed(0)}% adj touch — ${t.basis})` : "none viable";
+      const derivedBlock = derivedTargets
+        ? `\n\nDERIVED TARGETS — walk-forward basis (1d horizon)\nUP   T1: ${fmtTgt(derivedTargets.up.t1)}\nUP   T2: ${fmtTgt(derivedTargets.up.t2)}\nDOWN T1: ${fmtTgt(derivedTargets.down.t1)}\nDOWN T2: ${fmtTgt(derivedTargets.down.t2)}\nmethod: ${derivedTargets.up.method}`
+        : "";
+
       res.json({
-        deterministic,
+        deterministic: deterministic + derivedBlock,
+        derivedTargets,
         claude: claudeResult.status === "fulfilled" ? claudeResult.value : null,
         gpt: gptResult.status === "fulfilled" ? gptResult.value : null,
         errors: {
@@ -4801,6 +4839,29 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       }));
     } catch (e: any) {
       res.status(500).json({ error: "survival_failed", message: e?.message ?? String(e) });
+    }
+  });
+
+  // T1/T2 AUTO-DERIVATION — POST /api/edge/targets
+  // Body: { spot: number, side?: "call"|"put", levels: [{kind, name, price}] }
+  // Omit side to get both directions. Same engine the eod-setup brief uses.
+  app.post("/api/edge/targets", async (req, res) => {
+    try {
+      const spot = Number(req.body?.spot);
+      const levels = Array.isArray(req.body?.levels) ? req.body.levels : [];
+      if (!Number.isFinite(spot) || spot <= 0) {
+        return res.status(400).json({ error: "bad_request", message: "spot (number > 0) required" });
+      }
+      if (levels.length === 0) {
+        return res.status(400).json({ error: "bad_request", message: "levels array required: [{kind, name, price}]" });
+      }
+      const side = req.body?.side;
+      if (side === "call" || side === "put") {
+        return res.json(deriveTargets({ spot, side, levels }));
+      }
+      res.json(deriveBothSides(spot, levels));
+    } catch (e: any) {
+      res.status(500).json({ error: "targets_failed", message: e?.message ?? String(e) });
     }
   });
 
