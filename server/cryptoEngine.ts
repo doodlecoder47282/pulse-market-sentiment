@@ -64,6 +64,15 @@ export interface Candidate {
   boosted: boolean;
   lastRefreshAt: number | null;
 
+  // on-chain security (public Solana RPC — free, no keys)
+  mintAuthorityActive: boolean | null;   // null = unchecked
+  freezeAuthorityActive: boolean | null;
+  top10Pct: number | null;               // top-10 holder share ex-largest (AMM vault heuristic)
+  securityCheckedAt: number | null;
+
+  // rolling history for sustained-flow gating (whale-blink filter)
+  hist: Array<{ t: number; volAccel: number | null; netBuyRatio5m: number | null; mcap: number | null }>;
+
   // derived
   ageMinutes: number | null;
   volAccel: number | null;        // m5 volume annualized vs h1 baseline
@@ -192,8 +201,14 @@ sqlite.exec(`
     graded_at INTEGER
   );
   CREATE INDEX IF NOT EXISTS idx_crypto_signals_outcome ON crypto_signals(outcome);
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_crypto_signals_pair_day
-    ON crypto_signals(pair_address, detected_at / 86400000);
+`);
+// MIGRATION: the original per-day dedupe ignored verdict, which silently
+// BLOCKED same-day WATCH → ENTER upgrades — the most important signal we
+// have. Uniqueness is now (pair, verdict, day) so an upgrade writes its row.
+sqlite.exec(`
+  DROP INDEX IF EXISTS idx_crypto_signals_pair_day;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_crypto_signals_pair_verdict_day
+    ON crypto_signals(pair_address, verdict, detected_at / 86400000);
 `);
 
 function persistSignal(c: Candidate): void {
@@ -214,6 +229,8 @@ function persistSignal(c: Candidate): void {
         meme: c.memeScore, narrativeHits: c.narrativeHits, rugFlags: c.rugFlags,
         boosted: c.boosted, pumpfunGraduate: c.pumpfunGraduate,
         ageMinutes: c.ageMinutes, reasons: c.verdictReasons,
+        mintAuthorityActive: c.mintAuthorityActive, freezeAuthorityActive: c.freezeAuthorityActive,
+        top10Pct: c.top10Pct, securityCheckedAt: c.securityCheckedAt,
       }),
       JSON.stringify(c.risk),
     );
@@ -281,6 +298,8 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
     buys5m: null, sells5m: null, buys1h: null, sells1h: null,
     chg5m: null, chg1h: null, chg24h: null,
     boosted: false, lastRefreshAt: null,
+    mintAuthorityActive: null, freezeAuthorityActive: null, top10Pct: null, securityCheckedAt: null,
+    hist: [],
     ageMinutes: null, volAccel: null, netBuyRatio5m: null,
     fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
     hardKill: false, score: null, verdict: null, verdictReasons: [], risk: null,
@@ -389,8 +408,123 @@ async function momentumTick(): Promise<void> {
       c.boosted = boostedTokens.has(c.tokenAddress.toLowerCase());
       c.lastRefreshAt = Date.now();
       scoreCandidate(c);
+      // history AFTER scoring so volAccel/netBuyRatio are fresh; cap 20 readings
+      c.hist.push({ t: c.lastRefreshAt, volAccel: c.volAccel, netBuyRatio5m: c.netBuyRatio5m, mcap: c.marketCap });
+      if (c.hist.length > 20) c.hist.shift();
       persistSignal(c);
     }
+  }
+}
+
+// ─── 2b. SECURITY — public Solana RPC on-chain checks ───────────────────
+//
+// The #1 rug vector isn't liquidity — it's authorities and concentration:
+//   - mint authority active  = dev can print infinite supply into your bid
+//   - freeze authority active = dev can freeze YOUR tokens (can't sell)
+//   - top-10 holders > 45%   = coordinated dump risk
+// All readable from the free public RPC (api.mainnet-beta.solana.com), no key.
+// Heuristic: the single largest token account is almost always the AMM vault,
+// so concentration = top-10 EXCLUDING the largest, over total supply. Disclosed.
+//
+// Budget: 3 RPC calls per token, 3 tokens per 45s tick — far under public
+// RPC limits. Each candidate is checked once; re-checked every 30 min only
+// while an authority remains active (revocations happen post-launch).
+
+const SECURITY_MS = 45_000;
+// Method-aware routing, verified live:
+//   - publicnode serves getAccountInfo keylessly (authorities + supply via
+//     parsed mint data) but gates "indexed" methods (getTokenLargestAccounts)
+//     behind a personal token.
+//   - mainnet-beta serves indexed methods but 429s on bursts — so holder
+//     concentration is ONE gentle call per tick with a cooldown after any 429,
+//     and it is non-fatal: authorities alone still complete the check.
+const RPC_ACCOUNT = ["https://solana-rpc.publicnode.com", "https://api.mainnet-beta.solana.com"];
+const RPC_INDEXED = ["https://api.mainnet-beta.solana.com"];
+let rpcId = 1;
+let indexedCooldownUntil = 0; // set after a 429 — back off 5 min
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+async function solRpc(method: string, params: any[], urls: string[]): Promise<any> {
+  let lastErr: any = null;
+  for (const url of urls) {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 12_000);
+    try {
+      const r = await fetch(url, {
+        method: "POST", signal: ctl.signal,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: rpcId++, method, params }),
+      });
+      if (!r.ok) throw new Error(`rpc ${r.status} @ ${new URL(url).hostname}`);
+      const j = await r.json();
+      if (j.error) throw new Error(`rpc: ${j.error?.message ?? "unknown"}`);
+      return j.result;
+    } catch (e: any) {
+      lastErr = e;
+      await sleep(400);
+      continue;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+  throw lastErr ?? new Error("all solana rpcs failed");
+}
+
+async function securityTick(): Promise<void> {
+  // oldest-unchecked first; re-check active-authority tokens every 30 min
+  const now = Date.now();
+  const due = [...tracked.values()]
+    .filter((c) => c.chain === "solana" && c.tokenAddress && (c.liquidityUsd ?? 0) >= LIQ_FLOOR_USD)
+    .filter((c) =>
+      c.securityCheckedAt == null ||
+      ((c.mintAuthorityActive || c.freezeAuthorityActive) && now - c.securityCheckedAt > 30 * 60_000))
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0)) // best candidates first — they gate ENTER
+    .slice(0, 2); // gentle pace — public RPCs throttle bursts hard
+  if (due.length === 0) return;
+
+  let okCount = 0;
+  let lastErr: any = null;
+  let concentrationDone = false; // max ONE indexed call per tick
+  for (const c of due) {
+    try {
+      // CRITICAL PATH: authorities + supply from one parsed account read
+      const acct = await solRpc("getAccountInfo", [c.tokenAddress, { encoding: "jsonParsed" }], RPC_ACCOUNT);
+      const info = acct?.value?.data?.parsed?.info;
+      if (!info) throw new Error("mint account not parseable");
+      c.mintAuthorityActive = info.mintAuthority != null;
+      c.freezeAuthorityActive = info.freezeAuthority != null;
+      const total = Number(info.supply ?? 0);
+
+      // BEST-EFFORT: holder concentration (indexed — mainnet-beta only, gentle)
+      if (!concentrationDone && total > 0 && Date.now() > indexedCooldownUntil) {
+        concentrationDone = true;
+        try {
+          await sleep(800);
+          const largest = await solRpc("getTokenLargestAccounts", [c.tokenAddress], RPC_INDEXED);
+          const accts: any[] = largest?.value ?? [];
+          if (accts.length > 1) {
+            // exclude the single largest account (AMM vault heuristic)
+            const rest = accts.slice(1, 11);
+            const top = rest.reduce((s: number, a: any) => s + Number(a?.amount ?? 0), 0);
+            c.top10Pct = Number(((top / total) * 100).toFixed(1));
+          }
+        } catch (e: any) {
+          if (/429/.test(String(e?.message))) indexedCooldownUntil = Date.now() + 5 * 60_000;
+          // non-fatal — authorities are the gate, concentration is a bonus flag
+        }
+      }
+
+      c.securityCheckedAt = Date.now();
+      okCount++;
+      scoreCandidate(c); // re-verdict with security facts
+      persistSignal(c);
+      await sleep(700);
+    } catch (e: any) {
+      lastErr = e;
+    }
+  }
+  if (okCount === 0 && lastErr) {
+    throw new Error(`solana rpc failing: ${String(lastErr?.message ?? lastErr).slice(0, 100)}`);
   }
 }
 
@@ -453,6 +587,10 @@ function scoreCandidate(c: Candidate): void {
   if ((c.ageMinutes ?? 1e9) < 10) flags.push("under 10 min old — sniper zone, spreads brutal");
   if (c.boosted) flags.push("paid DexScreener boost — manufactured attention, discount the FOMO");
   if ((c.vol24h ?? 0) < 1000 && (c.ageMinutes ?? 0) > 720) flags.push("aged with no volume — dead pool");
+  // on-chain security facts (public RPC)
+  if (c.mintAuthorityActive === true) { flags.push("MINT AUTHORITY ACTIVE — dev can print supply into your bid"); hardKill = true; }
+  if (c.freezeAuthorityActive === true) { flags.push("FREEZE AUTHORITY ACTIVE — dev can lock your tokens"); hardKill = true; }
+  if ((c.top10Pct ?? 0) > 45) flags.push(`top-10 holders ${c.top10Pct}% of supply (ex-pool) — coordinated dump risk`);
   c.rugFlags = flags;
   c.hardKill = hardKill;
 
@@ -475,9 +613,23 @@ function scoreCandidate(c: Candidate): void {
     verdict = c.score >= 55 ? "WATCH" : "PASS";
     reasons.push(`mcap $${(mcap / 1e6).toFixed(2)}M above 1M entry ceiling — watch for retrace only`);
   } else if (c.score >= 70 && (c.volAccel ?? 0) >= 1.5 && (c.netBuyRatio5m ?? 0) >= 0.58) {
-    verdict = "ENTER";
-    reasons.push(`score ${c.score}, flow accelerating ${c.volAccel?.toFixed(1)}x, ${Math.round((c.netBuyRatio5m ?? 0) * 100)}% buys`);
-    if (c.narrativeHits.length) reasons.push(`narrative confirm: ${c.narrativeHits.join(", ")}`);
+    // WHALE-BLINK FILTER: one hot 5-min window is a single buyer, not a move.
+    // ENTER requires sustained flow — at least 2 of the last 3 refreshes with
+    // accel >= 1.5 — plus a completed on-chain security check.
+    const recent = c.hist.slice(-3);
+    const sustained = recent.length >= 2 && recent.filter((h) => (h.volAccel ?? 0) >= 1.5).length >= 2;
+    if (!sustained) {
+      verdict = "WATCH";
+      reasons.push(`score ${c.score}, accel ${c.volAccel?.toFixed(1)}x but not sustained yet (need 2 of last 3 polls) — whale-blink filter`);
+    } else if (c.securityCheckedAt == null) {
+      verdict = "WATCH";
+      reasons.push(`score ${c.score}, flow sustained — held at WATCH pending on-chain security check (mint/freeze/holders)`);
+    } else {
+      verdict = "ENTER";
+      reasons.push(`score ${c.score}, flow sustained ${c.volAccel?.toFixed(1)}x, ${Math.round((c.netBuyRatio5m ?? 0) * 100)}% buys, security checked`);
+      if (c.top10Pct != null) reasons.push(`top-10 holders ${c.top10Pct}% ex-pool`);
+      if (c.narrativeHits.length) reasons.push(`narrative confirm: ${c.narrativeHits.join(", ")}`);
+    }
   } else if (c.score >= 50) {
     verdict = "WATCH";
     reasons.push(`score ${c.score} — setup forming, waiting on flow confirmation`);
@@ -621,7 +773,8 @@ export function startCryptoEngines(): void {
   if (started) return;
   started = true;
   hb("scanner", SCANNER_MS); hb("momentum", MOMENTUM_MS);
-  hb("narratives", NARRATIVE_MS); hb("grader", GRADER_MS); hb("watchdog", WATCHDOG_MS);
+  hb("narratives", NARRATIVE_MS); hb("grader", GRADER_MS);
+  hb("security", SECURITY_MS); hb("watchdog", WATCHDOG_MS);
 
   const arm = (name: string, ms: number, fn: () => Promise<void>, initialDelay: number) => {
     setTimeout(() => {
@@ -633,9 +786,10 @@ export function startCryptoEngines(): void {
   arm("momentum", MOMENTUM_MS, momentumTick, 8_000);
   arm("narratives", NARRATIVE_MS, narrativeTick, 3_000);
   arm("grader", GRADER_MS, graderTick, 45_000);
+  arm("security", SECURITY_MS, securityTick, 20_000);
   timers.push(setInterval(watchdogTick, WATCHDOG_MS));
   watchdogTick();
-  console.log("[crypto] engines started — scanner/momentum/narratives/grader + watchdog");
+  console.log("[crypto] engines started — scanner/momentum/narratives/security/grader + watchdog");
 }
 
 export function getCryptoFeed(): {

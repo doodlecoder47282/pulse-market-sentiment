@@ -26,6 +26,8 @@ interface Candidate {
   buys5m: number | null; sells5m: number | null;
   chg5m: number | null; chg1h: number | null; chg24h: number | null;
   boosted: boolean; ageMinutes: number | null;
+  mintAuthorityActive: boolean | null; freezeAuthorityActive: boolean | null;
+  top10Pct: number | null; securityCheckedAt: number | null;
   volAccel: number | null; netBuyRatio5m: number | null;
   fomoScore: number | null; memeScore: number | null;
   narrativeHits: string[]; rugFlags: string[]; hardKill: boolean;
@@ -365,6 +367,25 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
               <Stat label="slippage" value={`~${c.risk.estSlippagePct}%`} />
             </div>
           )}
+          <div className="flex flex-wrap items-center gap-1.5 text-[9px]">
+            {c.securityCheckedAt == null ? (
+              <span className="rounded bg-muted/40 px-1.5 py-0.5 text-muted-foreground">on-chain check pending</span>
+            ) : (
+              <>
+                <span className={`rounded px-1.5 py-0.5 font-semibold ${c.mintAuthorityActive ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/15 text-emerald-300"}`}>
+                  mint {c.mintAuthorityActive ? "ACTIVE" : "revoked ✓"}
+                </span>
+                <span className={`rounded px-1.5 py-0.5 font-semibold ${c.freezeAuthorityActive ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/15 text-emerald-300"}`}>
+                  freeze {c.freezeAuthorityActive ? "ACTIVE" : "none ✓"}
+                </span>
+                {c.top10Pct != null && (
+                  <span className={`rounded px-1.5 py-0.5 font-semibold ${c.top10Pct > 45 ? "bg-rose-500/20 text-rose-300" : c.top10Pct > 30 ? "bg-amber-500/15 text-amber-300" : "bg-emerald-500/15 text-emerald-300"}`}>
+                    top10 {c.top10Pct}%
+                  </span>
+                )}
+              </>
+            )}
+          </div>
           <p className="text-[9px] text-muted-foreground">
             {c.dexId} · {c.chain} · via {c.discoveredVia} · pair {c.pairAddress.slice(0, 10)}…
           </p>
