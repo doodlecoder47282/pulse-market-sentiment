@@ -68,6 +68,7 @@ import { computeOfiTrend } from "./leeReadyOfi";
 import { buildGammaLevelsEnhanced } from "./gammaLevels";
 import { runBackfill, getBacktestSummary } from "./backtest";
 import { deriveTargets, deriveBothSides, type CandidateLevel } from "./targetDerivation";
+import { startCryptoEngines, getCryptoFeed, getCryptoHealth, getCryptoSignals } from "./cryptoEngine";
 import { buildChainAudit } from "./chainAudit";
 import { buildHeatseeker } from "./heatseeker";
 import { getCboeChain } from "./cboeCache";
@@ -4842,6 +4843,20 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     }
   });
 
+  // CRYPTO DEGEN DESK — feed / health / signals
+  app.get("/api/crypto/feed", (_req, res) => {
+    try { res.json(getCryptoFeed()); }
+    catch (e: any) { res.status(500).json({ error: "crypto_feed_failed", message: e?.message ?? String(e) }); }
+  });
+  app.get("/api/crypto/health", (_req, res) => {
+    try { res.json(getCryptoHealth()); }
+    catch (e: any) { res.status(500).json({ error: "crypto_health_failed", message: e?.message ?? String(e) }); }
+  });
+  app.get("/api/crypto/signals", (_req, res) => {
+    try { res.json(getCryptoSignals()); }
+    catch (e: any) { res.status(500).json({ error: "crypto_signals_failed", message: e?.message ?? String(e) }); }
+  });
+
   // T1/T2 AUTO-DERIVATION — POST /api/edge/targets
   // Body: { spot: number, side?: "call"|"put", levels: [{kind, name, price}] }
   // Omit side to get both directions. Same engine the eod-setup brief uses.
@@ -5161,6 +5176,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
   // Kick off tracker poller
   startOdteTracker(4_000);
+  // Crypto degen desk — GeckoTerminal/DexScreener/RSS engines + watchdog.
+  // Free public APIs, no keys, independent of the Schwab data path.
+  try { startCryptoEngines(); } catch (e: any) { console.warn(`[crypto] failed to start: ${e?.message ?? e}`); }
 
   // Kick off MM-matrix scheduler (10/13/15:30 ET snapshots, 16:30 grading)
   startMmScheduler();

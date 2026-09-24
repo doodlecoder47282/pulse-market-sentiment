@@ -26,6 +26,7 @@ import GlobalEdgeBanner from "@/components/GlobalEdgeBanner";
 import { RegimeChip } from "@/components/RegimeChip";
 import TakeFive, { TakeFiveFab } from "@/components/TakeFive";
 import EdgeLabPanel from "@/components/EdgeLabPanel";
+const CryptoPanel = lazy(() => import("@/components/CryptoPanel"));
 import { MacroTicker, MacroCarousel } from "@/components/MacroCarousel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTickers, type TabKey } from "@/components/TickerContext";
@@ -469,6 +470,13 @@ export default function Dashboard() {
               >
                 Edge Lab
               </TabsTrigger>
+              <TabsTrigger
+                value="crypto"
+                data-testid="tab-crypto"
+                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-fuchsia-600/35 data-[state=active]:via-violet-600/25 data-[state=active]:to-lime-500/30 data-[state=active]:text-fuchsia-100"
+              >
+                Crypto
+              </TabsTrigger>
             </TabsList>
           </div>
 
@@ -597,6 +605,15 @@ export default function Dashboard() {
             <ErrorBoundary label="Edge Lab">
               <Suspense fallback={<div className="text-xs text-muted-foreground">loading edge lab…</div>}>
                 <EdgeLabPanel />
+              </Suspense>
+            </ErrorBoundary>
+          </TabsContent>
+
+          {/* ── Crypto tab (lazy) ── */}
+          <TabsContent value="crypto" className="space-y-6">
+            <ErrorBoundary label="Crypto">
+              <Suspense fallback={<div className="text-xs text-muted-foreground">loading degen desk…</div>}>
+                <CryptoPanel />
               </Suspense>
             </ErrorBoundary>
           </TabsContent>
@@ -944,6 +961,7 @@ export default function Dashboard() {
             { key: "news", label: "News" },
             { key: "takefive", label: "Take5" },
             { key: "edgelab", label: "Edge" },
+            { key: "crypto", label: "Crypto" },
           ] as { key: TabKey; label: string }[]).map((t) => {
             const isActive = activeTab === t.key;
             return (

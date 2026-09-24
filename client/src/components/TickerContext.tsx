@@ -27,7 +27,8 @@ export type TabKey =
   | "news"
   | "voices"
   | "takefive"
-  | "edgelab";
+  | "edgelab"
+  | "crypto";
 
 type TickerContextValue = {
   watchlist: WatchlistEntry[];
