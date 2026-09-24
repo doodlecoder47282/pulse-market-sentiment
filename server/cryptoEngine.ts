@@ -70,6 +70,22 @@ export interface Candidate {
   top10Pct: number | null;               // top-10 holder share ex-largest (AMM vault heuristic)
   securityCheckedAt: number | null;
 
+  // rugcheck.xyz cached report (keyless)
+  rcRisks: string[];
+  rcLpLockedPct: number | null;
+  rcCheckedAt: number | null;
+
+  // social velocity (bluesky keyless search + pump.fun coin object)
+  bskyMentions1h: number | null;
+  bskyMentions10m: number | null;
+  pumpReplies: number | null;
+  pumpReplyPerHr: number | null;   // measured between polls
+  pumpLive: boolean;               // livestream running = raw attention
+  hasSocialLinks: boolean | null;  // twitter/telegram/website on the token
+  socialScore: number | null;      // 0-100
+  socialCheckedAt: number | null;
+  prevPumpReplies: { count: number; t: number } | null;
+
   // rolling history for sustained-flow gating (whale-blink filter)
   hist: Array<{ t: number; volAccel: number | null; netBuyRatio5m: number | null; mcap: number | null }>;
 
@@ -231,6 +247,9 @@ function persistSignal(c: Candidate): void {
         ageMinutes: c.ageMinutes, reasons: c.verdictReasons,
         mintAuthorityActive: c.mintAuthorityActive, freezeAuthorityActive: c.freezeAuthorityActive,
         top10Pct: c.top10Pct, securityCheckedAt: c.securityCheckedAt,
+        rcRisks: c.rcRisks, rcLpLockedPct: c.rcLpLockedPct,
+        socialScore: c.socialScore, bskyMentions1h: c.bskyMentions1h,
+        pumpReplyPerHr: c.pumpReplyPerHr, pumpLive: c.pumpLive,
       }),
       JSON.stringify(c.risk),
     );
@@ -254,6 +273,25 @@ async function getJson(url: string, timeoutMs = 12_000): Promise<any> {
   } finally {
     clearTimeout(t);
   }
+}
+
+// pump.fun's CDN rejects node's TLS fingerprint (any UA -> 403) but allows
+// curl's. Verified live. So pump.fun calls shell out to curl; everything
+// else stays on native fetch.
+import { execFile } from "child_process";
+
+function curlJson(url: string, timeoutMs = 12_000): Promise<any> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "curl",
+      ["-s", "-m", String(Math.ceil(timeoutMs / 1000)), "-H", "accept: application/json", url],
+      { timeout: timeoutMs + 2000, maxBuffer: 4 * 1024 * 1024 },
+      (err, stdout) => {
+        if (err) return reject(err);
+        try { resolve(JSON.parse(stdout)); } catch (e) { reject(new Error(`non-json from ${url.slice(0, 60)}`)); }
+      },
+    );
+  });
 }
 
 // ─── 1. SCANNER — GeckoTerminal discovery ───────────────────────────────
@@ -299,6 +337,9 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
     chg5m: null, chg1h: null, chg24h: null,
     boosted: false, lastRefreshAt: null,
     mintAuthorityActive: null, freezeAuthorityActive: null, top10Pct: null, securityCheckedAt: null,
+    rcRisks: [], rcLpLockedPct: null, rcCheckedAt: null,
+    bskyMentions1h: null, bskyMentions10m: null, pumpReplies: null, pumpReplyPerHr: null,
+    pumpLive: false, hasSocialLinks: null, socialScore: null, socialCheckedAt: null, prevPumpReplies: null,
     hist: [],
     ageMinutes: null, volAccel: null, netBuyRatio5m: null,
     fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
@@ -514,6 +555,18 @@ async function securityTick(): Promise<void> {
         }
       }
 
+      // ── rugcheck.xyz cached summary (keyless, verified) — LP lock + named risks ──
+      if (c.rcCheckedAt == null) {
+        try {
+          const rc = await getJson(`https://api.rugcheck.xyz/v1/tokens/${c.tokenAddress}/report/summary`);
+          const risks: any[] = rc?.risks ?? [];
+          c.rcRisks = risks.map((r) => String(r?.name ?? r)).filter(Boolean).slice(0, 6);
+          const lp = Number(rc?.lpLockedPct ?? NaN);
+          c.rcLpLockedPct = Number.isFinite(lp) ? Number(lp.toFixed(1)) : null;
+          c.rcCheckedAt = Date.now();
+        } catch { /* cached-only source — absence is not a verdict */ }
+      }
+
       c.securityCheckedAt = Date.now();
       okCount++;
       scoreCandidate(c); // re-verdict with security facts
@@ -525,6 +578,91 @@ async function securityTick(): Promise<void> {
   }
   if (okCount === 0 && lastErr) {
     throw new Error(`solana rpc failing: ${String(lastErr?.message ?? lastErr).slice(0, 100)}`);
+  }
+}
+
+// ─── 2c. SOCIAL VELOCITY — bluesky + pump.fun (keyless, verified live) ───
+//
+// FOMO forms on social before it finishes printing on the chart. Free keyless
+// sources that actually work from this server (tested):
+//   - bluesky search via api.bsky.app (the "public." host CDN-blocks
+//     datacenter IPs; the main host serves keyless reads) — mention counts
+//     for "$SYMBOL" in the last 10m/60m.
+//   - pump.fun /coins/{mint} — reply_count (velocity between polls),
+//     livestream flag, twitter/telegram/website links.
+// Reddit blocks datacenter IPs outright — excluded, disclosed.
+// X/twitter is paywalled — excluded, disclosed.
+
+const SOCIAL_MS = 90_000;
+const BSKY = "https://api.bsky.app/xrpc/app.bsky.feed.searchPosts";
+const PUMP = "https://frontend-api-v3.pump.fun";
+
+async function socialTick(): Promise<void> {
+  // refresh the best candidates first (they gate ENTER); 4 per tick,
+  // stale after 5 min. ~3 bsky + ~3 pump calls per tick — trivial load.
+  const now = Date.now();
+  const due = [...tracked.values()]
+    .filter((c) => c.lastRefreshAt != null && (c.marketCap ?? 0) <= MCAP_CEILING * 2)
+    .filter((c) => c.socialCheckedAt == null || now - c.socialCheckedAt > 5 * 60_000)
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+    .slice(0, 4);
+  if (due.length === 0) return;
+
+  let okCount = 0;
+  let lastErr: any = null;
+  for (const c of due) {
+    try {
+      // ── bluesky mentions: "$SYMBOL" (cashtag form degens actually post) ──
+      const sym = c.symbol.replace(/[^A-Za-z0-9]/g, "");
+      if (sym.length >= 3) {
+        try {
+          const q = encodeURIComponent(`$${sym}`);
+          const r = await getJson(`${BSKY}?q=${q}&sort=latest&limit=25`);
+          const posts: any[] = r?.posts ?? [];
+          const ts = posts
+            .map((p) => Date.parse(p?.record?.createdAt ?? p?.indexedAt ?? ""))
+            .filter((t) => Number.isFinite(t));
+          c.bskyMentions1h = ts.filter((t) => now - t < 3600_000).length;
+          c.bskyMentions10m = ts.filter((t) => now - t < 600_000).length;
+        } catch { /* bsky is enhancement — never blocks the tick */ }
+      }
+
+      // ── pump.fun coin object (only for pump ecosystem tokens) ──
+      if (c.tokenAddress.endsWith("pump") || c.pumpfunGraduate) {
+        try {
+          const coin = await curlJson(`${PUMP}/coins/${c.tokenAddress}`);
+          const replies = Number(coin?.reply_count ?? NaN);
+          if (Number.isFinite(replies)) {
+            if (c.prevPumpReplies && now > c.prevPumpReplies.t) {
+              const hrs = (now - c.prevPumpReplies.t) / 3600_000;
+              if (hrs > 0.02) c.pumpReplyPerHr = Number(((replies - c.prevPumpReplies.count) / hrs).toFixed(1));
+            }
+            c.prevPumpReplies = { count: replies, t: now };
+            c.pumpReplies = replies;
+          }
+          c.pumpLive = Boolean(coin?.is_currently_live);
+          c.hasSocialLinks = Boolean(coin?.twitter || coin?.telegram || coin?.website);
+        } catch { /* unofficial API — graceful degradation is the contract */ }
+      }
+
+      // ── social score 0-100 ──
+      let s = 0;
+      s += Math.min(35, (c.bskyMentions10m ?? 0) * 12);          // fresh mentions are gold
+      s += Math.min(20, (c.bskyMentions1h ?? 0) * 2.5);
+      s += Math.min(30, Math.max(0, (c.pumpReplyPerHr ?? 0)) * 0.75); // 40 replies/hr = max
+      if (c.pumpLive) s += 10;
+      if (c.hasSocialLinks) s += 5;
+      c.socialScore = Math.round(Math.min(100, s));
+      c.socialCheckedAt = now;
+      okCount++;
+      scoreCandidate(c);
+      persistSignal(c);
+    } catch (e: any) {
+      lastErr = e;
+    }
+  }
+  if (okCount === 0 && lastErr) {
+    throw new Error(`social sources failing: ${String(lastErr?.message ?? lastErr).slice(0, 100)}`);
   }
 }
 
@@ -572,6 +710,9 @@ function scoreCandidate(c: Candidate): void {
   if (c.netBuyRatio5m != null) fomo += Math.max(0, (c.netBuyRatio5m - 0.5) * 100); // up to +50
   if (c.discoveredVia === "trending") fomo += 10;
   if (c.boosted) fomo += 8; // paid promo IS fomo — but it's flagged as manufactured below
+  // social velocity (bluesky mentions + pump.fun reply rate) — real crowd
+  // attention, weighted in at 30%: flow still leads, social confirms
+  if (c.socialScore != null) fomo = fomo * 0.7 + c.socialScore * 0.3;
   c.fomoScore = Math.min(100, fomo);
 
   // rug filter
@@ -591,6 +732,9 @@ function scoreCandidate(c: Candidate): void {
   if (c.mintAuthorityActive === true) { flags.push("MINT AUTHORITY ACTIVE — dev can print supply into your bid"); hardKill = true; }
   if (c.freezeAuthorityActive === true) { flags.push("FREEZE AUTHORITY ACTIVE — dev can lock your tokens"); hardKill = true; }
   if ((c.top10Pct ?? 0) > 45) flags.push(`top-10 holders ${c.top10Pct}% of supply (ex-pool) — coordinated dump risk`);
+  // rugcheck cached report — LP lock + named risks (non-fatal: cached data)
+  if (c.rcLpLockedPct != null && c.rcLpLockedPct < 50) flags.push(`LP only ${c.rcLpLockedPct}% locked (rugcheck) — pull risk`);
+  for (const r of c.rcRisks) flags.push(`rugcheck: ${r}`);
   c.rugFlags = flags;
   c.hardKill = hardKill;
 
@@ -774,7 +918,7 @@ export function startCryptoEngines(): void {
   started = true;
   hb("scanner", SCANNER_MS); hb("momentum", MOMENTUM_MS);
   hb("narratives", NARRATIVE_MS); hb("grader", GRADER_MS);
-  hb("security", SECURITY_MS); hb("watchdog", WATCHDOG_MS);
+  hb("security", SECURITY_MS); hb("social", SOCIAL_MS); hb("watchdog", WATCHDOG_MS);
 
   const arm = (name: string, ms: number, fn: () => Promise<void>, initialDelay: number) => {
     setTimeout(() => {
@@ -787,9 +931,10 @@ export function startCryptoEngines(): void {
   arm("narratives", NARRATIVE_MS, narrativeTick, 3_000);
   arm("grader", GRADER_MS, graderTick, 45_000);
   arm("security", SECURITY_MS, securityTick, 20_000);
+  arm("social", SOCIAL_MS, socialTick, 30_000);
   timers.push(setInterval(watchdogTick, WATCHDOG_MS));
   watchdogTick();
-  console.log("[crypto] engines started — scanner/momentum/narratives/security/grader + watchdog");
+  console.log("[crypto] engines started — scanner/momentum/narratives/security/social/grader + watchdog");
 }
 
 export function getCryptoFeed(): {

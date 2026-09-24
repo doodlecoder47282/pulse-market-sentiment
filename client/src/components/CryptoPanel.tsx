@@ -28,6 +28,10 @@ interface Candidate {
   boosted: boolean; ageMinutes: number | null;
   mintAuthorityActive: boolean | null; freezeAuthorityActive: boolean | null;
   top10Pct: number | null; securityCheckedAt: number | null;
+  rcRisks: string[]; rcLpLockedPct: number | null;
+  bskyMentions1h: number | null; bskyMentions10m: number | null;
+  pumpReplies: number | null; pumpReplyPerHr: number | null;
+  pumpLive: boolean; socialScore: number | null; socialCheckedAt: number | null;
   volAccel: number | null; netBuyRatio5m: number | null;
   fomoScore: number | null; memeScore: number | null;
   narrativeHits: string[]; rugFlags: string[]; hardKill: boolean;
@@ -328,9 +332,15 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
       </div>
       <div className="mt-1 flex justify-between text-[9px] text-muted-foreground">
         <span>runway to $1M cap: {mcapPct.toFixed(0)}%</span>
-        <span className="flex items-center gap-1">
-          <Flame className={`h-2.5 w-2.5 ${(c.fomoScore ?? 0) >= 60 ? "text-orange-400" : "text-muted-foreground"}`} />
-          fomo {Math.round(c.fomoScore ?? 0)}
+        <span className="flex items-center gap-2">
+          {c.pumpLive && <span className="font-semibold text-rose-400">● LIVE</span>}
+          <span className="flex items-center gap-1">
+            <Flame className={`h-2.5 w-2.5 ${(c.fomoScore ?? 0) >= 60 ? "text-orange-400" : "text-muted-foreground"}`} />
+            fomo {Math.round(c.fomoScore ?? 0)}
+          </span>
+          <span className={`${(c.socialScore ?? 0) >= 40 ? "text-fuchsia-300" : "text-muted-foreground"}`}>
+            social {c.socialScore != null ? Math.round(c.socialScore) : "—"}
+          </span>
         </span>
       </div>
 
@@ -383,9 +393,20 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
                     top10 {c.top10Pct}%
                   </span>
                 )}
+                {c.rcLpLockedPct != null && (
+                  <span className={`rounded px-1.5 py-0.5 font-semibold ${c.rcLpLockedPct < 50 ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/15 text-emerald-300"}`}>
+                    LP {c.rcLpLockedPct}% locked
+                  </span>
+                )}
               </>
             )}
           </div>
+          {c.socialCheckedAt != null && (
+            <div className="flex flex-wrap items-center gap-1.5 text-[9px] text-muted-foreground">
+              <span>social · bsky {c.bskyMentions1h ?? 0} mentions/1h ({c.bskyMentions10m ?? 0} last 10m)</span>
+              {c.pumpReplies != null && <span>· pump.fun {c.pumpReplies} replies{c.pumpReplyPerHr != null ? ` (${c.pumpReplyPerHr >= 0 ? "+" : ""}${c.pumpReplyPerHr}/hr)` : ""}</span>}
+            </div>
+          )}
           <p className="text-[9px] text-muted-foreground">
             {c.dexId} · {c.chain} · via {c.discoveredVia} · pair {c.pairAddress.slice(0, 10)}…
           </p>
