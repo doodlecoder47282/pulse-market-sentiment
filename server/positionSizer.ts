@@ -45,7 +45,7 @@ export interface SizingResult {
   /** Kelly-capped fraction of account (decimal, e.g. 0.045 = 4.5%) */
   kellyAccountFraction: number;
   /** Reason for size cap (whichever was binding) */
-  bindingConstraint: "risk-floor" | "kelly-cap" | "conviction-tier" | "min-contract";
+  bindingConstraint: "risk-floor" | "kelly-cap" | "conviction-tier" | "min-contract" | "cash-cap";
   /** All-in payoff if T1 hits (gain%) */
   expectedPayoffPct: number;
   /** Rejection if grade < banger gate */
@@ -89,12 +89,21 @@ function tierMultiplier(score: number): number {
 
 export function sizePosition(input: SizingInput): SizingResult {
   const reasoning: string[] = [];
+  const numericInputs = [input.accountSize, input.entryPrice, input.stopPrice, input.gradeScore,
+    input.targetPct ?? BANGER_MIN_PCT, input.maxRiskPct ?? 0.01, input.kellyFraction ?? 0.25];
+  if (numericInputs.some(value => !Number.isFinite(value))) {
+    return {
+      contracts: 0, riskDollars: 0, notionalDollars: 0, kellyAccountFraction: 0,
+      bindingConstraint: "risk-floor", expectedPayoffPct: 0, rejected: true,
+      rejectReason: "all sizing inputs must be finite numbers", reasoning: ["invalid numeric input — no size"],
+    };
+  }
   const accountSize = Math.max(0, input.accountSize);
   const maxRiskPct = clamp(input.maxRiskPct ?? 0.01, 0.001, 0.05);
   const entry = Math.max(0, input.entryPrice);
-  const stop = Math.max(0, input.stopPrice);
+  const stop = input.stopPrice;
   const grade = clamp(input.gradeScore, 0, 100);
-  const target = Math.max(BANGER_MIN_PCT, input.targetPct ?? BANGER_MIN_PCT);
+  const target = input.targetPct ?? BANGER_MIN_PCT;
   const kellyFrac = clamp(input.kellyFraction ?? 0.25, 0.05, 1.0);
 
   // ── Hard rejections ──────────────────────────────────────────────────────
@@ -180,12 +189,15 @@ export function sizePosition(input: SizingInput): SizingResult {
   const tierMult = tierMultiplier(grade);
   const tierContracts = Math.floor(Math.min(riskFloorContracts, kellyContracts) * tierMult);
   reasoning.push(`conviction tier: grade ${grade} → ${(tierMult * 100).toFixed(0)}% size multiplier`);
+  const cashContracts = Math.floor(accountSize / (entry * 100));
+  reasoning.push(`cash cap: premium outlay cannot exceed the supplied account budget → ${cashContracts} contracts`);
 
   // ── Final binding constraint ─────────────────────────────────────────────
   const candidates = [
     { count: riskFloorContracts, name: "risk-floor" as const },
     { count: kellyContracts, name: "kelly-cap" as const },
     { count: tierContracts, name: "conviction-tier" as const },
+    { count: cashContracts, name: "cash-cap" as const },
   ];
   // Pick the SMALLEST (most conservative)
   candidates.sort((a, b) => a.count - b.count);

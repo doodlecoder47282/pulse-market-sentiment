@@ -194,7 +194,6 @@ const DISPLAY_NAME: Record<string, string> = {
   t2Up: "T2 UPSIDE",
   t1Down: "DOWNSIDE TARGET",
   t2Down: "T2 DOWNSIDE",
-  mainPivot: "MAIN PIVOT",
   gammaZero: "\u03b3-ZERO",
 };
 const displayName = (kind: string, fallback: string) =>

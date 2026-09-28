@@ -17,6 +17,7 @@ import OpenAI from "openai";
 import { getTickerAlpha, type TickerAlpha } from "./tickerAlpha";
 import { buildPivotProjection, type PivotProjectionResponse } from "./pivotProjection";
 import { getPriceHistory } from "./schwab";
+import { normalizeScenarioWeights } from "./scenarioWeights";
 
 export type Direction = "BULL" | "BEAR" | "NEUTRAL";
 
@@ -370,9 +371,12 @@ function normalizeVerdict(raw: any, fallback: OutlookVerdict, provider: OutlookV
   if (!raw || typeof raw !== "object") return fallback;
   const sc = raw.scenarios || {};
   // Force probs to sum to 100
-  const bp = Math.max(0, Math.min(100, Number(sc.bull?.prob ?? fallback.scenarios.bull.prob)));
-  const xp = Math.max(0, Math.min(100, Number(sc.bear?.prob ?? fallback.scenarios.bear.prob)));
-  const np = Math.max(0, Math.min(100, 100 - bp - xp));
+  const weights = normalizeScenarioWeights(
+    Number(sc.bull?.prob ?? fallback.scenarios.bull.prob),
+    Number(sc.bear?.prob ?? fallback.scenarios.bear.prob),
+    sc.base?.prob == null ? undefined : Number(sc.base.prob),
+  );
+  const bp = weights.bull, xp = weights.bear, np = weights.base;
   return {
     direction: (raw.direction === "BULL" || raw.direction === "BEAR" || raw.direction === "NEUTRAL")
       ? raw.direction : fallback.direction,

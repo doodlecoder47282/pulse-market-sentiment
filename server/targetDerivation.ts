@@ -90,7 +90,7 @@ const RATIO_CLAMP_HI = 2.5;
 const PROB_CAP = 0.95;
 
 const METHOD =
-  "walk-forward daily touch rates (stride-sampled, non-overlapping) with first-order distance adjustment: adjProb = wfTouchRate * clamp(medianDistBps/todayDistBps, 0.25, 2.5)";
+  "historical price/volatility proxy-level touch rates (stride-sampled) with heuristic distance adjustment: adjProb = wfTouchRate * clamp(medianDistBps/todayDistBps, 0.25, 2.5); not reconstructed historical dealer levels";
 
 export function deriveTargets(args: {
   spot: number;
@@ -166,7 +166,7 @@ export function deriveTargets(args: {
       wfTouchRate: Number(stats.touchRate.toFixed(3)),
       wfMedianDistBps: Number(stats.medDistBps.toFixed(1)),
       adjProb: Number(adjProb.toFixed(3)),
-      basis: `${wfKind} wf touch ${(stats.touchRate * 100).toFixed(1)}% @ median ${stats.medDistBps.toFixed(0)}bps, today ${distBps.toFixed(0)}bps → adj ${(adjProb * 100).toFixed(0)}%`,
+      basis: `${wfKind} historical proxy touch ${(stats.touchRate * 100).toFixed(1)}% @ median ${stats.medDistBps.toFixed(0)}bps, today ${distBps.toFixed(0)}bps → heuristic ${(adjProb * 100).toFixed(0)}%`,
     });
   }
 
@@ -206,6 +206,7 @@ export function deriveTargets(args: {
   }
 
   caveats.push("adjusted probabilities are first-order distance scaling of unconditional rates, not a fitted conditional model — treat as ordering, not odds");
+  caveats.push("historical wall/magnet/flip observations use price-volatility proxies, not historical option-chain reconstruction; matching names do not establish live-level calibration");
 
   return {
     side, spot, t1, t2,

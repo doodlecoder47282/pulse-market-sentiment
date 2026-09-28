@@ -16,7 +16,7 @@ interface SizingResult {
   riskDollars: number;
   notionalDollars: number;
   kellyAccountFraction: number;
-  bindingConstraint: "risk-floor" | "kelly-cap" | "conviction-tier" | "min-contract";
+  bindingConstraint: "risk-floor" | "kelly-cap" | "conviction-tier" | "min-contract" | "cash-cap";
   expectedPayoffPct: number;
   rejected: boolean;
   rejectReason?: string;

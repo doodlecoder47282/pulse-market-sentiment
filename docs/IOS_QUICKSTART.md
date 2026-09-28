@@ -1,5 +1,9 @@
 # Batcave iPhone: first build
 
+For the complete first-time Mac walkthrough, device signing, backend boundaries,
+and troubleshooting, read [XCODE_GUIDE.md](XCODE_GUIDE.md). This file remains the
+short command reference.
+
 Status: Capacitor project generated and web assets tested in a browser.
 Not yet compiled, signed, or tested in Xcode or on a physical iPhone.
 

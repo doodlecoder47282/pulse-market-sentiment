@@ -32,6 +32,7 @@ interface Candidate {
   bskyMentions1h: number | null; bskyMentions10m: number | null;
   pumpReplies: number | null; pumpReplyPerHr: number | null;
   pumpLive: boolean; socialScore: number | null; socialCheckedAt: number | null;
+  socialCoverage?: "pending" | "ok" | "partial" | "unavailable" | "stale";
   volAccel: number | null; netBuyRatio5m: number | null;
   fomoScore: number | null; memeScore: number | null;
   narrativeHits: string[]; rugFlags: string[]; hardKill: boolean;
@@ -238,9 +239,9 @@ function TrackingBanner({ sig, view }: { sig?: SignalsResp; view: string }) {
       <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
       <p className="text-[11px] leading-snug text-amber-200/90">
         <span className="font-semibold">tracking mode.</span> every ENTER/WATCH is logged and graded
-        (5M hit / doubled / rugged / dead) but nothing here is stakeable until the audited hit rate exists
-        — same n≥50 rule as the 0DTE desk{graded != null ? ` (${graded} graded so far)` : ""}. sub-1M memes
-        are a &gt;90% loss-rate arena; the math only works small, cut fast, and letting 4-5x winners pay for everything.
+        (5M hit / doubled / rugged / dead). These are discovery outcomes, not realized trade returns.
+        {graded != null ? ` ${graded} graded so far.` : ""} Fifty outcomes alone do not establish calibration or
+        positive expected value. Execution costs, failed exits, and out-of-sample validation still matter.
       </p>
     </div>
   );
@@ -339,7 +340,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
             fomo {Math.round(c.fomoScore ?? 0)}
           </span>
           <span className={`${(c.socialScore ?? 0) >= 40 ? "text-fuchsia-300" : "text-muted-foreground"}`}>
-            social {c.socialScore != null ? Math.round(c.socialScore) : "—"}
+            social {c.socialCoverage === "ok" && c.socialScore != null ? Math.round(c.socialScore) : c.socialCoverage ?? "—"}
           </span>
         </span>
       </div>
@@ -403,7 +404,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
           </div>
           {c.socialCheckedAt != null && (
             <div className="flex flex-wrap items-center gap-1.5 text-[9px] text-muted-foreground">
-              <span>social · bsky {c.bskyMentions1h ?? 0} mentions/1h ({c.bskyMentions10m ?? 0} last 10m)</span>
+              <span>social {c.socialCoverage ?? "unknown"} · bsky {c.bskyMentions1h ?? "unavailable"} mentions/1h ({c.bskyMentions10m ?? "unavailable"} last 10m)</span>
               {c.pumpReplies != null && <span>· pump.fun {c.pumpReplies} replies{c.pumpReplyPerHr != null ? ` (${c.pumpReplyPerHr >= 0 ? "+" : ""}${c.pumpReplyPerHr}/hr)` : ""}</span>}
             </div>
           )}
@@ -467,7 +468,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
       </div>
       {!stats.calibrated && (
         <p className="text-[10px] text-muted-foreground">
-          calibration unlocks at 50 graded outcomes — until then these stats are the whole product: proving or killing the edge.
+          sample counts are not calibration. Tracking-only until independent outcome and execution validation establishes an edge.
         </p>
       )}
       <div className="space-y-1.5">

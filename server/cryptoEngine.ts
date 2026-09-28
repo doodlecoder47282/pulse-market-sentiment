@@ -30,6 +30,7 @@
 // for pairs, 60 rpm for boosts). Both budgets respected by design (batching).
 
 import { sqlite } from "./storage";
+import { cryptoAuditStats } from "./cryptoAuditStats";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -84,6 +85,8 @@ export interface Candidate {
   hasSocialLinks: boolean | null;  // twitter/telegram/website on the token
   socialScore: number | null;      // 0-100
   socialCheckedAt: number | null;
+  socialAttemptAt: number | null;
+  socialCoverage: "pending" | "ok" | "partial" | "unavailable" | "stale";
   prevPumpReplies: { count: number; t: number } | null;
 
   // rolling history for sustained-flow gating (whale-blink filter)
@@ -249,6 +252,7 @@ function persistSignal(c: Candidate): void {
         top10Pct: c.top10Pct, securityCheckedAt: c.securityCheckedAt,
         rcRisks: c.rcRisks, rcLpLockedPct: c.rcLpLockedPct,
         socialScore: c.socialScore, bskyMentions1h: c.bskyMentions1h,
+        socialCoverage: c.socialCoverage, socialCheckedAt: c.socialCheckedAt,
         pumpReplyPerHr: c.pumpReplyPerHr, pumpLive: c.pumpLive,
       }),
       JSON.stringify(c.risk),
@@ -284,7 +288,7 @@ function curlJson(url: string, timeoutMs = 12_000): Promise<any> {
   return new Promise((resolve, reject) => {
     execFile(
       "curl",
-      ["-s", "-m", String(Math.ceil(timeoutMs / 1000)), "-H", "accept: application/json", url],
+      ["--fail", "-s", "-m", String(Math.ceil(timeoutMs / 1000)), "-H", "accept: application/json", url],
       { timeout: timeoutMs + 2000, maxBuffer: 4 * 1024 * 1024 },
       (err, stdout) => {
         if (err) return reject(err);
@@ -339,7 +343,8 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
     mintAuthorityActive: null, freezeAuthorityActive: null, top10Pct: null, securityCheckedAt: null,
     rcRisks: [], rcLpLockedPct: null, rcCheckedAt: null,
     bskyMentions1h: null, bskyMentions10m: null, pumpReplies: null, pumpReplyPerHr: null,
-    pumpLive: false, hasSocialLinks: null, socialScore: null, socialCheckedAt: null, prevPumpReplies: null,
+    pumpLive: false, hasSocialLinks: null, socialScore: null, socialCheckedAt: null,
+    socialAttemptAt: null, socialCoverage: "pending", prevPumpReplies: null,
     hist: [],
     ageMinutes: null, volAccel: null, netBuyRatio5m: null,
     fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
@@ -603,7 +608,7 @@ async function socialTick(): Promise<void> {
   const now = Date.now();
   const due = [...tracked.values()]
     .filter((c) => c.lastRefreshAt != null && (c.marketCap ?? 0) <= MCAP_CEILING * 2)
-    .filter((c) => c.socialCheckedAt == null || now - c.socialCheckedAt > 5 * 60_000)
+    .filter((c) => c.socialAttemptAt == null || now - c.socialAttemptAt > 5 * 60_000)
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
     .slice(0, 4);
   if (due.length === 0) return;
@@ -612,25 +617,37 @@ async function socialTick(): Promise<void> {
   let lastErr: any = null;
   for (const c of due) {
     try {
+      c.socialAttemptAt = now;
+      // Do not carry a previous successful count across a failed refresh.
+      c.bskyMentions1h = null; c.bskyMentions10m = null;
+      c.pumpReplies = null; c.pumpReplyPerHr = null;
+      c.pumpLive = false; c.hasSocialLinks = null;
+      let successes = 0;
+      let eligible = 0;
       // ── bluesky mentions: "$SYMBOL" (cashtag form degens actually post) ──
       const sym = c.symbol.replace(/[^A-Za-z0-9]/g, "");
       if (sym.length >= 3) {
+        eligible++;
         try {
           const q = encodeURIComponent(`$${sym}`);
           const r = await getJson(`${BSKY}?q=${q}&sort=latest&limit=25`);
-          const posts: any[] = r?.posts ?? [];
+          if (!Array.isArray(r?.posts)) throw new Error("invalid Bluesky response");
+          const posts: any[] = r.posts;
           const ts = posts
             .map((p) => Date.parse(p?.record?.createdAt ?? p?.indexedAt ?? ""))
-            .filter((t) => Number.isFinite(t));
+            .filter((t) => Number.isFinite(t) && t <= now);
           c.bskyMentions1h = ts.filter((t) => now - t < 3600_000).length;
           c.bskyMentions10m = ts.filter((t) => now - t < 600_000).length;
+          successes++;
         } catch { /* bsky is enhancement — never blocks the tick */ }
       }
 
       // ── pump.fun coin object (only for pump ecosystem tokens) ──
       if (c.tokenAddress.endsWith("pump") || c.pumpfunGraduate) {
+        eligible++;
         try {
           const coin = await curlJson(`${PUMP}/coins/${c.tokenAddress}`);
+          if (coin?.mint !== c.tokenAddress) throw new Error("invalid pump coin identity");
           const replies = Number(coin?.reply_count ?? NaN);
           if (Number.isFinite(replies)) {
             if (c.prevPumpReplies && now > c.prevPumpReplies.t) {
@@ -642,6 +659,7 @@ async function socialTick(): Promise<void> {
           }
           c.pumpLive = Boolean(coin?.is_currently_live);
           c.hasSocialLinks = Boolean(coin?.twitter || coin?.telegram || coin?.website);
+          successes++;
         } catch { /* unofficial API — graceful degradation is the contract */ }
       }
 
@@ -652,9 +670,11 @@ async function socialTick(): Promise<void> {
       s += Math.min(30, Math.max(0, (c.pumpReplyPerHr ?? 0)) * 0.75); // 40 replies/hr = max
       if (c.pumpLive) s += 10;
       if (c.hasSocialLinks) s += 5;
-      c.socialScore = Math.round(Math.min(100, s));
-      c.socialCheckedAt = now;
-      okCount++;
+      c.socialScore = successes > 0 ? Math.round(Math.min(100, s)) : null;
+      c.socialCheckedAt = successes > 0 ? now : null;
+      c.socialCoverage = successes === 0 ? "unavailable" : successes === eligible ? "ok" : "partial";
+      if (successes > 0) okCount++;
+      else lastErr = new Error("no usable social source response");
       scoreCandidate(c);
       persistSignal(c);
     } catch (e: any) {
@@ -685,6 +705,12 @@ function scoreMeme(nameIn: string, symbolIn: string): { score: number; tags: str
 
 function scoreCandidate(c: Candidate): void {
   const now = Date.now();
+  if (c.socialCheckedAt != null && now - c.socialCheckedAt > 10 * 60_000) {
+    c.socialScore = null;
+    c.socialCoverage = "stale";
+    c.bskyMentions1h = null; c.bskyMentions10m = null;
+    c.pumpReplyPerHr = null; c.pumpLive = false;
+  }
   c.ageMinutes = c.pairCreatedAt ? Math.max(0, (now - c.pairCreatedAt) / 60_000) : null;
 
   // meme score
@@ -712,7 +738,7 @@ function scoreCandidate(c: Candidate): void {
   if (c.boosted) fomo += 8; // paid promo IS fomo — but it's flagged as manufactured below
   // social velocity (bluesky mentions + pump.fun reply rate) — real crowd
   // attention, weighted in at 30%: flow still leads, social confirms
-  if (c.socialScore != null) fomo = fomo * 0.7 + c.socialScore * 0.3;
+  if (c.socialScore != null && c.socialCoverage === "ok") fomo = fomo * 0.7 + c.socialScore * 0.3;
   c.fomoScore = Math.min(100, fomo);
 
   // rug filter
@@ -750,7 +776,7 @@ function scoreCandidate(c: Candidate): void {
   const reasons: string[] = [];
   let verdict: Candidate["verdict"] = "PASS";
   if (hardKill) {
-    reasons.push("hard kill: " + flags.filter((f) => /floor|honeypot|mid-rug|exit door/.test(f)).join("; "));
+    reasons.push("hard kill: " + flags.filter((f) => /floor|honeypot|mid-rug|exit door|AUTHORITY ACTIVE/.test(f)).join("; "));
   } else if (mcap <= 0 || c.priceUsd == null) {
     reasons.push("no reliable mcap/price yet");
   } else if (mcap > MCAP_ENTRY_MAX) {
@@ -797,7 +823,7 @@ function scoreCandidate(c: Candidate): void {
       notes: [
         "size = 0.5% of pool liquidity — the exit is the constraint, not the entry",
         "most signals here still lose; the math needs the 4-5x winners",
-        "UNCALIBRATED: tracking mode until graded hit rate exists (n>=50)",
+        "UNCALIBRATED: sample size alone never authorizes staking; independent outcome and execution validation required",
       ],
     };
   } else {
@@ -857,7 +883,7 @@ async function narrativeTick(): Promise<void> {
 
 async function graderTick(): Promise<void> {
   const open = sqlite.prepare(
-    `SELECT id, pair_address, chain, detected_at, mcap_at_signal, liquidity_at_signal, peak_mcap FROM crypto_signals WHERE outcome = 'OPEN' ORDER BY detected_at DESC LIMIT 60`,
+    `SELECT id, pair_address, chain, detected_at, mcap_at_signal, liquidity_at_signal, peak_mcap, peak_at FROM crypto_signals WHERE outcome = 'OPEN' ORDER BY detected_at DESC LIMIT 60`,
   ).all() as any[];
   if (open.length === 0) return;
 
@@ -966,25 +992,18 @@ export function getCryptoHealth(): { engines: EngineHealth[]; trackedCount: numb
 
 export function getCryptoSignals(): {
   signals: any[];
-  stats: { total: number; open: number; hit5m: number; doubled: number; rugged: number; dead: number; calibrated: boolean };
+  stats: ReturnType<typeof cryptoAuditStats>;
 } {
   const signals = sqlite.prepare(
     `SELECT * FROM crypto_signals ORDER BY detected_at DESC LIMIT 100`,
   ).all() as any[];
-  const cnt = (o: string) => signals.filter((s) => s.outcome === o).length;
-  const total = (sqlite.prepare(`SELECT count(*) c FROM crypto_signals`).get() as any)?.c ?? 0;
-  const graded = total - cnt("OPEN");
   return {
     signals: signals.map((s) => ({
       ...s,
       features: safeParse(s.features_json),
       risk: safeParse(s.risk_json),
     })),
-    stats: {
-      total, open: cnt("OPEN"), hit5m: cnt("HIT_5M"), doubled: cnt("DOUBLED"),
-      rugged: cnt("RUGGED"), dead: cnt("DEAD"),
-      calibrated: graded >= 50,
-    },
+    stats: cryptoAuditStats(sqlite),
   };
 }
 

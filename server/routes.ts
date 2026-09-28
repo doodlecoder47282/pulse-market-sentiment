@@ -15,6 +15,7 @@ import {
   gatherSocial, fetchHeadlines,
 } from "./sources";
 import { computeComposite } from "./composite";
+import { formatDecisionBlock } from "./decisionSupport";
 import { fetchAllVoices, factCheckItem, listVoices, computeVoicesBias } from "./voices";
 import { xEnabled } from "./x";
 import { fetchIntraday, fetchPrevDayOHLC } from "./quotes";

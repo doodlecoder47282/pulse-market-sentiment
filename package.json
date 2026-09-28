@@ -11,6 +11,7 @@
     "ios:open": "cap open ios",
     "ios:run": "npm run ios:sync && cap run ios",
     "test:mobile": "tsx --test tests/mobile.test.ts",
+    "test:calculations": "tsx --test tests/calculation-review.test.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "db:push": "drizzle-kit push"

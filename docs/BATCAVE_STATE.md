@@ -10,6 +10,11 @@ read-only authenticated gateway, and Xcode source. User additionally requested
 NIST-oriented multi-user security; that is a BLOCKED release requirement, not
 implemented multi-user support. Read `SECURITY.md` before extending access.
 
+The subsequent bounded source/calculation review is complete. Read
+`docs/BATCAVE_REVIEW.md` for fixed versus unresolved findings and
+`docs/XCODE_GUIDE.md` for the complete Mac walkthrough. Do not repeat the entire
+review on resume; focus the next approved change on the freshness contract.
+
 ## Verified this session
 
 - Repo: `doodlecoder47282/pulse-market-sentiment`.
@@ -22,12 +27,16 @@ implemented multi-user support. Read `SECURITY.md` before extending access.
   session-memory owner token. Web transport retains `__PORT_5000__`.
 - Unrelated runtime changes exist in scheduler state and database/session files. They must not be staged with these docs.
 - Native frontend build and Capacitor iOS sync passed; web frontend build passed.
-- Three focused test groups pass: URL/session validation, gateway auth/routing,
-  and rate limiting. Browser checks pass for setup/validation/401/fixture-login/
+- Nine focused test groups pass: six calculation/source-health regression groups
+  plus URL/session validation, gateway auth/routing, and rate limiting.
+  Browser checks previously passed for setup/validation/401/fixture-login/
   disconnect/offline at 375 and 1280 widths, without page errors or horizontal overflow.
-- Whole-repo TypeScript check still fails with 182 errors outside touched mobile
-  files. Capacitor/Vite configs typecheck separately. Dependency audit reports
-  15 findings (5 high); no broad dependency update attempted.
+  This review rechecked setup viewport/HTTPS rejection/401 at 375 and 1280.
+- Whole-repo TypeScript check still fails with 59 diagnostics after setting
+  ES2022 and fixing a missing formatter import and duplicate object key.
+  The earlier 182 count is obsolete; most of the reduction is configuration,
+  not repaired business logic. The previous dependency audit reported
+  15 findings (5 high); not re-audited or remediated this pass.
 - No Xcode compilation, signing, physical-device testing, or live mobile backend
   integration has occurred. Existing running server was not restarted or exposed.
 
@@ -51,21 +60,36 @@ Do not redistribute an unreviewed full-history archive.
 - Earlier successful build/deploy claims apply to that earlier run, not today's runtime.
 - Existing crypto implementation is experimental tracking, not proof of positive expected value.
 
-## Known crypto issues from focused source inspection
+## Review fixes and remaining issues
 
 Do not repeat prior “all green means complete coverage” claims:
 
-- `socialTick` swallows individual source errors, then can assign `socialScore = 0`
-  and update `socialCheckedAt` even when collection failed. Fix source-level
-  health, timestamps, missing-value handling, and stale-data expiry before trusting social scoring.
+- Fixed full-table crypto totals, false sample-count calibration flag,
+  social failure/partial/stale handling, authority hard-kill reason, and peak timestamp.
+- Fixed sizer target validation/nonfinite values/negative stops/cash cap,
+  scenario weight normalization, and proxy target methodology labels.
+- Restore no longer deletes nongit folders; synthetic reseed requires explicit
+  opt-in and a separate existing test DB. Neither was run against production.
+- Added 330-file lexical inventory plus six isolated calculation tests.
 - Bluesky queries use cashtags and at most 25 returned posts. Common words/ticker
   collisions, sampling caps, repeated authors, bots, and incomplete pagination
   prevent interpreting these counts as comprehensive token-specific velocity.
 - Pump reply count and linked socials are limited attention proxies, not coverage of X or Telegram.
 - Holder concentration blindly excludes the largest account as a pool heuristic.
   That account is not verified as a vault; do not describe the remainder as verified ex-pool ownership.
-- `calibrated: graded >= 50` is a sample-count flag, not statistical calibration.
+- Calibration remains false; sampleThresholdMet does not authorize staking.
+- Newest-60 grader selection can starve older open records. Zero liquidity,
+  authority unknown-state display, holder identity, and correlated scoring need review.
 - Previously observed 403 responses do not establish a permanent platform-wide ban or prove the cause.
+- CBOE cache can serve up to seven-day stale data while adapter stamps 15-minute lag.
+  Preserve real provider/fetch/cache timestamps and fail closed at consuming alerts.
+- Models references nonexistent charmPerDay; existing charm has different units.
+  Do not blindly rename it. Resolve price-drift mapping and expiry time conventions.
+- Proxy touch rates and LLM scenario weights are not validated trading probabilities.
+- This workspace snapshot had 26 terminal crypto outcomes and zero valid graded
+  non-rejected 0DTE fires; do not claim calibrated execution returns.
+- Optional X client already exists in server/x.ts/voices, separate from crypto social.
+- Backend fixes are built/source-controlled, not proof of a restarted live engine.
 
 ## iOS direction
 
@@ -78,12 +102,13 @@ Keep legacy `/api/*` inaccessible from a public mobile proxy. Current shared
 Schwab token row `id=1`, unencrypted token writes, missing OAuth state binding,
 and broad response logging block multi-user release. See `SECURITY.md`.
 
-Read `docs/IOS_QUICKSTART.md` for Mac commands and deployment boundaries;
+Read `docs/XCODE_GUIDE.md` for complete Mac commands and deployment boundaries;
 `docs/IOS_QA.md` for evidence and remaining device tests. Do not use a preview
 URL as the mobile backend or embed brokerage credentials in any mobile artifact.
 
 ## Next step
 
-Have the owner open the feature branch in Xcode and verify the setup screen on
-their iPhone, without connecting additional brokerage users. Credential rotation
-and secure multi-user architecture are mandatory before any broader test.
+Next proposed implementation: repair the CBOE freshness contract and fail-closed
+alert gates after user approval. The owner can meanwhile follow XCODE_GUIDE.md
+to verify the setup screen without connecting additional brokerage users.
+Credential rotation and secure multi-user architecture remain mandatory.
