@@ -8,6 +8,8 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
 import { startMlRetrainCron } from "./mlRetrainCron";
+import { createMobileGateway } from "./mobileGateway";
+import { getSchwabStatus } from "./schwab";
 
 // Global safety nets — do NOT let a stray promise reject or exception kill the
 // long-running server process. Crashes here previously took down /api/* during
@@ -21,6 +23,8 @@ process.on("uncaughtException", (err: any) => {
 
 const app = express();
 const httpServer = createServer(app);
+// Must run before JSON parsing, request logging, and existing routes.
+app.use(createMobileGateway(undefined, getSchwabStatus));
 
 declare module "http" {
   interface IncomingMessage {

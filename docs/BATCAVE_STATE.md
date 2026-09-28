@@ -4,20 +4,32 @@ Updated: 2026-09-28. This is a compact handoff, not a live-health certificate.
 
 ## Current objective
 
-Save the credit-conserving resume framework and assess reuse of the existing
-GitHub app for iOS. No native implementation or new deployment authorized in
-this checkpoint.
+User authorized the Capacitor iPhone build and confirmed Mac/Xcode access.
+First milestone is implemented on `feat/capacitor-ios`: bundled native shell,
+read-only authenticated gateway, and Xcode source. User additionally requested
+NIST-oriented multi-user security; that is a BLOCKED release requirement, not
+implemented multi-user support. Read `SECURITY.md` before extending access.
 
 ## Verified this session
 
 - Repo: `doodlecoder47282/pulse-market-sentiment`.
-- Local and remote `main` matched `1e9028809e371b73233ac33680db5b58692264ec` before this documentation change.
+- Feature branch is based on `main` commit `9f4ea2093147bf2e00ce3b9e057aa75d2c061486`.
 - GitHub reports PUBLIC visibility, contrary to older private-repo assumptions.
 - Existing stack: React/Vite client, Express/Node server, SQLite/Drizzle.
-- No tracked Swift, Xcode project, or Capacitor configuration was found.
-- API transport uses the preview-specific `__PORT_5000__` mechanism. It needs an explicit secure backend URL and auth design for a bundled native client.
+- Capacitor 8.5.2, Swift Package Manager project at `ios/App/App.xcodeproj`,
+  Node 22+, Xcode 26+, native assets at `dist/native`. Build with `npm run ios:sync`.
+- Native transport uses a user-entered HTTPS backend origin plus a separate
+  session-memory owner token. Web transport retains `__PORT_5000__`.
 - Unrelated runtime changes exist in scheduler state and database/session files. They must not be staged with these docs.
-- No runtime build, native build, or fresh market-feed validation was performed for this documentation-only task.
+- Native frontend build and Capacitor iOS sync passed; web frontend build passed.
+- Three focused test groups pass: URL/session validation, gateway auth/routing,
+  and rate limiting. Browser checks pass for setup/validation/401/fixture-login/
+  disconnect/offline at 375 and 1280 widths, without page errors or horizontal overflow.
+- Whole-repo TypeScript check still fails with 182 errors outside touched mobile
+  files. Capacitor/Vite configs typecheck separately. Dependency audit reports
+  15 findings (5 high); no broad dependency update attempted.
+- No Xcode compilation, signing, physical-device testing, or live mobile backend
+  integration has occurred. Existing running server was not restarted or exposed.
 
 ## Security blocker
 
@@ -57,16 +69,21 @@ Do not repeat prior “all green means complete coverage” claims:
 
 ## iOS direction
 
-Proposed: bundled React UI through Capacitor plus the existing separately hosted
-backend. Keep polling, SQLite, brokerage credentials, and grading on the server.
-Do not simply point a released app at a temporary Computer preview.
+The bundled shell opens on a setup screen and mounts the existing terminal only
+after `/api/mobile/health` authenticates. Mobile writes and broker-management
+routes are denied. Read-only source status is redacted. The gateway is disabled
+unless `BATCAVE_MOBILE_TOKEN` is configured. It is NOT multi-user authentication.
 
-Before implementation: confirm Mac/Xcode access and whether the first target is
-personal-device use or TestFlight/App Store distribution. Choose persistent HTTPS
-backend hosting, per-user authentication, origin policy, and OAuth redirect flow.
+Keep legacy `/api/*` inaccessible from a public mobile proxy. Current shared
+Schwab token row `id=1`, unencrypted token writes, missing OAuth state binding,
+and broad response logging block multi-user release. See `SECURITY.md`.
+
+Read `docs/IOS_QUICKSTART.md` for Mac commands and deployment boundaries;
+`docs/IOS_QA.md` for evidence and remaining device tests. Do not use a preview
+URL as the mobile backend or embed brokerage credentials in any mobile artifact.
 
 ## Next step
 
-Ask the user whether they have access to a Mac with Xcode and want personal-device
-testing first. Resolve exposed credentials before broad distribution. Do not
-start an iOS rewrite or unattended AI monitor while waiting.
+Have the owner open the feature branch in Xcode and verify the setup screen on
+their iPhone, without connecting additional brokerage users. Credential rotation
+and secure multi-user architecture are mandatory before any broader test.

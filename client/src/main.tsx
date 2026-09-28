@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import "./native.css";
 
 // Global crash logger — structured, no PII. Catches errors that escape React's
 // ErrorBoundaries (event handlers, async, third-party scripts) so a stack trace
@@ -50,4 +51,13 @@ window.addEventListener("vite:preloadError", (e) => {
 // Signal the index.html boot watchdog that the bundle executed and mounted.
 (window as any).__APP_BOOTED__ = true;
 
-createRoot(document.getElementById("root")!).render(<App />);
+const root = createRoot(document.getElementById("root")!);
+if (import.meta.env.VITE_NATIVE_BUILD === "true") {
+  document.title = "Batcave · iPhone";
+  document.documentElement.classList.add("native-app");
+  void import("./components/NativeShell").then(({ default: NativeShell }) => {
+    root.render(<NativeShell />);
+  });
+} else {
+  root.render(<App />);
+}

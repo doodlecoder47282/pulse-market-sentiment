@@ -23,3 +23,14 @@ ml_service/__pycache__/
 
 # CBOE delayed chain disk cache (regenerated at runtime)
 data/cboe/
+
+# Native build products and signing material (source project is tracked)
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+ios/App/App/config.xml
+ios/App/Pods/
+ios/App/build/
+ios/DerivedData/
+**/xcuserdata/
+*.p12
+*.mobileprovision
