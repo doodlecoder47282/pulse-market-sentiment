@@ -35,8 +35,8 @@ This puts Pulse on Railway's infrastructure — runs 24/7, no GCP Akamai block, 
 - Click "+ New Variable" three times, paste:
 
 ```
-SCHWAB_CLIENT_ID = VDMyoxpnxoRMB90ZfvmyAVVIZHAss5oBIL2pdVNhgEIA6SLR
-SCHWAB_CLIENT_SECRET = dKNkGWjfa5c2ulDgrqhG8MNZp9dzlZdJUDkcoc4ESH5FjNW9PD8mpLKI7KhmlkWq
+SCHWAB_CLIENT_ID = YOUR_SCHWAB_CLIENT_ID
+SCHWAB_CLIENT_SECRET = YOUR_SCHWAB_CLIENT_SECRET
 SCHWAB_REDIRECT_URI = https://YOUR-RAILWAY-URL/api/schwab/callback
 ```
 
