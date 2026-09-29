@@ -108,7 +108,15 @@ URL as the mobile backend or embed brokerage credentials in any mobile artifact.
 
 ## Next step
 
-Next proposed implementation: repair the CBOE freshness contract and fail-closed
-alert gates after user approval. The owner can meanwhile follow XCODE_GUIDE.md
-to verify the setup screen without connecting additional brokerage users.
-Credential rotation and secure multi-user architecture remain mandatory.
+Latest request: final Xcode-readiness verification. Completed a clean-source
+Node 22 install, native build/sync, all nine tests, parsed project/SPM/plist/icon/
+asset checks, and added a shared App scheme plus `ios:preflight` and `ios:verify`.
+The native build now targets Safari 15 instead of Vite's newer default.
+All 36 output files match the synced Xcode assets. No native compiler exists
+in this Linux workspace; do not claim Debug/Release have compiled.
+Fresh install still reports 15 dependency vulnerabilities, including five high.
+
+Next step: owner runs `npm run ios:verify` on their Mac; it attempts unsigned
+Debug and Release simulator builds, then they launch App in Xcode. After that,
+the next proposed backend work is still CBOE freshness/alert gates.
+Credential rotation and multi-user architecture remain mandatory before broader access.

@@ -9,6 +9,8 @@
     "build:ios": "vite build --config vite.native.config.ts --mode native",
     "ios:sync": "npm run build:ios && cap sync ios",
     "ios:open": "cap open ios",
+    "ios:preflight": "node scripts/ios-preflight.mjs",
+    "ios:verify": "bash scripts/ios-verify.sh",
     "ios:run": "npm run ios:sync && cap run ios",
     "test:mobile": "tsx --test tests/mobile.test.ts",
     "test:calculations": "tsx --test tests/calculation-review.test.ts",

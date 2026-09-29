@@ -138,6 +138,37 @@ Perplexity preview address.
 
 ## Run in the simulator first
 
+### Recommended final compiler check
+
+After `npm ci`, run this command on your Mac before opening Xcode:
+
+```bash
+npm run ios:verify
+```
+
+It checks Node/Xcode versions, runs the nine focused test groups, rebuilds and
+syncs the native assets, validates the project structure and plist, resolves
+Swift packages, and attempts unsigned **Debug and Release** builds for the iOS
+Simulator. No Apple signing team or brokerage secrets are needed for this check.
+It does not start the market backend.
+
+Only the message `PASS: Debug and Release compiled for iOS Simulator.` confirms
+both native builds succeeded on your Mac. On a non-Mac computer the script exits
+with an explicit failure, rather than treating a skipped compile as a pass.
+Logs are under `ios/DerivedData/verification-logs/`; if it fails, share the first
+relevant error and nearby lines after redacting local identifiers, not the whole
+log or any credentials.
+
+Then run `npm run ios:open` and follow the interactive steps below. Compilation
+does not replace launching the simulator or physical-device testing.
+
+The latest Linux clean-source check completed a fresh lockfile installation,
+native build/sync, all nine tests, and `npm run ios:preflight`. All 36 native
+output files matched their Xcode copies; project parsing, shared App scheme,
+bundle IDs, SPM version, plist, and opaque 1024px app icon passed structural
+checks. Native syntax/CSS now target Safari 15 to match the project's iOS 15
+minimum, but oldest-device runtime compatibility is not certified by transpilation.
+
 In Xcode, choose the **App** scheme and an installed iPhone simulator as the run
 destination, then choose **Product > Run** or press **Command-R**.
 These are the standard scheme/destination steps in
