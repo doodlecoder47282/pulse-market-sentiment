@@ -1,8 +1,22 @@
 # Batcave checkpoint
 
-Updated: 2026-09-28. This is a compact handoff, not a live-health certificate.
+Updated: 2026-09-30. This is a compact handoff, not a live-health certificate.
 
 ## Current objective
+
+Latest completed request (2026-09-30): created the staged implementation checklist
+at `docs/INSTITUTIONAL_IMPLEMENTATION_CHECKLIST.md` and the stock/crypto quick-search
+AI Trade Brief specification at `docs/TRADE_BRIEF_SPEC.md`. Planning only: no new
+integrations, scoring changes, subscriptions, migrations or deployment.
+Every implementation item requires evidence before being marked complete.
+The proposed next task is S0 baseline/boundary verification, followed by
+S1-A/S1-B scoring isolation and duplicate-factor correction. Await an implementation
+request; do not automatically execute the entire roadmap.
+Trade Brief should aggregate applicable existing calculations into an evidence-bound
+responsive phone/desktop output; native iOS remains paused.
+X connector was dismissed: do not request it again without an explicit request.
+Yahoo Finance NEWS is allowed; the no-Yahoo equities PRICE-feed constraint remains.
+No new paid services, provider accounts or continuous AI monitoring were enabled.
 
 Latest direction (2026-09-29): iOS/Xcode is PAUSED by the user.
 Targeted crypto reliability repair is implemented and running in this workspace
@@ -19,7 +33,7 @@ implemented multi-user support. Read `SECURITY.md` before extending access.
 The subsequent bounded source/calculation review is complete. Read
 `docs/BATCAVE_REVIEW.md` for fixed versus unresolved findings and
 `docs/XCODE_GUIDE.md` for the complete Mac walkthrough. Do not repeat the entire
-review on resume; focus the next approved change on the freshness contract.
+review on resume; follow the current checklist and newest approved objective.
 
 ## Verified this session
 
@@ -129,9 +143,14 @@ and stale-candidate PASS gates. Fifteen focused test groups pass.
 The first post-repair snapshot: 102 total, 16 open, 59 unobservable, 27 graded.
 Do not count unobservable rows as wins or losses; calibration remains false.
 
-Next proposed objective, awaiting user authorization: restore stock/macro
+Older proposed objective, superseded by the current checklist unless re-requested: restore stock/macro
 data authentication/freshness and implement a transparent gold confirmation
 panel. Current Schwab status requires reauthentication; missing real-yield/
 breakeven inputs and stale GLD/oil bars prevent confirming the supplied gold thesis.
 Historical CBOE freshness, charm units, credential rotation and multi-user
 architecture remain unresolved release blockers.
+
+Current next proposed action: S0 baseline/boundary verification in
+`INSTITUTIONAL_IMPLEMENTATION_CHECKLIST.md`. Preserve all native iOS work as paused.
+Checklist and Trade Brief specification were reviewed as documents only; no tests,
+build, runtime verification or security sign-off was performed for this planning turn.
