@@ -18,22 +18,28 @@ import {
 
 type Verdict = "ENTER" | "WATCH" | "PASS" | null;
 
-interface Candidate {
+export interface Candidate {
   chain: string; pairAddress: string; tokenAddress: string;
   symbol: string; name: string; dexId: string;
   pumpfunGraduate: boolean; discoveredVia: string;
   priceUsd: number | null; marketCap: number | null; liquidityUsd: number | null;
+  fdv?: number | null;
+  liquidityEvidence?: { provider: string; fetchedAt: number; pairAddress: string } | null;
   vol5m: number | null; vol1h: number | null; vol24h: number | null;
   buys5m: number | null; sells5m: number | null;
   chg5m: number | null; chg1h: number | null; chg24h: number | null;
   boosted: boolean; ageMinutes: number | null;
   mintAuthorityActive: boolean | null; freezeAuthorityActive: boolean | null;
   top10Pct: number | null; securityCheckedAt: number | null;
+  lastRefreshAt?: number | null;
+  securityEvidence?: { state: string; program: string | null; reason: string; slot: number | null } | null;
+  rawTop10Pct?: number | null; holderCheckedAt?: number | null;
   rcRisks: string[]; rcLpLockedPct: number | null;
   bskyMentions1h: number | null; bskyMentions10m: number | null;
   pumpReplies: number | null; pumpReplyPerHr: number | null;
   pumpLive: boolean; socialScore: number | null; socialCheckedAt: number | null;
   socialCoverage?: "pending" | "ok" | "partial" | "unavailable" | "stale";
+  socialEvidence?: { sampledPosts: number; uniqueAuthors1h: number; repeatedTextShare: number | null; capped: boolean; identity: string } | null;
   volAccel: number | null; netBuyRatio5m: number | null;
   fomoScore: number | null; memeScore: number | null;
   scoreBreakdown?: MemeScoreBreakdown | null;
@@ -46,19 +52,19 @@ interface Candidate {
   } | null;
 }
 
-interface FeedResp {
+export interface FeedResp {
   asOf: number; trackedCount: number; candidates: Candidate[];
   narrativeHeat: Array<{ term: string; hits: number; sources: string[] }>;
   narrativeUpdatedAt: number | null;
   scoreVersion?: string;
 }
 
-interface HealthResp {
+export interface HealthResp {
   engines: Array<{ name: string; status: string; lastOkAt: number | null; runs: number; errors: number; lastError: string | null }>;
   trackedCount: number; asOf: number;
 }
 
-interface SignalsResp {
+export interface SignalsResp {
   signals: any[];
   stats: { total: number; open: number; hit5m: number; doubled: number; rugged: number; dead: number; unobservable?: number; graded?: number; calibrated: boolean };
 }
@@ -287,7 +293,7 @@ function Section({ icon, title, empty, items, expanded, setExpanded, accent, col
   );
 }
 
-function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string; isOpen: boolean; toggle: () => void }) {
+export function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string; isOpen: boolean; toggle: () => void }) {
   const border =
     accent === "enter" ? "border-lime-400/35 hover:border-lime-400/60"
     : accent === "watch" ? "border-amber-400/30 hover:border-amber-400/55"
@@ -297,14 +303,14 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
     <button
       onClick={toggle}
       aria-expanded={isOpen}
-      className={`group w-full rounded-xl border ${border} bg-card/60 p-3 text-left transition-all`}
+      className={`group min-w-0 w-full rounded-xl border ${border} bg-card/60 p-3 text-left transition-all [overflow-wrap:anywhere]`}
       data-testid={`crypto-card-${c.pairAddress.slice(0, 8)}`}
     >
       <div className="flex items-center gap-2.5">
         {/* score ring */}
         <ScoreRing score={c.score} accent={accent} budget={c.scoreBreakdown?.budget ?? MEME_SCORE_BUDGET} />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             <span className="truncate font-mono text-sm font-bold">{c.symbol}</span>
             {c.pumpfunGraduate && (
               <span className="rounded bg-emerald-500/15 px-1 py-px text-[9px] font-semibold text-emerald-300" title="graduated the pump.fun bonding curve">
@@ -335,15 +341,9 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
         </div>
       </div>
 
-      {/* mcap runway bar: 0 → 1M with lime fill */}
-      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted/50">
-        <div
-          className={`h-full rounded-full ${mcapPct >= 95 ? "bg-orange-400" : "bg-gradient-to-r from-fuchsia-500 to-lime-400"}`}
-          style={{ width: `${Math.max(3, mcapPct)}%` }}
-        />
-      </div>
-      <div className="mt-1 flex justify-between text-[9px] text-muted-foreground">
-        <span>runway to $1M cap: {mcapPct.toFixed(0)}%</span>
+      <p className="mt-2 text-xs font-medium">{c.verdict ?? "PENDING"} · {c.verdictReasons[0] ?? "Evidence pending"}</p>
+      <div className="mt-1 flex flex-wrap justify-between gap-2 text-[9px] text-muted-foreground">
+        <span>Market cap, not a price target</span>
         <span className="flex items-center gap-2">
           {c.pumpLive && <span className="font-semibold text-rose-400">● LIVE</span>}
           <span className="flex items-center gap-1">
@@ -367,6 +367,11 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
       {/* expanded: reasons + risk + rug flags */}
       {isOpen && (
         <div className="mt-3 space-y-2 border-t border-border/40 pt-2.5">
+          <p className="break-all font-mono text-xs" data-testid={`crypto-mint-${c.pairAddress.slice(0, 8)}`}>{c.chain} · {c.tokenAddress}</p>
+          <p className="text-xs text-muted-foreground">Market received: {c.lastRefreshAt ? new Date(c.lastRefreshAt).toLocaleString() : "unknown"}. Provider event time is unavailable.</p>
+          <p className="text-xs text-muted-foreground">Liquidity: {c.liquidityEvidence?.provider ?? "unavailable"} · {c.liquidityEvidence?.fetchedAt ? new Date(c.liquidityEvidence.fetchedAt).toLocaleString() : "unknown age"}. Reported reserves are not executable depth. FDV: {fmtUsd(c.fdv)}.</p>
+          <p className="text-xs text-muted-foreground">Mint: {c.securityCheckedAt && Date.now() - c.securityCheckedAt > 1800000 ? "STALE" : c.securityEvidence?.state ?? "UNKNOWN"}.
+            Checked {c.securityCheckedAt ? new Date(c.securityCheckedAt).toLocaleString() : "never"}. {c.securityEvidence?.reason ?? "Program and authorities have not been verified."}</p>
           {c.scoreBreakdown && (
             <div className="rounded-md border border-border/50 p-2 text-xs leading-relaxed" data-testid={`crypto-score-breakdown-${c.pairAddress.slice(0, 8)}`}>
               <div className="grid grid-cols-3 gap-2 font-mono">
@@ -415,9 +420,9 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
                 <span className={`rounded px-1.5 py-0.5 font-semibold ${c.freezeAuthorityActive === true ? "bg-rose-500/20 text-rose-300" : c.freezeAuthorityActive === false ? "bg-emerald-500/15 text-emerald-300" : "bg-muted text-muted-foreground"}`}>
                   freeze {c.freezeAuthorityActive == null ? "UNKNOWN" : c.freezeAuthorityActive ? "ACTIVE" : "none observed"}
                 </span>
-                {c.top10Pct != null && (
-                  <span className={`rounded px-1.5 py-0.5 font-semibold ${c.top10Pct > 45 ? "bg-rose-500/20 text-rose-300" : c.top10Pct > 30 ? "bg-amber-500/15 text-amber-300" : "bg-emerald-500/15 text-emerald-300"}`}>
-                    holder proxy {c.top10Pct}% (vault unverified)
+                {c.rawTop10Pct != null && (
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
+                    Top 10 accounts {c.rawTop10Pct}% including pools; owners unverified
                   </span>
                 )}
                 {c.rcLpLockedPct != null && (
@@ -434,6 +439,8 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
               {c.pumpReplies != null && <span>· pump.fun {c.pumpReplies} replies{c.pumpReplyPerHr != null ? ` (${c.pumpReplyPerHr >= 0 ? "+" : ""}${c.pumpReplyPerHr}/hr)` : ""}</span>}
             </div>
           )}
+          {c.socialEvidence && <p className="text-xs text-muted-foreground">{c.socialEvidence.uniqueAuthors1h} unique sampled authors / {c.socialEvidence.sampledPosts} returned posts.
+            {c.socialEvidence.capped ? " Sample cap reached; no complete-coverage claim." : ""} {c.socialEvidence.identity}. Repeated text {c.socialEvidence.repeatedTextShare == null ? "unknown" : `${(c.socialEvidence.repeatedTextShare * 100).toFixed(0)}%`}.</p>}
           <p className="text-[9px] text-muted-foreground">
             {c.dexId} · {c.chain} · via {c.discoveredVia} · pair {c.pairAddress.slice(0, 10)}…
           </p>
@@ -471,7 +478,7 @@ function ScoreRing({ score, accent, budget }: { score: number | null; accent: st
 
 // ─── signal log ─────────────────────────────────────────────────────────
 
-function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
+export function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
   if (loading) return <FeedSkeleton />;
   if (!sig) return <p className="text-xs text-muted-foreground">no signal data yet.</p>;
   const { stats } = sig;

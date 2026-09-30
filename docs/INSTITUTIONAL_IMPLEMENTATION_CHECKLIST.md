@@ -4,7 +4,7 @@ Created September 30, 2026. Planning baseline: local application commit `b4bb19c
 
 ## Operating contract
 
-- **Current milestone:** The user authorized starting the meme-coin area on September 30. The first scoring foundation is implemented; see `MEME_SCORING_HANDOFF.md` for tests, runtime evidence and limitations. Checked items below apply to that bounded scope, not the full institutional roadmap.
+- **Current milestone:** September 30 combined crypto desk/data reliability, stock lookup and SPY containment release is implemented. See `CRYPTO_DESK_RELEASE.md`, `CRYPTO_DESK_DATA_REVIEW.md` and `SPY_PROJECTION_REVIEW.md`. The stock brief is deterministic and partial; the SPY forecast is withheld. Checked items do not certify the full institutional roadmap.
 - **Product scope:** Crypto research and tracking, with separate liquid-crypto and meme/microcap logic, plus a stock/crypto quick-search Trade Brief. No automated trading, real-money sizing activation or additional brokerage users.
 - **Paused work:** iOS/Xcode remains paused. Do not resume the older gold-panel proposal unless requested.
 - **Source constraints:** Yahoo Finance news is allowed; Yahoo equities-price feeds are not. Preserve Schwab-primary pricing and honestly labeled existing fallbacks.
@@ -19,17 +19,41 @@ Statuses: `NOT STARTED`, `IN PROGRESS`, `BLOCKED`, `PASSED`, or `DEFERRED`. “D
 |---|---|---|---|
 | S0 | Baseline, scope and immediate security boundary | None | IN PROGRESS |
 | S1 | Versioned, explainable scoring | S0 | IN PROGRESS |
-| S2 | Point-in-time evidence and health contracts | S0 | NOT STARTED |
-| S3 | Entity-aware news and social context | S1 + S2 | NOT STARTED |
-| S4 | Liquid-crypto market, derivatives and macro context | S2 | NOT STARTED |
-| S5 | Address-specific meme/on-chain evidence | S2; approved access where needed | NOT STARTED |
+| S2 | Point-in-time evidence and health contracts | S0 | IN PROGRESS |
+| S3 | Entity-aware news and social context | S1 + S2 | IN PROGRESS |
+| S4 | Liquid-crypto market, derivatives and macro context | S2 | IN PROGRESS |
+| S5 | Address-specific meme/on-chain evidence | S2; approved access where needed | IN PROGRESS |
 | S6 | Executable paper ledger and capacity model | S1 + S2; relevant S4/S5 feeds | NOT STARTED |
-| TB | Stock/crypto search and AI Trade Brief | S0 + S2; validated asset-specific calculators and relevant S3–S6 inputs | NOT STARTED |
+| TB | Stock/crypto search and AI Trade Brief | S0 + S2; validated asset-specific calculators and relevant S3–S6 inputs | IN PROGRESS |
 | S7 | Reproducible research and forward validation | S3–S6 for the declared strategy scope | NOT STARTED |
 | S8 | Operational and security release review | Earlier gates for enabled scope | NOT STARTED |
 | O1 | Optional licensed data or X upgrade | Quantified gap; specific approval | DEFERRED |
 
 Complete one bounded objective per work session. S1 and S2 have independent dependencies, but this plan does not authorize parallel agents or unattended execution. A scoped release need not enable every proposed source; document excluded capabilities and never imply they are present.
+
+### September 30 implementation delta
+
+The user explicitly authorized one stock-lookup agent for this combined release.
+The status changes above record bounded progress, not passed stages:
+
+- S2: typed evidence/health contracts and observation/receipt distinctions exist
+  for the new desk. Durable raw events, snapshots, replay and recovery remain open.
+- S3: six shared RSS adapters, safe links, exact-URL deduplication and capped
+  author-aware social samples exist. Entity attribution, syndication clustering,
+  comparable historical velocity and durable first-seen times remain open.
+- S4: sampled Coinbase BTC/ETH, Deribit inverse perpetuals, DefiLlama TVL and dated
+  FRED are wired. Streaming depth, cross-venue checks, stablecoin/unlock context,
+  macro vintages and executable trading logic remain open.
+- S5: original SPL mint parser and exact-pool reserve repair exist; unknown and
+  unsupported programs block WATCH. No guessed vault exclusion remains.
+  Token-2022 extensions, actual owners, event continuity and sell routes are open.
+- TB: explicit finite-universe stock listing search, horizon controls, classic
+  pivot research references and eight-category coverage are wired. Crypto search
+  briefs, full catalysts/options/earnings/seasonality, AI prose and actionable
+  entry/stop/target calculations remain open.
+
+Individual full-scope checkboxes remain unchecked wherever a partial adapter
+does not satisfy the whole stated acceptance condition.
 
 Suggested responsibility: implementation agent/developer produces evidence; project owner approves scope, risk limits and spending; an independent qualified reviewer assesses high-risk release controls. Assign actual names before release rather than inventing a team.
 

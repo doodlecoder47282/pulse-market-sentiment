@@ -70,7 +70,9 @@ test("social failures remain unknown, partial coverage does not reweight FOMO, a
   try {
     engine.upsertFromGtPool({attributes:{address:"fixturepair",name:"TEST / SOL",market_cap_usd:100000},relationships:{base_token:{data:{id:"solana_tokenpump"}}}}, "new_pools");
     const c=engine.tracked.values().next().value;
-    Object.assign(c,{lastRefreshAt:Date.now(), liquidityUsd:20000,priceUsd:1,vol5m:1000,vol1h:6000,buys5m:6,sells5m:4,bskyMentions1h:99});
+    Object.assign(c,{lastRefreshAt:Date.now(), liquidityUsd:20000,priceUsd:1,vol5m:4000,vol1h:12000,buys5m:80,sells5m:20,bskyMentions1h:99,
+      liquidityEvidence:{provider:"DexScreener",fetchedAt:Date.now(),pairAddress:c.pairAddress}});
+    engine.scoreCandidate(c); // social collection is now bounded to near-qualifying research candidates
     globalThis.fetch=async()=>new Response("blocked",{status:403});
     globals.__pumpFixture=null;
     await assert.rejects(engine.socialTick());
@@ -83,7 +85,7 @@ test("social failures remain unknown, partial coverage does not reweight FOMO, a
     await engine.socialTick();
     assert.equal(c.socialCoverage,"partial");
     assert.equal(c.bskyMentions1h,0);
-    assert.ok(Math.abs(c.fomoScore-30)<1e-9); // no penalty for a missing source
+    assert.ok(Math.abs(c.fomoScore-70)<1e-9); // no penalty for a missing source
     globals.__pumpFixture={mint:"tokenpump",reply_count:0,is_currently_live:false};
     c.socialAttemptAt=0;
     await engine.socialTick();

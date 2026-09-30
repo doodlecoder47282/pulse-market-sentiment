@@ -4,7 +4,34 @@ Updated: 2026-09-30. This is a compact handoff, not a live-health certificate.
 
 ## Current objective
 
-Latest authorized request (2026-09-30): queued visual edit for persistent tabs,
+Latest authorized combined request (2026-09-30): improve the sparse crypto
+screen and missing-data quality, delegate stock lookup, and audit/fix the
+misleading SPY projection. Implemented in one existing-app release:
+
+- Six-group crypto desk with candidate inspection, BTC/ETH context, news/macro,
+  source coverage and observational outcomes. Public Coinbase/Deribit/DefiLlama
+  context plus shared CoinDesk/The Block/Decrypt/Yahoo/Fed/BLS headline adapters.
+- Exact-pool liquidity fallback, zero/null distinction, no FDV-to-cap substitution,
+  explicit SPL program/authority parsing, unsupported/PASS gating, unfiltered
+  largest-account share disclosure and sampled-author social evidence.
+- Score version `meme-research-2026-09-30.2`; no ENTER promotion or staking.
+- Stock/ETF lookup and manual deterministic brief. AI, full news/options/
+  earnings/seasonality integration, actionable levels and sizing are NOT complete.
+- Old SPY synthetic generator physically removed; forecast and dealer levels
+  withheld. Only bounded verified observations may be shown. Predictive accuracy
+  remains unestablished. Trainers and other ML paths were not repaired.
+- 45 focused test groups pass; production build passes; 59 existing TypeScript
+  diagnostics remain, none in the added/modified feature files. Browser QA
+  includes real responses, mobile expanded-card clipping repair, outage/recovery
+  and expired-context withdrawal. See `CRYPTO_DESK_RELEASE.md`.
+- Read `CRYPTO_DESK_DATA_REVIEW.md`, `SPY_PROJECTION_REVIEW.md` and
+  `TRADE_BRIEF_STOCK_HANDOFF.md` before resuming; do not repeat this full audit.
+
+Native iOS stays paused. No new accounts, paid sources, X reconnection or AI
+monitoring were added. Source quantity is not validation or institutional readiness.
+The unresolved security blockers below still apply.
+
+Previous authorized request (2026-09-30): queued visual edit for persistent tabs,
 restrained iOS-style glass, and moderately larger desktop typography.
 Implemented in dashboard.tsx/index.css with measured border-box header offset,
 sticky desktop dock, fixed mobile dock, active-tab centering on resize,
@@ -29,7 +56,8 @@ diagnostics remain. Desktop/375px browser QA passed using live policy/health
 and isolated labeled fixtures for WATCH/stale details. Runtime restarted;
 social and grader remain degraded. No provider accounts or paid feeds added.
 Checklist: `docs/INSTITUTIONAL_IMPLEMENTATION_CHECKLIST.md`.
-Trade Brief specification: `docs/TRADE_BRIEF_SPEC.md`; not implemented.
+Trade Brief specification: `docs/TRADE_BRIEF_SPEC.md`; now partially implemented
+for a finite stock/ETF universe, without AI or actionable trade plans.
 Trade Brief should aggregate applicable existing calculations into an evidence-bound
 responsive phone/desktop output; native iOS remains paused.
 X connector was dismissed: do not request it again without an explicit request.
@@ -113,11 +141,13 @@ Do not repeat prior “all green means complete coverage” claims:
   collisions, sampling caps, repeated authors, bots, and incomplete pagination
   prevent interpreting these counts as comprehensive token-specific velocity.
 - Pump reply count and linked socials are limited attention proxies, not coverage of X or Telegram.
-- Holder concentration blindly excludes the largest account as a pool heuristic.
-  That account is not verified as a vault; do not describe the remainder as verified ex-pool ownership.
+- Former largest-account exclusion was removed in the September 30 desk release.
+  Raw top-ten account share includes the largest and is not scored. Vault and
+  beneficial-owner identity remain unverified.
 - Calibration remains false; sampleThresholdMet does not authorize staking.
-- Newest-60 grader selection can starve older open records. Zero liquidity,
-  authority unknown-state display, holder identity, and correlated scoring need review.
+- Fair bounded grader selection was repaired in the September 29 reliability pass.
+  Zero liquidity and authority unknown-state handling were tightened September 30.
+  Verified ownership, sell feasibility and outcome execution semantics remain gaps.
 - Previously observed 403 responses do not establish a permanent platform-wide ban or prove the cause.
 - CBOE cache can serve up to seven-day stale data while adapter stamps 15-minute lag.
   Preserve real provider/fetch/cache timestamps and fail closed at consuming alerts.
@@ -168,7 +198,9 @@ breakeven inputs and stale GLD/oil bars prevent confirming the supplied gold the
 Historical CBOE freshness, charm units, credential rotation and multi-user
 architecture remain unresolved release blockers.
 
-Current next proposed action: verify token-program/authority parsing and holder
-vault identity in the meme engine, retaining UNKNOWN for unsupported/unverified cases.
-Preserve native iOS pause and research-only mode. Credential rotation, stock
-authentication/freshness and multi-user security are not resolved by this patch.
+Next bounded choice: either restore SPY with a real-observation, instrument/unit
+validation contract, or extend meme evidence with Token-2022 support, verified
+vault identity and read-only sell feasibility. Do not activate predictions,
+execution or full-roadmap scope without validation. Preserve native iOS pause
+and research-only mode. Credential rotation and multi-user security are unresolved;
+successful isolated Schwab reads do not certify continuous auth/entitlements.

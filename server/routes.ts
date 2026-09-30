@@ -1,4 +1,8 @@
 import { vixToAtmPct } from "@shared/vol";
+import { getCryptoContext } from "./cryptoContext";
+import { getCryptoSourceRegister } from "./cryptoEngine";
+import { registerTradeBriefRoutes } from "./tradeBrief";
+import { spyProjectionRoute } from "./spyProjection";
 import { getWidgetLayout, saveWidgetLayout, resetWidgetLayout } from "./widgetLayouts";
 import { buildTradeEnvironment, startTradeEnvironmentWatch } from "./tradeEnvironment";
 import type { Express } from "express";
@@ -411,6 +415,8 @@ function rescaleLevelsForSpy(input: any, factor = 10): any {
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  // Bounded read-only stock/ETF research; stays inside the existing API boundary.
+  registerTradeBriefRoutes(app);
   // ── Widget layout persistence (customizable dashboard stacks) ──
   app.get("/api/layout/:tab", (req, res) => {
     try {
@@ -4845,6 +4851,13 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   // CRYPTO DEGEN DESK — feed / health / signals
+  app.get("/api/crypto/context", async (_req, res) => {
+    try {
+      const context = await getCryptoContext();
+      res.json({ ...context, sources: [...getCryptoSourceRegister(), ...context.sources] });
+    }
+    catch { res.status(503).json({ error: "crypto_context_unavailable", message: "Context is unavailable; no missing value is treated as zero." }); }
+  });
   app.get("/api/crypto/feed", (_req, res) => {
     try { res.json(getCryptoFeed()); }
     catch (e: any) { res.status(500).json({ error: "crypto_feed_failed", message: e?.message ?? String(e) }); }
@@ -6126,252 +6139,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     }
   });
 
-  // ─── ML Lab unified SPY endpoint ───────────────────────────────────────
-  // SPY-scale variant of projection-spx: live SPY 5min candles + dealer levels
-  // (rescaled SPX→SPY by /10) + 60min projection bands. When the Schwab tape is
-  // unavailable the route synthesizes a deterministic GBM walk anchored on the
-  // current snapshot price so the panel still renders end-to-end.
-  app.get("/api/ml/projection-spy", async (_req, res) => {
-    try {
-      const { mlQuantileOverlay, mlQuantileMorning } = await import("./mlBridge");
-      const { buildMlFeatures } = await import("./mlGreekFeatures");
-      const { fetchOHLC } = await import("./ohlc");
-      const { buildGammaLevelsEnhanced } = await import("./gammaLevels");
-      const { buildMorningFingerprint, computeMorningBlendWeight, blendBands } = await import("./mlMorningFingerprint");
-
-      const features = await buildMlFeatures(resolveMlFeatureInputs);
-      const horizons = [5, 15, 30, 60];
-      const projection = await mlQuantileOverlay(features, horizons, { timeoutMs: 2500 });
-
-      // Today's RTH SPY 5min bars
-      let candles: any[] = [];
-      let spot: number | null = null;
-      let prevClose: number | null = null;
-      try {
-        const ohlc = await fetchOHLC("SPY", "1D", "5m");
-        candles = (ohlc?.candles ?? []).map((c: any) => ({ ...c, synthetic: false }));
-        spot = ohlc?.price ?? null;
-        prevClose = ohlc?.prevClose ?? null;
-      } catch { /* empty */ }
-
-      // Snapshot fallback for spot/prevClose + synthetic candle generation.
-      let snapSpy: { price: number | null; prevClose: number | null; changePct: number | null } = {
-        price: null, prevClose: null, changePct: null,
-      };
-      try {
-        const snap = await getOrBuild(false);
-        snapSpy = {
-          price: snap.spy?.price ?? null,
-          prevClose: snap.spy?.prevClose ?? null,
-          changePct: snap.spy?.changePct ?? null,
-        };
-        if (spot == null) spot = snapSpy.price;
-        if (prevClose == null) prevClose = snapSpy.prevClose;
-      } catch { /* leave nulls */ }
-
-      // Levels — fetch SPX-scale and divide every numeric value by 10 for SPY.
-      let levels: any = null;
-      try {
-        const snap = await getOrBuild(false);
-        const spxLevels = buildGammaLevelsEnhanced(snap.gamma, snap.spy.price ?? snap.gamma.spot);
-        levels = rescaleLevelsForSpy(spxLevels, 10);
-      } catch { /* null levels */ }
-
-      // Synthetic candle synthesis when tape empty AND we have a spot anchor.
-      let synthetic = false;
-      let syntheticReason: string | null = null;
-      if (candles.length === 0 && spot != null && spot > 0) {
-        // Determine current ET minute-of-day (0..1439).
-        const fmt = new Intl.DateTimeFormat("en-US", {
-          timeZone: "America/New_York",
-          hour12: false,
-          hour: "2-digit",
-          minute: "2-digit",
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-        });
-        const parts = fmt.formatToParts(new Date());
-        const h = Number(parts.find((p) => p.type === "hour")?.value ?? "9");
-        const mn = Number(parts.find((p) => p.type === "minute")?.value ?? "30");
-        const yyyy = parts.find((p) => p.type === "year")?.value ?? "1970";
-        const mm = parts.find((p) => p.type === "month")?.value ?? "01";
-        const dd = parts.find((p) => p.type === "day")?.value ?? "01";
-        const etMinutes = h * 60 + mn;
-        const RTH_OPEN = 570; // 9:30
-        const RTH_CLOSE = 960; // 16:00
-        const minsSinceOpen = Math.max(0, Math.min(RTH_CLOSE, etMinutes) - RTH_OPEN);
-        const nBars = Math.floor(minsSinceOpen / 5);
-        if (nBars > 0) {
-          const anchor = spot;
-          const pctChange = snapSpy.changePct ?? 0;
-          const prevC = prevClose ?? anchor / (1 + pctChange / 100);
-          const dailyDrift = anchor - prevC;
-          const perBarDrift = dailyDrift / nBars;
-          const stdev = anchor * 0.0008;
-
-          // Deterministic seed = today's epoch day (ET)
-          const epochDay = Math.floor(
-            Date.UTC(Number(yyyy), Number(mm) - 1, Number(dd)) / 86_400_000,
-          );
-          let seed = epochDay >>> 0;
-          const rng = () => {
-            // mulberry32
-            seed = (seed + 0x6D2B79F5) >>> 0;
-            let t = seed;
-            t = Math.imul(t ^ (t >>> 15), t | 1);
-            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-          };
-          // Box-Muller normal
-          const norm = () => {
-            const u = Math.max(1e-9, rng());
-            const v = rng();
-            return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
-          };
-
-          // Build candles 9:30 ET → now, 5min steps.
-          // Open of bar 0 = prevClose; subsequent opens = previous close.
-          const dayStartUtc = Date.UTC(Number(yyyy), Number(mm) - 1, Number(dd));
-          // Convert ET 9:30 to UTC epoch for that day. America/New_York can be UTC-5 (EST) or UTC-4 (EDT).
-          // Simple approach: format the dayStart and shift; easier — just trust local epoch math by
-          // taking now() - (etMinutes - currentBarMinute) minutes for each bar timestamp.
-          const nowMs = Date.now();
-          const minutesIntoSession = etMinutes - RTH_OPEN; // current minute since 9:30
-          let prevC2 = prevC;
-          let lastClose = prevC2;
-          const synth: any[] = [];
-          for (let i = 0; i < nBars; i++) {
-            const open = lastClose;
-            const drift = perBarDrift;
-            const noise = stdev * norm();
-            const close = open + drift + noise;
-            const move = Math.abs(close - open);
-            const buf = stdev * 0.5;
-            const high = Math.max(open, close) + move * 0.25 + buf;
-            const low = Math.min(open, close) - move * 0.25 - buf;
-            const vol = 100_000 + Math.floor(rng() * 400_000);
-            // Bar timestamp = open time in epoch seconds. Bar i opens at minute (i*5) since 9:30.
-            // Using nowMs adjusted backward by (minutesIntoSession - i*5) minutes.
-            const t = Math.floor((nowMs - (minutesIntoSession - i * 5) * 60_000) / 1000);
-            synth.push({
-              t,
-              o: Number(open.toFixed(2)),
-              h: Number(high.toFixed(2)),
-              l: Number(low.toFixed(2)),
-              c: Number(close.toFixed(2)),
-              v: vol,
-              synthetic: true,
-            });
-            lastClose = close;
-          }
-          // Force last close to anchor exactly so the chart agrees with the spot.
-          if (synth.length > 0) {
-            const last = synth[synth.length - 1];
-            last.c = Number(anchor.toFixed(2));
-            last.h = Number(Math.max(last.h, last.o, last.c).toFixed(2));
-            last.l = Number(Math.min(last.l, last.o, last.c).toFixed(2));
-          }
-          candles = synth;
-          synthetic = true;
-          syntheticReason = "Schwab intraday tape unavailable; deterministic GBM walk anchored on snapshot spot.";
-        } else {
-          syntheticReason = "pre-market — no bars yet";
-        }
-      } else if (candles.length === 0) {
-        syntheticReason = "no tape and no snapshot spot";
-      }
-
-      // ─── Model D Morning Anchor blend ─────────────────────────────
-      // Compute morning fingerprint from SPY tape; fold into features dict;
-      // call /quantile/morning; blend with v3 by time-of-day weight.
-      let morningFp: any = { ready: false };
-      let morningProjection: any = null;
-      let blendWeight = 0;
-      let blendedBands: any = projection?.bands ?? null;
-      try {
-        const atr5m = Number(features?.atr_5m ?? 0);
-        morningFp = await buildMorningFingerprint({
-          symbol: "SPY",
-          prevClose,
-          atr5m,
-          spot: Number(spot ?? 0),
-        });
-        if (morningFp.ready) {
-          const morningFeatures = {
-            ...features,
-            morn_orb_range_atr: morningFp.morn_orb_range_atr,
-            morn_orb_hi_pct: morningFp.morn_orb_hi_pct,
-            morn_orb_lo_pct: morningFp.morn_orb_lo_pct,
-            morn_open_drive_atr: morningFp.morn_open_drive_atr,
-            morn_opening_vol_z: morningFp.morn_opening_vol_z,
-            morn_gap_atr: morningFp.morn_gap_atr,
-            morn_vwap_dev_atr: morningFp.morn_vwap_dev_atr,
-            bars_since_anchor: morningFp.bars_since_anchor,
-            spot_vs_anchor_atr: morningFp.spot_vs_anchor_atr,
-          };
-          morningProjection = await mlQuantileMorning(
-            morningFeatures,
-            [30, 60, 120, 180, 240],
-            { timeoutMs: 2500 },
-          );
-          blendWeight = computeMorningBlendWeight();
-          blendedBands = blendBands(
-            projection?.bands ?? null,
-            morningProjection?.bands ?? null,
-            blendWeight,
-          );
-        }
-      } catch (err) {
-        // Morning model is optional — v3 stays as the floor. Never block.
-        console.warn("[ml:projection-spy] morning blend skipped:", (err as any)?.message);
-      }
-
-      res.json({
-        ok: true,
-        candles,
-        spot,
-        prevClose,
-        levels,
-        projection: projection
-          ? { bands: projection.bands, status: projection.status, version: projection.version }
-          : { bands: null, status: "UNAVAILABLE", version: "-" },
-        morning: {
-          ready: !!morningFp?.ready,
-          reason: morningFp?.reason ?? null,
-          anchorClose: morningFp?.anchor_close ?? null,
-          anchorTimeEt: morningFp?.anchor_time_et ?? null,
-          barsSinceAnchor: morningFp?.bars_since_anchor ?? 0,
-          fingerprint: morningFp?.ready
-            ? {
-                orb_range_atr: morningFp.morn_orb_range_atr,
-                orb_hi_pct: morningFp.morn_orb_hi_pct,
-                orb_lo_pct: morningFp.morn_orb_lo_pct,
-                open_drive_atr: morningFp.morn_open_drive_atr,
-                opening_vol_z: morningFp.morn_opening_vol_z,
-                gap_atr: morningFp.morn_gap_atr,
-                vwap_dev_atr: morningFp.morn_vwap_dev_atr,
-              }
-            : null,
-          projection: morningProjection
-            ? { bands: morningProjection.bands, status: morningProjection.status, version: morningProjection.version }
-            : null,
-        },
-        blend: {
-          weight: blendWeight,
-          activeModel:
-            blendWeight <= 0 ? "v3" : blendWeight >= 0.5 ? "morning" : "blend",
-          bands: blendedBands,
-        },
-        features,
-        synthetic,
-        syntheticReason,
-        asOf: new Date().toISOString(),
-      });
-    } catch (e: any) {
-      res.status(500).json({ ok: false, error: e?.message ?? "projection-spy failed" });
-    }
-  });
+  // SPY research availability: never fabricate tape or reuse unvalidated SPX features.
+  app.get("/api/ml/projection-spy", spyProjectionRoute);
 
   // ─── ML service health (Wires 17–20) ────────────────────────────────────
   app.get("/api/ml/health", async (_req, res) => {

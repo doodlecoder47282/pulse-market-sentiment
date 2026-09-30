@@ -32,6 +32,10 @@ import { sqlite } from "./storage";
 import { cryptoAuditStats } from "./cryptoAuditStats";
 import { CRYPTO_RELIABILITY_VERSION, ensureCryptoGradeSchema, finiteNonnegative, gradeCryptoBatch } from "./cryptoReliability";
 import { evaluateMemeScore, MEME_SCORE_VERSION, type MemeScoreBreakdown } from "../shared/memeScoring";
+import { parseMintEvidence, rawTop10AccountPct, type MintEvidence } from "../shared/cryptoSecurity";
+import { getCryptoNews } from "./cryptoContext";
+import { summarizeSocialPosts } from "../shared/cryptoDesk";
+import type { DeskSource } from "../shared/cryptoDesk";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -53,6 +57,8 @@ export interface Candidate {
   marketCap: number | null;
   fdv: number | null;
   liquidityUsd: number | null;
+  liquidityEvidence: { provider: "DexScreener" | "GeckoTerminal"; fetchedAt: number; pairAddress: string } | null;
+  liquidityRepairAt: number | null;
   vol5m: number | null;
   vol1h: number | null;
   vol24h: number | null;
@@ -69,8 +75,12 @@ export interface Candidate {
   // on-chain security (public Solana RPC — free, no keys)
   mintAuthorityActive: boolean | null;   // null = unchecked
   freezeAuthorityActive: boolean | null;
-  top10Pct: number | null;               // top-10 holder share ex-largest (AMM vault heuristic)
+  top10Pct: number | null;               // legacy field, null until vault identity is verified
   securityCheckedAt: number | null;
+  securityAttemptAt: number | null;
+  securityEvidence: MintEvidence | null;
+  rawTop10Pct: number | null;            // token accounts including unverified pools, NOT owners
+  holderCheckedAt: number | null;
 
   // rugcheck.xyz cached report (keyless)
   rcRisks: string[];
@@ -88,6 +98,7 @@ export interface Candidate {
   socialCheckedAt: number | null;
   socialAttemptAt: number | null;
   socialCoverage: "pending" | "ok" | "partial" | "unavailable" | "stale";
+  socialEvidence: ReturnType<typeof summarizeSocialPosts> | null;
   prevPumpReplies: { count: number; t: number } | null;
 
   // rolling history for sustained-flow gating (whale-blink filter)
@@ -264,12 +275,15 @@ function persistSignal(c: Candidate): void {
         volAccel: c.volAccel, netBuyRatio5m: c.netBuyRatio5m, fomo: c.fomoScore,
         meme: c.memeScore, narrativeHits: c.narrativeHits, rugFlags: c.rugFlags,
         boosted: c.boosted, pumpfunGraduate: c.pumpfunGraduate,
+        liquidityEvidence: c.liquidityEvidence,
         ageMinutes: c.ageMinutes, reasons: c.verdictReasons,
         mintAuthorityActive: c.mintAuthorityActive, freezeAuthorityActive: c.freezeAuthorityActive,
         top10Pct: c.top10Pct, securityCheckedAt: c.securityCheckedAt,
+        securityEvidence: c.securityEvidence, rawTop10Pct: c.rawTop10Pct, holderCheckedAt: c.holderCheckedAt,
         rcRisks: c.rcRisks, rcLpLockedPct: c.rcLpLockedPct,
         socialScore: c.socialScore, bskyMentions1h: c.bskyMentions1h,
         socialCoverage: c.socialCoverage, socialCheckedAt: c.socialCheckedAt,
+        socialEvidence: c.socialEvidence,
         pumpReplyPerHr: c.pumpReplyPerHr, pumpLive: c.pumpLive,
       }),
       JSON.stringify(c.risk),
@@ -353,25 +367,31 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
     firstSeenAt: Date.now(),
     pairCreatedAt: createdAt,
     priceUsd: null, marketCap: null, fdv: null, liquidityUsd: null,
+    liquidityEvidence: null, liquidityRepairAt: null,
     vol5m: null, vol1h: null, vol24h: null,
     buys5m: null, sells5m: null, buys1h: null, sells1h: null,
     chg5m: null, chg1h: null, chg24h: null,
     boosted: false, lastRefreshAt: null,
     mintAuthorityActive: null, freezeAuthorityActive: null, top10Pct: null, securityCheckedAt: null,
+    securityAttemptAt: null, securityEvidence: null, rawTop10Pct: null, holderCheckedAt: null,
     rcRisks: [], rcLpLockedPct: null, rcCheckedAt: null,
     bskyMentions1h: null, bskyMentions10m: null, pumpReplies: null, pumpReplyPerHr: null,
     pumpLive: false, hasSocialLinks: null, socialScore: null, socialCheckedAt: null,
-    socialAttemptAt: null, socialCoverage: "pending", prevPumpReplies: null,
+    socialAttemptAt: null, socialCoverage: "pending", socialEvidence: null, prevPumpReplies: null,
     hist: [],
     ageMinutes: null, volAccel: null, netBuyRatio5m: null,
     fomoScore: null, memeScore: null, scoreBreakdown: null, narrativeHits: [], rugFlags: [],
     hardKill: false, score: null, verdict: null, verdictReasons: [], risk: null,
   };
   // GT gives a coarse first look — momentum engine refines with DexScreener.
-  c.marketCap = effMcap ?? c.marketCap;
+  if (c.lastRefreshAt == null) c.marketCap = finiteNonnegative(attrs.market_cap_usd); // FDV is not circulating market cap.
   c.fdv = Number.isFinite(fdv) ? fdv : c.fdv;
-  c.priceUsd = Number(attrs.base_token_price_usd ?? NaN) || c.priceUsd;
-  c.liquidityUsd = Number(attrs.reserve_in_usd ?? NaN) || c.liquidityUsd;
+  if (c.lastRefreshAt == null) c.priceUsd = finiteNonnegative(attrs.base_token_price_usd);
+  const reserve = finiteNonnegative(attrs.reserve_in_usd);
+  if (reserve != null) {
+    c.liquidityUsd = reserve;
+    c.liquidityEvidence = { provider: "GeckoTerminal", fetchedAt: Date.now(), pairAddress };
+  }
   if (!existing) tracked.set(key, c);
 }
 
@@ -467,7 +487,13 @@ async function momentumTick(): Promise<void> {
       c.priceUsd = finiteNonnegative(p?.priceUsd);
       c.marketCap = finiteNonnegative(p?.marketCap);
       c.fdv = finiteNonnegative(p?.fdv);
-      c.liquidityUsd = finiteNonnegative(p?.liquidity?.usd);
+      const liquidity = finiteNonnegative(p?.liquidity?.usd);
+      if (liquidity != null) {
+        c.liquidityUsd = liquidity;
+        c.liquidityEvidence = { provider: "DexScreener", fetchedAt: Date.now(), pairAddress: c.pairAddress };
+      } else if (!c.liquidityEvidence || Date.now() - c.liquidityEvidence.fetchedAt > 5 * 60_000) {
+        c.liquidityUsd = null; c.liquidityEvidence = null;
+      }
       c.vol5m = finiteNonnegative(p?.volume?.m5);
       c.vol1h = finiteNonnegative(p?.volume?.h1);
       c.vol24h = finiteNonnegative(p?.volume?.h24);
@@ -491,21 +517,42 @@ async function momentumTick(): Promise<void> {
       persistSignal(c);
     }
   }
+  // Repair a bounded oldest-attempt batch by exact chain + pool identity.
+  // Missing Dex liquidity is common for launchpad pools; reserve is not exit depth.
+  const repair = [...tracked.values()].filter(c => c.chain === "solana" &&
+    /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(c.pairAddress) &&
+    (c.liquidityUsd == null || c.liquidityEvidence?.provider === "GeckoTerminal") &&
+    (c.liquidityRepairAt == null || Date.now() - c.liquidityRepairAt >= 180000))
+    .sort((a, b) => (a.liquidityRepairAt ?? 0) - (b.liquidityRepairAt ?? 0)).slice(0, 60);
+  if (repair.length) {
+    const attemptedAt = Date.now(); for (const c of repair) c.liquidityRepairAt = attemptedAt;
+    for (let offset = 0; offset < repair.length; offset += 20) {
+     const chunk = repair.slice(offset, offset + 20);
+     try {
+      const result = await getJson(`${GT_BASE}/networks/solana/pools/multi/${chunk.map(c => c.pairAddress).join(",")}`);
+      if (!Array.isArray(result?.data)) throw new Error("Invalid pool repair payload");
+      for (const pool of result.data) {
+        const address = pool?.attributes?.address;
+        const c = chunk.find(x => x.pairAddress === address && pool?.id === `solana_${address}`);
+        const reserve = finiteNonnegative(pool?.attributes?.reserve_in_usd);
+        if (!c || reserve == null) continue;
+        c.liquidityUsd = reserve;
+        c.liquidityEvidence = { provider: "GeckoTerminal", fetchedAt: Date.now(), pairAddress: address };
+        scoreCandidate(c); persistSignal(c);
+      }
+     } catch { hb("momentum", MOMENTUM_MS).degraded = true; break; }
+    }
+  }
 }
 
 // ─── 2b. SECURITY — public Solana RPC on-chain checks ───────────────────
 //
-// The #1 rug vector isn't liquidity — it's authorities and concentration:
-//   - mint authority active  = dev can print infinite supply into your bid
-//   - freeze authority active = dev can freeze YOUR tokens (can't sell)
-//   - top-10 holders > 45%   = coordinated dump risk
-// All readable from the free public RPC (api.mainnet-beta.solana.com), no key.
-// Heuristic: the single largest token account is almost always the AMM vault,
-// so concentration = top-10 EXCLUDING the largest, over total supply. Disclosed.
-//
-// Budget: 3 RPC calls per token, 3 tokens per 45s tick — far under public
-// RPC limits. Each candidate is checked once; re-checked every 30 min only
-// while an authority remains active (revocations happen post-launch).
+// Supported original SPL mint/freeze fields only; not a complete safety audit.
+// Unsupported programs and incomplete fields remain unknown and block WATCH.
+// Largest-account concentration includes every returned account. It is NOT
+// beneficial-owner concentration and is not scored; vault identity is unverified.
+// Budget: two candidate attempts per 45s tick, refreshed after 15 minutes,
+// with indexed-method cooldown on throttling. Public RPC availability is variable.
 
 const SECURITY_MS = 45_000;
 // Method-aware routing, verified live:
@@ -548,14 +595,14 @@ async function solRpc(method: string, params: any[], urls: string[]): Promise<an
 }
 
 async function securityTick(): Promise<void> {
-  // oldest-unchecked first; re-check active-authority tokens every 30 min
+  // Fair, oldest-attempt-first rotation. All results expire, not only active authorities.
   const now = Date.now();
   const due = [...tracked.values()]
     .filter((c) => c.chain === "solana" && c.tokenAddress && (c.liquidityUsd ?? 0) >= LIQ_FLOOR_USD)
     .filter((c) =>
-      c.securityCheckedAt == null ||
-      ((c.mintAuthorityActive || c.freezeAuthorityActive) && now - c.securityCheckedAt > 30 * 60_000))
-    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0)) // best candidates first — they gate ENTER
+      c.securityAttemptAt == null || now - c.securityAttemptAt > 15 * 60_000)
+    .sort((a, b) => Number((b.score ?? 0) >= 40 && !b.hardKill) - Number((a.score ?? 0) >= 40 && !a.hardKill) ||
+      (a.securityAttemptAt ?? 0) - (b.securityAttemptAt ?? 0))
     .slice(0, 2); // gentle pace — public RPCs throttle bursts hard
   if (due.length === 0) return;
 
@@ -563,28 +610,27 @@ async function securityTick(): Promise<void> {
   let lastErr: any = null;
   let concentrationDone = false; // max ONE indexed call per tick
   for (const c of due) {
+    c.securityAttemptAt = Date.now();
+    c.top10Pct = null; // Never infer an AMM vault from account rank.
+    c.rawTop10Pct = null; c.holderCheckedAt = null;
     try {
       // CRITICAL PATH: authorities + supply from one parsed account read
-      const acct = await solRpc("getAccountInfo", [c.tokenAddress, { encoding: "jsonParsed" }], RPC_ACCOUNT);
-      const info = acct?.value?.data?.parsed?.info;
-      if (!info) throw new Error("mint account not parseable");
-      c.mintAuthorityActive = info.mintAuthority != null;
-      c.freezeAuthorityActive = info.freezeAuthority != null;
-      const total = Number(info.supply ?? 0);
+      const acct = await solRpc("getAccountInfo", [c.tokenAddress, { encoding: "jsonParsed", commitment: "confirmed" }], RPC_ACCOUNT);
+      c.securityEvidence = parseMintEvidence(acct);
+      c.mintAuthorityActive = c.securityEvidence.mintAuthorityActive;
+      c.freezeAuthorityActive = c.securityEvidence.freezeAuthorityActive;
+      const supply = c.securityEvidence.supplyRaw;
+      if (c.securityEvidence.state !== "CHECKED") hb("security", SECURITY_MS).degraded = true;
 
       // BEST-EFFORT: holder concentration (indexed — mainnet-beta only, gentle)
-      if (!concentrationDone && total > 0 && Date.now() > indexedCooldownUntil) {
+      if (!concentrationDone && supply != null && BigInt(supply) > 0n && Date.now() > indexedCooldownUntil) {
         concentrationDone = true;
         try {
           await sleep(800);
-          const largest = await solRpc("getTokenLargestAccounts", [c.tokenAddress], RPC_INDEXED);
+          const largest = await solRpc("getTokenLargestAccounts", [c.tokenAddress, { commitment: "confirmed" }], RPC_INDEXED);
           const accts: any[] = largest?.value ?? [];
-          if (accts.length > 1) {
-            // exclude the single largest account (AMM vault heuristic)
-            const rest = accts.slice(1, 11);
-            const top = rest.reduce((s: number, a: any) => s + Number(a?.amount ?? 0), 0);
-            c.top10Pct = Number(((top / total) * 100).toFixed(1));
-          }
+          c.rawTop10Pct = rawTop10AccountPct(accts, supply);
+          c.holderCheckedAt = c.rawTop10Pct != null ? Date.now() : null;
         } catch (e: any) {
           if (/429/.test(String(e?.message))) indexedCooldownUntil = Date.now() + 5 * 60_000;
           // non-fatal — authorities are the gate, concentration is a bonus flag
@@ -610,6 +656,10 @@ async function securityTick(): Promise<void> {
       await sleep(700);
     } catch (e: any) {
       lastErr = e;
+      c.mintAuthorityActive = null; c.freezeAuthorityActive = null;
+      c.securityCheckedAt = null; c.securityEvidence = null;
+      hb("security", SECURITY_MS).degraded = true;
+      scoreCandidate(c);
     }
   }
   if (okCount === 0 && lastErr) {
@@ -639,8 +689,9 @@ async function socialTick(): Promise<void> {
   const now = Date.now();
   const due = [...tracked.values()]
     .filter((c) => c.lastRefreshAt != null && (c.marketCap ?? 0) <= MCAP_CEILING * 2)
+    .filter((c) => !c.hardKill && c.liquidityUsd != null && (c.score ?? 0) >= 40)
     .filter((c) => c.socialAttemptAt == null || now - c.socialAttemptAt > 5 * 60_000)
-    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+    .sort((a, b) => (a.socialAttemptAt ?? 0) - (b.socialAttemptAt ?? 0))
     .slice(0, 4);
   if (due.length === 0) return;
 
@@ -651,6 +702,7 @@ async function socialTick(): Promise<void> {
       c.socialAttemptAt = now;
       // Do not carry a previous successful count across a failed refresh.
       c.bskyMentions1h = null; c.bskyMentions10m = null;
+      c.socialEvidence = null;
       c.pumpReplies = null; c.pumpReplyPerHr = null;
       c.pumpLive = false; c.hasSocialLinks = null;
       let successes = 0;
@@ -664,11 +716,9 @@ async function socialTick(): Promise<void> {
           const r = await getJson(`${BSKY}?q=${q}&sort=latest&limit=25`);
           if (!Array.isArray(r?.posts)) throw new Error("invalid Bluesky response");
           const posts: any[] = r.posts;
-          const ts = posts
-            .map((p) => Date.parse(p?.record?.createdAt ?? p?.indexedAt ?? ""))
-            .filter((t) => Number.isFinite(t) && t <= now);
-          c.bskyMentions1h = ts.filter((t) => now - t < 3600_000).length;
-          c.bskyMentions10m = ts.filter((t) => now - t < 600_000).length;
+          c.socialEvidence = summarizeSocialPosts(posts, now);
+          c.bskyMentions1h = c.socialEvidence.mentions1h;
+          c.bskyMentions10m = c.socialEvidence.mentions10m;
           successes++;
         } catch { /* bsky is enhancement — never blocks the tick */ }
       }
@@ -683,7 +733,8 @@ async function socialTick(): Promise<void> {
           if (Number.isFinite(replies)) {
             if (c.prevPumpReplies && now > c.prevPumpReplies.t) {
               const hrs = (now - c.prevPumpReplies.t) / 3600_000;
-              if (hrs > 0.02) c.pumpReplyPerHr = Number(((replies - c.prevPumpReplies.count) / hrs).toFixed(1));
+              if (hrs > 0.02 && hrs <= 1 / 6 && replies >= c.prevPumpReplies.count)
+                c.pumpReplyPerHr = Number(((replies - c.prevPumpReplies.count) / hrs).toFixed(1));
             }
             c.prevPumpReplies = { count: replies, t: now };
             c.pumpReplies = replies;
@@ -696,14 +747,14 @@ async function socialTick(): Promise<void> {
 
       // ── social score 0-100 ──
       let s = 0;
-      s += Math.min(35, (c.bskyMentions10m ?? 0) * 12);          // fresh mentions are gold
-      s += Math.min(20, (c.bskyMentions1h ?? 0) * 2.5);
+      s += Math.min(35, (c.socialEvidence?.uniqueAuthors10m ?? 0) * 12);
+      s += Math.min(20, (c.socialEvidence?.uniqueAuthors1h ?? 0) * 2.5);
       s += Math.min(30, Math.max(0, (c.pumpReplyPerHr ?? 0)) * 0.75); // 40 replies/hr = max
-      if (c.pumpLive) s += 10;
-      if (c.hasSocialLinks) s += 5;
+      // Links and livestream flags are descriptive, not proof of demand.
       c.socialScore = successes > 0 ? Math.round(Math.min(100, s)) : null;
       c.socialCheckedAt = successes > 0 ? now : null;
       c.socialCoverage = successes === 0 ? "unavailable" : successes === eligible ? "ok" : "partial";
+      if (c.socialEvidence?.capped || c.socialEvidence?.timestampsComplete === false) c.socialCoverage = "partial";
       if (c.socialCoverage!=="ok") hb("social",SOCIAL_MS).degraded=true;
       if (successes > 0) okCount++;
       else lastErr = new Error("no usable social source response");
@@ -758,9 +809,11 @@ function scoreCandidate(c: Candidate): void {
   // rug filter
   const flags: string[] = [];
   let hardKill = false;
+  if (!c.liquidityEvidence || now - c.liquidityEvidence.fetchedAt > 5 * 60_000 || c.liquidityEvidence.fetchedAt > now) c.liquidityUsd = null;
   const liq = c.liquidityUsd ?? 0;
-  const mcap = c.marketCap ?? c.fdv ?? 0;
-  if (liq < LIQ_FLOOR_USD) { flags.push(`liquidity $${(liq / 1000).toFixed(1)}k < $${LIQ_FLOOR_USD / 1000}k research floor`); hardKill = true; }
+  const mcap = c.marketCap ?? 0; // Never silently promote FDV to market cap.
+  if (c.liquidityUsd != null && liq < LIQ_FLOOR_USD) { flags.push(`liquidity $${(liq / 1000).toFixed(1)}k < $${LIQ_FLOOR_USD / 1000}k research floor`); hardKill = true; }
+  if (c.liquidityUsd == null) flags.push("liquidity evidence unavailable or stale; not observed zero");
   if (mcap > 0 && liq > 0 && liq / mcap < 0.03) { flags.push(`liq/mcap ${(100 * liq / mcap).toFixed(1)}% < 3% — exit door too small`); hardKill = true; }
   if (mcap > 0 && liq > mcap * 2) flags.push("liquidity >> mcap — weird pool, likely mispriced data");
   if ((c.buys1h ?? 0) >= 25 && c.sells1h === 0) { flags.push("buys but ZERO observed sells in 1h — honeypot proxy, not proof"); hardKill = true; }
@@ -771,7 +824,7 @@ function scoreCandidate(c: Candidate): void {
   // on-chain security facts (public RPC)
   if (c.mintAuthorityActive === true) { flags.push("MINT AUTHORITY ACTIVE — dev can print supply into your bid"); hardKill = true; }
   if (c.freezeAuthorityActive === true) { flags.push("FREEZE AUTHORITY ACTIVE — dev can lock your tokens"); hardKill = true; }
-  if ((c.top10Pct ?? 0) > 45) flags.push(`holder proxy ${c.top10Pct}% excluding largest account; vault identity unverified`);
+  // Raw concentration includes vaults and is not verified owner concentration.
   // rugcheck cached report — LP lock + named risks (non-fatal: cached data)
   if (c.rcLpLockedPct != null && c.rcLpLockedPct < 50) flags.push(`LP only ${c.rcLpLockedPct}% locked (rugcheck) — pull risk`);
   for (const r of c.rcRisks) flags.push(`rugcheck: ${r}`);
@@ -789,12 +842,17 @@ function scoreCandidate(c: Candidate): void {
   let verdict: Candidate["verdict"] = "PASS";
   if (c.scoreBreakdown.inputStatus.market !== "fresh") {
     reasons.push("market observation missing, future-dated or older than five minutes");
+  } else if (c.liquidityUsd == null) {
+    reasons.push("liquidity evidence missing or stale; reserve coverage required before research qualification");
   } else if (hardKill) {
     reasons.push("hard kill: " + flags.filter((f) => /floor|honeypot|mid-rug|exit door|AUTHORITY ACTIVE/.test(f)).join("; "));
   } else if (!Number.isFinite(mcap) || mcap <= 0 || c.priceUsd == null || !Number.isFinite(c.priceUsd) || c.priceUsd <= 0) {
     reasons.push("no reliable mcap/price yet");
   } else if (c.score == null) {
     reasons.push("flow inputs missing, inconsistent or without a usable volume/trade baseline");
+  } else if (c.securityEvidence?.state !== "CHECKED" || c.securityCheckedAt == null ||
+      now - c.securityCheckedAt > 30 * 60_000 || c.securityCheckedAt > now) {
+    reasons.push("authority checks incomplete, stale or unsupported; no research shortlist qualification");
   } else if (mcap > MCAP_ENTRY_MAX) {
     verdict = c.score >= 55 ? "WATCH" : "PASS";
     reasons.push(`mcap $${(mcap / 1e6).toFixed(2)}M above 1M entry ceiling — watch for retrace only`);
@@ -839,12 +897,6 @@ function scoreCandidate(c: Candidate): void {
 
 // ─── 4. NARRATIVES — RSS keyword heat ───────────────────────────────────
 
-const RSS_FEEDS = [
-  { name: "CoinDesk", url: "https://www.coindesk.com/arc/outboundfeeds/rss/" },
-  { name: "TheBlock", url: "https://www.theblock.co/rss.xml" },
-  { name: "Decrypt", url: "https://decrypt.co/feed" },
-];
-
 // Terms worth tracking as narrative heat. Single words only (title matching).
 const NARRATIVE_TERMS = [
   "solana", "memecoin", "meme", "dogecoin", "doge", "pepe", "bonk", "wif",
@@ -854,31 +906,19 @@ const NARRATIVE_TERMS = [
 
 async function narrativeTick(): Promise<void> {
   const counts = new Map<string, { hits: number; sources: Set<string> }>();
-  let anyOk = false;
-  for (const feed of RSS_FEEDS) {
-    try {
-      const ctl = new AbortController();
-      const t = setTimeout(() => ctl.abort(), 12_000);
-      const r = await fetch(feed.url, { signal: ctl.signal, headers: { "user-agent": "batcave-terminal/1.0" } });
-      clearTimeout(t);
-      if (!r.ok) continue;
-      const xml = await r.text();
-      anyOk = true;
-      const titles = [...xml.matchAll(/<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/title>/gis)]
-        .map((m) => m[1] ?? "").slice(1, 60); // skip channel title
-      for (const title of titles) {
-        for (const term of NARRATIVE_TERMS) {
-          if (new RegExp(`\\b${term}\\b`, "i").test(title)) {
-            const e = counts.get(term) ?? { hits: 0, sources: new Set<string>() };
-            e.hits++;
-            e.sources.add(feed.name);
-            counts.set(term, e);
-          }
-        }
+  const news = await getCryptoNews();
+  const cryptoSources = news.sources.filter(s => s.role === "crypto headlines");
+  if (!cryptoSources.some(s => s.state === "HEALTHY" || s.state === "PARTIAL")) throw new Error("No current usable crypto RSS feeds");
+  hb("narratives", NARRATIVE_MS).degraded = cryptoSources.some(s => s.state !== "HEALTHY");
+  for (const row of news.rows.filter(r => r.group === "crypto" && r.publishedAt != null &&
+      Date.now() - r.publishedAt <= 3 * 86400_000)) {
+    for (const term of NARRATIVE_TERMS) {
+      if (new RegExp(`\\b${term}\\b`, "i").test(row.title)) {
+        const e = counts.get(term) ?? { hits: 0, sources: new Set<string>() };
+        e.hits++; e.sources.add(row.publisher); counts.set(term, e);
       }
-    } catch { /* individual feed failure is fine */ }
+    }
   }
-  if (!anyOk) throw new Error("all RSS feeds unreachable");
   narrativeHeat = [...counts.entries()]
     .map(([term, v]) => ({ term, hits: v.hits, sources: [...v.sources] }))
     .sort((a, b) => b.hits - a.hits);
@@ -966,12 +1006,11 @@ export function getCryptoFeed(): {
     } else scoreCandidate(c); // expire social evidence on reads as well as scheduled polls
   }
   const list = [...tracked.values()]
-    .filter((c) => c.lastRefreshAt != null)
     .sort((a, b) => {
       const rank = (v: Candidate["verdict"]) => (v === "ENTER" ? 0 : v === "WATCH" ? 1 : 2);
       return rank(a.verdict) - rank(b.verdict) || (b.score ?? 0) - (a.score ?? 0);
     })
-    .slice(0, 80);
+    .slice(0, MAX_TRACKED);
   return {
     asOf: Date.now(),
     trackedCount: tracked.size,
@@ -991,6 +1030,31 @@ export function getCryptoHealth() {
   return { engines, trackedCount: tracked.size, asOf: now,
     version: CRYPTO_RELIABILITY_VERSION, scoreVersion: MEME_SCORE_VERSION, discoverySources, lastGradeBatch,
     observationNote:"Provider fetch samples, not exchange timestamps. No continuity guarantee while the host is suspended." };
+}
+export function getCryptoSourceRegister(): DeskSource[] {
+  const engines = getCryptoHealth().engines;
+  const definitions = [
+    ["geckoterminal", "GeckoTerminal", "scanner", "Pool discovery / reserve repair", GT_BASE,
+      "60s discovery; bounded 20-pool repair batches", "Solana discovery window is bounded. Exact-pool reserves are not executable depth; FDV is never treated as circulating market cap."],
+    ["dexscreener", "DexScreener", "momentum", "Pool price / transactions / reported volume", DS_BASE,
+      "75s collector", "Provider receipt time only. No unique-wallet, wash-trading or complete on-chain event claim. Paid boosts are promotion, not organic evidence."],
+    ["solana", "Solana public RPC", "security", "Mint program / authorities / raw token accounts", RPC_ACCOUNT[0],
+      "2 mints per 45s; priority-qualified then oldest attempt", "Original SPL parser only. Token-2022/other programs fail closed. Raw account concentration includes pools; vaults and beneficial owners unverified."],
+    ["rugcheck", "Rugcheck", "security", "Cached risk flags", "https://api.rugcheck.xyz",
+      "Best effort per mint", "Third-party cached summary is supplementary, not independent complete safety verification. Coverage can differ from the RPC routine."],
+    ["bluesky", "Bluesky", "social", "Sampled cashtag attention", "https://api.bsky.app",
+      "4 priority candidates per 90s; max 25 returned posts", "Near-qualifying candidates only. Unique authors and duplicate text are sampled; symbol collisions and incomplete windows remain. Not verified contract attribution."],
+    ["pumpfun", "pump.fun", "social", "Mint-specific reply counter", PUMP,
+      "Shares bounded social collector", "Unofficial endpoint may fail or change. Reply deltas require comparable intervals; reply volume is not verified unique buyers or organic demand."],
+  ] as const;
+  return [...definitions.map(([id, name, engine, role, url, cadence, limitation]): DeskSource => {
+    const h = engines.find(e => e.name === engine);
+    return { id, name, role, url, cadence, limitation,
+      state: !h?.lastOkAt ? "UNKNOWN" : ["stale", "late"].includes(h.status) ? "STALE" :
+        h.status === "error" ? "UNAVAILABLE" : "PARTIAL",
+      fetchedAt: h?.lastOkAt ?? null, observedAt: null };
+  }), { id: "x", name: "X", role: "Social coverage", url: "https://x.com", state: "DISABLED",
+    fetchedAt: null, observedAt: null, cadence: "Not connected", limitation: "User dismissed connection. No unofficial scrape, cookies, account creation or complete-X claim." }];
 }
 
 export function getCryptoSignals(): {

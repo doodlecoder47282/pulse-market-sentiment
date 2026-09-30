@@ -80,6 +80,8 @@ test("engine integration: promotion/name/trending cannot lift rank; hard gates a
   const current = Date.now();
   Object.assign(c, baseline, { lastRefreshAt: current, socialCheckedAt: current, marketCap: 100000,
     priceUsd: 0.01, liquidityUsd: 20000, buys1h: 100, sells1h: 30, vol24h: 100000,
+    liquidityEvidence: { provider: "DexScreener", fetchedAt: current, pairAddress: c.pairAddress },
+    securityEvidence: { state: "CHECKED" },
     pairCreatedAt: current - 3600_000, mintAuthorityActive: false, freezeAuthorityActive: false,
     securityCheckedAt: current, rcRisks: [], top10Pct: null });
   engine.scoreCandidate(c);
@@ -108,10 +110,10 @@ test("engine integration: promotion/name/trending cannot lift rank; hard gates a
     assert.equal(c.risk, null, field);
     c[field] = original;
   }
-  c.sells1h = null; c.mintAuthorityActive = null; c.freezeAuthorityActive = null;
+  c.sells1h = null; c.mintAuthorityActive = null; c.freezeAuthorityActive = null; c.securityEvidence = null;
   engine.scoreCandidate(c);
   assert.equal(c.hardKill, false); // missing sells is not observed zero sells
-  assert.equal(c.verdict, "WATCH");
+  assert.equal(c.verdict, "PASS");
   assert.ok(c.verdictReasons.some((r: string) => r.includes("incomplete")));
   c.socialCheckedAt = Date.now() - 660000;
   const result = engine.getCryptoFeed();

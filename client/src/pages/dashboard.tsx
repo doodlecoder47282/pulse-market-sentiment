@@ -26,8 +26,9 @@ import GlobalEdgeBanner from "@/components/GlobalEdgeBanner";
 import { RegimeChip } from "@/components/RegimeChip";
 import TakeFive, { TakeFiveFab } from "@/components/TakeFive";
 import EdgeLabPanel from "@/components/EdgeLabPanel";
-const CryptoPanel = lazy(() => import("@/components/CryptoPanel"));
+const CryptoPanel = lazy(() => import("@/components/CryptoDesk"));
 import { MacroTicker, MacroCarousel } from "@/components/MacroCarousel";
+import { TradeBriefSearch } from "@/components/TradeBriefSearch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTickers, type TabKey } from "@/components/TickerContext";
 import ErrorBoundary from "@/components/ErrorBoundary";
@@ -459,6 +460,7 @@ export default function Dashboard() {
       <MacroTicker />
 
       <main className="batcave-main batcave-content-width mx-auto space-y-4 px-3 py-4 pb-24 text-[14px] sm:space-y-6 sm:px-4 sm:py-6 sm:text-[14px] md:pb-6 md:px-8 md:text-[15px] xl:px-10 xl:text-[16px]">
+        <TradeBriefSearch />
         {/* Rotating macro carousel — always visible above the tabs */}
         <MacroCarousel />
 
