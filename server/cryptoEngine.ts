@@ -15,13 +15,12 @@
 //                          m5/h1/h24 volume + buys/sells + price changes +
 //                          liquidity. Computes flow acceleration + FOMO score.
 //                          Also pulls DexScreener token-boosts (paid promotion
-//                          = manufactured FOMO — flagged, scored both ways).
+//                          = promotion context only; never positive organic evidence).
 //   3. RUG FILTER (inline on refresh) — liquidity floor, liq/mcap sanity,
 //                          sell-side existence (honeypot proxy), crash filter,
 //                          age gates. Hard kills → PASS regardless of score.
 //   4. NARRATIVES (5min) — crypto RSS (CoinDesk/TheBlock/Decrypt) keyword heat.
-//                          Names that match a hot narrative score higher —
-//                          news CONFIRMS, it does not trigger.
+//                          Keyword matches are context only, not verified token news.
 //
 //   WATCHDOG (30s) — each engine writes a heartbeat; late/stale/error states
 //                    are exposed at /api/crypto/health and shown in the UI.
@@ -32,6 +31,7 @@
 import { sqlite } from "./storage";
 import { cryptoAuditStats } from "./cryptoAuditStats";
 import { CRYPTO_RELIABILITY_VERSION, ensureCryptoGradeSchema, finiteNonnegative, gradeCryptoBatch } from "./cryptoReliability";
+import { evaluateMemeScore, MEME_SCORE_VERSION, type MemeScoreBreakdown } from "../shared/memeScoring";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -97,20 +97,21 @@ export interface Candidate {
   ageMinutes: number | null;
   volAccel: number | null;        // m5 volume annualized vs h1 baseline
   netBuyRatio5m: number | null;   // buys/(buys+sells)
-  fomoScore: number | null;       // 0-100
+  fomoScore: number | null;       // legacy API name: pure flow pace/buy-count proxy, no social blend
   memeScore: number | null;       // 0-100
+  scoreBreakdown: MemeScoreBreakdown | null;
   narrativeHits: string[];
   rugFlags: string[];
   hardKill: boolean;
-  score: number | null;           // composite 0-100
+  score: number | null;           // provisional research points, budget 70; not comparable to legacy 100
   verdict: "ENTER" | "WATCH" | "PASS" | null;
   verdictReasons: string[];
   risk: RiskParams | null;
 }
 
 export interface RiskParams {
-  maxPositionUsd: number;      // sized off exit liquidity, not conviction
-  suggestedStopPct: number;    // hard stop on position
+  maxPositionUsd: number;      // illustrative liquidity cap, NOT verified executable size
+  suggestedStopPct: number;    // fixed research scenario, not an executable stop
   liquidityExitStopPct: number;// bail if liquidity drops this much
   targetMcap: number;          // 5M default ride target
   targetMultiple: number | null;
@@ -150,8 +151,8 @@ const GRADER_MS = 10 * 60_000;
 const GT_BASE = "https://api.geckoterminal.com/api/v2";
 const DS_BASE = "https://api.dexscreener.com";
 
-// Meme lexicon for the catchy-name scorer. Weighted by how reliably the theme
-// has carried runners. This is a heuristic, not a model — disclosed as such.
+// Descriptive name lexicon retained for context only. No validated predictive
+// evidence and no contribution to the research ranking.
 const MEME_LEXICON: Array<{ re: RegExp; w: number; tag: string }> = [
   { re: /doge|shib|inu|floki/i, w: 14, tag: "dog meta" },
   { re: /cat|kitty|meow|mog/i, w: 12, tag: "cat meta" },
@@ -256,6 +257,10 @@ function persistSignal(c: Candidate): void {
       Date.now(), c.chain, c.pairAddress, c.tokenAddress, c.symbol, c.name,
       c.verdict, c.score, c.marketCap, c.priceUsd, c.liquidityUsd,
       JSON.stringify({
+        scoreVersion: MEME_SCORE_VERSION, scoreBreakdown: c.scoreBreakdown,
+        scoreInputs: { vol5m: c.vol5m, vol1h: c.vol1h, buys5m: c.buys5m, sells5m: c.sells5m,
+          lastRefreshAt: c.lastRefreshAt, socialScore: c.socialScore, socialCheckedAt: c.socialCheckedAt,
+          socialCoverage: c.socialCoverage, hardKill: c.hardKill, riskFlagCount: c.rugFlags.length },
         volAccel: c.volAccel, netBuyRatio5m: c.netBuyRatio5m, fomo: c.fomoScore,
         meme: c.memeScore, narrativeHits: c.narrativeHits, rugFlags: c.rugFlags,
         boosted: c.boosted, pumpfunGraduate: c.pumpfunGraduate,
@@ -359,7 +364,7 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
     socialAttemptAt: null, socialCoverage: "pending", prevPumpReplies: null,
     hist: [],
     ageMinutes: null, volAccel: null, netBuyRatio5m: null,
-    fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
+    fomoScore: null, memeScore: null, scoreBreakdown: null, narrativeHits: [], rugFlags: [],
     hardKill: false, score: null, verdict: null, verdictReasons: [], risk: null,
   };
   // GT gives a coarse first look — momentum engine refines with DexScreener.
@@ -463,13 +468,13 @@ async function momentumTick(): Promise<void> {
       c.marketCap = finiteNonnegative(p?.marketCap);
       c.fdv = finiteNonnegative(p?.fdv);
       c.liquidityUsd = finiteNonnegative(p?.liquidity?.usd);
-      c.vol5m = Number(p?.volume?.m5 ?? NaN) || 0;
-      c.vol1h = Number(p?.volume?.h1 ?? NaN) || 0;
-      c.vol24h = Number(p?.volume?.h24 ?? NaN) || 0;
-      c.buys5m = Number(p?.txns?.m5?.buys ?? NaN) || 0;
-      c.sells5m = Number(p?.txns?.m5?.sells ?? NaN) || 0;
-      c.buys1h = Number(p?.txns?.h1?.buys ?? NaN) || 0;
-      c.sells1h = Number(p?.txns?.h1?.sells ?? NaN) || 0;
+      c.vol5m = finiteNonnegative(p?.volume?.m5);
+      c.vol1h = finiteNonnegative(p?.volume?.h1);
+      c.vol24h = finiteNonnegative(p?.volume?.h24);
+      c.buys5m = finiteNonnegative(p?.txns?.m5?.buys);
+      c.sells5m = finiteNonnegative(p?.txns?.m5?.sells);
+      c.buys1h = finiteNonnegative(p?.txns?.h1?.buys);
+      c.sells1h = finiteNonnegative(p?.txns?.h1?.sells);
       c.chg5m = Number(p?.priceChange?.m5 ?? NaN);
       c.chg1h = Number(p?.priceChange?.h1 ?? NaN);
       c.chg24h = Number(p?.priceChange?.h24 ?? NaN);
@@ -744,102 +749,73 @@ function scoreCandidate(c: Candidate): void {
   const meme = scoreMeme(c.name, c.symbol);
   c.memeScore = meme.score;
 
-  // narrative confirmation — name/symbol matches a hot news narrative
-  c.narrativeHits = narrativeHeat
+  // Unverified keyword context only. No score contribution or confirmation claim.
+  c.narrativeHits = (narrativeUpdatedAt != null && now - narrativeUpdatedAt <= 15 * 60_000 ? narrativeHeat : [])
     .filter((n) => n.hits >= 2)
     .filter((n) => new RegExp(`\\b${n.term}\\b`, "i").test(`${c.name} ${c.symbol}`))
     .map((n) => n.term);
-
-  // flow: volume acceleration = m5 pace vs h1 pace
-  const paceM5 = (c.vol5m ?? 0) / 5;
-  const paceH1 = (c.vol1h ?? 0) / 60;
-  c.volAccel = paceH1 > 0 ? paceM5 / paceH1 : (paceM5 > 0 ? 5 : 0);
-  const t5 = (c.buys5m ?? 0) + (c.sells5m ?? 0);
-  c.netBuyRatio5m = t5 > 0 ? (c.buys5m ?? 0) / t5 : null;
-
-  // FOMO score: acceleration + one-sided tape + trending/boost presence
-  let fomo = 0;
-  if (c.volAccel != null) fomo += Math.min(40, c.volAccel * 10);          // 4x accel = max
-  if (c.netBuyRatio5m != null) fomo += Math.max(0, (c.netBuyRatio5m - 0.5) * 100); // up to +50
-  if (c.discoveredVia === "trending") fomo += 10;
-  if (c.boosted) fomo += 8; // paid promo IS fomo — but it's flagged as manufactured below
-  // social velocity (bluesky mentions + pump.fun reply rate) — real crowd
-  // attention, weighted in at 30%: flow still leads, social confirms
-  if (c.socialScore != null && c.socialCoverage === "ok") fomo = fomo * 0.7 + c.socialScore * 0.3;
-  c.fomoScore = Math.min(100, fomo);
 
   // rug filter
   const flags: string[] = [];
   let hardKill = false;
   const liq = c.liquidityUsd ?? 0;
   const mcap = c.marketCap ?? c.fdv ?? 0;
-  if (liq < LIQ_FLOOR_USD) { flags.push(`liquidity $${(liq / 1000).toFixed(1)}k < $${LIQ_FLOOR_USD / 1000}k floor — cannot exit`); hardKill = true; }
+  if (liq < LIQ_FLOOR_USD) { flags.push(`liquidity $${(liq / 1000).toFixed(1)}k < $${LIQ_FLOOR_USD / 1000}k research floor`); hardKill = true; }
   if (mcap > 0 && liq > 0 && liq / mcap < 0.03) { flags.push(`liq/mcap ${(100 * liq / mcap).toFixed(1)}% < 3% — exit door too small`); hardKill = true; }
   if (mcap > 0 && liq > mcap * 2) flags.push("liquidity >> mcap — weird pool, likely mispriced data");
-  if ((c.buys1h ?? 0) >= 25 && (c.sells1h ?? 0) === 0) { flags.push("buys but ZERO sells in 1h — honeypot pattern"); hardKill = true; }
+  if ((c.buys1h ?? 0) >= 25 && c.sells1h === 0) { flags.push("buys but ZERO observed sells in 1h — honeypot proxy, not proof"); hardKill = true; }
   if ((c.chg1h ?? 0) < -55) { flags.push(`price ${c.chg1h?.toFixed(0)}% in 1h — mid-rug or post-dump`); hardKill = true; }
   if ((c.ageMinutes ?? 1e9) < 10) flags.push("under 10 min old — sniper zone, spreads brutal");
-  if (c.boosted) flags.push("paid DexScreener boost — manufactured attention, discount the FOMO");
-  if ((c.vol24h ?? 0) < 1000 && (c.ageMinutes ?? 0) > 720) flags.push("aged with no volume — dead pool");
+  if (c.boosted) flags.push("paid DexScreener boost: promotion risk, no positive attention points");
+  if (c.vol24h != null && c.vol24h < 1000 && (c.ageMinutes ?? 0) > 720) flags.push("aged pool with low observed volume");
   // on-chain security facts (public RPC)
   if (c.mintAuthorityActive === true) { flags.push("MINT AUTHORITY ACTIVE — dev can print supply into your bid"); hardKill = true; }
   if (c.freezeAuthorityActive === true) { flags.push("FREEZE AUTHORITY ACTIVE — dev can lock your tokens"); hardKill = true; }
-  if ((c.top10Pct ?? 0) > 45) flags.push(`top-10 holders ${c.top10Pct}% of supply (ex-pool) — coordinated dump risk`);
+  if ((c.top10Pct ?? 0) > 45) flags.push(`holder proxy ${c.top10Pct}% excluding largest account; vault identity unverified`);
   // rugcheck cached report — LP lock + named risks (non-fatal: cached data)
   if (c.rcLpLockedPct != null && c.rcLpLockedPct < 50) flags.push(`LP only ${c.rcLpLockedPct}% locked (rugcheck) — pull risk`);
   for (const r of c.rcRisks) flags.push(`rugcheck: ${r}`);
   c.rugFlags = flags;
   c.hardKill = hardKill;
 
-  // composite: flow 35, structure 25 (inverse rug pressure), meme 15, narrative 15, fomo 10
-  const flow = Math.min(35, (c.fomoScore ?? 0) * 0.35);
-  const structure = hardKill ? 0 : Math.max(0, 25 - flags.length * 5);
-  const memePts = (c.memeScore ?? 0) * 0.15;
-  const narrPts = Math.min(15, c.narrativeHits.length * 7.5);
-  const fomoPts = (c.fomoScore ?? 0) * 0.10;
-  c.score = Math.round(Math.min(100, flow + structure + memePts + narrPts + fomoPts));
+  c.scoreBreakdown = evaluateMemeScore({ ...c, riskFlagCount: flags.length }, now);
+  c.volAccel = c.scoreBreakdown.volAccel;
+  c.netBuyRatio5m = c.scoreBreakdown.netBuyRatio5m;
+  c.fomoScore = c.scoreBreakdown.flowScore;
+  c.score = c.scoreBreakdown.score;
 
   // verdict
   const reasons: string[] = [];
   let verdict: Candidate["verdict"] = "PASS";
-  if (c.lastRefreshAt==null || now-c.lastRefreshAt>5*60_000) {
-    reasons.push("market observation missing or older than five minutes");
+  if (c.scoreBreakdown.inputStatus.market !== "fresh") {
+    reasons.push("market observation missing, future-dated or older than five minutes");
   } else if (hardKill) {
     reasons.push("hard kill: " + flags.filter((f) => /floor|honeypot|mid-rug|exit door|AUTHORITY ACTIVE/.test(f)).join("; "));
-  } else if (mcap <= 0 || c.priceUsd == null) {
+  } else if (!Number.isFinite(mcap) || mcap <= 0 || c.priceUsd == null || !Number.isFinite(c.priceUsd) || c.priceUsd <= 0) {
     reasons.push("no reliable mcap/price yet");
+  } else if (c.score == null) {
+    reasons.push("flow inputs missing, inconsistent or without a usable volume/trade baseline");
   } else if (mcap > MCAP_ENTRY_MAX) {
     verdict = c.score >= 55 ? "WATCH" : "PASS";
     reasons.push(`mcap $${(mcap / 1e6).toFixed(2)}M above 1M entry ceiling — watch for retrace only`);
-  } else if (c.score >= 70 && (c.volAccel ?? 0) >= 1.5 && (c.netBuyRatio5m ?? 0) >= 0.58) {
-    // WHALE-BLINK FILTER: one hot 5-min window is a single buyer, not a move.
-    // ENTER requires sustained flow — at least 2 of the last 3 refreshes with
-    // accel >= 1.5 — plus a completed on-chain security check.
-    const recent = c.hist.slice(-3);
-    const sustained = recent.length >= 2 && recent.filter((h) => (h.volAccel ?? 0) >= 1.5).length >= 2;
-    if (!sustained) {
-      verdict = "WATCH";
-      reasons.push(`score ${c.score}, accel ${c.volAccel?.toFixed(1)}x but not sustained yet (need 2 of last 3 polls) — whale-blink filter`);
-    } else if (c.securityCheckedAt == null) {
-      verdict = "WATCH";
-      reasons.push(`score ${c.score}, flow sustained — held at WATCH pending on-chain security check (mint/freeze/holders)`);
-    } else {
-      verdict = "ENTER";
-      reasons.push(`score ${c.score}, flow sustained ${c.volAccel?.toFixed(1)}x, ${Math.round((c.netBuyRatio5m ?? 0) * 100)}% buys, security checked`);
-      if (c.top10Pct != null) reasons.push(`top-10 holders ${c.top10Pct}% ex-pool`);
-      if (c.narrativeHits.length) reasons.push(`narrative confirm: ${c.narrativeHits.join(", ")}`);
-    }
   } else if (c.score >= 50) {
     verdict = "WATCH";
-    reasons.push(`score ${c.score} — setup forming, waiting on flow confirmation`);
+    reasons.push(`${c.score}/70 provisional research points; ENTER disabled pending new-version validation`);
   } else {
     reasons.push(`score ${c.score} below 50`);
+  }
+  if (verdict === "WATCH") {
+    if (c.mintAuthorityActive == null || c.freezeAuthorityActive == null || c.securityCheckedAt == null) {
+      reasons.push("authority checks incomplete; WATCH is an observation list, not permission to trade");
+    }
+    if (c.scoreBreakdown.inputStatus.social !== "sampled") reasons.push("social input missing/partial/stale; no social points or reweighting");
+    reasons.push("holder vault identity and executable exits remain unverified");
   }
   c.verdict = verdict;
   c.verdictReasons = reasons;
 
-  // risk params — sized off exit liquidity, never conviction
-  if (verdict === "ENTER" || verdict === "WATCH") {
+  // Existing research scenarios, not calculated price targets or executable sizing.
+  if (verdict === "WATCH") {
     const maxPos = Math.floor(Math.min(liq * 0.005, 400)); // 0.5% of pool, hard cap
     c.risk = {
       maxPositionUsd: Math.max(0, maxPos),
@@ -850,8 +826,9 @@ function scoreCandidate(c: Candidate): void {
       estSlippagePct: liq > 0 ? Number(Math.min(15, (maxPos / liq) * 200).toFixed(1)) : 15,
       holdHorizonHours: 24,
       notes: [
-        "size = 0.5% of pool liquidity — the exit is the constraint, not the entry",
-        "most signals here still lose; the math needs the 4-5x winners",
+        "ILLUSTRATIVE ONLY: 0.5% of reported pool liquidity capped at $400; not a verified executable size",
+        "Fixed -35% stop / -30% liquidity-drop scenarios and $5M market-cap milestone, not calculated trade levels",
+        "Slippage is a pool-size proxy, not a route quote. Stops and exits are not guaranteed",
         "UNCALIBRATED: sample size alone never authorizes staking; independent outcome and execution validation required",
       ],
     };
@@ -978,13 +955,15 @@ export function getCryptoFeed(): {
   candidates: Candidate[];
   narrativeHeat: typeof narrativeHeat;
   narrativeUpdatedAt: number | null;
+  scoreVersion: string;
 } {
   // Source outages must not leave an old ENTER/WATCH active indefinitely.
   for (const c of tracked.values()) {
-    if (c.lastRefreshAt==null || Date.now()-c.lastRefreshAt>5*60_000) {
+    if (c.lastRefreshAt==null || c.lastRefreshAt>Date.now() || Date.now()-c.lastRefreshAt>5*60_000) {
       c.verdict="PASS"; c.risk=null; c.score=null;
+      c.scoreBreakdown=null;
       c.verdictReasons=["market observation missing or older than five minutes"];
-    }
+    } else scoreCandidate(c); // expire social evidence on reads as well as scheduled polls
   }
   const list = [...tracked.values()]
     .filter((c) => c.lastRefreshAt != null)
@@ -999,6 +978,7 @@ export function getCryptoFeed(): {
     candidates: list,
     narrativeHeat: narrativeHeat.slice(0, 14),
     narrativeUpdatedAt,
+    scoreVersion: MEME_SCORE_VERSION,
   };
 }
 
@@ -1009,7 +989,7 @@ export function getCryptoHealth() {
     h.lastError?"error":now-(h.lastOkAt??0)>h.cadenceMs*5?"stale":
     now-(h.lastOkAt??0)>h.cadenceMs*2.5?"late":h.degraded?"degraded":"ok"}));
   return { engines, trackedCount: tracked.size, asOf: now,
-    version: CRYPTO_RELIABILITY_VERSION, discoverySources, lastGradeBatch,
+    version: CRYPTO_RELIABILITY_VERSION, scoreVersion: MEME_SCORE_VERSION, discoverySources, lastGradeBatch,
     observationNote:"Provider fetch samples, not exchange timestamps. No continuity guarantee while the host is suspended." };
 }
 

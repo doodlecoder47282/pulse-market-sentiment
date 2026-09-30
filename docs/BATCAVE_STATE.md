@@ -4,14 +4,20 @@ Updated: 2026-09-30. This is a compact handoff, not a live-health certificate.
 
 ## Current objective
 
-Latest completed request (2026-09-30): created the staged implementation checklist
-at `docs/INSTITUTIONAL_IMPLEMENTATION_CHECKLIST.md` and the stock/crypto quick-search
-AI Trade Brief specification at `docs/TRADE_BRIEF_SPEC.md`. Planning only: no new
-integrations, scoring changes, subscriptions, migrations or deployment.
-Every implementation item requires evidence before being marked complete.
-The proposed next task is S0 baseline/boundary verification, followed by
-S1-A/S1-B scoring isolation and duplicate-factor correction. Await an implementation
-request; do not automatically execute the entire roadmap.
+Latest authorized request (2026-09-30): start the meme-coin area and clarify
+reuse of existing level calculators. First bounded scoring foundation implemented:
+`meme-research-2026-09-30.1`; see `docs/MEME_SCORING_HANDOFF.md`.
+Flow is counted once, sampled social is separate, name/keyword/promotion bonuses
+are removed, missing inputs stay unknown, and revised candidates are WATCH/PASS
+only pending validation. Risk fields are labeled illustrative scenarios, not
+calculated price levels or verified executable size. Newly inserted audit JSON
+contains score version/breakdown/replay inputs; full immutable snapshots remain future work.
+20 focused test groups and the production build pass; 59 old TypeScript
+diagnostics remain. Desktop/375px browser QA passed using live policy/health
+and isolated labeled fixtures for WATCH/stale details. Runtime restarted;
+social and grader remain degraded. No provider accounts or paid feeds added.
+Checklist: `docs/INSTITUTIONAL_IMPLEMENTATION_CHECKLIST.md`.
+Trade Brief specification: `docs/TRADE_BRIEF_SPEC.md`; not implemented.
 Trade Brief should aggregate applicable existing calculations into an evidence-bound
 responsive phone/desktop output; native iOS remains paused.
 X connector was dismissed: do not request it again without an explicit request.
@@ -150,7 +156,7 @@ breakeven inputs and stale GLD/oil bars prevent confirming the supplied gold the
 Historical CBOE freshness, charm units, credential rotation and multi-user
 architecture remain unresolved release blockers.
 
-Current next proposed action: S0 baseline/boundary verification in
-`INSTITUTIONAL_IMPLEMENTATION_CHECKLIST.md`. Preserve all native iOS work as paused.
-Checklist and Trade Brief specification were reviewed as documents only; no tests,
-build, runtime verification or security sign-off was performed for this planning turn.
+Current next proposed action: verify token-program/authority parsing and holder
+vault identity in the meme engine, retaining UNKNOWN for unsupported/unverified cases.
+Preserve native iOS pause and research-only mode. Credential rotation, stock
+authentication/freshness and multi-user security are not resolved by this patch.

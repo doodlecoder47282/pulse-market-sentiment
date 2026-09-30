@@ -4,7 +4,7 @@ Created September 30, 2026. Planning baseline: local application commit `b4bb19c
 
 ## Operating contract
 
-- **Current deliverable:** Checklist, stock/crypto Trade Brief feature specification and continuity checkpoint only. All implementation items below remain unchecked until supported by new evidence.
+- **Current milestone:** The user authorized starting the meme-coin area on September 30. The first scoring foundation is implemented; see `MEME_SCORING_HANDOFF.md` for tests, runtime evidence and limitations. Checked items below apply to that bounded scope, not the full institutional roadmap.
 - **Product scope:** Crypto research and tracking, with separate liquid-crypto and meme/microcap logic, plus a stock/crypto quick-search Trade Brief. No automated trading, real-money sizing activation or additional brokerage users.
 - **Paused work:** iOS/Xcode remains paused. Do not resume the older gold-panel proposal unless requested.
 - **Source constraints:** Yahoo Finance news is allowed; Yahoo equities-price feeds are not. Preserve Schwab-primary pricing and honestly labeled existing fallbacks.
@@ -17,8 +17,8 @@ Statuses: `NOT STARTED`, `IN PROGRESS`, `BLOCKED`, `PASSED`, or `DEFERRED`. “D
 
 | Stage | Deliverable | Dependency | Current status |
 |---|---|---|---|
-| S0 | Baseline, scope and immediate security boundary | None | NOT STARTED |
-| S1 | Versioned, explainable scoring | S0 | NOT STARTED |
+| S0 | Baseline, scope and immediate security boundary | None | IN PROGRESS |
+| S1 | Versioned, explainable scoring | S0 | IN PROGRESS |
 | S2 | Point-in-time evidence and health contracts | S0 | NOT STARTED |
 | S3 | Entity-aware news and social context | S1 + S2 | NOT STARTED |
 | S4 | Liquid-crypto market, derivatives and macro context | S2 | NOT STARTED |
@@ -37,8 +37,8 @@ Suggested responsibility: implementation agent/developer produces evidence; proj
 
 Stage S0 establishes the exact code and data under review. It does not repeat the entire historical audit.
 
-- [ ] **S0-A:** Record branch, commit, working-tree changes and intended runtime. Preserve unrelated database, scheduler and session files.
-- [ ] **S0-B:** Verify the latest crypto-repair handoff against the inspected source. Run existing focused crypto/calculation tests and record build/type-check results, including pre-existing failures.
+- [x] **S0-A:** Record branch, commit, working-tree changes and intended runtime. Preserve unrelated database, scheduler and session files. Evidence: `MEME_SCORING_HANDOFF.md`; baseline `4a0f7e1`, remote application baseline `b4bb19c`, unchanged feature branch.
+- [x] **S0-B:** Verify the latest crypto-repair handoff against the inspected source. Run existing focused crypto/calculation tests and record build/type-check results, including pre-existing failures. Evidence: 20 focused groups pass; production build passes; 59 pre-existing TypeScript diagnostics remain.
 - [ ] **S0-C:** Create a redacted source register: endpoint, data role, access requirements, permitted use, quota, coverage, cadence, upstream provider and known limitations.
 - [ ] **S0-D:** Keep research collectors read-only and isolated from brokerage tokens, trading functions and withdrawal permissions. Confirm the actual deployment/access boundary before using sensitive data.
 - [ ] **S0-E:** Record the status of previously exposed credentials as verified rotated/revoked or unverified. Obtain owner action through a secure process; do not print secrets or rewrite history.
@@ -52,13 +52,18 @@ Stage S0 establishes the exact code and data under review. It does not repeat th
 
 Stage S1 corrects the meaning of the score before adding new inputs. Initial touchpoints: `server/cryptoEngine.ts`, scoring tests and the consuming UI/API.
 
-- [ ] **S1-A:** Extract or isolate scoring into a deterministic, versioned function. Preserve a legacy fixture set for before/after comparison.
-- [ ] **S1-B:** Remove duplicate confirmation from the same FOMO value appearing as both flow and FOMO. Define distinct transaction-flow and social-attention inputs.
-- [ ] **S1-C:** Separate paid promotion from organic attention. Remove any positive organic-confirmation contribution unless subsequently supported by a declared validation experiment.
-- [ ] **S1-D:** Treat name-based “memeability” as an unvalidated descriptive heuristic, not proven alpha. Keep it out of promoted decision logic unless it earns its role in S7.
-- [ ] **S1-E:** Separate hard safety/freshness gates from ranking. A high narrative/social score cannot override unsafe, unsupported or stale prerequisites.
-- [ ] **S1-F:** Define missing-input behavior explicitly; do not silently turn missing values into zero or reweight away missing required evidence.
+- [x] **S1-A:** Extract or isolate scoring into a deterministic, versioned function. Preserve a legacy fixture set for before/after comparison. Implemented in `shared/memeScoring.ts`; existing calculation regression fixtures retained.
+- [x] **S1-B:** Remove duplicate confirmation from the same FOMO value appearing as both flow and FOMO. Define distinct transaction-flow and social-attention inputs.
+- [x] **S1-C:** Separate paid promotion from organic attention. Remove any positive organic-confirmation contribution unless subsequently supported by a declared validation experiment.
+- [x] **S1-D:** Treat name-based “memeability” as an unvalidated descriptive heuristic, not proven alpha. Keep it out of promoted decision logic unless it earns its role in S7.
+- [x] **S1-E:** Separate hard safety/freshness gates from ranking. A high narrative/social score cannot override unsafe, unsupported or stale prerequisites. Revised output is WATCH/PASS only; token-program coverage remains future work.
+- [x] **S1-F:** Define missing-input behavior explicitly; do not silently turn missing values into zero or reweight away missing required evidence.
 - [ ] **S1-G:** Persist the score version, feature values, missingness, weighted contributions and gate reasons with every signal.
+
+S1-G is partial: newly inserted signal JSON contains version, replay inputs,
+contributions and reasons, but existing per-day deduplication still prevents
+a complete decision-by-decision history. Full snapshot storage remains S2.
+This stage is not fully passed or calibrated.
 
 **Required tests:** Score bounds; zero versus null; duplicate-input handling; no organic uplift from promotion; safety-gate precedence; stale-input rejection; identical inputs produce identical outputs; versioned legacy/new comparisons.
 
@@ -249,7 +254,9 @@ Verification ladder for a code milestone:
 4. For UI/API changes, verify integration and affected desktop/mobile states, then update the existing preview through the normal deployment workflow.
 5. Commit only scoped files; preserve runtime databases and unrelated changes. Push/publish only within verified authorization.
 
-For this checklist/specification-only deliverable, no build, restart, migration or deployment is required or claimed.
+The original checklist/specification deliverable required no build or restart.
+The subsequent authorized meme-scoring milestone has its own evidence and
+runtime/preview verification in `MEME_SCORING_HANDOFF.md`.
 
 ## Credit-conserving resume protocol
 
@@ -262,6 +269,10 @@ For this checklist/specification-only deliverable, no build, restart, migration 
 
 ## Next proposed implementation
 
-Select **S0 baseline and boundary verification**, then **S1-A/S1-B scoring isolation and duplicate-factor correction** as the first code milestone. No new data providers are needed for that milestone.
+The first meme-scoring milestone is complete within its limited scope. Next
+proposed objective: verify token-program/authority parsing and holder vault
+identity, retaining UNKNOWN for unsupported or unverified cases.
 
-Current planning deliverables are this checklist and the Trade Brief specification. Wait for the user's next implementation instruction; preserve iOS pause, optional X status, credential boundaries and cash-disabled research mode.
+Preserve iOS pause, optional X status, credential boundaries and cash-disabled
+research mode. The authorization to start the meme area does not authorize
+paid services, multi-user brokerage access or the entire roadmap at once.
