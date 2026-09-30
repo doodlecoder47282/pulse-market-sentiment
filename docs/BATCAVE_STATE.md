@@ -4,7 +4,19 @@ Updated: 2026-09-30. This is a compact handoff, not a live-health certificate.
 
 ## Current objective
 
-Latest authorized request (2026-09-30): start the meme-coin area and clarify
+Latest authorized request (2026-09-30): queued visual edit for persistent tabs,
+restrained iOS-style glass, and moderately larger desktop typography.
+Implemented in dashboard.tsx/index.css with measured border-box header offset,
+sticky desktop dock, fixed mobile dock, active-tab centering on resize,
+deep-switch scroll reset and accessibility fallbacks.
+Build passed; 59 pre-existing TypeScript diagnostics remain, none in dashboard.
+Bounded Chromium QA passed at 375/390/820/1024/1440/1920px, including themes,
+keyboard selection, internal overflow, deep scroll and header-height stress.
+See `docs/UI_GLASS_NAVIGATION_HANDOFF.md`. Update the existing Batcave app at
+`sentiment-app/dist/public`, not a copy. No native assets, providers, calculations,
+brokerage settings or scoring changed. Native iOS remains paused.
+
+Previous authorized request (2026-09-30): start the meme-coin area and clarify
 reuse of existing level calculators. First bounded scoring foundation implemented:
 `meme-research-2026-09-30.1`; see `docs/MEME_SCORING_HANDOFF.md`.
 Flow is counted once, sampled social is separate, name/keyword/promotion bonuses
@@ -134,7 +146,7 @@ URL as the mobile backend or embed brokerage credentials in any mobile artifact.
 
 ## Next step
 
-Latest request: final Xcode-readiness verification. Completed a clean-source
+Earlier paused milestone: final Xcode-readiness verification. Completed a clean-source
 Node 22 install, native build/sync, all nine tests, parsed project/SPM/plist/icon/
 asset checks, and added a shared App scheme plus `ios:preflight` and `ios:verify`.
 The native build now targets Safari 15 instead of Vite's newer default.

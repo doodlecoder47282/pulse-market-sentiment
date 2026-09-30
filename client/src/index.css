@@ -397,6 +397,125 @@
   scrollbar-width: none;
 }
 
+/* Batcave workspace chrome: restrained glass, readable type, persistent tabs.
+   No filters or transforms on the content: charts and market values stay sharp. */
+.batcave-shell {
+  --batcave-header-height: 76px;
+  --batcave-glass-fill: hsl(var(--background) / 0.96);
+  --batcave-glass-edge: hsl(var(--foreground) / 0.12);
+}
+.batcave-content-width { max-width: 1920px; }
+.batcave-glass {
+  background: var(--batcave-glass-fill);
+  border-color: var(--batcave-glass-edge);
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .batcave-glass {
+    background: linear-gradient(145deg, hsl(var(--foreground) / 0.035), transparent 55%),
+      hsl(var(--background) / 0.86);
+    -webkit-backdrop-filter: blur(22px) saturate(135%);
+    backdrop-filter: blur(22px) saturate(135%);
+  }
+}
+.batcave-header {
+  padding-top: env(safe-area-inset-top, 0px);
+  box-shadow: 0 1px 0 hsl(var(--foreground) / 0.035);
+}
+.batcave-tabs-dock {
+  position: sticky;
+  top: calc(var(--batcave-header-height) + 8px);
+  z-index: 35;
+}
+.batcave-tabs-scroll {
+  position: relative;
+  overflow-x: auto;
+  border: 1px solid var(--batcave-glass-edge);
+  border-radius: 18px;
+  padding: 5px;
+  box-shadow: 0 8px 24px hsl(0 0% 0% / 0.14), inset 0 1px 0 hsl(var(--foreground) / 0.06);
+}
+.batcave-primary-tabs {
+  height: auto;
+  min-width: max-content;
+  padding: 0;
+  gap: 3px;
+  border-radius: 13px;
+  background: transparent;
+}
+.batcave-primary-tabs [role="tab"] {
+  flex: 1 0 auto;
+  min-height: 44px;
+  padding: 0.6rem clamp(0.6rem, 1vw, 1.1rem);
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: transparent;
+  background-image: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+  transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease;
+}
+.batcave-primary-tabs [role="tab"]:hover {
+  background-color: hsl(var(--foreground) / 0.045);
+  color: hsl(var(--foreground));
+}
+.batcave-primary-tabs [role="tab"][data-state="active"] {
+  background: linear-gradient(160deg, hsl(var(--foreground) / 0.075), hsl(var(--primary) / 0.08));
+  border-color: hsl(var(--foreground) / 0.12);
+  color: hsl(var(--foreground));
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.08), 0 2px 7px hsl(0 0% 0% / 0.08);
+  font-weight: 650;
+}
+.batcave-primary-tabs [role="tab"]:focus-visible,
+.batcave-mobile-dock button:focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: -3px;
+}
+.batcave-tabs-root > [role="tabpanel"] {
+  position: relative;
+  isolation: isolate;
+  z-index: 0;
+  scroll-margin-top: calc(var(--batcave-header-height) + 80px);
+}
+.batcave-mobile-dock {
+  left: max(8px, env(safe-area-inset-left, 0px));
+  right: max(8px, env(safe-area-inset-right, 0px));
+  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  padding: 4px;
+  overflow: hidden;
+  border: 1px solid var(--batcave-glass-edge);
+  border-radius: 22px;
+  box-shadow: 0 8px 32px hsl(0 0% 0% / 0.2), inset 0 1px 0 hsl(var(--foreground) / 0.06);
+}
+.batcave-mobile-dock button { border-radius: 16px; }
+.batcave-mobile-dock button[aria-current="page"] {
+  box-shadow: inset 0 0 0 1px hsl(var(--primary) / 0.2);
+}
+@media (max-width: 767px) {
+  .batcave-main { padding-bottom: calc(7rem + env(safe-area-inset-bottom, 0px)); }
+}
+@media (min-width: 1024px) {
+  /* A modest 6.25% rem-scale lift, plus a floor for legacy 8–11px labels.
+     Pixel dimensions and SVG/canvas chart coordinates are not zoomed. */
+  html { font-size: 17px; }
+  .batcave-shell [class~="text-[8px]"],
+  .batcave-shell [class~="text-[9px]"],
+  .batcave-shell [class~="text-[10px]"] { font-size: 12px; line-height: 1.45; }
+  .batcave-shell [class~="text-[11px]"] { font-size: 13px; line-height: 1.5; }
+  .batcave-shell [class~="text-[12px]"],
+  .batcave-shell .text-xs { font-size: 13px; line-height: 1.5; }
+  .batcave-shell [class~="text-[13px]"] { font-size: 14px; line-height: 1.45; }
+  .batcave-shell .text-sm { font-size: 15px; line-height: 1.5; }
+  .batcave-main { line-height: 1.55; }
+  .batcave-primary-tabs [role="tab"] { font-size: 15px; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .batcave-glass { background: hsl(var(--background)); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .batcave-primary-tabs [role="tab"] { transition: none; }
+}
+
 /* ──────────────────────────────────────────────────────────────────────── */
 /* THE VAULT — money-green gangster Calendar theme                          */
 /* Used by NewsPanel > Calendar sub-tab. Background is deep money-green     */
