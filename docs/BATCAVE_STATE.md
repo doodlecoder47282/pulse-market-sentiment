@@ -4,6 +4,12 @@ Updated: 2026-09-28. This is a compact handoff, not a live-health certificate.
 
 ## Current objective
 
+Latest direction (2026-09-29): iOS/Xcode is PAUSED by the user.
+Targeted crypto reliability repair is implemented and running in this workspace
+with version `2026-09-29.1`; see `CRYPTO_RELIABILITY_HANDOFF.md`.
+Additional gold-thesis coverage review is in `GOLD_SIGNAL_COVERAGE.md`.
+Do not resume iOS without a new request. Its existing guide remains the handoff.
+
 User authorized the Capacitor iPhone build and confirmed Mac/Xcode access.
 First milestone is implemented on `feat/capacitor-ios`: bundled native shell,
 read-only authenticated gateway, and Xcode source. User additionally requested
@@ -116,7 +122,16 @@ All 36 output files match the synced Xcode assets. No native compiler exists
 in this Linux workspace; do not claim Debug/Release have compiled.
 Fresh install still reports 15 dependency vulnerabilities, including five high.
 
-Next step: owner runs `npm run ios:verify` on their Mac; it attempts unsigned
-Debug and Release simulator builds, then they launch App in Xcode. After that,
-the next proposed backend work is still CBOE freshness/alert gates.
-Credential rotation and multi-user architecture remain mandatory before broader access.
+The Mac commands above are a paused handoff, not the active next step.
+Crypto now uses fair bounded grading, observation-window validity, explicit
+UNOBSERVABLE outcomes, immediate recovery health, single-flight engines,
+and stale-candidate PASS gates. Fifteen focused test groups pass.
+The first post-repair snapshot: 102 total, 16 open, 59 unobservable, 27 graded.
+Do not count unobservable rows as wins or losses; calibration remains false.
+
+Next proposed objective, awaiting user authorization: restore stock/macro
+data authentication/freshness and implement a transparent gold confirmation
+panel. Current Schwab status requires reauthentication; missing real-yield/
+breakeven inputs and stale GLD/oil bars prevent confirming the supplied gold thesis.
+Historical CBOE freshness, charm units, credential rotation and multi-user
+architecture remain unresolved release blockers.

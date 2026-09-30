@@ -8,7 +8,7 @@ export function cryptoAuditStats(db: Database.Database) {
   const graded = ["HIT_5M", "DOUBLED", "RUGGED", "DEAD"].reduce((sum, outcome) => sum + count(outcome), 0);
   return {
     total, open: count("OPEN"), hit5m: count("HIT_5M"), doubled: count("DOUBLED"),
-    rugged: count("RUGGED"), dead: count("DEAD"), graded,
+    rugged: count("RUGGED"), dead: count("DEAD"), unobservable: count("UNOBSERVABLE"), graded,
     sampleThresholdMet: graded >= 50,
     // A sample count is not a calibration/validation procedure.
     calibrated: false,

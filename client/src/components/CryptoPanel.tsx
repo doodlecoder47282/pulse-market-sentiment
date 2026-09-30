@@ -57,7 +57,7 @@ interface HealthResp {
 
 interface SignalsResp {
   signals: any[];
-  stats: { total: number; open: number; hit5m: number; doubled: number; rugged: number; dead: number; calibrated: boolean };
+  stats: { total: number; open: number; hit5m: number; doubled: number; rugged: number; dead: number; unobservable?: number; graded?: number; calibrated: boolean };
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────
@@ -211,16 +211,16 @@ export default function CryptoPanel() {
 function AgentStrip({ health }: { health?: HealthResp }) {
   const dot = (s: string) =>
     s === "ok" ? "bg-lime-400 shadow-[0_0_6px_rgba(163,230,53,0.8)] animate-pulse"
-    : s === "late" ? "bg-amber-400"
+    : s === "late" || s === "degraded" ? "bg-amber-400"
     : s === "starting" ? "bg-sky-400 animate-pulse"
     : "bg-rose-500";
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border/50 bg-background/50 px-3 py-2 backdrop-blur" data-testid="crypto-agent-strip">
+    <div className="flex min-w-0 flex-wrap items-center gap-3 rounded-lg border border-border/50 bg-background/50 px-3 py-2 backdrop-blur" data-testid="crypto-agent-strip">
       <HeartPulse className="h-3.5 w-3.5 text-muted-foreground" />
       {(health?.engines ?? []).filter((e) => e.name !== "watchdog").map((e) => (
         <div key={e.name} className="flex items-center gap-1.5" title={`${e.name}: ${e.status} · ${e.runs} runs · ${e.errors} errors${e.lastError ? ` · ${e.lastError}` : ""}`}>
           <span className={`h-2 w-2 rounded-full ${dot(e.status)}`} />
-          <span className="text-[10px] font-medium text-muted-foreground">{e.name}</span>
+          <span className="text-[10px] font-medium text-muted-foreground">{e.name}: {e.status}</span>
         </div>
       ))}
       {(health?.engines ?? []).length === 0 && (
@@ -233,13 +233,14 @@ function AgentStrip({ health }: { health?: HealthResp }) {
 // ─── tracking banner ────────────────────────────────────────────────────
 
 function TrackingBanner({ sig, view }: { sig?: SignalsResp; view: string }) {
-  const graded = sig ? sig.stats.total - sig.stats.open : null;
+  const graded = sig ? sig.stats.graded ?? sig.stats.hit5m+sig.stats.doubled+sig.stats.rugged+sig.stats.dead : null;
   return (
     <div className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2">
       <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
       <p className="text-[11px] leading-snug text-amber-200/90">
         <span className="font-semibold">tracking mode.</span> every ENTER/WATCH is logged and graded
-        (5M hit / doubled / rugged / dead). These are discovery outcomes, not realized trade returns.
+        (5M hit / doubled / rugged / dead). Missing observation windows are unobservable, not wins or losses.
+        These are discovery outcomes, not realized trade returns.
         {graded != null ? ` ${graded} graded so far.` : ""} Fifty outcomes alone do not establish calibration or
         positive expected value. Execution costs, failed exits, and out-of-sample validation still matter.
       </p>
@@ -451,7 +452,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
   const { stats } = sig;
   return (
     <div className="space-y-3" data-testid="crypto-signal-log">
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-7">
         {[
           ["logged", stats.total, "text-foreground"],
           ["open", stats.open, "text-sky-300"],
@@ -459,6 +460,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
           ["doubled", stats.doubled, "text-emerald-300"],
           ["rugged", stats.rugged, "text-rose-300"],
           ["dead", stats.dead, "text-muted-foreground"],
+          ["unobserved", stats.unobservable ?? 0, "text-amber-300"],
         ].map(([label, val, cls]) => (
           <div key={String(label)} className="rounded-lg border border-border/50 bg-card/50 p-2 text-center">
             <div className={`font-mono text-lg font-bold tabular-nums ${cls}`}>{String(val)}</div>
@@ -476,7 +478,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
           <p className="text-xs text-muted-foreground">no signals logged yet — the bar is meant to be high. check back after a session of scanning.</p>
         )}
         {sig.signals.map((s) => (
-          <div key={s.id} className="flex items-center gap-2 rounded-lg border border-border/40 bg-card/40 px-2.5 py-2 text-[11px]" data-testid={`crypto-signal-${String(s.id).slice(0, 8)}`}>
+          <div key={s.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border/40 bg-card/40 px-2.5 py-2 text-[11px]" data-testid={`crypto-signal-${String(s.id).slice(0, 8)}`} title={s.grade_error ?? undefined}>
             <Badge variant="outline" className={`px-1.5 text-[9px] ${
               s.verdict === "ENTER" ? "border-lime-400/50 text-lime-300" : "border-amber-400/40 text-amber-300"
             }`}>{s.verdict}</Badge>

@@ -31,6 +31,7 @@
 
 import { sqlite } from "./storage";
 import { cryptoAuditStats } from "./cryptoAuditStats";
+import { CRYPTO_RELIABILITY_VERSION, ensureCryptoGradeSchema, finiteNonnegative, gradeCryptoBatch } from "./cryptoReliability";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -126,7 +127,10 @@ interface EngineHealth {
   lastError: string | null;
   runs: number;
   errors: number;
-  status: "ok" | "late" | "stale" | "error" | "starting";
+  status: "ok" | "late" | "stale" | "error" | "starting" | "degraded";
+  running?: boolean;
+  skippedOverlaps?: number;
+  degraded?: boolean;
 }
 
 // ─── Config ─────────────────────────────────────────────────────────────
@@ -181,16 +185,23 @@ function hb(name: string, cadenceMs: number): EngineHealth {
 
 async function runEngine(name: string, cadenceMs: number, fn: () => Promise<void>): Promise<void> {
   const h = hb(name, cadenceMs);
+  if (h.running) { h.skippedOverlaps=(h.skippedOverlaps??0)+1; return; }
+  h.running=true;
+  h.degraded=false;
   h.lastRunAt = Date.now();
   h.runs++;
   try {
     await fn();
     h.lastOkAt = Date.now();
     h.lastError = null;
+    h.status = h.degraded ? "degraded" : "ok";
   } catch (e: any) {
     h.errors++;
     h.lastError = String(e?.message ?? e).slice(0, 300);
+    h.status = "error";
     console.warn(`[crypto:${name}] ${h.lastError}`);
+  } finally {
+    h.running=false;
   }
 }
 
@@ -221,6 +232,7 @@ sqlite.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_crypto_signals_outcome ON crypto_signals(outcome);
 `);
+ensureCryptoGradeSchema(sqlite);
 // MIGRATION: the original per-day dedupe ignored verdict, which silently
 // BLOCKED same-day WATCH → ENTER upgrades — the most important signal we
 // have. Uniqueness is now (pair, verdict, day) so an upgrade writes its row.
@@ -358,18 +370,32 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
   if (!existing) tracked.set(key, c);
 }
 
+const discoverySources = {
+  new_pools: { lastAttemptAt: null as number|null, lastOkAt: null as number|null, error: null as string|null, count: 0 },
+  trending: { lastAttemptAt: null as number|null, lastOkAt: null as number|null, error: null as string|null, count: 0 },
+};
+
+async function scanSource(kind: keyof typeof discoverySources, url: string) {
+  const state=discoverySources[kind];
+  state.lastAttemptAt=Date.now();
+  try {
+    const response=await getJson(url);
+    if (!Array.isArray(response?.data)) throw Error("Malformed pool response");
+    state.count=response.data.length; state.lastOkAt=Date.now(); state.error=null;
+    for (const pool of response.data) upsertFromGtPool(pool,kind);
+  } catch (e:any) {
+    state.error=String(e?.message??"Discovery unavailable").slice(0,200);
+    throw e;
+  }
+}
+
 async function scannerTick(): Promise<void> {
   // 2 GT calls per tick (well under 30 rpm)
   const [fresh, trending] = await Promise.allSettled([
-    getJson(`${GT_BASE}/networks/solana/new_pools?page=1`),
-    getJson(`${GT_BASE}/networks/solana/trending_pools?page=1`),
+    scanSource("new_pools", `${GT_BASE}/networks/solana/new_pools?page=1`),
+    scanSource("trending", `${GT_BASE}/networks/solana/trending_pools?page=1`),
   ]);
-  if (fresh.status === "fulfilled") {
-    for (const p of fresh.value?.data ?? []) upsertFromGtPool(p, "new_pools");
-  }
-  if (trending.status === "fulfilled") {
-    for (const p of trending.value?.data ?? []) upsertFromGtPool(p, "trending");
-  }
+  hb("scanner",SCANNER_MS).degraded = fresh.status==="rejected" || trending.status==="rejected";
   if (fresh.status === "rejected" && trending.status === "rejected") {
     throw new Error(`geckoterminal unreachable: ${String((fresh as any).reason?.message ?? "?").slice(0, 120)}`);
   }
@@ -433,10 +459,10 @@ async function momentumTick(): Promise<void> {
       if (!c) continue;
       c.symbol = String(p?.baseToken?.symbol ?? c.symbol);
       c.name = String(p?.baseToken?.name ?? c.name);
-      c.priceUsd = Number(p?.priceUsd ?? NaN) || null;
-      c.marketCap = Number(p?.marketCap ?? NaN) || null;
-      c.fdv = Number(p?.fdv ?? NaN) || null;
-      c.liquidityUsd = Number(p?.liquidity?.usd ?? NaN) || null;
+      c.priceUsd = finiteNonnegative(p?.priceUsd);
+      c.marketCap = finiteNonnegative(p?.marketCap);
+      c.fdv = finiteNonnegative(p?.fdv);
+      c.liquidityUsd = finiteNonnegative(p?.liquidity?.usd);
       c.vol5m = Number(p?.volume?.m5 ?? NaN) || 0;
       c.vol1h = Number(p?.volume?.h1 ?? NaN) || 0;
       c.vol24h = Number(p?.volume?.h24 ?? NaN) || 0;
@@ -673,6 +699,7 @@ async function socialTick(): Promise<void> {
       c.socialScore = successes > 0 ? Math.round(Math.min(100, s)) : null;
       c.socialCheckedAt = successes > 0 ? now : null;
       c.socialCoverage = successes === 0 ? "unavailable" : successes === eligible ? "ok" : "partial";
+      if (c.socialCoverage!=="ok") hb("social",SOCIAL_MS).degraded=true;
       if (successes > 0) okCount++;
       else lastErr = new Error("no usable social source response");
       scoreCandidate(c);
@@ -775,7 +802,9 @@ function scoreCandidate(c: Candidate): void {
   // verdict
   const reasons: string[] = [];
   let verdict: Candidate["verdict"] = "PASS";
-  if (hardKill) {
+  if (c.lastRefreshAt==null || now-c.lastRefreshAt>5*60_000) {
+    reasons.push("market observation missing or older than five minutes");
+  } else if (hardKill) {
     reasons.push("hard kill: " + flags.filter((f) => /floor|honeypot|mid-rug|exit door|AUTHORITY ACTIVE/.test(f)).join("; "));
   } else if (mcap <= 0 || c.priceUsd == null) {
     reasons.push("no reliable mcap/price yet");
@@ -881,42 +910,22 @@ async function narrativeTick(): Promise<void> {
 
 // ─── GRADER — audit outcomes (tracking mode) ────────────────────────────
 
+let lastGradeBatch: Awaited<ReturnType<typeof gradeCryptoBatch>> | null = null;
 async function graderTick(): Promise<void> {
-  const open = sqlite.prepare(
-    `SELECT id, pair_address, chain, detected_at, mcap_at_signal, liquidity_at_signal, peak_mcap, peak_at FROM crypto_signals WHERE outcome = 'OPEN' ORDER BY detected_at DESC LIMIT 60`,
-  ).all() as any[];
-  if (open.length === 0) return;
-
-  const mark = sqlite.prepare(
-    `UPDATE crypto_signals SET peak_mcap = ?, peak_at = ?, last_mcap = ?, last_liquidity = ?, outcome = ?, graded_at = ? WHERE id = ?`,
-  );
-  const now = Date.now();
-  for (const row of open) {
-    const key = `${row.chain}:${row.pair_address}`;
-    let mcap: number | null = null;
-    let liq: number | null = null;
-    const live = tracked.get(key);
-    if (live?.lastRefreshAt && now - live.lastRefreshAt < 10 * 60_000) {
-      mcap = live.marketCap; liq = live.liquidityUsd;
-    } else {
-      try {
-        const resp = await getJson(`${DS_BASE}/latest/dex/pairs/${row.chain}/${row.pair_address}`);
-        const p = resp?.pairs?.[0] ?? resp?.pair;
-        mcap = Number(p?.marketCap ?? p?.fdv ?? NaN) || null;
-        liq = Number(p?.liquidity?.usd ?? NaN) || null;
-      } catch { continue; }
+  lastGradeBatch=await gradeCryptoBatch(sqlite, async row => {
+    const live=tracked.get(`${row.chain}:${row.pair_address}`);
+    if (live?.lastRefreshAt && Date.now()-live.lastRefreshAt<10*60_000 &&
+        live.marketCap!=null && live.liquidityUsd!=null) {
+      return {mcap:live.marketCap,liq:live.liquidityUsd,observedAt:live.lastRefreshAt};
     }
-    if (mcap == null) continue;
-    const peak = Math.max(Number(row.peak_mcap ?? 0), mcap);
-    const entryMcap = Number(row.mcap_at_signal ?? 0);
-    const entryLiq = Number(row.liquidity_at_signal ?? 0);
-    let outcome = "OPEN";
-    if (peak >= TARGET_MCAP) outcome = "HIT_5M";
-    else if (entryLiq > 0 && liq != null && liq < entryLiq * 0.15) outcome = "RUGGED";
-    else if (entryMcap > 0 && mcap < entryMcap * 0.1) outcome = "RUGGED";
-    else if (now - Number(row.detected_at) > 72 * 3600_000) outcome = peak >= entryMcap * 2 ? "DOUBLED" : "DEAD";
-    mark.run(peak, peak > Number(row.peak_mcap ?? 0) ? now : row.peak_at ?? null, mcap, liq,
-      outcome, outcome === "OPEN" ? null : now, row.id);
+    const resp=await getJson(`${DS_BASE}/latest/dex/pairs/${encodeURIComponent(row.chain)}/${encodeURIComponent(row.pair_address)}`);
+    const p=(resp?.pairs??(resp?.pair?[resp.pair]:[])).find((p:any)=>p.chainId===row.chain && p.pairAddress===row.pair_address);
+    if (!p) throw Error("Pair absent from provider response");
+    return {mcap:finiteNonnegative(p.marketCap),liq:finiteNonnegative(p.liquidity?.usd),observedAt:Date.now()};
+  });
+  if (lastGradeBatch.unavailable>0) {
+    hb("grader",GRADER_MS).degraded=true;
+    if (lastGradeBatch.observed===0 && lastGradeBatch.closed===0) throw Error("No usable observations in grading batch");
   }
 }
 
@@ -928,10 +937,10 @@ function watchdogTick(): void {
     if (h.name === "watchdog") continue;
     if (h.lastRunAt == null) { h.status = "starting"; continue; }
     const sinceOk = now - (h.lastOkAt ?? 0);
-    if (h.lastError && sinceOk > h.cadenceMs * 3) h.status = "error";
+    if (h.lastError) h.status = "error";
     else if (sinceOk > h.cadenceMs * 5) h.status = "stale";
     else if (sinceOk > h.cadenceMs * 2.5) h.status = "late";
-    else h.status = "ok";
+    else h.status = h.degraded ? "degraded" : "ok";
   }
   const wd = hb("watchdog", WATCHDOG_MS);
   wd.lastRunAt = now; wd.lastOkAt = now; wd.runs++; wd.status = "ok";
@@ -970,6 +979,13 @@ export function getCryptoFeed(): {
   narrativeHeat: typeof narrativeHeat;
   narrativeUpdatedAt: number | null;
 } {
+  // Source outages must not leave an old ENTER/WATCH active indefinitely.
+  for (const c of tracked.values()) {
+    if (c.lastRefreshAt==null || Date.now()-c.lastRefreshAt>5*60_000) {
+      c.verdict="PASS"; c.risk=null; c.score=null;
+      c.verdictReasons=["market observation missing or older than five minutes"];
+    }
+  }
   const list = [...tracked.values()]
     .filter((c) => c.lastRefreshAt != null)
     .sort((a, b) => {
@@ -986,8 +1002,15 @@ export function getCryptoFeed(): {
   };
 }
 
-export function getCryptoHealth(): { engines: EngineHealth[]; trackedCount: number; asOf: number } {
-  return { engines: [...health.values()], trackedCount: tracked.size, asOf: Date.now() };
+export function getCryptoHealth() {
+  // Recompute derived status on reads, not only at the next watchdog interval.
+  const now=Date.now();
+  const engines=[...health.values()].map(h=>({...h,status:h.lastRunAt==null?"starting":
+    h.lastError?"error":now-(h.lastOkAt??0)>h.cadenceMs*5?"stale":
+    now-(h.lastOkAt??0)>h.cadenceMs*2.5?"late":h.degraded?"degraded":"ok"}));
+  return { engines, trackedCount: tracked.size, asOf: now,
+    version: CRYPTO_RELIABILITY_VERSION, discoverySources, lastGradeBatch,
+    observationNote:"Provider fetch samples, not exchange timestamps. No continuity guarantee while the host is suspended." };
 }
 
 export function getCryptoSignals(): {

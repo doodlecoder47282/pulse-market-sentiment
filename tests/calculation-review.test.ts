@@ -13,7 +13,7 @@ test("crypto statistics count all rows, not only the latest 100", () => {
   db.exec("CREATE TABLE crypto_signals (outcome TEXT)");
   const insert = db.prepare("INSERT INTO crypto_signals VALUES (?)");
   for (let i = 0; i < 140; i++) insert.run("OPEN");
-  assert.deepEqual(cryptoAuditStats(db), { total: 140, open: 140, hit5m: 0, doubled: 0, rugged: 0, dead: 0, graded: 0, sampleThresholdMet: false, calibrated: false });
+  assert.deepEqual(cryptoAuditStats(db), { total: 140, open: 140, hit5m: 0, doubled: 0, rugged: 0, dead: 0, unobservable: 0, graded: 0, sampleThresholdMet: false, calibrated: false });
   for (let i = 0; i < 55; i++) insert.run("DEAD");
   const stats = cryptoAuditStats(db);
   assert.equal(stats.graded, 55);
