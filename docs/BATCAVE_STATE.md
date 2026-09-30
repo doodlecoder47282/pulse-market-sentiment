@@ -31,6 +31,14 @@ Native iOS stays paused. No new accounts, paid sources, X reconnection or AI
 monitoring were added. Source quantity is not validation or institutional readiness.
 The unresolved security blockers below still apply.
 
+Follow-up authorized September 30: repair SPY's real-data feature pipeline
+before any forecast. Implemented `spy-real-1m-2026-09-30.1`: provider-verified
+session hours, contiguous completed one-minute SPY bars, dated prior-session
+daily close, 17 explicit-unit features, one live/replay numerical core, hash-
+deduplicated local snapshots and offline replay. The guarded API displays this
+status but still returns no forecast or levels. Legacy SPX/synthetic models were
+not retrained or reconnected. See the updated `SPY_PROJECTION_REVIEW.md`.
+
 Previous authorized request (2026-09-30): queued visual edit for persistent tabs,
 restrained iOS-style glass, and moderately larger desktop typography.
 Implemented in dashboard.tsx/index.css with measured border-box header offset,
@@ -198,9 +206,14 @@ breakeven inputs and stale GLD/oil bars prevent confirming the supplied gold the
 Historical CBOE freshness, charm units, credential rotation and multi-user
 architecture remain unresolved release blockers.
 
-Next bounded choice: either restore SPY with a real-observation, instrument/unit
-validation contract, or extend meme evidence with Token-2022 support, verified
-vault identity and read-only sell feasibility. Do not activate predictions,
-execution or full-roadmap scope without validation. Preserve native iOS pause
-and research-only mode. Credential rotation and multi-user security are unresolved;
-successful isolated Schwab reads do not certify continuous auth/entitlements.
+The SPY real-observation contract is now implemented and isolated from legacy
+models. Its next bounded step is a paper-only, point-in-time dataset/label and
+forward-validation harness, not forecast restoration. See
+`SPY_REAL_PIPELINE_HANDOFF.md`: 50 focused tests, production build, live/replay
+parity and desktop/phone checks passed; 59 existing type diagnostics remain.
+Existing boot-time jobs can exhaust the shared provider budget temporarily;
+the new path reports BLOCKED and recovered on a later manual check.
+Meme Token-2022 support, vault identity and sell feasibility remain separate
+future work. Preserve native iOS pause and research-only mode. Credential
+rotation and multi-user security remain unresolved; successful isolated
+Schwab reads do not certify continuous availability or entitlements.

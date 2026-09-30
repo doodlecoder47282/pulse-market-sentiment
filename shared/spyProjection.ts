@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { SpyFeaturesSchema } from "./spyFeatures";
 
-export const SPY_PROJECTION_GUARD_VERSION = "spy-projection-guard-2026-09-30.1";
+export const SPY_PROJECTION_GUARD_VERSION = "spy-projection-guard-2026-09-30.2";
 const Price = z.number().finite().positive();
 export const VerifiedSpyCandleSchema = z.object({
   t: z.number().int().positive(), o: Price, h: Price, l: Price, c: Price,
@@ -14,13 +15,14 @@ export const SpyProjectionResponseSchema = z.object({
   status: z.literal("UNAVAILABLE"),
   projection: z.object({ status: z.literal("UNAVAILABLE"), bands: z.null() }).strict(),
   levels: z.null(),
+  features: SpyFeaturesSchema,
   tape: z.object({
     status: z.enum(["available", "missing", "stale", "unavailable", "outside_session", "invalid"]),
     reason: z.string(), source: z.literal("Schwab"),
     observedAt: z.string().datetime().nullable(),
     lastTradeAt: z.string().datetime().nullable(), lastTrade: Price.nullable(),
     candles: z.array(VerifiedSpyCandleSchema).max(78),
-    sessionCalendarVerified: z.literal(false),
+    sessionCalendarVerified: z.boolean(),
   }).strict(),
   blockers: z.array(z.string()), requirements: z.array(z.string()),
   predictionValidation: z.literal("not_established"),
@@ -28,7 +30,7 @@ export const SpyProjectionResponseSchema = z.object({
   if (r.tape.status !== "available" && (r.tape.candles.length || r.tape.lastTrade !== null)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Unusable tape cannot carry displayed price data" });
   }
-  if (r.tape.status === "available" && (!r.tape.candles.length || !r.tape.lastTradeAt || !r.tape.observedAt || !r.tape.lastTrade)) {
+  if (r.tape.status === "available" && (!r.tape.candles.length || !r.tape.lastTradeAt || !r.tape.observedAt || !r.tape.lastTrade || !r.tape.sessionCalendarVerified)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Available tape requires observed provenance" });
   }
 });

@@ -2,10 +2,51 @@
 
 Decision: **the former display was not a reliable decision aid**. It could present
 simulated history, unvalidated mixed-instrument levels/features and a FLAT badge
-without a forecast. The repaired SPY path fails closed. This is a correctness
-containment change, not a claim that prediction accuracy has improved.
+without a forecast. The old path remains disabled. The September 30 follow-up
+repairs the real-data feature foundation only; no forecast has been restored.
 
-## Concrete findings
+## Real-data feature pipeline repair
+
+Implemented after the containment review:
+
+- Added an exact-symbol, exact-currency SPY contract at
+  `shared/spyFeatures.ts`, version `spy-real-1m-2026-09-30.1`. It accepts only
+  completed, contiguous one-minute Schwab regular-session OHLC, a recent
+  explicitly real-time quote, provider market hours and separately validated
+  daily OHLC for the prior provider-open session.
+- Provider market-hours responses establish the actual open/close. Weekdays,
+  holidays and early closes are not guessed. Halt status remains unverified.
+- Removed the prior-close ambiguity from this path. The response-level
+  `previousClose` field is not consumed because it can describe the beginning
+  of a requested multi-day history window. The prior close must be a daily bar
+  whose date equals the preceding provider-declared open session.
+- Defined 17 versioned SPY features with explicit units and warmups. Five- and
+  30-minute returns and volatility use one-minute close-to-close log returns.
+  Volatility is square-root sum of squared returns and is not annualized.
+  ATR14 is mean one-minute true range across 14 transitions. No single-return
+  sample-standard-deviation zero, daily approximation or silent floor.
+- Morning features use the first 15 completed one-minute bars. Their high, low,
+  anchor close, ATR denominator, range and drive freeze at 09:45. The live
+  elapsed value is minutes, not a count of five-minute bars.
+- VWAP is explicitly labeled an HLC3 bar-volume-weighted proxy. Any missing bar
+  volume or zero aggregate volume leaves it null; it is not called trade VWAP.
+- `calculateSpyFeatures` is the only numerical implementation used by live and
+  replay. It has no network, wall clock, random generator or model dependency.
+  Prefix-invariance tests prevent future bars from changing an earlier row.
+- Added a hash-deduplicated local SQLite archive of normalized inputs and feature
+  output plus an offline read-only JSONL replay command. It is an additive local
+  research record, not an immutable external audit ledger or historical backfill.
+- The guarded API and Models panel display feature status, contract version,
+  units, missing reasons and archive status. Five-minute observation cards are
+  aggregated from the same accepted one-minute input. READY means the input and
+  calculations passed, not that any model is approved.
+
+The former SPX/synthetic feature builders and stored models were not relabeled
+or reused. The guarded SPY route has no import of those builders or the ML
+service and still returns `status: UNAVAILABLE`, `levels: null`, and
+`predictionValidation: not_established`.
+
+## Original findings
 
 1. **The tape was generated, not observed.** The original inline SPY handler
    generated additive seeded random candles/volume when real bars were absent,
@@ -63,7 +104,7 @@ containment change, not a claim that prediction accuracy has improved.
    exact-symbol raw fields and validates completed five-minute intervals rather
    than trusting fetch time. See [guarded SPY service](../server/spyProjection.ts).
 
-## Implemented now
+## Earlier containment implementation
 
 - Replaced the old inline GET route with `spyProjectionRoute`, physically removing
   its automatic GBM generation, snapshot fallback, model blending and fixed-ratio
@@ -93,18 +134,18 @@ Implementation: [server guard](../server/spyProjection.ts),
 ## Still blocked / deliberately unchanged
 
 No trainer, stored model, training dataset, other ML endpoint or other module's
-feature math was modified. Fixing and retraining those consumers safely requires
-a separately scoped versioned instrument/unit/time contract and a real,
-timestamped training/evaluation dataset. A “small fix” to annualization or bar
-counts in only one path would silently change model inputs without proving parity.
+feature math was modified. The new contract is intentionally incompatible with
+legacy feature names so no stored model can silently consume it.
 
-Restoration requires native-SPY timestamped level/chain evidence; verified
-exchange calendar/halts; true prior-session close; real-observation out-of-sample
-and forward evaluation against simple baselines; quantile-order/coverage checks;
-and declared supported horizons. No promise of predictive accuracy, validated
-probability, execution readiness or return is made.
+Restoration requires sufficient point-in-time real snapshots; a predeclared
+target/horizon; chronological holdout and forward evaluation against simple
+baselines; quantile-order/coverage checks if quantiles are retained; declared
+costs and failure criteria; and independent review where feasible. Native-SPY
+timestamped options/levels are required only if a declared model uses them.
+Corporate-action adjustments and halt status still need contracts. No promise
+of predictive accuracy, validated probability, execution readiness or return.
 
-The screenshot's actual runtime quote/prevClose values were not logged or
-reconstructed in this task. Broker authorization/live entitlements were not
-probed or changed. Shared authentication and legacy logging are not repaired by
-this UI/route change. Native iOS remains paused.
+The screenshot's exact runtime quote/prevClose values were not reconstructed.
+The follow-up used existing authorized read-only provider access; it did not
+change OAuth, entitlements or credentials. Shared authentication and legacy
+logging are not repaired by this release. Native iOS remains paused.
