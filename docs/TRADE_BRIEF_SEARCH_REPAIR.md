@@ -48,4 +48,10 @@ levels, source-coverage, brokerage, security or native-iOS behavior is expanded.
 - Backend was rebuilt and restarted once to activate the shared INTC registry.
   No new credentials or provider subscriptions were requested.
 
-Final deployed opaque-iframe verification will be recorded after the update.
+Updated the existing Batcave artifact after code commit `8021c2a`. Two final
+checks passed in the actual deployed opaque iframe (`allow-scripts`, no
+`allow-forms`, no `allow-same-origin`, no mocked responses): touch Intel search
+followed by INTC confirmation and Analyze, and keyboard Enter search for INTC.
+Both search and research requests returned HTTP 200. No page errors or
+horizontal overflow at 390px. Twelve browser scenarios total.
+Results: `/home/user/workspace/batcave-search-browser-results.json`.
