@@ -34,3 +34,6 @@ ios/DerivedData/
 **/xcuserdata/
 *.p12
 *.mobileprovision
+
+# Isolated AI worker IPC key and persistent call budget: runtime only.
+data/brief-ai/

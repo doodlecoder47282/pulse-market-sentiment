@@ -13,6 +13,7 @@ const UA =
 export type EarningsTiming = "BMO" | "AMC" | "DMH" | "UNK";
 
 export interface EarningsRow {
+  provenance?: { source: "Nasdaq"; url: string; checked_at: string; synthetic: false };
   date: string;            // YYYY-MM-DD (ET trading day)
   ticker: string;
   company: string;
@@ -190,6 +191,7 @@ async function fetchNasdaqEarnings(date: string): Promise<EarningsRow[]> {
     const { t: timing, label: timingLabel } = parseTiming(row.time);
     const isMag7 = MAG7.has(ticker);
     out.push({
+      provenance: { source: "Nasdaq", url, checked_at: new Date().toISOString(), synthetic: false },
       date,
       ticker,
       company: String(row.name ?? ticker),
@@ -242,6 +244,12 @@ interface CacheEntry {
 const CACHE_MS = 30 * 60 * 1000;
 let weeklyCache: CacheEntry | null = null;
 let monthlyCache: CacheEntry | null = null;
+
+/** Cache-only accessor. No missing-cache refresh, date fanout or synthetic-row promotion. */
+export function getCachedEarningsSnapshot(): EarningsResponse | null {
+  const entries = [weeklyCache, monthlyCache].filter((v): v is CacheEntry => v !== null);
+  return entries.sort((a, b) => b.at - a.at)[0]?.value ?? null;
+}
 
 export async function getEarnings(horizon: "weekly" | "monthly" = "weekly"): Promise<EarningsResponse> {
   const cache = horizon === "weekly" ? weeklyCache : monthlyCache;

@@ -1,7 +1,8 @@
 import { vixToAtmPct } from "@shared/vol";
 import { getCryptoContext } from "./cryptoContext";
 import { getCryptoSourceRegister } from "./cryptoEngine";
-import { registerTradeBriefRoutes } from "./tradeBrief";
+import { createTradeBriefService, registerTradeBriefRoutes } from "./tradeBrief";
+import { registerTradeBriefAiRoutes } from "./tradeBriefAi";
 import { spyProjectionRoute } from "./spyProjection";
 import { getWidgetLayout, saveWidgetLayout, resetWidgetLayout } from "./widgetLayouts";
 import { buildTradeEnvironment, startTradeEnvironmentWatch } from "./tradeEnvironment";
@@ -416,7 +417,9 @@ function rescaleLevelsForSpy(input: any, factor = 10): any {
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   // Bounded read-only stock/ETF research; stays inside the existing API boundary.
-  registerTradeBriefRoutes(app);
+  const tradeBriefService = createTradeBriefService();
+  registerTradeBriefRoutes(app, tradeBriefService);
+  registerTradeBriefAiRoutes(app, id => tradeBriefService.getSnapshot(id));
   // ── Widget layout persistence (customizable dashboard stacks) ──
   app.get("/api/layout/:tab", (req, res) => {
     try {

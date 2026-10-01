@@ -28,6 +28,8 @@ export interface Headline {
   source: string;
   url: string;
   published: number; // epoch seconds
+  /** False/absent means the legacy display time may be an update/retrieval fallback. */
+  publication_verified?: boolean;
   summary: string;
   topics: NewsTopic[];
   tickers: string[]; // inferred tickers mentioned
@@ -63,6 +65,7 @@ export interface NewsResponse {
   calendar: CalendarEvent[];
   topics: { topic: NewsTopic; count: number }[];
   warnings: string[];
+  feeds?: { source: string; status: "ok" | "unavailable"; checked_at: string; item_count: number }[];
 }
 
 // ---- Topic classifier ----
@@ -124,8 +127,9 @@ function parseRss(xml: string, sourceName: string): Headline[] {
     const descRaw = firstMatch(body, /<description[^>]*>([\s\S]*?)<\/description>/i) ||
                     firstMatch(body, /<summary[^>]*>([\s\S]*?)<\/summary>/i) ||
                     firstMatch(body, /<content[^>]*>([\s\S]*?)<\/content>/i);
-    const pubStr = firstMatch(body, /<pubDate[^>]*>([\s\S]*?)<\/pubDate>/i) ||
-                   firstMatch(body, /<published[^>]*>([\s\S]*?)<\/published>/i) ||
+    const publishedStr = firstMatch(body, /<pubDate[^>]*>([\s\S]*?)<\/pubDate>/i) ||
+                   firstMatch(body, /<published[^>]*>([\s\S]*?)<\/published>/i);
+    const pubStr = publishedStr ||
                    firstMatch(body, /<updated[^>]*>([\s\S]*?)<\/updated>/i);
     const guid = firstMatch(body, /<guid[^>]*>([\s\S]*?)<\/guid>/i) ||
                  firstMatch(body, /<id[^>]*>([\s\S]*?)<\/id>/i) || link;
@@ -139,6 +143,7 @@ function parseRss(xml: string, sourceName: string): Headline[] {
       source: sourceName,
       url: link.trim(),
       published,
+      publication_verified: !!publishedStr && Number.isFinite(published),
       summary: summary.trim().slice(0, 320),
       topics: classifyTopics(blob),
       tickers: extractTickers(blob),
@@ -556,11 +561,22 @@ async function fetchEarningsCalendar(): Promise<CalendarEvent[]> {
   return out;
 }
 
+let latestNewsSnapshot: NewsResponse | null = null;
+/** Cache-only access: never invokes RSS/calendar providers. Treat returned data as read-only. */
+export function getCachedNewsSnapshot(): NewsResponse | null {
+  return latestNewsSnapshot;
+}
+
 export async function buildNewsSnapshot(): Promise<NewsResponse> {
   const warnings: string[] = [];
+  const feeds: NonNullable<NewsResponse["feeds"]> = [];
 
   const rssPromises = RSS_SOURCES.map((s) =>
-    fetchRss(s.url, s.name).catch((e) => {
+    fetchRss(s.url, s.name).then(items => {
+      feeds.push({ source: s.name, status: "ok", checked_at: new Date().toISOString(), item_count: items.length });
+      return items;
+    }).catch((e) => {
+      feeds.push({ source: s.name, status: "unavailable", checked_at: new Date().toISOString(), item_count: 0 });
       warnings.push(`${s.name}: ${e?.message ?? "failed"}`);
       return [] as Headline[];
     }),
@@ -646,11 +662,14 @@ export async function buildNewsSnapshot(): Promise<NewsResponse> {
     .sort((a, b) => a.when - b.when)
     .slice(0, 400);
 
-  return {
+  const snapshot: NewsResponse = {
     asOf: now,
     headlines,
     calendar: calFiltered,
     topics,
     warnings,
+    feeds,
   };
+  latestNewsSnapshot = snapshot;
+  return snapshot;
 }

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import { classicPivots } from "./pivots";
 import { etEpochMs } from "./etTime";
+import { enrichStockBrief, type BriefBar } from "./tradeBriefEnrichment";
 import {
   BriefRequestSchema, SearchRequestSchema, TRADE_BRIEF_CATEGORIES, TRADE_BRIEF_INSTRUMENTS,
   TRADE_BRIEF_VERSION, TradeBriefSchema, searchTradeBriefInstruments,
@@ -19,6 +20,11 @@ export interface TradeBriefDependencies {
   quote: (symbol: string) => Promise<unknown>;
   history: (symbol: string) => Promise<unknown>;
   macro: () => Promise<unknown>;
+  /** Optional raw Schwab-only chain; no getOptionChain delayed fallback. */
+  options?: (symbol: string) => Promise<unknown>;
+  /** Local cache-only readers: never start aggregate RSS/calendar builds. */
+  news?: () => Promise<unknown>;
+  earnings?: () => Promise<unknown>;
   now?: () => number;
   timeoutMs?: number;
 }
@@ -95,7 +101,7 @@ function readQuote(raw: unknown, instrument: TradeBriefInstrument, now: number) 
   };
 }
 
-type Candle = { datetime: number; open: number; high: number; low: number; close: number; date: string };
+type Candle = BriefBar;
 function readHistory(raw: unknown, symbol: string, now: number): { bars: Candle[]; invalid: boolean } {
   const r = object(raw);
   if (r.synthetic === true || r.symbol !== symbol || !Array.isArray(r.candles) || r.candles.length > 100) return { bars: [], invalid: true };
@@ -111,7 +117,8 @@ function readHistory(raw: unknown, symbol: string, now: number): { bars: Candle[
     const date = etDate(b.datetime);
     if (seen.has(date)) return { bars: [], invalid: true };
     seen.add(date);
-    bars.push({ datetime: b.datetime, open: b.open, high: b.high, low: b.low, close: b.close, date });
+    bars.push({ datetime: b.datetime, open: b.open, high: b.high, low: b.low, close: b.close, date,
+      volume: finite(b.volume) && b.volume >= 0 ? b.volume : null });
   }
   return { bars: bars.sort((a, b) => a.datetime - b.datetime), invalid: false };
 }
@@ -130,11 +137,17 @@ function requiredDates(horizon: TradeBriefHorizon, today: string): string[] {
 /** Pure builder: all output numbers come from validated observations or the existing pivot calculator. */
 export function buildStockTradeBrief(
   instrument: TradeBriefInstrument, horizon: TradeBriefHorizon,
-  inputs: { quote: LoadResult; history: LoadResult; macro: LoadResult }, now: number,
+  inputs: { quote: LoadResult; history: LoadResult; macro: LoadResult; options?: LoadResult;
+    news?: unknown; earnings?: unknown }, now: number,
 ): TradeBrief {
   const statuses = Object.fromEntries(TRADE_BRIEF_CATEGORIES.map(c => [c, moduleStatus(c, now)])) as Record<TradeBriefCategory, TradeBriefSourceStatus>;
   const observations: TradeBriefEvidence[] = [];
   const levels: TradeBriefLevel[] = [];
+  // A resolved null is provider unavailability, not a healthy missing-field payload.
+  inputs = { ...inputs,
+    quote: inputs.quote.state === "ok" && inputs.quote.value == null ? { state: "unavailable", value: null } : inputs.quote,
+    history: inputs.history.state === "ok" && inputs.history.value == null ? { state: "unavailable", value: null } : inputs.history,
+    macro: inputs.macro.state === "ok" && inputs.macro.value == null ? { state: "unavailable", value: null } : inputs.macro };
   const q = readQuote(inputs.quote.value, instrument, now);
   const quoteAge = horizon === "intraday" ? 60 : 300;
   statuses.quote.max_age_seconds = quoteAge;
@@ -217,7 +230,7 @@ export function buildStockTradeBrief(
       });
       statuses.levels.status = "partial";
       statuses.levels.contributed = true;
-      statuses.levels.reason = "Classical reference structure only, not an entry, stop or target. Corporate-action adjustment, exchange holiday coverage, ATR/VWAP and executable costs are unverified.";
+      statuses.levels.reason = "Classical reference structure only, not an entry, stop or target. Corporate-action adjustment, exchange holiday coverage, intraday VWAP and executable costs are unverified.";
       statuses.levels.observed_at = observed;
       statuses.levels.evidence_ids = ["period-h", "period-l", "period-c"];
     }
@@ -259,14 +272,24 @@ export function buildStockTradeBrief(
     : macroEvidence.length === 0 ? "missing" : statuses.macro.contributed ? "partial" : "stale";
   statuses.macro.reason = "Cached daily rates, credit and dollar context only, with individual observation dates; not live macro or a ticker signal. Real yields, sector breadth and a verified economic calendar are not covered. No refresh job is started.";
 
+  const enrichment = enrichStockBrief({
+    instrument, now, today: etDate(now), quoteAge, usableQuote, price: q.price, priceTime: q.tradeTime,
+    quoteTime: q.quoteTime, volume: q.volume, bars: history.bars,
+    requiredPriorDate: requiredDates("intraday", etDate(now))[0],
+    news: inputs.news, earnings: inputs.earnings, options: inputs.options?.value,
+    optionsState: inputs.options?.state, statuses, observations, levels,
+  });
   const pivot = levels.find(l => l.kind === "pivot");
   const relation = usableQuote && pivot ? (q.price! > pivot.value ? "above" : q.price! < pivot.value ? "below" : "at") : null;
-  const thesis = relation
+  const structuralThesis = relation
     ? `The last verified trade is ${relation} the ${horizon === "swing" ? "prior-week" : "prior-session"} classic pivot. That is structural context, not a validated trading edge.`
     : usableQuote ? "A recent price observation is available, but compatible structural history is not sufficient for a conditional plan."
     : "A usable, explicitly real-time price is missing for this horizon. Wait for verified data rather than substitute a stale or delayed observation.";
+  const thesis = structuralThesis + (enrichment.claims.length ? ` ${enrichment.claims.map(c => c.text).join(" ")}` : "");
+  const earningsContext = enrichment.contexts.find(c => c.category === "earnings");
   const eventRisk = instrument.asset_class === "STOCK"
-    ? "Earnings date and timing are unknown; an event gap can overwhelm a technically attractive level."
+    ? earningsContext ? `${earningsContext.text} An event gap can overwhelm reference structure; do not infer a safe event window.`
+      : "Earnings date and timing are unknown; an event gap can overwhelm a technically attractive level."
     : "Fund distributions, rebalances and underlying holdings' event exposure are unknown; ETF classification does not remove event risk.";
   const statusesArray = TRADE_BRIEF_CATEGORIES.map(c => statuses[c]);
   const prerequisites = [
@@ -276,7 +299,7 @@ export function buildStockTradeBrief(
     "Review a horizon-compatible entry/invalidation rule and actual execution costs before calculating risk.",
   ];
   // The snapshot expires at the earliest consumed instant-data threshold, never at a restamped fetch time.
-  const deadlines = [now + SNAPSHOT_TTL];
+  const deadlines = [now + SNAPSHOT_TTL, ...enrichment.deadlines];
   if (usableQuote) deadlines.push(q.tradeTime! + quoteAge * SECOND);
   if (statuses.volume.contributed) deadlines.push(q.quoteTime! + quoteAge * SECOND);
   for (const e of macroEvidence) {
@@ -284,7 +307,7 @@ export function buildStockTradeBrief(
   }
   // A source-period change must not reuse yesterday's / last week's computed context.
   deadlines.push(etEpochMs(shiftDate(etDate(now), 1), 0, 0));
-  const observedTimes = observations.map(e => Date.parse(e.observed_at)).filter(Number.isFinite);
+  const observedTimes = [...observations, ...enrichment.contexts].map(e => Date.parse(e.observed_at)).filter(Number.isFinite);
   const result = {
     instrument_id: instrument.id, instrument, horizon, mode: "research_only" as const,
     created_at: iso(now), expires_at: iso(Math.min(...deadlines)),
@@ -296,7 +319,11 @@ export function buildStockTradeBrief(
     coverage: usableQuote ? "partial" as const : "insufficient" as const, source_statuses: statusesArray,
     coverage_gaps: statusesArray.filter(s => s.status !== "available").map(s => `${s.category}: ${s.reason}`),
     verdict: usableQuote ? "WATCH" as const : "INSUFFICIENT DATA" as const,
-    thesis, counterevidence: [eventRisk, "No fresh options, normalized relative-volume or ticker-specific news confirmation is available in this brief."],
+    thesis, counterevidence: [eventRisk,
+      "Cumulative/full-day volume comparison is not time-of-day RVOL, directional flow or a validated trading edge.",
+      statuses.news.contributed ? "Collected attributed headlines are non-exhaustive and do not prove materiality." : "Ticker-specific news collection is missing or unverified; absence of collected items is not absence of catalysts.",
+      statuses.options.contributed ? "Sampled options quotes/volume do not establish dealer positioning, buyer intent or execution quality." : "Fresh reviewed options evidence is unavailable.",
+      "Corporate-action adjustments, exchange sessions/halts and executable costs remain unverified."],
     prerequisites,
     quote: usableQuote ? { value: q.price!, unit: "USD/share" as const, observed_at: iso(q.tradeTime!),
       evidence_id: "quote-last", source: "Schwab" as const } : null,
@@ -308,7 +335,7 @@ export function buildStockTradeBrief(
     trigger: levels.length
       ? "Wait for a fresh price comparison at the displayed structure, then verify event, liquidity and execution prerequisites. Crossing a reference alone is not an entry."
       : "Wait for usable quote and compatible completed-period history. No entry trigger, stop or target is available.",
-    events: [{ text: eventRisk, evidence_ids: [] }],
+    events: [{ text: eventRisk, evidence_ids: earningsContext ? [earningsContext.id] : [] }],
     management_rules: [
       "Remain in research/WATCH mode. Do not treat reference support or resistance as orders.",
       "Re-analyze manually after new information or a material price change; there is no background market monitoring.",
@@ -319,14 +346,20 @@ export function buildStockTradeBrief(
       "Changing instrument or horizon supersedes the previous brief.",
       "A corporate action, material event or crossing of reference structure requires a new review; this brief does not monitor crossings.",
     ],
-    claims: [{ text: thesis, evidence_ids: relation ? ["quote-last", ...pivot!.evidence_ids] : usableQuote ? ["quote-last"] : [] }],
+    claims: [{ text: structuralThesis, evidence_ids: relation ? ["quote-last", ...pivot!.evidence_ids] : usableQuote ? ["quote-last"] : [] },
+      ...enrichment.claims],
     evidence: observations,
+    context_items: enrichment.contexts,
     methodology: [
       "Intraday: prior weekday's completed daily OHLC. Swing: aggregate every weekday of the previous Monday–Friday week (high=max highs; low=min lows; close=Friday close). Missing weekdays suppress structure, including holiday weeks.",
       "Reuse server/pivots.ts classicPivots: PP=(H+L+C)/3; S1=2*PP-H; R1=2*PP-L. Retain full calculation precision; display rounded prices only.",
       "Intraday last-trade/volume maximum age is one minute; swing is five minutes. Quotes without explicit real-time entitlement never become current price. No CBOE fallback is used until its true cache-age contract is verified.",
       "FRED observations use their published date at daily precision, not a fabricated release time. Daily macro context expires after seven calendar days and never supplies trade levels.",
       "Exchange holidays, early closes, adjusted-price provenance and halt status are unverified. Clock windows are not assertions that the exchange is open.",
+      ...enrichment.methodology,
+      "Enrichment uses only validated, observed prior daily bars; ATR and volume baselines are conservatively suppressed when a weekday is absent because exchange holiday completeness is unverified.",
+      "Options uses only raw Schwab chains with exact identity, explicit non-delayed status, fresh underlying/contract times and valid standard bid/ask. Sampled counts/volume are descriptive; no OI timestamp, GEX, walls or intent is invented.",
+      "News and earnings reuse existing local snapshots only; no per-Analyze aggregate RSS/calendar fanout. Explicit text attribution is not issuer-confirmed materiality.",
     ],
     explanation: { status: "deterministic" as const, detail: "Curated from validated evidence and coverage rules. AI is not enabled in this bounded slice; no model request, tools or numeric generation occurs." },
     model_version: "none" as const, calculation_version: TRADE_BRIEF_VERSION,
@@ -363,6 +396,22 @@ const defaultDependencies: TradeBriefDependencies = {
     const { getFredSnapshot } = await import("./fredClient");
     return getFredSnapshot();
   },
+  async options(symbol) {
+    const { schwabFetch } = await import("./schwab");
+    const today = new Date(), to = new Date(today.getTime() + 45 * DAY);
+    return schwabFetch("marketdata/v1/chains", {
+      symbol, contractType: "ALL", strikeCount: 20, includeUnderlyingQuote: "true",
+      fromDate: today.toISOString().slice(0, 10), toDate: to.toISOString().slice(0, 10),
+    });
+  },
+  async news() {
+    const { getCachedNewsSnapshot } = await import("./news");
+    return getCachedNewsSnapshot();
+  },
+  async earnings() {
+    const { getCachedEarningsSnapshot } = await import("./earnings");
+    return getCachedEarningsSnapshot();
+  },
 };
 
 export function createTradeBriefService(deps: TradeBriefDependencies = defaultDependencies) {
@@ -383,7 +432,7 @@ export function createTradeBriefService(deps: TradeBriefDependencies = defaultDe
       if (activeReads >= MAX_IN_FLIGHT) return { state: "busy", value: null };
       activeReads++;
       underlying = Promise.resolve().then(read)
-        .then(value => ({ state: "ok", value } as LoadResult))
+        .then(value => value == null ? { state: "unavailable", value: null } as LoadResult : { state: "ok", value } as LoadResult)
         .catch(() => ({ state: "unavailable", value: null } as LoadResult));
       reads.set(key, underlying);
       // Keep the slot until the existing provider helper actually settles, even after a response timeout.
@@ -409,24 +458,43 @@ export function createTradeBriefService(deps: TradeBriefDependencies = defaultDe
     const work = pending.get(key);
     if (work) return work;
     const promise = (async () => {
-      const [quote, history, macro] = await Promise.all([
+      // Cache-only readers are normally synchronous. Bound even injected readers so they
+      // cannot extend the endpoint deadline or trigger retry/replacement loops.
+      const cached = (read?: () => Promise<unknown>) => !read ? Promise.resolve(null)
+        : new Promise<unknown>(resolve => {
+          const timer = setTimeout(() => resolve(null), timeoutMs);
+          void Promise.resolve().then(read).catch(() => null).then(value => {
+            clearTimeout(timer); resolve(value);
+          });
+        });
+      const [quote, history, macro, options, news, earnings] = await Promise.all([
         load(`quote:${instrument.symbol}`, () => deps.quote(instrument.symbol)),
         load(`history:${instrument.symbol}`, () => deps.history(instrument.symbol)),
         load("macro", deps.macro),
+        deps.options ? load(`options:${instrument.symbol}`, () => deps.options!(instrument.symbol))
+          : Promise.resolve({ state: "unavailable", value: null } as LoadResult),
+        cached(deps.news), cached(deps.earnings),
       ]);
-      const brief = freezeDeep(buildStockTradeBrief(instrument, horizon, { quote, history, macro }, now()));
+      const brief = freezeDeep(buildStockTradeBrief(instrument, horizon, { quote, history, macro, options, news, earnings }, now()));
       cache.set(key, brief);
       return brief;
     })();
     pending.set(key, promise);
     try { return await promise; } finally { pending.delete(key); }
   }
-  return { analyze };
+  /** Existing immutable snapshots only: no reads, refresh, retries or provider spending. */
+  function getSnapshot(snapshotId: string): TradeBrief | null {
+    for (const snapshot of cache.values()) {
+      if (snapshot.snapshot_id === snapshotId && now() < Date.parse(snapshot.expires_at)) return snapshot;
+    }
+    return null;
+  }
+  return { analyze, getSnapshot };
 }
 export type TradeBriefService = ReturnType<typeof createTradeBriefService>;
 
 /** Register inside the existing restricted web API boundary; this is not new authentication. */
-export function registerTradeBriefRoutes(app: Express, service = createTradeBriefService()): void {
+export function registerTradeBriefRoutes(app: Express, service: Pick<TradeBriefService, "analyze"> = createTradeBriefService()): void {
   let windowAt = Date.now(), searchCount = 0, briefCount = 0;
   function budget(kind: "search" | "brief", res: Response) {
     const now = Date.now();

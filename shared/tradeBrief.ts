@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** This is a deliberately finite US-listed research universe, not a security master. */
-export const TRADE_BRIEF_VERSION = "stock-brief-2026-09-30.1";
+export const TRADE_BRIEF_VERSION = "stock-brief-2026-10-01.2";
 export const TRADE_BRIEF_CATEGORIES = [
   "quote", "levels", "news", "options", "volume", "earnings", "macro", "seasonality",
 ] as const;
@@ -81,8 +81,16 @@ export const EvidenceSchema = z.object({
   value: z.number().finite(), unit: z.string(), observed_at: z.string(),
   time_precision: z.enum(["instant", "date", "period"]),
   status: CoverageSchema, source: z.string(), url: z.string().url(),
+  formula_id: z.string().optional(), evidence_ids: z.array(z.string()).optional(),
 }).strict();
 export type TradeBriefEvidence = z.infer<typeof EvidenceSchema>;
+export const ContextItemSchema = z.object({
+  id: z.string(), category: z.enum(TRADE_BRIEF_CATEGORIES), text: z.string().max(1600),
+  source: z.string(), url: z.string().url(), observed_at: z.string(),
+  time_precision: z.enum(["instant", "date", "period"]), status: CoverageSchema,
+  evidence_ids: z.array(z.string()),
+}).strict();
+export type TradeBriefContextItem = z.infer<typeof ContextItemSchema>;
 export const LevelSchema = z.object({
   kind: z.enum(["support", "pivot", "resistance"]), label: z.string(),
   value: z.number().finite().positive(), unit: z.literal("USD/share"),
@@ -113,9 +121,32 @@ export const TradeBriefSchema = z.object({
   management_rules: z.array(z.string()), invalidation_rules: z.array(z.string()),
   claims: z.array(z.object({ text: z.string(), evidence_ids: z.array(z.string()) })),
   evidence: z.array(EvidenceSchema), methodology: z.array(z.string()),
+  context_items: z.array(ContextItemSchema).max(30).optional(),
   explanation: z.object({ status: z.literal("deterministic"), detail: z.string() }),
   model_version: z.literal("none"), calculation_version: z.string(),
-}).strict();
+}).strict().superRefine((brief, ctx) => {
+  const ids = [...brief.evidence, ...(brief.context_items ?? [])].map(e => e.id);
+  const known = new Set(ids);
+  if (known.size !== ids.length) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Duplicate evidence IDs" });
+  if (new Set(brief.source_statuses.map(s => s.category)).size !== TRADE_BRIEF_CATEGORIES.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Duplicate coverage categories" });
+  }
+  const references = [
+    ...brief.levels, ...brief.source_statuses, ...brief.claims, ...brief.events,
+    ...brief.evidence, ...(brief.context_items ?? []),
+  ];
+  for (const row of references) {
+    if (row.evidence_ids?.some(id => !known.has(id))) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Unknown evidence reference" });
+    }
+  }
+  if (brief.quote && !known.has(brief.quote.evidence_id)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Unknown quote evidence" });
+  }
+  if (brief.instrument_id !== brief.instrument.id) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Instrument identity mismatch" });
+  }
+});
 export type TradeBrief = z.infer<typeof TradeBriefSchema>;
 
 export function tradeBriefExpired(brief: Pick<TradeBrief, "expires_at">, now = Date.now()): boolean {

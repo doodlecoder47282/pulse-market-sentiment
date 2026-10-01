@@ -4,6 +4,27 @@ Updated: 2026-10-01. This is a compact handoff, not a live-health certificate.
 
 ## Current objective
 
+Latest authorized follow-up (2026-10-01): three-model council diagnosed
+Trade Brief adapter exclusions, then bounded enrichment and opt-in AI
+curation were implemented. Calculation `stock-brief-2026-10-01.2`; ATR14
+simple mean, structure distances, NOT-RVOL full-day volume ratio and
+matched-date yield spread; cached exact-attribution news, real-row earnings
+and fresh raw Schwab option samples only. Visible reasons and evidence.
+AI selects prewritten IDs from immutable server snapshots, cannot generate
+new claims/numbers/verdicts; explicit click only, no automatic AI on lookup.
+Isolated credentialed worker port5002, IPC-authenticated; main5000 remains
+without model credentials. Persistent6/hour30/day attempt budget, no SDK
+retries; runtime key/ledger in gitignored data/brief-ai/. 88 focused tests,
+production build and live/manual AI succeeded; 59 unrelated TS errors remain.
+See TRADE_BRIEF_ENRICHMENT_RELEASE.md and TRADE_BRIEF_QA_INVENTORY.md.
+News can be missing, earnings cold until existing cache warms, options stale
+after60seconds, holiday gaps suppress prior20volume; seasonality unsupported.
+Research-only and NIST/multi-user security gates unchanged. Native/SPY paused.
+Social provider evaluation favors a conditional authorized Neynar pilot;
+its published quotas conflict, so actual entitlement must be checked.
+No provider connected, account/subscription created or X reconnected.
+Read SOCIAL_PROVIDER_EVALUATION.md; do not repeat council/provider research.
+
 Latest follow-up (2026-10-01, morning ET): iterate the remaining social gap.
 Added exact-contract Bluesky search plus separate unscored ticker context,
 bounded source-post receipts, gated non-overlapping 10-minute activity

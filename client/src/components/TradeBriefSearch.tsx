@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Search, ChevronRight, RefreshCw, ShieldCheck } from "lucide-react";
 import { transportRequest } from "@/lib/queryClient";
+import { TradeBriefAi } from "./TradeBriefAi";
 import {
   SearchResponseSchema, TradeBriefSchema, tradeBriefExpired,
   type CoverageStatus, type TradeBrief, type TradeBriefHorizon, type TradeBriefInstrument,
@@ -166,7 +167,7 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
     } finally { if (generation.current === request) setBusy(null); }
   }
 
-  return <section data-testid="trade-brief-search" aria-labelledby={`${id}-title`} className={`min-w-0 rounded-xl border border-border bg-card text-card-foreground shadow-sm ${className}`}>
+  return <section data-testid="trade-brief-search" aria-labelledby={`${id}-title`} className={`min-w-0 [overflow-wrap:anywhere] rounded-xl border border-border bg-card text-card-foreground shadow-sm ${className}`}>
     <div className="border-b border-border p-4 sm:p-5">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -228,9 +229,10 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
           <label htmlFor={`${id}-horizon`} className="mb-1.5 block text-sm font-medium">Research horizon</label>
           <select data-testid="trade-brief-horizon" id={`${id}-horizon`} value={horizon} className={`${control} w-full`}
             onChange={e => { supersede(); setHorizon(e.target.value as TradeBriefHorizon); }}>
-            <option value="swing">Swing · prior-week structure</option>
-            <option value="intraday">Intraday · prior-session structure</option>
+            <option value="swing">Swing</option>
+            <option value="intraday">Intraday</option>
           </select>
+          <p className="mt-1 text-xs text-muted-foreground">{horizon === "swing" ? "Prior-week structure" : "Prior-session structure"}</p>
         </div>
         <button data-testid="trade-brief-analyze" className={`${action} border-primary/40 bg-primary/10`} type="button" disabled={!selected || busy === "brief" || offline} onClick={analyze}>
           {brief ? <RefreshCw size={16} aria-hidden="true" /> : <ChevronRight size={16} aria-hidden="true" />}
@@ -281,6 +283,24 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
             </div>)}
           </div>}
           {!!brief.levels.length && <p className="mt-2 text-xs text-muted-foreground">{brief.levels[0].period} · USD/share · Not an entry, stop or target.</p>}
+          {!expired && !!brief.claims.length && <div data-testid="trade-brief-factors" className="mt-4 rounded-lg border border-border p-4">
+            <h4 className="text-sm font-semibold">Calculated evidence</h4>
+            <p className="mt-1 text-xs text-muted-foreground">Existing inputs, explicit formulas. Descriptive context, not a proven trading edge.</p>
+            <ul className="mt-3 space-y-3 text-sm leading-relaxed">
+              {brief.claims.map((claim, i) => <li key={i} className="border-t border-border pt-3 first:border-0 first:pt-0">
+                {claim.text}<span className="mt-1 block break-words text-xs text-muted-foreground">Evidence: {claim.evidence_ids.join(", ")}</span>
+              </li>)}
+            </ul>
+          </div>}
+          {!expired && !!brief.context_items?.some(item => item.category === "news" || item.category === "earnings") && <div data-testid="trade-brief-context" className="mt-4">
+            <h4 className="text-sm font-semibold">News and event context</h4>
+            <ul className="mt-2 space-y-3">
+              {brief.context_items.filter(item => item.category === "news" || item.category === "earnings").map(item => <li key={item.id} className="rounded-lg border border-border p-3 text-sm leading-relaxed">
+                <p>{item.text}</p><p className="mt-1 text-xs text-muted-foreground">{item.category} · {timestamp(item.observed_at)} · {statusLabels[item.status]}</p>
+                <a data-testid={`trade-brief-context-${item.id}`} href={item.url} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-xs underline underline-offset-2">{item.source}</a>
+              </li>)}
+            </ul>
+          </div>}
           <div className="mt-4 space-y-3 text-sm leading-relaxed">
             <div><h4 className="font-semibold">Wait-for condition</h4><p className="mt-1 text-muted-foreground">{brief.trigger}</p></div>
             <div><h4 className="font-semibold">What argues against a trade</h4><ul className="mt-1 list-disc space-y-1 pl-4 text-muted-foreground">
@@ -292,8 +312,9 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
             </div>
           </div>
           <div className="mt-4 rounded-lg border border-border bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
-            <strong className="text-foreground">Deterministic explanation · No AI call</strong><br />{brief.explanation.detail}
+            <strong className="text-foreground">Deterministic calculations · No automatic AI call</strong><br />{brief.explanation.detail}
           </div>
+          <TradeBriefAi key={brief.snapshot_id} brief={brief} expired={expired} offline={offline} />
         </div>
 
         <aside aria-label="Coverage and evidence" className="min-w-0">
@@ -303,6 +324,7 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
             {brief.source_statuses.map(s => <li key={s.category} className="min-w-0 rounded-lg border border-border px-3 py-2">
               <p className="mb-1.5 text-sm font-medium capitalize">{s.category}</p><Badge status={s.status} />
               <p className="mt-1 text-xs text-muted-foreground">{s.contributed ? "Contributed to snapshot" : s.applicability === "not_applicable" ? "Not a company-earnings input" : "Did not contribute"}</p>
+              <p data-testid={`trade-brief-coverage-${s.category}`} className="mt-2 text-xs leading-relaxed text-muted-foreground">{s.reason}</p>
               <p className="mt-1 break-words text-xs text-muted-foreground">{s.observed_at ? timestamp(s.observed_at) : "Observation time unavailable"}</p>
             </li>)}
           </ul>
