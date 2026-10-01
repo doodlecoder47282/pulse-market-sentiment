@@ -17,6 +17,8 @@ without model credentials. Persistent6/hour30/day attempt budget, no SDK
 retries; runtime key/ledger in gitignored data/brief-ai/. 88 focused tests,
 production build and live/manual AI succeeded; 59 unrelated TS errors remain.
 See TRADE_BRIEF_ENRICHMENT_RELEASE.md and TRADE_BRIEF_QA_INVENTORY.md.
+Implementation f43a1ff deployed in place; fresh opaque-iframe 390px touch
+lookup and actual AI curation both passed, with no page exceptions.
 News can be missing, earnings cold until existing cache warms, options stale
 after60seconds, holiday gaps suppress prior20volume; seasonality unsupported.
 Research-only and NIST/multi-user security gates unchanged. Native/SPY paused.
