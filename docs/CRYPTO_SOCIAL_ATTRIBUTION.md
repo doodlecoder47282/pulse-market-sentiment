@@ -93,4 +93,10 @@ for either audience. No alternate identity, cookies or scraping bypass was added
 - No page errors, nested button/link controls or horizontal overflow were
   observed. Screenshots of positive/partial fixtures and real responses were
   visually inspected. Fixtures were removed after testing.
-- Final existing-preview deployment verification is pending.
+- Implementation commit `cc7dc02` deployed to the existing Batcave preview.
+  Fresh 390px touch QA in an opaque `allow-scripts` iframe passed startup,
+  Intel listing search, social coverage and one-tap sample inspection, with
+  no page errors or horizontal overflow. A deployed checkpoint showed 16
+  current samples among 131 distinct tracked mints, still zero exact-contract
+  matches. The correct output was insufficient evidence, not a momentum call.
+  QA receipt: `/home/user/workspace/crypto-social-qa.json`.

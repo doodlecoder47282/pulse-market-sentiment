@@ -16,6 +16,10 @@ node/index access. 77 tests and production build passed; 59 unrelated type
 diagnostics remain. Real-response and fixture mobile/desktop QA passed.
 See `CRYPTO_SOCIAL_ATTRIBUTION.md`; resume there without repeating audits.
 No new accounts, credentials, paid sources, AI loops or native/forecast work.
+Implementation `cc7dc02` deployed in place. Fresh opaque-iframe mobile touch
+checks passed startup, Intel lookup and one-tap social inspection. At the
+deployed checkpoint 16/131 tracked mints had current samples, with no exact
+contract matches; this is not complete or validated social coverage.
 
 Latest authorized repair (2026-10-01): crypto security, social and grading.
 Implemented bounded eight-mint RPC batches, reviewed immutable Token-2022
