@@ -361,7 +361,7 @@ export function buildStockTradeBrief(
       "Options uses only raw Schwab chains with exact identity, explicit non-delayed status, fresh underlying/contract times and valid standard bid/ask. Sampled counts/volume are descriptive; no OI timestamp, GEX, walls or intent is invented.",
       "News and earnings reuse existing local snapshots only; no per-Analyze aggregate RSS/calendar fanout. Explicit text attribution is not issuer-confirmed materiality.",
     ],
-    explanation: { status: "deterministic" as const, detail: "Curated from validated evidence and coverage rules. AI is not enabled in this bounded slice; no model request, tools or numeric generation occurs." },
+    explanation: { status: "deterministic" as const, detail: "Calculated from validated evidence and coverage rules without a model call. Optional AI curation is a separate, explicit request; it can only prioritize approved findings and cannot generate numbers or upgrade the verdict." },
     model_version: "none" as const, calculation_version: TRADE_BRIEF_VERSION,
   };
   const hash = createHash("sha256").update(JSON.stringify(result)).digest("hex").slice(0, 24);

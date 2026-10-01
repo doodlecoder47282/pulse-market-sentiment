@@ -34,6 +34,8 @@ test("curation accepts only known unique IDs, no arbitrary prose/numbers/targets
 
 test("AI renders immutable server text, preserves verdict and deduplicates requests", async () => {
   const brief = fixture();
+  assert.ok(brief.explanation.detail.includes("Optional AI curation"));
+  assert.ok(!brief.explanation.detail.includes("AI is not enabled"));
   let calls = 0;
   const service = createTradeBriefAiService(id => id === brief.snapshot_id ? brief : null, async catalog => {
     calls++; await new Promise(resolve => setTimeout(resolve, 10)); return select(catalog);
