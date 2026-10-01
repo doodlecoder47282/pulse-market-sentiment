@@ -23,7 +23,7 @@ const stocks = [
   ["AAPL", "Apple"], ["MSFT", "Microsoft"], ["NVDA", "NVIDIA"],
   ["AMZN", "Amazon"], ["GOOGL", "Alphabet — Class A"], ["GOOG", "Alphabet — Class C"],
   ["META", "Meta Platforms"], ["TSLA", "Tesla"], ["AMD", "Advanced Micro Devices"],
-  ["AVGO", "Broadcom"], ["PLTR", "Palantir Technologies"], ["COIN", "Coinbase"],
+  ["AVGO", "Broadcom"], ["INTC", "Intel Corporation"], ["PLTR", "Palantir Technologies"], ["COIN", "Coinbase"],
   ["MSTR", "Strategy (MicroStrategy)"], ["NFLX", "Netflix"], ["JPM", "JPMorgan Chase"],
   ["BAC", "Bank of America"], ["F", "Ford Motor"], ["XOM", "Exxon Mobil"],
 ] as const;

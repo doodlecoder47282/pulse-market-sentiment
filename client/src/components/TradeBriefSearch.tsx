@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Search, ChevronRight, RefreshCw, ShieldCheck } from "lucide-react";
 import { transportRequest } from "@/lib/queryClient";
 import {
@@ -101,30 +101,38 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
   }
   function editQuery(value: string) {
     supersede();
+    setNotice("");
     setQuery(value);
     setSelected(null);
     setMatches([]);
     setSearched(false);
     setMatchCount(0);
   }
-  async function search(event: FormEvent) {
-    event.preventDefault();
-    if (!query.trim() || offline) return;
+  async function search() {
+    if (!query.trim() || offline || busy === "search") return;
+    const searchTerm = query.trim();
     supersede();
     setSelected(null);
     setMatches([]);
     setSearched(false);
     const request = ++generation.current;
     setBusy("search");
+    setNotice(`Looking for “${searchTerm}”…`);
     try {
-      const result = SearchResponseSchema.parse(await getJson(`/api/trade-brief/search?q=${encodeURIComponent(query.trim())}`));
+      const result = SearchResponseSchema.parse(await getJson(`/api/trade-brief/search?q=${encodeURIComponent(searchTerm)}`));
       if (generation.current !== request) return;
       setMatches(result.instruments);
       setMatchCount(result.total);
       setSearched(true);
+      setNotice(result.total > 0
+        ? `${result.total} matching ${result.total === 1 ? "listing" : "listings"}. Select the exact instrument below.`
+        : `No supported listing found for “${searchTerm}”.`);
     } catch (e) {
-      if (generation.current === request) setError(e instanceof Error && !(e.name === "ZodError")
-        ? e.message : "The lookup returned an incompatible response. No listing was selected.");
+      if (generation.current === request) {
+        setNotice("");
+        setError(e instanceof Error && !(e.name === "ZodError")
+          ? e.message : "The lookup returned an incompatible response. No listing was selected.");
+      }
     } finally { if (generation.current === request) setBusy(null); }
   }
   function select(instrument: TradeBriefInstrument) {
@@ -169,17 +177,28 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
           <ShieldCheck size={14} aria-hidden="true" /> STOCK / ETF · Research only
         </span>
       </div>
-      <form onSubmit={search} className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+      {/* Embedded previews can disallow native form submission, including React
+          onSubmit. Explicit click/Enter handlers also work without allow-forms. */}
+      <div role="search" aria-label="Find a stock or ETF" className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
         <div className="min-w-0">
           <label htmlFor={`${id}-search`} className="mb-1.5 block text-sm font-medium">Ticker or company / fund name</label>
           <input data-testid="trade-brief-query" id={`${id}-search`} className={`${control} w-full`} type="search" value={query} maxLength={64}
             placeholder="Try NVDA, Apple, Alphabet or SPY" autoComplete="off" spellCheck={false}
-            aria-describedby={`${id}-scope`} onChange={e => editQuery(e.target.value)} />
+            enterKeyHint="search" aria-describedby={`${id}-scope`} onChange={e => editQuery(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                void search();
+              }
+            }} />
         </div>
-        <button data-testid="trade-brief-find" className={`${action} sm:self-end`} type="submit" disabled={!query.trim() || busy === "search" || offline}>
+        <button data-testid="trade-brief-find" className={`${action} sm:self-end`} type="button" onClick={() => void search()} disabled={!query.trim() || busy === "search" || offline}>
           <Search size={16} aria-hidden="true" />{busy === "search" ? "Finding…" : "Find listing"}
         </button>
-      </form>
+      </div>
+      <p data-testid="trade-brief-search-status" role="status" aria-live="polite" aria-atomic="true" className="mt-3 text-sm text-muted-foreground">
+        {busy === "search" || (searched && !selected) ? notice : ""}
+      </p>
       <p id={`${id}-scope`} className="mt-2 text-xs leading-relaxed text-muted-foreground">
         Curated US listings, priced in USD. Every match requires confirmation. Other securities, crypto and ambiguous share classes are never silently substituted.
       </p>
@@ -219,10 +238,11 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
         </button>
       </div>}
       <div aria-live="polite" aria-atomic="true" className="mt-3 text-sm text-muted-foreground">
-        {busy === "brief" ? "Checking bounded sources. No model call or account access is being requested." : notice}
+        {busy === "brief" ? "Checking bounded sources. No model call or account access is being requested."
+          : busy !== "search" && (!searched || selected) ? notice : ""}
       </div>
       {offline && <p role="alert" className="mt-2 text-sm text-amber-800 dark:text-amber-300">Offline. Previous snapshots are not live; reconnect and refresh manually.</p>}
-      {error && <p role="alert" className="mt-2 break-words text-sm text-destructive">{error}</p>}
+      {error && <p data-testid="trade-brief-error" role="alert" className="mt-2 break-words text-sm text-destructive">{error}</p>}
       {!brief && !busy && !error && !notice && <p className="mt-3 text-sm text-muted-foreground">
         Start with a listing. The brief will separate usable evidence from stale, missing and unsupported inputs. No orders or account sizing.
       </p>}

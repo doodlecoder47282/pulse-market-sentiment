@@ -4,6 +4,15 @@ Updated: 2026-09-30. This is a compact handoff, not a live-health certificate.
 
 ## Current objective
 
+Latest follow-up (2026-09-30, 23:27 ET): Find listing did nothing for Intel.
+Reproduced zero requests for form submit inside the actual deployed opaque
+iframe; standalone form worked but Intel was absent. Replaced native form
+submission with explicit tap/Enter handlers and visible result/error status;
+added canonical Intel Corporation/INTC to lookup and brief validation. 35 tests,
+full production build and ten local browser scenarios passed. Same 59 old
+TypeScript diagnostics. See `TRADE_BRIEF_SEARCH_REPAIR.md`; retain the curated
+universe disclosure and explicit selection. No calculation/source expansion.
+
 Latest follow-up (2026-09-30 ET): user reported blank screen/spinner. Startup
 repair adds independent HTML recovery, committed-mount detection, root/lazy
 error boundaries, optional-animation skip, dashboard mounting only after

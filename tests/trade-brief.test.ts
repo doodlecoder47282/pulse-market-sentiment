@@ -31,6 +31,9 @@ test("lookup requires exact explicit selection; Alphabet classes remain separate
   assert.deepEqual(alphabet.instruments.map(i => i.symbol).sort(), ["GOOG", "GOOGL"]);
   assert.equal(searchTradeBriefInstruments("aapl").instruments[0].id, stock.id);
   assert.equal(searchTradeBriefInstruments("Apple").instruments[0].symbol, "AAPL");
+  assert.equal(searchTradeBriefInstruments("Intel").instruments[0].id, "US:STOCK:INTC");
+  assert.equal(searchTradeBriefInstruments(" intc ").instruments[0].name, "Intel Corporation");
+  assert.equal(searchTradeBriefInstruments("Intel Corporation").instruments[0].symbol, "INTC");
   assert.equal(searchTradeBriefInstruments("not-a-security").total, 0);
   assert.equal(searchTradeBriefInstruments("bitcoin").total, 0);
   assert.equal(searchTradeBriefInstruments("").total, 0);
