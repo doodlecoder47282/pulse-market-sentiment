@@ -1,5 +1,6 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { ApplicationMounted, StartupBoundary, StartupRecovery } from "./components/StartupBoundary";
 import "./index.css";
 import "./native.css";
 
@@ -37,27 +38,27 @@ if (!window.location.hash) {
   window.location.hash = "#/";
 }
 
-// Stale lazy chunks (deploy replaced hashed assets under a cached index.html)
-// — reload once with a cache-buster instead of dying on a dynamic import error.
-window.addEventListener("vite:preloadError", (e) => {
-  e.preventDefault();
-  if (!/(^|[?&])wdbust=/.test(window.location.search)) {
-    const loc = window.location;
-    const q = loc.search ? loc.search + "&" : "?";
-    loc.replace(loc.pathname + q + "wdbust=" + Date.now() + loc.hash);
-  }
-});
-
-// Signal the index.html boot watchdog that the bundle executed and mounted.
-(window as any).__APP_BOOTED__ = true;
+// Do not suppress rejected lazy imports: React boundaries must receive them.
+// The static HTML fallback covers failures before this module can execute.
 
 const root = createRoot(document.getElementById("root")!);
-if (import.meta.env.VITE_NATIVE_BUILD === "true") {
+if ((window as Window & { __APP_STYLE_BLOCKED__?: boolean }).__APP_STYLE_BLOCKED__) {
+  root.render(<>
+    <StartupRecovery
+      title="An application stylesheet didn't load"
+      detail="Startup was stopped rather than opening an unstyled, unreliable screen. Reload to try the application files again."
+      code="BC-STYLE"
+    />
+    <ApplicationMounted />
+  </>);
+} else if (import.meta.env.VITE_NATIVE_BUILD === "true") {
   document.title = "Batcave · iPhone";
   document.documentElement.classList.add("native-app");
   void import("./components/NativeShell").then(({ default: NativeShell }) => {
-    root.render(<NativeShell />);
+    root.render(<><StartupBoundary><NativeShell /></StartupBoundary><ApplicationMounted /></>);
+  }).catch(() => {
+    root.render(<><StartupRecovery title="Batcave couldn't finish loading" code="BC-NATIVE" /><ApplicationMounted /></>);
   });
 } else {
-  root.render(<App />);
+  root.render(<><StartupBoundary><App /></StartupBoundary><ApplicationMounted /></>);
 }

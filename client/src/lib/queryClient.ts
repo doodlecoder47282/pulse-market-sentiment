@@ -1,10 +1,11 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 import { getNativeSession, nativeRequestTarget } from "./nativeSession";
+import { withRequestDeadline } from "./requestDeadline";
 
 const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 const nativeBuild = import.meta.env.VITE_NATIVE_BUILD === "true";
 
-export async function transportRequest(method: string, path: string, data?: unknown): Promise<Response> {
+export async function transportRequest(method: string, path: string, data?: unknown, signal?: AbortSignal): Promise<Response> {
   if (nativeBuild) {
     const session = getNativeSession();
     if (!session) throw new Error("Connect your Batcave server first.");
@@ -30,6 +31,7 @@ export async function transportRequest(method: string, path: string, data?: unkn
     method,
     headers: data ? { "Content-Type": "application/json" } : {},
     body: data ? JSON.stringify(data) : undefined,
+    signal,
   });
 }
 
@@ -56,8 +58,19 @@ export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
-  async ({ queryKey }) => {
-    const res = await transportRequest("GET", queryKey.join("/"));
+  async ({ queryKey, signal }) => {
+    const path = queryKey.join("/");
+    // Bound the web boot-critical read only. Other providers/native remain
+    // unchanged, and a body that stalls after HTTP headers is also bounded.
+    if (!nativeBuild && path === "/api/snapshot") {
+      return withRequestDeadline(async (requestSignal) => {
+        const res = await transportRequest("GET", path, undefined, requestSignal);
+        if (unauthorizedBehavior === "returnNull" && res.status === 401) return null;
+        if (!res.ok) throw new Error(`The data service is unavailable (HTTP ${res.status}). Try again.`);
+        return await res.json();
+      }, signal);
+    }
+    const res = await transportRequest("GET", path);
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
       return null;

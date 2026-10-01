@@ -196,7 +196,7 @@ export default function Dashboard() {
   const tabsRootRef = useRef<HTMLDivElement | null>(null);
   const previousTabRef = useRef(activeTab);
 
-  const { data, isLoading, isError, error, dataUpdatedAt } = useQuery<Snapshot_Public>({
+  const { data, isLoading, isError, error, dataUpdatedAt, refetch, isFetching, fetchStatus } = useQuery<Snapshot_Public>({
     queryKey: ["/api/snapshot"],
     refetchInterval: 60_000,  // auto-refresh every 60s
     // No refetchOnWindowFocus: the 60s interval already keeps data fresh, and on
@@ -272,7 +272,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (isError) {
       toast({
-        title: "Couldn't refresh quotes — retrying",
+        title: "Snapshot unavailable",
         description: "Snapshot data may be stale.",
         variant: "destructive",
       });
@@ -307,13 +307,18 @@ export default function Dashboard() {
         <Card className="max-w-md">
           <CardContent className="p-6 text-center">
             <AlertTriangle className="mx-auto mb-3 h-8 w-8 text-amber-500" />
-            <h2 className="text-lg font-semibold">Couldn't load snapshot</h2>
+            <h2 className="text-lg font-semibold" data-testid="snapshot-load-error">Couldn't load snapshot</h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              {(error as Error)?.message ?? "Upstream data sources are unreachable."}
+              {fetchStatus === "paused"
+                ? "You're offline. Reconnect, then retry the data request."
+                : error instanceof Error && error.message.includes("within 15 seconds")
+                  ? "The data service did not respond within 15 seconds. Try again."
+                  : "The data service is unreachable or returned an invalid response. No trade data is being shown."}
             </p>
-            <Button className="mt-4" onClick={() => refreshMut.mutate()} data-testid="button-retry">
-              Retry
+            <Button className="mt-4" onClick={() => void refetch()} disabled={isFetching} data-testid="button-retry">
+              {isFetching ? "Retrying…" : "Retry data"}
             </Button>
+            <p className="mt-4 text-xs text-muted-foreground">BC-SNAPSHOT · Retrying reads the existing snapshot; it does not rebuild market data.</p>
           </CardContent>
         </Card>
       </div>
@@ -1082,6 +1087,10 @@ function DashboardSkeleton() {
   return (
     <div className="min-h-screen bg-background p-4 md:p-8">
       <div className="mx-auto max-w-[1800px] space-y-6">
+        <div role="status" data-testid="snapshot-loading">
+          <h1 className="text-lg font-semibold">Loading your market snapshot</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Waiting for the data service. A slow or failed request will show recovery instructions.</p>
+        </div>
         <Skeleton className="h-14 w-full" />
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
           <Skeleton className="h-[420px] lg:col-span-5" />

@@ -4,6 +4,17 @@ Updated: 2026-09-30. This is a compact handoff, not a live-health certificate.
 
 ## Current objective
 
+Latest follow-up (2026-09-30 ET): user reported blank screen/spinner. Startup
+repair adds independent HTML recovery, committed-mount detection, root/lazy
+error boundaries, optional-animation skip, dashboard mounting only after
+acknowledgment, stylesheet deadline recovery, and a 15-second web snapshot GET
+deadline with read-only retry. Reproduced the old permanent blank screen by
+blocking LaunchSplash. 32 focused automated tests and 12 local Chromium
+scenarios passed; frontend build passed; 59 unrelated TypeScript errors remain.
+See `STARTUP_RELIABILITY_HANDOFF.md`. Update the same deployed app, never a copy.
+Backend process was kept running; no provider warm-up/retraining. iOS remains
+paused; the repaired SPY projection remains unavailable pending validation.
+
 Latest authorized combined request (2026-09-30): improve the sparse crypto
 screen and missing-data quality, delegate stock lookup, and audit/fix the
 misleading SPY projection. Implemented in one existing-app release:
