@@ -99,11 +99,11 @@ test("engine lock prevents overlap; discovery validates failures and recovers im
       score:50,hardKill:false,marketCap:100000,priceUsd:1,pairCreatedAt:at-3600000,rcRisks:[],hist:[],
       socialAttemptAt:null,securityAttemptAt:null};
     engine.tracked.set("solana:pool",candidate);
-    let pumpCalls=0,mintCalls=0;
+    let pumpCalls=0,mintCalls=0,bskyCalls=0;
     globalThis.fetch=async(input,init)=>{
       const url=String(input);
       if(url.includes("pump.fun")){pumpCalls++;return new Response("denied",{status:403});}
-      if(url.includes("bsky"))return new Response(JSON.stringify({posts:[]}));
+      if(url.includes("bsky")){bskyCalls++;return new Response(JSON.stringify({posts:[]}));}
       if(url.includes("rugcheck"))return new Response(JSON.stringify({risks:[]}));
       const body=JSON.parse(String(init?.body));assert.equal(body.method,"getMultipleAccounts");mintCalls++;
       return new Response(JSON.stringify({result:{context:{slot:1},value:[{owner:"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
@@ -112,12 +112,30 @@ test("engine lock prevents overlap; discovery validates failures and recovers im
     await engine.runEngine("security",45000,engine.securityTick);
     assert.equal(mintCalls,1);assert.equal(candidate.securityEvidence.state,"CHECKED");
     candidate.score=50;candidate.hardKill=false;
+    const otherPool={...candidate,pairAddress:"pool-two",hist:[]};
+    engine.tracked.set("solana:pool-two",otherPool);
     await engine.runEngine("social",90000,engine.socialTick);
     assert.equal(candidate.socialCoverage,"partial");assert.equal(candidate.pumpReplies,null);
     assert.equal(candidate.socialSources.pumpfun.state,"blocked");assert.equal(pumpCalls,1);
+    assert.equal(bskyCalls,2);assert.equal(candidate.socialDetail.contract.mentions1h,0);
+    assert.equal(otherPool.socialDetail,candidate.socialDetail);
     candidate.score=50;candidate.hardKill=false;candidate.socialAttemptAt=null;
     await engine.runEngine("social",90000,engine.socialTick);
     assert.equal(pumpCalls,1);assert.equal(candidate.socialSources.pumpfun.state,"cooldown");
     assert.notEqual(engine.getCryptoHealth().engines.find((h:any)=>h.name==="social").status,"ok");
+    // Ticker-only chatter must never become contract evidence or social points.
+    candidate.score=50;candidate.hardKill=false;candidate.socialAttemptAt=null;
+    globalThis.fetch=async input=>{
+      bskyCalls++;const query=new URL(String(input)).searchParams.get("q");
+      return new Response(JSON.stringify({posts:query===token?[]:[{
+        uri:"at://did:plc:fixture/app.bsky.feed.post/key",
+        author:{did:"did:plc:fixture"},record:{text:"$TEST",createdAt:new Date(Date.now()-1000).toISOString()},
+      }]}));
+    };
+    await engine.runEngine("social",90000,engine.socialTick);
+    assert.equal(candidate.socialDetail.ticker.mentions1h,1);
+    assert.equal(candidate.socialDetail.contract.mentions1h,0);
+    assert.equal(candidate.socialScore,0);
+    assert.equal(candidate.scoreBreakdown.contributions.social,null);
   } finally {globalThis.fetch=old;}
 });

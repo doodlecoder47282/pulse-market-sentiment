@@ -36,8 +36,10 @@ import { parseMintEvidence, rawTop10AccountPct, type MintEvidence } from "../sha
 import { getCryptoNews } from "./cryptoContext";
 import { summarizeSocialPosts } from "../shared/cryptoDesk";
 import type { DeskSource } from "../shared/cryptoDesk";
-import { selectMintBatch, unwrapMintBatch, readBlueskySample, ProviderBackoff, parsePumpCoin,
+import { selectMintBatch, unwrapMintBatch, ProviderBackoff, parsePumpCoin,
   createGradeObserver, type CollectorCheck } from "./cryptoCollectors";
+import { readSocialTokenEvidence, selectSocialBatch } from "./cryptoSocial";
+import type { SocialTokenEvidence } from "../shared/cryptoSocial";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -102,6 +104,7 @@ export interface Candidate {
   socialAttemptAt: number | null;
   socialCoverage: "pending" | "ok" | "partial" | "unavailable" | "stale";
   socialEvidence: ReturnType<typeof summarizeSocialPosts> | null;
+  socialDetail?: SocialTokenEvidence | null;
   prevPumpReplies: { count: number; t: number } | null;
   socialSources?: Record<string, CollectorCheck>;
 
@@ -292,6 +295,7 @@ function persistSignal(c: Candidate): void {
         socialScore: c.socialScore, bskyMentions1h: c.bskyMentions1h,
         socialCoverage: c.socialCoverage, socialCheckedAt: c.socialCheckedAt,
         socialEvidence: c.socialEvidence,
+        socialDetail: c.socialDetail,
         securitySources: c.securitySources, socialSources: c.socialSources,
         pumpReplyPerHr: c.pumpReplyPerHr, pumpLive: c.pumpLive,
       }),
@@ -683,15 +687,14 @@ async function securityTick(): Promise<void> {
   updateCoverage();
 }
 
-// ─── 2c. SOCIAL VELOCITY — bluesky + pump.fun (keyless, verified live) ───
+// ─── 2c. SOCIAL EVIDENCE — bounded public-source samples ──────────────
 //
 // Public-source coverage is probed at runtime, never assumed from old tests.
 // Bounded sampled sources, not validated early-warning predictors:
-//   - Bluesky public search: bounded last-hour pages with exact lexical filtering.
+//   - Bluesky public search: separate contract and ticker-only last-hour samples.
 //   - pump.fun /coins/{mint} — reply_count (velocity between polls),
 //     livestream flag, twitter/telegram/website links.
-// Reddit blocks datacenter IPs outright — excluded, disclosed.
-// X/twitter is paywalled — excluded, disclosed.
+// No new Reddit/X account access is configured; neither is polled here.
 
 const SOCIAL_MS = 90_000;
 const PUMP = "https://frontend-api-v3.pump.fun";
@@ -699,15 +702,11 @@ const pumpBackoff = new ProviderBackoff();
 const blueskyBackoff = new ProviderBackoff();
 
 async function socialTick(): Promise<void> {
-  // Four eligible research candidates per tick. ENTER remains disabled.
-  // At most two Bluesky pages per candidate; denied providers share backoff.
+  // Four unique mints per tick, priority plus fair coverage. ENTER stays disabled.
+  // Two requests per mint maximum; one contract query plus optional ticker query.
   const now = Date.now();
-  const due = [...tracked.values()]
-    .filter((c) => c.lastRefreshAt != null && (c.marketCap ?? 0) <= MCAP_CEILING * 2)
-    .filter((c) => !c.hardKill && c.liquidityUsd != null && (c.score ?? 0) >= 40)
-    .filter((c) => c.socialAttemptAt == null || now - c.socialAttemptAt > 5 * 60_000)
-    .sort((a, b) => (a.socialAttemptAt ?? 0) - (b.socialAttemptAt ?? 0))
-    .slice(0, 4);
+  const deadline = now + 25_000;
+  const due = selectSocialBatch([...tracked.values()], now, MCAP_CEILING * 2);
   if (due.length === 0) {
     hb("social", SOCIAL_MS).idle = true;
     const stale = [...tracked.values()].filter(c => c.socialAttemptAt != null &&
@@ -720,32 +719,48 @@ async function socialTick(): Promise<void> {
   }
 
   let okCount = 0;
+  let attempted = 0;
   let lastErr: any = null;
   for (const c of due) {
+    if (Date.now() >= deadline) break;
     try {
+      attempted++;
       c.socialAttemptAt = now;
       // Do not carry a previous successful count across a failed refresh.
       c.bskyMentions1h = null; c.bskyMentions10m = null;
       c.socialEvidence = null;
+      c.socialDetail = null; c.socialScore = null; c.socialCheckedAt = null; c.socialCoverage = "unavailable";
       c.pumpReplies = null; c.pumpReplyPerHr = null;
       c.pumpLive = false; c.hasSocialLinks = null;
       c.socialSources = {};
       let successes = 0;
       let eligible = 0;
-      // ── bluesky mentions: "$SYMBOL" (cashtag form degens actually post) ──
+      // ── exact-contract evidence; ticker-only mentions are never scored ──
       eligible++;
       const bskyCooldown = blueskyBackoff.snapshot(now);
       if (bskyCooldown) c.socialSources.bluesky = bskyCooldown;
       else {
         try {
-          c.socialEvidence = await readBlueskySample(c.symbol, c.tokenAddress, now, getJson);
+          c.socialDetail = await readSocialTokenEvidence(c.symbol, c.tokenAddress, now, async url => {
+            const pause = blueskyBackoff.snapshot(Date.now());
+            if (pause) throw new Error("Provider cooldown");
+            if (Date.now() >= deadline) throw new Error("Social batch deadline");
+            try {
+              const data = await getJson(url, Math.min(8000, deadline - Date.now()));
+              blueskyBackoff.success(); return data;
+            } catch (e) { blueskyBackoff.failure(e, Date.now()); throw e; }
+          });
+          c.socialEvidence = c.socialDetail.contract;
           c.bskyMentions1h = c.socialEvidence.mentions1h;
           c.bskyMentions10m = c.socialEvidence.mentions10m;
-          c.socialSources.bluesky = { state: c.socialEvidence.capped || !c.socialEvidence.timestampsComplete ? "partial" : "ok",
-            checkedAt: Date.now(), reason: "Bounded one-hour search; up to two pages. Not exhaustive or verified organic attention." };
-          blueskyBackoff.success();
+          const pause = blueskyBackoff.snapshot(Date.now());
+          c.socialSources.bluesky = { state: c.socialDetail.queryGap || c.socialDetail.ticker?.capped ||
+            c.socialDetail.ticker?.timestampsComplete === false || c.socialEvidence.capped || !c.socialEvidence.timestampsComplete ? "partial" : "ok",
+            checkedAt: Date.now(), retryAt: pause?.retryAt,
+            reason: "Exact-contract sample; ticker-only chatter kept separate. Two bounded one-hour queries, not exhaustive or organic-attention proof." +
+              (pause ? ` ${pause.reason}` : "") };
           successes++;
-        } catch (e) { c.socialSources.bluesky = blueskyBackoff.failure(e, Date.now()); }
+        } catch (e) { c.socialSources.bluesky = blueskyBackoff.snapshot(Date.now()) ?? blueskyBackoff.failure(e, Date.now()); }
       }
       providerChecks.set("bluesky", c.socialSources.bluesky);
 
@@ -756,7 +771,8 @@ async function socialTick(): Promise<void> {
         if (pumpCooldown) c.socialSources.pumpfun = pumpCooldown;
         else {
         try {
-          const coin = parsePumpCoin(await getJson(`${PUMP}/coins/${c.tokenAddress}`), c.tokenAddress);
+          if (Date.now() >= deadline) throw new Error("Social batch deadline");
+          const coin = parsePumpCoin(await getJson(`${PUMP}/coins/${c.tokenAddress}`, Math.min(8000, deadline - Date.now())), c.tokenAddress);
           const replies = coin.replies;
             if (c.prevPumpReplies && now > c.prevPumpReplies.t) {
               const hrs = (now - c.prevPumpReplies.t) / 3600_000;
@@ -789,20 +805,32 @@ async function socialTick(): Promise<void> {
       c.socialScore = successes > 0 ? Math.round(Math.min(100, s)) : null;
       c.socialCheckedAt = successes > 0 ? now : null;
       c.socialCoverage = successes === 0 ? "unavailable" : successes === eligible ? "ok" : "partial";
-      if (c.socialEvidence?.capped || c.socialEvidence?.timestampsComplete === false) c.socialCoverage = "partial";
+      if (c.socialDetail?.queryGap || c.socialSources.bluesky.state === "partial") c.socialCoverage = "partial";
       if (c.socialCoverage!=="ok") hb("social",SOCIAL_MS).degraded=true;
       if (successes > 0) okCount++;
       else lastErr = new Error("no usable social source response");
       scoreCandidate(c);
       persistSignal(c);
+      // Social identity is mint-level, not pool-level. Share the explicit query
+      // label too, rather than counting requests/posts once per liquidity pool.
+      for (const other of tracked.values()) if (other !== c && other.tokenAddress === c.tokenAddress) {
+        for (const key of ["socialDetail", "socialEvidence", "socialScore", "socialCoverage", "socialCheckedAt",
+          "socialAttemptAt", "socialSources", "bskyMentions1h", "bskyMentions10m", "pumpReplies",
+          "pumpReplyPerHr", "pumpLive", "hasSocialLinks", "prevPumpReplies"] as const) {
+          (other as any)[key] = c[key];
+        }
+        scoreCandidate(other);
+      }
     } catch (e: any) {
       lastErr = e;
     }
   }
   const gaps = due.filter(c => c.socialCoverage !== "ok");
-  hb("social", SOCIAL_MS).coverage = { attempted: due.length, usable: okCount, pending: gaps.length,
+  if (attempted < due.length) hb("social", SOCIAL_MS).degraded = true;
+  hb("social", SOCIAL_MS).coverage = { attempted, usable: okCount, pending: gaps.length,
     checkedAt: Date.now(), issues: [...new Set(gaps.flatMap(c => Object.values(c.socialSources ?? {})
-      .filter(s => !["ok", "not_applicable"].includes(s.state)).map(s => s.reason)))].slice(0, 3) };
+      .filter(s => !["ok", "not_applicable"].includes(s.state)).map(s => s.reason))
+      .concat(attempted < due.length ? ["Batch deadline reached; remaining mints stay eligible for the next fair pass."] : []))].slice(0, 3) };
   if (okCount === 0 && lastErr) {
     throw new Error(`social sources failing: ${String(lastErr?.message ?? lastErr).slice(0, 100)}`);
   }
@@ -1092,8 +1120,9 @@ export function getCryptoSourceRegister(): DeskSource[] {
       "8 unique mints per 45s in one RPC batch; priority plus oldest-first", "Original SPL plus a reviewed immutable Token-2022 metadata subset. Transfer-changing, mutable or unknown extensions fail closed. Raw accounts include unverified pools."],
     ["rugcheck", "Rugcheck", "security", "Cached risk flags", "https://api.rugcheck.xyz",
       "Best effort per mint", "Third-party cached summary is supplementary, not independent complete safety verification. Coverage can differ from the RPC routine."],
-    ["bluesky", "Bluesky", "social", "Sampled cashtag attention", "https://api.bsky.app",
-      "4 priority candidates per 90s; two pages of up to 100 posts", "One-hour search with lexical filtering. Unique authors and duplicate text remain a bounded sample, not exhaustive social coverage or verified demand."],
+    ["bluesky", "Bluesky", "social", "Contract mentions + separate ticker-only context", "https://api.bsky.app",
+      "4 unique mints per 90s; priority + oldest-first; 2 requests/mint; 25s batch deadline",
+      "One-hour sample: up to 100 returned posts per query. Exact contract text/known token links only for scoring; ticker-only posts never confirm a token. Zero matches is not zero activity. No complete social-market or organic-demand claim."],
     ["pumpfun", "pump.fun", "social", "Mint-specific reply counter", PUMP,
       "Bounded collector; 30min cooldown on denied public access", "No access-control or transport bypass. Missing reply counts remain unknown; reply volume is not verified buyers or organic demand."],
   ] as const;

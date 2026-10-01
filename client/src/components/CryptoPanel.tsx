@@ -9,6 +9,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { MEME_SCORE_BUDGET, type MemeScoreBreakdown } from "@shared/memeScoring";
+import { socialEvidenceFresh, type SocialTokenEvidence } from "@shared/cryptoSocial";
 import {
   Flame, Radar, Newspaper, Activity, ShieldAlert, Rocket, Skull,
   Eye, XCircle, Zap, HeartPulse, TrendingUp, Clock,
@@ -40,6 +41,7 @@ export interface Candidate {
   pumpLive: boolean; socialScore: number | null; socialCheckedAt: number | null;
   socialCoverage?: "pending" | "ok" | "partial" | "unavailable" | "stale";
   socialSources?: Record<string, { state: string; reason: string; checkedAt: number; retryAt?: number }>;
+  socialDetail?: SocialTokenEvidence | null;
   socialEvidence?: { sampledPosts: number; returnedPosts?: number; uniqueAuthors1h: number; repeatedTextShare: number | null; capped: boolean; identity: string } | null;
   volAccel: number | null; netBuyRatio5m: number | null;
   fomoScore: number | null; memeScore: number | null;
@@ -303,10 +305,10 @@ export function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent:
     : "border-border/50 hover:border-border";
   const mcapPct = c.marketCap != null ? Math.min(100, (c.marketCap / 1_000_000) * 100) : 0;
   return (
-    <button
-      onClick={toggle}
-      aria-expanded={isOpen}
+    <article
       className={`group min-w-0 w-full rounded-xl border ${border} bg-card/60 p-3 text-left transition-all [overflow-wrap:anywhere]`}
+    >
+    <button type="button" onClick={toggle} aria-expanded={isOpen} className="w-full text-left"
       data-testid={`crypto-card-${c.pairAddress.slice(0, 8)}`}
     >
       <div className="flex items-center gap-2.5">
@@ -367,6 +369,7 @@ export function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent:
         <Stat label="buys 5m" value={c.netBuyRatio5m != null ? `${Math.round(c.netBuyRatio5m * 100)}%` : "—"} hot={(c.netBuyRatio5m ?? 0) >= 0.65} />
       </div>
 
+      </button>
       {/* expanded: reasons + risk + rug flags */}
       {isOpen && (
         <div className="mt-3 space-y-2 border-t border-border/40 pt-2.5">
@@ -436,13 +439,14 @@ export function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent:
               </>
             )}
           </div>
-          {c.socialCheckedAt != null && (
+          {c.socialDetail && <SocialEvidence detail={c.socialDetail} id={c.pairAddress} />}
+          {!c.socialDetail && c.socialCheckedAt != null && Date.now() - c.socialCheckedAt <= 600000 && (
             <div className="flex flex-wrap items-center gap-1.5 text-[9px] text-muted-foreground">
               <span>social {c.socialCoverage ?? "unknown"} · bsky {c.bskyMentions1h ?? "unavailable"} mentions/1h ({c.bskyMentions10m ?? "unavailable"} last 10m)</span>
               {c.pumpReplies != null && <span>· pump.fun {c.pumpReplies} replies{c.pumpReplyPerHr != null ? ` (${c.pumpReplyPerHr >= 0 ? "+" : ""}${c.pumpReplyPerHr}/hr)` : ""}</span>}
             </div>
           )}
-          {c.socialEvidence && <p className="text-xs text-muted-foreground">{c.socialEvidence.uniqueAuthors1h} unique sampled authors / {c.socialEvidence.sampledPosts} matched posts
+          {!c.socialDetail && c.socialEvidence && c.socialCheckedAt != null && Date.now() - c.socialCheckedAt <= 600000 && <p className="text-xs text-muted-foreground">{c.socialEvidence.uniqueAuthors1h} unique sampled authors / {c.socialEvidence.sampledPosts} matched posts
             {c.socialEvidence.returnedPosts != null ? ` (${c.socialEvidence.returnedPosts} returned before filtering)` : ""}.
             {c.socialEvidence.capped ? " Sample cap reached; no complete-coverage claim." : ""} {c.socialEvidence.identity}. Repeated text {c.socialEvidence.repeatedTextShare == null ? "unknown" : `${(c.socialEvidence.repeatedTextShare * 100).toFixed(0)}%`}.</p>}
           {c.socialSources && <div className="space-y-2 text-xs text-muted-foreground" data-testid={`crypto-social-sources-${c.pairAddress}`}>
@@ -456,8 +460,39 @@ export function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent:
           </p>
         </div>
       )}
-    </button>
+    </article>
   );
+}
+
+function SocialEvidence({ detail: e, id }: { detail: SocialTokenEvidence; id: string }) {
+  if (!socialEvidenceFresh(e, Date.now())) return <p className="text-xs text-muted-foreground" data-testid={`crypto-social-detail-${id}`}>
+    Social sample expired or incompatible. Counts and pace withdrawn until a new observation arrives.
+  </p>;
+  const partial = e.contract.capped || !e.contract.timestampsComplete;
+  return <section className="space-y-2 rounded-md border border-border/50 p-3 text-xs leading-relaxed"
+    data-testid={`crypto-social-detail-${id}`}>
+    <h4 className="font-semibold text-foreground">Social evidence, not a trade signal</h4>
+    <p>Bluesky · sampled {new Date(e.sampledAt).toLocaleTimeString()} · one-hour window</p>
+    <p><strong>Exact contract:</strong> {e.contract.mentions1h} matched posts · {e.contract.uniqueAuthors1h} unique sampled authors.
+      {" "}{e.contract.returnedPosts} returned before filtering.{partial ? " Incomplete sample: capped or invalid records." : ""}
+      {" "}Zero matches does not establish zero activity.</p>
+    <p><strong>Ticker-only:</strong> {e.ticker ? `${e.ticker.mentions1h} posts for ${e.ticker.query}; excluded from scoring.` : e.tickerReason}
+      {e.ticker?.capped ? " Ticker sample capped." : ""}</p>
+    <p data-testid={`crypto-social-pace-${id}`}><strong>Sample pace:</strong>{" "}
+      {e.pace.state === "sampled" ? `${e.pace.current10m} latest 10m vs ${e.pace.previous10m} preceding 10m (${e.pace.ratio}×). ` : "Insufficient evidence. "}
+      {e.pace.reason}</p>
+    <p>Repeated contract text: {e.contract.repeatedTextShare == null ? "unknown" : `${Math.round(e.contract.repeatedTextShare * 100)}%`}.
+      {" "}Authors are not verified buyers; repeated text is not a bot verdict. Post times are author-declared.</p>
+    {e.receipts.length > 0 && <div className="space-y-2" data-testid={`crypto-social-receipts-${id}`}>
+      {e.receipts.map((r, i) => <a className="block rounded border border-border/40 p-2 text-foreground underline underline-offset-4"
+        key={`${r.url}:${r.match}`} href={r.url} target="_blank" rel="noopener noreferrer"
+        data-testid={`crypto-social-post-${id}-${i}`}>
+        {r.match === "contract" ? "Contract mention" : "Unattributed ticker mention"} · {new Date(r.at).toLocaleTimeString()}
+        <span className="mt-1 block no-underline text-muted-foreground">{r.excerpt || "Open original post"}</span>
+      </a>)}
+    </div>}
+    <p>Only the sampled Bluesky results are shown. Missing pump.fun or X coverage is not replaced by these counts.</p>
+  </section>;
 }
 
 function Stat({ label, value, hot }: { label: string; value: string; hot?: boolean }) {

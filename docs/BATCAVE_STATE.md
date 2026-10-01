@@ -4,6 +4,19 @@ Updated: 2026-10-01. This is a compact handoff, not a live-health certificate.
 
 ## Current objective
 
+Latest follow-up (2026-10-01, morning ET): iterate the remaining social gap.
+Added exact-contract Bluesky search plus separate unscored ticker context,
+bounded source-post receipts, gated non-overlapping 10-minute activity
+comparisons, fair four-mint sampling, cross-pool reuse and a 25-second batch
+deadline. UI has social coverage and one-tap sample inspection; expired
+counts/pace withdraw. Version `social-attribution-2026-10-01.1`; research score
+`meme-research-2026-10-01.2`. Pump.fun denial still makes coverage partial;
+X stays disabled. Farcaster considered but not added without verified live
+node/index access. 77 tests and production build passed; 59 unrelated type
+diagnostics remain. Real-response and fixture mobile/desktop QA passed.
+See `CRYPTO_SOCIAL_ATTRIBUTION.md`; resume there without repeating audits.
+No new accounts, credentials, paid sources, AI loops or native/forecast work.
+
 Latest authorized repair (2026-10-01): crypto security, social and grading.
 Implemented bounded eight-mint RPC batches, reviewed immutable Token-2022
 metadata parsing, exact-match one-hour Bluesky samples, explicit pump.fun

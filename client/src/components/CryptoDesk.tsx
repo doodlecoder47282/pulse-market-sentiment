@@ -4,6 +4,7 @@ import { Activity, ArrowUpRight, Search, ShieldAlert, RefreshCw, Database } from
 import { TokenCard, SignalLog, type Candidate, type FeedResp, type HealthResp, type SignalsResp } from "./CryptoPanel";
 import { evidenceAge, type CryptoContext, type DeskHeadline, type LiquidQuote } from "@shared/cryptoDesk";
 import { MEME_SCORE_BUDGET } from "@shared/memeScoring";
+import { socialEvidenceFresh } from "@shared/cryptoSocial";
 
 type View = "overview" | "meme" | "liquid" | "news" | "evidence" | "outcomes";
 const views: [View, string][] = [["overview", "Overview"], ["meme", "Meme discovery"], ["liquid", "BTC / ETH"], ["news", "News & macro"], ["evidence", "Data coverage"], ["outcomes", "Outcomes"]];
@@ -68,6 +69,8 @@ export default function CryptoDesk() {
   const feed = feedExpired ? undefined : feedQ.data;
   const context = contextExpired ? undefined : contextQ.data;
   const all = feed?.candidates ?? [];
+  const socialMints = [...new Map(all.map(c => [c.tokenAddress, c])).values()];
+  const socialSampled = socialMints.filter(c => socialEvidenceFresh(c.socialDetail, clock));
   const counts = {
     fresh: all.filter(c => fresh(c.lastRefreshAt)).length,
     liquidity: all.filter(c => fresh(c.lastRefreshAt) && c.liquidityUsd != null).length,
@@ -187,6 +190,26 @@ export default function CryptoDesk() {
       </Box>
     </>}
     {view === "evidence" && <>
+      <Box title="Social coverage" note="A successful request is not complete market coverage." testId="crypto-social-summary">
+        <div className="crypto-info-grid">
+          <div><h4>Contract-attributed samples</h4><p>{feed ? <>{socialSampled.length} / {socialMints.length} tracked mints have a current Bluesky sample.
+            {" "}{socialSampled.filter(c => (c.socialDetail?.contract.mentions1h ?? 0) > 0).length} have exact-contract matches in that sample.</> :
+            "Current feed unavailable or loading; no coverage count is assumed."}</p></div>
+          <div><h4>Still outside our view</h4><p>X is disabled. Pump.fun may deny public access. Ticker chatter is separate context,
+            never a substitute for token attribution or proof of organic demand.</p></div>
+        </div>
+        <p className="crypto-footnote">Four unique mints per pass, with priority and oldest-first coverage. Open a sampled token in Meme discovery
+          for query counts, source posts and a guarded comparison of non-overlapping 10-minute windows. Unpolled mints remain unknown.</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {socialSampled.slice(0,4).map(c => <button key={c.tokenAddress} type="button"
+            className="rounded-md border border-border px-3 py-2 text-sm hover:bg-muted"
+            data-testid={`crypto-social-inspect-${c.pairAddress.slice(0,8)}`}
+            onClick={() => { setView("meme"); setFilter("ALL"); setQuery(c.tokenAddress);
+              setExpanded(c.pairAddress); window.scrollTo({top:0,behavior:"instant"}); }}>
+            Inspect {c.symbol} social sample
+          </button>)}
+        </div>
+      </Box>
       <Box title="Collectors & coverage" note="These are deterministic routines, not autonomous reasoning agents." testId="crypto-agent-strip">
         <div className="crypto-engine-grid">{healthQ.data?.engines.map(e => <div key={e.name} data-testid={`crypto-engine-${e.name}`}><div className="flex justify-between gap-2"><strong>{e.name}</strong><Status state={e.status} /></div><p>Last completed run {timestamp(e.lastOkAt)}</p><p>{e.runs} runs · {e.errors} errors</p>
           {e.coverage && <><p>{e.coverage.usable} usable · {e.coverage.pending} coverage gaps<br />{e.coverage.attempted} attempted in latest batch</p>
