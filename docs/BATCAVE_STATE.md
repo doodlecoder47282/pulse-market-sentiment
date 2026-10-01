@@ -19,6 +19,11 @@ contracts remain explicit gaps. See `CRYPTO_THREE_COMPONENT_REPAIR.md` for
 scope and verification; do not repeat the full audit. No new accounts,
 credentials, paid APIs, X reconnection, AI loops, ENTER promotion or native
 build. iOS stays paused and SPY forecasts remain disabled.
+Implementation commit `84bb9f6` deployed to the existing Batcave preview.
+Fresh opaque-iframe mobile touch QA passed startup, Intel listing, crypto
+coverage and outcomes; 390/1440px checks found no overflow or page errors.
+Final runtime grading batch: 17 complete observations, none missing. Social
+remains partially blocked by pump.fun, not fully repaired provider access.
 
 Latest follow-up (2026-09-30, 23:27 ET): Find listing did nothing for Intel.
 Reproduced zero requests for form submit inside the actual deployed opaque

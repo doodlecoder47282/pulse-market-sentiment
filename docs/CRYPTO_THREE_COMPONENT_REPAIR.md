@@ -63,7 +63,7 @@ probability or permission to trade).
 - Bluesky search parameters and its non-exhaustive cursor semantics are defined in the [official searchPosts lexicon](https://raw.githubusercontent.com/bluesky-social/atproto/main/lexicons/app/bsky/feed/searchPosts.json).
 - Public endpoint access can depend on the service implementation, as noted in the [Bluesky API documentation](https://docs.bsky.app/docs/api/app-bsky-feed-search-posts).
 
-## QA inventory and pending verification
+## QA inventory
 
 - Unit/regression: accepted/rejected extension sets, batch order/length/fairness,
   source denial/backoff, bounded pages and collisions, missing versus zero,
@@ -100,7 +100,20 @@ probability or permission to trade).
   overflow were observed. Screenshots were inspected.
 
 Final build and restart completed after idle-state and range-validation
-regressions passed. Deployed verification is the remaining release check.
+regressions passed. Implementation commit: `84bb9f6`. The existing Batcave
+preview was updated in place, with no independent copy or public publication.
+
+Deployed verification passed at 390px and 1440px in a fresh Chromium context.
+The mobile test used touch input and an opaque `sandbox="allow-scripts"`
+iframe, including startup acknowledgment, Intel listing search, crypto
+coverage and outcomes. No page exceptions or horizontal overflow occurred.
+The final runtime showed eight usable mint checks, then idle while no checks
+were due; the grader recorded 17 complete current observations, zero partial,
+zero unavailable and zero awaiting retry. Social correctly remained degraded
+for the public-access denial. Counts are point-in-time checks, not uptime or
+future completeness guarantees. Local QA receipt:
+`/home/user/workspace/crypto-three-deployed-qa.json`.
+
 Public RPC throttling, unsupported
 contracts, unavailable cap fields and unofficial-provider restrictions remain
 explicit; they cannot be solved by relabeling status.
