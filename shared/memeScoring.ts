@@ -3,7 +3,7 @@
  * flow 35 + risk-screen structure 25 + sampled social 10 = 70 possible points.
  * Name/narrative bonuses are withheld. This is not a probability or entry model.
  */
-export const MEME_SCORE_VERSION = "meme-research-2026-09-30.2";
+export const MEME_SCORE_VERSION = "meme-research-2026-10-01.1";
 export const MEME_SCORE_BUDGET = 70;
 export const MEME_MARKET_MAX_AGE_MS = 5 * 60_000;
 export const MEME_SOCIAL_MAX_AGE_MS = 10 * 60_000;

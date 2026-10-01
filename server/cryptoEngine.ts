@@ -36,6 +36,8 @@ import { parseMintEvidence, rawTop10AccountPct, type MintEvidence } from "../sha
 import { getCryptoNews } from "./cryptoContext";
 import { summarizeSocialPosts } from "../shared/cryptoDesk";
 import type { DeskSource } from "../shared/cryptoDesk";
+import { selectMintBatch, unwrapMintBatch, readBlueskySample, ProviderBackoff, parsePumpCoin,
+  createGradeObserver, type CollectorCheck } from "./cryptoCollectors";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -81,6 +83,7 @@ export interface Candidate {
   securityEvidence: MintEvidence | null;
   rawTop10Pct: number | null;            // token accounts including unverified pools, NOT owners
   holderCheckedAt: number | null;
+  securitySources?: Record<string, CollectorCheck>;
 
   // rugcheck.xyz cached report (keyless)
   rcRisks: string[];
@@ -100,6 +103,7 @@ export interface Candidate {
   socialCoverage: "pending" | "ok" | "partial" | "unavailable" | "stale";
   socialEvidence: ReturnType<typeof summarizeSocialPosts> | null;
   prevPumpReplies: { count: number; t: number } | null;
+  socialSources?: Record<string, CollectorCheck>;
 
   // rolling history for sustained-flow gating (whale-blink filter)
   hist: Array<{ t: number; volAccel: number | null; netBuyRatio5m: number | null; mcap: number | null }>;
@@ -139,10 +143,12 @@ interface EngineHealth {
   lastError: string | null;
   runs: number;
   errors: number;
-  status: "ok" | "late" | "stale" | "error" | "starting" | "degraded";
+  status: "ok" | "idle" | "late" | "stale" | "error" | "starting" | "degraded";
   running?: boolean;
   skippedOverlaps?: number;
   degraded?: boolean;
+  idle?: boolean;
+  coverage?: { attempted: number; usable: number; pending: number; checkedAt: number; issues: string[] };
 }
 
 // ─── Config ─────────────────────────────────────────────────────────────
@@ -181,6 +187,7 @@ const MEME_LEXICON: Array<{ re: RegExp; w: number; tag: string }> = [
 
 const tracked = new Map<string, Candidate>(); // key = chain:pairAddress
 const health = new Map<string, EngineHealth>();
+const providerChecks = new Map<string, CollectorCheck>();
 let narrativeHeat: Array<{ term: string; hits: number; sources: string[] }> = [];
 let narrativeUpdatedAt: number | null = null;
 let timers: NodeJS.Timeout[] = [];
@@ -200,13 +207,14 @@ async function runEngine(name: string, cadenceMs: number, fn: () => Promise<void
   if (h.running) { h.skippedOverlaps=(h.skippedOverlaps??0)+1; return; }
   h.running=true;
   h.degraded=false;
+  h.idle=false;
   h.lastRunAt = Date.now();
   h.runs++;
   try {
     await fn();
     h.lastOkAt = Date.now();
     h.lastError = null;
-    h.status = h.degraded ? "degraded" : "ok";
+    h.status = h.degraded ? "degraded" : h.idle ? "idle" : "ok";
   } catch (e: any) {
     h.errors++;
     h.lastError = String(e?.message ?? e).slice(0, 300);
@@ -284,6 +292,7 @@ function persistSignal(c: Candidate): void {
         socialScore: c.socialScore, bskyMentions1h: c.bskyMentions1h,
         socialCoverage: c.socialCoverage, socialCheckedAt: c.socialCheckedAt,
         socialEvidence: c.socialEvidence,
+        securitySources: c.securitySources, socialSources: c.socialSources,
         pumpReplyPerHr: c.pumpReplyPerHr, pumpLive: c.pumpLive,
       }),
       JSON.stringify(c.risk),
@@ -308,25 +317,6 @@ async function getJson(url: string, timeoutMs = 12_000): Promise<any> {
   } finally {
     clearTimeout(t);
   }
-}
-
-// pump.fun's CDN rejects node's TLS fingerprint (any UA -> 403) but allows
-// curl's. Verified live. So pump.fun calls shell out to curl; everything
-// else stays on native fetch.
-import { execFile } from "child_process";
-
-function curlJson(url: string, timeoutMs = 12_000): Promise<any> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      "curl",
-      ["--fail", "-s", "-m", String(Math.ceil(timeoutMs / 1000)), "-H", "accept: application/json", url],
-      { timeout: timeoutMs + 2000, maxBuffer: 4 * 1024 * 1024 },
-      (err, stdout) => {
-        if (err) return reject(err);
-        try { resolve(JSON.parse(stdout)); } catch (e) { reject(new Error(`non-json from ${url.slice(0, 60)}`)); }
-      },
-    );
-  });
 }
 
 // ─── 1. SCANNER — GeckoTerminal discovery ───────────────────────────────
@@ -547,11 +537,11 @@ async function momentumTick(): Promise<void> {
 
 // ─── 2b. SECURITY — public Solana RPC on-chain checks ───────────────────
 //
-// Supported original SPL mint/freeze fields only; not a complete safety audit.
+// Supported SPL plus immutable, self-referenced Token-2022 metadata subset.
 // Unsupported programs and incomplete fields remain unknown and block WATCH.
 // Largest-account concentration includes every returned account. It is NOT
 // beneficial-owner concentration and is not scored; vault identity is unverified.
-// Budget: two candidate attempts per 45s tick, refreshed after 15 minutes,
+// Budget: one batch of eight unique mints per 45s tick, refreshed after 15 minutes,
 // with indexed-method cooldown on throttling. Public RPC availability is variable.
 
 const SECURITY_MS = 45_000;
@@ -567,10 +557,15 @@ const RPC_INDEXED = ["https://api.mainnet-beta.solana.com"];
 let rpcId = 1;
 let indexedCooldownUntil = 0; // set after a 429 — back off 5 min
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const rpcBackoffs = new Map<string, ProviderBackoff>();
 
 async function solRpc(method: string, params: any[], urls: string[]): Promise<any> {
   let lastErr: any = null;
   for (const url of urls) {
+    const key = `${url}:${method}`;
+    const backoff = rpcBackoffs.get(key) ?? new ProviderBackoff();
+    rpcBackoffs.set(key, backoff);
+    if (!backoff.available(Date.now())) { lastErr = new Error("RPC method in retry cooldown"); continue; }
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), 12_000);
     try {
@@ -582,9 +577,11 @@ async function solRpc(method: string, params: any[], urls: string[]): Promise<an
       if (!r.ok) throw new Error(`rpc ${r.status} @ ${new URL(url).hostname}`);
       const j = await r.json();
       if (j.error) throw new Error(`rpc: ${j.error?.message ?? "unknown"}`);
+      backoff.success();
       return j.result;
     } catch (e: any) {
       lastErr = e;
+      backoff.failure(e, Date.now());
       await sleep(400);
       continue;
     } finally {
@@ -595,32 +592,50 @@ async function solRpc(method: string, params: any[], urls: string[]): Promise<an
 }
 
 async function securityTick(): Promise<void> {
-  // Fair, oldest-attempt-first rotation. All results expire, not only active authorities.
   const now = Date.now();
-  const due = [...tracked.values()]
-    .filter((c) => c.chain === "solana" && c.tokenAddress && (c.liquidityUsd ?? 0) >= LIQ_FLOOR_USD)
-    .filter((c) =>
-      c.securityAttemptAt == null || now - c.securityAttemptAt > 15 * 60_000)
-    .sort((a, b) => Number((b.score ?? 0) >= 40 && !b.hardKill) - Number((a.score ?? 0) >= 40 && !a.hardKill) ||
-      (a.securityAttemptAt ?? 0) - (b.securityAttemptAt ?? 0))
-    .slice(0, 2); // gentle pace — public RPCs throttle bursts hard
-  if (due.length === 0) return;
-
-  let okCount = 0;
-  let lastErr: any = null;
-  let concentrationDone = false; // max ONE indexed call per tick
-  for (const c of due) {
-    c.securityAttemptAt = Date.now();
+  const eligible = [...tracked.values()].filter(c => c.chain === "solana" &&
+    /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(c.tokenAddress) && (c.liquidityUsd ?? 0) >= LIQ_FLOOR_USD);
+  const due = selectMintBatch(eligible.filter(c => c.securityAttemptAt == null || now - c.securityAttemptAt > 15 * 60_000));
+  const updateCoverage = () => {
+    const incomplete = eligible.filter(c => c.securityEvidence?.state !== "CHECKED" ||
+      c.securityCheckedAt == null || now - c.securityCheckedAt > 30 * 60_000);
+    const h = hb("security", SECURITY_MS);
+    h.degraded = incomplete.length > 0;
+    h.coverage = { attempted: due.length, usable: eligible.length - incomplete.length, pending: incomplete.length,
+      checkedAt: Date.now(), issues: [...new Set(incomplete.map(c => c.securityEvidence?.reason ??
+        "Mint check pending or RPC unavailable"))].slice(0, 3) };
+  };
+  if (!due.length) { hb("security", SECURITY_MS).idle = true; updateCoverage(); return; }
+  // One ordered RPC response binds each result to its requested mint.
+  const mints = due.map(c => c.tokenAddress);
+  const affected = eligible.filter(c => mints.includes(c.tokenAddress));
+  for (const c of affected) c.securityAttemptAt = now;
+  let accounts;
+  try {
+    accounts = unwrapMintBatch(await solRpc("getMultipleAccounts",
+      [mints, { encoding: "jsonParsed", commitment: "confirmed" }], RPC_ACCOUNT), mints);
+    providerChecks.set("solana", { state: "ok", checkedAt: Date.now(), reason: "Ordered mint batch received; parser coverage is reported separately." });
+  } catch (e) {
+    const check: CollectorCheck = { state: "unavailable", checkedAt: Date.now(), reason: "Mint batch unavailable or malformed; authority fields withheld." };
+    providerChecks.set("solana", check);
+    for (const c of affected) {
+      c.securityEvidence = null; c.securityCheckedAt = null;
+      c.mintAuthorityActive = null; c.freezeAuthorityActive = null;
+      c.securitySources = { rpc: check }; scoreCandidate(c);
+    }
+    updateCoverage(); throw e;
+  }
+  let concentrationDone = false, rugcheckDone = false;
+  for (const {mint, account} of accounts) {
+    const c = due.find(c => c.tokenAddress === mint)!;
     c.top10Pct = null; // Never infer an AMM vault from account rank.
     c.rawTop10Pct = null; c.holderCheckedAt = null;
-    try {
-      // CRITICAL PATH: authorities + supply from one parsed account read
-      const acct = await solRpc("getAccountInfo", [c.tokenAddress, { encoding: "jsonParsed", commitment: "confirmed" }], RPC_ACCOUNT);
-      c.securityEvidence = parseMintEvidence(acct);
+      c.securityEvidence = parseMintEvidence(account, mint);
       c.mintAuthorityActive = c.securityEvidence.mintAuthorityActive;
       c.freezeAuthorityActive = c.securityEvidence.freezeAuthorityActive;
       const supply = c.securityEvidence.supplyRaw;
-      if (c.securityEvidence.state !== "CHECKED") hb("security", SECURITY_MS).degraded = true;
+      c.securitySources = { rpc: { state: c.securityEvidence.state === "CHECKED" ? "ok" : "partial",
+        checkedAt: Date.now(), reason: c.securityEvidence.reason } };
 
       // BEST-EFFORT: holder concentration (indexed — mainnet-beta only, gentle)
       if (!concentrationDone && supply != null && BigInt(supply) > 0n && Date.now() > indexedCooldownUntil) {
@@ -633,59 +648,59 @@ async function securityTick(): Promise<void> {
           c.holderCheckedAt = c.rawTop10Pct != null ? Date.now() : null;
         } catch (e: any) {
           if (/429/.test(String(e?.message))) indexedCooldownUntil = Date.now() + 5 * 60_000;
-          // non-fatal — authorities are the gate, concentration is a bonus flag
+          c.securitySources.holders = { state: "unavailable", checkedAt: Date.now(), reason: "Indexed account coverage unavailable; no owner-concentration conclusion." };
         }
       }
 
       // ── rugcheck.xyz cached summary (keyless, verified) — LP lock + named risks ──
-      if (c.rcCheckedAt == null) {
+      if (!rugcheckDone && (c.rcCheckedAt == null || now - c.rcCheckedAt > 15 * 60_000)) {
+        rugcheckDone = true;
         try {
           const rc = await getJson(`https://api.rugcheck.xyz/v1/tokens/${c.tokenAddress}/report/summary`);
-          const risks: any[] = rc?.risks ?? [];
+          if (!Array.isArray(rc?.risks)) throw new Error("Rugcheck risk list missing");
+          const risks: any[] = rc.risks;
           c.rcRisks = risks.map((r) => String(r?.name ?? r)).filter(Boolean).slice(0, 6);
           const lp = Number(rc?.lpLockedPct ?? NaN);
-          c.rcLpLockedPct = Number.isFinite(lp) ? Number(lp.toFixed(1)) : null;
+          c.rcLpLockedPct = Number.isFinite(lp) && lp >= 0 && lp <= 100 ? Number(lp.toFixed(1)) : null;
           c.rcCheckedAt = Date.now();
-        } catch { /* cached-only source — absence is not a verdict */ }
+          providerChecks.set("rugcheck", { state: "ok", checkedAt: Date.now(), reason: "Supplementary cached risk list received; not a complete safety audit." });
+        } catch {
+          c.rcRisks = []; c.rcLpLockedPct = null; c.rcCheckedAt = null;
+          providerChecks.set("rugcheck", { state: "unavailable", checkedAt: Date.now(), reason: "Supplementary risk report unavailable." });
+        }
       }
 
-      c.securityCheckedAt = Date.now();
-      okCount++;
-      scoreCandidate(c); // re-verdict with security facts
-      persistSignal(c);
-      await sleep(700);
-    } catch (e: any) {
-      lastErr = e;
-      c.mintAuthorityActive = null; c.freezeAuthorityActive = null;
-      c.securityCheckedAt = null; c.securityEvidence = null;
-      hb("security", SECURITY_MS).degraded = true;
-      scoreCandidate(c);
-    }
+      c.securityCheckedAt = providerChecks.get("solana")!.checkedAt;
+      // Pools of the same mint share the same mint-level evidence, not prices.
+      for (const other of affected.filter(p => p.tokenAddress === mint)) {
+        Object.assign(other, { securityEvidence: c.securityEvidence, securityCheckedAt: c.securityCheckedAt,
+          mintAuthorityActive: c.mintAuthorityActive, freezeAuthorityActive: c.freezeAuthorityActive,
+          securitySources: c.securitySources, rawTop10Pct: c.rawTop10Pct, holderCheckedAt: c.holderCheckedAt,
+          top10Pct: null, rcRisks: c.rcRisks, rcLpLockedPct: c.rcLpLockedPct, rcCheckedAt: c.rcCheckedAt });
+        scoreCandidate(other); persistSignal(other);
+      }
   }
-  if (okCount === 0 && lastErr) {
-    throw new Error(`solana rpc failing: ${String(lastErr?.message ?? lastErr).slice(0, 100)}`);
-  }
+  updateCoverage();
 }
 
 // ─── 2c. SOCIAL VELOCITY — bluesky + pump.fun (keyless, verified live) ───
 //
-// FOMO forms on social before it finishes printing on the chart. Free keyless
-// sources that actually work from this server (tested):
-//   - bluesky search via api.bsky.app (the "public." host CDN-blocks
-//     datacenter IPs; the main host serves keyless reads) — mention counts
-//     for "$SYMBOL" in the last 10m/60m.
+// Public-source coverage is probed at runtime, never assumed from old tests.
+// Bounded sampled sources, not validated early-warning predictors:
+//   - Bluesky public search: bounded last-hour pages with exact lexical filtering.
 //   - pump.fun /coins/{mint} — reply_count (velocity between polls),
 //     livestream flag, twitter/telegram/website links.
 // Reddit blocks datacenter IPs outright — excluded, disclosed.
 // X/twitter is paywalled — excluded, disclosed.
 
 const SOCIAL_MS = 90_000;
-const BSKY = "https://api.bsky.app/xrpc/app.bsky.feed.searchPosts";
 const PUMP = "https://frontend-api-v3.pump.fun";
+const pumpBackoff = new ProviderBackoff();
+const blueskyBackoff = new ProviderBackoff();
 
 async function socialTick(): Promise<void> {
-  // refresh the best candidates first (they gate ENTER); 4 per tick,
-  // stale after 5 min. ~3 bsky + ~3 pump calls per tick — trivial load.
+  // Four eligible research candidates per tick. ENTER remains disabled.
+  // At most two Bluesky pages per candidate; denied providers share backoff.
   const now = Date.now();
   const due = [...tracked.values()]
     .filter((c) => c.lastRefreshAt != null && (c.marketCap ?? 0) <= MCAP_CEILING * 2)
@@ -693,7 +708,16 @@ async function socialTick(): Promise<void> {
     .filter((c) => c.socialAttemptAt == null || now - c.socialAttemptAt > 5 * 60_000)
     .sort((a, b) => (a.socialAttemptAt ?? 0) - (b.socialAttemptAt ?? 0))
     .slice(0, 4);
-  if (due.length === 0) return;
+  if (due.length === 0) {
+    hb("social", SOCIAL_MS).idle = true;
+    const stale = [...tracked.values()].filter(c => c.socialAttemptAt != null &&
+      (c.socialCoverage !== "ok" || c.socialCheckedAt == null || now - c.socialCheckedAt > 600000));
+    hb("social", SOCIAL_MS).degraded = stale.length > 0;
+    hb("social", SOCIAL_MS).coverage = { attempted: 0, usable: 0, pending: stale.length, checkedAt: now,
+      issues: stale.length ? ["No currently due priority candidate; previous missing/stale coverage remains unresolved."]
+        : ["No eligible research candidate due; idle is not a provider-health confirmation."] };
+    return;
+  }
 
   let okCount = 0;
   let lastErr: any = null;
@@ -705,32 +729,35 @@ async function socialTick(): Promise<void> {
       c.socialEvidence = null;
       c.pumpReplies = null; c.pumpReplyPerHr = null;
       c.pumpLive = false; c.hasSocialLinks = null;
+      c.socialSources = {};
       let successes = 0;
       let eligible = 0;
       // ── bluesky mentions: "$SYMBOL" (cashtag form degens actually post) ──
-      const sym = c.symbol.replace(/[^A-Za-z0-9]/g, "");
-      if (sym.length >= 3) {
-        eligible++;
+      eligible++;
+      const bskyCooldown = blueskyBackoff.snapshot(now);
+      if (bskyCooldown) c.socialSources.bluesky = bskyCooldown;
+      else {
         try {
-          const q = encodeURIComponent(`$${sym}`);
-          const r = await getJson(`${BSKY}?q=${q}&sort=latest&limit=25`);
-          if (!Array.isArray(r?.posts)) throw new Error("invalid Bluesky response");
-          const posts: any[] = r.posts;
-          c.socialEvidence = summarizeSocialPosts(posts, now);
+          c.socialEvidence = await readBlueskySample(c.symbol, c.tokenAddress, now, getJson);
           c.bskyMentions1h = c.socialEvidence.mentions1h;
           c.bskyMentions10m = c.socialEvidence.mentions10m;
+          c.socialSources.bluesky = { state: c.socialEvidence.capped || !c.socialEvidence.timestampsComplete ? "partial" : "ok",
+            checkedAt: Date.now(), reason: "Bounded one-hour search; up to two pages. Not exhaustive or verified organic attention." };
+          blueskyBackoff.success();
           successes++;
-        } catch { /* bsky is enhancement — never blocks the tick */ }
+        } catch (e) { c.socialSources.bluesky = blueskyBackoff.failure(e, Date.now()); }
       }
+      providerChecks.set("bluesky", c.socialSources.bluesky);
 
       // ── pump.fun coin object (only for pump ecosystem tokens) ──
       if (c.tokenAddress.endsWith("pump") || c.pumpfunGraduate) {
         eligible++;
+        const pumpCooldown = pumpBackoff.snapshot(now);
+        if (pumpCooldown) c.socialSources.pumpfun = pumpCooldown;
+        else {
         try {
-          const coin = await curlJson(`${PUMP}/coins/${c.tokenAddress}`);
-          if (coin?.mint !== c.tokenAddress) throw new Error("invalid pump coin identity");
-          const replies = Number(coin?.reply_count ?? NaN);
-          if (Number.isFinite(replies)) {
+          const coin = parsePumpCoin(await getJson(`${PUMP}/coins/${c.tokenAddress}`), c.tokenAddress);
+          const replies = coin.replies;
             if (c.prevPumpReplies && now > c.prevPumpReplies.t) {
               const hrs = (now - c.prevPumpReplies.t) / 3600_000;
               if (hrs > 0.02 && hrs <= 1 / 6 && replies >= c.prevPumpReplies.count)
@@ -738,11 +765,19 @@ async function socialTick(): Promise<void> {
             }
             c.prevPumpReplies = { count: replies, t: now };
             c.pumpReplies = replies;
-          }
-          c.pumpLive = Boolean(coin?.is_currently_live);
-          c.hasSocialLinks = Boolean(coin?.twitter || coin?.telegram || coin?.website);
+          c.pumpLive = coin.live;
+          c.hasSocialLinks = coin.links;
+          c.socialSources.pumpfun = { state: "ok", checkedAt: Date.now(), reason: "Exact mint reply counter received; not unique buyers or organic demand." };
+          pumpBackoff.success();
           successes++;
-        } catch { /* unofficial API — graceful degradation is the contract */ }
+        } catch (e) {
+          c.prevPumpReplies = null;
+          c.socialSources.pumpfun = pumpBackoff.failure(e, Date.now());
+        }
+        }
+        providerChecks.set("pumpfun", c.socialSources.pumpfun);
+      } else {
+        c.socialSources.pumpfun = { state: "not_applicable", checkedAt: now, reason: "Not identified as a pump ecosystem mint." };
       }
 
       // ── social score 0-100 ──
@@ -764,6 +799,10 @@ async function socialTick(): Promise<void> {
       lastErr = e;
     }
   }
+  const gaps = due.filter(c => c.socialCoverage !== "ok");
+  hb("social", SOCIAL_MS).coverage = { attempted: due.length, usable: okCount, pending: gaps.length,
+    checkedAt: Date.now(), issues: [...new Set(gaps.flatMap(c => Object.values(c.socialSources ?? {})
+      .filter(s => !["ok", "not_applicable"].includes(s.state)).map(s => s.reason)))].slice(0, 3) };
   if (okCount === 0 && lastErr) {
     throw new Error(`social sources failing: ${String(lastErr?.message ?? lastErr).slice(0, 100)}`);
   }
@@ -788,6 +827,9 @@ function scoreMeme(nameIn: string, symbolIn: string): { score: number; tags: str
 
 function scoreCandidate(c: Candidate): void {
   const now = Date.now();
+  if (c.rcCheckedAt == null || c.rcCheckedAt > now || now - c.rcCheckedAt > 15 * 60_000) {
+    c.rcRisks = []; c.rcLpLockedPct = null;
+  }
   if (c.socialCheckedAt != null && now - c.socialCheckedAt > 10 * 60_000) {
     c.socialScore = null;
     c.socialCoverage = "stale";
@@ -928,21 +970,29 @@ async function narrativeTick(): Promise<void> {
 // ─── GRADER — audit outcomes (tracking mode) ────────────────────────────
 
 let lastGradeBatch: Awaited<ReturnType<typeof gradeCryptoBatch>> | null = null;
+const gradeFallbackBackoff = new ProviderBackoff();
 async function graderTick(): Promise<void> {
+  const observeExactPool = createGradeObserver(getJson, Date.now, gradeFallbackBackoff);
   lastGradeBatch=await gradeCryptoBatch(sqlite, async row => {
     const live=tracked.get(`${row.chain}:${row.pair_address}`);
-    if (live?.lastRefreshAt && Date.now()-live.lastRefreshAt<10*60_000 &&
+    if (live?.lastRefreshAt && live.tokenAddress === row.token_address &&
+        live.lastRefreshAt <= Date.now() && Date.now()-live.lastRefreshAt<10*60_000 &&
+        live.liquidityEvidence && live.liquidityEvidence.pairAddress === row.pair_address &&
+        live.liquidityEvidence.fetchedAt <= Date.now() && Date.now()-live.liquidityEvidence.fetchedAt<10*60_000 &&
         live.marketCap!=null && live.liquidityUsd!=null) {
-      return {mcap:live.marketCap,liq:live.liquidityUsd,observedAt:live.lastRefreshAt};
+      return {mcap:live.marketCap,liq:live.liquidityUsd,
+        observedAt:Math.min(live.lastRefreshAt,live.liquidityEvidence.fetchedAt),
+        source:`Tracked exact pool; DexScreener cap + ${live.liquidityEvidence.provider} reserve (conservative receipt time)`};
     }
-    const resp=await getJson(`${DS_BASE}/latest/dex/pairs/${encodeURIComponent(row.chain)}/${encodeURIComponent(row.pair_address)}`);
-    const p=(resp?.pairs??(resp?.pair?[resp.pair]:[])).find((p:any)=>p.chainId===row.chain && p.pairAddress===row.pair_address);
-    if (!p) throw Error("Pair absent from provider response");
-    return {mcap:finiteNonnegative(p.marketCap),liq:finiteNonnegative(p.liquidity?.usd),observedAt:Date.now()};
+    return observeExactPool(row);
   });
-  if (lastGradeBatch.unavailable>0) {
+  const pending = lastGradeBatch.unavailable + lastGradeBatch.partial + lastGradeBatch.deferred;
+  hb("grader", GRADER_MS).idle = lastGradeBatch.selected === 0;
+  hb("grader", GRADER_MS).coverage = { attempted: lastGradeBatch.selected, usable: lastGradeBatch.observed - lastGradeBatch.partial,
+    pending, checkedAt: Date.now(), issues: pending ? ["Exact-pool observations missing/partial or in retry backoff; no replacement pool or fabricated loss."] : [] };
+  if (pending>0) {
     hb("grader",GRADER_MS).degraded=true;
-    if (lastGradeBatch.observed===0 && lastGradeBatch.closed===0) throw Error("No usable observations in grading batch");
+    if (lastGradeBatch.unavailable>0 && lastGradeBatch.observed===0 && lastGradeBatch.closed===0) throw Error("No usable observations in grading batch");
   }
 }
 
@@ -957,7 +1007,7 @@ function watchdogTick(): void {
     if (h.lastError) h.status = "error";
     else if (sinceOk > h.cadenceMs * 5) h.status = "stale";
     else if (sinceOk > h.cadenceMs * 2.5) h.status = "late";
-    else h.status = h.degraded ? "degraded" : "ok";
+    else h.status = h.degraded ? "degraded" : h.idle ? "idle" : "ok";
   }
   const wd = hb("watchdog", WATCHDOG_MS);
   wd.lastRunAt = now; wd.lastOkAt = now; wd.runs++; wd.status = "ok";
@@ -1026,7 +1076,7 @@ export function getCryptoHealth() {
   const now=Date.now();
   const engines=[...health.values()].map(h=>({...h,status:h.lastRunAt==null?"starting":
     h.lastError?"error":now-(h.lastOkAt??0)>h.cadenceMs*5?"stale":
-    now-(h.lastOkAt??0)>h.cadenceMs*2.5?"late":h.degraded?"degraded":"ok"}));
+    now-(h.lastOkAt??0)>h.cadenceMs*2.5?"late":h.degraded?"degraded":h.idle?"idle":"ok"}));
   return { engines, trackedCount: tracked.size, asOf: now,
     version: CRYPTO_RELIABILITY_VERSION, scoreVersion: MEME_SCORE_VERSION, discoverySources, lastGradeBatch,
     observationNote:"Provider fetch samples, not exchange timestamps. No continuity guarantee while the host is suspended." };
@@ -1039,16 +1089,23 @@ export function getCryptoSourceRegister(): DeskSource[] {
     ["dexscreener", "DexScreener", "momentum", "Pool price / transactions / reported volume", DS_BASE,
       "75s collector", "Provider receipt time only. No unique-wallet, wash-trading or complete on-chain event claim. Paid boosts are promotion, not organic evidence."],
     ["solana", "Solana public RPC", "security", "Mint program / authorities / raw token accounts", RPC_ACCOUNT[0],
-      "2 mints per 45s; priority-qualified then oldest attempt", "Original SPL parser only. Token-2022/other programs fail closed. Raw account concentration includes pools; vaults and beneficial owners unverified."],
+      "8 unique mints per 45s in one RPC batch; priority plus oldest-first", "Original SPL plus a reviewed immutable Token-2022 metadata subset. Transfer-changing, mutable or unknown extensions fail closed. Raw accounts include unverified pools."],
     ["rugcheck", "Rugcheck", "security", "Cached risk flags", "https://api.rugcheck.xyz",
       "Best effort per mint", "Third-party cached summary is supplementary, not independent complete safety verification. Coverage can differ from the RPC routine."],
     ["bluesky", "Bluesky", "social", "Sampled cashtag attention", "https://api.bsky.app",
-      "4 priority candidates per 90s; max 25 returned posts", "Near-qualifying candidates only. Unique authors and duplicate text are sampled; symbol collisions and incomplete windows remain. Not verified contract attribution."],
+      "4 priority candidates per 90s; two pages of up to 100 posts", "One-hour search with lexical filtering. Unique authors and duplicate text remain a bounded sample, not exhaustive social coverage or verified demand."],
     ["pumpfun", "pump.fun", "social", "Mint-specific reply counter", PUMP,
-      "Shares bounded social collector", "Unofficial endpoint may fail or change. Reply deltas require comparable intervals; reply volume is not verified unique buyers or organic demand."],
+      "Bounded collector; 30min cooldown on denied public access", "No access-control or transport bypass. Missing reply counts remain unknown; reply volume is not verified buyers or organic demand."],
   ] as const;
   return [...definitions.map(([id, name, engine, role, url, cadence, limitation]): DeskSource => {
     const h = engines.find(e => e.name === engine);
+    const check = providerChecks.get(id);
+    if (["solana", "rugcheck", "bluesky", "pumpfun"].includes(id)) return {
+      id, name, role, url, cadence, limitation: `${limitation} ${check?.reason ?? "No provider attempt this process yet."}`,
+      state: !check ? "UNKNOWN" : nowTooOld(check.checkedAt, engine === "security" ? 1800000 : 600000) ? "STALE" :
+        ["ok", "partial"].includes(check.state) ? "PARTIAL" : "UNAVAILABLE",
+      fetchedAt: check && ["ok", "partial"].includes(check.state) ? check.checkedAt : null, observedAt: null,
+    };
     return { id, name, role, url, cadence, limitation,
       state: !h?.lastOkAt ? "UNKNOWN" : ["stale", "late"].includes(h.status) ? "STALE" :
         h.status === "error" ? "UNAVAILABLE" : "PARTIAL",
@@ -1056,6 +1113,8 @@ export function getCryptoSourceRegister(): DeskSource[] {
   }), { id: "x", name: "X", role: "Social coverage", url: "https://x.com", state: "DISABLED",
     fetchedAt: null, observedAt: null, cadence: "Not connected", limitation: "User dismissed connection. No unofficial scrape, cookies, account creation or complete-X claim." }];
 }
+
+function nowTooOld(t: number, ttl: number) { return t > Date.now() || Date.now() - t > ttl; }
 
 export function getCryptoSignals(): {
   signals: any[];

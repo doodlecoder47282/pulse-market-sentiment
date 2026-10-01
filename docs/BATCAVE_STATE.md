@@ -1,8 +1,24 @@
 # Batcave checkpoint
 
-Updated: 2026-09-30. This is a compact handoff, not a live-health certificate.
+Updated: 2026-10-01. This is a compact handoff, not a live-health certificate.
 
 ## Current objective
+
+Latest authorized repair (2026-10-01): crypto security, social and grading.
+Implemented bounded eight-mint RPC batches, reviewed immutable Token-2022
+metadata parsing, exact-match one-hour Bluesky samples, explicit pump.fun
+403/cooldown without bypass, exact-pool/mint grading fallback, durable retry
+and observation-gap/provenance fields, and coverage/idle UI disclosure.
+Reliability `2026-10-01.1`, parser `mint-fields-2026-10-01.1`, research score
+`meme-research-2026-10-01.1`. All 66 focused tests and production build pass;
+59 existing unrelated TypeScript diagnostics remain. Real checks accepted the
+reviewed Token-2022 subset and recovered reserve observations for four older
+missing pools. Existing liquidity-collapse labels are sampled thresholds,
+not proof of fraud or realized losses. Public-access denial and unsupported
+contracts remain explicit gaps. See `CRYPTO_THREE_COMPONENT_REPAIR.md` for
+scope and verification; do not repeat the full audit. No new accounts,
+credentials, paid APIs, X reconnection, AI loops, ENTER promotion or native
+build. iOS stays paused and SPY forecasts remain disabled.
 
 Latest follow-up (2026-09-30, 23:27 ET): Find listing did nothing for Intel.
 Reproduced zero requests for form submit inside the actual deployed opaque

@@ -39,7 +39,8 @@ export interface Candidate {
   pumpReplies: number | null; pumpReplyPerHr: number | null;
   pumpLive: boolean; socialScore: number | null; socialCheckedAt: number | null;
   socialCoverage?: "pending" | "ok" | "partial" | "unavailable" | "stale";
-  socialEvidence?: { sampledPosts: number; uniqueAuthors1h: number; repeatedTextShare: number | null; capped: boolean; identity: string } | null;
+  socialSources?: Record<string, { state: string; reason: string; checkedAt: number; retryAt?: number }>;
+  socialEvidence?: { sampledPosts: number; returnedPosts?: number; uniqueAuthors1h: number; repeatedTextShare: number | null; capped: boolean; identity: string } | null;
   volAccel: number | null; netBuyRatio5m: number | null;
   fomoScore: number | null; memeScore: number | null;
   scoreBreakdown?: MemeScoreBreakdown | null;
@@ -60,7 +61,9 @@ export interface FeedResp {
 }
 
 export interface HealthResp {
-  engines: Array<{ name: string; status: string; lastOkAt: number | null; runs: number; errors: number; lastError: string | null }>;
+  engines: Array<{ name: string; status: string; lastOkAt: number | null; runs: number; errors: number; lastError: string | null;
+    coverage?: { attempted: number; usable: number; pending: number; checkedAt: number; issues: string[] } }>;
+  lastGradeBatch?: { selected: number; observed: number; partial?: number; unavailable: number; deferred?: number; closed: number; unobservable: number } | null;
   trackedCount: number; asOf: number;
 }
 
@@ -439,8 +442,15 @@ export function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent:
               {c.pumpReplies != null && <span>· pump.fun {c.pumpReplies} replies{c.pumpReplyPerHr != null ? ` (${c.pumpReplyPerHr >= 0 ? "+" : ""}${c.pumpReplyPerHr}/hr)` : ""}</span>}
             </div>
           )}
-          {c.socialEvidence && <p className="text-xs text-muted-foreground">{c.socialEvidence.uniqueAuthors1h} unique sampled authors / {c.socialEvidence.sampledPosts} returned posts.
+          {c.socialEvidence && <p className="text-xs text-muted-foreground">{c.socialEvidence.uniqueAuthors1h} unique sampled authors / {c.socialEvidence.sampledPosts} matched posts
+            {c.socialEvidence.returnedPosts != null ? ` (${c.socialEvidence.returnedPosts} returned before filtering)` : ""}.
             {c.socialEvidence.capped ? " Sample cap reached; no complete-coverage claim." : ""} {c.socialEvidence.identity}. Repeated text {c.socialEvidence.repeatedTextShare == null ? "unknown" : `${(c.socialEvidence.repeatedTextShare * 100).toFixed(0)}%`}.</p>}
+          {c.socialSources && <div className="space-y-2 text-xs text-muted-foreground" data-testid={`crypto-social-sources-${c.pairAddress}`}>
+            {Object.entries(c.socialSources).map(([name, source]) => <p key={name}>
+              <strong>{name}: {source.state.replaceAll("_", " ")}</strong>. {source.reason}
+              {source.retryAt && <> Retry eligible {new Date(source.retryAt).toLocaleTimeString()}.</>}
+            </p>)}
+          </div>}
           <p className="text-[9px] text-muted-foreground">
             {c.dexId} · {c.chain} · via {c.discoveredVia} · pair {c.pairAddress.slice(0, 10)}…
           </p>

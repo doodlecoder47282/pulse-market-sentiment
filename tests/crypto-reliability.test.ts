@@ -54,8 +54,9 @@ test("covered final window resolves sampled doubled/dead outcomes",async()=>{
   const db=fixture(),now=Date.now(),detected=now-OUTCOME_WINDOW_MS-1000;
   for(const id of ["double","dead"]) {
     insert(db,id,detected);
-    db.prepare("UPDATE crypto_signals SET last_observed_at=?,observed_samples=3,peak_mcap=? WHERE id=?")
-      .run(now-60000,id==="double"?250000:110000,id);
+    db.prepare(`UPDATE crypto_signals SET last_observed_at=?,first_observed_at=?,
+      max_observation_gap_ms=600000,observed_samples=433,peak_mcap=? WHERE id=?`)
+      .run(now-60000,detected+1000,id==="double"?250000:110000,id);
   }
   await gradeCryptoBatch(db,async()=>{throw Error("not needed")},()=>now);
   assert.equal((db.prepare("SELECT outcome FROM crypto_signals WHERE id='double'").get() as any).outcome,"DOUBLED");
@@ -64,7 +65,7 @@ test("covered final window resolves sampled doubled/dead outcomes",async()=>{
 });
 test("engine lock prevents overlap; discovery validates failures and recovers immediately",async()=>{
   const contents=readFileSync("server/cryptoEngine.ts","utf8")+
-    "\nexport {runEngine,scannerTick,hb,tracked,scoreCandidate};";
+    "\nexport {runEngine,scannerTick,securityTick,socialTick,hb,tracked,scoreCandidate};";
   const output=await build({stdin:{contents,resolveDir:process.cwd()+"/server",loader:"ts"},bundle:true,
     platform:"node",format:"esm",write:false,plugins:[{name:"db-fixture",setup(b){
       b.onResolve({filter:/^\.\/storage$/},args=>({path:args.path,namespace:"fixture"}));
@@ -89,5 +90,34 @@ test("engine lock prevents overlap; discovery validates failures and recovers im
     assert.equal(engine.getCryptoHealth().engines.find((h:any)=>h.name==="scanner").status,"degraded");
     engine.tracked.set("old",{lastRefreshAt:Date.now()-600000,verdict:"ENTER",risk:{},score:90});
     assert.equal(engine.getCryptoFeed().candidates[0].verdict,"PASS");
+    engine.tracked.clear();
+    await engine.runEngine("social",90000,engine.socialTick);
+    assert.equal(engine.getCryptoHealth().engines.find((h:any)=>h.name==="social").status,"idle");
+    const at=Date.now(), token="3jcc99pP2ND2Rmv2gZYDBb2JiWRuB4d7H11Rhtenpump";
+    const candidate:any={chain:"solana",tokenAddress:token,pairAddress:"pool",symbol:"TEST",name:"Fixture",
+      lastRefreshAt:at,liquidityUsd:10000,liquidityEvidence:{provider:"DexScreener",fetchedAt:at,pairAddress:"pool"},
+      score:50,hardKill:false,marketCap:100000,priceUsd:1,pairCreatedAt:at-3600000,rcRisks:[],hist:[],
+      socialAttemptAt:null,securityAttemptAt:null};
+    engine.tracked.set("solana:pool",candidate);
+    let pumpCalls=0,mintCalls=0;
+    globalThis.fetch=async(input,init)=>{
+      const url=String(input);
+      if(url.includes("pump.fun")){pumpCalls++;return new Response("denied",{status:403});}
+      if(url.includes("bsky"))return new Response(JSON.stringify({posts:[]}));
+      if(url.includes("rugcheck"))return new Response(JSON.stringify({risks:[]}));
+      const body=JSON.parse(String(init?.body));assert.equal(body.method,"getMultipleAccounts");mintCalls++;
+      return new Response(JSON.stringify({result:{context:{slot:1},value:[{owner:"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        data:{parsed:{type:"mint",info:{isInitialized:true,decimals:6,supply:"0",mintAuthority:null,freezeAuthority:null}}}}]}}));
+    };
+    await engine.runEngine("security",45000,engine.securityTick);
+    assert.equal(mintCalls,1);assert.equal(candidate.securityEvidence.state,"CHECKED");
+    candidate.score=50;candidate.hardKill=false;
+    await engine.runEngine("social",90000,engine.socialTick);
+    assert.equal(candidate.socialCoverage,"partial");assert.equal(candidate.pumpReplies,null);
+    assert.equal(candidate.socialSources.pumpfun.state,"blocked");assert.equal(pumpCalls,1);
+    candidate.score=50;candidate.hardKill=false;candidate.socialAttemptAt=null;
+    await engine.runEngine("social",90000,engine.socialTick);
+    assert.equal(pumpCalls,1);assert.equal(candidate.socialSources.pumpfun.state,"cooldown");
+    assert.notEqual(engine.getCryptoHealth().engines.find((h:any)=>h.name==="social").status,"ok");
   } finally {globalThis.fetch=old;}
 });

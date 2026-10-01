@@ -108,7 +108,7 @@ export default function CryptoDesk() {
       {[
         ["Tracked pools", feed ? String(feed.trackedCount) : "—", "Bounded Solana discovery"],
         ["Market observations", feed ? `${counts.fresh} / ${all.length}` : "—", "Received within 5 minutes"],
-        ["Mint checks current", feed ? `${counts.authority} / ${all.length}` : "—", "Supported parser, within 30 min"],
+        ["Mint checks current", feed ? `${counts.authority} / ${all.length}` : "—", "Reviewed SPL / Token-2022 subset"],
         ["Research shortlist", feed ? String(counts.watch) : "—", `${counts.pass} passed over · ENTER disabled`],
       ].map(([label, value, note]) => <div className="crypto-kpi" key={label}><span>{label}</span><strong>{value}</strong><small>{note}</small></div>)}
     </div>
@@ -188,7 +188,11 @@ export default function CryptoDesk() {
     </>}
     {view === "evidence" && <>
       <Box title="Collectors & coverage" note="These are deterministic routines, not autonomous reasoning agents." testId="crypto-agent-strip">
-        <div className="crypto-engine-grid">{healthQ.data?.engines.map(e => <div key={e.name}><div className="flex justify-between gap-2"><strong>{e.name}</strong><Status state={e.status} /></div><p>Last successful run {timestamp(e.lastOkAt)}</p><p>{e.runs} runs · {e.errors} errors</p></div>)}</div>
+        <div className="crypto-engine-grid">{healthQ.data?.engines.map(e => <div key={e.name} data-testid={`crypto-engine-${e.name}`}><div className="flex justify-between gap-2"><strong>{e.name}</strong><Status state={e.status} /></div><p>Last completed run {timestamp(e.lastOkAt)}</p><p>{e.runs} runs · {e.errors} errors</p>
+          {e.coverage && <><p>{e.coverage.usable} usable · {e.coverage.pending} coverage gaps<br />{e.coverage.attempted} attempted in latest batch</p>
+            {e.coverage.issues.map(issue => <p key={issue} className="text-xs">{issue}</p>)}</>}
+          {e.lastError && <p className="crypto-error">{e.lastError}</p>}
+        </div>)}</div>
         {healthQ.isError && <p className="crypto-error">Collector health unavailable.</p>}
       </Box>
       <Box title="Source register" note="Publication time, observation time and fetch time are not interchangeable.">
@@ -202,6 +206,13 @@ export default function CryptoDesk() {
     </>}
     {view === "outcomes" && <Box title="Discovery outcomes" note="Market-cap milestones, not paper-trade P&L or realized returns.">
       <div className="crypto-safety-line"><ShieldAlert size={16} /><span>Unobservable records are not wins or losses. Legacy ENTER rows retain their original labels; new ENTER signals remain disabled.</span></div>
+      {healthQ.data?.lastGradeBatch && <p className="crypto-footnote" data-testid="crypto-grade-batch">
+        Latest grading batch: {healthQ.data.lastGradeBatch.observed} observations
+        {" · "}{healthQ.data.lastGradeBatch.partial ?? 0} partial
+        {" · "}{healthQ.data.lastGradeBatch.unavailable} unavailable
+        {" · "}{healthQ.data.lastGradeBatch.deferred ?? 0} awaiting retry.
+        {" "}Missing pools are never replaced by another pool. Historical rows without documented coverage cannot establish a full-window result.
+      </p>}
       {sigQ.isError ? <p className="crypto-error">Outcome ledger unavailable. No zero-loss claim can be made.</p> : <SignalLog sig={sigQ.data} loading={sigQ.isLoading} />}
     </Box>}
     <footer className="crypto-footnote">Read-only research · no wallet connection, signing or order routing · context {context?.version ?? "pending"}</footer>

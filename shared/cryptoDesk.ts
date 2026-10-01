@@ -117,7 +117,7 @@ export function normalizeDerivative(instrument: string, result: any, now: number
     state: valid ? age === "HEALTHY" && !complete ? "PARTIAL" : age : "UNAVAILABLE",
     url: `https://www.deribit.com/api/v2/public/ticker?instrument_name=${instrument}` };
 }
-export function summarizeSocialPosts(posts: any[], now: number) {
+export function summarizeSocialPosts(posts: any[], now: number, options: { limit?: number; hasMore?: boolean; identity?: string } = {}) {
   const seen = new Set<string>();
   const rows = posts.filter(p => {
     const id = String(p?.uri ?? "");
@@ -133,6 +133,8 @@ export function summarizeSocialPosts(posts: any[], now: number) {
   return { sampledPosts: posts.length, mentions1h: rows.length, mentions10m: recent.length,
     uniqueAuthors1h: authors.size, uniqueAuthors10m: recentAuthors.size,
     repeatedTextShare: rows.length ? 1 - texts.size / rows.length : null,
-    capped: posts.length >= 25, timestampsComplete: posts.every(p => Number.isFinite(Date.parse(p?.record?.createdAt ?? ""))),
-    identity: "cashtag sample, not verified mint attribution" };
+    capped: !!options.hasMore || posts.length >= (options.limit ?? 25),
+    timestampsComplete: posts.every(p => Number.isFinite(Date.parse(p?.record?.createdAt ?? "")) &&
+      Date.parse(p.record.createdAt) <= now),
+    identity: options.identity ?? "cashtag sample, not verified mint attribution" };
 }
