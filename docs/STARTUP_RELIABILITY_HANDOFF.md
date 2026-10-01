@@ -64,6 +64,11 @@ network/device condition on the user's phone.
   stalled stylesheet with successful reload recovery.
 - Visual review passed for 390px recovery states/mobile terminal and 1440px
   desktop terminal. No horizontal overflow in normal tested layouts.
+- Updated the same Batcave artifact after source commit `3657229`. Two further
+  deployed checks passed (14 browser scenarios total): desktop loaded the
+  real snapshot with HTTP 200, no page errors, and working Crypto navigation;
+  a 390px opaque sandbox iframe passed both gates and loaded real data.
+  Browser results are `/home/user/workspace/batcave-startup-browser-results.json`.
 - Full user-device reproduction remains unavailable. The original fault was
   reproduced by blocking the animation chunk, not observed on the user's device.
 
