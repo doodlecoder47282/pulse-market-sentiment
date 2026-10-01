@@ -4,6 +4,19 @@ Updated: 2026-10-01. This is a compact handoff, not a live-health certificate.
 
 ## Current objective
 
+Latest planning request (2026-10-01, 11:44 ET): full source-to-variable-to-AI
+and thumb-first GUI framework. Saved
+BATCAVE_EVIDENCE_AND_EXPERIENCE_FRAMEWORK.pplx.md as proposed version1.0,
+grounded in current release and official API/security/accessibility docs.
+Includes source admission/rights, typed point-in-time evidence, stock/crypto/
+meme calculation contracts, mandatory-risk AI selection, thumb/tap parity,
+security blockers, seven delivery stages, acceptance tests and target metrics.
+This is a plan, NOT implementation or approval to execute the entire roadmap.
+No app/provider/runtime changes, paid access, X reconnect or iOS work.
+Next proposed bounded package: source/evidence contracts and calendar/replay
+design; verify credential-exposure closure before sensitive expansion.
+Read this plan rather than repeating the provider research or model council.
+
 Latest authorized follow-up (2026-10-01): three-model council diagnosed
 Trade Brief adapter exclusions, then bounded enrichment and opt-in AI
 curation were implemented. Calculation `stock-brief-2026-10-01.2`; ATR14
