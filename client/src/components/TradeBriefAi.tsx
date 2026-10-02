@@ -17,7 +17,7 @@ export function TradeBriefAi({ brief, expired, offline }: { brief: TradeBrief; e
   }, []);
   useEffect(() => { if (expired || offline) controller.current?.abort(); }, [expired, offline]);
   async function curate() {
-    if (attempted || busy || expired || offline || native || tradeBriefExpired(brief)) return;
+    if (attempted || busy || expired || offline || native || brief.verdict === "INSUFFICIENT DATA" || tradeBriefExpired(brief)) return;
     setAttempted(true); setBusy(true); setError("");
     const abort = new AbortController();
     controller.current = abort;
@@ -40,17 +40,18 @@ export function TradeBriefAi({ brief, expired, offline }: { brief: TradeBrief; e
   return <section data-testid="trade-brief-ai" className="mt-4 rounded-lg border border-primary/25 bg-primary/5 p-4 text-sm leading-relaxed">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h4 className="font-semibold">Evidence-locked AI curator</h4>
-        <p className="mt-1 text-xs text-muted-foreground">Optional prioritization. No new facts, forecasts or trade levels.</p>
+        <h4 className="font-semibold">Prioritize this research</h4>
+        <p className="mt-1 text-xs text-muted-foreground">Uses verified findings only. It cannot fill missing data.</p>
       </div>
       <button data-testid="trade-brief-curate" type="button" onClick={() => void curate()}
-        disabled={attempted || busy || expired || offline || native || !brief.claims.length}
+        disabled={attempted || busy || expired || offline || native || brief.verdict === "INSUFFICIENT DATA" || !brief.claims.length}
         className="min-h-[44px] rounded-lg border border-primary/40 bg-background px-3 py-2 text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50">
         {busy ? "Curating…" : attempted ? "Snapshot attempted" : "Curate with AI"}
       </button>
     </div>
     <div role="status" aria-live="polite" data-testid="trade-brief-ai-status" className="mt-3 text-xs text-muted-foreground">
       {expired ? "Snapshot expired. AI output withdrawn."
+        : brief.verdict === "INSUFFICIENT DATA" ? "Not enough usable evidence for AI prioritization. No credits are spent on this data gap."
         : offline ? "Offline. AI output is not current."
         : native ? "AI curation is not enabled in the paused iPhone build."
         : busy ? "One bounded model request. The research verdict cannot be upgraded."

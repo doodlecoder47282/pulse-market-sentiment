@@ -5,7 +5,7 @@ import { ArchiveReceiptSchema } from "./evidenceLedger";
 import { EvidenceAcquisitionSchema, reviewEvidenceAcquisition } from "./evidenceAcquisition";
 
 /** This is a deliberately finite US-listed research universe, not a security master. */
-export const TRADE_BRIEF_VERSION = "stock-brief-2026-10-02.1";
+export const TRADE_BRIEF_VERSION = "stock-brief-2026-10-02.2";
 export const TRADE_BRIEF_CATEGORIES = [
   "quote", "levels", "news", "options", "volume", "earnings", "macro", "seasonality",
 ] as const;

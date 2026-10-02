@@ -4,6 +4,7 @@ import { transportRequest } from "@/lib/queryClient";
 import { TradeBriefAi } from "./TradeBriefAi";
 import { EvidenceHistory } from "./EvidenceHistory";
 import { EvidenceTiming } from "./EvidenceTiming";
+import { TradeBriefSummary } from "./TradeBriefSummary";
 import { getSourceContract } from "@shared/evidencePolicy";
 import {
   SearchResponseSchema, TradeBriefSchema, tradeBriefExpired,
@@ -70,6 +71,7 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [expired, setExpired] = useState(false);
+  const [editing, setEditing] = useState(true);
   const [offline, setOffline] = useState(() => typeof navigator !== "undefined" && !navigator.onLine);
   const generation = useRef(0);
   const resultRef = useRef<HTMLHeadingElement>(null);
@@ -161,9 +163,13 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
         throw new Error("The response does not match the selected listing and horizon. Nothing was displayed.");
       }
       setBrief(result);
+      setEditing(false);
       setExpired(tradeBriefExpired(result));
-      setNotice("Research snapshot ready. Expand evidence for input dates and coverage gaps.");
-      setTimeout(() => { if (generation.current === request) resultRef.current?.focus(); }, 0);
+      setNotice("");
+      setTimeout(() => { if (generation.current === request) {
+        resultRef.current?.scrollIntoView({ block: "start", behavior: "instant" });
+        resultRef.current?.focus({ preventScroll: true });
+      } }, 0);
     } catch (e) {
       if (generation.current === request) setError(e instanceof Error && !(e.name === "ZodError")
         ? e.message : "The research snapshot failed validation. No values were displayed.");
@@ -174,20 +180,29 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
     <div className="border-b border-border p-4 sm:p-5">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 id={`${id}-title`} className="flex items-center gap-2 text-lg font-semibold"><Search size={18} aria-hidden="true" />Trade Brief</h2>
-          <p className="mt-1 text-sm text-muted-foreground">One listing. One horizon. A traceable research snapshot.</p>
+          <h2 id={`${id}-title`} className="flex items-center gap-2 text-lg font-semibold"><Search size={18} aria-hidden="true" />Stock research</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Price context. Key drivers. Your next check.</p>
         </div>
         <span className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
-          <ShieldCheck size={14} aria-hidden="true" /> STOCK / ETF · Research only
+          <ShieldCheck size={14} aria-hidden="true" /> STOCKS / ETFs
         </span>
       </div>
+      {brief && !editing && <div className="flex flex-wrap items-center justify-between gap-2" data-testid="brief-compact-search">
+        <button data-testid="brief-edit-search" type="button" className={action} onClick={() => setEditing(true)}>
+          <Search size={16} aria-hidden="true" />{brief.instrument.symbol} · {horizon === "swing" ? "Swing" : "Intraday"}<span className="text-muted-foreground">Change</span>
+        </button>
+        <button data-testid="brief-quick-refresh" type="button" className={action} onClick={analyze} disabled={offline || busy === "brief"}>
+          <RefreshCw size={16} aria-hidden="true" />Refresh
+        </button>
+      </div>}
+      <div hidden={brief !== null && !editing}>
       {/* Embedded previews can disallow native form submission, including React
           onSubmit. Explicit click/Enter handlers also work without allow-forms. */}
-      <div role="search" aria-label="Find a stock or ETF" className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+      <div role="search" aria-label="Find a stock or ETF" className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2">
         <div className="min-w-0">
-          <label htmlFor={`${id}-search`} className="mb-1.5 block text-sm font-medium">Ticker or company / fund name</label>
+          <label htmlFor={`${id}-search`} className="mb-1.5 block text-sm font-medium">Ticker or company</label>
           <input data-testid="trade-brief-query" id={`${id}-search`} className={`${control} w-full`} type="search" value={query} maxLength={64}
-            placeholder="Try NVDA, Apple, Alphabet or SPY" autoComplete="off" spellCheck={false}
+            placeholder="e.g. SPY, NVDA, Intel" autoComplete="off" spellCheck={false}
             enterKeyHint="search" aria-describedby={`${id}-scope`} onChange={e => editQuery(e.target.value)}
             onKeyDown={e => {
               if (e.key === "Enter" && !e.nativeEvent.isComposing) {
@@ -196,15 +211,15 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
               }
             }} />
         </div>
-        <button data-testid="trade-brief-find" className={`${action} sm:self-end`} type="button" onClick={() => void search()} disabled={!query.trim() || busy === "search" || offline}>
-          <Search size={16} aria-hidden="true" />{busy === "search" ? "Finding…" : "Find listing"}
+        <button data-testid="trade-brief-find" aria-label="Find listing" className={`${action} self-end`} type="button" onClick={() => void search()} disabled={!query.trim() || busy === "search" || offline}>
+          <Search size={16} aria-hidden="true" /><span className="hidden sm:inline">{busy === "search" ? "Finding…" : "Search"}</span>
         </button>
       </div>
       <p data-testid="trade-brief-search-status" role="status" aria-live="polite" aria-atomic="true" className="mt-3 text-sm text-muted-foreground">
         {busy === "search" || (searched && !selected) ? notice : ""}
       </p>
       <p id={`${id}-scope`} className="mt-2 text-xs leading-relaxed text-muted-foreground">
-        Curated US listings, priced in USD. Every match requires confirmation. Other securities, crypto and ambiguous share classes are never silently substituted.
+        Selected US listings · USD · Confirm your match before analysis.
       </p>
 
       {matches.length > 0 && <div className="mt-4">
@@ -225,7 +240,7 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
 
       {selected && <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
         <div className="min-w-0 rounded-lg border border-border bg-muted/30 px-3 py-2">
-          <span className="block text-xs text-muted-foreground">Confirmed listing</span>
+          <span className="block text-xs text-muted-foreground">Selected instrument</span>
           <span className="block break-words text-sm font-medium">{selected ? `${selected.symbol} · ${selected.asset_class} · ${selected.name}` : "Choose a search result"}</span>
         </div>
         <div className="min-w-0">
@@ -235,7 +250,6 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
             <option value="swing">Swing</option>
             <option value="intraday">Intraday</option>
           </select>
-          <p className="mt-1 text-xs text-muted-foreground">{horizon === "swing" ? "Prior-week structure" : "Prior-session structure"}</p>
         </div>
         <button data-testid="trade-brief-analyze" className={`${action} border-primary/40 bg-primary/10`} type="button" disabled={!selected || busy === "brief" || offline} onClick={analyze}>
           {brief ? <RefreshCw size={16} aria-hidden="true" /> : <ChevronRight size={16} aria-hidden="true" />}
@@ -243,24 +257,36 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
         </button>
       </div>}
       <div aria-live="polite" aria-atomic="true" className="mt-3 text-sm text-muted-foreground">
-        {busy === "brief" ? "Checking bounded sources. No model call or account access is being requested."
+        {busy === "brief" ? "Checking price, history, events and source coverage…"
           : busy !== "search" && (!searched || selected) ? notice : ""}
       </div>
       {offline && <p role="alert" className="mt-2 text-sm text-amber-800 dark:text-amber-300">Offline. Previous snapshots are not live; reconnect and refresh manually.</p>}
       {error && <p data-testid="trade-brief-error" role="alert" className="mt-2 break-words text-sm text-destructive">{error}</p>}
       {!brief && !busy && !error && !notice && <p className="mt-3 text-sm text-muted-foreground">
-        Start with a listing. The brief will separate usable evidence from stale, missing and unsupported inputs. No orders or account sizing.
+        Search a company or ticker to see a concise, source-backed research brief.
       </p>}
+      </div>
     </div>
 
     {brief && <div className="min-w-0 p-4 sm:p-5">
-      {expired && <div role="alert" className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
-        <strong>Snapshot expired.</strong> Current-price and level cards are withdrawn. Historical evidence remains below; refresh before relying on it.
-      </div>}
+      <TradeBriefSummary brief={brief} expired={expired} resultRef={resultRef} />
+      <div className="brief-tools">
+        <details data-testid="brief-history-disclosure">
+          <summary data-testid="brief-history-toggle">Saved evidence</summary>
+          <EvidenceHistory key={`history-${brief.snapshot_id}`} brief={brief} offline={offline} />
+        </details>
+        <details data-testid="brief-ai-disclosure">
+          <summary data-testid="brief-ai-toggle">Optional AI prioritization</summary>
+          <TradeBriefAi key={brief.snapshot_id} brief={brief} expired={expired} offline={offline} />
+        </details>
+      </div>
+      <details className="brief-full-record" data-testid="brief-full-record">
+        <summary data-testid="brief-full-record-toggle">Sources, calculations &amp; full research record</summary>
+        <p className="mb-4 text-xs text-muted-foreground">Captured {timestamp(brief.created_at)}. {expired ? "Current checks expired; historical record only." : `Current checks expire ${timestamp(brief.expires_at)}.`}</p>
       <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
         <div className="min-w-0">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h3 ref={resultRef} tabIndex={-1} className="text-base font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+            <h3 className="text-base font-semibold">
               {brief.instrument.symbol} <span className="font-normal text-muted-foreground">/ {brief.horizon === "swing" ? "Swing research" : "Intraday research"}</span>
             </h3>
             <span className="rounded-md border border-amber-500/40 px-2 py-1 text-xs font-semibold text-amber-800 dark:text-amber-300">
@@ -333,8 +359,6 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
           <div className="mt-4 rounded-lg border border-border bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
             <strong className="text-foreground">Deterministic calculations · No automatic AI call</strong><br />{brief.explanation.detail}
           </div>
-          <TradeBriefAi key={brief.snapshot_id} brief={brief} expired={expired} offline={offline} />
-          <EvidenceHistory key={`history-${brief.snapshot_id}`} brief={brief} offline={offline} />
         </div>
 
         <aside aria-label="Coverage and evidence" className="min-w-0">
@@ -403,6 +427,7 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
           </details>
         </aside>
       </div>
+      </details>
     </div>}
   </section>;
 }

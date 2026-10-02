@@ -171,6 +171,20 @@ export function buildStockTradeBrief(
   }
 
   const history = readHistory(inputs.history.value, instrument.symbol, now);
+  // A live quote is required for CURRENT structure, not for displaying a real
+  // completed-session observation. Preserve source/date; never relabel it live.
+  const priorDate = referenceSessions(etDate(now), "intraday")?.[0];
+  const priorBar = !history.invalid && inputs.history.state === "ok"
+    ? history.bars.find(b => b.date === priorDate) : undefined;
+  if (priorBar) {
+    for (const [field, label] of [["close", "Close"], ["high", "High"], ["low", "Low"]] as const) {
+      observations.push(evidence(`history-session-${field}`, "levels", `Completed-session ${label}`,
+        priorBar[field], "USD/share", priorBar.date, "partial", "Schwab daily history", SCHWAB_URL, "date"));
+    }
+    if (priorBar.volume !== null) observations.push(evidence("history-session-volume", "volume",
+      "Completed-session volume", priorBar.volume, "shares", priorBar.date, "partial",
+      "Schwab daily history", SCHWAB_URL, "date"));
+  }
   const session = scheduledSession(now);
   const expectedDates = referenceSessions(etDate(now), horizon);
   const dates = expectedDates ?? [];
@@ -387,29 +401,35 @@ function freezeDeep<T>(value: T): T {
  * Lazy imports avoid initializing DB/providers during schema tests.
  * No accounts, token values, exception messages, arbitrary URLs, or raw provider payloads are returned.
  */
+async function interactiveSchwabRead(path: string, params: Record<string, string | number>, onAcquisition?: AcquisitionObserver) {
+  const { schwabFetch } = await import("./schwab");
+  let budgetBlocked = false;
+  const data = await schwabFetch(path, params, {
+    priority: "interactive", onAcquisition, onBudgetBlocked: () => { budgetBlocked = true; },
+  });
+  if (data === null && budgetBlocked) throw new Error("source_budget_busy");
+  return data;
+}
 const defaultDependencies: TradeBriefDependencies = {
   async quote(symbol, onAcquisition) {
-    const { schwabFetch } = await import("./schwab");
-    return schwabFetch("marketdata/v1/quotes", { symbols: symbol, fields: "quote,reference" }, { onAcquisition });
+    return interactiveSchwabRead("marketdata/v1/quotes", { symbols: symbol, fields: "quote,reference" }, onAcquisition);
   },
   async history(symbol, onAcquisition) {
-    const { schwabFetch } = await import("./schwab");
-    return schwabFetch("marketdata/v1/pricehistory", {
+    return interactiveSchwabRead("marketdata/v1/pricehistory", {
       symbol, periodType: "month", period: 3, frequencyType: "daily", frequency: 1,
       needExtendedHoursData: "false",
-    }, { onAcquisition });
+    }, onAcquisition);
   },
   async macro() {
     const { getFredSnapshot } = await import("./fredClient");
     return getFredSnapshot();
   },
   async options(symbol, onAcquisition) {
-    const { schwabFetch } = await import("./schwab");
     const today = new Date(), to = new Date(today.getTime() + 45 * DAY);
-    return schwabFetch("marketdata/v1/chains", {
+    return interactiveSchwabRead("marketdata/v1/chains", {
       symbol, contractType: "ALL", strikeCount: 20, includeUnderlyingQuote: "true",
       fromDate: today.toISOString().slice(0, 10), toDate: to.toISOString().slice(0, 10),
-    }, { onAcquisition });
+    }, onAcquisition);
   },
   async news() {
     const { getCachedNewsSnapshot } = await import("./news");
@@ -464,7 +484,7 @@ export function createTradeBriefService(deps: TradeBriefDependencies = defaultDe
             : makeEvidenceAcquisition("unverified_adapter_return", null, now())) : null;
           return { state: "ok", value, ...(parsed?.success ? { acquisition: parsed.data } : {}) } as LoadResult;
         })
-        .catch(() => ({ state: "unavailable", value: null } as LoadResult));
+        .catch(e => ({ state: e instanceof Error && e.message === "source_budget_busy" ? "busy" : "unavailable", value: null } as LoadResult));
       reads.set(key, underlying);
       // Keep the slot until the existing provider helper actually settles, even after a response timeout.
       // schwabFetch does not accept AbortSignal; do NOT spawn replacements on repeated timeouts.

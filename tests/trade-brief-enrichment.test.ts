@@ -88,7 +88,14 @@ test("history gaps, insufficient samples, delayed quotes and split-like jumps su
   const short = history(); short.candles = short.candles.slice(-10);
   assert.equal(value(make({}, quote(), short), "atr14"), undefined);
   const delayed = quote(); delayed.AAPL.realtime = false;
-  assert.equal(value(make({}, delayed), "atr14"), undefined);
+  // Historical volatility needs complete sessions, not a current quote.
+  // Current-price comparisons still require the original live-quote gate.
+  const delayedBrief = make({}, delayed);
+  assert.equal(value(delayedBrief, "atr14"), 20);
+  assert.equal(value(delayedBrief, "price-atr-percent"), undefined);
+  assert.equal(value(delayedBrief, "distance-pivot"), undefined);
+  assert.equal(delayedBrief.quote, null);
+  assert.equal(delayedBrief.levels.length, 0);
   const split = history(); split.candles.at(-1)!.close = 180; split.candles.at(-1)!.high = 200;
   assert.equal(value(make({}, quote(), split), "atr14"), undefined);
 });

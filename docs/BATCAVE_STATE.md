@@ -4,6 +4,26 @@ Updated: 2026-10-02. This is a compact handoff, not a live-health certificate.
 
 ## Current objective
 
+Latest continuation (Oct2 user screenshots: Crypto inaccessible / stock research
+empty and repetitive): targeted repair implemented and verified locally.
+Read RESEARCH_NAVIGATION_REPAIR.md. Stock research now appears only in Signals;
+mobile pinned Stocks/Crypto/Chart/More with all11 workspaces in a reflowing dialog.
+Actual content scrolls into view on selection, not just an active-tab change.
+Compact default brief shows dated price/session context, <=3 sourced findings,
+next check; detailed record/history/optionalAI collapsed, state retained.
+Schwab background collectors limited to85 of existing100/min application cap,
+leaving capacity for interactive briefs; retries recheck and cooldowns remain.
+Validated prior-session OHLC/volume and ATR can display without a usable live
+quote; current levels/price ratios stay gated. Calculation version
+stock-brief-2026-10-02.2 supported in replay, old versions/archives preserved.
+232/232 tests, clean TypeScript, full production build; final menu frontend built.
+Real INTC returned dated quote/history/ATR, stale live price/options withheld.
+Original browser receipt checksum verified,16 calculations replay matched.
+375/390/430/1440 normal/200% zero document overflow; real Crypto subtabs loaded.
+No page exceptions/AI requests. Deployed acceptance pending in release doc.
+iOS paused, SPY forecast/crypto ENTER disabled, no new providers or accounts.
+Next source work remains bounded issuer news/social coverage, not fake completeness.
+
 Latest continuation (Oct2 accessibility/TypeScript request): both bounded agents
 completed and cross-reviewed repairs; parent final typecheck is clean (59→0),
 full regression223/223, production build passes. No compiler suppression.

@@ -259,6 +259,9 @@ function cacheTtlMs(path: string, params?: Record<string, string | number>): num
 // We cap at 100/min to leave headroom.
 const _reqLog: number[] = [];
 const MAX_REQ_PER_MIN = 100;
+// Keep manual, bounded stock research usable during collector startup bursts.
+// This is a reservation inside the existing limit, never extra provider capacity.
+const BACKGROUND_REQ_PER_MIN = 85;
 
 function _trimReqLog() {
   const cutoff = Date.now() - 60_000;
@@ -305,7 +308,8 @@ function sleep(ms: number): Promise<void> {
 export async function schwabFetch(
   path: string,
   params?: Record<string, string | number>,
-  opts?: { skipCache?: boolean; onAcquisition?: (metadata: EvidenceAcquisition) => void },
+  opts?: { skipCache?: boolean; onAcquisition?: (metadata: EvidenceAcquisition) => void;
+    priority?: "interactive"; onBudgetBlocked?: () => void },
 ): Promise<any | null> {
   const token = await getAccessToken();
   if (!token) return null;
@@ -363,8 +367,12 @@ export async function schwabFetch(
   }
 
   // Self-throttle
+  const requestLimit = opts?.priority === "interactive" ? MAX_REQ_PER_MIN : BACKGROUND_REQ_PER_MIN;
+  const budgetBlocked = () => {
+    try { opts?.onBudgetBlocked?.(); } catch { /* diagnostic observers do not control transport */ }
+  };
   _trimReqLog();
-  if (_reqLog.length >= MAX_REQ_PER_MIN) {
+  if (_reqLog.length >= requestLimit) {
     const stale = _cache.get(cacheKey);
     if (stale) return delivered(stale.data, "stale_cache_fallback", stale.receivedAt, stale.fingerprint);
     // Wait until oldest request ages out
@@ -374,6 +382,7 @@ export async function schwabFetch(
       _trimReqLog();
     } else {
       console.warn("[schwab] self-throttle hit, skipping:", path);
+      budgetBlocked();
       return null;
     }
   }
@@ -387,6 +396,13 @@ export async function schwabFetch(
   const maxAttempts = 3;
   let lastStatus = 0;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // Recheck after waits and before EVERY retry; concurrent callers cannot
+    // spend the reserved slots or exceed the cap through the retry path.
+    _trimReqLog();
+    if (_reqLog.length >= requestLimit) {
+      budgetBlocked();
+      return staleResult();
+    }
     _reqLog.push(Date.now());
     try {
       const res = await fetch(url.toString(), {

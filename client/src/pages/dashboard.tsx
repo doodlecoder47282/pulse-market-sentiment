@@ -40,6 +40,7 @@ import { PanelSkeleton } from "@/components/ui/panel-skeleton";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { centeredScrollLeft, useShellLayout } from "@/hooks/use-shell-layout";
 import ShellNavScroller from "@/components/ShellNavScroller";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
   RefreshCw, ArrowDownRight, ArrowUpRight, Zap,
@@ -267,7 +268,7 @@ export default function Dashboard() {
     if (previousTabRef.current !== activeTab && tabsRootRef.current) {
       const top = tabsRootRef.current.getBoundingClientRect().top + window.scrollY;
       const offset = Number.parseFloat(shellRef.current?.style.getPropertyValue("--batcave-top-offset") || "0");
-      if (window.scrollY > top - offset) window.scrollTo({ top: Math.max(0, top - offset), behavior: "instant" });
+      window.scrollTo({ top: Math.max(0, top - offset), behavior: "instant" });
     }
     previousTabRef.current = activeTab;
     return () => {
@@ -474,22 +475,21 @@ export default function Dashboard() {
 
       {/* Regime headline — one-sentence read on current market state */}
       <div ref={bannerRef} className="batcave-banner" data-testid="dashboard-regime-banner">
+        {activeTab === "crypto" ? <p className="px-3 py-3 text-sm text-muted-foreground md:px-8">Crypto research · venue and observation time shown with each data point</p> :
         <ErrorBoundary compact label="RegimeHeadline">
           <RegimeHeadline />
-        </ErrorBoundary>
+        </ErrorBoundary>}
       </div>
+      {activeTab !== "crypto" && <>
       <ErrorBoundary compact label="TradeEnvironmentStrip">
         <TradeEnvironmentStrip />
       </ErrorBoundary>
 
       {/* Ticker tape — flows across the top under the header on every tab */}
       <MacroTicker />
+      </>}
 
       <main id="dashboard-main" tabIndex={-1} className="batcave-main batcave-content-width mx-auto space-y-4 px-3 py-4 pb-24 text-[14px] sm:space-y-6 sm:px-4 sm:py-6 sm:text-[14px] md:pb-6 md:px-8 md:text-[15px] xl:px-10 xl:text-[16px]">
-        <TradeBriefSearch />
-        {/* Rotating macro carousel — always visible above the tabs */}
-        <MacroCarousel />
-
         <Tabs ref={tabsRootRef} value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)} className="batcave-tabs-root w-full">
           <MobileWorkspaceNav activeTab={activeTab} setActiveTab={setActiveTab} navRef={mobileDockRef} />
           {/* Sticky glass dock. Its scrolling child preserves access to every tab. */}
@@ -545,6 +545,10 @@ export default function Dashboard() {
             </TabsList>
             </ShellNavScroller>
             </div>
+          </div>
+          {/* Keep the stock receipt/search in memory without obstructing other workspaces. */}
+          <div hidden={activeTab !== "signals"} data-testid="stock-research-workspace">
+            <TradeBriefSearch />
           </div>
 
           {/* ── Chart tab (lazy) ── */}
@@ -677,9 +681,9 @@ export default function Dashboard() {
           </TabsContent>
 
           {/* ── Crypto tab (lazy) ── */}
-          <TabsContent value="crypto" className="space-y-6">
+          <TabsContent value="crypto" className="space-y-6" data-testid="crypto-workspace">
             <ErrorBoundary label="Crypto">
-              <Suspense fallback={<div className="text-xs text-muted-foreground">loading degen desk…</div>}>
+              <Suspense fallback={<div role="status" className="p-4 text-sm text-muted-foreground">Opening crypto research…</div>}>
                 <CryptoPanel />
               </Suspense>
             </ErrorBoundary>
@@ -687,6 +691,7 @@ export default function Dashboard() {
 
           {/* ── Signals tab (eager — primary tab) ── */}
           <TabsContent value="signals" className="space-y-6">
+            <MacroCarousel />
             <Suspense fallback={null}><TabHeadline tab="signals" /></Suspense>
 
             {/* Regime conditioning chip — pulled from /api/regime, shared across tabs */}
@@ -1016,7 +1021,25 @@ function MobileWorkspaceNav({ activeTab, setActiveTab, navRef }: {
   setActiveTab: (tab: TabKey) => void;
   navRef: RefObject<HTMLElement>;
 }) {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const workspaces: { key: TabKey; label: string; name: string }[] = [
+    { key: "signals", label: "Stocks", name: "Stocks and signals" },
+    { key: "chart", label: "Chart", name: "Chart" },
+    { key: "models", label: "Models", name: "Models" },
+    { key: "heatseeker", label: "Heat", name: "Heatseeker" },
+    { key: "tradedesk", label: "Desk", name: "Trade Desk" },
+    { key: "regime", label: "Regime", name: "Regime" },
+    { key: "cosmos", label: "Cosmos", name: "Cosmos" },
+    { key: "news", label: "News", name: "News" },
+    { key: "takefive", label: "Take5", name: "Take Five" },
+    { key: "edgelab", label: "Edge", name: "Edge Lab" },
+    { key: "crypto", label: "Crypto", name: "Crypto" },
+  ];
+  const primary = ["signals", "crypto", "chart"] as const;
+  const choose = (key: TabKey) => { setActiveTab(key); setMoreOpen(false); };
   return (
+    <>
     <nav ref={navRef} className="batcave-mobile-dock batcave-glass fixed z-40 md:hidden"
       data-testid="mobile-bottom-nav" aria-label="Mobile workspace navigation"
       onKeyDown={(event) => {
@@ -1032,23 +1055,10 @@ function MobileWorkspaceNav({ activeTab, setActiveTab, navRef }: {
         buttons[next].focus({ preventScroll: true });
         buttons[next].click();
       }}>
-      <ShellNavScroller name="mobile">
-        <div className="batcave-mobile-items">
-          {([
-            { key: "signals", label: "Signals", name: "Signals" },
-            { key: "chart", label: "Chart", name: "Chart" },
-            { key: "models", label: "Models", name: "Models" },
-            { key: "heatseeker", label: "Heat", name: "Heatseeker" },
-            { key: "tradedesk", label: "Desk", name: "Trade Desk" },
-            { key: "regime", label: "Regime", name: "Regime" },
-            { key: "cosmos", label: "Cosmos", name: "Cosmos" },
-            { key: "news", label: "News", name: "News" },
-            { key: "takefive", label: "Take5", name: "Take Five" },
-            { key: "edgelab", label: "Edge", name: "Edge Lab" },
-            { key: "crypto", label: "Crypto", name: "Crypto" },
-          ] as { key: TabKey; label: string; name: string }[]).map((tab) => (
+        <div className="batcave-mobile-primary">
+          {primary.map(key => workspaces.find(tab => tab.key === key)!).map((tab) => (
             <button type="button" key={tab.key} data-workspace={tab.key}
-              onClick={() => setActiveTab(tab.key)} aria-label={tab.name}
+              onClick={() => choose(tab.key)} aria-label={tab.name}
               aria-current={activeTab === tab.key ? "page" : undefined}
               data-testid={`bottomnav-${tab.key}`}
               className={"batcave-mobile-tab text-xs font-medium transition-colors " +
@@ -1056,9 +1066,27 @@ function MobileWorkspaceNav({ activeTab, setActiveTab, navRef }: {
               {tab.label}
             </button>
           ))}
+          <button ref={moreButtonRef} type="button" data-testid="bottomnav-more" aria-label="All workspaces" aria-haspopup="dialog"
+            className={`batcave-mobile-tab text-xs font-medium ${primary.includes(activeTab as typeof primary[number]) ? "text-muted-foreground" : "bg-primary/10 text-foreground"}`}
+            onClick={() => setMoreOpen(true)}>More</button>
         </div>
-      </ShellNavScroller>
     </nav>
+    <Dialog open={moreOpen} onOpenChange={setMoreOpen}>
+      <DialogContent className="max-h-[80dvh] overflow-y-auto [&>button]:min-h-[44px] [&>button]:min-w-[44px] [&>button]:grid [&>button]:place-items-center"
+        onCloseAutoFocus={event => { event.preventDefault(); moreButtonRef.current?.focus({ preventScroll: true }); }}>
+        <DialogTitle className="pr-12">Workspaces</DialogTitle>
+        <DialogDescription>Choose your research workspace.</DialogDescription>
+        <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 8rem), 1fr))" }}>
+          {workspaces.map(tab => <button key={tab.key} type="button" data-testid={`workspace-${tab.key}`}
+            aria-current={activeTab === tab.key ? "page" : undefined}
+            onClick={() => choose(tab.key)}
+            className={`min-h-[48px] min-w-0 break-words rounded-lg border px-3 py-3 text-left text-sm focus-visible:ring-2 focus-visible:ring-primary ${activeTab === tab.key ? "border-primary bg-primary/10" : "border-border"}`}>
+            {tab.name}
+          </button>)}
+        </div>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 

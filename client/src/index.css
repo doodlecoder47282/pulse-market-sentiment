@@ -638,6 +638,38 @@
   box-shadow: inset 0 0 0 1px hsl(var(--primary) / 0.2);
 }
 .batcave-mobile-items { display: flex; width: max-content; min-width: 100%; gap: 3px; }
+.batcave-mobile-primary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; }
+.batcave-mobile-primary .batcave-mobile-tab { min-width: 0; padding-inline: .25rem; white-space: normal; overflow-wrap: anywhere; }
+.brief-summary { display: grid; gap: 1.25rem; }
+.brief-summary-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: .75rem; }
+.brief-eyebrow { font-size: .75rem; color: hsl(var(--muted-foreground)); line-height: 1.5; }
+.brief-state { border: 1px solid hsl(var(--primary) / .3); background: hsl(var(--primary) / .07); border-radius: .4rem; padding: .35rem .6rem; font-size: .75rem; font-weight: 600; }
+.brief-price-row { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 1.25rem; align-items: start; }
+.brief-price { font-size: 1.65rem; line-height: 1.4; font-weight: 650; font-variant-numeric: tabular-nums; margin-block: .15rem; }
+.brief-session-note span { font-size: .875rem; font-weight: 600; }
+.brief-session-note p, .brief-next-action > p, .brief-finding > p { font-size: .875rem; line-height: 1.6; margin-top: .35rem; }
+.brief-session-note p { color: hsl(var(--muted-foreground)); }
+.brief-session-context { border-block: 1px solid hsl(var(--border)); padding-block: 1rem; }
+.brief-history-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; margin-block: .75rem; }
+.brief-history-grid dt { font-size: .75rem; color: hsl(var(--muted-foreground)); }
+.brief-history-grid dd { font-size: .875rem; font-weight: 600; line-height: 1.7; font-variant-numeric: tabular-nums; }
+.brief-key-findings { display: grid; gap: .6rem; }
+.brief-finding { border-bottom: 1px solid hsl(var(--border)); padding-bottom: .7rem; }
+.brief-next-action { background: hsl(var(--muted) / .3); border-radius: .6rem; padding: .9rem; }
+.brief-coverage-strip { display: flex; flex-wrap: wrap; gap: .35rem .8rem; font-size: .75rem; color: hsl(var(--muted-foreground)); }
+.brief-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; margin-top: 1.25rem; }
+.brief-tools details, .brief-full-record { min-width: 0; border: 1px solid hsl(var(--border)); border-radius: .6rem; }
+.brief-tools details[open] { grid-column: 1 / -1; }
+.brief-tools summary, .brief-full-record > summary { cursor: pointer; min-height: 48px; padding: .85rem; font-size: .875rem; font-weight: 500; }
+.brief-tools summary:focus-visible, .brief-full-record > summary:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: 2px; }
+.brief-tools details > section { border: 0; margin-top: 0; background: none; }
+.brief-full-record { margin-top: .5rem; }
+.brief-full-record[open] { padding: 0 .85rem .85rem; }
+@media (max-width: 600px) {
+  .brief-price-row { grid-template-columns: minmax(0, 1fr); gap: .8rem; }
+  .brief-history-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .brief-tools { grid-template-columns: minmax(0, 1fr); }
+}
 .batcave-mobile-tab {
   display: inline-flex;
   flex: 1 0 auto;

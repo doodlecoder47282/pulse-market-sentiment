@@ -2,7 +2,9 @@ import type { z } from "zod";
 import { ArchivedTradeBriefSchema } from "../shared/tradeBrief";
 import { ReplayCheckSchema } from "../shared/evidenceLedger";
 
-const SUPPORTED = new Set(["stock-brief-2026-10-01.2", "stock-brief-2026-10-01.3", "stock-brief-2026-10-02.1"]);
+// .2 adds separately dated raw session observations and allows the unchanged
+// ATR formula without a current quote. Numerical formula definitions are unchanged.
+const SUPPORTED = new Set(["stock-brief-2026-10-01.2", "stock-brief-2026-10-01.3", "stock-brief-2026-10-02.1", "stock-brief-2026-10-02.2"]);
 /**
  * Pure numerical replay of stored normalized inputs, NOT provider re-ingestion,
  * raw-candle aggregation, text regeneration, a backtest or new market analysis.

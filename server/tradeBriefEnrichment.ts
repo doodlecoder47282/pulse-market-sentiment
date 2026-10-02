@@ -66,12 +66,13 @@ export function enrichStockBrief(input: EnrichmentInput) {
   // Daily observations strictly before today; never consume today's partial bar.
   const completed = input.bars.filter(b => b.date < today);
   const latest = completed.at(-1);
-  const compatible = latest?.date === input.requiredPriorDate && input.usableQuote;
+  const historyCompatible = latest?.date === input.requiredPriorDate;
+  const compatible = historyCompatible && input.usableQuote;
   function completeScheduledWindow(sample: BriefBar[], count: number) {
     const expected = previousSessions(today, count);
     return expected !== null && sample.length === count && sample.every((b, i) => b.date === expected[i]);
   }
-  if (compatible && completeScheduledWindow(completed.slice(-15), 15)) {
+  if (historyCompatible && completeScheduledWindow(completed.slice(-15), 15)) {
     const sample = completed.slice(-15);
     const splitLike = sample.slice(1).some((b, i) => Math.abs(b.close / sample[i].close - 1) > 0.5);
     if (!splitLike) {
@@ -92,7 +93,8 @@ export function enrichStockBrief(input: EnrichmentInput) {
       if (atr > 0) {
         numeric("atr14", "levels", "ATR14 · simple mean of 14 completed true ranges (not Wilder)", atr,
           "USD/share", latest.date, "ATR14_SMA=sum(TR_last14)/14", trIds);
-        numeric("price-atr-percent", "levels", "ATR14 as percent of verified last trade", 100 * atr / input.price!,
+        if (input.usableQuote) {
+          numeric("price-atr-percent", "levels", "ATR14 as percent of verified last trade", 100 * atr / input.price!,
           "percent", iso(input.priceTime!), "100*ATR14/last", ["atr14", "quote-last"]);
         for (const level of levels) {
           numeric(`distance-${level.kind}`, "levels", `Last trade minus ${level.label}`, input.price! - level.value,
@@ -103,13 +105,14 @@ export function enrichStockBrief(input: EnrichmentInput) {
           numeric(`distance-atr-${level.kind}`, "levels", `Distance to ${level.label} / ATR14`,
             (input.price! - level.value) / atr, "ATR14 units", iso(input.priceTime!),
             "(last-reference)/ATR14", ["quote-last", "atr14", ...level.evidence_ids]);
+          }
         }
         statuses.levels.status = "partial"; statuses.levels.contributed = true;
         statuses.levels.observed_at ??= latest.date;
-        statuses.levels.reason += " ATR14 independently has 15 validated observed daily bars and uses a simple mean of 14 completed true ranges, not Wilder smoothing; price distances are descriptive, not entries or probabilities.";
+        statuses.levels.reason += " Historical ATR14 uses 15 validated daily bars and a simple mean of 14 completed true ranges, not Wilder smoothing. Current-price distances require a separately verified live quote.";
         const shortened = sample.slice(1).filter(b => equityDay(b.date).kind === "early_close").length;
-        context("factor-atr", "levels", `Completed-session ATR14 is ${atr.toFixed(2)} USD/share (${(100 * atr / input.price!).toFixed(2)}% of last trade). Published session dates checked${shortened ? `; includes ${shortened} shortened-session range(s)` : ""}. Adjustment provenance and unscheduled closures/halts remain unverified.`,
-          "Schwab deterministic calculation", SCHWAB_URL, latest.date, "period", ["atr14", "price-atr-percent"]);
+        context("factor-atr", "levels", `Completed-session ATR14 is ${atr.toFixed(2)} USD/share${input.usableQuote ? ` (${(100 * atr / input.price!).toFixed(2)}% of last trade)` : ""}. Historical range context, not a forecast or stop. Published session dates checked${shortened ? `; includes ${shortened} shortened-session range(s)` : ""}. Adjustment provenance and unscheduled closures/halts remain unverified.`,
+          "Schwab deterministic calculation", SCHWAB_URL, latest.date, "period", input.usableQuote ? ["atr14", "price-atr-percent"] : ["atr14"]);
         claims.push({ text: contexts.at(-1)!.text, evidence_ids: ["factor-atr"] });
       }
     } else {
@@ -184,6 +187,12 @@ export function enrichStockBrief(input: EnrichmentInput) {
     };
     const patterns = [new RegExp(`\\$${escape(instrument.symbol)}(?![A-Za-z0-9])`, "i"),
       ...(names[instrument.symbol] ?? []).map(n => new RegExp(`\\b${escape(n)}\\b`, "i"))];
+    // Reviewed distinctive brands in a financial headline, not substring ticker
+    // guesses. Ambiguous Apple/Meta/COIN/F/Strategy stay on the strict path.
+    const brands: Record<string, string> = { INTC: "Intel", NVDA: "(?:Nvidia|NVIDIA)",
+      MSFT: "Microsoft", AVGO: "Broadcom", PLTR: "Palantir", NFLX: "Netflix" };
+    const brand = brands[instrument.symbol] ? new RegExp(`\\b${brands[instrument.symbol]}\\b`) : null;
+    const financialContext = /\b(?:shares?|stocks?|earnings|guidance|revenue|profits?|quarter|chips?|semiconductors?|acquisition|antitrust)\b/i;
     let accepted = 0;
     for (const h of headlines) {
       if (accepted >= 5) break;
@@ -195,7 +204,7 @@ export function enrichStockBrief(input: EnrichmentInput) {
         || h.publication_verified !== true || !time(published, now) || now - published >= DAY
         || !safeUrl(h.url) || typeof h.source !== "string"
         || !citationAllowed(newsSourceId(h.source) ?? "unregistered", h.url)
-        || !patterns.some(p => p.test(text))) continue;
+        || !(patterns.some(p => p.test(text)) || (brand?.test(text) && financialContext.test(text)))) continue;
       const id = `news-explicit-${accepted++}`;
       context(id, "news", `${text.slice(0, 900)} · Explicit text attribution only; not confirmation of materiality or exhaustive news coverage.`,
         h.source, h.url, iso(published), "instant");

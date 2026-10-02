@@ -362,7 +362,8 @@ function transportHarness() {
   runInContext(schwabCode, sandbox);
   return {
     fetch: (path = "marketdata/v1/quotes", params: Record<string, string | number> = { symbols: "AAPL" },
-      options?: { skipCache?: boolean; onAcquisition?: (a: EvidenceAcquisition) => void }) =>
+      options?: { skipCache?: boolean; onAcquisition?: (a: EvidenceAcquisition) => void;
+        priority?: "interactive"; onBudgetBlocked?: () => void }) =>
       exported.schwabFetch(path, params, options) as Promise<unknown>,
     replies, eval: (script: string) => runInContext(script, sandbox),
     get clock() { return clock; }, set clock(v: number) { clock = v; },
@@ -462,6 +463,36 @@ test("actual transport: self-throttle, empty cooldown, no authentication and old
   await h.fetch(undefined, undefined, { onAcquisition: a => seen.push(a) });
   assert.equal(seen[2].read_provenance, "stale_cache_fallback");
   assert.equal(seen[2].received_at, null);
+});
+
+test("actual transport: manual research reservation stays inside the cap and cannot bypass cooldown/auth", async () => {
+  const h = transportHarness();
+  let blocked = 0;
+  h.eval("_reqLog.splice(0, _reqLog.length, ...Array(85).fill(Date.now()))");
+  assert.equal(await h.fetch(undefined, { symbols: "BACKGROUND" }, { onBudgetBlocked: () => blocked++ }), null);
+  assert.equal(h.calls, 0);
+  h.replies.push({ payload: { observed: true } });
+  assert.deepEqual(await h.fetch(undefined, { symbols: "INTC" }, { priority: "interactive" }), { observed: true });
+  assert.equal(h.calls, 1);
+  h.eval("_reqLog.splice(0, _reqLog.length, ...Array(100).fill(Date.now()))");
+  assert.equal(await h.fetch(undefined, { symbols: "AAPL" }, { priority: "interactive", onBudgetBlocked: () => blocked++ }), null);
+  assert.equal(h.calls, 1); assert.equal(blocked, 2);
+  h.eval("_reqLog.length=0; _cooldown.set('marketdata/v1/quotes', Date.now()+60000)");
+  assert.equal(await h.fetch(undefined, { symbols: "AAPL" }, { priority: "interactive" }), null);
+  h.eval("_cooldown.clear()"); h.authorized = false;
+  assert.equal(await h.fetch(undefined, { symbols: "AAPL" }, { priority: "interactive" }), null);
+  assert.equal(h.calls, 1);
+});
+
+test("actual transport: retries cannot exceed background or interactive capacity", async () => {
+  for (const [count, priority] of [[84, undefined], [99, "interactive"]] as const) {
+    const h = transportHarness();
+    h.eval(`_reqLog.splice(0, _reqLog.length, ...Array(${count}).fill(Date.now()))`);
+    h.replies.push({ status: 500 });
+    assert.equal(await h.fetch(undefined, { symbols: "NEW" }, { priority }), null);
+    assert.equal(h.calls, 1);
+    assert.equal(h.eval("_reqLog.length"), count + 1);
+  }
 });
 
 test("actual transport: minute-history cache-key omission and skip-cache behavior are unchanged", async () => {
