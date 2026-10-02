@@ -18,8 +18,11 @@ view and realIntel lookup/analyze/history pass, no pageerrors/automaticAI.
 Preserved baseTarget=spot; no unvalidatedcharmpriceheuristic. Missinggammaflip
 omitsoptionalquarterlytrajectory. SPYMLforecast/cryptoENTER staydisabled.
 Main5000 restarted once, worker5002unchanged; finalUIdeltasfrontendonly.
-In-place preview deployment/opaqueiframe smoke pending below; do notclaimdone
-until release deployment section is updated. iOS/native work remainspaused.
+Code799cd33 deployed in place to existing Batcave asset72791db6-0515-4bb8-ae21-f89b932391cc.
+Fresh390px touch-enabled opaqueiframe Intel lookup/analyze/history/checksum passed.
+EndCrypto/HomeSignals/key7Cosmos,200%headerbounds/zerooverflow and390x400focusclear
+passed; no pageerrors/automaticAIcalls. See a11y-types-deployed-results.json.
+Preview depends on current sandboxbackend, notalwaysonproduction. iOS stayspaused.
 Nextqueue is data/sourcecoverage, offdevicebackupapproval or broaderlegacy
 panelaccessibility, not newproviders/councils unlessauthorized. Runtimekeys/data
 remainprivateexcluded; noNIST/multiuser/forecastaccuracycertification.

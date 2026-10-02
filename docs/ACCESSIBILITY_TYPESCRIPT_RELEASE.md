@@ -1,6 +1,6 @@
 # Batcave: accessibility and TypeScript repair
 
-This developer release record covers the authorized two-agent batch on October 2, 2026. Both agents completed implementation and mutual code/test review. Parent browser verification and final in-place deployment are recorded below; release remains pending until the deployment row is completed.
+This developer release record covers the authorized two-agent batch on October 2, 2026. Both agents completed implementation and mutual code/test review. Parent integrated verification and in-place private-preview deployment are complete, within the explicitly bounded scope below.
 
 ## Scope and ownership
 
@@ -68,7 +68,11 @@ Detailed agent inventories and limitations are in `ACCESSIBILITY_HANDOFF.md` and
 
 ### Deployment
 
-Final code is ready for an in-place update of the existing Batcave preview. Main backend was built/restarted once; final presentation deltas were frontend-only rebuilds. A real 390px opaque-iframe lookup/history and enlarged-shell smoke test remains required after upload.
+Code commit `799cd33` was deployed in place to the existing Batcave artifact `72791db6-0515-4bb8-ae21-f89b932391cc`. No independent copy, public publication, native build or Vercel action was made. Main backend was built/restarted once; final presentation deltas were frontend-only rebuilds.
+
+Post-upload acceptance used a fresh 390px touch-enabled Chromium context with the app inside an opaque sandboxed iframe (`allow-scripts allow-popups`, no same-origin permission). Real Intel search, INTC confirmation, Analyze, saved-evidence review and historical timing disclosure passed. The stored-content checksum verified. End selected Crypto; Home returned to Signals; numeric 7 selected Cosmos. At 200% root font all visible header targets stayed inside the viewport and measured at least 44 × 44px, with zero document overflow. At 390 × 400 the focused ticker input cleared the persistent bottom dock. No page exceptions or automatic AI curation requests occurred.
+
+Deployed evidence: `a11y-types-deployed-results.json`, `a11y-deployed-390-200.png`, `a11y-deployed-short-focus.png`. Browser test sessions are closed after capture. Only intentional code/docs/tests were committed; runtime databases, scheduler state, receipts, recovery keys and archives remain excluded. The private preview relies on the current sandbox backend and is not an always-on production deployment.
 
 ## Unchanged release boundaries
 
