@@ -3,6 +3,7 @@ import { Search, ChevronRight, RefreshCw, ShieldCheck } from "lucide-react";
 import { transportRequest } from "@/lib/queryClient";
 import { TradeBriefAi } from "./TradeBriefAi";
 import { EvidenceHistory } from "./EvidenceHistory";
+import { EvidenceTiming } from "./EvidenceTiming";
 import { getSourceContract } from "@shared/evidencePolicy";
 import {
   SearchResponseSchema, TradeBriefSchema, tradeBriefExpired,
@@ -355,6 +356,7 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
               <p data-testid="trade-brief-policy-count">{expired ? "Expired snapshot: no current AI eligibility."
                 : `${brief.evidence_review.eligible_ids.length} evidence items passed the contract at capture; ${brief.evidence_review.excluded.length} excluded from AI selection.`}</p>
               <p className="text-xs text-muted-foreground">This counts evidence items, not independent sources or confidence. AI rechecks at request time.</p>
+              <EvidenceTiming brief={brief} testId="trade-brief-timing" />
               <ul className="space-y-2 text-xs text-muted-foreground">
                 {brief.evidence_review.source_ids.map(id => {
                   const contract = getSourceContract(id);

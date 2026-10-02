@@ -2,6 +2,7 @@ import { z } from "zod";
 import { EvidenceReviewSchema } from "./evidencePolicy";
 import { EquityScheduleSchema } from "./equityCalendar";
 import { ArchiveReceiptSchema } from "./evidenceLedger";
+import { EvidenceAcquisitionSchema, reviewEvidenceAcquisition } from "./evidenceAcquisition";
 
 /** This is a deliberately finite US-listed research universe, not a security master. */
 export const TRADE_BRIEF_VERSION = "stock-brief-2026-10-02.1";
@@ -86,6 +87,7 @@ export const EvidenceSchema = z.object({
   status: CoverageSchema, source: z.string(), url: z.string().url(),
   formula_id: z.string().optional(), evidence_ids: z.array(z.string()).optional(),
   source_id: z.string().optional(),
+  acquisition: EvidenceAcquisitionSchema.optional(),
 }).strict();
 export type TradeBriefEvidence = z.infer<typeof EvidenceSchema>;
 export const ContextItemSchema = z.object({
@@ -133,7 +135,7 @@ const TradeBriefObjectSchema = z.object({
   model_version: z.literal("none"), calculation_version: z.string(),
 }).strict();
 function validateReferences(brief: Pick<z.infer<typeof TradeBriefObjectSchema>,
-  "evidence" | "context_items" | "levels" | "source_statuses" | "claims" | "events" | "quote" | "instrument" | "instrument_id">,
+  "evidence" | "context_items" | "levels" | "source_statuses" | "claims" | "events" | "quote" | "instrument" | "instrument_id" | "created_at">,
   ctx: z.RefinementCtx) {
   const ids = [...brief.evidence, ...(brief.context_items ?? [])].map(e => e.id);
   const known = new Set(ids);
@@ -155,6 +157,14 @@ function validateReferences(brief: Pick<z.infer<typeof TradeBriefObjectSchema>,
   }
   if (brief.instrument_id !== brief.instrument.id) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Instrument identity mismatch" });
+  }
+  for (const e of brief.evidence) {
+    if (e.acquisition === undefined) continue; // Old snapshots are not restamped or migrated.
+    if (!["schwab.quote", "schwab.history", "schwab.options"].includes(e.source_id ?? "") || e.formula_id
+      || reviewEvidenceAcquisition(e.acquisition, { observed_at: e.observed_at, time_precision: e.time_precision,
+        captured_at: brief.created_at, now: Date.parse(brief.created_at) }).status !== "accepted") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid evidence acquisition" });
+    }
   }
 }
 export const TradeBriefSchema = TradeBriefObjectSchema.superRefine(validateReferences);

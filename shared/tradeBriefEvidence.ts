@@ -1,4 +1,5 @@
 import type { TradeBrief } from "./tradeBrief";
+import { reviewEvidenceAcquisition } from "./evidenceAcquisition";
 import {
   EVIDENCE_POLICY_VERSION, getSourceContract, reviewEvidence,
   type EvidenceEnvelope, type ResearchIdentity,
@@ -10,6 +11,12 @@ export function tradeBriefEnvelopes(brief: Pick<TradeBrief, "instrument" | "crea
     asset_class: brief.instrument.asset_class, currency: brief.instrument.currency };
   const rows: EvidenceEnvelope[] = [...brief.evidence, ...(brief.context_items ?? [])].map(e => {
     const sourceId = e.source_id ?? "unregistered";
+    // Capture is snapshot assembly. A later read/capture never refreshes original receipt.
+    const acquisition = reviewEvidenceAcquisition("acquisition" in e ? e.acquisition : undefined, {
+      observed_at: e.observed_at, time_precision: e.time_precision,
+      captured_at: brief.created_at, now: Date.parse(brief.created_at),
+    });
+    const acquiredSource = ["schwab.quote", "schwab.history", "schwab.options"].includes(sourceId) && !e.formula_id;
     return {
       schema_version: EVIDENCE_POLICY_VERSION, evidence_id: e.id, research_identity: identity,
       category: e.category, source_id: sourceId, upstream_lineage_id: getSourceContract(sourceId)?.lineage ?? "unknown",
@@ -18,7 +25,9 @@ export function tradeBriefEnvelopes(brief: Pick<TradeBrief, "instrument" | "crea
       source_time_role: sourceId === "batcave.calculation" ? "derived_input"
         : e.category === "earnings" ? "calendar_checked" : e.category === "news" ? "publication"
         : e.time_precision === "instant" ? "market_observation" : "historical_period",
-      captured_at: brief.created_at, received_at: null, first_seen_at: null, known_at: null,
+      captured_at: brief.created_at,
+      received_at: acquiredSource && acquisition.status === "accepted" ? acquisition.received_at : null,
+      first_seen_at: null, known_at: null,
       expires_at: brief.expires_at, status: e.status, citation_url: e.url,
       formula_id: e.formula_id ?? null, dependency_ids: e.evidence_ids ?? [],
       adjustment_basis: "unverified", correction_of: null,

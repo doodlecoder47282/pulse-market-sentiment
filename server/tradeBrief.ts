@@ -5,6 +5,10 @@ import { easternDate as etDate, equityDay, referenceSessions, scheduledSession }
 import { enrichStockBrief, type BriefBar } from "./tradeBriefEnrichment";
 import { reviewTradeBriefEvidence } from "../shared/tradeBriefEvidence";
 import {
+  EvidenceAcquisitionSchema, makeEvidenceAcquisition, reviewEvidenceAcquisition, reuseEvidenceAcquisition,
+  type EvidenceAcquisition,
+} from "../shared/evidenceAcquisition";
+import {
   BriefRequestSchema, SearchRequestSchema, TRADE_BRIEF_CATEGORIES, TRADE_BRIEF_INSTRUMENTS,
   TRADE_BRIEF_VERSION, TradeBriefSchema, searchTradeBriefInstruments,
   type CoverageStatus, type TradeBrief, type TradeBriefCategory, type TradeBriefEvidence,
@@ -16,13 +20,14 @@ const DAY = 86_400_000;
 const SNAPSHOT_TTL = 45 * SECOND;
 const SCHWAB_URL = "https://developer.schwab.com/products/trader-api--individual";
 const MAX_IN_FLIGHT = 4;
-type LoadResult = { state: "ok"; value: unknown } | { state: "unavailable" | "timeout" | "busy"; value: null };
+type AcquisitionObserver = (metadata: EvidenceAcquisition) => void;
+type LoadResult = { state: "ok"; value: unknown; acquisition?: unknown } | { state: "unavailable" | "timeout" | "busy"; value: null };
 export interface TradeBriefDependencies {
-  quote: (symbol: string) => Promise<unknown>;
-  history: (symbol: string) => Promise<unknown>;
+  quote: (symbol: string, onAcquisition?: AcquisitionObserver) => Promise<unknown>;
+  history: (symbol: string, onAcquisition?: AcquisitionObserver) => Promise<unknown>;
   macro: () => Promise<unknown>;
   /** Optional raw Schwab-only chain; no getOptionChain delayed fallback. */
-  options?: (symbol: string) => Promise<unknown>;
+  options?: (symbol: string, onAcquisition?: AcquisitionObserver) => Promise<unknown>;
   /** Local cache-only readers: never start aggregate RSS/calendar builds. */
   news?: () => Promise<unknown>;
   earnings?: () => Promise<unknown>;
@@ -293,6 +298,21 @@ export function buildStockTradeBrief(
   // Expire at scheduled open/close (including early close) or ET date change.
   deadlines.push(Date.parse(session.schedule.next_boundary_at));
   const observedTimes = [...observations, ...enrichment.contexts].map(e => Date.parse(e.observed_at)).filter(Number.isFinite);
+  // Optional provenance only; freshness/numerical gates above still use ORIGINAL observations.
+  // Do not transfer one endpoint's receipt onto calculations or mixed-source dependencies.
+  const acquisitions: Record<string, unknown> = {
+    "schwab.quote": inputs.quote.state === "ok" ? inputs.quote.acquisition : undefined,
+    "schwab.history": inputs.history.state === "ok" ? inputs.history.acquisition : undefined,
+    "schwab.options": inputs.options?.state === "ok" ? inputs.options.acquisition : undefined,
+  };
+  for (const e of observations) {
+    const raw = acquisitions[e.source_id ?? ""];
+    if (raw === undefined || e.formula_id) continue;
+    const checked = reviewEvidenceAcquisition(raw, {
+      observed_at: e.observed_at, time_precision: e.time_precision, captured_at: iso(now), now,
+    });
+    if (checked.status === "accepted") e.acquisition = EvidenceAcquisitionSchema.parse(raw);
+  }
   const result = {
     instrument_id: instrument.id, instrument, horizon, mode: "research_only" as const,
     created_at: iso(now), expires_at: iso(Math.min(...deadlines)),
@@ -368,28 +388,28 @@ function freezeDeep<T>(value: T): T {
  * No accounts, token values, exception messages, arbitrary URLs, or raw provider payloads are returned.
  */
 const defaultDependencies: TradeBriefDependencies = {
-  async quote(symbol) {
+  async quote(symbol, onAcquisition) {
     const { schwabFetch } = await import("./schwab");
-    return schwabFetch("marketdata/v1/quotes", { symbols: symbol, fields: "quote,reference" });
+    return schwabFetch("marketdata/v1/quotes", { symbols: symbol, fields: "quote,reference" }, { onAcquisition });
   },
-  async history(symbol) {
+  async history(symbol, onAcquisition) {
     const { schwabFetch } = await import("./schwab");
     return schwabFetch("marketdata/v1/pricehistory", {
       symbol, periodType: "month", period: 3, frequencyType: "daily", frequency: 1,
       needExtendedHoursData: "false",
-    });
+    }, { onAcquisition });
   },
   async macro() {
     const { getFredSnapshot } = await import("./fredClient");
     return getFredSnapshot();
   },
-  async options(symbol) {
+  async options(symbol, onAcquisition) {
     const { schwabFetch } = await import("./schwab");
     const today = new Date(), to = new Date(today.getTime() + 45 * DAY);
     return schwabFetch("marketdata/v1/chains", {
       symbol, contractType: "ALL", strikeCount: 20, includeUnderlyingQuote: "true",
       fromDate: today.toISOString().slice(0, 10), toDate: to.toISOString().slice(0, 10),
-    });
+    }, { onAcquisition });
   },
   async news() {
     const { getCachedNewsSnapshot } = await import("./news");
@@ -412,15 +432,38 @@ export function createTradeBriefService(deps: TradeBriefDependencies = defaultDe
   const recentReads = new Map<string, { expires: number; result: LoadResult }>();
   let activeReads = 0;
 
-  async function load(key: string, read: () => Promise<unknown>): Promise<LoadResult> {
+  async function load(key: string, read: (onAcquisition?: AcquisitionObserver) => Promise<unknown>,
+    trackAcquisition = false): Promise<LoadResult> {
     const recent = recentReads.get(key);
-    if (recent && now() < recent.expires) return recent.result;
+    if (recent && now() < recent.expires) {
+      const r = recent.result;
+      return r.state === "ok" && r.acquisition !== undefined
+        ? { ...r, acquisition: reuseEvidenceAcquisition(r.acquisition, now()) } : r;
+    }
     let underlying = reads.get(key);
     if (!underlying) {
       if (activeReads >= MAX_IN_FLIGHT) return { state: "busy", value: null };
       activeReads++;
-      underlying = Promise.resolve().then(read)
-        .then(value => value == null ? { state: "unavailable", value: null } as LoadResult : { state: "ok", value } as LoadResult)
+      let reported = false, acquisition: unknown;
+      underlying = Promise.resolve().then(() => read(trackAcquisition ? metadata => {
+        // Copy at the callback boundary; later producer mutation cannot change this read.
+        reported = true;
+        const parsed = EvidenceAcquisitionSchema.safeParse(metadata);
+        acquisition = parsed.success ? parsed.data : null;
+      } : undefined))
+        .then(value => {
+          if (value == null) return { state: "unavailable", value: null } as LoadResult;
+          if (trackAcquisition) {
+            // Own the completed-read cache payload: dependency callers may retain/mutate
+            // their raw object after returning it. No receipt may follow that mutation.
+            try { value = structuredClone(value); }
+            catch { return { state: "ok", value } as LoadResult; } // usable raw data, no acquisition claim
+          }
+          // A legacy helper's completion is ONLY an unverified adapter read, never a receipt.
+          const parsed = trackAcquisition ? EvidenceAcquisitionSchema.safeParse(reported ? acquisition
+            : makeEvidenceAcquisition("unverified_adapter_return", null, now())) : null;
+          return { state: "ok", value, ...(parsed?.success ? { acquisition: parsed.data } : {}) } as LoadResult;
+        })
         .catch(() => ({ state: "unavailable", value: null } as LoadResult));
       reads.set(key, underlying);
       // Keep the slot until the existing provider helper actually settles, even after a response timeout.
@@ -456,10 +499,10 @@ export function createTradeBriefService(deps: TradeBriefDependencies = defaultDe
           });
         });
       const [quote, history, macro, options, news, earnings] = await Promise.all([
-        load(`quote:${instrument.symbol}`, () => deps.quote(instrument.symbol)),
-        load(`history:${instrument.symbol}`, () => deps.history(instrument.symbol)),
+        load(`quote:${instrument.symbol}`, observer => deps.quote(instrument.symbol, observer), true),
+        load(`history:${instrument.symbol}`, observer => deps.history(instrument.symbol, observer), true),
         load("macro", deps.macro),
-        deps.options ? load(`options:${instrument.symbol}`, () => deps.options!(instrument.symbol))
+        deps.options ? load(`options:${instrument.symbol}`, observer => deps.options!(instrument.symbol, observer), true)
           : Promise.resolve({ state: "unavailable", value: null } as LoadResult),
         cached(deps.news), cached(deps.earnings),
       ]);

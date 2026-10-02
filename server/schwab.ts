@@ -7,6 +7,9 @@
 import { db, schwabTokens } from "./storage";
 import { eq } from "drizzle-orm";
 import { observeQuote } from "./quoteShield";
+import { makeEvidenceAcquisition, type EvidenceAcquisition } from "../shared/evidenceAcquisition";
+import { createHash } from "node:crypto";
+import { serialize, deserialize } from "node:v8";
 
 // ─── Credentials from environment (read lazily to avoid import-order issues) ──
 const getClientId = () => process.env.SCHWAB_CLIENT_ID ?? "";
@@ -228,8 +231,14 @@ export function clearTokens(): void {
 
 // ─── Generic Schwab fetch with cache + 429 backoff + self-throttle ────────────
 
-// Per-endpoint cache. Key = path|sortedParams. Value = { data, expiresAt }.
-const _cache = new Map<string, { data: any; expiresAt: number }>();
+// Original successful body receipt is tied to the parsed payload, not wire bytes.
+// Raw legacy consumers may mutate data: opt-in readers verify the fingerprint and take
+// an isolated copy. Missing fingerprints/receipts or changed payloads remain unverified.
+const _cache = new Map<string, { data: any; expiresAt: number; receivedAt?: number; fingerprint?: string }>();
+const payloadFingerprint = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+function fingerprintPayload(data: any): string | undefined {
+  try { return payloadFingerprint(serialize(data)); } catch { return undefined; }
+}
 
 // Per-endpoint TTL (ms). Anything not listed = no cache.
 // pricehistory differentiates by frequencyType: minute bars need a short TTL
@@ -296,7 +305,7 @@ function sleep(ms: number): Promise<void> {
 export async function schwabFetch(
   path: string,
   params?: Record<string, string | number>,
-  opts?: { skipCache?: boolean },
+  opts?: { skipCache?: boolean; onAcquisition?: (metadata: EvidenceAcquisition) => void },
 ): Promise<any | null> {
   const token = await getAccessToken();
   if (!token) return null;
@@ -312,12 +321,35 @@ export async function schwabFetch(
   const paramStr = cacheParams ? Object.entries(cacheParams).sort().map(([k, v]) => `${k}=${v}`).join("&") : "";
   const cacheKey = `${path}|${paramStr}`;
   const ttl = cacheTtlMs(path, params);
+  // Opt-in metadata only. Preserve every raw return, retry, TTL and fallback behavior.
+  const delivered = (data: any, kind: "transport_response" | "cache_hit" | "stale_cache_fallback",
+    receipt?: number, fingerprint?: string) => {
+    if (data != null && opts?.onAcquisition) {
+      let receivedAt: number | null = null;
+      try {
+        const bytes = serialize(data);
+        if (fingerprint !== undefined && payloadFingerprint(bytes) === fingerprint) receivedAt = receipt ?? null;
+        // Isolate opted-in stock evidence from subsequent mutation by raw legacy readers.
+        data = deserialize(bytes);
+      } catch { /* no provable original payload means no receipt; raw legacy behavior remains */ }
+      const provenance = kind === "transport_response" && receivedAt === null ? "unverified_adapter_return" : kind;
+      const metadata = makeEvidenceAcquisition(provenance, receivedAt, Date.now());
+      if (metadata) {
+        try { opts.onAcquisition(Object.freeze(metadata)); } catch { /* observers cannot change provider behavior */ }
+      }
+    }
+    return data;
+  };
+  const staleResult = () => {
+    const stale = _cache.get(cacheKey);
+    return stale ? delivered(stale.data ?? null, "stale_cache_fallback", stale.receivedAt, stale.fingerprint) : null;
+  };
 
   // Cache hit
   if (!opts?.skipCache && ttl > 0) {
     const hit = _cache.get(cacheKey);
     if (hit && hit.expiresAt > Date.now()) {
-      return hit.data;
+      return delivered(hit.data, "cache_hit", hit.receivedAt, hit.fingerprint);
     }
   }
 
@@ -326,7 +358,7 @@ export async function schwabFetch(
   const coolUntil = _cooldown.get(epKey);
   if (coolUntil && coolUntil > Date.now()) {
     const stale = _cache.get(cacheKey);
-    if (stale) return stale.data; // serve stale during cooldown
+    if (stale) return delivered(stale.data, "stale_cache_fallback", stale.receivedAt, stale.fingerprint); // serve stale during cooldown
     return null;
   }
 
@@ -334,7 +366,7 @@ export async function schwabFetch(
   _trimReqLog();
   if (_reqLog.length >= MAX_REQ_PER_MIN) {
     const stale = _cache.get(cacheKey);
-    if (stale) return stale.data;
+    if (stale) return delivered(stale.data, "stale_cache_fallback", stale.receivedAt, stale.fingerprint);
     // Wait until oldest request ages out
     const waitMs = Math.max(0, _reqLog[0] + 60_000 - Date.now()) + 50;
     if (waitMs < 5000) {
@@ -368,8 +400,10 @@ export async function schwabFetch(
         // Reset 403 streak on success
         _403Streak.delete(epKey);
         const data = await res.json();
-        if (ttl > 0) _cache.set(cacheKey, { data, expiresAt: Date.now() + ttl });
-        return data;
+        const receivedAt = Date.now(); // after successful body parsing, never inferred from cache expiry
+        const fingerprint = fingerprintPayload(data);
+        if (ttl > 0) _cache.set(cacheKey, { data, expiresAt: receivedAt + ttl, receivedAt, fingerprint });
+        return delivered(data, "transport_response", receivedAt, fingerprint);
       }
       // 401 → token issue, no retry
       if (res.status === 401) {
@@ -385,7 +419,7 @@ export async function schwabFetch(
         const coolMs = streak >= 3 ? 5 * 60_000 : 60_000;
         console.warn(`[schwab] 403 forbidden: ${path} (cooldown ${Math.round(coolMs / 1000)}s, streak ${streak})`);
         _cooldown.set(epKey, Date.now() + coolMs);
-        return _cache.get(cacheKey)?.data ?? null;
+        return staleResult();
       }
       // 429 → backoff with Retry-After if present
       if (res.status === 429) {
@@ -401,7 +435,7 @@ export async function schwabFetch(
         // Final 429 → cool down endpoint
         console.warn("[schwab] 429 rate-limited:", path, "(cooldown 60s)");
         _cooldown.set(epKey, Date.now() + 60_000);
-        return _cache.get(cacheKey)?.data ?? null;
+        return staleResult();
       }
       // 5xx → retry
       if (res.status >= 500 && attempt < maxAttempts) {
@@ -409,14 +443,14 @@ export async function schwabFetch(
         continue;
       }
       console.warn("[schwab] fetch failed:", res.status, path);
-      return _cache.get(cacheKey)?.data ?? null;
+      return staleResult();
     } catch (e: any) {
       console.warn("[schwab] fetch exception:", e?.message, path);
       if (attempt < maxAttempts) {
         await sleep(500 * attempt);
         continue;
       }
-      return _cache.get(cacheKey)?.data ?? null;
+      return staleResult();
     }
   }
   console.warn("[schwab] all retries exhausted:", path, "last:", lastStatus);

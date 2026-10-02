@@ -4,6 +4,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { withRequestDeadline } from "@/lib/requestDeadline";
 import { LedgerReadResponseSchema } from "@shared/evidenceLedger";
 import { ArchivedTradeBriefSchema, type TradeBrief } from "@shared/tradeBrief";
+import { EvidenceTiming } from "./EvidenceTiming";
 
 const button = "min-h-[44px] rounded-lg border border-border px-3 py-2 text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 disabled:cursor-not-allowed";
 const date = (value: string) => new Date(value).toLocaleString();
@@ -56,6 +57,7 @@ export function EvidenceHistory({ brief, offline }: { brief: TradeBrief; offline
           {result.data.record.replay.status === "mismatch" && <p role="alert" className="mt-2 text-destructive">Stored calculations did not reproduce. Do not rely on this record.</p>}
         </div>
         <p className="text-sm">Captured verdict: {result.data.snapshot.verdict}. {result.data.snapshot.thesis}</p>
+        <EvidenceTiming brief={result.data.snapshot} testId="evidence-history-timing" />
         <details className="rounded-md border border-border">
           <summary data-testid="evidence-history-data-toggle" className="min-h-[44px] cursor-pointer p-3 text-sm font-medium">Stored numerical evidence and versions</summary>
           <div className="space-y-3 border-t border-border p-3 text-xs">

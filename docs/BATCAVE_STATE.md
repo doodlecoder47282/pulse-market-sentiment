@@ -1,8 +1,31 @@
 # Batcave checkpoint
 
-Updated: 2026-10-01. This is a compact handoff, not a live-health certificate.
+Updated: 2026-10-02. This is a compact handoff, not a live-health certificate.
 
 ## Current objective
+
+Latest continuation (Oct1 23:41ET request, implemented Oct2): two bounded agents
+implemented encrypted local recovery and stock acquisition provenance, then
+cross-reviewed each other. Parent integrated CLI/ignore rules and live/historical
+timing disclosure. Read EVIDENCE_RECOVERY_RELEASE.md,
+EVIDENCE_RECOVERY_COORDINATION.md and both BACKUP/ACQUISITION_HANDOFF docs.
+121/121 aggregate tests pass; build passes; same59 unrelated TS diagnostics,
+none in changed files. Main5000 restarted once, worker5002 unchanged.
+Real local2-record encrypted backup/isolatedrestore passed; an original browser
+receipt reproduces entire historical response in separate process, no fetch.
+No source overwrite/export. data/evidence-recovery/ and
+data/evidence-recovery-keys/ are PRIVATE ignored runtime; never commit/share.
+Restore does NOT select itself as live. Samehost NOT offdevice disaster recovery.
+Optional evidence-acquisition-v1 separates app receipt/read/cache provenance
+from provider observed_at. Fingerprint+isolatedcopy guards both mutable caches.
+Unknown receipts/firstseen/knownat stayunknown; old archives unchanged.
+375/1440px GUIpasses noerrors/overflow/AIrequests; 44px timing controls.
+200%newdisclosure wraps; existing fixedshellcontrolsclip (open UI ticket).
+Mutual reviews: no unresolved blocker in assigned scope. Next operationalgate:
+approved offdevice destination+separatekeycustody, then retrieval/restore drill.
+Furtherqueue: prospective revision/source coverage, crypto migration, shell
+accessibility; no unrelatedproject/council/polling. iOS stayspaused; SPYforecasts
+and cryptoENTER disabled. Publishing/multiuser/rights/security stillblocked.
 
 Latest implementation (2026-10-01,23:03ET request): durable evidence-history ledger
 for deterministic stock/ETF briefs. Dedicated SQLite atomic capture under

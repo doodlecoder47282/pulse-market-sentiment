@@ -18,6 +18,8 @@
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "evidence:history": "tsx scripts/evidence-history.ts",
+    "evidence:backup": "tsx scripts/evidence-backup.ts",
+    "test:evidence-foundation": "tsx --test tests/evidence-ledger.test.ts tests/evidence-backup.test.ts tests/evidence-acquisition.test.ts tests/evidence-policy.test.ts tests/equity-calendar.test.ts tests/trade-brief.test.ts tests/trade-brief-enrichment.test.ts tests/trade-brief-ai.test.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {

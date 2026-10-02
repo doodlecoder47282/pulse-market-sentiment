@@ -40,3 +40,8 @@ data/brief-ai/
 
 # Private bounded evidence archive and receipt-signing key; never bundle/commit.
 data/evidence-ledger/
+
+# Encrypted local recovery packages, isolated drills and separate recovery keys.
+# Encryption does not make these appropriate for public source distribution.
+data/evidence-recovery/
+data/evidence-recovery-keys/
