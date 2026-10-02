@@ -4,6 +4,31 @@ Updated: 2026-10-01. This is a compact handoff, not a live-health certificate.
 
 ## Current objective
 
+Latest implementation (2026-10-01,23:03ET request): durable evidence-history ledger
+for deterministic stock/ETF briefs. Dedicated SQLite atomic capture under
+gitignored data/evidence-ledger/, owner-only permissions, stable per-record
+receipt read via POST/api/trade-brief/history/read. No HTTP list/write/bypass.
+Original snapshots/envelopes/versions/unknown timestamps retained; checksums,
+supported numerical replay, predecessor/change detection and writer-session
+continuity disclosure. Archives never enter live cache/AI. Live capture failure
+is explicit, not a blank screen or pretend save. Receipt bodies/errors redacted
+from research logging. Replay UI remains historical after snapshot expiry.
+Schema evidence-ledger-v1; original stock/calendar/policy versions unchanged.
+74 focused tests pass (including separate-process replay/network blocked);
+production build passes, same59 unrelated type errors.375/1440px GUI checks
+pass, no errors/overflow/AI requests. Private receipt absent from DOM/payload.
+Main5000 rebuilt/restarted once without model credentials; worker5002 unchanged.
+Limits:30-day readability,500 records,48MiB payload total,384KiB each. Expired
+rows physically purged on later successful capture, not during inactivity.
+Restart-safe on current disk only, plaintext at rest; NOT off-device backup,
+multi-user security, full PIT history, provider correction stream, crypto or
+optional AI-selection archive. Receipt remains in tab memory; local-owner CLI:
+npm run evidence:history -- list | inspect <record-uuid>.
+Read EVIDENCE_LEDGER_RELEASE.md and EVIDENCE_LEDGER_QA.md; protect BOTH database
+and receipt.key; do not stage/archive/share them. Next: approved private backup/
+restore policy and normalized acquisition/revision metadata, then crypto.
+iOS/Xcode stays paused, SPY forecasts and crypto ENTER disabled.
+
 Latest authorized continuation (2026-10-01 late evening ET): exchange-calendar
 handling for ticker briefs. Implemented bounded NYSE/Nasdaq common2026 core
 schedule from official pages, DST, holidays/early closes, exact prior-session/

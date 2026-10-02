@@ -46,8 +46,9 @@ export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
+  signal?: AbortSignal,
 ): Promise<Response> {
-  const res = await transportRequest(method, url, data);
+  const res = await transportRequest(method, url, data, signal);
 
   await throwIfResNotOk(res);
   return res;

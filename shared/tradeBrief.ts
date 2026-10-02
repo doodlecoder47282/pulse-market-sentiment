@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { EvidenceReviewSchema } from "./evidencePolicy";
 import { EquityScheduleSchema } from "./equityCalendar";
+import { ArchiveReceiptSchema } from "./evidenceLedger";
 
 /** This is a deliberately finite US-listed research universe, not a security master. */
 export const TRADE_BRIEF_VERSION = "stock-brief-2026-10-02.1";
@@ -102,7 +103,7 @@ export const LevelSchema = z.object({
   period: z.string(), purpose: z.literal("structure_reference_only"),
 }).strict();
 export type TradeBriefLevel = z.infer<typeof LevelSchema>;
-export const TradeBriefSchema = z.object({
+const TradeBriefObjectSchema = z.object({
   brief_id: z.string(), snapshot_id: z.string(), instrument_id: z.string(),
   instrument: InstrumentSchema, horizon: HorizonSchema, mode: z.literal("research_only"),
   created_at: z.string(), expires_at: z.string(),
@@ -127,9 +128,13 @@ export const TradeBriefSchema = z.object({
   evidence: z.array(EvidenceSchema), methodology: z.array(z.string()),
   context_items: z.array(ContextItemSchema).max(30).optional(),
   evidence_review: EvidenceReviewSchema.optional(),
+  archive: ArchiveReceiptSchema.optional(),
   explanation: z.object({ status: z.literal("deterministic"), detail: z.string() }),
   model_version: z.literal("none"), calculation_version: z.string(),
-}).strict().superRefine((brief, ctx) => {
+}).strict();
+function validateReferences(brief: Pick<z.infer<typeof TradeBriefObjectSchema>,
+  "evidence" | "context_items" | "levels" | "source_statuses" | "claims" | "events" | "quote" | "instrument" | "instrument_id">,
+  ctx: z.RefinementCtx) {
   const ids = [...brief.evidence, ...(brief.context_items ?? [])].map(e => e.id);
   const known = new Set(ids);
   if (known.size !== ids.length) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Duplicate evidence IDs" });
@@ -151,7 +156,18 @@ export const TradeBriefSchema = z.object({
   if (brief.instrument_id !== brief.instrument.id) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Instrument identity mismatch" });
   }
-});
+}
+export const TradeBriefSchema = TradeBriefObjectSchema.superRefine(validateReferences);
+/** Historical view only. Preserve version stamps; never relabel old contracts as current. */
+export const ArchivedTradeBriefSchema = TradeBriefObjectSchema.extend({
+  evidence_review: EvidenceReviewSchema.extend({ version: z.string().min(1) }).optional(),
+  session: z.object({
+    label: z.string(), calendar_verified: z.literal(false),
+    schedule: EquityScheduleSchema.extend({
+      version: z.string().min(1), coverage_from: z.string(), coverage_through: z.string(),
+    }).optional(),
+  }),
+}).superRefine(validateReferences);
 export type TradeBrief = z.infer<typeof TradeBriefSchema>;
 
 export function tradeBriefExpired(brief: Pick<TradeBrief, "expires_at">, now = Date.now()): boolean {

@@ -401,7 +401,8 @@ const defaultDependencies: TradeBriefDependencies = {
   },
 };
 
-export function createTradeBriefService(deps: TradeBriefDependencies = defaultDependencies) {
+export function createTradeBriefService(deps: TradeBriefDependencies = defaultDependencies,
+  capture?: (brief: TradeBrief) => NonNullable<TradeBrief["archive"]>) {
   const now = deps.now ?? Date.now;
   const timeoutMs = Math.min(8_000, Math.max(1, deps.timeoutMs ?? 8_000));
   // Bounded by the finite registry (two horizons each); no user-controlled arbitrary cache keys.
@@ -462,7 +463,12 @@ export function createTradeBriefService(deps: TradeBriefDependencies = defaultDe
           : Promise.resolve({ state: "unavailable", value: null } as LoadResult),
         cached(deps.news), cached(deps.earnings),
       ]);
-      const brief = freezeDeep(buildStockTradeBrief(instrument, horizon, { quote, history, macro, options, news, earnings }, now()));
+      const built = buildStockTradeBrief(instrument, horizon, { quote, history, macro, options, news, earnings }, now());
+      if (capture) {
+        try { built.archive = capture(built); }
+        catch { built.archive = { status: "unavailable", detail: "Local evidence archive unavailable. This brief is not confirmed saved." }; }
+      }
+      const brief = freezeDeep(built);
       cache.set(key, brief);
       return brief;
     })();

@@ -3,6 +3,8 @@ import { getCryptoContext } from "./cryptoContext";
 import { getCryptoSourceRegister } from "./cryptoEngine";
 import { createTradeBriefService, registerTradeBriefRoutes } from "./tradeBrief";
 import { registerTradeBriefAiRoutes } from "./tradeBriefAi";
+import { openEvidenceLedger, type EvidenceLedger } from "./evidenceLedger";
+import { registerEvidenceLedgerRoutes } from "./evidenceLedgerRoutes";
 import { spyProjectionRoute } from "./spyProjection";
 import { getWidgetLayout, saveWidgetLayout, resetWidgetLayout } from "./widgetLayouts";
 import { buildTradeEnvironment, startTradeEnvironmentWatch } from "./tradeEnvironment";
@@ -417,9 +419,12 @@ function rescaleLevelsForSpy(input: any, factor = 10): any {
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   // Bounded read-only stock/ETF research; stays inside the existing API boundary.
-  const tradeBriefService = createTradeBriefService();
+  let evidenceLedger: EvidenceLedger | undefined;
+  const getEvidenceLedger = () => evidenceLedger ??= openEvidenceLedger();
+  const tradeBriefService = createTradeBriefService(undefined, brief => getEvidenceLedger().capture(brief));
   registerTradeBriefRoutes(app, tradeBriefService);
   registerTradeBriefAiRoutes(app, id => tradeBriefService.getSnapshot(id));
+  registerEvidenceLedgerRoutes(app, getEvidenceLedger);
   // ── Widget layout persistence (customizable dashboard stacks) ──
   app.get("/api/layout/:tab", (req, res) => {
     try {

@@ -17,6 +17,7 @@
     "test:crypto": "tsx --test tests/crypto-reliability.test.ts tests/meme-scoring.test.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "evidence:history": "tsx scripts/evidence-history.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {

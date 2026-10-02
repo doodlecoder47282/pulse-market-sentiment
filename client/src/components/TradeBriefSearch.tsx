@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Search, ChevronRight, RefreshCw, ShieldCheck } from "lucide-react";
 import { transportRequest } from "@/lib/queryClient";
 import { TradeBriefAi } from "./TradeBriefAi";
+import { EvidenceHistory } from "./EvidenceHistory";
 import { getSourceContract } from "@shared/evidencePolicy";
 import {
   SearchResponseSchema, TradeBriefSchema, tradeBriefExpired,
@@ -332,6 +333,7 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
             <strong className="text-foreground">Deterministic calculations · No automatic AI call</strong><br />{brief.explanation.detail}
           </div>
           <TradeBriefAi key={brief.snapshot_id} brief={brief} expired={expired} offline={offline} />
+          <EvidenceHistory key={`history-${brief.snapshot_id}`} brief={brief} offline={offline} />
         </div>
 
         <aside aria-label="Coverage and evidence" className="min-w-0">
