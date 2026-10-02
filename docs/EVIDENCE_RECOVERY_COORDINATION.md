@@ -63,6 +63,8 @@ GUI checks at 375px and 1440px covered real analysis/save/history with unknown r
 
 Saved verification evidence: `recovery-foundation-final.log`, `recovery-typecheck-final.log`, `recovery-build-final.log`, `recovery-mobile-live.png`, `recovery-mobile-timing-fixture.png`, `recovery-desktop-timing.png`, `recovery-mobile-enlarged.png`. Detailed peer decisions and owner commands are in `EVIDENCE_BACKUP_HANDOFF.md` and `EVIDENCE_ACQUISITION_HANDOFF.md`.
 
+Commit `60e0fd1` deployed to the existing private preview. Final 390px opaque-iframe real listing/analysis/save/history/timing flow passed; a real Schwab receipt annotation survived unchanged in history and did not override the missing-current-price verdict. No errors, horizontal overflow or AI calls. Screenshot: `recovery-deployed-mobile.png`. A pre-restart browser receipt also passed the updated HTTP history endpoint with checksum/replay verified and actionable=false.
+
 ## Low-credit continuation rule
 
 Resume from `BATCAVE_STATE.md`, this register and the narrow handoffs. Reuse tests and cached evidence; assign at most two non-overlapping workers for this batch. Stop at the next external approval or unavailable-data dependency rather than launching a broad audit, another council or an unrelated project.

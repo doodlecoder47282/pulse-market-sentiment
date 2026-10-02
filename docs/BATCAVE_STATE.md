@@ -21,6 +21,9 @@ from provider observed_at. Fingerprint+isolatedcopy guards both mutable caches.
 Unknown receipts/firstseen/knownat stayunknown; old archives unchanged.
 375/1440px GUIpasses noerrors/overflow/AIrequests; 44px timing controls.
 200%newdisclosure wraps; existing fixedshellcontrolsclip (open UI ticket).
+Code60e0fd1 deployedinplace. Real390px opaqueiframe lookup/analyze/save/read
+passed; realSchwabreceipt preserved inhistory without currentprice promotion.
+Noerrors/overflow/AIcalls; oldbrowserreceipt stillHTTP200 afterrestart.
 Mutual reviews: no unresolved blocker in assigned scope. Next operationalgate:
 approved offdevice destination+separatekeycustody, then retrieval/restore drill.
 Furtherqueue: prospective revision/source coverage, crypto migration, shell
