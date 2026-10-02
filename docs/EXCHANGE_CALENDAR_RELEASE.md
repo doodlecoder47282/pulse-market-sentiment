@@ -35,6 +35,8 @@ The official schedule lists 2026 early closes at 1:00 p.m. ET on November 27 and
 
 Logs and screenshots are saved as `calendar-tests.log`, `calendar-typecheck.log`, `calendar-build.log`, `calendar-mobile.png` and `calendar-desktop.png` in the workspace. Tests and fixtures do not certify market-data accuracy, predictive performance or production security.
 
+Code commit `2b5528f` was deployed in place to the existing Batcave artifact. Final deployed 390px opaque-iframe testing passed Intel search, INTC confirmation, Analyze and calendar disclosure, with zero page exceptions, horizontal overflow or AI requests. Screenshot: `calendar-deployed-mobile.png`. Browser resources were closed; no public site was published.
+
 ## Continuation
 
 Calendar version: `us-core-schedule-2026-10-02.1`. Stock output: `stock-brief-2026-10-02.1`. Evidence-policy version: `evidence-policy-2026-10-02.1`; the register now includes two reference-only calendar records in addition to the prior 27 source/product records.

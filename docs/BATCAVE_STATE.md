@@ -16,6 +16,8 @@ lookup/Analyze and375/1440px checks pass; no page errors/overflow/actual AI call
 Live after-hours quote/history/options remained unavailable; not overridden.
 See EXCHANGE_CALENDAR_RELEASE.md and CALENDAR_QA.md. Calendar and stock-output
 versions2026-10-02.1; evidence-policy2026-10-02.1,29 selected source/product records.
+Commit2b5528f deployed in place; real390px opaque-iframe Intel lookup, Analyze
+and calendar disclosure passed with no errors/overflow/AI calls.
 No calendar polling; main5000 rebuilt/restarted once, worker5002 unchanged.
 This is ticker-brief schedule logic, NOT all legacy scheduler migration, live
 halt status, PIT-safe history or multi-user security approval. 2027unsupported.
