@@ -1,3 +1,4 @@
+import { citationAllowed, newsSourceId } from "../shared/evidencePolicy";
 import {
   TRADE_BRIEF_VERSION, type TradeBriefCategory, type TradeBriefContextItem,
   type TradeBriefEvidence, type TradeBriefInstrument, type TradeBriefLevel,
@@ -42,6 +43,8 @@ export function enrichStockBrief(input: EnrichmentInput) {
     unit: string, observed: string, formula?: string, evidence_ids?: string[]) {
     if (!finite(value)) return;
     observations.push({ id, category, label, value, unit, observed_at: observed,
+      source_id: formula ? "batcave.calculation" : category === "macro" ? "fred.observations"
+        : category === "options" ? "schwab.options" : "schwab.history",
       time_precision: /^\d{4}-\d{2}-\d{2}$/.test(observed) ? "period" : "instant",
       status: "partial", source: category === "macro" ? "FRED derived observation" : "Schwab",
       url: category === "macro" ? "https://fred.stlouisfed.org/series/DGS10" : SCHWAB_URL,
@@ -52,6 +55,9 @@ export function enrichStockBrief(input: EnrichmentInput) {
   function context(id: string, category: TradeBriefCategory, text: string, source: string,
     url: string, observed_at: string, precision: TradeBriefContextItem["time_precision"], evidence_ids: string[] = []) {
     contexts.push({ id, category, text: text.slice(0, 1600), source, url, observed_at,
+      source_id: category === "news" ? newsSourceId(source) : category === "earnings" ? "nasdaq.earnings"
+        : "batcave.calculation",
+      ...(evidence_ids.length ? { formula_id: `${TRADE_BRIEF_VERSION}:context:${id}` } : {}),
       time_precision: precision, status: "partial", evidence_ids });
     statuses[category].evidence_ids.push(id);
   }
@@ -186,6 +192,7 @@ export function enrichStockBrief(input: EnrichmentInput) {
       if (!feed || !time(checked, now) || now - checked > 15 * 60_000
         || h.publication_verified !== true || !time(published, now) || now - published >= DAY
         || !safeUrl(h.url) || typeof h.source !== "string"
+        || !citationAllowed(newsSourceId(h.source) ?? "unregistered", h.url)
         || !patterns.some(p => p.test(text))) continue;
       const id = `news-explicit-${accepted++}`;
       context(id, "news", `${text.slice(0, 900)} · Explicit text attribution only; not confirmation of materiality or exhaustive news coverage.`,

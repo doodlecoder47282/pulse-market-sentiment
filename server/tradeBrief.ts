@@ -3,6 +3,7 @@ import type { Express, Request, Response } from "express";
 import { classicPivots } from "./pivots";
 import { etEpochMs } from "./etTime";
 import { enrichStockBrief, type BriefBar } from "./tradeBriefEnrichment";
+import { reviewTradeBriefEvidence } from "../shared/tradeBriefEvidence";
 import {
   BriefRequestSchema, SearchRequestSchema, TRADE_BRIEF_CATEGORIES, TRADE_BRIEF_INSTRUMENTS,
   TRADE_BRIEF_VERSION, TradeBriefSchema, searchTradeBriefInstruments,
@@ -74,7 +75,9 @@ function moduleStatus(category: TradeBriefCategory, now: number): TradeBriefSour
 function evidence(id: string, category: TradeBriefCategory, label: string, value: number, unit: string,
   observed: string, status: CoverageStatus, source = "Schwab", url = SCHWAB_URL,
   precision: TradeBriefEvidence["time_precision"] = "instant"): TradeBriefEvidence {
-  return { id, category, label, value, unit, observed_at: observed, status, source, url, time_precision: precision };
+  const source_id = category === "macro" ? "fred.observations"
+    : precision === "instant" ? "schwab.quote" : "schwab.history";
+  return { id, category, label, value, unit, observed_at: observed, status, source, url, time_precision: precision, source_id };
 }
 function errorReason(result: LoadResult): string {
   return result.state === "timeout" ? "Source exceeded the bounded response deadline; no substitute values used."
@@ -364,8 +367,9 @@ export function buildStockTradeBrief(
     explanation: { status: "deterministic" as const, detail: "Calculated from validated evidence and coverage rules without a model call. Optional AI curation is a separate, explicit request; it can only prioritize approved findings and cannot generate numbers or upgrade the verdict." },
     model_version: "none" as const, calculation_version: TRADE_BRIEF_VERSION,
   };
-  const hash = createHash("sha256").update(JSON.stringify(result)).digest("hex").slice(0, 24);
-  return TradeBriefSchema.parse({ ...result, brief_id: `brief-${hash}`, snapshot_id: `snapshot-${hash}` });
+  const reviewed = { ...result, evidence_review: reviewTradeBriefEvidence(result, now) };
+  const hash = createHash("sha256").update(JSON.stringify(reviewed)).digest("hex").slice(0, 24);
+  return TradeBriefSchema.parse({ ...reviewed, brief_id: `brief-${hash}`, snapshot_id: `snapshot-${hash}` });
 }
 
 function freezeDeep<T>(value: T): T {

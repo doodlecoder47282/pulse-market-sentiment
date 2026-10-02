@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { EvidenceReviewSchema } from "./evidencePolicy";
 
 /** This is a deliberately finite US-listed research universe, not a security master. */
-export const TRADE_BRIEF_VERSION = "stock-brief-2026-10-01.2";
+export const TRADE_BRIEF_VERSION = "stock-brief-2026-10-01.3";
 export const TRADE_BRIEF_CATEGORIES = [
   "quote", "levels", "news", "options", "volume", "earnings", "macro", "seasonality",
 ] as const;
@@ -82,6 +83,7 @@ export const EvidenceSchema = z.object({
   time_precision: z.enum(["instant", "date", "period"]),
   status: CoverageSchema, source: z.string(), url: z.string().url(),
   formula_id: z.string().optional(), evidence_ids: z.array(z.string()).optional(),
+  source_id: z.string().optional(),
 }).strict();
 export type TradeBriefEvidence = z.infer<typeof EvidenceSchema>;
 export const ContextItemSchema = z.object({
@@ -89,6 +91,7 @@ export const ContextItemSchema = z.object({
   source: z.string(), url: z.string().url(), observed_at: z.string(),
   time_precision: z.enum(["instant", "date", "period"]), status: CoverageSchema,
   evidence_ids: z.array(z.string()),
+  source_id: z.string().optional(), formula_id: z.string().optional(),
 }).strict();
 export type TradeBriefContextItem = z.infer<typeof ContextItemSchema>;
 export const LevelSchema = z.object({
@@ -122,6 +125,7 @@ export const TradeBriefSchema = z.object({
   claims: z.array(z.object({ text: z.string(), evidence_ids: z.array(z.string()) })),
   evidence: z.array(EvidenceSchema), methodology: z.array(z.string()),
   context_items: z.array(ContextItemSchema).max(30).optional(),
+  evidence_review: EvidenceReviewSchema.optional(),
   explanation: z.object({ status: z.literal("deterministic"), detail: z.string() }),
   model_version: z.literal("none"), calculation_version: z.string(),
 }).strict().superRefine((brief, ctx) => {

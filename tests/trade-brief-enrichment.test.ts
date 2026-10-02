@@ -31,9 +31,9 @@ function make(extras: Extras = {}, q: unknown = quote(), h: unknown = history(),
 }
 const value = (b: ReturnType<typeof make>, id: string) => b.evidence.find(e => e.id === id)?.value;
 const status = (b: ReturnType<typeof make>, category: string) => b.source_statuses.find(s => s.category === category)!;
-function news(title = "Apple Inc reports results", source = "Fixture RSS") {
+function news(title = "Apple Inc reports results", source = "MarketWatch") {
   return { asOf: now / 1000, feeds: [{ source, status: "ok", checked_at: new Date(now - 5000).toISOString(), item_count: 1 }],
-    headlines: [{ title, source, url: "https://example.com/article", published: now / 1000 - 120,
+    headlines: [{ title, source, url: "https://www.marketwatch.com/story/fixture-only", published: now / 1000 - 120,
       publication_verified: true, tickers: ["AAPL"] }] };
 }
 function earnings() {
@@ -63,6 +63,10 @@ test("ATR14 SMA, signed reference distances, full-day volume ratio and matched m
   assert.ok(b.claims.some(c => c.evidence_ids.includes("factor-atr")));
   assert.equal(b.risk.basis, "withheld");
   assert.ok(TradeBriefSchema.safeParse(b).success);
+  assert.deepEqual(b.evidence_review?.excluded, []);
+  assert.ok(b.evidence_review?.eligible_ids.includes("factor-atr"));
+  assert.ok(b.evidence_review?.eligible_ids.includes("factor-volume"));
+  assert.ok(b.evidence_review?.eligible_ids.includes("factor-yield-curve"));
 });
 
 test("today's incomplete candle never enters daily ATR or prior20 baseline; observed zero remains zero", () => {
@@ -99,7 +103,7 @@ test("cached news requires explicit title attribution, healthy fresh feed and ac
   assert.equal(status(make({ news: news("Results from $AAPL") }), "news").status, "partial");
   assert.equal(status(make({ news: news("Results from $AAPLX") }), "news").contributed, false);
   const b = make({ news: news() });
-  assert.ok(b.context_items?.some(c => c.category === "news" && c.url === "https://example.com/article"));
+  assert.ok(b.context_items?.some(c => c.category === "news" && c.url === "https://www.marketwatch.com/story/fixture-only"));
   const unhealthy = news(); unhealthy.feeds[0].status = "unavailable";
   assert.equal(status(make({ news: unhealthy }), "news").contributed, false);
   const old = news(); old.headlines[0].published -= 86400;

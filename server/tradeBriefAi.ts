@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { TradeBrief } from "../shared/tradeBrief";
 import { tradeBriefExpired } from "../shared/tradeBrief";
+import { reviewTradeBriefEvidence } from "../shared/tradeBriefEvidence";
 import {
   AiBriefRequestSchema, AiBriefResponseSchema, AiCatalogSchema, validateAiSelection,
   type AiCatalog, type AiBriefResponse,
@@ -13,9 +14,10 @@ const limitations = [
   "This is not a forecast, a validated edge, an execution plan or continuously monitored advice.",
 ];
 
-export function buildAiCatalog(brief: TradeBrief): AiCatalog {
-  const usable = new Set([...brief.evidence, ...(brief.context_items ?? [])]
-    .filter(e => e.status === "available" || e.status === "partial").map(e => e.id));
+export function buildAiCatalog(brief: TradeBrief, now = Date.parse(brief.created_at)): AiCatalog {
+  // Recompute: never trust a supplied/stored eligibility summary at the model boundary.
+  const review = reviewTradeBriefEvidence(brief, now);
+  const usable = new Set(review.eligible_ids);
   const claims = brief.claims.filter(c => c.evidence_ids.length > 0
     && c.evidence_ids.every(id => usable.has(id)))
     .slice(0, 24).map((c, i) => ({ id: `claim-${i}`, text: c.text.slice(0, 1600), evidence_ids: c.evidence_ids }));
@@ -61,7 +63,7 @@ export function createTradeBriefAiService(
       const promise = (async () => {
         active++;
         try {
-          const catalog = buildAiCatalog(brief);
+          const catalog = buildAiCatalog(brief, now());
           const selected = validateAiSelection(await curate(catalog), catalog);
           if (tradeBriefExpired(brief, now())) return fallback("Snapshot expired during curation. Refresh the brief manually.");
           const pick = (rows: AiCatalog["claims"], ids: string[]) => ids.map(id => rows.find(row => row.id === id)!);

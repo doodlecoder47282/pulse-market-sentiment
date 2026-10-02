@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Search, ChevronRight, RefreshCw, ShieldCheck } from "lucide-react";
 import { transportRequest } from "@/lib/queryClient";
 import { TradeBriefAi } from "./TradeBriefAi";
+import { getSourceContract } from "@shared/evidencePolicy";
 import {
   SearchResponseSchema, TradeBriefSchema, tradeBriefExpired,
   type CoverageStatus, type TradeBrief, type TradeBriefHorizon, type TradeBriefInstrument,
@@ -328,6 +329,31 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
               <p className="mt-1 break-words text-xs text-muted-foreground">{s.observed_at ? timestamp(s.observed_at) : "Observation time unavailable"}</p>
             </li>)}
           </ul>
+          {brief.evidence_review && <details data-testid="trade-brief-policy" className="mt-3 rounded-lg border border-border">
+            <summary data-testid="trade-brief-policy-toggle" className="min-h-[44px] cursor-pointer px-3 py-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+              Source policy &amp; AI eligibility
+            </summary>
+            <div className="space-y-3 border-t border-border p-3 text-sm leading-relaxed">
+              <p data-testid="trade-brief-policy-count">{expired ? "Expired snapshot: no current AI eligibility."
+                : `${brief.evidence_review.eligible_ids.length} evidence items passed the contract at capture; ${brief.evidence_review.excluded.length} excluded from AI selection.`}</p>
+              <p className="text-xs text-muted-foreground">This counts evidence items, not independent sources or confidence. AI rechecks at request time.</p>
+              <ul className="space-y-2 text-xs text-muted-foreground">
+                {brief.evidence_review.source_ids.map(id => {
+                  const contract = getSourceContract(id);
+                  return <li key={id}><strong className="text-foreground">{contract?.name ?? "Unregistered source"}</strong>
+                    <br />{contract?.limitation ?? "Excluded until a source contract is registered."}
+                    <br />Rights unverified · Not approved for public/multi-user use
+                  </li>;
+                })}
+              </ul>
+              {brief.evidence_review.excluded.length > 0 && <details>
+                <summary data-testid="trade-brief-policy-exclusions" className="min-h-[44px] cursor-pointer py-3 text-sm">Why evidence was excluded</summary>
+                <ul className="space-y-1 text-xs text-muted-foreground">{brief.evidence_review.excluded.map(e => <li key={e.id}>{e.id}: {e.reasons.map(r => r.replaceAll("_", " ")).join("; ")}</li>)}</ul>
+              </details>}
+              {brief.evidence_review.limitations.map(text => <p key={text} className="text-xs text-muted-foreground">{text}</p>)}
+              <p className="text-xs text-muted-foreground">{brief.evidence_review.version}</p>
+            </div>
+          </details>}
           <details className="mt-3 rounded-lg border border-border">
             <summary className="min-h-[44px] cursor-pointer px-3 py-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">Evidence, freshness &amp; gaps</summary>
             <div className="space-y-4 border-t border-border p-3 text-xs leading-relaxed">

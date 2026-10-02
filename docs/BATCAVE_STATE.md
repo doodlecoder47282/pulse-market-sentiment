@@ -4,6 +4,27 @@ Updated: 2026-10-01. This is a compact handoff, not a live-health certificate.
 
 ## Current objective
 
+Latest implementation request (2026-10-01 evening ET): start the saved framework
+logically with less credit use. Delivered a bounded Stage A source/evidence
+foundation, not the whole roadmap. See STAGE_A_EVIDENCE_RELEASE.md and
+STAGE_A_QA.md. 27 selected source/product records; core typed research identity,
+timestamps/units/lineage and recursive dependency admission; stock snapshots
+include source-policy review and manual AI rechecks eligibility at request time.
+Registered publisher/citation gates tighten stock news. Collapsed mobile/
+desktop policy disclosure has honest evidence counts and exclusion reasons.
+Policy evidence-policy-2026-10-01.1; stock output stock-brief-2026-10-01.3.
+41 focused tests and production build passed; 59 unrelated type errors remain.
+375/1440px browser checks passed, including expiry, HTTP failure and legacy
+response compatibility; no page exceptions/overflow or actual model calls.
+Main5000 rebuilt/restarted once without model credentials; worker5002 unchanged.
+No new source integrations/polling, paid access, X reconnect or council.
+Crypto records are inventory only; shared adapter migration remains pending.
+Security/rights approval, calendar/adjustments and persistent point-in-time
+history remain incomplete. Evidence scope rejection is not app-wide auth.
+iOS paused; SPY forecasts and crypto ENTER stay disabled. Next bounded package:
+verified session-calendar contract and point-in-time history foundation.
+Do not repeat broad research or council; reuse this checkpoint and the framework.
+
 Latest planning request (2026-10-01, 11:44 ET): full source-to-variable-to-AI
 and thumb-first GUI framework. Saved
 BATCAVE_EVIDENCE_AND_EXPERIENCE_FRAMEWORK.pplx.md as proposed version1.0,
