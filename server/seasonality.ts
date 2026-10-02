@@ -252,7 +252,7 @@ function findOptimalWindow(
 export function generateAnalysisText(
   symbol: string,
   opt: OptimalWindow | null,
-  yearly: Pick<YearlySeasonality, "fullYearAvg" | "fullYearWinRate" | "presidentialCycleYear" | "presidentialCycleAvg" | "lookbackYears">,
+  yearly: Pick<YearlySeasonality, "fullYearAvg" | "fullYearWinRate" | "presidentialCycleYear" | "presidentialCycleAvg">,
   lookback: number,
 ): string {
   if (!opt || opt.confidenceLabel === "Insufficient") {
@@ -503,7 +503,7 @@ export function computeSeasonality(
     analysisText: generateAnalysisText(
       "this ticker",
       optimalWindow,
-      { fullYearAvg, fullYearWinRate, presidentialCycleYear: cycYear, presidentialCycleAvg, lookbackYears },
+      { fullYearAvg, fullYearWinRate, presidentialCycleYear: cycYear, presidentialCycleAvg },
       lookbackYears,
     ),
   };
@@ -554,7 +554,7 @@ export async function buildSeasonalitySnapshot(lookback?: number): Promise<Seaso
         yearly.analysisText = generateAnalysisText(
           tk.symbol,
           yearly.optimalWindow,
-          { fullYearAvg: yearly.fullYearAvg, fullYearWinRate: yearly.fullYearWinRate, presidentialCycleYear: yearly.presidentialCycleYear, presidentialCycleAvg: yearly.presidentialCycleAvg, lookbackYears: computed.lookbackYears },
+          { fullYearAvg: yearly.fullYearAvg, fullYearWinRate: yearly.fullYearWinRate, presidentialCycleYear: yearly.presidentialCycleYear, presidentialCycleAvg: yearly.presidentialCycleAvg },
           computed.lookbackYears,
         );
         return { symbol: tk.symbol, displayName: tk.displayName, ...computed, yearly };

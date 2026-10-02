@@ -401,59 +401,59 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
       <div className="rounded-lg border border-amber-500/20 bg-amber-500/5">
         {/* Header */}
-        <CollapsibleTrigger asChild>
-          <button
-            className="flex min-h-[44px] w-full items-center justify-between px-4 py-3 text-left"
-            data-testid="flow-alerts-toggle"
-          >
-            <div className="flex items-center gap-2">
-              <Bell className={`h-3.5 w-3.5 ${totalCount > 0 ? "text-amber-400" : "text-muted-foreground"}`} />
-              <span className="text-xs font-semibold uppercase tracking-wider text-amber-300">
-                Flow Alerts
-              </span>
-              {totalCount > 0 && (
-                <div className="flex items-center gap-1">
-                  <span className="flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-amber-500 px-1 font-mono text-[9px] font-bold text-black">
-                    {totalCount}
-                  </span>
-                  {highCount > 0 && (
-                    <span className="flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-red-500 px-1 font-mono text-[9px] font-bold text-white">
-                      {highCount} HIGH
+        <div className="batcave-flow-alerts-header flex items-center gap-2 px-4 py-3"
+          data-testid="flow-alerts-header">
+          <CollapsibleTrigger asChild>
+            <button type="button"
+              className="flex min-h-[44px] min-w-[44px] flex-1 basis-48 items-center justify-between gap-2 text-left"
+              data-testid="flow-alerts-toggle"
+              aria-label={`${isOpen ? "Collapse" : "Expand"} flow alerts; ${totalCount} alerts, ${highCount} high severity; ${isConnected ? "Schwab live" : "offline"}`}
+            >
+              <span className="batcave-flow-alerts-summary flex items-center gap-2">
+                <Bell aria-hidden="true" className={`h-3.5 w-3.5 ${totalCount > 0 ? "text-amber-400" : "text-muted-foreground"}`} />
+                <span className="text-xs font-semibold uppercase tracking-wider text-amber-300">
+                  Flow Alerts
+                </span>
+                {totalCount > 0 && (
+                  <span className="batcave-flow-alerts-counts flex items-center gap-1">
+                    <span className="flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-amber-500 px-1 font-mono text-[9px] font-bold text-black">
+                      {totalCount}
                     </span>
-                  )}
-                </div>
-              )}
-              {/* Connection status indicator */}
-              <div className="flex items-center gap-1 ml-2">
-                {isConnected ? (
-                  <span className="flex items-center gap-1 text-[9px] text-emerald-400">
-                    <Wifi className="h-2.5 w-2.5" /> SCHWAB LIVE
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1 text-[9px] text-muted-foreground/60">
-                    <WifiOff className="h-2.5 w-2.5" /> OFFLINE
+                    {highCount > 0 && (
+                      <span className="flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-red-500 px-1 font-mono text-[9px] font-bold text-white">
+                        {highCount} HIGH
+                      </span>
+                    )}
                   </span>
                 )}
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              {totalCount > 0 && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); dismissAll(); }}
-                  className="rounded px-2 py-0.5 text-[9px] text-muted-foreground hover:text-foreground transition border border-border/40 hover:border-border"
-                  data-testid="dismiss-all-alerts"
-                >
-                  clear all
-                </button>
-              )}
+                {/* Connection status indicator */}
+                <span className="flex items-center gap-1 ml-2">
+                  {isConnected ? (
+                    <span className="flex items-center gap-1 text-[9px] text-emerald-400">
+                      <Wifi aria-hidden="true" className="h-2.5 w-2.5" /> SCHWAB LIVE
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-[9px] text-muted-foreground/60">
+                      <WifiOff aria-hidden="true" className="h-2.5 w-2.5" /> OFFLINE
+                    </span>
+                  )}
+                </span>
+              </span>
               {isOpen ? (
-                <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+                <ChevronUp aria-hidden="true" className="h-3.5 w-3.5 text-muted-foreground" />
               ) : (
-                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                <ChevronDown aria-hidden="true" className="h-3.5 w-3.5 text-muted-foreground" />
               )}
-            </div>
-          </button>
-        </CollapsibleTrigger>
+            </button>
+          </CollapsibleTrigger>
+          {totalCount > 0 && (
+            <button type="button" onClick={dismissAll}
+              className="shrink-0 rounded px-2 py-0.5 text-[9px] text-muted-foreground hover:text-foreground transition border border-border/40 hover:border-border"
+              data-testid="dismiss-all-alerts" aria-label="Clear all flow alerts">
+              clear all
+            </button>
+          )}
+        </div>
 
         <CollapsibleContent>
           <div className="border-t border-amber-500/10 px-4 pb-4 pt-3 space-y-2">

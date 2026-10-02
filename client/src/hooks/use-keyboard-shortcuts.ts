@@ -1,5 +1,5 @@
 // use-keyboard-shortcuts.ts — keyboard navigation for the Pulse dashboard.
-// Keys 1-8: switch tabs in locked order
+// Keys 1-8: legacy workspace bindings (7 opens Cosmos)
 // /: focus ticker input in Chart tab
 // ESC: close Take Five overlay / blur focused input
 // ?: toggle help modal
@@ -7,15 +7,16 @@
 import { useEffect, useCallback, type RefObject } from "react";
 import type { TabKey } from "@/components/TickerContext";
 
-// Tab order matches the locked UI order
-const TAB_KEYS: TabKey[] = [
+// Preserve the legacy numeric positions independently of the visual tab order.
+// The help dialog shares this map so its labels cannot drift from the handler.
+export const TAB_KEYS: readonly TabKey[] = [
   "signals",
   "chart",
   "models",
   "tradedesk",
   "regime",
   "news",
-  "voices",
+  "cosmos",
   "takefive",
 ];
 
@@ -129,16 +130,18 @@ export const TAB_LABELS: Record<TabKey, string> = {
   signals: "Signals",
   chart: "Chart",
   models: "Models",
+  heatseeker: "Heatseeker",
   tradedesk: "Trade Desk",
   regime: "Regime",
   news: "News",
-  voices: "Voices",
+  cosmos: "Cosmos",
   takefive: "Take Five",
   edgelab: "Edge Lab",
+  crypto: "Crypto",
 };
 
 export const SHORTCUT_DOCS = [
-  { key: "1 – 8", description: "Switch to tab by position (Signals → Take Five)" },
+  { key: "1 – 8", description: "Workspace shortcuts (7: Cosmos; see numbered list)" },
   { key: "/", description: "Focus ticker search in Chart tab" },
   { key: "ESC", description: "Close overlay / blur focused input" },
   { key: "?", description: "Toggle this help screen" },

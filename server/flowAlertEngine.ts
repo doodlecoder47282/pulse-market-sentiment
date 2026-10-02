@@ -630,6 +630,7 @@ export function getFlowSnapshot(): FlowSnapshot {
 
 // ─── Single-shot preview for /api/flow/preview ───────────────────────────────
 export async function previewFlow(): Promise<{
+  source: FlowSnapshot["source"];
   config: FlowSnapshot["config"];
   byTicker: Record<string, { whales: WhaleHit[]; rejected: Array<{ occ: string; reason: string }> }>;
   totalScanned: number;

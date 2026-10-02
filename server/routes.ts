@@ -752,6 +752,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const q = enriched.horizons?.quarterly as any;
         if (q && q.spot) {
           const snap = await getOrBuild(false);
+          // A missing crossing is unknown, not a zero-price anchor. Omit this
+          // optional trajectory rather than inventing a flip for its drift math.
+          const zeroGamma = snap.gamma.zeroGamma;
+          if (zeroGamma == null || !Number.isFinite(zeroGamma) || zeroGamma <= 0) {
+            throw new Error("Quarterly trajectory unavailable: no valid gamma flip");
+          }
           const composite = snap.composite?.score ?? 50;
           // Scale-aware level mapping:
           //  snap.gamma.* are SPY-scale (gamma chain built from SPY chain).
@@ -787,7 +793,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             vix3m: vixData.vix3m,
             callWall: snap.gamma.callWall * gammaScale,
             putWall: snap.gamma.putWall * gammaScale,
-            gammaFlip: snap.gamma.zeroGamma * gammaScale,
+            gammaFlip: zeroGamma * gammaScale,
             maxPain: snap.gamma.maxPain * gammaScale,
             totalGex: snap.gamma.totalGex,
             composite,

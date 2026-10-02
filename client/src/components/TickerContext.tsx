@@ -25,7 +25,7 @@ export type TabKey =
   | "tradedesk"
   | "regime"
   | "news"
-  | "voices"
+  | "cosmos"
   | "takefive"
   | "edgelab"
   | "crypto";

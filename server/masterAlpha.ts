@@ -832,7 +832,7 @@ export async function masterAlphaRoute(req: any, res: any) {
       const candles = ohlc?.candles ?? [];
       if (candles.length >= 2) {
         const prior = candles[candles.length - 2];
-        pivots = buildPivotBundle(symbol, { o: prior.o, h: prior.h, l: prior.l, c: prior.c });
+        pivots = buildPivotBundle(symbol, { t: prior.t, o: prior.o, h: prior.h, l: prior.l, c: prior.c });
       }
     } catch { /* pivots are optional */ }
 

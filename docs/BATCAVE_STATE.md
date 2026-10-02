@@ -4,6 +4,26 @@ Updated: 2026-10-02. This is a compact handoff, not a live-health certificate.
 
 ## Current objective
 
+Latest continuation (Oct2 accessibility/TypeScript request): both bounded agents
+completed and cross-reviewed repairs; parent final typecheck is clean (59→0),
+full regression223/223, production build passes. No compiler suppression.
+Read ACCESSIBILITY_TYPESCRIPT_RELEASE.md and both ACCESSIBILITY/TYPESCRIPT_HANDOFF.
+Shell now measures sticky chrome, reflows at enlarged text, keeps navigation
+reachable in short viewports, supports all11 workspaces with visible scroll
+controls/keyboard/focus and >=44px header controls. Numeric7 nowCosmos; helpmatches.
+Real populated P/C/FlowAlerts header overflows repaired; collapse/dismiss sibling
+buttons, no livealerts dismissed. Light banner/legend/tooltip contrast corrected.
+Parent sixwidth normal/200%rootfont matrix allzerooverflow; keyboard/swipe/short
+view and realIntel lookup/analyze/history pass, no pageerrors/automaticAI.
+Preserved baseTarget=spot; no unvalidatedcharmpriceheuristic. Missinggammaflip
+omitsoptionalquarterlytrajectory. SPYMLforecast/cryptoENTER staydisabled.
+Main5000 restarted once, worker5002unchanged; finalUIdeltasfrontendonly.
+In-place preview deployment/opaqueiframe smoke pending below; do notclaimdone
+until release deployment section is updated. iOS/native work remainspaused.
+Nextqueue is data/sourcecoverage, offdevicebackupapproval or broaderlegacy
+panelaccessibility, not newproviders/councils unlessauthorized. Runtimekeys/data
+remainprivateexcluded; noNIST/multiuser/forecastaccuracycertification.
+
 Latest continuation (Oct1 23:41ET request, implemented Oct2): two bounded agents
 implemented encrypted local recovery and stock acquisition provenance, then
 cross-reviewed each other. Parent integrated CLI/ignore rules and live/historical

@@ -2007,18 +2007,19 @@ function buildAlert(
 
 
   // Try picking from Schwab chain via wire15 context
-  let pickedContract: {
+  type PickedContract = {
     strike: number; delta: number; gamma: number; theta: number; vega: number;
     midPrice: number; iv: number; bid: number | null; ask: number | null;
     key: string; expiry: string; openInterest: number; volume: number;
-  } | null = null;
+  };
+  let pickedContract: PickedContract | null = null;
 
   if (args.wire15?.schwabChain && args.wire15.todayExpKey) {
     const expMap = (side === "call"
       ? args.wire15.schwabChain.callExpDateMap
       : args.wire15.schwabChain.putExpDateMap) ?? {};
     const strikesObj = expMap[args.wire15.todayExpKey] ?? {};
-    const bandCandidates: typeof pickedContract[] = [];
+    const bandCandidates: PickedContract[] = [];
     for (const [strikeStr, contracts] of Object.entries(strikesObj as Record<string, any[]>)) {
       const sk = parseFloat(strikeStr);
       if (!isFinite(sk)) continue;
@@ -2050,9 +2051,9 @@ function buildAlert(
     // Prefer between spot and T1
     const lo = Math.min(args.spot, t1Lv.price);
     const hi = Math.max(args.spot, t1Lv.price);
-    const betweenCands = bandCandidates.filter((c) => c !== null && c!.strike > lo && c!.strike < hi);
+    const betweenCands = bandCandidates.filter((c) => c.strike > lo && c.strike < hi);
     const pool = betweenCands.length > 0 ? betweenCands : bandCandidates;
-    pickedContract = (pool as NonNullable<typeof pickedContract>[]).reduce((a, b) =>
+    pickedContract = pool.reduce((a, b) =>
       Math.abs(a.strike - args.spot) <= Math.abs(b.strike - args.spot) ? a : b,
     );
   }

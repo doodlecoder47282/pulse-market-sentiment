@@ -277,7 +277,8 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
     { level: gammaFlip, label: "Gamma Flip", kind: "gammaFlip", strength: "primary"   },
     { level: maxPain,   label: "Max Pain",   kind: "maxPain",   strength: "secondary" },
     { level: spot,      label: "Spot",       kind: "spot",      strength: "secondary" },
-  ].sort((a, b) => a.level - b.level);
+  ];
+  magnets.sort((a, b) => a.level - b.level);
 
   // ─── Headline ───────────────────────────────────────────────────────────────
   const winner: PathKey = pBase >= pBull && pBase >= pBear ? "base"

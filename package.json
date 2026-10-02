@@ -17,6 +17,7 @@
     "test:crypto": "tsx --test tests/crypto-reliability.test.ts tests/meme-scoring.test.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "test:regression": "tsx --test tests/*.test.ts",
     "evidence:history": "tsx scripts/evidence-history.ts",
     "evidence:backup": "tsx scripts/evidence-backup.ts",
     "test:evidence-foundation": "tsx --test tests/evidence-ledger.test.ts tests/evidence-backup.test.ts tests/evidence-acquisition.test.ts tests/evidence-policy.test.ts tests/equity-calendar.test.ts tests/trade-brief.test.ts tests/trade-brief-enrichment.test.ts tests/trade-brief-ai.test.ts",

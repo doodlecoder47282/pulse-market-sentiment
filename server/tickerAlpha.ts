@@ -337,9 +337,8 @@ function buildPerTickerGamma(chain: any, ticker: string): PerTickerGamma | null 
   if (!chain || chain.error) return null;
   const S =
     Number(chain?.underlying?.last) ||
-    Number(chain?.underlyingPrice) ||
-    null;
-  if (!S || !isFinite(S)) return null;
+    Number(chain?.underlyingPrice);
+  if (!Number.isFinite(S) || S <= 0) return null;
 
   const callMap = chain.callExpDateMap || {};
   const putMap = chain.putExpDateMap || {};

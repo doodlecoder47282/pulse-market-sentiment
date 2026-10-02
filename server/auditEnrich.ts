@@ -26,7 +26,7 @@
 //
 // Pure function. try/catch guard returns original on any failure.
 
-import type { ModelsResponse } from "./routes";
+import type { ModelsResponse } from "./models";
 import Database from "better-sqlite3";
 import { getOdteSnapshot } from "./odteTracker";
 import { computeVolumeProfile } from "./volumeProfile";

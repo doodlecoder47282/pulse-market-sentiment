@@ -940,7 +940,7 @@ function buildAudit(
   // Mirrors @SelzTrades-style daily print. Pulls strictly from already-
   // computed levels + charm — no LLM, no external feed.
   //   BULL  = nearest structural resistance above spot, capped to spot+1d EM
-  //   BASE  = spot drifted by charmPerDay (charm decay drift) over 1 session
+  //   BASE  = observed spot; a validated charm-to-price mapping is unavailable
   //   BEAR  = first structural support below spot that fails (strongMag /
   //           zeroGamma / putWall), capped to spot-1d EM
   // 1-day EM uses VIX-style annualized IV (extras.vixForEM, scale 0..100 in
@@ -969,12 +969,10 @@ function buildAudit(
   const bullRaw = resistAbove[0]?.price ?? bullCap;
   const bullTarget = Math.min(bullRaw, bullCap);
 
-  // Base target: spot drifted by charm. charmPerDay is small per-share value
-  // — normalise against spot to get a pct drift, capped at ±50bps.
-  const charmDrift = cur.charmPerDay
-    ? Math.max(-0.005, Math.min(0.005, cur.charmPerDay / 1_000))
-    : 0;
-  const baseTarget = spot * (1 + charmDrift);
+  // ExposurePoint reports dollar charm exposure, not a price drift. The old
+  // nonexistent charmPerDay property always withheld the adjustment. Preserve
+  // that behavior: do not invent a charm-to-price mapping in a typing repair.
+  const baseTarget = spot;
 
   // Bear target: first failing support below, capped to spot - EM.
   const bearCap = spot - oneDayEM;

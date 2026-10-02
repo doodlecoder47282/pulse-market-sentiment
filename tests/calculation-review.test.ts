@@ -56,37 +56,60 @@ test("social failures remain unknown, partial coverage does not reweight FOMO, a
     stdin: {contents, resolveDir: process.cwd()+"/server", loader:"ts"},
     bundle:true, platform:"node", format:"esm", write:false,
     plugins:[{name:"crypto-fixtures", setup(b) {
-      b.onResolve({filter:/^(\.\/storage|child_process)$/}, args=>({path:args.path,namespace:"fixture"}));
-      b.onLoad({filter:/.*/,namespace:"fixture"}, args=>({
-        loader:"js", contents:args.path==="child_process"
-          ? "export function execFile(_file,_args,_options,callback){const fixture=globalThis.__pumpFixture;if(!fixture) callback(new Error('blocked'),'');else callback(null,JSON.stringify(fixture));}"
-          : "export const sqlite={exec(){},prepare(){return {run(){},all(){return []},get(){return {c:0}}}}};",
+      b.onResolve({filter:/^\.\/storage$/}, args=>({path:args.path,namespace:"fixture"}));
+      b.onLoad({filter:/.*/,namespace:"fixture"}, () => ({
+        loader:"js", contents:"export const sqlite={exec(){},prepare(){return {run(){},all(){return []},get(){return {c:0}}}}};",
       }));
     }}],
   });
   const engine = await import("data:text/javascript;base64,"+Buffer.from(bundled.outputFiles[0].text).toString("base64"));
   const originalFetch=globalThis.fetch;
-  const globals=globalThis as any;
+  const originalNow=Date.now;
+  const mint="3jcc99pP2ND2Rmv2gZYDBb2JiWRuB4d7H11Rhtenpump";
+  let now=Date.parse("2026-10-02T04:00:00Z");
+  let requests=0;
+  let responseMode:"denied"|"partial"|"complete"="denied";
   try {
-    engine.upsertFromGtPool({attributes:{address:"fixturepair",name:"TEST / SOL",market_cap_usd:100000},relationships:{base_token:{data:{id:"solana_tokenpump"}}}}, "new_pools");
+    Date.now=()=>now;
+    globalThis.fetch=async input=>{
+      requests++;
+      const url=new URL(String(input));
+      assert.ok(["api.bsky.app","frontend-api-v3.pump.fun"].includes(url.hostname),"Unexpected provider request");
+      if(responseMode==="denied") return new Response("blocked",{status:403});
+      if(url.hostname==="api.bsky.app") return new Response(JSON.stringify({posts:[]}),{status:200});
+      assert.equal(url.pathname,`/coins/${mint}`);
+      return responseMode==="partial" ? new Response("unavailable",{status:503})
+        : new Response(JSON.stringify({mint,reply_count:0,is_currently_live:false}),{status:200});
+    };
+    engine.upsertFromGtPool({attributes:{address:"fixturepair",name:"TEST / SOL",market_cap_usd:100000},relationships:{base_token:{data:{id:`solana_${mint}`}}}}, "new_pools");
     const c=engine.tracked.values().next().value;
     Object.assign(c,{lastRefreshAt:Date.now(), liquidityUsd:20000,priceUsd:1,vol5m:4000,vol1h:12000,buys5m:80,sells5m:20,bskyMentions1h:99,
       liquidityEvidence:{provider:"DexScreener",fetchedAt:Date.now(),pairAddress:c.pairAddress}});
     engine.scoreCandidate(c); // social collection is now bounded to near-qualifying research candidates
-    globalThis.fetch=async()=>new Response("blocked",{status:403});
-    globals.__pumpFixture=null;
     await assert.rejects(engine.socialTick());
     assert.equal(c.socialScore,null);
     assert.equal(c.bskyMentions1h,null);
     assert.equal(c.socialCheckedAt,null);
     assert.equal(c.socialCoverage,"unavailable");
-    globalThis.fetch=async()=>new Response(JSON.stringify({posts:[]}),{status:200});
+    assert.equal(requests,2,"Both eligible providers were attempted with a valid mint");
+    c.socialAttemptAt=0;
+    await assert.rejects(engine.socialTick());
+    assert.equal(requests,2,"403 cooldown must prevent transport retries");
+    // Advance the explicit clock beyond provider backoff and refresh market evidence.
+    // Do not bypass or reset the production cooldown to force coverage.
+    now+=31*60_000;
+    c.lastRefreshAt=now;
+    c.liquidityEvidence.fetchedAt=now;
+    responseMode="partial";
     c.socialAttemptAt=0;
     await engine.socialTick();
     assert.equal(c.socialCoverage,"partial");
     assert.equal(c.bskyMentions1h,0);
     assert.ok(Math.abs(c.fomoScore-70)<1e-9); // no penalty for a missing source
-    globals.__pumpFixture={mint:"tokenpump",reply_count:0,is_currently_live:false};
+    now+=31*60_000;
+    c.lastRefreshAt=now;
+    c.liquidityEvidence.fetchedAt=now;
+    responseMode="complete";
     c.socialAttemptAt=0;
     await engine.socialTick();
     assert.equal(c.socialCoverage,"ok");
@@ -97,7 +120,7 @@ test("social failures remain unknown, partial coverage does not reweight FOMO, a
     assert.equal(c.socialScore,null);
   } finally {
     globalThis.fetch=originalFetch;
-    delete globals.__pumpFixture;
+    Date.now=originalNow;
   }
 });
 

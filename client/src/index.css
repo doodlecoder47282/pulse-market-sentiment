@@ -206,12 +206,10 @@
   html {
     /* Kills the white rubber-band void on iOS Safari when overscrolling */
     overscroll-behavior-y: none;
-    /* Wide tables (heatmap strike ladder) must scroll INSIDE their own
-       container — never pan the whole page sideways on a phone swipe.
-       clip > hidden: clip doesn't create a scroll container (iOS quirk where
-       hidden can hijack page scrolling). hidden kept as fallback. */
-    overflow-x: hidden;
-    overflow-x: clip;
+    /* Containment belongs on each wide table/strip, not the document:
+       clipping here would conceal inaccessible shell controls. */
+    scroll-padding-top: calc(var(--batcave-scroll-top, 0px) + 0.5rem);
+    scroll-padding-bottom: calc(var(--batcave-scroll-bottom, 0px) + 0.5rem);
     background-color: hsl(var(--background));
     /* No gray flash on iOS taps — we provide our own press feedback */
     -webkit-tap-highlight-color: transparent;
@@ -254,8 +252,6 @@
   body {
     @apply font-sans antialiased bg-background text-foreground;
     overscroll-behavior-y: none;
-    overflow-x: hidden;
-    overflow-x: clip;
     overscroll-behavior-x: none;
     min-height: 100vh;
     min-height: 100dvh;
@@ -400,7 +396,13 @@
 /* Batcave workspace chrome: restrained glass, readable type, persistent tabs.
    No filters or transforms on the content: charts and market values stay sharp. */
 .batcave-shell {
-  --batcave-header-height: 76px;
+  --batcave-header-height: 0px;
+  --batcave-banner-height: 0px;
+  --batcave-desktop-dock-height: 0px;
+  --batcave-mobile-dock-height: 0px;
+  --batcave-top-offset: 0px;
+  --batcave-bottom-offset: 0px;
+  --batcave-dock-gap: 8px;
   --batcave-glass-fill: hsl(var(--background) / 0.96);
   --batcave-glass-edge: hsl(var(--foreground) / 0.12);
 }
@@ -421,22 +423,118 @@
   padding-top: env(safe-area-inset-top, 0px);
   box-shadow: 0 1px 0 hsl(var(--foreground) / 0.035);
 }
+.batcave-header-row,
+.batcave-header-actions {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.batcave-brand { flex: 0 0 auto; }
+.batcave-header-actions {
+  flex: 0 1 auto;
+  max-width: 100%;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+.batcave-header-actions > *,
+.batcave-header-quotes { min-width: 0; max-width: 100%; }
+.batcave-header-actions button {
+  flex-shrink: 0;
+  min-width: 44px;
+  min-height: 44px;
+  height: auto;
+  justify-content: center;
+}
+.batcave-header [data-testid="live-quote-strip"],
+.batcave-header [data-testid="live-quote-strip"] > div {
+  flex-wrap: wrap;
+}
+.batcave-header button:focus-visible,
+.batcave-skip-link:focus-visible,
+.batcave-main:focus-visible,
+.batcave-nav-scroll-button:focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
+}
+.batcave-skip-link {
+  position: fixed;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 100;
+  min-height: 44px;
+  max-width: calc(100% - 1rem);
+  padding: 0.5rem 1rem;
+  border: 1px solid hsl(var(--primary));
+  border-radius: 0.5rem;
+  background: hsl(var(--background));
+  transform: translateY(calc(-100% - 1rem));
+}
+.batcave-skip-link:focus { transform: none; }
+.batcave-banner {
+  position: sticky;
+  top: var(--batcave-header-height);
+  z-index: 36;
+  background: hsl(var(--background));
+}
+.batcave-banner [data-testid="regime-headline"] { position: static; }
+.batcave-banner [data-testid="regime-headline"] > div,
+.batcave-banner [data-testid="regime-headline-meta"] { flex-wrap: wrap; }
+.batcave-banner [data-testid="regime-headline-text"] {
+  min-width: min(100%, 16rem);
+  white-space: normal;
+  overflow: visible;
+  text-overflow: initial;
+  overflow-wrap: anywhere;
+}
+/* The original semantic utilities are dark-surface tints. Keep their meaning,
+   but use readable foreground shades when the user selects the light theme. */
+:root:not(.dark) .batcave-banner .text-emerald-300,
+:root:not(.dark) .batcave-banner .text-emerald-400 { color: #047857; }
+:root:not(.dark) .batcave-banner .text-rose-200,
+:root:not(.dark) .batcave-banner .text-rose-400 { color: #be123c; }
+:root:not(.dark) .batcave-banner .text-amber-200,
+:root:not(.dark) .batcave-banner .text-amber-400 { color: #92400e; }
+:root:not(.dark) .batcave-banner .text-slate-200,
+:root:not(.dark) .batcave-banner .text-slate-400 { color: #334155; }
 .batcave-tabs-dock {
   position: sticky;
-  top: calc(var(--batcave-header-height) + 8px);
+  top: calc(var(--batcave-top-offset) + var(--batcave-dock-gap));
   z-index: 35;
 }
 .batcave-tabs-scroll {
   position: relative;
-  overflow-x: auto;
   border: 1px solid var(--batcave-glass-edge);
   border-radius: 18px;
   padding: 5px;
   box-shadow: 0 8px 24px hsl(0 0% 0% / 0.14), inset 0 1px 0 hsl(var(--foreground) / 0.06);
 }
+.batcave-nav-scroller { display: flex; align-items: stretch; gap: 4px; min-width: 0; }
+.batcave-nav-strip {
+  flex: 1 1 0%;
+  min-width: 0;
+  padding: 3px;
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent;
+  scroll-padding-inline: 3px;
+}
+.batcave-nav-scroll-button {
+  display: inline-flex;
+  flex: 0 0 44px;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 13px;
+  color: hsl(var(--foreground));
+  background: hsl(var(--foreground) / 0.035);
+}
+.batcave-nav-scroll-button svg { width: 1.1rem; height: 1.1rem; }
+.batcave-nav-scroll-button[aria-disabled="true"] { opacity: 0.4; }
+.batcave-nav-scroller[data-overflow="false"] > .batcave-nav-scroll-button { display: none; }
 .batcave-primary-tabs {
   height: auto;
-  min-width: max-content;
+  width: max-content;
+  min-width: 100%;
   padding: 0;
   gap: 3px;
   border-radius: 13px;
@@ -475,14 +573,62 @@
   position: relative;
   isolation: isolate;
   z-index: 0;
-  scroll-margin-top: calc(var(--batcave-header-height) + 80px);
+  scroll-margin-top: 0.5rem;
+}
+/* Dashboard card headings share the shell's reflow contract. These used to
+   protrude beyond the page once the document overflow mask was removed. */
+.batcave-main [data-card-id] > :first-child,
+.batcave-main [data-card-id] > :first-child > div {
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+/* Live P/C title/provider and aggregate details must reflow at enlarged text
+   sizes. Scope to this card's header and aggregate grid, not its chart/tables. */
+.batcave-main [data-testid="flow-panel"] > :first-child > div,
+.batcave-main [data-testid="flow-panel"] > :nth-child(2) > .grid > :first-child {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.batcave-main [data-testid="flow-panel"] > :first-child > div > div,
+.batcave-main [data-testid="flow-panel"] > :nth-child(2) > .grid > :first-child > :last-child {
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+.batcave-main [data-testid="flow-panel"] > :nth-child(2) > .grid > :first-child > :last-child > div {
+  flex-wrap: wrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+/* Loaded alert counts/status add another row that is absent in offline states.
+   Keep the title, both count badges, connection status and both actions present. */
+.batcave-main .batcave-flow-alerts-header,
+.batcave-main [data-testid="flow-alerts-toggle"],
+.batcave-main .batcave-flow-alerts-summary,
+.batcave-main .batcave-flow-alerts-counts {
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+.batcave-main [data-testid="flow-alerts-toggle"] { min-width: 44px; }
+.batcave-main [data-testid="flow-alerts-toggle"] svg { flex-shrink: 0; }
+.batcave-main [data-testid="dismiss-all-alerts"] {
+  min-width: 44px;
+  min-height: 44px;
+  white-space: normal;
+}
+.batcave-main [data-testid="flow-alerts-toggle"]:focus-visible,
+.batcave-main [data-testid="dismiss-all-alerts"]:focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
 }
 .batcave-mobile-dock {
   left: max(8px, env(safe-area-inset-left, 0px));
   right: max(8px, env(safe-area-inset-right, 0px));
   bottom: calc(8px + env(safe-area-inset-bottom, 0px));
   padding: 4px;
-  overflow: hidden;
   border: 1px solid var(--batcave-glass-edge);
   border-radius: 22px;
   box-shadow: 0 8px 32px hsl(0 0% 0% / 0.2), inset 0 1px 0 hsl(var(--foreground) / 0.06);
@@ -491,8 +637,23 @@
 .batcave-mobile-dock button[aria-current="page"] {
   box-shadow: inset 0 0 0 1px hsl(var(--primary) / 0.2);
 }
+.batcave-mobile-items { display: flex; width: max-content; min-width: 100%; gap: 3px; }
+.batcave-mobile-tab {
+  display: inline-flex;
+  flex: 1 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 76px;
+  min-height: 56px;
+  padding: 0.5rem 0.75rem;
+  white-space: nowrap;
+}
+.batcave-shell[data-shell-flow="true"] .batcave-header,
+.batcave-shell[data-shell-flow="true"] .batcave-banner {
+  position: static;
+}
 @media (max-width: 767px) {
-  .batcave-main { padding-bottom: calc(7rem + env(safe-area-inset-bottom, 0px)); }
+  .batcave-main { padding-bottom: calc(var(--batcave-bottom-offset) + 1rem); }
 }
 @media (min-width: 1024px) {
   /* A modest 6.25% rem-scale lift, plus a floor for legacy 8–11px labels.
@@ -503,17 +664,18 @@
   .batcave-shell [class~="text-[10px]"] { font-size: 12px; line-height: 1.45; }
   .batcave-shell [class~="text-[11px]"] { font-size: 13px; line-height: 1.5; }
   .batcave-shell [class~="text-[12px]"],
-  .batcave-shell .text-xs { font-size: 13px; line-height: 1.5; }
+  .batcave-shell .text-xs { font-size: 0.764706rem; line-height: 1.5; }
   .batcave-shell [class~="text-[13px]"] { font-size: 14px; line-height: 1.45; }
-  .batcave-shell .text-sm { font-size: 15px; line-height: 1.5; }
+  .batcave-shell .text-sm { font-size: 0.882353rem; line-height: 1.5; }
   .batcave-main { line-height: 1.55; }
-  .batcave-primary-tabs [role="tab"] { font-size: 15px; }
+  .batcave-primary-tabs [role="tab"] { font-size: 0.882353rem; }
 }
 @media (prefers-reduced-transparency: reduce) {
   .batcave-glass { background: hsl(var(--background)); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .batcave-primary-tabs [role="tab"] { transition: none; }
+  .batcave-shell button:active { transform: none; }
 }
 
 .crypto-desk { display: grid; gap: 20px; min-width: 0; font-size: 14px; line-height: 1.5; }
@@ -922,6 +1084,13 @@
     font-size: 0;
     z-index: 60;
   }
+}
+
+/* The dashboard launcher participates in header reflow rather than floating
+   over controls or requiring another guessed bottom-dock offset. */
+.batcave-header .take5-fab {
+  position: static;
+  flex-shrink: 0;
 }
 
 .take5-fab:hover {

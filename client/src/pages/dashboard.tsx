@@ -26,7 +26,6 @@ import GlobalEdgeBanner from "@/components/GlobalEdgeBanner";
 import { RegimeChip } from "@/components/RegimeChip";
 import TakeFive, { TakeFiveFab } from "@/components/TakeFive";
 import EdgeLabPanel from "@/components/EdgeLabPanel";
-const CryptoPanel = lazy(() => import("@/components/CryptoDesk"));
 import { MacroTicker, MacroCarousel } from "@/components/MacroCarousel";
 import { TradeBriefSearch } from "@/components/TradeBriefSearch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -39,6 +38,8 @@ import { useTheme } from "@/components/ThemeContext";
 import { CollapsibleCard } from "@/components/CollapsibleCard";
 import { PanelSkeleton } from "@/components/ui/panel-skeleton";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
+import { centeredScrollLeft, useShellLayout } from "@/hooks/use-shell-layout";
+import ShellNavScroller from "@/components/ShellNavScroller";
 import { useToast } from "@/hooks/use-toast";
 import {
   RefreshCw, ArrowDownRight, ArrowUpRight, Zap,
@@ -48,9 +49,10 @@ import {
 import SchwabSettings, { SchwabStatusPill } from "@/components/SchwabSettings";
 import WhaleFlowPanel from "@/components/WhaleFlowPanel";
 import TrackedSignalsPanel from "@/components/signals/TrackedSignalsPanel";
-import { useEffect, useState, useRef, lazy, Suspense } from "react";
+import { useEffect, useState, useRef, lazy, Suspense, type RefObject } from "react";
 
 // ── Lazy-loaded heavy components (code splitting) ──────────────────────────
+const CryptoPanel = lazy(() => import("@/components/CryptoDesk"));
 const ModelsPanel = lazy(() => import("@/components/ModelsPanel"));
 const DailyPlaybookChart = lazy(() => import("@/components/DailyPlaybookChart"));
 const TabHeadline = lazy(() => import("@/components/TabHeadline"));
@@ -193,6 +195,9 @@ export default function Dashboard() {
   const tickerInputRef = useRef<HTMLInputElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLElement | null>(null);
+  const bannerRef = useRef<HTMLDivElement | null>(null);
+  const desktopDockRef = useRef<HTMLDivElement | null>(null);
+  const mobileDockRef = useRef<HTMLElement | null>(null);
   const tabsRootRef = useRef<HTMLDivElement | null>(null);
   const previousTabRef = useRef(activeTab);
 
@@ -227,45 +232,49 @@ export default function Dashboard() {
     return () => clearInterval(id);
   }, []);
 
-  // Measure the real header rather than guessing its height at different text
-  // sizes, zoom levels and breakpoints. The dock must never hide behind it.
-  useEffect(() => {
-    const header = headerRef.current;
-    const shell = shellRef.current;
-    if (!header || !shell) return;
-    const measure = () => shell.style.setProperty("--batcave-header-height", `${Math.ceil(header.getBoundingClientRect().height)}px`);
-    measure();
-    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
-    observer?.observe(header, { box: "border-box" });
-    window.addEventListener("resize", measure);
-    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
-  }, [isLoading, isError]);
+  useShellLayout({
+    shell: shellRef, header: headerRef, banner: bannerRef,
+    desktopDock: desktopDockRef, mobileDock: mobileDockRef,
+  }, !isLoading && !isError && !!data);
 
   // Keep the active tab centered in both scrollable nav strips — the strip
   // follows the finger instead of leaving the selection off-screen.
   useEffect(() => {
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const behavior = reducedMotion ? "auto" : "smooth";
     const centerActiveTabs = () => {
       for (const sel of [`[data-testid="tab-${activeTab}"]`, `[data-testid="bottomnav-${activeTab}"]`]) {
-        const btn = document.querySelector<HTMLElement>(sel);
-        const strip = btn?.closest<HTMLElement>(".tabs-scroll-container, .scrollbar-none");
+        const btn = shellRef.current?.querySelector<HTMLElement>(sel);
+        const strip = btn?.closest<HTMLElement>(".batcave-nav-strip");
         if (btn && strip && strip.clientWidth > 0 && strip.scrollWidth > strip.clientWidth) {
-          strip.scrollTo({ left: btn.offsetLeft - (strip.clientWidth - btn.offsetWidth) / 2, behavior });
+          const item = btn.getBoundingClientRect();
+          const bounds = strip.getBoundingClientRect();
+          strip.scrollTo({
+            left: centeredScrollLeft(item.left, item.width, bounds.left, strip.clientWidth, strip.scrollLeft, strip.scrollWidth),
+            behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+          });
         }
       }
     };
-    centerActiveTabs();
-    window.addEventListener("resize", centerActiveTabs);
+    let frame = requestAnimationFrame(centerActiveTabs);
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(centerActiveTabs);
+    };
+    window.addEventListener("resize", schedule);
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(schedule) : null;
+    for (const element of [desktopDockRef.current, mobileDockRef.current]) if (element) observer?.observe(element);
     // Switching from deep inside one panel opens the next at its beginning,
     // while keeping the sticky dock visible. Initial load does not jump.
     if (previousTabRef.current !== activeTab && tabsRootRef.current) {
       const top = tabsRootRef.current.getBoundingClientRect().top + window.scrollY;
-      const offset = (headerRef.current?.getBoundingClientRect().height ?? 72) + 12;
-      if (window.scrollY > top - offset) window.scrollTo({ top: Math.max(0, top - offset), behavior });
+      const offset = Number.parseFloat(shellRef.current?.style.getPropertyValue("--batcave-top-offset") || "0");
+      if (window.scrollY > top - offset) window.scrollTo({ top: Math.max(0, top - offset), behavior: "instant" });
     }
     previousTabRef.current = activeTab;
-    return () => window.removeEventListener("resize", centerActiveTabs);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", schedule);
+    };
   }, [activeTab, isLoading, isError]);
 
   // Toast on snapshot fetch error
@@ -329,8 +338,14 @@ export default function Dashboard() {
 
   return (
     <div ref={shellRef} className="batcave-shell min-h-screen bg-background">
-      {/* Floating Take Five launcher — visible on every tab */}
-      <TakeFiveFab onClick={() => setTake5Open(true)} />
+      <button type="button" className="batcave-skip-link" data-testid="skip-dashboard-content"
+        onClick={() => {
+          const main = document.getElementById("dashboard-main");
+          main?.focus({ preventScroll: true });
+          main?.scrollIntoView({ block: "start", behavior: "instant" });
+        }}>
+        Skip to workspace content
+      </button>
       <TakeFive mode="overlay" open={take5Open} onClose={() => setTake5Open(false)} />
 
       {/* Keyboard shortcuts help modal */}
@@ -341,9 +356,9 @@ export default function Dashboard() {
 
       {/* Header */}
       <header ref={headerRef} className="batcave-header batcave-glass sticky top-0 z-40 border-b border-border" data-testid="dashboard-header">
-        <div className="batcave-content-width mx-auto flex items-center justify-between gap-2 px-3 py-3 sm:px-4 md:px-8 xl:px-10">
+        <div className="batcave-header-row batcave-content-width mx-auto flex items-center justify-between gap-2 px-3 py-3 sm:px-4 md:px-8 xl:px-10">
           {/* Left: Logo + name + BATCAVE tag */}
-          <div className="flex items-center gap-3">
+          <div className="batcave-brand flex items-center gap-3">
             <div className="text-primary"><Logo className="h-7 w-7" /></div>
             <div>
               <div className="font-semibold leading-none">Pulse</div>
@@ -355,14 +370,15 @@ export default function Dashboard() {
           </div>
 
           {/* Center: Live quotes strip (desktop only) */}
-          <div className="hidden lg:flex">
+          <div className="batcave-header-quotes hidden lg:flex">
             <ErrorBoundary compact label="LiveQuoteStrip">
               <LiveQuoteStrip />
             </ErrorBoundary>
           </div>
 
           {/* Right: Clock + market status + last-update + refresh */}
-          <div className="flex items-center gap-1.5 md:gap-3">
+          <div className="batcave-header-actions flex items-center gap-1.5 md:gap-3">
+            <TakeFiveFab onClick={() => setTake5Open(true)} />
             {/* Clock + market status: stacked, visible on md+ */}
             <div className="hidden items-end gap-2 md:flex">
               <div className="flex flex-col items-end gap-0.5">
@@ -390,6 +406,7 @@ export default function Dashboard() {
               onClick={() => refreshMut.mutate()}
               disabled={refreshMut.isPending}
               data-testid="button-refresh"
+              aria-label="Refresh snapshot"
               className="h-10 w-10 min-h-0 p-0 sm:h-auto sm:w-auto sm:px-3"
             >
               <RefreshCw className={`h-3.5 w-3.5 sm:mr-2 ${refreshMut.isPending ? "animate-spin" : ""}`} />
@@ -405,6 +422,7 @@ export default function Dashboard() {
               type="button"
               onClick={() => setSettingsOpen(true)}
               title="Schwab & Settings"
+              aria-label="Schwab and settings"
               className="flex items-center justify-center rounded-md border border-border/60 h-10 w-10 sm:h-auto sm:w-auto sm:p-1.5 text-muted-foreground/50 transition hover:border-border hover:text-muted-foreground"
               data-testid="button-settings"
             >
@@ -444,6 +462,7 @@ export default function Dashboard() {
               type="button"
               onClick={() => setHelpOpen(true)}
               title="Keyboard shortcuts (?)"
+              aria-label="Keyboard shortcuts"
               className="hidden items-center rounded-md border border-border/60 p-1.5 text-muted-foreground/50 transition hover:border-border hover:text-muted-foreground md:flex"
               data-testid="button-shortcuts-hint"
             >
@@ -454,9 +473,11 @@ export default function Dashboard() {
       </header>
 
       {/* Regime headline — one-sentence read on current market state */}
-      <ErrorBoundary compact label="RegimeHeadline">
-        <RegimeHeadline />
-      </ErrorBoundary>
+      <div ref={bannerRef} className="batcave-banner" data-testid="dashboard-regime-banner">
+        <ErrorBoundary compact label="RegimeHeadline">
+          <RegimeHeadline />
+        </ErrorBoundary>
+      </div>
       <ErrorBoundary compact label="TradeEnvironmentStrip">
         <TradeEnvironmentStrip />
       </ErrorBoundary>
@@ -464,15 +485,17 @@ export default function Dashboard() {
       {/* Ticker tape — flows across the top under the header on every tab */}
       <MacroTicker />
 
-      <main className="batcave-main batcave-content-width mx-auto space-y-4 px-3 py-4 pb-24 text-[14px] sm:space-y-6 sm:px-4 sm:py-6 sm:text-[14px] md:pb-6 md:px-8 md:text-[15px] xl:px-10 xl:text-[16px]">
+      <main id="dashboard-main" tabIndex={-1} className="batcave-main batcave-content-width mx-auto space-y-4 px-3 py-4 pb-24 text-[14px] sm:space-y-6 sm:px-4 sm:py-6 sm:text-[14px] md:pb-6 md:px-8 md:text-[15px] xl:px-10 xl:text-[16px]">
         <TradeBriefSearch />
         {/* Rotating macro carousel — always visible above the tabs */}
         <MacroCarousel />
 
         <Tabs ref={tabsRootRef} value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)} className="batcave-tabs-root w-full">
+          <MobileWorkspaceNav activeTab={activeTab} setActiveTab={setActiveTab} navRef={mobileDockRef} />
           {/* Sticky glass dock. Its scrolling child preserves access to every tab. */}
-          <div className="batcave-tabs-dock mb-5 hidden md:block" data-testid="dashboard-tabs-dock">
-            <div className="batcave-glass batcave-tabs-scroll tabs-scroll-container">
+          <div ref={desktopDockRef} className="batcave-tabs-dock mb-5 hidden md:block" data-testid="dashboard-tabs-dock">
+            <div className="batcave-glass batcave-tabs-scroll">
+            <ShellNavScroller name="desktop">
             <TabsList
               className="batcave-primary-tabs flex w-full flex-nowrap items-center"
               data-testid="tabs-dashboard"
@@ -520,6 +543,7 @@ export default function Dashboard() {
                 Crypto
               </TabsTrigger>
             </TabsList>
+            </ShellNavScroller>
             </div>
           </div>
 
@@ -959,14 +983,14 @@ export default function Dashboard() {
                 <CollapsibleCard id="fear-greed" title="CNN Fear &amp; Greed">
                   <>
                     {fearGreed ? (
-                      <div className="flex items-center gap-4">
+                      <div className="flex flex-wrap items-center gap-4">
                         <div className={`font-mono text-4xl font-bold ${scoreColor(fearGreed.value)}`} data-testid="text-fg-value">
                           {fearGreed.value}
                         </div>
-                        <div>
+                        <div className="min-w-0 max-w-full flex-1 basis-48">
                           <div className="text-sm font-medium">{fearGreed.label}</div>
                           <div className="text-xs text-muted-foreground">0 (fear) · 50 (neutral) · 100 (greed)</div>
-                          <div className="mt-2 h-1.5 w-48 overflow-hidden rounded-full bg-muted">
+                          <div className="mt-2 h-1.5 w-48 max-w-full overflow-hidden rounded-full bg-muted">
                             <div className={`h-full ${scoreBg(fearGreed.value)}`} style={{ width: `${fearGreed.value}%` }} />
                           </div>
                         </div>
@@ -983,49 +1007,58 @@ export default function Dashboard() {
         </Tabs>
       </main>
 
-      {/* Mobile bottom dock stays visible, with all 11 tabs in locked order. */}
-      <nav
-        className="batcave-mobile-dock batcave-glass fixed z-40 md:hidden"
-        data-testid="mobile-bottom-nav"
-        aria-label="Mobile tab navigation"
-      >
-        {/* Right-edge fade hints there's more to scroll */}
-        <div className="pointer-events-none absolute right-0 top-0 bottom-0 z-10 w-6 bg-gradient-to-l from-background to-transparent" />
-        <div className="flex hscroll-contain scrollbar-none">
-          {([
-            { key: "signals", label: "Signals" },
-            { key: "chart", label: "Chart" },
-            { key: "models", label: "Models" },
-            { key: "heatseeker", label: "Heat" },
-            { key: "tradedesk", label: "Desk" },
-            { key: "regime", label: "Regime" },
-            { key: "cosmos", label: "Cosmos" },
-            { key: "news", label: "News" },
-            { key: "takefive", label: "Take5" },
-            { key: "edgelab", label: "Edge" },
-            { key: "crypto", label: "Crypto" },
-          ] as { key: TabKey; label: string }[]).map((t) => {
-            const isActive = activeTab === t.key;
-            return (
-              <button
-                key={t.key}
-                onClick={() => setActiveTab(t.key)}
-                aria-current={isActive ? "page" : undefined}
-                data-testid={`bottomnav-${t.key}`}
-                className={
-                  "flex min-w-[76px] flex-1 shrink-0 flex-col items-center justify-center gap-0.5 px-3 py-2 text-xs font-medium transition-colors min-h-[56px] " +
-                  (isActive
-                    ? "text-foreground bg-primary/10"
-                    : "text-muted-foreground hover:text-foreground")
-                }
-              >
-                <span className="whitespace-nowrap">{t.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </nav>
     </div>
+  );
+}
+
+function MobileWorkspaceNav({ activeTab, setActiveTab, navRef }: {
+  activeTab: TabKey;
+  setActiveTab: (tab: TabKey) => void;
+  navRef: RefObject<HTMLElement>;
+}) {
+  return (
+    <nav ref={navRef} className="batcave-mobile-dock batcave-glass fixed z-40 md:hidden"
+      data-testid="mobile-bottom-nav" aria-label="Mobile workspace navigation"
+      onKeyDown={(event) => {
+        if (event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented) return;
+        const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("[data-workspace]"));
+        const index = buttons.indexOf(event.target as HTMLButtonElement);
+        if (index < 0) return;
+        const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1
+          : event.key === "ArrowRight" ? (index + 1) % buttons.length
+          : event.key === "ArrowLeft" ? (index - 1 + buttons.length) % buttons.length : -1;
+        if (next < 0) return;
+        event.preventDefault();
+        buttons[next].focus({ preventScroll: true });
+        buttons[next].click();
+      }}>
+      <ShellNavScroller name="mobile">
+        <div className="batcave-mobile-items">
+          {([
+            { key: "signals", label: "Signals", name: "Signals" },
+            { key: "chart", label: "Chart", name: "Chart" },
+            { key: "models", label: "Models", name: "Models" },
+            { key: "heatseeker", label: "Heat", name: "Heatseeker" },
+            { key: "tradedesk", label: "Desk", name: "Trade Desk" },
+            { key: "regime", label: "Regime", name: "Regime" },
+            { key: "cosmos", label: "Cosmos", name: "Cosmos" },
+            { key: "news", label: "News", name: "News" },
+            { key: "takefive", label: "Take5", name: "Take Five" },
+            { key: "edgelab", label: "Edge", name: "Edge Lab" },
+            { key: "crypto", label: "Crypto", name: "Crypto" },
+          ] as { key: TabKey; label: string; name: string }[]).map((tab) => (
+            <button type="button" key={tab.key} data-workspace={tab.key}
+              onClick={() => setActiveTab(tab.key)} aria-label={tab.name}
+              aria-current={activeTab === tab.key ? "page" : undefined}
+              data-testid={`bottomnav-${tab.key}`}
+              className={"batcave-mobile-tab text-xs font-medium transition-colors " +
+                (activeTab === tab.key ? "text-foreground bg-primary/10" : "text-muted-foreground hover:text-foreground")}>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </ShellNavScroller>
+    </nav>
   );
 }
 
