@@ -270,6 +270,22 @@ export function TradeBriefSearch({ className = "" }: { className?: string }) {
             Expires {timestamp(brief.expires_at)} · {brief.coverage === "partial" ? "Partial coverage" : "Insufficient coverage"}<br />
             {brief.session.label}
           </p>
+          {brief.session.schedule && <details data-testid="trade-brief-calendar" className="mt-3 rounded-lg border border-border">
+            <summary data-testid="trade-brief-calendar-toggle" className="min-h-[44px] cursor-pointer px-3 py-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+              {brief.session.schedule.coverage === "covered" ? "Session calendar · published schedule" : "Session calendar · unsupported date"}
+            </summary>
+            <div className="space-y-2 border-t border-border p-3 text-xs leading-relaxed text-muted-foreground">
+              <p data-testid="trade-brief-calendar-hours">{brief.session.schedule.session_date} · {brief.session.schedule.day_type.replaceAll("_", " ")}
+                {brief.session.schedule.session_minutes ? ` · ${brief.session.schedule.session_minutes} scheduled core minutes` : ""}
+                {brief.session.schedule.holiday ? ` · ${brief.session.schedule.holiday}` : ""}</p>
+              <p>Cash-equity core hours only. Published holidays are excluded from expected bars; real missing sessions still block calculations. Shortened sessions do not enter an unnormalized full-day volume comparison.</p>
+              <p>Not live venue or halt status. No point-in-time backtest approval. Coverage: {brief.session.schedule.coverage_from} through {brief.session.schedule.coverage_through}.</p>
+              <p>Reviewed {timestamp(brief.session.schedule.reviewed_at)} · {brief.session.schedule.version}</p>
+              <div className="flex flex-wrap gap-3">
+                {brief.session.schedule.source_urls.map((url, i) => <a key={url} data-testid={`trade-brief-calendar-source-${i}`} href={url} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-[44px] items-center underline underline-offset-2">{i === 0 ? "NYSE calendar" : "Nasdaq calendar"}</a>)}
+              </div>
+            </div>
+          </details>}
           <p className="mt-3 text-sm leading-relaxed">{brief.thesis}</p>
           {!expired && <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
             <div className="min-w-0 rounded-lg border border-border p-3">

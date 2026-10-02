@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { EvidenceReviewSchema } from "./evidencePolicy";
+import { EquityScheduleSchema } from "./equityCalendar";
 
 /** This is a deliberately finite US-listed research universe, not a security master. */
-export const TRADE_BRIEF_VERSION = "stock-brief-2026-10-01.3";
+export const TRADE_BRIEF_VERSION = "stock-brief-2026-10-02.1";
 export const TRADE_BRIEF_CATEGORIES = [
   "quote", "levels", "news", "options", "volume", "earnings", "macro", "seasonality",
 ] as const;
@@ -106,7 +107,7 @@ export const TradeBriefSchema = z.object({
   instrument: InstrumentSchema, horizon: HorizonSchema, mode: z.literal("research_only"),
   created_at: z.string(), expires_at: z.string(),
   observed_at_range: z.object({ oldest: z.string().nullable(), newest: z.string().nullable() }),
-  session: z.object({ label: z.string(), calendar_verified: z.literal(false) }),
+  session: z.object({ label: z.string(), calendar_verified: z.literal(false), schedule: EquityScheduleSchema.optional() }),
   coverage: z.enum(["partial", "insufficient"]), source_statuses: z.array(SourceStatusSchema).length(8),
   coverage_gaps: z.array(z.string()),
   verdict: z.enum(["WATCH", "INSUFFICIENT DATA"]), thesis: z.string(), counterevidence: z.array(z.string()),

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { buildStockTradeBrief, createTradeBriefService } from "../server/tradeBrief";
 import { TRADE_BRIEF_INSTRUMENTS, TradeBriefSchema } from "../shared/tradeBrief";
 import { etEpochMs } from "../server/etTime";
+import { isScheduledSession } from "../server/equityCalendar";
 
 const now = Date.parse("2026-09-30T15:00:30Z");
 const stock = TRADE_BRIEF_INSTRUMENTS.find(i => i.symbol === "AAPL")!;
@@ -15,7 +16,7 @@ function history() {
   const candles: { datetime: number; open: number; high: number; low: number; close: number; volume?: number }[] = [];
   for (let t = Date.parse("2026-08-20T12:00:00Z"); t < Date.parse("2026-09-30T12:00:00Z"); t += 86400_000) {
     const date = new Date(t);
-    if ([0, 6].includes(date.getUTCDay())) continue;
+    if (!isScheduledSession(date.toISOString().slice(0, 10))) continue;
     candles.push({ datetime: etEpochMs(date.toISOString().slice(0, 10), 0, 0), open: 100, high: 110, low: 90,
       close: 100, volume: 2000 });
   }

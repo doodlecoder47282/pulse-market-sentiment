@@ -4,6 +4,25 @@ Updated: 2026-10-01. This is a compact handoff, not a live-health certificate.
 
 ## Current objective
 
+Latest authorized continuation (2026-10-01 late evening ET): exchange-calendar
+handling for ticker briefs. Implemented bounded NYSE/Nasdaq common2026 core
+schedule from official pages, DST, holidays/early closes, exact prior-session/
+prior-week/ATR/volume windows and expiry at scheduled boundaries.
+Real missing sessions and unsupported years stay blocked; shortened sessions
+are disclosed in ATR and excluded from unnormalized full-day volume comparison.
+UI has collapsed calendar details with official links and44px targets.
+55 focused tests/build pass; same59 unrelated TS diagnostics. Real INTC
+lookup/Analyze and375/1440px checks pass; no page errors/overflow/actual AI calls.
+Live after-hours quote/history/options remained unavailable; not overridden.
+See EXCHANGE_CALENDAR_RELEASE.md and CALENDAR_QA.md. Calendar and stock-output
+versions2026-10-02.1; evidence-policy2026-10-02.1,29 selected source/product records.
+No calendar polling; main5000 rebuilt/restarted once, worker5002 unchanged.
+This is ticker-brief schedule logic, NOT all legacy scheduler migration, live
+halt status, PIT-safe history or multi-user security approval. 2027unsupported.
+Next foundation: bounded durable decision/evidence ledger with revisions,
+known-at discipline and restart/replay checks; do not repeat broad research.
+iOS/Xcode paused; SPY forecasts and crypto ENTER disabled.
+
 Latest implementation request (2026-10-01 evening ET): start the saved framework
 logically with less credit use. Delivered a bounded Stage A source/evidence
 foundation, not the whole roadmap. See STAGE_A_EVIDENCE_RELEASE.md and

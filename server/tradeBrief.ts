@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import { classicPivots } from "./pivots";
-import { etEpochMs } from "./etTime";
+import { easternDate as etDate, equityDay, referenceSessions, scheduledSession } from "./equityCalendar";
 import { enrichStockBrief, type BriefBar } from "./tradeBriefEnrichment";
 import { reviewTradeBriefEvidence } from "../shared/tradeBriefEvidence";
 import {
@@ -38,23 +38,6 @@ const iso = (ms: number) => new Date(ms).toISOString();
 const validTime = (v: unknown, now: number): v is number =>
   finite(v) && v > 946684800000 && v <= now; // never silently replace a missing/provider-future time
 
-function etDate(ms: number): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
-  }).formatToParts(ms);
-  return ["year", "month", "day"].map(k => parts.find(p => p.type === k)!.value).join("-");
-}
-function shiftDate(date: string, days: number): string {
-  return iso(Date.parse(`${date}T12:00:00Z`) + days * DAY).slice(0, 10);
-}
-function weekday(date: string) { return new Date(`${date}T12:00:00Z`).getUTCDay(); }
-function clockSession(now: number): string {
-  const date = etDate(now), day = weekday(date);
-  if (day === 0 || day === 6) return "Weekend clock window — exchange calendar and halt status unverified";
-  if (now < etEpochMs(date, 9, 30)) return "Pre-open clock window — exchange calendar and halt status unverified";
-  if (now >= etEpochMs(date, 16, 0)) return "After-close clock window — early closes and halt status unverified";
-  return "Regular-hours clock window — holidays, early closes and halt status unverified";
-}
 const REGISTRY: Record<TradeBriefCategory, { source: string; dependencies: string[]; age: number | null }> = {
   quote: { source: "Schwab quote", dependencies: ["exact listing", "trade timestamp", "real-time entitlement"], age: 300 },
   levels: { source: "Schwab daily OHLC + existing classicPivots", dependencies: ["usable quote", "complete prior period", "USD prices"], age: null },
@@ -118,23 +101,15 @@ function readHistory(raw: unknown, symbol: string, now: number): { bars: Candle[
       return { bars: [], invalid: true };
     }
     const date = etDate(b.datetime);
+    // A bar on a published closure is inconsistent, not a new trading session.
+    const scheduled = equityDay(date);
+    if (scheduled.kind === "holiday" || scheduled.kind === "weekend") return { bars: [], invalid: true };
     if (seen.has(date)) return { bars: [], invalid: true };
     seen.add(date);
     bars.push({ datetime: b.datetime, open: b.open, high: b.high, low: b.low, close: b.close, date,
       volume: finite(b.volume) && b.volume >= 0 ? b.volume : null });
   }
   return { bars: bars.sort((a, b) => a.datetime - b.datetime), invalid: false };
-}
-
-/** Conservative calendar policy: never infer holiday sessions or treat an incomplete week as complete. */
-function requiredDates(horizon: TradeBriefHorizon, today: string): string[] {
-  if (horizon === "intraday") {
-    let prior = shiftDate(today, -1);
-    while ([0, 6].includes(weekday(prior))) prior = shiftDate(prior, -1);
-    return [prior];
-  }
-  const monday = shiftDate(today, -((weekday(today) + 6) % 7) - 7);
-  return Array.from({ length: 5 }, (_, i) => shiftDate(monday, i));
 }
 
 /** Pure builder: all output numbers come from validated observations or the existing pivot calculator. */
@@ -191,18 +166,25 @@ export function buildStockTradeBrief(
   }
 
   const history = readHistory(inputs.history.value, instrument.symbol, now);
-  const dates = requiredDates(horizon, etDate(now));
-  const period = horizon === "intraday" ? `Prior weekday ${dates[0]}` : `Prior week ${dates[0]} through ${dates[4]}`;
+  const session = scheduledSession(now);
+  const expectedDates = referenceSessions(etDate(now), horizon);
+  const dates = expectedDates ?? [];
+  const period = dates.length === 0 ? "Reference period unavailable"
+    : horizon === "intraday" ? `Prior scheduled session ${dates[0]}`
+    : `Previous calendar week: ${dates[0]} through ${dates.at(-1)} (${dates.length} scheduled sessions)`;
   const bars = dates.map(d => history.bars.find(b => b.date === d));
   if (inputs.history.state !== "ok") {
     statuses.levels.status = "unavailable";
     statuses.levels.reason = errorReason(inputs.history);
+  } else if (expectedDates === null || dates.length === 0) {
+    statuses.levels.status = "unsupported";
+    statuses.levels.reason = "Reference period is outside reviewed calendar coverage. Weekdays are not substituted for unknown sessions.";
   } else if (history.invalid || history.bars.length === 0) {
     statuses.levels.status = "missing";
-    statuses.levels.reason = "Daily OHLC is missing or fails listing, timestamp, duplicate-session or price-order validation.";
+    statuses.levels.reason = "Daily OHLC is missing or fails listing, timestamp, scheduled-session, duplicate-session or price-order validation.";
   } else if (bars.some(b => !b)) {
     statuses.levels.status = "stale";
-    statuses.levels.reason = `${period} is incomplete. No holiday calendar is verified; older sessions and incomplete weeks are not silently substituted.`;
+    statuses.levels.reason = `${period} is incomplete. Missing scheduled sessions remain real data gaps; older bars are not substituted. Published holidays are excluded from the required dates.`;
   } else if (!usableQuote) {
     statuses.levels.status = "unavailable";
     statuses.levels.reason = "Current usable quote is a mandatory dependency; stale/delayed price cannot produce current structural context.";
@@ -233,7 +215,7 @@ export function buildStockTradeBrief(
       });
       statuses.levels.status = "partial";
       statuses.levels.contributed = true;
-      statuses.levels.reason = "Classical reference structure only, not an entry, stop or target. Corporate-action adjustment, exchange holiday coverage, intraday VWAP and executable costs are unverified.";
+      statuses.levels.reason = "Classical reference structure only, not an entry, stop or target. Published holiday/early-close schedule applied; corporate-action adjustment, unscheduled closures/halts, intraday VWAP and executable costs remain unverified.";
       statuses.levels.observed_at = observed;
       statuses.levels.evidence_ids = ["period-h", "period-l", "period-c"];
     }
@@ -278,7 +260,7 @@ export function buildStockTradeBrief(
   const enrichment = enrichStockBrief({
     instrument, now, today: etDate(now), quoteAge, usableQuote, price: q.price, priceTime: q.tradeTime,
     quoteTime: q.quoteTime, volume: q.volume, bars: history.bars,
-    requiredPriorDate: requiredDates("intraday", etDate(now))[0],
+    requiredPriorDate: referenceSessions(etDate(now), "intraday")?.[0] ?? null,
     news: inputs.news, earnings: inputs.earnings, options: inputs.options?.value,
     optionsState: inputs.options?.state, statuses, observations, levels,
   });
@@ -298,7 +280,7 @@ export function buildStockTradeBrief(
   const prerequisites = [
     ...(!usableQuote ? ["Obtain an exact-listing real-time quote within this horizon's age limit."] : []),
     ...(!levels.length ? ["Obtain complete, validated daily history for the selected horizon."] : []),
-    "Verify issuer/fund events, corporate actions, exchange session and halt status.",
+    "Verify issuer/fund events, corporate actions, live exchange status and instrument halts; the published schedule is not a live status feed.",
     "Review a horizon-compatible entry/invalidation rule and actual execution costs before calculating risk.",
   ];
   // The snapshot expires at the earliest consumed instant-data threshold, never at a restamped fetch time.
@@ -308,8 +290,8 @@ export function buildStockTradeBrief(
   for (const e of macroEvidence) {
     if (e.status === "partial") deadlines.push(Date.parse(e.observed_at) + 7 * DAY);
   }
-  // A source-period change must not reuse yesterday's / last week's computed context.
-  deadlines.push(etEpochMs(shiftDate(etDate(now), 1), 0, 0));
+  // Expire at scheduled open/close (including early close) or ET date change.
+  deadlines.push(Date.parse(session.schedule.next_boundary_at));
   const observedTimes = [...observations, ...enrichment.contexts].map(e => Date.parse(e.observed_at)).filter(Number.isFinite);
   const result = {
     instrument_id: instrument.id, instrument, horizon, mode: "research_only" as const,
@@ -318,7 +300,7 @@ export function buildStockTradeBrief(
       oldest: observedTimes.length ? iso(Math.min(...observedTimes)) : null,
       newest: observedTimes.length ? iso(Math.max(...observedTimes)) : null,
     },
-    session: { label: clockSession(now), calendar_verified: false as const },
+    session: { ...session, calendar_verified: false as const },
     coverage: usableQuote ? "partial" as const : "insufficient" as const, source_statuses: statusesArray,
     coverage_gaps: statusesArray.filter(s => s.status !== "available").map(s => `${s.category}: ${s.reason}`),
     verdict: usableQuote ? "WATCH" as const : "INSUFFICIENT DATA" as const,
@@ -326,7 +308,7 @@ export function buildStockTradeBrief(
       "Cumulative/full-day volume comparison is not time-of-day RVOL, directional flow or a validated trading edge.",
       statuses.news.contributed ? "Collected attributed headlines are non-exhaustive and do not prove materiality." : "Ticker-specific news collection is missing or unverified; absence of collected items is not absence of catalysts.",
       statuses.options.contributed ? "Sampled options quotes/volume do not establish dealer positioning, buyer intent or execution quality." : "Fresh reviewed options evidence is unavailable.",
-      "Corporate-action adjustments, exchange sessions/halts and executable costs remain unverified."],
+      "Corporate-action adjustments, unscheduled exchange closures, instrument halts and executable costs remain unverified."],
     prerequisites,
     quote: usableQuote ? { value: q.price!, unit: "USD/share" as const, observed_at: iso(q.tradeTime!),
       evidence_id: "quote-last", source: "Schwab" as const } : null,
@@ -354,13 +336,14 @@ export function buildStockTradeBrief(
     evidence: observations,
     context_items: enrichment.contexts,
     methodology: [
-      "Intraday: prior weekday's completed daily OHLC. Swing: aggregate every weekday of the previous Monday–Friday week (high=max highs; low=min lows; close=Friday close). Missing weekdays suppress structure, including holiday weeks.",
+      "Intraday: prior scheduled cash-equity session strictly before today. Swing: aggregate every scheduled session of the previous calendar week (high=max highs; low=min lows; close=last scheduled session close). Published holidays are excluded, but missing scheduled bars still suppress structure.",
       "Reuse server/pivots.ts classicPivots: PP=(H+L+C)/3; S1=2*PP-H; R1=2*PP-L. Retain full calculation precision; display rounded prices only.",
       "Intraday last-trade/volume maximum age is one minute; swing is five minutes. Quotes without explicit real-time entitlement never become current price. No CBOE fallback is used until its true cache-age contract is verified.",
       "FRED observations use their published date at daily precision, not a fabricated release time. Daily macro context expires after seven calendar days and never supplies trade levels.",
-      "Exchange holidays, early closes, adjusted-price provenance and halt status are unverified. Clock windows are not assertions that the exchange is open.",
+      `Published common NYSE/Nasdaq core schedule: ${session.schedule.version}, coverage 2026 only, reviewed ${session.schedule.reviewed_at}. DST-aware ET times and scheduled early closes applied. A schedule is not proof of live exchange status, adjusted-price provenance or absence of halts.`,
       ...enrichment.methodology,
-      "Enrichment uses only validated, observed prior daily bars; ATR and volume baselines are conservatively suppressed when a weekday is absent because exchange holiday completeness is unverified.",
+      "Enrichment uses exact expected scheduled-session windows. ATR includes shortened-session ranges as observed; full-day volume comparisons are suppressed when today or a baseline session is shortened. Today’s bar is never treated as completed.",
+      "Calendar review time is not a historical known-at time. This version is not approved for point-in-time backtesting or forecasting; unknown years and unexpected missing sessions fail closed.",
       "Options uses only raw Schwab chains with exact identity, explicit non-delayed status, fresh underlying/contract times and valid standard bid/ask. Sampled counts/volume are descriptive; no OI timestamp, GEX, walls or intent is invented.",
       "News and earnings reuse existing local snapshots only; no per-Analyze aggregate RSS/calendar fanout. Explicit text attribution is not issuer-confirmed materiality.",
     ],

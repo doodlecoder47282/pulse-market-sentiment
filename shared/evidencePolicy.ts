@@ -1,12 +1,12 @@
 import { z } from "zod";
 
 /** Application policy, NOT provider availability, legal approval or an API quota claim. */
-export const EVIDENCE_POLICY_VERSION = "evidence-policy-2026-10-01.1";
+export const EVIDENCE_POLICY_VERSION = "evidence-policy-2026-10-02.1";
 type SourceContract = {
   id: string; name: string; endpoint: string; lineage: string;
   categories: readonly string[]; units: readonly string[]; citationHosts: readonly string[];
   maxAgeSeconds: number | null; timeBasis: string; cadence: string; limitation: string;
-  integration: "enforced_stock_brief" | "inventory_only" | "disabled";
+  integration: "enforced_stock_brief" | "reference_only" | "inventory_only" | "disabled";
   rights: "unverified"; publicUse: "blocked"; auth: "existing_oauth" | "public" | "local" | "none";
 };
 const equityUnits = ["USD/share", "shares", "shares/session", "percent", "ATR14 units",
@@ -28,7 +28,7 @@ export const SOURCE_CONTRACTS: readonly SourceContract[] = Object.freeze([
     "Existing bounded manual brief request", "Intraday tightens to 60s; explicit real-time entitlement required.", undefined, "existing_oauth"),
   source("schwab.history", "Schwab daily history", "https://api.schwabapi.com/marketdata/v1/pricehistory", "schwab.marketdata",
     ["levels", "volume"], equityUnits, schwabHost, 90 * 86400, "Completed session date / period end",
-    "Reuse the existing three-month daily-history read", "Historical inputs, not live observations; calendar and adjustments unverified.", undefined, "existing_oauth"),
+    "Reuse the existing three-month daily-history read", "Historical inputs, not live observations; published 2026 schedule checked, adjustments and unscheduled closures unverified.", undefined, "existing_oauth"),
   source("schwab.options", "Schwab option samples", "https://api.schwabapi.com/marketdata/v1/chains", "schwab.marketdata",
     ["options"], ["contracts", "contracts traded", "USD/share underlying", "USD/share premium"], schwabHost, 60,
     "Provider underlying and contract quote times", "Existing manual request; no delayed fallback",
@@ -56,6 +56,12 @@ export const SOURCE_CONTRACTS: readonly SourceContract[] = Object.freeze([
     ["levels", "volume", "macro", "options"], [...equityUnits, "percentage points", "text"],
     [...schwabHost, "fred.stlouisfed.org"], null, "Input observation dates; no new observation",
     "In-process only", "Every dependency must pass. Not an independent source or validated edge.", undefined, "local"),
+  source("nyse.core-calendar", "NYSE published core calendar", "https://www.nyse.com/trade/hours-calendars", "nyse.schedule",
+    ["session-calendar"], [], ["www.nyse.com"], null, "Reviewed 2026 dates and ET core hours, not live status",
+    "Versioned local reference; no runtime polling", "Historical known-at and unscheduled closure/halts are not established.", "reference_only"),
+  source("nasdaq.core-calendar", "Nasdaq published core calendar", "https://www.nasdaq.com/market-activity/stock-market-holiday-schedule", "nasdaq.schedule",
+    ["session-calendar"], [], ["www.nasdaq.com"], null, "Reviewed 2026 dates and ET core hours, not live status",
+    "Versioned local reference; no runtime polling", "Core cash equities only; not extended sessions, options or a live halt feed.", "reference_only"),
   ...[
     ["geckoterminal", "GeckoTerminal", "https://api.geckoterminal.com/api/v2", "geckoterminal", "Pool discovery/reserves; sampled, not a continuous tape."],
     ["dexscreener", "DEX Screener", "https://api.dexscreener.com", "dexscreener", "Receipt-only timing must not be called provider observation time."],

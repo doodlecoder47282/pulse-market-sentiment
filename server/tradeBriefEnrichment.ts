@@ -1,4 +1,5 @@
 import { citationAllowed, newsSourceId } from "../shared/evidencePolicy";
+import { equityDay, previousSessions } from "./equityCalendar";
 import {
   TRADE_BRIEF_VERSION, type TradeBriefCategory, type TradeBriefContextItem,
   type TradeBriefEvidence, type TradeBriefInstrument, type TradeBriefLevel,
@@ -25,7 +26,7 @@ const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 export interface EnrichmentInput {
   instrument: TradeBriefInstrument; now: number; today: string; quoteAge: number;
   usableQuote: boolean; price: number | null; priceTime: number | null; quoteTime: number | null; volume: number | null;
-  bars: BriefBar[]; requiredPriorDate: string;
+  bars: BriefBar[]; requiredPriorDate: string | null;
   news?: unknown; earnings?: unknown; options?: unknown;
   optionsState?: "ok" | "unavailable" | "timeout" | "busy";
   statuses: Record<TradeBriefCategory, TradeBriefSourceStatus>;
@@ -66,19 +67,11 @@ export function enrichStockBrief(input: EnrichmentInput) {
   const completed = input.bars.filter(b => b.date < today);
   const latest = completed.at(-1);
   const compatible = latest?.date === input.requiredPriorDate && input.usableQuote;
-  function contiguousWeekdays(sample: BriefBar[]) {
-    if (!sample.length) return false;
-    const dates = new Set(sample.map(b => b.date));
-    const end = Date.parse(`${sample.at(-1)!.date}T12:00:00Z`);
-    let start = Date.parse(`${sample[0].date}T12:00:00Z`);
-    if (end - start > 100 * DAY) return false;
-    for (; start <= end; start += DAY) {
-      const d = new Date(start);
-      if (![0, 6].includes(d.getUTCDay()) && !dates.has(iso(start).slice(0, 10))) return false;
-    }
-    return true;
+  function completeScheduledWindow(sample: BriefBar[], count: number) {
+    const expected = previousSessions(today, count);
+    return expected !== null && sample.length === count && sample.every((b, i) => b.date === expected[i]);
   }
-  if (compatible && completed.length >= 15 && contiguousWeekdays(completed.slice(-15))) {
+  if (compatible && completeScheduledWindow(completed.slice(-15), 15)) {
     const sample = completed.slice(-15);
     const splitLike = sample.slice(1).some((b, i) => Math.abs(b.close / sample[i].close - 1) > 0.5);
     if (!splitLike) {
@@ -114,7 +107,8 @@ export function enrichStockBrief(input: EnrichmentInput) {
         statuses.levels.status = "partial"; statuses.levels.contributed = true;
         statuses.levels.observed_at ??= latest.date;
         statuses.levels.reason += " ATR14 independently has 15 validated observed daily bars and uses a simple mean of 14 completed true ranges, not Wilder smoothing; price distances are descriptive, not entries or probabilities.";
-        context("factor-atr", "levels", `Completed-session ATR14 is ${atr.toFixed(2)} USD/share (${(100 * atr / input.price!).toFixed(2)}% of last trade). Adjustment provenance and exchange-session completeness remain unverified.`,
+        const shortened = sample.slice(1).filter(b => equityDay(b.date).kind === "early_close").length;
+        context("factor-atr", "levels", `Completed-session ATR14 is ${atr.toFixed(2)} USD/share (${(100 * atr / input.price!).toFixed(2)}% of last trade). Published session dates checked${shortened ? `; includes ${shortened} shortened-session range(s)` : ""}. Adjustment provenance and unscheduled closures/halts remain unverified.`,
           "Schwab deterministic calculation", SCHWAB_URL, latest.date, "period", ["atr14", "price-atr-percent"]);
         claims.push({ text: contexts.at(-1)!.text, evidence_ids: ["factor-atr"] });
       }
@@ -122,9 +116,13 @@ export function enrichStockBrief(input: EnrichmentInput) {
       statuses.levels.reason += " ATR14 withheld: split-like close discontinuity requires corporate-action review.";
     }
     methodology.push("ATR14 is the arithmetic mean of max(H-L, |H-previous completed close|, |L-previous completed close|) for 14 observed completed daily bars, seeded by a 15th close. Not Wilder ATR or adjusted total-return history; split-like jumps suppress ATR.");
+  } else if (input.usableQuote) {
+    statuses.levels.reason += " ATR14 withheld: exact prior 15 scheduled-session bars are incomplete or calendar coverage is unsupported.";
   }
   const volumeSample = completed.slice(-20);
-  if (compatible && volumeSample.length === 20 && contiguousWeekdays(volumeSample) && volumeSample.every(b => b.volume !== null)
+  const fullLengthVolumeWindow = equityDay(today).kind === "regular"
+    && volumeSample.every(b => equityDay(b.date).kind === "regular");
+  if (compatible && completeScheduledWindow(volumeSample, 20) && fullLengthVolumeWindow && volumeSample.every(b => b.volume !== null)
     && input.volume !== null && input.quoteTime !== null
     && input.quoteTime >= Date.parse(`${today}T00:00:00Z`)
     && now - input.quoteTime < input.quoteAge * 1000) {
@@ -146,6 +144,10 @@ export function enrichStockBrief(input: EnrichmentInput) {
         ["volume-session-vs-prior20"]);
       claims.push({ text: contexts.at(-1)!.text, evidence_ids: ["factor-volume"] });
     }
+  } else if (statuses.volume.contributed) {
+    statuses.volume.reason += !fullLengthVolumeWindow
+      ? " Full-day baseline comparison withheld: a shortened, closed or unsupported session would make the unnormalized comparison misleading."
+      : " Full-day baseline comparison withheld: exact prior 20 scheduled-session volumes are incomplete. Holidays are not counted as missing sessions.";
   }
   const two = observations.find(e => e.id === "macro-DGS2" && e.status === "partial");
   const ten = observations.find(e => e.id === "macro-DGS10" && e.status === "partial");
