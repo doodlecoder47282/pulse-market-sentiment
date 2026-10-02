@@ -20,6 +20,8 @@ Implemented October 1, 2026 ET. This is the first bounded package from the saved
 
 Local evidence: `stage-a-tests.log`, `stage-a-typecheck.log`, `stage-a-build.log`, `stage-a-mobile.png`, `stage-a-desktop.png` in the workspace. These are engineering checks, not proof of provider coverage, alpha, future accuracy or production security.
 
+Code commit `4242841` was deployed in place to the existing Batcave artifact. A final 390px opaque-iframe check using the deployed bundle and real backend passed INTC search, listing selection, Analyze and policy disclosure. No page exceptions, horizontal overflow or AI POSTs occurred. Screenshot: `stage-a-deployed-mobile.png`; browser resources were closed. No public site was published.
+
 ## Explicit limits
 
 - **Scope of enforcement:** New contracts gate stock AI selection and stock news admission. Existing stock numeric displays retain their prior validated adapters; the review does not rewrite their calculations. Older evidence without source IDs may display but is not selectable by AI.

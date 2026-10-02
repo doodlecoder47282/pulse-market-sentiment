@@ -13,6 +13,8 @@ include source-policy review and manual AI rechecks eligibility at request time.
 Registered publisher/citation gates tighten stock news. Collapsed mobile/
 desktop policy disclosure has honest evidence counts and exclusion reasons.
 Policy evidence-policy-2026-10-01.1; stock output stock-brief-2026-10-01.3.
+Code commit4242841 deployed in place; deployed390px opaque-iframe INTC search,
+Analyze and policy disclosure passed, no errors/overflow/AI POST.
 41 focused tests and production build passed; 59 unrelated type errors remain.
 375/1440px browser checks passed, including expiry, HTTP failure and legacy
 response compatibility; no page exceptions/overflow or actual model calls.
