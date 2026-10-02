@@ -20,7 +20,11 @@ stock-brief-2026-10-02.2 supported in replay, old versions/archives preserved.
 Real INTC returned dated quote/history/ATR, stale live price/options withheld.
 Original browser receipt checksum verified,16 calculations replay matched.
 375/390/430/1440 normal/200% zero document overflow; real Crypto subtabs loaded.
-No page exceptions/AI requests. Deployed acceptance pending in release doc.
+No page exceptions/AI requests. Code317988b deployedinplace to sameBatcave asset.
+Fresh390x740 opaqueiframe realFind/analyze/refresh/history passed;checksumverified,
+16 replaycalculations matched. Crypto opens fromdeepstockhistory;actualfeedcounts
+populate andBTC/ETH renders. No pageerrors/overflow/automaticAI. Release doc and
+research-cleanup-deployed-results.json record proof, notfullsourcecertification.
 iOS paused, SPY forecast/crypto ENTER disabled, no new providers or accounts.
 Next source work remains bounded issuer news/social coverage, not fake completeness.
 

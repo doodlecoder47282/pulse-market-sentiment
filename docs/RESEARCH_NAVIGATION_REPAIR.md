@@ -42,4 +42,8 @@ Logs and screenshots are retained in the workspace as `research-cleanup-*.log`, 
 
 ## Release record
 
-The changes are ready for in-place deployment after the recorded checks. The final deployed iframe acceptance result will be appended below; a local build alone is not deployed acceptance.
+Code commit `317988b` was deployed in place to the existing Batcave artifact `72791db6-0515-4bb8-ae21-f89b932391cc`. No public site was published.
+
+A fresh 390×740 touch-enabled Chromium context loaded the deployed bundle inside an opaque sandbox iframe, with the America/New_York timezone. Find listing, listing selection, Analyze, compact refresh, timestamped session/ATR context, saved-history retrieval, checksum verification and sixteen matched replay calculations passed. Selecting Crypto from the long history view brought the actual Crypto heading into the viewport and hid the stock brief. After its network response completed, pool/coverage counts populated and BTC/ETH context rendered. All eleven More entries were present, and returning to Stocks preserved the result.
+
+Deployed checks recorded no page exceptions, automatic AI requests or document horizontal overflow. The first harness attempt lacked a parent viewport meta tag and therefore used a desktop-width mobile layout; correcting the test harness to an actual 390px iframe resolved that harness issue without app changes. Final evidence is saved as `research-cleanup-deployed-results.json`, `research-deployed-stock.png` and `research-deployed-crypto.png`.
