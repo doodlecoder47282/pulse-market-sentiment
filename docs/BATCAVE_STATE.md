@@ -18,6 +18,9 @@ Schema evidence-ledger-v1; original stock/calendar/policy versions unchanged.
 production build passes, same59 unrelated type errors.375/1440px GUI checks
 pass, no errors/overflow/AI requests. Private receipt absent from DOM/payload.
 Main5000 rebuilt/restarted once without model credentials; worker5002 unchanged.
+Code commit2d9734e deployed in place to existing Batcave artifact. Real390px
+opaque-iframe Intel lookup/Analyze/save/history-read passed: checksum verified,
+one supported calculation matched, no page errors/overflow/AI calls.
 Limits:30-day readability,500 records,48MiB payload total,384KiB each. Expired
 rows physically purged on later successful capture, not during inactivity.
 Restart-safe on current disk only, plaintext at rest; NOT off-device backup,
