@@ -30,7 +30,9 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Type check (reported, not blocking)
         continue-on-error: true
-        run: npx tsc --noEmit -p tsconfig.json 2>&1 | tee tsc.log; echo "tsc errors: $(grep -c 'error TS' tsc.log || true)"
+        run: |
+          npx tsc --noEmit -p tsconfig.json 2>&1 | tee tsc.log
+          echo "tsc error count = $(grep -c 'error TS' tsc.log || true)"
       - name: Production build
         run: npm run build
       - name: Boot server and smoke test
