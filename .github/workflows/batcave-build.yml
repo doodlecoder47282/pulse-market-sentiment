@@ -86,12 +86,15 @@ jobs:
             const errors = [];
             p.on("pageerror", (e) => errors.push(e.message));
             await p.goto("http://127.0.0.1:5057/#/", { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
-            await p.waitForTimeout(6000);
-            for (const label of ["I understand", "Acknowledge", "Enter", "Continue"]) {
-              const btn = p.getByRole("button", { name: new RegExp(label, "i") });
-              if (await btn.count()) { await btn.first().click({ timeout: 2000 }).catch(() => {}); }
-            }
             await p.waitForTimeout(5000);
+            await p.keyboard.press("Enter").catch(() => {});
+            const splashBtn = p.getByRole("button", { name: /print/i });
+            if (await splashBtn.count()) await splashBtn.first().click({ timeout: 3000 }).catch(() => {});
+            await p.waitForTimeout(2500);
+            await p.evaluate(() => document.querySelectorAll("div").forEach((d) => { if (d.scrollHeight > d.clientHeight + 10) d.scrollTop = d.scrollHeight; }));
+            await p.waitForTimeout(800);
+            await p.locator('[data-testid="button-premarket-acknowledge"]').click({ timeout: 5000 }).catch((e) => console.log(name, "ack:", e.message.split("\n")[0]));
+            await p.waitForTimeout(15000);
             await p.screenshot({ path: `ui-${name}.png` });
             console.log(name, "page errors:", errors.length, errors.slice(0, 3));
           }
@@ -166,6 +169,18 @@ jobs:
           grep -E "error:|warning: .*deprecated|BUILD (SUCCEEDED|FAILED)" reports/04-xcodebuild-full.log | head -60 > reports/04-xcodebuild.log || true
           tail -40 reports/04-xcodebuild-full.log >> reports/04-xcodebuild.log
           exit $rc
+      - name: Launch in iOS Simulator and screenshot
+        continue-on-error: true
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; c=[x for k,v in d.items() if 'iOS' in k for x in v if x['name'].startswith('iPhone')]; print(c[-1]['udid'] if c else '')")
+          echo "simulator: $UDID" | tee reports/07-sim.log
+          xcrun simctl boot "$UDID" 2>&1 | tee -a reports/07-sim.log
+          xcrun simctl bootstatus "$UDID" -b 2>&1 | tail -2 | tee -a reports/07-sim.log
+          APP=$(find build/dd/Build/Products -name 'App.app' -maxdepth 3 | head -1)
+          xcrun simctl install "$UDID" "$APP" 2>&1 | tee -a reports/07-sim.log
+          xcrun simctl launch "$UDID" com.batcave.terminal 2>&1 | tee -a reports/07-sim.log
+          sleep 25
+          xcrun simctl io "$UDID" screenshot reports/ios-sim.png 2>&1 | tee -a reports/07-sim.log
       - name: Package Xcode project zip
         run: |
           mkdir -p out/Batcave-iOS

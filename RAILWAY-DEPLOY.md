@@ -42,6 +42,25 @@ SCHWAB_REDIRECT_URI = https://YOUR-RAILWAY-URL/api/schwab/callback
 
 You won't know the Railway URL yet — leave the third one as `https://127.0.0.1` for now, we update it in step 6.
 
+Also add these two (recommended for any public URL):
+
+```
+BATCAVE_ACCESS_KEY = <a long random passphrase only you know>
+BATCAVE_DATA_DIR = /app/persist
+```
+
+- `BATCAVE_ACCESS_KEY` locks every `/api` call behind a key. The website and the
+  iPhone app ask for it once and remember it on that device. Without it, anyone
+  who finds the URL can read your terminal and trigger Schwab calls.
+- `BATCAVE_DATA_DIR` moves the SQLite database (Schwab tokens, graded history,
+  backups) onto a volume so redeploys do not wipe it. Create the volume in the
+  next step.
+
+### 4b. Add a volume (keeps your data across redeploys)
+- Service → right-click / "+ New" → **Volume**
+- Mount path: `/app/persist`
+- Do not mount it at `/app/data` — that would hide the seed files shipped in the repo.
+
 ### 5. Generate public URL
 - Click "Settings" tab → "Networking" → "Generate Domain"
 - Railway creates something like `pulse-batcave-production.up.railway.app`
@@ -59,6 +78,15 @@ You won't know the Railway URL yet — leave the third one as `https://127.0.0.1
 - Login + approve
 - Schwab redirects to Railway → Railway calls Schwab from its IP → ✅ works
 - Tokens save to Railway's environment, persist across restarts
+
+## Hosting notes
+
+- The server binds `0.0.0.0` automatically when `RAILWAY_ENVIRONMENT` is present
+  (Railway sets it). Earlier builds bound `127.0.0.1` and were unreachable on Railway.
+- Health check: `https://YOUR-RAILWAY-URL/api/health` returns `{"ok":true,...}`.
+- The Python ML sidecar (`ml_service/`, LightGBM) is not installed by the default
+  Node build. ML projection panels report unavailable on Railway until a Python
+  build step is added. Everything else runs.
 
 ## After this point
 
