@@ -4,9 +4,9 @@
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { sqlite } from "./storage";
+import { MAIN_DB_PATH, BACKUP_DIR } from "./dbPath";
 
-const DB_PATH = "./data.db";
-const BACKUP_DIR = "./backups";
+const DB_PATH = MAIN_DB_PATH;
 const KEEP = 7;
 
 let started = false;

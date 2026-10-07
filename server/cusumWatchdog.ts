@@ -16,8 +16,9 @@
 
 import Database from "better-sqlite3";
 import { cusum } from "./stats";
+import { MAIN_DB_PATH } from "./dbPath";
 
-const sqlite = new Database("data.db");
+const sqlite = new Database(MAIN_DB_PATH);
 
 export function watchdogStatus(days: number = 60): {
   ok: boolean;

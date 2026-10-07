@@ -27,8 +27,9 @@
 //   Reference: <0.20 good, <0.10 excellent, 0.06–0.12 = top forecaster.
 
 import Database from "better-sqlite3";
+import { MAIN_DB_PATH } from "./dbPath";
 
-const sqlite = new Database("data.db");
+const sqlite = new Database(MAIN_DB_PATH);
 
 // One-time schema bootstrap. Idempotent — safe to call on every server start.
 sqlite.exec(`

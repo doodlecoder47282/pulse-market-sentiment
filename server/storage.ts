@@ -3,8 +3,9 @@ import type { Snapshot, InsertSnapshot, XUser, XTweet, SchwabToken } from "@shar
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { desc, eq } from "drizzle-orm";
+import { MAIN_DB_PATH } from "./dbPath";
 
-const sqlite = new Database("data.db");
+const sqlite = new Database(MAIN_DB_PATH);
 export { sqlite };
 sqlite.pragma("journal_mode = WAL");
 
