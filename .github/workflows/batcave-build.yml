@@ -1,0 +1,171 @@
+name: Batcave build (web + iOS)
+
+# Web job: installs, type-checks, builds, boots the production server and
+# smoke-tests it (health, UI, access-key gate, iOS CORS).
+# iOS job: generates/syncs the Capacitor Xcode project, compiles it for the
+# iOS Simulator without signing, and publishes a ready-to-open Xcode zip.
+
+on:
+  push:
+    branches: [ios-capacitor]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: batcave-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Type check (reported, not blocking)
+        continue-on-error: true
+        run: npx tsc --noEmit -p tsconfig.json 2>&1 | tee tsc.log; echo "tsc errors: $(grep -c 'error TS' tsc.log || true)"
+      - name: Production build
+        run: npm run build
+      - name: Boot server and smoke test
+        run: |
+          set -u
+          fail=0
+          check() { if [ "$1" = "$2" ]; then echo "PASS $3 ($1)"; else echo "FAIL $3 (got $1, want $2)"; fail=1; fi; }
+          wait_up() { for i in $(seq 1 60); do curl -fsS "http://127.0.0.1:$1/api/health" >/dev/null 2>&1 && return 0; sleep 1; done; return 1; }
+
+          NODE_ENV=production PORT=5055 HOST=127.0.0.1 node dist/index.cjs > server-open.log 2>&1 &
+          OPEN_PID=$!
+          wait_up 5055 || { echo "server did not start"; tail -80 server-open.log; exit 1; }
+          check "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/)" 200 "UI index served"
+          curl -s http://127.0.0.1:5055/ | grep -q '<div id="root">' && echo "PASS UI html has root" || { echo "FAIL UI html"; fail=1; }
+          check "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/api/health)" 200 "health"
+          check "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/api/schwab/status)" 200 "schwab status route"
+          check "$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS -H 'Origin: capacitor://localhost' -H 'Access-Control-Request-Method: GET' http://127.0.0.1:5055/api/health)" 204 "iOS CORS preflight"
+          curl -s -D - -o /dev/null -H 'Origin: capacitor://localhost' http://127.0.0.1:5055/api/health | grep -qi '^access-control-allow-origin: capacitor://localhost' && echo "PASS iOS CORS header" || { echo "FAIL iOS CORS header"; fail=1; }
+          curl -s -D - -o /dev/null -H 'Origin: https://evil.example' http://127.0.0.1:5055/api/health | grep -qi '^access-control-allow-origin' && { echo "FAIL foreign origin allowed"; fail=1; } || echo "PASS foreign origin not allowed"
+          echo "--- sample endpoint status codes (data depends on live sources) ---"
+          for p in /api/schwab/status /api/regime /api/quotes /api/news /api/crypto/scanner; do
+            echo "$p -> $(curl -s -o /dev/null -m 20 -w '%{http_code}' http://127.0.0.1:5055$p)"
+          done
+          kill $OPEN_PID || true; sleep 2
+
+          NODE_ENV=production PORT=5056 HOST=127.0.0.1 BATCAVE_ACCESS_KEY=ci-test-key node dist/index.cjs > server-gated.log 2>&1 &
+          GATED_PID=$!
+          wait_up 5056 || { echo "gated server did not start"; tail -80 server-gated.log; exit 1; }
+          curl -s http://127.0.0.1:5056/api/health | grep -q '"authRequired":true' && echo "PASS health reports auth" || { echo "FAIL health auth flag"; fail=1; }
+          check "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5056/api/schwab/status)" 401 "gate blocks without key"
+          check "$(curl -s -o /dev/null -w '%{http_code}' -H 'x-batcave-key: wrong' http://127.0.0.1:5056/api/schwab/status)" 401 "gate blocks wrong key"
+          check "$(curl -s -o /dev/null -w '%{http_code}' -H 'x-batcave-key: ci-test-key' http://127.0.0.1:5056/api/schwab/status)" 200 "gate allows right key"
+          check "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5056/)" 200 "UI still served when gated"
+          kill $GATED_PID || true
+          echo "--- server log tail ---"; tail -40 server-open.log
+          exit $fail
+      - name: Screenshot the UI
+        continue-on-error: true
+        run: |
+          npx --yes playwright@1.48.2 install --with-deps chromium >/dev/null 2>&1
+          NODE_ENV=production PORT=5057 HOST=127.0.0.1 node dist/index.cjs > server-shot.log 2>&1 &
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:5057/api/health >/dev/null 2>&1 && break; sleep 1; done
+          cat > shot.mjs <<'EOF'
+          import { chromium } from "playwright";
+          const b = await chromium.launch();
+          for (const [name, vp] of [["desktop", { width: 1440, height: 900 }], ["iphone", { width: 393, height: 852 }]]) {
+            const p = await b.newPage({ viewport: vp });
+            const errors = [];
+            p.on("pageerror", (e) => errors.push(e.message));
+            await p.goto("http://127.0.0.1:5057/#/", { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+            await p.waitForTimeout(6000);
+            for (const label of ["I understand", "Acknowledge", "Enter", "Continue"]) {
+              const btn = p.getByRole("button", { name: new RegExp(label, "i") });
+              if (await btn.count()) { await btn.first().click({ timeout: 2000 }).catch(() => {}); }
+            }
+            await p.waitForTimeout(5000);
+            await p.screenshot({ path: `ui-${name}.png` });
+            console.log(name, "page errors:", errors.length, errors.slice(0, 3));
+          }
+          await b.close();
+          EOF
+          npm i --no-save playwright@1.48.2 >/dev/null 2>&1 && node shot.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-build-report
+          path: |
+            tsc.log
+            server-*.log
+            ui-*.png
+          if-no-files-found: ignore
+
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - run: xcodebuild -version
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      - name: Add Capacitor (first run only)
+        run: |
+          if ! grep -q '"@capacitor/ios"' package.json; then
+            npm install --no-audit --no-fund --ignore-scripts @capacitor/core@^8 @capacitor/ios@^8
+            npm install --no-audit --no-fund --ignore-scripts -D @capacitor/cli@^8
+          fi
+      - name: Build web bundle for the app
+        env:
+          VITE_API_BASE: ${{ vars.BATCAVE_API_BASE }}
+        run: npx vite build
+      - name: Create or sync the Xcode project
+        run: |
+          if [ ! -d ios/App ]; then npx cap add ios; else npx cap sync ios; fi
+          ls -la ios/App
+      - name: Compile for iOS Simulator (no signing)
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/dd CODE_SIGNING_ALLOWED=NO build | tail -40
+      - name: Package Xcode project zip
+        run: |
+          mkdir -p out/Batcave-iOS
+          rsync -a --exclude 'build' --exclude 'DerivedData' ios/ out/Batcave-iOS/ios/
+          cp capacitor.config.json out/Batcave-iOS/
+          cat > out/Batcave-iOS/OPEN-ME.txt <<'EOF'
+          Batcave iOS - Xcode project
+
+          1. Double-click ios/App/App.xcodeproj (Xcode opens it; Swift packages resolve automatically).
+          2. Select the "App" target > Signing & Capabilities > choose your Team (your Apple Account works).
+             If the bundle ID is taken, change com.batcave.terminal to something unique.
+          3. Plug in your iPhone (or pick a simulator) and press Run.
+          4. First launch asks for your Batcave server URL (your hosted backend, e.g. https://xxxx.up.railway.app)
+             and the access key if the server sets BATCAVE_ACCESS_KEY.
+
+          The web UI is already bundled inside ios/App/App/public. To rebuild it after code changes,
+          use the repo: npm install && npm run ios:sync, then Run again in Xcode.
+          EOF
+          cd out && ditto -c -k --sequesterRsrc --keepParent Batcave-iOS Batcave-iOS-Xcode.zip && ls -la
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Batcave-iOS-Xcode
+          path: out/Batcave-iOS-Xcode.zip
+      - name: Commit generated project back to the branch
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "batcave-ci"
+          git config user.email "batcave-ci@users.noreply.github.com"
+          git add package.json package-lock.json ios
+          if git diff --cached --quiet; then echo "nothing to commit"; exit 0; fi
+          git commit -m "chore(ios): generate Capacitor iOS project via CI"
+          git push origin HEAD:${GITHUB_REF_NAME}
