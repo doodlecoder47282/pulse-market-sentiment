@@ -1,6 +1,6 @@
 // server/masterAlpha.ts
 // ═══════════════════════════════════════════════════════════════════════════
-// MASTER UNIFIED ALPHA FORMULA — calibrated for the terminal
+// MASTER UNIFIED ALPHA FORMULA — hand-set weights (not yet fit to this app's data)
 //
 // Consumes what the terminal already computes (ModelHorizon.audit + PivotBundle)
 // so every number is honest to the rest of the app. No duplicated greek math.
@@ -29,8 +29,19 @@ import type { PivotBundle } from "./pivots";
 const client = new Anthropic();
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TUNABLE CONSTANTS — calibrated, not hand-picked, but adjustable in one place
+// TUNABLE CONSTANTS — HAND-SET, adjustable in one place.
+// β_charm and the net-C σ are borrowed from the Baltussen-Terstegge-Whelan
+// sample (R² = 3.2%), whose net-C differs from this app's in OI coverage,
+// sign assumptions and time units; the component weights are hand-picked.
+// None of these are calibrated on this app's history. masterAlphaFit.ts
+// re-estimates them from the logged snapshots (mmPredictions) once enough
+// independent sessions exist (MASTER_ALPHA_MIN_SESSIONS); until a reviewed
+// fit is promoted, outputs carry coefficientStatus = "hand-set".
 // ═══════════════════════════════════════════════════════════════════════════
+
+export const MASTER_ALPHA_COEFFICIENT_STATUS = "hand-set" as const;
+const COEFFICIENT_NOTE =
+  "hand-set weights: β_charm and net-C σ borrowed from a published sample, component weights hand-picked; not fit to this app's history yet";
 
 // Charm — paper Table IX regression (β on standardised net-C)
 const BETA_CHARM       = -0.18;    // paper reported, t=2.99, R²=3.2%
@@ -68,7 +79,7 @@ const CHARM_WINDOW_DAYS: Record<Horizon, number> = {
   quarterly: 45,   // always on during the quarter
 };
 
-// Component weights (should sum to 1)
+// Component weights (should sum to 1) — hand-set
 const W_CHARM = 0.45, W_VANNA = 0.20, W_GEX = 0.15, W_GTBR = 0.10, W_OD = 0.10;
 
 // Signal thresholds (bps) — ordered so STRONG bands are checked before plain
@@ -168,6 +179,11 @@ export interface MasterAlphaOutput {
 
   // AI narrative
   aiAnalysis:          string;
+
+  // Honesty label for the coefficients (added): "hand-set" until a fit on
+  // the app's own logged history is reviewed and promoted.
+  coefficientStatus:   "hand-set" | "fitted";
+  coefficientNote:     string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -231,7 +247,7 @@ function getCalendarContext(d: Date) {
 // ═══════════════════════════════════════════════════════════════════════════
 // ───────────────────────────────────────────────────────────────────────────
 //
-//  MASTER FORMULA — calibrated, decoupled
+//  MASTER FORMULA — hand-set weights, decoupled
 //
 //  COMPOSITE EXPECTED HORIZON RETURN:
 //
@@ -570,12 +586,13 @@ function lockedTargetAlignment(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AI SYSTEM PROMPT — calibrated wording, no formula hallucination
+// AI SYSTEM PROMPT — fixed wording, no formula hallucination
 // ═══════════════════════════════════════════════════════════════════════════
 
 const MASTER_SYSTEM_PROMPT = `You are the master alpha engine inside BATCAVE. You receive a fully computed data packet for a SINGLE horizon (daily/weekly/monthly/quarterly). Synthesise the packet into a brief. Use only the numbers in the packet — do not compute new ones.
 
-CALIBRATION (what the numbers mean):
+WHAT THE NUMBERS MEAN:
+- The weights and β are HAND-SET (borrowed from a published sample), not fit to this terminal's history; say so once, plainly, and do not call them calibrated.
 - r̂_final is in bps of expected horizon return. Paper baseline: 18.2bps per −$48.1M net-C on 3rd-Thu SOQ.
 - STRONG_LONG ≥ +20bps | LONG ≥ +8bps | NEUTRAL | SHORT ≤ −8bps | STRONG_SHORT ≤ −20bps
 - GEX regime enters as a MULTIPLIER on composite (0.70× in POS γ, 1.15× in NEG γ), not as its own bps.
@@ -630,7 +647,7 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
 
   // --- Pull dealer net-greeks directly from the audit block (source of truth) ---
   // netCTrue is Σ charm_strike × OI_strike × 100 per Perfiliev Table VIII — the
-  // standardised net-C against which NETC_SD_M = $80M is calibrated. Falls back
+  // standardised net-C against which the paper measured NETC_SD_M = $80M. Falls back
   // to legacy charmPerDay * 1000 for older audit blocks that predate netCTrue.
   // Scale to $M (netCTrue is in raw $, divide by 1e6).
   const netCharm_M = audit.netCTrue != null
@@ -726,6 +743,7 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
     nearestPivot: np,
     lockedTargetAlignment: lta,
     priorDayRange: pivots?.range != null ? r2(pivots.range) : null,
+    coefficientStatus: MASTER_ALPHA_COEFFICIENT_STATUS,
   };
 
   let aiAnalysis = "Unavailable.";
@@ -774,6 +792,8 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
     dollarGammaAggregate: dollarGamma_M,
     gammaPnlAt_r_hat,
     aiAnalysis,
+    coefficientStatus: MASTER_ALPHA_COEFFICIENT_STATUS,
+    coefficientNote: COEFFICIENT_NOTE,
   };
 }
 

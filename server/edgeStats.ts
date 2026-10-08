@@ -5,6 +5,12 @@
 import { db } from "./storage";
 import { predictionOutcomes } from "@shared/schema";
 import { and, eq, gte, lte, sql } from "drizzle-orm";
+import { reliabilityCurve, wilsonInterval, firstPerSession, type ReliabilityReport } from "./stats";
+
+// The event a regime call's hit_30 records (outcomeLogger.gradeRegimeCall):
+// a proxy, not the regime itself.
+const REGIME_HIT_EVENT =
+  "regime-match proxy: SPY close-to-close |move| >= 0.5% to the grading date for TREND calls, < 0.5% for CHOP/neutral; one call per ET session";
 
 export interface EdgeStats {
   asOf: number;
@@ -37,7 +43,20 @@ interface RegimeCallEdge {
   overallHitRate: number;
   byConfidenceBucket: { bucket: string; n: number; hitRate: number }[];
   byRegime: { regime: string; n: number; hitRate: number }[];
-  calibration: { predictedProb: number; actualHitRate: number; n: number }[];
+  // ONE call per ET session (the first): calls logged every few minutes in
+  // a session share one graded outcome. predictedProb = mean predicted
+  // probability in the bucket (bucket midpoint when empty); actualHitRate is
+  // null for an empty bucket (no data, not 0%). wilsonLo/Hi = Wilson 95%
+  // interval of the hit rate; tested = n ≥ 10; inInterval = predicted inside
+  // that interval (null if untested).
+  calibration: {
+    predictedProb: number; actualHitRate: number | null; n: number;
+    hits?: number; wilsonLo?: number; wilsonHi?: number; tested?: boolean; inInterval?: boolean | null;
+  }[];
+  // Stated calibration test on the same one-per-session (topProbability, hit30) pairs.
+  reliability?: ReliabilityReport;
+  calibrationSessions?: number;   // independent sessions behind calibration + reliability
+  calibrationEvent?: string;      // what hit30 measures for regime calls
 }
 
 export interface ThresholdSuggestion {
@@ -204,17 +223,46 @@ function aggregateRegimeCalls(rows: any[]): RegimeCallEdge {
     { lo: 0.7, hi: 0.85 },
     { lo: 0.85, hi: 1.01 },
   ];
+  // Missing / unparseable topProbability is NaN (excluded), never a 0% forecast.
+  const topProb = (r: (typeof graded)[number]): number => {
+    try {
+      const raw = JSON.parse(r.predictionJson || "{}").topProbability;
+      const p = raw == null ? NaN : Number(raw);
+      return Number.isFinite(p) ? p : NaN;
+    } catch {
+      return NaN;
+    }
+  };
+  const sessionRows = firstPerSession(
+    graded.filter((r) => Number.isFinite(topProb(r))),
+    (r) => Number(r.capturedAt),
+  );
   const calibration = probBuckets.map((b) => {
-    const items = graded.filter((r) => {
-      const p = JSON.parse(r.predictionJson || "{}").topProbability ?? 0;
+    const items = sessionRows.filter((r) => {
+      const p = topProb(r);
       return p >= b.lo && p < b.hi;
     });
+    const hits = items.filter((r) => r.hit30 === 1).length;
+    const n = items.length;
+    const meanPred = n ? items.reduce((s, r) => s + topProb(r), 0) / n : (b.lo + b.hi) / 2;
+    const w = wilsonInterval(hits, n);
+    const tested = n >= 10;
     return {
-      predictedProb: (b.lo + b.hi) / 2,
-      actualHitRate: items.length ? items.filter((r) => r.hit30 === 1).length / items.length : 0,
-      n: items.length,
+      predictedProb: meanPred,
+      actualHitRate: n ? hits / n : null,
+      n,
+      hits,
+      wilsonLo: w.lo,
+      wilsonHi: w.hi,
+      tested,
+      inInterval: tested ? meanPred >= w.lo && meanPred <= w.hi : null,
     };
   });
+  const reliability = reliabilityCurve(
+    sessionRows.map(topProb),
+    sessionRows.map((r) => (r.hit30 === 1 ? 1 : 0)),
+    { event: REGIME_HIT_EVENT },
+  );
 
   return {
     total,
@@ -224,6 +272,9 @@ function aggregateRegimeCalls(rows: any[]): RegimeCallEdge {
     byConfidenceBucket,
     byRegime,
     calibration,
+    reliability,
+    calibrationSessions: sessionRows.length,
+    calibrationEvent: REGIME_HIT_EVENT,
   };
 }
 

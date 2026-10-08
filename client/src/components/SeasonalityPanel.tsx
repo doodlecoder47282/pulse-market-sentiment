@@ -39,6 +39,12 @@ interface OptimalWindow {
   winRate: number;
   yearsTested: number;
   confidenceLabel: "Excellent" | "Good" | "Fair" | "Weak" | "Insufficient";
+  significance?: {
+    windowsSearched: number;
+    pFamilywise: number;
+    significant: boolean;
+    outOfSample: { heldOutYears: number; randomWindowPercentile: number } | null;
+  };
 }
 
 interface YearlySeasonality {
@@ -334,12 +340,18 @@ function YearlyView({ ticker, lookback }: { ticker: SeasonalityTicker; lookback:
       {opt && (
         <div className={`rounded-lg border px-3 py-2 text-xs ${confidenceColor(opt.confidenceLabel)} bg-current/5`} style={{ borderColor: "currentcolor" }}>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <span className="font-semibold">Optimal Seasonal Window</span>
-            <span>🟢 BUY: <span className="font-mono font-bold">{opt.buyDate}</span></span>
-            <span>🔴 SELL: <span className="font-mono font-bold">{opt.sellDate}</span></span>
+            <span className="font-semibold">{opt.significance && !opt.significance.significant ? "Best In-Sample Window (not significant)" : "Optimal Seasonal Window"}</span>
+            <span>BUY: <span className="font-mono font-bold">{opt.buyDate}</span></span>
+            <span>SELL: <span className="font-mono font-bold">{opt.sellDate}</span></span>
             <span>Geo avg: <span className="font-mono font-bold">{fmtPct(opt.geometricAvgReturn)}</span></span>
             <span>Win rate: <span className="font-mono font-bold">{winRatePct(opt.winRate)}</span></span>
             <Badge variant="outline" className={`text-[9px] ${confidenceColor(opt.confidenceLabel)}`}>{opt.confidenceLabel}</Badge>
+            {opt.significance && (
+              <span className="text-[10px] opacity-80" title={`Best of ${opt.significance.windowsSearched} windows searched, tested against calendar-scrambled history`}>
+                data-snooping p={opt.significance.pFamilywise.toFixed(2)}
+                {opt.significance.outOfSample ? ` · held-out ${opt.significance.outOfSample.heldOutYears}y rank ${Math.round(opt.significance.outOfSample.randomWindowPercentile * 100)}%` : ""}
+              </span>
+            )}
           </div>
         </div>
       )}
@@ -385,9 +397,12 @@ function YearlyView({ ticker, lookback }: { ticker: SeasonalityTicker; lookback:
                   <ReferenceArea
                     x1={Math.floor(opt.buyDayOfYear / step) * step}
                     x2={Math.floor(opt.sellDayOfYear / step) * step}
-                    fill="#10b981"
-                    fillOpacity={0.05}
+                    // Green only for a window that passed the data-snooping test;
+                    // otherwise grey and labelled, so noise is never shaded as a signal.
+                    fill={opt.significance?.significant ? "#10b981" : "#64748b"}
+                    fillOpacity={opt.significance?.significant ? 0.05 : 0.04}
                     strokeOpacity={0}
+                    label={opt.significance?.significant ? undefined : { value: "not significant", position: "insideTop", fontSize: 9, fill: "#94a3b8" }}
                   />
                 )}
 

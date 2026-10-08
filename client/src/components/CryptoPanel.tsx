@@ -32,6 +32,8 @@ interface Candidate {
   bskyMentions1h: number | null; bskyMentions10m: number | null;
   pumpReplies: number | null; pumpReplyPerHr: number | null;
   pumpLive: boolean; socialScore: number | null; socialCheckedAt: number | null;
+  // collection state: a failed/stale collection is NOT zero attention
+  socialStatus?: "ok" | "partial" | "failed" | "stale" | "unavailable" | null;
   volAccel: number | null; netBuyRatio5m: number | null;
   fomoScore: number | null; memeScore: number | null;
   narrativeHits: string[]; rugFlags: string[]; hardKill: boolean;
@@ -56,7 +58,13 @@ interface HealthResp {
 
 interface SignalsResp {
   signals: any[];
-  stats: { total: number; open: number; hit5m: number; doubled: number; rugged: number; dead: number; calibrated: boolean };
+  // one aggregate query over all logged signals; sampleReady = graded ≥ 50
+  // (a sample-size flag, not calibration)
+  stats: {
+    total: number; open: number; hit5m: number; doubled: number; rugged: number; dead: number;
+    graded: number; sampleReady: boolean; minGradedForSample: number;
+    noData?: number; // past the 72h horizon but unpriceable: missing, not dead
+  };
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────
@@ -119,7 +127,7 @@ export default function CryptoPanel() {
         </div>
       </div>
 
-      {/* tracking-mode banner until calibrated */}
+      {/* tracking-mode banner until the graded sample is large enough */}
       <TrackingBanner sig={sigQ.data} view={view} />
 
       {/* narrative heat */}
@@ -232,7 +240,7 @@ function AgentStrip({ health }: { health?: HealthResp }) {
 // ─── tracking banner ────────────────────────────────────────────────────
 
 function TrackingBanner({ sig, view }: { sig?: SignalsResp; view: string }) {
-  const graded = sig ? sig.stats.total - sig.stats.open : null;
+  const graded = sig ? sig.stats.graded : null;
   return (
     <div className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2">
       <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
@@ -340,6 +348,11 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
           </span>
           <span className={`${(c.socialScore ?? 0) >= 40 ? "text-fuchsia-300" : "text-muted-foreground"}`}>
             social {c.socialScore != null ? Math.round(c.socialScore) : "—"}
+            {c.socialStatus && c.socialStatus !== "ok" && (
+              <span className="ml-0.5 text-[9px] text-amber-300/80" title="social collection state — not zero attention">
+                {c.socialStatus}
+              </span>
+            )}
           </span>
         </span>
       </div>
@@ -403,7 +416,12 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
           </div>
           {c.socialCheckedAt != null && (
             <div className="flex flex-wrap items-center gap-1.5 text-[9px] text-muted-foreground">
-              <span>social · bsky {c.bskyMentions1h ?? 0} mentions/1h ({c.bskyMentions10m ?? 0} last 10m)</span>
+              <span>
+                social · bsky{" "}
+                {c.bskyMentions1h != null
+                  ? `${c.bskyMentions1h} mentions/1h (${c.bskyMentions10m ?? 0} last 10m)`
+                  : "unavailable (fetch failed or not searched)"}
+              </span>
               {c.pumpReplies != null && <span>· pump.fun {c.pumpReplies} replies{c.pumpReplyPerHr != null ? ` (${c.pumpReplyPerHr >= 0 ? "+" : ""}${c.pumpReplyPerHr}/hr)` : ""}</span>}
             </div>
           )}
@@ -450,7 +468,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
   const { stats } = sig;
   return (
     <div className="space-y-3" data-testid="crypto-signal-log">
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-7">
         {[
           ["logged", stats.total, "text-foreground"],
           ["open", stats.open, "text-sky-300"],
@@ -458,6 +476,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
           ["doubled", stats.doubled, "text-emerald-300"],
           ["rugged", stats.rugged, "text-rose-300"],
           ["dead", stats.dead, "text-muted-foreground"],
+          ["no data", stats.noData ?? 0, "text-amber-300/80"],
         ].map(([label, val, cls]) => (
           <div key={String(label)} className="rounded-lg border border-border/50 bg-card/50 p-2 text-center">
             <div className={`font-mono text-lg font-bold tabular-nums ${cls}`}>{String(val)}</div>
@@ -465,9 +484,9 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
           </div>
         ))}
       </div>
-      {!stats.calibrated && (
+      {!stats.sampleReady && (
         <p className="text-[10px] text-muted-foreground">
-          calibration unlocks at 50 graded outcomes — until then these stats are the whole product: proving or killing the edge.
+          sample-ready at {stats.minGradedForSample ?? 50} graded outcomes ({stats.graded ?? 0} so far) — a minimum sample, not a calibration. until then these stats are the whole product: proving or killing the edge.
         </p>
       )}
       <div className="space-y-1.5">
@@ -485,7 +504,8 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
             <span className="font-mono tabular-nums text-muted-foreground">peak {fmtUsd(s.peak_mcap)}</span>
             <span className={`ml-auto font-semibold ${
               s.outcome === "HIT_5M" ? "text-lime-300" : s.outcome === "DOUBLED" ? "text-emerald-300"
-              : s.outcome === "RUGGED" ? "text-rose-300" : s.outcome === "DEAD" ? "text-muted-foreground" : "text-sky-300"
+              : s.outcome === "RUGGED" ? "text-rose-300" : s.outcome === "DEAD" ? "text-muted-foreground"
+              : s.outcome === "NO_DATA" ? "text-amber-300/80" : "text-sky-300"
             }`}>{s.outcome}</span>
             <span className="hidden text-[9px] text-muted-foreground sm:block">
               {new Date(Number(s.detected_at)).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}

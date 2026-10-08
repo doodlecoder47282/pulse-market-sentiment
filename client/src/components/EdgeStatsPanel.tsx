@@ -24,13 +24,19 @@ interface WhaleEdge {
 }
 interface ConfBucket { bucket: string; n: number; hitRate: number; }
 interface ByRegime { regime: string; n: number; hitRate: number; }
-interface CalibPoint { predictedProb: number; actualHitRate: number; n: number; }
+interface CalibPoint {
+  predictedProb: number; actualHitRate: number | null; n: number; // null = empty bucket (no data, not 0%)
+  wilsonLo?: number; wilsonHi?: number; tested?: boolean; inInterval?: boolean | null;
+}
 interface RegimeEdge {
   total: number; graded: number; pending: number;
   overallHitRate: number;
   byConfidenceBucket: ConfBucket[];
   byRegime: ByRegime[];
   calibration: CalibPoint[];
+  calibrationSessions?: number;
+  calibrationEvent?: string;
+  reliability?: { n: number; verdict: "calibrated" | "not calibrated" | "insufficient data"; test: { name: string; reasons: string[] } };
 }
 interface Suggestion {
   field: "premiumFloor" | "volOiRatio" | "deltaMin" | string;
@@ -153,7 +159,18 @@ function CalibrationPlot({ r }: { r: RegimeEdge }) {
   const inner = size - pad * 2;
   return (
     <div className="rounded-md border border-border/50 bg-card/40 p-3">
-      <div className="text-[11px] uppercase text-muted-foreground tracking-wider mb-2">Regime Calibration</div>
+      <div className="text-[11px] uppercase text-muted-foreground tracking-wider mb-1">Regime Calibration</div>
+      <div className="mb-2 text-[10px] text-muted-foreground" data-testid="text-calibration-verdict" title={r.reliability?.test.name}>
+        {r.reliability
+          ? r.reliability.verdict === "calibrated"
+            ? `calibrated: passes the reliability test (n=${r.reliability.n})`
+            : r.reliability.verdict === "not calibrated"
+              ? `not calibrated: ${r.reliability.test.reasons.join("; ")}`
+              : `calibration untested: ${r.reliability.test.reasons.join("; ")}`
+          : "calibration untested"}
+        {" "}· one call per session{r.calibrationSessions != null ? ` (${r.calibrationSessions} sessions)` : ""} · bars = Wilson 95% · grey = fewer than 10 sessions
+        {r.calibrationEvent && <div className="mt-0.5 opacity-80">event graded: {r.calibrationEvent}</div>}
+      </div>
       <div className="flex flex-col md:flex-row gap-4 items-start">
         <svg width={size} height={size} className="shrink-0" data-testid="svg-calibration">
           {/* axes */}
@@ -163,14 +180,21 @@ function CalibrationPlot({ r }: { r: RegimeEdge }) {
           <line x1={pad} y1={size - pad} x2={size - pad} y2={pad} stroke="currentColor" strokeOpacity="0.15" strokeDasharray="3,3" />
           {/* points */}
           {r.calibration.map((p, i) => {
-            if (p.n === 0) return null;
+            if (p.n === 0 || p.actualHitRate == null) return null; // empty bucket: nothing to plot
             const cx = pad + p.predictedProb * inner;
             const cy = size - pad - p.actualHitRate * inner;
             const radius = Math.min(10, 3 + Math.sqrt(p.n));
-            const wellCalibrated = Math.abs(p.predictedProb - p.actualHitRate) < 0.1;
+            // Green only when the predicted probability sits inside the hit
+            // rate's Wilson 95% interval with at least 10 calls; grey = untested.
+            const tested = p.tested ?? p.n >= 10;
+            const inside = p.inInterval ?? null;
+            const fill = !tested || inside == null ? "fill-slate-400/60" : inside ? "fill-emerald-400/70" : "fill-amber-400/70";
             return (
               <g key={i}>
-                <circle cx={cx} cy={cy} r={radius} className={wellCalibrated ? "fill-emerald-400/70" : "fill-amber-400/70"} />
+                {p.wilsonLo != null && p.wilsonHi != null && (
+                  <line x1={cx} x2={cx} y1={size - pad - p.wilsonLo * inner} y2={size - pad - p.wilsonHi * inner} stroke="currentColor" strokeOpacity="0.35" />
+                )}
+                <circle cx={cx} cy={cy} r={radius} className={fill} />
                 <text x={cx} y={cy - radius - 3} textAnchor="middle" fontSize="9" fill="currentColor" opacity="0.6">n={p.n}</text>
               </g>
             );

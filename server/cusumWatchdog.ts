@@ -1,32 +1,48 @@
 // server/cusumWatchdog.ts
 //
-// CUSUM drift watchdog over the Pulse calibration outcome stream.
+// CUSUM skill watchdog over the Pulse calibration outcome stream.
 //
 // Reads from the existing pulse_outcomes SQLite table (created by
 // calibration.ts) — we never write to it, never touch it. Pure observer.
 //
-// The series we monitor is `brier_total - trivial_total_per_day`. If Pulse
-// is stable, this hovers around its baseline. If it drifts UPWARD (we're
-// getting worse vs trivial), CUSUM accumulates and trips a watchdog flag.
+// The series we monitor is d_t = brier_total_t − climatology_brier_t, oldest →
+// newest, where climatology is the ONE base-rate forecaster shared with
+// calibration.ts (stats.climatologyBaseline). The CUSUM target is 0 = no skill,
+// so a model that is persistently worse than the base rate trips the alarm.
+// (The old version used each series' own mean as target and a uniform 1/3
+// baseline, so a model that always lost to trivial still read HEALTHY.)
 //
-// Status badge:
-//   HEALTHY   — drift is within 4σ
-//   DRIFTING  — drift > 4σ but ≤ 5σ — caution
-//   BROKEN    — drift > 5σ — model is empirically worse than trivial
+// Status badge (stats.skillWatchdog):
+//   HEALTHY   — demonstrated skill: Diebold-Mariano ≤ −2 vs climatology, CUSUM ≤ 4σ
+//   NO_SKILL  — not significantly better than climatology ("no demonstrated skill")
+//   DRIFTING  — CUSUM in (4σ, 5σ] (heuristic thresholds)
+//   BROKEN    — CUSUM > 5σ, or DM ≥ +2 (significantly worse than climatology)
+// One row per settled day, 1-day outcome: windows do not overlap (horizon 1).
 
 import Database from "better-sqlite3";
-import { cusum } from "./stats";
+import { skillWatchdog } from "./stats";
 
 const sqlite = new Database("data.db");
 
 export function watchdogStatus(days: number = 60): {
   ok: boolean;
-  status: "HEALTHY" | "DRIFTING" | "BROKEN" | "INSUFFICIENT_DATA";
+  status: "HEALTHY" | "NO_SKILL" | "DRIFTING" | "BROKEN" | "INSUFFICIENT_DATA";
   n: number;
   cValue: number;
   baseline: number;
   thresholds: { warn: number; alarm: number };
   reason: string;
+  skill?: {
+    reference: string;
+    meanDiff: number;
+    tStat: number | null;
+    dmP?: number | null;
+    test?: string;
+    bss: number | null;
+    modelBrier: number;
+    climatologyBrier: number;
+    climatologyFreqs: number[];
+  };
 } {
   try {
     const rows = sqlite
@@ -55,29 +71,33 @@ export function watchdogStatus(days: number = 60): {
       };
     }
 
-    // Per-day error series: pulse Brier minus trivial-forecaster Brier on the
-    // same day. Positive = pulse is worse than trivial = bad.
-    const errors = rows.map((r) => {
-      const trivialDay =
-        Math.pow(1 / 3 - r.outcome_bull, 2) +
-        Math.pow(1 / 3 - r.outcome_base, 2) +
-        Math.pow(1 / 3 - r.outcome_bear, 2);
-      return r.brier_total - trivialDay;
-    });
-
-    const result = cusum(errors);
+    // SQL returns newest-first; CUSUM must run oldest → newest.
+    const chron = [...rows].reverse();
+    const w = skillWatchdog(
+      chron.map((r) => ({
+        modelBrier: r.brier_total,
+        outcome: [r.outcome_bull, r.outcome_base, r.outcome_bear],
+      })),
+    );
     return {
-      ok: result.status !== "BROKEN",
-      status: result.status,
+      ok: w.status !== "BROKEN",
+      status: w.status,
       n: rows.length,
-      cValue: result.c,
-      baseline: result.baseline,
-      thresholds: { warn: result.h_warn, alarm: result.h_alarm },
-      reason: result.status === "HEALTHY"
-        ? "model tracking baseline"
-        : result.status === "DRIFTING"
-        ? "model drifting vs trivial — watch closely"
-        : "model worse than trivial — investigate",
+      cValue: w.cusum.c,
+      baseline: w.cusum.baseline,
+      thresholds: { warn: w.cusum.h_warn, alarm: w.cusum.h_alarm },
+      reason: w.reason,
+      skill: {
+        reference: "climatology (realized base rates over the window)",
+        meanDiff: w.meanDiff,
+        tStat: w.tStat,
+        dmP: w.dmP,
+        test: "Diebold-Mariano (HLN-corrected), horizon 1, on BS_model - BS_climatology; HEALTHY needs DM <= -2",
+        bss: w.bss,
+        modelBrier: w.modelBrier,
+        climatologyBrier: w.climatologyBrier,
+        climatologyFreqs: w.climatologyFreqs,
+      },
     };
   } catch (e: any) {
     return {

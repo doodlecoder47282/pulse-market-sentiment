@@ -5,7 +5,13 @@
 // directional accuracy, Brier score, and calibration deciles.
 //
 // Output is consumed by Models tab's MLAccuracyCard component to answer
-// "is the ML agent getting better."
+// "is the model getting better." Note: the graded probabilities are the MM
+// matrix's hand-set priors, not a trained ML model.
+//
+// "Calibrated" is decided ONLY by the reliability test in
+// stats.reliabilityCurve (predicted vs observed per bin, Wilson intervals,
+// Spiegelhalter Z), never by a Brier threshold: Brier mixes calibration with
+// sharpness.
 //
 // Grading rules (peer-to-peer, no false precision):
 //   - Daily horizon prediction: realized = next session's close
@@ -19,6 +25,9 @@
 
 import { promises as fs } from "fs";
 import * as path from "path";
+import { reliabilityCurve, binarySkillTest, type ReliabilityReport } from "./stats";
+
+const MODEL_KIND = "MM matrix hand-set priors (not a trained ML model)";
 
 const PRED_PATH = path.join(process.cwd(), "data", "mm-predictions", "predictions.jsonl");
 
@@ -72,6 +81,14 @@ export type AccuracySummary = {
   brierN: number;
   // Calibration: 10 deciles of pUp
   calibration: { bucket: number; pUpAvg: number; actualUpRate: number; n: number }[];
+  // Reliability curve (pUp as P(r > +0.05%)) with Wilson intervals per bin,
+  // Brier skill vs the climatology base rate, and the stated calibration test.
+  reliability: ReliabilityReport;
+  // Brier, Brier skill vs climatology and the Diebold-Mariano significance,
+  // all on the SAME independent sample as the reliability curve (one daily
+  // call per session). brierScore above is over every graded row (n = brierN).
+  skill: ReturnType<typeof binarySkillTest>;
+  modelKind: string;
   // Rolling windows (most-recent-N)
   windows: {
     last7: { hitRate: number | null; brier: number | null; n: number };
@@ -217,6 +234,19 @@ function gradePrediction(
   };
 }
 
+/** First graded daily-horizon forecast per session date (oldest ts wins). */
+export function independentDailyRows<T extends { horizon: string; sessionDate: string; ts: number; realizedReturnPct: number | null }>(
+  rows: T[],
+): T[] {
+  const first = new Map<string, T>();
+  for (const g of rows) {
+    if (g.horizon !== "daily" || g.realizedReturnPct == null) continue;
+    const prev = first.get(g.sessionDate);
+    if (!prev || g.ts < prev.ts) first.set(g.sessionDate, g);
+  }
+  return [...first.values()].sort((a, b) => a.ts - b.ts);
+}
+
 function rollingWindow(graded: GradedEntry[], n: number): { hitRate: number | null; brier: number | null; n: number } {
   const window = graded.slice(-n);
   const calls = window.filter((g) => g.callCorrect !== null);
@@ -247,6 +277,9 @@ export async function buildAccuracySummary(symbol = "^GSPC"): Promise<AccuracySu
       brierScore: null,
       brierN: 0,
       calibration: [],
+      reliability: reliabilityCurve([], []),
+      skill: binarySkillTest([], []),
+      modelKind: MODEL_KIND,
       windows: {
         last7: { hitRate: null, brier: null, n: 0 },
         last14: { hitRate: null, brier: null, n: 0 },
@@ -300,6 +333,16 @@ export async function buildAccuracySummary(symbol = "^GSPC"): Promise<AccuracySu
       n: v.n,
     }));
 
+  // Reliability curve on the same binary event the Brier uses (r > +0.05%).
+  // The Wilson intervals and the Spiegelhalter Z assume independent
+  // outcomes, so the test uses ONE forecast per session: the first daily
+  // snapshot of each session date. Repeat snapshots on one date share one
+  // realized close, and weekly windows overlap; counting them would inflate n.
+  const relRows = independentDailyRows(graded);
+  const relPreds = relRows.map((g) => Math.max(0, Math.min(1, g.pUp / 100)));
+  const relOutcomes = relRows.map((g) => ((g.realizedReturnPct as number) > 0.05 ? 1 : 0));
+  const reliability = reliabilityCurve(relPreds, relOutcomes, { event: "SPX next-session close > +0.05% vs the snapshot spot (pUp); one daily call per session" });
+
   // Rolling trail: running hit rate at each point (smoothed over last 7)
   const trail: { ts: number; rollingHitRate: number; brier: number | null }[] = [];
   for (let i = 0; i < graded.length; i++) {
@@ -329,6 +372,9 @@ export async function buildAccuracySummary(symbol = "^GSPC"): Promise<AccuracySu
     brierScore,
     brierN: briers.length,
     calibration,
+    reliability,
+    skill: binarySkillTest(relPreds, relOutcomes),
+    modelKind: MODEL_KIND,
     windows: {
       last7: rollingWindow(graded, 7),
       last14: rollingWindow(graded, 14),
