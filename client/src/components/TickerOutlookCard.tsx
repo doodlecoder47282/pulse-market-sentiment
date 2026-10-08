@@ -8,10 +8,12 @@
 //   2. CATALYSTS ROW: next earnings (date, days-out, EPS est, IV expected move
 //      if available), closest macro events (FOMC/CPI/NFP/OPEX). This is the
 //      first thing under the headline so users see what's coming.
-//   3. KEY LEVELS: target / invalidation / R:R / Kelly.
+//   3. KEY LEVELS: target / invalidation / R:R / size. Size shows "none":
+//      there is no fitted win probability for single names, so no Kelly size
+//      (the old figure was |composite|/100 x 0.25 or an LLM's number).
 //   4. 60-DAY FORWARD PROJECTION: realized-vol cone chart (q10/q25/q50/q75/q90)
 //      with spot, target, and invalidation overlaid. Honest — not an ML model.
-//   5. SCENARIOS: bull/base/bear with probability bars.
+//   5. SCENARIOS: bull/base/bear with heuristic weight bars (not calibrated).
 //   6. POSITIONING: gamma walls, GEX, IV skew, max pain.
 //   7. NEWS + SOCIAL: stacked side-by-side on desktop, stacked vertically on
 //      mobile. Tier badges. Click-through to source.
@@ -43,7 +45,10 @@ interface OutlookVerdict {
   targetPrice: number | null;
   expectedMovePct: number | null;
   rr: number | null;
+  /** Deprecated: always 0 on current servers. Not displayed. */
   kellyFrac: number;
+  /** Optional for older servers. available=false: no size is shown. */
+  sizing?: { available: boolean; reason: string };
   invalidation: number | null;
   edgeType: "informational" | "analytical" | "behavioral" | "environmental" | "none";
   counterargument: string;
@@ -393,8 +398,11 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                 <span className="font-mono text-2xl font-bold text-foreground">
                   {v.confidence}%
                 </span>
-                <span className="text-xs uppercase tracking-wider text-muted-foreground">
-                  confidence
+                <span
+                  className="text-xs uppercase tracking-wider text-muted-foreground"
+                  title="Heuristic score from the composite read (or the AI write-up), not a calibrated probability."
+                >
+                  confidence (heuristic)
                 </span>
                 {v.edgeType && v.edgeType !== "none" && (
                   <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider ${dirBorder(dir)} ${dirText(dir)}`}>
@@ -492,10 +500,13 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                   value={fmtMoney(v.invalidation)}
                   hint={v.rr != null ? `R:R ${v.rr.toFixed(2)}x` : undefined}
                 />
+                {/* No position size: single names have no fitted win
+                    probability, so a Kelly size cannot be computed honestly. */}
                 <KV
-                  label="kelly"
-                  value={`${(v.kellyFrac * 100).toFixed(1)}%`}
-                  hint="quarter-Kelly"
+                  label="size"
+                  value="none"
+                  hint="no fitted win prob"
+                  title={v.sizing?.reason ?? "No size: single-name outlooks have no fitted win probability."}
                 />
               </div>
 
@@ -611,7 +622,10 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                 </div>
               </div>
 
-              {/* Scenarios */}
+              {/* Scenarios: weights are heuristic (hand-set or AI-written), not calibrated */}
+              <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
+                scenario weights · heuristic, not calibrated probabilities
+              </div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 <ScenarioBar label="bull" color="emerald" s={v.scenarios.bull} />
                 <ScenarioBar label="base" color="slate" s={v.scenarios.base} />
@@ -855,14 +869,16 @@ function KV({
   value,
   hint,
   valueClass,
+  title,
 }: {
   label: string;
   value: React.ReactNode;
   hint?: string;
   valueClass?: string;
+  title?: string;
 }) {
   return (
-    <div>
+    <div title={title}>
       <div className="text-[9px] uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className={`font-mono text-sm tabular-nums ${valueClass ?? ""}`}>{value}</div>
       {hint && <div className="text-[9px] text-muted-foreground">{hint}</div>}

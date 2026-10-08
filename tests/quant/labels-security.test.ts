@@ -275,3 +275,38 @@ test("F9.2/F12.1: Projected Path is labeled a volatility cone (simulated trainin
   assert.doesNotMatch(ml, /machine-learned forecast|model is confident/);
   assert.doesNotMatch(sched, /`ML 30m:|consider passing/);
 });
+
+// ─── F6.1 Ticker Outlook: no Kelly size, heuristic scenario weights ────────
+
+test("F6.1: Outlook reports no size and never takes kellyFrac from the composite or an LLM", async () => {
+  const M = await import("../../server/outlookVerdictMath.ts");
+  assert.deepEqual(M.noOutlookSizing(), { available: false, reason: M.NO_SIZE_REASON });
+  assert.match(M.NO_SIZE_REASON, /no fitted win probability/);
+  const src = readFileSync(path.join(ROOT, "server/tickerOutlook.ts"), "utf8");
+  // Old formulas: |c|/100 x 0.25 and Number(raw.kellyFrac ...) from the model.
+  assert.doesNotMatch(src, /Math\.abs\(c\) \/ 100\) \* 0\.25/);
+  assert.doesNotMatch(src, /raw\.kellyFrac/);
+  assert.equal((src.match(/kellyFrac: 0,/g) ?? []).length, 2, "both verdict paths pin kellyFrac to 0");
+  assert.doesNotMatch(src, /"kellyFrac": <0-1 number>/, "LLM prompt no longer asks for a size");
+  const card = readFileSync(path.join(ROOT, "client/src/components/TickerOutlookCard.tsx"), "utf8");
+  assert.doesNotMatch(card, /label="kelly"|quarter-Kelly|v\.kellyFrac \* 100/);
+  const email = readFileSync(path.join(ROOT, "server/alphaEmailComposer.ts"), "utf8");
+  assert.doesNotMatch(email, /parts\.push\(`size \$\{t\.sizingKelly\}`\)|max loss \$\{t\.maxLoss\}/);
+});
+
+test("F6.1: scenario weights are integers in [0,100] summing to exactly 100", async () => {
+  const { normalizeScenarioWeights } = await import("../../server/outlookVerdictMath.ts");
+  const fb = { bull: 30, bear: 30 };
+  // Hand-computed: 70 + 60 = 130 > 100 -> scale by 100/130: 53.85 -> 54, 46.15 -> 46, base 0.
+  assert.deepEqual(normalizeScenarioWeights(70, 60, fb), { bull: 54, base: 0, bear: 46 });
+  // Normal case: 50 / 20 -> base 30.
+  assert.deepEqual(normalizeScenarioWeights(50, 20, fb), { bull: 50, base: 30, bear: 20 });
+  // Non-numeric falls back; negatives clamp to 0.
+  assert.deepEqual(normalizeScenarioWeights("abc", undefined, fb), { bull: 30, base: 40, bear: 30 });
+  assert.deepEqual(normalizeScenarioWeights(-5, 40, fb), { bull: 0, base: 60, bear: 40 });
+  for (const [b, x] of [[33.3, 33.3], [99.6, 0.6], [150, 150], [0.4, 0.4], [100, 0]] as const) {
+    const w = normalizeScenarioWeights(b, x, fb);
+    assert.equal(w.bull + w.base + w.bear, 100, `${b}/${x}`);
+    for (const v of [w.bull, w.base, w.bear]) assert.ok(Number.isInteger(v) && v >= 0 && v <= 100);
+  }
+});

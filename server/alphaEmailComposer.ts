@@ -83,9 +83,10 @@ function formatTrade(t: TradeIdea, idx: number): string[] {
   lines.push(`${idx + 1}. ${t.structure ?? "(no structure)"}`);
   if (t.thesis) lines.push(`   thesis: ${t.thesis}`);
   const parts: string[] = [];
-  if (t.sizingKelly) parts.push(`size ${t.sizingKelly}`);
+  // No size and no bankroll %: sizingKelly / maxLoss come from the language
+  // model, which has no fitted win probability, so they are not Kelly sizes
+  // and are deliberately not shown (review finding 6.1).
   if (t.rr) parts.push(`R:R ${t.rr}`);
-  if (t.maxLoss) parts.push(`max loss ${t.maxLoss}`);
   if (parts.length) lines.push(`   ${parts.join(" \u00b7 ")}`);
   if (t.invalidation) lines.push(`   invalid: ${t.invalidation}`);
   return lines;
