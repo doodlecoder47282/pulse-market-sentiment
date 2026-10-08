@@ -8,7 +8,7 @@
 // contract; nothing here is a dollar P&L).
 
 import { black76, fitImpliedDistribution, type ImpliedDistribution, type OptionQuote } from "./breedenLitzenberger";
-import { timeToExpiry } from "./timeToExpiry";
+import { settlementStyleOf, timeToExpiry } from "./timeToExpiry";
 
 // ─── (a) Straddle expected move ─────────────────────────────────────────────
 //
@@ -258,10 +258,13 @@ function contractMid(c: any): number | null {
   return 0.5 * (bid + ask);
 }
 
-/** Prefer the PM-settled contract when a strike lists AM and PM (SPX vs SPXW). */
+/** Prefer the PM-settled contract when a strike lists AM and PM (SPX vs
+ *  SPXW): settlementStyleOf reads settlementType, else the option root. */
 function pickContract(list: any[] | undefined): any | null {
   if (!list || list.length === 0) return null;
-  const pm = list.find((c) => String(c?.settlementType ?? "").toUpperCase() === "P");
+  const pm = list.find((c) => settlementStyleOf({
+    symbol: c?.symbol ?? null, optionRoot: c?.optionRoot ?? null, settlementType: c?.settlementType ?? null,
+  }) === "PM");
   return pm ?? list[0];
 }
 

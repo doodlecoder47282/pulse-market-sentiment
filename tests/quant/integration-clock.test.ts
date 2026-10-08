@@ -72,3 +72,14 @@ test("ivForClock re-solves 0DTE sigma from the mid with our T; longer tenors kee
   assert.ok(Math.abs(s - 0.2) < 1e-4, `${s}`);
   assert.equal(ivForClock({ vendorIv: 0.18, bid: 10, ask: 11, spot: 6600, strike: 6600, T: 30 / 365, type: "C" }), 0.18);
 });
+
+test("implied-scenario adapter prefers the PM-settled SPXW contract by root, not only settlementType", async () => {
+  const { quotesFromSchwabExpiry } = await import("../../server/impliedScenario");
+  // No settlementType field: the SPX root (AM, SOQ) must lose to SPXW (PM).
+  const calls = { "2026-10-16:8": { "6600.0": [
+    { symbol: "SPX   261016C06600000", bid: 50, ask: 52 },
+    { symbol: "SPXW  261016C06600000", bid: 40, ask: 41 },
+  ] } };
+  const q = quotesFromSchwabExpiry(calls, {}, "2026-10-16:8");
+  assert.deepEqual(q, [{ strike: 6600, callMid: 40.5, putMid: null }]);
+});

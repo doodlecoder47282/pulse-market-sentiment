@@ -37,6 +37,7 @@ import { computeGreeks } from "./greeks";
 import { storage } from "./storage";
 import { getQuotes as schwabGetQuotes, getOptionChain } from "./schwab";
 import { cdfAt, type ImpliedDistribution } from "./breedenLitzenberger";
+import { isRegularSessionOpen } from "./exchangeCalendar";
 import {
   etNowParts,
   horizonTargetIso,
@@ -1506,7 +1507,8 @@ async function impliedContextFor(
     const calls = chain.callExpDateMap, puts = chain.putExpDateMap;
     const now = new Date();
     const et = etNowParts(now);
-    const rth = et.dow >= 1 && et.dow <= 5 && et.minutes >= 570 && et.minutes < 960;
+    // Regular session per the exchange calendar (holidays, 13:00 half days)
+    const rth = isRegularSessionOpen(now.getTime());
     // Today's expiry is only live during the regular session; after the close
     // its quotes are stale, so it is excluded rather than shown as a move.
     const keys = Array.from(new Set([...Object.keys(calls || {}), ...Object.keys(puts || {})]))
