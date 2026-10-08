@@ -171,6 +171,23 @@ export function scenarioOddsFromCdf(
   };
 }
 
+/**
+ * Risk-neutral odds of exactly the events calibration.ts grades for the
+ * audit's scenarioProb: bull = close >= T_up, bear = close <= T_dn, base =
+ * neither. With a continuous distribution P(S_T >= T_up) = 1 - CDF(T_up).
+ */
+export function gradedScenarioOdds(
+  cdf: (K: number) => number,
+  targets: { bull: number; bear: number },
+): { bull: number; base: number; bear: number } | null {
+  const { bull, bear } = targets;
+  if (!Number.isFinite(bull) || !Number.isFinite(bear) || !(bull > bear)) return null;
+  const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+  const pBull = clamp01(1 - cdf(bull));
+  const pBear = clamp01(cdf(bear));
+  return { bull: pBull, base: clamp01(1 - pBull - pBear), bear: pBear };
+}
+
 /** Whole percentages that sum to exactly 100 (largest-remainder rounding). */
 export function toPercentTriple(o: { bull: number; base: number; bear: number }): { bull: number; base: number; bear: number } {
   const keys = ["bull", "base", "bear"] as const;

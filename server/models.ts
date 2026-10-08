@@ -43,6 +43,7 @@ import {
   impliedDistributionForExpiry,
   pickExpiryKey,
   quotesFromSchwabExpiry,
+  gradedScenarioOdds,
   scenarioOddsFromCdf,
   straddleExpectedMove,
   toPercentTriple,
@@ -136,6 +137,10 @@ export interface ModelPath {
   // not a real-world forecast). "hand-set-heuristic" = fixed regime splits,
   // used only when no usable chain is available.
   probabilitySource?: ScenarioProbSource;
+  // The event `probability` refers to. Path odds (implied) split terminal
+  // prices halfway between the three PATH targets; they are not the event
+  // calibration.ts grades (that is audit.scenarioProb, see scenarioProbEvent).
+  probabilityEvent?: string;
   pCloseBeyond?: number | null;            // Q: P(S_T beyond target) (bull/bear only)
   pTouch?: number | null;                  // ~ min(1, 2 x pCloseBeyond), reflection principle
   target: number;                          // end-of-horizon price
@@ -178,6 +183,9 @@ export interface ModelAudit {
   scenarioProb: { bull: number; base: number; bear: number };  // percentages summing to 100
   scenarioProbSource?: ScenarioProbSource;
   scenarioProbNote?: string;
+  // The graded event (calibration.ts): bull = close >= scenarioTargets.bull,
+  // bear = close <= scenarioTargets.bear, base = neither.
+  scenarioProbEvent?: string;
   // Daily expected move (1 standard deviation to the close, index points).
   // "0dte-straddle": same-day ATM straddle mid inverted with Black-76
   // (straddle ~ 0.8 sigma S sqrt(T), Brenner-Subrahmanyam 1988).
@@ -870,6 +878,9 @@ function buildAudit(
   extras: {
     paths: ModelPath[];
     scenarioProbIn?: { bull: number; base: number; bear: number };
+    // Implied CDF P(S_T <= K) of this horizon's expiry; when present the
+    // audit scenarioProb is the risk-neutral probability of the graded events.
+    impliedCdf?: ((K: number) => number) | null;
     iv1d: number | null;
     iv1dPrev: number | null;
     charmPrev: number | null;
@@ -877,7 +888,6 @@ function buildAudit(
     vixTermRatio?: number | null;
     vixForEM?: number | null;
     straddleEM?: StraddleExpectedMove | null;
-    scenarioProbSource?: ScenarioProbSource;
     impliedDistribution?: ModelAudit["impliedDistribution"];
   },
 ): ModelAudit {
@@ -978,7 +988,7 @@ function buildAudit(
   const putWallDistBps = putWallPrice != null
     ? Math.round(((putWallPrice - spot) / spot) * 10_000)
     : null;
-  const scenarioProb = extras.scenarioProbIn ?? computeScenarioProb(gammaZone, dfi, {
+  let scenarioProb = extras.scenarioProbIn ?? computeScenarioProb(gammaZone, dfi, {
     vixTermRatio: extras.vixTermRatio ?? null,
     callWallDistBps,
     putWallDistBps,
@@ -1056,6 +1066,21 @@ function buildAudit(
     oneDayEM: parseFloat(oneDayEM.toFixed(2)),
   };
 
+  // Risk-neutral odds of exactly the events calibration.ts grades against
+  // these targets, so the logged Brier scores the number that was shown.
+  let scenarioProbSource: ScenarioProbSource = "hand-set-heuristic";
+  if (extras.impliedCdf) {
+    const g = gradedScenarioOdds(extras.impliedCdf, { bull: scenarioTargets.bull, bear: scenarioTargets.bear });
+    if (g) {
+      scenarioProb = toPercentTriple(g);
+      scenarioProbSource = "risk-neutral-implied";
+    }
+  }
+  // Paths carry their own (halfway-partition) odds when implied; otherwise
+  // they show the same heuristic split as the audit.
+  const pathPct = (p: ModelPath | undefined, k: "bull" | "base" | "bear") =>
+    p && p.probabilitySource === "risk-neutral-implied" ? Math.round(p.probability * 100) : scenarioProb[k];
+
   // Selz #1 — charm-zero CLUSTER filtered to ±3% of spot
   const charmZeros = profile.zeroCharmSpots.filter((x) => Math.abs(x - spot) / spot <= 0.03);
 
@@ -1091,9 +1116,9 @@ function buildAudit(
   const basePath = extras.paths.find((p) => p.kind === "base");
   const bearPath = extras.paths.find((p) => p.kind === "bear");
   const closeTargets = {
-    bull: bullPath ? { price: bullPath.target, prob: scenarioProb.bull } : null,
-    base: basePath ? { price: basePath.target, prob: scenarioProb.base } : null,
-    bear: bearPath ? { price: bearPath.target, prob: scenarioProb.bear } : null,
+    bull: bullPath ? { price: bullPath.target, prob: pathPct(bullPath, "bull") } : null,
+    base: basePath ? { price: basePath.target, prob: pathPct(basePath, "base") } : null,
+    bear: bearPath ? { price: bearPath.target, prob: pathPct(bearPath, "bear") } : null,
   };
 
   // Selz #4 — term structure DoD
@@ -1142,10 +1167,11 @@ function buildAudit(
     doubleZeroLow,
     doubleZeroHigh,
     scenarioProb,
-    scenarioProbSource: extras.scenarioProbSource ?? "hand-set-heuristic",
-    scenarioProbNote: (extras.scenarioProbSource ?? "hand-set-heuristic") === "risk-neutral-implied"
-      ? "Risk-neutral (options-implied) odds from the SVI-smoothed distribution of this horizon's expiry; regions split halfway between targets. Not a real-world forecast."
+    scenarioProbSource,
+    scenarioProbNote: scenarioProbSource === "risk-neutral-implied"
+      ? "Risk-neutral (options-implied) probability of the graded events: close >= bull target, close <= bear target, else base (SVI-smoothed distribution of this horizon's expiry). Not a real-world forecast."
       : "Heuristic: hand-set regime splits with flow/term-structure tilts. Not calibrated to outcomes.",
+    scenarioProbEvent: `bull: close >= ${scenarioTargets.bull}; bear: close <= ${scenarioTargets.bear}; base: neither`,
     expectedMove,
     impliedDistribution: extras.impliedDistribution ?? null,
     scenarioTargets,
@@ -1236,8 +1262,8 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
 
   // ---- Options-implied scenario odds + 0DTE straddle expected move ----
   const implied = await impliedContextFor(symbol, horizon, displaySpot);
-  let scenarioProbIn: { bull: number; base: number; bear: number } | undefined;
   let scenarioProbSource: ScenarioProbSource = "hand-set-heuristic";
+  let impliedCdf: ((K: number) => number) | null = null;
   const dist = implied.dist;
   const bullP = paths.find((p) => p.kind === "bull");
   const baseP = paths.find((p) => p.kind === "base");
@@ -1254,7 +1280,10 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
       bullP.pTouch = odds.pTouchBull;
       bearP.pCloseBeyond = odds.pCloseBeyondBear;
       bearP.pTouch = odds.pTouchBear;
-      scenarioProbIn = toPercentTriple(odds);
+      for (const p of [bullP, baseP, bearP]) {
+        p.probabilityEvent = `risk-neutral P(close in region), regions split halfway between path targets (upper ${odds.upper.toFixed(2)}, lower ${odds.lower.toFixed(2)})`;
+      }
+      impliedCdf = (K) => cdfAt(dist, K);
       scenarioProbSource = "risk-neutral-implied";
     }
   }
@@ -1320,8 +1349,7 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
     lastRecal: lastRecalOut,
     vixTermRatio: vixTermRatioForAudit,
     vixForEM: vix ?? null,
-    scenarioProbIn,
-    scenarioProbSource,
+    impliedCdf,
     straddleEM: implied.straddle,
     impliedDistribution: dist && implied.expiry && scenarioProbSource === "risk-neutral-implied"
       ? {
@@ -1339,6 +1367,7 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
   // One probability set per scenario: in the heuristic fallback the paths
   // carry the same numbers the audit shows (they used to differ).
   if (scenarioProbSource === "hand-set-heuristic") {
+    for (const p of paths) p.probabilityEvent = "heuristic split, same numbers as audit.scenarioProb";
     if (bullP) bullP.probability = audit.scenarioProb.bull / 100;
     if (baseP) baseP.probability = audit.scenarioProb.base / 100;
     if (bearP) bearP.probability = audit.scenarioProb.bear / 100;

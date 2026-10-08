@@ -409,3 +409,18 @@ test("rows with a supplied T <= 0 are settled and dropped; tYears sees the contr
   const prof = buildGammaProfile(rows, 6600, { r: 0, q: 0 });
   assert.equal(prof.rowsUsed, 1); // the AM contract (T = 0 after the open) carries no gamma
 });
+
+test("audit scenarioProb = Q-probability of exactly the graded events (calibration.ts)", async () => {
+  const { gradedScenarioOdds } = await import("../../server/impliedScenario");
+  // Lognormal, F = 6600, v = 0.01; calibration grades bull = close >= T_up,
+  // bear = close <= T_dn, base = neither. T_up 6650, T_dn 6540:
+  //   bull = 1 - N((ln(6650/6600) + 5e-5)/0.01) = 1 - N(0.75972) = 0.22371
+  //   bear = N((ln(6540/6600) + 5e-5)/0.01)     = N(-0.90825)   = 0.18188
+  const cdf = (K: number) => Phi((Math.log(K / 6600) + 0.00005) / 0.01);
+  const g = gradedScenarioOdds(cdf, { bull: 6650, bear: 6540 });
+  assert.ok(g);
+  assert.ok(Math.abs(g.bull - 0.22371) < 5e-5, `${g.bull}`);
+  assert.ok(Math.abs(g.bear - 0.18188) < 5e-5, `${g.bear}`);
+  assert.ok(Math.abs(g.bull + g.base + g.bear - 1) < 1e-12);
+  assert.equal(gradedScenarioOdds(cdf, { bull: 6500, bear: 6540 }), null); // inverted targets
+});
