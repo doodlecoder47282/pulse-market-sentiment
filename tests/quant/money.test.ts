@@ -13,6 +13,7 @@ import { contractExposure, charmTiltNorm, callDelta0 } from "../../server/greekE
 import { modelThetaToClose, projectedThetaCost } from "../../server/chainClock";
 import { bsPrice, delta as bsDelta } from "../../server/greeks";
 import { etWallToEpochMs } from "../../server/exchangeCalendar";
+import { deriveSessionBars } from "../../server/odteProjection";
 import { buildChainAudit } from "../../server/chainAudit";
 import { buildHeatseeker } from "../../server/heatseeker";
 import { buildExposureProfile, rowYears, type ExposureRow } from "../../server/exposureProfile";
@@ -281,4 +282,25 @@ test("roundTripFeePct: 2 x fee / (ask x 100); index root without a fee is not $0
   near(roundTripFeePct(resolveFeePerContract(null, "SPY"), 1.5)!, 0.86667, 1e-4, "SPY default fee %");
   // SPXW with no fee given: unknown (null), never silently 0.
   assert.equal(roundTripFeePct(resolveFeePerContract(null, "SPXW"), 1.5), null);
+});
+
+// ─── Part B: session bounds from the exchange calendar ───────────────────────
+
+test("deriveSessionBars: a 13:00 half day ignores prints after the close", () => {
+  // Fri 2026-11-27 closes at 13:00 ET. Bars: prior day close 6,690; 09:30 bar
+  // 6,700-6,705; 12:55 bar 6,702-6,708; a 13:30 print at 6,730 (after the close)
+  // must not become the session high (old filter: < 16:00 kept it).
+  const bar = (date: string, min: number, lo: number, hi: number, close: number) =>
+    ({ datetime: etWallToEpochMs(date, min), open: lo, high: hi, low: lo, close, volume: 1000 });
+  const candles = [
+    bar("2026-11-25", 15 * 60 + 55, 6685, 6692, 6690),
+    bar("2026-11-27", 9 * 60 + 30, 6700, 6705, 6704),
+    bar("2026-11-27", 12 * 60 + 55, 6702, 6708, 6706),
+    bar("2026-11-27", 13 * 60 + 30, 6725, 6730, 6728),
+  ];
+  const b = deriveSessionBars(candles, etWallToEpochMs("2026-11-27", 14 * 60));
+  assert.equal(b.priorClose, 6690);
+  assert.equal(b.sessionHigh, 6708);
+  assert.equal(b.sessionLow, 6700);
+  assert.equal(b.orbHigh, 6705);
 });

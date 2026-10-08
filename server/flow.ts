@@ -13,7 +13,7 @@
 // OCC format: ROOT + YYMMDD + C/P + STRIKE(8 digits) — we parse side from pos[-17].
 
 import { LAST_PRINT_SIDE_NOTE } from "@shared/flowLabels";
-import { isRegularSessionOpen } from "./exchangeCalendar";
+import { etDate, isRegularSessionOpen, sessionCloseMinutes } from "./exchangeCalendar";
 
 const UA = "Mozilla/5.0 (compatible; PulseDashboard/1.0)";
 
@@ -281,13 +281,20 @@ function synthesizeIntradaySeries(
   now: Date,
 ): IntradayVolSample[] {
   const samples: IntradayVolSample[] = [];
-  // 13 points from 9:30 to 4:00 in 30-min increments
+  // 30-min buckets from 9:30 to today's close (exchange calendar: 13 on a
+  // full day, 7 on a 13:00 half day).
   const marketOpenH = 9 * 60 + 30; // minutes since midnight ET
-  const marketCloseH = 16 * 60;
+  const marketCloseH = sessionCloseMinutes(etDate(now.getTime())) ?? 16 * 60;
   const nowEt = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
   const nowMins = nowEt.getHours() * 60 + nowEt.getMinutes();
-  // U-curve weights for each 30-min bucket (higher at open/close)
-  const weights = [0.15, 0.09, 0.07, 0.06, 0.06, 0.06, 0.06, 0.07, 0.08, 0.09, 0.10, 0.08, 0.07];
+  // U-curve weights for each 30-min bucket (higher at open/close). On a half
+  // day keep the U: the first buckets of the full-day curve plus its last
+  // ones, so the cumulative fraction reaches 1 at the real close.
+  const FULL_DAY_WEIGHTS = [0.15, 0.09, 0.07, 0.06, 0.06, 0.06, 0.06, 0.07, 0.08, 0.09, 0.10, 0.08, 0.07];
+  const nBuckets = Math.max(1, Math.min(FULL_DAY_WEIGHTS.length, Math.round((marketCloseH - marketOpenH) / 30)));
+  const weights = nBuckets === FULL_DAY_WEIGHTS.length
+    ? FULL_DAY_WEIGHTS
+    : [...FULL_DAY_WEIGHTS.slice(0, Math.ceil(nBuckets / 2)), ...FULL_DAY_WEIGHTS.slice(FULL_DAY_WEIGHTS.length - Math.floor(nBuckets / 2))];
   const totalWeight = weights.reduce((a, b) => a + b, 0);
   // ET-aware 09:30 open epoch. The old version re-parsed an ET wall-clock string as
   // server-local time, so on a UTC host every sample stamp was shifted by the ET offset.

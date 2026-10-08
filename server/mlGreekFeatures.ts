@@ -21,6 +21,7 @@
 import type { GammaLevelsEnhanced } from "./gammaLevels";
 import type { ChainAuditResult } from "./chainAudit";
 import { fetchOHLC } from "./ohlc";
+import { etDate, sessionCloseMinutes } from "./exchangeCalendar";
 
 // ─── Cache ──────────────────────────────────────────────────────────────────
 
@@ -134,8 +135,11 @@ export async function buildMlFeaturesFromInputs(
   const dow = dowMap[partMap.weekday ?? "Wed"] ?? 2;
   const fracHour = hourEt + minEt / 60;
   const isFirst30 = fracHour >= 9.5 && fracHour < 10.0 ? 1 : 0;
-  const isPostLunch = fracHour >= 13.0 && fracHour < 15.5 ? 1 : 0;
-  const isLast30 = fracHour >= 15.5 && fracHour < 16.0 ? 1 : 0;
+  // The last 30 minutes run up to today's real close (exchange calendar):
+  // 15:30-16:00, or 12:30-13:00 on a half day (no post-lunch window then).
+  const closeHour = (sessionCloseMinutes(etDate(now.getTime())) ?? 16 * 60) / 60;
+  const isPostLunch = fracHour >= 13.0 && fracHour < Math.min(15.5, closeHour - 0.5) ? 1 : 0;
+  const isLast30 = fracHour >= closeHour - 0.5 && fracHour < closeHour ? 1 : 0;
 
   // ── Vol / ATR / trend over recent bars ───────────────────────────────────
   // 5-minute log returns

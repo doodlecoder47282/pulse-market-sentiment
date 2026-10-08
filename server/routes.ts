@@ -6333,7 +6333,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         const dd = parts.find((p) => p.type === "day")?.value ?? "01";
         const etMinutes = h * 60 + mn;
         const RTH_OPEN = 570; // 9:30
-        const RTH_CLOSE = 960; // 16:00
+        // Today's close from the exchange calendar (13:00 on half days); a
+        // holiday/weekend has no session, so no bars are synthesized.
+        const RTH_CLOSE = sessionCloseMinutes(`${yyyy}-${mm}-${dd}`) ?? RTH_OPEN;
         const minsSinceOpen = Math.max(0, Math.min(RTH_CLOSE, etMinutes) - RTH_OPEN);
         const nBars = Math.floor(minsSinceOpen / 5);
         if (nBars > 0) {
