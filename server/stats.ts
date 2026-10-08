@@ -235,9 +235,13 @@ function quantile(sortedAsc: number[], q: number): number {
 //   DRIFTING  — h_warn < C_t ≤ h_alarm
 //   BROKEN    — C_t > h_alarm
 // Defaults: μ₀ = mean of `series`, k = 0.5σ, h_warn = 4σ, h_alarm = 5σ.
-// k = 0.5σ, h = 5σ is the textbook tabular CUSUM (Montgomery, Introduction to
-// Statistical Quality Control, 7th ed.): in-control ARL ≈ 465, ARL ≈ 10 for a
-// 1σ shift. Pass `opts.target` to anchor μ₀ to a fixed reference instead of the
+// k = 0.5σ, h = 5σ is the textbook tabular CUSUM (Page 1954; Montgomery,
+// Introduction to Statistical Quality Control, 7th ed.). Its quoted run
+// lengths (in-control ARL ≈ 465, ARL ≈ 10 for a 1σ shift) assume iid NORMAL
+// observations with a KNOWN σ. Daily Brier differences are bounded, skewed and
+// may be autocorrelated, and σ here is estimated from the same window, so the
+// actual false-alarm rate is unknown: treat 4σ / 5σ as heuristic thresholds,
+// not calibrated ARLs. Pass `opts.target` to anchor μ₀ to a fixed reference instead of the
 // series' own mean: a series' own mean can never drift from itself, so a
 // model-skill watchdog must anchor to the no-skill level (target 0).
 // The series must be ordered OLDEST → NEWEST.
