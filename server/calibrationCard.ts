@@ -82,7 +82,7 @@ export async function postCalibrationCard(days: number = 7): Promise<{
     ? realizedNotes.map((s) => `  ${s}`).join("\n")
     : "  scenarios realizing in line with model predictions";
 
-  // Trivial-forecaster delta — how much edge over a 1/3-1/3-1/3 baseline.
+  // Trivial-forecaster delta — edge over the climatology (base-rate) baseline.
   const edgeBull = ((r.trivialBull - r.bull) / r.trivialBull) * 100;
   const edgeBase = ((r.trivialBase - r.base) / r.trivialBase) * 100;
   const edgeBear = ((r.trivialBear - r.bear) / r.trivialBear) * 100;
@@ -143,8 +143,8 @@ export async function postCalibrationCard(days: number = 7): Promise<{
   // Resolution = variance of forecast probs (3-Min Data Science). High variance
   // means the model meaningfully differentiates days; low variance means it's
   // basically constant.
-  // Watchdog = CUSUM on (brier_total - trivial_total). If the model stops
-  // beating trivial, this trips and the user sees DRIFTING/BROKEN.
+  // Watchdog = CUSUM on (brier_total - climatology_brier), target 0 = no skill.
+  // If the model stops beating the base rate, the user sees DRIFTING/BROKEN.
   try {
     const fp = recentForecastProbs(30);
     const rsBull = resolutionScore(fp.bull);
@@ -172,7 +172,7 @@ export async function postCalibrationCard(days: number = 7): Promise<{
       w.status === "BROKEN" ? "● BROKEN" :
       "● WARMING UP";
     lines.push("");
-    lines.push(sectionRule("WATCHDOG (CUSUM on edge-vs-trivial)"));
+    lines.push(sectionRule("WATCHDOG (CUSUM vs climatology, target = zero skill)"));
     lines.push(`  ${badge}   c=${w.cValue.toFixed(3)}   baseline=${w.baseline.toFixed(3)}   n=${w.n}`);
     lines.push(`  ${w.reason}`);
   } catch (e) {

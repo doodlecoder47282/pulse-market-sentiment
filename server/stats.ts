@@ -235,7 +235,13 @@ function quantile(sortedAsc: number[], q: number): number {
 //   DRIFTING  — h_warn < C_t ≤ h_alarm
 //   BROKEN    — C_t > h_alarm
 // Defaults: μ₀ = mean of `series`, k = 0.5σ, h_warn = 4σ, h_alarm = 5σ.
-export function cusum(series: number[]): {
+// k = 0.5σ, h = 5σ is the textbook tabular CUSUM (Montgomery, Introduction to
+// Statistical Quality Control, 7th ed.): in-control ARL ≈ 465, ARL ≈ 10 for a
+// 1σ shift. Pass `opts.target` to anchor μ₀ to a fixed reference instead of the
+// series' own mean: a series' own mean can never drift from itself, so a
+// model-skill watchdog must anchor to the no-skill level (target 0).
+// The series must be ordered OLDEST → NEWEST.
+export function cusum(series: number[], opts: { target?: number } = {}): {
   c: number;
   status: "HEALTHY" | "DRIFTING" | "BROKEN";
   baseline: number;
@@ -254,9 +260,12 @@ export function cusum(series: number[]): {
       h_alarm: 0,
     };
   }
-  const mu0 = finite.reduce((s, x) => s + x, 0) / finite.length;
+  const mean = finite.reduce((s, x) => s + x, 0) / finite.length;
+  const mu0 = opts.target != null && Number.isFinite(opts.target) ? opts.target : mean;
+  // σ is the series' dispersion around its own mean (not around the target),
+  // so a large persistent offset from the target does not inflate σ and mask itself.
   const variance =
-    finite.reduce((s, x) => s + (x - mu0) * (x - mu0), 0) / (finite.length - 1);
+    finite.reduce((s, x) => s + (x - mean) * (x - mean), 0) / (finite.length - 1);
   const sigma = Math.sqrt(Math.max(variance, 1e-12));
   const k = 0.5 * sigma;
   const h_warn = 4 * sigma;
@@ -305,3 +314,309 @@ export const SPX_BASE_RATES_UP = {
   monthly: 0.63,
   yearly: 0.73,
 };
+
+// ─── Ordinary least squares ───────────────────────────────────────────────
+//
+// y = X·β + ε. `X` rows are observations; include a column of 1s for an
+// intercept. Solved via the normal equations with partial-pivot Gauss-Jordan
+// inversion of X'X (k is small everywhere this is used: ≤ ~15 regressors).
+// Standard errors are classical: se(β_j) = sqrt(s² · [(X'X)^{-1}]_jj) with
+// s² = SSR / (n − k). Returns ok=false when X'X is singular or n ≤ k.
+export function olsFit(X: number[][], y: number[]): {
+  ok: boolean;
+  coef: number[];
+  se: number[];
+  t: number[];
+  n: number;
+  k: number;
+  ssr: number;
+  sigma2: number;
+  r2: number;
+} {
+  const n = Math.min(X.length, y.length);
+  const k = n > 0 ? X[0].length : 0;
+  const fail = { ok: false, coef: [], se: [], t: [], n, k, ssr: NaN, sigma2: NaN, r2: NaN };
+  if (n === 0 || k === 0 || n <= k) return fail;
+  // X'X and X'y
+  const xtx: number[][] = Array.from({ length: k }, () => new Array(k).fill(0));
+  const xty: number[] = new Array(k).fill(0);
+  for (let r = 0; r < n; r++) {
+    const row = X[r];
+    const yr = y[r];
+    if (!Number.isFinite(yr) || row.length !== k || row.some((v) => !Number.isFinite(v))) return fail;
+    for (let i = 0; i < k; i++) {
+      xty[i] += row[i] * yr;
+      for (let j = i; j < k; j++) xtx[i][j] += row[i] * row[j];
+    }
+  }
+  for (let i = 0; i < k; i++) for (let j = 0; j < i; j++) xtx[i][j] = xtx[j][i];
+  // Invert X'X (Gauss-Jordan, partial pivoting)
+  const a = xtx.map((row, i) => [...row, ...Array.from({ length: k }, (_, j) => (i === j ? 1 : 0))]);
+  let scale = 0;
+  for (let i = 0; i < k; i++) scale = Math.max(scale, Math.abs(xtx[i][i]));
+  for (let col = 0; col < k; col++) {
+    let piv = col;
+    for (let r = col + 1; r < k; r++) if (Math.abs(a[r][col]) > Math.abs(a[piv][col])) piv = r;
+    if (Math.abs(a[piv][col]) <= 1e-12 * Math.max(1, scale)) return fail;
+    if (piv !== col) { const tmp = a[piv]; a[piv] = a[col]; a[col] = tmp; }
+    const d = a[col][col];
+    for (let j = 0; j < 2 * k; j++) a[col][j] /= d;
+    for (let r = 0; r < k; r++) {
+      if (r === col) continue;
+      const f = a[r][col];
+      if (f === 0) continue;
+      for (let j = 0; j < 2 * k; j++) a[r][j] -= f * a[col][j];
+    }
+  }
+  const inv = a.map((row) => row.slice(k));
+  const coef = inv.map((row) => row.reduce((s, v, j) => s + v * xty[j], 0));
+  let ssr = 0;
+  let ySum = 0;
+  for (let r = 0; r < n; r++) ySum += y[r];
+  const yMean = ySum / n;
+  let sst = 0;
+  for (let r = 0; r < n; r++) {
+    let fit = 0;
+    for (let j = 0; j < k; j++) fit += X[r][j] * coef[j];
+    ssr += (y[r] - fit) ** 2;
+    sst += (y[r] - yMean) ** 2;
+  }
+  const sigma2 = ssr / (n - k);
+  const se = inv.map((row, j) => Math.sqrt(Math.max(0, sigma2 * row[j])));
+  const t = coef.map((b, j) => (se[j] > 0 ? b / se[j] : NaN));
+  const r2 = sst > 0 ? 1 - ssr / sst : NaN;
+  return { ok: true, coef, se, t, n, k, ssr, sigma2, r2 };
+}
+
+// ─── Climatology baseline (the ONE trivial forecaster) ────────────────────
+//
+// Every place Batcave compares a probability model with a "trivial
+// forecaster" uses this helper: the climatological (base-rate) forecaster
+// that always predicts the realized class frequencies of the logged outcomes.
+// It is the standard reference forecast for the Brier skill score
+// (BSS = 1 − BS / BS_climatology; Wilks, Statistical Methods in the
+// Atmospheric Sciences, ch. "Forecast verification"). Uniform 1/K is a
+// straw man that any forecaster leaning on the most common class beats.
+//
+// `outcomes` rows are one-hot vectors over K mutually exclusive classes
+// (multinomial), or a single 0/1 column for a binary event. Frequencies are
+// the in-window sample frequencies; that is the hardest constant forecast to
+// beat (it is the Brier-optimal constant in-sample), so it errs toward
+// flagging a model, which is the safe direction for a watchdog.
+export function climatologyBaseline(outcomes: number[][]): {
+  n: number;
+  freqs: number[];       // base rate per class
+  perClass: number[];    // mean squared error per class of the climatology forecast
+  total: number;         // multinomial Brier of the climatology forecast (sum over classes)
+  perRow: number[];      // per-observation climatology Brier (sum over classes)
+} {
+  const rows = outcomes.filter((r) => Array.isArray(r) && r.length > 0 && r.every(Number.isFinite));
+  const n = rows.length;
+  if (n === 0) return { n: 0, freqs: [], perClass: [], total: NaN, perRow: [] };
+  const K = rows[0].length;
+  const freqs = new Array(K).fill(0);
+  for (const r of rows) for (let j = 0; j < K; j++) freqs[j] += r[j] ?? 0;
+  for (let j = 0; j < K; j++) freqs[j] /= n;
+  const perClass = new Array(K).fill(0);
+  const perRow: number[] = [];
+  for (const r of rows) {
+    let s = 0;
+    for (let j = 0; j < K; j++) {
+      const e = (freqs[j] - (r[j] ?? 0)) ** 2;
+      perClass[j] += e;
+      s += e;
+    }
+    perRow.push(s);
+  }
+  for (let j = 0; j < K; j++) perClass[j] /= n;
+  const total = perClass.reduce((s, v) => s + v, 0);
+  return { n, freqs, perClass, total, perRow };
+}
+
+// Brier skill score vs climatology: 1 − BS_model / BS_clim. > 0 = skill,
+// 0 = no better than the base rate, < 0 = worse than the base rate.
+export function brierSkillScore(modelBrier: number, climatologyBrier: number): number | null {
+  if (!Number.isFinite(modelBrier) || !Number.isFinite(climatologyBrier) || climatologyBrier <= 0) return null;
+  return 1 - modelBrier / climatologyBrier;
+}
+
+// ─── Skill watchdog (CUSUM anchored to zero skill) ────────────────────────
+//
+// d_t = BS_model,t − BS_clim,t, ordered oldest → newest. Mean d > 0 means the
+// model is worse than the base-rate forecaster. The CUSUM target is 0 (no
+// skill), so a model that is consistently worse than climatology accumulates
+// and trips, instead of reading HEALTHY against its own mean. A model whose
+// window mean is ≥ 0 is never HEALTHY: it has shown no skill.
+export type SkillWatchdogStatus = "HEALTHY" | "DRIFTING" | "BROKEN";
+export function skillWatchdog(
+  rowsOldestFirst: Array<{ modelBrier: number; outcome: number[] }>,
+): {
+  status: SkillWatchdogStatus;
+  n: number;
+  meanDiff: number;           // mean(BS_model − BS_clim); < 0 = skill
+  tStat: number | null;       // meanDiff / (sd / √n)
+  bss: number | null;         // window Brier skill score vs climatology
+  modelBrier: number;
+  climatologyBrier: number;
+  climatologyFreqs: number[];
+  cusum: ReturnType<typeof cusum>;
+  reason: string;
+} {
+  const rows = rowsOldestFirst.filter((r) => Number.isFinite(r.modelBrier) && Array.isArray(r.outcome));
+  const clim = climatologyBaseline(rows.map((r) => r.outcome));
+  const d = rows.map((r, i) => r.modelBrier - clim.perRow[i]);
+  const n = d.length;
+  const modelBrier = n ? rows.reduce((s, r) => s + r.modelBrier, 0) / n : NaN;
+  const meanDiff = n ? d.reduce((s, v) => s + v, 0) / n : NaN;
+  const sd = n > 1 ? Math.sqrt(d.reduce((s, v) => s + (v - meanDiff) ** 2, 0) / (n - 1)) : NaN;
+  const tStat = n > 1 && sd > 1e-12 ? meanDiff / (sd / Math.sqrt(n)) : null;
+  const cs = cusum(d, { target: 0 });
+  const bss = brierSkillScore(modelBrier, clim.total);
+  let status: SkillWatchdogStatus;
+  let reason: string;
+  if (cs.status === "BROKEN") {
+    status = "BROKEN";
+    reason = "CUSUM vs zero skill crossed 5σ: model is persistently worse than the base-rate forecaster";
+  } else if (meanDiff > 0 && tStat != null && tStat >= 2) {
+    status = "BROKEN";
+    reason = `model Brier is worse than climatology over the window (t=${tStat.toFixed(1)})`;
+  } else if (cs.status === "DRIFTING") {
+    status = "DRIFTING";
+    reason = "CUSUM vs zero skill crossed 4σ: losing to the base-rate forecaster, watch closely";
+  } else if (!(meanDiff < 0)) {
+    status = "DRIFTING";
+    reason = "no skill: model is not beating the base-rate (climatology) forecaster";
+  } else {
+    status = "HEALTHY";
+    reason = "model beats the base-rate forecaster over the window and the CUSUM is quiet";
+  }
+  return {
+    status, n, meanDiff, tStat, bss, modelBrier,
+    climatologyBrier: clim.total, climatologyFreqs: clim.freqs, cusum: cs, reason,
+  };
+}
+
+// ─── Wilson score interval ────────────────────────────────────────────────
+//
+// Wilson (1927) score interval for a binomial proportion k/n; recommended
+// over the Wald interval by Brown, Cai & DasGupta (2001, Statistical Science).
+export function wilsonInterval(k: number, n: number, z: number = 1.96): { lo: number; hi: number; p: number } {
+  if (!(n > 0)) return { lo: 0, hi: 1, p: NaN };
+  const p = k / n;
+  const z2 = z * z;
+  const denom = 1 + z2 / n;
+  const center = (p + z2 / (2 * n)) / denom;
+  const half = (z / denom) * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n));
+  return { lo: Math.max(0, center - half), hi: Math.min(1, center + half), p };
+}
+
+// ─── Reliability curve + calibration test ────────────────────────────────
+//
+// Bins forecasts into equal-width probability bins and reports, per bin, the
+// mean forecast, the observed frequency, the count and the Wilson 95% interval
+// (Murphy & Winkler 1977 reliability diagram). "calibrated" is returned ONLY
+// when the stated test passes:
+//   1. n ≥ minTotal graded forecasts (default 100), and
+//   2. Spiegelhalter (1986, Stat Med 5:421) Z test does not reject
+//      calibration at alpha (two-sided). Z = Σ(o−p)(1−2p) / √Σ(1−2p)²p(1−p)
+//      is the Brier score standardised by its mean and variance under
+//      perfect calibration, and
+//   3. every bin with ≥ minBinN forecasts has its mean forecast inside its
+//      Wilson interval at the Bonferroni level alpha/m (m = bins tested).
+// Brier mixes calibration with sharpness, so a low Brier alone is never
+// called "calibrated".
+export type ReliabilityBin = {
+  lo: number;
+  hi: number;
+  n: number;
+  meanPred: number | null;
+  observed: number | null;
+  wilsonLo: number | null;
+  wilsonHi: number | null;
+  tested: boolean;
+  inInterval: boolean | null;
+};
+export type ReliabilityReport = {
+  n: number;
+  bins: ReliabilityBin[];
+  brier: number | null;
+  climatologyBrier: number | null;
+  bss: number | null;
+  spiegelhalterZ: number | null;
+  spiegelhalterP: number | null;
+  verdict: "calibrated" | "not calibrated" | "insufficient data";
+  test: {
+    name: string;
+    alpha: number;
+    minTotal: number;
+    minBinN: number;
+    passed: boolean;
+    reasons: string[];
+  };
+};
+export function reliabilityCurve(
+  preds: number[],
+  outcomes: number[],
+  opts: { bins?: number; minTotal?: number; minBinN?: number; alpha?: number } = {},
+): ReliabilityReport {
+  const nb = Math.max(2, Math.floor(opts.bins ?? 10));
+  const minTotal = opts.minTotal ?? 100;
+  const minBinN = opts.minBinN ?? 10;
+  const alpha = opts.alpha ?? 0.05;
+  const pairs: Array<[number, number]> = [];
+  for (let i = 0; i < Math.min(preds.length, outcomes.length); i++) {
+    const p = preds[i];
+    const o = outcomes[i];
+    if (!Number.isFinite(p) || !(o === 0 || o === 1)) continue;
+    pairs.push([Math.max(0, Math.min(1, p)), o]);
+  }
+  const n = pairs.length;
+  const acc = Array.from({ length: nb }, () => ({ n: 0, sp: 0, so: 0 }));
+  let brierSum = 0, zNum = 0, zVar = 0;
+  for (const [p, o] of pairs) {
+    const b = Math.min(nb - 1, Math.floor(p * nb));
+    acc[b].n++; acc[b].sp += p; acc[b].so += o;
+    brierSum += (p - o) ** 2;
+    zNum += (o - p) * (1 - 2 * p);
+    zVar += (1 - 2 * p) ** 2 * p * (1 - p);
+  }
+  const tested = acc.filter((a) => a.n >= minBinN).length;
+  const zBin = ppf(1 - alpha / (2 * Math.max(1, tested)));
+  const bins: ReliabilityBin[] = acc.map((a, i) => {
+    if (a.n === 0) {
+      return { lo: i / nb, hi: (i + 1) / nb, n: 0, meanPred: null, observed: null, wilsonLo: null, wilsonHi: null, tested: false, inInterval: null };
+    }
+    const meanPred = a.sp / a.n;
+    const w95 = wilsonInterval(a.so, a.n, 1.96);
+    const isTested = a.n >= minBinN;
+    const wT = wilsonInterval(a.so, a.n, zBin);
+    return {
+      lo: i / nb, hi: (i + 1) / nb, n: a.n, meanPred, observed: a.so / a.n,
+      wilsonLo: w95.lo, wilsonHi: w95.hi, tested: isTested,
+      inInterval: isTested ? meanPred >= wT.lo && meanPred <= wT.hi : null,
+    };
+  });
+  const brier = n ? brierSum / n : null;
+  const clim = climatologyBaseline(pairs.map(([, o]) => [o]));
+  const climatologyBrier = n ? clim.total : null;
+  const bss = brier != null && climatologyBrier != null ? brierSkillScore(brier, climatologyBrier) : null;
+  const spiegelhalterZ = zVar > 0 ? zNum / Math.sqrt(zVar) : null;
+  const spiegelhalterP = spiegelhalterZ != null ? 2 * (1 - cdf(Math.abs(spiegelhalterZ))) : null;
+  const reasons: string[] = [];
+  if (n < minTotal) reasons.push(`need ≥${minTotal} graded forecasts, have ${n}`);
+  if (spiegelhalterP == null) reasons.push("Spiegelhalter Z undefined (all forecasts at 0, 0.5 or 1)");
+  else if (spiegelhalterP < alpha) reasons.push(`Spiegelhalter Z=${spiegelhalterZ!.toFixed(2)} rejects calibration (p=${spiegelhalterP.toFixed(3)})`);
+  const missed = bins.filter((b) => b.inInterval === false);
+  if (missed.length) reasons.push(`${missed.length} bin(s) outside Bonferroni Wilson interval`);
+  if (tested === 0) reasons.push(`no bin has ≥${minBinN} forecasts`);
+  const passed = reasons.length === 0;
+  const verdict: ReliabilityReport["verdict"] =
+    n < minTotal ? "insufficient data" : passed ? "calibrated" : "not calibrated";
+  return {
+    n, bins, brier, climatologyBrier, bss, spiegelhalterZ, spiegelhalterP, verdict,
+    test: {
+      name: `n≥${minTotal}, Spiegelhalter Z (two-sided alpha ${alpha}), every bin with n≥${minBinN} inside its Bonferroni Wilson interval`,
+      alpha, minTotal, minBinN, passed, reasons,
+    },
+  };
+}

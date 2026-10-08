@@ -27,6 +27,7 @@
 //   Reference: <0.20 good, <0.10 excellent, 0.06–0.12 = top forecaster.
 
 import Database from "better-sqlite3";
+import { climatologyBaseline } from "./stats";
 
 const sqlite = new Database("data.db");
 
@@ -182,10 +183,9 @@ export function rollingBrier(days: number = 30): {
   base: number;
   bear: number;
   total: number;
-  // Reference baseline: the "always 1/3" trivial forecaster.
-  // BS for that = 3 * (1/3)² when wrong scenario = 0.222, etc.
-  // We compute it dynamically from the same outcome stream so we have a
-  // fair comparator for the user.
+  // Reference baseline: the climatology (base-rate) forecaster from
+  // stats.climatologyBaseline, computed from the same outcome stream so the
+  // comparator is fair. Field names kept as trivial* for API compatibility.
   trivialBull: number;
   trivialBase: number;
   trivialBear: number;
@@ -224,21 +224,16 @@ export function rollingBrier(days: number = 30): {
   const meanBear = rows.reduce((s, r) => s + r.brier_bear, 0) / n;
   const meanTotal = rows.reduce((s, r) => s + r.brier_total, 0) / n;
 
-  // Realized outcome distribution (climatology)
-  const realizedBull = rows.reduce((s, r) => s + r.outcome_bull, 0) / n;
-  const realizedBase = rows.reduce((s, r) => s + r.outcome_base, 0) / n;
-  const realizedBear = rows.reduce((s, r) => s + r.outcome_bear, 0) / n;
-
   // Baseline forecaster = CLIMATOLOGY (always predicts the realized frequency),
   // not uniform 1/3. Base is structurally the most likely bucket (±0.5 EM
   // middle), so uniform was a straw man any constant forecast could beat.
-  const trivialBull =
-    rows.reduce((s, r) => s + Math.pow(realizedBull - r.outcome_bull, 2), 0) / n;
-  const trivialBase =
-    rows.reduce((s, r) => s + Math.pow(realizedBase - r.outcome_base, 2), 0) / n;
-  const trivialBear =
-    rows.reduce((s, r) => s + Math.pow(realizedBear - r.outcome_bear, 2), 0) / n;
-  const trivialTotal = trivialBull + trivialBase + trivialBear;
+  // Shared helper: the CUSUM watchdog uses the same definition.
+  const clim = climatologyBaseline(
+    rows.map((r) => [r.outcome_bull, r.outcome_base, r.outcome_bear]),
+  );
+  const [realizedBull, realizedBase, realizedBear] = clim.freqs;
+  const [trivialBull, trivialBase, trivialBear] = clim.perClass;
+  const trivialTotal = clim.total;
 
   // Top-pick hit rate. We need the original prediction to know which scenario
   // was the top pick that day. JOIN to pulse_predictions for the morning row.
