@@ -501,9 +501,11 @@ def train_score_calibrator() -> Dict[str, Any]:
 
 def train_quantile_overlay() -> Dict[str, Any]:
     """
-    Train LightGBM quantile regressors for horizons [5, 15, 30, 60] min.
-    Uses spy_1min_history (daily bars) to synthesize intraday features + forward returns.
-    Wire 18 Model B implementation via train_quantile_impl.
+    Train LightGBM quantile regressors for horizons [5, 15, 30, 60] min on REAL
+    data only: logged live features (ml_feature_log) and Schwab SPX minute bars
+    (spx_minute_bars). Returns INSUFFICIENT_REAL_DATA, and writes no model,
+    until the sufficiency gate in train_quantile_impl is met. The synthetic
+    daily-bar simulation is removed.
     """
     try:
         from train_quantile_impl import train_quantile_overlay as _train_impl

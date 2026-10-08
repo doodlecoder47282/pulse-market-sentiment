@@ -40,6 +40,12 @@ export interface MLQuantileOverlayResponse {
   bands: Record<string, MLQuantileBand>;
   status: string;
   version: string;
+  /**
+   * What the served model was trained on: "real" (logged live features + real
+   * minute bars) or "synthetic_gbm" (simulated bars, random dealer levels:
+   * every model up to quantile_overlay v4). Null when the sidecar does not say.
+   */
+  trainingData: string | null;
 }
 
 export interface MLModelHealth {
@@ -48,6 +54,7 @@ export interface MLModelHealth {
   trained_at: string | null;
   n_train: number;
   auc: number | null;
+  training_data?: string | null;
 }
 
 export interface MLHealthResponse {
@@ -168,6 +175,7 @@ export async function mlQuantileOverlay(
     bands: Record<string, MLQuantileBand>;
     status: string;
     version: number | string;
+    training_data?: string | null;
   }>("/quantile/overlay", { features, horizons }, "mlQuantileOverlay", opts?.timeoutMs);
 
   if (!raw || !raw.bands || Object.keys(raw.bands).length === 0) return null;
@@ -175,6 +183,7 @@ export async function mlQuantileOverlay(
     bands: raw.bands,
     status: String(raw.status),
     version: String(raw.version),
+    trainingData: raw.training_data ?? null,
   };
 }
 
@@ -191,6 +200,7 @@ export async function mlQuantileMorning(
     bands: Record<string, MLQuantileBand>;
     status: string;
     version: number | string;
+    training_data?: string | null;
   }>("/quantile/morning", { features, horizons }, "mlQuantileMorning", opts?.timeoutMs);
 
   if (!raw || !raw.bands || Object.keys(raw.bands).length === 0) return null;
@@ -198,6 +208,7 @@ export async function mlQuantileMorning(
     bands: raw.bands,
     status: String(raw.status),
     version: String(raw.version),
+    trainingData: raw.training_data ?? null,
   };
 }
 

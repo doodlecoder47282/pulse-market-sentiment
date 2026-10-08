@@ -7,13 +7,13 @@
 //   - fetchOHLC("^SPX", "1D", "5m")     (today's 5min RTH bars)
 //   - snapshot helpers (VIX, prev VIX, etc.)
 //
-// Honest disclosure (also referenced in train_quantile_impl.py and the UI):
-//   the historical training set does NOT carry per-bar real Greek snapshots.
-//   The trainer SYNTHESIZES plausible distance-to-level features. So the model
-//   has learned to USE these signals (sign of net GEX, distance to nearest wall
-//   in ATR units, regime ordinals), but the absolute calibration of those
-//   distances at production time will be approximate. As live Greek snapshots
-//   accumulate per bar, this module is the place to swap synthetic for real.
+// Training data (review items 9.1/9.2): the models served up to v4 were
+//   trained on simulated minute bars with random dealer levels, so these
+//   features meant nothing in training. The synthetic trainer is removed. The
+//   dict built here is now LOGGED every few minutes during RTH
+//   (mlDataLog.ts -> ml_feature_log, with a list of placeholder features),
+//   next to real Schwab SPX minute bars (spx_minute_bars), and the trainer
+//   learns only from those logs once enough real days exist.
 //
 // All returned values are guaranteed finite numbers (NaN/null/undefined → 0).
 // Result is cached for 30s to keep DB / chain pulls reasonable.
@@ -280,7 +280,35 @@ export async function buildMlFeaturesFromInputs(
     const v = out[k];
     if (!Number.isFinite(v)) out[k] = 0;
   }
+
+  // Provenance for the training log: which features are a 0 placeholder for
+  // MISSING input rather than an observed value (data-state rule: missing is
+  // not zero). The served dict keeps 0 for the predictor contract; the logger
+  // records this list so training can treat those cells as missing.
+  const missing: string[] = [];
+  if (!(spot > 0)) missing.push("spx_spot");
+  if (!(vixLevel > 0)) missing.push("vix_level", "vix_change_pct");
+  else if (!(vixPrevSafe > 0)) missing.push("vix_change_pct");
+  if (bars.length < 7) missing.push("realized_vol_30m", "realized_vol_5m", "atr_5m", "trend_30m", "trend_5m",
+    "realized_vol_5min", "realized_vol_30min", "bar_return_1min", "momentum_15min", "distance_from_open_pct");
+  const lvlMissing: Array<[number, string]> = [
+    [callWall, "dist_to_callwall_atr"], [putWall, "dist_to_putwall_atr"], [maxPain, "dist_to_maxpain_atr"],
+    [zomma, "dist_to_zomma_atr"], [upVomma, "dist_to_upvomma_atr"], [dnVomma, "dist_to_dnvomma_atr"],
+    [vannaLvl, "vanna_level_dist_atr"], [charmLvl, "charm_level_dist_atr"],
+  ];
+  for (const [v, name] of lvlMissing) if (!(v > 0)) missing.push(name);
+  if (levels?.gammaFlip?.value == null) missing.push("dist_to_flip_atr", "net_gex_sign", "gex_regime_ord");
+  if (topGex.length === 0) missing.push("net_gex_magnitude", "net_gex_b");
+  missing.push("vix_pct_of_5d_avg"); // always a placeholder in this fast path
+  _lastProvenance = { at: Date.now(), missing: Array.from(new Set(missing)), bars5m: bars.length, liveChainAudit: !!inputs.chainAudit };
   return out;
+}
+
+let _lastProvenance: { at: number; missing: string[]; bars5m: number; liveChainAudit: boolean } | null = null;
+
+/** Which features of the most recent build were placeholders for missing inputs. */
+export function getLastMlFeatureProvenance(): { at: number; missing: string[]; bars5m: number; liveChainAudit: boolean } | null {
+  return _lastProvenance;
 }
 
 /**
