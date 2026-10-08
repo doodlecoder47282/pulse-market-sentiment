@@ -45,6 +45,7 @@ export interface MasterAlphaFit {
   intercept: number | null;
   coefficients: Array<{ component: string; multiplier: number; se: number; t: number; handSetWeight: number | null }>;
   droppedComponents: string[];   // constant (e.g. always 0) in the sample
+  sessionsDroppedMissing: number; // sessions dropped because a used component was not logged (never filled with 0)
   r2: number | null;
   oosR2: number | null;          // last 30% of sessions, model fit on the first 70%
   note: string;
@@ -73,7 +74,7 @@ export function fitMasterAlphaWeights(
   const rows = [...firstBySession.values()].sort((a, b) => a.ts - b.ts);
   const base: MasterAlphaFit = {
     status: "insufficient-data", horizon, sessions: rows.length, minSessions,
-    intercept: null, coefficients: [], droppedComponents: [], r2: null, oosR2: null,
+    intercept: null, coefficients: [], droppedComponents: [], sessionsDroppedMissing: 0, r2: null, oosR2: null,
     note: `hand-set weights: need ≥${minSessions} independent ${horizon} sessions with logged components, have ${rows.length}`,
   };
   if (rows.length < minSessions) return base;
@@ -83,31 +84,42 @@ export function fitMasterAlphaWeights(
   for (const r of rows) for (const c of r.components) {
     if (typeof c.weight === "number" && !handSet.has(componentKey(c.name))) handSet.set(componentKey(c.name), c.weight);
   }
-  const value = (r: MasterAlphaFitSample, k: string) => {
+  // A component that was not logged (or not finite) is MISSING, not 0 bps:
+  // filling it with 0 would bias its multiplier toward 0 and the others with it.
+  const value = (r: MasterAlphaFitSample, k: string): number => {
     const c = r.components.find((x) => componentKey(x.name) === k);
-    return c && Number.isFinite(c.directionBps) ? c.directionBps : 0;
+    return c && Number.isFinite(c.directionBps) ? c.directionBps : NaN;
   };
   const used = keys.filter((k) => {
-    const v = rows.map((r) => value(r, k));
-    return Math.max(...v) - Math.min(...v) > 1e-9;
+    const v = rows.map((r) => value(r, k)).filter(Number.isFinite);
+    return v.length > 0 && Math.max(...v) - Math.min(...v) > 1e-9;
   });
   const dropped = keys.filter((k) => !used.includes(k));
-  const X = rows.map((r) => [1, ...used.map((k) => value(r, k))]);
-  const y = rows.map((r) => r.realizedBps);
+  // Complete-case fit: drop sessions missing any used component, and say how many.
+  const complete = rows.filter((r) => used.every((k) => Number.isFinite(value(r, k))));
+  const sessionsDroppedMissing = rows.length - complete.length;
+  if (complete.length < minSessions) {
+    return {
+      ...base, sessions: complete.length, droppedComponents: dropped, sessionsDroppedMissing,
+      note: `hand-set weights: need ≥${minSessions} independent ${horizon} sessions with every component logged, have ${complete.length} (${sessionsDroppedMissing} dropped for a missing component)`,
+    };
+  }
+  const X = complete.map((r) => [1, ...used.map((k) => value(r, k))]);
+  const y = complete.map((r) => r.realizedBps);
   const f = olsFit(X, y);
   if (!f.ok) {
-    return { ...base, status: "fit-failed", droppedComponents: dropped, note: "hand-set weights: OLS failed (collinear components)" };
+    return { ...base, status: "fit-failed", sessions: complete.length, droppedComponents: dropped, sessionsDroppedMissing, note: "hand-set weights: OLS failed (collinear components)" };
   }
 
   // Out-of-sample check: fit on the first 70%, score the last 30% against
   // the training-mean forecast.
   let oosR2: number | null = null;
-  const nTrain = Math.floor(rows.length * (1 - OOS_FRACTION));
+  const nTrain = Math.floor(complete.length * (1 - OOS_FRACTION));
   const tr = olsFit(X.slice(0, nTrain), y.slice(0, nTrain));
-  if (tr.ok && nTrain < rows.length) {
+  if (tr.ok && nTrain < complete.length) {
     const yBar = y.slice(0, nTrain).reduce((s, v) => s + v, 0) / nTrain;
     let sse = 0, sseBench = 0;
-    for (let i = nTrain; i < rows.length; i++) {
+    for (let i = nTrain; i < complete.length; i++) {
       const yh = X[i].reduce((s, v, j) => s + v * tr.coef[j], 0);
       sse += (y[i] - yh) ** 2;
       sseBench += (y[i] - yBar) ** 2;
@@ -118,7 +130,7 @@ export function fitMasterAlphaWeights(
   return {
     status: "fit-ready",
     horizon,
-    sessions: rows.length,
+    sessions: complete.length,
     minSessions,
     intercept: f.coef[0],
     coefficients: used.map((k, j) => ({
@@ -129,6 +141,7 @@ export function fitMasterAlphaWeights(
       handSetWeight: handSet.get(k) ?? null,
     })),
     droppedComponents: dropped,
+    sessionsDroppedMissing,
     r2: f.r2,
     oosR2,
     note: "fit available for review; live formula still uses hand-set weights until a reviewed fit is promoted",

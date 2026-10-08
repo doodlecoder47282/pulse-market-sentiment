@@ -429,6 +429,22 @@ test("masterAlpha sample gate is the 80%-power size for R^2 = 3.2%", () => {
   assert.ok(MASTER_ALPHA_MIN_SESSIONS >= Math.ceil(n) + 5);
 });
 
+test("masterAlpha fit: a missing component drops the session (never 0 bps) and is counted", () => {
+  const r = mulberry32(77);
+  const samples = maSamples(r, 400, 1);
+  // 30 sessions never logged vanna: complete-case fit uses 370 and reports 30 dropped
+  for (let i = 0; i < 30; i++) samples[i * 10].components = samples[i * 10].components.filter((c) => !c.name.startsWith("Vanna"));
+  const fit = fitMasterAlphaWeights(samples);
+  assert.equal(fit.status, "fit-ready");
+  assert.equal(fit.sessionsDroppedMissing, 30);
+  assert.equal(fit.sessions, 370);
+  // below the gate after dropping -> stays hand-set, with the count in the note
+  const few = fitMasterAlphaWeights(maSamples(mulberry32(3), 260, 1).map((s, i) => (i < 20 ? { ...s, components: s.components.slice(0, 1) } : s)));
+  assert.equal(few.status, "insufficient-data");
+  assert.equal(few.sessionsDroppedMissing, 20);
+  assert.match(few.note, /20 dropped for a missing component/);
+});
+
 test("masterAlpha fit stays 'hand-set' below the sample gate", () => {
   const r = mulberry32(5);
   const fit = fitMasterAlphaWeights(maSamples(r, 100, 3));
