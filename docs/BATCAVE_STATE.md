@@ -1,72 +1,84 @@
 # Batcave checkpoint
 
-Updated: 2026-09-28. This is a compact handoff, not a live-health certificate.
+Updated: 2026-10-08. This is a compact handoff, not a live-health certificate.
 
-## Current objective
+## Completed objective
 
-Save the credit-conserving resume framework and assess reuse of the existing
-GitHub app for iOS. No native implementation or new deployment authorized in
-this checkpoint.
+iOS Xcode project (Capacitor 8) and hosted-deployment readiness, on branch
+`ios-capacitor` (PR to `main`). No deployment was performed.
 
-## Verified this session
+## Verified (GitHub Actions run 37574061566, sha 5459fc1)
 
-- Repo: `doodlecoder47282/pulse-market-sentiment`.
-- Local and remote `main` matched `1e9028809e371b73233ac33680db5b58692264ec` before this documentation change.
-- GitHub reports PUBLIC visibility, contrary to older private-repo assumptions.
-- Existing stack: React/Vite client, Express/Node server, SQLite/Drizzle.
-- No tracked Swift, Xcode project, or Capacitor configuration was found.
-- API transport uses the preview-specific `__PORT_5000__` mechanism. It needs an explicit secure backend URL and auth design for a bundled native client.
-- Unrelated runtime changes exist in scheduler state and database/session files. They must not be staged with these docs.
-- No runtime build, native build, or fresh market-feed validation was performed for this documentation-only task.
+- Web: `npm ci`, `npm run build` pass on Node 20. Production server boots;
+  smoke tests pass: UI served, `/api/health`, iOS CORS preflight/header,
+  foreign origin rejected, `BATCAVE_ACCESS_KEY` gate (no key 401, wrong key 401,
+  right key 200), `BATCAVE_DATA_DIR` creates `data.db` in the volume path.
+- Headless Chromium (desktop 1440x900 and 393x852): dashboard renders past the
+  splash and pre-market gate with 0 page errors; FX/crypto ticker populated;
+  Schwab shows DISCONNECTED (expected, no credentials in CI).
+- iOS: Xcode 26.3, Capacitor 8.5.2 (SPM, iOS 15.0 minimum). `cap add ios`
+  succeeded; `xcodebuild` Debug for iOS Simulator: BUILD SUCCEEDED (unsigned).
+  App installed and launched in the Simulator; shows the server-connect screen.
+- `npx tsc --noEmit`: 182 pre-existing errors (largest: odteAlertEngine 46,
+  chainAudit 33, cryptoEngine 14). None in files changed this session. The
+  build does not type-check, so these do not block it.
 
-## Security blocker
+## Changes
 
-`RAILWAY-DEPLOY.md` contained literal Schwab client ID/secret assignments.
-This change replaces those assignments with placeholders in the current file.
-Previous commits still contain the values. Treat them as exposed; removing text
-does not revoke a credential.
+- `client/src/lib/queryClient.ts`: API base = saved server URL, then
+  `VITE_API_BASE`, then the legacy port token, then same origin; `x-batcave-key` header.
+- `client/src/components/ConnectionGate.tsx` (+ mounted in `App.tsx`).
+- `server/index.ts`: `/api/health`, `/api/health/auth`, CORS allowlist for
+  Capacitor origins (+ `BATCAVE_ALLOWED_ORIGINS`), optional `BATCAVE_ACCESS_KEY`
+  gate on `/api`, bind `0.0.0.0` when `RAILWAY_ENVIRONMENT`/`RENDER`/`FLY_APP_NAME`
+  is set or `HOST` given (was hard-coded `127.0.0.1`, unreachable on Railway).
+- `server/dbPath.ts`: `BATCAVE_DATA_DIR` relocates `data.db`, backups and
+  `greek_gradient.db` (seeded from repo copy) for persistent volumes.
+- `capacitor.config.json` (appId `com.batcave.terminal`), `ios/` project,
+  `npm run ios:sync` / `ios:open`.
+- CI `.github/workflows/batcave-build.yml`. Reports are force-pushed to branches
+  `ci-reports-web` / `ci-reports-ios` because agent sessions cannot read
+  Actions log/artifact storage. Read them with a shallow clone of those branches.
+- Docs: `docs/IOS.md`, `RAILWAY-DEPLOY.md` (access key, volume, hosting notes).
 
-User/account-owner action: revoke/rotate affected credentials and review OAuth
-tokens/authorizations. Do not display values. Repository privacy changes and
-history rewriting require approval and coordination; neither has been performed.
-Do not redistribute an unreviewed full-history archive.
+## Security blockers (unchanged, user action required)
 
-## Product context
+- Repo is PUBLIC. Schwab client ID/secret exist in git history. Rotate them in
+  the Schwab developer portal before deploying.
+- Four Discord webhook URLs are hard-coded in `server/discord.ts`,
+  `server/calibrationCard.ts`, `server/discordBatcaveCard.ts`. Anyone can post to
+  those channels. Regenerate the webhooks in Discord, then move them to env vars.
+- Runtime DB files `data/greek_gradient.db{,-wal,-shm}` are tracked.
 
-- T1/T2 target derivation and audit persistence work are in the repo.
-- Crypto includes scanner, momentum, narratives, security, social, grader, and watchdog routines.
-- These routines are deterministic software, not independent reasoning agents.
-- Earlier successful build/deploy claims apply to that earlier run, not today's runtime.
-- Existing crypto implementation is experimental tracking, not proof of positive expected value.
+## Known gaps
 
-## Known crypto issues from focused source inspection
+- Python ML sidecar (`ml_service/`, LightGBM) is not installed by the Railway
+  Node build; ML panels report unavailable there.
+- Social-score failure-to-zero, cashtag matching, and `graded >= 50` "calibrated"
+  issues from the 2026-09-28 checkpoint are unchanged.
+- Score calibrator models are `BOOTSTRAP` with n_train = 80.
+- iOS app not signed or tested on a physical device.
 
-Do not repeat prior “all green means complete coverage” claims:
+## 2026-10-08: quant code review + self-call fix
 
-- `socialTick` swallows individual source errors, then can assign `socialScore = 0`
-  and update `socialCheckedAt` even when collection failed. Fix source-level
-  health, timestamps, missing-value handling, and stale-data expiry before trusting social scoring.
-- Bluesky queries use cashtags and at most 25 returned posts. Common words/ticker
-  collisions, sampling caps, repeated authors, bots, and incomplete pagination
-  prevent interpreting these counts as comprehensive token-specific velocity.
-- Pump reply count and linked socials are limited attention proxies, not coverage of X or Telegram.
-- Holder concentration blindly excludes the largest account as a pool heuristic.
-  That account is not verified as a vault; do not describe the remainder as verified ex-pool ownership.
-- `calibrated: graded >= 50` is a sample-count flag, not statistical calibration.
-- Previously observed 403 responses do not establish a permanent platform-wide ban or prove the cause.
-
-## iOS direction
-
-Proposed: bundled React UI through Capacitor plus the existing separately hosted
-backend. Keep polling, SQLite, brokerage credentials, and grading on the server.
-Do not simply point a released app at a temporary Computer preview.
-
-Before implementation: confirm Mac/Xcode access and whether the first target is
-personal-device use or TestFlight/App Store distribution. Choose persistent HTTPS
-backend hosting, per-user authentication, origin policy, and OAuth redirect flow.
+- Sector-by-sector quant review of `main` published as a Claude Doc
+  ("Batcave Terminal — Quant Code Review"). Overall grade C-. Each finding was
+  checked with a script against a synthetic or known answer. Highlights:
+  stale CBOE chains (up to 7 days) labeled 900 s lag; three disagreeing
+  gamma-flip methods; OU band finds mean reversion in 95% of random walks;
+  CUSUM reads HEALTHY for a model worse than climatology; Cosmos (astrology)
+  emits trade instructions; ML v4 trained on synthetic GBM bars; "Kelly" not
+  derived from a win probability; holiday table covers 2026 only.
+- Fix d40db7d: with `BATCAVE_ACCESS_KEY` set, the ~25 internal
+  `fetch("http://127.0.0.1:PORT/api/...")` calls were getting 401. `server/index.ts`
+  now adds the key only to requests aimed at its own port. CI run 37800438742:
+  "PASS internal self-calls work with access key on".
+- Deferred by the user (2026-10-08): Railway hosting (chosen as the best fit,
+  Hobby ~$5/mo; user creates the account) and the iOS/Xcode build. Before
+  hosting: rotate Schwab keys, regenerate Discord webhooks, set
+  `BATCAVE_ACCESS_KEY` in Railway (never in chat).
 
 ## Next step
 
-Ask the user whether they have access to a Mac with Xcode and want personal-device
-testing first. Resolve exposed credentials before broad distribution. Do not
-start an iOS rewrite or unattended AI monitor while waiting.
+User picks which review fixes to start with (or answers the Cosmos question in
+the doc); no code changes to `main` until then.

@@ -9,6 +9,7 @@ import Dashboard from "@/pages/dashboard";
 import { TickerProvider } from "@/components/TickerContext";
 import { ThemeProvider } from "@/components/ThemeContext";
 import PreMarketGate from "@/components/PreMarketGate";
+import ConnectionGate from "@/components/ConnectionGate";
 import { useState, lazy, Suspense } from "react";
 
 // LaunchSplash is the only framer-motion consumer (~4MB on disk → big gzip).
@@ -37,6 +38,7 @@ function App() {
       <ThemeProvider>
       <TooltipProvider>
         <Toaster />
+        <ConnectionGate />
         <TickerProvider>
           {showSplash && (
             <Suspense fallback={<div className="fixed inset-0 z-[9999] bg-black" />}>

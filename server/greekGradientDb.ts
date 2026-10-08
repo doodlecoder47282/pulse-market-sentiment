@@ -23,8 +23,9 @@
 
 import Database from "better-sqlite3";
 import path from "path";
+import { GREEK_DB_PATH } from "./dbPath";
 
-const dbPath = path.join(process.cwd(), "data", "greek_gradient.db");
+const dbPath = GREEK_DB_PATH;
 let db: Database.Database | null = null;
 
 function getDb(): Database.Database {

@@ -7,6 +7,7 @@ import type { Request } from 'express';
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import { startMlRetrainCron } from "./mlRetrainCron";
 
 // Global safety nets — do NOT let a stray promise reject or exception kill the
@@ -37,6 +38,77 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+
+// ── Native app + hosted deployment support ─────────────────────────────────
+// CORS: the iOS app (Capacitor) serves its bundled UI from capacitor://localhost
+// and calls this server cross-origin. Only /api is opened, only to listed origins.
+// Extra origins: BATCAVE_ALLOWED_ORIGINS="https://a.example,https://b.example".
+const ALLOWED_ORIGINS = new Set(
+  [
+    "capacitor://localhost",
+    "ionic://localhost",
+    "http://localhost",
+    "https://localhost",
+    ...(process.env.BATCAVE_ALLOWED_ORIGINS || "").split(","),
+  ]
+    .map((o) => o.trim())
+    .filter(Boolean),
+);
+app.use("/api", (req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-batcave-key");
+    res.setHeader("Access-Control-Max-Age", "600");
+  }
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+
+// Optional shared access key. When BATCAVE_ACCESS_KEY is set, every /api call
+// except /api/health must send it in the x-batcave-key header. Unset = open
+// (previous behavior). Set it on any publicly reachable deployment.
+const ACCESS_KEY = (process.env.BATCAVE_ACCESS_KEY || "").trim();
+function keyMatches(given: unknown): boolean {
+  if (!ACCESS_KEY || typeof given !== "string") return false;
+  const a = Buffer.from(given);
+  const b = Buffer.from(ACCESS_KEY);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+// The engines call each other over local HTTP (trade environment -> heatseeker,
+// Discord cards -> models, exit brain -> quotes, ...; ~25 call sites). When the
+// gate is on, attach the key to every request this process sends to its own
+// port so those internal calls keep working. Nothing else is touched.
+if (ACCESS_KEY) {
+  const ownPort = String(process.env.PORT || "5000");
+  const selfPrefixes = [`http://127.0.0.1:${ownPort}/`, `http://localhost:${ownPort}/`];
+  const baseFetch = globalThis.fetch.bind(globalThis);
+  globalThis.fetch = ((input: any, init?: any) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input?.url;
+    if (typeof url === "string" && selfPrefixes.some((p) => url.startsWith(p))) {
+      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+      headers.set("x-batcave-key", ACCESS_KEY);
+      return baseFetch(input, { ...(init ?? {}), headers });
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+}
+
+app.get("/api/health", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ ok: true, service: "batcave", authRequired: !!ACCESS_KEY, time: new Date().toISOString() });
+});
+app.use("/api", (req, res, next) => {
+  if (!ACCESS_KEY) return next();
+  if (keyMatches(req.headers["x-batcave-key"])) return next();
+  return res.status(401).json({ error: "batcave_auth_required" });
+});
+app.get("/api/health/auth", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ ok: true });
+});
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -108,14 +180,21 @@ app.use((req, res, next) => {
   const port = parseInt(process.env.PORT || "5000", 10);
   // host: 127.0.0.1 (not 0.0.0.0) — sandbox forwarder owns 169.254.0.21:5000
   // and 0.0.0.0 conflicts with it. Forwarder routes external traffic to localhost.
+  // Hosted platforms (Railway etc.) route traffic to the container's external
+  // interface, so bind 0.0.0.0 there. HOST overrides either default.
+  const host =
+    process.env.HOST ||
+    (process.env.RAILWAY_ENVIRONMENT || process.env.RENDER || process.env.FLY_APP_NAME
+      ? "0.0.0.0"
+      : "127.0.0.1");
   httpServer.listen(
     {
       port,
-      host: "127.0.0.1",
+      host,
       reusePort: true,
     },
     () => {
-      log(`serving on port ${port}`);
+      log(`serving on ${host}:${port}`);
       startMlRetrainCron();
     },
   );

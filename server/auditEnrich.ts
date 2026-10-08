@@ -37,6 +37,7 @@ import { computeOfiTrend } from "./leeReadyOfi.js";
 import { computeWickTiming } from "./wickTiming.js";
 import { getPriceHistory, getOptionChain } from "./schwab.js";
 import { etEpochMs } from "./etTime.js";
+import { MAIN_DB_PATH } from "./dbPath";
 
 export interface VommaPocket {
   strike: number;
@@ -160,7 +161,7 @@ const INTRADAY_CACHE_MS = 2 * 60_000;
 function getReadOnlyDb(): Database.Database {
   if (roDb) return roDb;
   // Open read-only handle to avoid lock contention with the main writer
-  roDb = new Database("data.db", { readonly: true, fileMustExist: true });
+  roDb = new Database(MAIN_DB_PATH, { readonly: true, fileMustExist: true });
   return roDb;
 }
 
