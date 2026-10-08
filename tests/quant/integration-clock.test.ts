@@ -83,3 +83,16 @@ test("implied-scenario adapter prefers the PM-settled SPXW contract by root, not
   const q = quotesFromSchwabExpiry(calls, {}, "2026-10-16:8");
   assert.deepEqual(q, [{ strike: 6600, callMid: 40.5, putMid: null }]);
 });
+
+test("market-hours checks follow the exchange calendar (holiday, 13:00 half day)", async () => {
+  const { isRthOpen, rthSessionKey } = await import("../../server/sessionCache");
+  // Thu 26 Nov 2026 (Thanksgiving) 11:00 ET = 16:00Z: closed all day
+  assert.equal(isRthOpen(new Date("2026-11-26T16:00:00Z")), false);
+  // Fri 27 Nov 2026 half day: 12:30 ET open, 13:30 ET closed
+  assert.equal(isRthOpen(new Date("2026-11-27T17:30:00Z")), true);
+  assert.equal(isRthOpen(new Date("2026-11-27T18:30:00Z")), false);
+  // A regular Friday at 13:30 ET (Fri 9 Oct 2026, EDT) is open
+  assert.equal(isRthOpen(new Date("2026-10-09T17:30:00Z")), true);
+  // Session key on the holiday rolls back to Wed 25 Nov, not "Thursday"
+  assert.equal(rthSessionKey(new Date("2026-11-26T16:00:00Z")), "2026-11-25");
+});

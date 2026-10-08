@@ -39,7 +39,7 @@ import { computeRND, type CallStrike } from "./breedenLitzenberger";
 import { dollarGexPerPct, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
 import { contractYears, expiryOfKey, ivForClock } from "./chainClock";
 import { timeToExpiry } from "./timeToExpiry";
-import { etDate, REGULAR_OPEN_MIN, sessionCloseMinutes } from "./exchangeCalendar";
+import { etDate, isRegularSessionOpen, REGULAR_OPEN_MIN, sessionCloseMinutes } from "./exchangeCalendar";
 import { gamma as bsGammaOurClock } from "./greeks";
 import { fitOUBand, shouldShowOUBand } from "./ouBand";
 import { flagTailEvent } from "./stableTail";
@@ -5365,11 +5365,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   async function killboxAutoSeed() {
     try {
       // Time gate — only during regular US market hours.
-      const nowEt = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-      const day = nowEt.getDay(); // 0=Sun, 6=Sat
-      if (day === 0 || day === 6) return;
-      const mins = nowEt.getHours() * 60 + nowEt.getMinutes();
-      if (mins < 9 * 60 + 30 || mins > 16 * 60) return;
+      // Exchange calendar: holidays and the 13:00 half-day close respected.
+      if (!isRegularSessionOpen()) return;
 
       // Mimic the chain-audit handler inline — write directly into the table.
       const symbol = "$SPX";

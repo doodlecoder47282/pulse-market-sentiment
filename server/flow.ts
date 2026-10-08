@@ -13,6 +13,7 @@
 // OCC format: ROOT + YYMMDD + C/P + STRIKE(8 digits) — we parse side from pos[-17].
 
 import { LAST_PRINT_SIDE_NOTE } from "@shared/flowLabels";
+import { isRegularSessionOpen } from "./exchangeCalendar";
 
 const UA = "Mozilla/5.0 (compatible; PulseDashboard/1.0)";
 
@@ -259,14 +260,9 @@ function getEtDateString(): string {
     year: "numeric", month: "2-digit", day: "2-digit" });
 }
 
+// Regular session per the exchange calendar (holidays, 13:00 half days).
 function isMarketOpen(): boolean {
-  const now = new Date();
-  const etStr = now.toLocaleString("en-US", { timeZone: "America/New_York" });
-  const et = new Date(etStr);
-  const day = et.getDay();
-  if (day === 0 || day === 6) return false;
-  const totalMins = et.getHours() * 60 + et.getMinutes();
-  return totalMins >= 9 * 60 + 30 && totalMins < 16 * 60;
+  return isRegularSessionOpen();
 }
 
 function getTimeLabel(epochSecs: number): string {

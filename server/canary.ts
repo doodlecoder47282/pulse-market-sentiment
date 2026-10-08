@@ -14,6 +14,7 @@
 // This module never touches the locked engines (signals/regime/dfi/models/composite).
 
 import { sqlite } from "./storage";
+import { etClock, isRegularSessionOpen, REGULAR_OPEN_MIN, sessionMinutes } from "./exchangeCalendar";
 import { getQuotes, type NormalizedQuote } from "./schwab";
 import { postToDiscord } from "./discord";
 
@@ -21,10 +22,10 @@ import { postToDiscord } from "./discord";
 // FULL-day σ, which understates |z| ~3.6× at 10:00 ET. Scale σ by the elapsed
 // fraction of daily variance (~25% overnight + 75% pro-rata through RTH).
 function elapsedVarianceFrac(): number {
-  const et = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-  const min = et.getHours() * 60 + et.getMinutes();
-  const elapsedMin = Math.min(390, Math.max(0, min - 570)); // since 9:30
-  return Math.max(0.15, 0.25 + 0.75 * (elapsedMin / 390));
+  const c = etClock();
+  const len = sessionMinutes(c.date) || 390; // 210 on a half day
+  const elapsedMin = Math.min(len, Math.max(0, c.minutes - REGULAR_OPEN_MIN)); // since 9:30
+  return Math.max(0.15, 0.25 + 0.75 * (elapsedMin / len));
 }
 
 // ── config ──────────────────────────────────────────────────────────────────
@@ -118,14 +119,9 @@ export interface CanarySnapshot {
   canaries: CanaryRow[];
 }
 
+// Regular session per the exchange calendar (holidays, 13:00 half days).
 function isRTH(): boolean {
-  const p = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour12: false, hour: "2-digit", minute: "2-digit", weekday: "short" }).formatToParts(new Date());
-  const wd = p.find(x => x.type === "weekday")?.value || "";
-  if (wd === "Sat" || wd === "Sun") return false;
-  const h = parseInt(p.find(x => x.type === "hour")?.value || "0", 10) % 24;
-  const m = parseInt(p.find(x => x.type === "minute")?.value || "0", 10);
-  const mins = h * 60 + m;
-  return mins >= 570 && mins < 960;
+  return isRegularSessionOpen();
 }
 
 let snapCache: { at: number; data: CanarySnapshot } | null = null;

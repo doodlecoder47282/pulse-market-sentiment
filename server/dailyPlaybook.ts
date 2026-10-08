@@ -1,4 +1,5 @@
 import { vixToAtmPct } from "@shared/vol";
+import { etClock, sessionCloseMinutes } from "./exchangeCalendar";
 /**
  * dailyPlaybook.ts
  *
@@ -103,19 +104,14 @@ export interface DailyPlaybook {
 function nowSec(): number { return Math.floor(Date.now() / 1000); }
 
 function sessionET(): "premarket" | "rth" | "afterhours" | "closed" {
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York", hour12: false, weekday: "short",
-    hour: "2-digit", minute: "2-digit",
-  });
-  const parts = fmt.formatToParts(new Date());
-  const wd = parts.find(p => p.type === "weekday")?.value ?? "";
-  if (wd === "Sat" || wd === "Sun") return "closed";
-  const h = parseInt(parts.find(p => p.type === "hour")?.value ?? "0", 10);
-  const m = parseInt(parts.find(p => p.type === "minute")?.value ?? "0", 10);
-  const mins = h * 60 + m;
+  // Exchange calendar: holidays are closed, half days close at 13:00 ET.
+  const c = etClock();
+  const close = sessionCloseMinutes(c.date);
+  if (close == null) return "closed";          // weekend or holiday
+  const mins = c.minutes;
   if (mins < 4 * 60) return "closed";          // <4am ET
   if (mins < 9 * 60 + 30) return "premarket";  // 4:00–9:30
-  if (mins < 16 * 60) return "rth";            // 9:30–16:00
+  if (mins < close) return "rth";              // 9:30–16:00 (13:00 on half days)
   if (mins < 20 * 60) return "afterhours";     // 16:00–20:00
   return "closed";
 }

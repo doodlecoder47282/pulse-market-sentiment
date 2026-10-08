@@ -10,6 +10,7 @@
  */
 
 import { lockPlaybookAtOpen, buildDailyPlaybook } from "./dailyPlaybook";
+import { etDate as calEtDate, isTradingDay as calIsTradingDay, sessionCloseMinutes as calCloseMin } from "./exchangeCalendar";
 
 let _interval: ReturnType<typeof setInterval> | null = null;
 let _lockedToday: string = "";
@@ -34,7 +35,10 @@ function _hhmmET(): { hh: number; mm: number; weekday: string } {
 async function tick() {
   try {
     const { hh, mm, weekday } = _hhmmET();
-    if (weekday === "Sat" || weekday === "Sun") return;
+    // Exchange calendar: skip holidays as well as weekends (weekday unused now)
+    void weekday;
+    if (!calIsTradingDay(calEtDate())) return;
+    const closeMin = calCloseMin(calEtDate()) ?? 16 * 60; // 13:00 on half days
 
     const today = _todayET();
 
@@ -50,14 +54,14 @@ async function tick() {
     // lock for today yet, lock now using current snapshot. Drift then anchors
     // to the moment we caught the day, not 9:00 — which is honest and useful.
     // Only catches up during 9:15–16:00 ET.
-    if (mins >= 9 * 60 + 15 && mins <= 16 * 60 && _lockedToday !== today) {
+    if (mins >= 9 * 60 + 15 && mins <= closeMin && _lockedToday !== today) {
       await lockPlaybookAtOpen("SPY");
       _lockedToday = today;
       console.log("[playbookScheduler] catch-up lock fired (server booted post-9:00 ET)");
     }
 
     // 9:30–16:00 ET → keep snapshot warm (cheap, uses existing snapshot cache)
-    if (mins >= 9 * 60 + 30 && mins <= 16 * 60) {
+    if (mins >= 9 * 60 + 30 && mins <= closeMin) {
       // Pre-warm so /drift returns instantly
       await buildDailyPlaybook("SPY");
     }

@@ -13,10 +13,10 @@
 // back to v3-only projection.
 
 import { fetchOHLC } from "./ohlc";
+import { etDate, sessionCloseMinutes } from "./exchangeCalendar";
 
 const ANCHOR_MIN_FROM_OPEN = 15; // 9:30 + 15 = 9:45 ET
-const RTH_OPEN_MIN = 570; // 9:30 ET
-const RTH_CLOSE_MIN = 960; // 16:00 ET
+const RTH_OPEN_MIN = 570; // 9:30 ET (close comes from exchangeCalendar: 16:00, 13:00 on half days)
 
 interface Bar {
   t: number;
@@ -200,14 +200,18 @@ export async function buildMorningFingerprint(opts: {
  */
 export function computeMorningBlendWeight(): number {
   const etMin = _etMinutesNow();
-  // Convert to fractional hour-of-day for clarity
+  // Session close from the exchange calendar (16:00, or 13:00 on half days);
+  // holidays and weekends have no session.
+  const close = sessionCloseMinutes(etDate());
+  if (close == null) return 0;
+  const decayStart = close - 60;
   if (etMin < 585) return 0;            // pre-9:45 ET
   if (etMin < 630) {                     // 9:45 - 10:30 ramp
     return ((etMin - 585) / 45) * 0.7;
   }
-  if (etMin < 900) return 0.7;           // 10:30 - 15:00 plateau
-  if (etMin < 960) {                     // 15:00 - 16:00 decay
-    return 0.7 * (1 - (etMin - 900) / 60) + 0.3 * ((etMin - 900) / 60);
+  if (etMin < decayStart) return 0.7;    // 10:30 - (close - 1h) plateau
+  if (etMin < close) {                   // last hour: decay 70% -> 30%
+    return 0.7 * (1 - (etMin - decayStart) / 60) + 0.3 * ((etMin - decayStart) / 60);
   }
   return 0;                              // post-close
 }

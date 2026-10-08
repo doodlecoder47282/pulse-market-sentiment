@@ -26,6 +26,7 @@
 import { getOptionChain, type OptionChainResponse } from "./schwab";
 import { isRthOpen } from "./sessionCache";
 import { recordOdteOptionMarks, type TrackerQuote } from "./odteAuditDb";
+import { etDate as calEtDate, sessionCloseMinutes as calCloseMin } from "./exchangeCalendar";
 
 // getOptionChain caches chains for 60 s (schwab.ts), so polling faster than that only
 // returns the identical snapshot. Cadence is clamped to this TTL.
@@ -41,10 +42,11 @@ function inTrackerSession(now = new Date()): boolean {
     timeZone: "America/New_York", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
   }).formatToParts(now);
   const g = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
-  const wday = g("weekday");
-  if (wday === "Sat" || wday === "Sun") return false;
+  // Exchange calendar: no session on holidays; half days close at 13:00 ET.
+  const close = calCloseMin(calEtDate(now.getTime()));
+  if (close == null) return false;
   const mod = Number(g("hour")) * 60 + Number(g("minute"));
-  return mod >= 9 * 60 + 25 && mod <= 16 * 60 + 15;
+  return mod >= 9 * 60 + 25 && mod <= close + 15;
 }
 
 // ─── Types ─────────────────────────────────────────────────────────────────

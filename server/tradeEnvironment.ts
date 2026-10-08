@@ -31,6 +31,7 @@ import { computeOfiTrend } from "./leeReadyOfi";
 import { buildCanarySnapshot } from "./canary";
 import { sqlite } from "./storage";
 import { postToDiscord } from "./discord";
+import { etDate as calEtDate, sessionCloseMinutes as calCloseMin } from "./exchangeCalendar";
 
 export type TradeEnvState = "STAND_DOWN" | "CHOP" | "NORMAL" | "LOADED" | "STRIKE";
 
@@ -58,13 +59,14 @@ function sessionET(): TradeEnvironment["session"] {
     timeZone: "America/New_York", hour12: false,
     weekday: "short", hour: "2-digit", minute: "2-digit",
   }).formatToParts(new Date());
-  const wd = p.find(x => x.type === "weekday")?.value ?? "";
-  if (wd === "Sat" || wd === "Sun") return "closed";
+  // Exchange calendar: holidays closed, half days close at 13:00 ET.
+  const close = calCloseMin(calEtDate());
+  if (close == null) return "closed";
   const mins = parseInt(p.find(x => x.type === "hour")?.value ?? "0", 10) * 60
     + parseInt(p.find(x => x.type === "minute")?.value ?? "0", 10);
   if (mins < 4 * 60) return "closed";
   if (mins < 9 * 60 + 30) return "premarket";
-  if (mins < 16 * 60) return "rth";
+  if (mins < close) return "rth";
   if (mins < 20 * 60) return "afterhours";
   return "closed";
 }

@@ -9,6 +9,8 @@
  * Cheap: predict route reads from the snapshot cache, no new Schwab calls.
  */
 
+import { etDate as calEtDate, sessionCloseMinutes as calCloseMin } from "./exchangeCalendar";
+
 let _interval: ReturnType<typeof setInterval> | null = null;
 
 function _hhmmET(): { hh: number; mm: number; weekday: string } {
@@ -27,10 +29,13 @@ function _hhmmET(): { hh: number; mm: number; weekday: string } {
 async function tick() {
   try {
     const { hh, mm, weekday } = _hhmmET();
-    if (weekday === "Sat" || weekday === "Sun") return;
+    void weekday;
+    // Exchange calendar: holidays skipped, half days end at 13:00 ET
+    const closeMin = calCloseMin(calEtDate());
+    if (closeMin == null) return;
     const mins = hh * 60 + mm;
-    // Only fill history during pre-open warm-up + RTH (9:00–16:00 ET)
-    if (mins < 9 * 60 || mins > 16 * 60) return;
+    // Only fill history during pre-open warm-up + RTH (9:00 ET to the close)
+    if (mins < 9 * 60 || mins > closeMin) return;
 
     const port = Number(process.env.PORT ?? 5000);
     // Fire-and-forget; the route's side-effect records the raw regime into history.

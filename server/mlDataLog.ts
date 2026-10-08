@@ -25,6 +25,7 @@
 // scoring pass (at most every 15 minutes).
 
 import { sqlite } from "./storage";
+import { isTradingDay as calIsTradingDay, sessionCloseMinutes as calCloseMin } from "./exchangeCalendar";
 import { getPriceHistory } from "./schwab";
 import { buildMlFeatures, getLastMlFeatureProvenance, type MlFeatureInputs } from "./mlGreekFeatures";
 import { mlQuantileOverlay } from "./mlBridge";
@@ -85,7 +86,10 @@ function etMinuteOfDay(ms: number): { day: string; mod: number; weekday: boolean
   const f = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(ms));
   const g = (t: string) => f.find((p) => p.type === t)?.value ?? "";
   const wd = g("weekday");
-  return { day: etDate(ms), mod: Number(g("hour")) * 60 + Number(g("minute")), weekday: wd !== "Sat" && wd !== "Sun" };
+  void wd;
+  const day = etDate(ms);
+  // "weekday" = an exchange trading day (holidays excluded)
+  return { day, mod: Number(g("hour")) * 60 + Number(g("minute")), weekday: calIsTradingDay(day) };
 }
 
 // ─── 1. Minute bars ──────────────────────────────────────────────────────────
@@ -267,11 +271,12 @@ export function startMlDataLogger(resolveInputs: () => Promise<MlFeatureInputs>)
     const now = Date.now();
     const { mod, weekday, day } = etMinuteOfDay(now);
     try {
-      if (weekday && mod >= 9 * 60 + 35 && mod <= 15 * 60 + 55 && now - _lastLog >= LOG_EVERY_MS - 5_000) {
+      const closeMin = calCloseMin(day) ?? 16 * 60; // 13:00 on half days
+      if (weekday && mod >= 9 * 60 + 35 && mod <= closeMin - 5 && now - _lastLog >= LOG_EVERY_MS - 5_000) {
         _lastLog = now;
         await logMlSnapshot(resolveInputs, now);
       }
-      const closeMs = etWallToUtcMs(day, 16, 5);
+      const closeMs = etWallToUtcMs(day, Math.floor((closeMin + 5) / 60), (closeMin + 5) % 60);
       const barsDue = weekday && now >= closeMs && _lastBarsPersist < closeMs;
       if (now - _lastScore >= SCORE_EVERY_MS) { // at most one Schwab history call per 15 min
         _lastScore = now;

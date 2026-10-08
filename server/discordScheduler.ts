@@ -273,9 +273,11 @@ const HALFHOUR_FIRED = new Set<string>(); // YYYY-MM-DD HH:MM entries
 async function maybeFireHalfHour(): Promise<void> {
   const { date, hh, mm, dow } = etNow();
   if (!isTradingDay(dow, date)) return;
-  // Window: 10:00 ≤ t ≤ 16:00 (skip 9:30, owned by daily card)
+  // Window: 10:00 ≤ t ≤ session close (16:00, or 13:00 on half days; skip
+  // 9:30, owned by the daily card)
   const minutes = hh * 60 + mm;
-  if (minutes < 10 * 60 || minutes > 16 * 60) return;
+  const closeMin = sessionCloseMinutes(date) ?? 16 * 60;
+  if (minutes < 10 * 60 || minutes > closeMin) return;
 
   // Snap to the most recent :00 / :30 boundary at-or-before now.
   const slotMM = mm < 30 ? 0 : 30;
@@ -323,8 +325,10 @@ function shouldFire(key: string): boolean {
 async function pollLevelAndGammaAlerts(): Promise<void> {
   const { dow, date, hh } = etNow();
   if (!isTradingDay(dow, date)) return;
-  // Only poll during RTH-ish window (9:30–16:00 ET) to avoid wasting cycles
-  if (hh < 9 || hh >= 16) return;
+  // Only poll during RTH-ish window (9:00 ET to the session close: 16:00, or
+  // 13:00 on half days) to avoid wasting cycles
+  const closeMinPoll = sessionCloseMinutes(date) ?? 16 * 60;
+  if (hh < 9 || hh * 60 >= closeMinPoll) return;
 
   let res: Response;
   try {
@@ -781,11 +785,13 @@ const SETTLE_FIRED = new Set<string>(); // YYYY-MM-DD
 async function maybeSettleDay(): Promise<void> {
   const { date, hh, mm, dow } = etNow();
   if (!isTradingDay(dow, date)) return;
-  // Settle window 16:01-16:30 ET (one minute past close gives prints a moment to land).
-  // Was an exact `mm === 1` match on a 60 s timer whose body awaits slow internal
-  // fetches, so one slow /api/models pushed the tick past :01 and the day never settled.
+  // Settle window close+1 .. close+30 ET (16:01-16:30, or 13:01-13:30 on a
+  // half day, so the EOD post follows the real 13:00 close). Was an exact
+  // `mm === 1` match on a 60 s timer; then a 16:01-16:30 window that settled
+  // half days three hours after the close.
   const nowMin = hh * 60 + mm;
-  if (nowMin < 16 * 60 + 1 || nowMin > 16 * 60 + 30) return;
+  const closeMin = sessionCloseMinutes(date) ?? 16 * 60;
+  if (nowMin < closeMin + 1 || nowMin > closeMin + 30) return;
   if (SETTLE_FIRED.has(date)) return;
   SETTLE_FIRED.add(date);
   try {
