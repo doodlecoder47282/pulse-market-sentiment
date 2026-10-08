@@ -20,7 +20,7 @@ import type { OptionChainResponse } from "./schwab";
 import { etEpochMs } from "./etTime";
 import { timeToExpiry, settlementStyleOf, type SettlementStyle } from "./timeToExpiry";
 import { gamma as bsGamma, vega as bsVega, impliedVol, normCdf } from "./greeks";
-import { FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromRows } from "./gammaProfile";
+import { dollarGexPerPct, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromRows } from "./gammaProfile";
 
 // ─── Internal contract shape ──────────────────────────────────────────────────
 
@@ -31,6 +31,7 @@ interface Contract {
   dte: number;                 // whole calendar days (bucket label only; 0 = expires today)
   style: SettlementStyle;      // AM (SOQ, 09:30 ET open) or PM (session close)
   tYears: number;              // timeToExpiry(): calendar minutes to settlement / 525,600, 15-min floor
+  sigma?: number;              // effectiveIV(c, spot), cached once per audit (buildChainAudit)
   delta: number;
   gamma: number;
   theta: number;
@@ -164,8 +165,13 @@ export interface GEXBucket {
   callWall: number | null;
   putWall: number | null;
   zeroGamma: number | null;
-  totalGex: number;
+  totalGex: number;            // $ per 1% move, same basis as the flip (see gexBasis)
   contractCount: number;
+  /** Walls, totalGex and the flip all use Black-Scholes gamma with our clock
+   *  (c.tYears) and effectiveIV, r/q = FLIP_RATE/FLIP_DIV_YIELD, so the regime
+   *  sign and the flip cannot disagree. Vendor gamma (unknown T convention)
+   *  is no longer mixed in. */
+  gexBasis?: "black-scholes-our-clock";
 }
 
 export interface GEXDecayResult {
@@ -401,6 +407,7 @@ const RESOLVE_IV_MAX_T = 3 / 365;
  * negligible). Otherwise, or if the quote is unusable, the vendor IV is used.
  */
 function effectiveIV(c: Contract, spot: number): number {
+  if (c.sigma != null) return c.sigma;
   if (c.tYears > 0 && c.tYears <= RESOLVE_IV_MAX_T && c.bid > 0 && c.ask >= c.bid && spot > 0) {
     const mid = (c.bid + c.ask) / 2;
     const solved = impliedVol(mid, spot, c.strike, c.tYears, 0, 0, c.side === "call" ? "C" : "P");
@@ -771,9 +778,12 @@ function computeSingleGEXBucket(contracts: Contract[], spot: number): GEXBucket 
   const strikeMap = new Map<number, { callGex: number; putGex: number; netGex: number }>();
 
   for (const c of contracts) {
+    const sigma = effectiveIV(c, spot);
+    if (!(sigma > 0) || !(c.tYears > 0) || !(c.oi > 0)) continue;
     if (!strikeMap.has(c.strike)) strikeMap.set(c.strike, { callGex: 0, putGex: 0, netGex: 0 });
     const row = strikeMap.get(c.strike)!;
-    const gex = c.gamma * c.oi * 100 * spot * spot * 0.01;
+    // $ per 1% move: gamma x OI x 100 x S^2 x 0.01, gamma on the flip's basis
+    const gex = dollarGexPerPct(bsGamma(spot, c.strike, sigma, c.tYears, FLIP_RATE, FLIP_DIV_YIELD), c.oi, spot);
     if (c.side === "call") row.callGex += gex;
     else row.putGex -= gex;
     row.netGex = row.callGex + row.putGex;
@@ -783,7 +793,7 @@ function computeSingleGEXBucket(contracts: Contract[], spot: number): GEXBucket 
     .map(([strike, v]) => ({ strike, ...v }))
     .sort((a, b) => a.strike - b.strike);
 
-  if (!profile.length) return { callWall: null, putWall: null, zeroGamma: null, totalGex: 0, contractCount: 0 };
+  if (!profile.length) return { callWall: null, putWall: null, zeroGamma: null, totalGex: 0, contractCount: 0, gexBasis: "black-scholes-our-clock" };
 
   const aboveSpot = profile.filter(p => p.strike >= spot);
   const belowSpot = profile.filter(p => p.strike < spot);
@@ -795,7 +805,7 @@ function computeSingleGEXBucket(contracts: Contract[], spot: number): GEXBucket 
   // Gamma flip: app-wide re-priced definition (gammaProfile.ts), not the
   // cumulative-by-strike sign change.
   const zeroGamma = repricedFlipFromRows(
-    contracts.map((c) => ({ type: c.side === "call" ? "C" as const : "P" as const, strike: c.strike, iv: c.iv, oi: c.oi, dte: c.dte })),
+    contracts.map((c) => ({ type: c.side === "call" ? "C" as const : "P" as const, strike: c.strike, iv: effectiveIV(c, spot), oi: c.oi, dte: c.dte, T: c.tYears })),
     spot,
     { r: FLIP_RATE, q: FLIP_DIV_YIELD },
   ).zeroGamma;
@@ -808,6 +818,7 @@ function computeSingleGEXBucket(contracts: Contract[], spot: number): GEXBucket 
     zeroGamma,
     totalGex,
     contractCount: contracts.length,
+    gexBasis: "black-scholes-our-clock",
   };
 }
 
@@ -930,6 +941,8 @@ export function buildChainAudit(
   nowMs: number = Date.now(),
 ): ChainAuditResult {
   const contracts = extractContracts(chain.callExpDateMap, chain.putExpDateMap, nowMs);
+  // sigma valid for each contract's T, solved once (Newton on the mid inside 3 days)
+  for (const c of contracts) c.sigma = effectiveIV(c, spot);
 
   const expiries = [...new Set(contracts.map(c => c.expiry))];
 
