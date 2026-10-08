@@ -5,12 +5,16 @@
 import { sqlite } from "./storage";
 import { randomUUID } from "node:crypto";
 import { getQuotes, getOptionChain, getPriceHistory } from "./schwab";
-import { OPTION_MULTIPLIER } from "./validationMath";
+import { OPTION_MULTIPLIER, toCents } from "./validationMath";
 
-/** $ for the whole position, to the cent: (price diff $/share) x qty x multiplier (100 per option contract, 1 per share). */
+/**
+ * $ for the whole position, to the cent: (price diff $/share) x qty x multiplier
+ * (100 per option contract, 1 per share). Halves round away from zero for
+ * losses too (Math.round(-1234.5) is -1234, so a -$12.345 loss read -$12.34).
+ */
 function positionDollars(priceDiff: number, qty: number, instrument: Instrument): number {
   const mult = instrument === "OPTION" ? OPTION_MULTIPLIER : 1;
-  return Math.round(priceDiff * qty * mult * 100) / 100;
+  return toCents(priceDiff * qty * mult) / 100;
 }
 
 // ET helpers. Grading must only happen against a CLOSING line, so we need the ET date

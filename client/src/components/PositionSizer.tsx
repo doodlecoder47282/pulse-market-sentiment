@@ -283,9 +283,10 @@ export function PositionSizer() {
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs text-muted-foreground">notional</div>
+                  {/* notionalDollars is the premium paid (contracts x entry x 100, ex fees), not underlying notional */}
+                  <div className="text-xs text-muted-foreground">premium paid</div>
                   <div className="text-lg font-semibold" data-testid="text-notional">
-                    {fmtDollar(r.notionalDollars)}
+                    {fmtCents(r.notionalDollars)}
                   </div>
                 </div>
                 <div>

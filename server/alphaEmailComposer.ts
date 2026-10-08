@@ -215,7 +215,8 @@ export function composeAlphaEmail(payload: AlphaBriefPayload): { subject: string
       const fmtPct = (v: number | null | undefined) => (v == null || !Number.isFinite(Number(v))) ? "?" : (Number(v) * 100).toFixed(1) + "%";
       const fmtDec = (v: number | null | undefined, d = 4) => (v == null || !Number.isFinite(Number(v))) ? "?" : Number(v).toFixed(d);
       if (p.gex != null || p.dex != null || p.flipLevel != null) {
-        lines.push(`  GEX ${fmtB(p.gex)} \u00b7 DEX ${fmtB(p.dex)} \u00b7 flip ${fmtLvl(p.flipLevel)}`);
+        // GEX is $ per 1% spot move, DEX $ delta notional (SPY /api/exposures).
+        lines.push(`  GEX ${fmtB(p.gex)}/1% \u00b7 DEX ${fmtB(p.dex)} \u00b7 flip ${fmtLvl(p.flipLevel)}`);
       }
       if (p.ivRv?.iv30 != null || p.ivRv?.rv30 != null) {
         lines.push(`  IV30 ${fmtPct(p.ivRv.iv30)} \u00b7 RV30 ${fmtPct(p.ivRv.rv30)} \u00b7 spread ${fmtPct(p.ivRv.spread)}`);
