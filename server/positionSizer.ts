@@ -25,14 +25,18 @@
 
 import { FIRE_GATE as ENGINE_FIRE_GATE, BANGER_MIN_PCT as ENGINE_BANGER_MIN_PCT } from "./odteAlertEngine";
 import { loadOptionLedgerBucket } from "./odteGrader";
-import { sizeLongOption, type CoreSizingResult } from "./sizingMath";
+import { sizeLongOption, resolveFeePerContract, type CoreSizingResult } from "./sizingMath";
 
 export interface SizingInput {
   /** Total account size in dollars */
   accountSize: number;
   /** Max fraction of account risked on this single trade (default 0.01 = 1%, ceiling 0.05) */
   maxRiskPct?: number;
-  /** Expected entry fill, $ per share (e.g. 1.50 = $150 per contract). Use the ask for a market buy. */
+  /**
+   * Expected entry FILL, $ per share (e.g. 1.55 = $155 per contract): the ask
+   * for a market buy, NOT the mid. The Trade Desk card converts its mid input
+   * with shared/sizerRequest.ts (ask = mid + spread/2).
+   */
   entryPrice: number;
   /** Stop price, $ per share */
   stopPrice: number;
@@ -42,8 +46,12 @@ export interface SizingInput {
   targetPct?: number;
   /** Fractional Kelly (0.25 = quarter Kelly default, capped at 0.5) */
   kellyFraction?: number;
-  /** Commission + exchange fees, $ per contract per side (default 0.65, Schwab's published per-contract fee) */
+  /** Commission + exchange fees, $ per contract per side. Default 0.65 (Schwab) for equity/ETF options; REQUIRED for index roots (SPX, SPXW, XSP, ...). */
   feePerContract?: number;
+  /** Option root, e.g. "SPXW" or "SPY". */
+  product?: string;
+  /** Max loss if the option gaps to zero, fraction of account (default and ceiling 0.05). */
+  maxGapLossPct?: number;
   /** Expected fill below the stop, $ per share (e.g. half the bid-ask spread). Default 0. */
   stopSlippage?: number;
   /** Contract multiplier (default 100: SPX, SPXW, XSP, SPY, QQQ, equity options) */
@@ -68,7 +76,9 @@ function tierMultiplier(score: number): number {
 
 export function sizePosition(input: SizingInput): SizingResult {
   let ledger = null;
-  try { ledger = loadOptionLedgerBucket(input.gradeScore); } catch { ledger = null; }
+  // The ledger's realized returns are taken net of the same fee the trade will pay.
+  const fee = resolveFeePerContract(input.feePerContract, input.product) ?? 0;
+  try { ledger = loadOptionLedgerBucket(input.gradeScore, Date.now(), fee); } catch { ledger = null; }
   return sizeLongOption(input, {
     fireGate: FIRE_GATE,
     bangerMinPct: BANGER_MIN_PCT,

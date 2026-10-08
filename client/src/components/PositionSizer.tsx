@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { buildSizerRequest } from "@shared/sizerRequest";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +17,7 @@ interface SizingResult {
   riskDollars: number;
   notionalDollars: number;
   kellyAccountFraction: number;
-  bindingConstraint: "risk-floor" | "kelly-cap" | "conviction-tier" | "min-contract" | "cash";
+  bindingConstraint: "risk-floor" | "kelly-cap" | "conviction-tier" | "min-contract" | "cash" | "gap-cap";
   expectedPayoffPct: number;
   rejected: boolean;
   rejectReason?: string;
@@ -59,20 +60,21 @@ export function PositionSizer() {
   const [kellyFraction, setKellyFraction] = useState("25");
   const [spreadDollars, setSpreadDollars] = useState("0.10");
   const [holdMin, setHoldMin] = useState("45");
+  // Fees: $ per contract per side. Required for index options (SPXW): Schwab's
+  // $0.65 plus exchange index fees that vary by account; read it off a confirm.
+  const [feePerContract, setFeePerContract] = useState("");
+  const [product, setProduct] = useState("SPXW");
+  const [gapPct, setGapPct] = useState("5");
 
   const sizeMut = useMutation({
     mutationFn: async (): Promise<SizingResult> => {
-      const res = await apiRequest("POST", "/api/position-sizer", {
-        accountSize: Number(accountSize),
-        maxRiskPct: Number(maxRiskPct) / 100,
-        entryPrice: Number(entryPrice),
-        stopPrice: Number(stopPrice),
-        gradeScore: Number(gradeScore),
-        targetPct: Number(targetPct),
-        kellyFraction: Number(kellyFraction) / 100,
-        // A stop fills at the bid, about half the quoted spread below the stop's mid.
-        stopSlippage: Math.max(0, Number(spreadDollars) || 0) / 2,
-      });
+      // The card collects MID prices; buildSizerRequest sends the fill (ask =
+      // mid + spread/2) as entryPrice and spread/2 as the stop slippage.
+      const res = await apiRequest("POST", "/api/position-sizer", buildSizerRequest({
+        accountSize, maxRiskPctPercent: maxRiskPct, midPrice: entryPrice, stopPrice,
+        spreadDollars, gradeScore, targetPct, kellyPercent: kellyFraction,
+        feePerContract, product, maxGapLossPctPercent: gapPct,
+      }));
       return await res.json();
     },
   });
@@ -138,7 +140,7 @@ export function PositionSizer() {
             />
           </label>
           <label className="space-y-1">
-            <span className="text-xs text-muted-foreground">entry price ($)</span>
+            <span className="text-xs text-muted-foreground">option mid now ($/share)</span>
             <Input
               type="number"
               value={entryPrice}
@@ -149,7 +151,7 @@ export function PositionSizer() {
             />
           </label>
           <label className="space-y-1">
-            <span className="text-xs text-muted-foreground">stop price ($)</span>
+            <span className="text-xs text-muted-foreground">stop, mid level ($/share)</span>
             <Input
               type="number"
               value={stopPrice}
@@ -188,13 +190,43 @@ export function PositionSizer() {
             />
           </label>
           <label className="space-y-1">
-            <span className="text-xs text-muted-foreground">bid-ask spread ($)</span>
+            <span className="text-xs text-muted-foreground">bid-ask spread ($/share; buy at ask, stop sells at bid)</span>
             <Input
               type="number"
               value={spreadDollars}
               onChange={(e) => setSpreadDollars(e.target.value)}
               step="0.05"
               data-testid="input-spread"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-muted-foreground">product (option root)</span>
+            <Input
+              value={product}
+              onChange={(e) => setProduct(e.target.value.toUpperCase())}
+              placeholder="SPXW"
+              data-testid="input-product"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-muted-foreground">fees $/contract/side{product && /^(SPXW?|XSP|NDXP?|RUTW?|VIX|DJX|MRUT)$/.test(product) ? " (required for index)" : " (blank = $0.65)"}</span>
+            <Input
+              type="number"
+              value={feePerContract}
+              onChange={(e) => setFeePerContract(e.target.value)}
+              step="0.01"
+              placeholder="from your trade confirm"
+              data-testid="input-fee-per-contract"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-muted-foreground">max loss if it gaps to zero (% acct, max 5)</span>
+            <Input
+              type="number"
+              value={gapPct}
+              onChange={(e) => setGapPct(e.target.value)}
+              step="0.5"
+              data-testid="input-gap-pct"
             />
           </label>
           <label className="space-y-1">

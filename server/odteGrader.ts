@@ -38,7 +38,7 @@ import { getPriceHistory } from "./schwab";
 import { loadOdteOptionMarks } from "./odteAuditDb";
 import {
   etCloseMs as etCloseForDate, etDate, gradeOdteOptionPnl, underlyingCloseOutPct,
-  summarizeOptionReturns, gradeBucketFor, type OptionLedgerBucket, type MinuteBar,
+  summarizeOptionReturns, gradeBucketFor, netOptionReturn, type OptionLedgerBucket, type MinuteBar,
 } from "./validationMath";
 
 const MAX_LOOKBACK_DAYS = 9; // Schwab minute history reaches ~10 days back
@@ -95,6 +95,29 @@ async function getSpxMinuteCandles(): Promise<Candle[]> {
   return candles;
 }
 
+/**
+ * Official SPX closing values by ET date from Schwab daily bars: the PM
+ * settlement value of SPXW (Cboe: PM-settled on the closing value). Used for
+ * held-to-close grades; the last minute-bar close is the fallback, labeled.
+ */
+let _dailyCache: { fetchedAt: number; byDate: Map<string, number> } | null = null;
+async function getSpxDailyCloses(): Promise<Map<string, number>> {
+  const now = Date.now();
+  if (_dailyCache && now - _dailyCache.fetchedAt < 30 * 60_000) return _dailyCache.byDate;
+  const byDate = new Map<string, number>();
+  try {
+    const resp = await getPriceHistory("$SPX", "month", 1, "daily", 1);
+    for (const c of (resp.candles ?? []) as any[]) {
+      if (typeof c.close === "number" && Number.isFinite(c.close) && typeof c.datetime === "number") {
+        // Daily candle datetime is the session start; midday of that session gives its ET date.
+        byDate.set(etDate(c.datetime + 12 * 3600_000), c.close);
+      }
+    }
+  } catch { /* fallback to minute bars */ }
+  _dailyCache = { fetchedAt: now, byDate };
+  return byDate;
+}
+
 interface RowGrade {
   outcome: Record<string, unknown>;
   pctReturn: number | null;     // MFE, % of spot (diagnostic)
@@ -120,6 +143,7 @@ export function gradeRow(
   candles: Candle[],
   now: number,
   marks: Array<{ ts: number; bid: number | null; ask: number | null; mid: number | null }> = [],
+  officialClose: number | null = null,
 ): RowGrade {
   let features: any = {};
   try { features = JSON.parse(row.features_json || "{}"); } catch { /* noop */ }
@@ -184,6 +208,7 @@ export function gradeRow(
       closeMs,
       bars: candles,
       marks,
+      settlementValue: officialClose,
     });
     option = {
       status: g.status,
@@ -203,7 +228,9 @@ export function gradeRow(
   return {
     outcome: {
       result: hitT1 ? "t1_first" : stopped ? "stop_first" : "no_touch_eod",
-      method: "minute-first-touch v2; option P&L replayed on logged Schwab marks (ask in, bid out, settlement at intrinsic)",
+      method: "minute-first-touch v2",
+      optionMethod: "plan replay (T1 / stop / -20% / settle) on logged Schwab marks: ask in, bid out, PM settlement at intrinsic",
+      settlementSource: isFire ? (officialClose != null && officialClose > 0 ? "official_close_daily_bar" : "last_minute_bar_close") : null,
       spotAtFire: spot0,
       t1,
       stop,
@@ -255,10 +282,11 @@ export async function gradeOdteAlerts(now: number = Date.now()): Promise<OdteGra
 
     if (gradeable.length > 0) {
       const candles = await getSpxMinuteCandles();
+      const closes = await getSpxDailyCloses();
       for (const r of gradeable) {
         try {
           const marks = r.tier !== "REJECTED" ? loadOdteOptionMarks(r.alert_id) : [];
-          const g = gradeRow(r, candles, now, marks);
+          const g = gradeRow(r, candles, now, marks, closes.get(etDate(r.detected_at)) ?? null);
           const o = g.option;
           mark.run(JSON.stringify(g.outcome), g.pctReturn, g.realizedPct, g.hit30, g.hit50, g.hitT1, now,
             o.status, o.reason, o.entry, o.exit, o.exitAt, o.ret, o.mfe, r.id);
@@ -284,39 +312,59 @@ export async function gradeOdteAlerts(now: number = Date.now()): Promise<OdteGra
 
 // ─── Option-P&L ledger by grade bucket (feeds positionSizer) ─────────────────
 
-let _ledgerCache: { at: number; byLabel: Map<string, OptionLedgerBucket> } | null = null;
+let _ledgerCache: { at: number; rows: Array<{ score: number; entry: number; exit: number; settled: boolean }> } | null = null;
 
-function loadLedger(now: number): Map<string, OptionLedgerBucket> {
-  if (_ledgerCache && now - _ledgerCache.at < 5 * 60_000) return _ledgerCache.byLabel;
-  const byLabel = new Map<string, OptionLedgerBucket>();
+/** Option-graded fires (entry ask, exit price, settled flag); cached 5 min. */
+function loadLedgerRows(now: number): Array<{ score: number; entry: number; exit: number; settled: boolean }> {
+  if (_ledgerCache && now - _ledgerCache.at < 5 * 60_000) return _ledgerCache.rows;
+  let rows: Array<{ score: number; entry: number; exit: number; settled: boolean }> = [];
   try {
-    const rows = sqlite
-      .prepare(`SELECT score, option_return FROM odte_alert_audit
-                WHERE option_status = 'graded' AND option_return IS NOT NULL AND tier != 'REJECTED'`)
-      .all() as Array<{ score: number; option_return: number }>;
-    const groups = new Map<string, number[]>();
-    for (const r of rows) {
-      const b = gradeBucketFor(Number(r.score));
-      if (!b) continue;
-      if (!groups.has(b.label)) groups.set(b.label, []);
-      groups.get(b.label)!.push(Number(r.option_return));
-    }
-    for (const [label, rets] of groups) byLabel.set(label, summarizeOptionReturns(label, rets));
+    rows = (sqlite
+      .prepare(`SELECT score, option_entry, option_exit, option_reason FROM odte_alert_audit
+                WHERE option_status = 'graded' AND option_entry > 0 AND option_exit IS NOT NULL AND tier != 'REJECTED'`)
+      .all() as Array<{ score: number; option_entry: number; option_exit: number; option_reason: string }>)
+      .map((r) => ({
+        score: Number(r.score),
+        entry: Number(r.option_entry),
+        exit: Number(r.option_exit),
+        // Cash-settled holds and worthless expiries pay no closing fee.
+        settled: r.option_reason === "settled_at_close" || Number(r.option_exit) === 0,
+      }));
   } catch { /* table or columns missing: empty ledger */ }
-  _ledgerCache = { at: now, byLabel };
+  _ledgerCache = { at: now, rows };
+  return rows;
+}
+
+/**
+ * Ledger buckets with realized returns NET of `feePerContract` ($ per
+ * contract per side): the stored option_return is gross, and the sizer's
+ * planned loss includes fees, so p, b, L and the log-optimal Kelly must too.
+ */
+function loadLedger(now: number, feePerContract: number): Map<string, OptionLedgerBucket> {
+  const groups = new Map<string, number[]>();
+  for (const r of loadLedgerRows(now)) {
+    const b = gradeBucketFor(r.score);
+    if (!b) continue;
+    const net = netOptionReturn(r.entry, r.exit, feePerContract, r.settled);
+    if (net == null) continue;
+    if (!groups.has(b.label)) groups.set(b.label, []);
+    groups.get(b.label)!.push(net);
+  }
+  const byLabel = new Map<string, OptionLedgerBucket>();
+  for (const [label, rets] of groups) byLabel.set(label, summarizeOptionReturns(label, rets));
   return byLabel;
 }
 
-/** Realized option-P&L bucket for a grade (null when the grade has no bucket). n = 0 when no fire is option-graded yet. */
-export function loadOptionLedgerBucket(score: number, now: number = Date.now()): OptionLedgerBucket | null {
+/** Realized option-P&L bucket for a grade, net of fees (null when the grade has no bucket). n = 0 when no fire is option-graded yet. */
+export function loadOptionLedgerBucket(score: number, now: number = Date.now(), feePerContract = 0): OptionLedgerBucket | null {
   const b = gradeBucketFor(score);
   if (!b) return null;
-  return loadLedger(now).get(b.label) ?? { label: b.label, n: 0, wins: 0, avgWinReturn: null, avgLossReturn: null };
+  return loadLedger(now, feePerContract).get(b.label) ?? { label: b.label, n: 0, wins: 0, avgWinReturn: null, avgLossReturn: null, returns: [] };
 }
 
-/** Whole ledger, for display: every bucket with its realized option stats. */
-export function getOptionLedgerSummary(now: number = Date.now()): OptionLedgerBucket[] {
-  const m = loadLedger(now);
+/** Whole ledger, for display: every bucket with its realized option stats, net of feePerContract. */
+export function getOptionLedgerSummary(now: number = Date.now(), feePerContract = 0): OptionLedgerBucket[] {
+  const m = loadLedger(now, feePerContract);
   return ["72-79", "80-84", "85-89", "90-94", "95-100"].map((label) =>
-    m.get(label) ?? { label, n: 0, wins: 0, avgWinReturn: null, avgLossReturn: null });
+    m.get(label) ?? { label, n: 0, wins: 0, avgWinReturn: null, avgLossReturn: null, returns: [] });
 }

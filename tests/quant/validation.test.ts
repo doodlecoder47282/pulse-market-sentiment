@@ -7,10 +7,12 @@ import {
   optionTradeDollars, gradeOdteOptionPnl, underlyingCloseOutPct, acceptExitQuote, askToBidReturn,
   modeledExpiryExit, settlementStyle, evaluateWhaleTrade, erfc, intervalScore, scoreIntervalCoverage,
   etCloseMs, etDate, priceAtFromBars, forwardReturnFromBars, nonOverlappingForecasts, gradeBucketFor,
-  maxPainStrike, levelsFromChainSnapshot,
+  maxPainStrike, levelsFromChainSnapshot, logOptimalKelly, netOptionReturn, christoffersenIndependence, toCents,
+  isOutcomeOnOptionMarks, OUTCOME_ON_OPTION_MARKS_SQL,
   type MinuteBar, type OptionMark,
 } from "../../server/validationMath";
-import { sizeLongOption, type CoreSizingDeps } from "../../server/sizingMath";
+import { sizeLongOption, resolveFeePerContract, type CoreSizingDeps } from "../../server/sizingMath";
+import { buildSizerRequest } from "../../shared/sizerRequest";
 
 const near = (a: number, b: number, tol: number, msg?: string) =>
   assert.ok(Math.abs(a - b) <= tol, `${msg ?? ""} expected ${b} +/- ${tol}, got ${a}`);
@@ -133,10 +135,14 @@ test("sizer: risk above the 5% ceiling is lowered, a tiny risk is never raised, 
   assert.equal(lo.riskBudgetDollars, 5); // $10,000 x 0.05% = $5, not raised to 0.1%
   assert.equal(lo.contracts, 0);         // $5 < $50 per contract
   // Tight stop: risk budget alone would buy 100 contracts at $10 = $100,000 notional on a $20,000 account.
+  // Cash would allow 20 ($20,000). The gap cap (full premium <= 5% = $1,000) allows 1.
   const cash = sizeLongOption({ accountSize: 20_000, maxRiskPct: 0.05, entryPrice: 10, stopPrice: 9.9, gradeScore: 96, feePerContract: 0, kellyFraction: 0.5 },
     deps({ label: "95-100", n: 1000, wins: 900, avgWinReturn: 0.9, avgLossReturn: 0.01 }));
-  assert.ok(cash.notionalDollars <= 20_000, `notional ${cash.notionalDollars}`);
-  assert.equal(cash.contracts, 20); // $20,000 / $1,000 per contract
+  assert.equal(cash.candidates.cash, 20);
+  assert.equal(cash.candidates.gap, 1);
+  assert.equal(cash.contracts, 1);
+  assert.equal(cash.bindingConstraint, "gap-cap");
+  assert.ok(cash.maxLossDollars <= 1_000);
 });
 
 test("sizer invariants hold for random accounts (seeded)", () => {
@@ -159,6 +165,7 @@ test("sizer invariants hold for random accounts (seeded)", () => {
     const budget = Math.min(0.05, riskPct) * account;
     assert.ok(r.riskDollars <= budget + 1e-9, `risk ${r.riskDollars} > budget ${budget}`);
     assert.ok(r.notionalDollars + r.contracts * fee <= account + 1e-9, "cost > account");
+    assert.ok(r.maxLossDollars <= 0.05 * account + 1e-9, `gap loss ${r.maxLossDollars} > 5% of ${account}`);
     if (r.perContract) assert.ok(Math.abs(r.riskDollars - r.contracts * r.perContract.riskAtStop) < 1e-6);
   }
   assert.ok(sized > 200, `only ${sized} non-zero sizes: invariants not exercised`);
@@ -365,4 +372,106 @@ test("per-trade Sharpe is annualized by trades per year (Lo 2002), Sortino by fu
   near(annualizedSortino(r, 12)!, (0.0083333 / 0.0091287) * Math.sqrt(12), 1e-4);
   assert.equal(annualizedSortino([0.01, 0.02, 0.03, 0.01, 0.02], 12), null); // no downside: undefined, not infinite
   assert.equal(annualizedSharpe([0.01], 12), null);
+});
+
+// ─── Fix round (WS3 review) ──────────────────────────────────────────────────
+
+test("client path: mid + spread is converted to an ask fill; true loss at stop stays inside the budget", () => {
+  // Repro: $10,000, 2% risk ($200), mid 1.50, stop 1.20 (mid level), spread 0.10, $0.65/side, SPXW.
+  const body = buildSizerRequest({ accountSize: "10000", maxRiskPctPercent: "2", midPrice: "1.50", stopPrice: "1.20", spreadDollars: "0.10",
+    gradeScore: "96", targetPct: "50", kellyPercent: "25", feePerContract: "0.65", product: "SPXW", maxGapLossPctPercent: "5" });
+  assert.equal(body.entryPrice, 1.55);   // ask = mid + 0.05
+  assert.equal(body.stopSlippage, 0.05); // the stop sells at the bid, 0.05 under its mid
+  assert.equal(body.maxRiskPct, 0.02);
+  const r = sizeLongOption(body, deps(strongLedger));
+  // True loss at stop per contract: (1.55 - 1.15) x 100 + 1.30 = $41.30 -> floor(200 / 41.30) = 4 by the risk budget.
+  assert.equal(r.perContract?.riskAtStop, 41.3);
+  assert.equal(r.candidates.riskBudget, 4);
+  // Gap cap: premium + fees = $156.30; 5% of $10,000 = $500 -> 3 contracts, which binds.
+  assert.equal(r.contracts, 3);
+  assert.equal(r.bindingConstraint, "gap-cap");
+  assert.ok(r.riskDollars <= 200, `risk ${r.riskDollars}`);
+  assert.equal(r.riskDollars, 123.9);   // 3 x $41.30
+  // The old card sent the mid as entryPrice and no slippage: 5 contracts whose true loss was 5 x $41.30 = $206.50 > $200.
+  const old = sizeLongOption({ accountSize: 10_000, maxRiskPct: 0.02, entryPrice: 1.5, stopPrice: 1.2, gradeScore: 96, targetPct: 50, feePerContract: 0.65, maxGapLossPct: 0.05 }, deps(strongLedger));
+  assert.equal(old.candidates.riskBudget, 6); // (1.50 - 1.20) x 100 + 1.30 = $31.30 -> 6, understated risk
+  assert.ok(5 * 41.3 > 200);
+});
+
+test("gap cap bounds the full-premium loss (WS3 repro: $25k, 5% risk, 2.00 entry, 1.90 stop, half Kelly)", () => {
+  const ledger = { label: "95-100", n: 400, wins: 240, avgWinReturn: 0.6, avgLossReturn: 0.25 };
+  const r = sizeLongOption({ accountSize: 25_000, maxRiskPct: 0.05, entryPrice: 2, stopPrice: 1.9, gradeScore: 96, targetPct: 50, kellyFraction: 0.5, feePerContract: 0.65 }, deps(ledger));
+  // Before: 66 contracts, $13,200 premium, $13,285.80 lost on a gap through the stop.
+  // Now: max loss per contract $200 + $1.30 = $201.30; 5% of $25,000 = $1,250 -> 6 contracts.
+  assert.equal(r.candidates.gap, 6);
+  assert.equal(r.contracts, 6);
+  assert.equal(r.bindingConstraint, "gap-cap");
+  assert.equal(r.maxLossDollars, 1207.8);
+  assert.equal(r.gapLossBudgetDollars, 1250);
+  // A smaller stated gap limit is honoured; a larger one is lowered to 5%.
+  assert.equal(sizeLongOption({ accountSize: 25_000, maxRiskPct: 0.05, entryPrice: 2, stopPrice: 1.9, gradeScore: 96, feePerContract: 0.65, kellyFraction: 0.5, maxGapLossPct: 0.02 }, deps(ledger)).contracts, 2);
+  assert.equal(sizeLongOption({ accountSize: 25_000, maxRiskPct: 0.05, entryPrice: 2, stopPrice: 1.9, gradeScore: 96, feePerContract: 0.65, kellyFraction: 0.5, maxGapLossPct: 0.5 }, deps(ledger)).maxGapLossPctApplied, 0.05);
+});
+
+test("log-optimal Kelly on realized returns (Kelly 1956 / Thorp 2006: max E log(1 + f X))", () => {
+  // Two-point check: +1 w.p. 0.6, -1 w.p. 0.4 -> f* = 2p - 1 = 0.2
+  near(logOptimalKelly([1, 1, 1, -1, -1]), 0.2, 1e-9);
+  // 6 x +50%, 3 x -20%, 1 x -100%: scipy bounded minimize gives f* = 0.443534;
+  // the two-point approximation (p 0.6, b 0.5, L = mean loser 0.4) says 0.70.
+  near(logOptimalKelly([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -0.2, -0.2, -0.2, -1]), 0.443534, 1e-5);
+  assert.equal(logOptimalKelly([-0.1, 0.05]), 0); // negative mean: no bet
+  assert.ok(logOptimalKelly([0.5, -1, 0.5, 0.5]) < 1); // never 1/|worst loss| or more
+  // kellyFromLedger takes the smaller of the two
+  const ev = kellyFromLedger({ bucket: summarizeOptionReturns("x", [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -0.2, -0.2, -0.2, -1]), plannedB: 0.5, plannedL: 0.2 });
+  assert.ok(ev.fLogOptimal != null && ev.fStar <= ev.fLogOptimal + 1e-12 && ev.fStar <= ev.fBinary + 1e-12);
+});
+
+test("ledger returns are net of fees; index options require an explicit fee", () => {
+  // Entry 2.00, exit 2.60, $0.65/side: ($60.00 - $1.30) / $200 = 0.2935
+  near(netOptionReturn(2, 2.6, 0.65, false)!, 0.2935, 1e-12);
+  // Settled worthless: -($200 + $0.65) / $200 = -1.00325 (opening fee only)
+  near(netOptionReturn(2, 0, 0.65, true)!, -1.00325, 1e-12);
+  assert.equal(resolveFeePerContract(undefined, "SPXW"), null);
+  assert.equal(resolveFeePerContract(undefined, "SPY"), 0.65);
+  assert.equal(resolveFeePerContract(0.9, "SPXW"), 0.9);
+  const r = sizeLongOption({ accountSize: 25_000, entryPrice: 2, stopPrice: 1.6, gradeScore: 96, product: "SPXW" }, deps(strongLedger));
+  assert.equal(r.rejected, true);
+  assert.match(r.rejectReason ?? "", /fee per contract required/);
+  assert.equal(toCents(-0.005), -1); // halves away from zero for losses too
+  assert.equal(toCents(0.005), 1);
+});
+
+test("Christoffersen independence test (1998) on a miss sequence", () => {
+  // Sequence 0011000111000010: transitions n00 6, n01 3, n10 3, n11 3; LR 0.415329, p 0.519277 (scipy chi2.sf)
+  const v = [0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0].map((x) => x === 1);
+  const r = christoffersenIndependence(v)!;
+  assert.deepEqual([r.n00, r.n01, r.n10, r.n11], [6, 3, 3, 3]);
+  near(r.lr, 0.415329, 1e-5);
+  near(r.p, 0.519277, 1e-5);
+  assert.equal(christoffersenIndependence([true]), null);
+});
+
+test("chain walls use gamma for every strike or for none", () => {
+  // Strike 105 has gamma 0.01 x 300 OI = 3; strike 110 has 200 OI and no gamma. Mixing would pick 110 (200 > 3).
+  const mixed = levelsFromChainSnapshot({ date: "d", spot: 101, contracts: [
+    { strike: 105, type: "C", openInterest: 300, gamma: 0.01 }, { strike: 110, type: "C", openInterest: 200 } ] });
+  assert.equal(mixed.weighting, "oi_only");
+  assert.equal(mixed.callWall, 105); // OI alone: 300 > 200
+  const full = levelsFromChainSnapshot({ date: "d", spot: 101, contracts: [
+    { strike: 105, type: "C", openInterest: 300, gamma: 0.01 }, { strike: 110, type: "C", openInterest: 200, gamma: 0.02 } ] });
+  assert.equal(full.weighting, "oi_x_gamma");
+  assert.equal(full.callWall, 110); // 4 > 3
+});
+
+test("proxy-graded whale outcomes are excluded at query time, not rewritten", () => {
+  assert.equal(isOutcomeOnOptionMarks({ kind: "whale_alert", outcomeJson: JSON.stringify({ result: "ok", leverage: 12 }) }), false);
+  assert.equal(isOutcomeOnOptionMarks({ kind: "whale_alert", outcome_json: JSON.stringify({ result: "ok", method: "option_marks_v1" }) }), true);
+  assert.equal(isOutcomeOnOptionMarks({ kind: "regime_call", outcomeJson: "{}" }), true);
+  assert.ok(OUTCOME_ON_OPTION_MARKS_SQL.includes('"method":"option_marks_v1"'));
+});
+
+test("whale trade smaller than one contract is flagged by zero contracts", () => {
+  const w = evaluateWhaleTrade({ isCall: true, strike: 200, occ: "AAPL  261016C00200000", entryBid: 3.0, entryAsk: 3.1, loggedExitBid: 3.5, underlyingCloseAtExpiry: null, notional: 300, feePerContract: 0.65 });
+  assert.equal(w.contracts, 0);  // $310.65 per contract > $300
+  assert.equal(w.dollarPnl, 0);  // the backtest maps this to reason below_one_contract and excludes it from totals
 });

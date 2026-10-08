@@ -155,6 +155,8 @@ export interface OptionLedgerBucket {
   wins: number;                 // realized option return > 0
   avgWinReturn: number | null;  // mean realized return of winners (> 0)
   avgLossReturn: number | null; // mean |realized return| of losers (> 0)
+  /** Every realized return in the bucket (net of fees when built by netOptionReturn). Feeds log-optimal Kelly. */
+  returns?: number[];
 }
 
 export interface KellyEvidence {
@@ -168,7 +170,10 @@ export interface KellyEvidence {
   bSource: "planned" | "realized_min_planned";
   L: number;
   LSource: "planned" | "realized_max_planned";
-  fStar: number;          // full Kelly (may be <= 0)
+  fStar: number;          // full Kelly used (may be <= 0): min of binary Kelly and log-optimal Kelly when returns exist
+  fBinary: number;        // p/L - q/b with p = Wilson lower bound
+  fLogOptimal: number | null; // argmax mean log(1 + f r) on the realized returns; null without returns
+  worstReturn: number | null; // most negative realized return in the bucket
   kellyFraction: number;  // applied fraction after the cap
   fApplied: number;       // max(0, kellyFraction * fStar): fraction of account staked as premium
   notes: string[];
@@ -223,9 +228,57 @@ export function kellyFromLedger(args: {
   const requested = args.kellyFraction ?? DEFAULT_KELLY_FRACTION;
   const kf = Number.isFinite(requested) && requested > 0 ? Math.min(MAX_KELLY_FRACTION, requested) : 0;
   if (requested > MAX_KELLY_FRACTION) notes.push(`Kelly fraction capped at ${MAX_KELLY_FRACTION} (half Kelly)`);
-  const fStar = kellyFraction(p, b, L);
+  const fBinary = kellyFraction(p, b, L);
+  // Log-optimal Kelly on the realized distribution (Kelly 1956; Thorp 2006
+  // sec. 7: maximize E[log(1 + f X)]). It needs 1 + f * min(X) > 0, so it can
+  // never stake more than 1/|worst loss|, which the two-point p/L - q/b
+  // approximation ignores when the average loser is much smaller than the worst.
+  const rets = (bucket.returns ?? []).filter((r) => Number.isFinite(r));
+  const fLog = rets.length > 0 ? logOptimalKelly(rets) : null;
+  const worst = rets.length > 0 ? Math.min(...rets) : null;
+  let fStar = fBinary;
+  if (fLog != null && Number.isFinite(fBinary) && fLog < fBinary) {
+    fStar = fLog;
+    notes.push(`log-optimal Kelly on ${rets.length} realized returns (worst ${(worst! * 100).toFixed(0)}%) is smaller than the two-point Kelly: using it`);
+  }
   const fApplied = Number.isFinite(fStar) ? Math.max(0, kf * fStar) : 0;
-  return { p, pSource, n, wins, wilsonLo: w.lo, wilsonHi: w.hi, b, bSource, L, LSource, fStar, kellyFraction: kf, fApplied, notes };
+  return { p, pSource, n, wins, wilsonLo: w.lo, wilsonHi: w.hi, b, bSource, L, LSource, fStar, fBinary, fLogOptimal: fLog, worstReturn: worst, kellyFraction: kf, fApplied, notes };
+}
+
+/**
+ * Growth-optimal fraction for i.i.d. returns X (fraction of stake):
+ * f* = argmax_f mean(log(1 + f X)) on [0, 1/|min X|). The objective is
+ * concave, so its derivative g(f) = mean(X / (1 + f X)) is decreasing: solved
+ * by bisection. 0 when mean(X) <= 0. Without any loss the bound is 1 (a long
+ * option can lose at most its premium), so f* <= 1 always.
+ */
+export function logOptimalKelly(returns: number[]): number {
+  const xs = returns.filter((r) => Number.isFinite(r));
+  if (xs.length === 0) return 0;
+  const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+  if (!(mean > 0)) return 0;
+  const minX = Math.min(...xs);
+  const hi0 = minX < 0 ? Math.min(1, 1 / -minX) : 1;
+  const g = (f: number) => xs.reduce((a, x) => a + x / (1 + f * x), 0) / xs.length;
+  let lo = 0, hi = hi0 * (1 - 1e-9);
+  if (g(hi) >= 0) return hi;
+  for (let i = 0; i < 100; i++) {
+    const mid = (lo + hi) / 2;
+    if (g(mid) > 0) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+/**
+ * Realized option return NET of fees, as a fraction of the premium paid:
+ * (exit - entry) x mult - fees, over entry x mult. Fees are per contract per
+ * side; a cash-settled hold or a worthless expiry pays the opening fee only.
+ * The sizer's planned loss includes fees, so the ledger it compares with must too.
+ */
+export function netOptionReturn(entry: number, exit: number, feePerContract: number, settled: boolean, multiplier = OPTION_MULTIPLIER): number | null {
+  if (!(entry > 0) || !Number.isFinite(exit)) return null;
+  const d = optionTradeDollars({ entry, exit, contracts: 1, multiplier, feePerContract, settled });
+  return d.perContractNet / (toCents(entry * multiplier) / 100);
 }
 
 /** Summarize realized option returns into a ledger bucket. Wins are returns > 0. */
@@ -241,6 +294,7 @@ export function summarizeOptionReturns(label: string, returns: number[]): Option
     wins: winners.length,
     avgWinReturn: mean(winners),
     avgLossReturn: avgLoss != null && avgLoss > 0 ? avgLoss : null,
+    returns: xs,
   };
 }
 
@@ -249,9 +303,14 @@ export function summarizeOptionReturns(label: string, returns: number[]): Option
 /** Standard equity/index option contract multiplier (shares or index $ per point). */
 export const OPTION_MULTIPLIER = 100;
 
-/** $ -> integer cents, rounding to the nearest cent (removes binary floating error such as 0.30000000000000004). */
+/**
+ * $ -> integer cents, nearest cent, halves away from zero for either sign
+ * (Math.round alone rounds -0.005 up to -0). Removes binary floating error
+ * such as 0.30000000000000004.
+ */
 export function toCents(dollars: number): number {
-  return Math.round(dollars * 100);
+  const c = Math.round(Math.abs(dollars) * 100 + 1e-9);
+  return dollars < 0 ? -c : c;
 }
 
 /**
@@ -350,6 +409,8 @@ export function gradeOdteOptionPnl(input: {
   marks: OptionMark[];
   maxMarkLagMs?: number;
   maxMarkGapMs?: number;
+  /** Official index close for the day (SPXW PM settlement value). Falls back to the 15:59 bar close when absent. */
+  settlementValue?: number | null;
 }): OdteOptionGrade {
   const lag = input.maxMarkLagMs ?? 180_000;
   const maxGap = input.maxMarkGapMs ?? 300_000;
@@ -443,7 +504,7 @@ export function gradeOdteOptionPnl(input: {
   const last = bars[bars.length - 1];
   if (last.datetime + 60_000 < input.closeMs - 120_000) return blank("no_close_bar");
   if (!covered(input.closeMs)) return blank("mark_gap");
-  const S = last.close;
+  const S = input.settlementValue != null && input.settlementValue > 0 ? input.settlementValue : last.close;
   const intrinsic = input.isCall ? Math.max(0, S - input.strike) : Math.max(0, input.strike - S);
   return done("settled_at_close", intrinsic, input.closeMs, S, true);
 }
@@ -596,6 +657,28 @@ export function evaluateWhaleTrade(args: {
   };
 }
 
+// ─── Prediction-outcome provenance (whale alerts) ───────────────────────────
+
+/** Method tag on whale outcomes graded from real option marks (outcomeLogger). */
+export const WHALE_MARKS_METHOD = "option_marks_v1";
+
+/**
+ * SQL condition (no parameters) that keeps regime calls and only those whale
+ * outcomes graded on option marks. Older whale rows were graded by an
+ * underlying-move x leverage proxy; they stay stored untouched and are
+ * excluded at query time. outcome_json is written with JSON.stringify, so the
+ * tag appears exactly as "method":"option_marks_v1".
+ */
+export const OUTCOME_ON_OPTION_MARKS_SQL =
+  `(kind != 'whale_alert' OR outcome_json LIKE '%"method":"${WHALE_MARKS_METHOD}"%')`;
+
+/** Same rule for a row already loaded (camelCase or snake_case outcome JSON). */
+export function isOutcomeOnOptionMarks(row: { kind?: string | null; outcomeJson?: string | null; outcome_json?: string | null }): boolean {
+  if (row.kind != null && row.kind !== "whale_alert") return true;
+  const raw = row.outcomeJson ?? row.outcome_json ?? "";
+  try { return JSON.parse(raw || "{}")?.method === WHALE_MARKS_METHOD; } catch { return false; }
+}
+
 // ─── Per-trade Sharpe / Sortino ─────────────────────────────────────────────
 
 /**
@@ -662,9 +745,14 @@ export function maxPainStrike(contracts: HistoricalChainSnapshot["contracts"]): 
  * gives no gamma), put wall = the same for puts at or below spot, max pain as
  * above. Levels the chain cannot define stay null and are not scored.
  */
-export function levelsFromChainSnapshot(snap: HistoricalChainSnapshot): { callWall: number | null; putWall: number | null; maxPain: number | null } {
+export function levelsFromChainSnapshot(snap: HistoricalChainSnapshot): { callWall: number | null; putWall: number | null; maxPain: number | null; weighting: "oi_x_gamma" | "oi_only" } {
+  // One weighting per snapshot: OI x gamma only when EVERY contract with open
+  // interest carries a gamma; otherwise OI alone for all strikes. Mixing would
+  // compare OI x gamma (~0.001-0.01 per share) with raw OI on other strikes.
+  const withOi = snap.contracts.filter((c) => (c.openInterest || 0) > 0);
+  const useGamma = withOi.length > 0 && withOi.every((c) => c.gamma != null && Number.isFinite(c.gamma) && c.gamma > 0);
   const weight = (c: HistoricalChainSnapshot["contracts"][number]) =>
-    Math.max(0, c.openInterest || 0) * (c.gamma != null && Number.isFinite(c.gamma) && c.gamma > 0 ? c.gamma : 1);
+    Math.max(0, c.openInterest || 0) * (useGamma ? (c.gamma as number) : 1);
   const pick = (type: "C" | "P", above: boolean): number | null => {
     const byStrike = new Map<number, number>();
     for (const c of snap.contracts) {
@@ -676,7 +764,7 @@ export function levelsFromChainSnapshot(snap: HistoricalChainSnapshot): { callWa
     for (const [k, v] of byStrike) if (v > w) { w = v; best = k; }
     return best;
   };
-  return { callWall: pick("C", true), putWall: pick("P", false), maxPain: maxPainStrike(snap.contracts) };
+  return { callWall: pick("C", true), putWall: pick("P", false), maxPain: maxPainStrike(snap.contracts), weighting: useGamma ? "oi_x_gamma" : "oi_only" };
 }
 
 // ─── Forecast interval coverage ─────────────────────────────────────────────
@@ -718,6 +806,8 @@ export interface CoverageScore {
   meanIntervalScore: number | null; // Gneiting-Raftery interval score, same units as the outcome
   belowLo: number;           // misses under the band
   aboveHi: number;           // misses over the band
+  independenceLR: number | null; // Christoffersen (1998) LR_ind on the time-ordered miss sequence, chi2(1)
+  independenceP: number | null;
 }
 
 /**
@@ -741,7 +831,7 @@ export function scoreIntervalCoverage(rows: Array<{ lo: number; hi: number; real
     isSum += intervalScore(l, u, r.realized, alpha);
   }
   if (n === 0) {
-    return { n: 0, covered: 0, rate: null, wilsonLo: null, wilsonHi: null, nominal, nominalInsideInterval: null, kupiecLR: null, kupiecP: null, meanIntervalScore: null, belowLo: 0, aboveHi: 0 };
+    return { n: 0, covered: 0, rate: null, wilsonLo: null, wilsonHi: null, nominal, nominalInsideInterval: null, kupiecLR: null, kupiecP: null, meanIntervalScore: null, belowLo: 0, aboveHi: 0, independenceLR: null, independenceP: null };
   }
   const w = wilsonInterval(covered, n);
   const x = n - covered;          // misses
@@ -752,6 +842,8 @@ export function scoreIntervalCoverage(rows: Array<{ lo: number; hi: number; real
   const lr = -2 * (ll(x, n, pi0) - ll(x, n, pHat));
   const kupiecLR = Math.max(0, lr);
   const kupiecP = erfc(Math.sqrt(kupiecLR / 2)); // chi2(1) survival function
+  // Rows are expected in time order (callers pass nonOverlappingForecasts output).
+  const ind = christoffersenIndependence(ok.map((r) => r.realized < Math.min(r.lo, r.hi) || r.realized > Math.max(r.lo, r.hi)));
   return {
     n, covered, rate: covered / n,
     wilsonLo: w.lo, wilsonHi: w.hi, nominal,
@@ -759,7 +851,37 @@ export function scoreIntervalCoverage(rows: Array<{ lo: number; hi: number; real
     kupiecLR, kupiecP,
     meanIntervalScore: isSum / n,
     belowLo, aboveHi,
+    independenceLR: ind?.lr ?? null,
+    independenceP: ind?.p ?? null,
   };
+}
+
+/**
+ * Christoffersen (1998) independence test for an interval forecast's hit
+ * sequence (true = realized outside the band, a "violation"), in time order.
+ * First-order Markov alternative: with n_ij = count of state i followed by j,
+ *   pi01 = n01/(n00+n01), pi11 = n11/(n10+n11), pi = (n01+n11)/total,
+ *   LR_ind = -2 ln[(1-pi)^(n00+n10) pi^(n01+n11)]
+ *            + 2 ln[(1-pi01)^n00 pi01^n01 (1-pi11)^n10 pi11^n11]  ~ chi2(1).
+ * Clustered misses (a model that is wrong for a whole regime) reject it even
+ * when the unconditional rate is near nominal. Null below 2 transitions.
+ */
+export function christoffersenIndependence(violations: boolean[]): { lr: number; p: number; n00: number; n01: number; n10: number; n11: number } | null {
+  let n00 = 0, n01 = 0, n10 = 0, n11 = 0;
+  for (let i = 1; i < violations.length; i++) {
+    const a = violations[i - 1] ? 1 : 0, b = violations[i] ? 1 : 0;
+    if (a === 0 && b === 0) n00++; else if (a === 0) n01++; else if (b === 0) n10++; else n11++;
+  }
+  const total = n00 + n01 + n10 + n11;
+  if (total < 2) return null;
+  const xlogy = (k: number, q: number) => (k > 0 ? k * Math.log(q) : 0);
+  const pi = (n01 + n11) / total;
+  const pi01 = n00 + n01 > 0 ? n01 / (n00 + n01) : 0;
+  const pi11 = n10 + n11 > 0 ? n11 / (n10 + n11) : 0;
+  const l0 = xlogy(n00 + n10, 1 - pi) + xlogy(n01 + n11, pi);
+  const l1 = xlogy(n00, 1 - pi01) + xlogy(n01, pi01) + xlogy(n10, 1 - pi11) + xlogy(n11, pi11);
+  const lr = Math.max(0, -2 * (l0 - l1));
+  return { lr, p: erfc(Math.sqrt(lr / 2)), n00, n01, n10, n11 };
 }
 
 /**

@@ -434,7 +434,9 @@ function LiveTrackerView({
                 // live bid now: the executable round trip, not last-vs-last.
                 const entryPx = t.buyAsk != null && t.buyAsk > 0 ? t.buyAsk : t.buyPrice;
                 const exitPx = live?.bid ?? null;
-                const pnl = exitPx != null ? Math.round((exitPx - entryPx) * 100 * 100) / 100 : null;
+                // Cents, halves away from zero for losses too (Math.round(-0.5) is -0).
+                const rawPnl = exitPx != null ? (exitPx - entryPx) * 100 : null;
+                const pnl = rawPnl != null ? Math.sign(rawPnl) * Math.round(Math.abs(rawPnl) * 100 + 1e-9) / 100 : null;
                 return (
                   <div
                     key={t.id}
@@ -456,7 +458,7 @@ function LiveTrackerView({
                       </span>
                       {pnl != null && (
                         <span className={`font-mono font-semibold tabular-nums ${pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                          {pnl >= 0 ? "+" : "-"}${Math.abs(pnl).toFixed(2)}/con at bid
+                          {pnl >= 0 ? "+" : "-"}${Math.abs(pnl).toFixed(2)}/con at bid, before fees
                         </span>
                       )}
                       <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]"

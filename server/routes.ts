@@ -4739,6 +4739,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         kellyFraction: b.kellyFraction != null ? Number(b.kellyFraction) : undefined,
         feePerContract: b.feePerContract != null ? Number(b.feePerContract) : undefined,
         stopSlippage: b.stopSlippage != null ? Number(b.stopSlippage) : undefined,
+        product: typeof b.product === "string" ? b.product : undefined,
+        maxGapLossPct: b.maxGapLossPct != null ? Number(b.maxGapLossPct) : undefined,
       }));
     } catch (e: any) {
       res.status(500).json({ error: "sizer_failed", message: e?.message ?? String(e) });
@@ -6062,21 +6064,26 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     try {
       const { getCoverageReport } = await import("./mlDataLog");
       const days = Math.max(1, Math.min(365, Number(req.query.days) || 30));
-      res.json(getCoverageReport(days));
+      const version = typeof req.query.version === "string" && req.query.version ? req.query.version : undefined;
+      res.json(getCoverageReport(days, Date.now(), version));
     } catch (e: any) {
       res.status(500).json({ error: "coverage_failed", message: e?.message ?? String(e) });
     }
   });
 
   // GET /api/odte/option-ledger — realized option-P&L ledger by grade bucket (feeds the sizer).
-  app.get("/api/odte/option-ledger", async (_req, res) => {
+  app.get("/api/odte/option-ledger", async (req, res) => {
     try {
       const { getOptionLedgerSummary } = await import("./odteGrader");
       const { wilsonInterval } = await import("./validationMath");
+      const fee = Math.max(0, Number(req.query.fee) || 0); // $ per contract per side; 0 = gross
       res.json({
         asOf: Date.now(),
-        note: "Realized option returns of fired 0DTE alerts replayed on logged Schwab marks (ask in, bid out, settlement at intrinsic). Fires without marks are ungraded and excluded.",
-        buckets: getOptionLedgerSummary().map((b) => {
+        feePerContract: fee,
+        note: "Plan replay (T1 / stop / -20% / settle) of fired 0DTE alerts on logged Schwab marks: ask in, bid out, PM settlement at intrinsic. " +
+          (fee > 0 ? `Returns net of $${fee.toFixed(2)} per contract per side.` : "Returns before fees (pass ?fee= for net).") +
+          " Fires without marks are ungraded and excluded.",
+        buckets: getOptionLedgerSummary(Date.now(), fee).map(({ returns: _r, ...b }) => {
           const w = wilsonInterval(b.wins, b.n);
           return { ...b, winRate: b.n > 0 ? b.wins / b.n : null, wilsonLo: b.n > 0 ? w.lo : null, wilsonHi: b.n > 0 ? w.hi : null };
         }),

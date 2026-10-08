@@ -138,8 +138,9 @@ function watchedAlerts(now: number): Array<{ alertId: string; strike: number; is
 }
 
 /**
- * Log the current Schwab quote of every fired alert's contract. Expiry must
- * match the tracker's chain (0DTE) when the alert recorded one. Fail-soft.
+ * Log the current Schwab quote of every fired alert's contract. The alert's
+ * logged expiry must equal the tracker chain's expiry; alerts without one are
+ * never matched (their grade stays "no_marks_logged"). Fail-soft.
  */
 export function recordOdteOptionMarks(args: {
   expiryISO: string;
@@ -157,7 +158,8 @@ export function recordOdteOptionMarks(args: {
     const stmt = sqlite.prepare(`INSERT OR IGNORE INTO odte_option_marks (alert_id, ts, bid, ask, mid, underlying, source)
                                  VALUES (?, ?, ?, ?, ?, ?, ?)`);
     for (const w of watch) {
-      if (w.expiry && args.expiryISO && w.expiry !== args.expiryISO) continue;
+      // Expiry is required: a strike/side match on a different expiry is a different contract.
+      if (!w.expiry || !args.expiryISO || w.expiry !== args.expiryISO) continue;
       const q = args.quotes.find((x) => Math.abs(x.strike - w.strike) < 1e-6 && (x.side === "call") === w.isCall);
       if (!q) continue;
       const bid = q.bid != null && Number.isFinite(q.bid) && q.bid >= 0 ? q.bid : null;
