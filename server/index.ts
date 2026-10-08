@@ -15,6 +15,10 @@ import {
   makeSelfCallFetch,
   healthPayload,
   formatRequestLog,
+  resolveBindHost,
+  gateMode,
+  gateWarnings,
+  newInternalKey,
 } from "./accessGate";
 
 // Global safety nets — do NOT let a stray promise reject or exception kill the
@@ -77,30 +81,35 @@ app.use((req, res, next) => {
 // Extra origins: BATCAVE_ALLOWED_ORIGINS="https://a.example,https://b.example".
 app.use("/api", makeCorsMiddleware(parseAllowedOrigins(process.env.BATCAVE_ALLOWED_ORIGINS)));
 
-// Optional shared access key. When BATCAVE_ACCESS_KEY is set, every /api call
-// except /api/health must send it in the x-batcave-key header. Unset = open
-// (previous behavior). Set it on any publicly reachable deployment.
+// Shared access key. When BATCAVE_ACCESS_KEY is set, every /api call except
+// /api/health must send it in the x-batcave-key header. Unset: open on a
+// loopback bind (local use, as before); on a reachable bind (0.0.0.0, Railway)
+// the gate FAILS CLOSED with 503 unless BATCAVE_ALLOW_OPEN=1 (accessGate.ts).
 const ACCESS_KEY = (process.env.BATCAVE_ACCESS_KEY || "").trim();
+const BIND_HOST = resolveBindHost(process.env);
+const GATE_MODE = gateMode(process.env);
+// Fail closed still lets the engines' own self-calls through, using a random
+// per-process key that never leaves this process.
+const INTERNAL_KEY = GATE_MODE === "closed" ? newInternalKey() : "";
 // The engines call each other over local HTTP (trade environment -> heatseeker,
 // Discord cards -> models, exit brain -> quotes, ...; ~25 call sites). When the
 // gate is on, attach the key to every request this process sends to its own
 // port so those internal calls keep working (ios-capacitor d40db7d).
-if (ACCESS_KEY) {
-  globalThis.fetch = makeSelfCallFetch(globalThis.fetch.bind(globalThis), ACCESS_KEY, process.env.PORT || "5000");
+const SELF_CALL_KEY = ACCESS_KEY || INTERNAL_KEY;
+if (SELF_CALL_KEY) {
+  globalThis.fetch = makeSelfCallFetch(globalThis.fetch.bind(globalThis), SELF_CALL_KEY, process.env.PORT || "5000");
 }
 
 app.get("/api/health", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
-  res.json(healthPayload(!!ACCESS_KEY));
+  res.json(healthPayload(!!ACCESS_KEY, new Date(), GATE_MODE === "closed"));
 });
-app.use("/api", makeAccessGate(ACCESS_KEY));
+app.use("/api", makeAccessGate(ACCESS_KEY, { failClosed: GATE_MODE === "closed", internalKey: INTERNAL_KEY || undefined }));
 app.get("/api/health/auth", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.json({ ok: true });
 });
-if (!ACCESS_KEY) {
-  log("BATCAVE_ACCESS_KEY not set: /api is open. Set it on any reachable deployment.", "security");
-}
+for (const w of gateWarnings(process.env)) log(w, "security");
 
 (async () => {
   await registerRoutes(httpServer, app);
@@ -137,11 +146,8 @@ if (!ACCESS_KEY) {
   // and 0.0.0.0 conflicts with it. Forwarder routes external traffic to localhost.
   // Hosted platforms (Railway etc.) route traffic to the container's external
   // interface, so bind 0.0.0.0 there. HOST overrides either default.
-  const host =
-    process.env.HOST ||
-    (process.env.RAILWAY_ENVIRONMENT || process.env.RENDER || process.env.FLY_APP_NAME
-      ? "0.0.0.0"
-      : "127.0.0.1");
+  // Same resolution the access gate uses (accessGate.resolveBindHost).
+  const host = BIND_HOST;
   httpServer.listen(
     {
       port,

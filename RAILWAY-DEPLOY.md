@@ -42,6 +42,21 @@ SCHWAB_REDIRECT_URI = https://YOUR-RAILWAY-URL/api/schwab/callback
 
 You won't know the Railway URL yet — leave the third one as `https://127.0.0.1` for now, we update it in step 6.
 
+Also add the access key. On Railway the server binds 0.0.0.0, so without a
+key it fails closed: every `/api` call except `/api/health` returns 503.
+
+```
+BATCAVE_ACCESS_KEY = <a long random value, 32+ characters, e.g. from: openssl rand -hex 32>
+```
+
+The web app asks for this key once per browser. Never paste the key into
+chat or commit it. `BATCAVE_ALLOW_OPEN=1` runs the server with no key on
+purpose (anyone with the URL can use it); do not set it on Railway.
+Discord cards are optional: set `PULSE_DISCORD_WEBHOOK` (and the
+`PULSE_DISCORD_*_WEBHOOK` variants listed in `.env.local.example`) to
+`https://discord.com/api/webhooks/...` URLs; unset or malformed values
+disable that card.
+
 ### 5. Generate public URL
 - Click "Settings" tab → "Networking" → "Generate Domain"
 - Railway creates something like `pulse-batcave-production.up.railway.app`

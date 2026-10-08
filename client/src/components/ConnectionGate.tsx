@@ -6,6 +6,7 @@ import {
   getApiBase,
   isNativeApp,
 } from "@/lib/queryClient";
+import { serverUrlProblem } from "@/lib/serverUrl";
 
 /**
  * Connection setup for the Batcave client.
@@ -16,12 +17,15 @@ import {
  *   and sent as the x-batcave-key header. Brokerage secrets never live here.
  */
 
-type Mode = "hidden" | "setup" | "key" | "unreachable";
+type Mode = "hidden" | "setup" | "key" | "unreachable" | "locked";
 
 interface Health {
   ok: boolean;
   authRequired: boolean;
+  /** Server refuses /api until BATCAVE_ACCESS_KEY is configured on it. */
+  locked: boolean;
 }
+
 
 async function probe(base: string, key?: string): Promise<Health | "unreachable" | "no-health"> {
   try {
@@ -32,7 +36,7 @@ async function probe(base: string, key?: string): Promise<Health | "unreachable"
     if (res.status === 404) return "no-health";
     if (!res.ok) return "unreachable";
     const body = await res.json();
-    return { ok: !!body?.ok, authRequired: !!body?.authRequired };
+    return { ok: !!body?.ok, authRequired: !!body?.authRequired, locked: !!body?.locked };
   } catch {
     return "unreachable";
   }
@@ -92,6 +96,7 @@ export default function ConnectionGate() {
         return;
       }
       if (h === "no-health") return; // older server without the health route
+      if (h.locked) { setMode("locked"); return; }
       if (h.authRequired && !read(ACCESS_KEY_STORAGE_KEY)) setMode("key");
     });
     const onAuth = () => {
@@ -113,14 +118,20 @@ export default function ConnectionGate() {
     setBusy(true);
     setStatus("Checking connection...");
     const base = (showServer ? server : getApiBase()).trim().replace(/\/+$/, "");
-    if (showServer && !/^https?:\/\//i.test(base)) {
-      setStatus("Server URL must start with https:// (or http:// on a local network).");
+    const urlProblem = showServer ? serverUrlProblem(base) : null;
+    if (urlProblem) {
+      setStatus(urlProblem);
       setBusy(false);
       return;
     }
     const h = await probe(base, accessKey.trim());
     if (h === "unreachable") {
       setStatus("Server not reachable. Check the URL and that the server is running.");
+      setBusy(false);
+      return;
+    }
+    if (h !== "no-health" && h.locked) {
+      setStatus("The server has no access key configured and refuses requests. Set BATCAVE_ACCESS_KEY on the server.");
       setBusy(false);
       return;
     }
@@ -147,7 +158,9 @@ export default function ConnectionGate() {
       ? "Connect to your Batcave server"
       : mode === "unreachable"
         ? "Batcave server not reachable"
-        : "Access key required";
+        : mode === "locked"
+          ? "Server locked: no access key configured"
+          : "Access key required";
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/95 p-4 font-sans">
@@ -155,9 +168,11 @@ export default function ConnectionGate() {
         <div className="mb-1 text-2xl tracking-wider text-yellow-400" style={{ fontFamily: "'Bebas Neue', Impact, sans-serif" }}>BATCAVE</div>
         <h2 className="mb-3 text-base font-semibold">{title}</h2>
         <p className="mb-4 text-xs leading-relaxed text-zinc-400">
-          {showServer
-            ? "The app runs its data engine on your hosted server. Enter that server's address, for example https://your-app.up.railway.app."
-            : "This server is protected. Enter the access key set as BATCAVE_ACCESS_KEY on the server."}
+          {mode === "locked"
+            ? "This server is reachable from the network but has no BATCAVE_ACCESS_KEY, so it refuses data requests. Set BATCAVE_ACCESS_KEY on the server (or BATCAVE_ALLOW_OPEN=1 to run it open on purpose), restart it, then reload."
+            : showServer
+              ? "The app runs its data engine on your hosted server. Enter that server's address, for example https://your-app.up.railway.app."
+              : "This server is protected. Enter the access key set as BATCAVE_ACCESS_KEY on the server."}
         </p>
         <form
           onSubmit={(e) => {

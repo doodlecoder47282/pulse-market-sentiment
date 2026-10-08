@@ -35,15 +35,20 @@ test("F11.1: no Discord webhook URL is hard-coded in server, client, shared or d
   assert.deepEqual(hits, []);
 });
 
+// Fake webhook-shaped URLs, assembled at runtime (not real credentials).
+const FAKE_HOOK = ["https://discord.com", "/api/", "webhooks/", "0/test-not-a-secret"].join("");
+
 test("F11.1: webhook resolution is env-only, blank = disabled, UOA falls back to whale", async () => {
   const { resolveDiscordWebhook, webhookFromEnv } = await import("../../server/webhookConfig.ts");
-  const url = "https://example.invalid/hook"; // placeholder, not a webhook
+  const url = FAKE_HOOK;
   assert.equal(resolveDiscordWebhook("main", {}), "");
   assert.equal(resolveDiscordWebhook("main", { PULSE_DISCORD_WEBHOOK: "   " }), "");
   assert.equal(resolveDiscordWebhook("main", { PULSE_DISCORD_WEBHOOK: ` ${url} ` }), url);
   assert.equal(resolveDiscordWebhook("model", { PULSE_DISCORD_WEBHOOK: url }), "", "model must not borrow main");
   assert.equal(resolveDiscordWebhook("uoa", { PULSE_DISCORD_WHALE_WEBHOOK: url }), url);
   assert.equal(resolveDiscordWebhook("uoa", { PULSE_DISCORD_UOA_WEBHOOK: url + "2", PULSE_DISCORD_WHALE_WEBHOOK: url }), url + "2");
+  // An invalid UOA value disables the card; it does not silently reroute to whale.
+  assert.equal(resolveDiscordWebhook("uoa", { PULSE_DISCORD_UOA_WEBHOOK: "not a url", PULSE_DISCORD_WHALE_WEBHOOK: url }), "");
   assert.equal(webhookFromEnv("X", { X: undefined }), "");
 });
 
@@ -415,4 +420,130 @@ test("F5.1: no engine or other panel consumes Cosmos output", () => {
     .filter((f) => /\/api\/cosmos/.test(readFileSync(f, "utf8")))
     .map((f) => path.relative(ROOT, f));
   assert.deepEqual(clientReaders, ["client/src/components/CosmosPanel.tsx"]);
+});
+
+// ─── Fix round (WS4 review) ────────────────────────────────────────────────
+
+test("review 1: fail closed on a reachable bind without a key; loopback stays open", async () => {
+  const G = await import("../../server/accessGate.ts");
+  assert.equal(G.resolveBindHost({}), "127.0.0.1");
+  assert.equal(G.resolveBindHost({ RAILWAY_ENVIRONMENT: "production" }), "0.0.0.0");
+  assert.equal(G.resolveBindHost({ HOST: "::1", RAILWAY_ENVIRONMENT: "x" }), "::1");
+  for (const h of ["127.0.0.1", "127.1.2.3", "localhost", "::1", "[::1]"]) assert.equal(G.isLoopbackHost(h), true, h);
+  for (const h of ["0.0.0.0", "::", "10.0.0.5", "192.168.1.2", "example.com"]) assert.equal(G.isLoopbackHost(h), false, h);
+  assert.equal(G.gateMode({}), "open-loopback");
+  assert.equal(G.gateMode({ HOST: "0.0.0.0" }), "closed");
+  assert.equal(G.gateMode({ RAILWAY_ENVIRONMENT: "p" }), "closed");
+  assert.equal(G.gateMode({ RAILWAY_ENVIRONMENT: "p", BATCAVE_ALLOW_OPEN: "1" }), "open-explicit");
+  assert.equal(G.gateMode({ RAILWAY_ENVIRONMENT: "p", BATCAVE_ALLOW_OPEN: "true" }), "closed", "only the exact value 1 opens");
+  assert.equal(G.gateMode({ RAILWAY_ENVIRONMENT: "p", BATCAVE_ACCESS_KEY: "k".repeat(40) }), "key");
+
+  const internal = G.newInternalKey();
+  assert.equal(internal.length, 64);
+  const closed = G.makeAccessGate("", { failClosed: true, internalKey: internal });
+  const c: Captured = { headers: {} };
+  let passed = false;
+  closed({ method: "GET", path: "/models", headers: {} }, fakeRes(c), () => { passed = true; });
+  assert.equal(passed, false);
+  assert.equal(c.status, 503);
+  assert.deepEqual(c.body, { error: "batcave_access_key_required" });
+  // The engines' self-calls carry the per-process internal key and pass.
+  let selfPassed = false;
+  closed({ method: "GET", path: "/heatseeker", headers: { "x-batcave-key": internal } }, fakeRes({ headers: {} }), () => { selfPassed = true; });
+  assert.equal(selfPassed, true);
+  // Loopback, no key: open as before.
+  let openPassed = false;
+  G.makeAccessGate("", { failClosed: false })({ method: "GET", path: "/models", headers: {} }, fakeRes({ headers: {} }), () => { openPassed = true; });
+  assert.equal(openPassed, true);
+  assert.equal(G.healthPayload(false, new Date(0), true).locked, true);
+  // /api/health is registered before the gate in server/index.ts.
+  const idx = readFileSync(path.join(ROOT, "server/index.ts"), "utf8");
+  assert.ok(idx.indexOf('app.get("/api/health"') < idx.indexOf('app.use("/api", makeAccessGate('));
+  const envEx = readFileSync(path.join(ROOT, ".env.local.example"), "utf8");
+  assert.match(envEx, /^BATCAVE_ALLOW_OPEN=$/m);
+});
+
+test("review 3: short-key boot warning and per-IP slowdown on repeated 401s", async () => {
+  const G = await import("../../server/accessGate.ts");
+  const w = G.gateWarnings({ BATCAVE_ACCESS_KEY: "short-key" });
+  assert.equal(w.length, 1);
+  assert.match(w[0], /shorter than 32/);
+  assert.doesNotMatch(w[0], /short-key/, "warning never echoes the key");
+  assert.deepEqual(G.gateWarnings({ BATCAVE_ACCESS_KEY: "x".repeat(32) }), []);
+  // Delay schedule: 5 free failures, then 250, 500, 1000 ... capped at 8000 ms.
+  assert.deepEqual([1, 5, 6, 7, 8, 11, 30].map(G.failureDelayMs), [0, 0, 250, 500, 1000, 8000, 8000]);
+
+  const key = "k".repeat(40);
+  let t = 0;
+  const delays: number[] = [];
+  const gate = G.makeAccessGate(key, {
+    tracker: new G.FailureTracker(),
+    now: () => t,
+    schedule: (fn, ms) => { delays.push(ms); fn(); },
+  });
+  const hit = (k: string | undefined, ip: string) => {
+    const c: Captured = { headers: {} };
+    let passed = false;
+    gate({ method: "GET", path: "/x", headers: { "x-batcave-key": k }, ip }, fakeRes(c), () => { passed = true; });
+    return { c, passed };
+  };
+  for (let i = 0; i < 5; i++) assert.equal(hit("bad", "1.1.1.1").c.status, 401);
+  assert.deepEqual(delays, [], "first five failures are not delayed");
+  assert.equal(hit("bad", "1.1.1.1").c.status, 401);
+  assert.deepEqual(delays, [250]);
+  assert.equal(hit("bad", "2.2.2.2").c.status, 401, "other IPs are not slowed");
+  assert.deepEqual(delays, [250]);
+  assert.equal(hit(key, "1.1.1.1").passed, true, "a correct key is never delayed");
+  hit("bad", "1.1.1.1");
+  assert.deepEqual(delays, [250], "success clears the IP's failures");
+  t += G.FAIL_WINDOW_MS + 1;
+  for (let i = 0; i < 6; i++) hit("bad", "2.2.2.2");
+  assert.deepEqual(delays, [250, 250], "window resets after 10 minutes");
+});
+
+test("review 2: webhook values are validated; errors are logged without the URL", async () => {
+  const W = await import("../../server/webhookConfig.ts");
+  assert.equal(W.isValidDiscordWebhookUrl(FAKE_HOOK), true);
+  assert.equal(W.isValidDiscordWebhookUrl(FAKE_HOOK.replace("discord.com", "discordapp.com")), true);
+  for (const bad of [
+    "not a url",
+    FAKE_HOOK.replace("https:", "http:"),
+    FAKE_HOOK.replace("discord.com", "discord.com.evil.example"),
+    FAKE_HOOK.replace("discord.com", "evil.example"),
+    FAKE_HOOK.replace("https://", "https://user:pw@"),
+    FAKE_HOOK.replace("/api/webhooks/", "/other/"),
+  ]) assert.equal(W.isValidDiscordWebhookUrl(bad), false, bad);
+
+  W._resetWebhookWarnings();
+  const logs: string[] = [];
+  const secretish = "https://evil.example/" + "x".repeat(20);
+  assert.equal(W.webhookOrWarn("main", "card", { PULSE_DISCORD_WEBHOOK: secretish }, (m) => logs.push(m)), "");
+  assert.equal(W.webhookOrWarn("main", "card", { PULSE_DISCORD_WEBHOOK: secretish }, (m) => logs.push(m)), "");
+  assert.equal(logs.length, 1, "warned once");
+  assert.match(logs[0], /PULSE_DISCORD_WEBHOOK is not a valid/);
+  assert.doesNotMatch(logs[0], /evil\.example|xxxx/);
+  assert.equal(W.webhookOrWarn("model", "m", { PULSE_DISCORD_MODEL_WEBHOOK: FAKE_HOOK }), FAKE_HOOK);
+
+  // A fetch-style error whose message contains the URL is summarized without it.
+  const err = Object.assign(new TypeError(`fetch failed ${FAKE_HOOK}`), { cause: { code: "ECONNRESET" } });
+  assert.equal(W.safeErrorSummary(err), "TypeError (ECONNRESET)");
+  assert.equal(W.safeErrorSummary("boom"), "Error");
+  // No send site logs e.message any more.
+  for (const f of ["discord.ts", "calibrationCard.ts", "discordBatcaveCard.ts", "discordFlowCard.ts", "discordUoaCard.ts"]) {
+    const src = readFileSync(path.join(ROOT, "server", f), "utf8");
+    assert.doesNotMatch(src, /(webhook|\$\{ticker\}|discordUoaCard\]) failed: \$\{e\?\.message/, f);
+  }
+});
+
+test("review 4: http:// server URLs only for loopback or private-network hosts", async () => {
+  const { serverUrlProblem, isPrivateOrLoopbackHost } = await import("../../client/src/lib/serverUrl.ts");
+  for (const ok of ["https://x.up.railway.app", "http://localhost:5000", "http://127.0.0.1:5000", "http://192.168.1.20:5000",
+    "http://10.0.0.2", "http://172.16.0.1", "http://172.31.255.255", "http://[::1]:5000", "http://[fd12::1]", "http://batcave.local"]) {
+    assert.equal(serverUrlProblem(ok), null, ok);
+  }
+  for (const bad of ["http://x.up.railway.app", "http://8.8.8.8", "http://172.32.0.1", "http://192.169.0.1", "ftp://host", "nonsense"]) {
+    assert.notEqual(serverUrlProblem(bad), null, bad);
+  }
+  assert.equal(isPrivateOrLoopbackHost("169.254.1.1"), true);
+  assert.equal(isPrivateOrLoopbackHost("11.0.0.1"), false);
 });
