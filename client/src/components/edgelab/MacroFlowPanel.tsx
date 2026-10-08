@@ -18,9 +18,9 @@ interface FredObservation {
 interface CotSnapshotRow {
   market: string;
   reportDate: string;
-  commercialNet: number;
-  nonCommercialNet: number;
-  oi: number;
+  commercialNet: number | null;
+  nonCommercialNet: number | null;
+  oi: number | null;
   nonCommercialPctile: number | null;
   weekChangeNonComm: number | null;
   bias: "spec-extreme-long" | "spec-extreme-short" | "neutral" | "tilting-long" | "tilting-short";
@@ -129,13 +129,13 @@ export default function MacroFlowPanel() {
                   <tr key={r.market} className="border-b border-border/40" data-testid={`row-cot-${r.market}`}>
                     <td className="py-1 pr-2 font-mono font-semibold">{r.market}</td>
                     <td className="py-1 pr-2 text-muted-foreground font-mono">{r.reportDate}</td>
-                    <td className={`py-1 pr-2 text-right font-mono ${r.nonCommercialNet >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
-                      {r.nonCommercialNet.toLocaleString()}
+                    <td className={`py-1 pr-2 text-right font-mono ${r.nonCommercialNet == null ? "text-muted-foreground" : r.nonCommercialNet >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                      {r.nonCommercialNet == null ? "—" : r.nonCommercialNet.toLocaleString()}
                     </td>
-                    <td className={`py-1 pr-2 text-right font-mono ${r.commercialNet >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
-                      {r.commercialNet.toLocaleString()}
+                    <td className={`py-1 pr-2 text-right font-mono ${r.commercialNet == null ? "text-muted-foreground" : r.commercialNet >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                      {r.commercialNet == null ? "—" : r.commercialNet.toLocaleString()}
                     </td>
-                    <td className="py-1 pr-2 text-right font-mono text-muted-foreground">{r.oi.toLocaleString()}</td>
+                    <td className="py-1 pr-2 text-right font-mono text-muted-foreground">{r.oi == null ? "—" : r.oi.toLocaleString()}</td>
                     <td className="py-1 pr-2 text-right font-mono">{r.nonCommercialPctile == null ? "—" : `${r.nonCommercialPctile.toFixed(0)}%`}</td>
                     <td className={`py-1 pr-2 text-right font-mono ${(r.weekChangeNonComm ?? 0) >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
                       {r.weekChangeNonComm == null ? "—" : r.weekChangeNonComm.toLocaleString()}
