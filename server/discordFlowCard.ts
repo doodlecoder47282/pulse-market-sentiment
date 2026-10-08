@@ -11,6 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { postToDiscord } from "./discord";
+import { safeErrorSummary } from "./webhookConfig";
 import type { WhaleHit } from "./flowAlertEngine";
 import { getFlowConfig } from "./flowConfig";
 import { HEAVY_CONTRACT_NOTE } from "@shared/flowLabels";
@@ -105,7 +106,7 @@ export async function postWhaleFlowAlert(
       }],
     }, "whale");
   } catch (e: any) {
-    console.warn(`[discordFlowCard] post ${ticker} failed: ${e?.message ?? e}`);
+    console.warn(`[discordFlowCard] post ${ticker} failed: ${safeErrorSummary(e)}`);
     return false;
   }
 }

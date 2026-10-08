@@ -16,9 +16,8 @@
 // We use one embed per card.
 
 import {
-  resolveDiscordWebhook,
-  warnWebhookDisabledOnce,
-  DISCORD_CHANNEL_ENV,
+  webhookOrWarn,
+  safeErrorSummary,
   type DiscordChannel,
 } from "./webhookConfig";
 
@@ -64,11 +63,8 @@ export type { DiscordChannel } from "./webhookConfig";
 
 export async function postToDiscord(payload: DiscordPayload, channel: DiscordChannel = "main"): Promise<boolean> {
   const tag = channel === "main" ? "discord" : `discord:${channel}`;
-  const url = resolveDiscordWebhook(channel);
-  if (!url) {
-    warnWebhookDisabledOnce(tag, DISCORD_CHANNEL_ENV[channel]);
-    return false;
-  }
+  const url = webhookOrWarn(channel, tag);
+  if (!url) return false;
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -82,7 +78,8 @@ export async function postToDiscord(payload: DiscordPayload, channel: DiscordCha
     }
     return true;
   } catch (e: any) {
-    console.warn(`[${tag}] webhook failed: ${e?.message ?? e}`);
+    // Name and cause code only: the message can contain the webhook URL.
+    console.warn(`[${tag}] webhook failed: ${safeErrorSummary(e)}`);
     return false;
   }
 }

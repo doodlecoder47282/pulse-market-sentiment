@@ -29,7 +29,7 @@
 import { rollingBrier, gradeBrier, beatsTrivial, recentForecastProbs } from "./calibration";
 import { resolutionScore, gradeResolution, betaBinomialCI } from "./stats";
 import { watchdogStatus } from "./cusumWatchdog";
-import { resolveDiscordWebhook, warnWebhookDisabledOnce, DISCORD_CHANNEL_ENV } from "./webhookConfig";
+import { webhookOrWarn, safeErrorSummary } from "./webhookConfig";
 
 // Main Batcave channel, from PULSE_DISCORD_WEBHOOK only (no hard-coded fallback).
 // Resolved at send time; unset = card disabled, logged once.
@@ -188,11 +188,8 @@ export async function postCalibrationCard(days: number = 7): Promise<{
 }
 
 async function sendWebhook(content: string): Promise<boolean> {
-  const url = resolveDiscordWebhook("main");
-  if (!url) {
-    warnWebhookDisabledOnce("calibrationCard", DISCORD_CHANNEL_ENV.main);
-    return false;
-  }
+  const url = webhookOrWarn("main", "calibrationCard");
+  if (!url) return false;
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -206,7 +203,7 @@ async function sendWebhook(content: string): Promise<boolean> {
     }
     return true;
   } catch (e: any) {
-    console.warn(`[calibrationCard] webhook failed: ${e?.message ?? e}`);
+    console.warn(`[calibrationCard] webhook failed: ${safeErrorSummary(e)}`);
     return false;
   }
 }

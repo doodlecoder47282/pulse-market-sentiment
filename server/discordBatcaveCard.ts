@@ -35,7 +35,7 @@ import { recordPrediction } from "./calibration";
 import { chainAbove, chainBelow, playbookCopy } from "./levelPlaybook";
 import { computeRealtimeTargets } from "./realtimeTargets";
 import { getTodayEventContext } from "./volCalendar";
-import { resolveDiscordWebhook, warnWebhookDisabledOnce, DISCORD_CHANNEL_ENV } from "./webhookConfig";
+import { webhookOrWarn, safeErrorSummary } from "./webhookConfig";
 
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -875,11 +875,8 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
   if (opts?.dryRun) {
     return { ok: true, preview: final };
   }
-  const webhookUrl = resolveDiscordWebhook("model");
-  if (!webhookUrl) {
-    warnWebhookDisabledOnce("discord:model", DISCORD_CHANNEL_ENV.model);
-    return { ok: false, preview: final };
-  }
+  const webhookUrl = webhookOrWarn("model", "discord:model");
+  if (!webhookUrl) return { ok: false, preview: final };
   try {
     const res = await fetch(webhookUrl, {
       method: "POST",
@@ -892,7 +889,7 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
       console.warn(`[discord:model] batcave card webhook ${res.status}: ${txt.slice(0, 200)}`);
     }
   } catch (e: any) {
-    console.warn(`[discord:model] batcave card webhook failed: ${e?.message ?? e}`);
+    console.warn(`[discord:model] batcave card webhook failed: ${safeErrorSummary(e)}`);
   }
 
   return { ok, preview: final };
