@@ -29,6 +29,8 @@ type Mag7Response = {
   spyChange: number | null;
   alphaVsSpy: number | null;
   breadth: number;
+  /** Members with a known day change (breadth denominator); absent on old payloads */
+  breadthN?: number;
   eqWt4w: number | null;
 };
 
@@ -83,6 +85,10 @@ function rsiTag(rsi: number | null) {
 
 // -------- Breadth bar (shared) --------
 function BreadthBar({ breadth, count }: { breadth: number; count: number }) {
+  // No member has a known day change: show "unavailable", not 0 up / 0 down.
+  if (count <= 0) {
+    return <span className="font-mono text-[10px] text-muted-foreground">breadth unavailable</span>;
+  }
   const up = Math.round(breadth * count);
   const down = count - up;
   return (
@@ -165,7 +171,7 @@ export default function Mag7Panel() {
 
         <div className="ml-auto flex items-center gap-2">
           <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Breadth</span>
-          <BreadthBar breadth={data.breadth} count={data.members.length} />
+          <BreadthBar breadth={data.breadth} count={data.breadthN ?? data.members.length} />
         </div>
       </div>
 
@@ -257,7 +263,7 @@ export function Mag7Strip() {
       <span className={`font-mono tabular-nums ${alphaUp ? "text-emerald-400" : "text-rose-400"}`}>
         {formatPct(data.alphaVsSpy)}
       </span>
-      <BreadthBar breadth={data.breadth} count={data.members.length} />
+      <BreadthBar breadth={data.breadth} count={data.breadthN ?? data.members.length} />
       <div className="ml-auto flex items-center gap-1.5">
         {data.members.map((m) => {
           const up = (m.changePct ?? 0) > 0;

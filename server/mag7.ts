@@ -4,6 +4,7 @@
 // Pulls from Schwab (via quotes.ts) in parallel; matches the macro.ts caching pattern.
 
 import { fetchIntraday, fetchDailyCloses } from "./quotes";
+import { prevCloseFromDailyBars, dailyBarSessionDate, dayChange } from "./dayChange";
 
 export type Mag7Member = {
   symbol: string;
@@ -28,8 +29,12 @@ export type Mag7Response = {
   spyChange: number | null;
   /** Mag7 - SPY (>0 = Mag7 leading, <0 = broad market leading) */
   alphaVsSpy: number | null;
-  /** % of Mag7 members up on day (0..1) */
+  /** Share of members with a known day change that are up (0..1); 0 when breadthN = 0 */
   breadth: number;
+  /** Members with a known day change (the breadth denominator) */
+  breadthN: number;
+  /** Members up on the day */
+  advancers: number;
   /** Equal-weight 4W return */
   eqWt4w: number | null;
 };
@@ -74,9 +79,17 @@ async function fetchMember(def: { symbol: string; name: string }): Promise<Mag7M
       fetchDailyCloses(def.symbol, 60).catch(() => []),
     ]);
     const closes: number[] = (daily || []).map((d) => d.c).filter((c) => c != null && isFinite(c));
-    const price = intra?.price ?? (closes.length ? closes[closes.length - 1] : null);
-    const prevClose = intra?.prevClose ?? (closes.length >= 2 ? closes[closes.length - 2] : null);
-    const changePct = price != null && prevClose ? ((price - prevClose) / prevClose) * 100 : null;
+    // Day change vs the prior session close (server/dayChange.ts). If the
+    // intraday series is missing, fall back to the latest daily bar and the
+    // daily bar dated before it -- never to an arbitrary earlier bar.
+    let price: number | null = intra?.price ?? null;
+    let prevClose: number | null = intra?.price != null ? intra.prevClose : null;
+    if (price == null && daily && daily.length) {
+      const lastBar = daily[daily.length - 1];
+      price = lastBar.c;
+      prevClose = prevCloseFromDailyBars(daily, dailyBarSessionDate(lastBar.t))?.close ?? null;
+    }
+    const { changePct } = dayChange(price, prevClose);
     // 4W return = latest vs. close ~20 trading days ago
     let return4w: number | null = null;
     if (closes.length >= 21 && price != null) {
@@ -107,13 +120,17 @@ export async function buildMag7Snapshot(): Promise<Mag7Response> {
 
   const spyPrice = spyIntra?.price ?? null;
   const spyPrev = spyIntra?.prevClose ?? null;
-  const spyChange = spyPrice != null && spyPrev ? ((spyPrice - spyPrev) / spyPrev) * 100 : null;
+  const spyChange = dayChange(spyPrice, spyPrev).changePct;
 
   // Aggregates
   const dayChanges = members.map((m) => m.changePct).filter((x): x is number => x != null);
   const eqWtChange = dayChanges.length ? dayChanges.reduce((a, b) => a + b, 0) / dayChanges.length : null;
   const alphaVsSpy = eqWtChange != null && spyChange != null ? eqWtChange - spyChange : null;
-  const breadth = members.length ? members.filter((m) => (m.changePct ?? 0) > 0).length / members.length : 0;
+  // Breadth over members with a known day change only: a member whose change
+  // could not be computed is missing, not a decliner.
+  const breadthN = dayChanges.length;
+  const advancers = dayChanges.filter((x) => x > 0).length;
+  const breadth = breadthN ? advancers / breadthN : 0;
   const ret4wVals = members.map((m) => m.return4w).filter((x): x is number => x != null);
   const eqWt4w = ret4wVals.length ? ret4wVals.reduce((a, b) => a + b, 0) / ret4wVals.length : null;
 
@@ -124,6 +141,8 @@ export async function buildMag7Snapshot(): Promise<Mag7Response> {
     spyChange,
     alphaVsSpy,
     breadth,
+    breadthN,
+    advancers,
     eqWt4w,
   };
 }

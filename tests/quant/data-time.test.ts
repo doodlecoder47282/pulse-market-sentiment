@@ -14,6 +14,8 @@ import {
 } from "../../server/timeToExpiry";
 import { bsPrice } from "../../server/greeks";
 import { buildChainAudit } from "../../server/chainAudit";
+import { resolvePrevClose, prevCloseFromDailyBars, dailyBarSessionDate, dayChange } from "../../server/dayChange";
+import { aggregateCandles } from "../../server/candleAggregate";
 
 const ms = (iso: string) => Date.parse(iso);
 
@@ -217,4 +219,69 @@ test("chainAudit: settled contracts are dropped (AM SPX after the open, 0DTE aft
   const after = buildChainAudit(chain, S, ms("2026-10-16T16:05:00-04:00"));
   assert.equal(after.contractsProcessed, 0);
   assert.equal(after.vanna.profile.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Day change from the prior session close (finding 1.2).
+// Hand example: SPY prior close 650.00, last 656.50 -> change +6.50 $/share, +1.00%.
+// ---------------------------------------------------------------------------
+
+
+// Daily bars stamped at midnight Central (Schwab), epoch seconds.
+const dailyBar = (date: string, c: number) => ({ t: Date.parse(`${date}T00:00:00-05:00`) / 1000, c });
+const DAILY = [dailyBar("2026-10-05", 640), dailyBar("2026-10-06", 645), dailyBar("2026-10-07", 650), dailyBar("2026-10-08", 656.5)];
+
+test("dayChange: quote closePrice for a price from today's session", () => {
+  const r = resolvePrevClose({
+    priceSessionDate: "2026-10-08", todayEt: "2026-10-08", prevTradingDate: "2026-10-07",
+    quote: { closePrice: 650, lastPrice: 656.5, netChange: 6.5 }, dailyBars: DAILY,
+  });
+  assert.equal(r.prevClose, 650);
+  assert.equal(r.source, "schwab_quote_close");
+  const d = dayChange(656.5, r.prevClose);
+  assert.equal(d.change, 6.5);
+  assert.ok(Math.abs((d.changePct ?? 0) - 1.0) < 1e-12);
+  // closePrice missing: last - netChange (Schwab's own definition).
+  const r2 = resolvePrevClose({ priceSessionDate: "2026-10-08", todayEt: "2026-10-08", quote: { lastPrice: 656.5, netChange: 6.5 } });
+  assert.equal(r2.prevClose, 650);
+  assert.equal(r2.source, "schwab_quote_net_change");
+});
+
+test("dayChange: price from an earlier session uses the daily bar before that session", () => {
+  // Saturday: last price is Thursday's (10-08) close; prior close is 10-07, not the quote.
+  const r = resolvePrevClose({
+    priceSessionDate: "2026-10-08", todayEt: "2026-10-10",
+    quote: { closePrice: 656.5, lastPrice: 656.5, netChange: 0 }, dailyBars: DAILY,
+  });
+  assert.equal(r.prevClose, 650);
+  assert.equal(r.source, "daily_bar");
+  assert.equal(r.prevCloseDate, "2026-10-07");
+});
+
+test("dayChange: nothing honest available -> null, never a first-bar or previous-candle close", () => {
+  const r = resolvePrevClose({ priceSessionDate: "2026-10-08", todayEt: "2026-10-08", quote: null, dailyBars: [] });
+  assert.equal(r.prevClose, null);
+  assert.equal(r.source, "unavailable");
+  assert.deepEqual(dayChange(656.5, null), { change: null, changePct: null });
+});
+
+test("dayChange: daily-bar dating is robust to midnight CT, ET or UTC stamps", () => {
+  for (const off of ["-05:00", "-04:00", "Z"]) {
+    assert.equal(dailyBarSessionDate(Date.parse(`2026-10-08T00:00:00${off}`) / 1000), "2026-10-08", off);
+  }
+  assert.equal(prevCloseFromDailyBars(DAILY, "2026-10-08")?.close, 650);
+});
+
+test("candles: 2m from 1m and 60m from 30m, anchored at 09:30 ET", () => {
+  const t0 = Date.parse("2026-10-08T09:30:00-04:00") / 1000;
+  const ones = [0, 1, 2, 3, 4].map((i) => ({ t: t0 + i * 60, o: 100 + i, h: 101 + i, l: 99 + i, c: 100.5 + i, v: 10 }));
+  const twos = aggregateCandles(ones, 2);
+  assert.equal(twos.length, 3);
+  assert.deepEqual(twos[0], { t: t0, o: 100, h: 102, l: 99, c: 101.5, v: 20 });
+  assert.deepEqual(twos[2], { t: t0 + 240, o: 104, h: 105, l: 103, c: 104.5, v: 10 });
+  const thirties = [0, 1, 2, 3].map((i) => ({ t: t0 + i * 1800, o: 1, h: 2 + i, l: 0.5, c: 1 + i, v: null }));
+  const hours = aggregateCandles(thirties, 60);
+  assert.deepEqual(hours.map((h) => h.t), [t0, t0 + 3600]); // 09:30, 10:30
+  assert.equal(hours[1].h, 5);
+  assert.equal(hours[1].v, null);
 });

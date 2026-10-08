@@ -469,6 +469,10 @@ export type NormalizedQuote = {
   ask: number | null;
   volume: number | null;
   source: "schwab";
+  /** Schwab quote closePrice: the previous regular session's close ($/share or index pts). */
+  prevClose?: number | null;
+  /** Schwab quoteTime (epoch ms), when provided. */
+  quoteTimeMs?: number | null;
 };
 
 /** Normalize legacy `.X` suffix on cash-index symbols. Schwab requires `$VIX`, `$SPX`,
@@ -521,6 +525,8 @@ export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
           ask: qd.askPrice ?? null,
           volume: qd.totalVolume ?? null,
           source: "schwab",
+          prevClose: typeof qd.closePrice === "number" && qd.closePrice > 0 ? qd.closePrice : null,
+          quoteTimeMs: typeof qd.quoteTime === "number" ? qd.quoteTime : (typeof qd.tradeTime === "number" ? qd.tradeTime : null),
         });
       }
       return results;
