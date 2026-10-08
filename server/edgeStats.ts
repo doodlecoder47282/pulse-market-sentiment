@@ -5,6 +5,7 @@
 import { db } from "./storage";
 import { predictionOutcomes } from "@shared/schema";
 import { and, eq, gte, lte, sql } from "drizzle-orm";
+import { reliabilityCurve, wilsonInterval, type ReliabilityReport } from "./stats";
 
 export interface EdgeStats {
   asOf: number;
@@ -37,7 +38,15 @@ interface RegimeCallEdge {
   overallHitRate: number;
   byConfidenceBucket: { bucket: string; n: number; hitRate: number }[];
   byRegime: { regime: string; n: number; hitRate: number }[];
-  calibration: { predictedProb: number; actualHitRate: number; n: number }[];
+  // predictedProb = mean predicted probability in the bucket (bucket midpoint
+  // when empty). wilsonLo/Hi = Wilson 95% interval of the hit rate; tested =
+  // n ≥ 10; inInterval = predicted inside that interval (null if untested).
+  calibration: {
+    predictedProb: number; actualHitRate: number; n: number;
+    hits?: number; wilsonLo?: number; wilsonHi?: number; tested?: boolean; inInterval?: boolean | null;
+  }[];
+  // Stated calibration test on the same (topProbability, hit30) pairs.
+  reliability?: ReliabilityReport;
 }
 
 export interface ThresholdSuggestion {
@@ -204,17 +213,41 @@ function aggregateRegimeCalls(rows: any[]): RegimeCallEdge {
     { lo: 0.7, hi: 0.85 },
     { lo: 0.85, hi: 1.01 },
   ];
+  // Missing / unparseable topProbability is NaN (excluded), never a 0% forecast.
+  const topProb = (r: (typeof graded)[number]): number => {
+    try {
+      const raw = JSON.parse(r.predictionJson || "{}").topProbability;
+      const p = raw == null ? NaN : Number(raw);
+      return Number.isFinite(p) ? p : NaN;
+    } catch {
+      return NaN;
+    }
+  };
   const calibration = probBuckets.map((b) => {
     const items = graded.filter((r) => {
-      const p = JSON.parse(r.predictionJson || "{}").topProbability ?? 0;
+      const p = topProb(r);
       return p >= b.lo && p < b.hi;
     });
+    const hits = items.filter((r) => r.hit30 === 1).length;
+    const n = items.length;
+    const meanPred = n ? items.reduce((s, r) => s + topProb(r), 0) / n : (b.lo + b.hi) / 2;
+    const w = wilsonInterval(hits, n);
+    const tested = n >= 10;
     return {
-      predictedProb: (b.lo + b.hi) / 2,
-      actualHitRate: items.length ? items.filter((r) => r.hit30 === 1).length / items.length : 0,
-      n: items.length,
+      predictedProb: meanPred,
+      actualHitRate: n ? hits / n : 0,
+      n,
+      hits,
+      wilsonLo: w.lo,
+      wilsonHi: w.hi,
+      tested,
+      inInterval: tested ? meanPred >= w.lo && meanPred <= w.hi : null,
     };
   });
+  const reliability = reliabilityCurve(
+    graded.map(topProb),
+    graded.map((r) => (r.hit30 === 1 ? 1 : 0)),
+  );
 
   return {
     total,
@@ -224,6 +257,7 @@ function aggregateRegimeCalls(rows: any[]): RegimeCallEdge {
     byConfidenceBucket,
     byRegime,
     calibration,
+    reliability,
   };
 }
 

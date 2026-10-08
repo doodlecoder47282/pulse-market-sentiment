@@ -1,18 +1,22 @@
 import EdgeInfo from "@/components/EdgeInfo";
 // client/src/components/models/MLAccuracyCard.tsx
 //
-// Honest, peer-to-peer ML accuracy card for the Models tab.
-// Answers: "is the ML agent actually getting better?"
+// Honest, peer-to-peer accuracy card for the Models tab.
+// Answers: "is the MM matrix getting better?" The graded probabilities are the
+// MM matrix's hand-set priors, not a trained ML model.
 //
 // Pulls /api/ml/accuracy-history which grades every prediction in
 // data/mm-predictions/predictions.jsonl against realized SPX closes.
 //
 // Shows:
-//   - Headline hit rate + Brier with verdict pill (calibrated / mis-calibrated / coin flip)
+//   - Headline hit rate + Brier + Brier skill vs the climatology base rate
+//   - Header pill says "calibrated" ONLY when the server's stated reliability
+//     test passes (stats.reliabilityCurve); a Brier threshold never earns it,
+//     because Brier mixes calibration with sharpness
 //   - Per-call breakdown (bull / bear / pin)
 //   - Rolling windows last7 / last14 / last30 — momentum check
 //   - Sparkline of rolling hit-rate (newest right)
-//   - Calibration table: pUpAvg vs actualUpRate per decile (the truth bucket)
+//   - Reliability curve: predicted vs observed per bin, counts, Wilson 95%
 //
 // No localStorage. Object-form query. Array query key. Touch-friendly.
 
@@ -26,6 +30,23 @@ import { Brain, AlertTriangle, TrendingUp, TrendingDown, Target } from "lucide-r
 type WindowStat = { hitRate: number | null; brier: number | null; n: number };
 type CalibBucket = { bucket: number; pUpAvg: number; actualUpRate: number; n: number };
 type TrailPoint = { ts: number; rollingHitRate: number; brier: number | null };
+type RelBin = {
+  lo: number; hi: number; n: number;
+  meanPred: number | null; observed: number | null;
+  wilsonLo: number | null; wilsonHi: number | null;
+  tested: boolean; inInterval: boolean | null;
+};
+type Reliability = {
+  n: number;
+  bins: RelBin[];
+  brier: number | null;
+  climatologyBrier: number | null;
+  bss: number | null;
+  spiegelhalterZ: number | null;
+  spiegelhalterP: number | null;
+  verdict: "calibrated" | "not calibrated" | "insufficient data";
+  test: { name: string; passed: boolean; reasons: string[] };
+};
 
 type AccuracyResp = {
   totalPredictions: number;
@@ -42,6 +63,8 @@ type AccuracyResp = {
   brierScore: number | null;
   brierN: number;
   calibration: CalibBucket[];
+  reliability?: Reliability;
+  modelKind?: string;
   windows: { last7: WindowStat; last14: WindowStat; last30: WindowStat };
   trail: TrailPoint[];
   oldestPrediction: string | null;
@@ -54,17 +77,58 @@ function pct(x: number | null): string {
   return `${(x * 100).toFixed(0)}%`;
 }
 
-function brierBadge(b: number | null): { label: string; cls: string; desc: string } {
-  if (b == null) return { label: "no data", cls: "border-slate-500/40 text-slate-400", desc: "" };
-  // Brier reference points for binary classifier:
-  //   0.10 = excellent (well-calibrated alpha)
-  //   0.20 = good
-  //   0.25 = coin flip
-  //   0.35+ = miscalibrated
-  if (b < 0.15) return { label: "calibrated", cls: "border-green-500/50 bg-green-500/10 text-green-300", desc: "Brier < 0.15 — sharp probabilities" };
-  if (b < 0.22) return { label: "decent", cls: "border-emerald-500/40 bg-emerald-500/5 text-emerald-300", desc: "Brier < 0.22 — usable edge" };
-  if (b < 0.27) return { label: "coin flip", cls: "border-amber-500/40 bg-amber-500/5 text-amber-300", desc: "Brier ~ 0.25 — no edge over random" };
-  return { label: "mis-calibrated", cls: "border-red-500/50 bg-red-500/10 text-red-300", desc: "Brier > 0.27 — model fighting the tape" };
+// Brier label. Never says "calibrated": that word belongs to the reliability
+// test. The skill comparison is against the ONE trivial forecaster the server
+// uses everywhere (climatology = the realized base rate), not a fixed 0.25.
+function brierBadge(b: number | null, bss: number | null | undefined): { label: string; cls: string } {
+  if (b == null) return { label: "no data", cls: "border-slate-500/40 text-slate-400" };
+  if (bss != null && bss <= 0) return { label: "no skill vs base rate", cls: "border-amber-500/40 bg-amber-500/5 text-amber-300" };
+  if (b < 0.15) return { label: "low brier", cls: "border-green-500/50 bg-green-500/10 text-green-300" };
+  if (b < 0.22) return { label: "decent", cls: "border-emerald-500/40 bg-emerald-500/5 text-emerald-300" };
+  if (b < 0.27) return { label: "coin flip", cls: "border-amber-500/40 bg-amber-500/5 text-amber-300" };
+  return { label: "worse than coin flip", cls: "border-red-500/50 bg-red-500/10 text-red-300" };
+}
+
+function calibrationPill(rel: Reliability | undefined): { label: string; cls: string; title: string } {
+  if (!rel) return { label: "calibration untested", cls: "border-slate-500/40 text-slate-400", title: "no reliability test in this response" };
+  const title = `${rel.test.name}${rel.test.reasons.length ? ` | ${rel.test.reasons.join("; ")}` : " | passed"}`;
+  if (rel.verdict === "calibrated") return { label: "calibrated", cls: "border-green-500/50 bg-green-500/10 text-green-300", title };
+  if (rel.verdict === "not calibrated") return { label: "not calibrated", cls: "border-red-500/50 bg-red-500/10 text-red-300", title };
+  return { label: `calibration untested · n=${rel.n}`, cls: "border-slate-500/40 text-slate-400", title };
+}
+
+// Reliability diagram: predicted (x) vs observed (y) per bin, Wilson 95% bars,
+// dot area ~ count. Dashed diagonal = perfect calibration.
+function ReliabilityDiagram({ rel }: { rel: Reliability }) {
+  const W = 180, H = 120, P = 14;
+  const sx = (v: number) => P + v * (W - 2 * P);
+  const sy = (v: number) => H - P - v * (H - 2 * P);
+  const filled = rel.bins.filter((b) => b.n > 0 && b.meanPred != null && b.observed != null);
+  const maxN = Math.max(1, ...filled.map((b) => b.n));
+  return (
+    <svg width={W} height={H} className="shrink-0 rounded bg-black/40" role="img" aria-label="reliability curve">
+      <line x1={sx(0)} y1={sy(0)} x2={sx(1)} y2={sy(1)} stroke="#475569" strokeWidth={0.6} strokeDasharray="2,3" />
+      <line x1={sx(0)} y1={sy(0)} x2={sx(1)} y2={sy(0)} stroke="#334155" strokeWidth={0.6} />
+      <line x1={sx(0)} y1={sy(0)} x2={sx(0)} y2={sy(1)} stroke="#334155" strokeWidth={0.6} />
+      {filled.map((b) => (
+        <g key={b.lo}>
+          {b.wilsonLo != null && b.wilsonHi != null && (
+            <line x1={sx(b.meanPred!)} x2={sx(b.meanPred!)} y1={sy(b.wilsonLo)} y2={sy(b.wilsonHi)} stroke="#64748b" strokeWidth={1} />
+          )}
+          <circle
+            cx={sx(b.meanPred!)}
+            cy={sy(b.observed!)}
+            r={1.5 + 3.5 * Math.sqrt(b.n / maxN)}
+            fill={b.inInterval === false ? "#f87171" : b.tested ? "#22d3ee" : "#94a3b8"}
+          >
+            <title>{`said ${(b.meanPred! * 100).toFixed(0)}% · got ${(b.observed! * 100).toFixed(0)}% · n=${b.n} · Wilson ${((b.wilsonLo ?? 0) * 100).toFixed(0)}-${((b.wilsonHi ?? 1) * 100).toFixed(0)}%`}</title>
+          </circle>
+        </g>
+      ))}
+      <text x={sx(0.5)} y={H - 2} textAnchor="middle" fontSize={7} fill="#64748b">predicted</text>
+      <text x={3} y={sy(0.5)} fontSize={7} fill="#64748b" transform={`rotate(-90 6 ${sy(0.5)})`}>observed</text>
+    </svg>
+  );
 }
 
 function trendDelta(trail: TrailPoint[]): { delta: number; arrow: "up" | "down" | "flat" } {
@@ -138,7 +202,8 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
     );
   }
 
-  const brier = brierBadge(data.brierScore);
+  const brier = brierBadge(data.brierScore, data.reliability?.bss);
+  const calib = calibrationPill(data.reliability);
   const trend = trendDelta(data.trail);
 
   // Sparkline geometry
@@ -154,15 +219,15 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
         .join(" ")
     : "";
 
-  // Honesty banner — fires when Brier > 0.27 (mis-calibrated). The ML model is
-  // not gaming users with false confidence: it tells you it's currently noise.
+  // Honesty banner — fires when Brier > 0.27 (worse than a constant 50%). The
+  // card does not game users with false confidence: it says it's currently noise.
   const isMisCalibrated = data.brierScore != null && data.brierScore > 0.27;
   const isWeak = data.brierScore != null && data.brierScore > 0.22 && !isMisCalibrated;
 
   return (
     <Card className="border-cyan-500/20 bg-gradient-to-b from-cyan-950/10 to-card">
       <CardContent className="p-4">
-        {/* Honesty banner — only renders when the model is failing calibration */}
+        {/* Honesty banner — only renders when Brier is worse than a coin flip */}
         {isMisCalibrated && (
           <div
             className="mb-3 flex items-start gap-2 rounded-md border border-rose-500/50 bg-rose-500/10 p-3"
@@ -171,10 +236,10 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" />
             <div>
               <div className="text-[11px] font-bold uppercase tracking-wider text-rose-200">
-                model abstaining · mis-calibrated
+                model abstaining · worse than coin flip
               </div>
               <div className="mt-0.5 text-[11px] leading-snug text-rose-100/90">
-                Brier {data.brierScore!.toFixed(3)} · above 0.27 threshold. Treat ML probabilities as noise this regime —
+                Brier {data.brierScore!.toFixed(3)} · above 0.27 threshold. Treat these probabilities as noise this regime —
                 fade or ignore until hit rate recovers. Position size from your own thesis, not from this output.
               </div>
             </div>
@@ -187,8 +252,8 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
           >
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" />
             <div className="text-[11px] leading-snug text-amber-100/90">
-              <strong>weak edge.</strong> Brier {data.brierScore!.toFixed(3)} — usable but barely above coin flip.
-              Quarter-Kelly size at most. Cross-check with positioning + flow before sizing up.
+              <strong>weak edge.</strong> Brier {data.brierScore!.toFixed(3)} — barely better than a coin flip.
+              Do not size from these probabilities. Cross-check with positioning + flow.
             </div>
           </div>
         )}
@@ -198,15 +263,20 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
           <Brain className="h-4 w-4 text-cyan-400" />
           <div>
             <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-cyan-300/80">
-              ML Agent Scorecard
+              MM Matrix Scorecard
               <EdgeInfo id="ml-accuracy" className="h-6 w-6" />
             </div>
             <div className="text-[10px] text-muted-foreground">
-              grades every prediction vs realized closes · honest, no inflation
+              {data.modelKind ?? "MM matrix hand-set priors (not a trained ML model)"} · graded vs realized closes
             </div>
           </div>
-          <Badge variant="outline" className={`ml-auto px-2 py-0.5 text-[10px] ${brier.cls}`}>
-            {brier.label}
+          <Badge
+            variant="outline"
+            className={`ml-auto px-2 py-0.5 text-[10px] ${calib.cls}`}
+            title={calib.title}
+            data-testid="badge-ml-calibration"
+          >
+            {calib.label}
           </Badge>
         </div>
 
@@ -227,7 +297,10 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
               {data.brierScore != null ? data.brierScore.toFixed(3) : "—"}
             </div>
             <div className="text-[9px] text-muted-foreground/70">
-              lower = better · 0.25 = coin flip
+              {brier.label} · lower = better · 0.25 = coin flip
+              {data.reliability?.bss != null && (
+                <> · skill vs base rate {data.reliability.bss >= 0 ? "+" : ""}{(data.reliability.bss * 100).toFixed(0)}%</>
+              )}
             </div>
           </div>
           <div className="rounded border border-border/40 bg-black/30 p-2">
@@ -336,42 +409,60 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
           </div>
         </div>
 
-        {/* Calibration table */}
-        {data.calibration.length > 0 && (
-          <div className="mt-3 rounded border border-border/40 bg-black/30 p-2">
+        {/* Reliability curve: the evidence behind (and shown before) any "calibrated" label */}
+        {data.reliability && data.reliability.n > 0 ? (
+          <div className="mt-3 rounded border border-border/40 bg-black/30 p-2" data-testid="ml-reliability-curve">
             <div className="mb-1 text-[9px] uppercase tracking-wide text-muted-foreground">
-              calibration · model pUp vs realized up-rate per decile
+              reliability · predicted P(up &gt; 0.05%) vs realized per bin · Wilson 95% · one daily call per session (n={data.reliability.n})
             </div>
-            <div className="flex flex-wrap gap-1">
-              {data.calibration.map((c) => {
-                const gap = c.actualUpRate - c.pUpAvg;
-                const tone =
-                  Math.abs(gap) < 10
-                    ? "border-green-500/30 text-green-300"
-                    : Math.abs(gap) < 25
-                      ? "border-amber-500/40 text-amber-300"
-                      : "border-red-500/40 text-red-300";
-                return (
+            <div className="flex flex-wrap items-start gap-2">
+              <ReliabilityDiagram rel={data.reliability} />
+              <div className="flex flex-1 flex-wrap gap-1">
+                {data.reliability.bins.filter((b) => b.n > 0).map((b) => (
                   <div
-                    key={c.bucket}
-                    className={`rounded border ${tone} bg-black/40 px-1.5 py-1 font-mono text-[9px]`}
-                    title={`bucket ${c.bucket * 10}-${(c.bucket + 1) * 10}% pUp · n=${c.n}`}
+                    key={b.lo}
+                    className={`rounded border ${b.inInterval === false ? "border-red-500/40 text-red-300" : b.tested ? "border-green-500/30 text-green-300" : "border-slate-500/30 text-slate-400"} bg-black/40 px-1.5 py-1 font-mono text-[9px]`}
+                    title={b.tested ? "tested bin" : "too few forecasts to test"}
                   >
-                    <div className="text-muted-foreground/80">{c.bucket * 10}-{(c.bucket + 1) * 10}%</div>
-                    <div>said {c.pUpAvg.toFixed(0)}</div>
-                    <div className="opacity-80">got {c.actualUpRate.toFixed(0)}</div>
-                    <div className={`text-[8px] ${gap > 0 ? "text-green-400" : gap < 0 ? "text-red-400" : "text-slate-400"}`}>
-                      {gap >= 0 ? "+" : ""}{gap.toFixed(0)}pp
+                    <div className="text-muted-foreground/80">{Math.round(b.lo * 100)}-{Math.round(b.hi * 100)}%</div>
+                    <div>said {((b.meanPred ?? 0) * 100).toFixed(0)}</div>
+                    <div className="opacity-80">got {((b.observed ?? 0) * 100).toFixed(0)}</div>
+                    <div className="text-[8px] opacity-70">
+                      {((b.wilsonLo ?? 0) * 100).toFixed(0)}-{((b.wilsonHi ?? 1) * 100).toFixed(0)} · n={b.n}
                     </div>
                   </div>
-                );
-              })}
+                ))}
+              </div>
             </div>
-            <div className="mt-1.5 text-[9px] text-muted-foreground/70">
-              {brier.desc || "tight gap = sharp · big gap = mis-calibrated"}
+            <div className="mt-1.5 text-[9px] text-muted-foreground/70" data-testid="text-ml-calibration-test">
+              test: {data.reliability.test.name}.{" "}
+              {data.reliability.spiegelhalterZ != null && (
+                <>Spiegelhalter Z {data.reliability.spiegelhalterZ.toFixed(2)} (p {data.reliability.spiegelhalterP?.toFixed(3)}). </>
+              )}
+              {data.reliability.test.passed ? "passed." : data.reliability.test.reasons.join("; ") + "."}
             </div>
           </div>
-        )}
+        ) : data.calibration.length > 0 ? (
+          <div className="mt-3 rounded border border-border/40 bg-black/30 p-2">
+            <div className="mb-1 text-[9px] uppercase tracking-wide text-muted-foreground">
+              model pUp vs realized up-rate per decile · calibration untested
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {data.calibration.map((c) => (
+                <div
+                  key={c.bucket}
+                  className="rounded border border-slate-500/30 bg-black/40 px-1.5 py-1 font-mono text-[9px] text-slate-300"
+                  title={`bucket ${c.bucket * 10}-${(c.bucket + 1) * 10}% pUp · n=${c.n}`}
+                >
+                  <div className="text-muted-foreground/80">{c.bucket * 10}-{(c.bucket + 1) * 10}%</div>
+                  <div>said {c.pUpAvg.toFixed(0)}</div>
+                  <div className="opacity-80">got {c.actualUpRate.toFixed(0)}</div>
+                  <div className="text-[8px] opacity-70">n={c.n}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

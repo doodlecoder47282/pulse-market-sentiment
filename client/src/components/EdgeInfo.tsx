@@ -93,9 +93,9 @@ const INFO: Record<string, InfoEntry> = {
     edge: "When skew steepens while flow stays call-heavy, someone is buying protection on a rally they expect to continue \u2014 that combination rarely shows up in price yet.",
   },
   "ml-accuracy": {
-    title: "ML Scorecard",
-    what: "The model grades every prediction it ever logged against what actually happened: hit rate, Brier score (calibration), and trend.",
-    how: "Brier under 0.22 = usable. Over 0.27 = the model itself tells you it's noise right now \u2014 the red banner fires automatically.",
+    title: "MM Matrix Scorecard",
+    what: "Grades every MM-matrix prediction it ever logged (hand-set priors, not a trained ML model) against what actually happened: hit rate, Brier score, skill vs the base rate, a reliability curve, and trend.",
+    how: "Brier under 0.22 = usable. Over 0.27 = worse than a coin flip \u2014 the red banner fires automatically. Brier mixes calibration with sharpness, so \"calibrated\" appears only when the reliability curve passes its stated test (100+ graded forecasts, Spiegelhalter Z, every bin with 10+ forecasts inside its Wilson interval).",
     edge: "Knowing when your model is broken is worth more than the model. Most people size up exactly when their signal decays \u2014 this panel stops that.",
   },
   backtest: {
