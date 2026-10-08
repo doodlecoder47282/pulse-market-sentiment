@@ -14,7 +14,7 @@
 
 import type { OptionChainResponse } from "./schwab";
 import { invNormCDF } from "./chainAudit";
-import { cumulativeStrikeFlip, repricedFlipFromChain } from "./gammaProfile";
+import { cumulativeStrikeFlip, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
 
 type Chain = Exclude<OptionChainResponse, { error: string }>;
 
@@ -330,6 +330,8 @@ export function buildHeatseeker(
   const flip = repricedFlipFromChain(chain, spot, {
     expiryKeys: [expKey],
     tYears: () => T,
+    r: FLIP_RATE,
+    q: FLIP_DIV_YIELD,
     lowPct: 1 - windowPct / 100,
     highPct: 1 + windowPct / 100,
     nLevels: 121,

@@ -29,7 +29,7 @@ async function fetchJson(url: string, headers: Record<string, string> = {}): Pro
 }
 import { getAlphaEventsForTicker, type AlphaEvent } from "./alphaNews";
 import { getOptionChain, getQuotes } from "./schwab";
-import { repricedFlipFromChain } from "./gammaProfile";
+import { FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
 
 // ---- Types ----
 
@@ -434,7 +434,7 @@ function buildPerTickerGamma(chain: any, ticker: string): PerTickerGamma | null 
   // 0-45 DTE contracts. null when net dealer gamma never changes sign: the old
   // fallback reported the strike with the smallest running sum as a "flip",
   // which showed a level that does not exist.
-  const zeroGamma: number | null = repricedFlipFromChain(chain, S, { maxDte: 45 }).zeroGamma;
+  const zeroGamma: number | null = repricedFlipFromChain(chain, S, { maxDte: 45, r: FLIP_RATE, q: FLIP_DIV_YIELD }).zeroGamma;
 
   // Max pain — strike that minimizes total option pain (open interest × distance)
   let maxPain: number | null = null;

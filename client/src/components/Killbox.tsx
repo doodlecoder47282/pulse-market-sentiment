@@ -47,7 +47,7 @@ interface ForwardResponse {
 }
 
 const GREEK_LENSES: { key: Greek; label: string; sub: string; unit: string }[] = [
-  { key: "gex", label: "GAMMA", sub: "GEX · $/1pt", unit: "$" },
+  { key: "gex", label: "GAMMA", sub: "GEX · $/1% move", unit: "$" },
   { key: "vanna", label: "VANNA", sub: "∂Δ/∂σ · $/1%vol", unit: "$" },
   { key: "charm", label: "CHARM", sub: "∂Δ/∂t · $/day", unit: "$" },
   { key: "vomma", label: "VOMMA", sub: "∂vega/∂σ · $/1%vol", unit: "$" },

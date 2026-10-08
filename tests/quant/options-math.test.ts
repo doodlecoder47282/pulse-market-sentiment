@@ -374,3 +374,38 @@ test("25-delta IV interpolated in delta space; no bracket -> null", async () => 
   // The old nearest-contract pick returned 0.20 (the 31D put) here.
   assert.equal(ivAtAbsDelta([{ delta: 0.4, iv: 0.2 }, { delta: 0.45, iv: 0.19 }], 0.25), null);
 });
+
+// ─── review fixes (WS1 review of qf-ws2) ────────────────────────────────────
+
+test("dollarGexPerPct: $ per 1% move, x100 contract multiplier (hand-computed)", async () => {
+  const { dollarGexPerPct } = await import("../../server/gammaProfile");
+  // gamma 0.002 per share, 1,000 contracts, SPX 6,600:
+  //   0.002 x 1,000 x 100 x 6,600^2 x 0.01 = 0.002 x 1,000 x 100 x 43,560,000 x 0.01
+  //   = $87,120,000 per 1% move. The pre-fix routes formula (no x100) gave $871,200.
+  assert.equal(dollarGexPerPct(0.002, 1000, 6600), 87_120_000);
+  assert.equal(dollarGexPerPct(0.002, 1000, 6600) / 100, 871_200);
+});
+
+test("rows with a supplied T <= 0 are settled and dropped; tYears sees the contract", async () => {
+  const { buildGammaProfile, rowsFromChain } = await import("../../server/gammaProfile");
+  const live: OptionRow = { type: "C", strike: 100, iv: 0.2, oi: 10, dte: 365, T: 1 };
+  const settled: OptionRow = { type: "P", strike: 100, iv: 0.2, oi: 10, dte: 0, T: 0 };
+  const p = buildGammaProfile([live, settled], 100, { r: 0, q: 0 });
+  assert.equal(p.rowsUsed, 1);
+  assert.ok(Math.abs(p.currentGex - 1984.76) < 0.01); // only the live call (see dollar-gamma test)
+  // AM-settled SPX (settlementType "A") vs PM-settled SPXW in one expiry key:
+  const chain = {
+    callExpDateMap: { "2026-10-16:0": { "6600.0": [
+      { volatility: 15, openInterest: 100, settlementType: "A" },
+      { volatility: 15, openInterest: 200, settlementType: "P" },
+    ] } },
+    putExpDateMap: {},
+  };
+  const seen: string[] = [];
+  const rows = rowsFromChain(chain, {
+    tYears: (_k, _d, c) => { seen.push(c.settlementType); return c.settlementType === "A" ? 0 : 1 / 252; },
+  });
+  assert.deepEqual(seen, ["A", "P"]);
+  const prof = buildGammaProfile(rows, 6600, { r: 0, q: 0 });
+  assert.equal(prof.rowsUsed, 1); // the AM contract (T = 0 after the open) carries no gamma
+});

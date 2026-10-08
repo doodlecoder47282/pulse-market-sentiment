@@ -92,9 +92,35 @@ function toTradingYears(dteCalendar: number): number {
   return tradingDays / 262;
 }
 
-function rowT(row: OptionRow): number {
-  if (row.T != null && Number.isFinite(row.T) && row.T > 0) return row.T;
+/** T for a row: the caller's T when supplied, else the dte convention.
+ *  null = drop the row: a supplied T <= 0 (or non-finite) means the contract
+ *  has settled (e.g. AM-settled SPX after the open), so it carries no gamma. */
+function rowT(row: OptionRow): number | null {
+  if (row.T != null) return Number.isFinite(row.T) && row.T > 0 ? row.T : null;
   return toTradingYears(row.dte);
+}
+
+/**
+ * Rate and dividend yield used by EVERY gamma-flip consumer (passed
+ * explicitly at each call site so they cannot drift apart). These are the
+ * values the Signals snapshot and the Models exposure profile already used:
+ * r = 5% (front-end T-bill level), q = 1.3% (S&P 500 trailing dividend
+ * yield). Gamma is insensitive to both at these horizons; they matter only
+ * for consistency between panels.
+ */
+export const FLIP_RATE = 0.05;
+export const FLIP_DIV_YIELD = 0.013;
+
+/**
+ * Dollar gamma of a position, in $ per 1% move of the underlying:
+ *   gamma (per share, per $1 of spot) x contracts x 100 (shares per contract,
+ *   SPX/SPXW/SPY/XSP/QQQ and US equity options) x S^2 x 0.01.
+ * Derivation: a 1% move dS = 0.01 S changes delta by gamma * 0.01 S per
+ * share; the hedge notional of that delta change is (gamma * 0.01 S) * S per
+ * share, times 100 shares per contract.
+ */
+export function dollarGexPerPct(gamma: number, contracts: number, spot: number, multiplier = 100): number {
+  return gamma * contracts * multiplier * spot * spot * 0.01;
 }
 
 type PricedRow = OptionRow & { T: number; sign: number };
@@ -105,7 +131,7 @@ function netGexAt(rows: PricedRow[], S: number, r: number, q: number): number {
   for (const row of rows) {
     const gamma = bsGamma(S, row.strike, row.iv, row.T, r, q, row.type);
     // dollar-gamma per 1% move: γ · OI · 100 · S² · 0.01
-    total += row.sign * gamma * row.oi * 100 * S * S * 0.01;
+    total += row.sign * dollarGexPerPct(gamma, row.oi, S);
   }
   return total;
 }
@@ -165,8 +191,8 @@ export function buildGammaProfile(
   spot: number,
   opts: { r?: number; q?: number; nLevels?: number; lowPct?: number; highPct?: number } = {},
 ): GammaProfile {
-  const r = opts.r ?? 0.05;
-  const q = opts.q ?? 0.013;
+  const r = opts.r ?? FLIP_RATE;
+  const q = opts.q ?? FLIP_DIV_YIELD;
   const nLevels = Math.max(2, Math.floor(opts.nLevels ?? 60));
   const lowPct = opts.lowPct ?? 0.9;
   const highPct = opts.highPct ?? 1.1;
@@ -176,13 +202,13 @@ export function buildGammaProfile(
   const step = (hi - lo) / (nLevels - 1);
 
   // Pre-compute T per row (doesn't change with spot).
-  const precomputed: PricedRow[] = rows
-    .filter((row) => row.iv > 0 && row.oi > 0 && row.dte >= 0 && Number.isFinite(row.iv) && Number.isFinite(row.strike))
-    .map((row) => ({
-      ...row,
-      T: rowT(row),
-      sign: row.type === "C" ? 1 : -1,
-    }));
+  const precomputed: PricedRow[] = [];
+  for (const row of rows) {
+    if (!(row.iv > 0 && row.oi > 0 && row.dte >= 0 && Number.isFinite(row.iv) && Number.isFinite(row.strike))) continue;
+    const T = rowT(row);
+    if (T == null) continue; // settled contract: no gamma
+    precomputed.push({ ...row, T, sign: row.type === "C" ? 1 : -1 });
+  }
 
   const curve: GammaProfilePoint[] = [];
   for (let i = 0; i < nLevels; i++) {
@@ -258,8 +284,10 @@ export interface ChainRowOptions {
   maxDte?: number;
   /** Position weight per contract (default: open interest). */
   weight?: (contract: any, side: "C" | "P") => number;
-  /** Time to expiry in years for an expiry key; undefined = dte convention. */
-  tYears?: (expKey: string, dte: number) => number | undefined;
+  /** Time to expiry in years; undefined = dte convention, <= 0 = settled
+   *  (row dropped). Gets the contract so a caller can tell AM-settled SPX
+   *  from PM-settled SPXW in the same expiry key (settlementType / symbol). */
+  tYears?: (expKey: string, dte: number, contract: any) => number | undefined;
 }
 
 /** Calendar DTE from a Schwab expiry key "YYYY-MM-DD:N". */
@@ -298,7 +326,7 @@ export function rowsFromChain(chain: ChainMapsLike, opts: ChainRowOptions = {}):
           if (!Number.isFinite(ivPct) || ivPct <= 0 || ivPct >= 500) continue;
           const w = opts.weight ? opts.weight(c, side) : Number(c?.openInterest) || 0;
           if (!Number.isFinite(w) || w <= 0) continue;
-          const T = opts.tYears ? opts.tYears(expKey, dte) : undefined;
+          const T = opts.tYears ? opts.tYears(expKey, dte, c) : undefined;
           rows.push({ type: side, strike, iv: ivPct / 100, oi: w, dte, ...(T != null ? { T } : {}) });
         }
       }

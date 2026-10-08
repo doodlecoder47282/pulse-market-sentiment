@@ -7,7 +7,7 @@
 import { db, schwabTokens } from "./storage";
 import { eq } from "drizzle-orm";
 import { observeQuote } from "./quoteShield";
-import { cumulativeStrikeFlip, repricedFlipFromChain } from "./gammaProfile";
+import { cumulativeStrikeFlip, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
 
 // ─── Credentials from environment (read lazily to avoid import-order issues) ──
 const getClientId = () => process.env.SCHWAB_CLIENT_ID ?? "";
@@ -711,7 +711,7 @@ export function computeGEXFromChain(chain: Exclude<OptionChainResponse, { error:
   // No real spot (underlying.last missing) -> no flip, rather than a flip
   // computed around the placeholder spot of 1.
   const hasSpot = chain.underlying.last != null && chain.underlying.last > 0;
-  const zeroGamma = hasSpot ? repricedFlipFromChain(chain, spotPrice, { maxDte: 45 }).zeroGamma : null;
+  const zeroGamma = hasSpot ? repricedFlipFromChain(chain, spotPrice, { maxDte: 45, r: FLIP_RATE, q: FLIP_DIV_YIELD }).zeroGamma : null;
   const zeroGammaCumulative = cumulativeStrikeFlip(profile);
 
   return {

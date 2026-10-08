@@ -18,7 +18,7 @@
 
 import type { OptionChainResponse } from "./schwab";
 import { etEpochMs } from "./etTime";
-import { repricedFlipFromRows } from "./gammaProfile";
+import { FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromRows } from "./gammaProfile";
 
 // ─── Internal contract shape ──────────────────────────────────────────────────
 
@@ -742,6 +742,7 @@ function computeSingleGEXBucket(contracts: Contract[], spot: number): GEXBucket 
   const zeroGamma = repricedFlipFromRows(
     contracts.map((c) => ({ type: c.side === "call" ? "C" as const : "P" as const, strike: c.strike, iv: c.iv, oi: c.oi, dte: c.dte })),
     spot,
+    { r: FLIP_RATE, q: FLIP_DIV_YIELD },
   ).zeroGamma;
 
   const totalGex = profile.reduce((s, p) => s + p.netGex, 0);

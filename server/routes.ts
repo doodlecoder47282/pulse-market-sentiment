@@ -36,7 +36,7 @@ import { resolutionScore, gradeResolution } from "./stats";
 import { watchdogStatus } from "./cusumWatchdog";
 import { shieldStatus } from "./quoteShield";
 import { computeRND, type CallStrike } from "./breedenLitzenberger";
-import { repricedFlipFromChain } from "./gammaProfile";
+import { dollarGexPerPct, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
 import { fitOUBand, shouldShowOUBand } from "./ouBand";
 import { flagTailEvent } from "./stableTail";
 import { fetchDailyCloses } from "./quotes";
@@ -3515,7 +3515,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
               if (weight <= 0) continue;
 
               const sign = side === "C" ? 1 : -1;
-              cell.gex += sign * gamma * weight * spot * spot * 0.01;
+              // $ per 1% move: gamma x contracts x 100 x S^2 x 0.01 (the x100
+              // contract multiplier was missing, understating GEX 100x).
+              cell.gex += sign * dollarGexPerPct(gamma, weight, spot);
 
               if (sigma > 0 && Math.abs(delta) > 1e-6 && Math.abs(delta) < 1 - 1e-6) {
                 const callDelta = side === "C" ? Math.abs(delta) : 1 - Math.abs(delta);
@@ -3596,6 +3598,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         // weighting as the cells. The old cumulative loop fired on the first
         // strike (cum starts at 0), so it always returned the lowest strike.
         gammaFlip = repricedFlipFromChain(chain, spot, {
+          r: FLIP_RATE,
+          q: FLIP_DIV_YIELD,
           weight: (c: any) => weightMode === "oi" ? (Number(c?.openInterest) || 0)
             : weightMode === "volume" ? (Number(c?.totalVolume) || 0)
             : (Number(c?.openInterest) || 0) + (Number(c?.totalVolume) || 0) * 0.25,
@@ -3726,7 +3730,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
             const delta = Math.abs(rawDelta) > 0 && Math.abs(rawDelta) < 1 ? rawDelta : 0;
             const sigma = ivPct > 0 ? ivPct / 100 : 0;
             const sign = side === "C" ? 1 : -1;
-            if (gamma > 0) { row.gex += sign * gamma * weight * spot * spot * 0.01; validGammaCount++; }
+            // GEX in $ per 1% move (gamma x contracts x 100 x S^2 x 0.01)
+            if (gamma > 0) { row.gex += sign * dollarGexPerPct(gamma, weight, spot); validGammaCount++; }
             if (sigma > 0 && Math.abs(delta) > 1e-6 && Math.abs(delta) < 1 - 1e-6) {
               const callDelta = side === "C" ? Math.abs(delta) : 1 - Math.abs(delta);
               const d1 = invN(callDelta);
@@ -3754,6 +3759,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       // gamma flip: app-wide re-priced definition (gammaProfile.ts) on this
       // expiry, same hybrid weight and the same RTH-minute T as the panel greeks.
       const gammaFlip: number | null = repricedFlipFromChain(chain, spot, {
+        r: FLIP_RATE,
+        q: FLIP_DIV_YIELD,
         expiryKeys: [nearestKey],
         weight: (c: any) => (Number(c?.openInterest) || 0) + (Number(c?.totalVolume) || 0) * 0.25,
         tYears: () => T,
@@ -3787,7 +3794,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const gexValid = validGammaCount >= 10; // need a real greek surface to trust regime/levels
       const regime = !gexValid ? "indeterminate" : netGex >= 0 ? "long_gamma" : "short_gamma";
       const pinPullMax = regime === "long_gamma" && pin != null ? Math.min(0.6, pinMag / totalAbsGex) : 0;
-      const charmNorm = totalAbsGex > 0 ? Math.max(-0.15, Math.min(0.15, netCharm / totalAbsGex)) : 0;
+      // charm/GEX tilt kept on its pre-fix scale: GEX gained the x100 contract
+      // multiplier, the charm aggregate did not, so divide GEX back by 100 to
+      // leave the projected path unchanged.
+      const charmNorm = totalAbsGex > 0 ? Math.max(-0.15, Math.min(0.15, netCharm / (totalAbsGex / 100))) : 0;
       const coneWiden = regime === "short_gamma" ? 1.15 : 1.0;
       const N = 26;
       const path: any[] = [];
@@ -3940,8 +3950,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
               if (weight <= 0) continue;
 
               const sign = side === "C" ? 1 : -1;
-              // GEX: gamma × weight × S² × 0.01 × 100 (per 1% move, $ notional)
-              row.gex += sign * gamma * weight * spot * spot * 0.01;
+              // GEX in $ per 1% move: gamma x contracts x 100 x S^2 x 0.01.
+              // (The comment always said x100; the code had dropped it.)
+              row.gex += sign * dollarGexPerPct(gamma, weight, spot);
 
               if (sigma > 0 && Math.abs(delta) > 1e-6 && Math.abs(delta) < 1 - 1e-6) {
                 // Recover d1 from delta
@@ -3992,6 +4003,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         // weighting as the profile. The old cumulative loop fired on the first
         // strike (cum starts at 0), so it always returned the lowest strike.
         gammaFlip = repricedFlipFromChain(chain, spot, {
+          r: FLIP_RATE,
+          q: FLIP_DIV_YIELD,
           weight: (c: any) => weightMode === "oi" ? (Number(c?.openInterest) || 0)
             : weightMode === "volume" ? (Number(c?.totalVolume) || 0)
             : (Number(c?.openInterest) || 0) + (Number(c?.totalVolume) || 0) * 0.25,
