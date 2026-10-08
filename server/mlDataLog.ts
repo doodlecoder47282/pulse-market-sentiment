@@ -104,7 +104,9 @@ export async function persistSpxMinuteBars(): Promise<number> {
     }
   });
   tx(candles);
-  _lastBarsPersist = Date.now();
+  // An empty answer (token missing, rate-limit throttle) is not a successful
+  // persist: leave the marker so the next tick retries.
+  if (candles.length > 0) _lastBarsPersist = Date.now();
   return n;
 }
 
@@ -149,8 +151,9 @@ export function scorePendingForecasts(now = Date.now()): { scored: number; noPri
   for (const p of pending) {
     const r = forwardReturnFromBars(bars, p.ts, p.horizon_min);
     if (r != null) { upd.run(r, now, "scored", p.id); scored++; continue; }
-    // Bars for this window may still arrive on the next persist; give up after a day.
-    if (now - p.ts > 24 * 3600_000) { upd.run(null, now, "no_price", p.id); noPrice++; }
+    // Bars for this window may still arrive on a later persist (Schwab keeps ~10
+    // days of minute history); give up only after that window has passed.
+    if (now - p.ts > 9 * 24 * 3600_000) { upd.run(null, now, "no_price", p.id); noPrice++; }
   }
   return { scored, noPrice };
 }
@@ -249,7 +252,7 @@ export function startMlDataLogger(resolveInputs: () => Promise<MlFeatureInputs>)
       }
       const closeMs = etWallToUtcMs(day, 16, 5);
       const barsDue = weekday && now >= closeMs && _lastBarsPersist < closeMs;
-      if (barsDue || now - _lastScore >= SCORE_EVERY_MS) {
+      if (now - _lastScore >= SCORE_EVERY_MS) { // at most one Schwab history call per 15 min
         _lastScore = now;
         if (barsDue || now - _lastBarsPersist > 6 * 3600_000) await persistSpxMinuteBars();
         scorePendingForecasts(now);
