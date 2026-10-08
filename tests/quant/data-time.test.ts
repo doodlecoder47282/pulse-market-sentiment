@@ -285,3 +285,48 @@ test("candles: 2m from 1m and 60m from 30m, anchored at 09:30 ET", () => {
   assert.equal(hours[1].h, 5);
   assert.equal(hours[1].v, null);
 });
+
+// ---------------------------------------------------------------------------
+// Social gauge (finding 5.4/5.5): failed, stale or tiny samples are
+// "unavailable"/"insufficient" with score null, never a neutral 0 -> 50.
+// ---------------------------------------------------------------------------
+
+test("social: failed collection is unavailable, not neutral", async () => {
+  const { summarizeSocial } = await import("../../server/sources");
+  const now = ms("2026-10-08T15:00:00Z");
+  const post = (tone: "bullish" | "bearish" | "neutral", iso = "2026-10-08T14:00:00Z") =>
+    ({ source: "StockTwits" as const, text: "", url: "", timestamp: iso, tone });
+  const failed = summarizeSocial([{ name: "a", posts: null }, { name: "b", posts: null }], now);
+  assert.equal(failed.score, null);
+  assert.equal(failed.status, "unavailable");
+  // Stale: newest post 4 days old -> excluded -> unavailable.
+  const stale = summarizeSocial([{ name: "a", posts: [post("bullish", "2026-10-04T14:00:00Z")] }], now);
+  assert.equal(stale.status, "unavailable");
+  assert.equal(stale.sources?.[0].state, "stale");
+  // Too few tagged posts: 2 tagged < 5.
+  const tiny = summarizeSocial([{ name: "a", posts: [post("bullish"), post("bearish"), post("neutral")] }], now);
+  assert.equal(tiny.score, null);
+  assert.equal(tiny.status, "insufficient");
+  // 6 bullish, 2 bearish, one source failed: (6 - 2) / 8 = +50, partial.
+  const ok = summarizeSocial([
+    { name: "a", posts: [...Array(6)].map(() => post("bullish")).concat([post("bearish"), post("bearish")]) },
+    { name: "b", posts: null },
+  ], now);
+  assert.equal(ok.score, 50);
+  assert.equal(ok.status, "partial");
+});
+
+test("social: composite leaves out an unavailable social gauge instead of scoring it 50", async () => {
+  const { computeComposite } = await import("../../server/composite");
+  const base: any = {
+    vol: { vix: { value: null }, vvix: { value: null }, vix9d: { value: null }, vix3m: { value: null }, skew: { value: null } },
+    term: { ratio9dOver30d: null, ratio30dOver3m: null },
+    gamma: { totalGex: 1e9, regime: "positive", callWall: 0, putWall: 0, maxPain: 0, zeroGamma: null, pcrOi: 1, pcrVol: 1 },
+    fearGreed: null, aaii: null, spy: { price: 1, prevClose: 1, changePct: 0 },
+  };
+  const without = computeComposite({ ...base, social: { score: null, bullish: 0, bearish: 0, neutral: 0, posts: [], status: "unavailable" } });
+  assert.equal(without.gauges.some((g: any) => /Social/.test(g.name)), false);
+  const withSocial = computeComposite({ ...base, social: { score: 40, bullish: 7, bearish: 3, neutral: 0, posts: [], status: "ok" } });
+  const g = withSocial.gauges.find((x: any) => /Social/.test(x.name));
+  assert.equal(g?.value, 70); // 50 + 40 / 2
+});

@@ -283,7 +283,7 @@ export interface WefThemeResponse {
 }
 
 export interface SocialPost {
-  source: "X" | "Reddit" | "News";
+  source: "X" | "Reddit" | "News" | "StockTwits";
   author?: string;
   text: string;
   url: string;
@@ -292,11 +292,18 @@ export interface SocialPost {
 }
 
 export interface SocialSentiment {
-  score: number;                   // -100 (extreme fear) ... +100 (extreme greed)
+  /** -100 (all bearish) ... +100 (all bullish); null when collection failed or the sample is too small. */
+  score: number | null;
   bullish: number;                 // raw counts
   bearish: number;
   neutral: number;
   posts: SocialPost[];
+  /** ok | partial (a source failed or was stale) | insufficient (too few tagged posts) | unavailable (no source collected). Absent on old snapshots. */
+  status?: "ok" | "partial" | "insufficient" | "unavailable";
+  /** Per-source collection state. */
+  sources?: { name: string; state: "ok" | "empty" | "stale" | "failed"; posts: number; newest?: string | null }[];
+  /** Collection time, epoch ms. */
+  asOf?: number;
 }
 
 export interface Gauge {

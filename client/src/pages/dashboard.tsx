@@ -862,9 +862,11 @@ export default function Dashboard() {
                 title={
                   <>
                     <MessageSquare className="h-4 w-4" />
-                    X &amp; Reddit Chatter
-                    <Badge variant="secondary" className="ml-2 font-mono text-[10px]">
-                      score {social.score >= 0 ? "+" : ""}{social.score}
+                    StockTwits &amp; Reddit Chatter
+                    <Badge variant="secondary" className="ml-2 font-mono text-[10px]" data-testid="badge-social-score">
+                      {social.score == null
+                        ? (social.status === "insufficient" ? "too few tagged posts" : "unavailable")
+                        : `score ${social.score >= 0 ? "+" : ""}${social.score}${social.status === "partial" ? " (partial)" : ""}`}
                     </Badge>
                   </>
                 }
@@ -883,8 +885,9 @@ export default function Dashboard() {
                   </div>
                   {social.posts.length === 0 ? (
                     <div className="rounded-md border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
-                      Social feed unreachable. Public X mirrors occasionally block requests — the composite still updates from
-                      VIX, gamma, and Fear &amp; Greed signals.
+                      Social feed unavailable{social.sources?.length
+                        ? ` (${social.sources.map((x) => `${x.name}: ${x.state}`).join(", ")})`
+                        : ""}. The social gauge is left out of the composite until collection recovers.
                     </div>
                   ) : (
                     <ScrollArea className="h-[300px] pr-3 [&>div>div]:!block">

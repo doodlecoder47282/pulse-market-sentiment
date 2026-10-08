@@ -322,65 +322,109 @@ function decodeEntities(s: string): string {
     .replace(/&quot;/g, '"').replace(/&#x27;|&apos;/g, "'").replace(/&nbsp;/g, " ");
 }
 
+// Throws on a failed request so gatherSocial can tell "failed" from "no posts".
 async function fetchStockTwits(symbol: string, limit = 30): Promise<SocialPost[]> {
-  try {
-    const d = await fetchJson(`https://api.stocktwits.com/api/2/streams/symbol/${symbol}.json?limit=${limit}`);
-    const msgs = d?.messages ?? [];
-    return msgs.map((m: any) => {
-      const body = decodeEntities(m.body || "");
-      const explicit = m?.entities?.sentiment?.basic?.toLowerCase();
-      const tone: SocialPost["tone"] =
-        explicit === "bullish" ? "bullish"
-        : explicit === "bearish" ? "bearish"
-        : scoreText(body);
-      return {
-        source: "X" as const,
-        author: "@" + (m.user?.username ?? "?"),
-        text: body.slice(0, 240),
-        url: `https://stocktwits.com/${m.user?.username}/message/${m.id}`,
-        timestamp: m.created_at,
-        tone,
-      };
-    });
-  } catch {
-    return [];
-  }
+  const d = await fetchJson(`https://api.stocktwits.com/api/2/streams/symbol/${symbol}.json?limit=${limit}`);
+  const msgs = d?.messages ?? [];
+  return msgs.map((m: any) => {
+    const body = decodeEntities(m.body || "");
+    const explicit = m?.entities?.sentiment?.basic?.toLowerCase();
+    const tone: SocialPost["tone"] =
+      explicit === "bullish" ? "bullish"
+      : explicit === "bearish" ? "bearish"
+      : scoreText(body);
+    return {
+      source: "StockTwits" as const,
+      author: "@" + (m.user?.username ?? "?"),
+      text: body.slice(0, 240),
+      url: `https://stocktwits.com/${m.user?.username}/message/${m.id}`,
+      timestamp: m.created_at,
+      tone,
+    };
+  });
 }
 
 /** Reddit public JSON (no auth). Works well for /r/wallstreetbets + /r/options. */
+// Throws on a failed request so gatherSocial can tell "failed" from "no posts".
 async function fetchReddit(sub: string, limit = 30): Promise<SocialPost[]> {
-  try {
-    const d = await fetchJson(`https://www.reddit.com/r/${sub}/hot.json?limit=${limit}`);
-    const items = d?.data?.children ?? [];
-    return items.map((c: any) => {
-      const t = `${c.data.title || ""} ${c.data.selftext || ""}`.slice(0, 300);
-      return {
-        source: "Reddit" as const,
-        author: "r/" + sub,
-        text: c.data.title || "",
-        url: `https://www.reddit.com${c.data.permalink}`,
-        tone: scoreText(t),
-      };
-    });
-  } catch {
-    return [];
-  }
+  const d = await fetchJson(`https://www.reddit.com/r/${sub}/hot.json?limit=${limit}`);
+  const items = d?.data?.children ?? [];
+  return items.map((c: any) => {
+    const t = `${c.data.title || ""} ${c.data.selftext || ""}`.slice(0, 300);
+    return {
+      source: "Reddit" as const,
+      author: "r/" + sub,
+      text: c.data.title || "",
+      url: `https://www.reddit.com${c.data.permalink}`,
+      timestamp: typeof c.data.created_utc === "number" ? new Date(c.data.created_utc * 1000).toISOString() : undefined,
+      tone: scoreText(t),
+    };
+  });
 }
 
-/** Aggregate X + Reddit into one SocialSentiment payload. */
-export async function gatherSocial(): Promise<SocialSentiment> {
-  const [stSpy, stVix, rOpts] = await Promise.all([
-    fetchStockTwits("SPY", 30),
-    fetchStockTwits("VIX", 15),
-    fetchReddit("options", 25),
-  ]);
-  const posts = [...stSpy, ...stVix, ...rOpts];
-  const bullish = posts.filter((p) => p.tone === "bullish").length;
-  const bearish = posts.filter((p) => p.tone === "bearish").length;
-  const neutral = posts.filter((p) => p.tone === "neutral").length;
+/** A source whose newest post is older than this is stale and left out of the score. */
+export const SOCIAL_STALE_MAX_HOURS = 72;
+/** Fewer tagged (bullish + bearish) posts than this gives no score: one post would read +/-100. */
+export const SOCIAL_MIN_TAGGED = 5;
+
+type SocialSourceState = NonNullable<SocialSentiment["sources"]>[number];
+
+/**
+ * Pure scoring step, exported for tests. Missing, stale and too-small samples
+ * yield score = null with a status, never a neutral 0 (which the composite
+ * would map to a 50 "neutral" gauge).
+ */
+export function summarizeSocial(
+  collected: { name: string; posts: SocialPost[] | null }[],
+  nowMs: number = Date.now(),
+): SocialSentiment {
+  const sources: SocialSourceState[] = [];
+  const used: SocialPost[] = [];
+  for (const src of collected) {
+    if (src.posts == null) {
+      sources.push({ name: src.name, state: "failed", posts: 0, newest: null });
+      continue;
+    }
+    const times = src.posts.map((p) => (p.timestamp ? Date.parse(p.timestamp) : NaN)).filter((t) => isFinite(t));
+    const newestMs = times.length ? Math.max(...times) : null;
+    const newest = newestMs != null ? new Date(newestMs).toISOString() : null;
+    if (src.posts.length === 0) {
+      sources.push({ name: src.name, state: "empty", posts: 0, newest });
+    } else if (newestMs != null && nowMs - newestMs > SOCIAL_STALE_MAX_HOURS * 3600_000) {
+      sources.push({ name: src.name, state: "stale", posts: src.posts.length, newest });
+    } else {
+      sources.push({ name: src.name, state: "ok", posts: src.posts.length, newest });
+      used.push(...src.posts);
+    }
+  }
+  const bullish = used.filter((p) => p.tone === "bullish").length;
+  const bearish = used.filter((p) => p.tone === "bearish").length;
+  const neutral = used.filter((p) => p.tone === "neutral").length;
   const tagged = bullish + bearish;
-  const score = tagged > 0 ? Math.round(((bullish - bearish) / tagged) * 100) : 0;
-  return { score, bullish, bearish, neutral, posts: posts.slice(0, 40) };
+  const anyUsable = sources.some((x) => x.state === "ok");
+  const degraded = sources.some((x) => x.state === "failed" || x.state === "stale");
+  let status: NonNullable<SocialSentiment["status"]>;
+  let score: number | null = null;
+  if (!anyUsable) status = "unavailable";
+  else if (tagged < SOCIAL_MIN_TAGGED) status = "insufficient";
+  else {
+    score = Math.round(((bullish - bearish) / tagged) * 100);
+    status = degraded ? "partial" : "ok";
+  }
+  return { score, bullish, bearish, neutral, posts: used.slice(0, 40), status, sources, asOf: nowMs };
+}
+
+/** Aggregate StockTwits + Reddit into one SocialSentiment payload (keyword/tag tone, a heuristic). */
+export async function gatherSocial(): Promise<SocialSentiment> {
+  const settle = async (name: string, p: Promise<SocialPost[]>) => {
+    try { return { name, posts: await p }; } catch { return { name, posts: null }; }
+  };
+  const collected = await Promise.all([
+    settle("StockTwits SPY", fetchStockTwits("SPY", 30)),
+    settle("StockTwits VIX", fetchStockTwits("VIX", 15)),
+    settle("Reddit r/options", fetchReddit("options", 25)),
+  ]);
+  return summarizeSocial(collected);
 }
 
 /** Market news headlines relevant to SPX/SPY.

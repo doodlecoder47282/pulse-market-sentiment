@@ -169,15 +169,21 @@ export function computeComposite(
         : "Near gamma flip — unstable regime",
   });
 
-  gauges.push({
-    name: "Social Sentiment (X + Reddit)",
-    value: clamp(socialScore(snap.social.score)),
-    weight: 0.10,
-    interpretation:
-      snap.social.score > 30 ? "Retail chatter skews bullish"
-      : snap.social.score > -30 ? "Retail chatter mixed"
-      : "Retail chatter skews bearish",
-  });
+  // Social gauge only when collection produced a score. A failed, stale or
+  // too-small sample is left out (weights renormalise below) instead of
+  // entering as a neutral 50.
+  const socialRaw = snap.social.score;
+  if (socialRaw != null && Number.isFinite(socialRaw)) {
+    gauges.push({
+      name: "Social Sentiment (StockTwits + Reddit)",
+      value: clamp(socialScore(socialRaw)),
+      weight: 0.10,
+      interpretation:
+        (socialRaw > 30 ? "Retail chatter skews bullish"
+        : socialRaw > -30 ? "Retail chatter mixed"
+        : "Retail chatter skews bearish") + (snap.social.status === "partial" ? " (partial: a source failed or was stale)" : ""),
+    });
+  }
 
   if (snap.fearGreed) {
     gauges.push({
@@ -255,7 +261,8 @@ function buildTakeaway(score: number, label: string, snap: Omit<Snapshot_Public,
       : "Gamma is near zero — unstable regime, prepare for regime shift.",
   );
   if (snap.gamma.pcrOi > 1.8) parts.push(`PCR OI at ${snap.gamma.pcrOi.toFixed(2)} signals heavy put hedging.`);
-  if (snap.social.score < -20) parts.push(`Social tone skews bearish (${snap.social.score}).`);
-  else if (snap.social.score > 20) parts.push(`Social tone skews bullish (+${snap.social.score}).`);
+  const social = snap.social.score;
+  if (social != null && social < -20) parts.push(`Social tone skews bearish (${social}).`);
+  else if (social != null && social > 20) parts.push(`Social tone skews bullish (+${social}).`);
   return parts.join(" ");
 }

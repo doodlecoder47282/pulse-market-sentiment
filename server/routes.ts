@@ -291,7 +291,7 @@ async function buildSnapshot(): Promise<Snapshot_Public> {
     getQuote("SPY"),
     cboeSpyChain().catch((e) => { warnings.push(`CBOE chain: ${e.message}`); return null; }),
     cnnFearGreed(),
-    gatherSocial().catch((e) => { warnings.push(`Social: ${e.message}`); return { score: 0, bullish: 0, bearish: 0, neutral: 0, posts: [] }; }),
+    gatherSocial().catch((e) => { warnings.push(`Social: ${e.message}`); return { score: null, bullish: 0, bearish: 0, neutral: 0, posts: [], status: "unavailable" as const, sources: [], asOf: Date.now() }; }),
     fetchHeadlines(),
   ]);
 
