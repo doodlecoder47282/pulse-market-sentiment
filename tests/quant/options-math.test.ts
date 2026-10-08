@@ -144,3 +144,204 @@ test("rowsFromChain: Schwab shape, percent IV, -999 sentinel dropped, T override
   const want = closedFormFlip(6650, 5000, 6550, 5000, 0.15, 1 / 252);
   assert.ok(Math.abs((flip.zeroGamma as number) - want) < 1e-3);
 });
+
+// ─── F2.3 implied distribution (SVI-smoothed Breeden-Litzenberger) ──────────
+
+import {
+  black76,
+  computeRND,
+  computeRNDRaw,
+  fitImpliedDistribution,
+  probAbove,
+  sviProbAbove,
+  sviW,
+  type SviParams,
+} from "../../server/breedenLitzenberger";
+
+/** Deterministic PRNG (mulberry32) for seeded quote noise. */
+function mulberry32(seed: number): () => number {
+  let a = seed | 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** High-accuracy standard normal CDF (erfc, W. J. Cody rational approximations via series). */
+function Phi(x: number): number {
+  // Use the complementary error function by continued fraction for |x| large,
+  // series otherwise; accurate to ~1e-12, independent of the module under test.
+  const z = Math.abs(x) / Math.SQRT2;
+  let erfc: number;
+  if (z < 3) {
+    let sum = z, term = z;
+    for (let n = 1; n < 200; n++) { term *= -z * z / n; sum += term / (2 * n + 1); }
+    erfc = 1 - (2 / Math.sqrt(Math.PI)) * sum;
+  } else {
+    let f = 0;
+    for (let n = 60; n >= 1; n--) f = (n / 2) / (z + f);
+    erfc = Math.exp(-z * z) / Math.sqrt(Math.PI) / (z + f);
+  }
+  return x >= 0 ? 1 - erfc / 2 : erfc / 2;
+}
+
+const SPX_GRID: number[] = [];
+for (let K = 6300; K <= 6900; K += 5) SPX_GRID.push(K);
+
+test("BL on noisy flat-vol 0DTE calls: smoothed P(up>1%) ~ true, raw is far off", () => {
+  // Review 2.4 setup: SPX 6600, 5-pt strikes, call mids with +/-$0.25 uniform
+  // noise. True (lognormal, sigma 15%, T = 1/252, r = q = 0):
+  //   P(S_T > 1.01 S) = N(d2), d2 = (ln(1/1.01) - v^2/2)/v, v = 0.15/sqrt(252)
+  //   = N(-1.0577) = 0.14508.
+  const S = 6600, v = 0.15 / Math.sqrt(252), w = v * v;
+  const truth = Phi((Math.log(1 / 1.01) - w / 2) / v);
+  assert.ok(Math.abs(truth - 0.14508) < 1e-4);
+  let worst = 0, rawWorst = 0;
+  for (let seed = 1; seed <= 8; seed++) {
+    const rnd = mulberry32(seed);
+    const chain = SPX_GRID.map((K) => ({ strike: K, callMid: Math.max(0, black76(S, K, w, "C") + (rnd() - 0.5) * 0.5) }));
+    const out = computeRND(chain, S, 0, 1 / 252, 50);
+    assert.equal(out.method, "svi-smoothed");
+    worst = Math.max(worst, Math.abs((out.probs as any).pUpOnePct - truth));
+    const raw = computeRNDRaw(chain, S, 0, 1 / 252, 50);
+    rawWorst = Math.max(rawWorst, Math.abs((raw.probs as any).pUpOnePct - truth));
+  }
+  assert.ok(worst < 0.01, `smoothed worst error ${worst}`);
+  assert.ok(rawWorst > 0.05, `raw estimator should be noise-dominated, worst ${rawWorst}`);
+});
+
+test("BL density is non-negative, integrates to 1, and recovers a clean skewed smile exactly", () => {
+  // Truth: SVI slice with equity-style skew (rho = -0.7); its exact digital is
+  // P(S_T > K) = N(d_-) - phi(d_-) w'(k) / (2 sqrt w)  (Gatheral & Jacquier 2014).
+  const S = 6600;
+  const truth: SviParams = { a: 4e-5, b: 0.0043, rho: -0.7, m: 0.002, sigma: 0.01 };
+  const quotes = SPX_GRID.map((K) => {
+    const w = sviW(truth, Math.log(K / S));
+    return { strike: K, callMid: black76(S, K, w, "C"), putMid: black76(S, K, w, "P") };
+  });
+  const d = fitImpliedDistribution(quotes, { spot: S, T: 1 / 252 });
+  assert.ok(d);
+  assert.equal(d.forwardSource, "put-call-parity");
+  assert.ok(Math.abs(d.forward - S) < 1e-6);
+  assert.ok(d.grid.density.every((x) => x >= 0));
+  // Integral of f(K) dK over the grid (trapezoid in K) ~ 1.
+  let mass = 0;
+  for (let i = 1; i < d.grid.strike.length; i++) {
+    mass += 0.5 * (d.grid.density[i] + d.grid.density[i - 1]) * (d.grid.strike[i] - d.grid.strike[i - 1]);
+  }
+  assert.ok(Math.abs(mass - 1) < 1e-3, `mass ${mass}`);
+  for (const K of [6400, 6534, 6600, 6666, 6750]) {
+    assert.ok(Math.abs(probAbove(d, K) - sviProbAbove(truth, S, K)) < 5e-4, `K=${K}`);
+  }
+});
+
+test("BL on noisy skewed puts+calls: probabilities within 0.01 of truth", () => {
+  const S = 6600;
+  const truth: SviParams = { a: 4e-5, b: 0.0043, rho: -0.7, m: 0.002, sigma: 0.01 };
+  let worst = 0;
+  for (let seed = 11; seed <= 16; seed++) {
+    const rnd = mulberry32(seed);
+    const quotes = SPX_GRID.map((K) => {
+      const w = sviW(truth, Math.log(K / S));
+      return {
+        strike: K,
+        callMid: Math.max(0, black76(S, K, w, "C") + (rnd() - 0.5) * 0.5),
+        putMid: Math.max(0, black76(S, K, w, "P") + (rnd() - 0.5) * 0.5),
+      };
+    });
+    const d = fitImpliedDistribution(quotes, { spot: S, T: 1 / 252 });
+    assert.ok(d);
+    for (const K of [6400, 6534, 6600, 6666, 6750]) {
+      worst = Math.max(worst, Math.abs(probAbove(d, K) - sviProbAbove(truth, S, K)));
+    }
+  }
+  assert.ok(worst < 0.01, `worst ${worst}`);
+});
+
+// ─── F3.3 straddle expected move ────────────────────────────────────────────
+
+import {
+  quotesFromSchwabExpiry,
+  scenarioOddsFromCdf,
+  straddleExpectedMove,
+  toPercentTriple,
+  pickExpiryKey,
+} from "../../server/impliedScenario";
+
+test("straddle EM: hand-computed ATM case and Brenner-Subrahmanyam 0.8 rule", () => {
+  // F = K = 6600, v = sigma sqrt(T) = 0.01:
+  //   straddle = 2 F (2 N(v/2) - 1) = 2*6600*(2*N(0.005) - 1) = 52.6600 points
+  //   Brenner-Subrahmanyam: ~ 0.7979 * F * v = 52.660 (agrees to 1e-4 here)
+  //   1-sigma move = F * v = 66.00 points.
+  const F = 6600, v = 0.01;
+  const c = black76(F, 6600, v * v, "C"), p = black76(F, 6600, v * v, "P");
+  assert.ok(Math.abs(c + p - 52.66) < 0.005, `straddle ${c + p}`);
+  const em = straddleExpectedMove([{ strike: 6600, callMid: c, putMid: p }], 6600);
+  assert.ok(em);
+  assert.ok(Math.abs(em.oneSigmaMove - 66.0) < 1e-6, `${em.oneSigmaMove}`);
+  assert.ok(Math.abs(em.approxOneSigma - 66.0) < 0.01, `${em.approxOneSigma}`);
+});
+
+test("straddle EM off-ATM: parity forward and bracketing interpolation recover F and v", () => {
+  // Forward 6602.5 between the 6600 and 6605 strikes, v = 0.0095 at both.
+  const F = 6602.5, v = 0.0095;
+  const quotes = [6590, 6595, 6600, 6605, 6610].map((K) => ({
+    strike: K, callMid: black76(F, K, v * v, "C"), putMid: black76(F, K, v * v, "P"),
+  }));
+  const em = straddleExpectedMove(quotes, 6601);
+  assert.ok(em);
+  assert.ok(Math.abs(em.forward - F) < 1e-9);
+  assert.ok(Math.abs(em.totalVol - v) < 1e-9);
+  assert.ok(Math.abs(em.oneSigmaMove - F * v) < 1e-6); // 62.72 points
+});
+
+test("straddle EM: no two-sided ATM quotes -> null (caller falls back, labeled)", () => {
+  assert.equal(straddleExpectedMove([{ strike: 6600, callMid: 10, putMid: null }], 6600), null);
+});
+
+// ─── F3.2 scenario odds from the implied distribution ───────────────────────
+
+test("scenario odds: lognormal known answer, sums to 1, falls with distance", () => {
+  // Lognormal Q-distribution, F = 6600, v = 0.01:
+  //   P(S_T <= K) = N((ln(K/F) + v^2/2)/v).
+  // Targets bull 6680 / base 6600 / bear 6520 -> boundaries U = 6640, L = 6560.
+  //   bull = 1 - N((ln(6640/6600) + 5e-5)/0.01) = 1 - N(0.6092) = 0.2712
+  //   bear = N((ln(6560/6600) + 5e-5)/0.01) = N(-0.6029) = 0.2733
+  //   base = 0.4555
+  const F = 6600, v = 0.01;
+  const cdf = (K: number) => Phi((Math.log(K / F) + (v * v) / 2) / v);
+  const o = scenarioOddsFromCdf(cdf, 6600, { bull: 6680, base: 6600, bear: 6520 });
+  assert.ok(o);
+  assert.equal(o.upper, 6640);
+  assert.equal(o.lower, 6560);
+  assert.ok(Math.abs(o.bull - 0.2712) < 5e-4, `bull ${o.bull}`);
+  assert.ok(Math.abs(o.bear - 0.2733) < 5e-4, `bear ${o.bear}`);
+  assert.ok(Math.abs(o.bull + o.base + o.bear - 1) < 1e-12);
+  // Reflection principle: touch ~ 2 x close-beyond.
+  assert.ok(Math.abs(o.pTouchBull - 2 * o.pCloseBeyondBull) < 1e-12);
+  // A target twice as far away gets lower odds (hand-set splits did not).
+  const far = scenarioOddsFromCdf(cdf, 6600, { bull: 6800, base: 6600, bear: 6520 });
+  assert.ok(far && far.bull < o.bull);
+  assert.deepEqual(toPercentTriple(o), { bull: 27, base: 46, bear: 27 });
+});
+
+test("toPercentTriple always sums to 100", () => {
+  for (const t of [{ bull: 1 / 3, base: 1 / 3, bear: 1 / 3 }, { bull: 0.005, base: 0.99, bear: 0.005 }, { bull: 0.2712, base: 0.4555, bear: 0.2733 }]) {
+    const p = toPercentTriple(t);
+    assert.equal(p.bull + p.base + p.bear, 100);
+  }
+});
+
+test("Schwab expiry adapter: mids, PM-settled preference, expiry pick", () => {
+  const calls = { "2026-10-16:8": { "6600.0": [
+    { settlementType: "A", bid: 50, ask: 52 },
+    { settlementType: "P", bid: 40, ask: 41 },
+  ] } };
+  const puts = { "2026-10-16:8": { "6600.0": [{ settlementType: "P", bid: 39, ask: 40 }], "6550.0": [{ bid: 0, ask: 0 }] } };
+  const q = quotesFromSchwabExpiry(calls, puts, "2026-10-16:8");
+  assert.deepEqual(q, [{ strike: 6600, callMid: 40.5, putMid: 39.5 }]);
+  assert.equal(pickExpiryKey(["2026-10-09:1", "2026-10-16:8", "2026-10-15:7"], "2026-10-16"), "2026-10-16:8");
+  assert.equal(pickExpiryKey(["2026-10-15:7", "2026-10-17:9"], "2026-10-16"), "2026-10-17:9");
+});
