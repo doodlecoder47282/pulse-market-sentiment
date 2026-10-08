@@ -197,15 +197,15 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone: "neutral",
-        topLine: "Astrology + sky engine — exotic regime context.",
-        subLine: "Treat as background coloring, not signal. CLV beats narrative.",
+        topLine: "Sky context — for entertainment, not a trading signal.",
+        subLine: "No trade instructions, direction calls, sizes or alerts. No engine reads it.",
         bullets: [
-          "Lunar phase, planetary aspects, transits — historical correlations are weak but present.",
-          "Useful as a tiebreaker when DFI + flow are split, not as primary signal.",
-          "Outside model ensemble — view-only.",
+          "Lunar, geomagnetic and SAD effects have studies behind them; all are small or disputed.",
+          "Retrogrades, Bradley, Gann and natal charts have no peer-reviewed support.",
+          "Outside every model, score and alert — view-only.",
         ],
         asOf: Date.now(),
-        whatThisIs: "Cosmic / astrological backdrop — color, not conviction.",
+        whatThisIs: "Astronomy facts plus financial-astrology reference, labeled by evidence. Context only.",
       };
 
     case "news":

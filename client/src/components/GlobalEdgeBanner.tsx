@@ -4,18 +4,17 @@
  * Surfaces the highest-leverage state changes that traders should never miss:
  *   • VIX9D > VIX inversion (short-dated fear premium)
  *   • VVIX > 120 spike (vol-of-vol compression / 0DTE tail risk)
- *   • Kp ≥ 5 geomagnetic storm (academic-supported sentiment drag)
  *   • GEX flip crossover (spot crossed dealer flip strike)
  *
  * Each alert has its own dismiss-this-session state. Reads only from
- * data already fetched elsewhere — adds one /api/cosmos/sky read.
+ * data already fetched elsewhere. The former Kp (geomagnetic) alert was
+ * removed: Cosmos output is context, never an alert or trade instruction
+ * (review finding 5.3), and the Cosmos "sky" endpoint it called did not exist.
  *
  * No emojis. No localStorage. Touch friendly (≥44px tap targets).
  */
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
-import { AlertTriangle, X, Zap, Activity, Wifi } from "lucide-react";
+import { AlertTriangle, X, Zap, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -47,22 +46,6 @@ export default function GlobalEdgeBanner({
 }: Props) {
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
 
-  // Lightweight Kp pull — academic Kp≥5 rule. Refetches every 5min.
-  const { data: kp } = useQuery<{ kpNow?: number; kpMax24h?: number }>({
-    queryKey: ["/api/cosmos/kp-summary"],
-    queryFn: async () => {
-      const r = await apiRequest("GET", "/api/cosmos/sky").catch(() => null);
-      if (!r || !r.ok) return {};
-      const j = await r.json();
-      return {
-        kpNow: j?.kp?.now ?? j?.kp?.current ?? null,
-        kpMax24h: j?.kp?.max24h ?? null,
-      };
-    },
-    refetchInterval: 300_000,
-    staleTime: 240_000,
-  });
-
   const alerts = useMemo<AlertSpec[]>(() => {
     const out: AlertSpec[] = [];
 
@@ -92,18 +75,6 @@ export default function GlobalEdgeBanner({
       });
     }
 
-    // Kp storm — geomagnetic, academic-supported
-    const kpNow = kp?.kpNow ?? null;
-    if (kpNow != null && kpNow >= 5) {
-      out.push({
-        id: "kp-storm",
-        tone: "violet",
-        icon: <Wifi className="h-4 w-4" />,
-        title: `Kp ${kpNow.toFixed(1)} — G${Math.min(5, Math.floor(kpNow) - 4)} geomagnetic storm`,
-        body: "Documented negative-sentiment drag on equities. Reduce directional risk; prefer mean-reversion setups today and next session.",
-      });
-    }
-
     // GEX flip crossover — only if both spot and zeroGamma are present and within 0.3% band
     if (spot != null && zeroGamma != null && spot > 0 && zeroGamma > 0) {
       const distPct = Math.abs(spot - zeroGamma) / spot;
@@ -119,7 +90,7 @@ export default function GlobalEdgeBanner({
     }
 
     return out.filter((a) => !dismissed.has(a.id));
-  }, [vix, vix9d, vvix, ratio9dOver30d, spot, zeroGamma, kp, dismissed]);
+  }, [vix, vix9d, vvix, ratio9dOver30d, spot, zeroGamma, dismissed]);
 
   if (alerts.length === 0) return null;
 

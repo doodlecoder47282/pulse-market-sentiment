@@ -310,3 +310,109 @@ test("F6.1: scenario weights are integers in [0,100] summing to exactly 100", as
     for (const v of [w.bull, w.base, w.bear]) assert.ok(Number.isInteger(v) && v >= 0 && v <= 100);
   }
 });
+
+// ─── F5.1 Cosmos: context only, no trade instructions, nothing consumes it ──
+
+// Phrases that would make Cosmos a trading instruction or direction call.
+const COSMOS_INSTRUCTION_RE =
+  /\b(size (up|down|longs?|normally)|normal sizing|reduce (gross |position |directional )?(exposure|size|risk|leverage)|reduce leverage|tighten stops|put spreads?|iron condors?|hedge via|hedges? on|scale-in|fade (rips|conviction)|load put|lean long|short[- ]bias|long[- ]bias|contrarian longs|favou?red|avoid (initiating|new|confrontational)|entry windows?|strong window for entries|close only|swing-long|rotate toward|trust breakouts|trimming longs|trade your system|bullish|bearish|risk-on bias|contraction bias)\b/i;
+const EMOJI_RE = /[\u{1F300}-\u{1FAFF}]/u;
+
+function cosmosTexts(C: any, date: Date): string[] {
+  const snap = C.buildCosmosSnapshot(date);
+  const out: string[] = [snap.dailyBriefMarkdown];
+  for (const s of snap.financialSignals) out.push(s.headline, s.detail, ...s.impacts);
+  for (const z of snap.zodiacReadings) out.push(z.headline, z.detail, z.luckyWindow);
+  for (const o of [C.buildWeeklyOutlook(date), C.buildMonthlyOutlook(date)]) {
+    out.push(o.markdown);
+    for (const e of o.events) out.push(e.headline, e.detail);
+  }
+  for (const v of Object.values(C.taxonomyLiveStates(snap, null)) as any[]) out.push(v.currentValue ?? "", v.badge ?? "");
+  return out;
+}
+
+test("F5.1: Cosmos output over two years has no trade instruction, direction call or emoji", async () => {
+  const C = await import("../../server/cosmos.ts");
+  const statics: string[] = [
+    C.HONEST_EDGE_ASSESSMENT, C.COSMOS_DISCLAIMER,
+    ...C.TAXONOMY.flatMap((t: any) => [t.description, ...t.tags]),
+    ...C.BOOKS.map((b: any) => b.summary),
+    ...C.ACADEMIC_PAPERS.map((p: any) => p.finding),
+    ...C.EDGE_RULES.flatMap((r: any) => [r.title, r.body]),
+  ];
+  for (const t of statics) {
+    assert.doesNotMatch(t, COSMOS_INSTRUCTION_RE, t.slice(0, 80));
+    assert.doesNotMatch(t, EMOJI_RE);
+  }
+  // Every 17 days for two years (43 dates; 17 is not a multiple of the 29.5-day
+  // lunar month, so snapshot dates sweep every phase). Each date also scans
+  // the next 30 days of events, so every station, ingress and Bradley zone
+  // change in the window is covered.
+  const start = Date.UTC(2025, 0, 1, 15);
+  let n = 0;
+  for (let d = 0; d < 730; d += 17) {
+    const date = new Date(start + d * 86_400_000);
+    for (const t of cosmosTexts(C, date)) {
+      const m = t.match(COSMOS_INSTRUCTION_RE);
+      assert.equal(m, null, `${date.toISOString()}: "${m?.[0]}" in: ${t.slice(0, 120)}`);
+      assert.doesNotMatch(t, EMOJI_RE);
+      n++;
+    }
+    const snap = C.buildCosmosSnapshot(date);
+    for (const s of snap.financialSignals) {
+      assert.equal(s.severity, "info");
+      assert.ok(typeof s.evidence === "string" && s.evidence.length > 0);
+    }
+    const w = C.buildWeeklyOutlook(date);
+    assert.equal(w.netBias, "neutral");
+    assert.ok(w.events.every((e: any) => e.bias === "neutral" && typeof e.evidence === "string"));
+    assert.match(w.markdown, /not a trading signal/);
+    assert.equal(snap.disclaimer, C.COSMOS_DISCLAIMER);
+  }
+  assert.ok(n > 500);
+});
+
+test("F5.1: only lunar, geomagnetic and SAD items claim any study; the LLM prompt forbids trades", async () => {
+  const C = await import("../../server/cosmos.ts");
+  const studied = C.TAXONOMY.filter((t: any) => t.evidence !== "no peer-reviewed support").map((t: any) => t.id).sort();
+  assert.deepEqual(studied, ["full_moon", "geomagnetic_storm", "new_moon", "sad_seasonal"]);
+  assert.equal(C.TAXONOMY.find((t: any) => t.id === "sad_seasonal").evidence, "peer-reviewed, disputed");
+  // Yuan, Zheng & Zhu (2006, JEF 13(1)): 3-5% a year; 3%/252 to 5%/252 = 1.2 to 2.0 bp a day.
+  assert.match(C.LUNAR_EVIDENCE_NOTE, /3-5% a year/);
+  assert.match(C.LUNAR_EVIDENCE_NOTE, /1-2 basis points a day/);
+  assert.match(C.OUTLOOK_SYSTEM_PROMPT, /For entertainment and context, not a trading signal\./);
+  assert.match(C.OUTLOOK_SYSTEM_PROMPT, /Do NOT give trade instructions, position sizes/);
+  assert.doesNotMatch(C.OUTLOOK_SYSTEM_PROMPT, /trade playbook|sizing, sector tilts, hedging, specific setups/);
+});
+
+test("F5.1: mean lunar node matches Meeus eq. 47.7 (replaces a stale hard-coded sign)", async () => {
+  const C = await import("../../server/cosmos.ts");
+  // T = 0 at J2000.0 (2000-01-01 12:00 TT ~ UTC here): Omega = 125.0445479 deg (Meeus 47.7).
+  assert.ok(Math.abs(C.meanLunarNodeLongitude(new Date(Date.UTC(2000, 0, 1, 12))) - 125.0445479) < 1e-6);
+  // One Julian year later: -1934.1362891/100 = -19.3413629 deg per year (plus negligible T^2 terms).
+  const a = C.meanLunarNodeLongitude(new Date(Date.UTC(2000, 0, 1, 12)));
+  const b = C.meanLunarNodeLongitude(new Date(Date.UTC(2000, 0, 1, 12) + 365.25 * 86_400_000));
+  assert.ok(Math.abs(((a - b + 360) % 360) - 19.3413629) < 1e-4);
+  const snap = C.buildCosmosSnapshot(new Date(Date.UTC(2026, 9, 8, 15)));
+  // 2026-10-08: Omega ~ 327.3 deg = Aquarius 27.3 (hand-computed from 47.7).
+  assert.match(C.taxonomyLiveStates(snap, null).node_cycle.currentValue, /Aquarius 27\.\d/);
+});
+
+test("F5.1: no engine or other panel consumes Cosmos output", () => {
+  const serverImporters = walk(path.join(ROOT, "server"))
+    .filter((f) => /\.ts$/.test(f) && !f.endsWith(path.join("server", "cosmos.ts")))
+    .filter((f) => /from ["']\.\/cosmos(\.js)?["']/.test(readFileSync(f, "utf8")))
+    .map((f) => path.relative(ROOT, f));
+  assert.deepEqual(serverImporters, ["server/routes.ts"], "only routes.ts (the Cosmos tab endpoints) may import cosmos.ts");
+  const routes = readFileSync(path.join(ROOT, "server/routes.ts"), "utf8");
+  // Engines call each other over HTTP; none may fetch the Cosmos endpoints.
+  const selfCalls = walk(path.join(ROOT, "server")).filter((f) => /\.ts$/.test(f))
+    .filter((f) => /fetch\([^)]*\/api\/cosmos/.test(readFileSync(f, "utf8")));
+  assert.deepEqual(selfCalls, []);
+  assert.ok(routes.includes('app.get("/api/cosmos"'));
+  const clientReaders = walk(path.join(ROOT, "client/src"))
+    .filter((f) => /\.(ts|tsx)$/.test(f))
+    .filter((f) => /\/api\/cosmos/.test(readFileSync(f, "utf8")))
+    .map((f) => path.relative(ROOT, f));
+  assert.deepEqual(clientReaders, ["client/src/components/CosmosPanel.tsx"]);
+});
