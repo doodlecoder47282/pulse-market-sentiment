@@ -4951,6 +4951,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         type: params.type,
         notional: params.notional,
         maxDte: params.maxDte,
+        feePerContract: params.feePerContract != null ? Number(params.feePerContract) : undefined,
       });
       res.json(summary);
     } catch (e: any) {
