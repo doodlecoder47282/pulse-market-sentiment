@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { adfCriticalValue, adfTest, ar1BiasCorrected, fitOUBand } from "../../server/ouBand";
 import {
   olsFit, climatologyBaseline, brierSkillScore, skillWatchdog, cusum,
-  wilsonInterval, reliabilityCurve, dieboldMariano, firstPerSession,
+  wilsonInterval, reliabilityCurve, dieboldMariano, firstPerSession, binarySkillTest,
 } from "../../server/stats";
 import { findOptimalWindow, isFullCalendarYear, computeSeasonality } from "../../server/seasonality";
 import { independentDailyRows } from "../../server/mlAccuracy";
@@ -250,6 +250,25 @@ test("Diebold-Mariano size: ~5% on iid nulls, and the HAC variance fixes overlap
   assert.ok(rejIid / M > 0.035 && rejIid / M < 0.07, `iid size ${rejIid / M}`);
   assert.ok(rejNaive / M > 0.12, `ignoring overlap over-rejects: ${rejNaive / M}`);
   assert.ok(rejHac / M < 0.09, `Newey-West h=2 size ${rejHac / M}`);
+});
+
+test("binary skill test: skill, no demonstrated skill and significantly worse (banner trigger)", () => {
+  const r = mulberry32(2718);
+  const p = Array.from({ length: 300 }, () => r());
+  const o = p.map((v) => (r() < v ? 1 : 0));
+  assert.equal(binarySkillTest(p, o).verdict, "skill"); // calibrated, sharp forecasts
+  const base = o.reduce((a, b) => a + b, 0) / o.length;
+  assert.equal(binarySkillTest(o.map(() => base), o).verdict, "no demonstrated skill"); // the base rate itself
+  const anti = binarySkillTest(p.map((v) => 1 - v), o); // inverted forecasts
+  assert.equal(anti.verdict, "worse than climatology");
+  assert.ok(anti.bss != null && anti.bss < 0 && anti.dm != null && anti.dm >= 2);
+  // Brier and BSS come from the same sample: BSS = 1 - Brier/Brier_clim exactly
+  const t = binarySkillTest(p, o);
+  assert.ok(Math.abs((t.bss as number) - (1 - (t.brier as number) / (t.climatologyBrier as number))) < 1e-12);
+  // perfect forecaster: zero-variance differential, sign certain
+  const perfect = binarySkillTest([1, 0, 1, 0, 1, 0], [1, 0, 1, 0, 1, 0]);
+  assert.equal(perfect.verdict, "skill");
+  assert.equal(perfect.dm, null);
 });
 
 test("watchdog: a model no better than climatology is NO_SKILL, never HEALTHY", () => {

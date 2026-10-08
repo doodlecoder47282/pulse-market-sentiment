@@ -48,6 +48,18 @@ type Reliability = {
   test: { name: string; passed: boolean; reasons: string[] };
 };
 
+// Brier, skill vs climatology and its Diebold-Mariano significance, all on
+// the independent sample (one daily call per session) the reliability curve uses.
+type SkillTest = {
+  n: number;
+  brier: number | null;
+  climatologyBrier: number | null;
+  bss: number | null;
+  dm: number | null;
+  dmP: number | null;
+  verdict: "skill" | "no demonstrated skill" | "worse than climatology";
+};
+
 type AccuracyResp = {
   totalPredictions: number;
   gradedPredictions: number;
@@ -64,6 +76,7 @@ type AccuracyResp = {
   brierN: number;
   calibration: CalibBucket[];
   reliability?: Reliability;
+  skill?: SkillTest;
   modelKind?: string;
   windows: { last7: WindowStat; last14: WindowStat; last30: WindowStat };
   trail: TrailPoint[];
@@ -77,16 +90,20 @@ function pct(x: number | null): string {
   return `${(x * 100).toFixed(0)}%`;
 }
 
-// Brier label. Never says "calibrated": that word belongs to the reliability
-// test. The skill comparison is against the ONE trivial forecaster the server
-// uses everywhere (climatology = the realized base rate), not a fixed 0.25.
-function brierBadge(b: number | null, bss: number | null | undefined): { label: string; cls: string } {
-  if (b == null) return { label: "no data", cls: "border-slate-500/40 text-slate-400" };
-  if (bss != null && bss <= 0) return { label: "no skill vs base rate", cls: "border-amber-500/40 bg-amber-500/5 text-amber-300" };
-  if (b < 0.15) return { label: "low brier", cls: "border-green-500/50 bg-green-500/10 text-green-300" };
-  if (b < 0.22) return { label: "decent", cls: "border-emerald-500/40 bg-emerald-500/5 text-emerald-300" };
-  if (b < 0.27) return { label: "coin flip", cls: "border-amber-500/40 bg-amber-500/5 text-amber-300" };
-  return { label: "worse than coin flip", cls: "border-red-500/50 bg-red-500/10 text-red-300" };
+// Skill label. Never says "calibrated" (that word belongs to the reliability
+// test). Compared with the ONE trivial forecaster the server uses everywhere
+// (climatology = the realized base rate), with Diebold-Mariano significance,
+// on one call per session; not a fixed Brier cut-off.
+function skillBadge(skill: SkillTest | undefined): { label: string; cls: string } {
+  if (!skill || skill.n === 0) return { label: "skill untested", cls: "border-slate-500/40 text-slate-400" };
+  if (skill.verdict === "worse than climatology") return { label: "worse than base rate", cls: "border-red-500/50 bg-red-500/10 text-red-300" };
+  if (skill.verdict === "skill") return { label: "skill vs base rate", cls: "border-green-500/50 bg-green-500/10 text-green-300" };
+  return { label: "no demonstrated skill", cls: "border-amber-500/40 bg-amber-500/5 text-amber-300" };
+}
+
+function dmText(skill: SkillTest): string {
+  if (skill.dm != null) return `DM ${skill.dm.toFixed(2)}, n=${skill.n} sessions`;
+  return skill.verdict === "no demonstrated skill" ? `n=${skill.n} sessions, too few to test` : `n=${skill.n} sessions, zero-variance difference`;
 }
 
 function calibrationPill(rel: Reliability | undefined): { label: string; cls: string; title: string } {
@@ -202,7 +219,8 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
     );
   }
 
-  const brier = brierBadge(data.brierScore, data.reliability?.bss);
+  const skill = data.skill;
+  const brier = skillBadge(skill);
   const calib = calibrationPill(data.reliability);
   const trend = trendDelta(data.trail);
 
@@ -219,15 +237,16 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
         .join(" ")
     : "";
 
-  // Honesty banner — fires when Brier > 0.27 (worse than a constant 50%). The
-  // card does not game users with false confidence: it says it's currently noise.
-  const isMisCalibrated = data.brierScore != null && data.brierScore > 0.27;
-  const isWeak = data.brierScore != null && data.brierScore > 0.22 && !isMisCalibrated;
+  // Honesty banners, from the skill test on one call per session:
+  //   red   — Brier skill vs the base rate is significantly NEGATIVE (DM >= +2);
+  //   amber — no demonstrated skill (not significantly better than the base rate).
+  const isMisCalibrated = skill?.verdict === "worse than climatology";
+  const isWeak = skill != null && skill.n > 0 && skill.verdict === "no demonstrated skill";
 
   return (
     <Card className="border-cyan-500/20 bg-gradient-to-b from-cyan-950/10 to-card">
       <CardContent className="p-4">
-        {/* Honesty banner — only renders when Brier is worse than a coin flip */}
+        {/* Honesty banner — only renders when skill vs the base rate is significantly negative */}
         {isMisCalibrated && (
           <div
             className="mb-3 flex items-start gap-2 rounded-md border border-rose-500/50 bg-rose-500/10 p-3"
@@ -236,10 +255,10 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" />
             <div>
               <div className="text-[11px] font-bold uppercase tracking-wider text-rose-200">
-                model abstaining · worse than coin flip
+                model abstaining · worse than the base rate
               </div>
               <div className="mt-0.5 text-[11px] leading-snug text-rose-100/90">
-                Brier {data.brierScore!.toFixed(3)} · above 0.27 threshold. Treat these probabilities as noise this regime —
+                Brier {skill!.brier?.toFixed(3)} vs base rate {skill!.climatologyBrier?.toFixed(3)} (skill {skill!.bss != null ? `${(skill!.bss * 100).toFixed(0)}%` : "n/a"}; {dmText(skill!)}). Treat these probabilities as noise this regime —
                 fade or ignore until hit rate recovers. Position size from your own thesis, not from this output.
               </div>
             </div>
@@ -252,7 +271,7 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
           >
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" />
             <div className="text-[11px] leading-snug text-amber-100/90">
-              <strong>weak edge.</strong> Brier {data.brierScore!.toFixed(3)} — barely better than a coin flip.
+              <strong>no demonstrated skill.</strong> Not significantly better than always forecasting the base rate ({dmText(skill!)}).
               Do not size from these probabilities. Cross-check with positioning + flow.
             </div>
           </div>
@@ -297,9 +316,14 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
               {data.brierScore != null ? data.brierScore.toFixed(3) : "—"}
             </div>
             <div className="text-[9px] text-muted-foreground/70">
-              {brier.label} · lower = better · 0.25 = coin flip
-              {data.reliability?.bss != null && (
-                <> · skill vs base rate {data.reliability.bss >= 0 ? "+" : ""}{(data.reliability.bss * 100).toFixed(0)}%</>
+              all graded rows, n={data.brierN} · lower = better
+              {skill && skill.n > 0 && skill.brier != null && (
+                <>
+                  <br />
+                  one call/session, n={skill.n}: Brier {skill.brier.toFixed(3)}
+                  {skill.bss != null && <> · skill vs base rate {skill.bss >= 0 ? "+" : ""}{(skill.bss * 100).toFixed(0)}%</>}
+                  {" "}· {brier.label}{skill.dm != null ? ` (DM ${skill.dm.toFixed(2)})` : ""}
+                </>
               )}
             </div>
           </div>

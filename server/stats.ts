@@ -477,7 +477,12 @@ export function dieboldMariano(d: number[], h: number = 1): {
   };
   let lrv = gamma(0);
   for (let k = 1; k <= H - 1 && k < T; k++) lrv += 2 * (1 - k / H) * gamma(k);
-  if (!(lrv > 1e-18)) return { n: T, meanDiff, lrv, stat: null, p: null, h: H };
+  if (!(lrv > 1e-18)) {
+    // Zero-variance differential: the sign of the mean is certain (e.g. a
+    // perfect forecaster); ±Infinity, p = 0. A zero mean stays untestable.
+    if (Math.abs(meanDiff) > 1e-12) return { n: T, meanDiff, lrv, stat: meanDiff > 0 ? Infinity : -Infinity, p: 0, h: H };
+    return { n: T, meanDiff, lrv, stat: null, p: null, h: H };
+  }
   const dm = meanDiff / Math.sqrt(lrv / T);
   const hln = (T + 1 - 2 * H + (H * (H - 1)) / T) / T;
   const stat = hln > 0 ? dm * Math.sqrt(hln) : dm;
@@ -519,22 +524,24 @@ export function skillWatchdog(
   const modelBrier = n ? rows.reduce((s, r) => s + r.modelBrier, 0) / n : NaN;
   const dm = dieboldMariano(d, opts.horizon ?? 1);
   const meanDiff = dm.meanDiff;
-  const tStat = dm.stat;
+  const dmRaw = dm.stat; // may be ±Infinity for a zero-variance differential
+  const tStat = dmRaw != null && Number.isFinite(dmRaw) ? dmRaw : null; // JSON-safe
   const cs = cusum(d, { target: 0 });
   const bss = brierSkillScore(modelBrier, clim.total);
-  const dmTxt = tStat != null ? `DM=${tStat.toFixed(2)}, n=${n}` : `DM undefined, n=${n}`;
+  const dmTxt = tStat != null ? `DM=${tStat.toFixed(2)}, n=${n}`
+    : dmRaw != null ? `DM=${dmRaw > 0 ? "+" : "-"}inf (zero-variance difference), n=${n}` : `DM undefined, n=${n}`;
   let status: SkillWatchdogStatus;
   let reason: string;
   if (cs.status === "BROKEN") {
     status = "BROKEN";
     reason = `CUSUM vs zero skill crossed 5σ (heuristic): model is persistently worse than the base-rate forecaster (${dmTxt})`;
-  } else if (tStat != null && tStat >= DM_SKILL_THRESHOLD) {
+  } else if (dmRaw != null && dmRaw >= DM_SKILL_THRESHOLD) {
     status = "BROKEN";
     reason = `model Brier is significantly worse than climatology (${dmTxt})`;
   } else if (cs.status === "DRIFTING") {
     status = "DRIFTING";
     reason = `CUSUM vs zero skill crossed 4σ (heuristic): losing to the base-rate forecaster, watch closely (${dmTxt})`;
-  } else if (tStat != null && tStat <= -DM_SKILL_THRESHOLD) {
+  } else if (dmRaw != null && dmRaw <= -DM_SKILL_THRESHOLD) {
     status = "HEALTHY";
     reason = `demonstrated skill: Brier significantly below climatology (${dmTxt}) and the CUSUM is quiet`;
   } else {
@@ -545,6 +552,41 @@ export function skillWatchdog(
     status, n, meanDiff, tStat, dmP: dm.p, bss, modelBrier,
     climatologyBrier: clim.total, climatologyFreqs: clim.freqs, cusum: cs, reason,
   };
+}
+
+// ─── Binary skill test vs climatology ─────────────────────────────────────
+//
+// Brier skill of binary forecasts against the ONE climatology baseline, with
+// significance from a Diebold-Mariano test on the per-forecast Brier
+// difference d_i = (p_i − o_i)² − (ō − o_i)². Forecasts must be independent
+// (one per non-overlapping outcome window), so h = 1.
+//   verdict "worse than climatology"   DM ≥ +2
+//           "skill"                    DM ≤ −2
+//           "no demonstrated skill"    otherwise (or too few to test)
+export function binarySkillTest(preds: number[], outcomes: number[]): {
+  n: number;
+  brier: number | null;
+  climatologyBrier: number | null;
+  bss: number | null;
+  dm: number | null;
+  dmP: number | null;
+  verdict: "skill" | "no demonstrated skill" | "worse than climatology";
+} {
+  const pairs: Array<[number, number]> = [];
+  for (let i = 0; i < Math.min(preds.length, outcomes.length); i++) {
+    const p = preds[i], o = outcomes[i];
+    if (Number.isFinite(p) && (o === 0 || o === 1)) pairs.push([Math.max(0, Math.min(1, p)), o]);
+  }
+  const n = pairs.length;
+  if (n === 0) return { n, brier: null, climatologyBrier: null, bss: null, dm: null, dmP: null, verdict: "no demonstrated skill" };
+  const clim = climatologyBaseline(pairs.map(([, o]) => [o]));
+  const d = pairs.map(([p, o], i) => (p - o) ** 2 - clim.perRow[i]);
+  const brier = pairs.reduce((s, [p, o]) => s + (p - o) ** 2, 0) / n;
+  const t = dieboldMariano(d, 1);
+  const verdict = t.stat != null && t.stat >= DM_SKILL_THRESHOLD ? "worse than climatology"
+    : t.stat != null && t.stat <= -DM_SKILL_THRESHOLD ? "skill" : "no demonstrated skill";
+  // dm is null when untestable or infinite (JSON has no Infinity); the verdict still reflects it.
+  return { n, brier, climatologyBrier: clim.total, bss: brierSkillScore(brier, clim.total), dm: t.stat != null && Number.isFinite(t.stat) ? t.stat : null, dmP: t.p, verdict };
 }
 
 // ─── One observation per trading session ─────────────────────────────────

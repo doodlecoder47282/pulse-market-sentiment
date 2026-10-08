@@ -25,7 +25,7 @@
 
 import { promises as fs } from "fs";
 import * as path from "path";
-import { reliabilityCurve, type ReliabilityReport } from "./stats";
+import { reliabilityCurve, binarySkillTest, type ReliabilityReport } from "./stats";
 
 const MODEL_KIND = "MM matrix hand-set priors (not a trained ML model)";
 
@@ -84,6 +84,10 @@ export type AccuracySummary = {
   // Reliability curve (pUp as P(r > +0.05%)) with Wilson intervals per bin,
   // Brier skill vs the climatology base rate, and the stated calibration test.
   reliability: ReliabilityReport;
+  // Brier, Brier skill vs climatology and the Diebold-Mariano significance,
+  // all on the SAME independent sample as the reliability curve (one daily
+  // call per session). brierScore above is over every graded row (n = brierN).
+  skill: ReturnType<typeof binarySkillTest>;
   modelKind: string;
   // Rolling windows (most-recent-N)
   windows: {
@@ -274,6 +278,7 @@ export async function buildAccuracySummary(symbol = "^GSPC"): Promise<AccuracySu
       brierN: 0,
       calibration: [],
       reliability: reliabilityCurve([], []),
+      skill: binarySkillTest([], []),
       modelKind: MODEL_KIND,
       windows: {
         last7: { hitRate: null, brier: null, n: 0 },
@@ -334,10 +339,9 @@ export async function buildAccuracySummary(symbol = "^GSPC"): Promise<AccuracySu
   // snapshot of each session date. Repeat snapshots on one date share one
   // realized close, and weekly windows overlap; counting them would inflate n.
   const relRows = independentDailyRows(graded);
-  const reliability = reliabilityCurve(
-    relRows.map((g) => Math.max(0, Math.min(1, g.pUp / 100))),
-    relRows.map((g) => ((g.realizedReturnPct as number) > 0.05 ? 1 : 0)),
-  );
+  const relPreds = relRows.map((g) => Math.max(0, Math.min(1, g.pUp / 100)));
+  const relOutcomes = relRows.map((g) => ((g.realizedReturnPct as number) > 0.05 ? 1 : 0));
+  const reliability = reliabilityCurve(relPreds, relOutcomes, { event: "SPX next-session close > +0.05% vs the snapshot spot (pUp); one daily call per session" });
 
   // Rolling trail: running hit rate at each point (smoothed over last 7)
   const trail: { ts: number; rollingHitRate: number; brier: number | null }[] = [];
@@ -369,6 +373,7 @@ export async function buildAccuracySummary(symbol = "^GSPC"): Promise<AccuracySu
     brierN: briers.length,
     calibration,
     reliability,
+    skill: binarySkillTest(relPreds, relOutcomes),
     modelKind: MODEL_KIND,
     windows: {
       last7: rollingWindow(graded, 7),

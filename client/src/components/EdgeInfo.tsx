@@ -95,7 +95,7 @@ const INFO: Record<string, InfoEntry> = {
   "ml-accuracy": {
     title: "MM Matrix Scorecard",
     what: "Grades every MM-matrix prediction it ever logged (hand-set priors, not a trained ML model) against what actually happened: hit rate, Brier score, skill vs the base rate, a reliability curve, and trend.",
-    how: "Brier under 0.22 = usable. Over 0.27 = worse than a coin flip \u2014 the red banner fires automatically. Brier mixes calibration with sharpness, so \"calibrated\" appears only when the reliability curve passes its stated test (100+ graded forecasts, Spiegelhalter Z, every bin with 10+ forecasts inside its Wilson interval).",
+    how: "Skill is measured against always forecasting the base rate (climatology), on one call per session. The red banner fires when that skill is significantly negative (Diebold-Mariano statistic of +2 or more); the amber one when skill is not demonstrated (DM above -2). Brier mixes calibration with sharpness, so \"calibrated\" appears only when the reliability curve passes its stated test (100+ graded forecasts, Spiegelhalter Z, every bin with 10+ forecasts inside its Wilson interval).",
     edge: "Knowing when your model is broken is worth more than the model. Most people size up exactly when their signal decays \u2014 this panel stops that.",
   },
   backtest: {
