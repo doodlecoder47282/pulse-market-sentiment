@@ -1,0 +1,35 @@
+✔ Copying web assets from public to ios/App/App/public in 12.20ms
+✔ Creating capacitor.config.json in ios/App/App in 634.29μs
+✔ copy ios in 61.79ms
+✔ Updating iOS plugins in 12.46ms
+[info] All Capacitor plugins have a Package.swift file and will be included in Package.swift
+[info] Writing Package.swift
+✔ update ios in 59.29ms
+[info] Sync finished in 0.182s
+ios
+ios/.gitignore
+ios/App
+ios/App/App
+ios/App/App.xcodeproj
+ios/App/App.xcodeproj/project.pbxproj
+ios/App/App.xcodeproj/project.xcworkspace
+ios/App/App/AppDelegate.swift
+ios/App/App/Assets.xcassets
+ios/App/App/Base.lproj
+ios/App/App/capacitor.config.json
+ios/App/App/config.xml
+ios/App/App/Info.plist
+ios/App/App/public
+ios/App/App/SceneDelegate.swift
+ios/App/CapApp-SPM
+ios/App/CapApp-SPM/.gitignore
+ios/App/CapApp-SPM/Package.swift
+ios/App/CapApp-SPM/README.md
+ios/App/CapApp-SPM/Sources
+ios/capacitor-cordova-ios-plugins
+ios/capacitor-cordova-ios-plugins/CordovaPluginsResources.podspec
+ios/capacitor-cordova-ios-plugins/resources
+ios/capacitor-cordova-ios-plugins/resources/.gitkeep
+ios/capacitor-cordova-ios-plugins/sources
+ios/capacitor-cordova-ios-plugins/sources/.gitkeep
+ios/debug.xcconfig
