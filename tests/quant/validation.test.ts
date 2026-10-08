@@ -355,3 +355,14 @@ test("ML quantile pipeline: real-data labels, day-based gate, purged walk-forwar
   const r = spawnSync("python3", ["-I", script], { encoding: "utf8", timeout: 15_000 });
   assert.equal(r.status, 0, `python checks failed:\n${r.stdout}\n${r.stderr}`);
 });
+
+test("per-trade Sharpe is annualized by trades per year (Lo 2002), Sortino by full-sample downside deviation", async () => {
+  const { annualizedSharpe, annualizedSortino } = await import("../../server/validationMath");
+  const r = [0.02, -0.01, 0.03, -0.02, 0.01, 0.02]; // mean 0.008333, sample sd 0.019408
+  near(annualizedSharpe(r, 12)!, (0.0083333 / 0.0194079) * Math.sqrt(12), 1e-4); // 12 trades/yr -> 1.4874
+  near(annualizedSharpe(r, 12)! / annualizedSharpe(r, 252)!, Math.sqrt(12 / 252), 1e-12);
+  // downside deviation: sqrt((0.01^2 + 0.02^2) / 6) = 0.0091287
+  near(annualizedSortino(r, 12)!, (0.0083333 / 0.0091287) * Math.sqrt(12), 1e-4);
+  assert.equal(annualizedSortino([0.01, 0.02, 0.03, 0.01, 0.02], 12), null); // no downside: undefined, not infinite
+  assert.equal(annualizedSharpe([0.01], 12), null);
+});

@@ -596,6 +596,37 @@ export function evaluateWhaleTrade(args: {
   };
 }
 
+// ─── Per-trade Sharpe / Sortino ─────────────────────────────────────────────
+
+/**
+ * Annualized Sharpe ratio of per-period returns: mean/sd x sqrt(q), q = periods
+ * per year (Lo 2002, "The Statistics of Sharpe Ratios", FAJ 58(4), IID case).
+ * For a sparse signal the period is one TRADE, so q = trades per year, not
+ * 252: multiplying per-trade Sharpe by sqrt(252) overstates it by
+ * sqrt(252 / tradesPerYear). Null below 5 returns.
+ */
+export function annualizedSharpe(rets: number[], periodsPerYear: number): number | null {
+  const xs = rets.filter((r) => Number.isFinite(r));
+  if (xs.length < 5 || !(periodsPerYear > 0)) return null;
+  const m = xs.reduce((a, b) => a + b, 0) / xs.length;
+  const v = xs.reduce((a, b) => a + (b - m) * (b - m), 0) / (xs.length - 1);
+  const sd = Math.sqrt(v);
+  return sd > 0 ? (m / sd) * Math.sqrt(periodsPerYear) : null;
+}
+
+/**
+ * Annualized Sortino ratio with target 0: mean / sqrt(mean(min(r, 0)^2)) x sqrt(q)
+ * (Sortino & van der Meer 1991: downside deviation averages over ALL periods,
+ * not only the losing ones). Null when there is no downside or below 5 returns.
+ */
+export function annualizedSortino(rets: number[], periodsPerYear: number): number | null {
+  const xs = rets.filter((r) => Number.isFinite(r));
+  if (xs.length < 5 || !(periodsPerYear > 0)) return null;
+  const m = xs.reduce((a, b) => a + b, 0) / xs.length;
+  const dd = Math.sqrt(xs.reduce((a, r) => a + Math.min(0, r) ** 2, 0) / xs.length);
+  return dd > 0 ? (m / dd) * Math.sqrt(periodsPerYear) : null;
+}
+
 // ─── Historical chain levels (pluggable volatility-band backtest source) ────
 
 /** One end-of-day chain. openInterest in contracts; gamma per share per $1 (vendor convention). */
