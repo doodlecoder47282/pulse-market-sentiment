@@ -58,6 +58,8 @@ jobs:
           for p in /api/schwab/status /api/regime /api/quotes /api/news /api/crypto/scanner; do
             echo "$p -> $(curl -s -o /dev/null -m 20 -w '%{http_code}' http://127.0.0.1:5055$p)"
           done
+          OPEN_GAMMA_NOTE=$(curl -s -m 60 http://127.0.0.1:5055/api/trade-environment | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);const d=(j.drivers||[]).find(x=>x.key==="gamma");console.log(d?d.note:"no-gamma-driver")}catch(e){console.log("unparseable")}})' )
+          echo "open server gamma driver: $OPEN_GAMMA_NOTE"
           kill $OPEN_PID || true; sleep 2
 
           NODE_ENV=production PORT=5056 HOST=127.0.0.1 BATCAVE_ACCESS_KEY=ci-test-key BATCAVE_DATA_DIR=$RUNNER_TEMP/persist node dist/index.cjs > server-gated.log 2>&1 &
@@ -68,6 +70,9 @@ jobs:
           check "$(curl -s -o /dev/null -w '%{http_code}' -H 'x-batcave-key: wrong' http://127.0.0.1:5056/api/schwab/status)" 401 "gate blocks wrong key"
           check "$(curl -s -o /dev/null -w '%{http_code}' -H 'x-batcave-key: ci-test-key' http://127.0.0.1:5056/api/schwab/status)" 200 "gate allows right key"
           check "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5056/)" 200 "UI still served when gated"
+          GATED_GAMMA_NOTE=$(curl -s -m 60 -H "x-batcave-key: ci-test-key" http://127.0.0.1:5056/api/trade-environment | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);const d=(j.drivers||[]).find(x=>x.key==="gamma");console.log(d?d.note:"no-gamma-driver")}catch(e){console.log("unparseable")}})' )
+          echo "gated server gamma driver: $GATED_GAMMA_NOTE"
+          if echo "$OPEN_GAMMA_NOTE" | grep -qv "unavailable" && echo "$GATED_GAMMA_NOTE" | grep -q "unavailable"; then echo "FAIL internal self-calls blocked by access key"; fail=1; else echo "PASS internal self-calls work with access key on"; fi
           kill $GATED_PID || true
           [ -f "$RUNNER_TEMP/persist/data.db" ] && echo "PASS data dir holds data.db" || { echo "FAIL data dir"; ls -la "$RUNNER_TEMP/persist" || true; fail=1; }
           echo "--- server log tail ---"; tail -40 server-open.log

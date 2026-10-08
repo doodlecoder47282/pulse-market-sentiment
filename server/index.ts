@@ -77,6 +77,25 @@ function keyMatches(given: unknown): boolean {
   const b = Buffer.from(ACCESS_KEY);
   return a.length === b.length && timingSafeEqual(a, b);
 }
+// The engines call each other over local HTTP (trade environment -> heatseeker,
+// Discord cards -> models, exit brain -> quotes, ...; ~25 call sites). When the
+// gate is on, attach the key to every request this process sends to its own
+// port so those internal calls keep working. Nothing else is touched.
+if (ACCESS_KEY) {
+  const ownPort = String(process.env.PORT || "5000");
+  const selfPrefixes = [`http://127.0.0.1:${ownPort}/`, `http://localhost:${ownPort}/`];
+  const baseFetch = globalThis.fetch.bind(globalThis);
+  globalThis.fetch = ((input: any, init?: any) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input?.url;
+    if (typeof url === "string" && selfPrefixes.some((p) => url.startsWith(p))) {
+      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+      headers.set("x-batcave-key", ACCESS_KEY);
+      return baseFetch(input, { ...(init ?? {}), headers });
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+}
+
 app.get("/api/health", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.json({ ok: true, service: "batcave", authRequired: !!ACCESS_KEY, time: new Date().toISOString() });
