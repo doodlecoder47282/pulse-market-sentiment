@@ -86,8 +86,8 @@ jobs:
           [ "$REGRESS" -eq 0 ] && echo "PASS no route regressions" || { echo "FAIL route regressions"; fail=1; }
           echo "head 5xx count: $(awk '$3 ~ /^5/' rep/routes-both.txt | wc -l)  base 5xx count: $(awk '$2 ~ /^5/' rep/routes-both.txt | wc -l)"
           check "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5060/)" 200 "UI index served"
-          grep -E "uncaughtException|unhandledRejection|TypeError|ReferenceError" rep/server-head.log | sort | uniq -c | sort -rn | head -30 > rep/server-head-errors.txt
-          grep -E "uncaughtException|unhandledRejection|TypeError|ReferenceError" rep/server-base.log | sort | uniq -c | sort -rn | head -30 > rep/server-base-errors.txt
+          { grep -E "uncaughtException|unhandledRejection|TypeError|ReferenceError" rep/server-head.log || true; } | sort | uniq -c | sort -rn | head -30 > rep/server-head-errors.txt
+          { grep -E "uncaughtException|unhandledRejection|TypeError|ReferenceError" rep/server-base.log || true; } | sort | uniq -c | sort -rn | head -30 > rep/server-base-errors.txt
           echo "--- runtime errors head vs base (count) ---"; wc -l rep/server-head-errors.txt rep/server-base-errors.txt
           pkill -f "dist/index.cjs" || true; sleep 2
 
@@ -99,10 +99,18 @@ jobs:
             check "$(curl -s -o /dev/null -w '%{http_code}' -H 'x-batcave-key: ci-test-key' http://127.0.0.1:5062/api/schwab/status)" 200 "gate allows right key"
             NOTE=$(curl -s -m 60 -H "x-batcave-key: ci-test-key" http://127.0.0.1:5062/api/trade-environment | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);const d=(j.drivers||[]).find(x=>x.key==="gamma");console.log(d?d.note:"no-gamma-driver")}catch(e){console.log("unparseable")}})')
             echo "gated gamma driver: $NOTE"
-            grep -c '401' rep/server-gated.log | xargs echo "gated server 401 log lines:"
+            { grep -c '401' rep/server-gated.log || true; } | xargs echo "gated server 401 log lines:"
             pkill -f "dist/index.cjs" || true
           else
             echo "SKIP access-key checks (gate not present)"
+          fi
+          if [ -f server/accessGate.ts ]; then
+            # Reachable bind with no key must fail closed.
+            NODE_ENV=production PORT=5063 HOST=0.0.0.0 node dist/index.cjs > rep/server-open.log 2>&1 &
+            wait_up 5063 || { echo "FAIL fail-closed server did not start"; fail=1; }
+            check "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5063/api/schwab/status)" 503 "public bind without key fails closed"
+            check "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5063/api/health)" 200 "health stays open when locked"
+            pkill -f "dist/index.cjs" || true
           fi
           exit $fail
       - name: Publish report to ci-reports-quant branch

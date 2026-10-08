@@ -39,6 +39,8 @@ export interface SignedTickBar {
   direction: 1 | -1 | 0;
   signedVolume: number;
   cumulative: number;
+  /** True when the candle had no volume: the bar adds nothing and is not a 0-volume print. */
+  volumeMissing?: boolean;
 }
 
 /** Tick rule on bars. Returns one bar per candle after the first. */
@@ -53,10 +55,11 @@ export function signedTickVolumeBars(candles: MinuteCandleLike[]): SignedTickBar
     if (c.close > prev.close) direction = 1;
     else if (c.close < prev.close) direction = -1;
     else direction = lastDirection; // zero-tick rule: persist last sign
-    const volume = c.volume || 0;
+    const volumeMissing = c.volume == null || !Number.isFinite(c.volume);
+    const volume = volumeMissing ? 0 : (c.volume as number);
     const signedVolume = volume * direction;
     cumulative += signedVolume;
-    bars.push({ ts: c.datetime, close: c.close, volume, direction, signedVolume, cumulative });
+    bars.push({ ts: c.datetime, close: c.close, volume, direction, signedVolume, cumulative, ...(volumeMissing ? { volumeMissing: true } : {}) });
     if (direction !== 0) lastDirection = direction;
   }
   return bars;

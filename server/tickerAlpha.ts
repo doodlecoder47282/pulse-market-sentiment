@@ -337,11 +337,12 @@ function approxGamma(K: number, S: number, T: number, iv: number): number {
  */
 function buildPerTickerGamma(chain: any, ticker: string): PerTickerGamma | null {
   if (!chain || chain.error) return null;
-  const S =
+  const spotRaw =
     Number(chain?.underlying?.last) ||
     Number(chain?.underlyingPrice) ||
     null;
-  if (!S || !isFinite(S)) return null;
+  if (!spotRaw || !isFinite(spotRaw)) return null;
+  const S: number = spotRaw;
 
   const callMap = chain.callExpDateMap || {};
   const putMap = chain.putExpDateMap || {};

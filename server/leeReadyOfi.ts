@@ -57,7 +57,9 @@ export type OfiTrend = {
   method: "tick-rule-1m";
   label: "signed tick volume";
   /** "unavailable" = bars could not be fetched; trend fields are placeholders, not a flat read. */
-  dataState: "ok" | "unavailable";
+  /** "partial" = some minute bars had no volume (they add nothing; see volumeMissingBars). */
+  dataState: "ok" | "partial" | "unavailable";
+  volumeMissingBars?: number;
   /** Diagnostic: session buy-minus-sell volume by bulk volume classification
    *  (past-only sigma); null when no bar could be classified. */
   bvcCumulativeNow: number | null;
@@ -103,9 +105,9 @@ export async function computeOfiTrend(): Promise<OfiTrend> {
 
   // Trend classification
   // Threshold: |slope15m| must exceed median bar volume * 5 to be meaningful
-  const medianVol = bars.length > 0
-    ? bars.map(b => b.volume).sort((a, b) => a - b)[Math.floor(bars.length / 2)]
-    : 0;
+  const volumeMissingBars = bars.filter((b) => b.volumeMissing).length;
+  const knownVols = bars.filter((b) => !b.volumeMissing).map((b) => b.volume).sort((a, b) => a - b);
+  const medianVol = knownVols.length > 0 ? knownVols[Math.floor(knownVols.length / 2)] : 0;
   const threshold = medianVol * 5;
 
   let trend: "BULLISH" | "BEARISH" | "NEUTRAL" = "NEUTRAL";
@@ -127,7 +129,8 @@ export async function computeOfiTrend(): Promise<OfiTrend> {
     acceleration,
     method: "tick-rule-1m",
     label: "signed tick volume",
-    dataState: "ok",
+    dataState: knownVols.length === 0 ? "unavailable" : volumeMissingBars > 0 ? "partial" : "ok",
+    volumeMissingBars,
     bvcCumulativeNow: (() => {
       const b = bulkVolumeClassify(candles).cumulativeSigned;
       return b == null ? null : Math.round(b);

@@ -28,7 +28,7 @@ type Mag7Response = {
   eqWtChange: number | null;
   spyChange: number | null;
   alphaVsSpy: number | null;
-  breadth: number;
+  breadth: number | null;
   /** Members with a known day change (breadth denominator); absent on old payloads */
   breadthN?: number;
   eqWt4w: number | null;
@@ -84,9 +84,9 @@ function rsiTag(rsi: number | null) {
 }
 
 // -------- Breadth bar (shared) --------
-function BreadthBar({ breadth, count }: { breadth: number; count: number }) {
+function BreadthBar({ breadth, count }: { breadth: number | null; count: number }) {
   // No member has a known day change: show "unavailable", not 0 up / 0 down.
-  if (count <= 0) {
+  if (count <= 0 || breadth == null) {
     return <span className="font-mono text-[10px] text-muted-foreground">breadth unavailable</span>;
   }
   const up = Math.round(breadth * count);

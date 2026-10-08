@@ -2053,6 +2053,16 @@ ${notes || "(none)"}
 
 Build the EOD setup brief.`;
 
+      // Missing live inputs must not become 0 (a 0 flip or wall turns into a
+      // "spot is 6,600 points above zero gamma" brief). Refuse and say which.
+      const requiredEod: Record<string, unknown> = { spx, vix, iv, gex, callWall, putWall, zeroGamma, hvl, gammaFlip, pcRatio };
+      const missingEod = Object.entries(requiredEod)
+        .filter(([, v]) => v == null || v === "" || !Number.isFinite(Number(v)))
+        .map(([k]) => k);
+      if (missingEod.length) {
+        return res.status(400).json({ error: "missing_inputs", missing: missingEod, message: `EOD brief needs live values for: ${missingEod.join(", ")}` });
+      }
+
       // ---- DETERMINISTIC BRIEF (always runs, always returns) ----
       // This is the source of truth. Built from the exact same dealer-gamma
       // inputs the rest of the app uses. No external API, no key, no failure mode.
@@ -2287,7 +2297,7 @@ OUTPUT FORMAT — RETURN ONLY VALID JSON (no markdown fences, no prose preamble)
     "bear": { "probability": <int>, "target": "...", "horizon": "...", "rr": "...", "invalidation": "...", "evidence": ["..."] }
   },
   "trades": [
-    { "structure": "<concrete: e.g. 'long TLT 91/94 call spread 30DTE'>", "sizingKelly": "<fractional Kelly: e.g. '0.25x Kelly = 0.5% bankroll'>", "rr": "<R:R>", "invalidation": "<level>", "maxLoss": "<% bankroll>", "thesis": "<1 sentence>" }
+    { "structure": "<concrete: e.g. 'long TLT 91/94 call spread 30DTE'>", "sizingKelly": "n/a", "rr": "<R:R>", "invalidation": "<level>", "maxLoss": "<max loss of the structure in $ per 1 contract or 1 spread>", "thesis": "<1 sentence>" }
   ],
   "counterarguments": ["<strongest counterargument 1>", "<2>", "<3>"],
   "evidence": {
@@ -2303,7 +2313,7 @@ RULES:
 - Every scenario MUST include a specific invalidation level (“if SPY trades below 738.50 by 11am ET”).
 - R:R ≥ 2:1 for any trade you propose; otherwise return an empty trades array.
 - If no edge exists, set verdict="MIXED", confidence ≤ 30, return empty trades array, write “No edge — pass” in oneLiner.
-- Use Kelly sizing language. Default to 0.25x Kelly when uncertainty is high.
+- Do NOT size positions or use Kelly language: no fitted win probability exists for these ideas. Always write "n/a" in sizingKelly.
 - counterarguments must contain the STRONGEST opposing view, not throwaway hedges.
 - If the fusion context has data warnings (missing panels, stale feed), reflect that in confidence — do NOT pretend you have complete information.
 - NEVER hallucinate prices or specific moves not anchored in the provided levels/tape.
@@ -6077,9 +6087,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
             const sp = d.audit?.scenarioProb ?? null;
             const st = d.audit?.scenarioTargets ?? null;
             if (spot == null) spot = d.spot ?? undefined;
-            if (probBull == null && sp) probBull = (sp.bull ?? 0) / 100;
-            if (probBase == null && sp) probBase = (sp.base ?? 0) / 100;
-            if (probBear == null && sp) probBear = (sp.bear ?? 0) / 100;
+            // Missing odds stay missing (400 below), never read as 0%.
+            if (probBull == null && sp?.bull != null) probBull = sp.bull / 100;
+            if (probBase == null && sp?.base != null) probBase = sp.base / 100;
+            if (probBear == null && sp?.bear != null) probBear = sp.bear / 100;
             if (oneDayEM == null && st) oneDayEM = st.oneDayEM ?? undefined;
             if (realizedSigma20d == null && d.audit?.realizedSigma20d != null) {
               realizedSigma20d = d.audit.realizedSigma20d;

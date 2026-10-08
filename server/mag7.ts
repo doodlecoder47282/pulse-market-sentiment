@@ -29,8 +29,8 @@ export type Mag7Response = {
   spyChange: number | null;
   /** Mag7 - SPY (>0 = Mag7 leading, <0 = broad market leading) */
   alphaVsSpy: number | null;
-  /** Share of members with a known day change that are up (0..1); 0 when breadthN = 0 */
-  breadth: number;
+  /** Share of members with a known day change that are up (0..1); null when breadthN = 0 */
+  breadth: number | null;
   /** Members with a known day change (the breadth denominator) */
   breadthN: number;
   /** Members up on the day */
@@ -130,7 +130,7 @@ export async function buildMag7Snapshot(): Promise<Mag7Response> {
   // could not be computed is missing, not a decliner.
   const breadthN = dayChanges.length;
   const advancers = dayChanges.filter((x) => x > 0).length;
-  const breadth = breadthN ? advancers / breadthN : 0;
+  const breadth = breadthN ? advancers / breadthN : null; // null = no member with a known change, not 0% advancers
   const ret4wVals = members.map((m) => m.return4w).filter((x): x is number => x != null);
   const eqWt4w = ret4wVals.length ? ret4wVals.reduce((a, b) => a + b, 0) / ret4wVals.length : null;
 

@@ -393,7 +393,9 @@ const COST_MODEL =
   "else intrinsic on the expiry-day close (cash-settled index) or intrinsic minus half the entry spread (physical); full time decay; " +
   "fees per contract per side; whole contracts within the per-trade notional. Alerts without a logged entry quote are not traded. " +
   "Alerts where one contract costs more than the notional are reason below_one_contract and are excluded from every total. " +
-  "Totals mix logged-bid exits (the outcome grader's definition) with modeled expiry exits; byExitSource reports them separately.";
+  "Totals mix logged-bid exits (the outcome grader's definition) with modeled expiry exits; byExitSource reports them separately. " +
+  "The default fee ($0.65 per contract per side) is Schwab's equity/ETF option commission; index options (SPX, SPXW, XSP, NDX, RUT, VIX) " +
+  "also carry exchange index fees that are not included unless feePerContract is set, so index-option returns are slightly overstated.";
 
 /** ET calendar date of a daily candle (its start time). */
 function etDateOfBar(c: Candle): string {

@@ -10,8 +10,10 @@
  * side (up to ~80 rows). For each poll, per contract:
  *   · deltaVol        = current.volume − prev.volume  (prints since last snapshot)
  *   · notional        = deltaVol × last × 100
- *   · classification  = Lee-Ready (last vs midpoint → buyer/seller; midpoint
- *                       trades fall back to tick-rule vs previous last)
+ *   · classification  = quote rule on the snapshot's last print (last vs
+ *                       midpoint; at the midpoint, tick rule vs previous last).
+ *                       Lee-Ready style, but on one last print per poll, not
+ *                       trade-level prints, so it is a rough side estimate.
  *   · buyFlag         = classification === "buy" && notional ≥ minNotional
  *
  * When a user ARMS a contract, the tracker opens an active position snapshot.
