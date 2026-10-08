@@ -63,6 +63,11 @@ export async function buildGammaCurve(symbol: string): Promise<GammaCurveResult 
     return { error: "chain unavailable" };
   }
   const gex = computeGEXFromChain(chain as any);
+  // No underlying last price: GEX is unavailable (computeGEXFromChain no
+  // longer substitutes spot = 1), not a curve of near-zero values.
+  if (gex.dataState === "no_spot") {
+    return { error: "spot unavailable" };
+  }
   const spot = (chain as any).underlying?.last ?? (chain as any).underlyingPrice ?? null;
   if (!gex.profile?.length || !Number.isFinite(spot)) {
     return { error: "insufficient chain data" };

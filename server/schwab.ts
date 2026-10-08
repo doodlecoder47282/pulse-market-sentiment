@@ -9,8 +9,7 @@ import { eq } from "drizzle-orm";
 import { observeQuote } from "./quoteShield";
 import { etDate, addDays } from "./exchangeCalendar";
 import { quoteFreshness } from "./quoteFreshness";
-import { cumulativeStrikeFlip, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
-import { contractYears } from "./chainClock";
+import { gexByStrikeFromChain } from "./gammaProfile";
 
 // ─── Credentials from environment (read lazily to avoid import-order issues) ──
 const getClientId = () => process.env.SCHWAB_CLIENT_ID ?? "";
@@ -676,70 +675,12 @@ export async function getOptionChain(
 }
 
 /** Compute gamma exposure from a Schwab option chain response.
- *  Returns { callWall, putWall, zeroGamma, zeroGammaCumulative, profile[] }.
- *  zeroGamma is the app-wide re-priced flip (gammaProfile.ts);
- *  zeroGammaCumulative is the legacy cumulative-by-strike secondary.
+ *  Pure math lives in gammaProfile.gexByStrikeFromChain (tested); this keeps
+ *  the import path callers already use. Returns { callWall, putWall,
+ *  zeroGamma, zeroGammaCumulative, profile[], dataState }. A chain without
+ *  underlying.last is dataState "no_spot" with an empty profile: GEX is
+ *  S^2-scaled, so the old placeholder spot of 1 gave numbers ~S^2 too small.
  */
 export function computeGEXFromChain(chain: Exclude<OptionChainResponse, { error: string }>) {
-  type GexStrike = { strike: number; callGex: number; putGex: number; netGex: number };
-  const strikeMap = new Map<number, GexStrike>();
-  const spotPrice = chain.underlying.last ?? 1;
-
-  function processMap(map: Record<string, Record<string, any[]>>, side: "call" | "put") {
-    for (const expKey of Object.keys(map)) {
-      const strikesObj = map[expKey];
-      for (const strikeStr of Object.keys(strikesObj)) {
-        const contracts = strikesObj[strikeStr];
-        const strike = parseFloat(strikeStr);
-        if (!isFinite(strike)) continue;
-        for (const c of contracts) {
-          // Settled contracts (AM SPX after the open, anything past its
-          // settlement instant) carry no gamma: one clock, timeToExpiry.
-          if (!(contractYears(expKey, c) > 0)) continue;
-          // Schwab uses -999 as a "no greek" sentinel — drop it, don't sum it
-          const rawGamma = c.gamma ?? 0;
-          const gamma = rawGamma <= -999 || !isFinite(rawGamma) ? 0 : rawGamma;
-          const oi = c.openInterest ?? 0;
-          const gex = gamma * oi * 100 * spotPrice * spotPrice * 0.01;
-          if (!strikeMap.has(strike)) {
-            strikeMap.set(strike, { strike, callGex: 0, putGex: 0, netGex: 0 });
-          }
-          const row = strikeMap.get(strike)!;
-          if (side === "call") row.callGex += gex;
-          else row.putGex -= gex; // puts invert
-          row.netGex = row.callGex + row.putGex;
-        }
-      }
-    }
-  }
-
-  processMap(chain.callExpDateMap, "call");
-  processMap(chain.putExpDateMap, "put");
-
-  const profile = Array.from(strikeMap.values()).sort((a, b) => a.strike - b.strike);
-  if (!profile.length) return { callWall: null, putWall: null, zeroGamma: null, zeroGammaCumulative: null, profile: [] };
-
-  // Call Wall: strike above spot with max positive call GEX
-  const aboveSpot = profile.filter((p) => p.strike >= spotPrice);
-  const belowSpot = profile.filter((p) => p.strike < spotPrice);
-
-  const callWall = aboveSpot.reduce((best, p) => (!best || p.callGex > best.callGex ? p : best), null as GexStrike | null);
-  const putWall = belowSpot.reduce((best, p) => (!best || p.putGex < best.putGex ? p : best), null as GexStrike | null);
-
-  // Gamma flip: re-priced profile (one definition app-wide, gammaProfile.ts),
-  // same 0-45 DTE universe as the Signals snapshot (sources.ts).
-  // The cumulative-by-strike sign change is kept only as a labeled secondary.
-  // No real spot (underlying.last missing) -> no flip, rather than a flip
-  // computed around the placeholder spot of 1.
-  const hasSpot = chain.underlying.last != null && chain.underlying.last > 0;
-  const zeroGamma = hasSpot ? repricedFlipFromChain(chain, spotPrice, { maxDte: 45, r: FLIP_RATE, q: FLIP_DIV_YIELD }).zeroGamma : null;
-  const zeroGammaCumulative = cumulativeStrikeFlip(profile);
-
-  return {
-    callWall: callWall?.strike ?? null,
-    putWall: putWall?.strike ?? null,
-    zeroGamma,
-    zeroGammaCumulative,
-    profile,
-  };
+  return gexByStrikeFromChain(chain);
 }

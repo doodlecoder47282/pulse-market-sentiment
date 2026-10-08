@@ -380,3 +380,76 @@ export function repricedFlipFromRows(
     method: "repriced-profile",
   };
 }
+
+// ─── Per-strike GEX from a chain (Signals snapshot, gamma curve, killbox DB) ──
+
+export interface GexStrike { strike: number; callGex: number; putGex: number; netGex: number }
+
+export interface ChainGex {
+  callWall: number | null;
+  putWall: number | null;
+  zeroGamma: number | null;
+  zeroGammaCumulative: number | null;
+  profile: GexStrike[];
+  /** "ok", or "no_spot" when the chain has no underlying last price (nothing computed). */
+  dataState: "ok" | "no_spot";
+}
+
+/**
+ * Per-strike dealer GEX, $ per 1% move: vendor gamma x OI x 100 x S^2 x 0.01
+ * (calls +, puts -), call/put walls, the app-wide re-priced flip and the
+ * legacy cumulative flip. Settled contracts (chainClock.contractYears = 0)
+ * and Schwab's -999 gamma sentinel are dropped. Without a real spot
+ * (underlying.last missing or <= 0) nothing is computed: the old code used
+ * spot = 1, which scaled every GEX by 1/S^2 and placed both walls by
+ * comparing strikes with 1.
+ */
+export function gexByStrikeFromChain(
+  chain: ChainMapsLike & { underlying?: { last?: number | null } | null },
+  nowMs: number = Date.now(),
+): ChainGex {
+  const last = chain.underlying?.last;
+  const spot = last != null && Number.isFinite(last) && last > 0 ? last : null;
+  if (spot == null) {
+    return { callWall: null, putWall: null, zeroGamma: null, zeroGammaCumulative: null, profile: [], dataState: "no_spot" };
+  }
+  const strikeMap = new Map<number, GexStrike>();
+  const processMap = (map: Record<string, Record<string, any[]>> | null | undefined, side: "call" | "put") => {
+    for (const expKey of Object.keys(map ?? {})) {
+      const strikesObj = map![expKey];
+      for (const strikeStr of Object.keys(strikesObj)) {
+        const strike = parseFloat(strikeStr);
+        if (!isFinite(strike)) continue;
+        for (const c of strikesObj[strikeStr] ?? []) {
+          if (!(contractYears(expKey, c, nowMs) > 0)) continue;
+          const rawGamma = Number(c?.gamma ?? 0);
+          const gamma = rawGamma <= -999 || !isFinite(rawGamma) ? 0 : rawGamma;
+          const gex = dollarGexPerPct(gamma, Number(c?.openInterest ?? 0) || 0, spot);
+          let row = strikeMap.get(strike);
+          if (!row) { row = { strike, callGex: 0, putGex: 0, netGex: 0 }; strikeMap.set(strike, row); }
+          if (side === "call") row.callGex += gex;
+          else row.putGex -= gex; // puts invert
+          row.netGex = row.callGex + row.putGex;
+        }
+      }
+    }
+  };
+  processMap(chain.callExpDateMap, "call");
+  processMap(chain.putExpDateMap, "put");
+
+  const profile = Array.from(strikeMap.values()).sort((a, b) => a.strike - b.strike);
+  if (!profile.length) return { callWall: null, putWall: null, zeroGamma: null, zeroGammaCumulative: null, profile: [], dataState: "ok" };
+
+  const callWall = profile.filter((p) => p.strike >= spot).reduce<GexStrike | null>((best, p) => (!best || p.callGex > best.callGex ? p : best), null);
+  const putWall = profile.filter((p) => p.strike < spot).reduce<GexStrike | null>((best, p) => (!best || p.putGex < best.putGex ? p : best), null);
+  // Flip: re-priced profile, same 0-45 DTE universe as the Signals snapshot.
+  const zeroGamma = repricedFlipFromChain(chain, spot, { maxDte: 45, r: FLIP_RATE, q: FLIP_DIV_YIELD, nowMs }).zeroGamma;
+  return {
+    callWall: callWall?.strike ?? null,
+    putWall: putWall?.strike ?? null,
+    zeroGamma,
+    zeroGammaCumulative: cumulativeStrikeFlip(profile),
+    profile,
+    dataState: "ok",
+  };
+}
