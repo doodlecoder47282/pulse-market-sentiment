@@ -29,6 +29,7 @@ import { buildSchwabFlow, type SchwabFlowContract } from "./schwabFlow";
 // require() threw inside its try/catch, so nothing persisted and hydrateFromDb loaded 0
 // rows, silently. whalePersistence only imports a *type* from this file, so no cycle.
 import { persistFollowState, persistWhaleAlert, loadAllFollows } from "./whalePersistence";
+import { etCloseMs } from "./validationMath";
 
 // Persistence wrappers — fail-soft, never let DB hiccups break tracking.
 function safePersistFollow(p: FollowPosition): void {
@@ -81,6 +82,16 @@ export interface FollowPosition {
     drawdownStreak: number;
     /** Last time volume increased */
     lastVolumeBumpAt: number;
+    /** Latest Schwab quote, $ per share (additive; absent on rows from older builds) */
+    bid?: number | null;
+    ask?: number | null;
+    quoteAt?: number | null;
+    /**
+     * Last quote observed at or before the 16:00 ET close of the expiry date:
+     * the exit mark the outcome grader uses (review item 8.2). Never written
+     * after the close, so a later stale quote cannot overwrite it.
+     */
+    preExpiryQuote?: { bid: number | null; ask: number | null; mark: number | null; at: number } | null;
   };
   status: FollowStatus;
   /** When status transitioned to its current value */
@@ -168,8 +179,12 @@ export async function updateAll(): Promise<{
   closed: number;
   errors: number;
 }> {
+  const nowMs = Date.now();
+  // CLOSED (premium ~0) positions keep logging quotes until the expiry close so
+  // the grader has a real exit mark for them too; otherwise the worst trades
+  // would drop out of the ledger as "no mark" and bias it upward.
   const open = Array.from(positions.values()).filter(
-    (p) => p.status !== "CLOSED" && p.status !== "EXPIRED",
+    (p) => p.status !== "EXPIRED" && (p.status !== "CLOSED" || nowMs <= expiryCloseMs(p.expiration)),
   );
   if (open.length === 0) return { updated: 0, closed: 0, errors: 0 };
 
@@ -212,10 +227,16 @@ export async function updateAll(): Promise<{
           }
           continue;
         }
-        applyTick(p, live, now);
+        if (p.status === "CLOSED") {
+          recordQuote(p, live, flow.asOf ?? now);
+          safePersistFollow(p);
+          continue;
+        }
+        applyTick(p, live, now, flow.asOf ?? now);
         safePersistFollow(p);
         updated++;
-        if (p.status === "CLOSED" || p.status === "EXPIRED") closed++;
+        const after = p.status as FollowStatus; // applyTick may have moved it to a terminal state
+        if (after === "CLOSED" || after === "EXPIRED") closed++;
       }
     } catch {
       errors++;
@@ -233,7 +254,25 @@ function isExpired(expiration: string): boolean {
   return Date.now() > d + 21.5 * 60 * 60_000;
 }
 
-function applyTick(p: FollowPosition, live: SchwabFlowContract, now: number): void {
+function expiryCloseMs(expiration: string): number {
+  const ms = etCloseMs(String(expiration).slice(0, 10));
+  return Number.isFinite(ms) ? ms : -Infinity;
+}
+
+/** Store the latest quote; keep the last one at or before the expiry close as the exit mark. */
+function recordQuote(p: FollowPosition, live: SchwabFlowContract, quoteAt: number): void {
+  const bid = Number.isFinite(live.bid) && live.bid >= 0 ? live.bid : null;
+  const ask = Number.isFinite(live.ask) && live.ask > 0 ? live.ask : null;
+  const mark = Number.isFinite(live.mark) && live.mark > 0 ? live.mark : null;
+  p.live.bid = bid;
+  p.live.ask = ask;
+  p.live.quoteAt = quoteAt;
+  if ((bid != null || ask != null) && quoteAt <= expiryCloseMs(p.expiration)) {
+    p.live.preExpiryQuote = { bid, ask, mark, at: quoteAt };
+  }
+}
+
+function applyTick(p: FollowPosition, live: SchwabFlowContract, now: number, quoteAt: number = now): void {
   const newMark = live.mark > 0 ? live.mark : p.live.mark ?? p.entry.mark;
   const prevMark = p.live.mark ?? p.entry.mark;
   const pctChange = p.entry.mark > 0 ? (newMark - p.entry.mark) / p.entry.mark : 0;
@@ -262,7 +301,12 @@ function applyTick(p: FollowPosition, live: SchwabFlowContract, now: number): vo
     fadeStreak,
     drawdownStreak,
     lastVolumeBumpAt: volBumped ? now : p.live.lastVolumeBumpAt,
+    bid: p.live.bid,
+    ask: p.live.ask,
+    quoteAt: p.live.quoteAt,
+    preExpiryQuote: p.live.preExpiryQuote,
   };
+  recordQuote(p, live, quoteAt);
 
   // ─── Status transitions ──────────────────────────────────────────────────
   // CLOSED: mark went to ~0. Note this is "premium blew up / worthless", not evidence of

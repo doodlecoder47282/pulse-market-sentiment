@@ -290,6 +290,14 @@ def train_score_calibrator() -> Dict[str, Any]:
         if "graded" in df_r.columns:
             df_r = df_r[df_r["graded"] == 1]
 
+        # Ungraded rows (no option mark, insufficient history, retired leverage
+        # proxy) carry hit_30 = NULL. They are missing labels, not losses:
+        # "int(None or 0)" used to turn every one of them into a 0.
+        if "hit_30" in df_w.columns:
+            df_w = df_w[df_w["hit_30"].notna()]
+        if "hit_30" in df_r.columns:
+            df_r = df_r[df_r["hit_30"].notna()]
+
         bootstrap_n = len(df_w) + len(df_r)
 
         if bootstrap_n < MIN_ROWS_SCORE_BOOTSTRAP:
@@ -307,12 +315,12 @@ def train_score_calibrator() -> Dict[str, Any]:
         for _, row in df_w.iterrows():
             feats = _extract_bootstrap_features(row, "whale_alert")
             feat_rows.append(feats)
-            labels.append(int(row.get("hit_30") or 0))
+            labels.append(int(row["hit_30"]))
 
         for _, row in df_r.iterrows():
             feats = _extract_bootstrap_features(row, "regime_call")
             feat_rows.append(feats)
-            labels.append(int(row.get("hit_30") or 0))
+            labels.append(int(row["hit_30"]))
 
         # Sort by captured_at for temporal split
         ts_vals_w = df_w["captured_at"].tolist() if "captured_at" in df_w.columns else [0] * len(df_w)

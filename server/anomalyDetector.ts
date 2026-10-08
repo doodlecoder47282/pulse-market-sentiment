@@ -146,7 +146,7 @@ export interface DriftResult {
 export function computeDrift(): DriftResult {
   const rows = sqlite.prepare(
     `SELECT pct_return, hit_50, captured_at FROM prediction_outcomes
-     WHERE graded = 1 ORDER BY captured_at DESC LIMIT 200`
+     WHERE graded = 1 AND pct_return IS NOT NULL ORDER BY captured_at DESC LIMIT 200`
   ).all() as { pct_return: number | null; hit_50: number | null; captured_at: number }[];
   if (rows.length < 30) {
     return { recent30: { count: rows.length, meanAbsPctReturn: null, meanHit50: null },

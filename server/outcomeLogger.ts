@@ -6,6 +6,13 @@ import { db, sqlite } from "./storage";
 import { predictionOutcomes } from "@shared/schema";
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { loadWhaleEntryQuote, loadWhaleExitQuote } from "./whalePersistence";
+import { acceptExitQuote, askToBidReturn, etCloseMs, optionTradeDollars, usableEntryAsk } from "./validationMath";
+
+/** How old the logged exit quote may be at the expiry close (the flow loop re-quotes every few minutes). */
+const WHALE_EXIT_QUOTE_MAX_AGE_MS = 20 * 60_000;
+/** Method tag on whale outcomes graded from real option marks. */
+const WHALE_MARKS_METHOD = "option_marks_v1";
 
 export type PredictionKind = "whale_alert" | "regime_call";
 
@@ -48,7 +55,7 @@ export interface RegimeCallPrediction {
 
 /**
  * Log a whale alert prediction. Grading scheduled for the alert's
- * expiration day at 20:00 UTC (16:00 ET).
+ * expiration day at the 16:00 ET close (DST-correct).
  */
 export function logWhaleAlertPrediction(p: WhaleAlertPrediction): string {
   try {
@@ -165,66 +172,50 @@ export async function runGrader(now: number = Date.now()): Promise<GradingSummar
   return summary;
 }
 
+/**
+ * Grade a whale alert on real option marks (review item 8.2): bought at the
+ * ask logged at detection, sold at the bid the follow-through tracker logged
+ * at or shortly before the expiry close. No logged entry ask or no usable exit
+ * quote -> result "ungraded_no_mark" with null returns: never estimated (the
+ * old grader multiplied the underlying move by a clamp(|delta|/0.05, 4, 25)
+ * leverage proxy with no theta or spread).
+ * pctReturn is the realized option return (fraction of premium paid).
+ */
 function gradeWhaleAlert(row: any, now: number): boolean {
   const pred = JSON.parse(row.predictionJson || "{}");
-  const symbol = row.symbol;
-  // Get entry bar (close on or before captured_at) and exit bar (close on or before due).
-  const entryBar = closeOnOrBefore(symbol, row.capturedAt);
-  const exitBar = closeOnOrBefore(symbol, row.gradingDueAt);
-  // MISSION FIX — pipeline leak: grading comes due at expiry, but the daily
-  // bar for that session lands in the cache hours later. The old code graded
-  // immediately, found exit == entry bar, and permanently stamped
-  // no_holding_period — 537 of 640 whale rows died that way, starving every
-  // downstream edge analysis. Now: DEFER (leave ungraded) inside a 4-day grace
-  // window so a later tick regrades once the bar exists; only stamp the
-  // terminal result after grace expires.
-  const GRACE_MS = 4 * 24 * 3600_000;
-  const inGrace = now - row.gradingDueAt < GRACE_MS;
-  if (!entryBar || !exitBar) {
-    if (inGrace) return false; // retry on a later tick
-    markGraded(row.predictionId, {
-      result: "insufficient_history",
-      pctReturn: null,
-      hit30: null,
-      hit50: null,
-      hit100: null,
-    }, now, null, null, null, null);
+  const occ = String(pred.occ ?? "");
+  // Exit at the 16:00 ET close of the expiry date. Rows logged by older builds
+  // carry a 20:00 UTC due time, which is 15:00 ET in winter: recompute.
+  const exitTime = pred.expiration ? parseExpirationToMs(String(pred.expiration)) : Number(row.gradingDueAt);
+  if (now < exitTime) return false; // not closed yet: retry on a later tick
+  const ungraded = (reason: string, extra: Record<string, unknown> = {}) => {
+    markGraded(row.predictionId, { result: "ungraded_no_mark", method: WHALE_MARKS_METHOD, reason, ...extra }, now, null, null, null, null);
     return false;
-  }
-  if (exitBar.t <= entryBar.t) {
-    if (inGrace) return false; // bar not cached yet — retry later
-    markGraded(row.predictionId, {
-      result: "no_holding_period",
-      pctReturn: null,
-      hit30: null,
-      hit50: null,
-      hit100: null,
-    }, now, null, null, null, null);
-    return false;
-  }
+  };
+  const entry = loadWhaleEntryQuote(occ, Number(row.capturedAt));
+  const entryAsk = usableEntryAsk(entry);
+  if (entryAsk == null) return ungraded("no_entry_quote_logged");
+  const exitQ = loadWhaleExitQuote(occ);
+  const acc = acceptExitQuote(exitQ, exitTime, WHALE_EXIT_QUOTE_MAX_AGE_MS);
+  if (!acc.ok) return ungraded(acc.reason, { entryAsk, exitQuoteAt: exitQ?.at ?? null });
 
-  const movePct = (exitBar.close - entryBar.close) / entryBar.close;
-  const tNorm = String(pred.type).toUpperCase();
-  const isCall = tNorm === "CALL" || tNorm === "C";
-  const directional = isCall ? movePct : -movePct;
-  const delta = Number(pred.delta ?? 0);
-  // Match backtester leverage model exactly: clamp(|delta|/0.05, 4, 25)
-  const leverage = Math.max(4, Math.min(25, Math.abs(delta) / 0.05));
-  const pctReturn = Math.max(-1, leverage * directional);
-
+  const pctReturn = askToBidReturn(entryAsk, acc.bid);
   const hit30 = pctReturn >= 0.3 ? 1 : 0;
   const hit50 = pctReturn >= 0.5 ? 1 : 0;
   const hit100 = pctReturn >= 1.0 ? 1 : 0;
-
+  // $ per contract (x100), before fees; fees are account-specific and not applied here.
+  const perContract = optionTradeDollars({ entry: entryAsk, exit: acc.bid, contracts: 1, feePerContract: 0 }).perContractGross;
   markGraded(
     row.predictionId,
     {
       result: "ok",
-      entryClose: entryBar.close,
-      exitClose: exitBar.close,
-      movePct,
-      directional,
-      leverage,
+      method: WHALE_MARKS_METHOD,
+      entryAsk,
+      entryBid: entry?.bid ?? null,
+      entryQuoteAt: entry?.at ?? null,
+      exitBid: acc.bid,
+      exitQuoteAt: acc.at,
+      pnlPerContractBeforeFees: perContract,
       pctReturn,
     },
     now,
@@ -234,6 +225,38 @@ function gradeWhaleAlert(row: any, now: number): boolean {
     hit100,
   );
   return true;
+}
+
+/**
+ * One-time, idempotent: whale outcomes graded by the old leverage proxy keep
+ * their numbers inside outcome_json.legacyProxy but lose pct_return / hit_*,
+ * so edge stats, drift and the ML calibrator stop treating them as option P&L.
+ */
+export function retireLegacyWhaleProxyGrades(): number {
+  let n = 0;
+  try {
+    const rows = sqlite.prepare(`SELECT prediction_id, outcome_json, pct_return, hit_30, hit_50, hit_100
+                                 FROM prediction_outcomes
+                                 WHERE kind = 'whale_alert' AND graded = 1 AND pct_return IS NOT NULL`)
+      .all() as Array<{ prediction_id: string; outcome_json: string | null; pct_return: number; hit_30: number | null; hit_50: number | null; hit_100: number | null }>;
+    const upd = sqlite.prepare(`UPDATE prediction_outcomes SET outcome_json = ?, pct_return = NULL, hit_30 = NULL, hit_50 = NULL, hit_100 = NULL
+                                WHERE prediction_id = ?`);
+    for (const r of rows) {
+      let out: any = {};
+      try { out = JSON.parse(r.outcome_json || "{}"); } catch { out = {}; }
+      if (out?.method === WHALE_MARKS_METHOD) continue;
+      const next = {
+        result: "retired_leverage_proxy",
+        note: "graded by the old underlying-move x leverage proxy (no theta, no spread); not option P&L",
+        legacyProxy: { ...out, pctReturn: r.pct_return, hit30: r.hit_30, hit50: r.hit_50, hit100: r.hit_100 },
+      };
+      upd.run(JSON.stringify(next), r.prediction_id);
+      n++;
+    }
+  } catch (e: any) {
+    console.warn("[outcomeLogger] legacy proxy retirement failed:", e?.message ?? e);
+  }
+  return n;
 }
 
 function gradeRegimeCall(row: any, now: number): boolean {
@@ -312,10 +335,10 @@ function markGraded(
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function parseExpirationToMs(exp: string): number {
-  // "2026-05-08" → epoch ms at 20:00 UTC (16:00 ET)
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(exp);
+  // "2026-05-08" → epoch ms of 16:00 ET that day (20:00 UTC in summer, 21:00 UTC in winter)
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(exp);
   if (!m) return Date.now();
-  return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 20, 0, 0);
+  return etCloseMs(`${m[1]}-${m[2]}-${m[3]}`);
 }
 
 function closeOnOrBefore(symbol: string, atMs: number): { close: number; t: number; date: string } | null {
@@ -342,6 +365,8 @@ let started = false;
 export function startGraderScheduler() {
   if (started) return;
   started = true;
+  const retired = retireLegacyWhaleProxyGrades();
+  if (retired > 0) console.log(`[outcomeGrader] retired ${retired} whale outcomes graded by the leverage proxy`);
   // Run every 30 minutes during weekdays. Cheap, idempotent (graded=0 filter).
   const tick = async () => {
     try {
