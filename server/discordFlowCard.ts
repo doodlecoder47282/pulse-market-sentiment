@@ -6,7 +6,7 @@
 // Color: bullish=green / bearish=red / mixed=blue
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { postToDiscord, WHALE_WEBHOOK_URL } from "./discord";
+import { postToDiscord } from "./discord";
 import type { WhaleHit } from "./flowAlertEngine";
 import { getFlowConfig } from "./flowConfig";
 
@@ -98,7 +98,7 @@ export async function postWhaleFlowAlert(
         })() },
         timestamp: new Date().toISOString(),
       }],
-    }, WHALE_WEBHOOK_URL);
+    }, "whale");
   } catch (e: any) {
     console.warn(`[discordFlowCard] post ${ticker} failed: ${e?.message ?? e}`);
     return false;

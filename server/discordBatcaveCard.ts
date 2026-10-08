@@ -35,15 +35,14 @@ import { recordPrediction } from "./calibration";
 import { chainAbove, chainBelow, playbookCopy } from "./levelPlaybook";
 import { computeRealtimeTargets } from "./realtimeTargets";
 import { getTodayEventContext } from "./volCalendar";
+import { resolveDiscordWebhook, warnWebhookDisabledOnce, DISCORD_CHANNEL_ENV } from "./webhookConfig";
 
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
 
 // Model channel webhook — every-30-min refined-area card lands here.
-// PULSE_DISCORD_MODEL_WEBHOOK overrides; falls back to dedicated model channel.
-const WEBHOOK_URL =
-  process.env.PULSE_DISCORD_MODEL_WEBHOOK ??
-  "https://discord.com/api/webhooks/1501708521010499735/dltDgL_xkY_e5dImY_oYZW8B-d7HCpbnHGAwgMVdIBCuyN58ld04ptSNsr1xfdywtg5T";
+// From PULSE_DISCORD_MODEL_WEBHOOK only (no hard-coded fallback); resolved at
+// send time, unset = card disabled, logged once.
 
 // ─── helpers ─────────────────────────────────────────────────────────────
 function fmt0(n: number | null | undefined): string {
@@ -876,8 +875,13 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
   if (opts?.dryRun) {
     return { ok: true, preview: final };
   }
+  const webhookUrl = resolveDiscordWebhook("model");
+  if (!webhookUrl) {
+    warnWebhookDisabledOnce("discord:model", DISCORD_CHANNEL_ENV.model);
+    return { ok: false, preview: final };
+  }
   try {
-    const res = await fetch(WEBHOOK_URL, {
+    const res = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "Pulse Batcave", content: final }),

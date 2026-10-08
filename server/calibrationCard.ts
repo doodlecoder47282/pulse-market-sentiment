@@ -29,10 +29,10 @@
 import { rollingBrier, gradeBrier, beatsTrivial, recentForecastProbs } from "./calibration";
 import { resolutionScore, gradeResolution, betaBinomialCI } from "./stats";
 import { watchdogStatus } from "./cusumWatchdog";
+import { resolveDiscordWebhook, warnWebhookDisabledOnce, DISCORD_CHANNEL_ENV } from "./webhookConfig";
 
-const WEBHOOK_URL =
-  process.env.PULSE_DISCORD_WEBHOOK ??
-  "https://discord.com/api/webhooks/1318055174576803860/egM4Fx5DcOnxX3fOkbCxmywkgvwgmJWC2B7O1geDKkF-6cFjpN4mspLlPWCZkrBn4Li6";
+// Main Batcave channel, from PULSE_DISCORD_WEBHOOK only (no hard-coded fallback).
+// Resolved at send time; unset = card disabled, logged once.
 
 function fmt3(n: number): string {
   return n.toFixed(3);
@@ -188,8 +188,13 @@ export async function postCalibrationCard(days: number = 7): Promise<{
 }
 
 async function sendWebhook(content: string): Promise<boolean> {
+  const url = resolveDiscordWebhook("main");
+  if (!url) {
+    warnWebhookDisabledOnce("calibrationCard", DISCORD_CHANNEL_ENV.main);
+    return false;
+  }
   try {
-    const res = await fetch(WEBHOOK_URL, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "Pulse Batcave", content }),
