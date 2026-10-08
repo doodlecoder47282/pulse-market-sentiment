@@ -36,6 +36,7 @@ import { resolutionScore, gradeResolution } from "./stats";
 import { watchdogStatus } from "./cusumWatchdog";
 import { shieldStatus } from "./quoteShield";
 import { computeRND, type CallStrike } from "./breedenLitzenberger";
+import { repricedFlipFromChain } from "./gammaProfile";
 import { fitOUBand, shouldShowOUBand } from "./ouBand";
 import { flagTailEvent } from "./stableTail";
 import { fetchDailyCloses } from "./quotes";
@@ -3590,14 +3591,14 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
           if (st.strike >= spot && st.total > callWallValue) { callWallValue = st.total; callWall = st.strike; }
           if (st.strike <= spot && st.total < putWallValue) { putWallValue = st.total; putWall = st.strike; }
         }
-        let cum = 0, prevCum = 0, prevStrike = strikeTotals[0]?.strike ?? 0;
-        for (const st of strikeTotals) {
-          prevCum = cum; cum += st.total;
-          if ((prevCum <= 0 && cum > 0) || (prevCum >= 0 && cum < 0)) {
-            gammaFlip = (prevStrike + st.strike) / 2; break;
-          }
-          prevStrike = st.strike;
-        }
+        // Gamma flip: app-wide re-priced definition (gammaProfile.ts), same
+        // weighting as the cells. The old cumulative loop fired on the first
+        // strike (cum starts at 0), so it always returned the lowest strike.
+        gammaFlip = repricedFlipFromChain(chain, spot, {
+          weight: (c: any) => weightMode === "oi" ? (Number(c?.openInterest) || 0)
+            : weightMode === "volume" ? (Number(c?.totalVolume) || 0)
+            : (Number(c?.openInterest) || 0) + (Number(c?.totalVolume) || 0) * 0.25,
+        }).zeroGamma;
       }
 
       res.json({
@@ -3749,17 +3750,16 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         if (r.gex > maxPos) { maxPos = r.gex; callWall = r.strike; }
         if (r.gex < maxNeg) { maxNeg = r.gex; putWall = r.strike; }
       }
-      // gamma flip: cumulative-gex zero crossing across the band
-      let gammaFlip: number | null = null;
-      let cum = 0; let prevCum = 0; let prevStrike: number | null = null;
-      for (const r of rows) {
-        prevCum = cum; cum += r.gex;
-        if (prevStrike != null && prevCum !== 0 && Math.sign(prevCum) !== Math.sign(cum) && cum !== 0) {
-          const f = Math.abs(prevCum) / (Math.abs(prevCum) + Math.abs(cum));
-          gammaFlip = prevStrike + (r.strike - prevStrike) * f;
-        }
-        prevStrike = r.strike;
-      }
+      // gamma flip: app-wide re-priced definition (gammaProfile.ts) on this
+      // expiry, same hybrid weight and the same RTH-minute T as the panel greeks.
+      const gammaFlip: number | null = repricedFlipFromChain(chain, spot, {
+        expiryKeys: [nearestKey],
+        weight: (c: any) => (Number(c?.openInterest) || 0) + (Number(c?.totalVolume) || 0) * 0.25,
+        tYears: () => T,
+        lowPct: 0.95,
+        highPct: 1.05,
+        nLevels: 101,
+      }).zeroGamma;
       // pin candidate: max |gex| strike within ±1.5% of spot
       let pin: number | null = null, pinMag = 0;
       for (const r of rows) {
@@ -3987,15 +3987,14 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
           if (p.strike >= spot && p.exposure > callWallValue) { callWallValue = p.exposure; callWall = p.strike; }
           if (p.strike <= spot && p.exposure < putWallValue) { putWallValue = p.exposure; putWall = p.strike; }
         }
-        const sorted = [...gexProfile].sort((a, b) => a.strike - b.strike);
-        let cum = 0, prevCum = 0, prevStrike = sorted[0]?.strike ?? 0;
-        for (const p of sorted) {
-          prevCum = cum; cum += p.exposure;
-          if ((prevCum <= 0 && cum > 0) || (prevCum >= 0 && cum < 0)) {
-            gammaFlip = (prevStrike + p.strike) / 2; break;
-          }
-          prevStrike = p.strike;
-        }
+        // Gamma flip: app-wide re-priced definition (gammaProfile.ts), same
+        // weighting as the profile. The old cumulative loop fired on the first
+        // strike (cum starts at 0), so it always returned the lowest strike.
+        gammaFlip = repricedFlipFromChain(chain, spot, {
+          weight: (c: any) => weightMode === "oi" ? (Number(c?.openInterest) || 0)
+            : weightMode === "volume" ? (Number(c?.totalVolume) || 0)
+            : (Number(c?.openInterest) || 0) + (Number(c?.totalVolume) || 0) * 0.25,
+        }).zeroGamma;
       }
 
       let stability = 0.5;

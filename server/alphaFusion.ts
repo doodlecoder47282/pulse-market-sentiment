@@ -342,8 +342,12 @@ export async function buildFusionContext(items: AlphaNewsItem[]): Promise<Fusion
       gexAtSpot = best?.gex ?? null;
       dexAtSpot = best?.dex ?? null;
     }
-    // Flip level = first curve point where gex changes sign (zero-gamma crossing)
-    for (let i = 1; i < curve.length; i++) {
+    // Flip level: the app-wide re-priced flip that /api/exposures already
+    // reports (gammaProfile.ts definition). The curve scan below is only a
+    // fallback for older payloads without that field.
+    const zg = exposures.profile.zeroGammaSpot;
+    if (typeof zg === "number" && Number.isFinite(zg)) flipLevel = zg;
+    for (let i = 1; flipLevel == null && i < curve.length; i++) {
       const a = curve[i - 1]?.gex;
       const b = curve[i]?.gex;
       if (a != null && b != null && Math.sign(a) !== Math.sign(b) && Math.sign(a) !== 0) {

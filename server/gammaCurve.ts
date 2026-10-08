@@ -51,7 +51,9 @@ export interface GammaCurveResult {
   walls: GammaWall[];          // top 6 by |netGex|
   vacuums: VacuumZone[];       // top 3 lowest-density gaps near spot
   asymmetry: AsymmetrySummary;
-  zeroGamma: number | null;    // cumulative-flip strike from existing helper
+  zeroGamma: number | null;    // re-priced gamma flip (gammaProfile.ts), app-wide definition
+  zeroGammaCumulative?: number | null; // secondary: cumulative-by-strike sign change (legacy)
+  zeroGammaMethod?: "repriced-profile";
   source: "schwab" | "cboe";
 }
 
@@ -167,7 +169,13 @@ export async function buildGammaCurve(symbol: string): Promise<GammaCurveResult 
       bias,
       biasNote,
     },
+    // One flip definition everywhere: computeGEXFromChain returns the
+    // re-priced flip (every contract <=45 DTE re-priced across +/-10% of spot,
+    // crossing nearest spot -- gammaProfile.ts); the cumulative-by-strike
+    // number is the labeled secondary.
     zeroGamma: gex.zeroGamma ?? null,
-    source: "schwab",
+    zeroGammaCumulative: gex.zeroGammaCumulative ?? null,
+    zeroGammaMethod: "repriced-profile",
+    source: (chain as any).source === "cboe" ? "cboe" : "schwab",
   };
 }

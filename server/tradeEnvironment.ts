@@ -119,12 +119,20 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
   try {
     const port = process.env.PORT || 5000;
     const r = await fetch(`http://127.0.0.1:${port}/api/heatseeker?symbol=$SPX`);
-    if (r.ok) {
-      const hs: any = await r.json();
+    const hs: any = r.ok ? await r.json() : null;
+    // An empty chain is missing data, not "long gamma": report it as unknown.
+    if (hs && Array.isArray(hs.strikes) && hs.strikes.length > 0) {
       spot = hs.spot ?? null;
       putWall = hs.totals?.putWall ?? null;
       callWall = hs.totals?.callWall ?? null;
-      const netGex = hs.totals?.netGex ?? 0;
+      // Regime sign and flip come from the same re-priced profile
+      // (gammaProfile.ts) so "short gamma" and "near the flip" can't disagree.
+      // Older heatseeker payloads without the re-priced field fall back to the
+      // per-strike sum.
+      const repriced = hs.totals?.gexAtSpotRepriced;
+      const netGex = typeof repriced === "number" && Number.isFinite(repriced)
+        ? repriced
+        : (hs.totals?.netGex ?? 0);
       const zeroGamma = hs.totals?.zeroGamma ?? null;
       shortGamma = netGex < 0;
       if (shortGamma) gammaPts += 20;

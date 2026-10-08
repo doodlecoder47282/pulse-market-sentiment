@@ -123,6 +123,9 @@ interface HeatseekerData {
     callWall: number | null;
     putWall: number | null;
     zeroGamma: number | null;
+    /** Secondary, legacy: cumulative-by-strike sign change (not a flip level). */
+    zeroGammaCumulative?: number | null;
+    zeroGammaMethod?: "repriced-profile";
   };
   availableExpiries?: { date: string; dte: number }[];
   requestedExpiry?: string | null;
@@ -813,8 +816,21 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                 </Badge>
               )}
               {totals.zeroGamma !== null && (
-                <Badge variant="outline" className="border-amber-500/40 bg-amber-500/5 text-amber-400">
+                <Badge
+                  variant="outline"
+                  className="border-amber-500/40 bg-amber-500/5 text-amber-400"
+                  title="Gamma flip: spot level where net dealer gamma changes sign, with every contract of this expiry re-priced at each hypothetical spot (same definition as the Signals panel)."
+                >
                   0γ {totals.zeroGamma.toFixed(0)}
+                </Badge>
+              )}
+              {totals.zeroGammaCumulative != null && (
+                <Badge
+                  variant="outline"
+                  className="border-border/40 text-muted-foreground"
+                  title="Secondary reference only: first strike where cumulative per-strike GEX at today's spot changes sign. Not the gamma flip."
+                >
+                  cum-strike {totals.zeroGammaCumulative.toFixed(0)}
                 </Badge>
               )}
               <Badge variant="outline" className="font-mono">last {tickTime}</Badge>

@@ -7,6 +7,7 @@
 import { db, schwabTokens } from "./storage";
 import { eq } from "drizzle-orm";
 import { observeQuote } from "./quoteShield";
+import { cumulativeStrikeFlip, repricedFlipFromChain } from "./gammaProfile";
 
 // ─── Credentials from environment (read lazily to avoid import-order issues) ──
 const getClientId = () => process.env.SCHWAB_CLIENT_ID ?? "";
@@ -657,7 +658,9 @@ export async function getOptionChain(
 }
 
 /** Compute gamma exposure from a Schwab option chain response.
- *  Returns { callWall, putWall, zeroGamma, gexByStrike[] }
+ *  Returns { callWall, putWall, zeroGamma, zeroGammaCumulative, profile[] }.
+ *  zeroGamma is the app-wide re-priced flip (gammaProfile.ts);
+ *  zeroGammaCumulative is the legacy cumulative-by-strike secondary.
  */
 export function computeGEXFromChain(chain: Exclude<OptionChainResponse, { error: string }>) {
   type GexStrike = { strike: number; callGex: number; putGex: number; netGex: number };
@@ -693,7 +696,7 @@ export function computeGEXFromChain(chain: Exclude<OptionChainResponse, { error:
   processMap(chain.putExpDateMap, "put");
 
   const profile = Array.from(strikeMap.values()).sort((a, b) => a.strike - b.strike);
-  if (!profile.length) return { callWall: null, putWall: null, zeroGamma: null, profile: [] };
+  if (!profile.length) return { callWall: null, putWall: null, zeroGamma: null, zeroGammaCumulative: null, profile: [] };
 
   // Call Wall: strike above spot with max positive call GEX
   const aboveSpot = profile.filter((p) => p.strike >= spotPrice);
@@ -702,22 +705,20 @@ export function computeGEXFromChain(chain: Exclude<OptionChainResponse, { error:
   const callWall = aboveSpot.reduce((best, p) => (!best || p.callGex > best.callGex ? p : best), null as GexStrike | null);
   const putWall = belowSpot.reduce((best, p) => (!best || p.putGex < best.putGex ? p : best), null as GexStrike | null);
 
-  // Zero Gamma: strike closest to where cumulative net GEX flips sign
-  let cumGex = 0;
-  let zeroGamma: number | null = null;
-  for (const p of profile) {
-    const prev = cumGex;
-    cumGex += p.netGex;
-    if (prev < 0 && cumGex >= 0 || prev > 0 && cumGex <= 0) {
-      zeroGamma = p.strike;
-      break;
-    }
-  }
+  // Gamma flip: re-priced profile (one definition app-wide, gammaProfile.ts),
+  // same 0-45 DTE universe as the Signals snapshot (sources.ts).
+  // The cumulative-by-strike sign change is kept only as a labeled secondary.
+  // No real spot (underlying.last missing) -> no flip, rather than a flip
+  // computed around the placeholder spot of 1.
+  const hasSpot = chain.underlying.last != null && chain.underlying.last > 0;
+  const zeroGamma = hasSpot ? repricedFlipFromChain(chain, spotPrice, { maxDte: 45 }).zeroGamma : null;
+  const zeroGammaCumulative = cumulativeStrikeFlip(profile);
 
   return {
     callWall: callWall?.strike ?? null,
     putWall: putWall?.strike ?? null,
     zeroGamma,
+    zeroGammaCumulative,
     profile,
   };
 }

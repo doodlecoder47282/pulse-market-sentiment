@@ -18,6 +18,7 @@
 
 import type { OptionChainResponse } from "./schwab";
 import { etEpochMs } from "./etTime";
+import { repricedFlipFromRows } from "./gammaProfile";
 
 // ─── Internal contract shape ──────────────────────────────────────────────────
 
@@ -736,16 +737,12 @@ function computeSingleGEXBucket(contracts: Contract[], spot: number): GEXBucket 
   const putWall = belowSpot.reduce<typeof profile[0] | null>(
     (best, p) => (!best || p.putGex < best.putGex ? p : best), null);
 
-  let cumGex = 0;
-  let zeroGamma: number | null = null;
-  for (const p of profile) {
-    const prev = cumGex;
-    cumGex += p.netGex;
-    if ((prev < 0 && cumGex >= 0) || (prev > 0 && cumGex <= 0)) {
-      zeroGamma = p.strike;
-      break;
-    }
-  }
+  // Gamma flip: app-wide re-priced definition (gammaProfile.ts), not the
+  // cumulative-by-strike sign change.
+  const zeroGamma = repricedFlipFromRows(
+    contracts.map((c) => ({ type: c.side === "call" ? "C" as const : "P" as const, strike: c.strike, iv: c.iv, oi: c.oi, dte: c.dte })),
+    spot,
+  ).zeroGamma;
 
   const totalGex = profile.reduce((s, p) => s + p.netGex, 0);
 

@@ -156,7 +156,7 @@ function classifyZone(spot: number, levels: ModelLevel[]): ZoneClassification {
     const overrun = (spot - cw) / spot;
     return {
       zone: "ABOVE_CALL",
-      note: `Spot ${overrun > 0.005 ? "well " : ""}above Call Wall (${cw.toFixed(0)}) — breakout, dealers short calls`,
+      note: `Spot ${overrun > 0.005 ? "well " : ""}above Call Wall (${cw.toFixed(0)}) — breakout past the largest call-gamma strike`,
       positionInZone: Math.min(1, overrun / 0.01),
       distToNearestPct,
     };

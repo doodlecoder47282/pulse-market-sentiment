@@ -274,7 +274,7 @@ function bucketByStrike(rows: ExposureRow[], spot: number, r: number, q: number)
     } else {
       b.putGex  += gex;
       b.putOi   += row.oi;
-      // puts contribute negative to net GEX under the dealer-short convention
+      // puts contribute negative to net GEX (naive model: dealers short put gamma)
     }
     b.netGex = b.callGex - b.putGex;
     b.gamma = Math.max(b.gamma, g.gamma);

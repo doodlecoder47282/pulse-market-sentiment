@@ -11,14 +11,14 @@
 //   VEX   = Vanna × OI × 100 × S  × 0.01      ($ of dΔ per 1% vol)
 //   Charm = Charm × OI × 100 × S  / 365       ($ of dΔ per calendar day)
 //
-// Sign convention: dealers are assumed SHORT customer-owned options, so
-//   call OI contributes +Greek (dealer short call = positive gamma for dealer
-//     when customer is long? No — dealer is SHORT gamma on call OI, hedges by
-//     buying more as price rises).
-// We follow Perfiliev / SpotGamma / MenthorQ: calls contribute +, puts −.
-// That's what makes "positive GEX = vol-suppressing" work as an intuition.
+// Sign convention (the naive dealer model of SqueezeMetrics / Perfiliev /
+// SpotGamma): customers BUY puts and SELL calls, so dealers are LONG call
+// gamma and SHORT put gamma. Calls contribute +, puts -. That is what makes
+// "positive GEX = vol-suppressing" work. The model ignores customers who sell
+// puts or buy calls; trade-classified open/close data would be needed for that.
 
 import { computeGreeks, type GreekSet } from "./greeks";
+import { buildGammaProfile } from "./gammaProfile";
 
 export type OptionType = "C" | "P";
 
@@ -46,7 +46,7 @@ export interface ExposureProfile {
   q: number;
   curve: ExposurePoint[];       // spot levels from lowPct·S → highPct·S
   current: ExposurePoint;       // exposures evaluated at actual current spot
-  zeroGammaSpot: number | null; // spot where GEX flips sign
+  zeroGammaSpot: number | null; // gamma flip: gammaProfile.ts re-priced definition (crossing nearest spot)
   zeroCharmSpot: number | null; // spot where Charm flips sign (primary — nearest to spot)
   zeroCharmSpots: number[];     // ALL charm sign-flips across the curve (Batcave #1 — charm-zero CLUSTER)
   zeroVannaSpot: number | null; // spot where VEX flips sign
@@ -133,8 +133,15 @@ export function buildExposureProfile(
     curve.push({ spot: S, ...e });
   }
 
-  // Zero-crossings for GEX / Charm / VEX.
-  const zeroGammaSpot = findZeroCrossing(curve.map((p) => ({ x: p.spot, y: p.gex })));
+  // Gamma flip: ONE definition app-wide -- buildGammaProfile (re-priced,
+  // bisection-refined, crossing nearest spot), fed this module's own T per row
+  // so the flip and this curve share a clock.
+  const zeroGammaSpot = buildGammaProfile(
+    precomputed.map((row) => ({ type: row.type, strike: row.strike, iv: row.iv, oi: row.oi, dte: row.dte, T: row.T })),
+    spot,
+    { r, q, nLevels, lowPct, highPct },
+  ).zeroGammaSpot;
+  // Zero-crossings for Charm / VEX.
   const charmPts = curve.map((p) => ({ x: p.spot, y: p.charm }));
   // Primary charmZero must be the dealer-relevant root — the crossing NEAREST to spot,
   // restricted to ±1.5% band. Far-out crossings at the wings (±10%) are numerical artifacts,
@@ -165,7 +172,7 @@ export function buildExposureProfile(
   // True net-C aggregate per locked formula: Σ charm_strike × OI_strike × 100.
   // No spot factor, no /365 — this matches Perfiliev Table VIII / paper Table IX inputs
   // against which the β_C regression and NETC_SD_M = $80M stdev are calibrated.
-  // Dealer sign convention: calls +1, puts −1 (dealers short customer OI).
+  // Dealer sign convention: calls +1, puts -1 (naive model: dealers long call OI, short put OI).
   let netCTrue = 0;
   for (const row of precomputed) {
     const g: GreekSet = computeGreeks(spot, row.strike, row.iv, row.T, r, q, row.type);

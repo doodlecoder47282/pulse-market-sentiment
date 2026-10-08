@@ -14,6 +14,7 @@
 
 import type { OptionChainResponse } from "./schwab";
 import { invNormCDF } from "./chainAudit";
+import { cumulativeStrikeFlip, repricedFlipFromChain } from "./gammaProfile";
 
 type Chain = Exclude<OptionChainResponse, { error: string }>;
 
@@ -80,7 +81,16 @@ export interface HeatseekerResult {
     netCharm: number;
     callWall: number | null;  // max positive GEX strike above spot
     putWall: number | null;   // max negative GEX strike below spot
-    zeroGamma: number | null; // strike where cum net GEX flips
+    /** Gamma flip: spot level where re-priced net dealer gamma (every contract
+     *  of this expiry re-priced with Black-Scholes at each hypothetical spot)
+     *  changes sign, nearest current spot. Same definition as the Signals panel. */
+    zeroGamma: number | null;
+    /** Secondary, legacy: first strike where cumulative per-strike GEX (at
+     *  today's spot) changes sign. Not a flip level; shown for reference only. */
+    zeroGammaCumulative?: number | null;
+    zeroGammaMethod?: "repriced-profile";
+    /** Re-priced net dealer GEX at spot over the full expiry (sign = regime). */
+    gexAtSpotRepriced?: number | null;
   };
   availableExpiries: { date: string; dte: number }[]; // every expiry present in chain
   requestedExpiry: string | null; // what the caller asked for (null = nearest auto-pick)
@@ -132,7 +142,7 @@ export function buildHeatseeker(
       strikes: [],
       stickyZones: [],
       pivotBands: [],
-      totals: { netGex: 0, netDex: 0, netVanna: 0, netCharm: 0, callWall: null, putWall: null, zeroGamma: null },
+      totals: { netGex: 0, netDex: 0, netVanna: 0, netCharm: 0, callWall: null, putWall: null, zeroGamma: null, zeroGammaCumulative: null, zeroGammaMethod: "repriced-profile", gexAtSpotRepriced: null },
       availableExpiries: [],
       requestedExpiry: targetExpiry ?? null,
     };
@@ -233,8 +243,10 @@ export function buildHeatseeker(
 
         const s = ensure(strike);
 
-        // Dealer convention: dealers short calls (-), long puts (+) for gamma
-        // net GEX at strike = callGEX - putGEX (positive = dealers long gamma)
+        // Naive dealer convention (SqueezeMetrics / SpotGamma): customers buy
+        // puts and sell calls, so dealers are LONG call gamma and SHORT put
+        // gamma. Net GEX at strike = callGEX - putGEX (positive = dealers long
+        // gamma). This ignores customers who sell puts or buy calls.
         const gex = gamma * oi * mult * spot * spot * 0.01;
 
         // True Black-Scholes vanna/charm recovered from delta + IV (same d1
@@ -310,18 +322,21 @@ export function buildHeatseeker(
     }
   }
 
-  // Zero gamma: cumulative net GEX from lowest strike — flips from + to - (or vice versa)
-  let cum = 0;
-  let zeroGamma: number | null = null;
-  let prevCum = 0;
-  for (const s of strikes) {
-    prevCum = cum;
-    cum += s.netGex;
-    if (prevCum !== 0 && Math.sign(prevCum) !== Math.sign(cum)) {
-      zeroGamma = s.strike;
-      break;
-    }
-  }
+  // Gamma flip — ONE definition app-wide: re-price every contract of this
+  // expiry (all strikes, not just the display window) at hypothetical spots
+  // across the window and take the zero crossing of net dealer gamma nearest
+  // spot (gammaProfile.ts). Uses this module's own T so the flip and the
+  // per-strike greeks share a clock.
+  const flip = repricedFlipFromChain(chain, spot, {
+    expiryKeys: [expKey],
+    tYears: () => T,
+    lowPct: 1 - windowPct / 100,
+    highPct: 1 + windowPct / 100,
+    nLevels: 121,
+  });
+  const zeroGamma: number | null = flip.rowsUsed > 0 ? flip.zeroGamma : null;
+  // Legacy cumulative-by-strike number, kept as a labeled secondary only.
+  const zeroGammaCumulative = cumulativeStrikeFlip(strikes);
 
   const totals = {
     netGex: strikes.reduce((a, s) => a + s.netGex, 0),
@@ -331,6 +346,9 @@ export function buildHeatseeker(
     callWall,
     putWall,
     zeroGamma,
+    zeroGammaCumulative,
+    zeroGammaMethod: "repriced-profile" as const,
+    gexAtSpotRepriced: flip.rowsUsed > 0 ? flip.gexAtSpot : null,
   };
 
   // 5. Sticky-zone composite score
