@@ -100,14 +100,14 @@ export function settlementStyleOf(hint: ContractSettlementHint | string | null |
  *   PM: session close on the expiry date (16:00 ET, 13:00 ET on half days).
  *   AM: the 09:30 ET open on the expiry date (SOQ).
  * If the date is not a trading day (an exchange-moved expiry the feed did not
- * re-date), the previous trading day's close is used.
+ * re-date, e.g. the June 2026 monthly on Juneteenth, Fri 19 Jun), settlement
+ * moves to the previous trading day with the same style: its 09:30 open for
+ * AM-settled series (SOQ on Thu 18 Jun), its close for PM-settled series.
  */
 export function settlementInstantMs(expiry: IsoDate, style: SettlementStyle = "PM"): number {
   const date = expiry.slice(0, 10);
-  if (isTradingDay(date)) {
-    return style === "AM" ? (sessionOpenMs(date) as number) : (sessionCloseMs(date) as number);
-  }
-  return sessionCloseMs(prevTradingDay(date)) as number;
+  const day = isTradingDay(date) ? date : prevTradingDay(date);
+  return style === "AM" ? (sessionOpenMs(day) as number) : (sessionCloseMs(day) as number);
 }
 
 /** Regular-session minutes inside [fromMs, toMs], using the exchange calendar. */
