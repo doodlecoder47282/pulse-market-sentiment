@@ -1,6 +1,6 @@
 # Batcave checkpoint
 
-Updated: 2026-10-07. This is a compact handoff, not a live-health certificate.
+Updated: 2026-10-08. This is a compact handoff, not a live-health certificate.
 
 ## Completed objective
 
@@ -59,8 +59,24 @@ iOS Xcode project (Capacitor 8) and hosted-deployment readiness, on branch
 - Score calibrator models are `BOOTSTRAP` with n_train = 80.
 - iOS app not signed or tested on a physical device.
 
+## 2026-10-08: quant code review + self-call fix
+
+- Sector-by-sector quant review of `main` published as a Claude Doc
+  ("Batcave Terminal — Quant Code Review"). Overall grade C-. Each finding was
+  checked with a script against a synthetic or known answer. Highlights:
+  stale CBOE chains (up to 7 days) labeled 900 s lag; three disagreeing
+  gamma-flip methods; OU band finds mean reversion in 95% of random walks;
+  CUSUM reads HEALTHY for a model worse than climatology; Cosmos (astrology)
+  emits trade instructions; ML v4 trained on synthetic GBM bars; "Kelly" not
+  derived from a win probability; holiday table covers 2026 only.
+- Fix d40db7d: with `BATCAVE_ACCESS_KEY` set, the ~25 internal
+  `fetch("http://127.0.0.1:PORT/api/...")` calls were getting 401. `server/index.ts`
+  now adds the key only to requests aimed at its own port. CI run 37800438742:
+  "PASS internal self-calls work with access key on".
+- iOS work is on hold at the user's request. No hosting chosen yet
+  (options given: own PC + Cloudflare Tunnel, Oracle Always Free, Railway).
+
 ## Next step
 
-User deploys `ios-capacitor` (or `main` after merging the PR) to Railway with
-rotated Schwab credentials, `BATCAVE_ACCESS_KEY`, and a volume at
-`/app/persist` (`BATCAVE_DATA_DIR=/app/persist`), then enters that URL in the iOS app.
+User picks which review fixes to start with (or answers the Cosmos question in
+the doc); no code changes to `main` until then.
