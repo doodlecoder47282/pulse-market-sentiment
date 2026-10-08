@@ -29,6 +29,10 @@ export function aggregateCandles<T extends CandleLike>(candles: readonly T[], mi
   const anchorCache = new Map<string, number>();
   const out: CandleLike[] = [];
   let cur: CandleLike | null = null;
+  // Volume is the sum of the sub-bars only when every sub-bar has one; a
+  // single missing sub-bar volume makes the bucket's volume missing (null),
+  // never a partial sum that would read as low volume.
+  let volMissing = false;
   for (const b of candles) {
     const date = etDate(b.t * 1000);
     let anchor = anchorCache.get(date);
@@ -41,9 +45,11 @@ export function aggregateCandles<T extends CandleLike>(candles: readonly T[], mi
       cur.h = Math.max(cur.h, b.h);
       cur.l = Math.min(cur.l, b.l);
       cur.c = b.c;
-      cur.v = cur.v == null && b.v == null ? null : (cur.v ?? 0) + (b.v ?? 0);
+      if (b.v == null) volMissing = true;
+      cur.v = volMissing || cur.v == null ? null : cur.v + (b.v as number);
     } else {
       if (cur) out.push(cur);
+      volMissing = b.v == null;
       cur = { t: start, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v };
     }
   }
