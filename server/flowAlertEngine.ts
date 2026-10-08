@@ -30,6 +30,7 @@ import { registerWhale } from "./whaleFollowThrough";
 import { getRegimeSnapshot } from "./regimeStateCache";
 import { regimeConvictionMultiplier } from "./edgeStats";
 import { logWhaleAlertPrediction } from "./outcomeLogger";
+import { isRegularSessionOpen } from "./exchangeCalendar";
 
 // Fire-once Discord poster for UOA. Posts the exact cluster returned by ingestContract.
 // It used to look up "any cluster for this ticker fired in the last 10 s", which posted
@@ -167,20 +168,10 @@ const DEDUP_COARSE_WINDOW_MS = 18 * 60 * 60 * 1000;
 // ET market hours guard — flow scanner runs ONLY during RTH on trading days.
 // Without this, Schwab can return stale snapshots / late prints / rebroadcast
 // the same day's flow after 16:00 ET, causing apparent re-alerts.
-const HOLIDAYS_2026 = new Set([
-  "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25",
-  "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
-]);
+// Holidays and 13:00 ET half-day closes come from the shared exchange calendar
+// (the old 2026-only table had no half days and expired on 1 Jan 2027).
 function isRthNow(): boolean {
-  const now = new Date();
-  const etStr = now.toLocaleString("en-US", { timeZone: "America/New_York" });
-  const et = new Date(etStr);
-  const day = et.getDay();
-  if (day === 0 || day === 6) return false;
-  const dateStr = et.toISOString().slice(0, 10);
-  if (HOLIDAYS_2026.has(dateStr)) return false;
-  const totalMins = et.getHours() * 60 + et.getMinutes();
-  return totalMins >= 9 * 60 + 30 && totalMins < 16 * 60;
+  return isRegularSessionOpen(Date.now());
 }
 
 // Hydration flag — ensures the dedup map is populated from SQLite exactly

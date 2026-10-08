@@ -31,6 +31,7 @@ import { mlQuantileOverlay } from "./mlBridge";
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { isTradingDay as calIsTradingDay, sessionCloseMinutes } from "./exchangeCalendar";
 
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -213,13 +214,6 @@ async function _buildMlLine(
   }
 }
 
-// Match mmScheduler holiday list
-const HOLIDAYS_2026 = new Set([
-  "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03",
-  "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07",
-  "2026-11-26", "2026-12-25",
-]);
-
 function etNow(): { date: string; hh: number; mm: number; dow: number } {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
@@ -235,10 +229,9 @@ function etNow(): { date: string; hh: number; mm: number; dow: number } {
   return { date, hh, mm, dow };
 }
 
-function isTradingDay(dow: number, date: string): boolean {
-  if (dow === 0 || dow === 6) return false;
-  if (HOLIDAYS_2026.has(date)) return false;
-  return true;
+// Weekends, NYSE holidays (2026-2028) via the shared exchange calendar.
+function isTradingDay(_dow: number, date: string): boolean {
+  return calIsTradingDay(date);
 }
 
 // ─── 1. Daily card cron ─────────────────────────────────────────────────
@@ -452,9 +445,12 @@ async function pollLevelAndGammaAlerts(): Promise<void> {
 async function pollOdteBangerAlerts(): Promise<void> {
   const { dow, date, hh, mm } = etNow();
   if (!isTradingDay(dow, date)) return;
-  // Only during RTH — 9:45 ET to 15:45 ET (engine also has a time-of-day score)
+  // Only during RTH — 9:45 ET to 15 min before the close (15:45 ET; 12:45 ET on
+  // 13:00 half days, when the 0DTE chain settles at 13:00). Engine also has a
+  // time-of-day score.
   const tod = hh * 60 + mm;
-  if (tod < 9 * 60 + 45 || tod > 15 * 60 + 45) return;
+  const closeMin = sessionCloseMinutes(date) ?? 16 * 60;
+  if (tod < 9 * 60 + 45 || tod > closeMin - 15) return;
 
   let modelsRes: Response, odteRes: Response;
   try {
