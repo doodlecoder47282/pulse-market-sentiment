@@ -18,6 +18,8 @@
 
 import type { OptionChainResponse } from "./schwab";
 import { etEpochMs } from "./etTime";
+import { timeToExpiry, settlementStyleOf, type SettlementStyle } from "./timeToExpiry";
+import { gamma as bsGamma, vega as bsVega, impliedVol } from "./greeks";
 
 // ─── Internal contract shape ──────────────────────────────────────────────────
 
@@ -25,7 +27,9 @@ interface Contract {
   strike: number;
   side: "call" | "put";
   expiry: string;              // "YYYY-MM-DD"
-  dte: number;
+  dte: number;                 // whole calendar days (bucket label only; 0 = expires today)
+  style: SettlementStyle;      // AM (SOQ, 09:30 ET open) or PM (session close)
+  tYears: number;              // timeToExpiry(): calendar minutes to settlement / 525,600, 15-min floor
   delta: number;
   gamma: number;
   theta: number;
@@ -222,11 +226,10 @@ function parseExpiryKey(key: string): string {
   return key.split(":")[0];
 }
 
-/** Parse DTE from expiry string "YYYY-MM-DD" vs today */
-function parseDTE(expiryDate: string): number {
-  const now = new Date();
+/** Parse DTE (whole calendar days, bucket label) from expiry string "YYYY-MM-DD" vs now */
+function parseDTE(expiryDate: string, nowMs: number = Date.now()): number {
   const exp = new Date(etEpochMs(expiryDate, 16, 0)); // 4pm ET, DST-aware
-  const diff = (exp.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+  const diff = (exp.getTime() - nowMs) / (1000 * 60 * 60 * 24);
   return Math.max(0, Math.round(diff));
 }
 
@@ -248,18 +251,28 @@ function normIV(rawIV: number | null | undefined): number {
 function extractContracts(
   callExpDateMap: Record<string, Record<string, any[]>>,
   putExpDateMap: Record<string, Record<string, any[]>>,
+  nowMs: number = Date.now(),
 ): Contract[] {
   const contracts: Contract[] = [];
 
   function processMap(map: Record<string, Record<string, any[]>>, side: "call" | "put") {
     for (const expKey of Object.keys(map)) {
       const expiry = parseExpiryKey(expKey);
-      const dte = parseDTE(expiry);
+      const dte = parseDTE(expiry, nowMs);
       const strikesObj = map[expKey];
       for (const strikeStr of Object.keys(strikesObj)) {
         const strike = parseFloat(strikeStr);
         if (!isFinite(strike)) continue;
         for (const c of strikesObj[strikeStr]) {
+          // Settlement-aware clock. A Schwab $SPX chain lists AM-settled SPX
+          // monthlies and PM-settled SPXW under the same expiry key; the SPX
+          // monthly settles at the 09:30 ET open, SPXW at the close. Settled
+          // contracts carry no risk, so they are dropped from every metric.
+          const style = settlementStyleOf({
+            symbol: c.symbol, optionRoot: c.optionRoot, settlementType: c.settlementType,
+          });
+          const tte = timeToExpiry(expiry, { nowMs, style });
+          if (tte.expired) continue;
           const iv = normIV(c.volatility);
           const theoreticalIV = c.theoreticalVolatility != null && isFinite(c.theoreticalVolatility)
             ? normIV(c.theoreticalVolatility)
@@ -269,6 +282,8 @@ function extractContracts(
             side,
             expiry,
             dte,
+            style,
+            tYears: tte.years,
             delta: c.delta ?? 0,
             gamma: c.gamma ?? 0,
             theta: c.theta ?? 0,
@@ -356,22 +371,72 @@ function computeDEX(contracts: Contract[], spot: number): DEXResult {
   };
 }
 
+// ─── 2-3c shared Black-Scholes terms ─────────────────────────────────────────
+//
+// Vanna, charm, vomma and zomma are computed from one self-consistent
+// Black-Scholes evaluation per contract (r = q = 0) using:
+//   T     = c.tYears (timeToExpiry: calendar minutes to the settlement instant
+//           / 525,600, 15-minute floor), so 0DTE contracts are included until
+//           they settle;
+//   sigma = an implied vol that is valid for that T (see effectiveIV).
+// The earlier version recovered d1 from the vendor delta, used the vendor vega
+// and T = whole days / 365, and skipped every contract with dte <= 0, which
+// dropped the entire 0DTE expiry. It also mixed the vendor's own (unknown) T
+// convention with ours.
+
+/** Expiries this close (calendar years) get IV re-solved from the quote mid. */
+const RESOLVE_IV_MAX_T = 3 / 365;
+
+/**
+ * Implied vol consistent with c.tYears. An implied vol is only meaningful with
+ * the T used to solve it (Hull, "Options, Futures, and Other Derivatives",
+ * implied volatility chapter): Schwab does not document the time convention
+ * behind its "volatility" field, and for 0DTE the difference between
+ * conventions is large. For expiries within 3 days we therefore solve sigma
+ * from the two-sided quote mid with our T (r = q = 0; carry over <= 3 days is
+ * negligible). Otherwise, or if the quote is unusable, the vendor IV is used.
+ */
+function effectiveIV(c: Contract, spot: number): number {
+  if (c.tYears > 0 && c.tYears <= RESOLVE_IV_MAX_T && c.bid > 0 && c.ask >= c.bid && spot > 0) {
+    const mid = (c.bid + c.ask) / 2;
+    const solved = impliedVol(mid, spot, c.strike, c.tYears, 0, 0, c.side === "call" ? "C" : "P");
+    if (solved != null && isFinite(solved) && solved > 0.005 && solved < 4.99) return solved;
+  }
+  return c.iv;
+}
+
+interface BsTerms { T: number; sigma: number; d1: number; d2: number; phiD1: number }
+
+/** d1, d2, phi(d1) for one contract (r = q = 0), or null if not computable. */
+function bsTerms(c: Contract, spot: number): BsTerms | null {
+  const T = c.tYears;
+  if (!(T > 0) || !(spot > 0) || !(c.strike > 0)) return null;
+  const sigma = effectiveIV(c, spot);
+  if (!(sigma > 0)) return null;
+  const sRootT = sigma * Math.sqrt(T);
+  const d1 = (Math.log(spot / c.strike) + 0.5 * sigma * sigma * T) / sRootT;
+  const d2 = d1 - sRootT;
+  if (!isFinite(d1) || !isFinite(d2)) return null;
+  const phiD1 = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
+  return { T, sigma, d1, d2, phiD1 };
+}
+
 // ─── 2. Vanna ─────────────────────────────────────────────────────────────────
 
 function computeVanna(contracts: Contract[], spot: number): VannaResult {
   const strikeMap = new Map<number, number>();
 
   for (const c of contracts) {
-    if (c.oi <= 0 || c.iv <= 0 || c.vega === 0 || c.dte <= 0) continue;
-    const dd = recoverD1D2(c);
-    if (!dd) continue;
-    const T = c.dte / 365;
-    const sigmaRootT = c.iv * Math.sqrt(T);
-    if (sigmaRootT <= 0 || !isFinite(sigmaRootT)) continue;
-    // Institutional vanna = -vega * d2 / (S * sigma * sqrt(T))  (Black-Scholes ∂Δ/∂σ)
-    const vanna = safeDivide(-c.vega * dd.d2, spot * sigmaRootT);
-    // Vanna exposure in $ per 1% vol move = vanna × OI × 100 × S × 0.01
-    const vannaExp = vanna * c.oi * 100 * spot * 0.01;
+    if (c.oi <= 0) continue;
+    const t = bsTerms(c, spot);
+    if (!t) continue;
+    // Black-Scholes vanna = dDelta/dSigma = -phi(d1) * d2 / sigma (per 1.0 vol, per share;
+    // same for calls and puts). Computed directly, so it no longer depends on the
+    // vendor's vega units (finding 7.5).
+    const vanna = -t.phiD1 * t.d2 / t.sigma;
+    // Units: $ change in dealer-agnostic delta notional per +1 vol point
+    //   = vanna x 0.01 (one vol point) x OI x 100 (shares per contract) x S ($/share).
+    const vannaExp = vanna * 0.01 * c.oi * 100 * spot;
     strikeMap.set(c.strike, (strikeMap.get(c.strike) ?? 0) + vannaExp);
   }
 
@@ -395,21 +460,17 @@ function computeCharm(contracts: Contract[], spot: number): CharmResult {
   const strikeMap = new Map<number, number>();
 
   for (const c of contracts) {
-    if (c.oi <= 0 || c.dte <= 0 || c.iv <= 0) continue;
-    const dd = recoverD1D2(c);
-    if (!dd) continue;
-    const T = c.dte / 365;
-    const sigmaRootT = c.iv * Math.sqrt(T);
-    if (sigmaRootT <= 0 || !isFinite(sigmaRootT)) continue;
-    // Black-Scholes charm with r=q=0: charm = phi(d1) * d2 / (2*T), in delta/year.
-    // (Previous version had a sign flip and an extra sigma*sqrt(T) in the denominator,
-    // which inverted the drift direction and over-weighted short-dated expiries.)
-    // With q=0, charm_call = charm_put. phi = standard normal pdf.
-    const phiD1 = Math.exp(-0.5 * dd.d1 * dd.d1) / Math.sqrt(2 * Math.PI);
-    const charm = safeDivide(phiD1 * dd.d2, 2 * T);
-    // charm is in (delta units / year). Convert to per-day by /365.
-    // Exposure in $/day per 1pt move = charm × OI × 100 × S / 365
-    const charmExp = (charm * c.oi * 100 * spot) / 365;
+    if (c.oi <= 0) continue;
+    const t = bsTerms(c, spot);
+    if (!t) continue;
+    // Black-Scholes charm with r = q = 0: dDelta/dt = phi(d1) * d2 / (2T), delta per
+    // calendar year (T in calendar years); identical for calls and puts.
+    const charm = t.phiD1 * t.d2 / (2 * t.T);
+    // Units: $ delta notional change per calendar day
+    //   = charm / 365 x OI x 100 (shares per contract) x S ($/share).
+    // For 0DTE this is an instantaneous rate scaled to a day, not the decay
+    // actually left before settlement.
+    const charmExp = (charm / 365) * c.oi * 100 * spot;
     strikeMap.set(c.strike, (strikeMap.get(c.strike) ?? 0) + charmExp);
   }
 
@@ -426,13 +487,6 @@ function computeCharm(contracts: Contract[], spot: number): CharmResult {
 
   return { profile, peakCharmStrike, totalCharmPerDay };
 }
-
-// ─── 3b/3c helpers: derive d1/d2 from Schwab greeks ──────────────────────────
-//
-// Schwab provides delta directly. For a call: delta = N(d1), so d1 = N⁻¹(delta).
-// For a put: delta = N(d1) - 1, so d1 = N⁻¹(delta + 1). Then d2 = d1 - σ√T.
-// This lets us compute vomma and zomma without re-implementing Black-Scholes
-// from scratch — we ride on Schwab's own pricing model.
 
 /** Beasley-Springer-Moro approximation of inverse normal CDF. Accurate to ~1e-7 over (0,1). */
 export function invNormCDF(p: number): number {
@@ -461,42 +515,22 @@ export function invNormCDF(p: number): number {
            ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1);
 }
 
-/** Recover d1, d2 from contract using its delta and IV. Returns null if unrecoverable. */
-function recoverD1D2(c: Contract): { d1: number; d2: number } | null {
-  if (c.iv <= 0 || c.dte <= 0) return null;
-  const T = c.dte / 365;
-  const sigmaRootT = c.iv * Math.sqrt(T);
-  if (sigmaRootT <= 0 || !isFinite(sigmaRootT)) return null;
-  let probability: number;
-  if (c.side === "call") {
-    if (c.delta <= 0 || c.delta >= 1) return null;
-    probability = c.delta;
-  } else {
-    // put delta is in (-1, 0). d1 = N⁻¹(delta + 1)
-    if (c.delta >= 0 || c.delta <= -1) return null;
-    probability = c.delta + 1;
-  }
-  const d1 = invNormCDF(probability);
-  const d2 = d1 - sigmaRootT;
-  if (!isFinite(d1) || !isFinite(d2)) return null;
-  return { d1, d2 };
-}
-
 // ─── 3b. Vomma (∂vega/∂σ) ─────────────────────────────────────────────────────
 
 function computeVomma(contracts: Contract[], spot: number): VommaResult {
   const strikeMap = new Map<number, number>();
 
   for (const c of contracts) {
-    if (c.oi <= 0 || c.iv <= 0 || c.vega === 0) continue;
-    const dd = recoverD1D2(c);
-    if (!dd) continue;
-    // Vomma per contract = vega · (d1 · d2) / σ. Units: dollars per 1.0 vol unit per contract.
-    const vomma = safeDivide(c.vega * dd.d1 * dd.d2, c.iv);
-    // Aggregate exposure for a 1% (0.01) vol move: vomma × OI × 100 × 0.01.
-    // Note: vega is already in $/contract per 1.0 vol unit (Schwab convention), so this
-    // gives $ change in *vega P&L* per 1% vol move — i.e. convexity of vol exposure.
-    const vommaExp = vomma * c.oi * 100 * 0.01;
+    if (c.oi <= 0) continue;
+    const t = bsTerms(c, spot);
+    if (!t) continue;
+    // Vomma = vega * d1 * d2 / sigma, with vega = S * phi(d1) * sqrt(T) per 1.0 vol per share.
+    const vega = bsVega(spot, c.strike, t.sigma, t.T, 0, 0);
+    const vomma = vega * t.d1 * t.d2 / t.sigma;
+    // Units: $ change in position vega (vega in $ per 1 vol point) per +1 vol point
+    //   = vomma x 0.01 x 0.01 x OI x 100 (shares per contract).
+    // Matches the previous output if Schwab's vega is quoted per 1 vol point.
+    const vommaExp = vomma * 0.01 * 0.01 * c.oi * 100;
     strikeMap.set(c.strike, (strikeMap.get(c.strike) ?? 0) + vommaExp);
   }
 
@@ -520,14 +554,18 @@ function computeZomma(contracts: Contract[], spot: number): ZommaResult {
   const strikeMap = new Map<number, number>();
 
   for (const c of contracts) {
-    if (c.oi <= 0 || c.iv <= 0 || c.gamma === 0) continue;
-    const dd = recoverD1D2(c);
-    if (!dd) continue;
-    // Zomma per contract = gamma · (d1 · d2 − 1) / σ. Units: gamma-units per 1.0 vol unit.
-    const zomma = safeDivide(c.gamma * (dd.d1 * dd.d2 - 1), c.iv);
-    // $-gamma exposure change per 1% vol move = zomma × OI × 100 × S² × 0.01.
-    // (Gamma P&L is per S²; sign convention matches dealer net-gamma convention via OI.)
-    const zommaExp = zomma * c.oi * 100 * spot * spot * 0.01;
+    if (c.oi <= 0) continue;
+    const t = bsTerms(c, spot);
+    if (!t) continue;
+    // Zomma = gamma * (d1 * d2 - 1) / sigma, per 1.0 vol (gamma per share).
+    const g = bsGamma(spot, c.strike, t.sigma, t.T, 0, 0);
+    const zomma = g * (t.d1 * t.d2 - 1) / t.sigma;
+    // Units: $ change in dollar gamma (GEX convention: gamma x OI x 100 x S^2 x 0.01,
+    // i.e. $ delta change per 1% spot move) per +1 vol point
+    //   = zomma x 0.01 (vol point) x OI x 100 x S^2 x 0.01.
+    // The previous formula omitted the vol-point 0.01, so it was per 100 vol
+    // points and 100x larger than its "per vol pct" label.
+    const zommaExp = zomma * 0.01 * c.oi * 100 * spot * spot * 0.01;
     strikeMap.set(c.strike, (strikeMap.get(c.strike) ?? 0) + zommaExp);
   }
 
@@ -867,12 +905,16 @@ function computeVRP(contracts: Contract[], spot: number): VRPEntry[] {
  * Build the full chain audit from a Schwab OptionChainResponse.
  * @param chain - raw Schwab chain (must be non-error variant)
  * @param spot  - current underlying price
+ * @param nowMs - valuation instant (epoch ms); defaults to now. Contracts already
+ *                settled at nowMs (0DTE after the close, AM-settled SPX monthlies
+ *                after the 09:30 ET open) are excluded from every metric.
  */
 export function buildChainAudit(
   chain: Exclude<OptionChainResponse, { error: string }>,
   spot: number,
+  nowMs: number = Date.now(),
 ): ChainAuditResult {
-  const contracts = extractContracts(chain.callExpDateMap, chain.putExpDateMap);
+  const contracts = extractContracts(chain.callExpDateMap, chain.putExpDateMap, nowMs);
 
   const expiries = [...new Set(contracts.map(c => c.expiry))];
 
