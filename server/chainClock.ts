@@ -19,7 +19,7 @@
 
 import { settlementStyleOf, timeToExpiry, type SettlementStyle } from "./timeToExpiry";
 import { addDays, etDate, sessionCloseMs, sessionMinutes } from "./exchangeCalendar";
-import { impliedVol } from "./greeks";
+import { bsPrice, impliedVol } from "./greeks";
 
 /** Expiries this close (calendar years) get sigma re-solved from the quote mid. */
 export const RESOLVE_IV_MAX_T = 3 / 365;
@@ -103,4 +103,51 @@ export function minutesToSessionClose(nowMs: number = Date.now()): number {
 export function projectedThetaCost(thetaPerDay: number, minutesToClose: number, nowMs: number = Date.now()): number {
   const len = sessionMinutes(etDate(nowMs)) || 390;
   return (thetaPerDay / len) * minutesToClose;
+}
+
+/**
+ * Theta to the close by full repricing, per share (negative = cost): the
+ * Black-Scholes value with spot and sigma held at the close minus the value
+ * now,
+ *   cost = P(S, sigma, T_close) - P(S, sigma, T_now),  T_close = T_now - minutesToClose.
+ * When the contract settles at or before the close (a PM-settled 0DTE),
+ * P(T_close) is intrinsic, so the cost is minus the whole extrinsic value:
+ * at expiry an option is worth its intrinsic value (Hull, OFOD, ch. 11).
+ * sigma is solved from the mid with our T (ivForClock), so P(T_now) is the
+ * mid. Why not theta x minutes: the vendor theta is an instantaneous rate on
+ * an undocumented clock, and decay is not linear in time (ATM value ~ sqrt T,
+ * so the instantaneous rate x T is only half of what is left: with S = 6,700,
+ * sigma 15% and 4 h to a PM settlement the ATM call holds 8.57 of extrinsic,
+ * while a per-day theta of -25.70 spread over 390 minutes charges 15.82
+ * for 240 minutes).
+ * Returns null when no usable sigma or the contract has settled; callers then
+ * fall back to projectedThetaCost. Multiply by 100 for $ per contract.
+ */
+export function modelThetaToClose(args: {
+  spot: number;
+  strike: number;
+  type: "C" | "P";
+  expiry: string;                       // "YYYY-MM-DD"
+  symbol?: string | null;               // OCC/Schwab symbol: AM (SPX) vs PM (SPXW) settlement
+  bid: number | null | undefined;
+  ask: number | null | undefined;
+  vendorIv: number;                     // decimal, used only when the mid cannot be solved
+  minutesToClose: number;
+  nowMs: number;
+}): number | null {
+  const { spot, strike, type } = args;
+  if (!(spot > 0) || !(strike > 0) || !(args.minutesToClose >= 0)) return null;
+  const tte = timeToExpiry(args.expiry, { nowMs: args.nowMs, style: settlementStyleOf(args.symbol ?? null) });
+  if (tte.expired || !(tte.years > 0)) return null;
+  const T = tte.years;
+  const sigma = ivForClock({ vendorIv: args.vendorIv, bid: args.bid, ask: args.ask, spot, strike, T, type });
+  if (!(sigma > 0)) return null;
+  const pNow = bsPrice(spot, strike, sigma, T, 0, 0, type);
+  const closeMs = args.nowMs + args.minutesToClose * 60_000;
+  const settlesByClose = tte.settlementMs <= closeMs;
+  const tClose = settlesByClose ? 0 : T - args.minutesToClose / 525_600;
+  const intrinsic = type === "C" ? Math.max(0, spot - strike) : Math.max(0, strike - spot);
+  const pClose = tClose > 1e-12 ? bsPrice(spot, strike, sigma, tClose, 0, 0, type) : intrinsic;
+  const cost = pClose - pNow;
+  return Number.isFinite(cost) ? Math.min(0, cost) : null;
 }

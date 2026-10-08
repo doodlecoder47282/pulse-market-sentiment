@@ -41,7 +41,7 @@
 // function of current snapshots — restart-safe because it only fires on
 // fresh transitions detected via in-memory history.
 
-import { minutesToSessionClose, projectedThetaCost } from "./chainClock";
+import { minutesToSessionClose, modelThetaToClose, projectedThetaCost } from "./chainClock";
 
 export type OdteSetupKind = "FAILED_BREAK" | "PIVOT_RECLAIM" | "WALL_REJECT";
 export type Side = "call" | "put";
@@ -2129,12 +2129,21 @@ function buildAlert(
       return gateReject(args, setup, side, reversionLevel, `CONTRACT_SPREAD_TOO_WIDE_GT_5_PCT ${(w16ContractSpreadPct*100).toFixed(1)}%`, { contract: contractForScoring });
     }
 
+    // Theta to the close per share by repricing (chainClock.modelThetaToClose,
+    // same as contractPicker); theta-per-day over the session only without a sigma.
+    const thetaToClose = modelThetaToClose({
+      spot: args.spot, strike: pickedContract.strike, type: side === "call" ? "C" : "P",
+      expiry: pickedContract.expiry, symbol: pickedContract.key,
+      bid: pickedContract.bid, ask: pickedContract.ask, vendorIv: pickedContract.iv,
+      minutesToClose, nowMs: args.asOf,
+    }) ?? projectedThetaCost(theta, minutesToClose, args.asOf);
+
     // Wire 16: use entryPrice (mid + halfSpread) as denominator for honest fill projection
     function bsProj(targetPrice: number): number {
       const move = side === "call" ? targetPrice - args.spot : args.spot - targetPrice;
       const projDeltaPnl = absDelta * move;
       const projGammaBoost = 0.5 * gamma * move * move;
-      const projThetaCost = projectedThetaCost(theta, minutesToClose, args.asOf); // per share; theta < 0 so this is negative
+      const projThetaCost = thetaToClose; // per share, negative
       const projPnl = projDeltaPnl + projGammaBoost + projThetaCost;
       // Wire 16: use entryPrice (honest fill) as denominator
       const denom = entryPrice > 0 ? entryPrice : mid;

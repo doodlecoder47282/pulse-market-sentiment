@@ -29,7 +29,7 @@
 // All gate logic lives in odteAlertEngine.ts.
 
 import type { Side } from "./odteAlertEngine";
-import { minutesToSessionClose, projectedThetaCost } from "./chainClock";
+import { minutesToSessionClose, modelThetaToClose, projectedThetaCost } from "./chainClock";
 
 export interface ContractDetails {
   strike: number;
@@ -266,6 +266,15 @@ export async function pickContractForSide(
   // minutesToClose = minutes until today's close (13:00 ET on half days)
   const minutesToClose = computeMinutesToClose(nowMs);
 
+  // Theta to the close, per share, by repricing (chainClock.modelThetaToClose):
+  // for this 0DTE contract it is minus the extrinsic value still in the mid.
+  // Falls back to theta-per-day spread over the session only without a sigma.
+  const thetaToClose = modelThetaToClose({
+    spot, strike: best.strike, type: side === "call" ? "C" : "P",
+    expiry: todayKey.split(":")[0] ?? todayEt, symbol: best.key,
+    bid: best.bid, ask: best.ask, vendorIv: best.iv, minutesToClose, nowMs,
+  }) ?? projectedThetaCost(best.theta, minutesToClose, nowMs);
+
   // Wire 16: use entryPrice (midPrice + halfSpread) as denominator for honest fill
   function projReturn(targetPrice: number): {
     projDeltaPnl: number;
@@ -287,11 +296,8 @@ export async function pickContractForSide(
     // gamma boost uses signed move^2 (always positive addend)
     const projGammaBoost = 0.5 * best!.gamma * move * move;
 
-    // theta is per-day (negative). Theta cost = portion of the session left:
-    // theta_per_day / session minutes (390, 210 on half days) * minutesToClose
-    const thetaPerDay = best!.theta; // already negative, e.g. -2.50
-    const projThetaCost = projectedThetaCost(thetaPerDay, minutesToClose, nowMs); // per share
-    // projThetaCost is negative; we subtract it (add theta cost back as positive cost)
+    // Theta cost to the close, per share, negative (computed once above).
+    const projThetaCost = thetaToClose;
 
     const projPnl = projDeltaPnl + projGammaBoost + projThetaCost; // thetaCost already negative
 
