@@ -2456,9 +2456,11 @@ export function formatOdteAlert(a: OdteAlert): { content: string } {
   // Wire 16: projection tier tag
   const projTier = a.wire15?.projTier ?? null;
   const tierTag = projTier ? `  [${projTier}]` : "";
-  lines.push(`T1:  ${Math.round(a.t1.price)}  (${a.t1.name})  +${projT1Pct}% est${tierTag}`);
+  // Signed: an A-(85) override can fire below the 30% floor, even negative ("+-12%" before).
+  const sgn = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
+  lines.push(`T1:  ${Math.round(a.t1.price)}  (${a.t1.name})  ${sgn(projT1Pct)}% est${tierTag}`);
   if (a.t2) {
-    const t2ProjStr = projT2Pct != null ? `+${projT2Pct}% est` : "+—% est";
+    const t2ProjStr = projT2Pct != null ? `${sgn(projT2Pct)}% est` : "+—% est";
     lines.push(`  IF T1 BREAKS: stop -> ${a.side === "call" ? "BELOW" : "ABOVE"} ${newStop}  |  T2: ${Math.round(a.t2.price)} (${a.t2.name}) ${t2ProjStr}`);
     lines.push(`  T2 activates on: 5-min candle close ${a.side === "call" ? "ABOVE" : "BELOW"} ${Math.round(a.t1.price)}`);
   }
