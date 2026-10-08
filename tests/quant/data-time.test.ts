@@ -149,6 +149,8 @@ test("tte: settlement style resolution", () => {
   assert.equal(settlementStyleOf(null), "PM");
   // An expiry dated on a holiday falls back to the prior trading day's close.
   assert.equal(settlementInstantMs("2026-04-03", "PM"), ms("2026-04-02T16:00:00-04:00"));
+  // AM-settled June 2026 monthly dated Fri 19 Jun (Juneteenth): SOQ at Thu 18 Jun 09:30 ET.
+  assert.equal(settlementInstantMs("2026-06-19", "AM"), ms("2026-06-18T09:30:00-04:00"));
 });
 
 // ---------------------------------------------------------------------------
@@ -156,7 +158,10 @@ test("tte: settlement style resolution", () => {
 // Known answers from Black-Scholes with r = q = 0 (Hull), S = 6600, sigma = 15%,
 // T = 120 / 525,600 (14:00 ET on expiry day), OI = 1,000, multiplier 100:
 //   K = 6600: vanna $ per vol pt = -phi(d1) d2 / sigma x 0.01 x 1000 x 100 x 6600 = 19,892.38
-//   K = 6610: vanna $ per vol pt = 9,403,848.92 ; charm $ per day = -846,346,403.10
+//   K = 6610: vanna $ per vol pt = 9,403,848.92
+//   K = 6610 charm (delta change to settlement, 2 h < 1 day): call delta N(d1) = 0.252430
+//     decays to 0 (OTM) -> -0.252430 x 1000 x 100 x 6600 = -$166,603,996.21
+//     (the old charm/365 extrapolation read -$846,346,403.10)
 // (computed independently with scipy.stats.norm).
 // ---------------------------------------------------------------------------
 
@@ -193,8 +198,25 @@ test("chainAudit: 0DTE vanna/charm included with intraday T and IV re-solved fro
   const ch = new Map(audit.charm.profile.map((p) => [p.strike, p.charmExposure]));
   assert.ok(Math.abs((v.get(6600) ?? 0) - 19_892.38) / 19_892.38 < 1e-3, `vanna 6600 ${v.get(6600)}`);
   assert.ok(Math.abs((v.get(6610) ?? 0) - 9_403_848.92) / 9_403_848.92 < 1e-3, `vanna 6610 ${v.get(6610)}`);
-  assert.ok(Math.abs((ch.get(6610) ?? 0) - -846_346_403.10) / 846_346_403.10 < 1e-3, `charm 6610 ${ch.get(6610)}`);
+  assert.ok(Math.abs((ch.get(6610) ?? 0) - -166_603_996.21) / 166_603_996.21 < 1e-3, `charm 6610 ${ch.get(6610)}`);
+  assert.equal(audit.charm.horizon, "1d-or-to-settlement");
   assert.ok(audit.vomma.profile.length === 2 && audit.zomma.profile.length === 2);
+});
+
+test("chainAudit: charm over a 30-day tenor is the 1-day delta change (~ charm/365)", () => {
+  // 2026-10-07 16:00 EDT -> 2026-11-06 16:00 EST: 30 days + 60 min (DST ends 1 Nov).
+  // K = 6500 call, S = 6600, sigma 15%, OI 1000. scipy: Delta(T - 1d) - Delta(T) gives
+  // +$1,395,579.71 per day; the instantaneous charm/365 is +$1,360,631.74 (first-order agreement).
+  const S = 6600;
+  const T = (43_200 + 60) / 525_600;
+  const chain: any = {
+    underlying: { last: S, bid: S, ask: S }, source: "schwab",
+    callExpDateMap: { "2026-11-06:30": { "6500.0": [contract("SPXW  261106C06500000", 6500, "C", S, 0.15, T, 15)] } },
+    putExpDateMap: {},
+  };
+  const audit = buildChainAudit(chain, S, ms("2026-10-07T16:00:00-04:00"));
+  const v = audit.charm.profile[0]?.charmExposure ?? NaN;
+  assert.ok(Math.abs(v - 1_395_579.71) / 1_395_579.71 < 1e-3, `charm 30d ${v}`);
 });
 
 test("chainAudit: settled contracts are dropped (AM SPX after the open, 0DTE after the close)", () => {
@@ -284,6 +306,10 @@ test("candles: 2m from 1m and 60m from 30m, anchored at 09:30 ET", () => {
   assert.deepEqual(hours.map((h) => h.t), [t0, t0 + 3600]); // 09:30, 10:30
   assert.equal(hours[1].h, 5);
   assert.equal(hours[1].v, null);
+  // One missing sub-bar volume makes the bucket volume missing, not a partial sum.
+  const mixed = aggregateCandles([{ ...ones[0] }, { ...ones[1], v: null }, { ...ones[2], v: null }, { ...ones[3] }], 2);
+  assert.equal(mixed[0].v, null); // 10 + null
+  assert.equal(mixed[1].v, null); // null + 10
 });
 
 // ---------------------------------------------------------------------------

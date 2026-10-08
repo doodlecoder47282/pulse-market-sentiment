@@ -19,7 +19,7 @@
 import type { OptionChainResponse } from "./schwab";
 import { etEpochMs } from "./etTime";
 import { timeToExpiry, settlementStyleOf, type SettlementStyle } from "./timeToExpiry";
-import { gamma as bsGamma, vega as bsVega, impliedVol } from "./greeks";
+import { gamma as bsGamma, vega as bsVega, impliedVol, normCdf } from "./greeks";
 
 // ─── Internal contract shape ──────────────────────────────────────────────────
 
@@ -84,7 +84,10 @@ export interface CharmStrike {
 export interface CharmResult {
   profile: CharmStrike[];
   peakCharmStrike: number | null;
+  /** $ delta-notional change, spot and IV unchanged, over the next calendar day
+   *  or until settlement if that is sooner (0DTE: the decay left into the close). */
   totalCharmPerDay: number;
+  horizon?: "1d-or-to-settlement";
 }
 
 // Vomma: vega's sensitivity to IV (∂vega/∂σ). Tells you how vol-of-vol
@@ -463,14 +466,28 @@ function computeCharm(contracts: Contract[], spot: number): CharmResult {
     if (c.oi <= 0) continue;
     const t = bsTerms(c, spot);
     if (!t) continue;
-    // Black-Scholes charm with r = q = 0: dDelta/dt = phi(d1) * d2 / (2T), delta per
-    // calendar year (T in calendar years); identical for calls and puts.
-    const charm = t.phiD1 * t.d2 / (2 * t.T);
-    // Units: $ delta notional change per calendar day
-    //   = charm / 365 x OI x 100 (shares per contract) x S ($/share).
-    // For 0DTE this is an instantaneous rate scaled to a day, not the decay
-    // actually left before settlement.
-    const charmExp = (charm / 365) * c.oi * 100 * spot;
+    // Delta decay over h = min(1 calendar day, time to settlement), spot and IV
+    // held fixed: Delta(T - h) - Delta(T), with r = q = 0 (Black-Scholes delta
+    // N(d1); the put delta is N(d1) - 1, so the change is the same for puts).
+    // At settlement delta is terminal: 1 in the money, 0 out of it (1/2 at
+    // the strike). This replaces charm/365 (the instantaneous rate scaled to a
+    // day), which for 0DTE extrapolated a rate over a day that does not exist:
+    // K = 6610, S = 6600, sigma 15%, 2 h left, OI 1,000 read -$846M/day while
+    // the delta actually left to lose is 0.252 x 1000 x 100 x 6600 = -$166.6M.
+    // For tenors well over a day the finite difference equals charm/365 to
+    // first order.
+    const h = Math.min(1 / 365, t.T);
+    const deltaNow = normCdf(t.d1);
+    const tau = t.T - h;
+    let deltaLater: number;
+    if (tau <= 1e-12) {
+      deltaLater = spot > c.strike ? 1 : spot < c.strike ? 0 : 0.5;
+    } else {
+      const sRootTau = t.sigma * Math.sqrt(tau);
+      deltaLater = normCdf((Math.log(spot / c.strike) + 0.5 * t.sigma * t.sigma * tau) / sRootTau);
+    }
+    // Units: $ delta notional change over h = (Delta change) x OI x 100 (shares per contract) x S ($/share).
+    const charmExp = (deltaLater - deltaNow) * c.oi * 100 * spot;
     strikeMap.set(c.strike, (strikeMap.get(c.strike) ?? 0) + charmExp);
   }
 
@@ -485,7 +502,7 @@ function computeCharm(contracts: Contract[], spot: number): CharmResult {
 
   const totalCharmPerDay = profile.reduce((s, p) => s + p.charmExposure, 0);
 
-  return { profile, peakCharmStrike, totalCharmPerDay };
+  return { profile, peakCharmStrike, totalCharmPerDay, horizon: "1d-or-to-settlement" };
 }
 
 /** Beasley-Springer-Moro approximation of inverse normal CDF. Accurate to ~1e-7 over (0,1). */

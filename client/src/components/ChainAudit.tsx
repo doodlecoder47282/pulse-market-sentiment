@@ -441,7 +441,7 @@ export default function ChainAudit() {
               <KPICard
                 label="Peak Charm Strike"
                 value={fmtStrike(audit.charm.peakCharmStrike)}
-                sub={`${fmtDollar(audit.charm.totalCharmPerDay)} / day`}
+                sub={`${fmtDollar(audit.charm.totalCharmPerDay)} / day (or to settlement)`}
                 color="#f97316"
                 testId="kpi-charm-peak"
               />
