@@ -7,6 +7,7 @@
 import { db, schwabTokens } from "./storage";
 import { eq } from "drizzle-orm";
 import { observeQuote } from "./quoteShield";
+import { etDate, addDays } from "./exchangeCalendar";
 
 // ─── Credentials from environment (read lazily to avoid import-order issues) ──
 const getClientId = () => process.env.SCHWAB_CLIENT_ID ?? "";
@@ -620,11 +621,11 @@ export async function getOptionChain(
         includeUnderlyingQuote: "true",
       };
       if (dte !== undefined) {
-        const now = new Date();
-        const to = new Date(now);
-        to.setDate(to.getDate() + Math.max(dte, 1));
-        params.fromDate = now.toISOString().split("T")[0];
-        params.toDate = to.toISOString().split("T")[0];
+        // Expiration window in ET calendar dates. It was built from UTC dates,
+        // so after 20:00 ET (00:00 UTC) the request started on the next day.
+        const fromEt = etDate();
+        params.fromDate = fromEt;
+        params.toDate = addDays(fromEt, Math.max(dte, 1));
       }
       const data = await schwabFetch("marketdata/v1/chains", params);
       if (data && (data.callExpDateMap || data.putExpDateMap)) {
