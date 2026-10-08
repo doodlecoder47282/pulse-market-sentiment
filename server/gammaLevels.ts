@@ -54,12 +54,20 @@ const TARGET_IDS = {
   vommaLower: "lower-vomma",
 } as const;
 
-function userTargets(): Record<keyof typeof TARGET_IDS, number> {
+// Missing user levels are null (shown as missing), never 0.
+function userTargets(): Record<keyof typeof TARGET_IDS, number | null> {
   const levels = readLevelsSync().levels;
   const byId = new Map(levels.map((l) => [l.id, l.value]));
   const out: any = {};
-  for (const [key, id] of Object.entries(TARGET_IDS)) out[key] = byId.get(id) ?? 0;
+  for (const [key, id] of Object.entries(TARGET_IDS)) {
+    const v = byId.get(id);
+    out[key] = typeof v === "number" && Number.isFinite(v) ? v : null;
+  }
   return out;
+}
+
+function userEntry(v: number | null): GammaLevelEntry | null {
+  return v != null ? { value: v, source: "user_targets" } : null;
 }
 
 export function buildGammaLevelsEnhanced(
@@ -100,18 +108,21 @@ export function buildGammaLevelsEnhanced(
     putWall: { value: gamma.putWall, source: "computed" },
     topGexStrikes,
     // Second-order Greek levels — from user targets (not computed from chain)
-    vanna: { value: targets.vanna, source: "user_targets" },
-    charm: { value: targets.charm, source: "user_targets" },
-    vommaUpper: { value: targets.vommaUpper, source: "user_targets" },
-    vommaLower: { value: targets.vommaLower, source: "user_targets" },
-    zomma: { value: targets.zomma, source: "user_targets" },
-    negGamma: { value: targets.negGamma, source: "user_targets" },
-    mopex: { value: targets.mopex, source: "user_targets" },
+    vanna: userEntry(targets.vanna),
+    charm: userEntry(targets.charm),
+    vommaUpper: userEntry(targets.vommaUpper),
+    vommaLower: userEntry(targets.vommaLower),
+    zomma: userEntry(targets.zomma),
+    negGamma: userEntry(targets.negGamma),
+    mopex: userEntry(targets.mopex),
+    // Weekly targets keep their non-null shape because clients read .value
+    // directly; the editable store seeds all four ids, so 0 appears only if a
+    // user deletes one (TODO: make these nullable together with the readers).
     weeklyTargets: {
-      upside:   { value: targets.upside,   source: "user_targets" },
-      downside: { value: targets.downside, source: "user_targets" },
-      t2Up:     { value: targets.t2Up,     source: "user_targets" },
-      t2Down:   { value: targets.t2Down,   source: "user_targets" },
+      upside:   { value: targets.upside ?? 0,   source: "user_targets" },
+      downside: { value: targets.downside ?? 0, source: "user_targets" },
+      t2Up:     { value: targets.t2Up ?? 0,     source: "user_targets" },
+      t2Down:   { value: targets.t2Down ?? 0,   source: "user_targets" },
     },
     spxNow,
     asOf: new Date().toISOString(),
