@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { adfCriticalValue, adfTest, ar1BiasCorrected, fitOUBand } from "../../server/ouBand";
 import {
   olsFit, climatologyBaseline, brierSkillScore, skillWatchdog, cusum,
-  wilsonInterval, reliabilityCurve, dieboldMariano,
+  wilsonInterval, reliabilityCurve, dieboldMariano, firstPerSession,
 } from "../../server/stats";
 import { findOptimalWindow, isFullCalendarYear, computeSeasonality } from "../../server/seasonality";
 import { independentDailyRows } from "../../server/mlAccuracy";
@@ -301,6 +301,23 @@ test("reliability test: calibrated forecasts pass, miscalibrated fail, small sam
   const b = rep.bins.find((x) => x.n > 0)!;
   assert.ok(b.wilsonLo != null && b.wilsonHi != null && b.wilsonLo <= b.observed! && b.observed! <= b.wilsonHi);
   assert.equal(rep.bins.reduce((s, x) => s + x.n, 0), 2000);
+});
+
+test("calibration evidence: one call per ET session, and the test names its event", () => {
+  // 78 five-minute calls on each of 3 sessions share 3 outcomes: 3 observations, not 234.
+  const rows: Array<{ ts: number; p: number; o: number }> = [];
+  for (const day of [Date.UTC(2026, 9, 5, 13, 35), Date.UTC(2026, 9, 6, 13, 35), Date.UTC(2026, 9, 7, 13, 35)]) {
+    for (let k = 0; k < 78; k++) rows.push({ ts: day + k * 300_000, p: 0.6, o: 1 });
+  }
+  const one = firstPerSession(rows, (r) => r.ts);
+  assert.equal(one.length, 3);
+  assert.equal(one[0].ts, Date.UTC(2026, 9, 5, 13, 35)); // earliest call of the session kept
+  // 23:30 ET on Oct 5 is Oct 6 03:30 UTC: still the Oct 5 session
+  assert.equal(firstPerSession([{ ts: Date.UTC(2026, 9, 6, 3, 30) }, { ts: Date.UTC(2026, 9, 5, 14, 0) }], (r) => r.ts).length, 1);
+  // with 3 independent observations the n >= 100 gate is not met
+  const rep = reliabilityCurve(one.map((r) => r.p), one.map((r) => r.o), { event: "SPY |move| >= 0.5% proxy" });
+  assert.equal(rep.verdict, "insufficient data");
+  assert.match(rep.test.name, /^event: SPY \|move\| >= 0\.5% proxy; /);
 });
 
 // ─── F5.3 seasonal window data-snooping test ────────────────────────────

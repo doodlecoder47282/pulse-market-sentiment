@@ -25,7 +25,7 @@ interface WhaleEdge {
 interface ConfBucket { bucket: string; n: number; hitRate: number; }
 interface ByRegime { regime: string; n: number; hitRate: number; }
 interface CalibPoint {
-  predictedProb: number; actualHitRate: number; n: number;
+  predictedProb: number; actualHitRate: number | null; n: number; // null = empty bucket (no data, not 0%)
   wilsonLo?: number; wilsonHi?: number; tested?: boolean; inInterval?: boolean | null;
 }
 interface RegimeEdge {
@@ -34,6 +34,8 @@ interface RegimeEdge {
   byConfidenceBucket: ConfBucket[];
   byRegime: ByRegime[];
   calibration: CalibPoint[];
+  calibrationSessions?: number;
+  calibrationEvent?: string;
   reliability?: { n: number; verdict: "calibrated" | "not calibrated" | "insufficient data"; test: { name: string; reasons: string[] } };
 }
 interface Suggestion {
@@ -166,7 +168,8 @@ function CalibrationPlot({ r }: { r: RegimeEdge }) {
               ? `not calibrated: ${r.reliability.test.reasons.join("; ")}`
               : `calibration untested: ${r.reliability.test.reasons.join("; ")}`
           : "calibration untested"}
-        {" "}· bars = Wilson 95% · grey = fewer than 10 calls
+        {" "}· one call per session{r.calibrationSessions != null ? ` (${r.calibrationSessions} sessions)` : ""} · bars = Wilson 95% · grey = fewer than 10 sessions
+        {r.calibrationEvent && <div className="mt-0.5 opacity-80">event graded: {r.calibrationEvent}</div>}
       </div>
       <div className="flex flex-col md:flex-row gap-4 items-start">
         <svg width={size} height={size} className="shrink-0" data-testid="svg-calibration">
@@ -177,7 +180,7 @@ function CalibrationPlot({ r }: { r: RegimeEdge }) {
           <line x1={pad} y1={size - pad} x2={size - pad} y2={pad} stroke="currentColor" strokeOpacity="0.15" strokeDasharray="3,3" />
           {/* points */}
           {r.calibration.map((p, i) => {
-            if (p.n === 0) return null;
+            if (p.n === 0 || p.actualHitRate == null) return null; // empty bucket: nothing to plot
             const cx = pad + p.predictedProb * inner;
             const cy = size - pad - p.actualHitRate * inner;
             const radius = Math.min(10, 3 + Math.sqrt(p.n));

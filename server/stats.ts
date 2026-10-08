@@ -547,6 +547,30 @@ export function skillWatchdog(
   };
 }
 
+// ─── One observation per trading session ─────────────────────────────────
+//
+// Binomial intervals and calibration tests assume independent outcomes.
+// Calls logged every few minutes inside one session share one realized
+// outcome, so they are one observation, not dozens. Keeps the EARLIEST row
+// per America/New_York calendar date (ts in epoch ms).
+const ET_DATE_FMT = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+});
+export function etSessionDate(ms: number): string {
+  return ET_DATE_FMT.format(new Date(ms));
+}
+export function firstPerSession<T>(rows: T[], tsMs: (r: T) => number): T[] {
+  const first = new Map<string, { ts: number; row: T }>();
+  for (const r of rows) {
+    const ts = tsMs(r);
+    if (!Number.isFinite(ts)) continue;
+    const k = etSessionDate(ts);
+    const prev = first.get(k);
+    if (!prev || ts < prev.ts) first.set(k, { ts, row: r });
+  }
+  return [...first.values()].sort((a, b) => a.ts - b.ts).map((v) => v.row);
+}
+
 // ─── Wilson score interval ────────────────────────────────────────────────
 //
 // Wilson (1927) score interval for a binomial proportion k/n; recommended
@@ -608,7 +632,7 @@ export type ReliabilityReport = {
 export function reliabilityCurve(
   preds: number[],
   outcomes: number[],
-  opts: { bins?: number; minTotal?: number; minBinN?: number; alpha?: number } = {},
+  opts: { bins?: number; minTotal?: number; minBinN?: number; alpha?: number; event?: string } = {},
 ): ReliabilityReport {
   const nb = Math.max(2, Math.floor(opts.bins ?? 10));
   const minTotal = opts.minTotal ?? 100;
@@ -666,7 +690,7 @@ export function reliabilityCurve(
   return {
     n, bins, brier, climatologyBrier, bss, spiegelhalterZ, spiegelhalterP, verdict,
     test: {
-      name: `n≥${minTotal}, Spiegelhalter Z (two-sided alpha ${alpha}), every bin with n≥${minBinN} inside its Bonferroni Wilson interval`,
+      name: `${opts.event ? `event: ${opts.event}; ` : ""}n≥${minTotal}, Spiegelhalter Z (two-sided alpha ${alpha}), every bin with n≥${minBinN} inside its Bonferroni Wilson interval`,
       alpha, minTotal, minBinN, passed, reasons,
     },
   };
