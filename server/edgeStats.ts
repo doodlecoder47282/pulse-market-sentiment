@@ -4,6 +4,7 @@
 
 import { db } from "./storage";
 import { predictionOutcomes } from "@shared/schema";
+import { isOutcomeOnOptionMarks } from "./validationMath";
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { reliabilityCurve, wilsonInterval, firstPerSession, type ReliabilityReport } from "./stats";
 
@@ -78,7 +79,8 @@ export function computeEdgeStats(windowDays: number = 30): EdgeStats {
     .where(gte(predictionOutcomes.capturedAt, windowFrom))
     .all();
 
-  const whaleRows = allRows.filter((r) => r.kind === "whale_alert");
+  // Only whale outcomes graded on real option marks; proxy-graded rows stay stored but are excluded.
+  const whaleRows = allRows.filter((r) => r.kind === "whale_alert" && isOutcomeOnOptionMarks(r));
   const regimeRows = allRows.filter((r) => r.kind === "regime_call");
 
   return {
@@ -389,7 +391,8 @@ export function regimeConvictionMultiplier(
           gte(predictionOutcomes.capturedAt, from),
         ),
       )
-      .all();
+      .all()
+      .filter((r) => r.hit30 != null && isOutcomeOnOptionMarks(r)); // ungraded or proxy-graded rows are not misses
     if (rows.length < 5) return { multiplier: 1.0, n: rows.length, baseHitRate: 0, regimeHitRate: 0 };
     const baseHit = rows.filter((r) => r.hit30 === 1).length / rows.length;
     const inRegime = rows.filter((r) => {

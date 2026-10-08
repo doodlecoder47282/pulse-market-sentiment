@@ -15,12 +15,79 @@
 //   - never throws to callers — errors logged, swallowed
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { db } from "./storage";
+import { db, sqlite } from "./storage";
 import { whaleAlerts, whaleFollows } from "@shared/schema";
 import type { WhaleAlert, WhaleFollow } from "@shared/schema";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import type { WhaleHit } from "./flowAlertEngine";
 import type { FollowPosition } from "./whaleFollowThrough";
+
+// ─── Entry-quote ledger (review items 4.4 / 8.2) ─────────────────────────────
+// whale_alerts has no bid/ask, so the option P&L of an alert could only be
+// proxied. Every detection now also logs the contract's quote at detection
+// ($ per share, as quoted; one contract = 100x). Keyed by (occ, detected_at),
+// the same values outcomeLogger stores as the prediction's occ / captured_at.
+try {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS whale_alert_quotes (
+      occ TEXT NOT NULL,
+      detected_at INTEGER NOT NULL,
+      bid REAL,
+      ask REAL,
+      mid REAL,
+      spot REAL,
+      iv REAL,
+      PRIMARY KEY (occ, detected_at)
+    );
+  `);
+} catch (e) {
+  console.warn("[whalePersistence] whale_alert_quotes init failed:", (e as Error).message);
+}
+
+function finiteOrNull(v: unknown): number | null {
+  const n = Number(v);
+  return v != null && Number.isFinite(n) ? n : null;
+}
+
+/** Record the quote at detection. Fail-soft. */
+export function persistWhaleEntryQuote(hit: WhaleHit): void {
+  try {
+    const bid = finiteOrNull(hit.bid);
+    const ask = finiteOrNull(hit.ask);
+    if (bid == null && ask == null) return;
+    sqlite.prepare(`INSERT OR IGNORE INTO whale_alert_quotes (occ, detected_at, bid, ask, mid, spot, iv)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(hit.occ, hit.detectedAt, bid, ask, finiteOrNull(hit.mid), finiteOrNull(hit.spot), finiteOrNull(hit.iv));
+  } catch (e) {
+    console.warn("[whalePersistence] entry quote insert failed:", (e as Error).message);
+  }
+}
+
+/** Entry quote for an alert: exact (occ, detected_at) match, else the nearest within 5 minutes. */
+export function loadWhaleEntryQuote(occ: string, detectedAt: number): { bid: number | null; ask: number | null; at: number } | null {
+  try {
+    const row = sqlite.prepare(`SELECT bid, ask, detected_at FROM whale_alert_quotes
+                                WHERE occ = ? AND detected_at BETWEEN ? AND ?
+                                ORDER BY ABS(detected_at - ?) ASC LIMIT 1`)
+      .get(occ, detectedAt - 300_000, detectedAt + 300_000, detectedAt) as { bid: number | null; ask: number | null; detected_at: number } | undefined;
+    return row ? { bid: row.bid, ask: row.ask, at: row.detected_at } : null;
+  } catch { return null; }
+}
+
+/**
+ * Last quote the follow-through tracker logged at or before the expiry close
+ * (stored in whale_follows.current_live_json.preExpiryQuote). Null if none.
+ */
+export function loadWhaleExitQuote(occ: string): { bid: number | null; ask: number | null; mark: number | null; at: number } | null {
+  try {
+    const row = sqlite.prepare(`SELECT current_live_json FROM whale_follows WHERE occ = ?`).get(occ) as { current_live_json: string } | undefined;
+    if (!row) return null;
+    const live = JSON.parse(row.current_live_json || "{}");
+    const q = live?.preExpiryQuote;
+    if (!q || !Number.isFinite(Number(q.at))) return null;
+    return { bid: finiteOrNull(q.bid), ask: finiteOrNull(q.ask), mark: finiteOrNull(q.mark), at: Number(q.at) };
+  } catch { return null; }
+}
 
 // ─── Insert path ─────────────────────────────────────────────────────────────
 
@@ -51,6 +118,7 @@ export function persistWhaleAlert(hit: WhaleHit): void {
   } catch (e) {
     console.warn("[whalePersistence] alert insert failed:", (e as Error).message);
   }
+  persistWhaleEntryQuote(hit);
 }
 
 /** Upsert follow-through state for a position. Fail-soft. */

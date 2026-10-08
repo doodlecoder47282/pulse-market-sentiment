@@ -4753,6 +4753,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         maxRiskPct: b.maxRiskPct != null ? Number(b.maxRiskPct) : undefined,
         targetPct: b.targetPct != null ? Number(b.targetPct) : undefined,
         kellyFraction: b.kellyFraction != null ? Number(b.kellyFraction) : undefined,
+        feePerContract: b.feePerContract != null ? Number(b.feePerContract) : undefined,
+        stopSlippage: b.stopSlippage != null ? Number(b.stopSlippage) : undefined,
+        product: typeof b.product === "string" ? b.product : undefined,
+        maxGapLossPct: b.maxGapLossPct != null ? Number(b.maxGapLossPct) : undefined,
       }));
     } catch (e: any) {
       res.status(500).json({ error: "sizer_failed", message: e?.message ?? String(e) });
@@ -4965,6 +4969,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         type: params.type,
         notional: params.notional,
         maxDte: params.maxDte,
+        feePerContract: params.feePerContract != null ? Number(params.feePerContract) : undefined,
       });
       res.json(summary);
     } catch (e: any) {
@@ -6063,6 +6068,46 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     } catch { /* fall through with nulls */ }
     return { levels, spxNow, vix, vixPrev };
   };
+
+  // F9.1 / F9.3 — deterministic real-data logger for the quantile forecaster
+  // (features + served bands every 5 min in RTH, Schwab SPX minute bars after
+  // the close) and live 10-90% coverage scoring. Disable: PULSE_ML_DATALOG=0.
+  import("./mlDataLog").then((m) => m.startMlDataLogger(resolveMlFeatureInputs))
+    .catch((e) => console.warn("[ml:datalog] not started:", e?.message ?? e));
+
+  // GET /api/ml/coverage?days=30 — live coverage of the served 10-90% band.
+  app.get("/api/ml/coverage", async (req, res) => {
+    try {
+      const { getCoverageReport } = await import("./mlDataLog");
+      const days = Math.max(1, Math.min(365, Number(req.query.days) || 30));
+      const version = typeof req.query.version === "string" && req.query.version ? req.query.version : undefined;
+      res.json(getCoverageReport(days, Date.now(), version));
+    } catch (e: any) {
+      res.status(500).json({ error: "coverage_failed", message: e?.message ?? String(e) });
+    }
+  });
+
+  // GET /api/odte/option-ledger — realized option-P&L ledger by grade bucket (feeds the sizer).
+  app.get("/api/odte/option-ledger", async (req, res) => {
+    try {
+      const { getOptionLedgerSummary } = await import("./odteGrader");
+      const { wilsonInterval } = await import("./validationMath");
+      const fee = Math.max(0, Number(req.query.fee) || 0); // $ per contract per side; 0 = gross
+      res.json({
+        asOf: Date.now(),
+        feePerContract: fee,
+        note: "Plan replay (T1 / stop / -20% / settle) of fired 0DTE alerts on logged Schwab marks: ask in, bid out, PM settlement at intrinsic. " +
+          (fee > 0 ? `Returns net of $${fee.toFixed(2)} per contract per side.` : "Returns before fees (pass ?fee= for net).") +
+          " Fires without marks are ungraded and excluded.",
+        buckets: getOptionLedgerSummary(Date.now(), fee).map(({ returns: _r, ...b }) => {
+          const w = wilsonInterval(b.wins, b.n);
+          return { ...b, winRate: b.n > 0 ? b.wins / b.n : null, wilsonLo: b.n > 0 ? w.lo : null, wilsonHi: b.n > 0 ? w.hi : null };
+        }),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: "ledger_failed", message: e?.message ?? String(e) });
+    }
+  });
 
   app.post("/api/ml/projection", async (req, res) => {
     const { mlQuantileOverlay } = await import("./mlBridge");

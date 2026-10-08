@@ -1,7 +1,9 @@
 /**
  * Backtest Accuracy Overlay
  *
- * Renders historical hit-rates for our key dealer-level proxies.
+ * Renders historical hit-rates of the volatility-band stand-ins for the key
+ * dealer levels (ATR/VIX bands, EMA). No options data unless a historical
+ * chain provider is plugged in server-side (dealerLevelsFromChains).
  * Two render modes:
  *   - <BacktestBadge horizon="daily" kind="putWall" />   → inline chip (used in rail rows)
  *   - <BacktestPanel defaultHorizon="daily" />           → full collapsible panel
@@ -34,6 +36,9 @@ interface BacktestRow {
 
 interface BacktestSummary {
   methodology: string;
+  label?: string;
+  levelSource?: "volatility_band_proxy" | "historical_chain";
+  dealerLevelsFromChains?: boolean;
   computedAt: number | null;
   byLevel: Record<string, BacktestRow>;
 }
@@ -119,6 +124,11 @@ export function BacktestBadge({
           <div className="mb-1 text-[9px] uppercase tracking-wider text-amber-400">
             {LABELS[mapped]} · {horizon.toUpperCase()}
           </div>
+          {!data.dealerLevelsFromChains && (
+            <div className="mb-1 text-[9px] text-amber-300/80">
+              volatility-band stand-in, not this dealer level's own history
+            </div>
+          )}
           <div className="space-y-0.5 text-muted-foreground">
             <div>Touched: <span className={rateColor(row.touchRate, "touch")}>{pct(row.touchRate)}</span> of <span className="text-white">{row.sampleSize}</span> obs</div>
             <div>Held (reversed ≥50%): <span className={rateColor(row.holdRate, "hold")}>{pct(row.holdRate)}</span></div>
@@ -180,22 +190,25 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
       >
         {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
         <History className="h-3 w-3" />
-        Backtest Accuracy · 5Y
-        <Badge variant="outline" className="ml-2 border-amber-500/40 font-mono text-[8px] text-amber-300/90">
-          PROXY MODE
-        </Badge>
+        {data?.dealerLevelsFromChains ? "Dealer-Level Backtest · 5Y" : "Volatility-Band Backtest · 5Y"}
+        {!data?.dealerLevelsFromChains && (
+          <Badge variant="outline" className="ml-2 border-amber-500/40 font-mono text-[8px] text-amber-300/90" data-testid="badge-backtest-not-dealer">
+            NOT DEALER LEVELS
+          </Badge>
+        )}
         <TooltipProvider delayDuration={100}>
           <Tooltip>
             <TooltipTrigger asChild>
               <Info className="h-3 w-3 text-muted-foreground/60" />
             </TooltipTrigger>
             <TooltipContent side="bottom" className="max-w-sm bg-black/95 font-mono text-[10px] leading-relaxed">
-              Proxy mode: historical option chains aren't available from free feeds,
-              so levels are reconstructed using standard analytic proxies
-              (ATR × VIX for walls, 20D EMA for zero-gamma, σ-bands for pivots,
-              round-number clusters for max-pain). Matches our live engine when
-              OI is sparse. Upgrade path: Polygon.io flat files or ORATS for
-              true dealer-level reconstruction.
+              Volatility-band backtest: this contains no options data. Each row
+              tests a stand-in named after a dealer level: ATR × VIX bands for
+              the walls, a 20-day EMA for zero-gamma, σ-bands for pivots and a
+              round-number strike for max pain. The rates say how often price
+              reaches those bands, not how dealer levels from the live chain
+              behave. Real dealer levels need historical option chains (a paid
+              feed such as ORATS or Polygon flat files), which are not connected.
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
@@ -241,7 +254,7 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
             </Button>
 
             <span className="font-mono text-[9px] text-muted-foreground/60">
-              Free feeds → analytic proxies. See tooltip for methodology.
+              Volatility bands, not option chains. See tooltip.
             </span>
           </div>
 
@@ -251,7 +264,7 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
 
           {empty && !rebuild.isPending && (
             <div className="rounded border border-amber-500/30 bg-amber-500/5 p-3 text-center font-mono text-[10px] text-amber-300">
-              No backtest data yet. The initial 5-year backfill runs ~8s after server boot;
+              No volatility-band backtest data yet. The initial 5-year backfill runs ~8s after server boot;
               click Rebuild if it hasn't populated.
             </div>
           )}

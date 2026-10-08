@@ -21,6 +21,7 @@
  */
 
 import { sqlite } from "./storage";
+import { OUTCOME_ON_OPTION_MARKS_SQL } from "./validationMath";
 
 const MIN_USABLE = 50;
 const MIN_CELL = 10;
@@ -56,7 +57,7 @@ function loadUsable(): { usable: UsableRow[]; gradedTotal: number; noHold: numbe
   try {
     const rows = sqlite
       .prepare(`SELECT prediction_json, inputs_json, outcome_json, pct_return
-                FROM prediction_outcomes WHERE kind='whale_alert' AND graded=1`)
+                FROM prediction_outcomes WHERE kind='whale_alert' AND graded=1 AND ${OUTCOME_ON_OPTION_MARKS_SQL}`)
       .all() as Array<{ prediction_json: string; inputs_json: string; outcome_json: string; pct_return: number | null }>;
     const usable: UsableRow[] = [];
     let noHold = 0, insufHist = 0;

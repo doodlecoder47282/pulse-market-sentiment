@@ -59,8 +59,10 @@ def health():
                 "n_train": m.get("n_train"),
                 "auc": m.get("auc_mean", m.get("auc")),
                 "low_signal": m.get("low_signal"),
+                # "real" | "synthetic_gbm" | None (not recorded)
+                "training_data": m.get("training_data"),
             }
-        return {"status": "INSUFFICIENT_DATA", "version": 0, "trained_at": None, "n_train": 0, "auc": None, "low_signal": None}
+        return {"status": "INSUFFICIENT_DATA", "version": 0, "trained_at": None, "n_train": 0, "auc": None, "low_signal": None, "training_data": None}
 
     return {
         "status": "ok",
@@ -120,11 +122,13 @@ def quantile_overlay(req: QuantileRequest):
         meta = registry.get_meta("quantile_overlay") or {}
         status = meta.get("status", "INSUFFICIENT_DATA")
         version = meta.get("version", 0)
+        training_data = meta.get("training_data")
     except Exception:
         bands = {}
         status = "INSUFFICIENT_DATA"
         version = 0
-    return {"bands": bands, "status": status, "version": version}
+        training_data = None
+    return {"bands": bands, "status": status, "version": version, "training_data": training_data}
 
 
 # ─── /quantile/morning — Model D Morning Anchor ───────────────────────
@@ -136,11 +140,13 @@ def quantile_morning(req: MorningQuantileRequest):
         meta = registry.get_meta("quantile_overlay_morning") or {}
         status = meta.get("status", "INSUFFICIENT_DATA")
         version = meta.get("version", 0)
+        training_data = meta.get("training_data")
     except Exception:
         bands = {}
         status = "INSUFFICIENT_DATA"
         version = 0
-    return {"bands": bands, "status": status, "version": version}
+        training_data = None
+    return {"bands": bands, "status": status, "version": version, "training_data": training_data}
 
 
 # ─── /retrain ────────────────────────────────────────────────────────────────

@@ -25,8 +25,8 @@ interface BacktestResult {
   median_ret_bps: number;
   total_ret_pct: number;
   max_dd_pct: number;
-  sharpe: number;
-  sortino: number;
+  sharpe: number | null;
+  sortino: number | null;
   best_trade_bps: number;
   worst_trade_bps: number;
   notes: string;
@@ -164,8 +164,8 @@ export default function BacktestPanel() {
             <Stat label="median bps" value={r.median_ret_bps.toFixed(1)} positive={r.median_ret_bps} />
             <Stat label="total ret" value={`${r.total_ret_pct.toFixed(2)}%`} positive={r.total_ret_pct} />
             <Stat label="max DD" value={`${r.max_dd_pct.toFixed(2)}%`} positive={r.max_dd_pct} />
-            <Stat label="Sharpe" value={r.sharpe.toFixed(2)} positive={r.sharpe} />
-            <Stat label="Sortino" value={r.sortino.toFixed(2)} positive={r.sortino} />
+            <Stat label="Sharpe (ann.)" value={r.sharpe != null ? r.sharpe.toFixed(2) : "n/a"} positive={r.sharpe} />
+            <Stat label="Sortino (ann.)" value={r.sortino != null ? r.sortino.toFixed(2) : "n/a"} positive={r.sortino} />
           </div>
 
           <div className="grid grid-cols-2 gap-2">

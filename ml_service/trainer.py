@@ -290,6 +290,18 @@ def train_score_calibrator() -> Dict[str, Any]:
         if "graded" in df_r.columns:
             df_r = df_r[df_r["graded"] == 1]
 
+        # Ungraded rows (no option mark, insufficient history, retired leverage
+        # proxy) carry hit_30 = NULL. They are missing labels, not losses:
+        # "int(None or 0)" used to turn every one of them into a 0.
+        if "hit_30" in df_w.columns:
+            df_w = df_w[df_w["hit_30"].notna()]
+        # Whale rows graded by the old leverage proxy stay stored but are not
+        # option outcomes: keep only rows graded on logged option marks.
+        if "outcome_json" in df_w.columns:
+            df_w = df_w[df_w["outcome_json"].fillna("").str.contains('"method":"option_marks_v1"', regex=False)]
+        if "hit_30" in df_r.columns:
+            df_r = df_r[df_r["hit_30"].notna()]
+
         bootstrap_n = len(df_w) + len(df_r)
 
         if bootstrap_n < MIN_ROWS_SCORE_BOOTSTRAP:
@@ -307,12 +319,12 @@ def train_score_calibrator() -> Dict[str, Any]:
         for _, row in df_w.iterrows():
             feats = _extract_bootstrap_features(row, "whale_alert")
             feat_rows.append(feats)
-            labels.append(int(row.get("hit_30") or 0))
+            labels.append(int(row["hit_30"]))
 
         for _, row in df_r.iterrows():
             feats = _extract_bootstrap_features(row, "regime_call")
             feat_rows.append(feats)
-            labels.append(int(row.get("hit_30") or 0))
+            labels.append(int(row["hit_30"]))
 
         # Sort by captured_at for temporal split
         ts_vals_w = df_w["captured_at"].tolist() if "captured_at" in df_w.columns else [0] * len(df_w)
@@ -493,9 +505,11 @@ def train_score_calibrator() -> Dict[str, Any]:
 
 def train_quantile_overlay() -> Dict[str, Any]:
     """
-    Train LightGBM quantile regressors for horizons [5, 15, 30, 60] min.
-    Uses spy_1min_history (daily bars) to synthesize intraday features + forward returns.
-    Wire 18 Model B implementation via train_quantile_impl.
+    Train LightGBM quantile regressors for horizons [5, 15, 30, 60] min on REAL
+    data only: logged live features (ml_feature_log) and Schwab SPX minute bars
+    (spx_minute_bars). Returns INSUFFICIENT_REAL_DATA, and writes no model,
+    until the sufficiency gate in train_quantile_impl is met. The synthetic
+    daily-bar simulation is removed.
     """
     try:
         from train_quantile_impl import train_quantile_overlay as _train_impl

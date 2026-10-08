@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { buildSizerRequest } from "@shared/sizerRequest";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,11 +17,16 @@ interface SizingResult {
   riskDollars: number;
   notionalDollars: number;
   kellyAccountFraction: number;
-  bindingConstraint: "risk-floor" | "kelly-cap" | "conviction-tier" | "min-contract";
+  bindingConstraint: "risk-floor" | "kelly-cap" | "conviction-tier" | "min-contract" | "cash" | "gap-cap";
   expectedPayoffPct: number;
   rejected: boolean;
   rejectReason?: string;
   reasoning: string[];
+  // Added by the server sizer (all $ for the whole position unless perContract)
+  maxLossDollars?: number;
+  feesDollars?: number;
+  riskBudgetDollars?: number;
+  perContract?: { premium: number; riskAtStop: number; maxLoss: number; feesRoundTrip: number } | null;
 }
 
 // MISSION FIX #2 — edge survival waterfall (POST /api/edge/survival)
@@ -40,6 +46,10 @@ function fmtDollar(n: number): string {
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
+function fmtCents(n: number): string {
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 export function PositionSizer() {
   const [accountSize, setAccountSize] = useState("25000");
   const [maxRiskPct, setMaxRiskPct] = useState("1");
@@ -50,18 +60,21 @@ export function PositionSizer() {
   const [kellyFraction, setKellyFraction] = useState("25");
   const [spreadDollars, setSpreadDollars] = useState("0.10");
   const [holdMin, setHoldMin] = useState("45");
+  // Fees: $ per contract per side. Required for index options (SPXW): Schwab's
+  // $0.65 plus exchange index fees that vary by account; read it off a confirm.
+  const [feePerContract, setFeePerContract] = useState("");
+  const [product, setProduct] = useState("SPXW");
+  const [gapPct, setGapPct] = useState("5");
 
   const sizeMut = useMutation({
     mutationFn: async (): Promise<SizingResult> => {
-      const res = await apiRequest("POST", "/api/position-sizer", {
-        accountSize: Number(accountSize),
-        maxRiskPct: Number(maxRiskPct) / 100,
-        entryPrice: Number(entryPrice),
-        stopPrice: Number(stopPrice),
-        gradeScore: Number(gradeScore),
-        targetPct: Number(targetPct),
-        kellyFraction: Number(kellyFraction) / 100,
-      });
+      // The card collects MID prices; buildSizerRequest sends the fill (ask =
+      // mid + spread/2) as entryPrice and spread/2 as the stop slippage.
+      const res = await apiRequest("POST", "/api/position-sizer", buildSizerRequest({
+        accountSize, maxRiskPctPercent: maxRiskPct, midPrice: entryPrice, stopPrice,
+        spreadDollars, gradeScore, targetPct, kellyPercent: kellyFraction,
+        feePerContract, product, maxGapLossPctPercent: gapPct,
+      }));
       return await res.json();
     },
   });
@@ -127,7 +140,7 @@ export function PositionSizer() {
             />
           </label>
           <label className="space-y-1">
-            <span className="text-xs text-muted-foreground">entry price ($)</span>
+            <span className="text-xs text-muted-foreground">option mid now ($/share)</span>
             <Input
               type="number"
               value={entryPrice}
@@ -138,7 +151,7 @@ export function PositionSizer() {
             />
           </label>
           <label className="space-y-1">
-            <span className="text-xs text-muted-foreground">stop price ($)</span>
+            <span className="text-xs text-muted-foreground">stop, mid level ($/share)</span>
             <Input
               type="number"
               value={stopPrice}
@@ -177,13 +190,43 @@ export function PositionSizer() {
             />
           </label>
           <label className="space-y-1">
-            <span className="text-xs text-muted-foreground">bid-ask spread ($)</span>
+            <span className="text-xs text-muted-foreground">bid-ask spread ($/share; buy at ask, stop sells at bid)</span>
             <Input
               type="number"
               value={spreadDollars}
               onChange={(e) => setSpreadDollars(e.target.value)}
               step="0.05"
               data-testid="input-spread"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-muted-foreground">product (option root)</span>
+            <Input
+              value={product}
+              onChange={(e) => setProduct(e.target.value.toUpperCase())}
+              placeholder="SPXW"
+              data-testid="input-product"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-muted-foreground">fees $/contract/side{product && /^(SPXW?|XSP|NDXP?|RUTW?|VIX|DJX|MRUT)$/.test(product) ? " (required for index)" : " (blank = $0.65)"}</span>
+            <Input
+              type="number"
+              value={feePerContract}
+              onChange={(e) => setFeePerContract(e.target.value)}
+              step="0.01"
+              placeholder="from your trade confirm"
+              data-testid="input-fee-per-contract"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-muted-foreground">max loss if it gaps to zero (% acct, max 5)</span>
+            <Input
+              type="number"
+              value={gapPct}
+              onChange={(e) => setGapPct(e.target.value)}
+              step="0.5"
+              data-testid="input-gap-pct"
             />
           </label>
           <label className="space-y-1">
@@ -236,7 +279,7 @@ export function PositionSizer() {
                 <div>
                   <div className="text-xs text-muted-foreground">risk</div>
                   <div className="text-lg font-semibold text-red-500" data-testid="text-risk-dollars">
-                    {fmtDollar(r.riskDollars)}
+                    {fmtCents(r.riskDollars)}
                   </div>
                 </div>
                 <div>
@@ -261,6 +304,12 @@ export function PositionSizer() {
                 target +{r.expectedPayoffPct}%
               </Badge>
             </div>
+            {r.perContract && (
+              <div className="text-xs text-muted-foreground font-mono tabular-nums" data-testid="text-sizer-dollars">
+                per contract (x100): premium {fmtCents(r.perContract.premium)} · loss at stop {fmtCents(r.perContract.riskAtStop)} · fees {fmtCents(r.perContract.feesRoundTrip)}
+                {" "}| position: max loss if it expires worthless {fmtCents(r.maxLossDollars ?? 0)} · fees {fmtCents(r.feesDollars ?? 0)} · risk budget {fmtCents(r.riskBudgetDollars ?? 0)}
+              </div>
+            )}
             <details className="text-xs text-muted-foreground">
               <summary className="cursor-pointer hover:text-foreground" data-testid="summary-reasoning">
                 why this size?
