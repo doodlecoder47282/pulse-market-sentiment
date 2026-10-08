@@ -30,6 +30,10 @@
 // for pairs, 60 rpm for boosts). Both budgets respected by design (batching).
 
 import { sqlite } from "./storage";
+import {
+  computeSocialScore, resolveSocialCollection, expireSocial, summarizeSignalCounts,
+  CRYPTO_SIGNAL_COUNTS_SQL, type SocialStatus, type SocialSourceStatus, type CryptoSignalStats,
+} from "./cryptoStats";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -82,8 +86,11 @@ export interface Candidate {
   pumpReplyPerHr: number | null;   // measured between polls
   pumpLive: boolean;               // livestream running = raw attention
   hasSocialLinks: boolean | null;  // twitter/telegram/website on the token
-  socialScore: number | null;      // 0-100
-  socialCheckedAt: number | null;
+  socialScore: number | null;      // 0-100; null = unavailable/failed/stale, never "zero attention"
+  socialCheckedAt: number | null;  // last COMPLETE collection (all attempted sources ok)
+  socialAttemptAt: number | null;  // last attempt, success or not
+  socialStatus: SocialStatus | null;
+  socialSources: { bsky: SocialSourceStatus; pump: SocialSourceStatus } | null;
   prevPumpReplies: { count: number; t: number } | null;
 
   // rolling history for sustained-flow gating (whale-blink filter)
@@ -213,7 +220,7 @@ sqlite.exec(`
     peak_at INTEGER,
     last_mcap REAL,
     last_liquidity REAL,
-    outcome TEXT,           -- OPEN | HIT_5M | DOUBLED | RUGGED | DEAD
+    outcome TEXT,           -- OPEN | HIT_5M | DOUBLED | RUGGED | DEAD | NO_DATA
     graded_at INTEGER
   );
   CREATE INDEX IF NOT EXISTS idx_crypto_signals_outcome ON crypto_signals(outcome);
@@ -248,7 +255,7 @@ function persistSignal(c: Candidate): void {
         mintAuthorityActive: c.mintAuthorityActive, freezeAuthorityActive: c.freezeAuthorityActive,
         top10Pct: c.top10Pct, securityCheckedAt: c.securityCheckedAt,
         rcRisks: c.rcRisks, rcLpLockedPct: c.rcLpLockedPct,
-        socialScore: c.socialScore, bskyMentions1h: c.bskyMentions1h,
+        socialScore: c.socialScore, socialStatus: c.socialStatus, bskyMentions1h: c.bskyMentions1h,
         pumpReplyPerHr: c.pumpReplyPerHr, pumpLive: c.pumpLive,
       }),
       JSON.stringify(c.risk),
@@ -340,6 +347,7 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
     rcRisks: [], rcLpLockedPct: null, rcCheckedAt: null,
     bskyMentions1h: null, bskyMentions10m: null, pumpReplies: null, pumpReplyPerHr: null,
     pumpLive: false, hasSocialLinks: null, socialScore: null, socialCheckedAt: null, prevPumpReplies: null,
+    socialAttemptAt: null, socialStatus: null, socialSources: null,
     hist: [],
     ageMinutes: null, volAccel: null, netBuyRatio5m: null,
     fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
@@ -603,7 +611,7 @@ async function socialTick(): Promise<void> {
   const now = Date.now();
   const due = [...tracked.values()]
     .filter((c) => c.lastRefreshAt != null && (c.marketCap ?? 0) <= MCAP_CEILING * 2)
-    .filter((c) => c.socialCheckedAt == null || now - c.socialCheckedAt > 5 * 60_000)
+    .filter((c) => c.socialAttemptAt == null || now - c.socialAttemptAt > 5 * 60_000)
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
     .slice(0, 4);
   if (due.length === 0) return;
@@ -612,6 +620,9 @@ async function socialTick(): Promise<void> {
   let lastErr: any = null;
   for (const c of due) {
     try {
+      c.socialAttemptAt = now;
+      let bsky: SocialSourceStatus = "skipped";
+      let pump: SocialSourceStatus = "skipped";
       // ── bluesky mentions: "$SYMBOL" (cashtag form degens actually post) ──
       const sym = c.symbol.replace(/[^A-Za-z0-9]/g, "");
       if (sym.length >= 3) {
@@ -624,7 +635,14 @@ async function socialTick(): Promise<void> {
             .filter((t) => Number.isFinite(t));
           c.bskyMentions1h = ts.filter((t) => now - t < 3600_000).length;
           c.bskyMentions10m = ts.filter((t) => now - t < 600_000).length;
-        } catch { /* bsky is enhancement — never blocks the tick */ }
+          bsky = "ok";
+        } catch {
+          // bsky is enhancement — never blocks the tick. A failed fetch is
+          // MISSING data, not zero mentions.
+          bsky = "failed";
+          c.bskyMentions1h = null;
+          c.bskyMentions10m = null;
+        }
       }
 
       // ── pump.fun coin object (only for pump ecosystem tokens) ──
@@ -642,23 +660,34 @@ async function socialTick(): Promise<void> {
           }
           c.pumpLive = Boolean(coin?.is_currently_live);
           c.hasSocialLinks = Boolean(coin?.twitter || coin?.telegram || coin?.website);
-        } catch { /* unofficial API — graceful degradation is the contract */ }
+          pump = "ok";
+        } catch {
+          // unofficial API — graceful degradation is the contract, but the
+          // failure is recorded, never scored as zero replies.
+          pump = "failed";
+        }
       }
 
-      // ── social score 0-100 ──
-      let s = 0;
-      s += Math.min(35, (c.bskyMentions10m ?? 0) * 12);          // fresh mentions are gold
-      s += Math.min(20, (c.bskyMentions1h ?? 0) * 2.5);
-      s += Math.min(30, Math.max(0, (c.pumpReplyPerHr ?? 0)) * 0.75); // 40 replies/hr = max
-      if (c.pumpLive) s += 10;
-      if (c.hasSocialLinks) s += 5;
-      c.socialScore = Math.round(Math.min(100, s));
-      c.socialCheckedAt = now;
+      // ── social score 0-100: published only from a complete collection ──
+      const next = resolveSocialCollection(
+        { socialScore: c.socialScore, socialCheckedAt: c.socialCheckedAt, socialStatus: c.socialStatus },
+        { bsky, pump },
+        computeSocialScore(c),
+        now,
+      );
+      c.socialScore = next.socialScore;
+      c.socialCheckedAt = next.socialCheckedAt;
+      c.socialStatus = next.socialStatus;
+      c.socialSources = { bsky, pump };
+      if (bsky === "failed" && pump !== "ok") throw new Error("bsky fetch failed");
+      if (pump === "failed" && bsky !== "ok") throw new Error("pump.fun fetch failed");
       okCount++;
       scoreCandidate(c);
       persistSignal(c);
     } catch (e: any) {
       lastErr = e;
+      // still rescore so FOMO drops a score that just expired or failed
+      try { scoreCandidate(c); } catch { /* scoring errors surface on the momentum tick */ }
     }
   }
   if (okCount === 0 && lastErr) {
@@ -711,7 +740,15 @@ function scoreCandidate(c: Candidate): void {
   if (c.discoveredVia === "trending") fomo += 10;
   if (c.boosted) fomo += 8; // paid promo IS fomo — but it's flagged as manufactured below
   // social velocity (bluesky mentions + pump.fun reply rate) — real crowd
-  // attention, weighted in at 30%: flow still leads, social confirms
+  // attention, weighted in at 30%: flow still leads, social confirms.
+  // An expired score (older than SOCIAL_TTL_MS) is dropped first, so a stale
+  // or failed collection never blends in as if current.
+  const soc = expireSocial(
+    { socialScore: c.socialScore, socialCheckedAt: c.socialCheckedAt, socialStatus: c.socialStatus },
+    now,
+  );
+  c.socialScore = soc.socialScore;
+  c.socialStatus = soc.socialStatus;
   if (c.socialScore != null) fomo = fomo * 0.7 + c.socialScore * 0.3;
   c.fomoScore = Math.min(100, fomo);
 
@@ -855,18 +892,29 @@ async function narrativeTick(): Promise<void> {
 
 // ─── GRADER — audit outcomes (tracking mode) ────────────────────────────
 
+// Oldest OPEN rows first: they are the ones due for a verdict. (Newest-first
+// with LIMIT 60 starved older rows once more than 60 were open, so they stayed
+// OPEN forever and the stats overstated `open`.) A signal past the 72h horizon
+// that cannot be priced is NO_DATA: missing, never scored as DEAD or RUGGED.
+const GRADE_HORIZON_MS = 72 * 3600_000;
+const NO_DATA_AFTER_ERRORS_MS = 7 * 24 * 3600_000; // fetch errors this long after detection → stop retrying
+
 async function graderTick(): Promise<void> {
   const open = sqlite.prepare(
-    `SELECT id, pair_address, chain, detected_at, mcap_at_signal, liquidity_at_signal, peak_mcap FROM crypto_signals WHERE outcome = 'OPEN' ORDER BY detected_at DESC LIMIT 60`,
+    `SELECT id, pair_address, chain, detected_at, mcap_at_signal, liquidity_at_signal, peak_mcap, peak_at FROM crypto_signals WHERE outcome = 'OPEN' ORDER BY detected_at ASC LIMIT 60`,
   ).all() as any[];
   if (open.length === 0) return;
 
   const mark = sqlite.prepare(
     `UPDATE crypto_signals SET peak_mcap = ?, peak_at = ?, last_mcap = ?, last_liquidity = ?, outcome = ?, graded_at = ? WHERE id = ?`,
   );
+  const markNoData = sqlite.prepare(
+    `UPDATE crypto_signals SET outcome = 'NO_DATA', graded_at = ? WHERE id = ? AND outcome = 'OPEN'`,
+  );
   const now = Date.now();
   for (const row of open) {
     const key = `${row.chain}:${row.pair_address}`;
+    const age = now - Number(row.detected_at);
     let mcap: number | null = null;
     let liq: number | null = null;
     const live = tracked.get(key);
@@ -878,9 +926,18 @@ async function graderTick(): Promise<void> {
         const p = resp?.pairs?.[0] ?? resp?.pair;
         mcap = Number(p?.marketCap ?? p?.fdv ?? NaN) || null;
         liq = Number(p?.liquidity?.usd ?? NaN) || null;
-      } catch { continue; }
+      } catch {
+        // transient fetch error: retry next tick, unless it has failed for a week
+        if (age > NO_DATA_AFTER_ERRORS_MS) markNoData.run(now, row.id);
+        continue;
+      }
     }
-    if (mcap == null) continue;
+    if (mcap == null) {
+      // the source answered but has no price for the pair: past the horizon
+      // that is a missing outcome, not a dead or rugged coin
+      if (age > GRADE_HORIZON_MS) markNoData.run(now, row.id);
+      continue;
+    }
     const peak = Math.max(Number(row.peak_mcap ?? 0), mcap);
     const entryMcap = Number(row.mcap_at_signal ?? 0);
     const entryLiq = Number(row.liquidity_at_signal ?? 0);
@@ -888,7 +945,7 @@ async function graderTick(): Promise<void> {
     if (peak >= TARGET_MCAP) outcome = "HIT_5M";
     else if (entryLiq > 0 && liq != null && liq < entryLiq * 0.15) outcome = "RUGGED";
     else if (entryMcap > 0 && mcap < entryMcap * 0.1) outcome = "RUGGED";
-    else if (now - Number(row.detected_at) > 72 * 3600_000) outcome = peak >= entryMcap * 2 ? "DOUBLED" : "DEAD";
+    else if (age > GRADE_HORIZON_MS) outcome = peak >= entryMcap * 2 ? "DOUBLED" : "DEAD";
     mark.run(peak, peak > Number(row.peak_mcap ?? 0) ? now : row.peak_at ?? null, mcap, liq,
       outcome, outcome === "OPEN" ? null : now, row.id);
   }
@@ -966,25 +1023,24 @@ export function getCryptoHealth(): { engines: EngineHealth[]; trackedCount: numb
 
 export function getCryptoSignals(): {
   signals: any[];
-  stats: { total: number; open: number; hit5m: number; doubled: number; rugged: number; dead: number; calibrated: boolean };
+  stats: CryptoSignalStats & { listLimit: number };
 } {
+  // The list is the latest 100 for display; the stats come from ONE aggregate
+  // query over every logged signal, so total/open/graded share one window.
+  // (Before, total was all-time while open/hit/doubled counted only the
+  // latest 100, overstating graded = total − open.)
+  const LIST_LIMIT = 100;
   const signals = sqlite.prepare(
-    `SELECT * FROM crypto_signals ORDER BY detected_at DESC LIMIT 100`,
-  ).all() as any[];
-  const cnt = (o: string) => signals.filter((s) => s.outcome === o).length;
-  const total = (sqlite.prepare(`SELECT count(*) c FROM crypto_signals`).get() as any)?.c ?? 0;
-  const graded = total - cnt("OPEN");
+    `SELECT * FROM crypto_signals ORDER BY detected_at DESC LIMIT ?`,
+  ).all(LIST_LIMIT) as any[];
+  const stats = summarizeSignalCounts(sqlite.prepare(CRYPTO_SIGNAL_COUNTS_SQL).get() as any);
   return {
     signals: signals.map((s) => ({
       ...s,
       features: safeParse(s.features_json),
       risk: safeParse(s.risk_json),
     })),
-    stats: {
-      total, open: cnt("OPEN"), hit5m: cnt("HIT_5M"), doubled: cnt("DOUBLED"),
-      rugged: cnt("RUGGED"), dead: cnt("DEAD"),
-      calibrated: graded >= 50,
-    },
+    stats: { ...stats, listLimit: LIST_LIMIT },
   };
 }
 
