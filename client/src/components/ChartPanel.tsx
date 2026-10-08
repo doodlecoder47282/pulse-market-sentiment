@@ -196,7 +196,7 @@ export default function ChartPanel() {
       {/* Flow strip above the chart for quick P/C read */}
       <FlowStrip />
 
-      {/* Lee-Ready order-flow imbalance — 1-min signed vol histogram */}
+      {/* Signed tick volume — 1-min SPY bars, tick rule (not Lee-Ready, not book OFI) */}
       <OfiHistogram />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[220px_1fr]" data-testid="chart-panel">

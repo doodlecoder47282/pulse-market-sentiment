@@ -1266,7 +1266,7 @@ function scoreSetup(args: {
         score += boost;
         args.audit.wire13OfiBoost = boost;
         reasoning.push(
-          `Wire 13 OFI trend (Lee-Ready): ${ofi.trend} ${ofi.acceleration} aligned with ${args.side} ` +
+          `Wire 13 signed tick volume (tick rule, SPY 1m): ${ofi.trend} ${ofi.acceleration} aligned with ${args.side} ` +
           `(cum=${(ofi.cumulative / 1000).toFixed(1)}k 15m=${(ofi.slope15m / 1000).toFixed(1)}k ` +
           `5m=${(ofi.slope5m / 1000).toFixed(1)}k): +${boost}`,
         );
@@ -1276,7 +1276,7 @@ function scoreSetup(args: {
         score += penalty;
         args.audit.wire13OfiPenalty = penalty;
         reasoning.push(
-          `Wire 13 OFI trend (Lee-Ready): ${ofi.trend} ${ofi.acceleration} opposed to ${args.side} ` +
+          `Wire 13 signed tick volume (tick rule, SPY 1m): ${ofi.trend} ${ofi.acceleration} opposed to ${args.side} ` +
           `(cum=${(ofi.cumulative / 1000).toFixed(1)}k 15m=${(ofi.slope15m / 1000).toFixed(1)}k ` +
           `5m=${(ofi.slope5m / 1000).toFixed(1)}k): ${penalty}`,
         );
@@ -2301,7 +2301,7 @@ function buildAlert(
                         : gammaSlope5m > 0 ? "UP" : "DOWN";
 
   // Greek signals line: OFI primary + gamma slope secondary
-  const greekSignals = `OFI ${ofiLabel}  ·  γ-slope ${gammaSlopeLabel}`;
+  const greekSignals = `TickVol ${ofiLabel}  ·  γ-slope ${gammaSlopeLabel}`;
 
   // Regime tag: compose gamma-zone + chop/jump/corr flags
   const gzLabel = args.audit.gammaZone === "y+" ? "\u03b3+ DAMPENED"

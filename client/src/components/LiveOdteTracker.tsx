@@ -7,7 +7,7 @@ import EdgeInfo from "@/components/EdgeInfo";
  * Features:
  *  · Table of 40 SPX 0DTE contracts (ATM ±20 strikes, calls + puts)
  *  · Live bid / ask / last / volume / Δvol / OI / classification per row
- *  · Inline volume sparkline colored by Lee-Ready classification
+ *  · Inline volume sparkline colored by last-print side (quote rule on snapshot deltas)
  *  · Size-selector slider (how many contracts of size to trip a "buy" alert)
  *  · "Arm" button per row to track a position (buy → exit inference)
  *  · Tracked positions panel with live P&L vs buy price + SELL_INFERRED marker
@@ -366,7 +366,7 @@ function LiveTrackerView({
               <Badge variant="outline" className="font-mono text-[10px]">tick {tickTime}</Badge>
             </CardTitle>
             <div className="mt-1 text-xs text-muted-foreground">
-              ATM ±20 strikes · Lee-Ready classifier (last vs midpoint, tick-rule fallback) ·
+              ATM ±20 strikes · last-print side per snapshot delta (last vs mid, tick fallback; not trade-by-trade) ·
               BUY when notional ≥ <span className="font-mono text-orange-400">{fmtMoney(minNotional)}</span>
             </div>
           </div>

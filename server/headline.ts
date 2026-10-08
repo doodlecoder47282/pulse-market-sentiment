@@ -109,7 +109,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
           "Neutral regime — only act on highest-conviction whales.",
         ],
         asOf: Date.now(),
-        whatThisIs: "Whale flow — $2.5M+ surgical option blocks (1–3DTE) plus a separate UOA scanner with cap-tiered clustering for any-ticker, any-date alerts.",
+        whatThisIs: "Whale flow — heavy contracts ($2.5M+ cumulative day premium on one contract, 1–3DTE; can be many small trades, not block prints) plus a separate UOA scanner with cap-tiered clustering for any-ticker, any-date alerts.",
       };
 
     case "chart":

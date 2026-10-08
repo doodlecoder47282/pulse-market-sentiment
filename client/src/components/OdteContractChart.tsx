@@ -3,7 +3,8 @@
  *
  * ToS-style intraday chart of a single 0DTE contract.
  *   · Top pane: price (OHLC close line + high/low envelope shaded, bid/ask band)
- *   · Bottom pane: volume bars split by Lee-Ready classification
+ *   · Bottom pane: volume bars split by last-print side (each snapshot's volume
+ *                  delta tagged by the latest print vs mid; not trade-by-trade)
  *                  (emerald = buy-classified, rose = sell-classified, muted = other)
  *
  * Data from GET /api/odte-tracker/chart?key=<contractKey>&bucketMs=<ms>
@@ -413,7 +414,7 @@ export default function OdteContractChart({
                 we swap in an empty-state hint so it doesn't look broken. */}
             <div className="h-[140px] w-full rounded-md border border-border/30 bg-background/40 p-1">
               <div className="flex items-center justify-between px-2 pt-1 text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
-                <span>Volume · buy vs sell (Lee-Ready)</span>
+                <span>Volume · buy vs sell (last-print side)</span>
                 {stats && stats.totalBuy + stats.totalSell === 0 && meta.volume != null && meta.volume > 0 && (
                   <span className="text-[9px] text-amber-400/80 normal-case tracking-normal" data-testid="text-no-new-prints">
                     no new prints since tracking began · session total {meta.volume.toLocaleString()}

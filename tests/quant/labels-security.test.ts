@@ -174,3 +174,85 @@ test("F11.2: every client fetch goes through queryClient and carries the key hea
   const qc = readFileSync(path.join(ROOT, "client/src/lib/queryClient.ts"), "utf8");
   assert.equal((qc.match(/authHeaders\(\)/g) ?? []).length >= 2, true);
 });
+
+// ─── F4.2 signed tick volume (tick rule) and bulk volume classification ────
+
+test("F4.2: normalCdf matches standard normal table values", async () => {
+  const { normalCdf } = await import("../../server/signedVolume.ts");
+  // Reference: scipy.stats.norm.cdf; Abramowitz & Stegun 7.1.26 error < 1.5e-7.
+  assert.ok(Math.abs(normalCdf(0) - 0.5) < 2e-7);
+  assert.ok(Math.abs(normalCdf(1) - 0.8413447461) < 2e-7);
+  assert.ok(Math.abs(normalCdf(1.96) - 0.9750021048) < 2e-7);
+  assert.ok(Math.abs(normalCdf(-1) - 0.1586552539) < 2e-7);
+});
+
+test("F4.2: tick rule on bars signs whole-bar volume, zero tick keeps the last sign", async () => {
+  const { signedTickVolumeBars } = await import("../../server/signedVolume.ts");
+  const closes = [100, 101, 101, 100, 100, 102];
+  const vols = [5, 10, 20, 30, 40, 50];
+  const bars = signedTickVolumeBars(closes.map((c, i) => ({ datetime: i, close: c, volume: vols[i] })));
+  // Hand-computed: up, zero(keep up), down, zero(keep down), up.
+  assert.deepEqual(bars.map((b) => b.direction), [1, 1, -1, -1, 1]);
+  assert.deepEqual(bars.map((b) => b.signedVolume), [10, 20, -30, -40, 50]);
+  assert.deepEqual(bars.map((b) => b.cumulative), [10, 30, 0, -40, 10]);
+  // Leading zero ticks have no prior sign: volume is left unsigned (0).
+  const flatStart = signedTickVolumeBars([100, 100, 101].map((c, i) => ({ datetime: i, close: c, volume: 7 })));
+  assert.deepEqual(flatStart.map((b) => b.signedVolume), [0, 7]);
+});
+
+test("F4.2: bulk volume classification matches Easley-Lopez de Prado-O'Hara (2012) eq. 7", async () => {
+  const { bulkVolumeClassify } = await import("../../server/signedVolume.ts");
+  // dP = [+1,+2,-1], sample sd = 1.527525; buy fraction = Phi(dP/sd).
+  // Reference values from scipy.stats.norm.cdf: 0.743655, 0.904785, 0.256345;
+  // signed = sum V*(2f-1) with V = [10,20,30] -> 6.445210.
+  const r = bulkVolumeClassify([100, 101, 103, 102].map((c, i) => ({ datetime: i, close: c, volume: [0, 10, 20, 30][i] })));
+  assert.ok(Math.abs(r.sigma - 1.5275252317) < 1e-9);
+  const ref = [0.7436546, 0.9047849, 0.2563454];
+  r.buyFraction.forEach((f, i) => assert.ok(Math.abs(f - ref[i]) < 1e-6, `bar ${i}: ${f}`));
+  assert.ok(Math.abs(r.cumulativeSigned - 6.44521) < 1e-4);
+  // Symmetric moves with equal volume net to zero; no price change splits 50/50.
+  const sym = bulkVolumeClassify([100, 101, 100, 101, 100].map((c, i) => ({ datetime: i, close: c, volume: 10 })));
+  assert.ok(Math.abs(sym.cumulativeSigned) < 1e-9);
+  const flat = bulkVolumeClassify([100, 100, 100].map((c, i) => ({ datetime: i, close: c, volume: 10 })));
+  assert.deepEqual(flat.buyFraction, [0.5, 0.5]);
+  assert.equal(flat.cumulativeSigned, 0);
+});
+
+// ─── F4.1 / F4.2 / F12.3 wording scans ─────────────────────────────────────
+
+// Scans code lines that can reach a screen, API or alert. Pure comment lines
+// (//, *, {/* ... */}) are skipped: some engine comments in files owned by
+// other workstreams still say "Lee-Ready" and are not user-visible.
+function scan(dirs: string[], re: RegExp): string[] {
+  const out: string[] = [];
+  for (const d of dirs) {
+    for (const f of walk(path.join(ROOT, d)).filter((p) => /\.(ts|tsx)$/.test(p))) {
+      readFileSync(f, "utf8").split("\n").forEach((line, i) => {
+        const t = line.trim();
+        if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*") || t.startsWith("{/*")) return;
+        if (re.test(line)) out.push(`${path.relative(ROOT, f)}:${i + 1}`);
+      });
+    }
+  }
+  return out;
+}
+
+test("F4.1: no UI or API text calls heavy contracts 'blocks' or the last-print side 'aggressor flow'", () => {
+  const re = /Aggressor Flow|who paid up|BLOCK TRADE|Block-level activity|surgical options? blocks|whale print\(s\)|block trades,|\$\{c\.tag\} aggressor|>aggressor tag</;
+  assert.deepEqual(scan(["client/src", "server", "shared"], re), []);
+});
+
+test("F4.2/F12.3: no component or alert text calls the tick-rule read Lee-Ready or OFI", () => {
+  const re = /Lee-Ready (OFI|classifier|order-flow|classification|1-min)|\(Lee-Ready\)|OFI trend \(Lee-Ready\)|Order Flow · 1m signed volume|`OFI: |`OFI \$\{/;
+  assert.deepEqual(scan(["client/src", "server"], re), []);
+});
+
+test("F4.1: shared labels say what the data is", async () => {
+  const L = await import("../../shared/flowLabels.ts");
+  assert.equal(L.HEAVY_CONTRACTS, "heavy contracts");
+  assert.equal(L.LAST_PRINT_SIDE, "last-print side");
+  assert.equal(L.SIGNED_TICK_VOLUME, "signed tick volume");
+  assert.match(L.HEAVY_CONTRACT_NOTE, /not a block print/);
+  assert.match(L.LAST_PRINT_SIDE_NOTE, /Not trade-by-trade/);
+  assert.match(L.SIGNED_TICK_VOLUME_NOTE, /Not Lee-Ready/);
+});

@@ -18,7 +18,7 @@
 //   1. Dealer gamma posture   (0-28)  net GEX sign/magnitude, distance to flip
 //   2. Vol term structure     (0-22)  VIX9D>VIX inversion, VIX3M<VIX backwardation, VIX level
 //   3. Range expansion        (0-15)  last-30m realized range vs time-scaled ATR(20)
-//   4. Order-flow impulse     (0-10)  Lee-Ready OFI trend + acceleration
+//   4. Tick-volume impulse    (0-10)  signed tick volume trend + acceleration (tick rule, SPY 1m)
 //   5. Canary stress          (0-12)  cross-asset divergence/alarm composite
 //   6. Whale conflux          (0-10)  same-direction $2.5M+ blocks in last 60m
 //   7. Wall proximity         (0-8)   spot hugging put/call wall while short gamma
@@ -202,18 +202,20 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
 
   // 4. Order-flow impulse
   let ofiPts = 0;
-  let ofiNote = "order flow flat.";
+  let ofiNote = "signed tick volume flat.";
   try {
     const ofi = await computeOfiTrend();
-    if (ofi.trend !== "NEUTRAL") {
+    if (ofi.dataState === "unavailable") {
+      ofiNote = "signed tick volume unavailable (no SPY minute bars) — not scored, not a flat read.";
+    } else if (ofi.trend !== "NEUTRAL") {
       ofiPts += 5;
       if (ofi.acceleration === "ACCELERATING") ofiPts += 5;
-      ofiNote = `${ofi.trend.toLowerCase()} flow${ofi.acceleration === "ACCELERATING" ? " and ACCELERATING — someone is leaning on the tape with size" : ", steady pressure"}.`;
+      ofiNote = `${ofi.trend.toLowerCase()} signed tick volume${ofi.acceleration === "ACCELERATING" ? " and ACCELERATING" : ", steady"} (tick rule on SPY 1m bars, not trade-level aggressor data).`;
     } else {
-      ofiNote = "signed volume is balanced — no one is forcing direction.";
+      ofiNote = "signed tick volume is balanced.";
     }
-  } catch { /* flat */ }
-  drivers.push({ key: "ofi", label: "order-flow impulse", points: ofiPts, max: 10, note: ofiNote });
+  } catch { ofiNote = "signed tick volume unavailable (error) — not scored."; }
+  drivers.push({ key: "ofi", label: "tick-volume impulse", points: ofiPts, max: 10, note: ofiNote });
 
   // 5. Canary stress
   let canaryPts = 0;

@@ -323,7 +323,7 @@ export function isWhale(c: SchwabFlowContract): { whale: boolean; reason: string
   reasonParts.push(`$${(c.notional / 1_000_000).toFixed(2)}M premium`);
   if (newStrikeOk) reasonParts.push(`NEW STRIKE (OI=0)`);
   else reasonParts.push(`vol/OI ${c.volOiRatio.toFixed(1)}x`);
-  reasonParts.push(`${c.tag} aggressor`);
+  reasonParts.push(`${c.tag} last print`);
   reasonParts.push(`${c.dte}DTE`);
   if ((c.delta ?? 0) !== 0) reasonParts.push(`Δ ${c.delta.toFixed(2)}`);
   return { whale: true, reason: reasonParts.join(" • ") };

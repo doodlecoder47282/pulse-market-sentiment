@@ -729,7 +729,7 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     return `VIX/SPX BREAKDOWN: ${dir} (${vixStr}, ${spxStr} over 5m)`;
   })();
 
-  // Wire 13: OFI block (Lee-Ready 1-min session-cumulative trend)
+  // Wire 13: signed tick volume block (tick rule on SPY 1-min bars; not Lee-Ready, not book OFI)
   // One-line summary: trend + acceleration + key numbers in thousands.
   const ofiBlock = (() => {
     const ofi = (audit as any).ofiTrend;
@@ -739,11 +739,11 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
       return (k >= 0 ? "+" : "") + k.toFixed(1) + "k";
     };
     if (ofi.trend === "NEUTRAL") {
-      return `OFI: NEUTRAL (cum=${fmtK(ofi.cumulative)})`;
+      return `TICK VOL: NEUTRAL (cum=${fmtK(ofi.cumulative)})`;
     }
     const accel = ofi.acceleration !== "FLAT" ? ` ${ofi.acceleration}` : "";
     return (
-      `OFI: ${ofi.trend}${accel} ` +
+      `TICK VOL: ${ofi.trend}${accel} ` +
       `(cum=${fmtK(ofi.cumulative)}, 15m=${fmtK(ofi.slope15m)}, 5m=${fmtK(ofi.slope5m)})`
     );
   })();

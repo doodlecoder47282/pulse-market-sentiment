@@ -1,17 +1,20 @@
 import EdgeInfo from "@/components/EdgeInfo";
 // OfiHistogram.tsx
-// 1-min Lee-Ready signed-volume bars + session-cumulative line.
+// 1-min signed tick volume bars + session-cumulative line. Tick rule on SPY
+// 1-minute closes (whole bar volume signed by close-to-close change); not
+// Lee-Ready and not order-book OFI. File/endpoint names are historical.
 // Compact sub-panel for Chart + Trade Desk (SPX feed).
 //
 // Rules:
 //  - emerald bar = buy-side (signedVolume > 0)
 //  - rose bar    = sell-side (signedVolume < 0)
-//  - cyan line   = session-cumulative OFI (right axis)
+//  - cyan line   = session-cumulative signed tick volume (right axis)
 //  - badges show 15m/5m slope + acceleration regime
 // Shows ONLY when /api/ofi returns >= 5 bars; otherwise renders nothing.
 
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { SIGNED_TICK_VOLUME_NOTE } from "@shared/flowLabels";
 import {
   Bar, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis, Cell,
 } from "recharts";
@@ -66,8 +69,8 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
     return (
       <div className="rounded-md border border-border/60 bg-card/40 p-2.5" data-testid="ofi-histogram">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-            Order Flow · 1m signed volume (SPY proxy)
+          <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-muted-foreground" title={SIGNED_TICK_VOLUME_NOTE}>
+            Signed tick volume · 1m (SPY proxy)
           </span>
           <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider text-amber-300">
             no prints
@@ -106,8 +109,8 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
   return (
     <div className="rounded-md border border-border/60 bg-card/40 p-2.5" data-testid="ofi-histogram">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-          Order Flow · 1m signed volume (SPY proxy)
+        <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-muted-foreground" title={SIGNED_TICK_VOLUME_NOTE}>
+          Signed tick volume · 1m (SPY proxy)
         </span>
         <EdgeInfo id="order-flow" className="h-6 w-6" />
         <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${trendColor}`}>
@@ -129,7 +132,7 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
           <Tooltip
             contentStyle={{ background: "rgba(15,15,20,0.95)", border: "1px solid #333", fontSize: 10 }}
             formatter={(value: any, name: string) => {
-              if (name === "signed") return [fmtVol(value), "signed vol"];
+              if (name === "signed") return [fmtVol(value), "signed tick vol"];
               if (name === "cum") return [fmtVol(value), "cumulative"];
               return [value, name];
             }}
