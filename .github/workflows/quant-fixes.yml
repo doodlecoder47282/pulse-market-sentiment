@@ -74,8 +74,9 @@ jobs:
 
           probe() { while read -r r; do printf '%s %s\n' "$r" "$(curl -s -o /dev/null -m 45 -w '%{http_code}' "http://127.0.0.1:$1$r")"; done < rep/routes.txt; }
           probe 5061 > rep/routes-base.txt &
+          BASE_PROBE=$!
           probe 5060 > rep/routes-head.txt
-          wait
+          wait "$BASE_PROBE"   # a bare wait would also wait on the head server and hang until timeout
           join rep/routes-base.txt rep/routes-head.txt > rep/routes-both.txt
           echo "--- routes whose status changed (route base head) ---"
           awk '$2!=$3' rep/routes-both.txt | tee rep/routes-changed.txt

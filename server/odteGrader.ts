@@ -351,7 +351,7 @@ function loadLedger(now: number, feePerContract: number): Map<string, OptionLedg
     groups.get(b.label)!.push(net);
   }
   const byLabel = new Map<string, OptionLedgerBucket>();
-  for (const [label, rets] of groups) byLabel.set(label, summarizeOptionReturns(label, rets));
+  for (const [label, rets] of Array.from(groups)) byLabel.set(label, summarizeOptionReturns(label, rets));
   return byLabel;
 }
 

@@ -82,7 +82,7 @@ async function _flushQuoteBatch(): Promise<void> {
     quotes = await getQuotes(Array.from(batch.keys()));
   } catch { /* resolve every waiter with null below */ }
   const bySym = new Map(quotes.map((q) => [q.symbol, q]));
-  for (const [sym, waiters] of batch) {
+  for (const [sym, waiters] of Array.from(batch)) {
     const q = bySym.get(sym);
     const info: QuoteCloseLike | null = q
       ? { closePrice: q.prevClose ?? null, lastPrice: q.last, netChange: q.change }

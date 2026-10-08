@@ -183,7 +183,7 @@ export function computeDailyCoverage(now = Date.now()): number {
   const up = sqlite.prepare(`INSERT OR REPLACE INTO ml_coverage_daily
     (day, horizon_min, model, version, training_data, n, covered, rate, wilson_lo, wilson_hi, kupiec_p, independence_p, mean_interval_score, below_lo, above_hi, computed_at)
     VALUES (?, ?, 'quantile_overlay', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-  for (const [k, list] of groups) {
+  for (const [k, list] of Array.from(groups)) {
     const [day, h, version] = k.split("|");
     const s = scoreRows(list);
     up.run(day, Number(h), version, list[list.length - 1].training_data ?? null, s.n, s.covered, s.rate, s.wilsonLo, s.wilsonHi,

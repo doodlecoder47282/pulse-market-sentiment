@@ -761,7 +761,7 @@ export function levelsFromChainSnapshot(snap: HistoricalChainSnapshot): { callWa
       byStrike.set(c.strike, (byStrike.get(c.strike) ?? 0) + weight(c));
     }
     let best: number | null = null, w = 0;
-    for (const [k, v] of byStrike) if (v > w) { w = v; best = k; }
+    for (const [k, v] of Array.from(byStrike)) if (v > w) { w = v; best = k; }
     return best;
   };
   return { callWall: pick("C", true), putWall: pick("P", false), maxPain: maxPainStrike(snap.contracts), weighting: useGamma ? "oi_x_gamma" : "oi_only" };
@@ -920,7 +920,7 @@ export function nonOverlappingForecasts<T extends { ts: number; horizonMin: numb
     byH.get(r.horizonMin)!.push(r);
   }
   const out: T[] = [];
-  for (const [h, list] of byH) {
+  for (const [h, list] of Array.from(byH)) {
     list.sort((a, b) => a.ts - b.ts);
     let nextFree = -Infinity;
     for (const r of list) {

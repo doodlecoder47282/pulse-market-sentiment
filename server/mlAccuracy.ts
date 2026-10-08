@@ -244,7 +244,7 @@ export function independentDailyRows<T extends { horizon: string; sessionDate: s
     const prev = first.get(g.sessionDate);
     if (!prev || g.ts < prev.ts) first.set(g.sessionDate, g);
   }
-  return [...first.values()].sort((a, b) => a.ts - b.ts);
+  return Array.from(first.values()).sort((a, b) => a.ts - b.ts);
 }
 
 function rollingWindow(graded: GradedEntry[], n: number): { hitRate: number | null; brier: number | null; n: number } {

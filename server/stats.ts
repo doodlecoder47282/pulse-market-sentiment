@@ -610,7 +610,7 @@ export function firstPerSession<T>(rows: T[], tsMs: (r: T) => number): T[] {
     const prev = first.get(k);
     if (!prev || ts < prev.ts) first.set(k, { ts, row: r });
   }
-  return [...first.values()].sort((a, b) => a.ts - b.ts).map((v) => v.row);
+  return Array.from(first.values()).sort((a, b) => a.ts - b.ts).map((v) => v.row);
 }
 
 // ─── Wilson score interval ────────────────────────────────────────────────

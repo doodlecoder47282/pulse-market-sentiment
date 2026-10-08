@@ -71,7 +71,7 @@ export function fitMasterAlphaWeights(
     const prev = firstBySession.get(s.sessionDate);
     if (!prev || s.ts < prev.ts) firstBySession.set(s.sessionDate, s);
   }
-  const rows = [...firstBySession.values()].sort((a, b) => a.ts - b.ts);
+  const rows = Array.from(firstBySession.values()).sort((a, b) => a.ts - b.ts);
   const base: MasterAlphaFit = {
     status: "insufficient-data", horizon, sessions: rows.length, minSessions,
     intercept: null, coefficients: [], droppedComponents: [], sessionsDroppedMissing: 0, r2: null, oosR2: null,
@@ -79,7 +79,7 @@ export function fitMasterAlphaWeights(
   };
   if (rows.length < minSessions) return base;
 
-  const keys = [...new Set(rows.flatMap((r) => r.components.map((c) => componentKey(c.name))))].sort();
+  const keys = Array.from(new Set<string>(rows.flatMap((r) => r.components.map((c) => componentKey(c.name))))).sort();
   const handSet = new Map<string, number>();
   for (const r of rows) for (const c of r.components) {
     if (typeof c.weight === "number" && !handSet.has(componentKey(c.name))) handSet.set(componentKey(c.name), c.weight);
