@@ -44,6 +44,7 @@ export type OfiBar = {
   direction: 1 | -1 | 0;  // tick rule sign for this bar
   signedVolume: number;    // volume * direction
   cumulative: number;      // session-cumulative running sum
+  volumeMissing?: boolean; // candle had no volume; adds nothing (not a 0-volume print)
 };
 
 export type OfiTrend = {

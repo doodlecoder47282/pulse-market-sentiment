@@ -1,6 +1,49 @@
 # Batcave checkpoint
 
-Updated: 2026-09-28. This is a compact handoff, not a live-health certificate.
+Updated: 2026-10-08. This is a compact handoff, not a live-health certificate.
+
+## 2026-10-08: quant-fixes branch (PR to main)
+
+Completed objective: apply the 37 fixes from the quant code review (Claude Doc
+"Batcave Terminal - Quant Code Review"), with the user's priorities: Schwab is
+always connected (no backup-data work: F1.1 and F12.3 dropped), and every
+output, above all every dollar figure, must be accurate for any account size.
+Cosmos kept as a tab with all trade instructions removed.
+
+How: five workstream agents (data/time, options math, statistics,
+validation/sizing/ML, labels/security), each reviewed by another, then an
+integration pass (one expiry clock), a money-math audit of every $ output, and
+an independent verifier that had not seen the work.
+
+Evidence:
+- Verifier: 33 of 37 DONE, F8.1 and F9.1 PARTIAL (no historical option chains,
+  not enough real ML data yet; both relabeled and gated), F1.1 and F12.3
+  dropped by the user. Five dollar checks match an independent Python
+  recomputation (GEX per 1%, sizer at the ask with fees, 0DTE charm to
+  settlement, theta to the close, Wilson and Kelly).
+- Quant tests: 164 pass, 0 fail (`tests/quant`, run in CI and locally).
+- CI (`.github/workflows/quant-fixes.yml`, report on branch
+  `ci-reports-quant`): build passes; all 121 GET routes return the same status
+  as main; no runtime errors; tsc error count checked per file vs main.
+
+Visible behavior changes: sizers show 0 contracts until the new option-P&L
+ledger has evidence; whale and 0DTE track records restart on real option
+marks; many "calibrated" labels now read "not tested" or "no demonstrated
+skill"; OU band and seasonal windows usually read "not significant"; Discord
+cards are off until `PULSE_DISCORD_*` env vars are set; a public bind without
+`BATCAVE_ACCESS_KEY` returns 503 on /api (override `BATCAVE_ALLOW_OPEN=1`).
+
+Blockers (user action):
+- Revoke and regenerate the Discord webhooks and the Schwab app secret: they
+  are in public git history. Merging does not remove them.
+- History cleanup is a destructive rewrite: only with explicit approval.
+
+Known risks / not verified: live Schwab fields (settlementType, quoteTime on
+$VIX, vega units), the SPX exchange fee (sizer requires it for index roots),
+EOD brief still has hard-coded default weekly targets in routes.ts,
+`data/greek_gradient.db*` still tracked.
+
+Next step: user reviews and merges the quant-fixes PR.
 
 ## Current objective
 
