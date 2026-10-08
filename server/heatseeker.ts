@@ -14,6 +14,7 @@
 
 import type { OptionChainResponse } from "./schwab";
 import { contractYears, ivForClock } from "./chainClock";
+import { contractExposure } from "./greekExposure";
 import { cumulativeStrikeFlip, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
 
 type Chain = Exclude<OptionChainResponse, { error: string }>;
@@ -247,27 +248,21 @@ export function buildHeatseeker(
         // puts and sell calls, so dealers are LONG call gamma and SHORT put
         // gamma. Net GEX at strike = callGEX - putGEX (positive = dealers long
         // gamma). This ignores customers who sell puts or buy calls.
-        const gex = gamma * oi * mult * spot * spot * 0.01;
+        // $ per 1% move: gamma x OI x 100 x S^2 x 0.01. Vendor gamma/delta only
+        // inside their valid ranges: Schwab sends -999 sentinels when the
+        // market is closed, which read as a -$10^12 wall.
+        const gex = gamma > 0 && gamma <= 1 ? gamma * oi * mult * spot * spot * 0.01 : 0;
 
-        // Black-Scholes vanna/charm (r = q = 0) from strike, spot, sigma and
-        // our T directly, so the vendor's undocumented delta clock is not
-        // mixed with ours.
-        let vanna = 0;
-        let charm = 0;
-        if (ivDec > 0 && T > 0 && spot > 0 && strike > 0) {
-          {
-            const sRootT = ivDec * Math.sqrt(T);
-            const d1v = (Math.log(spot / strike) + 0.5 * ivDec * ivDec * T) / sRootT;
-            const d2v = d1v - sRootT;
-            const phi = Math.exp(-0.5 * d1v * d1v) / Math.sqrt(2 * Math.PI);
-            vanna = (-phi * d2v) / ivDec;   // dDelta per 1.0 vol move
-            charm = (phi * d2v) / (2 * T);  // dDelta per year (r=q=0)
-          }
-        }
+        // Vanna and charm in $ from strike, spot, sigma and our T
+        // (server/greekExposure.ts, r = q = 0), so the vendor's undocumented
+        // delta clock is not mixed with ours. Charm is the $ delta change over
+        // min(1 calendar day, T): for the 0DTE expiry Heatseeker defaults to,
+        // charm/365 extrapolated the instantaneous rate past settlement.
+        const x = ivDec > 0 ? contractExposure({ spot, strike, sigma: ivDec, T, contracts: oi, multiplier: mult }) : null;
 
-        const dexContrib = delta * oi * mult * spot;
-        const vannaContrib = vanna * oi * mult * spot * 0.01; // $ per 1% vol move
-        const charmContrib = (charm * oi * mult * spot) / 365; // $ per calendar day
+        const dexContrib = Math.abs(delta) <= 1 ? delta * oi * mult * spot : 0; // $ delta
+        const vannaContrib = x ? x.vannaPerVolPt : 0; // $ per +1 vol point
+        const charmContrib = x ? x.charmPerDay : 0;   // $ per calendar day (or to settlement)
 
         if (side === "call") {
           s.callOI += oi;

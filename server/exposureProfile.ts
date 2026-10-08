@@ -9,9 +9,12 @@
 //   DEX   = Δ     × OI × 100 × S              ($ directional exposure)
 //   GEX   = Γ     × OI × 100 × S² × 0.01      ($ per 1% spot move)
 //   VEX   = Vanna × OI × 100 × S  × 0.01      ($ of dΔ per 1% vol)
-//   Charm = Charm × OI × 100 × S  / 365       ($ of dΔ per calendar day)
-//     T is in calendar years (timeToExpiry: minutes / 525,600), so charm per
-//     year / 365 is exactly the decay per calendar day.
+//   Charm = [Δ(T−h) − Δ(T)] × OI × 100 × S    ($ of dΔ per calendar day)
+//     h = min(1 calendar day, T), spot and IV held. For tenors well over a day
+//     this equals charm/365 × OI × 100 × S to first order; inside a day it is
+//     the delta left to lose before settlement (charm/365 extrapolated the
+//     instantaneous rate past expiry, overstating 0DTE rows; same change as
+//     chainAudit.ts and greekExposure.ts).
 //
 // Sign convention (the naive dealer model of SqueezeMetrics / Perfiliev /
 // SpotGamma): customers BUY puts and SELL calls, so dealers are LONG call
@@ -19,7 +22,7 @@
 // "positive GEX = vol-suppressing" work. The model ignores customers who sell
 // puts or buy calls; trade-classified open/close data would be needed for that.
 
-import { computeGreeks, type GreekSet } from "./greeks";
+import { computeGreeks, delta as bsDelta, type GreekSet } from "./greeks";
 import { buildGammaProfile } from "./gammaProfile";
 import { dteYears } from "./chainClock";
 
@@ -79,6 +82,13 @@ export function rowYears(row: ExposureRow, nowMs: number = Date.now()): number {
   return dteYears(row.dte, { expiry: row.expiry ?? null, style: row.style, nowMs });
 }
 
+/** Black-Scholes delta at time-to-expiry T; the terminal delta (1/0, 1/2 at the strike; put = call - 1) when T <= 0. */
+function deltaAfter(S: number, K: number, sigma: number, T: number, r: number, q: number, type: OptionType): number {
+  if (T > 1e-12) return bsDelta(S, K, sigma, T, r, q, type);
+  const call = S > K ? 1 : S < K ? 0 : 0.5;
+  return type === "C" ? call : call - 1;
+}
+
 /**
  * Evaluate all four exposures at a given spot, summed across the chain.
  * Each row's Greeks are recomputed at that hypothetical spot (same approach
@@ -96,7 +106,9 @@ function exposuresAt(
     dex += row.sign * g.delta  * oiMult * S;
     gex += row.sign * g.gamma  * oiMult * S * S * 0.01;
     vex += row.sign * g.vanna  * oiMult * S * 0.01;
-    ch  += row.sign * g.charm  * oiMult * S / 365;
+    // $ delta change over h = min(1 day, T): see the header.
+    const h = Math.min(1 / 365, row.T);
+    ch  += row.sign * (deltaAfter(S, row.strike, row.iv, row.T - h, r, q, row.type) - g.delta) * oiMult * S;
   }
   return { dex, gex, vex, charm: ch };
 }

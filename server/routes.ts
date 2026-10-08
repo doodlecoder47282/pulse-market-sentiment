@@ -41,6 +41,7 @@ import { contractYears, expiryOfKey, ivForClock } from "./chainClock";
 import { timeToExpiry } from "./timeToExpiry";
 import { etDate, isRegularSessionOpen, REGULAR_OPEN_MIN, sessionCloseMinutes } from "./exchangeCalendar";
 import { gamma as bsGammaOurClock } from "./greeks";
+import { charmTiltNorm, contractExposure } from "./greekExposure";
 import { fitOUBand, shouldShowOUBand } from "./ouBand";
 import { flagTailEvent } from "./stableTail";
 import { fetchDailyCloses } from "./quotes";
@@ -3292,14 +3293,31 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
                     const oi = c.openInterest || 0;
                     const vol = c.totalVolume || 0;
                     if (oi === 0 && vol === 0) continue;
-                    const gamma = c.gamma ?? 0;
+                    // Same gamma basis as /api/killbox/forward: our clock T,
+                    // sigma valid for it, Black-Scholes gamma; vendor gamma only
+                    // when no sigma and only inside (0, 1] (Schwab sends -999
+                    // sentinels when the market is closed). Settled -> skip.
+                    const T = contractYears(ek, c);
+                    if (!(T > 0)) continue;
+                    const ivPct = c.volatility || 0;
+                    const sigma = ivForClock({
+                      vendorIv: ivPct > 0 && ivPct < 500 ? ivPct / 100 : 0,
+                      bid: Number(c.bid), ask: Number(c.ask), spot, strike: parseFloat(sk), T, type: side,
+                    });
+                    const rawGamma = Number(c.gamma);
+                    const gamma = sigma > 0
+                      ? bsGammaOurClock(spot, parseFloat(sk), sigma, T, FLIP_RATE, FLIP_DIV_YIELD)
+                      : (rawGamma > 0 && rawGamma <= 1 ? rawGamma : 0);
+                    if (!(gamma > 0) || !Number.isFinite(gamma)) continue;
                     let w = 0;
                     if (weightMode === "oi") w = oi;
                     else if (weightMode === "volume") w = vol;
                     else w = oi + vol * 0.25;
                     if (w <= 0) continue;
                     const sign = side === "C" ? 1 : -1;
-                    const contrib = sign * gamma * w * spot * spot * 0.01;
+                    // $ per 1% move: gamma x contracts x 100 x S^2 x 0.01 (the x100
+                    // contract multiplier was missing: 100x too small).
+                    const contrib = sign * dollarGexPerPct(gamma, w, spot);
                     netGex += contrib;
                     totalAbsGex += Math.abs(contrib);
                   }
@@ -3307,7 +3325,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
               }
             }
           }
-          gexRegime = netGex > 0 ? "long_gamma" : "short_gamma";
+          // No priced contract (closed-market sentinels, empty chain) is
+          // unknown, not short gamma.
+          gexRegime = totalAbsGex > 0 ? (netGex > 0 ? "long_gamma" : "short_gamma") : "unknown";
           gexShare = totalAbsGex > 0 ? netGex / totalAbsGex : 0; // -1..+1
         }
       } catch (e: any) {
@@ -3536,20 +3556,16 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
               cell.gex += sign * dollarGexPerPct(gamma, weight, spot);
 
               if (sigma > 0) {
-                // d1 from strike, spot, sigma and our T (not the vendor delta,
-                // whose clock is undocumented)
-                const d1 = (Math.log(spot / strike) + 0.5 * sigma * sigma * T) / (sigma * sqrtT);
-                const d2 = d1 - sigma * sqrtT;
-                const phid1 = phi(d1);
-                const vegaPerContract = spot * phid1 * sqrtT;
-                const vanna = -vegaPerContract * d2 / (spot * sigma * sqrtT);
-                const charm = -phid1 * d2 / (2 * T * sigma * sqrtT) / 365;
-                const vomma = vegaPerContract * d1 * d2 / sigma;
-                const zomma = gamma * (d1 * d2 - 1) / sigma;
-                cell.vanna += sign * vanna * weight * 100;
-                cell.charm += sign * charm * weight * 100;
-                cell.vomma += sign * vomma * weight * 100;
-                cell.zomma += sign * zomma * weight * 100;
+                // Dollar exposures, one definition (server/greekExposure.ts):
+                // vanna $ delta per +1 vol pt, charm $ delta over min(1 day, T),
+                // vomma $ vega per +1 vol pt, zomma $ GEX per +1 vol pt. The old
+                // inline math gave share-units per 1.00 vol and a charm off by
+                // -1/(sigma sqrt T) while the client labelled them $/1%vol, $/day.
+                const x = contractExposure({ spot, strike, sigma, T, contracts: weight });
+                cell.vanna += sign * x.vannaPerVolPt;
+                cell.charm += sign * x.charmPerDay;
+                cell.vomma += sign * x.vommaPerVolPt;
+                cell.zomma += sign * x.zommaPerVolPt;
               }
             }
           }
@@ -3761,11 +3777,12 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
             // GEX in $ per 1% move (gamma x contracts x 100 x S^2 x 0.01)
             if (gamma > 0) { row.gex += sign * dollarGexPerPct(gamma, weight, spot); validGammaCount++; }
             if (sigma > 0) {
-              const d1 = (Math.log(spot / strike) + 0.5 * sigma * sigma * T) / (sigma * sqrtT);
-              const d2 = d1 - sigma * sqrtT;
-              // charm per day, dealer-signed, weighted
-              const charm = -phi(d1) * d2 / (2 * T * sigma * sqrtT) / 365;
-              row.charm += sign * charm * weight * spot * 0.01;
+              // Dealer-signed $ delta-notional change to settlement (same-day
+              // expiry: h = T), server/greekExposure.ts. The old line used
+              // -phi(d1) d2 / (2 T sigma sqrt T) / 365 x S x 0.01: sign flipped and
+              // 1/(sigma sqrt T) too large (~360x with 3 h left), so the tilt sat
+              // at its clamp.
+              row.charm += sign * contractExposure({ spot, strike, sigma, T, contracts: weight }).charmPerDay;
             }
           }
         }
@@ -3829,10 +3846,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const gexValid = validGammaCount >= 10; // need a real greek surface to trust regime/levels
       const regime = !gexValid ? "indeterminate" : netGex >= 0 ? "long_gamma" : "short_gamma";
       const pinPullMax = regime === "long_gamma" && pin != null ? Math.min(0.6, pinMag / totalAbsGex) : 0;
-      // charm/GEX tilt kept on its pre-fix scale: GEX gained the x100 contract
-      // multiplier, the charm aggregate did not, so divide GEX back by 100 to
-      // leave the projected path unchanged.
-      const charmNorm = totalAbsGex > 0 ? Math.max(-0.15, Math.min(0.15, netCharm / (totalAbsGex / 100))) : 0;
+      // Charm tilt: dealer charm flow to the close ($, = -netCharm) over gross
+      // $ GEX per 1% (heuristic, clamped +-0.15 of the cone): greekExposure.charmTiltNorm.
+      const charmNorm = charmTiltNorm(netCharm, totalAbsGex);
       const coneWiden = regime === "short_gamma" ? 1.15 : 1.0;
       const N = 26;
       const path: any[] = [];
@@ -3881,6 +3897,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         atmIV: +(atmIVPct).toFixed(2), atmIVSource, gexValid,
         expectedMove: { sigma: emSigma != null ? +emSigma.toFixed(2) : null, straddle: straddle > 0 ? +straddle.toFixed(2) : null },
         netGex: gexValid ? +netGex.toFixed(0) : null, netCharm: gexValid ? +netCharm.toFixed(0) : null, regime,
+        // units of the two numbers above (additive fields)
+        netGexUnits: "$ per 1% spot move (dealer-signed)", netCharmUnits: "$ dealer delta-notional change to settlement, spot and vol held",
         levels: gexValid ? { callWall, putWall, gammaFlip: gammaFlip != null ? +gammaFlip.toFixed(0) : null, pin } : { callWall: null, putWall: null, gammaFlip: null, pin: null },
         weightTotals: { oi: totalOI, volume: totalVol },
         path,
@@ -3999,21 +4017,13 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
               row.gex += sign * dollarGexPerPct(gamma, weight, spot);
 
               if (sigma > 0) {
-                // d1 from strike, spot, sigma and our T (not the vendor delta,
-                // whose clock is undocumented)
-                const d1 = (Math.log(spot / strike) + 0.5 * sigma * sigma * T) / (sigma * sqrtT);
-                const d2 = d1 - sigma * sqrtT;
-                const phid1 = phi(d1);
-                const vegaPerContract = spot * phid1 * sqrtT;
-                // Match chainAudit.ts institutional formulas
-                const vanna = -vegaPerContract * d2 / (spot * sigma * sqrtT);
-                const charm = -phid1 * d2 / (2 * T * sigma * sqrtT) / 365;
-                const vomma = vegaPerContract * d1 * d2 / sigma;
-                const zomma = gamma * (d1 * d2 - 1) / sigma;
-                row.vanna += sign * vanna * weight * 100;
-                row.charm += sign * charm * weight * 100;
-                row.vomma += sign * vomma * weight * 100;
-                row.zomma += sign * zomma * weight * 100;
+                // Dollar exposures in the units the Killbox lenses print
+                // ($/1%vol, $/day): server/greekExposure.ts, same as chainAudit.
+                const x = contractExposure({ spot, strike, sigma, T, contracts: weight });
+                row.vanna += sign * x.vannaPerVolPt;
+                row.charm += sign * x.charmPerDay;
+                row.vomma += sign * x.vommaPerVolPt;
+                row.zomma += sign * x.zommaPerVolPt;
               }
             }
           }

@@ -50,6 +50,7 @@ interface Contract {
 
 // ─── Public result types ──────────────────────────────────────────────────────
 
+/** DEX values are $ delta notional: delta x OI x 100 x spot (customer-side signs: calls +, puts -). */
 export interface DEXStrike {
   strike: number;
   callDex: number;
@@ -329,8 +330,13 @@ function computeDEX(contracts: Contract[], spot: number): DEXResult {
       strikeMap.set(c.strike, { strike: c.strike, callDex: 0, putDex: 0, netDex: 0 });
     }
     const row = strikeMap.get(c.strike)!;
-    // delta × OI × 100 (puts keep their negative sign naturally from Schwab)
-    const dex = c.delta * c.oi * 100;
+    // $ delta notional: delta x OI x 100 (shares per contract) x S ($/share).
+    // Puts keep their negative sign from Schwab. The old value stopped at
+    // shares (no x S) while the panel printed it with "$": 1/S of the real
+    // dollars (SPX 6,700: 1.5M delta-shares printed "$1.5M", really $10.05B). Vendor delta outside
+    // [-1, 1] (Schwab's -999 closed-market sentinel) is skipped, not summed.
+    if (!(Math.abs(c.delta) <= 1)) continue;
+    const dex = c.delta * c.oi * 100 * spot;
     if (c.side === "call") row.callDex += dex;
     else row.putDex += dex;
     row.netDex = row.callDex + row.putDex;
