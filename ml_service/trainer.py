@@ -295,6 +295,10 @@ def train_score_calibrator() -> Dict[str, Any]:
         # "int(None or 0)" used to turn every one of them into a 0.
         if "hit_30" in df_w.columns:
             df_w = df_w[df_w["hit_30"].notna()]
+        # Whale rows graded by the old leverage proxy stay stored but are not
+        # option outcomes: keep only rows graded on logged option marks.
+        if "outcome_json" in df_w.columns:
+            df_w = df_w[df_w["outcome_json"].fillna("").str.contains('"method":"option_marks_v1"', regex=False)]
         if "hit_30" in df_r.columns:
             df_r = df_r[df_r["hit_30"].notna()]
 

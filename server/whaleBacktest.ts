@@ -67,7 +67,7 @@ export interface BacktestTrade {
   delta: number;
   pctReturn: number | null;  // option return, ask in / exit out, before fees
   dollarPnl: number | null;  // $ for `contracts` whole contracts, after fees
-  reason: "ok" | "no_history" | "no_exit_bar" | "no_delta" | "filtered" | "no_entry_quote" | "am_settled";
+  reason: "ok" | "no_history" | "no_exit_bar" | "no_delta" | "filtered" | "no_entry_quote" | "am_settled" | "below_one_contract";
   // Added: option prices are $ per share; one contract = 100x
   optionEntryAsk?: number | null;
   optionExitPrice?: number | null;
@@ -82,6 +82,12 @@ export interface BacktestSummary {
   windowFrom: number;
   windowTo: number;
   filters: { symbol?: string; type?: string; maxDte: number; notional: number; feePerContract?: number };
+  /**
+   * The same totals split by how the exit was priced. Only "logged_bid" uses
+   * the definition the outcome grader uses (logged ask in, logged bid out);
+   * "modeled_expiry" prices the exit from the expiry-day close.
+   */
+  byExitSource?: Array<{ exitSource: "logged_bid" | "modeled_expiry"; n: number; winRate: number; avgPctReturn: number; totalDollarPnl: number }>;
   /** Plain-language cost model, shown with the numbers. */
   costModel?: string;
   totals: {
@@ -283,6 +289,13 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestSumma
         pnlPerContract: ev.pnlPerContract,
         feesDollars: ev.feesDollars,
       };
+      if ((ev.reason === "ok_logged_mark" || ev.reason === "ok_modeled_expiry") && ev.contracts === 0) {
+        // One contract costs more than the per-trade notional: not a trade at
+        // this notional. The per-contract result is kept for reference only.
+        trades.push({ ...common, pctReturn: ev.pctReturn, dollarPnl: null, reason: "below_one_contract" });
+        skipped++;
+        continue;
+      }
       if (ev.reason === "ok_logged_mark" || ev.reason === "ok_modeled_expiry") {
         trades.push({ ...common, pctReturn: ev.pctReturn, dollarPnl: ev.dollarPnl, reason: "ok" });
         continue;
@@ -345,6 +358,17 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestSumma
     windowTo,
     filters: { symbol: params.symbol, type: params.type, maxDte, notional, feePerContract },
     costModel: COST_MODEL,
+    byExitSource: (["logged_bid", "modeled_expiry"] as const).map((src) => {
+      const ts = executed.filter((t) => (src === "logged_bid" ? t.exitSource === "logged_bid" : t.exitSource !== "logged_bid"));
+      const w = ts.filter((t) => (t.pctReturn ?? 0) > 0).length;
+      return {
+        exitSource: src,
+        n: ts.length,
+        winRate: ts.length ? w / ts.length : 0,
+        avgPctReturn: ts.length ? ts.reduce((a, t) => a + (t.pctReturn ?? 0), 0) / ts.length : 0,
+        totalDollarPnl: ts.reduce((a, t) => a + (t.dollarPnl ?? 0), 0),
+      };
+    }),
     totals: {
       alertsConsidered: rows.length,
       tradesExecuted: executed.length,
@@ -367,7 +391,9 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestSumma
 const COST_MODEL =
   "long option held to expiry: bought at the ask logged at detection; sold at the logged bid at the expiry close when available, " +
   "else intrinsic on the expiry-day close (cash-settled index) or intrinsic minus half the entry spread (physical); full time decay; " +
-  "fees per contract per side; whole contracts within the per-trade notional. Alerts without a logged entry quote are not traded.";
+  "fees per contract per side; whole contracts within the per-trade notional. Alerts without a logged entry quote are not traded. " +
+  "Alerts where one contract costs more than the notional are reason below_one_contract and are excluded from every total. " +
+  "Totals mix logged-bid exits (the outcome grader's definition) with modeled expiry exits; byExitSource reports them separately.";
 
 /** ET calendar date of a daily candle (its start time). */
 function etDateOfBar(c: Candle): string {

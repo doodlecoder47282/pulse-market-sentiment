@@ -7,12 +7,10 @@ import { predictionOutcomes } from "@shared/schema";
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { loadWhaleEntryQuote, loadWhaleExitQuote } from "./whalePersistence";
-import { acceptExitQuote, askToBidReturn, etCloseMs, optionTradeDollars, usableEntryAsk } from "./validationMath";
+import { acceptExitQuote, askToBidReturn, etCloseMs, optionTradeDollars, usableEntryAsk, WHALE_MARKS_METHOD } from "./validationMath";
 
 /** How old the logged exit quote may be at the expiry close (the flow loop re-quotes every few minutes). */
 const WHALE_EXIT_QUOTE_MAX_AGE_MS = 20 * 60_000;
-/** Method tag on whale outcomes graded from real option marks. */
-const WHALE_MARKS_METHOD = "option_marks_v1";
 
 export type PredictionKind = "whale_alert" | "regime_call";
 
@@ -228,36 +226,10 @@ function gradeWhaleAlert(row: any, now: number): boolean {
 }
 
 /**
- * One-time, idempotent: whale outcomes graded by the old leverage proxy keep
- * their numbers inside outcome_json.legacyProxy but lose pct_return / hit_*,
- * so edge stats, drift and the ML calibrator stop treating them as option P&L.
+ * Whale outcomes graded by the old leverage proxy are NOT rewritten: stored
+ * rows stay as they are. Readers exclude them at query time with
+ * OUTCOME_ON_OPTION_MARKS_SQL / isOutcomeOnOptionMarks (validationMath).
  */
-export function retireLegacyWhaleProxyGrades(): number {
-  let n = 0;
-  try {
-    const rows = sqlite.prepare(`SELECT prediction_id, outcome_json, pct_return, hit_30, hit_50, hit_100
-                                 FROM prediction_outcomes
-                                 WHERE kind = 'whale_alert' AND graded = 1 AND pct_return IS NOT NULL`)
-      .all() as Array<{ prediction_id: string; outcome_json: string | null; pct_return: number; hit_30: number | null; hit_50: number | null; hit_100: number | null }>;
-    const upd = sqlite.prepare(`UPDATE prediction_outcomes SET outcome_json = ?, pct_return = NULL, hit_30 = NULL, hit_50 = NULL, hit_100 = NULL
-                                WHERE prediction_id = ?`);
-    for (const r of rows) {
-      let out: any = {};
-      try { out = JSON.parse(r.outcome_json || "{}"); } catch { out = {}; }
-      if (out?.method === WHALE_MARKS_METHOD) continue;
-      const next = {
-        result: "retired_leverage_proxy",
-        note: "graded by the old underlying-move x leverage proxy (no theta, no spread); not option P&L",
-        legacyProxy: { ...out, pctReturn: r.pct_return, hit30: r.hit_30, hit50: r.hit_50, hit100: r.hit_100 },
-      };
-      upd.run(JSON.stringify(next), r.prediction_id);
-      n++;
-    }
-  } catch (e: any) {
-    console.warn("[outcomeLogger] legacy proxy retirement failed:", e?.message ?? e);
-  }
-  return n;
-}
 
 function gradeRegimeCall(row: any, now: number): boolean {
   // Grade by checking realized SPY/^GSPC move direction over horizon.
@@ -365,8 +337,6 @@ let started = false;
 export function startGraderScheduler() {
   if (started) return;
   started = true;
-  const retired = retireLegacyWhaleProxyGrades();
-  if (retired > 0) console.log(`[outcomeGrader] retired ${retired} whale outcomes graded by the leverage proxy`);
   // Run every 30 minutes during weekdays. Cheap, idempotent (graded=0 filter).
   const tick = async () => {
     try {
