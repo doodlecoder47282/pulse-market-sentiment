@@ -28,7 +28,7 @@ async function fetchText(url: string, headers: Record<string, string> = {}) {
  *  Yahoo — the implementation has always been Schwab-only. The misleading name
  *  was a vestige from the pre-Schwab era.
  */
-export async function getQuote(symbol: string): Promise<{ last: number | null; prev: number | null; }> {
+export async function getQuote(symbol: string): Promise<{ last: number | null; prev: number | null; stale?: boolean | null; ageMs?: number | null }> {
   try {
     // Map Yahoo-style symbols to Schwab equivalents
     const schwabSymbol = toSchwabSymbol(symbol);
@@ -39,7 +39,8 @@ export async function getQuote(symbol: string): Promise<{ last: number | null; p
     // changePercent is vs prev close; back-calculate prev from last + change
     const last = q.last;
     const prev = (q.change != null && isFinite(q.change)) ? last - q.change : null;
-    return { last, prev };
+    // Freshness of the quote itself (server/quoteFreshness.ts).
+    return { last, prev, stale: q.stale ?? null, ageMs: q.ageMs ?? null };
   } catch {
     return { last: null, prev: null };
   }

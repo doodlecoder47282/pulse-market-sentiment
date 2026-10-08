@@ -1504,9 +1504,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       ]);
       const spyChangePct = spy.last && spy.prev ? ((spy.last - spy.prev) / spy.prev) * 100 : null;
       const vixChangePct = vix.last && vix.prev ? ((vix.last - vix.prev) / vix.prev) * 100 : null;
+      // stale: Schwab quote older than 2 min during the regular session (null = age unknown).
       const data = {
-        spy: { price: spy.last, changePct: spyChangePct },
-        vix: { price: vix.last, changePct: vixChangePct },
+        spy: { price: spy.last, changePct: spyChangePct, stale: spy.stale ?? null, ageSec: spy.ageMs != null ? Math.round(spy.ageMs / 1000) : null },
+        vix: { price: vix.last, changePct: vixChangePct, stale: vix.stale ?? null, ageSec: vix.ageMs != null ? Math.round(vix.ageMs / 1000) : null },
         timestamp: Date.now(),
       };
       quotesCache = { at: Date.now(), data };
@@ -1515,9 +1516,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Fallback to snapshot cache
       if (lastResult) {
         const s = lastResult.data;
+        // Snapshot fallback: these are not live quotes.
+        const ageSec = Math.round((Date.now() - lastResult.at) / 1000);
         return res.json({
-          spy: { price: s.spy.price, changePct: s.spy.changePct },
-          vix: { price: s.vol.vix.value, changePct: s.vol.vix.changePct },
+          spy: { price: s.spy.price, changePct: s.spy.changePct, stale: true, ageSec },
+          vix: { price: s.vol.vix.value, changePct: s.vol.vix.changePct, stale: true, ageSec },
           timestamp: lastResult.at,
         });
       }

@@ -6,11 +6,38 @@ import { apiRequest } from "@/lib/queryClient";
 import { FlashNumber } from "./FlashNumber";
 import { Skeleton } from "@/components/ui/skeleton";
 
+type QuoteCell = {
+  price: number | null;
+  changePct: number | null;
+  /** true = not refreshing during the session; null = age unknown (absent on old servers). */
+  stale?: boolean | null;
+  ageSec?: number | null;
+};
 type QuotesResponse = {
-  spy: { price: number | null; changePct: number | null };
-  vix: { price: number | null; changePct: number | null };
+  spy: QuoteCell;
+  vix: QuoteCell;
   timestamp: number;
 };
+
+/** Small chip when a quote must not be read as live. */
+function StaleChip({ q }: { q: QuoteCell }) {
+  if (q.stale === true) {
+    const age = q.ageSec != null ? (q.ageSec >= 120 ? `${Math.round(q.ageSec / 60)}m` : `${q.ageSec}s`) : "";
+    return (
+      <span className="rounded border border-amber-500/50 px-1 font-mono text-[9px] uppercase text-amber-400" title="Quote is not refreshing during the regular session">
+        stale{age ? ` ${age}` : ""}
+      </span>
+    );
+  }
+  if (q.stale === null) {
+    return (
+      <span className="rounded border border-border px-1 font-mono text-[9px] uppercase text-muted-foreground" title="Quote carried no timestamp; age unknown">
+        age ?
+      </span>
+    );
+  }
+  return null;
+}
 
 function fmt2(v: number | null, decimals = 2): string {
   if (v == null) return "—";
@@ -66,6 +93,7 @@ export default function LiveQuoteStrip() {
             {fmtPct(data.spy.changePct)}
           </span>
         )}
+        <StaleChip q={data.spy} />
       </div>
 
       <span className="text-border">|</span>
@@ -84,6 +112,7 @@ export default function LiveQuoteStrip() {
             {fmtPct(data.vix.changePct)}
           </span>
         )}
+        <StaleChip q={data.vix} />
       </div>
     </div>
   );

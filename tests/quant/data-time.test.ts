@@ -379,3 +379,20 @@ test("social: composite leaves out an unavailable social gauge instead of scorin
   const g = withSocial.gauges.find((x: any) => /Social/.test(x.name));
   assert.equal(g?.value, 70); // 50 + 40 / 2
 });
+
+// ---------------------------------------------------------------------------
+// Quote freshness: a Schwab quote older than 2 min during the regular session
+// is stale; old quotes outside the session are normal; unknown age is null.
+// ---------------------------------------------------------------------------
+
+test("quote freshness: stale only during the session, unknown age is not live", async () => {
+  const { quoteFreshness, QUOTE_STALE_AFTER_MS } = await import("../../server/quoteFreshness");
+  const open = ms("2026-10-08T14:00:00-04:00");      // Thursday, session open
+  assert.deepEqual(quoteFreshness(open - 30_000, open), { ageMs: 30_000, stale: false, marketOpen: true });
+  assert.equal(quoteFreshness(open - QUOTE_STALE_AFTER_MS - 1, open).stale, true);
+  assert.equal(quoteFreshness(null, open).stale, null);
+  const halfDayAfter = ms("2026-11-27T14:00:00-05:00"); // after the 13:00 half-day close
+  assert.equal(quoteFreshness(halfDayAfter - 3_600_000, halfDayAfter).stale, false);
+  const saturday = ms("2026-10-10T12:00:00-04:00");
+  assert.deepEqual(quoteFreshness(null, saturday), { ageMs: null, stale: false, marketOpen: false });
+});

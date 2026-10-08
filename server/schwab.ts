@@ -8,6 +8,7 @@ import { db, schwabTokens } from "./storage";
 import { eq } from "drizzle-orm";
 import { observeQuote } from "./quoteShield";
 import { etDate, addDays } from "./exchangeCalendar";
+import { quoteFreshness } from "./quoteFreshness";
 
 // ─── Credentials from environment (read lazily to avoid import-order issues) ──
 const getClientId = () => process.env.SCHWAB_CLIENT_ID ?? "";
@@ -472,8 +473,12 @@ export type NormalizedQuote = {
   source: "schwab";
   /** Schwab quote closePrice: the previous regular session's close ($/share or index pts). */
   prevClose?: number | null;
-  /** Schwab quoteTime (epoch ms), when provided. */
+  /** Schwab quoteTime (else tradeTime), epoch ms, when provided. */
   quoteTimeMs?: number | null;
+  /** now - quoteTimeMs (ms); null when the quote had no timestamp. */
+  ageMs?: number | null;
+  /** Older than 2 min during the regular session (quoteFreshness.ts); null = age unknown. */
+  stale?: boolean | null;
 };
 
 /** Normalize legacy `.X` suffix on cash-index symbols. Schwab requires `$VIX`, `$SPX`,
@@ -511,6 +516,9 @@ export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
         // Schwab returns either "quote" (regular) or "reference" depending on type
         const qd = q.quote ?? q.fundamental ?? {};
         const last = qd.lastPrice ?? qd.mark ?? null;
+        const quoteTimeMs: number | null = typeof qd.quoteTime === "number" ? qd.quoteTime
+          : typeof qd.tradeTime === "number" ? qd.tradeTime : null;
+        const fresh = quoteFreshness(quoteTimeMs);
         // Quote-shield observer (flag-only — see MASTER_SYNTHESIS Tier 2 #6)
         try {
           if (last != null && isFinite(last)) observeQuote(origSym, last);
@@ -527,7 +535,9 @@ export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
           volume: qd.totalVolume ?? null,
           source: "schwab",
           prevClose: typeof qd.closePrice === "number" && qd.closePrice > 0 ? qd.closePrice : null,
-          quoteTimeMs: typeof qd.quoteTime === "number" ? qd.quoteTime : (typeof qd.tradeTime === "number" ? qd.tradeTime : null),
+          quoteTimeMs,
+          ageMs: fresh.ageMs,
+          stale: fresh.stale,
         });
       }
       return results;
