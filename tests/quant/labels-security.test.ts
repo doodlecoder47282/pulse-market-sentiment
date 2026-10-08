@@ -256,3 +256,22 @@ test("F4.1: shared labels say what the data is", async () => {
   assert.match(L.LAST_PRINT_SIDE_NOTE, /Not trade-by-trade/);
   assert.match(L.SIGNED_TICK_VOLUME_NOTE, /Not Lee-Ready/);
 });
+
+// ─── F9.2 / F12.1 Projected Path relabel ───────────────────────────────────
+
+test("F9.2/F12.1: Projected Path is labeled a volatility cone (simulated training), no confidence claims", () => {
+  const panel = readFileSync(path.join(ROOT, "client/src/components/MLProjectionPanel.tsx"), "utf8");
+  const info = readFileSync(path.join(ROOT, "client/src/components/EdgeInfo.tsx"), "utf8");
+  const sched = readFileSync(path.join(ROOT, "server/discordScheduler.ts"), "utf8");
+  assert.match(panel, /volatility cone \(simulated training\)/);
+  assert.match(panel, /SIM-TRAINED/);
+  // Default is simulated unless the service explicitly reports real training data.
+  assert.match(panel, /training_data \?\? "synthetic"\) !== "real"/);
+  for (const banned of [/where the model thinks price goes/, /high conviction/, /the model is confident/, /higher confidence in the path/]) {
+    assert.doesNotMatch(panel, banned);
+  }
+  const ml = info.slice(info.indexOf('"ml-forecast"'), info.indexOf('"trade-desk"'));
+  assert.match(ml, /volatility cone \(simulated training\)/);
+  assert.doesNotMatch(ml, /machine-learned forecast|model is confident/);
+  assert.doesNotMatch(sched, /`ML 30m:|consider passing/);
+});

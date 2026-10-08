@@ -202,11 +202,11 @@ async function _buildMlLine(
     const q50Pct = `${q50Sign}${(q50 * 100).toFixed(2)}%`;
 
     if (counter) {
-      return `ML 30m: median move ${q50Pct} (counter-trend — consider passing)`;
+      return `Vol cone 30m (simulated training): median ${q50Pct}, against alert side`;
     } else {
       const q90Pct = `+${(q90 * 100).toFixed(2)}%`;
       const q10Pct = `${(q10 * 100).toFixed(2)}%`;
-      return `ML 30m: q50 ${q50Pct} · q90 ${q90Pct} / q10 ${q10Pct}`;
+      return `Vol cone 30m (simulated training): q50 ${q50Pct} · q90 ${q90Pct} / q10 ${q10Pct}`;
     }
   } catch {
     return undefined;
