@@ -11,6 +11,8 @@
 import { buildExposureProfile, type ExposureRow, type ExposureProfile } from "./exposureProfile";
 import { impliedVol } from "./greeks";
 import { getCboeChain } from "./cboeCache";
+import { dteYears } from "./chainClock";
+import { settlementStyleOf } from "./timeToExpiry";
 
 const OCC_RE = /^([A-Z]+)(\d{6})([CP])(\d{8})$/;
 
@@ -48,6 +50,8 @@ export function chainToRows(
     if (dte < 0 || dte > maxDte) continue;
 
     const strike = parseInt(m[4]) / 1000;
+    const expiryIso = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const style = settlementStyleOf(m[1]); // SPX root = AM (SOQ), SPXW / ETFs = PM
     const oi = Number(o.open_interest ?? 0);
     if (!oi || oi <= 0) continue;
     const type = m[3] as "C" | "P";
@@ -55,6 +59,8 @@ export function chainToRows(
     let iv = Number(o.iv ?? 0);
 
     // Fallback: solve IV from last/mid/bid+ask avg if missing or absurd.
+    // (Vendor IV inside 3 days is NOT re-solved with our clock here: this is
+    // the delayed CBOE path, which the Schwab-primary rule leaves as is.)
     if (!isFinite(iv) || iv <= 0 || iv > 5) {
       const bid = Number(o.bid ?? 0);
       const ask = Number(o.ask ?? 0);
@@ -62,10 +68,9 @@ export function chainToRows(
       let price = 0;
       if (bid > 0 && ask > 0 && ask >= bid) price = (bid + ask) / 2;
       else if (last > 0) price = last;
-      if (price > 0 && dte > 0) {
-        // Convert calendar DTE to trading years for IV solve (match exposureProfile).
-        const tradingDays = Math.max(1, Math.round(dte * (262 / 365)));
-        const T = tradingDays / 262;
+      const T = dteYears(dte, { expiry: expiryIso, style });
+      if (price > 0 && T > 0) {
+        // Same clock as exposureProfile (server/timeToExpiry.ts).
         const solved = impliedVol(price, spot, strike, T, r, q, type);
         if (solved && solved > 0.01 && solved < 5) {
           iv = solved;
@@ -75,7 +80,7 @@ export function chainToRows(
     }
 
     if (!iv || iv <= 0) continue;
-    rows.push({ type, strike, iv, oi, dte });
+    rows.push({ type, strike, iv, oi, dte, expiry: expiryIso, style });
   }
 
   return { rows, spot, solvedIvCount };

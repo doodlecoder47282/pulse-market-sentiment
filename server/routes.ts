@@ -37,6 +37,10 @@ import { watchdogStatus } from "./cusumWatchdog";
 import { shieldStatus } from "./quoteShield";
 import { computeRND, type CallStrike } from "./breedenLitzenberger";
 import { dollarGexPerPct, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
+import { contractYears, expiryOfKey, ivForClock } from "./chainClock";
+import { timeToExpiry } from "./timeToExpiry";
+import { etDate, REGULAR_OPEN_MIN, sessionCloseMinutes } from "./exchangeCalendar";
+import { gamma as bsGammaOurClock } from "./greeks";
 import { fitOUBand, shouldShowOUBand } from "./ouBand";
 import { flagTailEvent } from "./stableTail";
 import { fetchDailyCloses } from "./quotes";
@@ -3494,8 +3498,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
           const dteStr = ek.split(":")[1] || "30";
           const dteDays = Math.max(1 / 365, parseFloat(dteStr) || 30);
           expiryDTE.set(ek, dteDays);
-          const T = dteDays / 365;
-          const sqrtT = Math.sqrt(T);
+          // T per contract below: one clock (timeToExpiry via chainClock)
           for (const sk of Object.keys(map[ek] || {})) {
             const strike = parseFloat(sk);
             if (!isFinite(strike)) continue;
@@ -3505,10 +3508,20 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
               const oi = c.openInterest || 0;
               const vol = c.totalVolume || 0;
               if (oi === 0 && vol === 0) continue;
+              // One clock: calendar minutes to the real settlement instant
+              // (AM SPX vs PM SPXW, half days) / 525,600; settled -> skip.
+              const T = contractYears(ek, c);
+              if (!(T > 0)) continue;
+              const sqrtT = Math.sqrt(T);
               const ivPct = c.volatility || 0;
-              const sigma = ivPct > 0 ? ivPct / 100 : 0;
-              const delta = c.delta ?? 0;
-              const gamma = c.gamma ?? 0;
+              // sigma valid for our T (re-solved from the mid inside 3 days)
+              const sigma = ivForClock({
+                vendorIv: ivPct > 0 && ivPct < 500 ? ivPct / 100 : 0,
+                bid: Number(c.bid), ask: Number(c.ask), spot, strike, T, type: side,
+              });
+              // Gamma on the same basis as the flip (Black-Scholes, our T);
+              // vendor gamma only when no usable sigma.
+              const gamma = sigma > 0 ? bsGammaOurClock(spot, strike, sigma, T, FLIP_RATE, FLIP_DIV_YIELD) : (c.gamma ?? 0);
               if (side === "C") cell.callOI += oi; else cell.putOI += oi;
 
               let weight = 0;
@@ -3522,9 +3535,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
               // contract multiplier was missing, understating GEX 100x).
               cell.gex += sign * dollarGexPerPct(gamma, weight, spot);
 
-              if (sigma > 0 && Math.abs(delta) > 1e-6 && Math.abs(delta) < 1 - 1e-6) {
-                const callDelta = side === "C" ? Math.abs(delta) : 1 - Math.abs(delta);
-                const d1 = invN(callDelta);
+              if (sigma > 0) {
+                // d1 from strike, spot, sigma and our T (not the vendor delta,
+                // whose clock is undocumented)
+                const d1 = (Math.log(spot / strike) + 0.5 * sigma * sigma * T) / (sigma * sqrtT);
                 const d2 = d1 - sigma * sqrtT;
                 const phid1 = phi(d1);
                 const vegaPerContract = spot * phid1 * sqrtT;
@@ -3652,7 +3666,11 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const dteOf = (ek: string) => { const n = parseFloat(ek.split(":")[1] || "99"); return isFinite(n) ? n : 99; };
       const allKeys = [...Object.keys(chain.callExpDateMap || {}), ...Object.keys(chain.putExpDateMap || {})];
       if (allKeys.length === 0) return res.status(503).json({ error: "no_expiries" });
-      const nearestKey = allKeys.sort((a, b) => dteOf(a) - dteOf(b))[0];
+      // Nearest expiry that has not settled yet (after the close today's key
+      // can still be listed; its contracts carry no risk).
+      const liveKeys = allKeys.filter((k) => !timeToExpiry(expiryOfKey(k)).expired);
+      if (liveKeys.length === 0) return res.status(503).json({ error: "no_live_expiries" });
+      const nearestKey = liveKeys.sort((a, b) => dteOf(a) - dteOf(b))[0];
       const nearestDte = dteOf(nearestKey);
       const expiryDate = nearestKey.split(":")[0];
 
@@ -3662,14 +3680,20 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const etHour = parseInt(get("hour"), 10) % 24;
       const etMin = parseInt(get("minute"), 10);
       const nowMin = etHour * 60 + etMin;
-      const OPEN = 9 * 60 + 30, CLOSE = 16 * 60;
+      // Session bounds from the exchange calendar: 13:00 close on half days;
+      // a holiday/weekend reads as closed (next session = a full one).
+      const todayEt = etDate();
+      const OPEN = REGULAR_OPEN_MIN;
+      const todayClose = sessionCloseMinutes(todayEt);
+      const CLOSE = todayClose ?? -1;
+      const sessionLen = todayClose != null ? todayClose - OPEN : 390;
       let sessionState: "preopen" | "intraday" | "closed";
       let startMin: number; // minutes-from-open where projection starts
-      if (nowMin < OPEN) { sessionState = "preopen"; startMin = 0; }
-      else if (nowMin < CLOSE) { sessionState = "intraday"; startMin = nowMin - OPEN; }
+      if (todayClose != null && nowMin < OPEN) { sessionState = "preopen"; startMin = 0; }
+      else if (todayClose != null && nowMin < CLOSE) { sessionState = "intraday"; startMin = nowMin - OPEN; }
       else { sessionState = "closed"; startMin = 0; }
-      const projMinutes = 390 - startMin; // projection window length
-      const minutesToClose = sessionState === "intraday" ? CLOSE - nowMin : 390;
+      const projMinutes = (sessionState === "closed" ? 390 : sessionLen) - startMin; // projection window length
+      const minutesToClose = sessionState === "intraday" ? CLOSE - nowMin : projMinutes;
 
       // ── aggregate 0DTE-only per-strike GEX + charm ──
       const SQRT_2PI = Math.sqrt(2 * Math.PI);
@@ -3688,22 +3712,18 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
       };
 
-      type Row = { strike: number; gex: number; charm: number; callOI: number; putOI: number; callMid: number; putMid: number; callIV: number; putIV: number };
+      type Row = { strike: number; gex: number; charm: number; callOI: number; putOI: number; callMid: number; putMid: number; callIV: number; putIV: number; T?: number };
       const agg = new Map<number, Row>();
       const getRow = (k: number): Row => {
         let r = agg.get(k);
         if (!r) { r = { strike: k, gex: 0, charm: 0, callOI: 0, putOI: 0, callMid: 0, putMid: 0, callIV: 0, putIV: 0 }; agg.set(k, r); }
         return r;
       };
-      // RTH-minute time basis — matches odteProjection's MIN_PER_YEAR=252·390
-      // convention (the old calendar half-day floor was ~2.5× larger at 14:00,
-      // so panel greeks disagreed with the projection on the same screen).
-      const etNowOdte = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-      const minNowOdte = etNowOdte.getHours() * 60 + etNowOdte.getMinutes();
-      const remainingTodayMin = minNowOdte < 570 ? 390 : Math.max(15, 960 - Math.min(960, minNowOdte));
-      const remainingMinOdte = remainingTodayMin + Math.max(0, nearestDte) * 390 * (252 / 365);
-      const T = remainingMinOdte / (252 * 390);
-      const sqrtT = Math.sqrt(T);
+      // Greeks: one clock per contract (timeToExpiry via chainClock, calendar
+      // minutes to the real settlement instant / 525,600) with sigma solved
+      // for that T. The projection cone below stays on odteProjection's
+      // trading-minute basis, converted from the same total variance.
+      let atmTotalVar: number | null = null; // sigma^2 * T of the ATM contracts (calendar clock)
       const passes: Array<{ side: "C" | "P"; map: any }> = [
         { side: "C", map: chain.callExpDateMap },
         { side: "P", map: chain.putExpDateMap },
@@ -3722,22 +3742,26 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
             const mid = c.bid != null && c.ask != null && c.ask > 0 ? (c.bid + c.ask) / 2 : (c.last || 0);
             // Schwab returns -999 sentinels for greeks/IV when market is closed — sanitize hard
             const rawIV = c.volatility || 0;
-            const ivPct = rawIV > 0 && rawIV < 500 ? rawIV : 0;
-            if (side === "C") { row.callOI += oi; row.callMid = mid; row.callIV = ivPct; }
-            else { row.putOI += oi; row.putMid = mid; row.putIV = ivPct; }
+            const T = contractYears(nearestKey, c);
+            if (!(T > 0)) continue; // settled (e.g. AM SPX after the open)
+            const sqrtT = Math.sqrt(T);
+            const sigmaClock = ivForClock({
+              vendorIv: rawIV > 0 && rawIV < 500 ? rawIV / 100 : 0,
+              bid: Number(c.bid), ask: Number(c.ask), spot, strike, T, type: side,
+            });
+            const ivPct = sigmaClock > 0 ? sigmaClock * 100 : 0; // calendar-clock IV, %
+            if (side === "C") { row.callOI += oi; row.callMid = mid; row.callIV = ivPct; row.T = T; }
+            else { row.putOI += oi; row.putMid = mid; row.putIV = ivPct; row.T = T; }
             const weight = oi + vol * 0.25; // hybrid: 0DTE OI is stale by design, volume carries intraday info
             if (weight <= 0) continue;
             const rawGamma = c.gamma ?? 0;
             const gamma = rawGamma > 0 && rawGamma <= 1 ? rawGamma : 0; // vanilla gamma is (0,1]
-            const rawDelta = c.delta ?? 0;
-            const delta = Math.abs(rawDelta) > 0 && Math.abs(rawDelta) < 1 ? rawDelta : 0;
-            const sigma = ivPct > 0 ? ivPct / 100 : 0;
+            const sigma = sigmaClock;
             const sign = side === "C" ? 1 : -1;
             // GEX in $ per 1% move (gamma x contracts x 100 x S^2 x 0.01)
             if (gamma > 0) { row.gex += sign * dollarGexPerPct(gamma, weight, spot); validGammaCount++; }
-            if (sigma > 0 && Math.abs(delta) > 1e-6 && Math.abs(delta) < 1 - 1e-6) {
-              const callDelta = side === "C" ? Math.abs(delta) : 1 - Math.abs(delta);
-              const d1 = invN(callDelta);
+            if (sigma > 0) {
+              const d1 = (Math.log(spot / strike) + 0.5 * sigma * sigma * T) / (sigma * sqrtT);
               const d2 = d1 - sigma * sqrtT;
               // charm per day, dealer-signed, weighted
               const charm = -phi(d1) * d2 / (2 * T * sigma * sqrtT) / 365;
@@ -3760,13 +3784,13 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         if (r.gex < maxNeg) { maxNeg = r.gex; putWall = r.strike; }
       }
       // gamma flip: app-wide re-priced definition (gammaProfile.ts) on this
-      // expiry, same hybrid weight and the same RTH-minute T as the panel greeks.
+      // expiry, same hybrid weight and the same per-contract clock as above
+      // (rowsFromChain defaults to chainClock.contractYears).
       const gammaFlip: number | null = repricedFlipFromChain(chain, spot, {
         r: FLIP_RATE,
         q: FLIP_DIV_YIELD,
         expiryKeys: [nearestKey],
         weight: (c: any) => (Number(c?.openInterest) || 0) + (Number(c?.totalVolume) || 0) * 0.25,
-        tYears: () => T,
         lowPct: 0.95,
         highPct: 1.05,
         nLevels: 101,
@@ -3780,17 +3804,25 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       // ── ATM IV + straddle expected move ──
       let atmRow = rows[0];
       for (const r of rows) if (Math.abs(r.strike - spot) < Math.abs(atmRow.strike - spot)) atmRow = r;
+      // atmIVPct: calendar-clock IV (comparable with the chain's IV column).
       let atmIVPct = (atmRow.callIV > 0 && atmRow.putIV > 0) ? (atmRow.callIV + atmRow.putIV) / 2 : (atmRow.callIV || atmRow.putIV || 0);
+      if (atmIVPct > 0 && atmRow.T != null && atmRow.T > 0) atmTotalVar = (atmIVPct / 100) ** 2 * atmRow.T;
       const straddle = (atmRow.callMid || 0) + (atmRow.putMid || 0);
       const MIN_PER_YEAR = 252 * 390;
       let atmIVSource: "chain" | "straddle" = "chain";
       if (atmIVPct <= 0 && straddle > 0) {
         // Closed-market fallback: ATM straddle ~= 0.8 * S * sigma * sqrt(T) -> invert for sigma
-        const tYears = 390 / MIN_PER_YEAR; // full session
+        const tYears = projMinutes / MIN_PER_YEAR; // session minutes (210 on a half day)
         atmIVPct = (straddle / (0.8 * spot * Math.sqrt(tYears))) * 100;
         atmIVSource = "straddle";
       }
-      const atmIV = atmIVPct / 100;
+      // The projection (odteProjection) runs on trading minutes / (252 x 390).
+      // Convert the calendar-clock total variance sigma^2*T to that basis over
+      // the minutes left in the session, so sd to the close = S*sqrt(sigma^2*T)
+      // (variance spread over the remaining session; no basis is mixed).
+      const atmIV = atmIVSource === "chain" && atmTotalVar != null && projMinutes > 0
+        ? Math.sqrt(atmTotalVar / (projMinutes / MIN_PER_YEAR))
+        : atmIVPct / 100;
       const emSigma = atmIV > 0 ? spot * atmIV * Math.sqrt(projMinutes / MIN_PER_YEAR) : null;
 
       // ── path: 27 points (~every 15 min) ──
@@ -3929,8 +3961,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         for (const ek of Object.keys(map || {})) {
           const dteStr = ek.split(":")[1] || "30";
           const dteDays = Math.max(1 / 365, parseFloat(dteStr) || 30);
-          const T = dteDays / 365;
-          const sqrtT = Math.sqrt(T);
+          // T per contract below: one clock (timeToExpiry via chainClock)
           for (const sk of Object.keys(map[ek] || {})) {
             const strike = parseFloat(sk);
             if (!isFinite(strike)) continue;
@@ -3939,10 +3970,20 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
               const oi = c.openInterest || 0;
               const vol = c.totalVolume || 0;
               if (oi === 0 && vol === 0) continue;
+              // One clock: calendar minutes to the real settlement instant
+              // (AM SPX vs PM SPXW, half days) / 525,600; settled -> skip.
+              const T = contractYears(ek, c);
+              if (!(T > 0)) continue;
+              const sqrtT = Math.sqrt(T);
               const ivPct = c.volatility || 0;
-              const sigma = ivPct > 0 ? ivPct / 100 : 0;
-              const delta = c.delta ?? 0;
-              const gamma = c.gamma ?? 0;
+              // sigma valid for our T (re-solved from the mid inside 3 days)
+              const sigma = ivForClock({
+                vendorIv: ivPct > 0 && ivPct < 500 ? ivPct / 100 : 0,
+                bid: Number(c.bid), ask: Number(c.ask), spot, strike, T, type: side,
+              });
+              // Gamma on the same basis as the flip (Black-Scholes, our T);
+              // vendor gamma only when no usable sigma.
+              const gamma = sigma > 0 ? bsGammaOurClock(spot, strike, sigma, T, FLIP_RATE, FLIP_DIV_YIELD) : (c.gamma ?? 0);
               if (side === "C") { row.callOI += oi; row.callVol += vol; }
               else { row.putOI += oi; row.putVol += vol; }
 
@@ -3957,10 +3998,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
               // (The comment always said x100; the code had dropped it.)
               row.gex += sign * dollarGexPerPct(gamma, weight, spot);
 
-              if (sigma > 0 && Math.abs(delta) > 1e-6 && Math.abs(delta) < 1 - 1e-6) {
-                // Recover d1 from delta
-                const callDelta = side === "C" ? Math.abs(delta) : 1 - Math.abs(delta);
-                const d1 = invN(callDelta);
+              if (sigma > 0) {
+                // d1 from strike, spot, sigma and our T (not the vendor delta,
+                // whose clock is undocumented)
+                const d1 = (Math.log(spot / strike) + 0.5 * sigma * sigma * T) / (sigma * sqrtT);
                 const d2 = d1 - sigma * sqrtT;
                 const phid1 = phi(d1);
                 const vegaPerContract = spot * phid1 * sqrtT;

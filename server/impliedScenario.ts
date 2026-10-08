@@ -8,6 +8,7 @@
 // contract; nothing here is a dollar P&L).
 
 import { black76, fitImpliedDistribution, type ImpliedDistribution, type OptionQuote } from "./breedenLitzenberger";
+import { timeToExpiry } from "./timeToExpiry";
 
 // ─── (a) Straddle expected move ─────────────────────────────────────────────
 //
@@ -312,6 +313,7 @@ export function impliedDistributionForExpiry(
 ): ImpliedDistribution | null {
   const quotes = quotesFromSchwabExpiry(callMap, putMap, expKey);
   const dte = dteOfKey(expKey);
-  const T = Number.isFinite(dte) ? Math.max(dte, 0) / 365 : 0; // discounting only
+  // discounting only; one clock (timeToExpiry, PM settlement)
+  const T = Number.isFinite(dte) ? timeToExpiry(expKey.slice(0, 10)).years : 0;
   return fitImpliedDistribution(quotes, { spot, r, T });
 }

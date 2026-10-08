@@ -41,6 +41,8 @@
 // function of current snapshots — restart-safe because it only fires on
 // fresh transitions detected via in-memory history.
 
+import { minutesToSessionClose, projectedThetaCost } from "./chainClock";
+
 export type OdteSetupKind = "FAILED_BREAK" | "PIVOT_RECLAIM" | "WALL_REJECT";
 export type Side = "call" | "put";
 
@@ -2132,7 +2134,7 @@ function buildAlert(
       const move = side === "call" ? targetPrice - args.spot : args.spot - targetPrice;
       const projDeltaPnl = absDelta * move;
       const projGammaBoost = 0.5 * gamma * move * move;
-      const projThetaCost = (theta / 390) * minutesToClose; // theta is negative, so this is negative
+      const projThetaCost = projectedThetaCost(theta, minutesToClose, args.asOf); // per share; theta < 0 so this is negative
       const projPnl = projDeltaPnl + projGammaBoost + projThetaCost;
       // Wire 16: use entryPrice (honest fill) as denominator
       const denom = entryPrice > 0 ? entryPrice : mid;
@@ -2388,10 +2390,10 @@ function buildAlert(
  * Synchronous helper: compute minutesToClose from known hourET/minuteET.
  * Used in buildAlert (which must remain sync).
  */
-function computeMinutesToCloseSync(nowMs: number, hourET: number, minuteET: number): number {
-  const todMinET = hourET * 60 + minuteET;
-  const closeMinET = 16 * 60; // 16:00 ET
-  return Math.max(1, closeMinET - todMinET);
+function computeMinutesToCloseSync(nowMs: number, _hourET: number, _minuteET: number): number {
+  // Real session close from the exchange calendar (13:00 ET on half days);
+  // the old 16:00 hard-code overstated theta cost on half days.
+  return minutesToSessionClose(nowMs);
 }
 
 // ─── Format the alert as the user's mockup ────────────────────────────────

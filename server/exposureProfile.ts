@@ -10,10 +10,8 @@
 //   GEX   = Γ     × OI × 100 × S² × 0.01      ($ per 1% spot move)
 //   VEX   = Vanna × OI × 100 × S  × 0.01      ($ of dΔ per 1% vol)
 //   Charm = Charm × OI × 100 × S  / 365       ($ of dΔ per calendar day)
-//     T is in trading years (262/yr) and toTradingYears maps one calendar day
-//     to (262/365)/262 = 1/365 trading years, so dividing the per-trading-year
-//     charm by 365 is the per-CALENDAR-day decay (averaged over weekends).
-//     Per TRADING day would be / 262 (1.39x larger); the label says calendar.
+//     T is in calendar years (timeToExpiry: minutes / 525,600), so charm per
+//     year / 365 is exactly the decay per calendar day.
 //
 // Sign convention (the naive dealer model of SqueezeMetrics / Perfiliev /
 // SpotGamma): customers BUY puts and SELL calls, so dealers are LONG call
@@ -23,6 +21,7 @@
 
 import { computeGreeks, type GreekSet } from "./greeks";
 import { buildGammaProfile } from "./gammaProfile";
+import { dteYears } from "./chainClock";
 
 export type OptionType = "C" | "P";
 
@@ -32,6 +31,8 @@ export interface ExposureRow {
   iv: number;     // decimal (0.15 = 15%)
   oi: number;     // open interest (contracts)
   dte: number;    // calendar days to expiry
+  expiry?: string;        // "YYYY-MM-DD" when known (more precise than dte)
+  style?: "AM" | "PM";    // settlement style when known (SPX root = AM)
 }
 
 export interface ExposurePoint {
@@ -69,12 +70,13 @@ export interface ExposureProfile {
 }
 
 /**
- * Perfiliev's convention: 262 trading days/yr, 1/262 floor for 0DTE.
- * Input dte is CALENDAR days; convert to trading days first.
+ * T for a row on the ONE clock (server/timeToExpiry.ts via chainClock):
+ * calendar minutes to the settlement instant / 525,600, 15-minute floor,
+ * 0 once settled. Replaces the old whole-trading-day rounding (1-day floor),
+ * which held 0DTE gamma at a full day all session.
  */
-function toTradingYears(dteCalendar: number): number {
-  const tradingDays = Math.max(1, Math.round(dteCalendar * (262 / 365)));
-  return tradingDays / 262;
+export function rowYears(row: ExposureRow, nowMs: number = Date.now()): number {
+  return dteYears(row.dte, { expiry: row.expiry ?? null, style: row.style, nowMs });
 }
 
 /**
@@ -122,13 +124,15 @@ export function buildExposureProfile(
   const hi = highPct * spot;
   const step = (hi - lo) / (nLevels - 1);
 
+  const nowMs = Date.now();
   const precomputed = rows
     .filter((row) => row.iv > 0 && row.oi > 0 && row.dte >= 0)
     .map((row) => ({
       ...row,
-      T: toTradingYears(row.dte),
+      T: rowYears(row, nowMs),
       sign: row.type === "C" ? 1 : -1,
-    }));
+    }))
+    .filter((row) => row.T > 0); // settled contracts carry no greeks
 
   const curve: ExposurePoint[] = [];
   for (let i = 0; i < nLevels; i++) {

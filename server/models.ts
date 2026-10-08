@@ -30,7 +30,7 @@
 
 import { vixToAtmPct } from "@shared/vol";
 import type { ExposureProfile, ExposureRow } from "./exposureProfile";
-import { buildExposureProfile } from "./exposureProfile";
+import { buildExposureProfile, rowYears } from "./exposureProfile";
 import { chainToRows } from "./exposures";
 import { getCboeChain } from "./cboeCache";
 import { computeGreeks } from "./greeks";
@@ -310,8 +310,8 @@ function bucketByStrike(rows: ExposureRow[], spot: number, r: number, q: number)
   const byStrike = new Map<number, StrikeBucket>();
 
   for (const row of rows) {
-    const tradingDays = Math.max(1, Math.round(row.dte * (262 / 365)));
-    const T = tradingDays / 262;
+    const T = rowYears(row); // ONE clock (timeToExpiry), 0 once settled
+    if (!(T > 0)) continue;
     const g = computeGreeks(spot, row.strike, row.iv, T, r, q, row.type);
     const oiMult = row.oi * 100;
     const gex = g.gamma * oiMult * spot * spot * 0.01; // positive magnitude

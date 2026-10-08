@@ -29,6 +29,7 @@
 // All gate logic lives in odteAlertEngine.ts.
 
 import type { Side } from "./odteAlertEngine";
+import { minutesToSessionClose, projectedThetaCost } from "./chainClock";
 
 export interface ContractDetails {
   strike: number;
@@ -262,7 +263,7 @@ export async function pickContractForSide(
   }
 
   // ─── Projected return calculation (BS approximation) ─────────────────────
-  // minutesToClose = minutes until 16:00 ET
+  // minutesToClose = minutes until today's close (13:00 ET on half days)
   const minutesToClose = computeMinutesToClose(nowMs);
 
   // Wire 16: use entryPrice (midPrice + halfSpread) as denominator for honest fill
@@ -286,10 +287,10 @@ export async function pickContractForSide(
     // gamma boost uses signed move^2 (always positive addend)
     const projGammaBoost = 0.5 * best!.gamma * move * move;
 
-    // theta is per-day (negative). Theta cost = portion of day remaining.
-    // theta_per_day / 390 minutes * minutesToClose
+    // theta is per-day (negative). Theta cost = portion of the session left:
+    // theta_per_day / session minutes (390, 210 on half days) * minutesToClose
     const thetaPerDay = best!.theta; // already negative, e.g. -2.50
-    const projThetaCost = (thetaPerDay / 390) * minutesToClose;
+    const projThetaCost = projectedThetaCost(thetaPerDay, minutesToClose, nowMs); // per share
     // projThetaCost is negative; we subtract it (add theta cost back as positive cost)
 
     const projPnl = projDeltaPnl + projGammaBoost + projThetaCost; // thetaCost already negative
@@ -342,45 +343,11 @@ export async function pickContractForSide(
 }
 
 /**
- * Compute minutes remaining until 16:00 ET from nowMs.
- * Returns at least 1 (as spec'd: max(1, ...)).
+ * Minutes remaining until today's session close (16:00 ET, 13:00 ET on half
+ * days, exchangeCalendar). Returns at least 1 (as spec'd: max(1, ...)).
  */
 export function computeMinutesToClose(nowMs: number): number {
-  const now = new Date(nowMs);
-  // Build 16:00 ET for the current ET date
-  const etFmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(now);
-  const [m, d, y] = etFmt.split("/");
-  // Create a Date that represents 16:00 ET on the current ET date
-  // We need to convert to UTC. Simple approach: build target as local-ET string.
-  const closeEt = new Date(`${y}-${m}-${d}T16:00:00`);
-  // This Date is interpreted as local time. We want it in ET.
-  // Use a reliable approach: compute via getTime offset.
-  const etOffsetMs = getEtOffsetMs(nowMs);
-  const closeUtcMs = closeEt.getTime() - etOffsetMs;
-  const diffMs = closeUtcMs - nowMs;
-  return Math.max(1, Math.floor(diffMs / 60_000));
-}
-
-/**
- * Get the UTC offset for America/New_York at a given timestamp (ms).
- * Returns negative ms for behind UTC (e.g. ET is UTC-5 → -5*3600*1000).
- */
-function getEtOffsetMs(nowMs: number): number {
-  const now = new Date(nowMs);
-  // Build a UTC-string-based approach: format in ET and compare
-  const etParts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
-    hour12: false,
-  }).format(now);
-  // en-CA gives "YYYY-MM-DD, HH:MM:SS"
-  const etStr = etParts.replace(", ", "T");
-  const etDate = new Date(etStr + "Z"); // treat as UTC to get the "epoch" of ET wall clock
-  return etDate.getTime() - nowMs; // how much the ET wall clock is ahead of UTC in ms (negative for behind)
+  return minutesToSessionClose(nowMs);
 }
 
 /**

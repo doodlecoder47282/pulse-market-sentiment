@@ -30,6 +30,7 @@ async function fetchJson(url: string, headers: Record<string, string> = {}): Pro
 import { getAlphaEventsForTicker, type AlphaEvent } from "./alphaNews";
 import { getOptionChain, getQuotes } from "./schwab";
 import { FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
+import { contractYears, ivForClock } from "./chainClock";
 
 // ---- Types ----
 
@@ -367,7 +368,6 @@ function buildPerTickerGamma(chain: any, ticker: string): PerTickerGamma | null 
       const dteMatch = /:(\d+)/.exec(expKey);
       const dteDays = dteMatch ? parseInt(dteMatch[1]) : NaN;
       if (!isFinite(dteDays) || dteDays < 0 || dteDays > 45) continue;
-      const T = Math.max(dteDays, 1) / 365;
       const strikes = map[expKey];
       for (const strikeKey of Object.keys(strikes)) {
         const K = parseFloat(strikeKey);
@@ -375,6 +375,10 @@ function buildPerTickerGamma(chain: any, ticker: string): PerTickerGamma | null 
         const arr = strikes[strikeKey];
         if (!Array.isArray(arr) || arr.length === 0) continue;
         const c = arr[0];
+        // One clock (timeToExpiry): calendar minutes to settlement / 525,600;
+        // settled contracts are dropped. (Was max(dte, 1)/365: a full day at 0DTE.)
+        const T = contractYears(expKey, c);
+        if (!(T > 0)) continue;
         const oi = Number(c.openInterest) || 0;
         const vol = Number(c.totalVolume) || 0;
         if (oi <= 0) continue;
@@ -383,7 +387,7 @@ function buildPerTickerGamma(chain: any, ticker: string): PerTickerGamma | null 
         if (!isFinite(g) || g === 0) {
           // Compute from IV if Schwab gamma is missing
           if (isFinite(iv) && iv > 0) {
-            g = approxGamma(K, S, T, iv / 100);
+            g = approxGamma(K, S, T, ivForClock({ vendorIv: iv / 100, bid: Number(c.bid), ask: Number(c.ask), spot: S, strike: K, T, type }));
           } else {
             continue;
           }

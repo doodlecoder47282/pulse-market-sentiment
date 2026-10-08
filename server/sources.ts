@@ -172,7 +172,8 @@ export function buildGammaStructure(chain: any): GammaStructure {
   // gamma flips sign. This is the level SpotGamma / MenthorQ publish.
   const profileRows: OptionRow[] = rows
     .filter((rr) => rr.iv > 0 && rr.oi > 0)
-    .map((rr) => ({ type: rr.type, strike: rr.strike, iv: rr.iv, oi: rr.oi, dte: rr.dte }));
+    // expiry date -> the shared clock (timeToExpiry, PM: SPY options settle on the close)
+    .map((rr) => ({ type: rr.type, strike: rr.strike, iv: rr.iv, oi: rr.oi, dte: rr.dte, expiry: rr.expiry }));
   const gammaProfile = buildGammaProfile(profileRows, S);
   const zeroGamma: number | null = gammaProfile.zeroGammaSpot;
 

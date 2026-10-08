@@ -10,6 +10,7 @@ import { observeQuote } from "./quoteShield";
 import { etDate, addDays } from "./exchangeCalendar";
 import { quoteFreshness } from "./quoteFreshness";
 import { cumulativeStrikeFlip, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
+import { contractYears } from "./chainClock";
 
 // ─── Credentials from environment (read lazily to avoid import-order issues) ──
 const getClientId = () => process.env.SCHWAB_CLIENT_ID ?? "";
@@ -692,6 +693,9 @@ export function computeGEXFromChain(chain: Exclude<OptionChainResponse, { error:
         const strike = parseFloat(strikeStr);
         if (!isFinite(strike)) continue;
         for (const c of contracts) {
+          // Settled contracts (AM SPX after the open, anything past its
+          // settlement instant) carry no gamma: one clock, timeToExpiry.
+          if (!(contractYears(expKey, c) > 0)) continue;
           // Schwab uses -999 as a "no greek" sentinel — drop it, don't sum it
           const rawGamma = c.gamma ?? 0;
           const gamma = rawGamma <= -999 || !isFinite(rawGamma) ? 0 : rawGamma;

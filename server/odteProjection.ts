@@ -17,6 +17,10 @@
  * These are projections of the model's expected shape, NOT a forecast of actual bars.
  */
 
+// Trading-minute basis for the intraday cone. Callers must pass an atmIV on
+// this same basis: /api/odte/forward converts the calendar-clock total
+// variance (timeToExpiry, sigma^2*T) over the minutes left in the session, so
+// the cone's sd to the close equals S*sqrt(sigma^2*T) and no basis is mixed.
 export const MIN_PER_YEAR = 252 * 390;
 
 /** Abramowitz-Stegun 7.1.26 normal CDF. */

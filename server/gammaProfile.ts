@@ -18,6 +18,9 @@
  * number survives only as a labeled secondary (cumulativeStrikeFlip).
  */
 
+import { contractYears, dteYears, ivForClock } from "./chainClock";
+import type { SettlementStyle } from "./timeToExpiry";
+
 // Standard-normal PDF.
 function normPdf(x: number): number {
   return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
@@ -51,10 +54,13 @@ export interface OptionRow {
   iv: number;     // implied vol, decimal (0.15 = 15%)
   oi: number;     // open interest (or the caller's position weight)
   dte: number;    // calendar days to expiry
-  /** Optional time to expiry in years. When set it overrides the dte
-   *  conversion, so a caller with an intraday clock (Heatseeker) re-prices
-   *  with the same T it uses for its own greeks. */
+  /** Optional time to expiry in years (server/timeToExpiry.ts clock). When
+   *  set it is used as is; <= 0 means settled and the row is dropped. */
   T?: number;
+  /** Optional expiry date "YYYY-MM-DD" and settlement style; used for T when
+   *  T is not supplied (more precise than the whole-day dte). */
+  expiry?: string;
+  style?: SettlementStyle;
 }
 
 export interface GammaProfilePoint {
@@ -79,25 +85,14 @@ export interface GammaProfile {
   method: "repriced-profile";
 }
 
-/**
- * Perfiliev's convention: 262 trading days/yr, 1/262 floor for 0DTE.
- * We receive dte in CALENDAR days, so convert: ~262/365 ≈ 0.7178 to get trading days.
- */
-// TODO(WS1 timeToExpiry): replace with the shared intraday time-to-expiry
-// helper once it lands; callers with a real intraday clock pass OptionRow.T.
-function toTradingYears(dteCalendar: number): number {
-  // No whole-day rounding: rounding put 0/1/2 DTE all at T=1/262, flattening
-  // near-dated gamma. Quarter-day floor keeps 0DTE greeks finite.
-  const tradingDays = Math.max(0.25, dteCalendar * (262 / 365));
-  return tradingDays / 262;
-}
-
-/** T for a row: the caller's T when supplied, else the dte convention.
- *  null = drop the row: a supplied T <= 0 (or non-finite) means the contract
- *  has settled (e.g. AM-settled SPX after the open), so it carries no gamma. */
-function rowT(row: OptionRow): number | null {
-  if (row.T != null) return Number.isFinite(row.T) && row.T > 0 ? row.T : null;
-  return toTradingYears(row.dte);
+/** T for a row: the caller's T when supplied, else the shared clock
+ *  (server/timeToExpiry.ts: calendar minutes to the settlement instant /
+ *  525,600, 15-minute floor) from the row's expiry date or whole-day dte.
+ *  null = drop the row: T <= 0 (or non-finite) means the contract has
+ *  settled (e.g. AM-settled SPX after the open), so it carries no gamma. */
+function rowT(row: OptionRow, nowMs: number): number | null {
+  const T = row.T != null ? row.T : dteYears(row.dte, { expiry: row.expiry ?? null, style: row.style, nowMs });
+  return Number.isFinite(T) && T > 0 ? T : null;
 }
 
 /**
@@ -189,8 +184,9 @@ function findCrossings(
 export function buildGammaProfile(
   rows: OptionRow[],
   spot: number,
-  opts: { r?: number; q?: number; nLevels?: number; lowPct?: number; highPct?: number } = {},
+  opts: { r?: number; q?: number; nLevels?: number; lowPct?: number; highPct?: number; nowMs?: number } = {},
 ): GammaProfile {
+  const nowMs = opts.nowMs ?? Date.now();
   const r = opts.r ?? FLIP_RATE;
   const q = opts.q ?? FLIP_DIV_YIELD;
   const nLevels = Math.max(2, Math.floor(opts.nLevels ?? 60));
@@ -205,7 +201,7 @@ export function buildGammaProfile(
   const precomputed: PricedRow[] = [];
   for (const row of rows) {
     if (!(row.iv > 0 && row.oi > 0 && row.dte >= 0 && Number.isFinite(row.iv) && Number.isFinite(row.strike))) continue;
-    const T = rowT(row);
+    const T = rowT(row, nowMs);
     if (T == null) continue; // settled contract: no gamma
     precomputed.push({ ...row, T, sign: row.type === "C" ? 1 : -1 });
   }
@@ -284,10 +280,15 @@ export interface ChainRowOptions {
   maxDte?: number;
   /** Position weight per contract (default: open interest). */
   weight?: (contract: any, side: "C" | "P") => number;
-  /** Time to expiry in years; undefined = dte convention, <= 0 = settled
-   *  (row dropped). Gets the contract so a caller can tell AM-settled SPX
-   *  from PM-settled SPXW in the same expiry key (settlementType / symbol). */
+  /** Time to expiry in years; undefined = the shared clock for this contract
+   *  (chainClock.contractYears: AM SPX vs PM SPXW, half days), <= 0 = settled
+   *  (row dropped). Gets the contract so a caller can tell the two apart. */
   tYears?: (expKey: string, dte: number, contract: any) => number | undefined;
+  /** Spot: when given, sigma for expiries within 3 days is re-solved from the
+   *  quote mid with our T (chainClock.ivForClock). */
+  spot?: number;
+  /** Valuation instant (default now). */
+  nowMs?: number;
 }
 
 /** Calendar DTE from a Schwab expiry key "YYYY-MM-DD:N". */
@@ -303,6 +304,7 @@ function dteFromKey(expKey: string): number {
  */
 export function rowsFromChain(chain: ChainMapsLike, opts: ChainRowOptions = {}): OptionRow[] {
   const keep = opts.expiryKeys ? new Set(opts.expiryKeys) : null;
+  const nowMs = opts.nowMs ?? Date.now();
   const rows: OptionRow[] = [];
   const passes: Array<{ side: "C" | "P"; map: Record<string, Record<string, any[]>> | null | undefined }> = [
     { side: "C", map: chain.callExpDateMap },
@@ -322,12 +324,17 @@ export function rowsFromChain(chain: ChainMapsLike, opts: ChainRowOptions = {}):
           if (opts.maxDte != null && dte > opts.maxDte) continue;
           const strike = Number.isFinite(strikeFromKey) ? strikeFromKey : Number(c?.strikePrice);
           if (!Number.isFinite(strike) || strike <= 0) continue;
-          const ivPct = Number(c?.volatility);
-          if (!Number.isFinite(ivPct) || ivPct <= 0 || ivPct >= 500) continue;
           const w = opts.weight ? opts.weight(c, side) : Number(c?.openInterest) || 0;
           if (!Number.isFinite(w) || w <= 0) continue;
-          const T = opts.tYears ? opts.tYears(expKey, dte, c) : undefined;
-          rows.push({ type: side, strike, iv: ivPct / 100, oi: w, dte, ...(T != null ? { T } : {}) });
+          const T = opts.tYears?.(expKey, dte, c) ?? contractYears(expKey, c, nowMs);
+          if (!(Number.isFinite(T) && T > 0)) continue; // settled
+          const ivPct = Number(c?.volatility);
+          const vendorIv = Number.isFinite(ivPct) && ivPct > 0 && ivPct < 500 ? ivPct / 100 : NaN;
+          const iv = opts.spot != null && opts.spot > 0
+            ? ivForClock({ vendorIv, bid: Number(c?.bid), ask: Number(c?.ask), spot: opts.spot, strike, T, type: side })
+            : vendorIv;
+          if (!(Number.isFinite(iv) && iv > 0)) continue;
+          rows.push({ type: side, strike, iv, oi: w, dte, T });
         }
       }
     }
@@ -352,7 +359,7 @@ export function repricedFlipFromChain(
   spot: number,
   opts: ChainRowOptions & { r?: number; q?: number; nLevels?: number; lowPct?: number; highPct?: number } = {},
 ): RepricedFlip {
-  const rows = rowsFromChain(chain, opts);
+  const rows = rowsFromChain(chain, { ...opts, spot: opts.spot ?? spot });
   return repricedFlipFromRows(rows, spot, opts);
 }
 

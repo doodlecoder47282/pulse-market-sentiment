@@ -13,7 +13,7 @@
  */
 
 import type { OptionChainResponse } from "./schwab";
-import { invNormCDF } from "./chainAudit";
+import { contractYears, ivForClock } from "./chainClock";
 import { cumulativeStrikeFlip, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
 
 type Chain = Exclude<OptionChainResponse, { error: string }>;
@@ -179,18 +179,12 @@ export function buildHeatseeker(
   const expiry = picked.date;
   const dte = picked.dte;
 
-  // Fractional years to expiry. For 0DTE use remaining minutes to 16:00 ET
-  // (15-minute floor) so vanna/charm don't blow up or vanish at T=0.
-  let T: number;
-  if (dte >= 1) {
-    T = dte / 365;
-  } else {
-    const nowEt = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-    const close = new Date(nowEt);
-    close.setHours(16, 0, 0, 0);
-    const mins = Math.max(15, (close.getTime() - nowEt.getTime()) / 60000);
-    T = mins / (365 * 24 * 60);
-  }
+  // Time to expiry per CONTRACT on the one clock (server/timeToExpiry.ts via
+  // chainClock): calendar minutes to the real settlement instant / 525,600,
+  // AM-settled SPX vs PM SPXW, 13:00 close on half days, 15-minute floor.
+  // A contract that has settled (T = 0) is dropped. Replaces dte/365 and the
+  // hard-coded 16:00 close.
+  const nowMs = Date.now();
 
   // 2. Aggregate per-strike
   const strikeMap = new Map<number, HeatseekerStrike>();
@@ -232,6 +226,8 @@ export function buildHeatseeker(
       if (!isFinite(strike)) continue;
       const contracts = strikesObj[strikeStr] || [];
       for (const c of contracts) {
+        const T = contractYears(expKey, c, nowMs);
+        if (!(T > 0)) continue; // settled: no risk left
         const gamma = Number(c.gamma) || 0;
         const delta = Number(c.delta) || 0;
         const vega = Number(c.vega) || 0;
@@ -239,7 +235,11 @@ export function buildHeatseeker(
         const oi = Number(c.openInterest) || 0;
         const vol = Number(c.totalVolume) || 0;
         const iv = Number(c.volatility) || 0; // Schwab uses 0-100 scale
-        const ivDec = iv / 100;
+        // sigma valid for OUR T (re-solved from the mid inside 3 days)
+        const ivDec = ivForClock({
+          vendorIv: iv > 0 && iv < 500 ? iv / 100 : 0,
+          bid: Number(c.bid), ask: Number(c.ask), spot, strike, T, type: side === "call" ? "C" : "P",
+        });
 
         const s = ensure(strike);
 
@@ -249,16 +249,16 @@ export function buildHeatseeker(
         // gamma). This ignores customers who sell puts or buy calls.
         const gex = gamma * oi * mult * spot * spot * 0.01;
 
-        // True Black-Scholes vanna/charm recovered from delta + IV (same d1
-        // recovery as chainAudit). Replaces the old vega*delta/iv and
-        // -theta*delta*2/iv proxies, which had the wrong shape across strikes.
+        // Black-Scholes vanna/charm (r = q = 0) from strike, spot, sigma and
+        // our T directly, so the vendor's undocumented delta clock is not
+        // mixed with ours.
         let vanna = 0;
         let charm = 0;
-        if (ivDec > 0 && T > 0) {
-          const prob = side === "call" ? delta : delta + 1;
-          if (prob > 0 && prob < 1) {
-            const d1v = invNormCDF(prob);
-            const d2v = d1v - ivDec * Math.sqrt(T);
+        if (ivDec > 0 && T > 0 && spot > 0 && strike > 0) {
+          {
+            const sRootT = ivDec * Math.sqrt(T);
+            const d1v = (Math.log(spot / strike) + 0.5 * ivDec * ivDec * T) / sRootT;
+            const d2v = d1v - sRootT;
             const phi = Math.exp(-0.5 * d1v * d1v) / Math.sqrt(2 * Math.PI);
             vanna = (-phi * d2v) / ivDec;   // dDelta per 1.0 vol move
             charm = (phi * d2v) / (2 * T);  // dDelta per year (r=q=0)
@@ -325,11 +325,10 @@ export function buildHeatseeker(
   // Gamma flip — ONE definition app-wide: re-price every contract of this
   // expiry (all strikes, not just the display window) at hypothetical spots
   // across the window and take the zero crossing of net dealer gamma nearest
-  // spot (gammaProfile.ts). Uses this module's own T so the flip and the
-  // per-strike greeks share a clock.
+  // spot (gammaProfile.ts). Same per-contract clock as the greeks above
+  // (rowsFromChain defaults to chainClock.contractYears).
   const flip = repricedFlipFromChain(chain, spot, {
     expiryKeys: [expKey],
-    tYears: () => T,
     r: FLIP_RATE,
     q: FLIP_DIV_YIELD,
     lowPct: 1 - windowPct / 100,
