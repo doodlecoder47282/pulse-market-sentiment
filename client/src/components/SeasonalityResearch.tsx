@@ -406,9 +406,12 @@ function ResearchResults({ ticker, lookback }: { ticker: SeasonalityTicker; look
                   <ReferenceArea
                     x1={Math.floor(opt.buyDayOfYear / step) * step}
                     x2={Math.floor(opt.sellDayOfYear / step) * step}
-                    fill="#10b981"
-                    fillOpacity={0.06}
+                    // Green only for a window that passed the data-snooping test;
+                    // otherwise grey and labelled, so noise is never shaded as a signal.
+                    fill={opt.significance?.significant ? "#10b981" : "#64748b"}
+                    fillOpacity={opt.significance?.significant ? 0.06 : 0.04}
                     strokeOpacity={0}
+                    label={opt.significance?.significant ? undefined : { value: "not significant", position: "insideTop", fontSize: 9, fill: "#94a3b8" }}
                   />
                 )}
                 {todayDay != null && (
