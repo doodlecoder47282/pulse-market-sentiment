@@ -796,7 +796,7 @@ export default function MLProjectionPanel() {
     return (
       <Card data-testid="panel-ml-projection" className="border-border/60">
         <CardHeader>
-          <CardTitle>SPY — Projected Path · {SIM_LABEL}</CardTitle>
+          <CardTitle>SPY — Projected Path · {simTrained ? SIM_LABEL : "quantile model"}</CardTitle>
         </CardHeader>
         <CardContent>
           <Skeleton className="h-[480px] w-full" />
@@ -809,7 +809,7 @@ export default function MLProjectionPanel() {
     return (
       <Card data-testid="panel-ml-projection" className="border-border/60">
         <CardHeader>
-          <CardTitle>SPY — Projected Path · {SIM_LABEL}</CardTitle>
+          <CardTitle>SPY — Projected Path · {simTrained ? SIM_LABEL : "quantile model"}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-between rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm">
@@ -954,7 +954,7 @@ export default function MLProjectionPanel() {
             <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
               {simTrained
                 ? "live candles, dealer levels, and a volatility cone: base, upper and lower paths from a quantile model trained on simulated data, not real market history. not a learned forecast; band coverage on real outcomes is not yet scored. updates every 5s during market hours."
-                : "live candles, dealer levels, and three forward paths: base, upper and lower quantiles. band coverage on real outcomes is scored separately. updates every 5s during market hours."}
+                : "live candles, dealer levels, and three forward paths: base, upper and lower quantiles. live 10-90% band coverage is not yet scored. updates every 5s during market hours."}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
