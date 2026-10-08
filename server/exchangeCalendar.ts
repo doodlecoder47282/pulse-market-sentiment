@@ -256,3 +256,19 @@ export function isRegularSessionOpen(ms: number = Date.now()): boolean {
   if (close == null) return false;
   return c.minutes >= REGULAR_OPEN_MIN && c.minutes < close;
 }
+
+/**
+ * Data state of today's intraday tape. Bars are never fabricated: an empty
+ * tape is "no_data" with the reason, so a chart shows nothing rather than an
+ * invented path.
+ *   ok       at least one bar
+ *   no_data  no session today, pre-market, or the session is (or was) open
+ *            and the feed returned no bars (failed or empty collection).
+ */
+export function intradayTapeState(barCount: number, ms: number = Date.now()): { dataState: "ok" | "no_data"; reason: string | null } {
+  if (barCount > 0) return { dataState: "ok", reason: null };
+  const c = etClock(ms);
+  if (sessionCloseMinutes(c.date) == null) return { dataState: "no_data", reason: "no session today (weekend or exchange holiday)" };
+  if (c.minutes < REGULAR_OPEN_MIN) return { dataState: "no_data", reason: "pre-market: no regular-session bars yet" };
+  return { dataState: "no_data", reason: "intraday tape returned no bars (feed failed or empty)" };
+}

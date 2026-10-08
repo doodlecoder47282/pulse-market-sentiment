@@ -12,7 +12,10 @@ import assert from "node:assert/strict";
 import { contractExposure, charmTiltNorm, callDelta0 } from "../../server/greekExposure";
 import { modelThetaToClose, projectedThetaCost } from "../../server/chainClock";
 import { bsPrice, delta as bsDelta } from "../../server/greeks";
-import { etWallToEpochMs } from "../../server/exchangeCalendar";
+import { etWallToEpochMs, intradayTapeState } from "../../server/exchangeCalendar";
+import { gexByStrikeFromChain, dollarGexPerPct, FLIP_RATE, FLIP_DIV_YIELD } from "../../server/gammaProfile";
+import { whaleFireSnapshot } from "../../server/validationMath";
+import { gamma as bsGamma } from "../../server/greeks";
 import { deriveSessionBars } from "../../server/odteProjection";
 import { buildChainAudit } from "../../server/chainAudit";
 import { buildHeatseeker } from "../../server/heatseeker";
@@ -303,4 +306,57 @@ test("deriveSessionBars: a 13:00 half day ignores prints after the close", () =>
   assert.equal(b.sessionHigh, 6708);
   assert.equal(b.sessionLow, 6700);
   assert.equal(b.orbHigh, 6705);
+});
+
+// ─── Follow-ups: no fabricated bars, no spot = 1, consistent re-fires, one gamma basis ──
+
+test("intradayTapeState: an empty tape is no_data with its reason, never bars", () => {
+  assert.deepEqual(intradayTapeState(78, etWallToEpochMs("2026-10-07", 15 * 60)), { dataState: "ok", reason: null });
+  assert.equal(intradayTapeState(0, etWallToEpochMs("2026-10-10", 11 * 60)).reason, "no session today (weekend or exchange holiday)"); // Saturday
+  assert.equal(intradayTapeState(0, etWallToEpochMs("2026-11-26", 11 * 60)).dataState, "no_data");                                    // Thanksgiving
+  assert.equal(intradayTapeState(0, etWallToEpochMs("2026-10-07", 8 * 60)).reason, "pre-market: no regular-session bars yet");
+  // Session open (or a half day after its 13:00 close) with zero bars: a failed or empty feed, said so.
+  assert.equal(intradayTapeState(0, etWallToEpochMs("2026-10-07", 11 * 60)).reason, "intraday tape returned no bars (feed failed or empty)");
+  assert.equal(intradayTapeState(0, etWallToEpochMs("2026-11-27", 14 * 60)).dataState, "no_data");
+});
+
+test("gexByStrikeFromChain: missing last price is no_spot (old: spot = 1); with spot, $ per 1% by strike", () => {
+  // Call K 6,750 gamma 0.002 OI 500 and put K 6,600 gamma 0.001 OI 1,000, S = 6,700:
+  //   call 0.002 x 500 x 100 x 6,700^2 x 0.01 = +$44,890,000; put -0.001 x 1,000 x 100 x 44,890,000 x 0.01 = -$44,890,000.
+  // With the old spot = 1 the call read 0.002 x 500 x 100 x 1 x 0.01 = $1 and both walls were judged against strike 1.
+  const nowMs = etWallToEpochMs("2026-10-07", 12 * 60);
+  const maps = {
+    callExpDateMap: { "2026-10-16:9": { "6750.0": [{ symbol: "SPXW  261016C06750000", gamma: 0.002, openInterest: 500, volatility: 15, bid: 40, ask: 41 }] } },
+    putExpDateMap: { "2026-10-16:9": { "6600.0": [{ symbol: "SPXW  261016P06600000", gamma: 0.001, openInterest: 1000, volatility: 16, bid: 30, ask: 31 }] } },
+  };
+  const none = gexByStrikeFromChain({ ...maps, underlying: { last: null } }, nowMs);
+  assert.equal(none.dataState, "no_spot");
+  assert.deepEqual(none.profile, []);
+  assert.equal(none.callWall, null);
+  const g = gexByStrikeFromChain({ ...maps, underlying: { last: 6700 } }, nowMs);
+  assert.equal(g.dataState, "ok");
+  near(g.profile.find((p) => p.strike === 6750)!.netGex, 44_890_000, 1e-3, "call GEX");
+  near(g.profile.find((p) => p.strike === 6600)!.netGex, -44_890_000, 1e-3, "put GEX");
+  assert.equal(g.callWall, 6750);
+  assert.equal(g.putWall, 6600);
+});
+
+test("whaleFireSnapshot: premium = volume x mark x 100 for the same fire", () => {
+  // $2,500,000 day premium on 5,000 contracts -> mark 2,500,000 / (5,000 x 100) = $5.00 per share.
+  const f = whaleFireSnapshot({ premium: 2_500_000, volume: 5_000, detectedAt: 1 });
+  assert.equal(f.mark, 5);
+  assert.equal(f.volume * (f.mark as number) * 100, f.premium);
+  // No volume: no mark, rather than Infinity.
+  assert.equal(whaleFireSnapshot({ premium: 10, volume: 0, detectedAt: 1 }).mark, null);
+});
+
+test("0DTE forward GEX basis: Black-Scholes gamma with r 5%, q 1.3%, our T (same as Killbox)", () => {
+  // ATM SPXW, S = K = 6,700, sigma 15%, 180 min to the PM settlement:
+  //   T = 180 / 525,600; v = 0.15 sqrt(T) = 0.00277587; d1 = (0.05 - 0.013 + 0.01125) T / v = 0.0059527
+  //   gamma = e^{-qT} phi(d1) / (S v) = 0.0214499; weight 1,000:
+  //   $GEX = 0.0214499 x 1,000 x 100 x 6,700^2 x 0.01 = $962.89M per 1% move.
+  const T = 180 / 525_600;
+  const g = bsGamma(6700, 6700, 0.15, T, FLIP_RATE, FLIP_DIV_YIELD);
+  near(g, 0.0214499, 1e-6, "gamma");
+  near(dollarGexPerPct(g, 1000, 6700) / 1e6, 962.89, 0.01, "$GEX M");
 });

@@ -7,10 +7,10 @@
 // the 60min ML horizon and linearly extrapolated to the 4:00 ET close,
 // capped ±1.5%.
 //
-// When the Schwab tape is empty the server hands back a deterministic
-// synthetic GBM walk anchored on /api/snapshot — those candles are greyed
-// out with a "TAPE SYNTHETIC" watermark and a banner above the chart so the
-// distinction is unambiguous.
+// When the Schwab tape is empty the server returns no candles and
+// dataState "no_data" with a reason; the panel shows NO INTRADAY DATA and
+// never draws invented candles (the old server filled the gap with a
+// simulated walk). The synthetic flag below is kept for older payloads.
 //
 // Honesty rules:
 //   • Gamma-snap is applied to the BASE line only (it is a deterministic
@@ -159,6 +159,9 @@ interface ProjectionSpyResponse {
   features: Record<string, number>;
   synthetic?: boolean;
   syntheticReason?: string | null;
+  /** "ok" = real bars; "no_data" = empty tape (dataStateReason says why). */
+  dataState?: "ok" | "no_data";
+  dataStateReason?: string | null;
   asOf: string;
 }
 
@@ -499,6 +502,8 @@ export default function MLProjectionPanel() {
   const features = data?.features ?? {};
   const synthetic = !!data?.synthetic;
   const syntheticReason = data?.syntheticReason ?? null;
+  const noData = data != null && (data.dataState === "no_data" || (data.candles ?? []).length === 0);
+  const noDataReason = data?.dataStateReason ?? null;
   const spot = data?.spot ?? candles[candles.length - 1]?.c ?? null;
 
   // Choose effective bands: blended if available, else v3.
@@ -985,15 +990,10 @@ export default function MLProjectionPanel() {
           </div>
         )}
 
-        {/* Empty-state banners */}
-        {!hasCandles && spot == null && (
-          <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-muted-foreground">
-            tape and spot offline — check Schwab token + snapshot service
-          </div>
-        )}
-        {!hasCandles && spot != null && !synthetic && (
-          <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
-            pre-market — no intraday yet. dealer levels loading.
+        {/* Empty-state banner: no intraday bars, nothing invented */}
+        {noData && (
+          <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-muted-foreground" data-testid="ml-no-data">
+            NO INTRADAY DATA{noDataReason ? ` — ${noDataReason}` : ""}{spot == null ? " · spot offline (check Schwab token + snapshot service)" : ""}
           </div>
         )}
         {hasCandles && !hasBands && (
@@ -1032,6 +1032,11 @@ export default function MLProjectionPanel() {
           style={{ height: 500 }}
           data-testid="chart-spy-projection"
         >
+          {!hasCandles && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center font-mono text-xs uppercase tracking-widest text-muted-foreground/70">
+              no intraday data
+            </div>
+          )}
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
               data={chartData}
