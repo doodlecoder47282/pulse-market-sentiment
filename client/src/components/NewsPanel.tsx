@@ -739,11 +739,13 @@ interface IvMoveResp {
   expiry: string | null;
   source: string | null;
 }
-function ImpliedMoveCell({ ticker, enabled }: { ticker: string; enabled: boolean }) {
+function ImpliedMoveCell({ ticker, enabled, date, timing }: { ticker: string; enabled: boolean; date: string; timing: string }) {
+  // date + timing pick the first expiry that includes the earnings reaction
+  // (a pre-earnings expiry's straddle carries none of the event).
   const { data, isLoading, isError } = useQuery<IvMoveResp>({
-    queryKey: ["/api/earnings-iv", ticker],
+    queryKey: ["/api/earnings-iv", ticker, date, timing],
     queryFn: async () => {
-      const r = await apiRequest("GET", `/api/earnings-iv?ticker=${encodeURIComponent(ticker)}`);
+      const r = await apiRequest("GET", `/api/earnings-iv?ticker=${encodeURIComponent(ticker)}&after=${encodeURIComponent(date)}&timing=${encodeURIComponent(timing)}`);
       return r.json();
     },
     enabled,
@@ -757,7 +759,7 @@ function ImpliedMoveCell({ ticker, enabled }: { ticker: string; enabled: boolean
     return <span className="text-muted-foreground">—</span>;
   }
   return (
-    <span className="font-mono text-sky-300" title={`ATM straddle expiry ${data.expiry ?? "—"} · ${data.source ?? "—"}`}>
+    <span className="font-mono text-sky-300" title={`ATM straddle, $ per share, expiry ${data.expiry ?? "—"} · ${data.source ?? "—"}`}>
       ±${data.impliedMove.toFixed(2)}
       <span className="ml-1 text-[9px] text-muted-foreground">({data.impliedMovePct.toFixed(1)}%)</span>
     </span>
@@ -1057,7 +1059,7 @@ function EarningsTab() {
                                 )}
                               </td>
                               <td className="py-1.5 pr-2 text-right" data-testid={`earnings-iv-${r.ticker}`}>
-                                <ImpliedMoveCell ticker={r.ticker} enabled={r.importance === "HIGH" || r.isMag7} />
+                                <ImpliedMoveCell ticker={r.ticker} date={r.date} timing={r.timing} enabled={r.importance === "HIGH" || r.isMag7} />
                               </td>
                               <td className="py-1.5 pr-2 text-center">
                                 <Badge

@@ -42,6 +42,7 @@ import { timeToExpiry } from "./timeToExpiry";
 import { etDate, isRegularSessionOpen, REGULAR_OPEN_MIN, sessionCloseMinutes } from "./exchangeCalendar";
 import { gamma as bsGammaOurClock } from "./greeks";
 import { charmTiltNorm, contractExposure } from "./greekExposure";
+import { pickEarningsExpiry } from "./impliedScenario";
 import { fitOUBand, shouldShowOUBand } from "./ouBand";
 import { flagTailEvent } from "./stableTail";
 import { fetchDailyCloses } from "./quotes";
@@ -2563,29 +2564,43 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     if (!ticker || !/^[A-Z.\-]{1,8}$/.test(ticker)) {
       return res.status(400).json({ error: "invalid ticker" });
     }
-    const cached = _ivMoveCache.get(ticker);
+    // Optional earnings date + timing: the straddle must be on an expiry that
+    // settles after the market reacts (impliedScenario.pickEarningsExpiry).
+    // Without them the old rule (earliest expiry) is kept and labelled.
+    const afterRaw = String(req.query.after ?? "").trim();
+    const after = /^\d{4}-\d{2}-\d{2}$/.test(afterRaw) ? afterRaw : null;
+    const timing = String(req.query.timing ?? "").trim().toUpperCase().slice(0, 4);
+    const cacheKey = `${ticker}|${after ?? ""}|${timing}`;
+    const cached = _ivMoveCache.get(cacheKey);
     const now = Date.now();
     if (cached && (now - cached.ts) < 10 * 60_000) {
       return res.json(cached.data);
     }
     try {
-      // Pull front-month chain (~14 day window covers post-earnings weekly)
-      const chain: any = await schwabGetOptionChain(ticker, 14);
+      // Chain window long enough to list the first post-earnings expiry.
+      const daysToEvent = after ? Math.ceil((Date.parse(after + "T00:00:00Z") - now) / 86_400_000) : 0;
+      const windowDays = Math.min(60, Math.max(14, daysToEvent + 10));
+      const chain: any = await schwabGetOptionChain(ticker, windowDays);
       if (!chain || chain.error || (!chain.callExpDateMap && !chain.putExpDateMap)) {
         const out = { ticker, impliedMove: null, impliedMovePct: null, expiry: null, source: null };
-        _ivMoveCache.set(ticker, { ts: now, data: out });
+        _ivMoveCache.set(cacheKey, { ts: now, data: out });
         return res.json(out);
       }
       const spot = chain.underlying?.last ?? chain.underlying?.bid ?? null;
       if (!spot || spot <= 0) {
         const out = { ticker, impliedMove: null, impliedMovePct: null, expiry: null, source: chain.source ?? null };
-        _ivMoveCache.set(ticker, { ts: now, data: out });
+        _ivMoveCache.set(cacheKey, { ts: now, data: out });
         return res.json(out);
       }
       // Find earliest expiry with valid ATM quotes
       const callMap = chain.callExpDateMap ?? {};
       const putMap = chain.putExpDateMap ?? {};
-      const expiryKeys = Array.from(new Set([...Object.keys(callMap), ...Object.keys(putMap)])).sort();
+      let expiryKeys = Array.from(new Set([...Object.keys(callMap), ...Object.keys(putMap)])).sort();
+      if (after) {
+        // Only expiries that include the earnings reaction, earliest first.
+        const first = pickEarningsExpiry(expiryKeys, after, timing);
+        expiryKeys = first ? expiryKeys.filter((k) => k.slice(0, 10) >= first) : [];
+      }
       let pickedExpiry: string | null = null;
       let straddle: number | null = null;
       for (const expKey of expiryKeys) {
@@ -2612,13 +2627,17 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const out = straddle != null && pickedExpiry
         ? {
             ticker,
+            // $ per share: ATM call mid + put mid on that expiry (the
+            // straddle ~ expected absolute move to expiry, ~0.8 sigma).
             impliedMove: Number(straddle.toFixed(2)),
             impliedMovePct: Number(((straddle / spot) * 100).toFixed(2)),
             expiry: pickedExpiry,
             source: chain.source ?? null,
+            earningsDate: after,
+            expiryRule: after ? "first expiry after the earnings reaction" : "earliest expiry (no earnings date given)",
           }
-        : { ticker, impliedMove: null, impliedMovePct: null, expiry: null, source: chain.source ?? null };
-      _ivMoveCache.set(ticker, { ts: now, data: out });
+        : { ticker, impliedMove: null, impliedMovePct: null, expiry: null, source: chain.source ?? null, earningsDate: after };
+      _ivMoveCache.set(cacheKey, { ts: now, data: out });
       res.json(out);
     } catch (err: any) {
       console.error("[earnings-iv]", ticker, err?.message);

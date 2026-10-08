@@ -320,3 +320,25 @@ export function impliedDistributionForExpiry(
   const T = Number.isFinite(dte) ? timeToExpiry(expKey.slice(0, 10)).years : 0;
   return fitImpliedDistribution(quotes, { spot, r, T });
 }
+
+// ─── Earnings implied move: which expiry ────────────────────────────────────
+
+/**
+ * First listed expiry whose price includes the earnings reaction. The ATM
+ * straddle prices the move only up to its own expiration, so an expiry that
+ * settles before the market can react carries none of the event:
+ *   BMO / DMH (before or during the session): the report-day expiry reacts.
+ *   AMC (after the close) and unknown timing: the reaction is the next
+ *   session, so the expiry must be strictly after the report date.
+ * Dates are "YYYY-MM-DD"; returns null when no listed expiry qualifies.
+ */
+export function pickEarningsExpiry(expiries: string[], earningsDate: string, timing: string | null | undefined): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(earningsDate)) return null;
+  const t = String(timing ?? "").toUpperCase();
+  const sameDayOk = t === "BMO" || t === "DMH";
+  const ok = expiries
+    .map((e) => e.slice(0, 10))
+    .filter((d) => (sameDayOk ? d >= earningsDate : d > earningsDate))
+    .sort();
+  return ok[0] ?? null;
+}

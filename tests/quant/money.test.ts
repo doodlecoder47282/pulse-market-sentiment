@@ -16,6 +16,8 @@ import { etWallToEpochMs } from "../../server/exchangeCalendar";
 import { buildChainAudit } from "../../server/chainAudit";
 import { buildHeatseeker } from "../../server/heatseeker";
 import { buildExposureProfile, rowYears, type ExposureRow } from "../../server/exposureProfile";
+import { pickEarningsExpiry } from "../../server/impliedScenario";
+import { toCents } from "../../server/validationMath";
 
 const near = (got: number, want: number, tol: number, what: string) =>
   assert.ok(Math.abs(got - want) <= tol, `${what}: got ${got}, want ${want} +- ${tol}`);
@@ -218,4 +220,28 @@ test("exposureProfile charm: finite delta change over one day x OI x 100 x S (r,
   const T = rowYears(row);
   const want = (bsDelta(S, 700, 0.18, T - 1 / 365, 0.05, 0.013, "C") - bsDelta(S, 700, 0.18, T, 0.05, 0.013, "C")) * 300 * 100 * S;
   near(p.current.charm, want, Math.abs(want) * 1e-3 + 0.5, "charm $/day");
+});
+
+// ─── 6. Earnings implied move: the straddle must span the reaction ───────────
+
+test("pickEarningsExpiry: AMC needs an expiry after the report day, BMO may use it", () => {
+  // Listed: Fri 10-23, Fri 10-30, Fri 11-06. AAPL reports Thu 10-29 after the close:
+  // the 10-23 straddle settles before the report (no event in its price);
+  // 10-30 settles the day of the reaction. A $2.10 pre-earnings straddle on
+  // a $250 stock read "+-$2.10 (0.8%)" for an event the 10-30 straddle prices at, say, $9.40.
+  const ex = ["2026-10-23:15", "2026-10-30:22", "2026-11-06:29"];
+  assert.equal(pickEarningsExpiry(ex, "2026-10-29", "AMC"), "2026-10-30");
+  assert.equal(pickEarningsExpiry(ex, "2026-10-30", "BMO"), "2026-10-30"); // report-day expiry reacts
+  assert.equal(pickEarningsExpiry(ex, "2026-10-30", "AMC"), "2026-11-06");
+  assert.equal(pickEarningsExpiry(ex, "2026-10-30", "UNK"), "2026-11-06"); // unknown timing: be safe
+  assert.equal(pickEarningsExpiry(ex, "2026-11-06", "AMC"), null);         // not listed yet: missing, not a number
+});
+
+test("CLV/trade-log dollars: toCents rounds halves away from zero for losses", () => {
+  // Equity, qty 1, price diff -12.345: Math.round(-1234.4999999999998) / 100 = -12.34,
+  // toCents(-12.345) / 100 = -12.35 (the loss is never shaved by float error).
+  assert.equal(Math.round(-12.345 * 100) / 100, -12.34);
+  assert.equal(toCents(-12.345) / 100, -12.35);
+  // Option, 3 contracts, (1.20 - 1.50) $/share x 3 x 100 = -$90.00 exactly.
+  assert.equal(toCents((1.2 - 1.5) * 3 * 100) / 100, -90);
 });

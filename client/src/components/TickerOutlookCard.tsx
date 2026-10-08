@@ -179,12 +179,14 @@ interface TickerProjectionResponse {
   honestyNote: string;
 }
 
+// /api/earnings-iv response (server/routes.ts). The card used to read
+// expectedMovePct, a field the server never sends, so the IV move never showed.
 interface EarningsIvResponse {
   ticker: string;
-  expectedMoveAbs?: number;
-  expectedMovePct?: number;
-  expiry?: string;
-  warnings?: string[];
+  impliedMove: number | null;     // ATM straddle, $ per share
+  impliedMovePct: number | null;  // straddle / spot x 100
+  expiry: string | null;
+  source?: string | null;
 }
 
 // ────────────────────── helpers ──────────────────────
@@ -299,9 +301,11 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
   // IV expected move — lazy, only fires if there's an upcoming earnings
   const hasEarnings = !!cal.data?.nextEarnings;
   const ivMove = useQuery<EarningsIvResponse>({
-    queryKey: ["/api/earnings-iv", ticker],
+    queryKey: ["/api/earnings-iv", ticker, cal.data?.nextEarnings?.date, cal.data?.nextEarnings?.timing],
     queryFn: async () => {
-      const r = await apiRequest("GET", `/api/earnings-iv?ticker=${encodeURIComponent(ticker)}`);
+      const ne = cal.data?.nextEarnings;
+      const q = ne ? `&after=${encodeURIComponent(ne.date)}&timing=${encodeURIComponent(ne.timing)}` : "";
+      const r = await apiRequest("GET", `/api/earnings-iv?ticker=${encodeURIComponent(ticker)}${q}`);
       return r.json();
     },
     enabled: enabled && hasEarnings,
@@ -447,9 +451,9 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                     EPS est ${cal.data.nextEarnings.epsForecast.toFixed(2)}
                   </span>
                 )}
-                {ivMove.data?.expectedMovePct != null && (
-                  <span className="font-mono text-foreground/70">
-                    · IV ±{ivMove.data.expectedMovePct.toFixed(1)}%
+                {ivMove.data?.impliedMovePct != null && (
+                  <span className="font-mono text-foreground/70" title={`ATM straddle $${ivMove.data.impliedMove?.toFixed(2) ?? "—"} per share, expiry ${ivMove.data.expiry ?? "—"}`}>
+                    · IV ±{ivMove.data.impliedMovePct.toFixed(1)}%
                   </span>
                 )}
               </div>
