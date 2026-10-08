@@ -360,3 +360,17 @@ test("horizon target expiries (ET calendar)", async () => {
   assert.equal(horizonTargetIso("weekly", new Date("2026-10-10T16:00:00Z")), "2026-10-16");
   assert.equal(horizonTargetIso("monthly", new Date("2026-10-16T16:00:00Z")), "2026-11-20");
 });
+
+test("25-delta IV interpolated in delta space; no bracket -> null", async () => {
+  const { ivAtAbsDelta } = await import("@shared/vol");
+  // Puts at |delta| 0.18 (iv 0.24) and 0.31 (iv 0.20): 25D lies 7/13 of the way
+  //   iv = 0.24 + (0.25 - 0.18)/(0.31 - 0.18) * (0.20 - 0.24) = 0.218462
+  const rows = [
+    { delta: -0.10, iv: 0.27 }, { delta: -0.18, iv: 0.24 },
+    { delta: -0.31, iv: 0.20 }, { delta: -0.45, iv: 0.17 }, { delta: -999, iv: 0.5 },
+  ];
+  const iv = ivAtAbsDelta(rows, 0.25) as number;
+  assert.ok(Math.abs(iv - 0.2184615) < 1e-6, `${iv}`);
+  // The old nearest-contract pick returned 0.20 (the 31D put) here.
+  assert.equal(ivAtAbsDelta([{ delta: 0.4, iv: 0.2 }, { delta: 0.45, iv: 0.19 }], 0.25), null);
+});

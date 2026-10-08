@@ -10,6 +10,10 @@
 //   GEX   = Γ     × OI × 100 × S² × 0.01      ($ per 1% spot move)
 //   VEX   = Vanna × OI × 100 × S  × 0.01      ($ of dΔ per 1% vol)
 //   Charm = Charm × OI × 100 × S  / 365       ($ of dΔ per calendar day)
+//     T is in trading years (262/yr) and toTradingYears maps one calendar day
+//     to (262/365)/262 = 1/365 trading years, so dividing the per-trading-year
+//     charm by 365 is the per-CALENDAR-day decay (averaged over weekends).
+//     Per TRADING day would be / 262 (1.39x larger); the label says calendar.
 //
 // Sign convention (the naive dealer model of SqueezeMetrics / Perfiliev /
 // SpotGamma): customers BUY puts and SELL calls, so dealers are LONG call
