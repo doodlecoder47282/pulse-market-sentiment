@@ -6,9 +6,10 @@
 // Sizing: the Outlook shows NO position size. Kelly (1956) needs a win
 // probability and a payoff ratio estimated from graded outcomes; single-name
 // outlooks have neither (the old "quarter-Kelly" was |composite|/100 x 0.25,
-// or a number written by a language model). The 0DTE sizer uses a fitted
-// grade-to-win-probability curve (gradeCalibration.ts); nothing equivalent
-// exists for single names yet, so sizing.available is always false.
+// or a number written by a language model). The 0DTE sizer sizes from the
+// Wilson lower bound of the win rate in its realized option-mark ledger
+// (graded on real option prices); no such graded ledger exists for
+// single-name outlooks yet, so sizing.available is always false.
 //
 // Scenario weights: bull/base/bear weights are heuristic (hand-set or
 // LLM-written), not calibrated probabilities. They are only normalized so the
