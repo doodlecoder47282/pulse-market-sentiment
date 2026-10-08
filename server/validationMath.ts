@@ -929,3 +929,19 @@ export function nonOverlappingForecasts<T extends { ts: number; horizonMin: numb
   }
   return out.sort((a, b) => a.ts - b.ts);
 }
+
+// ─── Whale re-fire snapshot ─────────────────────────────────────────────────
+
+/**
+ * One whale fire as a self-consistent triple: premium ($, cumulative day
+ * premium = volume x mark x 100), volume (contracts, session cumulative) and
+ * the implied mark ($ per share = premium / (volume x 100)). The follow-through
+ * entry is the FIRST fire and is never rewritten (its mark is the P&L basis
+ * and the DB row keeps it); later fires are recorded with this snapshot so
+ * premium and volume always describe the same moment.
+ */
+export function whaleFireSnapshot(hit: { premium: number; volume: number; detectedAt: number }): { premium: number; volume: number; mark: number | null; at: number } {
+  const volume = Number.isFinite(hit.volume) && hit.volume > 0 ? hit.volume : 0;
+  const premium = Number.isFinite(hit.premium) && hit.premium > 0 ? hit.premium : 0;
+  return { premium, volume, mark: volume > 0 ? premium / (volume * OPTION_MULTIPLIER) : null, at: hit.detectedAt };
+}

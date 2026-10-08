@@ -29,7 +29,7 @@ import { buildSchwabFlow, type SchwabFlowContract } from "./schwabFlow";
 // require() threw inside its try/catch, so nothing persisted and hydrateFromDb loaded 0
 // rows, silently. whalePersistence only imports a *type* from this file, so no cycle.
 import { persistFollowState, persistWhaleAlert, loadAllFollows } from "./whalePersistence";
-import { etCloseMs } from "./validationMath";
+import { etCloseMs, whaleFireSnapshot } from "./validationMath";
 
 // Persistence wrappers — fail-soft, never let DB hiccups break tracking.
 function safePersistFollow(p: FollowPosition): void {
@@ -60,7 +60,7 @@ export interface FollowPosition {
   /** Entry observation snapshot */
   entry: {
     mark: number;
-    premium: number;       // notional at detection
+    premium: number;       // $ day premium at the FIRST fire (= volume x mark x 100); never rewritten
     delta: number;
     volume: number;        // running session volume at detection
     openInterest: number;
@@ -92,6 +92,9 @@ export interface FollowPosition {
      * after the close, so a later stale quote cannot overwrite it.
      */
     preExpiryQuote?: { bid: number | null; ask: number | null; mark: number | null; at: number } | null;
+    /** Latest re-fire of this contract (additive): premium $ = volume x mark x 100, same moment. */
+    lastFire?: { premium: number; volume: number; mark: number | null; at: number } | null;
+    refireCount?: number;
   };
   status: FollowStatus;
   /** When status transitioned to its current value */
@@ -118,13 +121,16 @@ export function registerWhale(hit: WhaleHit): void {
   // Always log to alert history (audit trail) — even on re-fires of the same OCC.
   safePersistAlert(hit);
   if (positions.has(hit.occ)) {
-    // Already tracking — flowAlertEngine premium-tier dedup handles re-fires;
-    // we just bump the entry premium on the existing record.
+    // Already tracking (flowAlertEngine premium-tier dedup handles re-fires).
+    // The entry is the FIRST fire and is never rewritten: the old code raised
+    // entry.premium alone, so premium no longer equalled entry.volume x
+    // entry.mark x 100, and the DB upsert never stored it (entryJson is
+    // insert-only), so memory and disk disagreed after a restart. The latest
+    // fire is kept instead as one consistent premium/volume/mark snapshot.
     const p = positions.get(hit.occ)!;
-    if (hit.premium > p.entry.premium) {
-      p.entry.premium = hit.premium;       // tier increased = more conviction
-      safePersistFollow(p);
-    }
+    p.live.lastFire = whaleFireSnapshot(hit);
+    p.live.refireCount = (p.live.refireCount ?? 0) + 1;
+    safePersistFollow(p);
     return;
   }
   // GC oldest if at capacity
