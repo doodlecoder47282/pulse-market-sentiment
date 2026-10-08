@@ -361,3 +361,15 @@ export function gammaBudgetContracts(args: {
     : "gamma-target";
   return { contracts, gammaContracts, premiumCapContracts, dollarGammaPerContract: dollarGamma, premiumPerContract: premium, binding };
 }
+
+/**
+ * Round-trip fees as a percent of the premium paid: 2 x fee / (ask x multiplier) x 100.
+ * fee is $ per contract per side, ask $ per share. Example: $0.65 + $0.45 index
+ * fee = $1.10 per side on a $1.50 ask: 2.20 / 150 = 1.4667% of premium.
+ * Null when the fee or the ask is unusable (fee not given is not $0).
+ */
+export function roundTripFeePct(feePerContract: number | null | undefined, ask: number, multiplier = OPTION_MULTIPLIER): number | null {
+  if (feePerContract == null || !Number.isFinite(feePerContract) || feePerContract < 0) return null;
+  if (!(ask > 0) || !(multiplier > 0)) return null;
+  return (2 * feePerContract) / (ask * multiplier) * 100;
+}

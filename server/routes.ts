@@ -4916,6 +4916,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   app.post("/api/edge/survival", async (req, res) => {
     try {
       const { computeEdgeSurvival } = await import("./edgeSurvival");
+      const { resolveFeePerContract } = await import("./sizingMath");
       const b = req.body ?? {};
       const gradeScore = Number(b.gradeScore);
       const bid = Number(b.bid), ask = Number(b.ask);
@@ -4927,6 +4928,12 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         gradeScore, bid, ask, targetPct, stopPct,
         theta: b.theta != null ? Number(b.theta) : null,
         expectedHoldMin: b.expectedHoldMin != null ? Number(b.expectedHoldMin) : undefined,
+        // Same fee rule as the sizer: explicit fee, else $0.65 for equity/ETF
+        // options, else (index root, no fee) not counted and labelled.
+        feePerContract: resolveFeePerContract(
+          b.feePerContract != null && b.feePerContract !== "" && isFinite(Number(b.feePerContract)) ? Number(b.feePerContract) : null,
+          typeof b.product === "string" ? b.product : null,
+        ),
       }));
     } catch (e: any) {
       res.status(500).json({ error: "survival_failed", message: e?.message ?? String(e) });

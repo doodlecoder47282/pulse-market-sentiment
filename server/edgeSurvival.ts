@@ -9,6 +9,7 @@
  *   gross EV (grade-implied p x payoff structure)
  *     - spread cost        (full bid/ask spread as % of mid — you pay it round-trip)
  *     - slippage           (depth-blind estimate: half-spread again on exit urgency)
+ *     - fees               (2 x $ per contract per side / premium paid; not counted when unknown)
  *     - theta cost         (contract theta bleed over the expected hold)
  *     - model uncertainty  (haircut p to the Wilson lower bound of its bucket)
  *   = net EV, plus a 1-sigma adverse scenario (wider spread, longer hold).
@@ -18,6 +19,7 @@
  */
 
 import { getWinProb, getCalibrationReport } from "./gradeCalibration";
+import { roundTripFeePct } from "./sizingMath";
 
 export interface EdgeSurvivalInput {
   gradeScore: number;
@@ -32,6 +34,8 @@ export interface EdgeSurvivalInput {
   theta?: number | null;
   /** expected hold in minutes (default 45 for 0DTE reversion setups) */
   expectedHoldMin?: number;
+  /** all-in fee, $ per contract per side (commission + exchange fees). Omitted = not counted, and the row says so. */
+  feePerContract?: number | null;
 }
 
 export interface EdgeSurvivalRow { label: string; pct: number; note: string }
@@ -72,6 +76,17 @@ export function computeEdgeSurvival(inp: EdgeSurvivalInput): EdgeSurvivalResult 
   const slippage = spreadCost * 0.5;
   rows.push({ label: "slippage (urgency exit)", pct: -slippage, note: "half-spread again on the way out" });
 
+  // 2b. Fees: $ per contract per side, both sides, as % of the premium paid
+  // (ask x 100). A $1.10 all-in fee on a $1.50 ask is 2.20 / 150 = 1.47%.
+  const feePct = roundTripFeePct(inp.feePerContract, inp.ask);
+  rows.push({
+    label: "fees (round trip)",
+    pct: -(feePct ?? 0),
+    note: feePct != null
+      ? `$${(inp.feePerContract as number).toFixed(2)}/contract/side x 2 on a $${(inp.ask * 100).toFixed(2)} premium`
+      : "fee not given: not counted (index options carry exchange fees on top of commission)",
+  });
+
   // 3. Theta over the expected hold.
   const holdMin = Math.max(5, inp.expectedHoldMin ?? 45);
   let thetaCost = 0;
@@ -105,7 +120,7 @@ export function computeEdgeSurvival(inp: EdgeSurvivalInput): EdgeSurvivalResult 
   // Adverse scenario: spread 1.5x wider, hold 1.5x longer, p at lower bound.
   const advSpread = spreadCost * 1.5 + spreadCost * 0.75;
   const advTheta = thetaCost * 1.5;
-  const adverseNetEv = evAtAdverseP - advSpread - advTheta;
+  const adverseNetEv = evAtAdverseP - advSpread - advTheta - (feePct ?? 0);
 
   const verdict: EdgeSurvivalResult["verdict"] =
     netEv <= 0 ? "STAND_DOWN" : adverseNetEv <= 0 ? "MARGINAL" : "EXPRESS";

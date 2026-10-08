@@ -91,6 +91,9 @@ export function PositionSizer() {
         targetPct: Number(targetPct),
         stopPct: stopPctLoss,
         expectedHoldMin: Number(holdMin) || 45,
+        // $ per contract per side; blank = not given (the waterfall says so)
+        ...(String(feePerContract).trim() !== "" && Number.isFinite(Number(feePerContract)) ? { feePerContract: Number(feePerContract) } : {}),
+        product,
       });
       return await res.json();
     },

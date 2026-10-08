@@ -18,7 +18,7 @@ import { buildHeatseeker } from "../../server/heatseeker";
 import { buildExposureProfile, rowYears, type ExposureRow } from "../../server/exposureProfile";
 import { pickEarningsExpiry } from "../../server/impliedScenario";
 import { toCents } from "../../server/validationMath";
-import { gammaBudgetContracts } from "../../server/sizingMath";
+import { gammaBudgetContracts, roundTripFeePct, resolveFeePerContract } from "../../server/sizingMath";
 
 const near = (got: number, want: number, tol: number, what: string) =>
   assert.ok(Math.abs(got - want) <= tol, `${what}: got ${got}, want ${want} +- ${tol}`);
@@ -270,4 +270,15 @@ test("gammaBudgetContracts: $1M budget, S 6,700, sigma 17%, 1 day, 10 bp -> 420 
   assert.equal(t.binding, "gamma-target");
   // No forecast (< 1 bp) or no budget: no size.
   assert.equal(gammaBudgetContracts({ spot: 6700, sigma: 0.17, T: 1 / 365, rHatBps: 0.5, riskBudgetDollars: 1e6 }).contracts, 0);
+});
+
+// ─── 8. Edge-survival fee row ────────────────────────────────────────────────
+
+test("roundTripFeePct: 2 x fee / (ask x 100); index root without a fee is not $0", () => {
+  // $1.10 all-in per side on a $1.50 ask: 2.20 / 150 x 100 = 1.4667% of premium.
+  near(roundTripFeePct(1.10, 1.5)!, 1.46667, 1e-4, "fee %");
+  // Equity default $0.65 (Schwab): 1.30 / 150 = 0.8667%.
+  near(roundTripFeePct(resolveFeePerContract(null, "SPY"), 1.5)!, 0.86667, 1e-4, "SPY default fee %");
+  // SPXW with no fee given: unknown (null), never silently 0.
+  assert.equal(roundTripFeePct(resolveFeePerContract(null, "SPXW"), 1.5), null);
 });
