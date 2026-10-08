@@ -596,6 +596,58 @@ export function evaluateWhaleTrade(args: {
   };
 }
 
+// ─── Historical chain levels (pluggable volatility-band backtest source) ────
+
+/** One end-of-day chain. openInterest in contracts; gamma per share per $1 (vendor convention). */
+export interface HistoricalChainSnapshot {
+  date: string;
+  spot: number;
+  contracts: Array<{ strike: number; type: "C" | "P"; openInterest: number; gamma?: number | null }>;
+}
+
+/**
+ * Max-pain strike: the settlement price that minimizes the total intrinsic
+ * value paid to option holders, sum_calls OI*max(0, K* - K) + sum_puts OI*max(0, K - K*),
+ * searched over listed strikes (the common definition). Null on an empty chain.
+ */
+export function maxPainStrike(contracts: HistoricalChainSnapshot["contracts"]): number | null {
+  const strikes = Array.from(new Set(contracts.filter((c) => c.strike > 0).map((c) => c.strike))).sort((a, b) => a - b);
+  if (strikes.length === 0) return null;
+  let best: number | null = null, bestPay = Infinity;
+  for (const k of strikes) {
+    let pay = 0;
+    for (const c of contracts) {
+      const oi = Math.max(0, c.openInterest || 0);
+      pay += c.type === "C" ? oi * Math.max(0, k - c.strike) : oi * Math.max(0, c.strike - k);
+    }
+    if (pay < bestPay - 1e-9) { bestPay = pay; best = k; }
+  }
+  return best;
+}
+
+/**
+ * Chain-derived levels for the backtest: call wall = strike at or above spot
+ * with the largest call gamma exposure (OI x gamma; OI alone when the vendor
+ * gives no gamma), put wall = the same for puts at or below spot, max pain as
+ * above. Levels the chain cannot define stay null and are not scored.
+ */
+export function levelsFromChainSnapshot(snap: HistoricalChainSnapshot): { callWall: number | null; putWall: number | null; maxPain: number | null } {
+  const weight = (c: HistoricalChainSnapshot["contracts"][number]) =>
+    Math.max(0, c.openInterest || 0) * (c.gamma != null && Number.isFinite(c.gamma) && c.gamma > 0 ? c.gamma : 1);
+  const pick = (type: "C" | "P", above: boolean): number | null => {
+    const byStrike = new Map<number, number>();
+    for (const c of snap.contracts) {
+      if (c.type !== type || !(c.strike > 0)) continue;
+      if (above ? c.strike < snap.spot : c.strike > snap.spot) continue;
+      byStrike.set(c.strike, (byStrike.get(c.strike) ?? 0) + weight(c));
+    }
+    let best: number | null = null, w = 0;
+    for (const [k, v] of byStrike) if (v > w) { w = v; best = k; }
+    return best;
+  };
+  return { callWall: pick("C", true), putWall: pick("P", false), maxPain: maxPainStrike(snap.contracts) };
+}
+
 // ─── Forecast interval coverage ─────────────────────────────────────────────
 
 /** erfc via Numerical Recipes' Chebyshev fit (|rel err| < 1.2e-7). */

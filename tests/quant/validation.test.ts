@@ -7,6 +7,7 @@ import {
   optionTradeDollars, gradeOdteOptionPnl, underlyingCloseOutPct, acceptExitQuote, askToBidReturn,
   modeledExpiryExit, settlementStyle, evaluateWhaleTrade, erfc, intervalScore, scoreIntervalCoverage,
   etCloseMs, etDate, priceAtFromBars, forwardReturnFromBars, nonOverlappingForecasts, gradeBucketFor,
+  maxPainStrike, levelsFromChainSnapshot,
   type MinuteBar, type OptionMark,
 } from "../../server/validationMath";
 import { sizeLongOption, type CoreSizingDeps } from "../../server/sizingMath";
@@ -321,4 +322,24 @@ test("forward returns from minute bars refuse gaps; overlapping forecasts are th
     { ts: 0, horizonMin: 30 }, { ts: 10 * 60_000, horizonMin: 30 }, { ts: 30 * 60_000, horizonMin: 30 }, { ts: 61 * 60_000, horizonMin: 30 },
   ]);
   assert.deepEqual(kept.map((k) => k.ts / 60_000), [0, 30, 61]);
+});
+
+// ─── Pluggable chain source for the volatility-band backtest ────────────────
+
+test("max pain and chain walls from a toy chain", () => {
+  // Calls: 100 OI at K=95, 300 at K=105. Puts: 200 at K=100, 50 at K=90.
+  // Payout at K*=95: puts (100-95)*200 = 1000 -> 1000; at 100: calls 5*100 = 500 -> 500;
+  // at 105: calls 10*100 = 1000, puts 0 + 0 -> 1000; at 90: puts 10*200 = 2000. Max pain = 100.
+  const contracts = [
+    { strike: 95, type: "C" as const, openInterest: 100 },
+    { strike: 105, type: "C" as const, openInterest: 300 },
+    { strike: 100, type: "P" as const, openInterest: 200 },
+    { strike: 90, type: "P" as const, openInterest: 50 },
+  ];
+  assert.equal(maxPainStrike(contracts), 100);
+  const lv = levelsFromChainSnapshot({ date: "2026-01-02", spot: 101, contracts });
+  assert.equal(lv.callWall, 105); // only call strike at or above spot
+  assert.equal(lv.putWall, 100);  // largest put OI at or below spot
+  assert.equal(lv.maxPain, 100);
+  assert.equal(maxPainStrike([]), null);
 });

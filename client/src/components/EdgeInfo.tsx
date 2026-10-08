@@ -99,10 +99,10 @@ const INFO: Record<string, InfoEntry> = {
     edge: "Knowing when your model is broken is worth more than the model. Most people size up exactly when their signal decays \u2014 this panel stops that.",
   },
   backtest: {
-    title: "Backtest Accuracy \u00b7 5Y",
-    what: "How often each dealer level actually held or got touched over five years of history, split by daily / weekly / monthly horizons.",
-    how: "Use the touch and hold rates as base rates when planning trades around walls and flips. It rebuilds itself automatically when stale.",
-    edge: "Base rates keep you honest. A wall that holds 60% of the time is a lean, not a law \u2014 size like it.",
+    title: "Volatility-Band Backtest \u00b7 5Y",
+    what: "How often price touched or reversed at volatility bands (ATR x VIX, sigma bands) and a 20-day EMA over five years. These are stand-ins named after dealer levels: the test contains no options data, so it does not measure the live walls or flip.",
+    how: "Read the rates as base rates for volatility bands, and compare each row with the baseline rows. Real dealer-level history needs historical option chains, which are not connected.",
+    edge: "Base rates keep you honest, but only for what was tested. A band that holds 60% of the time says nothing yet about today's gamma wall.",
   },
   regime: {
     title: "Regime Panel",

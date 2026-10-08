@@ -92,7 +92,7 @@ function WalkForwardCard() {
   return (
     <Card data-testid="card-walkforward">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-semibold tracking-tight">walk-forward backtest — honest sample sizes</CardTitle>
+        <CardTitle className="text-sm font-semibold tracking-tight">walk-forward volatility-band backtest — honest sample sizes (no options data)</CardTitle>
         <p className="text-xs text-muted-foreground leading-snug">
           pooled numbers score every day with overlapping forward windows — autocorrelated and flattering. wf columns stride the calendar so windows never overlap. a level only matters if it beats BOTH baseline rows at the same horizon.
         </p>

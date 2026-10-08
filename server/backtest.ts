@@ -1,38 +1,73 @@
 /**
- * Backtest engine — historical accuracy of key dealer levels.
+ * Volatility-band backtest (review item 8.1).
  *
- * Methodology: "proxy-vol-regime-v1"
- *   Free feeds (Yahoo) don't give 5y true option chains, so we reconstruct
- *   analytic proxies that align with how our live engine places levels
- *   when OI is sparse:
+ * WHAT THIS IS: a 5-year test of VOLATILITY BANDS and MOVING AVERAGES around
+ * the SPX close. It contains NO options data. The "levels" it scores are
+ * analytic stand-ins named after the dealer levels they imitate:
  *
- *     - zeroGamma     = trailing 20D EMA (γ-flip proxy; Perfiliev 2023)
- *     - callWall      = close + k1 * ATR20 * (VIX/20)          (resistance)
- *     - putWall       = close - k1 * ATR20 * (VIX/20)          (support)
- *     - upsidePivot   = close + σ * sqrt(DTE/252) * k2         (bull path target)
+ *     - zeroGamma     = trailing 20D EMA
+ *     - callWall      = close + k1 * ATR20 * (VIX/20)
+ *     - putWall       = close - k1 * ATR20 * (VIX/20)
+ *     - upsidePivot   = close + σ * sqrt(DTE/252) * k2
  *     - downsidePivot = close - σ * sqrt(DTE/252) * k2, clamped by maxDropPct
- *     - mopexMaxPain  = nearest round-25 strike to close (institutional clustering)
+ *     - mopexMaxPain  = nearest round-25 strike to close
  *     - dominantMag   = larger of |callWall-S|, |putWall-S| from S
- *     - extremeVac    = 2σ band (low-liquidity vacuum edge)
- *     - vommaPocket   = 1.5σ band (vol-of-vol compression)
+ *     - extremeVac    = 2σ band
+ *     - vommaPocket   = 1.5σ band
+ *
+ *   Its hit rates say how often price reaches an ATR/VIX band or an EMA. They
+ *   say nothing about the gamma structure the live terminal trades, and every
+ *   API response says so (label, levelSource, dealerLevelsFromChains = false).
  *
  *   For each historical date D and each horizon H:
  *     predict level at D, then walk [D+1, D+H] and check:
- *       touched  = price came within tolerance (25bps default, 50bps tails)
+ *       touched  = price came within tolerance (20-50 bps by level kind)
  *       held     = touched AND reversed ≥50% back into range within horizon
  *       absDist  = |closeAtHorizonEnd - predictedLevel| in bps
  *       breach1% = realized went >1% past level
  *
- *   Upgrade path to true dealer-level reconstruction: Polygon.io flat files
- *   or ORATS historical chains. UI labels this "proxy mode" so nobody
- *   mistakes proxy hit-rates for true dealer-level hit-rates.
+ * PLUGGABLE SOURCE: real dealer levels need historical option chains (open
+ * interest and greeks per strike per day), which only paid feeds provide
+ * (ORATS, Polygon/Massive flat files, Cboe DataShop). None is connected and
+ * none may be bought without the owner's approval. registerHistoricalChainProvider()
+ * plugs one in: runBackfill() then scores chain-derived call wall, put wall
+ * and max pain (levelsFromChainSnapshot), the label switches to
+ * "dealer-level backtest (historical chains: <provider>)", and the
+ * volatility-band stand-ins are not mixed in.
  */
 
 import { db } from "./storage";
 import { backtestLevels, backtestObservations } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
+import { levelsFromChainSnapshot, type HistoricalChainSnapshot } from "./validationMath";
 
-const METHODOLOGY = "proxy-vol-regime-v1";
+const METHODOLOGY = "proxy-vol-regime-v1"; // stored per row; kept for continuity with existing rows
+export const VOL_BAND_LABEL = "Volatility-band backtest (ATR/VIX bands and a 20-day EMA, no options data)";
+
+// ─── Pluggable historical chain source ──────────────────────────────────────
+
+/** One end-of-day historical chain: per-strike open interest (contracts) and per-share gamma. */
+export type { HistoricalChainSnapshot };
+
+export interface HistoricalChainProvider {
+  /** Short name shown in labels, e.g. "orats". */
+  id: string;
+  /** End-of-day chain for `symbol` on `date` (YYYY-MM-DD), or null when the vendor has none. */
+  getChain(symbol: string, date: string): Promise<HistoricalChainSnapshot | null>;
+}
+
+let _chainProvider: HistoricalChainProvider | null = null;
+
+/** Plug in a historical chain vendor. Pass null to go back to the volatility-band stand-ins. */
+export function registerHistoricalChainProvider(p: HistoricalChainProvider | null): void {
+  _chainProvider = p;
+}
+
+export function currentLevelSource(): { levelSource: "volatility_band_proxy" | "historical_chain"; label: string; dealerLevelsFromChains: boolean; provider: string | null } {
+  return _chainProvider
+    ? { levelSource: "historical_chain", label: `Dealer-level backtest (historical chains: ${_chainProvider.id})`, dealerLevelsFromChains: true, provider: _chainProvider.id }
+    : { levelSource: "volatility_band_proxy", label: VOL_BAND_LABEL, dealerLevelsFromChains: false, provider: null };
+}
 
 export type BacktestHorizon = "daily" | "weekly" | "monthly" | "quarterly";
 export type LevelKind =
@@ -371,7 +406,10 @@ export async function runBackfill(yearsLookback = 5): Promise<{
     const ema20  = rollingEma(closes, 20);
     const rv20   = realizedVol(spx, 20);
 
-    // 3. Walk each date, compute proxy levels, score forward
+    // 3. Walk each date, compute levels (volatility-band stand-ins, or the
+    //    plugged-in historical chain), score forward
+    const chainProvider = _chainProvider;
+    const methodology = chainProvider ? `historical-chain:${chainProvider.id}` : METHODOLOGY;
     const observations: Observation[] = [];
     const maxHorizon = HORIZON_DAYS.quarterly;
 
@@ -379,6 +417,31 @@ export async function runBackfill(yearsLookback = 5): Promise<{
       const date = spx[i].date;
       const vixClose = vixByDate.get(date);
       if (vixClose == null) continue;
+
+      if (chainProvider) {
+        // Historical-chain path: only levels that the chain defines are scored.
+        let snap: HistoricalChainSnapshot | null = null;
+        try { snap = await chainProvider.getChain("SPX", date); } catch { snap = null; }
+        if (!snap) continue;
+        const cl = levelsFromChainSnapshot(snap);
+        (Object.keys(HORIZON_DAYS) as BacktestHorizon[]).forEach(h => {
+          const fwd = spx.slice(i + 1, i + 1 + HORIZON_DAYS[h]);
+          if (fwd.length === 0) return;
+          const pushObs = (kind: LevelKind, pred: number | null) => {
+            if (pred == null || !isFinite(pred)) return;
+            const o = scoreLevel(date, h, kind, pred, spx[i].c, fwd, atr20[i] ?? 0);
+            if (o) observations.push(o);
+          };
+          pushObs("callWall", cl.callWall);
+          pushObs("putWall", cl.putWall);
+          pushObs("mopexMaxPain", cl.maxPain);
+          const r = seededRand(date + h);
+          const off = (0.5 + r) * (atr20[i] ?? spx[i].c * 0.01);
+          pushObs("baselineSpot", spx[i].c);
+          pushObs("baselineRandom", spx[i].c + (r < 0.5 ? -1 : 1) * off);
+        });
+        continue;
+      }
 
       const lv = computeLevels(i, spx, atr20, ema20, vixClose, rv20);
       if (!lv) continue;
@@ -447,7 +510,7 @@ export async function runBackfill(yearsLookback = 5): Promise<{
         medianAbsDistBps: medAbsDist,
         breachBeyondPct: breachPct,
         computedAt: now,
-        methodology: METHODOLOGY,
+        methodology,
       }).run();
       aggCount++;
     }
@@ -465,6 +528,11 @@ export async function runBackfill(yearsLookback = 5): Promise<{
 
 export interface BacktestSummary {
   methodology: string;
+  /** What the numbers measure, for every screen that shows them. */
+  label: string;
+  levelSource: "volatility_band_proxy" | "historical_chain";
+  /** False: the levels are ATR/VIX bands and an EMA, not dealer levels from option chains. */
+  dealerLevelsFromChains: boolean;
   computedAt: number | null;
   byLevel: Record<string, {
     horizon: BacktestHorizon;
@@ -482,7 +550,9 @@ export function getBacktestSummary(): BacktestSummary {
   const rows = db.select().from(backtestLevels).all();
   const byLevel: BacktestSummary["byLevel"] = {};
   let maxComputed = 0;
+  let storedMethodology: string | null = null;
   for (const r of rows) {
+    if (r.methodology) storedMethodology = String(r.methodology);
     const key = `${r.horizon}|${r.levelKind}`;
     byLevel[key] = {
       horizon: r.horizon as BacktestHorizon,
@@ -496,8 +566,12 @@ export function getBacktestSummary(): BacktestSummary {
     };
     if (r.computedAt > maxComputed) maxComputed = r.computedAt;
   }
+  const fromChains = storedMethodology != null && storedMethodology.startsWith("historical-chain:");
   return {
-    methodology: METHODOLOGY,
+    methodology: storedMethodology ?? METHODOLOGY,
+    label: fromChains ? `Dealer-level backtest (${storedMethodology})` : VOL_BAND_LABEL,
+    levelSource: fromChains ? "historical_chain" : "volatility_band_proxy",
+    dealerLevelsFromChains: fromChains,
     computedAt: maxComputed || null,
     byLevel,
   };
@@ -529,6 +603,8 @@ export interface WalkForwardRow {
 export interface WalkForwardSummary {
   computedAt: number;
   methodology: string;
+  label: string;
+  dealerLevelsFromChains: boolean;
   rows: WalkForwardRow[];
   note: string;
 }
@@ -574,8 +650,11 @@ export function getWalkForwardSummary(force = false): WalkForwardSummary {
     }
   }
 
+  const src = getBacktestSummary();
   const data: WalkForwardSummary = {
     computedAt: now,
+    label: src.label,
+    dealerLevelsFromChains: src.dealerLevelsFromChains,
     methodology: "stride-sampled walk-forward: every Nth distinct date per horizon (N = horizon days) so forward windows never overlap. Pooled numbers shown for contrast are autocorrelated and overstate effective sample size — treat them as deprecated.",
     rows,
     note: "compare each level against baselineSpot and baselineRandom rows: a level only carries information if it beats both at the same horizon.",
