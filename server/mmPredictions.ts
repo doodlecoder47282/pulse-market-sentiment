@@ -21,6 +21,7 @@ import path from "node:path";
 import type { ModelHorizon } from "./models";
 import type { MMMatrix } from "./mmMatrix";
 import { runMasterAlpha } from "./masterAlpha";
+import { fitMasterAlphaWeights, type MasterAlphaFit, type MasterAlphaFitSample } from "./masterAlphaFit";
 
 const LOG_DIR = path.resolve(process.cwd(), "data", "mm-predictions");
 const LOG_FILE = path.join(LOG_DIR, "predictions.jsonl");
@@ -39,6 +40,10 @@ export interface MasterAlphaSnap {
   nearestPivotName: string | null;
   nearestPivotDistBps: number | null;
   lockedAlignment: string;             // confirms_upside | confirms_downside | mixed | n/a
+  // Per-component inputs, logged so the hand-set weights can be re-fit on
+  // this app's own history (masterAlphaFit.ts). Absent on older rows.
+  components?: Array<{ name: string; rawValue: number; directionBps: number; weight: number }>;
+  coefficientStatus?: string;
 }
 
 export interface SnapshotRow {
@@ -136,6 +141,13 @@ export async function snapshotHorizon(horizon: ModelHorizon, horizonKey: string)
       nearestPivotName: ma.nearestPivot?.name ?? null,
       nearestPivotDistBps: ma.nearestPivot?.distBps ?? null,
       lockedAlignment: ma.lockedTargetAlignment?.bias ?? "n/a",
+      components: (ma.components ?? []).map((c) => ({
+        name: c.name,
+        rawValue: Number((c.rawValue ?? 0).toFixed(4)),
+        directionBps: Number((c.directionBps ?? 0).toFixed(4)),
+        weight: c.weight,
+      })),
+      coefficientStatus: ma.coefficientStatus,
     };
   } catch (e: any) {
     // non-fatal — MM snapshot still logged without masterAlpha
@@ -192,6 +204,9 @@ export interface MasterAlphaStats {
     outcome: string | null;
     hit: boolean | null;
   }>;
+  // Re-fit of the component weights on logged daily sessions, with the
+  // sample-size gate; "insufficient-data" until enough sessions exist.
+  fit: MasterAlphaFit;
 }
 
 export async function masterAlphaStats(): Promise<MasterAlphaStats> {
@@ -292,12 +307,27 @@ export async function masterAlphaStats(): Promise<MasterAlphaStats> {
     };
   });
 
+  const fitSamples: MasterAlphaFitSample[] = [];
+  for (const s of snaps) {
+    const o = outcomes.get(s.id);
+    const comps = s.masterAlpha?.components;
+    if (!o || !comps) continue;
+    fitSamples.push({
+      ts: s.ts,
+      sessionDate: s.sessionDate,
+      horizon: s.horizon,
+      components: comps,
+      realizedBps: o.tPlusClosePct * 100,
+    });
+  }
+
   return {
     total: snaps.length,
     graded: snaps.filter((s) => outcomes.has(s.id)).length,
     buckets: bucketArr,
     correlation,
     recent,
+    fit: fitMasterAlphaWeights(fitSamples, { horizon: "daily" }),
   };
 }
 
