@@ -1,0 +1,116 @@
+name: Batcave quant fixes check
+
+# Type-check, build, quant tests, and a route-by-route regression comparison
+# between origin/main (base) and this branch (head). The report is pushed to
+# the ci-reports-quant branch because agent sessions cannot read Actions logs.
+
+on:
+  push:
+    branches: [quant-fixes]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: quant-fixes-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install head
+        run: npm ci --no-audit --no-fund
+      - name: Prepare base (origin/main)
+        run: |
+          git worktree add ../base origin/main
+          cd ../base && npm ci --no-audit --no-fund
+      - name: Type check head and base (reported per file)
+        continue-on-error: true
+        run: |
+          mkdir -p rep
+          npx tsc --noEmit -p tsconfig.json > rep/tsc-head.log 2>&1 || true
+          (cd ../base && npx tsc --noEmit -p tsconfig.json > "$GITHUB_WORKSPACE/rep/tsc-base.log" 2>&1 || true)
+          for f in head base; do grep -oE '^[^(]+\(' rep/tsc-$f.log | sed 's/($//' | sort | uniq -c | sort -k2 > rep/tsc-$f-byfile.txt; done
+          echo "tsc errors: head=$(grep -c 'error TS' rep/tsc-head.log) base=$(grep -c 'error TS' rep/tsc-base.log)" | tee rep/tsc-summary.txt
+          echo "--- files with MORE errors on head ---" >> rep/tsc-summary.txt
+          join -1 2 -2 2 -a 1 -e 0 -o 0,1.1,2.1 rep/tsc-head-byfile.txt rep/tsc-base-byfile.txt | awk '$2>$3' >> rep/tsc-summary.txt
+          cat rep/tsc-summary.txt
+      - name: Quant tests
+        run: |
+          node --experimental-transform-types --no-warnings \
+            --import ./tests/quant/loader/register.mjs --test 'tests/quant/*.test.ts' 2>&1 | tee rep/quant-tests.log
+          exit ${PIPESTATUS[0]}
+        shell: bash
+      - name: Production build (head and base)
+        run: |
+          npm run build 2>&1 | tail -20 | tee rep/build-head.log
+          (cd ../base && npm run build 2>&1 | tail -5) > rep/build-base.log
+      - name: Route regression and smoke tests
+        shell: bash
+        run: |
+          exec > >(tee rep/smoke.log) 2>&1
+          set -u
+          fail=0
+          check() { if [ "$1" = "$2" ]; then echo "PASS $3 ($1)"; else echo "FAIL $3 (got $1, want $2)"; fail=1; fi; }
+          wait_up() { for i in $(seq 1 90); do curl -fsS "http://127.0.0.1:$1/api/health" >/dev/null 2>&1 && return 0; curl -fsS -o /dev/null "http://127.0.0.1:$1/" 2>/dev/null && return 0; sleep 1; done; return 1; }
+          grep -ohE "app\.get\(\s*['\"]/api/[^'\"]+['\"]" server/*.ts | sed -E "s/app\.get\(\s*['\"]//; s/['\"]$//" | grep -v ":" | sort -u > rep/routes.txt
+          echo "routes: $(wc -l < rep/routes.txt)"
+
+          (cd ../base && NODE_ENV=production PORT=5061 HOST=127.0.0.1 node dist/index.cjs > "$GITHUB_WORKSPACE/rep/server-base.log" 2>&1 &)
+          NODE_ENV=production PORT=5060 HOST=127.0.0.1 node dist/index.cjs > rep/server-head.log 2>&1 &
+          wait_up 5060 || { echo "FAIL head server did not start"; tail -80 rep/server-head.log; exit 1; }
+          wait_up 5061 || echo "WARN base server did not start"
+          sleep 20   # let schedulers settle so both sides see similar warm-up
+
+          probe() { while read -r r; do printf '%s %s\n' "$r" "$(curl -s -o /dev/null -m 45 -w '%{http_code}' "http://127.0.0.1:$1$r")"; done < rep/routes.txt; }
+          probe 5061 > rep/routes-base.txt &
+          probe 5060 > rep/routes-head.txt
+          wait
+          join rep/routes-base.txt rep/routes-head.txt > rep/routes-both.txt
+          echo "--- routes whose status changed (route base head) ---"
+          awk '$2!=$3' rep/routes-both.txt | tee rep/routes-changed.txt
+          REGRESS=$(awk '$2 ~ /^[234]/ && $3 ~ /^5|000/' rep/routes-both.txt | wc -l)
+          echo "head 5xx/timeout where base was OK: $REGRESS"
+          awk '$2 ~ /^[234]/ && $3 ~ /^5|000/' rep/routes-both.txt | sed 's/^/REGRESSION /'
+          [ "$REGRESS" -eq 0 ] && echo "PASS no route regressions" || { echo "FAIL route regressions"; fail=1; }
+          echo "head 5xx count: $(awk '$3 ~ /^5/' rep/routes-both.txt | wc -l)  base 5xx count: $(awk '$2 ~ /^5/' rep/routes-both.txt | wc -l)"
+          check "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5060/)" 200 "UI index served"
+          grep -E "uncaughtException|unhandledRejection|TypeError|ReferenceError" rep/server-head.log | sort | uniq -c | sort -rn | head -30 > rep/server-head-errors.txt
+          grep -E "uncaughtException|unhandledRejection|TypeError|ReferenceError" rep/server-base.log | sort | uniq -c | sort -rn | head -30 > rep/server-base-errors.txt
+          echo "--- runtime errors head vs base (count) ---"; wc -l rep/server-head-errors.txt rep/server-base-errors.txt
+          pkill -f "dist/index.cjs" || true; sleep 2
+
+          if grep -q BATCAVE_ACCESS_KEY server/index.ts; then
+            NODE_ENV=production PORT=5062 HOST=127.0.0.1 BATCAVE_ACCESS_KEY=ci-test-key node dist/index.cjs > rep/server-gated.log 2>&1 &
+            wait_up 5062 || { echo "FAIL gated server did not start"; exit 1; }
+            check "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5062/api/schwab/status)" 401 "gate blocks without key"
+            check "$(curl -s -o /dev/null -w '%{http_code}' -H 'x-batcave-key: wrong' http://127.0.0.1:5062/api/schwab/status)" 401 "gate blocks wrong key"
+            check "$(curl -s -o /dev/null -w '%{http_code}' -H 'x-batcave-key: ci-test-key' http://127.0.0.1:5062/api/schwab/status)" 200 "gate allows right key"
+            NOTE=$(curl -s -m 60 -H "x-batcave-key: ci-test-key" http://127.0.0.1:5062/api/trade-environment | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);const d=(j.drivers||[]).find(x=>x.key==="gamma");console.log(d?d.note:"no-gamma-driver")}catch(e){console.log("unparseable")}})')
+            echo "gated gamma driver: $NOTE"
+            grep -c '401' rep/server-gated.log | xargs echo "gated server 401 log lines:"
+            pkill -f "dist/index.cjs" || true
+          else
+            echo "SKIP access-key checks (gate not present)"
+          fi
+          exit $fail
+      - name: Publish report to ci-reports-quant branch
+        if: always()
+        run: |
+          cp -f rep/* /tmp/ 2>/dev/null; mkdir -p /tmp/rep && cp -R rep/. /tmp/rep/ 2>/dev/null || true
+          for f in /tmp/rep/server-*.log; do [ -f "$f" ] && tail -400 "$f" > "$f.tail" && mv "$f.tail" "$f"; done
+          echo "run ${GITHUB_RUN_ID} sha ${GITHUB_SHA}" > /tmp/rep/RUN.txt
+          cd /tmp/rep && git init -q && git checkout -q -b ci-reports-quant
+          git -c user.name=batcave-ci -c user.email=batcave-ci@users.noreply.github.com add -A
+          git -c user.name=batcave-ci -c user.email=batcave-ci@users.noreply.github.com commit -qm "quant report ${GITHUB_RUN_ID}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-reports-quant
