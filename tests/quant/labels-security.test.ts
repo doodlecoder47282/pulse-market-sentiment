@@ -547,3 +547,14 @@ test("review 4: http:// server URLs only for loopback or private-network hosts",
   assert.equal(isPrivateOrLoopbackHost("169.254.1.1"), true);
   assert.equal(isPrivateOrLoopbackHost("11.0.0.1"), false);
 });
+
+test("review 5: any training_data other than \"real\" (e.g. synthetic_gbm) is simulated; coverage wording stays true", () => {
+  const panel = readFileSync(path.join(ROOT, "client/src/components/MLProjectionPanel.tsx"), "utf8");
+  assert.match(panel, /training_data\?: string \| null;/);
+  assert.doesNotMatch(panel, /training_data\?: "synthetic" \| "real"/);
+  // Must remain true once /api/ml/coverage exists: no claim that coverage is unscored.
+  assert.doesNotMatch(panel, /not yet scored|coverage unverified/);
+  // Same rule as isSimTrained(): only "real" counts as real training.
+  const isSim = (v: string | null | undefined) => (v ?? "synthetic") !== "real";
+  assert.deepEqual(["synthetic_gbm", "synthetic", null, undefined, "real"].map(isSim), [true, true, true, true, false]);
+});

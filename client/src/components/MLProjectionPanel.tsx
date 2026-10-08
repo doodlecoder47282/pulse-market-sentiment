@@ -24,8 +24,8 @@
 //     panel is labeled "volatility cone (simulated training)" and the TRAINED
 //     badge reads SIM-TRAINED, unless /api/ml/health reports
 //     training_data: "real" for quantile_overlay (WS4 real-data retrain).
-//     The band is a cone width, not model confidence: live 10-90% coverage
-//     is not yet scored.
+//     The band is a cone width, not model confidence; this panel does not
+//     show the band's live 10-90% coverage (scored separately, if at all).
 //
 // No localStorage / sessionStorage / cookies. No emojis.
 
@@ -74,7 +74,9 @@ interface MLModelHealth {
   n_train: number;
   auc: number | null;
   /** Optional; absent = treat as simulated. Set to "real" only by a real-data retrain. */
-  training_data?: "synthetic" | "real";
+  /** ml_service meta value, e.g. "synthetic_gbm" or "real". Anything other than
+   *  "real" (including absent/null) is treated as simulated training. */
+  training_data?: string | null;
 }
 
 interface HealthResponse {
@@ -913,7 +915,7 @@ export default function MLProjectionPanel() {
   if (bandWidth > 0 && spot) {
     const widthPct = bandWidth / spot;
     if (widthPct < 0.004) {
-      interpretations.push(`narrow cone ($${bandWidth.toFixed(2)} width) — width is not confidence; coverage unverified.`);
+      interpretations.push(`narrow cone ($${bandWidth.toFixed(2)} width) — width is not confidence; coverage not shown here.`);
     } else {
       interpretations.push(`wide cone ($${bandWidth.toFixed(2)}) — trade levels, not direction.`);
     }
@@ -953,8 +955,8 @@ export default function MLProjectionPanel() {
             </CardTitle>
             <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
               {simTrained
-                ? "live candles, dealer levels, and a volatility cone: base, upper and lower paths from a quantile model trained on simulated data, not real market history. not a learned forecast; band coverage on real outcomes is not yet scored. updates every 5s during market hours."
-                : "live candles, dealer levels, and three forward paths: base, upper and lower quantiles. live 10-90% band coverage is not yet scored. updates every 5s during market hours."}
+                ? "live candles, dealer levels, and a volatility cone: base, upper and lower paths from a quantile model trained on simulated data, not real market history. not a learned forecast; this panel does not show the band\u2019s coverage on real outcomes. updates every 5s during market hours."
+                : "live candles, dealer levels, and three forward paths: base, upper and lower quantiles. this panel does not show the band\u2019s live 10-90% coverage. updates every 5s during market hours."}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
