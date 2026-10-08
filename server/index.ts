@@ -8,6 +8,14 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
 import { startMlRetrainCron } from "./mlRetrainCron";
+import {
+  parseAllowedOrigins,
+  makeCorsMiddleware,
+  makeAccessGate,
+  makeSelfCallFetch,
+  healthPayload,
+  formatRequestLog,
+} from "./accessGate";
 
 // Global safety nets — do NOT let a stray promise reject or exception kill the
 // long-running server process. Crashes here previously took down /api/* during
@@ -49,31 +57,50 @@ export function log(message: string, source = "express") {
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
+// Request log: method, path, status, duration. Response bodies are not
+// logged: chain/model payloads are large, and status payloads can carry
+// account or token data (OWASP Logging Cheat Sheet; CWE-532).
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
   res.on("finish", () => {
-    const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      log(logLine);
+      log(formatRequestLog(req.method, path, res.statusCode, Date.now() - start));
     }
   });
-
   next();
 });
+
+// ── Native app + hosted deployment support (from branch ios-capacitor) ─────
+// CORS: the iOS app (Capacitor) serves its bundled UI from capacitor://localhost
+// and calls this server cross-origin. Only /api is opened, only to listed origins.
+// Extra origins: BATCAVE_ALLOWED_ORIGINS="https://a.example,https://b.example".
+app.use("/api", makeCorsMiddleware(parseAllowedOrigins(process.env.BATCAVE_ALLOWED_ORIGINS)));
+
+// Optional shared access key. When BATCAVE_ACCESS_KEY is set, every /api call
+// except /api/health must send it in the x-batcave-key header. Unset = open
+// (previous behavior). Set it on any publicly reachable deployment.
+const ACCESS_KEY = (process.env.BATCAVE_ACCESS_KEY || "").trim();
+// The engines call each other over local HTTP (trade environment -> heatseeker,
+// Discord cards -> models, exit brain -> quotes, ...; ~25 call sites). When the
+// gate is on, attach the key to every request this process sends to its own
+// port so those internal calls keep working (ios-capacitor d40db7d).
+if (ACCESS_KEY) {
+  globalThis.fetch = makeSelfCallFetch(globalThis.fetch.bind(globalThis), ACCESS_KEY, process.env.PORT || "5000");
+}
+
+app.get("/api/health", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json(healthPayload(!!ACCESS_KEY));
+});
+app.use("/api", makeAccessGate(ACCESS_KEY));
+app.get("/api/health/auth", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ ok: true });
+});
+if (!ACCESS_KEY) {
+  log("BATCAVE_ACCESS_KEY not set: /api is open. Set it on any reachable deployment.", "security");
+}
 
 (async () => {
   await registerRoutes(httpServer, app);
@@ -108,14 +135,21 @@ app.use((req, res, next) => {
   const port = parseInt(process.env.PORT || "5000", 10);
   // host: 127.0.0.1 (not 0.0.0.0) — sandbox forwarder owns 169.254.0.21:5000
   // and 0.0.0.0 conflicts with it. Forwarder routes external traffic to localhost.
+  // Hosted platforms (Railway etc.) route traffic to the container's external
+  // interface, so bind 0.0.0.0 there. HOST overrides either default.
+  const host =
+    process.env.HOST ||
+    (process.env.RAILWAY_ENVIRONMENT || process.env.RENDER || process.env.FLY_APP_NAME
+      ? "0.0.0.0"
+      : "127.0.0.1");
   httpServer.listen(
     {
       port,
-      host: "127.0.0.1",
+      host,
       reusePort: true,
     },
     () => {
-      log(`serving on port ${port}`);
+      log(`serving on ${host}:${port}`);
       startMlRetrainCron();
     },
   );
