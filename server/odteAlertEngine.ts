@@ -2131,10 +2131,12 @@ function buildAlert(
 
     // Theta to the close per share by repricing (chainClock.modelThetaToClose,
     // same as contractPicker); theta-per-day over the session only without a sigma.
+    // Explicitly typed view: tsc infers pickedContract as never here (the
+    // `typeof pickedContract[]` candidate array is typed while it is null).
+    const pc: { strike: number; expiry: string; key: string; bid: number | null; ask: number | null; iv: number } = pickedContract;
     const thetaToClose = modelThetaToClose({
-      spot: args.spot, strike: pickedContract.strike, type: side === "call" ? "C" : "P",
-      expiry: pickedContract.expiry, symbol: pickedContract.key,
-      bid: pickedContract.bid, ask: pickedContract.ask, vendorIv: pickedContract.iv,
+      spot: args.spot, strike: pc.strike, type: side === "call" ? "C" : "P",
+      expiry: pc.expiry, symbol: pc.key, bid: pc.bid, ask: pc.ask, vendorIv: pc.iv,
       minutesToClose, nowMs: args.asOf,
     }) ?? projectedThetaCost(theta, minutesToClose, args.asOf);
 
