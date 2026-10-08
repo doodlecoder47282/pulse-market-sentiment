@@ -298,10 +298,11 @@ export interface SocialSentiment {
   bearish: number;
   neutral: number;
   posts: SocialPost[];
-  /** ok | partial (a source failed or was stale) | insufficient (too few tagged posts) | unavailable (no source collected). Absent on old snapshots. */
+  /** ok | partial (a source failed, was stale/undated, or posts of unknown age were dropped) | insufficient (too few tagged posts) | unavailable (no source collected). Absent on old snapshots. */
   status?: "ok" | "partial" | "insufficient" | "unavailable";
   /** Per-source collection state. */
-  sources?: { name: string; state: "ok" | "empty" | "stale" | "failed"; posts: number; newest?: string | null }[];
+  /** Per-source collection state; posts = posts scored (ok) or collected; dropped = posts left out (undated or older than the age window). */
+  sources?: { name: string; state: "ok" | "empty" | "stale" | "undated" | "failed"; posts: number; newest?: string | null; dropped?: number }[];
   /** Collection time, epoch ms. */
   asOf?: number;
 }

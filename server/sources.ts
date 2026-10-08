@@ -362,39 +362,73 @@ async function fetchReddit(sub: string, limit = 30): Promise<SocialPost[]> {
   });
 }
 
-/** A source whose newest post is older than this is stale and left out of the score. */
-export const SOCIAL_STALE_MAX_HOURS = 72;
+/**
+ * Post age window for the score. The gauge is a same-session read that sits
+ * next to VIX, gamma and Fear & Greed in a composite refreshed every snapshot,
+ * so it should reflect the current session plus overnight/pre-market chatter:
+ * 24 hours. (A 72 h window let Friday's chatter set Monday's read.) The
+ * StockTwits SPY stream (latest 30 messages) normally spans minutes, so the
+ * window only bites when that feed is frozen; Reddit "hot" often carries
+ * posts older than a day, and those are dropped rather than scored.
+ */
+export const SOCIAL_MAX_AGE_HOURS = 24;
 /** Fewer tagged (bullish + bearish) posts than this gives no score: one post would read +/-100. */
 export const SOCIAL_MIN_TAGGED = 5;
 
 type SocialSourceState = NonNullable<SocialSentiment["sources"]>[number];
 
+const INVERT_TONE: Record<SocialPost["tone"], SocialPost["tone"]> = {
+  bullish: "bearish", bearish: "bullish", neutral: "neutral",
+};
+
+export interface CollectedSocialSource {
+  name: string;
+  /** null = the request failed. */
+  posts: SocialPost[] | null;
+  /** The source's tone is about an asset that moves against equities (VIX):
+   *  "bullish VIX" is bearish for stocks, so tone is inverted before scoring. */
+  invertTone?: boolean;
+}
+
 /**
- * Pure scoring step, exported for tests. Missing, stale and too-small samples
- * yield score = null with a status, never a neutral 0 (which the composite
- * would map to a 50 "neutral" gauge).
+ * Pure scoring step, exported for tests. Missing, stale, undated and
+ * too-small samples yield score = null with a status, never a neutral 0
+ * (which the composite would map to a 50 "neutral" gauge). A post enters the
+ * score only with a readable timestamp inside SOCIAL_MAX_AGE_HOURS; posts of
+ * unknown age are dropped and mark the result as partial.
  */
 export function summarizeSocial(
-  collected: { name: string; posts: SocialPost[] | null }[],
+  collected: CollectedSocialSource[],
   nowMs: number = Date.now(),
 ): SocialSentiment {
   const sources: SocialSourceState[] = [];
   const used: SocialPost[] = [];
+  const maxAgeMs = SOCIAL_MAX_AGE_HOURS * 3600_000;
+  let undatedDropped = 0;
   for (const src of collected) {
     if (src.posts == null) {
       sources.push({ name: src.name, state: "failed", posts: 0, newest: null });
       continue;
     }
-    const times = src.posts.map((p) => (p.timestamp ? Date.parse(p.timestamp) : NaN)).filter((t) => isFinite(t));
-    const newestMs = times.length ? Math.max(...times) : null;
-    const newest = newestMs != null ? new Date(newestMs).toISOString() : null;
     if (src.posts.length === 0) {
-      sources.push({ name: src.name, state: "empty", posts: 0, newest });
-    } else if (newestMs != null && nowMs - newestMs > SOCIAL_STALE_MAX_HOURS * 3600_000) {
-      sources.push({ name: src.name, state: "stale", posts: src.posts.length, newest });
+      sources.push({ name: src.name, state: "empty", posts: 0, newest: null });
+      continue;
+    }
+    const dated = src.posts
+      .map((p) => ({ p, t: p.timestamp ? Date.parse(p.timestamp) : NaN }))
+      .filter((x) => Number.isFinite(x.t));
+    const undated = src.posts.length - dated.length;
+    undatedDropped += undated;
+    const newestMs = dated.length ? Math.max(...dated.map((x) => x.t)) : null;
+    const newest = newestMs != null ? new Date(newestMs).toISOString() : null;
+    const fresh = dated.filter((x) => nowMs - x.t <= maxAgeMs && x.t <= nowMs + 5 * 60_000).map((x) => x.p);
+    if (dated.length === 0) {
+      sources.push({ name: src.name, state: "undated", posts: src.posts.length, newest: null, dropped: undated });
+    } else if (fresh.length === 0) {
+      sources.push({ name: src.name, state: "stale", posts: src.posts.length, newest, dropped: src.posts.length });
     } else {
-      sources.push({ name: src.name, state: "ok", posts: src.posts.length, newest });
-      used.push(...src.posts);
+      sources.push({ name: src.name, state: "ok", posts: fresh.length, newest, dropped: src.posts.length - fresh.length });
+      used.push(...(src.invertTone ? fresh.map((p) => ({ ...p, tone: INVERT_TONE[p.tone] })) : fresh));
     }
   }
   const bullish = used.filter((p) => p.tone === "bullish").length;
@@ -402,7 +436,7 @@ export function summarizeSocial(
   const neutral = used.filter((p) => p.tone === "neutral").length;
   const tagged = bullish + bearish;
   const anyUsable = sources.some((x) => x.state === "ok");
-  const degraded = sources.some((x) => x.state === "failed" || x.state === "stale");
+  const degraded = undatedDropped > 0 || sources.some((x) => x.state !== "ok");
   let status: NonNullable<SocialSentiment["status"]>;
   let score: number | null = null;
   if (!anyUsable) status = "unavailable";
@@ -416,12 +450,15 @@ export function summarizeSocial(
 
 /** Aggregate StockTwits + Reddit into one SocialSentiment payload (keyword/tag tone, a heuristic). */
 export async function gatherSocial(): Promise<SocialSentiment> {
-  const settle = async (name: string, p: Promise<SocialPost[]>) => {
-    try { return { name, posts: await p }; } catch { return { name, posts: null }; }
+  const settle = async (name: string, p: Promise<SocialPost[]>, invertTone = false): Promise<CollectedSocialSource> => {
+    try { return { name, posts: await p, invertTone }; } catch { return { name, posts: null, invertTone }; }
   };
   const collected = await Promise.all([
     settle("StockTwits SPY", fetchStockTwits("SPY", 30)),
-    settle("StockTwits VIX", fetchStockTwits("VIX", 15)),
+    // VIX chatter: tone inverted (bullish VIX = bearish equities); the post's
+    // tone shown on the card is the equity read, and the author is tagged.
+    settle("StockTwits VIX (tone inverted)", fetchStockTwits("VIX", 15).then((ps) =>
+      ps.map((p) => ({ ...p, author: `${p.author ?? ""} on $VIX (tone shown for equities)` }))), true),
     settle("Reddit r/options", fetchReddit("options", 25)),
   ]);
   return summarizeSocial(collected);

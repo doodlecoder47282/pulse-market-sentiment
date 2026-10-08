@@ -342,6 +342,29 @@ test("social: failed collection is unavailable, not neutral", async () => {
   assert.equal(ok.status, "partial");
 });
 
+test("social: VIX tone inverted, unknown-age posts dropped, 24 h window", async () => {
+  const { summarizeSocial } = await import("../../server/sources");
+  const now = ms("2026-10-08T15:00:00Z");
+  const post = (tone: "bullish" | "bearish" | "neutral", iso = "2026-10-08T14:00:00Z") =>
+    ({ source: "StockTwits" as const, text: "", url: "", timestamp: iso, tone });
+  // 6 "bullish VIX" posts = 6 bearish equity reads -> -100.
+  const vix = summarizeSocial([{ name: "vix", posts: [...Array(6)].map(() => post("bullish")), invertTone: true }], now);
+  assert.equal(vix.score, -100);
+  assert.equal(vix.bearish, 6);
+  // Undated posts never count as fresh.
+  const undated = summarizeSocial([{ name: "a", posts: [...Array(6)].map(() => post("bullish", "")) }], now);
+  assert.equal(undated.status, "unavailable");
+  assert.equal(undated.sources?.[0].state, "undated");
+  // 5 dated bullish + 3 undated: scored on the 5, flagged partial.
+  const mix = summarizeSocial([{ name: "a", posts: [...Array(5)].map(() => post("bullish")).concat([...Array(3)].map(() => post("bearish", ""))) }], now);
+  assert.equal(mix.score, 100);
+  assert.equal(mix.status, "partial");
+  // 30 h old: outside the 24 h window.
+  const old = summarizeSocial([{ name: "a", posts: [...Array(6)].map(() => post("bullish", "2026-10-07T09:00:00Z")) }], now);
+  assert.equal(old.status, "unavailable");
+  assert.equal(old.sources?.[0].state, "stale");
+});
+
 test("social: composite leaves out an unavailable social gauge instead of scoring it 50", async () => {
   const { computeComposite } = await import("../../server/composite");
   const base: any = {
