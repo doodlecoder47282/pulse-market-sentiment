@@ -107,6 +107,15 @@ interface ModelAudit {
   doubleZeroLow: number | null;
   doubleZeroHigh: number | null;
   scenarioProb: { bull: number; base: number; bear: number };
+  scenarioProbSource?: "risk-neutral-implied" | "hand-set-heuristic";
+  scenarioProbNote?: string;
+  expectedMove?: {
+    oneSigma: number;
+    source: "0dte-straddle" | "vix-scaled";
+    straddleMid: number | null;
+    strike: number | null;
+    note: string;
+  };
   closeTargets?: {
     bull: { price: number; prob: number } | null;
     base: { price: number; prob: number } | null;
@@ -152,6 +161,8 @@ interface MMMatrix {
   zones: MMZone[];
   cells: MMCell[];
   notes: { regime: string; zone: string; summary: string };
+  probabilityBasis?: "hand-set-priors";
+  probabilityNote?: string;
 }
 
 interface ModelHorizon {
@@ -458,7 +469,7 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
       {a.mainPivot && <RailRow label="MAIN PIVOT" value={fmtK(a.mainPivot)} sub={distPct(a.mainPivot)} color={COLORS.amber} />}
 
       {/* Scenario projections */}
-      <RailDivider label="scenarios" />
+      <RailDivider label={a.scenarioProbSource === "risk-neutral-implied" ? "scenarios (risk-neutral)" : "scenarios (heuristic)"} />
       <RailRow label={`BULL ${probs.bull}%`} value={bullRange} color={COLORS.bull} />
       <RailRow label={`BASE ${probs.base}%`} value={baseRange} color={COLORS.base} />
       <RailRow label={`BEAR ${probs.bear}%`} value={bearRange} color={COLORS.bear} />
@@ -647,6 +658,17 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
         <span className="text-cyan-400">BASE {probs.base}%</span>
         <span>·</span>
         <span className="text-red-400">BEAR {probs.bear}%</span>
+        <span className="text-muted-foreground/60" title={a.scenarioProbNote}>
+          ({scenarioSourceLabel(a.scenarioProbSource)})
+        </span>
+        {a.expectedMove && (
+          <>
+            <span>|</span>
+            <span title={a.expectedMove.note}>
+              EM ±{a.expectedMove.oneSigma.toFixed(1)} ({a.expectedMove.source === "0dte-straddle" ? "0DTE straddle" : "VIX fallback"})
+            </span>
+          </>
+        )}
         <span>|</span>
         <span>PATH: <span className="text-foreground">{a.path}</span></span>
         <span>|</span>
@@ -657,6 +679,10 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
 }
 
 // ─── Scenario legend bottom strip ─────────────────────────────────────────────
+
+function scenarioSourceLabel(src: ModelAudit["scenarioProbSource"]): string {
+  return src === "risk-neutral-implied" ? "risk-neutral, options-implied" : "heuristic, hand-set";
+}
 
 function ScenarioLegend({ horizon }: { horizon: ModelHorizon }) {
   const a = horizon.audit;
@@ -674,7 +700,9 @@ function ScenarioLegend({ horizon }: { horizon: ModelHorizon }) {
 
   return (
     <div className="space-y-0.5 border-t border-border/40 pt-2 font-mono text-[10px]">
-      <div className="text-[9px] uppercase tracking-widest text-muted-foreground/50">Scenario projections</div>
+      <div className="text-[9px] uppercase tracking-widest text-muted-foreground/50" title={a.scenarioProbNote}>
+        Scenario projections · {scenarioSourceLabel(a.scenarioProbSource)}
+      </div>
       {bullPath && (
         <div className="text-green-400">
           BULL {probs.bull}% → Clear {zg ? `${fmtK(zg)} Gamma Zero` : "resistance"}
@@ -754,8 +782,11 @@ function MMMatrixHeatmap({ horizon }: { horizon: ModelHorizon }) {
   return (
     <div className="mt-3 border-t border-border/40 pt-2">
       <div className="flex items-baseline justify-between mb-1.5">
-        <div className="text-[9px] uppercase tracking-widest text-muted-foreground/50 font-mono">
-          Market-maker probability matrix
+        <div
+          className="text-[9px] uppercase tracking-widest text-muted-foreground/50 font-mono"
+          title={mm.probabilityNote ?? "Hand-set priors tilted by live context; not fit to logged outcomes."}
+        >
+          Market-maker matrix · hand-set priors (not fit to outcomes)
         </div>
         <div className="font-mono text-[9px] text-muted-foreground/70">
           <span className="text-amber-400">YOU ARE HERE:</span> {REGIME_LABEL[mm.currentRegime]} · {ZONE_LABEL[mm.currentZone]}

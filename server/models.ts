@@ -35,7 +35,19 @@ import { chainToRows } from "./exposures";
 import { getCboeChain } from "./cboeCache";
 import { computeGreeks } from "./greeks";
 import { storage } from "./storage";
-import { getQuotes as schwabGetQuotes } from "./schwab";
+import { getQuotes as schwabGetQuotes, getOptionChain } from "./schwab";
+import { cdfAt, type ImpliedDistribution } from "./breedenLitzenberger";
+import {
+  etNowParts,
+  horizonTargetIso,
+  impliedDistributionForExpiry,
+  pickExpiryKey,
+  quotesFromSchwabExpiry,
+  scenarioOddsFromCdf,
+  straddleExpectedMove,
+  toPercentTriple,
+  type StraddleExpectedMove,
+} from "./impliedScenario";
 import { fetchOHLC } from "./ohlc";
 import { buildMMMatrix } from "./mmMatrix";
 
@@ -113,10 +125,19 @@ export interface ModelPathWaypoint {
   price: number;
 }
 
+export type ScenarioProbSource = "risk-neutral-implied" | "hand-set-heuristic";
+
 export interface ModelPath {
   kind: "base" | "bull" | "bear";
   name: string;
-  probability: number;                     // 0..1
+  probability: number;                     // 0..1 (see probabilitySource)
+  // Where `probability` comes from. "risk-neutral-implied" = read from the
+  // SVI-smoothed implied distribution of the horizon's expiry (Q measure,
+  // not a real-world forecast). "hand-set-heuristic" = fixed regime splits,
+  // used only when no usable chain is available.
+  probabilitySource?: ScenarioProbSource;
+  pCloseBeyond?: number | null;            // Q: P(S_T beyond target) (bull/bear only)
+  pTouch?: number | null;                  // ~ min(1, 2 x pCloseBeyond), reflection principle
   target: number;                          // end-of-horizon price
   waypoints: ModelPathWaypoint[];
   color: "base" | "bull" | "bear";
@@ -155,6 +176,30 @@ export interface ModelAudit {
   doubleZeroLow: number | null;           // lower bound of double-zero zone
   doubleZeroHigh: number | null;          // upper bound of double-zero zone
   scenarioProb: { bull: number; base: number; bear: number };  // percentages summing to 100
+  scenarioProbSource?: ScenarioProbSource;
+  scenarioProbNote?: string;
+  // Daily expected move (1 standard deviation to the close, index points).
+  // "0dte-straddle": same-day ATM straddle mid inverted with Black-76
+  // (straddle ~ 0.8 sigma S sqrt(T), Brenner-Subrahmanyam 1988).
+  // "vix-scaled": fallback, VIX -> ATM vol x sqrt(1/252) x 0.55 hand-set
+  // residual-session factor.
+  expectedMove?: {
+    oneSigma: number;
+    source: "0dte-straddle" | "vix-scaled";
+    straddleMid: number | null;            // index points per share
+    strike: number | null;
+    note: string;
+  };
+  impliedDistribution?: {
+    expiry: string;
+    measure: "risk-neutral";
+    method: "svi-smoothed";
+    forward: number;
+    coverage: number;                      // mass inside the quoted strikes
+    fitRmse: number;                       // index points per share
+    quotesUsed: number;
+    negativeMassClipped: number;
+  } | null;
   scenarioTargets: { bull: number; base: number; bear: number; oneDayEM: number }; // close-by-EOD price targets per scenario
   closeTargets: {                         // Selz #5 — discrete BULL / BASE / BEAR close targets (chart right edge)
     bull:  { price: number; prob: number } | null;
@@ -831,6 +876,9 @@ function buildAudit(
     lastRecal: { at: number; dfi: number; dfiDeltaSinceOpen: number | null } | null;
     vixTermRatio?: number | null;
     vixForEM?: number | null;
+    straddleEM?: StraddleExpectedMove | null;
+    scenarioProbSource?: ScenarioProbSource;
+    impliedDistribution?: ModelAudit["impliedDistribution"];
   },
 ): ModelAudit {
   const cur = profile.current;
@@ -954,7 +1002,27 @@ function buildAudit(
   const fullDayEM = vixForEM != null && vixForEM > 0
     ? spot * (vixToAtmPct(vixForEM) / 100) * Math.sqrt(1 / 252)
     : spot * 0.010;
-  const oneDayEM = fullDayEM * 0.55;
+  // Preferred: the same-day (0DTE) ATM straddle, which prices exactly the
+  // residual session, so no hand-set session factor is needed.
+  const straddle = extras.straddleEM ?? null;
+  const oneDayEM = straddle ? straddle.oneSigmaMove : fullDayEM * 0.55;
+  const expectedMove: NonNullable<ModelAudit["expectedMove"]> = straddle
+    ? {
+        oneSigma: parseFloat(straddle.oneSigmaMove.toFixed(2)),
+        source: "0dte-straddle",
+        straddleMid: parseFloat(straddle.straddleMid.toFixed(2)),
+        strike: straddle.strike,
+        note: "1 sigma to the close from the 0DTE ATM straddle mid (straddle ~ 0.8 sigma S sqrt T)",
+      }
+    : {
+        oneSigma: parseFloat(oneDayEM.toFixed(2)),
+        source: "vix-scaled",
+        straddleMid: null,
+        strike: null,
+        note: vixForEM != null && vixForEM > 0
+          ? "fallback: VIX-implied ATM vol x sqrt(1/252) x 0.55 (hand-set session factor); no same-day straddle"
+          : "fallback: fixed 1% x 0.55 (VIX and same-day straddle unavailable)",
+      };
 
   const resistAbove = levels
     .filter((l) => l.side === "resistance" && l.price > spot)
@@ -1074,6 +1142,12 @@ function buildAudit(
     doubleZeroLow,
     doubleZeroHigh,
     scenarioProb,
+    scenarioProbSource: extras.scenarioProbSource ?? "hand-set-heuristic",
+    scenarioProbNote: (extras.scenarioProbSource ?? "hand-set-heuristic") === "risk-neutral-implied"
+      ? "Risk-neutral (options-implied) odds from the SVI-smoothed distribution of this horizon's expiry; regions split halfway between targets. Not a real-world forecast."
+      : "Heuristic: hand-set regime splits with flow/term-structure tilts. Not calibrated to outcomes.",
+    expectedMove,
+    impliedDistribution: extras.impliedDistribution ?? null,
     scenarioTargets,
     closeTargets,
     lastRecal: extras.lastRecal,
@@ -1160,6 +1234,32 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
   const { spotAnchorDate, targetDate, targetDateLong, waypointLabels } = buildHorizonDates(horizon);
   const paths = generatePaths(levels, displaySpot, scaledProfile, horizon, waypointLabels);
 
+  // ---- Options-implied scenario odds + 0DTE straddle expected move ----
+  const implied = await impliedContextFor(symbol, horizon, displaySpot);
+  let scenarioProbIn: { bull: number; base: number; bear: number } | undefined;
+  let scenarioProbSource: ScenarioProbSource = "hand-set-heuristic";
+  const dist = implied.dist;
+  const bullP = paths.find((p) => p.kind === "bull");
+  const baseP = paths.find((p) => p.kind === "base");
+  const bearP = paths.find((p) => p.kind === "bear");
+  if (dist && implied.expiry && dist.quotesUsed >= 10 && dist.coverage >= 0.6 && bullP && baseP && bearP) {
+    const odds = scenarioOddsFromCdf((K) => cdfAt(dist, K), displaySpot, {
+      bull: bullP.target, base: baseP.target, bear: bearP.target,
+    });
+    if (odds) {
+      bullP.probability = odds.bull;
+      baseP.probability = odds.base;
+      bearP.probability = odds.bear;
+      bullP.pCloseBeyond = odds.pCloseBeyondBull;
+      bullP.pTouch = odds.pTouchBull;
+      bearP.pCloseBeyond = odds.pCloseBeyondBear;
+      bearP.pTouch = odds.pTouchBear;
+      scenarioProbIn = toPercentTriple(odds);
+      scenarioProbSource = "risk-neutral-implied";
+    }
+  }
+  for (const p of paths) p.probabilitySource = scenarioProbSource;
+
   // ---- Selz #3/#4: intraday recal + DoD lookups ----
   const tradeDate = etTradeDate(new Date());
   const iv1dNow = vix != null ? vixToAtmPct(vix) / Math.sqrt(252) : null;
@@ -1220,7 +1320,29 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
     lastRecal: lastRecalOut,
     vixTermRatio: vixTermRatioForAudit,
     vixForEM: vix ?? null,
+    scenarioProbIn,
+    scenarioProbSource,
+    straddleEM: implied.straddle,
+    impliedDistribution: dist && implied.expiry && scenarioProbSource === "risk-neutral-implied"
+      ? {
+          expiry: implied.expiry,
+          measure: "risk-neutral",
+          method: "svi-smoothed",
+          forward: parseFloat(dist.forward.toFixed(2)),
+          coverage: parseFloat(dist.coverage.toFixed(4)),
+          fitRmse: parseFloat(dist.fitRmse.toFixed(4)),
+          quotesUsed: dist.quotesUsed,
+          negativeMassClipped: parseFloat(dist.negativeMassClipped.toFixed(5)),
+        }
+      : null,
   });
+  // One probability set per scenario: in the heuristic fallback the paths
+  // carry the same numbers the audit shows (they used to differ).
+  if (scenarioProbSource === "hand-set-heuristic") {
+    if (bullP) bullP.probability = audit.scenarioProb.bull / 100;
+    if (baseP) baseP.probability = audit.scenarioProb.base / 100;
+    if (bearP) bearP.probability = audit.scenarioProb.bear / 100;
+  }
 
   // Price range: widest of call wall → put wall vs. ±2% of spot, padded
   const cw = levels.find((l) => l.kind === "callWall")?.price ?? displaySpot * 1.02;
@@ -1334,6 +1456,40 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
   }
 
   return horizonOut;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Options-implied context: the horizon expiry's smoothed implied distribution
+// and the same-day ATM straddle. Schwab chain (getOptionChain; its own CBOE
+// fallback is labeled by the chain's source). Missing data -> nulls, and the
+// callers fall back to labeled heuristics.
+// ──────────────────────────────────────────────────────────────────────────
+
+async function impliedContextFor(
+  symbol: "^GSPC" | "SPY",
+  horizon: Horizon,
+  spot: number,
+): Promise<{ dist: ImpliedDistribution | null; expiry: string | null; straddle: StraddleExpectedMove | null }> {
+  const none = { dist: null, expiry: null, straddle: null };
+  try {
+    const chain = await getOptionChain(symbol === "^GSPC" ? "$SPX" : "SPY", DTE_MAX[horizon]);
+    if (!chain || "error" in chain) return none;
+    const calls = chain.callExpDateMap, puts = chain.putExpDateMap;
+    const now = new Date();
+    const et = etNowParts(now);
+    const rth = et.dow >= 1 && et.dow <= 5 && et.minutes >= 570 && et.minutes < 960;
+    // Today's expiry is only live during the regular session; after the close
+    // its quotes are stale, so it is excluded rather than shown as a move.
+    const keys = Array.from(new Set([...Object.keys(calls || {}), ...Object.keys(puts || {})]))
+      .filter((k) => k.split(":")[0] > et.iso || (rth && k.split(":")[0] === et.iso));
+    const todayKey = rth ? keys.find((k) => k.split(":")[0] === et.iso) ?? null : null;
+    const straddle = todayKey ? straddleExpectedMove(quotesFromSchwabExpiry(calls, puts, todayKey), spot) : null;
+    const expKey = pickExpiryKey(keys, horizonTargetIso(horizon, now));
+    const dist = expKey ? impliedDistributionForExpiry(calls, puts, expKey, spot, 0.05) : null;
+    return { dist, expiry: expKey ? expKey.split(":")[0] : null, straddle };
+  } catch {
+    return none;
+  }
 }
 
 export async function buildModelsSnapshot(input: {

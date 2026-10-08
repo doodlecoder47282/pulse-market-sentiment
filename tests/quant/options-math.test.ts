@@ -345,3 +345,18 @@ test("Schwab expiry adapter: mids, PM-settled preference, expiry pick", () => {
   assert.equal(pickExpiryKey(["2026-10-09:1", "2026-10-16:8", "2026-10-15:7"], "2026-10-16"), "2026-10-16:8");
   assert.equal(pickExpiryKey(["2026-10-15:7", "2026-10-17:9"], "2026-10-16"), "2026-10-17:9");
 });
+
+test("horizon target expiries (ET calendar)", async () => {
+  const { horizonTargetIso, etNowParts } = await import("../../server/impliedScenario");
+  // 2026-10-08 18:00Z = Thu 14:00 EDT. Oct 2026 starts on a Thursday, so the
+  // third Friday is Oct 16; Jan 2027 starts on a Friday -> third Friday Jan 15.
+  const now = new Date("2026-10-08T18:00:00Z");
+  assert.deepEqual(etNowParts(now), { iso: "2026-10-08", dow: 4, minutes: 840 });
+  assert.equal(horizonTargetIso("daily", now), "2026-10-08");
+  assert.equal(horizonTargetIso("weekly", now), "2026-10-09");
+  assert.equal(horizonTargetIso("monthly", now), "2026-10-16");
+  assert.equal(horizonTargetIso("quarterly", now), "2027-01-15");
+  // Saturday -> next week's Friday; OPEX day rolls monthly to next month (Nov 20).
+  assert.equal(horizonTargetIso("weekly", new Date("2026-10-10T16:00:00Z")), "2026-10-16");
+  assert.equal(horizonTargetIso("monthly", new Date("2026-10-16T16:00:00Z")), "2026-11-20");
+});

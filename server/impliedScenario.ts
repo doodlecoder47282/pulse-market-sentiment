@@ -183,6 +183,52 @@ export function toPercentTriple(o: { bull: number; base: number; bear: number })
   return { bull: floors[0], base: floors[1], bear: floors[2] };
 }
 
+// ─── ET calendar helpers for picking the horizon expiry ───
+
+export function etNowParts(d: Date): { iso: string; dow: number; minutes: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+    weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  const dowMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return {
+    iso: `${get("year")}-${get("month")}-${get("day")}`,
+    dow: dowMap[get("weekday")] ?? 1,
+    minutes: (parseInt(get("hour"), 10) % 24) * 60 + parseInt(get("minute"), 10),
+  };
+}
+
+function isoAddDays(iso: string, days: number): string {
+  const t = Date.parse(iso + "T12:00:00Z") + days * 86_400_000;
+  return new Date(t).toISOString().slice(0, 10);
+}
+
+function thirdFridayIso(year: number, month0: number): string {
+  const first = new Date(Date.UTC(year, month0, 1, 12));
+  const offset = (5 - first.getUTCDay() + 7) % 7;
+  return new Date(Date.UTC(year, month0, 1 + offset + 14, 12)).toISOString().slice(0, 10);
+}
+
+/** Target expiry date (ET calendar) for a models.ts horizon: today, this week's
+ *  Friday, this month's (or next) third Friday, third Friday three months out. */
+export function horizonTargetIso(h: "daily" | "weekly" | "monthly" | "quarterly", now: Date): string {
+  const et = etNowParts(now);
+  if (h === "daily") return et.iso;
+  if (h === "weekly") {
+    const toFri = et.dow === 6 ? 6 : et.dow === 0 ? 5 : 5 - et.dow;
+    return isoAddDays(et.iso, toFri);
+  }
+  const y = parseInt(et.iso.slice(0, 4), 10), m0 = parseInt(et.iso.slice(5, 7), 10) - 1;
+  if (h === "monthly") {
+    const tf = thirdFridayIso(y, m0);
+    if (et.iso < tf) return tf; // on OPEX day itself buildHorizonDates rolls to next month
+    return thirdFridayIso(m0 === 11 ? y + 1 : y, (m0 + 1) % 12);
+  }
+  const m3 = m0 + 3;
+  return thirdFridayIso(y + Math.floor(m3 / 12), m3 % 12);
+}
+
 // ─── Schwab chain adapter ───────────────────────────────────────────────────
 
 type ExpMap = Record<string, Record<string, any[]>> | null | undefined;
