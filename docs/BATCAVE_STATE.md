@@ -73,8 +73,10 @@ iOS Xcode project (Capacitor 8) and hosted-deployment readiness, on branch
   `fetch("http://127.0.0.1:PORT/api/...")` calls were getting 401. `server/index.ts`
   now adds the key only to requests aimed at its own port. CI run 37800438742:
   "PASS internal self-calls work with access key on".
-- iOS work is on hold at the user's request. No hosting chosen yet
-  (options given: own PC + Cloudflare Tunnel, Oracle Always Free, Railway).
+- Deferred by the user (2026-10-08): Railway hosting (chosen as the best fit,
+  Hobby ~$5/mo; user creates the account) and the iOS/Xcode build. Before
+  hosting: rotate Schwab keys, regenerate Discord webhooks, set
+  `BATCAVE_ACCESS_KEY` in Railway (never in chat).
 
 ## Next step
 
