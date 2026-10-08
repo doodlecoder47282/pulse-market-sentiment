@@ -18,6 +18,7 @@ import { buildHeatseeker } from "../../server/heatseeker";
 import { buildExposureProfile, rowYears, type ExposureRow } from "../../server/exposureProfile";
 import { pickEarningsExpiry } from "../../server/impliedScenario";
 import { toCents } from "../../server/validationMath";
+import { gammaBudgetContracts } from "../../server/sizingMath";
 
 const near = (got: number, want: number, tol: number, what: string) =>
   assert.ok(Math.abs(got - want) <= tol, `${what}: got ${got}, want ${want} +- ${tol}`);
@@ -244,4 +245,29 @@ test("CLV/trade-log dollars: toCents rounds halves away from zero for losses", (
   assert.equal(toCents(-12.345) / 100, -12.35);
   // Option, 3 contracts, (1.20 - 1.50) $/share x 3 x 100 = -$90.00 exactly.
   assert.equal(toCents((1.2 - 1.5) * 3 * 100) / 100, -90);
+});
+
+// ─── 7. Master Alpha size: premium at risk never exceeds the budget ─────────
+
+test("gammaBudgetContracts: $1M budget, S 6,700, sigma 17%, 1 day, 10 bp -> 420 contracts, $998,930 premium", () => {
+  // v = 0.17 sqrt(1/365) = 0.0088983; ATM call = S [N(v/2) - N(-v/2)] = 23.78406 per share
+  //   -> $2,378.41 per contract. Premium cap: floor(1,000,000 / 2,378.41) = 420 -> $998,930.
+  // gamma_ATM = 1 / (S v sqrt(2 pi)) = 0.0066914; $Gamma = gamma S^2 = $300,387.86 per contract.
+  // Gamma target at R = 0.001: floor(1e6 / (50 x 300,387.86 x 1e-6)) = 66,580 (old code: min(500, .) = 500,
+  //   500 x $2,378.41 = $1,189,203 of premium > the $1M budget).
+  const s = gammaBudgetContracts({ spot: 6700, sigma: 0.17, T: 1 / 365, rHatBps: 10, riskBudgetDollars: 1_000_000 });
+  // (the module's normal CDF is Abramowitz-Stegun 7.1.26, |error| < 7.5e-8, i.e. < $0.02 per contract here)
+  near(s.premiumPerContract, 2378.41, 0.02, "ATM premium per contract");
+  near(s.dollarGammaPerContract, 300387.86, 0.05, "$Gamma per contract");
+  assert.equal(s.gammaContracts, 66580);
+  assert.equal(s.premiumCapContracts, 420);
+  assert.equal(s.contracts, 420);
+  assert.equal(s.binding, "premium-cap");
+  assert.ok(s.contracts * s.premiumPerContract <= 1_000_000);
+  // A big forecast where the gamma target binds: R = 2% -> floor(1e6 / (50 x 300,387.86 x 4e-4)) = 166.
+  const t = gammaBudgetContracts({ spot: 6700, sigma: 0.17, T: 1 / 365, rHatBps: 200, riskBudgetDollars: 1_000_000 });
+  assert.equal(t.contracts, 166);
+  assert.equal(t.binding, "gamma-target");
+  // No forecast (< 1 bp) or no budget: no size.
+  assert.equal(gammaBudgetContracts({ spot: 6700, sigma: 0.17, T: 1 / 365, rHatBps: 0.5, riskBudgetDollars: 1e6 }).contracts, 0);
 });

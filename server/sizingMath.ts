@@ -304,3 +304,60 @@ export function sizeLongOption(input: CoreSizingInput, deps: CoreSizingDeps): Co
     winEvidence: ev,
   };
 }
+
+// ─── Master Alpha dollar-gamma sizing, capped by the premium at risk ────────
+
+/**
+ * Contracts for the Master Alpha "trade setup" (ATM long options).
+ *   $Gamma per contract   = gamma_ATM x S^2 x 100 shares / 100 = gamma_ATM x S^2   ($)
+ *   gamma P&L at move R   = 1/2 gamma (S R)^2 x 100 = 50 x gamma S^2 x R^2   (Hull, OFOD ch. 19, delta-gamma P&L)
+ *   gamma_ATM             = phi(0) / (S sigma sqrt T)                         (r = q = 0)
+ *   premium per contract  = C_ATM x 100, C_ATM = S [N(v/2) - N(-v/2)], v = sigma sqrt T
+ *                           (~ 0.3989 S v; Brenner & Subrahmanyam 1988)
+ * The old sizing set contracts so that the gamma P&L AT THE FORECAST move
+ * equals the "risk budget", capped at 500. That never bounded the loss: a long
+ * option can lose its whole premium (OCC/OIC quick guide: long call max loss =
+ * premium paid), and because R^2 is tiny the gamma count is in the tens of
+ * thousands, so the 500 cap almost always bound. At S = 6,700, sigma 17%,
+ * T = 1 day: premium $2,378.41 per contract, 500 x $2,378.41 = $1,189,203 of
+ * premium against a $1M budget. The count is now floored to the premium
+ * budget too (420 contracts = $998,930), so contracts x premium <= budget.
+ */
+export function gammaBudgetContracts(args: {
+  spot: number;
+  sigma: number;        // decimal
+  T: number;            // years, > 0
+  rHatBps: number;      // forecast move, basis points (signed)
+  riskBudgetDollars: number;
+  maxContracts?: number;
+}): {
+  contracts: number;
+  gammaContracts: number;          // gamma P&L at the forecast move = budget
+  premiumCapContracts: number;     // premium at risk <= budget
+  dollarGammaPerContract: number;  // gamma_ATM x S^2, $ (P&L = 50 x this x R^2)
+  premiumPerContract: number;      // ATM option premium x 100, $
+  binding: "gamma-target" | "premium-cap" | "max-contracts" | "none";
+} {
+  const { spot: S, sigma, T, rHatBps, riskBudgetDollars: B } = args;
+  const cap = args.maxContracts ?? 500;
+  const zero = { contracts: 0, gammaContracts: 0, premiumCapContracts: 0, dollarGammaPerContract: 0, premiumPerContract: 0, binding: "none" as const };
+  if (!(S > 0) || !(sigma > 0) || !(T > 0) || !(B > 0) || !(Math.abs(rHatBps) >= 1)) return zero;
+  const v = sigma * Math.sqrt(T);
+  const gammaATM = 1 / (S * v * Math.sqrt(2 * Math.PI));
+  const dollarGamma = gammaATM * S * S;                      // $ per contract (x100 shares / 100)
+  const R = rHatBps / 10_000;
+  const N = (x: number) => {
+    // Abramowitz & Stegun 7.1.26
+    const t = 1 / (1 + 0.3275911 * Math.abs(x) / Math.SQRT2);
+    const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x / 2);
+    return x < 0 ? 0.5 * (1 - y) : 0.5 * (1 + y);
+  };
+  const premium = S * (N(v / 2) - N(-v / 2)) * 100;           // $ per contract
+  const gammaContracts = Math.floor(B / (50 * dollarGamma * R * R) + 1e-9);
+  const premiumCapContracts = Math.floor(B / premium + 1e-9);
+  const contracts = Math.max(0, Math.min(gammaContracts, premiumCapContracts, cap));
+  const binding = contracts === cap && cap < Math.min(gammaContracts, premiumCapContracts) ? "max-contracts"
+    : contracts === premiumCapContracts && premiumCapContracts < gammaContracts ? "premium-cap"
+    : "gamma-target";
+  return { contracts, gammaContracts, premiumCapContracts, dollarGammaPerContract: dollarGamma, premiumPerContract: premium, binding };
+}

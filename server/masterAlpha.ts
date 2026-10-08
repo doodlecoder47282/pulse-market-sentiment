@@ -28,6 +28,7 @@ import type { PivotBundle } from "./pivots";
 import { horizonTargetIso } from "./impliedScenario";
 import { yearsToExpiry } from "./timeToExpiry";
 import { etDate, nextTradingDay } from "./exchangeCalendar";
+import { gammaBudgetContracts } from "./sizingMath";
 
 const client = new Anthropic();
 
@@ -176,7 +177,9 @@ export interface MasterAlphaOutput {
   };
 
   // sizing
-  recommendedContracts: number;
+  recommendedContracts: number;            // whole contracts; premium at risk <= riskBudget_M
+  premiumPerContract:   number;            // $ per ATM contract (model, Brenner-Subrahmanyam)
+  premiumAtRisk_M:      number;            // $M: recommendedContracts x premiumPerContract
   dollarGammaAggregate: number;            // $M (from audit)
   gammaPnlAt_r_hat:     number;            // $M expected at compositeEdgeBps
 
@@ -512,7 +515,7 @@ function horizonOptionYears(horizon: Horizon, nowMs: number = Date.now()): numbe
 function sizePosition(
   spot: number, vix: number | null, dollarGamma_M: number,
   rHat_bps: number, riskBudget_M: number, horizon: Horizon
-): { contracts: number; pnl_M: number; dg_per_contract: number } {
+): { contracts: number; pnl_M: number; dg_per_contract: number; premium_per_contract: number; premiumAtRisk_M: number; binding: string } {
   const R = rHat_bps / 10000;
   const pnl_M = 50 * Math.abs(dollarGamma_M) * R * R;
   // ATM-equivalent per-contract $Γ
@@ -522,17 +525,18 @@ function sizePosition(
   // same basis as VIX). After today's close the daily target rolls to the
   // next session.
   const T = horizonOptionYears(horizon);
-  const gammaATM = 1 / (spot * sigma * Math.sqrt(T) * Math.sqrt(2 * Math.PI));
-  const dg_per_contract_M = (gammaATM * spot * spot / 100) * 100 / 1e6;  // $M/contract
-  const dgEff = Math.max(dg_per_contract_M, 0.0001);
-  const contracts = (Math.abs(rHat_bps) >= 1 && riskBudget_M > 0)
-    // whole contracts, rounded DOWN so the size never exceeds the risk budget
-    ? Math.min(500, Math.max(0, Math.floor(riskBudget_M / (50 * dgEff * R * R))))
-    : 0;
+  // Whole contracts, rounded DOWN, gamma-P&L target AND premium at risk <=
+  // budget (sizingMath.gammaBudgetContracts): the old count capped only the
+  // gamma P&L, so 500 ATM contracts could cost more than the budget.
+  const s = gammaBudgetContracts({ spot, sigma, T, rHatBps: rHat_bps, riskBudgetDollars: riskBudget_M * 1e6 });
+  const dgEff = Math.max(s.dollarGammaPerContract / 1e6, 0.0001);  // $M/contract
   return {
-    contracts,
+    contracts: s.contracts,
     pnl_M: Math.round(pnl_M * 1000) / 1000,
     dg_per_contract: Math.round(dgEff * 1000) / 1000,
+    premium_per_contract: Math.round(s.premiumPerContract * 100) / 100,                 // $ per contract
+    premiumAtRisk_M: Math.round(s.contracts * s.premiumPerContract / 1e6 * 1000) / 1000, // $M, <= budget
+    binding: s.binding,
   };
 }
 
@@ -631,7 +635,7 @@ Zero-γ [X] · Call Wall [X] · Put Wall [X] · Charm-zero [X]
 Nearest pivot: [name] @ [value] ([distBps]bps)
 
 ## Trade Setup
-Direction · GTBR trigger [X]pts · Size [N] contracts · $Γ/ctrct [X]M · Expected P&L at r̂: [X]K
+Direction · GTBR trigger [X]pts · Size [N] contracts (premium at risk $[premiumAtRisk_M]M) · $Γ/ctrct [X]M · Expected P&L at r̂: [X]K
 
 ## Locked Framework
 [one line on lockedTargetAlignment]
@@ -747,6 +751,11 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
     gtbrPoints: gtbrR.gtbrPoints,
     gtbrPct: r2(gtbrR.gtbrPct * 100),
     recommendedContracts: size.contracts,
+    // ATM premium per contract ($) and premium at risk ($M, <= riskBudget_M):
+    // the most the recommended size loses if the options expire worthless.
+    premiumPerContract: size.premium_per_contract,
+    premiumAtRisk_M: size.premiumAtRisk_M,
+    sizeBinding: size.binding,
     dollarGamma_per_contract_M: size.dg_per_contract,
     dollarGammaAggregate_M: r2(dollarGamma_M),
     gammaPnlAt_r_hat_M: r2(gammaPnlAt_r_hat),
@@ -803,6 +812,8 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
     nearestPivot: np,
     lockedTargetAlignment: lta,
     recommendedContracts: size.contracts,
+    premiumPerContract: size.premium_per_contract,
+    premiumAtRisk_M: size.premiumAtRisk_M,
     dollarGammaAggregate: dollarGamma_M,
     gammaPnlAt_r_hat,
     aiAnalysis,
