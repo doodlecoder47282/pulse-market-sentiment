@@ -12,6 +12,7 @@ import EdgeInfo from "@/components/EdgeInfo";
 
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { LAST_PRINT_SIDE_NOTE } from "@shared/flowLabels";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -105,6 +106,9 @@ interface IntradayFlowTicker {
   totalVol: number;
   totalPrem: number;
   netAggressorPrem: number;
+  /** Optional for older servers. "unavailable" = no chain data; zeros are placeholders. */
+  aggressorState?: "live" | "cached" | "unavailable";
+  sideMethod?: string;
 }
 
 interface IntradayFlowResponse {
@@ -284,7 +288,8 @@ function FlowTile({ tick }: { tick: FlowTicker }) {
 
 // ─── Intraday Volume Chart (UW-style mirror bars) ──────────────────────────────
 // "flow" view is the new default: mirror-stacked bars separating
-// bought vs sold calls and bought vs sold puts (aggressor-classified).
+// ask-side vs bid-side calls and puts by last-print side (each contract's day
+// volume tagged by its latest print vs the quote; not trade-by-trade).
 type ViewMode = "flow" | "bars" | "area" | "ratio";
 
 function StatBox({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "up" | "down" | "neutral" | "warn" }) {
@@ -304,6 +309,8 @@ function StatBox({ label, value, tone = "neutral" }: { label: string; value: str
 function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; estimated: boolean }) {
   const [view, setView] = useState<ViewMode>("flow");
   const series = ticker.series;
+  // A failed chain fetch is not a $0 read: show "—" instead of zeros.
+  const sideUnavailable = ticker.aggressorState === "unavailable";
 
   // Compute per-bucket deltas (UW-style flow)
   const deltaSeries = useMemo(() => {
@@ -315,7 +322,7 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
       const callDelta = prev ? Math.max(0, s.callVolume - prev.callVolume) : 0;
       const putDelta = prev ? Math.max(0, s.putVolume - prev.putVolume) : 0;
       const netDelta = callDelta - putDelta;
-      // Aggressor-side deltas (Lee-Ready estimate)
+      // Last-print-side deltas (day volume tagged by latest print, not Lee-Ready)
       const boughtCallDelta = prev ? Math.max(0, s.boughtCallVol - prev.boughtCallVol) : 0;
       const soldCallDelta   = prev ? Math.max(0, s.soldCallVol   - prev.soldCallVol)   : 0;
       const boughtPutDelta  = prev ? Math.max(0, s.boughtPutVol  - prev.boughtPutVol)  : 0;
@@ -485,50 +492,56 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
         <StatBox label="P/C" value={fmtPcr(ticker.currentPcr)} tone={ticker.currentPcr != null && ticker.currentPcr > 1.05 ? "down" : ticker.currentPcr != null && ticker.currentPcr < 0.75 ? "up" : "warn"} />
       </div>
 
-      {/* ─── AGGRESSOR BREAKDOWN: bought vs sold, classified via bid/ask vs last ─── */}
+      {/* ─── LAST-PRINT SIDE: day volume tagged by each contract's latest print vs quote ─── */}
       <div className="rounded-md border border-border/40 bg-card/20 p-2">
         <div className="mb-1.5 flex items-center justify-between">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Aggressor Flow · who paid up?</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground" title={ticker.sideMethod ?? LAST_PRINT_SIDE_NOTE}>Last-print side · ask vs bid</span>
           <span className="text-[9px] font-mono text-muted-foreground" data-testid="aggressor-classified-pct">
-            classified {ticker.aggressor.classifiedPct.toFixed(0)}% · bid/ask rule
+            {sideUnavailable
+              ? "side unavailable · no chain data"
+              : `classified ${ticker.aggressor.classifiedPct.toFixed(0)}% · last print vs quote${ticker.aggressorState === "cached" ? " · cached" : ""}`}
           </span>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <StatBox
-            label="Bought Calls $"
-            value={fmtDollar(ticker.aggressor.boughtCallPrem)}
+            label="Calls ask-side $"
+            value={sideUnavailable ? "—" : fmtDollar(ticker.aggressor.boughtCallPrem)}
             tone="up"
           />
           <StatBox
-            label="Sold Calls $"
-            value={fmtDollar(ticker.aggressor.soldCallPrem)}
+            label="Calls bid-side $"
+            value={sideUnavailable ? "—" : fmtDollar(ticker.aggressor.soldCallPrem)}
             tone="down"
           />
           <StatBox
-            label="Bought Puts $"
-            value={fmtDollar(ticker.aggressor.boughtPutPrem)}
+            label="Puts ask-side $"
+            value={sideUnavailable ? "—" : fmtDollar(ticker.aggressor.boughtPutPrem)}
             tone="down"
           />
           <StatBox
-            label="Sold Puts $"
-            value={fmtDollar(ticker.aggressor.soldPutPrem)}
+            label="Puts bid-side $"
+            value={sideUnavailable ? "—" : fmtDollar(ticker.aggressor.soldPutPrem)}
             tone="up"
           />
         </div>
         <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
           <StatBox
             label="Net Bias"
-            value={`${ticker.netAggressorPrem >= 0 ? "+" : ""}${fmtDollar(ticker.netAggressorPrem)} ${ticker.netAggressorPrem >= 0 ? "BULL" : "BEAR"}`}
-            tone={ticker.netAggressorPrem >= 0 ? "up" : "down"}
+            value={sideUnavailable ? "—" : `${ticker.netAggressorPrem >= 0 ? "+" : ""}${fmtDollar(ticker.netAggressorPrem)} ${ticker.netAggressorPrem >= 0 ? "BULL" : "BEAR"}`}
+            tone={sideUnavailable ? "neutral" : ticker.netAggressorPrem >= 0 ? "up" : "down"}
           />
           <StatBox
             label="Overall Vol"
             value={fmtVol(ticker.totalVol)}
             tone="neutral"
           />
+          {/* $ units: sum over side-tagged contracts of day volume x last x 100
+              (per-share last price x 100-share contract multiplier). Excludes
+              contracts whose last print sat at mid (untagged), so it is not
+              total day premium. */}
           <StatBox
-            label="Total Prem"
-            value={fmtDollar(ticker.totalPrem)}
+            label="Side-tagged prem"
+            value={sideUnavailable ? "—" : fmtDollar(ticker.totalPrem)}
             tone="neutral"
           />
         </div>
@@ -592,19 +605,19 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
                     <div className="rounded-lg border border-border bg-popover p-2 text-xs shadow-lg space-y-0.5 min-w-[180px]">
                       <div className="mb-1 font-semibold">{s.timeLabel}</div>
                       <div className="flex justify-between gap-4">
-                        <span className="text-emerald-400">Bought Calls</span>
+                        <span className="text-emerald-400">Calls ask-side</span>
                         <span className="font-mono text-emerald-300">{fmtVol(s.boughtCallDelta)}</span>
                       </div>
                       <div className="flex justify-between gap-4">
-                        <span className="text-emerald-700">Sold Calls</span>
+                        <span className="text-emerald-700">Calls bid-side</span>
                         <span className="font-mono text-emerald-300/70">{fmtVol(s.soldCallDelta)}</span>
                       </div>
                       <div className="flex justify-between gap-4">
-                        <span className="text-rose-400">Bought Puts</span>
+                        <span className="text-rose-400">Puts ask-side</span>
                         <span className="font-mono text-rose-300">{fmtVol(s.boughtPutDelta)}</span>
                       </div>
                       <div className="flex justify-between gap-4">
-                        <span className="text-rose-700">Sold Puts</span>
+                        <span className="text-rose-700">Puts bid-side</span>
                         <span className="font-mono text-rose-300/70">{fmtVol(s.soldPutDelta)}</span>
                       </div>
                       <div className="mt-1 pt-1 border-t border-border/50 flex justify-between gap-4">
@@ -741,17 +754,17 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
       <div className="flex items-center gap-3 text-[10px] text-muted-foreground px-2 flex-wrap">
         {view === "flow" ? (
           <>
-            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-emerald-400" /> Bought calls</span>
-            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-emerald-800/70" /> Sold calls</span>
-            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-rose-500" /> Bought puts</span>
-            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-rose-900/70" /> Sold puts</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-emerald-400" /> Calls ask-side</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-emerald-800/70" /> Calls bid-side</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-rose-500" /> Puts ask-side</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-rose-900/70" /> Puts bid-side</span>
             <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-slate-400" style={{ backgroundImage: "repeating-linear-gradient(90deg, #94a3b8 0 3px, transparent 3px 6px)" }} /> Overall vol</span>
-            <span className="text-muted-foreground/60">· aggressor from bid/ask rule</span>
+            <span className="text-muted-foreground/60" title={LAST_PRINT_SIDE_NOTE}>· side = last print vs quote, not trade-by-trade</span>
           </>
         ) : view === "bars" ? (
           <>
-            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 bg-emerald-500" /> Calls Δ (buying)</span>
-            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 bg-rose-500" /> Puts Δ (buying)</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 bg-emerald-500" /> Calls Δ volume (both sides)</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 bg-rose-500" /> Puts Δ volume (both sides)</span>
             <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-amber-500" /> P/C overlay</span>
             <span className="text-muted-foreground/60">· brighter = spike (≥2× avg)</span>
           </>
@@ -799,7 +812,7 @@ function IntradayFlowSection() {
       <div className="border-t border-border/40" />
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Intraday Call/Put Flow · Bought vs Sold</span>
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Intraday Call/Put Flow · Ask vs Bid Side</span>
           {!data.marketOpen && (
             <Badge variant="outline" className="text-[9px] text-muted-foreground border-border/50">After Hours</Badge>
           )}

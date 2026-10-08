@@ -19,10 +19,10 @@ type InfoEntry = {
 const INFO: Record<string, InfoEntry> = {
   "whale-flow": {
     title: "Whale Flow",
-    what: "A live detector for surgical options blocks: $2.5M+ premium, 15x volume vs open interest or a brand-new strike, bought at the ask, 1\u20133 days to expiry.",
-    how: "Expand a ticker to see each block's strike, side, and premium. CONFLUX means multiple whales hit adjacent strikes in the same direction \u2014 that clustering is the strongest signal on this panel.",
-    edge: "Someone paying millions at the ask for contracts that die in days is not hedging casually. Clustered, same-direction whale money tells you where informed conviction sits before price shows it.",
-    risk: "A single block can be one leg of a spread. Never size off one print \u2014 wait for the cluster.",
+    what: "A live detector for heavy contracts: $2.5M+ of cumulative day premium (volume x mid) on one contract, 15x volume vs open interest or a brand-new strike, last print at or above the ask, 1\u20133 days to expiry. The chain snapshot has no trade sizes, so a heavy contract can be thousands of small trades \u2014 it is not a block print.",
+    how: "Expand a ticker to see each heavy contract's strike, last-print side, and premium. CONFLUX means several heavy contracts on adjacent strikes lean the same way. Side comes from the latest print vs the quote, not from each trade.",
+    edge: "Large same-direction premium in contracts that expire in days is worth a look. Treat it as a lead to check against price and positioning, not as proof of informed money.",
+    risk: "The last-print side tags the whole day's volume by one print; on the delayed feed the print and quote can be from different moments. A heavy contract can be one leg of a spread or a closing trade. Never size off one contract.",
   },
   "tracked-signals": {
     title: "Tracked Signals",
@@ -49,10 +49,10 @@ const INFO: Record<string, InfoEntry> = {
     edge: "Knowing which side of the flip you're on decides whether fading or following is the right trade. Same chart, opposite playbooks.",
   },
   "order-flow": {
-    title: "Order Flow \u00b7 Signed Volume",
-    what: "Every minute of SPY tape classified as buy pressure (green, hit at the ask) or sell pressure (red, hit at the bid), with a cumulative line.",
+    title: "Signed Tick Volume (1m, SPY)",
+    what: "Each 1-minute SPY bar's whole volume signed by its close-to-close change (tick rule): green if the bar closed up, red if down, with a cumulative line. It does not see individual trades or the bid/ask, so it is not Lee-Ready and not order-book imbalance.",
     how: "Read the cumulative slope against price. Rising price + rising cumulative = healthy. Rising price + falling cumulative = the move is running on fumes.",
-    edge: "Divergence between tape and price leads price. This is the closest thing to watching real money vote in real time.",
+    edge: "A divergence between the cumulative line and price is a prompt to look closer. Because the sign comes from price itself, this read partly restates price.",
     risk: "Overnight and lunch hours print thin \u2014 don't read conviction into low-volume bars.",
   },
   "thermal-heatmap": {
@@ -132,9 +132,9 @@ const INFO: Record<string, InfoEntry> = {
   },
   "ml-forecast": {
     title: "Projected Path",
-    what: "A machine-learned forecast of where SPY goes over the next hour, drawn as three paths: base (best guess), bull (realistic best case), and bear (realistic worst case), extended to the close.",
-    how: "Read the verdict strip first \u2014 it says lean up, lean down, or flat in one sentence. Then check band width: a tight band means the model is confident, a wide band means direction is a coin-flip and you should trade the levels instead. The dealer lines on the chart (walls, flip) are where the path is most likely to stall or accelerate.",
-    edge: "The forecast is not a crystal ball \u2014 the edge is knowing when the model is confident versus guessing. Tight band + a clear lean + gamma regime agreeing is the highest-probability window this panel produces.",
+    what: "A volatility cone for SPY over the next hour, extended to the close: base, upper and lower paths from a quantile model. The served model was trained on simulated random-walk minutes with random dealer-level features, not real market data, so treat it as a volatility cone (simulated training), not a learned forecast.",
+    how: "Read band width as a rough size of the expected range. The lean of the base path and the dealer lines are not learned from real data in this model version. Coverage of the 10\u201390% band on real outcomes has not been verified yet.",
+    edge: "None claimed until the model is retrained on real minute bars and logged greeks and its live 10\u201390% coverage is scored. Use the dealer levels and your own read for direction.",
     risk: "Forecasts decay fast after news or a regime break. If price rips through a wall the whole projection re-anchors \u2014 never hold a trade just because the old path said so.",
   },
   "trade-desk": {

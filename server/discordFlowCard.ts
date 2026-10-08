@@ -1,14 +1,20 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// discordFlowCard.ts — WHALE flow alert formatter for Discord
+// discordFlowCard.ts — WHALE flow (heavy contracts) alert formatter for Discord
+//
+// A "whale" here is a heavy contract: large cumulative day premium on one
+// contract (can be many small trades), not a block print. Side is the
+// last-print side (latest print vs quote), not trade-by-trade aggressor data.
 //
 // One embed per ticker. Hits ranked by premium desc.
 // Title: "🐋 WHALE FLOW — $TICKER" (no emoji per project rules — replaced w/ text)
 // Color: bullish=green / bearish=red / mixed=blue
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { postToDiscord, WHALE_WEBHOOK_URL } from "./discord";
+import { postToDiscord } from "./discord";
+import { safeErrorSummary } from "./webhookConfig";
 import type { WhaleHit } from "./flowAlertEngine";
 import { getFlowConfig } from "./flowConfig";
+import { HEAVY_CONTRACT_NOTE } from "@shared/flowLabels";
 
 const COLOR_BULL = 0x16a34a;
 const COLOR_BEAR = 0xdc2626;
@@ -32,11 +38,11 @@ function fmtHit(h: WhaleHit): string {
     `**${h.strike}${side}** ${exp} (${h.dte}d)`,
     `${fmtMoney(h.premium)}`,
     ratioPart,
-    `${h.tag}`,
+    `last print ${h.tag}`,
   ];
   // MISSION FIX #5 — intent read: opening probability + spread-leg flag +
   // directional confidence. Heuristic, but far better than assuming every
-  // block is directional conviction.
+  // heavy contract is directional conviction.
   if (h.openingProb != null) {
     const intent = h.openingProb >= 0.75 ? "likely opening" : h.openingProb >= 0.5 ? "lean opening" : "closing risk";
     parts.push(`${intent} ${(h.openingProb * 100).toFixed(0)}%`);
@@ -71,7 +77,7 @@ export async function postWhaleFlowAlert(
 
     // Header summary line
     const summary = [
-      `**Total whale premium:** ${fmtMoney(totalPrem)}`,
+      `**Total heavy-contract premium:** ${fmtMoney(totalPrem)}`,
       `**Calls:** ${callCount} (${fmtMoney(callPrem)})  •  **Puts:** ${putCount} (${fmtMoney(putPrem)})`,
       `**C/P ratio:** ${netRatio.toFixed(2)}x`,
     ].join("\n");
@@ -79,9 +85,9 @@ export async function postWhaleFlowAlert(
     // Hit list — top 8 to stay under embed char limit
     const top = hits.slice(0, 8);
     const list = top.map((h, i) => `\`${String(i + 1).padStart(2)}.\` ${fmtHit(h)}`).join("\n");
-    const moreLine = hits.length > 8 ? `\n_+ ${hits.length - 8} more whale print(s)_` : "";
+    const moreLine = hits.length > 8 ? `\n_+ ${hits.length - 8} more heavy contract(s)_` : "";
 
-    const description = `${summary}\n\n${list}${moreLine}`;
+    const description = `${summary}\n\n${list}${moreLine}\n\n_${HEAVY_CONTRACT_NOTE}_`;
 
     return await postToDiscord({
       username: "Pulse Batcave — Whale Flow",
@@ -94,13 +100,13 @@ export async function postWhaleFlowAlert(
         footer: { text: (() => {
           const cfg = getFlowConfig();
           const tag = cfg.requiredTag === "AT_ASK" ? "AT/ABOVE_ASK" : cfg.requiredTag;
-          return `whale gate: ${fmtMoney(cfg.premiumFloor)}+ premium • vol/OI ${cfg.volOiRatio}x+ OR new-strike • ${tag} • dte ${cfg.minDte}-${cfg.maxDte}`;
+          return `heavy-contract gate: ${fmtMoney(cfg.premiumFloor)}+ day premium • vol/OI ${cfg.volOiRatio}x+ OR new-strike • last print ${tag} • dte ${cfg.minDte}-${cfg.maxDte}`;
         })() },
         timestamp: new Date().toISOString(),
       }],
-    }, WHALE_WEBHOOK_URL);
+    }, "whale");
   } catch (e: any) {
-    console.warn(`[discordFlowCard] post ${ticker} failed: ${e?.message ?? e}`);
+    console.warn(`[discordFlowCard] post ${ticker} failed: ${safeErrorSummary(e)}`);
     return false;
   }
 }

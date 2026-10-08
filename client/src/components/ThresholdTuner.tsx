@@ -202,7 +202,7 @@ export function ThresholdTuner() {
             />
           </label>
           <label className="space-y-1">
-            <span className="text-xs text-muted-foreground">aggressor tag</span>
+            <span className="text-xs text-muted-foreground" title="Side of the contract's latest print vs the quote; not trade-by-trade aggressor data">last-print tag</span>
             <select
               value={requiredTag}
               onChange={(e) => setRequiredTag(e.target.value as FlowConfig["requiredTag"])}

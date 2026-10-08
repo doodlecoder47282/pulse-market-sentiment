@@ -121,7 +121,9 @@ function computeAlerts(
     }
   }
 
-  // 2. BLOCK_TRADE — single strike with volume ≥ 500 (institutional size)
+  // 2. HEAVY STRIKE (type key "BLOCK" kept for compatibility) — cumulative day
+  //    volume on one strike >= 2000 contracts. Not a block print: the chain
+  //    snapshot has no trade sizes, so this can be many small trades.
   const allStrikes = new Set([...Object.keys(callStats.strikeVol), ...Object.keys(putStats.strikeVol)]);
   for (const strikeStr of Array.from(allStrikes)) {
     const callVol = callStats.strikeVol[strikeStr] ?? 0;
@@ -136,7 +138,7 @@ function computeAlerts(
         symbol,
         strike: parseFloat(strikeStr),
         side: dominant,
-        message: `Block-level activity at ${strikeStr} — ${totalVol.toLocaleString()} total contracts (${callVol.toLocaleString()}C / ${putVol.toLocaleString()}P)`,
+        message: `Heavy cumulative volume at ${strikeStr} — ${totalVol.toLocaleString()} contracts today (${callVol.toLocaleString()}C / ${putVol.toLocaleString()}P), not a block print`,
         severity: totalVol >= 5000 ? "high" : "med",
       });
     }
@@ -212,7 +214,7 @@ const SEVERITY_CLASSES: Record<AlertSeverity, { dot: string; border: string; bg:
 
 const TYPE_LABELS: Record<FlowAlertType, string> = {
   UNUSUAL_VOL: "UNUSUAL VOL",
-  BLOCK: "BLOCK TRADE",
+  BLOCK: "HEAVY STRIKE",
   MAGNET: "STRIKE MAGNET",
   PC_SHIFT: "P/C SHIFT",
   WALL: "WALL BUILD",
@@ -464,7 +466,7 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
                 <div>
                   <div className="text-sm font-medium text-muted-foreground">Schwab offline — connect to watch flow alerts</div>
                   <div className="text-xs text-muted-foreground/60 mt-1">
-                    Real-time option chain data required to detect unusual volume, block trades, and wall formation.
+                    Real-time option chain data required to detect unusual volume, heavy strikes, and wall formation.
                   </div>
                 </div>
                 {onOpenSettings && (
@@ -487,7 +489,7 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
                   {symbol} flow is quiet — no alerts yet
                 </div>
                 <div className="text-[9px] text-muted-foreground/40">
-                  Polling every 30s · alerts fire on unusual volume, block trades, P/C shifts, wall formation
+                  Polling every 30s · alerts fire on unusual volume, heavy strikes, P/C shifts, wall formation
                 </div>
               </div>
             ) : (

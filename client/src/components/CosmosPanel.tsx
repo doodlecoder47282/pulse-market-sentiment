@@ -1,14 +1,17 @@
 // CosmosPanel.tsx — Cosmos tab for the Pulse Batcave terminal.
 //
-// Combines the trading-astrology intel brief (static reference content —
-// taxonomy, books, academic papers, edge rules) with the live astronomy
-// engine in server/cosmos.ts (real-time planetary positions, aspects,
-// lunar phase, NOAA Kp, natal-chart transits). Every taxonomy entry gets
-// a live "lit" state so the static doc doubles as a real-time indicator.
+// CONTEXT ONLY, FOR ENTERTAINMENT, NOT A TRADING SIGNAL (review finding 5.3).
+// The tab shows sky facts with an evidence label per item; it renders no
+// trade instruction, direction call, size or alert, and no other panel or
+// engine reads Cosmos output as a signal.
 //
-// Design language is lifted from trading_astrology_intel_brief.html:
-// gold/blue/green accents on near-black, Georgia serif body, monospace
-// labels, tier badges, signal rows with weight indicators.
+// Combines financial-astrology reference content (taxonomy, books, papers,
+// reading rules) with the live astronomy engine in server/cosmos.ts
+// (planetary positions, aspects, lunar phase, NOAA Kp). Every taxonomy entry
+// shows whether the sky event is happening now and its evidence level.
+//
+// Design language: gold/blue/green accents on near-black, Georgia serif
+// body, monospace labels, tier badges, rows with evidence labels.
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -33,13 +36,14 @@ type CosmosResponse = {
     lunarPhase: { name: string; illumination: number; angle: number };
     voidOfCourse: { active: boolean; nextSignAt?: string; nextSign?: string };
     bradley: { value: number; trend: "rising" | "falling"; zone: "high" | "low" | "neutral" };
-    financialSignals: Array<{ id: string; severity: "high" | "medium" | "low"; headline: string; detail: string }>;
+    financialSignals: Array<{ id: string; severity: "high" | "medium" | "info"; headline: string; detail: string; evidence?: string }>;
     zodiacReadings: Array<{ sign: string; glyph: string; element: string; tone: string; reading: string; rulingPlanet: string }>;
     natalTransits: Array<{
       symbol: string; natalName: string; score: number;
       aspects: Array<{ transitingPlanet: string; aspect: string; natalPlanet: string; orb: number; applying: boolean }>;
     }>;
     dailyBriefMarkdown: string;
+    disclaimer?: string;
   };
   kp: {
     fetchedAt: string; current: number | null; max24h: number | null;
@@ -48,7 +52,7 @@ type CosmosResponse = {
   } | null;
   taxonomy: Array<{
     id: string; name: string; category: "planetary" | "lunar" | "solar_geomag" | "cycle_gann";
-    tags: string[]; description: string; weight: string;
+    tags: string[]; description: string; weight: string; evidence?: string;
   }>;
   taxonomyLive: Record<string, {
     id: string; active: boolean; strength: number;
@@ -69,7 +73,9 @@ type OutlookEvent = {
   headline: string;
   detail: string;
   severity: "high" | "medium" | "low";
+  /** Deprecated: always "neutral" on current servers; not displayed. */
   bias: "bullish" | "bearish" | "neutral" | "volatile";
+  evidence?: string;
 };
 
 type OutlookHorizon = {
@@ -77,6 +83,7 @@ type OutlookHorizon = {
   startDate: string;
   endDate: string;
   events: OutlookEvent[];
+  /** Deprecated: always "neutral" on current servers; not displayed (no direction calls). */
   netBias: "bullish" | "bearish" | "mixed" | "neutral";
   keyDates: string[];
   markdown: string;
@@ -93,6 +100,9 @@ type OutlookResponse = {
     generatedAt: string;
   };
 };
+
+const COSMOS_DISCLAIMER_FALLBACK =
+  "Cosmos is sky context for entertainment, not a trading signal. Nothing here is a trade instruction, direction call, position size or alert, and no other Batcave engine reads it.";
 
 // ─── Palette tokens (match intel brief HTML) ────────────────────────────────
 const ACCENT_GOLD = "#c8a96e";
@@ -608,22 +618,32 @@ export default function CosmosPanel() {
       {/* ── Header ── */}
       <div className="flex items-baseline justify-between gap-4 flex-wrap pb-5 mb-5 border-b" style={{ borderColor: BORDER_COL }}>
         <div>
-          <div className="cm-title">COSMOS — MARKET ASTROLOGY &amp; SKY SIGNALS</div>
-          <div className="cm-subtitle mt-1.5">Live planetary engine · intel brief · academic research · edge extraction framework</div>
+          <div className="cm-title">COSMOS — SKY CONTEXT</div>
+          <div className="cm-subtitle mt-1.5">Live planetary engine · financial-astrology reference · what the research does and does not show</div>
         </div>
         <div className="cm-stamp">
           {data ? new Date(data.snapshot.generatedAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }).toUpperCase() : "LOADING"}
         </div>
       </div>
 
+      {/* ── Disclaimer: always visible ── */}
+      <div
+        className="mb-5 rounded px-3 py-2"
+        style={{ border: `1px solid ${ACCENT_GOLD}55`, background: BG3, fontSize: 12, color: TEXT }}
+        data-testid="cosmos-disclaimer"
+      >
+        <span style={{ fontFamily: "monospace", fontSize: 10, color: ACCENT_GOLD, letterSpacing: "0.08em" }}>FOR ENTERTAINMENT, NOT A TRADING SIGNAL · </span>
+        {data?.snapshot.disclaimer ?? COSMOS_DISCLAIMER_FALLBACK}
+      </div>
+
       {/* ── Sub-tabs ── */}
       <div className="flex gap-0 border-b mb-6 hscroll-contain" style={{ borderColor: BORDER_COL }}>
         {([
           { id: "live", label: "LIVE SKY" },
-          { id: "taxonomy", label: "SIGNAL TAXONOMY" },
+          { id: "taxonomy", label: "SKY TAXONOMY" },
           { id: "academic", label: "ACADEMIC RESEARCH" },
           { id: "books", label: "BOOKS & SOURCES" },
-          { id: "edge", label: "EDGE EXTRACTION" },
+          { id: "edge", label: "READING RULES" },
         ] as Array<{ id: SubTab; label: string }>).map((t) => (
           <button
             key={t.id}
@@ -701,11 +721,8 @@ function OutlookPanel() {
   }
 
   const active = data[horizon];
-  const biasColor =
-    active.netBias === "bullish" ? ACCENT_GREEN
-    : active.netBias === "bearish" ? ACCENT_DANGER
-    : active.netBias === "mixed" ? ACCENT_GOLD
-    : MUTED;
+  // No direction call: the card border is neutral (netBias is not displayed).
+  const biasColor = MUTED;
 
   // Pick body content based on source toggle
   const bodyText =
@@ -728,7 +745,7 @@ function OutlookPanel() {
         {/* Header bar */}
         <div className="flex items-center justify-between gap-3 px-5 py-3 border-b flex-wrap" style={{ borderColor: BORDER_COL, background: BG3 }}>
           <div className="flex items-center gap-3 flex-wrap">
-            <div style={{ fontFamily: "monospace", fontSize: 11, color: ACCENT_GOLD, letterSpacing: "0.08em" }}>AI MARKET OUTLOOK</div>
+            <div style={{ fontFamily: "monospace", fontSize: 11, color: ACCENT_GOLD, letterSpacing: "0.08em" }}>SKY CALENDAR</div>
             <div style={{ fontFamily: "monospace", fontSize: 10, color: MUTED }}>{startFmt} → {endFmt}</div>
             <div style={{ fontFamily: "monospace", fontSize: 9, color: MUTED, letterSpacing: "0.06em" }}>
               UPDATED {new Date(data.meta.generatedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
@@ -764,21 +781,21 @@ function OutlookPanel() {
           </div>
         </div>
 
-        {/* Bias strip + stats */}
+        {/* Stats strip (no direction call) */}
         <div className="flex items-center justify-between gap-4 px-5 py-3 border-b flex-wrap" style={{ borderColor: BORDER_COL }}>
           <div className="flex items-center gap-6 flex-wrap">
             <div>
-              <div style={{ fontFamily: "monospace", fontSize: 9, color: MUTED, letterSpacing: "0.08em" }}>NET BIAS</div>
-              <div style={{ fontFamily: "monospace", fontSize: 15, color: biasColor, fontWeight: "bold", letterSpacing: "0.04em" }}>
-                {active.netBias.toUpperCase()}
+              <div style={{ fontFamily: "monospace", fontSize: 9, color: MUTED, letterSpacing: "0.08em" }}>DIRECTION CALL</div>
+              <div style={{ fontFamily: "monospace", fontSize: 15, color: MUTED, fontWeight: "bold", letterSpacing: "0.04em" }} title="Cosmos makes no direction calls">
+                NONE
               </div>
             </div>
             <div>
-              <div style={{ fontFamily: "monospace", fontSize: 9, color: MUTED, letterSpacing: "0.08em" }}>KEY DATES</div>
+              <div style={{ fontFamily: "monospace", fontSize: 9, color: MUTED, letterSpacing: "0.08em" }}>MAJOR EVENTS</div>
               <div style={{ fontFamily: "monospace", fontSize: 15, color: ACCENT_GOLD, fontWeight: "bold" }}>{highCount}</div>
             </div>
             <div>
-              <div style={{ fontFamily: "monospace", fontSize: 9, color: MUTED, letterSpacing: "0.08em" }}>SECONDARY</div>
+              <div style={{ fontFamily: "monospace", fontSize: 9, color: MUTED, letterSpacing: "0.08em" }}>OTHER EVENTS</div>
               <div style={{ fontFamily: "monospace", fontSize: 15, color: ACCENT_BLUE, fontWeight: "bold" }}>{medCount}</div>
             </div>
           </div>
@@ -787,7 +804,7 @@ function OutlookPanel() {
             <button
               data-testid="outlook-source-deterministic"
               onClick={() => setSource("deterministic")}
-              title="Rule-based astro calculation"
+              title="Deterministic sky calendar"
               style={{
                 padding: "3px 10px", fontSize: 9, fontFamily: "monospace", letterSpacing: "0.06em",
                 background: source === "deterministic" ? `${ACCENT_GOLD}22` : "transparent",
@@ -835,6 +852,11 @@ function OutlookPanel() {
 
         {/* Body */}
         <div className="px-5 py-4" style={{ fontFamily: "Georgia, serif", fontSize: 13, lineHeight: 1.65, color: TEXT, maxHeight: 380, overflowY: "auto" }}>
+          {source !== "deterministic" && (
+            <div style={{ fontFamily: "monospace", fontSize: 9, color: MUTED, letterSpacing: "0.06em", marginBottom: 6 }}>
+              AI-WRITTEN NARRATIVE · CONTEXT ONLY, NOT A TRADING SIGNAL · MAY CONTAIN ERRORS
+            </div>
+          )}
           <OutlookMarkdown text={bodyText ?? active.markdown} />
         </div>
 
@@ -904,7 +926,7 @@ function LiveSkyTab({ data }: { data: CosmosResponse }) {
           <div className="cm-stat-label">{(s.lunarPhase.illumination * 100).toFixed(0)}% illum · Moon in {s.positions.find(p => p.id === "moon")?.sign}</div>
         </div>
         <div className="cm-stat">
-          <div className="cm-stat-val" style={{ color: s.bradley.zone === "high" ? ACCENT_DANGER : s.bradley.zone === "low" ? ACCENT_GREEN : ACCENT_GOLD }}>
+          <div className="cm-stat-val" style={{ color: ACCENT_GOLD }} title="Bradley siderograph: practitioner index, no peer-reviewed support">
             {s.bradley.value.toFixed(2)}
           </div>
           <div className="cm-stat-label">Bradley {s.bradley.trend} · {s.bradley.zone} zone</div>
@@ -988,17 +1010,18 @@ function LiveSkyTab({ data }: { data: CosmosResponse }) {
         </div>
       )}
 
-      {/* Active financial signals */}
+      {/* Active sky events (context, not signals): labeled by evidence, not severity */}
       {s.financialSignals.length > 0 && (
         <div>
-          <div className="cm-section-label mb-3">Active Market Signals</div>
+          <div className="cm-section-label mb-3">Active Sky Events · context, not signals</div>
           <div className="cm-card p-4 space-y-3">
             {s.financialSignals.map((sig, i) => {
-              const color = sig.severity === "high" ? ACCENT_DANGER : sig.severity === "medium" ? ACCENT_GOLD : ACCENT_BLUE;
+              const evidence = sig.evidence ?? "no peer-reviewed support";
+              const color = evidence.startsWith("no ") ? MUTED : ACCENT_BLUE;
               return (
                 <div key={i} style={{ borderLeft: `3px solid ${color}`, paddingLeft: 12 }}>
                   <div style={{ fontFamily: "monospace", fontSize: 11, color, fontWeight: 600, letterSpacing: "0.05em" }}>
-                    {sig.severity.toUpperCase()} · {sig.headline}
+                    {sig.headline} · {evidence.toUpperCase()}
                   </div>
                   <div style={{ fontSize: 12.5, marginTop: 3, color: TEXT }}>{sig.detail}</div>
                 </div>
@@ -1064,30 +1087,28 @@ function KpStrip({ recent, forecast }: { recent: Array<{ time: string; kp: numbe
   );
 }
 
-// ─── SIGNAL TAXONOMY — full-merge with live lighting ────────────────────────
+// ─── SKY TAXONOMY — reference list with live state and evidence ─────────────
 function TaxonomyTab({ data }: { data: CosmosResponse }) {
   const sections: Array<{ key: "planetary" | "lunar" | "solar_geomag" | "cycle_gann"; label: string }> = [
-    { key: "planetary", label: "Planetary Signals" },
-    { key: "lunar", label: "Lunar Signals" },
-    { key: "solar_geomag", label: "Solar & Geomagnetic Signals" },
-    { key: "cycle_gann", label: "Time Cycle & Gann Signals" },
+    { key: "planetary", label: "Planetary Events" },
+    { key: "lunar", label: "Lunar Events" },
+    { key: "solar_geomag", label: "Solar & Geomagnetic Events" },
+    { key: "cycle_gann", label: "Time Cycle & Gann Lore" },
   ];
 
-  const weightLabel = (w: string) => {
-    if (w === "HIGH" || w === "HIGH_ACADEMIC") return { label: w === "HIGH_ACADEMIC" ? "HIGH ✓" : "HIGH", cls: "cm-weight-hi" };
-    if (w === "MEDIUM") return { label: "MEDIUM", cls: "cm-weight-med" };
-    if (w === "MACRO") return { label: "MACRO", cls: "cm-weight-lo" };
-    if (w === "FILTER") return { label: "FILTER", cls: "cm-weight-lo" };
-    if (w === "PROPRIETARY") return { label: "HIGH★", cls: "cm-weight-hi" };
-    if (w === "ESOTERIC") return { label: "ESOTERIC", cls: "cm-weight-lo" };
-    return { label: w, cls: "cm-weight-lo" };
+  // Right column shows the evidence level, not a signal weight. Older
+  // servers without `evidence` fall back to a neutral label.
+  const evidenceLabel = (e: { evidence?: string }) => {
+    const ev = e.evidence ?? "evidence not stated";
+    if (ev.startsWith("peer-reviewed") || ev.startsWith("working paper")) return { label: ev.toUpperCase(), cls: "cm-weight-med" };
+    return { label: ev.toUpperCase(), cls: "cm-weight-lo" };
   };
 
   return (
     <div className="space-y-6">
       <div style={{ fontSize: 12, color: MUTED, fontStyle: "italic" }}>
-        Every signal below shows its live state. Rows with a glowing left edge are ACTIVE NOW from the live engine or NOAA feed.
-        Use stacked confluence — never a single signal in isolation (see Edge Extraction tab).
+        Reference list of sky events that financial astrology talks about, with each one's live state and the evidence for a market effect.
+        "Active" means the sky event is happening, not that a market effect is expected. Context only, not a trading signal.
       </div>
 
       {sections.map((section) => {
@@ -1098,7 +1119,7 @@ function TaxonomyTab({ data }: { data: CosmosResponse }) {
             <div className="cm-card p-4">
               {entries.map((e) => {
                 const live = data.taxonomyLive[e.id];
-                const wt = weightLabel(e.weight);
+                const wt = evidenceLabel(e);
                 const isActive = live?.active === true;
                 return (
                   <div key={e.id} className={cn("cm-signal-row", isActive && "active")} data-testid={`taxonomy-row-${e.id}`}>
@@ -1106,7 +1127,7 @@ function TaxonomyTab({ data }: { data: CosmosResponse }) {
                       <div className="cm-signal-name">{e.name}</div>
                       <div className="mt-1">
                         {e.tags.map((tag) => (
-                          <span key={tag} className={cn("cm-tag", tag.includes("Bullish") && "green", tag.includes("Bearish") && "red")}>{tag}</span>
+                          <span key={tag} className="cm-tag">{tag}</span>
                         ))}
                       </div>
                       {live?.currentValue && (
@@ -1168,7 +1189,7 @@ function AcademicTab({ data }: { data: CosmosResponse }) {
       </div>
 
       <div>
-        <div className="cm-section-label mb-3">Federal Reserve / Central Bank Research</div>
+        <div className="cm-section-label mb-3">Federal Reserve Working Papers (and published versions)</div>
         <div className="cm-card p-4">
           {fed.map((p) => (
             <div key={p.title} className="cm-academic-row">
@@ -1204,11 +1225,11 @@ function AcademicTab({ data }: { data: CosmosResponse }) {
         <div className="cm-card p-4" style={{ fontSize: 12, lineHeight: 1.9 }}>
           <span className="cm-tag">SSRN.com</span> — all Fed working papers free (search by title above)<br />
           <span className="cm-tag">FRASER StLouisFed</span> — full-text FRB Atlanta working papers, free<br />
-          <span className="cm-tag">Wiley Online Library</span> — Pesavento/Lee books + Journal of Finance<br />
+          <span className="cm-tag">Wiley Online Library</span> — Pesavento/Lee practitioner books<br />
           <span className="cm-tag">ResearchGate</span> — most academic papers via request, often free PDF<br />
           <span className="cm-tag">ISFM</span> — International Society for Financial Astrology, practitioner papers<br />
           <span className="cm-tag">Foundation for the Study of Cycles</span> — Mogey's archive, historical cycle research<br />
-          <span className="cm-tag">NOAA Space Weather</span> — live Kp index (powers the GMS light in Taxonomy tab)
+          <span className="cm-tag">NOAA Space Weather</span> — live Kp index (shown in the Taxonomy tab as context)
         </div>
       </div>
     </div>
@@ -1234,16 +1255,14 @@ function BooksTab({ data }: { data: CosmosResponse }) {
           <span key={t} className={cn("cm-tag", t === "Wiley" && "gold", t === "Original source" && "gold", t === "Best entry point" && "green")}>{t}</span>
         ))}
       </div>
-      {b.score != null && (
-        <div className="cm-bar mt-3"><div className="cm-bar-fill" style={{ width: `${b.score}%` }} /></div>
-      )}
+      {/* No quality score bar: these are practitioner books, not rated evidence. */}
     </div>
   );
 
   return (
     <div className="space-y-6">
       <div>
-        <div className="cm-section-label mb-3">Tier I — Institutional / Wiley / Peer-Reviewed</div>
+        <div className="cm-section-label mb-3">Tier I — Practitioner Books (Wiley; not peer-reviewed)</div>
         {tier1.map(Card1)}
       </div>
       <div>
@@ -1262,7 +1281,7 @@ function BooksTab({ data }: { data: CosmosResponse }) {
   );
 }
 
-// ─── EDGE EXTRACTION tab ────────────────────────────────────────────────────
+// ─── READING RULES tab (sub-tab id "edge" kept) ─────────────────────────────
 function EdgeTab({ data }: { data: CosmosResponse }) {
   // Simple markdown-ish renderer: bold + newlines.
   const renderBody = (body: string) => {
@@ -1281,7 +1300,7 @@ function EdgeTab({ data }: { data: CosmosResponse }) {
 
   return (
     <div className="space-y-4">
-      <div className="cm-section-label">The Core Framework — Stacking Signals for Edge</div>
+      <div className="cm-section-label">How to read this tab — context, not signals</div>
 
       {data.rules.map((r) => (
         <div key={r.id} className={cn("cm-edge-block", r.color)} data-testid={`edge-rule-${r.id}`}>
@@ -1293,7 +1312,7 @@ function EdgeTab({ data }: { data: CosmosResponse }) {
       ))}
 
       <div className="cm-warn mt-6">
-        <div className="cm-warn-title mb-2">HONEST EDGE ASSESSMENT</div>
+        <div className="cm-warn-title mb-2">EVIDENCE SUMMARY</div>
         <div style={{ fontSize: 12, color: TEXT, lineHeight: 1.7 }}>
           {data.honestEdge}
         </div>

@@ -35,15 +35,14 @@ import { recordPrediction } from "./calibration";
 import { chainAbove, chainBelow, playbookCopy } from "./levelPlaybook";
 import { computeRealtimeTargets } from "./realtimeTargets";
 import { getTodayEventContext } from "./volCalendar";
+import { webhookOrWarn, safeErrorSummary } from "./webhookConfig";
 
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
 
 // Model channel webhook — every-30-min refined-area card lands here.
-// PULSE_DISCORD_MODEL_WEBHOOK overrides; falls back to dedicated model channel.
-const WEBHOOK_URL =
-  process.env.PULSE_DISCORD_MODEL_WEBHOOK ??
-  "https://discord.com/api/webhooks/1501708521010499735/dltDgL_xkY_e5dImY_oYZW8B-d7HCpbnHGAwgMVdIBCuyN58ld04ptSNsr1xfdywtg5T";
+// From PULSE_DISCORD_MODEL_WEBHOOK only (no hard-coded fallback); resolved at
+// send time, unset = card disabled, logged once.
 
 // ─── helpers ─────────────────────────────────────────────────────────────
 function fmt0(n: number | null | undefined): string {
@@ -730,7 +729,7 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
     return `VIX/SPX BREAKDOWN: ${dir} (${vixStr}, ${spxStr} over 5m)`;
   })();
 
-  // Wire 13: OFI block (Lee-Ready 1-min session-cumulative trend)
+  // Wire 13: signed tick volume block (tick rule on SPY 1-min bars; not Lee-Ready, not book OFI)
   // One-line summary: trend + acceleration + key numbers in thousands.
   const ofiBlock = (() => {
     const ofi = (audit as any).ofiTrend;
@@ -740,11 +739,11 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
       return (k >= 0 ? "+" : "") + k.toFixed(1) + "k";
     };
     if (ofi.trend === "NEUTRAL") {
-      return `OFI: NEUTRAL (cum=${fmtK(ofi.cumulative)})`;
+      return `TICK VOL: NEUTRAL (cum=${fmtK(ofi.cumulative)})`;
     }
     const accel = ofi.acceleration !== "FLAT" ? ` ${ofi.acceleration}` : "";
     return (
-      `OFI: ${ofi.trend}${accel} ` +
+      `TICK VOL: ${ofi.trend}${accel} ` +
       `(cum=${fmtK(ofi.cumulative)}, 15m=${fmtK(ofi.slope15m)}, 5m=${fmtK(ofi.slope5m)})`
     );
   })();
@@ -876,8 +875,10 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
   if (opts?.dryRun) {
     return { ok: true, preview: final };
   }
+  const webhookUrl = webhookOrWarn("model", "discord:model");
+  if (!webhookUrl) return { ok: false, preview: final };
   try {
-    const res = await fetch(WEBHOOK_URL, {
+    const res = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "Pulse Batcave", content: final }),
@@ -888,7 +889,7 @@ export async function postBatcaveDailyCard(opts?: { dryRun?: boolean }): Promise
       console.warn(`[discord:model] batcave card webhook ${res.status}: ${txt.slice(0, 200)}`);
     }
   } catch (e: any) {
-    console.warn(`[discord:model] batcave card webhook failed: ${e?.message ?? e}`);
+    console.warn(`[discord:model] batcave card webhook failed: ${safeErrorSummary(e)}`);
   }
 
   return { ok, preview: final };

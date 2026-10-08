@@ -109,7 +109,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
           "Neutral regime — only act on highest-conviction whales.",
         ],
         asOf: Date.now(),
-        whatThisIs: "Whale flow — $2.5M+ surgical option blocks (1–3DTE) plus a separate UOA scanner with cap-tiered clustering for any-ticker, any-date alerts.",
+        whatThisIs: "Whale flow — heavy contracts ($2.5M+ cumulative day premium on one contract, 1–3DTE; can be many small trades, not block prints) plus a separate UOA scanner with cap-tiered clustering for any-ticker, any-date alerts.",
       };
 
     case "chart":
@@ -197,15 +197,15 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone: "neutral",
-        topLine: "Astrology + sky engine — exotic regime context.",
-        subLine: "Treat as background coloring, not signal. CLV beats narrative.",
+        topLine: "Sky context — for entertainment, not a trading signal.",
+        subLine: "No trade instructions, direction calls, sizes or alerts. No engine reads it.",
         bullets: [
-          "Lunar phase, planetary aspects, transits — historical correlations are weak but present.",
-          "Useful as a tiebreaker when DFI + flow are split, not as primary signal.",
-          "Outside model ensemble — view-only.",
+          "Lunar, geomagnetic and SAD effects have studies behind them; all are small or disputed.",
+          "Retrogrades, Bradley, Gann and natal charts have no peer-reviewed support.",
+          "Outside every model, score and alert — view-only.",
         ],
         asOf: Date.now(),
-        whatThisIs: "Cosmic / astrological backdrop — color, not conviction.",
+        whatThisIs: "Astronomy facts plus financial-astrology reference, labeled by evidence. Context only.",
       };
 
     case "news":

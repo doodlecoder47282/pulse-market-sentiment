@@ -1,9 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // discordUoaCard.ts — Discord embed for UOA cluster fires.
-// One embed per cluster trigger. Routes to UOA_WEBHOOK_URL (falls back to whale).
+// One embed per cluster trigger. Routes to the "uoa" channel (falls back to whale).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { postToDiscord, UOA_WEBHOOK_URL } from "./discord";
+import { postToDiscord } from "./discord";
+import { safeErrorSummary } from "./webhookConfig";
 import type { UoaCluster } from "./uoaScanner";
 
 const COLOR_BULL = 0x16a34a;
@@ -52,9 +53,9 @@ export async function postUoaClusterAlert(c: UoaCluster): Promise<boolean> {
       }],
     };
 
-    return await postToDiscord(payload, UOA_WEBHOOK_URL);
+    return await postToDiscord(payload, "uoa");
   } catch (e: any) {
-    console.warn(`[discordUoaCard] failed: ${e?.message ?? e}`);
+    console.warn(`[discordUoaCard] failed: ${safeErrorSummary(e)}`);
     return false;
   }
 }

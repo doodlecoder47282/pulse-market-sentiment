@@ -19,6 +19,14 @@
 //   • Linear extrapolation past 60min uses the 30→60 slope, capped ±1.5%,
 //     and ends at 16:00 ET.
 //
+//   • Label: the served quantile model was trained on simulated random-walk
+//     minutes with random dealer-level features (ml_service v4 meta), so the
+//     panel is labeled "volatility cone (simulated training)" and the TRAINED
+//     badge reads SIM-TRAINED, unless /api/ml/health reports
+//     training_data: "real" for quantile_overlay (WS4 real-data retrain).
+//     The band is a cone width, not model confidence; this panel does not
+//     show the band's live 10-90% coverage (scored separately, if at all).
+//
 // No localStorage / sessionStorage / cookies. No emojis.
 
 import { useMemo } from "react";
@@ -65,6 +73,10 @@ interface MLModelHealth {
   trained_at: string | null;
   n_train: number;
   auc: number | null;
+  /** Optional; absent = treat as simulated. Set to "real" only by a real-data retrain. */
+  /** ml_service meta value, e.g. "synthetic_gbm" or "real". Anything other than
+   *  "real" (including absent/null) is treated as simulated training. */
+  training_data?: string | null;
 }
 
 interface HealthResponse {
@@ -208,6 +220,12 @@ function fmtMinuteAxis(min: number): string {
 
 // ─── Status strip (preserved testids) ────────────────────────────────────────
 
+/** True unless the service says this model was trained on real data. */
+function isSimTrained(m: MLModelHealth | undefined | null): boolean {
+  return (m?.training_data ?? "synthetic") !== "real";
+}
+const SIM_LABEL = "volatility cone (simulated training)";
+
 function statusVariant(s: string): "default" | "secondary" | "destructive" | "outline" {
   if (s === "TRAINED") return "default";
   if (s === "BOOTSTRAP") return "secondary";
@@ -268,14 +286,27 @@ function MLStatusStrip() {
       <Separator orientation="vertical" className="h-4 self-center" />
       <div className="flex items-center gap-1.5" data-testid="text-ml-status-quantile_overlay">
         <span className="text-muted-foreground font-medium">quantile_overlay</span>
-        <Badge variant={statusVariant(quantile_overlay?.status ?? "")} className={`text-xs h-5 ${statusColor(quantile_overlay?.status ?? "")}`}>
-          {quantile_overlay?.status ?? "—"}
-        </Badge>
+        {quantile_overlay?.status === "TRAINED" && isSimTrained(quantile_overlay) ? (
+          <Badge
+            variant="secondary"
+            className="text-xs h-5 text-amber-500"
+            title="Trained on simulated random-walk minutes and random dealer-level features, not real market data."
+            data-testid="badge-ml-sim-trained"
+          >
+            SIM-TRAINED
+          </Badge>
+        ) : (
+          <Badge variant={statusVariant(quantile_overlay?.status ?? "")} className={`text-xs h-5 ${statusColor(quantile_overlay?.status ?? "")}`}>
+            {quantile_overlay?.status ?? "—"}
+          </Badge>
+        )}
         {quantile_overlay?.version != null && (
           <span className="text-muted-foreground">v{quantile_overlay.version}</span>
         )}
         {quantile_overlay?.n_train != null && (
-          <span className="text-muted-foreground">n={quantile_overlay.n_train}</span>
+          <span className="text-muted-foreground">
+            n={quantile_overlay.n_train}{isSimTrained(quantile_overlay) ? " simulated rows" : ""}
+          </span>
         )}
       </div>
       <Separator orientation="vertical" className="h-4 self-center" />
@@ -451,6 +482,14 @@ export default function MLProjectionPanel() {
     refetchInterval: isRth ? 5_000 : 5 * 60_000,
     retry: false,
   });
+  // Same query key as MLStatusStrip, so react-query shares one request.
+  const { data: health } = useQuery<HealthResponse>({
+    queryKey: ["/api/ml/health"],
+    queryFn: () => apiRequest("GET", "/api/ml/health").then((r) => r.json()),
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  const simTrained = isSimTrained(health?.models?.quantile_overlay);
 
   const candles = data?.candles ?? [];
   const levels = data?.levels ?? null;
@@ -759,7 +798,7 @@ export default function MLProjectionPanel() {
     return (
       <Card data-testid="panel-ml-projection" className="border-border/60">
         <CardHeader>
-          <CardTitle>SPY — Projected Path (60min ML + extrapolation to close)</CardTitle>
+          <CardTitle>SPY — Projected Path · {simTrained ? SIM_LABEL : "quantile model"}</CardTitle>
         </CardHeader>
         <CardContent>
           <Skeleton className="h-[480px] w-full" />
@@ -772,7 +811,7 @@ export default function MLProjectionPanel() {
     return (
       <Card data-testid="panel-ml-projection" className="border-border/60">
         <CardHeader>
-          <CardTitle>SPY — Projected Path (60min ML + extrapolation to close)</CardTitle>
+          <CardTitle>SPY — Projected Path · {simTrained ? SIM_LABEL : "quantile model"}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-between rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm">
@@ -876,9 +915,9 @@ export default function MLProjectionPanel() {
   if (bandWidth > 0 && spot) {
     const widthPct = bandWidth / spot;
     if (widthPct < 0.004) {
-      interpretations.push(`tight band ($${bandWidth.toFixed(2)} width) — high conviction.`);
+      interpretations.push(`narrow cone ($${bandWidth.toFixed(2)} width) — width is not confidence; coverage not shown here.`);
     } else {
-      interpretations.push(`wide band ($${bandWidth.toFixed(2)}) — low conviction, trade levels not direction.`);
+      interpretations.push(`wide cone ($${bandWidth.toFixed(2)}) — trade levels, not direction.`);
     }
   }
   const topInterps = interpretations.slice(0, 3);
@@ -890,10 +929,10 @@ export default function MLProjectionPanel() {
   const convictionTight = bandWidth > 0 && spot ? bandWidth / spot < 0.004 : false;
   const verdictText =
     basePrice == null || spot == null
-      ? "projection warming up — verdict when the model has enough tape."
+      ? "projection warming up — cone appears when the model has enough tape."
       : lean === "FLAT"
-        ? `model sees a flat drift — expected close near $${fmtPrice(basePrice)}. ${convictionTight ? "tight band: the model is confident price stays contained." : "wide band: low conviction, trade the levels, not a direction."}`
-        : `model leans ${lean === "UP" ? "HIGHER" : "LOWER"} — base path to $${fmtPrice(basePrice)} (${fmtPct(leanPct)}). bull case $${fmtPrice(bullPrice)}, bear case $${fmtPrice(bearPrice)}. ${convictionTight ? "tight band = higher confidence in the path." : "wide band = direction is a coin-flip, respect both scenarios."}`;
+        ? `cone center flat — base path near $${fmtPrice(basePrice)}. ${convictionTight ? "narrow cone" : "wide cone: trade the levels, not a direction"}.${simTrained ? " simulated training: not a learned forecast." : ""}`
+        : `cone center drifts ${lean === "UP" ? "higher" : "lower"} — base path $${fmtPrice(basePrice)} (${fmtPct(leanPct)}), upper $${fmtPrice(bullPrice)}, lower $${fmtPrice(bearPrice)}.${simTrained ? " simulated training: the drift is not learned from real data." : ""}`;
   const verdictStyle =
     lean === "UP" ? "border-emerald-800 bg-emerald-950/40 text-emerald-200"
     : lean === "DOWN" ? "border-rose-800 bg-rose-950/40 text-rose-200"
@@ -907,10 +946,17 @@ export default function MLProjectionPanel() {
             <CardTitle className="flex items-center gap-2">
               <Activity className="w-4 h-4 shrink-0" />
               SPY — Projected Path
+              {simTrained && (
+                <Badge variant="outline" className="border-amber-500/50 text-amber-400 text-[10px] font-mono" data-testid="badge-ml-cone-label">
+                  {SIM_LABEL}
+                </Badge>
+              )}
               <EdgeInfo id="ml-forecast" />
             </CardTitle>
             <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
-              live candles, dealer levels, and three forward paths: where the model thinks price goes, best case and worst case. updates every 5s during market hours.
+              {simTrained
+                ? "live candles, dealer levels, and a volatility cone: base, upper and lower paths from a quantile model trained on simulated data, not real market history. not a learned forecast; this panel does not show the band\u2019s coverage on real outcomes. updates every 5s during market hours."
+                : "live candles, dealer levels, and three forward paths: base, upper and lower quantiles. this panel does not show the band\u2019s live 10-90% coverage. updates every 5s during market hours."}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">

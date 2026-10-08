@@ -12,6 +12,8 @@
 // Returns: { data: { options: [{ option: "SPY250509C00500000", volume, open_interest, ... }] } }
 // OCC format: ROOT + YYMMDD + C/P + STRIKE(8 digits) — we parse side from pos[-17].
 
+import { LAST_PRINT_SIDE_NOTE } from "@shared/flowLabels";
+
 const UA = "Mozilla/5.0 (compatible; PulseDashboard/1.0)";
 
 export type FlowTicker = {
@@ -173,7 +175,8 @@ export interface IntradayVolSample {
   callVolume: number;    // cumulative calls from open
   putVolume: number;     // cumulative puts from open
   pcRatio: number | null;
-  // Aggressor-classified cumulative volumes (Lee-Ready-style from bid/ask/last)
+  // Last-print-side cumulative volumes: each contract's whole day volume tagged
+  // by its latest print vs the current bid/ask (not trade-by-trade aggressor data)
   boughtCallVol: number;
   soldCallVol: number;
   unknownCallVol: number;
@@ -219,7 +222,13 @@ export interface IntradayFlowTicker {
   totalPrem: number;
   // Net aggressor score: (boughtCall + soldPut) - (soldCall + boughtPut)
   // positive = bullish aggression, negative = bearish aggression (premium $)
+  // Field names are historical; "bought"/"sold" mean ask-side/bid-side by last print.
   netAggressorPrem: number;
+  /** "live" = classified from this poll's chain; "cached" = fetch failed, last good
+   *  breakdown reused; "unavailable" = no chain data (breakdown zeros are placeholders). */
+  aggressorState: "live" | "cached" | "unavailable";
+  /** Honest label for the side classification shown in the UI. */
+  sideMethod: string;
 }
 
 export interface IntradayFlowResponse {
@@ -327,7 +336,10 @@ function synthesizeIntradaySeries(
   return samples;
 }
 
-// ─── Aggressor classifier (Lee-Ready-style quote rule) ────────────────────
+// ─── Last-print side classifier (quote rule on each contract's latest print) ─
+// NOT Lee-Ready (which classifies each trade against the prevailing quote):
+// the chain snapshot only has the day's cumulative volume and the latest print,
+// so the whole day volume of a contract takes the side of its latest print.
 // For each contract with volume > 0, classify today's volume as
 // buyer-initiated, seller-initiated, or unknown using bid/ask/last price.
 //   - last >= ask - eps  → BUY  (paid the offer)
@@ -390,9 +402,11 @@ export async function buildIntradayFlowSnapshot(): Promise<IntradayFlowResponse>
     // Fetch current snapshot from CBOE
     let callVol = 0, putVol = 0;
     let agg: AggressorBreakdown | null = null;
+    let chainRows = 0;
     try {
       const d = await cboeFetch(tk.cboeSymbol, 8_000);
       const opts: any[] = d?.data?.options || [];
+      chainRows = opts.length;
       for (const o of opts) {
         const side = parseSide(String(o.option || ""));
         const v = Number(o.volume || 0);
@@ -461,6 +475,9 @@ export async function buildIntradayFlowSnapshot(): Promise<IntradayFlowResponse>
 
     const currentCall = hasRealData ? callVol : buf.lastCallVol;
     const currentPut = hasRealData ? putVol : buf.lastPutVol;
+    // Data state for the side breakdown: never present a failed fetch as a $0 read.
+    const aggressorState: IntradayFlowTicker["aggressorState"] =
+      agg && chainRows > 0 ? "live" : !agg && buf.lastAggressor ? "cached" : "unavailable";
     const effectiveAgg: AggressorBreakdown = agg ?? buf.lastAggressor ?? {
       boughtCallVol: 0, soldCallVol: 0, unknownCallVol: 0,
       boughtPutVol: 0, soldPutVol: 0, unknownPutVol: 0,
@@ -489,6 +506,8 @@ export async function buildIntradayFlowSnapshot(): Promise<IntradayFlowResponse>
       totalVol,
       totalPrem,
       netAggressorPrem,
+      aggressorState,
+      sideMethod: LAST_PRINT_SIDE_NOTE,
     });
   }
 
