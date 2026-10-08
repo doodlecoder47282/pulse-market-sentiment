@@ -70,12 +70,14 @@ sqlite.exec(`
     day TEXT NOT NULL,
     horizon_min INTEGER NOT NULL,
     model TEXT NOT NULL,
+    version TEXT NOT NULL,          -- served model version: coverage is never pooled across versions
+    training_data TEXT,             -- 'real' | 'synthetic_gbm' | null
     n INTEGER NOT NULL,
     covered INTEGER NOT NULL,
-    rate REAL, wilson_lo REAL, wilson_hi REAL, kupiec_p REAL, mean_interval_score REAL,
+    rate REAL, wilson_lo REAL, wilson_hi REAL, kupiec_p REAL, independence_p REAL, mean_interval_score REAL,
     below_lo INTEGER, above_hi INTEGER,
     computed_at INTEGER NOT NULL,
-    PRIMARY KEY (day, horizon_min, model)
+    PRIMARY KEY (day, horizon_min, model, version)
   );
 `);
 
@@ -165,21 +167,23 @@ function scoreRows(rows: Array<{ ts: number; horizon_min: number; q10: number; q
 
 /** Recompute and store coverage for every ET day that has scored forecasts. */
 export function computeDailyCoverage(now = Date.now()): number {
-  const rows = sqlite.prepare(`SELECT ts, horizon_min, q10, q90, realized_ret FROM ml_forecast_log WHERE outcome = 'scored' AND model = 'quantile_overlay' ORDER BY ts ASC`)
-    .all() as Array<{ ts: number; horizon_min: number; q10: number; q90: number; realized_ret: number }>;
+  const rows = sqlite.prepare(`SELECT ts, horizon_min, q10, q90, realized_ret, version, training_data FROM ml_forecast_log
+                               WHERE outcome = 'scored' AND model = 'quantile_overlay' ORDER BY ts ASC`)
+    .all() as Array<{ ts: number; horizon_min: number; q10: number; q90: number; realized_ret: number; version: string | null; training_data: string | null }>;
   const groups = new Map<string, typeof rows>();
   for (const r of rows) {
-    const k = `${etDate(r.ts)}|${r.horizon_min}`;
+    const k = `${etDate(r.ts)}|${r.horizon_min}|${r.version ?? ""}`;
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k)!.push(r);
   }
   const up = sqlite.prepare(`INSERT OR REPLACE INTO ml_coverage_daily
-    (day, horizon_min, model, n, covered, rate, wilson_lo, wilson_hi, kupiec_p, mean_interval_score, below_lo, above_hi, computed_at)
-    VALUES (?, ?, 'quantile_overlay', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    (day, horizon_min, model, version, training_data, n, covered, rate, wilson_lo, wilson_hi, kupiec_p, independence_p, mean_interval_score, below_lo, above_hi, computed_at)
+    VALUES (?, ?, 'quantile_overlay', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   for (const [k, list] of groups) {
-    const [day, h] = k.split("|");
+    const [day, h, version] = k.split("|");
     const s = scoreRows(list);
-    up.run(day, Number(h), s.n, s.covered, s.rate, s.wilsonLo, s.wilsonHi, s.kupiecP, s.meanIntervalScore, s.belowLo, s.aboveHi, now);
+    up.run(day, Number(h), version, list[list.length - 1].training_data ?? null, s.n, s.covered, s.rate, s.wilsonLo, s.wilsonHi,
+      s.kupiecP, s.independenceP, s.meanIntervalScore, s.belowLo, s.aboveHi, now);
   }
   return groups.size;
 }
@@ -189,41 +193,58 @@ export interface CoverageReport {
   nominal: number;
   band: "q10-q90";
   note: string;
+  /** Coverage is scored per served model version; this report covers one version. */
+  version: string | null;
+  trainingData: string | null;
+  versionsSeen: Array<{ version: string; trainingData: string | null; scored: number }>;
   pooled: Array<{ horizonMin: number; windowDays: number } & CoverageScore>;
-  daily: Array<{ day: string; horizonMin: number; n: number; covered: number; rate: number | null; wilsonLo: number | null; wilsonHi: number | null; kupiecP: number | null; meanIntervalScore: number | null }>;
+  daily: Array<{ day: string; horizonMin: number; n: number; covered: number; rate: number | null; wilsonLo: number | null; wilsonHi: number | null; kupiecP: number | null; independenceP: number | null; meanIntervalScore: number | null }>;
   pending: number;
   noPrice: number;
-  trainingData: string | null;
 }
 
-/** Live coverage of the served 10-90% band: pooled over the last windowDays and per day. */
-export function getCoverageReport(windowDays = 30, now = Date.now()): CoverageReport {
+/**
+ * Live coverage of the served 10-90% band for ONE model version (default:
+ * the most recently served one), pooled over windowDays and per day. Versions
+ * and training types are never mixed: a retrain starts a fresh record.
+ */
+export function getCoverageReport(windowDays = 30, now = Date.now(), version?: string): CoverageReport {
   const since = now - windowDays * 24 * 3600_000;
-  let rows: Array<{ ts: number; horizon_min: number; q10: number; q90: number; realized_ret: number; training_data: string | null }> = [];
+  let rows: Array<{ ts: number; horizon_min: number; q10: number; q90: number; realized_ret: number; version: string | null; training_data: string | null }> = [];
   let pending = 0, noPrice = 0;
   let daily: CoverageReport["daily"] = [];
+  let versionsSeen: CoverageReport["versionsSeen"] = [];
+  let ver: string | null = version ?? null;
   try {
-    rows = sqlite.prepare(`SELECT ts, horizon_min, q10, q90, realized_ret, training_data FROM ml_forecast_log
-                           WHERE outcome = 'scored' AND model = 'quantile_overlay' AND ts >= ? ORDER BY ts ASC`).all(since) as typeof rows;
+    versionsSeen = (sqlite.prepare(`SELECT version, training_data, COUNT(*) n, MAX(ts) last FROM ml_forecast_log
+                                    WHERE outcome = 'scored' AND model = 'quantile_overlay' AND ts >= ?
+                                    GROUP BY version, training_data ORDER BY last DESC`).all(since) as any[])
+      .map((r) => ({ version: String(r.version ?? ""), trainingData: r.training_data ?? null, scored: Number(r.n) }));
+    if (ver == null) ver = versionsSeen[0]?.version ?? null;
+    rows = sqlite.prepare(`SELECT ts, horizon_min, q10, q90, realized_ret, version, training_data FROM ml_forecast_log
+                           WHERE outcome = 'scored' AND model = 'quantile_overlay' AND ts >= ? AND COALESCE(version, '') = ?
+                           ORDER BY ts ASC`).all(since, ver ?? "") as typeof rows;
     pending = Number((sqlite.prepare(`SELECT COUNT(*) n FROM ml_forecast_log WHERE outcome = 'pending'`).get() as any)?.n ?? 0);
     noPrice = Number((sqlite.prepare(`SELECT COUNT(*) n FROM ml_forecast_log WHERE outcome = 'no_price' AND ts >= ?`).get(since) as any)?.n ?? 0);
-    daily = (sqlite.prepare(`SELECT day, horizon_min, n, covered, rate, wilson_lo, wilson_hi, kupiec_p, mean_interval_score FROM ml_coverage_daily
-                             WHERE model = 'quantile_overlay' ORDER BY day DESC, horizon_min ASC LIMIT 400`).all() as any[])
-      .map((r) => ({ day: r.day, horizonMin: r.horizon_min, n: r.n, covered: r.covered, rate: r.rate, wilsonLo: r.wilson_lo, wilsonHi: r.wilson_hi, kupiecP: r.kupiec_p, meanIntervalScore: r.mean_interval_score }));
+    daily = (sqlite.prepare(`SELECT day, horizon_min, n, covered, rate, wilson_lo, wilson_hi, kupiec_p, independence_p, mean_interval_score FROM ml_coverage_daily
+                             WHERE model = 'quantile_overlay' AND version = ? ORDER BY day DESC, horizon_min ASC LIMIT 400`).all(ver ?? "") as any[])
+      .map((r) => ({ day: r.day, horizonMin: r.horizon_min, n: r.n, covered: r.covered, rate: r.rate, wilsonLo: r.wilson_lo, wilsonHi: r.wilson_hi, kupiecP: r.kupiec_p, independenceP: r.independence_p, meanIntervalScore: r.mean_interval_score }));
   } catch { /* tables not created yet */ }
   const pooled = HORIZONS.map((h) => ({ horizonMin: h, windowDays, ...scoreRows(rows.filter((r) => r.horizon_min === h)) }));
-  const td = rows.length ? rows[rows.length - 1].training_data : null;
   return {
     asOf: now,
     nominal: NOMINAL,
     band: "q10-q90",
-    note: "Fraction of realized SPX forward returns inside the served 10-90% band; nominal 80%. Only non-overlapping outcome windows per horizon are counted. " +
-      "Wilson 95% interval on the rate; Kupiec p < 0.05 rejects correct coverage. n = 0 means no scored forecasts yet (not 0% coverage).",
+    note: "Fraction of realized SPX forward returns inside the served 10-90% band; nominal 80%, for one model version. Only non-overlapping outcome windows per horizon are counted. " +
+      "Wilson 95% interval on the rate; Kupiec p < 0.05 rejects correct coverage; Christoffersen independence p < 0.05 means misses cluster. " +
+      "n = 0 means no scored forecasts yet (not 0% coverage).",
+    version: ver,
+    trainingData: rows.length ? rows[rows.length - 1].training_data : (versionsSeen.find((v) => v.version === ver)?.trainingData ?? null),
+    versionsSeen,
     pooled,
     daily,
     pending,
     noPrice,
-    trainingData: td,
   };
 }
 
