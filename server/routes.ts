@@ -3763,7 +3763,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         { side: "C", map: chain.callExpDateMap },
         { side: "P", map: chain.putExpDateMap },
       ];
-      let totalOI = 0, totalVol = 0, validGammaCount = 0;
+      let totalOI = 0, totalVol = 0, validGammaCount = 0, unpricedGammaCount = 0;
       for (const { side, map } of passes) {
         const strikes = map?.[nearestKey] || {};
         for (const sk of Object.keys(strikes)) {
@@ -3789,12 +3789,18 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
             else { row.putOI += oi; row.putMid = mid; row.putIV = ivPct; row.T = T; }
             const weight = oi + vol * 0.25; // hybrid: 0DTE OI is stale by design, volume carries intraday info
             if (weight <= 0) continue;
-            const rawGamma = c.gamma ?? 0;
-            const gamma = rawGamma > 0 && rawGamma <= 1 ? rawGamma : 0; // vanilla gamma is (0,1]
             const sigma = sigmaClock;
             const sign = side === "C" ? 1 : -1;
-            // GEX in $ per 1% move (gamma x contracts x 100 x S^2 x 0.01)
-            if (gamma > 0) { row.gex += sign * dollarGexPerPct(gamma, weight, spot); validGammaCount++; }
+            // GEX in $ per 1% move (gamma x contracts x 100 x S^2 x 0.01) on the
+            // same basis as the Killbox, thermal map and gamma flip:
+            // Black-Scholes gamma (r = FLIP_RATE, q = FLIP_DIV_YIELD) with our
+            // clock T and sigma valid for it. The old line used Schwab's
+            // vendor gamma (undocumented clock), so this map's walls and the
+            // flip it is drawn against were on different gammas. A contract
+            // with no usable sigma is left out and counted, not given a vendor value.
+            const gamma = sigma > 0 ? bsGammaOurClock(spot, strike, sigma, T, FLIP_RATE, FLIP_DIV_YIELD) : 0;
+            if (gamma > 0 && Number.isFinite(gamma)) { row.gex += sign * dollarGexPerPct(gamma, weight, spot); validGammaCount++; }
+            else unpricedGammaCount++;
             if (sigma > 0) {
               // Dealer-signed $ delta-notional change to settlement (same-day
               // expiry: h = T), server/greekExposure.ts. The old line used
@@ -3918,6 +3924,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         netGex: gexValid ? +netGex.toFixed(0) : null, netCharm: gexValid ? +netCharm.toFixed(0) : null, regime,
         // units of the two numbers above (additive fields)
         netGexUnits: "$ per 1% spot move (dealer-signed)", netCharmUnits: "$ dealer delta-notional change to settlement, spot and vol held",
+        gexBasis: "Black-Scholes gamma (r 5%, q 1.3%), time to the real settlement instant, sigma solved from the mid inside 3 days; same basis as Killbox and the gamma flip",
+        gexContracts: { priced: validGammaCount, unpriced: unpricedGammaCount },
         levels: gexValid ? { callWall, putWall, gammaFlip: gammaFlip != null ? +gammaFlip.toFixed(0) : null, pin } : { callWall: null, putWall: null, gammaFlip: null, pin: null },
         weightTotals: { oi: totalOI, volume: totalVol },
         path,
