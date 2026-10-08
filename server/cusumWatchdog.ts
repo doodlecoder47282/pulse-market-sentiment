@@ -13,9 +13,11 @@
 // baseline, so a model that always lost to trivial still read HEALTHY.)
 //
 // Status badge (stats.skillWatchdog):
-//   HEALTHY   — window mean beats climatology and CUSUM ≤ 4σ
-//   DRIFTING  — no demonstrated skill (mean ≥ 0) or CUSUM in (4σ, 5σ]
-//   BROKEN    — CUSUM > 5σ, or worse than climatology with t ≥ 2
+//   HEALTHY   — demonstrated skill: Diebold-Mariano ≤ −2 vs climatology, CUSUM ≤ 4σ
+//   NO_SKILL  — not significantly better than climatology ("no demonstrated skill")
+//   DRIFTING  — CUSUM in (4σ, 5σ] (heuristic thresholds)
+//   BROKEN    — CUSUM > 5σ, or DM ≥ +2 (significantly worse than climatology)
+// One row per settled day, 1-day outcome: windows do not overlap (horizon 1).
 
 import Database from "better-sqlite3";
 import { skillWatchdog } from "./stats";
@@ -24,7 +26,7 @@ const sqlite = new Database("data.db");
 
 export function watchdogStatus(days: number = 60): {
   ok: boolean;
-  status: "HEALTHY" | "DRIFTING" | "BROKEN" | "INSUFFICIENT_DATA";
+  status: "HEALTHY" | "NO_SKILL" | "DRIFTING" | "BROKEN" | "INSUFFICIENT_DATA";
   n: number;
   cValue: number;
   baseline: number;
@@ -34,6 +36,8 @@ export function watchdogStatus(days: number = 60): {
     reference: string;
     meanDiff: number;
     tStat: number | null;
+    dmP?: number | null;
+    test?: string;
     bss: number | null;
     modelBrier: number;
     climatologyBrier: number;
@@ -87,6 +91,8 @@ export function watchdogStatus(days: number = 60): {
         reference: "climatology (realized base rates over the window)",
         meanDiff: w.meanDiff,
         tStat: w.tStat,
+        dmP: w.dmP,
+        test: "Diebold-Mariano (HLN-corrected), horizon 1, on BS_model - BS_climatology; HEALTHY needs DM <= -2",
         bss: w.bss,
         modelBrier: w.modelBrier,
         climatologyBrier: w.climatologyBrier,

@@ -444,21 +444,67 @@ export function brierSkillScore(modelBrier: number, climatologyBrier: number): n
   return 1 - modelBrier / climatologyBrier;
 }
 
-// ─── Skill watchdog (CUSUM anchored to zero skill) ────────────────────────
+// ─── Diebold-Mariano test of equal predictive accuracy ───────────────────
 //
-// d_t = BS_model,t − BS_clim,t, ordered oldest → newest. Mean d > 0 means the
-// model is worse than the base-rate forecaster. The CUSUM target is 0 (no
-// skill), so a model that is consistently worse than climatology accumulates
-// and trips, instead of reading HEALTHY against its own mean. A model whose
-// window mean is ≥ 0 is never HEALTHY: it has shown no skill.
-export type SkillWatchdogStatus = "HEALTHY" | "DRIFTING" | "BROKEN";
+// Diebold & Mariano (1995, JBES 13:253) on the loss differential
+// d_t = L(model)_t − L(reference)_t:
+//   DM = d̄ / sqrt(LRV / T),  LRV = γ̂0 + 2 Σ_{k=1}^{h−1} w_k γ̂k
+// with sample autocovariances γ̂k (1/T normalisation) and Newey-West Bartlett
+// weights w_k = 1 − k/h (bandwidth h − 1), which keeps LRV positive. For
+// h-step forecasts the outcome windows overlap by h − 1 periods, so d_t is
+// MA(h−1) under the null; h = 1 (non-overlapping) uses γ̂0 only.
+// Harvey, Leybourne & Newbold (1997, IJF 13:281) small-sample correction:
+//   DM* = DM · sqrt((T + 1 − 2h + h(h − 1)/T) / T).
+// With h = 1 DM* equals the ordinary one-sample t statistic of d.
+// Negative = model has the smaller loss. p is two-sided from N(0,1).
+export function dieboldMariano(d: number[], h: number = 1): {
+  n: number;
+  meanDiff: number;
+  lrv: number;
+  stat: number | null;   // HLN-corrected DM
+  p: number | null;
+  h: number;
+} {
+  const x = d.filter(Number.isFinite);
+  const T = x.length;
+  const H = Math.max(1, Math.floor(h));
+  const meanDiff = T ? x.reduce((a, b) => a + b, 0) / T : NaN;
+  if (T < 3) return { n: T, meanDiff, lrv: NaN, stat: null, p: null, h: H };
+  const gamma = (k: number) => {
+    let s = 0;
+    for (let t = k; t < T; t++) s += (x[t] - meanDiff) * (x[t - k] - meanDiff);
+    return s / T;
+  };
+  let lrv = gamma(0);
+  for (let k = 1; k <= H - 1 && k < T; k++) lrv += 2 * (1 - k / H) * gamma(k);
+  if (!(lrv > 1e-18)) return { n: T, meanDiff, lrv, stat: null, p: null, h: H };
+  const dm = meanDiff / Math.sqrt(lrv / T);
+  const hln = (T + 1 - 2 * H + (H * (H - 1)) / T) / T;
+  const stat = hln > 0 ? dm * Math.sqrt(hln) : dm;
+  return { n: T, meanDiff, lrv, stat, p: 2 * (1 - cdf(Math.abs(stat))), h: H };
+}
+
+// ─── Skill watchdog (CUSUM anchored to zero skill + DM skill test) ─────────
+//
+// d_t = BS_model,t − BS_clim,t, ordered oldest → newest. The CUSUM target is
+// 0 (no skill), so a model persistently worse than climatology accumulates
+// and trips. HEALTHY requires DEMONSTRATED skill: a Diebold-Mariano statistic
+// ≤ −2 on d (model loss significantly below the base-rate forecaster's) and a
+// quiet CUSUM. Without that the status is NO_SKILL ("no demonstrated skill"),
+// never HEALTHY. DM ≥ +2 (significantly worse) is BROKEN.
+// `horizon` = forecast horizon in observation periods (1 = one row per
+// non-overlapping day); > 1 switches on the Newey-West long-run variance.
+export type SkillWatchdogStatus = "HEALTHY" | "NO_SKILL" | "DRIFTING" | "BROKEN";
+export const DM_SKILL_THRESHOLD = 2;
 export function skillWatchdog(
   rowsOldestFirst: Array<{ modelBrier: number; outcome: number[] }>,
+  opts: { horizon?: number } = {},
 ): {
   status: SkillWatchdogStatus;
   n: number;
   meanDiff: number;           // mean(BS_model − BS_clim); < 0 = skill
-  tStat: number | null;       // meanDiff / (sd / √n)
+  tStat: number | null;       // Diebold-Mariano (HLN-corrected) statistic on d
+  dmP: number | null;         // two-sided p of the DM statistic
   bss: number | null;         // window Brier skill score vs climatology
   modelBrier: number;
   climatologyBrier: number;
@@ -471,31 +517,32 @@ export function skillWatchdog(
   const d = rows.map((r, i) => r.modelBrier - clim.perRow[i]);
   const n = d.length;
   const modelBrier = n ? rows.reduce((s, r) => s + r.modelBrier, 0) / n : NaN;
-  const meanDiff = n ? d.reduce((s, v) => s + v, 0) / n : NaN;
-  const sd = n > 1 ? Math.sqrt(d.reduce((s, v) => s + (v - meanDiff) ** 2, 0) / (n - 1)) : NaN;
-  const tStat = n > 1 && sd > 1e-12 ? meanDiff / (sd / Math.sqrt(n)) : null;
+  const dm = dieboldMariano(d, opts.horizon ?? 1);
+  const meanDiff = dm.meanDiff;
+  const tStat = dm.stat;
   const cs = cusum(d, { target: 0 });
   const bss = brierSkillScore(modelBrier, clim.total);
+  const dmTxt = tStat != null ? `DM=${tStat.toFixed(2)}, n=${n}` : `DM undefined, n=${n}`;
   let status: SkillWatchdogStatus;
   let reason: string;
   if (cs.status === "BROKEN") {
     status = "BROKEN";
-    reason = "CUSUM vs zero skill crossed 5σ: model is persistently worse than the base-rate forecaster";
-  } else if (meanDiff > 0 && tStat != null && tStat >= 2) {
+    reason = `CUSUM vs zero skill crossed 5σ (heuristic): model is persistently worse than the base-rate forecaster (${dmTxt})`;
+  } else if (tStat != null && tStat >= DM_SKILL_THRESHOLD) {
     status = "BROKEN";
-    reason = `model Brier is worse than climatology over the window (t=${tStat.toFixed(1)})`;
+    reason = `model Brier is significantly worse than climatology (${dmTxt})`;
   } else if (cs.status === "DRIFTING") {
     status = "DRIFTING";
-    reason = "CUSUM vs zero skill crossed 4σ: losing to the base-rate forecaster, watch closely";
-  } else if (!(meanDiff < 0)) {
-    status = "DRIFTING";
-    reason = "no skill: model is not beating the base-rate (climatology) forecaster";
-  } else {
+    reason = `CUSUM vs zero skill crossed 4σ (heuristic): losing to the base-rate forecaster, watch closely (${dmTxt})`;
+  } else if (tStat != null && tStat <= -DM_SKILL_THRESHOLD) {
     status = "HEALTHY";
-    reason = "model beats the base-rate forecaster over the window and the CUSUM is quiet";
+    reason = `demonstrated skill: Brier significantly below climatology (${dmTxt}) and the CUSUM is quiet`;
+  } else {
+    status = "NO_SKILL";
+    reason = `no demonstrated skill: not significantly better than the base-rate (climatology) forecaster (${dmTxt}; needs DM ≤ −${DM_SKILL_THRESHOLD})`;
   }
   return {
-    status, n, meanDiff, tStat, bss, modelBrier,
+    status, n, meanDiff, tStat, dmP: dm.p, bss, modelBrier,
     climatologyBrier: clim.total, climatologyFreqs: clim.freqs, cusum: cs, reason,
   };
 }

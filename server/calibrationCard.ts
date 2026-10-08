@@ -168,6 +168,7 @@ export async function postCalibrationCard(days: number = 7): Promise<{
     const w = watchdogStatus(60);
     const badge =
       w.status === "HEALTHY" ? "● HEALTHY" :
+      w.status === "NO_SKILL" ? "● NO DEMONSTRATED SKILL" :
       w.status === "DRIFTING" ? "● DRIFTING" :
       w.status === "BROKEN" ? "● BROKEN" :
       "● WARMING UP";

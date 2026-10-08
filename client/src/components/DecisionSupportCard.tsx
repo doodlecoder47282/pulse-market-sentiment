@@ -29,7 +29,7 @@ type DecisionSupport = {
 
 type Watchdog = {
   ok: boolean;
-  status: "HEALTHY" | "DRIFTING" | "BROKEN" | "INSUFFICIENT_DATA";
+  status: "HEALTHY" | "NO_SKILL" | "DRIFTING" | "BROKEN" | "INSUFFICIENT_DATA";
   n: number;
   cValue: number;
   baseline: number;
@@ -65,7 +65,7 @@ function statusBadgeClass(s: Watchdog["status"]): string {
 }
 
 function statusLabel(s: Watchdog["status"]): string {
-  return s === "INSUFFICIENT_DATA" ? "WARMING UP" : s;
+  return s === "INSUFFICIENT_DATA" ? "WARMING UP" : s === "NO_SKILL" ? "NO SKILL SHOWN" : s;
 }
 
 export function DecisionSupportCard() {

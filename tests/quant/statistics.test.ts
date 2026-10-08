@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { adfCriticalValue, adfTest, ar1BiasCorrected, fitOUBand } from "../../server/ouBand";
 import {
   olsFit, climatologyBaseline, brierSkillScore, skillWatchdog, cusum,
-  wilsonInterval, reliabilityCurve,
+  wilsonInterval, reliabilityCurve, dieboldMariano,
 } from "../../server/stats";
 import { findOptimalWindow, isFullCalendarYear, computeSeasonality } from "../../server/seasonality";
 import { independentDailyRows } from "../../server/mlAccuracy";
@@ -221,6 +221,45 @@ test("watchdog reads HEALTHY for a model with real skill over climatology", () =
   const w = skillWatchdog(rows);
   assert.equal(w.status, "HEALTHY");
   assert.ok(w.bss != null && w.bss > 0);
+});
+
+test("Diebold-Mariano: hand-computed values (h = 1 is the one-sample t; h = 2 Bartlett + HLN)", () => {
+  // h = 1: d = [-0.1,-0.2,0.05,-0.15,-0.1], mean -0.1, SS 0.035, sd sqrt(0.035/4) = 0.0935414,
+  // t = -0.1 / (0.0935414/sqrt 5) = -2.390457
+  const a = dieboldMariano([-0.1, -0.2, 0.05, -0.15, -0.1], 1);
+  assert.ok(Math.abs((a.stat as number) - -2.390457) < 1e-5, `h=1 ${a.stat}`);
+  // h = 2: d = [2,0,2,0]: gamma0 = 1, gamma1 = -3/4; LRV = 1 + 2(1 - 1/2)(-0.75) = 0.25;
+  // DM = 1/sqrt(0.25/4) = 4; HLN factor sqrt((4 + 1 - 4 + 2/4)/4) = sqrt(0.375) -> 2.449490
+  const b = dieboldMariano([2, 0, 2, 0], 2);
+  assert.ok(Math.abs(b.lrv - 0.25) < 1e-12);
+  assert.ok(Math.abs((b.stat as number) - 4 * Math.sqrt(0.375)) < 1e-9);
+});
+
+test("Diebold-Mariano size: ~5% on iid nulls, and the HAC variance fixes overlapping (MA(1)) differentials", () => {
+  const r = mulberry32(1995);
+  const M = 2000, T = 120;
+  let rejIid = 0, rejNaive = 0, rejHac = 0;
+  for (let m = 0; m < M; m++) {
+    const e = Array.from({ length: T + 1 }, () => gauss(r));
+    const iid = e.slice(1);
+    const ma1 = iid.map((v, t) => v + e[t]); // 2-step overlap: d_t = e_t + e_{t-1}
+    if (Math.abs(dieboldMariano(iid, 1).stat as number) >= 1.96) rejIid++;
+    if (Math.abs(dieboldMariano(ma1, 1).stat as number) >= 1.96) rejNaive++;
+    if (Math.abs(dieboldMariano(ma1, 2).stat as number) >= 1.96) rejHac++;
+  }
+  assert.ok(rejIid / M > 0.035 && rejIid / M < 0.07, `iid size ${rejIid / M}`);
+  assert.ok(rejNaive / M > 0.12, `ignoring overlap over-rejects: ${rejNaive / M}`);
+  assert.ok(rejHac / M < 0.09, `Newey-West h=2 size ${rejHac / M}`);
+});
+
+test("watchdog: a model no better than climatology is NO_SKILL, never HEALTHY", () => {
+  const r = mulberry32(8);
+  const outs = multinomialDays(r, 60, [0.3, 0.4, 0.3]);
+  // forecasts the true base rates every day: zero skill by construction
+  const rows = outs.map((o) => ({ modelBrier: brier3([0.3, 0.4, 0.3], o), outcome: o }));
+  const w = skillWatchdog(rows);
+  assert.equal(w.status, "NO_SKILL");
+  assert.match(w.reason, /no demonstrated skill/);
 });
 
 test("cusum anchored to a target accumulates a persistent offset", () => {
