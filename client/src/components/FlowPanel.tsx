@@ -535,8 +535,12 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
             value={fmtVol(ticker.totalVol)}
             tone="neutral"
           />
+          {/* $ units: sum over side-tagged contracts of day volume x last x 100
+              (per-share last price x 100-share contract multiplier). Excludes
+              contracts whose last print sat at mid (untagged), so it is not
+              total day premium. */}
           <StatBox
-            label="Total Prem"
+            label="Side-tagged prem"
             value={sideUnavailable ? "—" : fmtDollar(ticker.totalPrem)}
             tone="neutral"
           />
@@ -759,8 +763,8 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
           </>
         ) : view === "bars" ? (
           <>
-            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 bg-emerald-500" /> Calls Δ (buying)</span>
-            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 bg-rose-500" /> Puts Δ (buying)</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 bg-emerald-500" /> Calls Δ volume (both sides)</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 bg-rose-500" /> Puts Δ volume (both sides)</span>
             <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-amber-500" /> P/C overlay</span>
             <span className="text-muted-foreground/60">· brighter = spike (≥2× avg)</span>
           </>
