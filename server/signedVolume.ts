@@ -12,12 +12,19 @@
 //    (2012), "Flow Toxicity and Liquidity in a High-frequency World", RFS
 //    25(5), eq. (7): buy volume of bar i = V_i * Z(dP_i / sigma_dP), with Z
 //    the standard normal CDF and sigma_dP the standard deviation of bar-to-bar
-//    price changes; dP = 0 splits the bar 50/50. Computed alongside as a
-//    diagnostic only. The panel keeps the tick rule because Chakrabarty,
-//    Pascual & Shkilko (2015, J. Financial Markets, "Evaluating trade
-//    classification algorithms: BVC versus the tick rule and the Lee-Ready
-//    algorithm") find the tick rule and Lee-Ready classify equity volume
-//    more accurately than BVC.
+//    price changes. Computed alongside as a diagnostic only.
+//    No look-ahead: sigma for bar i uses only the price changes BEFORE bar i
+//    (expanding window over the bars passed in, at least BVC_MIN_PAST_CHANGES
+//    of them); earlier bars are left unclassified. A bar with missing volume
+//    is unclassified (its price change still feeds later sigmas); it is never
+//    counted as zero volume.
+//
+// Why the panel uses the bar-level tick rule: continuity with the original
+// Wire 13 read, not evidence. Published comparisons (e.g. Chakrabarty,
+// Pascual & Shkilko 2015, J. Financial Markets) rank BVC against the
+// TRADE-level tick rule and Lee-Ready, which need individual trade prints this
+// app does not have; they do not show that a tick rule on 1-minute bars beats
+// BVC. Neither read here is trade-level aggressor data.
 
 export interface MinuteCandleLike {
   datetime: number;
@@ -67,30 +74,65 @@ export function normalCdf(x: number): number {
   return x >= 0 ? 0.5 * (1 + erf) : 0.5 * (1 - erf);
 }
 
+/** Minimum number of past price changes before a bar can be classified. */
+export const BVC_MIN_PAST_CHANGES = 10;
+
 export interface BvcResult {
-  /** Per bar (from the second candle): buy fraction Z(dP/sigma). */
-  buyFraction: number[];
-  /** Sum over bars of V * (2 * buyFraction - 1) = buy volume - sell volume. */
-  cumulativeSigned: number;
+  /**
+   * Per bar from the second candle: buy fraction Z(dP / sigma_past), or null
+   * when the bar is unclassified (too few past changes, sigma 0, or missing
+   * volume).
+   */
+  buyFraction: (number | null)[];
+  /** Sum over classified bars of V * (2 * buyFraction - 1); null when no bar was classified. */
+  cumulativeSigned: number | null;
+  /** sigma used for the LAST bar (past changes only); 0 when not yet estimable. */
   sigma: number;
+  barsClassified: number;
+  barsMissingVolume: number;
 }
 
-/** Bulk volume classification over a session of bars (EL-O 2012, eq. 7). */
+function finiteVolume(v: number | null | undefined): number | null {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+}
+
+/** Bulk volume classification over a session of bars (ELO 2012, eq. 7), no look-ahead. */
 export function bulkVolumeClassify(candles: MinuteCandleLike[]): BvcResult {
-  const dP: number[] = [];
-  for (let i = 1; i < candles.length; i++) dP.push(candles[i].close - candles[i - 1].close);
-  let sigma = 0;
-  if (dP.length >= 2) {
-    const mean = dP.reduce((s, x) => s + x, 0) / dP.length;
-    const v = dP.reduce((s, x) => s + (x - mean) ** 2, 0) / (dP.length - 1);
-    sigma = Math.sqrt(v);
-  }
-  const buyFraction: number[] = [];
+  const buyFraction: (number | null)[] = [];
   let cumulativeSigned = 0;
-  for (let i = 0; i < dP.length; i++) {
-    const f = sigma > 0 ? normalCdf(dP[i] / sigma) : 0.5;
-    buyFraction.push(f);
-    cumulativeSigned += (candles[i + 1].volume || 0) * (2 * f - 1);
+  let barsClassified = 0;
+  let barsMissingVolume = 0;
+  // Running sums of past price changes (Welford's method for the variance).
+  let n = 0;
+  let mean = 0;
+  let m2 = 0;
+  let sigma = 0;
+  for (let i = 1; i < candles.length; i++) {
+    const dP = candles[i].close - candles[i - 1].close;
+    sigma = n >= 2 ? Math.sqrt(m2 / (n - 1)) : 0;
+    const vol = finiteVolume(candles[i].volume);
+    if (vol == null) barsMissingVolume++;
+    if (n >= BVC_MIN_PAST_CHANGES && sigma > 0 && vol != null && Number.isFinite(dP)) {
+      const f = normalCdf(dP / sigma);
+      buyFraction.push(f);
+      cumulativeSigned += vol * (2 * f - 1);
+      barsClassified++;
+    } else {
+      buyFraction.push(null);
+    }
+    // Only now add this bar's change, so it informs later bars only.
+    if (Number.isFinite(dP)) {
+      n++;
+      const d = dP - mean;
+      mean += d / n;
+      m2 += d * (dP - mean);
+    }
   }
-  return { buyFraction, cumulativeSigned, sigma };
+  return {
+    buyFraction,
+    cumulativeSigned: barsClassified > 0 ? cumulativeSigned : null,
+    sigma,
+    barsClassified,
+    barsMissingVolume,
+  };
 }

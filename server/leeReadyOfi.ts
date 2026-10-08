@@ -25,8 +25,10 @@
 // proportional expectation the trend is accelerating; < 0.7x it is decelerating.
 //
 // Bulk volume classification (Easley, Lopez de Prado & O'Hara 2012) is
-// computed alongside as bvcCumulativeNow, a diagnostic only; the trend keeps
-// the tick rule (see signedVolume.ts for why).
+// computed alongside as bvcCumulativeNow, a diagnostic only (past-only sigma,
+// missing volume left unclassified). The trend keeps the bar-level tick rule
+// for continuity; see signedVolume.ts for what the evidence does and does not
+// say about that choice.
 //
 // Cache: 30 seconds (Schwab free tier ~ 1 req/s; no need to hammer it).
 // Graceful degradation: returns NEUTRAL_TREND with dataState "unavailable"
@@ -56,7 +58,8 @@ export type OfiTrend = {
   label: "signed tick volume";
   /** "unavailable" = bars could not be fetched; trend fields are placeholders, not a flat read. */
   dataState: "ok" | "unavailable";
-  /** Diagnostic: session buy-minus-sell volume by bulk volume classification. */
+  /** Diagnostic: session buy-minus-sell volume by bulk volume classification
+   *  (past-only sigma); null when no bar could be classified. */
   bvcCumulativeNow: number | null;
 };
 
@@ -125,7 +128,10 @@ export async function computeOfiTrend(): Promise<OfiTrend> {
     method: "tick-rule-1m",
     label: "signed tick volume",
     dataState: "ok",
-    bvcCumulativeNow: Math.round(bulkVolumeClassify(candles).cumulativeSigned),
+    bvcCumulativeNow: (() => {
+      const b = bulkVolumeClassify(candles).cumulativeSigned;
+      return b == null ? null : Math.round(b);
+    })(),
   };
   cache = { ts: Date.now(), trend: result };
   console.log(

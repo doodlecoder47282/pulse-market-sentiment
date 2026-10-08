@@ -205,22 +205,46 @@ test("F4.2: tick rule on bars signs whole-bar volume, zero tick keeps the last s
   assert.deepEqual(flatStart.map((b) => b.signedVolume), [0, 7]);
 });
 
-test("F4.2: bulk volume classification matches Easley-Lopez de Prado-O'Hara (2012) eq. 7", async () => {
-  const { bulkVolumeClassify } = await import("../../server/signedVolume.ts");
-  // dP = [+1,+2,-1], sample sd = 1.527525; buy fraction = Phi(dP/sd).
-  // Reference values from scipy.stats.norm.cdf: 0.743655, 0.904785, 0.256345;
-  // signed = sum V*(2f-1) with V = [10,20,30] -> 6.445210.
-  const r = bulkVolumeClassify([100, 101, 103, 102].map((c, i) => ({ datetime: i, close: c, volume: [0, 10, 20, 30][i] })));
-  assert.ok(Math.abs(r.sigma - 1.5275252317) < 1e-9);
-  const ref = [0.7436546, 0.9047849, 0.2563454];
-  r.buyFraction.forEach((f, i) => assert.ok(Math.abs(f - ref[i]) < 1e-6, `bar ${i}: ${f}`));
-  assert.ok(Math.abs(r.cumulativeSigned - 6.44521) < 1e-4);
-  // Symmetric moves with equal volume net to zero; no price change splits 50/50.
-  const sym = bulkVolumeClassify([100, 101, 100, 101, 100].map((c, i) => ({ datetime: i, close: c, volume: 10 })));
-  assert.ok(Math.abs(sym.cumulativeSigned) < 1e-9);
-  const flat = bulkVolumeClassify([100, 100, 100].map((c, i) => ({ datetime: i, close: c, volume: 10 })));
-  assert.deepEqual(flat.buyFraction, [0.5, 0.5]);
-  assert.equal(flat.cumulativeSigned, 0);
+test("F4.2: bulk volume classification (ELO 2012 eq. 7) with past-only sigma and missing volume left missing", async () => {
+  const { bulkVolumeClassify, BVC_MIN_PAST_CHANGES } = await import("../../server/signedVolume.ts");
+  assert.equal(BVC_MIN_PAST_CHANGES, 10);
+  // dP = ten alternating +/-1, then +2, -1, 0. Volumes 5 x10, then 100, missing, 40.
+  const dP = [1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 2, -1, 0];
+  const vols: (number | null)[] = [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 100, null, 40];
+  const closes = [100];
+  for (const d of dP) closes.push(closes[closes.length - 1] + d);
+  const candles = closes.map((c, i) => ({ datetime: i, close: c, volume: i === 0 ? 0 : vols[i - 1] }));
+  const r = bulkVolumeClassify(candles);
+  // First 10 bars have < 10 past changes: unclassified.
+  assert.deepEqual(r.buyFraction.slice(0, 10), Array(10).fill(null));
+  // Bar 11: sigma of the 10 past changes = sqrt(10/9) = 1.0540926; Phi(2/1.0540926) = 0.9711102 (scipy).
+  assert.ok(Math.abs((r.buyFraction[10] ?? 0) - 0.9711102144) < 1e-6);
+  // Bar 12: missing volume -> unclassified, not zero volume.
+  assert.equal(r.buyFraction[11], null);
+  assert.equal(r.barsMissingVolume, 1);
+  // Bar 13: dP = 0 -> 0.5.
+  assert.ok(Math.abs((r.buyFraction[12] ?? 0) - 0.5) < 2e-7); // A&S 7.1.26 error bound
+  // Signed = 100 x (2 x 0.9711102 - 1) + 40 x 0 = 94.2220429 (scipy).
+  assert.ok(Math.abs((r.cumulativeSigned ?? 0) - 94.22204289) < 1e-4); // 200 x A&S CDF error bound
+  assert.equal(r.barsClassified, 2);
+  // sigma reported for the last bar uses the 12 changes before it: 1.1645002 (numpy ddof=1).
+  assert.ok(Math.abs(r.sigma - 1.1645001529) < 1e-9);
+
+  // No look-ahead: changing a later bar never changes an earlier classification.
+  const later = candles.map((c, i) => (i === candles.length - 1 ? { ...c, close: c.close + 50 } : c));
+  const r2 = bulkVolumeClassify(later);
+  assert.deepEqual(r2.buyFraction.slice(0, 12), r.buyFraction.slice(0, 12));
+  // Too few bars: nothing classified -> null, not 0.
+  const short = bulkVolumeClassify(candles.slice(0, 5));
+  assert.equal(short.cumulativeSigned, null);
+  assert.equal(short.barsClassified, 0);
+});
+
+test("F4.2: signedVolume no longer cites trade-level studies to justify the bar-level tick rule", () => {
+  const src = readFileSync(path.join(ROOT, "server/signedVolume.ts"), "utf8");
+  assert.doesNotMatch(src, /keeps the tick rule because Chakrabarty/);
+  assert.match(src, /TRADE-level tick rule/);
+  assert.doesNotMatch(src, /candles\[i \+ 1\]\.volume \|\| 0/);
 });
 
 // ─── F4.1 / F4.2 / F12.3 wording scans ─────────────────────────────────────
