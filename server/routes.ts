@@ -751,7 +751,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           try {
             const { buildJPMCollarSnapshot } = await import("./jpmCollar");
             const jpm = await buildJPMCollarSnapshot();
-            jpmStrikes = {
+            // Expired strikes are history, not live structure.
+            if (!jpm.current.expired) jpmStrikes = {
               shortPut: jpm.current.shortPut * jpmScale,
               longPut: jpm.current.longPut * jpmScale,
               shortCall: jpm.current.shortCall * jpmScale,

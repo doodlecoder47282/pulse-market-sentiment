@@ -20,13 +20,19 @@ export interface CollarQuarter {
 
 export interface JPMCollarResponse {
   current: CollarQuarter & {
-    spxNow: number;
-    distToLongPut: number;    // points below long put
-    distToShortPut: number;   // points below short put
-    distToShortCall: number;  // points above short call
-    pctToLongPut: number;
-    pctToShortPut: number;
-    pctToShortCall: number;
+    /** SPX last; null when the quote is unavailable (never a made-up level). */
+    spxNow: number | null;
+    spxAvailable: boolean;
+    /** True once rollDate has passed: these strikes expired and the next
+     *  reset's strikes are not on file, so they are historical, not live. */
+    expired: boolean;
+    staleNote: string | null;
+    distToLongPut: number | null;    // points below long put (null: no SPX quote)
+    distToShortPut: number | null;   // points below short put
+    distToShortCall: number | null;  // points above short call
+    pctToLongPut: number | null;
+    pctToShortPut: number | null;
+    pctToShortCall: number | null;
     daysToRoll: number;
   };
   history: CollarQuarter[];
@@ -95,26 +101,42 @@ export async function buildJPMCollarSnapshot(): Promise<JPMCollarResponse> {
 
   // Fetch current SPX price
   const spxQuote = await getQuote("^GSPC").catch(() => ({ last: null, prev: null })); // getQuote is Schwab-backed
-  const spxNow = spxQuote.last ?? 5800; // fallback if feed unavailable
+  const spxLast = spxQuote.last;
+  const spxAvailable = spxLast != null && Number.isFinite(spxLast) && spxLast > 0;
+  // No quote -> null distances. (Was a hard-coded 5,800 "fallback" spot.)
+  const spxNow: number | null = spxAvailable ? (spxLast as number) : null;
 
   // Current quarter is the first entry (most recent)
   const current = COLLAR_DATA[0];
   const history = COLLAR_DATA.slice(1);
 
-  const distToLongPut = spxNow - current.longPut;
-  const distToShortPut = spxNow - current.shortPut;
-  const distToShortCall = current.shortCall - spxNow;
+  // The table is hand-maintained. Once the latest roll date has passed, the
+  // strikes on file have expired and the new reset is missing: say so instead
+  // of presenting expired strikes as the live collar.
+  const todayEt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
+  const expired = todayEt > current.rollDate;
+  const staleNote = expired
+    ? `Strikes on file expired at the ${current.rollDate} roll; the newer reset strikes have not been entered. Shown as historical reference only.`
+    : null;
+
+  const distToLongPut = spxNow != null ? spxNow - current.longPut : null;
+  const distToShortPut = spxNow != null ? spxNow - current.shortPut : null;
+  const distToShortCall = spxNow != null ? current.shortCall - spxNow : null;
+  const pct = (d: number | null) => (d != null && spxNow != null ? (d / spxNow) * 100 : null);
 
   const data: JPMCollarResponse = {
     current: {
       ...current,
       spxNow,
+      spxAvailable,
+      expired,
+      staleNote,
       distToLongPut,
       distToShortPut,
       distToShortCall,
-      pctToLongPut: (distToLongPut / spxNow) * 100,
-      pctToShortPut: (distToShortPut / spxNow) * 100,
-      pctToShortCall: (distToShortCall / spxNow) * 100,
+      pctToLongPut: pct(distToLongPut),
+      pctToShortPut: pct(distToShortPut),
+      pctToShortCall: pct(distToShortCall),
       daysToRoll: daysUntil(current.rollDate),
     },
     history,
