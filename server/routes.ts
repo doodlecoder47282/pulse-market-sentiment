@@ -4737,6 +4737,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         maxRiskPct: b.maxRiskPct != null ? Number(b.maxRiskPct) : undefined,
         targetPct: b.targetPct != null ? Number(b.targetPct) : undefined,
         kellyFraction: b.kellyFraction != null ? Number(b.kellyFraction) : undefined,
+        feePerContract: b.feePerContract != null ? Number(b.feePerContract) : undefined,
+        stopSlippage: b.stopSlippage != null ? Number(b.stopSlippage) : undefined,
       }));
     } catch (e: any) {
       res.status(500).json({ error: "sizer_failed", message: e?.message ?? String(e) });

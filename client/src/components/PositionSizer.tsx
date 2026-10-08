@@ -16,11 +16,16 @@ interface SizingResult {
   riskDollars: number;
   notionalDollars: number;
   kellyAccountFraction: number;
-  bindingConstraint: "risk-floor" | "kelly-cap" | "conviction-tier" | "min-contract";
+  bindingConstraint: "risk-floor" | "kelly-cap" | "conviction-tier" | "min-contract" | "cash";
   expectedPayoffPct: number;
   rejected: boolean;
   rejectReason?: string;
   reasoning: string[];
+  // Added by the server sizer (all $ for the whole position unless perContract)
+  maxLossDollars?: number;
+  feesDollars?: number;
+  riskBudgetDollars?: number;
+  perContract?: { premium: number; riskAtStop: number; maxLoss: number; feesRoundTrip: number } | null;
 }
 
 // MISSION FIX #2 — edge survival waterfall (POST /api/edge/survival)
@@ -38,6 +43,10 @@ interface SurvivalResult {
 
 function fmtDollar(n: number): string {
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
+
+function fmtCents(n: number): string {
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function PositionSizer() {
@@ -61,6 +70,8 @@ export function PositionSizer() {
         gradeScore: Number(gradeScore),
         targetPct: Number(targetPct),
         kellyFraction: Number(kellyFraction) / 100,
+        // A stop fills at the bid, about half the quoted spread below the stop's mid.
+        stopSlippage: Math.max(0, Number(spreadDollars) || 0) / 2,
       });
       return await res.json();
     },
@@ -236,7 +247,7 @@ export function PositionSizer() {
                 <div>
                   <div className="text-xs text-muted-foreground">risk</div>
                   <div className="text-lg font-semibold text-red-500" data-testid="text-risk-dollars">
-                    {fmtDollar(r.riskDollars)}
+                    {fmtCents(r.riskDollars)}
                   </div>
                 </div>
                 <div>
@@ -261,6 +272,12 @@ export function PositionSizer() {
                 target +{r.expectedPayoffPct}%
               </Badge>
             </div>
+            {r.perContract && (
+              <div className="text-xs text-muted-foreground font-mono tabular-nums" data-testid="text-sizer-dollars">
+                per contract (x100): premium {fmtCents(r.perContract.premium)} · loss at stop {fmtCents(r.perContract.riskAtStop)} · fees {fmtCents(r.perContract.feesRoundTrip)}
+                {" "}| position: max loss if it expires worthless {fmtCents(r.maxLossDollars ?? 0)} · fees {fmtCents(r.feesDollars ?? 0)} · risk budget {fmtCents(r.riskBudgetDollars ?? 0)}
+              </div>
+            )}
             <details className="text-xs text-muted-foreground">
               <summary className="cursor-pointer hover:text-foreground" data-testid="summary-reasoning">
                 why this size?

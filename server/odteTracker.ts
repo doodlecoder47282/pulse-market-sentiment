@@ -25,6 +25,7 @@
 
 import { getOptionChain, type OptionChainResponse } from "./schwab";
 import { isRthOpen } from "./sessionCache";
+import { recordOdteOptionMarks, type TrackerQuote } from "./odteAuditDb";
 
 // getOptionChain caches chains for 60 s (schwab.ts), so polling faster than that only
 // returns the identical snapshot. Cadence is clamped to this TTL.
@@ -357,6 +358,31 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
 
   for (const s of Object.keys(callStrikesObj)) addRow(s, callStrikesObj[s], "call");
   for (const s of Object.keys(putStrikesObj)) addRow(s, putStrikesObj[s], "put");
+
+  // Option-mark ledger (review items 7.2/7.3): log the live Schwab quote of
+  // every fired 0DTE alert's contract (any strike in the chain, not only the
+  // displayed ATM window) so the grader can replay real option P&L.
+  if (symbol === "$SPX") {
+    try {
+      const quotes: TrackerQuote[] = [];
+      const collect = (obj: Record<string, any[]>, side: Side) => {
+        for (const k of Object.keys(obj)) {
+          const c = obj[k]?.[0];
+          const strike = parseFloat(k);
+          if (!c || !isFinite(strike)) continue;
+          quotes.push({
+            strike, side,
+            bid: typeof c.bid === "number" ? c.bid : null,
+            ask: typeof c.ask === "number" ? c.ask : null,
+            quoteTime: typeof c.quoteTimeInLong === "number" && c.quoteTimeInLong > 0 ? c.quoteTimeInLong : null,
+          });
+        }
+      };
+      collect(callStrikesObj, "call");
+      collect(putStrikesObj, "put");
+      recordOdteOptionMarks({ expiryISO, source: chain.source, underlying: spot, quotes, now: nowTs });
+    } catch { /* mark logging never blocks the tracker */ }
+  }
 
   // Sort by ascending strike, calls-above-puts-at-same-strike (rendering convention)
   rows.sort((a, b) => a.strike - b.strike || (a.side === "call" ? -1 : 1));
