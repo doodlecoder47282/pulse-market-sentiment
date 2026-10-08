@@ -3,6 +3,7 @@
 // from the live option chain. Pairs naturally with VIX9D inversion alert.
 
 import { getOptionChain } from "./schwab";
+import { ivAtAbsDelta } from "@shared/vol";
 
 export interface SkewPoint {
   tenorDays: number;
@@ -33,17 +34,6 @@ export interface SkewSnapshot {
 }
 
 interface ContractRow { strike: number; iv: number; delta: number; }
-
-function pickByDelta(rows: ContractRow[], target: number): ContractRow | null {
-  let best: ContractRow | null = null;
-  let bestDiff = Infinity;
-  for (const r of rows) {
-    if (!Number.isFinite(r.delta) || !Number.isFinite(r.iv) || r.iv <= 0) continue;
-    const d = Math.abs(Math.abs(r.delta) - target);
-    if (d < bestDiff) { bestDiff = d; best = r; }
-  }
-  return bestDiff <= 0.15 ? best : null;
-}
 
 function pickAtm(rows: ContractRow[], spot: number): ContractRow | null {
   let best: ContractRow | null = null;
@@ -119,17 +109,19 @@ export async function computeSkew(symbol: string): Promise<SkewSnapshot | { erro
     const atmC = pickAtm(calls, spot);
     const atmP = pickAtm(puts, spot);
     const atmIv = atmC && atmP ? (atmC.iv + atmP.iv) / 2 : (atmC?.iv ?? atmP?.iv ?? null);
-    const c25 = pickByDelta(calls, 0.25);
-    const p25 = pickByDelta(puts, 0.25);
-    const putSkew = (p25 && atmIv != null) ? p25.iv - atmIv : null;
-    const callSkew = (c25 && atmIv != null) ? c25.iv - atmIv : null;
-    const rr = (c25 && p25) ? c25.iv - p25.iv : null;
+    // Exact 25-delta vols, interpolated in delta between bracketing strikes
+    // (the old nearest-contract pick within +/-0.15 could be 10D to 40D).
+    const c25iv = ivAtAbsDelta(calls, 0.25);
+    const p25iv = ivAtAbsDelta(puts, 0.25);
+    const putSkew = (p25iv != null && atmIv != null) ? p25iv - atmIv : null;
+    const callSkew = (c25iv != null && atmIv != null) ? c25iv - atmIv : null;
+    const rr = (c25iv != null && p25iv != null) ? c25iv - p25iv : null;
     return {
       tenorDays: dte,
       expiry: date,
       atmIv,
-      put25dIv: p25?.iv ?? null,
-      call25dIv: c25?.iv ?? null,
+      put25dIv: p25iv,
+      call25dIv: c25iv,
       putSkew,
       callSkew,
       riskReversal25d: rr,

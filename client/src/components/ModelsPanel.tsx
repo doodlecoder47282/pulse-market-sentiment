@@ -70,6 +70,8 @@ interface ModelPath {
   kind: "base" | "bull" | "bear";
   name: string;
   probability: number;
+  probabilitySource?: "risk-neutral-implied" | "hand-set-heuristic";
+  probabilityEvent?: string;
   target: number;
   waypoints: ModelPathWaypoint[];
   color: "base" | "bull" | "bear";
@@ -107,6 +109,15 @@ interface ModelAudit {
   doubleZeroLow: number | null;
   doubleZeroHigh: number | null;
   scenarioProb: { bull: number; base: number; bear: number };
+  scenarioProbSource?: "risk-neutral-implied" | "hand-set-heuristic";
+  scenarioProbNote?: string;
+  expectedMove?: {
+    oneSigma: number;
+    source: "0dte-straddle" | "vix-scaled";
+    straddleMid: number | null;
+    strike: number | null;
+    note: string;
+  };
   closeTargets?: {
     bull: { price: number; prob: number } | null;
     base: { price: number; prob: number } | null;
@@ -152,6 +163,8 @@ interface MMMatrix {
   zones: MMZone[];
   cells: MMCell[];
   notes: { regime: string; zone: string; summary: string };
+  probabilityBasis?: "hand-set-priors";
+  probabilityNote?: string;
 }
 
 interface ModelHorizon {
@@ -458,10 +471,11 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
       {a.mainPivot && <RailRow label="MAIN PIVOT" value={fmtK(a.mainPivot)} sub={distPct(a.mainPivot)} color={COLORS.amber} />}
 
       {/* Scenario projections */}
-      <RailDivider label="scenarios" />
-      <RailRow label={`BULL ${probs.bull}%`} value={bullRange} color={COLORS.bull} />
-      <RailRow label={`BASE ${probs.base}%`} value={baseRange} color={COLORS.base} />
-      <RailRow label={`BEAR ${probs.bear}%`} value={bearRange} color={COLORS.bear} />
+      <RailDivider label={a.scenarioProbSource === "risk-neutral-implied" ? "scenarios (risk-neutral)" : "scenarios (heuristic)"} />
+      {/* Path odds (path targets); audit.scenarioProb is the graded-event set */}
+      <RailRow label={`BULL ${pathPct(horizon, "bull", probs.bull)}%`} value={bullRange} color={COLORS.bull} />
+      <RailRow label={`BASE ${pathPct(horizon, "base", probs.base)}%`} value={baseRange} color={COLORS.base} />
+      <RailRow label={`BEAR ${pathPct(horizon, "bear", probs.bear)}%`} value={bearRange} color={COLORS.bear} />
 
       {/* Downside */}
       <RailDivider label="support" />
@@ -647,6 +661,17 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
         <span className="text-cyan-400">BASE {probs.base}%</span>
         <span>·</span>
         <span className="text-red-400">BEAR {probs.bear}%</span>
+        <span className="text-muted-foreground/60" title={a.scenarioProbNote}>
+          ({scenarioSourceLabel(a.scenarioProbSource)})
+        </span>
+        {a.expectedMove && (
+          <>
+            <span>|</span>
+            <span title={a.expectedMove.note}>
+              EM ±{a.expectedMove.oneSigma.toFixed(1)} ({a.expectedMove.source === "0dte-straddle" ? "0DTE straddle" : "VIX fallback"})
+            </span>
+          </>
+        )}
         <span>|</span>
         <span>PATH: <span className="text-foreground">{a.path}</span></span>
         <span>|</span>
@@ -657,6 +682,17 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
 }
 
 // ─── Scenario legend bottom strip ─────────────────────────────────────────────
+
+// Probability shown next to a PATH target: the path's own odds when they are
+// options-implied (halfway partition of path targets), else the audit split.
+function pathPct(h: ModelHorizon, kind: "bull" | "base" | "bear", fallback: number): number {
+  const p = h.paths.find((x) => x.kind === kind);
+  return p && p.probabilitySource === "risk-neutral-implied" ? Math.round(p.probability * 100) : fallback;
+}
+
+function scenarioSourceLabel(src: ModelAudit["scenarioProbSource"]): string {
+  return src === "risk-neutral-implied" ? "risk-neutral, options-implied" : "heuristic, hand-set";
+}
 
 function ScenarioLegend({ horizon }: { horizon: ModelHorizon }) {
   const a = horizon.audit;
@@ -674,10 +710,12 @@ function ScenarioLegend({ horizon }: { horizon: ModelHorizon }) {
 
   return (
     <div className="space-y-0.5 border-t border-border/40 pt-2 font-mono text-[10px]">
-      <div className="text-[9px] uppercase tracking-widest text-muted-foreground/50">Scenario projections</div>
+      <div className="text-[9px] uppercase tracking-widest text-muted-foreground/50" title={a.scenarioProbNote}>
+        Scenario projections · {scenarioSourceLabel(a.scenarioProbSource)}
+      </div>
       {bullPath && (
         <div className="text-green-400">
-          BULL {probs.bull}% → Clear {zg ? `${fmtK(zg)} Gamma Zero` : "resistance"}
+          BULL {pathPct(horizon, "bull", probs.bull)}% → Clear {zg ? `${fmtK(zg)} Gamma Zero` : "resistance"}
           {charmZ ? ` + ${fmtK(charmZ)} Charm Zero` : ""}
           {cw ? ` → ${fmtK(cw)} Call Wall` : ""}
           {" → CLOSE "}
@@ -686,14 +724,14 @@ function ScenarioLegend({ horizon }: { horizon: ModelHorizon }) {
       )}
       {basePath && (
         <div className="text-cyan-400">
-          BASE {probs.base}% → Chop {fmtK(spot * 0.997)}-{fmtK(spot * 1.003)} → Gamma Zero Ceiling
+          BASE {pathPct(horizon, "base", probs.base)}% → Chop {fmtK(spot * 0.997)}-{fmtK(spot * 1.003)} → Gamma Zero Ceiling
           {" → CLOSE "}
           <span className="text-cyan-300">{fmtK(basePath.target * 0.999)}-{fmtK(basePath.target * 1.001)}</span>
         </div>
       )}
       {bearPath && (
         <div className="text-red-400">
-          BEAR {probs.bear}% → Break {pw ? `${fmtK(pw)} Put Wall` : "support"} → Vol expansion
+          BEAR {pathPct(horizon, "bear", probs.bear)}% → Break {pw ? `${fmtK(pw)} Put Wall` : "support"} → Vol expansion
           {" → CLOSE "}
           <span className="text-red-300">{fmtK(bearPath.target * 0.999)}-{fmtK(bearPath.target * 1.001)}</span>
         </div>
@@ -754,8 +792,11 @@ function MMMatrixHeatmap({ horizon }: { horizon: ModelHorizon }) {
   return (
     <div className="mt-3 border-t border-border/40 pt-2">
       <div className="flex items-baseline justify-between mb-1.5">
-        <div className="text-[9px] uppercase tracking-widest text-muted-foreground/50 font-mono">
-          Market-maker probability matrix
+        <div
+          className="text-[9px] uppercase tracking-widest text-muted-foreground/50 font-mono"
+          title={mm.probabilityNote ?? "Hand-set priors tilted by live context; not fit to logged outcomes."}
+        >
+          Market-maker matrix · hand-set priors (not fit to outcomes)
         </div>
         <div className="font-mono text-[9px] text-muted-foreground/70">
           <span className="text-amber-400">YOU ARE HERE:</span> {REGIME_LABEL[mm.currentRegime]} · {ZONE_LABEL[mm.currentZone]}
@@ -1063,7 +1104,7 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
                 dots already render the final price. */}
             {horizon.paths.map(p => {
               const stroke = p.kind === "bull" ? COLORS.bull : p.kind === "base" ? COLORS.base : COLORS.bear;
-              const prob = p.kind === "bull" ? probs.bull : p.kind === "base" ? probs.base : probs.bear;
+              const prob = pathPct(horizon, p.kind, p.kind === "bull" ? probs.bull : p.kind === "base" ? probs.base : probs.bear);
               const showPrints = horizon.horizon === "weekly";
               const labelPos: "top" | "bottom" = p.kind === "bear" ? "bottom" : "top";
               const labelDy = p.kind === "base" ? -14 : (p.kind === "bull" ? -4 : 4);

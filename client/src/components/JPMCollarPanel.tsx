@@ -23,13 +23,16 @@ interface CollarQuarter {
 
 interface JPMCollarData {
   current: CollarQuarter & {
-    spxNow: number;
-    distToLongPut: number;
-    distToShortPut: number;
-    distToShortCall: number;
-    pctToLongPut: number;
-    pctToShortPut: number;
-    pctToShortCall: number;
+    spxNow: number | null;
+    spxAvailable?: boolean;
+    expired?: boolean;
+    staleNote?: string | null;
+    distToLongPut: number | null;
+    distToShortPut: number | null;
+    distToShortCall: number | null;
+    pctToLongPut: number | null;
+    pctToShortPut: number | null;
+    pctToShortCall: number | null;
     daysToRoll: number;
   };
   history: CollarQuarter[];
@@ -41,7 +44,8 @@ function fmtDate(ts: number) {
   return new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function fmtPct(v: number) {
+function fmtPct(v: number | null) {
+  if (v == null || !Number.isFinite(v)) return "—";
   return `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
 }
 
@@ -103,10 +107,16 @@ export default function JPMCollarPanel() {
   const yMax = Math.max(...allValues) * 1.02;
 
   const distToCallPct = current.pctToShortCall;
-  const distToPutPct = -current.pctToLongPut;
+  const distToPutPct = current.pctToLongPut != null ? -current.pctToLongPut : null;
 
   return (
     <div className="space-y-4" data-testid="jpm-collar-panel">
+      {current.expired && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs text-amber-400 flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          {current.staleNote ?? "Collar strikes on file have expired; newer reset not entered."}
+        </div>
+      )}
       {/* Current quarter summary */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <div className="rounded-lg border border-border/60 bg-card/50 p-2.5">
@@ -118,12 +128,12 @@ export default function JPMCollarPanel() {
             <Calendar className="h-3 w-3" /> Roll Date
           </div>
           <div className="mt-0.5 text-sm font-semibold">{current.rollDate}</div>
-          <div className="text-[10px] text-muted-foreground">{current.daysToRoll}d away</div>
+          <div className="text-[10px] text-muted-foreground">{current.expired ? "expired" : `${current.daysToRoll}d away`}</div>
         </div>
         <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-2.5">
           <div className="text-[10px] uppercase tracking-wider text-emerald-400/80">Long Put (Floor)</div>
           <div className="mt-0.5 text-sm font-semibold text-emerald-300">{current.longPut.toLocaleString()}</div>
-          <div className="text-[10px] text-muted-foreground">{fmtPct(-distToPutPct)} below spot</div>
+          <div className="text-[10px] text-muted-foreground">{fmtPct(distToPutPct != null ? -distToPutPct : null)} below spot</div>
         </div>
         <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-2.5">
           <div className="text-[10px] uppercase tracking-wider text-rose-400/80">Short Call (Cap)</div>

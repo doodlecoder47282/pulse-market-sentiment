@@ -29,6 +29,7 @@ async function fetchJson(url: string, headers: Record<string, string> = {}): Pro
 }
 import { getAlphaEventsForTicker, type AlphaEvent } from "./alphaNews";
 import { getOptionChain, getQuotes } from "./schwab";
+import { FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
 
 // ---- Types ----
 
@@ -429,33 +430,11 @@ function buildPerTickerGamma(chain: any, ticker: string): PerTickerGamma | null 
     }
   }
 
-  // Zero gamma: linear interp where cumulative GEX flips sign
-  let zeroGamma: number | null = null;
-  let cum = 0;
-  for (let i = 0; i < strikes.length - 1; i++) {
-    const k = strikes[i];
-    const kNext = strikes[i + 1];
-    const cumNext = cum + (gexByStrike.get(k) || 0);
-    if (cum <= 0 && cumNext > 0) {
-      zeroGamma = k + ((kNext - k) * -cum) / Math.max(cumNext - cum, 1);
-      break;
-    }
-    cum = cumNext;
-  }
-  if (zeroGamma == null) {
-    // fallback: strike where running sum is minimum |sum|
-    let best = Infinity;
-    let bestK = strikes[Math.floor(strikes.length / 2)];
-    let run = 0;
-    for (const k of strikes) {
-      run += gexByStrike.get(k) || 0;
-      if (Math.abs(run) < best) {
-        best = Math.abs(run);
-        bestK = k;
-      }
-    }
-    zeroGamma = bestK;
-  }
+  // Zero gamma: app-wide re-priced definition (gammaProfile.ts) over the same
+  // 0-45 DTE contracts. null when net dealer gamma never changes sign: the old
+  // fallback reported the strike with the smallest running sum as a "flip",
+  // which showed a level that does not exist.
+  const zeroGamma: number | null = repricedFlipFromChain(chain, S, { maxDte: 45, r: FLIP_RATE, q: FLIP_DIV_YIELD }).zeroGamma;
 
   // Max pain — strike that minimizes total option pain (open interest × distance)
   let maxPain: number | null = null;
