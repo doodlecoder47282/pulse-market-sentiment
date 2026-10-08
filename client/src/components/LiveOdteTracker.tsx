@@ -60,6 +60,7 @@ interface TrackedPosition {
   strike: number;
   side: Side;
   buyPrice: number;
+  buyAsk?: number | null;
   buyVolume: number;
   buyTimestamp: number;
   baselineOI: number;
@@ -429,7 +430,11 @@ function LiveTrackerView({
               {activeTracked.map(t => {
                 const live = data.contracts.find(c => c.key === t.contractKey);
                 const livePx = live?.last ?? null;
-                const pnl = livePx != null ? (livePx - t.buyPrice) * 100 : null;
+                // $ per contract (x100) if bought at the ask when armed and sold at the
+                // live bid now: the executable round trip, not last-vs-last.
+                const entryPx = t.buyAsk != null && t.buyAsk > 0 ? t.buyAsk : t.buyPrice;
+                const exitPx = live?.bid ?? null;
+                const pnl = exitPx != null ? Math.round((exitPx - entryPx) * 100 * 100) / 100 : null;
                 return (
                   <div
                     key={t.id}
@@ -442,7 +447,7 @@ function LiveTrackerView({
                         {t.strike.toFixed(0)}{t.side === "call" ? "C" : "P"}
                       </span>
                       <span className="text-muted-foreground">
-                        entry ${t.buyPrice.toFixed(2)} · {new Date(t.buyTimestamp).toLocaleTimeString()}
+                        entry ${entryPx.toFixed(2)}{t.buyAsk != null && t.buyAsk > 0 ? " ask" : " last"} · {new Date(t.buyTimestamp).toLocaleTimeString()}
                       </span>
                     </div>
                     <div className="flex items-center gap-3">
@@ -451,7 +456,7 @@ function LiveTrackerView({
                       </span>
                       {pnl != null && (
                         <span className={`font-mono font-semibold tabular-nums ${pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                          {pnl >= 0 ? "+" : ""}${pnl.toFixed(0)}/con
+                          {pnl >= 0 ? "+" : "-"}${Math.abs(pnl).toFixed(2)}/con at bid
                         </span>
                       )}
                       <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]"

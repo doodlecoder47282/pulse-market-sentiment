@@ -89,7 +89,8 @@ export interface TrackedPosition {
   contractKey: string;
   strike: number;
   side: Side;
-  buyPrice: number;             // entry last at arm
+  buyPrice: number;             // entry last at arm ($ per share)
+  buyAsk?: number | null;       // ask at arm: what a market buy pays ($ per share)
   buyVolume: number;            // cumulative volume at arm
   buyTimestamp: number;
   baselineOI: number;           // OI at arm (for OI-drop check)
@@ -573,6 +574,7 @@ export function armPosition(args: {
     strike: row.strike,
     side: row.side,
     buyPrice: row.last,
+    buyAsk: row.ask,
     buyVolume: row.volume,
     buyTimestamp: Date.now(),
     baselineOI: row.openInterest,
