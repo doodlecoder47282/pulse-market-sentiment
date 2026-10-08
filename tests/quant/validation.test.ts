@@ -343,3 +343,15 @@ test("max pain and chain walls from a toy chain", () => {
   assert.equal(lv.maxPain, 100);
   assert.equal(maxPainStrike([]), null);
 });
+
+// ─── ML real-data pipeline (Python, no lightgbm needed) ──────────────────────
+
+test("ML quantile pipeline: real-data labels, day-based gate, purged walk-forward folds (python)", async (t) => {
+  const { spawnSync } = await import("node:child_process");
+  const { fileURLToPath } = await import("node:url");
+  const probe = spawnSync("python3", ["-I", "-c", "import numpy, pandas"], { encoding: "utf8", timeout: 15_000 });
+  if (probe.error || probe.status !== 0) { t.skip("python3 with numpy and pandas not available"); return; }
+  const script = fileURLToPath(new URL("./ml_quantile_data.py", import.meta.url));
+  const r = spawnSync("python3", ["-I", script], { encoding: "utf8", timeout: 15_000 });
+  assert.equal(r.status, 0, `python checks failed:\n${r.stdout}\n${r.stderr}`);
+});

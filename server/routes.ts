@@ -6051,6 +6051,41 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     return { levels, spxNow, vix, vixPrev };
   };
 
+  // F9.1 / F9.3 — deterministic real-data logger for the quantile forecaster
+  // (features + served bands every 5 min in RTH, Schwab SPX minute bars after
+  // the close) and live 10-90% coverage scoring. Disable: PULSE_ML_DATALOG=0.
+  import("./mlDataLog").then((m) => m.startMlDataLogger(resolveMlFeatureInputs))
+    .catch((e) => console.warn("[ml:datalog] not started:", e?.message ?? e));
+
+  // GET /api/ml/coverage?days=30 — live coverage of the served 10-90% band.
+  app.get("/api/ml/coverage", async (req, res) => {
+    try {
+      const { getCoverageReport } = await import("./mlDataLog");
+      const days = Math.max(1, Math.min(365, Number(req.query.days) || 30));
+      res.json(getCoverageReport(days));
+    } catch (e: any) {
+      res.status(500).json({ error: "coverage_failed", message: e?.message ?? String(e) });
+    }
+  });
+
+  // GET /api/odte/option-ledger — realized option-P&L ledger by grade bucket (feeds the sizer).
+  app.get("/api/odte/option-ledger", async (_req, res) => {
+    try {
+      const { getOptionLedgerSummary } = await import("./odteGrader");
+      const { wilsonInterval } = await import("./validationMath");
+      res.json({
+        asOf: Date.now(),
+        note: "Realized option returns of fired 0DTE alerts replayed on logged Schwab marks (ask in, bid out, settlement at intrinsic). Fires without marks are ungraded and excluded.",
+        buckets: getOptionLedgerSummary().map((b) => {
+          const w = wilsonInterval(b.wins, b.n);
+          return { ...b, winRate: b.n > 0 ? b.wins / b.n : null, wilsonLo: b.n > 0 ? w.lo : null, wilsonHi: b.n > 0 ? w.hi : null };
+        }),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: "ledger_failed", message: e?.message ?? String(e) });
+    }
+  });
+
   app.post("/api/ml/projection", async (req, res) => {
     const { mlQuantileOverlay } = await import("./mlBridge");
     const { buildMlFeatures } = await import("./mlGreekFeatures");
