@@ -23,6 +23,7 @@
 
 import { getPriceHistory, getOptionChain } from "./schwab";
 import { contractYears } from "./chainClock";
+import { UpstreamUnavailableError } from "@shared/unavailable";
 import { etDate, isTradingDay, nextTradingDay, sessionCloseMs } from "./exchangeCalendar";
 import { atmIvTermFromChain, coneBandsFromVariance, totalVarianceAt, type AtmIvPoint } from "./tickerConeMath";
 
@@ -134,8 +135,15 @@ export async function buildTickerProjection(
   if (!term.length || spot == null) {
     // 2. Fallback: 30-day realized vol from Schwab daily bars, unscaled.
     sigmaSource = "realized_30d";
-    const bars = await fetchDailyBars(wireSym);
-    if (bars.length < 20) throw new Error(`no Schwab option chain and insufficient bars for ${symbol} (${bars.length})`);
+    // Neither Schwab source can answer: upstream unavailable (route -> 503 +
+    // dataState), not a server error. A bars timeout / fetch error is the same.
+    let bars: { t: number; c: number }[];
+    try {
+      bars = await fetchDailyBars(wireSym);
+    } catch (e: any) {
+      throw new UpstreamUnavailableError(`no Schwab option chain for ${symbol} and Schwab daily bars failed (${String(e?.message ?? e).slice(0, 80)})`);
+    }
+    if (bars.length < 20) throw new UpstreamUnavailableError(`no Schwab option chain and insufficient Schwab daily bars for ${symbol} (${bars.length} of 20)`);
     const logRets: number[] = [];
     for (let i = 1; i < bars.length; i++) logRets.push(Math.log(bars[i].c / bars[i - 1].c));
     realizedDaily = std(logRets.slice(-30));

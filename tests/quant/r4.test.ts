@@ -428,3 +428,21 @@ test("headline wording: no 'probability' for heuristic numbers, no edge claim", 
   const h = src("server/headline.ts");
   assert.doesNotMatch(h, /Composite probability score|scores transition probability|Confidence ≥70% = transition signal worth acting on|has best edge/);
 });
+
+// ── 11. /api/ticker-projection: no chain + too few bars -> 503 unavailable ──
+import { UpstreamUnavailableError, classifyRouteError } from "../../shared/unavailable";
+
+test("ticker projection: no Schwab chain and too few bars is upstream-unavailable (503 + dataState), not 500", () => {
+  const tp = src("server/tickerProjection.ts");
+  assert.match(tp, /if \(bars\.length < 20\) throw new UpstreamUnavailableError\(/);
+  assert.match(tp, /throw new UpstreamUnavailableError\(`no Schwab option chain for \$\{symbol\} and Schwab daily bars failed/);
+  assert.doesNotMatch(tp, /throw new Error\(`no Schwab option chain and insufficient bars/);
+  const e = new UpstreamUnavailableError("no Schwab option chain and insufficient Schwab daily bars for XYZ (3 of 20)");
+  const out = classifyRouteError(e, "x", { schwabConnected: true });
+  assert.equal(out.kind, "unavailable");
+  assert.equal(out.status, 503);
+  assert.equal((out.body as any).dataState, "unavailable");
+  const route = src("server/routes.ts");
+  const i = route.indexOf('app.get("/api/ticker-projection"');
+  assert.match(route.slice(i, i + 800), /if \(sendIfUnavailable\(res, e\)\) return;/);
+});
