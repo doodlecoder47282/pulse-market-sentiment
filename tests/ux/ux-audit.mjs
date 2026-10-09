@@ -121,17 +121,22 @@ for (const vp of viewports) {
   const t0 = Date.now();
   await p.goto(`${BASE}/#/`, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
   const firstLoadMs = Date.now() - t0;
+  await p.waitForTimeout(4000); // splash animation must finish before it accepts input
   await p.screenshot({ path: `${OUT}/${vp.name}/00-first-screen.png` });
   await p.keyboard.press("Enter").catch(() => {});
   const splash = p.getByRole("button", { name: /print/i });
-  if (await splash.count()) await splash.first().click({ timeout: 3000 }).catch(() => {});
+  if (await splash.count()) await splash.first().click({ timeout: 5000 }).catch(() => {});
+  await p.waitForTimeout(2500);
+  await p.screenshot({ path: `${OUT}/${vp.name}/00b-premarket-gate.png` });
   for (let k = 0; k < 4; k++) {
     await p.evaluate(() => document.querySelectorAll("div").forEach((d) => { if (d.scrollHeight > d.clientHeight + 10) { d.scrollTop = d.scrollHeight; d.dispatchEvent(new Event("scroll")); } }));
     await p.mouse.wheel(0, 5000).catch(() => {});
     await p.waitForTimeout(500);
   }
-  await p.locator('[data-testid="button-premarket-acknowledge"]').click({ timeout: 8000 }).catch(() => {});
-  await p.waitForTimeout(6000);
+  await p.locator('[data-testid="button-premarket-acknowledge"]').click({ timeout: 8000 }).catch((e) => console.log(vp.name, "ack:", e.message.split("\n")[0]));
+  await p.waitForTimeout(8000);
+  const gateGone = await p.locator('[data-testid="tab-signals"]').first().isVisible().catch(() => false);
+  console.log(vp.name, "tabs visible after gates:", gateGone);
   for (const [i, t] of tabs.entries()) {
     const btn = p.locator(`[data-testid="tab-${t}"]`);
     const entry = { viewport: vp.name, width: vp.width, tab: t };
