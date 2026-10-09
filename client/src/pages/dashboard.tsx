@@ -1,6 +1,9 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Snapshot_Public } from "@shared/schema";
+import type { Snapshot_Public, Composite, GammaStructure, SocialSentiment } from "@shared/schema";
+import { parseUnavailableError } from "@shared/unavailable";
+import DataStateChip from "@/components/DataStateChip";
+import UnavailablePanel from "@/components/UnavailablePanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Tooltip as UITooltip,
@@ -171,6 +174,32 @@ function LiveClock() {
   );
 }
 
+// /api/snapshot body: the full Snapshot_Public (dataState "ok" | "stale"), or
+// when Schwab cannot answer a partial (dataState "partial") whose Schwab
+// sections (gamma, composite, quote values) are null with per-section
+// reasons (server/snapshotDegrade.ts). A 503 arrives as a query error.
+type SectionState = { dataState: string; reason: string | null; source: string };
+type SnapshotResponse = Omit<Snapshot_Public, "gamma" | "composite" | "spy"> & {
+  spy: Omit<Snapshot_Public["spy"], "price"> & { price: number | null };
+  gamma: GammaStructure | null;
+  composite: Composite | null;
+  dataState?: "ok" | "stale" | "partial";
+  dataStateReason?: string | null;
+  sections?: Partial<Record<"quotes" | "gamma" | "composite" | "social" | "fearGreed" | "headlines", SectionState>>;
+};
+
+const nullVm = (symbol: string, name: string) => ({ symbol, name, value: null, prev: null, changePct: null, stale: null });
+// No snapshot at all: every quote-derived value is missing (null, shown as a gap), never 0.
+const EMPTY_VOL: Snapshot_Public["vol"] = {
+  vix: nullVm("^VIX", "VIX (30-day implied vol)"),
+  vvix: nullVm("^VVIX", "VVIX (Vol-of-Vol)"),
+  vix9d: nullVm("^VIX9D", "VIX9D (9-day)"),
+  vix3m: nullVm("^VIX3M", "VIX3M (3-month)"),
+  skew: nullVm("^SKEW", "Cboe SKEW index (via Schwab)"),
+};
+const EMPTY_TERM: Snapshot_Public["term"] = { vix9d: null, vix: null, vix3m: null, ratio9dOver30d: null, ratio30dOver3m: null };
+const EMPTY_SPY: SnapshotResponse["spy"] = { price: null, prevClose: null, changePct: null, stale: null, ageMs: null };
+
 export default function Dashboard() {
   const { theme, toggleTheme, compact, toggleCompact } = useTheme();
   // Take Five overlay state — shared by floating FAB and tab "peek" button.
@@ -191,7 +220,7 @@ export default function Dashboard() {
   // Ref for Chart tab ticker input (for "/" shortcut)
   const tickerInputRef = useRef<HTMLInputElement | null>(null);
 
-  const { data, isLoading, isError, error, dataUpdatedAt } = useQuery<Snapshot_Public>({
+  const { data, isLoading, isError, error, dataUpdatedAt } = useQuery<SnapshotResponse>({
     queryKey: ["/api/snapshot"],
     refetchInterval: 60_000,  // auto-refresh every 60s
     // No refetchOnWindowFocus: the 60s interval already keeps data fresh, and on
@@ -267,26 +296,26 @@ export default function Dashboard() {
 
   if (isLoading) return <DashboardSkeleton />;
 
-  if (isError || !data) {
-    return (
-      <div className="flex min-h-screen items-center justify-center p-8">
-        <Card className="max-w-md">
-          <CardContent className="p-6 text-center">
-            <AlertTriangle className="mx-auto mb-3 h-8 w-8 text-amber-500" />
-            <h2 className="text-lg font-semibold">Couldn't load snapshot</h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              {(error as Error)?.message ?? "Upstream data sources are unreachable."}
-            </p>
-            <Button className="mt-4" onClick={() => refreshMut.mutate()} data-testid="button-retry">
-              Retry
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  const { composite, vol, spy, gamma, term, social, fearGreed } = data;
+  // Snapshot unavailable or partial (Schwab not answering): the app shell and
+  // all 11 tabs still render; Schwab-dependent cards show the state and
+  // reason, context cards (social, F&G) render when the partial carries them.
+  // A failed snapshot used to replace the whole app with an error screen.
+  const snapErr = isError ? parseUnavailableError(error) : null;
+  const snapState: string = snapErr
+    ? snapErr.dataState
+    : (data?.dataState ?? (data ? "ok" : "unavailable"));
+  const snapReason: string | null = snapErr
+    ? snapErr.reason
+    : (data?.dataStateReason ?? (data ? null : "no snapshot from the server"));
+  const vol = data?.vol ?? EMPTY_VOL;
+  const term = data?.term ?? EMPTY_TERM;
+  const spy = data?.spy ?? EMPTY_SPY;
+  const gamma: GammaStructure | null = data?.gamma ?? null;
+  const composite: Composite | null = data?.composite ?? null;
+  const social: SocialSentiment | null = data?.social ?? null;
+  const fearGreed = data?.fearGreed ?? null;
+  const sectionReason = (k: "gamma" | "composite" | "quotes") =>
+    data?.sections?.[k]?.reason ?? snapReason ?? "Schwab did not answer";
 
   return (
     <div className="min-h-screen bg-background">
@@ -342,8 +371,11 @@ export default function Dashboard() {
             <div className="hidden text-right md:block">
               <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Last update</div>
               <div className="font-mono text-xs" data-testid="text-last-update">
-                {fmt.ts(data.capturedAt)}
+                {data ? fmt.ts(data.capturedAt) : "—"}
               </div>
+              {snapState !== "ok" ? (
+                <DataStateChip state={snapState} reason={snapReason} source="Schwab" testId="chip-snapshot-state" />
+              ) : null}
             </div>
             <Button
               variant="outline"
@@ -489,7 +521,7 @@ export default function Dashboard() {
               vvix={vol.vvix.value}
               ratio9dOver30d={term.ratio9dOver30d}
               spot={spy.price ?? null /* SPY $: same scale as gamma.zeroGamma (Schwab SPY chain); was SPY x10 vs an SPY-scale flip */}
-              zeroGamma={gamma.zeroGamma ?? null}
+              zeroGamma={gamma?.zeroGamma ?? null}
             />
             <ErrorBoundary label="Chart Panel">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
@@ -507,7 +539,7 @@ export default function Dashboard() {
               vvix={vol.vvix.value}
               ratio9dOver30d={term.ratio9dOver30d}
               spot={spy.price ?? null /* SPY $: same scale as gamma.zeroGamma (Schwab SPY chain); was SPY x10 vs an SPY-scale flip */}
-              zeroGamma={gamma.zeroGamma ?? null}
+              zeroGamma={gamma?.zeroGamma ?? null}
             />
             <ErrorBoundary label="Models Panel">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
@@ -558,7 +590,7 @@ export default function Dashboard() {
               vvix={vol.vvix.value}
               ratio9dOver30d={term.ratio9dOver30d}
               spot={spy.price ?? null /* SPY $: same scale as gamma.zeroGamma (Schwab SPY chain); was SPY x10 vs an SPY-scale flip */}
-              zeroGamma={gamma.zeroGamma ?? null}
+              zeroGamma={gamma?.zeroGamma ?? null}
             />
             <ErrorBoundary label="Trade Desk">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
@@ -634,7 +666,7 @@ export default function Dashboard() {
               vvix={vol.vvix.value}
               ratio9dOver30d={term.ratio9dOver30d}
               spot={spy.price ?? null /* SPY $: same scale as gamma.zeroGamma (Schwab SPY chain); was SPY x10 vs an SPY-scale flip */}
-              zeroGamma={gamma.zeroGamma ?? null}
+              zeroGamma={gamma?.zeroGamma ?? null}
             />
 
             {/* Customizable widget stack — reorder, hide, or add widgets from anywhere */}
@@ -643,7 +675,9 @@ export default function Dashboard() {
             {/* MISSION FIX #6 — sampled participation breadth from cached daily bars */}
             <Suspense fallback={null}><BreadthCard /></Suspense>
 
-            {/* Composite gauge — hero panel, full width */}
+            {/* Composite gauge — hero panel, full width. Needs the Schwab
+                implied-vol and options-positioning blocks: unavailable without them. */}
+            {composite ? (<>
             <Card data-testid="card-composite">
               <CardContent className="p-6">
                 <div className="flex items-start justify-between">
@@ -703,6 +737,15 @@ export default function Dashboard() {
                 </div>
               </CollapsibleCard>
             </section>
+            </>) : (
+              <Card data-testid="card-composite">
+                <CardContent className="p-6">
+                  <div className="text-xs uppercase tracking-widest text-muted-foreground">Composite Sentiment</div>
+                  <UnavailablePanel className="mt-3" title="Composite and signal breakdown" state="unavailable"
+                    reason={sectionReason("composite")} testId="unavailable-composite" />
+                </CardContent>
+              </Card>
+            )}
 
             {/* Third row: Gamma structure chart + term structure */}
             <section className="grid grid-cols-1 gap-4 lg:grid-cols-12">
@@ -711,6 +754,9 @@ export default function Dashboard() {
                 className="lg:col-span-8"
                 title={<><Activity className="h-4 w-4" />Dealer Gamma Structure (SPY · 0-45 DTE)</>}
               >
+                {!gamma ? (
+                  <UnavailablePanel title="Dealer gamma" state="unavailable" reason={sectionReason("gamma")} testId="unavailable-gamma" />
+                ) : (
                 <>
                   <div className="mb-3 flex flex-wrap gap-3 text-xs">
                     {/* TODO(threshold-context): no baseline for Net GEX in the API. To satisfy
@@ -783,6 +829,7 @@ export default function Dashboard() {
                     Γ × OI × 100 × S² × 1%.
                   </p>
                 </>
+                )}
               </CollapsibleCard>
 
               {/* Term structure + top OI */}
@@ -792,6 +839,10 @@ export default function Dashboard() {
                   title={<><Waves className="h-4 w-4" />VIX Term Structure</>}
                 >
                   <div className="space-y-3">
+                    {term.vix == null || term.vix9d == null || term.vix3m == null ? (
+                      <UnavailablePanel compact state={term.vix == null && term.vix9d == null && term.vix3m == null ? "unavailable" : "partial"}
+                        reason={sectionReason("quotes")} testId="unavailable-term" />
+                    ) : null}
                     <TermBar label="VIX 9D"  value={term.vix9d}  max={40} />
                     <TermBar label="VIX 30D" value={term.vix}    max={40} highlight />
                     <TermBar label="VIX 3M"  value={term.vix3m}  max={40} />
@@ -813,6 +864,9 @@ export default function Dashboard() {
                 </CollapsibleCard>
 
                 <CollapsibleCard id="top-oi" title="Top Open Interest">
+                  {!gamma ? (
+                    <UnavailablePanel compact title="Open interest" state="unavailable" reason={sectionReason("gamma")} testId="unavailable-top-oi" />
+                  ) : (
                   <>
                     <div className="grid grid-cols-2 gap-3 text-xs">
                       <div>
@@ -850,6 +904,7 @@ export default function Dashboard() {
                     </div>
                     <div className="mt-2 text-[10px] italic text-muted-foreground/70">Small text = dominant expiry for that strike (MM-DD·DTE)</div>
                   </>
+                  )}
                 </CollapsibleCard>
               </div>
             </section>
@@ -864,13 +919,16 @@ export default function Dashboard() {
                     <MessageSquare className="h-4 w-4" />
                     StockTwits Chatter (social, context only)
                     <Badge variant="secondary" className="ml-2 font-mono text-[10px]" data-testid="badge-social-score">
-                      {social.score == null
+                      {!social ? "unavailable" : social.score == null
                         ? (social.status === "insufficient" ? "too few tagged posts" : "unavailable")
                         : `score ${social.score >= 0 ? "+" : ""}${social.score}${social.status === "partial" ? " (partial)" : ""}`}
                     </Badge>
                   </>
                 }
               >
+                {!social ? (
+                  <UnavailablePanel title="Social" state={snapState} reason={snapReason} source="server" testId="unavailable-social" />
+                ) : (
                 <>
                   {social.sources && social.sources.length > 0 && (
                     <div className="mb-2 text-[10px] text-muted-foreground" data-testid="text-social-sources">
@@ -919,6 +977,7 @@ export default function Dashboard() {
                     </ScrollArea>
                   )}
                 </>
+                )}
               </CollapsibleCard>
 
               <div className="lg:col-span-6">

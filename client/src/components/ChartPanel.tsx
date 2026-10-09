@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import GammaContextBanner from "./GammaContextBanner";
+import UnavailablePanel from "./UnavailablePanel";
 import OfiHistogram from "./OfiHistogram";
 import { useAlphaNewsMarkers, AlphaNewsPanel, AlphaNewsToggle } from "./AlphaNewsOverlay";
 import TickerOutlookCard from "./TickerOutlookCard";
@@ -384,7 +385,12 @@ export default function ChartPanel() {
           {/* Engine-agnostic GEX banner — renders above every engine including
               TV, so the user always has call wall / put wall / 0γ / max pain
               context with distance-from-spot. */}
-          {viewMode === "price" && showGamma && (
+          {/* 503 (Schwab chain unavailable) or failed request: state + reason,
+              not the "chain wired for SPX/SPY only" note meant for other tickers. */}
+          {viewMode === "price" && showGamma && gammaQuery.isError && (
+            <UnavailablePanel compact title={`Gamma walls (${activeChart})`} error={gammaQuery.error} testId="gamma-banner-unavailable" />
+          )}
+          {viewMode === "price" && showGamma && !gammaQuery.isError && (
             <GammaContextBanner
               spot={
                 engine === "tv"

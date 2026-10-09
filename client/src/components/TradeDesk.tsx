@@ -23,6 +23,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { fmt } from "@/lib/format";
 import LivenessBadge from "@/components/LivenessBadge";
 import DataAgeChip from "@/components/DataAgeChip";
+import DataStateChip from "@/components/DataStateChip";
+import UnavailablePanel from "@/components/UnavailablePanel";
+import { parseUnavailableError } from "@shared/unavailable";
 import {
   LineChart, Line, XAxis, YAxis, ReferenceLine, ResponsiveContainer,
   Tooltip as RTooltip, CartesianGrid, Area, AreaChart,
@@ -132,11 +135,16 @@ type TradeDeskPayload = {
   interval: string;
   quotes: { spx: QuoteSeries | null; spy: QuoteSeries | null; vix: QuoteSeries | null };
   pivots: { spx: PivotBundle | null; spy: PivotBundle | null; vix: PivotBundle | null };
-  gammaMap: GammaMap;
-  squeeze: Squeeze;
-  playbook: Playbook;
-  composite: { score: number; label: string };
+  // null with sections[k] = {dataState:"unavailable", reason} when Schwab
+  // cannot supply the snapshot (server/snapshotDegrade.ts tradeDeskDegraded).
+  gammaMap: GammaMap | null;
+  squeeze: Squeeze | null;
+  playbook: Playbook | null;
+  composite: { score: number; label: string } | null;
   voicesBias: { score: number; sampleSize: number } | null;
+  dataState?: "ok" | "stale" | "partial";
+  dataStateReason?: string | null;
+  sections?: Partial<Record<"gammaMap" | "squeeze" | "playbook" | "composite", { dataState: string; reason: string | null; source: string }>>;
 };
 
 type PivotSystem = "classic" | "fib" | "cam" | "all";
@@ -160,18 +168,13 @@ export default function TradeDesk() {
 
   if (isLoading) return <TradeDeskSkeleton />;
 
-  if (isError || !data) {
-    return (
-      <Card className="border-amber-500/30">
-        <CardContent className="p-6 text-center">
-          <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-amber-500" />
-          <div className="text-sm text-muted-foreground">
-            Trade Desk feed unreachable: {(error as Error)?.message || "unknown error"}
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
+  // The independent panels (regime forecast, edge stats, sizer, EOD play
+  // maker) render whatever the trade-desk feed does. When the feed is 503
+  // (Schwab cannot answer) or partial, the Schwab sections show the state
+  // and reason instead of the whole tab collapsing to one error card.
+  const feedErr = isError || !data ? parseUnavailableError(error) : null;
+  const secReason = (k: "gammaMap" | "squeeze" | "playbook" | "composite") =>
+    data?.sections?.[k]?.reason ?? data?.dataStateReason ?? "Schwab did not answer";
 
   return (
     <div className="space-y-4">
@@ -189,6 +192,43 @@ export default function TradeDesk() {
       {/* MISSION FIX #2 — risk-first sizer + net-EV survival waterfall */}
       <PositionSizer />
 
+      {!data ? (
+        <Card className="border-rose-500/30" data-testid="trade-desk-unavailable">
+          <CardContent className="p-4">
+            <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-500">
+              <AlertTriangle className="h-4 w-4" /> Trade Desk feed
+            </div>
+            <UnavailablePanel
+              title="Intraday quotes, pivots, gamma map, squeeze and playbook"
+              state={feedErr?.dataState ?? "unavailable"}
+              reason={feedErr?.reason ?? (error as Error)?.message ?? "no response"}
+            />
+          </CardContent>
+        </Card>
+      ) : (
+        <TradeDeskFeed data={data} range={range} setRange={setRange} pivotSystem={pivotSystem} setPivotSystem={setPivotSystem} secReason={secReason} />
+      )}
+
+      {/* EOD Play Maker */}
+      <section>
+        <EodPlayMaker />
+      </section>
+    </div>
+  );
+}
+
+function TradeDeskFeed({
+  data, range, setRange, pivotSystem, setPivotSystem, secReason,
+}: {
+  data: TradeDeskPayload;
+  range: "1d" | "5d";
+  setRange: (r: "1d" | "5d") => void;
+  pivotSystem: PivotSystem;
+  setPivotSystem: (p: PivotSystem) => void;
+  secReason: (k: "gammaMap" | "squeeze" | "playbook" | "composite") => string;
+}) {
+  return (
+    <div className="space-y-4">
       {/* Command bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/20 bg-gradient-to-r from-amber-500/5 to-transparent px-4 py-2.5">
         <div className="flex items-center gap-2">
@@ -200,6 +240,9 @@ export default function TradeDesk() {
           <div className="font-mono text-[11px] text-muted-foreground">
             {fmt.ts(data.capturedAt)} · {data.interval} bars
           </div>
+          {data.dataState && data.dataState !== "ok" ? (
+            <DataStateChip state={data.dataState} reason={data.dataStateReason ?? null} source="Schwab" testId="chip-trade-desk-state" />
+          ) : null}
         </div>
         <div className="flex items-center gap-3">
           <ToggleGroup
@@ -224,10 +267,14 @@ export default function TradeDesk() {
       {/* Playbook + Squeeze header */}
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <div className="lg:col-span-8">
-          <PlaybookCard playbook={data.playbook} />
+          {data.playbook ? <PlaybookCard playbook={data.playbook} /> : (
+            <UnavailablePanel title="Playbook" state="unavailable" reason={secReason("playbook")} testId="unavailable-playbook" />
+          )}
         </div>
         <div className="lg:col-span-4">
-          <SqueezeDial squeeze={data.squeeze} />
+          {data.squeeze ? <SqueezeDial squeeze={data.squeeze} /> : (
+            <UnavailablePanel title="Squeeze" state="unavailable" reason={secReason("squeeze")} testId="unavailable-squeeze" />
+          )}
         </div>
       </section>
 
@@ -269,15 +316,10 @@ export default function TradeDesk() {
         <div className="flex justify-end">
           <DataAgeChip asOfMs={(data as any).gammaAsOf ?? null} stale={(data as any).gammaStale ?? null} maxAgeMs={(data as any).gammaMaxAgeMs ?? null} label="gamma map · Schwab SPY chain" />
         </div>
-        <GammaMapCard gammaMap={data.gammaMap} spot={data.quotes.spy?.price ?? null} />
+        {data.gammaMap ? <GammaMapCard gammaMap={data.gammaMap} spot={data.quotes.spy?.price ?? null} /> : (
+          <UnavailablePanel title="Gamma map" state="unavailable" reason={secReason("gammaMap")} testId="unavailable-gamma-map" />
+        )}
       </section>
-
-      {/* EOD Play Maker */}
-      <section>
-        <EodPlayMaker />
-      </section>
-
-
     </div>
   );
 }

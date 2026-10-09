@@ -5,6 +5,7 @@
 
 import { useState } from "react";
 import DataAgeChip from "./DataAgeChip";
+import UnavailablePanel from "./UnavailablePanel";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -180,7 +181,7 @@ function buildRows(e: GammaLevelsEnhanced): LevelRow[] {
 export default function GammaLevelsStrip() {
   const [expanded, setExpanded] = useState(true);
 
-  const { data, isLoading } = useQuery<EnhancedGammaResponse>({
+  const { data, isLoading, isError, error } = useQuery<EnhancedGammaResponse>({
     queryKey: ["/api/gamma-levels-enhanced"],
     queryFn: async () =>
       apiRequest("GET", "/api/gamma-levels-enhanced?symbol=SPY").then((r) => r.json()),
@@ -199,7 +200,17 @@ export default function GammaLevelsStrip() {
     );
   }
 
-  if (!data?.supported || !data?.enhanced) {
+  // 503 (Schwab chain unavailable) or a failed request: say so with the
+  // reason. It used to fall through to "only available for SPY/SPX".
+  if (isError || !data) {
+    return (
+      <div className="rounded-xl border border-border/60 bg-card/40 p-3" data-testid="gamma-levels-strip">
+        <UnavailablePanel compact title="Gamma Levels" error={error} testId="gamma-levels-unavailable" />
+      </div>
+    );
+  }
+
+  if (!data.supported || !data.enhanced) {
     return (
       <div className="rounded-xl border border-border/60 bg-card/40 p-3 text-[11px] text-muted-foreground">
         Gamma levels only available for SPY/SPX.

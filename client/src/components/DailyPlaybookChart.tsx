@@ -21,6 +21,7 @@ import {
 } from "recharts";
 import { apiRequest } from "@/lib/queryClient";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import UnavailablePanel from "@/components/UnavailablePanel";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TrendingUp, Minus, TrendingDown, Lock, Activity, Info, AlertTriangle, Zap, Heart, HeartCrack, Flame, Snowflake } from "lucide-react";
@@ -173,7 +174,7 @@ interface Props {
 }
 
 export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
-  const { data: pb, isLoading } = useQuery<DailyPlaybook>({
+  const { data: pb, isLoading, isError, error } = useQuery<DailyPlaybook>({
     queryKey: ["/api/playbook/daily", symbol],
     queryFn: async () => {
       const r = await apiRequest("GET", `/api/playbook/daily?symbol=${symbol}`);
@@ -194,6 +195,16 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
   });
 
   const series = useMemo(() => (pb ? buildPathSeries(pb) : []), [pb]);
+
+  // 503 (Schwab chain/VIX/$SPX unavailable) or a failed request: show the
+  // state and reason. It used to sit on the loading skeleton forever.
+  if (!isLoading && (isError || !pb)) {
+    return (
+      <div className="rounded-lg border border-border/40 bg-muted/5 p-4" data-testid="daily-playbook-chart">
+        <UnavailablePanel title={`Daily Playbook (${symbol})`} error={error} testId="playbook-unavailable" />
+      </div>
+    );
+  }
 
   if (isLoading || !pb) {
     return (
