@@ -11,6 +11,7 @@ import { firstPassage, projectToTarget } from "../../server/t1Projection";
 import { bsPrice, delta as bsDelta, gamma as bsGamma } from "../../server/greeks";
 import { cdf } from "../../server/stats";
 import { modelThetaToClose } from "../../server/chainClock";
+import { liquidationReturn, entryFillOf } from "../../server/exitValuation";
 
 const near = (got: number, want: number, tol: number, what: string) =>
   assert.ok(Math.abs(got - want) <= tol, `${what}: got ${got}, want ${want} +- ${tol}`);
@@ -277,4 +278,25 @@ test("projectToTarget: unavailable without a two-sided quote or after settlement
   assert.equal(projectToTarget({ ...base, bid: null, ask: 10 }), null);
   assert.equal(projectToTarget({ ...base, bid: 11, ask: 10 }), null);
   assert.equal(projectToTarget({ ...base, bid: 9, ask: 10, nowMs: Date.UTC(2026, 6, 15, 21, 0) }), null);
+});
+
+// ─── 6.6 exit brain on the bid, net of the exit fee ─────────────────────────
+
+test("liquidationReturn: sold at the bid after the exit fee, on cash paid incl. the entry fee (hand-computed)", () => {
+  // Bought at the ask 5.00, fee $0.65/side: cost 500.65. Quote 4.10 x 4.30 (mid 4.20).
+  // Mid-based drawdown: (4.20 - 5.00)/5.00 = -16.0% -> the old -20% stop would NOT fire.
+  // At the bid: 410 - 0.65 = 409.35; (409.35 - 500.65)/500.65 = -18.236%.
+  const l = liquidationReturn({ entryFill: 5.0, bid: 4.1, feePerContract: 0.65 })!;
+  assert.equal(l.costBasis, 500.65);
+  assert.equal(l.liquidationValue, 409.35);
+  near(l.netReturn, (409.35 - 500.65) / 500.65, 1e-12, "net at bid");
+  // Bid 3.95 (mid 4.05 = -19% on mid): 395 - 0.65 = 394.35 -> -21.232%: the stop fires at the bid.
+  const s2 = liquidationReturn({ entryFill: 5.0, bid: 3.95, feePerContract: 0.65 })!;
+  assert.ok(s2.netReturn <= -0.2, `${s2.netReturn}`);
+  // Zero bid: nothing to sell, no closing fee: -100%.
+  near(liquidationReturn({ entryFill: 5.0, bid: 0, feePerContract: 0.65 })!.netReturn, -1, 1e-12, "zero bid");
+  // No bid: missing, not 0%.
+  assert.equal(liquidationReturn({ entryFill: 5.0, bid: null, feePerContract: 0.65 }), null);
+  assert.deepEqual(entryFillOf({ buyPrice: 4.9, buyAsk: 5.0 }), { fill: 5.0, basis: "ask_at_arm" });
+  assert.deepEqual(entryFillOf({ buyPrice: 4.9, buyAsk: null }), { fill: 4.9, basis: "last_at_arm" });
 });

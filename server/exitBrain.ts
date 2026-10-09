@@ -19,8 +19,8 @@
 //                                ▼  every 30s during RTH
 //   ┌─────────────────────────────────────────────────────────────────┐
 //   │ for each active position:                                       │
-//   │   1) read live mark from odteTracker snapshot                   │
-//   │   2) compute drawdown vs entry                                  │
+//   │   1) read the live BID from odteTracker snapshot                │
+//   │   2) net return if sold now: bid - exit fee vs ask + entry fee  │
 //   │   3) HARD STOP: drawdown ≤ −20%  →  EXIT immediately            │
 //   │   4) DYNAMIC STOP: 5-cat confluence score                       │
 //   │      a) MTF stack collapse against side                         │
@@ -42,21 +42,31 @@ import { getTracked, getOdteSnapshot, type TrackedPosition, type Side } from "./
 import { getMtfStack, isStackCollapse } from "./mtfStack";
 import { getRevExtSnapshot, isReversionThreat } from "./revExtClassifier";
 import { computeRealtimeTargets } from "./realtimeTargets";
+import { entryFillOf, liquidationReturn, type EntryBasis } from "./exitValuation";
+import { odteProjectionFee } from "./t1Projection";
 
 // ─── Types ────────────────────────────────────────────────────────────
 
-export type ExitAction = "HOLD" | "TRIM" | "EXIT" | "TRAIL";
+/** NO_QUOTE: no bid to sell at, so the stop and P&L cannot be evaluated (never shown as HOLD at 0%). */
+export type ExitAction = "HOLD" | "TRIM" | "EXIT" | "TRAIL" | "NO_QUOTE";
 
 export interface ExitBrainEval {
   positionId: string;
   contractKey: string;
   side: Side;
-  /** Live mark used for this eval */
+  /** Price used for this eval: the live BID (what the position can be sold at). Null without a bid. */
   mark: number | null;
-  /** Entry price */
+  /** Entry fill, $ per share: the ask at arm when logged, else the last print at arm (entryBasis). */
   entry: number;
-  /** Drawdown vs entry, signed pct (e.g. -0.18 = −18%) */
-  drawdownPct: number;
+  entryBasis?: EntryBasis;
+  /** Net return if sold at the bid now, after the exit fee, on cash paid incl. the entry fee; FRACTION (-0.18 = -18%). Null without a bid. */
+  drawdownPct: number | null;
+  /** Live quote (additive). */
+  bid?: number | null;
+  ask?: number | null;
+  /** "bid_net_of_exit_fee" (review item 6.6). */
+  valuation?: string;
+  feePerContract?: number;
   /** Peak unrealized return seen during the position's life, signed pct */
   peakReturnPct: number;
   /** Action verdict */
@@ -100,7 +110,7 @@ export interface ExitBrainSnapshot {
 
 // ─── Config ───────────────────────────────────────────────────────────
 
-const HARD_STOP_PCT = -0.20;       // -20% drawdown → instant exit
+const HARD_STOP_PCT = -0.20;       // -20% of cash paid if sold at the bid after fees → instant exit
 const EVAL_INTERVAL_MS = 30_000;   // 30s cadence (user spec)
 
 // Score thresholds (0..100):
@@ -152,17 +162,14 @@ async function getVix(): Promise<number | null> {
   }
 }
 
-/** Get the most recent live mark (last → mid → bid mid) for a contract. */
-function getLiveMark(contractKey: string): number | null {
+/** Live bid/ask for a contract. The bid is what a long position can be sold at. */
+function getLiveQuote(contractKey: string): { bid: number | null; ask: number | null } {
   const snap = getOdteSnapshot();
   const row = snap.contracts.find((c) => c.key === contractKey);
-  if (!row) return null;
-  if (row.last != null && row.last > 0) return row.last;
-  if (row.mid != null && row.mid > 0) return row.mid;
-  if (row.bid != null && row.ask != null && row.bid > 0 && row.ask > 0) {
-    return (row.bid + row.ask) / 2;
-  }
-  return null;
+  if (!row) return { bid: null, ask: null };
+  const bid = row.bid != null && Number.isFinite(row.bid) && row.bid >= 0 ? row.bid : null;
+  const ask = row.ask != null && Number.isFinite(row.ask) && row.ask > 0 ? row.ask : null;
+  return { bid, ask };
 }
 
 // ─── Per-position eval ────────────────────────────────────────────────
@@ -180,16 +187,21 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
   }
   const mem = memory.get(pos.id)!;
 
-  const mark = getLiveMark(pos.contractKey);
-  const entry = pos.buyPrice;
-  const ret = mark != null && entry > 0 ? (mark - entry) / entry : 0;
-  if (ret > mem.peakReturnPct) mem.peakReturnPct = ret;
+  // Review 6.6: judge the position on what it can be SOLD for now (the bid,
+  // minus the exit fee) against the cash paid (ask at arm plus the entry fee).
+  const quote = getLiveQuote(pos.contractKey);
+  const { fill: entry, basis: entryBasis } = entryFillOf(pos);
+  const fee = odteProjectionFee();
+  const liq = liquidationReturn({ entryFill: entry, bid: quote.bid, feePerContract: fee });
+  const mark = quote.bid;
+  const ret: number | null = liq ? liq.netReturn : null;
+  if (ret != null && ret > mem.peakReturnPct) mem.peakReturnPct = ret;
 
   // Map option side ("call"/"put") → underlying directional side ("long"/"short")
   const underlyingSide: "long" | "short" = pos.side === "call" ? "long" : "short";
 
   // ─── Category 1: HARD STOP ─────────────────────────────────────────
-  const hardStop = ret <= HARD_STOP_PCT ? 100 : 0;
+  const hardStop = ret != null && ret <= HARD_STOP_PCT ? 100 : 0;
 
   // ─── Category 2: MTF STACK COLLAPSE ────────────────────────────────
   let stackCollapseScore = 0;
@@ -399,11 +411,13 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
   // If we've banked a fat unrealized (≥40% gain) and we've given back ≥15% from
   // peak, treat it like a confluence-driven exit.
   const trailTriggered =
-    mem.peakReturnPct >= 0.40 && ret <= mem.peakReturnPct - 0.15;
+    ret != null && mem.peakReturnPct >= 0.40 && ret <= mem.peakReturnPct - 0.15;
 
   // ─── Action verdict ────────────────────────────────────────────────
   let action: ExitAction = "HOLD";
-  if (hardStop >= 100) {
+  if (ret == null) {
+    action = "NO_QUOTE";
+  } else if (hardStop >= 100) {
     action = "EXIT";
   } else if (trailTriggered) {
     action = "TRAIL";
@@ -417,12 +431,15 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
 
   // ─── Reasons (top contributors) ───────────────────────────────────
   const reasons: string[] = [];
-  if (hardStop >= 100) {
-    reasons.push(`HARD STOP: drawdown ${(ret * 100).toFixed(0)}% ≤ -20%`);
+  if (ret == null) {
+    reasons.push("NO BID: hard stop and P&L cannot be evaluated until the contract has a bid");
   }
-  if (trailTriggered) {
+  if (hardStop >= 100 && ret != null) {
+    reasons.push(`HARD STOP: ${(ret * 100).toFixed(0)}% if sold at the bid after fees, ≤ -20%`);
+  }
+  if (trailTriggered && ret != null) {
     reasons.push(
-      `TRAIL: peak +${(mem.peakReturnPct * 100).toFixed(0)}%, gave back ${((mem.peakReturnPct - ret) * 100).toFixed(0)}%`,
+      `TRAIL: peak +${(mem.peakReturnPct * 100).toFixed(0)}% at the bid, gave back ${((mem.peakReturnPct - ret) * 100).toFixed(0)}%`,
     );
   }
   if (stackReason) reasons.push(stackReason);
@@ -440,7 +457,12 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
     side: pos.side,
     mark,
     entry,
+    entryBasis,
     drawdownPct: ret,
+    bid: quote.bid,
+    ask: quote.ask,
+    valuation: "bid_net_of_exit_fee",
+    feePerContract: fee,
     peakReturnPct: mem.peakReturnPct,
     action,
     exitScore,
@@ -500,7 +522,7 @@ export function startExitBrain(intervalMs = EVAL_INTERVAL_MS): void {
   timer = setInterval(() => {
     void evalAll();
   }, intervalMs);
-  console.log(`[exitBrain] started — 30s eval cadence, hard stop -20%, exit≥${EXIT_SCORE} trim≥${TRIM_SCORE}`);
+  console.log(`[exitBrain] started — 30s eval cadence, hard stop -20% at the bid net of fees, exit≥${EXIT_SCORE} trim≥${TRIM_SCORE}`);
 }
 
 export function stopExitBrain(): void {
