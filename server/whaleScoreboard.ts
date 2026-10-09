@@ -22,16 +22,17 @@
 
 import { optionTradeDollars, toCents, usableEntryAsk, OPTION_MULTIPLIER } from "./validationMath";
 
-/** Schwab's published online option commission, $ per contract per side
- *  (Schwab pricing summary: "$0 base commission, plus $0.65 per contract",
- *  https://www.schwab.com/public/file/P-3346815). Index options also carry
- *  exchange index fees that are not included, so index results are slightly high. */
+/** Schwab's published online option commission for equity/ETF options, $ per
+ *  contract per side ("$0 base commission, plus $0.65 per contract",
+ *  https://www.schwab.com/public/file/P-3346815). Index roots use the configured
+ *  all-in fee (feeConfig.feeForProduct); without one they are not scored. */
 export const SCOREBOARD_FEE_PER_CONTRACT = 0.65;
 
 export const SCOREBOARD_BASIS = "ask_in_bid_out_net_fees" as const;
 export const SCOREBOARD_BASIS_NOTE =
-  "bought at the logged ask at detection, sold at the logged bid at the terminal moment; $0.65 per contract per side " +
-  "(index exchange fees not included); win = positive P&L after fees; positions without both quotes are excluded and counted";
+  "bought at the logged ask at detection, sold at the logged bid at the terminal moment; fees per contract per side " +
+  "($0.65 equity/ETF; index roots only with a configured all-in fee, else excluded and counted); win = positive P&L after fees; " +
+  "positions without both quotes are excluded and counted";
 
 export interface ScoredTrade {
   pnlPerContract: number;   // $ per contract, after fees
@@ -44,13 +45,15 @@ export function scoreAskToBid(args: {
   entryBid?: number | null;
   entryAsk: number | null | undefined;
   exitBid: number | null | undefined;
-  feePerContract?: number;
+  /** $ per contract per side; null = not configured (index root): not scored. */
+  feePerContract: number | null;
   multiplier?: number;
 }): ScoredTrade | null {
   const ask = usableEntryAsk({ bid: args.entryBid ?? null, ask: args.entryAsk ?? null });
   const bid = args.exitBid;
   if (ask == null || bid == null || !Number.isFinite(bid) || bid < 0) return null;
-  const fee = Math.max(0, args.feePerContract ?? SCOREBOARD_FEE_PER_CONTRACT);
+  if (args.feePerContract == null || !Number.isFinite(args.feePerContract)) return null;
+  const fee = Math.max(0, args.feePerContract);
   const mult = args.multiplier ?? OPTION_MULTIPLIER;
   const settled = bid === 0;
   const d = optionTradeDollars({ entry: ask, exit: bid, contracts: 1, multiplier: mult, feePerContract: fee, settled });
@@ -70,14 +73,15 @@ export interface ScoreboardRow {
   losses: number;
   burns: number;          // peak net >= +50% but final net <= 0 (only where the peak bid was logged)
   burnsEvaluated: number; // positions with a logged peak bid
-  winRate: number;        // wins / count
-  avgPct: number;         // mean netReturn
-  totalPnLPct: number;    // sum netReturn
-  avgPeakPct: number;     // mean peak netReturn over burnsEvaluated
-  bestPct: number;
-  worstPct: number;
-  avgPnlPerContract: number; // $ per contract, after fees
+  winRate: number | null;        // wins / count; null when nothing was scored (N-3)
+  avgPct: number | null;         // mean netReturn
+  totalPnLPct: number;           // sum netReturn (0 is the exact empty sum)
+  avgPeakPct: number | null;     // mean peak netReturn over burnsEvaluated
+  bestPct: number | null;
+  worstPct: number | null;
+  avgPnlPerContract: number | null; // $ per contract, after fees
   excludedNoQuote: number;   // terminal positions without an entry ask or exit bid
+  excludedNoFee: number;     // index-root positions without a configured all-in fee
   priceBasis: string;
 }
 
@@ -86,6 +90,7 @@ export function buildScoreboardRow(
   trades: Array<{ trade: ScoredTrade; peakNetReturn: number | null }>,
   excludedNoQuote: number,
   priceBasis: string = SCOREBOARD_BASIS,
+  excludedNoFee = 0,
 ): ScoreboardRow {
   let wins = 0, losses = 0, burns = 0, burnsEvaluated = 0;
   let sum = 0, sumPeak = 0, sumPnl = 0;
@@ -105,14 +110,15 @@ export function buildScoreboardRow(
   const n = trades.length;
   return {
     source, count: n, wins, losses, burns, burnsEvaluated,
-    winRate: n > 0 ? wins / n : 0,
-    avgPct: n > 0 ? sum / n : 0,
+    winRate: n > 0 ? wins / n : null,
+    avgPct: n > 0 ? sum / n : null,
     totalPnLPct: sum,
-    avgPeakPct: burnsEvaluated > 0 ? sumPeak / burnsEvaluated : 0,
-    bestPct: n > 0 ? best : 0,
-    worstPct: n > 0 ? worst : 0,
-    avgPnlPerContract: n > 0 ? Math.round((sumPnl / n) * 100) / 100 : 0,
+    avgPeakPct: burnsEvaluated > 0 ? sumPeak / burnsEvaluated : null,
+    bestPct: n > 0 ? best : null,
+    worstPct: n > 0 ? worst : null,
+    avgPnlPerContract: n > 0 ? Math.round((sumPnl / n) * 100) / 100 : null,
     excludedNoQuote,
+    excludedNoFee,
     priceBasis,
   };
 }
@@ -130,7 +136,8 @@ export function netReturnOnCost(pnlPerContract: number | null | undefined, entry
   return costC > 0 ? (toCents(pnlPerContract)) / costC : null;
 }
 
-export interface NetGroupStats { n: number; winners: number; losers: number; winRate: number; avgPctReturn: number; medianPctReturn: number; totalDollarPnl: number }
+/** Empty groups report null rates (N-3), never 0%. */
+export interface NetGroupStats { n: number; winners: number; losers: number; winRate: number | null; avgPctReturn: number | null; medianPctReturn: number | null; totalDollarPnl: number }
 
 /** Win rate, mean/median net return and $ total over executed trades, all net of fees. */
 export function netGroupStats(trades: Array<{ netPctReturn: number | null; pnlPerContract: number | null; dollarPnl: number | null }>): NetGroupStats {
@@ -138,13 +145,13 @@ export function netGroupStats(trades: Array<{ netPctReturn: number | null; pnlPe
   const winners = ok.filter((t) => (t.pnlPerContract as number) > 0).length;
   const rets = ok.map((t) => t.netPctReturn as number).sort((a, b) => a - b);
   const n = ok.length;
-  const median = n === 0 ? 0 : n % 2 ? rets[(n - 1) / 2] : (rets[n / 2 - 1] + rets[n / 2]) / 2;
+  const median = n === 0 ? null : n % 2 ? rets[(n - 1) / 2] : (rets[n / 2 - 1] + rets[n / 2]) / 2;
   return {
     n,
     winners,
     losers: n - winners,
-    winRate: n ? winners / n : 0,
-    avgPctReturn: n ? rets.reduce((a, b) => a + b, 0) / n : 0,
+    winRate: n ? winners / n : null,
+    avgPctReturn: n ? rets.reduce((a, b) => a + b, 0) / n : null,
     medianPctReturn: median,
     totalDollarPnl: Math.round(ok.reduce((a, t) => a + (t.dollarPnl ?? 0), 0) * 100) / 100,
   };

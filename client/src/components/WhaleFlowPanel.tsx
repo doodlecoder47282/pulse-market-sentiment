@@ -683,15 +683,17 @@ interface PerformanceRow {
   wins: number;
   losses: number;
   burns: number;
-  winRate: number;
-  avgPct: number;
+  winRate: number | null;     // null when nothing was scored
+  avgPct: number | null;
   totalPnLPct: number;
-  avgPeakPct: number;
-  bestPct: number;
-  worstPct: number;
+  avgPeakPct: number | null;
+  bestPct: number | null;
+  worstPct: number | null;
   /** "ask_in_bid_out_net_fees" (whale) or "mid_to_mid" (tracked signals). */
   priceBasis?: string;
   excludedNoQuote?: number;
+  /** Index-root positions not scored: no configured all-in index fee. */
+  excludedNoFee?: number;
   burnsEvaluated?: number;
 }
 interface PerformanceSnapshot {
@@ -735,7 +737,7 @@ function PerformanceCard() {
 
   const snap = perfQuery.data;
   const rows = snap?.bySource ?? [];
-  const showRows = rows.filter((r) => r.count > 0 || (r.excludedNoQuote ?? 0) > 0);
+  const showRows = rows.filter((r) => r.count > 0 || (r.excludedNoQuote ?? 0) > 0 || (r.excludedNoFee ?? 0) > 0);
 
   return (
     <section data-testid="section-performance">
@@ -797,6 +799,7 @@ function PerformanceCard() {
                 {sourceLabel(r.source)}
                 {r.priceBasis === "mid_to_mid" && <span className="ml-1 text-[9px] text-amber-400/80" title={snap?.midToMidNote}>mid to mid, no fees</span>}
                 {!!r.excludedNoQuote && <span className="ml-1 text-[9px] text-muted-foreground" title="no logged entry ask or exit bid">+{r.excludedNoQuote} unscored</span>}
+                {!!r.excludedNoFee && <span className="ml-1 text-[9px] text-muted-foreground" title="index option: set INDEX_OPTION_FEE_PER_CONTRACT to score these">+{r.excludedNoFee} no index fee</span>}
               </div>
               <div className="text-right font-mono text-muted-foreground">{r.count}</div>
               <div className="text-right font-mono">
@@ -804,11 +807,11 @@ function PerformanceCard() {
                 <span className="text-muted-foreground/60"> / </span>
                 <span className="text-red-400">{r.losses}</span>
               </div>
-              <div className={`text-right font-mono font-semibold ${winRateColor(r.winRate, r.count)}`}>
-                {r.count > 0 ? `${(r.winRate * 100).toFixed(0)}%` : "—"}
+              <div className={`text-right font-mono font-semibold ${winRateColor(r.winRate ?? 0, r.count)}`}>
+                {r.winRate != null ? `${(r.winRate * 100).toFixed(0)}%` : "—"}
               </div>
-              <div className={`text-right font-mono ${r.count > 0 ? pctColor(r.avgPct * 100) : "text-muted-foreground"}`}>
-                {r.count > 0 ? fmtPct(r.avgPct * 100) : "—"}
+              <div className={`text-right font-mono ${r.avgPct != null ? pctColor(r.avgPct * 100) : "text-muted-foreground"}`}>
+                {r.avgPct != null ? fmtPct(r.avgPct * 100) : "—"}
               </div>
               <div className="text-right font-mono">
                 {r.burns > 0 ? <span className="text-amber-400">{r.burns}</span> : <span className="text-muted-foreground">0</span>}
@@ -827,11 +830,11 @@ function PerformanceCard() {
                 <span className="text-muted-foreground/60"> / </span>
                 <span className="text-red-400">{snap.overall.losses}</span>
               </div>
-              <div className={`text-right font-mono font-semibold ${winRateColor(snap.overall.winRate, snap.overall.count)}`}>
-                {(snap.overall.winRate * 100).toFixed(0)}%
+              <div className={`text-right font-mono font-semibold ${winRateColor(snap.overall.winRate ?? 0, snap.overall.count)}`}>
+                {snap.overall.winRate != null ? `${(snap.overall.winRate * 100).toFixed(0)}%` : "—"}
               </div>
-              <div className={`text-right font-mono ${pctColor(snap.overall.avgPct * 100)}`}>
-                {fmtPct(snap.overall.avgPct * 100)}
+              <div className={`text-right font-mono ${pctColor((snap.overall.avgPct ?? 0) * 100)}`}>
+                {snap.overall.avgPct != null ? fmtPct(snap.overall.avgPct * 100) : "—"}
               </div>
               <div className="text-right font-mono">
                 {snap.overall.burns > 0 ? <span className="text-amber-400">{snap.overall.burns}</span> : <span className="text-muted-foreground">0</span>}

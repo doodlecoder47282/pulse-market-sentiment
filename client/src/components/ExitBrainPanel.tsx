@@ -30,6 +30,9 @@ interface ExitBrainEval {
   entry: number;
   /** Net return if sold at the bid after fees, FRACTION; null without a bid. */
   drawdownPct: number | null;
+  /** Bid vs entry ask before fees (the stop's basis), FRACTION; shown when the net figure is unavailable. */
+  bidReturnPct?: number | null;
+  feeBasis?: string;
   peakReturnPct: number;   // FRACTION
   action: "HOLD" | "TRIM" | "EXIT" | "TRAIL" | "NO_QUOTE";
   exitScore: number;
@@ -141,11 +144,15 @@ function EvalRow({ ev }: { ev: ExitBrainEval }) {
           <span className="text-muted-foreground">bid</span>
           <span className="font-mono" data-testid={`eval-mark-${ev.positionId}`}>{ev.mark != null ? `$${ev.mark.toFixed(2)}` : "—"}</span>
           <span
-            className={`font-mono font-semibold ${ev.drawdownPct != null ? drawdownColor(ev.drawdownPct * 100) : "text-muted-foreground"}`}
+            className={`font-mono font-semibold ${(ev.drawdownPct ?? ev.bidReturnPct) != null ? drawdownColor(((ev.drawdownPct ?? ev.bidReturnPct) as number) * 100) : "text-muted-foreground"}`}
             data-testid={`eval-drawdown-${ev.positionId}`}
-            title="if sold at the bid now, after the exit fee, on cash paid incl. the entry fee"
+            title={ev.drawdownPct != null ? "if sold at the bid now, after the exit fee, on cash paid incl. the entry fee" : (ev.feeBasis ?? "")}
           >
-            {ev.drawdownPct != null ? `${ev.drawdownPct >= 0 ? "+" : ""}${(ev.drawdownPct * 100).toFixed(1)}% net` : "no bid"}
+            {ev.drawdownPct != null
+              ? `${ev.drawdownPct >= 0 ? "+" : ""}${(ev.drawdownPct * 100).toFixed(1)}% net`
+              : ev.bidReturnPct != null
+                ? `${ev.bidReturnPct >= 0 ? "+" : ""}${(ev.bidReturnPct * 100).toFixed(1)}% at bid, before fees`
+                : "no bid"}
           </span>
           <span className="text-emerald-400/70 font-mono" data-testid={`eval-peak-${ev.positionId}`}>
             peak +{(ev.peakReturnPct * 100).toFixed(1)}%

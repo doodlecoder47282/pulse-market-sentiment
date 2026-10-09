@@ -30,7 +30,8 @@ import { buildSchwabFlow, type SchwabFlowContract } from "./schwabFlow";
 // rows, silently. whalePersistence only imports a *type* from this file, so no cycle.
 import { persistFollowState, persistWhaleAlert, loadAllFollows, loadWhaleEntryQuote } from "./whalePersistence";
 import { acceptExitQuote, etCloseMs, whaleFireSnapshot } from "./validationMath";
-import { buildScoreboardRow, scoreAskToBid, SCOREBOARD_BASIS_NOTE, SCOREBOARD_FEE_PER_CONTRACT, type ScoreboardRow, type ScoredTrade } from "./whaleScoreboard";
+import { buildScoreboardRow, scoreAskToBid, SCOREBOARD_BASIS_NOTE, type ScoreboardRow, type ScoredTrade } from "./whaleScoreboard";
+import { feeForProduct } from "./feeConfig";
 
 // Persistence wrappers — fail-soft, never let DB hiccups break tracking.
 function safePersistFollow(p: FollowPosition): void {
@@ -476,12 +477,16 @@ function followScore(p: FollowPosition): FollowScore {
   const base: FollowScore = { basis: "ask_in_bid_out_net_fees", netReturn: null, pnlPerContract: null, win: null, final: terminal, reason: null };
   try {
     if (terminal) {
-      const s = scoreFollowPosition(p);
+      const fr = feeForProduct(p.occ);
+      if (fr.fee == null) return { ...base, reason: fr.basis };
+      const s = scoreFollowPosition(p, fr.fee);
       return s ? { ...base, netReturn: s.trade.netReturn, pnlPerContract: s.trade.pnlPerContract, win: s.trade.win }
         : { ...base, reason: "no logged entry ask or exit bid: not scored" };
     }
+    const fr = feeForProduct(p.occ);
+    if (fr.fee == null) return { ...base, reason: fr.basis };
     const e = entryQuote(p);
-    const t = scoreAskToBid({ entryBid: e.bid, entryAsk: e.ask, exitBid: p.live.bid ?? null });
+    const t = scoreAskToBid({ entryBid: e.bid, entryAsk: e.ask, exitBid: p.live.bid ?? null, feePerContract: fr.fee });
     return t ? { ...base, netReturn: t.netReturn, pnlPerContract: t.pnlPerContract, win: t.win }
       : { ...base, reason: e.ask == null ? "no logged entry ask" : "no current bid" };
   } catch {
@@ -533,8 +538,8 @@ function entryQuote(p: FollowPosition): { bid: number | null; ask: number | null
   } catch { return { bid: null, ask: null }; }
 }
 
-/** Score one terminal position at ask in / bid out, net of fees; null when a quote is missing. */
-export function scoreFollowPosition(p: FollowPosition, feePerContract = SCOREBOARD_FEE_PER_CONTRACT): { trade: ScoredTrade; peakNetReturn: number | null } | null {
+/** Score one terminal position at ask in / bid out, net of fees; null when a quote or the fee (index root) is missing. */
+export function scoreFollowPosition(p: FollowPosition, feePerContract: number | null = feeForProduct(p.occ).fee): { trade: ScoredTrade; peakNetReturn: number | null } | null {
   const e = entryQuote(p);
   const trade = scoreAskToBid({ entryBid: e.bid, entryAsk: e.ask, exitBid: terminalExitBid(p), feePerContract });
   if (!trade) return null;
@@ -559,13 +564,15 @@ export function getPerformanceSnapshot(opts?: { windowDays?: number }): Performa
   );
 
   const scored: Array<{ trade: ScoredTrade; peakNetReturn: number | null }> = [];
-  let excluded = 0;
+  let excluded = 0, excludedNoFee = 0;
   for (const p of terminal) {
-    const s = scoreFollowPosition(p);
+    const fee = feeForProduct(p.occ).fee;
+    if (fee == null) { excludedNoFee++; continue; }
+    const s = scoreFollowPosition(p, fee);
     if (s) scored.push(s); else excluded++;
   }
   // whaleFollowThrough only tracks whale-source positions
-  const row = buildScoreboardRow("whale", scored, excluded);
+  const row = buildScoreboardRow("whale", scored, excluded, undefined, excludedNoFee);
   return {
     asOf: Date.now(),
     windowDays,

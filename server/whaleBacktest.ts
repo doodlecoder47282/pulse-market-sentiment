@@ -34,9 +34,8 @@ import { getPriceHistory } from "./schwab";
 import { loadWhaleEntryQuote, loadWhaleExitQuote } from "./whalePersistence";
 import { acceptExitQuote, etCloseMs, evaluateWhaleTrade } from "./validationMath";
 import { netGroupStats, netReturnOnCost } from "./whaleScoreboard";
+import { feeForProduct } from "./feeConfig";
 
-/** Assumed fee: Schwab's published $0.65 per contract per side (index options carry extra exchange fees). */
-const DEFAULT_FEE_PER_CONTRACT = 0.65;
 const EXIT_QUOTE_MAX_AGE_MS = 20 * 60_000;
 
 // ─── Types ─────────────────────────────────────────────────────────────
@@ -74,7 +73,7 @@ export interface BacktestTrade {
   pctReturn: number | null;  // option return, ask in / exit out, BEFORE fees (reference only)
   netPctReturn?: number | null; // pnlPerContract / (ask x 100 + fee): the basis of every total
   dollarPnl: number | null;  // $ for `contracts` whole contracts, after fees
-  reason: "ok" | "no_history" | "no_exit_bar" | "no_delta" | "filtered" | "no_entry_quote" | "am_settled" | "below_one_contract";
+  reason: "ok" | "no_history" | "no_exit_bar" | "no_delta" | "filtered" | "no_entry_quote" | "am_settled" | "below_one_contract" | "no_fee_configured";
   // Added: option prices are $ per share; one contract = 100x
   optionEntryAsk?: number | null;
   optionExitPrice?: number | null;
@@ -93,13 +92,13 @@ export interface BacktestSummary {
   asOf: number;
   windowFrom: number;
   windowTo: number;
-  filters: { symbol?: string; type?: string; maxDte: number; notional: number; feePerContract?: number };
+  filters: { symbol?: string; type?: string; maxDte: number; notional: number; feePerContract?: number | "per_root" };
   /**
    * The same totals split by how the exit was priced. Only "logged_bid" uses
    * the definition the outcome grader uses (logged ask in, logged bid out);
    * "modeled_expiry" prices the exit from the expiry-day close.
    */
-  byExitSource?: Array<{ exitSource: "logged_bid" | "modeled_expiry"; n: number; winRate: number; avgPctReturn: number; totalDollarPnl: number }>;
+  byExitSource?: Array<{ exitSource: "logged_bid" | "modeled_expiry"; n: number; winRate: number | null; avgPctReturn: number | null; totalDollarPnl: number }>;
   /** Plain-language cost model, shown with the numbers. */
   costModel?: string;
   totals: {
@@ -108,9 +107,9 @@ export interface BacktestSummary {
     skipped: number;
     winners: number;
     losers: number;
-    winRate: number; // 0..1, win = P&L after fees > 0
-    avgPctReturn: number; // mean NET return across executed trades
-    medianPctReturn: number; // median NET return
+    winRate: number | null; // 0..1, win = P&L after fees > 0; null with no trades
+    avgPctReturn: number | null; // mean NET return across executed trades
+    medianPctReturn: number | null; // median NET return
     totalDollarPnl: number;
     bestTrade: BacktestTrade | null;
     worstTrade: BacktestTrade | null;
@@ -118,15 +117,15 @@ export interface BacktestSummary {
   bySymbol: Array<{
     symbol: string;
     n: number;
-    winRate: number;
-    avgPctReturn: number;
+    winRate: number | null;
+    avgPctReturn: number | null;
     totalDollarPnl: number;
   }>;
   byType: Array<{
     type: "CALL" | "PUT";
     n: number;
-    winRate: number;
-    avgPctReturn: number;
+    winRate: number | null;
+    avgPctReturn: number | null;
     totalDollarPnl: number;
   }>;
   trades: BacktestTrade[];
@@ -209,7 +208,10 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestSumma
   const windowTo = toEpochMs(params.to, now);
   const notional = params.notional ?? 1000;
   const maxDte = params.maxDte ?? 7;
-  const feePerContract = params.feePerContract != null && Number.isFinite(params.feePerContract) ? Math.max(0, params.feePerContract) : DEFAULT_FEE_PER_CONTRACT;
+  // SF-2: an explicit fee applies to every trade; otherwise the fee rule per
+  // root (feeConfig): $0.65 equity/ETF, the configured all-in fee for index
+  // roots, and index roots without one are skipped (no_fee_configured).
+  const explicitFee = params.feePerContract != null && Number.isFinite(params.feePerContract) ? Math.max(0, params.feePerContract) : null;
 
   // Pull alerts from db
   let rows: any[] = [];
@@ -264,6 +266,12 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestSumma
       const { bar: expBar } = closeOnOrBefore(candles, expMs);
       const tNorm = String(r.type).toUpperCase();
       const isCall = tNorm === "CALL" || tNorm === "C";
+      const feePerContract = explicitFee ?? feeForProduct(String(r.occ || r.symbol)).fee;
+      if (feePerContract == null) {
+        trades.push(makeTradeStub(r, "no_fee_configured"));
+        skipped++;
+        continue;
+      }
       const quote = loadWhaleEntryQuote(String(r.occ), detectedAt);
       const exitQ = Date.now() >= expMs ? loadWhaleExitQuote(String(r.occ)) : null;
       const acc = exitQ ? acceptExitQuote(exitQ, expMs, EXIT_QUOTE_MAX_AGE_MS) : null;
@@ -350,7 +358,7 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestSumma
     asOf: now,
     windowFrom,
     windowTo,
-    filters: { symbol: params.symbol, type: params.type, maxDte, notional, feePerContract },
+    filters: { symbol: params.symbol, type: params.type, maxDte, notional, feePerContract: explicitFee ?? "per_root" },
     costModel: COST_MODEL,
     byExitSource: (["logged_bid", "modeled_expiry"] as const).map((src) => ({
       exitSource: src,
@@ -382,8 +390,8 @@ const COST_MODEL =
   "Win rate and returns are NET of fees (win = P&L after fees > 0; return = net P&L / (ask x 100 + fee)), the same basis as the dollar P&L. " +
   "Alerts where one contract costs more than the notional are reason below_one_contract and are excluded from every total. " +
   "Totals mix logged-bid exits (the outcome grader's definition) with modeled expiry exits; byExitSource reports them separately. " +
-  "The default fee ($0.65 per contract per side) is Schwab's equity/ETF option commission; index options (SPX, SPXW, XSP, NDX, RUT, VIX) " +
-  "also carry exchange index fees that are not included unless feePerContract is set, so index-option returns are slightly overstated.";
+  "Fees: feePerContract when given; else $0.65 per contract per side (Schwab equity/ETF commission) and, for index roots " +
+  "(SPX, SPXW, XSP, NDX, RUT, VIX), the configured all-in INDEX_OPTION_FEE_PER_CONTRACT; index alerts without one are skipped as no_fee_configured.";
 
 /** ET calendar date of a daily candle (its start time). */
 function etDateOfBar(c: Candle): string {

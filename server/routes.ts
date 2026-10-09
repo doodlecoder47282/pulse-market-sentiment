@@ -5559,13 +5559,15 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
             count: list.length,
             wins, losses, burns,
             burnsEvaluated: list.length,
-            winRate: decided > 0 ? wins / decided : 0,
-            avgPct: list.length > 0 ? sumPct / list.length : 0,
+            // Empty groups are null, never 0% (N-3).
+            winRate: decided > 0 ? wins / decided : null,
+            avgPct: list.length > 0 ? sumPct / list.length : null,
             totalPnLPct: sumPct,
-            avgPeakPct: list.length > 0 ? sumPeak / list.length : 0,
-            bestPct: bestPct === -Infinity ? 0 : bestPct,
-            worstPct: worstPct === Infinity ? 0 : worstPct,
+            avgPeakPct: list.length > 0 ? sumPeak / list.length : null,
+            bestPct: bestPct === -Infinity ? null : bestPct,
+            worstPct: worstPct === Infinity ? null : worstPct,
             excludedNoQuote: 0,
+            excludedNoFee: 0,
             priceBasis: "mid_to_mid",
           };
         };
