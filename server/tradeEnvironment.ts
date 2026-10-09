@@ -388,10 +388,12 @@ function logAndGradeConvexity(
   }
   if (!bars.length) return;
   const pending = sqlite.prepare(`SELECT bucket, ts FROM trade_env_log WHERE graded_at IS NULL AND session_date = ? AND ts <= ?`)
-    .all(d, now - 31 * 60_000) as Array<{ bucket: string; ts: number }>;
+    .all(d, now - 35 * 60_000) as Array<{ bucket: string; ts: number }>;
   for (const r of pending) {
     const fr = forwardRange(bars, r.ts);
-    // Too few bars (gap, half-day close) stays ungraded and is excluded, never a 0 range.
+    // Too few bars: retry for 2 h (late minute bars), then close it out as
+    // ungraded (fwd_range NULL, excluded from the fit), never a 0 range.
+    if (fr == null && now - r.ts < 2 * 3600_000) continue;
     sqlite.prepare(`UPDATE trade_env_log SET fwd_range = ?, graded_at = ? WHERE bucket = ?`).run(fr, now, r.bucket);
   }
 }
