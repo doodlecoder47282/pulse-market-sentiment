@@ -546,7 +546,7 @@ function SqueezeDial({ squeeze }: { squeeze: Squeeze }) {
             {squeeze.label}
           </div>
           <div className="mt-0.5 font-mono text-[11px] text-amber-500">
-            {squeeze.probability}% · {squeeze.direction.toUpperCase()} · {squeeze.timeHorizon}
+            <span title="Heuristic intensity 0-100 (playbook.ts), not a probability of a move.">intensity {squeeze.probability}/100</span> · {squeeze.direction.toUpperCase()} · {squeeze.timeHorizon}
           </div>
         </div>
 
@@ -1948,9 +1948,9 @@ const LEGEND_GROUPS: Array<{
     ],
   },
   {
-    group: "Conviction / Probability",
+    group: "Conviction (heuristic weights)",
     items: [
-      { swatch: "bg-amber-500/20 border-amber-500/40", label: "Primary scenario", meaning: "Highest-odds path on the playbook" },
+      { swatch: "bg-amber-500/20 border-amber-500/40", label: "Primary scenario", meaning: "Highest-weight path on the playbook (heuristic)" },
       { swatch: "bg-card/30 border-border", label: "Secondary", meaning: "Plausible alt path" },
       { swatch: "bg-card/10 border-border/50 opacity-80", label: "Tertiary", meaning: "Tail / low-odds" },
     ],
@@ -1958,7 +1958,7 @@ const LEGEND_GROUPS: Array<{
   {
     group: "Gamma / Regime",
     items: [
-      { swatch: "bg-purple-500/20 border-purple-500/40", label: "Regime forecast", meaning: "Forward-looking transition probabilities" },
+      { swatch: "bg-purple-500/20 border-purple-500/40", label: "Regime forecast", meaning: "Forward-looking regime transition estimates" },
       { swatch: "bg-cyan-500/20 border-cyan-500/40", label: "News / catalyst", meaning: "Per-event reaction map" },
       { swatch: "bg-emerald-500/40", label: "Positive γ", meaning: "Dampening — pin to walls" },
       { swatch: "bg-red-500/40", label: "Negative γ", meaning: "Acceleration — moves extend" },

@@ -333,3 +333,32 @@ test("runtime files: not tracked by git and ignored", async () => {
   const sched = readFileSync(new URL("../../server/discordScheduler.ts", import.meta.url), "utf8");
   assert.ok(!sched.includes("/home/user/workspace"), "no hard-coded sandbox path");
 });
+
+// ─── Items 9-10: no trade instruction in the skill banner; heuristic scores
+// are not displayed as percentages/probabilities in the swept files ────────
+test("wording: MLAccuracyCard banner reports the test, not an abstention or a trade instruction", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../../client/src/components/models/MLAccuracyCard.tsx", import.meta.url), "utf8");
+  assert.ok(!/model abstaining/i.test(src));
+  assert.ok(!/fade or ignore/i.test(src));
+  assert.ok(!/Position size from your own thesis/i.test(src));
+  assert.match(src, /significantly worse than the base rate/);
+});
+
+test("wording: swept panels show heuristic scores as /100 or % wt, never as a bare % confidence/probability", async () => {
+  const { readFileSync } = await import("node:fs");
+  const swept = [
+    "TradeDesk.tsx", "DailyPlaybookChart.tsx", "AlphaNewsOverlay.tsx", "models/PivotProjection.tsx",
+    "edgelab/EdgeBriefing.tsx", "edgelab/EdgeBrief.tsx", "TickerOutlookCard.tsx", "edgelab/CrossAssetPanel.tsx",
+  ];
+  const bad = /\{[^}]*(confidence|probability|\.prob\b|\bprob)[^}]*\}%(?! wt)|% conf\b|conf \{|high-confidence/;
+  for (const f of swept) {
+    const src = readFileSync(new URL(`../../client/src/components/${f}`, import.meta.url), "utf8");
+    // style widths (`${prob}%`) are layout, not labels.
+    const hits = src.split("\n").filter((l) => bad.test(l) && !l.trim().startsWith("//") && !/width|style=/.test(l));
+    assert.deepEqual(hits, [], `${f}: ${hits.join(" | ")}`);
+  }
+  const pb = readFileSync(new URL("../../server/playbook.ts", import.meta.url), "utf8");
+  assert.ok(!/probability \$\{squeeze\.probability\}%/.test(pb));
+  assert.ok(!/\$\{squeeze\.probability\}% conviction/.test(pb));
+});

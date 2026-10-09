@@ -72,7 +72,7 @@ export default function CrossAssetPanel() {
                 <Badge variant="outline" className={`text-xs ${riskColor(d.regimeVerdict.risk)}`} data-testid="badge-regime-risk">
                   risk {d.regimeVerdict.risk}
                 </Badge>
-                <Badge variant="outline" className="text-xs">{d.regimeVerdict.confidence} conf</Badge>
+                <Badge variant="outline" className="text-xs" title="Rule-based agreement of SPY, HYG, TLT and DXY moves, not a probability.">{d.regimeVerdict.confidence} agreement</Badge>
               </div>
             </div>
             <div className="text-sm font-semibold mb-1" data-testid="text-regime-label">{d.regimeVerdict.label}</div>

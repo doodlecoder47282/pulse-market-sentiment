@@ -96,7 +96,7 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
               <Badge variant="outline" className={`text-[10px] py-0 px-1.5 h-4 ${edgeBadgeClass(d.edgeType)}`}>
                 {d.edgeType}
               </Badge>
-              <span className="text-[10px] text-muted-foreground">{d.confidence}% conf</span>
+              <span className="text-[10px] text-muted-foreground" title="Heuristic score 0-100, not a calibrated probability.">score {d.confidence}/100</span>
             </>
           )}
         </div>
@@ -207,7 +207,7 @@ function CaseRow({ label, tone, thesis, prob }: { label: string; tone: "emerald"
     <div className="space-y-1">
       <div className="flex items-center justify-between text-xs">
         <span className={`font-mono uppercase font-semibold ${color}`}>{label}</span>
-        <span className="font-mono text-muted-foreground">{prob}%</span>
+        <span className="font-mono text-muted-foreground" title="Heuristic case weight, not a calibrated probability.">{prob}% wt</span>
       </div>
       <div className="h-1 rounded bg-muted/30 overflow-hidden">
         <div className={`h-full ${barColor}`} style={{ width: `${Math.max(0, Math.min(100, prob))}%` }} />

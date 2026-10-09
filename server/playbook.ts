@@ -617,9 +617,9 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
   }
 
   if (squeeze.direction === "up" && squeeze.probability > 50) {
-    gameplan.push(`Gamma-squeeze setup skewed UP (score ${squeeze.score}, ${squeeze.probability}% conviction). Consider 0-3 DTE call spreads above ${cw.toFixed(0)} for ${squeeze.timeHorizon}.`);
+    gameplan.push(`Gamma-squeeze setup skewed UP (score ${squeeze.score}, intensity ${squeeze.probability}/100, heuristic). Consider 0-3 DTE call spreads above ${cw.toFixed(0)} for ${squeeze.timeHorizon}.`);
   } else if (squeeze.direction === "down" && squeeze.probability > 50) {
-    gameplan.push(`Gamma-squeeze setup skewed DOWN (score ${squeeze.score}, ${squeeze.probability}% conviction). Protect longs with 0-3 DTE put hedges at/below ${pw.toFixed(0)} for ${squeeze.timeHorizon}.`);
+    gameplan.push(`Gamma-squeeze setup skewed DOWN (score ${squeeze.score}, intensity ${squeeze.probability}/100, heuristic). Protect longs with 0-3 DTE put hedges at/below ${pw.toFixed(0)} for ${squeeze.timeHorizon}.`);
   }
 
   if (v > 25) {
@@ -634,7 +634,7 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
     parts.push(`VIX at ${v.toFixed(2)} (${vChg > 0 ? "+" : ""}${vChg.toFixed(1)}% d/d); term ratio ${termRatio.toFixed(3)} ${termRatio > 1 ? "(backwardation = near-term stress)" : "(contango = calm front-end)"}.`);
     parts.push(`Composite sentiment ${compositeScore}/100 (${bias === "bullish" ? "tilted bullish" : bias === "bearish" ? "tilted bearish" : "mixed"}).`);
     if (squeeze.probability > 40) {
-      parts.push(`Gamma-squeeze probability ${squeeze.probability}% with a ${squeeze.direction.toUpperCase()} skew (${squeeze.timeHorizon}).`);
+      parts.push(`Gamma-squeeze intensity ${squeeze.probability}/100 (heuristic) with a ${squeeze.direction.toUpperCase()} skew (${squeeze.timeHorizon}).`);
     }
     return parts.join(" ");
   })();

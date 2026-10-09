@@ -264,7 +264,7 @@ export function DecisionSupportCard() {
         )}
 
         <div className="mt-3 text-[10px] leading-relaxed text-muted-foreground">
-          Tier-1/2 observers · Mauboussin probabilities & payoffs · all read-only · never alters scenario calc.
+          Tier-1/2 observers · Mauboussin-style odds x payoffs (odds are model heuristics, not calibrated probabilities) · all read-only · never alters scenario calc.
         </div>
       </CardContent>
     </Card>
