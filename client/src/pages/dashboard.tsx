@@ -862,7 +862,7 @@ export default function Dashboard() {
                 title={
                   <>
                     <MessageSquare className="h-4 w-4" />
-                    StockTwits &amp; Reddit Chatter
+                    StockTwits Chatter (social, context only)
                     <Badge variant="secondary" className="ml-2 font-mono text-[10px]" data-testid="badge-social-score">
                       {social.score == null
                         ? (social.status === "insufficient" ? "too few tagged posts" : "unavailable")

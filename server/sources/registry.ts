@@ -199,7 +199,8 @@ export const SOURCES: Record<string, SourceSpec> = {
     cost: "free", key: "none",
     terms: "Reddit Data API requires a registered OAuth client; unauthenticated traffic is blocked, so the keyless read was removed",
     termsUrl: "https://support.reddithelp.com/hc/en-us/articles/16160319875092-Reddit-Data-API-Wiki",
-    feeds: "nothing (dropped)", minIntervalMs: 0,
+    feeds: "dropped from the Signals social gauge; still read by the Ticker Outlook mention scan (server/tickerAlpha.ts, outside this workstream) and flagged for removal",
+    minIntervalMs: 0,
   },
   // ── Crypto majors (exchange-direct) ──
   coinbase: {

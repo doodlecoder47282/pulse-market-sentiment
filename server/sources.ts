@@ -1,7 +1,8 @@
 /**
  * Data source adapters: Schwab (quotes), CBOE (SPY options chain),
- * CNN Fear & Greed, AAII (via fallback), and web-based X/Reddit sentiment
- * aggregated from public search pages (no login / no API key).
+ * CNN Fear & Greed (undocumented JSON, context only) and the StockTwits
+ * public symbol streams (social, context only). Reddit was dropped: its Data
+ * API requires OAuth. Source tiers and terms: server/sources/registry.ts.
  */
 import type {
   GammaStructure, GexStrikePoint, SocialPost, SocialSentiment,
@@ -360,23 +361,11 @@ async function fetchStockTwits(symbol: string, limit = 30): Promise<SocialPost[]
   });
 }
 
-/** Reddit public JSON (no auth). Works well for /r/wallstreetbets + /r/options. */
-// Throws on a failed request so gatherSocial can tell "failed" from "no posts".
-async function fetchReddit(sub: string, limit = 30): Promise<SocialPost[]> {
-  const d = await fetchJson(`https://www.reddit.com/r/${sub}/hot.json?limit=${limit}`);
-  const items = d?.data?.children ?? [];
-  return items.map((c: any) => {
-    const t = `${c.data.title || ""} ${c.data.selftext || ""}`.slice(0, 300);
-    return {
-      source: "Reddit" as const,
-      author: "r/" + sub,
-      text: c.data.title || "",
-      url: `https://www.reddit.com${c.data.permalink}`,
-      timestamp: typeof c.data.created_utc === "number" ? new Date(c.data.created_utc * 1000).toISOString() : undefined,
-      tone: scoreText(t),
-    };
-  });
-}
+// Reddit was dropped (round 2, R2-I): the Reddit Data API requires a
+// registered OAuth client and blocks unauthenticated traffic ("Reddit Data
+// API Wiki", https://support.reddithelp.com/hc/en-us/articles/16160319875092-Reddit-Data-API-Wiki),
+// so the keyless /hot.json read violated the terms. The gauge runs on
+// StockTwits alone and its sources list says so.
 
 /**
  * Post age window for the score. The gauge is a same-session read that sits
@@ -384,8 +373,8 @@ async function fetchReddit(sub: string, limit = 30): Promise<SocialPost[]> {
  * so it should reflect the current session plus overnight/pre-market chatter:
  * 24 hours. (A 72 h window let Friday's chatter set Monday's read.) The
  * StockTwits SPY stream (latest 30 messages) normally spans minutes, so the
- * window only bites when that feed is frozen; Reddit "hot" often carries
- * posts older than a day, and those are dropped rather than scored.
+ * window only bites when that feed is frozen; older posts are dropped
+ * rather than scored.
  */
 export const SOCIAL_MAX_AGE_HOURS = 24;
 /** Fewer tagged (bullish + bearish) posts than this gives no score: one post would read +/-100. */
@@ -464,7 +453,9 @@ export function summarizeSocial(
   return { score, bullish, bearish, neutral, posts: used.slice(0, 40), status, sources, asOf: nowMs };
 }
 
-/** Aggregate StockTwits + Reddit into one SocialSentiment payload (keyword/tag tone, a heuristic). */
+/** StockTwits SPY + VIX streams into one SocialSentiment payload (keyword/tag
+ *  tone, a heuristic). Social media: a weak, context-only source (see
+ *  server/sources/registry.ts), never a price, greeks, options or sizing input. */
 export async function gatherSocial(): Promise<SocialSentiment> {
   const settle = async (name: string, p: Promise<SocialPost[]>, invertTone = false): Promise<CollectedSocialSource> => {
     try { return { name, posts: await p, invertTone }; } catch { return { name, posts: null, invertTone }; }
@@ -475,7 +466,6 @@ export async function gatherSocial(): Promise<SocialSentiment> {
     // tone shown on the card is the equity read, and the author is tagged.
     settle("StockTwits VIX (tone inverted)", fetchStockTwits("VIX", 15).then((ps) =>
       ps.map((p) => ({ ...p, author: `${p.author ?? ""} on $VIX (tone shown for equities)` }))), true),
-    settle("Reddit r/options", fetchReddit("options", 25)),
   ]);
   return summarizeSocial(collected);
 }
