@@ -31,6 +31,8 @@ interface SchwabStatus {
   expiresIn: number;        // seconds
   refreshExpiresIn: number; // seconds
   needsReauth: boolean;
+  /** Token storage at rest (server/schwabTokenStore.ts). */
+  tokenStore?: { mode: "encrypted" | "plaintext-local" | "locked"; encryptedAtRest: boolean; reason: string | null };
 }
 
 interface SchwabDiag {
@@ -464,6 +466,28 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
               </div>
             )}
           </div>
+
+          {/* Token storage at rest: locked (no BATCAVE_TOKEN_KEY on a reachable
+              bind, or tokens that cannot be decrypted) blocks the connection;
+              plaintext-local is allowed on loopback only and says so. */}
+          {status?.tokenStore && (status.tokenStore.mode !== "encrypted" || status.tokenStore.reason) && (
+            <div
+              className={`rounded-md border p-2 text-[11px] ${
+                status.tokenStore.mode === "locked" || (status.tokenStore.reason && status.tokenStore.mode === "encrypted")
+                  ? "border-rose-500/40 bg-rose-500/5 text-rose-300"
+                  : "border-amber-500/30 bg-amber-500/5 text-amber-300"
+              }`}
+              data-testid="schwab-token-store"
+            >
+              <span className="font-semibold">
+                {status.tokenStore.mode === "locked" ? "Token storage locked" : status.tokenStore.mode === "plaintext-local" ? "Tokens stored unencrypted (local only)" : "Token storage problem"}
+              </span>
+              {status.tokenStore.reason ? <span className="text-muted-foreground"> · {status.tokenStore.reason}</span> : null}
+            </div>
+          )}
+          {status?.tokenStore?.mode === "encrypted" && !status.tokenStore.reason && (
+            <div className="text-[10px] text-muted-foreground" data-testid="schwab-token-store">Tokens encrypted at rest (AES-256-GCM).</div>
+          )}
 
           {/* OAuth flow (show if disconnected or needs reauth) */}
           {(!isConnected) && (

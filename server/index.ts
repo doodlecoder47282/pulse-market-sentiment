@@ -19,7 +19,9 @@ import {
   gateMode,
   gateWarnings,
   newInternalKey,
+  trustProxyHops,
 } from "./accessGate";
+import { tokenKeyWarnings } from "./tokenCrypto";
 
 // Global safety nets — do NOT let a stray promise reject or exception kill the
 // long-running server process. Crashes here previously took down /api/* during
@@ -33,6 +35,13 @@ process.on("uncaughtException", (err: any) => {
 
 const app = express();
 const httpServer = createServer(app);
+
+// Client IP behind a platform proxy (Railway/Render/Fly): trust exactly the
+// configured hop count so req.ip, and with it the wrong-key slowdown bucket in
+// accessGate.ts, is per client. Never `true`: see trustProxyHops for the
+// spoofing trade-off. Local/unknown hosts trust nothing (socket address).
+const TRUST_PROXY_HOPS = trustProxyHops(process.env);
+if (TRUST_PROXY_HOPS > 0) app.set("trust proxy", TRUST_PROXY_HOPS);
 
 declare module "http" {
   interface IncomingMessage {
@@ -110,6 +119,8 @@ app.get("/api/health/auth", (_req, res) => {
   res.json({ ok: true });
 });
 for (const w of gateWarnings(process.env)) log(w, "security");
+// Schwab token storage at rest (tokenCrypto.ts): plaintext-local / locked reasons.
+for (const w of tokenKeyWarnings(process.env)) log(w, "security");
 
 (async () => {
   await registerRoutes(httpServer, app);

@@ -52,6 +52,33 @@ BATCAVE_ACCESS_KEY = <a long random value, 32+ characters, e.g. from: openssl ra
 The web app asks for this key once per browser. Never paste the key into
 chat or commit it. `BATCAVE_ALLOW_OPEN=1` runs the server with no key on
 purpose (anyone with the URL can use it); do not set it on Railway.
+
+Also add the token encryption key. Schwab OAuth tokens are stored in
+`data.db` encrypted with AES-256-GCM under this key. On a reachable bind
+(Railway) without it, token storage is locked: Schwab Connect refuses to
+save tokens and Settings shows "Token storage locked" with the reason.
+
+```
+BATCAVE_TOKEN_KEY = <exactly 32 random bytes, base64, e.g. from: openssl rand -base64 32>
+```
+
+- Keep it out of chat, git and logs, like the access key. Losing it means
+  the stored tokens cannot be decrypted: Settings says so and one Schwab
+  reconnect stores fresh tokens.
+- Rotation: move the old value to `BATCAVE_TOKEN_KEY_PREVIOUS`, set a new
+  `BATCAVE_TOKEN_KEY`, restart. The row is re-encrypted on the next read;
+  then remove `BATCAVE_TOKEN_KEY_PREVIOUS`.
+- Existing plaintext tokens are encrypted in place on first read (the old
+  page is zeroed and the WAL truncated). Copies made earlier (`backups/`,
+  any downloaded `data.db`) still hold plaintext: reconnect Schwab once after
+  enabling the key so those old tokens are superseded, and delete old backups.
+- Locally (127.0.0.1) the key is optional; without it tokens stay
+  unencrypted and the boot log says so.
+- Trust proxy: on Railway/Render/Fly the server trusts exactly one proxy hop
+  (`X-Forwarded-For`) so the wrong-key slowdown is counted per client, not
+  per proxy. Override with `BATCAVE_TRUST_PROXY_HOPS` (0 disables) only if
+  the platform puts more hops in front; see server/index.ts for the
+  spoofing trade-off.
 Discord cards are optional: set `PULSE_DISCORD_WEBHOOK` (and the
 `PULSE_DISCORD_*_WEBHOOK` variants listed in `.env.local.example`) to
 `https://discord.com/api/webhooks/...` URLs; unset or malformed values
@@ -73,7 +100,9 @@ disable that card.
 - Hit Schwab Connect button
 - Login + approve
 - Schwab redirects to Railway → Railway calls Schwab from its IP → ✅ works
-- Tokens save to Railway's environment, persist across restarts
+- Tokens save to `data.db` on the container disk, encrypted with
+  `BATCAVE_TOKEN_KEY`. They survive restarts; a redeploy without a Railway
+  volume starts with an empty disk and needs one reconnect
 
 ## After this point
 

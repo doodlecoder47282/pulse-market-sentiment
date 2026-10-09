@@ -136,3 +136,160 @@ test("ofi payload: fewer than 15 bars is not a 15-minute slope", () => {
   assert.equal(p.trendComplete, false);
   assert.equal(p.totalBars, 10);
 });
+
+// ─── Item 1 (11.5): Schwab tokens encrypted at rest ─────────────────────────
+import {
+  parseTokenKey,
+  tokenKeyPolicy,
+  tokenKeyWarnings,
+  gcmSeal,
+  encryptValue,
+  decryptValue,
+  tokenAad,
+  decodeStoredRow,
+  encodeRowForStorage,
+  isEncryptedValue,
+  type TokenRow,
+} from "../../server/tokenCrypto";
+
+// Test-only keys: fixed filler bytes, not secrets, never used outside this file.
+const TEST_KEY_B64 = Buffer.alloc(32, 7).toString("base64");
+const TEST_KEY2_B64 = Buffer.alloc(32, 9).toString("base64");
+const LOCAL = { HOST: "127.0.0.1" };
+const PUBLIC = { RAILWAY_ENVIRONMENT: "production" }; // binds 0.0.0.0
+
+test("tokens: AES-256-GCM known answer (McGrew-Viega GCM spec, Test Case 16)", () => {
+  const key = Buffer.from("feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308", "hex");
+  const iv = Buffer.from("cafebabefacedbaddecaf888", "hex");
+  const aad = Buffer.from("feedfacedeadbeeffeedfacedeadbeefabaddad2", "hex");
+  const pt = Buffer.from(
+    "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39",
+    "hex",
+  );
+  const { ct, tag } = gcmSeal(pt, key, aad, iv);
+  assert.equal(
+    ct.toString("hex"),
+    "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662",
+  );
+  assert.equal(tag.toString("hex"), "76fc6ece0f4e1768cddf8853bb2d551b");
+});
+
+test("tokens: key parsing is strict (32 bytes, base64 or base64url) and never echoes the key", () => {
+  assert.equal(parseTokenKey(TEST_KEY_B64).ok, true);
+  assert.equal(parseTokenKey(TEST_KEY_B64.replace(/\+/g, "-").replace(/\//g, "_")).ok, true);
+  assert.deepEqual(parseTokenKey(""), { ok: false, reason: "missing" });
+  assert.equal((parseTokenKey("not base64!!") as any).reason, "invalid_base64");
+  const short = parseTokenKey(Buffer.alloc(16, 1).toString("base64"));
+  assert.equal((short as any).reason, "wrong_length");
+  assert.equal((short as any).bytes, 16);
+  const w = tokenKeyWarnings({ ...PUBLIC, BATCAVE_TOKEN_KEY: Buffer.alloc(16, 1).toString("base64") });
+  assert.ok(w.length > 0 && w.every((m) => !m.includes(Buffer.alloc(16, 1).toString("base64"))));
+});
+
+test("tokens: policy fails closed on a reachable bind without a key; local stays usable", () => {
+  assert.equal(tokenKeyPolicy({ ...LOCAL }).mode, "plaintext-local");
+  assert.equal(tokenKeyPolicy({ ...PUBLIC }).mode, "locked");
+  assert.equal(tokenKeyPolicy({ HOST: "0.0.0.0" }).mode, "locked");
+  assert.equal(tokenKeyPolicy({ ...PUBLIC, BATCAVE_TOKEN_KEY: TEST_KEY_B64 }).mode, "encrypted");
+  // A malformed key never silently downgrades to plaintext, even locally.
+  assert.equal(tokenKeyPolicy({ ...LOCAL, BATCAVE_TOKEN_KEY: "abc" }).mode, "locked");
+  assert.match(tokenKeyPolicy({ ...PUBLIC }).reason ?? "", /BATCAVE_TOKEN_KEY not set/);
+});
+
+test("tokens: encrypt/decrypt round trip; random IV; AAD binds row and column; tamper fails", () => {
+  const key = parseTokenKey(TEST_KEY_B64) as { ok: true; key: Buffer };
+  const aad = tokenAad(1, "access_token");
+  const a = encryptValue("ACCESS-123", key.key, aad);
+  const b = encryptValue("ACCESS-123", key.key, aad);
+  assert.ok(isEncryptedValue(a));
+  assert.notEqual(a, b, "fresh IV per encryption");
+  assert.ok(!a.includes("ACCESS-123"));
+  assert.equal(decryptValue(a, key.key, aad), "ACCESS-123");
+  assert.throws(() => decryptValue(a, key.key, tokenAad(1, "refresh_token")), /token_decrypt_failed/);
+  assert.throws(() => decryptValue(a, key.key, tokenAad(2, "access_token")), /token_decrypt_failed/);
+  const wrong = parseTokenKey(TEST_KEY2_B64) as { ok: true; key: Buffer };
+  assert.throws(() => decryptValue(a, wrong.key, aad), /token_decrypt_failed/);
+  const parts = a.split(":");
+  const ct = Buffer.from(parts[4], "base64");
+  ct[0] ^= 1;
+  const tampered = [...parts.slice(0, 4), ct.toString("base64")].join(":");
+  assert.throws(() => decryptValue(tampered, key.key, aad), /token_decrypt_failed/);
+});
+
+const plainRow: TokenRow = { id: 1, accessToken: "acc-plain", refreshToken: "ref-plain", expiresAt: 111, refreshExpiresAt: 222, updatedAt: 333 };
+
+test("tokens: legacy plaintext row migrates transparently on first read", () => {
+  const pol = tokenKeyPolicy({ ...PUBLIC, BATCAVE_TOKEN_KEY: TEST_KEY_B64 });
+  const r = decodeStoredRow(plainRow, pol);
+  assert.equal(r.status, "ok");
+  if (r.status !== "ok") return;
+  assert.equal(r.row.accessToken, "acc-plain");
+  assert.equal(r.row.refreshToken, "ref-plain");
+  assert.ok(r.rewrite, "plaintext row is scheduled for re-encryption");
+  const stored = r.rewrite!;
+  assert.ok(isEncryptedValue(stored.accessToken) && isEncryptedValue(stored.refreshToken));
+  assert.equal(stored.expiresAt, 111);
+  assert.equal(stored.refreshExpiresAt, 222);
+  // Second read: already encrypted, no rewrite, same tokens.
+  const r2 = decodeStoredRow(stored, pol);
+  assert.equal(r2.status, "ok");
+  if (r2.status === "ok") {
+    assert.equal(r2.rewrite, null);
+    assert.equal(r2.row.accessToken, "acc-plain");
+  }
+});
+
+test("tokens: swapped ciphertexts, wrong key, missing key and rotation", () => {
+  const pol = tokenKeyPolicy({ ...PUBLIC, BATCAVE_TOKEN_KEY: TEST_KEY_B64 });
+  const enc = encodeRowForStorage(plainRow, pol);
+  const swapped = { ...enc, accessToken: enc.refreshToken, refreshToken: enc.accessToken };
+  assert.equal(decodeStoredRow(swapped, pol).status, "decrypt_failed");
+  const otherKey = tokenKeyPolicy({ ...PUBLIC, BATCAVE_TOKEN_KEY: TEST_KEY2_B64 });
+  const bad = decodeStoredRow(enc, otherKey);
+  assert.equal(bad.status, "decrypt_failed");
+  if (bad.status === "decrypt_failed") assert.ok(!bad.reason.includes("acc-plain"));
+  // Encrypted row but no key locally: locked, not handed out as gibberish.
+  assert.equal(decodeStoredRow(enc, tokenKeyPolicy({ ...LOCAL })).status, "locked");
+  // Public bind without key: even a plaintext row is not read.
+  assert.equal(decodeStoredRow(plainRow, tokenKeyPolicy({ ...PUBLIC })).status, "locked");
+  assert.throws(() => encodeRowForStorage(plainRow, tokenKeyPolicy({ ...PUBLIC })), /token_store_locked/);
+  // Rotation: old key as PREVIOUS decrypts and schedules re-encryption under the new key.
+  const rotated = tokenKeyPolicy({ ...PUBLIC, BATCAVE_TOKEN_KEY: TEST_KEY2_B64, BATCAVE_TOKEN_KEY_PREVIOUS: TEST_KEY_B64 });
+  const r = decodeStoredRow(enc, rotated);
+  assert.equal(r.status, "ok");
+  if (r.status === "ok") {
+    assert.equal(r.row.refreshToken, "ref-plain");
+    assert.ok(r.rewrite);
+    assert.equal(decodeStoredRow(r.rewrite!, otherKey).status, "ok");
+  }
+});
+
+test("tokens: local plaintext mode keeps previous behaviour (no rewrite, no encryption)", () => {
+  const pol = tokenKeyPolicy({ ...LOCAL });
+  const r = decodeStoredRow(plainRow, pol);
+  assert.equal(r.status, "ok");
+  if (r.status === "ok") assert.equal(r.rewrite, null);
+  assert.equal(encodeRowForStorage(plainRow, pol).accessToken, "acc-plain");
+});
+
+// ─── Item 3: trust proxy only behind a known platform proxy ─────────────────
+import { trustProxyHops } from "../../server/accessGate";
+
+test("trust proxy: 1 hop on Railway/Render/Fly, 0 locally, explicit override bounded", () => {
+  assert.equal(trustProxyHops({}), 0);
+  assert.equal(trustProxyHops({ HOST: "0.0.0.0" }), 0, "a reachable bind alone is not evidence of a proxy");
+  assert.equal(trustProxyHops({ RAILWAY_ENVIRONMENT: "production" }), 1);
+  assert.equal(trustProxyHops({ RENDER: "true" }), 1);
+  assert.equal(trustProxyHops({ FLY_APP_NAME: "batcave" }), 1);
+  assert.equal(trustProxyHops({ RAILWAY_ENVIRONMENT: "production", BATCAVE_TRUST_PROXY_HOPS: "0" }), 0);
+  assert.equal(trustProxyHops({ BATCAVE_TRUST_PROXY_HOPS: "2" }), 2);
+  assert.equal(trustProxyHops({ RAILWAY_ENVIRONMENT: "x", BATCAVE_TRUST_PROXY_HOPS: "true" }), 0, "malformed trusts nothing");
+  assert.equal(trustProxyHops({ BATCAVE_TRUST_PROXY_HOPS: "99" }), 0);
+});
+
+test("trust proxy: index.ts never sets trust proxy to true", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../../server/index.ts", import.meta.url), "utf8");
+  assert.ok(!/set\(\s*["']trust proxy["']\s*,\s*true/.test(src));
+  assert.match(src, /app\.set\("trust proxy", TRUST_PROXY_HOPS\)/);
+});
