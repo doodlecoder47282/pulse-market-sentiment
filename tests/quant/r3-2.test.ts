@@ -11,6 +11,10 @@ import {
 } from "../../server/flowIntradayState";
 import { volumeOverOiShare, fullyOpeningShare, fullyOpeningFromShare, openingText } from "../../server/flowIntent";
 import { buildDailyPlaybook, computeSqueezeIndicator, playbookBiasPoints } from "../../server/playbook";
+import { bannedKinds, scrubBriefText, scrubBrief, REMOVED_NOTE } from "../../server/edgeBriefText";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { ofiApiPayload, ofiMethodLabel, type OfiTrendLike } from "../../server/ofiPayload";
 import {
   leeReadySign, classifyL1Trades, OptionTradeSideBook, summarizeStreamSide, optionKey,
@@ -291,4 +295,74 @@ test("R3-2.6 squeeze: missing VIX / term ratio do not fire rules and are listed 
   // Same book with VIX 14 falling 5 %: the compression rule fires (+10 up fuel).
   const s2 = computeSqueezeIndicator({ ...base, term: { ratio9dOver30d: 1.0 } as any, vix: { value: 14, changePct: -5 } as any });
   assert.equal(s2.score - s1.score, 10);
+});
+
+// ─── Item 7: Edge Lab brief has no hand-set odds, confidence or trade advice ─
+
+test("R3-2.7 output filter drops trade, structure, size, probability and edge-claim sentences", () => {
+  // The exact sentences the old deterministic brief produced.
+  const old = [
+    "sell premium structures (iron condors, credit spreads) sized small.",
+    "cut size 50%.",
+    "size up directional longs / sell put spreads.",
+    "long straddles or calendars on liquid expiries.",
+    "premium sellers have edge here.",
+    "that's a skill signal.",
+    "lean long with 25-50% normal size.",
+    "there is a 55% chance the base case holds.",
+    "paper-trade or 25% size for 4 weeks.",
+    "fade wall touches with defined risk.",
+  ];
+  for (const x of old) assert.ok(bannedKinds(x).length > 0, `not caught: ${x}`);
+  // Descriptive sentences survive.
+  const ok = [
+    "IV/RV is 1.31x: options price more volatility than the stock has realized over 20 days.",
+    "estimated dealer gamma is negative, so hedging flow tends to add to moves.",
+    "watch: price relative to zero-gamma 5800.",
+    "skew is balanced: no extreme in either wing.",
+    "entries beat the close by 3.1 bps on average across 42 fills, 61% positive.",
+    "sample size: 42 graded fills.",
+  ];
+  for (const x of ok) assert.deepEqual(bannedKinds(x), [], `false positive: ${x}`);
+  assert.equal(scrubBriefText("IV is above RV. sell premium here. watch RV."), "IV is above RV. watch RV.");
+  assert.equal(scrubBriefText("cut size 50%."), REMOVED_NOTE);
+});
+
+test("R3-2.7 scrubBrief nulls confidence and case weights whatever the model returned", () => {
+  const b = scrubBrief({
+    confidence: 70,
+    summary: "options rich. premium sellers have edge here.",
+    baseCase: { thesis: "IV drifts toward RV", prob: 55 },
+    bullCase: { thesis: "vol crush", prob: 25 },
+    bearCase: { thesis: "RV catches up", prob: 20 },
+    actionable: "sell iron condors sized small.",
+    invalidation: "RV above IV.",
+    counterargument: "IV is forward-looking.",
+    bullets: ["IV 22%", "size: half"],
+  });
+  assert.equal(b.confidence, null);
+  assert.deepEqual([b.baseCase.prob, b.bullCase.prob, b.bearCase.prob], [null, null, null]);
+  assert.equal(b.summary, "options rich.");
+  assert.equal(b.actionable, REMOVED_NOTE);
+  assert.deepEqual(b.bullets, ["IV 22%"]);
+  assert.equal(b.removedSentences, 3); // summary 1, actionable 1, bullet 1
+});
+
+test("R3-2.7 deterministic brief source: no hand-set weights / confidence, no trade or size text", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const src = readFileSync(join(here, "../../server/edgeLabBrief.ts"), "utf8");
+  const start = src.indexOf("function deterministicFallback");
+  const end = src.indexOf("// ------- PANEL DATA BUILDERS");
+  const fn = src.slice(start, end);
+  assert.ok(start > 0 && end > start);
+  assert.doesNotMatch(fn, /prob:\s*\d/);
+  assert.doesNotMatch(fn, /confidence\s*=\s*\d/);
+  const lines = fn.split("\n").filter((l) => !l.trim().startsWith("//"));
+  const bad = lines.filter((l) => bannedKinds(l).length > 0);
+  assert.deepEqual(bad, []);
+  // The LLM normalizer discards model numbers.
+  assert.match(src, /confidence: null,/);
+  assert.doesNotMatch(src, /Number\(parsed\.(baseCase|bullCase|bearCase)\?\.prob\)/);
+  assert.match(src, /return scrubBrief\(brief\)/);
+  assert.match(src, /return scrubBrief\(deterministicFallback\(panel, ctx\)\)/);
 });
