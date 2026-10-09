@@ -329,3 +329,34 @@ test("seasonality verdict: significant but bottom-half out of sample is failed_o
   assert.match(text, /NOT validated/);
   assert.match(text, /^In-sample analysis/);
 });
+
+// ─── Cosmos: deterministic trade-instruction filter on the LLM narrative ──
+
+test("cosmos filter drops trade, size, hedge and direction sentences; keeps sky facts; forces the disclaimer", async () => {
+  const { filterTradeInstructions, isTradeInstruction, COSMOS_LLM_DISCLAIMER } = await import("../../server/cosmos");
+  const llm = [
+    "## Week ahead",
+    "Mercury stations direct on Tue Oct 13. The full Moon falls on Thu Oct 15.",
+    "- **Oct 15** Full Moon [lunar study] — Yuan, Zheng & Zhu (2006) found returns a basis point or two lower around full moons. Consider put spreads into the date.",
+    "- Venus enters Libra on Oct 17. Size longs normally this week.",
+    "- Iron condors are favored while the Moon is void of course.",
+    "Stocks will likely rally after the eclipse.",
+    "Stay defensive and trim exposure into Friday.",
+    "Bradley turns on Oct 20; it has no peer-reviewed support.",
+  ].join("\n");
+  const f = filterTradeInstructions(llm);
+  assert.ok(f.text.startsWith(COSMOS_LLM_DISCLAIMER));
+  for (const bad of [/put spreads/i, /Size longs/i, /condor/i, /rally/i, /defensive/i, /trim/i]) assert.doesNotMatch(f.text, bad);
+  for (const good of [/Mercury stations direct/, /full Moon falls/, /Venus enters Libra/, /Yuan, Zheng & Zhu/, /no peer-reviewed support/, /## Week ahead/]) assert.match(f.text, good);
+  assert.equal(f.dropped, 5);
+  // the disclaimer appears exactly once even if the model already wrote it
+  const twice = filterTradeInstructions(`${COSMOS_LLM_DISCLAIMER}\n\nThe Moon is waxing.`);
+  assert.equal(twice.text.split(COSMOS_LLM_DISCLAIMER).length - 1, 1);
+  // instruction forms
+  for (const s of ["Buy the dip on Monday.", "Go long SPX into the new moon.", "Hedge with puts.", "Markets could slide after the eclipse.", "A bullish week.", "Take profits before Friday.", "Enter a position at the open."]) {
+    assert.ok(isTradeInstruction(s), s);
+  }
+  for (const s of ["The Moon exits Virgo at 14:00 ET.", "Saturn is retrograde.", "Kp reached 5 (G1 storm).", "Planetary positions are from VSOP87."]) {
+    assert.ok(!isTradeInstruction(s), s);
+  }
+});

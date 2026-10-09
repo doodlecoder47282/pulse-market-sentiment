@@ -156,6 +156,7 @@ import {
   buildWeeklyOutlook,
   buildMonthlyOutlook,
   OUTLOOK_SYSTEM_PROMPT,
+  filterTradeInstructions,
 } from "./cosmos";
 import {
   startOdteTracker, getOdteSnapshot, armPosition, disarmPosition,
@@ -5190,6 +5191,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   // ─── Cosmos: astrology/astronomy intel brief + live engine ────────────────
+  type CosmosLlmResult = Array<{ text: string | null; error: string | null; dropped: number }>;
+  const cosmosLlmCache = new Map<string, { at: number; ttlMs: number; data: CosmosLlmResult }>();
+  const cosmosLlmInflight = new Map<string, Promise<CosmosLlmResult>>();
   // GET /api/cosmos/outlook — weekly (7d) + monthly (30d) forward astro
   // outlook. Deterministic baseline always returned. If ANTHROPIC_API_KEY /
   // OPENAI_API_KEY are set, LLM-enhanced narrative returned alongside.
@@ -5226,34 +5230,62 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         return r.output_text ?? "";
       }
 
-      const [wClaude, wGpt, mClaude, mGpt] = await Promise.allSettled([
-        enhanceWithClaude(weekly.markdown),
-        enhanceWithGpt(weekly.markdown),
-        enhanceWithClaude(monthly.markdown),
-        enhanceWithGpt(monthly.markdown),
-      ]);
-
-      const pick = (r: PromiseSettledResult<string>): string | null =>
-        r.status === "fulfilled" ? r.value : null;
-      const err = (r: PromiseSettledResult<string>): string | null =>
-        r.status === "rejected" ? String((r as any).reason?.message ?? r.reason) : null;
+      // The four LLM calls are cached per day (ET date of the request) for
+      // 6 h, or 15 min after any failure, with in-flight de-duplication, so
+      // they do not run on every request. Their text passes the
+      // deterministic trade-instruction filter before it is served.
+      const dayKey = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(date);
+      const cacheKey = `${dayKey}:${hasAnthropicKey ? 1 : 0}${hasOpenAiKey ? 1 : 0}`;
+      const hit = cosmosLlmCache.get(cacheKey);
+      let llm: CosmosLlmResult;
+      if (hit && Date.now() - hit.at < hit.ttlMs) {
+        llm = hit.data;
+      } else {
+        let pending = cosmosLlmInflight.get(cacheKey);
+        if (!pending) {
+          pending = Promise.allSettled([
+            enhanceWithClaude(weekly.markdown),
+            enhanceWithGpt(weekly.markdown),
+            enhanceWithClaude(monthly.markdown),
+            enhanceWithGpt(monthly.markdown),
+          ]).then((settled) => {
+            const data = settled.map((r) => {
+              if (r.status === "rejected") return { text: null, error: String((r as any).reason?.message ?? r.reason), dropped: 0 };
+              const f = filterTradeInstructions(r.value);
+              return { text: f.text, error: null, dropped: f.dropped };
+            }) as CosmosLlmResult;
+            const anyFailed = data.some((d) => d.error != null);
+            cosmosLlmCache.set(cacheKey, { at: Date.now(), ttlMs: anyFailed ? 15 * 60_000 : 6 * 3600_000, data });
+            if (cosmosLlmCache.size > 31) cosmosLlmCache.delete(cosmosLlmCache.keys().next().value as string);
+            return data;
+          }).finally(() => { cosmosLlmInflight.delete(cacheKey); });
+          cosmosLlmInflight.set(cacheKey, pending);
+        }
+        llm = await pending;
+      }
+      const cachedAt = cosmosLlmCache.get(cacheKey)?.at ?? Date.now();
+      const [wC, wG, mC, mG] = llm;
 
       res.json({
         weekly: {
           ...weekly,
-          claude: pick(wClaude),
-          gpt: pick(wGpt),
-          errors: { claude: err(wClaude), gpt: err(wGpt) },
+          claude: wC.text,
+          gpt: wG.text,
+          errors: { claude: wC.error, gpt: wG.error },
+          filteredSentences: { claude: wC.dropped, gpt: wG.dropped },
         },
         monthly: {
           ...monthly,
-          claude: pick(mClaude),
-          gpt: pick(mGpt),
-          errors: { claude: err(mClaude), gpt: err(mGpt) },
+          claude: mC.text,
+          gpt: mG.text,
+          errors: { claude: mC.error, gpt: mG.error },
+          filteredSentences: { claude: mC.dropped, gpt: mG.dropped },
         },
         meta: {
           llmEnhancersEnabled: { claude: hasAnthropicKey, gpt: hasOpenAiKey },
           generatedAt: new Date().toISOString(),
+          llmCachedAt: new Date(cachedAt).toISOString(),
+          llmFilter: "sentences with trade, size, hedge, options or direction instructions are removed deterministically",
         },
       });
     } catch (e) {

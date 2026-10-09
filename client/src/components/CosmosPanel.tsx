@@ -90,6 +90,8 @@ type OutlookHorizon = {
   claude: string | null;
   gpt: string | null;
   errors: { claude: string | null; gpt: string | null };
+  /** sentences removed by the server's deterministic trade-instruction filter */
+  filteredSentences?: { claude: number; gpt: number };
 };
 
 type OutlookResponse = {
@@ -98,6 +100,7 @@ type OutlookResponse = {
   meta: {
     llmEnhancersEnabled: { claude: boolean; gpt: boolean };
     generatedAt: string;
+    llmCachedAt?: string;
   };
 };
 
@@ -855,6 +858,9 @@ function OutlookPanel() {
           {source !== "deterministic" && (
             <div style={{ fontFamily: "monospace", fontSize: 9, color: MUTED, letterSpacing: "0.06em", marginBottom: 6 }}>
               AI-WRITTEN NARRATIVE · CONTEXT ONLY, NOT A TRADING SIGNAL · MAY CONTAIN ERRORS
+              {active.filteredSentences && (source === "claude" || source === "gpt") && active.filteredSentences[source] > 0
+                ? ` · ${active.filteredSentences[source]} SENTENCE(S) WITH TRADE OR DIRECTION LANGUAGE REMOVED`
+                : ""}
             </div>
           )}
           <OutlookMarkdown text={bodyText ?? active.markdown} />

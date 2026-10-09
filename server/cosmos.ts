@@ -1385,6 +1385,73 @@ Rules:
 4. State the evidence plainly: only lunar (Yuan, Zheng & Zhu 2006: about 3-5% a year in aggregate, a basis point or two a day), geomagnetic (Krivelyova & Robotti 2003, a working paper) and SAD (Kamstra, Kramer & Levi 2003, disputed by Kelly & Meschke 2010) effects have studies behind them, and those effects are small. Retrogrades, Bradley, Gann, ingresses and natal charts have no peer-reviewed support.
 5. Plain markdown, no emojis, at most 250 words.`;
 
+// ─── Deterministic output filter for the LLM narrative (finding 5.3/5.8) ─
+// The no-trade-instruction rule above is only a prompt. This filter is the
+// enforcement: every sentence of the model's text that names a trade, an
+// order, a position size, an options structure, a hedge or a market
+// direction call is dropped before the text reaches the page, and the
+// disclaimer is forced to be the first line. It is deliberately strict:
+// dropping an innocent sentence costs nothing, letting one instruction
+// through is the failure we are guarding against.
+
+export const COSMOS_LLM_DISCLAIMER = "For entertainment and context, not a trading signal.";
+
+const TRADE_INSTRUCTION_PATTERNS: RegExp[] = [
+  // orders, entries, exits, stops, targets (sky verbs like "Venus enters
+  // Libra" or "the Moon exits Virgo" are not matched)
+  /\b(buy|buying|sell|selling|short|shorting|go long|going long|go short|get long|get short|take profits?|profit[- ]taking|stop[- ]?loss(es)?|trailing stop|price targets?)\b/i,
+  /\b(enter|entering|exit|exiting|close|closing|open|opening|take|initiate|add)\s+(a\s+|the\s+|your\s+|new\s+)?(trade|trades|position|positions|long|longs|short|shorts)\b/i,
+  /\b(entry|exit)\s+(point|price|level|signal|timing)s?\b/i,
+  // sizing and allocation
+  /\b(size|sizing|sized|position[- ]siz\w*|allocat(e|es|ed|ion|ions)|overweight|underweight|exposure|leverage|risk budget|trim|scale (in|out)|load up|accumulate|de-?risk|re-?risk|rebalanc\w*|rotate into)\b/i,
+  // hedges and options structures
+  /\b(hedg\w*|calls?|puts?|spreads?|straddles?|strangles?|condors?|iron fly|butterfl(y|ies)|collars?|covered call|protective put|options? (play|trade|strateg\w*))\b/i,
+  // direction calls and forecasts
+  /\b(bullish|bearish|risk[- ]on|risk[- ]off|long bias|short bias|upside|downside|rally|sell-?off|crash|correction|breakout|breakdown|bounce|rebound|top(ping)? out|bottom(ing)? out)\b/i,
+  /\b(stocks?|markets?|equities|indices|index|spx|spy|s&p|nasdaq|dow|bitcoin|crypto|gold|bonds?|the tape)\b[^.!?]*\b(will|should|could|may|might|likely to|expected to|poised to|set to|tends? to)\b[^.!?]*\b(rise|rises|fall|falls|climb|drop|decline|rally|slide|gain|lose|move (higher|lower|up|down)|go (higher|lower|up|down)|outperform|underperform)\b/i,
+  /\b(favou?r(s|ed|ing)?|avoid|stay (long|short|flat|out|neutral|defensive|aggressive)|lean (long|short|into|against)|be (cautious|defensive|aggressive))\b/i,
+  /\b(neutral|cautious|defensive|aggressive) (stance|bias|posture|positioning|outlook)\b/i,
+];
+
+export function isTradeInstruction(sentence: string): boolean {
+  return TRADE_INSTRUCTION_PATTERNS.some((re) => re.test(sentence));
+}
+
+/** Split a line into sentences (keeps markdown bullets/headings with their first sentence). */
+function splitSentences(line: string): string[] {
+  const parts = line.split(/(?<=[.!?])\s+(?=[*_"'(\[]*[A-Z0-9])/);
+  return parts.filter((p) => p.length > 0);
+}
+
+/**
+ * Drop every sentence that reads as a trade, size, hedge or direction
+ * instruction; force the disclaimer as the first line. Pure.
+ */
+export function filterTradeInstructions(text: string): { text: string; dropped: number; droppedSentences: string[] } {
+  const droppedSentences: string[] = [];
+  const outLines: string[] = [];
+  for (const rawLine of String(text ?? "").split(/\r?\n/)) {
+    if (rawLine.trim() === "") { outLines.push(""); continue; }
+    if (rawLine.includes(COSMOS_LLM_DISCLAIMER)) continue; // re-added below, once
+    const prefix = rawLine.match(/^\s*(#{1,6}\s+|[-*+]\s+|\d+\.\s+|>\s*)?/)?.[0] ?? "";
+    const body = rawLine.slice(prefix.length);
+    const kept = splitSentences(body).filter((sent) => {
+      if (isTradeInstruction(sent)) { droppedSentences.push(sent.trim()); return false; }
+      return true;
+    });
+    if (kept.length) outLines.push(prefix + kept.join(" "));
+  }
+  // collapse runs of blank lines left by dropped bullets
+  const collapsed: string[] = [];
+  for (const l of outLines) if (!(l === "" && (collapsed.length === 0 || collapsed[collapsed.length - 1] === ""))) collapsed.push(l);
+  while (collapsed.length && collapsed[collapsed.length - 1] === "") collapsed.pop();
+  return {
+    text: [COSMOS_LLM_DISCLAIMER, "", ...collapsed].join("\n").trim(),
+    dropped: droppedSentences.length,
+    droppedSentences,
+  };
+}
+
 // ─── NOAA Kp-index (geomagnetic storm) fetcher ──────────────────────────────
 // Pulls from NOAA SWPC free endpoints (no key). Cached 60min.
 // Kp 0-4 = quiet, 5 = G1 storm, 6 = G2, 7 = G3, 8 = G4, 9 = G5.
