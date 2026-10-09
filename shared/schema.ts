@@ -120,12 +120,12 @@ export interface GexStrikePoint {
 
 export interface GammaStructure {
   spot: number;
-  totalGex: number;             // net dealer gamma ($ per 1% move), calls +, puts -
+  totalGex: number;             // net dealer gamma ($ per 1% move), calls +, puts -; Black-Scholes re-priced (gammaProfile.gexByStrikeFromChain)
   regime: "positive" | "negative" | "neutral";
-  callWall: number;             // strike with largest positive GEX contribution
-  callWallGex: number;
-  putWall: number;              // strike with largest negative GEX contribution
-  putWallGex: number;
+  callWall: number;             // strike at/above spot with the largest re-priced call GEX
+  callWallGex: number;          // that strike's call GEX ($ per 1%)
+  putWall: number;              // strike below spot with the largest |re-priced put GEX|
+  putWallGex: number;           // that strike's put GEX ($ per 1%, negative)
   zeroGamma: number | null;     // canonical zero-gamma spot level (Perfiliev-style) — where total γ flips as spot moves
   maxPain: number;              // nearest expiry max-pain strike
   nearestDte: number;

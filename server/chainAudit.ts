@@ -25,7 +25,7 @@ import { cdfAt, fitImpliedDistribution, type OptionQuote } from "./breedenLitzen
 
 // ─── Internal contract shape ──────────────────────────────────────────────────
 
-interface Contract {
+export interface Contract {
   strike: number;
   side: "call" | "put";
   expiry: string;              // "YYYY-MM-DD"
@@ -33,7 +33,8 @@ interface Contract {
   style: SettlementStyle;      // AM (SOQ, 09:30 ET open) or PM (session close)
   tYears: number;              // timeToExpiry(): calendar minutes to settlement / 525,600, 15-min floor
   sigma?: number;              // effectiveIV(c, spot), cached once per audit (buildChainAudit)
-  delta: number;
+  /** Vendor delta in [-1, 1]; null = missing or Schwab's -999 sentinel (never 0). */
+  delta: number | null;
   gamma: number;
   theta: number;
   vega: number;
@@ -67,6 +68,11 @@ export interface DEXResult {
   totalCallDex: number;
   totalPutDex: number;
   totalNetDex: number;
+  /** "ok": every contract with OI had a delta; "partial": totals cover only the
+   *  contracts with a delta (see dexCoverage); "unavailable": none had one
+   *  (totals are not an observed zero). */
+  dexState?: "ok" | "partial" | "unavailable";
+  dexCoverage?: { contractsWithDelta: number; contractsMissingDelta: number; oiMissingShare: number | null };
 }
 
 export interface VannaStrike {
@@ -177,7 +183,7 @@ export interface UnusualContract {
   volOiRatio: number;
   lastPrice: number;
   dollarVolume: number;
-  deltaNotional: number;
+  deltaNotional: number | null;   // null when the contract has no delta
 }
 
 export interface DealerScoreResult {
@@ -344,7 +350,8 @@ function extractContracts(
             dte,
             style,
             tYears: tte.years,
-            delta: c.delta ?? 0,
+            // Missing / sentinel delta is missing, not an observed 0 delta.
+            delta: typeof c.delta === "number" && Number.isFinite(c.delta) && Math.abs(c.delta) <= 1 ? c.delta : null,
             gamma: c.gamma ?? 0,
             theta: c.theta ?? 0,
             vega: c.vega ?? 0,
@@ -371,10 +378,16 @@ function extractContracts(
 
 // ─── 1. DEX ───────────────────────────────────────────────────────────────────
 
-function computeDEX(contracts: Contract[], spot: number): DEXResult {
+export function computeDEX(contracts: Contract[], spot: number): DEXResult {
   const strikeMap = new Map<number, DEXStrike>();
+  let withDelta = 0, missingDelta = 0, oiMissing = 0, oiTotal = 0;
 
   for (const c of contracts) {
+    if (c.oi > 0) {
+      oiTotal += c.oi;
+      if (c.delta == null) { missingDelta++; oiMissing += c.oi; } else withDelta++;
+    }
+    if (c.delta == null) continue; // missing delta: counted above, never summed as 0
     if (!strikeMap.has(c.strike)) {
       strikeMap.set(c.strike, { strike: c.strike, callDex: 0, putDex: 0, netDex: 0 });
     }
@@ -384,7 +397,6 @@ function computeDEX(contracts: Contract[], spot: number): DEXResult {
     // shares (no x S) while the panel printed it with "$": 1/S of the real
     // dollars (SPX 6,700: 1.5M delta-shares printed "$1.5M", really $10.05B). Vendor delta outside
     // [-1, 1] (Schwab's -999 closed-market sentinel) is skipped, not summed.
-    if (!(Math.abs(c.delta) <= 1)) continue;
     const dex = c.delta * c.oi * 100 * spot;
     if (c.side === "call") row.callDex += dex;
     else row.putDex += dex;
@@ -433,6 +445,12 @@ function computeDEX(contracts: Contract[], spot: number): DEXResult {
     totalCallDex,
     totalPutDex,
     totalNetDex,
+    dexState: withDelta === 0 ? "unavailable" : missingDelta > 0 ? "partial" : "ok",
+    dexCoverage: {
+      contractsWithDelta: withDelta,
+      contractsMissingDelta: missingDelta,
+      oiMissingShare: oiTotal > 0 ? oiMissing / oiTotal : null,
+    },
   };
 }
 
@@ -698,21 +716,21 @@ function computeIVSkew(contracts: Contract[]): SkewEntry[] {
     const { dte, calls, puts } = group;
 
     // ATM IV: call and put closest to delta=0.50 / -0.50
-    const atmCall = calls.filter(c => c.iv > 0).sort((a, b) =>
-      Math.abs(Math.abs(a.delta) - 0.5) - Math.abs(Math.abs(b.delta) - 0.5)
+    const atmCall = calls.filter(c => c.iv > 0 && c.delta != null).sort((a, b) =>
+      Math.abs(Math.abs(a.delta!) - 0.5) - Math.abs(Math.abs(b.delta!) - 0.5)
     )[0];
-    const atmPut = puts.filter(c => c.iv > 0).sort((a, b) =>
-      Math.abs(Math.abs(a.delta) - 0.5) - Math.abs(Math.abs(b.delta) - 0.5)
+    const atmPut = puts.filter(c => c.iv > 0 && c.delta != null).sort((a, b) =>
+      Math.abs(Math.abs(a.delta!) - 0.5) - Math.abs(Math.abs(b.delta!) - 0.5)
     )[0];
     const atmIV = atmCall && atmPut ? (atmCall.iv + atmPut.iv) / 2
       : atmCall?.iv ?? atmPut?.iv ?? null;
 
     // 25-delta: call closest to delta=0.25, put closest to delta=-0.25
-    const call25 = calls.filter(c => c.iv > 0).sort((a, b) =>
-      Math.abs(a.delta - 0.25) - Math.abs(b.delta - 0.25)
+    const call25 = calls.filter(c => c.iv > 0 && c.delta != null).sort((a, b) =>
+      Math.abs(a.delta! - 0.25) - Math.abs(b.delta! - 0.25)
     )[0];
-    const put25 = puts.filter(c => c.iv > 0).sort((a, b) =>
-      Math.abs(a.delta + 0.25) - Math.abs(b.delta + 0.25)
+    const put25 = puts.filter(c => c.iv > 0 && c.delta != null).sort((a, b) =>
+      Math.abs(a.delta! + 0.25) - Math.abs(b.delta! + 0.25)
     )[0];
 
     const put25IV = put25?.iv ?? null;
@@ -787,7 +805,7 @@ function computeUnusualVolume(contracts: Contract[], spot: number): UnusualContr
 
     const price = c.mark > 0 ? c.mark : (c.bid + c.ask) / 2;
     const dollarVolume = price * c.volume * 100;
-    const deltaNotional = c.delta * c.oi * 100 * spot;
+    const deltaNotional = c.delta != null ? c.delta * c.oi * 100 * spot : null;
 
     flagged.push({
       symbol: `${c.side.toUpperCase()}_${c.strike}_${c.expiry}`,
@@ -820,7 +838,7 @@ function computeDealerScore(contracts: Contract[], spot: number): DealerScoreRes
   let putScore = 0;
 
   for (const c of contracts) {
-    if (c.oi <= 0) continue;
+    if (c.oi <= 0 || c.delta == null) continue;
     const weight = Math.exp(-Math.abs(c.strike - spot) / bandwidth);
     const deltaCont = Math.abs(c.delta) * c.oi * 100;
     if (c.side === "call") callScore += weight * deltaCont;
@@ -1064,7 +1082,7 @@ export function buildChainAudit(
   // Data quality assessment
   // Schwab sends -999 sentinels for every greek when the market is closed:
   // only in-range values count as greeks.
-  const hasGreeks = contracts.some(c => c.delta !== 0 && Math.abs(c.delta) <= 1 && c.gamma > 0 && c.gamma < 900);
+  const hasGreeks = contracts.some(c => c.delta != null && c.delta !== 0 && c.gamma > 0 && c.gamma < 900);
   const hasTheoreticalIV = contracts.some(c => c.theoreticalIV != null && c.theoreticalIV > 0);
   const pinning = computePinning(contracts, spot);
   const dataQuality: ChainAuditResult["dataQuality"] =

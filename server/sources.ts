@@ -8,7 +8,7 @@
 import type {
   GammaStructure, GexStrikePoint, SocialPost, SocialSentiment,
 } from "@shared/schema";
-import { buildGammaProfile, type OptionRow } from "./gammaProfile";
+import { buildGammaProfile, gexByStrikeFromChain, type OptionRow } from "./gammaProfile";
 import { toSchwabSymbol } from "./schwabSymbols";
 import { flattenSchwabChain, chainSpot, type SchwabChainLike } from "./schwabChainRows";
 import { timeToExpiry, type SettlementStyle } from "./timeToExpiry";
@@ -79,26 +79,31 @@ export const yahooQuote = getQuote;
  * Gamma structure for the Signals snapshot from a Schwab option chain
  * (SPY, 0-45 DTE; strikes and spot in SPY dollars). Was the CBOE delayed SPY
  * chain; Schwab is now the only source (user decision 2026-10-08).
- * Vendor gamma (Schwab), open interest and Schwab IV; settled contracts
- * (T <= 0 on the shared expiry clock) and Schwab's -999 placeholders are
- * dropped, not counted as zero.
+ * Round 4: per-strike GEX, total GEX and the walls come from
+ * gammaProfile.gexByStrikeFromChain: Black-Scholes gamma re-priced on the
+ * shared clock with the flip's r and q (the same per-contract term the flip
+ * sums), call wall = largest call GEX at or above spot, put wall = largest
+ * |put GEX| below spot. The vendor gamma (undocumented T convention, -999
+ * when closed) no longer feeds anything here. OI, volume and max pain come
+ * from the chain rows; settled contracts (T <= 0) are dropped. A chain with
+ * no re-priceable strike on both sides of spot throws ("no re-priceable
+ * gamma"), which the snapshot reports as unavailable (not a 0 wall).
  */
 export function buildGammaStructure(chain: SchwabChainLike, nowMs: number = Date.now()): GammaStructure {
   const spot = chainSpot(chain);
   if (spot == null) throw new Error("Schwab chain has no underlying price");
   const S: number = spot;
 
-  type Row = { type: "C" | "P"; strike: number; gamma: number; iv: number; oi: number; vol: number; dte: number; expiry: string; style: SettlementStyle };
+  type Row = { type: "C" | "P"; strike: number; iv: number; oi: number; vol: number; dte: number; expiry: string; style: SettlementStyle };
   const rows: Row[] = [];
   for (const c of flattenSchwabChain(chain)) {
     if (c.dte < 0 || c.dte > 45) continue;
     if (!(timeToExpiry(c.expiry, { nowMs, style: c.style }).years > 0)) continue; // settled
-    const gamma = c.gamma;
     const oi = c.openInterest;
-    if (gamma == null || gamma === 0 || oi == null || oi === 0) continue;
+    if (oi == null || oi === 0) continue;
     rows.push({
       type: c.side,
-      strike: c.strike, gamma, iv: c.iv ?? 0, oi,
+      strike: c.strike, iv: c.iv ?? 0, oi,
       vol: c.volume ?? 0,
       dte: c.dte,
       expiry: c.expiry,
@@ -106,15 +111,23 @@ export function buildGammaStructure(chain: SchwabChainLike, nowMs: number = Date
     });
   }
 
+  // Re-priced per-strike GEX ($ per 1% move; calls +, puts -), 0-45 DTE.
+  const chainGex = gexByStrikeFromChain({ ...chain, underlying: { last: S } } as any, nowMs);
   const gexByStrike = new Map<number, number>();
+  for (const p of chainGex.profile) gexByStrike.set(p.strike, p.netGex);
+  const wallCall = chainGex.profile.find((p) => p.strike === chainGex.callWall);
+  const wallPut = chainGex.profile.find((p) => p.strike === chainGex.putWall);
+  if (chainGex.callWall == null || chainGex.putWall == null || !wallCall || !wallPut || !(wallCall.callGex > 0) || !(wallPut.putGex < 0)) {
+    throw new Error("Schwab chain unusable: no re-priceable gamma on both sides of spot (no call wall at/above or put wall below)");
+  }
+  const callWall: number = chainGex.callWall, callWallGex: number = wallCall.callGex;
+  const putWall: number = chainGex.putWall, putWallGex: number = wallPut.putGex;
+
   const callOiByStrike = new Map<number, number>();
   const putOiByStrike = new Map<number, number>();
   let totalCallOi = 0, totalPutOi = 0, callVol = 0, putVol = 0;
 
   for (const r of rows) {
-    const sign = r.type === "C" ? 1 : -1;
-    const gex = sign * r.gamma * r.oi * 100 * S * S * 0.01;
-    gexByStrike.set(r.strike, (gexByStrike.get(r.strike) || 0) + gex);
     if (r.type === "C") {
       callOiByStrike.set(r.strike, (callOiByStrike.get(r.strike) || 0) + r.oi);
       totalCallOi += r.oi; callVol += r.vol;
@@ -126,14 +139,6 @@ export function buildGammaStructure(chain: SchwabChainLike, nowMs: number = Date
 
   const strikes = Array.from(gexByStrike.keys()).sort((a, b) => a - b);
   const totalGex = strikes.reduce((a, k) => a + (gexByStrike.get(k) || 0), 0);
-
-  let callWall = strikes[0], putWall = strikes[0];
-  let callWallGex = -Infinity, putWallGex = Infinity;
-  for (const k of strikes) {
-    const g = gexByStrike.get(k) || 0;
-    if (g > callWallGex) { callWallGex = g; callWall = k; }
-    if (g < putWallGex)  { putWallGex = g; putWall = k; }
-  }
 
   // GEX Crossover Strike: legacy metric — strike at which cumulative per-strike
   // GEX flips sign (where the GEX centroid lies). Kept for continuity but NOT

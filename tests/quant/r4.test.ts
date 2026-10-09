@@ -123,3 +123,59 @@ test("oauthErrorCode keeps only the RFC 6749 error code", () => {
   assert.doesNotMatch(schwab, /Token exchange failed \(\$\{res\.status\}\): \$\{txt\}/);
   assert.match(schwab, /code exchange failed:", res\.status, errCode\)/);
 });
+
+// ── 4. Signals walls / total GEX re-priced; DEX missing delta is missing ────
+import { buildGammaStructure } from "../../server/sources";
+import { computeDEX, type Contract } from "../../server/chainAudit";
+import { gexByStrikeFromChain } from "../../server/gammaProfile";
+
+test("Signals gamma: walls bracket spot and come from re-priced GEX, not vendor gamma", () => {
+  const S = 670, now = Date.parse("2026-10-09T20:30:00Z");
+  const C = (sym: string, x: Record<string, unknown>) => ({ symbol: sym, ...x });
+  const chain = {
+    underlying: { last: S },
+    callExpDateMap: { "2026-10-16:7": {
+      // deep ITM call with huge OI and a huge (bogus) vendor gamma: old code
+      // made it the "call wall" below spot
+      "640.0": [C("SPY   261016C00640000", { openInterest: 90_000, gamma: 0.5, volatility: 20 })],
+      "675.0": [C("SPY   261016C00675000", { openInterest: 30_000, gamma: 0.0001, volatility: 15 })],
+      "690.0": [C("SPY   261016C00690000", { openInterest: 30_000, gamma: 0.0001, volatility: 15 })],
+    } },
+    putExpDateMap: { "2026-10-16:7": {
+      "665.0": [C("SPY   261016P00665000", { openInterest: 40_000, gamma: -999, volatility: 17 })],
+      "700.0": [C("SPY   261016P00700000", { openInterest: 80_000, gamma: 0.9, volatility: 14 })],
+    } },
+  };
+  const g = buildGammaStructure(chain as any, now);
+  assert.ok(g.callWall >= S, `call wall ${g.callWall} must be at/above spot`);
+  assert.ok(g.putWall < S, `put wall ${g.putWall} must be below spot`);
+  assert.equal(g.callWall, 675);   // nearer-the-money call dominates re-priced gamma
+  assert.equal(g.putWall, 665);    // vendor gamma -999 irrelevant; the 700 put is above spot
+  const ref = gexByStrikeFromChain(chain as any, now);
+  const net = ref.profile.reduce((a, p) => a + p.netGex, 0);
+  assert.ok(Math.abs(g.totalGex - net) <= 1e-6 * Math.abs(net));
+  assert.ok(g.callWallGex > 0 && g.putWallGex < 0);
+  // no strike on one side of spot -> unusable (unavailable upstream), not a 0 wall
+  const oneSided = { underlying: { last: S }, callExpDateMap: chain.callExpDateMap, putExpDateMap: {} };
+  assert.throws(() => buildGammaStructure(oneSided as any, now), /no re-priceable gamma/);
+});
+
+test("chain audit DEX: missing delta is excluded and reported, not summed as 0", () => {
+  const base = { side: "call" as const, expiry: "2026-10-16", dte: 7, style: "PM" as const, tYears: 7 / 365, gamma: 0, theta: 0, vega: 0, rho: 0, iv: 0.15, theoreticalIV: null, volume: 0, mark: 0, last: 0, bid: 0, ask: 0, inTheMoney: false };
+  const mk = (strike: number, delta: number | null, oi: number, side: "call" | "put" = "call"): Contract => ({ ...base, strike, delta, oi, side } as Contract);
+  const S = 100;
+  const ok = computeDEX([mk(100, 0.5, 10), mk(95, -0.3, 20, "put")], S);
+  // hand: 0.5*10*100*100 = 50,000 ; -0.3*20*100*100 = -60,000
+  assert.equal(ok.totalCallDex, 50_000);
+  assert.equal(ok.totalPutDex, -60_000);
+  assert.equal(ok.dexState, "ok");
+  const part = computeDEX([mk(100, 0.5, 10), mk(105, null, 30)], S);
+  assert.equal(part.totalNetDex, 50_000);
+  assert.equal(part.dexState, "partial");
+  assert.deepEqual(part.dexCoverage, { contractsWithDelta: 1, contractsMissingDelta: 1, oiMissingShare: 0.75 });
+  const none = computeDEX([mk(105, null, 30)], S);
+  assert.equal(none.dexState, "unavailable");
+  assert.match(src("server/chainAudit.ts"), /Math\.abs\(c\.delta\) <= 1 \? c\.delta : null/);
+  assert.doesNotMatch(src("server/chainAudit.ts"), /delta: c\.delta \?\? 0/);
+  assert.match(src("client/src/components/Heatseeker.tsx"), /label=\{dexStatLabel\(totals\.dexState, totals\.dexCoverage\)\}/);
+});

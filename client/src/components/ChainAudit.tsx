@@ -31,6 +31,8 @@ interface DEXResult {
   totalCallDex: number;
   totalPutDex: number;
   totalNetDex: number;
+  dexState?: "ok" | "partial" | "unavailable";
+  dexCoverage?: { contractsWithDelta: number; contractsMissingDelta: number; oiMissingShare: number | null };
 }
 
 interface VannaResult {
@@ -79,7 +81,7 @@ interface UnusualContract {
   volOiRatio: number;
   lastPrice: number;
   dollarVolume: number;
-  deltaNotional: number;
+  deltaNotional: number | null;
 }
 
 interface DealerScoreResult {
@@ -659,10 +661,14 @@ export default function ChainAudit() {
               </div>
               <div className="space-y-2">
                 <KPICard
-                  label="Net DEX"
-                  value={fmtDollar(audit.dex.totalNetDex)}
-                  sub={`Calls: ${fmtDollar(audit.dex.totalCallDex)}`}
-                  color={audit.dex.totalNetDex >= 0 ? CALL_COLOR : PUT_COLOR}
+                  label={audit.dex.dexState === "partial" ? "Net DEX (partial)" : "Net DEX"}
+                  value={audit.dex.dexState === "unavailable" ? "unavailable" : fmtDollar(audit.dex.totalNetDex)}
+                  sub={audit.dex.dexState === "unavailable"
+                    ? "no contract with a usable delta"
+                    : audit.dex.dexState === "partial" && audit.dex.dexCoverage
+                      ? `${audit.dex.dexCoverage.contractsMissingDelta} contracts without delta${audit.dex.dexCoverage.oiMissingShare != null ? ` (${(audit.dex.dexCoverage.oiMissingShare * 100).toFixed(0)}% of OI)` : ""} excluded · Calls: ${fmtDollar(audit.dex.totalCallDex)}`
+                      : `Calls: ${fmtDollar(audit.dex.totalCallDex)}`}
+                  color={audit.dex.dexState === "unavailable" ? undefined : audit.dex.totalNetDex >= 0 ? CALL_COLOR : PUT_COLOR}
                   testId="kpi-net-dex"
                 />
                 {audit.dex.maxPositive && (

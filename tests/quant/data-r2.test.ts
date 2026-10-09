@@ -451,21 +451,30 @@ test("Signals gamma structure from a Schwab SPY chain: GEX = gamma x OI x 100 x 
   // After Friday's close the 2026-10-09 PM expiry has settled and is dropped.
   const afterClose = Date.parse("2026-10-09T20:30:00Z");
   const g = buildGammaStructure(chain, afterClose);
-  // Hand computation (dollars per 1% move):
-  //   call 680: 0.02 x 10,000 x 100 x 670^2 x 0.01 = 89,780,000
-  //   put 660: -0.015 x 20,000 x 100 x 670^2 x 0.01 = -134,670,000
-  //   put 650: gamma -999 (missing) -> excluded, not zero
-  //   put 665 (0DTE, settled at 16:00) -> excluded
-  const callG = 0.02 * 10_000 * 100 * S * S * 0.01;
-  const putG = -0.015 * 20_000 * 100 * S * S * 0.01;
-  assert.equal(callG, 89_780_000);
-  assert.equal(putG, -134_670_000);
-  assert.ok(Math.abs(g.totalGex - (callG + putG)) < 1e-6);
+  // Round 4: GEX is Black-Scholes gamma RE-PRICED on the shared clock
+  // (gammaProfile.gexByStrikeFromChain, r = 5%, q = 1.3%), not the vendor
+  // gamma. Closed form (Hull, OFOD, gamma = e^{-qT} phi(d1) / (S sigma sqrt T)):
+  //   $GEX per 1% = gamma x OI x 100 x S^2 x 0.01, calls +, puts -.
+  //   put 650: vendor gamma -999 is irrelevant now; IV 19% -> re-priced, kept.
+  //   put 665 (0DTE, settled at 16:00) -> excluded.
+  const T = timeToExpiry("2026-10-16", { nowMs: afterClose, style: "PM" }).years;
+  const bsG = (K: number, sig: number) => {
+    const r = 0.05, q = 0.013, sq = sig * Math.sqrt(T);
+    const d1 = (Math.log(S / K) + (r - q + sig * sig / 2) * T) / sq;
+    return Math.exp(-q * T) * Math.exp(-d1 * d1 / 2) / Math.sqrt(2 * Math.PI) / (S * sq);
+  };
+  const callG = bsG(680, 0.15) * 10_000 * 100 * S * S * 0.01;
+  const put660 = -bsG(660, 0.18) * 20_000 * 100 * S * S * 0.01;
+  const put650 = -bsG(650, 0.19) * 5_000 * 100 * S * S * 0.01;
+  const rel = (a: number, b: number) => Math.abs(a - b) / Math.abs(b);
+  assert.ok(rel(g.totalGex, callG + put660 + put650) < 1e-9, `${g.totalGex} vs ${callG + put660 + put650}`);
   assert.equal(g.callWall, 680);
+  assert.ok(rel(g.callWallGex, callG) < 1e-9);
   assert.equal(g.putWall, 660);
+  assert.ok(rel(g.putWallGex, put660) < 1e-9);
   assert.equal(g.spot, S);
-  assert.deepEqual(g.profile.map((p) => p.strike), [660, 680]);
-  assert.equal(g.pcrOi, 2);              // 20,000 / 10,000
+  assert.deepEqual(g.profile.map((p) => p.strike), [650, 660, 680]);
+  assert.equal(g.pcrOi, 2.5);            // 25,000 / 10,000 (the 650 put's OI is observed)
   assert.throws(() => buildGammaStructure({ underlying: { last: null }, callExpDateMap: {}, putExpDateMap: {} }), /no underlying price/);
 });
 

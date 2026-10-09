@@ -113,6 +113,9 @@ interface HeatseekerData {
   totals: {
     netGex: number | null;
     netDex: number | null;
+    /** Server heatseeker.ts: "partial" = netDex covers only contracts with a delta. */
+    dexState?: "ok" | "partial" | "unavailable";
+    dexCoverage?: { contractsWithDelta: number; contractsMissingDelta: number; oiMissingShare: number | null; basis: string };
     netVanna: number | null;
     netCharm: number | null;
     callWall: number | null;
@@ -815,7 +818,11 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                 value={totals.netGex != null ? fmtM(totals.netGex) : "—"}
                 positive={totals.netGex != null ? totals.netGex >= 0 : null}
               />
-              <Stat label="Net DEX" value={totals.netDex != null ? fmtM(totals.netDex) : "—"} positive={totals.netDex != null ? totals.netDex >= 0 : null} />
+              <Stat
+                label={dexStatLabel(totals.dexState, totals.dexCoverage)}
+                value={totals.netDex != null && totals.dexState !== "unavailable" ? fmtM(totals.netDex) : "—"}
+                positive={totals.netDex != null && totals.dexState !== "unavailable" ? totals.netDex >= 0 : null}
+              />
               <Stat label="Net Vanna" value={totals.netVanna != null ? fmtM(totals.netVanna) : "—"} positive={totals.netVanna != null ? totals.netVanna >= 0 : null} />
               <Stat label="Net Charm" value={totals.netCharm != null ? fmtM(totals.netCharm) : "—"} positive={totals.netCharm != null ? totals.netCharm >= 0 : null} />
             </div>
@@ -1250,6 +1257,20 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
 }
 
 // ─── Sub-components ────────────────────────────────────────────────────────
+/** Net DEX label: says when the total covers only part of the open interest. */
+function dexStatLabel(
+  state: "ok" | "partial" | "unavailable" | undefined,
+  cov: { contractsWithDelta: number; contractsMissingDelta: number; oiMissingShare: number | null } | undefined,
+): string {
+  if (state === "unavailable") return "Net DEX · unavailable (no delta)";
+  if (state === "partial" && cov) {
+    const share = cov.oiMissingShare != null ? `, ${(cov.oiMissingShare * 100).toFixed(0)}% of OI` : "";
+    return `Net DEX · partial (${cov.contractsMissingDelta} of ${cov.contractsWithDelta + cov.contractsMissingDelta} contracts no delta${share})`;
+  }
+  if (state === "partial") return "Net DEX · partial";
+  return "Net DEX";
+}
+
 function Stat({ label, value, positive }: { label: string; value: string; positive: boolean | null }) {
   // positive === null: missing value, rendered neutral (no up/down colour or arrow).
   return (

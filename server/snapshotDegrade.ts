@@ -110,9 +110,10 @@ function isChainError(c: unknown): c is ChainErrorLike {
   return !!c && typeof (c as ChainErrorLike).error === "string";
 }
 
-/** buildGammaStructure throws this exact message when the chain has no
- *  underlying price (server/sources.ts): the chain is unusable upstream data. */
-const NO_UNDERLYING_RE = /no underlying price/i;
+/** buildGammaStructure throws these messages when the chain has no
+ *  underlying price or no re-priceable gamma on both sides of spot
+ *  (server/sources.ts): the chain is unusable upstream data. */
+const NO_UNDERLYING_RE = /no underlying price|no re-priceable gamma/i;
 
 function quotesSection(q: SnapshotInputs["vix"][]): SectionState {
   const have = q.filter((x) => x.last != null).length;

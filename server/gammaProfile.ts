@@ -692,7 +692,10 @@ export function gexRegime(
   return gexAtSpot > 0 ? "positive" : "negative";
 }
 
-// ─── Per-strike GEX from a chain (Signals snapshot, gamma curve, killbox DB) ──
+// ─── Per-strike GEX from a chain ──────────────────────────────────────────
+// Consumers: Signals snapshot walls / total GEX / per-strike profile
+// (sources.buildGammaStructure, since round 4; before that it used the
+// vendor gamma), schwab.ts per-strike GEX, ML features (mlFeatureMath).
 
 export interface GexStrike { strike: number; callGex: number; putGex: number; netGex: number }
 
