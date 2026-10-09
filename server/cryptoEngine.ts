@@ -19,9 +19,19 @@
 //   3. RUG FILTER (inline on refresh) — liquidity floor, liq/mcap sanity,
 //                          sell-side existence (honeypot proxy), crash filter,
 //                          age gates. Hard kills → PASS regardless of score.
-//   4. NARRATIVES (5min) — crypto RSS (CoinDesk/TheBlock/Decrypt) keyword heat.
+//   4. NARRATIVES (5min) — crypto RSS (CoinDesk/TheBlock/Decrypt) keyword heat
+//                          over titles published in the last 24 h.
 //                          Names that match a hot narrative score higher —
 //                          news CONFIRMS, it does not trigger.
+//   5. MAJORS     (60s)  — BTC/ETH/SOL exchange-direct from Coinbase Exchange
+//                          and Kraken public REST, cross-checked; CoinGecko as
+//                          a labeled reference (server/sources/cryptoMajors.ts).
+//
+// Source tiers (server/sources/registry.ts): DexScreener is the primary DEX
+// input, Jupiter Price v3 cross-checks its pool price, Solana RPC gives
+// on-chain facts. pump.fun (undocumented frontend API) and Bluesky are
+// labeled low-grade attention proxies: shown, logged for later testing, and
+// kept out of the score, the verdict and the RUGGED/DEAD grading.
 //
 //   WATCHDOG (30s) — each engine writes a heartbeat; late/stale/error states
 //                    are exposed at /api/crypto/health and shown in the UI.
@@ -30,6 +40,10 @@
 // for pairs, 60 rpm for boosts). Both budgets respected by design (batching).
 
 import { sqlite } from "./storage";
+import { parseFeed } from "./sources/parse";
+import { sourceTable, TIER_LABEL } from "./sources/registry";
+import { readMajors, type MajorsSnapshot } from "./sources/cryptoMajors";
+import { parseJupiterPrices, jupiterCheck, narrativeCounts, JUP_MAX_IDS, type JupState } from "./sources/dexCross";
 import {
   computeSocialScore, resolveSocialCollection, expireSocial,
   CRYPTO_SIGNAL_COUNTS_SQL, type SocialStatus, type SocialSourceStatus,
@@ -69,6 +83,12 @@ export interface Candidate {
   chg24h: number | null;
   boosted: boolean;
   lastRefreshAt: number | null;
+
+  // Jupiter Price v3 cross-check of the DexScreener pool price
+  jupPriceUsd: number | null;
+  jupState: JupState;
+  jupGapPct: number | null;
+  jupCheckedAt: number | null;
 
   // on-chain security (public Solana RPC — free, no keys)
   mintAuthorityActive: boolean | null;   // null = unchecked
@@ -152,11 +172,13 @@ const CANDIDATE_TTL_MS = 48 * 3600_000; // drop after 48h without a signal
 const SCANNER_MS = 60_000;
 const MOMENTUM_MS = 75_000;
 const NARRATIVE_MS = 5 * 60_000;
+const MAJORS_MS = 60_000;
 const WATCHDOG_MS = 30_000;
 const GRADER_MS = 10 * 60_000;
 
 const GT_BASE = "https://api.geckoterminal.com/api/v2";
 const DS_BASE = "https://api.dexscreener.com";
+const JUP_BASE = "https://api.jup.ag/price/v3"; // keyless tier, 0.5 req/s
 
 // Meme lexicon for the catchy-name scorer. Weighted by how reliably the theme
 // has carried runners. This is a heuristic, not a model — disclosed as such.
@@ -179,6 +201,8 @@ const tracked = new Map<string, Candidate>(); // key = chain:pairAddress
 const health = new Map<string, EngineHealth>();
 let narrativeHeat: Array<{ term: string; hits: number; sources: string[] }> = [];
 let narrativeUpdatedAt: number | null = null;
+let narrativeSources: Array<{ name: string; state: "ok" | "empty" | "failed"; titles: number; undated: number }> = [];
+let majors: MajorsSnapshot | null = null;
 let timers: NodeJS.Timeout[] = [];
 let started = false;
 
@@ -352,6 +376,7 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
     buys5m: null, sells5m: null, buys1h: null, sells1h: null,
     chg5m: null, chg1h: null, chg24h: null,
     boosted: false, lastRefreshAt: null,
+    jupPriceUsd: null, jupState: "unchecked", jupGapPct: null, jupCheckedAt: null,
     mintAuthorityActive: null, freezeAuthorityActive: null, top10Pct: null, top10Method: null, securityCheckedAt: null,
     rcRisks: [], rcLpLockedPct: null, rcCheckedAt: null,
     bskyMentions1h: null, bskyMentions10m: null, bskyMentionsByAddress1h: null, bskyMentionsByAddress10m: null, bskyCapped: false,
@@ -434,6 +459,20 @@ async function momentumTick(): Promise<void> {
     byToken.set(c.tokenAddress, arr);
   }
   const addrs = [...byToken.keys()];
+  // Jupiter cross-check: one keyless call per tick (<= 50 mints; the keyless
+  // limit is 0.5 req/s and the tick is 75 s). A failed call marks the check
+  // failed for this tick; it never blocks the DexScreener refresh.
+  const jupMints = addrs.slice(0, JUP_MAX_IDS);
+  let jup: { prices: Map<string, number>; omitted: Set<string>; failed: boolean; at: number } | null = null;
+  if (jupMints.length) {
+    try {
+      const j = await getJson(`${JUP_BASE}?ids=${jupMints.join(",")}`);
+      const r = parseJupiterPrices(j, jupMints);
+      jup = { prices: r.prices, omitted: new Set(r.omitted), failed: false, at: Date.now() };
+    } catch {
+      jup = { prices: new Map(), omitted: new Set(), failed: true, at: Date.now() };
+    }
+  }
   for (let i = 0; i < addrs.length; i += 30) {
     const chunk = addrs.slice(i, i + 30);
     let resp: any;
@@ -482,6 +521,17 @@ async function momentumTick(): Promise<void> {
       if (Number.isNaN(c.chg24h)) c.chg24h = null;
       if (p?.pairCreatedAt) c.pairCreatedAt = Number(p.pairCreatedAt);
       c.boosted = boostedTokens.has(c.tokenAddress.toLowerCase());
+      if (jup && jupMints.includes(c.tokenAddress)) {
+        const jp = jup.prices.get(c.tokenAddress) ?? null;
+        const chk = jupiterCheck(c.priceUsd, { price: jp, omitted: jup.omitted.has(c.tokenAddress), failed: jup.failed });
+        c.jupPriceUsd = jp;
+        c.jupState = chk.state;
+        c.jupGapPct = chk.gapPct != null ? Number(chk.gapPct.toFixed(1)) : null;
+        c.jupCheckedAt = jup.at;
+      } else {
+        c.jupState = "unchecked";
+        c.jupGapPct = null;
+      }
       c.lastRefreshAt = Date.now();
       scoreCandidate(c);
       // history AFTER scoring so volAccel/netBuyRatio are fresh; cap 20 readings
@@ -834,17 +884,18 @@ function scoreCandidate(c: Candidate): void {
   if (c.netBuyRatio5m != null) fomo += Math.max(0, (c.netBuyRatio5m - 0.5) * 100); // up to +50
   if (c.discoveredVia === "trending") fomo += 10;
   if (c.boosted) fomo += 8; // paid promo IS fomo — but it's flagged as manufactured below
-  // social velocity (bluesky mentions + pump.fun reply rate) — real crowd
-  // attention, weighted in at 30%: flow still leads, social confirms.
-  // An expired score (older than SOCIAL_TTL_MS) is dropped first, so a stale
-  // or failed collection never blends in as if current.
+  // Social velocity (Bluesky mentions + pump.fun reply rate) is a low-grade
+  // attention proxy from social media and an undocumented frontend API
+  // (R2-I): it is shown and logged in features_json for later testing, but
+  // it no longer blends into FOMO, so it cannot move the score or verdict.
+  // An expired score (older than SOCIAL_TTL_MS) is dropped so a stale or
+  // failed collection never displays as current.
   const soc = expireSocial(
     { socialScore: c.socialScore, socialCheckedAt: c.socialCheckedAt, socialStatus: c.socialStatus },
     now,
   );
   c.socialScore = soc.socialScore;
   c.socialStatus = soc.socialStatus;
-  if (c.socialScore != null) fomo = fomo * 0.7 + c.socialScore * 0.3;
   c.fomoScore = Math.min(100, fomo);
 
   // rug filter
@@ -872,6 +923,9 @@ function scoreCandidate(c: Candidate): void {
   // rugcheck cached report — LP lock + named risks (non-fatal: cached data)
   if (c.rcLpLockedPct != null && c.rcLpLockedPct < 50) flags.push(`LP only ${c.rcLpLockedPct}% locked (rugcheck) — pull risk`);
   for (const r of c.rcRisks) flags.push(`rugcheck: ${r}`);
+  // Jupiter cross-check of the pool price (aggregator; flags, not hard kills)
+  if (c.jupState === "diverge") flags.push(`pool price ${c.jupGapPct}% off Jupiter — price unverified, no entry`);
+  else if (c.jupState === "no-reliable-price") flags.push("Jupiter has no reliable price for this mint — price unverified");
   c.rugFlags = flags;
   c.hardKill = hardKill;
 
@@ -905,9 +959,15 @@ function scoreCandidate(c: Candidate): void {
     } else if (c.securityCheckedAt == null) {
       verdict = "WATCH";
       reasons.push(`score ${c.score}, flow sustained — held at WATCH pending on-chain security check (mint/freeze/holders)`);
+    } else if (c.jupState === "diverge" || c.jupState === "no-reliable-price") {
+      verdict = "WATCH";
+      reasons.push(`score ${c.score}, flow sustained — held at WATCH: DexScreener price not confirmed by Jupiter (${c.jupState}${c.jupGapPct != null ? ` ${c.jupGapPct}%` : ""})`);
     } else {
       verdict = "ENTER";
       reasons.push(`score ${c.score}, flow sustained ${c.volAccel?.toFixed(1)}x, ${Math.round((c.netBuyRatio5m ?? 0) * 100)}% buys, security checked`);
+      reasons.push(c.jupState === "agree" || c.jupState === "watch"
+        ? `pool price confirmed by Jupiter (${c.jupGapPct}% gap)`
+        : `pool price not cross-checked (Jupiter ${c.jupState})`);
       if (c.top10Pct != null) reasons.push(`top-10 holders ${c.top10Pct}% (${c.top10Method ?? "method unknown"})`);
       if (c.narrativeHits.length) reasons.push(`narrative confirm: ${c.narrativeHits.join(", ")}`);
     }
@@ -958,36 +1018,24 @@ const NARRATIVE_TERMS = [
 ];
 
 async function narrativeTick(): Promise<void> {
-  const counts = new Map<string, { hits: number; sources: Set<string> }>();
-  let anyOk = false;
-  for (const feed of RSS_FEEDS) {
+  // Publisher RSS (titles only), parsed with the shared feed parser so each
+  // title has a publish time; only the last 24 h count. A failed feed is
+  // "failed", a feed with no recent titles is "empty" (observed zero).
+  const feeds = await Promise.all(RSS_FEEDS.map(async (feed) => {
     try {
-      const ctl = new AbortController();
-      const t = setTimeout(() => ctl.abort(), 12_000);
-      const r = await fetch(feed.url, { signal: ctl.signal, headers: { "user-agent": "batcave-terminal/1.0" } });
-      clearTimeout(t);
-      if (!r.ok) continue;
-      const xml = await r.text();
-      anyOk = true;
-      const titles = [...xml.matchAll(/<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/title>/gis)]
-        .map((m) => m[1] ?? "").slice(1, 60); // skip channel title
-      for (const title of titles) {
-        for (const term of NARRATIVE_TERMS) {
-          if (new RegExp(`\\b${term}\\b`, "i").test(title)) {
-            const e = counts.get(term) ?? { hits: 0, sources: new Set<string>() };
-            e.hits++;
-            e.sources.add(feed.name);
-            counts.set(term, e);
-          }
-        }
-      }
-    } catch { /* individual feed failure is fine */ }
-  }
-  if (!anyOk) throw new Error("all RSS feeds unreachable");
-  narrativeHeat = [...counts.entries()]
-    .map(([term, v]) => ({ term, hits: v.hits, sources: [...v.sources] }))
-    .sort((a, b) => b.hits - a.hits);
-  narrativeUpdatedAt = Date.now();
+      const r = await fetch(feed.url, { signal: AbortSignal.timeout(12_000), headers: { "user-agent": "batcave-terminal/1.0" } });
+      if (!r.ok) return { name: feed.name, items: null };
+      return { name: feed.name, items: parseFeed(await r.text()).slice(0, 80).map((i) => ({ title: i.title, publishedMs: i.publishedMs })) };
+    } catch {
+      return { name: feed.name, items: null };
+    }
+  }));
+  const now = Date.now();
+  const r = narrativeCounts(feeds, NARRATIVE_TERMS, now);
+  narrativeSources = r.sources;
+  if (r.sources.every((x) => x.state === "failed")) throw new Error("all RSS feeds unreachable");
+  narrativeHeat = r.heat;
+  narrativeUpdatedAt = now;
 }
 
 // ─── GRADER — audit outcomes (tracking mode) ────────────────────────────
@@ -1051,6 +1099,21 @@ async function graderTick(): Promise<void> {
   }
 }
 
+// ─── MAJORS — exchange-direct BTC/ETH/SOL ───────────────────────────────
+
+async function majorsTick(): Promise<void> {
+  const snap = await readMajors();
+  majors = snap;
+  if (snap.state === "unavailable") throw new Error("no live exchange quote for BTC/ETH/SOL");
+}
+
+/** Crypto source labels for the UI (tier + terms), from the registry. */
+function cryptoSourceLabels() {
+  return sourceTable().filter((x) => x.area.startsWith("crypto")).map((x) => ({
+    id: x.id, name: x.name, tier: x.tier, tierLabel: TIER_LABEL[x.tier], weakReason: x.weakReason ?? null, feeds: x.feeds,
+  }));
+}
+
 // ─── WATCHDOG ───────────────────────────────────────────────────────────
 
 function watchdogTick(): void {
@@ -1075,7 +1138,7 @@ export function startCryptoEngines(): void {
   started = true;
   hb("scanner", SCANNER_MS); hb("momentum", MOMENTUM_MS);
   hb("narratives", NARRATIVE_MS); hb("grader", GRADER_MS);
-  hb("security", SECURITY_MS); hb("social", SOCIAL_MS); hb("watchdog", WATCHDOG_MS);
+  hb("security", SECURITY_MS); hb("social", SOCIAL_MS); hb("majors", MAJORS_MS); hb("watchdog", WATCHDOG_MS);
 
   const arm = (name: string, ms: number, fn: () => Promise<void>, initialDelay: number) => {
     setTimeout(() => {
@@ -1089,6 +1152,7 @@ export function startCryptoEngines(): void {
   arm("grader", GRADER_MS, graderTick, 45_000);
   arm("security", SECURITY_MS, securityTick, 20_000);
   arm("social", SOCIAL_MS, socialTick, 30_000);
+  arm("majors", MAJORS_MS, majorsTick, 2_500);
   timers.push(setInterval(watchdogTick, WATCHDOG_MS));
   watchdogTick();
   console.log("[crypto] engines started — scanner/momentum/narratives/security/social/grader + watchdog");
@@ -1100,6 +1164,9 @@ export function getCryptoFeed(): {
   candidates: Candidate[];
   narrativeHeat: typeof narrativeHeat;
   narrativeUpdatedAt: number | null;
+  narrativeSources: typeof narrativeSources;
+  majors: MajorsSnapshot | null;
+  sourceLabels: ReturnType<typeof cryptoSourceLabels>;
 } {
   const list = [...tracked.values()]
     .filter((c) => c.lastRefreshAt != null)
@@ -1114,6 +1181,10 @@ export function getCryptoFeed(): {
     candidates: list,
     narrativeHeat: narrativeHeat.slice(0, 14),
     narrativeUpdatedAt,
+    narrativeSources,
+    // null until the first majors read completes (not "no data")
+    majors,
+    sourceLabels: cryptoSourceLabels(),
   };
 }
 

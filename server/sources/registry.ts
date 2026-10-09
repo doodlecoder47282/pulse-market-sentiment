@@ -213,15 +213,15 @@ export const SOURCES: Record<string, SourceSpec> = {
   kraken: {
     id: "kraken", name: "Kraken", publisher: "Payward (Kraken)",
     tier: "primary", area: "crypto-majors", access: "public REST /0/public/Ticker and /Trades", cost: "free", key: "none",
-    terms: "public endpoints, no auth; we use 4 requests per 60 s",
+    terms: "public endpoints, no auth; per-client counter max 15, decay 0.33/s (https://docs.kraken.com/exchange/guides/rest/ratelimits.md); we use 4 requests per 60 s",
     termsUrl: "https://docs.kraken.com/api/docs/rest-api/get-ticker-information",
     feeds: "BTC/ETH/SOL top of book, last trade, taker flow, cross-check", minIntervalMs: MIN,
   },
   coingecko: {
     id: "coingecko", name: "CoinGecko (reference)", publisher: "CoinGecko",
-    tier: "aggregator", area: "crypto-majors", access: "public API simple/price", cost: "free", key: "none",
-    terms: "keyless public tier, rate limited; reference only, never in the exchange cross-check",
-    termsUrl: null, feeds: "Crypto majors reference price", minIntervalMs: 2 * MIN,
+    tier: "aggregator", area: "crypto-majors", access: "Demo API simple/price (free key, optional env BATCAVE_COINGECKO_DEMO_KEY)", cost: "free", key: "optional env",
+    terms: "keyless tier is documented as not for scheduled polling, so it is read only with a free Demo key (100 calls/min); one call per 5 min; reference only, never in the exchange cross-check",
+    termsUrl: "https://docs.coingecko.com/docs/keyless-public-api.md", feeds: "Crypto majors reference price", minIntervalMs: 5 * MIN,
   },
   // ── Solana DEX ──
   dexscreener: {
@@ -234,7 +234,8 @@ export const SOURCES: Record<string, SourceSpec> = {
   geckoterminal: {
     id: "geckoterminal", name: "GeckoTerminal", publisher: "CoinGecko",
     tier: "aggregator", area: "crypto-dex", access: "documented public API v2", cost: "free", key: "none",
-    terms: "documented public API; free tier 10 calls/min; we use 2 per minute", termsUrl: "https://www.geckoterminal.com/dex-api",
+    terms: "keyless public API, about 10 calls/min; CoinGecko documents the keyless tier as not meant for scheduled polling (https://docs.coingecko.com/docs/keyless-public-api.md). OPEN TERMS RISK: the scanner polls 2 calls/min; no keyless documented alternative for new-pool discovery was found",
+    termsUrl: "https://www.geckoterminal.com/dex-api",
     feeds: "New and trending Solana pools (discovery)", minIntervalMs: MIN,
   },
   jupiter: {
@@ -242,7 +243,7 @@ export const SOURCES: Record<string, SourceSpec> = {
     tier: "aggregator", area: "crypto-dex", access: "keyless api.jup.ag/price/v3", cost: "free", key: "none",
     terms: "keyless 0.5 req/s; we send 1 request per 75 s",
     termsUrl: "https://developers.jup.ag/docs/api-setup.md",
-    feeds: "DEX token price cross-check against DexScreener", minIntervalMs: 75_000,
+    feeds: "DEX pool price cross-check against DexScreener; a >15% gap or no reliable Jupiter price holds ENTER at WATCH", minIntervalMs: 75_000,
   },
   solana_rpc: {
     id: "solana_rpc", name: "Solana RPC", publisher: "Solana Foundation / PublicNode",
@@ -261,14 +262,14 @@ export const SOURCES: Record<string, SourceSpec> = {
     id: "pumpfun", name: "pump.fun (unofficial)", publisher: "pump.fun",
     tier: "weak", weakReason: "undocumented frontend API", area: "crypto-social", access: "frontend-api-v3 coin object", cost: "free", key: "none",
     terms: "undocumented frontend API with no published terms; kept because no documented source gives reply counts; attention proxy only",
-    termsUrl: null, feeds: "Reply velocity, livestream flag (social attention only)", minIntervalMs: 5 * MIN,
+    termsUrl: null, feeds: "Reply velocity, livestream flag (attention proxy shown and logged; not in the score, verdict or RUGGED/DEAD grading)", minIntervalMs: 5 * MIN,
   },
   bluesky: {
     id: "bluesky", name: "Bluesky", publisher: "Bluesky Social (AT Protocol AppView)",
     tier: "weak", weakReason: "social media", area: "crypto-social", access: "documented app.bsky.feed.searchPosts", cost: "free", key: "none",
     terms: "documented public AppView endpoint; low-grade attention proxy, never a fundamental input",
     termsUrl: "https://github.com/bluesky-social/atproto/blob/main/lexicons/app/bsky/feed/searchPosts.json",
-    feeds: "Mention counts (social attention only)", minIntervalMs: 5 * MIN,
+    feeds: "Mention counts (low-grade attention proxy shown and logged; not in the score, verdict or RUGGED/DEAD grading)", minIntervalMs: 5 * MIN,
   },
   coindesk: {
     id: "coindesk", name: "CoinDesk", publisher: "CoinDesk",

@@ -287,3 +287,116 @@ test("news calendar rows: official time exact, Nasdaq date-only time not guessed
   assert.equal(au.timeExact, false);
   assert.match(au.title, /\$42B/);
 });
+
+// ─── Crypto majors: exchange-direct, cross-checked ─────────────────────────
+
+import {
+  parseCoinbaseTicker, parseCoinbaseTrades, parseKrakenTicker, parseKrakenTrades,
+  tradeFlow, crossCheck, venueState, buildMajorRow, mid, spreadBps, TRADE_STALE_MS,
+} from "../../server/sources/cryptoMajors";
+import { parseJupiterPrices, jupiterCheck, narrativeCounts } from "../../server/sources/dexCross";
+
+test("Coinbase trades: `side` is the maker side, so the taker (aggressor) is the opposite", () => {
+  // Coinbase docs: a "sell" side trade is an up-tick (a taker bought from a resting sell).
+  const t = parseCoinbaseTrades([
+    { trade_id: 2, side: "sell", size: "1", price: "100", time: "2026-10-09T15:00:00Z" },
+    { trade_id: 1, side: "buy", size: "3", price: "102", time: "2026-10-09T14:59:00Z" },
+    { trade_id: 0, side: "?", size: "1", price: "1", time: "2026-10-09T14:59:00Z" },
+  ]);
+  assert.deepEqual(t.map((x) => x.takerSide), ["buy", "sell"]);
+  const q = parseCoinbaseTicker({ trade_id: 2, price: "100", size: "1", time: "2026-10-09T15:00:00Z", bid: "99.5", ask: "100.5", volume: "1234.5" });
+  assert.equal(mid(q), 100);
+  assert.equal(spreadBps(q), 100); // (100.5 - 99.5) / 100 = 100 bps
+  assert.equal(q.lastTradeMs, Date.UTC(2026, 9, 9, 15));
+});
+
+test("Kraken: pair keys resolved (XXBTZUSD), b/s is the taker side, 24h volume and VWAP", () => {
+  const tick = { error: [], result: { XXBTZUSD: { a: ["62010.0", "1", "1.0"], b: ["62000.0", "2", "2.0"], c: ["62005.0", "0.01"], v: ["100", "2500"], p: ["61900", "61800"] } } };
+  const q = parseKrakenTicker(tick, "BTC")!;
+  assert.equal(mid(q), 62005);
+  assert.equal(q.volume24h, 2500);
+  assert.equal(q.vwap24h, 61800);
+  assert.equal(parseKrakenTicker(tick, "ETH"), null);
+  const tr = parseKrakenTrades({ error: [], result: { XXBTZUSD: [["62000.0", "0.5", 1791558000.25, "b", "m", "", 1], ["62001.0", "0.5", 1791558001, "s", "l", "", 2]], last: "x" } }, "BTC");
+  assert.deepEqual(tr.map((x) => [x.takerSide, x.timeMs]), [["buy", 1791558000250], ["sell", 1791558001000]]);
+  assert.throws(() => parseKrakenTicker({ error: ["EQuery:Unknown asset pair"] }, "BTC"));
+});
+
+test("tradeFlow: taker-buy share and VWAP by hand; coverage reported when the batch is short", () => {
+  const now = Date.UTC(2026, 9, 9, 15, 0, 0);
+  const trades = [
+    { price: 100, size: 1, timeMs: now - 60_000, takerSide: "buy" as const },
+    { price: 102, size: 3, timeMs: now - 30_000, takerSide: "sell" as const },
+    { price: 90, size: 9, timeMs: now - 10 * 60_000, takerSide: "buy" as const }, // outside 5 min
+  ];
+  const f = tradeFlow(trades, now);
+  assert.equal(f.count, 2);
+  assert.equal(f.takerBuyShare, 0.25); // 1 / (1 + 3)
+  assert.equal(f.vwap, 101.5);         // (100 + 306) / 4
+  assert.equal(f.notionalUsd, 406);
+  assert.equal(f.largestUsd, 306);
+  assert.equal(f.coveredSec, 300);
+  const short = tradeFlow(trades.slice(0, 2), now);
+  assert.equal(short.coveredSec, 60); // batch only reaches back one minute
+  assert.equal(tradeFlow([], now).takerBuyShare, null); // no trades is not 50/50
+});
+
+test("crossCheck: bps divergence by hand; diverged venues give no reference price", () => {
+  const a = crossCheck(100_000, 100_100); // 100 / 100050 = 9.995 bps
+  assert.equal(a.state, "agree");
+  assert.ok(Math.abs(a.divergenceBps! - 9.995) < 0.001);
+  assert.equal(a.reference, 100_050);
+  assert.equal(crossCheck(100_000, 100_500).state, "watch");   // 49.9 bps
+  const d = crossCheck(100_000, 102_000);                       // 198 bps
+  assert.equal(d.state, "diverge");
+  assert.equal(d.reference, null);
+  assert.deepEqual(crossCheck(null, 5), { state: "single-source", divergenceBps: null, reference: 5 });
+  assert.equal(crossCheck(null, null).state, "unavailable");
+});
+
+test("majors row: a venue with no recent trade is stale and leaves the cross-check", () => {
+  const now = Date.UTC(2026, 9, 9, 15);
+  const live = { quote: { bid: 99.9, ask: 100.1, last: 100, lastTradeMs: now - 1000, volume24h: 1, vwap24h: null }, trades: [], fetchedAtMs: now, error: null };
+  const old = { quote: { bid: 120, ask: 120.2, last: 120, lastTradeMs: null, volume24h: 1, vwap24h: null }, trades: [{ price: 120, size: 1, timeMs: now - TRADE_STALE_MS - 1, takerSide: "buy" as const }], fetchedAtMs: now, error: null };
+  assert.equal(venueState(live, now), "ok");
+  assert.equal(venueState(old, now), "stale");
+  assert.equal(venueState({ quote: null, trades: null, fetchedAtMs: null, error: "x" }, now), "failed");
+  const row = buildMajorRow("BTC", live, old, { price: 100.2, asOfMs: now }, now);
+  assert.equal(row.cross.state, "single-source"); // the stale Kraken book is not compared
+  assert.equal(row.cross.reference, 100);
+  assert.ok(Math.abs(row.coingecko.deviationBps! - 20) < 1e-9); // reference only
+  assert.match(row.coingecko.label, /reference/);
+});
+
+test("Jupiter cross-check: omitted mint is no-reliable-price, gap thresholds by hand", () => {
+  const r = parseJupiterPrices({ MintA: { usdPrice: 1.1, blockId: 1 }, MintB: { usdPrice: 0 } }, ["MintA", "MintB", "MintC"]);
+  assert.equal(r.prices.get("MintA"), 1.1);
+  assert.deepEqual(r.omitted, ["MintB", "MintC"]);
+  const w = jupiterCheck(1.0, { price: 1.1, omitted: false, failed: false });
+  assert.equal(w.state, "watch"); // |1.0 - 1.1| / 1.1 = 9.09%
+  assert.ok(Math.abs(w.gapPct! - 9.0909) < 1e-3);
+  assert.equal(jupiterCheck(1.0, { price: 1.03, omitted: false, failed: false }).state, "agree");
+  assert.equal(jupiterCheck(1.0, { price: 2, omitted: false, failed: false }).state, "diverge");
+  assert.equal(jupiterCheck(1.0, { price: null, omitted: true, failed: false }).state, "no-reliable-price");
+  assert.equal(jupiterCheck(1.0, { price: null, omitted: false, failed: true }).state, "failed");
+  assert.equal(jupiterCheck(1.0, null).state, "unchecked");
+});
+
+test("narrative heat counts only dated titles from the last 24 h; failed and empty feeds differ", () => {
+  const now = Date.UTC(2026, 9, 9, 15);
+  const r = narrativeCounts([
+    { name: "CoinDesk", items: [{ title: "Solana ETF filing", publishedMs: now - 3600_000 }, { title: "Solana rally", publishedMs: now - 3 * 86400_000 }, { title: "Solana undated", publishedMs: null }] },
+    { name: "Decrypt", items: [{ title: "Old solana story", publishedMs: now - 2 * 86400_000 }] },
+    { name: "TheBlock", items: null },
+  ], ["solana", "etf"], now);
+  assert.deepEqual(r.heat.find((h) => h.term === "solana"), { term: "solana", hits: 1, sources: ["CoinDesk"] });
+  assert.deepEqual(r.sources.map((x) => x.state), ["ok", "empty", "failed"]);
+  assert.equal(r.sources[0].undated, 1);
+});
+
+test("CoinGecko reference needs the optional Demo key; no key means not called", async () => {
+  const { coingeckoDemoKey } = await import("../../server/sources/cryptoMajors");
+  assert.equal(coingeckoDemoKey({}), null);
+  assert.equal(coingeckoDemoKey({ BATCAVE_COINGECKO_DEMO_KEY: "bad key!" }), null);
+  assert.equal(coingeckoDemoKey({ BATCAVE_COINGECKO_DEMO_KEY: "CG-abcdefgh1234" }), "CG-abcdefgh1234");
+});
