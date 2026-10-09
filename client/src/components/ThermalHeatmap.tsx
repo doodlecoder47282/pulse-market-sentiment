@@ -290,13 +290,13 @@ export default function ThermalHeatmap() {
 
   return (
     <div data-testid="thermal-heatmap" className="relative rounded-xl border border-slate-700/60 bg-slate-900/40 p-4">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
         <div className="flex items-center gap-2">
           <Flame className="w-4 h-4 text-amber-400" />
           <div className="text-slate-100 font-semibold text-sm tracking-wide">Thermal · dealer gamma map</div>
           <EdgeInfo id="thermal-heatmap" />
         </div>
-        <div className="flex items-center gap-1" data-testid="thermal-greek-selector">
+        <div className="flex flex-wrap items-center gap-1" data-testid="thermal-greek-selector">
           {(["per-date", "global"] as const).map(m => (
             <button
               key={m}
