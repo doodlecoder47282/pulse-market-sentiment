@@ -1723,7 +1723,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         type: "FLIP BREAKOUT", direction: "long",
         structure: verticalBuy(Math.round(callWall), Math.round(callWall + 20), "call"),
         trigger: `break + hold above ${callWall.toFixed(0)}`,
-        target: `T2 UP ${t2up.toFixed(0)}`, stop: `close back below ${Math.round(callWall - 3)}`,
+        target: Number.isFinite(t2up) ? `T2 UP ${t2up.toFixed(0)}` : "T2 UP (unset)", stop: `close back below ${Math.round(callWall - 3)}`,
         size: "1%", horizon: "intraday runner",
       });
     } else if (distToPutWall > 0 && distToPutWall < Math.max(8, oneDayEm * 0.6) && qBucket !== "FRAGILE") {
@@ -1742,7 +1742,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         type: "FLIP BREAKOUT", direction: "short",
         structure: verticalBuy(Math.round(putWall), Math.round(putWall - 20), "put"),
         trigger: `break + hold below ${putWall.toFixed(0)}`,
-        target: `T2 DOWN ${t2down.toFixed(0)}`, stop: `close back above ${Math.round(putWall + 3)}`,
+        target: Number.isFinite(t2down) ? `T2 DOWN ${t2down.toFixed(0)}` : "T2 DOWN (unset)", stop: `close back above ${Math.round(putWall + 3)}`,
         size: "1%", horizon: "intraday runner",
       });
     } else if (qBucket === "FRAGILE" || gex < 0) {
@@ -2018,17 +2018,23 @@ Be precise. No hedging language. If inputs are insufficient, say so and stop —
     try {
       // Compute live third-order strikes; body values still win if explicitly passed.
       const to = await computeThirdOrderStrikes(String(req.body?.symbol || "$SPX"));
+      // Weekly targets come from the user's saved level store (Heatseeker
+      // levels editor); third-order strikes from the live Schwab chain. A level
+      // that is neither sent, saved nor computed stays unset (null), never a
+      // hard-coded number from an old week.
+      const { userTargets } = await import("./gammaLevels");
+      const ut = userTargets();
       const {
         spx, vix, iv, qscore,
         gex, callWall, putWall, zeroGamma, hvl, gammaFlip,
-        upside = 7140, downside = 6950, t2up = 7270, t2down = 6885,
-        mopex = 7025,
-        vanna = to?.vanna ?? 7089,
-        zomma = to?.zomma ?? 7070,
-        charm = to?.charm ?? 7128,
-        negGamma = to?.negGamma ?? 7100,
-        upperVomma = to?.upperVomma ?? 7265,
-        lowerVomma = to?.lowerVomma ?? 6960,
+        upside = ut.upside, downside = ut.downside, t2up = ut.t2Up, t2down = ut.t2Down,
+        mopex = ut.mopex,
+        vanna = to?.vanna ?? ut.vanna,
+        zomma = to?.zomma ?? ut.zomma,
+        charm = to?.charm ?? ut.charm,
+        negGamma = to?.negGamma ?? ut.negGamma,
+        upperVomma = to?.upperVomma ?? ut.vommaUpper,
+        lowerVomma = to?.lowerVomma ?? ut.vommaLower,
         pcRatio, opex = false,
         regime,
         notes = "",
@@ -2053,12 +2059,12 @@ HVL: ${hvl}
 Gamma Flip: ${gammaFlip}
 
 USER WEEKLY TARGETS (locked)
-UPSIDE ${upside} / DOWNSIDE ${downside}
-T2 UP ${t2up} / T2 DOWN ${t2down}
-MOPEX ${mopex}
-VANNA ${vanna} / ZOMMA ${zomma} / CHARM ${charm}
-NEG \u03b3 ${negGamma}
-UPPER VOMMA ${upperVomma} / LOWER VOMMA ${lowerVomma}
+UPSIDE ${upside ?? "unset"} / DOWNSIDE ${downside ?? "unset"}
+T2 UP ${t2up ?? "unset"} / T2 DOWN ${t2down ?? "unset"}
+MOPEX ${mopex ?? "unset"}
+VANNA ${vanna ?? "unset"} / ZOMMA ${zomma ?? "unset"} / CHARM ${charm ?? "unset"}
+NEG \u03b3 ${negGamma ?? "unset"}
+UPPER VOMMA ${upperVomma ?? "unset"} / LOWER VOMMA ${lowerVomma ?? "unset"}
 
 SESSION
 Intraday P/C: ${pcRatio}
@@ -2079,6 +2085,9 @@ Build the EOD setup brief.`;
         return res.status(400).json({ error: "missing_inputs", missing: missingEod, message: `EOD brief needs live values for: ${missingEod.join(", ")}` });
       }
 
+      // Optional user levels: unset stays NaN (printed "unset"), never 0.
+      const lvl = (v: unknown): number => (v == null || v === "" ? NaN : Number(v));
+
       // ---- DETERMINISTIC BRIEF (always runs, always returns) ----
       // This is the source of truth. Built from the exact same dealer-gamma
       // inputs the rest of the app uses. No external API, no key, no failure mode.
@@ -2093,12 +2102,12 @@ Build the EOD setup brief.`;
         zeroGamma: Number(zeroGamma) || 0,
         hvl: Number(hvl) || 0,
         gammaFlip: Number(gammaFlip) || 0,
-        upside: Number(upside), downside: Number(downside),
-        t2up: Number(t2up), t2down: Number(t2down),
-        mopex: Number(mopex), vanna: Number(vanna),
-        zomma: Number(zomma), charm: Number(charm),
-        negGamma: Number(negGamma),
-        upperVomma: Number(upperVomma), lowerVomma: Number(lowerVomma),
+        upside: lvl(upside), downside: lvl(downside),
+        t2up: lvl(t2up), t2down: lvl(t2down),
+        mopex: lvl(mopex), vanna: lvl(vanna),
+        zomma: lvl(zomma), charm: lvl(charm),
+        negGamma: lvl(negGamma),
+        upperVomma: lvl(upperVomma), lowerVomma: lvl(lowerVomma),
         pcRatio: Number(pcRatio) || 0,
         opex: Boolean(opex),
         regime,

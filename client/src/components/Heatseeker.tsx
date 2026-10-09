@@ -63,20 +63,10 @@ interface OdteContract {
   lastTradeTime?: number | null;
 }
 
-// ─── User's locked SPX weekly targets (from session context) ───────────────
-const LOCKED_LEVELS: Array<{ value: number; label: string; kind: "upside" | "downside" | "pin" | "vomma" }> = [
-  { value: 7270, label: "T2 UP", kind: "upside" },
-  { value: 7265, label: "UPPER VOMMA", kind: "vomma" },
-  { value: 7140, label: "UPSIDE", kind: "upside" },
-  { value: 7128, label: "CHARM", kind: "pin" },
-  { value: 7100, label: "NEG γ", kind: "pin" },
-  { value: 7089, label: "VANNA", kind: "pin" },
-  { value: 7070, label: "ZOMMA", kind: "pin" },
-  { value: 7025, label: "MOPEX", kind: "pin" },
-  { value: 6960, label: "LOWER VOMMA", kind: "vomma" },
-  { value: 6950, label: "DOWNSIDE", kind: "downside" },
-  { value: 6885, label: "T2 DOWN", kind: "downside" },
-];
+// ─── User's SPX weekly targets ─────────────────────────────────────────────
+// No hard-coded fallback levels: the user's saved levels (server store) are the
+// only source; with none saved, no reference lines are drawn.
+const LOCKED_LEVELS: Array<{ value: number; label: string; kind: "upside" | "downside" | "pin" | "vomma" }> = [];
 
 // ─── Types matching /api/heatseeker ────────────────────────────────────────
 interface Strike {
@@ -711,8 +701,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
   // on strikes that actually traded today. Toggle lets user bring them back.
   const [hideZeroVol, setHideZeroVol] = useState(true);
 
-  // Server-persisted user-editable sticky levels. Falls back to LOCKED_LEVELS
-  // when the API hasn't responded yet or returns an empty list.
+  // Server-persisted user-editable sticky levels; none saved = none drawn.
   const [editOpen, setEditOpen] = useState(false);
   const { data: serverLevels } = useQuery<ServerLevelsResp>({
     queryKey: ["/api/heatseeker/levels"],

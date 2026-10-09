@@ -1539,12 +1539,11 @@ function FieldRow({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
-// ─── EOD locked weekly targets (fall back when live feed is cold) ────────────
-const LOCKED_LEVELS: Record<string, string> = {
-  upside: "7140", downside: "6950", t2up: "7270", t2down: "6885",
-  mopex: "7025", vanna: "7089", zomma: "7070", charm: "7128",
-  negGamma: "7100", upperVomma: "7265", lowerVomma: "6960",
-};
+// ─── EOD weekly targets ─────────────────────────────────────────────────────
+// No hard-coded fallback levels: an empty field is sent empty and the server
+// fills it from the user's saved level store (Heatseeker levels editor), or
+// leaves it unset. Old-week numbers must never stand in for live or saved ones.
+const LOCKED_LEVELS: Record<string, string> = {};
 
 function isOpexToday(): boolean {
   const now = new Date();
