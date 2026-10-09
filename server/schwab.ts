@@ -16,6 +16,8 @@ import {
   chainStrikePlan, strikeCoverage, inferStrikeCountSemantics, atmIvFromChain, chainIsDelayed,
   type SchwabDataKind, type SchwabFreshness, type StrikeCoverage, type StrikeCountSemantics,
 } from "./schwabDataPolicy";
+import { streamEquityQuote } from "./streamStore";
+import { parseStreamerInfo, startSchwabStream, streamConfigFromEnv, type StreamerInfo, type WebSocketLike } from "./schwabStream";
 
 // ─── Credentials from environment (read lazily to avoid import-order issues) ──
 const getClientId = () => process.env.SCHWAB_CLIENT_ID ?? "";
@@ -531,6 +533,8 @@ export type NormalizedQuote = {
   fetchedAtMs?: number | null;
   /** true when the payload came from the in-memory cache. */
   servedFromCache?: boolean;
+  /** "stream": Schwab Streamer LEVELONE (live session); "rest": Schwab /quotes snapshot. */
+  feed?: "stream" | "rest";
 };
 
 /** Normalize legacy `.X` suffix on cash-index symbols. Schwab requires `$VIX`, `$SPX`,
@@ -544,6 +548,78 @@ function _normalizeIndexSymbol(sym: string): string {
   return sym;
 }
 
+/**
+ * Streamer connection info from GET /trader/v1/userPreference (streamerInfo[0]).
+ * Never cached (data kind "other"); null when Schwab is not connected or the
+ * payload has no usable streamerInfo. The socket URL and ids are never logged.
+ */
+export async function getStreamerInfo(): Promise<StreamerInfo | null> {
+  const meta = await schwabFetchMeta("trader/v1/userPreference");
+  return meta.data ? parseStreamerInfo(meta.data) : null;
+}
+
+/**
+ * Start the one Schwab Streamer connection (server/schwabStream.ts) with this
+ * module's token and userPreference fetch. BATCAVE_STREAM=0 disables it; REST
+ * snapshots (still Schwab) then serve every consumer. Uses Node 22's global
+ * WebSocket, else the `ws` package.
+ */
+export async function bootSchwabStream(): Promise<void> {
+  if (process.env.BATCAVE_STREAM === "0") {
+    console.log("[schwab-stream] disabled (BATCAVE_STREAM=0): REST snapshots only");
+    return;
+  }
+  let WS: any = (globalThis as any).WebSocket;
+  if (!WS) {
+    try { WS = (await import("ws")).default; } catch { WS = null; }
+  }
+  if (!WS) {
+    console.warn("[schwab-stream] no WebSocket implementation: REST snapshots only");
+    return;
+  }
+  startSchwabStream({
+    getAccessToken: () => getAccessToken(),
+    forceTokenRefresh: () => getAccessToken(25 * 60_000),
+    getStreamerInfo,
+    createSocket: (url: string) => new WS(url) as WebSocketLike,
+    onLastPrice: (symbol, price, tMs) => { observeQuote(symbol, price, tMs); },
+    onFinalBars: (bars) => {
+      import("./mlDataLog").then((m) => m.persistStreamSpxBars(bars)).catch((e) => {
+        console.warn("[schwab-stream] bar persist failed:", e?.message ?? e);
+      });
+    },
+  }, streamConfigFromEnv(process.env));
+}
+
+/** A Schwab Streamer LEVELONE quote in the REST quote shape (feed "stream"), or null when the stream cannot serve it now. */
+function _streamedQuote(wireSym: string, origSym: string, nowMs: number): NormalizedQuote | null {
+  const r = streamEquityQuote(wireSym, nowMs);
+  if (!r.quote) return null;
+  const q = r.quote;
+  const last = q.last ?? q.mark ?? null;
+  if (last == null) return null;
+  const quoteTimeMs = q.quoteTimeMs ?? q.tradeTimeMs ?? null;
+  const fresh = quoteFreshness(quoteTimeMs, nowMs);
+  return {
+    symbol: origSym,
+    last,
+    change: q.netChange,
+    changePercent: q.netChangePercent,
+    bid: q.bid,
+    ask: q.ask,
+    volume: q.totalVolume,
+    source: "schwab",
+    prevClose: q.closePrice != null && q.closePrice > 0 ? q.closePrice : null,
+    regularMarketLast: q.regularMarketLast != null && q.regularMarketLast > 0 ? q.regularMarketLast : null,
+    quoteTimeMs,
+    ageMs: fresh.ageMs,
+    stale: fresh.stale,
+    fetchedAtMs: q.receivedAtMs,
+    servedFromCache: false,
+    feed: "stream",
+  };
+}
+
 /** Get quotes for multiple symbols via Schwab. Returns empty array if not authenticated. */
 export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
   if (!symbols.length) return [];
@@ -552,17 +628,37 @@ export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
   const wireSymbols = symbols.map(_normalizeIndexSymbol);
   const wireToOriginal = new Map<string, string>();
   symbols.forEach((orig, i) => wireToOriginal.set(wireSymbols[i], orig));
+  // Schwab Streamer first: a LEVELONE quote from the live session (fresh by
+  // streamStore's validity rule) is used as is; only the rest go to REST.
+  const nowMs = Date.now();
+  const streamed = new Map<string, NormalizedQuote>();
+  for (const w of wireSymbols) {
+    const sq = _streamedQuote(w, wireToOriginal.get(w) ?? w, nowMs);
+    if (sq) streamed.set(w, sq);
+  }
+  const restSymbols = wireSymbols.filter((w) => !streamed.has(w));
+  const ordered = (rest: NormalizedQuote[]): NormalizedQuote[] => {
+    const byWire = new Map<string, NormalizedQuote>();
+    rest.forEach((q) => byWire.set(_normalizeIndexSymbol(q.symbol), q));
+    const out: NormalizedQuote[] = [];
+    for (const w of wireSymbols) {
+      const q = streamed.get(w) ?? byWire.get(w);
+      if (q) out.push(q);
+    }
+    return out;
+  };
+  if (!restSymbols.length) return ordered([]);
   const token = await getAccessToken();
   if (!token) {
     console.warn("[schwab] not authenticated, returning empty quotes");
-    return [];
+    return ordered([]);
   }
   try {
-    const meta = await schwabFetchMeta("marketdata/v1/quotes", { symbols: wireSymbols.join(",") });
+    const meta = await schwabFetchMeta("marketdata/v1/quotes", { symbols: restSymbols.join(",") });
     const data = meta.data;
     if (data && typeof data === "object") {
       const results: NormalizedQuote[] = [];
-      for (const wireSym of wireSymbols) {
+      for (const wireSym of restSymbols) {
         const q = data[wireSym];
         if (!q) continue;
         const origSym = wireToOriginal.get(wireSym) ?? wireSym;
@@ -597,14 +693,15 @@ export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
           stale: meta.freshness?.stale ? true : fresh.stale,
           fetchedAtMs: meta.freshness?.asOfMs ?? null,
           servedFromCache: meta.freshness?.servedFromCache ?? false,
+          feed: "rest",
         });
       }
-      return results;
+      return ordered(results);
     }
   } catch (e: any) {
     console.warn("[schwab] getQuotes error:", e?.message);
   }
-  return [];
+  return ordered([]);
 }
 
 export type PriceHistoryResponse = {

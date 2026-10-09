@@ -8,6 +8,8 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
 import { startMlRetrainCron } from "./mlRetrainCron";
+import { bootSchwabStream } from "./schwab";
+import { getStreamStatus } from "./schwabStream";
 import {
   parseAllowedOrigins,
   makeCorsMiddleware,
@@ -110,6 +112,11 @@ app.get("/api/health/auth", (_req, res) => {
   res.json({ ok: true });
 });
 for (const w of gateWarnings(process.env)) log(w, "security");
+// Schwab Streamer status (connection, per-service age, subscriptions, reconnects). No tokens or ids.
+app.get("/api/schwab/stream/status", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json(getStreamStatus());
+});
 
 (async () => {
   await registerRoutes(httpServer, app);
@@ -157,6 +164,7 @@ for (const w of gateWarnings(process.env)) log(w, "security");
     () => {
       log(`serving on ${host}:${port}`);
       startMlRetrainCron();
+      bootSchwabStream().catch((e) => log(`stream boot failed: ${e?.message ?? e}`, "schwab-stream"));
     },
   );
 })();
