@@ -7,6 +7,7 @@ import type {
   GammaStructure, GexStrikePoint, SocialPost, SocialSentiment,
 } from "@shared/schema";
 import { buildGammaProfile, type OptionRow } from "./gammaProfile";
+import { fetchMarketHeadlineFeed, type HeadlineFeed } from "./news";
 
 const UA = "Mozilla/5.0 (compatible; SentimentDash/1.0)";
 
@@ -466,10 +467,19 @@ export async function gatherSocial(): Promise<SocialSentiment> {
   return summarizeSocial(collected);
 }
 
-/** Market news headlines relevant to SPX/SPY.
- *  // TODO: Schwab-only mode — Yahoo source removed, awaiting Schwab equivalent.
- *  Returns empty array gracefully.
+/** Market news headlines for the Signals snapshot (finding 5.8).
+ *  Schwab has no news API; this reuses the News tab's labeled RSS sources
+ *  (server/news.ts) with source, publish time and a feed status, so a failed
+ *  collection reads "unavailable" instead of an always-empty list. Context
+ *  only: headlines never feed a price, greeks, options or sizing calculation.
  */
-export async function fetchHeadlines(): Promise<{ title: string; url: string; source: string; publishedAt?: string }[]> {
-  return [];
+export async function fetchHeadlines(): Promise<HeadlineFeed> {
+  try {
+    return await fetchMarketHeadlineFeed();
+  } catch (e: any) {
+    return {
+      items: [], status: "unavailable", sources: [], maxAgeHours: 24, undatedDropped: 0, asOf: Date.now(),
+      note: `no headline source: ${String(e?.message ?? e).slice(0, 120)}`,
+    };
+  }
 }

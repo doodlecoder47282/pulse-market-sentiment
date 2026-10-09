@@ -332,7 +332,8 @@ async function buildSnapshot(): Promise<Snapshot_Public> {
     social,
     fearGreed: fg,
     aaii: null, // could be wired later via Thursday-released CSV
-    headlines,
+    headlines: headlines.items,
+    headlinesFeed: { status: headlines.status, sources: headlines.sources, asOf: headlines.asOf, maxAgeHours: headlines.maxAgeHours, note: headlines.note },
     warnings,
   };
 

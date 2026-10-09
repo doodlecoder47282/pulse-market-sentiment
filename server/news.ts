@@ -200,6 +200,80 @@ const RSS_SOURCES: { name: string; url: string }[] = [
   { name: "FT Markets", url: "https://www.ft.com/markets?format=rss" },
 ];
 
+// ---- Signals headline feed (finding 5.8) ----
+// Schwab has no news API. The Signals snapshot reuses the News tab's labeled
+// RSS sources (non-price context only: never feeds a price, greeks, options
+// or sizing calculation). Each item keeps its source and publish time, and
+// the feed carries a status so an outage reads "unavailable", never as an
+// empty quiet tape.
+
+export interface HeadlineFeedItem { title: string; url: string; source: string; publishedAt?: string }
+export interface HeadlineFeed {
+  items: HeadlineFeedItem[];
+  status: "ok" | "partial" | "empty" | "unavailable";
+  sources: Array<{ name: string; state: "ok" | "empty" | "failed"; items: number; newest: string | null }>;
+  maxAgeHours: number;
+  undatedDropped: number;
+  asOf: number;
+  note: string;
+}
+
+export const HEADLINE_FEED_MAX_AGE_HOURS = 24;
+
+/** Pure: merge per-source RSS results (null = request failed) into the Signals feed. */
+export function summarizeHeadlineFeed(
+  results: Array<{ name: string; items: Headline[] | null }>,
+  nowMs: number = Date.now(),
+  limit = 15,
+): HeadlineFeed {
+  const sources: HeadlineFeed["sources"] = [];
+  const merged: Headline[] = [];
+  const seen = new Set<string>();
+  let undatedDropped = 0;
+  const minSec = nowMs / 1000 - HEADLINE_FEED_MAX_AGE_HOURS * 3600;
+  for (const r of results) {
+    if (r.items == null) { sources.push({ name: r.name, state: "failed", items: 0, newest: null }); continue; }
+    const dated = r.items.filter((h) => Number.isFinite(h.published) && h.published > 0);
+    undatedDropped += r.items.length - dated.length;
+    const fresh = dated.filter((h) => h.published >= minSec && h.published <= nowMs / 1000 + 300);
+    const newest = dated.length ? new Date(Math.max(...dated.map((h) => h.published)) * 1000).toISOString() : null;
+    sources.push({ name: r.name, state: fresh.length ? "ok" : "empty", items: fresh.length, newest });
+    for (const h of fresh) {
+      const key = h.title.toLowerCase().replace(/\W+/g, " ").trim().slice(0, 120);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(h);
+    }
+  }
+  merged.sort((a, b) => b.published - a.published);
+  const anyOk = sources.some((x) => x.state === "ok");
+  const anyFailed = sources.some((x) => x.state === "failed");
+  const status: HeadlineFeed["status"] = !results.length || sources.every((x) => x.state === "failed")
+    ? "unavailable"
+    : !anyOk ? "empty" : anyFailed ? "partial" : "ok";
+  return {
+    items: merged.slice(0, limit).map((h) => ({
+      title: h.title, url: h.url, source: h.source, publishedAt: new Date(h.published * 1000).toISOString(),
+    })),
+    status,
+    sources,
+    maxAgeHours: HEADLINE_FEED_MAX_AGE_HOURS,
+    undatedDropped,
+    asOf: nowMs,
+    note: status === "unavailable"
+      ? "no headline source reachable (RSS feeds failed); Schwab has no news API"
+      : `RSS headlines (${sources.filter((x) => x.state === "ok").map((x) => x.name).join(", ") || "none"}), last ${HEADLINE_FEED_MAX_AGE_HOURS}h; context only, never a price input`,
+  };
+}
+
+export async function fetchMarketHeadlineFeed(): Promise<HeadlineFeed> {
+  const settled = await Promise.allSettled(RSS_SOURCES.map((s) => fetchRss(s.url, s.name)));
+  return summarizeHeadlineFeed(settled.map((r, i) => ({
+    name: RSS_SOURCES[i].name,
+    items: r.status === "fulfilled" ? r.value : null,
+  })));
+}
+
 // Nasdaq econ calendar: public JSON endpoint. Iterates daily across a window
 // to collect a full 14-day forward view instead of a single day.
 async function fetchEconCalendar(): Promise<CalendarEvent[]> {

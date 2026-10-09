@@ -411,5 +411,13 @@ export interface Snapshot_Public {
   aaii: { bullish: number; bearish: number; neutral: number; asOf: string } | null;
   composite: Composite;
   headlines: { title: string; url: string; source: string; publishedAt?: string }[];
+  /** Headline feed state: "unavailable" when no RSS source answered (Schwab has no news API) */
+  headlinesFeed?: {
+    status: "ok" | "partial" | "empty" | "unavailable";
+    sources: Array<{ name: string; state: "ok" | "empty" | "failed"; items: number; newest: string | null }>;
+    asOf: number;
+    maxAgeHours: number;
+    note: string;
+  };
   warnings: string[];
 }

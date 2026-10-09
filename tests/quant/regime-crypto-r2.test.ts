@@ -264,3 +264,30 @@ test("breadth: sample labelled as hand-picked large caps; sector participation c
   assert.equal(b3.dataState, "insufficient");
   assert.equal(b3.pctAbove20dma, null);
 });
+
+// ─── 5.8 Signals headline feed: real labeled source, or "unavailable" ─────
+
+test("headline feed: labeled RSS items with age; all-failed is unavailable, not an empty quiet list", async () => {
+  const { summarizeHeadlineFeed } = await import("../../server/news");
+  const now = Date.parse("2026-10-08T15:00:00Z");
+  const h = (title: string, source: string, hoursAgo: number | null) => ({
+    id: title, title, source, url: `https://x/${encodeURIComponent(title)}`,
+    published: hoursAgo == null ? 0 : now / 1000 - hoursAgo * 3600, summary: "", topics: [], tickers: [],
+  });
+  const down = summarizeHeadlineFeed([{ name: "A", items: null }, { name: "B", items: null }], now);
+  assert.equal(down.status, "unavailable");
+  assert.equal(down.items.length, 0);
+  assert.match(down.note, /no headline source/);
+  const mixed = summarizeHeadlineFeed([
+    { name: "A", items: [h("Fed holds rates", "A", 1), h("Old story", "A", 30), h("No date", "A", null)] },
+    { name: "B", items: null },
+    { name: "C", items: [h("Fed holds rates", "C", 2), h("CPI hot", "C", 0.5)] },
+  ], now);
+  assert.equal(mixed.status, "partial");
+  assert.deepEqual(mixed.items.map((i: any) => i.title), ["CPI hot", "Fed holds rates"]); // newest first, deduped, >24h dropped
+  assert.equal(mixed.items[0].source, "C");
+  assert.equal(mixed.items[0].publishedAt, new Date(now - 0.5 * 3600_000).toISOString());
+  assert.equal(mixed.undatedDropped, 1);
+  const stale = summarizeHeadlineFeed([{ name: "A", items: [h("Old", "A", 48)] }], now);
+  assert.equal(stale.status, "empty");
+});
