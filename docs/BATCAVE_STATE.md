@@ -106,6 +106,16 @@ screenshots all 11 tabs (desktop) and Signals (phone) on every run.
 Next step: user reviews and merges PR #3; then one live session with Schwab
 connected to confirm the streamer and the unverified fields above.
 
+UX audit (CI 37953742495 at 4d51cb6, tests/ux/ux-audit.mjs, output in
+ci-reports-quant ux/): 11 tabs x 6 viewports, Schwab disconnected. Result in
+the Claude Doc "Batcave UX and Visual Audit": UX grade C+, 26 fixes ranked.
+Top items: profane emoji splash, mandatory affirmation gate, Edge Lab shows a
+score and SPX-scale "SPY" levels with no inputs, contradictory regime chips,
+LIVE badge over failed models, raw JSON errors, phone tab bar hides 6 tabs,
+~45% of a laptop screen is chrome, 13-59% of text under 10 px. No page
+errors, no sideways scroll, tab switches 40-255 ms. Phone per-tab metrics
+not measured (bottom bar lacks test IDs). No UX fixes implemented yet.
+
 ## Current objective
 
 Save the credit-conserving resume framework and assess reuse of the existing
