@@ -11,6 +11,7 @@ import {
 } from "../../server/gammaZone";
 import { dailyCardHeader } from "../../server/dailyCardHeader";
 import { predictTransition, _resetPredictorHistory } from "../../server/regimePredictor";
+import { oauthErrorCode } from "../../server/oauthError";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const src = (p: string) => readFileSync(path.join(ROOT, p), "utf8");
@@ -108,4 +109,17 @@ test("daily card: observed values and the scenario source label are printed", ()
   assert.match(hs.scenarioSourceLabel, /heuristic/);
   assert.equal(hs.scenarioFieldName, "Scenarios (heuristic)");
   assert.doesNotMatch(src("server/discord.ts"), /fetchJSON\(`\/api\/sentiment`\)/);
+});
+
+// ── 3. Schwab code exchange never logs or returns the raw token body ───────
+test("oauthErrorCode keeps only the RFC 6749 error code", () => {
+  const body = JSON.stringify({ error: "invalid_grant", error_description: "code=SECRETCODE123 client_id=abc" });
+  assert.equal(oauthErrorCode(body), "invalid_grant");
+  assert.equal(oauthErrorCode("<html>access_token=xyz</html>"), "unknown");
+  assert.equal(oauthErrorCode(JSON.stringify({ error: "access_token=abc.def" })), "unknown");
+  assert.equal(oauthErrorCode(""), "unknown");
+  const schwab = src("server/schwab.ts");
+  assert.doesNotMatch(schwab, /code exchange failed:", res\.status, txt\)/);
+  assert.doesNotMatch(schwab, /Token exchange failed \(\$\{res\.status\}\): \$\{txt\}/);
+  assert.match(schwab, /code exchange failed:", res\.status, errCode\)/);
 });

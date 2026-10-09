@@ -21,6 +21,7 @@ import {
 } from "./schwabDataPolicy";
 import { streamEquityQuote } from "./streamStore";
 import { parseStreamerInfo, startSchwabStream, streamConfigFromEnv, type StreamerInfo, type WebSocketLike } from "./schwabStream";
+import { oauthErrorCode } from "./oauthError";
 
 // ─── Credentials from environment (read lazily to avoid import-order issues) ──
 const getClientId = () => process.env.SCHWAB_CLIENT_ID ?? "";
@@ -88,11 +89,7 @@ async function doRefresh(
       const errTxt = await res.text().catch(() => "");
       // Log and keep the HTTP status and OAuth error code only (RFC 6749 s5.2:
       // a short token like "invalid_grant"); never the raw response body.
-      let errCode = "unknown";
-      try {
-        const c = JSON.parse(errTxt)?.error;
-        if (typeof c === "string" && /^[a-z_]{1,40}$/.test(c)) errCode = c;
-      } catch { /* non-JSON body: code stays "unknown" */ }
+      const errCode = oauthErrorCode(errTxt);
       console.warn("[schwab] token refresh failed:", res.status, errCode);
       _lastRefreshError = { at: now, status: res.status, message: errCode };
       if (/invalid_grant/i.test(errTxt)) {
@@ -151,9 +148,11 @@ export async function exchangeCodeForTokens(code: string): Promise<{ ok: true } 
       }),
     });
     if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      console.error("[schwab] code exchange failed:", res.status, txt);
-      return { ok: false, error: `Token exchange failed (${res.status}): ${txt}` };
+      // Status + OAuth error code only (as the refresh path): the raw body is
+      // never logged or returned to the caller.
+      const errCode = oauthErrorCode(await res.text().catch(() => ""));
+      console.error("[schwab] code exchange failed:", res.status, errCode);
+      return { ok: false, error: `Token exchange failed (${res.status}): ${errCode}` };
     }
     const data = await res.json();
     const now = Date.now();
