@@ -30,6 +30,8 @@
 //
 // All math is bounded, fail-soft, and independent of any LLM.
 
+import { gammaZoneEffect } from "./gammaZone";
+
 type RegimeBucket =
   | "TREND_STRONG"
   | "TREND_WEAK"
@@ -118,6 +120,9 @@ function flipRateFromHistory(): { rate: number; flips: number; samples: number }
  */
 function rawRegimeFor(dfi: number, gZone: string, slopeMag: number): RegimeBucket {
   const inGammaPocket = gZone === "y" || gZone === "y+";
+  // Gamma unknown ("y?" / missing GEX): the trend/chop split below rests on
+  // the gamma regime, so make no regime claim at all.
+  if (gammaZoneEffect(gZone) === "unknown" && gZone !== "y") return "NEUTRAL";
   const adfi = Math.abs(dfi);
   if (adfi >= 3.5 && !inGammaPocket) return "TREND_STRONG";
   if (adfi >= 2.0 && !inGammaPocket) return "TREND_WEAK";
@@ -439,7 +444,7 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   // ─── Status gating ─── warming-up if not enough samples
   let status: "ready" | "warming" | "degraded" = "ready";
   if (histSamples < 5) status = "warming";
-  if (!Number.isFinite(dfi) || !audit.gammaZone) status = "degraded";
+  if (!Number.isFinite(dfi) || gammaZoneEffect(audit.gammaZone) === "unknown") status = "degraded";
 
   // ─── Plain-English synthesis ───
   const top = candidates[0];

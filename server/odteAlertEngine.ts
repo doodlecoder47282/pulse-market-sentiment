@@ -44,6 +44,7 @@
 import { minutesToSessionClose } from "./chainClock";
 import { gradeEvidenceLine, t1SaleContracts, ODTE_PLAN_RULES, type GradeEvidence } from "./validationMath";
 import { atmPathSigma, projectToTarget } from "./t1Projection";
+import { normalizeGammaZone, gammaZoneTag } from "./gammaZone";
 import { feeForProduct } from "./feeConfig";
 import { spreadExceedsStop } from "./exitValuation";
 
@@ -668,15 +669,18 @@ function scoreSetup(args: {
   // Reversion setups (FAILED_BREAK, WALL_REJECT) prefer γ+ (dampened).
   // Momentum setups (PIVOT_RECLAIM) prefer γ− (volatile).
   const isReversion = args.setup === "FAILED_BREAK" || args.setup === "WALL_REJECT";
-  const gz = args.audit.gammaZone;
-  if (gz) {
+  // "y?" / missing = gamma unknown: no regime credit or penalty either way.
+  const gz = args.audit.gammaZone == null ? null : normalizeGammaZone(args.audit.gammaZone);
+  if (gz === "y?") {
+    reasoning.push(`γ-zone unknown (GEX missing/immaterial): +0`);
+  } else if (gz) {
     if ((isReversion && gz === "y+") || (!isReversion && gz === "y-")) {
       score += 15;
       reasoning.push(`γ-zone ${gz} aligned: +15`);
     } else if (!isReversion && gz === "y+") {
       score -= 5;
       reasoning.push(`γ-zone y+ dampening headwind for ${args.setup} (Adams 2025: MM counter-directional hedging): -5`);
-    } else if (gz) {
+    } else {
       score += 5;
       reasoning.push(`γ-zone ${gz} mixed: +5`);
     }
@@ -2345,9 +2349,8 @@ function buildAlert(
   const greekSignals = `TickVol ${ofiLabel}  ·  γ-slope ${gammaSlopeLabel}`;
 
   // Regime tag: compose gamma-zone + chop/jump/corr flags
-  const gzLabel = args.audit.gammaZone === "y+" ? "\u03b3+ DAMPENED"
-                : args.audit.gammaZone === "y-" ? "\u03b3\u2212 VOLATILE"
-                : "NEUTRAL";
+  // "y?" / missing = gamma unknown (never "NEUTRAL", which reads as a regime).
+  const gzLabel = gammaZoneTag(args.audit.gammaZone);
   const regimeParts = [gzLabel];
   if (args.audit.chopRegime) regimeParts.push("CHOP");
   if (args.audit.jumpRegime) regimeParts.push("JUMP");

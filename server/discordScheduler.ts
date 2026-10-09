@@ -33,6 +33,7 @@ import { dirname } from "node:path";
 import { schedulerStatePath } from "./dbPath";
 import { internalFetch, isInternalRoute } from "./internalApi";
 import { isTradingDay as calIsTradingDay, sessionCloseMinutes } from "./exchangeCalendar";
+import { detectGammaFlip } from "./gammaZone";
 
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -337,22 +338,20 @@ async function pollLevelAndGammaAlerts(): Promise<void> {
   const newGammaZone = audit.gammaZone ?? null;
   const gammaZero = audit.gammaZero ?? null;
 
-  // Gamma zone flip
-  if (
-    alertState.gammaZone &&
-    newGammaZone &&
-    alertState.gammaZone !== newGammaZone &&
-    shouldFire(`gamma:${newGammaZone}`)
-  ) {
-    console.log(`[discordScheduler] gamma flip ${alertState.gammaZone} → ${newGammaZone}`);
+  // Gamma zone flip: only between two KNOWN regimes. "y?" (GEX missing or
+  // immaterial) is a data state, so y+ -> y? is silent and does not reset the
+  // last known zone (alertState.gammaZone holds the last KNOWN zone).
+  const flip = detectGammaFlip(alertState.gammaZone, newGammaZone);
+  if (flip.flip && flip.prev && shouldFire(`gamma:${flip.next}`)) {
+    console.log(`[discordScheduler] gamma flip ${flip.prev} → ${flip.next}`);
     await postGammaFlipAlert({
-      prevZone: alertState.gammaZone,
-      newZone: newGammaZone,
+      prevZone: flip.prev,
+      newZone: flip.next,
       spot,
       gammaZero,
     });
   }
-  alertState.gammaZone = newGammaZone;
+  alertState.gammaZone = flip.nextLastKnown;
 
   // Level status transitions — collect all meaningful transitions in this tick,
   // then either coalesce (≥2 levels within 5 SPX pts) or fire individually.

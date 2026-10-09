@@ -927,12 +927,14 @@ function buildAudit(
   const gammaZone: "y+" | "y-" | "y?" = regimeA === "positive" ? "y+" : regimeA === "negative" ? "y-" : "y?";
   const gammaZoneLabel = regimeA === "positive" ? "DAMPENING" : regimeA === "negative" ? "AMPLIFYING" : "UNKNOWN";
 
-  // Path classification from GEX regime + charm direction
+  // Path classification from the material-gamma regime (not the raw GEX
+  // sign: sub-floor noise or missing GEX is UNKNOWN) + charm direction.
   let path = "range-bound";
-  if (cur.gex < 0 && cur.charm < 0) path = "liquid path down";
-  else if (cur.gex < 0 && cur.charm > 0) path = "liquid path up";
-  else if (cur.gex > 0 && cur.charm < 0) path = "grind down into pin";
-  else if (cur.gex > 0 && cur.charm > 0) path = "grind up into pin";
+  if (gammaZone === "y?") path = "gamma unknown (no path claim)";
+  else if (gammaZone === "y-" && cur.charm < 0) path = "liquid path down";
+  else if (gammaZone === "y-" && cur.charm > 0) path = "liquid path up";
+  else if (gammaZone === "y+" && cur.charm < 0) path = "grind down into pin";
+  else if (gammaZone === "y+" && cur.charm > 0) path = "grind up into pin";
 
   // OPEX gravity — direction to nearest mopex max pain * distance in bps
   const mp = byKind("mopexMaxPain")?.price;
@@ -1409,7 +1411,9 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
   const yMin = Math.min(pw, t2Dn, displaySpot * 0.985);
 
   const termRatio = vix && vix3m ? vix3m / vix : null;
-  const termLabel = termRatio && termRatio > 1 ? "contango (calm front-end)" : "backwardation (stress front-end)";
+  // Missing VIX or VIX3M is "unavailable", not backwardation.
+  const termLabel = termRatio == null ? "unavailable"
+    : termRatio > 1 ? "contango (calm front-end)" : "backwardation (stress front-end)";
   const vixChangePct = vix && vixPrev ? ((vix - vixPrev) / vixPrev) * 100 : null;
   const vomma: "elevated" | "normal" = (vix ?? 0) > 20 ? "elevated" : "normal";
   const confidence: "HIGH" | "MODERATE" | "LOW" =

@@ -33,6 +33,7 @@
 // Read-only. Pure function. Try/catch wrapped at every external surface.
 
 import { getPriceHistory } from "./schwab";
+import { gammaZoneEffect } from "./gammaZone";
 
 // ─── Time helpers (America/New_York session math) ──────────────────────
 
@@ -147,6 +148,9 @@ function detectRegime(audit: any): RegimeBucket {
   // dfi is normalized [-5..+5]. dominantMag/charm-flat regime in y/y+ → chop
   const gZone = String(audit?.gammaZone ?? "").toLowerCase();
   const inGammaPocket = gZone === "y" || gZone === "y+";
+  // Gamma unknown ("y?" / missing GEX): the trend/chop split below rests on
+  // the gamma regime, so make no regime claim at all.
+  if (gammaZoneEffect(gZone) === "unknown" && gZone !== "y") return "NEUTRAL";
   // Slope text e.g. "DN 0.70° → -1.40" — magnitude proxy
   const slopeText = String(audit?.slope ?? "");
   const slopeMag = Math.abs(parseFloat(slopeText.match(/-?\d+(\.\d+)?/g)?.[1] ?? "0"));

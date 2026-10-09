@@ -38,6 +38,7 @@ import { computeWickTiming } from "./wickTiming.js";
 import { getPriceHistory, getOptionChain } from "./schwab.js";
 import { etEpochMs } from "./etTime.js";
 import { etDate, sessionCloseMinutes } from "./exchangeCalendar";
+import { gammaZoneEffect } from "./gammaZone";
 
 export interface VommaPocket {
   strike: number;
@@ -390,8 +391,13 @@ function computeIntradayPivot(args: {
     source = "GEX-anchored open";
   } else if (etMinutes < charmStart) {
     // 11:00–14:00 — hybrid blend by gamma regime
-    const gammaPos = String(audit?.gammaZone ?? "").startsWith("y+");
-    if (gammaPos) {
+    const gEffect = gammaZoneEffect(audit?.gammaZone);
+    if (gEffect === "unknown") {
+      // Gamma unknown ("y?" / missing GEX): no dampen/amplify claim, so take
+      // the midpoint of the two regime blends below instead of picking one.
+      pivot = 0.475 * gexAnchor + 0.40 * mainPivot + 0.125 * spot;
+      source = "hybrid γ? (gamma unknown, unweighted)";
+    } else if (gEffect === "dampening") {
       // Dampening regime → magnets dominate (price pulls toward dealers)
       pivot = 0.55 * gexAnchor + 0.30 * mainPivot + 0.15 * spot;
       source = "hybrid γ+ (mag-weighted)";
