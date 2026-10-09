@@ -6,6 +6,7 @@
  */
 
 // Token row access goes through the encrypted store (AES-256-GCM, BATCAVE_TOKEN_KEY).
+import type { ChainSegmentLike } from "./schwabDataPolicy";
 import { readSchwabTokens, writeSchwabTokens, deleteSchwabTokens, tokenStoreStatus, type TokenStoreStatus } from "./schwabTokenStore";
 import { observeQuote } from "./quoteShield";
 import { etDate, addDays } from "./exchangeCalendar";
@@ -968,7 +969,8 @@ export async function getOptionChainLadder(symbol: string, dteMax: number): Prom
   const bad = parts.find((p) => "error" in p);
   if (bad) return bad;
   const ok = parts as OptionChainOk[];
-  const merged = mergeChainSegments(ok);
+  // OptionChainOk has no index signature; the merge keeps every field it is given.
+  const merged = mergeChainSegments(ok as unknown as ChainSegmentLike[]) as unknown as OptionChainOk | null;
   if (!merged) return { error: "schwab_unavailable", source: null, dataState: "unavailable", reason: "no chain segments" };
   const keep = (m: Record<string, Record<string, any[]>>) => {
     const out: Record<string, Record<string, any[]>> = {};

@@ -61,9 +61,12 @@ jobs:
           exit ${PIPESTATUS[0]}
         shell: bash
       - name: Production build (head and base)
+        shell: bash
         run: |
-          npm run build 2>&1 | tail -20 | tee rep/build-head.log
-          (cd ../base && npm run build 2>&1 | tail -5) > rep/build-base.log
+          set -o pipefail
+          npm run build 2>&1 | tail -40 | tee rep/build-head.log
+          test -f dist/index.cjs || { echo "FAIL head build produced no dist/index.cjs" | tee -a rep/build-head.log; exit 1; }
+          (cd ../base && npm run build 2>&1 | tail -5) > rep/build-base.log || echo "WARN base build failed" >> rep/build-base.log
       - name: Route regression and smoke tests
         shell: bash
         run: |

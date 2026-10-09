@@ -97,9 +97,9 @@ export async function computeSkew(symbol: string): Promise<SkewSnapshot | { erro
   const tenorChains = await fetchTenorChains(symbol);
   const okChains = tenorChains.filter((x) => x.chain != null);
   if (!okChains.length) return { error: "chain unavailable" };
-  const front = okChains[0].chain;
+  const frontChain = okChains[0].chain;
 
-  const spot = front.underlying?.last ?? front.underlyingPrice ?? null;
+  const spot = frontChain.underlying?.last ?? frontChain.underlyingPrice ?? null;
   if (!Number.isFinite(spot)) return { error: "no spot" };
 
   // Expiries common to the call and put maps, per tenor request.

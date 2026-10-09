@@ -84,7 +84,7 @@ const ZONES: MMZone[] = ["ABOVE_CALL", "CW_TO_0G", "AT_0G", "0G_TO_PW", "BELOW_P
 
 interface RegimeInputs {
   gexTotal: number;           // signed $ / 1%
-  gammaZone: "y+" | "y-";
+  gammaZone: "y+" | "y-" | "y?"; // "y?" = GEX missing or immaterial (models gexRegime)
   charmTighteningRate: number;
   charmChopFlag: boolean;
   vixDelta: number | null;    // DoD change
@@ -96,6 +96,11 @@ interface RegimeInputs {
 }
 
 function classifyRegime(inp: RegimeInputs): { regime: MMRegime; note: string } {
+  // Unknown gamma regime (GEX missing, zero or below the materiality floor):
+  // no long/short-gamma claim. Neutral, labeled.
+  if (inp.gammaZone === "y?") {
+    return { regime: "NEUTRAL", note: "Gamma regime unknown (GEX missing or immaterial) — no dealer-hedging claim" };
+  }
   const absGex = Math.abs(inp.gexTotal);
   const gexB = absGex / 1e9;
 
@@ -402,7 +407,7 @@ function daysToFriday(asOf: number): number {
 export function buildMMMatrix(horizon: ModelHorizon, horizonDays: number): MMMatrix {
   const a = horizon.audit;
   const inp: RegimeInputs = {
-    gexTotal: a.gammaZone === "y+" ? a.gexTotal : -a.gexTotal,
+    gexTotal: a.gammaZone === "y+" ? a.gexTotal : a.gammaZone === "y-" ? -a.gexTotal : 0,
     gammaZone: a.gammaZone,
     charmTighteningRate: a.charmTightening?.rate ?? 0,
     charmChopFlag: a.charmTightening?.chopFlag ?? false,
