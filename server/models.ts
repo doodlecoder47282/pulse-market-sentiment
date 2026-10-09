@@ -33,8 +33,9 @@ import type { ExposureProfile, ExposureRow } from "./exposureProfile";
 import { buildExposureProfile, rowYears } from "./exposureProfile";
 import { exposureRowsFromSchwabChain, chainSpot } from "./schwabChainRows";
 import { computeGreeks } from "./greeks";
+import { gexRegime } from "./gammaProfile";
 import { storage } from "./storage";
-import { getQuotes as schwabGetQuotes, getOptionChain } from "./schwab";
+import { getQuotes as schwabGetQuotes, getOptionChainLadder } from "./schwab";
 import { cdfAt, type ImpliedDistribution } from "./breedenLitzenberger";
 import { isRegularSessionOpen } from "./exchangeCalendar";
 import {
@@ -163,8 +164,8 @@ export interface ModelAudit {
   vexPerVolPct: number;                    // $B / 1% vol (signed)
   vannaBias: "positive" | "negative";
   vannaM: number;                          // vanna exposure in $M
-  gammaZone: "y+" | "y-";                  // positive = dampening, negative = amplifying
-  gammaZoneLabel: string;                  // "DAMPENING" / "AMPLIFYING"
+  gammaZone: "y+" | "y-" | "y?";           // positive = dampening, negative = amplifying, "y?" = unknown (missing / no material gamma)
+  gammaZoneLabel: string;                  // "DAMPENING" / "AMPLIFYING" / "UNKNOWN"
   gammaAtSpot: number;                     // raw gamma × OI at current spot (for DFI)
   dfi: number;                             // Delta Flow Indicator — normalised DEX slope (signed, float)
   dfiLabel: string;                        // "BULLISH" / "BEARISH" / "NEUTRAL"
@@ -663,6 +664,12 @@ function extractLevels(
 // Path generation — BASE / BULL / BEAR waypoints across the horizon.
 // ──────────────────────────────────────────────────────────────────────────
 
+/** Dealer gamma regime of an exposure profile: material sign at spot, else "unknown". */
+function profileGexRegime(profile: ExposureProfile): "positive" | "negative" | "unknown" {
+  const peak = Math.max(0, ...profile.curve.map((p) => (Number.isFinite(p.gex) ? Math.abs(p.gex) : 0)));
+  return gexRegime(profile.current?.gex, peak, profile.contractCount ?? 0);
+}
+
 function generatePaths(
   levels: ModelLevel[],
   spot: number,
@@ -681,15 +688,20 @@ function generatePaths(
   const t1Up = byKind("t1Up")!;
   const t1Down = byKind("t1Down")!;
 
-  const totalGex = profile.current.gex;
-  const regime: "positive" | "negative" = totalGex > 0 ? "positive" : "negative";
+  const regime = profileGexRegime(profile);
 
   // Probability split reflects regime:
   //   positive GEX → dampening → BASE gets highest weight (range-bound drift to magnet)
   //   negative GEX → amplifying → BULL / BEAR more likely (trends extend)
+  //   unknown (no usable contracts, GEX exactly 0 or below the materiality
+  //   floor) → NO regime split: equal weights, labelled (round 3, N3-3; it
+  //   used to fall into the negative branch). These placeholders are replaced
+  //   by the risk-neutral odds or the audit's split in buildHorizon.
   const probs = regime === "positive"
     ? { base: 0.45, bull: 0.30, bear: 0.25 }
-    : { base: 0.30, bull: 0.30, bear: 0.40 };
+    : regime === "negative"
+      ? { base: 0.30, bull: 0.30, bear: 0.40 }
+      : { base: 1 / 3, bull: 1 / 3, bear: 1 / 3 };
 
   const nWay = waypointDates.length;
 
@@ -805,7 +817,7 @@ function midPath(spot: number, via: number, end: number, nAfter: number): number
 //   the cap is harder still — scenarios collapse toward base.
 //   Normalise to sum = 100, clamp each to minimum 10%.
 function computeScenarioProb(
-  gammaZone: "y+" | "y-",
+  gammaZone: "y+" | "y-" | "y?",
   dfi: number,
   ctx?: {
     vixTermRatio: number | null;
@@ -813,7 +825,8 @@ function computeScenarioProb(
     putWallDistBps: number | null;    // signed: - means wall below spot
   },
 ): { bull: number; base: number; bear: number } {
-  const rawBase = 0.37 + (gammaZone === "y+" ? 0.08 : -0.08);
+  // Unknown regime ("y?": missing or immaterial GEX): no regime adjustment.
+  const rawBase = 0.37 + (gammaZone === "y+" ? 0.08 : gammaZone === "y-" ? -0.08 : 0);
   const bullBoost = dfi > 0 ? 0.10 * Math.tanh(dfi / 3) : 0;
   const bearBoost = dfi < 0 ? 0.10 * Math.tanh(-dfi / 3) : 0;
 
@@ -908,8 +921,11 @@ function buildAudit(
 
   const slopeDir = cur.charm > 0 ? "UP" : "DN";
   const slopeDeg = Math.min(2.0, Math.abs(cur.charm) / 1e9 * 0.5).toFixed(2);
-  const gammaZone = cur.gex >= 0 ? "y+" : "y-";
-  const gammaZoneLabel = cur.gex >= 0 ? "DAMPENING" : "AMPLIFYING";
+  // Regime only from material gamma at spot (round 3, N3-3): missing, an
+  // exact 0 or sub-floor noise is UNKNOWN, not positive or negative.
+  const regimeA = profileGexRegime(profile);
+  const gammaZone: "y+" | "y-" | "y?" = regimeA === "positive" ? "y+" : regimeA === "negative" ? "y-" : "y?";
+  const gammaZoneLabel = regimeA === "positive" ? "DAMPENING" : regimeA === "negative" ? "AMPLIFYING" : "UNKNOWN";
 
   // Path classification from GEX regime + charm direction
   let path = "range-bound";
@@ -1218,7 +1234,9 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
   // x realSPX/SPY for the SPX view). "SPX" -> $SPX (AM SPX + PM SPXW, each on
   // its own settlement clock), "SPY" -> SPY. No other source: when Schwab
   // cannot answer, this horizon is unavailable.
-  const chain = await getOptionChain(chainSymbol === "SPX" ? "$SPX" : "SPY", DTE_MAX[horizon]);
+  // Shared DTE ladder (schwab.getOptionChainLadder): each horizon reuses the
+  // segments the shorter horizons already fetched this minute (round 3, N1-1).
+  const chain = await getOptionChainLadder(chainSymbol === "SPX" ? "$SPX" : "SPY", DTE_MAX[horizon]);
   if ("error" in chain) throw new Error(`Schwab ${chainSymbol} chain unavailable: ${chain.reason ?? chain.error}`);
   const spySpot = chainSpot(chain);
   if (!spySpot) throw new Error(`No spot in the Schwab chain for ${chainSymbol}`);
@@ -1516,7 +1534,7 @@ async function impliedContextFor(
 ): Promise<{ dist: ImpliedDistribution | null; expiry: string | null; straddle: StraddleExpectedMove | null }> {
   const none = { dist: null, expiry: null, straddle: null };
   try {
-    const chain = await getOptionChain(symbol === "^GSPC" ? "$SPX" : "SPY", DTE_MAX[horizon]);
+    const chain = await getOptionChainLadder(symbol === "^GSPC" ? "$SPX" : "SPY", DTE_MAX[horizon]);
     if (!chain || "error" in chain) return none;
     const calls = chain.callExpDateMap, puts = chain.putExpDateMap;
     const now = new Date();

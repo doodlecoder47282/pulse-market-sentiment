@@ -14,7 +14,9 @@ import { gexByStrikeFromChain } from "./gammaProfile";
 import {
   FRESH_TTL_MS, schwabDataKind, staleServeDecision, freshFreshness, maxServeAgeMs,
   chainStrikePlan, strikeCoverage, inferStrikeCountSemantics, atmIvFromChain, chainIsDelayed,
+  chainAsOf, chainLadderSegments, mergeChainSegments,
   type SchwabDataKind, type SchwabFreshness, type StrikeCoverage, type StrikeCountSemantics,
+  type ChainCoverage, type ChainAsOfBasis,
 } from "./schwabDataPolicy";
 import { streamEquityQuote } from "./streamStore";
 import { parseStreamerInfo, startSchwabStream, streamConfigFromEnv, type StreamerInfo, type WebSocketLike } from "./schwabStream";
@@ -792,9 +794,15 @@ export type OptionChainOk = {
   callExpDateMap: Record<string, Record<string, any[]>>;
   putExpDateMap: Record<string, Record<string, any[]>>;
   source: "schwab";
-  /** When Schwab produced this chain (our receive time), epoch ms. */
+  /** When the chain's market data was current, epoch ms: Schwab's underlying
+   *  quoteTime when present (asOfBasis "underlying_quote_time"), else our
+   *  receive time (round 3, N1-2; schwabDataPolicy.chainAsOf). */
   asOfMs: number;
+  /** now - asOfMs. */
   ageMs: number;
+  asOfBasis?: ChainAsOfBasis;
+  /** When we received the response from Schwab (cache age is measured from this). */
+  receivedAtMs?: number;
   servedFromCache: boolean;
   /** true = a refresh failed and an older chain (within maxAgeMs) is served. */
   stale: boolean;
@@ -840,11 +848,13 @@ async function _spotHint(wireSymbol: string): Promise<{ spot: number | null; atm
  *  @param dte      last expiry in calendar days from today (window starts today)
  *  @param opts.fromDte first expiry in calendar days (default 0): lets a caller
  *                  that needs one tenor (e.g. 60-90 DTE skew) skip the front.
+ *  @param opts.coverage what the strikes must cover (schwabDataPolicy.ChainCoverage,
+ *                  default "gamma"); "wing25" for skew, "atm" for ATM IV only.
  */
 export async function getOptionChain(
   symbol: string,
   dte?: number,
-  opts?: { fromDte?: number },
+  opts?: { fromDte?: number; coverage?: ChainCoverage },
 ): Promise<OptionChainResponse> {
   // Normalize legacy .X suffix on cash indexes (silent fix for locked callers)
   const wireSymbol = _normalizeIndexSymbol(symbol);
@@ -855,6 +865,7 @@ export async function getOptionChain(
     const hint = await _spotHint(wireSymbol);
     const plan = chainStrikePlan({
       symbol: wireSymbol, spot: hint.spot, dteMax: dte ?? 60, atmIv: hint.atmIv, semantics: _strikeCountSemantics,
+      coverage: opts?.coverage,
     });
     const params: Record<string, string | number> = {
       symbol: wireSymbol,
@@ -902,20 +913,25 @@ export async function getOptionChain(
       _chainCost.set(wireSymbol, { strikeCount: plan.strikeCount, bytes: r.bytes, contracts, at: Date.now(), coverage });
     }
     const f = r.freshness;
+    // Age from Schwab's underlying quote time; receive time only as fallback.
+    const quoteTimeMs = num(u.quoteTime);
+    const ao = chainAsOf(quoteTimeMs, f.asOfMs);
     return {
       underlying: {
         last,
         bid: num(u.bid),
         ask: num(u.ask),
         close: num(u.close),
-        quoteTimeMs: num(u.quoteTime),
+        quoteTimeMs,
         delayed: typeof data.isDelayed === "boolean" ? data.isDelayed : typeof u.delayed === "boolean" ? u.delayed : null,
       },
       callExpDateMap: data.callExpDateMap ?? {},
       putExpDateMap: data.putExpDateMap ?? {},
       source: "schwab",
-      asOfMs: f.asOfMs,
-      ageMs: f.ageMs,
+      asOfMs: ao.asOfMs,
+      ageMs: Math.max(0, Date.now() - ao.asOfMs),
+      asOfBasis: ao.basis,
+      receivedAtMs: f.asOfMs,
       servedFromCache: f.servedFromCache,
       stale: f.stale,
       maxAgeMs: f.maxAgeMs,
@@ -928,6 +944,37 @@ export async function getOptionChain(
     console.warn("[schwab] getOptionChain error:", e?.message);
     return { error: "schwab_unavailable", source: null, reason: `Schwab chain error: ${e?.message ?? "unknown"}` };
   }
+}
+
+/**
+ * Multi-expiry chain 0..dteMax assembled from the shared DTE ladder
+ * (schwabDataPolicy.chainLadderSegments: [0-2] [3-7] [8-30] [31-45] [46-100]).
+ * Each segment is its own cached request, so the Models horizons and the
+ * regime headline share one download per segment per minute instead of each
+ * re-downloading the near expiries. The last segment may run past dteMax:
+ * expiries beyond it are dropped here. Any segment failing makes the whole
+ * view unavailable (a GEX sum missing a segment would be silently wrong).
+ */
+export async function getOptionChainLadder(symbol: string, dteMax: number): Promise<OptionChainResponse> {
+  const segs = chainLadderSegments(dteMax);
+  const parts = await Promise.all(segs.map((s) => getOptionChain(symbol, s.toDte, { fromDte: s.fromDte })));
+  const bad = parts.find((p) => "error" in p);
+  if (bad) return bad;
+  const ok = parts as OptionChainOk[];
+  const merged = mergeChainSegments(ok);
+  if (!merged) return { error: "schwab_unavailable", source: null, dataState: "unavailable", reason: "no chain segments" };
+  const keep = (m: Record<string, Record<string, any[]>>) => {
+    const out: Record<string, Record<string, any[]>> = {};
+    for (const k of Object.keys(m)) {
+      const d = parseFloat(k.split(":")[1] ?? "");
+      if (!Number.isFinite(d) || d <= dteMax) out[k] = m[k];
+    }
+    return out;
+  };
+  merged.callExpDateMap = keep(merged.callExpDateMap);
+  merged.putExpDateMap = keep(merged.putExpDateMap);
+  merged.ageMs = Math.max(0, Date.now() - merged.asOfMs);
+  return merged;
 }
 
 /** Compute gamma exposure from a Schwab option chain response.

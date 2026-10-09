@@ -733,8 +733,11 @@ async function getAtmIV(spot: number): Promise<number | null> {
   }
 
   try {
-    // Pull SPX 0DTE chain (current trading day)
-    const chain = await getOptionChain("$SPX.X");
+    // Pull the SPX 0-day window (today's expiry; tomorrow's after the close).
+    // It used to omit the window, which downloaded EVERY listed expiry once a
+    // minute for one ATM IV; the 0-day window is the request the 0DTE engines
+    // already make, so this shares their cached response (round 3, N1-1).
+    const chain = await getOptionChain("$SPX", 0);
     if (!chain || (chain as any).error) {
       atmIVCache = { ts: Date.now(), spot, iv: null };
       return null;

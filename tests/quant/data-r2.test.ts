@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import {
   schwabDataKind, staleServeDecision, freshFreshness, maxServeAgeMs, MAX_SERVE_AGE_MS,
   chainStrikePlan, strikeCoverage, inferStrikeCountSemantics, atmIvFromChain,
-  Z_10_DELTA, MAX_STRIKE_COUNT, STRIKE_COUNT_STEP, chainIsDelayed, modelsFallbackDecision, oldestChainAsOf,
+  Z_10_DELTA, Z_25_DELTA, MAX_STRIKE_COUNT, STRIKE_COUNT_STEP, chainIsDelayed, modelsFallbackDecision, oldestChainAsOf,
 } from "../../server/schwabDataPolicy";
 import { toSchwabSymbol } from "../../server/schwabSymbols";
 import { resolvePrevClose, dayChange } from "../../server/dayChange";
@@ -97,25 +97,29 @@ test("strike plan: SPX 0DTE covers the +-10% re-priced flip scan", () => {
   assert.ok((30 * 5) / 6700 < 0.023);
 });
 
-test("strike plan: 90 DTE window reaches past the 25-delta put even when capped", () => {
+test("strike plan: 90 DTE window reaches past the 25-delta put (round 3: long windows capped at the 25-delta wing)", () => {
   const S = 6700, iv = 0.18, T = 90 / 365;
   const p = chainStrikePlan({ symbol: "$SPX", spot: S, dteMax: 90, atmIv: iv });
-  const em = Z_10_DELTA * 1.5 * iv * Math.sqrt(T);
-  assert.ok(Math.abs(p.halfWidthPct - em) < 1e-12);
-  assert.ok(Math.abs(p.halfWidthPct - 0.17182) < 1e-4, String(p.halfWidthPct));
-  assert.equal(p.perSide, 231);           // ceil(0.17182 * 6700 / 5)
-  assert.equal(p.strikeCount, MAX_STRIKE_COUNT);
-  assert.equal(p.capped, true);
+  // Long window (> 7 DTE): 25-delta wing z25 x 1.5 x 0.18 x sqrt(90/365) = 0.0904 < 10% flip-scan floor.
+  const em = Z_25_DELTA * 1.5 * iv * Math.sqrt(T);
+  assert.ok(Math.abs(em - 0.09044) < 1e-4, String(em));
+  assert.equal(p.halfWidthPct, 0.10);
+  assert.equal(p.perSide, 134);           // ceil(0.10 * 6700 / 5)
+  assert.equal(p.strikeCount, 280);       // 2 x 134 = 268 -> step 20 (was capped at 300 with the 10-delta wing)
+  assert.equal(p.capped, false);
   // 25-delta put at a skewed wing vol of 22%: ln(K/F) = -0.0677 (K ~ 0.9345 F)
   const k25 = put25Moneyness(0.22, T);
   assert.ok(Math.abs(k25 - -0.06772) < 2e-4, String(k25));
-  // worst case: cap of 300 read as a TOTAL -> 150 strikes per side = 750 points = 11.2%
-  const cappedCoverage = (MAX_STRIKE_COUNT / 2) * 5 / S;
-  assert.ok(cappedCoverage > Math.abs(Math.exp(k25) - 1), `${cappedCoverage}`);
+  // worst case: 280 read as a TOTAL -> 140 strikes per side = 700 points = 10.4%, past the 25-delta put
+  const worstCoverage = (p.strikeCount / 2) * 5 / S;
+  assert.ok(worstCoverage > Math.abs(Math.exp(k25) - 1), `${worstCoverage}`);
   // the old 60-strike request (30 per side, 2.2%) did not reach it
   assert.ok((30 * 5) / S < Math.abs(Math.exp(k25) - 1));
   // once Schwab is known to count per side, the request halves
-  assert.equal(chainStrikePlan({ symbol: "$SPX", spot: S, dteMax: 90, atmIv: iv, semantics: "per_side" }).strikeCount, 240); // 231 -> step 20
+  assert.equal(chainStrikePlan({ symbol: "$SPX", spot: S, dteMax: 90, atmIv: iv, semantics: "per_side" }).strikeCount, 140); // 134 -> step 20
+  // A short window keeps the 10-delta wing: 7 DTE at 60% vol -> z10 x 1.5 x 0.6 x sqrt(7/365) = 15.97%.
+  const short = chainStrikePlan({ symbol: "$SPX", spot: S, dteMax: 7, atmIv: 0.6 });
+  assert.ok(Math.abs(short.halfWidthPct - Z_10_DELTA * 1.5 * 0.6 * Math.sqrt(7 / 365)) < 1e-12);
 });
 
 test("strike plan: spacing by symbol and unknown spot", () => {
