@@ -366,7 +366,7 @@ test("R3-2.7 deterministic brief source: no hand-set weights / confidence, no tr
   // The LLM normalizer discards model numbers.
   assert.match(src, /confidence: null,/);
   assert.doesNotMatch(src, /Number\(parsed\.(baseCase|bullCase|bearCase)\?\.prob\)/);
-  assert.match(src, /return scrubBrief\(brief\)/);
+  assert.match(src, /return scrubBrief\(brief, \{ strict: true \}\)/); // round 4: LLM path uses the strict allow-list
   assert.match(src, /return scrubBrief\(deterministicFallback\(panel, ctx\)\)/);
 });
 

@@ -179,3 +179,40 @@ test("chain audit DEX: missing delta is excluded and reported, not summed as 0",
   assert.doesNotMatch(src("server/chainAudit.ts"), /delta: c\.delta \?\? 0/);
   assert.match(src("client/src/components/Heatseeker.tsx"), /label=\{dexStatLabel\(totals\.dexState, totals\.dexCoverage\)\}/);
 });
+
+// ── 5. Edge Lab LLM filter: allow-list, verdict filtered ────────────────────
+import { scrubBriefText, scrubBrief, isDescriptiveSentence, scrubVerdict, REMOVED_NOTE, VERDICT_REMOVED } from "../../server/edgeBriefText";
+
+const ORDERS = [
+  "Buy 0DTE calls above 5800.", "Sell the 5750 puts.", "Consider buying SPY calls on a dip.",
+  "Short SPX into the call wall.", "Take profits at 5820.", "Use a stop at 5790.",
+  "Odds favor a pin near 5800.", "There is a 60% chance of a pin.", "60-70% likely to pin.",
+  "Go long above the flip.", "Load up on puts.", "Risk 1% of the account.",
+  "Hold the 5800 calls into the close.", "You should fade the pop.", "Set a target at 5850.",
+  "Stops below 5780 make sense.", "Trade 2 contracts per $10k.",
+];
+const DESCRIPTIVE = ["The put wall at 5700 held twice.", "IV is above realized by 1.3x.", "A short squeeze is possible.", "watch: price relative to zero-gamma 5800."];
+
+test("edge brief: every order / odds phrasing is dropped in both modes; descriptive sentences kept", () => {
+  for (const c of ORDERS) {
+    assert.equal(scrubBriefText(c, { strict: true }), REMOVED_NOTE, `strict leaked: ${c}`);
+    assert.equal(scrubBriefText(c), REMOVED_NOTE, `deny-list leaked: ${c}`);
+  }
+  for (const d of DESCRIPTIVE) {
+    assert.equal(scrubBriefText(d, { strict: true }), d, `strict dropped: ${d}`);
+    assert.equal(scrubBriefText(d), d);
+    assert.equal(isDescriptiveSentence(d), true);
+  }
+  assert.equal(scrubBriefText("IV is above RV. Buy calls above 5800. The flip sits at 5790.", { strict: true }), "IV is above RV. The flip sits at 5790.");
+});
+
+test("edge brief: verdict is filtered (SELL PREMIUM never reaches the chip)", () => {
+  assert.equal(scrubVerdict("SELL PREMIUM"), VERDICT_REMOVED);
+  assert.equal(scrubVerdict("go long"), VERDICT_REMOVED);
+  assert.equal(scrubVerdict("IV above RV"), "IV above RV");
+  const b = scrubBrief({ verdict: "SELL PREMIUM", verdictColor: "emerald", confidence: 80, summary: "IV is rich.", baseCase: { thesis: "", prob: 0.5 }, bullCase: { thesis: "", prob: 0.2 }, bearCase: { thesis: "", prob: 0.3 }, actionable: "", invalidation: "", counterargument: "", bullets: ["Buy the dip", "ratio: 1.3x"] }, { strict: true });
+  assert.equal(b.verdict, VERDICT_REMOVED);
+  assert.equal(b.verdictColor, "neutral");
+  assert.deepEqual(b.bullets, ["ratio: 1.3x"]);
+  assert.match(src("server/edgeLabBrief.ts"), /return scrubBrief\(brief, \{ strict: true \}\);/);
+});

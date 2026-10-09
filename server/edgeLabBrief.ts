@@ -719,5 +719,7 @@ Read the data and describe it in the JSON schema: what it shows, what to watch n
     contextSnapshot: ctx,
   };
 
-  return scrubBrief(brief);
+  // LLM output: strict descriptive allow-list (deterministic text above is
+  // code-reviewed and uses the deny-list only).
+  return scrubBrief(brief, { strict: true });
 }
