@@ -182,8 +182,9 @@ export async function runGrader(now: number = Date.now()): Promise<GradingSummar
 function gradeWhaleAlert(row: any, now: number): boolean {
   const pred = JSON.parse(row.predictionJson || "{}");
   const occ = String(pred.occ ?? "");
-  // Exit at the 16:00 ET close of the expiry date. Rows logged by older builds
-  // carry a 20:00 UTC due time, which is 15:00 ET in winter: recompute.
+  // Exit at the session close of the expiry date (16:00 ET; 13:00 ET on an
+  // early-close day, exchange calendar via validationMath.etCloseMs). Rows
+  // logged by older builds carry a 20:00 UTC due time: recompute.
   const exitTime = pred.expiration ? parseExpirationToMs(String(pred.expiration)) : Number(row.gradingDueAt);
   if (now < exitTime) return false; // not closed yet: retry on a later tick
   const ungraded = (reason: string, extra: Record<string, unknown> = {}) => {
@@ -307,7 +308,8 @@ function markGraded(
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function parseExpirationToMs(exp: string): number {
-  // "2026-05-08" → epoch ms of 16:00 ET that day (20:00 UTC in summer, 21:00 UTC in winter)
+  // "2026-05-08" → epoch ms of that day's session close: 16:00 ET (20:00 UTC in
+  // summer, 21:00 UTC in winter), 13:00 ET on early-close days
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(exp);
   if (!m) return Date.now();
   return etCloseMs(`${m[1]}-${m[2]}-${m[3]}`);
@@ -350,8 +352,8 @@ export function startGraderScheduler() {
       // bars). This is the feed for empirical grade calibration.
       const { gradeOdteAlerts } = await import("./odteGrader");
       const og = await gradeOdteAlerts(Date.now());
-      if (og.graded > 0 || og.insufficient > 0) {
-        console.log(`[odteGrader] ran — graded=${og.graded} wins=${og.wins} losses=${og.losses} insufficient=${og.insufficient}`);
+      if (og.graded > 0 || og.insufficient > 0 || og.deferred > 0) {
+        console.log(`[odteGrader] ran — graded=${og.graded} wins=${og.wins} losses=${og.losses} insufficient=${og.insufficient} deferred=${og.deferred} fromSavedBars=${og.fromSavedBars}`);
         const { invalidateCalibrationCache } = await import("./gradeCalibration");
         invalidateCalibrationCache();
       }
