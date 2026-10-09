@@ -31,7 +31,7 @@ export default function SchwabRequiredNotice({ onConnect, what }: { onConnect: (
           {reauth ? "Reconnect Schwab to refresh this tab" : "Connect Schwab to fill this tab"}
         </div>
         <div className="text-sm text-muted-foreground">
-          {what} comes from your Schwab account. You sign in on Schwab's own page; Batcave never sees your password.
+          This tab runs on {what} from your Schwab account. You sign in on Schwab's own page; Batcave never sees your password.
         </div>
       </div>
       <Button onClick={onConnect} className="min-h-[44px] shrink-0" data-testid="button-connect-schwab">

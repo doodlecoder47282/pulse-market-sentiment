@@ -516,7 +516,7 @@ export default function Dashboard() {
           {/* ── Chart tab (lazy) ── */}
           <TabsContent value="chart" className="space-y-6">
             <Suspense fallback={null}><TabHeadline tab="chart" /></Suspense>
-            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="The SPX chart, dealer levels and Mag 7 data" />
+            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="price and option-chain data" />
             <GlobalEdgeBanner
               vix={vol.vix.value}
               vix9d={vol.vix9d.value}
@@ -535,7 +535,7 @@ export default function Dashboard() {
           {/* ── Models tab (lazy) ── */}
           <TabsContent value="models" className="space-y-6">
             <Suspense fallback={null}><TabHeadline tab="models" /></Suspense>
-            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="Every model" />
+            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="option-chain data" />
             <GlobalEdgeBanner
               vix={vol.vix.value}
               vix9d={vol.vix9d.value}
@@ -572,7 +572,7 @@ export default function Dashboard() {
           {/* ── Heatseeker tab (lazy) ─ 0DTE live Greeks + sticky zones ── */}
           <TabsContent value="heatseeker" className="space-y-6">
             <Suspense fallback={null}><TabHeadline tab="heatseeker" /></Suspense>
-            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="The 0DTE option scanner" />
+            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="0DTE option-chain data" />
             <ErrorBoundary compact label="OdteForward">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
                 <OdteForward />
@@ -588,7 +588,7 @@ export default function Dashboard() {
           {/* ── Trade Desk tab (lazy) ── */}
           <TabsContent value="tradedesk" className="space-y-6">
             <Suspense fallback={null}><TabHeadline tab="tradedesk" /></Suspense>
-            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="The regime outlook and live marks" />
+            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="live quotes and option marks" />
             <GlobalEdgeBanner
               vix={vol.vix.value}
               vix9d={vol.vix9d.value}
@@ -639,7 +639,7 @@ export default function Dashboard() {
 
           {/* ── Edge Lab tab ── */}
           <TabsContent value="edgelab" className="space-y-6">
-            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="Edge Lab's levels, briefing and gamma curve" />
+            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="price and option-chain data" />
             <ErrorBoundary label="Edge Lab">
               <Suspense fallback={<div className="text-xs text-muted-foreground">loading edge lab…</div>}>
                 <EdgeLabPanel />
@@ -659,7 +659,7 @@ export default function Dashboard() {
           {/* ── Signals tab (eager — primary tab) ── */}
           <TabsContent value="signals" className="space-y-6">
             <Suspense fallback={null}><TabHeadline tab="signals" /></Suspense>
-            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="Whale flow and the option scanner" />
+            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="option flow data" />
 
             {/* Regime conditioning chip — pulled from /api/regime, shared across tabs */}
             <div className="flex items-center gap-2">
