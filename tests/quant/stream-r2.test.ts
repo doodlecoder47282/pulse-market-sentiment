@@ -625,6 +625,8 @@ test("streamer: LOGIN_DENIED (code 3) forces one token refresh check, retries, t
     await waitFor(() => st.state === "live", 4000, "live after denial");
     assert.equal(calls.force, 1); // only after the first denial
     assert.deepEqual(fake.logins().map((r) => r.parameters.Authorization), ["bad", "bad", "good"]);
+    // "live" is set on the LOGIN ack; the SUBS frame follows a moment later.
+    await waitFor(() => fake.cmds("LEVELONE_EQUITIES").length >= 1, 2000, "SUBS after login");
     assert.equal(fake.cmds("LEVELONE_EQUITIES").length, 1); // no SUBS until a LOGIN succeeds
   } finally {
     st.stop();
