@@ -158,6 +158,8 @@ export function streamConfigFromEnv(env: Record<string, string | undefined>): St
     return xs.length ? xs : d;
   };
   const int = (v: string | undefined, d: number, lo: number, hi: number) => {
+    // An unset or blank variable means "use the default" (Number("") is 0, not missing).
+    if (v == null || String(v).trim() === "") return d;
     const n = Number(v);
     return Number.isFinite(n) && n >= lo && n <= hi ? Math.floor(n) : d;
   };

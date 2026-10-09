@@ -763,3 +763,11 @@ test("config from env: lists and bounded option cap; default subscription set", 
   for (const s of ["$SPX", "$VIX", "$VIX9D", "SPY", "QQQ", "IWM", "DIA", "AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA"]) assert.ok(d.equities.includes(s), s);
   assert.ok(d.equities.length + d.chartSymbols.length + d.chartOptionalSymbols.length + d.maxOptionSymbols <= 500);
 });
+
+test("blank BATCAVE_STREAM_MAX_OPTIONS keeps the default, an explicit 0 is honoured", async () => {
+  const { streamConfigFromEnv } = await import("../../server/schwabStream.ts");
+  const d = streamConfigFromEnv({});
+  assert.equal(streamConfigFromEnv({ BATCAVE_STREAM_MAX_OPTIONS: "" }).maxOptionSymbols, d.maxOptionSymbols);
+  assert.equal(streamConfigFromEnv({ BATCAVE_STREAM_MAX_OPTIONS: "  " }).maxOptionSymbols, d.maxOptionSymbols);
+  assert.equal(streamConfigFromEnv({ BATCAVE_STREAM_MAX_OPTIONS: "0" }).maxOptionSymbols, 0);
+});
