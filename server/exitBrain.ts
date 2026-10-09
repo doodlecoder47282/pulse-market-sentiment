@@ -96,7 +96,11 @@ export interface ExitBrainSnapshot {
     ticks: number;
     errors: number;
     lastError?: string;
+    /** Ticks skipped because the previous full pass was still running. */
+    skippedTicks?: number;
   };
+  /** Positions at or past the hard stop, from live marks only (independent of /api/models). */
+  hardStopHits?: Array<{ positionId: string; contractKey: string; mark: number; returnPct: number; asOf: number }>;
 }
 
 // ─── Config ───────────────────────────────────────────────────────────
@@ -139,13 +143,23 @@ let ticks = 0;
 let errors = 0;
 let lastError = "";
 let lastTickMs = 0;
+// In-process call timeouts (were unbounded local HTTP): /api/models is a heavy
+// rebuild on a cold cache, quotes are light. Matches discordScheduler's bounds.
+const MODELS_CALL_TIMEOUT_MS = 30_000;
+const QUOTES_CALL_TIMEOUT_MS = 4_000;
+// One evaluation pass at a time: a slow pass must not stack timers.
+let evalInFlight = false;
+let skippedTicks = 0;
+// Hard-stop sweep: computed from the live marks only (no /api/models), every
+// tick, including ticks skipped because a full pass is still running.
+let hardStopHits: Array<{ positionId: string; contractKey: string; mark: number; returnPct: number; asOf: number }> = [];
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
 async function getVix(): Promise<number | null> {
   try {
     // In-process /api/quotes (internalApi.ts); body read as before.
-    const d: any = (await callInternal("/api/quotes")).body;
+    const d: any = (await callInternal("/api/quotes", { timeoutMs: QUOTES_CALL_TIMEOUT_MS })).body;
     return Number(d?.vix?.price ?? null) || null;
   } catch {
     return null;
@@ -225,8 +239,9 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
   let targetsScore = 0;
   let targetsReason = "";
   try {
-    // In-process /api/models (internalApi.ts); body read as before.
-    const data: any = (await callInternal("/api/models?symbol=^GSPC&experimental=1")).body;
+    // In-process /api/models (internalApi.ts), bounded; skipped once the hard
+    // stop has fired (it overrides every other category).
+    const data: any = hardStop >= 100 ? null : (await callInternal("/api/models?symbol=^GSPC&experimental=1", { timeoutMs: MODELS_CALL_TIMEOUT_MS })).body;
     const daily = data?.horizons?.daily;
     if (daily) {
       const rt = await computeRealtimeTargets({
@@ -296,8 +311,9 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
   let gammaScore = 0;
   let gammaReason = "";
   try {
-    // In-process /api/models (internalApi.ts); body read as before.
-    const data: any = (await callInternal("/api/models?symbol=^GSPC&experimental=1")).body;
+    // In-process /api/models (internalApi.ts), bounded; skipped once the hard
+    // stop has fired (it overrides every other category).
+    const data: any = hardStop >= 100 ? null : (await callInternal("/api/models?symbol=^GSPC&experimental=1", { timeoutMs: MODELS_CALL_TIMEOUT_MS })).body;
     const daily = data?.horizons?.daily;
     if (daily) {
       const spot = daily.spot as number;
@@ -458,7 +474,26 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
 
 // ─── Eval loop ────────────────────────────────────────────────────────
 
+/** Hard stop from live marks only: never waits on /api/models or quotes. */
+function hardStopSweep(): void {
+  const now = Date.now();
+  const hits: typeof hardStopHits = [];
+  for (const p of getTracked().filter((x) => x.status === "active")) {
+    const mark = getLiveMark(p.contractKey);
+    if (mark == null || !(p.buyPrice > 0)) continue;
+    const ret = (mark - p.buyPrice) / p.buyPrice;
+    if (ret <= HARD_STOP_PCT) hits.push({ positionId: p.id, contractKey: p.contractKey, mark, returnPct: ret, asOf: now });
+  }
+  hardStopHits = hits;
+}
+
 async function evalAll(): Promise<void> {
+  try { hardStopSweep(); } catch (e: any) { errors++; lastError = `hard-stop sweep: ${e?.message ?? String(e)}`; }
+  if (evalInFlight) {
+    skippedTicks++;
+    return;
+  }
+  evalInFlight = true;
   try {
     const positions = getTracked().filter((p) => p.status === "active");
     if (!positions.length) {
@@ -484,6 +519,7 @@ async function evalAll(): Promise<void> {
     errors++;
     lastError = e?.message ?? String(e);
   } finally {
+    evalInFlight = false;
     ticks++;
     lastTickMs = Date.now();
   }
@@ -525,7 +561,9 @@ export function getExitBrainSnapshot(): ExitBrainSnapshot {
       ticks,
       errors,
       lastError: lastError || undefined,
+      skippedTicks,
     },
+    hardStopHits: hardStopHits.map((h) => ({ ...h })),
   };
 }
 
