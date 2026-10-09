@@ -32,6 +32,7 @@ import { buildCanarySnapshot } from "./canary";
 import { sqlite } from "./storage";
 import { postToDiscord } from "./discord";
 import { etDate as calEtDate, sessionCloseMinutes as calCloseMin } from "./exchangeCalendar";
+import { internalJson } from "./internalApi";
 
 export type TradeEnvState = "STAND_DOWN" | "CHOP" | "NORMAL" | "LOADED" | "STRIKE";
 
@@ -119,9 +120,9 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
   let putWall: number | null = null;
   let callWall: number | null = null;
   try {
-    const port = process.env.PORT || 5000;
-    const r = await fetch(`http://127.0.0.1:${port}/api/heatseeker?symbol=$SPX`);
-    const hs: any = r.ok ? await r.json() : null;
+    // In-process /api/heatseeker handler (internalApi.ts): same cache and
+    // payload as the route, no local HTTP hop. Non-2xx -> null, as before.
+    const hs: any = await internalJson("/api/heatseeker?symbol=$SPX");
     // An empty chain is missing data, not "long gamma": report it as unknown.
     if (hs && Array.isArray(hs.strikes) && hs.strikes.length > 0) {
       spot = hs.spot ?? null;

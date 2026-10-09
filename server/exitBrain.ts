@@ -42,6 +42,7 @@ import { getTracked, getOdteSnapshot, type TrackedPosition, type Side } from "./
 import { getMtfStack, isStackCollapse } from "./mtfStack";
 import { getRevExtSnapshot, isReversionThreat } from "./revExtClassifier";
 import { computeRealtimeTargets } from "./realtimeTargets";
+import { callInternal } from "./internalApi";
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -143,9 +144,8 @@ let lastTickMs = 0;
 
 async function getVix(): Promise<number | null> {
   try {
-    const port = Number(process.env.PORT ?? 5000);
-    const r = await fetch(`http://127.0.0.1:${port}/api/quotes`);
-    const d: any = await r.json();
+    // In-process /api/quotes (internalApi.ts); body read as before.
+    const d: any = (await callInternal("/api/quotes")).body;
     return Number(d?.vix?.price ?? null) || null;
   } catch {
     return null;
@@ -225,9 +225,8 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
   let targetsScore = 0;
   let targetsReason = "";
   try {
-    const port = Number(process.env.PORT ?? 5000);
-    const r = await fetch(`http://127.0.0.1:${port}/api/models?symbol=^GSPC&experimental=1`);
-    const data: any = await r.json();
+    // In-process /api/models (internalApi.ts); body read as before.
+    const data: any = (await callInternal("/api/models?symbol=^GSPC&experimental=1")).body;
     const daily = data?.horizons?.daily;
     if (daily) {
       const rt = await computeRealtimeTargets({
@@ -297,9 +296,8 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
   let gammaScore = 0;
   let gammaReason = "";
   try {
-    const port = Number(process.env.PORT ?? 5000);
-    const r = await fetch(`http://127.0.0.1:${port}/api/models?symbol=^GSPC&experimental=1`);
-    const data: any = await r.json();
+    // In-process /api/models (internalApi.ts); body read as before.
+    const data: any = (await callInternal("/api/models?symbol=^GSPC&experimental=1")).body;
     const daily = data?.horizons?.daily;
     if (daily) {
       const spot = daily.spot as number;

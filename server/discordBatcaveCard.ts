@@ -36,6 +36,7 @@ import { chainAbove, chainBelow, playbookCopy } from "./levelPlaybook";
 import { computeRealtimeTargets } from "./realtimeTargets";
 import { getTodayEventContext } from "./volCalendar";
 import { webhookOrWarn, safeErrorSummary } from "./webhookConfig";
+import { internalJson, isInternalRoute } from "./internalApi";
 
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -57,6 +58,8 @@ function pad(s: string, n: number): string {
   return s.length >= n ? s : s + " ".repeat(n - s.length);
 }
 function fetchJSON(path: string): Promise<any | null> {
+  // /api/models and /api/quotes run in-process (internalApi.ts).
+  if (isInternalRoute(path)) return internalJson(path);
   return fetch(`${BASE}${path}`)
     .then((r) => (r.ok ? r.json() : null))
     .catch(() => null);

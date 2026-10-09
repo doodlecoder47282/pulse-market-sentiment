@@ -100,10 +100,12 @@ const GATE_MODE = gateMode(process.env);
 // Fail closed still lets the engines' own self-calls through, using a random
 // per-process key that never leaves this process.
 const INTERNAL_KEY = GATE_MODE === "closed" ? newInternalKey() : "";
-// The engines call each other over local HTTP (trade environment -> heatseeker,
-// Discord cards -> models, exit brain -> quotes, ...; ~25 call sites). When the
-// gate is on, attach the key to every request this process sends to its own
-// port so those internal calls keep working (ios-capacitor d40db7d).
+// The trading-critical engine calls (trade environment -> heatseeker, exit
+// brain -> quotes/models, Discord cards and decision support -> models) now
+// run in-process (internalApi.ts). The remaining local-HTTP self-calls (news,
+// regime ticker, mm scheduler, alpha brief, ...) still need the key: when the
+// gate is on, attach it to every request this process sends to its own port
+// (ios-capacitor d40db7d).
 const SELF_CALL_KEY = ACCESS_KEY || INTERNAL_KEY;
 if (SELF_CALL_KEY) {
   globalThis.fetch = makeSelfCallFetch(globalThis.fetch.bind(globalThis), SELF_CALL_KEY, process.env.PORT || "5000");

@@ -362,3 +362,76 @@ test("wording: swept panels show heuristic scores as /100 or % wt, never as a ba
   assert.ok(!/probability \$\{squeeze\.probability\}%/.test(pb));
   assert.ok(!/\$\{squeeze\.probability\}% conviction/.test(pb));
 });
+
+// ─── Item 5 (11.3): in-process engine calls ─────────────────────────────────
+import {
+  internalRoute,
+  callInternal,
+  internalJson,
+  internalFetch,
+  isInternalRoute,
+  _resetInternalRoutes,
+} from "../../server/internalApi";
+
+test("internal api: handler gets the parsed query and its JSON body comes back as on the wire", async () => {
+  _resetInternalRoutes();
+  const cached = { spot: 6000, nan: NaN, when: new Date(0), nested: { a: 1 } };
+  let seen: any = null;
+  internalRoute("/api/heatseeker", async (req: any, res: any) => {
+    seen = req.query;
+    res.json(cached);
+  });
+  const r = await callInternal("/api/heatseeker?symbol=$SPX&expiry=2026-10-09");
+  assert.deepEqual(seen, { symbol: "$SPX", expiry: "2026-10-09" });
+  assert.equal(r.ok, true);
+  assert.equal(r.status, 200);
+  // Wire semantics: NaN -> null, Date -> ISO string.
+  assert.equal(r.body.nan, null);
+  assert.equal(r.body.when, "1970-01-01T00:00:00.000Z");
+  // Isolation: mutating the result never touches the route's cached object.
+  r.body.nested.a = 99;
+  assert.equal(cached.nested.a, 1);
+});
+
+test("internal api: status codes and error bodies are preserved; internalJson maps non-2xx to null", async () => {
+  _resetInternalRoutes();
+  internalRoute("/api/models", async (_req: any, res: any) => { res.status(503).json({ message: "Failed to build models" }); });
+  const r = await callInternal("/api/models?symbol=^GSPC&experimental=1");
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 503);
+  assert.equal(r.body.message, "Failed to build models");
+  assert.equal(await internalJson("/api/models?symbol=SPX"), null);
+  const resp = await internalFetch("/api/models");
+  assert.equal(resp.ok, false);
+  assert.equal(resp.status, 503);
+  assert.equal((await resp.json()).message, "Failed to build models");
+});
+
+test("internal api: thrown handler is a 500 with message; unregistered allow-listed route is 503, never HTTP", async () => {
+  _resetInternalRoutes();
+  internalRoute("/api/quotes", async () => { throw new Error("schwab down"); });
+  const r = await callInternal("/api/quotes");
+  assert.equal(r.status, 500);
+  assert.equal(r.body.message, "schwab down");
+  const missing = await callInternal("/api/odte-tracker");
+  assert.equal(missing.status, 503);
+  assert.equal(missing.error, "internal_route_not_registered");
+  assert.equal(isInternalRoute("/api/models?symbol=SPX"), true);
+  assert.equal(isInternalRoute("/api/news"), false);
+});
+
+test("internal api: timeout behaves like an aborted fetch; sync handlers work", async () => {
+  _resetInternalRoutes();
+  internalRoute("/api/models", () => new Promise<void>(() => { /* never responds */ }));
+  const r = await callInternal("/api/models", { timeoutMs: 20 });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, "timeout");
+  await assert.rejects(internalFetch("/api/models", { timeoutMs: 20 }), (e: any) => e.name === "TimeoutError");
+  internalRoute("/api/odte-tracker", (_req: any, res: any) => { res.json({ contracts: [] }); });
+  assert.deepEqual(await internalJson("/api/odte-tracker"), { contracts: [] });
+  // A handler that resolves without responding is reported, not left hanging.
+  internalRoute("/api/quotes", async () => {});
+  const nr = await callInternal("/api/quotes");
+  assert.equal(nr.error, "no_response");
+  _resetInternalRoutes();
+});

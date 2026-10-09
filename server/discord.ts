@@ -86,6 +86,8 @@ export async function postToDiscord(payload: DiscordPayload, channel: DiscordCha
 
 // ─── Internal API fetchers ──────────────────────────────────
 async function fetchJSON(path: string): Promise<any | null> {
+  // /api/models and /api/quotes run in-process (internalApi.ts); others over HTTP.
+  if (isInternalRoute(path)) return internalJson(path);
   try {
     const res = await fetch(`${BASE}${path}`);
     if (!res.ok) return null;
@@ -277,6 +279,7 @@ export async function postDailyModelCard(): Promise<boolean> {
 // are optional — alert still fires cleanly with just the bare minimum.
 import { chainAbove, chainBelow, fmtChain, playbookCopy, type LevelLite } from "./levelPlaybook";
 import { formatOdteAlert, type OdteAlert } from "./odteAlertEngine";
+import { internalJson, isInternalRoute } from "./internalApi";
 
 export type LevelAlertContext = {
   dfi?: number | null;            // current DFI value
