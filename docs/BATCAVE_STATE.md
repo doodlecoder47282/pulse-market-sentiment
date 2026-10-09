@@ -116,6 +116,21 @@ LIVE badge over failed models, raw JSON errors, phone tab bar hides 6 tabs,
 errors, no sideways scroll, tab switches 40-255 ms. Phone per-tab metrics
 not measured (bottom bar lacks test IDs). No UX fixes implemented yet.
 
+UX batch 1 (09c4ef9 + header follow-up; CI 37961552901 green: 507 tests,
+tsc 163 vs 182, no route regressions, UX audit all six sizes incl. phones
+via bottomnav-* IDs): splash deleted; pre-market checklist opt-in (Settings,
+off by default, skip button, no scroll lock); Edge Lab gives "insufficient
+data" with no score below 2 real inputs and hides SPX weekly targets for
+non-SPX symbols or when unset/older than 7 days (tests/quant/ux1.test.ts);
+regime rotation reports missing axes instead of "balanced" (dataState on
+/api/regime); chip renamed "Rotation"; Models shows NOT BUILT and one
+sentence instead of an error wall; raw HTTP/JSON errors replaced
+(client/src/lib/friendlyError.ts); explainer copy fixed (no trade advice,
+Take Five, News sources, slang); Take 5 moved into the header; last update in
+ET. Phone CLS 0.28-0.34 -> under 0.05. Note: the audit doc wrongly said the
+DISCONNECTED pill is not clickable; it already opens Schwab settings.
+Remaining from the fix list: items 7-8 (phone nav, chrome height), 11-26.
+
 ## Current objective
 
 Save the credit-conserving resume framework and assess reuse of the existing

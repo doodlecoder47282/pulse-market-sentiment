@@ -353,7 +353,7 @@ export default function Dashboard() {
           {/* Right: Clock + market status + last-update + refresh */}
           <div className="flex items-center gap-1.5 md:gap-3">
             {/* Clock + market status: stacked, visible on md+ */}
-            <div className="hidden items-end gap-2 md:flex">
+            <div className="hidden items-end gap-2 lg:flex">
               <div className="flex flex-col items-end gap-0.5">
                 <LiveClock />
                 <MarketStatusPill status={marketStatus} />

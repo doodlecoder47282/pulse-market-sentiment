@@ -431,7 +431,7 @@ export function TakeFiveFab({ onClick }: { onClick: () => void }) {
       title="Step off. Breathe. Come back sharp."
     >
       <Zap className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
-      <span className="hidden sm:inline">TAKE 5</span>
+      <span className="hidden whitespace-nowrap xl:inline">Take 5</span>
     </button>
   );
 }
