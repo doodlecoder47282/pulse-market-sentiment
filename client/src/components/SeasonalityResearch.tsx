@@ -44,6 +44,7 @@ interface OptimalWindow {
   winRate: number;
   yearsTested: number;
   confidenceLabel: "Excellent" | "Good" | "Fair" | "Weak" | "Insufficient";
+  verdict?: "validated" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
   significance?: {
     windowsSearched: number;
     pFamilywise: number;
@@ -111,6 +112,31 @@ function confidenceColor(label: string): string {
   if (label === "Fair") return "text-amber-400 border-amber-500/50";
   return "text-rose-400 border-rose-500/50";
 }
+
+// One verdict drives the header and the shading: only a window that passed
+// the snooping test AND ranked in the top half out of sample is "Optimal"
+// and shaded green (a significant-but-failed-hold-out window used to read
+// "Optimal" in green next to a "Weak" badge).
+type WindowVerdict = "validated" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
+function windowVerdict(opt: OptimalWindow): WindowVerdict {
+  if (opt.verdict) return opt.verdict;
+  const sig = opt.significance;
+  if (!sig || !sig.significant) return "not_significant";
+  if (!sig.outOfSample) return "in_sample_only";
+  return sig.outOfSample.randomWindowPercentile >= 0.5 ? "validated" : "failed_out_of_sample";
+}
+const WINDOW_HEADER: Record<WindowVerdict, string> = {
+  validated: "Optimal Seasonal Window (held up out of sample)",
+  failed_out_of_sample: "Best In-Sample Window (failed out-of-sample check)",
+  in_sample_only: "Best In-Sample Window (no hold-out, not validated)",
+  not_significant: "Best In-Sample Window (not significant)",
+};
+const WINDOW_SHADE_LABEL: Record<WindowVerdict, string> = {
+  validated: "",
+  failed_out_of_sample: "failed out of sample",
+  in_sample_only: "in-sample only",
+  not_significant: "not significant",
+};
 function getMonthTicks(): { index: number; label: string }[] {
   return MONTH_LABELS.map((m, i) => ({
     index: Math.round((i / 12) * 252),
@@ -350,7 +376,7 @@ function ResearchResults({ ticker, lookback }: { ticker: SeasonalityTicker; look
       {opt && (
         <div className={`rounded-lg border px-3 py-2 text-xs ${confidenceColor(opt.confidenceLabel)} bg-current/5`} style={{ borderColor: "currentcolor" }}>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <span className="font-semibold">{opt.significance && !opt.significance.significant ? "Best In-Sample Window (not significant)" : "Optimal Seasonal Window"}</span>
+            <span className="font-semibold">{WINDOW_HEADER[windowVerdict(opt)]}</span>
             <span>BUY: <span className="font-mono font-bold">{opt.buyDate}</span></span>
             <span>SELL: <span className="font-mono font-bold">{opt.sellDate}</span></span>
             <span>Geo avg: <span className="font-mono font-bold">{fmtPct(opt.geometricAvgReturn)}</span></span>
@@ -406,12 +432,13 @@ function ResearchResults({ ticker, lookback }: { ticker: SeasonalityTicker; look
                   <ReferenceArea
                     x1={Math.floor(opt.buyDayOfYear / step) * step}
                     x2={Math.floor(opt.sellDayOfYear / step) * step}
-                    // Green only for a window that passed the data-snooping test;
-                    // otherwise grey and labelled, so noise is never shaded as a signal.
-                    fill={opt.significance?.significant ? "#10b981" : "#64748b"}
-                    fillOpacity={opt.significance?.significant ? 0.06 : 0.04}
+                    // Green only for a validated window (passed the snooping test
+                    // and the out-of-sample check); otherwise grey and labelled,
+                    // so noise or a failed hold-out is never shaded as a signal.
+                    fill={windowVerdict(opt) === "validated" ? "#10b981" : "#64748b"}
+                    fillOpacity={windowVerdict(opt) === "validated" ? 0.06 : 0.04}
                     strokeOpacity={0}
-                    label={opt.significance?.significant ? undefined : { value: "not significant", position: "insideTop", fontSize: 9, fill: "#94a3b8" }}
+                    label={windowVerdict(opt) === "validated" ? undefined : { value: WINDOW_SHADE_LABEL[windowVerdict(opt)], position: "insideTop", fontSize: 9, fill: "#94a3b8" }}
                   />
                 )}
                 {todayDay != null && (

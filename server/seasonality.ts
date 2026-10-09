@@ -39,6 +39,21 @@ export interface OptimalWindow {
   /** Data-snooping test of the window search (added). The label above is
    *  "Insufficient" unless the family-wise p-value is ≤ 0.05. */
   significance?: SeasonalSignificance;
+  /** One verdict for headers and shading (UI must not infer it from `significant` alone):
+   *  validated = passed the snooping test AND ranked in the top half of
+   *  same-length windows on held-out years; failed_out_of_sample = passed
+   *  in-sample but ranked bottom half out of sample; in_sample_only = passed
+   *  but too few years for a hold-out; not_significant = failed the test. */
+  verdict?: SeasonalVerdict;
+}
+
+export type SeasonalVerdict = "validated" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
+
+/** Header and colour for a window, shared by the panels (pure). */
+export function seasonalVerdict(significant: boolean, outOfSamplePercentile: number | null): SeasonalVerdict {
+  if (!significant) return "not_significant";
+  if (outOfSamplePercentile == null) return "in_sample_only";
+  return outOfSamplePercentile >= 0.5 ? "validated" : "failed_out_of_sample";
 }
 
 export interface SeasonalSignificance {
@@ -399,7 +414,12 @@ export function findOptimalWindow(
     label = "Weak";
   }
 
+  const verdict = seasonalVerdict(significant, outOfSample ? outOfSample.randomWindowPercentile : null);
+  // A label above Weak requires the hold-out too: "in sample only" cannot be Good/Excellent.
+  if (verdict === "in_sample_only" && (label === "Excellent" || label === "Good")) label = "Fair";
+
   return {
+    verdict,
     buyDayOfYear: best.buyDay,
     buyDate: dayOfYearToDate(best.buyDay),
     sellDayOfYear: best.sellDay,
@@ -423,7 +443,7 @@ export function findOptimalWindow(
 export function generateAnalysisText(
   symbol: string,
   opt: OptimalWindow | null,
-  yearly: Pick<YearlySeasonality, "fullYearAvg" | "fullYearWinRate" | "presidentialCycleYear" | "presidentialCycleAvg" | "lookbackYears">,
+  yearly: Pick<YearlySeasonality, "fullYearAvg" | "fullYearWinRate" | "presidentialCycleYear" | "presidentialCycleAvg"> & { lookbackYears?: number },
   lookback: number,
 ): string {
   if (!opt || opt.confidenceLabel === "Insufficient") {
@@ -442,7 +462,13 @@ export function generateAnalysisText(
   const sigNote = sig
     ? ` Data-snooping p=${sig.pFamilywise.toFixed(2)} across ${sig.windowsSearched.toLocaleString("en-US")} windows searched${sig.outOfSample ? `; on the ${sig.outOfSample.heldOutYears} most recent held-out years the window chosen without them ranked at the ${Math.round(sig.outOfSample.randomWindowPercentile * 100)}th percentile of same-length windows` : ""}.`
     : "";
-  return `Analysis of the ${symbol} seasonal pattern above shows that a Buy Date of ${opt.buyDate} and a Sell Date of ${opt.sellDate} has resulted in a geometric average return of ${opt.geometricAvgReturn >= 0 ? "+" : ""}${opt.geometricAvgReturn.toFixed(1)}% over the past ${lookback} years. This seasonal timeframe has shown positive results in ${positiveYears} of those ${opt.yearsTested} periods (${winPct}%), rated ${opt.confidenceLabel}.${sigNote}${cycleNote}`;
+  const verdictNote = opt.verdict === "failed_out_of_sample"
+    ? " It passed the in-sample snooping test but ranked in the bottom half of same-length windows on the held-out years, so it is NOT validated."
+    : opt.verdict === "in_sample_only"
+      ? " Too few years for a held-out check, so it is significant in-sample only, not validated."
+      : "";
+  const lead = opt.verdict === "validated" ? "Analysis" : "In-sample analysis";
+  return `${lead} of the ${symbol} seasonal pattern above shows that a Buy Date of ${opt.buyDate} and a Sell Date of ${opt.sellDate} has resulted in a geometric average return of ${opt.geometricAvgReturn >= 0 ? "+" : ""}${opt.geometricAvgReturn.toFixed(1)}% over the past ${lookback} years. This seasonal timeframe has shown positive results in ${positiveYears} of those ${opt.yearsTested} periods (${winPct}%), rated ${opt.confidenceLabel}.${verdictNote}${sigNote}${cycleNote}`;
 }
 
 // ─── Main compute ─────────────────────────────────────────────────────────

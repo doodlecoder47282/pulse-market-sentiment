@@ -291,3 +291,41 @@ test("headline feed: labeled RSS items with age; all-failed is unavailable, not 
   const stale = summarizeHeadlineFeed([{ name: "A", items: [h("Old", "A", 48)] }], now);
   assert.equal(stale.status, "empty");
 });
+
+// ─── Seasonality: a window that fails the hold-out is never "Optimal" ─────
+
+test("seasonality verdict: significant but bottom-half out of sample is failed_out_of_sample, not validated", async () => {
+  const { seasonalVerdict, findOptimalWindow, generateAnalysisText } = await import("../../server/seasonality");
+  assert.equal(seasonalVerdict(false, 0.9), "not_significant");
+  assert.equal(seasonalVerdict(true, null), "in_sample_only");
+  assert.equal(seasonalVerdict(true, 0.3), "failed_out_of_sample");
+  assert.equal(seasonalVerdict(true, 0.5), "validated");
+  // A calendar effect present only in the early (training) years: the
+  // in-sample search finds it, the held-out recent years do not have it.
+  // Seeded fixture, 20 years: +0.5%/day on days 100-159 in the first 14
+  // years; in the 6 held-out years (floor(20/3)) that window loses 0.4%/day
+  // and days 1-59 gain 0.15%/day. The full-sample search still passes the
+  // snooping test (p 0.04 with this seed), but the window picked on the
+  // first 14 years ranks in the bottom third of same-length windows on the
+  // held-out years: the case that used to read "Optimal" in green.
+  const r = mulberry32(31);
+  const m = new Map<number, number[]>();
+  for (let y = 0; y < 20; y++) {
+    let L = 0;
+    const p = [0];
+    for (let d = 1; d < 252; d++) {
+      const inWin = d >= 100 && d < 160;
+      L += (y < 14 ? (inWin ? 0.005 : 0) : (inWin ? -0.004 : d < 60 ? 0.0015 : 0)) + 0.01 * gauss(r);
+      p.push((Math.exp(L) - 1) * 100);
+    }
+    m.set(2000 + y, p);
+  }
+  const w = findOptimalWindow(m, { permutations: 49 })!;
+  assert.ok(w.significance!.significant, `p ${w.significance!.pFamilywise}`);
+  assert.ok(w.significance!.outOfSample!.randomWindowPercentile < 0.5);
+  assert.equal(w.verdict, "failed_out_of_sample");
+  assert.equal(w.confidenceLabel, "Weak");
+  const text = generateAnalysisText("TEST", w, { fullYearAvg: 1, fullYearWinRate: 0.5, presidentialCycleYear: 2, presidentialCycleAvg: null }, 20);
+  assert.match(text, /NOT validated/);
+  assert.match(text, /^In-sample analysis/);
+});
