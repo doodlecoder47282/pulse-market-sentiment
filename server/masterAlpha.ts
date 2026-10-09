@@ -932,7 +932,8 @@ import { buildModelsSnapshot } from "./models";
 import { buildPivotBundle } from "./pivots";
 import { fetchOHLC } from "./ohlc";
 import { fetchPrevDayOHLC } from "./quotes";
-import { getQuotes as schwabGetQuotes } from "./schwab";
+import { getQuotes as schwabGetQuotes, getSchwabStatus } from "./schwab";
+import { classifyRouteError, unavailableBody } from "@shared/unavailable";
 
 export async function masterAlphaRoute(req: any, res: any) {
   try {
@@ -976,7 +977,10 @@ export async function masterAlphaRoute(req: any, res: any) {
     });
     const horizon = snapshot.horizons[horizonKey];
     if (!horizon) {
-      return res.status(500).json({ error: `Horizon ${horizonKey} build failed`, warnings: snapshot.warnings });
+      // buildModelsSnapshot records a failed horizon (Schwab chain/spot
+      // missing) as a warning: that is a missing upstream, not a bug.
+      const why = (snapshot.warnings ?? []).join("; ") || "no Schwab data for this horizon";
+      return res.status(503).json({ ...unavailableBody(`Horizon ${horizonKey} unavailable: ${why}`), error: `Horizon ${horizonKey} unavailable`, warnings: snapshot.warnings });
     }
 
     // build prior-day pivot bundle from the most recent COMPLETED daily
@@ -994,7 +998,12 @@ export async function masterAlphaRoute(req: any, res: any) {
     });
     res.json(out);
   } catch (err: any) {
-    console.error("[masterAlpha]", err);
-    res.status(500).json({ error: err?.message ?? String(err) });
+    // Missing upstream (typed error, or Schwab not connected) -> 503 with the
+    // reason; anything else is a real bug -> 500.
+    let schwabConnected: boolean | null = null;
+    try { schwabConnected = getSchwabStatus().connected; } catch { schwabConnected = null; }
+    const out = classifyRouteError(err, "master alpha failed", { schwabConnected, key: "error" });
+    if (out.kind === "bug") console.error("[masterAlpha]", err);
+    res.status(out.status).json(out.body);
   }
 }

@@ -75,7 +75,7 @@ import { buildTickerOutlook } from "./tickerOutlook";
 import { gatherPositioningForTicker } from "./tickerAlpha";
 import { buildEconWeek, type EconWeek } from "./econWeek";
 import { buildModelsSnapshot, type ModelsResponse, type Horizon } from "./models";
-import type { Snapshot_Public, VolMetric } from "@shared/schema";
+import type { Snapshot_Public } from "@shared/schema";
 import { readCacheEntry, writeCache, rthSessionKey } from "./sessionCache";
 import { maxServeAgeMs, modelsFallbackDecision, oldestChainAsOf } from "./schwabDataPolicy";
 import { buildSeasonalitySnapshot, fetchBars, computeSeasonality, generateAnalysisText } from "./seasonality";
@@ -85,6 +85,8 @@ import { buildJPMCollarSnapshot, getCachedSpxCloses } from "./jpmCollar";
 import { buildVolCalendar, getTodayEventContext } from "./volCalendar";
 import { computeOfiTrend } from "./leeReadyOfi";
 import { buildGammaLevelsEnhanced } from "./gammaLevels";
+import { assembleSnapshot, snapshotFailureResponse, tradeDeskDegraded, liveMetricsFromSnapshot, factCheckMetrics } from "./snapshotDegrade";
+import { classifyRouteError, isUpstreamUnavailable, UpstreamUnavailableError } from "@shared/unavailable";
 import { runBackfill, getBacktestSummary } from "./backtest";
 import { deriveTargets, deriveBothSides, type CandidateLevel } from "./targetDerivation";
 import { startCryptoEngines, getCryptoFeed, getCryptoHealth, getCryptoSignals } from "./cryptoEngine";
@@ -121,11 +123,6 @@ import { buildDeterministicAlphaBrief } from "./alphaEngine";
 import { buildFusionContext, fusionContextToPromptBlock, type FusionContext } from "./alphaFusion";
 import { composeAlphaEmail } from "./alphaEmailComposer";
 import { getEarnings } from "./earnings";
-
-function vm(symbol: string, name: string, last: number | null, prev: number | null, stale?: boolean | null): VolMetric {
-  const changePct = last != null && prev ? ((last - prev) / prev) * 100 : null;
-  return { symbol, name, value: last, prev, changePct, stale: stale ?? null };
-}
 
 let inflight: Promise<Snapshot_Public> | null = null;
 let lastResult: { at: number; data: Snapshot_Public } | null = null;
@@ -259,53 +256,13 @@ async function buildSnapshot(): Promise<Snapshot_Public> {
     fetchHeadlines(),
   ]);
 
-  if ("error" in chainResp) throw new Error(`Schwab SPY options chain unavailable: ${chainResp.reason ?? chainResp.error}`);
-  const chain = chainResp;
-  if (chain.stale) warnings.push(`Schwab SPY chain is ${Math.round(chain.ageMs / 1000)} s old (${chain.staleReason ?? "refresh failed"}).`);
-
-  const gamma = buildGammaStructure(chain);
-  const term = {
-    vix9d: vix9d.last,
-    vix: vix.last,
-    vix3m: vix3m.last,
-    ratio9dOver30d: vix.last && vix9d.last ? vix9d.last / vix.last : null,
-    ratio30dOver3m: vix3m.last && vix.last ? vix.last / vix3m.last : null,
-  };
-  // SPY day change: last vs the prior session close, null (not 0) when unknown.
-  const spyPrice = spy.last ?? gamma.spot;
-  const spyPrev = spy.prev ?? null;
-  const spyChangePct = spyPrice != null && spyPrev != null && spyPrev > 0 ? ((spyPrice - spyPrev) / spyPrev) * 100 : null;
-
-  const partial: Omit<Snapshot_Public, "composite"> = {
-    capturedAt: Math.floor(Date.now() / 1000),
-    spy: {
-      price: spyPrice,
-      prevClose: spyPrev,
-      changePct: spyChangePct,
-      // price from the chain's underlying when the quote is missing: that is the chain's age
-      stale: spy.last != null ? (spy.stale ?? null) : chain.stale,
-      ageMs: spy.last != null ? (spy.ageMs ?? null) : chain.ageMs,
-      prevCloseSource: spy.prevSource,
-    },
-    vol: {
-      vix:  vm("^VIX",  "VIX (30-day implied vol)", vix.last,  vix.prev, vix.stale),
-      vvix: vm("^VVIX", "VVIX (Vol-of-Vol)",        vvix.last, vvix.prev, vvix.stale),
-      vix9d:vm("^VIX9D","VIX9D (9-day)",            vix9d.last,vix9d.prev, vix9d.stale),
-      vix3m:vm("^VIX3M","VIX3M (3-month)",          vix3m.last,vix3m.prev, vix3m.stale),
-      skew: vm("^SKEW", "Cboe SKEW index (via Schwab)", skew.last, skew.prev, skew.stale),
-    },
-    term,
-    gamma,
-    social,
-    fearGreed: fg,
-    aaii: null, // could be wired later via Thursday-released CSV
-    headlines: headlines.items,
-    headlinesFeed: { status: headlines.status, sources: headlines.sources, asOf: headlines.asOf, maxAgeHours: headlines.maxAgeHours, note: headlines.note },
-    warnings,
-    gammaSource: "schwab",
-    gammaAsOf: Math.floor(chain.asOfMs / 1000),
-    gammaStale: chain.stale,
-  };
+  // Pure assembly (server/snapshotDegrade.ts): a missing or unusable Schwab
+  // chain throws UpstreamUnavailableError carrying the partial body (quotes,
+  // social, F&G, headlines) instead of a bare Error that became a 500.
+  const partial = assembleSnapshot(
+    { vix, vvix, vix9d, vix3m, skew, spy, chain: chainResp, fearGreed: fg, social, headlines, warnings, nowMs: Date.now() },
+    buildGammaStructure,
+  );
 
   // Pull a cheap voicesBias if we have a warm cache. Never force-fetch here
   // — keeping snapshot + voices refreshes independent protects our X quota.
@@ -323,6 +280,40 @@ async function buildSnapshot(): Promise<Snapshot_Public> {
   });
   return full;
 }
+
+/**
+ * Route catch blocks of Schwab-dependent routes: a missing upstream answers
+ * 503 {dataState:"unavailable", reason} (shared/unavailable.ts); only a real
+ * bug answers 500, and that is logged so CI's server log shows it.
+ */
+function sendRouteError(res: ExResponse, e: unknown, fallback: string, key: "message" | "error" = "message") {
+  let schwabConnected: boolean | null = null;
+  try { schwabConnected = getSchwabStatus().connected; } catch { schwabConnected = null; }
+  const out = classifyRouteError(e, fallback, { schwabConnected, key });
+  if (out.kind === "bug") console.error(`[route] 500: ${fallback}:`, (e as any)?.stack ?? e);
+  return res.status(out.status).json(out.body);
+}
+
+/** Sweep helper for Schwab-dependent routes that keep their own 500 body:
+ *  answers 503 {dataState:"unavailable", reason} and returns true when the
+ *  error is a missing upstream; otherwise returns false and the route's
+ *  original 500 path runs (a real bug). */
+function sendIfUnavailable(res: ExResponse, e: unknown): boolean {
+  let schwabConnected: boolean | null = null;
+  try { schwabConnected = getSchwabStatus().connected; } catch { schwabConnected = null; }
+  const out = classifyRouteError(e, "upstream unavailable", { schwabConnected });
+  if (out.kind !== "unavailable") {
+    console.error("[route] 500:", (e as any)?.stack ?? e);
+    return false;
+  }
+  res.status(503).json(out.body);
+  return true;
+}
+
+// Last partial (Schwab-unavailable) snapshot body: re-assembled at most every
+// 30 s so a polling client does not refetch every context source per request.
+let lastPartialSnapshot: { at: number; status: number; body: unknown } | null = null;
+const PARTIAL_CACHE_MS = 30_000;
 
 async function getOrBuild(force = false): Promise<Snapshot_Public> {
   if (!force && lastResult && Date.now() - lastResult.at < CACHE_MS) return lastResult.data;
@@ -348,7 +339,10 @@ async function getOrBuild(force = false): Promise<Snapshot_Public> {
             warnings: [...(snap.warnings ?? []), `Stale snapshot: captured ${Math.round(ageMs / 1000)} s ago; live rebuild failed.`],
           };
         }
-        throw new Error(`Snapshot unavailable: ${e?.message ?? "rebuild failed"}; last stored snapshot is ${Math.round(ageMs / 60_000)} min old (max ${Math.round(maxAge / 60_000)} min)`);
+        const msg = `Snapshot unavailable: ${e?.message ?? "rebuild failed"}; last stored snapshot is ${Math.round(ageMs / 60_000)} min old (max ${Math.round(maxAge / 60_000)} min)`;
+        // An upstream failure stays an upstream failure (503 / partial), with its partial context.
+        if (isUpstreamUnavailable(e)) throw new UpstreamUnavailableError(msg, { upstream: e.upstream, partial: e.partial });
+        throw new Error(msg);
       }
       throw e;
     });
@@ -435,23 +429,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  app.get("/api/snapshot", async (_req, res) => {
+  // Full snapshot: dataState "ok" (or "stale" when a stored snapshot within
+  // its max age is served). Schwab unavailable: 200 dataState "partial" with
+  // the Schwab sections null and the context sections filled, or 503
+  // {dataState:"unavailable", reason} when nothing useful remains.
+  const sendSnapshot = async (res: ExResponse, force: boolean, fallback: string) => {
     try {
-      const data = await getOrBuild(false);
-      res.json(data);
+      if (!force && lastPartialSnapshot && Date.now() - lastPartialSnapshot.at < PARTIAL_CACHE_MS
+          && !(lastResult && Date.now() - lastResult.at < CACHE_MS)) {
+        return res.status(lastPartialSnapshot.status).json(lastPartialSnapshot.body);
+      }
+      const data = await getOrBuild(force);
+      lastPartialSnapshot = null;
+      res.json({ ...data, dataState: data.stale ? "stale" : "ok", dataStateReason: data.stale ? (data.staleReason ?? null) : null });
     } catch (e: any) {
-      res.status(500).json({ message: e?.message ?? "Failed to build snapshot" });
+      const degraded = snapshotFailureResponse(e);
+      if (degraded) {
+        lastPartialSnapshot = { at: Date.now(), status: degraded.status, body: degraded.body };
+        return res.status(degraded.status).json(degraded.body);
+      }
+      sendRouteError(res, e, fallback);
     }
-  });
-
-  app.post("/api/snapshot/refresh", async (_req, res) => {
-    try {
-      const data = await getOrBuild(true);
-      res.json(data);
-    } catch (e: any) {
-      res.status(500).json({ message: e?.message ?? "Failed to refresh" });
-    }
-  });
+  };
+  app.get("/api/snapshot", (_req, res) => sendSnapshot(res, false, "Failed to build snapshot"));
+  app.post("/api/snapshot/refresh", (_req, res) => sendSnapshot(res, true, "Failed to refresh"));
 
   // Voices — curated analyst feed with data-relevance ranking + live fact-check
   app.get("/api/voices", async (_req, res) => {
@@ -459,21 +460,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (voicesCache && Date.now() - voicesCache.at < VOICES_CACHE_MS) {
         return res.json(voicesCache.data);
       }
+      // Voices are non-Schwab context: a missing snapshot only leaves the
+      // fact-check metrics null ("unverified"), never 0 and never a 500.
+      let snapReason: string | null = null;
       const [{ voices, items }, snap] = await Promise.all([
         fetchAllVoices(),
-        getOrBuild(false),
+        getOrBuild(false).catch((e: any) => { snapReason = e?.message ?? "snapshot unavailable"; return null; }),
       ]);
-      const liveMetrics = {
-        vix: snap.vol.vix.value ?? 0,
-        vvix: snap.vol.vvix.value ?? 0,
-        spy: snap.spy.price ?? 0,
-        skew: snap.vol.skew.value ?? 0,
-        pcr: snap.gamma.pcrOi ?? 0,
-      };
-      for (const it of items) factCheckItem(it, liveMetrics);
+      const liveMetrics = liveMetricsFromSnapshot(snap);
+      for (const it of items) factCheckItem(it, factCheckMetrics(liveMetrics));
       const bias = computeVoicesBias(items);
       const payload = {
         voices, items, liveMetrics,
+        liveMetricsState: snap ? "ok" : "unavailable",
+        liveMetricsReason: snapReason,
         xEnabled: xEnabled(),
         voicesBias: bias,
         capturedAt: Math.floor(Date.now() / 1000),
@@ -503,6 +503,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       // Fetch the three intraday series + prior-day OHLC for each (for pivots),
       // plus the main snapshot (for gamma, term, vix, composite, voices bias).
+      let snapErr: unknown = null;
       const [spx, spy, vix, spxPrev, spyPrev, vixPrev, snap, voicesData] = await Promise.all([
         fetchIntraday("^GSPC", range, interval).catch((e) => { console.warn("[trade-desk] SPX:", e.message); return null; }),
         fetchIntraday("SPY",   range, interval).catch((e) => { console.warn("[trade-desk] SPY:", e.message); return null; }),
@@ -510,13 +511,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         fetchPrevDayOHLC("^GSPC").catch(() => null),
         fetchPrevDayOHLC("SPY").catch(() => null),
         fetchPrevDayOHLC("^VIX").catch(() => null),
-        getOrBuild(false),
+        getOrBuild(false).catch((e) => { snapErr = e; return null; }),
         Promise.resolve(voicesCache?.data ?? null),
       ]);
 
       const spxPivots = spxPrev ? buildPivotBundle("^GSPC", spxPrev) : null;
       const spyPivots = spyPrev ? buildPivotBundle("SPY",   spyPrev) : null;
       const vixPivots = vixPrev ? buildPivotBundle("^VIX",  vixPrev) : null;
+
+      // Snapshot unavailable (Schwab chain/quotes missing): quotes and pivots
+      // still render; gamma map, squeeze, playbook and composite are null with
+      // the reason (200 partial), or 503 when no quote came back either. A
+      // snapshot failure that is a code bug still answers 500.
+      if (!snap) {
+        let connected: boolean | null = null;
+        try { connected = getSchwabStatus().connected; } catch { connected = null; }
+        const cls = classifyRouteError(snapErr, "snapshot unavailable", { schwabConnected: connected });
+        if (cls.kind === "bug") throw snapErr;
+        const out = tradeDeskDegraded({
+          range, interval,
+          quotes: { spx, spy, vix },
+          pivots: { spx: spxPivots, spy: spyPivots, vix: vixPivots },
+          reason: cls.body.reason,
+          voicesBias: voicesData?.voicesBias ?? null,
+          nowMs: Date.now(),
+        });
+        return res.status(out.status).json(out.body);
+      }
 
       // Gamma map is SPY-based (that's our options-chain source).
       const spyLast = spy?.price ?? snap.spy.price;
@@ -583,13 +604,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         gammaMaxAgeMs: maxServeAgeMs("chains"),
         squeeze,
         playbook,
+        dataState: snap.stale ? "stale" : "ok",
         composite: { score: snap.composite.score, label: snap.composite.label },
         voicesBias: voicesData?.voicesBias ?? null,
       };
       tradeCache = { at: Date.now(), range, data: payload };
       res.json(payload);
     } catch (e: any) {
-      res.status(500).json({ message: e?.message ?? "Failed to build trade desk" });
+      sendRouteError(res, e, "Failed to build trade desk");
     }
   });
 
@@ -610,6 +632,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       macroCache = { at: Date.now(), data };
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build macro snapshot" });
     }
   });
@@ -638,6 +661,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       ohlcCache.set(key, { at: Date.now(), data });
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to fetch OHLC" });
     }
   });
@@ -654,6 +678,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       flowCache = { at: Date.now(), data };
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build flow snapshot" });
     }
   });
@@ -671,6 +696,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       intradayFlowCache = { at: Date.now(), data };
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build intraday flow" });
     }
   });
@@ -878,6 +904,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
       res.json({ ok: true, snapshots: snaps });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "snapshot failed" });
     }
   });
@@ -1194,6 +1221,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       mag7Cache = { at: Date.now(), data };
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build Mag7 snapshot" });
     }
   });
@@ -1251,6 +1279,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         asOf: new Date().toISOString(),
       });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to fetch gamma levels" });
     }
   });
@@ -1267,6 +1296,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const data = await buildTickerOutlook(symbol, { forceVerdict: force });
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build ticker outlook" });
     }
   });
@@ -1297,6 +1327,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const data = await buildTickerProjection(symbol, sessions);
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build ticker projection" });
     }
   });
@@ -1311,6 +1342,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const data = await buildTickerCalendar(symbol);
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build ticker calendar" });
     }
   });
@@ -1326,6 +1358,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       regimeCache.set(w, { at: Date.now(), data });
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build regime snapshot" });
     }
   });
@@ -1337,6 +1370,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const data = await buildSectorWeb();
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build sector web" });
     }
   });
@@ -1354,6 +1388,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const data = buildUnderperformers(daily, { mode, maxRows });
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build underperformers" });
     }
   });
@@ -1453,6 +1488,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }));
       res.json({ ...projection, chartBars });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build pivot projection" });
     }
   });
@@ -1512,6 +1548,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           timestamp: lastResult.at,
         });
       }
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to fetch quotes" });
     }
   }));
@@ -1526,6 +1563,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const data = await buildSeasonalitySnapshot(validLookback);
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build seasonality" });
     }
   });
@@ -1574,6 +1612,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json(response);
     } catch (e: any) {
       console.error("[seasonality/:symbol]", e?.message);
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to compute seasonality" });
     }
   });
@@ -2165,6 +2204,7 @@ Build the EOD setup brief.`;
       });
     } catch (e: any) {
       console.error("[eod-setup]", e?.message);
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "EOD setup failed" });
     }
   });
@@ -2179,6 +2219,7 @@ Build the EOD setup brief.`;
       ]);
       res.json({ ...collar, spxCloses });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build JPM collar" });
     }
   });
@@ -2631,6 +2672,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       res.json(out);
     } catch (err: any) {
       console.error("[earnings-iv]", ticker, err?.message);
+      if (sendIfUnavailable(res, err)) return;
       res.status(500).json({ error: err?.message ?? "earnings iv fetch failed" });
     }
   });
@@ -2733,6 +2775,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const snap = await computeIvRvSnapshot(sym);
       res.json(snap);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: e?.message ?? "iv-rv failed" });
     }
   });
@@ -2745,6 +2788,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const out = await buildGammaCurve(sym);
       res.json(out);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: e?.message ?? "gamma-curve failed" });
     }
   });
@@ -2755,6 +2799,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const { buildCrossAssetMatrix } = await import("./crossAsset");
       res.json(buildCrossAssetMatrix());
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: e?.message ?? "cross-asset failed" });
     }
   });
@@ -2767,6 +2812,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const out = await computeSkew(sym);
       res.json(out);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: e?.message ?? "skew failed" });
     }
   });
@@ -2889,6 +2935,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const enhanced = buildGammaLevelsEnhanced(g, spxNow, { chainAsOf: snap.gammaAsOf ?? null, stale: !!(snap.gammaStale || snap.stale) });
       res.json({ symbol: "SPY", supported: true, enhanced, asOf: snap.capturedAt, chainAsOf: snap.gammaAsOf ?? null, chainStale: !!(snap.gammaStale || snap.stale), chainMaxAgeMs: maxServeAgeMs("chains") });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build enhanced gamma levels" });
     }
   });
@@ -2904,18 +2951,13 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         fetchAllVoices(),
         getOrBuild(false).catch(() => null),
       ]);
-      const liveMetrics = snap ? {
-        vix: snap.vol.vix.value ?? 0,
-        vvix: snap.vol.vvix.value ?? 0,
-        spy: snap.spy.price ?? 0,
-        skew: snap.vol.skew.value ?? 0,
-        pcr: snap.gamma.pcrOi ?? 0,
-      } : { vix: 0, vvix: 0, spy: 0, skew: 0, pcr: 0 };
-      for (const it of items) factCheckItem(it, liveMetrics);
+      const liveMetrics = liveMetricsFromSnapshot(snap);
+      for (const it of items) factCheckItem(it, factCheckMetrics(liveMetrics));
       voicesCache = {
         at: Date.now(),
         data: {
           voices, items, liveMetrics,
+          liveMetricsState: snap ? "ok" : "unavailable",
           xEnabled: xEnabled(),
           voicesBias: computeVoicesBias(items),
           capturedAt: Math.floor(Date.now() / 1000),
@@ -2959,6 +3001,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const pb = await buildDailyPlaybook(symbol);
       res.json(pb);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: String(e?.message || e) });
     }
   });
@@ -2981,6 +3024,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const pb = await lockPlaybookAtOpen(symbol);
       res.json(pb);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: String(e?.message || e) });
     }
   });
@@ -2993,6 +3037,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const drift = await getDriftFromLocked(symbol);
       res.json(drift);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: String(e?.message || e) });
     }
   });
@@ -3060,6 +3105,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const source = quotes.length > 0 ? quotes[0].source : "schwab";
       res.json({ quotes, source, asOf: Date.now() });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Quotes fetch failed" });
     }
   });
@@ -3074,6 +3120,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const data = await schwabGetPriceHistory(symbol, periodType, period, frequencyType, frequency);
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Price history failed" });
     }
   });
@@ -3095,6 +3142,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const gex = computeGEXFromChain(chain);
       res.json({ ...chain, gex });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Option chain fetch failed" });
     }
   });
@@ -3201,6 +3249,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       res.json(payload);
     } catch (e: any) {
       console.error("[chain-audit]", e?.message);
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "internal", message: e?.message ?? "Chain audit failed" });
     }
   });
@@ -3228,6 +3277,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       res.json({ symbol, greek, hours, points, stats });
     } catch (e: any) {
       console.error("[killbox/gradient]", e?.message);
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "internal", message: e?.message ?? "Killbox gradient failed" });
     }
   });
@@ -3448,6 +3498,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       });
     } catch (e: any) {
       console.error("[regime/headline]", e?.message, e?.stack);
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "internal", message: e?.message ?? "Regime headline failed" });
     }
   });
@@ -3668,6 +3719,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         source: chain.source,
       });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "server_error", message: e?.message || String(e) });
     }
   });
@@ -3929,6 +3981,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       });
     } catch (e: any) {
       console.error("[odte/forward]", e?.message);
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "internal", message: e?.message });
     }
   });
@@ -4123,6 +4176,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       });
     } catch (e: any) {
       console.error("[killbox/forward]", e?.message, e?.stack);
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "internal", message: e?.message ?? "Killbox forward failed" });
     }
   });
@@ -4218,6 +4272,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       res.json(result);
     } catch (e: any) {
       console.error("[heatseeker]", e?.message);
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "internal", message: e?.message ?? "Heatseeker failed" });
     }
   }));
@@ -4686,6 +4741,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const stack = await getMtfStack(symbol);
       res.json(stack);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "mtf_stack_failed", message: e?.message ?? String(e), stack: String(e?.stack ?? "").split("\n").slice(0, 6) });
     }
   });
@@ -4702,6 +4758,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const snap = await getRevExtSnapshot(symbol);
       res.json(snap);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "rev_ext_failed", message: e?.message ?? String(e), stack: String(e?.stack ?? "").split("\n").slice(0, 6) });
     }
   });
@@ -4733,6 +4790,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       } catch {}
       res.json(out);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "realtime_targets_failed", message: e?.message ?? String(e) });
     }
   });
@@ -5121,6 +5179,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       }
       res.json({ symbol, ...out });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "regime_predict_failed", message: e?.message ?? String(e) });
     }
   });
@@ -5869,6 +5928,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         ...out,
       });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ note: e?.message ?? "failed" });
     }
   });
@@ -5903,6 +5963,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         },
       });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ note: e?.message ?? "failed" });
     }
   });
@@ -5926,6 +5987,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const flag = flagTailEvent(todayReturn, recent);
       res.json({ todayReturn, ...flag });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ note: e?.message ?? "failed" });
     }
   });
@@ -5956,6 +6018,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         note: "shadow forecaster — not used in live calc; promote only after Brier-better-than-trivial across 30+ days",
       });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ note: e?.message ?? "failed" });
     }
   });
@@ -6059,6 +6122,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         inputs: { spot, probBull, probBase, probBear, oneDayEM, realizedSigma20d },
       });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ note: e?.message ?? "failed" });
     }
   });
@@ -6235,6 +6299,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         asOf: new Date().toISOString(),
       });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ ok: false, error: e?.message ?? "projection-spx failed" });
     }
   });
@@ -6347,6 +6412,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         asOf: new Date().toISOString(),
       });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ ok: false, error: e?.message ?? "projection-spy failed" });
     }
   });
@@ -6381,6 +6447,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const cone = await buildMultiDayCone(symbol);
       res.json(cone);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build multi-day cone" });
     }
   });

@@ -1,5 +1,6 @@
 import { vixToAtmPct } from "@shared/vol";
 import { etClock, sessionCloseMinutes } from "./exchangeCalendar";
+import { UpstreamUnavailableError } from "@shared/unavailable";
 /**
  * dailyPlaybook.ts
  *
@@ -145,14 +146,14 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
   let scale = 1;
   if (isSPX) {
     if (snap.spxSpot == null || !(snap.spxSpot > 0) || !(spyPx > 0)) {
-      throw new Error("SPX playbook unavailable: no Schwab $SPX quote to map SPY-chain levels");
+      throw new UpstreamUnavailableError("SPX playbook unavailable: no Schwab $SPX quote to map SPY-chain levels");
     }
     scale = snap.spxSpot / spyPx;
   }
   // Missing inputs make the playbook unavailable; they are never defaulted.
-  if (g.zeroGamma == null) throw new Error("Playbook unavailable: no gamma flip in the scanned range of the Schwab SPY chain");
+  if (g.zeroGamma == null) throw new UpstreamUnavailableError("Playbook unavailable: no gamma flip in the scanned range of the Schwab SPY chain");
   const vixIn = vol.vix?.value;
-  if (vixIn == null || !(vixIn > 0)) throw new Error("Playbook unavailable: VIX quote unavailable from Schwab");
+  if (vixIn == null || !(vixIn > 0)) throw new UpstreamUnavailableError("Playbook unavailable: VIX quote unavailable from Schwab");
 
   const spot = isSPX ? (snap.spxSpot as number) : spyPx;
   const callWall = g.callWall * scale;

@@ -44,7 +44,7 @@ type VoiceItem = {
 type VoicesResponse = {
   voices: VoiceMeta[];
   items: VoiceItem[];
-  liveMetrics: { vix: number; vvix: number; spy: number; skew: number; pcr: number };
+  liveMetrics: { vix: number | null; vvix: number | null; spy: number | null; skew: number | null; pcr: number | null };
   xEnabled?: boolean;
   voicesBias?: { score: number; sampleSize: number };
   capturedAt: number;
@@ -215,7 +215,7 @@ export default function VoicesPanel() {
               </div>
             )}
             <p className="mt-3 text-xs text-muted-foreground">
-              Weighted by analyst credibility × post data-density. {data.items.length} items scanned; fact-checked against live VIX {data.liveMetrics.vix?.toFixed(2)}, SPY ${data.liveMetrics.spy?.toFixed(2)}.
+              Weighted by analyst credibility × post data-density. {data.items.length} items scanned; fact-checked against live VIX {data.liveMetrics.vix != null ? data.liveMetrics.vix.toFixed(2) : "unavailable"}, SPY {data.liveMetrics.spy != null ? `$${data.liveMetrics.spy.toFixed(2)}` : "unavailable"}{data.liveMetrics.vix == null || data.liveMetrics.spy == null ? " (Schwab unavailable: numeric claims left unverified)" : ""}.
               {data.xEnabled && <span className="ml-1 rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary" data-testid="badge-x-live">X live</span>}
             </p>
           </CardContent>
