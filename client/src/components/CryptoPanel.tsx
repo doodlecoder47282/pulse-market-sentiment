@@ -4,6 +4,10 @@
 // but every number is real and every risk flag is shown. FOMO meter, narrative
 // heat chips, agent health strip with pulsing status dots, graded audit log.
 // Tracking mode is displayed loudly until calibration exists (n>=50 graded).
+// Sources (server/sources/registry.ts): BTC/ETH/SOL exchange-direct from
+// Coinbase Exchange + Kraken (cross-checked); DEX data from DexScreener with
+// a Jupiter price check; Bluesky and pump.fun (unofficial API) are labeled
+// low-grade attention proxies and are not in the score or verdict.
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -40,6 +44,8 @@ interface Candidate {
   volAccel: number | null; netBuyRatio5m: number | null;
   fomoScore: number | null; memeScore: number | null;
   narrativeHits: string[]; rugFlags: string[]; hardKill: boolean;
+  jupPriceUsd?: number | null; jupGapPct?: number | null; jupCheckedAt?: number | null;
+  jupState?: "agree" | "watch" | "diverge" | "no-reliable-price" | "failed" | "unchecked";
   score: number | null; verdict: Verdict; verdictReasons: string[];
   risk: {
     maxPositionUsd: number; suggestedStopPct: number; liquidityExitStopPct: number;
@@ -48,10 +54,34 @@ interface Candidate {
   } | null;
 }
 
+interface TradeFlow {
+  count: number; takerBuyShare: number | null; vwap: number | null; notionalUsd: number;
+  largestUsd: number | null; coveredSec: number; lastTradeMs: number | null;
+}
+interface VenueCell {
+  state: "ok" | "stale" | "failed"; mid: number | null; spreadBps: number | null; last: number | null;
+  lastTradeUtc: string | null; volume24h: number | null; flow: TradeFlow | null; error: string | null;
+}
+interface MajorRow {
+  asset: "BTC" | "ETH" | "SOL";
+  coinbase: VenueCell;
+  kraken: VenueCell & { vwap24h: number | null };
+  cross: { state: "agree" | "watch" | "diverge" | "single-source" | "unavailable"; divergenceBps: number | null; reference: number | null; note: string };
+  coingecko: { price: number | null; deviationBps: number | null; asOfUtc: string | null; label: string };
+}
+interface MajorsSnapshot {
+  asOf: number; state: "ok" | "partial" | "unavailable"; rows: MajorRow[]; note: string;
+  sources: Array<{ id: string; name: string; tier: string; state: "ok" | "partial" | "failed" | "not_configured"; fetchedAtUtc: string | null; error: string | null }>;
+}
+interface SourceLabel { id: string; name: string; tier: string; tierLabel: string; weakReason: string | null; feeds: string }
+
 interface FeedResp {
   asOf: number; trackedCount: number; candidates: Candidate[];
   narrativeHeat: Array<{ term: string; hits: number; sources: string[] }>;
   narrativeUpdatedAt: number | null;
+  narrativeSources?: Array<{ name: string; state: "ok" | "empty" | "failed"; titles: number; undated: number }>;
+  majors?: MajorsSnapshot | null;
+  sourceLabels?: SourceLabel[];
 }
 
 interface HealthResp {
@@ -99,6 +129,75 @@ const fmtAge = (min: number | null): string => {
 const pctCls = (v: number | null) =>
   v == null ? "text-muted-foreground" : v >= 0 ? "text-lime-400" : "text-rose-400";
 
+// ─── majors strip ───────────────────────────────────────────────────────
+
+const fmtPx = (v: number | null) =>
+  v == null ? "—" : v >= 1000 ? v.toLocaleString("en-US", { maximumFractionDigits: 0 }) : v.toLocaleString("en-US", { maximumFractionDigits: 2 });
+
+const CROSS_COLOR: Record<MajorRow["cross"]["state"], string> = {
+  agree: "text-emerald-300", watch: "text-amber-300", diverge: "text-rose-300", "single-source": "text-amber-300", unavailable: "text-rose-300",
+};
+
+function VenueLine({ name, v }: { name: string; v: VenueCell }) {
+  const f = v.flow;
+  return (
+    <div className="text-[9.5px] text-muted-foreground" title={v.error ?? undefined}>
+      <span className="font-semibold text-foreground/80">{name}</span>{" "}
+      {v.state === "failed" ? <span className="text-rose-300">failed</span>
+        : <>
+            <span className={v.state === "stale" ? "text-amber-300" : undefined}>{v.state === "stale" ? "stale · " : ""}mid {fmtPx(v.mid)}</span>
+            {v.spreadBps != null && <> · spr {v.spreadBps.toFixed(1)} bps</>}
+            {f && (f.count > 0
+              ? <> · taker buy {Math.round((f.takerBuyShare ?? 0) * 100)}% of {f.count} trades / {Math.round(f.coveredSec / 60)}m</>
+              : <> · 0 trades in window (observed)</>)}
+            {v.lastTradeUtc && <> · last {new Date(v.lastTradeUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</>}
+          </>}
+    </div>
+  );
+}
+
+function MajorsStrip({ majors, loaded }: { majors: MajorsSnapshot | null; loaded: boolean }) {
+  if (!loaded) return null;
+  if (!majors) {
+    return <div className="rounded-lg border border-border/50 p-2 text-[10px] text-muted-foreground">majors: first exchange read pending</div>;
+  }
+  return (
+    <div className="rounded-lg border border-border/50 bg-card/40 p-2.5" data-testid="crypto-majors">
+      <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[10px]">
+        <TrendingUp className="h-3.5 w-3.5 text-lime-400" />
+        <span className="font-semibold uppercase tracking-[0.15em]">majors · exchange-direct</span>
+        <span className={majors.state === "ok" ? "text-emerald-300" : majors.state === "partial" ? "text-amber-300" : "text-rose-300"}>{majors.state}</span>
+        {majors.sources.map((x) => (
+          <span key={x.id} className="text-muted-foreground" title={x.error ?? undefined}>
+            · {x.name} ({x.tier}) <span className={x.state === "ok" ? "text-emerald-300" : x.state === "not_configured" ? undefined : x.state === "partial" ? "text-amber-300" : "text-rose-300"}>{x.state === "not_configured" ? "not configured" : x.state}</span>
+          </span>
+        ))}
+      </div>
+      <div className="grid gap-2 md:grid-cols-3">
+        {majors.rows.map((r) => (
+          <div key={r.asset} className="rounded border border-border/40 p-2">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="font-mono text-sm font-bold">{r.asset}</span>
+              <span className="font-mono text-sm tabular-nums">{r.cross.reference != null ? `$${fmtPx(r.cross.reference)}` : "no reference"}</span>
+            </div>
+            <div className={`text-[9.5px] ${CROSS_COLOR[r.cross.state]}`}>
+              {r.cross.state}{r.cross.divergenceBps != null ? ` · ${r.cross.divergenceBps.toFixed(1)} bps` : ""} · {r.cross.note}
+            </div>
+            <VenueLine name="Coinbase" v={r.coinbase} />
+            <VenueLine name="Kraken" v={r.kraken} />
+            {r.coingecko.price != null && (
+              <div className="text-[9px] text-muted-foreground" title={r.coingecko.label}>
+                CoinGecko ref ${fmtPx(r.coingecko.price)}{r.coingecko.deviationBps != null ? ` (${r.coingecko.deviationBps >= 0 ? "+" : ""}${r.coingecko.deviationBps.toFixed(0)} bps)` : ""} · reference only
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 text-[9px] text-muted-foreground">{majors.note}. Taker flow from public trade prints; context, not a signal.</div>
+    </div>
+  );
+}
+
 // ─── main panel ─────────────────────────────────────────────────────────
 
 export default function CryptoPanel() {
@@ -138,6 +237,9 @@ export default function CryptoPanel() {
         </div>
       </div>
 
+      {/* BTC / ETH / SOL exchange-direct, cross-checked */}
+      <MajorsStrip majors={feed?.majors ?? null} loaded={!!feed} />
+
       {/* tracking-mode banner until the graded sample is large enough */}
       <TrackingBanner sig={sigQ.data} view={view} />
 
@@ -161,8 +263,16 @@ export default function CryptoPanel() {
           </span>
         ))}
         {(feed?.narrativeHeat ?? []).length === 0 && (
-          <span className="text-[10px] text-muted-foreground">warming up…</span>
+          <span className="text-[10px] text-muted-foreground">
+            {feed?.narrativeUpdatedAt == null ? "warming up…" : "no tracked terms in the last 24 h (observed)"}
+          </span>
         )}
+        {(feed?.narrativeSources ?? []).map((x) => (
+          <span key={x.name} className={`text-[9px] ${x.state === "failed" ? "text-rose-300" : "text-muted-foreground"}`}
+            title={`${x.name} RSS (publisher): ${x.titles} titles in 24 h${x.undated ? `, ${x.undated} undated ignored` : ""}`}>
+            · {x.name} {x.state === "ok" ? "ok" : x.state === "empty" ? "0 recent" : "failed"}
+          </span>
+        ))}
       </div>
 
       {/* view toggle */}
@@ -357,8 +467,11 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
             <Flame className={`h-2.5 w-2.5 ${(c.fomoScore ?? 0) >= 60 ? "text-orange-400" : "text-muted-foreground"}`} />
             fomo {Math.round(c.fomoScore ?? 0)}
           </span>
-          <span className={`${(c.socialScore ?? 0) >= 40 ? "text-fuchsia-300" : "text-muted-foreground"}`}>
-            social {c.socialScore != null ? Math.round(c.socialScore) : "—"}
+          <span
+            className={`${(c.socialScore ?? 0) >= 40 ? "text-fuchsia-300" : "text-muted-foreground"}`}
+            title="social attention proxy (Bluesky, pump.fun unofficial API): low grade, shown only, not in the score or verdict"
+          >
+            social (low-grade) {c.socialScore != null ? Math.round(c.socialScore) : "—"}
             {c.socialStatus && c.socialStatus !== "ok" && (
               <span className="ml-0.5 text-[9px] text-amber-300/80" title="social collection state — not zero attention">
                 {c.socialStatus}
@@ -446,10 +559,21 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
                 );
               })()}
               {c.socialCoverage && <span>· score over {c.socialCoverage}</span>}
+              <span className="text-amber-300/70">· attention proxy only (social media; pump.fun is an unofficial API), not in the score or verdict</span>
             </div>
           )}
           <p className="text-[9px] text-muted-foreground">
-            {c.dexId} · {c.chain} · via {c.discoveredVia} · pair {c.pairAddress.slice(0, 10)}…
+            price check · Jupiter{" "}
+            <span className={c.jupState === "diverge" || c.jupState === "no-reliable-price" ? "text-rose-300" : c.jupState === "agree" ? "text-emerald-300" : c.jupState === "watch" ? "text-amber-300" : undefined}>
+              {c.jupState === "agree" || c.jupState === "watch" || c.jupState === "diverge"
+                ? `${c.jupState} (${c.jupGapPct}% vs DexScreener)`
+                : c.jupState === "no-reliable-price" ? "has no reliable price for this mint"
+                : c.jupState === "failed" ? "request failed (not cross-checked)"
+                : "not checked yet"}
+            </span>
+          </p>
+          <p className="text-[9px] text-muted-foreground">
+            {c.dexId} · {c.chain} · via {c.discoveredVia} · pair {c.pairAddress.slice(0, 10)}… · data: DexScreener (aggregator API), Solana RPC, rugcheck
           </p>
         </div>
       )}
