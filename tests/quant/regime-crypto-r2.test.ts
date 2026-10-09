@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   mulberry32, neweyWestLRV, neweyWestLag, politisWhiteBlockLength, stationaryBootstrapIndices,
-  horizonZSeries, terminalRun, regimeZTest, ledoitWolf, standardizedComposite, toCorrelation,
+  horizonZSeries, terminalRun, regimeZTest, ledoitWolf, ledoitWolfConstantCorrelation, standardizedComposite, toCorrelation,
 } from "../../server/macroStats";
 
 function gauss(r: () => number): number {
@@ -105,4 +105,92 @@ test("regime null test is correctly sized on random walks and detects an injecte
   assert.equal(regimeZTest(r, 65, { seed: 1, reps: 199 })!.pZ, t.pZ);
   // not enough history -> null, never a fabricated z
   assert.equal(regimeZTest(r.slice(0, 80), 65), null);
+});
+
+// ─── 5.6 canary composite as a z-score ─────────────────────────────────────
+
+test("Ledoit-Wolf shrinkage: hand-computed case and Frobenius-loss improvement (seeded MC)", () => {
+  // Hand case (Ledoit & Wolf 2004, Sec. 3 estimators, divisor n, ||A||^2 = tr(AA')/p):
+  // X = {(2,0),(0,1),(-2,0),(0,-1)}: S = diag(2, 0.5), m = 1.25,
+  // d2 = (0.75^2 + 0.75^2)/2 = 0.5625, bbar2 = 4 * 2.125 / 16 = 0.53125,
+  // shrinkage = 0.53125 / 0.5625 = 0.94444..., S*11 = 1.291666..., S*22 = 1.208333...
+  const lw = ledoitWolf([[2, 0], [0, 1], [-2, 0], [0, -1]])!;
+  assert.ok(Math.abs(lw.shrinkage - 0.53125 / 0.5625) < 1e-12);
+  assert.ok(Math.abs(lw.cov[0][0] - 1.2916666666666667) < 1e-12);
+  assert.ok(Math.abs(lw.cov[1][1] - 1.2083333333333333) < 1e-12);
+  assert.equal(lw.cov[0][1], 0);
+  // MC: p = 6, n = 30, equicorrelation 0.3. LW must beat the sample
+  // covariance in average Frobenius loss (the paper's main result), and the
+  // intensity must fall toward 0 as n grows.
+  const p = 6, rho = 0.3;
+  const draw = (rand: () => number) => {
+    const f = gauss(rand);
+    return Array.from({ length: p }, () => Math.sqrt(rho) * f + Math.sqrt(1 - rho) * gauss(rand));
+  };
+  const truth = (i: number, j: number) => (i === j ? 1 : rho);
+  const rand = mulberry32(5);
+  const sampleCov = (X: number[][]) => {
+    const m = Array.from({ length: p }, (_, j) => X.reduce((a, r) => a + r[j], 0) / X.length);
+    return Array.from({ length: p }, (_, i) => Array.from({ length: p }, (_, j) =>
+      X.reduce((a, r) => a + (r[i] - m[i]) * (r[j] - m[j]), 0) / X.length));
+  };
+  let lossLW = 0, lossCC = 0, lossS = 0;
+  for (let rep = 0; rep < 300; rep++) {
+    const X = Array.from({ length: 30 }, () => draw(rand));
+    const S = sampleCov(X);
+    const est = ledoitWolf(X)!;
+    const cc = ledoitWolfConstantCorrelation(X)!;
+    assert.ok(cc.shrinkage >= 0 && cc.shrinkage <= 1);
+    for (let i = 0; i < p; i++) for (let j = 0; j < p; j++) {
+      lossLW += (est.cov[i][j] - truth(i, j)) ** 2;
+      lossCC += (cc.cov[i][j] - truth(i, j)) ** 2;
+      lossS += (S[i][j] - truth(i, j)) ** 2;
+    }
+  }
+  assert.ok(lossLW < lossS, `LW ${lossLW} vs sample ${lossS}`);
+  assert.ok(lossCC < lossS, `LW-CC ${lossCC} vs sample ${lossS}`);
+  // Constant-correlation target, hand case: with every pairwise correlation
+  // equal, F = S, gamma = 0 -> intensity 1 and S* = S.
+  const eq = ledoitWolfConstantCorrelation([[1, 1], [-1, -1], [1, 1], [-1, -1], [2, 2], [-2, -2]])!;
+  assert.ok(Math.abs(eq.mu - 1) < 1e-12);
+  const big = ledoitWolf(Array.from({ length: 5000 }, () => draw(rand)))!;
+  assert.ok(big.shrinkage < 0.05, `n=5000 shrinkage ${big.shrinkage}`);
+});
+
+test("canary composite: sum(w z)/sqrt(w'Rw) is N(0,1) under the null; closed-form limits", () => {
+  // Identity R, equal weights, all z = 1, k = 4: 4 / sqrt(4) = 2, effective N = 4.
+  const I4 = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]];
+  const a = standardizedComposite([1, 1, 1, 1], [1, 1, 1, 1], I4)!;
+  assert.equal(a.z, 2);
+  assert.equal(a.effectiveN, 4);
+  // Perfect correlation: the z equals the weighted mean, effective N = 1.
+  const ones = [[1, 1, 1], [1, 1, 1], [1, 1, 1]];
+  const b = standardizedComposite([1, 0.8, 1.1], [2, -1, 0.5], ones)!;
+  assert.ok(Math.abs(b.z - b.weightedMean) < 1e-12);
+  assert.ok(Math.abs(b.effectiveN - 1) < 1e-12);
+  // Seeded MC with the canary weights and equicorrelation 0.3: with R
+  // estimated by Ledoit-Wolf (constant-correlation target) from 126 days the
+  // composite has variance ~1,
+  // while the old weighted mean has variance w'Rw/(sum w)^2 (~0.42 here).
+  const w = [1.0, 1.0, 0.8, 0.9, 1.1, 0.5];
+  const p = w.length, rho = 0.3;
+  const rand = mulberry32(17);
+  const draw = () => {
+    const f = gauss(rand);
+    return Array.from({ length: p }, () => Math.sqrt(rho) * f + Math.sqrt(1 - rho) * gauss(rand));
+  };
+  const hist = Array.from({ length: 126 }, draw);
+  const R = toCorrelation(ledoitWolfConstantCorrelation(hist)!.cov);
+  let v = 0, vMean = 0;
+  const N = 6000;
+  for (let k = 0; k < N; k++) {
+    const r = standardizedComposite(w, draw(), R)!;
+    v += r.z * r.z;
+    vMean += r.weightedMean * r.weightedMean;
+  }
+  v /= N; vMean /= N;
+  assert.ok(Math.abs(v - 1) < 0.12, `composite variance ${v}`);
+  assert.ok(vMean < 0.55, `weighted-mean variance ${vMean}`);
+  // a 1.25 weighted-mean alarm was really about z = 1.25 / sqrt(vMean)
+  assert.ok(1.25 / Math.sqrt(vMean) > 1.7);
 });

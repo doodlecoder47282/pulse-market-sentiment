@@ -38,7 +38,11 @@
 //    well-conditioned estimator for large-dimensional covariance matrices",
 //    J. Multivariate Analysis 88(2):365-411,
 //    https://econpapers.repec.org/RePEc:eee:jmvana:v:88:y:2004:i:2:p:365-411),
-//    because 6 series over ~120 days is a small sample.
+//    because 6 series over ~120 days is a small sample. The canary uses the
+//    constant-correlation target (Ledoit & Wolf 2004, "Honey, I Shrunk the
+//    Sample Covariance Matrix", https://econ-papers.upf.edu/papers/691.pdf):
+//    shrinking positively correlated canaries toward independence would
+//    understate sqrt(w' R w) and inflate the composite.
 
 // ─── PRNG ──────────────────────────────────────────────────────────────────
 
@@ -324,7 +328,7 @@ export interface ShrunkCovariance {
   cov: number[][];
   /** shrinkage intensity toward mu * I, in [0, 1] */
   shrinkage: number;
-  /** scale of the identity target, trace(S) / p */
+  /** identity target: its scale trace(S) / p; constant-correlation target: the average correlation */
   mu: number;
   n: number;
   p: number;
@@ -362,6 +366,61 @@ export function ledoitWolf(X: number[][]): ShrunkCovariance | null {
   const shrinkage = d2 > 0 ? b2 / d2 : 1;
   const cov = S.map((row, i) => row.map((v, j) => shrinkage * (i === j ? m : 0) + (1 - shrinkage) * v));
   return { cov, shrinkage, mu: m, n, p };
+}
+
+/**
+ * Ledoit-Wolf shrinkage toward the CONSTANT-CORRELATION target ("Honey, I
+ * Shrunk the Sample Covariance Matrix", J. Portfolio Management 30(4) 2004,
+ * https://econ-papers.upf.edu/papers/691.pdf): F keeps each variance and sets
+ * every correlation to the average sample correlation rbar;
+ *   delta = max(0, min(1, (pi - rho) / gamma / n)),  S* = delta F + (1 - delta) S,
+ * with pi, rho (theta terms) and gamma as in the paper (divisor n). Unlike the
+ * identity target it does not pull a set of positively correlated signals
+ * toward independence, which would understate sqrt(w' R w) and inflate a
+ * composite z.
+ */
+export function ledoitWolfConstantCorrelation(X: number[][]): ShrunkCovariance | null {
+  const n = X.length;
+  if (n < 2) return null;
+  const p = X[0].length;
+  if (p < 2 || X.some((row) => row.length !== p || row.some((v) => !Number.isFinite(v)))) return null;
+  const means = new Array(p).fill(0);
+  for (const row of X) for (let j = 0; j < p; j++) means[j] += row[j] / n;
+  const Y = X.map((row) => row.map((v, j) => v - means[j]));
+  const S: number[][] = Array.from({ length: p }, () => new Array(p).fill(0));
+  for (const y of Y) for (let i = 0; i < p; i++) for (let j = 0; j < p; j++) S[i][j] += (y[i] * y[j]) / n;
+  const sd = S.map((row, i) => Math.sqrt(row[i]));
+  if (sd.some((v) => !(v > 0))) return null;
+  let rbar = 0;
+  for (let i = 0; i < p; i++) for (let j = i + 1; j < p; j++) rbar += S[i][j] / (sd[i] * sd[j]);
+  rbar *= 2 / (p * (p - 1));
+  const F = S.map((row, i) => row.map((v, j) => (i === j ? v : rbar * sd[i] * sd[j])));
+  let pi = 0;
+  const piDiag = new Array(p).fill(0);
+  for (let i = 0; i < p; i++) for (let j = 0; j < p; j++) {
+    let a = 0;
+    for (const y of Y) a += (y[i] * y[j] - S[i][j]) ** 2;
+    a /= n;
+    pi += a;
+    if (i === j) piDiag[i] = a;
+  }
+  let rho = piDiag.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < p; i++) for (let j = 0; j < p; j++) {
+    if (i === j) continue;
+    let tii = 0, tjj = 0;
+    for (const y of Y) {
+      const cij = y[i] * y[j] - S[i][j];
+      tii += (y[i] * y[i] - S[i][i]) * cij;
+      tjj += (y[j] * y[j] - S[j][j]) * cij;
+    }
+    tii /= n; tjj /= n;
+    rho += (rbar / 2) * ((sd[j] / sd[i]) * tii + (sd[i] / sd[j]) * tjj);
+  }
+  let gamma = 0;
+  for (let i = 0; i < p; i++) for (let j = 0; j < p; j++) gamma += (F[i][j] - S[i][j]) ** 2;
+  const shrinkage = gamma > 0 ? Math.max(0, Math.min(1, (pi - rho) / gamma / n)) : 1;
+  const cov = S.map((row, i) => row.map((v, j) => shrinkage * F[i][j] + (1 - shrinkage) * v));
+  return { cov, shrinkage, mu: rbar, n, p };
 }
 
 /** Covariance to correlation. */

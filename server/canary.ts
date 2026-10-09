@@ -17,6 +17,7 @@ import { sqlite } from "./storage";
 import { etClock, isRegularSessionOpen, REGULAR_OPEN_MIN, sessionMinutes } from "./exchangeCalendar";
 import { getQuotes, type NormalizedQuote } from "./schwab";
 import { postToDiscord } from "./discord";
+import { ledoitWolfConstantCorrelation, toCorrelation, standardizedComposite } from "./macroStats";
 
 // Partial-session variance scaling: intraday returns are compared against a
 // FULL-day σ, which understates |z| ~3.6× at 10:00 ET. Scale σ by the elapsed
@@ -55,7 +56,16 @@ export const CANARY_SYMBOLS = ["FXA", "FXY", "CPER", "GLD", "USO", "UUP", "HYG",
 const Z_WATCH = 1.0;
 const Z_SIGNAL = 1.5;
 const SPY_FLAT_FLOOR = -0.3;   // SPY z above this = "flat-to-up", divergence eligible
-const COMPOSITE_ALARM = 1.25;  // weighted composite risk-off pressure
+// The composite is a true z-score (finding 5.6): sum(w z) / sqrt(w' R w),
+// N(0,1) under the null. Thresholds are one-sided normal quantiles:
+// 1.645 = 5% (chirping / risk-on confirm), 1.96 = 2.5% (alarm). The old
+// weighted MEAN of correlated z's had sd well below 1, so its 1.25 alarm
+// was roughly z 1.9 at average canary correlation 0.3.
+const COMPOSITE_WATCH_Z = 1.645;
+const COMPOSITE_ALARM_Z = 1.96;
+// Correlation history for R: ~6 months of daily closes.
+const CORR_LOOKBACK_DAYS = 126;
+const CORR_MIN_DAYS = 60;
 
 // ── daily-bars helpers ──────────────────────────────────────────────────────
 
@@ -94,6 +104,60 @@ function dailyVol(series: number[]): number | null {
   return sd > 0 ? sd : null;
 }
 
+/** date -> close for a canary (single symbol, or numerator/denominator ratio). */
+function canaryCloseByDate(c: CanaryDef, n: number): Map<string, number> {
+  const out = new Map<string, number>();
+  if (c.legs.length === 1) {
+    for (const b of loadBars(c.legs[0], n)) if (b.close > 0) out.set(b.date, b.close);
+  } else {
+    const bm = new Map(loadBars(c.legs[1], n).map((x) => [x.date, x.close]));
+    for (const a of loadBars(c.legs[0], n)) {
+      const d = bm.get(a.date);
+      if (d && d > 0 && a.close > 0) out.set(a.date, a.close / d);
+    }
+  }
+  return out;
+}
+
+export interface CanaryCorrelation {
+  ids: string[];
+  /** Ledoit-Wolf shrunk correlation of daily risk-off-signed returns */
+  R: number[][];
+  days: number;
+  shrinkage: number;
+}
+
+/**
+ * Correlation of the canaries' daily risk-off-signed log returns over the
+ * last ~6 months, on dates where every canary has a return, shrunk with
+ * Ledoit-Wolf toward the constant-correlation target (keeps the average
+ * correlation, so the composite's sd is not understated), then rescaled to
+ * a correlation matrix.
+ * The crude "spike is also risk-off" rule is non-linear and is not in R
+ * (R uses the linear signed return); this is disclosed in the method label.
+ */
+function canaryCorrelation(): CanaryCorrelation | null {
+  const series = CANARIES.map((c) => canaryCloseByDate(c, CORR_LOOKBACK_DAYS + 1));
+  const dateSets = series.map((m) => Array.from(m.keys()).sort());
+  if (dateSets.some((d) => d.length < CORR_MIN_DAYS + 1)) return null;
+  const common = dateSets[0].filter((d) => series.every((m) => m.has(d)));
+  if (common.length < CORR_MIN_DAYS + 1) return null;
+  const X: number[][] = [];
+  for (let i = 1; i < common.length; i++) {
+    X.push(CANARIES.map((c, j) => c.riskOffSign * Math.log(series[j].get(common[i])! / series[j].get(common[i - 1])!)));
+  }
+  const p = CANARIES.length;
+  const sds = Array.from({ length: p }, (_, j) => {
+    const col = X.map((r) => r[j]);
+    const m = col.reduce((a, b) => a + b, 0) / col.length;
+    return Math.sqrt(col.reduce((a, b) => a + (b - m) ** 2, 0) / (col.length - 1));
+  });
+  if (sds.some((v) => !(v > 0))) return null;
+  const lw = ledoitWolfConstantCorrelation(X.map((r) => r.map((v, j) => v / sds[j])));
+  if (!lw) return null;
+  return { ids: CANARIES.map((c) => c.id), R: toCorrelation(lw.cov), days: X.length, shrinkage: lw.shrinkage };
+}
+
 // ── snapshot ────────────────────────────────────────────────────────────────
 
 export interface CanaryRow {
@@ -113,7 +177,11 @@ export interface CanarySnapshot {
   asOf: string;
   marketSession: boolean;      // ETFs trade RTH only — z's are live only in-session
   spy: { d1Pct: number | null; z: number | null };
-  composite: number | null;    // weighted risk-off pressure
+  composite: number | null;    // risk-off pressure as a z-score: sum(w z) / sqrt(w' R w)
+  compositeMethod: string;
+  compositeWeightedMean: number | null; // the old weighted mean, for reference (not a z)
+  compositeEffectiveN: number | null;   // (sum w)^2 / (w' R w): independent canaries' worth
+  correlation: { days: number; shrinkage: number } | null;
   read: "confirming_risk_on" | "quiet" | "canaries_chirping" | "divergence" | "alarm" | "no_data";
   headline: string;
   canaries: CanaryRow[];
@@ -194,9 +262,27 @@ export async function buildCanarySnapshot(): Promise<CanarySnapshot> {
 
   const valid = rows.filter(r => r.riskOffZ != null);
   let composite: number | null = null;
+  let compositeWeightedMean: number | null = null;
+  let compositeEffectiveN: number | null = null;
+  let compositeMethod = "insufficient canaries (need 3 with data)";
+  const corr = canaryCorrelation();
   if (valid.length >= 3) {
-    const wsum = valid.reduce((s, r) => s + r.weight, 0);
-    composite = +(valid.reduce((s, r) => s + (r.riskOffZ as number) * r.weight, 0) / wsum).toFixed(2);
+    const idx = valid.map(r => CANARIES.findIndex(c => c.id === r.id));
+    // With no usable history, assume perfect correlation (R = 1 1'): the
+    // composite then equals the weighted mean, whose sd is never above the
+    // true one, so alarms are not inflated. Labelled as such.
+    const R = corr
+      ? idx.map(i => idx.map(j => corr.R[i][j]))
+      : idx.map(() => idx.map(() => 1));
+    const res = standardizedComposite(valid.map(r => r.weight), valid.map(r => r.riskOffZ as number), R);
+    if (res) {
+      composite = +res.z.toFixed(2);
+      compositeWeightedMean = +res.weightedMean.toFixed(2);
+      compositeEffectiveN = +res.effectiveN.toFixed(2);
+      compositeMethod = corr
+        ? `z-score: sum(w z) / sqrt(w' R w), R = Ledoit-Wolf (constant-correlation target) shrunk correlation of ${corr.days} days of risk-off-signed daily returns (shrinkage ${corr.shrinkage.toFixed(2)}); crude spike rule not in R`
+        : "weighted mean (correlation history unavailable: R assumed all ones, conservative), not a calibrated z";
+    }
   }
 
   const divergers = rows.filter(r => r.diverging);
@@ -205,21 +291,21 @@ export async function buildCanarySnapshot(): Promise<CanarySnapshot> {
   let read: CanarySnapshot["read"] = "no_data";
   let headline = "insufficient data — canary bars still accumulating";
   if (composite != null) {
-    if (composite >= COMPOSITE_ALARM && offs.length >= 2 && spyZ != null && spyZ >= SPY_FLAT_FLOOR) {
+    if (composite >= COMPOSITE_ALARM_Z && offs.length >= 2 && spyZ != null && spyZ >= SPY_FLAT_FLOOR) {
       read = "alarm";
       headline = `ALARM — ${offs.length} canaries risk-off (${offs.map(r => r.id).join(", ")}) while SPX holds. Equity tape is the last to know.`;
     } else if (divergers.length >= 1) {
       read = "divergence";
       headline = `divergence — ${divergers.map(r => r.label).join(" + ")} signaling risk-off against a flat/up SPX. Watch, don't chase.`;
-    } else if (offs.length >= 1 || composite >= Z_WATCH) {
+    } else if (offs.length >= 1 || composite >= COMPOSITE_WATCH_Z) {
       read = "canaries_chirping";
-      headline = `chirping — risk-off pressure building (composite ${composite}) but SPX confirming lower too. Aligned, not divergent.`;
-    } else if (composite <= -Z_WATCH) {
+      headline = `chirping — risk-off pressure building (composite z ${composite}) but SPX confirming lower too. Aligned, not divergent.`;
+    } else if (composite <= -COMPOSITE_WATCH_Z) {
       read = "confirming_risk_on";
-      headline = `risk-on confirmed — canaries tailwind (composite ${composite}). Cross-asset agrees with the equity tape.`;
+      headline = `risk-on confirmed — canaries tailwind (composite z ${composite}). Cross-asset agrees with the equity tape.`;
     } else {
       read = "quiet";
-      headline = `quiet — composite ${composite}, nothing above ±1σ that matters. No cross-asset edge today.`;
+      headline = `quiet — composite z ${composite}, inside the one-sided 5% line (±${COMPOSITE_WATCH_Z}). No cross-asset edge today.`;
     }
   }
 
@@ -227,7 +313,9 @@ export async function buildCanarySnapshot(): Promise<CanarySnapshot> {
     asOf: new Date().toISOString(),
     marketSession: isRTH(),
     spy: { d1Pct: spyRet != null ? +(spyRet * 100).toFixed(2) : null, z: spyZ != null ? +spyZ.toFixed(2) : null },
-    composite, read, headline, canaries: rows,
+    composite, compositeMethod, compositeWeightedMean, compositeEffectiveN,
+    correlation: corr ? { days: corr.days, shrinkage: +corr.shrinkage.toFixed(3) } : null,
+    read, headline, canaries: rows,
   };
   snapCache = { at: Date.now(), data };
   return data;
