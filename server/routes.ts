@@ -344,7 +344,9 @@ async function buildSnapshot(): Promise<Snapshot_Public> {
   if (voicesCache?.data?.items) {
     voicesBias = computeVoicesBias(voicesCache.data.items);
   }
-  const composite = computeComposite(partial, voicesBias);
+  // Block weights estimated from stored gauge history once the sample gate passes (else hand-set, labelled).
+  const { getEstimatedGaugeWeights } = await import("./compositeWeights");
+  const composite = computeComposite(partial, voicesBias, getEstimatedGaugeWeights());
   const full: Snapshot_Public = { ...partial, composite };
   await storage.saveSnapshot({
     capturedAt: full.capturedAt,

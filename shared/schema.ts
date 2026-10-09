@@ -322,6 +322,10 @@ export interface Composite {
   takeaway: string;             // short human summary
   tradingRegime: string;        // "positive gamma / mean reversion", etc.
   method?: string;              // how gauges are weighted (heuristic, block-first)
+  /** "estimated" (HRP on gauge history, gate passed) or "heuristic" (hand-set) */
+  weightSource?: "estimated" | "heuristic";
+  /** effective number of independent gauges under the estimated weights; null when heuristic */
+  effectiveGauges?: number | null;
   /** Implied-vol + options-positioning blocks only (no social/survey/F&G): the only score allowed into price/path calculations. */
   marketScore?: number | null;
 }

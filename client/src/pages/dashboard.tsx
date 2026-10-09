@@ -679,7 +679,7 @@ export default function Dashboard() {
                 title={
                   <>
                     Signal Breakdown
-                    <span className="ml-2 text-xs font-normal text-muted-foreground">weighted components · 0 fear → 100 greed</span>
+                    <span className="ml-2 text-xs font-normal text-muted-foreground" title={composite.method ?? ""}>weighted components · 0 fear → 100 greed · weights {composite.weightSource === "estimated" ? `estimated (≈${composite.effectiveGauges} independent gauges)` : "hand-set heuristic"}</span>
                   </>
                 }
               >

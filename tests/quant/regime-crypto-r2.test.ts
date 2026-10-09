@@ -8,6 +8,9 @@ import {
   horizonZSeries, terminalRun, regimeZTest, ledoitWolf, ledoitWolfConstantCorrelation, standardizedComposite, toCorrelation,
 } from "../../server/macroStats";
 
+const near = (a: number, b: number, tol: number, msg = "") =>
+  assert.ok(Math.abs(a - b) <= tol, `${msg} expected ${b} +/- ${tol}, got ${a}`);
+
 function gauss(r: () => number): number {
   let u = 0;
   while (u === 0) u = r();
@@ -604,4 +607,55 @@ test("canary thresholds: composite close-to-close history and empirical percenti
   const m = hist.reduce((a, b) => a + b, 0) / hist.length;
   const sd = Math.sqrt(hist.reduce((a, b) => a + (b - m) ** 2, 0) / (hist.length - 1));
   assert.ok(sd > 1.05, `realized sd ${sd}`); // rolling-vol z of t(3) returns is wider than N(0,1)
+});
+
+test("sentiment weights: HRP on gauge history (known answer), sample gate, heuristic fallback labelled", async () => {
+  const { estimateGaugeWeights, computeComposite, WEIGHT_MIN_DAYS } = await import("../../server/composite");
+  // Independent daily changes, variances VIX 1, SKEW 4 (implied-vol block), PCR 2 (positioning).
+  // HRP with fixed clusters: within vol 1/1 : 1/4 -> 0.8 / 0.2, block var 0.64 + 0.04 * 4 = 0.8;
+  // between 1/0.8 : 1/2 -> 0.714 / 0.286. Effective weights 0.571, 0.143, 0.286;
+  // effective N = 1 / sum w^2 = 2.34 for independent gauges.
+  const rand = mulberry32(12);
+  const hist: Array<Record<string, number>> = [];
+  let a = 50, b = 50, c = 50;
+  for (let t = 0; t < 3001; t++) {
+    hist.push({ "VIX Level": a, "SKEW Index": b, "Put/Call OI (0-45 DTE)": c });
+    a += gauss(rand); b += 2 * gauss(rand); c += Math.SQRT2 * gauss(rand);
+  }
+  const r = estimateGaugeWeights(hist);
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  near(r.est.weights["VIX Level"], 0.8 / 1.4, 0.03, "VIX");
+  near(r.est.weights["SKEW Index"], 0.2 / 1.4, 0.02, "SKEW");
+  near(r.est.weights["Put/Call OI (0-45 DTE)"], 0.4 / 1.4, 0.03, "PCR");
+  near(r.est.effectiveN, 1 / ((0.8 / 1.4) ** 2 + (0.2 / 1.4) ** 2 + (0.4 / 1.4) ** 2), 0.15, "effective N");
+  // Two copies of one factor count about once: effective N falls toward 1 + PCR.
+  const dup = hist.map((h) => ({ ...h, "VVIX (Vol-of-Vol)": h["VIX Level"] * 1.0 }));
+  const r2 = estimateGaugeWeights(dup);
+  assert.ok(r2.ok && r2.est.effectiveN < r.est.effectiveN + 0.05, "a duplicated gauge adds ~no independent information");
+  // Sample gate: fewer than 60 daily changes -> not estimated, with the reason.
+  const short = estimateGaugeWeights(hist.slice(0, WEIGHT_MIN_DAYS - 10));
+  assert.equal(short.ok, false);
+  const base: any = {
+    vol: { vix: { value: 20 }, vvix: { value: null }, vix9d: { value: null }, vix3m: { value: null }, skew: { value: 140 } },
+    term: { ratio9dOver30d: null, ratio30dOver3m: null },
+    gamma: { totalGex: 1e9, regime: "positive", callWall: 0, putWall: 0, maxPain: 0, zeroGamma: null, pcrOi: 1, pcrVol: 1 },
+    social: { score: null, bullish: 0, bearish: 0, neutral: 0, posts: [], status: "unavailable" },
+    fearGreed: null, aaii: null, spy: { price: 1, prevClose: 1, changePct: 0 },
+  };
+  // Gate failed: hand-set weights, labelled heuristic, no method citation, no effective N.
+  const h = computeComposite(base, null, short);
+  assert.equal(h.weightSource, "heuristic");
+  assert.match(h.method ?? "", /heuristic hand-set/);
+  assert.doesNotMatch(h.method ?? "", /Lopez|Prado|risk parity/);
+  assert.equal(h.effectiveGauges, null);
+  // Gate passed but Dealer Gamma has no estimated weight -> heuristic (every gauge must be covered).
+  assert.equal(computeComposite(base, null, r).weightSource, "heuristic");
+  // Covered: estimated weights used, renormalized over the gauges present.
+  const est = { ok: true as const, est: { ...r.est, weights: { ...r.est.weights, "Dealer Gamma Regime": 0.2 } } };
+  const e = computeComposite(base, null, est);
+  assert.equal(e.weightSource, "estimated");
+  const tot = r.est.weights["VIX Level"] + r.est.weights["SKEW Index"] + r.est.weights["Put/Call OI (0-45 DTE)"] + 0.2;
+  near(e.gauges.find((g: any) => g.name === "VIX Level")!.weight, r.est.weights["VIX Level"] / tot, 1e-12);
+  assert.ok(e.effectiveGauges != null);
 });

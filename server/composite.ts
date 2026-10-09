@@ -7,18 +7,28 @@
  * SKEW are all reads of one implied-vol factor, and CNN Fear & Greed itself
  * contains VIX and the put/call ratio (2 of its 7 indicators,
  * https://edition.cnn.com/markets/fear-and-greed). Averaging them as if
- * independent gave the vol factor about half the score. Gauges are now
- * grouped into blocks and weighted hierarchically, block first, then within
- * the block (the cluster-first allocation of Lopez de Prado 2016, "Building
- * Diversified Portfolios that Outperform Out of Sample",
- * https://papers.ssrn.com/abstract=2708678): adding another vol gauge cannot
- * raise the vol factor's share. F&G's block weight is cut by its 2/7 overlap.
- * Block and intra-block weights are hand-set heuristics, not estimated: a
- * correlation-estimated weighting needs stored gauge history (the snapshots
- * table holds it) and is not fitted yet. The score is a heuristic sentiment
- * reading, not a probability.
+ * independent gave the vol factor about half the score. Gauges are grouped
+ * into blocks and weighted block first, then within the block, so adding
+ * another vol gauge cannot raise the vol factor's share.
+ *
+ * Two weight sources:
+ *  1. ESTIMATED (preferred): estimateGaugeWeights() on the daily history of
+ *     gauge sub-scores stored in the snapshots table. Hierarchical risk
+ *     parity with the blocks as fixed clusters (Lopez de Prado 2016,
+ *     "Building Diversified Portfolios that Outperform Out of Sample",
+ *     https://papers.ssrn.com/abstract=2708678): inverse-variance weights of
+ *     the daily sub-score changes within a block, then inverse block
+ *     variance between blocks, on a Ledoit-Wolf constant-correlation shrunk
+ *     covariance. Used only when the sample gate passes (>= 60 daily
+ *     changes on complete days). Reports the effective number of
+ *     independent gauges, (sum w)^2 / (w' R w).
+ *  2. HAND-SET (until the gate passes): fixed block weights below, labelled
+ *     a heuristic; F&G's block weight is cut by its 2/7 overlap. No method
+ *     citation is claimed for these numbers.
+ * The score is a heuristic sentiment reading, not a probability.
  */
 import type { Composite, Gauge, Snapshot_Public } from "@shared/schema";
+import { ledoitWolfConstantCorrelation } from "./macroStats";
 
 /** Clamp to 0..100. */
 const clamp = (v: number) => Math.max(0, Math.min(100, v));
@@ -48,6 +58,84 @@ export function blockWeights(gauges: Array<{ block: GaugeBlock; intra: number }>
     const v = intraSum.get(g.block) ?? 0;
     return v > 0 ? (BLOCK_WEIGHTS[g.block] / total) * (g.intra / v) : 0;
   });
+}
+
+// ─── Estimated weights from gauge history ─────────────────────────────────
+
+/** Gauge name -> block (names as computeComposite writes them). */
+export const GAUGE_BLOCK: Record<string, GaugeBlock> = {
+  "VIX Level": "implied-vol",
+  "VVIX (Vol-of-Vol)": "implied-vol",
+  "Term Structure (9D/30D)": "implied-vol",
+  "SKEW Index": "implied-vol",
+  "Put/Call OI (0-45 DTE)": "options-positioning",
+  "Dealer Gamma Regime": "options-positioning",
+  "Social Sentiment (StockTwits + Reddit)": "crowd",
+  "AAII Bull-Bear Spread": "crowd",
+  "Curated Voices Bias": "crowd",
+  "CNN Fear & Greed": "fear-greed",
+};
+
+export const WEIGHT_MIN_DAYS = 60;
+
+export interface EstimatedGaugeWeights {
+  method: "hrp-blocks";
+  /** daily sub-score changes used (complete days) */
+  days: number;
+  /** effective weight per gauge name, summing to 1 */
+  weights: Record<string, number>;
+  blockWeights: Partial<Record<GaugeBlock, number>>;
+  /** (sum w)^2 / (w' R w) with R the correlation of daily sub-score changes */
+  effectiveN: number;
+  gauges: string[];
+}
+
+/**
+ * HRP with fixed clusters on daily gauge sub-score CHANGES (levels are
+ * persistent and would show spurious correlation). `history` = one row per
+ * ET day, gauge name -> 0..100 sub-score (missing gauges absent). Gauges
+ * observed on fewer than WEIGHT_MIN_DAYS + 1 days are left out; the
+ * remaining gauges must share >= WEIGHT_MIN_DAYS complete day-to-day
+ * changes, otherwise the gate fails (ok: false with the reason).
+ */
+export function estimateGaugeWeights(
+  history: Array<Record<string, number>>,
+): { ok: true; est: EstimatedGaugeWeights } | { ok: false; reason: string; days: number } {
+  const names = Object.keys(GAUGE_BLOCK).filter((n) => history.filter((h) => Number.isFinite(h[n])).length >= WEIGHT_MIN_DAYS + 1);
+  if (names.length < 2) return { ok: false, reason: `fewer than 2 gauges with ${WEIGHT_MIN_DAYS + 1}+ days of history`, days: 0 };
+  const D: number[][] = [];
+  for (let t = 1; t < history.length; t++) {
+    const a = history[t - 1], b = history[t];
+    if (names.every((n) => Number.isFinite(a[n]) && Number.isFinite(b[n]))) D.push(names.map((n) => b[n] - a[n]));
+  }
+  if (D.length < WEIGHT_MIN_DAYS) return { ok: false, reason: `${D.length} complete daily changes (need ${WEIGHT_MIN_DAYS})`, days: D.length };
+  const lw = ledoitWolfConstantCorrelation(D);
+  if (!lw) return { ok: false, reason: "covariance not estimable (a gauge never changed)", days: D.length };
+  const S = lw.cov;
+  const blocks = Array.from(new Set(names.map((n) => GAUGE_BLOCK[n])));
+  const within: Record<string, number> = {};
+  const blockVar: Partial<Record<GaugeBlock, number>> = {};
+  for (const b of blocks) {
+    const idx = names.map((n, i) => (GAUGE_BLOCK[n] === b ? i : -1)).filter((i) => i >= 0);
+    const inv = idx.map((i) => 1 / S[i][i]);
+    const tot = inv.reduce((x, y) => x + y, 0);
+    const w = inv.map((v) => v / tot);
+    idx.forEach((i, k) => { within[names[i]] = w[k]; });
+    let v = 0;
+    for (let a = 0; a < idx.length; a++) for (let c = 0; c < idx.length; c++) v += w[a] * w[c] * S[idx[a]][idx[c]];
+    blockVar[b] = v;
+  }
+  const invB = blocks.map((b) => 1 / (blockVar[b] as number));
+  const totB = invB.reduce((x, y) => x + y, 0);
+  const bw: Partial<Record<GaugeBlock, number>> = {};
+  blocks.forEach((b, k) => { bw[b] = invB[k] / totB; });
+  const weights: Record<string, number> = {};
+  for (const n of names) weights[n] = (bw[GAUGE_BLOCK[n]] as number) * within[n];
+  const sd = names.map((_, i) => Math.sqrt(S[i][i]));
+  const wv = names.map((n) => weights[n]);
+  let q = 0;
+  for (let i = 0; i < names.length; i++) for (let j = 0; j < names.length; j++) q += wv[i] * wv[j] * S[i][j] / (sd[i] * sd[j]);
+  return { ok: true, est: { method: "hrp-blocks", days: D.length, weights, blockWeights: bw, effectiveN: 1 / q, gauges: names } };
 }
 
 /**
@@ -128,6 +216,7 @@ function socialScore(s: number): number {
 export function computeComposite(
   snap: Omit<Snapshot_Public, "composite">,
   voicesBias?: { score: number; sampleSize: number } | null,
+  estimated?: { ok: true; est: EstimatedGaugeWeights } | { ok: false; reason: string; days: number } | null,
 ): Composite {
   // `weight` here is the INTRA-block weight; blockWeights() turns it into
   // the effective composite weight below.
@@ -282,8 +371,22 @@ export function computeComposite(
 
   // Hierarchical (block-first) weights; blocks with no gauge drop out and the
   // rest renormalize. Each gauge's `weight` becomes its effective share.
-  const eff = blockWeights(gauges.map((g) => ({ block: g.block, intra: g.weight })));
+  // Estimated weights when the gate passed and they cover every present
+  // gauge; otherwise the hand-set heuristic.
+  const est = estimated && estimated.ok ? estimated.est : null;
+  const useEst = !!est && gauges.length > 0 && gauges.every((g) => Number.isFinite(est.weights[g.name]) && est.weights[g.name] > 0);
+  let eff: number[];
+  if (useEst) {
+    const raw = gauges.map((g) => est!.weights[g.name]);
+    const tot = raw.reduce((a, b) => a + b, 0);
+    eff = raw.map((v) => v / tot);
+  } else {
+    eff = blockWeights(gauges.map((g) => ({ block: g.block, intra: g.weight })));
+  }
   gauges.forEach((g, i) => { g.weight = eff[i]; });
+  const weightNote = useEst
+    ? `estimated: hierarchical risk parity on ${est!.days} days of gauge sub-score changes (blocks as clusters, Ledoit-Wolf shrunk covariance); about ${est!.effectiveN.toFixed(1)} independent gauges`
+    : `heuristic hand-set block weights (implied vol 30%, options positioning 30%, crowd 25%, CNN F&G 15% x 5/7 for its VIX and put/call overlap)${estimated && !estimated.ok ? `; estimated weights not used: ${estimated.reason}` : est ? "; estimated weights not used: a present gauge has no estimated weight" : ""}`;
   const totalW = eff.reduce((a, b) => a + b, 0);
   const score = totalW ? Math.round(gauges.reduce((a, g) => a + g.value * g.weight, 0) / totalW) : 50;
 
@@ -314,7 +417,9 @@ export function computeComposite(
 
   return {
     score, label, gauges, takeaway, tradingRegime, marketScore,
-    method: "heuristic: block-weighted (implied vol 30%, options positioning 30%, crowd 25%, CNN F&G 15% x 5/7 for its VIX and put/call overlap); weights renormalize over the blocks present; not a probability",
+    method: `${weightNote}; weights renormalize over the gauges present; a heuristic reading, not a probability`,
+    weightSource: useEst ? "estimated" : "heuristic",
+    effectiveGauges: useEst ? +est!.effectiveN.toFixed(2) : null,
   };
 }
 
