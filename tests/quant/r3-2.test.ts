@@ -10,6 +10,7 @@ import {
   isFreshChain, seriesFrom, shouldAppendSample,
 } from "../../server/flowIntradayState";
 import { volumeOverOiShare, fullyOpeningShare, fullyOpeningFromShare, openingText } from "../../server/flowIntent";
+import { buildDailyPlaybook, computeSqueezeIndicator, playbookBiasPoints } from "../../server/playbook";
 import { ofiApiPayload, ofiMethodLabel, type OfiTrendLike } from "../../server/ofiPayload";
 import {
   leeReadySign, classifyL1Trades, OptionTradeSideBook, summarizeStreamSide, optionKey,
@@ -230,4 +231,64 @@ test("R3-2.5 opening-side bound V - OI and fully-opening bound V - 2 OI (hand-co
   assert.match(txt, /with an opening side >= 93% of vol; fully opening >= 87%/);
   assert.match(txt, /which side opened is unknown/);
   assert.equal(openingText(0), "volume within prior-day OI: may be closing");
+});
+
+// ─── Item 6: playbook is descriptive, market-only, honest about missing VIX ─
+
+const gammaFix = (regime: "positive" | "negative" | "neutral") => ({
+  callWall: 600, putWall: 580, callWallGex: 1e9, putWallGex: -1e9, zeroGamma: 588, regime,
+  totalGex: regime === "positive" ? 2e9 : regime === "negative" ? -2e9 : 0, maxPain: 590, pcrOi: 1.2,
+  profile: [], gammaProfile: [], gexCrossoverStrike: null,
+}) as any;
+const vixOk = { value: 18, changePct: 1 } as any;
+const vixMissing = { value: null, changePct: null } as any;
+const sq = (direction: "up" | "down" | "neutral") => ({ score: 0, probability: 30, direction, label: "", triggers: [], riskFactors: [], timeHorizon: "" });
+
+test("R3-2.6 bias points: missing VIX / term ratio / market score add nothing (not VIX 0, not ratio 1.00)", () => {
+  // marketScore 65 (+2 bull), positive gamma (+2 bull), squeeze up (+2 bull), ratio 0.90 (+1 bull) = 7 / 0.
+  const full = playbookBiasPoints({ marketScore: 65, gamma: gammaFix("positive"), squeeze: sq("up"), term: { ratio9dOver30d: 0.9 } as any, vix: vixOk });
+  assert.deepEqual([full.bullPts, full.bearPts], [7, 0]);
+  assert.deepEqual(full.unavailable, []);
+  // VIX 30 (+1 bear), ratio 1.10 (+1 bear), marketScore 35 (+2 bear), negative gamma (+2 bear) = 0 / 6.
+  const bear = playbookBiasPoints({ marketScore: 35, gamma: gammaFix("negative"), squeeze: sq("neutral"), term: { ratio9dOver30d: 1.1 } as any, vix: { value: 30, changePct: 4 } as any });
+  assert.deepEqual([bear.bullPts, bear.bearPts], [0, 6]);
+  const miss = playbookBiasPoints({ marketScore: null, gamma: gammaFix("neutral"), squeeze: sq("neutral"), term: { ratio9dOver30d: null } as any, vix: vixMissing });
+  assert.deepEqual([miss.bullPts, miss.bearPts], [0, 0]);
+  assert.deepEqual(miss.unavailable, ["market composite", "VIX", "VIX 9D/30D ratio"]);
+  assert.equal(miss.v, null);
+  assert.equal(miss.termRatio, null);
+});
+
+test("R3-2.6 playbook text: no structure / size advice; missing VIX says unavailable", () => {
+  const banned = /iron condor|call spread|put hedge|debit spread|size half|reduce position size|widen stops|protect longs|rallies are for sale|lean long|fade pullbacks|size down/i;
+  for (const regime of ["positive", "negative", "neutral"] as const) {
+    for (const dir of ["up", "down", "neutral"] as const) {
+      const pb = buildDailyPlaybook({
+        spot: 590, gamma: gammaFix(regime), pivots: null, term: { ratio9dOver30d: 1.0 } as any,
+        vix: { value: 28, changePct: 6 } as any, marketScore: 50, squeeze: { ...sq(dir), probability: 70, score: dir === "up" ? 40 : dir === "down" ? -40 : 0 },
+      });
+      const text = [pb.headline, pb.summary, ...pb.gameplan].join(" | ");
+      assert.doesNotMatch(text, banned, `${regime}/${dir}: ${text}`);
+    }
+  }
+  const pb = buildDailyPlaybook({
+    spot: 590, gamma: gammaFix("positive"), pivots: null, term: { ratio9dOver30d: null } as any,
+    vix: vixMissing, marketScore: null, squeeze: sq("neutral"),
+  });
+  assert.match(pb.summary, /VIX unavailable/);
+  assert.match(pb.summary, /term ratio unavailable/);
+  assert.match(pb.summary, /Market-only composite unavailable/);
+  assert.doesNotMatch(pb.summary, /VIX at 0\.00|ratio 1\.000/);
+  assert.deepEqual(pb.unavailableInputs, ["market composite", "VIX", "VIX 9D/30D ratio"]);
+});
+
+test("R3-2.6 squeeze: missing VIX / term ratio do not fire rules and are listed as unavailable", () => {
+  const base = { spot: 590, gamma: gammaFix("neutral"), vvix: { value: null } as any, skew: { value: null } as any };
+  const s1 = computeSqueezeIndicator({ ...base, term: { ratio9dOver30d: null } as any, vix: vixMissing });
+  assert.ok(s1.riskFactors.some((r) => /VIX level or change unavailable/.test(r)));
+  assert.ok(s1.riskFactors.some((r) => /term ratio unavailable/.test(r)));
+  assert.ok(!s1.triggers.some((t) => /VIX \d/.test(t)));
+  // Same book with VIX 14 falling 5 %: the compression rule fires (+10 up fuel).
+  const s2 = computeSqueezeIndicator({ ...base, term: { ratio9dOver30d: 1.0 } as any, vix: { value: 14, changePct: -5 } as any });
+  assert.equal(s2.score - s1.score, 10);
 });
