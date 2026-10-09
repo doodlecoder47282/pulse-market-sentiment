@@ -16,8 +16,18 @@
 //      option-P&L ledger (odteGrader), b and L from the same ledger. The
 //      point win rate is used only once a bucket has 385 graded fires.
 //      Fractional Kelly capped at one half.
-//   4) Conviction tier scales the envelope by grade band.
-// The smallest of the four wins.
+//   4) Gap cap: full premium + fees if the option gaps to zero <= account x
+//      maxGapLossPct (default and ceiling 5%).
+//   5) Conviction tier scales the envelope by grade band.
+// The smallest wins.
+//
+// GRADE GATE (review item 6.4; the Field Manual "trade-desk" entry in
+// client/src/components/EdgeInfo.tsx states the same rule — keep them in sync):
+//   grade < FIRE_GATE (= odteAlertEngine.MIN_FIRE_SCORE = 72, letter B-): no size.
+//   tier multiplier on the envelope:
+//     72-79 -> 0.50   80-84 -> 0.70   85-94 -> 0.85   95+ -> 1.00
+// The old Field Manual said grades below 80 are rejected; the code has sized
+// from 72 at half size since Wire 16, and that is the documented rule now.
 //
 // Units: entryPrice and stopPrice are $ per share (premium as quoted); one
 // contract = 100 x that. Dollar outputs are for the whole position.

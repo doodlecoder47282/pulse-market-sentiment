@@ -15,7 +15,7 @@
 // Engineering contract (preserved from prior segments):
 //   - try/catch wrapped, fail silently
 //   - never modifies existing calcs (signals/regime/dfi/models/composite)
-//   - read-only observer over buildUnusualFlow output
+//   - read-only observer over buildSchwabFlow output (Schwab chain only)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { buildSchwabFlow, type SchwabFlowContract } from "./schwabFlow";
@@ -31,6 +31,7 @@ import { getRegimeSnapshot } from "./regimeStateCache";
 import { regimeConvictionMultiplier } from "./edgeStats";
 import { logWhaleAlertPrediction } from "./outcomeLogger";
 import { isRegularSessionOpen } from "./exchangeCalendar";
+import { directionScore, volumeOverOiShare } from "./flowIntent";
 
 // Fire-once Discord poster for UOA. Posts the exact cluster returned by ingestContract.
 // It used to look up "any cluster for this ticker fired in the last 10 s", which posted
@@ -113,12 +114,16 @@ export interface WhaleHit {
   // MISSION FIX #5 — transaction-intent classification. A $2.5M block is not
   // automatically directional conviction: it can be closing, rolling, a spread
   // leg, or a hedge. These fields turn the binary bull/bear tag into a
-  // probabilistic read. All heuristic (no trade-condition codes on the feed),
-  // disclosed as such, and additive — nothing gates on them.
-  openingProb?: number;            // 0..1 — P(this is opening positioning), from vol-vs-OI
+  // read. No trade-condition codes or open/close flags on the feed; additive,
+  // nothing gates on them (review item 4.6, flowIntent.ts).
+  /** @deprecated hand-set "opening probability"; no longer written (null in new rows). */
+  openingProb?: number;
+  /** max(0, 1 - priorDayOI / volume): lower bound on the opening share of today's volume if nothing was opened and closed again today. */
+  volumeOverOiShare?: number | null;
   spreadLegLikely?: boolean;       // same-scan sibling contract on the same expiry
   incrementalPremium?: number;     // $ premium since the previous scan (delta-volume based)
-  directionalConfidence?: number;  // 0..1 — opening prob x aggressor clarity x spread discount
+  /** Heuristic direction SCORE 0..1 (not a probability): volumeOverOiShare x last-print clarity x spread-leg discount, hand-set factors. */
+  directionalConfidence?: number;
 }
 
 export interface FlowSnapshot {
@@ -230,23 +235,6 @@ function pruneVolMemory(now: number): void {
   for (const [k, v] of volMemory) if (now - v.ts > VOL_MEMORY_TTL) volMemory.delete(k);
 }
 
-/** P(opening) from volume-vs-OI structure. Heuristic, disclosed. */
-function openingProbability(c: SchwabFlowContract): number {
-  if (c.isNewStrike && c.openInterest === 0) return 0.92;      // nothing to close
-  if (c.volOiRatio >= 8) return 0.85;                          // volume dwarfs existing OI
-  if (c.volOiRatio >= 4) return 0.75;
-  if (c.volOiRatio >= 2) return 0.65;
-  if (c.volOiRatio >= 1) return 0.50;                          // could be closing existing
-  return 0.35;                                                 // volume < OI — closing risk high
-}
-
-/** Aggressor clarity: ask-side lift or bid-side hit = clear; mid prints = murky. */
-function aggressorClarity(tag: string): number {
-  if (tag === "ABOVE_ASK" || tag === "AT_ASK") return 0.9;
-  if (tag === "BELOW_BID" || tag === "AT_BID") return 0.9;
-  return 0.55;
-}
-
 /** Compute intent fields for a batch of hits from one ticker scan.
  *  Spread detection: two same-expiry contracts firing in the same scan with
  *  notional within 2.5x of each other reads as a spread/roll structure. */
@@ -264,15 +252,16 @@ function classifyIntent(hits: WhaleHit[], contracts: SchwabFlowContract[], now: 
     }
     volMemory.set(h.occ, { volume: c.volume, ts: now });
 
-    h.openingProb = openingProbability(c);
+    // Opening share bound from today's volume vs prior-day OI (flowIntent.ts),
+    // replacing the hand-set 0.92/0.85/0.75 "probabilities".
+    h.volumeOverOiShare = volumeOverOiShare(c.volume, c.openInterest);
     // Same-expiry sibling in this same batch = likely spread leg or roll
     h.spreadLegLikely = hits.some(
       (o) => o !== h && o.expiration === h.expiration
         && Math.max(o.premium, h.premium) / Math.max(1, Math.min(o.premium, h.premium)) <= 2.5,
     );
-    const clarity = aggressorClarity(h.tag);
-    const spreadDiscount = h.spreadLegLikely ? 0.5 : 1.0;
-    h.directionalConfidence = Number((h.openingProb * clarity * spreadDiscount).toFixed(2));
+    const score = directionScore(h.volumeOverOiShare ?? null, h.tag, !!h.spreadLegLikely);
+    if (score != null) h.directionalConfidence = score;
   }
 }
 

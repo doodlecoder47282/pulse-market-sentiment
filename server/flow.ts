@@ -11,13 +11,16 @@
 //
 // Ratio convention:
 //   pcr = totalPutVolume / totalCallVolume
-//   pcr > 1.05 → bearish / hedging pressure
-//   pcr < 0.75 → bullish / call-heavy
+// Zones are NOT fixed cut-offs: each symbol's ratio is z-scored against its
+// own Schwab history at the same clock time (pcrHistory.ts, review item 4.5,
+// SF-5); without 20 recorded sessions the zone is "insufficient_history".
 //
 // Source rows: schwabChainRows.flattenSchwabChain (side, volume, OI, bid, ask, last).
 
 import { LAST_PRINT_SIDE_NOTE } from "@shared/flowLabels";
-import { etDate, isRegularSessionOpen, sessionCloseMinutes } from "./exchangeCalendar";
+import { etDate, isRegularSessionOpen, isTradingDay, sessionCloseMinutes, sessionCloseMs, sessionOpenMs } from "./exchangeCalendar";
+import { pcrReadAtClock, type PcrRead, type PcrZone } from "./pcrHistory";
+import { loadPcrSessions, recordPcrSnapshot, sessionMinuteOf } from "./pcrHistoryStore";
 
 import { flattenSchwabChain, chainVolumeTotals, chainSpot, type FlatContract } from "./schwabChainRows";
 
@@ -35,7 +38,10 @@ export type FlowTicker = {
   pcrVolume: number | null;
   pcrOI: number | null;
   changeFromOpen: number | null;
-  zone: "bullish" | "neutral" | "bearish";
+  /** Zone vs this symbol's own history (pcrHistory.ts); never a fixed cut-off. */
+  zone: PcrZone;
+  /** z-score detail behind `zone` (added; absent until attachPcrHistory runs). */
+  pcrRead?: PcrRead;
   asOf: number;
   /** "ok" = Schwab chain read (zeros are observed zeros); "unavailable" = no chain: volumes are not observed. */
   dataState?: "ok" | "unavailable";
@@ -54,7 +60,8 @@ export type FlowResponse = {
     indexPcr: number | null;
     mag7Pcr: number | null;
     combinedPcr: number | null;
-    zone: "bullish" | "neutral" | "bearish";
+    zone: PcrZone;
+    pcrRead?: PcrRead;
   };
   intradaySeries: {
     t: number;
@@ -92,11 +99,10 @@ async function flowChain(chainSymbol: string) {
   return "error" in chain ? null : chain;
 }
 
-function zoneFor(pcr: number | null): "bullish" | "neutral" | "bearish" {
-  if (pcr == null) return "neutral";
-  if (pcr > 1.05) return "bearish";
-  if (pcr < 0.75) return "bullish";
-  return "neutral";
+// Placeholder until attachPcrHistory z-scores the ratio against the symbol's
+// own history: missing volume is "unavailable", never "neutral".
+function zoneFor(pcr: number | null): PcrZone {
+  return pcr == null ? "unavailable" : "insufficient_history";
 }
 
 async function fetchTickerFlow(
@@ -520,6 +526,61 @@ function mean(nums: (number | null)[]): number | null {
   return xs.reduce((a, b) => a + b, 0) / xs.length;
 }
 
+// ─── Per-symbol P/C history (review item 4.5, SF-5) ─────────────────────────
+// Records each symbol's cumulative day volume (0-FLOW_DTE chains) from Schwab
+// snapshots per 30-minute bucket and replaces every zone with a z-score
+// against that symbol's own history at the same clock time. Only chains that
+// were read and are not stale are recorded; an unavailable chain is neither
+// recorded nor zoned (zone "unavailable").
+const PCR_COMBINED_KEY = "__COMBINED";
+
+export function attachPcrHistory(resp: FlowResponse, nowMs: number = Date.now()): FlowResponse {
+  const today = etDate(nowMs);
+  // Minute of today's session; outside the session the full-day value is compared.
+  const at = sessionMinuteOf(nowMs);
+  const minute = at && at.date === today ? at.minute : 24 * 60;
+  const readFor = (key: string, putVol: number, callVol: number, observed: boolean): PcrRead => {
+    if (observed) recordPcrSnapshot({ symbol: key, putVol, callVol, provider: resp.provider, capturedAtMs: nowMs });
+    return pcrReadAtClock(observed ? { putVol, callVol } : null, minute, loadPcrSessions(key, today), { today });
+  };
+  for (const t of [...resp.indexGroup, ...resp.mag7Group]) {
+    const observed = t.dataState === "ok" && !t.chainStale && t.putVol + t.callVol > 0;
+    const r = readFor(t.symbol, t.putVol, t.callVol, observed);
+    t.pcrRead = r;
+    t.zone = r.zone;
+  }
+  let puts = 0, calls = 0;
+  let allRead = true;
+  for (const t of [...resp.indexGroup, ...resp.mag7Group]) {
+    if (t.symbol === "^VIX") continue;
+    if (t.dataState !== "ok" || t.chainStale) { allRead = false; continue; }
+    puts += t.putVol || 0; calls += t.callVol || 0;
+  }
+  // The combined history is only comparable when every constituent was read.
+  const r = readFor(PCR_COMBINED_KEY, puts, calls, allRead && resp.aggregate.combinedPcr != null && puts + calls > 0);
+  resp.aggregate.pcrRead = r;
+  resp.aggregate.zone = r.zone;
+  ensurePcrCloseRecorder();
+  return resp;
+}
+
+// Every 30-minute bucket must be captured even when nobody has the panel
+// open: a deterministic timer (no AI) rebuilds the snapshot every 10 minutes
+// from the open to 15 minutes after the close on trading days.
+let pcrRecorder: ReturnType<typeof setInterval> | null = null;
+function ensurePcrCloseRecorder(): void {
+  if (pcrRecorder) return;
+  pcrRecorder = setInterval(() => {
+    const now = Date.now();
+    const d = etDate(now);
+    const close = isTradingDay(d) ? sessionCloseMs(d) : null;
+    const open = close != null ? sessionOpenMs(d) : null;
+    if (close == null || open == null || now < open || now > close + 15 * 60_000) return;
+    buildFlowSnapshot().catch((e: any) => console.warn(`[flow] P/C record failed: ${e?.message ?? e}`));
+  }, 10 * 60_000);
+  (pcrRecorder as any).unref?.();
+}
+
 export async function buildFlowSnapshot(): Promise<FlowResponse> {
   const warnings: string[] = [];
 
@@ -563,7 +624,7 @@ export async function buildFlowSnapshot(): Promise<FlowResponse> {
     warnings.push("Intraday aggregate unavailable for at least one group.");
   }
 
-  return {
+  return attachPcrHistory({
     provider: "schwab",
     coverage: `Schwab option chains, expiries 0-${FLOW_DTE} calendar days, strikes within the requested window around spot (at least +-10%); a near-dated put/call ratio, not all listed expiries.`,
     indexGroup,
@@ -577,5 +638,5 @@ export async function buildFlowSnapshot(): Promise<FlowResponse> {
     intradaySeries: [...intradayRing],
     warnings,
     asOf: Math.floor(Date.now() / 1000),
-  };
+  });
 }

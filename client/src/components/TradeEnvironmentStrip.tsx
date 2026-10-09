@@ -2,7 +2,8 @@
  * TradeEnvironmentStrip — the fused "should I be trading right now" banner.
  * Renders directly under the regime headline on every tab. Collapsed: state
  * chip + convexity index + one-liner. Tap to expand the seven drivers and
- * concrete instructions.
+ * context notes. The index is a heuristic composite (hand-set points), not a
+ * forecast, and gives no entry or size.
  */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -15,10 +16,11 @@ type EnvDriver = {
   points: number;
   max: number;
   note: string;
+  dataState?: "ok" | "unavailable";
 };
 
 type TradeEnv = {
-  state: "STAND_DOWN" | "CHOP" | "NORMAL" | "LOADED" | "STRIKE";
+  state: "STAND_DOWN" | "CHOP" | "NORMAL" | "LOADED" | "STRIKE" | "PARTIAL" | "UNAVAILABLE";
   score: number;
   headline: string;
   instructions: string[];
@@ -26,6 +28,8 @@ type TradeEnv = {
   session: string;
   asOf: number;
   degraded: boolean;
+  label?: string;
+  calibration?: { status: string; sessions: number; windows: number; minSessions: number; minWindows: number; note: string };
 };
 
 const STATE_STYLE: Record<TradeEnv["state"], { chip: string; bar: string; label: string }> = {
@@ -34,6 +38,8 @@ const STATE_STYLE: Record<TradeEnv["state"], { chip: string; bar: string; label:
   NORMAL:     { chip: "bg-sky-950/60 text-sky-400 border-sky-900", bar: "bg-sky-500", label: "NORMAL" },
   LOADED:     { chip: "bg-orange-950/60 text-orange-400 border-orange-800", bar: "bg-orange-500", label: "LOADED" },
   STRIKE:     { chip: "bg-rose-950/70 text-rose-300 border-rose-800 animate-pulse", bar: "bg-rose-500", label: "STRIKE" },
+  PARTIAL:    { chip: "bg-slate-900 text-amber-300 border-amber-700 border-dashed", bar: "bg-amber-700", label: "PARTIAL" },
+  UNAVAILABLE: { chip: "bg-slate-900 text-slate-500 border-slate-700 border-dashed", bar: "bg-slate-700", label: "UNAVAILABLE" },
 };
 
 export default function TradeEnvironmentStrip() {
@@ -44,7 +50,7 @@ export default function TradeEnvironmentStrip() {
   });
 
   if (!data) return null;
-  const st = STATE_STYLE[data.state] ?? STATE_STYLE.NORMAL;
+  const st = STATE_STYLE[data.state] ?? STATE_STYLE.UNAVAILABLE;
 
   return (
     <div
@@ -67,8 +73,17 @@ export default function TradeEnvironmentStrip() {
           <span className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-800">
             <span className={`block h-full ${st.bar}`} style={{ width: `${data.score}%` }} />
           </span>
-          <span className="font-mono text-[10px] text-muted-foreground">{data.score}</span>
+          <span className="font-mono text-[10px] text-muted-foreground">{data.score}{data.degraded ? "+" : ""}</span>
         </span>
+        {data.degraded && (
+          <span
+            className="shrink-0 rounded border border-amber-700 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-amber-400"
+            title="some drivers are unavailable and score 0: the index is a lower bound"
+            data-testid="trade-environment-degraded"
+          >
+            degraded
+          </span>
+        )}
         <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground sm:text-xs">
           {data.headline}
         </span>
@@ -83,7 +98,7 @@ export default function TradeEnvironmentStrip() {
         <div className="border-t border-border/40 px-3 pb-3 pt-2 sm:px-4" data-testid="trade-environment-detail">
           <div className="mb-2 flex items-center justify-between">
             <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-              convexity index {data.score}/100
+              heuristic convexity index {data.score}/100
             </span>
             <EdgeInfo id="trade-environment" />
           </div>
@@ -96,14 +111,20 @@ export default function TradeEnvironmentStrip() {
               >
                 <div className="flex items-center justify-between">
                   <span className="font-mono text-[10px] uppercase tracking-wider text-slate-400">{d.label}</span>
-                  <span className={`font-mono text-[10px] ${d.points > 0 ? "text-orange-400" : "text-slate-600"}`}>
-                    +{d.points}/{d.max}
+                  <span className={`font-mono text-[10px] ${d.dataState === "unavailable" ? "text-amber-500" : d.points > 0 ? "text-orange-400" : "text-slate-600"}`}>
+                    {d.dataState === "unavailable" ? "n/a" : `+${d.points}/${d.max}`}
                   </span>
                 </div>
                 <p className="mt-0.5 text-[11px] leading-snug text-slate-300">{d.note}</p>
               </div>
             ))}
           </div>
+          {data.label && (
+            <p className="mt-2 text-[10px] leading-snug text-muted-foreground" data-testid="trade-env-label">
+              {data.label}
+              {data.calibration ? ` · fit to forward range: ${data.calibration.status} (${data.calibration.sessions}/${data.calibration.minSessions} sessions, ${data.calibration.windows}/${data.calibration.minWindows} windows)` : ""}
+            </p>
+          )}
           <div className="mt-2 space-y-1">
             {data.instructions.map((line, i) => (
               <p key={i} className="text-[11px] leading-snug text-slate-300">

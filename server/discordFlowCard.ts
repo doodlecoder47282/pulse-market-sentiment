@@ -15,6 +15,7 @@ import { safeErrorSummary } from "./webhookConfig";
 import type { WhaleHit } from "./flowAlertEngine";
 import { getFlowConfig } from "./flowConfig";
 import { HEAVY_CONTRACT_NOTE } from "@shared/flowLabels";
+import { openingText } from "./flowIntent";
 
 const COLOR_BULL = 0x16a34a;
 const COLOR_BEAR = 0xdc2626;
@@ -40,15 +41,13 @@ function fmtHit(h: WhaleHit): string {
     ratioPart,
     `last print ${h.tag}`,
   ];
-  // MISSION FIX #5 — intent read: opening probability + spread-leg flag +
-  // directional confidence. Heuristic, but far better than assuming every
-  // heavy contract is directional conviction.
-  if (h.openingProb != null) {
-    const intent = h.openingProb >= 0.75 ? "likely opening" : h.openingProb >= 0.5 ? "lean opening" : "closing risk";
-    parts.push(`${intent} ${(h.openingProb * 100).toFixed(0)}%`);
-  }
+  // Intent read (review item 4.6, flowIntent.ts): the opening share is a
+  // bound from volume vs prior-day OI, and the direction score is a hand-set
+  // heuristic shown as a 0-1 score, never as a percentage.
+  const opening = openingText(h.volumeOverOiShare ?? null);
+  if (opening) parts.push(opening);
   if (h.spreadLegLikely) parts.push("spread leg?");
-  if (h.directionalConfidence != null) parts.push(`dir conf ${(h.directionalConfidence * 100).toFixed(0)}%`);
+  if (h.directionalConfidence != null) parts.push(`dir score ${h.directionalConfidence.toFixed(2)} (heuristic)`);
   return parts.join(" • ");
 }
 

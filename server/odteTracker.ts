@@ -30,6 +30,7 @@ import { isRthOpen } from "./sessionCache";
 import { recordOdteOptionMarks, type TrackerQuote } from "./odteAuditDb";
 import { streamOptionOverlay, syncStreamOptions } from "./streamStore";
 import { etDate as calEtDate, sessionCloseMinutes as calCloseMin } from "./exchangeCalendar";
+import { spreadExceedsStop } from "./exitValuation";
 
 // getOptionChain caches chains for 60 s (schwab.ts), so polling faster than that only
 // returns the identical snapshot. Cadence is clamped to this TTL.
@@ -604,6 +605,10 @@ export function armPosition(args: {
   const row = snap.contracts.find(c => c.key === args.contractKey);
   if (!row) return { ok: false, error: "contract not found in current snapshot" };
   if (row.last == null) return { ok: false, error: "contract has no last price" };
+  // SF-3 (R2-C): the plan's option stop is bid <= 0.80 x the ask fill; a quote
+  // already there would stop on entry, and without a two-sided quote the stop is undefined.
+  const sxs = spreadExceedsStop(row.bid, row.ask);
+  if (sxs !== false) return { ok: false, error: sxs ? "SPREAD_EXCEEDS_STOP: bid at or below 0.80 x ask" : "SPREAD_EXCEEDS_STOP: no two-sided quote to define the -20% stop" };
   const existing = tracked.find(t => t.contractKey === args.contractKey && t.status === "active");
   if (existing) return { ok: true, position: existing };
 

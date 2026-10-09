@@ -25,6 +25,7 @@
 // (Campbell & Thompson 2008, RFS 21:1509 — OOS R² vs the training mean).
 
 import { olsFit } from "./stats";
+import { DEFAULT_RISK_PCT, MAX_RISK_PCT } from "./sizingMath";
 
 export const MASTER_ALPHA_MIN_SESSIONS = 250;
 const OOS_FRACTION = 0.3;
@@ -146,4 +147,119 @@ export function fitMasterAlphaWeights(
     oosR2,
     note: "fit available for review; live formula still uses hand-set weights until a reviewed fit is promoted",
   };
+}
+
+// ─── Promotion gate (R2-C 9) ─────────────────────────────────────────────────
+// masterAlpha may print a direction label (LONG / SHORT, STRONG_*) and a
+// contract count ONLY from a fit that a person reviewed and promoted. The
+// promotion record is a JSON file written by that reviewer (no endpoint, no
+// automatic swap); this gate re-checks it independently so a record cannot
+// promote an under-sampled or out-of-sample-failing fit:
+//   - sessions >= MASTER_ALPHA_MIN_SESSIONS (250, power argument above)
+//   - out-of-sample R^2 > 0 against the training mean (Campbell & Thompson 2008)
+//   - finite intercept and multipliers, horizon matches, reviewer and date set
+// Until then the composite is a hand-set HEURISTIC score: no direction-strength
+// label and no size.
+
+export interface MasterAlphaPromotion {
+  horizon: string;
+  promotedAt: string;           // ISO date of the review
+  reviewer: string;
+  sessions: number;
+  oosR2: number;
+  intercept: number;
+  coefficients: Array<{ component: string; multiplier: number }>;
+}
+
+export type MasterAlphaGate =
+  | { promoted: true; reason: string; model: MasterAlphaPromotion }
+  | { promoted: false; reason: string };
+
+export function masterAlphaPromotionGate(
+  rec: MasterAlphaPromotion | null | undefined,
+  horizon: string,
+  minSessions: number = MASTER_ALPHA_MIN_SESSIONS,
+): MasterAlphaGate {
+  if (!rec) return { promoted: false, reason: "no reviewed fit promoted: heuristic score only (hand-set weights)" };
+  if (rec.horizon !== horizon) return { promoted: false, reason: `promoted fit is for ${rec.horizon}, not ${horizon}` };
+  if (!rec.reviewer || !rec.promotedAt) return { promoted: false, reason: "promotion record lacks reviewer or date" };
+  if (!(rec.sessions >= minSessions)) return { promoted: false, reason: `promoted fit has ${rec.sessions} sessions < ${minSessions}` };
+  if (!(Number.isFinite(rec.oosR2) && rec.oosR2 > 0)) return { promoted: false, reason: `promoted fit out-of-sample R^2 ${rec.oosR2} is not > 0` };
+  if (!Number.isFinite(rec.intercept) || !Array.isArray(rec.coefficients) || rec.coefficients.length === 0
+      || rec.coefficients.some((c) => !c || typeof c.component !== "string" || !Number.isFinite(c.multiplier))) {
+    return { promoted: false, reason: "promotion record has missing or non-finite coefficients" };
+  }
+  return { promoted: true, reason: `fit promoted ${rec.promotedAt} by ${rec.reviewer}: ${rec.sessions} sessions, OOS R^2 ${rec.oosR2.toFixed(3)}`, model: rec };
+}
+
+/** Fitted forecast (bps) from a promoted model; null when a used component is missing (never filled with 0). */
+export function promotedForecastBps(
+  model: MasterAlphaPromotion,
+  components: Array<{ name: string; directionBps: number }>,
+): number | null {
+  let y = model.intercept;
+  for (const c of model.coefficients) {
+    const comp = components.find((x) => componentKey(x.name) === c.component);
+    if (!comp || !Number.isFinite(comp.directionBps)) return null;
+    y += c.multiplier * comp.directionBps;
+  }
+  return y;
+}
+
+/**
+ * Premium-at-risk budget for a masterAlpha size, from the USER's inputs only
+ * (no default dollar amount; the old route defaulted to $1M):
+ *   accountSize x riskPct (default 1%, capped at 5%: sizingMath limits), or an
+ *   explicit riskBudgetDollars, or the legacy explicit riskBudget_M.
+ * Null when the request carries none of them.
+ */
+export function resolveMasterAlphaRiskBudget(b: {
+  accountSize?: unknown; riskPct?: unknown; riskBudgetDollars?: unknown; riskBudget_M?: unknown;
+}): { dollars: number | null; source: string } {
+  const num = (v: unknown) => (v == null || v === "" ? NaN : Number(v));
+  const acct = num(b.accountSize);
+  if (acct > 0) {
+    const req = num(b.riskPct);
+    const pct = Number.isFinite(req) && req > 0 ? Math.min(MAX_RISK_PCT, req) : DEFAULT_RISK_PCT;
+    return { dollars: Math.floor(acct * pct * 100) / 100, source: `account ${acct} x ${(pct * 100).toFixed(2)}%` };
+  }
+  const usd = num(b.riskBudgetDollars);
+  if (usd > 0) return { dollars: Math.floor(usd * 100) / 100, source: "riskBudgetDollars input" };
+  const m = num(b.riskBudget_M);
+  if (m > 0) return { dollars: Math.floor(m * 1e6 * 100) / 100, source: "riskBudget_M input" };
+  return { dollars: null, source: "no account size or risk budget given" };
+}
+
+/**
+ * Whole contracts of the CHOSEN contract that fit a premium-at-risk budget
+ * (SF-7): floor(budget / (ask x m + fee)) in integer cents, so contracts x
+ * (ask x m + opening fee) <= budget (a long option's maximum loss if it
+ * expires worthless: no closing fee). `cap` is an optional extra limit (the
+ * gamma-target count). Null without a Schwab ask or a fee (index root with no
+ * configured fee): no size, never a guessed premium.
+ */
+export function contractsFromAsk(args: { budgetDollars: number; ask: number | null; fee: number | null; multiplier?: number; cap?: number | null }): {
+  contracts: number; costPerContract: number; premiumAtRisk: number; binding: "budget" | "cap";
+} | null {
+  const m = args.multiplier ?? 100;
+  if (args.ask == null || !(args.ask > 0) || args.fee == null || !(args.fee >= 0) || !(args.budgetDollars > 0)) return null;
+  const costC = Math.round(args.ask * m * 100) + Math.round(args.fee * 100);
+  const budgetC = Math.floor(args.budgetDollars * 100 + 1e-9);
+  const byBudget = Math.floor(budgetC / costC);
+  const cap = args.cap != null && Number.isFinite(args.cap) && args.cap >= 0 ? Math.floor(args.cap) : Infinity;
+  const contracts = Math.max(0, Math.min(byBudget, cap));
+  return { contracts, costPerContract: costC / 100, premiumAtRisk: (contracts * costC) / 100, binding: cap < byBudget ? "cap" : "budget" };
+}
+
+/** Nearest-to-spot contract with a two-sided Schwab quote in an expDateMap slice ({ strike: [contract] }). */
+export function atmContractFrom(strikes: Record<string, any[]> | null | undefined, spot: number): { strike: number; bid: number; ask: number; symbol: string | null } | null {
+  if (!strikes || !(spot > 0)) return null;
+  let best: { strike: number; bid: number; ask: number; symbol: string | null } | null = null;
+  for (const [ks, arr] of Object.entries(strikes)) {
+    const k = parseFloat(ks);
+    const c = Array.isArray(arr) ? arr[0] : null;
+    if (!Number.isFinite(k) || !c || !(typeof c.ask === "number" && c.ask > 0 && typeof c.bid === "number" && c.bid >= 0 && c.bid <= c.ask)) continue;
+    if (!best || Math.abs(k - spot) < Math.abs(best.strike - spot)) best = { strike: k, bid: c.bid, ask: c.ask, symbol: typeof c.symbol === "string" ? c.symbol : null };
+  }
+  return best;
 }

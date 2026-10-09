@@ -41,8 +41,11 @@
 // function of current snapshots — restart-safe because it only fires on
 // fresh transitions detected via in-memory history.
 
-import { minutesToSessionClose, modelThetaToClose, projectedThetaCost } from "./chainClock";
+import { minutesToSessionClose } from "./chainClock";
 import { gradeEvidenceLine, t1SaleContracts, ODTE_PLAN_RULES, type GradeEvidence } from "./validationMath";
+import { atmPathSigma, projectToTarget } from "./t1Projection";
+import { feeForProduct } from "./feeConfig";
+import { spreadExceedsStop } from "./exitValuation";
 
 export type OdteSetupKind = "FAILED_BREAK" | "PIVOT_RECLAIM" | "WALL_REJECT";
 export type Side = "call" | "put";
@@ -84,8 +87,16 @@ export interface Audit {
   contractVega?: number | null;
   contractIv?: number | null;
   // Gate 3 (Projected return)
-  projReturnPctT1?: number | null;        // decimal (e.g. 0.80 = 80%)
+  projReturnPctT1?: number | null;        // decimal (e.g. 0.80 = 80%): return IF T1 is reached (what Gate 3 tests)
   projReturnPctT2?: number | null;
+  /** SF-6: model touch probability of T1 before the close (implied vol; not calibrated). */
+  projPHitT1?: number | null;
+  /** Return at the close on paths that never touch T1. */
+  projNoTouchPctT1?: number | null;
+  /** pHit x return-if-reached + (1 - pHit) x no-touch return, under the model (= -costs by construction). */
+  projEvPctT1?: number | null;
+  /** False when no index fee is configured: projections are before fees. */
+  projFeeIncluded?: boolean | null;
   projMinutesToClose?: number | null;
   // Gate 4 (IV richness)
   rv5d?: number | null;                   // 5-day realized vol (annualized, decimal)
@@ -249,8 +260,12 @@ export interface OdteAlert {
   reasoning: string[];              // breakdown of where points came from
   // Wire 15 gate audit fields
   wire15?: {
-    projReturnPctT1: number | null;  // decimal (0.80 = 80%)
+    projReturnPctT1: number | null;  // decimal (0.80 = 80%): return IF T1 is reached (Gate 3)
     projReturnPctT2: number | null;
+    projPHitT1?: number | null;      // SF-6: model touch probability (implied vol, not calibrated)
+    projNoTouchPctT1?: number | null;
+    projEvPctT1?: number | null;     // model EV (= -costs by construction)
+    projFeeIncluded?: boolean | null;
     rv5d: number | null;
     ivRichRatio: number | null;
     ivRichDegrade: boolean;
@@ -2094,6 +2109,7 @@ function buildAlert(
   // ─── Wire 15: GATE 3 — Projected return >= +30% to T1 (Wire 16: was 50%) ──────────
   let projReturnPctT1: number | null = null;
   let projReturnPctT2: number | null = null;
+  let projT1Detail: { pHit: number; noTouch: number; ev: number; feeIncluded: boolean } | null = null;
   let ivRichDegrade = false;
   let ivRichRatio: number | null = null;
   const rv5d: number | null = args.wire15?.rv5d ?? null;
@@ -2106,9 +2122,6 @@ function buildAlert(
 
   if (pickedContract) {
     const minutesToClose = computeMinutesToCloseSync(args.asOf, args.hourET, args.minuteET);
-    const gamma = pickedContract.gamma;
-    const theta = pickedContract.theta; // per-day, negative
-    const absDelta = Math.abs(pickedContract.delta);
     const mid = pickedContract.midPrice;
 
     // Wire 16: spread-aware entry price (paying near ask = honest fill)
@@ -2130,31 +2143,45 @@ function buildAlert(
       return gateReject(args, setup, side, reversionLevel, `CONTRACT_SPREAD_TOO_WIDE_GT_5_PCT ${(w16ContractSpreadPct*100).toFixed(1)}%`, { contract: contractForScoring });
     }
 
-    // Theta to the close per share by repricing (chainClock.modelThetaToClose,
-    // same as contractPicker); theta-per-day over the session only without a sigma.
+    // SF-3: a bid already at or below the plan's -20% stop of an ask fill
+    // would stop on entry; without a two-sided quote the stop is undefined.
+    const sxs = spreadExceedsStop(w16ContractBid, w16ContractAsk);
+    if (sxs !== false) {
+      return gateReject(args, setup, side, reversionLevel, sxs ? "SPREAD_EXCEEDS_STOP" : "PROJECTION_UNAVAILABLE no two-sided quote", { contract: contractForScoring });
+    }
+
+    // Gate 3 projection (review 6.7 / R2-C 7, t1Projection.ts): reprice the
+    // contract by Black-Scholes AT the target with the expected time to reach
+    // it (E[first passage | touch before the close] under the contract's
+    // implied vol), buy at the ask, sell at projected mid - half spread, fee
+    // per contract per side. The old version used time-now delta/gamma plus
+    // the whole decay to the close charged at spot and no exit cost.
     // Explicitly typed view: tsc infers pickedContract as never here (the
     // `typeof pickedContract[]` candidate array is typed while it is null).
     const pc: { strike: number; expiry: string; key: string; bid: number | null; ask: number | null; iv: number } = pickedContract;
-    const thetaToClose = modelThetaToClose({
-      spot: args.spot, strike: pc.strike, type: side === "call" ? "C" : "P",
+    // N-2: the path uses the ATM vol of the same expiry (solved on our clock);
+    // the picked strike is repriced with its own vol (sticky strike).
+    const sideMap = args.wire15?.schwabChain
+      ? (side === "call" ? args.wire15.schwabChain.callExpDateMap : args.wire15.schwabChain.putExpDateMap) ?? {}
+      : {};
+    const pathSigma = args.wire15?.todayExpKey
+      ? atmPathSigma((sideMap as any)[args.wire15.todayExpKey], args.spot, side === "call" ? "C" : "P", pc.expiry, args.asOf)
+      : null;
+    const proj = (targetPrice: number) => projectToTarget({
+      spot: args.spot, strike: pc.strike, type: side === "call" ? "C" : "P", target: targetPrice,
       expiry: pc.expiry, symbol: pc.key, bid: pc.bid, ask: pc.ask, vendorIv: pc.iv,
-      minutesToClose, nowMs: args.asOf,
-    }) ?? projectedThetaCost(theta, minutesToClose, args.asOf);
-
-    // Wire 16: use entryPrice (mid + halfSpread) as denominator for honest fill projection
-    function bsProj(targetPrice: number): number {
-      const move = side === "call" ? targetPrice - args.spot : args.spot - targetPrice;
-      const projDeltaPnl = absDelta * move;
-      const projGammaBoost = 0.5 * gamma * move * move;
-      const projThetaCost = thetaToClose; // per share, negative
-      const projPnl = projDeltaPnl + projGammaBoost + projThetaCost;
-      // Wire 16: use entryPrice (honest fill) as denominator
-      const denom = entryPrice > 0 ? entryPrice : mid;
-      return denom > 0 ? projPnl / denom : 0;
+      minutesToClose, nowMs: args.asOf, feePerContract: feeForProduct(pc.key).fee, pathSigma,
+    });
+    const t1P = proj(t1Lv.price);
+    if (!t1P) {
+      // Without a two-sided quote or a usable sigma the 30% gate cannot be
+      // checked: reject rather than let a missing projection pass.
+      return gateReject(args, setup, side, reversionLevel, "PROJECTION_UNAVAILABLE no two-sided quote or sigma", { contract: contractForScoring });
     }
-
-    projReturnPctT1 = bsProj(t1Lv.price);
-    projReturnPctT2 = t2Lv ? bsProj(t2Lv.price) : bsProj(t1Lv.price + (side === "call" ? 5 : -5));
+    const t2P = proj(t2Lv ? t2Lv.price : t1Lv.price + (side === "call" ? 5 : -5));
+    projReturnPctT1 = t1P.projReturnPct;
+    projT1Detail = { pHit: t1P.pHit, noTouch: t1P.noTouchReturnPct, ev: t1P.evReturnPct, feeIncluded: t1P.feeIncluded };
+    projReturnPctT2 = t2P ? t2P.projReturnPct : null;
 
     // ─── Wire 15: GATE 4 — IV richness ──────────────────────────────────────────────
     // atmIV: use the picked contract's IV; rv5d from wire15 context
@@ -2330,6 +2357,10 @@ function buildAlert(
   const wire15Audit = {
     projReturnPctT1,
     projReturnPctT2,
+    projPHitT1: projT1Detail?.pHit ?? null,
+    projNoTouchPctT1: projT1Detail?.noTouch ?? null,
+    projEvPctT1: projT1Detail?.ev ?? null,
+    projFeeIncluded: projT1Detail?.feeIncluded ?? null,
     rv5d,
     ivRichRatio,
     ivRichDegrade,
@@ -2501,6 +2532,11 @@ export function formatOdteAlert(
   lines.push("");
   lines.push(`Greek signals:  ${a.greekSignals}`);
   lines.push(`Regime:  ${a.regime}`);
+  // SF-6 (R2-C): the T1 "% est" is the return IF T1 is reached (Gate 3 tests it).
+  if (a.wire15?.projPHitT1 != null && a.wire15?.projEvPctT1 != null) {
+    const pc = (x: number) => `${x >= 0 ? "+" : ""}${Math.round(x * 100)}%`;
+    lines.push(`T1 model: touch p ${Math.round(a.wire15.projPHitT1 * 100)}% (implied vol, not calibrated) | no touch ${pc(a.wire15.projNoTouchPctT1 ?? 0)} | EV ${pc(a.wire15.projEvPctT1)} = spread+fees cost under the model, not edge${a.wire15.projFeeIncluded === false ? " | before index fees (not configured)" : ""}`);
+  }
   lines.push("");
   lines.push(`Built by God. Paid by the Market.`);
 

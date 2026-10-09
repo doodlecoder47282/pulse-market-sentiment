@@ -135,7 +135,7 @@ export async function snapshotHorizon(horizon: ModelHorizon, horizonKey: string)
     const ma = await runMasterAlpha({ horizon });
     masterAlpha = {
       compositeEdgeBps: Number((ma.compositeEdgeBps ?? 0).toFixed(2)),
-      compositeSignal: ma.compositeSignal,
+      compositeSignal: ma.heuristicBand, // band of the logged score; the API signal is gated (UNRATED until a fit is promoted)
       compositeConfidence: Number((ma.compositeConfidence ?? 0).toFixed(3)),
       gexRegime: ma.gexRegime,
       nearestPivotName: ma.nearestPivot?.name ?? null,
