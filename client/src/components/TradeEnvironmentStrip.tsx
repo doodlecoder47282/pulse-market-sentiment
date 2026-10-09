@@ -20,7 +20,7 @@ type EnvDriver = {
 };
 
 type TradeEnv = {
-  state: "STAND_DOWN" | "CHOP" | "NORMAL" | "LOADED" | "STRIKE";
+  state: "STAND_DOWN" | "CHOP" | "NORMAL" | "LOADED" | "STRIKE" | "PARTIAL" | "UNAVAILABLE";
   score: number;
   headline: string;
   instructions: string[];
@@ -38,6 +38,8 @@ const STATE_STYLE: Record<TradeEnv["state"], { chip: string; bar: string; label:
   NORMAL:     { chip: "bg-sky-950/60 text-sky-400 border-sky-900", bar: "bg-sky-500", label: "NORMAL" },
   LOADED:     { chip: "bg-orange-950/60 text-orange-400 border-orange-800", bar: "bg-orange-500", label: "LOADED" },
   STRIKE:     { chip: "bg-rose-950/70 text-rose-300 border-rose-800 animate-pulse", bar: "bg-rose-500", label: "STRIKE" },
+  PARTIAL:    { chip: "bg-slate-900 text-amber-300 border-amber-700 border-dashed", bar: "bg-amber-700", label: "PARTIAL" },
+  UNAVAILABLE: { chip: "bg-slate-900 text-slate-500 border-slate-700 border-dashed", bar: "bg-slate-700", label: "UNAVAILABLE" },
 };
 
 export default function TradeEnvironmentStrip() {
@@ -48,7 +50,7 @@ export default function TradeEnvironmentStrip() {
   });
 
   if (!data) return null;
-  const st = STATE_STYLE[data.state] ?? STATE_STYLE.NORMAL;
+  const st = STATE_STYLE[data.state] ?? STATE_STYLE.UNAVAILABLE;
 
   return (
     <div
@@ -71,8 +73,17 @@ export default function TradeEnvironmentStrip() {
           <span className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-800">
             <span className={`block h-full ${st.bar}`} style={{ width: `${data.score}%` }} />
           </span>
-          <span className="font-mono text-[10px] text-muted-foreground">{data.score}</span>
+          <span className="font-mono text-[10px] text-muted-foreground">{data.score}{data.degraded ? "+" : ""}</span>
         </span>
+        {data.degraded && (
+          <span
+            className="shrink-0 rounded border border-amber-700 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-amber-400"
+            title="some drivers are unavailable and score 0: the index is a lower bound"
+            data-testid="trade-environment-degraded"
+          >
+            degraded
+          </span>
+        )}
         <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground sm:text-xs">
           {data.headline}
         </span>

@@ -45,7 +45,8 @@ import { postToDiscord } from "./discord";
 import { etDate as calEtDate, sessionCloseMinutes as calCloseMin, sessionOpenMs as calOpenMs } from "./exchangeCalendar";
 import { fitConvexityWeights, forwardRange, type ConvexityFit, type ConvexitySample } from "./convexityFit";
 
-export type TradeEnvState = "STAND_DOWN" | "CHOP" | "NORMAL" | "LOADED" | "STRIKE";
+import { classifyEnvState, type TradeEnvState } from "./tradeEnvState";
+export type { TradeEnvState };
 
 export interface EnvDriver {
   key: string;
@@ -305,20 +306,16 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
 
   const score = Math.min(100, Math.round(drivers.reduce((a, d) => a + d.points, 0)));
 
-  // State mapping
-  let state: TradeEnvState;
-  if (score >= 70) state = "STRIKE";
-  else if (score >= 45) state = "LOADED";
-  else if (score >= 25) state = "NORMAL";
-  else state = shortGamma || rangePts > 0 ? "NORMAL" : (gammaPts === 0 && !shortGamma ? "CHOP" : "STAND_DOWN");
-  // CHOP refinement: deep long gamma + quiet flow + calm vol = pin day
-  if (score < 25 && !shortGamma && ofiPts === 0 && volPts === 0) state = "CHOP";
-  else if (score < 25 && state !== "CHOP") state = "STAND_DOWN";
+  // State mapping (tradeEnvState.ts; SF-1: missing drivers never read as quiet)
+  const missing = drivers.filter((d) => d.dataState === "unavailable").map((d) => d.key);
+  const state: TradeEnvState = classifyEnvState({ score, shortGamma, gammaPts, rangePts, ofiPts, volPts, missing });
 
   // R2-C 5/8: descriptive only. The old text issued orders ("size up on
   // confirmation", "trade WITH the break", "normal size", "no trade") from
   // hand-set points that have never been fitted to outcomes.
   const headline =
+    state === "UNAVAILABLE" ? "dealer gamma, vol term structure and range inputs are all unavailable: no environment read." :
+    state === "PARTIAL" ? `partial read: ${missing.join(", ")} unavailable, so the index (${score}) is a lower bound and no quiet state is claimed.` :
     state === "STRIKE" ? "short gamma, expanding range and directional tick volume are present together (heuristic composite)." :
     state === "LOADED" ? "several conditions associated with larger moves are present at once (heuristic composite)." :
     state === "NORMAL" ? "no unusual combination of drivers (heuristic composite)." :
@@ -421,7 +418,7 @@ function convexityCalibration(): TradeEnvironment["calibration"] {
 }
 
 // ── watch loop: alert on upward state transitions during RTH ────────────────
-const RANK: Record<TradeEnvState, number> = { STAND_DOWN: 0, CHOP: 0, NORMAL: 1, LOADED: 2, STRIKE: 3 };
+const RANK: Record<TradeEnvState, number> = { STAND_DOWN: 0, CHOP: 0, NORMAL: 1, LOADED: 2, STRIKE: 3, PARTIAL: -1, UNAVAILABLE: -1 };
 let _lastState: TradeEnvState | null = null;
 let _lastAlertAt = 0;
 const REFIRE_MS = 30 * 60_000;
