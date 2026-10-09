@@ -233,3 +233,71 @@ test("chain audit: charm reported separately for 0DTE (to settlement) and other 
   assert.equal(a.vanna.convention, "long-holder-aggregate");
   assert.ok(Math.abs(a.vanna.totalVannaDealerNaive!) < 0.05 * Math.abs(a.vanna.totalVannaDollarPerVolPct) + 1);
 });
+
+// ─── Items 9 and 12: cone drift and tails; robust tail z-score ──────────────
+
+import { coneBandPrices, studentTSumQuantile } from "../../server/multiDayProjection";
+import { flagTailEvent, MAD_NORMAL } from "../../server/stableTail";
+
+test("cone tails: 1-day Student-t(4) quantile matches the closed form; n-day sums match seeded Monte Carlo", () => {
+  // t_4 quantiles have a closed form (Hill 1970; e.g. Shaw 2006, "Sampling
+  // Student's T distribution"): t = sign(p - 1/2) 2 sqrt(cos(acos(sqrt(a))/3)/sqrt(a) - 1), a = 4p(1-p).
+  const t4 = (p: number) => {
+    const a = 4 * p * (1 - p);
+    const q = Math.cos(Math.acos(Math.sqrt(a)) / 3) / Math.sqrt(a);
+    return Math.sign(p - 0.5) * 2 * Math.sqrt(q - 1);
+  };
+  near(t4(0.95), 2.131847, 1e-5, "t4(0.95) table value");
+  const unit = Math.SQRT1_2; // unit-variance scaling sqrt((nu-2)/nu)
+  for (const p of [0.01, 0.05, 0.10, 0.25, 0.75, 0.95, 0.99]) {
+    near(studentTSumQuantile(p, 1), t4(p) * unit, 2e-3, `1-day q${p}`);
+  }
+  // 10-day sum: seeded Monte Carlo of sum of 10 unit-variance t4 / sqrt(10).
+  const u = rng(20261008), z = gauss(u);
+  const draw = () => {
+    // T_4 = Z / sqrt(chi2_4 / 4), chi2_4 = sum of 4 squared normals
+    const c = z() ** 2 + z() ** 2 + z() ** 2 + z() ** 2;
+    return (z() / Math.sqrt(c / 4)) * unit;
+  };
+  const N = 200_000, xs = new Float64Array(N);
+  for (let i = 0; i < N; i++) { let s = 0; for (let k = 0; k < 10; k++) s += draw(); xs[i] = s / Math.sqrt(10); }
+  xs.sort();
+  for (const p of [0.01, 0.05, 0.25]) {
+    const mc = xs[Math.floor(p * N)];
+    near(studentTSumQuantile(p, 10), mc, 0.03, `10-day q${p} vs MC`);
+  }
+  // Fat-tail content: wider than normal at 1% (2.326), narrower at 10% (1.2816) for 1 day.
+  assert.ok(-studentTSumQuantile(0.01, 1) > 2.326 && -studentTSumQuantile(0.10, 1) < 1.2816);
+});
+
+test("cone: zero drift (q50 = spot) and symmetric log bands", () => {
+  const b = coneBandPrices(6700, 0.01, 5);
+  assert.equal(b.q50, 6700);
+  near(Math.log(b.q99 / 6700), -Math.log(b.q01 / 6700), 1e-3, "symmetric 1/99 in log");
+  assert.ok(b.q01 < b.q05 && b.q05 < b.q10 && b.q10 < b.q25 && b.q75 < b.q90 && b.q90 < b.q95 && b.q95 < b.q99);
+});
+
+test("stableTail: modified z-score uses Phi^-1(0.75) = 0.6745; percentile compares like with like; missing is NaN, not 0", () => {
+  // Phi^-1(0.75) = 0.674490 (normal tables); E|Z| = sqrt(2/pi) = 0.797885 is a different constant.
+  near(MAD_NORMAL, 0.67449, 1e-4, "MAD of N(0,1)");
+  // Window -0.020, -0.019, ..., +0.020 (41 values): median 0; the |deviations|
+  // are 0, 0.001 (x2), ..., 0.020 (x2), whose median (21st of 41) is 0.010.
+  const w: number[] = [];
+  for (let i = -20; i <= 20; i++) w.push(i / 1000);
+  const f = flagTailEvent(0.06, w);
+  assert.equal(f.dataState, "ok");
+  near(f.median, 0, 1e-12, "median");
+  near(f.mad, 0.01, 1e-12, "MAD");
+  near(f.tailZ, 0.6745 * 0.06 / 0.01, 1e-9, "M = 0.6745 x / MAD = 4.047");
+  assert.equal(f.isWarning, true); // 3.5 < 4.047 <= 5
+  near(f.percentile, 1, 1e-12, "larger than every window deviation");
+  const g = flagTailEvent(0.0, w);
+  near(g.percentile, 0, 1e-12, "a zero deviation is the smallest");
+  near(g.empiricalExceedance, 1, 1e-12, "every |dev| >= 0");
+  const thin = flagTailEvent(0.01, w.slice(0, 10));
+  assert.ok(Number.isNaN(thin.tailZ));
+  assert.equal(thin.dataState, "insufficient");
+  const flat = flagTailEvent(0.01, new Array(40).fill(0.001));
+  assert.equal(flat.dataState, "degenerate");
+  assert.ok(Number.isNaN(flat.tailZ));
+});
