@@ -14,10 +14,12 @@ import { vixToAtmPct } from "@shared/vol";
 // issues", Quantitative Finance 1(2), 223-236,
 // https://ideas.repec.org/a/taf/quantf/v1y2001i2p223-236.html; quoted in
 // arXiv:2311.07738). A t with nu degrees of freedom has tail index nu.
-// Scaled to unit variance, the t is NARROWER than the normal at the 10/90%
-// quantiles and wider beyond about 2.5 sigma, and the n-day sum converges to
-// normal (central limit), so the honest fat-tail content is in q01/q99 at
-// short horizons. Not modelled: volatility clustering (GARCH-type), which is
+// Scaled to unit variance, its two-sided tail probability crosses the
+// normal's at about 1.95 sigma (P(|X| > 1.955) = 5.06% for both; numerical
+// root of the two survival functions): inside that the t is NARROWER (its
+// 10/90% quantiles are +-1.085 vs +-1.282), beyond it wider (1/99%: +-2.65 vs
+// +-2.33). The n-day sum converges to normal (central limit), so the honest
+// fat-tail content is in q01/q99 (and q05/q95) at short horizons. Not modelled: volatility clustering (GARCH-type), which is
 // what fattens multi-day tails in stressed regimes. Coverage of these bands
 // has NOT been tested on held-out data: they are not "calibrated".
 //

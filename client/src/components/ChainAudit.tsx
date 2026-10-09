@@ -104,7 +104,7 @@ interface GEXDecayResult {
   combined: GEXBucket;
 }
 
-interface PinStrike { strike: number; prob: number; distance: number; lower?: number; upper?: number }
+interface PinStrike { strike: number; prob: number; distance: number; lower?: number; upper?: number; probPerPoint?: number }
 
 interface PinningMeta {
   method: string;
@@ -112,6 +112,7 @@ interface PinningMeta {
   state: "ok" | "unavailable";
   reason: string | null;
   expiry: string | null;
+  settlementStyle?: "AM" | "PM" | null;
   quotesUsed: number;
   coverage: number | null;
   fitRmse: number | null;
@@ -453,7 +454,7 @@ export default function ChainAudit() {
               <KPICard
                 label="Peak Vanna Strike (long-holder OI)"
                 value={fmtStrike(audit.vanna.peakVannaStrike)}
-                sub={`${fmtDollar(audit.vanna.totalVannaDollarPerVolPct)} / 1 vol pt, all OI as held${audit.vanna.totalVannaDealerNaive != null ? ` · dealer (calls - puts) ${fmtDollar(audit.vanna.totalVannaDealerNaive)}` : ""}`}
+                sub={`${fmtDollar(audit.vanna.totalVannaDollarPerVolPct)} / 1 vol pt, all OI as held${audit.vanna.totalVannaDealerNaive != null ? ` · dealer sign (calls - puts) ${fmtDollar(audit.vanna.totalVannaDealerNaive)}, all expiries (Heatseeker: one expiry)` : ""}`}
                 color="#a78bfa"
                 testId="kpi-vanna-peak"
               />
@@ -461,7 +462,7 @@ export default function ChainAudit() {
                 label="Peak Charm Strike (long-holder OI)"
                 value={fmtStrike(audit.charm.peakCharmStrike)}
                 sub={audit.charm.totalCharmToSettlement != null && audit.charm.totalCharmOneDay != null
-                  ? `0DTE to settlement ${fmtDollar(audit.charm.totalCharmToSettlement)} · other expiries next 1 day ${fmtDollar(audit.charm.totalCharmOneDay)}`
+                  ? `settling within 24h, to settlement ${fmtDollar(audit.charm.totalCharmToSettlement)} · later expiries, next 1 day ${fmtDollar(audit.charm.totalCharmOneDay)}`
                   : `${fmtDollar(audit.charm.totalCharmPerDay)} / day (or to settlement)`}
                 color="#f97316"
                 testId="kpi-charm-peak"
@@ -731,12 +732,15 @@ export default function ChainAudit() {
                         </div>
                         <div className="text-muted-foreground">{p.prob.toFixed(1)}%</div>
                         <div className="text-muted-foreground/60">{p.distance > 0 ? "+" : ""}{p.distance.toFixed(0)}pt</div>
+                        {p.lower != null && p.upper != null && (
+                          <div className="text-muted-foreground/50">bin {(p.upper - p.lower).toFixed(0)}pt</div>
+                        )}
                       </div>
                     ))}
                   </div>
                   {audit.pinningMeta && (
                     <div className="mt-2 px-2 font-mono text-[9px] text-muted-foreground/70" data-testid="pinning-note">
-                      {audit.pinningMeta.note}. exp {audit.pinningMeta.expiry ?? "?"}, {audit.pinningMeta.quotesUsed} quotes
+                      {audit.pinningMeta.note}; ranked by probability per point. exp {audit.pinningMeta.expiry ?? "?"}{audit.pinningMeta.settlementStyle ? ` (${audit.pinningMeta.settlementStyle}-settled)` : ""}, {audit.pinningMeta.quotesUsed} quotes
                       {audit.pinningMeta.coverage != null ? `, ${(audit.pinningMeta.coverage * 100).toFixed(0)}% of mass inside quoted strikes` : ""}.
                     </div>
                   )}

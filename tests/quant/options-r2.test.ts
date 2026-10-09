@@ -479,3 +479,40 @@ test("fix 11: one r/q basis; q = 0 for single names; carry-aware vanna and charm
   const p0 = contractExposure({ spot: S, strike: K, sigma: sig, T, contracts: n, type: "P" });
   near(c0.charmPerDay, p0.charmPerDay, 1e-9, "r = q = 0");
 });
+
+test("fix 8/10: pin fit uses one settlement style (PM over AM); strikes ranked per point; -999 greeks are not 'greeks'", () => {
+  const nowMs = Date.UTC(2026, 9, 7, 13, 0); // 09:00 ET, before the SPX AM open
+  const T = yearsToExpiry("2026-10-16", nowMs, "PM");
+  const strikes: number[] = [];
+  for (let K = 6300; K <= 7100; K += 5) strikes.push(K);
+  const pm: any = flatVolChain("2026-10-16", 9, 6700, 0.16, T, strikes);
+  // Add AM-settled SPX monthlies at the same strikes, priced at a very different vol.
+  const amChain: any = flatVolChain("2026-10-16", 9, 6700, 0.40, T, strikes);
+  for (const side of ["callExpDateMap", "putExpDateMap"]) {
+    for (const k of Object.keys(pm[side]["2026-10-16:9"])) {
+      const am = amChain[side]["2026-10-16:9"][k][0];
+      pm[side]["2026-10-16:9"][k].push({ ...am, symbol: am.symbol.replace("SPXW ", "SPX  ") });
+    }
+  }
+  const a = buildChainAudit(pm, 6700, nowMs);
+  assert.equal(a.pinningMeta?.settlementStyle, "PM");
+  const D = Math.exp(-0.05 * T), w = 0.16 * 0.16 * T;
+  const P = (K: number) => normCdf((Math.log(6700 / D / K) - w / 2) / Math.sqrt(w));
+  const top = a.pinning[0];
+  near(top.prob, (P(top.strike - 2.5) - P(top.strike + 2.5)) * 100, 0.02, "PM-only fit (AM quotes at 40% vol ignored)");
+  // Ranking is by probability per point.
+  for (let i = 1; i < a.pinning.length; i++) assert.ok(a.pinning[i - 1].probPerPoint! >= a.pinning[i].probPerPoint!);
+  // Mixed spacing: 5-pt strikes near spot, 25-pt beyond: a wide far bin must not outrank a near one.
+  const mixed: number[] = [];
+  for (let K = 6300; K < 6600; K += 25) mixed.push(K);
+  for (let K = 6600; K <= 6800; K += 5) mixed.push(K);
+  for (let K = 6825; K <= 7100; K += 25) mixed.push(K);
+  const m = buildChainAudit(flatVolChain("2026-10-16", 9, 6700, 0.16, T, mixed) as any, 6700, nowMs);
+  assert.ok(m.pinning.every((p) => p.upper! - p.lower! === 5));
+  // Closed market: every greek is -999 -> no greeks.
+  const closed: any = flatVolChain("2026-10-16", 9, 6700, 0.16, T, strikes.slice(0, 20));
+  for (const side of ["callExpDateMap", "putExpDateMap"]) for (const k of Object.keys(closed[side]["2026-10-16:9"])) {
+    const c = closed[side]["2026-10-16:9"][k][0]; c.delta = -999; c.gamma = -999;
+  }
+  assert.equal(buildChainAudit(closed, 6700, nowMs).dataQuality, "minimal");
+});

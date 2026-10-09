@@ -74,7 +74,7 @@ const COLLAR_DATA: CollarQuarter[] = [
     shortPut: 5310,
     shortCall: 7155,
     verification: "partial",
-    source: "6,475 confirmed: MarketWatch (Dow Jones), 'A trap door could open up under the S&P 500 after this influential options trade expires on Tuesday', 2026-03-31; 5,310 and 7,155 from secondary sources",
+    source: "level 6,475 confirmed as 'one of the collar levels' by MarketWatch (Dow Jones), 'A trap door could open up under the S&P 500 after this influential options trade expires on Tuesday', 2026-03-31; its leg (long put) is inferred, not stated; 5,310 and 7,155 from secondary sources",
   },
   {
     // Corrected in round 2: the table had 5,900 / 4,980 / 6,640.

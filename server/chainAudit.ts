@@ -84,8 +84,10 @@ export interface VannaResult {
    *  the naive DEALER convention (dealers long calls, short puts:
    *  calls minus puts), shown here as totalVannaDealerNaive. */
   convention?: "long-holder-aggregate";
-  /** Same $ per +1 vol point, naive dealer sign (calls +, puts -): the
-   *  number comparable with Heatseeker's Net Vanna. */
+  /** Same $ per +1 vol point with the naive dealer SIGN (calls +, puts -),
+   *  the convention of Heatseeker's Net Vanna. Not the same number: this sums
+   *  every expiry in the request at r = q = 0, Heatseeker one expiry inside
+   *  its display window on its own r/q basis. */
   totalVannaDealerNaive?: number;
 }
 
@@ -103,10 +105,12 @@ export interface CharmResult {
    *  MIXES two horizons: kept for compatibility; use the split below. */
   totalCharmPerDay: number;
   horizon?: "1d-or-to-settlement";
-  /** Contracts that settle within one calendar day (0DTE): delta change
-   *  from now to settlement (terminal delta 1 / 0). Long-holder sum. */
+  /** Contracts settling within the next 24 hours (time to settlement < 1
+   *  calendar day; usually today's 0DTE, after the close also tomorrow's
+   *  expiry): delta change from now to settlement (terminal delta 1 / 0).
+   *  Long-holder sum. */
   totalCharmToSettlement?: number;
-  /** All other contracts: delta change over exactly one calendar day. */
+  /** All contracts settling later than 24 hours from now: delta change over exactly one calendar day. */
   totalCharmOneDay?: number;
   /** Naive dealer sign (calls +, puts -), comparable with Heatseeker. */
   totalCharmToSettlementDealerNaive?: number;
@@ -212,6 +216,10 @@ export interface PinStrike {
   distance: number;         // points from spot
   lower?: number;           // strike - half the local strike spacing
   upper?: number;           // strike + half the local strike spacing
+  /** prob / (upper - lower): percent per index point. Strikes are ranked by
+   *  this, so a strike in a 25-point-spaced region is not favoured over one
+   *  in a 5-point region just because its bin is wider. */
+  probPerPoint?: number;
 }
 
 export interface PinningMeta {
@@ -220,6 +228,9 @@ export interface PinningMeta {
   state: "ok" | "unavailable";
   reason: string | null;
   expiry: string | null;
+  /** Settlement style fitted: one style only (SPX AM and SPXW PM settle at
+   *  different instants on different prices); PM preferred. */
+  settlementStyle?: SettlementStyle | null;
   quotesUsed: number;
   coverage: number | null;   // implied mass inside the quoted strike range
   fitRmse: number | null;    // $ per share, OTM price residual RMSE
@@ -545,7 +556,9 @@ function computeCharm(contracts: Contract[], spot: number): CharmResult {
     const charmExp = (deltaLater - deltaNow) * c.oi * 100 * spot;
     strikeMap.set(c.strike, (strikeMap.get(c.strike) ?? 0) + charmExp);
     // Report the two horizons separately: summing "delta left to lose before
-    // today's settlement" with "one day of decay" adds unlike quantities.
+    // a settlement inside 24 h" with "one day of decay" adds unlike quantities.
+    // The split is by the horizon actually used (h < 1 day), not by the
+    // expiry's calendar date, so the bucket always matches the arithmetic.
     const dealer = c.side === "call" ? charmExp : -charmExp;
     if (h < 1 / 365) { toSettle += charmExp; toSettleDealer += dealer; }
     else { oneDay += charmExp; oneDayDealer += dealer; }
@@ -929,23 +942,24 @@ function computePinning(contracts: Contract[], spot: number): { pins: PinStrike[
   let nearest = live[0];
   for (const c of live) if (c.tYears < nearest.tYears) nearest = c;
   const expiry = nearest.expiry;
-  const group = live.filter((c) => c.expiry === expiry);
+  const sameDate = live.filter((c) => c.expiry === expiry);
+  // ONE settlement style per fit: an SPX monthly (AM, settles on the 09:30
+  // SOQ) and SPXW (PM, settles on the close) listed under the same date are
+  // different underlyings at different instants with different clocks.
+  // PM (SPXW) preferred; AM only when the date has no PM contracts.
+  const style: SettlementStyle = sameDate.some((c) => c.style === "PM") ? "PM" : "AM";
+  const group = sameDate.filter((c) => c.style === style);
   const T = Math.max(...group.map((c) => c.tYears));
 
-  // One mid per strike and side; prefer the PM-settled contract (SPXW) when a
-  // strike lists both AM SPX and PM SPXW.
-  type Pick = { mid: number; pm: boolean };
-  const calls = new Map<number, Pick>(), puts = new Map<number, Pick>();
+  // One mid per strike and side.
+  const calls = new Map<number, number>(), puts = new Map<number, number>();
   for (const c of group) {
     if (!(c.ask > 0) || !(c.bid >= 0) || c.ask < c.bid) continue;
-    const mid = 0.5 * (c.bid + c.ask);
     const m = c.side === "call" ? calls : puts;
-    const prev = m.get(c.strike);
-    const pm = c.style === "PM";
-    if (!prev || (pm && !prev.pm)) m.set(c.strike, { mid, pm });
+    if (!m.has(c.strike)) m.set(c.strike, 0.5 * (c.bid + c.ask));
   }
   const strikes = Array.from(new Set([...Array.from(calls.keys()), ...Array.from(puts.keys())])).sort((a, b) => a - b);
-  const quotes: OptionQuote[] = strikes.map((K) => ({ strike: K, callMid: calls.get(K)?.mid ?? null, putMid: puts.get(K)?.mid ?? null }));
+  const quotes: OptionQuote[] = strikes.map((K) => ({ strike: K, callMid: calls.get(K) ?? null, putMid: puts.get(K) ?? null }));
   const dist = fitImpliedDistribution(quotes, { spot, r: FLIP_RATE, T });
   if (!dist) return unavailable("implied distribution fit failed (too few usable quotes)", expiry, quotes.length);
   if (dist.quotesUsed < PIN_MIN_QUOTES) return unavailable(`only ${dist.quotesUsed} usable quotes (need ${PIN_MIN_QUOTES})`, expiry, dist.quotesUsed);
@@ -959,14 +973,15 @@ function computePinning(contracts: Contract[], spot: number): { pins: PinStrike[
     if (!Number.isFinite(w) || w <= 0) continue;
     const lower = K - w / 2, upper = K + w / 2;
     const p = cdfAt(dist, upper) - cdfAt(dist, lower);
-    pins.push({ strike: K, prob: Math.max(0, p) * 100, distance: K - spot, lower, upper });
+    const prob = Math.max(0, p) * 100;
+    pins.push({ strike: K, prob, distance: K - spot, lower, upper, probPerPoint: prob / w });
   }
-  pins.sort((a, b) => b.prob - a.prob);
+  pins.sort((a, b) => (b.probPerPoint ?? 0) - (a.probPerPoint ?? 0));
   return {
     pins: pins.slice(0, 5),
     meta: {
       method: "svi-implied-settlement-probability", measure: "risk-neutral", state: "ok", reason: null,
-      expiry, quotesUsed: dist.quotesUsed, coverage: dist.coverage, fitRmse: dist.fitRmse, note,
+      expiry, settlementStyle: style, quotesUsed: dist.quotesUsed, coverage: dist.coverage, fitRmse: dist.fitRmse, note,
     },
   };
 }
@@ -1047,7 +1062,9 @@ export function buildChainAudit(
   const expiries = [...new Set(contracts.map(c => c.expiry))];
 
   // Data quality assessment
-  const hasGreeks = contracts.some(c => c.delta !== 0 && c.gamma !== 0);
+  // Schwab sends -999 sentinels for every greek when the market is closed:
+  // only in-range values count as greeks.
+  const hasGreeks = contracts.some(c => c.delta !== 0 && Math.abs(c.delta) <= 1 && c.gamma > 0 && c.gamma < 900);
   const hasTheoreticalIV = contracts.some(c => c.theoreticalIV != null && c.theoreticalIV > 0);
   const pinning = computePinning(contracts, spot);
   const dataQuality: ChainAuditResult["dataQuality"] =
