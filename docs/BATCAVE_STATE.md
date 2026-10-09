@@ -143,6 +143,17 @@ that run (not yet CI-verified). Remaining: tap targets under 24px on touch
 (42-79 per screen size, mostly chips), designed empty states per panel,
 visual hierarchy, fonts, brand kit, professional mode, CI thresholds.
 
+Vercel (user connected it 2026-10-09; user chose website only for now):
+vercel.json builds the client (vite build -> dist/public) and rewrites every
+/api/* call to api/unavailable.js, which answers 503 {dataState:
+"unavailable"} so panels show "No Batcave server is connected". No server
+code, secrets or Schwab access on Vercel. Production on Vercel follows main
+(old UI with the profane splash) until PR #3 is merged; quant-fixes gets a
+preview URL. Later: deploy the server (Railway was the earlier choice), set
+VITE_API_BASE in Vercel, add CORS for the Vercel origin on the server, set
+BATCAVE_ACCESS_KEY / BATCAVE_TOKEN_KEY, register the Schwab callback URL, and
+rotate the exposed Schwab secret and Discord webhooks first.
+
 ## Current objective
 
 Save the credit-conserving resume framework and assess reuse of the existing
