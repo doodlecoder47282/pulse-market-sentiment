@@ -266,3 +266,84 @@ test("daily playbook: headline says '% wt, heuristic'; missing VIX9D/VIX3M is un
   const pb2: any = await buildDailyPlaybook("SPY");
   assert.equal(pb2.inputs.find((i: any) => i.key === "vix3m").calibration, "Contango (calm)");
 });
+
+// ── 7. Quarterly cone: SPX ATM IV term + Student-t(4), no hand-set multipliers
+import { buildQuarterlyTrajectory, QuarterlyConeUnavailableError } from "../../server/quarterlyTrajectory";
+import { studentTSumQuantileFft } from "../../server/tickerConeMath";
+
+// Seeded RNG (mulberry32) + Box-Muller, for an independent Monte Carlo check.
+function rng(seed: number) {
+  let a = seed >>> 0;
+  return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+
+test("quarterly cone: t(4)-sum quantile used by the cone matches a seeded Monte Carlo (n = 6)", () => {
+  const u = rng(42);
+  const gauss = () => Math.sqrt(-2 * Math.log(1 - u())) * Math.cos(2 * Math.PI * u());
+  // unit-variance t(4): Z / sqrt(chi2_4 / 4) x sqrt((4 - 2) / 4)
+  const t4 = () => { let c = 0; for (let i = 0; i < 4; i++) { const g = gauss(); c += g * g; } return (gauss() / Math.sqrt(c / 4)) * Math.SQRT1_2; };
+  const N = 200_000, n = 6, xs = new Float64Array(N);
+  for (let i = 0; i < N; i++) { let s = 0; for (let j = 0; j < n; j++) s += t4(); xs[i] = s / Math.sqrt(n); }
+  xs.sort();
+  const mc = xs[Math.floor(0.8413447460685429 * N)];
+  const fft = studentTSumQuantileFft(0.8413447460685429, n, 4, 66);
+  assert.ok(Math.abs(mc - fft) < 0.01, `MC ${mc} vs FFT ${fft}`);
+  assert.ok(fft < 1, "t(4) shoulders: the 84.13% quantile of a unit-variance sum is inside 1 sd");
+});
+
+const NOW_FRI = Date.parse("2026-10-09T14:00:00Z"); // Fri 10:00 ET
+const BASE_IN = { spot: 6700, vix: 18, vix9d: 15, vix3m: 20, callWall: 6900, putWall: 6500, gammaFlip: 6600, maxPain: 6650, totalGex: 2e9, composite: 50, skew: 130, nowMs: NOW_FRI };
+
+test("quarterly cone: flat 20% ATM IV -> known answer at week 1 and week 13, no damping or event bump", () => {
+  const ivTerm = [
+    { expiry: "2026-11-20", T: 0.1, atmIv: 0.2, w: 0.004 },
+    { expiry: "2027-03-19", T: 0.45, atmIv: 0.2, w: 0.018 },
+  ];
+  const t = buildQuarterlyTrajectory({ ...BASE_IN, realizedVol20d: 0.10, ivTerm });
+  assert.equal(t.sigmaSource, "spx_atm_iv_term");
+  const w1 = t.weeks[0];
+  // Week 1 ends Fri 2026-10-16 16:00 ET = 20:00Z: T = 7.25 days / 365.
+  // Sessions with a close after now through 10-16: Oct 9, 12, 13, 14, 15, 16 = 6.
+  assert.equal(w1.weekEndDate, "2026-10-16");
+  assert.equal(w1.sessions, 6);
+  const T1 = 7.25 / 365;
+  assert.ok(Math.abs(w1.tYears! - T1) < 1e-12);
+  assert.ok(Math.abs(w1.totalVariance! - 0.04 * T1) < 1e-15);
+  const sd1 = 0.2 * Math.sqrt(T1);
+  const z = studentTSumQuantileFft(0.8413447460685429, 6, 4, 66);
+  assert.ok(Math.abs(w1.bull - 6700 * Math.exp(z * sd1)) <= 0.006, `${w1.bull}`);
+  assert.ok(Math.abs(w1.bear - 6700 * Math.exp(-z * sd1)) <= 0.006, `${w1.bear}`);
+  assert.equal(w1.base, 6700);
+  // Every week: w = 0.04 T exactly, OPEX/FOMC weeks included (tags only, no bump).
+  for (const w of t.weeks) assert.ok(Math.abs(w.totalVariance! - 0.04 * w.tYears!) < 1e-15, w.weekLabel);
+  assert.ok(t.weeks.some((w) => (w.events ?? []).length > 0), "event weeks still tagged");
+  // Week 13: Fri 2027-01-08, 13 weeks out; Thanksgiving / Christmas / New Year holidays skipped.
+  const w13 = t.weeks[12];
+  assert.equal(w13.weekEndDate, "2027-01-08");
+  assert.equal(t.drivers.vrpScale, 1);
+  assert.doesNotMatch(t.methodology, /1\.12/);
+  const qsrc = src("server/quarterlyTrajectory.ts");
+  assert.doesNotMatch(qsrc, /\? 1\.12 : 1\.0|function damp\(|\* vrpScale/);
+});
+
+test("quarterly cone: term interpolation is linear in total variance; fallback realized vol labelled; none -> unavailable", () => {
+  const ivTerm = [
+    { expiry: "2026-11-20", T: 0.1, atmIv: 0.15, w: 0.15 * 0.15 * 0.1 },
+    { expiry: "2027-03-19", T: 0.3, atmIv: 0.20, w: 0.2 * 0.2 * 0.3 },
+  ];
+  const t = buildQuarterlyTrajectory({ ...BASE_IN, ivTerm });
+  const w13 = t.weeks[12];
+  const T = w13.tYears!;
+  assert.ok(T > 0.1 && T < 0.3);
+  const expected = 0.00225 + (0.012 - 0.00225) * (T - 0.1) / 0.2;
+  assert.ok(Math.abs(w13.totalVariance! - expected) < 1e-15);
+  const rv = buildQuarterlyTrajectory({ ...BASE_IN, realizedVol20d: 0.16, ivTerm: [] });
+  assert.equal(rv.sigmaSource, "realized_20d");
+  assert.match(rv.methodology, /FALLBACK/);
+  for (const w of rv.weeks) assert.ok(Math.abs(w.totalVariance! - 0.0256 * w.sessions! / 252) < 1e-15);
+  assert.throws(() => buildQuarterlyTrajectory({ ...BASE_IN, realizedVol20d: null, ivTerm: null }), QuarterlyConeUnavailableError);
+});
+
+test("models path label does not use the raw GEX sign when gamma is unknown", () => {
+  assert.match(src("server/models.ts"), /if \(gammaZone === "y\?"\) path = "gamma unknown \(no path claim\)"/);
+});

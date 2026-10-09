@@ -200,8 +200,10 @@ interface TrajectoryWeek {
   bull: number;
   base: number;
   bear: number;
-  sigmaWeek: number;          // INCREMENTAL one-week σ (event bumps visible here)
-  sigmaCum?: number;          // CUMULATIVE σ thru week k — drives the cone
+  sigmaWeek: number;          // INCREMENTAL one-week σ: sqrt of this week's added implied variance x spot
+  sigmaCum?: number;          // 1 sd of log price thru week k, x spot (bands are t(4) quantiles)
+  q10?: number;
+  q90?: number;
   cumDriftPct?: number;       // cumulative drift % of the median vs spot (0: zero drift)
   /** Heuristic scenario line (hand-set tilts + anchor pulls), not the median. */
   scenarioBase?: number;
@@ -248,6 +250,7 @@ interface WeeklyTrajectory {
     realizedVol20d?: number | null;
   };
   methodology?: string;
+  sigmaSource?: "spx_atm_iv_term" | "realized_20d";
 }
 
 interface ModelsResponse {
@@ -1889,7 +1892,7 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
             <span className="text-red-400">BEAR <span className="font-bold">{fmtPrice(traj.endpoint.bear)}</span></span>
           </div>
           <div className="mt-1 text-[9px] text-muted-foreground">
-            ±1σ cone ±{fmtPrice(traj.weeks[12]?.sigmaCum ?? traj.weeks[12]?.sigmaWeek ?? 0)} · ±2σ ±{fmtPrice((traj.weeks[12]?.sigmaCum ?? traj.weeks[12]?.sigmaWeek ?? 0) * 2)} (cumulative thru WK13)
+            1 sd (log) ±{fmtPrice(traj.weeks[12]?.sigmaCum ?? traj.weeks[12]?.sigmaWeek ?? 0)} · BULL/BEAR = t(4) 84%/16% quantiles{traj.weeks[12]?.q10 != null && traj.weeks[12]?.q90 != null ? ` · q10–q90 ${fmtPrice(traj.weeks[12].q10)}–${fmtPrice(traj.weeks[12].q90)}` : ""} (thru WK13, coverage untested)
           </div>
         </div>
 
@@ -1944,7 +1947,7 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
 
       {/* v2: σ scaling row — VRP + event weeks + segments */}
       <div className="mt-2 rounded border border-purple-500/20 bg-black/50 p-2 font-mono text-[10px]">
-        <div className="mb-1 text-[9px] uppercase tracking-widest text-purple-400/80">σ SCALING (— cone width drivers)</div>
+        <div className="mb-1 text-[9px] uppercase tracking-widest text-purple-400/80">CONE WIDTH ({traj.sigmaSource === "spx_atm_iv_term" ? "Schwab SPX ATM IV term, t(4) bands" : traj.sigmaSource === "realized_20d" ? "FALLBACK: 20d realized vol, unscaled" : "source unlabelled"})</div>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 text-[10px]">
           <div>
             <div className="text-[8px] text-muted-foreground/70">VRP RATIO</div>
@@ -1961,15 +1964,11 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
             </div>
           </div>
           <div>
-            <div className="text-[8px] text-muted-foreground/70">VRP SCALE</div>
-            <div className={
-              (traj.drivers.vrpScale ?? 1) < 0.95 ? "text-cyan-400" :
-              (traj.drivers.vrpScale ?? 1) > 1.05 ? "text-amber-400" :
-              "text-foreground"
-            }>
-              ×{(traj.drivers.vrpScale ?? 1).toFixed(2)}
+            <div className="text-[8px] text-muted-foreground/70">CONE SOURCE</div>
+            <div className={traj.sigmaSource === "spx_atm_iv_term" ? "text-foreground" : "text-amber-400"}>
+              {traj.sigmaSource === "spx_atm_iv_term" ? "SPX ATM IV" : traj.sigmaSource === "realized_20d" ? "RV20 fallback" : "\u2014"}
             </div>
-            <div className="text-[8px] text-muted-foreground/50">cone narrow/wide</div>
+            <div className="text-[8px] text-muted-foreground/50">no VRP / damping multiplier</div>
           </div>
           <div>
             <div className="text-[8px] text-muted-foreground/70">EVENT WEEKS</div>
@@ -1977,10 +1976,10 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
               {traj.drivers.eventWeeks ?? 0}
               <span className="text-[8px] text-muted-foreground/60"> /13</span>
             </div>
-            <div className="text-[8px] text-muted-foreground/50">σ +12% on OPEX/FOMC</div>
+            <div className="text-[8px] text-muted-foreground/50">tagged; priced in option IV, no bump</div>
           </div>
           <div>
-            <div className="text-[8px] text-muted-foreground/70">TERM SEG</div>
+            <div className="text-[8px] text-muted-foreground/70">VIX TERM (context)</div>
             <div className="text-cyan-400 text-[10px]">VIX9D → VIX → VIX3M</div>
             <div className="text-[8px] text-muted-foreground/50">
               {traj.inputs.vix9d?.toFixed(1) ?? "\u2014"} → {traj.inputs.vix?.toFixed(1) ?? "\u2014"} → {traj.inputs.vix3m?.toFixed(1) ?? "\u2014"}

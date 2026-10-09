@@ -317,8 +317,10 @@ test("N3-2 quarterly trajectory: BASE = spot every week, tilts only in the label
   for (const w of t.weeks) {
     assert.equal(w.base, 6700);
     assert.equal(w.cumDriftPct, 0);
-    near(w.bull - w.base, w.sigmaCum, 0.011, "bull = spot + sigma");
-    near(w.base - w.bear, w.sigmaCum, 0.011, "bear = spot - sigma");
+    // Round 4: bands are t(4)-sum quantiles in log price (no IV term here ->
+    // labelled 20d realized fallback); r4.test.ts has the known answers.
+    assert.ok(w.bull > w.base && w.bear < w.base);
+    near(Math.log(w.bull / w.base), -Math.log(w.bear / w.base), 2e-5, "symmetric in log price");
   }
   assert.ok(t.weeks.some((w) => w.scenarioBase !== 6700), "scenario line carries the tilt");
   assert.equal(t.endpoint.base, 6700);

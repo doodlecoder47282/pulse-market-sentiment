@@ -816,8 +816,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           const dailyAudit = (enriched.horizons?.daily as any)?.audit;
           const realizedVol20d: number | null = dailyAudit?.realizedSigma20d ?? null;
 
+          // Cone width (round 4): Schwab $SPX ATM implied-vol term structure,
+          // expiries to ~5 weeks past the 13-week horizon (ATM strikes only).
+          // No chain -> the builder falls back to labelled 20d realized vol.
+          let spxIvTerm: import("./tickerConeMath").AtmIvPoint[] = [];
+          try {
+            const { atmIvTermFromChain } = await import("./tickerConeMath");
+            const coneNow = Date.now();
+            const spxChain = await schwabGetOptionChain("$SPX", 13 * 7 + 35, { coverage: "atm" });
+            const spxLast = "error" in spxChain ? null : spxChain.underlying?.last ?? null;
+            if (!("error" in spxChain) && spxLast != null && spxLast > 0) {
+              spxIvTerm = atmIvTermFromChain(spxChain, spxLast, (k, c) => contractYears(k, c, coneNow));
+            }
+          } catch { /* realized-vol fallback below, labelled */ }
+
           const { buildQuarterlyTrajectory } = await import("./quarterlyTrajectory");
           const traj = buildQuarterlyTrajectory({
+            ivTerm: spxIvTerm,
             spot: q.spot,
             vix: vixData.vix as number,
             vix9d: vixData.vix9d,
