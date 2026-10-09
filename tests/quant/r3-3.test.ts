@@ -171,3 +171,39 @@ test("canary thresholds: history built on the live subset (weights, R block, tra
   const full = compositeHistory(X, w, R, 20);
   assert.notEqual(full.length ? full[0] : NaN, sub[0]);
 });
+
+// ─── 5. 0DTE plan replay: same-bar order ───────────────────────────────────
+
+test("0DTE replay: a T1 touch in the bar that closes a 5-minute candle below the stop happened first", async () => {
+  const { replayOdtePlan } = await import("../../server/validationMath");
+  const M = 60_000;
+  const T0 = Date.UTC(2026, 9, 9, 14, 0);   // 10:00 ET, a 5-minute boundary
+  const CLOSE = Date.UTC(2026, 9, 9, 20, 0);
+  const flat = (px: number) => { const o: any[] = []; for (let t = T0; t < CLOSE; t += M) o.push({ datetime: t, open: px, high: px, low: px, close: px }); return o; };
+  const plan = { isCall: true, entryTs: T0, closeMs: CLOSE, t1: 6010, stopLevel: 5990, t2: 6025, contracts: 2 };
+  // 10:04 bar (ends the 10:00-10:05 candle): high 6011 touches T1, close 5989 < stop.
+  const bars = flat(6000);
+  bars[4] = { ...bars[4], high: 6011, low: 5988, close: 5989 };
+  const r = replayOdtePlan(plan, bars);
+  // 2 contracts: 1 at T1 (6010), the runner (1) still under the ORIGINAL
+  // stop is stopped at the same close 5989; both known at 10:05.
+  assert.deepEqual(r.legs.map((l) => [l.kind, l.fraction, l.underlyingPx, l.time]),
+    [["t1_touch", 0.5, 6010, T0 + 5 * M], ["underlying_stop", 0.5, 5989, T0 + 5 * M]]);
+  assert.equal(r.hitT1, true);
+  assert.equal(r.stoppedBeforeT1, false);
+  // Same bar, close NOT beyond the stop: only T1; runner continues.
+  const b2 = flat(6000);
+  b2[4] = { ...b2[4], high: 6011, close: 6005 };
+  assert.deepEqual(replayOdtePlan(plan, b2).legs.map((l) => l.kind), ["t1_touch"]);
+  // A bar reaching T2 from below T1 passed T1 first: both legs in that bar.
+  const b3 = flat(6000);
+  b3[7] = { ...b3[7], high: 6026, close: 6020 };
+  const r3 = replayOdtePlan(plan, b3);
+  assert.deepEqual(r3.legs.map((l) => [l.kind, l.fraction, l.underlyingPx]), [["t1_touch", 0.5, 6010], ["t2_touch", 0.5, 6025]]);
+  assert.equal(r3.remaining, 0);
+  // Put side mirror: low 5989 touches T1 5990, 5-minute close 6011 above stop 6010.
+  const pp = { isCall: false, entryTs: T0, closeMs: CLOSE, t1: 5990, stopLevel: 6010, contracts: 1 };
+  const b4 = flat(6000);
+  b4[9] = { ...b4[9], low: 5989, high: 6012, close: 6011 };
+  assert.deepEqual(replayOdtePlan(pp, b4).legs.map((l) => [l.kind, l.fraction]), [["t1_touch", 1]]);
+});

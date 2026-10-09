@@ -527,7 +527,34 @@ export function replayOdtePlan(plan: OdtePlanInput, allBars: MinuteBar[]): PlanR
       if (fav > out.mfePts) out.mfePts = fav;
     }
     const windowEnd = isWindowEndBar(t);
-    // (A) 5-minute close stop, with the level in force before this bar's events.
+    // Same-bar order (round 3): a touch is an intrabar event and the 5-minute
+    // stop is judged on the bar's CLOSE, the last print of the minute, so in
+    // a bar that both touches a target and closes a 5-minute candle beyond
+    // the stop the touch happened first. (A) touches, then (B) the close
+    // stop on whatever is still open, with the level in force at the close.
+    // (A) touches, on bars that opened at or after the fire. Prices are
+    // continuous: a call bar that reaches T2 from below T1 passed T1 first,
+    // so both legs fill in that bar, T1 then T2.
+    if (touchBar) {
+      if (phase === "pre" && (isCall ? b.high >= t1 : b.low <= t1)) {
+        out.legs.push({ kind: "t1_touch", time: known, fraction: partial, underlyingPx: t1 });
+        remaining -= partial;
+        out.hitT1 = true;
+        phase = "runner";
+        if (remaining > 1e-12 && t2 != null && (isCall ? b.high >= t2 : b.low <= t2)) {
+          out.legs.push({ kind: "t2_touch", time: known, fraction: remaining, underlyingPx: t2 });
+          remaining = 0;
+          break;
+        }
+      } else if (phase !== "pre" && t2 != null && (isCall ? b.high >= t2 : b.low <= t2)) {
+        out.legs.push({ kind: "t2_touch", time: known, fraction: remaining, underlyingPx: t2 });
+        remaining = 0;
+        break;
+      }
+    }
+    if (remaining <= 1e-12) { remaining = 0; break; }
+    // (B) 5-minute close stop on what is still open. The runner keeps the
+    // original stop until a 5-minute close beyond T1 arms the trail (C).
     if (windowEnd) {
       const lvl = phase === "armed" ? trail : stopLevel;
       if (lvl > 0 && (isCall ? b.close < lvl : b.close > lvl)) {
@@ -537,20 +564,6 @@ export function replayOdtePlan(plan: OdtePlanInput, allBars: MinuteBar[]): PlanR
         break;
       }
     }
-    // (B) touches, on bars that opened at or after the fire.
-    if (touchBar) {
-      if (phase === "pre" && (isCall ? b.high >= t1 : b.low <= t1)) {
-        out.legs.push({ kind: "t1_touch", time: known, fraction: partial, underlyingPx: t1 });
-        remaining -= partial;
-        out.hitT1 = true;
-        phase = "runner";
-      } else if (phase !== "pre" && t2 != null && (isCall ? b.high >= t2 : b.low <= t2)) {
-        out.legs.push({ kind: "t2_touch", time: known, fraction: remaining, underlyingPx: t2 });
-        remaining = 0;
-        break;
-      }
-    }
-    if (remaining <= 1e-12) { remaining = 0; break; }
     // (C) arm the runner's trail on a 5-minute close beyond T1.
     if (windowEnd && phase === "runner" && (isCall ? b.close > t1 : b.close < t1)) {
       phase = "armed";
