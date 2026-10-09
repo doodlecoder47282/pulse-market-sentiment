@@ -27,6 +27,8 @@
 import { sqlite } from "./storage";
 import { isTradingDay as calIsTradingDay, sessionCloseMinutes as calCloseMin } from "./exchangeCalendar";
 import { getPriceHistory } from "./schwab";
+import { getActiveStreamStore, type StreamBar } from "./streamStore";
+import { estimateRealizedVol } from "./realizedVol";
 import { buildMlFeatures, getLastMlFeatureProvenance, type MlFeatureInputs } from "./mlGreekFeatures";
 import { mlQuantileOverlay } from "./mlBridge";
 import {
@@ -80,6 +82,17 @@ sqlite.exec(`
     computed_at INTEGER NOT NULL,
     PRIMARY KEY (day, horizon_min, model, version)
   );
+  -- Noise-robust realized variance of the Schwab Streamer tick series
+  -- (server/realizedVol.ts) over the continuous stream window ending at ts.
+  CREATE TABLE IF NOT EXISTS ml_tick_rv_log (
+    ts INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    from_ms INTEGER, to_ms INTEGER, n_obs INTEGER NOT NULL,
+    rv_naive REAL, rv_sparse_20m REAL, tsrv REAL, tsrv_k INTEGER, realized_kernel REAL, rk_bandwidth INTEGER,
+    noise_var REAL, iv REAL, method TEXT, annualized_vol REAL,
+    data_state TEXT NOT NULL, reason TEXT,
+    PRIMARY KEY (ts, symbol)
+  );
 `);
 
 function etMinuteOfDay(ms: number): { day: string; mod: number; weekday: boolean } {
@@ -96,11 +109,18 @@ function etMinuteOfDay(ms: number): { day: string; mod: number; weekday: boolean
 
 let _lastBarsPersist = 0;
 
-/** Persist Schwab $SPX minute candles (INSERT OR IGNORE). Returns rows written. */
+/**
+ * Persist Schwab $SPX minute candles. A REST candle (source 'schwab') replaces
+ * a streamed bar for the same minute ('schwab_stream_chart' or
+ * 'schwab_stream_l1'); REST rows are never overwritten. Returns rows written.
+ */
 export async function persistSpxMinuteBars(): Promise<number> {
   const resp = await getPriceHistory("$SPX", "day", 10, "minute", 1);
   const candles = (resp?.candles ?? []) as any[];
-  const stmt = sqlite.prepare(`INSERT OR IGNORE INTO spx_minute_bars (t, open, high, low, close, volume, source) VALUES (?, ?, ?, ?, ?, ?, 'schwab')`);
+  const stmt = sqlite.prepare(`INSERT INTO spx_minute_bars (t, open, high, low, close, volume, source) VALUES (?, ?, ?, ?, ?, ?, 'schwab')
+    ON CONFLICT(t) DO UPDATE SET open = excluded.open, high = excluded.high, low = excluded.low, close = excluded.close,
+      volume = excluded.volume, source = 'schwab'
+    WHERE spx_minute_bars.source <> 'schwab'`);
   let n = 0;
   const tx = sqlite.transaction((rows: any[]) => {
     for (const c of rows) {
@@ -113,6 +133,51 @@ export async function persistSpxMinuteBars(): Promise<number> {
   // An empty answer (token missing, rate-limit throttle) is not a successful
   // persist: leave the marker so the next tick retries.
   if (candles.length > 0) _lastBarsPersist = Date.now();
+  return n;
+}
+
+/**
+ * Persist final, complete $SPX 1-minute bars from the Schwab Streamer
+ * (schwabStream.ts sink). Keeps bars past Schwab's ~10-day REST minute
+ * history. INSERT OR IGNORE: an existing row (REST or stream) is kept; a later
+ * REST candle replaces a streamed one (persistSpxMinuteBars). Returns rows written.
+ */
+export function persistStreamSpxBars(bars: StreamBar[], symbol = "$SPX"): number {
+  const stmt = sqlite.prepare(`INSERT OR IGNORE INTO spx_minute_bars (t, open, high, low, close, volume, source) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+  let n = 0;
+  const tx = sqlite.transaction((rows: StreamBar[]) => {
+    for (const b of rows) {
+      if (b.symbol !== symbol || !b.complete) continue;
+      if (![b.t, b.open, b.high, b.low, b.close].every((v) => typeof v === "number" && Number.isFinite(v))) continue;
+      const src = b.source === "chart_equity" ? "schwab_stream_chart" : "schwab_stream_l1";
+      n += Number(stmt.run(b.t, b.open, b.high, b.low, b.close, b.volume, src).changes ?? 0);
+    }
+  });
+  tx(bars);
+  return n;
+}
+
+/**
+ * Log noise-robust realized variance of the streamed tick series (last-price
+ * updates of the current continuous stream session, Schwab time) for $SPX and
+ * SPY. dataState "insufficient" rows are logged too (never as 0).
+ */
+export function logTickRealizedVol(now = Date.now(), symbols: string[] = ["$SPX", "SPY"]): number {
+  const store = getActiveStreamStore();
+  if (!store) return 0;
+  const ins = sqlite.prepare(`INSERT OR REPLACE INTO ml_tick_rv_log (ts, symbol, from_ms, to_ms, n_obs, rv_naive, rv_sparse_20m, tsrv, tsrv_k,
+    realized_kernel, rk_bandwidth, noise_var, iv, method, annualized_vol, data_state, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  let n = 0;
+  for (const sym of symbols) {
+    const { ticks } = store.sessionTicks(sym);
+    if (!ticks.length) continue;
+    const dayStart = etWallToUtcMs(etDate(now), 9, 30);
+    const pts = ticks.filter((k) => k.lastInFrame && k.last != null && k.t >= dayStart && k.t <= now).map((k) => ({ t: k.t, p: k.last as number }));
+    const e = estimateRealizedVol(pts);
+    ins.run(now, sym, e.fromMs, e.toMs, e.n, e.rvNaive, e.rvSparse20m, e.tsrv, e.tsrvK, e.realizedKernel, e.rkBandwidth,
+      e.noiseVar, e.iv, e.method, e.annualizedVol, e.dataState, e.reason);
+    n++;
+  }
   return n;
 }
 
@@ -274,6 +339,7 @@ export function startMlDataLogger(resolveInputs: () => Promise<MlFeatureInputs>)
       const closeMin = calCloseMin(day) ?? 16 * 60; // 13:00 on half days
       if (weekday && mod >= 9 * 60 + 35 && mod <= closeMin - 5 && now - _lastLog >= LOG_EVERY_MS - 5_000) {
         _lastLog = now;
+        try { logTickRealizedVol(now); } catch (e: any) { console.warn(`[ml:datalog] tick RV log failed: ${e?.message ?? e}`); }
         await logMlSnapshot(resolveInputs, now);
       }
       const closeMs = etWallToUtcMs(day, Math.floor((closeMin + 5) / 60), (closeMin + 5) % 60);

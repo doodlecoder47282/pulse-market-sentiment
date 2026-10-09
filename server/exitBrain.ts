@@ -42,6 +42,7 @@ import { getTracked, getOdteSnapshot, type TrackedPosition, type Side } from "./
 import { getMtfStack, isStackCollapse } from "./mtfStack";
 import { getRevExtSnapshot, isReversionThreat } from "./revExtClassifier";
 import { computeRealtimeTargets } from "./realtimeTargets";
+import { streamOptionOverlay } from "./streamStore";
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -53,6 +54,10 @@ export interface ExitBrainEval {
   side: Side;
   /** Live mark used for this eval */
   mark: number | null;
+  /** "stream": Schwab Streamer LEVELONE_OPTIONS at its quote time; "rest_chain": tracker's last Schwab chain poll; null: no mark. */
+  markSource?: "stream" | "rest_chain" | null;
+  /** Schwab quote time behind the mark, epoch ms (null when unknown). */
+  markQuoteTimeMs?: number | null;
   /** Entry price */
   entry: number;
   /** Drawdown vs entry, signed pct (e.g. -0.18 = −18%) */
@@ -152,17 +157,27 @@ async function getVix(): Promise<number | null> {
   }
 }
 
-/** Get the most recent live mark (last → mid → bid mid) for a contract. */
-function getLiveMark(contractKey: string): number | null {
+/**
+ * Most recent live mark (last -> mid) for a contract: the Schwab Streamer
+ * LEVELONE_OPTIONS quote when the contract is streamed and live (newer than
+ * the tracker's chain poll), else the tracker's last Schwab chain row.
+ */
+function getLiveMarkWithSource(contractKey: string): { mark: number | null; source: "stream" | "rest_chain" | null; quoteTimeMs: number | null } {
   const snap = getOdteSnapshot();
   const row = snap.contracts.find((c) => c.key === contractKey);
-  if (!row) return null;
-  if (row.last != null && row.last > 0) return row.last;
-  if (row.mid != null && row.mid > 0) return row.mid;
-  if (row.bid != null && row.ask != null && row.bid > 0 && row.ask > 0) {
-    return (row.bid + row.ask) / 2;
+  if (!row) return { mark: null, source: null, quoteTimeMs: null };
+  const sq = streamOptionOverlay(row.optionSymbol ?? null, row.quoteTimeMs ?? null);
+  const pick = (last: number | null, bid: number | null, ask: number | null): number | null => {
+    if (last != null && last > 0) return last;
+    if (bid != null && ask != null && bid > 0 && ask > 0) return (bid + ask) / 2;
+    return null;
+  };
+  if (sq) {
+    const m = pick(sq.last, sq.bid, sq.ask);
+    if (m != null) return { mark: m, source: "stream", quoteTimeMs: sq.quoteTimeMs };
   }
-  return null;
+  const m = pick(row.last, row.bid, row.ask) ?? (row.mid != null && row.mid > 0 ? row.mid : null);
+  return { mark: m, source: m != null ? "rest_chain" : null, quoteTimeMs: row.quoteTimeMs ?? null };
 }
 
 // ─── Per-position eval ────────────────────────────────────────────────
@@ -180,7 +195,8 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
   }
   const mem = memory.get(pos.id)!;
 
-  const mark = getLiveMark(pos.contractKey);
+  const live = getLiveMarkWithSource(pos.contractKey);
+  const mark = live.mark;
   const entry = pos.buyPrice;
   const ret = mark != null && entry > 0 ? (mark - entry) / entry : 0;
   if (ret > mem.peakReturnPct) mem.peakReturnPct = ret;
@@ -439,6 +455,8 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
     contractKey: pos.contractKey,
     side: pos.side,
     mark,
+    markSource: live.source,
+    markQuoteTimeMs: live.quoteTimeMs,
     entry,
     drawdownPct: ret,
     peakReturnPct: mem.peakReturnPct,

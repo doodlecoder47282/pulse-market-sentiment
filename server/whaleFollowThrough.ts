@@ -30,6 +30,7 @@ import { buildSchwabFlow, type SchwabFlowContract } from "./schwabFlow";
 // rows, silently. whalePersistence only imports a *type* from this file, so no cycle.
 import { persistFollowState, persistWhaleAlert, loadAllFollows } from "./whalePersistence";
 import { etCloseMs, whaleFireSnapshot } from "./validationMath";
+import { streamOptionOverlay, syncStreamOptions } from "./streamStore";
 
 // Persistence wrappers — fail-soft, never let DB hiccups break tracking.
 function safePersistFollow(p: FollowPosition): void {
@@ -86,6 +87,8 @@ export interface FollowPosition {
     bid?: number | null;
     ask?: number | null;
     quoteAt?: number | null;
+    /** Source of the latest quote: Schwab Streamer LEVELONE_OPTIONS or the Schwab REST chain (additive). */
+    markSource?: "stream" | "rest_chain";
     /**
      * Last quote observed at or before the 16:00 ET close of the expiry date:
      * the exit mark the outcome grader uses (review item 8.2). Never written
@@ -192,6 +195,13 @@ export async function updateAll(): Promise<{
   const open = Array.from(positions.values()).filter(
     (p) => p.status !== "EXPIRED" && (p.status !== "CLOSED" || nowMs <= expiryCloseMs(p.expiration)),
   );
+  // Stream LEVELONE_OPTIONS for open whale contracts, newest first (the
+  // stream caps option keys; contracts over the cap stay on the REST chain).
+  try {
+    const occs = open.slice().sort((a, b) => b.entry.detectedAt - a.entry.detectedAt)
+      .map((p) => p.occ).filter((o) => /^[A-Z$.]{1,6}\s*\d{6}[CP]\d{8}$/.test(o));
+    syncStreamOptions("whale", occs);
+  } catch { /* streaming is optional */ }
   if (open.length === 0) return { updated: 0, closed: 0, errors: 0 };
 
   // Group by symbol so we make ≤1 chain call per ticker
@@ -223,7 +233,19 @@ export async function updateAll(): Promise<{
       const byOcc = new Map<string, SchwabFlowContract>();
       for (const c of flow.contracts) byOcc.set(c.occ, c);
       for (const p of group) {
-        const live = byOcc.get(p.occ);
+        const restLive = byOcc.get(p.occ);
+        // Mark source: the streamed quote when the stream session is live (a
+        // delta stream's record is current until Schwab sends a change); the
+        // chain carries no per-contract quote time here to compare against.
+        const sq = restLive ? streamOptionOverlay(p.occ, null, now) : null;
+        const live: SchwabFlowContract | undefined = restLive && sq ? {
+          ...restLive,
+          bid: sq.bid ?? restLive.bid,
+          ask: sq.ask ?? restLive.ask,
+          mark: sq.mark ?? restLive.mark,
+          volume: sq.totalVolume ?? restLive.volume,
+        } : restLive;
+        const quoteAt = sq ? (sq.quoteTimeMs ?? flow.asOf ?? now) : (flow.asOf ?? now);
         if (!live) {
           // Contract dropped from chain — likely expired
           if (isExpired(p.expiration)) {
@@ -234,11 +256,13 @@ export async function updateAll(): Promise<{
           continue;
         }
         if (p.status === "CLOSED") {
-          recordQuote(p, live, flow.asOf ?? now);
+          recordQuote(p, live, quoteAt);
+          p.live.markSource = sq ? "stream" : "rest_chain";
           safePersistFollow(p);
           continue;
         }
-        applyTick(p, live, now, flow.asOf ?? now);
+        applyTick(p, live, now, quoteAt);
+        p.live.markSource = sq ? "stream" : "rest_chain";
         safePersistFollow(p);
         updated++;
         const after = p.status as FollowStatus; // applyTick may have moved it to a terminal state

@@ -28,6 +28,7 @@
 import { getOptionChain, type OptionChainResponse } from "./schwab";
 import { isRthOpen } from "./sessionCache";
 import { recordOdteOptionMarks, type TrackerQuote } from "./odteAuditDb";
+import { streamOptionOverlay, syncStreamOptions } from "./streamStore";
 import { etDate as calEtDate, sessionCloseMinutes as calCloseMin } from "./exchangeCalendar";
 
 // getOptionChain caches chains for 60 s (schwab.ts), so polling faster than that only
@@ -75,6 +76,12 @@ export interface ContractRow {
   buyFlag: boolean;             // large notional + buy-classified
   distance: number;             // abs(strike − spot)
   lastTradeTime: number | null; // epoch ms of the contract's last actual print (Schwab tradeTimeInLong)
+  /** Schwab option symbol (streamer key). */
+  optionSymbol?: string | null;
+  /** Where bid/ask/last came from: Schwab Streamer LEVELONE_OPTIONS or the Schwab REST chain. */
+  markSource?: "stream" | "rest_chain";
+  /** Schwab quote time of bid/ask, epoch ms. */
+  quoteTimeMs?: number | null;
 }
 
 export interface TickEvent {
@@ -105,6 +112,8 @@ export interface TrackedPosition {
   markerSellTs: number | null;
   estExitPrice: number | null;
   estExitTs: number | null;
+  /** Schwab option symbol, streamed while the position is active. */
+  optionSymbol?: string | null;
 }
 
 export interface TrackerSnapshot {
@@ -288,10 +297,16 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
     const c = contracts?.[0];
     if (!c) return;
     const key = `${symbol}_${strike.toFixed(0)}${side === "call" ? "C" : "P"}_${expiryISO}`;
-    const bid = typeof c.bid === "number" ? c.bid : null;
-    const ask = typeof c.ask === "number" ? c.ask : null;
-    const last = typeof c.last === "number" ? c.last : (typeof c.mark === "number" ? c.mark : null);
-    const volume = typeof c.totalVolume === "number" ? c.totalVolume : 0;
+    // Mark source: Schwab Streamer LEVELONE_OPTIONS when the contract is
+    // streamed (armed) and its quote is live and not older than the chain's;
+    // else the Schwab REST chain row. Never any other vendor.
+    const optionSymbol = typeof c.symbol === "string" ? c.symbol : null;
+    const restQt = typeof c.quoteTimeInLong === "number" && c.quoteTimeInLong > 0 ? c.quoteTimeInLong : null;
+    const sq = streamOptionOverlay(optionSymbol, restQt, nowTs);
+    const bid = sq ? sq.bid : typeof c.bid === "number" ? c.bid : null;
+    const ask = sq ? sq.ask : typeof c.ask === "number" ? c.ask : null;
+    const last = sq && (sq.last ?? sq.mark) != null ? (sq.last ?? sq.mark) : typeof c.last === "number" ? c.last : (typeof c.mark === "number" ? c.mark : null);
+    const volume = sq && sq.totalVolume != null ? sq.totalVolume : typeof c.totalVolume === "number" ? c.totalVolume : 0;
     const oi = typeof c.openInterest === "number" ? c.openInterest : 0;
     const prev = prevByKey.get(key);
     const deltaVol = prev ? Math.max(0, volume - prev.volume) : 0;
@@ -300,7 +315,7 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
     const cls = deltaVol > 0 ? classify(last, bid, ask, prevLast) : "neutral";
     const notional = deltaVol > 0 && last != null ? deltaVol * last * 100 : 0;
     const buyFlag = cls === "buy" && notional >= DEFAULT_MIN_NOTIONAL;
-    const lastTradeTime = typeof c.tradeTimeInLong === "number" && c.tradeTimeInLong > 0 ? c.tradeTimeInLong : null;
+    const lastTradeTime = sq?.tradeTimeMs ?? (typeof c.tradeTimeInLong === "number" && c.tradeTimeInLong > 0 ? c.tradeTimeInLong : null);
 
     rows.push({
       key,
@@ -318,6 +333,9 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
       buyFlag,
       distance: Math.abs(strike - spot),
       lastTradeTime,
+      optionSymbol,
+      markSource: sq ? "stream" : "rest_chain",
+      quoteTimeMs: sq ? (sq.quoteTimeMs ?? restQt) : restQt,
     });
 
     prevByKey.set(key, { volume, last });
@@ -375,11 +393,13 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
           const c = obj[k]?.[0];
           const strike = parseFloat(k);
           if (!c || !isFinite(strike)) continue;
+          const restQt = typeof c.quoteTimeInLong === "number" && c.quoteTimeInLong > 0 ? c.quoteTimeInLong : null;
+          const sq = streamOptionOverlay(typeof c.symbol === "string" ? c.symbol : null, restQt, nowTs);
           quotes.push({
             strike, side,
-            bid: typeof c.bid === "number" ? c.bid : null,
-            ask: typeof c.ask === "number" ? c.ask : null,
-            quoteTime: typeof c.quoteTimeInLong === "number" && c.quoteTimeInLong > 0 ? c.quoteTimeInLong : null,
+            bid: sq ? sq.bid : typeof c.bid === "number" ? c.bid : null,
+            ask: sq ? sq.ask : typeof c.ask === "number" ? c.ask : null,
+            quoteTime: sq ? (sq.quoteTimeMs ?? restQt) : restQt,
           });
         }
       };
@@ -433,6 +453,8 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
       });
     }
   }
+
+  syncArmedStream();
 
   lastSnapshot = {
     asOf: nowTs,
@@ -561,6 +583,19 @@ export function getContractChart(
   };
 }
 
+/** Stream LEVELONE_OPTIONS for every active armed contract (streamStore owner "odte"). */
+function syncArmedStream(): void {
+  try {
+    const syms: string[] = [];
+    for (const t of tracked) {
+      if (t.status !== "active") continue;
+      const sym = t.optionSymbol ?? lastSnapshot.contracts.find((c) => c.key === t.contractKey)?.optionSymbol ?? null;
+      if (sym) syms.push(sym);
+    }
+    syncStreamOptions("odte", syms);
+  } catch { /* streaming is optional; REST chain marks remain */ }
+}
+
 export function armPosition(args: {
   contractKey: string;
   minNotional?: number;
@@ -589,8 +624,10 @@ export function armPosition(args: {
     markerSellTs: null,
     estExitPrice: null,
     estExitTs: null,
+    optionSymbol: row.optionSymbol ?? null,
   };
   tracked.push(pos);
+  syncArmedStream();
   pushEvent({
     ts: pos.buyTimestamp,
     contractKey: pos.contractKey,
@@ -608,6 +645,7 @@ export function disarmPosition(id: string): boolean {
   const idx = tracked.findIndex(t => t.id === id);
   if (idx === -1) return false;
   tracked.splice(idx, 1);
+  syncArmedStream();
   return true;
 }
 
