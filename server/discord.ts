@@ -15,6 +15,8 @@
 // Discord webhook format: rich embeds (limit 10 per message, 6000 chars total).
 // We use one embed per card.
 
+import { gammaZoneLabel, normalizeGammaZone } from "./gammaZone";
+import { dailyCardHeader } from "./dailyCardHeader";
 import {
   webhookOrWarn,
   safeErrorSummary,
@@ -87,7 +89,7 @@ export async function postToDiscord(payload: DiscordPayload, channel: DiscordCha
 // ─── Internal API fetchers ──────────────────────────────────
 async function fetchJSON(path: string): Promise<any | null> {
   // Every registered route runs in-process (internalApi.ts). The HTTP branch is only for
-  // paths with no registered handler (/api/sentiment has none: it returns null either way).
+  // paths with no registered handler.
   if (isInternalRoute(path)) return internalJson(path);
   try {
     const res = await fetch(`${BASE}${path}`);
@@ -122,9 +124,8 @@ function statusEmoji(status: string): string {
   return "●"; // held / default
 }
 
-function gammaZoneLabel(zone: string): string {
-  return zone === "y+" ? "γ+ (dampened)" : "γ− (volatile)";
-}
+// gammaZoneLabel: "y?" (GEX missing / immaterial) renders as "gamma unknown",
+// never as either regime. See server/gammaZone.ts.
 
 // Word-wrap a string to ~maxChars per line. Used for the playbook copy in
 // level alerts so long sentences don't sprawl across the embed.
@@ -148,14 +149,15 @@ function wrapText(s: string, maxChars: number): string[] {
 //
 // Mirrors the Batcave-style mockup the user approved. Pulls strictly from
 // /api/models — spot, scenarioProb, levels (with #4 status), rangeBox (#3),
-// gammaZone, dfi, vix term ratio. All data, no LLM.
+// gammaZone, dfi, vix term ratio. All data, no LLM. Missing inputs render
+// as "unavailable", never as 0 / y+ / an even split.
 export async function postDailyModelCard(): Promise<boolean> {
-  // Pull all three feeds in parallel — models for spot/levels/scenarios,
-  // quotes for current VIX, sentiment for VIX term ratio (vix3m / vix).
-  const [data, quotes, sentiment] = await Promise.all([
+  // Models for spot/levels/scenarios/term ratio (daily.vol.termRatio is
+  // VIX3M / VIX from the Schwab quotes models.ts already uses); quotes for
+  // the current VIX print. (The old /api/sentiment call had no handler.)
+  const [data, quotes] = await Promise.all([
     fetchJSON(`/api/models?symbol=SPX`),
     fetchJSON(`/api/quotes`),
-    fetchJSON(`/api/sentiment`),
   ]);
   if (!data) {
     console.warn("[discord] daily card: /api/models returned null");
@@ -169,26 +171,11 @@ export async function postDailyModelCard(): Promise<boolean> {
 
   const spot = daily.spot ?? null;
   const audit = daily.audit ?? {};
-  const scen = audit.scenarioProb ?? { bull: 0, base: 0, bear: 0 };
-  const gammaZone = audit.gammaZone ?? "y+";
-  const dfi = audit.dfi ?? 0;
-  const vix = quotes?.vix?.price ?? null;
-  // termRatio in /api/sentiment is vix/vix3m (front-over-back). Invert so
-  // > 1 = contango (calm), < 1 = backwardation (stress) — matches our copy.
-  const ratioFrontOverBack = sentiment?.ratio30dOver3m ?? null;
-  const termRatio = ratioFrontOverBack ? 1 / ratioFrontOverBack : null;
-  const termLabel = termRatio == null ? ""
-    : termRatio < 1 ? "backwardation (stress)"
-    : termRatio > 1.05 ? "contango (calm)"
-    : "flat";
-
-  // Pick scenario color from highest-weight outcome
-  const top = scen.bull >= scen.bear && scen.bull >= scen.base
-    ? "bull"
-    : scen.bear >= scen.base ? "bear" : "base";
+  const card = dailyCardHeader(audit, daily.vol ?? null, quotes?.vix?.price ?? null);
+  const scen = card.scen;
   const color =
-    top === "bull" ? COLOR_BULL :
-    top === "bear" ? COLOR_BEAR : COLOR_NEUTRAL;
+    card.top === "bull" ? COLOR_BULL :
+    card.top === "bear" ? COLOR_BEAR : COLOR_NEUTRAL;
 
   // Levels — dedupe by rounded price so stacked levels (call wall + strong
   // mag + charm target all at the same strike) render once with combined
@@ -242,26 +229,20 @@ export async function postDailyModelCard(): Promise<boolean> {
     const n = Math.max(0, Math.min(20, Math.round(pct / 5)));
     return "[" + "#".repeat(n) + "-".repeat(20 - n) + "]";
   };
-  const scenarioBlock =
-    "```\n" +
-    `bull ${String(scen.bull).padStart(2)}%  ${bar(scen.bull)}\n` +
-    `base ${String(scen.base).padStart(2)}%  ${bar(scen.base)}\n` +
-    `bear ${String(scen.bear).padStart(2)}%  ${bar(scen.bear)}\n` +
-    "```";
-
-  // Vol context line
-  const volLine =
-    vix != null
-      ? `VIX ${vix.toFixed(2)}` +
-        (termRatio != null ? `  ·  term ${termRatio.toFixed(2)} (${termLabel})` : "")
-      : "_vol unavailable_";
+  const scenarioBlock = scen
+    ? "```\n" +
+      `bull ${String(scen.bull).padStart(2)}%  ${bar(scen.bull)}\n` +
+      `base ${String(scen.base).padStart(2)}%  ${bar(scen.base)}\n` +
+      `bear ${String(scen.bear).padStart(2)}%  ${bar(scen.bear)}\n` +
+      "```\n" + `_${card.scenarioSourceLabel}_`
+    : "_scenario weights unavailable_";
 
   const embed: DiscordEmbed = {
     title: `SPX · Daily Model · ${fmtPrice(spot)}`,
-    description: `${gammaZoneLabel(gammaZone)}  ·  DFI ${dfi >= 0 ? "+" : ""}${dfi.toFixed(2)}  ·  ${volLine}`,
+    description: card.description,
     color,
     fields: [
-      { name: "Scenarios", value: scenarioBlock, inline: false },
+      { name: card.scenarioFieldName, value: scenarioBlock, inline: false },
       { name: "Range Box", value: rangeBlock, inline: false },
       { name: "Levels (nearest)", value: levelsBlock, inline: false },
     ],
@@ -550,8 +531,13 @@ export async function postGammaFlipAlert(args: {
   gammaZero: number | null;
 }): Promise<boolean> {
   const { prevZone, newZone, spot, gammaZero } = args;
-  const into = newZone === "y+" ? "DAMPENED" : "VOLATILE";
-  const color = newZone === "y+" ? COLOR_BULL : COLOR_BEAR;
+  // A flip is only between two KNOWN regimes; into/out of "y?" (gamma
+  // unknown) is a data dropout, never an alert (discordScheduler gates this
+  // too via detectGammaFlip).
+  const p = normalizeGammaZone(prevZone), n = normalizeGammaZone(newZone);
+  if (p === "y?" || n === "y?" || p === n) return false;
+  const into = n === "y+" ? "DAMPENED" : "VOLATILE";
+  const color = n === "y+" ? COLOR_BULL : COLOR_BEAR;
 
   const embed: DiscordEmbed = {
     title: `SPX · γ-ZONE FLIP · into ${into}`,
