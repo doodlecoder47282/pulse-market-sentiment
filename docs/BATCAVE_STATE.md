@@ -97,6 +97,12 @@ Not verified live: Schwab Streamer login and index symbols ($VIX9D etc.),
 strikeCount semantics, closePrice roll after 16:00, request sizes, Railway
 deploy of the ML sidecar, client rendering in a browser.
 
+UI follow-up (06c2e0c, CI 37947924832 green, screenshots in ci-reports-quant
+shots/): regime banner reads "Regime unavailable" with the missing inputs
+instead of "Neutral ... size down"; missing VIX change no longer treated as
+0%; NET GEX shows "—" when unknown; header and page title say Batcave. CI now
+screenshots all 11 tabs (desktop) and Signals (phone) on every run.
+
 Next step: user reviews and merges PR #3; then one live session with Schwab
 connected to confirm the streamer and the unverified fields above.
 
