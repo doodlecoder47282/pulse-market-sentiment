@@ -348,3 +348,77 @@ test("edge survival never says EXPRESS when the sizer's Kelly is zero (seeded ra
     if (kelly.fApplied <= 0) assert.notEqual(r.verdict, "EXPRESS");
   }
 });
+
+// ─── Items 7-8: threshold hold-out, ungraded visibility ─────────────────────
+
+import {
+  twoProportionZ, walkForwardThreshold, selectThresholdInSample, whaleGradingCoverage, WF_Z_CRIT, type WfRow,
+} from "../../server/edgeStatsMath";
+import { isOutcomeOnOptionMarks } from "../../server/validationMath";
+
+test("two-proportion z (NIST 7.3.3) and the Bonferroni critical value", () => {
+  // 30/50 vs 15/50: pooled p = 0.45, z = 0.3 / sqrt(0.45 x 0.55 x 0.04) = 3.015113 (hand / scipy)
+  near(twoProportionZ(30, 50, 15, 50)!, 3.015113, 1e-6);
+  assert.equal(twoProportionZ(1, 0, 1, 2), null);
+  // scipy.stats.norm.ppf(1 - 0.05 / 3) = 2.128045
+  near(WF_Z_CRIT, 2.128045, 1e-3);
+});
+
+function lcg(seed: number) { let s = seed >>> 0; return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; }; }
+function synthRows(seed: number, n: number, pHi: number, pLo: number): WfRow[] {
+  const r = lcg(seed);
+  const D = 86_400_000;
+  return Array.from({ length: n }, (_, i) => {
+    const value = r() * 40;                       // e.g. vol/OI 0-40x
+    const p = value >= 20 ? pHi : pLo;
+    return { t: i * D, knownAt: i * D + 2 * D, hit: (r() < p ? 1 : 0) as 0 | 1, value };
+  });
+}
+
+test("walk-forward: a real effect survives out of sample; noise mined in-sample does not", () => {
+  const real = walkForwardThreshold(synthRows(7, 240, 0.6, 0.2), [15, 20, 30]);
+  assert.equal(real.status, "ok");
+  assert.equal(real.supported, true, real.reason);
+  assert.ok(real.oos.keptRate! > real.oos.droppedRate!);
+  assert.ok(real.oos.keptWilsonLo! > 0.4 && real.oos.keptWilsonHi! < 0.8);
+  // Null: hit rate 30% everywhere. Count how often the in-sample rule alone would
+  // suggest vs how often the walk-forward gate supports a suggestion (seeded).
+  // 1,000 null windows of 60 alerts, seven candidate cut-offs: the in-sample rule
+  // fires on noise 9 times (seeded), the walk-forward gate 0 times.
+  let inSample = 0, supported = 0;
+  const sweep = [5, 10, 15, 20, 25, 30, 35];
+  for (let k = 0; k < 1000; k++) {
+    const rows = synthRows(1000 + k, 60, 0.3, 0.3);
+    if (selectThresholdInSample(rows, sweep) != null) inSample++;
+    if (walkForwardThreshold(rows, sweep).supported) supported++;
+  }
+  assert.ok(inSample > 0, "the in-sample rule alone does mine noise");
+  assert.ok(supported <= 5, `false suggestions under the null: ${supported}/1000`);
+  assert.ok(supported < inSample, `in-sample ${inSample}, walk-forward ${supported}`);
+  // Too few rows: no test, no suggestion
+  assert.equal(walkForwardThreshold(synthRows(3, 30, 0.9, 0.1), [20]).status, "insufficient_rows");
+});
+
+test("walk-forward purges training rows whose outcome was not known before the test fold", () => {
+  const D = 86_400_000;
+  // 60 rows one day apart, each outcome known 10 days later: the last 10 rows before each fold are purged.
+  const rows: WfRow[] = Array.from({ length: 60 }, (_, i) => ({ t: i * D, knownAt: i * D + 10 * D, hit: (i % 2) as 0 | 1, value: i % 5 }));
+  const wf = walkForwardThreshold(rows, [3]);
+  assert.equal(wf.folds[0].purged, 10);
+  assert.equal(wf.folds[0].trainN, 20); // rows 0..19 known before row 30 fires
+});
+
+test("whale coverage: ungraded_no_mark is counted and shown, never a miss; legacy proxy rows are excluded", () => {
+  const ok = (ret: number) => ({ graded: 1, pctReturn: ret, outcomeJson: JSON.stringify({ result: "ok", method: "option_marks_v1" }) });
+  const nomark = (reason: string) => ({ graded: 1, pctReturn: null, outcomeJson: JSON.stringify({ result: "ungraded_no_mark", method: "option_marks_v1", reason }) });
+  const rows = [ok(0.4), ok(-0.2), ok(0.1), nomark("no_entry_quote_logged"), nomark("exit_quote_stale"), nomark("exit_quote_stale"),
+    { graded: 0, pctReturn: null, outcomeJson: null }, { graded: 1, pctReturn: 0.5, outcomeJson: JSON.stringify({ result: "ok" }) }];
+  const c = whaleGradingCoverage(rows.map((r) => ({ ...r, kind: "whale_alert" })), isOutcomeOnOptionMarks);
+  assert.equal(c.graded, 3);
+  assert.equal(c.pending, 1);
+  assert.equal(c.ungradedNoMark, 3);
+  near(c.ungradedShare!, 0.5, 1e-12);          // 3 / (3 + 3)
+  assert.deepEqual(c.ungradedReasons, { no_entry_quote_logged: 1, exit_quote_stale: 2 });
+  assert.equal(c.legacyProxyExcluded, 1);
+  assert.equal(c.total, 7);
+});
