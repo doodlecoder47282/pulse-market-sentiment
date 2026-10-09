@@ -8,9 +8,13 @@ import { isOutcomeOnOptionMarks } from "./validationMath";
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { reliabilityCurve, wilsonInterval, firstPerSession, type ReliabilityReport } from "./stats";
 import {
-  whaleGradingCoverage, walkForwardThreshold, WF_Z_CRIT,
+  whaleGradingCoverage, walkForwardThreshold, sweepAboveGate, WF_Z_CRIT,
   type WalkForwardResult, type WfRow,
 } from "./edgeStatsMath";
+import { getFlowConfig } from "./flowConfig";
+
+/** Threshold suggestions are tested on at least this much history (walk-forward needs rows). */
+export const SUGGESTION_WINDOW_DAYS = 180;
 
 // The event a regime call's hit_30 records (outcomeLogger.gradeRegimeCall):
 // a proxy, not the regime itself.
@@ -26,10 +30,16 @@ export interface EdgeStats {
   suggestions: ThresholdSuggestion[];
   /** Every swept field with its walk-forward result, suggested or not (round-2 item 7). */
   suggestionTests: SuggestionTest[];
+  /** History the suggestion tests used (max(windowDays, SUGGESTION_WINDOW_DAYS)). */
+  suggestionWindowDays: number;
 }
 
 export interface SuggestionTest {
   field: ThresholdSuggestion["field"];
+  /** live gate from getFlowConfig() */
+  current: number;
+  /** candidate cut-offs, all strictly tighter than the live gate */
+  candidates: number[];
   inSampleValue: number | null;
   walkForward: WalkForwardResult;
 }
@@ -110,7 +120,17 @@ export function computeEdgeStats(windowDays: number = 30): EdgeStats {
   const whaleAll = allRows.filter((r) => r.kind === "whale_alert");
   const whaleRows = whaleAll.filter((r: (typeof allRows)[number]) => r.graded === 1 && isOutcomeOnOptionMarks(r));
   const regimeRows = allRows.filter((r) => r.kind === "regime_call");
-  const { suggestions, tests } = deriveSuggestions(whaleRows);
+  // Suggestions use a longer history than the display window: the
+  // walk-forward needs rows to have any power (round-2 fix item 4).
+  const suggestionWindowDays = Math.max(windowDays, SUGGESTION_WINDOW_DAYS);
+  const sugFrom = now - suggestionWindowDays * 24 * 60 * 60 * 1000;
+  const sugRows = suggestionWindowDays === windowDays ? whaleRows : db
+    .select()
+    .from(predictionOutcomes)
+    .where(gte(predictionOutcomes.capturedAt, sugFrom))
+    .all()
+    .filter((r: (typeof allRows)[number]) => r.kind === "whale_alert" && r.graded === 1 && isOutcomeOnOptionMarks(r));
+  const { suggestions, tests } = deriveSuggestions(sugRows);
 
   return {
     asOf: now,
@@ -120,6 +140,7 @@ export function computeEdgeStats(windowDays: number = 30): EdgeStats {
     regimeCalls: aggregateRegimeCalls(regimeRows),
     suggestions,
     suggestionTests: tests,
+    suggestionWindowDays,
   };
 }
 
@@ -328,11 +349,21 @@ function aggregateRegimeCalls(rows: any[]): RegimeCallEdge {
 // Wilson 95% interval. The in-sample bar (5 points and 2 SE) still applies
 // to pick the candidate.
 
-const SWEEPS: Array<{ field: ThresholdSuggestion["field"]; currentNote: string; values: number[]; get: (p: any) => number; label: (v: number) => string }> = [
-  { field: "premiumFloor", currentNote: "$1M", values: [1_500_000, 2_000_000, 2_500_000, 5_000_000], get: (p) => Number(p.premium ?? 0), label: (v) => `$${(v / 1e6).toFixed(1)}M premium floor` },
-  { field: "volOiRatio", currentNote: "10x", values: [15, 20, 30], get: (p) => Number(p.volOiRatio ?? 0), label: (v) => `vol/OI ${v}x` },
-  { field: "deltaMin", currentNote: "0.20", values: [0.25, 0.3, 0.35], get: (p) => Math.abs(Number(p.delta ?? 0)), label: (v) => `delta floor ${v.toFixed(2)}` },
-];
+// Candidate grids; only values strictly tighter than the LIVE gate
+// (getFlowConfig(): defaults $2.5M premium, 15x vol/OI, 0.20 delta) are swept,
+// and the "current" label is the live value, not a hard-coded one.
+const PREMIUM_GRID = [1_500_000, 2_000_000, 2_500_000, 3_000_000, 4_000_000, 5_000_000, 7_500_000, 10_000_000];
+const VOLOI_GRID = [10, 12, 15, 20, 25, 30, 40, 50];
+const DELTA_GRID = [0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5];
+
+function sweeps(): Array<{ field: ThresholdSuggestion["field"]; current: number; currentNote: string; values: number[]; get: (p: any) => number; label: (v: number) => string }> {
+  const cfg = getFlowConfig();
+  return [
+    { field: "premiumFloor", current: cfg.premiumFloor, currentNote: `$${(cfg.premiumFloor / 1e6).toFixed(1)}M`, values: sweepAboveGate(cfg.premiumFloor, PREMIUM_GRID), get: (p) => Number(p.premium ?? 0), label: (v) => `$${(v / 1e6).toFixed(1)}M premium floor` },
+    { field: "volOiRatio", current: cfg.volOiRatio, currentNote: `${cfg.volOiRatio}x`, values: sweepAboveGate(cfg.volOiRatio, VOLOI_GRID), get: (p) => Number(p.volOiRatio ?? 0), label: (v) => `vol/OI ${v}x` },
+    { field: "deltaMin", current: cfg.deltaMin, currentNote: cfg.deltaMin.toFixed(2), values: sweepAboveGate(cfg.deltaMin, DELTA_GRID), get: (p) => Math.abs(Number(p.delta ?? 0)), label: (v) => `delta floor ${v.toFixed(2)}` },
+  ];
+}
 
 function deriveSuggestions(whaleRows: any[]): { suggestions: ThresholdSuggestion[]; tests: SuggestionTest[] } {
   const suggestions: ThresholdSuggestion[] = [];
@@ -345,7 +376,7 @@ function deriveSuggestions(whaleRows: any[]): { suggestions: ThresholdSuggestion
   });
   const overallHit30 = graded.length ? graded.filter((r) => r.hit30 === 1).length / graded.length : 0;
 
-  for (const sw of SWEEPS) {
+  for (const sw of sweeps()) {
     const rows: WfRow[] = parsed.map(({ r, p }) => ({
       t: Number(r.capturedAt),
       knownAt: Number(r.gradingDueAt ?? r.gradedAt),
@@ -353,7 +384,7 @@ function deriveSuggestions(whaleRows: any[]): { suggestions: ThresholdSuggestion
       value: sw.get(p),
     }));
     const wf = walkForwardThreshold(rows, sw.values);
-    tests.push({ field: sw.field, inSampleValue: wf.fullSampleValue, walkForward: wf });
+    tests.push({ field: sw.field, current: sw.current, candidates: sw.values, inSampleValue: wf.fullSampleValue, walkForward: wf });
     if (!wf.supported || wf.fullSampleValue == null) continue;
     const v = wf.fullSampleValue;
     const kept = rows.filter((x) => x.value >= v);
@@ -372,7 +403,7 @@ function deriveSuggestions(whaleRows: any[]): { suggestions: ThresholdSuggestion
       oos: {
         n: o.keptN, hits: o.keptHits, hitRate: o.keptRate, wilsonLo: o.keptWilsonLo, wilsonHi: o.keptWilsonHi,
         droppedN: o.droppedN, droppedHitRate: o.droppedRate, lift: o.lift, z: o.z, zCrit: WF_Z_CRIT,
-        method: `anchored walk-forward, ${wf.folds.length} test folds over the later half, purged training (outcome known before each fold)`,
+        method: `anchored walk-forward, ${wf.folds.length} test folds over the later half, purged training (outcome known before each fold), in-fold screen = largest kept-vs-dropped z, out-of-sample z with continuity correction`,
       },
     });
   }

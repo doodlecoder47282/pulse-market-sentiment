@@ -401,6 +401,7 @@ test("edge survival never says EXPRESS when the sizer's Kelly is zero (seeded ra
 
 import {
   twoProportionZ, walkForwardThreshold, selectThresholdInSample, whaleGradingCoverage, WF_Z_CRIT, type WfRow,
+  twoProportionPower, minimumDetectableLift, sweepAboveGate, normCdf,
 } from "../../server/edgeStatsMath";
 import { isOutcomeOnOptionMarks } from "../../server/validationMath";
 
@@ -445,6 +446,39 @@ test("walk-forward: a real effect survives out of sample; noise mined in-sample 
   assert.ok(supported < inSample, `in-sample ${inSample}, walk-forward ${supported}`);
   // Too few rows: no test, no suggestion
   assert.equal(walkForwardThreshold(synthRows(3, 30, 0.9, 0.1), [20]).status, "insufficient_rows");
+});
+
+test("power and minimum detectable lift of the out-of-sample test (scipy known answers)", () => {
+  // n1 = n2 = 100, p2 = 0.30, lift 0.15, z_a = 2.128 (OriginLab PSS two-proportion power formula):
+  // Phi((0.15 - 2.128 x 0.068465) / 0.067639) = 0.525379 (scipy.stats.norm.cdf)
+  near(twoProportionPower(100, 100, 0.3, 0.15)!, 0.525379, 1e-4);
+  // lift for 80% power at the same n: 0.204654 (scipy.optimize.brentq)
+  near(minimumDetectableLift(100, 100, 0.3)!, 0.204654, 1e-4);
+  near(normCdf(1.96), 0.9750021, 1e-6);
+  // Yates-corrected z: (0.3 - 0.5 x 0.04) / sqrt(0.45 x 0.55 x 0.04) = 2.814106
+  near(twoProportionZ(30, 50, 15, 50, true)!, 2.814106, 1e-6);
+  // Sweeps never re-suggest the live gate or a looser one (live defaults $2.5M, 15x)
+  assert.deepEqual(sweepAboveGate(2_500_000, [1_500_000, 2_500_000, 3_000_000, 5_000_000]), [3_000_000, 5_000_000]);
+  assert.deepEqual(sweepAboveGate(15, [10, 15, 20, 30]), [20, 30]);
+  // "no suggestion" still says what the test could see
+  const few = walkForwardThreshold(synthRows(5, 30, 0.5, 0.5), [20]);
+  assert.equal(few.status, "insufficient_rows");
+  assert.equal(few.power.oosRows, 15);
+  assert.ok(few.power.mde80 == null || few.power.mde80 > 0.4);
+});
+
+test("walk-forward screen: the z-maximizing in-fold screen keeps size at its 1.67% target (sampling slack 1 pt) and beats the strict screen on power", () => {
+  // Seeded: 600 null windows and 150 effect windows (+15 pts above a vol/OI of 20), 240 alerts each.
+  const sweep = [5, 10, 15, 20, 25, 30, 35];
+  let nullLoose = 0, effLoose = 0, effStrict = 0;
+  for (let i = 0; i < 600; i++) if (walkForwardThreshold(synthRows(3000 + i, 240, 0.3, 0.3), sweep, { screen: "loose" }).supported) nullLoose++;
+  for (let i = 0; i < 150; i++) {
+    const rows = synthRows(7000 + i, 240, 0.45, 0.3);
+    if (walkForwardThreshold(rows, sweep, { screen: "loose" }).supported) effLoose++;
+    if (walkForwardThreshold(rows, sweep, { screen: "strict" }).supported) effStrict++;
+  }
+  assert.ok(nullLoose / 600 <= 0.0167 + 0.01, `size ${nullLoose}/600`);
+  assert.ok(effLoose > effStrict, `power loose ${effLoose} vs strict ${effStrict} of 150`);
 });
 
 test("walk-forward purges training rows whose outcome was not known before the test fold", () => {

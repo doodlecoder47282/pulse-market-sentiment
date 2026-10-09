@@ -52,8 +52,13 @@ interface Suggestion {
 }
 interface SuggestionTest {
   field: string;
+  current?: number;
+  candidates?: number[];
   inSampleValue: number | null;
-  walkForward: { status: string; supported: boolean; reason: string };
+  walkForward: {
+    status: string; supported: boolean; reason: string;
+    power?: { oosRows: number; keptN: number; droppedN: number; mde80: number | null; powerAt10pts: number | null; basis: string };
+  };
 }
 interface EdgeStats {
   asOf: number;
@@ -62,6 +67,7 @@ interface EdgeStats {
   regimeCalls: RegimeEdge;
   suggestions: Suggestion[];
   suggestionTests?: SuggestionTest[];
+  suggestionWindowDays?: number;
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -253,7 +259,7 @@ function CalibrationPlot({ r }: { r: RegimeEdge }) {
   );
 }
 
-function SuggestionsPanel({ suggestions, tests }: { suggestions: Suggestion[]; tests?: SuggestionTest[] }) {
+function SuggestionsPanel({ suggestions, tests, windowDays }: { suggestions: Suggestion[]; tests?: SuggestionTest[]; windowDays?: number }) {
   const [appliedField, setAppliedField] = useState<string | null>(null);
   const [errorField, setErrorField] = useState<string | null>(null);
 
@@ -278,12 +284,20 @@ function SuggestionsPanel({ suggestions, tests }: { suggestions: Suggestion[]; t
   if (suggestions.length === 0) {
     return (
       <div className="rounded-md border border-border/50 bg-card/40 p-3 text-sm text-muted-foreground" data-testid="text-no-suggestions">
-        no threshold tweaks suggested. a suggestion needs out-of-sample support (walk-forward hold-out), not just a better in-sample hit rate.
-        {(tests ?? []).map((t) => (
-          <div key={t.field} className="mt-1 text-[11px]" data-testid={`text-suggestion-test-${t.field}`}>
-            {t.field}: {t.inSampleValue != null ? `in-sample pick ${t.inSampleValue}; ` : "no in-sample pick; "}{t.walkForward.reason}
-          </div>
-        ))}
+        no threshold tweaks suggested. a suggestion needs out-of-sample support (walk-forward hold-out over the last {windowDays ?? 180} days), not just a better in-sample hit rate.
+        {(tests ?? []).map((t) => {
+          const pw = t.walkForward.power;
+          return (
+            <div key={t.field} className="mt-1 text-[11px]" data-testid={`text-suggestion-test-${t.field}`}>
+              {t.field}{t.current != null ? ` (live ${t.current}; tested ${t.candidates && t.candidates.length ? t.candidates.join(", ") : "none above the gate"})` : ""}: {t.inSampleValue != null ? `pick ${t.inSampleValue}; ` : "no pick; "}{t.walkForward.reason}
+              {pw && (
+                <span data-testid={`text-suggestion-power-${t.field}`}>
+                  {" "}· power: with {pw.keptN} kept / {pw.droppedN} dropped out-of-sample alerts the test detects a lift of {pw.mde80 != null ? `${(pw.mde80 * 100).toFixed(0)} pts` : "no realistic size"} at 80% power; chance of catching a +10 pt lift {pw.powerAt10pts != null ? pct(pw.powerAt10pts, 0) : "—"}
+                </span>
+              )}
+            </div>
+          );
+        })}
       </div>
     );
   }
@@ -462,7 +476,7 @@ export default function EdgeStatsPanel() {
             )}
           </TabsContent>
           <TabsContent value="suggestions" className="mt-3">
-            <SuggestionsPanel suggestions={data.suggestions} tests={data.suggestionTests} />
+            <SuggestionsPanel suggestions={data.suggestions} tests={data.suggestionTests} windowDays={data.suggestionWindowDays} />
           </TabsContent>
         </Tabs>
 
