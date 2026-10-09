@@ -19,6 +19,8 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
+import { Switch } from "@/components/ui/switch";
+import { premarketGateEnabled, setPremarketGateEnabled } from "@/lib/prefs";
 import {
   CheckCircle, XCircle, AlertTriangle, ExternalLink, RefreshCw,
   Wifi, WifiOff, Loader2, Settings, Clock, Copy,
@@ -745,15 +747,35 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
             )}
           </div>
 
+          <PremarketToggle />
+
           {/* Help text */}
-          <div className="rounded-md border border-border/20 bg-muted/10 p-3 text-[10px] text-muted-foreground leading-relaxed">
-            <div className="font-semibold text-foreground/70 mb-1">About Schwab Integration</div>
-            Schwab access tokens expire every 30 minutes and are silently refreshed. Refresh tokens last 7 days — re-authenticate when prompted.
-            Your credentials are stored locally in the app's SQLite database and never transmitted to third parties.
-            Option chains require Schwab — Yahoo Finance does not provide reliable chain data.
+          <div className="rounded-md border border-border/20 bg-muted/10 p-3 text-xs text-muted-foreground leading-relaxed">
+            <div className="font-semibold text-foreground/80 mb-1">About the Schwab connection</div>
+            You sign in on Schwab's own page; Batcave never sees your Schwab password. Schwab gives Batcave a token:
+            access tokens expire every 30 minutes and are refreshed automatically, refresh tokens last 7 days, so you
+            reconnect about once a week. Tokens stay on the server (encrypted when BATCAVE_TOKEN_KEY is set) and can be revoked from your Schwab account.
+            All stock, index and options data comes from Schwab only; when Schwab can't answer, panels say so.
           </div>
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function PremarketToggle() {
+  const [on, setOn] = useState(premarketGateEnabled);
+  return (
+    <label className="flex min-h-[44px] items-center justify-between gap-3 rounded-md border border-border/30 p-3 text-sm">
+      <span>
+        <span className="block font-medium">Pre-market checklist</span>
+        <span className="block text-xs text-muted-foreground">Show your trading checklist when Batcave opens.</span>
+      </span>
+      <Switch
+        checked={on}
+        onCheckedChange={(v) => { setOn(v); setPremarketGateEnabled(v); }}
+        data-testid="switch-premarket-gate"
+      />
+    </label>
   );
 }

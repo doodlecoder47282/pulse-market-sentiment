@@ -80,6 +80,10 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
   const currentRegime = String(models?.currentRegime ?? "UNAVAILABLE");
   const headlineRegime = String(models?.headline ?? "");
   const tone = regimeTone(currentRegime);
+  // When the regime is unknown, tab copy describes the tab only; it never
+  // builds a sentence around "unavailable regime" or implies a neutral read.
+  const known = currentRegime !== "UNAVAILABLE" && currentRegime !== "GAMMA_UNKNOWN";
+  const withRegime = (base: string) => (known ? `${base} — ${regimeWord(currentRegime)} regime.` : `${base}.`);
 
   // Whale flow last hour — quick directional read
   const cutoff = Date.now() - 60 * 60_000;
@@ -100,14 +104,15 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone,
-        topLine: headlineRegime || `${regimeWord(currentRegime)} regime — read whale flow against it.`,
-        subLine: whaleSummary,
+        topLine: "Whale flow — fresh large option trades, tracked positions and recent closes.",
+        subLine: whaleSummary.charAt(0).toUpperCase() + whaleSummary.slice(1) + ".",
         bullets: [
-          "Signals tab shows fresh whale detections, tracked positions, and recently-closed plays.",
-          "Whale criteria: $2.5M+ premium, vol/OI 15x, ABOVE_ASK, 1–3DTE only.",
-          tone === "bull" ? "Trend regime — call-heavy whale herding reinforces direction." :
-          tone === "warning" ? "Chop regime — whale flow is noisier, weight CLV not P&L." :
-          "Neutral regime — only act on highest-conviction whales.",
+          "Whale criteria: $2.5M+ premium on one contract, volume/OI 15x, bought above the ask, 1–3 days to expiry.",
+          known
+            ? (tone === "bull" ? "Trend regime: one-sided whale flow has tended to line up with the move (descriptive)." :
+               tone === "warning" ? "Chop regime: whale flow is noisier; closing-line value is the better yardstick than P&L." :
+               "Neutral regime: no dominant dealer-hedging pressure.")
+            : "Regime unknown until Schwab gamma and VIX term data arrive.",
         ],
         asOf: Date.now(),
         whatThisIs: "Whale flow — heavy contracts ($2.5M+ cumulative day premium on one contract, 1–3DTE; can be many small trades, not block prints) plus a separate UOA scanner with cap-tiered clustering for any-ticker, any-date alerts.",
@@ -117,10 +122,8 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone,
-        topLine: `SPX cash chart with dealer levels — ${regimeWord(currentRegime)} regime.`,
-        subLine: tone === "bull" ? "Direction set, ride pullbacks to mainPivot." :
-                 tone === "warning" ? "Range-bound, fade into call/put walls." :
-                 "Watch DFI for transition before committing.",
+        topLine: withRegime("SPX cash chart with dealer levels"),
+        subLine: "Dealer levels are estimates from the Schwab option chain.",
         bullets: [
           "Dealer levels: call wall (resistance), put wall (support), gamma flip (pivot).",
           "Vanna and charm zeros add second-order pin pressure near OpEx.",
@@ -134,7 +137,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone,
-        topLine: `${regimeWord(currentRegime)} regime — composite model output.`,
+        topLine: withRegime("Composite model and forward-path projection"),
         subLine: "ML Lab below shows forward path scenarios (bull q90, base q50, bear q10).",
         bullets: [
           "Composite score blends DFI, gamma zone, IV term, vanna bias, charm pin, flow.",
@@ -156,7 +159,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
           ? "Trend regime: estimated dealer hedging tends to add to moves (descriptive, no edge claimed)."
           : currentRegime === "NEUTRAL"
           ? "Neutral regime: no dominant estimated hedging pressure."
-          : `Regime ${regimeWord(currentRegime)}: no hedging-pressure reading.`,
+          : "No hedging-pressure reading until Schwab chain data arrives.",
         bullets: [
           "Live Greeks across ATM ±20 strikes, refreshed every 4s.",
           "Hot zones = strike clusters with rising volume + Greek velocity.",
@@ -170,30 +173,30 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone,
-        topLine: `${regimeWord(currentRegime)} regime — what's the next 20-min likely look like?`,
-        subLine: "What's Next panel below scores regime transitions with heuristic weights (not calibrated probabilities).",
+        topLine: withRegime("Trade Desk — 20-minute regime outlook, edge tracking and position tools"),
+        subLine: "The outlook scores regime transitions with heuristic weights (not calibrated probabilities).",
         bullets: [
           "Predictor uses DFI slope, gamma flip, vanna, charm, IV term, VIX term, whale pressure.",
           "Heuristic score 70+/100 = strong transition reading, under 40 = weak; uncalibrated.",
           "Warming-up state means <5 samples collected: the reading is not formed yet.",
         ],
         asOf: Date.now(),
-        whatThisIs: "Forward-looking regime forecast — what the next 20 minutes likely look like.",
+        whatThisIs: "Regime outlook for the next 20 minutes, the edge-tracking loop and trade tools.",
       };
 
     case "regime":
       return {
         tab,
         tone,
-        topLine: `Macro + sector + correlation read — ${regimeWord(currentRegime)} micro-regime.`,
-        subLine: "Sector rotation map and JPM collar levels frame the macro context.",
+        topLine: withRegime("Macro, sector rotation and cross-asset read"),
+        subLine: "Sector rotation map, cross-asset canaries and dealer gamma map.",
         bullets: [
-          "JPM Collar Q2 2026: ceiling 6865, floor 6180, lower put 5210. Reset 2026-06-30.",
           "Sector web shows leadership rotation — risk-on (tech/discretionary) vs risk-off (staples/utilities).",
+          "Canary panel compares cross-asset moves against their own 20-day volatility.",
           "WEF themes map narratives to ticker baskets for thematic flow tracking.",
         ],
         asOf: Date.now(),
-        whatThisIs: "Macro context — sector rotation, dealer collar levels, narrative themes.",
+        whatThisIs: "Macro context — sector rotation, cross-asset canaries, narrative themes.",
       };
 
     case "cosmos":
@@ -218,12 +221,12 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
         topLine: "Market-relevant headlines and macro events.",
         subLine: "Filter: SPX-relevant, Fed/Treasury, geopolitics, OpEx/FOMC calendar.",
         bullets: [
-          "Headlines update continuously from Reuters, Bloomberg, SEC.",
-          "Reddit and anonymous blogs are filtered out — primary sources only.",
-          "Calendar effects (FOMC, OpEx, holidays) reshape regime — check before trading.",
+          "Official sources first (SEC, Fed, BLS, BEA, Treasury, CFTC), then established newswires; the source line shows which are live.",
+          "Reddit and anonymous blogs are filtered out.",
+          "Calendar: FOMC, data releases, OpEx and holidays.",
         ],
         asOf: Date.now(),
-        whatThisIs: "High-quality news — primary sources only, filtered for SPX relevance.",
+        whatThisIs: "Market news from tiered, labeled sources, filtered for SPX relevance.",
       };
 
     case "voices":
@@ -235,7 +238,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
         bullets: [
           "Voices are curated trader/quant accounts with track records.",
           "Use as confirmation, not primary signal.",
-          "Disagreement between voices and your data = reduce size, don't override.",
+          "When voices and your data disagree, the data is the record.",
         ],
         asOf: Date.now(),
         whatThisIs: "Curated commentary from traders with track records — confirmation, not signal.",
@@ -245,15 +248,14 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab,
         tone: "neutral",
-        topLine: "Daily 5-bullet wrap — the things that mattered.",
-        subLine: "Read at the close, plan tomorrow.",
+        topLine: "Take Five — a short reset away from the screen.",
+        subLine: "Breathing pacer and a few reminders. Nothing here reads market data.",
         bullets: [
-          "Auto-built from regime, flow, news, calendar.",
-          "Review at 4:05 PM ET, adjust thesis for tomorrow.",
-          "If 4 of 5 bullets disagree with your bias — flag the bias.",
+          "4-7-8 breathing pacer.",
+          "Also opens from the Take 5 button in the header.",
         ],
         asOf: Date.now(),
-        whatThisIs: "End-of-day 5-bullet recap — the day's regime, flow, and what shifts tomorrow.",
+        whatThisIs: "A personal reset tool: breathing pacer and reminders.",
       };
 
     case "global":
@@ -261,7 +263,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
       return {
         tab: "global",
         tone,
-        topLine: headlineRegime || `${regimeWord(currentRegime)} regime — ${whaleSummary}.`,
+        topLine: headlineRegime || (known ? `${regimeWord(currentRegime)} regime — ${whaleSummary}.` : `Regime unknown — ${whaleSummary}.`),
         subLine: "",
         bullets: [],
         asOf: Date.now(),

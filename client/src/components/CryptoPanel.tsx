@@ -1,4 +1,4 @@
-// CryptoPanel — the degen desk. Sub-1M meme discovery with honest verdicts.
+// CryptoPanel — digital assets: exchange-direct majors plus a small-cap launch scanner with honest verdicts.
 //
 // Design: Gen Z degen energy (neon purple/lime, glow accents, big score rings)
 // but every number is real and every risk flag is shown. FOMO meter, narrative
@@ -236,14 +236,14 @@ export default function CryptoPanel() {
           <div>
             <div className="flex items-center gap-2">
               <Rocket className="h-5 w-5 text-fuchsia-400" />
-              <h2 className="text-base font-bold tracking-tight">degen desk</h2>
+              <h2 className="text-base font-bold tracking-tight">Digital assets</h2>
               <Badge variant="outline" className="border-lime-400/40 bg-lime-400/10 text-[10px] text-lime-300">
-                sub-1M → 5M hunt
+                small-cap launch scanner
               </Badge>
             </div>
             <p className="mt-1 max-w-xl text-xs leading-snug text-muted-foreground">
-              solana launches + pump.fun graduations, scored on flow acceleration, a hand-set catchy-name
-              heuristic (not fitted to outcomes), narrative confirms, and rug filters. sized off exit liquidity. PASS is the default verdict.
+              Exchange-direct prices for majors, plus a tracker for new Solana launches scored on flow
+              acceleration, narrative confirmation and rug filters (hand-set heuristics, not fitted to outcomes). PASS is the default verdict.
             </p>
           </div>
           <AgentStrip health={healthQ.data} />

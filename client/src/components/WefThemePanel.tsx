@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import type { WefThemeResponse, WefTheme } from "@shared/schema";
 import { useTickers } from "./TickerContext";
+import { friendlyError } from "@/lib/friendlyError";
 
 type SortMode = "mentions" | "rs" | "alpha";
 
@@ -59,7 +60,7 @@ export default function WefThemePanel() {
             <span className="text-sm font-medium">WEF theme mapper unavailable</span>
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
-            {(error as Error)?.message ?? "Could not build the WEF theme basket map."}
+            {friendlyError(error, "Could not build the WEF theme basket map.")}
           </p>
         </CardContent>
       </Card>

@@ -8,6 +8,7 @@ import {
   ExternalLink, CheckCircle2, AlertTriangle, HelpCircle, ArrowUpRight, ArrowDownRight,
   Minus, Users, Heart, Repeat2, MessageCircle, Eye,
 } from "lucide-react";
+import { friendlyError } from "@/lib/friendlyError";
 
 type VoiceMeta = {
   handle: string; name: string; weight: number; tags: string[]; bio: string; xUrl: string;
@@ -179,7 +180,7 @@ export default function VoicesPanel() {
     return (
       <Card>
         <CardContent className="p-6 text-center text-sm text-muted-foreground">
-          Couldn't load voices. {(error as Error)?.message}
+          Couldn't load voices. {friendlyError(error, "")}
         </CardContent>
       </Card>
     );

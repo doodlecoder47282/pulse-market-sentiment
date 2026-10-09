@@ -320,7 +320,6 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-background">
       {/* Floating Take Five launcher — visible on every tab */}
-      <TakeFiveFab onClick={() => setTake5Open(true)} />
       <TakeFive mode="overlay" open={take5Open} onClose={() => setTake5Open(false)} />
 
       {/* Keyboard shortcuts help modal */}
@@ -368,10 +367,10 @@ export default function Dashboard() {
               </ErrorBoundary>
             </div>
 
-            <div className="hidden text-right md:block">
+            <div className="hidden whitespace-nowrap text-right xl:block">
               <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Last update</div>
               <div className="font-mono text-xs" data-testid="text-last-update">
-                {data ? fmt.ts(data.capturedAt) : "—"}
+                {data ? fmt.tsET(data.capturedAt) : "—"}
               </div>
               {snapState !== "ok" ? (
                 <DataStateChip state={snapState} reason={snapReason} source="Schwab" testId="chip-snapshot-state" />
@@ -392,6 +391,8 @@ export default function Dashboard() {
             <div className="hidden md:flex">
               <SchwabStatusPill onClick={() => setSettingsOpen(true)} />
             </div>
+
+            <TakeFiveFab onClick={() => setTake5Open(true)} />
 
             {/* Settings gear — always visible (44px tap target on mobile) */}
             <button
@@ -644,7 +645,7 @@ export default function Dashboard() {
           {/* ── Crypto tab (lazy) ── */}
           <TabsContent value="crypto" className="space-y-6">
             <ErrorBoundary label="Crypto">
-              <Suspense fallback={<div className="text-xs text-muted-foreground">loading degen desk…</div>}>
+              <Suspense fallback={<div className="text-xs text-muted-foreground">loading digital assets…</div>}>
                 <CryptoPanel />
               </Suspense>
             </ErrorBoundary>

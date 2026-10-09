@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/tooltip";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { friendlyError } from "@/lib/friendlyError";
 
 // --- Types matching /api/trade-desk payload ----------------------------------
 
@@ -201,7 +202,7 @@ export default function TradeDesk() {
             <UnavailablePanel
               title="Intraday quotes, pivots, gamma map, squeeze and playbook"
               state={feedErr?.dataState ?? "unavailable"}
-              reason={feedErr?.reason ?? (error as Error)?.message ?? "no response"}
+              reason={feedErr?.reason ?? friendlyError(error, "no response from the server")}
             />
           </CardContent>
         </Card>

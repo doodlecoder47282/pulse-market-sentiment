@@ -722,6 +722,8 @@ export type RegimeResponse = {
   // Diagnostics
   universeSize: number;
   missingSymbols: string[];
+  /** "ok" when every axis has readings, "partial" when some do, "unavailable" when none do. */
+  dataState: "ok" | "partial" | "unavailable";
 };
 
 const AXIS_LABELS: Record<AxisPair["axis"], string> = {
@@ -814,7 +816,23 @@ function buildThemes(readings: AxisReading[]): { fresh: Theme[]; durable: Theme[
 }
 
 function buildNarrative(axes: AxisSummary[]): { headline: string; narrative: string } {
-  const active = axes.filter((a) => a.direction !== 0 && a.conviction >= 20);
+  // An axis with no readings has no data: it is not "balanced". Never describe
+  // missing data as sitting at baseline.
+  const measured = axes.filter((a) => a.readings.length > 0);
+  if (!measured.length) {
+    return {
+      headline: "Rotation read unavailable",
+      narrative: "No sector or style price history could be loaded from Schwab, so no rotation read is possible.",
+    };
+  }
+  const active = measured.filter((a) => a.direction !== 0 && a.conviction >= 20);
+  if (!active.length && measured.length < axes.length) {
+    const missing = axes.filter((a) => a.readings.length === 0).map((a) => a.label).join(", ");
+    return {
+      headline: "No dominant rotation on the measured axes",
+      narrative: `The measured axes are close to their 2-year baselines; ${missing} could not be measured (missing data).`,
+    };
+  }
   if (!active.length) {
     return {
       headline: "No dominant rotation",
@@ -979,5 +997,8 @@ export async function buildRegimeSnapshot(window: WindowKey = "w4"): Promise<Reg
     warnings,
     universeSize: REGIME_UNIVERSE.length,
     missingSymbols: REGIME_UNIVERSE.filter((s) => !rowsBySymbol.has(s)),
+    dataState: axes.every((a) => a.readings.length > 0)
+      ? "ok"
+      : axes.some((a) => a.readings.length > 0) ? "partial" : "unavailable",
   };
 }

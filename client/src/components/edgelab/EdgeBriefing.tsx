@@ -24,7 +24,7 @@ interface Briefing {
   spot: number | null;
   verdict: string;
   verdictColor: VerdictColor;
-  confidence: number;
+  confidence: number | null;
   oneLiner: string;
   regime: {
     headline: string;
@@ -34,7 +34,7 @@ interface Briefing {
     notes: string[];
   } | null;
   crossAsset: {
-    rows: { symbol: string; last: number; d1Pct: number; w1Pct: number; m1Pct: number; corr20d: number | null; corrRegime: string }[];
+    rows: { symbol: string; last: number | null; d1Pct: number | null; w1Pct: number | null; m1Pct: number | null; corr20d: number | null; corrRegime: string }[];
     vix: number | null;
     vixChangePct: number | null;
   } | null;
@@ -62,6 +62,7 @@ interface Briefing {
     upside: number | null;
     downside: number | null;
     spot: number | null;
+    targets?: { source: string; symbolScale: string; updatedAt: number | null; shown: boolean; note: string };
   };
   panelHealth: { name: string; ok: boolean }[];
 }
@@ -78,8 +79,8 @@ const verdictPill = (c: VerdictColor) => {
 const fmtPct = (n: number, signed = true) =>
   `${signed && n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
 
-function PctCell({ v }: { v: number }) {
-  if (!Number.isFinite(v)) return <>—</>;
+function PctCell({ v }: { v: number | null }) {
+  if (v == null || !Number.isFinite(v)) return <>—</>;
   const cls = v > 0 ? "text-emerald-400" : v < 0 ? "text-rose-400" : "text-muted-foreground";
   return <span className={cls}>{fmtPct(v)}</span>;
 }
@@ -164,7 +165,9 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
                 <Badge variant="outline" className={`text-[10px] uppercase tracking-wider font-bold ${verdictPill(d.verdictColor)}`}>
                   {d.verdict}
                 </Badge>
-                <Badge variant="outline" className="text-[10px]" title="Heuristic score 0-100, not a calibrated probability.">score {d.confidence}/100</Badge>
+                {d.confidence != null && (
+                  <Badge variant="outline" className="text-[10px]" title="Heuristic score 0-100, not a calibrated probability.">score {d.confidence}/100</Badge>
+                )}
               </>
             )}
           </div>
@@ -209,7 +212,7 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
             {d.spot == null && (
               <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 text-[11px] text-amber-400 flex items-center gap-2" data-testid="briefing-offline-banner">
                 <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
-                no live spot for {d.symbol} — Schwab feed is down. Chain-derived levels and models below are from the last Schwab chain (see their age chips) or unavailable; price-anchored reads are not current.
+                No live {d.symbol} price from Schwab. Levels and reads that need a price are blank until Schwab answers.
               </div>
             )}
 
@@ -226,6 +229,11 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
                 <LevelChip label="vomma↓" value={d.levels.vomma.down} hint="lower vomma" />
                 <LevelChip label="charm" value={d.levels.charm} hint="charm pin" />
               </div>
+              {d.levels.targets && (
+                <div className="text-[11px] text-muted-foreground" data-testid="briefing-targets-note">
+                  Upside, downside, vomma and charm: {d.levels.targets.note}
+                </div>
+              )}
             </div>
 
             {/* Regime + Cross-asset side by side */}
@@ -266,11 +274,11 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
                       </thead>
                       <tbody className="font-mono tabular-nums">
                         {d.crossAsset.rows.map((r) => {
-                          const lastUsable = Number.isFinite(r.last) && r.last !== 0;
+                          const lastUsable = r.last != null && Number.isFinite(r.last) && r.last > 0;
                           return (
                             <tr key={r.symbol} className="border-b border-border/10 last:border-b-0">
                               <td className="py-1 pr-2 font-semibold">{r.symbol}</td>
-                              <td className="py-1 pr-2 text-right">{lastUsable ? r.last.toFixed(2) : "—"}</td>
+                              <td className="py-1 pr-2 text-right">{lastUsable ? (r.last as number).toFixed(2) : "—"}</td>
                               <td className="py-1 pr-2 text-right">{lastUsable ? <PctCell v={r.d1Pct} /> : "—"}</td>
                               <td className="py-1 pr-2 text-right">{lastUsable ? <PctCell v={r.w1Pct} /> : "—"}</td>
                               <td className="py-1 text-right">{lastUsable ? <PctCell v={r.m1Pct} /> : "—"}</td>

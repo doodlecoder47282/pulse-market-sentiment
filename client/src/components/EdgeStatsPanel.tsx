@@ -77,7 +77,9 @@ interface EdgeStats {
 const pct = (x: number, d = 1) => `${(x * 100).toFixed(d)}%`;
 const pctSigned = (x: number, d = 1) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(d)}%`;
 
-function rateColor(r: number): string {
+function rateColor(r: number | null | undefined): string {
+  // No graded sample: neutral grey, never a red "bad" color.
+  if (r == null || !Number.isFinite(r)) return "text-muted-foreground";
   if (r >= 0.5) return "text-emerald-400";
   if (r >= 0.3) return "text-amber-400";
   if (r >= 0.15) return "text-orange-400";
@@ -98,7 +100,7 @@ function HeadlineCards({ w, r }: { w: WhaleEdge; r: RegimeEdge }) {
     <div className="grid grid-cols-2 md:grid-cols-4 gap-2" data-testid="edge-headline-cards">
       <div className="rounded-md border border-border/50 bg-card/40 p-3">
         <div className="text-[10px] uppercase text-muted-foreground tracking-wider">Whale Hit-30</div>
-        <div className={`text-2xl font-semibold ${rateColor(w.hit30Rate)}`} data-testid="text-whale-hit30">
+        <div className={`text-2xl font-semibold ${rateColor(w.graded ? w.hit30Rate : null)}`} data-testid="text-whale-hit30">
           {w.graded ? pct(w.hit30Rate) : "—"}
         </div>
         <div className="text-[11px] text-muted-foreground" data-testid="text-whale-coverage">
@@ -112,21 +114,21 @@ function HeadlineCards({ w, r }: { w: WhaleEdge; r: RegimeEdge }) {
       </div>
       <div className="rounded-md border border-border/50 bg-card/40 p-3">
         <div className="text-[10px] uppercase text-muted-foreground tracking-wider">Whale Hit-50</div>
-        <div className={`text-2xl font-semibold ${rateColor(w.hit50Rate)}`} data-testid="text-whale-hit50">
+        <div className={`text-2xl font-semibold ${rateColor(w.graded ? w.hit50Rate : null)}`} data-testid="text-whale-hit50">
           {w.graded ? pct(w.hit50Rate) : "—"}
         </div>
-        <div className="text-[11px] text-muted-foreground">target zone</div>
+        <div className="text-[11px] text-muted-foreground">reached +50%</div>
       </div>
       <div className="rounded-md border border-border/50 bg-card/40 p-3">
         <div className="text-[10px] uppercase text-muted-foreground tracking-wider">Whale Hit-100</div>
-        <div className={`text-2xl font-semibold ${rateColor(w.hit100Rate)}`} data-testid="text-whale-hit100">
+        <div className={`text-2xl font-semibold ${rateColor(w.graded ? w.hit100Rate : null)}`} data-testid="text-whale-hit100">
           {w.graded ? pct(w.hit100Rate) : "—"}
         </div>
-        <div className="text-[11px] text-muted-foreground">banger zone</div>
+        <div className="text-[11px] text-muted-foreground">reached +100%</div>
       </div>
       <div className="rounded-md border border-border/50 bg-card/40 p-3">
         <div className="text-[10px] uppercase text-muted-foreground tracking-wider">Regime Hit</div>
-        <div className={`text-2xl font-semibold ${rateColor(r.overallHitRate)}`} data-testid="text-regime-hit">
+        <div className={`text-2xl font-semibold ${rateColor(r.graded ? r.overallHitRate : null)}`} data-testid="text-regime-hit">
           {r.graded ? pct(r.overallHitRate) : "—"}
         </div>
         <div className="text-[11px] text-muted-foreground">{r.graded} graded · {r.pending} pending</div>

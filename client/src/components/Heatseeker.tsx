@@ -42,6 +42,7 @@ import { Activity, AlertTriangle, Crosshair, Flame, Target, TrendingDown, Trendi
 import LiveOdteTracker from "./LiveOdteTracker";
 import DepthSkewFlow from "./DepthSkewFlow";
 import OdteContractChart from "./OdteContractChart";
+import { friendlyError } from "@/lib/friendlyError";
 
 // Contract snapshot shape from /api/odte-tracker (used to enrich drill-down meta)
 interface OdteContract {
@@ -405,7 +406,7 @@ export default function Heatseeker() {
   }
 
   if (error || !data || (data as any).error) {
-    const msg = (data as any)?.message ?? (error as Error)?.message ?? "Unable to load heatseeker";
+    const msg = friendlyError((data as any)?.message ?? error, "Heatseeker needs the Schwab option chain. Connect Schwab in Settings.");
     return (
       <div className="space-y-4">
         {header}

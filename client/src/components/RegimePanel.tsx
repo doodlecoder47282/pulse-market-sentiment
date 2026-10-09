@@ -19,6 +19,7 @@ import ErrorBoundary from "./ErrorBoundary";
 import SeasonalityPanel from "./SeasonalityPanel";
 import SeasonalityResearch from "./SeasonalityResearch";
 import JPMCollarPanel from "./JPMCollarPanel";
+import { friendlyError } from "@/lib/friendlyError";
 
 type WindowKey = "w4" | "w13" | "w52";
 
@@ -137,7 +138,7 @@ export default function RegimePanel() {
             <span className="text-sm font-medium">regime data offline — rotation snapshot failed</span>
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
-            {(error as Error)?.message ?? "Could not build the rotation snapshot."}
+            {friendlyError(error, "Could not build the rotation snapshot.")}
           </p>
         </CardContent>
       </Card>

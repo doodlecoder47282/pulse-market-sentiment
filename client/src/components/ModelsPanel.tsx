@@ -2251,7 +2251,12 @@ export default function ModelsPanel() {
           ))}
         </div>
 
-        {data && (
+        {data && !active && (
+          <Badge variant="outline" className="border-border/60 font-mono text-[10px] text-muted-foreground" data-testid="badge-models-session">
+            NOT BUILT
+          </Badge>
+        )}
+        {data && active && (
           <Badge
             variant="outline"
             className={
@@ -2265,7 +2270,7 @@ export default function ModelsPanel() {
           </Badge>
         )}
 
-        {updatedAgo && (
+        {updatedAgo && active && (
           <Badge
             variant="outline"
             className="border-cyan-500/30 font-mono text-[9px] text-cyan-300/90"
@@ -2308,10 +2313,9 @@ export default function ModelsPanel() {
         </div>
       )}
       {data && !active && !isLoading && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-6 text-center font-mono text-[11px] text-amber-300">
-          {data.warnings.length
-            ? data.warnings.join(" · ")
-            : `${horizon.toUpperCase()} model couldn't be built for ${symbol}.`}
+        <div className="rounded-lg border border-border bg-card/40 p-6 text-center text-sm text-muted-foreground" data-testid="models-not-built">
+          <div className="font-medium text-foreground">{horizon === "quarterly" ? "3M" : horizon.charAt(0).toUpperCase() + horizon.slice(1)} model not built</div>
+          <div className="mt-1">{summarizeModelWarnings(data.warnings, symbol === "^GSPC" ? "SPX" : symbol)}</div>
         </div>
       )}
       {active && (
@@ -2356,4 +2360,18 @@ export default function ModelsPanel() {
       </div>
     </div>
   );
+}
+
+/** One plain sentence from the per-horizon failure list: strips the
+ *  "<horizon> model failed:" prefixes and repeats, never a wall of errors. */
+export function summarizeModelWarnings(warnings: string[], symbol: string): string {
+  const reasons = Array.from(new Set(
+    (warnings ?? []).map((w) => String(w).replace(/^\s*\w+ model failed:\s*/i, "").trim()).filter(Boolean),
+  ));
+  if (!reasons.length) return `The model couldn't be built for ${symbol}.`;
+  if (reasons.every((r) => /not connected|not authenticated|needs? (re)?auth/i.test(r))) {
+    return "Waiting for Schwab: connect Schwab in Settings and the models build from the live option chain.";
+  }
+  const first = reasons[0].replace(/:\s*/g, " — ");
+  return reasons.length === 1 ? `${first}.` : `${first} (and ${reasons.length - 1} more).`;
 }

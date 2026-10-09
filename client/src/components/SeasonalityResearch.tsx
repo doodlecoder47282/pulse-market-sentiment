@@ -20,6 +20,7 @@ import {
   TrendingUp, TrendingDown, BarChart2, Search, ExternalLink,
   ChevronDown, ChevronUp, Calendar,
 } from "lucide-react";
+import { friendlyError } from "@/lib/friendlyError";
 
 // ─── Types (mirror SeasonalityPanel) ─────────────────────────────────────────
 interface SeasonalityBar {
@@ -725,7 +726,7 @@ export default function SeasonalityResearch() {
 
           {submittedSymbol && isError && (
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-400">
-              {(error as Error)?.message ?? `No data found for "${submittedSymbol}". Verify the Yahoo Finance symbol.`}
+              {friendlyError(error, `No data found for "${submittedSymbol}". Check the symbol.`)}
             </div>
           )}
 

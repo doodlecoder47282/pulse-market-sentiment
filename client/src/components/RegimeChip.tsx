@@ -17,6 +17,7 @@ interface AxisSummary {
   stage: string;
   conviction: number;
   narrative: string;
+  readings?: unknown[];
 }
 interface RegimeResp {
   capturedAt: number;
@@ -24,6 +25,7 @@ interface RegimeResp {
   headline: string;
   narrative: string;
   axes: AxisSummary[];
+  dataState?: "ok" | "partial" | "unavailable";
 }
 
 const POS_COPY: Record<AxisSummary["axis"], string> = {
@@ -53,21 +55,40 @@ export function RegimeChip({ origin }: { origin?: string }) {
   });
 
   if (!data || !data.axes?.length) return null;
+  const testId = `regime-chip${origin ? `-${origin}` : ""}`;
+  const chipBase = "inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] font-mono uppercase tracking-wider";
+
+  // This is the sector/style ROTATION read, distinct from the dealer-gamma
+  // regime in the banner, so it is labelled "Rotation". Axes without readings
+  // are missing data and never count as balanced.
+  const measured = data.axes.filter((a) => !Array.isArray(a.readings) || a.readings.length > 0);
+  if (data.dataState === "unavailable" || !measured.length) {
+    return (
+      <span
+        className={`${chipBase} border-border/40 bg-muted/30 text-muted-foreground`}
+        data-testid={testId}
+        title="Sector rotation read unavailable: no price history from Schwab"
+      >
+        <Activity className="h-2.5 w-2.5" />
+        Rotation: unavailable
+      </span>
+    );
+  }
 
   // Pick axis with strongest |compositeZ|
-  const top = [...data.axes].sort(
+  const top = [...measured].sort(
     (a, b) => Math.abs(b.compositeZ) - Math.abs(a.compositeZ)
   )[0];
   if (!top || Math.abs(top.compositeZ) < 0.5) {
     // Balanced — show neutral chip
     return (
       <span
-        className="inline-flex items-center gap-1.5 rounded border border-border/40 bg-muted/30 px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground"
-        data-testid={`regime-chip${origin ? `-${origin}` : ""}`}
-        title="Regime: balanced — leadership rotating, no dominant axis"
+        className={`${chipBase} border-border/40 bg-muted/30 text-muted-foreground`}
+        data-testid={testId}
+        title="Sector rotation balanced: no dominant axis"
       >
         <Activity className="h-2.5 w-2.5" />
-        Regime: balanced
+        Rotation: balanced
       </span>
     );
   }
@@ -83,12 +104,12 @@ export function RegimeChip({ origin }: { origin?: string }) {
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider ${tone}`}
-      data-testid={`regime-chip${origin ? `-${origin}` : ""}`}
+      className={`${chipBase} ${tone}`}
+      data-testid={testId}
       title={`${top.label} ${dirCopy} · z=${sign}${top.compositeZ.toFixed(2)} · ${data.headline}`}
     >
       <Activity className="h-2.5 w-2.5" />
-      Regime: {dirCopy} {sign}{top.compositeZ.toFixed(1)}σ
+      Rotation: {dirCopy} {sign}{top.compositeZ.toFixed(1)}σ
     </span>
   );
 }

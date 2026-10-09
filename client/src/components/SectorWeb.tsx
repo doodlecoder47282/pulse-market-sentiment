@@ -26,6 +26,7 @@ import * as d3 from "d3-force";
 import type { SectorWebResponse, SectorNode, LeaderNode, SectorEdge, SectorGridRow } from "@shared/schema";
 import { useTickers } from "./TickerContext";
 import ConstellationPulse from "./ConstellationPulse";
+import { friendlyError } from "@/lib/friendlyError";
 
 type WindowKey = "r1d" | "r1w" | "r1m";
 const WINDOW_LABEL: Record<WindowKey, string> = { r1d: "1D", r1w: "1W", r1m: "1M" };
@@ -198,7 +199,7 @@ export default function SectorWeb() {
             <span className="text-sm font-medium">sector web offline — correlation build failed</span>
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
-            {(error as Error)?.message ?? "Could not build the reactive sector web."}
+            {friendlyError(error, "Could not build the reactive sector web.")}
           </p>
         </CardContent>
       </Card>
