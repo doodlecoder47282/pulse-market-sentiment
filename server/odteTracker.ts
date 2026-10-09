@@ -27,8 +27,8 @@
 
 import { getOptionChain, type OptionChainResponse } from "./schwab";
 import { isRthOpen } from "./sessionCache";
-import { recordOdteOptionMarks, type TrackerQuote } from "./odteAuditDb";
-import { streamOptionOverlay, syncStreamOptions } from "./streamStore";
+import { recordOdteOptionMarks, recordOdteStreamMark, watchedAlerts, type TrackerQuote } from "./odteAuditDb";
+import { streamOptionOverlay, syncStreamOptions, addOptionQuoteObserver } from "./streamStore";
 import { etDate as calEtDate, sessionCloseMinutes as calCloseMin } from "./exchangeCalendar";
 import { spreadExceedsStop } from "./exitValuation";
 
@@ -408,6 +408,10 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
       collect(putStrikesObj, "put");
       recordOdteOptionMarks({ expiryISO, source: chain.source, underlying: spot, quotes, now: nowTs });
     } catch { /* mark logging never blocks the tracker */ }
+    // Round 3: stream every fired alert's contract (not only armed
+    // positions) so its marks are logged on each LEVELONE_OPTIONS update,
+    // between chain polls. The Schwab option symbol comes from this chain.
+    try { syncAlertStream(expiryISO, callStrikesObj, putStrikesObj, spot, nowTs); } catch { /* optional */ }
   }
 
   // Sort by ascending strike, calls-above-puts-at-same-strike (rendering convention)
@@ -582,6 +586,41 @@ export function getContractChart(
     firstTs: ticks[0].ts,
     lastTs: ticks[ticks.length - 1].ts,
   };
+}
+
+// Fired-alert contracts: Schwab option symbol -> alert ids (owner "odte_alerts").
+const alertSymbols = new Map<string, string[]>();
+let alertSpot: number | null = null;
+let alertObserverOff: (() => void) | null = null;
+
+function syncAlertStream(
+  expiryISO: string,
+  callObj: Record<string, any[]>,
+  putObj: Record<string, any[]>,
+  spot: number | null,
+  nowTs: number,
+): void {
+  alertSpot = spot;
+  const next = new Map<string, string[]>();
+  for (const w of watchedAlerts(nowTs)) {
+    if (!w.expiry || w.expiry !== expiryISO) continue;
+    const obj = w.isCall ? callObj : putObj;
+    for (const k of Object.keys(obj)) {
+      if (Math.abs(parseFloat(k) - w.strike) > 1e-6) continue;
+      const sym = obj[k]?.[0]?.symbol;
+      if (typeof sym === "string" && sym) next.set(sym, (next.get(sym) ?? []).concat(w.alertId));
+      break;
+    }
+  }
+  alertSymbols.clear();
+  for (const [k, v] of Array.from(next.entries())) alertSymbols.set(k, v);
+  if (!alertObserverOff && alertSymbols.size) {
+    alertObserverOff = addOptionQuoteObserver((q) => {
+      const ids = alertSymbols.get(q.symbol);
+      if (ids && ids.length) recordOdteStreamMark({ alertIds: ids, quote: q, underlying: alertSpot });
+    });
+  }
+  syncStreamOptions("odte_alerts", Array.from(alertSymbols.keys()));
 }
 
 /** Stream LEVELONE_OPTIONS for every active armed contract (streamStore owner "odte"). */

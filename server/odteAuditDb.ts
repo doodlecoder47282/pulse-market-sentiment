@@ -7,6 +7,7 @@
 
 import { sqlite } from "./storage";
 import { randomUUID } from "node:crypto";
+import { streamMarkToLog } from "./validationMath";
 
 // ─── Schema bootstrap ─────────────────────────────────────────────────────────
 
@@ -135,7 +136,7 @@ function etYmd(ms: number): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
 }
 
-function watchedAlerts(now: number): Array<{ alertId: string; strike: number; isCall: boolean; expiry: string }> {
+export function watchedAlerts(now: number): Array<{ alertId: string; strike: number; isCall: boolean; expiry: string }> {
   const day = etYmd(now);
   if (_watch && _watch.day === day && now - _watch.at < 30_000) return _watch.rows;
   const rows: Array<{ alertId: string; strike: number; isCall: boolean; expiry: string }> = [];
@@ -193,6 +194,38 @@ export function recordOdteOptionMarks(args: {
     }
   } catch (err: any) {
     console.warn(`[odte:audit] recordOdteOptionMarks error: ${err?.message ?? err}`);
+  }
+  return written;
+}
+
+/**
+ * Log a Schwab Streamer LEVELONE_OPTIONS update for the fired alerts whose
+ * contract it is (round 3: every stream update of a fired-alert contract,
+ * not only the chain polls). Changes of bid/ask are all logged, unchanged
+ * quotes on a heartbeat (validationMath.streamMarkToLog); delayed quotes
+ * never. source = "schwab_stream". Fail-soft.
+ */
+const _lastStreamMark = new Map<string, { ts: number; bid: number | null; ask: number | null }>();
+export function recordOdteStreamMark(args: {
+  alertIds: string[];
+  quote: { bid: number | null; ask: number | null; quoteTimeMs: number | null; delayed: boolean | null; receivedAtMs: number; underlyingPrice: number | null };
+  underlying?: number | null;
+}): number {
+  let written = 0;
+  try {
+    const stmt = sqlite.prepare(`INSERT OR IGNORE INTO odte_option_marks (alert_id, ts, bid, ask, mid, underlying, source)
+                                 VALUES (?, ?, ?, ?, ?, ?, 'schwab_stream')`);
+    const und = args.quote.underlyingPrice != null && args.quote.underlyingPrice > 0 ? args.quote.underlyingPrice : args.underlying ?? null;
+    for (const id of args.alertIds) {
+      const m = streamMarkToLog(_lastStreamMark.get(id), args.quote);
+      if (!m) continue;
+      stmt.run(id, m.ts, m.bid, m.ask, m.mid, und);
+      _lastStreamMark.set(id, { ts: m.ts, bid: m.bid, ask: m.ask });
+      written++;
+    }
+    if (_lastStreamMark.size > 500) _lastStreamMark.clear();
+  } catch (err: any) {
+    console.warn(`[odte:audit] recordOdteStreamMark error: ${err?.message ?? err}`);
   }
   return written;
 }

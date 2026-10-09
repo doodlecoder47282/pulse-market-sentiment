@@ -207,3 +207,63 @@ test("0DTE replay: a T1 touch in the bar that closes a 5-minute candle below the
   b4[9] = { ...b4[9], low: 5989, high: 6012, close: 6011 };
   assert.deepEqual(replayOdtePlan(pp, b4).legs.map((l) => [l.kind, l.fraction]), [["t1_touch", 1]]);
 });
+
+// ─── 5. Fired-alert contracts streamed; marks logged per update; bar provenance ─
+
+test("stream: every real-time option update reaches observers (never a delayed one); alert owner ranks after armed", async () => {
+  const { StreamStore, L1_OPTION_FIELDS: O, addOptionQuoteObserver, syncStreamOptions, wantedOptionSymbols, _resetOptionWants } = await import("../../server/streamStore");
+  const s = new StreamStore({ tickSymbols: [] });
+  const sym = "SPXW  261009C06610000";
+  const seen: Array<[number | null, number | null]> = [];
+  const off = addOptionQuoteObserver((q) => { if (q.symbol === sym) seen.push([q.bid, q.ask]); });
+  const now = Date.UTC(2026, 9, 9, 17, 0);
+  s.applyData({ service: "LEVELONE_OPTIONS", content: [{ key: sym, delayed: false, [O.BID]: 4.1, [O.ASK]: 4.3, [O.QUOTE_TIME]: now - 100 }] }, now);
+  s.applyData({ service: "LEVELONE_OPTIONS", content: [{ key: sym, delayed: false, [O.BID]: 4.2 }] }, now + 300);  // delta frame: ask carried
+  s.applyData({ service: "LEVELONE_OPTIONS", content: [{ key: sym, delayed: true, [O.BID]: 9.9 }] }, now + 600);   // delayed: not observed
+  off();
+  s.applyData({ service: "LEVELONE_OPTIONS", content: [{ key: sym, delayed: false, [O.BID]: 4.4 }] }, now + 900);  // after unsubscribe
+  assert.deepEqual(seen, [[4.1, 4.3], [4.2, 4.3]]);
+  _resetOptionWants();
+  syncStreamOptions("whale", ["W1"]);
+  syncStreamOptions("odte_alerts", ["F1", "A"]);
+  syncStreamOptions("odte", ["A"]);
+  assert.deepEqual(wantedOptionSymbols(2), { symbols: ["A", "F1"], overCap: ["W1"] });
+  _resetOptionWants();
+});
+
+test("stream marks: bid/ask changes all logged, unchanged quote on a 5 s heartbeat, delayed never, quote time used", async () => {
+  const { streamMarkToLog, STREAM_MARK_HEARTBEAT_MS } = await import("../../server/validationMath");
+  const t = 1_800_000_000_000;
+  const q = (bid: number | null, ask: number | null, rx: number, qt: number | null = rx, delayed: boolean | null = false) => ({ bid, ask, quoteTimeMs: qt, delayed, receivedAtMs: rx });
+  const a = streamMarkToLog(undefined, q(4.1, 4.3, t, t - 50))!;
+  assert.deepEqual([a.ts, a.bid, a.ask], [t - 50, 4.1, 4.3]);
+  near(a.mid!, 4.2, 1e-12);
+  // unchanged within the heartbeat: not re-logged; after it: logged
+  assert.equal(streamMarkToLog(a, q(4.1, 4.3, t + 1000)), null);
+  assert.equal(streamMarkToLog(a, q(4.1, 4.3, t + STREAM_MARK_HEARTBEAT_MS - 50))!.ts, t + STREAM_MARK_HEARTBEAT_MS - 50);
+  // any change is logged even 10 ms later
+  assert.equal(streamMarkToLog(a, q(4.0, 4.3, t - 40))!.bid, 4.0);
+  // delayed, no two-sided-or-one-sided quote, or older than the last mark: not logged
+  assert.equal(streamMarkToLog(undefined, q(4.1, 4.3, t, t, true)), null);
+  assert.equal(streamMarkToLog(undefined, q(null, 0, t)), null);
+  assert.equal(streamMarkToLog(a, q(4.0, 4.3, t - 100, t - 100)), null);
+  // future quote time beyond 5 s slack: receive time used; one-sided: mid null; observed 0 bid kept
+  const f = streamMarkToLog(undefined, q(0, 0.05, t, t + 60_000))!;
+  assert.deepEqual(f, { ts: t, bid: 0, ask: 0.05, mid: 0.025 });
+  assert.equal(streamMarkToLog(undefined, q(null, 0.05, t))!.mid, null);
+});
+
+test("0DTE grader bars provenance: counts by origin; stream-last-price bars are named", async () => {
+  const { minuteBarsProvenance, savedMinuteBarsSql } = await import("../../server/validationMath");
+  const T = Date.UTC(2026, 9, 9, 14, 0), M = 60_000;
+  const bar = (i: number, source?: string) => ({ datetime: T + i * M, open: 1, high: 1, low: 1, close: 1, ...(source ? { source } : {}) });
+  const saved = [bar(0, "schwab"), bar(1, "schwab_stream_l1"), bar(2, "schwab_stream_l1"), bar(3, "schwab_stream_chart"), bar(4), bar(5, "schwab_stream_l1")];
+  const live = [bar(5), bar(6)]; // live wins on minute 5
+  const p = minuteBarsProvenance(saved, live);
+  assert.deepEqual(p.counts, { schwabRestLive: 2, savedSchwabRest: 1, savedStreamChart: 1, savedStreamLastPrice: 2, savedUnknown: 1 });
+  assert.equal(p.fromStreamLastPrices, true);
+  assert.match(p.label, /2 built from Schwab stream last prices/);
+  assert.equal(minuteBarsProvenance([bar(0, "schwab")], []).fromStreamLastPrices, false);
+  assert.match(savedMinuteBarsSql(["t", "open", "high", "low", "close", "volume", "source"])!, /close, source FROM/);
+  assert.doesNotMatch(savedMinuteBarsSql(["t", "open", "high", "low", "close"])!, /source/);
+});

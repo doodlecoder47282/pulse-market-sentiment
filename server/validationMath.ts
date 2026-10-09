@@ -738,6 +738,39 @@ export function planUnderlyingCloseOutPct(isCall: boolean, spot0: number, plan: 
   return pct;
 }
 
+// ─── Streamed option marks (round 3, Sector 7) ──────────────────────────────
+
+/** Heartbeat: an unchanged streamed quote is still re-logged this often, so a quiet but live contract shows no mark gap. */
+export const STREAM_MARK_HEARTBEAT_MS = 5_000;
+
+/**
+ * Normalize one Schwab LEVELONE_OPTIONS update into a loggable mark, or null.
+ * A delayed quote is never logged as a mark (Schwab-only, real-time rule);
+ * a negative bid or a non-positive ask is not a quote. ts = Schwab quote
+ * time when present and not in the future (5 s clock slack), else the
+ * receive time. Every update that changes the bid or the ask is logged (the
+ * mark path is piecewise constant between changes, so this is lossless);
+ * an unchanged quote is re-logged after STREAM_MARK_HEARTBEAT_MS.
+ */
+export function streamMarkToLog(
+  prev: { ts: number; bid: number | null; ask: number | null } | undefined,
+  q: { bid: number | null; ask: number | null; quoteTimeMs: number | null; delayed: boolean | null; receivedAtMs: number },
+  heartbeatMs = STREAM_MARK_HEARTBEAT_MS,
+): { ts: number; bid: number | null; ask: number | null; mid: number | null } | null {
+  if (q.delayed === true) return null;
+  const bid = q.bid != null && Number.isFinite(q.bid) && q.bid >= 0 ? q.bid : null;
+  const ask = q.ask != null && Number.isFinite(q.ask) && q.ask > 0 ? q.ask : null;
+  if (bid == null && ask == null) return null;
+  const ts = q.quoteTimeMs != null && q.quoteTimeMs > 0 && q.quoteTimeMs <= q.receivedAtMs + 5_000 ? q.quoteTimeMs : q.receivedAtMs;
+  if (prev) {
+    const same = prev.bid === bid && prev.ask === ask;
+    if (ts <= prev.ts) return null;
+    if (same && ts - prev.ts < heartbeatMs) return null;
+  }
+  const mid = bid != null && ask != null && ask >= bid ? (bid + ask) / 2 : null;
+  return { ts, bid, ask, mid };
+}
+
 // ─── Persisted minute bars (review item 7.7) ────────────────────────────────
 
 /**
@@ -751,7 +784,10 @@ export function planUnderlyingCloseOutPct(isCall: boolean, spot0: number, plan: 
 export function savedMinuteBarsSql(columns: string[]): string | null {
   const has = (c: string) => columns.includes(c);
   if (has("t") && has("open") && has("high") && has("low") && has("close")) {
-    return `SELECT t AS datetime, open, high, low, close FROM spx_minute_bars WHERE t >= ? AND t < ? ORDER BY t ASC`;
+    // source (when present) says how the bar was built: 'schwab' = Schwab
+    // REST candle, 'schwab_stream_chart' = Streamer CHART_EQUITY bar,
+    // 'schwab_stream_l1' = aggregated from streamed LEVELONE last prices.
+    return `SELECT t AS datetime, open, high, low, close${has("source") ? ", source" : ""} FROM spx_minute_bars WHERE t >= ? AND t < ? ORDER BY t ASC`;
   }
   if (has("ts") && has("o") && has("h") && has("l") && has("c")) {
     return `SELECT ts AS datetime, o AS open, h AS high, l AS low, c AS close FROM spx_minute_bars WHERE ts >= ? AND ts < ? ORDER BY ts ASC`;
@@ -765,6 +801,51 @@ export function mergeMinuteBars(saved: MinuteBar[], live: MinuteBar[]): MinuteBa
   for (const b of saved) byT.set(b.datetime, b);
   for (const b of live) byT.set(b.datetime, b);
   return Array.from(byT.values()).sort((a, b) => a.datetime - b.datetime);
+}
+
+/** Minute-bar provenance counts of the bars a grade actually used. */
+export interface BarsProvenance {
+  /** Schwab REST price-history candles fetched at grading time */
+  schwabRestLive: number;
+  /** persisted Schwab REST candles */
+  savedSchwabRest: number;
+  /** persisted Streamer CHART_EQUITY bars */
+  savedStreamChart: number;
+  /** persisted bars aggregated from streamed LEVELONE last prices (not Schwab's own candles) */
+  savedStreamLastPrice: number;
+  /** persisted bars with no recorded source (older hazardEngine layout) */
+  savedUnknown: number;
+}
+
+/**
+ * Count the merged bars by origin (live wins on a duplicate, as in
+ * mergeMinuteBars) and say in words when any came from stream last prices:
+ * those bars' highs and lows are the extremes of the prints the streamer
+ * delivered, which can miss an intrabar extreme a full candle would show.
+ */
+export function minuteBarsProvenance(
+  saved: Array<MinuteBar & { source?: string | null }>,
+  live: MinuteBar[],
+): { counts: BarsProvenance; fromStreamLastPrices: boolean; label: string } {
+  const liveT = new Set(live.map((b) => b.datetime));
+  const counts: BarsProvenance = { schwabRestLive: liveT.size, savedSchwabRest: 0, savedStreamChart: 0, savedStreamLastPrice: 0, savedUnknown: 0 };
+  const seen = new Set<number>();
+  for (const b of saved) {
+    if (liveT.has(b.datetime) || seen.has(b.datetime)) continue;
+    seen.add(b.datetime);
+    const src = b.source ?? null;
+    if (src === "schwab") counts.savedSchwabRest++;
+    else if (src === "schwab_stream_chart") counts.savedStreamChart++;
+    else if (src === "schwab_stream_l1") counts.savedStreamLastPrice++;
+    else counts.savedUnknown++;
+  }
+  const parts: string[] = [];
+  if (counts.schwabRestLive) parts.push(`${counts.schwabRestLive} Schwab REST`);
+  if (counts.savedSchwabRest) parts.push(`${counts.savedSchwabRest} saved Schwab REST`);
+  if (counts.savedStreamChart) parts.push(`${counts.savedStreamChart} saved Schwab stream CHART_EQUITY`);
+  if (counts.savedStreamLastPrice) parts.push(`${counts.savedStreamLastPrice} built from Schwab stream last prices (highs/lows are the delivered prints)`);
+  if (counts.savedUnknown) parts.push(`${counts.savedUnknown} saved, source not recorded`);
+  return { counts, fromStreamLastPrices: counts.savedStreamLastPrice > 0, label: parts.length ? `minute bars: ${parts.join(", ")}` : "minute bars: none" };
 }
 
 // ─── Grade labels vs the realized ledger (review item 7.6) ──────────────────
