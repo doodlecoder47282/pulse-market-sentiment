@@ -40,6 +40,9 @@ type AxisReading = {
   stats?: {
     pZ: number;
     pPersist: number;
+    qZ?: number;
+    qPersist?: number;
+    fdrFamily?: number;
     zCrit95: number;
     persistBand: number;
     independentWindows: number;
@@ -205,7 +208,7 @@ export default function RegimePanel() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <ThemeColumn
           title="Fresh this week"
-          subtitle="New breaches of the bootstrap 5% line in the last 5 trading days"
+          subtitle="New breaches of the bootstrap 5% line in the last 5 trading days (BH q≤0.05 across all 21 readings)"
           themes={data.freshThemes}
           tone="fresh"
           icon={<Sparkle className="h-4 w-4" />}
@@ -213,7 +216,7 @@ export default function RegimePanel() {
         />
         <ThemeColumn
           title="Durable trends"
-          subtitle="Same-direction |z|≥1.5 for 6+ weeks, longer than a no-regime bootstrap allows (p≤0.05)"
+          subtitle="Same-direction |z|≥1.5 for 6+ weeks, longer than a no-regime bootstrap allows (BH q≤0.05)"
           themes={data.durableThemes}
           tone="durable"
           icon={<Clock className="h-4 w-4" />}
@@ -270,7 +273,8 @@ export default function RegimePanel() {
           independent observations, so their own spread is not used). Fresh and durable are tested against a
           stationary bootstrap of daily returns (Politis-Romano, Politis-White block length), the "no regime" null:
           fresh = |z| newly beyond the bootstrap 5% critical value; durable = |z|≥1.5 for 30+ sessions and a run that
-          long has bootstrap p≤0.05. Conviction is a heuristic rank from those p-values, not a probability.
+          long is unusual under the bootstrap. Both are then corrected for testing 7 pairs × 3 windows at once
+          (Benjamini-Hochberg false discovery rate, q≤0.05). Conviction is a heuristic rank from the q-values, not a probability.
           Stage: ≤10d early · 11-30d mid · 30+d mature.
         </p>
       </details>
@@ -425,7 +429,7 @@ function AxisCard({
                       className="font-mono text-[10px] text-muted-foreground"
                       title={`bootstrap null: |z| 5% line ${r.stats.zCrit95.toFixed(2)}, ${r.stats.independentWindows} non-overlapping windows in ${r.stats.sampleDays} days, mean block ${r.stats.blockLength}d`}
                     >
-                      p {r.stats.pZ.toFixed(2)}
+                      p {r.stats.pZ.toFixed(3)}{r.stats.qZ != null && Number.isFinite(r.stats.qZ) ? ` · q ${r.stats.qZ.toFixed(3)}` : ""}
                     </span>
                   )}
                 </div>

@@ -9,14 +9,15 @@
 // daily returns over the ~2Y history, tested against a stationary-bootstrap
 // "no regime" null (server/macroStats.ts, finding 5.4):
 //   - Fresh signal  = |z| beyond the bootstrap 5% critical value (and >= 1.96),
-//                     newly breached within the last 5 trading days
-//   - Durable trend = same-sign |z| >= 1.5 for 30+ sessions AND a run that
-//                     long has bootstrap p <= 0.05
+//                     newly breached within the last 5 trading days, AND
+//                     Benjamini-Hochberg q <= 0.05 across the 21 readings
+//   - Durable trend = same-sign |z| >= 1.5 for 30+ sessions AND the run's
+//                     bootstrap p-value has BH q <= 0.05 across the 21
 // Windows: 4W tactical / 13W quarterly / 52W yearly (all toggleable).
 // Stage: early (<=2w consistent) / mid (3-6w) / mature (8w+)
 
 import { storage } from "./storage";
-import { regimeZTest, seedFromString } from "./macroStats";
+import { regimeZTest, seedFromString, regimeFdrFlags } from "./macroStats";
 
 // Null-test thresholds (finding 5.4): two-sided 5% under the bootstrap null.
 const REGIME_ALPHA = 0.05;
@@ -381,6 +382,13 @@ export type AxisReading = {
   stats: {
     pZ: number;
     pPersist: number;
+    /** Benjamini-Hochberg q-values across every axis pair x window in the snapshot */
+    qZ: number;
+    qPersist: number;
+    /** number of readings in each BH family */
+    fdrFamily: number;
+    freshCandidate: boolean;
+    evidenceHead: string;
     zCrit95: number;
     runCrit95: number;
     persistBand: number;
@@ -441,20 +449,23 @@ function evaluateAxis(
   // Fresh: today's |z| is significant against the bootstrap null (two-sided
   // 5%), and it was not significant at some point in the prior 5 sessions.
   const zCrit = Number.isFinite(test.zCrit95) ? Math.max(FRESH_Z_FLOOR, test.zCrit95) : Infinity;
-  let fresh = false;
-  if (Math.abs(z) >= zCrit && test.pZ <= REGIME_ALPHA) {
+  // freshCandidate: today beyond the bootstrap line and newly so. The final
+  // "fresh" flag also needs the BH q-value across every reading in the
+  // snapshot (applyRegimeFdr), so it is set there, not here.
+  let freshCandidate = false;
+  if (Math.abs(z) >= zCrit) {
     const n = zSeries.length;
     for (let i = Math.max(0, n - 1 - FRESH_LOOKBACK); i < n - 1; i++) {
       const zi = zSeries[i];
       const sameSign = (sign > 0 && zi > 0) || (sign < 0 && zi < 0);
-      if (!sameSign || Math.abs(zi) < zCrit) { fresh = true; break; }
+      if (!sameSign || Math.abs(zi) < zCrit) { freshCandidate = true; break; }
     }
   }
 
   // Durable: the run must be economically long (30+ sessions) AND longer
   // than the bootstrap null produces 95% of the time. On a 52W window a
   // 30-day run is close to automatic under the null, which this rejects.
-  const durable = persistence >= DURABLE_MIN_DAYS && test.pPersist <= REGIME_ALPHA;
+  // durable likewise needs the BH q-value of pPersist (applyRegimeFdr).
 
   // Build evidence. Show raw component % returns over the same window.
   const nLastIdx = num.length - 1;
@@ -465,14 +476,8 @@ function evaluateAxis(
   const windowLabel = window === "w4" ? "4W" : window === "w13" ? "13W" : "52W";
   const numLabel = pair.num.length === 1 ? pair.num[0] : pair.num.join("+");
   const denLabel = pair.den.length === 1 ? pair.den[0] : pair.den.join("+");
-  const evidence = `${numLabel} ${numPct >= 0 ? "+" : ""}${numPct.toFixed(1)}% vs ${denLabel} ${denPct >= 0 ? "+" : ""}${denPct.toFixed(1)}% over ${windowLabel} (ratio RoC ${curRoc >= 0 ? "+" : ""}${curRoc.toFixed(1)}%, HAC z ${z >= 0 ? "+" : ""}${z.toFixed(2)}, bootstrap p ${test.pZ.toFixed(2)}${persistence > 0 ? `, ${persistence}d at |z|>=${PERSIST_BAND} (p ${test.pPersist.toFixed(2)})` : ""}; ${test.independentWindows} non-overlapping ${windowLabel} windows in ${test.sampleDays}d)`;
-
-  // Conviction 0-100 (a heuristic ranking, not a probability): 60 points for
-  // how unusual today's z is under the bootstrap null (1 - p) and 40 for how
-  // unusual the persistence run is (1 - p, 0 when there is no run).
-  const zPoints = 60 * (1 - test.pZ);
-  const persistencePoints = persistence > 0 ? 40 * (1 - test.pPersist) : 0;
-  const conviction = Math.max(0, Math.min(100, Math.round(zPoints + persistencePoints)));
+  // q-values are filled in by applyRegimeFdr; the evidence string is rebuilt there.
+  const evidence = `${numLabel} ${numPct >= 0 ? "+" : ""}${numPct.toFixed(1)}% vs ${denLabel} ${denPct >= 0 ? "+" : ""}${denPct.toFixed(1)}% over ${windowLabel} (ratio RoC ${curRoc >= 0 ? "+" : ""}${curRoc.toFixed(1)}%`;
 
   return {
     id: pair.id,
@@ -483,15 +488,20 @@ function evaluateAxis(
     z,
     persistenceDays: persistence,
     stage: classifyStage(persistence),
-    fresh,
-    durable,
+    fresh: false,
+    durable: false,
     direction,
     evidence,
     window,
-    conviction,
+    conviction: 0,
     stats: {
       pZ: test.pZ,
       pPersist: test.pPersist,
+      qZ: NaN,
+      qPersist: NaN,
+      fdrFamily: 0,
+      freshCandidate,
+      evidenceHead: evidence,
       zCrit95: test.zCrit95,
       runCrit95: test.runCrit95,
       persistBand: PERSIST_BAND,
@@ -772,7 +782,7 @@ function buildThemes(readings: AxisReading[]): { fresh: Theme[]; durable: Theme[
       fresh.push({
         kind: "fresh",
         headline: `${pair.label} — ${copy}`,
-        body: `Ratio z-score hit ${r.z.toFixed(2)} this week on a ${r.window === "w4" ? "4-week" : r.window === "w13" ? "13-week" : "52-week"} basis, a fresh breach of the bootstrap 5% line (|z| ${r.stats.zCrit95.toFixed(2)}, p ${r.stats.pZ.toFixed(2)}). ${pair.axis === "risk" ? "Watch for confirmation in credit spreads." : pair.axis === "growth" ? "Style leadership may be shifting." : pair.axis === "cyclical" ? "Growth expectations are being repriced." : "Breadth dynamics are changing."}`,
+        body: `Ratio z-score hit ${r.z.toFixed(2)} this week on a ${r.window === "w4" ? "4-week" : r.window === "w13" ? "13-week" : "52-week"} basis, a fresh breach of the bootstrap 5% line (|z| ${r.stats.zCrit95.toFixed(2)}, p ${r.stats.pZ.toFixed(3)}, BH q ${r.stats.qZ.toFixed(3)} across ${r.stats.fdrFamily} readings). ${pair.axis === "risk" ? "Watch for confirmation in credit spreads." : pair.axis === "growth" ? "Style leadership may be shifting." : pair.axis === "cyclical" ? "Growth expectations are being repriced." : "Breadth dynamics are changing."}`,
         evidence: [r.evidence],
         axis: r.axis,
         conviction: r.conviction,
@@ -782,7 +792,7 @@ function buildThemes(readings: AxisReading[]): { fresh: Theme[]; durable: Theme[
       durable.push({
         kind: "durable",
         headline: `${pair.label} — ${copy}`,
-        body: `This rotation has run ${r.persistenceDays} consecutive trading days with |z|≥${r.stats.persistBand} in the same direction, longer than a no-regime bootstrap produces 95% of the time (p ${r.stats.pPersist.toFixed(2)}) — a ${r.stage === "mature" ? "mature trend" : "persistent regime"}. Historical persistence, not a forecast.`,
+        body: `This rotation has run ${r.persistenceDays} consecutive trading days with |z|≥${r.stats.persistBand} in the same direction, longer than a no-regime bootstrap produces by chance (p ${r.stats.pPersist.toFixed(3)}, BH q ${r.stats.qPersist.toFixed(3)} across ${r.stats.fdrFamily} readings) — a ${r.stage === "mature" ? "mature trend" : "persistent regime"}. Historical persistence, not a forecast.`,
         evidence: [r.evidence],
         axis: r.axis,
         conviction: r.conviction,
@@ -867,6 +877,39 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+// ----- Multiple testing across the snapshot -----
+
+/**
+ * Benjamini-Hochberg across ALL readings of a snapshot (7 axis pairs x 3
+ * windows = 21 tests per family): one family for the z p-values (fresh), one
+ * for the persistence p-values (durable). fresh = freshCandidate and
+ * qZ <= 0.05; durable = 30+ sessions and qPersist <= 0.05. Conviction (a
+ * heuristic rank, not a probability) = 60 (1 - qZ) + 40 (1 - qPersist).
+ * Mutates and returns the readings. Exported for tests.
+ */
+export function applyRegimeFdr(readings: AxisReading[]): AxisReading[] {
+  const flags = regimeFdrFlags(
+    readings.map((r) => ({ pZ: r.stats.pZ, pPersist: r.stats.pPersist, freshCandidate: r.stats.freshCandidate, persistence: r.persistenceDays })),
+    REGIME_ALPHA, DURABLE_MIN_DAYS,
+  );
+  const qz = flags.map((f) => f.qZ);
+  const qp = flags.map((f) => f.qPersist);
+  readings.forEach((r, i) => {
+    r.stats.qZ = qz[i];
+    r.stats.qPersist = qp[i];
+    r.stats.fdrFamily = readings.length;
+    r.fresh = flags[i].fresh;
+    r.durable = flags[i].durable;
+    const zPoints = 60 * (1 - (Number.isFinite(qz[i]) ? qz[i] : 1));
+    const persistencePoints = r.persistenceDays > 0 ? 40 * (1 - (Number.isFinite(qp[i]) ? qp[i] : 1)) : 0;
+    r.conviction = Math.max(0, Math.min(100, Math.round(zPoints + persistencePoints)));
+    r.evidence = `${r.stats.evidenceHead}, HAC z ${r.z >= 0 ? "+" : ""}${r.z.toFixed(2)}, bootstrap p ${r.stats.pZ.toFixed(3)} (BH q ${qz[i].toFixed(3)} of ${readings.length})` +
+      `${r.persistenceDays > 0 ? `, ${r.persistenceDays}d at |z|>=${r.stats.persistBand} (p ${r.stats.pPersist.toFixed(3)}, q ${qp[i].toFixed(3)})` : ""}` +
+      `; ${r.stats.independentWindows} non-overlapping windows in ${r.stats.sampleDays}d)`;
+  });
+  return readings;
+}
+
 // ----- Public entry point -----
 
 export async function buildRegimeSnapshot(window: WindowKey = "w4"): Promise<RegimeResponse> {
@@ -902,6 +945,9 @@ export async function buildRegimeSnapshot(window: WindowKey = "w4"): Promise<Reg
       if (r) allReadings.push(r);
     }
   }
+
+  // FDR control across the whole snapshot before any flag is read.
+  applyRegimeFdr(allReadings);
 
   // Group axis summaries from the primary-window readings
   const byAxis = new Map<AxisPair["axis"], AxisReading[]>();

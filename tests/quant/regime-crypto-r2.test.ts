@@ -534,3 +534,38 @@ test("non-price sources: F&G carries source/asOf, stale is left out; marketScore
   assert.equal(withFresh.marketScore, 85);
   assert.ok(withFresh.score < withFresh.marketScore!);
 });
+
+test("regime FDR: Benjamini-Hochberg q-values (hand-computed) gate fresh and durable across the 21 readings", async () => {
+  const { benjaminiHochberg, regimeFdrFlags } = await import("../../server/macroStats");
+  // Benjamini & Hochberg (1995) step-up. p = [0.01, 0.04, 0.03, 0.20], m = 4:
+  // sorted 0.01, 0.03, 0.04, 0.20 -> p m / k = 0.04, 0.06, 0.0533, 0.20;
+  // monotone from the top: 0.04, 0.0533, 0.0533, 0.20.
+  const q = benjaminiHochberg([0.01, 0.04, 0.03, 0.2]);
+  assert.ok(Math.abs(q[0] - 0.04) < 1e-12);
+  assert.ok(Math.abs(q[1] - 0.04 * 4 / 3) < 1e-12);
+  assert.ok(Math.abs(q[2] - 0.04 * 4 / 3) < 1e-12);
+  assert.ok(Math.abs(q[3] - 0.2) < 1e-12);
+  assert.ok(Number.isNaN(benjaminiHochberg([NaN, 0.01])[0]));
+  // 21 readings: one at p = 0.03 alone is NOT fresh after BH (q = 0.63); one at p = 0.001 is.
+  const items = Array.from({ length: 21 }, (_, i) => ({ pZ: i === 0 ? 0.03 : i === 1 ? 0.001 : 0.5, pPersist: i === 2 ? 0.002 : 1, freshCandidate: i < 2, persistence: i === 2 ? 40 : 0 }));
+  const f = regimeFdrFlags(items);
+  assert.equal(f[0].fresh, false);
+  assert.ok(Math.abs(f[0].qZ - 0.03 * 21 / 2) < 1e-12);
+  assert.equal(f[1].fresh, true);
+  assert.equal(f[2].durable, true); // q = 0.002 * 21 / 1 = 0.042
+  assert.ok(Math.abs(f[2].qPersist - 0.042) < 1e-12);
+});
+
+test("regime block length accounts for volatility clustering (GARCH): max of r and |r| lengths", async () => {
+  const { politisWhiteBlockLength, regimeZTest } = await import("../../server/macroStats");
+  // GARCH(1,1) a = 0.10, b = 0.88, 1000 days after burn-in: returns ~uncorrelated,
+  // |returns| persistent (seeded; across 20 seeds |r| always gave the longer block).
+  const rand = mulberry32(1);
+  const r: number[] = [];
+  let h = 1e-4, e = 0;
+  for (let t = 0; t < 1500; t++) { h = 2e-6 + 0.1 * e * e + 0.88 * h; e = Math.sqrt(h) * gauss(rand); if (t >= 500) r.push(e); }
+  const bR = politisWhiteBlockLength(r).b;
+  const bA = politisWhiteBlockLength(r.map(Math.abs)).b;
+  assert.ok(bA > bR, `|r| block ${bA} vs r block ${bR}`);
+  assert.equal(regimeZTest(r, 20, { reps: 99, seed: 1 })!.blockLength, Math.max(bR, bA));
+});

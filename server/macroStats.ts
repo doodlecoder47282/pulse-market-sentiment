@@ -279,7 +279,15 @@ export function regimeZTest(
   if (!zSeries.length) return null;
   const z = zSeries[zSeries.length - 1];
   const persistence = terminalRun(zSeries, band);
-  const { b } = politisWhiteBlockLength(r);
+  // Volatility clustering: daily returns are nearly uncorrelated while their
+  // magnitudes are strongly autocorrelated, so a block length chosen on r
+  // alone (often 1-2) lets the bootstrap destroy the clustering and the null
+  // comes out too thin (oversized tests under GARCH). Use the larger of the
+  // Politis-White lengths of r and |r|.
+  const bR = politisWhiteBlockLength(r);
+  const absR = Array.from(r as ArrayLike<number>, (x) => Math.abs(x));
+  const bA = politisWhiteBlockLength(absR);
+  const b = Math.min(bR.bMax, Math.max(bR.b, bA.b));
   const rand = mulberry32(opts.seed ?? 0x5e9e);
   const buf = new Float64Array(T);
   const absZ: number[] = [];
@@ -320,6 +328,49 @@ export function regimeZTest(
     sampleDays: T,
     method: "HAC z (Newey-West) of the w-day return; p-values from a Politis-Romano stationary bootstrap of daily returns (Politis-White block length)",
   };
+}
+
+// ─── Multiple testing ─────────────────────────────────────────────────────
+
+/**
+ * Benjamini-Hochberg q-values (step-up, monotone): q_(i) = min_{j>=i} p_(j) m / j,
+ * capped at 1. Rejecting q <= alpha controls the false discovery rate at alpha
+ * for independent or positively dependent tests (Benjamini & Hochberg 1995,
+ * https://doi.org/10.1111/j.2517-6161.1995.tb02031.x;
+ * JRSS B 57(1):289-300; Benjamini & Yekutieli 2001, Ann. Statist. 29(4)).
+ * Non-finite p-values get q = NaN and do not count toward m.
+ */
+export function benjaminiHochberg(p: number[]): number[] {
+  const idx = p.map((v, i) => ({ v, i })).filter((x) => Number.isFinite(x.v));
+  const m = idx.length;
+  const q = p.map(() => NaN);
+  if (!m) return q;
+  idx.sort((a, b) => a.v - b.v);
+  let run = 1;
+  for (let k = m - 1; k >= 0; k--) {
+    run = Math.min(run, (idx[k].v * m) / (k + 1));
+    q[idx[k].i] = Math.min(1, run);
+  }
+  return q;
+}
+
+/**
+ * Regime flags after FDR control (pure, used by regime.ts applyRegimeFdr):
+ * one BH family for the z p-values, one for the persistence p-values.
+ */
+export function regimeFdrFlags(
+  items: Array<{ pZ: number; pPersist: number; freshCandidate: boolean; persistence: number }>,
+  alpha = 0.05,
+  durableMinDays = 30,
+): Array<{ qZ: number; qPersist: number; fresh: boolean; durable: boolean }> {
+  const qz = benjaminiHochberg(items.map((r) => r.pZ));
+  const qp = benjaminiHochberg(items.map((r) => r.pPersist));
+  return items.map((r, i) => ({
+    qZ: qz[i],
+    qPersist: qp[i],
+    fresh: r.freshCandidate && qz[i] <= alpha,
+    durable: r.persistence >= durableMinDays && qp[i] <= alpha,
+  }));
 }
 
 // ─── Ledoit-Wolf shrinkage and the canary composite z ────────────────────
