@@ -465,7 +465,7 @@ function buildMarketStructureEvents(from: Date, monthsAhead: number): CalendarEv
       when: opexWhen,
       whenLabel: formatEtLabel(opexWhen),
       importance: isWitch ? "HIGH" : "MED",
-      source: "CBOE (computed)",
+      source: "Exchange expiration rule (computed)",
       sourceId: "exchange_rules", tier: "computed", tierLabel: TIER_LABEL.computed, timeExact: true,
       notes: isWitch
         ? "Quarterly index + stock + ETF options expire on same day; historically elevated volume."
@@ -494,7 +494,7 @@ function buildMarketStructureEvents(from: Date, monthsAhead: number): CalendarEv
         when: vixWhen,
         whenLabel: formatEtLabel(vixWhen),
         importance: "MED",
-        source: "CBOE (computed)",
+        source: "Exchange expiration rule (computed)",
         sourceId: "exchange_rules", tier: "computed", tierLabel: TIER_LABEL.computed, timeExact: true,
         notes: "Special opening quotation used to settle VX futures + VIX options.",
       });
@@ -572,17 +572,17 @@ async function fetchVolEventCalendar(): Promise<CalendarEvent[]> {
       case "monthly_opex":
         kind = "OPEX"; hourEt = 16; minEt = 0;
         notes = "Monthly options expiration. Gamma roll-off after 4pm — dealer hedging unwinds.";
-        source = "CBOE";
+        source = "Exchange expiration rule (computed)";
         break;
       case "vix_exp":
         kind = "VIX_EXP"; hourEt = 9; minEt = 0;
         notes = "VIX SOQ print @ 9am ET. VX futures + VIX options settle.";
-        source = "CBOE";
+        source = "Exchange expiration rule (computed)";
         break;
       case "quad_witching":
         kind = "WITCH"; hourEt = 16; minEt = 0;
         notes = "Quad witching — index futures, index options, single-stock futures, equity options ALL expire. Historically the highest-volume day of the quarter.";
-        source = "CBOE";
+        source = "Exchange expiration rule (computed)";
         break;
       default:
         kind = "ECON";

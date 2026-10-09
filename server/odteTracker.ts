@@ -208,8 +208,8 @@ async function poll() {
     const chain: OptionChainResponse = await getOptionChain("$SPX", 0);
     if ("error" in chain) {
       // SPX unavailable. Off-hours, or when the failure is an auth failure
-      // ("schwab_required" = no token / CBOE also failed), do NOT try SPY: it just
-      // repeats the same failing token refresh and CBOE request every poll.
+      // ("schwab_required" = no Schwab token), do NOT try SPY: it just
+      // repeats the same failing token refresh every poll.
       // Note the SPY rows are keyed SPY_..., so armed $SPX positions do not update
       // during a fallback anyway.
       const authFailure = String((chain as any).error ?? "").includes("schwab_required");
