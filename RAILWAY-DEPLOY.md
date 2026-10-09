@@ -59,21 +59,31 @@ Also add the token encryption key. Schwab OAuth tokens are stored in
 save tokens and Settings shows "Token storage locked" with the reason.
 
 ```
-BATCAVE_TOKEN_KEY = <exactly 32 random bytes, base64, e.g. from: openssl rand -base64 32>
+BATCAVE_TOKEN_KEY = <exactly 32 random bytes, base64, not hex: openssl rand -base64 32>
 ```
 
-- Keep it out of chat, git and logs, like the access key. Losing it means
-  the stored tokens cannot be decrypted: Settings says so and one Schwab
-  reconnect stores fresh tokens.
+- The value must be base64, not hex (`openssl rand -hex 32` gives 64 hex
+  characters, which is rejected). Keep it out of chat, git and logs, like
+  the access key. Losing it means the stored tokens cannot be decrypted:
+  Settings says so and one Schwab reconnect stores fresh tokens.
 - Rotation: move the old value to `BATCAVE_TOKEN_KEY_PREVIOUS`, set a new
   `BATCAVE_TOKEN_KEY`, restart. The row is re-encrypted on the next read;
   then remove `BATCAVE_TOKEN_KEY_PREVIOUS`.
 - Existing plaintext tokens are encrypted in place on first read (the old
-  page is zeroed and the WAL truncated). Copies made earlier (`backups/`,
-  any downloaded `data.db`) still hold plaintext: reconnect Schwab once after
-  enabling the key so those old tokens are superseded, and delete old backups.
-- Locally (127.0.0.1) the key is optional; without it tokens stay
-  unencrypted and the boot log says so.
+  page is zeroed and the WAL truncated). If the server is locked (no key)
+  while a plaintext row is still in `data.db`, Settings says "plaintext
+  tokens still on disk: set BATCAVE_TOKEN_KEY or disconnect"; Disconnect
+  secure-deletes the row.
+- Copies made before encryption (`backups/`, any downloaded `data.db`)
+  still hold plaintext tokens. A plaintext refresh token in such a copy
+  stays usable until it expires (about 7 days after it was issued) unless
+  Schwab revokes it; reconnecting here does not revoke it. Treat backups
+  as secrets: keep them off shared drives and delete pre-encryption ones.
+- Locally (127.0.0.1) without the env key, the server generates a key file
+  once at `~/.batcave/token.key` (mode 0600, outside the repo and `data/`,
+  path override `BATCAVE_TOKEN_KEY_FILE`) and logs the path, never the key.
+  Plaintext storage needs an explicit `BATCAVE_TOKEN_PLAINTEXT_OK=1`
+  (loopback only).
 - Trust proxy: on Railway/Render/Fly the server trusts exactly one proxy hop
   (`X-Forwarded-For`) so the wrong-key slowdown is counted per client, not
   per proxy. Override with `BATCAVE_TRUST_PROXY_HOPS` (0 disables) only if

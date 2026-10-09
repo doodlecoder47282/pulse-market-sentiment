@@ -186,8 +186,21 @@ test("tokens: key parsing is strict (32 bytes, base64 or base64url) and never ec
   assert.ok(w.length > 0 && w.every((m) => !m.includes(Buffer.alloc(16, 1).toString("base64"))));
 });
 
-test("tokens: policy fails closed on a reachable bind without a key; local stays usable", () => {
-  assert.equal(tokenKeyPolicy({ ...LOCAL }).mode, "plaintext-local");
+test("tokens: policy fails closed on a reachable bind without a key; local uses a key file, plaintext only by opt-in", () => {
+  // Loopback without env key and without a usable key file: locked, never plaintext.
+  assert.equal(tokenKeyPolicy({ ...LOCAL }).mode, "locked");
+  const fileKey = { ok: true as const, key: Buffer.alloc(32, 3), path: "/home/u/.batcave/token.key", created: true };
+  const local = tokenKeyPolicy({ ...LOCAL }, fileKey);
+  assert.equal(local.mode, "encrypted");
+  assert.equal(local.keySource, "file");
+  // The key file is never used on a reachable bind.
+  assert.equal(tokenKeyPolicy({ ...PUBLIC }, fileKey).mode, "locked");
+  assert.equal(tokenKeyPolicy({ ...PUBLIC, BATCAVE_TOKEN_PLAINTEXT_OK: "1" }).mode, "locked");
+  assert.equal(tokenKeyPolicy({ ...LOCAL, BATCAVE_TOKEN_PLAINTEXT_OK: "1" }).mode, "plaintext-local");
+  // With an env key the file key becomes decrypt-only (rotation into the env key).
+  const envPol = tokenKeyPolicy({ ...LOCAL, BATCAVE_TOKEN_KEY: TEST_KEY_B64 }, fileKey);
+  assert.equal(envPol.keySource, "env");
+  assert.ok(envPol.previousKeys.some((k) => k.equals(fileKey.key)));
   assert.equal(tokenKeyPolicy({ ...PUBLIC }).mode, "locked");
   assert.equal(tokenKeyPolicy({ HOST: "0.0.0.0" }).mode, "locked");
   assert.equal(tokenKeyPolicy({ ...PUBLIC, BATCAVE_TOKEN_KEY: TEST_KEY_B64 }).mode, "encrypted");
@@ -250,6 +263,7 @@ test("tokens: swapped ciphertexts, wrong key, missing key and rotation", () => {
   if (bad.status === "decrypt_failed") assert.ok(!bad.reason.includes("acc-plain"));
   // Encrypted row but no key locally: locked, not handed out as gibberish.
   assert.equal(decodeStoredRow(enc, tokenKeyPolicy({ ...LOCAL })).status, "locked");
+  assert.equal(decodeStoredRow(enc, tokenKeyPolicy({ ...LOCAL, BATCAVE_TOKEN_PLAINTEXT_OK: "1" })).status, "locked");
   // Public bind without key: even a plaintext row is not read.
   assert.equal(decodeStoredRow(plainRow, tokenKeyPolicy({ ...PUBLIC })).status, "locked");
   assert.throws(() => encodeRowForStorage(plainRow, tokenKeyPolicy({ ...PUBLIC })), /token_store_locked/);
@@ -264,8 +278,8 @@ test("tokens: swapped ciphertexts, wrong key, missing key and rotation", () => {
   }
 });
 
-test("tokens: local plaintext mode keeps previous behaviour (no rewrite, no encryption)", () => {
-  const pol = tokenKeyPolicy({ ...LOCAL });
+test("tokens: explicit plaintext opt-in keeps plaintext (no rewrite, no encryption)", () => {
+  const pol = tokenKeyPolicy({ ...LOCAL, BATCAVE_TOKEN_PLAINTEXT_OK: "1" });
   const r = decodeStoredRow(plainRow, pol);
   assert.equal(r.status, "ok");
   if (r.status === "ok") assert.equal(r.rewrite, null);
@@ -462,4 +476,76 @@ test("ofi: trend-window completeness rule shared by the panel payload and the tr
   const { readFileSync } = await import("node:fs");
   const te = readFileSync(new URL("../../server/tradeEnvironment.ts", import.meta.url), "utf8");
   assert.match(te, /ofiTrendWindowComplete\(ofi\.bars\)/);
+});
+
+// ─── Fix round: key file, plaintext-on-disk status, no plaintext over ciphertext
+import { loadLocalKey, localKeyPath } from "../../server/tokenKeyFile";
+import { writeDecision } from "../../server/tokenCrypto";
+
+test("token key file: created once with mode 0600, reused, never inside the repo or data/", async () => {
+  const { mkdtempSync, statSync, readFileSync, chmodSync, rmSync } = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const home = mkdtempSync(path.join(os.tmpdir(), "batcave-key-"));
+  const repo = mkdtempSync(path.join(os.tmpdir(), "batcave-repo-"));
+  try {
+    const p = localKeyPath({}, home);
+    assert.equal(p, path.join(home, ".batcave", "token.key"));
+    assert.equal(localKeyPath({ BATCAVE_TOKEN_KEY_FILE: "/srv/k/token.key" }, home), "/srv/k/token.key");
+    const a = loadLocalKey(p, { create: true, cwd: repo });
+    assert.ok(a && a.ok && a.created && a.key.length === 32);
+    if (process.platform !== "win32") assert.equal(statSync(p).mode & 0o777, 0o600);
+    const b = loadLocalKey(p, { create: true, cwd: repo });
+    assert.ok(b && b.ok && !b.created && b.key.equals((a as any).key), "same key on the next start");
+    // The file holds base64, and the key never appears in any warning.
+    const w = tokenKeyWarnings({ HOST: "127.0.0.1" }, a);
+    assert.ok(w.some((m) => m.includes("generated a local encryption key file")));
+    assert.ok(w.every((m) => !m.includes(readFileSync(p, "utf8").trim())));
+    // Inside the app directory (repo or data/): refused.
+    const inRepo = loadLocalKey(path.join(repo, "data", "token.key"), { create: true, cwd: repo });
+    assert.ok(inRepo && !inRepo.ok);
+    assert.equal(loadLocalKey(path.join(home, "missing.key"), { create: false, cwd: repo }), null);
+    if (process.platform !== "win32") {
+      chmodSync(p, 0o644);
+      const open = loadLocalKey(p, { create: true, cwd: repo });
+      assert.ok(open && !open.ok && /readable by others/.test(open.error));
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("tokens: locked with a plaintext row says so; disconnect is the way out", () => {
+  const r = decodeStoredRow(plainRow, tokenKeyPolicy({ ...PUBLIC }));
+  assert.equal(r.status, "locked");
+  if (r.status === "locked") {
+    assert.equal(r.plaintextOnDisk, true);
+    assert.match(r.reason, /^plaintext tokens still on disk: set BATCAVE_TOKEN_KEY or disconnect/);
+  }
+  const enc = encodeRowForStorage(plainRow, tokenKeyPolicy({ ...PUBLIC, BATCAVE_TOKEN_KEY: TEST_KEY_B64 }));
+  const r2 = decodeStoredRow(enc, tokenKeyPolicy({ ...PUBLIC }));
+  assert.equal(r2.status === "locked" && r2.plaintextOnDisk === true, false, "encrypted row is not reported as plaintext");
+});
+
+test("tokens: never overwrite an encrypted row with plaintext", () => {
+  const encPol = tokenKeyPolicy({ ...PUBLIC, BATCAVE_TOKEN_KEY: TEST_KEY_B64 });
+  const enc = encodeRowForStorage(plainRow, encPol);
+  const plainPol = tokenKeyPolicy({ ...LOCAL, BATCAVE_TOKEN_PLAINTEXT_OK: "1" });
+  const d = writeDecision(enc, plainPol);
+  assert.equal(d.ok, false);
+  if (!d.ok) assert.match(d.reason, /refusing to overwrite encrypted/);
+  assert.equal(writeDecision(plainRow, plainPol).ok, true);
+  assert.equal(writeDecision(null, plainPol).ok, true);
+  assert.equal(writeDecision(enc, encPol).ok, true);
+  assert.equal(writeDecision(null, tokenKeyPolicy({ ...PUBLIC })).ok, false);
+});
+
+test("token docs: key is documented as base64 (not hex) with the openssl base64 command", async () => {
+  const { readFileSync } = await import("node:fs");
+  for (const f of [".env.local.example", "RAILWAY-DEPLOY.md"]) {
+    const src = readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
+    assert.match(src, /base64, not hex/, f);
+    assert.match(src, /openssl rand -base64 32/, f);
+  }
 });

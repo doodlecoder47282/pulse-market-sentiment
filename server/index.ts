@@ -22,6 +22,7 @@ import {
   trustProxyHops,
 } from "./accessGate";
 import { tokenKeyWarnings } from "./tokenCrypto";
+import { resolveTokenKeyPolicy } from "./tokenKeyFile";
 
 // Global safety nets — do NOT let a stray promise reject or exception kill the
 // long-running server process. Crashes here previously took down /api/* during
@@ -122,7 +123,9 @@ app.get("/api/health/auth", (_req, res) => {
 });
 for (const w of gateWarnings(process.env)) log(w, "security");
 // Schwab token storage at rest (tokenCrypto.ts): plaintext-local / locked reasons.
-for (const w of tokenKeyWarnings(process.env)) log(w, "security");
+// Resolves (and on a loopback bind without BATCAVE_TOKEN_KEY, creates) the
+// local key file at boot so the log says where the key lives (never the key).
+for (const w of tokenKeyWarnings(process.env, resolveTokenKeyPolicy(process.env).local)) log(w, "security");
 
 (async () => {
   await registerRoutes(httpServer, app);

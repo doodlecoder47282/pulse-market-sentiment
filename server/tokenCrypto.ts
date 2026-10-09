@@ -27,17 +27,24 @@
 // without the prefix is a legacy plaintext token and is migrated on first
 // read when a key is configured.
 //
-// Policy (tokenKeyPolicy)
-//   key valid                         -> "encrypted"
-//   key set but not 32 bytes base64   -> "locked" (a typo never silently
-//                                        downgrades to plaintext)
-//   key unset, loopback bind (local)  -> "plaintext-local" (previous behaviour,
-//                                        boot warning)
-//   key unset, reachable bind         -> "locked": tokens are neither read nor
-//                                        written; Schwab shows not connected
-//                                        with the reason
-// Rotation: BATCAVE_TOKEN_KEY_PREVIOUS (optional) is tried for decryption
-// only; a row read with it is re-encrypted under the current key.
+// Policy (tokenKeyPolicy). Encryption does not depend on the bind host; only
+// where the key comes from does.
+//   BATCAVE_TOKEN_KEY valid            -> "encrypted" (key source env)
+//   BATCAVE_TOKEN_KEY set but invalid  -> "locked" (a typo never silently
+//                                         downgrades to plaintext)
+//   unset, reachable bind              -> "locked": tokens are neither read
+//                                         nor written until the env key is set
+//   unset, loopback bind               -> "encrypted" with a local key file
+//                                         (tokenKeyFile.ts: 32 random bytes,
+//                                         mode 0600, ~/.batcave/token.key,
+//                                         outside the repo and data/); if the
+//                                         file cannot be used -> "locked"
+//   unset, loopback, BATCAVE_TOKEN_PLAINTEXT_OK=1 -> "plaintext-local"
+//                                         (explicit opt-in only)
+// Rotation: BATCAVE_TOKEN_KEY_PREVIOUS (optional), and an existing local key
+// file when the env key is in use, are tried for decryption only; a row read
+// with them is re-encrypted under the current key.
+// Never: overwrite an encrypted row with plaintext (writeDecision).
 //
 // Nothing here logs or returns token values in errors.
 
@@ -46,6 +53,7 @@ import { isLoopbackHost, resolveBindHost, type EnvLike } from "./accessGate";
 
 export const TOKEN_KEY_ENV = "BATCAVE_TOKEN_KEY";
 export const TOKEN_KEY_PREVIOUS_ENV = "BATCAVE_TOKEN_KEY_PREVIOUS";
+export const TOKEN_PLAINTEXT_OK_ENV = "BATCAVE_TOKEN_PLAINTEXT_OK";
 export const ENC_PREFIX = "enc:v1:";
 const ALGO = "aes-256-gcm";
 const IV_BYTES = 12;
@@ -71,47 +79,89 @@ export function parseTokenKey(raw: string | undefined | null): KeyParse {
 
 export type TokenStoreMode = "encrypted" | "plaintext-local" | "locked";
 
+export type TokenKeySource = "env" | "file" | null;
+
 export interface TokenKeyPolicy {
   mode: TokenStoreMode;
   /** Current key (encrypted mode only). */
   key?: Buffer;
+  keySource: TokenKeySource;
   /** Decrypt-only keys tried after the current one (rotation). */
   previousKeys: Buffer[];
   /** Plain-language reason for plaintext-local / locked; null when encrypted. */
   reason: string | null;
 }
 
+/** Result of loading / creating the local key file (tokenKeyFile.ts). */
+export type LocalKey = { ok: true; key: Buffer; path: string; created: boolean } | { ok: false; path: string; error: string };
+
 function keyProblem(p: Exclude<KeyParse, { ok: true }>): string {
-  if (p.reason === "wrong_length") return `${TOKEN_KEY_ENV} decodes to ${p.bytes} bytes; it must be exactly 32 bytes (openssl rand -base64 32)`;
-  return `${TOKEN_KEY_ENV} is not valid base64 (openssl rand -base64 32)`;
+  if (p.reason === "wrong_length") return `${TOKEN_KEY_ENV} decodes to ${p.bytes} bytes; it must be exactly 32 bytes of base64, not hex (openssl rand -base64 32)`;
+  return `${TOKEN_KEY_ENV} is not valid base64 (it must be base64, not hex: openssl rand -base64 32)`;
 }
 
-export function tokenKeyPolicy(env: EnvLike): TokenKeyPolicy {
+export function plaintextOptIn(env: EnvLike): boolean {
+  return (env[TOKEN_PLAINTEXT_OK_ENV] ?? "").trim() === "1";
+}
+
+/** True when the policy needs the local key file: no env key, loopback bind, no plaintext opt-in. */
+export function wantsLocalKeyFile(env: EnvLike): boolean {
+  const k = parseTokenKey(env[TOKEN_KEY_ENV]);
+  if (k.ok || k.reason !== "missing") return false;
+  return isLoopbackHost(resolveBindHost(env)) && !plaintextOptIn(env);
+}
+
+/**
+ * @param localKey the local key file, when one exists or was created
+ *                 (tokenKeyFile.ts). Used as the current key only on a
+ *                 loopback bind without an env key; with an env key it is a
+ *                 decrypt-only previous key.
+ */
+export function tokenKeyPolicy(env: EnvLike, localKey: LocalKey | null = null): TokenKeyPolicy {
   const cur = parseTokenKey(env[TOKEN_KEY_ENV]);
   const prev = parseTokenKey(env[TOKEN_KEY_PREVIOUS_ENV]);
   const previousKeys = prev.ok ? [prev.key] : [];
-  if (cur.ok) return { mode: "encrypted", key: cur.key, previousKeys, reason: null };
-  if (cur.reason !== "missing") return { mode: "locked", previousKeys, reason: keyProblem(cur) };
+  if (cur.ok) {
+    if (localKey?.ok && !localKey.key.equals(cur.key)) previousKeys.push(localKey.key);
+    return { mode: "encrypted", key: cur.key, keySource: "env", previousKeys, reason: null };
+  }
+  if (cur.reason !== "missing") return { mode: "locked", keySource: null, previousKeys, reason: keyProblem(cur) };
   const host = resolveBindHost(env);
-  if (isLoopbackHost(host)) {
+  if (!isLoopbackHost(host)) {
     return {
-      mode: "plaintext-local",
+      mode: "locked",
+      keySource: null,
       previousKeys,
-      reason: `${TOKEN_KEY_ENV} not set: Schwab tokens are stored unencrypted (loopback ${host} only)`,
+      reason: `${TOKEN_KEY_ENV} not set and bind host ${host} is reachable: Schwab token storage is locked until the key is set (32 bytes, base64: openssl rand -base64 32)`,
     };
   }
+  if (plaintextOptIn(env)) {
+    return {
+      mode: "plaintext-local",
+      keySource: null,
+      previousKeys,
+      reason: `${TOKEN_PLAINTEXT_OK_ENV}=1: Schwab tokens are stored unencrypted (loopback ${host} only)`,
+    };
+  }
+  if (localKey?.ok) return { mode: "encrypted", key: localKey.key, keySource: "file", previousKeys, reason: null };
   return {
     mode: "locked",
+    keySource: null,
     previousKeys,
-    reason: `${TOKEN_KEY_ENV} not set and bind host ${host} is reachable: Schwab token storage is locked until the key is set`,
+    reason: `local token key file unavailable (${localKey ? localKey.error : "not loaded"}): set ${TOKEN_KEY_ENV}, fix the key file, or set ${TOKEN_PLAINTEXT_OK_ENV}=1`,
   };
 }
 
 /** Boot-time warnings. Never includes key material. */
-export function tokenKeyWarnings(env: EnvLike): string[] {
-  const p = tokenKeyPolicy(env);
+export function tokenKeyWarnings(env: EnvLike, localKey: LocalKey | null = null): string[] {
+  const p = tokenKeyPolicy(env, localKey);
   const out: string[] = [];
   if (p.reason) out.push(p.reason);
+  if (p.keySource === "file" && localKey?.ok) {
+    out.push(localKey.created
+      ? `Schwab tokens: generated a local encryption key file at ${localKey.path} (mode 0600). Back it up with the database or reconnect Schwab if it is lost.`
+      : `Schwab tokens: encrypted with the local key file ${localKey.path}.`);
+  }
   const prevRaw = (env[TOKEN_KEY_PREVIOUS_ENV] ?? "").trim();
   if (prevRaw && !parseTokenKey(prevRaw).ok) out.push(`${TOKEN_KEY_PREVIOUS_ENV} is set but is not a 32-byte base64 key; it is ignored`);
   return out;
@@ -175,7 +225,7 @@ export interface TokenRow {
 
 export type DecodeResult =
   | { status: "ok"; row: TokenRow; rewrite: TokenRow | null }
-  | { status: "locked"; reason: string }
+  | { status: "locked"; reason: string; plaintextOnDisk?: boolean }
   | { status: "decrypt_failed"; reason: string };
 
 function decryptWithAny(stored: string, keys: Buffer[], aad: Buffer): { value: string; keyIndex: number } | null {
@@ -196,10 +246,19 @@ function decryptWithAny(stored: string, keys: Buffer[], aad: Buffer): { value: s
 export function decodeStoredRow(stored: TokenRow, policy: TokenKeyPolicy): DecodeResult {
   const accEnc = isEncryptedValue(stored.accessToken);
   const refEnc = isEncryptedValue(stored.refreshToken);
-  if (policy.mode === "locked") return { status: "locked", reason: policy.reason ?? "token storage locked" };
+  if (policy.mode === "locked") {
+    if (!accEnc || !refEnc) {
+      return {
+        status: "locked",
+        plaintextOnDisk: true,
+        reason: `plaintext tokens still on disk: set ${TOKEN_KEY_ENV} or disconnect (${policy.reason ?? "token storage locked"})`,
+      };
+    }
+    return { status: "locked", reason: policy.reason ?? "token storage locked" };
+  }
   if (policy.mode === "plaintext-local") {
     if (accEnc || refEnc) {
-      return { status: "locked", reason: `stored Schwab tokens are encrypted but ${TOKEN_KEY_ENV} is not set` };
+      return { status: "locked", reason: `stored Schwab tokens are encrypted but ${TOKEN_PLAINTEXT_OK_ENV}=1 disables encryption; unset it (local key file) or set ${TOKEN_KEY_ENV}` };
     }
     return { status: "ok", row: { ...stored }, rewrite: null };
   }
@@ -235,4 +294,17 @@ export function encodeRowForStorage(row: TokenRow, policy: TokenKeyPolicy): Toke
     accessToken: encryptValue(row.accessToken, key, tokenAad(row.id, "access_token")),
     refreshToken: encryptValue(row.refreshToken, key, tokenAad(row.id, "refresh_token")),
   };
+}
+
+/**
+ * May a row be written under this policy over `existing`? Never write
+ * plaintext over an encrypted row (a misconfiguration must not undo
+ * encryption); locked never writes.
+ */
+export function writeDecision(existing: Pick<TokenRow, "accessToken" | "refreshToken"> | null | undefined, policy: TokenKeyPolicy): { ok: true } | { ok: false; reason: string } {
+  if (policy.mode === "locked") return { ok: false, reason: policy.reason ?? "token storage locked" };
+  if (policy.mode === "plaintext-local" && existing && (isEncryptedValue(existing.accessToken) || isEncryptedValue(existing.refreshToken))) {
+    return { ok: false, reason: `refusing to overwrite encrypted Schwab tokens with plaintext; set ${TOKEN_KEY_ENV} (or remove ${TOKEN_PLAINTEXT_OK_ENV}) or disconnect first` };
+  }
+  return { ok: true };
 }

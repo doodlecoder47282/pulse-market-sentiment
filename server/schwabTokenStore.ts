@@ -21,20 +21,23 @@ import { db, sqlite, schwabTokens } from "./storage";
 import {
   decodeStoredRow,
   encodeRowForStorage,
-  tokenKeyPolicy,
+  writeDecision,
   type TokenRow,
   type TokenStoreMode,
+  type TokenKeySource,
 } from "./tokenCrypto";
+import { resolveTokenKeyPolicy } from "./tokenKeyFile";
 
 const ROW_ID = 1;
 
 export type TokenRead =
   | { status: "ok"; row: TokenRow }
   | { status: "none" }
-  | { status: "locked"; reason: string }
+  | { status: "locked"; reason: string; plaintextOnDisk?: boolean }
   | { status: "decrypt_failed"; reason: string };
 
 let _lastProblem: string | null = null;
+let _plaintextOnDisk = false;
 let _migrated = false;
 
 function writeRaw(row: TokenRow): void {
@@ -66,8 +69,9 @@ function migrateInPlace(encrypted: TokenRow): void {
 
 /** Reads and decrypts the token row; migrates a plaintext or old-key row. */
 export function readSchwabTokens(env: Record<string, string | undefined> = process.env): TokenRead {
-  const policy = tokenKeyPolicy(env);
+  const { policy } = resolveTokenKeyPolicy(env);
   const raw = db.select().from(schwabTokens).where(eq(schwabTokens.id, ROW_ID)).get() as TokenRow | undefined;
+  _plaintextOnDisk = false;
   if (!raw) {
     if (policy.mode === "locked") {
       _lastProblem = policy.reason;
@@ -79,6 +83,7 @@ export function readSchwabTokens(env: Record<string, string | undefined> = proce
   const r = decodeStoredRow(raw, policy);
   if (r.status !== "ok") {
     _lastProblem = r.reason;
+    _plaintextOnDisk = r.status === "locked" && r.plaintextOnDisk === true;
     return r;
   }
   _lastProblem = null;
@@ -97,15 +102,18 @@ export function writeSchwabTokens(
   row: Omit<TokenRow, "id">,
   env: Record<string, string | undefined> = process.env,
 ): { ok: true } | { ok: false; reason: string } {
-  const policy = tokenKeyPolicy(env);
-  if (policy.mode === "locked") {
-    _lastProblem = policy.reason;
-    return { ok: false, reason: policy.reason ?? "token storage locked" };
+  const { policy } = resolveTokenKeyPolicy(env);
+  const existing = db.select().from(schwabTokens).where(eq(schwabTokens.id, ROW_ID)).get() as TokenRow | undefined;
+  const ok = writeDecision(existing ?? null, policy);
+  if (!ok.ok) {
+    _lastProblem = ok.reason;
+    return ok;
   }
   writeRaw(encodeRowForStorage({ id: ROW_ID, ...row }, policy));
   return { ok: true };
 }
 
+/** Disconnect: secure-deletes the row (zeroed page) and truncates the WAL. Works in every mode. */
 export function deleteSchwabTokens(): void {
   try {
     sqlite.pragma("secure_delete = ON");
@@ -113,21 +121,32 @@ export function deleteSchwabTokens(): void {
   } finally {
     sqlite.pragma("secure_delete = OFF");
   }
+  try {
+    sqlite.pragma("wal_checkpoint(TRUNCATE)");
+  } catch { /* a busy reader can block the truncate; the next checkpoint clears it */ }
+  _plaintextOnDisk = false;
+  _lastProblem = null;
 }
 
 export interface TokenStoreStatus {
   mode: TokenStoreMode;
   encryptedAtRest: boolean;
+  /** Where the key comes from: env (BATCAVE_TOKEN_KEY) or the local key file. */
+  keySource: TokenKeySource;
+  /** Locked with a legacy plaintext row still in data.db: set the key or disconnect. */
+  plaintextOnDisk: boolean;
   /** Why tokens are not usable or not encrypted; null when all is well. */
   reason: string | null;
   migratedThisProcess: boolean;
 }
 
 export function tokenStoreStatus(env: Record<string, string | undefined> = process.env): TokenStoreStatus {
-  const p = tokenKeyPolicy(env);
+  const p = resolveTokenKeyPolicy(env).policy;
   return {
     mode: p.mode,
     encryptedAtRest: p.mode === "encrypted",
+    keySource: p.keySource,
+    plaintextOnDisk: _plaintextOnDisk,
     reason: _lastProblem ?? p.reason,
     migratedThisProcess: _migrated,
   };
