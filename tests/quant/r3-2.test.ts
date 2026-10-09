@@ -421,3 +421,21 @@ test("R3-2.9 REST chain bid older than the max age is not usable (NO_QUOTE)", ()
   // A future quote stamp (clock skew) reads as age 0, not negative.
   assert.equal(exitBidUsable("rest_chain", 1.0, now + 2_000, now).ageMs, 0);
 });
+
+// ─── Item 10: no LLM call for logging snapshots ─────────────────────────────
+
+test("R3-2.10 prediction logger asks masterAlpha for no narrative; the LLM call is gated", () => {
+  // masterAlpha.ts imports the Anthropic SDK (not loadable without npm), so
+  // this checks the source: every runMasterAlpha call in the logger passes
+  // narrative: false, and the model call sits behind that flag.
+  const here = dirname(fileURLToPath(import.meta.url));
+  const mm = readFileSync(join(here, "../../server/mmPredictions.ts"), "utf8");
+  const calls = mm.match(/runMasterAlpha\([^)]*\)/g) ?? [];
+  assert.ok(calls.length >= 1);
+  for (const c of calls) assert.match(c, /narrative:\s*false/, c);
+  const ma = readFileSync(join(here, "../../server/masterAlpha.ts"), "utf8");
+  const gate = ma.indexOf("if (input.narrative === false)");
+  const call = ma.indexOf("client.messages.create(");
+  assert.ok(gate > 0 && call > gate, "narrative gate precedes the model call");
+  assert.equal(ma.split("client.messages.create(").length - 1, 1, "single model call site");
+});

@@ -145,6 +145,13 @@ export interface MasterAlphaInput {
   riskBudget_M?:     number;              // legacy explicit $M budget (no default)
   /** Test/override hook; defaults to the reviewer's promotion file. */
   promotion?:        MasterAlphaPromotion | null;
+  /**
+   * false = no LLM narrative (aiAnalysis is a fixed note). The prediction
+   * logger (mmPredictions.snapshotHorizon) discards the narrative, so it
+   * passes false: no paid model call per logged snapshot (R3-2 item 10).
+   * Default true (the interactive /api/master-alpha route).
+   */
+  narrative?:        boolean;
 }
 
 export interface AlphaComponent {
@@ -867,7 +874,9 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
   };
 
   let aiAnalysis = "Unavailable.";
-  try {
+  if (input.narrative === false) {
+    aiAnalysis = "No narrative requested (logging snapshot).";
+  } else try {
     const response = await client.messages.create({
       model: "claude-sonnet-4-20250514",
       max_tokens: 1400,
