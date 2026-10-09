@@ -86,7 +86,8 @@ export async function postToDiscord(payload: DiscordPayload, channel: DiscordCha
 
 // ─── Internal API fetchers ──────────────────────────────────
 async function fetchJSON(path: string): Promise<any | null> {
-  // /api/models and /api/quotes run in-process (internalApi.ts); others over HTTP.
+  // Every registered route runs in-process (internalApi.ts). The HTTP branch is only for
+  // paths with no registered handler (/api/sentiment has none: it returns null either way).
   if (isInternalRoute(path)) return internalJson(path);
   try {
     const res = await fetch(`${BASE}${path}`);

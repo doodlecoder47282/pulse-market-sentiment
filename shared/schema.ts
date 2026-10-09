@@ -310,7 +310,9 @@ export interface SocialSentiment {
 }
 
 export interface Gauge {
-  name: string;
+  name: string;           // stable key (history, weights): never changes with display wording
+  /** Display text for the UI when it should differ from the history key `name`. */
+  label?: string;
   value: number;          // 0..100 where 50 = neutral
   weight: number;         // contribution weight to composite
   interpretation: string;

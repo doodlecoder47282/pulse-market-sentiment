@@ -431,7 +431,7 @@ test("internal api: thrown handler is a 500 with message; unregistered allow-lis
   assert.equal(missing.status, 503);
   assert.equal(missing.error, "internal_route_not_registered");
   assert.equal(isInternalRoute("/api/models?symbol=SPX"), true);
-  assert.equal(isInternalRoute("/api/news"), false);
+  assert.equal(isInternalRoute("/api/whales/performance"), false);
 });
 
 test("internal api: timeout behaves like an aborted fetch; sync handlers work", async () => {
@@ -445,7 +445,7 @@ test("internal api: timeout behaves like an aborted fetch; sync handlers work", 
   assert.deepEqual(await internalJson("/api/odte-tracker"), { contracts: [] });
   // A handler that resolves without responding is reported, not left hanging.
   internalRoute("/api/quotes", async () => {});
-  const nr = await callInternal("/api/quotes");
+  const nr = await callInternal("/api/quotes", { noResponseMs: 20 });
   assert.equal(nr.error, "no_response");
   _resetInternalRoutes();
 });
@@ -456,7 +456,7 @@ test("internal api: every allow-listed route is registered in routes.ts; convert
   const read = (f: string) => readFileSync(new URL(`../../server/${f}`, import.meta.url), "utf8");
   const routes = read("routes.ts");
   for (const p of INTERNAL_ROUTES) {
-    assert.ok(routes.includes(`app.get("${p}", internalRoute("${p}",`), `${p} registered`);
+    assert.ok(routes.includes(`app.get("${p}", internalRoute("${p}",`) || routes.includes(`app.post("${p}", internalRoute("${p}",`), `${p} registered`);
   }
   for (const f of ["tradeEnvironment.ts", "exitBrain.ts"]) {
     assert.ok(!/127\.0\.0\.1/.test(read(f)), `${f} still calls local HTTP`);

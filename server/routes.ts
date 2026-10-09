@@ -639,7 +639,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Real-time on the client via polling.
   const ohlcCache = new Map<string, { at: number; data: OHLCResponse }>();
   const OHLC_CACHE_MS = 15_000; // 15s cache — keeps candles near-realtime within the Schwab request budget
-  app.get("/api/ohlc", async (req, res) => {
+  app.get("/api/ohlc", internalRoute("/api/ohlc", async (req, res) => {
     try {
       const symbol = String(req.query.symbol || "").trim().toUpperCase();
       const tf = (String(req.query.tf || "1D").toUpperCase() as Timeframe);
@@ -662,7 +662,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to fetch OHLC" });
     }
-  });
+  }));
 
   // Put/Call flow ratio — index + Mag 7 aggregate, intraday ring buffer.
   let flowCache: { at: number; data: FlowResponse } | null = null;
@@ -885,7 +885,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ───── MM-matrix prediction logger ─────
   // POST /api/mm-snapshot — capture current cell probabilities for each horizon.
   // Reuses the /api/models cache if fresh to avoid rebuilding.
-  app.post("/api/mm-snapshot", async (req, res) => {
+  app.post("/api/mm-snapshot", internalRoute("/api/mm-snapshot", async (req, res) => {
     try {
       const symbol = (String(req.body?.symbol ?? "^GSPC").toUpperCase() === "SPY" ? "SPY" : "^GSPC") as "SPY" | "^GSPC";
       const requested: string[] = Array.isArray(req.body?.horizons) ? req.body.horizons : ["daily", "weekly"];
@@ -905,11 +905,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "snapshot failed" });
     }
-  });
+  }));
 
   // POST /api/mm-grade — fill forward outcomes for any ungraded snapshots whose
   // session has closed. Pulls daily ^GSPC closes from Yahoo via fetchOHLC.
-  app.post("/api/mm-grade", async (_req, res) => {
+  app.post("/api/mm-grade", internalRoute("/api/mm-grade", async (_req, res) => {
     try {
       const daily = await fetchOHLC("^GSPC", "1Y", "1d");
       const closeByDate = new Map<string, number>();
@@ -926,17 +926,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (e: any) {
       res.status(500).json({ message: e?.message ?? "grade failed" });
     }
-  });
+  }));
 
   // GET /api/mm-stats — empirical (regime, zone) stats vs priors
-  app.get("/api/mm-stats", async (_req, res) => {
+  app.get("/api/mm-stats", internalRoute("/api/mm-stats", async (_req, res) => {
     try {
       const stats = await empiricalStats();
       res.json(stats);
     } catch (e: any) {
       res.status(500).json({ message: e?.message ?? "stats failed" });
     }
-  });
+  }));
 
   // GET /api/master-alpha-stats — backtest aggregates of masterAlpha signals vs realized moves
   app.get("/api/master-alpha-stats", async (_req, res) => {
@@ -961,7 +961,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // asOf; past it, 503.
   const exposuresCache = new Map<string, { at: number; data: ExposuresResponse }>();
   const EXPOSURES_CACHE_MS = 5 * 60_000;
-  app.get("/api/exposures", async (req, res) => {
+  app.get("/api/exposures", internalRoute("/api/exposures", async (req, res) => {
     const symbol = String(req.query.symbol ?? "SPY").toUpperCase();
     const cached = exposuresCache.get(symbol);
     if (cached && Date.now() - cached.at < EXPOSURES_CACHE_MS
@@ -991,7 +991,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
       res.status(503).json({ dataState: "unavailable", reason: e?.message ?? `Failed to build exposures for ${symbol}`, message: e?.message ?? `Failed to build exposures for ${symbol}` });
     }
-  });
+  }));
 
   // Unusual options flow — Schwab option chain only (schwabFlow.buildSchwabFlow).
   // When Schwab cannot answer: 200 with dataState "unavailable", an empty
@@ -1114,7 +1114,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // News snapshot — RSS headlines + econ calendar merged.
   let newsCache: { at: number; data: NewsResponse } | null = null;
   const NEWS_CACHE_MS = 25_000;
-  app.get("/api/news", async (_req, res) => {
+  app.get("/api/news", internalRoute("/api/news", async (_req, res) => {
     try {
       if (newsCache && Date.now() - newsCache.at < NEWS_CACHE_MS) {
         return res.json(newsCache.data);
@@ -1126,7 +1126,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (newsCache) return res.json(newsCache.data);
       res.status(503).json({ dataState: "unavailable", reason: e?.message ?? "Failed to build news snapshot", message: e?.message ?? "Failed to build news snapshot" });
     }
-  });
+  }));
 
   // Alpha news indicator — ticker-scoped, tier-1/2/sentiment-shift filter, AI verdict.
   // GET /api/alpha-news?ticker=NVDA — returns ranked alpha events for the ticker.
@@ -1177,7 +1177,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Cached 5 min — events don't move often.
   const econWeekCache = new Map<string, { at: number; data: EconWeek }>();
   const ECON_WEEK_CACHE_MS = 5 * 60_000;
-  app.get("/api/econ-week", async (req, res) => {
+  app.get("/api/econ-week", internalRoute("/api/econ-week", async (req, res) => {
     try {
       const monParam = typeof req.query.from === "string" ? req.query.from : undefined;
       const cacheKey = monParam ?? "auto";
@@ -1191,7 +1191,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (e: any) {
       res.status(503).json({ dataState: "unavailable", reason: e?.message ?? "Failed to build econ week", message: e?.message ?? "Failed to build econ week" });
     }
-  });
+  }));
 
   // Lee-Ready order-flow imbalance — 1-min session-cumulative SPX trend.
   // Returns last 60 bars for histogram rendering on Chart + Trade Desk.
@@ -1345,7 +1345,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  app.get("/api/regime", async (req, res) => {
+  app.get("/api/regime", internalRoute("/api/regime", async (req, res) => {
     try {
       const w = (req.query.window === "w13" ? "w13" : req.query.window === "w52" ? "w52" : "w4") as WindowKey;
       const hit = regimeCache.get(w);
@@ -1359,7 +1359,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build regime snapshot" });
     }
-  });
+  }));
 
   // Reactive sector web — 11 GICS sectors + leader satellites + correlation edges.
   // Serves both the force-graph and the deep heatmap grid below it. 10-min cache.
@@ -1456,8 +1456,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const isIndex = symbol === "$SPX";
       if (symbol === "SPY" || isIndex) {
         try {
-          const port = Number(process.env.PORT ?? 5000);
-          const r = await fetch(`http://127.0.0.1:${port}/api/gamma-levels-enhanced`);
+          const r = await internalFetch("/api/gamma-levels-enhanced");
           if (r.ok) {
             // Endpoint shape is { symbol, supported, enhanced: { callWall, ... } }
             const g = (await r.json())?.enhanced;
@@ -2338,7 +2337,7 @@ RULES:
 - NEVER hallucinate prices or specific moves not anchored in the provided levels/tape.
 - JSON ONLY. No \`\`\`json fences. No commentary.`;
 
-  app.post("/api/alpha-brief", async (req, res) => {
+  app.post("/api/alpha-brief", internalRoute("/api/alpha-brief", async (req, res) => {
     try {
       const { newsItems = [] } = req.body || {};
       const items = Array.isArray(newsItems) ? newsItems : [];
@@ -2518,7 +2517,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       console.error("[alpha-brief]", err?.message);
       res.status(500).json({ error: err?.message ?? "ALPHA brief failed" });
     }
-  });
+  }));
 
   // ---- /api/alpha-brief/email — returns rendered email body + subject ----
   // Convenience for the cron: one HTTP call that does the full pipeline (deterministic
@@ -2533,11 +2532,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
       // Reuse the same LLM dispatch logic by POSTing to ourselves via local fetch.
       // Cheaper to inline, but this preserves the single source of truth.
-      const PORT = process.env.PORT ?? "5000";
-      const r = await fetch(`http://127.0.0.1:${PORT}/api/alpha-brief`, {
+      const r = await internalFetch("/api/alpha-brief", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ newsItems: items }),
+        body: { newsItems: items },
       });
       const payload = r.ok ? await r.json() : { deterministic, fusion: fusionCtx, structured: null, provider: "none" };
 
@@ -2562,7 +2559,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   // ---- Heatseeker user-editable sticky levels (server-persisted, NO localStorage) ----
-  app.get("/api/heatseeker/levels", async (_req, res) => {
+  app.get("/api/heatseeker/levels", internalRoute("/api/heatseeker/levels", async (_req, res) => {
     try {
       const { readLevels } = await import("./heatseekerLevels");
       const out = await readLevels();
@@ -2570,7 +2567,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "failed to read heatseeker levels" });
     }
-  });
+  }));
   app.post("/api/heatseeker/levels", async (req, res) => {
     try {
       const { writeLevels, sanitizeLevels } = await import("./heatseekerLevels");
@@ -2766,7 +2763,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   // ---- IV/RV ----
-  app.get("/api/iv-rv", async (req, res) => {
+  app.get("/api/iv-rv", internalRoute("/api/iv-rv", async (req, res) => {
     try {
       const { computeIvRvSnapshot } = await import("./ivRv");
       const sym = String(req.query.symbol ?? "SPY").toUpperCase();
@@ -2776,10 +2773,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: e?.message ?? "iv-rv failed" });
     }
-  });
+  }));
 
   // ---- Full gamma curve ----
-  app.get("/api/gamma-curve", async (req, res) => {
+  app.get("/api/gamma-curve", internalRoute("/api/gamma-curve", async (req, res) => {
     try {
       const { buildGammaCurve } = await import("./gammaCurve");
       const sym = String(req.query.symbol ?? "SPY").toUpperCase();
@@ -2789,10 +2786,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: e?.message ?? "gamma-curve failed" });
     }
-  });
+  }));
 
   // ---- Cross-asset confirmation matrix ----
-  app.get("/api/cross-asset", async (_req, res) => {
+  app.get("/api/cross-asset", internalRoute("/api/cross-asset", async (_req, res) => {
     try {
       const { buildCrossAssetMatrix } = await import("./crossAsset");
       res.json(buildCrossAssetMatrix());
@@ -2800,10 +2797,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: e?.message ?? "cross-asset failed" });
     }
-  });
+  }));
 
   // ---- Skew engine ----
-  app.get("/api/skew", async (req, res) => {
+  app.get("/api/skew", internalRoute("/api/skew", async (req, res) => {
     try {
       const { computeSkew } = await import("./skewEngine");
       const sym = String(req.query.symbol ?? "SPY").toUpperCase();
@@ -2813,7 +2810,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: e?.message ?? "skew failed" });
     }
-  });
+  }));
 
   // ---- FRED macro ----
   app.get("/api/fred", async (_req, res) => {
@@ -2908,7 +2905,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   app.post("/api/edgelab/brief", briefHandler);
 
   // ---- Edge briefing: fused daily/weekly preview across regime, cross-asset, playbook, news, models, levels ----
-  app.get("/api/edgelab/briefing", async (req, res) => {
+  app.get("/api/edgelab/briefing", internalRoute("/api/edgelab/briefing", async (req, res) => {
     try {
       const symbol = String(req.query.symbol ?? "SPY").toUpperCase();
       const { buildBriefing } = await import("./edgeBriefing");
@@ -2917,11 +2914,11 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "briefing failed" });
     }
-  });
+  }));
 
   // ---- Enhanced gamma levels: computed + user weekly targets ----
   // Augments the existing /api/gamma-levels with vanna/charm/vomma/zomma user targets.
-  app.get("/api/gamma-levels-enhanced", async (req, res) => {
+  app.get("/api/gamma-levels-enhanced", internalRoute("/api/gamma-levels-enhanced", async (req, res) => {
     try {
       const symbol = String(req.query.symbol || "SPY").trim().toUpperCase();
       if (symbol !== "SPY" && symbol !== "^GSPC" && symbol !== "SPX") {
@@ -2936,7 +2933,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build enhanced gamma levels" });
     }
-  });
+  }));
 
   // Background refresh cadence for voices (X-aware).
   // 10 handles × ~10 tweets per refresh ≈ up to 10 reads/handle + 10 user lookups
@@ -2992,7 +2989,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
   // Server-synthesized 3-path scenario plan for SPY/SPX, additive to ML projection.
   // Locked at 9:00 ET; drift overlay shows live deviation from morning lock.
-  app.get("/api/playbook/daily", async (req, res) => {
+  app.get("/api/playbook/daily", internalRoute("/api/playbook/daily", async (req, res) => {
     try {
       const symbol = (String(req.query.symbol || "SPY").toUpperCase() === "SPX" ? "SPX" : "SPY") as "SPY" | "SPX";
       const { buildDailyPlaybook } = await import("./dailyPlaybook");
@@ -3002,7 +2999,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: String(e?.message || e) });
     }
-  });
+  }));
 
   // The 9:00 ET locked playbook (immutable for the day; null until first lock fires)
   app.get("/api/playbook/daily/locked", async (_req, res) => {
@@ -5087,7 +5084,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   // Forward-looking regime transition probabilities. Pulls live audit from
   // /api/models, scores candidate regimes via dfi slope + IV term + gamma
   // flip proximity + session time + recent flip frequency. Read-only.
-  app.get("/api/regime/predict", async (req, res) => {
+  app.get("/api/regime/predict", internalRoute("/api/regime/predict", async (req, res) => {
     try {
       const { predictTransition } = await import("./regimePredictor");
       const symbol = String(req.query.symbol || "^GSPC");
@@ -5186,7 +5183,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "regime_predict_failed", message: e?.message ?? String(e) });
     }
-  });
+  }));
 
   // ToS-style 5-min intraday chart for a single contract (key = contractKey)
   app.get("/api/odte-tracker/chart", (req, res) => {

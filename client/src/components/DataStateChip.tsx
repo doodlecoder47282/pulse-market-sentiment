@@ -14,6 +14,7 @@
  * - asOf: epoch ms, epoch seconds or ISO string. With maxAgeMs, an ok/partial
  *   payload older than the max renders as "stale". Without asOf the age part
  *   reads "age unknown" when showAge is set, never "0s".
+ * - stale: server stale flag; DataAgeChip is now a thin wrapper over this chip.
  * - hideWhenOk: render nothing for a fresh "ok" (keeps quiet panels quiet).
  */
 import { useEffect, useState } from "react";
@@ -48,6 +49,8 @@ export interface DataStateChipProps {
   reason?: string | null;
   asOf?: number | string | null;
   maxAgeMs?: number | null;
+  /** Server stale flag (payload re-served after a failed refresh, within its max age). Downgrades ok/partial to stale. */
+  stale?: boolean | null;
   /** Data source name shown in the tooltip and before the age, e.g. "Schwab". */
   source?: string | null;
   /** Show the age even when asOf is missing ("age unknown"). Default: only when asOf given. */
@@ -62,6 +65,7 @@ export default function DataStateChip({
   reason,
   asOf,
   maxAgeMs,
+  stale,
   source,
   showAge,
   hideWhenOk = false,
@@ -72,9 +76,11 @@ export default function DataStateChip({
   const now = useNow(15_000, hasAsOf);
   const ageMs = hasAsOf ? ageFromAsOf(asOf ?? null, now) : null;
   const eff = effectiveDataState(state, ageMs, maxAgeMs);
+  // The server stale flag downgrades an ok/partial payload, never upgrades a bad one.
+  const flagged = stale === true && (eff === "ok" || eff === "partial");
   // Keep the caller's original string for "unknown state" labelling unless
-  // age downgraded it to stale.
-  const view = describeDataState(eff === "stale" ? "stale" : state, reason);
+  // age (or the stale flag) downgraded it to stale.
+  const view = describeDataState(eff === "stale" || flagged ? "stale" : state, reason);
   if (hideWhenOk && view.state === "ok") return null;
 
   const ageText = hasAsOf || showAge ? formatAge(ageMs) : null;

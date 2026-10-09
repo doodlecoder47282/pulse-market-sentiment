@@ -21,6 +21,8 @@ type RegimeBucket =
 interface RegimeCandidate {
   regime: RegimeBucket;
   probability: number;
+  /** Heuristic score out of 100 (hand-set softmax weight), not a calibrated probability. */
+  score?: number;
   isCurrent: boolean;
 }
 
@@ -30,6 +32,7 @@ interface RegimePredictPayload {
   candidates: RegimeCandidate[];
   horizonMinutes: number;
   confidence: number;
+  confidenceScore?: number;
   status: "ready" | "warming" | "degraded";
   headline: string;
   driverNotes: string[];
@@ -97,7 +100,7 @@ const REGIME_META: Record<
 
 function CandidateRow({ c, max, rank }: { c: RegimeCandidate; max: number; rank: number }) {
   const meta = REGIME_META[c.regime];
-  const pct = Math.round(c.probability * 100);
+  const pct = Math.round(c.score ?? c.probability * 100);
   const w = max > 0 ? (c.probability / max) * 100 : 0;
   const Icon = meta.icon;
   return (
@@ -109,7 +112,7 @@ function CandidateRow({ c, max, rank }: { c: RegimeCandidate; max: number; rank:
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
           <span className={`text-sm font-semibold ${meta.tone}`}>{meta.plain}</span>
-          <span className="font-mono text-sm font-semibold tabular-nums text-foreground">{pct}%</span>
+          <span className="font-mono text-sm font-semibold tabular-nums text-foreground" title="Heuristic score out of 100 (hand-set weights), not a calibrated probability">{pct}<span className="text-[10px] font-normal text-muted-foreground">/100</span></span>
         </div>
         <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted/30">
           <div
@@ -160,7 +163,7 @@ export default function RegimePredictPanel() {
   const max = Math.max(...data.candidates.map((c) => c.probability));
   const top3 = data.candidates.slice(0, 3);
   const topMeta = REGIME_META[data.candidates[0].regime];
-  const conf = Math.round(data.confidence * 100);
+  const conf = Math.round(data.confidenceScore ?? data.confidence * 100);
   const isTransition = data.candidates[0].regime !== data.currentRegime;
 
   // Warming / degraded states get a calm message instead of fake numbers
@@ -210,7 +213,7 @@ export default function RegimePredictPanel() {
             data-testid="badge-regime-confidence"
           >
             <span className="w-1.5 h-1.5 rounded-full bg-current" />
-            {conf}% confidence
+            heuristic score {conf}/100
           </span>
         </div>
 
