@@ -181,8 +181,16 @@ jobs:
             await p.keyboard.press("Enter").catch(() => {});
             const splash = p.getByRole("button", { name: /print/i });
             if (await splash.count()) await splash.first().click({ timeout: 3000 }).catch(() => {});
-            await p.locator('[data-testid="button-premarket-acknowledge"]').click({ timeout: 5000 }).catch(() => {});
-            await p.waitForTimeout(6000);
+            // The daily pre-market read must be scrolled to the end before its button enables.
+            for (let k = 0; k < 4; k++) {
+              await p.evaluate(() => document.querySelectorAll("div").forEach((d) => {
+                if (d.scrollHeight > d.clientHeight + 10) { d.scrollTop = d.scrollHeight; d.dispatchEvent(new Event("scroll")); }
+              }));
+              await p.mouse.wheel(0, 5000).catch(() => {});
+              await p.waitForTimeout(700);
+            }
+            await p.locator('[data-testid="button-premarket-acknowledge"]').click({ timeout: 8000 }).catch((e) => console.log("ack:", e.message.split("\\n")[0]));
+            await p.waitForTimeout(8000);
             return { p, errors };
           }
           const { p, errors } = await open({ width: 1440, height: 900 });
