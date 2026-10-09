@@ -15,8 +15,13 @@
 //     measured them against SPX spot (~6700): about -1,200 ATR. v1 rows are
 //     never used for training (the trainer filters on schema_version).
 //   - Unit guard: a level is only measured against spot when both carry the
-//     same underlying symbol AND level/spot lies in [0.7, 1.3]. A SPY-scale
-//     level against SPX spot (ratio ~0.1) is refused, never rescaled.
+//     same underlying symbol (the chain's own symbol when it reports one) AND
+//     level/spot lies in [0.7, 1.3]. A ratio near 0.1 or 10 (a SPY level
+//     against SPX spot) is "scale_mismatch"; any other ratio outside the band
+//     (a far strike) is "out_of_range". Neither is ever rescaled or measured.
+//   - Freshness: dealer levels are missing when the chain was served from a
+//     cache (servedFromCache), flagged stale, older than 5 minutes, or of
+//     unknown age; bars are only today's regular-session bars up to now.
 //   - Missing is NaN (JSON null), never 0 or a training median: LightGBM
 //     routes NaN down its learned missing-value branch ("LightGBM uses NA
 //     (NaN) to represent missing values by default", LightGBM docs, Advanced
@@ -34,7 +39,7 @@ import { gexByStrikeFromChain, repricedFlipFromChain, FLIP_RATE, FLIP_DIV_YIELD,
 import { buildChainAudit } from "./chainAudit";
 import { maxPainStrike } from "./validationMath";
 import { contractYears } from "./chainClock";
-import { etDate, sessionCloseMinutes } from "./exchangeCalendar";
+import { etClock, etDate, sessionCloseMinutes } from "./exchangeCalendar";
 
 export const ML_FEATURE_SCHEMA_VERSION = 2;
 
@@ -73,6 +78,8 @@ export interface DealerLevels {
   /** Re-priced net dealer GEX at spot, $ per 1% move; null = not computable. */
   gexAtSpot: number | null;
   rowsUsed: number;
+  /** Three largest |net GEX| strikes ($ per 1% move), for display. */
+  topGex?: Array<{ strike: number; gex: number }>;
 }
 
 export interface ChainLike extends ChainMapsLike {
@@ -81,6 +88,17 @@ export interface ChainLike extends ChainMapsLike {
   /** Set by the Schwab fetch layer when known (R2-A); else the caller's fetch time. */
   asOfMs?: number | null;
   servedFromCache?: boolean | null;
+  /** R2-A: true when the fetch layer judged the chain stale; null = unknown. */
+  stale?: boolean | null;
+  /** Requested/returned symbol, when the fetch layer reports it. */
+  symbol?: string | null;
+}
+
+/** "$SPX.X" -> "$SPX", "spy" -> "SPY". */
+export function normalizeUnderlying(sym: string | null | undefined): string | null {
+  if (!sym || typeof sym !== "string") return null;
+  const u = sym.trim().toUpperCase();
+  return u ? (u.startsWith("$") && u.endsWith(".X") ? u.slice(0, -2) : u) : null;
 }
 
 /** Front unsettled expiry's contracts for max pain (same expiry key, both sides). */
@@ -108,9 +126,11 @@ function frontExpiryContracts(chain: ChainLike, nowMs: number): Array<{ strike: 
 
 /**
  * Dealer levels from ONE Schwab option chain of `underlying` (e.g. "$SPX").
- * Refuses (levels null + reason) a chain that is not from Schwab, has no
- * underlying last, or is older than DEALER_LEVEL_MAX_AGE_MS: those are
- * "unavailable", never an older or delayed substitute.
+ * Refuses (levels null + reason) a chain that is not from Schwab, reports a
+ * different symbol, was served from a cache or flagged stale, is older than
+ * DEALER_LEVEL_MAX_AGE_MS or of unknown age, or has no underlying last: those
+ * are "unavailable", never an older or delayed substitute. The levels carry
+ * the chain's own symbol (else the requested one) for the unit guard.
  */
 export function dealerLevelsFromChain(
   chain: ChainLike | null | undefined,
@@ -120,7 +140,14 @@ export function dealerLevelsFromChain(
   const nowMs = opts.nowMs ?? Date.now();
   if (!chain) return { levels: null, reason: "chain_unavailable" };
   if (chain.source !== "schwab") return { levels: null, reason: `chain_source_${chain.source ?? "unknown"}_refused` };
-  const asOfMs = Number.isFinite(chain.asOfMs as number) ? (chain.asOfMs as number) : (opts.fetchedAtMs ?? nowMs);
+  const want = normalizeUnderlying(underlying);
+  const chainSym = normalizeUnderlying(chain.symbol);
+  if (chainSym && chainSym !== want) return { levels: null, reason: "chain_symbol_mismatch" };
+  if (chain.servedFromCache === true) return { levels: null, reason: "chain_served_from_cache" };
+  if (chain.stale === true) return { levels: null, reason: "chain_stale" };
+  const asOfMs = typeof chain.asOfMs === "number" && Number.isFinite(chain.asOfMs) ? chain.asOfMs
+    : typeof opts.fetchedAtMs === "number" && Number.isFinite(opts.fetchedAtMs) ? opts.fetchedAtMs : null;
+  if (asOfMs == null) return { levels: null, reason: "chain_age_unknown" };
   if (nowMs - asOfMs > DEALER_LEVEL_MAX_AGE_MS) return { levels: null, reason: "chain_stale" };
   const last = chain.underlying?.last;
   const spot = last != null && Number.isFinite(last) && last > 0 ? last : null;
@@ -144,7 +171,7 @@ export function dealerLevelsFromChain(
 
   return {
     levels: {
-      underlying,
+      underlying: chainSym ?? want ?? underlying,
       source: "schwab",
       asOfMs,
       chainSpot: spot,
@@ -155,6 +182,8 @@ export function dealerLevelsFromChain(
       zomma, upVomma, dnVomma, vanna, charm,
       gexAtSpot: flip.gexAtSpot,
       rowsUsed: flip.rowsUsed,
+      topGex: gex.profile.slice().sort((a, b) => Math.abs(b.netGex) - Math.abs(a.netGex)).slice(0, 3)
+        .map((p) => ({ strike: p.strike, gex: p.netGex })),
     },
     reason: null,
   };
@@ -162,9 +191,11 @@ export function dealerLevelsFromChain(
 
 /**
  * Unit guard. Distance from spot to a level in ATR units, or NaN with a
- * reason. Refuses a level from a different underlying, or whose ratio to spot
- * is outside [SCALE_GUARD_LO, SCALE_GUARD_HI] (a SPY strike against SPX spot
- * is ~0.1): never rescaled, never measured.
+ * reason. Refuses a level from a different underlying ("underlying_mismatch"),
+ * or whose ratio to spot is outside [SCALE_GUARD_LO, SCALE_GUARD_HI]: a ratio
+ * within 2x of 0.1 or 10 is a unit error ("scale_mismatch": a SPY strike
+ * against SPX spot is ~0.1), anything else a far strike ("out_of_range").
+ * Never rescaled, never measured.
  */
 export function guardedDistanceAtr(
   level: number | null | undefined,
@@ -175,9 +206,13 @@ export function guardedDistanceAtr(
 ): { value: number; reason: string | null } {
   if (level == null || !Number.isFinite(level) || level <= 0) return { value: NaN, reason: "level_missing" };
   if (spot == null || !Number.isFinite(spot) || spot <= 0) return { value: NaN, reason: "spot_missing" };
-  if (!levelUnderlying || levelUnderlying !== spotUnderlying) return { value: NaN, reason: "underlying_mismatch" };
+  const lu = normalizeUnderlying(levelUnderlying);
+  if (!lu || lu !== normalizeUnderlying(spotUnderlying)) return { value: NaN, reason: "underlying_mismatch" };
   const ratio = level / spot;
-  if (!(ratio >= SCALE_GUARD_LO && ratio <= SCALE_GUARD_HI)) return { value: NaN, reason: "scale_mismatch" };
+  if (!(ratio >= SCALE_GUARD_LO && ratio <= SCALE_GUARD_HI)) {
+    const unitError = (ratio >= 0.05 && ratio <= 0.2) || (ratio >= 5 && ratio <= 20);
+    return { value: NaN, reason: unitError ? "scale_mismatch" : "out_of_range" };
+  }
   if (atr == null || !Number.isFinite(atr) || atr <= 0) return { value: NaN, reason: "atr_missing" };
   return { value: (level - spot) / atr, reason: null };
 }
@@ -209,9 +244,34 @@ export function sessionRealizedVolPerBar(logRets: number[]): number {
   return Math.sqrt(ok.reduce((s, r) => s + r * r, 0) / ok.length);
 }
 
+/** Bar open time in epoch ms (fetchOHLC candles carry epoch seconds). */
+export function barOpenMs(t: number): number {
+  return t < 1e11 ? t * 1000 : t;
+}
+
+/**
+ * Bars of the regular session of nowMs's ET date only: 09:30 <= open < the
+ * session close (13:00 on half days), opened before nowMs, sorted. A
+ * multi-day series (e.g. a "1D" request that also returns yesterday's bars)
+ * never leaks yesterday into today's returns, ATR or session RV.
+ */
+export function todaysSessionBars<T extends { t: number }>(bars: T[], nowMs: number): T[] {
+  const day = etDate(nowMs);
+  const close = sessionCloseMinutes(day);
+  if (close == null) return [];
+  return bars
+    .filter((b) => {
+      const ms = barOpenMs(b.t);
+      if (!Number.isFinite(ms) || ms > nowMs) return false;
+      const c = etClock(ms);
+      return c.date === day && c.minutes >= 9 * 60 + 30 && c.minutes < close;
+    })
+    .sort((a, b) => barOpenMs(a.t) - barOpenMs(b.t));
+}
+
 export interface FeatureBuildInputs {
   nowMs: number;
-  /** Today's regular-session 5-minute bars of the spot index, oldest first. */
+  /** 5-minute bars of the spot index (any span; filtered to today's session), oldest first. */
   bars: Bar5m[];
   spot: number | null;
   /** Symbol of `spot`, e.g. "$SPX". */
@@ -245,7 +305,7 @@ export function computeMlFeatures(inp: FeatureBuildInputs): FeatureBuildResult {
     f[k] = Number.isFinite(v) ? v : NaN;
     if (!Number.isFinite(v)) reasons[k] = reasons[k] ?? why;
   };
-  const bars = inp.bars.filter((b) => [b.o, b.h, b.l, b.c].every((x) => Number.isFinite(x) && x > 0));
+  const bars = todaysSessionBars(inp.bars, inp.nowMs).filter((b) => [b.o, b.h, b.l, b.c].every((x) => Number.isFinite(x) && x > 0));
   const spot = inp.spot != null && Number.isFinite(inp.spot) && inp.spot > 0 ? inp.spot : (bars[bars.length - 1]?.c ?? NaN);
 
   // Time (ET wall clock) and the real session close (half days).
@@ -337,4 +397,80 @@ export function featuresForJson(f: Record<string, number>): Record<string, numbe
   const out: Record<string, number | null> = {};
   for (const k of Object.keys(f)) out[k] = Number.isFinite(f[k]) ? f[k] : null;
   return out;
+}
+
+// ─── ML Lab chart levels (R2-F fix round item 6) ────────────────────────────
+
+export interface LabLevelEntry { value: number | null; source: string; spxValue?: number | null }
+
+/**
+ * SPX-per-SPY conversion from two Schwab quotes, or null with a reason. Both
+ * quotes must be fresh (stale === false: an unknown age is not fresh), taken
+ * within 2 minutes of each other when both carry a time, and the ratio must
+ * be in [0.08, 0.12] (SPY is about 1/10 of SPX less accrued dividends). The
+ * old fixed /10 drifted by the dividend gap (~0.5% over a quarter: ~30 SPX
+ * points at a wall).
+ */
+export function spyPerSpxRatio(
+  spx: { last?: number | null; stale?: boolean | null; quoteTimeMs?: number | null } | null | undefined,
+  spy: { last?: number | null; stale?: boolean | null; quoteTimeMs?: number | null } | null | undefined,
+): { ratio: number | null; reason: string | null } {
+  if (!spx || !(Number(spx.last) > 0)) return { ratio: null, reason: "spx_quote_missing" };
+  if (!spy || !(Number(spy.last) > 0)) return { ratio: null, reason: "spy_quote_missing" };
+  if (spx.stale !== false || spy.stale !== false) return { ratio: null, reason: "quote_stale_or_unknown_age" };
+  if (spx.quoteTimeMs != null && spy.quoteTimeMs != null && Math.abs(spx.quoteTimeMs - spy.quoteTimeMs) > 120_000) {
+    return { ratio: null, reason: "quotes_not_simultaneous" };
+  }
+  const r = Number(spy.last) / Number(spx.last);
+  if (!(r >= 0.08 && r <= 0.12)) return { ratio: null, reason: "ratio_out_of_range" };
+  return { ratio: r, reason: null };
+}
+
+/**
+ * Chart levels for the ML Lab panel (same shape the panel already reads:
+ * callWall, putWall, gammaFlip, zomma, vommaUpper/Lower, vanna, charm, mopex
+ * = max pain, topGexStrikes, weeklyTargets) from the Schwab $SPX chain's
+ * dealer levels, multiplied by `scale` (1 for SPX; the live SPY/SPX quote
+ * ratio for SPY). Never the Signals snapshot gamma (CBOE SPY points). With no
+ * dealer levels or no scale, every chain level is null and dataState says
+ * why. User targets (SPX points) are scaled the same way and labeled.
+ */
+export function mlLabLevels(
+  dealer: DealerLevels | null,
+  dealerReason: string | null,
+  opts: {
+    scale: number | null;
+    scaleReason?: string | null;
+    display: string;
+    targets?: Partial<Record<"upside" | "downside" | "t2Up" | "t2Down" | "negGamma", number | null>>;
+  },
+): Record<string, any> {
+  const scale = opts.scale != null && Number.isFinite(opts.scale) && opts.scale > 0 ? opts.scale : null;
+  const ok = !!dealer && scale != null;
+  const entry = (v: number | null | undefined): LabLevelEntry | null =>
+    ok && v != null && Number.isFinite(v) && v > 0 ? { value: v * scale!, source: "schwab_spx_chain", spxValue: v } : null;
+  const target = (v: number | null | undefined): LabLevelEntry | null =>
+    scale != null && v != null && Number.isFinite(v) && v > 0 ? { value: v * scale, source: "user_targets", spxValue: v } : null;
+  const t = opts.targets ?? {};
+  return {
+    gammaFlip: entry(dealer?.flip),
+    callWall: entry(dealer?.callWall),
+    putWall: entry(dealer?.putWall),
+    topGexStrikes: ok ? (dealer!.topGex ?? []).map((g) => ({ strike: g.strike * scale!, gex: g.gex, source: "schwab_spx_chain" })) : [],
+    vanna: entry(dealer?.vanna),
+    charm: entry(dealer?.charm),
+    vommaUpper: entry(dealer?.upVomma),
+    vommaLower: entry(dealer?.dnVomma),
+    zomma: entry(dealer?.zomma),
+    mopex: entry(dealer?.maxPain),
+    negGamma: target(t.negGamma),
+    weeklyTargets: { upside: target(t.upside), downside: target(t.downside), t2Up: target(t.t2Up), t2Down: target(t.t2Down) },
+    spxNow: dealer?.chainSpot ?? null,
+    asOf: dealer ? new Date(dealer.asOfMs).toISOString() : null,
+    display: opts.display,
+    scale,
+    source: "Schwab $SPX option chain (dealer levels re-computed, same index as spot)",
+    dataState: ok ? "ok" : "unavailable",
+    reason: ok ? null : (!dealer ? (dealerReason ?? "dealer_levels_unavailable") : (opts.scaleReason ?? "scale_unavailable")),
+  };
 }

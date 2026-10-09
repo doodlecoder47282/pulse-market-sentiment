@@ -44,6 +44,14 @@ export interface MlFeatureInputs {
   chainFetchedAtMs?: number | null;
   /** Why spxChain is null, when it is. */
   chainReason?: string | null;
+  /**
+   * Optional injected $SPX 5-minute bars (e.g. aggregated from R2-H's
+   * streamed spx_minute_bars). Absent: Schwab price history (fetchOHLC).
+   * Either way only today's session bars are used (computeMlFeatures).
+   * New feature inputs (e.g. R2-H's ml_tick_rv_log) plug in here as
+   * optional fields; adding a feature means a new ML_FEATURE_SCHEMA_VERSION.
+   */
+  bars5m?: Array<{ t: number; o: number; h: number; l: number; c: number; v?: number | null }> | null;
 }
 
 export interface MlFeatureProvenance {
@@ -55,6 +63,8 @@ export interface MlFeatureProvenance {
   liveChainAudit: boolean;
   dealerAsOfMs: number | null;
   dealer: DealerLevels | null;
+  /** Why `dealer` is null, when it is. */
+  dealerReason: string | null;
 }
 
 let _lastProvenance: MlFeatureProvenance | null = null;
@@ -62,11 +72,13 @@ let _lastProvenance: MlFeatureProvenance | null = null;
 /** Build the schema-v2 feature dict from injected inputs (NaN = missing). */
 export async function buildMlFeaturesFromInputs(inputs: MlFeatureInputs, nowMs = Date.now()): Promise<Record<string, number>> {
   let bars: Array<{ t: number; o: number; h: number; l: number; c: number; v: number | null }> = [];
-  let spot = inputs.spxNow;
+  const spot = inputs.spxNow;
   try {
-    const ohlc = await fetchOHLC("^SPX", "1D", "5m");
-    bars = ohlc?.candles ?? [];
-    if (spot == null && ohlc?.price != null) spot = ohlc.price;
+    const ohlc = inputs.bars5m ? null : await fetchOHLC("^SPX", "1D", "5m");
+    bars = inputs.bars5m ? inputs.bars5m.map((b) => ({ ...b, v: b.v ?? null })) : (ohlc?.candles ?? []);
+    // No fallback to ohlc.price (age unknown, may be a prior close): without a
+    // fresh $SPX quote, spot is the last close of TODAY's session bars
+    // (computeMlFeatures), else missing.
   } catch {
     bars = [];
   }
@@ -80,7 +92,7 @@ export async function buildMlFeaturesFromInputs(inputs: MlFeatureInputs, nowMs =
   });
   _lastProvenance = {
     at: nowMs, schemaVersion: r.schemaVersion, missing: r.missing, reasons: r.reasons, bars5m: bars.length,
-    liveChainAudit: r.liveChain, dealerAsOfMs: r.dealerAsOfMs, dealer: dl.levels,
+    liveChainAudit: r.liveChain, dealerAsOfMs: r.dealerAsOfMs, dealer: dl.levels, dealerReason: dl.reason,
   };
   return r.features;
 }

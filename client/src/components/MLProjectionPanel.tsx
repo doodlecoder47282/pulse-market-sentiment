@@ -1,6 +1,6 @@
 // MLProjectionPanel.tsx — TOS-style SPY Forward Projection
 //
-// Live SPY 5min candles + dealer levels (rescaled SPX/10) + 3 forward path
+// Live SPY 5min candles + dealer levels ($SPX chain x live SPY/SPX ratio) + 3 forward path
 // scenarios drawn into the future space (right of "now") in the style of a
 // ThinkOrSwim chart: bull (q90) green dashed, base (q50) bold white, bear
 // (q10) red dashed. All anchored at the last candle close, extended through
@@ -115,8 +115,8 @@ interface GammaLevelEntry {
 
 interface GammaLevels {
   gammaFlip: GammaLevelEntry | null;
-  callWall: GammaLevelEntry;
-  putWall: GammaLevelEntry;
+  callWall: GammaLevelEntry | null;
+  putWall: GammaLevelEntry | null;
   topGexStrikes: Array<{ strike: number; gex: number }>;
   vanna: GammaLevelEntry | null;
   charm: GammaLevelEntry | null;
@@ -133,6 +133,11 @@ interface GammaLevels {
   };
   spxNow: number;
   asOf: string;
+  /** Server (R2-F): levels come from the Schwab $SPX chain; "unavailable" with a reason otherwise. */
+  dataState?: "ok" | "unavailable";
+  reason?: string | null;
+  display?: string;
+  scale?: number | null;
 }
 
 interface MorningPayload {
@@ -1365,6 +1370,16 @@ export default function MLProjectionPanel() {
             <p className="text-[10px] leading-snug text-muted-foreground/70">
               how far price sits from the walls and the flip — small distances mean the level is in play right now.
             </p>
+            {levels?.dataState === "unavailable" && (
+              <p className="text-[10px] leading-snug text-amber-400" data-testid="text-ml-levels-unavailable">
+                dealer levels unavailable ({levels.reason ?? "unknown"}), not zero.
+              </p>
+            )}
+            {levels?.dataState === "ok" && (
+              <p className="text-[10px] leading-snug text-muted-foreground/70">
+                from the Schwab $SPX option chain{levels.display === "SPY" && levels.scale ? `, x ${levels.scale.toFixed(5)} (live SPY/SPX quotes)` : ""}.
+              </p>
+            )}
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">spot</span>
               <span className="font-mono">

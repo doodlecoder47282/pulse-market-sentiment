@@ -6151,8 +6151,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const qs = await schwabGetQuotes(["$SPX", "$VIX"]);
       const spx = qs.find((q) => q.symbol === "$SPX");
       const vq = qs.find((q) => q.symbol === "$VIX");
-      if (spx && !spx.stale && spx.last != null && spx.last > 0) spxNow = spx.last;
-      if (vq && !vq.stale && vq.last != null && vq.last > 0) { vix = vq.last; vixPrev = vq.prevClose ?? null; }
+      // Only quotes known to be fresh: stale null (no quote time, age unknown) is missing too.
+      if (spx && spx.stale === false && spx.last != null && spx.last > 0) spxNow = spx.last;
+      if (vq && vq.stale === false && vq.last != null && vq.last > 0) { vix = vq.last; vixPrev = vq.prevClose ?? null; }
     } catch { /* missing, not zero */ }
     if (!mlChainCache || Date.now() - mlChainCache.at > 60_000) {
       const at = Date.now();
@@ -6160,7 +6161,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         const ch = await schwabGetOptionChain("$SPX", 45);
         if ("error" in ch) mlChainCache = { at, chain: null, reason: `chain_${ch.error}` };
         else if (ch.source !== "schwab") mlChainCache = { at, chain: null, reason: `chain_source_${ch.source}_refused` };
-        else mlChainCache = { at, chain: ch, reason: null };
+        // The guard reads the chain's own symbol when the fetch layer reports one.
+        else mlChainCache = { at, chain: { ...ch, symbol: (ch as any).symbol ?? "$SPX" }, reason: null };
       } catch {
         mlChainCache = { at, chain: null, reason: "chain_fetch_failed" };
       }
@@ -6251,7 +6253,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const { buildMlFeatures, getLastMlFeatureProvenance } = await import("./mlGreekFeatures");
       const { buildServedProjection } = await import("./mlServing");
       const { fetchOHLC } = await import("./ohlc");
-      const { buildGammaLevelsEnhanced } = await import("./gammaLevels");
+      const { userTargets } = await import("./gammaLevels");
+      const { mlLabLevels } = await import("./mlFeatureMath");
 
       const features = await buildMlFeatures(resolveMlFeatureInputs);
       const sp = await buildServedProjection(features);
@@ -6267,14 +6270,13 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         prevClose = ohlc?.prevClose ?? null;
       } catch { /* empty */ }
 
-      // Levels (re-build cheaply — getOrBuild is cached internally)
-      let levels: any = null;
-      try {
-        const snap = await getOrBuild(false);
-        levels = buildGammaLevelsEnhanced(snap.gamma, snap.spy.price ?? snap.gamma.spot);
-      } catch { /* null levels */ }
-
+      // Levels: the dealer levels the features were built from (Schwab $SPX
+      // chain, same index as the candles), never the Signals snapshot gamma.
       const prov = getLastMlFeatureProvenance();
+      let targets: any = {};
+      try { targets = userTargets(); } catch { targets = {}; }
+      const levels = mlLabLevels(prov?.dealer ?? null, prov?.dealerReason ?? "features_not_built", { scale: 1, display: "$SPX", targets });
+
       res.json({
         ok: true,
         candles,
@@ -6295,7 +6297,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   // ─── ML Lab unified SPY endpoint ───────────────────────────────────────
-  // SPY 5min candles + dealer levels (SPX-scale user targets rescaled /10) +
+  // SPY 5min candles + dealer levels ($SPX chain x live SPY/SPX ratio) +
   // the served forward-return band drawn on SPY. The band is the same one the
   // coverage logger scores (mlServing.buildServedProjection): a promoted
   // real-data quantile model, else the baseline volatility cone, with the
@@ -6307,7 +6309,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const { buildMlFeatures, getLastMlFeatureProvenance } = await import("./mlGreekFeatures");
       const { buildServedProjection } = await import("./mlServing");
       const { fetchOHLC } = await import("./ohlc");
-      const { buildGammaLevelsEnhanced } = await import("./gammaLevels");
+      const { userTargets } = await import("./gammaLevels");
+      const { mlLabLevels, spyPerSpxRatio } = await import("./mlFeatureMath");
 
       const features = await buildMlFeatures(resolveMlFeatureInputs);
       const sp = await buildServedProjection(features);
@@ -6331,13 +6334,20 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         if (prevClose == null) prevClose = snap.spy?.prevClose ?? null;
       } catch { /* leave nulls */ }
 
-      // Levels — fetch SPX-scale and divide every numeric value by 10 for SPY.
-      let levels: any = null;
+      // Levels: the $SPX-chain dealer levels behind the features, drawn on SPY
+      // through the live Schwab SPY/SPX quote ratio (not a fixed /10, and
+      // never the Signals snapshot gamma, which was CBOE SPY points). No fresh
+      // ratio -> levels unavailable with the reason.
+      let ratio: { ratio: number | null; reason: string | null } = { ratio: null, reason: "quotes_unavailable" };
       try {
-        const snap = await getOrBuild(false);
-        const spxLevels = buildGammaLevelsEnhanced(snap.gamma, snap.spy.price ?? snap.gamma.spot);
-        levels = rescaleLevelsForSpy(spxLevels, 10);
-      } catch { /* null levels */ }
+        const qs = await schwabGetQuotes(["$SPX", "SPY"]);
+        ratio = spyPerSpxRatio(qs.find((q) => q.symbol === "$SPX"), qs.find((q) => q.symbol === "SPY"));
+      } catch { /* ratio stays unavailable */ }
+      let targets: any = {};
+      try { targets = userTargets(); } catch { targets = {}; }
+      const provL = getLastMlFeatureProvenance();
+      const levels = mlLabLevels(provL?.dealer ?? null, provL?.dealerReason ?? "features_not_built",
+        { scale: ratio.ratio, scaleReason: ratio.reason, display: "SPY", targets });
 
       const synthetic = false;
       const tape = intradayTapeState(candles.length);

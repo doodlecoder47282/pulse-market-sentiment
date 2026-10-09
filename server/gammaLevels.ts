@@ -55,7 +55,7 @@ const TARGET_IDS = {
 } as const;
 
 // Missing user levels are null (shown as missing), never 0.
-function userTargets(): Record<keyof typeof TARGET_IDS, number | null> {
+export function userTargets(): Record<keyof typeof TARGET_IDS, number | null> {
   const levels = readLevelsSync().levels;
   const byId = new Map(levels.map((l) => [l.id, l.value]));
   const out: any = {};
