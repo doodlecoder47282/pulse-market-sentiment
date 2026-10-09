@@ -335,7 +335,7 @@ function BuildTable({ rows, onRowClick }: {
     <div className="hscroll-contain rounded-md border border-border/40">
       <table className="w-full text-[11px]">
         <thead className="border-b border-border/40 bg-muted/20 sticky top-0 z-10">
-          <tr className="text-left text-[9px] uppercase tracking-wider text-muted-foreground">
+          <tr className="text-left text-[11px] uppercase tracking-wider text-muted-foreground">
             <th className="px-2 py-1.5">Type</th>
             <th className="px-2 py-1.5">Strike</th>
             <th className="px-2 py-1.5">Expiry</th>
@@ -376,14 +376,14 @@ function BuildTable({ rows, onRowClick }: {
                 data-testid={`build-row-${row.key}`}
               >
                 <td className="px-2 py-1.5">
-                  <span className={`inline-block rounded border px-1.5 py-0.5 text-[9px] font-semibold ${typeStyle(row.type)}`}>
+                  <span className={`inline-block rounded border px-1.5 py-0.5 text-[11px] font-semibold ${typeStyle(row.type)}`}>
                     {isCall ? "CALL" : "PUT"}
                   </span>
                 </td>
                 <td className="px-2 py-1.5 font-semibold">{row.strike.toFixed(2)}</td>
                 <td className="px-2 py-1.5">
-                  <span className="text-[10px] text-muted-foreground">{fmtExpiryShort(row.expiration)}</span>
-                  <span className="ml-1 inline-block rounded bg-muted/40 px-1 py-0.5 text-[9px] text-muted-foreground">{row.dte}d</span>
+                  <span className="text-[11px] text-muted-foreground">{fmtExpiryShort(row.expiration)}</span>
+                  <span className="ml-1 inline-block rounded bg-muted/40 px-1 py-0.5 text-[11px] text-muted-foreground">{row.dte}d</span>
                 </td>
                 {/* Built $ cell — premium bar behind the value */}
                 <td className="relative px-2 py-1.5 text-right font-semibold">
@@ -400,11 +400,11 @@ function BuildTable({ rows, onRowClick }: {
                 <td className="px-2 py-1.5 text-right text-muted-foreground">{fmtNum(row.openInterest)}</td>
                 <td className="px-2 py-1.5 text-right text-amber-300">
                   {row.isNewStrike ? (
-                    <span className="inline-block rounded bg-violet-500/20 border border-violet-500/40 px-1.5 py-0.5 text-[9px] text-violet-300 font-semibold">NEW</span>
+                    <span className="inline-block rounded bg-violet-500/20 border border-violet-500/40 px-1.5 py-0.5 text-[11px] text-violet-300 font-semibold">NEW</span>
                   ) : `${row.volOiRatio.toFixed(1)}×`}
                 </td>
                 <td className="px-2 py-1.5">
-                  <span className={`inline-block rounded border px-1.5 py-0.5 text-[9px] font-semibold ${ts.border} ${ts.bg} ${ts.text}`}>{ts.label}</span>
+                  <span className={`inline-block rounded border px-1.5 py-0.5 text-[11px] font-semibold ${ts.border} ${ts.bg} ${ts.text}`}>{ts.label}</span>
                 </td>
                 <td className={`px-2 py-1.5 font-semibold ${leanColor}`}>
                   {row.netSentiment === 0 ? "—" : `${leanPositive ? "+" : ""}${fmtMoney(row.netSentiment)}`}
@@ -455,7 +455,7 @@ function MathTip({ content, children }: { content: string; children: React.React
         <TooltipTrigger asChild>
           <span className="inline-flex cursor-help items-center gap-0.5">
             {children}
-            <HelpCircle className="h-2.5 w-2.5 text-muted-foreground/60" />
+            <HelpCircle className="h-2.5 w-2.5 text-muted-foreground" />
           </span>
         </TooltipTrigger>
         <TooltipContent side="top" className="max-w-xs text-[11px] leading-relaxed">
@@ -482,11 +482,11 @@ function ContractRow({ c, onClick, symbol, trackedIds }: { c: UnusualContract; o
       data-testid={`flow-row-${c.occ}`}
     >
       {/* Time stub — the chain snapshot has no per-trade time; show expiry short */}
-      <td className="px-2 py-1.5 text-[10px] text-muted-foreground font-mono">
+      <td className="px-2 py-1.5 text-[11px] text-muted-foreground font-mono">
         {fmtExpiryShort(c.expiration)}
       </td>
       <td className="px-2 py-1.5">
-        <span className={`inline-block rounded border px-1.5 py-0.5 text-[9px] font-semibold ${typeStyle(c.type)}`}>
+        <span className={`inline-block rounded border px-1.5 py-0.5 text-[11px] font-semibold ${typeStyle(c.type)}`}>
           {c.type === "C" ? "CALL" : "PUT"}
         </span>
       </td>
@@ -494,16 +494,16 @@ function ContractRow({ c, onClick, symbol, trackedIds }: { c: UnusualContract; o
         {c.strike >= 100 ? c.strike.toFixed(2) : c.strike.toFixed(2)}
       </td>
       <td className="px-2 py-1.5">
-        <span className="text-[10px] text-muted-foreground font-mono">
+        <span className="text-[11px] text-muted-foreground font-mono">
           {fmtExpiryShort(c.expiration)}
         </span>
-        <span className="ml-1 inline-block rounded bg-muted/40 px-1 py-0.5 text-[9px] text-muted-foreground">
+        <span className="ml-1 inline-block rounded bg-muted/40 px-1 py-0.5 text-[11px] text-muted-foreground">
           {c.dte}d
         </span>
       </td>
       {/* Side */}
       <td className="px-2 py-1.5">
-        <span className={`inline-block rounded border px-1.5 py-0.5 text-[9px] font-semibold ${ts.border} ${ts.bg} ${ts.text}`}>
+        <span className={`inline-block rounded border px-1.5 py-0.5 text-[11px] font-semibold ${ts.border} ${ts.bg} ${ts.text}`}>
           {ts.label}
         </span>
       </td>
@@ -511,14 +511,14 @@ function ContractRow({ c, onClick, symbol, trackedIds }: { c: UnusualContract; o
       <td className="px-2 py-1.5 text-right text-muted-foreground font-mono tabular-nums">{fmtNum(c.openInterest)}</td>
       <td className="px-2 py-1.5 text-right text-amber-300 font-mono tabular-nums">
         {c.isNewStrike ? (
-          <span className="inline-block rounded bg-violet-500/20 border border-violet-500/40 px-1.5 py-0.5 text-[9px] text-violet-300 font-semibold">
+          <span className="inline-block rounded bg-violet-500/20 border border-violet-500/40 px-1.5 py-0.5 text-[11px] text-violet-300 font-semibold">
             NEW
           </span>
         ) : (
           `${c.volOiRatio.toFixed(1)}×`
         )}
       </td>
-      <td className="px-2 py-1.5 text-right text-muted-foreground font-mono tabular-nums text-[10px]">
+      <td className="px-2 py-1.5 text-right text-muted-foreground font-mono tabular-nums text-[11px]">
         {c.bid.toFixed(2)}×{c.ask.toFixed(2)}
       </td>
       <td className="px-2 py-1.5 text-right font-mono tabular-nums">{c.last > 0 ? c.last.toFixed(2) : "—"}</td>
@@ -599,7 +599,7 @@ function TableHead({ sortKey, onSort }: FlowTableHeadProps) {
   };
   return (
     <thead className="border-b border-border/40 bg-muted/20 sticky top-0 z-10">
-      <tr className="text-left text-[9px] uppercase tracking-wider text-muted-foreground">
+      <tr className="text-left text-[11px] uppercase tracking-wider text-muted-foreground">
         <th className="px-2 py-1.5">Time</th>
         <th className="px-2 py-1.5">{clickable("Type", "typeAsc", "typeAsc", "left", "sort-flow-type")}</th>
         <th className="px-2 py-1.5">
@@ -680,14 +680,14 @@ function GroupedTable({ groups, sortKey, onSort, onRowClick, symbol, trackedIds 
                         <span className="font-semibold text-foreground text-[11px]">
                           {fmtExpiryLong(g.expiration)}
                         </span>
-                        <span className="inline-block rounded bg-muted/60 px-1.5 py-0.5 text-[9px] text-muted-foreground">
+                        <span className="inline-block rounded bg-muted/60 px-1.5 py-0.5 text-[11px] text-muted-foreground">
                           {g.dte}d
                         </span>
-                        <span className="text-[10px] text-muted-foreground">
+                        <span className="text-[11px] text-muted-foreground">
                           {g.contracts.length} contract{g.contracts.length !== 1 ? "s" : ""}
                         </span>
                       </div>
-                      <div className="flex items-center gap-4 text-[10px]">
+                      <div className="flex items-center gap-4 text-[11px]">
                         <span className="text-muted-foreground">
                           Total <span className="font-semibold text-foreground">{fmtMoney(g.totalNotional)}</span>
                         </span>
@@ -754,7 +754,7 @@ function UnusualFlowModal({
             <Flame className="h-4 w-4 text-amber-400" />
             Unusual Flow · {symbol}
             {clicked && (
-              <span className="ml-2 inline-flex items-center gap-1.5 rounded border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-mono tabular-nums">
+              <span className="ml-2 inline-flex items-center gap-1.5 rounded border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] font-mono tabular-nums">
                 clicked: {clicked.type === "C" ? "CALL" : "PUT"} {clicked.strike} · exp {clicked.expiration}
               </span>
             )}
@@ -770,13 +770,13 @@ function UnusualFlowModal({
             <span className="text-muted-foreground">Total <span className="font-mono tabular-nums text-foreground">{fmtMoney(totalNotional)}</span></span>
             <span className="text-emerald-300">Bull {fmtMoney(bullishNotional)}</span>
             <span className="text-rose-300">Bear {fmtMoney(bearishNotional)}</span>
-            <span className="ml-auto text-[10px] text-muted-foreground/80">{allContracts.length} prints in view</span>
+            <span className="ml-auto text-[11px] text-muted-foreground/80">{allContracts.length} prints in view</span>
           </DialogDescription>
         </DialogHeader>
         <ScrollArea className="max-h-[70vh]">
           <table className="w-full text-[11px]">
             <thead className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border/40">
-              <tr className="text-left text-[9px] uppercase tracking-wider text-muted-foreground">
+              <tr className="text-left text-[11px] uppercase tracking-wider text-muted-foreground">
                 <th className="px-3 py-1.5">Timestamp</th>
                 <th className="px-2 py-1.5">Type</th>
                 <th className="px-2 py-1.5">Strike</th>
@@ -800,28 +800,28 @@ function UnusualFlowModal({
                     className={`cursor-pointer border-b border-border/20 hover:bg-muted/30 ${isClicked ? "bg-sky-500/15 ring-1 ring-inset ring-sky-500/40" : ""}`}
                     data-testid={`flow-modal-row-${c.occ}`}
                   >
-                    <td className="px-3 py-1.5 text-[10px] text-muted-foreground whitespace-nowrap">
+                    <td className="px-3 py-1.5 text-[11px] text-muted-foreground whitespace-nowrap">
                       {new Date(asOfMs).toLocaleTimeString("en-US", { hour12: false })}
                     </td>
                     <td className="px-2 py-1.5">
-                      <span className={`inline-block rounded border px-1.5 py-0.5 text-[9px] font-semibold ${typeStyle(c.type)}`}>
+                      <span className={`inline-block rounded border px-1.5 py-0.5 text-[11px] font-semibold ${typeStyle(c.type)}`}>
                         {c.type === "C" ? "CALL" : "PUT"}
                       </span>
                     </td>
                     <td className="px-2 py-1.5 font-semibold">{c.strike.toFixed(2)}</td>
-                    <td className="px-2 py-1.5 text-[10px] text-muted-foreground">
+                    <td className="px-2 py-1.5 text-[11px] text-muted-foreground">
                       {fmtExpiryShort(c.expiration)}
-                      <span className="ml-1 inline-block rounded bg-muted/40 px-1 py-0.5 text-[9px]">{c.dte}d</span>
+                      <span className="ml-1 inline-block rounded bg-muted/40 px-1 py-0.5 text-[11px]">{c.dte}d</span>
                     </td>
                     <td className="px-2 py-1.5">
-                      <span className={`inline-block rounded border px-1.5 py-0.5 text-[9px] font-semibold ${ts.border} ${ts.bg} ${ts.text}`}>
+                      <span className={`inline-block rounded border px-1.5 py-0.5 text-[11px] font-semibold ${ts.border} ${ts.bg} ${ts.text}`}>
                         {ts.label}
                       </span>
                     </td>
                     <td className="px-2 py-1.5 text-right">{fmtNum(c.volume)}</td>
                     <td className="px-2 py-1.5 text-right text-amber-300">
                       {c.isNewStrike ? (
-                        <span className="inline-block rounded bg-violet-500/20 border border-violet-500/40 px-1.5 py-0.5 text-[9px] text-violet-300 font-semibold">NEW</span>
+                        <span className="inline-block rounded bg-violet-500/20 border border-violet-500/40 px-1.5 py-0.5 text-[11px] text-violet-300 font-semibold">NEW</span>
                       ) : `${c.volOiRatio.toFixed(1)}×`}
                     </td>
                     <td className="px-2 py-1.5 text-right">{c.last > 0 ? c.last.toFixed(2) : "—"}</td>
@@ -835,7 +835,7 @@ function UnusualFlowModal({
             </tbody>
           </table>
         </ScrollArea>
-        <div className="border-t border-border/40 px-4 py-2 text-[10px] text-muted-foreground">
+        <div className="border-t border-border/40 px-4 py-2 text-[11px] text-muted-foreground">
           click any row to inspect that print · premium = volume × mid × 100
         </div>
       </DialogContent>
@@ -964,7 +964,7 @@ export default function UnusualFlowPanel({ symbol }: Props) {
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-sm">
             <Flame className="h-4 w-4 text-amber-400" /> Unusual Options Flow — {sym}
-            <Badge variant="outline" className="ml-1 border-rose-500/40 text-[9px] text-rose-300">SCHWAB · {data.dataState === "delayed" ? "delayed (not used)" : "unavailable"}</Badge>
+            <Badge variant="outline" className="ml-1 border-rose-500/40 text-[11px] text-rose-300">SCHWAB · {data.dataState === "delayed" ? "delayed (not used)" : "unavailable"}</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -989,11 +989,11 @@ export default function UnusualFlowPanel({ symbol }: Props) {
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2 text-sm">
             <Flame className="h-4 w-4 text-amber-400" /> Unusual Options Flow — {sym}
-            <Badge variant="outline" className="ml-1 border-amber-500/40 text-[9px] text-amber-300">
+            <Badge variant="outline" className="ml-1 border-amber-500/40 text-[11px] text-amber-300">
               SCHWAB · chain as of {new Date(data.asOf * 1000).toLocaleTimeString()}
             </Badge>
           </CardTitle>
-          <div className="text-[10px] text-muted-foreground">
+          <div className="text-[11px] text-muted-foreground">
             {data.spot != null && <>Spot {data.spot.toFixed(2)} · </>}
             {new Date(data.asOf * 1000).toLocaleTimeString()}
           </div>
@@ -1013,38 +1013,38 @@ export default function UnusualFlowPanel({ symbol }: Props) {
         {/* Summary row */}
         <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
           <div className="rounded-md border border-border/40 bg-card/40 p-3">
-            <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Flagged contracts</div>
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Flagged contracts</div>
             <div className="mt-0.5 font-mono text-lg font-bold tabular-nums">{s.flaggedCount}</div>
-            <div className="text-[9px] text-muted-foreground">Vol/OI ≥ 2 · $ ≥ 25K</div>
+            <div className="text-[11px] text-muted-foreground">Vol/OI ≥ 2 · $ ≥ 25K</div>
           </div>
           <div className={`rounded-md border p-3 ${leaning === "CALLS" ? "border-emerald-500/50 bg-emerald-500/10" : leaning === "PUTS" ? "border-rose-500/50 bg-rose-500/10" : "border-border/40 bg-card/40"}`}>
-            <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Call / Put $</div>
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Call / Put $</div>
             <div className="mt-0.5 flex items-baseline gap-2 font-mono text-sm tabular-nums">
               <span className="text-emerald-300">{fmtMoney(s.callNotional)}</span>
               <span className="text-muted-foreground">/</span>
               <span className="text-rose-300">{fmtMoney(s.putNotional)}</span>
             </div>
-            <div className="text-[9px] text-muted-foreground">
+            <div className="text-[11px] text-muted-foreground">
               P/C $ ratio {callPutRatio != null ? callPutRatio.toFixed(2) : "—"} · {leaning}
             </div>
           </div>
           <div className={`rounded-md border p-3 ${netBias === "BULLISH" ? "border-emerald-500/50 bg-emerald-500/10" : netBias === "BEARISH" ? "border-rose-500/50 bg-rose-500/10" : "border-border/40 bg-card/40"}`}>
-            <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Net sentiment $</div>
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Net sentiment $</div>
             <div className={`mt-0.5 flex items-center gap-1 font-mono text-lg font-bold tabular-nums ${netBias === "BULLISH" ? "text-emerald-300" : netBias === "BEARISH" ? "text-rose-300" : "text-muted-foreground"}`}>
               {netBias === "BULLISH" ? <TrendingUp className="h-4 w-4" /> : netBias === "BEARISH" ? <TrendingDown className="h-4 w-4" /> : null}
               {s.netSentimentNotional >= 0 ? "+" : ""}
               {fmtMoney(s.netSentimentNotional)}
             </div>
-            <div className="text-[9px] text-muted-foreground">Tape-side × call/put</div>
+            <div className="text-[11px] text-muted-foreground">Tape-side × call/put</div>
           </div>
           <div className="rounded-md border border-border/40 bg-card/40 p-3">
-            <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Above ask / Below bid</div>
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Above ask / Below bid</div>
             <div className="mt-0.5 flex items-baseline gap-2 font-mono text-sm tabular-nums">
               <span className="text-rose-300">{fmtMoney(s.aboveAskNotional)}</span>
               <span className="text-muted-foreground">/</span>
               <span className="text-sky-300">{fmtMoney(s.belowBidNotional)}</span>
             </div>
-            <div className="text-[9px] text-muted-foreground">
+            <div className="text-[11px] text-muted-foreground">
               Top tag: {s.topTag ? tagStyle(s.topTag).label : "—"}
             </div>
           </div>
@@ -1064,7 +1064,7 @@ export default function UnusualFlowPanel({ symbol }: Props) {
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
-                      className={`rounded-full border px-2.5 py-0.5 text-[10px] font-medium transition-colors ${
+                      className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
                         expiryFilter === f.value
                           ? "border-primary bg-primary/20 text-primary"
                           : "border-border/40 bg-muted/10 text-muted-foreground hover:border-border hover:text-foreground"
@@ -1098,7 +1098,7 @@ export default function UnusualFlowPanel({ symbol }: Props) {
                     role="tab"
                     aria-selected={viewMode === "live"}
                     onClick={() => handleViewModeChange("live")}
-                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium transition-colors ${
+                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-colors ${
                       viewMode === "live"
                         ? "bg-primary/20 text-primary"
                         : "text-muted-foreground hover:text-foreground"
@@ -1121,7 +1121,7 @@ export default function UnusualFlowPanel({ symbol }: Props) {
                     role="tab"
                     aria-selected={viewMode === "build"}
                     onClick={() => handleViewModeChange("build")}
-                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium transition-colors ${
+                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-colors ${
                       viewMode === "build"
                         ? "bg-primary/20 text-primary"
                         : "text-muted-foreground hover:text-foreground"
@@ -1141,7 +1141,7 @@ export default function UnusualFlowPanel({ symbol }: Props) {
 
           {/* Sort dropdown — collapses cleanly on mobile */}
           <div className="flex items-center gap-2 ml-auto">
-            <span className="text-[10px] text-muted-foreground hidden sm:inline">Sort</span>
+            <span className="text-[11px] text-muted-foreground hidden sm:inline">Sort</span>
             <Select
               value={sortKey}
               onValueChange={(v) => setSortKey(v as SortKey)}
@@ -1171,7 +1171,7 @@ export default function UnusualFlowPanel({ symbol }: Props) {
                   className="h-3.5 w-3.5"
                   data-testid="checkbox-group-by-expiry"
                 />
-                <Label htmlFor="group-by-exp" className="cursor-pointer text-[10px] text-muted-foreground">
+                <Label htmlFor="group-by-exp" className="cursor-pointer text-[11px] text-muted-foreground">
                   Group by expiry
                 </Label>
               </div>
@@ -1181,7 +1181,7 @@ export default function UnusualFlowPanel({ symbol }: Props) {
 
         {/* Filtered count note */}
         {expiryFilter !== "ALL" && (
-          <div className="text-[10px] text-muted-foreground">
+          <div className="text-[11px] text-muted-foreground">
             Showing {processedContracts.length} of {data.contracts.length} contracts ·{" "}
             {EXPIRY_FILTERS.find((f) => f.value === expiryFilter)?.desc}
           </div>
@@ -1195,7 +1195,7 @@ export default function UnusualFlowPanel({ symbol }: Props) {
           </div>
         ) : viewMode === "build" ? (
           <>
-            <div className="text-[10px] text-muted-foreground">
+            <div className="text-[11px] text-muted-foreground">
               Build view: {buildRows.length} unique strike-side bucket{buildRows.length !== 1 ? "s" : ""} · sorted by total premium
             </div>
             <BuildTable rows={buildRows} onRowClick={handleBuildRowClick} />
@@ -1216,7 +1216,7 @@ export default function UnusualFlowPanel({ symbol }: Props) {
           onRowClick={setOpenModalFor}
         />
 
-        <div className="text-[9px] text-muted-foreground space-y-0.5">
+        <div className="text-[11px] text-muted-foreground space-y-0.5">
           <div>
             Flagged when volume ≥ 100 AND (volume/OI ≥ 2× OR OI=0 new-strike) AND notional ≥ $25K AND DTE ≤ 90.
             Tape-side inferred from last-trade vs bid/ask. "NEW" = zero open interest (brand-new positioning).

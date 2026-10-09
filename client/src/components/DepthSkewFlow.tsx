@@ -353,7 +353,7 @@ export default function DepthSkewFlow() {
               />
             </>
           )}
-          <div className="ml-auto font-mono text-[10px] text-muted-foreground">
+          <div className="ml-auto font-mono text-[11px] text-muted-foreground">
             Spot{" "}
             <span className="text-foreground">
               {spot != null ? spot.toFixed(2) : "—"}
@@ -647,7 +647,7 @@ function Stat({
         : "text-foreground";
   return (
     <div className="flex flex-col">
-      <span className="text-[9px] uppercase tracking-wider text-muted-foreground">
+      <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
         {label}
       </span>
       <span className={`font-mono text-sm font-semibold tabular-nums ${cls}`}>

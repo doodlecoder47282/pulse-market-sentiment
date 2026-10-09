@@ -140,8 +140,15 @@ for (const vp of viewports) {
     entry.tabButtonVisible = await btn.first().isVisible();
     await p.evaluate(() => { window.__cls = 0; window.__longTasks = 0; window.scrollTo(0, 0); });
     const c0 = Date.now();
-    if (!entry.tabButtonVisible) await btn.first().scrollIntoViewIfNeeded().catch(() => {});
-    await btn.first().click({ timeout: 5000 }).catch((e) => { entry.clickError = e.message.split("\n")[0]; });
+    if (!entry.tabButtonVisible && btn === bottom && (await p.locator('[data-testid="bottomnav-more"]').count())) {
+      // Phone: secondary tabs live in the "More" sheet.
+      entry.viaMore = true;
+      await p.locator('[data-testid="bottomnav-more"]').click({ timeout: 5000 }).catch(() => {});
+      await p.locator(`[data-testid="moresheet-${t}"]`).click({ timeout: 5000 }).catch((e) => { entry.clickError = e.message.split("\n")[0]; });
+    } else {
+      if (!entry.tabButtonVisible) await btn.first().scrollIntoViewIfNeeded().catch(() => {});
+      await btn.first().click({ timeout: 5000 }).catch((e) => { entry.clickError = e.message.split("\n")[0]; });
+    }
     await p.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
     entry.switchMs = Date.now() - c0;
     await p.waitForTimeout(2500);

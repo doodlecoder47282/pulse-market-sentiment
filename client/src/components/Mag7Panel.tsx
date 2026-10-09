@@ -87,7 +87,7 @@ function rsiTag(rsi: number | null) {
 function BreadthBar({ breadth, count }: { breadth: number | null; count: number }) {
   // No member has a known day change: show "unavailable", not 0 up / 0 down.
   if (count <= 0 || breadth == null) {
-    return <span className="font-mono text-[10px] text-muted-foreground">breadth unavailable</span>;
+    return <span className="font-mono text-[11px] text-muted-foreground">breadth unavailable</span>;
   }
   const up = Math.round(breadth * count);
   const down = count - up;
@@ -97,7 +97,7 @@ function BreadthBar({ breadth, count }: { breadth: number | null; count: number 
         <div className="bg-emerald-500" style={{ width: `${breadth * 100}%` }} />
         <div className="bg-rose-500" style={{ width: `${(1 - breadth) * 100}%` }} />
       </div>
-      <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+      <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
         {up}↑ / {down}↓
       </span>
     </div>
@@ -142,27 +142,27 @@ export default function Mag7Panel() {
           <Users className="h-4 w-4 text-cyan-400" />
           <div className="text-sm font-semibold uppercase tracking-wider">Mag 7</div>
           <EdgeInfo id="mag7" />
-          <Badge variant="outline" className="border-cyan-500/40 text-[10px] text-cyan-300">
+          <Badge variant="outline" className="border-cyan-500/40 text-[11px] text-cyan-300">
             Equal-weight basket
           </Badge>
         </div>
 
         <div className="flex items-center gap-4 text-xs">
           <div className="flex items-baseline gap-1">
-            <span className="text-[10px] uppercase text-muted-foreground">Day</span>
+            <span className="text-[11px] uppercase text-muted-foreground">Day</span>
             <span className={`font-mono text-sm font-semibold tabular-nums ${eqWtUp ? "text-emerald-400" : "text-rose-400"}`}>
               {formatPct(data.eqWtChange)}
             </span>
           </div>
           <div className="flex items-baseline gap-1">
-            <span className="text-[10px] uppercase text-muted-foreground">vs SPY</span>
+            <span className="text-[11px] uppercase text-muted-foreground">vs SPY</span>
             <span className={`flex items-center gap-0.5 font-mono text-sm font-semibold tabular-nums ${alphaUp ? "text-emerald-400" : "text-rose-400"}`}>
               {alphaUp ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
               {formatPct(data.alphaVsSpy)}
             </span>
           </div>
           <div className="flex items-baseline gap-1">
-            <span className="text-[10px] uppercase text-muted-foreground">4W</span>
+            <span className="text-[11px] uppercase text-muted-foreground">4W</span>
             <span className={`font-mono text-sm tabular-nums ${(data.eqWt4w ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
               {formatPct(data.eqWt4w)}
             </span>
@@ -170,7 +170,7 @@ export default function Mag7Panel() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Breadth</span>
+          <span className="text-[11px] uppercase tracking-wider text-muted-foreground">Breadth</span>
           <BreadthBar breadth={data.breadth} count={data.breadthN ?? data.members.length} />
         </div>
       </div>
@@ -197,7 +197,7 @@ export default function Mag7Panel() {
               <div className="flex items-center justify-between gap-1">
                 <span className="text-xs font-semibold tracking-tight">{m.symbol}</span>
                 {rsi && (
-                  <span className={`rounded border px-1 text-[8px] font-semibold ${rsi.color}`}>
+                  <span className={`rounded border px-1 text-[11px] font-semibold ${rsi.color}`}>
                     {rsi.label}
                   </span>
                 )}
@@ -212,7 +212,7 @@ export default function Mag7Panel() {
                 </span>
               </div>
               {m.return4w != null && (
-                <div className="mt-0.5 text-[9px] text-muted-foreground">
+                <div className="mt-0.5 text-[11px] text-muted-foreground">
                   4W <span className={m.return4w >= 0 ? "text-emerald-400" : "text-rose-400"}>
                     {formatPct(m.return4w)}
                   </span>
@@ -270,7 +270,7 @@ export function Mag7Strip() {
           return (
             <span
               key={m.symbol}
-              className={`font-mono text-[10px] tabular-nums ${up ? "text-emerald-400" : "text-rose-400"}`}
+              className={`font-mono text-[11px] tabular-nums ${up ? "text-emerald-400" : "text-rose-400"}`}
               title={`${m.symbol} ${formatPct(m.changePct)}`}
             >
               {m.symbol}

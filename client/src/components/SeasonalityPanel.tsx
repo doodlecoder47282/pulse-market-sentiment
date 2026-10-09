@@ -268,7 +268,7 @@ function SeasonalStrengthBar({ monthly }: { monthly: SeasonalityBar[] }) {
   // Bucket each month by avg return + win rate
   return (
     <div className="mt-3">
-      <div className="mb-1 text-[9px] uppercase tracking-wider text-muted-foreground">Seasonal Strength by Month</div>
+      <div className="mb-1 text-[11px] uppercase tracking-wider text-muted-foreground">Seasonal Strength by Month</div>
       <div className="flex w-full rounded overflow-hidden" style={{ height: 14 }}>
         {monthly.map((m, i) => {
           const strong = m.avgReturn > 0.5 && m.winRate > 0.55;
@@ -281,10 +281,10 @@ function SeasonalStrengthBar({ monthly }: { monthly: SeasonalityBar[] }) {
       </div>
       <div className="mt-0.5 flex w-full">
         {MONTH_LABELS.map((m, i) => (
-          <div key={i} className="flex-1 text-center text-[8px] text-muted-foreground/60">{m[0]}</div>
+          <div key={i} className="flex-1 text-center text-[11px] text-muted-foreground">{m[0]}</div>
         ))}
       </div>
-      <div className="mt-1 flex items-center gap-3 text-[9px] text-muted-foreground">
+      <div className="mt-1 flex items-center gap-3 text-[11px] text-muted-foreground">
         <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-emerald-500/60" /> Strong</span>
         <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-rose-500/50" /> Weak</span>
         <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-muted/50" /> Neutral</span>
@@ -377,15 +377,15 @@ function YearlyView({ ticker, lookback }: { ticker: SeasonalityTicker; lookback:
             <span>SELL: <span className="font-mono font-bold">{opt.sellDate}</span></span>
             <span>Geo avg: <span className="font-mono font-bold">{fmtPct(opt.geometricAvgReturn)}</span></span>
             <span>Win rate: <span className="font-mono font-bold">{winRatePct(opt.winRate)}</span></span>
-            <Badge variant="outline" className={`text-[9px] ${confidenceColor(opt.confidenceLabel)}`}>{opt.confidenceLabel}</Badge>
+            <Badge variant="outline" className={`text-[11px] ${confidenceColor(opt.confidenceLabel)}`}>{opt.confidenceLabel}</Badge>
             {opt.significance && (
-              <span className="text-[10px] opacity-80" title={`Best of ${opt.significance.windowsSearched} windows searched, tested against calendar-scrambled history`}>
+              <span className="text-[11px] opacity-80" title={`Best of ${opt.significance.windowsSearched} windows searched, tested against calendar-scrambled history`}>
                 data-snooping p={opt.significance.pFamilywise.toFixed(2)}
                 {opt.significance.outOfSample ? ` · held-out ${opt.significance.outOfSample.heldOutYears}y rank ${Math.round(opt.significance.outOfSample.randomWindowPercentile * 100)}%${opt.significance.outOfSample.pValue != null ? `, p=${opt.significance.outOfSample.pValue.toFixed(2)}` : ""}` : ""}
               </span>
             )}
             {opt.testedWindow && !opt.testedWindow.sameAsHeadline && (
-              <span className="text-[10px] opacity-80" title="The walk-forward hold-out tests the window picked on the earlier years only; its result applies to that window, not the full-sample window shown">
+              <span className="text-[11px] opacity-80" title="The walk-forward hold-out tests the window picked on the earlier years only; its result applies to that window, not the full-sample window shown">
                 hold-out tested {opt.testedWindow.buyDate} to {opt.testedWindow.sellDate} (picked on earlier years)
               </span>
             )}
@@ -497,7 +497,7 @@ function YearlyView({ ticker, lookback }: { ticker: SeasonalityTicker; lookback:
               </ComposedChart>
             </ResponsiveContainer>
           </div>
-          <div className="mt-1.5 flex flex-wrap items-center gap-4 px-2 text-[10px] text-muted-foreground">
+          <div className="mt-1.5 flex flex-wrap items-center gap-4 px-2 text-[11px] text-muted-foreground">
             <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-slate-400" /> {lookback}yr avg</span>
             <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-cyan-400" /> 2026 YTD</span>
             <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-slate-500/25" /> ±1σ band</span>
@@ -556,7 +556,7 @@ function YearlyView({ ticker, lookback }: { ticker: SeasonalityTicker; lookback:
               </AreaChart>
             </ResponsiveContainer>
           </div>
-          <div className="mt-1 px-2 text-[9px] text-muted-foreground">
+          <div className="mt-1 px-2 text-[11px] text-muted-foreground">
             Blue = % of historical years that were net-positive at each calendar day from start of year. Above 70% = strong seasonal tailwind.
           </div>
         </CardContent>
@@ -593,7 +593,7 @@ function YearlyView({ ticker, lookback }: { ticker: SeasonalityTicker; lookback:
           )}
         </div>
         {yearly.presidentialCycleYear === 2 && (
-          <div className="text-muted-foreground/70 text-[10px] leading-relaxed">
+          <div className="text-muted-foreground text-[11px] leading-relaxed">
             Four-year cyclical low historically occurs within ~3 months before the midterm election. Midterm election: Nov 3, 2026.
           </div>
         )}
@@ -618,19 +618,19 @@ function YearlyView({ ticker, lookback }: { ticker: SeasonalityTicker; lookback:
       {/* Data transparency */}
       <div className="rounded-lg border border-border/30 bg-card/10 px-3 py-2">
         <button
-          className="flex w-full items-center gap-1.5 text-[10px] text-muted-foreground/60"
+          className="flex w-full items-center gap-1.5 text-[11px] text-muted-foreground"
           onClick={() => setShowInfo((v) => !v)}
         >
           <Info className="h-3 w-3" /> Data source &amp; methodology
           {showInfo ? <ChevronUp className="h-3 w-3 ml-auto" /> : <ChevronDown className="h-3 w-3 ml-auto" />}
         </button>
         {showInfo && (
-          <div className="mt-1.5 text-[10px] leading-relaxed text-muted-foreground/60 space-y-0.5">
+          <div className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground space-y-0.5">
             <div>Source: Yahoo Finance daily closes · Lookback: {yearly.yearsCovered[0]}–{yearly.yearsCovered[yearly.yearsCovered.length - 1]} ({yearly.yearsCovered.length} years)</div>
             <div>Monthly returns: month-over-month % change, averaged across years</div>
             <div>Win rate: % of years that period was positive · Geometric avg: compounded</div>
             <div>Not dividend-adjusted · 70%+ win rate preferred for tradeable signals</div>
-            <div className="text-muted-foreground/40">Seasonal analysis should be combined with technical + fundamental signals.</div>
+            <div className="text-muted-foreground">Seasonal analysis should be combined with technical + fundamental signals.</div>
           </div>
         )}
       </div>
@@ -718,7 +718,7 @@ function MonthlyView({ ticker }: { ticker: SeasonalityTicker }) {
               </ComposedChart>
             </ResponsiveContainer>
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-4 px-2 text-[10px] text-muted-foreground">
+          <div className="mt-2 flex flex-wrap items-center gap-4 px-2 text-[11px] text-muted-foreground">
             <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-slate-500" /> avg</span>
             <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-violet-400" style={{ borderTop: "1.5px dashed #a78bfa" }} /> median</span>
             <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-cyan-400" /> {currentYear}</span>
@@ -792,7 +792,7 @@ function WeeklyView({ ticker }: { ticker: SeasonalityTicker }) {
               </ComposedChart>
             </ResponsiveContainer>
           </div>
-          <div className="mt-2 flex items-center gap-4 px-2 text-[10px] text-muted-foreground">
+          <div className="mt-2 flex items-center gap-4 px-2 text-[11px] text-muted-foreground">
             <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-slate-500" /> {ticker.lookbackYears}yr avg</span>
             <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-cyan-400" /> {currentYear}</span>
             <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-slate-500/20" /> ±1σ</span>
@@ -807,7 +807,7 @@ function WeeklyView({ ticker }: { ticker: SeasonalityTicker }) {
 function StatChip({ label, val, color }: { label: string; val: string; color: string }) {
   return (
     <div className="rounded-md border border-border/50 bg-card/40 px-2.5 py-1.5">
-      <div className="text-[9px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className={`font-mono text-sm font-semibold tabular-nums ${color}`}>{val}</div>
     </div>
   );
@@ -869,14 +869,14 @@ export default function SeasonalityPanel() {
 
         {/* Lookback selector */}
         <div className="ml-auto flex items-center gap-1" data-testid="seasonality-lookback-selector">
-          <span className="text-[9px] uppercase tracking-wider text-muted-foreground mr-0.5">Lookback</span>
+          <span className="text-[11px] uppercase tracking-wider text-muted-foreground mr-0.5">Lookback</span>
           {LOOKBACK_OPTIONS.map((yr) => (
             <button
               key={yr}
               data-testid={`seasonality-lookback-${yr}`}
               onClick={() => setLookback(yr)}
               className={[
-                "rounded-full border px-2 py-0.5 text-[10px] font-semibold transition",
+                "rounded-full border px-2 py-0.5 text-[11px] font-semibold transition",
                 lookback === yr
                   ? "border-amber-500/60 bg-amber-500/15 text-amber-300"
                   : "border-border/50 text-muted-foreground hover:border-amber-500/30",
@@ -919,7 +919,7 @@ export default function SeasonalityPanel() {
           {activeView === "weekly" && <WeeklyView ticker={ticker} />}
 
           {/* Footer */}
-          <div className="text-[9px] text-muted-foreground/50">
+          <div className="text-[11px] text-muted-foreground">
             Lookback: {ticker.yearsCovered[0]}–{ticker.yearsCovered[ticker.yearsCovered.length - 1]} ({ticker.lookbackYears} years) ·
             Source: Yahoo Finance daily closes · Not dividend-adjusted · Updated: {new Date(data.asOf).toLocaleDateString()}
           </div>

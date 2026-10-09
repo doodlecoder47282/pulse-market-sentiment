@@ -120,7 +120,7 @@ function CandidateRow({ c, max, rank }: { c: RegimeCandidate; max: number; rank:
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
           <span className={`text-sm font-semibold ${meta.tone}`}>{meta.plain}</span>
-          <span className="font-mono text-sm font-semibold tabular-nums text-foreground" title="Heuristic score out of 100 (hand-set weights), not a calibrated probability">{pct}<span className="text-[10px] font-normal text-muted-foreground">/100</span></span>
+          <span className="font-mono text-sm font-semibold tabular-nums text-foreground" title="Heuristic score out of 100 (hand-set weights), not a calibrated probability">{pct}<span className="text-[11px] font-normal text-muted-foreground">/100</span></span>
         </div>
         <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted/30">
           <div
@@ -129,7 +129,7 @@ function CandidateRow({ c, max, rank }: { c: RegimeCandidate; max: number; rank:
           />
         </div>
         {c.isCurrent && (
-          <div className="mt-1 text-[10px] uppercase tracking-wider text-cyan-300">now</div>
+          <div className="mt-1 text-[11px] uppercase tracking-wider text-cyan-300">now</div>
         )}
       </div>
     </div>
@@ -347,7 +347,7 @@ export default function RegimePredictPanel() {
 function DriverChip({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-sm border border-border bg-card/40 px-2 py-1.5">
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className="font-mono text-xs tabular-nums text-foreground">{value}</div>
     </div>
   );

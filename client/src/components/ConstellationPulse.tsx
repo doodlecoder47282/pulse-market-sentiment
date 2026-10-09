@@ -180,7 +180,7 @@ export default function ConstellationPulse({
         <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
           {/* Regime label */}
           <div className="md:border-r md:border-border/60 md:pr-4">
-            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
               <Activity className="h-3 w-3" />
               Regime
             </div>
@@ -200,7 +200,7 @@ export default function ConstellationPulse({
 
           {/* Dispersion gauge */}
           <div className="md:border-r md:border-border/60 md:pr-4">
-            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
               <GaugeIcon className="h-3 w-3" />
               Correlation
             </div>
@@ -212,7 +212,7 @@ export default function ConstellationPulse({
                 {disp.mean >= 0 ? "+" : ""}
                 {disp.mean.toFixed(2)}
               </span>
-              <span className="text-[10px] text-muted-foreground">
+              <span className="text-[11px] text-muted-foreground">
                 σ {disp.std.toFixed(2)}
               </span>
             </div>
@@ -232,7 +232,7 @@ export default function ConstellationPulse({
 
           {/* Strongest pairs */}
           <div className="md:border-r md:border-border/60 md:pr-4">
-            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
               <Link2 className="h-3 w-3" />
               Tightest Pairs
             </div>
@@ -263,7 +263,7 @@ export default function ConstellationPulse({
 
           {/* Decouplers */}
           <div>
-            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
               <Unlink className="h-3 w-3" />
               Biggest Movers vs SPY (1W)
             </div>

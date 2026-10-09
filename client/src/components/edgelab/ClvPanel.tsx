@@ -243,7 +243,7 @@ export default function ClvPanel() {
                           {fmtBps(t.clvBps)}
                         </span>
                       ) : (
-                        <Badge variant="outline" className="text-[10px] py-0 px-1 h-4">pending</Badge>
+                        <Badge variant="outline" className="text-[11px] py-0 px-1 h-4">pending</Badge>
                       )}
                     </td>
                     <td className="py-1 pr-2 text-right text-muted-foreground">{fmtUsd(t.clvDollars)}</td>
@@ -265,7 +265,7 @@ export default function ClvPanel() {
         )}
       </div>
 
-      <p className="text-[10px] text-muted-foreground leading-snug">
+      <p className="text-[11px] text-muted-foreground leading-snug">
         CLV grades each trade against the closing mid. positive CLV = you got better fills than the close. that's the edge metric, not P&L.
       </p>
     </div>
@@ -276,9 +276,9 @@ function Kpi({ label, value, hint, positive }: { label: string; value: string; h
   const color = positive == null ? "" : positive > 0 ? "text-emerald-500" : positive < 0 ? "text-rose-500" : "";
   return (
     <div className="rounded border border-border p-2">
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className={`text-sm font-semibold tabular-nums ${color}`}>{value}</div>
-      {hint && <div className="text-[10px] text-muted-foreground">{hint}</div>}
+      {hint && <div className="text-[11px] text-muted-foreground">{hint}</div>}
     </div>
   );
 }

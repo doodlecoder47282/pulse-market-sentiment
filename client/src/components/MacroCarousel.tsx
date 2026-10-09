@@ -149,7 +149,7 @@ export function MacroTicker() {
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
           <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
         </span>
-        <span className="text-[9px] font-semibold uppercase tracking-wider text-emerald-400">Live</span>
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">Live</span>
       </div>
 
       <div
@@ -235,7 +235,7 @@ export function MacroCarousel() {
             );
           })}
         </div>
-        <div className="hidden shrink-0 text-right text-[10px] uppercase leading-tight tracking-wider text-muted-foreground sm:block">
+        <div className="hidden shrink-0 text-right text-[11px] uppercase leading-tight tracking-wider text-muted-foreground sm:block">
           Auto-rotating
           <div className="font-mono normal-case tracking-normal">
             {new Date(data.asOf * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}

@@ -205,7 +205,7 @@ function CurrentBadge({
       {icon}
       <span className="font-semibold">{label}</span>
       <span className="tabular-nums">{fmtMoney(value)}</span>
-      <span className="text-[10px] opacity-70">{units}</span>
+      <span className="text-[11px] opacity-70">{units}</span>
     </Badge>
   );
   if (!tip) return badge;
@@ -239,7 +239,7 @@ function ExposureChart({ title, subtitle, data, dataKey, spot, zeroSpot, flipLab
     <div className="rounded-lg border border-border/50 p-3" data-testid={testId}>
       <div className="mb-1 flex items-baseline justify-between">
         <div className="text-sm font-semibold">{title}</div>
-        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{subtitle}</div>
+        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{subtitle}</div>
       </div>
       <div className="h-[180px] w-full">
         <ResponsiveContainer width="100%" height="100%">

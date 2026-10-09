@@ -74,17 +74,17 @@ function timeAgo(iso: string): string {
 
 function SentimentChip({ s }: { s: "bull" | "bear" | "neutral" }) {
   if (s === "bull") return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400" data-testid={`chip-sentiment-${s}`}>
+    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400" data-testid={`chip-sentiment-${s}`}>
       <ArrowUpRight className="h-3 w-3" /> bullish
     </span>
   );
   if (s === "bear") return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-medium text-red-400" data-testid={`chip-sentiment-${s}`}>
+    <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-400" data-testid={`chip-sentiment-${s}`}>
       <ArrowDownRight className="h-3 w-3" /> bearish
     </span>
   );
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground" data-testid={`chip-sentiment-${s}`}>
+    <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground" data-testid={`chip-sentiment-${s}`}>
       <Minus className="h-3 w-3" /> neutral
     </span>
   );
@@ -93,17 +93,17 @@ function SentimentChip({ s }: { s: "bull" | "bear" | "neutral" }) {
 function FactCheckBadge({ fc }: { fc?: FactCheck }) {
   if (!fc) return null;
   if (fc.verdict === "consistent") return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400" title={fc.note} data-testid="fact-consistent">
+    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400" title={fc.note} data-testid="fact-consistent">
       <CheckCircle2 className="h-3 w-3" /> live-consistent
     </span>
   );
   if (fc.verdict === "conflicting") return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-400" title={fc.note} data-testid="fact-conflicting">
+    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-400" title={fc.note} data-testid="fact-conflicting">
       <AlertTriangle className="h-3 w-3" /> conflicts with live data
     </span>
   );
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground" title={fc.note} data-testid="fact-unverified">
+    <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground" title={fc.note} data-testid="fact-unverified">
       <HelpCircle className="h-3 w-3" /> unverified
     </span>
   );
@@ -116,7 +116,7 @@ function DataScoreBar({ score }: { score: number }) {
       <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
         <div className={`h-full ${color}`} style={{ width: `${Math.min(100, score)}%` }} />
       </div>
-      <span className="font-mono text-[10px] text-muted-foreground">{score}</span>
+      <span className="font-mono text-[11px] text-muted-foreground">{score}</span>
     </div>
   );
 }
@@ -203,21 +203,21 @@ export default function VoicesPanel() {
               <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
                 <div className="rounded-md bg-emerald-500/10 p-2">
                   <div className="font-mono text-lg text-emerald-400">{aggregate.bull}</div>
-                  <div className="text-[10px] uppercase text-muted-foreground">bullish</div>
+                  <div className="text-[11px] uppercase text-muted-foreground">bullish</div>
                 </div>
                 <div className="rounded-md bg-muted p-2">
                   <div className="font-mono text-lg">{aggregate.neu}</div>
-                  <div className="text-[10px] uppercase text-muted-foreground">neutral</div>
+                  <div className="text-[11px] uppercase text-muted-foreground">neutral</div>
                 </div>
                 <div className="rounded-md bg-red-500/10 p-2">
                   <div className="font-mono text-lg text-red-400">{aggregate.bear}</div>
-                  <div className="text-[10px] uppercase text-muted-foreground">bearish</div>
+                  <div className="text-[11px] uppercase text-muted-foreground">bearish</div>
                 </div>
               </div>
             )}
             <p className="mt-3 text-xs text-muted-foreground">
               Weighted by analyst credibility × post data-density. {data.items.length} items scanned; fact-checked against live VIX {data.liveMetrics.vix != null ? data.liveMetrics.vix.toFixed(2) : "unavailable"}, SPY {data.liveMetrics.spy != null ? `$${data.liveMetrics.spy.toFixed(2)}` : "unavailable"}{data.liveMetrics.vix == null || data.liveMetrics.spy == null ? " (Schwab unavailable: numeric claims left unverified)" : ""}.
-              {data.xEnabled && <span className="ml-1 rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary" data-testid="badge-x-live">X live</span>}
+              {data.xEnabled && <span className="ml-1 rounded-sm bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary" data-testid="badge-x-live">X live</span>}
             </p>
           </CardContent>
         </Card>
@@ -247,13 +247,13 @@ export default function VoicesPanel() {
                   >
                     <div className="flex items-center justify-between">
                       <div className="truncate text-xs font-semibold">{v.name}</div>
-                      <span className="font-mono text-[9px] text-muted-foreground">{Math.round(v.weight * 100)}%</span>
+                      <span className="font-mono text-[11px] text-muted-foreground">{Math.round(v.weight * 100)}%</span>
                     </div>
-                    <div className="truncate text-[10px] text-muted-foreground">@{v.handle}</div>
+                    <div className="truncate text-[11px] text-muted-foreground">@{v.handle}</div>
                     <div className="mt-1 flex items-center justify-between gap-1">
-                      {top ? <SentimentChip s={top.sentiment} /> : <span className="text-[9px] text-muted-foreground">—</span>}
+                      {top ? <SentimentChip s={top.sentiment} /> : <span className="text-[11px] text-muted-foreground">—</span>}
                       {v.lastTweetedAt && (
-                        <span className="font-mono text-[9px] text-muted-foreground" title={`Last tweet ${new Date(v.lastTweetedAt).toLocaleString()}`}>{timeAgo(v.lastTweetedAt)}</span>
+                        <span className="font-mono text-[11px] text-muted-foreground" title={`Last tweet ${new Date(v.lastTweetedAt).toLocaleString()}`}>{timeAgo(v.lastTweetedAt)}</span>
                       )}
                     </div>
                   </button>
@@ -267,7 +267,7 @@ export default function VoicesPanel() {
       {/* Sort/Filter bar */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1 rounded-md border border-border p-1">
-          <span className="px-2 text-[10px] uppercase text-muted-foreground">Sort</span>
+          <span className="px-2 text-[11px] uppercase text-muted-foreground">Sort</span>
           {(["data", "recent", "score"] as SortMode[]).map(m => (
             <Button
               key={m}
@@ -282,7 +282,7 @@ export default function VoicesPanel() {
           ))}
         </div>
         <div className="flex items-center gap-1 rounded-md border border-border p-1">
-          <span className="px-2 text-[10px] uppercase text-muted-foreground">Filter</span>
+          <span className="px-2 text-[11px] uppercase text-muted-foreground">Filter</span>
           {(["all", "tweets", "bull", "bear", "data-rich", "checked"] as FilterMode[]).map(f => (
             <Button
               key={f}
@@ -319,7 +319,7 @@ export default function VoicesPanel() {
                       <span className="font-semibold text-foreground">{it.voice}</span>
                       <span>@{it.handle}</span>
                       {isTweet && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary" data-testid={`chip-native-x-${idx}`}>
+                        <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary" data-testid={`chip-native-x-${idx}`}>
                           native post
                         </span>
                       )}
@@ -367,10 +367,10 @@ export default function VoicesPanel() {
                     {(it.claims.length > 0 || it.topics.length > 0) && (
                       <div className="mt-2 flex flex-wrap items-center gap-1">
                         {it.topics.slice(0, 5).map(t => (
-                          <Badge key={t} variant="secondary" className="text-[10px]">{t}</Badge>
+                          <Badge key={t} variant="secondary" className="text-[11px]">{t}</Badge>
                         ))}
                         {it.claims.slice(0, 3).map(c => (
-                          <span key={c} className="rounded-md bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-primary">{c}</span>
+                          <span key={c} className="rounded-md bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] text-primary">{c}</span>
                         ))}
                       </div>
                     )}

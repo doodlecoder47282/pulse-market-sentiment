@@ -98,7 +98,7 @@ function scoreBarColor(score: number): string {
 function MiniBar({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex flex-col gap-0.5" data-testid={`mini-bar-${label.replace(/\s/g, "-").toLowerCase()}`}>
-      <div className="text-[9px] uppercase tracking-wider text-muted-foreground/60">{label}</div>
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
         <div
           className="h-full bg-amber-500/60 transition-all"
@@ -126,14 +126,14 @@ function EvalRow({ ev }: { ev: ExitBrainEval }) {
         </span>
         <Badge
           variant="outline"
-          className={`text-[9px] ${ev.side === "call" ? "border-emerald-500/40 text-emerald-400" : "border-red-500/40 text-red-400"}`}
+          className={`text-[11px] ${ev.side === "call" ? "border-emerald-500/40 text-emerald-400" : "border-red-500/40 text-red-400"}`}
           data-testid={`eval-side-${ev.positionId}`}
         >
           {ev.side.toUpperCase()}
         </Badge>
         <Badge
           variant="outline"
-          className={`text-[9px] font-semibold ${actionBadgeClass(ev.action)}`}
+          className={`text-[11px] font-semibold ${actionBadgeClass(ev.action)}`}
           data-testid={`eval-action-${ev.positionId}`}
         >
           {ev.action}
@@ -162,7 +162,7 @@ function EvalRow({ ev }: { ev: ExitBrainEval }) {
 
       {/* Row 2: exit score progress bar */}
       <div className="space-y-1">
-        <div className="flex items-center justify-between text-[10px]">
+        <div className="flex items-center justify-between text-[11px]">
           <span className="text-muted-foreground uppercase tracking-wider">exit score</span>
           <span className="font-mono font-semibold" data-testid={`eval-score-${ev.positionId}`}>{ev.exitScore}/100</span>
         </div>
@@ -244,11 +244,11 @@ export default function ExitBrainPanel() {
           ) : (
             <>
               {data?.running ? (
-                <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-[9px]" data-testid="exit-brain-running">
+                <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-[11px]" data-testid="exit-brain-running">
                   running
                 </Badge>
               ) : (
-                <Badge variant="outline" className="border-muted-foreground/40 text-muted-foreground text-[9px]" data-testid="exit-brain-stopped">
+                <Badge variant="outline" className="border-muted-foreground/40 text-muted-foreground text-[11px]" data-testid="exit-brain-stopped">
                   stopped
                 </Badge>
               )}

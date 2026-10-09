@@ -114,7 +114,7 @@ export default function CrossAssetPanel() {
             </table>
           </div>
 
-          <p className="text-[10px] text-muted-foreground leading-snug">
+          <p className="text-[11px] text-muted-foreground leading-snug">
             correlations are vs SPY (SPY itself shows 1.00). tight = correlation behaves as expected, loose = drifting, broken = regime change in motion. clean risk-on means everything risk-correlated rallies together; mixed/suspicious = decorrelation, watch your size.
           </p>
         </>

@@ -120,7 +120,7 @@ export default function TradingViewWidget({
   return (
     <div>
       <div
-        className="mb-1 text-[10px] text-muted-foreground"
+        className="mb-1 text-[11px] text-muted-foreground"
         data-testid={`tv-widget-label-${symbol}`}
       >
         TradingView chart (third-party display data; not used in any Batcave calculation)

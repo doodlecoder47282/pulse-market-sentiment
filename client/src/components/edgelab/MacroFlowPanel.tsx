@@ -78,12 +78,12 @@ export default function MacroFlowPanel() {
             {fredQ.data.series.map(s => (
               <div key={s.seriesId} className="rounded border border-border/60 bg-muted/20 p-2" data-testid={`tile-fred-${s.seriesId}`}>
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-mono">{s.seriesId}</span>
-                  <span className="text-[10px] text-muted-foreground">{s.latestDate ?? "—"}</span>
+                  <span className="text-[11px] uppercase tracking-wide text-muted-foreground font-mono">{s.seriesId}</span>
+                  <span className="text-[11px] text-muted-foreground">{s.latestDate ?? "—"}</span>
                 </div>
-                <div className="text-[10px] text-muted-foreground leading-tight mb-1">{s.label}</div>
+                <div className="text-[11px] text-muted-foreground leading-tight mb-1">{s.label}</div>
                 <div className="text-sm font-semibold tabular-nums">{fmtNum(s.latest, 2)}</div>
-                <div className="flex gap-2 text-[10px] mt-1">
+                <div className="flex gap-2 text-[11px] mt-1">
                   <span className={(s.change ?? 0) >= 0 ? "text-emerald-500" : "text-rose-500"}>
                     Δ {fmtSigned(s.change, 3)}
                   </span>
@@ -141,7 +141,7 @@ export default function MacroFlowPanel() {
                       {r.weekChangeNonComm == null ? "—" : r.weekChangeNonComm.toLocaleString()}
                     </td>
                     <td className="py-1 pl-2">
-                      <Badge variant="outline" className={`text-[10px] py-0 px-1 h-4 ${biasColor(r.bias)}`}>
+                      <Badge variant="outline" className={`text-[11px] py-0 px-1 h-4 ${biasColor(r.bias)}`}>
                         {r.bias.replace(/-/g, " ")}
                       </Badge>
                     </td>
@@ -153,7 +153,7 @@ export default function MacroFlowPanel() {
         )}
       </div>
 
-      <p className="text-[10px] text-muted-foreground leading-snug">
+      <p className="text-[11px] text-muted-foreground leading-snug">
         FRED = official macro plumbing (rates, fed balance sheet, credit spreads, inflation). COT non-commercial pctile flags positioning extremes — &gt;90% = crowded long, &lt;10% = crowded short. extremes mean-revert at turning points.
       </p>
     </div>

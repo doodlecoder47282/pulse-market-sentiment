@@ -227,9 +227,9 @@ function KPICard({
   return (
     <Card className="bg-card/60 border-border/40" data-testid={testId}>
       <CardContent className="py-3 px-4">
-        <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-1">{label}</div>
+        <div className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono mb-1">{label}</div>
         <div className="font-mono font-bold text-sm" style={{ color: color ?? "var(--foreground)" }}>{value}</div>
-        {sub && <div className="font-mono text-[10px] text-muted-foreground mt-0.5">{sub}</div>}
+        {sub && <div className="font-mono text-[11px] text-muted-foreground mt-0.5">{sub}</div>}
       </CardContent>
     </Card>
   );
@@ -241,7 +241,7 @@ function GEXBucketCard({ label, bucket, testId }: { label: string; bucket: GEXBu
   return (
     <Card className="bg-card/60 border-border/40" data-testid={testId}>
       <CardHeader className="py-2 px-3">
-        <CardTitle className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{label}</CardTitle>
+        <CardTitle className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">{label}</CardTitle>
       </CardHeader>
       <CardContent className="px-3 py-1 space-y-0.5">
         <div className="flex justify-between font-mono text-[11px]">
@@ -262,7 +262,7 @@ function GEXBucketCard({ label, bucket, testId }: { label: string; bucket: GEXBu
             {fmtGex(bucket.totalGex)}
           </span>
         </div>
-        <div className="font-mono text-[10px] text-muted-foreground/60">
+        <div className="font-mono text-[11px] text-muted-foreground">
           {bucket.contractCount} contracts
         </div>
       </CardContent>
@@ -278,7 +278,7 @@ function DealerGauge({ score, regime }: { score: number; regime: string }) {
   const regimeLabel = regime === "call_dominant" ? "Call Delta Dominant" : regime === "put_dominant" ? "Put Delta Dominant" : "Neutral";
   return (
     <div className="flex flex-col gap-1" data-testid="dealer-gauge">
-      <div className="flex justify-between font-mono text-[10px] text-muted-foreground">
+      <div className="flex justify-between font-mono text-[11px] text-muted-foreground">
         <span>Short (-100)</span>
         <span style={{ color }} className="font-bold text-sm">{score > 0 ? "+" : ""}{score.toFixed(1)}</span>
         <span>Long (+100)</span>
@@ -289,7 +289,7 @@ function DealerGauge({ score, regime }: { score: number; regime: string }) {
           style={{ width: `${Math.max(2, Math.min(98, pct))}%`, background: color }}
         />
       </div>
-      <div className="text-center font-mono text-[10px]" style={{ color }}>
+      <div className="text-center font-mono text-[11px]" style={{ color }}>
         {regimeLabel}
       </div>
     </div>
@@ -299,10 +299,10 @@ function DealerGauge({ score, regime }: { score: number; regime: string }) {
 // ─── VRP signal badge ────────────────────────────────────────────────────────
 
 function VRPSignalBadge({ signal }: { signal: VRPEntry["signal"] }) {
-  if (signal === "sell_vol") return <Badge className="bg-red-500/20 text-red-400 border-red-500/40 font-mono text-[10px]">Sell Vol</Badge>;
-  if (signal === "buy_vol") return <Badge className="bg-green-500/20 text-green-400 border-green-500/40 font-mono text-[10px]">Buy Vol</Badge>;
-  if (signal === "neutral") return <Badge className="bg-muted/30 text-muted-foreground border-border/40 font-mono text-[10px]">Neutral</Badge>;
-  return <Badge variant="outline" className="font-mono text-[10px] text-muted-foreground/60">N/A</Badge>;
+  if (signal === "sell_vol") return <Badge className="bg-red-500/20 text-red-400 border-red-500/40 font-mono text-[11px]">Sell Vol</Badge>;
+  if (signal === "buy_vol") return <Badge className="bg-green-500/20 text-green-400 border-green-500/40 font-mono text-[11px]">Buy Vol</Badge>;
+  if (signal === "neutral") return <Badge className="bg-muted/30 text-muted-foreground border-border/40 font-mono text-[11px]">Neutral</Badge>;
+  return <Badge variant="outline" className="font-mono text-[11px] text-muted-foreground">N/A</Badge>;
 }
 
 // ─── Section wrapper ──────────────────────────────────────────────────────────
@@ -310,7 +310,7 @@ function VRPSignalBadge({ signal }: { signal: VRPEntry["signal"] }) {
 function Section({ title, children, testId }: { title: string; children: React.ReactNode; testId?: string }) {
   return (
     <div className="space-y-2" data-testid={testId}>
-      <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground/60 border-b border-border/30 pb-1">
+      <div className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground border-b border-border/30 pb-1">
         {title}
       </div>
       {children}
@@ -374,7 +374,7 @@ export default function ChainAudit() {
     <div className="space-y-4" data-testid="chain-audit-panel">
       {/* Header bar */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/40 bg-card/40 px-3 py-2">
-        <span className="font-mono text-[10px] uppercase tracking-widest text-cyan-400">Live Chain Audit</span>
+        <span className="font-mono text-[11px] uppercase tracking-widest text-cyan-400">Live Chain Audit</span>
         <span className="text-border/60">·</span>
 
         {/* Symbol toggle */}
@@ -384,7 +384,7 @@ export default function ChainAudit() {
               key={s}
               variant={symbol === s ? "default" : "ghost"}
               size="sm"
-              className="h-6 px-2.5 text-[10px] font-mono"
+              className="h-6 px-2.5 text-[11px] font-mono"
               onClick={() => setSymbol(s)}
               data-testid={`btn-chain-symbol-${s}`}
             >
@@ -394,20 +394,20 @@ export default function ChainAudit() {
         </div>
 
         {data && (
-          <Badge variant="outline" className="border-cyan-500/40 font-mono text-[9px] text-cyan-400">
+          <Badge variant="outline" className="border-cyan-500/40 font-mono text-[11px] text-cyan-400">
             {data.symbol} · {data.audit.contractsProcessed.toLocaleString()} contracts · {data.audit.expiriesFound} expiries
             {" "}<DataAgeChip asOfMs={(data as any).chainAsOfMs ?? null} stale={(data as any).chainStale ?? null} maxAgeMs={(data as any).chainMaxAgeMs ?? null} label="chain" />
           </Badge>
         )}
         {data?.audit?.dataQuality === "partial" && (
-          <Badge variant="outline" className="border-amber-500/40 font-mono text-[9px] text-amber-400">
+          <Badge variant="outline" className="border-amber-500/40 font-mono text-[11px] text-amber-400">
             Partial Data
           </Badge>
         )}
 
         <div className="ml-auto flex items-center gap-2">
           {dataUpdatedAt > 0 && (
-            <span className="font-mono text-[9px] text-muted-foreground/60" data-testid="chain-audit-timestamp">
+            <span className="font-mono text-[11px] text-muted-foreground" data-testid="chain-audit-timestamp">
               Updated {timeAgo(dataUpdatedAt)}
             </span>
           )}
@@ -416,7 +416,7 @@ export default function ChainAudit() {
             size="sm"
             onClick={() => refetch()}
             disabled={isFetching}
-            className="h-6 gap-1 font-mono text-[10px]"
+            className="h-6 gap-1 font-mono text-[11px]"
             data-testid="btn-chain-audit-refresh"
           >
             <RefreshCw className={`h-3 w-3 ${isFetching ? "animate-spin" : ""}`} />
@@ -474,7 +474,7 @@ export default function ChainAudit() {
               />
               <Card className="bg-card/60 border-border/40" data-testid="kpi-dealer-score">
                 <CardContent className="py-3 px-4">
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-2">
+                  <div className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono mb-2">
                     Dealer Score
                   </div>
                   <DealerGauge score={audit.dealerScore.score} regime={audit.dealerScore.regime} />
@@ -499,10 +499,10 @@ export default function ChainAudit() {
               {/* Term Structure Chart */}
               <Card className="bg-card/60 border-border/40">
                 <CardHeader className="py-2 px-3">
-                  <CardTitle className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+                  <CardTitle className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground flex items-center gap-2">
                     Term Structure
                     {audit.termStructure.contango != null && (
-                      <Badge variant="outline" className={`text-[9px] font-mono ${audit.termStructure.contango ? "border-green-500/40 text-green-400" : "border-red-500/40 text-red-400"}`}>
+                      <Badge variant="outline" className={`text-[11px] font-mono ${audit.termStructure.contango ? "border-green-500/40 text-green-400" : "border-red-500/40 text-red-400"}`}>
                         {audit.termStructure.contango ? "Contango" : "Backwardation"}
                         {audit.termStructure.steepness != null && ` ${(audit.termStructure.steepness * 100).toFixed(1)}pp`}
                       </Badge>
@@ -553,7 +553,7 @@ export default function ChainAudit() {
               {/* IV Skew table */}
               <Card className="bg-card/60 border-border/40">
                 <CardHeader className="py-2 px-3">
-                  <CardTitle className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                  <CardTitle className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
                     IV Skew (25-Delta)
                   </CardTitle>
                 </CardHeader>
@@ -562,12 +562,12 @@ export default function ChainAudit() {
                     <Table>
                       <TableHeader>
                         <TableRow className="border-border/30">
-                          <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-1 px-3">Expiry</TableHead>
-                          <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-1 text-right">DTE</TableHead>
-                          <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-1 text-right">ATM IV</TableHead>
-                          <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-1 text-right">25P IV</TableHead>
-                          <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-1 text-right">25C IV</TableHead>
-                          <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-1 text-right">Skew</TableHead>
+                          <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-1 px-3">Expiry</TableHead>
+                          <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-1 text-right">DTE</TableHead>
+                          <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-1 text-right">ATM IV</TableHead>
+                          <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-1 text-right">25P IV</TableHead>
+                          <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-1 text-right">25C IV</TableHead>
+                          <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-1 text-right">Skew</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -577,12 +577,12 @@ export default function ChainAudit() {
                             className={`border-border/20 ${row.elevatedFear ? "bg-red-500/5" : ""}`}
                             data-testid={`row-skew-${i}`}
                           >
-                            <TableCell className="font-mono text-[10px] py-1 px-3 text-muted-foreground">{row.expiry}</TableCell>
-                            <TableCell className="font-mono text-[10px] py-1 text-right">{row.dte}</TableCell>
-                            <TableCell className="font-mono text-[10px] py-1 text-right">{fmtIV(row.atmIV)}</TableCell>
-                            <TableCell className="font-mono text-[10px] py-1 text-right text-red-400">{fmtIV(row.put25IV)}</TableCell>
-                            <TableCell className="font-mono text-[10px] py-1 text-right text-green-400">{fmtIV(row.call25IV)}</TableCell>
-                            <TableCell className="font-mono text-[10px] py-1 text-right">
+                            <TableCell className="font-mono text-[11px] py-1 px-3 text-muted-foreground">{row.expiry}</TableCell>
+                            <TableCell className="font-mono text-[11px] py-1 text-right">{row.dte}</TableCell>
+                            <TableCell className="font-mono text-[11px] py-1 text-right">{fmtIV(row.atmIV)}</TableCell>
+                            <TableCell className="font-mono text-[11px] py-1 text-right text-red-400">{fmtIV(row.put25IV)}</TableCell>
+                            <TableCell className="font-mono text-[11px] py-1 text-right text-green-400">{fmtIV(row.call25IV)}</TableCell>
+                            <TableCell className="font-mono text-[11px] py-1 text-right">
                               {row.skew != null ? (
                                 <span className={row.elevatedFear ? "text-red-400 font-semibold" : ""}>
                                   {(row.skew * 100).toFixed(1)}pp
@@ -735,20 +735,20 @@ export default function ChainAudit() {
                   </div>
                   <div className="flex flex-wrap gap-3 mt-2 justify-center">
                     {audit.pinning.map((p, i) => (
-                      <div key={i} className="font-mono text-[10px] text-center" data-testid={`pin-strike-${i}`}>
+                      <div key={i} className="font-mono text-[11px] text-center" data-testid={`pin-strike-${i}`}>
                         <div className="font-semibold" style={{ color: Math.abs(p.distance) < 10 ? "#f59e0b" : "#06b6d4" }}>
                           {fmtStrike(p.strike)}
                         </div>
                         <div className="text-muted-foreground">{p.prob.toFixed(1)}%</div>
-                        <div className="text-muted-foreground/60">{p.distance > 0 ? "+" : ""}{p.distance.toFixed(0)}pt</div>
+                        <div className="text-muted-foreground">{p.distance > 0 ? "+" : ""}{p.distance.toFixed(0)}pt</div>
                         {p.lower != null && p.upper != null && (
-                          <div className="text-muted-foreground/50">bin {(p.upper - p.lower).toFixed(0)}pt</div>
+                          <div className="text-muted-foreground">bin {(p.upper - p.lower).toFixed(0)}pt</div>
                         )}
                       </div>
                     ))}
                   </div>
                   {audit.pinningMeta && (
-                    <div className="mt-2 px-2 font-mono text-[9px] text-muted-foreground/70" data-testid="pinning-note">
+                    <div className="mt-2 px-2 font-mono text-[11px] text-muted-foreground" data-testid="pinning-note">
                       {audit.pinningMeta.note}; ranked by probability per point. exp {audit.pinningMeta.expiry ?? "?"}{audit.pinningMeta.settlementStyle ? ` (${audit.pinningMeta.settlementStyle}-settled)` : ""}, {audit.pinningMeta.quotesUsed} quotes
                       {audit.pinningMeta.coverage != null ? `, ${(audit.pinningMeta.coverage * 100).toFixed(0)}% of mass inside quoted strikes` : ""}.
                     </div>
@@ -769,15 +769,15 @@ export default function ChainAudit() {
                     <Table>
                       <TableHeader>
                         <TableRow className="border-border/30">
-                          <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-2 px-3">Strike</TableHead>
-                          <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-2">Side</TableHead>
-                          <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-2">Expiry</TableHead>
-                          <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-2 text-right">DTE</TableHead>
-                          <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-2 text-right">Vol</TableHead>
-                          <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-2 text-right">OI</TableHead>
-                          <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-2 text-right">Ratio</TableHead>
-                          <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-2 text-right">$ Vol</TableHead>
-                          <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-2 text-right">Price</TableHead>
+                          <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-2 px-3">Strike</TableHead>
+                          <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-2">Side</TableHead>
+                          <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-2">Expiry</TableHead>
+                          <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-2 text-right">DTE</TableHead>
+                          <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-2 text-right">Vol</TableHead>
+                          <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-2 text-right">OI</TableHead>
+                          <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-2 text-right">Ratio</TableHead>
+                          <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-2 text-right">$ Vol</TableHead>
+                          <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-2 text-right">Price</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -787,36 +787,36 @@ export default function ChainAudit() {
                             className={`border-border/20 ${row.volOiRatio > 5 ? "bg-amber-500/5" : ""}`}
                             data-testid={`row-unusual-vol-${i}`}
                           >
-                            <TableCell className="font-mono text-[10px] py-1.5 px-3 font-semibold">
+                            <TableCell className="font-mono text-[11px] py-1.5 px-3 font-semibold">
                               {fmtStrike(row.strike)}
                             </TableCell>
-                            <TableCell className="font-mono text-[10px] py-1.5">
+                            <TableCell className="font-mono text-[11px] py-1.5">
                               <Badge
-                                className={`text-[9px] font-mono ${row.side === "call"
+                                className={`text-[11px] font-mono ${row.side === "call"
                                   ? "bg-green-500/20 text-green-400 border-green-500/40"
                                   : "bg-red-500/20 text-red-400 border-red-500/40"}`}
                               >
                                 {row.side.toUpperCase()}
                               </Badge>
                             </TableCell>
-                            <TableCell className="font-mono text-[10px] py-1.5 text-muted-foreground">
+                            <TableCell className="font-mono text-[11px] py-1.5 text-muted-foreground">
                               <div className="flex flex-col leading-tight">
                                 <span>{row.expiry}</span>
                                 {data?.asOf ? (
-                                  <span className="text-[9px] text-muted-foreground/50">loaded {fmtClockET(data.asOf)} ET</span>
+                                  <span className="text-[11px] text-muted-foreground">loaded {fmtClockET(data.asOf)} ET</span>
                                 ) : null}
                               </div>
                             </TableCell>
-                            <TableCell className="font-mono text-[10px] py-1.5 text-right">{row.dte}</TableCell>
-                            <TableCell className="font-mono text-[10px] py-1.5 text-right">{fmtVolume(row.volume)}</TableCell>
-                            <TableCell className="font-mono text-[10px] py-1.5 text-right text-muted-foreground">{fmtVolume(row.oi)}</TableCell>
-                            <TableCell className="font-mono text-[10px] py-1.5 text-right">
+                            <TableCell className="font-mono text-[11px] py-1.5 text-right">{row.dte}</TableCell>
+                            <TableCell className="font-mono text-[11px] py-1.5 text-right">{fmtVolume(row.volume)}</TableCell>
+                            <TableCell className="font-mono text-[11px] py-1.5 text-right text-muted-foreground">{fmtVolume(row.oi)}</TableCell>
+                            <TableCell className="font-mono text-[11px] py-1.5 text-right">
                               <span className={row.volOiRatio > 5 ? "text-amber-400 font-semibold" : "text-foreground"}>
                                 {fmtRatio(row.volOiRatio)}
                               </span>
                             </TableCell>
-                            <TableCell className="font-mono text-[10px] py-1.5 text-right">{fmtDollar(row.dollarVolume)}</TableCell>
-                            <TableCell className="font-mono text-[10px] py-1.5 text-right">${row.lastPrice.toFixed(2)}</TableCell>
+                            <TableCell className="font-mono text-[11px] py-1.5 text-right">{fmtDollar(row.dollarVolume)}</TableCell>
+                            <TableCell className="font-mono text-[11px] py-1.5 text-right">${row.lastPrice.toFixed(2)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -833,30 +833,30 @@ export default function ChainAudit() {
               <CardContent className="px-0 pb-2 pt-0">
                 {/* VRP reading guide — how to trade the signal */}
                 <div className="mx-3 my-2 rounded border border-border/40 bg-muted/20 px-3 py-2">
-                  <div className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/70 mb-1.5">
+                  <div className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground mb-1.5">
                     How to read — your edge in one glance
                   </div>
-                  <div className="grid grid-cols-1 gap-1.5 md:grid-cols-3 font-mono text-[10px] leading-snug">
+                  <div className="grid grid-cols-1 gap-1.5 md:grid-cols-3 font-mono text-[11px] leading-snug">
                     <div className="rounded border border-red-500/30 bg-red-500/5 px-2 py-1.5">
                       <div className="text-red-400 font-semibold">VRP &gt; +2pp · Sell Vol</div>
-                      <div className="text-muted-foreground/80 text-[9px] mt-0.5">
+                      <div className="text-muted-foreground/80 text-[11px] mt-0.5">
                         Market IV rich vs fair value. Short straddles, sell premium, credit spreads, iron condors.
                       </div>
                     </div>
                     <div className="rounded border border-border/40 px-2 py-1.5">
                       <div className="text-muted-foreground font-semibold">|VRP| ≤ 2pp · Fair</div>
-                      <div className="text-muted-foreground/80 text-[9px] mt-0.5">
+                      <div className="text-muted-foreground/80 text-[11px] mt-0.5">
                         No edge on vol. Trade direction, not premium. Wait for skew.
                       </div>
                     </div>
                     <div className="rounded border border-green-500/30 bg-green-500/5 px-2 py-1.5">
                       <div className="text-green-400 font-semibold">VRP &lt; −2pp · Buy Vol</div>
-                      <div className="text-muted-foreground/80 text-[9px] mt-0.5">
+                      <div className="text-muted-foreground/80 text-[11px] mt-0.5">
                         Market IV cheap vs fair value. Long straddles, long gamma, debit spreads, calendars.
                       </div>
                     </div>
                   </div>
-                  <div className="mt-1.5 font-mono text-[9px] text-muted-foreground/60 leading-snug">
+                  <div className="mt-1.5 font-mono text-[11px] text-muted-foreground leading-snug">
                     VRP = Market IV − Theoretical IV (bookdown realized-vol estimate). Positive = overpriced, negative = underpriced. Signal column auto-classifies per-expiry.
                   </div>
                 </div>
@@ -864,36 +864,36 @@ export default function ChainAudit() {
                   <Table>
                     <TableHeader>
                       <TableRow className="border-border/30">
-                        <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-2 px-3">Expiry</TableHead>
-                        <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-2 text-right">DTE</TableHead>
-                        <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-2 text-right">Market IV</TableHead>
-                        <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-2 text-right">Theoretical IV</TableHead>
-                        <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-2 text-right">VRP</TableHead>
-                        <TableHead className="font-mono text-[9px] uppercase text-muted-foreground/70 py-2 text-right">Signal</TableHead>
+                        <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-2 px-3">Expiry</TableHead>
+                        <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-2 text-right">DTE</TableHead>
+                        <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-2 text-right">Market IV</TableHead>
+                        <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-2 text-right">Theoretical IV</TableHead>
+                        <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-2 text-right">VRP</TableHead>
+                        <TableHead className="font-mono text-[11px] uppercase text-muted-foreground py-2 text-right">Signal</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {audit.vrp.map((row, i) => (
                         <TableRow key={row.expiry} className="border-border/20" data-testid={`row-vrp-${i}`}>
-                          <TableCell className="font-mono text-[10px] py-1.5 px-3 text-muted-foreground">
+                          <TableCell className="font-mono text-[11px] py-1.5 px-3 text-muted-foreground">
                             <div className="flex flex-col leading-tight">
                               <span>{row.expiry}</span>
                               {data?.asOf && i === 0 ? (
-                                <span className="text-[9px] text-muted-foreground/50">loaded {fmtClockET(data.asOf)} ET</span>
+                                <span className="text-[11px] text-muted-foreground">loaded {fmtClockET(data.asOf)} ET</span>
                               ) : null}
                             </div>
                           </TableCell>
-                          <TableCell className="font-mono text-[10px] py-1.5 text-right">{row.dte}</TableCell>
-                          <TableCell className="font-mono text-[10px] py-1.5 text-right">{fmtIV(row.marketIV)}</TableCell>
-                          <TableCell className="font-mono text-[10px] py-1.5 text-right text-muted-foreground">
-                            {row.theoreticalIV != null ? fmtIV(row.theoreticalIV) : <span className="text-muted-foreground/40">N/A</span>}
+                          <TableCell className="font-mono text-[11px] py-1.5 text-right">{row.dte}</TableCell>
+                          <TableCell className="font-mono text-[11px] py-1.5 text-right">{fmtIV(row.marketIV)}</TableCell>
+                          <TableCell className="font-mono text-[11px] py-1.5 text-right text-muted-foreground">
+                            {row.theoreticalIV != null ? fmtIV(row.theoreticalIV) : <span className="text-muted-foreground">N/A</span>}
                           </TableCell>
-                          <TableCell className="font-mono text-[10px] py-1.5 text-right">
+                          <TableCell className="font-mono text-[11px] py-1.5 text-right">
                             {row.vrp != null ? (
                               <span className={row.vrp < -0.01 ? "text-red-400" : row.vrp > 0.01 ? "text-green-400" : "text-muted-foreground"}>
                                 {row.vrp >= 0 ? "+" : ""}{(row.vrp * 100).toFixed(1)}pp
                               </span>
-                            ) : <span className="text-muted-foreground/40">N/A</span>}
+                            ) : <span className="text-muted-foreground">N/A</span>}
                           </TableCell>
                           <TableCell className="py-1.5 text-right">
                             <VRPSignalBadge signal={row.signal} />
@@ -904,7 +904,7 @@ export default function ChainAudit() {
                   </Table>
                 </div>
                 {audit.vrp.every(r => r.vrp == null) && (
-                  <div className="font-mono text-[10px] text-muted-foreground/60 text-center py-3">
+                  <div className="font-mono text-[11px] text-muted-foreground text-center py-3">
                     Theoretical IV not available in chain data — Schwab may not provide theoreticalVolatility for this symbol.
                   </div>
                 )}
@@ -918,7 +918,7 @@ export default function ChainAudit() {
               {/* Vanna */}
               <Card className="bg-card/60 border-border/40">
                 <CardHeader className="py-2 px-3">
-                  <CardTitle className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                  <CardTitle className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
                     Vanna Exposure — $ per 1% Vol Move
                   </CardTitle>
                 </CardHeader>
@@ -975,7 +975,7 @@ export default function ChainAudit() {
               {/* Charm */}
               <Card className="bg-card/60 border-border/40">
                 <CardHeader className="py-2 px-3">
-                  <CardTitle className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                  <CardTitle className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
                     Charm Exposure — $ per Day
                   </CardTitle>
                 </CardHeader>
@@ -1032,7 +1032,7 @@ export default function ChainAudit() {
           </Section>
 
           {/* Footer: data quality + spot */}
-          <div className="flex flex-wrap items-center gap-3 border-t border-border/30 pt-3 font-mono text-[9px] text-muted-foreground/50">
+          <div className="flex flex-wrap items-center gap-3 border-t border-border/30 pt-3 font-mono text-[11px] text-muted-foreground">
             <span>Spot: <span className="text-foreground/80">{data.spot.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></span>
             <span>·</span>
             <span>Data quality: <span className={

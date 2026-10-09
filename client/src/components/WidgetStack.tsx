@@ -153,9 +153,9 @@ export default function WidgetStack({ tab, defaults }: { tab: string; defaults: 
           >
             {editing && (
               <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
-                <span className="font-mono text-[10px] uppercase tracking-widest text-emerald-300/90">
+                <span className="font-mono text-[11px] uppercase tracking-widest text-emerald-300/90">
                   {w.label}
-                  <span className="ml-2 text-muted-foreground/60">from {w.home}</span>
+                  <span className="ml-2 text-muted-foreground">from {w.home}</span>
                 </span>
                 <span className="flex items-center gap-1">
                   <button type="button" aria-label="Move up" disabled={idx === 0} onClick={() => move(id, -1)} data-testid={`widget-up-${id}`} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border/60 text-muted-foreground transition enabled:hover:text-foreground disabled:opacity-30">
@@ -194,7 +194,7 @@ export default function WidgetStack({ tab, defaults }: { tab: string; defaults: 
           ) : (
             <div>
               <div className="mb-2 flex items-center justify-between">
-                <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Add a widget</span>
+                <span className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">Add a widget</span>
                 <button type="button" aria-label="Close" onClick={() => setAddOpen(false)} className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground">
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -210,7 +210,7 @@ export default function WidgetStack({ tab, defaults }: { tab: string; defaults: 
                   >
                     <Plus className="h-3 w-3" />
                     {WIDGET_REGISTRY[id].label}
-                    <span className="text-[9px] font-mono uppercase text-muted-foreground/70">{WIDGET_REGISTRY[id].home}</span>
+                    <span className="text-[11px] font-mono uppercase text-muted-foreground">{WIDGET_REGISTRY[id].home}</span>
                   </button>
                 ))}
               </div>

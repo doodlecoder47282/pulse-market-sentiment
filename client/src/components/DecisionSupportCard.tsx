@@ -140,14 +140,14 @@ export function DecisionSupportCard() {
         <div className="mb-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <Brain className="h-3.5 w-3.5 text-amber-500" />
-            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-500">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-500">
               Decision Support
             </span>
           </div>
           {wd && (
             <Badge
               variant="outline"
-              className={`font-mono text-[10px] uppercase ${statusBadgeClass(wd.status)}`}
+              className={`font-mono text-[11px] uppercase ${statusBadgeClass(wd.status)}`}
               data-testid="badge-watchdog-status"
               title={`${wd.reason} · c=${wd.cValue.toFixed(3)}`}
             >
@@ -163,14 +163,14 @@ export function DecisionSupportCard() {
             className="rounded-sm border border-border/60 bg-card/30 p-3"
             data-testid="tile-kelly"
           >
-            <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <div className="mb-1 flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
               <Target className="h-3 w-3" />
               Kelly ½ ({kellySide})
             </div>
             <div className="font-mono text-2xl font-semibold text-foreground">
               {kellyHasEdge ? `${kellyPct.toFixed(1)}%` : "0.0%"}
             </div>
-            <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+            <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
               {kellyHasEdge
                 ? `dominant prob ${(directional * 100).toFixed(0)}% — half-Kelly sizing`
                 : "no directional edge — base scenario dominates"}
@@ -181,28 +181,28 @@ export function DecisionSupportCard() {
             className="rounded-sm border border-border/60 bg-card/30 p-3"
             data-testid="tile-base-rates"
           >
-            <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <div className="mb-1 text-[11px] uppercase tracking-wider text-muted-foreground">
               SPX base rate up
             </div>
             <div className="grid grid-cols-4 gap-1 font-mono text-sm">
               <div className="text-center">
                 <div className="text-foreground">{BASE_RATES.daily}%</div>
-                <div className="text-[9px] uppercase text-muted-foreground">d</div>
+                <div className="text-[11px] uppercase text-muted-foreground">d</div>
               </div>
               <div className="text-center">
                 <div className="text-foreground">{BASE_RATES.weekly}%</div>
-                <div className="text-[9px] uppercase text-muted-foreground">w</div>
+                <div className="text-[11px] uppercase text-muted-foreground">w</div>
               </div>
               <div className="text-center">
                 <div className="text-foreground">{BASE_RATES.monthly}%</div>
-                <div className="text-[9px] uppercase text-muted-foreground">m</div>
+                <div className="text-[11px] uppercase text-muted-foreground">m</div>
               </div>
               <div className="text-center">
                 <div className="text-foreground">{BASE_RATES.yearly}%</div>
-                <div className="text-[9px] uppercase text-muted-foreground">y</div>
+                <div className="text-[11px] uppercase text-muted-foreground">y</div>
               </div>
             </div>
-            <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+            <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
               historical SPX positive-return frequency · anti-recency anchor
             </div>
           </div>
@@ -214,7 +214,7 @@ export function DecisionSupportCard() {
             className="rounded-sm border border-border/60 bg-card/30 p-3"
             data-testid="tile-close-band"
           >
-            <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <div className="mb-1 text-[11px] uppercase tracking-wider text-muted-foreground">
               P5 / P95 close band
             </div>
             <div className="font-mono text-base text-foreground">
@@ -222,7 +222,7 @@ export function DecisionSupportCard() {
                 ? `${p5p95.lo} — ${p5p95.hi}`
                 : <span className="text-muted-foreground">—</span>}
             </div>
-            <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+            <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
               90% close interval from one-day expected move
             </div>
           </div>
@@ -231,7 +231,7 @@ export function DecisionSupportCard() {
             className="rounded-sm border border-border/60 bg-card/30 p-3"
             data-testid="tile-vol-drag"
           >
-            <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <div className="mb-1 flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
               {volDragPct != null && <AlertTriangle className="h-3 w-3 text-amber-500" />}
               Vol drag
             </div>
@@ -240,7 +240,7 @@ export function DecisionSupportCard() {
                 ? `−${volDragPct.toFixed(1)}%/yr`
                 : <span className="text-muted-foreground">— (σ ≤ 25%)</span>}
             </div>
-            <div className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+            <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
               {volDragPct != null
                 ? `realized 20d σ = ${((ds!.inputs.realizedSigma20d ?? 0) * 100).toFixed(0)}% — geometric vs arithmetic gap`
                 : "displayed only when 20d σ exceeds 25%"}
@@ -251,7 +251,7 @@ export function DecisionSupportCard() {
         {/* Resolution row */}
         {rs && rs.n > 0 && (
           <div className="mt-3 rounded-sm border border-border/60 bg-card/30 p-3" data-testid="tile-resolution">
-            <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <div className="mb-1 flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
               <Shield className="h-3 w-3" />
               Resolution (last {rs.n} days · higher = sharper discrimination)
             </div>
@@ -263,7 +263,7 @@ export function DecisionSupportCard() {
           </div>
         )}
 
-        <div className="mt-3 text-[10px] leading-relaxed text-muted-foreground">
+        <div className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
           Tier-1/2 observers · Mauboussin-style odds x payoffs (odds are model heuristics, not calibrated probabilities) · all read-only · never alters scenario calc.
         </div>
       </CardContent>
@@ -280,7 +280,7 @@ function ResolutionPill({
 }) {
   return (
     <div className="flex items-center justify-between rounded-sm border border-border/40 bg-card/20 px-2 py-1.5">
-      <span className="text-[10px] uppercase text-muted-foreground">{label}</span>
+      <span className="text-[11px] uppercase text-muted-foreground">{label}</span>
       <span className="text-foreground">
         {score.toFixed(3)} <span className="text-muted-foreground">({g.letter})</span>
       </span>

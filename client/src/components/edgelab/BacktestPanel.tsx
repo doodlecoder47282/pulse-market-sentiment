@@ -145,7 +145,7 @@ export default function BacktestPanel() {
             {runMutation.isPending ? "running…" : "run backtest"}
           </Button>
           {symbols.length > 0 && (
-            <span className="text-[10px] text-muted-foreground self-center">{symbols.length} symbols available</span>
+            <span className="text-[11px] text-muted-foreground self-center">{symbols.length} symbols available</span>
           )}
         </div>
       </div>
@@ -214,7 +214,7 @@ export default function BacktestPanel() {
         </>
       )}
 
-      <p className="text-[10px] text-muted-foreground leading-snug">
+      <p className="text-[11px] text-muted-foreground leading-snug">
         vectorized signal runner with realistic costs (default 6 bps round-trip). Sharpe = annualized risk-adjusted return; Sortino punishes only downside vol. anything below 1.0 with a small sample = noise.
       </p>
     </div>
@@ -225,7 +225,7 @@ function Stat({ label, value, positive }: { label: string; value: string; positi
   const color = positive == null ? "" : positive > 0 ? "text-emerald-500" : positive < 0 ? "text-rose-500" : "";
   return (
     <div className="rounded border border-border/60 bg-muted/20 p-2">
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className={`text-sm font-semibold tabular-nums ${color}`}>{value}</div>
     </div>
   );

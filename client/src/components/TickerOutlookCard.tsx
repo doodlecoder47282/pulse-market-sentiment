@@ -386,7 +386,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
                 ai outlook
               </span>
               <span className="font-mono text-base font-bold text-foreground">{ticker}</span>
@@ -396,7 +396,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                 </span>
               )}
               {v?.provider && (
-                <span className="rounded border border-border/60 bg-muted/40 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                <span className="rounded border border-border/60 bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
                   {v.provider}
                 </span>
               )}
@@ -420,7 +420,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                   score (heuristic)
                 </span>
                 {v.edgeType && v.edgeType !== "none" && (
-                  <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider ${dirBorder(dir)} ${dirText(dir)}`}>
+                  <span className={`rounded border px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider ${dirBorder(dir)} ${dirText(dir)}`}>
                     {v.edgeType} edge
                   </span>
                 )}
@@ -437,7 +437,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
             )}
           </div>
 
-          <span className="shrink-0 rounded border border-border/60 px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+          <span className="shrink-0 rounded border border-border/60 px-2 py-1 text-[11px] uppercase tracking-wider text-muted-foreground">
             {expanded ? "hide" : "show"}
           </span>
         </div>
@@ -529,16 +529,16 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
               <div className="rounded-lg border border-border/40 bg-muted/10 p-2 sm:p-3">
                 <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                       60-session forward cone
                     </span>
                     {proj.data && (
-                      <span className="font-mono text-[10px] text-muted-foreground">
+                      <span className="font-mono text-[11px] text-muted-foreground">
                         σ {proj.data.sigmaAnnualizedPct.toFixed(1)}% ann · {proj.data.sigmaSource === "realized_30d" ? "30d realized (no chain)" : "own ATM IV term"}
                       </span>
                     )}
                   </div>
-                  <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                  <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
                     {proj.data?.sigmaSource === "realized_30d" ? "realized vol" : "implied vol"} · not ML
                   </span>
                 </div>
@@ -609,7 +609,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                   </div>
                 )}
                 {proj.data && (
-                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
                     <span className="flex items-center gap-1">
                       <span className={`inline-block h-2 w-3 rounded-sm ${dir === "BULL" ? "bg-emerald-500/60" : dir === "BEAR" ? "bg-rose-500/60" : "bg-amber-500/60"}`} />
                       50% band (q25–q75)
@@ -625,20 +625,20 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
 
               {/* Thesis + counter (detailed) */}
               <div className="rounded border border-border/40 bg-muted/10 p-2 text-xs">
-                <div className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                   detailed thesis
                 </div>
                 <div className="mt-0.5 text-foreground" data-testid="text-thesis">
                   {v.thesis}
                 </div>
                 <div className="mt-1.5 text-muted-foreground" data-testid="text-counter">
-                  <span className="text-[9px] font-semibold uppercase tracking-wider">counter:</span>{" "}
+                  <span className="text-[11px] font-semibold uppercase tracking-wider">counter:</span>{" "}
                   {v.counterargument}
                 </div>
               </div>
 
               {/* Scenarios: weights are heuristic (hand-set or AI-written), not calibrated */}
-              <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
                 scenario weights · heuristic, not calibrated probabilities
               </div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -649,7 +649,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
 
               {/* Positioning row */}
               <div className="rounded border border-border/40 bg-muted/10 p-2">
-                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                   positioning
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 md:grid-cols-6">
@@ -702,10 +702,10 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                 {/* News */}
                 <div className="rounded border border-border/40 bg-muted/10 p-2">
                   <div className="mb-1.5 flex items-center justify-between">
-                    <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                       alpha news ({q.data.alpha.news.events.length})
                     </div>
-                    <div className="font-mono text-[10px] text-muted-foreground">
+                    <div className="font-mono text-[11px] text-muted-foreground">
                       bias {q.data.alpha.rollup.newsBias > 0 ? "+" : ""}
                       {q.data.alpha.rollup.newsBias}
                     </div>
@@ -720,7 +720,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                       <li key={e.id} className="text-xs" data-testid={`news-event-${e.id}`}>
                         <div className="flex items-start gap-1.5">
                           <span
-                            className={`mt-0.5 shrink-0 rounded border px-1 py-0 font-mono text-[9px] uppercase tracking-wider ${tierBadge(e.tier)}`}
+                            className={`mt-0.5 shrink-0 rounded border px-1 py-0 font-mono text-[11px] uppercase tracking-wider ${tierBadge(e.tier)}`}
                           >
                             {e.tier === "SENTIMENT_SHIFT" ? "shift" : e.tier.replace("TIER_", "T")}
                           </span>
@@ -733,7 +733,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                             {e.title}
                           </a>
                         </div>
-                        <div className="mt-0.5 ml-1 flex items-center gap-2 text-[10px] text-muted-foreground">
+                        <div className="mt-0.5 ml-1 flex items-center gap-2 text-[11px] text-muted-foreground">
                           <span>{e.source}</span>
                           <span>· {ago(e.ts * 1000)} ago</span>
                           <span>· score {e.alphaScore}</span>
@@ -757,10 +757,10 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                 {/* Social */}
                 <div className="rounded border border-border/40 bg-muted/10 p-2">
                   <div className="mb-1.5 flex items-center justify-between">
-                    <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                       social exposure
                     </div>
-                    <div className="flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
+                    <div className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
                       <span title={q.data.alpha.social.scoreReason ?? undefined}>
                         tone {q.data.alpha.social.score == null
                           ? "not available"
@@ -774,7 +774,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                       )}
                     </div>
                   </div>
-                  <div className="mb-1.5 grid grid-cols-3 gap-1 text-[10px] text-muted-foreground">
+                  <div className="mb-1.5 grid grid-cols-3 gap-1 text-[11px] text-muted-foreground">
                     <KV label="stocktwits" value={srcCount(q.data.alpha.social.bySource?.stocktwits)} />
                     <KV label="reddit" value={srcCount(q.data.alpha.social.bySource?.reddit)} />
                     <KV label="x" value={srcCount(q.data.alpha.social.bySource?.x)} />
@@ -784,7 +784,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                       <li key={i} className="text-xs" data-testid={`social-post-${i}`}>
                         <div className="flex items-start gap-1.5">
                           <span
-                            className={`shrink-0 rounded border border-border/40 px-1 py-0 font-mono text-[9px] uppercase tracking-wider ${
+                            className={`shrink-0 rounded border border-border/40 px-1 py-0 font-mono text-[11px] uppercase tracking-wider ${
                               p.tone === "bullish"
                                 ? "text-emerald-300"
                                 : p.tone === "bearish"
@@ -805,7 +805,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
               {/* Pivot magnet ladder */}
               {sortedPivots.length > 0 && (
                 <div className="rounded border border-border/40 bg-muted/10 p-2">
-                  <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                     pivot magnets · top {sortedPivots.length}
                   </div>
                   <div className="space-y-1">
@@ -817,7 +817,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                       >
                         <div className="flex items-center gap-2">
                           <span
-                            className={`rounded border px-1 py-0 font-mono text-[9px] uppercase tracking-wider ${
+                            className={`rounded border px-1 py-0 font-mono text-[11px] uppercase tracking-wider ${
                               l.tier === "major"
                                 ? "border-cyan-500/40 bg-cyan-500/15 text-cyan-300"
                                 : "border-border/60 bg-muted/30 text-muted-foreground"
@@ -826,12 +826,12 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                             {l.label}
                           </span>
                           {l.confluence > 1 && (
-                            <span className="font-mono text-[9px] text-amber-300">
+                            <span className="font-mono text-[11px] text-amber-300">
                               x{l.confluence}
                             </span>
                           )}
                           {l.stackedWith.length > 0 && (
-                            <span className="text-[10px] text-muted-foreground">
+                            <span className="text-[11px] text-muted-foreground">
                               + {l.stackedWith.join(", ")}
                             </span>
                           )}
@@ -856,7 +856,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
               {/* Triggers */}
               {v.triggers.length > 0 && (
                 <div className="rounded border border-border/40 bg-muted/10 p-2">
-                  <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                     triggers
                   </div>
                   <ul className="space-y-0.5 text-xs text-foreground/90">
@@ -871,7 +871,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
               )}
 
               {q.data.warnings.length > 0 && (
-                <div className="text-[10px] text-amber-300/80">
+                <div className="text-[11px] text-amber-300/80">
                   warnings: {q.data.warnings.join(" · ")}
                 </div>
               )}
@@ -898,9 +898,9 @@ function KV({
 }) {
   return (
     <div title={title}>
-      <div className="text-[9px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className={`font-mono text-sm tabular-nums ${valueClass ?? ""}`}>{value}</div>
-      {hint && <div className="text-[9px] text-muted-foreground">{hint}</div>}
+      {hint && <div className="text-[11px] text-muted-foreground">{hint}</div>}
     </div>
   );
 }
@@ -927,7 +927,7 @@ function ScenarioBar({
   return (
     <div className={`rounded border p-2 ${colorMap[color]}`} data-testid={`scenario-${label}`}>
       <div className="flex items-center justify-between">
-        <span className="font-mono text-[10px] uppercase tracking-wider">{label}</span>
+        <span className="font-mono text-[11px] uppercase tracking-wider">{label}</span>
         <span className="font-mono text-xs font-bold tabular-nums">{s.prob}% wt</span>
       </div>
       <div className="mt-1 h-1 overflow-hidden rounded-full bg-black/30">
@@ -940,7 +940,7 @@ function ScenarioBar({
         {s.targetPct >= 0 ? "+" : ""}
         {s.targetPct.toFixed(2)}%
       </div>
-      <div className="mt-1 line-clamp-2 text-[10px] opacity-80">{s.thesis}</div>
+      <div className="mt-1 line-clamp-2 text-[11px] opacity-80">{s.thesis}</div>
     </div>
   );
 }

@@ -339,20 +339,20 @@ function FlowTile({ tick }: { tick: FlowTicker }) {
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-semibold tracking-wider">{tick.label}</span>
         {priceChange != null && (
-          <span className={`font-mono text-[9px] tabular-nums ${priceChange > 0 ? "text-emerald-400" : priceChange < 0 ? "text-rose-400" : "text-muted-foreground"}`}>
+          <span className={`font-mono text-[11px] tabular-nums ${priceChange > 0 ? "text-emerald-400" : priceChange < 0 ? "text-rose-400" : "text-muted-foreground"}`}>
             {priceChange > 0 ? "+" : ""}{priceChange.toFixed(2)}%
           </span>
         )}
       </div>
       <div className={`font-mono text-lg font-bold tabular-nums ${c.text}`}>{fmtPcr(tick.pcrVolume)}</div>
-      <div className="flex items-center justify-between text-[9px] text-muted-foreground">
+      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
         <span>P {tick.dataState === "unavailable" ? "—" : `${(tick.putVol / 1000).toFixed(0)}k`}</span>
         <span>·</span>
         <span>C {tick.dataState === "unavailable" ? "—" : `${(tick.callVol / 1000).toFixed(0)}k`}</span>
         <span>·</span>
         <span>OI {fmtPcr(tick.pcrOI)}</span>
       </div>
-      <div className="text-[9px] text-muted-foreground" title={tick.pcrRead?.reason ?? tick.pcrRead?.method ?? ""}>
+      <div className="text-[11px] text-muted-foreground" title={tick.pcrRead?.reason ?? tick.pcrRead?.method ?? ""}>
         {zDetail(tick.pcrRead)}
       </div>
     </div>
@@ -373,7 +373,7 @@ function StatBox({ label, value, tone = "neutral" }: { label: string; value: str
     : "border-border/40 bg-card/40 text-foreground";
   return (
     <div className={`rounded-md border px-2 py-1 ${toneCls}`}>
-      <div className="text-[9px] text-muted-foreground uppercase tracking-wider">{label}</div>
+      <div className="text-[11px] text-muted-foreground uppercase tracking-wider">{label}</div>
       <div className="font-mono font-semibold text-[11px]">{value}</div>
     </div>
   );
@@ -453,7 +453,7 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
   if (!series.length || !stats) return (
     <div className="flex h-32 flex-col items-center justify-center gap-1 text-xs text-muted-foreground" data-testid="flow-intraday-insufficient">
       <span>Insufficient samples — no intraday series drawn</span>
-      <span className="text-[10px] text-muted-foreground/70">
+      <span className="text-[11px] text-muted-foreground">
         {ticker.seriesReason ?? "accumulating fresh Schwab chain reads"}
         {ticker.chainState && ticker.chainState !== "fresh" ? ` · this poll: chain ${ticker.chainState}` : ""}
       </span>
@@ -531,7 +531,7 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
               key={v}
               onClick={() => setView(v)}
               data-testid={`button-flow-view-${v}`}
-              className={`px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider transition-colors ${
+              className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wider transition-colors ${
                 view === v ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground"
               }`}
             >
@@ -539,7 +539,7 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
             </button>
           ))}
         </div>
-        <div className="text-[9px] text-muted-foreground font-mono">
+        <div className="text-[11px] text-muted-foreground font-mono">
           {stats.sessionRange}{estimated && <span className="ml-2 text-amber-400/70">· est dist</span>}
         </div>
       </div>
@@ -576,8 +576,8 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
       {/* ─── LAST-PRINT SIDE: day volume tagged by each contract's latest print vs quote ─── */}
       <div className="rounded-md border border-border/40 bg-card/20 p-2">
         <div className="mb-1.5 flex items-center justify-between">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground" title={ticker.sideMethod ?? LAST_PRINT_SIDE_NOTE}>Last-print side · ask vs bid</span>
-          <span className="text-[9px] font-mono text-muted-foreground" data-testid="aggressor-classified-pct">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground" title={ticker.sideMethod ?? LAST_PRINT_SIDE_NOTE}>Last-print side · ask vs bid</span>
+          <span className="text-[11px] font-mono text-muted-foreground" data-testid="aggressor-classified-pct">
             {sideUnavailable
               ? "side unavailable · no chain data"
               : `classified ${ticker.aggressor.classifiedPct.toFixed(0)}% · last print vs quote${ticker.aggressorState === "cached" ? " · cached" : ""}`}
@@ -631,8 +631,8 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
       {/* ─── TRADE-LEVEL SIDE: Lee-Ready on streamed option trade blocks (streamed contracts only) ─── */}
       <div className="rounded-md border border-border/40 bg-card/20 p-2" data-testid="flow-stream-side">
         <div className="mb-1.5 flex flex-wrap items-center justify-between gap-1">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground" title={ticker.streamSide?.method ?? "Lee-Ready on Schwab LEVELONE_OPTIONS trade blocks for streamed contracts only."}>Trade-level side · streamed contracts</span>
-          <span className="text-[9px] font-mono text-muted-foreground">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground" title={ticker.streamSide?.method ?? "Lee-Ready on Schwab LEVELONE_OPTIONS trade blocks for streamed contracts only."}>Trade-level side · streamed contracts</span>
+          <span className="text-[11px] font-mono text-muted-foreground">
             {ticker.streamSide
               ? `${ticker.streamSide.contracts} contract${ticker.streamSide.contracts === 1 ? "" : "s"} · covers ${ticker.streamSide.coveragePct == null ? "—" : ticker.streamSide.coveragePct.toFixed(1)}% of chain day vol · quote rule ${ticker.streamSide.quoteRulePct?.toFixed(0) ?? "—"}%${ticker.streamSideState === "stream_down" ? " · stream down, totals to last block" : ""}`
               : ticker.streamSideState === "none_streamed" ? "no contract of this chain is streamed: not classified"
@@ -858,7 +858,7 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
       )}
 
       {/* Legend */}
-      <div className="flex items-center gap-3 text-[10px] text-muted-foreground px-2 flex-wrap">
+      <div className="flex items-center gap-3 text-[11px] text-muted-foreground px-2 flex-wrap">
         {view === "flow" ? (
           <>
             <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-emerald-400" /> Calls ask-side</span>
@@ -866,14 +866,14 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
             <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-rose-500" /> Puts ask-side</span>
             <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm bg-rose-900/70" /> Puts bid-side</span>
             <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-slate-400" style={{ backgroundImage: "repeating-linear-gradient(90deg, #94a3b8 0 3px, transparent 3px 6px)" }} /> Overall vol</span>
-            <span className="text-muted-foreground/60" title={LAST_PRINT_SIDE_NOTE}>· side = last print vs quote, not trade-by-trade</span>
+            <span className="text-muted-foreground" title={LAST_PRINT_SIDE_NOTE}>· side = last print vs quote, not trade-by-trade</span>
           </>
         ) : view === "bars" ? (
           <>
             <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 bg-emerald-500" /> Calls Δ volume (both sides)</span>
             <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 bg-rose-500" /> Puts Δ volume (both sides)</span>
             <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-amber-500" /> P/C overlay</span>
-            <span className="text-muted-foreground/60">· brighter = spike (≥2× avg)</span>
+            <span className="text-muted-foreground">· brighter = spike (≥2× avg)</span>
           </>
         ) : view === "area" ? (
           <>
@@ -923,10 +923,10 @@ function IntradayFlowSection({ flow }: { flow?: FlowResponse }) {
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Intraday Call/Put Flow · Ask vs Bid Side</span>
           {!data.marketOpen && (
-            <Badge variant="outline" className="text-[9px] text-muted-foreground border-border/50">After Hours</Badge>
+            <Badge variant="outline" className="text-[11px] text-muted-foreground border-border/50">After Hours</Badge>
           )}
           {data.estimated && (
-            <Badge variant="outline" className="text-[9px] text-amber-400 border-amber-500/40">Estimated Distribution</Badge>
+            <Badge variant="outline" className="text-[11px] text-amber-400 border-amber-500/40">Estimated Distribution</Badge>
           )}
         </div>
         {/* Ticker pills */}
@@ -937,7 +937,7 @@ function IntradayFlowSection({ flow }: { flow?: FlowResponse }) {
               onClick={() => setSelectedTicker(t.symbol)}
               data-testid={`flow-intraday-ticker-${t.symbol}`}
               className={[
-                "inline-flex min-h-[44px] items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold transition sm:min-h-0",
+                "inline-flex min-h-[44px] items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold transition sm:min-h-0",
                 selectedTicker === t.symbol
                   ? "border-cyan-500/60 bg-cyan-500/15 text-cyan-300"
                   : "border-border/50 text-muted-foreground hover:border-cyan-500/30",
@@ -1010,7 +1010,7 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
             <LivenessBadge feedName="flow" value={agg.combinedPcr} className="ml-1" />
             <EdgeInfo id="pc-flow" />
           </CardTitle>
-          <div className="text-[10px] text-muted-foreground">
+          <div className="text-[11px] text-muted-foreground">
             <span title={data.coverage}>Schwab chains 0-7 DTE</span> · {new Date(data.asOf * 1000).toLocaleTimeString()}
           </div>
         </div>
@@ -1023,9 +1023,9 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
 
       {/* Symbol selector for chain */}
       <div className="mb-3 flex items-center gap-2">
-        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Chain Symbol</span>
+        <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Chain Symbol</span>
         <Select value={chainSymbol} onValueChange={setChainSymbol}>
-          <SelectTrigger className="h-11 w-24 text-[10px] sm:h-6" data-testid="chain-symbol-select">
+          <SelectTrigger className="h-11 w-24 text-[11px] sm:h-6" data-testid="chain-symbol-select">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -1042,21 +1042,21 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
           {/* Big combined PCR */}
           <div className={`flex items-center gap-3 rounded-lg border ${color.border} ${color.bg} px-4 py-3`}>
             <div>
-              <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Combined PCR</div>
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Combined PCR</div>
               <div className={`font-mono text-3xl font-bold tabular-nums ${color.text}`}>
                 {fmtPcr(agg.combinedPcr)}
               </div>
             </div>
             <div className="h-8 w-px bg-border/50" />
             <div className="flex flex-col gap-1">
-              <Badge variant="outline" className={`${color.border} ${color.text} text-[9px]`}>
+              <Badge variant="outline" className={`${color.border} ${color.text} text-[11px]`}>
                 {agg.zone === "bearish" ? <TrendingDown className="mr-1 h-2.5 w-2.5" /> : agg.zone === "bullish" ? <TrendingUp className="mr-1 h-2.5 w-2.5" /> : <Minus className="mr-1 h-2.5 w-2.5" />}
                 {zoneLabel(agg.zone)}
               </Badge>
               {agg.pcrRead && (
-                <div className="text-[9px] text-muted-foreground" title={agg.pcrRead.reason ?? agg.pcrRead.method}>{zDetail(agg.pcrRead)}</div>
+                <div className="text-[11px] text-muted-foreground" title={agg.pcrRead.reason ?? agg.pcrRead.method}>{zDetail(agg.pcrRead)}</div>
               )}
-              <div className="flex gap-3 text-[10px] text-muted-foreground">
+              <div className="flex gap-3 text-[11px] text-muted-foreground">
                 <span>Idx <span className="font-mono text-foreground">{fmtPcr(agg.indexPcr)}</span></span>
                 <span>Mag7 <span className="font-mono text-foreground">{fmtPcr(agg.mag7Pcr)}</span></span>
               </div>
@@ -1066,13 +1066,13 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
           {/* Intraday spark */}
           <div className="flex flex-col justify-center rounded-lg border border-border/40 bg-muted/10 px-3 py-2">
             <div className="mb-1 flex items-center justify-between">
-              <span className="text-[9px] uppercase tracking-wider text-muted-foreground">Intraday PCR (last {series.length} samples)</span>
-              <span className="text-[9px] text-muted-foreground">≈ {Math.round((series.length * 10) / 60)} min</span>
+              <span className="text-[11px] uppercase tracking-wider text-muted-foreground">Intraday PCR (last {series.length} samples)</span>
+              <span className="text-[11px] text-muted-foreground">≈ {Math.round((series.length * 10) / 60)} min</span>
             </div>
             {series.length >= 2
               ? <PcrSparkline series={series} width={360} height={56} showAxis bands={agg.pcrRead} />
-              : <div className="flex h-14 items-center text-[10px] text-muted-foreground">insufficient samples: {series.length} fresh Schwab read{series.length === 1 ? "" : "s"} so far</div>}
-            <div className="mt-0.5 text-[9px] text-muted-foreground/70">
+              : <div className="flex h-14 items-center text-[11px] text-muted-foreground">insufficient samples: {series.length} fresh Schwab read{series.length === 1 ? "" : "s"} so far</div>}
+            <div className="mt-0.5 text-[11px] text-muted-foreground">
               {hasPcrBands(agg.pcrRead)
                 ? `bands = combined ±1 sd at this clock time (${agg.pcrRead!.n} sessions)`
                 : `no zone bands: ${agg.pcrRead?.reason ?? "combined history unavailable"}`}
@@ -1080,17 +1080,17 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
           </div>
 
           {/* Interpretation key */}
-          <div className="hidden flex-col justify-center gap-1 text-[9px] text-muted-foreground md:flex">
+          <div className="hidden flex-col justify-center gap-1 text-[11px] text-muted-foreground md:flex">
             <div className="flex items-center gap-1"><span className="h-1.5 w-3 rounded-sm bg-emerald-500" /> z ≤ −1 call-heavy for symbol</div>
             <div className="flex items-center gap-1"><span className="h-1.5 w-3 rounded-sm bg-amber-500" /> |z| &lt; 1 normal for symbol</div>
             <div className="flex items-center gap-1"><span className="h-1.5 w-3 rounded-sm bg-rose-500" /> z ≥ +1 put-heavy for symbol</div>
-            <div className="text-muted-foreground/70">vs own last 60 sessions at this clock time · descriptive, not a forecast</div>
+            <div className="text-muted-foreground">vs own last 60 sessions at this clock time · descriptive, not a forecast</div>
           </div>
         </div>
 
         {/* Index row */}
         <div>
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Index</div>
+          <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Index</div>
           <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
             {data.indexGroup.map((t) => <FlowTile key={t.symbol} tick={t} />)}
           </div>
@@ -1098,14 +1098,14 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
 
         {/* Mag 7 row */}
         <div>
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Mag 7</div>
+          <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Mag 7</div>
           <div className="grid grid-cols-3 gap-2 md:grid-cols-7">
             {data.mag7Group.map((t) => <FlowTile key={t.symbol} tick={t} />)}
           </div>
         </div>
 
         {data.warnings.length > 0 && (
-          <div className="text-[9px] text-amber-400/70">
+          <div className="text-[11px] text-amber-400/70">
             {data.warnings.join(" · ")}
           </div>
         )}
@@ -1148,12 +1148,12 @@ export function FlowStrip() {
       <div className="flex flex-wrap items-center gap-3 rounded-md border border-border/40 bg-card/40 px-3 py-2 backdrop-blur" data-testid="flow-strip">
         <div className="flex items-center gap-2">
           <Activity className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">P/C Flow</span>
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">P/C Flow</span>
         </div>
-        <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider text-amber-300">
+        <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-mono uppercase tracking-wider text-amber-300">
           feed offline
         </span>
-        <span className="ml-auto font-mono text-[9px] text-muted-foreground">
+        <span className="ml-auto font-mono text-[11px] text-muted-foreground">
           no options prints — resumes with live session
         </span>
       </div>
@@ -1164,21 +1164,21 @@ export function FlowStrip() {
     <div className={`flex flex-wrap items-center gap-3 rounded-md border ${color.border} ${color.bg} px-3 py-2 backdrop-blur`} data-testid="flow-strip">
       <div className="flex items-center gap-2">
         <Activity className="h-3.5 w-3.5 text-cyan-400" />
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">P/C Flow</span>
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">P/C Flow</span>
       </div>
       <div className="flex items-baseline gap-1.5">
         <span className={`font-mono text-lg font-bold tabular-nums ${color.text}`}>{fmtPcr(agg.combinedPcr)}</span>
-        <span className={`text-[9px] font-semibold ${color.text}`}>{zoneLabel(agg.zone)}</span>
+        <span className={`text-[11px] font-semibold ${color.text}`}>{zoneLabel(agg.zone)}</span>
       </div>
       <div className="h-5 w-px bg-border/40" />
-      <div className="flex gap-2 text-[10px]">
+      <div className="flex gap-2 text-[11px]">
         <span className="text-muted-foreground">Idx <span className={`font-mono ${color.text}`}>{fmtPcr(agg.indexPcr)}</span></span>
         <span className="text-muted-foreground">Mag7 <span className={`font-mono ${color.text}`}>{fmtPcr(agg.mag7Pcr)}</span></span>
       </div>
       <div className="ml-auto">
         {data.intradaySeries.length >= 2
           ? <PcrSparkline series={data.intradaySeries} width={140} height={28} bands={agg.pcrRead} />
-          : <span className="text-[9px] text-muted-foreground">insufficient samples</span>}
+          : <span className="text-[11px] text-muted-foreground">insufficient samples</span>}
       </div>
     </div>
   );

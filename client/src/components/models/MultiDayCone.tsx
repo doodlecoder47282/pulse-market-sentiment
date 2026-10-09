@@ -141,11 +141,11 @@ export default function MultiDayCone({ defaultSymbol = "^GSPC" }: { defaultSymbo
             <div className="text-[11px] uppercase tracking-[0.2em] text-indigo-300/80">
               Multi-Day Forward Cone · 10 sessions
             </div>
-            <div className="text-[10px] text-muted-foreground">
+            <div className="text-[11px] text-muted-foreground">
               realized vol cone · q10/q25/q50/q75/q90 · honest, not a trained model
             </div>
           </div>
-          <Badge variant="outline" className="ml-auto border-amber-500/40 bg-amber-500/5 px-2 py-0.5 text-[9px] text-amber-300">
+          <Badge variant="outline" className="ml-auto border-amber-500/40 bg-amber-500/5 px-2 py-0.5 text-[11px] text-amber-300">
             vol cone · not ML
           </Badge>
         </div>
@@ -153,24 +153,24 @@ export default function MultiDayCone({ defaultSymbol = "^GSPC" }: { defaultSymbo
         {/* Stats strip */}
         <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
           <div className="rounded border border-border/40 bg-black/30 p-2">
-            <div className="text-[9px] uppercase text-muted-foreground">spot</div>
+            <div className="text-[11px] uppercase text-muted-foreground">spot</div>
             <div className="font-mono text-sm text-foreground">{data.spot.toFixed(2)}</div>
           </div>
           <div className="rounded border border-border/40 bg-black/30 p-2">
-            <div className="text-[9px] uppercase text-muted-foreground">σ daily / annual</div>
+            <div className="text-[11px] uppercase text-muted-foreground">σ daily / annual</div>
             <div className="font-mono text-sm text-foreground">
               {(data.sigmaDaily * 100).toFixed(2)}% / {data.sigmaAnnualizedPct.toFixed(1)}%
             </div>
           </div>
           <div className="rounded border border-border/40 bg-black/30 p-2">
-            <div className="text-[9px] uppercase text-muted-foreground">drift / day</div>
+            <div className="text-[11px] uppercase text-muted-foreground">drift / day</div>
             <div className={`font-mono text-sm ${data.driftDaily > 0 ? "text-green-400" : data.driftDaily < 0 ? "text-red-400" : "text-foreground"}`}>
               {data.driftDaily >= 0 ? "+" : ""}
               {(data.driftDaily * 100).toFixed(3)}%
             </div>
           </div>
           <div className="rounded border border-border/40 bg-black/30 p-2">
-            <div className="text-[9px] uppercase text-muted-foreground">vol blowup factor</div>
+            <div className="text-[11px] uppercase text-muted-foreground">vol blowup factor</div>
             <div className="font-mono text-sm text-foreground">{data.volBlowupFactor.toFixed(2)}x</div>
           </div>
         </div>
@@ -274,8 +274,8 @@ export default function MultiDayCone({ defaultSymbol = "^GSPC" }: { defaultSymbo
 
         {/* Day-by-day table strip (compact) */}
         <div className="mt-2 hscroll-contain">
-          <table className="w-full font-mono text-[9px]">
-            <thead className="text-muted-foreground/60">
+          <table className="w-full font-mono text-[11px]">
+            <thead className="text-muted-foreground">
               <tr>
                 <th className="text-left py-1 px-1">day</th>
                 <th className="text-right py-1 px-1">q10</th>
@@ -297,7 +297,7 @@ export default function MultiDayCone({ defaultSymbol = "^GSPC" }: { defaultSymbo
                     <td className="py-0.5 px-1 text-right text-indigo-200">{b.q50.toFixed(2)}</td>
                     <td className="py-0.5 px-1 text-right text-green-300/60">{b.q75.toFixed(2)}</td>
                     <td className="py-0.5 px-1 text-right text-green-300/80">{b.q90.toFixed(2)}</td>
-                    <td className="py-0.5 px-1 text-right text-muted-foreground/70">±{(width / 2).toFixed(2)}%</td>
+                    <td className="py-0.5 px-1 text-right text-muted-foreground">±{(width / 2).toFixed(2)}%</td>
                   </tr>
                 );
               })}
@@ -306,7 +306,7 @@ export default function MultiDayCone({ defaultSymbol = "^GSPC" }: { defaultSymbo
         </div>
 
         {/* Honesty footer */}
-        <div className="mt-2 rounded border border-amber-500/20 bg-amber-500/5 p-2 text-[9px] text-amber-300/80">
+        <div className="mt-2 rounded border border-amber-500/20 bg-amber-500/5 p-2 text-[11px] text-amber-300/80">
           <span className="font-bold uppercase tracking-wider">methodology:</span> {data.honestyNote}
         </div>
       </CardContent>

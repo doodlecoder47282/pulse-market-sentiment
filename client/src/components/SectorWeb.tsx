@@ -866,7 +866,7 @@ function ForceGraph({ data, winKey }: { data: SectorWebResponse; winKey: WindowK
         >
           <Maximize2 className="h-3 w-3" />
         </Button>
-        <span className="px-1 font-mono text-[10px] text-muted-foreground">
+        <span className="px-1 font-mono text-[11px] text-muted-foreground">
           {Math.round(zoom.k * 100)}%
         </span>
       </div>
@@ -914,7 +914,7 @@ function ForceGraph({ data, winKey }: { data: SectorWebResponse; winKey: WindowK
               <span className="text-muted-foreground">·</span>
               <span className="text-[11px] font-normal text-muted-foreground">{hover.name}</span>
             </div>
-            <div className="mt-0.5 flex items-center gap-2 text-[9.5px] uppercase tracking-wider text-muted-foreground">
+            <div className="mt-0.5 flex items-center gap-2 text-[11px] uppercase tracking-wider text-muted-foreground">
               <span>{kindLabel}</span>
               {parentSector && (<><span>·</span><span>{parentSector}</span></>)}
             </div>
@@ -931,7 +931,7 @@ function ForceGraph({ data, winKey }: { data: SectorWebResponse; winKey: WindowK
               <PerfCell label={`Return ${WINDOW_LABEL[winKey]}`} value={hover.r} />
               <PerfCell label="vs SPY" value={hover.rs} />
               <div>
-                <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Hot?</div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Hot?</div>
                 <div className={`font-mono text-[12px] font-semibold ${Math.abs(hover.rs) > 1.5 ? "text-cyan-300" : "text-muted-foreground"}`}>
                   {Math.abs(hover.rs) > 1.5 ? "● rotation" : "—"}
                 </div>
@@ -939,7 +939,7 @@ function ForceGraph({ data, winKey }: { data: SectorWebResponse; winKey: WindowK
             </div>
 
             {hover.kind !== "market" && (
-              <div className="mt-2 border-t border-border/30 pt-1.5 text-[10px] text-cyan-300/80">
+              <div className="mt-2 border-t border-border/30 pt-1.5 text-[11px] text-cyan-300/80">
                 click → load in chart · shift+click → isolate neighbors
               </div>
             )}
@@ -954,7 +954,7 @@ function PerfCell({ label, value }: { label: string; value: number }) {
   const pos = value >= 0;
   return (
     <div>
-      <div className="text-[9px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className={`font-mono text-[12px] font-semibold ${pos ? "text-emerald-400" : "text-red-400"}`}>
         {pos ? "+" : ""}{value.toFixed(2)}%
       </div>
@@ -1007,13 +1007,13 @@ function SectorHeatmap({ grid, winKey, spy }: { grid: SectorGridRow[]; winKey: W
             >
               <div className="flex-1">
                 <div className="text-[13px] font-semibold">{row.sectorName}</div>
-                <div className="font-mono text-[10px] text-muted-foreground">{row.etf}</div>
+                <div className="font-mono text-[11px] text-muted-foreground">{row.etf}</div>
               </div>
               <div className="text-right">
                 <div className={`font-mono text-sm font-semibold ${rowR >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                   {rowR >= 0 ? "+" : ""}{rowR.toFixed(2)}%
                 </div>
-                <div className={`font-mono text-[10px] ${rowRs >= 0 ? "text-emerald-500/80" : "text-red-500/80"}`}>
+                <div className={`font-mono text-[11px] ${rowRs >= 0 ? "text-emerald-500/80" : "text-red-500/80"}`}>
                   RS {rowRs >= 0 ? "+" : ""}{rowRs.toFixed(2)}
                 </div>
               </div>
@@ -1035,7 +1035,7 @@ function SectorHeatmap({ grid, winKey, spy }: { grid: SectorGridRow[]; winKey: W
                     onClick={() => focusChart(l.symbol)}
                   >
                     <span className="font-mono text-[11px] font-semibold leading-tight">{l.symbol}</span>
-                    <span className={`font-mono text-[10px] leading-tight ${lR >= 0 ? "text-emerald-300" : "text-red-300"}`}>
+                    <span className={`font-mono text-[11px] leading-tight ${lR >= 0 ? "text-emerald-300" : "text-red-300"}`}>
                       {lR >= 0 ? "+" : ""}{lR.toFixed(1)}%
                     </span>
                   </button>

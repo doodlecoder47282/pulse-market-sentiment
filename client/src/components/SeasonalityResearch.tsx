@@ -256,7 +256,7 @@ function Row({ label, val, color }: { label: string; val: string; color: string 
 function StatChip({ label, val, color }: { label: string; val: string; color: string }) {
   return (
     <div className="rounded-md border border-border/50 bg-card/40 px-2.5 py-1.5">
-      <div className="text-[9px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className={`font-mono text-sm font-semibold tabular-nums ${color}`}>{val}</div>
     </div>
   );
@@ -335,11 +335,11 @@ function ResearchResults({ ticker, lookback }: { ticker: SeasonalityTicker; look
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-sm font-bold text-cyan-300">{ticker.symbol}</span>
-          <Badge variant="outline" className="text-[10px] font-mono text-muted-foreground">
+          <Badge variant="outline" className="text-[11px] font-mono text-muted-foreground">
             {lookback}Y lookback
           </Badge>
           {ticker.yearsCovered.length > 0 && (
-            <span className="text-[10px] text-muted-foreground">
+            <span className="text-[11px] text-muted-foreground">
               {ticker.yearsCovered[0]}–{ticker.yearsCovered[ticker.yearsCovered.length - 1]}
             </span>
           )}
@@ -387,9 +387,9 @@ function ResearchResults({ ticker, lookback }: { ticker: SeasonalityTicker; look
             <span>SELL: <span className="font-mono font-bold">{opt.sellDate}</span></span>
             <span>Geo avg: <span className="font-mono font-bold">{fmtPct(opt.geometricAvgReturn)}</span></span>
             <span>Win rate: <span className="font-mono font-bold">{winRatePct(opt.winRate)}</span></span>
-            <Badge variant="outline" className={`text-[9px] ${confidenceColor(opt.confidenceLabel)}`}>{opt.confidenceLabel}</Badge>
+            <Badge variant="outline" className={`text-[11px] ${confidenceColor(opt.confidenceLabel)}`}>{opt.confidenceLabel}</Badge>
             {opt.significance && (
-              <span className="text-[10px] opacity-80" title={`Best of ${opt.significance.windowsSearched} windows searched, tested against calendar-scrambled history`}>
+              <span className="text-[11px] opacity-80" title={`Best of ${opt.significance.windowsSearched} windows searched, tested against calendar-scrambled history`}>
                 data-snooping p={opt.significance.pFamilywise.toFixed(2)}
                 {opt.significance.outOfSample ? ` · held-out ${opt.significance.outOfSample.heldOutYears}y rank ${Math.round(opt.significance.outOfSample.randomWindowPercentile * 100)}%${opt.significance.outOfSample.pValue != null ? `, p=${opt.significance.outOfSample.pValue.toFixed(2)}` : ""}` : ""}
               </span>
@@ -463,7 +463,7 @@ function ResearchResults({ ticker, lookback }: { ticker: SeasonalityTicker; look
               </ComposedChart>
             </ResponsiveContainer>
           </div>
-          <div className="mt-1.5 flex flex-wrap items-center gap-4 px-2 text-[10px] text-muted-foreground">
+          <div className="mt-1.5 flex flex-wrap items-center gap-4 px-2 text-[11px] text-muted-foreground">
             <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-slate-400" /> {lookback}yr avg</span>
             <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-cyan-400" /> {currentYear} YTD</span>
             <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-slate-500/25" /> ±1σ band</span>
@@ -514,7 +514,7 @@ function ResearchResults({ ticker, lookback }: { ticker: SeasonalityTicker; look
               </AreaChart>
             </ResponsiveContainer>
           </div>
-          <div className="mt-1 px-2 text-[9px] text-muted-foreground">
+          <div className="mt-1 px-2 text-[11px] text-muted-foreground">
             Blue = % of historical years positive at each calendar day. Above 70% = strong seasonal tailwind.
           </div>
         </CardContent>
@@ -544,7 +544,7 @@ function ResearchResults({ ticker, lookback }: { ticker: SeasonalityTicker; look
               </ComposedChart>
             </ResponsiveContainer>
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-4 px-2 text-[10px] text-muted-foreground">
+          <div className="mt-2 flex flex-wrap items-center gap-4 px-2 text-[11px] text-muted-foreground">
             <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-slate-500" /> avg</span>
             <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-violet-400" style={{ borderTop: "1.5px dashed #a78bfa" }} /> median</span>
             <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-cyan-400" /> {currentYear}</span>
@@ -555,7 +555,7 @@ function ResearchResults({ ticker, lookback }: { ticker: SeasonalityTicker; look
 
       {/* Monthly stats table */}
       <div className="hscroll-contain">
-        <table className="w-full text-[10px] border-collapse">
+        <table className="w-full text-[11px] border-collapse">
           <thead>
             <tr className="border-b border-border/50">
               <th className="text-left px-2 py-1 text-muted-foreground font-semibold uppercase tracking-wider">Month</th>
@@ -685,14 +685,14 @@ export default function SeasonalityResearch() {
 
             {/* Lookback selector */}
             <div className="flex items-center gap-1">
-              <span className="text-[9px] uppercase tracking-wider text-muted-foreground mr-0.5">Lookback</span>
+              <span className="text-[11px] uppercase tracking-wider text-muted-foreground mr-0.5">Lookback</span>
               {LOOKBACK_OPTIONS.map((yr) => (
                 <button
                   key={yr}
                   data-testid={`seasonality-research-lookback-${yr}`}
                   onClick={() => setLookback(yr)}
                   className={[
-                    "rounded-full border px-2 py-0.5 text-[10px] font-semibold transition",
+                    "rounded-full border px-2 py-0.5 text-[11px] font-semibold transition",
                     lookback === yr
                       ? "border-amber-500/60 bg-amber-500/15 text-amber-300"
                       : "border-border/50 text-muted-foreground hover:border-amber-500/30",

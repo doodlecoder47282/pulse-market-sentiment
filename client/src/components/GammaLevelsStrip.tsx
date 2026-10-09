@@ -260,13 +260,13 @@ export default function GammaLevelsStrip() {
                 className="flex shrink-0 items-center gap-1 rounded-full border border-border/50 bg-card/60 px-2 py-0.5"
               >
                 <span className={`h-1.5 w-1.5 rounded-full ${DOT_CLASS[row.dotColor]}`} />
-                <span className="text-[10px] text-muted-foreground">{row.name}</span>
-                <span className="font-mono text-[10px] font-semibold text-foreground">
+                <span className="text-[11px] text-muted-foreground">{row.name}</span>
+                <span className="font-mono text-[11px] font-semibold text-foreground">
                   {row.value?.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  {!isSpy && <span className="ml-0.5 text-[8px] text-muted-foreground/60">spx</span>}
+                  {!isSpy && <span className="ml-0.5 text-[11px] text-muted-foreground">spx</span>}
                 </span>
                 {dist != null && (
-                  <span className={`text-[9px] font-mono ${dist >= 0 ? "text-rose-400" : "text-emerald-400"}`}>
+                  <span className={`text-[11px] font-mono ${dist >= 0 ? "text-rose-400" : "text-emerald-400"}`}>
                     {dist >= 0 ? "+" : ""}{dist.toFixed(1)}%
                   </span>
                 )}
@@ -291,7 +291,7 @@ export default function GammaLevelsStrip() {
               return (
                 <div key={`${row.name}-${i}`}>
                   {showSection && (
-                    <div className="mt-2 mb-1 px-1 text-[9px] uppercase tracking-widest text-muted-foreground/50">
+                    <div className="mt-2 mb-1 px-1 text-[11px] uppercase tracking-widest text-muted-foreground">
                       {row.section}
                     </div>
                   )}
@@ -300,21 +300,21 @@ export default function GammaLevelsStrip() {
                     data-testid={`gamma-level-${row.name.toLowerCase().replace(/\s+/g, "-")}`}
                   >
                     <span className={`h-2 w-2 shrink-0 rounded-full ${DOT_CLASS[row.dotColor]}`} />
-                    <span className="flex-1 text-[10px] font-medium tracking-wide text-muted-foreground truncate">
+                    <span className="flex-1 text-[11px] font-medium tracking-wide text-muted-foreground truncate">
                       {row.name}
                     </span>
                     <div className="flex flex-col items-end">
                       <span className="font-mono text-[11px] font-semibold text-foreground tabular-nums">
                         {row.value?.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                        {!isSpy && <span className="ml-0.5 text-[8px] text-muted-foreground/50">spx</span>}
+                        {!isSpy && <span className="ml-0.5 text-[11px] text-muted-foreground">spx</span>}
                       </span>
                       {dist != null && (
-                        <span className={`text-[9px] font-mono tabular-nums ${dist >= 0 ? "text-rose-400" : "text-emerald-400"}`}>
+                        <span className={`text-[11px] font-mono tabular-nums ${dist >= 0 ? "text-rose-400" : "text-emerald-400"}`}>
                           {dist >= 0 ? "+" : ""}{dist.toFixed(1)}%
                         </span>
                       )}
                     </div>
-                    <span className={`text-[8px] shrink-0 ${SOURCE_TAG_CLASS[row.source]}`}>
+                    <span className={`text-[11px] shrink-0 ${SOURCE_TAG_CLASS[row.source]}`}>
                       {row.source === "computed" ? "calc" : "tgt"}
                     </span>
                   </div>
@@ -323,7 +323,7 @@ export default function GammaLevelsStrip() {
             });
           })()}
 
-          <div className="mt-2 px-1 text-[9px] text-muted-foreground/40 leading-tight">
+          <div className="mt-2 px-1 text-[11px] text-muted-foreground leading-tight">
             <span className={SOURCE_TAG_CLASS.computed}>calc</span> = from the Schwab SPY chain (SPY $) ·{" "}
             <span className={SOURCE_TAG_CLASS.user_targets}>tgt</span> = user weekly targets (SPX pts)
           </div>

@@ -100,7 +100,7 @@ const importanceColor = (imp: string) => {
 function LevelChip({ label, value, hint }: { label: string; value: number | null; hint?: string }) {
   return (
     <div className="rounded-md border border-border/40 bg-card/40 px-2 py-1.5 min-w-[90px]" title={hint}>
-      <div className="text-[9px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className="font-mono text-sm font-semibold">{value != null ? value.toFixed(2) : "—"}</div>
     </div>
   );
@@ -112,20 +112,20 @@ function PathCard({ kind, p }: { kind: "bull" | "base" | "bear"; p: { label: str
   return (
     <div className={`rounded-md border ${color} p-3 space-y-2`}>
       <div className="flex items-center justify-between">
-        <span className={`text-[10px] uppercase tracking-wider font-bold ${accent}`}>{kind} · {p.label}</span>
+        <span className={`text-[11px] uppercase tracking-wider font-bold ${accent}`}>{kind} · {p.label}</span>
         <span className="font-mono font-bold">{fmtProb(p.probability)}</span>
       </div>
       <div className="text-[11px] text-muted-foreground leading-snug">{p.oneLiner}</div>
-      <div className="text-[10px]">
+      <div className="text-[11px]">
         <span className="text-muted-foreground">trigger:</span> <span className="font-mono">{p.trigger}</span>
       </div>
-      <div className="text-[10px]">
+      <div className="text-[11px]">
         <span className="text-muted-foreground">target:</span> <span className="font-mono">{p.targetLow.toFixed(2)} – {p.targetHigh.toFixed(2)}</span>
       </div>
       {p.drivers.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {p.drivers.map((d, i) => (
-            <span key={i} className="rounded border border-border/40 bg-muted/30 px-1.5 py-0.5 text-[9px] text-muted-foreground">{d}</span>
+            <span key={i} className="rounded border border-border/40 bg-muted/30 px-1.5 py-0.5 text-[11px] text-muted-foreground">{d}</span>
           ))}
         </div>
       )}
@@ -162,11 +162,11 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
             <CardTitle className="text-sm font-semibold tracking-tight">Daily / Weekly Briefing</CardTitle>
             {d && (
               <>
-                <Badge variant="outline" className={`text-[10px] uppercase tracking-wider font-bold ${verdictPill(d.verdictColor)}`}>
+                <Badge variant="outline" className={`text-[11px] uppercase tracking-wider font-bold ${verdictPill(d.verdictColor)}`}>
                   {d.verdict}
                 </Badge>
                 {d.confidence != null && (
-                  <Badge variant="outline" className="text-[10px]" title="Heuristic score 0-100, not a calibrated probability.">score {d.confidence}/100</Badge>
+                  <Badge variant="outline" className="text-[11px]" title="Heuristic score 0-100, not a calibrated probability.">score {d.confidence}/100</Badge>
                 )}
               </>
             )}
@@ -218,7 +218,7 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
 
             {/* Levels strip */}
             <div className="space-y-1">
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">key levels · {d.symbol}{d.spot != null ? ` · spot ${d.spot.toFixed(2)}` : ""}</div>
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">key levels · {d.symbol}{d.spot != null ? ` · spot ${d.spot.toFixed(2)}` : ""}</div>
               <div className="flex flex-wrap gap-1.5">
                 <LevelChip label="call wall" value={d.levels.callWall} hint="dealer call wall — ceiling above" />
                 <LevelChip label="put wall" value={d.levels.putWall} hint="dealer put wall — floor below" />
@@ -242,9 +242,9 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
               {d.regime && (
                 <div className="rounded-md border border-border/40 bg-card/40 p-3 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">regime</span>
+                    <span className="text-[11px] uppercase tracking-wider text-muted-foreground">regime</span>
                     {d.regime.riskAxisDirection && (
-                      <Badge variant="outline" className="text-[9px]">{d.regime.riskAxisDirection}</Badge>
+                      <Badge variant="outline" className="text-[11px]">{d.regime.riskAxisDirection}</Badge>
                     )}
                   </div>
                   <div className="text-sm font-semibold">{d.regime.headline}</div>
@@ -256,15 +256,15 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
               {d.crossAsset && (
                 <div className="rounded-md border border-border/40 bg-card/40 p-3 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">cross-asset</span>
+                    <span className="text-[11px] uppercase tracking-wider text-muted-foreground">cross-asset</span>
                     {d.crossAsset.vix != null && (
-                      <span className="text-[10px] font-mono">vix {d.crossAsset.vix.toFixed(2)}</span>
+                      <span className="text-[11px] font-mono">vix {d.crossAsset.vix.toFixed(2)}</span>
                     )}
                   </div>
                   <div className="hscroll-contain">
                     <table className="w-full text-[11px]">
                       <thead>
-                        <tr className="text-left text-[9px] uppercase tracking-wider text-muted-foreground border-b border-border/30">
+                        <tr className="text-left text-[11px] uppercase tracking-wider text-muted-foreground border-b border-border/30">
                           <th className="pb-1 pr-2">sym</th>
                           <th className="pb-1 pr-2 text-right">last</th>
                           <th className="pb-1 pr-2 text-right">1d</th>
@@ -296,7 +296,7 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
             {d.playbook && (
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">playbook · 3 paths · {d.playbook.marketSession}</div>
+                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">playbook · 3 paths · {d.playbook.marketSession}</div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                   <PathCard kind="bull" p={d.playbook.paths.bull} />
@@ -311,24 +311,24 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 {d.models.daily && (
                   <div className="rounded-md border border-border/40 bg-card/40 p-2.5 space-y-1">
-                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{d.models.daily.label}</div>
+                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{d.models.daily.label}</div>
                     <div className="text-sm font-semibold font-mono">
                       {d.models.daily.priceLow != null && d.models.daily.priceHigh != null
                         ? `${d.models.daily.priceLow.toFixed(2)} – ${d.models.daily.priceHigh.toFixed(2)}`
                         : "—"}
                     </div>
-                    <div className="text-[10px] text-muted-foreground">target {d.models.daily.targetDate}</div>
+                    <div className="text-[11px] text-muted-foreground">target {d.models.daily.targetDate}</div>
                   </div>
                 )}
                 {d.models.weekly && (
                   <div className="rounded-md border border-border/40 bg-card/40 p-2.5 space-y-1">
-                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{d.models.weekly.label}</div>
+                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{d.models.weekly.label}</div>
                     <div className="text-sm font-semibold font-mono">
                       {d.models.weekly.priceLow != null && d.models.weekly.priceHigh != null
                         ? `${d.models.weekly.priceLow.toFixed(2)} – ${d.models.weekly.priceHigh.toFixed(2)}`
                         : "—"}
                     </div>
-                    <div className="text-[10px] text-muted-foreground">target {d.models.weekly.targetDate}</div>
+                    <div className="text-[11px] text-muted-foreground">target {d.models.weekly.targetDate}</div>
                   </div>
                 )}
               </div>
@@ -337,19 +337,19 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
             {/* Week ahead */}
             {d.weekAhead.length > 0 && (
               <div className="space-y-1.5">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">week ahead</div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">week ahead</div>
                 <div className="grid grid-cols-1 sm:grid-cols-5 gap-1.5">
                   {d.weekAhead.map((day) => (
                     <div key={day.iso} className="rounded-md border border-border/30 bg-card/30 p-2 space-y-1">
-                      <div className="text-[10px] font-bold uppercase tracking-wider">{day.label}</div>
+                      <div className="text-[11px] font-bold uppercase tracking-wider">{day.label}</div>
                       {day.events.length === 0 ? (
-                        <div className="text-[10px] text-muted-foreground/60 italic">no scheduled events</div>
+                        <div className="text-[11px] text-muted-foreground italic">no scheduled events</div>
                       ) : (
                         day.events.map((ev, i) => (
                           <div key={i} className="space-y-0.5">
-                            <Badge variant="outline" className={`text-[8px] py-0 px-1 h-3.5 ${importanceColor(ev.importance)}`}>{ev.importance}</Badge>
-                            <div className="text-[10px] leading-tight font-medium">{ev.title}</div>
-                            <div className="text-[9px] text-muted-foreground">{ev.timeLabel}</div>
+                            <Badge variant="outline" className={`text-[11px] py-0 px-1 h-3.5 ${importanceColor(ev.importance)}`}>{ev.importance}</Badge>
+                            <div className="text-[11px] leading-tight font-medium">{ev.title}</div>
+                            <div className="text-[11px] text-muted-foreground">{ev.timeLabel}</div>
                           </div>
                         ))
                       )}
@@ -362,7 +362,7 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
             {/* News */}
             {d.news.length > 0 && (
               <div className="space-y-1.5">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">headlines</div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">headlines</div>
                 <div className="space-y-1">
                   {d.news.slice(0, 6).map((n, i) => (
                     <a
@@ -376,7 +376,7 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
                       <ExternalLink className="h-3 w-3 mt-0.5 flex-shrink-0 text-muted-foreground" />
                       <div className="min-w-0 flex-1">
                         <div className="leading-snug">{n.title}</div>
-                        <div className="text-[9px] text-muted-foreground/70">{n.source}</div>
+                        <div className="text-[11px] text-muted-foreground">{n.source}</div>
                       </div>
                     </a>
                   ))}
@@ -389,7 +389,7 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
               <button
                 type="button"
                 onClick={() => setShowHealth(!showHealth)}
-                className="flex items-center gap-1 text-[9px] uppercase tracking-wider text-muted-foreground hover:text-foreground"
+                className="flex items-center gap-1 text-[11px] uppercase tracking-wider text-muted-foreground hover:text-foreground"
               >
                 {showHealth ? <ChevronUp className="h-2.5 w-2.5" /> : <ChevronDown className="h-2.5 w-2.5" />}
                 data sources · {d.panelHealth.filter((p) => p.ok).length}/{d.panelHealth.length} live
@@ -399,7 +399,7 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
                   {d.panelHealth.map((p) => (
                     <span
                       key={p.name}
-                      className={`text-[9px] rounded border px-1.5 py-0.5 ${p.ok ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-400" : "border-rose-500/30 bg-rose-500/5 text-rose-400"}`}
+                      className={`text-[11px] rounded border px-1.5 py-0.5 ${p.ok ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-400" : "border-rose-500/30 bg-rose-500/5 text-rose-400"}`}
                     >
                       {p.name} {p.ok ? "✓" : "✗"}
                     </span>

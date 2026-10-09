@@ -94,10 +94,10 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
           <span className="text-xs font-semibold uppercase tracking-wide text-emerald-300/90">{title}</span>
           {d && (
             <>
-              <Badge variant="outline" className={`text-[10px] py-0 px-1.5 h-4 ${verdictClass(d.verdictColor)}`} data-testid={`badge-verdict-${panel}`}>
+              <Badge variant="outline" className={`text-[11px] py-0 px-1.5 h-4 ${verdictClass(d.verdictColor)}`} data-testid={`badge-verdict-${panel}`}>
                 {d.verdict}
               </Badge>
-              <Badge variant="outline" className={`text-[10px] py-0 px-1.5 h-4 ${edgeBadgeClass(d.edgeType)}`}>
+              <Badge variant="outline" className={`text-[11px] py-0 px-1.5 h-4 ${edgeBadgeClass(d.edgeType)}`}>
                 {d.edgeType}
               </Badge>
             </>
@@ -105,7 +105,7 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
         </div>
         <div className="flex items-center gap-1">
           {!enabled && manual && (
-            <Button size="sm" variant="outline" className="h-6 text-[10px] px-2" onClick={() => setEnabled(true)}>
+            <Button size="sm" variant="outline" className="h-6 text-[11px] px-2" onClick={() => setEnabled(true)}>
               generate brief
             </Button>
           )}
@@ -152,7 +152,7 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
               </p>
 
               <div className="rounded border border-border/40 bg-background/40 p-2">
-                <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">what to watch</div>
+                <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">what to watch</div>
                 <p className="text-xs leading-snug">{d.actionable}</p>
               </div>
 
@@ -169,7 +169,7 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
 
               <button
                 onClick={() => setExpanded(e => !e)}
-                className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
+                className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
                 data-testid={`button-brief-expand-${panel}`}
               >
                 {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
@@ -184,16 +184,16 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">
                     <div className="rounded border border-border/40 bg-background/40 p-2">
-                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">invalidation</div>
+                      <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-0.5">invalidation</div>
                       <p className="text-xs leading-snug">{d.invalidation}</p>
                     </div>
                     <div className="rounded border border-border/40 bg-background/40 p-2">
-                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">counterargument</div>
+                      <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-0.5">counterargument</div>
                       <p className="text-xs leading-snug">{d.counterargument}</p>
                     </div>
                   </div>
 
-                  <div className="text-[10px] text-muted-foreground/70 pt-1">
+                  <div className="text-[11px] text-muted-foreground pt-1">
                     source: {d.source} · {new Date(d.asOf).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
                     {" · descriptive only: no probabilities, trade or size advice"}
                     {d.removedSentences ? ` · ${d.removedSentences} sentence${d.removedSentences === 1 ? "" : "s"} removed by the filter` : ""}

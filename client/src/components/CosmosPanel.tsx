@@ -1083,7 +1083,7 @@ function KpStrip({ recent, forecast }: { recent: Array<{ time: string; kp: numbe
         <text x={chartW / 2 - 10} y={chartH + 14} fontSize="9" fill={MUTED} fontFamily="monospace">now</text>
         <text x={chartW - 35} y={chartH + 14} fontSize="9" fill={MUTED} fontFamily="monospace">+3 days</text>
       </svg>
-      <div className="flex gap-4 text-[10px]" style={{ color: MUTED, fontFamily: "monospace", marginTop: 4 }}>
+      <div className="flex gap-4 text-[11px]" style={{ color: MUTED, fontFamily: "monospace", marginTop: 4 }}>
         <span><span style={{ color: ACCENT_BLUE }}>■</span> observed</span>
         <span><span style={{ color: MUTED }}>■</span> forecast</span>
         <span><span style={{ color: ACCENT_GOLD }}>■</span> elevated (Kp 4)</span>

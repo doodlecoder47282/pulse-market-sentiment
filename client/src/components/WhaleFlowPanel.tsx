@@ -221,7 +221,7 @@ function SectionHeader({ icon, label, count }: { icon: React.ReactNode; label: s
       <span className="text-amber-500">{icon}</span>
       <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">{label}</span>
       {count !== undefined && (
-        <Badge variant="outline" className="ml-auto text-[9px] border-muted-foreground/40 text-muted-foreground" data-testid={`section-count-${label.toLowerCase().replace(/\s+/g, "-")}`}>
+        <Badge variant="outline" className="ml-auto text-[11px] border-muted-foreground/40 text-muted-foreground" data-testid={`section-count-${label.toLowerCase().replace(/\s+/g, "-")}`}>
           {count}
         </Badge>
       )}
@@ -255,16 +255,16 @@ function WhaleRow({ hit }: { hit: WhaleHit }) {
           {hit.sentiment}
         </span>
         {isConflux && (
-          <Badge variant="outline" className="border-fuchsia-500/60 bg-fuchsia-500/15 text-fuchsia-300 text-[9px] font-bold" data-testid={`whale-conflux-${hit.occ}`}>
+          <Badge variant="outline" className="border-fuchsia-500/60 bg-fuchsia-500/15 text-fuchsia-300 text-[11px] font-bold" data-testid={`whale-conflux-${hit.occ}`}>
             CONFLUX
           </Badge>
         )}
         {hit.isNewStrike ? (
-          <Badge variant="outline" className="border-cyan-500/50 bg-cyan-500/10 text-cyan-400 text-[9px]" data-testid={`whale-newstrike-${hit.occ}`}>
+          <Badge variant="outline" className="border-cyan-500/50 bg-cyan-500/10 text-cyan-400 text-[11px]" data-testid={`whale-newstrike-${hit.occ}`}>
             NEW STRIKE
           </Badge>
         ) : (
-          <span className="font-mono text-muted-foreground/70" data-testid={`whale-voioi-${hit.occ}`}>
+          <span className="font-mono text-muted-foreground" data-testid={`whale-voioi-${hit.occ}`}>
             vol/OI {hit.volOiRatio.toFixed(1)}x
           </span>
         )}
@@ -275,18 +275,18 @@ function WhaleRow({ hit }: { hit: WhaleHit }) {
 
       {open && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5 border-t border-border/30 px-3 py-2 font-mono text-[11px] text-muted-foreground" data-testid={`whale-detail-${hit.occ}`}>
-          <div><span className="text-muted-foreground/70">vol/OI</span> <span className="text-foreground">{hit.volume.toLocaleString()}/{hit.openInterest.toLocaleString()}</span></div>
-          <div><span className="text-muted-foreground/70">bid/ask</span> <span className="text-foreground">{hit.bid?.toFixed(2) ?? "—"}/{hit.ask?.toFixed(2) ?? "—"}</span></div>
-          <div><span className="text-muted-foreground/70">mid</span> <span className="text-foreground">${hit.mid?.toFixed(2) ?? "—"}</span></div>
-          <div><span className="text-muted-foreground/70">spread</span> <span className="text-foreground">{hit.spreadPct?.toFixed(1) ?? "—"}%</span></div>
-          <div><span className="text-muted-foreground/70">IV</span> <span className="text-foreground">{hit.iv !== undefined ? `${hit.iv.toFixed(1)}%` : "—"}</span></div>
-          <div><span className="text-muted-foreground/70">spot</span> <span className="text-foreground">{hit.spot ? hit.spot.toFixed(2) : "—"}</span></div>
-          <div><span className="text-muted-foreground/70">Δ</span> <span className="text-foreground">{hit.delta.toFixed(2)}</span></div>
-          <div><span className="text-muted-foreground/70">γ</span> <span className="text-foreground">{hit.gamma !== undefined ? hit.gamma.toFixed(4) : "—"}</span></div>
-          <div><span className="text-muted-foreground/70">θ</span> <span className="text-foreground">{hit.theta !== undefined ? hit.theta.toFixed(2) : "—"}</span></div>
-          <div><span className="text-muted-foreground/70">vega</span> <span className="text-foreground">{hit.vega !== undefined ? hit.vega.toFixed(2) : "—"}</span></div>
-          <div><span className="text-muted-foreground/70">strike vs spot</span> <span className={hit.distFromSpotPct !== undefined ? pctColor(hit.distFromSpotPct) : ""}>{hit.distFromSpotPct !== undefined ? fmtPct(hit.distFromSpotPct) : "—"}</span></div>
-          <div><span className="text-muted-foreground/70">breakeven</span> <span className="text-foreground">{hit.breakeven?.toFixed(2) ?? "—"}{hit.breakevenPct !== undefined ? ` (${fmtPct(hit.breakevenPct)})` : ""}</span></div>
+          <div><span className="text-muted-foreground">vol/OI</span> <span className="text-foreground">{hit.volume.toLocaleString()}/{hit.openInterest.toLocaleString()}</span></div>
+          <div><span className="text-muted-foreground">bid/ask</span> <span className="text-foreground">{hit.bid?.toFixed(2) ?? "—"}/{hit.ask?.toFixed(2) ?? "—"}</span></div>
+          <div><span className="text-muted-foreground">mid</span> <span className="text-foreground">${hit.mid?.toFixed(2) ?? "—"}</span></div>
+          <div><span className="text-muted-foreground">spread</span> <span className="text-foreground">{hit.spreadPct?.toFixed(1) ?? "—"}%</span></div>
+          <div><span className="text-muted-foreground">IV</span> <span className="text-foreground">{hit.iv !== undefined ? `${hit.iv.toFixed(1)}%` : "—"}</span></div>
+          <div><span className="text-muted-foreground">spot</span> <span className="text-foreground">{hit.spot ? hit.spot.toFixed(2) : "—"}</span></div>
+          <div><span className="text-muted-foreground">Δ</span> <span className="text-foreground">{hit.delta.toFixed(2)}</span></div>
+          <div><span className="text-muted-foreground">γ</span> <span className="text-foreground">{hit.gamma !== undefined ? hit.gamma.toFixed(4) : "—"}</span></div>
+          <div><span className="text-muted-foreground">θ</span> <span className="text-foreground">{hit.theta !== undefined ? hit.theta.toFixed(2) : "—"}</span></div>
+          <div><span className="text-muted-foreground">vega</span> <span className="text-foreground">{hit.vega !== undefined ? hit.vega.toFixed(2) : "—"}</span></div>
+          <div><span className="text-muted-foreground">strike vs spot</span> <span className={hit.distFromSpotPct !== undefined ? pctColor(hit.distFromSpotPct) : ""}>{hit.distFromSpotPct !== undefined ? fmtPct(hit.distFromSpotPct) : "—"}</span></div>
+          <div><span className="text-muted-foreground">breakeven</span> <span className="text-foreground">{hit.breakeven?.toFixed(2) ?? "—"}{hit.breakevenPct !== undefined ? ` (${fmtPct(hit.breakevenPct)})` : ""}</span></div>
           <div className="col-span-2 sm:col-span-3 italic text-muted-foreground/80" data-testid={`whale-reason-${hit.occ}`}>{hit.reason}</div>
         </div>
       )}
@@ -312,10 +312,10 @@ function TickerGroup({ ticker, whales, defaultOpen }: { ticker: string; whales: 
       >
         {open ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
         <span className="font-bold text-base text-foreground" data-testid={`ticker-name-${ticker}`}>{ticker}</span>
-        <Badge variant="outline" className="text-[9px] border-amber-500/40 bg-amber-500/10 text-amber-400" data-testid={`ticker-count-${ticker}`}>
+        <Badge variant="outline" className="text-[11px] border-amber-500/40 bg-amber-500/10 text-amber-400" data-testid={`ticker-count-${ticker}`}>
           {whales.length} {whales.length === 1 ? "whale" : "whales"}
         </Badge>
-        <span className={`text-[10px] font-semibold uppercase tracking-wider ${sentimentColor(dominant)}`}>
+        <span className={`text-[11px] font-semibold uppercase tracking-wider ${sentimentColor(dominant)}`}>
           {dominant}
         </span>
         <span className="ml-auto font-mono font-semibold text-amber-400 text-sm" data-testid={`ticker-total-${ticker}`}>
@@ -376,13 +376,13 @@ function TrackingRow({ pos }: { pos: FollowPosition }) {
         <span className="font-mono text-muted-foreground" data-testid={`tracking-contract-${pos.occ}`}>
           {pos.strike}{pos.type === "C" ? "C" : "P"} {pos.expiration.slice(5)}
         </span>
-        <Badge variant="outline" className={`text-[9px] ${statusBadgeClass(pos.status)}`} data-testid={`tracking-status-${pos.occ}`}>
+        <Badge variant="outline" className={`text-[11px] ${statusBadgeClass(pos.status)}`} data-testid={`tracking-status-${pos.occ}`}>
           {pos.status}
         </Badge>
         <span className={`font-semibold ${sentimentColor(pos.side)}`} data-testid={`tracking-side-${pos.occ}`}>
           {pos.side}
         </span>
-        <Badge variant="outline" className={`text-[9px] uppercase tracking-wider ${freshnessBadgeClass(fresh)}`} data-testid={`tracking-fresh-${pos.occ}`}>
+        <Badge variant="outline" className={`text-[11px] uppercase tracking-wider ${freshnessBadgeClass(fresh)}`} data-testid={`tracking-fresh-${pos.occ}`}>
           {freshnessLabel(fresh, pos)}
         </Badge>
       </div>
@@ -396,9 +396,9 @@ function TrackingRow({ pos }: { pos: FollowPosition }) {
             {fmtPct(pos.score.netReturn * 100)} if sold at bid
           </span>
         ) : (
-          <span className="text-muted-foreground/70" data-testid={`tracking-net-${pos.occ}`}>{pos.score?.reason ?? "bid-exit n/a"}</span>
+          <span className="text-muted-foreground" data-testid={`tracking-net-${pos.occ}`}>{pos.score?.reason ?? "bid-exit n/a"}</span>
         )}
-        <span className="text-muted-foreground/70" data-testid={`tracking-volse-${pos.occ}`}>volSE {pos.live.volumeSinceEntry.toLocaleString()}</span>
+        <span className="text-muted-foreground" data-testid={`tracking-volse-${pos.occ}`}>volSE {pos.live.volumeSinceEntry.toLocaleString()}</span>
       </div>
     </div>
   );
@@ -438,19 +438,19 @@ function TrackedTickerGroup({
       >
         {open ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
         <span className="font-bold text-base text-foreground">{ticker}</span>
-        <Badge variant="outline" className="text-[9px] border-amber-500/40 bg-amber-500/10 text-amber-400">
+        <Badge variant="outline" className="text-[11px] border-amber-500/40 bg-amber-500/10 text-amber-400">
           {positions.length} {positions.length === 1 ? "pos" : "posns"}
         </Badge>
-        <span className={`text-[10px] font-semibold uppercase tracking-wider ${sentimentColor(dominant)}`}>
+        <span className={`text-[11px] font-semibold uppercase tracking-wider ${sentimentColor(dominant)}`}>
           {dominant}
         </span>
         {hotCount > 0 && (
-          <Badge variant="outline" className="text-[9px] border-cyan-500/50 bg-cyan-500/15 text-cyan-300" data-testid={`tracked-hot-${ticker}`}>
+          <Badge variant="outline" className="text-[11px] border-cyan-500/50 bg-cyan-500/15 text-cyan-300" data-testid={`tracked-hot-${ticker}`}>
             {hotCount} hot
           </Badge>
         )}
         {soldCount > 0 && (
-          <Badge variant="outline" className="text-[9px] border-rose-500/50 bg-rose-500/15 text-rose-300" data-testid={`tracked-sold-${ticker}`}>
+          <Badge variant="outline" className="text-[11px] border-rose-500/50 bg-rose-500/15 text-rose-300" data-testid={`tracked-sold-${ticker}`}>
             {soldCount} sold
           </Badge>
         )}
@@ -495,17 +495,17 @@ function ClosedTickerGroup({
       >
         {open ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
         <span className="font-bold text-sm text-foreground">{ticker}</span>
-        <Badge variant="outline" className="text-[9px] border-muted-foreground/30 text-muted-foreground">
+        <Badge variant="outline" className="text-[11px] border-muted-foreground/30 text-muted-foreground">
           {positions.length} closed
         </Badge>
         {wins > 0 && (
-          <span className="text-[10px] text-emerald-400/80">{wins}W</span>
+          <span className="text-[11px] text-emerald-400/80">{wins}W</span>
         )}
         {losses > 0 && (
-          <span className="text-[10px] text-rose-400/80">{losses}L</span>
+          <span className="text-[11px] text-rose-400/80">{losses}L</span>
         )}
         {unscored > 0 && (
-          <span className="text-[10px] text-muted-foreground" title="no logged entry ask or exit bid">{unscored} unscored</span>
+          <span className="text-[11px] text-muted-foreground" title="no logged entry ask or exit bid">{unscored} unscored</span>
         )}
         <span className={`ml-auto font-mono text-xs ${scored.length ? pctColor(avgPct) : "text-muted-foreground"}`}>
           {scored.length ? `${fmtPct(avgPct)} avg net` : "no scored exits"}
@@ -568,7 +568,7 @@ function ClosedRow({ pos }: { pos: FollowPosition }) {
           {pos.strike}{pos.type === "C" ? "C" : "P"} {pos.expiration.slice(5)}
         </span>
         <span className={`font-semibold ${sentimentColor(pos.side)}`} data-testid={`closed-side-${pos.occ}`}>{pos.side}</span>
-        <Badge variant="outline" className="text-[9px] border-muted-foreground/30 text-muted-foreground" data-testid={`closed-status-${pos.occ}`}>
+        <Badge variant="outline" className="text-[11px] border-muted-foreground/30 text-muted-foreground" data-testid={`closed-status-${pos.occ}`}>
           {pos.status}
         </Badge>
       </div>
@@ -581,7 +581,7 @@ function ClosedRow({ pos }: { pos: FollowPosition }) {
           ) : (
             <span className="text-muted-foreground" data-testid={`closed-pct-${pos.occ}`}>{pos.score?.reason ?? "not scored"}</span>
           )}
-          <span className="text-muted-foreground/70" data-testid={`closed-peak-${pos.occ}`}>peak +{(cp.peakPctChange * 100).toFixed(1)}% mid</span>
+          <span className="text-muted-foreground" data-testid={`closed-peak-${pos.occ}`}>peak +{(cp.peakPctChange * 100).toFixed(1)}% mid</span>
           <span className="italic truncate flex-1 min-w-0" data-testid={`closed-reason-${pos.occ}`}>{cp.reason}</span>
         </div>
       )}
@@ -611,7 +611,7 @@ function UoaRow({ cl }: { cl: UoaCluster }) {
         <span className="font-mono text-muted-foreground" data-testid={`uoa-contract-${cl.key}`}>
           {cl.strike}{cl.type} {cl.expiration.slice(5)} • {cl.dte}DTE
         </span>
-        <Badge variant="outline" className={`text-[9px] ${bucketBadge(cl.bucket)}`} data-testid={`uoa-bucket-${cl.key}`}>
+        <Badge variant="outline" className={`text-[11px] ${bucketBadge(cl.bucket)}`} data-testid={`uoa-bucket-${cl.key}`}>
           {cl.bucket}
         </Badge>
         <span className={`font-semibold ${sentimentColor(cl.sentiment)}`} data-testid={`uoa-sentiment-${cl.key}`}>
@@ -621,7 +621,7 @@ function UoaRow({ cl }: { cl: UoaCluster }) {
           {cl.hitCount} hits
         </span>
         {cl.fired && (
-          <Badge variant="outline" className="border-emerald-500/50 bg-emerald-500/10 text-emerald-400 text-[9px]" data-testid={`uoa-fired-${cl.key}`}>
+          <Badge variant="outline" className="border-emerald-500/50 bg-emerald-500/10 text-emerald-400 text-[11px]" data-testid={`uoa-fired-${cl.key}`}>
             FIRED
           </Badge>
         )}
@@ -631,15 +631,15 @@ function UoaRow({ cl }: { cl: UoaCluster }) {
       </button>
       {open && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5 border-t border-border/30 px-3 py-2 font-mono text-[11px] text-muted-foreground" data-testid={`uoa-detail-${cl.key}`}>
-          <div><span className="text-muted-foreground/70">total vol</span> <span className="text-foreground">{cl.totalVolume.toLocaleString()}</span></div>
-          <div><span className="text-muted-foreground/70">avg vol/OI</span> <span className="text-foreground">{cl.avgVolOiRatio.toFixed(1)}x</span></div>
-          <div><span className="text-muted-foreground/70">avg Δ</span> <span className="text-foreground">{cl.avgDelta.toFixed(2)}</span></div>
-          <div><span className="text-muted-foreground/70">avg IV</span> <span className="text-foreground">{cl.avgIv.toFixed(1)}%</span></div>
-          <div><span className="text-muted-foreground/70">bid/ask</span> <span className="text-foreground">{cl.bid.toFixed(2)}/{cl.ask.toFixed(2)}</span></div>
-          <div><span className="text-muted-foreground/70">spread</span> <span className="text-foreground">{cl.spreadPct.toFixed(1)}%</span></div>
-          <div><span className="text-muted-foreground/70">spot</span> <span className="text-foreground">{cl.spot ? cl.spot.toFixed(2) : "—"}</span></div>
-          <div><span className="text-muted-foreground/70">strike vs spot</span> <span className={cl.distFromSpotPct !== undefined ? pctColor(cl.distFromSpotPct) : ""}>{cl.distFromSpotPct !== undefined ? fmtPct(cl.distFromSpotPct) : "—"}</span></div>
-          <div><span className="text-muted-foreground/70">breakeven</span> <span className="text-foreground">{cl.breakeven.toFixed(2)}{cl.breakevenPct !== undefined ? ` (${fmtPct(cl.breakevenPct)})` : ""}</span></div>
+          <div><span className="text-muted-foreground">total vol</span> <span className="text-foreground">{cl.totalVolume.toLocaleString()}</span></div>
+          <div><span className="text-muted-foreground">avg vol/OI</span> <span className="text-foreground">{cl.avgVolOiRatio.toFixed(1)}x</span></div>
+          <div><span className="text-muted-foreground">avg Δ</span> <span className="text-foreground">{cl.avgDelta.toFixed(2)}</span></div>
+          <div><span className="text-muted-foreground">avg IV</span> <span className="text-foreground">{cl.avgIv.toFixed(1)}%</span></div>
+          <div><span className="text-muted-foreground">bid/ask</span> <span className="text-foreground">{cl.bid.toFixed(2)}/{cl.ask.toFixed(2)}</span></div>
+          <div><span className="text-muted-foreground">spread</span> <span className="text-foreground">{cl.spreadPct.toFixed(1)}%</span></div>
+          <div><span className="text-muted-foreground">spot</span> <span className="text-foreground">{cl.spot ? cl.spot.toFixed(2) : "—"}</span></div>
+          <div><span className="text-muted-foreground">strike vs spot</span> <span className={cl.distFromSpotPct !== undefined ? pctColor(cl.distFromSpotPct) : ""}>{cl.distFromSpotPct !== undefined ? fmtPct(cl.distFromSpotPct) : "—"}</span></div>
+          <div><span className="text-muted-foreground">breakeven</span> <span className="text-foreground">{cl.breakeven.toFixed(2)}{cl.breakevenPct !== undefined ? ` (${fmtPct(cl.breakevenPct)})` : ""}</span></div>
           <div className="col-span-2 sm:col-span-3 italic text-muted-foreground/80" data-testid={`uoa-reason-${cl.key}`}>{cl.reason}</div>
         </div>
       )}
@@ -661,11 +661,11 @@ function UoaTickerGroup({ ticker, clusters }: { ticker: string; clusters: UoaClu
       >
         {open ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
         <span className="font-bold text-base text-foreground" data-testid={`uoa-ticker-name-${ticker}`}>{ticker}</span>
-        <Badge variant="outline" className="text-[9px] border-fuchsia-500/40 bg-fuchsia-500/10 text-fuchsia-300">
+        <Badge variant="outline" className="text-[11px] border-fuchsia-500/40 bg-fuchsia-500/10 text-fuchsia-300">
           {clusters.length} {clusters.length === 1 ? "cluster" : "clusters"}
         </Badge>
         {fired > 0 && (
-          <Badge variant="outline" className="text-[9px] border-emerald-500/50 bg-emerald-500/10 text-emerald-400">
+          <Badge variant="outline" className="text-[11px] border-emerald-500/50 bg-emerald-500/10 text-emerald-400">
             {fired} FIRED
           </Badge>
         )}
@@ -753,7 +753,7 @@ function PerformanceCard() {
             Performance
           </span>
           {snap && (
-            <span className="text-[10px] text-muted-foreground font-mono">
+            <span className="text-[11px] text-muted-foreground font-mono">
               {snap.totalTerminal} closed · last {snap.windowDays}d
             </span>
           )}
@@ -763,7 +763,7 @@ function PerformanceCard() {
             <button
               key={d}
               onClick={() => setWindowDays(d as 7 | 30)}
-              className={`inline-flex min-h-[44px] items-center px-2.5 py-0.5 text-[10px] rounded border transition-colors sm:min-h-0 ${
+              className={`inline-flex min-h-[44px] items-center px-2.5 py-0.5 text-[11px] rounded border transition-colors sm:min-h-0 ${
                 windowDays === d
                   ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300"
                   : "border-border/40 text-muted-foreground hover:text-foreground"
@@ -786,7 +786,7 @@ function PerformanceCard() {
         </div>
       ) : (
         <div className="rounded-md border border-border/40 overflow-hidden" data-testid="performance-table">
-          <div className="grid grid-cols-[1.4fr_0.5fr_0.9fr_0.7fr_0.8fr_0.5fr] gap-2 px-3 py-1.5 bg-muted/20 text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
+          <div className="grid grid-cols-[1.4fr_0.5fr_0.9fr_0.7fr_0.8fr_0.5fr] gap-2 px-3 py-1.5 bg-muted/20 text-[11px] uppercase tracking-wider text-muted-foreground font-mono">
             <div>source</div>
             <div className="text-right">n</div>
             <div className="text-right">W / L</div>
@@ -802,14 +802,14 @@ function PerformanceCard() {
             >
               <div className="font-medium">
                 {sourceLabel(r.source)}
-                {r.priceBasis === "mid_to_mid" && <span className="ml-1 text-[9px] text-amber-400/80" title={snap?.midToMidNote}>mid to mid, no fees</span>}
-                {!!r.excludedNoQuote && <span className="ml-1 text-[9px] text-muted-foreground" title="no logged entry ask or exit bid">+{r.excludedNoQuote} unscored</span>}
-                {!!r.excludedNoFee && <span className="ml-1 text-[9px] text-muted-foreground" title="index option: set INDEX_OPTION_FEE_PER_CONTRACT to score these">+{r.excludedNoFee} no index fee</span>}
+                {r.priceBasis === "mid_to_mid" && <span className="ml-1 text-[11px] text-amber-400/80" title={snap?.midToMidNote}>mid to mid, no fees</span>}
+                {!!r.excludedNoQuote && <span className="ml-1 text-[11px] text-muted-foreground" title="no logged entry ask or exit bid">+{r.excludedNoQuote} unscored</span>}
+                {!!r.excludedNoFee && <span className="ml-1 text-[11px] text-muted-foreground" title="index option: set INDEX_OPTION_FEE_PER_CONTRACT to score these">+{r.excludedNoFee} no index fee</span>}
               </div>
               <div className="text-right font-mono text-muted-foreground">{r.count}</div>
               <div className="text-right font-mono">
                 <span className="text-emerald-400">{r.wins}</span>
-                <span className="text-muted-foreground/60"> / </span>
+                <span className="text-muted-foreground"> / </span>
                 <span className="text-red-400">{r.losses}</span>
               </div>
               <div className={`text-right font-mono font-semibold ${winRateColor(r.winRate ?? 0, r.count)}`}>
@@ -832,7 +832,7 @@ function PerformanceCard() {
               <div className="text-right font-mono text-muted-foreground">{snap.overall.count}</div>
               <div className="text-right font-mono">
                 <span className="text-emerald-400">{snap.overall.wins}</span>
-                <span className="text-muted-foreground/60"> / </span>
+                <span className="text-muted-foreground"> / </span>
                 <span className="text-red-400">{snap.overall.losses}</span>
               </div>
               <div className={`text-right font-mono font-semibold ${winRateColor(snap.overall.winRate ?? 0, snap.overall.count)}`}>
@@ -849,7 +849,7 @@ function PerformanceCard() {
         </div>
       )}
       {snap?.priceBasisNote && (
-        <div className="mt-1.5 text-[10px] text-muted-foreground" data-testid="performance-basis">
+        <div className="mt-1.5 text-[11px] text-muted-foreground" data-testid="performance-basis">
           Whale rows: {snap.priceBasisNote}.{snap.midToMidNote ? ` ${snap.midToMidNote}.` : ""}
         </div>
       )}
@@ -874,7 +874,7 @@ function ClosedArchive({ positions }: { positions: FollowPosition[] }) {
         <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
           Closed Archive
         </span>
-        <span className="text-[10px] text-muted-foreground font-mono">
+        <span className="text-[11px] text-muted-foreground font-mono">
           {positions.length}
         </span>
         <span className="ml-auto text-muted-foreground">
@@ -1005,7 +1005,7 @@ export default function WhaleFlowPanel() {
             {closedPositions.length} closed today
           </span>
           {cfg && (
-            <span className="text-muted-foreground text-[10px] font-mono ml-auto" data-testid="whale-flow-gate">
+            <span className="text-muted-foreground text-[11px] font-mono ml-auto" data-testid="whale-flow-gate">
               gate: ${(cfg.premiumFloor / 1_000_000).toFixed(1)}M • {cfg.volOiRatio}x • {cfg.minDte}-{cfg.maxDte}DTE • {cfg.requiredTag}
             </span>
           )}

@@ -383,17 +383,17 @@ function RailRow({
 }) {
   return (
     <div
-      className={`flex items-baseline justify-between gap-2 border-b border-border/20 py-0.5 text-[10px] font-mono ${
+      className={`flex items-baseline justify-between gap-2 border-b border-border/20 py-0.5 text-[11px] font-mono ${
         highlight ? "bg-yellow-400/10" : ""
       }`}
     >
-      <span className="uppercase tracking-wider text-muted-foreground/70">
+      <span className="uppercase tracking-wider text-muted-foreground">
         {label}
         {backtestKind && backtestHorizon && <BacktestBadge horizon={backtestHorizon} kind={backtestKind} />}
       </span>
       <div className="text-right">
         <span className="font-semibold" style={{ color }}>{value}</span>
-        {sub && <span className="ml-1 text-[9px] text-muted-foreground">({sub})</span>}
+        {sub && <span className="ml-1 text-[11px] text-muted-foreground">({sub})</span>}
       </div>
     </div>
   );
@@ -401,7 +401,7 @@ function RailRow({
 
 function RailDivider({ label }: { label?: string }) {
   return (
-    <div className="my-0.5 border-t border-border/40 py-0.5 text-[8px] uppercase tracking-widest text-muted-foreground/40">
+    <div className="my-0.5 border-t border-border/40 py-0.5 text-[11px] uppercase tracking-widest text-muted-foreground">
       {label}
     </div>
   );
@@ -460,8 +460,8 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
     : a.charmZero != null ? fmtK(a.charmZero) : "—";
 
   return (
-    <div className="w-52 flex-shrink-0 overflow-y-auto border-l border-border/40 bg-black/30 px-2.5 py-2 font-mono text-[10px]">
-      <div className="mb-1 text-[9px] uppercase tracking-widest text-muted-foreground/50">Levels</div>
+    <div className="w-52 flex-shrink-0 overflow-y-auto border-l border-border/40 bg-black/30 px-2.5 py-2 font-mono text-[11px]">
+      <div className="mb-1 text-[11px] uppercase tracking-widest text-muted-foreground">Levels</div>
 
       {/* Upside */}
       <RailDivider label="resistance" />
@@ -498,7 +498,7 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
       {zomma    && <RailRow label="ZOMMA BRIDGE" value={pFmt(zomma.price)} sub={distPct(zomma.price)} color={COLORS.dz} />}
       {byKind("mopexMaxPain") && <RailRow label="MAX PAIN" value={pFmt(byKind("mopexMaxPain")?.price)} color={COLORS.amber} backtestKind="mopexMaxPain" backtestHorizon={horizon.horizon as BacktestHorizon} />}
 
-      <div className="mt-2 text-[8px] text-muted-foreground/40 leading-tight">
+      <div className="mt-2 text-[11px] text-muted-foreground leading-tight">
         Red = resistance · Green = support<br />
         Cyan = pivot/data · Yellow = flip zone<br />
         <span className="text-emerald-400/70">POS Γ</span> = fade moves · <span className="text-rose-400/70">NEG Γ</span> = follow moves
@@ -534,7 +534,7 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
 
   return (
     <div
-      className="rounded border border-border/60 bg-black/60 p-2.5 font-mono text-[10px] leading-[1.55] text-muted-foreground"
+      className="rounded border border-border/60 bg-black/60 p-2.5 font-mono text-[11px] leading-[1.55] text-muted-foreground"
       data-testid="batcave-audit-box"
     >
       {/* Line 1: live stats */}
@@ -571,7 +571,7 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
           <>
             <span>
               GAMMA ZERO: <span className="text-amber-400">{fmtK(zg)}</span>
-              {zgDistStr && <span className="text-muted-foreground/60"> ({zgDistStr})</span>}
+              {zgDistStr && <span className="text-muted-foreground"> ({zgDistStr})</span>}
             </span>
             <span>|</span>
           </>
@@ -631,7 +631,7 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
       {(dzLow != null || zg != null) && (
         <div className="mt-0.5">
           <span className="text-yellow-400 font-semibold">DOUBLE ZERO ZONE {dzStr}</span>
-          <span className="ml-2 text-muted-foreground/70">| {aboveDz}</span>
+          <span className="ml-2 text-muted-foreground">| {aboveDz}</span>
         </div>
       )}
 
@@ -672,7 +672,7 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
         <span className="text-cyan-400">BASE {probs.base}%</span>
         <span>·</span>
         <span className="text-red-400">BEAR {probs.bear}%</span>
-        <span className="text-muted-foreground/60" title={a.scenarioProbNote}>
+        <span className="text-muted-foreground" title={a.scenarioProbNote}>
           ({scenarioSourceLabel(a.scenarioProbSource)})
         </span>
         {a.expectedMove && (
@@ -732,8 +732,8 @@ function ScenarioLegend({ horizon }: { horizon: ModelHorizon }) {
   const charmZ = a.charmZero;
 
   return (
-    <div className="space-y-0.5 border-t border-border/40 pt-2 font-mono text-[10px]">
-      <div className="text-[9px] uppercase tracking-widest text-muted-foreground/50" title={a.scenarioProbNote}>
+    <div className="space-y-0.5 border-t border-border/40 pt-2 font-mono text-[11px]">
+      <div className="text-[11px] uppercase tracking-widest text-muted-foreground" title={a.scenarioProbNote}>
         Scenario projections · {scenarioSourceLabel(a.scenarioProbSource)}
       </div>
       {bullPath && (
@@ -816,23 +816,23 @@ function MMMatrixHeatmap({ horizon }: { horizon: ModelHorizon }) {
     <div className="mt-3 border-t border-border/40 pt-2">
       <div className="flex items-baseline justify-between mb-1.5">
         <div
-          className="text-[9px] uppercase tracking-widest text-muted-foreground/50 font-mono"
+          className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono"
           title={mm.probabilityNote ?? "Hand-set priors tilted by live context; not fit to logged outcomes."}
         >
           Market-maker matrix · hand-set priors (not fit to outcomes)
         </div>
-        <div className="font-mono text-[9px] text-muted-foreground/70">
+        <div className="font-mono text-[11px] text-muted-foreground">
           <span className="text-amber-400">YOU ARE HERE:</span> {REGIME_LABEL[mm.currentRegime]} · {ZONE_LABEL[mm.currentZone]}
         </div>
       </div>
 
       <div className="hscroll-contain">
-        <table className="font-mono text-[9px] border-separate" style={{ borderSpacing: 2 }} data-testid="mm-matrix">
+        <table className="font-mono text-[11px] border-separate" style={{ borderSpacing: 2 }} data-testid="mm-matrix">
           <thead>
             <tr>
-              <th className="p-1 text-left text-muted-foreground/60 font-normal w-20"></th>
+              <th className="p-1 text-left text-muted-foreground font-normal w-20"></th>
               {mm.zones.map((z) => (
-                <th key={z} className="p-1 text-center text-muted-foreground/70 font-semibold uppercase tracking-wider">
+                <th key={z} className="p-1 text-center text-muted-foreground font-semibold uppercase tracking-wider">
                   {ZONE_LABEL[z]}
                 </th>
               ))}
@@ -860,16 +860,16 @@ function MMMatrixHeatmap({ horizon }: { horizon: ModelHorizon }) {
                               <span className="font-bold" style={{ color: ACTION_COLOR[c.action] }}>
                                 {ACTION_LABEL[c.action]}
                               </span>
-                              <span className="text-foreground/80 text-[8px]">±{c.magnitude}</span>
+                              <span className="text-foreground/80 text-[11px]">±{c.magnitude}</span>
                             </div>
-                            <div className="mt-0.5 flex items-center gap-1 text-[8px]">
+                            <div className="mt-0.5 flex items-center gap-1 text-[11px]">
                               <span className="text-green-300">↑{c.pUp}</span>
                               <span className="text-cyan-300">·{c.pPin}</span>
                               <span className="text-red-300">↓{c.pDown}</span>
                             </div>
                           </div>
                         </TooltipTrigger>
-                        <TooltipContent side="top" className="font-mono text-[10px] max-w-xs">
+                        <TooltipContent side="top" className="font-mono text-[11px] max-w-xs">
                           <div className="font-semibold mb-1">{REGIME_LABEL[r]} · {ZONE_LABEL[z]}</div>
                           <div>Action: <span style={{ color: ACTION_COLOR[c.action] }}>{ACTION_LABEL[c.action]}</span></div>
                           <div>P(up): {c.pUp}% · P(pin): {c.pPin}% · P(down): {c.pDown}%</div>
@@ -885,9 +885,9 @@ function MMMatrixHeatmap({ horizon }: { horizon: ModelHorizon }) {
         </table>
       </div>
 
-      <div className="mt-1.5 space-y-0.5 font-mono text-[9px] leading-tight">
-        <div className="text-muted-foreground/70"><span className="text-amber-400">Regime:</span> {mm.notes.regime}</div>
-        <div className="text-muted-foreground/70"><span className="text-amber-400">Zone:</span> {mm.notes.zone}</div>
+      <div className="mt-1.5 space-y-0.5 font-mono text-[11px] leading-tight">
+        <div className="text-muted-foreground"><span className="text-amber-400">Regime:</span> {mm.notes.regime}</div>
+        <div className="text-muted-foreground"><span className="text-amber-400">Zone:</span> {mm.notes.zone}</div>
         <div className="text-foreground/90 font-semibold">→ {mm.notes.summary}</div>
       </div>
     </div>
@@ -912,7 +912,7 @@ function StatusStrip({ horizon }: { horizon: ModelHorizon }) {
 
   return (
     <div
-      className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-border/40 bg-black/40 px-3 py-1.5 font-mono text-[9px] text-muted-foreground/70"
+      className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-border/40 bg-black/40 px-3 py-1.5 font-mono text-[11px] text-muted-foreground"
       data-testid="batcave-status-strip"
     >
       <span className="text-foreground font-semibold">LIVE {fmtK(spot)}</span>
@@ -1281,12 +1281,12 @@ function EventBand({ horizon }: { horizon: ModelHorizon }) {
   return (
     <div className="mb-2 rounded border border-border/40 bg-black/30">
       <div className="flex items-center justify-between border-b border-border/30 px-2 py-1">
-        <div className="flex items-center gap-2 font-mono text-[9px] uppercase tracking-widest text-muted-foreground/70">
+        <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
           <span className="inline-block h-1 w-1 rounded-full bg-amber-400" />
           <span>Catalysts · Week</span>
-          {data && <span className="text-muted-foreground/50">{data.weekLabel}</span>}
+          {data && <span className="text-muted-foreground">{data.weekLabel}</span>}
         </div>
-        <div className="font-mono text-[9px] text-muted-foreground/40">
+        <div className="font-mono text-[11px] text-muted-foreground">
           {isLoading ? "loading…" : isError ? "feed error" : data ? data.source : ""}
         </div>
       </div>
@@ -1295,12 +1295,12 @@ function EventBand({ horizon }: { horizon: ModelHorizon }) {
           const events = dayMap.get(label) ?? [];
           return (
             <div key={label} className="flex flex-col gap-1 p-2 min-h-[64px]">
-              <div className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+              <div className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
                 {label}
               </div>
               <div className="flex flex-col gap-1">
                 {events.length === 0 && (
-                  <span className="font-mono text-[9px] text-muted-foreground/30">—</span>
+                  <span className="font-mono text-[11px] text-muted-foreground">—</span>
                 )}
                 {events.slice(0, 4).map((e) => {
                   const tone = chipTone(e.importance);
@@ -1308,14 +1308,14 @@ function EventBand({ horizon }: { horizon: ModelHorizon }) {
                     <div
                       key={e.id}
                       title={e.longTitle ?? e.title}
-                      className={`inline-flex items-center gap-1 rounded border ${tone.border} ${tone.bg} px-1.5 py-0.5 font-mono text-[9px] leading-tight ${tone.fg}`}
+                      className={`inline-flex items-center gap-1 rounded border ${tone.border} ${tone.bg} px-1.5 py-0.5 font-mono text-[11px] leading-tight ${tone.fg}`}
                     >
                       <span className="truncate">{e.title}</span>
                     </div>
                   );
                 })}
                 {events.length > 4 && (
-                  <span className="font-mono text-[9px] text-muted-foreground/40">+{events.length - 4} more</span>
+                  <span className="font-mono text-[11px] text-muted-foreground">+{events.length - 4} more</span>
                 )}
               </div>
             </div>
@@ -1376,12 +1376,12 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
   const below = rows.filter(r => r.price <= spot).sort((a, b) => b.price - a.price);
 
   const Chip = ({ r }: { r: Row }) => (
-    <div className="inline-flex items-center gap-1.5 rounded border border-border/40 bg-black/30 px-1.5 py-0.5 font-mono text-[10px]">
+    <div className="inline-flex items-center gap-1.5 rounded border border-border/40 bg-black/30 px-1.5 py-0.5 font-mono text-[11px]">
       <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: r.color }} />
       <span className="text-muted-foreground/80 uppercase tracking-wide">{r.name}</span>
       <span className="font-semibold text-foreground">{fmtK(r.price)}</span>
-      <span className="text-muted-foreground/60">{distPct(r.price)}</span>
-      {r.sub && <span className="text-muted-foreground/50">· {r.sub}</span>}
+      <span className="text-muted-foreground">{distPct(r.price)}</span>
+      {r.sub && <span className="text-muted-foreground">· {r.sub}</span>}
     </div>
   );
 
@@ -1396,18 +1396,18 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
   return (
     <div className="mt-2 space-y-1 border-t border-border/40 pt-2">
       <div className="flex items-baseline justify-between">
-        <div className="text-[9px] uppercase tracking-widest text-muted-foreground/50 font-mono">
+        <div className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono">
           Pivot Ladder — by horizon
         </div>
-        <div className="flex items-center gap-1.5 font-mono text-[9px]">
+        <div className="flex items-center gap-1.5 font-mono text-[11px]">
           <span className={`h-1.5 w-1.5 rounded-full ${regimeLabel.dot}`} />
           <span className={regimeLabel.color}>{regimeLabel.text}</span>
         </div>
       </div>
 
       {/* Vol structure quick-read — 3 bands */}
-      <div className="flex flex-wrap items-center gap-1.5 rounded border border-border/30 bg-muted/10 px-2 py-1 font-mono text-[9px]">
-        <span className="uppercase tracking-widest text-muted-foreground/60">Vol Structure</span>
+      <div className="flex flex-wrap items-center gap-1.5 rounded border border-border/30 bg-muted/10 px-2 py-1 font-mono text-[11px]">
+        <span className="uppercase tracking-widest text-muted-foreground">Vol Structure</span>
         <span className="text-border/60">|</span>
         <span className="text-rose-400">
           Sell zone {callWallPrice ? `≥ ${fmtK(callWallPrice)}` : "—"}
@@ -1425,18 +1425,18 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
       </div>
       {above.length > 0 && (
         <div className="flex flex-wrap items-center gap-1">
-          <span className="font-mono text-[9px] uppercase tracking-wider text-red-400/70 w-16">Above ↑</span>
+          <span className="font-mono text-[11px] uppercase tracking-wider text-red-400/70 w-16">Above ↑</span>
           {above.map((r) => <Chip key={`a-${r.name}-${r.price}`} r={r} />)}
         </div>
       )}
       <div className="flex flex-wrap items-center gap-1">
-        <span className="font-mono text-[9px] uppercase tracking-wider text-amber-400/80 w-16">Spot</span>
-        <div className="inline-flex items-center gap-1.5 rounded border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px]">
+        <span className="font-mono text-[11px] uppercase tracking-wider text-amber-400/80 w-16">Spot</span>
+        <div className="inline-flex items-center gap-1.5 rounded border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[11px]">
           <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />
           <span className="font-bold text-amber-300">LIVE {fmtK(spot)}</span>
         </div>
         {a.charmZero != null && (
-          <div className="inline-flex items-center gap-1.5 rounded border border-purple-500/40 bg-purple-500/5 px-1.5 py-0.5 font-mono text-[10px]">
+          <div className="inline-flex items-center gap-1.5 rounded border border-purple-500/40 bg-purple-500/5 px-1.5 py-0.5 font-mono text-[11px]">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-purple-400" />
             <span className="text-purple-300/80 uppercase tracking-wide">Charm 0</span>
             <span className="font-semibold text-purple-200">{fmtK(a.charmZero)}</span>
@@ -1444,7 +1444,7 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
           </div>
         )}
         {a.charmZeros && a.charmZeros.length > 0 && a.charmZeros.map((cz, i) => (
-          <div key={`cz-${i}`} className="inline-flex items-center gap-1.5 rounded border border-purple-500/30 bg-purple-500/5 px-1.5 py-0.5 font-mono text-[10px]">
+          <div key={`cz-${i}`} className="inline-flex items-center gap-1.5 rounded border border-purple-500/30 bg-purple-500/5 px-1.5 py-0.5 font-mono text-[11px]">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-purple-400/70" />
             <span className="text-purple-300/70 uppercase tracking-wide">Charm·0</span>
             <span className="font-semibold text-purple-200/90">{fmtK(cz)}</span>
@@ -1453,36 +1453,36 @@ function LevelsStrip({ horizon }: { horizon: ModelHorizon }) {
       </div>
       {below.length > 0 && (
         <div className="flex flex-wrap items-center gap-1">
-          <span className="font-mono text-[9px] uppercase tracking-wider text-green-400/70 w-16">Below ↓</span>
+          <span className="font-mono text-[11px] uppercase tracking-wider text-green-400/70 w-16">Below ↓</span>
           {below.map((r) => <Chip key={`b-${r.name}-${r.price}`} r={r} />)}
         </div>
       )}
 
       {a.closeTargets && (
         <div className="mt-1 flex flex-wrap items-center gap-1 border-t border-border/20 pt-1">
-          <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60 w-16">Close</span>
+          <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground w-16">Close</span>
           {a.closeTargets.bull && (
-            <div className="inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 font-mono text-[10px]" style={{ borderColor: `${COLORS.bull}55`, background: `${COLORS.bull}10` }}>
+            <div className="inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 font-mono text-[11px]" style={{ borderColor: `${COLORS.bull}55`, background: `${COLORS.bull}10` }}>
               <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: COLORS.bull }} />
               <span className="uppercase tracking-wide" style={{ color: COLORS.bull }}>Bull</span>
               <span className="font-semibold text-foreground">~{fmtK(a.closeTargets.bull.price)}</span>
-              <span className="text-muted-foreground/70">{a.closeTargets.bull.prob}%</span>
+              <span className="text-muted-foreground">{a.closeTargets.bull.prob}%</span>
             </div>
           )}
           {a.closeTargets.base && (
-            <div className="inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 font-mono text-[10px]" style={{ borderColor: `${COLORS.base}55`, background: `${COLORS.base}10` }}>
+            <div className="inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 font-mono text-[11px]" style={{ borderColor: `${COLORS.base}55`, background: `${COLORS.base}10` }}>
               <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: COLORS.base }} />
               <span className="uppercase tracking-wide" style={{ color: COLORS.base }}>Base</span>
               <span className="font-semibold text-foreground">~{fmtK(a.closeTargets.base.price)}</span>
-              <span className="text-muted-foreground/70">{a.closeTargets.base.prob}%</span>
+              <span className="text-muted-foreground">{a.closeTargets.base.prob}%</span>
             </div>
           )}
           {a.closeTargets.bear && (
-            <div className="inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 font-mono text-[10px]" style={{ borderColor: `${COLORS.bear}55`, background: `${COLORS.bear}10` }}>
+            <div className="inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 font-mono text-[11px]" style={{ borderColor: `${COLORS.bear}55`, background: `${COLORS.bear}10` }}>
               <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: COLORS.bear }} />
               <span className="uppercase tracking-wide" style={{ color: COLORS.bear }}>Bear</span>
               <span className="font-semibold text-foreground">~{fmtK(a.closeTargets.bear.price)}</span>
-              <span className="text-muted-foreground/70">{a.closeTargets.bear.prob}%</span>
+              <span className="text-muted-foreground">{a.closeTargets.bear.prob}%</span>
             </div>
           )}
         </div>
@@ -1534,7 +1534,7 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
 
   if (isLoading) {
     return (
-      <div className="flex h-[180px] items-center justify-center border-b border-border/30 bg-black/40 font-mono text-[10px] text-muted-foreground">
+      <div className="flex h-[180px] items-center justify-center border-b border-border/30 bg-black/40 font-mono text-[11px] text-muted-foreground">
         loading intraday tape...
       </div>
     );
@@ -1542,7 +1542,7 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
 
   if (!candles.length) {
     return (
-      <div className="flex h-[180px] items-center justify-center border-b border-border/30 bg-black/40 font-mono text-[10px] text-muted-foreground">
+      <div className="flex h-[180px] items-center justify-center border-b border-border/30 bg-black/40 font-mono text-[11px] text-muted-foreground">
         tape offline — market closed or Schwab throttled
       </div>
     );
@@ -1553,7 +1553,7 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
 
   return (
     <div className="border-b border-border/30 bg-black/60 p-2">
-      <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 px-1 font-mono text-[9px] text-muted-foreground">
+      <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 px-1 font-mono text-[11px] text-muted-foreground">
         <span className="text-amber-400 font-semibold uppercase tracking-widest">SPX Intraday · 5m</span>
         <span>SCHWAB TAPE</span>
         {prevClose != null && <span>· PREV {fmtK(prevClose)}</span>}
@@ -1562,7 +1562,7 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
         <span className={change >= 0 ? "text-green-400" : "text-red-400"}>
           · {change >= 0 ? "+" : ""}{change.toFixed(2)} ({changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}%)
         </span>
-        <span className="text-muted-foreground/50">· dashed lines = dealer levels from model</span>
+        <span className="text-muted-foreground">· dashed lines = dealer levels from model</span>
       </div>
       <div className="h-[180px] w-full">
         <ResponsiveContainer width="100%" height="100%">
@@ -1728,21 +1728,21 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
     const row = payload[0]?.payload;
     if (!row) return null;
     return (
-      <div className="rounded border border-amber-500/40 bg-black/95 px-3 py-2 font-mono text-[10px] shadow-lg">
+      <div className="rounded border border-amber-500/40 bg-black/95 px-3 py-2 font-mono text-[11px] shadow-lg">
         <div className="font-bold text-amber-400 mb-1">{label} · <span className="text-muted-foreground">{row.date}</span></div>
         <div className="text-yellow-400">BULL {fmtPrice(row.bull)}</div>
         <div className="text-foreground">BASE {fmtPrice(row.base)}</div>
         <div className="text-red-400">BEAR {fmtPrice(row.bear)}</div>
         {row.sigma > 0 && (
-          <div className="mt-1 text-[9px] text-muted-foreground">
+          <div className="mt-1 text-[11px] text-muted-foreground">
             ±1σ ±{fmtPrice(row.sigma)} · cum drift {(row.drift * 100).toFixed(2)}%
           </div>
         )}
         {row.segment && (
-          <div className="text-[9px] text-cyan-400/70">σ source: {row.segment}</div>
+          <div className="text-[11px] text-cyan-400/70">σ source: {row.segment}</div>
         )}
         {row.events && (
-          <div className="mt-1 inline-block rounded border border-amber-500/50 bg-amber-500/10 px-1 text-[9px] font-bold text-amber-400">
+          <div className="mt-1 inline-block rounded border border-amber-500/50 bg-amber-500/10 px-1 text-[11px] font-bold text-amber-400">
             {row.events.replace(/,/g, " + ")}
           </div>
         )}
@@ -1755,7 +1755,7 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
       className="border-t border-amber-500/30 bg-black/40 p-3"
       data-testid="weekly-trajectory-panel"
     >
-      <div className="mb-2 flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-widest">
+      <div className="mb-2 flex flex-wrap items-center gap-2 font-mono text-[11px] uppercase tracking-widest">
         <span className="text-amber-400 font-bold">13-WEEK TRAJECTORY</span>
         <span className="text-border">|</span>
         <span className="text-muted-foreground">BULL / BASE / BEAR · WEEK BY WEEK</span>
@@ -1884,111 +1884,111 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
       {/* Endpoint summary + drivers footer */}
       <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
         {/* Endpoint */}
-        <div className="rounded border border-amber-500/20 bg-black/50 p-2 font-mono text-[10px]">
-          <div className="mb-1 text-[9px] uppercase tracking-widest text-amber-400/80">3-MONTH ENDPOINT (WK13 · {traj.weeks[12]?.weekEndDate})</div>
+        <div className="rounded border border-amber-500/20 bg-black/50 p-2 font-mono text-[11px]">
+          <div className="mb-1 text-[11px] uppercase tracking-widest text-amber-400/80">3-MONTH ENDPOINT (WK13 · {traj.weeks[12]?.weekEndDate})</div>
           <div className="flex items-center gap-3">
             <span className="text-yellow-400">BULL <span className="font-bold">{fmtPrice(traj.endpoint.bull)}</span></span>
             <span className="text-foreground">BASE <span className="font-bold">{fmtPrice(traj.endpoint.base)}</span></span>
             <span className="text-red-400">BEAR <span className="font-bold">{fmtPrice(traj.endpoint.bear)}</span></span>
           </div>
-          <div className="mt-1 text-[9px] text-muted-foreground">
+          <div className="mt-1 text-[11px] text-muted-foreground">
             1 sd (log) ±{fmtPrice(traj.weeks[12]?.sigmaCum ?? traj.weeks[12]?.sigmaWeek ?? 0)} · BULL/BEAR = t(4) 84%/16% quantiles{traj.weeks[12]?.q10 != null && traj.weeks[12]?.q90 != null ? ` · q10–q90 ${fmtPrice(traj.weeks[12].q10)}–${fmtPrice(traj.weeks[12].q90)}` : ""} (thru WK13, coverage untested)
           </div>
         </div>
 
         {/* Drivers — v2 with 4 components */}
-        <div className="rounded border border-cyan-500/20 bg-black/50 p-2 font-mono text-[10px]">
-          <div className="mb-1 text-[9px] uppercase tracking-widest text-cyan-400/80">SCENARIO TILT DRIVERS (PER WEEK, HEURISTIC, NOT IN BASE)</div>
-          <div className="grid grid-cols-4 gap-2 text-[10px]">
+        <div className="rounded border border-cyan-500/20 bg-black/50 p-2 font-mono text-[11px]">
+          <div className="mb-1 text-[11px] uppercase tracking-widest text-cyan-400/80">SCENARIO TILT DRIVERS (PER WEEK, HEURISTIC, NOT IN BASE)</div>
+          <div className="grid grid-cols-4 gap-2 text-[11px]">
             <div>
-              <div className="text-[8px] text-muted-foreground/70">COMPOSITE</div>
+              <div className="text-[11px] text-muted-foreground">COMPOSITE</div>
               <div className={traj.drivers.compositeTilt >= 0 ? "text-green-400" : "text-red-400"}>
                 {(traj.drivers.compositeTilt * 100).toFixed(3)}%
               </div>
-              <div className="text-[8px] text-muted-foreground/50">{traj.inputs.composite}</div>
+              <div className="text-[11px] text-muted-foreground">{traj.inputs.composite}</div>
             </div>
             <div>
-              <div className="text-[8px] text-muted-foreground/70">GEX</div>
+              <div className="text-[11px] text-muted-foreground">GEX</div>
               <div className={traj.drivers.gexTilt >= 0 ? "text-green-400" : "text-red-400"}>
                 {(traj.drivers.gexTilt * 100).toFixed(3)}%
               </div>
-              <div className="text-[8px] text-muted-foreground/50">
+              <div className="text-[11px] text-muted-foreground">
                 {traj.inputs.totalGex != null ? `${(traj.inputs.totalGex / 1e9).toFixed(1)}B` : "\u2014"}
               </div>
             </div>
             <div>
-              <div className="text-[8px] text-muted-foreground/70">VIX TERM</div>
+              <div className="text-[11px] text-muted-foreground">VIX TERM</div>
               <div className={traj.drivers.vixTermTilt >= 0 ? "text-green-400" : "text-red-400"}>
                 {(traj.drivers.vixTermTilt * 100).toFixed(3)}%
               </div>
-              <div className="text-[8px] text-muted-foreground/50">
+              <div className="text-[11px] text-muted-foreground">
                 v {traj.inputs.vix?.toFixed(1) ?? "\u2014"}
               </div>
             </div>
             <div>
-              <div className="text-[8px] text-muted-foreground/70">SKEW</div>
+              <div className="text-[11px] text-muted-foreground">SKEW</div>
               <div className={(traj.drivers.skewTilt ?? 0) >= 0 ? "text-green-400" : "text-red-400"}>
                 {((traj.drivers.skewTilt ?? 0) * 100).toFixed(3)}%
               </div>
-              <div className="text-[8px] text-muted-foreground/50">
+              <div className="text-[11px] text-muted-foreground">
                 {traj.inputs.skew?.toFixed(1) ?? "\u2014"}
               </div>
             </div>
           </div>
-          <div className="mt-1 border-t border-cyan-500/15 pt-1 text-[9px]">
-            <span className="text-muted-foreground/70">TOTAL </span>
+          <div className="mt-1 border-t border-cyan-500/15 pt-1 text-[11px]">
+            <span className="text-muted-foreground">TOTAL </span>
             <span className={traj.drivers.totalDriftPerWeek >= 0 ? "text-green-400 font-bold" : "text-red-400 font-bold"}>
               {(traj.drivers.totalDriftPerWeek * 100).toFixed(3)}%/wk
             </span>
-            <span className="text-muted-foreground/50"> · {(traj.drivers.annualizedDrift * 100).toFixed(1)}%/yr</span>
+            <span className="text-muted-foreground"> · {(traj.drivers.annualizedDrift * 100).toFixed(1)}%/yr</span>
           </div>
         </div>
       </div>
 
       {/* v2: σ scaling row — VRP + event weeks + segments */}
-      <div className="mt-2 rounded border border-purple-500/20 bg-black/50 p-2 font-mono text-[10px]">
-        <div className="mb-1 text-[9px] uppercase tracking-widest text-purple-400/80">CONE WIDTH ({traj.sigmaSource === "spx_atm_iv_term" ? "Schwab SPX ATM IV term, t(4) bands" : traj.sigmaSource === "realized_20d" ? "FALLBACK: 20d realized vol, unscaled" : "source unlabelled"})</div>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 text-[10px]">
+      <div className="mt-2 rounded border border-purple-500/20 bg-black/50 p-2 font-mono text-[11px]">
+        <div className="mb-1 text-[11px] uppercase tracking-widest text-purple-400/80">CONE WIDTH ({traj.sigmaSource === "spx_atm_iv_term" ? "Schwab SPX ATM IV term, t(4) bands" : traj.sigmaSource === "realized_20d" ? "FALLBACK: 20d realized vol, unscaled" : "source unlabelled"})</div>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 text-[11px]">
           <div>
-            <div className="text-[8px] text-muted-foreground/70">VRP RATIO</div>
+            <div className="text-[11px] text-muted-foreground">VRP RATIO</div>
             <div className={
               (traj.drivers.vrpRatio ?? 1) < 0.85 ? "text-cyan-400" :
               (traj.drivers.vrpRatio ?? 1) > 1.05 ? "text-amber-400" :
               "text-foreground"
             }>
               {traj.drivers.vrpRatio != null ? traj.drivers.vrpRatio.toFixed(2) : "\u2014"}
-              <span className="text-[8px] text-muted-foreground/60"> RV/IV</span>
+              <span className="text-[11px] text-muted-foreground"> RV/IV</span>
             </div>
-            <div className="text-[8px] text-muted-foreground/50">
+            <div className="text-[11px] text-muted-foreground">
               rv {traj.inputs.realizedVol20d != null ? (traj.inputs.realizedVol20d * 100).toFixed(1) + "%" : "\u2014"} / iv {traj.inputs.vix?.toFixed(1) ?? "\u2014"}%
             </div>
           </div>
           <div>
-            <div className="text-[8px] text-muted-foreground/70">CONE SOURCE</div>
+            <div className="text-[11px] text-muted-foreground">CONE SOURCE</div>
             <div className={traj.sigmaSource === "spx_atm_iv_term" ? "text-foreground" : "text-amber-400"}>
               {traj.sigmaSource === "spx_atm_iv_term" ? "SPX ATM IV" : traj.sigmaSource === "realized_20d" ? "RV20 fallback" : "\u2014"}
             </div>
-            <div className="text-[8px] text-muted-foreground/50">no VRP / damping multiplier</div>
+            <div className="text-[11px] text-muted-foreground">no VRP / damping multiplier</div>
           </div>
           <div>
-            <div className="text-[8px] text-muted-foreground/70">EVENT WEEKS</div>
+            <div className="text-[11px] text-muted-foreground">EVENT WEEKS</div>
             <div className={(traj.drivers.eventWeeks ?? 0) > 0 ? "text-amber-400" : "text-foreground"}>
               {traj.drivers.eventWeeks ?? 0}
-              <span className="text-[8px] text-muted-foreground/60"> /13</span>
+              <span className="text-[11px] text-muted-foreground"> /13</span>
             </div>
-            <div className="text-[8px] text-muted-foreground/50">tagged; priced in option IV, no bump</div>
+            <div className="text-[11px] text-muted-foreground">tagged; priced in option IV, no bump</div>
           </div>
           <div>
-            <div className="text-[8px] text-muted-foreground/70">VIX TERM (context)</div>
-            <div className="text-cyan-400 text-[10px]">VIX9D → VIX → VIX3M</div>
-            <div className="text-[8px] text-muted-foreground/50">
+            <div className="text-[11px] text-muted-foreground">VIX TERM (context)</div>
+            <div className="text-cyan-400 text-[11px]">VIX9D → VIX → VIX3M</div>
+            <div className="text-[11px] text-muted-foreground">
               {traj.inputs.vix9d?.toFixed(1) ?? "\u2014"} → {traj.inputs.vix?.toFixed(1) ?? "\u2014"} → {traj.inputs.vix3m?.toFixed(1) ?? "\u2014"}
             </div>
           </div>
         </div>
       </div>
 
-      <div className="mt-2 text-[9px] text-muted-foreground/50 font-mono">
+      <div className="mt-2 text-[11px] text-muted-foreground font-mono">
         Drift-tilted GBM cone with magnet pull toward dealer levels. σ segmented across VIX9D/VIX/VIX3M, scaled by
         VRP (RV÷IV clamped 0.7-1.3), bumped +12% on OPEX/FOMC weeks. Drift = composite + GEX + VIX term + SKEW.
         Walls/flip pull primary, max pain + JPM secondary, capped ±4%/wk per anchor. NOT a forecast — a probability cone.
@@ -2008,7 +2008,7 @@ function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; sessio
       data-testid="batcave-model-view"
     >
       {/* ── Top header strip ── */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-black/70 px-3 py-2 font-mono text-[10px]">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-black/70 px-3 py-2 font-mono text-[11px]">
         <div className="flex flex-wrap items-center gap-2">
           <BatmanLogo className="h-5 w-10 text-amber-500" />
           <span className="font-bold text-amber-400 tracking-widest text-[11px]">BATCAVE</span>
@@ -2028,17 +2028,17 @@ function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; sessio
           <span className="text-border">|</span>
           <span className={a.dfi >= 0 ? "text-green-400" : "text-red-400"}>
             DFI {a.dfi >= 0 ? "+" : ""}{a.dfi.toFixed(2)} {a.dfiLabel}
-            {a.dfiFlipped && <span className="ml-1 text-yellow-400 text-[9px]">⚡ FLIP</span>}
+            {a.dfiFlipped && <span className="ml-1 text-yellow-400 text-[11px]">⚡ FLIP</span>}
           </span>
         </div>
-        <div className="flex items-center gap-2 text-muted-foreground/60 text-[9px]">
-          <BatmanLogo className="h-3 w-5 text-muted-foreground/40" />
+        <div className="flex items-center gap-2 text-muted-foreground text-[11px]">
+          <BatmanLogo className="h-3 w-5 text-muted-foreground" />
           <span>DATA: PULSE / BATCAVE MODEL</span>
         </div>
       </div>
 
       {/* ── VIX + confidence strip ── */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border/30 bg-black/40 px-3 py-1 font-mono text-[9px] text-muted-foreground/60">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border/30 bg-black/40 px-3 py-1 font-mono text-[11px] text-muted-foreground">
         <span>VIX {horizon.vol.vix?.toFixed(2) ?? "—"} {fmtPct(horizon.vol.vixChangePct)}</span>
         <span>·</span>
         <span>TERM {horizon.vol.termRatio?.toFixed(3) ?? "—"} ({horizon.vol.termLabel})</span>
@@ -2056,19 +2056,19 @@ function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; sessio
 
       {/* Batcave #3 + #4 — recal tracking + DoD term structure strip */}
       {(a.lastRecal || a.termStructureDoD) && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border/30 bg-black/50 px-3 py-1 font-mono text-[9px]" data-testid="recal-dod-strip">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border/30 bg-black/50 px-3 py-1 font-mono text-[11px]" data-testid="recal-dod-strip">
           {a.lastRecal && (
             <>
-              <span className="text-muted-foreground/60">LAST RECAL</span>
+              <span className="text-muted-foreground">LAST RECAL</span>
               <span className="text-foreground">{etTime(a.lastRecal.at)} ET</span>
-              <span className="text-muted-foreground/40">·</span>
+              <span className="text-muted-foreground">·</span>
               <span>
                 DFI{" "}
                 <span className={a.lastRecal.dfi >= 0 ? "text-green-400" : "text-red-400"}>
                   {a.lastRecal.dfi >= 0 ? "+" : ""}{a.lastRecal.dfi.toFixed(2)}
                 </span>
                 {a.lastRecal.dfiDeltaSinceOpen != null && (
-                  <span className="ml-1 text-muted-foreground/60">
+                  <span className="ml-1 text-muted-foreground">
                     ({a.lastRecal.dfiDeltaSinceOpen >= 0 ? "+" : ""}{a.lastRecal.dfiDeltaSinceOpen.toFixed(2)} since open)
                   </span>
                 )}
@@ -2078,7 +2078,7 @@ function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; sessio
           {a.lastRecal && a.termStructureDoD && <span className="text-border/60">|</span>}
           {a.termStructureDoD && (
             <>
-              <span className="text-muted-foreground/60">1D IV</span>
+              <span className="text-muted-foreground">1D IV</span>
               <span className="text-foreground">
                 {a.termStructureDoD.iv1d != null ? `${a.termStructureDoD.iv1d.toFixed(2)}%` : "—"}
               </span>
@@ -2087,17 +2087,17 @@ function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; sessio
                   ({a.termStructureDoD.iv1dDelta >= 0 ? "+" : ""}{a.termStructureDoD.iv1dDelta.toFixed(2)}%)
                 </span>
               )}
-              <span className="text-muted-foreground/40">·</span>
-              <span className="text-muted-foreground/60">CHARM</span>
+              <span className="text-muted-foreground">·</span>
+              <span className="text-muted-foreground">CHARM</span>
               <span className={a.termStructureDoD.charmNow >= 0 ? "text-green-400" : "text-red-400"}>
                 {a.termStructureDoD.charmNow >= 0 ? "+" : ""}{a.termStructureDoD.charmNow.toFixed(2)}B
               </span>
               {a.termStructureDoD.charmPrev != null && (
-                <span className="text-muted-foreground/60">
+                <span className="text-muted-foreground">
                   (was {a.termStructureDoD.charmPrev >= 0 ? "+" : ""}{a.termStructureDoD.charmPrev.toFixed(2)}B)
                 </span>
               )}
-              <span className="text-muted-foreground/40">·</span>
+              <span className="text-muted-foreground">·</span>
               <span className={
                 a.termStructureDoD.label === "Vol Bid Up" ? "text-amber-400 font-semibold" :
                 a.termStructureDoD.label === "Vol Offered" ? "text-cyan-400 font-semibold" :
@@ -2213,7 +2213,7 @@ export default function ModelsPanel() {
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card/40 px-3 py-2">
         <Activity className="h-4 w-4 text-amber-400" />
         <BatmanLogo className="h-4 w-8 text-amber-400" />
-        <span className="font-mono text-[10px] uppercase tracking-widest text-amber-400">Batcave Model</span>
+        <span className="font-mono text-[11px] uppercase tracking-widest text-amber-400">Batcave Model</span>
         <span className="text-border/60 mx-1">·</span>
 
         {/* Horizon pills */}
@@ -2223,7 +2223,7 @@ export default function ModelsPanel() {
               key={h}
               variant={horizon === h ? "default" : "ghost"}
               size="sm"
-              className="h-6 px-2.5 text-[10px] uppercase tracking-wider"
+              className="h-6 px-2.5 text-[11px] uppercase tracking-wider"
               onClick={() => setHorizon(h)}
               data-testid={`btn-horizon-${h}`}
             >
@@ -2242,7 +2242,7 @@ export default function ModelsPanel() {
               key={k}
               variant={symbol === k ? "default" : "ghost"}
               size="sm"
-              className="h-6 px-2.5 text-[10px]"
+              className="h-6 px-2.5 text-[11px]"
               onClick={() => setSymbol(k)}
               data-testid={`btn-symbol-${label}`}
             >
@@ -2252,7 +2252,7 @@ export default function ModelsPanel() {
         </div>
 
         {data && !active && (
-          <Badge variant="outline" className="border-border/60 font-mono text-[10px] text-muted-foreground" data-testid="badge-models-session">
+          <Badge variant="outline" className="border-border/60 font-mono text-[11px] text-muted-foreground" data-testid="badge-models-session">
             NOT BUILT
           </Badge>
         )}
@@ -2261,8 +2261,8 @@ export default function ModelsPanel() {
             variant="outline"
             className={
               data.session === "live" && !(data as any).stale
-                ? "border-green-500/40 font-mono text-[9px] text-green-400"
-                : "border-amber-500/40 font-mono text-[9px] text-amber-300"
+                ? "border-green-500/40 font-mono text-[11px] text-green-400"
+                : "border-amber-500/40 font-mono text-[11px] text-amber-300"
             }
             data-testid="badge-models-session"
           >
@@ -2273,7 +2273,7 @@ export default function ModelsPanel() {
         {updatedAgo && active && (
           <Badge
             variant="outline"
-            className="border-cyan-500/30 font-mono text-[9px] text-cyan-300/90"
+            className="border-cyan-500/30 font-mono text-[11px] text-cyan-300/90"
             data-testid="badge-models-updated"
             title="Bull / Base / Bear scenarios refresh every 30 minutes, and sooner whenever the Schwab chain behind them is older than its max age"
           >
@@ -2283,7 +2283,7 @@ export default function ModelsPanel() {
         )}
 
         {experimental && (
-          <Badge variant="outline" className="border-violet-500/50 font-mono text-[9px] text-violet-300" data-testid="badge-experimental">
+          <Badge variant="outline" className="border-violet-500/50 font-mono text-[11px] text-violet-300" data-testid="badge-experimental">
             EXP · DEALER MAP
           </Badge>
         )}
@@ -2293,7 +2293,7 @@ export default function ModelsPanel() {
           size="sm"
           onClick={() => refetch()}
           disabled={isFetching}
-          className="ml-auto h-6 gap-1 font-mono text-[10px]"
+          className="ml-auto h-6 gap-1 font-mono text-[11px]"
           data-testid="btn-models-refresh"
         >
           <RefreshCw className={`h-3 w-3 ${isFetching ? "animate-spin" : ""}`} />
@@ -2347,10 +2347,10 @@ export default function ModelsPanel() {
         className="rounded-lg border border-cyan-500/20 bg-black/30"
         data-testid="chain-audit-section"
       >
-        <div className="flex items-center gap-2 border-b border-cyan-500/20 px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-cyan-400/80">
+        <div className="flex items-center gap-2 border-b border-cyan-500/20 px-3 py-2 font-mono text-[11px] uppercase tracking-widest text-cyan-400/80">
           <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
           Live Chain Audit — Schwab
-          <span className="text-muted-foreground/40">· SPX / DEX / Vanna / Charm / Skew / Term / Vol / Dealer / GEX / Pin / VRP</span>
+          <span className="text-muted-foreground">· SPX / DEX / Vanna / Charm / Skew / Term / Vol / Dealer / GEX / Pin / VRP</span>
         </div>
         <div className="p-3">
           <ErrorBoundary label="Chain Audit">

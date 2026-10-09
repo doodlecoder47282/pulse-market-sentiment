@@ -77,7 +77,7 @@ export default function TradeEnvironmentStrip() {
         className="flex w-full items-center gap-2 px-3 py-1.5 text-left sm:gap-3 sm:px-4"
       >
         <span
-          className={`shrink-0 rounded border px-2 py-0.5 font-mono text-[10px] font-bold tracking-widest ${st.chip}`}
+          className={`shrink-0 rounded border px-2 py-0.5 font-mono text-[11px] font-bold tracking-widest ${st.chip}`}
           data-testid="trade-environment-state"
           title={STATE_MEANING[data.state as TradeEnv["state"]] ?? ""}
         >
@@ -87,11 +87,11 @@ export default function TradeEnvironmentStrip() {
           <span className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-800">
             <span className={`block h-full ${st.bar}`} style={{ width: `${data.score}%` }} />
           </span>
-          <span className="font-mono text-[10px] text-muted-foreground">{data.score}{data.degraded ? "+" : ""}</span>
+          <span className="font-mono text-[11px] text-muted-foreground">{data.score}{data.degraded ? "+" : ""}</span>
         </span>
         {data.degraded && (
           <span
-            className="shrink-0 rounded border border-amber-700 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-amber-400"
+            className="shrink-0 rounded border border-amber-700 px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider text-amber-400"
             title="some drivers are unavailable and score 0: the index is a lower bound"
             data-testid="trade-environment-degraded"
           >
@@ -111,7 +111,7 @@ export default function TradeEnvironmentStrip() {
       {open && (
         <div className="border-t border-border/40 px-3 pb-3 pt-2 sm:px-4" data-testid="trade-environment-detail">
           <div className="mb-2 flex items-center justify-between">
-            <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+            <span className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
               heuristic convexity index {data.score}/100
             </span>
             <EdgeInfo id="trade-environment" />
@@ -124,8 +124,8 @@ export default function TradeEnvironmentStrip() {
                 data-testid={`trade-env-driver-${d.key}`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-mono text-[10px] uppercase tracking-wider text-slate-400">{d.label}</span>
-                  <span className={`font-mono text-[10px] ${d.dataState === "unavailable" ? "text-amber-500" : d.points > 0 ? "text-orange-400" : "text-slate-600"}`}>
+                  <span className="font-mono text-[11px] uppercase tracking-wider text-slate-400">{d.label}</span>
+                  <span className={`font-mono text-[11px] ${d.dataState === "unavailable" ? "text-amber-500" : d.points > 0 ? "text-orange-400" : "text-slate-400"}`}>
                     {d.dataState === "unavailable" ? "n/a" : `+${d.points}/${d.max}`}
                   </span>
                 </div>
@@ -134,7 +134,7 @@ export default function TradeEnvironmentStrip() {
             ))}
           </div>
           {data.label && (
-            <p className="mt-2 text-[10px] leading-snug text-muted-foreground" data-testid="trade-env-label">
+            <p className="mt-2 text-[11px] leading-snug text-muted-foreground" data-testid="trade-env-label">
               {data.label}
               {data.calibration ? ` · fit to forward range: ${data.calibration.status} (${data.calibration.sessions}/${data.calibration.minSessions} sessions, ${data.calibration.windows}/${data.calibration.minWindows} windows)` : ""}
             </p>
@@ -142,7 +142,7 @@ export default function TradeEnvironmentStrip() {
           <div className="mt-2 space-y-1">
             {data.instructions.map((line, i) => (
               <p key={i} className="text-[11px] leading-snug text-slate-300">
-                <span className="mr-1.5 font-mono text-[10px] text-muted-foreground">{i + 1}.</span>
+                <span className="mr-1.5 font-mono text-[11px] text-muted-foreground">{i + 1}.</span>
                 {line}
               </p>
             ))}

@@ -176,7 +176,7 @@ export default function OdteContractChart({
             <Badge variant="outline" className={`h-5 font-mono text-[11px] ${badgeTone}`}>
               {meta.strike.toFixed(0)}{meta.side === "call" ? "C" : "P"}
             </Badge>
-            <Badge variant="outline" className="h-5 font-mono text-[10px]">
+            <Badge variant="outline" className="h-5 font-mono text-[11px]">
               exp {meta.expiry ?? "—"}
             </Badge>
             {meta.last != null && (
@@ -192,12 +192,12 @@ export default function OdteContractChart({
             {/* Cumulative session volume (from Schwab snapshot, not live delta bars).
                 Shown even after hours when deltaVol is 0 and signed-volume pane is empty. */}
             {meta.volume != null && meta.volume > 0 && (
-              <Badge variant="outline" className="h-5 font-mono text-[10px] text-muted-foreground">
+              <Badge variant="outline" className="h-5 font-mono text-[11px] text-muted-foreground">
                 vol {meta.volume.toLocaleString()}
               </Badge>
             )}
             {meta.openInterest != null && meta.openInterest > 0 && (
-              <Badge variant="outline" className="h-5 font-mono text-[10px] text-muted-foreground">
+              <Badge variant="outline" className="h-5 font-mono text-[11px] text-muted-foreground">
                 OI {meta.openInterest.toLocaleString()}
               </Badge>
             )}
@@ -209,7 +209,7 @@ export default function OdteContractChart({
               <Button
                 size="sm"
                 variant={pane === "chart" ? "default" : "ghost"}
-                className="h-6 rounded-none px-2 text-[10px]"
+                className="h-6 rounded-none px-2 text-[11px]"
                 onClick={() => setPane("chart")}
                 data-testid="button-pane-chart"
               >
@@ -218,7 +218,7 @@ export default function OdteContractChart({
               <Button
                 size="sm"
                 variant={pane === "details" ? "default" : "ghost"}
-                className="h-6 rounded-none px-2 text-[10px]"
+                className="h-6 rounded-none px-2 text-[11px]"
                 onClick={() => setPane("details")}
                 data-testid="button-pane-details"
               >
@@ -232,7 +232,7 @@ export default function OdteContractChart({
                   key={b.ms}
                   size="sm"
                   variant={bucketMs === b.ms ? "default" : "ghost"}
-                  className="h-6 rounded-none px-1.5 text-[10px]"
+                  className="h-6 rounded-none px-1.5 text-[11px]"
                   onClick={() => setBucketMs(b.ms)}
                   data-testid={`button-bucket-${b.label}`}
                 >
@@ -277,21 +277,21 @@ export default function OdteContractChart({
           <div className="space-y-2">
             {/* Session mini-stats row above chart */}
             {stats && (
-              <div className="grid grid-cols-4 gap-2 rounded-md border border-border/40 bg-muted/20 px-3 py-2 text-[10px]">
+              <div className="grid grid-cols-4 gap-2 rounded-md border border-border/40 bg-muted/20 px-3 py-2 text-[11px]">
                 <div>
-                  <div className="text-[9px] uppercase tracking-wider text-muted-foreground">High</div>
+                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">High</div>
                   <div className="font-mono text-[12px] font-semibold text-emerald-400 tabular-nums">${stats.high.toFixed(2)}</div>
                 </div>
                 <div>
-                  <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Low</div>
+                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Low</div>
                   <div className="font-mono text-[12px] font-semibold text-rose-400 tabular-nums">${stats.low.toFixed(2)}</div>
                 </div>
                 <div>
-                  <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Buy vol</div>
+                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Buy vol</div>
                   <div className="font-mono text-[12px] font-semibold text-emerald-400 tabular-nums">{stats.totalBuy.toLocaleString()}</div>
                 </div>
                 <div>
-                  <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Sell vol</div>
+                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Sell vol</div>
                   <div className="font-mono text-[12px] font-semibold text-rose-400 tabular-nums">{stats.totalSell.toLocaleString()}</div>
                 </div>
               </div>
@@ -299,7 +299,7 @@ export default function OdteContractChart({
 
             {/* Flat-tape banner — marks-only history (no prints, no range) is not a session read */}
             {stats && stats.high === stats.low && stats.totalBuy + stats.totalSell === 0 && (
-              <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-[10px] text-amber-400" data-testid="text-flat-tape">
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-[11px] text-amber-400" data-testid="text-flat-tape">
                 flat tape — these bars are quote marks only, no trades printed while tracking
                 {meta.lastTradeTime ? ` · last actual trade ${fmtTradeTime(meta.lastTradeTime)}` : ""}
               </div>
@@ -413,10 +413,10 @@ export default function OdteContractChart({
                 When every bar's totalVol is 0 (after-hours or no new prints yet)
                 we swap in an empty-state hint so it doesn't look broken. */}
             <div className="h-[140px] w-full rounded-md border border-border/30 bg-background/40 p-1">
-              <div className="flex items-center justify-between px-2 pt-1 text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
+              <div className="flex items-center justify-between px-2 pt-1 text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
                 <span>Volume · buy vs sell (last-print side)</span>
                 {stats && stats.totalBuy + stats.totalSell === 0 && meta.volume != null && meta.volume > 0 && (
-                  <span className="text-[9px] text-amber-400/80 normal-case tracking-normal" data-testid="text-no-new-prints">
+                  <span className="text-[11px] text-amber-400/80 normal-case tracking-normal" data-testid="text-no-new-prints">
                     no new prints since tracking began · session total {meta.volume.toLocaleString()}
                     {meta.lastTradeTime ? ` · last trade ${fmtTradeTime(meta.lastTradeTime)}` : ""}
                   </span>
@@ -463,7 +463,7 @@ export default function OdteContractChart({
               </ResponsiveContainer>
             </div>
 
-            <div className="flex items-center justify-between gap-2 pt-0.5 text-[9px] text-muted-foreground px-1">
+            <div className="flex items-center justify-between gap-2 pt-0.5 text-[11px] text-muted-foreground px-1">
               <div className="flex items-center gap-3">
                 <LegendDot color="#38bdf8" label="close price" />
                 <LegendDot color="#10b981" label="buy vol" />
@@ -519,7 +519,7 @@ function DetailsPane({
       <button
         type="button"
         onClick={onBack}
-        className="flex items-center gap-0.5 text-[10px] font-mono text-muted-foreground hover:text-foreground"
+        className="flex items-center gap-0.5 text-[11px] font-mono text-muted-foreground hover:text-foreground"
         data-testid="button-swipe-to-chart"
       >
         <ChevronLeft className="h-3 w-3" /> back to chart
@@ -587,7 +587,7 @@ function DetailsPane({
         )}
       </div>
 
-      <div className="pt-1 text-[9px] font-mono text-muted-foreground">
+      <div className="pt-1 text-[11px] font-mono text-muted-foreground">
         {barsCount} bars · {(bucketMs / 60_000).toFixed(0)}m buckets · key {meta.key}
       </div>
     </div>
@@ -598,7 +598,7 @@ function DetailRow({ label, value, tone }: { label: string; value: string; tone?
   const color = tone === "up" ? "text-emerald-400" : tone === "down" ? "text-rose-400" : "text-foreground";
   return (
     <div className="flex items-center justify-between rounded border bg-muted/10 px-2 py-1">
-      <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
       <span className={`font-mono text-[11px] tabular-nums ${color}`}>{value}</span>
     </div>
   );
@@ -615,7 +615,7 @@ function _DeprecatedStat({ label, value, tone }: { label: string; value: string;
   const color = tone === "up" ? "text-emerald-400" : tone === "down" ? "text-rose-400" : "text-foreground";
   return (
     <div>
-      <div className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className={`font-mono text-sm font-semibold tabular-nums ${color}`}>{value}</div>
     </div>
   );

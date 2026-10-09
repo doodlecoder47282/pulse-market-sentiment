@@ -87,14 +87,14 @@ export default function RegimeHeadline() {
       <div className="mx-auto flex max-w-[1800px] items-center gap-3 px-3 py-2 sm:px-4 md:px-8 xl:px-10">
         <div className={`flex items-center gap-1.5 ${style.icon}`}>
           <IconForTier tier={data.tier} regime={data.regime} />
-          <span className={`font-mono text-[10px] uppercase tracking-widest ${style.label}`} data-testid="regime-label">
+          <span className={`font-mono text-[11px] uppercase tracking-widest ${style.label}`} data-testid="regime-label">
             {REGIME_LABEL[data.regime]}
           </span>
         </div>
         <div className={`flex-1 truncate text-sm font-medium ${style.text}`} data-testid="regime-headline-text">
           {data.headline}
         </div>
-        <div className="hidden items-center gap-3 font-mono text-[10px] text-muted-foreground md:flex" data-testid="regime-headline-meta">
+        <div className="hidden items-center gap-3 font-mono text-[11px] text-muted-foreground md:flex" data-testid="regime-headline-meta">
           <span>
             <span className="opacity-60">VIX </span>
             {vix9d?.toFixed(1) ?? "—"}/{vix?.toFixed(1) ?? "—"}/{vix3m?.toFixed(1) ?? "—"} <span className={vixChangePct != null && vixChangePct >= 0 ? "text-rose-400" : "text-emerald-400"}>{vixChgStr}</span>

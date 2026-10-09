@@ -122,25 +122,25 @@ export default function JPMCollarPanel() {
       {/* Current quarter summary */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <div className="rounded-lg border border-border/60 bg-card/50 p-2.5">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Quarter</div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Quarter</div>
           <div className="mt-0.5 text-sm font-semibold">{current.quarter}</div>
         </div>
         <div className="rounded-lg border border-border/60 bg-card/50 p-2.5">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground flex items-center gap-1">
             <Calendar className="h-3 w-3" /> Roll Date
           </div>
           <div className="mt-0.5 text-sm font-semibold">{current.rollDate}</div>
-          <div className="text-[10px] text-muted-foreground">{current.expired ? "expired" : `${current.daysToRoll}d away`}</div>
+          <div className="text-[11px] text-muted-foreground">{current.expired ? "expired" : `${current.daysToRoll}d away`}</div>
         </div>
         <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-2.5">
-          <div className="text-[10px] uppercase tracking-wider text-emerald-400/80">Long Put (Floor)</div>
+          <div className="text-[11px] uppercase tracking-wider text-emerald-400/80">Long Put (Floor)</div>
           <div className="mt-0.5 text-sm font-semibold text-emerald-300">{current.longPut.toLocaleString()}</div>
-          <div className="text-[10px] text-muted-foreground">{fmtPct(distToPutPct != null ? -distToPutPct : null)} below spot</div>
+          <div className="text-[11px] text-muted-foreground">{fmtPct(distToPutPct != null ? -distToPutPct : null)} below spot</div>
         </div>
         <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-2.5">
-          <div className="text-[10px] uppercase tracking-wider text-rose-400/80">Short Call (Cap)</div>
+          <div className="text-[11px] uppercase tracking-wider text-rose-400/80">Short Call (Cap)</div>
           <div className="mt-0.5 text-sm font-semibold text-rose-300">{current.shortCall.toLocaleString()}</div>
-          <div className="text-[10px] text-muted-foreground">{fmtPct(distToCallPct)} above spot</div>
+          <div className="text-[11px] text-muted-foreground">{fmtPct(distToCallPct)} above spot</div>
         </div>
       </div>
 
@@ -240,11 +240,11 @@ export default function JPMCollarPanel() {
           <table className="w-full text-xs" data-testid="jpm-collar-history">
             <thead>
               <tr className="border-b border-border/40">
-                <th className="pb-1.5 text-left text-[10px] uppercase tracking-wider text-muted-foreground">Quarter</th>
-                <th className="pb-1.5 text-right text-[10px] uppercase tracking-wider text-emerald-400/70">Long Put</th>
-                <th className="pb-1.5 text-right text-[10px] uppercase tracking-wider text-amber-400/70">Short Put</th>
-                <th className="pb-1.5 text-right text-[10px] uppercase tracking-wider text-rose-400/70">Short Call</th>
-                <th className="pb-1.5 pl-2 text-left text-[10px] uppercase tracking-wider text-muted-foreground">Source</th>
+                <th className="pb-1.5 text-left text-[11px] uppercase tracking-wider text-muted-foreground">Quarter</th>
+                <th className="pb-1.5 text-right text-[11px] uppercase tracking-wider text-emerald-400/70">Long Put</th>
+                <th className="pb-1.5 text-right text-[11px] uppercase tracking-wider text-amber-400/70">Short Put</th>
+                <th className="pb-1.5 text-right text-[11px] uppercase tracking-wider text-rose-400/70">Short Call</th>
+                <th className="pb-1.5 pl-2 text-left text-[11px] uppercase tracking-wider text-muted-foreground">Source</th>
               </tr>
             </thead>
             <tbody>
@@ -253,20 +253,20 @@ export default function JPMCollarPanel() {
                   <td className="py-1.5 font-semibold">
                     {q.quarter}
                     {i === 0 && (current.expired
-                      ? <Badge variant="outline" className="ml-1.5 text-[9px] border-amber-500/50 text-amber-400">Expired</Badge>
-                      : <Badge variant="outline" className="ml-1.5 text-[9px] border-cyan-500/50 text-cyan-400">Current</Badge>)}
+                      ? <Badge variant="outline" className="ml-1.5 text-[11px] border-amber-500/50 text-amber-400">Expired</Badge>
+                      : <Badge variant="outline" className="ml-1.5 text-[11px] border-cyan-500/50 text-cyan-400">Current</Badge>)}
                   </td>
                   <td className="py-1.5 text-right font-mono tabular-nums text-emerald-400">{q.longPut.toLocaleString()}</td>
                   <td className="py-1.5 text-right font-mono tabular-nums text-amber-400">{q.shortPut.toLocaleString()}</td>
                   <td className="py-1.5 text-right font-mono tabular-nums text-rose-400">{q.shortCall.toLocaleString()}</td>
-                  <td className="py-1.5 pl-2 text-[10px] text-muted-foreground" title={q.source ?? ""}>
+                  <td className="py-1.5 pl-2 text-[11px] text-muted-foreground" title={q.source ?? ""}>
                     {q.verification ?? "unverified"}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <p className="mt-3 text-[10px] text-muted-foreground/60 italic">
+          <p className="mt-3 text-[11px] text-muted-foreground italic">
             * Hand-entered strikes; hover "source" for provenance. Only "verified" rows are confirmed by reputable reporting; the fund discloses exact positions in Form N-PORT (60-day lag). Dealer hedging of these positions is often cited as price gravity near the strikes; that effect is not measured here.
           </p>
         </CardContent>

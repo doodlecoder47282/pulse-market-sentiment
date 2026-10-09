@@ -24,14 +24,14 @@ function StaleChip({ q }: { q: QuoteCell }) {
   if (q.stale === true) {
     const age = q.ageSec != null ? (q.ageSec >= 120 ? `${Math.round(q.ageSec / 60)}m` : `${q.ageSec}s`) : "";
     return (
-      <span className="rounded border border-amber-500/50 px-1 font-mono text-[9px] uppercase text-amber-400" title="Quote is not refreshing during the regular session">
+      <span className="rounded border border-amber-500/50 px-1 font-mono text-[11px] uppercase text-amber-400" title="Quote is not refreshing during the regular session">
         stale{age ? ` ${age}` : ""}
       </span>
     );
   }
   if (q.stale === null) {
     return (
-      <span className="rounded border border-border px-1 font-mono text-[9px] uppercase text-muted-foreground" title="Quote carried no timestamp; age unknown">
+      <span className="rounded border border-border px-1 font-mono text-[11px] uppercase text-muted-foreground" title="Quote carried no timestamp; age unknown">
         age ?
       </span>
     );
@@ -81,7 +81,7 @@ export default function LiveQuoteStrip() {
     <div className="hidden items-center gap-3 sm:flex" data-testid="live-quote-strip">
       {/* SPY */}
       <div className="flex items-baseline gap-1.5">
-        <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">SPY</span>
+        <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">SPY</span>
         <FlashNumber
           value={data.spy.price}
           format={(v) => `$${fmt2(v)}`}
@@ -100,7 +100,7 @@ export default function LiveQuoteStrip() {
 
       {/* VIX */}
       <div className="flex items-baseline gap-1.5">
-        <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">VIX</span>
+        <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">VIX</span>
         <FlashNumber
           value={data.vix.price}
           format={(v) => fmt2(v)}

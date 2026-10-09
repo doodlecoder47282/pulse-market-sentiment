@@ -92,7 +92,7 @@ export default function DataStateChip({
 
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${TONE_CLASS[view.tone]} ${className ?? ""}`}
+      className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] font-mono uppercase tracking-wider ${TONE_CLASS[view.tone]} ${className ?? ""}`}
       title={title}
       data-testid={testId ?? "data-state-chip"}
       data-state={view.state}

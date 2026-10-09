@@ -32,7 +32,7 @@ export default function ShortcutsModal({ open, onClose }: Props) {
         <div className="space-y-4 text-sm">
           {/* Tab shortcuts */}
           <div>
-            <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">Tabs</div>
+            <div className="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">Tabs</div>
             <div className="space-y-1">
               {TAB_ORDER.map((tab, i) => (
                 <div key={tab} className="flex items-center justify-between gap-4">
@@ -47,7 +47,7 @@ export default function ShortcutsModal({ open, onClose }: Props) {
 
           {/* Other shortcuts */}
           <div>
-            <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">Navigation</div>
+            <div className="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">Navigation</div>
             <div className="space-y-1">
               {SHORTCUT_DOCS.filter((_, i) => i > 0).map((s) => (
                 <div key={s.key} className="flex items-center justify-between gap-4">

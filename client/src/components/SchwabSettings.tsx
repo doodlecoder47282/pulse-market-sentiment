@@ -90,11 +90,11 @@ function StreamFeedRow({ connected, stream }: { connected: boolean; stream: Stre
     return a == null ? "no data" : `${Math.round(a / 1000)}s`;
   };
   return (
-    <div className="space-y-1 text-[10px]" data-testid="schwab-stream-status">
+    <div className="space-y-1 text-[11px]" data-testid="schwab-stream-status">
       <div className="flex items-center gap-1" style={{ color: f.color }} title={f.detail}>
         <span className={`h-1.5 w-1.5 rounded-full ${f.label === "Streaming live" ? "animate-pulse" : ""}`} style={{ background: f.color }} />
         <span className="font-medium">Quotes: {f.label}</span>
-        {f.detail && <span className="text-muted-foreground/70 truncate max-w-[220px]">· {f.detail}</span>}
+        {f.detail && <span className="text-muted-foreground truncate max-w-[220px]">· {f.detail}</span>}
       </div>
       {connected && stream?.mode && stream.mode !== "down" && (
         <div className="text-muted-foreground font-mono">
@@ -186,7 +186,7 @@ export function SchwabStatusPill({ onClick }: { onClick: () => void }) {
         aria-hidden
       />
       <span
-        className="font-mono text-[9px] font-semibold uppercase tracking-wider"
+        className="font-mono text-[11px] font-semibold uppercase tracking-wider"
         style={{ color: isConnected ? "#34d399" : "#fbbf24" }}
       >
         {isConnected ? "SCHWAB LIVE" : data.connected ? "SCHWAB" : "DISCONNECTED"}
@@ -207,11 +207,11 @@ function SourceBadge({ source, detail }: { source: SourceState; detail?: string 
   };
   const s = styles[source];
   return (
-    <span className="flex items-center gap-1 text-[10px]" style={{ color: s.color }} title={detail}>
+    <span className="flex items-center gap-1 text-[11px]" style={{ color: s.color }} title={detail}>
       <span className={`h-1.5 w-1.5 rounded-full ${s.dot} ${s.pulse ? "animate-pulse" : ""}`} />
       <span>{s.label}</span>
       {detail && source !== "schwab_live" && (
-        <span className="text-muted-foreground/70 ml-0.5 truncate max-w-[140px]">· {detail}</span>
+        <span className="text-muted-foreground ml-0.5 truncate max-w-[140px]">· {detail}</span>
       )}
     </span>
   );
@@ -469,12 +469,12 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                     <CheckCircle className="h-4 w-4 text-emerald-400" />
                     <span className="text-sm font-medium text-emerald-300">Connected to Schwab</span>
                   </div>
-                  <span className="flex items-center gap-1 text-[10px] text-emerald-400 animate-pulse">
+                  <span className="flex items-center gap-1 text-[11px] text-emerald-400 animate-pulse">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                     LIVE
                   </span>
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-[10px] text-muted-foreground">
+                <div className="grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
                   <div className="flex items-center gap-1">
                     <Clock className="h-3 w-3" />
                     <span>Token expires: <span className="text-foreground font-mono">{formatDuration(status?.expiresIn ?? 0)}</span></span>
@@ -550,7 +550,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-6 border-red-500/40 text-[10px] text-red-400 hover:bg-red-500/10"
+                    className="h-6 border-red-500/40 text-[11px] text-red-400 hover:bg-red-500/10"
                     onClick={() => disconnectMut.mutate()}
                     disabled={disconnectMut.isPending}
                     data-testid="token-store-disconnect"
@@ -562,7 +562,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
             </div>
           )}
           {status?.tokenStore?.mode === "encrypted" && !status.tokenStore.reason && (
-            <div className="text-[10px] text-muted-foreground" data-testid="schwab-token-store">Tokens encrypted at rest (AES-256-GCM, key from {status.tokenStore.keySource === "file" ? "local key file" : "BATCAVE_TOKEN_KEY"}).</div>
+            <div className="text-[11px] text-muted-foreground" data-testid="schwab-token-store">Tokens encrypted at rest (AES-256-GCM, key from {status.tokenStore.keySource === "file" ? "local key file" : "BATCAVE_TOKEN_KEY"}).</div>
           )}
 
           {/* OAuth flow (show if disconnected or needs reauth) */}
@@ -575,7 +575,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
               {/* Step 1 */}
               <div className="rounded-md border border-border/40 p-3 space-y-2">
                 <div className="flex items-center gap-2">
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-bold">1</span>
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[11px] font-bold">1</span>
                   <span className="text-xs font-medium">Open Schwab authorization page</span>
                 </div>
                 <Button
@@ -590,7 +590,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                 </Button>
                 {authBlockedFallback && authUrlData?.url && (
                   <div className="mt-2 rounded border border-amber-500/40 bg-amber-500/5 p-2 space-y-2">
-                    <div className="text-[10px] font-semibold text-amber-300 uppercase tracking-wider">
+                    <div className="text-[11px] font-semibold text-amber-300 uppercase tracking-wider">
                       Popup blocked here — copy the link, open it in Safari
                     </div>
                     <Button
@@ -609,17 +609,17 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                       rows={3}
                       onFocus={(e) => e.currentTarget.select()}
                       onClick={(e) => e.currentTarget.select()}
-                      className="w-full resize-none rounded border border-border/40 bg-background/60 p-1.5 font-mono text-[10px] leading-tight text-blue-300 [user-select:text] [-webkit-user-select:text]"
+                      className="w-full resize-none rounded border border-border/40 bg-background/60 p-1.5 font-mono text-[11px] leading-tight text-blue-300 [user-select:text] [-webkit-user-select:text]"
                       data-testid="schwab-auth-url-box"
                     />
-                    <div className="text-[10px] leading-snug text-muted-foreground">
+                    <div className="text-[11px] leading-snug text-muted-foreground">
                       1. Copy · 2. Paste in Safari's address bar · 3. Log in at Schwab · 4. Copy the https://127.0.0.1/?code=... URL it lands on · 5. Come back here and paste it in step 2 below
                     </div>
                     <a
                       href={authUrlData.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="block text-[10px] text-muted-foreground underline underline-offset-2"
+                      className="block text-[11px] text-muted-foreground underline underline-offset-2"
                       data-testid="schwab-auth-fallback-link"
                     >
                       or try opening it directly (may be blocked in this app)
@@ -632,13 +632,13 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
               <div className={`rounded-md border p-3 space-y-2 transition-opacity ${step === "waiting_for_paste" ? "border-amber-500/40 bg-amber-500/5 opacity-100" : "border-border/40 opacity-60"}`}>
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-bold">2</span>
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[11px] font-bold">2</span>
                     <span className="text-xs font-medium">Paste anywhere on the page</span>
                   </div>
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-6 text-[10px] px-2"
+                    className="h-6 text-[11px] px-2"
                     onClick={handlePasteFromClipboard}
                     disabled={connectMut.isPending}
                     data-testid="paste-clipboard-btn"
@@ -646,7 +646,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                     Paste from clipboard
                   </Button>
                 </div>
-                <div className="text-[10px] text-muted-foreground leading-snug">
+                <div className="text-[11px] text-muted-foreground leading-snug">
                   After logging in, Schwab redirects to{" "}
                   <code className="rounded bg-muted px-1 text-amber-300">https://127.0.0.1/?code=...</code>.{" "}
                   Paste the full URL, just the code, or <span className="text-foreground">code=...</span> — we'll auto-connect.
@@ -663,11 +663,11 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                     }
                   }}
                   placeholder="Paste URL or code here — auto-connects"
-                  className="font-mono text-[10px] resize-none h-16"
+                  className="font-mono text-[11px] resize-none h-16"
                   data-testid="schwab-callback-url-input"
                 />
                 {connectMut.isPending && (
-                  <div className="flex items-center gap-2 text-[10px] text-amber-300">
+                  <div className="flex items-center gap-2 text-[11px] text-amber-300">
                     <Loader2 className="h-3 w-3 animate-spin" />
                     Connecting to Schwab...
                   </div>
@@ -675,7 +675,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="w-full text-[10px] h-7"
+                  className="w-full text-[11px] h-7"
                   onClick={handleConnect}
                   disabled={connectMut.isPending || !redirectedUrl.trim()}
                   data-testid="complete-connection-btn"
@@ -719,7 +719,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
 
             {/* Live cooldown / rate-budget banner */}
             {diag && (diag.cooldowns.length > 0 || diag.forbiddenStreaks.length > 0 || diag.requestsLastMinute > diag.maxPerMinute * 0.8) && (
-              <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[10px] text-amber-200/90 leading-snug space-y-0.5">
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200/90 leading-snug space-y-0.5">
                 {diag.cooldowns.length > 0 && (
                   <div>
                     <span className="font-semibold">Active cooldowns:</span>{" "}
@@ -741,7 +741,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
               </div>
             )}
             {diag && diag.cooldowns.length === 0 && diag.forbiddenStreaks.length === 0 && (
-              <div className="text-[10px] text-muted-foreground/70">
+              <div className="text-[11px] text-muted-foreground">
                 Cache: {diag.cacheEntries} entries · Budget: {diag.requestsLastMinute}/{diag.maxPerMinute} req/min
               </div>
             )}

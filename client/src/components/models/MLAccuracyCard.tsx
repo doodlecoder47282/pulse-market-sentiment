@@ -287,13 +287,13 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
               MM Matrix Scorecard
               <EdgeInfo id="ml-accuracy" className="h-6 w-6" />
             </div>
-            <div className="text-[10px] text-muted-foreground">
+            <div className="text-[11px] text-muted-foreground">
               {data.modelKind ?? "MM matrix hand-set priors (not a trained ML model)"} · graded vs realized closes
             </div>
           </div>
           <Badge
             variant="outline"
-            className={`ml-auto px-2 py-0.5 text-[10px] ${calib.cls}`}
+            className={`ml-auto px-2 py-0.5 text-[11px] ${calib.cls}`}
             title={calib.title}
             data-testid="badge-ml-calibration"
           >
@@ -304,20 +304,20 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
         {/* Top stat row */}
         <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
           <div className="rounded border border-border/40 bg-black/30 p-2">
-            <div className="text-[9px] uppercase tracking-wide text-muted-foreground">directional hit rate</div>
+            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">directional hit rate</div>
             <div className="font-mono text-xl text-foreground">
               {pct(data.directionalHitRate)}
             </div>
-            <div className="text-[9px] text-muted-foreground/70">
+            <div className="text-[11px] text-muted-foreground">
               over {data.directionalNCalls} called predictions
             </div>
           </div>
           <div className="rounded border border-border/40 bg-black/30 p-2">
-            <div className="text-[9px] uppercase tracking-wide text-muted-foreground">brier score</div>
+            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">brier score</div>
             <div className="font-mono text-xl text-foreground">
               {data.brierScore != null ? data.brierScore.toFixed(3) : "—"}
             </div>
-            <div className="text-[9px] text-muted-foreground/70">
+            <div className="text-[11px] text-muted-foreground">
               all graded rows, n={data.brierN} · lower = better
               {skill && skill.n > 0 && skill.brier != null && (
                 <>
@@ -330,16 +330,16 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
             </div>
           </div>
           <div className="rounded border border-border/40 bg-black/30 p-2">
-            <div className="text-[9px] uppercase tracking-wide text-muted-foreground">graded</div>
+            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">graded</div>
             <div className="font-mono text-xl text-foreground">
               {data.gradedPredictions}/{data.totalPredictions}
             </div>
-            <div className="text-[9px] text-muted-foreground/70">
+            <div className="text-[11px] text-muted-foreground">
               {data.abstained} abstained (|bias|&lt;0.15)
             </div>
           </div>
           <div className="rounded border border-border/40 bg-black/30 p-2">
-            <div className="text-[9px] uppercase tracking-wide text-muted-foreground">window</div>
+            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">window</div>
             <div className="font-mono text-[11px] text-foreground">
               {data.oldestPrediction ?? "—"}
               <br />
@@ -351,63 +351,63 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
         {/* Per-call breakdown */}
         <div className="mt-3 grid grid-cols-3 gap-2">
           <div className="rounded border border-green-500/20 bg-green-500/5 p-2">
-            <div className="flex items-center gap-1 text-[9px] uppercase text-green-300">
+            <div className="flex items-center gap-1 text-[11px] uppercase text-green-300">
               <TrendingUp className="h-3 w-3" />
               bull calls
             </div>
             <div className="font-mono text-base text-foreground">
-              {pct(data.bullHitRate)} <span className="text-[10px] text-muted-foreground">({data.bullN})</span>
+              {pct(data.bullHitRate)} <span className="text-[11px] text-muted-foreground">({data.bullN})</span>
             </div>
           </div>
           <div className="rounded border border-red-500/20 bg-red-500/5 p-2">
-            <div className="flex items-center gap-1 text-[9px] uppercase text-red-300">
+            <div className="flex items-center gap-1 text-[11px] uppercase text-red-300">
               <TrendingDown className="h-3 w-3" />
               bear calls
             </div>
             <div className="font-mono text-base text-foreground">
-              {pct(data.bearHitRate)} <span className="text-[10px] text-muted-foreground">({data.bearN})</span>
+              {pct(data.bearHitRate)} <span className="text-[11px] text-muted-foreground">({data.bearN})</span>
             </div>
           </div>
           <div className="rounded border border-cyan-500/20 bg-cyan-500/5 p-2">
-            <div className="flex items-center gap-1 text-[9px] uppercase text-cyan-300">
+            <div className="flex items-center gap-1 text-[11px] uppercase text-cyan-300">
               <Target className="h-3 w-3" />
               pin calls
             </div>
             <div className="font-mono text-base text-foreground">
-              {pct(data.pinHitRate)} <span className="text-[10px] text-muted-foreground">({data.pinN})</span>
+              {pct(data.pinHitRate)} <span className="text-[11px] text-muted-foreground">({data.pinN})</span>
             </div>
           </div>
         </div>
 
         {/* Rolling windows + sparkline */}
         <div className="mt-3 flex flex-wrap items-center gap-3 rounded border border-border/40 bg-black/30 p-2">
-          <div className="text-[9px] uppercase tracking-wide text-muted-foreground">rolling</div>
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">rolling</div>
           {([
             ["7d", data.windows.last7],
             ["14d", data.windows.last14],
             ["30d", data.windows.last30],
           ] as const).map(([label, w]) => (
-            <div key={label} className="text-[10px] font-mono">
+            <div key={label} className="text-[11px] font-mono">
               <span className="text-muted-foreground/80">{label}</span>{" "}
               <span className="text-foreground">{pct(w.hitRate)}</span>
-              <span className="text-muted-foreground/60"> · b{w.brier != null ? w.brier.toFixed(2) : "—"}</span>
+              <span className="text-muted-foreground"> · b{w.brier != null ? w.brier.toFixed(2) : "—"}</span>
             </div>
           ))}
           <div className="ml-auto flex items-center gap-1">
             {trend.arrow === "up" && (
-              <Badge variant="outline" className="border-green-500/40 px-1.5 py-0 text-[9px] text-green-300">
+              <Badge variant="outline" className="border-green-500/40 px-1.5 py-0 text-[11px] text-green-300">
                 <TrendingUp className="mr-0.5 h-2.5 w-2.5" />
                 improving +{(trend.delta * 100).toFixed(0)}pp
               </Badge>
             )}
             {trend.arrow === "down" && (
-              <Badge variant="outline" className="border-red-500/40 px-1.5 py-0 text-[9px] text-red-300">
+              <Badge variant="outline" className="border-red-500/40 px-1.5 py-0 text-[11px] text-red-300">
                 <TrendingDown className="mr-0.5 h-2.5 w-2.5" />
                 drifting {(trend.delta * 100).toFixed(0)}pp
               </Badge>
             )}
             {trend.arrow === "flat" && (
-              <Badge variant="outline" className="border-slate-500/40 px-1.5 py-0 text-[9px] text-slate-400">
+              <Badge variant="outline" className="border-slate-500/40 px-1.5 py-0 text-[11px] text-slate-400">
                 flat
               </Badge>
             )}
@@ -438,7 +438,7 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
         {/* Reliability curve: the evidence behind (and shown before) any "calibrated" label */}
         {data.reliability && data.reliability.n > 0 ? (
           <div className="mt-3 rounded border border-border/40 bg-black/30 p-2" data-testid="ml-reliability-curve">
-            <div className="mb-1 text-[9px] uppercase tracking-wide text-muted-foreground">
+            <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
               reliability · predicted P(up &gt; 0.05%) vs realized per bin · Wilson 95% · one daily call per session (n={data.reliability.n})
             </div>
             <div className="flex flex-wrap items-start gap-2">
@@ -447,20 +447,20 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
                 {data.reliability.bins.filter((b) => b.n > 0).map((b) => (
                   <div
                     key={b.lo}
-                    className={`rounded border ${b.inInterval === false ? "border-red-500/40 text-red-300" : b.tested ? "border-green-500/30 text-green-300" : "border-slate-500/30 text-slate-400"} bg-black/40 px-1.5 py-1 font-mono text-[9px]`}
+                    className={`rounded border ${b.inInterval === false ? "border-red-500/40 text-red-300" : b.tested ? "border-green-500/30 text-green-300" : "border-slate-500/30 text-slate-400"} bg-black/40 px-1.5 py-1 font-mono text-[11px]`}
                     title={b.tested ? "tested bin" : "too few forecasts to test"}
                   >
                     <div className="text-muted-foreground/80">{Math.round(b.lo * 100)}-{Math.round(b.hi * 100)}%</div>
                     <div>said {((b.meanPred ?? 0) * 100).toFixed(0)}</div>
                     <div className="opacity-80">got {((b.observed ?? 0) * 100).toFixed(0)}</div>
-                    <div className="text-[8px] opacity-70">
+                    <div className="text-[11px] opacity-70">
                       {((b.wilsonLo ?? 0) * 100).toFixed(0)}-{((b.wilsonHi ?? 1) * 100).toFixed(0)} · n={b.n}
                     </div>
                   </div>
                 ))}
               </div>
             </div>
-            <div className="mt-1.5 text-[9px] text-muted-foreground/70" data-testid="text-ml-calibration-test">
+            <div className="mt-1.5 text-[11px] text-muted-foreground" data-testid="text-ml-calibration-test">
               test: {data.reliability.test.name}.{" "}
               {data.reliability.spiegelhalterZ != null && (
                 <>Spiegelhalter Z {data.reliability.spiegelhalterZ.toFixed(2)} (p {data.reliability.spiegelhalterP?.toFixed(3)}). </>
@@ -470,20 +470,20 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
           </div>
         ) : data.calibration.length > 0 ? (
           <div className="mt-3 rounded border border-border/40 bg-black/30 p-2">
-            <div className="mb-1 text-[9px] uppercase tracking-wide text-muted-foreground">
+            <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
               model pUp vs realized up-rate per decile · calibration untested
             </div>
             <div className="flex flex-wrap gap-1">
               {data.calibration.map((c) => (
                 <div
                   key={c.bucket}
-                  className="rounded border border-slate-500/30 bg-black/40 px-1.5 py-1 font-mono text-[9px] text-slate-300"
+                  className="rounded border border-slate-500/30 bg-black/40 px-1.5 py-1 font-mono text-[11px] text-slate-300"
                   title={`bucket ${c.bucket * 10}-${(c.bucket + 1) * 10}% pUp · n=${c.n}`}
                 >
                   <div className="text-muted-foreground/80">{c.bucket * 10}-{(c.bucket + 1) * 10}%</div>
                   <div>said {c.pUpAvg.toFixed(0)}</div>
                   <div className="opacity-80">got {c.actualUpRate.toFixed(0)}</div>
-                  <div className="text-[8px] opacity-70">n={c.n}</div>
+                  <div className="text-[11px] opacity-70">n={c.n}</div>
                 </div>
               ))}
             </div>

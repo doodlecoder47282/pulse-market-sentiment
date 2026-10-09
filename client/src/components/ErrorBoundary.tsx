@@ -51,7 +51,7 @@ export default class ErrorBoundary extends Component<Props, State> {
           <Button
             variant="ghost"
             size="sm"
-            className="ml-auto h-6 px-2 text-[10px]"
+            className="ml-auto h-6 px-2 text-[11px]"
             onClick={this.handleReset}
           >
             <RefreshCw className="mr-1 h-3 w-3" />
@@ -71,10 +71,10 @@ export default class ErrorBoundary extends Component<Props, State> {
               Refresh the tab. If it keeps failing, check the diagnostics panel.
             </div>
             <details className="mt-2">
-              <summary className="cursor-pointer text-[11px] text-muted-foreground/70 hover:text-muted-foreground">
+              <summary className="cursor-pointer text-[11px] text-muted-foreground hover:text-muted-foreground">
                 error detail
               </summary>
-              <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded border border-border/40 bg-background/40 p-2 text-[10px] font-mono text-muted-foreground/80">
+              <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded border border-border/40 bg-background/40 p-2 text-[11px] font-mono text-muted-foreground/80">
                 {msg}
               </pre>
             </details>

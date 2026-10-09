@@ -154,7 +154,7 @@ const CROSS_COLOR: Record<MajorRow["cross"]["state"], string> = {
 function VenueLine({ name, v }: { name: string; v: VenueCell }) {
   const f = v.flow;
   return (
-    <div className="text-[9.5px] text-muted-foreground" title={v.error ?? undefined}>
+    <div className="text-[11px] text-muted-foreground" title={v.error ?? undefined}>
       <span className="font-semibold text-foreground/80">{name}</span>{" "}
       {v.state === "failed" ? <span className="text-rose-300">failed</span>
         : <>
@@ -172,11 +172,11 @@ function VenueLine({ name, v }: { name: string; v: VenueCell }) {
 function MajorsStrip({ majors, loaded }: { majors: MajorsSnapshot | null; loaded: boolean }) {
   if (!loaded) return null;
   if (!majors) {
-    return <div className="rounded-lg border border-border/50 p-2 text-[10px] text-muted-foreground">majors: first exchange read pending</div>;
+    return <div className="rounded-lg border border-border/50 p-2 text-[11px] text-muted-foreground">majors: first exchange read pending</div>;
   }
   return (
     <div className="rounded-lg border border-border/50 bg-card/40 p-2.5" data-testid="crypto-majors">
-      <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[10px]">
+      <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[11px]">
         <TrendingUp className="h-3.5 w-3.5 text-lime-400" />
         <span className="font-semibold uppercase tracking-[0.15em]">majors · exchange-direct</span>
         <span className={majors.state === "ok" ? "text-emerald-300" : majors.state === "partial" ? "text-amber-300" : "text-rose-300"}>{majors.state}</span>
@@ -193,20 +193,20 @@ function MajorsStrip({ majors, loaded }: { majors: MajorsSnapshot | null; loaded
               <span className="font-mono text-sm font-bold">{r.asset}</span>
               <span className="font-mono text-sm tabular-nums">{r.cross.reference != null ? `$${fmtPx(r.cross.reference)}` : "no reference"}</span>
             </div>
-            <div className={`text-[9.5px] ${CROSS_COLOR[r.cross.state]}`}>
+            <div className={`text-[11px] ${CROSS_COLOR[r.cross.state]}`}>
               {r.cross.state}{r.cross.divergenceBps != null ? ` · ${r.cross.divergenceBps.toFixed(1)} bps` : ""} · {r.cross.note}
             </div>
             <VenueLine name="Coinbase" v={r.coinbase} />
             <VenueLine name="Kraken" v={r.kraken} />
             {r.coingecko.price != null && (
-              <div className="text-[9px] text-muted-foreground" title={r.coingecko.label}>
+              <div className="text-[11px] text-muted-foreground" title={r.coingecko.label}>
                 CoinGecko ref ${fmtPx(r.coingecko.price)}{r.coingecko.deviationBps != null ? ` (${r.coingecko.deviationBps >= 0 ? "+" : ""}${r.coingecko.deviationBps.toFixed(0)} bps)` : ""} · reference only
               </div>
             )}
           </div>
         ))}
       </div>
-      <div className="mt-1 text-[9px] text-muted-foreground">{majors.note}. Taker flow from public trade prints; context, not a signal.</div>
+      <div className="mt-1 text-[11px] text-muted-foreground">{majors.note}. Taker flow from public trade prints; context, not a signal.</div>
     </div>
   );
 }
@@ -237,7 +237,7 @@ export default function CryptoPanel() {
             <div className="flex items-center gap-2">
               <Rocket className="h-5 w-5 text-fuchsia-400" />
               <h2 className="text-base font-bold tracking-tight">Digital assets</h2>
-              <Badge variant="outline" className="border-lime-400/40 bg-lime-400/10 text-[10px] text-lime-300">
+              <Badge variant="outline" className="border-lime-400/40 bg-lime-400/10 text-[11px] text-lime-300">
                 small-cap launch scanner
               </Badge>
             </div>
@@ -259,11 +259,11 @@ export default function CryptoPanel() {
       {/* narrative heat */}
       <div className="flex flex-wrap items-center gap-1.5" data-testid="crypto-narratives">
         <Newspaper className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="mr-1 text-[10px] uppercase tracking-[0.15em] text-muted-foreground">narrative heat</span>
+        <span className="mr-1 text-[11px] uppercase tracking-[0.15em] text-muted-foreground">narrative heat</span>
         {(feed?.narrativeHeat ?? []).slice(0, 10).map((n) => (
           <span
             key={n.term}
-            className={`rounded-full border px-2 py-0.5 font-mono text-[10px] ${
+            className={`rounded-full border px-2 py-0.5 font-mono text-[11px] ${
               n.hits >= 4
                 ? "border-orange-400/50 bg-orange-500/15 text-orange-300"
                 : n.hits >= 2
@@ -276,12 +276,12 @@ export default function CryptoPanel() {
           </span>
         ))}
         {(feed?.narrativeHeat ?? []).length === 0 && (
-          <span className="text-[10px] text-muted-foreground">
+          <span className="text-[11px] text-muted-foreground">
             {feed?.narrativeUpdatedAt == null ? "warming up…" : "no tracked terms in the last 24 h (observed)"}
           </span>
         )}
         {(feed?.narrativeSources ?? []).map((x) => (
-          <span key={x.name} className={`text-[9px] ${x.state === "failed" ? "text-rose-300" : "text-muted-foreground"}`}
+          <span key={x.name} className={`text-[11px] ${x.state === "failed" ? "text-rose-300" : "text-muted-foreground"}`}
             title={`${x.name} RSS (publisher): ${x.titles} titles in 24 h${x.undated ? `, ${x.undated} undated ignored` : ""}`}>
             · {x.name} {x.state === "ok" ? "ok" : x.state === "empty" ? "0 recent" : "failed"}
           </span>
@@ -304,7 +304,7 @@ export default function CryptoPanel() {
             {v === "feed" ? "live feed" : "signal log"}
           </button>
         ))}
-        <span className="ml-auto text-[10px] text-muted-foreground">
+        <span className="ml-auto text-[11px] text-muted-foreground">
           tracking {feed?.trackedCount ?? 0} pools · refresh 45s
         </span>
       </div>
@@ -361,11 +361,11 @@ function AgentStrip({ health }: { health?: HealthResp }) {
       {(health?.engines ?? []).filter((e) => e.name !== "watchdog").map((e) => (
         <div key={e.name} className="flex items-center gap-1.5" title={`${e.name}: ${e.status} · ${e.runs} runs · ${e.errors} errors${e.lastError ? ` · ${e.lastError}` : ""}`}>
           <span className={`h-2 w-2 rounded-full ${dot(e.status)}`} />
-          <span className="text-[10px] font-medium text-muted-foreground">{e.name}</span>
+          <span className="text-[11px] font-medium text-muted-foreground">{e.name}</span>
         </div>
       ))}
       {(health?.engines ?? []).length === 0 && (
-        <span className="text-[10px] text-muted-foreground">agents booting…</span>
+        <span className="text-[11px] text-muted-foreground">agents booting…</span>
       )}
     </div>
   );
@@ -403,8 +403,8 @@ function Section({ icon, title, empty, items, expanded, setExpanded, accent, col
       <button className="flex w-full items-center gap-2" onClick={() => setOpen((v) => !v)} data-testid={`crypto-section-${accent}`}>
         {icon}
         <span className="text-xs font-semibold uppercase tracking-[0.12em]">{title}</span>
-        <span className="rounded-full bg-muted/60 px-1.5 text-[10px] text-muted-foreground">{items.length}</span>
-        <span className="ml-auto text-[10px] text-muted-foreground">{open ? "hide" : "show"}</span>
+        <span className="rounded-full bg-muted/60 px-1.5 text-[11px] text-muted-foreground">{items.length}</span>
+        <span className="ml-auto text-[11px] text-muted-foreground">{open ? "hide" : "show"}</span>
       </button>
       {open && (
         <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-2">
@@ -439,29 +439,29 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
           <div className="flex items-center gap-1.5">
             <span className="truncate font-mono text-sm font-bold">{c.symbol}</span>
             {c.pumpfunGraduate && (
-              <span className="rounded bg-emerald-500/15 px-1 py-px text-[9px] font-semibold text-emerald-300" title="graduated the pump.fun bonding curve">
+              <span className="rounded bg-emerald-500/15 px-1 py-px text-[11px] font-semibold text-emerald-300" title="graduated the pump.fun bonding curve">
                 pump.fun grad
               </span>
             )}
             {c.boosted && (
-              <span className="rounded bg-orange-500/15 px-1 py-px text-[9px] font-semibold text-orange-300" title="paid DexScreener boost — manufactured attention">
+              <span className="rounded bg-orange-500/15 px-1 py-px text-[11px] font-semibold text-orange-300" title="paid DexScreener boost — manufactured attention">
                 paid boost
               </span>
             )}
             {c.narrativeHits.length > 0 && (
-              <span className="rounded bg-fuchsia-500/15 px-1 py-px text-[9px] font-semibold text-fuchsia-300">
+              <span className="rounded bg-fuchsia-500/15 px-1 py-px text-[11px] font-semibold text-fuchsia-300">
                 news: {c.narrativeHits[0]}
               </span>
             )}
           </div>
-          <div className="mt-0.5 flex items-center gap-2 text-[10px] text-muted-foreground">
+          <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
             <span className="truncate">{c.name}</span>
             <span className="flex items-center gap-0.5 shrink-0"><Clock className="h-2.5 w-2.5" />{fmtAge(c.ageMinutes)}</span>
           </div>
         </div>
         <div className="shrink-0 text-right">
           <div className="font-mono text-sm font-bold tabular-nums">{fmtUsd(c.marketCap)}</div>
-          <div className={`font-mono text-[10px] tabular-nums ${pctCls(c.chg1h)}`}>
+          <div className={`font-mono text-[11px] tabular-nums ${pctCls(c.chg1h)}`}>
             {c.chg1h != null ? `${c.chg1h >= 0 ? "+" : ""}${c.chg1h.toFixed(0)}% 1h` : "—"}
           </div>
         </div>
@@ -474,7 +474,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
           style={{ width: `${Math.max(3, mcapPct)}%` }}
         />
       </div>
-      <div className="mt-1 flex justify-between text-[9px] text-muted-foreground">
+      <div className="mt-1 flex justify-between text-[11px] text-muted-foreground">
         <span>runway to $1M cap: {mcapPct.toFixed(0)}%</span>
         <span className="flex items-center gap-2">
           {c.pumpLive && <span className="font-semibold text-rose-400">● LIVE</span>}
@@ -488,7 +488,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
           >
             social (low-grade) {c.socialScore != null ? Math.round(c.socialScore) : "—"}
             {c.socialStatus && c.socialStatus !== "ok" && (
-              <span className="ml-0.5 text-[9px] text-amber-300/80" title="social collection state — not zero attention">
+              <span className="ml-0.5 text-[11px] text-amber-300/80" title="social collection state — not zero attention">
                 {c.socialStatus}
               </span>
             )}
@@ -497,7 +497,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
       </div>
 
       {/* stat row */}
-      <div className="mt-2 grid grid-cols-4 gap-1.5 font-mono text-[10px] tabular-nums">
+      <div className="mt-2 grid grid-cols-4 gap-1.5 font-mono text-[11px] tabular-nums">
         <Stat label="liq" value={fmtUsd(c.liquidityUsd)} />
         <Stat label="vol 1h" value={fmtUsd(c.vol1h, 0)} />
         <Stat label="accel" value={c.volAccel != null ? `${c.volAccel.toFixed(1)}x` : "—"} hot={(c.volAccel ?? 0) >= 2} />
@@ -513,14 +513,14 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
           {c.rugFlags.length > 0 && (
             <div className="rounded-md bg-rose-500/8 p-2">
               {c.rugFlags.map((f, i) => (
-                <p key={i} className="flex items-start gap-1 text-[10px] leading-snug text-rose-300">
+                <p key={i} className="flex items-start gap-1 text-[11px] leading-snug text-rose-300">
                   <Skull className="mt-px h-2.5 w-2.5 shrink-0" />{f}
                 </p>
               ))}
             </div>
           )}
           {c.risk && (
-            <div className="grid grid-cols-2 gap-1.5 rounded-md bg-muted/30 p-2 font-mono text-[10px] tabular-nums sm:grid-cols-3">
+            <div className="grid grid-cols-2 gap-1.5 rounded-md bg-muted/30 p-2 font-mono text-[11px] tabular-nums sm:grid-cols-3">
               <Stat label="max size" value={`$${c.risk.maxPositionUsd}`} />
               <Stat label="stop" value={`${c.risk.suggestedStopPct}%`} />
               <Stat label="liq bail" value={`${c.risk.liquidityExitStopPct}% liq`} />
@@ -529,7 +529,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
               <Stat label="slippage" value={`~${c.risk.estSlippagePct}%`} />
             </div>
           )}
-          <div className="flex flex-wrap items-center gap-1.5 text-[9px]">
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
             {c.securityCheckedAt == null ? (
               <span className="rounded bg-muted/40 px-1.5 py-0.5 text-muted-foreground">on-chain check pending</span>
             ) : (
@@ -559,7 +559,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
             )}
           </div>
           {c.socialCheckedAt != null && (
-            <div className="flex flex-wrap items-center gap-1.5 text-[9px] text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
               <span>
                 social · bsky{" "}
                 {c.bskyMentions1h != null
@@ -582,7 +582,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
               <span className="text-amber-300/70">· attention proxy only (social media; pump.fun is an unofficial API), not in the score or verdict</span>
             </div>
           )}
-          <p className="text-[9px] text-muted-foreground">
+          <p className="text-[11px] text-muted-foreground">
             price check · Jupiter{" "}
             <span className={c.jupState === "diverge" || c.jupState === "no-reliable-price" ? "text-rose-300" : c.jupState === "agree" ? "text-emerald-300" : c.jupState === "watch" ? "text-amber-300" : undefined}>
               {c.jupState === "agree" || c.jupState === "watch" || c.jupState === "diverge"
@@ -592,7 +592,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
                 : "not checked yet (ENTER held at WATCH until checked)"}
             </span>
           </p>
-          <p className="text-[9px] text-muted-foreground">
+          <p className="text-[11px] text-muted-foreground">
             {c.dexId} · {c.chain} · via {c.discoveredVia} · pair {c.pairAddress.slice(0, 10)}… · data: DexScreener (aggregator API), Solana RPC, rugcheck
           </p>
         </div>
@@ -604,7 +604,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
 function Stat({ label, value, hot }: { label: string; value: string; hot?: boolean }) {
   return (
     <div className="rounded bg-muted/25 px-1.5 py-1">
-      <div className="text-[8px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className={`font-semibold ${hot ? "text-lime-300" : ""}`}>{value}</div>
     </div>
   );
@@ -649,26 +649,26 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
         ].map(([label, val, cls]) => (
           <div key={String(label)} className="rounded-lg border border-border/50 bg-card/50 p-2 text-center">
             <div className={`font-mono text-lg font-bold tabular-nums ${cls}`}>{String(val)}</div>
-            <div className="text-[9px] uppercase tracking-wide text-muted-foreground">{String(label)}</div>
+            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{String(label)}</div>
           </div>
         ))}
       </div>
-      <p className="text-[10px] text-muted-foreground" data-testid="crypto-stats-basis">
+      <p className="text-[11px] text-muted-foreground" data-testid="crypto-stats-basis">
         counts are distinct coins (first signal per coin){stats.rows ? `; ${stats.rows.total} logged rows` : ""}
         {stats.enterCoins ? ` · first-ENTER coins: ${stats.enterCoins.total} (${stats.enterCoins.graded} graded, ${stats.enterCoins.hit5m + stats.enterCoins.doubled} hit 5M or doubled)` : ""}
         {stats.noDataShare != null ? ` · no-data share ${Math.round(stats.noDataShare * 100)}% of resolved coins (missing outcomes, not losses)` : ""}
       </p>
       {stats.survivorship && (
-        <p className="text-[10px] text-muted-foreground" data-testid="crypto-survivorship">
+        <p className="text-[11px] text-muted-foreground" data-testid="crypto-survivorship">
           rug rate, first-ENTER coins: observed {pctOrDash(stats.survivorship.enterCoins.ruggedRateObserved)}, worst case {pctOrDash(stats.survivorship.enterCoins.ruggedRateWorstCase)} (every no-data pair counted as rugged: delisted pairs are often rugs)
           {" "}· all coins: observed {pctOrDash(stats.survivorship.coins.ruggedRateObserved)}, worst case {pctOrDash(stats.survivorship.coins.ruggedRateWorstCase)}
         </p>
       )}
       {stats.peakSampling && (
-        <p className="text-[10px] text-muted-foreground" data-testid="crypto-peak-sampling">{stats.peakSampling}</p>
+        <p className="text-[11px] text-muted-foreground" data-testid="crypto-peak-sampling">{stats.peakSampling}</p>
       )}
       {!stats.sampleReady && (
-        <p className="text-[10px] text-muted-foreground">
+        <p className="text-[11px] text-muted-foreground">
           not sample-ready{stats.sampleReason ? ` (${stats.sampleReason})` : ` at ${stats.minGradedForSample ?? 50} graded coins (${stats.graded ?? 0} so far)`} — a minimum sample, not a calibration. until then these stats are the whole product: proving or killing the edge.
         </p>
       )}
@@ -678,7 +678,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
         )}
         {sig.signals.map((s) => (
           <div key={s.id} className="flex items-center gap-2 rounded-lg border border-border/40 bg-card/40 px-2.5 py-2 text-[11px]" data-testid={`crypto-signal-${String(s.id).slice(0, 8)}`}>
-            <Badge variant="outline" className={`px-1.5 text-[9px] ${
+            <Badge variant="outline" className={`px-1.5 text-[11px] ${
               s.verdict === "ENTER" ? "border-lime-400/50 text-lime-300" : "border-amber-400/40 text-amber-300"
             }`}>{s.verdict}</Badge>
             <span className="font-mono font-bold">{s.symbol}</span>
@@ -690,7 +690,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
               : s.outcome === "RUGGED" ? "text-rose-300" : s.outcome === "DEAD" ? "text-muted-foreground"
               : s.outcome === "NO_DATA" ? "text-amber-300/80" : "text-sky-300"
             }`}>{s.outcome}</span>
-            <span className="hidden text-[9px] text-muted-foreground sm:block">
+            <span className="hidden text-[11px] text-muted-foreground sm:block">
               {new Date(Number(s.detected_at)).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
             </span>
           </div>

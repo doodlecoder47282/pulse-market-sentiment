@@ -264,14 +264,14 @@ export default function Heatseeker() {
       className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border/40 bg-card/40 px-2 py-1.5"
       data-testid="heatseeker-ticker-picker"
     >
-      <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">ticker</span>
+      <span className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">ticker</span>
       <div className="flex gap-1">
         {PRESETS.map((p) => (
           <Button
             key={p}
             variant={symbol === p ? "default" : "ghost"}
             size="sm"
-            className="h-6 px-2 text-[10px] font-mono"
+            className="h-6 px-2 text-[11px] font-mono"
             onClick={() => setSymbol(p)}
             data-testid={`btn-heatseeker-symbol-${p}`}
           >
@@ -287,11 +287,11 @@ export default function Heatseeker() {
         }}
         onBlur={commitDraft}
         placeholder="custom…"
-        className="h-6 w-24 px-2 font-mono text-[10px] uppercase placeholder:normal-case"
+        className="h-6 w-24 px-2 font-mono text-[11px] uppercase placeholder:normal-case"
         data-testid="input-heatseeker-symbol"
       />
       {!PRESETS.includes(symbol as any) && (
-        <Badge variant="outline" className="border-cyan-500/40 font-mono text-[9px] text-cyan-400">
+        <Badge variant="outline" className="border-cyan-500/40 font-mono text-[11px] text-cyan-400">
           custom · {symbol}
         </Badge>
       )}
@@ -306,12 +306,12 @@ export default function Heatseeker() {
       className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border/40 bg-card/40 px-2 py-1.5"
       data-testid="heatseeker-expiry-picker"
     >
-      <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">expiry</span>
+      <span className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">expiry</span>
       <div className="flex flex-wrap gap-1">
         <Button
           variant={pickedExpiry === null ? "default" : "ghost"}
           size="sm"
-          className="h-6 px-2 text-[10px] font-mono"
+          className="h-6 px-2 text-[11px] font-mono"
           onClick={() => setPickedExpiry(null)}
           data-testid="btn-expiry-auto"
           title="Nearest expiry (0DTE if available today)"
@@ -323,14 +323,14 @@ export default function Heatseeker() {
             key={q.date}
             variant={pickedExpiry === q.date ? "default" : "ghost"}
             size="sm"
-            className="h-6 px-2 text-[10px] font-mono"
+            className="h-6 px-2 text-[11px] font-mono"
             onClick={() => setPickedExpiry(q.date)}
             data-testid={`btn-expiry-${q.date}`}
             title={q.date}
           >
             {q.label}
             {q.tag && (
-              <span className="ml-1 rounded-sm bg-amber-500/20 px-1 text-[8px] text-amber-400">{q.tag}</span>
+              <span className="ml-1 rounded-sm bg-amber-500/20 px-1 text-[11px] text-amber-400">{q.tag}</span>
             )}
           </Button>
         ))}
@@ -340,7 +340,7 @@ export default function Heatseeker() {
           value={pickedExpiry ?? ""}
           onChange={(e) => setPickedExpiry(e.target.value || null)}
           data-testid="select-expiry-custom"
-          className="h-6 rounded-md border border-border/60 bg-background px-2 font-mono text-[10px] text-foreground"
+          className="h-6 rounded-md border border-border/60 bg-background px-2 font-mono text-[11px] text-foreground"
           title="Pick any expiry from the chain"
         >
           <option value="">custom…</option>
@@ -359,7 +359,7 @@ export default function Heatseeker() {
       <button
         data-testid="heatseeker-view-live"
         onClick={() => setView("live")}
-        className={`inline-flex min-h-[44px] items-center px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest transition-colors sm:min-h-0 ${
+        className={`inline-flex min-h-[44px] items-center px-3 py-1.5 text-[11px] font-mono uppercase tracking-widest transition-colors sm:min-h-0 ${
           view === "live" ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground"
         }`}
       >
@@ -368,7 +368,7 @@ export default function Heatseeker() {
       <button
         data-testid="heatseeker-view-killbox"
         onClick={() => setView("killbox")}
-        className={`inline-flex min-h-[44px] items-center px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest transition-colors sm:min-h-0 ${
+        className={`inline-flex min-h-[44px] items-center px-3 py-1.5 text-[11px] font-mono uppercase tracking-widest transition-colors sm:min-h-0 ${
           view === "killbox" ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground"
         }`}
       >
@@ -498,7 +498,7 @@ function LevelsEditor({
         </DialogHeader>
         <div className="max-h-[60vh] overflow-y-auto">
           <table className="w-full text-xs">
-            <thead className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+            <thead className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
               <tr>
                 <th className="pb-2 text-left">Label</th>
                 <th className="pb-2 text-right">Strike</th>
@@ -645,7 +645,7 @@ function PivotBandsLadder({ bands, spot, expiry, dte, degraded }: { bands: Pivot
           r.type === "spot" ? (
             <div key={`spot-${i}`} className="flex items-center gap-2 py-0.5" data-testid="pivot-bands-spot">
               <div className="h-px flex-1 bg-primary/40" />
-              <span className="font-mono text-[10px] font-bold tracking-widest text-primary">
+              <span className="font-mono text-[11px] font-bold tracking-widest text-primary">
                 SPOT {spot.toFixed(1)}
               </span>
               <div className="h-px flex-1 bg-primary/40" />
@@ -657,23 +657,23 @@ function PivotBandsLadder({ bands, spot, expiry, dte, degraded }: { bands: Pivot
               data-testid={`pivot-band-${r.band.center}`}
             >
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[9px] font-bold tracking-widest ${BAND_STYLE[r.band.role].chip}`}>
+                <span className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[11px] font-bold tracking-widest ${BAND_STYLE[r.band.role].chip}`}>
                   {BAND_STYLE[r.band.role].label}
                 </span>
                 <span className="font-mono text-sm font-bold">
                   {r.band.center.toFixed(1)}
-                  <span className="ml-2 text-[10px] font-normal text-muted-foreground">
+                  <span className="ml-2 text-[11px] font-normal text-muted-foreground">
                     {r.band.low.toFixed(1)} – {r.band.high.toFixed(1)}
                   </span>
                 </span>
-                <span className={`font-mono text-[10px] ${r.band.distancePct > 0 ? "text-emerald-400" : r.band.distancePct < 0 ? "text-rose-400" : "text-muted-foreground"}`}>
+                <span className={`font-mono text-[11px] ${r.band.distancePct > 0 ? "text-emerald-400" : r.band.distancePct < 0 ? "text-rose-400" : "text-muted-foreground"}`}>
                   {r.band.distancePct > 0 ? "+" : ""}{r.band.distancePct.toFixed(2)}%
                 </span>
                 <span className="ml-auto flex shrink-0 items-center gap-2">
                   <span className="h-1.5 w-12 overflow-hidden rounded-full bg-slate-800" title={`strength ${r.band.strength}/100`}>
                     <span className={`block h-full ${BAND_STYLE[r.band.role].bar}`} style={{ width: `${r.band.strength}%` }} />
                   </span>
-                  <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                  <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
                     fresh {r.band.freshness}
                   </span>
                 </span>
@@ -861,7 +861,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                 type="button"
                 size="sm"
                 variant="outline"
-                className="h-11 px-3 text-[10px] font-mono uppercase tracking-wider sm:h-6 sm:px-2"
+                className="h-11 px-3 text-[11px] font-mono uppercase tracking-wider sm:h-6 sm:px-2"
                 onClick={() => setEditOpen(true)}
                 data-testid="button-edit-levels"
               >
@@ -936,7 +936,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
               type="button"
               onClick={() => setHideZeroVol((v) => !v)}
               data-testid="toggle-hide-zero-vol"
-              className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-mono transition-colors ${
+              className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-mono transition-colors ${
                 hideZeroVol
                   ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
                   : "border-border text-muted-foreground hover:bg-muted/40"
@@ -993,7 +993,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                       <span className={isSpotRow ? "font-bold text-primary" : ""}>{fmtStrike(s.strike)}</span>
                       {lockedHit && (
                         <span
-                          className={`rounded-sm px-1 text-[9px] font-semibold ${
+                          className={`rounded-sm px-1 text-[11px] font-semibold ${
                             lockedHit.kind === "upside"
                               ? "bg-emerald-500/20 text-emerald-400"
                               : lockedHit.kind === "downside"
@@ -1008,10 +1008,10 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                       )}
                     </div>
                     <GexCell callGex={s.callGex} putGex={s.putGex} max={maxAbsGex} symbol={symbol} strike={s.strike} />
-                    {s.netDex != null ? <HeatCell value={s.netDex} max={maxAbsDex} /> : <div className="flex items-center justify-center font-mono text-[10px] text-muted-foreground" title="no usable delta at this strike">—</div>}
+                    {s.netDex != null ? <HeatCell value={s.netDex} max={maxAbsDex} /> : <div className="flex items-center justify-center font-mono text-[11px] text-muted-foreground" title="no usable delta at this strike">—</div>}
                     <HeatCell value={s.netVanna} max={maxAbsVanna} />
                     <HeatCell value={s.netCharm} max={maxAbsCharm} />
-                    <div className="text-right font-mono text-[10px] text-muted-foreground tabular-nums">
+                    <div className="text-right font-mono text-[11px] text-muted-foreground tabular-nums">
                       {fmtM(s.totalOI)} · {fmtM(s.totalVol)}
                     </div>
                   </div>
@@ -1276,7 +1276,7 @@ function Stat({ label, value, positive }: { label: string; value: string; positi
   // positive === null: missing value, rendered neutral (no up/down colour or arrow).
   return (
     <div>
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</div>
       <div
         className={`flex items-center gap-1 font-mono text-lg font-semibold tabular-nums ${
           positive == null ? "text-muted-foreground" : positive ? "text-emerald-400" : "text-rose-400"
@@ -1293,7 +1293,7 @@ function HeatCell({ value, max }: { value: number; max: number }) {
   const bg = cellColor(value, max);
   return (
     <div
-      className="flex items-center justify-center rounded-sm px-2 py-1 font-mono text-[10px] tabular-nums"
+      className="flex items-center justify-center rounded-sm px-2 py-1 font-mono text-[11px] tabular-nums"
       style={{ background: bg }}
       title={fmtM(value)}
     >
@@ -1352,7 +1352,7 @@ function GexCell({ callGex, putGex, max, symbol, strike }: { callGex: number; pu
 
   return (
     <div
-      className="relative flex h-7 items-center justify-center overflow-hidden rounded-sm bg-slate-500/5 font-mono text-[10px] tabular-nums"
+      className="relative flex h-7 items-center justify-center overflow-hidden rounded-sm bg-slate-500/5 font-mono text-[11px] tabular-nums"
       title={`calls +${fmtM(callGex)} · puts -${fmtM(putGex)} · net ${fmtM(net)}${arrow && arrow.dir !== "flat" ? ` · Δ ${arrow.dir === "up" ? "+" : "-"}${arrow.pct.toFixed(0)}% from open` : ""}`}
       data-testid={symbol && strike != null ? `gex-cell-${strike}` : undefined}
     >
@@ -1368,7 +1368,7 @@ function GexCell({ callGex, putGex, max, symbol, strike }: { callGex: number; pu
       <span className={`relative z-10 ${labelColor}`}>{fmtM(net)}</span>
       {arrow && arrow.dir !== "flat" && (
         <span
-          className={`absolute right-1 top-1/2 z-10 -translate-y-1/2 text-[8px] font-semibold ${
+          className={`absolute right-1 top-1/2 z-10 -translate-y-1/2 text-[11px] font-semibold ${
             arrow.dir === "up" ? "text-emerald-400" : "text-rose-400"
           }`}
           aria-label={`gex ${arrow.dir} ${arrow.pct.toFixed(0)} percent since open`}
@@ -1407,7 +1407,7 @@ function StickyCard({ zone, spot }: { zone: StickyZone; spot: number }) {
           <div className="font-mono text-2xl font-bold tabular-nums text-orange-400">
             {zone.score.toFixed(0)}
           </div>
-          <div className="text-[10px] text-muted-foreground">SCORE</div>
+          <div className="text-[11px] text-muted-foreground">SCORE</div>
         </div>
       </div>
       <p className="mt-3 text-xs leading-relaxed text-foreground/80">{zone.interpretation}</p>
@@ -1423,7 +1423,7 @@ function StickyCard({ zone, spot }: { zone: StickyZone; spot: number }) {
 function ScoreBar({ label, value, color }: { label: string; value: number; color: "emerald" | "sky" | "amber" }) {
   const bg = color === "emerald" ? "bg-emerald-500" : color === "sky" ? "bg-sky-500" : "bg-amber-500";
   return (
-    <div className="flex items-center gap-2 text-[10px]">
+    <div className="flex items-center gap-2 text-[11px]">
       <div className="w-10 font-mono uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
         <div

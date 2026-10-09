@@ -86,8 +86,8 @@ export default function TrackButton(props: Props) {
   };
 
   const sizeClass = props.size === "sm"
-    ? "text-[10px] px-2 py-0.5 h-5"
-    : "text-[9px] px-1.5 py-0.5 h-4";
+    ? "text-[11px] px-2 py-0.5 h-5"
+    : "text-[11px] px-1.5 py-0.5 h-4";
 
   return (
     <button

@@ -53,7 +53,7 @@ export default function PreMarketGate({ onAcknowledge }: PreMarketGateProps) {
             // READ THIS . EVERY . SINGLE . DAY . BEFORE THE MARKET OPENS .
           </div>
           <h1
-            className="text-5xl sm:text-7xl md:text-8xl font-black tracking-tight leading-[0.9] text-neutral-600 select-none"
+            className="text-5xl sm:text-7xl md:text-8xl font-black tracking-tight leading-[0.9] text-neutral-400 select-none"
             style={{ letterSpacing: "-0.02em" }}
           >
             PRE<span className="text-amber-400">-</span>
@@ -155,7 +155,7 @@ export default function PreMarketGate({ onAcknowledge }: PreMarketGateProps) {
               className={`group relative px-8 py-4 rounded border-2 transition-all duration-300 text-sm tracking-[0.25em] font-semibold ${
                 scrolledToBottom && !acknowledged
                   ? "border-amber-400 text-amber-400 hover:bg-amber-400 hover:text-black cursor-pointer"
-                  : "border-neutral-800 text-neutral-700 cursor-not-allowed"
+                  : "border-neutral-800 text-neutral-400 cursor-not-allowed"
               }`}
             >
               {acknowledged ? "TRADING THE PLAN..." : "I'VE READ IT. TRADE THE PLAN."}
@@ -199,7 +199,7 @@ function Truth({ children }: { children: React.ReactNode }) {
 function Check({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex gap-4 py-3 border-b border-neutral-900 text-[15px] sm:text-base leading-relaxed text-neutral-400">
-      <span className="select-none text-neutral-600 border border-neutral-700 w-5 h-5 inline-block flex-shrink-0 mt-1" />
+      <span className="select-none text-neutral-400 border border-neutral-700 w-5 h-5 inline-block flex-shrink-0 mt-1" />
       <p>{children}</p>
     </div>
   );

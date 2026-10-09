@@ -83,11 +83,11 @@ function StatusLine({ chip, note }: { chip: ReactNode; note: string }) {
   return (
     <div className="rounded-md border border-border/60 bg-card/40 p-2.5" data-testid="ofi-histogram">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-muted-foreground" title={SIGNED_TICK_VOLUME_NOTE}>
+        <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground" title={SIGNED_TICK_VOLUME_NOTE}>
           {TITLE}
         </span>
         {chip}
-        <span className="ml-auto font-mono text-[9px] text-muted-foreground">{note}</span>
+        <span className="ml-auto font-mono text-[11px] text-muted-foreground">{note}</span>
       </div>
     </div>
   );
@@ -161,7 +161,7 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
   return (
     <div className="rounded-md border border-border/60 bg-card/40 p-2.5" data-testid="ofi-histogram">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-muted-foreground" title={data.methodNote ?? SIGNED_TICK_VOLUME_NOTE} data-testid="ofi-method-label">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground" title={data.methodNote ?? SIGNED_TICK_VOLUME_NOTE} data-testid="ofi-method-label">
           {data.methodLabel ?? "Signed tick volume · 1m (SPY proxy)"}
         </span>
         <EdgeInfo id="order-flow" className="h-6 w-6" />
@@ -174,18 +174,18 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
         />
         {trendComplete ? (
           <>
-            <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${trendColor}`}>
+            <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] font-mono uppercase tracking-wider ${trendColor}`}>
               <TrendIcon className="h-2.5 w-2.5" /> {data.trend}
             </span>
-            <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${accelColor}`}>
+            <span className={`rounded-full border px-1.5 py-0.5 text-[11px] font-mono uppercase tracking-wider ${accelColor}`}>
               {data.acceleration}
             </span>
-            <span className="ml-auto font-mono text-[9px] text-muted-foreground">
+            <span className="ml-auto font-mono text-[11px] text-muted-foreground">
               15m {fmtVol(data.slope15m)} · 5m {fmtVol(data.slope5m)}
             </span>
           </>
         ) : (
-          <span className="ml-auto font-mono text-[9px] text-muted-foreground" data-testid="ofi-trend-withheld">
+          <span className="ml-auto font-mono text-[11px] text-muted-foreground" data-testid="ofi-trend-withheld">
             {tapeStale
               ? "trend withheld: tape stale"
               : observedZero
@@ -227,7 +227,7 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
         </ComposedChart>
       </ResponsiveContainer>
       {data.cumulativeNote ? (
-        <div className="mt-1 font-mono text-[9px] text-amber-300/80" data-testid="ofi-cumulative-note">
+        <div className="mt-1 font-mono text-[11px] text-amber-300/80" data-testid="ofi-cumulative-note">
           cyan line stops at the first bar without volume: {data.cumulativeNote}
         </div>
       ) : null}

@@ -48,7 +48,7 @@ export default function UnavailablePanel({
       </div>
       {why ? <div className="mt-1 break-words text-muted-foreground">{why}</div> : null}
       {!compact ? (
-        <div className="mt-1 text-[10px] text-muted-foreground/70">
+        <div className="mt-1 text-[11px] text-muted-foreground">
           Nothing is shown in place of this data. It returns when {source} answers again.
         </div>
       ) : null}

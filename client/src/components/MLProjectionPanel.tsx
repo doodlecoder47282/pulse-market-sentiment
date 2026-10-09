@@ -952,7 +952,7 @@ export default function MLProjectionPanel() {
               SPY — Projected Path
               <Badge
                 variant="outline"
-                className={`text-[10px] font-mono ${learned ? "border-emerald-500/50 text-emerald-400" : "border-amber-500/50 text-amber-400"}`}
+                className={`text-[11px] font-mono ${learned ? "border-emerald-500/50 text-emerald-400" : "border-amber-500/50 text-amber-400"}`}
                 data-testid="badge-ml-cone-label"
                 title={bandLabel}
               >
@@ -1013,7 +1013,7 @@ export default function MLProjectionPanel() {
           className={`flex items-center gap-3 rounded-md border px-3 py-2 ${verdictStyle}`}
           data-testid="ml-verdict-strip"
         >
-          <span className="shrink-0 rounded bg-black/30 px-2 py-0.5 font-mono text-[10px] font-bold tracking-widest">
+          <span className="shrink-0 rounded bg-black/30 px-2 py-0.5 font-mono text-[11px] font-bold tracking-widest">
             {verdictTag}
           </span>
           <span className="text-xs leading-snug">{verdictText}</span>
@@ -1026,7 +1026,7 @@ export default function MLProjectionPanel() {
           data-testid="chart-spy-projection"
         >
           {!hasCandles && (
-            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center font-mono text-xs uppercase tracking-widest text-muted-foreground/70">
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center font-mono text-xs uppercase tracking-widest text-muted-foreground">
               no intraday data
             </div>
           )}
@@ -1300,16 +1300,16 @@ export default function MLProjectionPanel() {
             <div className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">
               key levels
             </div>
-            <p className="text-[10px] leading-snug text-muted-foreground/70">
+            <p className="text-[11px] leading-snug text-muted-foreground">
               how far price sits from the walls and the flip — small distances mean the level is in play right now.
             </p>
             {levels?.dataState === "unavailable" && (
-              <p className="text-[10px] leading-snug text-amber-400" data-testid="text-ml-levels-unavailable">
+              <p className="text-[11px] leading-snug text-amber-400" data-testid="text-ml-levels-unavailable">
                 dealer levels unavailable ({levels.reason ?? "unknown"}), not zero.
               </p>
             )}
             {levels?.dataState === "ok" && (
-              <p className="text-[10px] leading-snug text-muted-foreground/70">
+              <p className="text-[11px] leading-snug text-muted-foreground">
                 from the Schwab $SPX option chain{levels.display === "SPY" && levels.scale ? `, x ${levels.scale.toFixed(5)} (live SPY/SPX quotes)` : ""}.
               </p>
             )}
@@ -1362,13 +1362,13 @@ export default function MLProjectionPanel() {
             <div className="text-xs font-semibold uppercase text-muted-foreground tracking-wider flex items-center justify-between">
               <span>scenarios ({activeHorizons[activeHorizons.length - 1] ?? 60}min)</span>
             </div>
-            <p className="text-[10px] leading-snug text-muted-foreground/70">
+            <p className="text-[11px] leading-snug text-muted-foreground">
               {learned
                 ? "base is the promoted model's median (q50); bull and bear are its 90th and 10th percentiles."
                 : "baseline cone: base is its zero-drift median; bull and bear are its 90th and 10th percentiles. not a learned forecast."}
             </p>
             {(activeModel === "morning" || activeModel === "blend") && morning?.anchorTimeEt && (
-              <div className="font-mono text-[10px] text-cyan-300/80">anchor {morning.anchorTimeEt}</div>
+              <div className="font-mono text-[11px] text-cyan-300/80">anchor {morning.anchorTimeEt}</div>
             )}
             <div className="flex justify-between text-sm">
               <span className="text-emerald-400">bull (q90)</span>
@@ -1406,7 +1406,7 @@ export default function MLProjectionPanel() {
             <div className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">
               interpretation
             </div>
-            <p className="text-[10px] leading-snug text-muted-foreground/70">
+            <p className="text-[11px] leading-snug text-muted-foreground">
               what the numbers mean in plain language — read this first, then check the levels.
             </p>
             <ul className="space-y-1.5 text-sm leading-relaxed">
@@ -1462,7 +1462,7 @@ function CoverageTable({ report, servedLabel }: { report: CoverageReportPayload 
       <div className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">
         live coverage of the drawn 10-90% band (nominal 80%)
       </div>
-      <p className="text-[10px] leading-snug text-muted-foreground/70">
+      <p className="text-[11px] leading-snug text-muted-foreground">
         scored on realized SPX returns, one non-overlapping forecast per horizon window, for this exact band ({servedLabel}).
         95% Wilson interval; Kupiec p &lt; 0.05 rejects 80% coverage; Christoffersen p &lt; 0.05 means misses cluster.
         a different band (another model version, or the baseline) starts its own record.
@@ -1497,7 +1497,7 @@ function CoverageTable({ report, servedLabel }: { report: CoverageReportPayload 
               })}
             </tbody>
           </table>
-          <div className="mt-1 text-[10px] text-muted-foreground/70">
+          <div className="mt-1 text-[11px] text-muted-foreground">
             pending (horizon not yet passed): {report.pending} · no price for the window: {report.noPrice}
           </div>
         </div>

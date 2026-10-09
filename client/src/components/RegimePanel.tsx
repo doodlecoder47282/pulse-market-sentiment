@@ -267,7 +267,7 @@ export default function RegimePanel() {
       )}
 
       <details className="rounded-md border border-border/40 bg-card/30 px-3 py-2 text-[11px] text-muted-foreground">
-        <summary className="cursor-pointer select-none text-[10px] uppercase tracking-wider">Methodology</summary>
+        <summary className="cursor-pointer select-none text-[11px] uppercase tracking-wider">Methodology</summary>
         <p className="mt-2 leading-relaxed">
           For each axis pair (e.g. SPY/TLT), the ratio's log return over the selected window is z-scored with the
           Newey-West long-run variance of its daily returns (overlapping rolling windows over 2 years hold only a few
@@ -337,8 +337,8 @@ function AxisChip({ axis }: { axis: AxisSummary }) {
     >
       <Icon className="h-3 w-3" />
       <span className="font-medium">{label}</span>
-      <span className="text-[10px] opacity-70">·</span>
-      <span className="text-[10px] opacity-80">{describeStage(axis.stage)}</span>
+      <span className="text-[11px] opacity-70">·</span>
+      <span className="text-[11px] opacity-80">{describeStage(axis.stage)}</span>
     </div>
   );
 }
@@ -366,7 +366,7 @@ function AxisCard({
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{axis.label}</div>
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{axis.label}</div>
             <CardTitle className={`mt-0.5 text-base font-semibold ${dirColor}`}>
               {axis.direction === 0
                 ? "Balanced"
@@ -380,7 +380,7 @@ function AxisCard({
             <div className="font-mono text-sm">
               <span className={dirColor}>{dirSign}{Math.abs(axis.compositeZ).toFixed(2)}σ</span>
             </div>
-            <div className={`text-[10px] uppercase tracking-wider ${stageColor}`}>{describeStage(axis.stage)}</div>
+            <div className={`text-[11px] uppercase tracking-wider ${stageColor}`}>{describeStage(axis.stage)}</div>
           </div>
         </div>
       </CardHeader>
@@ -389,7 +389,7 @@ function AxisCard({
 
         {/* conviction bar */}
         <div>
-          <div className="mb-1 flex items-center justify-between text-[10px] text-muted-foreground">
+          <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
             <span className="flex items-center gap-1">
               <GaugeIcon className="h-3 w-3" />
               Conviction
@@ -413,12 +413,12 @@ function AxisCard({
                 <div className="font-mono text-[11px] text-foreground/80">{r.label}</div>
                 <div className="flex items-center gap-1.5">
                   {r.fresh && (
-                    <Badge variant="outline" className="border-primary/50 bg-primary/10 text-[9px] text-primary">
+                    <Badge variant="outline" className="border-primary/50 bg-primary/10 text-[11px] text-primary">
                       fresh
                     </Badge>
                   )}
                   {r.durable && (
-                    <Badge variant="outline" className="border-fuchsia-500/50 bg-fuchsia-500/10 text-[9px] text-fuchsia-400">
+                    <Badge variant="outline" className="border-fuchsia-500/50 bg-fuchsia-500/10 text-[11px] text-fuchsia-400">
                       durable
                     </Badge>
                   )}
@@ -427,7 +427,7 @@ function AxisCard({
                   </span>
                   {r.stats && (
                     <span
-                      className="font-mono text-[10px] text-muted-foreground"
+                      className="font-mono text-[11px] text-muted-foreground"
                       title={`bootstrap null: |z| 5% line ${r.stats.zCrit95.toFixed(2)}, ${r.stats.independentWindows} non-overlapping windows in ${r.stats.sampleDays} days, wild-bootstrap null`}
                     >
                       p {r.stats.pZ.toFixed(3)}{r.stats.qZ != null && Number.isFinite(r.stats.qZ) ? ` · q ${r.stats.qZ.toFixed(3)}` : ""}
@@ -460,12 +460,12 @@ function AxisCard({
               </div>
               <div className="flex items-center gap-1.5">
                 {catchupCount > 0 && (
-                  <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-[9px] font-mono text-amber-400">
+                  <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-[11px] font-mono text-amber-400">
                     <Zap className="mr-0.5 h-2.5 w-2.5" />
                     {catchupCount} buy
                   </Badge>
                 )}
-                <span className="text-[10px] text-muted-foreground">
+                <span className="text-[11px] text-muted-foreground">
                   {leadersLaggards.all.length} names
                 </span>
               </div>
@@ -487,7 +487,7 @@ function LeadersLaggardsTable({ ll }: { ll: LeadersLaggards }) {
       <div>
         <div className="mb-1.5 flex items-center gap-1.5">
           <Crown className="h-3 w-3 text-emerald-400" />
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">
             Leaders
           </span>
         </div>
@@ -502,10 +502,10 @@ function LeadersLaggardsTable({ ll }: { ll: LeadersLaggards }) {
       <div>
         <div className="mb-1.5 flex items-center gap-1.5">
           <Target className="h-3 w-3 text-amber-400" />
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-400">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-400">
             Laggards
           </span>
-          <span className="text-[10px] text-muted-foreground">
+          <span className="text-[11px] text-muted-foreground">
             (sorted by catch-up score)
           </span>
         </div>
@@ -546,15 +546,15 @@ function ConstituentRowCard({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="font-mono text-[11px] font-semibold text-foreground">{c.symbol}</span>
-          <span className="text-[10px] text-muted-foreground">#{c.rank}</span>
+          <span className="text-[11px] text-muted-foreground">#{c.rank}</span>
           {c.catchupCandidate && (
-            <Badge variant="outline" className="border-amber-500/60 bg-amber-500/15 font-mono text-[8.5px] text-amber-300">
+            <Badge variant="outline" className="border-amber-500/60 bg-amber-500/15 font-mono text-[11px] text-amber-300">
               <Zap className="mr-0.5 h-2 w-2" />
               catch-up {c.catchupScore}
             </Badge>
           )}
         </div>
-        <div className="flex items-center gap-2 font-mono text-[10px]">
+        <div className="flex items-center gap-2 font-mono text-[11px]">
           <span className={rocColor}>
             {c.rocPct >= 0 ? "+" : ""}{c.rocPct.toFixed(1)}%
           </span>
@@ -565,7 +565,7 @@ function ConstituentRowCard({
           )}
         </div>
       </div>
-      <div className="mt-1 text-[10px] leading-snug text-muted-foreground">{c.note}</div>
+      <div className="mt-1 text-[11px] leading-snug text-muted-foreground">{c.note}</div>
     </div>
   );
 }
@@ -605,7 +605,7 @@ function CatchupStrip({
               Higher score = better mean-reversion setup.
             </p>
           </div>
-          <Badge variant="outline" className="font-mono text-[10px] text-amber-400">
+          <Badge variant="outline" className="font-mono text-[11px] text-amber-400">
             {top.length}
           </Badge>
         </div>
@@ -626,15 +626,15 @@ function CatchupStrip({
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5">
                     <span className="font-mono text-sm font-semibold text-amber-300">{p.symbol}</span>
-                    <Badge variant="outline" className="border-amber-500/50 bg-amber-500/15 font-mono text-[9px] text-amber-300">
+                    <Badge variant="outline" className="border-amber-500/50 bg-amber-500/15 font-mono text-[11px] text-amber-300">
                       {p.catchupScore}/100
                     </Badge>
                   </div>
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
                     {axisShortLabel(p.axis)}
                   </span>
                 </div>
-                <div className="mt-1 flex items-center gap-2 font-mono text-[10px]">
+                <div className="mt-1 flex items-center gap-2 font-mono text-[11px]">
                   <span className={p.rocPct >= 0 ? "text-emerald-400" : "text-red-400"}>
                     {p.rocPct >= 0 ? "+" : ""}{p.rocPct.toFixed(1)}%
                   </span>
@@ -644,7 +644,7 @@ function CatchupStrip({
                     </span>
                   )}
                 </div>
-                <div className="mt-1 text-[10px] leading-snug text-muted-foreground">{p.note}</div>
+                <div className="mt-1 text-[11px] leading-snug text-muted-foreground">{p.note}</div>
               </div>
             ))}
           </div>
@@ -687,7 +687,7 @@ function ThemeColumn({
             </CardTitle>
             <p className="mt-0.5 text-[11px] text-muted-foreground">{subtitle}</p>
           </div>
-          <Badge variant="outline" className="font-mono text-[10px]">
+          <Badge variant="outline" className="font-mono text-[11px]">
             {themes.length}
           </Badge>
         </div>
@@ -710,7 +710,7 @@ function ThemeColumn({
                     <ChevronRight className={`h-3 w-3 ${accentClass}`} />
                     <h4 className="text-sm font-semibold leading-tight">{t.headline}</h4>
                   </div>
-                  <Badge variant="outline" className="shrink-0 font-mono text-[9px]">
+                  <Badge variant="outline" className="shrink-0 font-mono text-[11px]">
                     {t.conviction}
                   </Badge>
                 </div>

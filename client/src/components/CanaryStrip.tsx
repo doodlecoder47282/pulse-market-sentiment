@@ -79,11 +79,11 @@ export default function CanaryStrip() {
       <div className="flex flex-wrap items-center gap-2 mb-1.5">
         <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-amber-300">Canary</span>
         <EdgeInfo id="canary" className="h-6 w-6" />
-        <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">cross-asset divergence · z vs own 20d vol</span>
-        <span className={`text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border ${rs.cls}`} data-testid="canary-read">
+        <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">cross-asset divergence · z vs own 20d vol</span>
+        <span className={`text-[11px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border ${rs.cls}`} data-testid="canary-read">
           {rs.label}
         </span>
-        <span className="ml-auto text-[9px] font-mono text-muted-foreground" data-testid="canary-composite" title={data.compositeMethod ?? ""}>
+        <span className="ml-auto text-[11px] font-mono text-muted-foreground" data-testid="canary-composite" title={data.compositeMethod ?? ""}>
           composite {data.composite != null ? (data.composite > 0 ? "+" : "") + data.composite : "—"}
           {data.compositeEffectiveN != null ? ` (≈${data.compositeEffectiveN} independent)` : ""}
           {data.thresholds ? ` · lines ${data.thresholds.method} ${data.thresholds.watch}/${data.thresholds.alarm} (normal ${data.thresholds.normalWatch}/${data.thresholds.normalAlarm}${data.thresholds.realizedSd != null ? `, realized sd ${data.thresholds.realizedSd}` : ""})` : ""}
@@ -92,7 +92,7 @@ export default function CanaryStrip() {
         </span>
       </div>
 
-      <div className="text-[10px] font-mono text-foreground/90 mb-2" data-testid="canary-headline">
+      <div className="text-[11px] font-mono text-foreground/90 mb-2" data-testid="canary-headline">
         {data.headline}
       </div>
 
@@ -103,7 +103,7 @@ export default function CanaryStrip() {
           return (
             <div
               key={c.id}
-              className={`flex items-center gap-2 text-[9px] font-mono py-1 px-1.5 rounded border ${c.diverging ? "border-amber-500/50 bg-amber-500/5" : "border-transparent"}`}
+              className={`flex items-center gap-2 text-[11px] font-mono py-1 px-1.5 rounded border ${c.diverging ? "border-amber-500/50 bg-amber-500/5" : "border-transparent"}`}
               title={c.note}
               data-testid={`canary-${c.id}`}
             >
@@ -126,13 +126,13 @@ export default function CanaryStrip() {
               <span className={`w-12 shrink-0 text-right tabular-nums ${c.diverging ? "text-amber-400 font-bold" : "text-muted-foreground"}`} data-testid={`canary-z-${c.id}`}>
                 {c.riskOffZ != null ? (c.riskOffZ > 0 ? "+" : "") + c.riskOffZ + "σ" : "—"}
               </span>
-              {c.diverging && <span className="shrink-0 text-[8px] uppercase text-amber-400 font-bold">div</span>}
+              {c.diverging && <span className="shrink-0 text-[11px] uppercase text-amber-400 font-bold">div</span>}
             </div>
           );
         })}
       </div>
 
-      <div className="mt-1.5 text-[8px] font-mono text-muted-foreground leading-relaxed">
+      <div className="mt-1.5 text-[11px] font-mono text-muted-foreground leading-relaxed">
         risk-off σ = today's move / own 20d vol, signed (AUDJPY·Cu/Au·crude·credit down = off, DXY·gold up = off, crude +2σ spike = inflation shock) · div = canary risk-off while SPY flat/up · alerts to Discord on divergence/alarm, 5min cadence RTH, 4h refire cap · confirmation, not entry — ETF proxies, RTH only
       </div>
     </div>

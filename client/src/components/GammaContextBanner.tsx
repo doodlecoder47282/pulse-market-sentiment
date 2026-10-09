@@ -58,17 +58,17 @@ function LevelPill({
       className="flex min-w-[120px] flex-col gap-0.5 rounded-md border border-border/40 bg-background/40 px-2 py-1.5"
       data-testid={`gamma-pill-${label.toLowerCase().replace(/\s/g, "-")}`}
     >
-      <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-wider text-muted-foreground">
+      <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
         <span className={`h-1.5 w-1.5 rounded-sm ${color}`} />
         <span>{label}</span>
-        {hint && <span className="text-muted-foreground/60">· {hint}</span>}
+        {hint && <span className="text-muted-foreground">· {hint}</span>}
       </div>
       <div className="flex items-baseline gap-1.5">
         <span className="font-mono text-sm font-semibold tabular-nums">
           {value.toFixed(2)}
         </span>
         <span
-          className={`font-mono text-[10px] tabular-nums ${
+          className={`font-mono text-[11px] tabular-nums ${
             above ? "text-emerald-400" : "text-rose-400"
           }`}
         >
@@ -95,7 +95,7 @@ export default function GammaContextBanner({
         className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border/40 bg-muted/5 px-3 py-2 text-[11px]"
         data-testid="gamma-banner-unsupported"
       >
-        <Zap className="h-3 w-3 text-muted-foreground/60" />
+        <Zap className="h-3 w-3 text-muted-foreground" />
         <span className="font-semibold uppercase tracking-wider text-muted-foreground">
           Gamma walls
         </span>
@@ -133,14 +133,14 @@ export default function GammaContextBanner({
             ? "POS GAMMA · mean-revert"
             : "NEG GAMMA · trend / breakout"}
         </Badge>
-        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
           {symbol} · {timeframe}
         </span>
         {tvNote && (
-          <span className="text-[10px] text-amber-300/80">{tvNote}</span>
+          <span className="text-[11px] text-amber-300/80">{tvNote}</span>
         )}
         {typeof levels.totalGex === "number" && (
-          <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+          <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
             Net GEX{" "}
             <span
               className={
@@ -152,7 +152,7 @@ export default function GammaContextBanner({
             </span>
           </span>
         )}
-        <span className="ml-auto font-mono text-[10px] text-muted-foreground">
+        <span className="ml-auto font-mono text-[11px] text-muted-foreground">
           Spot{" "}
           <span className="text-foreground">{spot.toFixed(2)}</span>
           {asOf && (

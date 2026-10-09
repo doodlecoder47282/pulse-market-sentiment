@@ -179,7 +179,7 @@ export default function EdgeInfo({ id, className = "" }: { id: string; className
           e.preventDefault();
           setOpen(true);
         }}
-        className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/40 text-muted-foreground/70 transition hover:border-border hover:text-foreground active:scale-95 ${className}`}
+        className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/40 text-muted-foreground transition hover:border-border hover:text-foreground active:scale-95 ${className}`}
       >
         <Info className="h-3.5 w-3.5" />
       </button>
@@ -187,7 +187,7 @@ export default function EdgeInfo({ id, className = "" }: { id: string; className
         <DialogContent className="max-w-md gap-0 overflow-hidden border-slate-700/70 bg-slate-950 p-0 sm:rounded-xl">
           {/* Header band */}
           <div className="border-b border-slate-800 bg-slate-900/60 px-5 py-4">
-            <div className="font-mono text-[9px] uppercase tracking-[0.25em] text-slate-500">
+            <div className="font-mono text-[11px] uppercase tracking-[0.25em] text-slate-500">
               Field Manual
             </div>
             <DialogTitle className="mt-1 text-base font-semibold tracking-tight text-slate-100">
@@ -200,7 +200,7 @@ export default function EdgeInfo({ id, className = "" }: { id: string; className
               const IconComponent = s.icon;
               return (
                 <div key={s.key}>
-                  <div className={`mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest ${s.tone}`}>
+                  <div className={`mb-1 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest ${s.tone}`}>
                     <IconComponent className="h-3 w-3" />
                     {s.label}
                   </div>
@@ -210,7 +210,7 @@ export default function EdgeInfo({ id, className = "" }: { id: string; className
             })}
             {info.risk && (
               <div>
-                <div className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-rose-400">
+                <div className="mb-1 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-rose-400">
                   <AlertTriangle className="h-3 w-3" />
                   What breaks it
                 </div>
@@ -219,7 +219,7 @@ export default function EdgeInfo({ id, className = "" }: { id: string; className
             )}
           </div>
           {/* Footer */}
-          <div className="border-t border-slate-800 bg-slate-900/40 px-5 py-2.5 text-center font-mono text-[9px] uppercase tracking-widest text-slate-600">
+          <div className="border-t border-slate-800 bg-slate-900/40 px-5 py-2.5 text-center font-mono text-[11px] uppercase tracking-widest text-slate-400">
             every read is probabilistic · size accordingly
           </div>
         </DialogContent>

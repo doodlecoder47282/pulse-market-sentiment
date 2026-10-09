@@ -99,7 +99,7 @@ function HeadlineCards({ w, r }: { w: WhaleEdge; r: RegimeEdge }) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-2" data-testid="edge-headline-cards">
       <div className="rounded-md border border-border/50 bg-card/40 p-3">
-        <div className="text-[10px] uppercase text-muted-foreground tracking-wider">Whale Hit-30</div>
+        <div className="text-[11px] uppercase text-muted-foreground tracking-wider">Whale Hit-30</div>
         <div className={`text-2xl font-semibold ${rateColor(w.graded ? w.hit30Rate : null)}`} data-testid="text-whale-hit30">
           {w.graded ? pct(w.hit30Rate) : "—"}
         </div>
@@ -113,21 +113,21 @@ function HeadlineCards({ w, r }: { w: WhaleEdge; r: RegimeEdge }) {
         </div>
       </div>
       <div className="rounded-md border border-border/50 bg-card/40 p-3">
-        <div className="text-[10px] uppercase text-muted-foreground tracking-wider">Whale Hit-50</div>
+        <div className="text-[11px] uppercase text-muted-foreground tracking-wider">Whale Hit-50</div>
         <div className={`text-2xl font-semibold ${rateColor(w.graded ? w.hit50Rate : null)}`} data-testid="text-whale-hit50">
           {w.graded ? pct(w.hit50Rate) : "—"}
         </div>
         <div className="text-[11px] text-muted-foreground">reached +50%</div>
       </div>
       <div className="rounded-md border border-border/50 bg-card/40 p-3">
-        <div className="text-[10px] uppercase text-muted-foreground tracking-wider">Whale Hit-100</div>
+        <div className="text-[11px] uppercase text-muted-foreground tracking-wider">Whale Hit-100</div>
         <div className={`text-2xl font-semibold ${rateColor(w.graded ? w.hit100Rate : null)}`} data-testid="text-whale-hit100">
           {w.graded ? pct(w.hit100Rate) : "—"}
         </div>
         <div className="text-[11px] text-muted-foreground">reached +100%</div>
       </div>
       <div className="rounded-md border border-border/50 bg-card/40 p-3">
-        <div className="text-[10px] uppercase text-muted-foreground tracking-wider">Regime Hit</div>
+        <div className="text-[11px] uppercase text-muted-foreground tracking-wider">Regime Hit</div>
         <div className={`text-2xl font-semibold ${rateColor(r.graded ? r.overallHitRate : null)}`} data-testid="text-regime-hit">
           {r.graded ? pct(r.overallHitRate) : "—"}
         </div>
@@ -165,7 +165,7 @@ function HitMatrix({ w }: { w: WhaleEdge }) {
             <div className="px-2 py-1.5 text-xs text-muted-foreground">no graded setups yet — take trades to build history</div>
           ) : (
             <div className="space-y-0.5">
-              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-2 text-[10px] text-muted-foreground">
+              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-2 text-[11px] text-muted-foreground">
                 <div>tier</div><div>n</div><div>hit-30</div><div>avg ret</div>
               </div>
               {section.rows.map((r, i) => (
@@ -187,7 +187,7 @@ function CalibrationPlot({ r }: { r: RegimeEdge }) {
   return (
     <div className="rounded-md border border-border/50 bg-card/40 p-3">
       <div className="text-[11px] uppercase text-muted-foreground tracking-wider mb-1">Regime Calibration</div>
-      <div className="mb-2 text-[10px] text-muted-foreground" data-testid="text-calibration-verdict" title={r.reliability?.test.name}>
+      <div className="mb-2 text-[11px] text-muted-foreground" data-testid="text-calibration-verdict" title={r.reliability?.test.name}>
         {r.reliability
           ? r.reliability.verdict === "calibrated"
             ? `calibrated: passes the reliability test (n=${r.reliability.n})`
@@ -236,7 +236,7 @@ function CalibrationPlot({ r }: { r: RegimeEdge }) {
             <div key={i} className="flex justify-between items-baseline">
               <span className="text-xs text-muted-foreground">{b.bucket}</span>
               <span className="tabular-nums">
-                <span className="text-[10px] text-muted-foreground mr-2">n={b.n}</span>
+                <span className="text-[11px] text-muted-foreground mr-2">n={b.n}</span>
                 <span className={`font-semibold ${b.n > 0 ? rateColor(b.hitRate) : "text-muted-foreground"}`}>
                   {b.n > 0 ? pct(b.hitRate) : "—"}
                 </span>
@@ -251,7 +251,7 @@ function CalibrationPlot({ r }: { r: RegimeEdge }) {
               <div key={i} className="flex justify-between items-baseline">
                 <span className="text-xs text-muted-foreground">{rg.regime}</span>
                 <span className="tabular-nums">
-                  <span className="text-[10px] text-muted-foreground mr-2">n={rg.n}</span>
+                  <span className="text-[11px] text-muted-foreground mr-2">n={rg.n}</span>
                   <span className={`font-semibold ${rateColor(rg.hitRate)}`}>{pct(rg.hitRate)}</span>
                 </span>
               </div>
@@ -314,7 +314,7 @@ function SuggestionsPanel({ suggestions, tests, windowDays }: { suggestions: Sug
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-400 text-[10px]">
+                <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-400 text-[11px]">
                   {s.field}
                 </Badge>
                 <span className="text-xs text-muted-foreground">
@@ -359,7 +359,7 @@ function SuggestionsPanel({ suggestions, tests, windowDays }: { suggestions: Sug
                 </Button>
               )}
               {errorField === s.field && (
-                <div className="text-[10px] text-red-400 mt-1">apply failed</div>
+                <div className="text-[11px] text-red-400 mt-1">apply failed</div>
               )}
             </div>
           </div>
@@ -416,7 +416,7 @@ export default function EdgeStatsPanel() {
           <CardTitle className="flex items-center gap-2 text-base">
             <Target className="h-4 w-4 shrink-0 text-amber-400" />
             Edge Loop
-            <Badge variant="outline" className="ml-2 text-[10px] border-border/50 bg-card/30">
+            <Badge variant="outline" className="ml-2 text-[11px] border-border/50 bg-card/30">
               {data.windowDays}d window
             </Badge>
             {/* asOf is when the server computed these stats from its graded-outcome DB (not a market feed). */}
@@ -463,7 +463,7 @@ export default function EdgeStatsPanel() {
             <TabsTrigger value="suggestions" className="text-xs gap-1.5" data-testid="tab-suggestions">
               <AlertTriangle className="h-3 w-3" /> suggestions
               {data.suggestions.length > 0 && (
-                <Badge variant="outline" className="ml-1 h-4 px-1 text-[9px] border-amber-500/40 bg-amber-500/10 text-amber-400">
+                <Badge variant="outline" className="ml-1 h-4 px-1 text-[11px] border-amber-500/40 bg-amber-500/10 text-amber-400">
                   {data.suggestions.length}
                 </Badge>
               )}
@@ -493,7 +493,7 @@ export default function EdgeStatsPanel() {
           </TabsContent>
         </Tabs>
 
-        <div className="text-[10px] text-muted-foreground text-center pt-1">
+        <div className="text-[11px] text-muted-foreground text-center pt-1">
           last grade: {new Date(data.asOf).toLocaleTimeString()} · auto-refreshes every 60s
         </div>
       </CardContent>

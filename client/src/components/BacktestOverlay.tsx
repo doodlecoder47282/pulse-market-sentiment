@@ -140,18 +140,18 @@ export function BacktestBadge({
       <Tooltip>
         <TooltipTrigger asChild>
           <span
-            className={`ml-1 cursor-help font-mono text-[8px] font-bold ${rateColor(v.touch, "touch")}`}
+            className={`ml-1 cursor-help font-mono text-[11px] font-bold ${rateColor(v.touch, "touch")}`}
             data-testid={`backtest-badge-${horizon}-${kind}`}
           >
             {pct(v.touch)}
           </span>
         </TooltipTrigger>
-        <TooltipContent side="left" className="max-w-xs bg-black/95 font-mono text-[10px]">
-          <div className="mb-1 text-[9px] uppercase tracking-wider text-amber-400">
+        <TooltipContent side="left" className="max-w-xs bg-black/95 font-mono text-[11px]">
+          <div className="mb-1 text-[11px] uppercase tracking-wider text-amber-400">
             {LABELS[mapped]} · {horizon.toUpperCase()}
           </div>
           {!data.dealerLevelsFromChains && (
-            <div className="mb-1 text-[9px] text-amber-300/80">
+            <div className="mb-1 text-[11px] text-amber-300/80">
               volatility-band stand-in, not this dealer level's own history
             </div>
           )}
@@ -211,23 +211,23 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
     >
       <button
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 border-b border-violet-500/20 px-3 py-2 text-left font-mono text-[10px] uppercase tracking-widest text-violet-300/80 hover:bg-violet-500/5"
+        className="flex w-full items-center gap-2 border-b border-violet-500/20 px-3 py-2 text-left font-mono text-[11px] uppercase tracking-widest text-violet-300/80 hover:bg-violet-500/5"
         data-testid="btn-backtest-toggle"
       >
         {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
         <History className="h-3 w-3" />
         {data?.dealerLevelsFromChains ? "Dealer-Level Backtest · 5Y" : "Volatility-Band Backtest · 5Y"}
         {!data?.dealerLevelsFromChains && (
-          <Badge variant="outline" className="ml-2 border-amber-500/40 font-mono text-[8px] text-amber-300/90" data-testid="badge-backtest-not-dealer">
+          <Badge variant="outline" className="ml-2 border-amber-500/40 font-mono text-[11px] text-amber-300/90" data-testid="badge-backtest-not-dealer">
             NOT DEALER LEVELS
           </Badge>
         )}
         <TooltipProvider delayDuration={100}>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Info className="h-3 w-3 text-muted-foreground/60" />
+              <Info className="h-3 w-3 text-muted-foreground" />
             </TooltipTrigger>
-            <TooltipContent side="bottom" className="max-w-sm bg-black/95 font-mono text-[10px] leading-relaxed">
+            <TooltipContent side="bottom" className="max-w-sm bg-black/95 font-mono text-[11px] leading-relaxed">
               Volatility-band backtest: this contains no options data. Each row
               tests a stand-in named after a dealer level: ATR × VIX bands for
               the walls, a 20-day EMA for zero-gamma, σ-bands for pivots and a
@@ -238,9 +238,9 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
-        <span className="ml-auto text-muted-foreground/50">
+        <span className="ml-auto text-muted-foreground">
           {data?.computedAt != null && Date.now() - data.computedAt * 1000 > 7 * 24 * 60 * 60 * 1000 && (
-            <Badge variant="outline" className="mr-1.5 border-rose-500/40 font-mono text-[8px] text-rose-300" data-testid="badge-backtest-stale">
+            <Badge variant="outline" className="mr-1.5 border-rose-500/40 font-mono text-[11px] text-rose-300" data-testid="badge-backtest-stale">
               STALE · REBUILDING
             </Badge>
           )}
@@ -258,7 +258,7 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
                   key={h}
                   variant={horizon === h ? "default" : "ghost"}
                   size="sm"
-                  className="h-6 px-2.5 text-[10px] uppercase tracking-wider"
+                  className="h-6 px-2.5 text-[11px] uppercase tracking-wider"
                   onClick={() => setHorizon(h)}
                   data-testid={`btn-bt-horizon-${h}`}
                 >
@@ -272,14 +272,14 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
               size="sm"
               onClick={() => rebuild.mutate()}
               disabled={rebuild.isPending || isFetching}
-              className="h-6 gap-1 font-mono text-[10px]"
+              className="h-6 gap-1 font-mono text-[11px]"
               data-testid="btn-backtest-rebuild"
             >
               <RefreshCw className={`h-3 w-3 ${rebuild.isPending || isFetching ? "animate-spin" : ""}`} />
               {rebuild.isPending ? "Rebuilding…" : "Rebuild"}
             </Button>
 
-            <span className="font-mono text-[9px] text-muted-foreground/60" data-testid="text-backtest-datastate">
+            <span className="font-mono text-[11px] text-muted-foreground" data-testid="text-backtest-datastate">
               {data?.dealerLevelsTested
                 ? "Dealer levels from historical chains."
                 : `Volatility bands, not option chains: no dealer level is tested. Blocked on ${data?.blockedOn ?? "historical option chains"}.`}
@@ -291,7 +291,7 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
           )}
 
           {empty && !rebuild.isPending && (
-            <div className="rounded border border-amber-500/30 bg-amber-500/5 p-3 text-center font-mono text-[10px] text-amber-300">
+            <div className="rounded border border-amber-500/30 bg-amber-500/5 p-3 text-center font-mono text-[11px] text-amber-300">
               No volatility-band backtest data yet. The initial 5-year backfill runs ~8s after server boot;
               click Rebuild if it hasn't populated.
             </div>
@@ -300,16 +300,16 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
           {!empty && !isLoading && (
             <>
               <div className="hscroll-contain rounded border border-border/40">
-                <table className="w-full border-collapse font-mono text-[10px]">
-                  <thead className="bg-black/50 text-muted-foreground/70">
+                <table className="w-full border-collapse font-mono text-[11px]">
+                  <thead className="bg-black/50 text-muted-foreground">
                     <tr className="border-b border-border/40">
-                      <th className="px-2 py-1.5 text-left text-[9px] uppercase tracking-wider">Level</th>
-                      <th className="px-2 py-1.5 text-right text-[9px] uppercase tracking-wider">Touch %</th>
-                      <th className="px-2 py-1.5 text-right text-[9px] uppercase tracking-wider">Hold %</th>
-                      <th className="px-2 py-1.5 text-right text-[9px] uppercase tracking-wider">Avg Miss</th>
-                      <th className="px-2 py-1.5 text-right text-[9px] uppercase tracking-wider">Median Miss</th>
-                      <th className="px-2 py-1.5 text-right text-[9px] uppercase tracking-wider">Breach &gt;1%</th>
-                      <th className="px-2 py-1.5 text-right text-[9px] uppercase tracking-wider" title="non-overlapping windows / pooled overlapping observations">n (pooled)</th>
+                      <th className="px-2 py-1.5 text-left text-[11px] uppercase tracking-wider">Level</th>
+                      <th className="px-2 py-1.5 text-right text-[11px] uppercase tracking-wider">Touch %</th>
+                      <th className="px-2 py-1.5 text-right text-[11px] uppercase tracking-wider">Hold %</th>
+                      <th className="px-2 py-1.5 text-right text-[11px] uppercase tracking-wider">Avg Miss</th>
+                      <th className="px-2 py-1.5 text-right text-[11px] uppercase tracking-wider">Median Miss</th>
+                      <th className="px-2 py-1.5 text-right text-[11px] uppercase tracking-wider">Breach &gt;1%</th>
+                      <th className="px-2 py-1.5 text-right text-[11px] uppercase tracking-wider" title="non-overlapping windows / pooled overlapping observations">n (pooled)</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -317,20 +317,20 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
                       <tr key={r.levelKind} className="border-b border-border/20 hover:bg-violet-500/5" data-testid={`bt-row-${r.levelKind}`}>
                         <td className="px-2 py-1.5 text-white">{LABELS[r.levelKind] ?? r.levelKind}</td>
                         <td className={`px-2 py-1.5 text-right font-semibold ${rateColor(v.touch, "touch")}`} title={v.lo != null && v.hi != null ? `95% CI ${pct(v.lo)}-${pct(v.hi)}` : undefined}>
-                          {pct(v.touch)}{v.lo != null && v.hi != null && <span className="ml-1 font-normal text-muted-foreground/70">[{pct(v.lo)}-{pct(v.hi)}]</span>}
+                          {pct(v.touch)}{v.lo != null && v.hi != null && <span className="ml-1 font-normal text-muted-foreground">[{pct(v.lo)}-{pct(v.hi)}]</span>}
                         </td>
                         <td className={`px-2 py-1.5 text-right ${rateColor(v.hold, "hold")}`}>{pct(v.hold)}</td>
                         <td className="px-2 py-1.5 text-right text-muted-foreground">{r.avgAbsDistBps.toFixed(0)} bps</td>
                         <td className="px-2 py-1.5 text-right text-muted-foreground">{r.medianAbsDistBps.toFixed(0)} bps</td>
                         <td className="px-2 py-1.5 text-right text-rose-400/80">{pct(r.breachBeyondPct)}</td>
-                        <td className="px-2 py-1.5 text-right text-muted-foreground/70">{v.nonOverlap ? `${v.n} (${r.sampleSize})` : `${r.sampleSize} pooled`}</td>
+                        <td className="px-2 py-1.5 text-right text-muted-foreground">{v.nonOverlap ? `${v.n} (${r.sampleSize})` : `${r.sampleSize} pooled`}</td>
                       </tr>
                     ); })}
                   </tbody>
                 </table>
               </div>
 
-              <div className="space-y-0.5 pt-1 font-mono text-[9px] leading-tight text-muted-foreground/60">
+              <div className="space-y-0.5 pt-1 font-mono text-[11px] leading-tight text-muted-foreground">
                 <div>
                   <span className="text-amber-400">Touch %:</span> {data?.touchRule ?? "price came within tolerance of level during horizon window."} Rates and n use non-overlapping windows (every Nth day, N = horizon); [ ] = Wilson 95% interval; the pooled count overlaps and overstates the evidence.
                 </div>

@@ -205,7 +205,7 @@ export default function TakeFive({ mode = "embedded", open = true, onClose }: Ta
         <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-[1.3fr_1fr]">
           {/* Quote card */}
           <div className="take5-panel flex min-h-[220px] flex-col justify-center rounded-lg p-6">
-            <div className="mb-3 text-[10px] uppercase tracking-[0.3em] text-[#ffd000]/70">
+            <div className="mb-3 text-[11px] uppercase tracking-[0.3em] text-[#ffd000]/70">
               Wisdom from the tape
             </div>
             <blockquote
@@ -220,7 +220,7 @@ export default function TakeFive({ mode = "embedded", open = true, onClose }: Ta
                 — {quote.attr}
               </div>
             </blockquote>
-            <div className="mt-5 flex items-center gap-2 text-[10px] text-[#f7f5ff]/50">
+            <div className="mt-5 flex items-center gap-2 text-[11px] text-[#f7f5ff]/50">
               <button
                 onClick={() => setQuoteIdx((i) => (i - 1 + QUOTES.length) % QUOTES.length)}
                 className="rounded border border-white/10 px-2 py-0.5 hover:bg-white/5"
@@ -243,7 +243,7 @@ export default function TakeFive({ mode = "embedded", open = true, onClose }: Ta
 
           {/* Breath pacer */}
           <div className="take5-panel flex flex-col items-center justify-center rounded-lg p-6">
-            <div className="mb-3 text-[10px] uppercase tracking-[0.3em] text-[#00ff88]/80">
+            <div className="mb-3 text-[11px] uppercase tracking-[0.3em] text-[#00ff88]/80">
               4 · 7 · 8 breathing pacer
             </div>
             <div className="relative flex h-[200px] w-[200px] items-center justify-center">
@@ -252,7 +252,7 @@ export default function TakeFive({ mode = "embedded", open = true, onClose }: Ta
                 BREATHE
               </div>
             </div>
-            <div className="mt-3 max-w-[280px] text-center text-[10px] leading-snug text-[#f7f5ff]/70">
+            <div className="mt-3 max-w-[280px] text-center text-[11px] leading-snug text-[#f7f5ff]/70">
               Inhale 4s, hold 7s, exhale 8s. Follow the glow. Three rounds and you're back.
             </div>
           </div>
@@ -261,7 +261,7 @@ export default function TakeFive({ mode = "embedded", open = true, onClose }: Ta
         {/* Identity + core truths */}
         <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2">
           <div className="take5-panel green rounded-lg p-5">
-            <div className="mb-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.25em] text-[#00ff88]">
+            <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.25em] text-[#00ff88]">
               <Zap className="h-3.5 w-3.5" /> Identity
             </div>
             <p className="font-mono text-[14px] leading-relaxed text-[#f7f5ff]">
@@ -270,7 +270,7 @@ export default function TakeFive({ mode = "embedded", open = true, onClose }: Ta
           </div>
 
           <div className="take5-panel rounded-lg p-5">
-            <div className="mb-2 text-[10px] uppercase tracking-[0.25em] text-[#ffd000]">
+            <div className="mb-2 text-[11px] uppercase tracking-[0.25em] text-[#ffd000]">
               Core truths
             </div>
             <ul className="space-y-2 font-mono text-[13px] leading-relaxed">
@@ -290,11 +290,11 @@ export default function TakeFive({ mode = "embedded", open = true, onClose }: Ta
           data-testid="checklist-section"
         >
           <div className="mb-3 flex items-center justify-between gap-3">
-            <div className="text-[10px] uppercase tracking-[0.25em] text-[#ffd000]">
+            <div className="text-[11px] uppercase tracking-[0.25em] text-[#ffd000]">
               Before I Trade — tick each, every session
             </div>
             <div
-              className={`flex items-center gap-2 rounded-md px-2 py-1 font-mono text-[10px] uppercase tracking-wider ${
+              className={`flex items-center gap-2 rounded-md px-2 py-1 font-mono text-[11px] uppercase tracking-wider ${
                 allCleared
                   ? "bg-[#00ff88]/15 text-[#00ff88]"
                   : "bg-[#ff2d2d]/10 text-[#ff2d2d]"
@@ -340,7 +340,7 @@ export default function TakeFive({ mode = "embedded", open = true, onClose }: Ta
               <button
                 type="button"
                 onClick={() => setChecked(BEFORE_I_TRADE.map(() => false))}
-                className="rounded border border-white/15 px-2 py-1 text-[10px] uppercase tracking-wider text-[#f7f5ff]/70 hover:bg-white/5"
+                className="rounded border border-white/15 px-2 py-1 text-[11px] uppercase tracking-wider text-[#f7f5ff]/70 hover:bg-white/5"
                 data-testid="checklist-reset"
               >
                 Reset for next trade
@@ -352,7 +352,7 @@ export default function TakeFive({ mode = "embedded", open = true, onClose }: Ta
         {/* Hard Rules + Stop Conditions */}
         <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2">
           <div className="take5-panel rounded-lg p-5">
-            <div className="mb-3 text-[10px] uppercase tracking-[0.25em] text-[#ffd000]">
+            <div className="mb-3 text-[11px] uppercase tracking-[0.25em] text-[#ffd000]">
               Hard Rules
             </div>
             <ul className="space-y-2 font-mono text-[12.5px] leading-relaxed">
@@ -366,7 +366,7 @@ export default function TakeFive({ mode = "embedded", open = true, onClose }: Ta
           </div>
 
           <div className="take5-panel red rounded-lg p-5">
-            <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.25em] text-[#ff2d2d]">
+            <div className="mb-3 flex items-center gap-2 text-[11px] uppercase tracking-[0.25em] text-[#ff2d2d]">
               Stop Conditions
             </div>
             <ul className="space-y-2 font-mono text-[12.5px] leading-relaxed">

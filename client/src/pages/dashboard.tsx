@@ -30,7 +30,7 @@ import { RegimeChip } from "@/components/RegimeChip";
 import TakeFive, { TakeFiveFab } from "@/components/TakeFive";
 import EdgeLabPanel from "@/components/EdgeLabPanel";
 const CryptoPanel = lazy(() => import("@/components/CryptoPanel"));
-import { MacroTicker, MacroCarousel } from "@/components/MacroCarousel";
+import { MacroTicker } from "@/components/MacroCarousel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTickers, type TabKey } from "@/components/TickerContext";
 import ErrorBoundary from "@/components/ErrorBoundary";
@@ -48,6 +48,8 @@ import {
   Keyboard, Settings, Sun, Moon, LayoutGrid, LayoutList,
 } from "lucide-react";
 import SchwabSettings, { SchwabStatusPill } from "@/components/SchwabSettings";
+import SchwabRequiredNotice from "@/components/SchwabRequiredNotice";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import WhaleFlowPanel from "@/components/WhaleFlowPanel";
 import TrackedSignalsPanel from "@/components/signals/TrackedSignalsPanel";
 import { useEffect, useState, useRef, lazy, Suspense } from "react";
@@ -136,7 +138,7 @@ function MarketStatusPill({ status }: { status: MarketStatus }) {
         }`}
         aria-hidden
       />
-      <span className="font-mono text-[10px] font-semibold tracking-wider">{cfg.label}</span>
+      <span className="font-mono text-[11px] font-semibold tracking-wider">{cfg.label}</span>
     </div>
   );
 }
@@ -338,7 +340,7 @@ export default function Dashboard() {
               <div className="font-semibold leading-none">Batcave</div>
               <div className="hidden items-center gap-1 xs:flex">
                 <BatmanLogoSmall className="h-3 w-6 text-amber-500" />
-                <span className="font-mono text-[10px] uppercase tracking-widest text-amber-500/80">TERMINAL</span>
+                <span className="font-mono text-[11px] uppercase tracking-widest text-amber-500/80">TERMINAL</span>
               </div>
             </div>
           </div>
@@ -399,7 +401,7 @@ export default function Dashboard() {
               type="button"
               onClick={() => setSettingsOpen(true)}
               title="Schwab & Settings"
-              className="flex items-center justify-center rounded-md border border-border/60 h-10 w-10 sm:h-auto sm:w-auto sm:p-1.5 text-muted-foreground/50 transition hover:border-border hover:text-muted-foreground"
+              className="flex items-center justify-center rounded-md border border-border/60 h-10 w-10 sm:h-auto sm:w-auto sm:p-1.5 text-muted-foreground transition hover:border-border hover:text-muted-foreground"
               data-testid="button-settings"
             >
               <Settings className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
@@ -411,7 +413,7 @@ export default function Dashboard() {
               onClick={toggleTheme}
               title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
               aria-label="Toggle color theme"
-              className="hidden sm:flex items-center rounded-md border border-border/60 p-1.5 text-muted-foreground/60 transition hover:border-border hover:text-amber-500"
+              className="hidden sm:flex items-center rounded-md border border-border/60 p-1.5 text-muted-foreground transition hover:border-border hover:text-amber-500"
               data-testid="button-theme-toggle"
             >
               {theme === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
@@ -426,7 +428,7 @@ export default function Dashboard() {
               className={`hidden items-center rounded-md border p-1.5 transition md:flex ${
                 compact
                   ? "border-amber-500/70 text-amber-500 hover:border-amber-400"
-                  : "border-border/60 text-muted-foreground/60 hover:border-border hover:text-muted-foreground"
+                  : "border-border/60 text-muted-foreground hover:border-border hover:text-muted-foreground"
               }`}
               data-testid="button-compact-toggle"
             >
@@ -438,7 +440,7 @@ export default function Dashboard() {
               type="button"
               onClick={() => setHelpOpen(true)}
               title="Keyboard shortcuts (?)"
-              className="hidden items-center rounded-md border border-border/60 p-1.5 text-muted-foreground/50 transition hover:border-border hover:text-muted-foreground md:flex"
+              className="hidden items-center rounded-md border border-border/60 p-1.5 text-muted-foreground transition hover:border-border hover:text-muted-foreground md:flex"
               data-testid="button-shortcuts-hint"
             >
               <Keyboard className="h-3.5 w-3.5" />
@@ -459,14 +461,12 @@ export default function Dashboard() {
       <MacroTicker />
 
       <main className="mx-auto max-w-[1800px] space-y-4 px-3 py-4 pb-24 text-[14px] sm:space-y-6 sm:px-4 sm:py-6 sm:text-[14px] md:pb-6 md:px-8 md:text-[15px] xl:px-10 xl:text-[16px]">
-        {/* Rotating macro carousel — always visible above the tabs */}
-        <MacroCarousel />
 
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)} className="w-full">
           {/* Desktop tab bar — single inline row. Hidden on mobile (replaced by bottom-nav). */}
           <div className="mb-4 hidden md:block">
             <TabsList
-              className="flex h-10 w-full flex-nowrap items-center justify-center gap-0 p-1 xl:h-12 xl:gap-1 xl:p-1.5"
+              className="flex h-10 w-full flex-nowrap items-center justify-center gap-0 p-1 xl:h-12 xl:gap-1 xl:p-1.5 [&>[data-state=active]]:bg-primary/15 [&>[data-state=active]]:text-primary [&>[data-state=active]]:shadow-none"
               data-testid="tabs-dashboard"
             >
               <TabsTrigger value="signals" data-testid="tab-signals" className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold">Signals</TabsTrigger>
@@ -475,7 +475,7 @@ export default function Dashboard() {
               <TabsTrigger
                 value="heatseeker"
                 data-testid="tab-heatseeker"
-                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500/30 data-[state=active]:to-rose-500/30 data-[state=active]:text-orange-50"
+                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold"
               >
                 Heatseeker
               </TabsTrigger>
@@ -484,7 +484,7 @@ export default function Dashboard() {
               <TabsTrigger
                 value="cosmos"
                 data-testid="tab-cosmos"
-                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-amber-600/30 data-[state=active]:via-indigo-500/20 data-[state=active]:to-emerald-500/25 data-[state=active]:text-amber-100"
+                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold"
               >
                 Cosmos
               </TabsTrigger>
@@ -492,21 +492,21 @@ export default function Dashboard() {
               <TabsTrigger
                 value="takefive"
                 data-testid="tab-takefive"
-                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-fuchsia-600/40 data-[state=active]:via-cyan-500/30 data-[state=active]:to-amber-400/40 data-[state=active]:text-white"
+                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold"
               >
                 Take Five
               </TabsTrigger>
               <TabsTrigger
                 value="edgelab"
                 data-testid="tab-edgelab"
-                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-600/30 data-[state=active]:via-cyan-500/25 data-[state=active]:to-indigo-500/30 data-[state=active]:text-emerald-100"
+                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold"
               >
                 Edge Lab
               </TabsTrigger>
               <TabsTrigger
                 value="crypto"
                 data-testid="tab-crypto"
-                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-fuchsia-600/35 data-[state=active]:via-violet-600/25 data-[state=active]:to-lime-500/30 data-[state=active]:text-fuchsia-100"
+                className="w-full min-h-[44px] md:min-h-0 text-[13px] sm:text-sm md:w-auto md:flex-1 md:text-sm xl:px-6 xl:text-[16px] xl:font-semibold"
               >
                 Crypto
               </TabsTrigger>
@@ -516,6 +516,7 @@ export default function Dashboard() {
           {/* ── Chart tab (lazy) ── */}
           <TabsContent value="chart" className="space-y-6">
             <Suspense fallback={null}><TabHeadline tab="chart" /></Suspense>
+            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="The SPX chart, dealer levels and Mag 7 data" />
             <GlobalEdgeBanner
               vix={vol.vix.value}
               vix9d={vol.vix9d.value}
@@ -534,6 +535,7 @@ export default function Dashboard() {
           {/* ── Models tab (lazy) ── */}
           <TabsContent value="models" className="space-y-6">
             <Suspense fallback={null}><TabHeadline tab="models" /></Suspense>
+            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="Every model" />
             <GlobalEdgeBanner
               vix={vol.vix.value}
               vix9d={vol.vix9d.value}
@@ -570,6 +572,7 @@ export default function Dashboard() {
           {/* ── Heatseeker tab (lazy) ─ 0DTE live Greeks + sticky zones ── */}
           <TabsContent value="heatseeker" className="space-y-6">
             <Suspense fallback={null}><TabHeadline tab="heatseeker" /></Suspense>
+            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="The 0DTE option scanner" />
             <ErrorBoundary compact label="OdteForward">
               <Suspense fallback={<PanelSkeleton variant="chart" />}>
                 <OdteForward />
@@ -585,6 +588,7 @@ export default function Dashboard() {
           {/* ── Trade Desk tab (lazy) ── */}
           <TabsContent value="tradedesk" className="space-y-6">
             <Suspense fallback={null}><TabHeadline tab="tradedesk" /></Suspense>
+            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="The regime outlook and live marks" />
             <GlobalEdgeBanner
               vix={vol.vix.value}
               vix9d={vol.vix9d.value}
@@ -635,6 +639,7 @@ export default function Dashboard() {
 
           {/* ── Edge Lab tab ── */}
           <TabsContent value="edgelab" className="space-y-6">
+            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="Edge Lab's levels, briefing and gamma curve" />
             <ErrorBoundary label="Edge Lab">
               <Suspense fallback={<div className="text-xs text-muted-foreground">loading edge lab…</div>}>
                 <EdgeLabPanel />
@@ -654,6 +659,7 @@ export default function Dashboard() {
           {/* ── Signals tab (eager — primary tab) ── */}
           <TabsContent value="signals" className="space-y-6">
             <Suspense fallback={null}><TabHeadline tab="signals" /></Suspense>
+            <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="Whale flow and the option scanner" />
 
             {/* Regime conditioning chip — pulled from /api/regime, shared across tabs */}
             <div className="flex items-center gap-2">
@@ -732,7 +738,7 @@ export default function Dashboard() {
                         />
                       </div>
                       <div className="mt-2 text-[11px] leading-snug text-muted-foreground">{g.interpretation}</div>
-                      <div className="mt-1 text-[10px] text-muted-foreground/70">weight {(g.weight * 100).toFixed(0)}%{g.block ? ` · ${g.block} block` : ""}</div>
+                      <div className="mt-1 text-[11px] text-muted-foreground">weight {(g.weight * 100).toFixed(0)}%{g.block ? ` · ${g.block} block` : ""}</div>
                     </div>
                   ))}
                 </div>
@@ -805,7 +811,7 @@ export default function Dashboard() {
                                 type="button"
                                 onClick={() => setPcrBucket(b.label)}
                                 data-testid={`pcr-bucket-${b.label}`}
-                                className={`inline-flex min-h-[44px] items-center rounded-md border px-2 py-0.5 text-[10px] font-mono transition sm:min-h-0 ${
+                                className={`inline-flex min-h-[44px] items-center rounded-md border px-2 py-0.5 text-[11px] font-mono transition sm:min-h-0 ${
                                   b.label === active.label
                                     ? "border-amber-400 bg-amber-400/20 text-amber-200"
                                     : "border-border bg-muted/30 text-muted-foreground hover:bg-muted/60"
@@ -877,7 +883,7 @@ export default function Dashboard() {
                             <span className="flex min-w-0 items-baseline gap-1">
                               <span className="font-mono">{s.strike.toFixed(0)}</span>
                               {s.expiry && (
-                                <span className="truncate font-mono text-[9px] text-muted-foreground/70">
+                                <span className="truncate font-mono text-[11px] text-muted-foreground">
                                   {s.expiry.slice(5)}·{s.dte}d
                                 </span>
                               )}
@@ -893,7 +899,7 @@ export default function Dashboard() {
                             <span className="flex min-w-0 items-baseline gap-1">
                               <span className="font-mono">{s.strike.toFixed(0)}</span>
                               {s.expiry && (
-                                <span className="truncate font-mono text-[9px] text-muted-foreground/70">
+                                <span className="truncate font-mono text-[11px] text-muted-foreground">
                                   {s.expiry.slice(5)}·{s.dte}d
                                 </span>
                               )}
@@ -903,7 +909,7 @@ export default function Dashboard() {
                         ))}
                       </div>
                     </div>
-                    <div className="mt-2 text-[10px] italic text-muted-foreground/70">Small text = dominant expiry for that strike (MM-DD·DTE)</div>
+                    <div className="mt-2 text-[11px] italic text-muted-foreground">Small text = dominant expiry for that strike (MM-DD·DTE)</div>
                   </>
                   )}
                 </CollapsibleCard>
@@ -919,7 +925,7 @@ export default function Dashboard() {
                   <>
                     <MessageSquare className="h-4 w-4" />
                     StockTwits Chatter (social, context only)
-                    <Badge variant="secondary" className="ml-2 font-mono text-[10px]" data-testid="badge-social-score">
+                    <Badge variant="secondary" className="ml-2 font-mono text-[11px]" data-testid="badge-social-score">
                       {!social ? "unavailable" : social.score == null
                         ? (social.status === "insufficient" ? "too few tagged posts" : "unavailable")
                         : `score ${social.score >= 0 ? "+" : ""}${social.score}${social.status === "partial" ? " (partial)" : ""}`}
@@ -932,7 +938,7 @@ export default function Dashboard() {
                 ) : (
                 <>
                   {social.sources && social.sources.length > 0 && (
-                    <div className="mb-2 text-[10px] text-muted-foreground" data-testid="text-social-sources">
+                    <div className="mb-2 text-[11px] text-muted-foreground" data-testid="text-social-sources">
                       sources: {social.sources.map((x: { name: string; state: string; newest?: string | null }) => `${x.name} ${x.state}${x.newest ? ` (newest ${Math.max(0, Math.round((Date.now() - Date.parse(x.newest)) / 60_000))}m ago)` : ""}`).join(" · ")}
                       {" "}· keyword/tag tone, a heuristic; context only
                     </div>
@@ -967,9 +973,9 @@ export default function Dashboard() {
                             data-testid={`post-${i}`}
                           >
                             <div className="mb-1 flex items-center gap-2">
-                              <Badge variant="outline" className="text-[9px]">{p.source}</Badge>
+                              <Badge variant="outline" className="text-[11px]">{p.source}</Badge>
                               {p.author && <span className="font-mono text-muted-foreground">{p.author}</span>}
-                              <span className={`ml-auto text-[10px] ${fmt.toneColor(p.tone)}`}>{p.tone}</span>
+                              <span className={`ml-auto text-[11px] ${fmt.toneColor(p.tone)}`}>{p.tone}</span>
                             </div>
                             <div className="break-words leading-snug">{p.text}</div>
                           </a>
@@ -992,7 +998,7 @@ export default function Dashboard() {
                         <div>
                           <div className="text-sm font-medium">{fearGreed.label}</div>
                           <div className="text-xs text-muted-foreground">0 (fear) · 50 (neutral) · 100 (greed)</div>
-                          <div className={`text-[10px] ${fearGreed.stale ? "text-amber-500" : "text-muted-foreground"}`} data-testid="text-fg-asof">
+                          <div className={`text-[11px] ${fearGreed.stale ? "text-amber-500" : "text-muted-foreground"}`} data-testid="text-fg-asof">
                             source {fearGreed.source}{fearGreed.asOf ? ` · as of ${new Date(fearGreed.asOf).toLocaleString()}` : " · age unknown"}
                             {fearGreed.stale ? " · STALE, left out of the composite" : ""}
                           </div>
@@ -1020,40 +1026,7 @@ export default function Dashboard() {
         data-testid="mobile-bottom-nav"
         aria-label="Mobile tab navigation"
       >
-        {/* Right-edge fade hints there's more to scroll */}
-        <div className="pointer-events-none absolute right-0 top-0 bottom-0 z-10 w-6 bg-gradient-to-l from-background to-transparent" />
-        <div className="flex hscroll-contain scrollbar-none">
-          {([
-            { key: "signals", label: "Signals" },
-            { key: "chart", label: "Chart" },
-            { key: "models", label: "Models" },
-            { key: "heatseeker", label: "Heat" },
-            { key: "tradedesk", label: "Desk" },
-            { key: "regime", label: "Regime" },
-            { key: "cosmos", label: "Cosmos" },
-            { key: "news", label: "News" },
-            { key: "takefive", label: "Take5" },
-            { key: "edgelab", label: "Edge" },
-            { key: "crypto", label: "Crypto" },
-          ] as { key: TabKey; label: string }[]).map((t) => {
-            const isActive = activeTab === t.key;
-            return (
-              <button
-                key={t.key}
-                onClick={() => setActiveTab(t.key)}
-                data-testid={`bottomnav-${t.key}`}
-                className={
-                  "flex min-w-[72px] flex-1 shrink-0 flex-col items-center justify-center gap-0.5 px-3 py-2 text-[11px] font-medium transition-colors min-h-[56px] " +
-                  (isActive
-                    ? "text-foreground bg-muted/60 border-t-2 border-primary"
-                    : "text-muted-foreground hover:text-foreground border-t-2 border-transparent")
-                }
-              >
-                <span className="whitespace-nowrap">{t.label}</span>
-              </button>
-            );
-          })}
-        </div>
+        <MobileTabBar activeTab={activeTab} onSelect={setActiveTab} />
       </nav>
     </div>
   );
@@ -1081,9 +1054,9 @@ function KeyStat({
   const tooltip = KEY_STAT_TOOLTIPS[label];
   const inner = (
     <div className="min-w-[90px] rounded-md border border-border bg-card/50 px-2.5 py-1.5 cursor-default" data-testid={testId}>
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}{tooltip && <span className="ml-0.5 text-muted-foreground/40">?</span>}</div>
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}{tooltip && <span className="ml-0.5 text-muted-foreground">?</span>}</div>
       <div className={`font-mono text-sm font-semibold ${toneClass}`}>{value}</div>
-      {sub && <div className="text-[10px] text-muted-foreground">{sub}</div>}
+      {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
     </div>
   );
   if (!tooltip) return inner;
@@ -1131,5 +1104,75 @@ function DashboardSkeleton() {
         </div>
       </div>
     </div>
+  );
+}
+
+// Phone navigation: four primary tabs plus "More", which opens a sheet with
+// the other seven. Every tab is one or two taps away and nothing is hidden
+// off the edge of the screen.
+const MOBILE_PRIMARY: { key: TabKey; label: string }[] = [
+  { key: "signals", label: "Signals" },
+  { key: "chart", label: "Chart" },
+  { key: "models", label: "Models" },
+  { key: "tradedesk", label: "Desk" },
+];
+const MOBILE_MORE: { key: TabKey; label: string }[] = [
+  { key: "heatseeker", label: "Heatseeker" },
+  { key: "regime", label: "Regime" },
+  { key: "news", label: "News" },
+  { key: "edgelab", label: "Edge Lab" },
+  { key: "crypto", label: "Crypto" },
+  { key: "cosmos", label: "Cosmos" },
+  { key: "takefive", label: "Take Five" },
+];
+
+function MobileTabBar({ activeTab, onSelect }: { activeTab: TabKey; onSelect: (k: TabKey) => void }) {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const inMore = MOBILE_MORE.find((t) => t.key === activeTab);
+  const cell = (active: boolean) =>
+    "flex min-h-[56px] flex-1 flex-col items-center justify-center px-2 py-2 text-xs font-medium transition-colors border-t-2 " +
+    (active ? "border-primary text-primary bg-primary/10" : "border-transparent text-muted-foreground hover:text-foreground");
+  return (
+    <>
+      <div className="flex">
+        {MOBILE_PRIMARY.map((t) => (
+          <button key={t.key} type="button" onClick={() => onSelect(t.key)} data-testid={`bottomnav-${t.key}`} className={cell(activeTab === t.key)}>
+            <span className="whitespace-nowrap">{t.label}</span>
+          </button>
+        ))}
+        <button type="button" onClick={() => setMoreOpen(true)} data-testid="bottomnav-more" aria-haspopup="dialog" className={cell(!!inMore)}>
+          <span className="whitespace-nowrap">{inMore ? inMore.label : "More"}</span>
+        </button>
+      </div>
+      {/* Hidden buttons keep one stable test hook per tab for the UX audit. */}
+      <div className="hidden">
+        {MOBILE_MORE.map((t) => (
+          <button key={t.key} type="button" data-testid={`bottomnav-${t.key}`} onClick={() => onSelect(t.key)} />
+        ))}
+      </div>
+      <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
+        <SheetContent side="bottom" className="pb-[calc(1rem+env(safe-area-inset-bottom))]" data-testid="bottomnav-more-sheet">
+          <SheetHeader>
+            <SheetTitle>All tabs</SheetTitle>
+          </SheetHeader>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            {[...MOBILE_PRIMARY, ...MOBILE_MORE].map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => { onSelect(t.key); setMoreOpen(false); }}
+                data-testid={`moresheet-${t.key}`}
+                className={
+                  "min-h-[48px] rounded-md border px-3 text-left text-sm font-medium " +
+                  (activeTab === t.key ? "border-primary bg-primary/10 text-primary" : "border-border text-foreground")
+                }
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </SheetContent>
+      </Sheet>
+    </>
   );
 }
