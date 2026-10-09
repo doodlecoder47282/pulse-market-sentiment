@@ -21,6 +21,7 @@ import {
 } from "recharts";
 import { apiRequest } from "@/lib/queryClient";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import UnavailablePanel from "@/components/UnavailablePanel";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TrendingUp, Minus, TrendingDown, Lock, Activity, Info, AlertTriangle, Zap, Heart, HeartCrack, Flame, Snowflake } from "lucide-react";
@@ -51,7 +52,7 @@ interface InputManifest {
   key: string;
   label: string;
   value: number | string;
-  source: "Schwab" | "Schwab+CBOE" | "CBOE delayed" | "Computed" | "Yahoo";
+  source: "Schwab" | "Computed";
   asOf: number;
   freshSeconds: number;
   calibration?: string;
@@ -173,7 +174,7 @@ interface Props {
 }
 
 export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
-  const { data: pb, isLoading } = useQuery<DailyPlaybook>({
+  const { data: pb, isLoading, isError, error } = useQuery<DailyPlaybook>({
     queryKey: ["/api/playbook/daily", symbol],
     queryFn: async () => {
       const r = await apiRequest("GET", `/api/playbook/daily?symbol=${symbol}`);
@@ -194,6 +195,16 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
   });
 
   const series = useMemo(() => (pb ? buildPathSeries(pb) : []), [pb]);
+
+  // 503 (Schwab chain/VIX/$SPX unavailable) or a failed request: show the
+  // state and reason. It used to sit on the loading skeleton forever.
+  if (!isLoading && (isError || !pb)) {
+    return (
+      <div className="rounded-lg border border-border/40 bg-muted/5 p-4" data-testid="daily-playbook-chart">
+        <UnavailablePanel title={`Daily Playbook (${symbol})`} error={error} testId="playbook-unavailable" />
+      </div>
+    );
+  }
 
   if (isLoading || !pb) {
     return (
@@ -240,7 +251,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <Activity className="h-4 w-4 text-amber-400" />
-              <span className="font-mono text-[10px] uppercase tracking-widest text-amber-400/80">Daily Playbook</span>
+              <span className="font-mono text-[11px] uppercase tracking-widest text-amber-400/80">Daily Playbook</span>
               <span className="text-[11px] text-muted-foreground">— {symbol}</span>
             </div>
             <div className="text-[13px] text-foreground/90 leading-snug max-w-2xl">{headline}</div>
@@ -251,7 +262,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
             {/* Regime badge — always shown */}
             <Badge
               variant="outline"
-              className="text-[10px] gap-1 font-mono"
+              className="text-[11px] gap-1 font-mono"
               style={{ borderColor: regimeBorder, background: regimeBg, color: regimeAccent }}
               data-testid={`badge-regime-${regimeKind}`}
             >
@@ -260,7 +271,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
             </Badge>
 
             {drift?.hasLock ? (
-              <Badge variant="outline" className="border-amber-500/40 bg-amber-500/5 text-amber-300 text-[10px] gap-1">
+              <Badge variant="outline" className="border-amber-500/40 bg-amber-500/5 text-amber-300 text-[11px] gap-1">
                 <Lock className="h-3 w-3" />
                 Locked 9:00 ET
                 {drift.spotDriftPct !== undefined && Math.abs(drift.spotDriftPct) > 0.05 && (
@@ -270,11 +281,11 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
                 )}
               </Badge>
             ) : (
-              <Badge variant="outline" className="border-muted-foreground/30 text-muted-foreground text-[10px]">
+              <Badge variant="outline" className="border-muted-foreground/30 text-muted-foreground text-[11px]">
                 No lock yet (pre-9:00 ET)
               </Badge>
             )}
-            <div className="text-[10px] text-muted-foreground font-mono">
+            <div className="text-[11px] text-muted-foreground font-mono">
               spot ${fmt$(pb.spot)}
             </div>
           </div>
@@ -295,12 +306,12 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
               <div className="text-[11px] font-semibold text-amber-300">
                 Regime flip detected since 9:00 ET lock
               </div>
-              <div className="text-[10px] text-amber-200/80 leading-snug">
+              <div className="text-[11px] text-amber-200/80 leading-snug">
                 {drift.regime.flipDirection === "toShort"
                   ? "Long→short gamma. Pin regime broken. Expect momentum, wider intraday range, dealer hedging amplifies moves."
                   : "Short→long gamma. Momentum regime ending. Expect mean-reversion, range contraction, dealer hedging dampens moves."}
               </div>
-              <div className="text-[10px] font-mono text-amber-200/60 mt-0.5">
+              <div className="text-[11px] font-mono text-amber-200/60 mt-0.5">
                 spot vs flip: {drift.regime.spotVsFlip >= 0 ? "+" : ""}${drift.regime.spotVsFlip.toFixed(2)} · GEX {drift.regime.totalGexB >= 0 ? "+" : ""}{drift.regime.totalGexB.toFixed(2)}B
               </div>
             </div>
@@ -342,7 +353,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
                     {/* Health pill */}
                     {h && drift?.hasLock && (
                       <span
-                        className="ml-1 text-[8px] font-mono uppercase px-1 py-0.5 rounded"
+                        className="ml-1 text-[11px] font-mono uppercase px-1 py-0.5 rounded"
                         style={{
                           color: isDead ? "#fca5a5" : isWeak ? "#fcd34d" : "#86efac",
                           background: isDead ? "rgba(239,68,68,0.15)" : isWeak ? "rgba(245,158,11,0.15)" : "rgba(16,185,129,0.10)",
@@ -355,22 +366,22 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
                     )}
                   </div>
                   <span className="font-mono text-[12px] font-bold" style={{ color: PATH_COLORS[k], textDecoration: isDead ? "line-through" : "none" }}>
-                    {Math.round(p.probability * 100)}%
+                    <span title="Heuristic path weight (bull + base + bear = 100%), not a calibrated probability.">{Math.round(p.probability * 100)}% wt</span>
                   </span>
                 </div>
                 <div className={`text-[11px] leading-snug ${isDead ? "text-muted-foreground" : "text-foreground/80"}`}>{p.oneLiner}</div>
-                <div className="grid grid-cols-2 gap-1 text-[10px] text-muted-foreground border-t border-border/20 pt-1.5">
+                <div className="grid grid-cols-2 gap-1 text-[11px] text-muted-foreground border-t border-border/20 pt-1.5">
                   <div>Trigger: <span className="font-mono text-foreground">${fmt$(p.trigger.level)}</span></div>
                   <div>Target: <span className="font-mono text-foreground">${fmt$(p.target.low)}–${fmt$(p.target.high)}</span></div>
                 </div>
                 {p.invalidation > 0 && (
-                  <div className="text-[10px] text-muted-foreground">
+                  <div className="text-[11px] text-muted-foreground">
                     Invalidates: <span className="font-mono text-red-400/80">${fmt$(p.invalidation)}</span>
                   </div>
                 )}
                 {/* Health reason — one-liner why thesis is dead/weak/alive */}
                 {h && drift?.hasLock && (isDead || isWeak) && (
-                  <div className="text-[10px] italic leading-snug pt-1 border-t border-border/20"
+                  <div className="text-[11px] italic leading-snug pt-1 border-t border-border/20"
                        style={{ color: isDead ? "#fca5a5" : "#fcd34d" }}>
                     {h.reason}
                   </div>
@@ -506,7 +517,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
               {drift.notes.join(" · ")}
             </div>
             {drift.probabilityShift && (
-              <div className="grid grid-cols-3 gap-2 pt-1 border-t border-amber-500/20 text-[10px]">
+              <div className="grid grid-cols-3 gap-2 pt-1 border-t border-amber-500/20 text-[11px]">
                 {(["bull", "base", "bear"] as PathKey[]).map(k => {
                   const shift = drift.probabilityShift![k];
                   return (
@@ -525,11 +536,11 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
           <summary className="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground transition flex items-center gap-1.5 list-none">
             <Info className="h-3 w-3" />
             <span className="font-semibold">Calibration</span>
-            <span className="text-[10px]">— {inputs.length} inputs · click to expand</span>
-            <span className="ml-auto text-[10px] group-open:hidden">Show</span>
-            <span className="ml-auto text-[10px] hidden group-open:inline">Hide</span>
+            <span className="text-[11px]">— {inputs.length} inputs · click to expand</span>
+            <span className="ml-auto text-[11px] group-open:hidden">Show</span>
+            <span className="ml-auto text-[11px] hidden group-open:inline">Hide</span>
           </summary>
-          <div className="mt-2 space-y-1 text-[10px]">
+          <div className="mt-2 space-y-1 text-[11px]">
             {inputs.map(inp => (
               <div
                 key={inp.key}
@@ -541,37 +552,31 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
                     {typeof inp.value === "number" ? inp.value.toFixed(2) : inp.value}
                   </span>
                   {inp.calibration && (
-                    <span className="text-muted-foreground/70 truncate">· {inp.calibration}</span>
+                    <span className="text-muted-foreground truncate">· {inp.calibration}</span>
                   )}
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <span
-                    className="px-1.5 py-0.5 rounded font-mono text-[9px]"
+                    className="px-1.5 py-0.5 rounded font-mono text-[11px]"
                     style={{
                       color:
                         inp.source === "Schwab" ? "#34d399"
-                        : inp.source === "Schwab+CBOE" ? "#a3e635"
-                        : inp.source === "CBOE delayed" ? "#fbbf24"
-                        : inp.source === "Computed" ? "#60a5fa"
-                        : "#fb923c",
+                        : "#60a5fa",
                       background:
                         inp.source === "Schwab" ? "rgba(16,185,129,0.08)"
-                        : inp.source === "Schwab+CBOE" ? "rgba(163,230,53,0.08)"
-                        : inp.source === "CBOE delayed" ? "rgba(251,191,36,0.08)"
-                        : inp.source === "Computed" ? "rgba(96,165,250,0.08)"
-                        : "rgba(251,146,60,0.08)",
+                        : "rgba(96,165,250,0.08)",
                     }}
                   >
                     {inp.source}
                   </span>
-                  <span className="text-muted-foreground/60 font-mono">
+                  <span className="text-muted-foreground font-mono">
                     {inp.freshSeconds < 60 ? "live" : `${Math.round(inp.freshSeconds / 60)}m`}
                   </span>
                 </div>
               </div>
             ))}
-            <div className="pt-2 text-[10px] text-muted-foreground italic border-t border-border/20">
-              Method: 1σ daily range from VIX/√252; path probabilities tilt on gamma sign,
+            <div className="pt-2 text-[11px] text-muted-foreground italic border-t border-border/20">
+              Method: 1σ daily range from VIX/√252; path weights (heuristic) tilt on gamma sign,
               VIX term structure, composite tilt, and spot vs gamma flip.
             </div>
           </div>

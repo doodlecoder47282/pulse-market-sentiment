@@ -15,35 +15,23 @@
 // Discord webhook format: rich embeds (limit 10 per message, 6000 chars total).
 // We use one embed per card.
 
-const WEBHOOK_URL =
-  process.env.PULSE_DISCORD_WEBHOOK ??
-  // Hardcoded fallback for the user's main Batcave channel. Override via env in prod.
-  "https://discord.com/api/webhooks/1318055174576803860/egM4Fx5DcOnxX3fOkbCxmywkgvwgmJWC2B7O1geDKkF-6cFjpN4mspLlPWCZkrBn4Li6";
+import { gammaZoneLabel, normalizeGammaZone } from "./gammaZone";
+import { dailyCardHeader } from "./dailyCardHeader";
+import {
+  webhookOrWarn,
+  safeErrorSummary,
+  type DiscordChannel,
+} from "./webhookConfig";
 
-// Dedicated whale-flow webhook. Only postWhaleFlowAlert routes here so the
-// $1M+ institutional flow stream stays separate from the rest of Batcave.
-export const WHALE_WEBHOOK_URL =
-  process.env.PULSE_DISCORD_WHALE_WEBHOOK ??
-  "https://discord.com/api/webhooks/1501707594199466076/uupxpODoD2fu5JoySqKLbYXgazBm0LFiNH6AOSTthJzXrUdDEnYngMcACS-1kDKq65-M";
-
-// UOA webhook — separate stream for clustered unusual activity (any-ticker,
-// market-cap-tiered). Falls back to whale webhook unless user sets a dedicated one.
-export const UOA_WEBHOOK_URL =
-  process.env.PULSE_DISCORD_UOA_WEBHOOK ?? WHALE_WEBHOOK_URL;
-
-// Dedicated SPX 0DTE banger webhook. Only postOdteBangerAlert routes here.
-// Keeps the bangers-only stream isolated from whale flow + main Batcave.
-export const ODTE_WEBHOOK_URL =
-  process.env.PULSE_DISCORD_ODTE_WEBHOOK ??
-  "https://discord.com/api/webhooks/1501708117929492530/WSQOta_mLBadBwJytdCX12NmXKbYQodl13Zb3-S5cB1g9RaKDB4dbpEH-njTGsFddQxb";
-
-// Dedicated SPX model webhook. Receives the 9:30 ET opening-bias kickoff
-// (postDailyModelCard) and the every-30-min refined-area cards
-// (postBatcaveDailyCard) on RTH trading days. Carries Trade Desk major
-// levels, GEX/γ-zone, scenarios, and the Wire 7-14 audit context.
-export const MODEL_WEBHOOK_URL =
-  process.env.PULSE_DISCORD_MODEL_WEBHOOK ??
-  "https://discord.com/api/webhooks/1501708521010499735/dltDgL_xkY_e5dImY_oYZW8B-d7HCpbnHGAwgMVdIBCuyN58ld04ptSNsr1xfdywtg5T";
+// Webhook URLs are read from the environment at post time; there are no
+// hard-coded fallbacks (a webhook URL is a write credential and the repo is
+// public). Unset = that card is disabled, logged once. Channels:
+//   main  PULSE_DISCORD_WEBHOOK        main Batcave channel
+//   whale PULSE_DISCORD_WHALE_WEBHOOK  heavy-contract (whale) flow stream
+//   uoa   PULSE_DISCORD_UOA_WEBHOOK    UOA clusters (falls back to whale)
+//   odte  PULSE_DISCORD_ODTE_WEBHOOK   SPX 0DTE alerts
+//   model PULSE_DISCORD_MODEL_WEBHOOK  9:30 kickoff + 30-min refined model cards
+// See server/webhookConfig.ts.
 
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -73,15 +61,12 @@ interface DiscordPayload {
 }
 
 // ─── Webhook poster ──────────────────────────────────────────────────────
-export async function postToDiscord(payload: DiscordPayload, urlOverride?: string): Promise<boolean> {
-  const url = urlOverride ?? WEBHOOK_URL;
-  const tag =
-    urlOverride === UOA_WEBHOOK_URL && UOA_WEBHOOK_URL !== WHALE_WEBHOOK_URL ? "discord:uoa" :
-    urlOverride === WHALE_WEBHOOK_URL ? "discord:whale" :
-    urlOverride === ODTE_WEBHOOK_URL ? "discord:odte" :
-    urlOverride === MODEL_WEBHOOK_URL ? "discord:model" :
-    urlOverride ? "discord:override" :
-    "discord";
+export type { DiscordChannel } from "./webhookConfig";
+
+export async function postToDiscord(payload: DiscordPayload, channel: DiscordChannel = "main"): Promise<boolean> {
+  const tag = channel === "main" ? "discord" : `discord:${channel}`;
+  const url = webhookOrWarn(channel, tag);
+  if (!url) return false;
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -95,13 +80,17 @@ export async function postToDiscord(payload: DiscordPayload, urlOverride?: strin
     }
     return true;
   } catch (e: any) {
-    console.warn(`[${tag}] webhook failed: ${e?.message ?? e}`);
+    // Name and cause code only: the message can contain the webhook URL.
+    console.warn(`[${tag}] webhook failed: ${safeErrorSummary(e)}`);
     return false;
   }
 }
 
 // ─── Internal API fetchers ──────────────────────────────────
 async function fetchJSON(path: string): Promise<any | null> {
+  // Every registered route runs in-process (internalApi.ts). The HTTP branch is only for
+  // paths with no registered handler.
+  if (isInternalRoute(path)) return internalJson(path);
   try {
     const res = await fetch(`${BASE}${path}`);
     if (!res.ok) return null;
@@ -135,9 +124,8 @@ function statusEmoji(status: string): string {
   return "●"; // held / default
 }
 
-function gammaZoneLabel(zone: string): string {
-  return zone === "y+" ? "γ+ (dampened)" : "γ− (volatile)";
-}
+// gammaZoneLabel: "y?" (GEX missing / immaterial) renders as "gamma unknown",
+// never as either regime. See server/gammaZone.ts.
 
 // Word-wrap a string to ~maxChars per line. Used for the playbook copy in
 // level alerts so long sentences don't sprawl across the embed.
@@ -161,14 +149,15 @@ function wrapText(s: string, maxChars: number): string[] {
 //
 // Mirrors the Batcave-style mockup the user approved. Pulls strictly from
 // /api/models — spot, scenarioProb, levels (with #4 status), rangeBox (#3),
-// gammaZone, dfi, vix term ratio. All data, no LLM.
+// gammaZone, dfi, vix term ratio. All data, no LLM. Missing inputs render
+// as "unavailable", never as 0 / y+ / an even split.
 export async function postDailyModelCard(): Promise<boolean> {
-  // Pull all three feeds in parallel — models for spot/levels/scenarios,
-  // quotes for current VIX, sentiment for VIX term ratio (vix3m / vix).
-  const [data, quotes, sentiment] = await Promise.all([
+  // Models for spot/levels/scenarios/term ratio (daily.vol.termRatio is
+  // VIX3M / VIX from the Schwab quotes models.ts already uses); quotes for
+  // the current VIX print. (The old /api/sentiment call had no handler.)
+  const [data, quotes] = await Promise.all([
     fetchJSON(`/api/models?symbol=SPX`),
     fetchJSON(`/api/quotes`),
-    fetchJSON(`/api/sentiment`),
   ]);
   if (!data) {
     console.warn("[discord] daily card: /api/models returned null");
@@ -182,26 +171,11 @@ export async function postDailyModelCard(): Promise<boolean> {
 
   const spot = daily.spot ?? null;
   const audit = daily.audit ?? {};
-  const scen = audit.scenarioProb ?? { bull: 0, base: 0, bear: 0 };
-  const gammaZone = audit.gammaZone ?? "y+";
-  const dfi = audit.dfi ?? 0;
-  const vix = quotes?.vix?.price ?? null;
-  // termRatio in /api/sentiment is vix/vix3m (front-over-back). Invert so
-  // > 1 = contango (calm), < 1 = backwardation (stress) — matches our copy.
-  const ratioFrontOverBack = sentiment?.ratio30dOver3m ?? null;
-  const termRatio = ratioFrontOverBack ? 1 / ratioFrontOverBack : null;
-  const termLabel = termRatio == null ? ""
-    : termRatio < 1 ? "backwardation (stress)"
-    : termRatio > 1.05 ? "contango (calm)"
-    : "flat";
-
-  // Pick scenario color from highest-weight outcome
-  const top = scen.bull >= scen.bear && scen.bull >= scen.base
-    ? "bull"
-    : scen.bear >= scen.base ? "bear" : "base";
+  const card = dailyCardHeader(audit, daily.vol ?? null, quotes?.vix?.price ?? null);
+  const scen = card.scen;
   const color =
-    top === "bull" ? COLOR_BULL :
-    top === "bear" ? COLOR_BEAR : COLOR_NEUTRAL;
+    card.top === "bull" ? COLOR_BULL :
+    card.top === "bear" ? COLOR_BEAR : COLOR_NEUTRAL;
 
   // Levels — dedupe by rounded price so stacked levels (call wall + strong
   // mag + charm target all at the same strike) render once with combined
@@ -255,26 +229,20 @@ export async function postDailyModelCard(): Promise<boolean> {
     const n = Math.max(0, Math.min(20, Math.round(pct / 5)));
     return "[" + "#".repeat(n) + "-".repeat(20 - n) + "]";
   };
-  const scenarioBlock =
-    "```\n" +
-    `bull ${String(scen.bull).padStart(2)}%  ${bar(scen.bull)}\n` +
-    `base ${String(scen.base).padStart(2)}%  ${bar(scen.base)}\n` +
-    `bear ${String(scen.bear).padStart(2)}%  ${bar(scen.bear)}\n` +
-    "```";
-
-  // Vol context line
-  const volLine =
-    vix != null
-      ? `VIX ${vix.toFixed(2)}` +
-        (termRatio != null ? `  ·  term ${termRatio.toFixed(2)} (${termLabel})` : "")
-      : "_vol unavailable_";
+  const scenarioBlock = scen
+    ? "```\n" +
+      `bull ${String(scen.bull).padStart(2)}%  ${bar(scen.bull)}\n` +
+      `base ${String(scen.base).padStart(2)}%  ${bar(scen.base)}\n` +
+      `bear ${String(scen.bear).padStart(2)}%  ${bar(scen.bear)}\n` +
+      "```\n" + `_${card.scenarioSourceLabel}_`
+    : "_scenario weights unavailable_";
 
   const embed: DiscordEmbed = {
     title: `SPX · Daily Model · ${fmtPrice(spot)}`,
-    description: `${gammaZoneLabel(gammaZone)}  ·  DFI ${dfi >= 0 ? "+" : ""}${dfi.toFixed(2)}  ·  ${volLine}`,
+    description: card.description,
     color,
     fields: [
-      { name: "Scenarios", value: scenarioBlock, inline: false },
+      { name: card.scenarioFieldName, value: scenarioBlock, inline: false },
       { name: "Range Box", value: rangeBlock, inline: false },
       { name: "Levels (nearest)", value: levelsBlock, inline: false },
     ],
@@ -285,7 +253,7 @@ export async function postDailyModelCard(): Promise<boolean> {
   return await postToDiscord({
     username: "Pulse Batcave",
     embeds: [embed],
-  }, MODEL_WEBHOOK_URL);
+  }, "model");
 }
 
 // ─── Card 2: level break alert ───────────────────────────────────────────
@@ -293,6 +261,7 @@ export async function postDailyModelCard(): Promise<boolean> {
 // are optional — alert still fires cleanly with just the bare minimum.
 import { chainAbove, chainBelow, fmtChain, playbookCopy, type LevelLite } from "./levelPlaybook";
 import { formatOdteAlert, type OdteAlert } from "./odteAlertEngine";
+import { internalJson, isInternalRoute } from "./internalApi";
 
 export type LevelAlertContext = {
   dfi?: number | null;            // current DFI value
@@ -519,7 +488,8 @@ export async function postLevelClusterAlert(args: {
 // mlLine is an optional augmentation line (Wires 17–20). If provided,
 // it is appended below the formatted alert body. Card still fires without it.
 export async function postOdteBangerAlert(a: OdteAlert, mlLine?: string): Promise<boolean> {
-  const { content } = formatOdteAlert(a);
+  const { gradeEvidenceFor, odtePlanContracts } = await import("./odteGrader");
+  const { content } = formatOdteAlert(a, gradeEvidenceFor(a.grade.score), odtePlanContracts());
   const isCall = a.side === "call";
   // A-tier (score >= 80) = directional color; below = warning amber
   const color =
@@ -550,7 +520,7 @@ export async function postOdteBangerAlert(a: OdteAlert, mlLine?: string): Promis
   return await postToDiscord({
     username: "Pulse Batcave",
     embeds: [embed],
-  }, ODTE_WEBHOOK_URL);
+  }, "odte");
 }
 
 // ─── Card 3: gamma flip alert ────────────────────────────────────────────
@@ -561,8 +531,13 @@ export async function postGammaFlipAlert(args: {
   gammaZero: number | null;
 }): Promise<boolean> {
   const { prevZone, newZone, spot, gammaZero } = args;
-  const into = newZone === "y+" ? "DAMPENED" : "VOLATILE";
-  const color = newZone === "y+" ? COLOR_BULL : COLOR_BEAR;
+  // A flip is only between two KNOWN regimes; into/out of "y?" (gamma
+  // unknown) is a data dropout, never an alert (discordScheduler gates this
+  // too via detectGammaFlip).
+  const p = normalizeGammaZone(prevZone), n = normalizeGammaZone(newZone);
+  if (p === "y?" || n === "y?" || p === n) return false;
+  const into = n === "y+" ? "DAMPENED" : "VOLATILE";
+  const color = n === "y+" ? COLOR_BULL : COLOR_BEAR;
 
   const embed: DiscordEmbed = {
     title: `SPX · γ-ZONE FLIP · into ${into}`,

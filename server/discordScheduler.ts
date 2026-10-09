@@ -27,10 +27,13 @@ import { settleDay } from "./calibration";
 import { postCalibrationCard } from "./calibrationCard";
 import { getTodayEventContext } from "./volCalendar";
 import { persistOdteAuditOnFire, persistOdteAuditOnReject, persistOdteEvaluationLog } from "./odteAuditDb";
-import { mlQuantileOverlay } from "./mlBridge";
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { schedulerStatePath } from "./dbPath";
+import { internalFetch, isInternalRoute } from "./internalApi";
+import { isTradingDay as calIsTradingDay, sessionCloseMinutes } from "./exchangeCalendar";
+import { detectGammaFlip } from "./gammaZone";
 
 const PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -39,7 +42,12 @@ const BASE = `http://127.0.0.1:${PORT}`;
 // Light endpoints get 4 s; /api/models is a heavy recompute so it gets a looser bound.
 const FETCH_TIMEOUT_MS = 4_000;
 const MODELS_FETCH_TIMEOUT_MS = 30_000;
+// /api/models, /api/odte-tracker and /api/quotes run in-process (same route
+// handler, same timeout semantics: a timeout rejects like an aborted fetch);
+// other paths (e.g. /api/news) still go over local HTTP.
 function ifetch(url: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<Response> {
+  const path = url.startsWith(BASE) ? url.slice(BASE.length) : url;
+  if (isInternalRoute(path)) return internalFetch(path, { timeoutMs });
   return fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
 }
 
@@ -49,7 +57,8 @@ function ifetch(url: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<Response> {
 // to empty, so the next tick thought the most-recent 30-min slot hadn't fired
 // yet and re-posted it. Persisting to a JSON file inside workspace fixes that
 // without adding a DB table.
-const SCHEDULER_STATE_PATH = "/home/user/workspace/sentiment-app/.discord-scheduler-state.json";
+// Untracked runtime file (11.7); created on first save (dbPath.ts).
+const SCHEDULER_STATE_PATH = schedulerStatePath();
 
 interface SchedulerPersistedState {
   dailyFired: string[];
@@ -169,56 +178,31 @@ function _buildMlFeatures(
 
 /**
  * Build an ML augmentation line for the Discord card.
- * - Calls mlQuantileOverlay (30min horizon only for 0DTE).
- * - Returns null on any ML failure — never throws.
- * - Models A (score_calibrator=BOOTSTRAP) and C (whale_follow=low_signal) are
- *   gated off — only Model B (quantile_overlay, status=TRAINED) is surfaced.
+ * R2-F: the line shows the server's most recent SERVED band (mlServing, the
+ * same band the Projected Path panel draws and the coverage logger scores),
+ * and only when that band is a promoted real-data quantile model. The old
+ * path sent this module's own legacy feature dict (zeros for missing inputs)
+ * to the sidecar, which a schema-v2 model would misread. Never throws.
  */
 async function _buildMlLine(
-  a: { asOf: number; side: string; spot: number; wire15?: any; grade?: any },
-  audit: { gexTier?: string | null; gex?: number | null; sessionOpen?: number | null },
-  hh: number,
-  mm: number,
-  dow: number,
+  _a: { asOf: number; side: string; spot: number; wire15?: any; grade?: any },
+  _audit: { gexTier?: string | null; gex?: number | null; sessionOpen?: number | null },
+  _hh: number,
+  _mm: number,
+  _dow: number,
 ): Promise<string | undefined> {
   try {
-    const features = _buildMlFeatures(a, audit, hh, mm, dow);
-    const overlay = await mlQuantileOverlay(features, [30]);
-    // Null or non-TRAINED → no line
-    if (!overlay || overlay.status !== "TRAINED") return undefined;
-    const band30 = overlay.bands["30"];
+    const { getRecentServedBand } = await import("./mlServing");
+    const rec = getRecentServedBand(10 * 60_000);
+    if (!rec || !rec.served.learned) return undefined;
+    const band30 = rec.served.bands?.["30"];
     if (!band30) return undefined;
-
-    const q50 = band30.q50;
-    const q90 = band30.q90;
-    const q10 = band30.q10;
-
-    const isCallSide = a.side === "call";
-    // Directional sign check: BULLISH alert expects positive q50, BEARISH expects negative q50
-    const counter = isCallSide ? q50 < 0 : q50 > 0;
-
     const fmt = (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
-    const q50Sign = q50 >= 0 ? "+" : "";
-    const q50Pct = `${q50Sign}${(q50 * 100).toFixed(2)}%`;
-
-    if (counter) {
-      return `ML 30m: median move ${q50Pct} (counter-trend — consider passing)`;
-    } else {
-      const q90Pct = `+${(q90 * 100).toFixed(2)}%`;
-      const q10Pct = `${(q10 * 100).toFixed(2)}%`;
-      return `ML 30m: q50 ${q50Pct} · q90 ${q90Pct} / q10 ${q10Pct}`;
-    }
+    return `SPX 30m range (${rec.served.label}): q10 ${fmt(band30.q10)} · q50 ${fmt(band30.q50)} · q90 ${fmt(band30.q90)}`;
   } catch {
     return undefined;
   }
 }
-
-// Match mmScheduler holiday list
-const HOLIDAYS_2026 = new Set([
-  "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03",
-  "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07",
-  "2026-11-26", "2026-12-25",
-]);
 
 function etNow(): { date: string; hh: number; mm: number; dow: number } {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -235,10 +219,9 @@ function etNow(): { date: string; hh: number; mm: number; dow: number } {
   return { date, hh, mm, dow };
 }
 
-function isTradingDay(dow: number, date: string): boolean {
-  if (dow === 0 || dow === 6) return false;
-  if (HOLIDAYS_2026.has(date)) return false;
-  return true;
+// Weekends, NYSE holidays (2026-2028) via the shared exchange calendar.
+function isTradingDay(_dow: number, date: string): boolean {
+  return calIsTradingDay(date);
 }
 
 // ─── 1. Daily card cron ─────────────────────────────────────────────────
@@ -280,9 +263,11 @@ const HALFHOUR_FIRED = new Set<string>(); // YYYY-MM-DD HH:MM entries
 async function maybeFireHalfHour(): Promise<void> {
   const { date, hh, mm, dow } = etNow();
   if (!isTradingDay(dow, date)) return;
-  // Window: 10:00 ≤ t ≤ 16:00 (skip 9:30, owned by daily card)
+  // Window: 10:00 ≤ t ≤ session close (16:00, or 13:00 on half days; skip
+  // 9:30, owned by the daily card)
   const minutes = hh * 60 + mm;
-  if (minutes < 10 * 60 || minutes > 16 * 60) return;
+  const closeMin = sessionCloseMinutes(date) ?? 16 * 60;
+  if (minutes < 10 * 60 || minutes > closeMin) return;
 
   // Snap to the most recent :00 / :30 boundary at-or-before now.
   const slotMM = mm < 30 ? 0 : 30;
@@ -330,8 +315,10 @@ function shouldFire(key: string): boolean {
 async function pollLevelAndGammaAlerts(): Promise<void> {
   const { dow, date, hh } = etNow();
   if (!isTradingDay(dow, date)) return;
-  // Only poll during RTH-ish window (9:30–16:00 ET) to avoid wasting cycles
-  if (hh < 9 || hh >= 16) return;
+  // Only poll during RTH-ish window (9:00 ET to the session close: 16:00, or
+  // 13:00 on half days) to avoid wasting cycles
+  const closeMinPoll = sessionCloseMinutes(date) ?? 16 * 60;
+  if (hh < 9 || hh * 60 >= closeMinPoll) return;
 
   let res: Response;
   try {
@@ -351,22 +338,20 @@ async function pollLevelAndGammaAlerts(): Promise<void> {
   const newGammaZone = audit.gammaZone ?? null;
   const gammaZero = audit.gammaZero ?? null;
 
-  // Gamma zone flip
-  if (
-    alertState.gammaZone &&
-    newGammaZone &&
-    alertState.gammaZone !== newGammaZone &&
-    shouldFire(`gamma:${newGammaZone}`)
-  ) {
-    console.log(`[discordScheduler] gamma flip ${alertState.gammaZone} → ${newGammaZone}`);
+  // Gamma zone flip: only between two KNOWN regimes. "y?" (GEX missing or
+  // immaterial) is a data state, so y+ -> y? is silent and does not reset the
+  // last known zone (alertState.gammaZone holds the last KNOWN zone).
+  const flip = detectGammaFlip(alertState.gammaZone, newGammaZone);
+  if (flip.flip && flip.prev && shouldFire(`gamma:${flip.next}`)) {
+    console.log(`[discordScheduler] gamma flip ${flip.prev} → ${flip.next}`);
     await postGammaFlipAlert({
-      prevZone: alertState.gammaZone,
-      newZone: newGammaZone,
+      prevZone: flip.prev,
+      newZone: flip.next,
       spot,
       gammaZero,
     });
   }
-  alertState.gammaZone = newGammaZone;
+  alertState.gammaZone = flip.nextLastKnown;
 
   // Level status transitions — collect all meaningful transitions in this tick,
   // then either coalesce (≥2 levels within 5 SPX pts) or fire individually.
@@ -452,9 +437,12 @@ async function pollLevelAndGammaAlerts(): Promise<void> {
 async function pollOdteBangerAlerts(): Promise<void> {
   const { dow, date, hh, mm } = etNow();
   if (!isTradingDay(dow, date)) return;
-  // Only during RTH — 9:45 ET to 15:45 ET (engine also has a time-of-day score)
+  // Only during RTH — 9:45 ET to 15 min before the close (15:45 ET; 12:45 ET on
+  // 13:00 half days, when the 0DTE chain settles at 13:00). Engine also has a
+  // time-of-day score.
   const tod = hh * 60 + mm;
-  if (tod < 9 * 60 + 45 || tod > 15 * 60 + 45) return;
+  const closeMin = sessionCloseMinutes(date) ?? 16 * 60;
+  if (tod < 9 * 60 + 45 || tod > closeMin - 15) return;
 
   let modelsRes: Response, odteRes: Response;
   try {
@@ -785,11 +773,13 @@ const SETTLE_FIRED = new Set<string>(); // YYYY-MM-DD
 async function maybeSettleDay(): Promise<void> {
   const { date, hh, mm, dow } = etNow();
   if (!isTradingDay(dow, date)) return;
-  // Settle window 16:01-16:30 ET (one minute past close gives prints a moment to land).
-  // Was an exact `mm === 1` match on a 60 s timer whose body awaits slow internal
-  // fetches, so one slow /api/models pushed the tick past :01 and the day never settled.
+  // Settle window close+1 .. close+30 ET (16:01-16:30, or 13:01-13:30 on a
+  // half day, so the EOD post follows the real 13:00 close). Was an exact
+  // `mm === 1` match on a 60 s timer; then a 16:01-16:30 window that settled
+  // half days three hours after the close.
   const nowMin = hh * 60 + mm;
-  if (nowMin < 16 * 60 + 1 || nowMin > 16 * 60 + 30) return;
+  const closeMin = sessionCloseMinutes(date) ?? 16 * 60;
+  if (nowMin < closeMin + 1 || nowMin > closeMin + 30) return;
   if (SETTLE_FIRED.has(date)) return;
   SETTLE_FIRED.add(date);
   try {

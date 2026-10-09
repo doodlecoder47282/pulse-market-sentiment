@@ -1,7 +1,8 @@
 import { vixToAtmPct } from "@shared/vol";
 import { getWidgetLayout, saveWidgetLayout, resetWidgetLayout } from "./widgetLayouts";
 import { buildTradeEnvironment, startTradeEnvironmentWatch } from "./tradeEnvironment";
-import type { Express } from "express";
+import type { Express, Request as ExRequest, Response as ExResponse } from "express";
+import { internalRoute, callInternal, internalJson, internalFetch } from "./internalApi";
 import type { Server } from "node:http";
 import { storage } from "./storage";
 import {
@@ -11,7 +12,7 @@ import {
   startTokenRefreshCycle,
 } from "./schwab";
 import {
-  getQuote, cboeSpyChain, buildGammaStructure, cnnFearGreed,
+  getQuote, buildGammaStructure, cnnFearGreed,
   gatherSocial, fetchHeadlines,
 } from "./sources";
 import { computeComposite } from "./composite";
@@ -36,6 +37,22 @@ import { resolutionScore, gradeResolution } from "./stats";
 import { watchdogStatus } from "./cusumWatchdog";
 import { shieldStatus } from "./quoteShield";
 import { computeRND, type CallStrike } from "./breedenLitzenberger";
+import { dollarGexPerPct, flipInputs, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain, type FlipWeight } from "./gammaProfile";
+
+/** Flip weight label for the killbox / thermal weight modes. */
+function flipWeightOf(mode: string): FlipWeight {
+  return mode === "oi" ? "open_interest" : mode === "volume" ? "volume" : "oi_plus_quarter_volume";
+}
+/** Every expiry key a chain response carries (flip universe label). */
+function chainExpiryKeys(chain: any): string[] {
+  return Array.from(new Set([...Object.keys(chain?.callExpDateMap ?? {}), ...Object.keys(chain?.putExpDateMap ?? {})]));
+}
+import { contractYears, expiryOfKey, ivForClock } from "./chainClock";
+import { timeToExpiry } from "./timeToExpiry";
+import { etDate, intradayTapeState, isRegularSessionOpen, REGULAR_OPEN_MIN, sessionCloseMinutes, sessionCloseMs } from "./exchangeCalendar";
+import { gamma as bsGammaOurClock } from "./greeks";
+import { charmTiltNorm, contractExposure } from "./greekExposure";
+import { pickEarningsExpiry } from "./impliedScenario";
 import { fitOUBand, shouldShowOUBand } from "./ouBand";
 import { flagTailEvent } from "./stableTail";
 import { fetchDailyCloses } from "./quotes";
@@ -50,15 +67,17 @@ import * as path from "path";
 import { buildMag7Snapshot, type Mag7Response } from "./mag7";
 import { buildFlowSnapshot, buildIntradayFlowSnapshot, type FlowResponse } from "./flow";
 import { buildExposuresSnapshot, type ExposuresResponse } from "./exposures";
-import { buildUnusualFlow, type UnusualFlowResponse } from "./unusualFlow";
+import type { UnusualFlowResponse } from "./unusualFlow";
+import { CASH_INDEX_TO_SCHWAB } from "./schwabSymbols";
 import { buildNewsSnapshot, type NewsResponse } from "./news";
 import { getAlphaEventsForTicker, getAlphaVerdict } from "./alphaNews";
 import { buildTickerOutlook } from "./tickerOutlook";
 import { gatherPositioningForTicker } from "./tickerAlpha";
 import { buildEconWeek, type EconWeek } from "./econWeek";
 import { buildModelsSnapshot, type ModelsResponse, type Horizon } from "./models";
-import type { Snapshot_Public, VolMetric } from "@shared/schema";
-import { readCache, writeCache, rthSessionKey } from "./sessionCache";
+import type { Snapshot_Public } from "@shared/schema";
+import { readCacheEntry, writeCache, rthSessionKey } from "./sessionCache";
+import { maxServeAgeMs, modelsFallbackDecision, oldestChainAsOf } from "./schwabDataPolicy";
 import { buildSeasonalitySnapshot, fetchBars, computeSeasonality, generateAnalysisText } from "./seasonality";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
@@ -66,12 +85,13 @@ import { buildJPMCollarSnapshot, getCachedSpxCloses } from "./jpmCollar";
 import { buildVolCalendar, getTodayEventContext } from "./volCalendar";
 import { computeOfiTrend } from "./leeReadyOfi";
 import { buildGammaLevelsEnhanced } from "./gammaLevels";
+import { assembleSnapshot, snapshotFailureResponse, tradeDeskDegraded, liveMetricsFromSnapshot, factCheckMetrics } from "./snapshotDegrade";
+import { classifyRouteError, isUpstreamUnavailable, UpstreamUnavailableError } from "@shared/unavailable";
 import { runBackfill, getBacktestSummary } from "./backtest";
 import { deriveTargets, deriveBothSides, type CandidateLevel } from "./targetDerivation";
 import { startCryptoEngines, getCryptoFeed, getCryptoHealth, getCryptoSignals } from "./cryptoEngine";
 import { buildChainAudit } from "./chainAudit";
 import { buildHeatseeker } from "./heatseeker";
-import { getCboeChain } from "./cboeCache";
 import {
   insertGreekSnapshot,
   fetchGradient,
@@ -80,62 +100,6 @@ import {
   type GreekSnapshotRow,
 } from "./greekGradientDb";
 
-// ─── CBOE → Schwab chain shape adapter ─────────────────────────────────
-// Heatseeker (and other consumers) expect Schwab's callExpDateMap /
-// putExpDateMap format. CBOE returns a flat options[] array with OCC
-// option symbols (e.g. "SPY260427C00500000"). This adapter parses the
-// OCC symbol, infers expiry + strike + side, and rebuilds the Schwab
-// shape so a stale CBOE chain can power Heatseeker on weekends/holidays
-// when Schwab is not connected.
-function cboeChainToSchwab(cboe: any, symbol: string): any {
-  const inner = cboe?.data?.data ?? cboe?.data ?? cboe;
-  const opts: any[] = inner?.options ?? [];
-  const spot = inner?.current_price ?? inner?.close ?? null;
-  const callExpDateMap: Record<string, Record<string, any[]>> = {};
-  const putExpDateMap: Record<string, Record<string, any[]>> = {};
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-  for (const o of opts) {
-    // OCC: ROOT (var) + YYMMDD (6) + C/P (1) + STRIKE*1000 (8)
-    const occ: string = String(o.option || "");
-    const m = occ.match(/^([A-Z]+)(\d{6})([CP])(\d{8})$/);
-    if (!m) continue;
-    const [, , yymmdd, cp, strikeRaw] = m;
-    const yy = parseInt(yymmdd.slice(0, 2), 10);
-    const mm = parseInt(yymmdd.slice(2, 4), 10);
-    const dd = parseInt(yymmdd.slice(4, 6), 10);
-    const expDate = new Date(Date.UTC(2000 + yy, mm - 1, dd));
-    const dte = Math.max(0, Math.round((expDate.getTime() - today.getTime()) / 86_400_000));
-    const isoDate = `${2000 + yy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
-    const expKey = `${isoDate}:${dte}`;
-    const strike = parseInt(strikeRaw, 10) / 1000;
-    const strikeKey = strike.toFixed(2).replace(/\.?0+$/, (s) => s.includes(".") ? s : "");
-    // Schwab contract shape that buildHeatseeker reads
-    const contract = {
-      strikePrice: strike,
-      openInterest: Number(o.open_interest) || 0,
-      totalVolume: Number(o.volume) || 0,
-      volatility: (Number(o.iv) || 0) * 100, // CBOE iv is decimal, Schwab is %
-      gamma: Number(o.gamma) || 0,
-      delta: Number(o.delta) || 0,
-      vega: Number(o.vega) || 0,
-      theta: Number(o.theta) || 0,
-      bid: Number(o.bid) || 0,
-      ask: Number(o.ask) || 0,
-      last: Number(o.last_trade_price) || 0,
-    };
-    const target = cp === "C" ? callExpDateMap : putExpDateMap;
-    if (!target[expKey]) target[expKey] = {};
-    if (!target[expKey][strikeKey]) target[expKey][strikeKey] = [];
-    target[expKey][strikeKey].push(contract);
-  }
-  return {
-    symbol,
-    underlying: { last: spot, bid: inner?.bid ?? null, ask: inner?.ask ?? null },
-    callExpDateMap,
-    putExpDateMap,
-  };
-}
 import { masterAlphaRoute } from "./masterAlpha";
 import {
   buildCosmosSnapshot,
@@ -149,6 +113,7 @@ import {
   buildWeeklyOutlook,
   buildMonthlyOutlook,
   OUTLOOK_SYSTEM_PROMPT,
+  filterTradeInstructions,
 } from "./cosmos";
 import {
   startOdteTracker, getOdteSnapshot, armPosition, disarmPosition,
@@ -158,11 +123,6 @@ import { buildDeterministicAlphaBrief } from "./alphaEngine";
 import { buildFusionContext, fusionContextToPromptBlock, type FusionContext } from "./alphaFusion";
 import { composeAlphaEmail } from "./alphaEmailComposer";
 import { getEarnings } from "./earnings";
-
-function vm(symbol: string, name: string, last: number | null, prev: number | null): VolMetric {
-  const changePct = last != null && prev ? ((last - prev) / prev) * 100 : null;
-  return { symbol, name, value: last, prev, changePct };
-}
 
 let inflight: Promise<Snapshot_Public> | null = null;
 let lastResult: { at: number; data: Snapshot_Public } | null = null;
@@ -282,52 +242,27 @@ function applyTermStructureRescale(
 async function buildSnapshot(): Promise<Snapshot_Public> {
   const warnings: string[] = [];
 
-  const [vix, vvix, vix9d, vix3m, skew, spy, chain, fg, social, headlines] = await Promise.all([
+  const [vix, vvix, vix9d, vix3m, skew, spy, chainResp, fg, social, headlines] = await Promise.all([
     getQuote("^VIX"),
     getQuote("^VVIX"),
     getQuote("^VIX9D"),
     getQuote("^VIX3M"),
     getQuote("^SKEW"),
     getQuote("SPY"),
-    cboeSpyChain().catch((e) => { warnings.push(`CBOE chain: ${e.message}`); return null; }),
+    // Schwab SPY chain, 0-45 DTE (was the CBOE delayed SPY chain).
+    schwabGetOptionChain("SPY", 45),
     cnnFearGreed(),
-    gatherSocial().catch((e) => { warnings.push(`Social: ${e.message}`); return { score: 0, bullish: 0, bearish: 0, neutral: 0, posts: [] }; }),
+    gatherSocial().catch((e) => { warnings.push(`Social: ${e.message}`); return { score: null, bullish: 0, bearish: 0, neutral: 0, posts: [], status: "unavailable" as const, sources: [], asOf: Date.now() }; }),
     fetchHeadlines(),
   ]);
 
-  if (!chain) throw new Error("Options chain unavailable");
-
-  const gamma = buildGammaStructure(chain);
-  const term = {
-    vix9d: vix9d.last,
-    vix: vix.last,
-    vix3m: vix3m.last,
-    ratio9dOver30d: vix.last && vix9d.last ? vix9d.last / vix.last : null,
-    ratio30dOver3m: vix3m.last && vix.last ? vix.last / vix3m.last : null,
-  };
-
-  const partial: Omit<Snapshot_Public, "composite"> = {
-    capturedAt: Math.floor(Date.now() / 1000),
-    spy: {
-      price: spy.last ?? gamma.spot,
-      prevClose: spy.prev ?? 0,
-      changePct: spy.last && spy.prev ? ((spy.last - spy.prev) / spy.prev) * 100 : 0,
-    },
-    vol: {
-      vix:  vm("^VIX",  "VIX (30-day implied vol)", vix.last,  vix.prev),
-      vvix: vm("^VVIX", "VVIX (Vol-of-Vol)",        vvix.last, vvix.prev),
-      vix9d:vm("^VIX9D","VIX9D (9-day)",            vix9d.last,vix9d.prev),
-      vix3m:vm("^VIX3M","VIX3M (3-month)",          vix3m.last,vix3m.prev),
-      skew: vm("^SKEW", "CBOE SKEW",                skew.last, skew.prev),
-    },
-    term,
-    gamma,
-    social,
-    fearGreed: fg,
-    aaii: null, // could be wired later via Thursday-released CSV
-    headlines,
-    warnings,
-  };
+  // Pure assembly (server/snapshotDegrade.ts): a missing or unusable Schwab
+  // chain throws UpstreamUnavailableError carrying the partial body (quotes,
+  // social, F&G, headlines) instead of a bare Error that became a 500.
+  const partial = assembleSnapshot(
+    { vix, vvix, vix9d, vix3m, skew, spy, chain: chainResp, fearGreed: fg, social, headlines, warnings, nowMs: Date.now() },
+    buildGammaStructure,
+  );
 
   // Pull a cheap voicesBias if we have a warm cache. Never force-fetch here
   // — keeping snapshot + voices refreshes independent protects our X quota.
@@ -335,7 +270,9 @@ async function buildSnapshot(): Promise<Snapshot_Public> {
   if (voicesCache?.data?.items) {
     voicesBias = computeVoicesBias(voicesCache.data.items);
   }
-  const composite = computeComposite(partial, voicesBias);
+  // Block weights estimated from stored gauge history once the sample gate passes (else hand-set, labelled).
+  const { getEstimatedGaugeWeights } = await import("./compositeWeights");
+  const composite = computeComposite(partial, voicesBias, getEstimatedGaugeWeights());
   const full: Snapshot_Public = { ...partial, composite };
   await storage.saveSnapshot({
     capturedAt: full.capturedAt,
@@ -344,6 +281,40 @@ async function buildSnapshot(): Promise<Snapshot_Public> {
   return full;
 }
 
+/**
+ * Route catch blocks of Schwab-dependent routes: a missing upstream answers
+ * 503 {dataState:"unavailable", reason} (shared/unavailable.ts); only a real
+ * bug answers 500, and that is logged so CI's server log shows it.
+ */
+function sendRouteError(res: ExResponse, e: unknown, fallback: string, key: "message" | "error" = "message") {
+  let schwabConnected: boolean | null = null;
+  try { schwabConnected = getSchwabStatus().connected; } catch { schwabConnected = null; }
+  const out = classifyRouteError(e, fallback, { schwabConnected, key });
+  if (out.kind === "bug") console.error(`[route] 500: ${fallback}:`, (e as any)?.stack ?? e);
+  return res.status(out.status).json(out.body);
+}
+
+/** Sweep helper for Schwab-dependent routes that keep their own 500 body:
+ *  answers 503 {dataState:"unavailable", reason} and returns true when the
+ *  error is a missing upstream; otherwise returns false and the route's
+ *  original 500 path runs (a real bug). */
+function sendIfUnavailable(res: ExResponse, e: unknown): boolean {
+  let schwabConnected: boolean | null = null;
+  try { schwabConnected = getSchwabStatus().connected; } catch { schwabConnected = null; }
+  const out = classifyRouteError(e, "upstream unavailable", { schwabConnected });
+  if (out.kind !== "unavailable") {
+    console.error("[route] 500:", (e as any)?.stack ?? e);
+    return false;
+  }
+  res.status(503).json(out.body);
+  return true;
+}
+
+// Last partial (Schwab-unavailable) snapshot body: re-assembled at most every
+// 30 s so a polling client does not refetch every context source per request.
+let lastPartialSnapshot: { at: number; status: number; body: unknown } | null = null;
+const PARTIAL_CACHE_MS = 30_000;
+
 async function getOrBuild(force = false): Promise<Snapshot_Public> {
   if (!force && lastResult && Date.now() - lastResult.at < CACHE_MS) return lastResult.data;
   if (inflight) return inflight;
@@ -351,9 +322,28 @@ async function getOrBuild(force = false): Promise<Snapshot_Public> {
     .then((d) => { lastResult = { at: Date.now(), data: d }; inflight = null; return d; })
     .catch(async (e) => {
       inflight = null;
-      // Fallback to last stored snapshot
+      // A rebuild failed: the last stored snapshot is served only within
+      // min(quote, chain) max age (2 min in the session, 15 min outside), marked stale
+      // with its capturedAt. Past that the snapshot is unavailable.
       const last = await storage.getLatestSnapshot();
-      if (last) return JSON.parse(last.payload) as Snapshot_Public;
+      if (last) {
+        const snap = JSON.parse(last.payload) as Snapshot_Public;
+        const ageMs = Date.now() - snap.capturedAt * 1000;
+        // The snapshot carries quotes and a chain: the tighter max age applies.
+        const maxAge = Math.min(maxServeAgeMs("quotes"), maxServeAgeMs("chains"));
+        if (ageMs <= maxAge) {
+          return {
+            ...snap,
+            stale: true,
+            staleReason: `rebuild failed (${e?.message ?? "error"}); stored snapshot from ${Math.round(ageMs / 1000)} s ago`,
+            warnings: [...(snap.warnings ?? []), `Stale snapshot: captured ${Math.round(ageMs / 1000)} s ago; live rebuild failed.`],
+          };
+        }
+        const msg = `Snapshot unavailable: ${e?.message ?? "rebuild failed"}; last stored snapshot is ${Math.round(ageMs / 60_000)} min old (max ${Math.round(maxAge / 60_000)} min)`;
+        // An upstream failure stays an upstream failure (503 / partial), with its partial context.
+        if (isUpstreamUnavailable(e)) throw new UpstreamUnavailableError(msg, { upstream: e.upstream, partial: e.partial });
+        throw new Error(msg);
+      }
       throw e;
     });
   return inflight;
@@ -439,23 +429,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  app.get("/api/snapshot", async (_req, res) => {
+  // Full snapshot: dataState "ok" (or "stale" when a stored snapshot within
+  // its max age is served). Schwab unavailable: 200 dataState "partial" with
+  // the Schwab sections null and the context sections filled, or 503
+  // {dataState:"unavailable", reason} when nothing useful remains.
+  const sendSnapshot = async (res: ExResponse, force: boolean, fallback: string) => {
     try {
-      const data = await getOrBuild(false);
-      res.json(data);
+      if (!force && lastPartialSnapshot && Date.now() - lastPartialSnapshot.at < PARTIAL_CACHE_MS
+          && !(lastResult && Date.now() - lastResult.at < CACHE_MS)) {
+        return res.status(lastPartialSnapshot.status).json(lastPartialSnapshot.body);
+      }
+      const data = await getOrBuild(force);
+      lastPartialSnapshot = null;
+      res.json({ ...data, dataState: data.stale ? "stale" : "ok", dataStateReason: data.stale ? (data.staleReason ?? null) : null });
     } catch (e: any) {
-      res.status(500).json({ message: e?.message ?? "Failed to build snapshot" });
+      const degraded = snapshotFailureResponse(e);
+      if (degraded) {
+        lastPartialSnapshot = { at: Date.now(), status: degraded.status, body: degraded.body };
+        return res.status(degraded.status).json(degraded.body);
+      }
+      sendRouteError(res, e, fallback);
     }
-  });
-
-  app.post("/api/snapshot/refresh", async (_req, res) => {
-    try {
-      const data = await getOrBuild(true);
-      res.json(data);
-    } catch (e: any) {
-      res.status(500).json({ message: e?.message ?? "Failed to refresh" });
-    }
-  });
+  };
+  app.get("/api/snapshot", (_req, res) => sendSnapshot(res, false, "Failed to build snapshot"));
+  app.post("/api/snapshot/refresh", (_req, res) => sendSnapshot(res, true, "Failed to refresh"));
 
   // Voices — curated analyst feed with data-relevance ranking + live fact-check
   app.get("/api/voices", async (_req, res) => {
@@ -463,21 +460,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (voicesCache && Date.now() - voicesCache.at < VOICES_CACHE_MS) {
         return res.json(voicesCache.data);
       }
+      // Voices are non-Schwab context: a missing snapshot only leaves the
+      // fact-check metrics null ("unverified"), never 0 and never a 500.
+      let snapReason: string | null = null;
       const [{ voices, items }, snap] = await Promise.all([
         fetchAllVoices(),
-        getOrBuild(false),
+        getOrBuild(false).catch((e: any) => { snapReason = e?.message ?? "snapshot unavailable"; return null; }),
       ]);
-      const liveMetrics = {
-        vix: snap.vol.vix.value ?? 0,
-        vvix: snap.vol.vvix.value ?? 0,
-        spy: snap.spy.price ?? 0,
-        skew: snap.vol.skew.value ?? 0,
-        pcr: snap.gamma.pcrOi ?? 0,
-      };
-      for (const it of items) factCheckItem(it, liveMetrics);
+      const liveMetrics = liveMetricsFromSnapshot(snap);
+      for (const it of items) factCheckItem(it, factCheckMetrics(liveMetrics));
       const bias = computeVoicesBias(items);
       const payload = {
         voices, items, liveMetrics,
+        liveMetricsState: snap ? "ok" : "unavailable",
+        liveMetricsReason: snapReason,
         xEnabled: xEnabled(),
         voicesBias: bias,
         capturedAt: Math.floor(Date.now() / 1000),
@@ -507,6 +503,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       // Fetch the three intraday series + prior-day OHLC for each (for pivots),
       // plus the main snapshot (for gamma, term, vix, composite, voices bias).
+      let snapErr: unknown = null;
       const [spx, spy, vix, spxPrev, spyPrev, vixPrev, snap, voicesData] = await Promise.all([
         fetchIntraday("^GSPC", range, interval).catch((e) => { console.warn("[trade-desk] SPX:", e.message); return null; }),
         fetchIntraday("SPY",   range, interval).catch((e) => { console.warn("[trade-desk] SPY:", e.message); return null; }),
@@ -514,13 +511,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         fetchPrevDayOHLC("^GSPC").catch(() => null),
         fetchPrevDayOHLC("SPY").catch(() => null),
         fetchPrevDayOHLC("^VIX").catch(() => null),
-        getOrBuild(false),
+        getOrBuild(false).catch((e) => { snapErr = e; return null; }),
         Promise.resolve(voicesCache?.data ?? null),
       ]);
 
       const spxPivots = spxPrev ? buildPivotBundle("^GSPC", spxPrev) : null;
       const spyPivots = spyPrev ? buildPivotBundle("SPY",   spyPrev) : null;
       const vixPivots = vixPrev ? buildPivotBundle("^VIX",  vixPrev) : null;
+
+      // Snapshot unavailable (Schwab chain/quotes missing): quotes and pivots
+      // still render; gamma map, squeeze, playbook and composite are null with
+      // the reason (200 partial), or 503 when no quote came back either. A
+      // snapshot failure that is a code bug still answers 500.
+      if (!snap) {
+        let connected: boolean | null = null;
+        try { connected = getSchwabStatus().connected; } catch { connected = null; }
+        const cls = classifyRouteError(snapErr, "snapshot unavailable", { schwabConnected: connected });
+        if (cls.kind === "bug") throw snapErr;
+        const out = tradeDeskDegraded({
+          range, interval,
+          quotes: { spx, spy, vix },
+          pivots: { spx: spxPivots, spy: spyPivots, vix: vixPivots },
+          reason: cls.body.reason,
+          voicesBias: voicesData?.voicesBias ?? null,
+          nowMs: Date.now(),
+        });
+        return res.status(out.status).json(out.body);
+      }
 
       // Gamma map is SPY-based (that's our options-chain source).
       const spyLast = spy?.price ?? snap.spy.price;
@@ -531,6 +548,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ...baseGammaMap,
         gammaProfile: snap.gamma.gammaProfile,
         gexCrossoverStrike: snap.gamma.gexCrossoverStrike,
+        // sources.buildGammaStructure: SPY chain rows 0-45 DTE, OI-weighted
+        flipInputs: flipInputs({ weight: "open_interest", universe: "all-expiries-in-request", expiryKeys: [], dteRange: [0, 45] }),
       };
 
       const squeeze = computeSqueezeIndicator({
@@ -565,9 +584,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         pivots: spyPivots,
         term: snap.term,
         vix: snap.vol.vix,
-        compositeScore: snap.composite.score,
-        compositeLabel: snap.composite.label,
-        voicesBiasScore: voicesData?.voicesBias?.score ?? null,
+        marketScore: snap.composite.marketScore ?? null,
         squeeze,
         todaysEvents,
       });
@@ -579,15 +596,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         quotes: { spx, spy, vix },
         pivots: { spx: spxPivots, spy: spyPivots, vix: vixPivots },
         gammaMap,
+        // Gamma map provenance: Schwab SPY chain time (epoch s) and stale flag.
+        gammaAsOf: snap.gammaAsOf ?? null,
+        gammaStale: !!(snap.gammaStale || snap.stale),
+        gammaMaxAgeMs: maxServeAgeMs("chains"),
         squeeze,
         playbook,
+        dataState: snap.stale ? "stale" : "ok",
         composite: { score: snap.composite.score, label: snap.composite.label },
         voicesBias: voicesData?.voicesBias ?? null,
       };
       tradeCache = { at: Date.now(), range, data: payload };
       res.json(payload);
     } catch (e: any) {
-      res.status(500).json({ message: e?.message ?? "Failed to build trade desk" });
+      sendRouteError(res, e, "Failed to build trade desk");
     }
   });
 
@@ -596,7 +618,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   const REGIME_CACHE_MS = 30 * 60_000;
 
   // Macro carousel — cross-asset quotes grouped by category for ticker tape + carousel.
-  // 60s cache keeps us safe on Yahoo rate limits (we hit ~25 symbols per refresh).
+  // Short cache keeps the Schwab request budget low (~25 symbols per refresh).
   let macroCache: { at: number; data: MacroResponse } | null = null;
   const MACRO_CACHE_MS = 10_000; // 10s cache — near-realtime ticker tape
   app.get("/api/macro", async (_req, res) => {
@@ -608,6 +630,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       macroCache = { at: Date.now(), data };
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build macro snapshot" });
     }
   });
@@ -615,8 +638,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // OHLC candlestick endpoint — 30s cache per (symbol, timeframe) pair.
   // Real-time on the client via polling.
   const ohlcCache = new Map<string, { at: number; data: OHLCResponse }>();
-  const OHLC_CACHE_MS = 15_000; // 15s cache — keeps candles near-realtime without hammering Yahoo
-  app.get("/api/ohlc", async (req, res) => {
+  const OHLC_CACHE_MS = 15_000; // 15s cache — keeps candles near-realtime within the Schwab request budget
+  app.get("/api/ohlc", internalRoute("/api/ohlc", async (req, res) => {
     try {
       const symbol = String(req.query.symbol || "").trim().toUpperCase();
       const tf = (String(req.query.tf || "1D").toUpperCase() as Timeframe);
@@ -636,9 +659,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       ohlcCache.set(key, { at: Date.now(), data });
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to fetch OHLC" });
     }
-  });
+  }));
 
   // Put/Call flow ratio — index + Mag 7 aggregate, intraday ring buffer.
   let flowCache: { at: number; data: FlowResponse } | null = null;
@@ -652,6 +676,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       flowCache = { at: Date.now(), data };
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build flow snapshot" });
     }
   });
@@ -669,6 +694,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       intradayFlowCache = { at: Date.now(), data };
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build intraday flow" });
     }
   });
@@ -684,14 +710,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   const modelsInFlight = new Map<string, Promise<ModelsResponse>>();
   // 30-min refresh cadence — model rebuilds every half hour during RTH so the
   // BULL / BASE / BEAR scenarios stay near-real-time without thrashing the
-  // options chain (Schwab/CBOE are rate-limited).
+  // options chain (Schwab is rate-limited).
   const MODELS_CACHE_MS = 30 * 60_000;
 
   async function buildModelsForKey(symbol: "SPY" | "^GSPC", experimental: boolean): Promise<ModelsResponse> {
     const cacheKey = `${symbol}${experimental ? ":exp" : ""}`;
     // Cache hit
     const cached = modelsCache.get(cacheKey);
-    if (cached && Date.now() - cached.at < MODELS_CACHE_MS) return cached.data;
+    // The 30-min rebuild cadence never serves chain-derived numbers past the
+    // chain max age (3 min in the session): an older build is a miss.
+    const cachedChainAsOf = cached ? oldestChainAsOf(cached.data.horizons as any) : null;
+    if (cached && Date.now() - cached.at < MODELS_CACHE_MS
+        && (cachedChainAsOf == null || Date.now() - cachedChainAsOf <= maxServeAgeMs("chains"))) {
+      return cached.data;
+    }
     // Existing build in flight
     const pending = modelsInFlight.get(cacheKey);
     if (pending) return pending;
@@ -715,7 +747,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     modelsInFlight.set(cacheKey, buildPromise);
     return buildPromise;
   }
-  app.get("/api/models", async (req, res) => {
+  // In-process callers use this same handler (internalApi.ts).
+  app.get("/api/models", internalRoute("/api/models", async (req: ExRequest, res: ExResponse) => {
     try {
       const symbol = (String(req.query.symbol ?? "^GSPC").toUpperCase() === "SPY" ? "SPY" : "^GSPC") as "SPY" | "^GSPC";
       // Dealer-map kinds (vanna flip, zomma bridge, charm target, neg-γ
@@ -737,20 +770,39 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const q = enriched.horizons?.quarterly as any;
         if (q && q.spot) {
           const snap = await getOrBuild(false);
-          const composite = snap.composite?.score ?? 50;
+          // Market-data blocks only (rule 2: no social/F&G in a price path). When
+          // unavailable the drift tilt is skipped (50 = zero tilt) and labelled below.
+          const marketScore = snap.composite?.marketScore;
+          const compositeAvailable = marketScore != null && Number.isFinite(marketScore);
+          const composite = compositeAvailable ? (marketScore as number) : 50;
           // Scale-aware level mapping:
-          //  snap.gamma.* are SPY-scale (gamma chain built from SPY chain).
-          //  JPM collar strikes are SPX-scale (5000s range).
+          //  snap.gamma.* are SPY-scale (Schwab SPY chain).
+          //  JPM collar strikes are SPX-scale.
           //  q.spot is whichever the caller asked for.
+          // SPY <-> SPX uses the real Schwab $SPX / SPY ratio (was a fixed x10).
+          // Missing ratio, VIX or flip leave the trajectory unavailable rather
+          // than defaulted (VIX 16 before); a missing composite skips the tilt.
           const isSPX = symbol === "^GSPC";
-          const gammaScale = isSPX ? 10 : 1;     // SPY → SPX: ×10
-          const jpmScale   = isSPX ? 1  : 0.1;   // SPX strikes → SPY: ÷10
+          const spyPx = snap.spy?.price ?? null;
+          const spxPx = isSPX ? q.spot : (await getQuote("^GSPC").catch(() => ({ last: null }))).last;
+          const ratio = spyPx != null && spyPx > 0 && spxPx != null && spxPx > 0 ? spxPx / spyPx : null;
+          // A missing market-data composite skips the drift tilt (labelled
+          // below); ratio, VIX and flip are required inputs.
+          const missing = [
+            ratio == null ? "SPX/SPY ratio" : null,
+            vixData.vix == null ? "VIX" : null,
+            snap.gamma.zeroGamma == null ? "gamma flip" : null,
+          ].filter(Boolean);
+          if (missing.length) throw new Error(`inputs unavailable: ${missing.join(", ")}`);
+          const gammaScale = isSPX ? (ratio as number) : 1;       // SPY -> SPX
+          const jpmScale   = isSPX ? 1 : 1 / (ratio as number);   // SPX strikes -> SPY
 
           let jpmStrikes: { shortPut: number; longPut: number; shortCall: number } | null = null;
           try {
             const { buildJPMCollarSnapshot } = await import("./jpmCollar");
             const jpm = await buildJPMCollarSnapshot();
-            jpmStrikes = {
+            // Expired strikes are history, not live structure.
+            if (!jpm.current.expired) jpmStrikes = {
               shortPut: jpm.current.shortPut * jpmScale,
               longPut: jpm.current.longPut * jpmScale,
               shortCall: jpm.current.shortCall * jpmScale,
@@ -758,32 +810,54 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           } catch { /* JPM optional */ }
 
           // v2 precision inputs:
-          //   - skew: CBOE SKEW (100-150) from snap, drives skew-adjusted drift
+          //   - skew: Cboe SKEW index (100-150, Schwab $SKEW quote) from snap, drives skew-adjusted drift
           //   - realizedVol20d: 20D realized vol from daily horizon audit, drives VRP scaling
           const skewVal = snap.vol?.skew?.value ?? null;
           const dailyAudit = (enriched.horizons?.daily as any)?.audit;
           const realizedVol20d: number | null = dailyAudit?.realizedSigma20d ?? null;
 
+          // Cone width (round 4): Schwab $SPX ATM implied-vol term structure,
+          // expiries to ~5 weeks past the 13-week horizon (ATM strikes only).
+          // No chain -> the builder falls back to labelled 20d realized vol.
+          let spxIvTerm: import("./tickerConeMath").AtmIvPoint[] = [];
+          try {
+            const { atmIvTermFromChain } = await import("./tickerConeMath");
+            const coneNow = Date.now();
+            const spxChain = await schwabGetOptionChain("$SPX", 13 * 7 + 35, { coverage: "atm" });
+            const spxLast = "error" in spxChain ? null : spxChain.underlying?.last ?? null;
+            if (!("error" in spxChain) && spxLast != null && spxLast > 0) {
+              spxIvTerm = atmIvTermFromChain(spxChain, spxLast, (k, c) => contractYears(k, c, coneNow));
+            }
+          } catch { /* realized-vol fallback below, labelled */ }
+
           const { buildQuarterlyTrajectory } = await import("./quarterlyTrajectory");
           const traj = buildQuarterlyTrajectory({
+            ivTerm: spxIvTerm,
             spot: q.spot,
-            vix: vixData.vix ?? 16,
+            vix: vixData.vix as number,
             vix9d: vixData.vix9d,
             vix3m: vixData.vix3m,
             callWall: snap.gamma.callWall * gammaScale,
             putWall: snap.gamma.putWall * gammaScale,
-            gammaFlip: snap.gamma.zeroGamma * gammaScale,
+            gammaFlip: (snap.gamma.zeroGamma as number) * gammaScale,
             maxPain: snap.gamma.maxPain * gammaScale,
             totalGex: snap.gamma.totalGex,
-            composite,
+            composite: composite as number,
             jpmStrikes,
             skew: skewVal,
             realizedVol20d,
           });
+          if (!compositeAvailable) {
+            (traj as any).compositeTiltNote = "unavailable: no market-data composite (implied-vol / positioning); composite drift tilt skipped";
+            if ((traj as any).inputs) (traj as any).inputs.composite = null;
+          }
           q.weeklyTrajectory = traj;
         }
       } catch (err: any) {
-        // Trajectory is purely additive; failure must not break /api/models
+        // Trajectory is purely additive; failure must not break /api/models.
+        // Say why it is missing instead of leaving it silently absent.
+        const qh = enriched.horizons?.quarterly as any;
+        if (qh) qh.weeklyTrajectoryUnavailable = `13-week trajectory unavailable: ${err?.message ?? err}`;
         console.warn("[models] quarterly trajectory build failed:", err?.message ?? err);
       }
 
@@ -793,21 +867,40 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       try {
         const symbol = (String(req.query.symbol ?? "^GSPC").toUpperCase() === "SPY" ? "SPY" : "^GSPC") as "SPY" | "^GSPC";
         const experimental = String(req.query.experimental ?? "") === "1";
-        const stale = await readCache<ModelsResponse>(`models-${symbol}${experimental ? "-exp" : ""}-${rthSessionKey()}`);
-        if (stale) {
-          stale.session = "last-close";
-          stale.warnings = [...(stale.warnings ?? []), `Live build failed: ${e?.message ?? e} — serving last RTH close.`];
-          return res.json(stale);
+        const entry = await readCacheEntry<ModelsResponse>(`models-${symbol}${experimental ? "-exp" : ""}-${rthSessionKey()}`);
+        if (entry) {
+          // "last-close" only for a copy built at or after its session close,
+          // served outside the session; otherwise only within the chain max
+          // age, flagged stale with its real chain time; else 503.
+          const chainAsOfMs = oldestChainAsOf(entry.data.horizons as any);
+          const d = modelsFallbackDecision({
+            savedAtMs: entry.at,
+            sessionCloseMs: sessionCloseMs(etDate(entry.at)),
+            chainAsOfMs,
+          });
+          if (d.serve) {
+            const out: ModelsResponse = {
+              ...entry.data,
+              session: d.label === "last-close" ? "last-close" : entry.data.session,
+              stale: d.label === "stale",
+              chainAsOfMs: chainAsOfMs ?? entry.at,
+              warnings: [...(entry.data.warnings ?? []), d.label === "last-close"
+                ? `Live build failed: ${e?.message ?? e} — serving the copy built after the last close.`
+                : `Live build failed: ${e?.message ?? e} — serving a stored build (${d.reason}).`],
+            };
+            return res.json(out);
+          }
+          return res.status(503).json({ dataState: "unavailable", message: `${e?.message ?? "Failed to build models"}; ${d.reason}` });
         }
       } catch {}
-      res.status(503).json({ message: e?.message ?? "Failed to build models" });
+      res.status(503).json({ dataState: "unavailable", message: e?.message ?? "Failed to build models" });
     }
-  });
+  }));
 
   // ───── MM-matrix prediction logger ─────
   // POST /api/mm-snapshot — capture current cell probabilities for each horizon.
   // Reuses the /api/models cache if fresh to avoid rebuilding.
-  app.post("/api/mm-snapshot", async (req, res) => {
+  app.post("/api/mm-snapshot", internalRoute("/api/mm-snapshot", async (req, res) => {
     try {
       const symbol = (String(req.body?.symbol ?? "^GSPC").toUpperCase() === "SPY" ? "SPY" : "^GSPC") as "SPY" | "^GSPC";
       const requested: string[] = Array.isArray(req.body?.horizons) ? req.body.horizons : ["daily", "weekly"];
@@ -824,13 +917,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
       res.json({ ok: true, snapshots: snaps });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "snapshot failed" });
     }
-  });
+  }));
 
   // POST /api/mm-grade — fill forward outcomes for any ungraded snapshots whose
   // session has closed. Pulls daily ^GSPC closes from Yahoo via fetchOHLC.
-  app.post("/api/mm-grade", async (_req, res) => {
+  app.post("/api/mm-grade", internalRoute("/api/mm-grade", async (_req, res) => {
     try {
       const daily = await fetchOHLC("^GSPC", "1Y", "1d");
       const closeByDate = new Map<string, number>();
@@ -847,17 +941,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (e: any) {
       res.status(500).json({ message: e?.message ?? "grade failed" });
     }
-  });
+  }));
 
   // GET /api/mm-stats — empirical (regime, zone) stats vs priors
-  app.get("/api/mm-stats", async (_req, res) => {
+  app.get("/api/mm-stats", internalRoute("/api/mm-stats", async (_req, res) => {
     try {
       const stats = await empiricalStats();
       res.json(stats);
     } catch (e: any) {
       res.status(500).json({ message: e?.message ?? "stats failed" });
     }
-  });
+  }));
 
   // GET /api/master-alpha-stats — backtest aggregates of masterAlpha signals vs realized moves
   app.get("/api/master-alpha-stats", async (_req, res) => {
@@ -876,15 +970,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/master-alpha", masterAlphaRoute);
 
   // Dealer exposure profiles — DEX / GEX / VEX / Charm across ±10% spot band.
-  // Per-symbol cache with 5-minute TTL (exposures are structural, not tick-level).
-  // On upstream CBOE errors, serve stale data if we have it — keeps the UI useful
-  // even when CBOE is rate-limiting.
+  // Per-symbol cache with 5-minute TTL (exposures are structural, not tick-level),
+  // never past the chain max age. On a Schwab failure the last build is served
+  // only within that max age (schwabDataPolicy), flagged stale with its chain
+  // asOf; past it, 503.
   const exposuresCache = new Map<string, { at: number; data: ExposuresResponse }>();
   const EXPOSURES_CACHE_MS = 5 * 60_000;
-  app.get("/api/exposures", async (req, res) => {
+  app.get("/api/exposures", internalRoute("/api/exposures", async (req, res) => {
     const symbol = String(req.query.symbol ?? "SPY").toUpperCase();
     const cached = exposuresCache.get(symbol);
-    if (cached && Date.now() - cached.at < EXPOSURES_CACHE_MS) {
+    if (cached && Date.now() - cached.at < EXPOSURES_CACHE_MS
+        && Date.now() - cached.data.meta.chainAsOfMs <= maxServeAgeMs("chains")) {
       return res.json(cached.data);
     }
     try {
@@ -892,37 +988,32 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       exposuresCache.set(symbol, { at: Date.now(), data });
       res.json(data);
     } catch (e: any) {
-      // Stale-fallback: serve old cached data if we have any, tagged with warning.
+      // Stale fallback: the last build, only while its chain is within max age.
       if (cached) {
-        const staleMin = Math.round((Date.now() - cached.at) / 60_000);
-        const stale = {
-          ...cached.data,
-          meta: {
-            ...cached.data.meta,
-            warnings: [...cached.data.meta.warnings, `Upstream CBOE unavailable (${e?.message ?? "error"}); serving ${staleMin} min stale data.`],
-          },
-        };
-        return res.json(stale);
+        const chainAgeMs = Date.now() - cached.data.meta.chainAsOfMs;
+        if (chainAgeMs <= maxServeAgeMs("chains")) {
+          const stale = {
+            ...cached.data,
+            meta: {
+              ...cached.data.meta,
+              chainAgeMs,
+              chainStale: true,
+              warnings: [...cached.data.meta.warnings, `Schwab unavailable (${e?.message ?? "error"}); showing the chain from ${Math.round(chainAgeMs / 1000)} s ago.`],
+            },
+          };
+          return res.json(stale);
+        }
       }
-      res.status(503).json({ message: e?.message ?? `Failed to build exposures for ${symbol}` });
+      res.status(503).json({ dataState: "unavailable", reason: e?.message ?? `Failed to build exposures for ${symbol}`, message: e?.message ?? `Failed to build exposures for ${symbol}` });
     }
-  });
+  }));
 
-  // Unusual options flow — CBOE primary, Schwab fallback for index/cash symbols
-  // and when CBOE is rate-limited (429) or doesn't carry the symbol (403/404).
-  // Always returns 200 so the panel never hard-fails — empty result with a
-  // human-readable `note` instead of 503.
+  // Unusual options flow — Schwab option chain only (schwabFlow.buildSchwabFlow).
+  // When Schwab cannot answer: 200 with dataState "unavailable", an empty
+  // list, null summary figures and a note (never a $0 / "no flow" read). A
+  // cached result is re-served only within the chain max age, flagged stale.
   const unusualFlowCache = new Map<string, { at: number; data: UnusualFlowResponse & { note?: string } }>();
   const UNUSUAL_FLOW_CACHE_MS = 60_000;
-
-  // CBOE's CDN doesn't host options chains for cash-settled indexes under their
-  // common tickers. Route these symbols directly to Schwab using the $-prefix form.
-  const CASH_INDEX_TO_SCHWAB: Record<string, string> = {
-    SPX: "$SPX",
-    NDX: "$NDX",
-    RUT: "$RUT",
-    VIX: "$VIX",
-  };
 
   // Normalize SchwabFlowResponse into the UnusualFlowResponse shape the UI expects.
   function schwabToUnusual(
@@ -976,122 +1067,69 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         netSentimentNotional: bullishNotional - bearishNotional,
         topTag,
       },
-      // Normalize to seconds (CBOE uses seconds; Schwab returns ms).
+      // Epoch seconds of the Schwab chain time (schwabFlow returns ms).
       asOf: schwab.asOf ? Math.floor(schwab.asOf / 1000) : Math.floor(Date.now() / 1000),
+      dataState: "ok",
+      ...(schwab.stale ? { note: "Schwab chain re-served after a failed refresh (within its max age)." } : {}),
     };
   }
 
   app.get("/api/flow/unusual", async (req, res) => {
     const symbolRaw = String(req.query.symbol ?? "SPY").toUpperCase();
-    // Normalize hyphenated tickers (BRK-B → BRK.B for CBOE; Schwab uses BRK/B).
-    const symbol = symbolRaw.replace(/-/g, ".");
+    // Schwab class-share format: BRK-B / BRK.B -> BRK/B.
+    const symbol = symbolRaw.replace(/[-.]/g, "/");
     const cacheKey = symbol;
     const cached = unusualFlowCache.get(cacheKey);
     if (cached && Date.now() - cached.at < UNUSUAL_FLOW_CACHE_MS) {
       return res.json(cached.data);
     }
-
-    // Cash indexes go straight to Schwab — CBOE CDN doesn't host them.
-    const isCashIndex = CASH_INDEX_TO_SCHWAB[symbol] != null;
-    if (isCashIndex) {
-      try {
-        const { buildSchwabFlow } = await import("./schwabFlow");
-        const schwabSym = CASH_INDEX_TO_SCHWAB[symbol];
-        const sf = await buildSchwabFlow(schwabSym);
-        if ("error" in sf) {
-          const data: any = {
-            provider: "schwab",
-            symbol,
-            spot: null,
-            contracts: [],
-            summary: {
-              flaggedCount: 0, callNotional: 0, putNotional: 0,
-              callPutNotionalRatio: null, aboveAskNotional: 0, belowBidNotional: 0,
-              netSentimentNotional: 0, topTag: null,
-            },
-            asOf: Math.floor(Date.now() / 1000),
-            note: `Schwab unavailable for ${symbol}: ${sf.error}`,
-          };
-          return res.json(data);
-        }
-        const data = schwabToUnusual(sf, symbol);
-        unusualFlowCache.set(cacheKey, { at: Date.now(), data });
-        return res.json(data);
-      } catch (e: any) {
-        if (cached) return res.json(cached.data);
-        const data: any = {
-          provider: "schwab",
-          symbol,
-          spot: null,
-          contracts: [],
-          summary: {
-            flaggedCount: 0, callNotional: 0, putNotional: 0,
-            callPutNotionalRatio: null, aboveAskNotional: 0, belowBidNotional: 0,
-            netSentimentNotional: 0, topTag: null,
-          },
-          asOf: Math.floor(Date.now() / 1000),
-          note: `Cash index chain temporarily unavailable: ${e?.message ?? e}`,
-        };
-        return res.json(data);
-      }
-    }
-
-    // Equities/ETFs — CBOE primary, Schwab fallback on any error.
+    const unavailable = (note: string, dataState: "unavailable" | "delayed" = "unavailable") => ({
+      provider: "schwab" as const,
+      symbol,
+      spot: null,
+      contracts: [],
+      // Not observed: null, not 0.
+      summary: {
+        flaggedCount: null, callNotional: null, putNotional: null,
+        callPutNotionalRatio: null, aboveAskNotional: null, belowBidNotional: null,
+        netSentimentNotional: null, topTag: null,
+      },
+      asOf: Math.floor(Date.now() / 1000),
+      dataState,
+      note,
+    });
+    const staleCached = () => {
+      if (!cached) return null;
+      const ageMs = Date.now() - cached.data.asOf * 1000;
+      if (ageMs > maxServeAgeMs("chains")) return null;
+      return { ...cached.data, note: `Schwab unavailable; showing the scan from ${Math.round(ageMs / 1000)} s ago.` };
+    };
     try {
-      const data = await buildUnusualFlow(symbol);
-      unusualFlowCache.set(cacheKey, { at: Date.now(), data });
-      res.json(data);
-    } catch (cboeErr: any) {
-      // CBOE failed — try Schwab fallback.
-      try {
-        const { buildSchwabFlow } = await import("./schwabFlow");
-        const sf = await buildSchwabFlow(symbol);
-        if ("error" in sf) {
-          if (cached) return res.json(cached.data);
-          const data: any = {
-            provider: "cboe",
-            symbol,
-            spot: null,
-            contracts: [],
-            summary: {
-              flaggedCount: 0, callNotional: 0, putNotional: 0,
-              callPutNotionalRatio: null, aboveAskNotional: 0, belowBidNotional: 0,
-              netSentimentNotional: 0, topTag: null,
-            },
-            asOf: Math.floor(Date.now() / 1000),
-            note: `Chain temporarily unavailable for ${symbol} (CBOE: ${cboeErr?.message ?? "error"}; Schwab: ${sf.error}). Showing empty result — try again shortly.`,
-          };
-          return res.json(data);
+      const { buildSchwabFlow } = await import("./schwabFlow");
+      const schwabSym = CASH_INDEX_TO_SCHWAB[symbol] ?? symbol;
+      const sf = await buildSchwabFlow(schwabSym);
+      if ("error" in sf) {
+        const st = staleCached();
+        if (st) return res.json(st);
+        if (sf.error === "schwab_delayed") {
+          return res.json(unavailable(`Schwab returned a DELAYED chain for ${symbol}: not current, not scanned.`, "delayed"));
         }
-        const data = schwabToUnusual(sf, symbol);
-        // Attach a note so the UI can show the source switch.
-        (data as any).note = `CBOE rate-limited — using Schwab fallback for ${symbol}.`;
-        unusualFlowCache.set(cacheKey, { at: Date.now(), data });
-        return res.json(data);
-      } catch (schwabErr: any) {
-        if (cached) return res.json(cached.data);
-        const data: any = {
-          provider: "cboe",
-          symbol,
-          spot: null,
-          contracts: [],
-          summary: {
-            flaggedCount: 0, callNotional: 0, putNotional: 0,
-            callPutNotionalRatio: null, aboveAskNotional: 0, belowBidNotional: 0,
-            netSentimentNotional: 0, topTag: null,
-          },
-          asOf: Math.floor(Date.now() / 1000),
-          note: `Chain temporarily unavailable for ${symbol}. CBOE: ${cboeErr?.message ?? "error"}. Schwab: ${schwabErr?.message ?? "error"}.`,
-        };
-        return res.json(data);
+        return res.json(unavailable(`Schwab chain unavailable for ${symbol}: ${sf.error}`));
       }
+      const data = schwabToUnusual(sf, symbol);
+      unusualFlowCache.set(cacheKey, { at: Date.now(), data });
+      return res.json(data);
+    } catch (e: any) {
+      const st = staleCached();
+      if (st) return res.json(st);
+      return res.json(unavailable(`Schwab chain request failed for ${symbol}: ${e?.message ?? e}`));
     }
   });
 
   // News snapshot — RSS headlines + econ calendar merged.
   let newsCache: { at: number; data: NewsResponse } | null = null;
   const NEWS_CACHE_MS = 25_000;
-  app.get("/api/news", async (_req, res) => {
+  app.get("/api/news", internalRoute("/api/news", async (_req, res) => {
     try {
       if (newsCache && Date.now() - newsCache.at < NEWS_CACHE_MS) {
         return res.json(newsCache.data);
@@ -1101,9 +1139,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json(data);
     } catch (e: any) {
       if (newsCache) return res.json(newsCache.data);
-      res.status(503).json({ message: e?.message ?? "Failed to build news snapshot" });
+      res.status(503).json({ dataState: "unavailable", reason: e?.message ?? "Failed to build news snapshot", message: e?.message ?? "Failed to build news snapshot" });
     }
-  });
+  }));
 
   // Alpha news indicator — ticker-scoped, tier-1/2/sentiment-shift filter, AI verdict.
   // GET /api/alpha-news?ticker=NVDA — returns ranked alpha events for the ticker.
@@ -1124,7 +1162,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       alphaEventsCache.set(ticker, { at: Date.now(), data });
       res.json(data);
     } catch (e: any) {
-      res.status(503).json({ message: e?.message ?? "Failed to fetch alpha news" });
+      res.status(503).json({ dataState: "unavailable", reason: e?.message ?? "Failed to fetch alpha news", message: e?.message ?? "Failed to fetch alpha news" });
     }
   });
 
@@ -1146,7 +1184,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const verdict = await getAlphaVerdict(event, context, !!body.force);
       res.json({ event, verdict });
     } catch (e: any) {
-      res.status(503).json({ message: e?.message ?? "Failed to generate alpha verdict" });
+      res.status(503).json({ dataState: "unavailable", reason: e?.message ?? "Failed to generate alpha verdict", message: e?.message ?? "Failed to generate alpha verdict" });
     }
   });
 
@@ -1154,7 +1192,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Cached 5 min — events don't move often.
   const econWeekCache = new Map<string, { at: number; data: EconWeek }>();
   const ECON_WEEK_CACHE_MS = 5 * 60_000;
-  app.get("/api/econ-week", async (req, res) => {
+  app.get("/api/econ-week", internalRoute("/api/econ-week", async (req, res) => {
     try {
       const monParam = typeof req.query.from === "string" ? req.query.from : undefined;
       const cacheKey = monParam ?? "auto";
@@ -1166,32 +1204,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       econWeekCache.set(cacheKey, { at: Date.now(), data });
       res.json(data);
     } catch (e: any) {
-      res.status(503).json({ message: e?.message ?? "Failed to build econ week" });
+      res.status(503).json({ dataState: "unavailable", reason: e?.message ?? "Failed to build econ week", message: e?.message ?? "Failed to build econ week" });
     }
-  });
+  }));
 
   // Lee-Ready order-flow imbalance — 1-min session-cumulative SPX trend.
   // Returns last 60 bars for histogram rendering on Chart + Trade Desk.
   app.get("/api/ofi", async (_req, res) => {
     try {
       const trend = await computeOfiTrend();
-      // Trim payload — client only needs last 60 bars for the histogram
-      const tail = trend.bars.slice(-60).map(b => ({
-        ts: b.ts,
-        signedVolume: b.signedVolume,
-        cumulative: b.cumulative,
-      }));
-      res.json({
-        bars: tail,
-        cumulativeNow: trend.cumulativeNow,
-        slope15m: trend.slope15m,
-        slope5m: trend.slope5m,
-        trend: trend.trend,
-        acceleration: trend.acceleration,
-        capturedAt: Math.floor(Date.now() / 1000),
-      });
+      // Last 60 bars plus dataState, reason and per-bar volumeMissing
+      // (ofiPayload.ts): failed or partial tape is never drawn as zero flow.
+      const { ofiApiPayload } = await import("./ofiPayload");
+      res.json(ofiApiPayload(trend, Date.now()));
     } catch (e: any) {
-      res.status(503).json({ message: e?.message ?? "Failed to compute OFI" });
+      res.status(503).json({ dataState: "unavailable", reason: e?.message ?? "Failed to compute OFI", message: e?.message ?? "Failed to compute OFI" });
     }
   });
 
@@ -1207,6 +1234,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       mag7Cache = { at: Date.now(), data };
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build Mag7 snapshot" });
     }
   });
@@ -1264,6 +1292,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         asOf: new Date().toISOString(),
       });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to fetch gamma levels" });
     }
   });
@@ -1280,6 +1309,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const data = await buildTickerOutlook(symbol, { forceVerdict: force });
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build ticker outlook" });
     }
   });
@@ -1310,6 +1340,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const data = await buildTickerProjection(symbol, sessions);
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build ticker projection" });
     }
   });
@@ -1324,11 +1355,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const data = await buildTickerCalendar(symbol);
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build ticker calendar" });
     }
   });
 
-  app.get("/api/regime", async (req, res) => {
+  app.get("/api/regime", internalRoute("/api/regime", async (req, res) => {
     try {
       const w = (req.query.window === "w13" ? "w13" : req.query.window === "w52" ? "w52" : "w4") as WindowKey;
       const hit = regimeCache.get(w);
@@ -1339,9 +1371,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       regimeCache.set(w, { at: Date.now(), data });
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build regime snapshot" });
     }
-  });
+  }));
 
   // Reactive sector web — 11 GICS sectors + leader satellites + correlation edges.
   // Serves both the force-graph and the deep heatmap grid below it. 10-min cache.
@@ -1350,6 +1383,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const data = await buildSectorWeb();
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build sector web" });
     }
   });
@@ -1367,6 +1401,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const data = buildUnderperformers(daily, { mode, maxRows });
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build underperformers" });
     }
   });
@@ -1416,7 +1451,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             console.log(`[pivot] Schwab fetch failed for ${symbol}, using stale cache (${cached.bars.length} bars)`);
             bars = cached.bars;
           } else {
-            return res.status(503).json({ message: `Schwab fetch failed for ${symbol}: ${fetchErr?.message ?? fetchErr}` });
+            return res.status(503).json({ dataState: "unavailable", reason: `Schwab fetch failed for ${symbol}: ${fetchErr?.message ?? fetchErr}`, message: `Schwab fetch failed for ${symbol}: ${fetchErr?.message ?? fetchErr}` });
           }
         }
       }
@@ -1426,7 +1461,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         if (cached && cached.bars.length >= 30) {
           bars = cached.bars;
         } else {
-          return res.status(503).json({ message: `Insufficient bars for ${symbol} (${bars.length})` });
+          return res.status(503).json({ dataState: "unavailable", reason: `Insufficient bars for ${symbol} (${bars.length})`, message: `Insufficient bars for ${symbol} (${bars.length})` });
         }
       }
       const spot = bars[bars.length - 1].close;
@@ -1436,8 +1471,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const isIndex = symbol === "$SPX";
       if (symbol === "SPY" || isIndex) {
         try {
-          const port = Number(process.env.PORT ?? 5000);
-          const r = await fetch(`http://127.0.0.1:${port}/api/gamma-levels-enhanced`);
+          const r = await internalFetch("/api/gamma-levels-enhanced");
           if (r.ok) {
             // Endpoint shape is { symbol, supported, enhanced: { callWall, ... } }
             const g = (await r.json())?.enhanced;
@@ -1466,6 +1500,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }));
       res.json({ ...projection, chartBars });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build pivot projection" });
     }
   });
@@ -1492,7 +1527,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Reuses lastResult cache so it never triggers a full snapshot rebuild.
   let quotesCache: { at: number; data: { spy: { price: number | null; changePct: number | null }; vix: { price: number | null; changePct: number | null }; timestamp: number } } | null = null;
   const QUOTES_CACHE_MS = 4_000; // 4s so 5s client poll always gets fresh data
-  app.get("/api/quotes", async (_req, res) => {
+  // In-process callers use this same handler (internalApi.ts).
+  app.get("/api/quotes", internalRoute("/api/quotes", async (_req: ExRequest, res: ExResponse) => {
     try {
       if (quotesCache && Date.now() - quotesCache.at < QUOTES_CACHE_MS) {
         return res.json(quotesCache.data);
@@ -1504,26 +1540,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       ]);
       const spyChangePct = spy.last && spy.prev ? ((spy.last - spy.prev) / spy.prev) * 100 : null;
       const vixChangePct = vix.last && vix.prev ? ((vix.last - vix.prev) / vix.prev) * 100 : null;
+      // stale: Schwab quote older than 2 min during the regular session (null = age unknown).
       const data = {
-        spy: { price: spy.last, changePct: spyChangePct },
-        vix: { price: vix.last, changePct: vixChangePct },
+        spy: { price: spy.last, changePct: spyChangePct, stale: spy.stale ?? null, ageSec: spy.ageMs != null ? Math.round(spy.ageMs / 1000) : null },
+        vix: { price: vix.last, changePct: vixChangePct, stale: vix.stale ?? null, ageSec: vix.ageMs != null ? Math.round(vix.ageMs / 1000) : null },
         timestamp: Date.now(),
       };
       quotesCache = { at: Date.now(), data };
       res.json(data);
     } catch (e: any) {
-      // Fallback to snapshot cache
-      if (lastResult) {
+      // Fallback to the snapshot's quotes: not live, flagged stale with their
+      // age, and only within the quote max age (schwabDataPolicy).
+      if (lastResult && Date.now() - lastResult.at <= maxServeAgeMs("quotes")) {
         const s = lastResult.data;
+        const ageSec = Math.round((Date.now() - lastResult.at) / 1000);
         return res.json({
-          spy: { price: s.spy.price, changePct: s.spy.changePct },
-          vix: { price: s.vol.vix.value, changePct: s.vol.vix.changePct },
+          spy: { price: s.spy.price, changePct: s.spy.changePct, stale: true, ageSec },
+          vix: { price: s.vol.vix.value, changePct: s.vol.vix.changePct, stale: true, ageSec },
           timestamp: lastResult.at,
         });
       }
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to fetch quotes" });
     }
-  });
+  }));
 
   // ---- Seasonality: 20-year monthly + weekly avg return patterns ----
   // 24-hour cache (historical data doesn't change intraday). Heavy fetch.
@@ -1535,6 +1575,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const data = await buildSeasonalitySnapshot(validLookback);
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build seasonality" });
     }
   });
@@ -1583,6 +1624,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json(response);
     } catch (e: any) {
       console.error("[seasonality/:symbol]", e?.message);
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to compute seasonality" });
     }
   });
@@ -1696,7 +1738,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         type: "FLIP BREAKOUT", direction: "long",
         structure: verticalBuy(Math.round(callWall), Math.round(callWall + 20), "call"),
         trigger: `break + hold above ${callWall.toFixed(0)}`,
-        target: `T2 UP ${t2up.toFixed(0)}`, stop: `close back below ${Math.round(callWall - 3)}`,
+        target: Number.isFinite(t2up) ? `T2 UP ${t2up.toFixed(0)}` : "T2 UP (unset)", stop: `close back below ${Math.round(callWall - 3)}`,
         size: "1%", horizon: "intraday runner",
       });
     } else if (distToPutWall > 0 && distToPutWall < Math.max(8, oneDayEm * 0.6) && qBucket !== "FRAGILE") {
@@ -1715,7 +1757,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         type: "FLIP BREAKOUT", direction: "short",
         structure: verticalBuy(Math.round(putWall), Math.round(putWall - 20), "put"),
         trigger: `break + hold below ${putWall.toFixed(0)}`,
-        target: `T2 DOWN ${t2down.toFixed(0)}`, stop: `close back above ${Math.round(putWall + 3)}`,
+        target: Number.isFinite(t2down) ? `T2 DOWN ${t2down.toFixed(0)}` : "T2 DOWN (unset)", stop: `close back above ${Math.round(putWall + 3)}`,
         size: "1%", horizon: "intraday runner",
       });
     } else if (qBucket === "FRAGILE" || gex < 0) {
@@ -1983,7 +2025,7 @@ Be precise. No hedging language. If inputs are insufficient, say so and stop —
   app.get("/api/killbox/third-order", async (req, res) => {
     const symbol = String(req.query.symbol || "$SPX").trim().toUpperCase() || "$SPX";
     const t = await computeThirdOrderStrikes(symbol);
-    if (!t) return res.status(503).json({ error: "unavailable", message: "chain or greeks unavailable" });
+    if (!t) return res.status(503).json({ dataState: "unavailable", reason: "chain or greeks unavailable", error: "unavailable", message: "chain or greeks unavailable" });
     res.json({ symbol, source: "computed", ...t });
   });
 
@@ -1991,17 +2033,23 @@ Be precise. No hedging language. If inputs are insufficient, say so and stop —
     try {
       // Compute live third-order strikes; body values still win if explicitly passed.
       const to = await computeThirdOrderStrikes(String(req.body?.symbol || "$SPX"));
+      // Weekly targets come from the user's saved level store (Heatseeker
+      // levels editor); third-order strikes from the live Schwab chain. A level
+      // that is neither sent, saved nor computed stays unset (null), never a
+      // hard-coded number from an old week.
+      const { userTargets } = await import("./gammaLevels");
+      const ut = userTargets();
       const {
         spx, vix, iv, qscore,
         gex, callWall, putWall, zeroGamma, hvl, gammaFlip,
-        upside = 7140, downside = 6950, t2up = 7270, t2down = 6885,
-        mopex = 7025,
-        vanna = to?.vanna ?? 7089,
-        zomma = to?.zomma ?? 7070,
-        charm = to?.charm ?? 7128,
-        negGamma = to?.negGamma ?? 7100,
-        upperVomma = to?.upperVomma ?? 7265,
-        lowerVomma = to?.lowerVomma ?? 6960,
+        upside = ut.upside, downside = ut.downside, t2up = ut.t2Up, t2down = ut.t2Down,
+        mopex = ut.mopex,
+        vanna = to?.vanna ?? ut.vanna,
+        zomma = to?.zomma ?? ut.zomma,
+        charm = to?.charm ?? ut.charm,
+        negGamma = to?.negGamma ?? ut.negGamma,
+        upperVomma = to?.upperVomma ?? ut.vommaUpper,
+        lowerVomma = to?.lowerVomma ?? ut.vommaLower,
         pcRatio, opex = false,
         regime,
         notes = "",
@@ -2026,12 +2074,12 @@ HVL: ${hvl}
 Gamma Flip: ${gammaFlip}
 
 USER WEEKLY TARGETS (locked)
-UPSIDE ${upside} / DOWNSIDE ${downside}
-T2 UP ${t2up} / T2 DOWN ${t2down}
-MOPEX ${mopex}
-VANNA ${vanna} / ZOMMA ${zomma} / CHARM ${charm}
-NEG \u03b3 ${negGamma}
-UPPER VOMMA ${upperVomma} / LOWER VOMMA ${lowerVomma}
+UPSIDE ${upside ?? "unset"} / DOWNSIDE ${downside ?? "unset"}
+T2 UP ${t2up ?? "unset"} / T2 DOWN ${t2down ?? "unset"}
+MOPEX ${mopex ?? "unset"}
+VANNA ${vanna ?? "unset"} / ZOMMA ${zomma ?? "unset"} / CHARM ${charm ?? "unset"}
+NEG \u03b3 ${negGamma ?? "unset"}
+UPPER VOMMA ${upperVomma ?? "unset"} / LOWER VOMMA ${lowerVomma ?? "unset"}
 
 SESSION
 Intraday P/C: ${pcRatio}
@@ -2041,6 +2089,19 @@ TRADER NOTES
 ${notes || "(none)"}
 
 Build the EOD setup brief.`;
+
+      // Missing live inputs must not become 0 (a 0 flip or wall turns into a
+      // "spot is 6,600 points above zero gamma" brief). Refuse and say which.
+      const requiredEod: Record<string, unknown> = { spx, vix, iv, gex, callWall, putWall, zeroGamma, hvl, gammaFlip, pcRatio };
+      const missingEod = Object.entries(requiredEod)
+        .filter(([, v]) => v == null || v === "" || !Number.isFinite(Number(v)))
+        .map(([k]) => k);
+      if (missingEod.length) {
+        return res.status(400).json({ error: "missing_inputs", missing: missingEod, message: `EOD brief needs live values for: ${missingEod.join(", ")}` });
+      }
+
+      // Optional user levels: unset stays NaN (printed "unset"), never 0.
+      const lvl = (v: unknown): number => (v == null || v === "" ? NaN : Number(v));
 
       // ---- DETERMINISTIC BRIEF (always runs, always returns) ----
       // This is the source of truth. Built from the exact same dealer-gamma
@@ -2056,12 +2117,12 @@ Build the EOD setup brief.`;
         zeroGamma: Number(zeroGamma) || 0,
         hvl: Number(hvl) || 0,
         gammaFlip: Number(gammaFlip) || 0,
-        upside: Number(upside), downside: Number(downside),
-        t2up: Number(t2up), t2down: Number(t2down),
-        mopex: Number(mopex), vanna: Number(vanna),
-        zomma: Number(zomma), charm: Number(charm),
-        negGamma: Number(negGamma),
-        upperVomma: Number(upperVomma), lowerVomma: Number(lowerVomma),
+        upside: lvl(upside), downside: lvl(downside),
+        t2up: lvl(t2up), t2down: lvl(t2down),
+        mopex: lvl(mopex), vanna: lvl(vanna),
+        zomma: lvl(zomma), charm: lvl(charm),
+        negGamma: lvl(negGamma),
+        upperVomma: lvl(upperVomma), lowerVomma: lvl(lowerVomma),
         pcRatio: Number(pcRatio) || 0,
         opex: Boolean(opex),
         regime,
@@ -2164,6 +2225,7 @@ Build the EOD setup brief.`;
       });
     } catch (e: any) {
       console.error("[eod-setup]", e?.message);
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "EOD setup failed" });
     }
   });
@@ -2178,6 +2240,7 @@ Build the EOD setup brief.`;
       ]);
       res.json({ ...collar, spxCloses });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build JPM collar" });
     }
   });
@@ -2276,7 +2339,7 @@ OUTPUT FORMAT — RETURN ONLY VALID JSON (no markdown fences, no prose preamble)
     "bear": { "probability": <int>, "target": "...", "horizon": "...", "rr": "...", "invalidation": "...", "evidence": ["..."] }
   },
   "trades": [
-    { "structure": "<concrete: e.g. 'long TLT 91/94 call spread 30DTE'>", "sizingKelly": "<fractional Kelly: e.g. '0.25x Kelly = 0.5% bankroll'>", "rr": "<R:R>", "invalidation": "<level>", "maxLoss": "<% bankroll>", "thesis": "<1 sentence>" }
+    { "structure": "<concrete: e.g. 'long TLT 91/94 call spread 30DTE'>", "sizingKelly": "n/a", "rr": "<R:R>", "invalidation": "<level>", "maxLoss": "<max loss of the structure in $ per 1 contract or 1 spread>", "thesis": "<1 sentence>" }
   ],
   "counterarguments": ["<strongest counterargument 1>", "<2>", "<3>"],
   "evidence": {
@@ -2292,13 +2355,13 @@ RULES:
 - Every scenario MUST include a specific invalidation level (“if SPY trades below 738.50 by 11am ET”).
 - R:R ≥ 2:1 for any trade you propose; otherwise return an empty trades array.
 - If no edge exists, set verdict="MIXED", confidence ≤ 30, return empty trades array, write “No edge — pass” in oneLiner.
-- Use Kelly sizing language. Default to 0.25x Kelly when uncertainty is high.
+- Do NOT size positions or use Kelly language: no fitted win probability exists for these ideas. Always write "n/a" in sizingKelly.
 - counterarguments must contain the STRONGEST opposing view, not throwaway hedges.
 - If the fusion context has data warnings (missing panels, stale feed), reflect that in confidence — do NOT pretend you have complete information.
 - NEVER hallucinate prices or specific moves not anchored in the provided levels/tape.
 - JSON ONLY. No \`\`\`json fences. No commentary.`;
 
-  app.post("/api/alpha-brief", async (req, res) => {
+  app.post("/api/alpha-brief", internalRoute("/api/alpha-brief", async (req, res) => {
     try {
       const { newsItems = [] } = req.body || {};
       const items = Array.isArray(newsItems) ? newsItems : [];
@@ -2478,7 +2541,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       console.error("[alpha-brief]", err?.message);
       res.status(500).json({ error: err?.message ?? "ALPHA brief failed" });
     }
-  });
+  }));
 
   // ---- /api/alpha-brief/email — returns rendered email body + subject ----
   // Convenience for the cron: one HTTP call that does the full pipeline (deterministic
@@ -2493,11 +2556,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
       // Reuse the same LLM dispatch logic by POSTing to ourselves via local fetch.
       // Cheaper to inline, but this preserves the single source of truth.
-      const PORT = process.env.PORT ?? "5000";
-      const r = await fetch(`http://127.0.0.1:${PORT}/api/alpha-brief`, {
+      const r = await internalFetch("/api/alpha-brief", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ newsItems: items }),
+        body: { newsItems: items },
       });
       const payload = r.ok ? await r.json() : { deterministic, fusion: fusionCtx, structured: null, provider: "none" };
 
@@ -2522,7 +2583,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   // ---- Heatseeker user-editable sticky levels (server-persisted, NO localStorage) ----
-  app.get("/api/heatseeker/levels", async (_req, res) => {
+  app.get("/api/heatseeker/levels", internalRoute("/api/heatseeker/levels", async (_req, res) => {
     try {
       const { readLevels } = await import("./heatseekerLevels");
       const out = await readLevels();
@@ -2530,7 +2591,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "failed to read heatseeker levels" });
     }
-  });
+  }));
   app.post("/api/heatseeker/levels", async (req, res) => {
     try {
       const { writeLevels, sanitizeLevels } = await import("./heatseekerLevels");
@@ -2553,29 +2614,43 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     if (!ticker || !/^[A-Z.\-]{1,8}$/.test(ticker)) {
       return res.status(400).json({ error: "invalid ticker" });
     }
-    const cached = _ivMoveCache.get(ticker);
+    // Optional earnings date + timing: the straddle must be on an expiry that
+    // settles after the market reacts (impliedScenario.pickEarningsExpiry).
+    // Without them the old rule (earliest expiry) is kept and labelled.
+    const afterRaw = String(req.query.after ?? "").trim();
+    const after = /^\d{4}-\d{2}-\d{2}$/.test(afterRaw) ? afterRaw : null;
+    const timing = String(req.query.timing ?? "").trim().toUpperCase().slice(0, 4);
+    const cacheKey = `${ticker}|${after ?? ""}|${timing}`;
+    const cached = _ivMoveCache.get(cacheKey);
     const now = Date.now();
     if (cached && (now - cached.ts) < 10 * 60_000) {
       return res.json(cached.data);
     }
     try {
-      // Pull front-month chain (~14 day window covers post-earnings weekly)
-      const chain: any = await schwabGetOptionChain(ticker, 14);
+      // Chain window long enough to list the first post-earnings expiry.
+      const daysToEvent = after ? Math.ceil((Date.parse(after + "T00:00:00Z") - now) / 86_400_000) : 0;
+      const windowDays = Math.min(60, Math.max(14, daysToEvent + 10));
+      const chain: any = await schwabGetOptionChain(ticker, windowDays);
       if (!chain || chain.error || (!chain.callExpDateMap && !chain.putExpDateMap)) {
         const out = { ticker, impliedMove: null, impliedMovePct: null, expiry: null, source: null };
-        _ivMoveCache.set(ticker, { ts: now, data: out });
+        _ivMoveCache.set(cacheKey, { ts: now, data: out });
         return res.json(out);
       }
       const spot = chain.underlying?.last ?? chain.underlying?.bid ?? null;
       if (!spot || spot <= 0) {
         const out = { ticker, impliedMove: null, impliedMovePct: null, expiry: null, source: chain.source ?? null };
-        _ivMoveCache.set(ticker, { ts: now, data: out });
+        _ivMoveCache.set(cacheKey, { ts: now, data: out });
         return res.json(out);
       }
       // Find earliest expiry with valid ATM quotes
       const callMap = chain.callExpDateMap ?? {};
       const putMap = chain.putExpDateMap ?? {};
-      const expiryKeys = Array.from(new Set([...Object.keys(callMap), ...Object.keys(putMap)])).sort();
+      let expiryKeys = Array.from(new Set([...Object.keys(callMap), ...Object.keys(putMap)])).sort();
+      if (after) {
+        // Only expiries that include the earnings reaction, earliest first.
+        const first = pickEarningsExpiry(expiryKeys, after, timing);
+        expiryKeys = first ? expiryKeys.filter((k) => k.slice(0, 10) >= first) : [];
+      }
       let pickedExpiry: string | null = null;
       let straddle: number | null = null;
       for (const expKey of expiryKeys) {
@@ -2602,16 +2677,21 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const out = straddle != null && pickedExpiry
         ? {
             ticker,
+            // $ per share: ATM call mid + put mid on that expiry (the
+            // straddle ~ expected absolute move to expiry, ~0.8 sigma).
             impliedMove: Number(straddle.toFixed(2)),
             impliedMovePct: Number(((straddle / spot) * 100).toFixed(2)),
             expiry: pickedExpiry,
             source: chain.source ?? null,
+            earningsDate: after,
+            expiryRule: after ? "first expiry after the earnings reaction" : "earliest expiry (no earnings date given)",
           }
-        : { ticker, impliedMove: null, impliedMovePct: null, expiry: null, source: chain.source ?? null };
-      _ivMoveCache.set(ticker, { ts: now, data: out });
+        : { ticker, impliedMove: null, impliedMovePct: null, expiry: null, source: chain.source ?? null, earningsDate: after };
+      _ivMoveCache.set(cacheKey, { ts: now, data: out });
       res.json(out);
     } catch (err: any) {
       console.error("[earnings-iv]", ticker, err?.message);
+      if (sendIfUnavailable(res, err)) return;
       res.status(500).json({ error: err?.message ?? "earnings iv fetch failed" });
     }
   });
@@ -2707,50 +2787,54 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   // ---- IV/RV ----
-  app.get("/api/iv-rv", async (req, res) => {
+  app.get("/api/iv-rv", internalRoute("/api/iv-rv", async (req, res) => {
     try {
       const { computeIvRvSnapshot } = await import("./ivRv");
       const sym = String(req.query.symbol ?? "SPY").toUpperCase();
       const snap = await computeIvRvSnapshot(sym);
       res.json(snap);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: e?.message ?? "iv-rv failed" });
     }
-  });
+  }));
 
   // ---- Full gamma curve ----
-  app.get("/api/gamma-curve", async (req, res) => {
+  app.get("/api/gamma-curve", internalRoute("/api/gamma-curve", async (req, res) => {
     try {
       const { buildGammaCurve } = await import("./gammaCurve");
       const sym = String(req.query.symbol ?? "SPY").toUpperCase();
       const out = await buildGammaCurve(sym);
       res.json(out);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: e?.message ?? "gamma-curve failed" });
     }
-  });
+  }));
 
   // ---- Cross-asset confirmation matrix ----
-  app.get("/api/cross-asset", async (_req, res) => {
+  app.get("/api/cross-asset", internalRoute("/api/cross-asset", async (_req, res) => {
     try {
       const { buildCrossAssetMatrix } = await import("./crossAsset");
       res.json(buildCrossAssetMatrix());
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: e?.message ?? "cross-asset failed" });
     }
-  });
+  }));
 
   // ---- Skew engine ----
-  app.get("/api/skew", async (req, res) => {
+  app.get("/api/skew", internalRoute("/api/skew", async (req, res) => {
     try {
       const { computeSkew } = await import("./skewEngine");
       const sym = String(req.query.symbol ?? "SPY").toUpperCase();
       const out = await computeSkew(sym);
       res.json(out);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: e?.message ?? "skew failed" });
     }
-  });
+  }));
 
   // ---- FRED macro ----
   app.get("/api/fred", async (_req, res) => {
@@ -2845,7 +2929,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   app.post("/api/edgelab/brief", briefHandler);
 
   // ---- Edge briefing: fused daily/weekly preview across regime, cross-asset, playbook, news, models, levels ----
-  app.get("/api/edgelab/briefing", async (req, res) => {
+  app.get("/api/edgelab/briefing", internalRoute("/api/edgelab/briefing", async (req, res) => {
     try {
       const symbol = String(req.query.symbol ?? "SPY").toUpperCase();
       const { buildBriefing } = await import("./edgeBriefing");
@@ -2854,11 +2938,11 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     } catch (e: any) {
       res.status(500).json({ error: e?.message ?? "briefing failed" });
     }
-  });
+  }));
 
   // ---- Enhanced gamma levels: computed + user weekly targets ----
   // Augments the existing /api/gamma-levels with vanna/charm/vomma/zomma user targets.
-  app.get("/api/gamma-levels-enhanced", async (req, res) => {
+  app.get("/api/gamma-levels-enhanced", internalRoute("/api/gamma-levels-enhanced", async (req, res) => {
     try {
       const symbol = String(req.query.symbol || "SPY").trim().toUpperCase();
       if (symbol !== "SPY" && symbol !== "^GSPC" && symbol !== "SPX") {
@@ -2867,12 +2951,13 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const snap = await getOrBuild(false);
       const g = snap.gamma;
       const spxNow = snap.spy.price ?? g.spot; // Use SPY price units to match computed chain levels
-      const enhanced = buildGammaLevelsEnhanced(g, spxNow);
-      res.json({ symbol: "SPY", supported: true, enhanced, asOf: snap.capturedAt });
+      const enhanced = buildGammaLevelsEnhanced(g, spxNow, { chainAsOf: snap.gammaAsOf ?? null, stale: !!(snap.gammaStale || snap.stale) });
+      res.json({ symbol: "SPY", supported: true, enhanced, asOf: snap.capturedAt, chainAsOf: snap.gammaAsOf ?? null, chainStale: !!(snap.gammaStale || snap.stale), chainMaxAgeMs: maxServeAgeMs("chains") });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build enhanced gamma levels" });
     }
-  });
+  }));
 
   // Background refresh cadence for voices (X-aware).
   // 10 handles × ~10 tweets per refresh ≈ up to 10 reads/handle + 10 user lookups
@@ -2885,18 +2970,13 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         fetchAllVoices(),
         getOrBuild(false).catch(() => null),
       ]);
-      const liveMetrics = snap ? {
-        vix: snap.vol.vix.value ?? 0,
-        vvix: snap.vol.vvix.value ?? 0,
-        spy: snap.spy.price ?? 0,
-        skew: snap.vol.skew.value ?? 0,
-        pcr: snap.gamma.pcrOi ?? 0,
-      } : { vix: 0, vvix: 0, spy: 0, skew: 0, pcr: 0 };
-      for (const it of items) factCheckItem(it, liveMetrics);
+      const liveMetrics = liveMetricsFromSnapshot(snap);
+      for (const it of items) factCheckItem(it, factCheckMetrics(liveMetrics));
       voicesCache = {
         at: Date.now(),
         data: {
           voices, items, liveMetrics,
+          liveMetricsState: snap ? "ok" : "unavailable",
           xEnabled: xEnabled(),
           voicesBias: computeVoicesBias(items),
           capturedAt: Math.floor(Date.now() / 1000),
@@ -2933,16 +3013,17 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
   // Server-synthesized 3-path scenario plan for SPY/SPX, additive to ML projection.
   // Locked at 9:00 ET; drift overlay shows live deviation from morning lock.
-  app.get("/api/playbook/daily", async (req, res) => {
+  app.get("/api/playbook/daily", internalRoute("/api/playbook/daily", async (req, res) => {
     try {
       const symbol = (String(req.query.symbol || "SPY").toUpperCase() === "SPX" ? "SPX" : "SPY") as "SPY" | "SPX";
       const { buildDailyPlaybook } = await import("./dailyPlaybook");
       const pb = await buildDailyPlaybook(symbol);
       res.json(pb);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: String(e?.message || e) });
     }
-  });
+  }));
 
   // The 9:00 ET locked playbook (immutable for the day; null until first lock fires)
   app.get("/api/playbook/daily/locked", async (_req, res) => {
@@ -2962,6 +3043,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const pb = await lockPlaybookAtOpen(symbol);
       res.json(pb);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: String(e?.message || e) });
     }
   });
@@ -2974,6 +3056,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const drift = await getDriftFromLocked(symbol);
       res.json(drift);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: String(e?.message || e) });
     }
   });
@@ -3041,6 +3124,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const source = quotes.length > 0 ? quotes[0].source : "schwab";
       res.json({ quotes, source, asOf: Date.now() });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Quotes fetch failed" });
     }
   });
@@ -3055,6 +3139,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const data = await schwabGetPriceHistory(symbol, periodType, period, frequencyType, frequency);
       res.json(data);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Price history failed" });
     }
   });
@@ -3070,12 +3155,13 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const dte = req.query.dte !== undefined ? parseInt(String(req.query.dte)) : undefined;
       const chain = await schwabGetOptionChain(symbol, dte);
       if ("error" in chain) {
-        return res.status(503).json(chain);
+        return res.status(503).json({ ...chain, dataState: chain.dataState ?? "unavailable", reason: chain.reason ?? chain.error });
       }
       // Augment with computed GEX levels
       const gex = computeGEXFromChain(chain);
       res.json({ ...chain, gex });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Option chain fetch failed" });
     }
   });
@@ -3098,29 +3184,19 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         return res.json(cached.data);
       }
 
-      // Fetch chain — Schwab required, no fallback
-      let chain = await schwabGetOptionChain(symbol, dte);
-      let usedSymbol = symbol;
+      // Fetch chain — Schwab only. No SPY substitute for SPX (a different
+      // instrument, scale and multiplier): unavailable instead.
+      const chain = await schwabGetOptionChain(symbol, dte);
+      const usedSymbol = symbol;
 
       if ("error" in chain) {
-        // Try SPY fallback if SPX-like symbol fails
-        const isSPX = symbol.includes("SPX") || symbol === "$SPX" || symbol === "SPXW";
-        if (isSPX) {
-          const spyChain = await schwabGetOptionChain("SPY", dte);
-          if ("error" in spyChain) {
-            return res.status(503).json({
-              error: "schwab_required",
-              message: "Schwab connection required for chain audit. Please connect Schwab in Settings.",
-            });
-          }
-          chain = spyChain;
-          usedSymbol = "SPY";
-        } else {
-          return res.status(503).json({
-            error: "schwab_required",
-            message: "Schwab connection required for chain audit. Please connect Schwab in Settings.",
-          });
-        }
+        return res.status(503).json({
+          error: chain.error,
+          dataState: chain.dataState ?? "unavailable",
+          message: chain.error === "schwab_required"
+            ? "Schwab connection required for chain audit. Please connect Schwab in Settings."
+            : `Schwab chain unavailable for ${symbol}: ${chain.reason ?? "no answer"}`,
+        });
       }
 
       const spot = chain.underlying.last ??
@@ -3130,18 +3206,28 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
       if (!spot || spot <= 0) {
         return res.status(503).json({
+          dataState: "no_spot",
+          reason: "Unable to determine underlying spot price from chain data.",
           error: "no_spot",
           message: "Unable to determine underlying spot price from chain data.",
         });
       }
 
-      const audit = buildChainAudit(chain, spot);
+      const audit: any = buildChainAudit(chain, spot);
+      // Chain provenance for the age chip (additive fields).
+      audit.chainSource = "schwab";
+      audit.chainAsOfMs = chain.asOfMs;
+      audit.chainStale = chain.stale;
+      audit.chainCoverage = chain.strikeCoverage
+        ? { belowPct: chain.strikeCoverage.belowPct, abovePct: chain.strikeCoverage.abovePct, complete: chain.strikeCoverage.complete }
+        : null;
 
       // KILLBOX snapshot write — fire-and-forget. Persist per-strike greek
       // exposure so the time-series gradient heatmap has history to render.
       // Never let a DB failure (or empty chain) break the audit response.
       try {
-        if (audit.dataQuality !== "minimal") {
+        // History rows only from a chain fetched for this call (never a re-served one).
+        if (audit.dataQuality !== "minimal" && !chain.stale) {
           const ts = Date.now();
           const rows: GreekSnapshotRow[] = [];
           for (const p of audit.vanna.profile) {
@@ -3171,7 +3257,12 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         symbol: usedSymbol,
         requestedSymbol: symbol,
         spot,
-        asOf: Date.now(),
+        // Data time: when Schwab produced the chain (was the time of this call).
+        asOf: chain.asOfMs,
+        chainAsOfMs: chain.asOfMs,
+        chainStale: chain.stale,
+        chainMaxAgeMs: chain.maxAgeMs,
+        chainSource: "schwab" as const,
         audit,
       };
 
@@ -3179,6 +3270,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       res.json(payload);
     } catch (e: any) {
       console.error("[chain-audit]", e?.message);
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "internal", message: e?.message ?? "Chain audit failed" });
     }
   });
@@ -3206,6 +3298,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       res.json({ symbol, greek, hours, points, stats });
     } catch (e: any) {
       console.error("[killbox/gradient]", e?.message);
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "internal", message: e?.message ?? "Killbox gradient failed" });
     }
   });
@@ -3219,7 +3312,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   // Classifies into 6 regimes with a one-sentence verdict + color tier.
   app.get("/api/regime/headline", async (_req, res) => {
     try {
-      const { getOptionChain } = await import("./schwab");
+      const { getOptionChainLadder } = await import("./schwab");
       const { getQuote } = await import("./sources");
 
       // 1) VIX term structure — Schwab cash indexes via getQuote (returns {last, prev})
@@ -3255,7 +3348,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       let spot: number | null = null;
       let weightMode: "oi" | "volume" | "hybrid" = "oi";
       try {
-        const chain = await getOptionChain("$SPX", 30);
+        // 0-30 DTE from the shared chain ladder ([0-2] [3-7] [8-30]), the
+        // same cached segments the Models horizons use (round 3, N1-1).
+        const chain = await getOptionChainLadder("$SPX", 30);
         if (!("error" in chain)) {
           spot = chain.underlying.last ?? null;
           let totalOI = 0, totalVol = 0;
@@ -3283,14 +3378,31 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
                     const oi = c.openInterest || 0;
                     const vol = c.totalVolume || 0;
                     if (oi === 0 && vol === 0) continue;
-                    const gamma = c.gamma ?? 0;
+                    // Same gamma basis as /api/killbox/forward: our clock T,
+                    // sigma valid for it, Black-Scholes gamma; vendor gamma only
+                    // when no sigma and only inside (0, 1] (Schwab sends -999
+                    // sentinels when the market is closed). Settled -> skip.
+                    const T = contractYears(ek, c);
+                    if (!(T > 0)) continue;
+                    const ivPct = c.volatility || 0;
+                    const sigma = ivForClock({
+                      vendorIv: ivPct > 0 && ivPct < 500 ? ivPct / 100 : 0,
+                      bid: Number(c.bid), ask: Number(c.ask), spot, strike: parseFloat(sk), T, type: side,
+                    });
+                    const rawGamma = Number(c.gamma);
+                    const gamma = sigma > 0
+                      ? bsGammaOurClock(spot, parseFloat(sk), sigma, T, FLIP_RATE, FLIP_DIV_YIELD)
+                      : (rawGamma > 0 && rawGamma <= 1 ? rawGamma : 0);
+                    if (!(gamma > 0) || !Number.isFinite(gamma)) continue;
                     let w = 0;
                     if (weightMode === "oi") w = oi;
                     else if (weightMode === "volume") w = vol;
                     else w = oi + vol * 0.25;
                     if (w <= 0) continue;
                     const sign = side === "C" ? 1 : -1;
-                    const contrib = sign * gamma * w * spot * spot * 0.01;
+                    // $ per 1% move: gamma x contracts x 100 x S^2 x 0.01 (the x100
+                    // contract multiplier was missing: 100x too small).
+                    const contrib = sign * dollarGexPerPct(gamma, w, spot);
                     netGex += contrib;
                     totalAbsGex += Math.abs(contrib);
                   }
@@ -3298,7 +3410,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
               }
             }
           }
-          gexRegime = netGex > 0 ? "long_gamma" : "short_gamma";
+          // No priced contract (closed-market sentinels, empty chain) is
+          // unknown, not short gamma.
+          gexRegime = totalAbsGex > 0 ? (netGex > 0 ? "long_gamma" : "short_gamma") : "unknown";
           gexShare = totalAbsGex > 0 ? netGex / totalAbsGex : 0; // -1..+1
         }
       } catch (e: any) {
@@ -3336,14 +3450,16 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         | "pinning"
         | "mean_reversion"
         | "trend_continuation"
-        | "neutral";
+        | "neutral"
+        | "unavailable";
 
       let regime: RegimeKey = "neutral";
       let confidence: "high" | "medium" | "low" = "low";
-      let headline = "Neutral regime — no clear edge, size down.";
+      let headline = "Neutral — no decisive regime signal.";
       let tier: "bullish" | "bearish" | "neutral" | "warning" = "neutral";
 
-      const vixPct = vixChg ?? 0;
+      // Missing VIX change is missing, not 0%: NaN fails every rule that needs it.
+      const vixPct = vixChg ?? NaN;
       const absShare = Math.abs(gexShare);
 
       // Volatility expansion — backwardation + VIX up + dealers short gamma
@@ -3390,6 +3506,14 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         const termLabel = termState === "contango" ? "contango" : termState === "backwardation" ? "backwardation" : "flat term";
         headline = `Neutral — ${gexLabel} (${(gexShare * 100).toFixed(0)}%), VIX ${termLabel}, no decisive edge.`;
       }
+      // Inputs missing (e.g. Schwab not answering): say so, never default to a neutral read.
+      else {
+        regime = "unavailable";
+        confidence = "low";
+        tier = "neutral";
+        const missing = [gexRegime === "unknown" ? "dealer gamma" : null, termState === "unknown" ? "VIX term structure" : null].filter(Boolean).join(" and ");
+        headline = `Regime unavailable — ${missing} missing from Schwab; no regime read.`;
+      }
 
       res.json({
         regime,
@@ -3407,6 +3531,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       });
     } catch (e: any) {
       console.error("[regime/headline]", e?.message, e?.stack);
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "internal", message: e?.message ?? "Regime headline failed" });
     }
   });
@@ -3427,11 +3552,11 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const { getOptionChain } = await import("./schwab");
       const chain = await getOptionChain(symbol, dte);
       if ("error" in chain) {
-        return res.status(503).json({ error: chain.error, message: "Option chain unavailable" });
+        return res.status(503).json({ error: chain.error, dataState: chain.dataState ?? "unavailable", message: `Option chain unavailable: ${chain.reason ?? chain.error}` });
       }
       const spot = chain.underlying.last ?? null;
       if (!spot || spot <= 0) {
-        return res.status(503).json({ error: "no_spot", message: "Spot price unavailable" });
+        return res.status(503).json({ dataState: "no_spot", reason: "Spot price unavailable", error: "no_spot", message: "Spot price unavailable" });
       }
 
       // First pass: totals for weighting mode
@@ -3489,8 +3614,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
           const dteStr = ek.split(":")[1] || "30";
           const dteDays = Math.max(1 / 365, parseFloat(dteStr) || 30);
           expiryDTE.set(ek, dteDays);
-          const T = dteDays / 365;
-          const sqrtT = Math.sqrt(T);
+          // T per contract below: one clock (timeToExpiry via chainClock)
           for (const sk of Object.keys(map[ek] || {})) {
             const strike = parseFloat(sk);
             if (!isFinite(strike)) continue;
@@ -3500,10 +3624,20 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
               const oi = c.openInterest || 0;
               const vol = c.totalVolume || 0;
               if (oi === 0 && vol === 0) continue;
+              // One clock: calendar minutes to the real settlement instant
+              // (AM SPX vs PM SPXW, half days) / 525,600; settled -> skip.
+              const T = contractYears(ek, c);
+              if (!(T > 0)) continue;
+              const sqrtT = Math.sqrt(T);
               const ivPct = c.volatility || 0;
-              const sigma = ivPct > 0 ? ivPct / 100 : 0;
-              const delta = c.delta ?? 0;
-              const gamma = c.gamma ?? 0;
+              // sigma valid for our T (re-solved from the mid inside 3 days)
+              const sigma = ivForClock({
+                vendorIv: ivPct > 0 && ivPct < 500 ? ivPct / 100 : 0,
+                bid: Number(c.bid), ask: Number(c.ask), spot, strike, T, type: side,
+              });
+              // Gamma on the same basis as the flip (Black-Scholes, our T);
+              // vendor gamma only when no usable sigma.
+              const gamma = sigma > 0 ? bsGammaOurClock(spot, strike, sigma, T, FLIP_RATE, FLIP_DIV_YIELD) : (c.gamma ?? 0);
               if (side === "C") cell.callOI += oi; else cell.putOI += oi;
 
               let weight = 0;
@@ -3513,22 +3647,21 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
               if (weight <= 0) continue;
 
               const sign = side === "C" ? 1 : -1;
-              cell.gex += sign * gamma * weight * spot * spot * 0.01;
+              // $ per 1% move: gamma x contracts x 100 x S^2 x 0.01 (the x100
+              // contract multiplier was missing, understating GEX 100x).
+              cell.gex += sign * dollarGexPerPct(gamma, weight, spot);
 
-              if (sigma > 0 && Math.abs(delta) > 1e-6 && Math.abs(delta) < 1 - 1e-6) {
-                const callDelta = side === "C" ? Math.abs(delta) : 1 - Math.abs(delta);
-                const d1 = invN(callDelta);
-                const d2 = d1 - sigma * sqrtT;
-                const phid1 = phi(d1);
-                const vegaPerContract = spot * phid1 * sqrtT;
-                const vanna = -vegaPerContract * d2 / (spot * sigma * sqrtT);
-                const charm = -phid1 * d2 / (2 * T * sigma * sqrtT) / 365;
-                const vomma = vegaPerContract * d1 * d2 / sigma;
-                const zomma = gamma * (d1 * d2 - 1) / sigma;
-                cell.vanna += sign * vanna * weight * 100;
-                cell.charm += sign * charm * weight * 100;
-                cell.vomma += sign * vomma * weight * 100;
-                cell.zomma += sign * zomma * weight * 100;
+              if (sigma > 0) {
+                // Dollar exposures, one definition (server/greekExposure.ts):
+                // vanna $ delta per +1 vol pt, charm $ delta over min(1 day, T),
+                // vomma $ vega per +1 vol pt, zomma $ GEX per +1 vol pt. The old
+                // inline math gave share-units per 1.00 vol and a charm off by
+                // -1/(sigma sqrt T) while the client labelled them $/1%vol, $/day.
+                const x = contractExposure({ spot, strike, sigma, T, contracts: weight });
+                cell.vanna += sign * x.vannaPerVolPt;
+                cell.charm += sign * x.charmPerDay;
+                cell.vomma += sign * x.vommaPerVolPt;
+                cell.zomma += sign * x.zommaPerVolPt;
               }
             }
           }
@@ -3590,14 +3723,16 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
           if (st.strike >= spot && st.total > callWallValue) { callWallValue = st.total; callWall = st.strike; }
           if (st.strike <= spot && st.total < putWallValue) { putWallValue = st.total; putWall = st.strike; }
         }
-        let cum = 0, prevCum = 0, prevStrike = strikeTotals[0]?.strike ?? 0;
-        for (const st of strikeTotals) {
-          prevCum = cum; cum += st.total;
-          if ((prevCum <= 0 && cum > 0) || (prevCum >= 0 && cum < 0)) {
-            gammaFlip = (prevStrike + st.strike) / 2; break;
-          }
-          prevStrike = st.strike;
-        }
+        // Gamma flip: app-wide re-priced definition (gammaProfile.ts), same
+        // weighting as the cells. The old cumulative loop fired on the first
+        // strike (cum starts at 0), so it always returned the lowest strike.
+        gammaFlip = repricedFlipFromChain(chain, spot, {
+          r: FLIP_RATE,
+          q: FLIP_DIV_YIELD,
+          weight: (c: any) => weightMode === "oi" ? (Number(c?.openInterest) || 0)
+            : weightMode === "volume" ? (Number(c?.totalVolume) || 0)
+            : (Number(c?.openInterest) || 0) + (Number(c?.totalVolume) || 0) * 0.25,
+        }).zeroGamma;
       }
 
       res.json({
@@ -3612,9 +3747,12 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         maxAbs,
         strikeTotals,
         levels: { callWall, callWallValue, putWall, putWallValue, gammaFlip },
+        // weight and expiry universe of gammaFlip (differs from Heatseeker's single-expiry flip)
+        flipInputs: flipInputs({ weight: flipWeightOf(weightMode), universe: "all-expiries-in-request", expiryKeys: chainExpiryKeys(chain) }),
         source: chain.source,
       });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "server_error", message: e?.message || String(e) });
     }
   });
@@ -3634,16 +3772,20 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         getPriceHistory(symbol, "day", 2, "minute", 5, false).catch(() => ({ candles: [] as any[] })),
       ]);
       if ("error" in chain) {
-        return res.status(503).json({ error: (chain as any).error, message: "Option chain unavailable" });
+        return res.status(503).json({ dataState: "unavailable", reason: "Option chain unavailable", error: (chain as any).error, message: "Option chain unavailable" });
       }
       const spot = chain.underlying.last ?? null;
-      if (!spot || spot <= 0) return res.status(503).json({ error: "no_spot" });
+      if (!spot || spot <= 0) return res.status(503).json({ dataState: "no_spot", reason: "no underlying spot in the Schwab $SPX chain", error: "no_spot" });
 
       // ── nearest expiry (min DTE) across both maps ──
       const dteOf = (ek: string) => { const n = parseFloat(ek.split(":")[1] || "99"); return isFinite(n) ? n : 99; };
       const allKeys = [...Object.keys(chain.callExpDateMap || {}), ...Object.keys(chain.putExpDateMap || {})];
-      if (allKeys.length === 0) return res.status(503).json({ error: "no_expiries" });
-      const nearestKey = allKeys.sort((a, b) => dteOf(a) - dteOf(b))[0];
+      if (allKeys.length === 0) return res.status(503).json({ dataState: "unavailable", reason: "the Schwab chain returned no expiries", error: "no_expiries" });
+      // Nearest expiry that has not settled yet (after the close today's key
+      // can still be listed; its contracts carry no risk).
+      const liveKeys = allKeys.filter((k) => !timeToExpiry(expiryOfKey(k)).expired);
+      if (liveKeys.length === 0) return res.status(503).json({ dataState: "unavailable", reason: "the Schwab chain has no unsettled expiry", error: "no_live_expiries" });
+      const nearestKey = liveKeys.sort((a, b) => dteOf(a) - dteOf(b))[0];
       const nearestDte = dteOf(nearestKey);
       const expiryDate = nearestKey.split(":")[0];
 
@@ -3653,14 +3795,20 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const etHour = parseInt(get("hour"), 10) % 24;
       const etMin = parseInt(get("minute"), 10);
       const nowMin = etHour * 60 + etMin;
-      const OPEN = 9 * 60 + 30, CLOSE = 16 * 60;
+      // Session bounds from the exchange calendar: 13:00 close on half days;
+      // a holiday/weekend reads as closed (next session = a full one).
+      const todayEt = etDate();
+      const OPEN = REGULAR_OPEN_MIN;
+      const todayClose = sessionCloseMinutes(todayEt);
+      const CLOSE = todayClose ?? -1;
+      const sessionLen = todayClose != null ? todayClose - OPEN : 390;
       let sessionState: "preopen" | "intraday" | "closed";
       let startMin: number; // minutes-from-open where projection starts
-      if (nowMin < OPEN) { sessionState = "preopen"; startMin = 0; }
-      else if (nowMin < CLOSE) { sessionState = "intraday"; startMin = nowMin - OPEN; }
+      if (todayClose != null && nowMin < OPEN) { sessionState = "preopen"; startMin = 0; }
+      else if (todayClose != null && nowMin < CLOSE) { sessionState = "intraday"; startMin = nowMin - OPEN; }
       else { sessionState = "closed"; startMin = 0; }
-      const projMinutes = 390 - startMin; // projection window length
-      const minutesToClose = sessionState === "intraday" ? CLOSE - nowMin : 390;
+      const projMinutes = (sessionState === "closed" ? 390 : sessionLen) - startMin; // projection window length
+      const minutesToClose = sessionState === "intraday" ? CLOSE - nowMin : projMinutes;
 
       // ── aggregate 0DTE-only per-strike GEX + charm ──
       const SQRT_2PI = Math.sqrt(2 * Math.PI);
@@ -3679,27 +3827,23 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
       };
 
-      type Row = { strike: number; gex: number; charm: number; callOI: number; putOI: number; callMid: number; putMid: number; callIV: number; putIV: number };
+      type Row = { strike: number; gex: number; charm: number; callOI: number; putOI: number; callMid: number; putMid: number; callIV: number; putIV: number; T?: number };
       const agg = new Map<number, Row>();
       const getRow = (k: number): Row => {
         let r = agg.get(k);
         if (!r) { r = { strike: k, gex: 0, charm: 0, callOI: 0, putOI: 0, callMid: 0, putMid: 0, callIV: 0, putIV: 0 }; agg.set(k, r); }
         return r;
       };
-      // RTH-minute time basis — matches odteProjection's MIN_PER_YEAR=252·390
-      // convention (the old calendar half-day floor was ~2.5× larger at 14:00,
-      // so panel greeks disagreed with the projection on the same screen).
-      const etNowOdte = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-      const minNowOdte = etNowOdte.getHours() * 60 + etNowOdte.getMinutes();
-      const remainingTodayMin = minNowOdte < 570 ? 390 : Math.max(15, 960 - Math.min(960, minNowOdte));
-      const remainingMinOdte = remainingTodayMin + Math.max(0, nearestDte) * 390 * (252 / 365);
-      const T = remainingMinOdte / (252 * 390);
-      const sqrtT = Math.sqrt(T);
+      // Greeks: one clock per contract (timeToExpiry via chainClock, calendar
+      // minutes to the real settlement instant / 525,600) with sigma solved
+      // for that T. The projection cone below stays on odteProjection's
+      // trading-minute basis, converted from the same total variance.
+      let atmTotalVar: number | null = null; // sigma^2 * T of the ATM contracts (calendar clock)
       const passes: Array<{ side: "C" | "P"; map: any }> = [
         { side: "C", map: chain.callExpDateMap },
         { side: "P", map: chain.putExpDateMap },
       ];
-      let totalOI = 0, totalVol = 0, validGammaCount = 0;
+      let totalOI = 0, totalVol = 0, validGammaCount = 0, unpricedGammaCount = 0;
       for (const { side, map } of passes) {
         const strikes = map?.[nearestKey] || {};
         for (const sk of Object.keys(strikes)) {
@@ -3713,32 +3857,44 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
             const mid = c.bid != null && c.ask != null && c.ask > 0 ? (c.bid + c.ask) / 2 : (c.last || 0);
             // Schwab returns -999 sentinels for greeks/IV when market is closed — sanitize hard
             const rawIV = c.volatility || 0;
-            const ivPct = rawIV > 0 && rawIV < 500 ? rawIV : 0;
-            if (side === "C") { row.callOI += oi; row.callMid = mid; row.callIV = ivPct; }
-            else { row.putOI += oi; row.putMid = mid; row.putIV = ivPct; }
+            const T = contractYears(nearestKey, c);
+            if (!(T > 0)) continue; // settled (e.g. AM SPX after the open)
+            const sqrtT = Math.sqrt(T);
+            const sigmaClock = ivForClock({
+              vendorIv: rawIV > 0 && rawIV < 500 ? rawIV / 100 : 0,
+              bid: Number(c.bid), ask: Number(c.ask), spot, strike, T, type: side,
+            });
+            const ivPct = sigmaClock > 0 ? sigmaClock * 100 : 0; // calendar-clock IV, %
+            if (side === "C") { row.callOI += oi; row.callMid = mid; row.callIV = ivPct; row.T = T; }
+            else { row.putOI += oi; row.putMid = mid; row.putIV = ivPct; row.T = T; }
             const weight = oi + vol * 0.25; // hybrid: 0DTE OI is stale by design, volume carries intraday info
             if (weight <= 0) continue;
-            const rawGamma = c.gamma ?? 0;
-            const gamma = rawGamma > 0 && rawGamma <= 1 ? rawGamma : 0; // vanilla gamma is (0,1]
-            const rawDelta = c.delta ?? 0;
-            const delta = Math.abs(rawDelta) > 0 && Math.abs(rawDelta) < 1 ? rawDelta : 0;
-            const sigma = ivPct > 0 ? ivPct / 100 : 0;
+            const sigma = sigmaClock;
             const sign = side === "C" ? 1 : -1;
-            if (gamma > 0) { row.gex += sign * gamma * weight * spot * spot * 0.01; validGammaCount++; }
-            if (sigma > 0 && Math.abs(delta) > 1e-6 && Math.abs(delta) < 1 - 1e-6) {
-              const callDelta = side === "C" ? Math.abs(delta) : 1 - Math.abs(delta);
-              const d1 = invN(callDelta);
-              const d2 = d1 - sigma * sqrtT;
-              // charm per day, dealer-signed, weighted
-              const charm = -phi(d1) * d2 / (2 * T * sigma * sqrtT) / 365;
-              row.charm += sign * charm * weight * spot * 0.01;
+            // GEX in $ per 1% move (gamma x contracts x 100 x S^2 x 0.01) on the
+            // same basis as the Killbox, thermal map and gamma flip:
+            // Black-Scholes gamma (r = FLIP_RATE, q = FLIP_DIV_YIELD) with our
+            // clock T and sigma valid for it. The old line used Schwab's
+            // vendor gamma (undocumented clock), so this map's walls and the
+            // flip it is drawn against were on different gammas. A contract
+            // with no usable sigma is left out and counted, not given a vendor value.
+            const gamma = sigma > 0 ? bsGammaOurClock(spot, strike, sigma, T, FLIP_RATE, FLIP_DIV_YIELD) : 0;
+            if (gamma > 0 && Number.isFinite(gamma)) { row.gex += sign * dollarGexPerPct(gamma, weight, spot); validGammaCount++; }
+            else unpricedGammaCount++;
+            if (sigma > 0) {
+              // Dealer-signed $ delta-notional change to settlement (same-day
+              // expiry: h = T), server/greekExposure.ts. The old line used
+              // -phi(d1) d2 / (2 T sigma sqrt T) / 365 x S x 0.01: sign flipped and
+              // 1/(sigma sqrt T) too large (~360x with 3 h left), so the tilt sat
+              // at its clamp.
+              row.charm += sign * contractExposure({ spot, strike, sigma, T, contracts: weight }).charmPerDay;
             }
           }
         }
       }
 
       const rows = [...agg.values()].filter(r => Math.abs(r.strike - spot) / spot <= 0.03).sort((a, b) => a.strike - b.strike);
-      if (rows.length === 0) return res.status(503).json({ error: "no_strikes" });
+      if (rows.length === 0) return res.status(503).json({ dataState: "unavailable", reason: "the Schwab chain has no usable strikes", error: "no_strikes" });
       const netGex = rows.reduce((s, r) => s + r.gex, 0);
       const netCharm = rows.reduce((s, r) => s + r.charm, 0);
       const totalAbsGex = rows.reduce((s, r) => s + Math.abs(r.gex), 0) || 1;
@@ -3749,17 +3905,18 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         if (r.gex > maxPos) { maxPos = r.gex; callWall = r.strike; }
         if (r.gex < maxNeg) { maxNeg = r.gex; putWall = r.strike; }
       }
-      // gamma flip: cumulative-gex zero crossing across the band
-      let gammaFlip: number | null = null;
-      let cum = 0; let prevCum = 0; let prevStrike: number | null = null;
-      for (const r of rows) {
-        prevCum = cum; cum += r.gex;
-        if (prevStrike != null && prevCum !== 0 && Math.sign(prevCum) !== Math.sign(cum) && cum !== 0) {
-          const f = Math.abs(prevCum) / (Math.abs(prevCum) + Math.abs(cum));
-          gammaFlip = prevStrike + (r.strike - prevStrike) * f;
-        }
-        prevStrike = r.strike;
-      }
+      // gamma flip: app-wide re-priced definition (gammaProfile.ts) on this
+      // expiry, same hybrid weight and the same per-contract clock as above
+      // (rowsFromChain defaults to chainClock.contractYears).
+      const gammaFlip: number | null = repricedFlipFromChain(chain, spot, {
+        r: FLIP_RATE,
+        q: FLIP_DIV_YIELD,
+        expiryKeys: [nearestKey],
+        weight: (c: any) => (Number(c?.openInterest) || 0) + (Number(c?.totalVolume) || 0) * 0.25,
+        lowPct: 0.95,
+        highPct: 1.05,
+        nLevels: 101,
+      }).zeroGamma;
       // pin candidate: max |gex| strike within ±1.5% of spot
       let pin: number | null = null, pinMag = 0;
       for (const r of rows) {
@@ -3769,24 +3926,34 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       // ── ATM IV + straddle expected move ──
       let atmRow = rows[0];
       for (const r of rows) if (Math.abs(r.strike - spot) < Math.abs(atmRow.strike - spot)) atmRow = r;
+      // atmIVPct: calendar-clock IV (comparable with the chain's IV column).
       let atmIVPct = (atmRow.callIV > 0 && atmRow.putIV > 0) ? (atmRow.callIV + atmRow.putIV) / 2 : (atmRow.callIV || atmRow.putIV || 0);
+      if (atmIVPct > 0 && atmRow.T != null && atmRow.T > 0) atmTotalVar = (atmIVPct / 100) ** 2 * atmRow.T;
       const straddle = (atmRow.callMid || 0) + (atmRow.putMid || 0);
       const MIN_PER_YEAR = 252 * 390;
       let atmIVSource: "chain" | "straddle" = "chain";
       if (atmIVPct <= 0 && straddle > 0) {
         // Closed-market fallback: ATM straddle ~= 0.8 * S * sigma * sqrt(T) -> invert for sigma
-        const tYears = 390 / MIN_PER_YEAR; // full session
+        const tYears = projMinutes / MIN_PER_YEAR; // session minutes (210 on a half day)
         atmIVPct = (straddle / (0.8 * spot * Math.sqrt(tYears))) * 100;
         atmIVSource = "straddle";
       }
-      const atmIV = atmIVPct / 100;
+      // The projection (odteProjection) runs on trading minutes / (252 x 390).
+      // Convert the calendar-clock total variance sigma^2*T to that basis over
+      // the minutes left in the session, so sd to the close = S*sqrt(sigma^2*T)
+      // (variance spread over the remaining session; no basis is mixed).
+      const atmIV = atmIVSource === "chain" && atmTotalVar != null && projMinutes > 0
+        ? Math.sqrt(atmTotalVar / (projMinutes / MIN_PER_YEAR))
+        : atmIVPct / 100;
       const emSigma = atmIV > 0 ? spot * atmIV * Math.sqrt(projMinutes / MIN_PER_YEAR) : null;
 
       // ── path: 27 points (~every 15 min) ──
       const gexValid = validGammaCount >= 10; // need a real greek surface to trust regime/levels
       const regime = !gexValid ? "indeterminate" : netGex >= 0 ? "long_gamma" : "short_gamma";
       const pinPullMax = regime === "long_gamma" && pin != null ? Math.min(0.6, pinMag / totalAbsGex) : 0;
-      const charmNorm = totalAbsGex > 0 ? Math.max(-0.15, Math.min(0.15, netCharm / totalAbsGex)) : 0;
+      // Charm tilt: dealer charm flow to the close ($, = -netCharm) over gross
+      // $ GEX per 1% (heuristic, clamped +-0.15 of the cone): greekExposure.charmTiltNorm.
+      const charmNorm = charmTiltNorm(netCharm, totalAbsGex);
       const coneWiden = regime === "short_gamma" ? 1.15 : 1.0;
       const N = 26;
       const path: any[] = [];
@@ -3835,13 +4002,19 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         atmIV: +(atmIVPct).toFixed(2), atmIVSource, gexValid,
         expectedMove: { sigma: emSigma != null ? +emSigma.toFixed(2) : null, straddle: straddle > 0 ? +straddle.toFixed(2) : null },
         netGex: gexValid ? +netGex.toFixed(0) : null, netCharm: gexValid ? +netCharm.toFixed(0) : null, regime,
+        // units of the two numbers above (additive fields)
+        netGexUnits: "$ per 1% spot move (dealer-signed)", netCharmUnits: "$ dealer delta-notional change to settlement, spot and vol held",
+        gexBasis: "Black-Scholes gamma (r 5%, q 1.3%), time to the real settlement instant, sigma solved from the mid inside 3 days; same basis as Killbox and the gamma flip",
+        gexContracts: { priced: validGammaCount, unpriced: unpricedGammaCount },
         levels: gexValid ? { callWall, putWall, gammaFlip: gammaFlip != null ? +gammaFlip.toFixed(0) : null, pin } : { callWall: null, putWall: null, gammaFlip: null, pin: null },
+        flipInputs: flipInputs({ weight: "oi_plus_quarter_volume", universe: "single-expiry", expiryKeys: [nearestKey] }),
         weightTotals: { oi: totalOI, volume: totalVol },
         path,
         strikes: rows.map(r => ({ strike: r.strike, gex: +r.gex.toFixed(0), callOI: r.callOI, putOI: r.putOI })),
       });
     } catch (e: any) {
       console.error("[odte/forward]", e?.message);
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "internal", message: e?.message });
     }
   });
@@ -3854,11 +4027,11 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const { getOptionChain } = await import("./schwab");
       const chain = await getOptionChain(symbol, dte);
       if ("error" in chain) {
-        return res.status(503).json({ error: chain.error, message: "Option chain unavailable" });
+        return res.status(503).json({ error: chain.error, dataState: chain.dataState ?? "unavailable", message: `Option chain unavailable: ${chain.reason ?? chain.error}` });
       }
       const spot = chain.underlying.last ?? null;
       if (!spot || spot <= 0) {
-        return res.status(503).json({ error: "no_spot", message: "Spot price unavailable" });
+        return res.status(503).json({ dataState: "no_spot", reason: "Spot price unavailable", error: "no_spot", message: "Spot price unavailable" });
       }
 
       type StrikeAgg = {
@@ -3915,8 +4088,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         for (const ek of Object.keys(map || {})) {
           const dteStr = ek.split(":")[1] || "30";
           const dteDays = Math.max(1 / 365, parseFloat(dteStr) || 30);
-          const T = dteDays / 365;
-          const sqrtT = Math.sqrt(T);
+          // T per contract below: one clock (timeToExpiry via chainClock)
           for (const sk of Object.keys(map[ek] || {})) {
             const strike = parseFloat(sk);
             if (!isFinite(strike)) continue;
@@ -3925,10 +4097,20 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
               const oi = c.openInterest || 0;
               const vol = c.totalVolume || 0;
               if (oi === 0 && vol === 0) continue;
+              // One clock: calendar minutes to the real settlement instant
+              // (AM SPX vs PM SPXW, half days) / 525,600; settled -> skip.
+              const T = contractYears(ek, c);
+              if (!(T > 0)) continue;
+              const sqrtT = Math.sqrt(T);
               const ivPct = c.volatility || 0;
-              const sigma = ivPct > 0 ? ivPct / 100 : 0;
-              const delta = c.delta ?? 0;
-              const gamma = c.gamma ?? 0;
+              // sigma valid for our T (re-solved from the mid inside 3 days)
+              const sigma = ivForClock({
+                vendorIv: ivPct > 0 && ivPct < 500 ? ivPct / 100 : 0,
+                bid: Number(c.bid), ask: Number(c.ask), spot, strike, T, type: side,
+              });
+              // Gamma on the same basis as the flip (Black-Scholes, our T);
+              // vendor gamma only when no usable sigma.
+              const gamma = sigma > 0 ? bsGammaOurClock(spot, strike, sigma, T, FLIP_RATE, FLIP_DIV_YIELD) : (c.gamma ?? 0);
               if (side === "C") { row.callOI += oi; row.callVol += vol; }
               else { row.putOI += oi; row.putVol += vol; }
 
@@ -3939,25 +4121,18 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
               if (weight <= 0) continue;
 
               const sign = side === "C" ? 1 : -1;
-              // GEX: gamma × weight × S² × 0.01 × 100 (per 1% move, $ notional)
-              row.gex += sign * gamma * weight * spot * spot * 0.01;
+              // GEX in $ per 1% move: gamma x contracts x 100 x S^2 x 0.01.
+              // (The comment always said x100; the code had dropped it.)
+              row.gex += sign * dollarGexPerPct(gamma, weight, spot);
 
-              if (sigma > 0 && Math.abs(delta) > 1e-6 && Math.abs(delta) < 1 - 1e-6) {
-                // Recover d1 from delta
-                const callDelta = side === "C" ? Math.abs(delta) : 1 - Math.abs(delta);
-                const d1 = invN(callDelta);
-                const d2 = d1 - sigma * sqrtT;
-                const phid1 = phi(d1);
-                const vegaPerContract = spot * phid1 * sqrtT;
-                // Match chainAudit.ts institutional formulas
-                const vanna = -vegaPerContract * d2 / (spot * sigma * sqrtT);
-                const charm = -phid1 * d2 / (2 * T * sigma * sqrtT) / 365;
-                const vomma = vegaPerContract * d1 * d2 / sigma;
-                const zomma = gamma * (d1 * d2 - 1) / sigma;
-                row.vanna += sign * vanna * weight * 100;
-                row.charm += sign * charm * weight * 100;
-                row.vomma += sign * vomma * weight * 100;
-                row.zomma += sign * zomma * weight * 100;
+              if (sigma > 0) {
+                // Dollar exposures in the units the Killbox lenses print
+                // ($/1%vol, $/day): server/greekExposure.ts, same as chainAudit.
+                const x = contractExposure({ spot, strike, sigma, T, contracts: weight });
+                row.vanna += sign * x.vannaPerVolPt;
+                row.charm += sign * x.charmPerDay;
+                row.vomma += sign * x.vommaPerVolPt;
+                row.zomma += sign * x.zommaPerVolPt;
               }
             }
           }
@@ -3987,15 +4162,16 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
           if (p.strike >= spot && p.exposure > callWallValue) { callWallValue = p.exposure; callWall = p.strike; }
           if (p.strike <= spot && p.exposure < putWallValue) { putWallValue = p.exposure; putWall = p.strike; }
         }
-        const sorted = [...gexProfile].sort((a, b) => a.strike - b.strike);
-        let cum = 0, prevCum = 0, prevStrike = sorted[0]?.strike ?? 0;
-        for (const p of sorted) {
-          prevCum = cum; cum += p.exposure;
-          if ((prevCum <= 0 && cum > 0) || (prevCum >= 0 && cum < 0)) {
-            gammaFlip = (prevStrike + p.strike) / 2; break;
-          }
-          prevStrike = p.strike;
-        }
+        // Gamma flip: app-wide re-priced definition (gammaProfile.ts), same
+        // weighting as the profile. The old cumulative loop fired on the first
+        // strike (cum starts at 0), so it always returned the lowest strike.
+        gammaFlip = repricedFlipFromChain(chain, spot, {
+          r: FLIP_RATE,
+          q: FLIP_DIV_YIELD,
+          weight: (c: any) => weightMode === "oi" ? (Number(c?.openInterest) || 0)
+            : weightMode === "volume" ? (Number(c?.totalVolume) || 0)
+            : (Number(c?.openInterest) || 0) + (Number(c?.totalVolume) || 0) * 0.25,
+        }).zeroGamma;
       }
 
       let stability = 0.5;
@@ -4014,12 +4190,18 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       res.json({
         symbol,
         asOf: nowMs,
+        // When Schwab produced the chain (asOf above is the computation time).
+        chainAsOfMs: chain.asOfMs,
+        chainStale: chain.stale,
+        chainMaxAgeMs: chain.maxAgeMs,
+        chainSource: "schwab",
         spot,
         weightMode,
         totalOI,
         totalVolume: totalVol,
         profiles,
         levels: { callWall, callWallValue, putWall, putWallValue, gammaFlip },
+        flipInputs: flipInputs({ weight: flipWeightOf(weightMode), universe: "all-expiries-in-request", expiryKeys: chainExpiryKeys(chain) }),
         stability,
         regime,
         strikeCount: allStrikes.length,
@@ -4027,6 +4209,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       });
     } catch (e: any) {
       console.error("[killbox/forward]", e?.message, e?.stack);
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "internal", message: e?.message ?? "Killbox forward failed" });
     }
   });
@@ -4052,11 +4235,12 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const env = await buildTradeEnvironment();
       res.json(env);
     } catch (e: any) {
-      res.status(503).json({ message: e?.message ?? "Failed to build trade environment" });
+      res.status(503).json({ dataState: "unavailable", reason: e?.message ?? "Failed to build trade environment", message: e?.message ?? "Failed to build trade environment" });
     }
   });
 
-  app.get("/api/heatseeker", async (req, res) => {
+  // In-process callers use this same handler (internalApi.ts).
+  app.get("/api/heatseeker", internalRoute("/api/heatseeker", async (req: ExRequest, res: ExResponse) => {
     try {
       const rawSymbol = String(req.query.symbol || "$SPX").trim();
       const symbol = rawSymbol.toUpperCase();
@@ -4083,79 +4267,17 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         chainDteWindow = Math.max(2, Math.min(days + 7, 180)); // cap at 180 days
       }
 
-      let chain: any = await schwabGetOptionChain(symbol, chainDteWindow);
-      let usedSymbol = symbol;
-      let scaleToSPX = false; // when true, SPY-derived chain rescaled ×10 to SPX values
-
-      const isSPX = symbol.includes("SPX") || symbol === "$SPX" || symbol === "SPXW";
-
+      // Schwab chain for the requested symbol only. The old fallbacks (SPY
+      // chain rescaled x10 to SPX, then the CBOE cache) mixed SPY open
+      // interest and $ multipliers into SPX levels; now Schwab-or-unavailable.
+      const chain: any = await schwabGetOptionChain(symbol, chainDteWindow);
+      const usedSymbol = symbol;
       if ("error" in chain) {
-        if (isSPX) {
-          const spyChain = await schwabGetOptionChain("SPY", chainDteWindow);
-          if (!("error" in spyChain)) {
-            chain = spyChain;
-            usedSymbol = "$SPX"; // keep SPX label, rescale below
-            scaleToSPX = true;
-          } else {
-            // Schwab failed for both — try CBOE cached chain
-            const cboeRaw = await getCboeChain("SPY").catch(() => null);
-            if (cboeRaw) {
-              chain = cboeChainToSchwab(cboeRaw, "SPY");
-              usedSymbol = "$SPX";
-              scaleToSPX = true;
-            } else {
-              return res.status(503).json({
-                error: "data_unavailable",
-                message: "No options chain available from Schwab or CBOE. Try again later.",
-              });
-            }
-          }
-        } else {
-          // Non-SPX symbol: try CBOE for the same ticker
-          const cboeRaw = await getCboeChain(symbol).catch(() => null);
-          if (cboeRaw) {
-            chain = cboeChainToSchwab(cboeRaw, symbol);
-          } else {
-            return res.status(503).json({
-              error: "data_unavailable",
-              message: `No options chain available for ${symbol}. Try again later.`,
-            });
-          }
-        }
-      }
-
-      // Rescale SPY-derived chain to SPX values (×10 strikes + spot)
-      if (scaleToSPX) {
-        const scaleStrikeMap = (m: any) => {
-          if (!m || typeof m !== "object") return m;
-          const out: any = {};
-          for (const expKey of Object.keys(m)) {
-            const exp = m[expKey];
-            const newExp: any = {};
-            for (const strikeKey of Object.keys(exp)) {
-              const newStrikeKey = String(parseFloat(strikeKey) * 10);
-              newExp[newStrikeKey] = exp[strikeKey];
-            }
-            out[expKey] = newExp;
-          }
-          return out;
-        };
-        const u = chain.underlying || {};
-        chain = {
-          ...chain,
-          symbol: "$SPX",
-          underlying: {
-            ...u,
-            symbol: "$SPX",
-            last: u.last != null ? u.last * 10 : u.last,
-            bid: u.bid != null ? u.bid * 10 : u.bid,
-            ask: u.ask != null ? u.ask * 10 : u.ask,
-            mark: u.mark != null ? u.mark * 10 : u.mark,
-            close: u.close != null ? u.close * 10 : u.close,
-          },
-          callExpDateMap: scaleStrikeMap(chain.callExpDateMap),
-          putExpDateMap: scaleStrikeMap(chain.putExpDateMap),
-        };
+        return res.status(503).json({
+          error: "data_unavailable",
+          dataState: chain.dataState ?? "unavailable",
+          message: `Schwab options chain unavailable for ${symbol}: ${chain.reason ?? chain.error}`,
+        });
       }
 
       const spot = chain.underlying.last ??
@@ -4165,19 +4287,30 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
       if (!spot || spot <= 0) {
         return res.status(503).json({
+          dataState: "no_spot",
+          reason: "Unable to determine underlying spot price.",
           error: "no_spot",
           message: "Unable to determine underlying spot price.",
         });
       }
 
-      const result = buildHeatseeker(chain, usedSymbol, spot, targetExpiry);
+      const result: any = buildHeatseeker(chain, usedSymbol, spot, targetExpiry);
+      // Chain provenance for the age chip (additive fields).
+      result.chainSource = "schwab";
+      result.chainAsOfMs = chain.asOfMs;
+      result.chainStale = chain.stale;
+      result.chainMaxAgeMs = chain.maxAgeMs;
+      result.chainCoverage = chain.strikeCoverage
+        ? { belowPct: chain.strikeCoverage.belowPct, abovePct: chain.strikeCoverage.abovePct, complete: chain.strikeCoverage.complete }
+        : null;
       heatseekerCache.set(cacheKey, { at: Date.now(), data: result });
       res.json(result);
     } catch (e: any) {
       console.error("[heatseeker]", e?.message);
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "internal", message: e?.message ?? "Heatseeker failed" });
     }
-  });
+  }));
 
   // ─── Backtest accuracy overlay ────────────────────────────────────────────
   app.get("/api/backtest/levels", async (_req, res) => {
@@ -4215,13 +4348,14 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   }, 8_000);
 
   // ─── 0DTE live tracker ────────────────────────────────────────────────────
-  app.get("/api/odte-tracker", (_req, res) => {
+  // In-process callers use this same handler (internalApi.ts).
+  app.get("/api/odte-tracker", internalRoute("/api/odte-tracker", (_req: ExRequest, res: ExResponse) => {
     try {
       res.json(getOdteSnapshot());
     } catch (e: any) {
       res.status(500).json({ error: "odte_tracker_failed", message: e?.message });
     }
-  });
+  }));
 
   app.get("/api/odte-tracker/sparkline", (req, res) => {
     try {
@@ -4268,9 +4402,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   // Quick health-check endpoint to verify Wire 9 fields are populated.
   app.get("/api/odte/diagnose", async (_req, res) => {
     try {
-      const port = process.env.PORT || "5000";
-      const modelsResp = await fetch(`http://127.0.0.1:${port}/api/models?symbol=^GSPC&experimental=1`).catch(() => null);
-      const models: any = modelsResp && modelsResp.ok ? await modelsResp.json().catch(() => null) : null;
+      // In-process /api/models (internalApi.ts): same handler, cache and dedup.
+      const models: any = await internalJson("/api/models?symbol=^GSPC&experimental=1");
       const daily = models?.horizons?.daily;
       const audit = daily?.audit ?? {};
       const { getSpotHistoryInfo, getChopRegime } = await import("./odteAlertEngine");
@@ -4462,18 +4595,19 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     try {
       const { diagnoseOdte } = await import("./odteAlertEngine");
       const { persistOdteAuditOnReject } = await import("./odteAuditDb");
-      const port = process.env.PORT || "5000";
+      // In-process route calls (internalApi.ts); Response-shaped so the
+      // status checks below are unchanged.
       const [modelsResp, odteResp] = await Promise.all([
-        fetch(`http://127.0.0.1:${port}/api/models?symbol=^GSPC&experimental=1`),
-        fetch(`http://127.0.0.1:${port}/api/odte-tracker`),
+        internalFetch("/api/models?symbol=^GSPC&experimental=1"),
+        internalFetch("/api/odte-tracker"),
       ]);
       if (!modelsResp.ok || !odteResp.ok) {
-        return res.status(503).json({ error: "upstream_unavailable", models: modelsResp.status, odte: odteResp.status });
+        return res.status(503).json({ dataState: "unavailable", reason: `upstream unavailable: /api/models ${modelsResp.status}, /api/odte/forward ${odteResp.status}`, error: "upstream_unavailable", models: modelsResp.status, odte: odteResp.status });
       }
       const models: any = await modelsResp.json();
       const odte: any = await odteResp.json();
       const daily = models.horizons?.daily;
-      if (!daily) return res.status(503).json({ error: "models_no_daily" });
+      if (!daily) return res.status(503).json({ dataState: "unavailable", reason: "no daily horizon from /api/models (Schwab chain or spot unavailable)", error: "models_no_daily" });
       const audit = daily.audit ?? {};
       const spot = odte.spot ?? daily.spot ?? 0;
       const oneDayEM = daily.expectedMove ?? daily.oneDayEM ?? audit?.scenarioTargets?.oneDayEM ?? audit?.oneDayEM ?? 0;
@@ -4533,12 +4667,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const { getOdteSnapshot } = await import("./odteTracker");
 
       // Snapshot models via local /api/models (re-uses cache + in-flight dedup)
-      const port = process.env.PORT || "5000";
-      const modelsResp = await fetch(`http://127.0.0.1:${port}/api/models?symbol=^GSPC&experimental=1`).catch(() => null);
-      const models: any = modelsResp && modelsResp.ok ? await modelsResp.json().catch(() => null) : null;
+      const models: any = await internalJson("/api/models?symbol=^GSPC&experimental=1");
       const odte = getOdteSnapshot();
       if (!models?.horizons?.daily) {
-        return res.status(503).json({ error: "models_unavailable" });
+        return res.status(503).json({ dataState: "unavailable", reason: "/api/models unavailable (Schwab chain or spot unavailable)", error: "models_unavailable" });
       }
       const daily = models.horizons.daily;
       const audit = daily.audit ?? {};
@@ -4601,9 +4733,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
       // readOnly: the preview endpoint is polled by the UI and must not mutate engine state.
       const diag = await diagnoseOdte(args, { readOnly: true });
+      const { gradeEvidenceFor, odtePlanContracts } = await import("./odteGrader");
       const previews = diag.fireable.map((a) => ({
         ...a,
-        formatted: formatOdteAlert(a).content,
+        formatted: formatOdteAlert(a, gradeEvidenceFor(a.grade.score), odtePlanContracts()).content,
       }));
       const rejectedSummary = diag.rejected.map(({ alert, reason }) => ({
         setup: alert.setup,
@@ -4643,6 +4776,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const stack = await getMtfStack(symbol);
       res.json(stack);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "mtf_stack_failed", message: e?.message ?? String(e), stack: String(e?.stack ?? "").split("\n").slice(0, 6) });
     }
   });
@@ -4659,6 +4793,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const snap = await getRevExtSnapshot(symbol);
       res.json(snap);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "rev_ext_failed", message: e?.message ?? String(e), stack: String(e?.stack ?? "").split("\n").slice(0, 6) });
     }
   });
@@ -4672,11 +4807,11 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const { computeRealtimeTargets } = await import("./realtimeTargets");
       const symbol = String(req.query.symbol || "^GSPC");
       // Pull live SPX models from local endpoint
-      const port = Number(process.env.PORT ?? 5000);
-      const r = await fetch(`http://127.0.0.1:${port}/api/models?symbol=${encodeURIComponent(symbol)}&experimental=1`);
-      const data: any = await r.json();
+      // In-process /api/models (internalApi.ts). Body read regardless of
+      // status, as before; a missing daily horizon answers 503 below.
+      const data: any = (await callInternal(`/api/models?symbol=${encodeURIComponent(symbol)}&experimental=1`)).body;
       const daily = data?.horizons?.daily;
-      if (!daily) return res.status(503).json({ error: "no_daily_horizon" });
+      if (!daily) return res.status(503).json({ dataState: "unavailable", reason: "no daily horizon from /api/models (Schwab chain or spot unavailable)", error: "no_daily_horizon" });
       const out = await computeRealtimeTargets({
         spot: daily.spot,
         scenarioTargets: daily.audit?.scenarioTargets ?? { bull: daily.spot, base: daily.spot, bear: daily.spot, oneDayEM: 0 },
@@ -4690,6 +4825,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       } catch {}
       res.json(out);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "realtime_targets_failed", message: e?.message ?? String(e) });
     }
   });
@@ -4737,6 +4873,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         maxRiskPct: b.maxRiskPct != null ? Number(b.maxRiskPct) : undefined,
         targetPct: b.targetPct != null ? Number(b.targetPct) : undefined,
         kellyFraction: b.kellyFraction != null ? Number(b.kellyFraction) : undefined,
+        feePerContract: b.feePerContract != null ? Number(b.feePerContract) : undefined,
+        stopSlippage: b.stopSlippage != null ? Number(b.stopSlippage) : undefined,
+        product: typeof b.product === "string" ? b.product : undefined,
+        maxGapLossPct: b.maxGapLossPct != null ? Number(b.maxGapLossPct) : undefined,
       }));
     } catch (e: any) {
       res.status(500).json({ error: "sizer_failed", message: e?.message ?? String(e) });
@@ -4821,11 +4961,15 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   // MISSION FIX #2 — POST /api/edge/survival
-  // Net-EV waterfall: does the edge survive spread, slippage, theta, and
-  // model uncertainty? body: { gradeScore, bid, ask, targetPct, stopPct, theta?, expectedHoldMin? }
+  // Does the edge survive costs? Evidence = the realized option ledger the
+  // sizer uses (net of the fee); theta repriced when contract inputs are sent.
+  // body: { gradeScore, bid, ask, targetPct, stopPct, expectedHoldMin?, feePerContract?, product?,
+  //         spot?, strike?, type? ("C"|"P"), expiry? (YYYY-MM-DD), symbol?, iv? }
   app.post("/api/edge/survival", async (req, res) => {
     try {
       const { computeEdgeSurvival } = await import("./edgeSurvival");
+      const { resolveFeePerContract } = await import("./sizingMath");
+      const { loadOptionLedgerBucket } = await import("./odteGrader");
       const b = req.body ?? {};
       const gradeScore = Number(b.gradeScore);
       const bid = Number(b.bid), ask = Number(b.ask);
@@ -4833,11 +4977,23 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       if (!isFinite(gradeScore) || !isFinite(bid) || !isFinite(ask) || !isFinite(targetPct) || !isFinite(stopPct)) {
         return res.status(400).json({ error: "bad_input", message: "gradeScore, bid, ask, targetPct, stopPct required (numbers)" });
       }
+      const num = (v: any) => (v != null && v !== "" && isFinite(Number(v)) ? Number(v) : null);
+      // Same fee rule as the sizer: explicit fee, else $0.65 for equity/ETF
+      // options, else (index root, no fee) not counted and labelled.
+      const fee = resolveFeePerContract(num(b.feePerContract), typeof b.product === "string" ? b.product : null);
+      let bucket = null;
+      try { bucket = loadOptionLedgerBucket(gradeScore, Date.now(), fee ?? 0); } catch { bucket = null; }
       res.json(computeEdgeSurvival({
         gradeScore, bid, ask, targetPct, stopPct,
-        theta: b.theta != null ? Number(b.theta) : null,
-        expectedHoldMin: b.expectedHoldMin != null ? Number(b.expectedHoldMin) : undefined,
-      }));
+        theta: num(b.theta),
+        expectedHoldMin: num(b.expectedHoldMin) ?? undefined,
+        feePerContract: fee,
+        spot: num(b.spot), strike: num(b.strike),
+        type: b.type === "C" || b.type === "P" ? b.type : null,
+        expiry: typeof b.expiry === "string" ? b.expiry.slice(0, 10) : null,
+        symbol: typeof b.symbol === "string" ? b.symbol : null,
+        iv: num(b.iv),
+      }, bucket));
     } catch (e: any) {
       res.status(500).json({ error: "survival_failed", message: e?.message ?? String(e) });
     }
@@ -4949,8 +5105,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         type: params.type,
         notional: params.notional,
         maxDte: params.maxDte,
+        feePerContract: params.feePerContract != null ? Number(params.feePerContract) : undefined,
       });
-      res.json(summary);
+      // A failed alert-history read is an error with its reason, not "no trades".
+      res.status(summary.dataState === "error" ? 503 : 200).json(summary);
     } catch (e: any) {
       res.status(500).json({ error: "backtest_failed", message: e?.message ?? String(e) });
     }
@@ -4960,16 +5118,16 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   // Forward-looking regime transition probabilities. Pulls live audit from
   // /api/models, scores candidate regimes via dfi slope + IV term + gamma
   // flip proximity + session time + recent flip frequency. Read-only.
-  app.get("/api/regime/predict", async (req, res) => {
+  app.get("/api/regime/predict", internalRoute("/api/regime/predict", async (req, res) => {
     try {
       const { predictTransition } = await import("./regimePredictor");
       const symbol = String(req.query.symbol || "^GSPC");
       const horizonMinutes = Math.max(5, Math.min(120, Number(req.query.horizonMinutes) || 20));
-      const port = Number(process.env.PORT ?? 5000);
-      const r = await fetch(`http://127.0.0.1:${port}/api/models?symbol=${encodeURIComponent(symbol)}&experimental=1`);
-      const data: any = await r.json();
+      // In-process /api/models (internalApi.ts). Body read regardless of
+      // status, as before; a missing daily horizon answers 503 below.
+      const data: any = (await callInternal(`/api/models?symbol=${encodeURIComponent(symbol)}&experimental=1`)).body;
       const daily = data?.horizons?.daily;
-      if (!daily) return res.status(503).json({ error: "no_daily_horizon" });
+      if (!daily) return res.status(503).json({ dataState: "unavailable", reason: "no daily horizon from /api/models (Schwab chain or spot unavailable)", error: "no_daily_horizon" });
 
       // Macro snapshot — fail-soft
       let macro: { vixTermRatio: number | null; dxyDelta: number | null; tnxDelta: number | null } | null = null;
@@ -5056,9 +5214,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       }
       res.json({ symbol, ...out });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ error: "regime_predict_failed", message: e?.message ?? String(e) });
     }
-  });
+  }));
 
   // ToS-style 5-min intraday chart for a single contract (key = contractKey)
   app.get("/api/odte-tracker/chart", (req, res) => {
@@ -5073,6 +5232,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   // ─── Cosmos: astrology/astronomy intel brief + live engine ────────────────
+  type CosmosLlmResult = Array<{ text: string | null; error: string | null; dropped: number }>;
+  const cosmosLlmCache = new Map<string, { at: number; ttlMs: number; data: CosmosLlmResult }>();
+  const cosmosLlmInflight = new Map<string, Promise<CosmosLlmResult>>();
   // GET /api/cosmos/outlook — weekly (7d) + monthly (30d) forward astro
   // outlook. Deterministic baseline always returned. If ANTHROPIC_API_KEY /
   // OPENAI_API_KEY are set, LLM-enhanced narrative returned alongside.
@@ -5109,34 +5271,62 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         return r.output_text ?? "";
       }
 
-      const [wClaude, wGpt, mClaude, mGpt] = await Promise.allSettled([
-        enhanceWithClaude(weekly.markdown),
-        enhanceWithGpt(weekly.markdown),
-        enhanceWithClaude(monthly.markdown),
-        enhanceWithGpt(monthly.markdown),
-      ]);
-
-      const pick = (r: PromiseSettledResult<string>): string | null =>
-        r.status === "fulfilled" ? r.value : null;
-      const err = (r: PromiseSettledResult<string>): string | null =>
-        r.status === "rejected" ? String((r as any).reason?.message ?? r.reason) : null;
+      // The four LLM calls are cached per day (ET date of the request) for
+      // 6 h, or 15 min after any failure, with in-flight de-duplication, so
+      // they do not run on every request. Their text passes the
+      // deterministic trade-instruction filter before it is served.
+      const dayKey = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(date);
+      const cacheKey = `${dayKey}:${hasAnthropicKey ? 1 : 0}${hasOpenAiKey ? 1 : 0}`;
+      const hit = cosmosLlmCache.get(cacheKey);
+      let llm: CosmosLlmResult;
+      if (hit && Date.now() - hit.at < hit.ttlMs) {
+        llm = hit.data;
+      } else {
+        let pending = cosmosLlmInflight.get(cacheKey);
+        if (!pending) {
+          pending = Promise.allSettled([
+            enhanceWithClaude(weekly.markdown),
+            enhanceWithGpt(weekly.markdown),
+            enhanceWithClaude(monthly.markdown),
+            enhanceWithGpt(monthly.markdown),
+          ]).then((settled) => {
+            const data = settled.map((r) => {
+              if (r.status === "rejected") return { text: null, error: String((r as any).reason?.message ?? r.reason), dropped: 0 };
+              const f = filterTradeInstructions(r.value);
+              return { text: f.text, error: null, dropped: f.dropped };
+            }) as CosmosLlmResult;
+            const anyFailed = data.some((d) => d.error != null);
+            cosmosLlmCache.set(cacheKey, { at: Date.now(), ttlMs: anyFailed ? 15 * 60_000 : 6 * 3600_000, data });
+            if (cosmosLlmCache.size > 31) cosmosLlmCache.delete(cosmosLlmCache.keys().next().value as string);
+            return data;
+          }).finally(() => { cosmosLlmInflight.delete(cacheKey); });
+          cosmosLlmInflight.set(cacheKey, pending);
+        }
+        llm = await pending;
+      }
+      const cachedAt = cosmosLlmCache.get(cacheKey)?.at ?? Date.now();
+      const [wC, wG, mC, mG] = llm;
 
       res.json({
         weekly: {
           ...weekly,
-          claude: pick(wClaude),
-          gpt: pick(wGpt),
-          errors: { claude: err(wClaude), gpt: err(wGpt) },
+          claude: wC.text,
+          gpt: wG.text,
+          errors: { claude: wC.error, gpt: wG.error },
+          filteredSentences: { claude: wC.dropped, gpt: wG.dropped },
         },
         monthly: {
           ...monthly,
-          claude: pick(mClaude),
-          gpt: pick(mGpt),
-          errors: { claude: err(mClaude), gpt: err(mGpt) },
+          claude: mC.text,
+          gpt: mG.text,
+          errors: { claude: mC.error, gpt: mG.error },
+          filteredSentences: { claude: mC.dropped, gpt: mG.dropped },
         },
         meta: {
           llmEnhancersEnabled: { claude: hasAnthropicKey, gpt: hasOpenAiKey },
           generatedAt: new Date().toISOString(),
+          llmCachedAt: new Date(cachedAt).toISOString(),
+          llmFilter: "sentences with trade, size, hedge, options or direction instructions are removed deterministically",
         },
       });
     } catch (e) {
@@ -5204,7 +5394,13 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   // Kick off Daily Playbook scheduler (9:00 ET lock + 5min drift refresh)
   try {
     const { setSnapshotProvider } = await import("./dailyPlaybook");
-    setSnapshotProvider(() => getOrBuild(false) as any);
+    // Snapshot + Schwab $SPX last (the SPX playbook maps SPY-chain levels by
+    // the real SPX/SPY ratio; null -> SPX playbook unavailable).
+    setSnapshotProvider(async () => {
+      const snap = await getOrBuild(false);
+      const spx = await getQuote("^GSPC").catch(() => ({ last: null }));
+      return { ...snap, spxSpot: spx.last ?? null } as any;
+    });
     const { startPlaybookScheduler } = await import("./playbookScheduler");
     startPlaybookScheduler();
   } catch (e: any) {
@@ -5303,26 +5499,20 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   async function killboxAutoSeed() {
     try {
       // Time gate — only during regular US market hours.
-      const nowEt = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-      const day = nowEt.getDay(); // 0=Sun, 6=Sat
-      if (day === 0 || day === 6) return;
-      const mins = nowEt.getHours() * 60 + nowEt.getMinutes();
-      if (mins < 9 * 60 + 30 || mins > 16 * 60) return;
+      // Exchange calendar: holidays and the 13:00 half-day close respected.
+      if (!isRegularSessionOpen()) return;
 
       // Mimic the chain-audit handler inline — write directly into the table.
       const symbol = "$SPX";
       const dte = 60;
-      let chain = await schwabGetOptionChain(symbol, dte);
-      let usedSymbol = symbol;
+      const chain = await schwabGetOptionChain(symbol, dte);
+      const usedSymbol = symbol;
       if ("error" in chain) {
-        const spy = await schwabGetOptionChain("SPY", dte);
-        if ("error" in spy) {
-          console.warn(`[killbox-seed] schwab unavailable, skipping tick`);
-          return;
-        }
-        chain = spy;
-        usedSymbol = "SPY";
+        // No SPY substitute: an SPX gradient row must come from the SPX chain.
+        console.warn(`[killbox-seed] schwab unavailable (${chain.reason ?? chain.error}), skipping tick`);
+        return;
       }
+      if (chain.stale) return; // never seed history from a re-served chain
       const spot = chain.underlying.last ??
         (chain.underlying.bid && chain.underlying.ask
           ? (chain.underlying.bid + chain.underlying.ask) / 2
@@ -5488,6 +5678,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
           trackedBySource.get(s.source)!.push(s);
         }
 
+        // Tracked signals (signalTracker) only log marks, so their rows stay
+        // MID TO MID and say so; they are listed but never mixed into the
+        // overall row, which uses the whale ask-in / bid-out net-of-fee basis.
         const buildTrackedRow = (source: string, list: any[]) => {
           let wins = 0, losses = 0, burns = 0;
           let sumPct = 0, sumPeak = 0;
@@ -5507,59 +5700,35 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
             source,
             count: list.length,
             wins, losses, burns,
-            winRate: decided > 0 ? wins / decided : 0,
-            avgPct: list.length > 0 ? sumPct / list.length : 0,
+            burnsEvaluated: list.length,
+            // Empty groups are null, never 0% (N-3).
+            winRate: decided > 0 ? wins / decided : null,
+            avgPct: list.length > 0 ? sumPct / list.length : null,
             totalPnLPct: sumPct,
-            avgPeakPct: list.length > 0 ? sumPeak / list.length : 0,
-            bestPct: bestPct === -Infinity ? 0 : bestPct,
-            worstPct: worstPct === Infinity ? 0 : worstPct,
+            avgPeakPct: list.length > 0 ? sumPeak / list.length : null,
+            bestPct: bestPct === -Infinity ? null : bestPct,
+            worstPct: worstPct === Infinity ? null : worstPct,
+            excludedNoQuote: 0,
+            excludedNoFee: 0,
+            priceBasis: "mid_to_mid",
           };
         };
 
-        const bySource = [...whaleSnap.bySource];
+        const bySource: any[] = [...whaleSnap.bySource];
         for (const [src, list] of trackedBySource) bySource.push(buildTrackedRow(src, list));
         bySource.sort((a, b) => b.count - a.count);
-
-        // Recompute overall across both sources
-        let totalCount = whaleSnap.totalTerminal;
-        let oWins = whaleSnap.overall.wins;
-        let oLosses = whaleSnap.overall.losses;
-        let oBurns = whaleSnap.overall.burns;
-        let oSumPct = whaleSnap.overall.totalPnLPct;
-        let oSumPeak = whaleSnap.overall.avgPeakPct * whaleSnap.totalTerminal;
-        let oBest = whaleSnap.overall.bestPct;
-        let oWorst = whaleSnap.overall.worstPct;
-        for (const list of trackedBySource.values()) {
-          totalCount += list.length;
-          for (const s of list) {
-            const pct = (s.live?.pctChange ?? 0) as number;
-            const peakPct = (s.live?.peakPctChange ?? 0) as number;
-            if (pct > 0) oWins++; else oLosses++;
-            if (peakPct >= 0.5 && pct <= 0) oBurns++;
-            oSumPct += pct;
-            oSumPeak += peakPct;
-            if (pct > oBest) oBest = pct;
-            if (pct < oWorst) oWorst = pct;
-          }
-        }
-        const oDecided = oWins + oLosses;
-        const overall = {
-          source: "overall",
-          count: totalCount,
-          wins: oWins, losses: oLosses, burns: oBurns,
-          winRate: oDecided > 0 ? oWins / oDecided : 0,
-          avgPct: totalCount > 0 ? oSumPct / totalCount : 0,
-          totalPnLPct: oSumPct,
-          avgPeakPct: totalCount > 0 ? oSumPeak / totalCount : 0,
-          bestPct: oBest, worstPct: oWorst,
-        };
 
         res.json({
           asOf: Date.now(),
           windowDays,
-          totalTerminal: totalCount,
+          totalTerminal: whaleSnap.totalTerminal + Array.from(trackedBySource.values()).reduce((a, l) => a + l.length, 0),
           bySource,
-          overall,
+          // Overall = whale positions only, on the ask-in / bid-out net-of-fee
+          // basis; mid-to-mid tracked rows are not mixed into it.
+          overall: whaleSnap.overall,
+          overallBasis: "ask_in_bid_out_net_fees",
+          priceBasisNote: whaleSnap.priceBasisNote,
+          midToMidNote: "tracked-signal rows (flow alerts, UOA, manual) are mid to mid with no fees: they overstate a tradable result by the round-trip spread",
         });
       } catch (e: any) {
         res.status(500).json({ error: "performance_failed", message: e?.message ?? String(e) });
@@ -5741,72 +5910,60 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   // their own probabilities so we can score them against actuals over 30+
   // days and decide whether they earn promotion to the live ladder.
 
-  // Tier 3.1: Breeden-Litzenberger implied PDF from SPY chain.
+  // Tier 3.1: Breeden-Litzenberger implied PDF from the live Schwab $SPX chain.
+  // Was a static file (data/cboe/SPY.json, CBOE delayed SPY calls). Now:
+  //   - $SPX: SPXW options are European and PM-settled, which is what
+  //     Breeden & Litzenberger (1978) assumes; SPY options are American, so
+  //     their prices carry an early-exercise premium the density would absorb.
+  //   - calls AND puts per strike (OTM puts carry the left wing; the SVI fit in
+  //     breedenLitzenberger.computeRND uses both via put-call parity).
+  //   - band: the ATM straddle 1-sigma move of the same expiry (index points),
+  //     not the Models daily EM scaled by 10.
   app.get("/api/experimental/bl-pdf", async (_req, res) => {
     try {
-      const chainPath = path.join(process.cwd(), "data/cboe/SPY.json");
-      const raw = fs.readFileSync(chainPath, "utf-8");
-      const j = JSON.parse(raw);
-      const opts: any[] = j?.data?.data?.options ?? j?.data?.options ?? [];
-      // Group by expiry (encoded in the OCC symbol — SPY{YYMMDD}{C|P}{strike})
-      const byExpiry = new Map<string, CallStrike[]>();
-      for (const o of opts) {
-        const sym: string = o.option ?? "";
-        const m = /^[A-Z]+(\d{6})([CP])(\d{8})$/.exec(sym);
-        if (!m) continue;
-        if (m[2] !== "C") continue; // only calls
-        const exp = m[1];
-        const strike = Number(m[3]) / 1000;
-        const bid = Number(o.bid ?? 0);
-        const ask = Number(o.ask ?? 0);
-        const mid = bid > 0 && ask > 0 ? (bid + ask) / 2 : Number(o.last_trade_price ?? 0);
-        if (!isFinite(mid) || mid <= 0) continue;
-        const arr = byExpiry.get(exp) ?? [];
-        arr.push({ strike, callMid: mid });
-        byExpiry.set(exp, arr);
+      const chain = await schwabGetOptionChain("$SPX", 7);
+      if ("error" in chain) {
+        return res.status(503).json({ dataState: "unavailable", note: `Schwab $SPX chain unavailable: ${chain.reason ?? chain.error}` });
       }
-      // Pick the nearest expiry that has ≥15 strikes
-      const candidates = [...byExpiry.entries()]
-        .filter(([, arr]) => arr.length >= 15)
-        .sort(([a], [b]) => a.localeCompare(b));
-      if (candidates.length === 0) {
-        return res.status(503).json({ note: "no expiry with sufficient call strikes" });
+      const spot = chain.underlying.last;
+      if (spot == null || !(spot > 0)) return res.status(503).json({ dataState: "unavailable", note: "no $SPX spot in the Schwab chain" });
+      const { quotesFromSchwabExpiry, straddleExpectedMove } = await import("./impliedScenario");
+      const keys = Array.from(new Set([...Object.keys(chain.callExpDateMap), ...Object.keys(chain.putExpDateMap)])).sort();
+      const nowMs = Date.now();
+      // Nearest expiry that has not settled and has >= 15 strikes with a call mid.
+      let picked: { key: string; quotes: ReturnType<typeof quotesFromSchwabExpiry>; T: number } | null = null;
+      for (const key of keys) {
+        const T = timeToExpiry(key.slice(0, 10), { nowMs, style: "PM" }).years;
+        if (!(T > 0)) continue;
+        const quotes = quotesFromSchwabExpiry(chain.callExpDateMap, chain.putExpDateMap, key);
+        if (quotes.filter((q) => q.callMid != null).length < 15) continue;
+        picked = { key, quotes, T };
+        break;
       }
-      const [exp, chain] = candidates[0];
-      const yy = 2000 + Number(exp.slice(0, 2));
-      const mm = Number(exp.slice(2, 4));
-      const dd = Number(exp.slice(4, 6));
-      // Options expire ~16:00 ET (~20:00 UTC), not midnight UTC — midnight cut
-      // T ~20h short on the front expiry.
-      const expDate = new Date(Date.UTC(yy, mm - 1, dd, 20));
-      const T = Math.max(
-        1 / 365,
-        (expDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24 * 365),
-      );
-      // Spot from /api/quotes
-      const PORT = Number(process.env.PORT ?? 5000);
-      const q = await fetch(`http://127.0.0.1:${PORT}/api/quotes`)
-        .then((r) => r.ok ? r.json() : null)
-        .catch(() => null);
-      const spot = q?.spy?.price ?? q?.spx?.price ?? 0;
-      if (!spot) return res.status(503).json({ note: "no spot available" });
-      const m = await fetch(`http://127.0.0.1:${PORT}/api/models?symbol=SPX`)
-        .then((r) => r.ok ? r.json() : null)
-        .catch(() => null);
-      // Models EM is in SPX points; this density is built on the SPY chain,
-      // so scale by 10 (otherwise pInOneEM pins at ~1.0).
-      const emSpx = m?.horizons?.daily?.audit?.scenarioTargets?.oneDayEM;
-      const oneDayEM = emSpx != null && isFinite(emSpx) ? emSpx / 10 : spot * 0.005;
-      const r = 0.045; // approximate risk-free; not life-or-death for shape
-      const out = computeRND(chain, spot, r, T, oneDayEM);
+      if (!picked) return res.status(503).json({ dataState: "unavailable", note: "no unsettled $SPX expiry with >= 15 quoted call strikes" });
+      const r = 0.045; // approximate risk-free; discounting only
+      const strikes: CallStrike[] = picked.quotes
+        .filter((q) => q.callMid != null && (q.callMid as number) > 0)
+        .map((q) => ({ strike: q.strike, callMid: q.callMid as number, putMid: q.putMid ?? null }));
+      const straddle = straddleExpectedMove(picked.quotes, spot, Math.exp(-r * picked.T));
+      const em = straddle?.oneSigmaMove ?? null;
+      if (em == null || !(em > 0)) return res.status(503).json({ dataState: "unavailable", note: "no ATM straddle quote for the expected-move band" });
+      const out = computeRND(strikes, spot, r, picked.T, em);
       res.json({
-        expiry: `${yy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`,
-        T_years: T,
+        expiry: picked.key.slice(0, 10),
+        T_years: picked.T,
         spot,
-        strikes: chain.length,
+        strikes: strikes.length,
+        putsQuoted: picked.quotes.filter((q) => q.putMid != null).length,
+        emBand: { points: em, source: "ATM straddle 1-sigma move to this expiry (same chain)" },
+        chainSource: "schwab",
+        chainSymbol: "$SPX",
+        chainAsOfMs: chain.asOfMs,
+        chainStale: chain.stale,
         ...out,
       });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ note: e?.message ?? "failed" });
     }
   });
@@ -5841,6 +5998,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         },
       });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ note: e?.message ?? "failed" });
     }
   });
@@ -5853,7 +6011,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         .map((b: any) => b.close ?? b.c)
         .filter((c: any) => typeof c === "number" && isFinite(c));
       if (closes.length < 31) {
-        return res.status(503).json({ note: "need ≥31 daily closes" });
+        return res.status(503).json({ dataState: "unavailable", reason: "need ≥31 daily closes", note: "need ≥31 daily closes" });
       }
       const returns: number[] = [];
       for (let i = 1; i < closes.length; i++) {
@@ -5864,6 +6022,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const flag = flagTailEvent(todayReturn, recent);
       res.json({ todayReturn, ...flag });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ note: e?.message ?? "failed" });
     }
   });
@@ -5875,13 +6034,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   let dfiCloud: Particle[] = initParticles(200);
   app.get("/api/experimental/particle-dfi", async (_req, res) => {
     try {
-      const PORT = Number(process.env.PORT ?? 5000);
-      const m = await fetch(`http://127.0.0.1:${PORT}/api/models?symbol=SPX`)
-        .then((r) => r.ok ? r.json() : null)
-        .catch(() => null);
+      const m: any = await internalJson("/api/models?symbol=SPX"); // in-process (internalApi.ts)
       const dfiRaw = m?.horizons?.daily?.audit?.dfi;
       if (typeof dfiRaw !== "number" || !isFinite(dfiRaw)) {
-        return res.status(503).json({ note: "no live DFI value" });
+        return res.status(503).json({ dataState: "unavailable", reason: "no live DFI value", note: "no live DFI value" });
       }
       const stepped = stepFilter(dfiCloud, dfiRaw);
       dfiCloud = stepped.particles;
@@ -5897,6 +6053,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         note: "shadow forecaster — not used in live calc; promote only after Brier-better-than-trivial across 30+ days",
       });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ note: e?.message ?? "failed" });
     }
   });
@@ -5965,18 +6122,16 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         probBear == null || oneDayEM == null
       ) {
         try {
-          const PORT = Number(process.env.PORT ?? 5000);
-          const m = await fetch(`http://127.0.0.1:${PORT}/api/models?symbol=SPX`)
-            .then((r) => r.ok ? r.json() : null)
-            .catch(() => null);
+          const m: any = await internalJson("/api/models?symbol=SPX"); // in-process (internalApi.ts)
           const d = m?.horizons?.daily;
           if (d) {
             const sp = d.audit?.scenarioProb ?? null;
             const st = d.audit?.scenarioTargets ?? null;
             if (spot == null) spot = d.spot ?? undefined;
-            if (probBull == null && sp) probBull = (sp.bull ?? 0) / 100;
-            if (probBase == null && sp) probBase = (sp.base ?? 0) / 100;
-            if (probBear == null && sp) probBear = (sp.bear ?? 0) / 100;
+            // Missing odds stay missing (400 below), never read as 0%.
+            if (probBull == null && sp?.bull != null) probBull = sp.bull / 100;
+            if (probBase == null && sp?.base != null) probBase = sp.base / 100;
+            if (probBear == null && sp?.bear != null) probBear = sp.bear / 100;
             if (oneDayEM == null && st) oneDayEM = st.oneDayEM ?? undefined;
             if (realizedSigma20d == null && d.audit?.realizedSigma20d != null) {
               realizedSigma20d = d.audit.realizedSigma20d;
@@ -6002,6 +6157,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         inputs: { spot, probBull, probBase, probBear, oneDayEM, realizedSigma20d },
       });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ note: e?.message ?? "failed" });
     }
   });
@@ -6022,31 +6178,84 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   // ─── ML quantile projection (ML Lab) ───────────────────────────────────
-  // Helper: resolve live inputs for the Greek feature builder.
-  // Captured here so mlGreekFeatures.ts stays free of circular imports on
-  // routes.ts (it cannot reach getOrBuild directly).
+  // Live inputs for the feature builder (feature schema v2, R2-F item 1),
+  // all from Schwab and all on $SPX: spot and VIX quotes (stale quotes are
+  // missing, not used) and the $SPX option chain the dealer levels are
+  // computed from (mlFeatureMath.dealerLevelsFromChain). The Signals snapshot
+  // gamma is NOT used: it was the CBOE SPY chain in SPY points, measured
+  // against SPX spot. Chain cached 60 s; the feature dict is cached 30 s.
+  let mlChainCache: { at: number; chain: any; reason: string | null } | null = null;
   const resolveMlFeatureInputs = async () => {
-    const { buildGammaLevelsEnhanced } = await import("./gammaLevels");
-    let levels: any = null;
     let spxNow: number | null = null;
     let vix: number | null = null;
     let vixPrev: number | null = null;
     try {
-      const snap = await getOrBuild(false);
-      const g = snap.gamma;
-      const spy = snap.spy.price ?? g.spot;
-      levels = buildGammaLevelsEnhanced(g, spy);
-      // SPX cash spot: prefer ^SPX 5min last close from the OHLC fetcher.
+      const qs = await schwabGetQuotes(["$SPX", "$VIX"]);
+      const spx = qs.find((q) => q.symbol === "$SPX");
+      const vq = qs.find((q) => q.symbol === "$VIX");
+      // Only quotes known to be fresh: stale null (no quote time, age unknown) is missing too.
+      if (spx && spx.stale === false && spx.last != null && spx.last > 0) spxNow = spx.last;
+      if (vq && vq.stale === false && vq.last != null && vq.last > 0) { vix = vq.last; vixPrev = vq.prevClose ?? null; }
+    } catch { /* missing, not zero */ }
+    if (!mlChainCache || Date.now() - mlChainCache.at > 60_000) {
+      const at = Date.now();
       try {
-        const { fetchOHLC } = await import("./ohlc");
-        const ohlc = await fetchOHLC("^SPX", "1D", "5m");
-        spxNow = ohlc?.price ?? null;
-      } catch { /* leave null */ }
-      vix = snap.vol.vix.value ?? null;
-      vixPrev = snap.vol.vix.prev ?? null;
-    } catch { /* fall through with nulls */ }
-    return { levels, spxNow, vix, vixPrev };
+        const ch = await schwabGetOptionChain("$SPX", 45);
+        if ("error" in ch) mlChainCache = { at, chain: null, reason: `chain_${ch.error}` };
+        else if (ch.source !== "schwab") mlChainCache = { at, chain: null, reason: `chain_source_${ch.source}_refused` };
+        // The guard reads the chain's own symbol when the fetch layer reports one.
+        else mlChainCache = { at, chain: { ...ch, symbol: (ch as any).symbol ?? "$SPX" }, reason: null };
+      } catch {
+        mlChainCache = { at, chain: null, reason: "chain_fetch_failed" };
+      }
+    }
+    return {
+      spxNow, spotUnderlying: "$SPX", vix, vixPrev,
+      spxChain: mlChainCache.chain, chainFetchedAtMs: mlChainCache.at, chainReason: mlChainCache.reason,
+    };
   };
+
+  // F9.1 / F9.3 — deterministic real-data logger for the quantile forecaster
+  // (features + served bands every 5 min in RTH, Schwab SPX minute bars after
+  // the close) and live 10-90% coverage scoring. Disable: PULSE_ML_DATALOG=0.
+  import("./mlDataLog").then((m) => m.startMlDataLogger(resolveMlFeatureInputs))
+    .catch((e) => console.warn("[ml:datalog] not started:", e?.message ?? e));
+
+  // GET /api/ml/coverage?days=30[&model=&version=] — live coverage of the
+  // drawn 10-90% band (default: the most recently scored served band).
+  app.get("/api/ml/coverage", async (req, res) => {
+    try {
+      const { getCoverageReport } = await import("./mlDataLog");
+      const days = Math.max(1, Math.min(365, Number(req.query.days) || 30));
+      const version = typeof req.query.version === "string" && req.query.version ? req.query.version : undefined;
+      const model = typeof req.query.model === "string" && req.query.model ? req.query.model : undefined;
+      res.json(getCoverageReport(days, Date.now(), version, model));
+    } catch (e: any) {
+      res.status(500).json({ error: "coverage_failed", message: e?.message ?? String(e) });
+    }
+  });
+
+  // GET /api/odte/option-ledger — realized option-P&L ledger by grade bucket (feeds the sizer).
+  app.get("/api/odte/option-ledger", async (req, res) => {
+    try {
+      const { getOptionLedgerSummary } = await import("./odteGrader");
+      const { wilsonInterval } = await import("./validationMath");
+      const fee = Math.max(0, Number(req.query.fee) || 0); // $ per contract per side; 0 = gross
+      res.json({
+        asOf: Date.now(),
+        feePerContract: fee,
+        note: "Replay of the published plan (5-min close stop or -20% on the bid; half at T1, runner to T2; PM settlement at intrinsic) of fired 0DTE alerts on logged Schwab marks: ask in, bid out. Return per graded position = (sale proceeds - premium paid - fees) / premium paid, premium paid = entry ask x 100 x contracts (see positionContracts). Grades are heuristic scores until a bucket has labelStatus 'ledger_backed'. " +
+          (fee > 0 ? `Returns net of $${fee.toFixed(2)} per contract per side.` : "Returns before fees (pass ?fee= for net).") +
+          " Fires without marks are ungraded and excluded.",
+        buckets: getOptionLedgerSummary(Date.now(), fee).map(({ returns: _r, ...b }) => {
+          const w = wilsonInterval(b.wins, b.n);
+          return { ...b, winRate: b.n > 0 ? b.wins / b.n : null, wilsonLo: b.n > 0 ? w.lo : null, wilsonHi: b.n > 0 ? w.hi : null };
+        }),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: "ledger_failed", message: e?.message ?? String(e) });
+    }
+  });
 
   app.post("/api/ml/projection", async (req, res) => {
     const { mlQuantileOverlay } = await import("./mlBridge");
@@ -6072,23 +6281,25 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
     // UI route — user tolerates latency. 2500ms covers FastAPI cold-start; hot-path Discord still 100ms.
     const result = await mlQuantileOverlay(features, horizons, { timeoutMs: 2500 });
-    if (!result) return res.status(503).json({ ok: false, error: "ML service unreachable" });
+    // The sidecar serves only a promoted real-data model: no bands = none
+    // passed the gate, or the sidecar is not running (GET /api/ml/health says which).
+    if (!result) return res.status(503).json({ ok: false, error: "no promoted quantile model, or ML sidecar unreachable (see /api/ml/health)" });
     res.json({ ok: true, ...result });
   });
 
   // ─── ML Lab unified SPX endpoint ───────────────────────────────────────
-  // Single payload the ML Lab panel consumes: candles + dealer levels +
-  // forward projection bands + the feature dict that produced the projection.
+  // Candles + dealer levels + the SERVED band (mlServing: a promoted real-data
+  // model, else the labeled baseline cone) + the feature dict behind it.
   app.get("/api/ml/projection-spx", async (_req, res) => {
     try {
-      const { mlQuantileOverlay } = await import("./mlBridge");
-      const { buildMlFeatures } = await import("./mlGreekFeatures");
+      const { buildMlFeatures, getLastMlFeatureProvenance } = await import("./mlGreekFeatures");
+      const { buildServedProjection } = await import("./mlServing");
       const { fetchOHLC } = await import("./ohlc");
-      const { buildGammaLevelsEnhanced } = await import("./gammaLevels");
+      const { userTargets } = await import("./gammaLevels");
+      const { mlLabLevels } = await import("./mlFeatureMath");
 
       const features = await buildMlFeatures(resolveMlFeatureInputs);
-      const horizons = [5, 15, 30, 60];
-      const projection = await mlQuantileOverlay(features, horizons, { timeoutMs: 2500 });
+      const sp = await buildServedProjection(features);
 
       // Today's RTH SPX 5min bars
       let candles: any[] = [];
@@ -6101,12 +6312,12 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         prevClose = ohlc?.prevClose ?? null;
       } catch { /* empty */ }
 
-      // Levels (re-build cheaply — getOrBuild is cached internally)
-      let levels: any = null;
-      try {
-        const snap = await getOrBuild(false);
-        levels = buildGammaLevelsEnhanced(snap.gamma, snap.spy.price ?? snap.gamma.spot);
-      } catch { /* null levels */ }
+      // Levels: the dealer levels the features were built from (Schwab $SPX
+      // chain, same index as the candles), never the Signals snapshot gamma.
+      const prov = getLastMlFeatureProvenance();
+      let targets: any = {};
+      try { targets = userTargets(); } catch { targets = {}; }
+      const levels = mlLabLevels(prov?.dealer ?? null, prov?.dealerReason ?? "features_not_built", { scale: 1, display: "$SPX", targets });
 
       res.json({
         ok: true,
@@ -6114,33 +6325,39 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         spot,
         prevClose,
         levels,
-        projection: projection
-          ? { bands: projection.bands, status: projection.status, version: projection.version }
+        projection: sp.served.bands
+          ? { bands: sp.served.bands, status: sp.served.learned ? "PROMOTED" : "BASELINE", version: sp.served.coverageVersion }
           : { bands: null, status: "UNAVAILABLE", version: "-" },
+        served: sp.served,
         features,
+        featureMissing: prov ? { schemaVersion: prov.schemaVersion, missing: prov.missing, reasons: prov.reasons, dealerAsOfMs: prov.dealerAsOfMs } : null,
         asOf: new Date().toISOString(),
       });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ ok: false, error: e?.message ?? "projection-spx failed" });
     }
   });
 
   // ─── ML Lab unified SPY endpoint ───────────────────────────────────────
-  // SPY-scale variant of projection-spx: live SPY 5min candles + dealer levels
-  // (rescaled SPX→SPY by /10) + 60min projection bands. When the Schwab tape is
-  // unavailable the route synthesizes a deterministic GBM walk anchored on the
-  // current snapshot price so the panel still renders end-to-end.
+  // SPY 5min candles + dealer levels ($SPX chain x live SPY/SPX ratio) +
+  // the served forward-return band drawn on SPY. The band is the same one the
+  // coverage logger scores (mlServing.buildServedProjection): a promoted
+  // real-data quantile model, else the baseline volatility cone, with the
+  // morning-anchor model blended in only if it too passed the gate. `served`
+  // names every component of the drawn band. An empty tape is dataState
+  // "no_data" (no candles are generated).
   app.get("/api/ml/projection-spy", async (_req, res) => {
     try {
-      const { mlQuantileOverlay, mlQuantileMorning } = await import("./mlBridge");
-      const { buildMlFeatures } = await import("./mlGreekFeatures");
+      const { buildMlFeatures, getLastMlFeatureProvenance } = await import("./mlGreekFeatures");
+      const { buildServedProjection } = await import("./mlServing");
       const { fetchOHLC } = await import("./ohlc");
-      const { buildGammaLevelsEnhanced } = await import("./gammaLevels");
-      const { buildMorningFingerprint, computeMorningBlendWeight, blendBands } = await import("./mlMorningFingerprint");
+      const { userTargets } = await import("./gammaLevels");
+      const { mlLabLevels, spyPerSpxRatio } = await import("./mlFeatureMath");
 
       const features = await buildMlFeatures(resolveMlFeatureInputs);
-      const horizons = [5, 15, 30, 60];
-      const projection = await mlQuantileOverlay(features, horizons, { timeoutMs: 2500 });
+      const sp = await buildServedProjection(features);
+      const served = sp.served;
 
       // Today's RTH SPY 5min bars
       let candles: any[] = [];
@@ -6153,178 +6370,33 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         prevClose = ohlc?.prevClose ?? null;
       } catch { /* empty */ }
 
-      // Snapshot fallback for spot/prevClose + synthetic candle generation.
-      let snapSpy: { price: number | null; prevClose: number | null; changePct: number | null } = {
-        price: null, prevClose: null, changePct: null,
-      };
+      // Snapshot fallback for spot/prevClose only (no candles are generated).
       try {
         const snap = await getOrBuild(false);
-        snapSpy = {
-          price: snap.spy?.price ?? null,
-          prevClose: snap.spy?.prevClose ?? null,
-          changePct: snap.spy?.changePct ?? null,
-        };
-        if (spot == null) spot = snapSpy.price;
-        if (prevClose == null) prevClose = snapSpy.prevClose;
+        if (spot == null) spot = snap.spy?.price ?? null;
+        if (prevClose == null) prevClose = snap.spy?.prevClose ?? null;
       } catch { /* leave nulls */ }
 
-      // Levels — fetch SPX-scale and divide every numeric value by 10 for SPY.
-      let levels: any = null;
+      // Levels: the $SPX-chain dealer levels behind the features, drawn on SPY
+      // through the live Schwab SPY/SPX quote ratio (not a fixed /10, and
+      // never the Signals snapshot gamma, which was CBOE SPY points). No fresh
+      // ratio -> levels unavailable with the reason.
+      let ratio: { ratio: number | null; reason: string | null } = { ratio: null, reason: "quotes_unavailable" };
       try {
-        const snap = await getOrBuild(false);
-        const spxLevels = buildGammaLevelsEnhanced(snap.gamma, snap.spy.price ?? snap.gamma.spot);
-        levels = rescaleLevelsForSpy(spxLevels, 10);
-      } catch { /* null levels */ }
+        const qs = await schwabGetQuotes(["$SPX", "SPY"]);
+        ratio = spyPerSpxRatio(qs.find((q) => q.symbol === "$SPX"), qs.find((q) => q.symbol === "SPY"));
+      } catch { /* ratio stays unavailable */ }
+      let targets: any = {};
+      try { targets = userTargets(); } catch { targets = {}; }
+      const provL = getLastMlFeatureProvenance();
+      const levels = mlLabLevels(provL?.dealer ?? null, provL?.dealerReason ?? "features_not_built",
+        { scale: ratio.ratio, scaleReason: ratio.reason, display: "SPY", targets });
 
-      // Synthetic candle synthesis when tape empty AND we have a spot anchor.
-      let synthetic = false;
-      let syntheticReason: string | null = null;
-      if (candles.length === 0 && spot != null && spot > 0) {
-        // Determine current ET minute-of-day (0..1439).
-        const fmt = new Intl.DateTimeFormat("en-US", {
-          timeZone: "America/New_York",
-          hour12: false,
-          hour: "2-digit",
-          minute: "2-digit",
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-        });
-        const parts = fmt.formatToParts(new Date());
-        const h = Number(parts.find((p) => p.type === "hour")?.value ?? "9");
-        const mn = Number(parts.find((p) => p.type === "minute")?.value ?? "30");
-        const yyyy = parts.find((p) => p.type === "year")?.value ?? "1970";
-        const mm = parts.find((p) => p.type === "month")?.value ?? "01";
-        const dd = parts.find((p) => p.type === "day")?.value ?? "01";
-        const etMinutes = h * 60 + mn;
-        const RTH_OPEN = 570; // 9:30
-        const RTH_CLOSE = 960; // 16:00
-        const minsSinceOpen = Math.max(0, Math.min(RTH_CLOSE, etMinutes) - RTH_OPEN);
-        const nBars = Math.floor(minsSinceOpen / 5);
-        if (nBars > 0) {
-          const anchor = spot;
-          const pctChange = snapSpy.changePct ?? 0;
-          const prevC = prevClose ?? anchor / (1 + pctChange / 100);
-          const dailyDrift = anchor - prevC;
-          const perBarDrift = dailyDrift / nBars;
-          const stdev = anchor * 0.0008;
-
-          // Deterministic seed = today's epoch day (ET)
-          const epochDay = Math.floor(
-            Date.UTC(Number(yyyy), Number(mm) - 1, Number(dd)) / 86_400_000,
-          );
-          let seed = epochDay >>> 0;
-          const rng = () => {
-            // mulberry32
-            seed = (seed + 0x6D2B79F5) >>> 0;
-            let t = seed;
-            t = Math.imul(t ^ (t >>> 15), t | 1);
-            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-          };
-          // Box-Muller normal
-          const norm = () => {
-            const u = Math.max(1e-9, rng());
-            const v = rng();
-            return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
-          };
-
-          // Build candles 9:30 ET → now, 5min steps.
-          // Open of bar 0 = prevClose; subsequent opens = previous close.
-          const dayStartUtc = Date.UTC(Number(yyyy), Number(mm) - 1, Number(dd));
-          // Convert ET 9:30 to UTC epoch for that day. America/New_York can be UTC-5 (EST) or UTC-4 (EDT).
-          // Simple approach: format the dayStart and shift; easier — just trust local epoch math by
-          // taking now() - (etMinutes - currentBarMinute) minutes for each bar timestamp.
-          const nowMs = Date.now();
-          const minutesIntoSession = etMinutes - RTH_OPEN; // current minute since 9:30
-          let prevC2 = prevC;
-          let lastClose = prevC2;
-          const synth: any[] = [];
-          for (let i = 0; i < nBars; i++) {
-            const open = lastClose;
-            const drift = perBarDrift;
-            const noise = stdev * norm();
-            const close = open + drift + noise;
-            const move = Math.abs(close - open);
-            const buf = stdev * 0.5;
-            const high = Math.max(open, close) + move * 0.25 + buf;
-            const low = Math.min(open, close) - move * 0.25 - buf;
-            const vol = 100_000 + Math.floor(rng() * 400_000);
-            // Bar timestamp = open time in epoch seconds. Bar i opens at minute (i*5) since 9:30.
-            // Using nowMs adjusted backward by (minutesIntoSession - i*5) minutes.
-            const t = Math.floor((nowMs - (minutesIntoSession - i * 5) * 60_000) / 1000);
-            synth.push({
-              t,
-              o: Number(open.toFixed(2)),
-              h: Number(high.toFixed(2)),
-              l: Number(low.toFixed(2)),
-              c: Number(close.toFixed(2)),
-              v: vol,
-              synthetic: true,
-            });
-            lastClose = close;
-          }
-          // Force last close to anchor exactly so the chart agrees with the spot.
-          if (synth.length > 0) {
-            const last = synth[synth.length - 1];
-            last.c = Number(anchor.toFixed(2));
-            last.h = Number(Math.max(last.h, last.o, last.c).toFixed(2));
-            last.l = Number(Math.min(last.l, last.o, last.c).toFixed(2));
-          }
-          candles = synth;
-          synthetic = true;
-          syntheticReason = "Schwab intraday tape unavailable; deterministic GBM walk anchored on snapshot spot.";
-        } else {
-          syntheticReason = "pre-market — no bars yet";
-        }
-      } else if (candles.length === 0) {
-        syntheticReason = "no tape and no snapshot spot";
-      }
-
-      // ─── Model D Morning Anchor blend ─────────────────────────────
-      // Compute morning fingerprint from SPY tape; fold into features dict;
-      // call /quantile/morning; blend with v3 by time-of-day weight.
-      let morningFp: any = { ready: false };
-      let morningProjection: any = null;
-      let blendWeight = 0;
-      let blendedBands: any = projection?.bands ?? null;
-      try {
-        const atr5m = Number(features?.atr_5m ?? 0);
-        morningFp = await buildMorningFingerprint({
-          symbol: "SPY",
-          prevClose,
-          atr5m,
-          spot: Number(spot ?? 0),
-        });
-        if (morningFp.ready) {
-          const morningFeatures = {
-            ...features,
-            morn_orb_range_atr: morningFp.morn_orb_range_atr,
-            morn_orb_hi_pct: morningFp.morn_orb_hi_pct,
-            morn_orb_lo_pct: morningFp.morn_orb_lo_pct,
-            morn_open_drive_atr: morningFp.morn_open_drive_atr,
-            morn_opening_vol_z: morningFp.morn_opening_vol_z,
-            morn_gap_atr: morningFp.morn_gap_atr,
-            morn_vwap_dev_atr: morningFp.morn_vwap_dev_atr,
-            bars_since_anchor: morningFp.bars_since_anchor,
-            spot_vs_anchor_atr: morningFp.spot_vs_anchor_atr,
-          };
-          morningProjection = await mlQuantileMorning(
-            morningFeatures,
-            [30, 60, 120, 180, 240],
-            { timeoutMs: 2500 },
-          );
-          blendWeight = computeMorningBlendWeight();
-          blendedBands = blendBands(
-            projection?.bands ?? null,
-            morningProjection?.bands ?? null,
-            blendWeight,
-          );
-        }
-      } catch (err) {
-        // Morning model is optional — v3 stays as the floor. Never block.
-        console.warn("[ml:projection-spy] morning blend skipped:", (err as any)?.message);
-      }
+      const synthetic = false;
+      const tape = intradayTapeState(candles.length);
+      const fp = sp.morning?.fingerprint ?? null;
+      const morningComp = served.components.find((c) => c.name === "morning_anchor") ?? null;
+      const prov = getLastMlFeatureProvenance();
 
       res.json({
         ok: true,
@@ -6332,52 +6404,73 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         spot,
         prevClose,
         levels,
-        projection: projection
-          ? { bands: projection.bands, status: projection.status, version: projection.version }
+        // Raw overlay as the sidecar answered (bands only when promoted).
+        projection: sp.overlay
+          ? { bands: sp.overlay.bands, status: sp.overlay.status, version: sp.overlay.version }
           : { bands: null, status: "UNAVAILABLE", version: "-" },
         morning: {
-          ready: !!morningFp?.ready,
-          reason: morningFp?.reason ?? null,
-          anchorClose: morningFp?.anchor_close ?? null,
-          anchorTimeEt: morningFp?.anchor_time_et ?? null,
-          barsSinceAnchor: morningFp?.bars_since_anchor ?? 0,
-          fingerprint: morningFp?.ready
+          ready: !!fp?.ready,
+          reason: fp?.reason ?? null,
+          anchorClose: fp?.anchor_close ?? null,
+          anchorTimeEt: fp?.anchor_time_et ?? null,
+          barsSinceAnchor: fp?.bars_since_anchor ?? 0,
+          fingerprint: fp?.ready
             ? {
-                orb_range_atr: morningFp.morn_orb_range_atr,
-                orb_hi_pct: morningFp.morn_orb_hi_pct,
-                orb_lo_pct: morningFp.morn_orb_lo_pct,
-                open_drive_atr: morningFp.morn_open_drive_atr,
-                opening_vol_z: morningFp.morn_opening_vol_z,
-                gap_atr: morningFp.morn_gap_atr,
-                vwap_dev_atr: morningFp.morn_vwap_dev_atr,
+                orb_range_atr: fp.morn_orb_range_atr,
+                orb_hi_pct: fp.morn_orb_hi_pct,
+                orb_lo_pct: fp.morn_orb_lo_pct,
+                open_drive_atr: fp.morn_open_drive_atr,
+                opening_vol_z: fp.morn_opening_vol_z,
+                gap_atr: fp.morn_gap_atr,
+                vwap_dev_atr: fp.morn_vwap_dev_atr,
               }
             : null,
-          projection: morningProjection
-            ? { bands: morningProjection.bands, status: morningProjection.status, version: morningProjection.version }
+          projection: sp.morning?.projection
+            ? { bands: sp.morning.projection.bands, status: sp.morning.projection.status, version: sp.morning.projection.version }
             : null,
+          // Blended only when promoted on real data (never so far).
+          inBlend: !!morningComp,
         },
+        // Kept for older readers: bands = the served (drawn) band.
         blend: {
-          weight: blendWeight,
-          activeModel:
-            blendWeight <= 0 ? "v3" : blendWeight >= 0.5 ? "morning" : "blend",
-          bands: blendedBands,
+          weight: morningComp?.weight ?? 0,
+          activeModel: !morningComp ? "v3" : morningComp.weight >= 0.5 ? "morning" : "blend",
+          bands: served.bands,
         },
+        served,
         features,
+        featureMissing: prov ? { schemaVersion: prov.schemaVersion, missing: prov.missing, reasons: prov.reasons, dealerAsOfMs: prov.dealerAsOfMs } : null,
         synthetic,
-        syntheticReason,
+        syntheticReason: null,
+        dataState: tape.dataState,
+        dataStateReason: tape.reason,
+        // Today's close, minutes after 09:30 ET (210 on a 13:00 half day); null = no session.
+        sessionCloseMin: (() => { const c = sessionCloseMinutes(etDate()); return c == null ? null : c - REGULAR_OPEN_MIN; })(),
         asOf: new Date().toISOString(),
       });
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ ok: false, error: e?.message ?? "projection-spy failed" });
     }
   });
 
   // ─── ML service health (Wires 17–20) ────────────────────────────────────
+  // 503 with an explicit reason when the sidecar is not installed on this
+  // host (no Python or missing packages) versus installed but not answering.
   app.get("/api/ml/health", async (_req, res) => {
     const { mlHealth } = await import("./mlBridge");
+    const { sidecarInstallStatus } = await import("./mlSidecarStatus");
     // UI route — longer timeout for dashboard consumption.
     const health = await mlHealth({ timeoutMs: 2500 });
-    if (!health) return res.status(503).json({ ok: false, error: "ML service unreachable" });
+    if (!health) {
+      const inst = sidecarInstallStatus();
+      return res.status(503).json({
+        ok: false,
+        error: inst.installed ? "ML sidecar unreachable" : "ML sidecar not installed",
+        sidecar: inst,
+        served: "baseline volatility cone (computed in the server; no sidecar needed)",
+      });
+    }
     res.json({ ok: true, ...health });
   });
 
@@ -6391,6 +6484,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const cone = await buildMultiDayCone(symbol);
       res.json(cone);
     } catch (e: any) {
+      if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Failed to build multi-day cone" });
     }
   });

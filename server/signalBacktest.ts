@@ -3,6 +3,7 @@
 // Edge metrics: Sharpe, Sortino, max drawdown, win-rate, mean-bps-per-trade, CLV-style.
 
 import { sqlite } from "./storage";
+import { annualizedSharpe, annualizedSortino } from "./validationMath";
 
 interface DailyBar { symbol: string; date: string; close: number; }
 
@@ -44,8 +45,8 @@ export interface BacktestResult {
   median_ret_bps: number;
   total_ret_pct: number;
   max_dd_pct: number;
-  sharpe: number;
-  sortino: number;
+  sharpe: number | null;   // annualized by trades per year; null below 5 trades or zero variance
+  sortino: number | null;  // null when there is no downside (undefined, not infinite) or below 5 trades
   best_trade_bps: number;
   worst_trade_bps: number;
   notes: string;
@@ -116,24 +117,6 @@ function maxDrawdown(equity: number[]): number {
     if (dd > mdd) mdd = dd;
   }
   return mdd * 100;
-}
-
-function sharpe(retsPct: number[]): number {
-  if (retsPct.length < 5) return 0;
-  const m = retsPct.reduce((a, b) => a + b, 0) / retsPct.length;
-  const v = retsPct.reduce((a, b) => a + (b - m) * (b - m), 0) / (retsPct.length - 1);
-  const sd = Math.sqrt(v);
-  return sd > 0 ? (m / sd) * Math.sqrt(252) : 0;
-}
-
-function sortino(retsPct: number[]): number {
-  if (retsPct.length < 5) return 0;
-  const m = retsPct.reduce((a, b) => a + b, 0) / retsPct.length;
-  const downs = retsPct.filter(r => r < 0);
-  if (!downs.length) return Infinity;
-  const dv = downs.reduce((a, b) => a + b * b, 0) / downs.length;
-  const dsd = Math.sqrt(dv);
-  return dsd > 0 ? (m / dsd) * Math.sqrt(252) : 0;
 }
 
 const DEFAULT_COST_BPS = 3; // ~1-2 ticks one-way + commission
@@ -258,10 +241,17 @@ export function runSignal(spec: BacktestSignalSpec, costBps = DEFAULT_COST_BPS):
   const totalRetPct = (eq - 1) * 100;
   const mdd = maxDrawdown(equity);
 
-  // Convert per-trade bps to pct for ratio annualization
+  // Annualize per-TRADE ratios by trades per year (Lo 2002), not sqrt(252):
+  // trades are sparse and never overlap, so a year holds far fewer than 252 of them.
   const retsPct = rets.map(b => b / 100);
-  const sh = sharpe(retsPct);
-  const so = sortino(retsPct);
+  let tradesPerYear = 0;
+  if (trades.length > 0) {
+    const spanDays = (Date.parse(trades[trades.length - 1].exitDate) - Date.parse(trades[0].entryDate)) / 86_400_000;
+    const spanYears = Math.max(spanDays, hold) / 365.25;
+    tradesPerYear = trades.length / spanYears;
+  }
+  const sh = annualizedSharpe(retsPct, tradesPerYear);
+  const so = annualizedSortino(retsPct, tradesPerYear);
 
   let notes = "";
   if (trades.length < 20) notes = "thin sample (<20 trades) — wide error bars, do not size off this alone";

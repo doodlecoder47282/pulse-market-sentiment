@@ -11,7 +11,8 @@
 //     regime before _appliedRegime switches.
 //
 // What this module adds:
-//   - Forward-looking score: how likely is each candidate regime to be the
+//   - Forward-looking heuristic score (hand-set softmax weights, not calibrated
+//     probabilities): how strongly does each candidate regime score to be the
 //     APPLIED regime in the next ~15-30 minutes? Returns currentRegime,
 //     candidates[] sorted by probability, drivers, confidence.
 //
@@ -29,12 +30,17 @@
 //
 // All math is bounded, fail-soft, and independent of any LLM.
 
+import { gammaZoneEffect } from "./gammaZone";
+
 type RegimeBucket =
   | "TREND_STRONG"
   | "TREND_WEAK"
   | "NEUTRAL"
   | "CHOP_WEAK"
-  | "CHOP_STRONG";
+  | "CHOP_STRONG"
+  // Round 4: GEX missing or immaterial ("y?"). Its own state, never NEUTRAL:
+  // the buckets below are defined by the gamma sign, so none applies.
+  | "GAMMA_UNKNOWN";
 
 const ALL_REGIMES: RegimeBucket[] = [
   "TREND_STRONG",
@@ -100,14 +106,23 @@ function dfiSlopeFromHistory(): { slope: number; samples: number } {
   return { slope: (last.dfi - first.dfi) / dtMin, samples: window.length };
 }
 
-function flipRateFromHistory(): { rate: number; flips: number; samples: number } {
-  if (_history.length < 3) return { rate: 0, flips: 0, samples: _history.length };
+/**
+ * Regime flips per minute over the known-gamma samples only: a GAMMA_UNKNOWN
+ * sample is a data dropout, so known -> unknown -> known is not two flips.
+ */
+export function flipRateOf(history: ReadonlyArray<{ ts: number; raw: string }>): { rate: number; flips: number; samples: number } {
+  const h = history.filter((x) => x.raw !== "GAMMA_UNKNOWN");
+  if (h.length < 3) return { rate: 0, flips: 0, samples: h.length };
   let flips = 0;
-  for (let i = 1; i < _history.length; i++) {
-    if (_history[i].raw !== _history[i - 1].raw) flips++;
+  for (let i = 1; i < h.length; i++) {
+    if (h[i].raw !== h[i - 1].raw) flips++;
   }
-  const dtMin = Math.max(0.5, (_history[_history.length - 1].ts - _history[0].ts) / 60_000);
-  return { rate: flips / dtMin, flips, samples: _history.length };
+  const dtMin = Math.max(0.5, (h[h.length - 1].ts - h[0].ts) / 60_000);
+  return { rate: flips / dtMin, flips, samples: h.length };
+}
+
+function flipRateFromHistory(): { rate: number; flips: number; samples: number } {
+  return flipRateOf(_history);
 }
 
 /**
@@ -117,6 +132,9 @@ function flipRateFromHistory(): { rate: number; flips: number; samples: number }
  */
 function rawRegimeFor(dfi: number, gZone: string, slopeMag: number): RegimeBucket {
   const inGammaPocket = gZone === "y" || gZone === "y+";
+  // Gamma unknown ("y?" / missing GEX): the trend/chop split below rests on
+  // the gamma regime, so make no regime claim at all (own state).
+  if (gammaZoneEffect(gZone) === "unknown" && gZone !== "y") return "GAMMA_UNKNOWN";
   const adfi = Math.abs(dfi);
   if (adfi >= 3.5 && !inGammaPocket) return "TREND_STRONG";
   if (adfi >= 2.0 && !inGammaPocket) return "TREND_WEAK";
@@ -148,7 +166,15 @@ export interface RegimePredictorInput {
 
 export interface RegimeCandidate {
   regime: RegimeBucket;
+  /**
+   * Hand-set softmax weight in 0..1 (sums to 1 over candidates). It is a
+   * heuristic score, NOT a calibrated probability: the driver weights are not
+   * fitted to outcomes. Kept under this name for existing readers; the UI
+   * shows `score` (0..100) instead.
+   */
   probability: number;
+  /** probability * 100, rounded to 1 decimal: a heuristic score out of 100, not a likelihood. */
+  score: number;
   isCurrent: boolean;
 }
 
@@ -156,7 +182,11 @@ export interface RegimePredictorOutput {
   currentRegime: RegimeBucket;
   candidates: RegimeCandidate[];
   horizonMinutes: number;
-  confidence: number; // 0..1
+  confidence: number; // 0..1 heuristic (max softmax weight x sample quality), not a calibrated probability
+  /** confidence * 100, 1 decimal: heuristic confidence score out of 100. */
+  confidenceScore: number;
+  /** Always "heuristic_softmax_weight": the scores are hand-set weights, not calibrated probabilities. */
+  scoreKind: "heuristic_softmax_weight";
   /** "warming" when historySamples<5; "ready" when ok; "degraded" when missing audit fields. */
   status: "ready" | "warming" | "degraded";
   /** Plain-English headline for the UI (already synthesized server-side). */
@@ -275,6 +305,7 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
     NEUTRAL: 0,
     CHOP_WEAK: 0,
     CHOP_STRONG: 0,
+    GAMMA_UNKNOWN: 0, // never scored: not in ALL_REGIMES
   };
 
   // 1) projected raw regime gets the largest base bump
@@ -419,13 +450,14 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   const candidates: RegimeCandidate[] = ALL_REGIMES.map((r) => ({
     regime: r,
     probability: probs[r],
+    score: Math.round(probs[r] * 1000) / 10,
     isCurrent: r === currentRaw,
   })).sort((a, b) => b.probability - a.probability);
 
   // ─── Status gating ─── warming-up if not enough samples
   let status: "ready" | "warming" | "degraded" = "ready";
   if (histSamples < 5) status = "warming";
-  if (!Number.isFinite(dfi) || !audit.gammaZone) status = "degraded";
+  if (!Number.isFinite(dfi) || gammaZoneEffect(audit.gammaZone) === "unknown") status = "degraded";
 
   // ─── Plain-English synthesis ───
   const top = candidates[0];
@@ -439,11 +471,12 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
       return "audit incomplete — predictor running on partial data.";
     }
     if (!top) return "no signal yet.";
+    // Heuristic score out of 100 (hand-set softmax weight), not a probability.
     const pct = Math.round(top.probability * 100);
     if (isTransition) {
-      return `${prettyRegime(top.regime)} likely next (${pct}%) — flipping from ${prettyRegime(currentRaw)} in next ${horizonMinutes}min.`;
+      return `${prettyRegime(top.regime)} scores highest next (heuristic ${pct}/100) — would flip from ${prettyRegime(currentRaw)} within ${horizonMinutes}min.`;
     }
-    return `${prettyRegime(currentRaw)} holds (${pct}%) — no transition expected in next ${horizonMinutes}min.`;
+    return `${prettyRegime(currentRaw)} scores highest (heuristic ${pct}/100) — no transition indicated in next ${horizonMinutes}min.`;
   })();
 
   const driverNotes: string[] = [];
@@ -465,13 +498,19 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   else if (sessionFrac > 0.75) driverNotes.push(`first 1.5hr of RTH — direction-setting window.`);
   if (flipRate > 0.3) driverNotes.push(`high flip rate (${flipRate.toFixed(2)}/min) — uncertain regime.`);
 
+  // Gamma unknown: no bucket applies, so no candidates and no confidence.
+  const gammaUnknown = currentRaw === "GAMMA_UNKNOWN";
   return {
     currentRegime: currentRaw,
-    candidates,
+    candidates: gammaUnknown ? [] : candidates,
     horizonMinutes,
-    confidence,
+    confidence: gammaUnknown ? 0 : confidence,
+    confidenceScore: gammaUnknown ? 0 : Math.round(confidence * 1000) / 10,
+    scoreKind: "heuristic_softmax_weight",
     status,
-    headline,
+    headline: gammaUnknown
+      ? "gamma unknown (GEX missing or immaterial at spot): no regime reading; the trend/chop buckets need the gamma sign."
+      : headline,
     driverNotes,
     drivers: {
       dfi,
@@ -502,5 +541,6 @@ function prettyRegime(r: RegimeBucket): string {
     case "NEUTRAL":      return "neutral";
     case "CHOP_WEAK":    return "light chop";
     case "CHOP_STRONG":  return "heavy chop";
+    case "GAMMA_UNKNOWN": return "gamma unknown";
   }
 }

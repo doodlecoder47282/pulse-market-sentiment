@@ -4,7 +4,7 @@ export default function Logo({ className = "" }: { className?: string }) {
       viewBox="0 0 28 28"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
-      aria-label="Pulse"
+      aria-label="Batcave"
       className={className}
     >
       {/* concentric pulse rings */}

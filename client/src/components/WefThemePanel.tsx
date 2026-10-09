@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import type { WefThemeResponse, WefTheme } from "@shared/schema";
 import { useTickers } from "./TickerContext";
+import { friendlyError } from "@/lib/friendlyError";
 
 type SortMode = "mentions" | "rs" | "alpha";
 
@@ -59,7 +60,7 @@ export default function WefThemePanel() {
             <span className="text-sm font-medium">WEF theme mapper unavailable</span>
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
-            {(error as Error)?.message ?? "Could not build the WEF theme basket map."}
+            {friendlyError(error, "Could not build the WEF theme basket map.")}
           </p>
         </CardContent>
       </Card>
@@ -91,7 +92,7 @@ export default function WefThemePanel() {
                     key={k}
                     variant={sort === k ? "secondary" : "ghost"}
                     size="sm"
-                    className="h-6 px-2 text-[10px]"
+                    className="h-6 px-2 text-[11px]"
                     onClick={() => setSort(k)}
                     data-testid={`wef-sort-${k}`}
                   >
@@ -122,7 +123,7 @@ export default function WefThemePanel() {
             >
               <Flame className="h-3.5 w-3.5 shrink-0 text-orange-300" />
               <div className="min-w-0">
-                <div className="text-[10px] uppercase tracking-wider text-orange-300/80">Hottest on WEF</div>
+                <div className="text-[11px] uppercase tracking-wider text-orange-300/80">Hottest on WEF</div>
                 <div className="truncate text-[12px] font-medium text-foreground">
                   {topThemeByMentions.label}{" "}
                   <span className="font-mono text-[11px] text-orange-200">
@@ -139,7 +140,7 @@ export default function WefThemePanel() {
             >
               <Sparkles className="h-3.5 w-3.5 shrink-0 text-emerald-300" />
               <div className="min-w-0">
-                <div className="text-[10px] uppercase tracking-wider text-emerald-300/80">Leading on tape</div>
+                <div className="text-[11px] uppercase tracking-wider text-emerald-300/80">Leading on tape</div>
                 <div className="truncate text-[12px] font-medium text-foreground">
                   {topThemeByRs.label}{" "}
                   <span
@@ -195,7 +196,7 @@ function ThemeCard({ theme, maxMentions }: { theme: WefTheme; maxMentions: numbe
         <div className="flex items-start justify-between gap-2">
           <div className="text-[14px] font-semibold">{theme.label}</div>
           <span
-            className="rounded-full border border-orange-500/30 bg-orange-500/15 px-2 py-0.5 text-[10px] font-mono text-orange-200"
+            className="rounded-full border border-orange-500/30 bg-orange-500/15 px-2 py-0.5 text-[11px] font-mono text-orange-200"
             title="WEF mention count across scanned sources"
           >
             {theme.mentions}× WEF
@@ -210,7 +211,7 @@ function ThemeCard({ theme, maxMentions }: { theme: WefTheme; maxMentions: numbe
 
       {/* Leaders — actually following the narrative */}
       <div>
-        <div className="mb-1 flex items-center gap-1 text-[10px] uppercase tracking-wider text-emerald-400/80">
+        <div className="mb-1 flex items-center gap-1 text-[11px] uppercase tracking-wider text-emerald-400/80">
           <TrendingUp className="h-3 w-3" />
           RS leaders (1M vs SPY)
         </div>
@@ -226,7 +227,7 @@ function ThemeCard({ theme, maxMentions }: { theme: WefTheme; maxMentions: numbe
                 onClick={() => focusChart(l.symbol)}
                 data-testid={`wef-leader-${l.symbol}`}
               >
-                {l.symbol} <span className="text-[9.5px] opacity-80">+{l.rs1m.toFixed(1)}</span>
+                {l.symbol} <span className="text-[11px] opacity-80">+{l.rs1m.toFixed(1)}</span>
               </button>
             ))}
           </div>
@@ -235,12 +236,12 @@ function ThemeCard({ theme, maxMentions }: { theme: WefTheme; maxMentions: numbe
 
       {/* Full basket — muted */}
       <div>
-        <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">Full basket</div>
+        <div className="mb-1 text-[11px] uppercase tracking-wider text-muted-foreground">Full basket</div>
         <div className="flex flex-wrap gap-1">
           {theme.basket.map((b) => (
             <button
               key={b}
-              className={`rounded border px-1.5 py-0.5 font-mono text-[10px] transition hover:border-cyan-400 hover:text-cyan-200 ${
+              className={`rounded border px-1.5 py-0.5 font-mono text-[11px] transition hover:border-cyan-400 hover:text-cyan-200 ${
                 theme.leaders.find((l) => l.symbol === b)
                   ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-300/80"
                   : "border-border/50 bg-muted/20 text-muted-foreground"
@@ -258,7 +259,7 @@ function ThemeCard({ theme, maxMentions }: { theme: WefTheme; maxMentions: numbe
       {/* Sources */}
       {theme.sources.length > 0 && (
         <div className="mt-auto border-t border-border/30 pt-2">
-          <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">From WEF</div>
+          <div className="mb-1 text-[11px] uppercase tracking-wider text-muted-foreground">From WEF</div>
           <div className="flex flex-col gap-0.5">
             {theme.sources.map((s) => (
               <a

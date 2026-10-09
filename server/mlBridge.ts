@@ -9,6 +9,8 @@
  * - Use native fetch (Node 18+)
  */
 
+import { ML_FEATURE_SCHEMA_VERSION } from "./mlFeatureMath";
+
 const ML_URL = () => process.env.PULSE_ML_URL ?? "http://127.0.0.1:5001";
 // Hot-path default: 100ms (Wire 20 contract — Discord card / 0DTE gate cannot block).
 // UI / dashboard routes pass an explicit override (e.g. 2500ms) since users tolerate latency.
@@ -40,6 +42,14 @@ export interface MLQuantileOverlayResponse {
   bands: Record<string, MLQuantileBand>;
   status: string;
   version: string;
+  /**
+   * What the served model was trained on: "real" (logged live features + real
+   * minute bars) or "synthetic_gbm" (simulated bars, random dealer levels:
+   * every model up to quantile_overlay v4). Null when the sidecar does not say.
+   */
+  trainingData: string | null;
+  /** Sidecar says this model passed the walk-forward promotion gate (R2-F). */
+  promoted?: boolean;
 }
 
 export interface MLModelHealth {
@@ -48,6 +58,7 @@ export interface MLModelHealth {
   trained_at: string | null;
   n_train: number;
   auc: number | null;
+  training_data?: string | null;
 }
 
 export interface MLHealthResponse {
@@ -168,13 +179,17 @@ export async function mlQuantileOverlay(
     bands: Record<string, MLQuantileBand>;
     status: string;
     version: number | string;
-  }>("/quantile/overlay", { features, horizons }, "mlQuantileOverlay", opts?.timeoutMs);
+    training_data?: string | null;
+    promoted?: boolean;
+  }>("/quantile/overlay", { features, horizons, schema_version: ML_FEATURE_SCHEMA_VERSION }, "mlQuantileOverlay", opts?.timeoutMs);
 
   if (!raw || !raw.bands || Object.keys(raw.bands).length === 0) return null;
   return {
     bands: raw.bands,
     status: String(raw.status),
     version: String(raw.version),
+    trainingData: raw.training_data ?? null,
+    promoted: raw.promoted === true,
   };
 }
 
@@ -191,14 +206,32 @@ export async function mlQuantileMorning(
     bands: Record<string, MLQuantileBand>;
     status: string;
     version: number | string;
-  }>("/quantile/morning", { features, horizons }, "mlQuantileMorning", opts?.timeoutMs);
+    training_data?: string | null;
+    promoted?: boolean;
+  }>("/quantile/morning", { features, horizons, schema_version: ML_FEATURE_SCHEMA_VERSION }, "mlQuantileMorning", opts?.timeoutMs);
 
   if (!raw || !raw.bands || Object.keys(raw.bands).length === 0) return null;
   return {
     bands: raw.bands,
     status: String(raw.status),
     version: String(raw.version),
+    trainingData: raw.training_data ?? null,
+    promoted: raw.promoted === true,
   };
+}
+
+/**
+ * POST /demote: mark a promoted model version not promoted (live coverage
+ * rejected); the sidecar then serves no bands and the server draws the
+ * baseline cone. Null when the sidecar does not answer.
+ */
+export async function mlDemote(
+  model: "quantile_overlay" | "quantile_overlay_morning",
+  version: number,
+  reason: string,
+  opts?: { timeoutMs?: number },
+): Promise<{ demoted: boolean; model: string; version: number } | null> {
+  return _post<{ demoted: boolean; model: string; version: number }>("/demote", { model, version, reason }, "mlDemote", opts?.timeoutMs ?? 5000);
 }
 
 /**

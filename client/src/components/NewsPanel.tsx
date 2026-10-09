@@ -1,6 +1,10 @@
 // NewsPanel.tsx
 // News tab: merged headline flow + economic/earnings calendar + macro topic filter.
-// Data: GET /api/news (3-min cache, free RSS + Nasdaq econ calendar).
+// Data: GET /api/news. Sources by tier (server/sources/registry.ts): official
+// issuers first (Fed, SEC, CFTC, BLS, BEA, Treasury), publishers' own RSS,
+// then labeled aggregator / unofficial secondaries. Every item shows its
+// source, tier and age; each source shows ok / empty / stale / failed /
+// not configured.
 
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -26,6 +30,123 @@ interface Headline {
   summary: string;
   topics: NewsTopic[];
   tickers: string[];
+  sourceId?: string;
+  publisher?: string;
+  tier?: SourceTier;
+  tierLabel?: string;
+  kind?: "news" | "official";
+  publishedUtc?: string;
+  fetchedAtUtc?: string;
+}
+
+type SourceTier = "primary" | "publisher" | "aggregator" | "computed" | "weak";
+type SourceState = "ok" | "empty" | "stale" | "failed" | "not_configured" | "partial";
+
+interface SourceStatus {
+  id: string;
+  name: string;
+  tier: SourceTier;
+  tierLabel: string;
+  unofficial: boolean;
+  state: SourceState;
+  items: number;
+  newestUtc: string | null;
+  fetchedAtUtc: string | null;
+  ageSec: number | null;
+  undatedDropped: number;
+  reason: string | null;
+}
+
+interface FilingItem {
+  form: string;
+  company: string;
+  cik: string;
+  accession: string;
+  acceptedUtc: string | null;
+  filingDate: string | null;
+  items: string[];
+  url: string;
+  source: string;
+  tier: SourceTier;
+}
+
+// Tier label colors: official = emerald, publisher = cyan, aggregator = amber,
+// unofficial / estimate = rose. Text always carries the label too.
+const TIER_COLOR: Record<string, string> = {
+  official: "border-emerald-500/50 bg-emerald-500/10 text-emerald-300",
+  publisher: "border-cyan-500/50 bg-cyan-500/10 text-cyan-300",
+  aggregator: "border-amber-500/50 bg-amber-500/10 text-amber-300",
+  computed: "border-border/40 bg-muted/20 text-muted-foreground",
+  unofficial: "border-rose-500/50 bg-rose-500/10 text-rose-300",
+  estimate: "border-rose-500/50 bg-rose-500/10 text-rose-300",
+};
+
+const STATE_LABEL: Record<SourceState, string> = {
+  ok: "ok",
+  empty: "0 items (observed)",
+  stale: "stale",
+  failed: "failed",
+  not_configured: "not configured",
+  partial: "partial",
+};
+
+const STATE_COLOR: Record<SourceState, string> = {
+  ok: "text-emerald-300",
+  empty: "text-muted-foreground",
+  stale: "text-amber-300",
+  failed: "text-rose-300",
+  not_configured: "text-muted-foreground",
+  partial: "text-amber-300",
+};
+
+function TierBadge({ label }: { label?: string }) {
+  if (!label) return null;
+  return (
+    <span className={`rounded border px-1 py-0.5 font-semibold uppercase tracking-wider ${TIER_COLOR[label] ?? TIER_COLOR.computed}`}>
+      {label}
+    </span>
+  );
+}
+
+function ageLabel(sec: number | null): string {
+  if (sec == null) return "never fetched";
+  if (sec < 60) return `${sec}s old`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m old`;
+  return `${Math.floor(sec / 3600)}h old`;
+}
+
+/** One line per source: name, tier, state and age. Failed never reads as quiet. */
+function SourceStrip({ sources, title }: { sources: SourceStatus[]; title: string }) {
+  if (!sources.length) return null;
+  return (
+    <details className="rounded border border-border/40 bg-muted/10 px-2 py-1 text-[11px]" data-testid={`source-strip-${title}`}>
+      <summary className="cursor-pointer select-none text-muted-foreground">
+        {title}: {sources.filter((x) => x.state === "ok").length}/{sources.length} ok
+        {sources.some((x) => x.state === "failed") && <span className="ml-1 text-rose-300">· {sources.filter((x) => x.state === "failed").length} failed</span>}
+        {sources.some((x) => x.state === "stale") && <span className="ml-1 text-amber-300">· stale</span>}
+        {sources.some((x) => x.state === "not_configured") && <span className="ml-1">· not configured: {sources.filter((x) => x.state === "not_configured").map((x) => x.name).join(", ")}</span>}
+      </summary>
+      <div className="mt-1 grid gap-0.5">
+        {sources.map((x) => (
+          <div key={x.id} className="flex flex-wrap items-center gap-1.5" title={x.reason ?? undefined}>
+            <TierBadge label={x.tierLabel} />
+            <span className="font-semibold">{x.name}</span>
+            <span className={STATE_COLOR[x.state]}>{STATE_LABEL[x.state]}</span>
+            {x.state !== "failed" && x.state !== "not_configured" && (
+              <span className="text-muted-foreground">
+                · {x.items} item{x.items === 1 ? "" : "s"} · fetched {ageLabel(x.ageSec)}
+                {x.newestUtc ? ` · newest ${timeAgo(Math.floor(Date.parse(x.newestUtc) / 1000))}` : ""}
+                {x.undatedDropped ? ` · ${x.undatedDropped} undated dropped` : ""}
+              </span>
+            )}
+            {x.reason && (x.state === "failed" || x.state === "stale" || x.state === "not_configured" || x.state === "partial") && (
+              <span className="text-muted-foreground">· {x.reason}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </details>
+  );
 }
 
 type CalendarKind = "ECON" | "FED" | "EARNINGS" | "TREASURY" | "OPEX" | "VIX_EXP" | "WITCH";
@@ -43,6 +164,11 @@ interface CalendarEvent {
   source: string;
   ticker?: string;
   notes?: string;
+  sourceId?: string;
+  tier?: SourceTier;
+  tierLabel?: string;
+  timeExact?: boolean;
+  sourceUrl?: string;
 }
 
 interface NewsResponse {
@@ -51,7 +177,15 @@ interface NewsResponse {
   calendar: CalendarEvent[];
   topics: { topic: NewsTopic; count: number }[];
   warnings: string[];
+  sources?: SourceStatus[];
+  headlineState?: SourceState | "unavailable";
+  calendarState?: SourceState | "unavailable";
+  filings?: { watchlist: FilingItem[]; wire: FilingItem[]; state: SourceState | "unavailable"; note: string };
 }
+
+const HEADLINE_SOURCE_IDS = new Set(["fed_press", "fed_speeches", "sec_press", "cftc_press", "marketwatch", "cnbc", "ft", "google_news_reuters"]);
+const CALENDAR_SOURCE_IDS = new Set(["bls_calendar", "bea_calendar", "treasury_auctions", "nasdaq_econ"]);
+const FILING_SOURCE_IDS = new Set(["sec_edgar_current", "sec_edgar_submissions"]);
 
 const TOPIC_COLOR: Record<NewsTopic, string> = {
   FED: "border-violet-500/50 bg-violet-500/10 text-violet-300",
@@ -99,9 +233,11 @@ const KIND_LABEL: Record<CalendarKind, string> = {
 
 function resolveEventUrl(e: CalendarEvent): string {
   const t = e.title.toLowerCase();
-  // Earnings → company investor relations search on Yahoo Finance
+  // The source's own page when the server knows it (BLS, BEA, Treasury).
+  if (e.sourceUrl) return e.sourceUrl;
+  // Earnings → the company's SEC EDGAR filings (8-K results are filed there)
   if (e.kind === "EARNINGS" && e.ticker) {
-    return `https://finance.yahoo.com/quote/${encodeURIComponent(e.ticker)}/`;
+    return `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${encodeURIComponent(e.ticker)}&type=8-K&dateb=&owner=include&count=40`;
   }
   // Fed / FOMC
   if (e.kind === "FED") {
@@ -255,7 +391,7 @@ function AlphaCopyButton({ text }: { text: string }) {
       variant="ghost"
       size="sm"
       data-testid="button-alpha-copy"
-      className="h-6 gap-1 px-2 text-[10px] text-amber-300/70 hover:text-amber-300"
+      className="h-6 gap-1 px-2 text-[11px] text-amber-300/70 hover:text-amber-300"
       onClick={() => {
         navigator.clipboard.writeText(text);
         setCopied(true);
@@ -271,7 +407,7 @@ function AlphaCopyButton({ text }: { text: string }) {
 function AlphaSkeleton() {
   return (
     <div className="space-y-2" data-testid="alpha-skeleton">
-      <div className="text-[10px] font-mono tracking-wider text-amber-400/60 animate-pulse">
+      <div className="text-[11px] font-mono tracking-wider text-amber-400/60 animate-pulse">
         ALPHA is analyzing the tape...
       </div>
       <Skeleton className="h-4 w-full bg-amber-500/10" />
@@ -327,14 +463,14 @@ function AlphaCard({ headlines }: { headlines: Headline[] }) {
             <h3 className="font-mono tracking-wider text-amber-300 text-sm font-semibold">ALPHA</h3>
             <Badge
               variant="outline"
-              className="border-amber-500/40 text-amber-300/80 text-[10px]"
+              className="border-amber-500/40 text-amber-300/80 text-[11px]"
             >
               Impact Engine
             </Badge>
             {mutation.data?.mode === "with_search" && (
               <Badge
                 variant="outline"
-                className="border-emerald-500/40 text-emerald-300/80 text-[9px]"
+                className="border-emerald-500/40 text-emerald-300/80 text-[11px]"
               >
                 + web search
               </Badge>
@@ -342,7 +478,7 @@ function AlphaCard({ headlines }: { headlines: Headline[] }) {
             {mutation.data?.mode === "knowledge_only" && (
               <Badge
                 variant="outline"
-                className="border-amber-500/30 text-amber-400/60 text-[9px]"
+                className="border-amber-500/30 text-amber-400/60 text-[11px]"
               >
                 knowledge only
               </Badge>
@@ -350,7 +486,7 @@ function AlphaCard({ headlines }: { headlines: Headline[] }) {
             {mutation.data?.mode === "deterministic" && (
               <Badge
                 variant="outline"
-                className="border-cyan-500/40 text-cyan-300/80 text-[9px]"
+                className="border-cyan-500/40 text-cyan-300/80 text-[11px]"
               >
                 rules engine
               </Badge>
@@ -404,7 +540,7 @@ function AlphaCard({ headlines }: { headlines: Headline[] }) {
                   prose-headings:text-sm prose-headings:font-semibold
                   prose-p:text-[11px] prose-p:leading-relaxed prose-p:text-foreground/90
                   prose-li:text-[11px] prose-li:leading-relaxed prose-li:text-foreground/90
-                  prose-table:text-[10px] prose-table:my-2 prose-td:py-1 prose-td:px-1.5 prose-th:py-1 prose-th:px-1.5
+                  prose-table:text-[11px] prose-table:my-2 prose-td:py-1 prose-td:px-1.5 prose-th:py-1 prose-th:px-1.5
                   prose-th:font-mono prose-th:tracking-wider prose-th:text-amber-300/80
                   prose-strong:text-foreground"
                 data-testid="alpha-brief-output"
@@ -531,7 +667,7 @@ export default function NewsPanel() {
         </TabsTrigger>
         <TabsTrigger value="calendar" className="gap-1.5" data-testid="news-tab-calendar">
           <CalendarDays className="h-3.5 w-3.5" /> Calendar
-          <Badge variant="outline" className="ml-1 border-amber-500/40 px-1 py-0 text-[8.5px] text-amber-300">
+          <Badge variant="outline" className="ml-1 border-amber-500/40 px-1 py-0 text-[11px] text-amber-300">
             {data.calendar.length}
           </Badge>
         </TabsTrigger>
@@ -551,11 +687,11 @@ export default function NewsPanel() {
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2 text-sm">
               <Newspaper className="h-4 w-4 text-cyan-400" /> Headlines
-              <Badge variant="outline" className="ml-1 border-cyan-500/40 text-[9px] text-cyan-300">
+              <Badge variant="outline" className="ml-1 border-cyan-500/40 text-[11px] text-cyan-300">
                 {data.headlines.length} stories · refresh 2m
               </Badge>
             </CardTitle>
-            <div className="text-[10px] text-muted-foreground">
+            <div className="text-[11px] text-muted-foreground">
               {new Date(data.asOf * 1000).toLocaleTimeString()}
             </div>
           </div>
@@ -575,7 +711,7 @@ export default function NewsPanel() {
             <div className="flex flex-wrap items-center gap-1">
               <button
                 onClick={() => setTopicFilter(null)}
-                className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider transition ${topicFilter === null ? "border-foreground/60 bg-foreground/10 text-foreground" : "border-border/40 text-muted-foreground hover:text-foreground"}`}
+                className={`rounded border px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider transition ${topicFilter === null ? "border-foreground/60 bg-foreground/10 text-foreground" : "border-border/40 text-muted-foreground hover:text-foreground"}`}
                 data-testid="topic-all"
               >
                 ALL
@@ -584,7 +720,7 @@ export default function NewsPanel() {
                 <button
                   key={topic}
                   onClick={() => setTopicFilter(topicFilter === topic ? null : topic)}
-                  className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider transition ${topicFilter === topic ? TOPIC_COLOR[topic] : "border-border/40 text-muted-foreground hover:text-foreground"}`}
+                  className={`rounded border px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider transition ${topicFilter === topic ? TOPIC_COLOR[topic] : "border-border/40 text-muted-foreground hover:text-foreground"}`}
                   data-testid={`topic-${topic}`}
                 >
                   {topic} · {count}
@@ -594,9 +730,16 @@ export default function NewsPanel() {
           </div>
         </CardHeader>
         <CardContent className="space-y-2">
-          {filtered.length === 0 ? (
+          {data.sources && (
+            <SourceStrip title="Headline sources" sources={data.sources.filter((x) => HEADLINE_SOURCE_IDS.has(x.id))} />
+          )}
+          {data.headlineState === "unavailable" ? (
+            <div className="rounded-md border border-rose-500/40 bg-rose-500/10 p-4 text-center text-sm text-rose-200" data-testid="headlines-unavailable">
+              Headlines unavailable: no source could be read. This is a collection failure, not a quiet tape.
+            </div>
+          ) : filtered.length === 0 ? (
             <div className="rounded-md border border-border/40 bg-muted/10 p-4 text-center text-sm text-muted-foreground">
-              No stories match your filter.
+              {data.headlines.length === 0 ? "Sources answered with no dated stories." : "No stories match your filter."}
             </div>
           ) : (
             filtered.map((h) => (
@@ -617,8 +760,14 @@ export default function NewsPanel() {
                   </div>
                   <ExternalLink className="mt-0.5 h-3 w-3 flex-shrink-0 text-muted-foreground" />
                 </div>
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[9px]">
-                  <span className="font-semibold uppercase tracking-wider text-cyan-300">{h.source}</span>
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+                  <TierBadge label={h.tierLabel} />
+                  <span
+                    className="font-semibold uppercase tracking-wider text-cyan-300"
+                    title={`${h.publisher ?? h.source}${h.publishedUtc ? ` · published ${h.publishedUtc}` : ""}${h.fetchedAtUtc ? ` · fetched ${h.fetchedAtUtc}` : ""}`}
+                  >
+                    {h.source}
+                  </span>
                   <span className="text-muted-foreground">· {timeAgo(h.published)}</span>
                   {h.topics.map((t) => (
                     <span key={t} className={`rounded border px-1 py-0.5 font-semibold uppercase tracking-wider ${TOPIC_COLOR[t]}`}>
@@ -637,11 +786,16 @@ export default function NewsPanel() {
         </CardContent>
       </Card>
 
-      {/* Compact calendar dupe + Feed warnings nuked — use Calendar tab for full event grid */}
+      {data.filings && <FilingsCard filings={data.filings} sources={(data.sources ?? []).filter((x) => FILING_SOURCE_IDS.has(x.id))} />}
     </div>
       </TabsContent>
 
       <TabsContent value="calendar" className="mt-0">
+        {data.sources && (
+          <div className="mb-2">
+            <SourceStrip title="Calendar sources" sources={data.sources.filter((x) => CALENDAR_SOURCE_IDS.has(x.id))} />
+          </div>
+        )}
         <FullCalendar events={data.calendar} asOf={data.asOf} />
       </TabsContent>
 
@@ -649,6 +803,61 @@ export default function NewsPanel() {
         <EarningsTab />
       </TabsContent>
     </Tabs>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// SEC filings (official): watchlist 8-K/10-Q/10-K and the latest 8-K wire,
+// EDGAR acceptance time. Needs BATCAVE_SEC_USER_AGENT on the server.
+// ──────────────────────────────────────────────────────────────────────────
+
+function FilingsCard({ filings, sources }: { filings: NonNullable<NewsResponse["filings"]>; sources: SourceStatus[] }) {
+  const row = (f: FilingItem) => (
+    <a
+      key={f.accession}
+      href={f.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex flex-wrap items-center gap-1.5 rounded border border-border/30 px-2 py-1 text-[11px] hover:border-emerald-500/40"
+    >
+      <span className="rounded border border-emerald-500/50 bg-emerald-500/10 px-1 font-mono font-semibold text-emerald-300">{f.form}</span>
+      <span className="font-semibold">{f.company}</span>
+      {f.items.length > 0 && <span className="text-muted-foreground">items {f.items.slice(0, 4).join(", ")}</span>}
+      <span className="ml-auto text-muted-foreground" title={f.acceptedUtc ?? undefined}>
+        {f.acceptedUtc ? timeAgo(Math.floor(Date.parse(f.acceptedUtc) / 1000)) : `filed ${f.filingDate ?? "date n/a"}`}
+      </span>
+    </a>
+  );
+  return (
+    <Card data-testid="filings-card">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-sm">
+          SEC filings <TierBadge label="official" />
+          <span className="text-[11px] font-normal text-muted-foreground">{filings.note}</span>
+        </CardTitle>
+        <SourceStrip title="Filing sources" sources={sources} />
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {filings.state === "unavailable" ? (
+          <div className="text-[11px] text-muted-foreground">
+            {sources.every((x) => x.state === "not_configured") ? "Not configured on the server." : "EDGAR could not be read (failed), so no filings are shown."}
+          </div>
+        ) : (
+          <>
+            <div>
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Watchlist, last 7 days</div>
+              {filings.watchlist.length ? <div className="grid gap-1">{filings.watchlist.slice(0, 15).map(row)}</div>
+                : <div className="text-[11px] text-muted-foreground">No watchlist filings in 7 days (observed).</div>}
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Latest 8-K wire</div>
+              {filings.wire.length ? <div className="grid gap-1">{filings.wire.slice(0, 15).map(row)}</div>
+                : <div className="text-[11px] text-muted-foreground">No 8-K entries returned.</div>}
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -702,6 +911,7 @@ interface EarningsResponse {
   mag7Reports: EarningsRow[];
   weeks: EarningsWeek[];
   warnings: string[];
+  sourceInfo?: { name: string; tier: "weak"; note: string; state: "ok" | "partial" | "failed"; failedDates: number; estimatedRows: number };
 }
 
 function formatMarketCap(cap: number | null): string {
@@ -739,11 +949,13 @@ interface IvMoveResp {
   expiry: string | null;
   source: string | null;
 }
-function ImpliedMoveCell({ ticker, enabled }: { ticker: string; enabled: boolean }) {
+function ImpliedMoveCell({ ticker, enabled, date, timing }: { ticker: string; enabled: boolean; date: string; timing: string }) {
+  // date + timing pick the first expiry that includes the earnings reaction
+  // (a pre-earnings expiry's straddle carries none of the event).
   const { data, isLoading, isError } = useQuery<IvMoveResp>({
-    queryKey: ["/api/earnings-iv", ticker],
+    queryKey: ["/api/earnings-iv", ticker, date, timing],
     queryFn: async () => {
-      const r = await apiRequest("GET", `/api/earnings-iv?ticker=${encodeURIComponent(ticker)}`);
+      const r = await apiRequest("GET", `/api/earnings-iv?ticker=${encodeURIComponent(ticker)}&after=${encodeURIComponent(date)}&timing=${encodeURIComponent(timing)}`);
       return r.json();
     },
     enabled,
@@ -752,14 +964,14 @@ function ImpliedMoveCell({ ticker, enabled }: { ticker: string; enabled: boolean
     retry: false,
   });
   if (!enabled) return <span className="text-muted-foreground">—</span>;
-  if (isLoading) return <span className="text-muted-foreground/50">…</span>;
+  if (isLoading) return <span className="text-muted-foreground">…</span>;
   if (isError || !data || data.impliedMove == null || data.impliedMovePct == null) {
     return <span className="text-muted-foreground">—</span>;
   }
   return (
-    <span className="font-mono text-sky-300" title={`ATM straddle expiry ${data.expiry ?? "—"} · ${data.source ?? "—"}`}>
+    <span className="font-mono text-sky-300" title={`ATM straddle, $ per share, expiry ${data.expiry ?? "—"} · ${data.source ?? "—"}`}>
       ±${data.impliedMove.toFixed(2)}
-      <span className="ml-1 text-[9px] text-muted-foreground">({data.impliedMovePct.toFixed(1)}%)</span>
+      <span className="ml-1 text-[11px] text-muted-foreground">({data.impliedMovePct.toFixed(1)}%)</span>
     </span>
   );
 }
@@ -835,9 +1047,12 @@ function EarningsTab() {
                 </h3>
                 <Badge
                   variant="outline"
-                  className="border-emerald-500/40 text-emerald-300/80 text-[10px]"
+                  className="border-rose-500/40 text-rose-300/80 text-[11px]"
+                  title={data?.sourceInfo?.note}
                 >
-                  Nasdaq
+                  Nasdaq · unofficial API
+                  {data?.sourceInfo && data.sourceInfo.state !== "ok" && ` · ${data.sourceInfo.state} (${data.sourceInfo.failedDates} day${data.sourceInfo.failedDates === 1 ? "" : "s"} failed)`}
+                  {data?.sourceInfo?.estimatedRows ? ` · ${data.sourceInfo.estimatedRows} estimated` : ""}
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground mt-1">
@@ -848,14 +1063,14 @@ function EarningsTab() {
             <div className="flex gap-1">
               <button
                 onClick={() => setHorizon("weekly")}
-                className={`rounded border px-3 py-1 text-[10px] font-semibold uppercase tracking-wider transition ${horizon === "weekly" ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-200" : "border-border/40 text-muted-foreground hover:text-foreground"}`}
+                className={`rounded border px-3 py-1 text-[11px] font-semibold uppercase tracking-wider transition ${horizon === "weekly" ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-200" : "border-border/40 text-muted-foreground hover:text-foreground"}`}
                 data-testid="earnings-horizon-weekly"
               >
                 Weekly
               </button>
               <button
                 onClick={() => setHorizon("monthly")}
-                className={`rounded border px-3 py-1 text-[10px] font-semibold uppercase tracking-wider transition ${horizon === "monthly" ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-200" : "border-border/40 text-muted-foreground hover:text-foreground"}`}
+                className={`rounded border px-3 py-1 text-[11px] font-semibold uppercase tracking-wider transition ${horizon === "monthly" ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-200" : "border-border/40 text-muted-foreground hover:text-foreground"}`}
                 data-testid="earnings-horizon-monthly"
               >
                 Monthly
@@ -874,14 +1089,14 @@ function EarningsTab() {
           {/* MAG7 highlight reel */}
           {data.mag7Reports.length > 0 && (
             <div className="mt-3 rounded border border-violet-500/30 bg-violet-500/5 p-2">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-violet-300 mb-1.5">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-violet-300 mb-1.5">
                 MAG7 in Window
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {data.mag7Reports.map((r) => (
                   <div
                     key={`mag7-${r.ticker}-${r.date}`}
-                    className="rounded border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-[10px]"
+                    className="rounded border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-[11px]"
                     data-testid={`mag7-${r.ticker}`}
                   >
                     <span className="font-mono font-semibold text-violet-200">{r.ticker}</span>
@@ -916,7 +1131,7 @@ function EarningsTab() {
             <button
               key={v}
               onClick={() => setImportanceFilter(v)}
-              className={`rounded border px-2 py-1 text-[9px] font-semibold uppercase tracking-wider transition ${importanceFilter === v ? "border-rose-500/60 bg-rose-500/15 text-rose-200" : "border-border/40 text-muted-foreground hover:text-foreground"}`}
+              className={`rounded border px-2 py-1 text-[11px] font-semibold uppercase tracking-wider transition ${importanceFilter === v ? "border-rose-500/60 bg-rose-500/15 text-rose-200" : "border-border/40 text-muted-foreground hover:text-foreground"}`}
               data-testid={`earnings-importance-${v.toLowerCase()}`}
             >
               {v === "ALL" ? "All" : v === "HIGH" ? "High" : "Med+"}
@@ -929,7 +1144,7 @@ function EarningsTab() {
             <button
               key={v}
               onClick={() => setTimingFilter(v)}
-              className={`rounded border px-2 py-1 text-[9px] font-semibold uppercase tracking-wider transition ${timingFilter === v ? "border-amber-500/60 bg-amber-500/15 text-amber-200" : "border-border/40 text-muted-foreground hover:text-foreground"}`}
+              className={`rounded border px-2 py-1 text-[11px] font-semibold uppercase tracking-wider transition ${timingFilter === v ? "border-amber-500/60 bg-amber-500/15 text-amber-200" : "border-border/40 text-muted-foreground hover:text-foreground"}`}
               data-testid={`earnings-timing-${v.toLowerCase()}`}
             >
               {v === "ALL" ? "Any Time" : v === "BMO" ? "Before Open" : "After Close"}
@@ -952,7 +1167,7 @@ function EarningsTab() {
               <div className="text-xs font-mono uppercase tracking-wider text-emerald-300">
                 {week.label}
               </div>
-              <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
                 <span>{week.count} reports</span>
                 {week.highImpact > 0 && (
                   <span className="text-rose-300">{week.highImpact} high impact</span>
@@ -973,7 +1188,7 @@ function EarningsTab() {
                   <div className="mb-2 flex items-center gap-2">
                     <CalendarDays className="h-3.5 w-3.5 text-emerald-400" />
                     <span className="text-sm font-semibold text-foreground">{day.label}</span>
-                    <span className="text-[10px] text-muted-foreground">
+                    <span className="text-[11px] text-muted-foreground">
                       ({day.rows.length} {day.rows.length === 1 ? "report" : "reports"})
                     </span>
                   </div>
@@ -981,7 +1196,7 @@ function EarningsTab() {
                   <div className="hscroll-contain">
                     <table className="w-full text-[11px]">
                       <thead>
-                        <tr className="border-b border-border/40 text-left text-[9.5px] font-mono uppercase tracking-wider text-muted-foreground">
+                        <tr className="border-b border-border/40 text-left text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
                           <th className="pb-1.5 pr-2">Ticker</th>
                           <th className="pb-1.5 pr-2">Company</th>
                           <th className="pb-1.5 pr-2 text-right">Mkt Cap</th>
@@ -1018,7 +1233,7 @@ function EarningsTab() {
                                 {r.isMag7 && (
                                   <Badge
                                     variant="outline"
-                                    className="ml-1 border-violet-500/50 bg-violet-500/10 px-1 py-0 text-[8px] text-violet-300"
+                                    className="ml-1 border-violet-500/50 bg-violet-500/10 px-1 py-0 text-[11px] text-violet-300"
                                   >
                                     MAG7
                                   </Badge>
@@ -1032,7 +1247,7 @@ function EarningsTab() {
                               </td>
                               <td className="py-1.5 pr-2">
                                 <span
-                                  className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase ${timing.bg}`}
+                                  className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-semibold uppercase ${timing.bg}`}
                                 >
                                   <TimingIcon className="h-2.5 w-2.5" />
                                   {timing.label}
@@ -1043,26 +1258,26 @@ function EarningsTab() {
                                   {formatEps(r.epsForecast)}
                                 </span>
                                 {r.numEstimates != null && r.numEstimates > 0 && (
-                                  <span className="ml-1 text-[9px] text-muted-foreground">({r.numEstimates})</span>
+                                  <span className="ml-1 text-[11px] text-muted-foreground">({r.numEstimates})</span>
                                 )}
                               </td>
                               <td className="py-1.5 pr-2 text-right font-mono text-muted-foreground">
                                 {formatEps(r.lastYearEps)}
                                 {surprise != null && Math.abs(surprise) >= 5 && (
                                   <span
-                                    className={`ml-1 text-[9px] ${surprise > 0 ? "text-emerald-400" : "text-rose-400"}`}
+                                    className={`ml-1 text-[11px] ${surprise > 0 ? "text-emerald-400" : "text-rose-400"}`}
                                   >
                                     {surprise > 0 ? "+" : ""}{surprise.toFixed(0)}%
                                   </span>
                                 )}
                               </td>
                               <td className="py-1.5 pr-2 text-right" data-testid={`earnings-iv-${r.ticker}`}>
-                                <ImpliedMoveCell ticker={r.ticker} enabled={r.importance === "HIGH" || r.isMag7} />
+                                <ImpliedMoveCell ticker={r.ticker} date={r.date} timing={r.timing} enabled={r.importance === "HIGH" || r.isMag7} />
                               </td>
                               <td className="py-1.5 pr-2 text-center">
                                 <Badge
                                   variant="outline"
-                                  className={`px-1.5 py-0 text-[9px] ${IMPORTANCE_STYLE[r.importance]}`}
+                                  className={`px-1.5 py-0 text-[11px] ${IMPORTANCE_STYLE[r.importance]}`}
                                 >
                                   {r.importance}
                                 </Badge>
@@ -1080,8 +1295,8 @@ function EarningsTab() {
         ))
       )}
 
-      <div className="text-[10px] text-muted-foreground text-center pt-2">
-        Data: Nasdaq earnings calendar · consensus EPS from analyst estimates · LY EPS = same fiscal quarter prior year
+      <div className="text-[11px] text-muted-foreground text-center pt-2">
+        Data: Nasdaq earnings calendar (undocumented API, unofficial; no free official forward earnings-date source exists) · consensus EPS as listed by Nasdaq · LY EPS = same fiscal quarter prior year · reported results are filed on SEC EDGAR
       </div>
     </div>
   );
@@ -1096,7 +1311,7 @@ function StatTile({ label, value, accent }: { label: string; value: string; acce
     : "text-foreground";
   return (
     <div className="rounded border border-border/40 bg-card/60 p-2">
-      <div className="text-[9.5px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className={`font-mono text-lg font-semibold ${color}`}>{value}</div>
     </div>
   );
@@ -1159,12 +1374,12 @@ function FullCalendar({ events, asOf }: { events: CalendarEvent[]; asOf: number 
               >
                 THE VAULT
               </div>
-              <div className="mt-0.5 text-[10px] uppercase tracking-[0.25em] text-[#e6d388]/70">
+              <div className="mt-0.5 text-[11px] uppercase tracking-[0.25em] text-[#e6d388]/70">
                 Full Market Calendar · {events.length} events · next 6 months
               </div>
             </div>
           </div>
-          <div className="text-[10px] text-[#e6d388]/60">
+          <div className="text-[11px] text-[#e6d388]/60">
             {new Date(asOf * 1000).toLocaleTimeString()}
           </div>
         </div>
@@ -1172,12 +1387,12 @@ function FullCalendar({ events, asOf }: { events: CalendarEvent[]; asOf: number 
         {/* Filters */}
         <div className="mt-3 flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-1">
-            <span className="mr-1 text-[9px] font-semibold uppercase tracking-wider text-[#e6d388]/70">
+            <span className="mr-1 text-[11px] font-semibold uppercase tracking-wider text-[#e6d388]/70">
               Kind
             </span>
             <button
               onClick={() => setKindFilter(null)}
-              className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider transition ${
+              className={`rounded border px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider transition ${
                 kindFilter === null
                   ? "border-foreground/60 bg-foreground/10 text-foreground"
                   : "border-border/40 text-muted-foreground hover:text-foreground"
@@ -1193,7 +1408,7 @@ function FullCalendar({ events, asOf }: { events: CalendarEvent[]; asOf: number 
                 <button
                   key={k}
                   onClick={() => setKindFilter(kindFilter === k ? null : k)}
-                  className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider transition ${
+                  className={`rounded border px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider transition ${
                     kindFilter === k ? KIND_COLOR[k] : "border-border/40 text-muted-foreground hover:text-foreground"
                   }`}
                   data-testid={`kind-${k}`}
@@ -1204,14 +1419,14 @@ function FullCalendar({ events, asOf }: { events: CalendarEvent[]; asOf: number 
             })}
           </div>
           <div className="flex flex-wrap items-center gap-1">
-            <span className="mr-1 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span className="mr-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
               Importance
             </span>
             {(["ALL", "MED", "HIGH"] as const).map((imp) => (
               <button
                 key={imp}
                 onClick={() => setImportanceFilter(imp)}
-                className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider transition ${
+                className={`rounded border px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider transition ${
                   importanceFilter === imp
                     ? imp === "HIGH"
                       ? "border-rose-500/60 bg-rose-500/10 text-rose-300"
@@ -1238,10 +1453,10 @@ function FullCalendar({ events, asOf }: { events: CalendarEvent[]; asOf: number 
           weeks.map(({ week, label, events: wkEvents }) => (
             <div key={week} data-testid={`week-${week}`}>
               <div className="mb-2 flex items-center gap-2 border-b border-[#d4af37]/25 pb-1">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#d4af37]">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#d4af37]">
                   Week of {label}
                 </div>
-                <div className="text-[9px] text-[#e6d388]/60">
+                <div className="text-[11px] text-[#e6d388]/60">
                   {wkEvents.length} event{wkEvents.length !== 1 ? "s" : ""}
                 </div>
               </div>
@@ -1263,7 +1478,7 @@ function FullCalendar({ events, asOf }: { events: CalendarEvent[]; asOf: number 
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1">
-                          <div className="flex items-center gap-1.5 text-[8.5px]">
+                          <div className="flex items-center gap-1.5 text-[11px]">
                             <span className={`rounded border px-1 py-0.5 font-semibold uppercase tracking-wider ${KIND_COLOR[e.kind]}`}>
                               {KIND_LABEL[e.kind]}
                             </span>
@@ -1273,16 +1488,16 @@ function FullCalendar({ events, asOf }: { events: CalendarEvent[]; asOf: number 
                           <div className="mt-1 text-[12px] font-semibold leading-snug text-[#f2ffcc] group-hover:text-[#d4ff00]">
                             {e.title}
                           </div>
-                          <div className="mt-0.5 text-[9.5px] text-[#adff2f]/70">
+                          <div className="mt-0.5 text-[11px] text-[#adff2f]/70">
                             {e.whenLabel} · {timeUntil(e.when)}
                           </div>
                         </div>
-                        <Badge variant="outline" className={`text-[8px] ${IMPORTANCE_COLOR[e.importance]}`}>
+                        <Badge variant="outline" className={`text-[11px] ${IMPORTANCE_COLOR[e.importance]}`}>
                           {e.importance}
                         </Badge>
                       </div>
                       {(e.forecast || e.previous || e.actual) && (
-                        <div className="mt-1.5 flex flex-wrap gap-2 text-[9px] text-[#d4ff66]/80">
+                        <div className="mt-1.5 flex flex-wrap gap-2 text-[11px] text-[#d4ff66]/80">
                           {e.previous && (
                             <span>
                               Prev: <span className="font-mono text-[#f2ffcc]">{e.previous}</span>
@@ -1301,22 +1516,25 @@ function FullCalendar({ events, asOf }: { events: CalendarEvent[]; asOf: number 
                         </div>
                       )}
                       {e.notes && (
-                        <div className="mt-1.5 text-[9.5px] italic text-[#adff2f]/60">
+                        <div className="mt-1.5 text-[11px] italic text-[#adff2f]/60">
                           {e.notes}
                         </div>
                       )}
                       {/* Impact bio — how this event moves markets */}
                       <div
-                        className="vault-bio mt-2 pt-1.5 text-[9.5px] leading-snug text-[#eaff66]/85"
+                        className="vault-bio mt-2 pt-1.5 text-[11px] leading-snug text-[#eaff66]/85"
                         data-testid={`cal-bio-${e.id}`}
                       >
-                        <span className="mr-1 text-[8px] font-semibold uppercase tracking-[0.18em] text-[#39ff14]">
+                        <span className="mr-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#39ff14]">
                           Market Impact
                         </span>
                         {bio}
                       </div>
-                      <div className="mt-1.5 text-[8.5px] text-[#9eff2e]/55">
-                        {e.source} · tap to open
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[11px] text-[#9eff2e]/55">
+                        <TierBadge label={e.tierLabel} />
+                        <span>{e.source}</span>
+                        {e.timeExact === false && <span>· time not exact</span>}
+                        <span>· tap to open</span>
                       </div>
                     </a>
                   );

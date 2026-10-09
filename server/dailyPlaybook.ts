@@ -1,4 +1,6 @@
 import { vixToAtmPct } from "@shared/vol";
+import { etClock, sessionCloseMinutes } from "./exchangeCalendar";
+import { UpstreamUnavailableError } from "@shared/unavailable";
 /**
  * dailyPlaybook.ts
  *
@@ -25,13 +27,17 @@ import { vixToAtmPct } from "@shared/vol";
 type SnapshotLike = {
   capturedAt: number;
   spy?: { price?: number | null };
+  /** Schwab $SPX last, for the SPX view (real SPX/SPY ratio, not x10). */
+  spxSpot?: number | null;
   gamma: {
     spot: number; totalGex: number; callWall: number; putWall: number;
-    zeroGamma: number; maxPain: number;
+    zeroGamma: number | null; maxPain: number;
   };
-  term?: { vix9d: number; vix: number; vix3m: number; ratio9dOver30d: number; ratio30dOver3m: number };
-  vol: { vix?: { value: number } };
-  composite?: { score: number; label: string };
+  /** When Schwab produced the chain behind `gamma` (epoch s). */
+  gammaAsOf?: number | null;
+  term?: { vix9d: number | null; vix: number | null; vix3m: number | null; ratio9dOver30d: number | null; ratio30dOver3m: number | null };
+  vol: { vix?: { value: number | null } };
+  composite?: { score: number; label: string; marketScore?: number | null };
 };
 
 export type SnapshotProvider = () => Promise<SnapshotLike>;
@@ -73,7 +79,7 @@ export interface InputManifest {
   key: string;                     // "spot", "vix", "callWall", etc.
   label: string;                   // human-readable
   value: number | string;
-  source: "Schwab" | "Schwab+CBOE" | "CBOE delayed" | "Computed" | "Yahoo";
+  source: "Schwab" | "Computed";
   asOf: number;                    // unix seconds
   freshSeconds: number;            // 0 = live now
   calibration?: string;            // "ATR(20)=±$8.40" etc.
@@ -103,19 +109,14 @@ export interface DailyPlaybook {
 function nowSec(): number { return Math.floor(Date.now() / 1000); }
 
 function sessionET(): "premarket" | "rth" | "afterhours" | "closed" {
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York", hour12: false, weekday: "short",
-    hour: "2-digit", minute: "2-digit",
-  });
-  const parts = fmt.formatToParts(new Date());
-  const wd = parts.find(p => p.type === "weekday")?.value ?? "";
-  if (wd === "Sat" || wd === "Sun") return "closed";
-  const h = parseInt(parts.find(p => p.type === "hour")?.value ?? "0", 10);
-  const m = parseInt(parts.find(p => p.type === "minute")?.value ?? "0", 10);
-  const mins = h * 60 + m;
+  // Exchange calendar: holidays are closed, half days close at 13:00 ET.
+  const c = etClock();
+  const close = sessionCloseMinutes(c.date);
+  if (close == null) return "closed";          // weekend or holiday
+  const mins = c.minutes;
   if (mins < 4 * 60) return "closed";          // <4am ET
   if (mins < 9 * 60 + 30) return "premarket";  // 4:00–9:30
-  if (mins < 16 * 60) return "rth";            // 9:30–16:00
+  if (mins < close) return "rth";              // 9:30–16:00 (13:00 on half days)
   if (mins < 20 * 60) return "afterhours";     // 16:00–20:00
   return "closed";
 }
@@ -138,17 +139,30 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
   const vol = snap.vol;
   const composite = snap.composite;
 
-  // SPX = SPY * 10 (close enough for level mapping; user typed SPX in the spec)
+  // Levels come from the Schwab SPY chain. SPX view: scale by the real
+  // Schwab $SPX / SPY ratio (was a fixed x10; SPX/SPY drifts with dividends).
   const isSPX = symbol === "SPX";
-  const scale = isSPX ? 10 : 1;
+  const spyPx = snap.spy?.price ?? g.spot;
+  let scale = 1;
+  if (isSPX) {
+    if (snap.spxSpot == null || !(snap.spxSpot > 0) || !(spyPx > 0)) {
+      throw new UpstreamUnavailableError("SPX playbook unavailable: no Schwab $SPX quote to map SPY-chain levels");
+    }
+    scale = snap.spxSpot / spyPx;
+  }
+  // Missing inputs make the playbook unavailable; they are never defaulted.
+  if (g.zeroGamma == null) throw new UpstreamUnavailableError("Playbook unavailable: no gamma flip in the scanned range of the Schwab SPY chain");
+  const vixIn = vol.vix?.value;
+  if (vixIn == null || !(vixIn > 0)) throw new UpstreamUnavailableError("Playbook unavailable: VIX quote unavailable from Schwab");
 
-  const spot = (snap.spy?.price ?? g.spot) * scale;
+  const spot = isSPX ? (snap.spxSpot as number) : spyPx;
   const callWall = g.callWall * scale;
   const putWall = g.putWall * scale;
   const gammaFlip = g.zeroGamma * scale;
   const maxPain = g.maxPain * scale;
   const totalGex = g.totalGex; // sign only matters
-  const vix = vol.vix?.value ?? 16;
+  const vix = vixIn;
+  const chainAsOf = snap.gammaAsOf ?? snap.capturedAt;
 
   const sigma = impliedDailySigma(vix, spot);
   const expectedRange = {
@@ -168,8 +182,16 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
   let pBull = 0.30, pBase = 0.40, pBear = 0.30;
 
   const isPositiveGamma = totalGex >= 0;
-  const isContango = (term?.ratio30dOver3m ?? 1) < 0.95 && (term?.ratio9dOver30d ?? 1) < 0.95;
-  const compScore = composite?.score ?? 50;
+  // Term state needs BOTH ratios (VIX9D/VIX and VIX/VIX3M): a missing VIX9D or
+  // VIX3M is "unavailable" (tilt skipped), never read as flat/backwardation.
+  const fin = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
+  const termKnown = fin(term?.ratio30dOver3m) && fin(term?.ratio9dOver30d);
+  const isContango = termKnown && (term!.ratio30dOver3m as number) < 0.95 && (term!.ratio9dOver30d as number) < 0.95;
+  const termLabel = !termKnown ? "unavailable (VIX9D or VIX3M missing): term tilt skipped"
+    : isContango ? "Contango (calm)" : "Flat/backwardation";
+  // Market-data blocks only (rule 2: no social/F&G in path probabilities).
+  // Unavailable -> the tilt is skipped explicitly (not a neutral 50).
+  const compScore: number | null = composite?.marketScore != null && Number.isFinite(composite.marketScore) ? composite.marketScore : null;
   const spotVsFlip = spot - gammaFlip;
 
   // Positive gamma + contango → boost base case (pin), trim wings
@@ -180,7 +202,7 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
   if (!isPositiveGamma){ pBase -= 0.10; pBull += 0.05; pBear += 0.05; }
 
   // Composite tilt: 50 = neutral; ±25 points → ±10% probability shift
-  const compTilt = (compScore - 50) / 250; // ±0.10 max
+  const compTilt = compScore != null ? (compScore - 50) / 250 : 0; // ±0.10 max; 0 = skipped when unavailable
   pBull += compTilt;
   pBear -= compTilt;
 
@@ -217,8 +239,8 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
       : `Negative gamma + bid → momentum higher. Targets +1σ ${(callWall + sigma).toFixed(2)}.`,
     drivers: [
       `Spot ${spot > gammaFlip ? "above" : "below"} flip (${gammaFlip.toFixed(2)})`,
-      `Composite ${compScore}/100`,
-      isContango ? "VIX contango (calm)" : "VIX backwardation (fragile)",
+      compScore != null ? `Composite (market blocks) ${compScore}/100` : "Composite (market blocks) unavailable: tilt skipped",
+      !termKnown ? "VIX term structure unavailable" : isContango ? "VIX contango (calm)" : "VIX flat/backwardation (fragile)",
     ],
   };
 
@@ -265,8 +287,8 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
       : `Negative gamma + offer → cascading sells. -1σ ${(putWall - sigma).toFixed(2)}.`,
     drivers: [
       `Put wall ${putWall.toFixed(2)} as last line`,
-      !isContango ? "Backwardation = stress" : "Sentiment fragile",
-      `Composite ${compScore}/100`,
+      !termKnown ? "VIX term structure unavailable" : !isContango ? "Flat/backwardation = stress" : "Sentiment fragile",
+      compScore != null ? `Composite (market blocks) ${compScore}/100` : "Composite (market blocks) unavailable: tilt skipped",
     ],
   };
 
@@ -285,8 +307,9 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
   const winnerLabel = winner === "bull" ? "lean up"
                     : winner === "bear" ? "lean down" : "pin & chop";
   const winnerProb = winner === "bull" ? pBull : winner === "bear" ? pBear : pBase;
+  // Path weights are hand-set heuristic tilts, not probabilities: say so.
   const headline =
-    `${symbol} ${spot.toFixed(2)} · ${winnerLabel} (${Math.round(winnerProb * 100)}%). ` +
+    `${symbol} ${spot.toFixed(2)} · ${winnerLabel} (${Math.round(winnerProb * 100)}% wt, heuristic). ` +
     `Range ${expectedRange.low.toFixed(2)}–${expectedRange.high.toFixed(2)} (1σ). ` +
     `Walls: put ${putWall.toFixed(2)} / call ${callWall.toFixed(2)}.`;
 
@@ -294,14 +317,14 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
   const inputs: InputManifest[] = [
     { key: "spot",      label: "Spot price",      value: spot,                source: "Schwab",       asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt },
     { key: "vix",       label: "VIX",             value: vix,                 source: "Schwab",       asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: `1σ daily ±$${sigma.toFixed(2)}` },
-    { key: "vix9d",     label: "VIX9D",           value: term?.vix9d ?? 0,    source: "Schwab",       asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt },
-    { key: "vix3m",     label: "VIX3M",           value: term?.vix3m ?? 0,    source: "Schwab",       asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: isContango ? "Contango (calm)" : "Flat/backwardation" },
-    { key: "callWall",  label: "Call Wall",       value: callWall,            source: "Schwab+CBOE",  asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: `Top call OI strike` },
-    { key: "putWall",   label: "Put Wall",        value: putWall,             source: "Schwab+CBOE",  asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: `Top put OI strike` },
-    { key: "gammaFlip", label: "Gamma Flip",      value: gammaFlip,           source: "Computed",     asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: `Zero-gamma level (Perfiliev)` },
-    { key: "maxPain",   label: "Max Pain",        value: maxPain,             source: "Computed",     asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt },
-    { key: "totalGex",  label: "Total GEX",       value: `${(totalGex / 1e9).toFixed(2)}B`, source: "Computed", asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: isPositiveGamma ? "Positive (pin)" : "Negative (momentum)" },
-    { key: "composite", label: "Composite",       value: compScore,           source: "Computed",     asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: composite?.label ?? "" },
+    { key: "vix9d",     label: "VIX9D",           value: term?.vix9d ?? "unavailable", source: "Schwab",       asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt },
+    { key: "vix3m",     label: "VIX3M",           value: term?.vix3m ?? "unavailable", source: "Schwab",       asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: termLabel },
+    { key: "callWall",  label: "Call Wall",       value: callWall,            source: "Schwab",        asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf, calibration: `Top call OI strike` },
+    { key: "putWall",   label: "Put Wall",        value: putWall,             source: "Schwab",        asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf, calibration: `Top put OI strike` },
+    { key: "gammaFlip", label: "Gamma Flip",      value: gammaFlip,           source: "Computed",     asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf, calibration: `Zero-gamma level (Perfiliev)` },
+    { key: "maxPain",   label: "Max Pain",        value: maxPain,             source: "Computed",     asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf },
+    { key: "totalGex",  label: "Total GEX",       value: `${(totalGex / 1e9).toFixed(2)}B`, source: "Computed", asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf, calibration: isPositiveGamma ? "Positive (pin)" : "Negative (momentum)" },
+    { key: "composite", label: "Composite (market blocks)", value: compScore ?? "unavailable", source: "Computed", asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: compScore != null ? (composite?.label ?? "") : "unavailable: no implied-vol / positioning gauge; scenario tilt skipped" },
   ];
 
   return {

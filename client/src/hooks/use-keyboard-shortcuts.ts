@@ -129,12 +129,15 @@ export const TAB_LABELS: Record<TabKey, string> = {
   signals: "Signals",
   chart: "Chart",
   models: "Models",
+  heatseeker: "Heatseeker",
   tradedesk: "Trade Desk",
   regime: "Regime",
+  cosmos: "Cosmos",
   news: "News",
   voices: "Voices",
   takefive: "Take Five",
   edgelab: "Edge Lab",
+  crypto: "Crypto",
 };
 
 export const SHORTCUT_DOCS = [

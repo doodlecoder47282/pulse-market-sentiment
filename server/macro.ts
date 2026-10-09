@@ -7,6 +7,7 @@
 // so the carousel feels alive.
 
 import { fetchIntraday, fetchDailyCloses } from "./quotes";
+import { prevCloseFromDailyBars, dailyBarSessionDate, dayChange } from "./dayChange";
 
 // --------- External fallbacks (Schwab can't quote crypto or =X FX pairs) ---------
 // CoinGecko (free, no key) for crypto. Frankfurter (ECB, free, no key) for FX.
@@ -243,8 +244,15 @@ async function fetchOne(def: TickerDef): Promise<MacroQuote | null> {
       fetchDailyCloses(def.symbol, 30).catch(() => []),
     ]);
     let spark: number[] = (daily || []).map((d) => d.c).filter((c) => c != null && isFinite(c));
-    let price: number | null = intra?.price ?? (spark.length ? spark[spark.length - 1] : null);
-    let prevClose: number | null = intra?.prevClose ?? (spark.length >= 2 ? spark[spark.length - 2] : null);
+    // Day change vs the prior session close (server/dayChange.ts). Without an
+    // intraday series, use the latest daily bar and the daily bar dated before it.
+    let price: number | null = intra?.price ?? null;
+    let prevClose: number | null = intra?.price != null ? intra.prevClose : null;
+    if (price == null && daily && daily.length) {
+      const lastBar = daily[daily.length - 1];
+      price = lastBar.c;
+      prevClose = prevCloseFromDailyBars(daily, dailyBarSessionDate(lastBar.t))?.close ?? null;
+    }
 
     // Schwab can't quote crypto or =X FX pairs — fall back to public endpoints.
     if ((price == null || spark.length < 2) && def.category === "crypto") {
@@ -264,8 +272,7 @@ async function fetchOne(def: TickerDef): Promise<MacroQuote | null> {
     }
 
     if (price == null) return null;
-    const change = price != null && prevClose != null ? price - prevClose : null;
-    const changePct = change != null && prevClose ? (change / prevClose) * 100 : null;
+    const { change, changePct } = dayChange(price, prevClose);
     return {
       category: def.category,
       symbol: def.symbol,

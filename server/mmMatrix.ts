@@ -20,7 +20,9 @@
 //   BELOW_PW        below Put Wall                                  → vacuum / tail
 //
 // Cell output:
-//   pUp / pDown / pPin    probabilities (sum to 100)
+//   pUp / pDown / pPin    HAND-SET PRIOR percentages (sum to 100). They are
+//                         not estimated from logged outcomes; treat them as
+//                         a heuristic, not calibrated probabilities.
 //   magnitude             expected absolute move over horizon ($ points)
 //   action                dealer action tag: defend | accelerate | fade | pin | capitulate
 //   bias                  net directional bias (−1 .. +1)
@@ -68,6 +70,9 @@ export interface MMMatrix {
     zone: string;       // human explanation of current zone pick
     summary: string;    // 1-line takeaway for the current (regime, zone) cell
   };
+  /** What pUp/pDown/pPin are: hand-set priors until fit to logged outcomes. */
+  probabilityBasis: "hand-set-priors";
+  probabilityNote: string;
 }
 
 const REGIMES: MMRegime[] = ["LONG_GAMMA", "NEUTRAL", "SHORT_GAMMA", "VANNA_DRIVEN", "CHARM_DRIVEN"];
@@ -79,7 +84,7 @@ const ZONES: MMZone[] = ["ABOVE_CALL", "CW_TO_0G", "AT_0G", "0G_TO_PW", "BELOW_P
 
 interface RegimeInputs {
   gexTotal: number;           // signed $ / 1%
-  gammaZone: "y+" | "y-";
+  gammaZone: "y+" | "y-" | "y?"; // "y?" = GEX missing or immaterial (models gexRegime)
   charmTighteningRate: number;
   charmChopFlag: boolean;
   vixDelta: number | null;    // DoD change
@@ -91,6 +96,11 @@ interface RegimeInputs {
 }
 
 function classifyRegime(inp: RegimeInputs): { regime: MMRegime; note: string } {
+  // Unknown gamma regime (GEX missing, zero or below the materiality floor):
+  // no long/short-gamma claim. Neutral, labeled.
+  if (inp.gammaZone === "y?") {
+    return { regime: "NEUTRAL", note: "Gamma regime unknown (GEX missing or immaterial) — no dealer-hedging claim" };
+  }
   const absGex = Math.abs(inp.gexTotal);
   const gexB = absGex / 1e9;
 
@@ -156,7 +166,7 @@ function classifyZone(spot: number, levels: ModelLevel[]): ZoneClassification {
     const overrun = (spot - cw) / spot;
     return {
       zone: "ABOVE_CALL",
-      note: `Spot ${overrun > 0.005 ? "well " : ""}above Call Wall (${cw.toFixed(0)}) — breakout, dealers short calls`,
+      note: `Spot ${overrun > 0.005 ? "well " : ""}above Call Wall (${cw.toFixed(0)}) — breakout past the largest call-gamma strike`,
       positionInZone: Math.min(1, overrun / 0.01),
       distToNearestPct,
     };
@@ -206,7 +216,9 @@ function classifyZone(spot: number, levels: ModelLevel[]): ZoneClassification {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Base probability table (pUp, pDown, pPin, action, intensity) per (regime, zone)
-// These are calibrated priors. Live context then tilts them.
+// These are HAND-SET priors: no code estimates them from outcomes. Live
+// context then tilts them. Label them as such until a fit on logged outcomes
+// (with a reliability check) replaces this table.
 // ──────────────────────────────────────────────────────────────────────────
 
 type BaseCell = { pUp: number; pDown: number; pPin: number; action: DealerAction; intensity: number };
@@ -395,7 +407,7 @@ function daysToFriday(asOf: number): number {
 export function buildMMMatrix(horizon: ModelHorizon, horizonDays: number): MMMatrix {
   const a = horizon.audit;
   const inp: RegimeInputs = {
-    gexTotal: a.gammaZone === "y+" ? a.gexTotal : -a.gexTotal,
+    gexTotal: a.gammaZone === "y+" ? a.gexTotal : a.gammaZone === "y-" ? -a.gexTotal : 0,
     gammaZone: a.gammaZone,
     charmTighteningRate: a.charmTightening?.rate ?? 0,
     charmChopFlag: a.charmTightening?.chopFlag ?? false,
@@ -442,6 +454,8 @@ export function buildMMMatrix(horizon: ModelHorizon, horizonDays: number): MMMat
     zones: ZONES,
     cells,
     notes: { regime: regimeNote, zone: zoneNote, summary },
+    probabilityBasis: "hand-set-priors",
+    probabilityNote: "Hand-set priors tilted by live context; not fit to logged outcomes, not calibrated probabilities.",
   };
 }
 
@@ -460,5 +474,5 @@ function buildSummary(c: MMCell): string {
     ? `${c.pUp}% up`
     : dominant === "down" ? `${c.pDown}% down`
     : `${c.pPin}% pinned`;
-  return `Dealers likely ${actionVerb[c.action]} — ${tilt}, ~${c.magnitude}pt move`;
+  return `Dealers likely ${actionVerb[c.action]} — ${tilt} (hand-set prior), ~${c.magnitude}pt move`;
 }

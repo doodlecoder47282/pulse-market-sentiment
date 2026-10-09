@@ -13,11 +13,14 @@ export interface EdgeBriefData {
   verdict: string;
   verdictColor: "emerald" | "rose" | "amber" | "neutral";
   edgeType: "informational" | "analytical" | "behavioral" | "timing" | "environmental" | "none";
-  confidence: number;
+  /** null: the server no longer sends a hand-set confidence (older servers may). */
+  confidence: number | null;
   summary: string;
-  baseCase: { thesis: string; prob: number };
-  bullCase: { thesis: string; prob: number };
-  bearCase: { thesis: string; prob: number };
+  /** prob is null: scenarios carry no hand-set weights. */
+  baseCase: { thesis: string; prob: number | null };
+  bullCase: { thesis: string; prob: number | null };
+  bearCase: { thesis: string; prob: number | null };
+  /** What to watch (descriptive); no trade or size advice. */
   actionable: string;
   invalidation: string;
   counterargument: string;
@@ -25,6 +28,7 @@ export interface EdgeBriefData {
   panel: string;
   asOf: number;
   source: "claude" | "openai" | "deterministic";
+  removedSentences?: number;
 }
 
 interface Props {
@@ -90,19 +94,18 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
           <span className="text-xs font-semibold uppercase tracking-wide text-emerald-300/90">{title}</span>
           {d && (
             <>
-              <Badge variant="outline" className={`text-[10px] py-0 px-1.5 h-4 ${verdictClass(d.verdictColor)}`} data-testid={`badge-verdict-${panel}`}>
+              <Badge variant="outline" className={`text-[11px] py-0 px-1.5 h-4 ${verdictClass(d.verdictColor)}`} data-testid={`badge-verdict-${panel}`}>
                 {d.verdict}
               </Badge>
-              <Badge variant="outline" className={`text-[10px] py-0 px-1.5 h-4 ${edgeBadgeClass(d.edgeType)}`}>
+              <Badge variant="outline" className={`text-[11px] py-0 px-1.5 h-4 ${edgeBadgeClass(d.edgeType)}`}>
                 {d.edgeType}
               </Badge>
-              <span className="text-[10px] text-muted-foreground">{d.confidence}% conf</span>
             </>
           )}
         </div>
         <div className="flex items-center gap-1">
           {!enabled && manual && (
-            <Button size="sm" variant="outline" className="h-6 text-[10px] px-2" onClick={() => setEnabled(true)}>
+            <Button size="sm" variant="outline" className="h-6 text-[11px] px-2" onClick={() => setEnabled(true)}>
               generate brief
             </Button>
           )}
@@ -142,11 +145,14 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
           {d && (
             <>
               <p className="text-xs leading-relaxed text-foreground/95" data-testid={`text-brief-summary-${panel}`}>
+                {d.source !== "deterministic" && (
+                  <span className="mr-1 font-semibold text-amber-400" data-testid={`text-brief-ai-label-${panel}`}>AI summary of the data (not advice):</span>
+                )}
                 {d.summary}
               </p>
 
               <div className="rounded border border-border/40 bg-background/40 p-2">
-                <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">actionable</div>
+                <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">what to watch</div>
                 <p className="text-xs leading-snug">{d.actionable}</p>
               </div>
 
@@ -163,11 +169,11 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
 
               <button
                 onClick={() => setExpanded(e => !e)}
-                className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
+                className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
                 data-testid={`button-brief-expand-${panel}`}
               >
                 {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                {expanded ? "hide breakdown" : "base / bull / bear breakdown"}
+                {expanded ? "hide scenarios" : "base / bull / bear scenarios"}
               </button>
 
               {expanded && (
@@ -178,17 +184,19 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">
                     <div className="rounded border border-border/40 bg-background/40 p-2">
-                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">invalidation</div>
+                      <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-0.5">invalidation</div>
                       <p className="text-xs leading-snug">{d.invalidation}</p>
                     </div>
                     <div className="rounded border border-border/40 bg-background/40 p-2">
-                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">counterargument</div>
+                      <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-0.5">counterargument</div>
                       <p className="text-xs leading-snug">{d.counterargument}</p>
                     </div>
                   </div>
 
-                  <div className="text-[10px] text-muted-foreground/70 pt-1">
+                  <div className="text-[11px] text-muted-foreground pt-1">
                     source: {d.source} · {new Date(d.asOf).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                    {" · descriptive only: no probabilities, trade or size advice"}
+                    {d.removedSentences ? ` · ${d.removedSentences} sentence${d.removedSentences === 1 ? "" : "s"} removed by the filter` : ""}
                   </div>
                 </div>
               )}
@@ -200,17 +208,14 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
   );
 }
 
-function CaseRow({ label, tone, thesis, prob }: { label: string; tone: "emerald" | "rose" | "amber"; thesis: string; prob: number }) {
+// Scenario theses only: the old hand-set weights (55/25/20) are not shown,
+// even if an older server still sends them.
+function CaseRow({ label, tone, thesis }: { label: string; tone: "emerald" | "rose" | "amber"; thesis: string; prob?: number | null }) {
   const color = tone === "emerald" ? "text-emerald-400 border-emerald-500/30" : tone === "rose" ? "text-rose-400 border-rose-500/30" : "text-amber-400 border-amber-500/30";
-  const barColor = tone === "emerald" ? "bg-emerald-500/40" : tone === "rose" ? "bg-rose-500/40" : "bg-amber-500/40";
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-xs">
         <span className={`font-mono uppercase font-semibold ${color}`}>{label}</span>
-        <span className="font-mono text-muted-foreground">{prob}%</span>
-      </div>
-      <div className="h-1 rounded bg-muted/30 overflow-hidden">
-        <div className={`h-full ${barColor}`} style={{ width: `${Math.max(0, Math.min(100, prob))}%` }} />
       </div>
       <p className="text-xs leading-snug text-foreground/90">{thesis}</p>
     </div>

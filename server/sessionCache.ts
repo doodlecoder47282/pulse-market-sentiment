@@ -14,6 +14,7 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
+import { isRegularSessionOpen, isTradingDay as calIsTradingDay, prevTradingDay as calPrevTradingDay } from "./exchangeCalendar";
 
 const CACHE_DIR = path.resolve(process.cwd(), "data", "sessions");
 
@@ -46,6 +47,20 @@ export async function readCache<T>(key: string): Promise<T | null> {
   }
 }
 
+/** Like readCache but keeps the write time `at` (epoch ms), so callers can
+ *  bound the age of what they serve. */
+export async function readCacheEntry<T>(key: string): Promise<{ at: number; data: T } | null> {
+  try {
+    const file = path.join(CACHE_DIR, `${safeKey(key)}.json`);
+    const raw = await fs.readFile(file, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.at !== "number" || parsed.data == null) return null;
+    return { at: parsed.at, data: parsed.data as T };
+  } catch {
+    return null;
+  }
+}
+
 // Return RTH session date (America/New_York) in YYYY-MM-DD form.
 // Before 9:30 ET we use the prior trading day — that way the "current session"
 // key stays stable until the next open. Weekends roll back to Friday.
@@ -72,36 +87,17 @@ export function rthSessionKey(now = new Date()): string {
   // Build a Date in local NY space (approximate — month is 0-indexed)
   const dow = new Date(Date.UTC(y, mo - 1, d)).getUTCDay(); // 0=Sun..6=Sat
 
-  // Pre-market (before 9:30 ET) or weekend → roll back to most recent weekday
-  if (minOfDay < 9 * 60 + 30 || dow === 0 || dow === 6) {
-    // Walk back until we land on Mon-Fri
-    const jsDate = new Date(Date.UTC(y, mo - 1, d));
-    do {
-      jsDate.setUTCDate(jsDate.getUTCDate() - 1);
-    } while (jsDate.getUTCDay() === 0 || jsDate.getUTCDay() === 6);
-    y = jsDate.getUTCFullYear();
-    mo = jsDate.getUTCMonth() + 1;
-    d = jsDate.getUTCDate();
-  }
-
-  return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  // Pre-market (before 9:30 ET), weekend or exchange holiday -> roll back to
+  // the most recent trading day (exchange calendar).
+  const iso = `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  void dow;
+  if (minOfDay < 9 * 60 + 30 || !calIsTradingDay(iso)) return calPrevTradingDay(iso);
+  return iso;
 }
 
-// True if NY time is between 9:30 and 16:00 on a weekday.
+// True during the regular session per the exchange calendar (09:30 to 16:00,
+// or 13:00 on half days; closed on holidays and weekends).
 export function isRthOpen(now = new Date()): boolean {
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  const parts = fmt.formatToParts(now);
-  const g = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
-  const wday = g("weekday");
-  if (wday === "Sat" || wday === "Sun") return false;
-  const hr = Number(g("hour"));
-  const min = Number(g("minute"));
-  const mod = hr * 60 + min;
-  return mod >= 9 * 60 + 30 && mod < 16 * 60;
+  return isRegularSessionOpen(now.getTime());
 }
+

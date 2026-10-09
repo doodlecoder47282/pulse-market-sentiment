@@ -1,6 +1,6 @@
 // ExposurePanel.tsx
 // Dealer exposure profiles — DEX / GEX / VEX / Charm across ±10% spot band.
-// Data source: GET /api/exposures?symbol=SYM (backed by CBOE chain + full BS Greeks).
+// Data source: GET /api/exposures?symbol=SYM (Schwab option chain + full BS Greeks).
 //
 // Layout: 2×2 grid of mini area charts. Each shows the exposure curve with:
 //   - vertical dashed line at current spot
@@ -15,6 +15,7 @@ import {
 import { Info, RefreshCw, Zap, TrendingUp, Clock, Activity, HelpCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import DataAgeChip from "./DataAgeChip";
 import { apiRequest } from "@/lib/queryClient";
 import {
   Tooltip as UITooltip,
@@ -69,7 +70,7 @@ export default function ExposurePanel({ symbol }: Props) {
       const r = await apiRequest("GET", `/api/exposures?symbol=${encodeURIComponent(sym)}`);
       return r.json();
     },
-    // Exposures are structural, not tick-level — 5 min refresh keeps CBOE happy.
+    // Exposures are structural, not tick-level — 5 min refresh keeps the Schwab request budget low.
     refetchInterval: 5 * 60_000,
     staleTime: 4 * 60_000,
   });
@@ -92,7 +93,7 @@ export default function ExposurePanel({ symbol }: Props) {
           <Info className="h-5 w-5 text-amber-500" />
           <div>Couldn't compute exposures for {sym}.</div>
           <div className="text-xs opacity-70">
-            {(error as any)?.message ?? "CBOE chain may be unavailable. SPY/QQQ/IWM + Mag7 work best."}
+            {(error as any)?.message ?? "Schwab option chain unavailable for this symbol."}
           </div>
           <button
             className="mt-2 rounded-md border border-border/60 px-3 py-1 text-xs hover:bg-muted"
@@ -114,8 +115,9 @@ export default function ExposurePanel({ symbol }: Props) {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <div className="space-y-0.5">
-            <CardTitle className="text-base" data-testid="text-exposure-title">
+            <CardTitle className="flex items-center gap-2 text-base" data-testid="text-exposure-title">
               Dealer exposure — {sym}
+              <DataAgeChip asOfMs={(data.meta as any).chainAsOfMs ?? null} stale={(data.meta as any).chainStale ?? null} maxAgeMs={(data.meta as any).chainMaxAgeMs ?? null} label="chain" />
             </CardTitle>
             <div className="text-xs text-muted-foreground">
               {data.meta.chainSize.toLocaleString()} contracts · 0-45 DTE · spot {p.currentSpot.toFixed(2)} · r {(p.r * 100).toFixed(1)}% · q {(p.q * 100).toFixed(1)}%
@@ -185,7 +187,7 @@ export default function ExposurePanel({ symbol }: Props) {
 const EXPOSURE_TOOLTIPS: Record<string, string> = {
   "DEX": "Delta Exposure: total dealer delta in dollars. Positive = dealers are net long delta (bought calls/sold puts); negative = net short delta. Drives the directional hedging flow.",
   "GEX": "Gamma Exposure: total dealer gamma in dollars per 1% move. Positive = dealers stabilize price (buy dips, sell rips); negative = dealers amplify moves.",
-  "VEX": "Vega Exposure: dealer sensitivity to implied volatility per 1% vol change. Negative VEX = dealers short vol (sell spikes); positive = long vol (buy spikes).",
+  "VEX": "Vanna Exposure: change in dealer delta, in $, per +1 vol point (vanna x OI x 100 x S x 0.01). Positive = dealer delta rises when IV rises (they sell into a vol spike to re-hedge); negative = they buy.",
   "Charm": "Charm (delta decay) exposure: how dealer delta changes with time. Accelerates into expiry — can create persistent directional drift near OPEX.",
 };
 
@@ -203,7 +205,7 @@ function CurrentBadge({
       {icon}
       <span className="font-semibold">{label}</span>
       <span className="tabular-nums">{fmtMoney(value)}</span>
-      <span className="text-[10px] opacity-70">{units}</span>
+      <span className="text-[11px] opacity-70">{units}</span>
     </Badge>
   );
   if (!tip) return badge;
@@ -237,7 +239,7 @@ function ExposureChart({ title, subtitle, data, dataKey, spot, zeroSpot, flipLab
     <div className="rounded-lg border border-border/50 p-3" data-testid={testId}>
       <div className="mb-1 flex items-baseline justify-between">
         <div className="text-sm font-semibold">{title}</div>
-        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{subtitle}</div>
+        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{subtitle}</div>
       </div>
       <div className="h-[180px] w-full">
         <ResponsiveContainer width="100%" height="100%">

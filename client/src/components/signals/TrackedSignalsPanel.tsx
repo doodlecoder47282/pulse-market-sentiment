@@ -89,7 +89,7 @@ function TrackedRow({ sig }: { sig: TrackedSignal }) {
   return (
     <div className="rounded-md border border-border/30 bg-card/40 px-3 py-2 text-xs space-y-1" data-testid={`tracked-row-${sig.id}`}>
       <div className="flex items-center gap-2 flex-wrap">
-        <Badge variant="outline" className={`text-[9px] py-0 px-1.5 h-4 ${SOURCE_COLOR[sig.source]}`}>
+        <Badge variant="outline" className={`text-[11px] py-0 px-1.5 h-4 ${SOURCE_COLOR[sig.source]}`}>
           {SOURCE_LABELS[sig.source]}
         </Badge>
         {sig.type && sig.strike != null && (
@@ -98,13 +98,13 @@ function TrackedRow({ sig }: { sig: TrackedSignal }) {
           </span>
         )}
         {sig.side && (
-          <span className={`font-semibold text-[10px] uppercase tracking-wider ${
+          <span className={`font-semibold text-[11px] uppercase tracking-wider ${
             sig.side === "BULLISH" ? "text-emerald-400" : sig.side === "BEARISH" ? "text-rose-400" : "text-muted-foreground"
           }`}>
             {sig.side}
           </span>
         )}
-        <Badge variant="outline" className={`text-[9px] py-0 px-1.5 h-4 ml-auto ${statusBadgeClass(sig.status)}`}>
+        <Badge variant="outline" className={`text-[11px] py-0 px-1.5 h-4 ml-auto ${statusBadgeClass(sig.status)}`}>
           {sig.status}
         </Badge>
         {isOpen && (
@@ -153,15 +153,15 @@ function GroupCard({ group, defaultOpen }: { group: TrackedGroup; defaultOpen: b
       >
         {open ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
         <span className="font-bold text-base text-foreground">{group.symbol}</span>
-        <Badge variant="outline" className="text-[9px] border-emerald-500/40 bg-emerald-500/10 text-emerald-400">
+        <Badge variant="outline" className="text-[11px] border-emerald-500/40 bg-emerald-500/10 text-emerald-400">
           {group.open} open
         </Badge>
         {group.closed > 0 && (
-          <Badge variant="outline" className="text-[9px] border-muted-foreground/40 bg-muted/30 text-muted-foreground">
+          <Badge variant="outline" className="text-[11px] border-muted-foreground/40 bg-muted/30 text-muted-foreground">
             {group.closed} closed
           </Badge>
         )}
-        <span className="ml-auto text-[10px] text-muted-foreground">{group.count} total</span>
+        <span className="ml-auto text-[11px] text-muted-foreground">{group.count} total</span>
       </button>
       {open && (
         <div className="space-y-1.5 px-2 pb-2 pt-1">
@@ -201,18 +201,18 @@ export default function TrackedSignalsPanel() {
         <div className="flex items-center gap-2 flex-wrap">
           <CardTitle className="text-sm font-semibold tracking-tight">Tracked Signals · grouped per ticker</CardTitle>
           <EdgeInfo id="tracked-signals" />
-          <Badge variant="outline" className="text-[10px]">
+          <Badge variant="outline" className="text-[11px]">
             {data?.open ?? 0} open · {data?.closed ?? 0} closed
           </Badge>
         </div>
         <div className="mt-2 flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">source</span>
+          <span className="text-[11px] uppercase tracking-wider text-muted-foreground">source</span>
           {(["all", "flow-alert", "unusual-flow", "whale", "manual"] as const).map((s) => (
             <button
               key={s}
               type="button"
               onClick={() => setSourceFilter(s)}
-              className={`inline-flex min-h-[44px] items-center rounded border px-2.5 py-0.5 text-[10px] uppercase tracking-wider transition-colors sm:min-h-0 ${
+              className={`inline-flex min-h-[44px] items-center rounded border px-2.5 py-0.5 text-[11px] uppercase tracking-wider transition-colors sm:min-h-0 ${
                 sourceFilter === s
                   ? "border-foreground/60 bg-foreground/10 text-foreground"
                   : "border-border bg-transparent text-muted-foreground hover:bg-card/50"
@@ -222,13 +222,13 @@ export default function TrackedSignalsPanel() {
               {s === "all" ? "all" : SOURCE_LABELS[s]}
             </button>
           ))}
-          <span className="ml-2 text-[10px] uppercase tracking-wider text-muted-foreground">status</span>
+          <span className="ml-2 text-[11px] uppercase tracking-wider text-muted-foreground">status</span>
           {(["OPEN", "CLOSED", "all"] as const).map((s) => (
             <button
               key={s}
               type="button"
               onClick={() => setStatusFilter(s)}
-              className={`inline-flex min-h-[44px] items-center rounded border px-2.5 py-0.5 text-[10px] uppercase tracking-wider transition-colors sm:min-h-0 ${
+              className={`inline-flex min-h-[44px] items-center rounded border px-2.5 py-0.5 text-[11px] uppercase tracking-wider transition-colors sm:min-h-0 ${
                 statusFilter === s
                   ? "border-foreground/60 bg-foreground/10 text-foreground"
                   : "border-border bg-transparent text-muted-foreground hover:bg-card/50"

@@ -15,13 +15,18 @@
 //     R2 = PP + 0.618*(H-L)     S2 = PP - 0.618*(H-L)
 //     R3 = PP + 1.000*(H-L)     S3 = PP - 1.000*(H-L)
 //
-//   Camarilla (intraday reversion/breakout, purpose-built for 0DTE):
+//   Camarilla (a 1989 intraday heuristic attributed to bond trader Nick
+//   Scott/Stott, per Babypips Forexpedia "Camarilla Pivot Points",
+//   https://www.babypips.com/forexpedia/camarilla-pivot-points). It predates
+//   daily SPX expiries and was NOT designed for 0DTE; there is no published
+//   evidence that these levels predict SPX intraday turns. Context only:
 //     H1-H6 = C + (H-L) * k   where k = {1.1/12, 1.1/6, 1.1/4, 1.1/2, 1.1, 1.1*1.168}
 //     L1-L6 = C - (H-L) * k
-//     H3/L3  = reversion fade zones (high-probability fade targets)
-//     H4/L4  = breakout triggers (commit stops beyond)
+//   Conventional (untested) trader readings:
+//     H3/L3  = fade zones
+//     H4/L4  = breakout triggers
 //     H5/L5  = trend-day targets
-//     H6/L6  = extreme tail (session-high/low reversal)
+//     H6/L6  = extreme tail
 
 import type { DailyOHLC } from "./quotes";
 

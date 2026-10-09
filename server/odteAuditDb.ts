@@ -7,6 +7,7 @@
 
 import { sqlite } from "./storage";
 import { randomUUID } from "node:crypto";
+import { streamMarkToLog } from "./validationMath";
 
 // ─── Schema bootstrap ─────────────────────────────────────────────────────────
 
@@ -56,7 +57,187 @@ sqlite.exec(`
     pcr_oi REAL
   );
   CREATE INDEX IF NOT EXISTS idx_odte_eval_log_ts ON odte_evaluation_log(ts DESC);
+
+  -- Option-mark ledger (review items 7.2/7.3): the live bid/ask of each FIRED
+  -- alert's contract, logged by the 0DTE tracker on every chain poll until the
+  -- close. The grader replays the trade plan on these real quotes. Prices are
+  -- $ per share as quoted by Schwab (one contract = 100x). source is always
+  -- 'schwab' here: delayed CBOE quotes are never logged as marks.
+  CREATE TABLE IF NOT EXISTS odte_option_marks (
+    alert_id TEXT NOT NULL,
+    ts INTEGER NOT NULL,
+    bid REAL,
+    ask REAL,
+    mid REAL,
+    underlying REAL,
+    source TEXT NOT NULL,
+    PRIMARY KEY (alert_id, ts)
+  );
 `);
+
+// Additive ledger columns on odte_alert_audit (idempotent: ALTER fails if the
+// column already exists, which is fine).
+//   option_status   'graded' | 'ungraded' (NULL = graded before option marks existed)
+//   option_reason   exit reason or why ungraded
+//   option_entry    $/share paid (the ask at fire)
+//   option_exit     $/share received: quantity-weighted average of the plan's
+//                   fills (bids at exit, settlement value for a settled runner)
+//   option_exit_at  epoch ms of the exit quote / settlement
+//   option_return   realized (exit - entry) / entry, fraction of premium
+//   option_mfe      best bid-based return before exit (diagnostic only)
+//   realized_pct    underlying close-out return % of the replayed plan
+//                   (pct_return keeps the best favorable excursion as a diagnostic)
+//   option_settled_frac  fraction of the position held to cash settlement
+//                   (no closing fee on it); NULL on rows graded before plan v2
+//   plan_contracts  whole contracts the plan was graded with (T1 sells
+//                   floor(n/2)); the ledger reports returns per that position
+for (const col of [
+  "option_status TEXT",
+  "option_reason TEXT",
+  "option_entry REAL",
+  "option_exit REAL",
+  "option_exit_at INTEGER",
+  "option_return REAL",
+  "option_mfe REAL",
+  "realized_pct REAL",
+  "option_settled_frac REAL",
+  "plan_contracts INTEGER",
+]) {
+  try { sqlite.exec(`ALTER TABLE odte_alert_audit ADD COLUMN ${col}`); } catch { /* column exists */ }
+}
+
+// ─── Plan position size (whole contracts) ────────────────────────────────────
+
+/**
+ * Contracts the published plan is sized and graded with. BATCAVE_ODTE_PLAN_CONTRACTS
+ * (a whole number >= 1) when configured, else the reference size of 2 (the
+ * smallest position that exercises the T1 / runner split), labelled as such.
+ * Logged on every fire so the grader replays the actual split.
+ */
+export function odtePlanContracts(): { contracts: number; source: "configured" | "reference" } {
+  const raw = Number(process.env.BATCAVE_ODTE_PLAN_CONTRACTS ?? "");
+  if (Number.isFinite(raw) && raw >= 1) return { contracts: Math.floor(raw), source: "configured" };
+  return { contracts: 2, source: "reference" };
+}
+
+// ─── Option-mark logging (called by odteTracker on every Schwab chain poll) ──
+
+export interface TrackerQuote {
+  strike: number;
+  side: "call" | "put";
+  bid: number | null;
+  ask: number | null;
+  quoteTime: number | null;   // Schwab quoteTimeInLong when present
+}
+
+let _watch: { at: number; day: string; rows: Array<{ alertId: string; strike: number; isCall: boolean; expiry: string }> } | null = null;
+
+function etYmd(ms: number): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
+}
+
+export function watchedAlerts(now: number): Array<{ alertId: string; strike: number; isCall: boolean; expiry: string }> {
+  const day = etYmd(now);
+  if (_watch && _watch.day === day && now - _watch.at < 30_000) return _watch.rows;
+  const rows: Array<{ alertId: string; strike: number; isCall: boolean; expiry: string }> = [];
+  try {
+    const recs = sqlite
+      .prepare(`SELECT alert_id, side, contract_json FROM odte_alert_audit
+                WHERE detected_at >= ? AND tier != 'REJECTED'`)
+      .all(now - 18 * 3600_000) as Array<{ alert_id: string; side: string; contract_json: string }>;
+    for (const r of recs) {
+      let c: any = {};
+      try { c = JSON.parse(r.contract_json || "{}"); } catch { continue; }
+      const strike = Number(c.strike);
+      const expiry = String(c.expiry ?? "").slice(0, 10);
+      if (!(strike > 0)) continue;
+      const t = String(c.optionType ?? r.side ?? "").toUpperCase();
+      rows.push({ alertId: r.alert_id, strike, isCall: t.startsWith("C"), expiry });
+    }
+  } catch { /* table missing: nothing to watch */ }
+  _watch = { at: now, day, rows };
+  return rows;
+}
+
+/**
+ * Log the current Schwab quote of every fired alert's contract. The alert's
+ * logged expiry must equal the tracker chain's expiry; alerts without one are
+ * never matched (their grade stays "no_marks_logged"). Fail-soft.
+ */
+export function recordOdteOptionMarks(args: {
+  expiryISO: string;
+  source: "schwab";
+  underlying: number | null;
+  quotes: TrackerQuote[];
+  now?: number;
+}): number {
+  if (args.source !== "schwab") return 0; // only Schwab quotes are logged as marks
+  const now = args.now ?? Date.now();
+  let written = 0;
+  try {
+    const watch = watchedAlerts(now);
+    if (watch.length === 0) return 0;
+    const stmt = sqlite.prepare(`INSERT OR IGNORE INTO odte_option_marks (alert_id, ts, bid, ask, mid, underlying, source)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?)`);
+    for (const w of watch) {
+      // Expiry is required: a strike/side match on a different expiry is a different contract.
+      if (!w.expiry || !args.expiryISO || w.expiry !== args.expiryISO) continue;
+      const q = args.quotes.find((x) => Math.abs(x.strike - w.strike) < 1e-6 && (x.side === "call") === w.isCall);
+      if (!q) continue;
+      const bid = q.bid != null && Number.isFinite(q.bid) && q.bid >= 0 ? q.bid : null;
+      const ask = q.ask != null && Number.isFinite(q.ask) && q.ask > 0 ? q.ask : null;
+      if (bid == null && ask == null) continue;
+      const ts = q.quoteTime != null && q.quoteTime > 0 && q.quoteTime <= now + 5_000 ? q.quoteTime : now;
+      const mid = bid != null && ask != null && ask >= bid ? (bid + ask) / 2 : null;
+      stmt.run(w.alertId, ts, bid, ask, mid, args.underlying, args.source);
+      written++;
+    }
+  } catch (err: any) {
+    console.warn(`[odte:audit] recordOdteOptionMarks error: ${err?.message ?? err}`);
+  }
+  return written;
+}
+
+/**
+ * Log a Schwab Streamer LEVELONE_OPTIONS update for the fired alerts whose
+ * contract it is (round 3: every stream update of a fired-alert contract,
+ * not only the chain polls). Changes of bid/ask are all logged, unchanged
+ * quotes on a heartbeat (validationMath.streamMarkToLog); delayed quotes
+ * never. source = "schwab_stream". Fail-soft.
+ */
+const _lastStreamMark = new Map<string, { ts: number; bid: number | null; ask: number | null }>();
+export function recordOdteStreamMark(args: {
+  alertIds: string[];
+  quote: { bid: number | null; ask: number | null; quoteTimeMs: number | null; delayed: boolean | null; receivedAtMs: number; underlyingPrice: number | null };
+  underlying?: number | null;
+}): number {
+  let written = 0;
+  try {
+    const stmt = sqlite.prepare(`INSERT OR IGNORE INTO odte_option_marks (alert_id, ts, bid, ask, mid, underlying, source)
+                                 VALUES (?, ?, ?, ?, ?, ?, 'schwab_stream')`);
+    const und = args.quote.underlyingPrice != null && args.quote.underlyingPrice > 0 ? args.quote.underlyingPrice : args.underlying ?? null;
+    for (const id of args.alertIds) {
+      const m = streamMarkToLog(_lastStreamMark.get(id), args.quote);
+      if (!m) continue;
+      stmt.run(id, m.ts, m.bid, m.ask, m.mid, und);
+      _lastStreamMark.set(id, { ts: m.ts, bid: m.bid, ask: m.ask });
+      written++;
+    }
+    if (_lastStreamMark.size > 500) _lastStreamMark.clear();
+  } catch (err: any) {
+    console.warn(`[odte:audit] recordOdteStreamMark error: ${err?.message ?? err}`);
+  }
+  return written;
+}
+
+/** Logged marks for one alert, oldest first. */
+export function loadOdteOptionMarks(alertId: string): Array<{ ts: number; bid: number | null; ask: number | null; mid: number | null }> {
+  try {
+    return sqlite
+      .prepare(`SELECT ts, bid, ask, mid FROM odte_option_marks WHERE alert_id = ? ORDER BY ts ASC`)
+      .all(alertId) as Array<{ ts: number; bid: number | null; ask: number | null; mid: number | null }>;
+  } catch { return []; }
+}
 
 // ─── Tier classifier ──────────────────────────────────────────────────────────
 
@@ -79,6 +260,7 @@ function _scoreTier(score: number): "STANDARD" | "BANGER" | "MOONSHOT" {
 export function persistOdteAuditOnFire(alert: any): void {
   try {
     const now = Date.now();
+    const plan = odtePlanContracts();
     const alertId: string =
       alert?.id ??
       alert?.alertId ??
@@ -101,6 +283,11 @@ export function persistOdteAuditOnFire(alert: any): void {
       t1EstPct: alert?.t1?.estPctGain ?? null,
       t2Price: alert?.t2?.price ?? null,
       t2TriggerLevel: alert?.t2TriggerLevel ?? null,
+      // Runner stop once armed (published plan; the grader replays it).
+      t2TrailingStopLevel: alert?.t2TrailingStopLevel ?? null,
+      // Whole-contract position the plan is graded with (T1 sells floor(n/2)).
+      planContracts: plan.contracts,
+      planContractsSource: plan.source,
       regimeText: alert?.regime ?? null,
       greekSignals: alert?.greekSignals ?? null,
       fireHourEt: Number(new Date(now).toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false })),

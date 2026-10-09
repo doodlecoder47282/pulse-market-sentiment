@@ -7,7 +7,7 @@ import EdgeInfo from "@/components/EdgeInfo";
  * Features:
  *  · Table of 40 SPX 0DTE contracts (ATM ±20 strikes, calls + puts)
  *  · Live bid / ask / last / volume / Δvol / OI / classification per row
- *  · Inline volume sparkline colored by Lee-Ready classification
+ *  · Inline volume sparkline colored by last-print side (quote rule on snapshot deltas)
  *  · Size-selector slider (how many contracts of size to trip a "buy" alert)
  *  · "Arm" button per row to track a position (buy → exit inference)
  *  · Tracked positions panel with live P&L vs buy price + SELL_INFERRED marker
@@ -60,6 +60,7 @@ interface TrackedPosition {
   strike: number;
   side: Side;
   buyPrice: number;
+  buyAsk?: number | null;
   buyVolume: number;
   buyTimestamp: number;
   baselineOI: number;
@@ -106,19 +107,19 @@ function clsBadge(c: Classification, dv: number) {
   if (dv === 0) return null;
   if (c === "buy") {
     return (
-      <Badge className="h-5 border-emerald-500/40 bg-emerald-500/10 text-[10px] text-emerald-400 hover:bg-emerald-500/20">
+      <Badge className="h-5 border-emerald-500/40 bg-emerald-500/10 text-[11px] text-emerald-400 hover:bg-emerald-500/20">
         <ArrowUp className="mr-0.5 h-2.5 w-2.5" />BUY
       </Badge>
     );
   }
   if (c === "sell") {
     return (
-      <Badge className="h-5 border-rose-500/40 bg-rose-500/10 text-[10px] text-rose-400 hover:bg-rose-500/20">
+      <Badge className="h-5 border-rose-500/40 bg-rose-500/10 text-[11px] text-rose-400 hover:bg-rose-500/20">
         <ArrowDown className="mr-0.5 h-2.5 w-2.5" />SELL
       </Badge>
     );
   }
-  return <Badge variant="outline" className="h-5 text-[10px] opacity-60">flat</Badge>;
+  return <Badge variant="outline" className="h-5 text-[11px] opacity-60">flat</Badge>;
 }
 
 /** Inline sparkline of recent volume deltas from the contract's event history */
@@ -264,24 +265,24 @@ function CollapsedTracker({ data, onExpand }: { data: TrackerSnapshot; onExpand:
             <div className="text-[11px] font-semibold uppercase tracking-wider text-orange-400">
               0DTE · {data.symbol}
             </div>
-            <div className="text-[10px] text-muted-foreground">
+            <div className="text-[11px] text-muted-foreground">
               {data.dte}DTE · exp {data.expiry ?? "—"} · tick {tickTime}
             </div>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-4 text-xs">
           <div className="flex flex-col items-end">
-            <span className="text-[9px] uppercase tracking-wider text-muted-foreground">Spot</span>
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">Spot</span>
             <span className="font-mono text-sm font-bold tabular-nums">{data.spot.toFixed(2)}</span>
           </div>
           <div className="flex flex-col items-end">
-            <span className="text-[9px] uppercase tracking-wider text-muted-foreground">Net flow</span>
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">Net flow</span>
             <span className={`font-mono text-sm font-bold tabular-nums ${netFlow >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
               {netFlow >= 0 ? "+" : ""}{fmtMoney(netFlow)}
             </span>
           </div>
           <div className="flex flex-col items-end">
-            <span className="text-[9px] uppercase tracking-wider text-muted-foreground">Buy flags</span>
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">Buy flags</span>
             <span className="font-mono text-sm font-bold tabular-nums text-orange-400">{buyFlags}</span>
           </div>
           {activeCount > 0 && (
@@ -360,13 +361,13 @@ function LiveTrackerView({
               <Radio className="h-4 w-4 animate-pulse text-orange-500" />
               Live 0DTE Tracker · {data.symbol}
               <EdgeInfo id="odte-tracker" />
-              <Badge variant="outline" className="ml-2 font-mono text-[10px]">
+              <Badge variant="outline" className="ml-2 font-mono text-[11px]">
                 {data.dte}DTE · exp {data.expiry ?? "—"}
               </Badge>
-              <Badge variant="outline" className="font-mono text-[10px]">tick {tickTime}</Badge>
+              <Badge variant="outline" className="font-mono text-[11px]">tick {tickTime}</Badge>
             </CardTitle>
             <div className="mt-1 text-xs text-muted-foreground">
-              ATM ±20 strikes · Lee-Ready classifier (last vs midpoint, tick-rule fallback) ·
+              ATM ±20 strikes · last-print side per snapshot delta (last vs mid, tick fallback; not trade-by-trade) ·
               BUY when notional ≥ <span className="font-mono text-orange-400">{fmtMoney(minNotional)}</span>
             </div>
           </div>
@@ -429,7 +430,13 @@ function LiveTrackerView({
               {activeTracked.map(t => {
                 const live = data.contracts.find(c => c.key === t.contractKey);
                 const livePx = live?.last ?? null;
-                const pnl = livePx != null ? (livePx - t.buyPrice) * 100 : null;
+                // $ per contract (x100) if bought at the ask when armed and sold at the
+                // live bid now: the executable round trip, not last-vs-last.
+                const entryPx = t.buyAsk != null && t.buyAsk > 0 ? t.buyAsk : t.buyPrice;
+                const exitPx = live?.bid ?? null;
+                // Cents, halves away from zero for losses too (Math.round(-0.5) is -0).
+                const rawPnl = exitPx != null ? (exitPx - entryPx) * 100 : null;
+                const pnl = rawPnl != null ? Math.sign(rawPnl) * Math.round(Math.abs(rawPnl) * 100 + 1e-9) / 100 : null;
                 return (
                   <div
                     key={t.id}
@@ -442,7 +449,7 @@ function LiveTrackerView({
                         {t.strike.toFixed(0)}{t.side === "call" ? "C" : "P"}
                       </span>
                       <span className="text-muted-foreground">
-                        entry ${t.buyPrice.toFixed(2)} · {new Date(t.buyTimestamp).toLocaleTimeString()}
+                        entry ${entryPx.toFixed(2)}{t.buyAsk != null && t.buyAsk > 0 ? " ask" : " last"} · {new Date(t.buyTimestamp).toLocaleTimeString()}
                       </span>
                     </div>
                     <div className="flex items-center gap-3">
@@ -451,10 +458,10 @@ function LiveTrackerView({
                       </span>
                       {pnl != null && (
                         <span className={`font-mono font-semibold tabular-nums ${pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                          {pnl >= 0 ? "+" : ""}${pnl.toFixed(0)}/con
+                          {pnl >= 0 ? "+" : "-"}${Math.abs(pnl).toFixed(2)}/con at bid, before fees
                         </span>
                       )}
-                      <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]"
+                      <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]"
                         onClick={() => onDisarm(t.id)}
                         data-testid={`button-disarm-${t.id}`}
                       >
@@ -492,7 +499,7 @@ function LiveTrackerView({
         <div className="hscroll-contain">
           <table className="w-full min-w-[780px] text-[11px]">
             <thead>
-              <tr className="border-b text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+              <tr className="border-b text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
                 <SortableTh sortKey="strike" label="Strike" state={sort} onSort={setSort} defaultDir="asc" className="py-1 pr-2" align="left" testId="sort-odte-strike" />
                 <SortableTh sortKey="side" label="Side" state={sort} onSort={setSort} defaultDir="asc" className="py-1 pr-2" align="left" testId="sort-odte-side" />
                 <SortableTh sortKey="bid" label="Bid" state={sort} onSort={setSort} className="py-1 pr-2" align="right" testId="sort-odte-bid" />
@@ -550,7 +557,7 @@ function LiveTrackerView({
                         size="sm"
                         variant={isAlreadyTracked ? "outline" : isBuy ? "default" : "ghost"}
                         disabled={isAlreadyTracked || armPending || r.last == null}
-                        className="h-6 px-2 text-[10px]"
+                        className="h-6 px-2 text-[11px]"
                         onClick={(e) => { e.stopPropagation(); onArm(r.key, minNotional); }}
                         data-testid={`button-arm-${r.key}`}
                       >

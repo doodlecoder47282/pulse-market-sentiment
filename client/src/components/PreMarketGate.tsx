@@ -5,40 +5,29 @@ interface PreMarketGateProps {
 }
 
 export default function PreMarketGate({ onAcknowledge }: PreMarketGateProps) {
+  // Opt-in personal checklist (Settings). Never locks the app: the continue
+  // button works immediately and a skip control sits at the top.
   const [acknowledged, setAcknowledged] = useState(false);
   const [exiting, setExiting] = useState(false);
-  const [scrolledToBottom, setScrolledToBottom] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  // Auto-detect when user reaches bottom of read
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-
-    const onScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = el;
-      // within 40px of bottom counts
-      if (scrollTop + clientHeight >= scrollHeight - 40) {
-        setScrolledToBottom(true);
-      }
-    };
-
-    el.addEventListener("scroll", onScroll, { passive: true });
-    // also check immediately in case content fits without scroll
-    onScroll();
-    return () => el.removeEventListener("scroll", onScroll);
-  }, []);
+  const scrolledToBottom = true;
 
   const handleAck = () => {
-    if (!scrolledToBottom) return;
     setAcknowledged(true);
     setExiting(true);
-    setTimeout(() => onAcknowledge(), 700);
+    setTimeout(() => onAcknowledge(), 300);
   };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") handleAck(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div
-      className={`fixed inset-0 z-[100] bg-black transition-opacity duration-700 ${
+      className={`fixed inset-0 z-[100] bg-black transition-opacity duration-300 ${
         exiting ? "opacity-0 pointer-events-none" : "opacity-100"
       }`}
       data-testid="overlay-premarket-gate"
@@ -49,12 +38,22 @@ export default function PreMarketGate({ onAcknowledge }: PreMarketGateProps) {
         className="h-full w-full overflow-y-auto px-6 sm:px-10 md:px-16 py-10 sm:py-14"
       >
         <div className="max-w-3xl mx-auto text-neutral-300">
+          <div className="mb-6 flex justify-end">
+            <button
+              type="button"
+              onClick={handleAck}
+              data-testid="button-premarket-skip"
+              className="min-h-[44px] rounded border border-neutral-700 px-4 text-xs tracking-[0.15em] text-neutral-300 transition hover:border-amber-400 hover:text-amber-400"
+            >
+              SKIP TO DASHBOARD
+            </button>
+          </div>
           {/* Header */}
           <div className="text-[11px] sm:text-xs tracking-[0.25em] text-neutral-500 mb-6">
             // READ THIS . EVERY . SINGLE . DAY . BEFORE THE MARKET OPENS .
           </div>
           <h1
-            className="text-5xl sm:text-7xl md:text-8xl font-black tracking-tight leading-[0.9] text-neutral-600 select-none"
+            className="text-5xl sm:text-7xl md:text-8xl font-black tracking-tight leading-[0.9] text-neutral-400 select-none"
             style={{ letterSpacing: "-0.02em" }}
           >
             PRE<span className="text-amber-400">-</span>
@@ -149,11 +148,6 @@ export default function PreMarketGate({ onAcknowledge }: PreMarketGateProps) {
 
           {/* Acknowledge */}
           <div className="mt-12 mb-6 flex flex-col items-center gap-4">
-            {!scrolledToBottom && (
-              <p className="text-[11px] tracking-[0.2em] text-neutral-600">
-                ↓ READ TO THE BOTTOM TO CONTINUE ↓
-              </p>
-            )}
             <button
               onClick={handleAck}
               disabled={!scrolledToBottom || acknowledged}
@@ -161,13 +155,13 @@ export default function PreMarketGate({ onAcknowledge }: PreMarketGateProps) {
               className={`group relative px-8 py-4 rounded border-2 transition-all duration-300 text-sm tracking-[0.25em] font-semibold ${
                 scrolledToBottom && !acknowledged
                   ? "border-amber-400 text-amber-400 hover:bg-amber-400 hover:text-black cursor-pointer"
-                  : "border-neutral-800 text-neutral-700 cursor-not-allowed"
+                  : "border-neutral-800 text-neutral-400 cursor-not-allowed"
               }`}
             >
               {acknowledged ? "TRADING THE PLAN..." : "I'VE READ IT. TRADE THE PLAN."}
             </button>
-            <p className="text-[10px] tracking-[0.15em] text-neutral-700">
-              this is a daily ritual. own it.
+            <p className="text-xs tracking-[0.1em] text-neutral-500">
+              Turn this checklist off in Settings.
             </p>
           </div>
         </div>
@@ -205,7 +199,7 @@ function Truth({ children }: { children: React.ReactNode }) {
 function Check({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex gap-4 py-3 border-b border-neutral-900 text-[15px] sm:text-base leading-relaxed text-neutral-400">
-      <span className="select-none text-neutral-600 border border-neutral-700 w-5 h-5 inline-block flex-shrink-0 mt-1" />
+      <span className="select-none text-neutral-400 border border-neutral-700 w-5 h-5 inline-block flex-shrink-0 mt-1" />
       <p>{children}</p>
     </div>
   );

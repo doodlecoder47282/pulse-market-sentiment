@@ -1,9 +1,13 @@
-// CryptoPanel — the degen desk. Sub-1M meme discovery with honest verdicts.
+// CryptoPanel — digital assets: exchange-direct majors plus a small-cap launch scanner with honest verdicts.
 //
 // Design: Gen Z degen energy (neon purple/lime, glow accents, big score rings)
 // but every number is real and every risk flag is shown. FOMO meter, narrative
 // heat chips, agent health strip with pulsing status dots, graded audit log.
 // Tracking mode is displayed loudly until calibration exists (n>=50 graded).
+// Sources (server/sources/registry.ts): BTC/ETH/SOL exchange-direct from
+// Coinbase Exchange + Kraken (cross-checked); DEX data from DexScreener with
+// a Jupiter price check; Bluesky and pump.fun (unofficial API) are labeled
+// low-grade attention proxies and are not in the score or verdict.
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -27,14 +31,21 @@ interface Candidate {
   chg5m: number | null; chg1h: number | null; chg24h: number | null;
   boosted: boolean; ageMinutes: number | null;
   mintAuthorityActive: boolean | null; freezeAuthorityActive: boolean | null;
-  top10Pct: number | null; securityCheckedAt: number | null;
+  top10Pct: number | null; top10Method?: string | null; securityCheckedAt: number | null;
   rcRisks: string[]; rcLpLockedPct: number | null;
   bskyMentions1h: number | null; bskyMentions10m: number | null;
-  pumpReplies: number | null; pumpReplyPerHr: number | null;
+  bskyMentionsByAddress1h?: number | null; bskyCapped?: boolean;
+  pumpReplies: number | null; pumpReplyPerHr: number | null; pumpCheckedAt?: number | null;
+  socialSources?: { bsky: "ok" | "failed" | "skipped"; pump: "ok" | "failed" | "skipped" } | null;
+  socialCoverage?: string | null;
   pumpLive: boolean; socialScore: number | null; socialCheckedAt: number | null;
+  // collection state: a failed/stale collection is NOT zero attention
+  socialStatus?: "ok" | "partial" | "failed" | "stale" | "unavailable" | null;
   volAccel: number | null; netBuyRatio5m: number | null;
   fomoScore: number | null; memeScore: number | null;
   narrativeHits: string[]; rugFlags: string[]; hardKill: boolean;
+  jupPriceUsd?: number | null; jupGapPct?: number | null; jupCheckedAt?: number | null;
+  jupState?: "agree" | "watch" | "diverge" | "no-reliable-price" | "failed" | "unchecked";
   score: number | null; verdict: Verdict; verdictReasons: string[];
   risk: {
     maxPositionUsd: number; suggestedStopPct: number; liquidityExitStopPct: number;
@@ -43,10 +54,34 @@ interface Candidate {
   } | null;
 }
 
+interface TradeFlow {
+  count: number; takerBuyShare: number | null; vwap: number | null; notionalUsd: number;
+  largestUsd: number | null; coveredSec: number; lastTradeMs: number | null;
+}
+interface VenueCell {
+  state: "ok" | "stale" | "failed"; mid: number | null; spreadBps: number | null; last: number | null;
+  lastTradeUtc: string | null; volume24h: number | null; flow: TradeFlow | null; error: string | null;
+}
+interface MajorRow {
+  asset: "BTC" | "ETH" | "SOL";
+  coinbase: VenueCell;
+  kraken: VenueCell & { vwap24h: number | null };
+  cross: { state: "agree" | "watch" | "diverge" | "single-source" | "unavailable"; divergenceBps: number | null; reference: number | null; note: string };
+  coingecko: { price: number | null; deviationBps: number | null; asOfUtc: string | null; label: string };
+}
+interface MajorsSnapshot {
+  asOf: number; state: "ok" | "partial" | "unavailable"; rows: MajorRow[]; note: string;
+  sources: Array<{ id: string; name: string; tier: string; state: "ok" | "partial" | "failed" | "not_configured"; fetchedAtUtc: string | null; error: string | null }>;
+}
+interface SourceLabel { id: string; name: string; tier: string; tierLabel: string; weakReason: string | null; feeds: string }
+
 interface FeedResp {
   asOf: number; trackedCount: number; candidates: Candidate[];
   narrativeHeat: Array<{ term: string; hits: number; sources: string[] }>;
   narrativeUpdatedAt: number | null;
+  narrativeSources?: Array<{ name: string; state: "ok" | "empty" | "failed"; titles: number; undated: number }>;
+  majors?: MajorsSnapshot | null;
+  sourceLabels?: SourceLabel[];
 }
 
 interface HealthResp {
@@ -54,9 +89,36 @@ interface HealthResp {
   trackedCount: number; asOf: number;
 }
 
+interface SignalCounts {
+  total: number; open: number; hit5m: number; doubled: number; rugged: number; dead: number;
+  graded: number; sampleReady: boolean; minGradedForSample: number;
+  noData?: number; // past the 72h horizon but unpriceable: missing, not dead
+}
+
+interface Survivorship {
+  noDataShare: number | null;
+  ruggedRateObserved: number | null;
+  ruggedRateWorstCase: number | null;
+  winRateWorstCase: number | null;
+}
+
 interface SignalsResp {
   signals: any[];
-  stats: { total: number; open: number; hit5m: number; doubled: number; rugged: number; dead: number; calibrated: boolean };
+  // top-level counts = DISTINCT COINS (first signal per coin); sampleReady =
+  // graded coins ≥ 50 (a sample-size flag, not calibration). rows = every
+  // logged WATCH/ENTER row; enterCoins = first ENTER per coin.
+  stats: SignalCounts & {
+    basis?: string;
+    noDataShare?: number | null;
+    rows?: SignalCounts;
+    enterCoins?: SignalCounts;
+    // round 3: sampleReady is decided on first-ENTER coins and needs a
+    // readable no-data share; survivorship bounds count NO_DATA as RUGGED.
+    survivorship?: { coins: Survivorship; enterCoins: Survivorship };
+    sampleBasis?: string;
+    sampleReason?: string;
+    peakSampling?: string;
+  };
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────
@@ -79,6 +141,75 @@ const fmtAge = (min: number | null): string => {
 
 const pctCls = (v: number | null) =>
   v == null ? "text-muted-foreground" : v >= 0 ? "text-lime-400" : "text-rose-400";
+
+// ─── majors strip ───────────────────────────────────────────────────────
+
+const fmtPx = (v: number | null) =>
+  v == null ? "—" : v >= 1000 ? v.toLocaleString("en-US", { maximumFractionDigits: 0 }) : v.toLocaleString("en-US", { maximumFractionDigits: 2 });
+
+const CROSS_COLOR: Record<MajorRow["cross"]["state"], string> = {
+  agree: "text-emerald-300", watch: "text-amber-300", diverge: "text-rose-300", "single-source": "text-amber-300", unavailable: "text-rose-300",
+};
+
+function VenueLine({ name, v }: { name: string; v: VenueCell }) {
+  const f = v.flow;
+  return (
+    <div className="text-[11px] text-muted-foreground" title={v.error ?? undefined}>
+      <span className="font-semibold text-foreground/80">{name}</span>{" "}
+      {v.state === "failed" ? <span className="text-rose-300">failed</span>
+        : <>
+            <span className={v.state === "stale" ? "text-amber-300" : undefined}>{v.state === "stale" ? "stale · " : ""}mid {fmtPx(v.mid)}</span>
+            {v.spreadBps != null && <> · spr {v.spreadBps.toFixed(1)} bps</>}
+            {f && (f.count > 0
+              ? <> · taker buy {Math.round((f.takerBuyShare ?? 0) * 100)}% of {f.count} trades / {Math.round(f.coveredSec / 60)}m</>
+              : <> · 0 trades in window (observed)</>)}
+            {v.lastTradeUtc && <> · last {new Date(v.lastTradeUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</>}
+          </>}
+    </div>
+  );
+}
+
+function MajorsStrip({ majors, loaded }: { majors: MajorsSnapshot | null; loaded: boolean }) {
+  if (!loaded) return null;
+  if (!majors) {
+    return <div className="rounded-lg border border-border/50 p-2 text-[11px] text-muted-foreground">majors: first exchange read pending</div>;
+  }
+  return (
+    <div className="rounded-lg border border-border/50 bg-card/40 p-2.5" data-testid="crypto-majors">
+      <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[11px]">
+        <TrendingUp className="h-3.5 w-3.5 text-lime-400" />
+        <span className="font-semibold uppercase tracking-[0.15em]">majors · exchange-direct</span>
+        <span className={majors.state === "ok" ? "text-emerald-300" : majors.state === "partial" ? "text-amber-300" : "text-rose-300"}>{majors.state}</span>
+        {majors.sources.map((x) => (
+          <span key={x.id} className="text-muted-foreground" title={x.error ?? undefined}>
+            · {x.name} ({x.tier}) <span className={x.state === "ok" ? "text-emerald-300" : x.state === "not_configured" ? undefined : x.state === "partial" ? "text-amber-300" : "text-rose-300"}>{x.state === "not_configured" ? "not configured" : x.state}</span>
+          </span>
+        ))}
+      </div>
+      <div className="grid gap-2 md:grid-cols-3">
+        {majors.rows.map((r) => (
+          <div key={r.asset} className="rounded border border-border/40 p-2">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="font-mono text-sm font-bold">{r.asset}</span>
+              <span className="font-mono text-sm tabular-nums">{r.cross.reference != null ? `$${fmtPx(r.cross.reference)}` : "no reference"}</span>
+            </div>
+            <div className={`text-[11px] ${CROSS_COLOR[r.cross.state]}`}>
+              {r.cross.state}{r.cross.divergenceBps != null ? ` · ${r.cross.divergenceBps.toFixed(1)} bps` : ""} · {r.cross.note}
+            </div>
+            <VenueLine name="Coinbase" v={r.coinbase} />
+            <VenueLine name="Kraken" v={r.kraken} />
+            {r.coingecko.price != null && (
+              <div className="text-[11px] text-muted-foreground" title={r.coingecko.label}>
+                CoinGecko ref ${fmtPx(r.coingecko.price)}{r.coingecko.deviationBps != null ? ` (${r.coingecko.deviationBps >= 0 ? "+" : ""}${r.coingecko.deviationBps.toFixed(0)} bps)` : ""} · reference only
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 text-[11px] text-muted-foreground">{majors.note}. Taker flow from public trade prints; context, not a signal.</div>
+    </div>
+  );
+}
 
 // ─── main panel ─────────────────────────────────────────────────────────
 
@@ -105,31 +236,34 @@ export default function CryptoPanel() {
           <div>
             <div className="flex items-center gap-2">
               <Rocket className="h-5 w-5 text-fuchsia-400" />
-              <h2 className="text-base font-bold tracking-tight">degen desk</h2>
-              <Badge variant="outline" className="border-lime-400/40 bg-lime-400/10 text-[10px] text-lime-300">
-                sub-1M → 5M hunt
+              <h2 className="text-base font-bold tracking-tight">Digital assets</h2>
+              <Badge variant="outline" className="border-lime-400/40 bg-lime-400/10 text-[11px] text-lime-300">
+                small-cap launch scanner
               </Badge>
             </div>
             <p className="mt-1 max-w-xl text-xs leading-snug text-muted-foreground">
-              solana launches + pump.fun graduations, scored on flow acceleration, catchy-name power,
-              narrative confirms, and rug filters. sized off exit liquidity. PASS is the default verdict.
+              Exchange-direct prices for majors, plus a tracker for new Solana launches scored on flow
+              acceleration, narrative confirmation and rug filters (hand-set heuristics, not fitted to outcomes). PASS is the default verdict.
             </p>
           </div>
           <AgentStrip health={healthQ.data} />
         </div>
       </div>
 
-      {/* tracking-mode banner until calibrated */}
+      {/* BTC / ETH / SOL exchange-direct, cross-checked */}
+      <MajorsStrip majors={feed?.majors ?? null} loaded={!!feed} />
+
+      {/* tracking-mode banner until the graded sample is large enough */}
       <TrackingBanner sig={sigQ.data} view={view} />
 
       {/* narrative heat */}
       <div className="flex flex-wrap items-center gap-1.5" data-testid="crypto-narratives">
         <Newspaper className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="mr-1 text-[10px] uppercase tracking-[0.15em] text-muted-foreground">narrative heat</span>
+        <span className="mr-1 text-[11px] uppercase tracking-[0.15em] text-muted-foreground">narrative heat</span>
         {(feed?.narrativeHeat ?? []).slice(0, 10).map((n) => (
           <span
             key={n.term}
-            className={`rounded-full border px-2 py-0.5 font-mono text-[10px] ${
+            className={`rounded-full border px-2 py-0.5 font-mono text-[11px] ${
               n.hits >= 4
                 ? "border-orange-400/50 bg-orange-500/15 text-orange-300"
                 : n.hits >= 2
@@ -142,8 +276,16 @@ export default function CryptoPanel() {
           </span>
         ))}
         {(feed?.narrativeHeat ?? []).length === 0 && (
-          <span className="text-[10px] text-muted-foreground">warming up…</span>
+          <span className="text-[11px] text-muted-foreground">
+            {feed?.narrativeUpdatedAt == null ? "warming up…" : "no tracked terms in the last 24 h (observed)"}
+          </span>
         )}
+        {(feed?.narrativeSources ?? []).map((x) => (
+          <span key={x.name} className={`text-[11px] ${x.state === "failed" ? "text-rose-300" : "text-muted-foreground"}`}
+            title={`${x.name} RSS (publisher): ${x.titles} titles in 24 h${x.undated ? `, ${x.undated} undated ignored` : ""}`}>
+            · {x.name} {x.state === "ok" ? "ok" : x.state === "empty" ? "0 recent" : "failed"}
+          </span>
+        ))}
       </div>
 
       {/* view toggle */}
@@ -162,7 +304,7 @@ export default function CryptoPanel() {
             {v === "feed" ? "live feed" : "signal log"}
           </button>
         ))}
-        <span className="ml-auto text-[10px] text-muted-foreground">
+        <span className="ml-auto text-[11px] text-muted-foreground">
           tracking {feed?.trackedCount ?? 0} pools · refresh 45s
         </span>
       </div>
@@ -219,11 +361,11 @@ function AgentStrip({ health }: { health?: HealthResp }) {
       {(health?.engines ?? []).filter((e) => e.name !== "watchdog").map((e) => (
         <div key={e.name} className="flex items-center gap-1.5" title={`${e.name}: ${e.status} · ${e.runs} runs · ${e.errors} errors${e.lastError ? ` · ${e.lastError}` : ""}`}>
           <span className={`h-2 w-2 rounded-full ${dot(e.status)}`} />
-          <span className="text-[10px] font-medium text-muted-foreground">{e.name}</span>
+          <span className="text-[11px] font-medium text-muted-foreground">{e.name}</span>
         </div>
       ))}
       {(health?.engines ?? []).length === 0 && (
-        <span className="text-[10px] text-muted-foreground">agents booting…</span>
+        <span className="text-[11px] text-muted-foreground">agents booting…</span>
       )}
     </div>
   );
@@ -232,14 +374,16 @@ function AgentStrip({ health }: { health?: HealthResp }) {
 // ─── tracking banner ────────────────────────────────────────────────────
 
 function TrackingBanner({ sig, view }: { sig?: SignalsResp; view: string }) {
-  const graded = sig ? sig.stats.total - sig.stats.open : null;
+  // Round 3: the gate a trader cares about is on first-ENTER coins.
+  const enter = sig?.stats.enterCoins;
+  const graded = enter ? enter.graded : sig ? sig.stats.graded : null;
   return (
     <div className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2">
       <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
       <p className="text-[11px] leading-snug text-amber-200/90">
         <span className="font-semibold">tracking mode.</span> every ENTER/WATCH is logged and graded
         (5M hit / doubled / rugged / dead) but nothing here is stakeable until the audited hit rate exists
-        — same n≥50 rule as the 0DTE desk{graded != null ? ` (${graded} graded so far)` : ""}. sub-1M memes
+        — same n≥50 rule as the 0DTE desk, counted in distinct first-ENTER coins with a no-data share of 20% or less{graded != null ? ` (${graded} graded ENTER coins so far${sig?.stats.sampleReady ? ", sample-ready" : ""})` : ""}. sub-1M memes
         are a &gt;90% loss-rate arena; the math only works small, cut fast, and letting 4-5x winners pay for everything.
       </p>
     </div>
@@ -259,8 +403,8 @@ function Section({ icon, title, empty, items, expanded, setExpanded, accent, col
       <button className="flex w-full items-center gap-2" onClick={() => setOpen((v) => !v)} data-testid={`crypto-section-${accent}`}>
         {icon}
         <span className="text-xs font-semibold uppercase tracking-[0.12em]">{title}</span>
-        <span className="rounded-full bg-muted/60 px-1.5 text-[10px] text-muted-foreground">{items.length}</span>
-        <span className="ml-auto text-[10px] text-muted-foreground">{open ? "hide" : "show"}</span>
+        <span className="rounded-full bg-muted/60 px-1.5 text-[11px] text-muted-foreground">{items.length}</span>
+        <span className="ml-auto text-[11px] text-muted-foreground">{open ? "hide" : "show"}</span>
       </button>
       {open && (
         <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-2">
@@ -295,29 +439,29 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
           <div className="flex items-center gap-1.5">
             <span className="truncate font-mono text-sm font-bold">{c.symbol}</span>
             {c.pumpfunGraduate && (
-              <span className="rounded bg-emerald-500/15 px-1 py-px text-[9px] font-semibold text-emerald-300" title="graduated the pump.fun bonding curve">
+              <span className="rounded bg-emerald-500/15 px-1 py-px text-[11px] font-semibold text-emerald-300" title="graduated the pump.fun bonding curve">
                 pump.fun grad
               </span>
             )}
             {c.boosted && (
-              <span className="rounded bg-orange-500/15 px-1 py-px text-[9px] font-semibold text-orange-300" title="paid DexScreener boost — manufactured attention">
+              <span className="rounded bg-orange-500/15 px-1 py-px text-[11px] font-semibold text-orange-300" title="paid DexScreener boost — manufactured attention">
                 paid boost
               </span>
             )}
             {c.narrativeHits.length > 0 && (
-              <span className="rounded bg-fuchsia-500/15 px-1 py-px text-[9px] font-semibold text-fuchsia-300">
+              <span className="rounded bg-fuchsia-500/15 px-1 py-px text-[11px] font-semibold text-fuchsia-300">
                 news: {c.narrativeHits[0]}
               </span>
             )}
           </div>
-          <div className="mt-0.5 flex items-center gap-2 text-[10px] text-muted-foreground">
+          <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
             <span className="truncate">{c.name}</span>
             <span className="flex items-center gap-0.5 shrink-0"><Clock className="h-2.5 w-2.5" />{fmtAge(c.ageMinutes)}</span>
           </div>
         </div>
         <div className="shrink-0 text-right">
           <div className="font-mono text-sm font-bold tabular-nums">{fmtUsd(c.marketCap)}</div>
-          <div className={`font-mono text-[10px] tabular-nums ${pctCls(c.chg1h)}`}>
+          <div className={`font-mono text-[11px] tabular-nums ${pctCls(c.chg1h)}`}>
             {c.chg1h != null ? `${c.chg1h >= 0 ? "+" : ""}${c.chg1h.toFixed(0)}% 1h` : "—"}
           </div>
         </div>
@@ -330,7 +474,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
           style={{ width: `${Math.max(3, mcapPct)}%` }}
         />
       </div>
-      <div className="mt-1 flex justify-between text-[9px] text-muted-foreground">
+      <div className="mt-1 flex justify-between text-[11px] text-muted-foreground">
         <span>runway to $1M cap: {mcapPct.toFixed(0)}%</span>
         <span className="flex items-center gap-2">
           {c.pumpLive && <span className="font-semibold text-rose-400">● LIVE</span>}
@@ -338,14 +482,22 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
             <Flame className={`h-2.5 w-2.5 ${(c.fomoScore ?? 0) >= 60 ? "text-orange-400" : "text-muted-foreground"}`} />
             fomo {Math.round(c.fomoScore ?? 0)}
           </span>
-          <span className={`${(c.socialScore ?? 0) >= 40 ? "text-fuchsia-300" : "text-muted-foreground"}`}>
-            social {c.socialScore != null ? Math.round(c.socialScore) : "—"}
+          <span
+            className={`${(c.socialScore ?? 0) >= 40 ? "text-fuchsia-300" : "text-muted-foreground"}`}
+            title="social attention proxy (Bluesky, pump.fun unofficial API): low grade, shown only, not in the score or verdict"
+          >
+            social (low-grade) {c.socialScore != null ? Math.round(c.socialScore) : "—"}
+            {c.socialStatus && c.socialStatus !== "ok" && (
+              <span className="ml-0.5 text-[11px] text-amber-300/80" title="social collection state — not zero attention">
+                {c.socialStatus}
+              </span>
+            )}
           </span>
         </span>
       </div>
 
       {/* stat row */}
-      <div className="mt-2 grid grid-cols-4 gap-1.5 font-mono text-[10px] tabular-nums">
+      <div className="mt-2 grid grid-cols-4 gap-1.5 font-mono text-[11px] tabular-nums">
         <Stat label="liq" value={fmtUsd(c.liquidityUsd)} />
         <Stat label="vol 1h" value={fmtUsd(c.vol1h, 0)} />
         <Stat label="accel" value={c.volAccel != null ? `${c.volAccel.toFixed(1)}x` : "—"} hot={(c.volAccel ?? 0) >= 2} />
@@ -361,14 +513,14 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
           {c.rugFlags.length > 0 && (
             <div className="rounded-md bg-rose-500/8 p-2">
               {c.rugFlags.map((f, i) => (
-                <p key={i} className="flex items-start gap-1 text-[10px] leading-snug text-rose-300">
+                <p key={i} className="flex items-start gap-1 text-[11px] leading-snug text-rose-300">
                   <Skull className="mt-px h-2.5 w-2.5 shrink-0" />{f}
                 </p>
               ))}
             </div>
           )}
           {c.risk && (
-            <div className="grid grid-cols-2 gap-1.5 rounded-md bg-muted/30 p-2 font-mono text-[10px] tabular-nums sm:grid-cols-3">
+            <div className="grid grid-cols-2 gap-1.5 rounded-md bg-muted/30 p-2 font-mono text-[11px] tabular-nums sm:grid-cols-3">
               <Stat label="max size" value={`$${c.risk.maxPositionUsd}`} />
               <Stat label="stop" value={`${c.risk.suggestedStopPct}%`} />
               <Stat label="liq bail" value={`${c.risk.liquidityExitStopPct}% liq`} />
@@ -377,7 +529,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
               <Stat label="slippage" value={`~${c.risk.estSlippagePct}%`} />
             </div>
           )}
-          <div className="flex flex-wrap items-center gap-1.5 text-[9px]">
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
             {c.securityCheckedAt == null ? (
               <span className="rounded bg-muted/40 px-1.5 py-0.5 text-muted-foreground">on-chain check pending</span>
             ) : (
@@ -388,9 +540,14 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
                 <span className={`rounded px-1.5 py-0.5 font-semibold ${c.freezeAuthorityActive ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/15 text-emerald-300"}`}>
                   freeze {c.freezeAuthorityActive ? "ACTIVE" : "none ✓"}
                 </span>
+                {c.top10Pct == null && c.top10Method?.startsWith("unavailable") && (
+                  <span title={c.top10Method} className="rounded px-1.5 py-0.5 font-semibold bg-amber-500/15 text-amber-300">
+                    top10 unavailable
+                  </span>
+                )}
                 {c.top10Pct != null && (
-                  <span className={`rounded px-1.5 py-0.5 font-semibold ${c.top10Pct > 45 ? "bg-rose-500/20 text-rose-300" : c.top10Pct > 30 ? "bg-amber-500/15 text-amber-300" : "bg-emerald-500/15 text-emerald-300"}`}>
-                    top10 {c.top10Pct}%
+                  <span title={c.top10Method ?? undefined} className={`rounded px-1.5 py-0.5 font-semibold ${c.top10Pct > 45 ? "bg-rose-500/20 text-rose-300" : c.top10Pct > 30 ? "bg-amber-500/15 text-amber-300" : "bg-emerald-500/15 text-emerald-300"}`}>
+                    top10 {c.top10Pct}%{c.top10Method?.includes("INCLUDING") ? " (incl. pool?)" : ""}
                   </span>
                 )}
                 {c.rcLpLockedPct != null && (
@@ -402,13 +559,41 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
             )}
           </div>
           {c.socialCheckedAt != null && (
-            <div className="flex flex-wrap items-center gap-1.5 text-[9px] text-muted-foreground">
-              <span>social · bsky {c.bskyMentions1h ?? 0} mentions/1h ({c.bskyMentions10m ?? 0} last 10m)</span>
-              {c.pumpReplies != null && <span>· pump.fun {c.pumpReplies} replies{c.pumpReplyPerHr != null ? ` (${c.pumpReplyPerHr >= 0 ? "+" : ""}${c.pumpReplyPerHr}/hr)` : ""}</span>}
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span>
+                social · bsky{" "}
+                {c.bskyMentions1h != null
+                  ? `${c.bskyCapped ? "≥" : ""}${c.bskyMentions1h} mentions/1h (${c.bskyCapped ? "≥" : ""}${c.bskyMentions10m ?? 0} last 10m${c.bskyMentionsByAddress1h != null ? `, ${c.bskyMentionsByAddress1h} by contract address` : ""})${c.bskyCapped ? " · search capped, lower bound" : ""}`
+                  : "unavailable (fetch failed or not searched)"}
+              </span>
+              {c.pumpReplies != null && (() => {
+                // pump.fun values are kept from the last successful read; mark
+                // them stale when the latest attempt failed or they are old.
+                const stale = c.socialSources?.pump === "failed" || (c.pumpCheckedAt != null && Date.now() - c.pumpCheckedAt > 15 * 60_000);
+                const at = c.pumpCheckedAt != null ? new Date(c.pumpCheckedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
+                return (
+                  <span className={stale ? "text-amber-300/80" : undefined} title={stale ? "last successful pump.fun read; the latest attempt failed or is old" : undefined}>
+                    · pump.fun {c.pumpReplies} replies{c.pumpReplyPerHr != null ? ` (${c.pumpReplyPerHr >= 0 ? "+" : ""}${c.pumpReplyPerHr}/hr)` : ""}
+                    {stale ? ` · STALE${at ? ` (as of ${at})` : ""}` : ""}
+                  </span>
+                );
+              })()}
+              {c.socialCoverage && <span>· score over {c.socialCoverage}</span>}
+              <span className="text-amber-300/70">· attention proxy only (social media; pump.fun is an unofficial API), not in the score or verdict</span>
             </div>
           )}
-          <p className="text-[9px] text-muted-foreground">
-            {c.dexId} · {c.chain} · via {c.discoveredVia} · pair {c.pairAddress.slice(0, 10)}…
+          <p className="text-[11px] text-muted-foreground">
+            price check · Jupiter{" "}
+            <span className={c.jupState === "diverge" || c.jupState === "no-reliable-price" ? "text-rose-300" : c.jupState === "agree" ? "text-emerald-300" : c.jupState === "watch" ? "text-amber-300" : undefined}>
+              {c.jupState === "agree" || c.jupState === "watch" || c.jupState === "diverge"
+                ? `${c.jupState} (${c.jupGapPct}% vs DexScreener)`
+                : c.jupState === "no-reliable-price" ? "has no reliable price for this mint"
+                : c.jupState === "failed" ? "request failed (not cross-checked; ENTER held at WATCH)"
+                : "not checked yet (ENTER held at WATCH until checked)"}
+            </span>
+          </p>
+          <p className="text-[11px] text-muted-foreground">
+            {c.dexId} · {c.chain} · via {c.discoveredVia} · pair {c.pairAddress.slice(0, 10)}… · data: DexScreener (aggregator API), Solana RPC, rugcheck
           </p>
         </div>
       )}
@@ -419,7 +604,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
 function Stat({ label, value, hot }: { label: string; value: string; hot?: boolean }) {
   return (
     <div className="rounded bg-muted/25 px-1.5 py-1">
-      <div className="text-[8px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className={`font-semibold ${hot ? "text-lime-300" : ""}`}>{value}</div>
     </div>
   );
@@ -444,30 +629,47 @@ function ScoreRing({ score, accent }: { score: number; accent: string }) {
 
 // ─── signal log ─────────────────────────────────────────────────────────
 
+const pctOrDash = (x: number | null | undefined) => (x == null ? "—" : `${Math.round(x * 100)}%`);
+
 function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
   if (loading) return <FeedSkeleton />;
   if (!sig) return <p className="text-xs text-muted-foreground">no signal data yet.</p>;
   const { stats } = sig;
   return (
     <div className="space-y-3" data-testid="crypto-signal-log">
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-7">
         {[
-          ["logged", stats.total, "text-foreground"],
+          ["coins", stats.total, "text-foreground"],
           ["open", stats.open, "text-sky-300"],
           ["hit 5M", stats.hit5m, "text-lime-300"],
           ["doubled", stats.doubled, "text-emerald-300"],
           ["rugged", stats.rugged, "text-rose-300"],
           ["dead", stats.dead, "text-muted-foreground"],
+          ["no data", stats.noData ?? 0, "text-amber-300/80"],
         ].map(([label, val, cls]) => (
           <div key={String(label)} className="rounded-lg border border-border/50 bg-card/50 p-2 text-center">
             <div className={`font-mono text-lg font-bold tabular-nums ${cls}`}>{String(val)}</div>
-            <div className="text-[9px] uppercase tracking-wide text-muted-foreground">{String(label)}</div>
+            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{String(label)}</div>
           </div>
         ))}
       </div>
-      {!stats.calibrated && (
-        <p className="text-[10px] text-muted-foreground">
-          calibration unlocks at 50 graded outcomes — until then these stats are the whole product: proving or killing the edge.
+      <p className="text-[11px] text-muted-foreground" data-testid="crypto-stats-basis">
+        counts are distinct coins (first signal per coin){stats.rows ? `; ${stats.rows.total} logged rows` : ""}
+        {stats.enterCoins ? ` · first-ENTER coins: ${stats.enterCoins.total} (${stats.enterCoins.graded} graded, ${stats.enterCoins.hit5m + stats.enterCoins.doubled} hit 5M or doubled)` : ""}
+        {stats.noDataShare != null ? ` · no-data share ${Math.round(stats.noDataShare * 100)}% of resolved coins (missing outcomes, not losses)` : ""}
+      </p>
+      {stats.survivorship && (
+        <p className="text-[11px] text-muted-foreground" data-testid="crypto-survivorship">
+          rug rate, first-ENTER coins: observed {pctOrDash(stats.survivorship.enterCoins.ruggedRateObserved)}, worst case {pctOrDash(stats.survivorship.enterCoins.ruggedRateWorstCase)} (every no-data pair counted as rugged: delisted pairs are often rugs)
+          {" "}· all coins: observed {pctOrDash(stats.survivorship.coins.ruggedRateObserved)}, worst case {pctOrDash(stats.survivorship.coins.ruggedRateWorstCase)}
+        </p>
+      )}
+      {stats.peakSampling && (
+        <p className="text-[11px] text-muted-foreground" data-testid="crypto-peak-sampling">{stats.peakSampling}</p>
+      )}
+      {!stats.sampleReady && (
+        <p className="text-[11px] text-muted-foreground">
+          not sample-ready{stats.sampleReason ? ` (${stats.sampleReason})` : ` at ${stats.minGradedForSample ?? 50} graded coins (${stats.graded ?? 0} so far)`} — a minimum sample, not a calibration. until then these stats are the whole product: proving or killing the edge.
         </p>
       )}
       <div className="space-y-1.5">
@@ -476,7 +678,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
         )}
         {sig.signals.map((s) => (
           <div key={s.id} className="flex items-center gap-2 rounded-lg border border-border/40 bg-card/40 px-2.5 py-2 text-[11px]" data-testid={`crypto-signal-${String(s.id).slice(0, 8)}`}>
-            <Badge variant="outline" className={`px-1.5 text-[9px] ${
+            <Badge variant="outline" className={`px-1.5 text-[11px] ${
               s.verdict === "ENTER" ? "border-lime-400/50 text-lime-300" : "border-amber-400/40 text-amber-300"
             }`}>{s.verdict}</Badge>
             <span className="font-mono font-bold">{s.symbol}</span>
@@ -485,9 +687,10 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
             <span className="font-mono tabular-nums text-muted-foreground">peak {fmtUsd(s.peak_mcap)}</span>
             <span className={`ml-auto font-semibold ${
               s.outcome === "HIT_5M" ? "text-lime-300" : s.outcome === "DOUBLED" ? "text-emerald-300"
-              : s.outcome === "RUGGED" ? "text-rose-300" : s.outcome === "DEAD" ? "text-muted-foreground" : "text-sky-300"
+              : s.outcome === "RUGGED" ? "text-rose-300" : s.outcome === "DEAD" ? "text-muted-foreground"
+              : s.outcome === "NO_DATA" ? "text-amber-300/80" : "text-sky-300"
             }`}>{s.outcome}</span>
-            <span className="hidden text-[9px] text-muted-foreground sm:block">
+            <span className="hidden text-[11px] text-muted-foreground sm:block">
               {new Date(Number(s.detected_at)).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
             </span>
           </div>

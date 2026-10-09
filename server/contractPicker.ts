@@ -21,7 +21,11 @@
 //   - Bid-ask spread gate: spreadPct = (ask - bid) / midPrice > 5% → reject.
 //     Try next-best strike; if none passes → CONTRACT_SPREAD_TOO_WIDE_GT_5_PCT
 //   - Spread-aware projection: entryPrice = midPrice + halfSpread (paying near ask).
-//     projReturnPctT1 = projPnl / entryPrice (replaces midPrice denominator).
+//
+// Round 2 (R2-C 7): the projection reprices the contract by Black-Scholes AT
+// the target with the expected time to reach it, sells at the projected bid
+// and pays fees (t1Projection.ts), instead of time-now delta/gamma plus the
+// whole decay to the close.
 //   - New audit fields: contractBid, contractAsk, contractMidPrice, contractEntryPrice,
 //     contractSpreadPct
 //
@@ -29,6 +33,10 @@
 // All gate logic lives in odteAlertEngine.ts.
 
 import type { Side } from "./odteAlertEngine";
+import { minutesToSessionClose } from "./chainClock";
+import { atmPathSigma, projectToTarget, type TargetProjection } from "./t1Projection";
+import { feeForProduct } from "./feeConfig";
+import { spreadExceedsStop } from "./exitValuation";
 
 export interface ContractDetails {
   strike: number;
@@ -51,12 +59,14 @@ export interface ContractDetails {
 
 export interface ContractPickResult {
   contract: ContractDetails;
-  projReturnPctT1: number;   // e.g. 0.80 = 80% projected return to T1 (Wire 16: uses entryPrice)
-  projReturnPctT2: number;   // e.g. 1.30 = 130% projected return to T2
-  projDeltaPnl: number;
-  projGammaBoost: number;
-  projThetaCost: number;
-  projPnl: number;           // dollar-value on per-share basis
+  projReturnPctT1: number;   // fraction of cash paid if T1 is reached (ask in, projected bid out, fees)
+  projReturnPctT2: number;   // same for T2
+  projDeltaPnl: number;      // $ per share: BS delta now x move
+  projGammaBoost: number;    // $ per share: rest of the move repricing
+  projThetaCost: number;     // $ per share: decay until the expected T1 touch, at the target (<= 0)
+  projPnl: number;           // $ per share after spread and fees (= projPnlPerContract / 100)
+  /** Full T1 projection detail (added): touch time, model touch probability, exit bid. */
+  projectionT1?: TargetProjection;
   minutesToClose: number;
   // Wire 16 audit fields
   contractBid: number | null;
@@ -67,7 +77,7 @@ export interface ContractPickResult {
 }
 
 export type ContractPickError = {
-  reason: "CONTRACT_NO_STRIKE_IN_DELTA_BAND" | "CHAIN_UNAVAILABLE" | "NO_CANDIDATES" | "CONTRACT_SPREAD_TOO_WIDE_GT_5_PCT";
+  reason: "CONTRACT_NO_STRIKE_IN_DELTA_BAND" | "CHAIN_UNAVAILABLE" | "NO_CANDIDATES" | "CONTRACT_SPREAD_TOO_WIDE_GT_5_PCT" | "PROJECTION_UNAVAILABLE" | "SPREAD_EXCEEDS_STOP";
   detail?: string;
 };
 
@@ -246,13 +256,20 @@ export async function pickContractForSide(
   const MAX_SPREAD_PCT = 0.05;
   let best: Candidate | null = null;
 
+  // SF-3: a bid already at or below the plan's -20% stop of an ask fill
+  // (bid <= 0.80 x ask) would stop on entry; no two-sided quote = no stop.
+  let exceedsStop = 0;
   for (const cand of sorted) {
+    if (spreadExceedsStop(cand.bid, cand.ask) !== false) { exceedsStop++; continue; }
     if (cand.spreadPct <= MAX_SPREAD_PCT) {
       best = cand;
       break;
     }
   }
 
+  if (!best && exceedsStop === sorted.length) {
+    return { reason: "SPREAD_EXCEEDS_STOP", detail: `All ${sorted.length} candidates have no two-sided quote or a bid at/below 0.80 x ask` };
+  }
   if (!best) {
     // No candidate has a tight-enough spread
     return {
@@ -261,48 +278,23 @@ export async function pickContractForSide(
     };
   }
 
-  // ─── Projected return calculation (BS approximation) ─────────────────────
-  // minutesToClose = minutes until 16:00 ET
+  // ─── Projected return if T1 / T2 is reached (t1Projection.ts) ────────────
+  // minutesToClose = minutes until today's close (13:00 ET on half days)
   const minutesToClose = computeMinutesToClose(nowMs);
-
-  // Wire 16: use entryPrice (midPrice + halfSpread) as denominator for honest fill
-  function projReturn(targetPrice: number): {
-    projDeltaPnl: number;
-    projGammaBoost: number;
-    projThetaCost: number;
-    projPnl: number;
-    projReturnPct: number;
-  } {
-    // move is signed by side: for call, positive SPX move = gain; for put, negative SPX move = gain
-    const move = side === "call"
-      ? targetPrice - spot
-      : spot - targetPrice;
-
-    // Use abs(delta) for the projection — delta is already signed by convention but
-    // we want the raw magnitude times the directional move.
-    const absDelta = Math.abs(best!.delta);
-    const projDeltaPnl = absDelta * move;
-
-    // gamma boost uses signed move^2 (always positive addend)
-    const projGammaBoost = 0.5 * best!.gamma * move * move;
-
-    // theta is per-day (negative). Theta cost = portion of day remaining.
-    // theta_per_day / 390 minutes * minutesToClose
-    const thetaPerDay = best!.theta; // already negative, e.g. -2.50
-    const projThetaCost = (thetaPerDay / 390) * minutesToClose;
-    // projThetaCost is negative; we subtract it (add theta cost back as positive cost)
-
-    const projPnl = projDeltaPnl + projGammaBoost + projThetaCost; // thetaCost already negative
-
-    // Wire 16: use entryPrice (honest fill = mid + halfSpread) in denominator
-    const denominator = best!.entryPrice > 0 ? best!.entryPrice : best!.midPrice;
-    const projReturnPct = denominator > 0 ? projPnl / denominator : 0;
-
-    return { projDeltaPnl, projGammaBoost, projThetaCost, projPnl, projReturnPct };
+  // N-2: path vol = ATM vol of the same expiry; the strike reprices with its own vol.
+  const expiryIso = todayKey!.split(":")[0] ?? todayEt;
+  const pathSigma = atmPathSigma(strikesObj as Record<string, any[]>, spot, side === "call" ? "C" : "P", expiryIso, nowMs);
+  const proj = (targetPrice: number) => projectToTarget({
+    spot, strike: best!.strike, type: side === "call" ? "C" : "P", target: targetPrice,
+    expiry: expiryIso, symbol: best!.key,
+    bid: best!.bid, ask: best!.ask, vendorIv: best!.iv, minutesToClose, nowMs,
+    feePerContract: feeForProduct(best!.key).fee, pathSigma,
+  });
+  const t1P = proj(t1Price);
+  const t2P = proj(t2Price != null ? t2Price : t1Price + (side === "call" ? 5 : -5));
+  if (!t1P || !t2P) {
+    return { reason: "PROJECTION_UNAVAILABLE", detail: "no two-sided quote or usable sigma for the picked strike" };
   }
-
-  const t1Proj = projReturn(t1Price);
-  const t2Proj = t2Price != null ? projReturn(t2Price) : projReturn(t1Price + (side === "call" ? 5 : -5));
 
   const expiry = todayKey.split(":")[0] ?? todayEt;
 
@@ -325,12 +317,13 @@ export async function pickContractForSide(
       key: best.key,
       expiry,
     },
-    projReturnPctT1: t1Proj.projReturnPct,
-    projReturnPctT2: t2Proj.projReturnPct,
-    projDeltaPnl: t1Proj.projDeltaPnl,
-    projGammaBoost: t1Proj.projGammaBoost,
-    projThetaCost: t1Proj.projThetaCost,
-    projPnl: t1Proj.projPnl,
+    projReturnPctT1: t1P.projReturnPct,
+    projReturnPctT2: t2P.projReturnPct,
+    projDeltaPnl: t1P.projDeltaPnl,
+    projGammaBoost: t1P.projGammaBoost,
+    projThetaCost: t1P.projThetaCost,
+    projPnl: t1P.projPnlPerContract != null ? t1P.projPnlPerContract / 100 : (t1P.projectedExitBid - t1P.entryAsk),
+    projectionT1: t1P,
     minutesToClose,
     // Wire 16 audit fields
     contractBid: best.bid,
@@ -342,45 +335,11 @@ export async function pickContractForSide(
 }
 
 /**
- * Compute minutes remaining until 16:00 ET from nowMs.
- * Returns at least 1 (as spec'd: max(1, ...)).
+ * Minutes remaining until today's session close (16:00 ET, 13:00 ET on half
+ * days, exchangeCalendar). Returns at least 1 (as spec'd: max(1, ...)).
  */
 export function computeMinutesToClose(nowMs: number): number {
-  const now = new Date(nowMs);
-  // Build 16:00 ET for the current ET date
-  const etFmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(now);
-  const [m, d, y] = etFmt.split("/");
-  // Create a Date that represents 16:00 ET on the current ET date
-  // We need to convert to UTC. Simple approach: build target as local-ET string.
-  const closeEt = new Date(`${y}-${m}-${d}T16:00:00`);
-  // This Date is interpreted as local time. We want it in ET.
-  // Use a reliable approach: compute via getTime offset.
-  const etOffsetMs = getEtOffsetMs(nowMs);
-  const closeUtcMs = closeEt.getTime() - etOffsetMs;
-  const diffMs = closeUtcMs - nowMs;
-  return Math.max(1, Math.floor(diffMs / 60_000));
-}
-
-/**
- * Get the UTC offset for America/New_York at a given timestamp (ms).
- * Returns negative ms for behind UTC (e.g. ET is UTC-5 → -5*3600*1000).
- */
-function getEtOffsetMs(nowMs: number): number {
-  const now = new Date(nowMs);
-  // Build a UTC-string-based approach: format in ET and compare
-  const etParts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
-    hour12: false,
-  }).format(now);
-  // en-CA gives "YYYY-MM-DD, HH:MM:SS"
-  const etStr = etParts.replace(", ", "T");
-  const etDate = new Date(etStr + "Z"); // treat as UTC to get the "epoch" of ET wall clock
-  return etDate.getTime() - nowMs; // how much the ET wall clock is ahead of UTC in ms (negative for behind)
+  return minutesToSessionClose(nowMs);
 }
 
 /**

@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { buildSizerRequest } from "@shared/sizerRequest";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,28 +17,40 @@ interface SizingResult {
   riskDollars: number;
   notionalDollars: number;
   kellyAccountFraction: number;
-  bindingConstraint: "risk-floor" | "kelly-cap" | "conviction-tier" | "min-contract";
+  bindingConstraint: "risk-floor" | "kelly-cap" | "conviction-tier" | "min-contract" | "cash" | "gap-cap";
   expectedPayoffPct: number;
   rejected: boolean;
   rejectReason?: string;
   reasoning: string[];
+  // Added by the server sizer (all $ for the whole position unless perContract)
+  maxLossDollars?: number;
+  feesDollars?: number;
+  riskBudgetDollars?: number;
+  perContract?: { premium: number; riskAtStop: number; maxLoss: number; feesRoundTrip: number } | null;
 }
 
 // MISSION FIX #2 — edge survival waterfall (POST /api/edge/survival)
 interface SurvivalRow { label: string; pct: number; note: string }
 interface SurvivalResult {
-  grossEvPct: number;
+  grossEvPct: number;            // realized ledger mean, % of premium
   rows: SurvivalRow[];
   netEvPct: number;
-  adverseNetEvPct: number;
-  verdict: "EXPRESS" | "MARGINAL" | "STAND_DOWN";
+  adverseNetEvPct: number | null; // null: theta not repriced (no contract inputs)
+  stress?: SurvivalRow[];
+  reference?: SurvivalRow[];     // this quote's costs, already inside realized returns
+  verdict: "EXPRESS" | "MARGINAL" | "STAND_DOWN" | "INSUFFICIENT_EVIDENCE";
   pUsed: number;
-  pSource: "fitted" | "prior";
+  pSource: string;
+  evidence?: { bucket: string | null; n: number; wins: number };
   note: string;
 }
 
 function fmtDollar(n: number): string {
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
+
+function fmtCents(n: number): string {
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function PositionSizer() {
@@ -50,18 +63,21 @@ export function PositionSizer() {
   const [kellyFraction, setKellyFraction] = useState("25");
   const [spreadDollars, setSpreadDollars] = useState("0.10");
   const [holdMin, setHoldMin] = useState("45");
+  // Fees: $ per contract per side. Required for index options (SPXW): Schwab's
+  // $0.65 plus exchange index fees that vary by account; read it off a confirm.
+  const [feePerContract, setFeePerContract] = useState("");
+  const [product, setProduct] = useState("SPXW");
+  const [gapPct, setGapPct] = useState("5");
 
   const sizeMut = useMutation({
     mutationFn: async (): Promise<SizingResult> => {
-      const res = await apiRequest("POST", "/api/position-sizer", {
-        accountSize: Number(accountSize),
-        maxRiskPct: Number(maxRiskPct) / 100,
-        entryPrice: Number(entryPrice),
-        stopPrice: Number(stopPrice),
-        gradeScore: Number(gradeScore),
-        targetPct: Number(targetPct),
-        kellyFraction: Number(kellyFraction) / 100,
-      });
+      // The card collects MID prices; buildSizerRequest sends the fill (ask =
+      // mid + spread/2) as entryPrice and spread/2 as the stop slippage.
+      const res = await apiRequest("POST", "/api/position-sizer", buildSizerRequest({
+        accountSize, maxRiskPctPercent: maxRiskPct, midPrice: entryPrice, stopPrice,
+        spreadDollars, gradeScore, targetPct, kellyPercent: kellyFraction,
+        feePerContract, product, maxGapLossPctPercent: gapPct,
+      }));
       return await res.json();
     },
   });
@@ -78,6 +94,9 @@ export function PositionSizer() {
         targetPct: Number(targetPct),
         stopPct: stopPctLoss,
         expectedHoldMin: Number(holdMin) || 45,
+        // $ per contract per side; blank = not given (the waterfall says so)
+        ...(String(feePerContract).trim() !== "" && Number.isFinite(Number(feePerContract)) ? { feePerContract: Number(feePerContract) } : {}),
+        product,
       });
       return await res.json();
     },
@@ -92,7 +111,9 @@ export function PositionSizer() {
   const s = survMut.data;
 
   const verdictStyle = (v: SurvivalResult["verdict"]) =>
-    v === "EXPRESS"
+    v === "INSUFFICIENT_EVIDENCE"
+      ? "border-border bg-muted/20 text-muted-foreground"
+      : v === "EXPRESS"
       ? "border-green-500/30 bg-green-500/5 text-green-500"
       : v === "MARGINAL"
         ? "border-amber-500/30 bg-amber-500/5 text-amber-500"
@@ -127,7 +148,7 @@ export function PositionSizer() {
             />
           </label>
           <label className="space-y-1">
-            <span className="text-xs text-muted-foreground">entry price ($)</span>
+            <span className="text-xs text-muted-foreground">option mid now ($/share)</span>
             <Input
               type="number"
               value={entryPrice}
@@ -138,7 +159,7 @@ export function PositionSizer() {
             />
           </label>
           <label className="space-y-1">
-            <span className="text-xs text-muted-foreground">stop price ($)</span>
+            <span className="text-xs text-muted-foreground">stop, mid level ($/share)</span>
             <Input
               type="number"
               value={stopPrice}
@@ -177,13 +198,43 @@ export function PositionSizer() {
             />
           </label>
           <label className="space-y-1">
-            <span className="text-xs text-muted-foreground">bid-ask spread ($)</span>
+            <span className="text-xs text-muted-foreground">bid-ask spread ($/share; buy at ask, stop sells at bid)</span>
             <Input
               type="number"
               value={spreadDollars}
               onChange={(e) => setSpreadDollars(e.target.value)}
               step="0.05"
               data-testid="input-spread"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-muted-foreground">product (option root)</span>
+            <Input
+              value={product}
+              onChange={(e) => setProduct(e.target.value.toUpperCase())}
+              placeholder="SPXW"
+              data-testid="input-product"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-muted-foreground">fees $/contract/side{product && /^(SPXW?|XSP|NDXP?|RUTW?|VIX|DJX|MRUT)$/.test(product) ? " (required for index)" : " (blank = $0.65)"}</span>
+            <Input
+              type="number"
+              value={feePerContract}
+              onChange={(e) => setFeePerContract(e.target.value)}
+              step="0.01"
+              placeholder="from your trade confirm"
+              data-testid="input-fee-per-contract"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-muted-foreground">max loss if it gaps to zero (% acct, max 5)</span>
+            <Input
+              type="number"
+              value={gapPct}
+              onChange={(e) => setGapPct(e.target.value)}
+              step="0.5"
+              data-testid="input-gap-pct"
             />
           </label>
           <label className="space-y-1">
@@ -236,13 +287,14 @@ export function PositionSizer() {
                 <div>
                   <div className="text-xs text-muted-foreground">risk</div>
                   <div className="text-lg font-semibold text-red-500" data-testid="text-risk-dollars">
-                    {fmtDollar(r.riskDollars)}
+                    {fmtCents(r.riskDollars)}
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs text-muted-foreground">notional</div>
+                  {/* notionalDollars is the premium paid (contracts x entry x 100, ex fees), not underlying notional */}
+                  <div className="text-xs text-muted-foreground">premium paid</div>
                   <div className="text-lg font-semibold" data-testid="text-notional">
-                    {fmtDollar(r.notionalDollars)}
+                    {fmtCents(r.notionalDollars)}
                   </div>
                 </div>
                 <div>
@@ -261,6 +313,12 @@ export function PositionSizer() {
                 target +{r.expectedPayoffPct}%
               </Badge>
             </div>
+            {r.perContract && (
+              <div className="text-xs text-muted-foreground font-mono tabular-nums" data-testid="text-sizer-dollars">
+                per contract (x100): premium {fmtCents(r.perContract.premium)} · loss at stop {fmtCents(r.perContract.riskAtStop)} · fees {fmtCents(r.perContract.feesRoundTrip)}
+                {" "}| position: max loss if it expires worthless {fmtCents(r.maxLossDollars ?? 0)} · fees {fmtCents(r.feesDollars ?? 0)} · risk budget {fmtCents(r.riskBudgetDollars ?? 0)}
+              </div>
+            )}
             <details className="text-xs text-muted-foreground">
               <summary className="cursor-pointer hover:text-foreground" data-testid="summary-reasoning">
                 why this size?
@@ -280,15 +338,17 @@ export function PositionSizer() {
           <div className={`rounded-md border p-3 space-y-2 ${verdictStyle(s.verdict)}`} data-testid="card-edge-survival">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="text-sm font-semibold" data-testid="text-survival-verdict">
-                edge survival: {s.verdict.replace("_", " ")}
+                edge survival: {s.verdict.replace(/_/g, " ")}
               </div>
               <div className="text-xs opacity-90">
-                p(win) {(s.pUsed * 100).toFixed(0)}% ({s.pSource})
+                {s.evidence && s.evidence.n > 0
+                  ? `ledger ${s.evidence.bucket}: ${s.evidence.wins}/${s.evidence.n} wins, p used ${(s.pUsed * 100).toFixed(0)}% (${s.pSource.replace(/_/g, " ")})`
+                  : "no realized ledger evidence"}
               </div>
             </div>
             <div className="space-y-1">
               <div className="flex justify-between text-xs font-mono tabular-nums">
-                <span className="text-foreground">gross EV</span>
+                <span className="text-foreground">realized EV (ledger mean)</span>
                 <span>{s.grossEvPct >= 0 ? "+" : ""}{s.grossEvPct.toFixed(1)}%</span>
               </div>
               {s.rows.map((row, i) => (
@@ -303,8 +363,23 @@ export function PositionSizer() {
               </div>
               <div className="flex justify-between text-xs font-mono tabular-nums text-muted-foreground">
                 <span>adverse scenario</span>
-                <span data-testid="text-adverse-ev">{s.adverseNetEvPct >= 0 ? "+" : ""}{s.adverseNetEvPct.toFixed(1)}%</span>
+                <span data-testid="text-adverse-ev">{s.adverseNetEvPct == null ? "not computed" : `${s.adverseNetEvPct >= 0 ? "+" : ""}${s.adverseNetEvPct.toFixed(1)}%`}</span>
               </div>
+              {(s.stress ?? []).map((row: SurvivalRow, i: number) => (
+                <div key={`st-${i}`} className="flex justify-between text-[11px] font-mono tabular-nums text-muted-foreground/80" title={row.note}>
+                  <span>&nbsp;&nbsp;stress: {row.label}</span>
+                  <span>{row.pct.toFixed(1)}%</span>
+                </div>
+              ))}
+              {(s.reference ?? []).length > 0 && (
+                <div className="pt-1 text-[11px] text-muted-foreground/80">this quote's costs (already in realized returns, not deducted again):</div>
+              )}
+              {(s.reference ?? []).map((row: SurvivalRow, i: number) => (
+                <div key={`rf-${i}`} className="flex justify-between text-[11px] font-mono tabular-nums text-muted-foreground/80" title={row.note}>
+                  <span>&nbsp;&nbsp;{row.label}</span>
+                  <span>{row.pct.toFixed(1)}%</span>
+                </div>
+              ))}
             </div>
             <p className="text-xs text-muted-foreground leading-snug">{s.note}</p>
           </div>

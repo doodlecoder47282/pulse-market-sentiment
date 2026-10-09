@@ -9,14 +9,14 @@ import Dashboard from "@/pages/dashboard";
 import { TickerProvider } from "@/components/TickerContext";
 import { ThemeProvider } from "@/components/ThemeContext";
 import PreMarketGate from "@/components/PreMarketGate";
-import { useState, lazy, Suspense } from "react";
+import ConnectionGate from "@/components/ConnectionGate";
+import { useState } from "react";
+import { premarketGateEnabled } from "@/lib/prefs";
+import { SpeedInsights } from "@vercel/speed-insights/react";
 
-// LaunchSplash is the only framer-motion consumer (~4MB on disk → big gzip).
-// Lazy-load it so framer-motion lands in its own chunk instead of the
-// critical-path entry bundle — the dashboard no longer waits on the animation
-// lib to download. The fallback is a plain black fill matching the splash's
-// own #000 background, so there is no visible flash before the chunk arrives.
-const LaunchSplash = lazy(() => import("@/components/LaunchSplash"));
+// Set by vite.config.ts: Vercel Speed Insights only on Vercel builds, so other
+// hosts never request Vercel's script.
+declare const __ON_VERCEL__: boolean;
 
 function AppRouter() {
   return (
@@ -28,22 +28,21 @@ function AppRouter() {
 }
 
 function App() {
-  const [showSplash, setShowSplash] = useState(true);
-  const [showPremarket, setShowPremarket] = useState(true);
-  const gateActive = showSplash || showPremarket;
+  // No launch splash: the dashboard opens straight away. The pre-market
+  // checklist is a personal opt-in (Settings), off by default, and never
+  // required to reach the app.
+  const [showPremarket, setShowPremarket] = useState(premarketGateEnabled);
+  const gateActive = showPremarket;
 
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
       <TooltipProvider>
         <Toaster />
+        {__ON_VERCEL__ ? <SpeedInsights /> : null}
+        <ConnectionGate />
         <TickerProvider>
-          {showSplash && (
-            <Suspense fallback={<div className="fixed inset-0 z-[9999] bg-black" />}>
-              <LaunchSplash onExit={() => setShowSplash(false)} />
-            </Suspense>
-          )}
-          {!showSplash && showPremarket && (
+          {showPremarket && (
             <PreMarketGate onAcknowledge={() => setShowPremarket(false)} />
           )}
           <div

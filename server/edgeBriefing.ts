@@ -10,6 +10,7 @@
  */
 
 import type express from "express";
+import { internalJson, isInternalRoute } from "./internalApi";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -22,6 +23,9 @@ export interface BriefingLevels {
   upside: number | null;
   downside: number | null;
   spot: number | null;
+  /** Where upside/downside/vomma/charm came from: the user's weekly SPX targets
+   *  (Heatseeker levels store). Null values mean not shown, with the reason. */
+  targets: { source: string; symbolScale: "SPX"; updatedAt: number | null; shown: boolean; note: string };
 }
 
 export interface BriefingRegime {
@@ -33,7 +37,7 @@ export interface BriefingRegime {
 }
 
 export interface BriefingCrossAsset {
-  rows: { symbol: string; last: number; d1Pct: number; w1Pct: number; m1Pct: number; corr20d: number | null; corrRegime: string }[];
+  rows: { symbol: string; last: number | null; d1Pct: number | null; w1Pct: number | null; m1Pct: number | null; corr20d: number | null; corrRegime: string }[];
   vix: number | null;
   vixChangePct: number | null;
 }
@@ -77,9 +81,9 @@ export interface BriefingPayload {
   symbol: string;
   spot: number | null;
   // Fused verdict
-  verdict: "strong bull" | "lean bull" | "mixed / range" | "lean bear" | "strong bear" | "no edge — pass";
+  verdict: "strong bull" | "lean bull" | "mixed / range" | "lean bear" | "strong bear" | "no edge — pass" | "insufficient data";
   verdictColor: "emerald" | "rose" | "amber" | "neutral";
-  confidence: number; // 0-100
+  confidence: number | null; // heuristic 0-100; null when there is not enough data for any read
   oneLiner: string;
   // Sections
   regime: BriefingRegime | null;
@@ -99,6 +103,8 @@ const DEFAULT_PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${DEFAULT_PORT}`;
 
 async function safeFetch<T = any>(path: string, timeoutMs = 4500): Promise<T | null> {
+  // /api/models, /api/quotes run in-process with the same timeout (internalApi.ts).
+  if (isInternalRoute(path)) return internalJson<T>(path, { timeoutMs });
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -117,24 +123,52 @@ function safe(n: any): number | null {
 
 // ─── Section builders ─────────────────────────────────────────────────────────
 
-function buildLevels(heatseeker: any, playbook: any, gammaCurve: any): BriefingLevels {
+const SPX_SCALE = new Set(["SPX", "$SPX", "$SPX.X", "^GSPC", "SPXW"]);
+const TARGETS_MAX_AGE_MS = 7 * 86_400_000;
+
+/** The weekly targets are typed in by the user on the SPX scale. They are shown
+ *  only for an SPX-scale symbol and only when set within the last 7 days; never
+ *  relabelled as another symbol's levels and never shown from the seed file. */
+export function weeklyTargetsGate(symbol: string, updatedAt: number | null | undefined, now = Date.now()):
+  { shown: boolean; note: string } {
+  const sym = symbol.toUpperCase();
+  if (!SPX_SCALE.has(sym)) {
+    return { shown: false, note: `Weekly targets are SPX levels; not shown for ${sym}.` };
+  }
+  if (!updatedAt || !Number.isFinite(updatedAt) || updatedAt <= 0) {
+    return { shown: false, note: "Weekly targets not set this week. Enter them in Heatseeker." };
+  }
+  if (now - updatedAt > TARGETS_MAX_AGE_MS) {
+    const d = new Date(updatedAt).toISOString().slice(0, 10);
+    return { shown: false, note: `Weekly targets last set ${d}; update them in Heatseeker.` };
+  }
+  return { shown: true, note: "Your weekly SPX targets (Heatseeker)." };
+}
+
+export function buildLevels(symbol: string, heatseeker: any, playbook: any, gammaCurve: any, now = Date.now()): BriefingLevels {
   const lv = (heatseeker?.levels ?? []) as any[];
-  const find = (id: string) => safe(lv.find((l) => l.id === id)?.value);
+  const updatedAt = safe(heatseeker?.updatedAt);
+  const gate = weeklyTargetsGate(symbol, updatedAt, now);
+  const find = (id: string) => (gate.shown ? safe(lv.find((l) => l.id === id)?.value) : null);
   return {
-    callWall: safe(playbook?.paths?.bull?.trigger?.level) ?? find("call-wall"),
-    putWall: safe(playbook?.paths?.bear?.trigger?.level) ?? find("put-wall"),
-    zeroGamma: safe(gammaCurve?.zeroGamma) ?? find("zero-gamma"),
+    // Walls and flip come from this symbol's own chain-derived routes only.
+    callWall: safe(playbook?.paths?.bull?.trigger?.level),
+    putWall: safe(playbook?.paths?.bear?.trigger?.level),
+    zeroGamma: safe(gammaCurve?.zeroGamma),
     vomma: { up: find("upper-vomma"), down: find("lower-vomma") },
     charm: find("charm"),
     upside: find("upside"),
     downside: find("downside"),
     spot: safe(playbook?.spot) ?? safe(gammaCurve?.spot),
+    targets: { source: "Heatseeker weekly targets", symbolScale: "SPX", updatedAt: updatedAt && updatedAt > 0 ? updatedAt : null, shown: gate.shown, note: gate.note },
   };
 }
 
 function buildRegime(regime: any): BriefingRegime | null {
   if (!regime) return null;
-  const riskAxis = (regime.axes ?? []).find((a: any) => a.axis === "risk");
+  // A risk axis with no readings is missing data, not "neutral".
+  const riskFound = (regime.axes ?? []).find((a: any) => a.axis === "risk");
+  const riskAxis = riskFound && Array.isArray(riskFound.readings) && riskFound.readings.length > 0 ? riskFound : null;
   return {
     headline: String(regime.headline ?? "regime read pending"),
     narrative: String(regime.narrative ?? ""),
@@ -158,10 +192,11 @@ function buildCrossAsset(cross: any, quotes: any): BriefingCrossAsset | null {
   return {
     rows: (cross.rows as any[]).slice(0, 8).map((r) => ({
       symbol: String(r.symbol),
-      last: Number(r.last ?? 0),
-      d1Pct: Number(r.d1Pct ?? 0),
-      w1Pct: Number(r.w1Pct ?? 0),
-      m1Pct: Number(r.m1Pct ?? 0),
+      // Missing stays missing (null), never 0. A last of 0 is a failed quote.
+      last: safe(r.last) != null && r.last > 0 ? r.last : null,
+      d1Pct: safe(r.last) != null && r.last > 0 ? safe(r.d1Pct) : null,
+      w1Pct: safe(r.last) != null && r.last > 0 ? safe(r.w1Pct) : null,
+      m1Pct: safe(r.last) != null && r.last > 0 ? safe(r.m1Pct) : null,
       corr20d: safe(r.corr20d),
       corrRegime: String(r.corrRegime ?? "n/a"),
     })),
@@ -235,10 +270,10 @@ function buildModels(models: any): { daily: BriefingModelHorizon | null; weekly:
 
 // ─── Verdict synthesis ────────────────────────────────────────────────────────
 
-function synthesizeVerdict(b: Omit<BriefingPayload, "verdict" | "verdictColor" | "confidence" | "oneLiner" | "asOf" | "panelHealth" | "symbol" | "spot">): {
+export function synthesizeVerdict(b: Omit<BriefingPayload, "verdict" | "verdictColor" | "confidence" | "oneLiner" | "asOf" | "panelHealth" | "symbol" | "spot">): {
   verdict: BriefingPayload["verdict"];
   verdictColor: BriefingPayload["verdictColor"];
-  confidence: number;
+  confidence: number | null;
   oneLiner: string;
 } {
   let bull = 0;
@@ -254,7 +289,8 @@ function synthesizeVerdict(b: Omit<BriefingPayload, "verdict" | "verdictColor" |
   }
 
   // Cross-asset SPY w1
-  const spy = b.crossAsset?.rows.find((r) => r.symbol === "SPY");
+  const spyRow = b.crossAsset?.rows.find((r) => r.symbol === "SPY");
+  const spy = spyRow && spyRow.w1Pct != null && Number.isFinite(spyRow.w1Pct) ? { ...spyRow, w1Pct: spyRow.w1Pct } : null;
   if (spy) {
     signals++;
     if (spy.w1Pct > 1) bull++;
@@ -269,7 +305,10 @@ function synthesizeVerdict(b: Omit<BriefingPayload, "verdict" | "verdictColor" |
   }
 
   // Playbook probabilities
-  if (b.playbook) {
+  const pbUsable = !!b.playbook && [b.playbook.paths.bull, b.playbook.paths.base, b.playbook.paths.bear]
+    .every((p) => Number.isFinite(p.probability)) &&
+    (b.playbook.paths.bull.probability + b.playbook.paths.base.probability + b.playbook.paths.bear.probability) > 0;
+  if (b.playbook && pbUsable) {
     signals++;
     const bullP = b.playbook.paths.bull.probability;
     const bearP = b.playbook.paths.bear.probability;
@@ -288,12 +327,13 @@ function synthesizeVerdict(b: Omit<BriefingPayload, "verdict" | "verdictColor" |
   const net = bull - bear;
   let verdict: BriefingPayload["verdict"];
   let verdictColor: BriefingPayload["verdictColor"];
-  let confidence = 50;
+  let confidence: number | null = 50;
 
   if (signals < 2) {
-    verdict = "no edge — pass";
+    // Fewer than two real inputs: no read at all, and no score.
+    verdict = "insufficient data";
     verdictColor = "neutral";
-    confidence = 30;
+    confidence = null;
   } else if (net >= 3) {
     verdict = "strong bull";
     verdictColor = "emerald";
@@ -320,14 +360,16 @@ function synthesizeVerdict(b: Omit<BriefingPayload, "verdict" | "verdictColor" |
   if (b.regime?.headline) drivers.push(b.regime.headline.toLowerCase());
   if (b.crossAsset?.vix != null) drivers.push(`vix ${b.crossAsset.vix.toFixed(1)}`);
   if (spy) drivers.push(`spy w1 ${spy.w1Pct >= 0 ? "+" : ""}${spy.w1Pct.toFixed(2)}%`);
-  if (b.playbook) {
+  if (b.playbook && pbUsable) {
     const dom = b.playbook.paths.base.probability >= b.playbook.paths.bull.probability && b.playbook.paths.base.probability >= b.playbook.paths.bear.probability
       ? "base"
       : b.playbook.paths.bull.probability > b.playbook.paths.bear.probability ? "bull" : "bear";
     drivers.push(`playbook leans ${dom}`);
   }
 
-  const oneLiner = `${verdict} · ${signals} confluence signals · ${drivers.slice(0, 3).join(" · ") || "data thin"}`;
+  const oneLiner = signals < 2
+    ? `insufficient data · ${signals} of 5 inputs available · no read until Schwab data arrives`
+    : `${verdict} · ${signals} of 5 inputs · ${drivers.slice(0, 3).join(" · ")}`;
   return { verdict, verdictColor, confidence, oneLiner };
 }
 
@@ -355,7 +397,7 @@ export async function buildBriefing(symbol: string): Promise<BriefingPayload> {
     weekAhead: buildWeekAhead(econ),
     news: buildNews(news),
     models: buildModels(models),
-    levels: buildLevels(heatseeker, playbook, gammaCurve),
+    levels: buildLevels(sym, heatseeker, playbook, gammaCurve),
   };
 
   const synth = synthesizeVerdict(partial);

@@ -4,6 +4,10 @@
 // Schwab-only mode: no Yahoo fallback.
 
 import { getPriceHistory } from "./schwab";
+import { resolveSessionPrevClose, latestStartedSessionDate } from "./quotes";
+import { dayChange, dailyBarSessionDate, intradayBarSessionDate, type PrevCloseSource } from "./dayChange";
+import { aggregateCandles } from "./candleAggregate";
+import { toSchwabSymbol } from "./schwabSymbols";
 
 export type Candle = {
   t: number;   // epoch seconds (bar open time)
@@ -30,24 +34,17 @@ export type OHLCResponse = {
   sessionLow: number | null;
   candles: Candle[];
   asOf: number;
+  /** Where prevClose came from (server/dayChange.ts); "unavailable" = no honest prior close. */
+  prevCloseSource?: PrevCloseSource;
+  /** ET date of the session whose close is prevClose, when known. */
+  prevCloseDate?: string | null;
+  /** Schwab price-history provenance: when Schwab produced the candles (epoch ms), cache use, staleness. */
+  dataAsOfMs?: number | null;
+  servedFromCache?: boolean;
+  stale?: boolean;
+  dataState?: "ok" | "empty" | "unavailable";
+  dataReason?: string | null;
 };
-
-// Map Yahoo-style symbols to Schwab equivalents.
-// Schwab cash indexes use "$" prefix WITHOUT ".X" suffix.
-function toSchwabSymbol(symbol: string): string {
-  const map: Record<string, string> = {
-    "^VIX": "$VIX",
-    "^VIX9D": "$VIX9D",
-    "^VIX3M": "$VIX3M",
-    "^VVIX": "$VVIX",
-    "^SKEW": "$SKEW",
-    "^GSPC": "$SPX",
-    "^SPX": "$SPX",
-    "^VXN": "$VXN",
-    "^RVX": "$RVX",
-  };
-  return map[symbol] ?? symbol;
-}
 
 type SchwabParams = {
   periodType: "day" | "month" | "year";
@@ -55,6 +52,8 @@ type SchwabParams = {
   frequencyType: "minute" | "daily" | "weekly" | "monthly";
   frequency: number;
   intervalLabel: string;  // for OHLCResponse.interval
+  /** Roll the returned bars up to this many minutes (Schwab has no 2m or 60m bars). */
+  aggregateTo?: number;
 };
 
 /**
@@ -73,8 +72,9 @@ function tfToSchwab(tf: Timeframe, intervalOverride?: Interval): SchwabParams {
         if (tf === "1D") return { periodType: "day", period: 1, frequencyType: "minute", frequency: 1, intervalLabel: "1m" };
         return { periodType: "day", period: 5, frequencyType: "minute", frequency: 1, intervalLabel: "1m" };
       case "2m":
-        if (tf === "1D") return { periodType: "day", period: 1, frequencyType: "minute", frequency: 1, intervalLabel: "2m" };
-        return { periodType: "day", period: 5, frequencyType: "minute", frequency: 1, intervalLabel: "2m" };
+        // Built from 1-minute bars (Schwab has no 2-minute frequency).
+        if (tf === "1D") return { periodType: "day", period: 1, frequencyType: "minute", frequency: 1, intervalLabel: "2m", aggregateTo: 2 };
+        return { periodType: "day", period: 5, frequencyType: "minute", frequency: 1, intervalLabel: "2m", aggregateTo: 2 };
       case "5m":
         if (tf === "1D") return { periodType: "day", period: 1, frequencyType: "minute", frequency: 5, intervalLabel: "5m" };
         return { periodType: "day", period: 5, frequencyType: "minute", frequency: 5, intervalLabel: "5m" };
@@ -86,9 +86,11 @@ function tfToSchwab(tf: Timeframe, intervalOverride?: Interval): SchwabParams {
         return { periodType: "day", period: 5, frequencyType: "minute", frequency: 30, intervalLabel: "30m" };
       case "60m":
       case "1h":
-        if (tf === "1D") return { periodType: "day", period: 1, frequencyType: "minute", frequency: 30, intervalLabel: "60m" };
-        if (tf === "5D") return { periodType: "day", period: 5, frequencyType: "minute", frequency: 30, intervalLabel: "60m" };
-        return { periodType: "month", period: 1, frequencyType: "daily", frequency: 1, intervalLabel: "60m" };
+        // Built from 30-minute bars, 09:30 ET anchored (Schwab has no 60-minute frequency).
+        if (tf === "1D") return { periodType: "day", period: 1, frequencyType: "minute", frequency: 30, intervalLabel: "60m", aggregateTo: 60 };
+        if (tf === "5D") return { periodType: "day", period: 5, frequencyType: "minute", frequency: 30, intervalLabel: "60m", aggregateTo: 60 };
+        // Longer ranges return daily bars: label them as such.
+        return { periodType: "month", period: 1, frequencyType: "daily", frequency: 1, intervalLabel: "1d" };
       case "1d":
         if (tf === "1Y") return { periodType: "year", period: 1, frequencyType: "daily", frequency: 1, intervalLabel: "1d" };
         if (tf === "3M") return { periodType: "month", period: 3, frequencyType: "daily", frequency: 1, intervalLabel: "1d" };
@@ -116,6 +118,8 @@ export async function fetchOHLC(symbol: string, tf: Timeframe, intervalOverride?
   const params = tfToSchwab(tf, intervalOverride);
 
   let candles: Candle[] = [];
+  let prov: Pick<OHLCResponse, "dataAsOfMs" | "servedFromCache" | "stale" | "dataState" | "dataReason"> =
+    { dataAsOfMs: null, servedFromCache: false, stale: false, dataState: "unavailable", dataReason: null };
   try {
     const resp = await getPriceHistory(
       schwabSym,
@@ -124,6 +128,11 @@ export async function fetchOHLC(symbol: string, tf: Timeframe, intervalOverride?
       params.frequencyType,
       params.frequency,
     );
+    prov = {
+      dataAsOfMs: resp.asOfMs ?? null, servedFromCache: resp.servedFromCache ?? false,
+      stale: resp.stale ?? false, dataState: resp.dataState ?? (resp.candles.length ? "ok" : "unavailable"),
+      dataReason: resp.reason ?? null,
+    };
     // Schwab candles: { datetime (ms), open, high, low, close, volume }
     candles = resp.candles
       .map((c) => ({
@@ -135,6 +144,7 @@ export async function fetchOHLC(symbol: string, tf: Timeframe, intervalOverride?
         v: c.volume ?? null,
       }))
       .filter((c) => c.o > 0 && c.c > 0);
+    if (params.aggregateTo) candles = aggregateCandles(candles, params.aggregateTo);
   } catch {
     // fall through — returns empty candles
   }
@@ -149,16 +159,35 @@ export async function fetchOHLC(symbol: string, tf: Timeframe, intervalOverride?
       sessionHigh: null, sessionLow: null,
       candles: [],
       asOf: Math.floor(Date.now() / 1000),
+      prevCloseSource: "unavailable",
+      prevCloseDate: null,
+      ...prov,
     };
   }
 
-  const price = candles[candles.length - 1]?.c ?? null;
-  // prevClose: close of the second-to-last daily bar, or first bar for intraday
-  const prevClose = candles.length >= 2
-    ? candles[candles.length - 2].c
-    : null;
-  const change = price != null && prevClose != null ? price - prevClose : null;
-  const changePct = change != null && prevClose ? (change / prevClose) * 100 : null;
+  const last = candles[candles.length - 1];
+  const price = last?.c ?? null;
+  // prevClose = close of the session BEFORE the session of the latest price
+  // (server/dayChange.ts). It was the previous candle's close, so a 5-minute
+  // chart showed a one-bar change as the day change.
+  const priceSessionDate =
+    params.frequencyType === "minute" ? intradayBarSessionDate(last.t)
+    : params.frequencyType === "daily" ? dailyBarSessionDate(last.t)
+    : latestStartedSessionDate();
+  let prevClose: number | null = null;
+  let prevCloseSource: PrevCloseSource = "unavailable";
+  let prevCloseDate: string | null = null;
+  try {
+    const pc = await resolveSessionPrevClose(
+      symbol,
+      priceSessionDate,
+      params.frequencyType === "daily" ? candles.map((c) => ({ t: c.t, c: c.c })) : null,
+    );
+    prevClose = pc.prevClose;
+    prevCloseSource = pc.source;
+    prevCloseDate = pc.prevCloseDate;
+  } catch { /* stays unavailable */ }
+  const { change, changePct } = dayChange(price, prevClose);
   const sessionHighs = candles.map((c) => c.h).filter((v) => v != null && v > 0);
   const sessionLows = candles.map((c) => c.l).filter((v) => v != null && v > 0);
 
@@ -174,6 +203,10 @@ export async function fetchOHLC(symbol: string, tf: Timeframe, intervalOverride?
     sessionHigh: sessionHighs.length > 0 ? Math.max(...sessionHighs) : null,
     sessionLow: sessionLows.length > 0 ? Math.min(...sessionLows) : null,
     candles,
-    asOf: Math.floor(Date.now() / 1000),
+    // Data time from Schwab (receive time of the candles), not the time of this call.
+    asOf: Math.floor((prov.dataAsOfMs ?? Date.now()) / 1000),
+    prevCloseSource,
+    prevCloseDate,
+    ...prov,
   };
 }

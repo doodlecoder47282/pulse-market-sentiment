@@ -83,9 +83,10 @@ function formatTrade(t: TradeIdea, idx: number): string[] {
   lines.push(`${idx + 1}. ${t.structure ?? "(no structure)"}`);
   if (t.thesis) lines.push(`   thesis: ${t.thesis}`);
   const parts: string[] = [];
-  if (t.sizingKelly) parts.push(`size ${t.sizingKelly}`);
+  // No size and no bankroll %: sizingKelly / maxLoss come from the language
+  // model, which has no fitted win probability, so they are not Kelly sizes
+  // and are deliberately not shown (review finding 6.1).
   if (t.rr) parts.push(`R:R ${t.rr}`);
-  if (t.maxLoss) parts.push(`max loss ${t.maxLoss}`);
   if (parts.length) lines.push(`   ${parts.join(" \u00b7 ")}`);
   if (t.invalidation) lines.push(`   invalid: ${t.invalidation}`);
   return lines;
@@ -214,7 +215,8 @@ export function composeAlphaEmail(payload: AlphaBriefPayload): { subject: string
       const fmtPct = (v: number | null | undefined) => (v == null || !Number.isFinite(Number(v))) ? "?" : (Number(v) * 100).toFixed(1) + "%";
       const fmtDec = (v: number | null | undefined, d = 4) => (v == null || !Number.isFinite(Number(v))) ? "?" : Number(v).toFixed(d);
       if (p.gex != null || p.dex != null || p.flipLevel != null) {
-        lines.push(`  GEX ${fmtB(p.gex)} \u00b7 DEX ${fmtB(p.dex)} \u00b7 flip ${fmtLvl(p.flipLevel)}`);
+        // GEX is $ per 1% spot move, DEX $ delta notional (SPY /api/exposures).
+        lines.push(`  GEX ${fmtB(p.gex)}/1% \u00b7 DEX ${fmtB(p.dex)} \u00b7 flip ${fmtLvl(p.flipLevel)}`);
       }
       if (p.ivRv?.iv30 != null || p.ivRv?.rv30 != null) {
         lines.push(`  IV30 ${fmtPct(p.ivRv.iv30)} \u00b7 RV30 ${fmtPct(p.ivRv.rv30)} \u00b7 spread ${fmtPct(p.ivRv.spread)}`);

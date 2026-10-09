@@ -5,6 +5,18 @@
 import { sqlite } from "./storage";
 import { randomUUID } from "node:crypto";
 import { getQuotes, getOptionChain, getPriceHistory } from "./schwab";
+import { OPTION_MULTIPLIER, toCents } from "./validationMath";
+import { sessionCloseMinutes } from "./exchangeCalendar";
+
+/**
+ * $ for the whole position, to the cent: (price diff $/share) x qty x multiplier
+ * (100 per option contract, 1 per share). Halves round away from zero for
+ * losses too (Math.round(-1234.5) is -1234, so a -$12.345 loss read -$12.34).
+ */
+function positionDollars(priceDiff: number, qty: number, instrument: Instrument): number {
+  const mult = instrument === "OPTION" ? OPTION_MULTIPLIER : 1;
+  return toCents(priceDiff * qty * mult) / 100;
+}
 
 // ET helpers. Grading must only happen against a CLOSING line, so we need the ET date
 // and ET clock rather than server-local / UTC time.
@@ -16,7 +28,15 @@ function etParts(ts: number = Date.now()): { date: string; minutes: number } {
   const g = (t: string) => parts.find(p => p.type === t)?.value ?? "00";
   return { date: `${g("year")}-${g("month")}-${g("day")}`, minutes: Number(g("hour")) * 60 + Number(g("minute")) };
 }
-const CLOSE_GRADE_MINUTES = 16 * 60 + 15; // 16:15 ET
+/**
+ * Grading opens 15 minutes after today's close (16:15 ET; 13:15 on a 13:00
+ * half day, when index options also stop 15 minutes after the equity close),
+ * from the exchange calendar. A day without a session has no closing line to wait for.
+ */
+function gradeOpensAtMinutes(etIsoDate: string): number {
+  const close = sessionCloseMinutes(etIsoDate);
+  return close == null ? 0 : close + 15;
+}
 
 /** Underlying daily close on a specific ET date (YYYY-MM-DD), or null. */
 async function dailyCloseOn(symbol: string, isoDate: string): Promise<number | null> {
@@ -116,9 +136,8 @@ export function deleteTrade(id: string): boolean {
 export function logExit(id: string, exitPrice: number): TradeRow | undefined {
   const t = getTrade(id);
   if (!t) return undefined;
-  const mult = t.instrument === "OPTION" ? 100 : 1;
   const dir = t.side === "BUY" ? 1 : -1;
-  const pnl = (exitPrice - t.entryPrice) * t.qty * mult * dir;
+  const pnl = positionDollars((exitPrice - t.entryPrice) * dir, t.qty, t.instrument);
   sqlite.prepare(`UPDATE trade_log SET exit_price = ?, exit_time = ?, pnl_dollars = ? WHERE id = ?`)
     .run(exitPrice, Date.now(), pnl, id);
   return getTrade(id);
@@ -164,9 +183,8 @@ function clvBps(side: Side, entry: number, closingMid: number): number {
 }
 
 function clvDollars(side: Side, entry: number, closingMid: number, qty: number, instrument: Instrument): number {
-  const mult = instrument === "OPTION" ? 100 : 1;
   const dir = side === "BUY" ? 1 : -1;
-  return (closingMid - entry) * qty * mult * dir;
+  return positionDollars((closingMid - entry) * dir, qty, instrument);
 }
 
 // ---------- Grading ----------
@@ -319,9 +337,9 @@ export async function gradePending(): Promise<{ graded: number; skipped: number 
   let graded = 0, skipped = 0;
   // Closing-line gate: this used to run on a 6 h timer from process start with no time
   // check, so a 10:00 trade could be "graded" at 11:30 against an intraday mark and was
-  // then graded=1 forever. Only grade rows captured on a prior ET day, or after 16:15 ET.
+  // then graded=1 forever. Only grade rows captured on a prior ET day, or 15 min after today's close.
   const now = etParts();
-  const afterClose = now.minutes >= CLOSE_GRADE_MINUTES;
+  const afterClose = now.minutes >= gradeOpensAtMinutes(now.date);
   for (const { id, captured_at } of rows) {
     const capturedDate = etParts(Number(captured_at)).date;
     if (capturedDate >= now.date && !afterClose) { skipped++; continue; }

@@ -8,10 +8,12 @@
  *
  * It reads /api/schwab/status (deduped by React Query across every mount) and
  * cross-references the actual value we're about to show, then resolves to:
- *   LIVE    — Schwab connected + we have a value
- *   CBOE    — feed doesn't need Schwab and we have a value (delayed CBOE etc.)
- *   STALE   — value present but Schwab is down and this feed normally needs it
- *   OFFLINE — no usable value (null / undefined / a zero that shouldn't be zero)
+ *   LIVE    — Schwab connected + we have a value (and the server did not flag it stale)
+ *   CONTEXT — non-market context feed that does not need Schwab (FRED, COT, news)
+ *   STALE   — value present but Schwab is down, or the server flagged the
+ *             payload stale (re-served after a failed refresh, within max age)
+ *   OFFLINE — no value (null / undefined / non-finite)
+ * Market data is Schwab only (no CBOE or delayed fallback).
  */
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -21,21 +23,20 @@ interface SchwabStatus {
   needsReauth: boolean;
 }
 
-type LivenessState = "LIVE" | "CBOE" | "STALE" | "OFFLINE";
+type LivenessState = "LIVE" | "CONTEXT" | "STALE" | "OFFLINE";
 
 const STATE_STYLE: Record<LivenessState, { dot: string; text: string; label: string; pulse: boolean }> = {
   LIVE:    { dot: "bg-emerald-400", text: "text-emerald-400", label: "live",    pulse: true },
-  CBOE:    { dot: "bg-sky-400",     text: "text-sky-400",     label: "cboe",    pulse: false },
+  CONTEXT: { dot: "bg-sky-400",     text: "text-sky-400",     label: "context", pulse: false },
   STALE:   { dot: "bg-amber-400",   text: "text-amber-400",   label: "stale",   pulse: false },
   OFFLINE: { dot: "bg-zinc-500",    text: "text-zinc-500",    label: "offline", pulse: false },
 };
 
-// A value is "usable" if it's present and not a meaningless zero. We treat 0 as
-// missing because every disconnected payload in this app backfills zeros where
-// a real reading would never legitimately be exactly 0 (PCR, spot, change%).
+// A value is "usable" if it's present and finite. An observed 0 is a value:
+// failed collection now arrives as null / dataState "unavailable", not 0.
 function hasUsableValue(value: unknown): boolean {
   if (value == null) return false;
-  if (typeof value === "number") return Number.isFinite(value) && value !== 0;
+  if (typeof value === "number") return Number.isFinite(value);
   if (typeof value === "string") return value.trim().length > 0;
   if (Array.isArray(value)) return value.length > 0;
   return true;
@@ -50,6 +51,10 @@ export interface LivenessBadgeProps {
   requiresSchwab?: boolean;
   /** Optional pre-fetched status if the parent already has it. */
   status?: SchwabStatus;
+  /** Server stale flag for this payload (e.g. chainStale): forces STALE. */
+  stale?: boolean | null;
+  /** When Schwab produced the data (epoch ms); shown in the tooltip as an age. */
+  asOfMs?: number | null;
   className?: string;
 }
 
@@ -58,6 +63,8 @@ export default function LivenessBadge({
   value,
   requiresSchwab = true,
   status: statusProp,
+  stale,
+  asOfMs,
   className,
 }: LivenessBadgeProps) {
   const { data: fetched } = useQuery<SchwabStatus>({
@@ -79,10 +86,11 @@ export default function LivenessBadge({
   const state: LivenessState = !usable
     ? "OFFLINE"
     : !requiresSchwab
-      ? "CBOE"
-      : schwabLive
+      ? "CONTEXT"
+      : schwabLive && !stale
         ? "LIVE"
         : "STALE";
+  const ageSec = asOfMs != null && Number.isFinite(asOfMs) ? Math.max(0, Math.round((Date.now() - asOfMs) / 1000)) : null;
 
   const s = STATE_STYLE[state];
 
@@ -90,7 +98,7 @@ export default function LivenessBadge({
     <span
       className={`inline-flex items-center gap-1.5 rounded-full border border-current/30 px-1.5 py-0.5 text-[11px] font-medium ${s.text} ${className ?? ""}`}
       data-testid={`liveness-${feedName}`}
-      title={`${feedName} · ${s.label}`}
+      title={`${feedName} · ${s.label}${ageSec != null ? ` · data ${ageSec < 120 ? `${ageSec}s` : `${Math.round(ageSec / 60)}m`} old` : ""}`}
     >
       <span
         className={`h-1.5 w-1.5 rounded-full ${s.dot} ${s.pulse ? "animate-pulse" : ""}`}

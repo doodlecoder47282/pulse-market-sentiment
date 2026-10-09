@@ -1,11 +1,18 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // server/cosmos.ts
 //
-// Astrology + financial astrology engine for the "Cosmos" tab.
+// Astronomy engine + financial-astrology reference for the "Cosmos" tab.
+//
+// CONTEXT ONLY, FOR ENTERTAINMENT, NOT A TRADING SIGNAL (review finding 5.3).
+// Nothing in this file outputs a trade instruction, direction call, position
+// size or alert. Each sky event carries an `evidence` label; only lunar,
+// geomagnetic and SAD effects have published studies, and those effects are
+// small or disputed. No other engine may consume Cosmos output as a signal
+// (only routes.ts imports this file, for the Cosmos tab's own endpoints).
 //
 // DESIGN PRINCIPLE: everything here is deterministic. Given a UTC timestamp
 // it produces the same planetary positions, aspects, lunar phase, signs,
-// retrogrades, natal transits, and rule-derived market signals. No external
+// retrogrades, natal transits, and evidence-labeled sky events. No external
 // API, no keys, no network.
 //
 // Accuracy note: we use simplified mean-element (Simon et al. / Meeus-style)
@@ -548,10 +555,22 @@ export function lunarPhase(date: Date): LunarPhase {
   return { phaseDegrees: phase, illumination: ill, name, daysIntoCycle: days };
 }
 
+// ─── Mean lunar node ────────────────────────────────────────────────────────
+// Longitude of the Moon's mean ascending node, Meeus "Astronomical Algorithms"
+// 2nd ed. eq. 47.7: Omega = 125.0445479 - 1934.1362891 T + 0.0020754 T^2
+// + T^3/467441 - T^4/60616000 (degrees, T in Julian centuries from J2000).
+// It moves backward about 19.3° a year (18.6-year cycle).
+export function meanLunarNodeLongitude(date: Date): number {
+  const T = jcFromJd(julianDay(date));
+  return norm360(
+    125.0445479 - 1934.1362891 * T + 0.0020754 * T * T + (T * T * T) / 467441 - (T * T * T * T) / 60616000,
+  );
+}
+
 // ─── Void-of-course Moon ─────────────────────────────────────────────────────
 // The Moon is "void of course" between its last major aspect to another planet
-// in the current sign and its entry into the next sign. Rule-based traders
-// avoid initiating new trades during VoC windows.
+// in the current sign and its entry into the next sign (astrological
+// tradition; no peer-reviewed market effect).
 export interface VoidOfCourse {
   active: boolean;
   lastAspectAt?: string; // ISO timestamp
@@ -625,9 +644,9 @@ export function voidOfCourseMoon(date: Date): VoidOfCourse {
 
 // ─── Bradley Siderograph ─────────────────────────────────────────────────────
 // Donald Bradley's 1948 siderograph combines weighted planetary aspects into
-// a single daily "market barometer" number. Positive peaks tend to mark
-// market highs, troughs tend to mark lows (inversions do happen). Widely
-// used by financial astrologers.
+// a single daily number. Financial astrologers read its peaks and troughs as
+// market turn dates (and concede frequent inversions). No peer-reviewed
+// support; computed here as sky context only.
 //
 // Formula (Bradley's original weighting, simplified):
 //   LT = sum of long-term aspect scores (Uranus, Neptune, Pluto vs Jupiter, Saturn)
@@ -637,7 +656,7 @@ export function voidOfCourseMoon(date: Date): VoidOfCourse {
 //
 // We implement a credible approximation: weighted aspect score across all
 // outer-planet pairs, normalized to a -1..1 range. For research-grade use a
-// trader would feed this into their own system; here it's a daily indicator.
+// trader would feed this into their own system; here it is context only.
 export function bradleySiderograph(date: Date): { value: number; trend: "rising" | "falling"; zone: "high" | "low" | "neutral" } {
   const positions = planetPositions(date);
   const asps = aspects(positions, date);
@@ -727,7 +746,7 @@ export interface NatalTransit {
     orb: number;
     quality: "hard" | "soft" | "neutral";
   }>;
-  score: number; // net disposition: positive = supportive, negative = stressed
+  score: number; // net aspect score (soft minus hard aspects); astrological tradition, no market meaning
 }
 
 export function natalTransits(symbol: string, date: Date): NatalTransit | null {
@@ -770,96 +789,111 @@ export function natalTransits(symbol: string, date: Date): NatalTransit | null {
   };
 }
 
-// ─── Financial-astrology signal engine (deterministic, rule-based) ──────────
+// ─── Sky events (deterministic, rule-based) ─────────────────────────────────
+// Each event is a fact about the sky plus what the literature says about it.
+// No event carries a trade instruction, direction call, size or alert
+// (review finding 5.3). The interface keeps its historical name and fields so
+// the API shape does not change; `severity` is always "info" and `evidence`
+// says whether any peer-reviewed study supports a market effect.
+
+/** What the literature supports for a sky event's claimed market effect. */
+export type CosmosEvidence =
+  | "peer-reviewed, small effect"
+  | "peer-reviewed, disputed"
+  | "working paper, small effect"
+  | "no peer-reviewed support";
+
 export interface FinancialSignal {
   id: string;
+  /** Always "info": a sky event is context, never an alert level. */
   severity: "high" | "medium" | "info";
   headline: string;
   detail: string;
-  impacts: string[]; // tags: e.g. ["tech", "vol", "reversal", "regime"]
+  /** Topic tags only (e.g. "lunar", "tradition"). Never an action. */
+  impacts: string[];
+  evidence: CosmosEvidence;
 }
 
-// Gann / financial-astrology rules — each is a pure function of positions.
+// Shared one-line citations (verified 2026-10-08):
+//  - Yuan, Zheng & Zhu (2006), "Are investors moonstruck? Lunar phases and
+//    stock returns", Journal of Empirical Finance 13(1). 48 countries; returns
+//    around full moons lower than around new moons by about 3-5% a year.
+//    https://researchonline.lse.ac.uk/id/eprint/39409
+//  - Krivelyova & Robotti (2003), "Playing the field: Geomagnetic storms and
+//    international stock markets", FRB Atlanta Working Paper 2003-5.
+//    https://ideas.repec.org/p/fip/fedawp/2003-5.html
+//  - Kamstra, Kramer & Levi (2003), "Winter Blues: A SAD Stock Market Cycle",
+//    American Economic Review 93(1). Disputed by Kelly & Meschke (2010),
+//    "Sentiment and stock returns: The SAD anomaly revisited", J. Banking &
+//    Finance 34(6): https://ideas.repec.org/a/eee/jbfina/v34y2010i6p1308-1326.html
+export const LUNAR_EVIDENCE_NOTE =
+  "Yuan, Zheng & Zhu (2006, Journal of Empirical Finance, 48 countries): returns around full moons were lower than around new moons by about 3-5% a year in aggregate, roughly 1-2 basis points a day, against typical daily index moves near 100 basis points. Historical, small, not tested out of sample here.";
+const NO_SUPPORT = "Financial-astrology tradition only; no peer-reviewed study supports a market effect.";
+
+export const COSMOS_DISCLAIMER =
+  "Cosmos is sky context for entertainment, not a trading signal. Nothing here is a trade instruction, direction call, position size or alert, and no other Batcave engine reads it.";
+
 export function financialSignals(positions: PlanetPosition[], asps: Aspect[], phase: LunarPhase, voc: VoidOfCourse, bradley: ReturnType<typeof bradleySiderograph>): FinancialSignal[] {
   const signals: FinancialSignal[] = [];
   const byId = Object.fromEntries(positions.map((p) => [p.id, p]));
 
-  // Mercury retrograde — classic tech/comms volatility and contract-review flag
   if (byId.mercury.retrograde) {
     signals.push({
       id: "mercury-retro",
-      severity: "medium",
+      severity: "info",
       headline: `Mercury retrograde in ${byId.mercury.sign}`,
       detail:
-        `Mercury governs contracts, communication, and tech. Retrograde periods historically correlate with reversals in tech ` +
-        `sector leadership and elevated volatility in short-duration trades. Review entries twice, confirm fills, avoid new ` +
-        `multi-leg structures on the first day.`,
-      impacts: ["tech", "comms", "vol", "reversal"],
+        `Seen from Earth, Mercury appears to move backward for about three weeks, about three times a year. ` +
+        `Tradition links it to miscommunication and reversals in tech. ${NO_SUPPORT}`,
+      impacts: ["planetary", "tradition"],
+      evidence: "no peer-reviewed support",
     });
   }
 
-  // Mars retrograde — momentum regime shift, aggressive trades misfire
   if (byId.mars.retrograde) {
     signals.push({
       id: "mars-retro",
-      severity: "medium",
+      severity: "info",
       headline: `Mars retrograde in ${byId.mars.sign}`,
-      detail:
-        `Mars retrograde typically marks momentum exhaustion. Breakout strategies underperform, fade/mean-reversion setups ` +
-        `over-perform relative to baseline. Size down aggressive directional plays.`,
-      impacts: ["momentum", "size-down"],
+      detail: `Tradition associates Mars retrograde with fading momentum. ${NO_SUPPORT}`,
+      impacts: ["planetary", "tradition"],
+      evidence: "no peer-reviewed support",
     });
   }
 
-  // Venus retrograde — consumer, luxury, relationships, paused spending
   if (byId.venus.retrograde) {
     signals.push({
       id: "venus-retro",
       severity: "info",
       headline: `Venus retrograde in ${byId.venus.sign}`,
-      detail:
-        `Consumer discretionary, luxury, and XLY-adjacent names historically underperform during Venus retro. Also affects ` +
-        `M&A deal flow — watch for delays or re-pricings.`,
-      impacts: ["consumer", "mna", "luxury"],
+      detail: `Tradition associates Venus retrograde with consumer spending and deal delays. ${NO_SUPPORT}`,
+      impacts: ["planetary", "tradition"],
+      evidence: "no peer-reviewed support",
     });
   }
 
-  // Full Moon — reversal risk at market extremes
-  if (phase.name === "Full Moon") {
+  if (phase.name === "Full Moon" || phase.name === "New Moon") {
     signals.push({
-      id: "full-moon",
-      severity: "high",
-      headline: `Full Moon (${phase.illumination.toFixed(2)} illumination)`,
-      detail:
-        `Full Moons mark culmination points — widely observed reversal risk at price extremes. If SPX is at a swing high or ` +
-        `low today, fade conviction is elevated. Intraday: 2–4 PM ET rotations more likely.`,
-      impacts: ["reversal", "vol"],
-    });
-  }
-  if (phase.name === "New Moon") {
-    signals.push({
-      id: "new-moon",
+      id: phase.name === "Full Moon" ? "full-moon" : "new-moon",
       severity: "info",
-      headline: `New Moon (${phase.illumination.toFixed(2)} illumination)`,
-      detail:
-        `New Moons seed new cycles — trend initiations more likely in the 3 days following. Trust breakouts more, fades less.`,
-      impacts: ["trend", "initiation"],
+      headline: `${phase.name} (${phase.illumination.toFixed(2)} illumination)`,
+      detail: LUNAR_EVIDENCE_NOTE,
+      impacts: ["lunar"],
+      evidence: "peer-reviewed, small effect",
     });
   }
 
-  // Void-of-course Moon — "do nothing" window
   if (voc.active) {
     signals.push({
       id: "voc-moon",
       severity: "info",
       headline: `Moon void-of-course until ${voc.nextSignAt ? new Date(voc.nextSignAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York", timeZoneName: "short" }) : "sign change"}`,
-      detail:
-        `Traditional astrological trading rule: avoid initiating new positions during VoC. Close existing trades, manage only.`,
-      impacts: ["caution", "hold"],
+      detail: `Traditional astrology calls the time before the Moon's next sign change "void of course". ${NO_SUPPORT}`,
+      impacts: ["lunar", "tradition"],
+      evidence: "no peer-reviewed support",
     });
   }
 
-  // Jupiter-Saturn aspect — generational regime shift
   for (const a of asps) {
     if (
       (a.a === "jupiter" && a.b === "saturn") ||
@@ -867,66 +901,62 @@ export function financialSignals(positions: PlanetPosition[], asps: Aspect[], ph
     ) {
       signals.push({
         id: "jup-sat",
-        severity: "high",
-        headline: `Jupiter ${a.aspect} Saturn (orb ${a.orb.toFixed(1)}°)`,
-        detail:
-          `The Jupiter-Saturn cycle is the dominant long-wave regime marker in financial astrology. Current ${a.aspect} ` +
-          `${a.applying ? "applying" : "separating"} — ${a.quality === "hard" ? "tension, contraction bias" : a.quality === "soft" ? "expansion, risk-on bias" : "neutral turning point"}. ` +
-          `Monitor yield curve and cyclical rotation for confirmation.`,
-        impacts: ["regime", "cycles", "macro"],
+        severity: "info",
+        headline: `Jupiter ${a.aspect} Saturn (orb ${a.orb.toFixed(1)}°, ${a.applying ? "applying" : "separating"})`,
+        detail: `Gann-tradition long cycle (about 20 years between conjunctions), so there are too few events to test. ${NO_SUPPORT}`,
+        impacts: ["planetary", "tradition"],
+        evidence: "no peer-reviewed support",
       });
     }
   }
 
-  // Uranus aspects — shock, sudden events
   for (const a of asps) {
     if ((a.a === "uranus" || a.b === "uranus") && a.quality === "hard" && a.score > 0.5) {
       signals.push({
         id: `uranus-${a.a}-${a.b}-${a.aspect}`,
-        severity: "high",
+        severity: "info",
         headline: `Uranus ${a.aspect} ${a.a === "uranus" ? a.b : a.a} (tight)`,
-        detail:
-          `Uranus hard aspects mark shock / surprise windows — headline-driven volatility, unexpected central-bank moves, ` +
-          `crypto dislocations. Keep VIX hedges on, reduce leverage.`,
-        impacts: ["shock", "vol", "crypto"],
+        detail: `Tradition associates hard Uranus aspects with surprises. ${NO_SUPPORT}`,
+        impacts: ["planetary", "tradition"],
+        evidence: "no peer-reviewed support",
       });
       break;
     }
   }
 
-  // Pluto aspects — deep transformation, power shifts, debt/leverage
   for (const a of asps) {
     if ((a.a === "pluto" || a.b === "pluto") && a.score > 0.5) {
       signals.push({
         id: `pluto-${a.a}-${a.b}-${a.aspect}`,
-        severity: a.quality === "hard" ? "high" : "medium",
+        severity: "info",
         headline: `Pluto ${a.aspect} ${a.a === "pluto" ? a.b : a.a}`,
-        detail:
-          `Pluto governs debt, leverage, concentration of power. ${a.quality === "hard" ? "Hard aspects flag credit stress and deleveraging events." : "Soft aspects support structural accumulation."} ` +
-          `Watch HYG/LQD spreads and bank sector action.`,
-        impacts: ["credit", "debt", "leverage"],
+        detail: `Tradition associates Pluto with debt and power shifts. ${NO_SUPPORT}`,
+        impacts: ["planetary", "tradition"],
+        evidence: "no peer-reviewed support",
       });
       break;
     }
   }
 
-  // Bradley zone — composite cycle
   if (bradley.zone !== "neutral") {
     signals.push({
       id: "bradley",
       severity: "info",
-      headline: `Bradley siderograph ${bradley.zone === "high" ? "peak zone" : "trough zone"} (${bradley.value.toFixed(2)}, ${bradley.trend})`,
+      headline: `Bradley siderograph ${bradley.zone} zone (${bradley.value.toFixed(2)}, ${bradley.trend})`,
       detail:
-        `Bradley's 1948 siderograph is at a ${bradley.zone}. Historically these zones mark turn windows — ` +
-        `${bradley.zone === "high" ? "exhaustion of risk-on" : "exhaustion of risk-off"}. Inversions do occur, so confirm with price action.`,
-      impacts: ["turn", "cycles"],
+        `Bradley's 1948 siderograph is a weighted sum of planetary aspects (approximated here). Practitioners read its ` +
+        `extremes as turn dates and concede that turns often invert. ${NO_SUPPORT}`,
+      impacts: ["cycle", "tradition"],
+      evidence: "no peer-reviewed support",
     });
   }
 
   return signals;
 }
 
-// ─── Zodiac daily readings (trader-focused) ─────────────────────────────────
+// ─── Zodiac readings (astrological tradition, no market content) ────────────
+// Kept for API compatibility; the client does not render them. The text
+// describes traditional sign traits only: no entries, sizes or "lucky" trades.
 export interface ZodiacReading {
   sign: Sign;
   glyph: string;
@@ -934,6 +964,7 @@ export interface ZodiacReading {
   modality: string;
   headline: string;
   detail: string;
+  /** Historical field name. Now the Moon's traditional relation to the sign, no market claim. */
   luckyWindow: string;
 }
 
@@ -947,19 +978,17 @@ export function zodiacReadings(positions: PlanetPosition[], asps: Aspect[], phas
     const element = SIGN_ELEMENT[sign];
     const modality = SIGN_MODALITY[sign];
 
-    // Trader-aware flavor based on element
-    const elementFlavor: Record<typeof element, string> = {
-      fire: "Bias toward action — high-conviction breakouts favored",
-      earth: "Bias toward patience — accumulation and structure favored",
-      air: "Bias toward analysis — pair trades and relative-value favored",
-      water: "Bias toward intuition — fades and reversal entries favored",
+    const elementTrait: Record<typeof element, string> = {
+      fire: "Fire sign (tradition: initiative)",
+      earth: "Earth sign (tradition: patience)",
+      air: "Air sign (tradition: analysis)",
+      water: "Water sign (tradition: intuition)",
     };
 
-    let headline = elementFlavor[element];
-    if (isMoonSign) headline = `Moon in your sign — emotions loud, trust data over gut. ${headline}`;
-    if (isSunSign) headline = `Sun in your sign — conviction high, avoid overconfidence. ${headline}`;
+    let headline = elementTrait[element];
+    if (isMoonSign) headline = `Moon in this sign today. ${headline}`;
+    if (isSunSign) headline = `Sun in this sign. ${headline}`;
 
-    // Detail: reference current major aspects that touch the sign's ruler
     const ruler: Record<Sign, PlanetId> = {
       Aries: "mars", Taurus: "venus", Gemini: "mercury", Cancer: "moon",
       Leo: "sun", Virgo: "mercury", Libra: "venus", Scorpio: "pluto",
@@ -969,26 +998,21 @@ export function zodiacReadings(positions: PlanetPosition[], asps: Aspect[], phas
     const rulerAsps = asps.filter((a) => a.a === rulerPlanet || a.b === rulerPlanet).slice(0, 2);
     const aspectNote = rulerAsps.length > 0
       ? rulerAsps.map((a) => `${a.a}-${a.b} ${a.aspect}`).join(", ")
-      : "ruler clear";
+      : "none";
 
-    const detail = `Ruling planet: ${PLANET_GLYPH[rulerPlanet]} ${rulerPlanet}. Active aspects: ${aspectNote}. ` +
-      `${modality === "cardinal" ? "Initiate" : modality === "fixed" ? "Hold" : "Adapt"} as the dominant posture today.`;
+    const detail = `Ruling planet: ${PLANET_GLYPH[rulerPlanet]} ${rulerPlanet}. Aspects to the ruler: ${aspectNote}. ` +
+      `Modality: ${modality}. Astrological tradition only, no market content.`;
 
-    // Lucky window — based on Moon's current sign relative to trader's sign
     const signIdx = SIGNS.indexOf(sign);
     const moonIdx = SIGNS.indexOf(moonSign);
     const diff = (moonIdx - signIdx + 12) % 12;
-    const trine = diff === 4 || diff === 8;
-    const sextile = diff === 2 || diff === 10;
-    const luckyWindow = trine
-      ? "Strong window for entries today"
-      : sextile
-        ? "Mild supportive window"
-        : diff === 6
-          ? "Avoid confrontational trades — opposition energy"
-          : diff === 3 || diff === 9
-            ? "Friction day — size down"
-            : "Baseline day — trade your system";
+    const luckyWindow =
+      diff === 0 ? "Moon conjunct this sign"
+      : diff === 4 || diff === 8 ? "Moon trine this sign (tradition: harmonious)"
+      : diff === 2 || diff === 10 ? "Moon sextile this sign (tradition: mildly harmonious)"
+      : diff === 6 ? "Moon opposite this sign (tradition: tension)"
+      : diff === 3 || diff === 9 ? "Moon square this sign (tradition: friction)"
+      : "No major Moon aspect to this sign";
 
     return {
       sign,
@@ -1010,10 +1034,13 @@ export interface CosmosSnapshot {
   lunarPhase: LunarPhase;
   voidOfCourse: VoidOfCourse;
   bradley: ReturnType<typeof bradleySiderograph>;
+  /** Sky events with evidence labels (historical field name; not market signals). */
   financialSignals: FinancialSignal[];
   zodiacReadings: ZodiacReading[];
   natalTransits: NatalTransit[];
   dailyBriefMarkdown: string;
+  /** Always present: what this tab is and is not. */
+  disclaimer: string;
 }
 
 export function buildCosmosSnapshot(date: Date = new Date()): CosmosSnapshot {
@@ -1044,14 +1071,12 @@ export function buildCosmosSnapshot(date: Date = new Date()): CosmosSnapshot {
     zodiacReadings: zod,
     natalTransits: natal,
     dailyBriefMarkdown: brief,
+    disclaimer: COSMOS_DISCLAIMER,
   };
 }
 
 // ─── Daily brief composer (deterministic) ───────────────────────────────────
-// Same pattern as the EOD brief: this is the source of truth, and if an LLM
-// key ever gets provided we add an /api/cosmos/brief-enhance endpoint that
-// uses the same data to write a richer narrative. For now the deterministic
-// brief is the entire story.
+// Sky facts plus evidence labels. No regime call, no trading disposition.
 function buildDailyBriefMarkdown(ctx: {
   date: Date;
   positions: PlanetPosition[];
@@ -1069,19 +1094,13 @@ function buildDailyBriefMarkdown(ctx: {
   const topAspects = asps.filter((a) => a.score > 0.5).slice(0, 6);
   const topNatal = natal.slice(0, 5);
 
-  const regime =
-    brad.zone === "high" ? "risk-on exhaustion zone"
-    : brad.zone === "low" ? "risk-off exhaustion zone"
-    : byId.mercury.retrograde ? "cautious / review mode"
-    : phase.name === "Full Moon" ? "reversal-risk peak"
-    : phase.name === "New Moon" ? "trend-initiation window"
-    : "baseline";
-
   const lines: string[] = [
-    `## COSMIC REGIME — ${dateStr}`,
-    `${regime.toUpperCase()}. Moon in ${byId.moon.sign} (${phase.name}, ${(phase.illumination * 100).toFixed(0)}% illum). ` +
+    `## SKY SUMMARY — ${dateStr}`,
+    `*${COSMOS_DISCLAIMER}*`,
+    ``,
+    `Moon in ${byId.moon.sign} (${phase.name}, ${(phase.illumination * 100).toFixed(0)}% illum). ` +
     `Sun in ${byId.sun.sign}. Bradley ${brad.value.toFixed(2)} ${brad.trend}. ` +
-    `${voc.active ? `**Moon void-of-course** — avoid new entries until ${voc.nextSignAt ? new Date(voc.nextSignAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }) : "sign change"} ET.` : ""}`,
+    `${voc.active ? `Moon void-of-course until ${voc.nextSignAt ? new Date(voc.nextSignAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }) : "sign change"} ET.` : ""}`,
     ``,
     `## PLANET POSITIONS`,
     `| Planet | Sign | Degree | Retro |`,
@@ -1101,55 +1120,34 @@ function buildDailyBriefMarkdown(ctx: {
   }
 
   if (sigs.length > 0) {
-    lines.push(`## MARKET SIGNALS`);
+    lines.push(`## SKY EVENTS (context, not signals)`);
     for (const s of sigs) {
-      const sev = s.severity === "high" ? "🔴" : s.severity === "medium" ? "🟡" : "🔵";
-      lines.push(`- ${sev} **${s.headline}** — ${s.detail}`);
+      lines.push(`- **${s.headline}** [${s.evidence}] — ${s.detail}`);
     }
     lines.push(``);
   }
 
   if (topNatal.length > 0) {
-    lines.push(`## NATAL TRANSITS — today's sky vs birth charts`);
+    lines.push(`## NATAL TRANSITS — today's sky vs first-trade charts (astrological tradition, untested)`);
     for (const t of topNatal) {
-      const disp = t.score > 0 ? "supportive" : t.score < 0 ? "stressed" : "neutral";
       const topHits = t.aspects.slice(0, 2).map((a) => `${a.transitingPlanet} ${a.aspect} natal ${a.natalPlanet}`).join(", ");
-      lines.push(`- **${t.symbol}** (${t.natalName}): score ${t.score.toFixed(2)} — ${disp}. ${topHits || "no tight aspects"}.`);
+      lines.push(`- **${t.symbol}** (${t.natalName}): aspect score ${t.score.toFixed(2)}. ${topHits || "no tight aspects"}.`);
     }
     lines.push(``);
   }
 
-  lines.push(`## TRADING DISPOSITION`);
-  if (voc.active) {
-    lines.push(`- **Void-of-course Moon** — traditional rule: close only, do not open new.`);
-  }
-  if (byId.mercury.retrograde) {
-    lines.push(`- **Mercury retrograde** — triple-check fills, avoid complex multi-leg new positions, tech names subject to reversal.`);
-  }
-  if (phase.name === "Full Moon") {
-    lines.push(`- **Full Moon** — reversal risk elevated at swing highs/lows. Fade conviction +1.`);
-  } else if (phase.name === "New Moon") {
-    lines.push(`- **New Moon** — trust breakouts more than usual over next 3 days.`);
-  }
-  if (brad.zone === "high") {
-    lines.push(`- **Bradley high** — be wary of added long exposure. Tighten stops on longs.`);
-  } else if (brad.zone === "low") {
-    lines.push(`- **Bradley low** — risk-off exhaustion. Contrarian longs favored on confirmation.`);
-  }
-  if (sigs.length === 0 && !voc.active && !byId.mercury.retrograde) {
-    lines.push(`- Baseline regime — trade your system. No cosmic overrides today.`);
-  }
-  lines.push(``);
   lines.push(`---`);
-  lines.push(`*Computed from VSOP87/Meeus mean-element formulas. Accuracy: Sun/Moon ±0.1°, outer planets ±0.5°. Aspects use 6–8° orbs.*`);
+  lines.push(`*Positions from VSOP87/Meeus mean-element formulas (Sun/Moon about ±0.1°, outer planets about ±0.5°); aspects use 6-8° orbs. Only lunar, geomagnetic and SAD effects have peer-reviewed studies, and those effects are small or disputed. Not a trading signal.*`);
 
   return lines.join("\n");
 }
 
-// ─── Forward-looking weekly + monthly outlook builders ─────────────────────
+// ─── Forward-looking weekly + monthly sky calendar ──────────────────────────
 // Scan ahead day-by-day through the geocentric engine; collect moon-phase
-// changes, Mercury station flips, sign ingresses, aspect peaks, Bradley
-// zone changes. All deterministic — zero network, zero LLM required.
+// changes, planetary stations, sign ingresses and Bradley zone changes.
+// Deterministic, no network, no LLM required. Events carry no direction:
+// `bias` is always "neutral" and `netBias` is always "neutral" (fields kept
+// for API compatibility; Cosmos makes no direction calls).
 
 export interface OutlookEvent {
   date: string;            // ISO
@@ -1170,8 +1168,11 @@ export interface OutlookEvent {
     | "void_of_course";
   headline: string;
   detail: string;
+  /** Astronomical prominence of the event, not market impact. */
   severity: "high" | "medium" | "low";
+  /** Deprecated: always "neutral". Cosmos makes no direction calls. */
   bias: "bullish" | "bearish" | "neutral" | "volatile";
+  evidence: CosmosEvidence;
 }
 
 function scanForwardEvents(startDate: Date, days: number): OutlookEvent[] {
@@ -1182,7 +1183,6 @@ function scanForwardEvents(startDate: Date, days: number): OutlookEvent[] {
     "First Quarter": "first_quarter",
     "Last Quarter": "last_quarter",
   };
-  // Previous day state — for edge detection
   let prevPhase = lunarPhase(startDate).name;
   let prevBradZone = bradleySiderograph(startDate).zone;
   const prevRx: Record<string, boolean> = {};
@@ -1201,54 +1201,34 @@ function scanForwardEvents(startDate: Date, days: number): OutlookEvent[] {
 
     // Moon phase transitions
     if (phase.name !== prevPhase && phaseNames[phase.name]) {
-      const severity: OutlookEvent["severity"] =
-        phase.name === "Full Moon" || phase.name === "New Moon" ? "high" : "low";
-      const bias: OutlookEvent["bias"] =
-        phase.name === "Full Moon" ? "bearish"
-        : phase.name === "New Moon" ? "bullish"
-        : "neutral";
-      const detail =
-        phase.name === "Full Moon" ? "Reversal-risk peak. U.Mich study: returns statistically lower in Full Moon window globally. Fade conviction."
-        : phase.name === "New Moon" ? "Trend-initiation window. 15-day lunar effect peaks here. Trust breakouts more than usual for next 3 trading days."
-        : phase.name === "First Quarter" ? "Mid-cycle — typically neutral. Use as a pulse check, not a signal."
-        : "Approaching New Moon. Begin trimming longs if SAD-season alignment.";
+      const isSyzygy = phase.name === "Full Moon" || phase.name === "New Moon";
       events.push({
         date: iso,
         dayOffset: d,
         type: phaseNames[phase.name],
         headline: `${phase.name} in ${byId.moon.sign}`,
-        detail,
-        severity,
-        bias,
+        detail: isSyzygy ? LUNAR_EVIDENCE_NOTE : "Quarter phase. No studied market effect.",
+        severity: isSyzygy ? "high" : "low",
+        bias: "neutral",
+        evidence: isSyzygy ? "peer-reviewed, small effect" : "no peer-reviewed support",
       });
     }
 
     // Bradley zone changes
-    if (brad.zone !== prevBradZone) {
-      if (brad.zone === "high") {
-        events.push({
-          date: iso,
-          dayOffset: d,
-          type: "bradley_high",
-          headline: `Bradley siderograph enters HIGH zone (${brad.value.toFixed(2)})`,
-          detail: "Risk-on exhaustion. Tighten stops on longs, watch for distribution. Not a top-tick signal — a warning zone.",
-          severity: "medium",
-          bias: "bearish",
-        });
-      } else if (brad.zone === "low") {
-        events.push({
-          date: iso,
-          dayOffset: d,
-          type: "bradley_low",
-          headline: `Bradley siderograph enters LOW zone (${brad.value.toFixed(2)})`,
-          detail: "Risk-off exhaustion. Contrarian longs favored on technical confirmation. Historical inflection region.",
-          severity: "medium",
-          bias: "bullish",
-        });
-      }
+    if (brad.zone !== prevBradZone && brad.zone !== "neutral") {
+      events.push({
+        date: iso,
+        dayOffset: d,
+        type: brad.zone === "high" ? "bradley_high" : "bradley_low",
+        headline: `Bradley siderograph enters ${brad.zone.toUpperCase()} zone (${brad.value.toFixed(2)})`,
+        detail: `Practitioners read siderograph extremes as turn dates and concede frequent inversions. ${NO_SUPPORT}`,
+        severity: "medium",
+        bias: "neutral",
+        evidence: "no peer-reviewed support",
+      });
     }
 
-    // Planet retrograde flips
+    // Planet retrograde stations
     for (const p of positions) {
       if (p.retrograde !== prevRx[p.id]) {
         const isMerc = p.id === "mercury";
@@ -1257,27 +1237,21 @@ function scanForwardEvents(startDate: Date, days: number): OutlookEvent[] {
           isMerc
             ? (nowRx ? "mercury_rx_start" : "mercury_rx_end")
             : (nowRx ? "planet_rx_start" : "planet_rx_end");
-        const detail = isMerc
-          ? (nowRx
-              ? "Mercury stations retrograde. Station date itself is the high-probability reversal window (±3 days). Avoid initiating new tech/comm positions until direct."
-              : "Mercury stations direct. Reversal-watch window closes. Tech/NASDAQ often reverse trend around station dates.")
-          : (nowRx
-              ? `${p.label} stations retrograde in ${p.sign}. Watch sector associations.`
-              : `${p.label} stations direct in ${p.sign}. End of reversal-watch window.`);
         events.push({
           date: iso,
           dayOffset: d,
           type: baseType,
           headline: `${p.glyph} ${p.label} stations ${nowRx ? "RETROGRADE" : "DIRECT"}`,
-          detail,
+          detail: `${p.label} stations ${nowRx ? "retrograde" : "direct"} in ${p.sign}. Practitioners watch station dates for reversals. ${NO_SUPPORT}`,
           severity: isMerc ? "high" : "medium",
-          bias: "volatile",
+          bias: "neutral",
+          evidence: "no peer-reviewed support",
         });
       }
       prevRx[p.id] = p.retrograde;
     }
 
-    // Major sign ingresses (only for slower bodies — sun, mars, jupiter, saturn, outer)
+    // Major sign ingresses (only for slower bodies)
     const slowBodies: PlanetId[] = ["sun", "mars", "jupiter", "saturn", "uranus", "neptune", "pluto"];
     for (const id of slowBodies) {
       const p = byId[id];
@@ -1288,13 +1262,10 @@ function scanForwardEvents(startDate: Date, days: number): OutlookEvent[] {
           dayOffset: d,
           type: "ingress",
           headline: `${p.glyph} ${p.label} enters ${p.signGlyph} ${p.sign}`,
-          detail:
-            id === "sun" ? `Solar ingress into ${p.sign} shifts seasonal tone.`
-            : id === "jupiter" ? `Jupiter ingress — year-long sector/theme shift. Growth-sector rotation signal.`
-            : id === "saturn" ? `Saturn ingress — multi-year structural shift. Value/utility-sector implications.`
-            : `${p.label} ingress to ${p.sign}. Background regime shift.`,
+          detail: `${p.label} ingress to ${p.sign}. Astrological tradition reads ingresses as theme shifts. ${NO_SUPPORT}`,
           severity: id === "sun" ? "low" : id === "jupiter" || id === "saturn" ? "high" : "medium",
           bias: "neutral",
+          evidence: "no peer-reviewed support",
         });
         prevSigns[id] = p.sign;
       }
@@ -1312,23 +1283,11 @@ export interface Outlook {
   startDate: string;
   endDate: string;
   events: OutlookEvent[];
+  /** Deprecated: always "neutral". Cosmos makes no direction calls. */
   netBias: "bullish" | "bearish" | "mixed" | "neutral";
-  keyDates: string[];           // ISO dates of high-severity events
+  keyDates: string[];           // ISO dates of astronomically prominent events
   markdown: string;
-}
-
-function summarizeBias(events: OutlookEvent[]): Outlook["netBias"] {
-  let bull = 0;
-  let bear = 0;
-  for (const e of events) {
-    const w = e.severity === "high" ? 3 : e.severity === "medium" ? 2 : 1;
-    if (e.bias === "bullish") bull += w;
-    else if (e.bias === "bearish") bear += w;
-  }
-  if (bull === 0 && bear === 0) return "neutral";
-  if (bull > bear * 1.5) return "bullish";
-  if (bear > bull * 1.5) return "bearish";
-  return "mixed";
+  disclaimer: string;
 }
 
 function buildOutlookMarkdown(
@@ -1336,149 +1295,171 @@ function buildOutlookMarkdown(
   startDate: Date,
   endDate: Date,
   events: OutlookEvent[],
-  netBias: Outlook["netBias"],
   snapshot: CosmosSnapshot,
 ): string {
   const fmtDate = (d: Date) => d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
   const fmtRange = `${fmtDate(startDate)} → ${fmtDate(endDate)}`;
-  const label = horizon === "weekly" ? "7-DAY OUTLOOK" : "30-DAY OUTLOOK";
+  const label = horizon === "weekly" ? "7-DAY SKY CALENDAR" : "30-DAY SKY CALENDAR";
   const byId = Object.fromEntries(snapshot.positions.map((p) => [p.id, p]));
 
-  const biasLine =
-    netBias === "bullish" ? "Net astro bias: **BULLISH** — supportive lunar/bradley alignment. Use confluence with technicals."
-    : netBias === "bearish" ? "Net astro bias: **BEARISH** — cautionary lunar/bradley alignment. Favor defensive posture."
-    : netBias === "mixed" ? "Net astro bias: **MIXED** — offsetting bullish/bearish pulls. Range-bound probability elevated."
-    : "Net astro bias: **NEUTRAL** — no strong directional astro signals. Trade your system.";
-
   const openingContext = horizon === "weekly"
-    ? `Week opens with Moon in ${byId.moon.sign}, ${snapshot.lunarPhase.name} (${(snapshot.lunarPhase.illumination * 100).toFixed(0)}% illum). Sun in ${byId.sun.sign}. Bradley ${snapshot.bradley.value.toFixed(2)} ${snapshot.bradley.trend}. ${byId.mercury.retrograde ? "Mercury RETROGRADE — reversal-watch active." : "Mercury direct."}`
-    : `Month opens with Sun in ${byId.sun.sign}, Moon in ${byId.moon.sign} (${snapshot.lunarPhase.name}). Jupiter in ${byId.jupiter.sign}, Saturn in ${byId.saturn.sign} — the two slow outer anchors frame the macro regime. Bradley ${snapshot.bradley.value.toFixed(2)} ${snapshot.bradley.trend}.`;
+    ? `Week opens with Moon in ${byId.moon.sign}, ${snapshot.lunarPhase.name} (${(snapshot.lunarPhase.illumination * 100).toFixed(0)}% illum). Sun in ${byId.sun.sign}. Bradley ${snapshot.bradley.value.toFixed(2)} ${snapshot.bradley.trend}. Mercury ${byId.mercury.retrograde ? "retrograde" : "direct"}.`
+    : `Month opens with Sun in ${byId.sun.sign}, Moon in ${byId.moon.sign} (${snapshot.lunarPhase.name}). Jupiter in ${byId.jupiter.sign}, Saturn in ${byId.saturn.sign}. Bradley ${snapshot.bradley.value.toFixed(2)} ${snapshot.bradley.trend}.`;
 
   const lines: string[] = [
     `## ${label} — ${fmtRange}`,
     ``,
-    biasLine,
+    `*${COSMOS_DISCLAIMER}*`,
     ``,
     openingContext,
     ``,
   ];
 
-  // Group events by day for scannability
   const highEvents = events.filter((e) => e.severity === "high");
   const medEvents = events.filter((e) => e.severity === "medium");
 
   if (highEvents.length > 0) {
-    lines.push(`### KEY DATES (HIGH IMPACT)`);
+    lines.push(`### MAJOR SKY EVENTS`);
     for (const e of highEvents) {
       const dstr = new Date(e.date).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-      const biasEmoji = e.bias === "bullish" ? "↑" : e.bias === "bearish" ? "↓" : e.bias === "volatile" ? "↕" : "•";
-      lines.push(`- **${dstr}** ${biasEmoji} **${e.headline}** — ${e.detail}`);
+      lines.push(`- **${dstr}** **${e.headline}** [${e.evidence}] — ${e.detail}`);
     }
     lines.push(``);
   }
 
   if (medEvents.length > 0) {
-    lines.push(`### SECONDARY SIGNALS`);
+    lines.push(`### OTHER SKY EVENTS`);
     for (const e of medEvents) {
       const dstr = new Date(e.date).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-      const biasEmoji = e.bias === "bullish" ? "↑" : e.bias === "bearish" ? "↓" : e.bias === "volatile" ? "↕" : "•";
-      lines.push(`- ${dstr} ${biasEmoji} ${e.headline} — ${e.detail}`);
+      lines.push(`- ${dstr} ${e.headline} [${e.evidence}] — ${e.detail}`);
     }
     lines.push(``);
   }
 
   if (events.length === 0) {
     lines.push(`### EVENT CALENDAR`);
-    lines.push(`No major astro inflections in this window. Baseline regime — trade your system, no cosmic overrides.`);
+    lines.push(`No major sky events in this window.`);
     lines.push(``);
   }
 
-  // Trading disposition
-  lines.push(`### TRADING DISPOSITION`);
-  if (horizon === "weekly") {
-    if (netBias === "bullish") {
-      lines.push(`- Size longs normally on technical confirmation. Bradley + lunar alignment supportive.`);
-      lines.push(`- Use key dates above as entry windows, not exit triggers.`);
-    } else if (netBias === "bearish") {
-      lines.push(`- Tighten stops on longs. Consider put spreads around key dates (Full Moon / Bradley high).`);
-      lines.push(`- Fade rips into resistance if multiple bearish events cluster within 3 trading days.`);
-    } else if (netBias === "mixed") {
-      lines.push(`- Range-bound probability high. Iron condors / defined-risk neutral strategies favored.`);
-      lines.push(`- Wait for technical confirmation before committing direction.`);
-    } else {
-      lines.push(`- No astro override. Trade your system with normal sizing.`);
-    }
-  } else {
-    if (netBias === "bullish") {
-      lines.push(`- Swing-long bias: scale-in on pullbacks to technical support.`);
-      lines.push(`- Sector rotation: watch for themes suggested by any Jupiter/Saturn ingresses above.`);
-    } else if (netBias === "bearish") {
-      lines.push(`- Reduce gross exposure. Hedge via longer-dated puts (30-60 DTE).`);
-      lines.push(`- Rotate toward defensive sectors (XLU, XLP, cash).`);
-    } else if (netBias === "mixed") {
-      lines.push(`- Choppy macro window. Reduce position size by 25-33%. Shorter swing holding periods.`);
-    } else {
-      lines.push(`- Macro-neutral month. Focus on sector/stock alpha rather than beta.`);
-    }
-  }
-  lines.push(``);
   lines.push(`---`);
-  lines.push(`*Generated from VSOP87/Meeus forward projection. Events filtered for trading relevance. Confluence with technical + fundamentals required — not a standalone trade signal.*`);
+  lines.push(`*Forward projection from VSOP87/Meeus formulas. No direction call, no trade instruction: only lunar, geomagnetic and SAD effects have peer-reviewed studies, and those effects are small or disputed.*`);
 
   return lines.join("\n");
 }
 
-export function buildWeeklyOutlook(date: Date = new Date()): Outlook {
-  const events = scanForwardEvents(date, 7);
-  const endDate = new Date(date.getTime() + 7 * 86_400_000);
-  const netBias = summarizeBias(events);
+function buildOutlook(horizon: "weekly" | "monthly", date: Date): Outlook {
+  const days = horizon === "weekly" ? 7 : 30;
+  const events = scanForwardEvents(date, days);
+  const endDate = new Date(date.getTime() + days * 86_400_000);
   const snapshot = buildCosmosSnapshot(date);
   const keyDates = events.filter((e) => e.severity === "high").map((e) => e.date);
   return {
-    horizon: "weekly",
+    horizon,
     startDate: date.toISOString(),
     endDate: endDate.toISOString(),
     events,
-    netBias,
+    netBias: "neutral",
     keyDates,
-    markdown: buildOutlookMarkdown("weekly", date, endDate, events, netBias, snapshot),
+    markdown: buildOutlookMarkdown(horizon, date, endDate, events, snapshot),
+    disclaimer: COSMOS_DISCLAIMER,
   };
+}
+
+export function buildWeeklyOutlook(date: Date = new Date()): Outlook {
+  return buildOutlook("weekly", date);
 }
 
 export function buildMonthlyOutlook(date: Date = new Date()): Outlook {
-  const events = scanForwardEvents(date, 30);
-  const endDate = new Date(date.getTime() + 30 * 86_400_000);
-  const netBias = summarizeBias(events);
-  const snapshot = buildCosmosSnapshot(date);
-  const keyDates = events.filter((e) => e.severity === "high").map((e) => e.date);
-  return {
-    horizon: "monthly",
-    startDate: date.toISOString(),
-    endDate: endDate.toISOString(),
-    events,
-    netBias,
-    keyDates,
-    markdown: buildOutlookMarkdown("monthly", date, endDate, events, netBias, snapshot),
-  };
+  return buildOutlook("monthly", date);
 }
 
-// System prompt shipped to LLM enhancers when keys are present
-export const OUTLOOK_SYSTEM_PROMPT = `You are a senior market astrologer + macro strategist writing for a sophisticated trader. You receive a deterministic astro outlook covering either the next 7 days (weekly) or next 30 days (monthly), including every major astro event in the window.
+// System prompt for the optional LLM narrative (routes.ts, only when keys are
+// set). It must describe the sky calendar, never turn it into trades.
+export const OUTLOOK_SYSTEM_PROMPT = `You write a short, plain-English sky calendar for the Cosmos tab of a market terminal. You receive a deterministic list of sky events for the next 7 days (weekly) or 30 days (monthly), each tagged with its evidence level.
 
-Your job:
-1. Keep the factual astro dates + events EXACTLY as given — never invent or omit.
-2. Translate the raw events into a cohesive narrative (2-4 paragraphs) in the voice of a veteran trader, not a mystic. Reference the academic backing where relevant (Krivelyova/Robotti Fed Atlanta geomagnetic; Yuan/Zheng/Zhu U.Mich lunar; Kamstra SAD).
-3. Weight your confidence to the academically-backed signals (lunar, geomagnetic, SAD) and treat Bradley/planetary stations as secondary confluence.
-4. End with a concrete trade playbook for the window (sizing, sector tilts, hedging, specific setups to watch).
-5. Tone: direct, zero woo-woo, zero hedging filler. Use markdown. Keep it tight — no longer than 400 words.
+Rules:
+1. Start with this exact sentence: "For entertainment and context, not a trading signal."
+2. Keep every date and event exactly as given. Never invent or omit events.
+3. Do NOT give trade instructions, position sizes, sector tilts, hedges, entries, exits, price targets, or any bullish/bearish/neutral direction call. Do not say what the market will do.
+4. State the evidence plainly: only lunar (Yuan, Zheng & Zhu 2006: about 3-5% a year in aggregate, a basis point or two a day), geomagnetic (Krivelyova & Robotti 2003, a working paper) and SAD (Kamstra, Kramer & Levi 2003, disputed by Kelly & Meschke 2010) effects have studies behind them, and those effects are small. Retrogrades, Bradley, Gann, ingresses and natal charts have no peer-reviewed support.
+5. Plain markdown, no emojis, at most 250 words.`;
 
-Never give investment advice or guarantee returns. Frame everything as probabilistic tide-chart information.`;
+// ─── Deterministic output filter for the LLM narrative (finding 5.3/5.8) ─
+// The no-trade-instruction rule above is only a prompt. This filter is the
+// enforcement, and it works as an ALLOW-LIST of sky talk: a sentence of the
+// model's text survives only if it mentions no market, asset or trading
+// noun (stocks, equities, market, SPX/SPY/S&P, sectors, tech, names, risk,
+// capital, traders, positions, volatility, ...), no price level (a 3-5 digit
+// number that is not a year or an angle), no trade/size/hedge/options verb
+// and no direction call. Everything else is dropped before the text reaches
+// the page, and the disclaimer is forced to be the first line. A deny-list
+// of instruction phrasings missed paraphrases ("Tech names tend to wobble
+// around Mercury stations"); the allow-list does not need to anticipate
+// them. Dropping an innocent sentence costs nothing; letting one market
+// sentence through is the failure we are guarding against.
+
+export const COSMOS_LLM_DISCLAIMER = "For entertainment and context, not a trading signal.";
+
+const TRADE_INSTRUCTION_PATTERNS: RegExp[] = [
+  // Market, asset and trading nouns: any mention makes the sentence market talk.
+  /\b(stocks?|shares?|equit(y|ies)|markets?|market-?wide|bourse|wall street|spx|spy|qqq|s\s*&\s*p|sp500|nasdaq|dow|russell|index(es)?|indices|futures?|etfs?|sectors?|tech|technology|semis?|semiconductors?|names|tickers?|risk|risky|capital|traders?|trading|trades?|investors?|investing|investments?|portfolios?|holdings?|positions?|exposure|allocation|leverage|margin|volatility|vix|vol|implied|premium|premiums|options?|calls?|puts?|strikes?|expir(y|ies|ation)|0dte|spreads?|straddles?|strangles?|condors?|butterfl(y|ies)|collars?|hedg\w*|bonds?|yields?|treasur(y|ies)|rates?|fed|fomc|dollar|usd|currenc(y|ies)|fx|gold|oil|crude|commodit(y|ies)|bitcoin|btc|crypto\w*|earnings|valuations?|prices?|priced|pricing|levels?|support (level|zone|line)s?|resistance|breakout|breakdown|tape|bids?|offers?|liquidity|flows?|buyers?|sellers?|bulls?|bears?|bullish|bearish|rally|rallies|sell-?offs?|crash(es)?|corrections?|drawdowns?|returns?|performance|outperform\w*|underperform\w*|profits?|loss(es)?|gains?|basis points?|bps)\b/i,
+  // Orders, sizing and imperatives addressed to the reader.
+  /\b(buy|buying|sell|selling|short|shorting|long|longs|go long|go short|enter|entering|exit|exiting|take profits?|stop[- ]?loss(es)?|trailing stop|price targets?|size|sizing|sized|trim|trimming|scale (in|out)|load up|accumulate|de-?risk|re-?risk|rebalanc\w*|rotate|lighten|lightening|reduce|reducing|add to|keep powder dry|stand aside|step aside|sit out|wait for|be careful|caution|cautious|defensive|aggressive|protect|protection|consider|favou?r\w*|avoid|lean)\b/i,
+  // Money and price levels: "$", a 3-5 digit number (with optional thousands
+  // separator or decimals) that is not a year (19xx/20xx) and not an angle
+  // or a percentage of illumination.
+  /\$\s?\d/,
+  /(?<![\d.,])(?!(?:19|20)\d\d(?![\d,.]))\d{1,2},\d{3}(?:\.\d+)?(?![\d°%])|(?<![\d.,])(?!(?:19|20)\d\d(?![\d,.]))\d{3,5}(?:\.\d+)?(?![\d,]|\s?(?:°|degrees?|deg\b|%|percent|km|miles?|nT|years?|days?|hours?|minutes?))/i,
+  // Forecasts of what anything will do.
+  /\b(will|should|could|may|might|likely to|expected to|poised to|set to|tends? to|tend to)\b[^.!?]*\b(rise|rises|fall|falls|climb|drop|decline|slide|gain|lose|move (higher|lower|up|down)|go (higher|lower|up|down)|wobble|weaken|strengthen|pop|dip|sink|soar|surge|jump|tumble|chop)\b/i,
+];
+
+export function isTradeInstruction(sentence: string): boolean {
+  return TRADE_INSTRUCTION_PATTERNS.some((re) => re.test(sentence));
+}
+
+/** Split a line into sentences (keeps markdown bullets/headings with their first sentence). */
+function splitSentences(line: string): string[] {
+  const parts = line.split(/(?<=[.!?])\s+(?=[*_"'(\[]*[A-Z0-9])/);
+  return parts.filter((p) => p.length > 0);
+}
+
+/**
+ * Drop every sentence that reads as a trade, size, hedge or direction
+ * instruction; force the disclaimer as the first line. Pure.
+ */
+export function filterTradeInstructions(text: string): { text: string; dropped: number; droppedSentences: string[] } {
+  const droppedSentences: string[] = [];
+  const outLines: string[] = [];
+  for (const rawLine of String(text ?? "").split(/\r?\n/)) {
+    if (rawLine.trim() === "") { outLines.push(""); continue; }
+    if (rawLine.includes(COSMOS_LLM_DISCLAIMER)) continue; // re-added below, once
+    const prefix = rawLine.match(/^\s*(#{1,6}\s+|[-*+]\s+|\d+\.\s+|>\s*)?/)?.[0] ?? "";
+    const body = rawLine.slice(prefix.length);
+    const kept = splitSentences(body).filter((sent) => {
+      if (isTradeInstruction(sent)) { droppedSentences.push(sent.trim()); return false; }
+      return true;
+    });
+    if (kept.length) outLines.push(prefix + kept.join(" "));
+  }
+  // collapse runs of blank lines left by dropped bullets
+  const collapsed: string[] = [];
+  for (const l of outLines) if (!(l === "" && (collapsed.length === 0 || collapsed[collapsed.length - 1] === ""))) collapsed.push(l);
+  while (collapsed.length && collapsed[collapsed.length - 1] === "") collapsed.pop();
+  return {
+    text: [COSMOS_LLM_DISCLAIMER, "", ...collapsed].join("\n").trim(),
+    dropped: droppedSentences.length,
+    droppedSentences,
+  };
+}
 
 // ─── NOAA Kp-index (geomagnetic storm) fetcher ──────────────────────────────
 // Pulls from NOAA SWPC free endpoints (no key). Cached 60min.
 // Kp 0-4 = quiet, 5 = G1 storm, 6 = G2, 7 = G3, 8 = G4, 9 = G5.
-// Per Krivelyova & Robotti (FRB Atlanta 2003), Kp ≥ 5 has a statistically
-// significant NEGATIVE effect on the FOLLOWING week's stock returns.
+// Krivelyova & Robotti (FRB Atlanta WP 2003-5) associate unusually high
+// geomagnetic activity with lower returns the following week (one working
+// paper, small effect). Shown as context only; never an alert.
 
 export interface NoaaKpPoint {
   time: string;        // ISO timestamp
@@ -1576,10 +1557,11 @@ export async function fetchNoaaKp(): Promise<NoaaKpSnapshot> {
   return result;
 }
 
-// ─── Taxonomy (intel brief static data) ─────────────────────────────────────
-// Sourced from trading_astrology_intel_brief.html (Pesavento/Lee/Bucholtz/
-// Fed Atlanta/U Mich references). This is the reference taxonomy; the live
-// engine above lights up whichever entries are firing right now.
+// ─── Taxonomy (reference data) ──────────────────────────────────────────────
+// Reference list of sky events that financial astrology talks about. Each
+// entry says what is claimed and what the evidence is. No entry contains a
+// trade instruction (review finding 5.3). `weight` is a historical field:
+// it no longer means signal strength; `evidence` is what the UI shows.
 
 export interface TaxonomyEntry {
   id: string;
@@ -1588,53 +1570,54 @@ export interface TaxonomyEntry {
   tags: string[];
   description: string;
   weight: "HIGH" | "HIGH_ACADEMIC" | "MEDIUM" | "MACRO" | "FILTER" | "PROPRIETARY" | "ESOTERIC";
+  evidence: CosmosEvidence;
 }
 
 export const TAXONOMY: TaxonomyEntry[] = [
   // Planetary
-  { id: "mercury_rx", name: "Mercury Retrograde", category: "planetary", tags: ["~3x/yr", "21 days"], weight: "HIGH",
-    description: "Historically correlates with increased confusion, contract delays, reversals in communication/tech sectors. Traders watch for SPX tops/bottoms within ±3 days of station (Rx/Direct turns). Strong effect in NASDAQ/tech plays." },
-  { id: "jupiter_saturn", name: "Jupiter–Saturn Cycle", category: "planetary", tags: ["20-yr", "Gann Master"], weight: "MACRO",
-    description: "W.D. Gann's 'master cycle.' Conjunctions mark generational bull/bear transitions. 2020 Capricorn conjunction aligned with COVID crash/recovery inflection. Used for macro regime framing, not short-term." },
-  { id: "venus_elongation", name: "Venus Elongation", category: "planetary", tags: ["Greatest elongation"], weight: "MEDIUM",
-    description: "Venus governs money/values in traditional astrology. Maximum elongation dates (E/W) appear repeatedly in Gann's price-time work as turning points in commodities (gold, copper, soft commodities)." },
-  { id: "mars_station", name: "Mars Stations", category: "planetary", tags: ["~2yr cycle"], weight: "MEDIUM",
-    description: "Mars = aggression/energy. Retrograde stations historically appear near energy sector volatility spikes and VIX extremes. Watch XLE, crude oil around Mars Rx ingress dates." },
-  { id: "pluto_ingress", name: "Pluto Ingress", category: "planetary", tags: ["Generational"], weight: "MACRO",
-    description: "Pluto entered Aquarius 2024 — last time was 1778–1798 (industrial revolution, US founding). Macro indicator only. Used by institutional astrologers to frame decade-long structural shifts (AI, energy transition)." },
+  { id: "mercury_rx", name: "Mercury Retrograde", category: "planetary", tags: ["~3x/yr", "~3 weeks"], weight: "ESOTERIC", evidence: "no peer-reviewed support",
+    description: "Mercury appears to move backward from Earth for about three weeks, about three times a year. Practitioners claim turning points cluster within a few days of its stations. No peer-reviewed study supports a market effect." },
+  { id: "jupiter_saturn", name: "Jupiter–Saturn Cycle", category: "planetary", tags: ["~20-yr"], weight: "ESOTERIC", evidence: "no peer-reviewed support",
+    description: "W.D. Gann's 'master cycle': conjunctions about every 20 years. Practitioner lore; with one event per 20 years there is no testable sample." },
+  { id: "venus_elongation", name: "Venus Elongation", category: "planetary", tags: ["Greatest elongation"], weight: "ESOTERIC", evidence: "no peer-reviewed support",
+    description: "Venus at its greatest angular distance from the Sun (about 46°). Appears in Gann-style price-time work as a turning date for commodities. Practitioner lore; untested." },
+  { id: "mars_station", name: "Mars Stations", category: "planetary", tags: ["~2-yr cycle"], weight: "ESOTERIC", evidence: "no peer-reviewed support",
+    description: "Mars appears to stop and reverse about every two years. Tradition links its stations to energy-market volatility. Practitioner lore; untested." },
+  { id: "pluto_ingress", name: "Pluto Ingress", category: "planetary", tags: ["Generational"], weight: "ESOTERIC", evidence: "no peer-reviewed support",
+    description: "Pluto moved into Aquarius in 2023-2024 (previously about 1778-1798). Used for generational narratives only; no testable market link." },
 
   // Lunar
-  { id: "new_moon", name: "New Moon", category: "lunar", tags: ["monthly", "Bullish bias"], weight: "HIGH_ACADEMIC",
-    description: "University of Michigan study (Yuan, Zheng, Zhu) across 48 countries: stock returns are measurably higher in the days around New Moon vs Full Moon. Effect strongest in emerging markets. 15-day window applies." },
-  { id: "full_moon", name: "Full Moon", category: "lunar", tags: ["monthly", "Bearish bias"], weight: "HIGH_ACADEMIC",
-    description: "Returns statistically lower in Full Moon window globally. Effect linked to investor mood/risk aversion shift. RBS tested a lunar trading system that outperformed buy-and-hold benchmark. Use as short-bias filter only." },
-  { id: "lunar_eclipse", name: "Lunar Eclipses", category: "lunar", tags: ["2–3/yr"], weight: "MEDIUM",
-    description: "Historically cluster near volatility expansion. Eclipse path matters — markets tied to eclipse shadow geography can see sector-specific effects. Often precede trend reversals by 1–3 weeks rather than same-day." },
-  { id: "moon_sign", name: "Moon Sign Transit", category: "lunar", tags: ["2.5 days each"], weight: "FILTER",
-    description: "Moon in Aries/Scorpio/Capricorn historically correlates with more decisive price action. Moon in Libra/Pisces: indecision/range days. Used in intraday models to filter entry bias, not as standalone signal." },
+  { id: "new_moon", name: "New Moon", category: "lunar", tags: ["monthly", "small effect"], weight: "HIGH_ACADEMIC", evidence: "peer-reviewed, small effect",
+    description: "Yuan, Zheng & Zhu (2006, Journal of Empirical Finance, 48 countries): returns around new moons exceeded those around full moons by about 3-5% a year in aggregate, roughly 1-2 basis points a day. Dichev & Janes (2003) report a similar US pattern. Small next to daily volatility, and not stable in every later sample." },
+  { id: "full_moon", name: "Full Moon", category: "lunar", tags: ["monthly", "small effect"], weight: "HIGH_ACADEMIC", evidence: "peer-reviewed, small effect",
+    description: "Same studies as New Moon: returns around full moons were lower on average, by about 3-5% a year in aggregate (a basis point or two a day). An average across many years and countries, not a forecast for any one day." },
+  { id: "lunar_eclipse", name: "Lunar Eclipses", category: "lunar", tags: ["2–3/yr"], weight: "ESOTERIC", evidence: "no peer-reviewed support",
+    description: "Practitioners claim eclipses precede volatility or reversals. No peer-reviewed support. Eclipse dates are not computed here." },
+  { id: "moon_sign", name: "Moon Sign Transit", category: "lunar", tags: ["~2.5 days each"], weight: "ESOTERIC", evidence: "no peer-reviewed support",
+    description: "The Moon changes zodiac sign about every 2.5 days. Tradition calls some signs 'decisive' and others 'indecisive'. No peer-reviewed support." },
 
   // Solar & Geomagnetic
-  { id: "solar_eclipse", name: "Solar Eclipse", category: "solar_geomag", tags: ["2/yr avg"], weight: "MEDIUM",
-    description: "Strong macro sentiment reset signal. Markets near eclipse path show increased volatility. Annular solar eclipses (ring of fire) have historically aligned with SPX trend reversals within 2–6 weeks." },
-  { id: "geomagnetic_storm", name: "Geomagnetic Storms", category: "solar_geomag", tags: ["~35 days/yr", "Bearish"], weight: "HIGH_ACADEMIC",
-    description: "Fed Atlanta Working Paper (Krivelyova & Robotti, 2003): high geomagnetic activity has a negative, statistically significant impact on the FOLLOWING week's stock returns across all US indices. Predictable in advance via NOAA Kp index." },
-  { id: "solar_max", name: "Solar Max / Sunspot Cycles", category: "solar_geomag", tags: ["11-yr cycle"], weight: "MEDIUM",
-    description: "80% of major historical market events (1749–1926) occurred near solar maxima. Correlation with DJIA and GDP documented. Currently in Solar Cycle 25 — active peak phase 2024–2026. Watch geomagnetic storm frequency spike." },
-  { id: "sad_seasonal", name: "Seasonal Affective Disorder", category: "solar_geomag", tags: ["SAD Effect", "Oct–Mar"], weight: "HIGH_ACADEMIC",
-    description: "Fed Atlanta (Kamstra, Kramer, Levi) documented the SAD stock market cycle: returns systematically lower as nights lengthen (Sep–Dec), then recover. The strongest of all mood-proxy variables in global multi-market testing." },
+  { id: "solar_eclipse", name: "Solar Eclipse", category: "solar_geomag", tags: ["~2/yr"], weight: "ESOTERIC", evidence: "no peer-reviewed support",
+    description: "Practitioners claim solar eclipses precede trend changes. No peer-reviewed support. Eclipse dates are not computed here." },
+  { id: "geomagnetic_storm", name: "Geomagnetic Storms", category: "solar_geomag", tags: ["NOAA Kp ≥ 5", "small effect"], weight: "HIGH_ACADEMIC", evidence: "working paper, small effect",
+    description: "Krivelyova & Robotti (Federal Reserve Bank of Atlanta Working Paper 2003-5): unusually high geomagnetic activity in the prior week was associated with lower returns on the world index and most international indices in their sample; they attribute it to mood misattribution. One working-paper result, not tested out of sample here. Kp comes live from NOAA." },
+  { id: "solar_max", name: "Solar Max / Sunspot Cycles", category: "solar_geomag", tags: ["~11-yr cycle"], weight: "ESOTERIC", evidence: "no peer-reviewed support",
+    description: "Nineteenth-century writers (for example W.S. Jevons) linked sunspot cycles to commercial crises. Modern evidence does not support a tradable market link." },
+  { id: "sad_seasonal", name: "Seasonal Affective Disorder", category: "solar_geomag", tags: ["SAD", "Sep–Dec", "disputed"], weight: "HIGH_ACADEMIC", evidence: "peer-reviewed, disputed",
+    description: "Kamstra, Kramer & Levi (2003, American Economic Review): returns were lower in autumn as nights lengthen and higher after the winter solstice. Kelly & Meschke (2010, Journal of Banking & Finance) find the effect is mechanically driven by the overlapping dummy-variable specification and turn-of-year returns. Disputed." },
 
   // Time Cycle & Gann
-  { id: "node_cycle", name: "18.6-Year Node Cycle", category: "cycle_gann", tags: ["Lunar Node"], weight: "MACRO",
-    description: "North/South Node axis movements — Gann's long-cycle framework. Node reversals align with secular bull/bear transitions. Current: North Node exited Taurus (2022–2023), entered Aries — historically precedes volatile commodity + equity cycles." },
-  { id: "gann_sq9", name: "Gann Square of Nine", category: "cycle_gann", tags: ["Price levels"], weight: "HIGH",
-    description: "Mathematical time-price mapping using a spiral number grid. Gann angles (45°, 90°, 120°) applied to price highs/lows yield future resistance and time inflection targets. Used actively by institutional quant shops for S/R mapping." },
-  { id: "dtt_goldbach", name: "Fibonacci + Prime Number Nodes", category: "cycle_gann", tags: ["DTT / Goldbach"], weight: "PROPRIETARY",
-    description: "DTT framework (Digital Time Theory) integrates prime-count candle intervals with session-model overlays. The Goldbach conjecture price-level overlay adds a second independent mathematical filter — strongest when both agree." },
-  { id: "helio_kabbalah", name: "Heliocentric Kabbalah Math", category: "cycle_gann", tags: ["Esoteric"], weight: "ESOTERIC",
-    description: "Sun-centered (heliocentric) planetary positioning used differently than geocentric charts. Kabbalah interval timing adds numerological cycle windows. Used in Bucholtz's almanac work for NYSE/NASDAQ date clustering." },
+  { id: "node_cycle", name: "18.6-Year Node Cycle", category: "cycle_gann", tags: ["Lunar Node"], weight: "ESOTERIC", evidence: "no peer-reviewed support",
+    description: "The Moon's orbital nodes circle the zodiac every 18.6 years (astronomical fact). McWhirter and Gann tied node positions to economic cycles. Practitioner lore; with so few cycles there is no testable sample." },
+  { id: "gann_sq9", name: "Gann Square of Nine", category: "cycle_gann", tags: ["Price levels"], weight: "ESOTERIC", evidence: "no peer-reviewed support",
+    description: "Gann's spiral number grid, used by practitioners to map price and time levels. No peer-reviewed support." },
+  { id: "dtt_goldbach", name: "Fibonacci + Prime Number Nodes", category: "cycle_gann", tags: ["DTT / Goldbach"], weight: "ESOTERIC", evidence: "no peer-reviewed support",
+    description: "Practitioner frameworks that time candles by prime counts and overlay number-theory price levels. No peer-reviewed support." },
+  { id: "helio_kabbalah", name: "Heliocentric Kabbalah Math", category: "cycle_gann", tags: ["Esoteric"], weight: "ESOTERIC", evidence: "no peer-reviewed support",
+    description: "Sun-centered planetary positions combined with numerological interval timing (used in Bucholtz's almanacs). Esoteric; no peer-reviewed support." },
 ];
 
-// Books & Sources from the intel brief
+// Books: practitioner literature. None is peer-reviewed.
 export interface BookEntry {
   title: string;
   authors: string;
@@ -1642,69 +1625,73 @@ export interface BookEntry {
   tier: 1 | 2 | 3;
   tags: string[];
   summary: string;
-  score?: number; // 0-100 for tier 1 bar
+  score?: number; // removed: no quality score is implied
 }
 
 export const BOOKS: BookEntry[] = [
   { title: "A Trader's Guide to Financial Astrology", authors: "Larry Pesavento & Shane Smoleny", publisher: "Wiley Trading Series · 2014", tier: 1,
-    tags: ["Wiley", "Statistical studies", "100yr data", "Lunar cycles", "Best entry point"], score: 90,
-    summary: "The single most academically grounded retail text on the subject. Pesavento is a 40-year veteran trader. Includes 100 years of historical correlations, 5-year planetary/lunar forecast data, and statistical studies on lunar cycle effects. Endorsed by Richard Mogey (Foundation for the Study of Cycles). The statistical lunar cycle section alone is worth the read — it's what bridges the woo to the data." },
+    tags: ["Wiley", "Practitioner", "Lunar cycles"],
+    summary: "Practitioner text by a long-time trader with historical tables and lunar-cycle studies. Not peer-reviewed; the historical correlations are in-sample." },
   { title: "Timing Solutions for Swing Traders", authors: "Robert Lee", publisher: "Wiley Trading Series · 2012", tier: 1,
-    tags: ["Wiley", "Swing trading", "TA integration", "Timing cycles"], score: 82,
-    summary: "Bridges technical analysis with financial astrology timing cycles specifically for swing trading. Focuses on entry/exit precision using both TA and planetary cycle confluence. Less esoteric than most — structured for active traders who want a systematic framework, not spiritual theory." },
-  { title: "Financial Astrology Almanac (Annual Series)", authors: "M.G. Bucholtz (B.Sc., MBA, M.Sc.)", publisher: "InvestingSuccess.ca · Annual", tier: 2,
-    tags: ["Date calendar", "NYSE/NASDAQ", "Annual updates"],
-    summary: "11-book annual almanac series. Covers: New Moon cycles for NYSE/NASDAQ, Venus movements, Mercury action, conjunctions, elongations, planetary declinations, Kabbalah intervals, Quantum Price Lines, and the Weston Model. Use current year's issue as a date-calendar overlay on your trading journal." },
+    tags: ["Wiley", "Practitioner", "Timing cycles"],
+    summary: "Combines technical analysis with planetary timing cycles for swing trading. Practitioner framework; not peer-reviewed." },
+  { title: "Financial Astrology Almanac (Annual Series)", authors: "M.G. Bucholtz", publisher: "InvestingSuccess.ca · Annual", tier: 2,
+    tags: ["Date calendar", "Annual"],
+    summary: "Annual almanac of New Moon cycles, Venus and Mercury events, conjunctions, declinations and Kabbalah intervals for NYSE/NASDAQ dates. Practitioner material." },
   { title: "Trading In Sync With Commodities", authors: "Susan Abbott Gidel", publisher: "susangidel.com · 2020s", tier: 2,
-    tags: ["Commodities", "Crude Oil", "Gold"],
-    summary: "Former CBOT wire reporter, 40yr commodity industry career. Covers: S&P 500, Gold, Soybeans, Crude Oil, Euro FX, 10-yr T-Notes vs astrological transits. Particularly strong on first-trade data and exchange horoscopes. The 'Red Letter Trading Days' newsletter is the operational version of her research." },
+    tags: ["Commodities"],
+    summary: "Compares S&P 500, gold, soybeans, crude, Euro FX and T-notes with astrological transits and first-trade charts. Practitioner material." },
   { title: "The Law of Vibration", authors: "William D. Gann (compiled)", publisher: "Various publications", tier: 2,
-    tags: ["Original source", "Square of 9", "Gann angles"],
-    summary: "The source code. Gann's original work on price-time relationships, planetary angles, and Square of Nine. Dense and intentionally cryptic — he didn't want to give it all away. Cross-reference with the W.D. Gann Master Stock Market Course for the decoded applied version. J.P. Morgan was a documented user of these methods." },
+    tags: ["Original source", "Square of 9"],
+    summary: "Gann's own writing on price-time relationships, planetary angles and the Square of Nine. Deliberately cryptic; historical interest." },
   { title: "Profitable Financial Market Trading — Ephemeris Alarm Series", authors: "Khit Wong", publisher: "Multiple volumes · Crypto + Equities", tier: 2,
-    tags: ["Crypto", "Intraday", "Minute-level"],
-    summary: "One of the few modern texts applying financial astrology down to the minute-level using 'Ephemeris Alarm' software. Covers crypto (BTC/ETH) specifically — useful for the 24/7 market where lunar/planetary cycles may operate without weekend gaps distorting the signal." },
+    tags: ["Crypto", "Intraday"],
+    summary: "Applies financial astrology to minute-level timing, including BTC and ETH. Practitioner material." },
   { title: "McWhirter Theory of Stock Market Forecasting", authors: "Louise McWhirter", publisher: "1977 reprint · Original ~1930s", tier: 3,
     tags: ["Lunar Node", "18.6yr cycle"],
-    summary: "The mysterious trader Gann and J.P. Morgan referenced. Her method uses Lunar Node position through the zodiac to forecast economic cycles. The 18.6-year node return maps cleanly to historical market cycles. Foundational for macro framing." },
-  { title: "Financial Astrology (Original)", authors: "David Williams", publisher: "1984 · Out of print, searchable PDF", tier: 3,
+    summary: "Uses the Moon's node position through the zodiac to describe economic cycles. Historical practitioner text." },
+  { title: "Financial Astrology (Original)", authors: "David Williams", publisher: "1984 · Out of print", tier: 3,
     tags: ["Jupiter-Saturn", "Sunspots", "DJIA"],
-    summary: "Documented Jupiter-Saturn cycles, sunspot correlations, and planetary aspects vs DJIA. One of the first rigorous historical back-studies. Data tables are still referenced in modern work. Find via archive.org or ISFM (International Society for Financial Astrology)." },
+    summary: "Early historical comparison of Jupiter-Saturn cycles, sunspots and planetary aspects with the DJIA. In-sample historical tables." },
 ];
 
 export interface AcademicPaper {
   title: string;
   source: string;
   finding: string;
-  badge: "FED ATL" | "U MICH" | "SAGE/TGARCH" | "APPLIED ECON";
+  badge: "FED ATL" | "U MICH" | "SAGE/TGARCH" | "APPLIED ECON" | "AER" | "JBF";
   category: "fed" | "university";
 }
 
 export const ACADEMIC_PAPERS: AcademicPaper[] = [
   { category: "fed", badge: "FED ATL",
     title: "Playing the Field: Geomagnetic Storms and International Stock Markets",
-    source: "Krivelyova & Robotti · Federal Reserve Bank of Atlanta · Working Paper 2003-5b",
-    finding: "High geomagnetic activity → statistically significant NEGATIVE effect on the following week's stock returns for ALL U.S. indices. Mechanism: mood misattribution causing elevated risk aversion. Effect robust across 35+ countries after controlling for SAD, seasonality, and other environmental variables." },
-  { category: "fed", badge: "FED ATL",
+    source: "Krivelyova & Robotti · Federal Reserve Bank of Atlanta · Working Paper 2003-5",
+    finding: "Unusually high geomagnetic activity in the prior week was associated with lower returns on the world index and most international indices in the sample. The authors link it to mood misattribution. A working paper; not tested out of sample here." },
+  { category: "fed", badge: "AER",
     title: "Winter Blues: A SAD Stock Market Cycle",
-    source: "Kamstra, Kramer & Levi · Federal Reserve Bank of Atlanta · Working Paper 2002-13",
-    finding: "Seasonal Affective Disorder (SAD) drives a systematic stock market cycle. Returns lower as daylight decreases Sep–Dec, recover Jan–Apr. Effect is the strongest and most globally consistent of all mood-proxy variables tested. Predates and predicts the 'sell in May' anomaly." },
+    source: "Kamstra, Kramer & Levi · American Economic Review 93(1), 2003 (FRB Atlanta WP 2002-13)",
+    finding: "Returns were lower in autumn as daylight shortens and higher after the winter solstice, across several countries. Disputed: see Kelly & Meschke (2010)." },
+  { category: "university", badge: "JBF",
+    title: "Sentiment and Stock Returns: The SAD Anomaly Revisited",
+    source: "Kelly & Meschke · Journal of Banking & Finance 34(6), 2010",
+    finding: "The SAD effect does not match the seasonal pattern of depression or its cross-country prevalence, and is mechanically driven by the overlapping dummy-variable specification and turn-of-year returns." },
   { category: "university", badge: "U MICH",
     title: "Are Investors Moonstruck? Lunar Phases and Stock Returns",
-    source: "Yuan, Zheng & Zhu · University of Michigan · Journal of Finance (MSCI dataset, 48 countries)",
-    finding: "Stock returns peak at New Moon and trough at Full Moon. Price cycle lags: valuations peak 1 week after New Moon, bottom 1 week after Full Moon. Effect present across developed and emerging markets. Royal Bank of Scotland's lunar trading system outperformed benchmark." },
+    source: "Yuan, Zheng & Zhu · Journal of Empirical Finance 13(1), 2006 · 48 countries",
+    finding: "Returns were lower around full moons than around new moons, by about 3-5% a year for global portfolios. Not explained by volatility, volume, announcements or other calendar effects. An aggregate average, not a daily forecast." },
   { category: "university", badge: "U MICH",
     title: "Lunar Cycle Effects in Stock Returns",
-    source: "Dichev & Janes · University of Michigan · 2001 (referenced in 40+ subsequent papers)",
-    finding: "One of the seminal papers establishing the lunar effect. Documented return differential between New Moon and Full Moon windows. Subsequently replicated and extended across international markets. The most-cited foundational paper in the sub-field." },
+    source: "Dichev & Janes · Journal of Private Equity, 2003 (working paper 2001)",
+    finding: "Returns in the 15 days around new moons were about double those in the 15 days around full moons, in about 100 years of US index data and in most of 24 other countries." },
   { category: "university", badge: "SAGE/TGARCH",
     title: "Moon Phases, Mood and Stock Market Returns (59 Markets)",
-    source: "Floros & Tan · SAGE Journals · 2013 · TGARCH Model",
-    finding: "59-country study using TGARCH models. Significant Full Moon effects in 6 markets, New Moon effects in 8 markets. Lunar effects interact with Monday effect and January effect — accounting for calendar anomalies strengthens the signal." },
+    source: "Floros & Tan · 2013 · TGARCH model",
+    finding: "Significant full-moon effects in 6 of 59 markets and new-moon effects in 8, i.e. absent in most markets; the estimates interact with Monday and January effects." },
   { category: "university", badge: "APPLIED ECON",
     title: "Lunar Seasonality in Precious Metal Returns",
     source: "Brian Lucey · Applied Economics Letters · 2010",
-    finding: "Gold and silver show lunar cycle patterns consistent with equity markets. Lunar effects on metals may be amplified due to smaller, more sentiment-driven market. Directly applicable to GLD, SLV, /GC options plays." },
+    finding: "Reports lunar-cycle patterns in gold and silver returns similar to those found in equities. Historical, in-sample." },
 ];
 
 export interface EdgeRule {
@@ -1714,27 +1701,27 @@ export interface EdgeRule {
   body: string; // markdown
 }
 
+// Historical name kept for the API ("rules"). These are reading rules for a
+// context tab, not trading rules.
 export const EDGE_RULES: EdgeRule[] = [
-  { id: "rule_1", color: "gold", title: "RULE 1 — NEVER USE A SINGLE ASTROLOGICAL SIGNAL ALONE",
-    body: "Every individual signal has noise. The academic literature confirms effects but they're probabilistic, not deterministic. Your edge multiplies when 2–3 signals align with a technical setup already valid on its own. Treat astrology as a filter layer above your existing SPX structure analysis — not as a trigger." },
-  { id: "rule_2", color: "blue", title: "RULE 2 — HIGHEST PROBABILITY SETUPS (3-LAYER CONFLUENCE)",
-    body: "**Layer 1 (Technical):** Valid price structure — bear flag, falling wedge, supply/demand zone, EOD institutional flow.\n\n**Layer 2 (Astro cycle):** New/Full Moon window, Mercury station, geomagnetic storm flag, SAD seasonal bias.\n\n**Layer 3 (Quantitative):** Your DTT node (DTT-2 at 10:00 or DTT-4 at 11:00) + Goldbach price-level alignment.\n\nWhen all three layers stack, size up. When only one is present, size down or skip." },
-  { id: "rule_3", color: "green", title: "RULE 3 — THE ACTIONABLE SIGNALS (STATISTICALLY BACKED)",
-    body: "**Geomagnetic Storm (GMS):** Check NOAA Kp index nightly. Kp ≥ 5 = G1 storm. Following week is historically bearish across all U.S. indices. Load put bias or reduce long exposure for the subsequent 5 sessions.\n\n**New Moon Window (Days -2 to +5):** Lean long bias, especially if SAD season (Sep–Apr) is winding down. Combine with SPX technical uptrend confirmation.\n\n**Full Moon Window (Days -2 to +5):** Short bias filter — avoid initiating new longs, tighten stops on existing winners.\n\n**SAD Seasonal:** Sep 22 → Dec 21 = systematic underperformance window. Jan → Apr = recovery bias. Adjust long/short portfolio lean accordingly." },
-  { id: "rule_4", color: "gold", title: "RULE 4 — MERCURY RETROGRADE PROTOCOL",
-    body: "Station dates (Rx turn and Direct turn) are the high-probability windows, not the entire retrograde period. Mark ±3 calendar days around each station as a 'reversal watch zone.' Avoid initiating new directional trades on the station day itself. Best used as a 'don't fight the reversal' day — if price is already showing a reversal signal on station day, the astrology is confirming, not initiating." },
-  { id: "rule_5", color: "blue", title: "RULE 5 — BUILDING YOUR ASTRO TRADING CALENDAR",
-    body: "1. Pull the current year's Bucholtz almanac dates for NYSE/NASDAQ.\n2. Mark all New/Full Moon dates (+/- 5 days).\n3. Mark Mercury, Venus, and Mars station dates (Rx and Direct turns).\n4. Mark solar/lunar eclipse dates (+/- 14 days as volatility expansion zones).\n5. Overlay NOAA Kp index forecast weekly.\n6. Cross-reference your DTT node schedule for the same dates.\n\nDates where 3+ events cluster within a 5-day window are your highest-priority trading weeks." },
-  { id: "rule_6", color: "green", title: "RULE 6 — SECTOR MAPPING BY PLANET",
-    body: "**Mercury → Tech/Communication:** Rx = NASDAQ drag, semiconductor weakness. Watch XLK.\n\n**Mars → Energy/Military:** Station dates = XLE volatility, crude oil turns. Aligns with existing XLE/DXY correlation work.\n\n**Venus → Financials/Consumer Discretionary:** Elongation dates = XLF/XLY inflection potential.\n\n**Jupiter → Growth/Expansion:** Ingress into new sign = bull sector rotation trigger. Jupiter in Gemini (2024–25) = communication/AI sector tailwind.\n\n**Saturn → Utilities/Real Estate:** Conjunctions and stations = REIT/utility sector compression signal." },
+  { id: "rule_1", color: "gold", title: "RULE 1 — CONTEXT, NOT A SIGNAL",
+    body: "Nothing on this tab is a trade instruction, a direction call, a position size or an alert, and no other Batcave engine reads Cosmos output. It is shown for entertainment and context." },
+  { id: "rule_2", color: "blue", title: "RULE 2 — WHAT HAS STUDIES BEHIND IT",
+    body: "**Lunar:** returns around full moons were lower than around new moons by about 3-5% a year in aggregate (Yuan, Zheng & Zhu 2006), about 1-2 basis points a day against typical daily index moves near 100 basis points.\n\n**Geomagnetic:** one Federal Reserve working paper (Krivelyova & Robotti 2003) finds lower returns after stormy weeks.\n\n**SAD:** published (Kamstra, Kramer & Levi 2003) and then disputed (Kelly & Meschke 2010).\n\nAll are historical averages. None has been tested out of sample in this app, and none is shown to be tradable after costs." },
+  { id: "rule_3", color: "green", title: "RULE 3 — WHAT HAS NONE",
+    body: "Mercury, Mars and Venus retrogrades, the Bradley siderograph, Gann cycles and the Square of Nine, lunar nodes, eclipses, void-of-course Moons, zodiac signs and natal charts of tickers have no peer-reviewed support for a market effect." },
+  { id: "rule_4", color: "gold", title: "RULE 4 — WHY COINCIDENCES PROVE NOTHING",
+    body: "There are dozens of sky events every month, so some will always line up with market turns by chance. Matching events to moves after the fact is data snooping (multiple testing). Evidence needs a rule fixed in advance and tested on later data against random dates." },
+  { id: "rule_5", color: "blue", title: "RULE 5 — WHAT IT WOULD TAKE TO BECOME A SIGNAL",
+    body: "Log the event dates going forward, fix one rule in advance, and grade it against a random-date null after trading costs over a large sample. Until that exists, Cosmos stays context." },
 ];
 
-export const HONEST_EDGE_ASSESSMENT = "The academic studies confirm real but small effects — statistically significant at the portfolio level, not reliably profitable on any single trade. The edge is in systematic application over 50–100+ signals, not cherry-picked calls. Geomagnetic and SAD effects are the most robustly replicated. Mercury retrograde and planetary station effects are practitioner-validated but lack peer-reviewed confirmation at scale. Use the academically backed signals as primary filters. Use the practitioner signals (Gann, planetary aspects) as secondary confluence — never as primary trade triggers. The traders who get destroyed with astrology are the ones who use it like a prediction engine. The traders who profit use it like a tide chart — it tells you when conditions favor a move, not what the move will be.";
+export const HONEST_EDGE_ASSESSMENT = "Only three sky-related effects have studies behind them: the lunar cycle (about 3-5% a year in aggregate, a basis point or two a day), geomagnetic storms (one Federal Reserve working paper) and the SAD cycle (published, then shown to be largely a specification artifact). They are historical averages across many years and countries, small next to daily volatility, and not tested out of sample here. Retrogrades, Bradley, Gann and natal charts have no peer-reviewed support. Cosmos is context for entertainment, not a trading signal.";
 
 // ─── Taxonomy live-lighting ─────────────────────────────────────────────────
 // Given a snapshot + kp, return which taxonomy entries are "ACTIVE NOW" and
-// with what strength (0-1). Implements the FULL MERGE: every static entry
-// gets a live state.
+// how close they are (0-1). "Active" means the sky event is happening, never
+// that a market effect is expected. Every static entry gets a live state.
 
 export interface TaxonomyLiveState {
   id: string;
@@ -1836,8 +1823,8 @@ export function taxonomyLiveStates(
     id: "moon_sign",
     active: isDecisive || isRange,
     strength: isDecisive ? 0.8 : isRange ? 0.6 : 0.3,
-    currentValue: `Moon in ${moon.sign} — ${isDecisive ? "decisive action bias" : isRange ? "range/indecision bias" : "neutral"}`,
-    badge: isDecisive ? "DECISIVE" : isRange ? "RANGE" : undefined,
+    currentValue: `Moon in ${moon.sign}${isDecisive ? " (tradition: 'decisive' sign)" : isRange ? " (tradition: 'indecisive' sign)" : ""}`,
+    badge: isDecisive || isRange ? "TRADITION" : undefined,
   };
 
   // Solar & geomag
@@ -1856,13 +1843,13 @@ export function taxonomyLiveStates(
     currentValue: kpVal != null ? `Kp = ${kpVal.toFixed(1)} (max 24h: ${(kp?.max24h ?? 0).toFixed(1)})` : "Kp data unavailable",
     badge: stormActive ? `STORM G${Math.max(1, Math.floor((kpVal ?? 5) - 4))}` : kpVal != null && kpVal >= 4 ? "ELEVATED" : "quiet",
   };
-  // Solar Cycle 25 is in peak 2024-2026, so currently always active macro
+  // Reference only: no live sunspot feed. (NASA/NOAA announced in Oct 2024
+  // that Solar Cycle 25 had reached its solar maximum period.)
   out["solar_max"] = {
     id: "solar_max",
-    active: true,
-    strength: 0.8,
-    currentValue: "Solar Cycle 25 peak phase (2024-2026)",
-    badge: "PEAK PHASE",
+    active: false,
+    strength: 0,
+    currentValue: "reference only (no live sunspot feed)",
   };
   // SAD: Sep 22 - Dec 21 (nights lengthening)
   const month = now.getMonth(); // 0-11
@@ -1873,29 +1860,31 @@ export function taxonomyLiveStates(
     id: "sad_seasonal",
     active: sadDepth,
     strength: sadDepth ? 0.9 : sadRecovery ? 0.4 : 0.1,
-    currentValue: sadDepth ? "Sep 22 – Dec 21: underperformance window" : sadRecovery ? "Dec 22 – Apr: recovery bias" : "summer baseline",
-    badge: sadDepth ? "BEARISH WINDOW" : sadRecovery ? "RECOVERY" : undefined,
+    currentValue: sadDepth ? "Sep 22 – Dec 21: lengthening nights (SAD window, effect disputed)" : sadRecovery ? "Dec 22 – Apr: shortening nights" : "summer",
+    badge: sadDepth ? "SAD WINDOW" : undefined,
   };
 
   // Cycle & Gann — mostly reference/macro, not live-triggered
+  // Computed (was a hard-coded "North Node in Aries (entered 2023)", stale
+  // since mid-2023). Mean node, Meeus "Astronomical Algorithms" eq. 47.7.
+  const node = meanLunarNodeLongitude(now);
   out["node_cycle"] = {
     id: "node_cycle",
-    active: true,
-    strength: 0.5,
-    currentValue: "North Node in Aries (entered 2023)",
-    badge: "ACTIVE PHASE",
+    active: false,
+    strength: 0,
+    currentValue: `Mean North Node in ${signFromLongitude(node)} ${degreeWithinSign(node).toFixed(1)}° (astronomical fact; market link untested)`,
   };
   out["gann_sq9"] = {
     id: "gann_sq9",
     active: false,
     strength: 0,
-    currentValue: "computed against price levels — see Signals tab",
+    currentValue: "reference only",
   };
   out["dtt_goldbach"] = {
     id: "dtt_goldbach",
     active: false,
     strength: 0,
-    currentValue: "proprietary DTT nodes — see Signals tab",
+    currentValue: "reference only",
   };
   out["helio_kabbalah"] = {
     id: "helio_kabbalah",

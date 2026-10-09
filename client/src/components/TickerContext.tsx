@@ -24,6 +24,7 @@ export type TabKey =
   | "heatseeker"
   | "tradedesk"
   | "regime"
+  | "cosmos"
   | "news"
   | "voices"
   | "takefive"

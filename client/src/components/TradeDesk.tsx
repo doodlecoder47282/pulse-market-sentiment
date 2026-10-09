@@ -22,6 +22,10 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { fmt } from "@/lib/format";
 import LivenessBadge from "@/components/LivenessBadge";
+import DataAgeChip from "@/components/DataAgeChip";
+import DataStateChip from "@/components/DataStateChip";
+import UnavailablePanel from "@/components/UnavailablePanel";
+import { parseUnavailableError } from "@shared/unavailable";
 import {
   LineChart, Line, XAxis, YAxis, ReferenceLine, ResponsiveContainer,
   Tooltip as RTooltip, CartesianGrid, Area, AreaChart,
@@ -38,6 +42,7 @@ import {
 } from "@/components/ui/tooltip";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { friendlyError } from "@/lib/friendlyError";
 
 // --- Types matching /api/trade-desk payload ----------------------------------
 
@@ -78,6 +83,8 @@ type GammaMap = {
   netGex: number;
   narrative: string;
   gexCrossoverStrike?: number | null;
+  /** Weight, expiry universe and dealer convention of zeroGamma. */
+  flipInputs?: { label: string };
   gammaProfile?: { spot: number; gex: number }[];
 };
 
@@ -129,11 +136,16 @@ type TradeDeskPayload = {
   interval: string;
   quotes: { spx: QuoteSeries | null; spy: QuoteSeries | null; vix: QuoteSeries | null };
   pivots: { spx: PivotBundle | null; spy: PivotBundle | null; vix: PivotBundle | null };
-  gammaMap: GammaMap;
-  squeeze: Squeeze;
-  playbook: Playbook;
-  composite: { score: number; label: string };
+  // null with sections[k] = {dataState:"unavailable", reason} when Schwab
+  // cannot supply the snapshot (server/snapshotDegrade.ts tradeDeskDegraded).
+  gammaMap: GammaMap | null;
+  squeeze: Squeeze | null;
+  playbook: Playbook | null;
+  composite: { score: number; label: string } | null;
   voicesBias: { score: number; sampleSize: number } | null;
+  dataState?: "ok" | "stale" | "partial";
+  dataStateReason?: string | null;
+  sections?: Partial<Record<"gammaMap" | "squeeze" | "playbook" | "composite", { dataState: string; reason: string | null; source: string }>>;
 };
 
 type PivotSystem = "classic" | "fib" | "cam" | "all";
@@ -157,18 +169,13 @@ export default function TradeDesk() {
 
   if (isLoading) return <TradeDeskSkeleton />;
 
-  if (isError || !data) {
-    return (
-      <Card className="border-amber-500/30">
-        <CardContent className="p-6 text-center">
-          <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-amber-500" />
-          <div className="text-sm text-muted-foreground">
-            Trade Desk feed unreachable: {(error as Error)?.message || "unknown error"}
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
+  // The independent panels (regime forecast, edge stats, sizer, EOD play
+  // maker) render whatever the trade-desk feed does. When the feed is 503
+  // (Schwab cannot answer) or partial, the Schwab sections show the state
+  // and reason instead of the whole tab collapsing to one error card.
+  const feedErr = isError || !data ? parseUnavailableError(error) : null;
+  const secReason = (k: "gammaMap" | "squeeze" | "playbook" | "composite") =>
+    data?.sections?.[k]?.reason ?? data?.dataStateReason ?? "Schwab did not answer";
 
   return (
     <div className="space-y-4">
@@ -186,17 +193,57 @@ export default function TradeDesk() {
       {/* MISSION FIX #2 — risk-first sizer + net-EV survival waterfall */}
       <PositionSizer />
 
+      {!data ? (
+        <Card className="border-rose-500/30" data-testid="trade-desk-unavailable">
+          <CardContent className="p-4">
+            <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-500">
+              <AlertTriangle className="h-4 w-4" /> Trade Desk feed
+            </div>
+            <UnavailablePanel
+              title="Intraday quotes, pivots, gamma map, squeeze and playbook"
+              state={feedErr?.dataState ?? "unavailable"}
+              reason={feedErr?.reason ?? friendlyError(error, "no response from the server")}
+            />
+          </CardContent>
+        </Card>
+      ) : (
+        <TradeDeskFeed data={data} range={range} setRange={setRange} pivotSystem={pivotSystem} setPivotSystem={setPivotSystem} secReason={secReason} />
+      )}
+
+      {/* EOD Play Maker */}
+      <section>
+        <EodPlayMaker />
+      </section>
+    </div>
+  );
+}
+
+function TradeDeskFeed({
+  data, range, setRange, pivotSystem, setPivotSystem, secReason,
+}: {
+  data: TradeDeskPayload;
+  range: "1d" | "5d";
+  setRange: (r: "1d" | "5d") => void;
+  pivotSystem: PivotSystem;
+  setPivotSystem: (p: PivotSystem) => void;
+  secReason: (k: "gammaMap" | "squeeze" | "playbook" | "composite") => string;
+}) {
+  return (
+    <div className="space-y-4">
       {/* Command bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/20 bg-gradient-to-r from-amber-500/5 to-transparent px-4 py-2.5">
         <div className="flex items-center gap-2">
           <Crosshair className="h-4 w-4 text-amber-500" />
-          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-500">Trade Desk</div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-500">Trade Desk</div>
           <EdgeInfo id="trade-desk" className="h-6 w-6" />
           <Separator orientation="vertical" className="mx-1 h-4" />
           <LivenessBadge feedName="quotes" value={data.quotes.spy?.price ?? null} />
           <div className="font-mono text-[11px] text-muted-foreground">
             {fmt.ts(data.capturedAt)} · {data.interval} bars
           </div>
+          {data.dataState && data.dataState !== "ok" ? (
+            <DataStateChip state={data.dataState} reason={data.dataStateReason ?? null} source="Schwab" testId="chip-trade-desk-state" />
+          ) : null}
         </div>
         <div className="flex items-center gap-3">
           <ToggleGroup
@@ -221,10 +268,14 @@ export default function TradeDesk() {
       {/* Playbook + Squeeze header */}
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <div className="lg:col-span-8">
-          <PlaybookCard playbook={data.playbook} />
+          {data.playbook ? <PlaybookCard playbook={data.playbook} /> : (
+            <UnavailablePanel title="Playbook" state="unavailable" reason={secReason("playbook")} testId="unavailable-playbook" />
+          )}
         </div>
         <div className="lg:col-span-4">
-          <SqueezeDial squeeze={data.squeeze} />
+          {data.squeeze ? <SqueezeDial squeeze={data.squeeze} /> : (
+            <UnavailablePanel title="Squeeze" state="unavailable" reason={secReason("squeeze")} testId="unavailable-squeeze" />
+          )}
         </div>
       </section>
 
@@ -250,7 +301,7 @@ export default function TradeDesk() {
         />
         <OfiHistogram />
         <IntradayChart
-          title="CBOE Volatility Index"
+          title="Cboe Volatility Index (Schwab $VIX)"
           symbol="^VIX"
           quote={data.quotes.vix}
           pivots={data.pivots.vix}
@@ -263,15 +314,13 @@ export default function TradeDesk() {
 
       {/* Gamma Map */}
       <section>
-        <GammaMapCard gammaMap={data.gammaMap} spot={data.quotes.spy?.price ?? null} />
+        <div className="flex justify-end">
+          <DataAgeChip asOfMs={(data as any).gammaAsOf ?? null} stale={(data as any).gammaStale ?? null} maxAgeMs={(data as any).gammaMaxAgeMs ?? null} label="gamma map · Schwab SPY chain" />
+        </div>
+        {data.gammaMap ? <GammaMapCard gammaMap={data.gammaMap} spot={data.quotes.spy?.price ?? null} /> : (
+          <UnavailablePanel title="Gamma map" state="unavailable" reason={secReason("gammaMap")} testId="unavailable-gamma-map" />
+        )}
       </section>
-
-      {/* EOD Play Maker */}
-      <section>
-        <EodPlayMaker />
-      </section>
-
-
     </div>
   );
 }
@@ -288,7 +337,7 @@ function ToggleGroup({
 }) {
   return (
     <div className="flex items-center gap-1.5">
-      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</span>
+      <span className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</span>
       <div className="flex rounded-sm border border-border bg-card/50 p-0.5">
         {options.map((o) => (
           <button
@@ -296,7 +345,7 @@ function ToggleGroup({
             onClick={() => onChange(o.v)}
             data-testid={`toggle-${label.toLowerCase()}-${o.v}`}
             className={
-              "px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider transition-colors " +
+              "px-2 py-0.5 font-mono text-[11px] uppercase tracking-wider transition-colors " +
               (value === o.v
                 ? "rounded-sm bg-amber-500/20 text-amber-500"
                 : "text-muted-foreground hover:text-foreground")
@@ -325,17 +374,17 @@ function PlaybookCard({ playbook }: { playbook: Playbook }) {
           <div className="flex-1 min-w-[260px]">
             <div className="mb-1 flex items-center gap-2">
               <Zap className="h-3.5 w-3.5 text-amber-500" />
-              <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-500">AI Daily Playbook</span>
+              <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-500">AI Daily Playbook</span>
             </div>
             <h2 className="font-mono text-lg font-semibold leading-tight text-foreground" data-testid="text-playbook-headline">
               {playbook.headline}
             </h2>
           </div>
           <div className="flex gap-2">
-            <Badge variant="outline" className={`font-mono text-[10px] uppercase ${biasColor}`} data-testid="badge-bias">
+            <Badge variant="outline" className={`font-mono text-[11px] uppercase ${biasColor}`} data-testid="badge-bias">
               {playbook.bias}
             </Badge>
-            <Badge variant="outline" className="border-border bg-card font-mono text-[10px] uppercase text-muted-foreground">
+            <Badge variant="outline" className="border-border bg-card font-mono text-[11px] uppercase text-muted-foreground">
               {playbook.conviction} conviction
             </Badge>
           </div>
@@ -353,7 +402,7 @@ function PlaybookCard({ playbook }: { playbook: Playbook }) {
 
         {/* Scenarios */}
         <div className="mt-4">
-          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-500">Scenarios</div>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-500">Scenarios</div>
           <div className="grid grid-cols-1 gap-2 lg:grid-cols-3">
             {playbook.scenarios.map((s, i) => (
               <div
@@ -368,7 +417,7 @@ function PlaybookCard({ playbook }: { playbook: Playbook }) {
               >
                 <div className="mb-1 flex items-center justify-between">
                   <div className="font-mono font-semibold text-foreground">{s.name}</div>
-                  <Badge variant="outline" className="border-border bg-card font-mono text-[9px] uppercase">
+                  <Badge variant="outline" className="border-border bg-card font-mono text-[11px] uppercase">
                     {s.odds}
                   </Badge>
                 </div>
@@ -395,14 +444,14 @@ function PlaybookCard({ playbook }: { playbook: Playbook }) {
           </div>
         </div>
 
-        {/* News Playbook — per-event reaction map */}
+        {/* News context: per-event reaction + nearest gamma levels (descriptive, no orders) */}
         {playbook.newsPlaybook && playbook.newsPlaybook.length > 0 && (
           <div className="mt-4">
             <div className="mb-2 flex items-center gap-2">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-400">
-                News Playbook — Today's Catalysts
+              <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-400">
+                News Context — Today's Catalysts
               </span>
-              <span className="text-[9px] text-muted-foreground">if/then per release</span>
+              <span className="text-[11px] text-muted-foreground">levels as context per release, not entries, stops or targets</span>
             </div>
             <div className="space-y-2">
               {playbook.newsPlaybook.map((np, i) => (
@@ -415,11 +464,11 @@ function PlaybookCard({ playbook }: { playbook: Playbook }) {
                     ▸ {np.event}
                   </div>
                   <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
-                    <div className="rounded-sm border border-emerald-500/30 bg-emerald-500/5 px-2 py-1.5 font-mono text-[10.5px] leading-snug text-emerald-200">
+                    <div className="rounded-sm border border-emerald-500/30 bg-emerald-500/5 px-2 py-1.5 font-mono text-[11px] leading-snug text-emerald-200">
                       <span className="mr-1 font-bold text-emerald-400">BULL</span>
                       {np.bullScenario}
                     </div>
-                    <div className="rounded-sm border border-red-500/30 bg-red-500/5 px-2 py-1.5 font-mono text-[10.5px] leading-snug text-red-200">
+                    <div className="rounded-sm border border-red-500/30 bg-red-500/5 px-2 py-1.5 font-mono text-[11px] leading-snug text-red-200">
                       <span className="mr-1 font-bold text-red-400">BEAR</span>
                       {np.bearScenario}
                     </div>
@@ -432,7 +481,7 @@ function PlaybookCard({ playbook }: { playbook: Playbook }) {
 
         {/* Gameplan */}
         <div className="mt-4">
-          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-500">Gameplan</div>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-500">Gameplan</div>
           <ul className="space-y-1.5">
             {playbook.gameplan.map((g, i) => (
               <li key={i} className="flex gap-2 text-[12px] leading-relaxed text-foreground" data-testid={`gameplan-${i}`}>
@@ -450,7 +499,7 @@ function PlaybookCard({ playbook }: { playbook: Playbook }) {
 function Row({ k, v }: { k: string; v: string }) {
   return (
     <div className="mt-0.5 flex gap-1.5">
-      <span className="w-14 flex-shrink-0 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">{k}</span>
+      <span className="w-14 flex-shrink-0 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">{k}</span>
       <span className="flex-1 text-foreground/90">{v}</span>
     </div>
   );
@@ -463,7 +512,7 @@ function LevelColumn({
   const arrow = tone === "bear" ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />;
   return (
     <div className="rounded-sm border border-border bg-card/30 p-2.5">
-      <div className={`mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider ${color}`}>
+      <div className={`mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider ${color}`}>
         {arrow} {title}
       </div>
       <div className="space-y-0.5">
@@ -542,21 +591,21 @@ function SqueezeDial({ squeeze }: { squeeze: Squeeze }) {
           <div className={`font-mono text-2xl font-bold tabular-nums ${color}`} data-testid="text-squeeze-score">
             {squeeze.score > 0 ? "+" : ""}{squeeze.score}
           </div>
-          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {squeeze.label}
           </div>
           <div className="mt-0.5 font-mono text-[11px] text-amber-500">
-            {squeeze.probability}% · {squeeze.direction.toUpperCase()} · {squeeze.timeHorizon}
+            <span title="Heuristic intensity 0-100 (playbook.ts), not a probability of a move.">intensity {squeeze.probability}/100</span> · {squeeze.direction.toUpperCase()} · {squeeze.timeHorizon}
           </div>
         </div>
 
         <div className="mt-3 space-y-2">
           {squeeze.triggers.length > 0 && (
             <div>
-              <div className="mb-1 text-[9px] font-semibold uppercase tracking-wider text-emerald-500">Triggers</div>
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-emerald-500">Triggers</div>
               <ul className="space-y-0.5">
                 {squeeze.triggers.slice(0, 4).map((t, i) => (
-                  <li key={i} className="flex gap-1.5 text-[10.5px] leading-snug text-foreground/80">
+                  <li key={i} className="flex gap-1.5 text-[11px] leading-snug text-foreground/80">
                     <span className="text-emerald-500">+</span>
                     <span>{t}</span>
                   </li>
@@ -566,10 +615,10 @@ function SqueezeDial({ squeeze }: { squeeze: Squeeze }) {
           )}
           {squeeze.riskFactors.length > 0 && (
             <div>
-              <div className="mb-1 text-[9px] font-semibold uppercase tracking-wider text-red-400">Risk</div>
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-red-400">Risk</div>
               <ul className="space-y-0.5">
                 {squeeze.riskFactors.slice(0, 3).map((t, i) => (
-                  <li key={i} className="flex gap-1.5 text-[10.5px] leading-snug text-foreground/80">
+                  <li key={i} className="flex gap-1.5 text-[11px] leading-snug text-foreground/80">
                     <span className="text-red-400">−</span>
                     <span>{t}</span>
                   </li>
@@ -719,7 +768,7 @@ function IntradayChart({
         <div className="mb-2 flex flex-wrap items-end justify-between gap-3">
           <div>
             <div className="flex items-baseline gap-2">
-              <span className={`font-mono text-[10px] font-semibold uppercase tracking-[0.18em] ${a.cls}`}>{symbol}</span>
+              <span className={`font-mono text-[11px] font-semibold uppercase tracking-[0.18em] ${a.cls}`}>{symbol}</span>
               <span className="text-[11px] text-muted-foreground">{title}</span>
             </div>
             <div className="mt-0.5 flex items-baseline gap-3">
@@ -734,7 +783,7 @@ function IntradayChart({
           </div>
 
           {/* Session stats + pivot quick ref */}
-          <div className="flex flex-wrap items-end gap-3 text-[10px] uppercase tracking-wider text-muted-foreground">
+          <div className="flex flex-wrap items-end gap-3 text-[11px] uppercase tracking-wider text-muted-foreground">
             <MiniStat label="Open" value={quote?.sessionOpen} />
             <MiniStat label="High" value={quote?.sessionHigh} tone="emerald" />
             <MiniStat label="Low"  value={quote?.sessionLow}  tone="red" />
@@ -850,7 +899,7 @@ function IntradayChart({
 
         {/* Legend + prior OHLC */}
         {pivots && (
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[9.5px] font-mono text-muted-foreground">
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-mono text-muted-foreground">
             {(system === "classic" || system === "all") && (
               <span><span className="inline-block h-0.5 w-3 bg-blue-400 align-middle" /> Classic</span>
             )}
@@ -908,11 +957,11 @@ function GammaProfileCurve({
       <div className="mb-2 flex items-baseline justify-between">
         <div className="flex items-center gap-2">
           <LineIcon className="h-3.5 w-3.5 text-amber-500" />
-          <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-500">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-500">
             Gamma Profile · total γ vs. hypothetical spot
           </span>
         </div>
-        <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+        <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
           Perfiliev · 60 levels · 0.9 · S → 1.1 · S
         </span>
       </div>
@@ -1017,7 +1066,7 @@ function GammaProfileCurve({
           </AreaChart>
         </ResponsiveContainer>
       </div>
-      <div className="mt-1.5 flex flex-wrap gap-3 text-[9.5px] font-mono text-muted-foreground">
+      <div className="mt-1.5 flex flex-wrap gap-3 text-[11px] font-mono text-muted-foreground">
         <span><span className="inline-block h-1.5 w-3 bg-emerald-500/60 align-middle" /> Positive γ (dealers dampen)</span>
         <span><span className="inline-block h-1.5 w-3 bg-red-500/60 align-middle" /> Negative γ (dealers amplify)</span>
         <span><span className="inline-block h-0.5 w-3 bg-amber-500 align-middle" /> Zero-γ flip</span>
@@ -1087,6 +1136,12 @@ function GammaMapCard({ gammaMap, spot }: { gammaMap: GammaMap; spot: number | n
           }/>
         </div>
 
+        {gammaMap.flipInputs?.label && (
+          <p className="mb-2 font-mono text-[11px] text-muted-foreground" data-testid="text-gamma-flip-inputs">
+            Flip inputs: {gammaMap.flipInputs.label}. Heatseeker's flip uses one expiry, so the two can differ.
+          </p>
+        )}
+
         {/* Narrative */}
         <p className="mb-4 rounded-sm border border-border bg-card/30 p-3 text-[11.5px] leading-relaxed text-muted-foreground" data-testid="text-gamma-narrative">
           {gammaMap.narrative}
@@ -1103,10 +1158,10 @@ function GammaMapCard({ gammaMap, spot }: { gammaMap: GammaMap; spot: number | n
 
         {/* GEX Crossover Strike (legacy — smaller, for reference) */}
         {gammaMap.gexCrossoverStrike != null && (
-          <div className="mb-4 flex items-center justify-between rounded-sm border border-border/50 bg-card/20 px-3 py-1.5 text-[10px] font-mono text-muted-foreground">
+          <div className="mb-4 flex items-center justify-between rounded-sm border border-border/50 bg-card/20 px-3 py-1.5 text-[11px] font-mono text-muted-foreground">
             <span className="uppercase tracking-wider">GEX Crossover Strike (legacy)</span>
             <span className="tabular-nums text-foreground/70">{gammaMap.gexCrossoverStrike.toFixed(2)}</span>
-            <span className="text-[9px] normal-case tracking-normal text-muted-foreground/80">
+            <span className="text-[11px] normal-case tracking-normal text-muted-foreground/80">
               strike where cumulative per-strike GEX flips · centroid of positioning
             </span>
           </div>
@@ -1115,7 +1170,7 @@ function GammaMapCard({ gammaMap, spot }: { gammaMap: GammaMap; spot: number | n
         {/* Ladder */}
         <div className="rounded-sm border border-border hscroll-contain">
           <div className="min-w-[420px]">
-          <div className="grid grid-cols-[70px_1fr_90px_80px] gap-2 border-b border-border bg-card/30 px-3 py-1.5 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <div className="grid grid-cols-[70px_1fr_90px_80px] gap-2 border-b border-border bg-card/30 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             <span>Strike</span>
             <span>GEX exposure</span>
             <span className="text-right">Zone</span>
@@ -1156,10 +1211,10 @@ function GammaMapCard({ gammaMap, spot }: { gammaMap: GammaMap; spot: number | n
                       )}
                     </div>
                   </div>
-                  <span className={`text-right font-mono text-[10px] uppercase ${zoneColor[z.zone] ?? "text-muted-foreground"}`}>
+                  <span className={`text-right font-mono text-[11px] uppercase ${zoneColor[z.zone] ?? "text-muted-foreground"}`}>
                     {zoneLabel[z.zone] ?? z.zone}
                   </span>
-                  <span className={`text-right font-mono tabular-nums text-[10.5px] ${
+                  <span className={`text-right font-mono tabular-nums text-[11px] ${
                     !spotUsable ? "text-muted-foreground" : distPct >= 0 ? "text-red-400/80" : "text-emerald-400/80"
                   }`}>
                     {!spotUsable ? "—" : `${distPct >= 0 ? "+" : ""}${distPct.toFixed(2)}%`}
@@ -1169,11 +1224,11 @@ function GammaMapCard({ gammaMap, spot }: { gammaMap: GammaMap; spot: number | n
             })}
             {/* spot marker row, or offline note when spot is unavailable */}
             {spot != null && Number.isFinite(spot) && spot > 0 ? (
-              <div className="border-t border-amber-500/30 bg-amber-500/5 px-3 py-1 text-center font-mono text-[10px] uppercase tracking-wider text-amber-500">
+              <div className="border-t border-amber-500/30 bg-amber-500/5 px-3 py-1 text-center font-mono text-[11px] uppercase tracking-wider text-amber-500">
                 ● Spot {spot.toFixed(2)}
               </div>
             ) : (
-              <div className="border-t border-border/40 px-3 py-1 text-center font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+              <div className="border-t border-border/40 px-3 py-1 text-center font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
                 spot unavailable — Schwab down, distances hidden
               </div>
             )}
@@ -1181,7 +1236,7 @@ function GammaMapCard({ gammaMap, spot }: { gammaMap: GammaMap; spot: number | n
           </div>
         </div>
 
-        <div className="mt-2 text-[10px] leading-snug text-muted-foreground">
+        <div className="mt-2 text-[11px] leading-snug text-muted-foreground">
           Red bars (right) = call-side hedging pressure (resistance — dealers sell shares as spot rises).
           Green bars (left) = put-side (support — dealers buy as spot falls). Zero-γ flip is where net dealer hedging sign changes.
         </div>
@@ -1201,12 +1256,12 @@ function GammaTile({ label, value, valueClass }: { label: string; value: React.R
   const tip = GAMMA_TILE_TOOLTIPS[label];
   return (
     <div className="rounded-sm border border-border bg-card/30 px-3 py-2">
-      <div className="flex items-center gap-0.5 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <div className="flex items-center gap-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         {label}
         {tip && (
           <UITooltip>
             <TooltipTrigger asChild>
-              <HelpCircle className="h-2 w-2 text-muted-foreground/40 cursor-help" />
+              <HelpCircle className="h-2 w-2 text-muted-foreground cursor-help" />
             </TooltipTrigger>
             <TooltipContent side="top" className="max-w-xs text-xs">{tip}</TooltipContent>
           </UITooltip>
@@ -1287,14 +1342,14 @@ function PivotTable({
         }`}
         data-testid={`pivot-row-${symbol}-${r.name}`}
       >
-        <span className={`text-[10px] font-semibold tracking-wider ${accentClass}`}>{r.name}</span>
+        <span className={`text-[11px] font-semibold tracking-wider ${accentClass}`}>{r.name}</span>
         <div className="flex items-baseline gap-1.5">
           <span className="font-mono text-[11px] tabular-nums text-foreground">
             {r.price.toFixed(decimals)}
           </span>
           {distance != null && distancePct != null && (
             <span
-              className={`font-mono text-[8.5px] tabular-nums ${
+              className={`font-mono text-[11px] tabular-nums ${
                 above ? "text-emerald-500/70" : "text-red-500/70"
               }`}
             >
@@ -1320,11 +1375,11 @@ function PivotTable({
   return (
     <div className="mt-3 rounded-md border border-border bg-card/20 p-2.5">
       <div className="mb-2 flex items-center justify-between">
-        <div className="text-[9.5px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
           {symbol} Pivot Levels · Prior-Day Basis
         </div>
         {spot != null && (
-          <div className="font-mono text-[10px] tabular-nums text-foreground">
+          <div className="font-mono text-[11px] tabular-nums text-foreground">
             Spot <span className="text-emerald-500">{spot.toFixed(decimals)}</span>
           </div>
         )}
@@ -1332,7 +1387,7 @@ function PivotTable({
       <div className={`grid grid-cols-1 gap-2 ${gridCls}`}>
         {showClassic && (
           <div className="space-y-1">
-            <div className="mb-1 flex items-center gap-1.5 text-[9.5px] font-semibold uppercase tracking-wider text-blue-400">
+            <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-blue-400">
               <span className="inline-block h-0.5 w-3 bg-blue-400" />
               Classic
             </div>
@@ -1341,7 +1396,7 @@ function PivotTable({
         )}
         {showFib && (
           <div className="space-y-1">
-            <div className="mb-1 flex items-center gap-1.5 text-[9.5px] font-semibold uppercase tracking-wider text-violet-400">
+            <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-violet-400">
               <span className="inline-block h-0.5 w-3 bg-violet-400" />
               Fibonacci
             </div>
@@ -1350,7 +1405,7 @@ function PivotTable({
         )}
         {showCam && (
           <div className="space-y-1">
-            <div className="mb-1 flex items-center gap-1.5 text-[9.5px] font-semibold uppercase tracking-wider text-amber-500">
+            <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-amber-500">
               <span className="inline-block h-0.5 w-3 bg-amber-500" />
               Camarilla
             </div>
@@ -1358,7 +1413,7 @@ function PivotTable({
           </div>
         )}
       </div>
-      <div className="mt-2 text-[9px] text-muted-foreground">
+      <div className="mt-2 text-[11px] text-muted-foreground">
         <span className="inline-block h-2 w-2 rounded-sm border border-emerald-500/50 bg-emerald-500/10 align-middle" />{" "}
         Level closest to spot · % shows distance from spot
       </div>
@@ -1387,7 +1442,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="inline-flex items-center gap-1 rounded border border-border/50 bg-card/40 px-2 py-0.5 text-[10px] text-muted-foreground transition hover:border-amber-500/40 hover:text-amber-400"
+      className="inline-flex items-center gap-1 rounded border border-border/50 bg-card/40 px-2 py-0.5 text-[11px] text-muted-foreground transition hover:border-amber-500/40 hover:text-amber-400"
       data-testid="button-copy-output"
       title="Copy to clipboard"
     >
@@ -1411,8 +1466,8 @@ function ModelOutputPanel({
     <div className="flex-1 min-w-0">
       <div className="mb-2 flex items-center justify-between">
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-400">{label}</span>
-          <Badge variant="outline" className="font-mono text-[9px] text-muted-foreground">{modelSlug}</Badge>
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-400">{label}</span>
+          <Badge variant="outline" className="font-mono text-[11px] text-muted-foreground">{modelSlug}</Badge>
         </div>
         {content && <CopyButton text={content} />}
       </div>
@@ -1465,12 +1520,12 @@ const FIELD_TOOLTIPS: Record<string, string> = {
 function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
   const tip = FIELD_TOOLTIPS[label];
   const labelEl = (
-    <span className="flex items-center gap-0.5 w-28 shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+    <span className="flex items-center gap-0.5 w-28 shrink-0 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
       {label}
       {tip && (
         <UITooltip>
           <TooltipTrigger asChild>
-            <HelpCircle className="h-2.5 w-2.5 text-muted-foreground/40 cursor-help" />
+            <HelpCircle className="h-2.5 w-2.5 text-muted-foreground cursor-help" />
           </TooltipTrigger>
           <TooltipContent side="left" className="max-w-xs text-xs">{tip}</TooltipContent>
         </UITooltip>
@@ -1485,12 +1540,11 @@ function FieldRow({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
-// ─── EOD locked weekly targets (fall back when live feed is cold) ────────────
-const LOCKED_LEVELS: Record<string, string> = {
-  upside: "7140", downside: "6950", t2up: "7270", t2down: "6885",
-  mopex: "7025", vanna: "7089", zomma: "7070", charm: "7128",
-  negGamma: "7100", upperVomma: "7265", lowerVomma: "6960",
-};
+// ─── EOD weekly targets ─────────────────────────────────────────────────────
+// No hard-coded fallback levels: an empty field is sent empty and the server
+// fills it from the user's saved level store (Heatseeker levels editor), or
+// leaves it unset. Old-week numbers must never stand in for live or saved ones.
+const LOCKED_LEVELS: Record<string, string> = {};
 
 function isOpexToday(): boolean {
   const now = new Date();
@@ -1532,12 +1586,12 @@ function LiveField({
           </span>
         )}
         {status === "lock" && (
-          <span className="text-[8px] font-bold tracking-wider text-amber-400" title="Locked target">LOCK</span>
+          <span className="text-[11px] font-bold tracking-wider text-amber-400" title="Locked target">LOCK</span>
         )}
         {status === "edit" && (
           <button
             onClick={onClear}
-            className="text-[9px] font-bold text-violet-400 hover:text-violet-300"
+            className="text-[11px] font-bold text-violet-400 hover:text-violet-300"
             title="Clear override, return to live/locked"
             data-testid={`clear-${testId}`}
           >✕</button>
@@ -1688,7 +1742,7 @@ function EodPlayMaker() {
           <span className="text-[11px] font-semibold uppercase tracking-[0.15em] text-amber-400">
             EOD 0DTE SPX PLAY MAKER — BATCAVE
           </span>
-          <Badge variant="outline" className="text-[9px] text-amber-500/60 border-amber-500/30">
+          <Badge variant="outline" className="text-[11px] text-amber-500/60 border-amber-500/30">
             Claude + GPT
           </Badge>
         </div>
@@ -1703,7 +1757,7 @@ function EodPlayMaker() {
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {/* Market state */}
             <div className="space-y-2">
-              <div className="text-[9px] font-semibold uppercase tracking-[0.15em] text-amber-400 mb-1">Market State</div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-amber-400 mb-1">Market State</div>
               <FieldRow label="SPX Spot">
                 <LiveField value={resolve("spx")} onChange={(v) => setOverride("spx", v)} onClear={() => clearOverride("spx")} status={isOverridden("spx") ? "edit" : isLive("spx") ? "live" : isLocked("spx") ? "lock" : "cold"} testId="input-spx" />
               </FieldRow>
@@ -1716,7 +1770,7 @@ function EodPlayMaker() {
               <FieldRow label="Q-Score">
                 <div className="flex items-center gap-2">
                   <div className="flex-1"><LiveField value={resolve("qscore")} onChange={(v) => setOverride("qscore", v)} onClear={() => clearOverride("qscore")} status={isOverridden("qscore") ? "edit" : isLive("qscore") ? "live" : isLocked("qscore") ? "lock" : "cold"} testId="input-qscore" /></div>
-                  <Badge variant="outline" className={`shrink-0 text-[9px] ${
+                  <Badge variant="outline" className={`shrink-0 text-[11px] ${
                     qNum == null ? "border-border/40 text-muted-foreground" :
                     qNum < 30 ? "border-emerald-500/40 text-emerald-400" :
                     qNum < 60 ? "border-amber-500/40 text-amber-400" :
@@ -1728,13 +1782,13 @@ function EodPlayMaker() {
                 <LiveField value={resolve("pcRatio")} onChange={(v) => setOverride("pcRatio", v)} onClear={() => clearOverride("pcRatio")} status={isOverridden("pcRatio") ? "edit" : isLive("pcRatio") ? "live" : isLocked("pcRatio") ? "lock" : "cold"} testId="input-pc-ratio" />
               </FieldRow>
               <FieldRow label="OPEX Today">
-                <div className="flex items-center gap-2" data-testid="checkbox-opex"><span className={`inline-flex h-3 w-3 items-center justify-center rounded border ${opex ? "border-amber-500 bg-amber-500/80 text-[8px] text-black" : "border-border/60 bg-transparent"}`}>{opex ? "✓" : ""}</span><span className="text-[10px] text-muted-foreground">{opex ? "YES — size down 30-50% (auto-detected)" : "No — normal sizing"}</span></div>
+                <div className="flex items-center gap-2" data-testid="checkbox-opex"><span className={`inline-flex h-3 w-3 items-center justify-center rounded border ${opex ? "border-amber-500 bg-amber-500/80 text-[11px] text-black" : "border-border/60 bg-transparent"}`}>{opex ? "✓" : ""}</span><span className="text-[11px] text-muted-foreground">{opex ? "YES — size down 30-50% (auto-detected)" : "No — normal sizing"}</span></div>
               </FieldRow>
             </div>
 
             {/* Dealer positioning */}
             <div className="space-y-2">
-              <div className="text-[9px] font-semibold uppercase tracking-[0.15em] text-amber-400 mb-1">Dealer Positioning</div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-amber-400 mb-1">Dealer Positioning</div>
               <FieldRow label="Total GEX ($B)">
                 <LiveField value={resolve("gex")} onChange={(v) => setOverride("gex", v)} onClear={() => clearOverride("gex")} status={isOverridden("gex") ? "edit" : isLive("gex") ? "live" : isLocked("gex") ? "lock" : "cold"} testId="input-gex" placeholder="+2.1" />
               </FieldRow>
@@ -1757,7 +1811,7 @@ function EodPlayMaker() {
 
             {/* Weekly targets */}
             <div className="space-y-2">
-              <div className="text-[9px] font-semibold uppercase tracking-[0.15em] text-amber-400 mb-1">Weekly Targets (Locked)</div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-amber-400 mb-1">Weekly Targets (Locked)</div>
               <FieldRow label="Upside">
                 <LiveField value={resolve("upside")} onChange={(v) => setOverride("upside", v)} onClear={() => clearOverride("upside")} status={isOverridden("upside") ? "edit" : isLive("upside") ? "live" : isLocked("upside") ? "lock" : "cold"} testId="input-upside" />
               </FieldRow>
@@ -1796,7 +1850,7 @@ function EodPlayMaker() {
 
           {/* Notes */}
           <div>
-            <div className="mb-1 text-[9px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">Trader Notes</div>
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">Trader Notes</div>
             <Textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
@@ -1838,19 +1892,19 @@ function EodPlayMaker() {
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" data-testid="eod-derived-targets">
                   {([["UP", result.derivedTargets.up], ["DOWN", result.derivedTargets.down]] as const).map(([dir, side]) => (
                     <div key={dir} className={`rounded-md border p-2.5 ${dir === "UP" ? "border-emerald-500/25 bg-emerald-500/5" : "border-rose-500/25 bg-rose-500/5"}`}>
-                      <div className={`text-[10px] font-semibold uppercase tracking-[0.15em] ${dir === "UP" ? "text-emerald-400" : "text-rose-400"}`}>
+                      <div className={`text-[11px] font-semibold uppercase tracking-[0.15em] ${dir === "UP" ? "text-emerald-400" : "text-rose-400"}`}>
                         {dir} targets · walk-forward derived
                       </div>
                       {[["T1", side.t1], ["T2", side.t2]].map(([lbl, t]: any) => (
                         <div key={lbl} className="mt-1.5 flex items-baseline justify-between gap-2">
-                          <span className="text-[10px] text-muted-foreground">{lbl}</span>
+                          <span className="text-[11px] text-muted-foreground">{lbl}</span>
                           {t ? (
                             <span className="font-mono text-xs tabular-nums" data-testid={`text-derived-${dir.toLowerCase()}-${String(lbl).toLowerCase()}`}>
                               {t.name} <span className="font-semibold">{t.price.toFixed(0)}</span>
                               <span className="ml-1.5 text-muted-foreground">{Math.round(t.adjProb * 100)}% adj touch</span>
                             </span>
                           ) : (
-                            <span className="text-[10px] text-muted-foreground">none viable</span>
+                            <span className="text-[11px] text-muted-foreground">none viable</span>
                           )}
                         </div>
                       ))}
@@ -1911,7 +1965,7 @@ function TradeDeskSkeleton() {
       <div className="flex items-center justify-between rounded-md border border-amber-500/10 bg-gradient-to-r from-amber-500/5 to-transparent px-4 py-2.5">
         <div className="flex items-center gap-2">
           <Crosshair className="h-4 w-4 text-amber-500/40" />
-          <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-500/60">Loading Trade Desk…</span>
+          <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-500/60">Loading Trade Desk…</span>
         </div>
         <Skeleton className="h-5 w-32" />
       </div>
@@ -1948,9 +2002,9 @@ const LEGEND_GROUPS: Array<{
     ],
   },
   {
-    group: "Conviction / Probability",
+    group: "Conviction (heuristic weights)",
     items: [
-      { swatch: "bg-amber-500/20 border-amber-500/40", label: "Primary scenario", meaning: "Highest-odds path on the playbook" },
+      { swatch: "bg-amber-500/20 border-amber-500/40", label: "Primary scenario", meaning: "Highest-weight path on the playbook (heuristic)" },
       { swatch: "bg-card/30 border-border", label: "Secondary", meaning: "Plausible alt path" },
       { swatch: "bg-card/10 border-border/50 opacity-80", label: "Tertiary", meaning: "Tail / low-odds" },
     ],
@@ -1958,7 +2012,7 @@ const LEGEND_GROUPS: Array<{
   {
     group: "Gamma / Regime",
     items: [
-      { swatch: "bg-purple-500/20 border-purple-500/40", label: "Regime forecast", meaning: "Forward-looking transition probabilities" },
+      { swatch: "bg-purple-500/20 border-purple-500/40", label: "Regime forecast", meaning: "Forward-looking regime transition estimates" },
       { swatch: "bg-cyan-500/20 border-cyan-500/40", label: "News / catalyst", meaning: "Per-event reaction map" },
       { swatch: "bg-emerald-500/40", label: "Positive γ", meaning: "Dampening — pin to walls" },
       { swatch: "bg-red-500/40", label: "Negative γ", meaning: "Acceleration — moves extend" },
@@ -1983,20 +2037,20 @@ function TradeDeskColorLegend() {
               <span className="h-2 w-2 rounded-sm bg-red-500" />
               <span className="h-2 w-2 rounded-sm bg-purple-500" />
             </div>
-            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
               Color Legend
             </span>
-            <span className="text-[9px] text-muted-foreground/70">
+            <span className="text-[11px] text-muted-foreground">
               {open ? "hide" : "what each tone means"}
             </span>
           </div>
-          <span className="font-mono text-[10px] text-muted-foreground">{open ? "−" : "+"}</span>
+          <span className="font-mono text-[11px] text-muted-foreground">{open ? "−" : "+"}</span>
         </button>
         {open && (
           <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
             {LEGEND_GROUPS.map((g) => (
               <div key={g.group}>
-                <div className="mb-1.5 text-[9px] font-semibold uppercase tracking-wider text-amber-500">
+                <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-amber-500">
                   {g.group}
                 </div>
                 <div className="space-y-1">
@@ -2004,10 +2058,10 @@ function TradeDeskColorLegend() {
                     <div key={it.label} className="flex items-start gap-2" data-testid={`legend-${it.label}`}>
                       <div className={`mt-0.5 h-3 w-3 flex-shrink-0 rounded-sm border ${it.swatch}`} />
                       <div className="min-w-0">
-                        <div className="font-mono text-[10px] uppercase tracking-wider text-foreground">
+                        <div className="font-mono text-[11px] uppercase tracking-wider text-foreground">
                           {it.label}
                         </div>
-                        <div className="text-[9.5px] leading-snug text-muted-foreground">{it.meaning}</div>
+                        <div className="text-[11px] leading-snug text-muted-foreground">{it.meaning}</div>
                       </div>
                     </div>
                   ))}

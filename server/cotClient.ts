@@ -71,19 +71,16 @@ function persist(market: string, rows: SocrataRow[]): number {
   let count = 0;
   const tx = sqlite.transaction((rs: SocrataRow[]) => {
     for (const r of rs) {
-      const cl = n(r.comm_positions_long_all) ?? 0;
-      const cs = n(r.comm_positions_short_all) ?? 0;
-      const ncl = n(r.noncomm_positions_long_all) ?? 0;
-      const ncs = n(r.noncomm_positions_short_all) ?? 0;
-      const nrl = n(r.nonrept_positions_long_all) ?? 0;
-      const nrs = n(r.nonrept_positions_short_all) ?? 0;
-      const oi = n(r.open_interest_all) ?? 0;
+      // A missing CFTC field is stored as NULL, not 0: a missing leg is not a
+      // flat position, and a net built from one missing leg would be wrong.
+      const net = (l: number | null, s: number | null) => (l != null && s != null ? l - s : null);
+      const oi = n(r.open_interest_all);
       stmt.run(
         market,
         r.report_date_as_yyyy_mm_dd ?? "",
-        cl - cs,
-        ncl - ncs,
-        nrl - nrs,
+        net(n(r.comm_positions_long_all), n(r.comm_positions_short_all)),
+        net(n(r.noncomm_positions_long_all), n(r.noncomm_positions_short_all)),
+        net(n(r.nonrept_positions_long_all), n(r.nonrept_positions_short_all)),
         oi,
         JSON.stringify(r),
       );
@@ -128,10 +125,14 @@ export async function refreshAllCot(): Promise<Record<string, { ok: boolean; row
 export interface CotSnapshotRow {
   market: string;
   reportDate: string;
-  commercialNet: number;
-  nonCommercialNet: number;
-  smallSpecsNet: number;
-  oi: number;
+  /** Non-price context source (rule 2): labelled, dated, never a price/options/sizing input. */
+  source: "CFTC Commitments of Traders";
+  /** Calendar days since the report's as-of date (positions are as of Tuesday, released Friday). */
+  ageDays: number | null;
+  commercialNet: number | null;
+  nonCommercialNet: number | null;
+  smallSpecsNet: number | null;
+  oi: number | null;
   // Percentile rank of nonCommercialNet over last 156 weeks (3y)
   nonCommercialPctile: number | null;
   weekChangeNonComm: number | null;
@@ -144,18 +145,20 @@ export function getCotSnapshot(): CotSnapshotRow[] {
     const hist = sqlite.prepare(
       `SELECT report_date, commercial_net, non_commercial_net, small_specs_net, oi
        FROM cot_reports WHERE market = ? ORDER BY report_date DESC LIMIT 156`
-    ).all(market) as { report_date: string; commercial_net: number; non_commercial_net: number; small_specs_net: number; oi: number }[];
+    ).all(market) as { report_date: string; commercial_net: number | null; non_commercial_net: number | null; small_specs_net: number | null; oi: number | null }[];
     if (!hist.length) continue;
     const latest = hist[0];
     const prev = hist[1];
-    const ncSeries = hist.map(r => r.non_commercial_net).filter(Number.isFinite);
+    const ncSeries = hist.map(r => r.non_commercial_net).filter((v): v is number => v != null && Number.isFinite(v));
+    const latestNc = latest.non_commercial_net;
     let pct: number | null = null;
-    if (ncSeries.length >= 30) {
+    if (ncSeries.length >= 30 && latestNc != null) {
       const sorted = [...ncSeries].sort((a, b) => a - b);
-      const idx = sorted.indexOf(latest.non_commercial_net);
+      const idx = sorted.indexOf(latestNc);
       pct = idx >= 0 ? (idx / (sorted.length - 1)) * 100 : null;
     }
-    const wkChg = prev ? latest.non_commercial_net - prev.non_commercial_net : null;
+    const prevNc = prev?.non_commercial_net ?? null;
+    const wkChg = latestNc != null && prevNc != null ? latestNc - prevNc : null;
     let bias: CotSnapshotRow["bias"] = "neutral";
     if (pct != null) {
       if (pct >= 90) bias = "spec-extreme-long";
@@ -163,9 +166,12 @@ export function getCotSnapshot(): CotSnapshotRow[] {
       else if (pct >= 70) bias = "tilting-long";
       else if (pct <= 30) bias = "tilting-short";
     }
+    const t = Date.parse(`${String(latest.report_date).slice(0, 10)}T00:00:00Z`);
     out.push({
       market,
       reportDate: latest.report_date,
+      source: "CFTC Commitments of Traders",
+      ageDays: Number.isFinite(t) ? Math.max(0, Math.floor((Date.now() - t) / 86_400_000)) : null,
       commercialNet: latest.commercial_net,
       nonCommercialNet: latest.non_commercial_net,
       smallSpecsNet: latest.small_specs_net,

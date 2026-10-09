@@ -1,12 +1,27 @@
 /**
  * server/schwab.ts
  * Charles Schwab API integration: OAuth token management + market data helpers.
- * Schwab is the sole market-data source. No Yahoo fallback.
+ * Schwab is the only market-data source (user decision 2026-10-08): no CBOE,
+ * no Yahoo. When Schwab cannot answer, callers get null / an error state.
  */
 
-import { db, schwabTokens } from "./storage";
-import { eq } from "drizzle-orm";
+// Token row access goes through the encrypted store (AES-256-GCM, BATCAVE_TOKEN_KEY).
+import type { ChainSegmentLike } from "./schwabDataPolicy";
+import { readSchwabTokens, writeSchwabTokens, deleteSchwabTokens, tokenStoreStatus, type TokenStoreStatus } from "./schwabTokenStore";
 import { observeQuote } from "./quoteShield";
+import { etDate, addDays } from "./exchangeCalendar";
+import { quoteFreshness } from "./quoteFreshness";
+import { gexByStrikeFromChain } from "./gammaProfile";
+import {
+  FRESH_TTL_MS, schwabDataKind, staleServeDecision, freshFreshness, maxServeAgeMs,
+  chainStrikePlan, strikeCoverage, inferStrikeCountSemantics, atmIvFromChain, chainIsDelayed,
+  chainAsOf, chainLadderSegments, mergeChainSegments,
+  type SchwabDataKind, type SchwabFreshness, type StrikeCoverage, type StrikeCountSemantics,
+  type ChainCoverage, type ChainAsOfBasis,
+} from "./schwabDataPolicy";
+import { streamEquityQuote } from "./streamStore";
+import { parseStreamerInfo, startSchwabStream, streamConfigFromEnv, type StreamerInfo, type WebSocketLike } from "./schwabStream";
+import { oauthErrorCode } from "./oauthError";
 
 // ─── Credentials from environment (read lazily to avoid import-order issues) ──
 const getClientId = () => process.env.SCHWAB_CLIENT_ID ?? "";
@@ -37,8 +52,9 @@ export async function getAccessToken(lookaheadMs = 60_000): Promise<string | nul
   const CLIENT_ID = getClientId();
   const CLIENT_SECRET = getClientSecret();
   if (!CLIENT_ID || !CLIENT_SECRET) return null;
-  const row = db.select().from(schwabTokens).where(eq(schwabTokens.id, 1)).get();
-  if (!row) return null;
+  const tok = readSchwabTokens(); // decrypts; null when none, locked or undecryptable
+  if (tok.status !== "ok") return null;
+  const row = tok.row;
   const now = Date.now();
   if (row.refreshExpiresAt < now) return null; // refresh token expired — needs full re-auth
   if (row.expiresAt > now + lookaheadMs) return row.accessToken; // still valid
@@ -71,8 +87,11 @@ async function doRefresh(
     });
     if (!res.ok) {
       const errTxt = await res.text().catch(() => "");
-      console.warn("[schwab] token refresh failed:", res.status, errTxt);
-      _lastRefreshError = { at: now, status: res.status, message: errTxt.slice(0, 200) };
+      // Log and keep the HTTP status and OAuth error code only (RFC 6749 s5.2:
+      // a short token like "invalid_grant"); never the raw response body.
+      const errCode = oauthErrorCode(errTxt);
+      console.warn("[schwab] token refresh failed:", res.status, errCode);
+      _lastRefreshError = { at: now, status: res.status, message: errCode };
       if (/invalid_grant/i.test(errTxt)) {
         _refreshDead = true; // refresh token is gone; retrying is pointless until re-auth
       } else {
@@ -88,16 +107,14 @@ async function doRefresh(
     const newRefreshExpiresAt = data.refresh_token
       ? now + 7 * 24 * 60 * 60 * 1000
       : row.refreshExpiresAt;
-    db.update(schwabTokens)
-      .set({
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token || row.refreshToken,
-        expiresAt: newExpiresAt,
-        refreshExpiresAt: newRefreshExpiresAt,
-        updatedAt: now,
-      })
-      .where(eq(schwabTokens.id, 1))
-      .run();
+    const saved = writeSchwabTokens({
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token || row.refreshToken,
+      expiresAt: newExpiresAt,
+      refreshExpiresAt: newRefreshExpiresAt,
+      updatedAt: now,
+    });
+    if (!saved.ok) console.warn("[schwab] refreshed token not persisted:", saved.reason);
     console.log("[schwab] token refreshed successfully");
     _lastRefreshError = null;
     return data.access_token;
@@ -131,26 +148,20 @@ export async function exchangeCodeForTokens(code: string): Promise<{ ok: true } 
       }),
     });
     if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      console.error("[schwab] code exchange failed:", res.status, txt);
-      return { ok: false, error: `Token exchange failed (${res.status}): ${txt}` };
+      // Status + OAuth error code only (as the refresh path): the raw body is
+      // never logged or returned to the caller.
+      const errCode = oauthErrorCode(await res.text().catch(() => ""));
+      console.error("[schwab] code exchange failed:", res.status, errCode);
+      return { ok: false, error: `Token exchange failed (${res.status}): ${errCode}` };
     }
     const data = await res.json();
     const now = Date.now();
     const expiresAt = now + (data.expires_in ?? 1800) * 1000;
     const refreshExpiresAt = now + 7 * 24 * 60 * 60 * 1000;
-    // Upsert row id=1
-    const existing = db.select().from(schwabTokens).where(eq(schwabTokens.id, 1)).get();
-    if (existing) {
-      db.update(schwabTokens)
-        .set({ accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt, refreshExpiresAt, updatedAt: now })
-        .where(eq(schwabTokens.id, 1))
-        .run();
-    } else {
-      db.insert(schwabTokens)
-        .values({ id: 1, accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt, refreshExpiresAt, updatedAt: now })
-        .run();
-    }
+    // Upsert row id=1, encrypted at rest (schwabTokenStore.ts); refuses to
+    // store when the token key is missing on a reachable bind.
+    const saved = writeSchwabTokens({ accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt, refreshExpiresAt, updatedAt: now });
+    if (!saved.ok) return { ok: false, error: `Token storage locked: ${saved.reason}` };
     console.log("[schwab] tokens persisted — connected!");
     clearRefreshBackoff(); // fresh tokens: forget any invalid_grant dead state
     return { ok: true };
@@ -177,9 +188,13 @@ export function getSchwabStatus(): {
   needsReauth: boolean;
   staleAccessToken: boolean;
   lastRefreshError: { at: number; status: number; message: string } | null;
+  /** Token storage at rest: mode (encrypted / plaintext-local / locked) and why. */
+  tokenStore: TokenStoreStatus;
 } {
-  const row = db.select().from(schwabTokens).where(eq(schwabTokens.id, 1)).get();
-  if (!row) {
+  const tok = readSchwabTokens();
+  if (tok.status !== "ok") {
+    // none, locked (no key on a reachable bind) or decrypt_failed: not connected,
+    // with tokenStore.reason saying which.
     return {
       connected: false,
       expiresIn: 0,
@@ -187,8 +202,10 @@ export function getSchwabStatus(): {
       needsReauth: true,
       staleAccessToken: false,
       lastRefreshError: _lastRefreshError,
+      tokenStore: tokenStoreStatus(),
     };
   }
+  const row = tok.row;
   const now = Date.now();
   const refreshExpired = row.refreshExpiresAt < now;
   const accessExpired = row.expiresAt < now;
@@ -208,6 +225,7 @@ export function getSchwabStatus(): {
     needsReauth,
     staleAccessToken: accessExpired && !refreshExpired,
     lastRefreshError: _lastRefreshError,
+    tokenStore: tokenStoreStatus(),
   };
 }
 
@@ -223,28 +241,19 @@ export function getAuthUrl(): string {
 
 /** Clears stored tokens (disconnect). */
 export function clearTokens(): void {
-  db.delete(schwabTokens).where(eq(schwabTokens.id, 1)).run();
+  deleteSchwabTokens();
 }
 
 // ─── Generic Schwab fetch with cache + 429 backoff + self-throttle ────────────
+//
+// Every cached payload keeps its real fetch time. A payload younger than its
+// FRESH_TTL is reused as fresh. When a refresh fails (403/429/5xx/throttle/
+// network) the cached payload is served only while it is younger than
+// maxServeAgeMs(kind) and is marked stale with its age; past that the caller
+// gets null (unavailable). Policy and limits: server/schwabDataPolicy.ts.
 
-// Per-endpoint cache. Key = path|sortedParams. Value = { data, expiresAt }.
-const _cache = new Map<string, { data: any; expiresAt: number }>();
-
-// Per-endpoint TTL (ms). Anything not listed = no cache.
-// pricehistory differentiates by frequencyType: minute bars need a short TTL
-// during RTH so live charts don't sit on 10-min-old data.
-function cacheTtlMs(path: string, params?: Record<string, string | number>): number {
-  if (path.startsWith("marketdata/v1/quotes")) return 30_000;
-  if (path.startsWith("marketdata/v1/pricehistory")) {
-    const ft = params ? String(params.frequencyType ?? "").toLowerCase() : "";
-    if (ft === "minute") return 20_000;   // 20s for intraday tape
-    return 300_000;                        // 5min for daily/weekly/monthly
-  }
-  if (path.startsWith("marketdata/v1/chains")) return 60_000;
-  if (path.startsWith("marketdata/v1/markets")) return 300_000;
-  return 0;
-}
+type CacheEntry = { data: any; fetchedAt: number; expiresAt: number };
+const _cache = new Map<string, CacheEntry>();
 
 // Self-throttle: track requests in last 60s. Schwab limit ~120/min on marketdata.
 // We cap at 100/min to leave headroom.
@@ -261,29 +270,22 @@ const _cooldown = new Map<string, number>();
 // Per-endpoint 403 streak counter — reset on success.
 const _403Streak = new Map<string, number>();
 
-/** Tracks how often we've fallen back to CBOE for chains, per symbol. Reset every 60s. */
-const _cboeFallbackHits = new Map<string, { count: number; lastTs: number }>();
-function _recordCboeFallback(symbol: string) {
+/** Stale serves and refusals per data kind (diagnostics; reset after 5 min idle). */
+const _degraded = new Map<string, { staleServed: number; unavailable: number; lastTs: number; lastReason: string }>();
+function _recordDegraded(kind: SchwabDataKind, served: boolean, reason: string) {
   const now = Date.now();
-  const cur = _cboeFallbackHits.get(symbol);
-  if (!cur || now - cur.lastTs > 60_000) {
-    _cboeFallbackHits.set(symbol, { count: 1, lastTs: now });
-  } else {
-    _cboeFallbackHits.set(symbol, { count: cur.count + 1, lastTs: now });
-  }
+  const cur = _degraded.get(kind);
+  const base = !cur || now - cur.lastTs > 300_000 ? { staleServed: 0, unavailable: 0, lastTs: now, lastReason: reason } : cur;
+  if (served) base.staleServed += 1; else base.unavailable += 1;
+  base.lastTs = now;
+  base.lastReason = reason;
+  _degraded.set(kind, base);
 }
-export function _getCboeFallbackHits() {
-  const now = Date.now();
-  // Drop entries older than 5 min
-  for (const [k, v] of _cboeFallbackHits) {
-    if (now - v.lastTs > 300_000) _cboeFallbackHits.delete(k);
-  }
-  return Array.from(_cboeFallbackHits.entries()).map(([symbol, v]) => ({
-    symbol,
-    count: v.count,
-    secondsAgo: Math.round((now - v.lastTs) / 1000),
-  }));
-}
+
+/** Last chain payload per symbol: strikeCount sent, bytes received, contracts, coverage. */
+const _chainCost = new Map<string, { strikeCount: number; bytes: number; contracts: number; at: number; coverage: StrikeCoverage | null }>();
+let _lastResponseBytes = 0;
+
 function _endpointKey(path: string): string {
   // Bucket by first 3 path segments (e.g. "marketdata/v1/pricehistory")
   return path.split("?")[0].split("/").slice(0, 3).join("/");
@@ -293,13 +295,33 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+export interface SchwabFetchResult {
+  /** Parsed payload, or null when unavailable. */
+  data: any | null;
+  /** Provenance of `data` (null when unavailable). */
+  freshness: SchwabFreshness | null;
+  /** Why the data is unavailable or stale; null when fresh. */
+  reason: string | null;
+  /** Response size in bytes when a request was made and succeeded. */
+  bytes?: number;
+}
+
+/** Raw data only (legacy shape). Stale payloads are bounded by maxServeAgeMs; use schwabFetchMeta for asOf. */
 export async function schwabFetch(
   path: string,
   params?: Record<string, string | number>,
   opts?: { skipCache?: boolean },
 ): Promise<any | null> {
+  return (await schwabFetchMeta(path, params, opts)).data;
+}
+
+export async function schwabFetchMeta(
+  path: string,
+  params?: Record<string, string | number>,
+  opts?: { skipCache?: boolean },
+): Promise<SchwabFetchResult> {
   const token = await getAccessToken();
-  if (!token) return null;
+  if (!token) return { data: null, freshness: null, reason: "Schwab not connected" };
 
   // Build cache key — exclude endDate from key for pricehistory minute bars
   // because we use endDate=now() to force Schwab to return today's tape, but
@@ -311,30 +333,40 @@ export async function schwabFetch(
   }
   const paramStr = cacheParams ? Object.entries(cacheParams).sort().map(([k, v]) => `${k}=${v}`).join("&") : "";
   const cacheKey = `${path}|${paramStr}`;
-  const ttl = cacheTtlMs(path, params);
+  const kind = schwabDataKind(path, params);
+  const ttl = FRESH_TTL_MS[kind];
 
-  // Cache hit
+  // Fresh cache hit (younger than the TTL): real fetch time, not stale.
   if (!opts?.skipCache && ttl > 0) {
     const hit = _cache.get(cacheKey);
     if (hit && hit.expiresAt > Date.now()) {
-      return hit.data;
+      return { data: hit.data, freshness: freshFreshness(hit.fetchedAt, kind, true), reason: null };
     }
   }
+
+  // A refresh failed: serve the cached payload only within its max age.
+  const serveStale = (reason: string): SchwabFetchResult => {
+    const entry = _cache.get(cacheKey);
+    const d = staleServeDecision(entry?.fetchedAt, kind, reason);
+    _recordDegraded(kind, d.serve, d.serve ? reason : d.reason);
+    if (d.serve && entry) return { data: entry.data, freshness: d.freshness, reason };
+    return { data: null, freshness: null, reason: d.serve ? reason : d.reason };
+  };
 
   // Endpoint cooldown check
   const epKey = _endpointKey(path);
   const coolUntil = _cooldown.get(epKey);
   if (coolUntil && coolUntil > Date.now()) {
-    const stale = _cache.get(cacheKey);
-    if (stale) return stale.data; // serve stale during cooldown
-    return null;
+    return serveStale(`Schwab ${epKey.split("/").pop()} cooling down ${Math.round((coolUntil - Date.now()) / 1000)} s after 403/429`);
   }
 
   // Self-throttle
   _trimReqLog();
   if (_reqLog.length >= MAX_REQ_PER_MIN) {
-    const stale = _cache.get(cacheKey);
-    if (stale) return stale.data;
+    const entry = _cache.get(cacheKey);
+    if (entry && staleServeDecision(entry.fetchedAt, kind, "self-throttle").serve) {
+      return serveStale("self-throttle (100 requests/min)");
+    }
     // Wait until oldest request ages out
     const waitMs = Math.max(0, _reqLog[0] + 60_000 - Date.now()) + 50;
     if (waitMs < 5000) {
@@ -342,7 +374,7 @@ export async function schwabFetch(
       _trimReqLog();
     } else {
       console.warn("[schwab] self-throttle hit, skipping:", path);
-      return null;
+      return serveStale("self-throttle (100 requests/min)");
     }
   }
 
@@ -367,14 +399,18 @@ export async function schwabFetch(
       if (res.ok) {
         // Reset 403 streak on success
         _403Streak.delete(epKey);
-        const data = await res.json();
-        if (ttl > 0) _cache.set(cacheKey, { data, expiresAt: Date.now() + ttl });
-        return data;
+        const text = await res.text();
+        const bytes = text.length;
+        _lastResponseBytes = bytes;
+        const data = JSON.parse(text);
+        const fetchedAt = Date.now();
+        if (ttl > 0) _cache.set(cacheKey, { data, fetchedAt, expiresAt: fetchedAt + ttl });
+        return { data, freshness: freshFreshness(fetchedAt, kind, false), reason: null, bytes };
       }
       // 401 → token issue, no retry
       if (res.status === 401) {
         console.warn("[schwab] 401 unauthorized:", path);
-        return null;
+        return { data: null, freshness: null, reason: "Schwab 401 unauthorized" };
       }
       // 403 → may be permission OR transient (Schwab returns 403 for rate-adjacent
       // refusals). Cool down endpoint 60s, no retry. Track 403 streak — if 3 in a row
@@ -385,7 +421,7 @@ export async function schwabFetch(
         const coolMs = streak >= 3 ? 5 * 60_000 : 60_000;
         console.warn(`[schwab] 403 forbidden: ${path} (cooldown ${Math.round(coolMs / 1000)}s, streak ${streak})`);
         _cooldown.set(epKey, Date.now() + coolMs);
-        return _cache.get(cacheKey)?.data ?? null;
+        return serveStale(`Schwab 403 (streak ${streak})`);
       }
       // 429 → backoff with Retry-After if present
       if (res.status === 429) {
@@ -401,7 +437,7 @@ export async function schwabFetch(
         // Final 429 → cool down endpoint
         console.warn("[schwab] 429 rate-limited:", path, "(cooldown 60s)");
         _cooldown.set(epKey, Date.now() + 60_000);
-        return _cache.get(cacheKey)?.data ?? null;
+        return serveStale("Schwab 429 rate limit");
       }
       // 5xx → retry
       if (res.status >= 500 && attempt < maxAttempts) {
@@ -409,24 +445,27 @@ export async function schwabFetch(
         continue;
       }
       console.warn("[schwab] fetch failed:", res.status, path);
-      return _cache.get(cacheKey)?.data ?? null;
+      return serveStale(`Schwab HTTP ${res.status}`);
     } catch (e: any) {
       console.warn("[schwab] fetch exception:", e?.message, path);
       if (attempt < maxAttempts) {
         await sleep(500 * attempt);
         continue;
       }
-      return _cache.get(cacheKey)?.data ?? null;
+      return serveStale(`Schwab request failed (${e?.message ?? "network"})`);
     }
   }
   console.warn("[schwab] all retries exhausted:", path, "last:", lastStatus);
-  return null;
+  return serveStale(`Schwab retries exhausted (last HTTP ${lastStatus})`);
 }
 
 /** Diagnostic snapshot for /api/schwab/diag. */
 export function getSchwabDiagnostics() {
   _trimReqLog();
   const now = Date.now();
+  for (const [k, v] of Array.from(_degraded.entries())) {
+    if (now - v.lastTs > 300_000) _degraded.delete(k);
+  }
   return {
     cacheEntries: _cache.size,
     requestsLastMinute: _reqLog.length,
@@ -437,7 +476,25 @@ export function getSchwabDiagnostics() {
     forbiddenStreaks: Array.from(_403Streak.entries())
       .filter(([_, n]) => n > 0)
       .map(([ep, n]) => ({ endpoint: ep, count: n })),
-    cboeFallbackHits: _getCboeFallbackHits(),
+    /** Per data kind in the last 5 min: cached payloads served stale (within max age) and requests left unavailable. */
+    degraded: Array.from(_degraded.entries()).map(([kind, v]) => ({
+      kind, staleServed: v.staleServed, unavailable: v.unavailable,
+      secondsAgo: Math.round((now - v.lastTs) / 1000), lastReason: v.lastReason,
+    })),
+    /** Max serve age per kind right now (ms): past it, data is unavailable. */
+    maxServeAgeMs: {
+      quotes: maxServeAgeMs("quotes", now),
+      chains: maxServeAgeMs("chains", now),
+      minute_bars: maxServeAgeMs("minute_bars", now),
+      daily_bars: maxServeAgeMs("daily_bars", now),
+    },
+    /** Option-chain request cost: strikeCount sent, bytes received, contracts parsed, coverage. */
+    chainCost: Array.from(_chainCost.entries()).map(([symbol, v]) => ({
+      symbol, strikeCount: v.strikeCount, bytes: v.bytes, contracts: v.contracts,
+      secondsAgo: Math.round((now - v.at) / 1000), coverage: v.coverage,
+    })),
+    strikeCountSemantics: _strikeCountSemantics,
+    lastResponseBytes: _lastResponseBytes,
   };
 }
 
@@ -469,6 +526,22 @@ export type NormalizedQuote = {
   ask: number | null;
   volume: number | null;
   source: "schwab";
+  /** Schwab quote closePrice: the previous regular session's close ($/share or index pts). */
+  prevClose?: number | null;
+  /** Schwab quoteTime (else tradeTime), epoch ms, when provided. */
+  quoteTimeMs?: number | null;
+  /** now - quoteTimeMs (ms); null when the quote had no timestamp. */
+  ageMs?: number | null;
+  /** Older than 2 min during the regular session (quoteFreshness.ts), or re-served from cache after a failed refresh; null = age unknown. */
+  stale?: boolean | null;
+  /** Schwab regularMarketLastPrice (last regular-session trade). */
+  regularMarketLast?: number | null;
+  /** When this quote payload was received from Schwab, epoch ms. */
+  fetchedAtMs?: number | null;
+  /** true when the payload came from the in-memory cache. */
+  servedFromCache?: boolean;
+  /** "stream": Schwab Streamer LEVELONE (live session); "rest": Schwab /quotes snapshot. */
+  feed?: "stream" | "rest";
 };
 
 /** Normalize legacy `.X` suffix on cash-index symbols. Schwab requires `$VIX`, `$SPX`,
@@ -482,6 +555,78 @@ function _normalizeIndexSymbol(sym: string): string {
   return sym;
 }
 
+/**
+ * Streamer connection info from GET /trader/v1/userPreference (streamerInfo[0]).
+ * Never cached (data kind "other"); null when Schwab is not connected or the
+ * payload has no usable streamerInfo. The socket URL and ids are never logged.
+ */
+export async function getStreamerInfo(): Promise<StreamerInfo | null> {
+  const meta = await schwabFetchMeta("trader/v1/userPreference");
+  return meta.data ? parseStreamerInfo(meta.data) : null;
+}
+
+/**
+ * Start the one Schwab Streamer connection (server/schwabStream.ts) with this
+ * module's token and userPreference fetch. BATCAVE_STREAM=0 disables it; REST
+ * snapshots (still Schwab) then serve every consumer. Uses Node 22's global
+ * WebSocket, else the `ws` package.
+ */
+export async function bootSchwabStream(): Promise<void> {
+  if (process.env.BATCAVE_STREAM === "0") {
+    console.log("[schwab-stream] disabled (BATCAVE_STREAM=0): REST snapshots only");
+    return;
+  }
+  let WS: any = (globalThis as any).WebSocket;
+  if (!WS) {
+    try { WS = (await import("ws")).default; } catch { WS = null; }
+  }
+  if (!WS) {
+    console.warn("[schwab-stream] no WebSocket implementation: REST snapshots only");
+    return;
+  }
+  startSchwabStream({
+    getAccessToken: () => getAccessToken(),
+    forceTokenRefresh: () => getAccessToken(25 * 60_000),
+    getStreamerInfo,
+    createSocket: (url: string) => new WS(url) as WebSocketLike,
+    onLastPrice: (symbol, price, tMs) => { observeQuote(symbol, price, tMs); },
+    onFinalBars: (bars) => {
+      import("./mlDataLog").then((m) => m.persistStreamSpxBars(bars)).catch((e) => {
+        console.warn("[schwab-stream] bar persist failed:", e?.message ?? e);
+      });
+    },
+  }, streamConfigFromEnv(process.env));
+}
+
+/** A Schwab Streamer LEVELONE quote in the REST quote shape (feed "stream"), or null when the stream cannot serve it now. */
+function _streamedQuote(wireSym: string, origSym: string, nowMs: number): NormalizedQuote | null {
+  const r = streamEquityQuote(wireSym, nowMs);
+  if (!r.quote) return null;
+  const q = r.quote;
+  const last = q.last ?? q.mark ?? null;
+  if (last == null) return null;
+  const quoteTimeMs = q.quoteTimeMs ?? q.tradeTimeMs ?? null;
+  const fresh = quoteFreshness(quoteTimeMs, nowMs);
+  return {
+    symbol: origSym,
+    last,
+    change: q.netChange,
+    changePercent: q.netChangePercent,
+    bid: q.bid,
+    ask: q.ask,
+    volume: q.totalVolume,
+    source: "schwab",
+    prevClose: q.closePrice != null && q.closePrice > 0 ? q.closePrice : null,
+    regularMarketLast: q.regularMarketLast != null && q.regularMarketLast > 0 ? q.regularMarketLast : null,
+    quoteTimeMs,
+    ageMs: fresh.ageMs,
+    stale: fresh.stale,
+    fetchedAtMs: q.receivedAtMs,
+    servedFromCache: false,
+    feed: "stream",
+  };
+}
+
 /** Get quotes for multiple symbols via Schwab. Returns empty array if not authenticated. */
 export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
   if (!symbols.length) return [];
@@ -490,25 +635,50 @@ export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
   const wireSymbols = symbols.map(_normalizeIndexSymbol);
   const wireToOriginal = new Map<string, string>();
   symbols.forEach((orig, i) => wireToOriginal.set(wireSymbols[i], orig));
+  // Schwab Streamer first: a LEVELONE quote from the live session (fresh by
+  // streamStore's validity rule) is used as is; only the rest go to REST.
+  const nowMs = Date.now();
+  const streamed = new Map<string, NormalizedQuote>();
+  for (const w of wireSymbols) {
+    const sq = _streamedQuote(w, wireToOriginal.get(w) ?? w, nowMs);
+    if (sq) streamed.set(w, sq);
+  }
+  const restSymbols = wireSymbols.filter((w) => !streamed.has(w));
+  const ordered = (rest: NormalizedQuote[]): NormalizedQuote[] => {
+    const byWire = new Map<string, NormalizedQuote>();
+    rest.forEach((q) => byWire.set(_normalizeIndexSymbol(q.symbol), q));
+    const out: NormalizedQuote[] = [];
+    for (const w of wireSymbols) {
+      const q = streamed.get(w) ?? byWire.get(w);
+      if (q) out.push(q);
+    }
+    return out;
+  };
+  if (!restSymbols.length) return ordered([]);
   const token = await getAccessToken();
   if (!token) {
     console.warn("[schwab] not authenticated, returning empty quotes");
-    return [];
+    return ordered([]);
   }
   try {
-    const data = await schwabFetch("marketdata/v1/quotes", { symbols: wireSymbols.join(",") });
+    const meta = await schwabFetchMeta("marketdata/v1/quotes", { symbols: restSymbols.join(",") });
+    const data = meta.data;
     if (data && typeof data === "object") {
       const results: NormalizedQuote[] = [];
-      for (const wireSym of wireSymbols) {
+      for (const wireSym of restSymbols) {
         const q = data[wireSym];
         if (!q) continue;
         const origSym = wireToOriginal.get(wireSym) ?? wireSym;
         // Schwab returns either "quote" (regular) or "reference" depending on type
         const qd = q.quote ?? q.fundamental ?? {};
         const last = qd.lastPrice ?? qd.mark ?? null;
+        const quoteTimeMs: number | null = typeof qd.quoteTime === "number" ? qd.quoteTime
+          : typeof qd.tradeTime === "number" ? qd.tradeTime : null;
+        const fresh = quoteFreshness(quoteTimeMs);
         // Quote-shield observer (flag-only — see MASTER_SYNTHESIS Tier 2 #6)
         try {
-          if (last != null && isFinite(last)) observeQuote(origSym, last);
+          // Only new payloads: a cached payload re-served carries no new information.
+          if (last != null && isFinite(last) && !meta.freshness?.servedFromCache) observeQuote(origSym, last, quoteTimeMs ?? Date.now());
         } catch { /* shield must never break ingest */ }
         results.push({
           symbol: origSym,
@@ -521,20 +691,40 @@ export async function getQuotes(symbols: string[]): Promise<NormalizedQuote[]> {
           ask: qd.askPrice ?? null,
           volume: qd.totalVolume ?? null,
           source: "schwab",
+          prevClose: typeof qd.closePrice === "number" && qd.closePrice > 0 ? qd.closePrice : null,
+          regularMarketLast: typeof qd.regularMarketLastPrice === "number" && qd.regularMarketLastPrice > 0 ? qd.regularMarketLastPrice : null,
+          quoteTimeMs,
+          ageMs: fresh.ageMs,
+          // A payload re-served after a failed refresh is stale even if its own
+          // quoteTime is recent; within the session fresh.stale also applies.
+          stale: meta.freshness?.stale ? true : fresh.stale,
+          fetchedAtMs: meta.freshness?.asOfMs ?? null,
+          servedFromCache: meta.freshness?.servedFromCache ?? false,
+          feed: "rest",
         });
       }
-      return results;
+      return ordered(results);
     }
   } catch (e: any) {
     console.warn("[schwab] getQuotes error:", e?.message);
   }
-  return [];
+  return ordered([]);
 }
 
 export type PriceHistoryResponse = {
   symbol: string;
   candles: { datetime: number; open: number; high: number; low: number; close: number; volume: number }[];
   source: "schwab";
+  /** "ok" = candles present; "empty" = Schwab answered with no candles; "unavailable" = no answer (not connected, error, or cache past max age). */
+  dataState?: "ok" | "empty" | "unavailable";
+  /** When Schwab produced the payload, epoch ms (null when unavailable). */
+  asOfMs?: number | null;
+  ageMs?: number | null;
+  servedFromCache?: boolean;
+  /** true = a refresh failed and an older payload (within maxAgeMs) is served. */
+  stale?: boolean;
+  maxAgeMs?: number | null;
+  reason?: string | null;
 };
 
 /** Get price history via Schwab. Returns empty candles if not authenticated or on error.
@@ -550,10 +740,14 @@ export async function getPriceHistory(
 ): Promise<PriceHistoryResponse> {
   // Normalize legacy .X suffix on cash indexes (silent fix for locked callers)
   const wireSymbol = _normalizeIndexSymbol(symbol);
+  const unavailable = (reason: string): PriceHistoryResponse => ({
+    symbol, candles: [], source: "schwab", dataState: "unavailable",
+    asOfMs: null, ageMs: null, servedFromCache: false, stale: false, maxAgeMs: null, reason,
+  });
   const token = await getAccessToken();
   if (!token) {
     console.warn("[schwab] not authenticated, returning empty candles");
-    return { symbol, candles: [], source: "schwab" };
+    return unavailable("Schwab not connected");
   }
   try {
     // CRITICAL: Schwab returns the PREVIOUS business day when endDate is omitted.
@@ -573,151 +767,231 @@ export async function getPriceHistory(
     if (frequencyType === "minute") {
       params.endDate = Math.floor(Date.now() / 20_000) * 20_000;
     }
-    const data = await schwabFetch("marketdata/v1/pricehistory", params);
-    if (data?.candles?.length) {
-      return { symbol, candles: data.candles, source: "schwab" };
-    }
+    const r = await schwabFetchMeta("marketdata/v1/pricehistory", params);
+    if (r.data == null || !r.freshness) return unavailable(r.reason ?? "Schwab price history unavailable");
+    const f = r.freshness;
+    const candles = Array.isArray(r.data?.candles) ? r.data.candles : [];
+    return {
+      symbol, candles, source: "schwab",
+      dataState: candles.length ? "ok" : "empty",
+      asOfMs: f.asOfMs, ageMs: f.ageMs, servedFromCache: f.servedFromCache, stale: f.stale, maxAgeMs: f.maxAgeMs,
+      reason: f.reason,
+    };
   } catch (e: any) {
     console.warn("[schwab] getPriceHistory error:", e?.message);
+    return unavailable(`Schwab price history error: ${e?.message ?? "unknown"}`);
   }
-  return { symbol, candles: [], source: "schwab" };
 }
 
-export type OptionChainResponse = {
-  underlying: { last: number | null; bid: number | null; ask: number | null };
+/** Schwab chain underlying block (index points or $/share). */
+export interface ChainUnderlying {
+  last: number | null;
+  bid: number | null;
+  ask: number | null;
+  /** Schwab underlying.close: previous session close as reported by the chain. */
+  close?: number | null;
+  /** Schwab underlying.quoteTime, epoch ms. */
+  quoteTimeMs?: number | null;
+  /** Schwab chain isDelayed flag (true would mean the entitlement serves delayed data). */
+  delayed?: boolean | null;
+}
+
+export type OptionChainOk = {
+  underlying: ChainUnderlying;
   callExpDateMap: Record<string, Record<string, any[]>>;
   putExpDateMap: Record<string, Record<string, any[]>>;
-  source: "schwab" | "cboe";
-  lagSeconds?: number;
-} | { error: "schwab_required" | "cboe_unavailable"; source: null };
+  source: "schwab";
+  /** When the chain's market data was current, epoch ms: Schwab's underlying
+   *  quoteTime when present (asOfBasis "underlying_quote_time"), else our
+   *  receive time (round 3, N1-2; schwabDataPolicy.chainAsOf). */
+  asOfMs: number;
+  /** now - asOfMs. */
+  ageMs: number;
+  asOfBasis?: ChainAsOfBasis;
+  /** When we received the response from Schwab (cache age is measured from this). */
+  receivedAtMs?: number;
+  servedFromCache: boolean;
+  /** true = a refresh failed and an older chain (within maxAgeMs) is served. */
+  stale: boolean;
+  maxAgeMs: number;
+  staleReason: string | null;
+  /** strikeCount sent to Schwab, and the coverage the response actually delivered. */
+  strikeCount: number;
+  strikePlan: string;
+  strikeCoverage: StrikeCoverage | null;
+};
 
-/** Get option chain. Tries Schwab first; on 403/null falls back to CBOE delayed (~15min lag).
- *  CBOE response is normalized to Schwab's callExpDateMap/putExpDateMap shape so all
- *  downstream consumers (gamma walls, GEX, exposures, whale detection) work unchanged.
- *  The `source` field on the response indicates which feed was used.
+/** Error: "schwab_required" = not connected (auth); "schwab_unavailable" = Schwab could not answer (or cache past max age). */
+/** Error: "schwab_required" = not connected (auth); "schwab_unavailable" = Schwab could not answer (or cache past max age);
+ *  "schwab_delayed" = Schwab answered with a chain flagged isDelayed: not current, so kept out of greeks, gamma and sizing. */
+export type OptionChainResponse = OptionChainOk | {
+  error: "schwab_required" | "schwab_unavailable" | "schwab_delayed";
+  source: null;
+  reason?: string;
+  dataState?: "unavailable" | "delayed";
+};
+
+// Last known spot and ATM IV per wire symbol: sizes the next strikeCount.
+const _chainHints = new Map<string, { spot: number; atmIv: number | null; at: number }>();
+let _strikeCountSemantics: StrikeCountSemantics = "unknown";
+
+async function _spotHint(wireSymbol: string): Promise<{ spot: number | null; atmIv: number | null }> {
+  const h = _chainHints.get(wireSymbol);
+  if (h && Date.now() - h.at < 6 * 3600_000) return { spot: h.spot, atmIv: h.atmIv };
+  try {
+    const qs = await getQuotes([wireSymbol]);
+    const last = qs[0]?.last;
+    return { spot: last != null && last > 0 ? last : null, atmIv: null };
+  } catch {
+    return { spot: null, atmIv: null };
+  }
+}
+
+/** Get an option chain from Schwab. Schwab is the only source: when it cannot
+ *  answer (or its cached chain is past maxServeAgeMs) the result is an error
+ *  ("schwab_required" when not connected, "schwab_unavailable" otherwise).
+ *  Every chain carries asOfMs / servedFromCache / stale and the strike
+ *  coverage it delivered.
+ *  @param dte      last expiry in calendar days from today (window starts today)
+ *  @param opts.fromDte first expiry in calendar days (default 0): lets a caller
+ *                  that needs one tenor (e.g. 60-90 DTE skew) skip the front.
+ *  @param opts.coverage what the strikes must cover (schwabDataPolicy.ChainCoverage,
+ *                  default "gamma"); "wing25" for skew, "atm" for ATM IV only.
  */
 export async function getOptionChain(
   symbol: string,
   dte?: number,
+  opts?: { fromDte?: number; coverage?: ChainCoverage },
 ): Promise<OptionChainResponse> {
   // Normalize legacy .X suffix on cash indexes (silent fix for locked callers)
   const wireSymbol = _normalizeIndexSymbol(symbol);
   const token = await getAccessToken();
+  if (!token) return { error: "schwab_required", source: null, reason: "Schwab not connected" };
 
-  // Try Schwab first if authenticated
-  if (token) {
-    try {
-      const params: Record<string, string | number> = {
-        symbol: wireSymbol,
-        contractType: "ALL",
-        strikeCount: 60,
-        includeUnderlyingQuote: "true",
-      };
-      if (dte !== undefined) {
-        const now = new Date();
-        const to = new Date(now);
-        to.setDate(to.getDate() + Math.max(dte, 1));
-        params.fromDate = now.toISOString().split("T")[0];
-        params.toDate = to.toISOString().split("T")[0];
-      }
-      const data = await schwabFetch("marketdata/v1/chains", params);
-      if (data && (data.callExpDateMap || data.putExpDateMap)) {
-        return {
-          underlying: {
-            last: data.underlying?.last ?? null,
-            bid: data.underlying?.bid ?? null,
-            ask: data.underlying?.ask ?? null,
-          },
-          callExpDateMap: data.callExpDateMap ?? {},
-          putExpDateMap: data.putExpDateMap ?? {},
-          source: "schwab",
-        };
-      }
-      // null/empty from Schwab → fall through to CBOE
-    } catch (e: any) {
-      console.warn("[schwab] getOptionChain error, trying CBOE fallback:", e?.message);
-    }
-  }
-
-  // Fallback: CBOE delayed (~15min lag). Same shape, source="cboe".
   try {
-    const { getCboeOptionChain } = await import("./cboeChainAdapter");
-    const cboeChain = await getCboeOptionChain(symbol, dte);
-    if ("error" in cboeChain) {
-      console.warn("[schwab] CBOE fallback failed:", cboeChain.error);
-      return { error: "schwab_required", source: null };
+    const hint = await _spotHint(wireSymbol);
+    const plan = chainStrikePlan({
+      symbol: wireSymbol, spot: hint.spot, dteMax: dte ?? 60, atmIv: hint.atmIv, semantics: _strikeCountSemantics,
+      coverage: opts?.coverage,
+    });
+    const params: Record<string, string | number> = {
+      symbol: wireSymbol,
+      contractType: "ALL",
+      strikeCount: plan.strikeCount,
+      includeUnderlyingQuote: "true",
+    };
+    if (dte !== undefined) {
+      // Expiration window in ET calendar dates. It was built from UTC dates,
+      // so after 20:00 ET (00:00 UTC) the request started on the next day.
+      const fromEt = etDate();
+      const fromDte = Math.max(0, Math.min(opts?.fromDte ?? 0, Math.max(dte, 1)));
+      params.fromDate = addDays(fromEt, fromDte);
+      params.toDate = addDays(fromEt, Math.max(dte, 1));
     }
-    console.log(`[schwab] using CBOE fallback for ${symbol} (lag ${cboeChain.lagSeconds}s)`);
-    _recordCboeFallback(symbol);
-    return cboeChain;
+    const r = await schwabFetchMeta("marketdata/v1/chains", params);
+    const data = r.data;
+    if (!data || !(data.callExpDateMap || data.putExpDateMap) || !r.freshness) {
+      return { error: "schwab_unavailable", source: null, dataState: "unavailable", reason: r.reason ?? "Schwab returned no chain" };
+    }
+    if (chainIsDelayed(data)) {
+      _recordDegraded("chains", false, "Schwab chain flagged isDelayed");
+      return {
+        error: "schwab_delayed", source: null, dataState: "delayed",
+        reason: "Schwab returned a DELAYED chain (isDelayed=true): not current, excluded from greeks, gamma and sizing",
+      };
+    }
+    const u = data.underlying ?? {};
+    const num = (x: any) => (typeof x === "number" && Number.isFinite(x) ? x : null);
+    const last = num(u.last);
+    const spot = last != null && last > 0 ? last : num(data.underlyingPrice);
+    const coverage = spot != null && spot > 0 ? strikeCoverage(data, spot, plan.halfWidthPct, plan.spacing) : null;
+    if (spot != null && spot > 0) {
+      _chainHints.set(wireSymbol, { spot, atmIv: atmIvFromChain(data, spot), at: Date.now() });
+      if (coverage && !r.freshness.servedFromCache && _strikeCountSemantics === "unknown") {
+        const inferred = inferStrikeCountSemantics(plan.strikeCount, coverage.nearestBelow, coverage.nearestAbove);
+        if (inferred !== "unknown") _strikeCountSemantics = inferred;
+      }
+    }
+    if (r.bytes != null) {
+      let contracts = 0;
+      for (const m of [data.callExpDateMap, data.putExpDateMap]) {
+        for (const ek of Object.keys(m ?? {})) for (const sk of Object.keys(m[ek] ?? {})) contracts += (m[ek][sk] ?? []).length;
+      }
+      _chainCost.set(wireSymbol, { strikeCount: plan.strikeCount, bytes: r.bytes, contracts, at: Date.now(), coverage });
+    }
+    const f = r.freshness;
+    // Age from Schwab's underlying quote time; receive time only as fallback.
+    const quoteTimeMs = num(u.quoteTime);
+    const ao = chainAsOf(quoteTimeMs, f.asOfMs);
+    return {
+      underlying: {
+        last,
+        bid: num(u.bid),
+        ask: num(u.ask),
+        close: num(u.close),
+        quoteTimeMs,
+        delayed: typeof data.isDelayed === "boolean" ? data.isDelayed : typeof u.delayed === "boolean" ? u.delayed : null,
+      },
+      callExpDateMap: data.callExpDateMap ?? {},
+      putExpDateMap: data.putExpDateMap ?? {},
+      source: "schwab",
+      asOfMs: ao.asOfMs,
+      ageMs: Math.max(0, Date.now() - ao.asOfMs),
+      asOfBasis: ao.basis,
+      receivedAtMs: f.asOfMs,
+      servedFromCache: f.servedFromCache,
+      stale: f.stale,
+      maxAgeMs: f.maxAgeMs,
+      staleReason: f.reason,
+      strikeCount: plan.strikeCount,
+      strikePlan: plan.basis,
+      strikeCoverage: coverage,
+    };
   } catch (e: any) {
-    console.warn("[schwab] CBOE fallback exception:", e?.message);
-    return { error: "schwab_required", source: null };
+    console.warn("[schwab] getOptionChain error:", e?.message);
+    return { error: "schwab_unavailable", source: null, reason: `Schwab chain error: ${e?.message ?? "unknown"}` };
   }
 }
 
+/**
+ * Multi-expiry chain 0..dteMax assembled from the shared DTE ladder
+ * (schwabDataPolicy.chainLadderSegments: [0-2] [3-7] [8-30] [31-45] [46-100]).
+ * Each segment is its own cached request, so the Models horizons and the
+ * regime headline share one download per segment per minute instead of each
+ * re-downloading the near expiries. The last segment may run past dteMax:
+ * expiries beyond it are dropped here. Any segment failing makes the whole
+ * view unavailable (a GEX sum missing a segment would be silently wrong).
+ */
+export async function getOptionChainLadder(symbol: string, dteMax: number): Promise<OptionChainResponse> {
+  const segs = chainLadderSegments(dteMax);
+  const parts = await Promise.all(segs.map((s) => getOptionChain(symbol, s.toDte, { fromDte: s.fromDte })));
+  const bad = parts.find((p) => "error" in p);
+  if (bad) return bad;
+  const ok = parts as OptionChainOk[];
+  // OptionChainOk has no index signature; the merge keeps every field it is given.
+  const merged = mergeChainSegments(ok as unknown as ChainSegmentLike[]) as unknown as OptionChainOk | null;
+  if (!merged) return { error: "schwab_unavailable", source: null, dataState: "unavailable", reason: "no chain segments" };
+  const keep = (m: Record<string, Record<string, any[]>>) => {
+    const out: Record<string, Record<string, any[]>> = {};
+    for (const k of Object.keys(m)) {
+      const d = parseFloat(k.split(":")[1] ?? "");
+      if (!Number.isFinite(d) || d <= dteMax) out[k] = m[k];
+    }
+    return out;
+  };
+  merged.callExpDateMap = keep(merged.callExpDateMap);
+  merged.putExpDateMap = keep(merged.putExpDateMap);
+  merged.ageMs = Math.max(0, Date.now() - merged.asOfMs);
+  return merged;
+}
+
 /** Compute gamma exposure from a Schwab option chain response.
- *  Returns { callWall, putWall, zeroGamma, gexByStrike[] }
+ *  Pure math lives in gammaProfile.gexByStrikeFromChain (tested); this keeps
+ *  the import path callers already use. Returns { callWall, putWall,
+ *  zeroGamma, zeroGammaCumulative, profile[], dataState }. A chain without
+ *  underlying.last is dataState "no_spot" with an empty profile: GEX is
+ *  S^2-scaled, so the old placeholder spot of 1 gave numbers ~S^2 too small.
  */
 export function computeGEXFromChain(chain: Exclude<OptionChainResponse, { error: string }>) {
-  type GexStrike = { strike: number; callGex: number; putGex: number; netGex: number };
-  const strikeMap = new Map<number, GexStrike>();
-  const spotPrice = chain.underlying.last ?? 1;
-
-  function processMap(map: Record<string, Record<string, any[]>>, side: "call" | "put") {
-    for (const expKey of Object.keys(map)) {
-      const strikesObj = map[expKey];
-      for (const strikeStr of Object.keys(strikesObj)) {
-        const contracts = strikesObj[strikeStr];
-        const strike = parseFloat(strikeStr);
-        if (!isFinite(strike)) continue;
-        for (const c of contracts) {
-          // Schwab uses -999 as a "no greek" sentinel — drop it, don't sum it
-          const rawGamma = c.gamma ?? 0;
-          const gamma = rawGamma <= -999 || !isFinite(rawGamma) ? 0 : rawGamma;
-          const oi = c.openInterest ?? 0;
-          const gex = gamma * oi * 100 * spotPrice * spotPrice * 0.01;
-          if (!strikeMap.has(strike)) {
-            strikeMap.set(strike, { strike, callGex: 0, putGex: 0, netGex: 0 });
-          }
-          const row = strikeMap.get(strike)!;
-          if (side === "call") row.callGex += gex;
-          else row.putGex -= gex; // puts invert
-          row.netGex = row.callGex + row.putGex;
-        }
-      }
-    }
-  }
-
-  processMap(chain.callExpDateMap, "call");
-  processMap(chain.putExpDateMap, "put");
-
-  const profile = Array.from(strikeMap.values()).sort((a, b) => a.strike - b.strike);
-  if (!profile.length) return { callWall: null, putWall: null, zeroGamma: null, profile: [] };
-
-  // Call Wall: strike above spot with max positive call GEX
-  const aboveSpot = profile.filter((p) => p.strike >= spotPrice);
-  const belowSpot = profile.filter((p) => p.strike < spotPrice);
-
-  const callWall = aboveSpot.reduce((best, p) => (!best || p.callGex > best.callGex ? p : best), null as GexStrike | null);
-  const putWall = belowSpot.reduce((best, p) => (!best || p.putGex < best.putGex ? p : best), null as GexStrike | null);
-
-  // Zero Gamma: strike closest to where cumulative net GEX flips sign
-  let cumGex = 0;
-  let zeroGamma: number | null = null;
-  for (const p of profile) {
-    const prev = cumGex;
-    cumGex += p.netGex;
-    if (prev < 0 && cumGex >= 0 || prev > 0 && cumGex <= 0) {
-      zeroGamma = p.strike;
-      break;
-    }
-  }
-
-  return {
-    callWall: callWall?.strike ?? null,
-    putWall: putWall?.strike ?? null,
-    zeroGamma,
-    profile,
-  };
+  return gexByStrikeFromChain(chain);
 }

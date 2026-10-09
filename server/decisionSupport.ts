@@ -15,13 +15,12 @@
 //     Close band  P5 / P95                            7126 / 7276
 //
 // Sources:
-//   Suggested size       ← Mauboussin footnote 73 (half-Kelly under the hood)
+//   Suggested size       ← none: scenario odds are not a fitted win rate (finding 6.1)
 //   Base rates           ← Mauboussin p. 24 (SPX d/w/m/y up-rates)
 //   Vol drag             ← Mauboussin p. 20 (σ²/2 rule of thumb, gated >25%)
 //   P5 / P95             ← 3-Min Data Science (PPF on EM≈1σ daily band)
 
 import {
-  kellyFraction,
   volDrag,
   normPpf,
   SPX_BASE_RATES_UP,
@@ -49,13 +48,14 @@ function row(label: string, value: string): string {
 export function formatDecisionBlock(inp: DecisionInputs): string {
   const lines: string[] = [];
 
-  // Compute size (half-Kelly under the hood, but we don't show the name).
-  let sizePct = 0;
+  // Lean only. No size: the scenario odds are risk-neutral (options-implied)
+  // or hand-set, not a fitted win probability, so Kelly does not apply
+  // (review finding 6.1). Sizing lives in the position sizer, which uses the
+  // Wilson lower bound of the realized option ledger.
   let sideLabel: "long" | "short" | "flat" = "flat";
   try {
     const directional = Math.max(inp.probBull, inp.probBear);
     if (directional > inp.probBase) {
-      sizePct = kellyFraction(directional, 0.5) * 100;
       sideLabel = inp.probBull >= inp.probBear ? "long" : "short";
     }
   } catch { /* keep defaults */ }
@@ -63,7 +63,7 @@ export function formatDecisionBlock(inp: DecisionInputs): string {
   // Close band
   let p05 = NaN, p95 = NaN;
   try {
-    const dailySigma = inp.oneDayEM; // EM ≈ 1σ daily (Schwab/cboe convention)
+    const dailySigma = inp.oneDayEM; // EM ≈ 1σ daily (Schwab expected-move input)
     p05 = normPpf(0.05, inp.spot, dailySigma);
     p95 = normPpf(0.95, inp.spot, dailySigma);
   } catch { /* keep NaN */ }
@@ -74,21 +74,15 @@ export function formatDecisionBlock(inp: DecisionInputs): string {
       sideLabel === "long" ? "long-leaning" :
       sideLabel === "short" ? "short-leaning" :
       "neutral";
-    const sizeTag = sizePct > 0 ? `size ${sizePct.toFixed(1)}%` : "no edge";
+    const sizeTag = "size: none";
     const bandTag = isFinite(p05) && isFinite(p95)
       ? `${Math.round(p05)}–${Math.round(p95)}`
       : "—";
     lines.push(row("STANCE", `${lean} · ${sizeTag} · ${bandTag}`));
   } catch { /* skip */ }
 
-  // 2. Suggested size row (raw number for verification)
-  try {
-    if (sideLabel === "flat") {
-      lines.push(row("Suggested size", "0.0%  (no edge)"));
-    } else {
-      lines.push(row(`Suggested size (${sideLabel})`, `${sizePct.toFixed(1)}%`));
-    }
-  } catch { /* skip */ }
+  // 2. Size row: none until a fitted win probability exists.
+  lines.push(row("Suggested size", "none (odds are not a win rate)"));
 
   // 3. Base-rate strip (Mauboussin p. 24) — d/w/m/y SPX up-rates
   try {

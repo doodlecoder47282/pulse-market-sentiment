@@ -1,29 +1,42 @@
 // server/whaleBacktest.ts
 //
-// Whale alert backtester. Replays past whale_alerts from SQLite against
-// underlying price history to estimate hypothetical P&L assuming you'd
-// entered each alert at the close of its detection day and exited at:
-//   - end of expiration day for non-0DTE
-//   - 0DTE: daily bars cannot simulate an intraday exit, so 0DTE alerts are
-//     reported as "no_exit_bar" with 0 P&L (not 15:55 ET as older notes claimed)
-//
-// The "pctReturn" fields are an underlying-move x leverage proxy (|delta|/0.05,
-// clamped 4-25x), NOT option P&L. Premium and gamma are ignored.
-//
-// Approximation model (read-only, simple, transparent):
-//   - Use the alert's recorded delta as the option's price sensitivity.
-//   - Underlying move from detection-bar close to exit-bar close drives PnL.
-//   - PnL multiplier: delta * underlyingMove. Calls are positive on upmove,
-//     puts on downmove. Cap at -100% (premium loss).
-//   - Result per alert: pctReturn, dollarPnl (vs $1k notional), regime tags.
-//
-// This is a sizing heuristic, not a market-making sim — no greeks decay,
-// no IV shifts, no spread costs. Treat output as relative ranking signal.
+// Whale alert backtester. Replays past whale_alerts as long-option trades
+// (review item 4.4: theta and spread are now in the P&L):
+//   - entry: BUY AT THE ASK logged at detection (whale_alert_quotes). Alerts
+//     with no logged quote (older than this build) are skipped as
+//     "no_entry_quote"; there is no leverage proxy any more.
+//   - exit, held to expiry:
+//       1. the bid the follow-through tracker logged at or shortly before the
+//          16:00 ET expiry close, when one exists ("ok_logged_mark");
+//       2. else the expiry value from the underlying's daily close on the
+//          expiry date: intrinsic for PM cash-settled index options (SPXW,
+//          XSP), intrinsic minus half the entry spread for physically settled
+//          options (sold at the bid in the last minutes), 0 if out of the money
+//          ("ok_modeled_expiry"). All time value decays by expiry, so this is
+//          the exact theta over the hold (Hull ch. 10 terminal payoff).
+//       AM-settled index roots (SPX monthlies, settled on the opening print)
+//       are skipped: the daily close is not their settlement value.
+//   - dollars: whole contracts that fit the per-trade notional
+//     (floor(notional / (ask x 100 + fee))), fees per contract per side
+//     (default $0.65); pnlPerContract and dollarPnl are after fees.
+//   - pctReturn = (exit - ask) / ask, before fees (kept per trade for reference).
+//   - netPctReturn = pnlPerContract / (ask x 100 + fee): every total (winners,
+//     win rate, mean/median return, by-symbol/type/exit-source) is NET of fees,
+//     the same basis as the $ P&L (whaleScoreboard.netGroupStats).
+//   - A DB failure returns dataState "error" with its note, never a summary
+//     that looks like "no trades".
+// 0DTE alerts use the same hold-to-close rule (the detection day is the expiry).
 
 import { db } from "./storage";
 import { whaleAlerts } from "@shared/schema";
-import { sql, and, gte, lte, eq } from "drizzle-orm";
+import { and, gte, lte, eq } from "drizzle-orm";
 import { getPriceHistory } from "./schwab";
+import { loadWhaleEntryQuote, loadWhaleExitQuote } from "./whalePersistence";
+import { acceptExitQuote, etCloseMs, evaluateWhaleTrade } from "./validationMath";
+import { netGroupStats, netReturnOnCost } from "./whaleScoreboard";
+import { feeForProduct } from "./feeConfig";
+
+const EXIT_QUOTE_MAX_AGE_MS = 20 * 60_000;
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
@@ -40,6 +53,8 @@ export interface BacktestParams {
   notional?: number;
   /** Skip alerts whose dte > maxDte (default 7) */
   maxDte?: number;
+  /** Commission + exchange fees, $ per contract per side (default 0.65) */
+  feePerContract?: number;
 }
 
 export interface BacktestTrade {
@@ -50,30 +65,51 @@ export interface BacktestTrade {
   dte: number;
   premium: number;
   detectedAt: number;
-  entryPrice: number; // underlying close at detection
-  exitPrice: number | null;
+  entryPrice: number; // underlying close on the detection day
+  exitPrice: number | null; // underlying close on the expiry day
   exitAt: number | null;
   underlyingMovePct: number | null;
   delta: number;
-  pctReturn: number | null;
-  dollarPnl: number | null;
-  reason: "ok" | "no_history" | "no_exit_bar" | "no_delta" | "filtered";
+  pctReturn: number | null;  // option return, ask in / exit out, BEFORE fees (reference only)
+  netPctReturn?: number | null; // pnlPerContract / (ask x 100 + fee): the basis of every total
+  dollarPnl: number | null;  // $ for `contracts` whole contracts, after fees
+  reason: "ok" | "no_history" | "no_exit_bar" | "no_delta" | "filtered" | "no_entry_quote" | "am_settled" | "below_one_contract" | "no_fee_configured";
+  // Added: option prices are $ per share; one contract = 100x
+  optionEntryAsk?: number | null;
+  optionExitPrice?: number | null;
+  exitSource?: "logged_bid" | "expiry_intrinsic_cash" | "expiry_intrinsic_less_half_spread" | null;
+  contracts?: number;
+  pnlPerContract?: number | null;   // $ per contract after round-trip fees
+  feesDollars?: number;
 }
 
 export interface BacktestSummary {
+  /** "error" when the alert history could not be read: totals are then not a result. */
+  dataState: "ok" | "error";
+  note?: string;
+  /** All totals are net of fees. */
+  returnBasis?: "net_of_fees";
   asOf: number;
   windowFrom: number;
   windowTo: number;
-  filters: { symbol?: string; type?: string; maxDte: number; notional: number };
+  filters: { symbol?: string; type?: string; maxDte: number; notional: number; feePerContract?: number | "per_root" };
+  /**
+   * The same totals split by how the exit was priced. Only "logged_bid" uses
+   * the definition the outcome grader uses (logged ask in, logged bid out);
+   * "modeled_expiry" prices the exit from the expiry-day close.
+   */
+  byExitSource?: Array<{ exitSource: "logged_bid" | "modeled_expiry"; n: number; winRate: number | null; avgPctReturn: number | null; totalDollarPnl: number }>;
+  /** Plain-language cost model, shown with the numbers. */
+  costModel?: string;
   totals: {
     alertsConsidered: number;
     tradesExecuted: number;
     skipped: number;
     winners: number;
     losers: number;
-    winRate: number; // 0..1
-    avgPctReturn: number; // mean across executed trades
-    medianPctReturn: number;
+    winRate: number | null; // 0..1, win = P&L after fees > 0; null with no trades
+    avgPctReturn: number | null; // mean NET return across executed trades
+    medianPctReturn: number | null; // median NET return
     totalDollarPnl: number;
     bestTrade: BacktestTrade | null;
     worstTrade: BacktestTrade | null;
@@ -81,15 +117,15 @@ export interface BacktestSummary {
   bySymbol: Array<{
     symbol: string;
     n: number;
-    winRate: number;
-    avgPctReturn: number;
+    winRate: number | null;
+    avgPctReturn: number | null;
     totalDollarPnl: number;
   }>;
   byType: Array<{
     type: "CALL" | "PUT";
     n: number;
-    winRate: number;
-    avgPctReturn: number;
+    winRate: number | null;
+    avgPctReturn: number | null;
     totalDollarPnl: number;
   }>;
   trades: BacktestTrade[];
@@ -102,13 +138,6 @@ function toEpochMs(v: string | number | undefined, fallback: number): number {
   if (typeof v === "number") return v;
   const n = Date.parse(v);
   return isFinite(n) ? n : fallback;
-}
-
-function median(nums: number[]): number {
-  if (nums.length === 0) return 0;
-  const s = [...nums].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
 interface Candle {
@@ -167,9 +196,8 @@ function closeOnOrBefore(
 }
 
 function expirationToMs(expiration: string): number {
-  // expiration like "2026-05-04" or ISO. Treat as 16:00 ET that day.
-  const d = new Date(`${expiration}T20:00:00Z`); // 16:00 ET ≈ 20:00 UTC (DST-naive)
-  return d.getTime();
+  // expiration like "2026-05-04" or ISO: 16:00 ET that day (DST-correct).
+  return etCloseMs(String(expiration).slice(0, 10));
 }
 
 // ─── Core ──────────────────────────────────────────────────────────────
@@ -180,6 +208,10 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestSumma
   const windowTo = toEpochMs(params.to, now);
   const notional = params.notional ?? 1000;
   const maxDte = params.maxDte ?? 7;
+  // SF-2: an explicit fee applies to every trade; otherwise the fee rule per
+  // root (feeConfig): $0.65 equity/ETF, the configured all-in fee for index
+  // roots, and index roots without one are skipped (no_fee_configured).
+  const explicitFee = params.feePerContract != null && Number.isFinite(params.feePerContract) ? Math.max(0, params.feePerContract) : null;
 
   // Pull alerts from db
   let rows: any[] = [];
@@ -215,14 +247,8 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestSumma
   }
 
   for (const [symbol, alerts] of bySymbol.entries()) {
+    // Daily history only feeds the modeled expiry exit; a logged exit bid works without it.
     const candles = await fetchDailyHistory(symbol);
-    if (!candles.length) {
-      for (const r of alerts) {
-        trades.push(makeTradeStub(r, "no_history"));
-        skipped++;
-      }
-      continue;
-    }
     for (const r of alerts) {
       const dte = Number(r.dte);
       if (dte > maxDte) {
@@ -231,97 +257,83 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestSumma
         continue;
       }
       const delta = Number(r.delta ?? 0);
-      if (!isFinite(delta) || delta === 0) {
-        trades.push(makeTradeStub(r, "no_delta"));
-        skipped++;
-        continue;
-      }
       const detectedAt = Number(r.detectedAt);
-      // Entry = close of the DETECTION day. Schwab daily candle `datetime` is the start of
-      // the day (early UTC) and alerts fire intra-RTH, so "first bar >= detectedAt" was
-      // tomorrow's bar: 1-DTE alerts all became no_exit_bar and 2-3 DTE lost a day.
-      // The detection day's bar is the last bar whose start is <= detectedAt.
-      let { bar: entryBar, idx: entryIdx } = closeOnOrBefore(candles, detectedAt);
-      if (!entryBar) {
-        const next = closeOnOrAfter(candles, detectedAt);
-        entryBar = next.bar;
-        entryIdx = next.idx;
-      }
-      if (!entryBar) {
-        trades.push(makeTradeStub(r, "no_history"));
-        skipped++;
-        continue;
-      }
-      // Exit bar: bar at expiration (inclusive). For 0DTE same day → use same bar's close as best available proxy.
+      // Entry = the detection day's daily bar (last bar whose start is <= detectedAt);
+      // Schwab daily candle `datetime` is the start of the day.
+      let { bar: entryBar } = closeOnOrBefore(candles, detectedAt);
+      if (!entryBar) entryBar = closeOnOrAfter(candles, detectedAt).bar;
       const expMs = expirationToMs(r.expiration);
-      let exitBar: Candle | null = null;
-      if (dte === 0) {
-        // 0DTE: use entry bar's close as exit — daily granularity prevents intraday sim.
-        // Mark as no_exit_bar to be transparent.
-        trades.push({
-          ...stubFields(r),
-          entryPrice: entryBar.close,
-          exitPrice: entryBar.close,
-          exitAt: entryBar.datetime,
-          underlyingMovePct: 0,
-          delta,
-          pctReturn: 0,
-          dollarPnl: 0,
-          reason: "no_exit_bar",
-        });
-        skipped++;
-        continue;
-      }
-      const { bar: expBar, idx: expIdx } = closeOnOrBefore(candles, expMs);
-      if (!expBar || expIdx <= entryIdx) {
-        // Expiration not yet reached (still alive) — mark as open and skip P&L calc
-        trades.push(makeTradeStub(r, "no_exit_bar"));
-        skipped++;
-        continue;
-      }
-      exitBar = expBar;
-      const movePct = (exitBar.close - entryBar.close) / entryBar.close;
-      // Schema stores raw type which is sometimes 'C'/'P' or 'CALL'/'PUT'. Normalize.
+      const { bar: expBar } = closeOnOrBefore(candles, expMs);
       const tNorm = String(r.type).toUpperCase();
       const isCall = tNorm === "CALL" || tNorm === "C";
-      const directionalMove = isCall ? movePct : -movePct;
-      // pctReturn = leverage * directionalMove. Leverage = |delta| * spot / premiumPerContract
-      // Premium per contract is unknown here; we assume average ATM 1-week call costs roughly
-      // 1.5% of underlying for tech names. As a generic proxy, use leverage = |delta| / 0.05
-      // bounded [4x, 25x]. Floors at -100% (max loss = premium).
-      const leverage = Math.max(4, Math.min(25, Math.abs(delta) / 0.05));
-      const pctReturn = Math.max(-1, leverage * directionalMove);
-      const dollarPnl = pctReturn * notional;
-      trades.push({
-        ...stubFields(r),
-        entryPrice: entryBar.close,
-        exitPrice: exitBar.close,
-        exitAt: exitBar.datetime,
-        underlyingMovePct: movePct,
-        delta,
-        pctReturn,
-        dollarPnl,
-        reason: "ok",
+      const feePerContract = explicitFee ?? feeForProduct(String(r.occ || r.symbol)).fee;
+      if (feePerContract == null) {
+        trades.push(makeTradeStub(r, "no_fee_configured"));
+        skipped++;
+        continue;
+      }
+      const quote = loadWhaleEntryQuote(String(r.occ), detectedAt);
+      const exitQ = Date.now() >= expMs ? loadWhaleExitQuote(String(r.occ)) : null;
+      const acc = exitQ ? acceptExitQuote(exitQ, expMs, EXIT_QUOTE_MAX_AGE_MS) : null;
+      // The expiry-day bar must be a different (later or same-day-for-0DTE) bar that has closed.
+      const expiryBarUsable = expBar != null && Date.now() >= expMs && etDateOfBar(expBar) === String(r.expiration).slice(0, 10);
+      const ev = evaluateWhaleTrade({
+        isCall,
+        strike: Number(r.strike),
+        occ: String(r.occ),
+        entryBid: quote?.bid ?? null,
+        entryAsk: quote?.ask ?? null,
+        loggedExitBid: acc && acc.ok ? acc.bid : null,
+        underlyingCloseAtExpiry: expiryBarUsable ? expBar!.close : null,
+        notional,
+        feePerContract,
       });
+      const common = {
+        ...stubFields(r),
+        entryPrice: entryBar?.close ?? 0,
+        exitPrice: expiryBarUsable ? expBar!.close : null,
+        exitAt: expiryBarUsable ? expBar!.datetime : null,
+        underlyingMovePct: entryBar && expiryBarUsable ? (expBar!.close - entryBar.close) / entryBar.close : null,
+        delta,
+        optionEntryAsk: ev.entryAsk,
+        optionExitPrice: ev.exitPrice,
+        exitSource: ev.exitSource,
+        contracts: ev.contracts,
+        pnlPerContract: ev.pnlPerContract,
+        feesDollars: ev.feesDollars,
+      };
+      const netPctReturn = netReturnOnCost(ev.pnlPerContract, ev.entryAsk, feePerContract);
+      if ((ev.reason === "ok_logged_mark" || ev.reason === "ok_modeled_expiry") && ev.contracts === 0) {
+        // One contract costs more than the per-trade notional: not a trade at
+        // this notional. The per-contract result is kept for reference only.
+        trades.push({ ...common, pctReturn: ev.pctReturn, netPctReturn, dollarPnl: null, reason: "below_one_contract" });
+        skipped++;
+        continue;
+      }
+      if (ev.reason === "ok_logged_mark" || ev.reason === "ok_modeled_expiry") {
+        trades.push({ ...common, pctReturn: ev.pctReturn, netPctReturn, dollarPnl: ev.dollarPnl, reason: "ok" });
+        continue;
+      }
+      const reason: BacktestTrade["reason"] =
+        ev.reason === "no_entry_quote" ? "no_entry_quote"
+        : ev.reason === "am_settled_no_settlement_value" ? "am_settled"
+        : !entryBar ? "no_history"
+        : "no_exit_bar"; // expiry not reached yet, or no expiry-day bar
+      trades.push({ ...common, pctReturn: null, dollarPnl: null, reason });
+      skipped++;
     }
   }
 
-  // ─── Aggregate ───
+  // ─── Aggregate (all net of fees) ───
   const executed = trades.filter((t) => t.reason === "ok");
-  const winners = executed.filter((t) => (t.pctReturn ?? 0) > 0);
-  const losers = executed.filter((t) => (t.pctReturn ?? 0) < 0);
-  const returns = executed.map((t) => t.pctReturn ?? 0);
-  const totalDollarPnl = executed.reduce((a, t) => a + (t.dollarPnl ?? 0), 0);
-  const avgPct = returns.length ? returns.reduce((a, b) => a + b, 0) / returns.length : 0;
-  const medPct = median(returns);
-  const best = executed.reduce<BacktestTrade | null>(
-    (b, t) => (b == null || (t.pctReturn ?? 0) > (b.pctReturn ?? 0) ? t : b),
-    null,
-  );
-  const worst = executed.reduce<BacktestTrade | null>(
-    (b, t) => (b == null || (t.pctReturn ?? 0) < (b.pctReturn ?? 0) ? t : b),
-    null,
-  );
+  const all = netGroupStats(executed.map((t) => ({ netPctReturn: t.netPctReturn ?? null, pnlPerContract: t.pnlPerContract ?? null, dollarPnl: t.dollarPnl })));
+  const netOf = (t: BacktestTrade) => t.netPctReturn ?? -Infinity;
+  const best = executed.reduce<BacktestTrade | null>((b, t) => (b == null || netOf(t) > netOf(b) ? t : b), null);
+  const worst = executed.reduce<BacktestTrade | null>((b, t) => (b == null || netOf(t) < netOf(b) ? t : b), null);
+  const groupStats = (ts: BacktestTrade[]) => {
+    const g = netGroupStats(ts.map((t) => ({ netPctReturn: t.netPctReturn ?? null, pnlPerContract: t.pnlPerContract ?? null, dollarPnl: t.dollarPnl })));
+    return { n: g.n, winRate: g.winRate, avgPctReturn: g.avgPctReturn, totalDollarPnl: g.totalDollarPnl };
+  };
 
   // bySymbol breakdown
   const symGroups = new Map<string, BacktestTrade[]>();
@@ -329,40 +341,39 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestSumma
     if (!symGroups.has(t.symbol)) symGroups.set(t.symbol, []);
     symGroups.get(t.symbol)!.push(t);
   }
-  const bySymbolStats = Array.from(symGroups.entries()).map(([symbol, ts]) => {
-    const w = ts.filter((t) => (t.pctReturn ?? 0) > 0).length;
-    const avg = ts.reduce((a, t) => a + (t.pctReturn ?? 0), 0) / ts.length;
-    const pnl = ts.reduce((a, t) => a + (t.dollarPnl ?? 0), 0);
-    return { symbol, n: ts.length, winRate: w / ts.length, avgPctReturn: avg, totalDollarPnl: pnl };
-  }).sort((a, b) => b.totalDollarPnl - a.totalDollarPnl);
+  const bySymbolStats = Array.from(symGroups.entries())
+    .map(([symbol, ts]) => ({ symbol, ...groupStats(ts) }))
+    .sort((a, b) => b.totalDollarPnl - a.totalDollarPnl);
 
   // byType
-  const callTs = executed.filter((t) => t.type === "CALL");
-  const putTs = executed.filter((t) => t.type === "PUT");
   const byType: BacktestSummary["byType"] = [];
-  for (const [k, ts] of [["CALL", callTs], ["PUT", putTs]] as const) {
-    if (!ts.length) continue;
-    const w = ts.filter((t) => (t.pctReturn ?? 0) > 0).length;
-    const avg = ts.reduce((a, t) => a + (t.pctReturn ?? 0), 0) / ts.length;
-    const pnl = ts.reduce((a, t) => a + (t.dollarPnl ?? 0), 0);
-    byType.push({ type: k as "CALL" | "PUT", n: ts.length, winRate: w / ts.length, avgPctReturn: avg, totalDollarPnl: pnl });
+  for (const k of ["CALL", "PUT"] as const) {
+    const ts = executed.filter((t) => t.type === k);
+    if (ts.length) byType.push({ type: k, ...groupStats(ts) });
   }
 
   return {
+    dataState: "ok",
+    returnBasis: "net_of_fees",
     asOf: now,
     windowFrom,
     windowTo,
-    filters: { symbol: params.symbol, type: params.type, maxDte, notional },
+    filters: { symbol: params.symbol, type: params.type, maxDte, notional, feePerContract: explicitFee ?? "per_root" },
+    costModel: COST_MODEL,
+    byExitSource: (["logged_bid", "modeled_expiry"] as const).map((src) => ({
+      exitSource: src,
+      ...groupStats(executed.filter((t) => (src === "logged_bid" ? t.exitSource === "logged_bid" : t.exitSource !== "logged_bid"))),
+    })),
     totals: {
       alertsConsidered: rows.length,
       tradesExecuted: executed.length,
       skipped,
-      winners: winners.length,
-      losers: losers.length,
-      winRate: executed.length ? winners.length / executed.length : 0,
-      avgPctReturn: avgPct,
-      medianPctReturn: medPct,
-      totalDollarPnl,
+      winners: all.winners,
+      losers: all.losers,
+      winRate: all.winRate,
+      avgPctReturn: all.avgPctReturn,
+      medianPctReturn: all.medianPctReturn,
+      totalDollarPnl: all.totalDollarPnl,
       bestTrade: best,
       worstTrade: worst,
     },
@@ -370,6 +381,22 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestSumma
     byType,
     trades,
   };
+}
+
+const COST_MODEL =
+  "long option held to expiry: bought at the ask logged at detection; sold at the logged bid at the expiry close when available, " +
+  "else intrinsic on the expiry-day close (cash-settled index) or intrinsic minus half the entry spread (physical); full time decay; " +
+  "fees per contract per side; whole contracts within the per-trade notional. Alerts without a logged entry quote are not traded. " +
+  "Win rate and returns are NET of fees (win = P&L after fees > 0; return = net P&L / (ask x 100 + fee)), the same basis as the dollar P&L. " +
+  "Alerts where one contract costs more than the notional are reason below_one_contract and are excluded from every total. " +
+  "Totals mix logged-bid exits (the outcome grader's definition) with modeled expiry exits; byExitSource reports them separately. " +
+  "Fees: feePerContract when given; else $0.65 per contract per side (Schwab equity/ETF commission) and, for index roots " +
+  "(SPX, SPXW, XSP, NDX, RUT, VIX), the configured all-in INDEX_OPTION_FEE_PER_CONTRACT; index alerts without one are skipped as no_fee_configured.";
+
+/** ET calendar date of a daily candle (its start time). */
+function etDateOfBar(c: Candle): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" })
+    .format(new Date(c.datetime + 12 * 3600_000)); // midday of the bar's session: robust to the 00:00/05:00 UTC start convention
 }
 
 // ─── Stub helpers ──────────────────────────────────────────────────────
@@ -408,7 +435,10 @@ function emptySummary(
   maxDte: number,
   note: string,
 ): BacktestSummary {
+  // A failed read is an error state with its reason, not an empty result.
   return {
+    dataState: "error",
+    note,
     asOf: Date.now(),
     windowFrom: from,
     windowTo: to,

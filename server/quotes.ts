@@ -28,6 +28,17 @@ export type QuoteSeries = {
   interval: string;
   range: string;
   asOf: number;                // epoch seconds
+  /** Where prevClose came from (see server/dayChange.ts); "unavailable" = no honest prior close. */
+  prevCloseSource?: PrevCloseSource;
+  /** ET date of the session whose close is prevClose, when known. */
+  prevCloseDate?: string | null;
+  /** ET date of the session the latest price belongs to. */
+  priceSessionDate?: string | null;
+  /** Schwab price-history provenance (asOf above is the data time when known). */
+  servedFromCache?: boolean;
+  stale?: boolean;
+  dataState?: "ok" | "empty" | "unavailable";
+  dataReason?: string | null;
 };
 
 export type DailyOHLC = {
@@ -51,7 +62,100 @@ export type PeriodOHLC = {
 
 // TODO: Schwab-only mode — Yahoo source removed, awaiting Schwab equivalent.
 // yFetch helper removed. Using Schwab getPriceHistory for all data.
-import { getPriceHistory } from "./schwab";
+import { getPriceHistory, getQuotes } from "./schwab";
+import {
+  type PrevCloseSource, type PrevCloseResult, type QuoteCloseLike,
+  resolvePrevClose, dayChange, dailyBarSessionDate, intradayBarSessionDate,
+} from "./dayChange";
+import { etClock, etDate, prevTradingDay, sessionCloseMs } from "./exchangeCalendar";
+import { toSchwabSymbol } from "./schwabSymbols";
+
+// ─── Prior close (shared by quotes.ts, ohlc.ts, mag7.ts, macro.ts) ───────────
+//
+// Schwab quote requests from callers that run in parallel (MAG 7, macro
+// carousel, Trade Desk) are coalesced into one /quotes call per 15 ms window
+// so the day-change fix does not multiply request count.
+const QUOTE_BATCH_MS = 15;
+const _pendingQuotes = new Map<string, Array<(q: QuoteCloseLike | null) => void>>();
+let _quoteTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function _flushQuoteBatch(): Promise<void> {
+  _quoteTimer = null;
+  const batch = new Map(_pendingQuotes);
+  _pendingQuotes.clear();
+  let quotes: Awaited<ReturnType<typeof getQuotes>> = [];
+  try {
+    quotes = await getQuotes(Array.from(batch.keys()));
+  } catch { /* resolve every waiter with null below */ }
+  const bySym = new Map(quotes.map((q) => [q.symbol, q]));
+  for (const [sym, waiters] of Array.from(batch)) {
+    const q = bySym.get(sym);
+    const info: QuoteCloseLike | null = q
+      ? { closePrice: q.prevClose ?? null, lastPrice: q.last, netChange: q.change, regularMarketLast: q.regularMarketLast ?? null }
+      : null;
+    for (const w of waiters) w(info);
+  }
+}
+
+/** Schwab quote close fields for one Schwab symbol (batched). Null when unavailable. */
+export function fetchQuoteClose(schwabSymbol: string): Promise<QuoteCloseLike | null> {
+  return new Promise((resolve) => {
+    const arr = _pendingQuotes.get(schwabSymbol) ?? [];
+    arr.push(resolve);
+    _pendingQuotes.set(schwabSymbol, arr);
+    if (!_quoteTimer) _quoteTimer = setTimeout(() => { void _flushQuoteBatch(); }, QUOTE_BATCH_MS);
+  });
+}
+
+/**
+ * Most recent regular session that has started by `nowMs` (today once 09:30 ET
+ * has passed on a trading day, otherwise the previous trading day). Used to
+ * date a price whose bar timestamps are not intraday (weekly/monthly candles).
+ */
+export function latestStartedSessionDate(nowMs: number = Date.now()): string {
+  const c = etClock(nowMs);
+  const close = sessionCloseMs(c.date);
+  if (close != null && c.minutes >= 9 * 60 + 30) return c.date;
+  return prevTradingDay(c.date);
+}
+
+/**
+ * Prior close for a price from session `priceSessionDate` (YYYY-MM-DD ET).
+ * Quote close first (today's prices), then Schwab daily bars; never an
+ * intraday bar. `dailyBars` may be passed when the caller already has them.
+ */
+export async function resolveSessionPrevClose(
+  symbol: string,
+  priceSessionDate: string | null,
+  dailyBars?: { t: number; c: number }[] | null,
+): Promise<PrevCloseResult> {
+  const schwabSym = toSchwabSymbol(symbol);
+  const nowMs = Date.now();
+  const todayEt = etDate(nowMs);
+  const sessionDate = priceSessionDate ?? todayEt;
+  const quote = sessionDate === todayEt ? await fetchQuoteClose(schwabSym).catch(() => null) : null;
+  let bars = dailyBars ?? null;
+  const quoteUsable = quote != null && ((quote.closePrice ?? 0) > 0 || (quote.lastPrice != null && quote.netChange != null));
+  // After today's close Schwab may roll closePrice to today's close: fetch
+  // daily bars (5-minute Schwab cache) so dayChange.resolvePrevClose can check
+  // the quote close against the bar dates.
+  const todayClose = sessionCloseMs(todayEt);
+  const afterSessionClose = todayClose != null && nowMs >= todayClose;
+  if ((!quoteUsable || afterSessionClose) && !bars) {
+    try {
+      const resp = await getPriceHistory(schwabSym, "month", 1, "daily", 1);
+      bars = resp.candles.map((c) => ({ t: Math.floor(c.datetime / 1000), c: c.close }));
+    } catch { bars = null; }
+  }
+  return resolvePrevClose({
+    priceSessionDate: sessionDate,
+    todayEt,
+    prevTradingDate: prevTradingDay(todayEt),
+    quote,
+    dailyBars: bars,
+    afterSessionClose,
+  });
+}
 
 /** Normalize Yahoo chart -> Bar[] */
 function normalizeBars(result: any): Bar[] {
@@ -71,18 +175,6 @@ function normalizeBars(result: any): Bar[] {
   return bars;
 }
 
-// Map Yahoo-style symbols to Schwab equivalents.
-// Schwab cash indexes use "$" prefix WITHOUT ".X" suffix.
-function toSchwabSymbol(symbol: string): string {
-  const map: Record<string, string> = {
-    "^VIX": "$VIX", "^VIX9D": "$VIX9D", "^VIX3M": "$VIX3M",
-    "^VVIX": "$VVIX", "^SKEW": "$SKEW",
-    "^GSPC": "$SPX", "^SPX": "$SPX",
-    "^VXN": "$VXN", "^RVX": "$RVX",
-  };
-  return map[symbol] ?? symbol;
-}
-
 /** Fetch an intraday chart via Schwab. Default: 1d range, 1m interval. */
 export async function fetchIntraday(
   symbol: string,
@@ -97,10 +189,18 @@ export async function fetchIntraday(
 
   let bars: Bar[] = [];
   let price: number | null = null;
-  let prevClose: number | null = null;
+  let dataAsOfMs: number | null = null;
+  let servedFromCache = false, stale = false;
+  let dataState: "ok" | "empty" | "unavailable" = "unavailable";
+  let dataReason: string | null = null;
 
   try {
     const resp = await getPriceHistory(schwabSym, "day", period, "minute", frequency);
+    dataAsOfMs = resp.asOfMs ?? null;
+    servedFromCache = resp.servedFromCache ?? false;
+    stale = resp.stale ?? false;
+    dataState = resp.dataState ?? (resp.candles.length ? "ok" : "unavailable");
+    dataReason = resp.reason ?? null;
     if (resp.candles.length > 0) {
       bars = resp.candles
         .map((c) => ({
@@ -113,19 +213,30 @@ export async function fetchIntraday(
         }))
         .filter((b) => b.c != null && (b.c as number) > 0);
       price = bars[bars.length - 1]?.c ?? null;
-      prevClose = bars.length >= 2 ? bars[0]?.c ?? null : null;
     }
   } catch { /* fall through to empty */ }
 
+  // Day change is measured from the prior session's close (server/dayChange.ts).
+  // It was bars[0].c -- the first bar of the window -- which made "day change"
+  // a change since the open (or since 5 days ago for range=5d).
+  const lastBar = bars[bars.length - 1];
+  const priceSessionDate = lastBar ? intradayBarSessionDate(lastBar.t) : null;
+  let pc: PrevCloseResult = { prevClose: null, source: "unavailable", prevCloseDate: null };
+  if (price != null) {
+    try { pc = await resolveSessionPrevClose(symbol, priceSessionDate); } catch { /* stays unavailable */ }
+  }
+  const prevClose = pc.prevClose;
+  // Session stats from the latest session's bars only (range=5d holds 5 sessions).
+  const sessionBars = priceSessionDate ? bars.filter((b) => intradayBarSessionDate(b.t) === priceSessionDate) : bars;
+
   // Quote-shield observer (flag-only — never alters returned data).
   try {
-    if (price != null && isFinite(price)) observeQuote(symbol, price);
+    if (price != null && isFinite(price) && lastBar) observeQuote(symbol, price, lastBar.t * 1000);
   } catch { /* shield must never break ingest */ }
 
-  const change = price != null && prevClose != null ? price - prevClose : null;
-  const changePct = change != null && prevClose ? (change / prevClose) * 100 : null;
-  const sessionHighs = bars.map((b) => b.h).filter((v): v is number => v != null);
-  const sessionLows = bars.map((b) => b.l).filter((v): v is number => v != null);
+  const { change, changePct } = dayChange(price, prevClose);
+  const sessionHighs = sessionBars.map((b) => b.h).filter((v): v is number => v != null);
+  const sessionLows = sessionBars.map((b) => b.l).filter((v): v is number => v != null);
 
   return {
     symbol,
@@ -135,13 +246,21 @@ export async function fetchIntraday(
     prevClose,
     change,
     changePct,
-    sessionOpen: bars[0]?.o ?? null,
+    sessionOpen: sessionBars[0]?.o ?? null,
     sessionHigh: sessionHighs.length > 0 ? Math.max(...sessionHighs) : null,
     sessionLow: sessionLows.length > 0 ? Math.min(...sessionLows) : null,
     bars,
     interval,
     range,
-    asOf: Math.floor(Date.now() / 1000),
+    // Data time from Schwab (receive time of the bars), not the time of this call.
+    asOf: Math.floor((dataAsOfMs ?? Date.now()) / 1000),
+    prevCloseSource: pc.source,
+    prevCloseDate: pc.prevCloseDate,
+    priceSessionDate,
+    servedFromCache,
+    stale,
+    dataState,
+    dataReason,
   };
 }
 
@@ -161,18 +280,18 @@ export async function fetchPrevDayOHLC(symbol: string): Promise<DailyOHLC | null
       .map((c) => ({ t: Math.floor(c.datetime / 1000), o: c.open, h: c.high, l: c.low, c: c.close }))
       .filter((r) => r.o > 0 && r.c > 0);
     if (!rows.length) return null;
-    // Pick the most recent completed session.
-    const nowEt = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-    const todayEt = `${nowEt.getFullYear()}-${nowEt.getMonth() + 1}-${nowEt.getDate()}`;
-    const last = rows[rows.length - 1];
-    const lastEt = new Date(new Date(last.t * 1000).toLocaleString("en-US", { timeZone: "America/New_York" }));
-    const lastDate = `${lastEt.getFullYear()}-${lastEt.getMonth() + 1}-${lastEt.getDate()}`;
-    const hourEt = nowEt.getHours();
-    const marketOpen = hourEt >= 9 && hourEt < 16;
-    if (lastDate === todayEt && marketOpen && rows.length >= 2) {
-      return rows[rows.length - 2];
+    // Most recent COMPLETED regular session: today once its close (16:00 ET,
+    // 13:00 ET on half days) has passed, otherwise the previous trading day.
+    // (Was "9 <= hour < 16", which mis-dated 09:00-09:30, half-day afternoons
+    // and holidays.)
+    const nowMs = Date.now();
+    const today = etDate(nowMs);
+    const todayClose = sessionCloseMs(today);
+    const lastCompleted = todayClose != null && nowMs >= todayClose ? today : prevTradingDay(today);
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (dailyBarSessionDate(rows[i].t) <= lastCompleted) return rows[i];
     }
-    return last;
+    return null;
   } catch {
     return null;
   }

@@ -1,0 +1,233 @@
+name: Batcave quant fixes check
+
+# Type-check, build, quant tests, and a route-by-route regression comparison
+# between origin/main (base) and this branch (head). The report is pushed to
+# the ci-reports-quant branch because agent sessions cannot read Actions logs.
+
+on:
+  push:
+    branches: [quant-fixes]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: quant-fixes-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install head
+        run: npm ci --no-audit --no-fund
+      - name: Prepare base (origin/main)
+        run: |
+          git worktree add ../base origin/main
+          cd ../base && npm ci --no-audit --no-fund
+      # Per-file tsc error counts, head vs base. The comparison is computed
+      # here (never fails, so the later steps still run and report); the
+      # "Type-check gate" step below fails the job when any file has more
+      # errors on head than on base (a new file with errors counts, base 0).
+      - name: Type check head and base (per file)
+        run: |
+          mkdir -p rep
+          export LC_ALL=C   # sort and join must agree on collation
+          npx tsc --noEmit -p tsconfig.json > rep/tsc-head.log 2>&1 || true
+          (cd ../base && npx tsc --noEmit -p tsconfig.json > "$GITHUB_WORKSPACE/rep/tsc-base.log" 2>&1 || true)
+          for f in head base; do grep -oE '^[^(]+\([0-9]+,[0-9]+\): error TS' rep/tsc-$f.log | sed -E 's/\(.*//' | sort | uniq -c | awk '{print $2, $1}' | sort -k1,1 > rep/tsc-$f-byfile.txt; done
+          echo "tsc errors: head=$(grep -c 'error TS' rep/tsc-head.log) base=$(grep -c 'error TS' rep/tsc-base.log)" | tee rep/tsc-summary.txt
+          echo "--- files with MORE errors on head (file head base) ---" >> rep/tsc-summary.txt
+          join -a 1 -e 0 -o 0,1.2,2.2 rep/tsc-head-byfile.txt rep/tsc-base-byfile.txt | awk '$2>$3' | tee rep/tsc-regressed.txt >> rep/tsc-summary.txt
+          # Errors with no file (config / missing type library, e.g. "error TS2688"):
+          # any such line on head that base does not have is also a regression.
+          for f in head base; do { grep -E '^error TS[0-9]+' rep/tsc-$f.log || true; } | sort -u > rep/tsc-$f-global.txt; done
+          echo "--- file-less tsc errors new on head ---" >> rep/tsc-summary.txt
+          comm -23 rep/tsc-head-global.txt rep/tsc-base-global.txt | tee rep/tsc-global-new.txt >> rep/tsc-summary.txt
+          cat rep/tsc-summary.txt
+      - name: Quant tests
+        run: |
+          node --experimental-transform-types --no-warnings \
+            --import ./tests/quant/loader/register.mjs --test 'tests/quant/*.test.ts' 2>&1 | tee rep/quant-tests.log
+          exit ${PIPESTATUS[0]}
+        shell: bash
+      - name: Production build (head and base)
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tail -40 | tee rep/build-head.log
+          test -f dist/index.cjs || { echo "FAIL head build produced no dist/index.cjs" | tee -a rep/build-head.log; exit 1; }
+          (cd ../base && npm run build 2>&1 | tail -5) > rep/build-base.log || echo "WARN base build failed" >> rep/build-base.log
+      - name: Route regression and smoke tests
+        shell: bash
+        run: |
+          exec > >(tee rep/smoke.log) 2>&1
+          set -u
+          fail=0
+          check() { if [ "$1" = "$2" ]; then echo "PASS $3 ($1)"; else echo "FAIL $3 (got $1, want $2)"; fail=1; fi; }
+          wait_up() { for i in $(seq 1 90); do curl -fsS "http://127.0.0.1:$1/api/health" >/dev/null 2>&1 && return 0; curl -fsS -o /dev/null "http://127.0.0.1:$1/" 2>/dev/null && return 0; sleep 1; done; return 1; }
+          grep -ohE "app\.get\(\s*['\"]/api/[^'\"]+['\"]" server/*.ts | sed -E "s/app\.get\(\s*['\"]//; s/['\"]$//" | grep -v ":" | sort -u > rep/routes.txt
+          echo "routes: $(wc -l < rep/routes.txt)"
+
+          (cd ../base && NODE_ENV=production PORT=5061 HOST=127.0.0.1 node dist/index.cjs > "$GITHUB_WORKSPACE/rep/server-base.log" 2>&1 &)
+          NODE_ENV=production PORT=5060 HOST=127.0.0.1 node dist/index.cjs > rep/server-head.log 2>&1 &
+          wait_up 5060 || { echo "FAIL head server did not start"; tail -80 rep/server-head.log; exit 1; }
+          wait_up 5061 || echo "WARN base server did not start"
+          sleep 20   # let schedulers settle so both sides see similar warm-up
+
+          # Each probe line: route, HTTP code, top-level dataState of a JSON body ("-" when none).
+          # A 503 whose JSON body carries dataState is the intended "unavailable" contract
+          # (Schwab cannot answer: shared/unavailable.ts), not a regression.
+          dstate() { [ -s "$1" ] || { echo "-"; return; }; node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);console.log(j&&typeof j==="object"&&!Array.isArray(j)&&typeof j.dataState==="string"&&j.dataState?j.dataState.replace(/\s+/g,"_"):"-")}catch(e){console.log("-")}})' < "$1"; }
+          probe() { while read -r r; do rm -f "rep/probe-$1.body"; code=$(curl -s -o "rep/probe-$1.body" -m 45 -w '%{http_code}' "http://127.0.0.1:$1$r"); printf '%s %s %s\n' "$r" "$code" "$(dstate "rep/probe-$1.body")"; done < rep/routes.txt; rm -f "rep/probe-$1.body"; }
+          probe 5061 > rep/routes-base-states.txt &
+          BASE_PROBE=$!
+          probe 5060 > rep/routes-head-states.txt
+          wait "$BASE_PROBE"   # a bare wait would also wait on the head server and hang until timeout
+          cut -d' ' -f1,2 rep/routes-base-states.txt > rep/routes-base.txt
+          cut -d' ' -f1,2 rep/routes-head-states.txt > rep/routes-head.txt
+          join rep/routes-base.txt rep/routes-head.txt > rep/routes-both.txt
+          # route base_code base_state head_code head_state
+          join rep/routes-base-states.txt rep/routes-head-states.txt > rep/routes-states.txt
+          echo "--- routes whose status changed (route base head) ---"
+          awk '$2!=$3' rep/routes-both.txt | tee rep/routes-changed.txt
+          echo "--- head dataState per route (route head_code head_state), non-'-' only ---"
+          awk '$5!="-" {print $1, $4, $5}' rep/routes-states.txt
+          UNAVAIL=$(awk '$4=="503" && $5!="-"' rep/routes-states.txt | wc -l)
+          echo "head 503 with dataState (structured unavailable, accepted): $UNAVAIL"
+          awk '$4=="503" && $5!="-" {print "UNAVAILABLE", $1, $4, $5}' rep/routes-states.txt
+          # Regression: base answered 2xx/3xx/4xx and head answers 000 (timeout/no
+          # response), any 5xx other than 503, or a 503 without a dataState body.
+          isreg='$2 ~ /^[234]/ && ($4 == "000" || ($4 ~ /^5/ && !($4 == "503" && $5 != "-")))'
+          REGRESS=$(awk "$isreg" rep/routes-states.txt | wc -l)
+          echo "head 500/000 (or 503 without dataState) where base was OK: $REGRESS"
+          awk "$isreg"' {print "REGRESSION", $1, $2, $4, $5}' rep/routes-states.txt
+          [ "$REGRESS" -eq 0 ] && echo "PASS no route regressions" || { echo "FAIL route regressions"; fail=1; }
+          echo "head 500s: $(awk '$4 ~ /^5/ && $4 != "503"' rep/routes-states.txt | wc -l)  base 500s: $(awk '$2 ~ /^5/ && $2 != "503"' rep/routes-states.txt | wc -l)"
+          echo "head 5xx count: $(awk '$3 ~ /^5/' rep/routes-both.txt | wc -l)  base 5xx count: $(awk '$2 ~ /^5/' rep/routes-both.txt | wc -l)"
+          check "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5060/)" 200 "UI index served"
+          { grep -E "uncaughtException|unhandledRejection|TypeError|ReferenceError" rep/server-head.log || true; } | sort | uniq -c | sort -rn | head -30 > rep/server-head-errors.txt
+          { grep -E "uncaughtException|unhandledRejection|TypeError|ReferenceError" rep/server-base.log || true; } | sort | uniq -c | sort -rn | head -30 > rep/server-base-errors.txt
+          echo "--- runtime errors head vs base (count) ---"; wc -l rep/server-head-errors.txt rep/server-base-errors.txt
+          pkill -f "dist/index.cjs" || true; sleep 2
+
+          if grep -q BATCAVE_ACCESS_KEY server/index.ts; then
+            NODE_ENV=production PORT=5062 HOST=127.0.0.1 BATCAVE_ACCESS_KEY=ci-test-key node dist/index.cjs > rep/server-gated.log 2>&1 &
+            wait_up 5062 || { echo "FAIL gated server did not start"; exit 1; }
+            check "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5062/api/schwab/status)" 401 "gate blocks without key"
+            check "$(curl -s -o /dev/null -w '%{http_code}' -H 'x-batcave-key: wrong' http://127.0.0.1:5062/api/schwab/status)" 401 "gate blocks wrong key"
+            check "$(curl -s -o /dev/null -w '%{http_code}' -H 'x-batcave-key: ci-test-key' http://127.0.0.1:5062/api/schwab/status)" 200 "gate allows right key"
+            NOTE=$(curl -s -m 60 -H "x-batcave-key: ci-test-key" http://127.0.0.1:5062/api/trade-environment | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);const d=(j.drivers||[]).find(x=>x.key==="gamma");console.log(d?d.note:"no-gamma-driver")}catch(e){console.log("unparseable")}})')
+            echo "gated gamma driver: $NOTE"
+            { grep -c '401' rep/server-gated.log || true; } | xargs echo "gated server 401 log lines:"
+            pkill -f "dist/index.cjs" || true
+          else
+            echo "SKIP access-key checks (gate not present)"
+          fi
+          if [ -f server/accessGate.ts ]; then
+            # Reachable bind with no key must fail closed.
+            NODE_ENV=production PORT=5063 HOST=0.0.0.0 node dist/index.cjs > rep/server-open.log 2>&1 &
+            wait_up 5063 || { echo "FAIL fail-closed server did not start"; fail=1; }
+            check "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5063/api/schwab/status)" 503 "public bind without key fails closed"
+            check "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5063/api/health)" 200 "health stays open when locked"
+            pkill -f "dist/index.cjs" || true
+          fi
+          exit $fail
+      - name: Type-check gate (no file may gain tsc errors vs base)
+        shell: bash
+        run: |
+          if [ ! -f rep/tsc-regressed.txt ] || [ ! -f rep/tsc-global-new.txt ]; then echo "FAIL type-check comparison did not run"; exit 1; fi
+          fail=0
+          if [ -s rep/tsc-regressed.txt ]; then
+            echo "FAIL files with more tsc errors on head than base (file head base):"
+            cat rep/tsc-regressed.txt
+            fail=1
+          fi
+          if [ -s rep/tsc-global-new.txt ]; then
+            echo "FAIL file-less tsc errors on head that base does not have:"
+            cat rep/tsc-global-new.txt
+            fail=1
+          fi
+          [ "$fail" -eq 0 ] && echo "PASS no file gained tsc errors and no new file-less errors"
+          exit $fail
+      - name: Screenshot every tab (no Schwab login in CI)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p rep/shots
+          npx --yes playwright@1.48.2 install --with-deps chromium >/dev/null 2>&1
+          NODE_ENV=production PORT=5070 HOST=127.0.0.1 node dist/index.cjs > rep/server-shot.log 2>&1 &
+          for i in $(seq 1 90); do curl -fsS http://127.0.0.1:5070/api/health >/dev/null 2>&1 && break; sleep 1; done
+          cat > shot.mjs <<'JS'
+          import { chromium } from "playwright";
+          const tabs = ["signals","chart","models","heatseeker","tradedesk","regime","cosmos","news","takefive","edgelab","crypto"];
+          const b = await chromium.launch();
+          async function open(vp) {
+            const p = await b.newPage({ viewport: vp });
+            const errors = [];
+            p.on("pageerror", (e) => errors.push(e.message));
+            await p.goto("http://127.0.0.1:5070/#/", { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+            await p.waitForTimeout(4000);
+            await p.keyboard.press("Enter").catch(() => {});
+            const splash = p.getByRole("button", { name: /print/i });
+            if (await splash.count()) await splash.first().click({ timeout: 3000 }).catch(() => {});
+            // The daily pre-market read must be scrolled to the end before its button enables.
+            for (let k = 0; k < 4; k++) {
+              await p.evaluate(() => document.querySelectorAll("div").forEach((d) => {
+                if (d.scrollHeight > d.clientHeight + 10) { d.scrollTop = d.scrollHeight; d.dispatchEvent(new Event("scroll")); }
+              }));
+              await p.mouse.wheel(0, 5000).catch(() => {});
+              await p.waitForTimeout(700);
+            }
+            await p.locator('[data-testid="button-premarket-acknowledge"]').click({ timeout: 8000 }).catch((e) => console.log("ack:", e.message.split("\\n")[0]));
+            await p.waitForTimeout(8000);
+            return { p, errors };
+          }
+          const { p, errors } = await open({ width: 1440, height: 900 });
+          for (const [i, t] of tabs.entries()) {
+            const btn = p.locator(`[data-testid="tab-${t}"]`);
+            if (!(await btn.count())) { console.log("missing tab", t); continue; }
+            await btn.first().click({ timeout: 5000 }).catch((e) => console.log(t, e.message.split("\n")[0]));
+            await p.waitForTimeout(7000);
+            await p.screenshot({ path: `rep/shots/${String(i + 1).padStart(2, "0")}-${t}.png`, fullPage: true });
+            console.log("shot", t);
+          }
+          console.log("desktop page errors:", errors.length, errors.slice(0, 5));
+          const m = await open({ width: 393, height: 852 });
+          await m.p.screenshot({ path: "rep/shots/12-signals-iphone.png", fullPage: false });
+          console.log("mobile page errors:", m.errors.length, m.errors.slice(0, 5));
+          await b.close();
+          JS
+          npm i --no-save playwright@1.48.2 >/dev/null 2>&1 && node shot.mjs 2>&1 | tee rep/shots/shot.log
+          pkill -f "dist/index.cjs" || true
+      - name: UX audit (every tab at six screen sizes)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          npx --yes playwright@1.48.2 install --with-deps chromium >/dev/null 2>&1
+          npm ls playwright >/dev/null 2>&1 || npm i --no-save playwright@1.48.2 >/dev/null 2>&1
+          NODE_ENV=production PORT=5071 HOST=127.0.0.1 node dist/index.cjs > rep/server-ux.log 2>&1 &
+          for i in $(seq 1 90); do curl -fsS http://127.0.0.1:5071/api/health >/dev/null 2>&1 && break; sleep 1; done
+          BASE_URL=http://127.0.0.1:5071 UX_OUT=rep/ux timeout 1500 node tests/ux/ux-audit.mjs 2>&1 | tail -20 | tee rep/ux-run.log
+          pkill -f "dist/index.cjs" || true
+      - name: Publish report to ci-reports-quant branch
+        if: always()
+        run: |
+          mkdir -p /tmp/rep && cp -R rep/. /tmp/rep/ 2>/dev/null || true
+          for f in /tmp/rep/server-*.log; do [ -f "$f" ] && tail -400 "$f" > "$f.tail" && mv "$f.tail" "$f"; done
+          echo "run ${GITHUB_RUN_ID} sha ${GITHUB_SHA}" > /tmp/rep/RUN.txt
+          cd /tmp/rep && git init -q && git checkout -q -b ci-reports-quant
+          git -c user.name=batcave-ci -c user.email=batcave-ci@users.noreply.github.com add -A
+          git -c user.name=batcave-ci -c user.email=batcave-ci@users.noreply.github.com commit -qm "quant report ${GITHUB_RUN_ID}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-reports-quant

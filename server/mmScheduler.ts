@@ -19,6 +19,9 @@
 // (cache, fallbacks, error handling). This keeps the scheduler decoupled from
 // internal implementation details.
 
+import { isTradingDay as calIsTradingDay, sessionCloseMinutes } from "./exchangeCalendar";
+import { internalFetch } from "./internalApi";
+
 type Slot = {
   key: string;
   hhmm: string;      // "HH:MM" ET, 24h
@@ -32,21 +35,6 @@ const SLOTS: Slot[] = [
   { key: "snap-15-30", hhmm: "15:30", kind: "snapshot" },
   { key: "grade-16-30", hhmm: "16:30", kind: "grade" },
 ];
-
-// US equity market full-day holidays (conservative; expand as needed).
-// Format YYYY-MM-DD. The app is best-effort — snapshot endpoints also guard.
-const HOLIDAYS_2026 = new Set([
-  "2026-01-01", // New Year's Day
-  "2026-01-19", // MLK Day
-  "2026-02-16", // Presidents' Day
-  "2026-04-03", // Good Friday
-  "2026-05-25", // Memorial Day
-  "2026-06-19", // Juneteenth
-  "2026-07-03", // July 4th observed
-  "2026-09-07", // Labor Day
-  "2026-11-26", // Thanksgiving
-  "2026-12-25", // Christmas
-]);
 
 function etNow(): { date: string; hh: number; mm: number; dow: number } {
   const now = new Date();
@@ -66,24 +54,20 @@ function etNow(): { date: string; hh: number; mm: number; dow: number } {
   return { date, hh, mm, dow };
 }
 
-function isTradingDay(dow: number, date: string): boolean {
-  if (dow === 0 || dow === 6) return false;
-  if (HOLIDAYS_2026.has(date)) return false;
-  return true;
+// Weekends and NYSE holidays (2026-2028) via the shared exchange calendar.
+function isTradingDay(_dow: number, date: string): boolean {
+  return calIsTradingDay(date);
 }
 
 // Fired set: "YYYY-MM-DD|slotkey" → true. Keeps memory tiny (~4 entries/day).
 const fired = new Set<string>();
 
-const PORT = Number(process.env.PORT ?? 5000);
-const BASE = `http://127.0.0.1:${PORT}`;
 
 async function runSnapshot(): Promise<void> {
   try {
-    const res = await fetch(`${BASE}/api/mm-snapshot`, {
+    const res = await internalFetch("/api/mm-snapshot", {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ symbol: "^GSPC", horizons: ["daily", "weekly"] }),
+      body: { symbol: "^GSPC", horizons: ["daily", "weekly"] },
     });
     if (!res.ok) {
       console.warn(`[mmScheduler] snapshot HTTP ${res.status}`);
@@ -99,7 +83,7 @@ async function runSnapshot(): Promise<void> {
 
 async function runGrade(): Promise<void> {
   try {
-    const res = await fetch(`${BASE}/api/mm-grade`, { method: "POST" });
+    const res = await internalFetch("/api/mm-grade", { method: "POST" });
     if (!res.ok) {
       console.warn(`[mmScheduler] grade HTTP ${res.status}`);
       return;
@@ -120,6 +104,9 @@ async function tick(): Promise<void> {
     // Fire within the first minute of the target. Minute-granularity.
     if (hh !== targetH) continue;
     if (mm !== targetM) continue;
+    // Half days close at 13:00 ET: a snapshot taken after the close would be
+    // graded against a close it already saw, so skip snapshot slots at/after it.
+    if (slot.kind === "snapshot" && targetH * 60 + targetM >= (sessionCloseMinutes(date) ?? 16 * 60)) continue;
 
     const key = `${date}|${slot.key}`;
     if (fired.has(key)) continue;

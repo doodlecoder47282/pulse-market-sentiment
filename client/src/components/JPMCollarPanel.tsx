@@ -19,17 +19,22 @@ interface CollarQuarter {
   longPut: number;
   shortPut: number;
   shortCall: number;
+  verification?: "verified" | "partial" | "unverified";
+  source?: string;
 }
 
 interface JPMCollarData {
   current: CollarQuarter & {
-    spxNow: number;
-    distToLongPut: number;
-    distToShortPut: number;
-    distToShortCall: number;
-    pctToLongPut: number;
-    pctToShortPut: number;
-    pctToShortCall: number;
+    spxNow: number | null;
+    spxAvailable?: boolean;
+    expired?: boolean;
+    staleNote?: string | null;
+    distToLongPut: number | null;
+    distToShortPut: number | null;
+    distToShortCall: number | null;
+    pctToLongPut: number | null;
+    pctToShortPut: number | null;
+    pctToShortCall: number | null;
     daysToRoll: number;
   };
   history: CollarQuarter[];
@@ -41,7 +46,8 @@ function fmtDate(ts: number) {
   return new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function fmtPct(v: number) {
+function fmtPct(v: number | null) {
+  if (v == null || !Number.isFinite(v)) return "—";
   return `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
 }
 
@@ -103,32 +109,38 @@ export default function JPMCollarPanel() {
   const yMax = Math.max(...allValues) * 1.02;
 
   const distToCallPct = current.pctToShortCall;
-  const distToPutPct = -current.pctToLongPut;
+  const distToPutPct = current.pctToLongPut != null ? -current.pctToLongPut : null;
 
   return (
     <div className="space-y-4" data-testid="jpm-collar-panel">
+      {current.expired && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs text-amber-400 flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          {current.staleNote ?? "Collar strikes on file have expired; newer reset not entered."}
+        </div>
+      )}
       {/* Current quarter summary */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <div className="rounded-lg border border-border/60 bg-card/50 p-2.5">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Quarter</div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Quarter</div>
           <div className="mt-0.5 text-sm font-semibold">{current.quarter}</div>
         </div>
         <div className="rounded-lg border border-border/60 bg-card/50 p-2.5">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground flex items-center gap-1">
             <Calendar className="h-3 w-3" /> Roll Date
           </div>
           <div className="mt-0.5 text-sm font-semibold">{current.rollDate}</div>
-          <div className="text-[10px] text-muted-foreground">{current.daysToRoll}d away</div>
+          <div className="text-[11px] text-muted-foreground">{current.expired ? "expired" : `${current.daysToRoll}d away`}</div>
         </div>
         <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-2.5">
-          <div className="text-[10px] uppercase tracking-wider text-emerald-400/80">Long Put (Floor)</div>
+          <div className="text-[11px] uppercase tracking-wider text-emerald-400/80">Long Put (Floor)</div>
           <div className="mt-0.5 text-sm font-semibold text-emerald-300">{current.longPut.toLocaleString()}</div>
-          <div className="text-[10px] text-muted-foreground">{fmtPct(-distToPutPct)} below spot</div>
+          <div className="text-[11px] text-muted-foreground">{fmtPct(distToPutPct != null ? -distToPutPct : null)} below spot</div>
         </div>
         <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-2.5">
-          <div className="text-[10px] uppercase tracking-wider text-rose-400/80">Short Call (Cap)</div>
+          <div className="text-[11px] uppercase tracking-wider text-rose-400/80">Short Call (Cap)</div>
           <div className="mt-0.5 text-sm font-semibold text-rose-300">{current.shortCall.toLocaleString()}</div>
-          <div className="text-[10px] text-muted-foreground">{fmtPct(distToCallPct)} above spot</div>
+          <div className="text-[11px] text-muted-foreground">{fmtPct(distToCallPct)} above spot</div>
         </div>
       </div>
 
@@ -228,10 +240,11 @@ export default function JPMCollarPanel() {
           <table className="w-full text-xs" data-testid="jpm-collar-history">
             <thead>
               <tr className="border-b border-border/40">
-                <th className="pb-1.5 text-left text-[10px] uppercase tracking-wider text-muted-foreground">Quarter</th>
-                <th className="pb-1.5 text-right text-[10px] uppercase tracking-wider text-emerald-400/70">Long Put</th>
-                <th className="pb-1.5 text-right text-[10px] uppercase tracking-wider text-amber-400/70">Short Put</th>
-                <th className="pb-1.5 text-right text-[10px] uppercase tracking-wider text-rose-400/70">Short Call</th>
+                <th className="pb-1.5 text-left text-[11px] uppercase tracking-wider text-muted-foreground">Quarter</th>
+                <th className="pb-1.5 text-right text-[11px] uppercase tracking-wider text-emerald-400/70">Long Put</th>
+                <th className="pb-1.5 text-right text-[11px] uppercase tracking-wider text-amber-400/70">Short Put</th>
+                <th className="pb-1.5 text-right text-[11px] uppercase tracking-wider text-rose-400/70">Short Call</th>
+                <th className="pb-1.5 pl-2 text-left text-[11px] uppercase tracking-wider text-muted-foreground">Source</th>
               </tr>
             </thead>
             <tbody>
@@ -239,17 +252,22 @@ export default function JPMCollarPanel() {
                 <tr key={q.quarter} className={`border-b border-border/20 ${i === 0 ? "bg-cyan-500/5" : ""}`}>
                   <td className="py-1.5 font-semibold">
                     {q.quarter}
-                    {i === 0 && <Badge variant="outline" className="ml-1.5 text-[9px] border-cyan-500/50 text-cyan-400">Current</Badge>}
+                    {i === 0 && (current.expired
+                      ? <Badge variant="outline" className="ml-1.5 text-[11px] border-amber-500/50 text-amber-400">Expired</Badge>
+                      : <Badge variant="outline" className="ml-1.5 text-[11px] border-cyan-500/50 text-cyan-400">Current</Badge>)}
                   </td>
                   <td className="py-1.5 text-right font-mono tabular-nums text-emerald-400">{q.longPut.toLocaleString()}</td>
                   <td className="py-1.5 text-right font-mono tabular-nums text-amber-400">{q.shortPut.toLocaleString()}</td>
                   <td className="py-1.5 text-right font-mono tabular-nums text-rose-400">{q.shortCall.toLocaleString()}</td>
+                  <td className="py-1.5 pl-2 text-[11px] text-muted-foreground" title={q.source ?? ""}>
+                    {q.verification ?? "unverified"}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <p className="mt-3 text-[10px] text-muted-foreground/60 italic">
-            * Strikes approximate — verify with latest JHEQX 13F filing. Dealer hedging of these positions creates price gravity near strikes.
+          <p className="mt-3 text-[11px] text-muted-foreground italic">
+            * Hand-entered strikes; hover "source" for provenance. Only "verified" rows are confirmed by reputable reporting; the fund discloses exact positions in Form N-PORT (60-day lag). Dealer hedging of these positions is often cited as price gravity near the strikes; that effect is not measured here.
           </p>
         </CardContent>
       </Card>

@@ -18,9 +18,9 @@ interface FredObservation {
 interface CotSnapshotRow {
   market: string;
   reportDate: string;
-  commercialNet: number;
-  nonCommercialNet: number;
-  oi: number;
+  commercialNet: number | null;
+  nonCommercialNet: number | null;
+  oi: number | null;
   nonCommercialPctile: number | null;
   weekChangeNonComm: number | null;
   bias: "spec-extreme-long" | "spec-extreme-short" | "neutral" | "tilting-long" | "tilting-short";
@@ -78,12 +78,12 @@ export default function MacroFlowPanel() {
             {fredQ.data.series.map(s => (
               <div key={s.seriesId} className="rounded border border-border/60 bg-muted/20 p-2" data-testid={`tile-fred-${s.seriesId}`}>
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-mono">{s.seriesId}</span>
-                  <span className="text-[10px] text-muted-foreground">{s.latestDate ?? "—"}</span>
+                  <span className="text-[11px] uppercase tracking-wide text-muted-foreground font-mono">{s.seriesId}</span>
+                  <span className="text-[11px] text-muted-foreground">{s.latestDate ?? "—"}</span>
                 </div>
-                <div className="text-[10px] text-muted-foreground leading-tight mb-1">{s.label}</div>
+                <div className="text-[11px] text-muted-foreground leading-tight mb-1">{s.label}</div>
                 <div className="text-sm font-semibold tabular-nums">{fmtNum(s.latest, 2)}</div>
-                <div className="flex gap-2 text-[10px] mt-1">
+                <div className="flex gap-2 text-[11px] mt-1">
                   <span className={(s.change ?? 0) >= 0 ? "text-emerald-500" : "text-rose-500"}>
                     Δ {fmtSigned(s.change, 3)}
                   </span>
@@ -129,19 +129,19 @@ export default function MacroFlowPanel() {
                   <tr key={r.market} className="border-b border-border/40" data-testid={`row-cot-${r.market}`}>
                     <td className="py-1 pr-2 font-mono font-semibold">{r.market}</td>
                     <td className="py-1 pr-2 text-muted-foreground font-mono">{r.reportDate}</td>
-                    <td className={`py-1 pr-2 text-right font-mono ${r.nonCommercialNet >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
-                      {r.nonCommercialNet.toLocaleString()}
+                    <td className={`py-1 pr-2 text-right font-mono ${r.nonCommercialNet == null ? "text-muted-foreground" : r.nonCommercialNet >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                      {r.nonCommercialNet == null ? "—" : r.nonCommercialNet.toLocaleString()}
                     </td>
-                    <td className={`py-1 pr-2 text-right font-mono ${r.commercialNet >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
-                      {r.commercialNet.toLocaleString()}
+                    <td className={`py-1 pr-2 text-right font-mono ${r.commercialNet == null ? "text-muted-foreground" : r.commercialNet >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                      {r.commercialNet == null ? "—" : r.commercialNet.toLocaleString()}
                     </td>
-                    <td className="py-1 pr-2 text-right font-mono text-muted-foreground">{r.oi.toLocaleString()}</td>
+                    <td className="py-1 pr-2 text-right font-mono text-muted-foreground">{r.oi == null ? "—" : r.oi.toLocaleString()}</td>
                     <td className="py-1 pr-2 text-right font-mono">{r.nonCommercialPctile == null ? "—" : `${r.nonCommercialPctile.toFixed(0)}%`}</td>
                     <td className={`py-1 pr-2 text-right font-mono ${(r.weekChangeNonComm ?? 0) >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
                       {r.weekChangeNonComm == null ? "—" : r.weekChangeNonComm.toLocaleString()}
                     </td>
                     <td className="py-1 pl-2">
-                      <Badge variant="outline" className={`text-[10px] py-0 px-1 h-4 ${biasColor(r.bias)}`}>
+                      <Badge variant="outline" className={`text-[11px] py-0 px-1 h-4 ${biasColor(r.bias)}`}>
                         {r.bias.replace(/-/g, " ")}
                       </Badge>
                     </td>
@@ -153,7 +153,7 @@ export default function MacroFlowPanel() {
         )}
       </div>
 
-      <p className="text-[10px] text-muted-foreground leading-snug">
+      <p className="text-[11px] text-muted-foreground leading-snug">
         FRED = official macro plumbing (rates, fed balance sheet, credit spreads, inflation). COT non-commercial pctile flags positioning extremes — &gt;90% = crowded long, &lt;10% = crowded short. extremes mean-revert at turning points.
       </p>
     </div>

@@ -65,18 +65,13 @@ Body template:
 
 Schwab API contact: from the developer portal "Help" or "Contact" link (varies — they don't publicize a generic email).
 
-### 5. Workaround while waiting (optional, ~30 min code)
+### 5. Workaround while waiting: none (superseded)
 
-If approval takes days, we can wire **CBOE delayed chains** as a fallback:
-
-- Source: `https://cdn.cboe.com/api/global/delayed_quotes/options/SPY.json` (free, no auth)
-- Lag: ~15 min
-- Coverage: SPY, QQQ, NVDA, TSLA, AAPL, MSFT, etc.
-- Already partially used in `server/sources.ts` (`cboeSpyChain`) and `server/cboeFlow.ts`
-
-We'd add a fallback in `server/schwab.ts` `getOptionChain()`: on 403, try CBOE. The data feeds gamma walls + 0DTE banger detection, so 15-min lag is acceptable for end-of-day analysis but degrades same-day 0DTE alerts.
-
-**Decision pending — let me know if you want CBOE fallback wired now or wait for Schwab.**
+A CBOE delayed-chain fallback was wired for a while and has been removed
+(user decision 2026-10-08): equities and options data are Schwab only. When
+Schwab cannot answer, chain-derived panels show "unavailable" (or a cached
+Schwab payload with its real age, within a stated max age); no other vendor
+substitutes. See `server/schwabDataPolicy.ts`.
 
 ---
 

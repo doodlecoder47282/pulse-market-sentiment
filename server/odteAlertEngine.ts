@@ -41,6 +41,13 @@
 // function of current snapshots — restart-safe because it only fires on
 // fresh transitions detected via in-memory history.
 
+import { minutesToSessionClose } from "./chainClock";
+import { gradeEvidenceLine, t1SaleContracts, ODTE_PLAN_RULES, type GradeEvidence } from "./validationMath";
+import { atmPathSigma, projectToTarget } from "./t1Projection";
+import { normalizeGammaZone, gammaZoneTag } from "./gammaZone";
+import { feeForProduct } from "./feeConfig";
+import { spreadExceedsStop } from "./exitValuation";
+
 export type OdteSetupKind = "FAILED_BREAK" | "PIVOT_RECLAIM" | "WALL_REJECT";
 export type Side = "call" | "put";
 
@@ -81,8 +88,16 @@ export interface Audit {
   contractVega?: number | null;
   contractIv?: number | null;
   // Gate 3 (Projected return)
-  projReturnPctT1?: number | null;        // decimal (e.g. 0.80 = 80%)
+  projReturnPctT1?: number | null;        // decimal (e.g. 0.80 = 80%): return IF T1 is reached (what Gate 3 tests)
   projReturnPctT2?: number | null;
+  /** SF-6: model touch probability of T1 before the close (implied vol; not calibrated). */
+  projPHitT1?: number | null;
+  /** Return at the close on paths that never touch T1. */
+  projNoTouchPctT1?: number | null;
+  /** pHit x return-if-reached + (1 - pHit) x no-touch return, under the model (= -costs by construction). */
+  projEvPctT1?: number | null;
+  /** False when no index fee is configured: projections are before fees. */
+  projFeeIncluded?: boolean | null;
   projMinutesToClose?: number | null;
   // Gate 4 (IV richness)
   rv5d?: number | null;                   // 5-day realized vol (annualized, decimal)
@@ -246,8 +261,12 @@ export interface OdteAlert {
   reasoning: string[];              // breakdown of where points came from
   // Wire 15 gate audit fields
   wire15?: {
-    projReturnPctT1: number | null;  // decimal (0.80 = 80%)
+    projReturnPctT1: number | null;  // decimal (0.80 = 80%): return IF T1 is reached (Gate 3)
     projReturnPctT2: number | null;
+    projPHitT1?: number | null;      // SF-6: model touch probability (implied vol, not calibrated)
+    projNoTouchPctT1?: number | null;
+    projEvPctT1?: number | null;     // model EV (= -costs by construction)
+    projFeeIncluded?: boolean | null;
     rv5d: number | null;
     ivRichRatio: number | null;
     ivRichDegrade: boolean;
@@ -650,15 +669,18 @@ function scoreSetup(args: {
   // Reversion setups (FAILED_BREAK, WALL_REJECT) prefer γ+ (dampened).
   // Momentum setups (PIVOT_RECLAIM) prefer γ− (volatile).
   const isReversion = args.setup === "FAILED_BREAK" || args.setup === "WALL_REJECT";
-  const gz = args.audit.gammaZone;
-  if (gz) {
+  // "y?" / missing = gamma unknown: no regime credit or penalty either way.
+  const gz = args.audit.gammaZone == null ? null : normalizeGammaZone(args.audit.gammaZone);
+  if (gz === "y?") {
+    reasoning.push(`γ-zone unknown (GEX missing/immaterial): +0`);
+  } else if (gz) {
     if ((isReversion && gz === "y+") || (!isReversion && gz === "y-")) {
       score += 15;
       reasoning.push(`γ-zone ${gz} aligned: +15`);
     } else if (!isReversion && gz === "y+") {
       score -= 5;
       reasoning.push(`γ-zone y+ dampening headwind for ${args.setup} (Adams 2025: MM counter-directional hedging): -5`);
-    } else if (gz) {
+    } else {
       score += 5;
       reasoning.push(`γ-zone ${gz} mixed: +5`);
     }
@@ -1266,7 +1288,7 @@ function scoreSetup(args: {
         score += boost;
         args.audit.wire13OfiBoost = boost;
         reasoning.push(
-          `Wire 13 OFI trend (Lee-Ready): ${ofi.trend} ${ofi.acceleration} aligned with ${args.side} ` +
+          `Wire 13 signed tick volume (tick rule, SPY 1m): ${ofi.trend} ${ofi.acceleration} aligned with ${args.side} ` +
           `(cum=${(ofi.cumulative / 1000).toFixed(1)}k 15m=${(ofi.slope15m / 1000).toFixed(1)}k ` +
           `5m=${(ofi.slope5m / 1000).toFixed(1)}k): +${boost}`,
         );
@@ -1276,7 +1298,7 @@ function scoreSetup(args: {
         score += penalty;
         args.audit.wire13OfiPenalty = penalty;
         reasoning.push(
-          `Wire 13 OFI trend (Lee-Ready): ${ofi.trend} ${ofi.acceleration} opposed to ${args.side} ` +
+          `Wire 13 signed tick volume (tick rule, SPY 1m): ${ofi.trend} ${ofi.acceleration} opposed to ${args.side} ` +
           `(cum=${(ofi.cumulative / 1000).toFixed(1)}k 15m=${(ofi.slope15m / 1000).toFixed(1)}k ` +
           `5m=${(ofi.slope5m / 1000).toFixed(1)}k): ${penalty}`,
         );
@@ -2091,6 +2113,7 @@ function buildAlert(
   // ─── Wire 15: GATE 3 — Projected return >= +30% to T1 (Wire 16: was 50%) ──────────
   let projReturnPctT1: number | null = null;
   let projReturnPctT2: number | null = null;
+  let projT1Detail: { pHit: number; noTouch: number; ev: number; feeIncluded: boolean } | null = null;
   let ivRichDegrade = false;
   let ivRichRatio: number | null = null;
   const rv5d: number | null = args.wire15?.rv5d ?? null;
@@ -2103,9 +2126,6 @@ function buildAlert(
 
   if (pickedContract) {
     const minutesToClose = computeMinutesToCloseSync(args.asOf, args.hourET, args.minuteET);
-    const gamma = pickedContract.gamma;
-    const theta = pickedContract.theta; // per-day, negative
-    const absDelta = Math.abs(pickedContract.delta);
     const mid = pickedContract.midPrice;
 
     // Wire 16: spread-aware entry price (paying near ask = honest fill)
@@ -2127,20 +2147,45 @@ function buildAlert(
       return gateReject(args, setup, side, reversionLevel, `CONTRACT_SPREAD_TOO_WIDE_GT_5_PCT ${(w16ContractSpreadPct*100).toFixed(1)}%`, { contract: contractForScoring });
     }
 
-    // Wire 16: use entryPrice (mid + halfSpread) as denominator for honest fill projection
-    function bsProj(targetPrice: number): number {
-      const move = side === "call" ? targetPrice - args.spot : args.spot - targetPrice;
-      const projDeltaPnl = absDelta * move;
-      const projGammaBoost = 0.5 * gamma * move * move;
-      const projThetaCost = (theta / 390) * minutesToClose; // theta is negative, so this is negative
-      const projPnl = projDeltaPnl + projGammaBoost + projThetaCost;
-      // Wire 16: use entryPrice (honest fill) as denominator
-      const denom = entryPrice > 0 ? entryPrice : mid;
-      return denom > 0 ? projPnl / denom : 0;
+    // SF-3: a bid already at or below the plan's -20% stop of an ask fill
+    // would stop on entry; without a two-sided quote the stop is undefined.
+    const sxs = spreadExceedsStop(w16ContractBid, w16ContractAsk);
+    if (sxs !== false) {
+      return gateReject(args, setup, side, reversionLevel, sxs ? "SPREAD_EXCEEDS_STOP" : "PROJECTION_UNAVAILABLE no two-sided quote", { contract: contractForScoring });
     }
 
-    projReturnPctT1 = bsProj(t1Lv.price);
-    projReturnPctT2 = t2Lv ? bsProj(t2Lv.price) : bsProj(t1Lv.price + (side === "call" ? 5 : -5));
+    // Gate 3 projection (review 6.7 / R2-C 7, t1Projection.ts): reprice the
+    // contract by Black-Scholes AT the target with the expected time to reach
+    // it (E[first passage | touch before the close] under the contract's
+    // implied vol), buy at the ask, sell at projected mid - half spread, fee
+    // per contract per side. The old version used time-now delta/gamma plus
+    // the whole decay to the close charged at spot and no exit cost.
+    // Explicitly typed view: tsc infers pickedContract as never here (the
+    // `typeof pickedContract[]` candidate array is typed while it is null).
+    const pc: { strike: number; expiry: string; key: string; bid: number | null; ask: number | null; iv: number } = pickedContract;
+    // N-2: the path uses the ATM vol of the same expiry (solved on our clock);
+    // the picked strike is repriced with its own vol (sticky strike).
+    const sideMap = args.wire15?.schwabChain
+      ? (side === "call" ? args.wire15.schwabChain.callExpDateMap : args.wire15.schwabChain.putExpDateMap) ?? {}
+      : {};
+    const pathSigma = args.wire15?.todayExpKey
+      ? atmPathSigma((sideMap as any)[args.wire15.todayExpKey], args.spot, side === "call" ? "C" : "P", pc.expiry, args.asOf)
+      : null;
+    const proj = (targetPrice: number) => projectToTarget({
+      spot: args.spot, strike: pc.strike, type: side === "call" ? "C" : "P", target: targetPrice,
+      expiry: pc.expiry, symbol: pc.key, bid: pc.bid, ask: pc.ask, vendorIv: pc.iv,
+      minutesToClose, nowMs: args.asOf, feePerContract: feeForProduct(pc.key).fee, pathSigma,
+    });
+    const t1P = proj(t1Lv.price);
+    if (!t1P) {
+      // Without a two-sided quote or a usable sigma the 30% gate cannot be
+      // checked: reject rather than let a missing projection pass.
+      return gateReject(args, setup, side, reversionLevel, "PROJECTION_UNAVAILABLE no two-sided quote or sigma", { contract: contractForScoring });
+    }
+    const t2P = proj(t2Lv ? t2Lv.price : t1Lv.price + (side === "call" ? 5 : -5));
+    projReturnPctT1 = t1P.projReturnPct;
+    projT1Detail = { pHit: t1P.pHit, noTouch: t1P.noTouchReturnPct, ev: t1P.evReturnPct, feeIncluded: t1P.feeIncluded };
+    projReturnPctT2 = t2P ? t2P.projReturnPct : null;
 
     // ─── Wire 15: GATE 4 — IV richness ──────────────────────────────────────────────
     // atmIV: use the picked contract's IV; rv5d from wire15 context
@@ -2301,12 +2346,11 @@ function buildAlert(
                         : gammaSlope5m > 0 ? "UP" : "DOWN";
 
   // Greek signals line: OFI primary + gamma slope secondary
-  const greekSignals = `OFI ${ofiLabel}  ·  γ-slope ${gammaSlopeLabel}`;
+  const greekSignals = `TickVol ${ofiLabel}  ·  γ-slope ${gammaSlopeLabel}`;
 
   // Regime tag: compose gamma-zone + chop/jump/corr flags
-  const gzLabel = args.audit.gammaZone === "y+" ? "\u03b3+ DAMPENED"
-                : args.audit.gammaZone === "y-" ? "\u03b3\u2212 VOLATILE"
-                : "NEUTRAL";
+  // "y?" / missing = gamma unknown (never "NEUTRAL", which reads as a regime).
+  const gzLabel = gammaZoneTag(args.audit.gammaZone);
   const regimeParts = [gzLabel];
   if (args.audit.chopRegime) regimeParts.push("CHOP");
   if (args.audit.jumpRegime) regimeParts.push("JUMP");
@@ -2316,6 +2360,10 @@ function buildAlert(
   const wire15Audit = {
     projReturnPctT1,
     projReturnPctT2,
+    projPHitT1: projT1Detail?.pHit ?? null,
+    projNoTouchPctT1: projT1Detail?.noTouch ?? null,
+    projEvPctT1: projT1Detail?.ev ?? null,
+    projFeeIncluded: projT1Detail?.feeIncluded ?? null,
     rv5d,
     ivRichRatio,
     ivRichDegrade,
@@ -2388,14 +2436,28 @@ function buildAlert(
  * Synchronous helper: compute minutesToClose from known hourET/minuteET.
  * Used in buildAlert (which must remain sync).
  */
-function computeMinutesToCloseSync(nowMs: number, hourET: number, minuteET: number): number {
-  const todMinET = hourET * 60 + minuteET;
-  const closeMinET = 16 * 60; // 16:00 ET
-  return Math.max(1, closeMinET - todMinET);
+function computeMinutesToCloseSync(nowMs: number, _hourET: number, _minuteET: number): number {
+  // Real session close from the exchange calendar (13:00 ET on half days);
+  // the old 16:00 hard-code overstated theta cost on half days.
+  return minutesToSessionClose(nowMs);
 }
 
 // ─── Format the alert as the user's mockup ────────────────────────────────
-export function formatOdteAlert(a: OdteAlert): { content: string } {
+/**
+ * Alert text. The STOP / T1 / RUNNER lines state the plan exactly as the
+ * grader replays it (validationMath.replayOdtePlan, ODTE_PLAN_RULES): a
+ * 5-minute CLOSE beyond the stop, the -20% stop on the option bid, half at
+ * T1 when there is a T2, the runner's trail armed by a 5-minute close beyond
+ * T1. Levels print unrounded so the text and the replay use the same number.
+ * `evidence` is the realized option-ledger bucket of the score (odteGrader.
+ * gradeEvidenceFor): the letter is a hand-weighted heuristic score, shown
+ * with the bucket's realized hit rate, Wilson interval and n (review 7.6).
+ */
+export function formatOdteAlert(
+  a: OdteAlert,
+  evidence?: GradeEvidence | null,
+  plan?: { contracts: number; source: "configured" | "reference" },
+): { content: string } {
   const sideUpper = a.side.toUpperCase();
   const contractType = a.side === "call" ? "C" : "P";
   const setupLabel =
@@ -2420,15 +2482,24 @@ export function formatOdteAlert(a: OdteAlert): { content: string } {
     ? Math.round(a.wire15.projReturnPctT2 * 100)
     : (a.t2 ? Math.round(a.t2.estPctGain) : null);
 
-  // NEW_STOP per spec: CALL = T1-3, PUT = T1+3
-  const newStop = a.side === "call"
-    ? Math.round(a.t1.price) - 3
-    : Math.round(a.t1.price) + 3;
+  // Exact level text: integers as-is, anything else to the cent (the replay uses the exact value).
+  const lvl = (x: number) => (Number.isInteger(x) ? String(x) : x.toFixed(2));
+  const below = a.side === "call" ? "BELOW" : "ABOVE";
+  const beyondT1 = a.side === "call" ? "ABOVE" : "BELOW";
+  // Runner trail (engine: T1 - 3 for a call, T1 + 3 for a put).
+  const trail = Number.isFinite(a.t2TrailingStopLevel) && a.t2TrailingStopLevel > 0
+    ? a.t2TrailingStopLevel
+    : (a.side === "call" ? a.t1.price - ODTE_PLAN_RULES.trailOffsetPts : a.t1.price + ODTE_PLAN_RULES.trailOffsetPts);
+  const hasT2 = !!a.t2 && (a.side === "call" ? a.t2.price > a.t1.price : a.t2.price < a.t1.price);
+  const stopPctTxt = Math.round(ODTE_PLAN_RULES.optionStopPct * 100);
+  const ask = Number(a.contract.ask);
+  const optStopPx = ask > 0 ? ` (bid <= $${(Math.floor(ask * (1 - ODTE_PLAN_RULES.optionStopPct) * 100 + 1e-9) / 100).toFixed(2)} on a $${ask.toFixed(2)} fill)` : "";
 
   const lines: string[] = [];
   lines.push(`SPX 0DTE TRADE ALERT  |  ${etTime} ET`);
   lines.push("─".repeat(40));
-  lines.push(`${sideUpper} ALERT  |  ${setupLabel}  |  CONFIDENCE ${a.grade.letter}  (${a.grade.score}/100)`);
+  lines.push(`${sideUpper} ALERT  |  ${setupLabel}  |  SCORE ${a.grade.letter}  (${a.grade.score}/100)`);
+  lines.push(`  score = hand-weighted heuristic, not a win probability. ${evidence === undefined ? "ledger not loaded" : gradeEvidenceLine(evidence)}`);
   lines.push("");
   lines.push(`CONTRACT:  SPX ${a.contract.strike} ${contractType}  |  SPX @ ${a.spot.toFixed(1)}  (delta ${deltaStr})`);
   lines.push("");
@@ -2441,19 +2512,34 @@ export function formatOdteAlert(a: OdteAlert): { content: string } {
   lines.push(`REVERSION:  ${reversionLine}`);
   lines.push(`ENTRY:  ${entryDesc}`);
   lines.push("");
-  lines.push(`STOP:  -20%  OR  5-min close ${a.side === "call" ? "BELOW" : "ABOVE"} ${Math.round(a.stopLevel)}`);
+  lines.push(`STOP (all):  option bid -${stopPctTxt}% before fees${optStopPx}  OR  5-min close ${below} ${lvl(a.stopLevel)}`);
   // Wire 16: projection tier tag
   const projTier = a.wire15?.projTier ?? null;
   const tierTag = projTier ? `  [${projTier}]` : "";
-  lines.push(`T1:  ${Math.round(a.t1.price)}  (${a.t1.name})  +${projT1Pct}% est${tierTag}`);
-  if (a.t2) {
-    const t2ProjStr = projT2Pct != null ? `+${projT2Pct}% est` : "+—% est";
-    lines.push(`  IF T1 BREAKS: stop -> ${a.side === "call" ? "BELOW" : "ABOVE"} ${newStop}  |  T2: ${Math.round(a.t2.price)} (${a.t2.name}) ${t2ProjStr}`);
-    lines.push(`  T2 activates on: 5-min candle close ${a.side === "call" ? "ABOVE" : "BELOW"} ${Math.round(a.t1.price)}`);
+  // Signed: an A-(85) override can fire below the 30% floor, even negative ("+-12%" before).
+  const sgn = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
+  // Whole contracts: T1 sells floor(n/2) of n (all when n = 1 or no T2).
+  const nPlan = Math.max(1, Math.floor(plan?.contracts ?? ODTE_PLAN_RULES.referenceContracts));
+  const kT1 = t1SaleContracts(nPlan, hasT2);
+  const sizeTag = `${nPlan} contract${nPlan === 1 ? "" : "s"}${plan?.source === "configured" ? "" : " (reference size)"}`;
+  const t1Sale = hasT2
+    ? (nPlan >= 2 ? `sell ${kT1} of ${nPlan} on first touch (floor(n/2); 1 contract: sell it)` : "sell the 1 contract on first touch (floor(n/2) rule; no runner)")
+    : "sell ALL on first touch";
+  lines.push(`T1:  ${lvl(a.t1.price)}  (${a.t1.name})  ${sgn(projT1Pct)}% est${tierTag}  ->  ${t1Sale}  [plan: ${sizeTag}]`);
+  if (hasT2 && a.t2 && nPlan - kT1 > 0) {
+    const t2ProjStr = projT2Pct != null ? `${sgn(projT2Pct)}% est` : "+—% est";
+    lines.push(`  RUNNER (${nPlan - kT1}): keeps the stop above until a 5-min close ${beyondT1} ${lvl(a.t1.price)}; then stop -> 5-min close ${below} ${lvl(trail)}; the -${stopPctTxt}% bid stop always applies`);
+    lines.push(`  T2:  ${lvl(a.t2.price)} (${a.t2.name}) ${t2ProjStr}  ->  sell the rest on first touch`);
   }
+  lines.push(`  Still open at the close (16:00 ET, 13:00 on half days): SPXW cash-settles at intrinsic.`);
   lines.push("");
   lines.push(`Greek signals:  ${a.greekSignals}`);
   lines.push(`Regime:  ${a.regime}`);
+  // SF-6 (R2-C): the T1 "% est" is the return IF T1 is reached (Gate 3 tests it).
+  if (a.wire15?.projPHitT1 != null && a.wire15?.projEvPctT1 != null) {
+    const pc = (x: number) => `${x >= 0 ? "+" : ""}${Math.round(x * 100)}%`;
+    lines.push(`T1 model: touch p ${Math.round(a.wire15.projPHitT1 * 100)}% (implied vol, not calibrated) | no touch ${pc(a.wire15.projNoTouchPctT1 ?? 0)} | EV ${pc(a.wire15.projEvPctT1)} = spread+fees cost under the model, not edge${a.wire15.projFeeIncluded === false ? " | before index fees (not configured)" : ""}`);
+  }
   lines.push("");
   lines.push(`Built by God. Paid by the Market.`);
 

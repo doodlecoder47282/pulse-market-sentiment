@@ -29,10 +29,10 @@
 import { rollingBrier, gradeBrier, beatsTrivial, recentForecastProbs } from "./calibration";
 import { resolutionScore, gradeResolution, betaBinomialCI } from "./stats";
 import { watchdogStatus } from "./cusumWatchdog";
+import { webhookOrWarn, safeErrorSummary } from "./webhookConfig";
 
-const WEBHOOK_URL =
-  process.env.PULSE_DISCORD_WEBHOOK ??
-  "https://discord.com/api/webhooks/1318055174576803860/egM4Fx5DcOnxX3fOkbCxmywkgvwgmJWC2B7O1geDKkF-6cFjpN4mspLlPWCZkrBn4Li6";
+// Main Batcave channel, from PULSE_DISCORD_WEBHOOK only (no hard-coded fallback).
+// Resolved at send time; unset = card disabled, logged once.
 
 function fmt3(n: number): string {
   return n.toFixed(3);
@@ -82,7 +82,7 @@ export async function postCalibrationCard(days: number = 7): Promise<{
     ? realizedNotes.map((s) => `  ${s}`).join("\n")
     : "  scenarios realizing in line with model predictions";
 
-  // Trivial-forecaster delta — how much edge over a 1/3-1/3-1/3 baseline.
+  // Trivial-forecaster delta — edge over the climatology (base-rate) baseline.
   const edgeBull = ((r.trivialBull - r.bull) / r.trivialBull) * 100;
   const edgeBase = ((r.trivialBase - r.base) / r.trivialBase) * 100;
   const edgeBear = ((r.trivialBear - r.bear) / r.trivialBear) * 100;
@@ -143,8 +143,8 @@ export async function postCalibrationCard(days: number = 7): Promise<{
   // Resolution = variance of forecast probs (3-Min Data Science). High variance
   // means the model meaningfully differentiates days; low variance means it's
   // basically constant.
-  // Watchdog = CUSUM on (brier_total - trivial_total). If the model stops
-  // beating trivial, this trips and the user sees DRIFTING/BROKEN.
+  // Watchdog = CUSUM on (brier_total - climatology_brier), target 0 = no skill.
+  // If the model stops beating the base rate, the user sees DRIFTING/BROKEN.
   try {
     const fp = recentForecastProbs(30);
     const rsBull = resolutionScore(fp.bull);
@@ -168,11 +168,12 @@ export async function postCalibrationCard(days: number = 7): Promise<{
     const w = watchdogStatus(60);
     const badge =
       w.status === "HEALTHY" ? "● HEALTHY" :
+      w.status === "NO_SKILL" ? "● NO DEMONSTRATED SKILL" :
       w.status === "DRIFTING" ? "● DRIFTING" :
       w.status === "BROKEN" ? "● BROKEN" :
       "● WARMING UP";
     lines.push("");
-    lines.push(sectionRule("WATCHDOG (CUSUM on edge-vs-trivial)"));
+    lines.push(sectionRule("WATCHDOG (CUSUM vs climatology, target = zero skill)"));
     lines.push(`  ${badge}   c=${w.cValue.toFixed(3)}   baseline=${w.baseline.toFixed(3)}   n=${w.n}`);
     lines.push(`  ${w.reason}`);
   } catch (e) {
@@ -188,8 +189,10 @@ export async function postCalibrationCard(days: number = 7): Promise<{
 }
 
 async function sendWebhook(content: string): Promise<boolean> {
+  const url = webhookOrWarn("main", "calibrationCard");
+  if (!url) return false;
   try {
-    const res = await fetch(WEBHOOK_URL, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "Pulse Batcave", content }),
@@ -201,7 +204,7 @@ async function sendWebhook(content: string): Promise<boolean> {
     }
     return true;
   } catch (e: any) {
-    console.warn(`[calibrationCard] webhook failed: ${e?.message ?? e}`);
+    console.warn(`[calibrationCard] webhook failed: ${safeErrorSummary(e)}`);
     return false;
   }
 }

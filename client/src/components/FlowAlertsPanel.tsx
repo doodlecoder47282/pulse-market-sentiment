@@ -121,7 +121,9 @@ function computeAlerts(
     }
   }
 
-  // 2. BLOCK_TRADE — single strike with volume ≥ 500 (institutional size)
+  // 2. HEAVY STRIKE (type key "BLOCK" kept for compatibility) — cumulative day
+  //    volume on one strike >= 2000 contracts. Not a block print: the chain
+  //    snapshot has no trade sizes, so this can be many small trades.
   const allStrikes = new Set([...Object.keys(callStats.strikeVol), ...Object.keys(putStats.strikeVol)]);
   for (const strikeStr of Array.from(allStrikes)) {
     const callVol = callStats.strikeVol[strikeStr] ?? 0;
@@ -136,7 +138,7 @@ function computeAlerts(
         symbol,
         strike: parseFloat(strikeStr),
         side: dominant,
-        message: `Block-level activity at ${strikeStr} — ${totalVol.toLocaleString()} total contracts (${callVol.toLocaleString()}C / ${putVol.toLocaleString()}P)`,
+        message: `Heavy cumulative volume at ${strikeStr} — ${totalVol.toLocaleString()} contracts today (${callVol.toLocaleString()}C / ${putVol.toLocaleString()}P), not a block print`,
         severity: totalVol >= 5000 ? "high" : "med",
       });
     }
@@ -212,7 +214,7 @@ const SEVERITY_CLASSES: Record<AlertSeverity, { dot: string; border: string; bg:
 
 const TYPE_LABELS: Record<FlowAlertType, string> = {
   UNUSUAL_VOL: "UNUSUAL VOL",
-  BLOCK: "BLOCK TRADE",
+  BLOCK: "HEAVY STRIKE",
   MAGNET: "STRIKE MAGNET",
   PC_SHIFT: "P/C SHIFT",
   WALL: "WALL BUILD",
@@ -247,19 +249,19 @@ function AlertRow({ alert, onDismiss, trackedIds }: { alert: FlowAlert; onDismis
       <div className="min-w-0 flex-1 space-y-0.5">
         {/* Header row */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className={`font-mono text-[9px] font-semibold uppercase tracking-wider ${s.text}`}>
+          <span className={`font-mono text-[11px] font-semibold uppercase tracking-wider ${s.text}`}>
             {TYPE_LABELS[alert.type]}
           </span>
-          <span className="font-mono text-[9px] text-muted-foreground">{alert.symbol}</span>
+          <span className="font-mono text-[11px] text-muted-foreground">{alert.symbol}</span>
           {alert.strike && (
-            <span className="font-mono text-[9px] text-muted-foreground">
+            <span className="font-mono text-[11px] text-muted-foreground">
               ${alert.strike.toFixed(0)}{alert.side && ` ${alert.side}`}
             </span>
           )}
-          <span className="font-mono text-[8px] text-muted-foreground/60 ml-auto">{time} ET</span>
+          <span className="font-mono text-[11px] text-muted-foreground ml-auto">{time} ET</span>
         </div>
         {/* Message */}
-        <div className="text-[10px] leading-snug text-muted-foreground">{alert.message}</div>
+        <div className="text-[11px] leading-snug text-muted-foreground">{alert.message}</div>
       </div>
       {/* Track + Dismiss */}
       <div className="flex flex-shrink-0 items-center gap-1">
@@ -276,7 +278,7 @@ function AlertRow({ alert, onDismiss, trackedIds }: { alert: FlowAlert; onDismis
         />
         <button
           onClick={() => onDismiss(alert.id)}
-          className="mt-0.5 rounded p-0.5 text-muted-foreground/50 hover:text-muted-foreground transition"
+          className="mt-0.5 rounded p-0.5 text-muted-foreground hover:text-muted-foreground transition"
           aria-label="Dismiss alert"
           data-testid={`dismiss-alert-${alert.id}`}
         >
@@ -413,11 +415,11 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
               </span>
               {totalCount > 0 && (
                 <div className="flex items-center gap-1">
-                  <span className="flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-amber-500 px-1 font-mono text-[9px] font-bold text-black">
+                  <span className="flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-amber-500 px-1 font-mono text-[11px] font-bold text-black">
                     {totalCount}
                   </span>
                   {highCount > 0 && (
-                    <span className="flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-red-500 px-1 font-mono text-[9px] font-bold text-white">
+                    <span className="flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-red-500 px-1 font-mono text-[11px] font-bold text-white">
                       {highCount} HIGH
                     </span>
                   )}
@@ -426,11 +428,11 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
               {/* Connection status indicator */}
               <div className="flex items-center gap-1 ml-2">
                 {isConnected ? (
-                  <span className="flex items-center gap-1 text-[9px] text-emerald-400">
+                  <span className="flex items-center gap-1 text-[11px] text-emerald-400">
                     <Wifi className="h-2.5 w-2.5" /> SCHWAB LIVE
                   </span>
                 ) : (
-                  <span className="flex items-center gap-1 text-[9px] text-muted-foreground/60">
+                  <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
                     <WifiOff className="h-2.5 w-2.5" /> OFFLINE
                   </span>
                 )}
@@ -440,7 +442,7 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
               {totalCount > 0 && (
                 <button
                   onClick={(e) => { e.stopPropagation(); dismissAll(); }}
-                  className="rounded px-2 py-0.5 text-[9px] text-muted-foreground hover:text-foreground transition border border-border/40 hover:border-border"
+                  className="rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground transition border border-border/40 hover:border-border"
                   data-testid="dismiss-all-alerts"
                 >
                   clear all
@@ -460,11 +462,11 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
             {!isConnected ? (
               /* Disconnected state */
               <div className="flex flex-col items-center gap-3 py-4 text-center">
-                <WifiOff className="h-8 w-8 text-muted-foreground/40" />
+                <WifiOff className="h-8 w-8 text-muted-foreground" />
                 <div>
                   <div className="text-sm font-medium text-muted-foreground">Schwab offline — connect to watch flow alerts</div>
-                  <div className="text-xs text-muted-foreground/60 mt-1">
-                    Real-time option chain data required to detect unusual volume, block trades, and wall formation.
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Real-time option chain data required to detect unusual volume, heavy strikes, and wall formation.
                   </div>
                 </div>
                 {onOpenSettings && (
@@ -482,12 +484,12 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
             ) : alerts.length === 0 ? (
               /* Connected, no alerts yet */
               <div className="flex flex-col items-center gap-2 py-4 text-center">
-                <Bell className="h-6 w-6 text-muted-foreground/30" />
-                <div className="text-xs text-muted-foreground/60">
+                <Bell className="h-6 w-6 text-muted-foreground" />
+                <div className="text-xs text-muted-foreground">
                   {symbol} flow is quiet — no alerts yet
                 </div>
-                <div className="text-[9px] text-muted-foreground/40">
-                  Polling every 30s · alerts fire on unusual volume, block trades, P/C shifts, wall formation
+                <div className="text-[11px] text-muted-foreground">
+                  Polling every 30s · alerts fire on unusual volume, heavy strikes, P/C shifts, wall formation
                 </div>
               </div>
             ) : (
@@ -503,7 +505,7 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
             {isConnected && (
               <div className="flex flex-wrap gap-2 pt-2 border-t border-border/20">
                 {(["UNUSUAL_VOL", "BLOCK", "PC_SHIFT", "WALL"] as FlowAlertType[]).map((type) => (
-                  <span key={type} className="text-[8px] uppercase tracking-wider text-muted-foreground/40">
+                  <span key={type} className="text-[11px] uppercase tracking-wider text-muted-foreground">
                     {TYPE_LABELS[type]}
                   </span>
                 ))}

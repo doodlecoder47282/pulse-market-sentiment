@@ -19,10 +19,10 @@ type InfoEntry = {
 const INFO: Record<string, InfoEntry> = {
   "whale-flow": {
     title: "Whale Flow",
-    what: "A live detector for surgical options blocks: $2.5M+ premium, 15x volume vs open interest or a brand-new strike, bought at the ask, 1\u20133 days to expiry.",
-    how: "Expand a ticker to see each block's strike, side, and premium. CONFLUX means multiple whales hit adjacent strikes in the same direction \u2014 that clustering is the strongest signal on this panel.",
-    edge: "Someone paying millions at the ask for contracts that die in days is not hedging casually. Clustered, same-direction whale money tells you where informed conviction sits before price shows it.",
-    risk: "A single block can be one leg of a spread. Never size off one print \u2014 wait for the cluster.",
+    what: "A live detector for heavy contracts: $2.5M+ of cumulative day premium (volume x mid) on one contract, 15x volume vs open interest or a brand-new strike, last print at or above the ask, 1\u20133 days to expiry. The chain snapshot has no trade sizes, so a heavy contract can be thousands of small trades \u2014 it is not a block print.",
+    how: "Expand a ticker to see each heavy contract's strike, last-print side, and premium. CONFLUX means several heavy contracts on adjacent strikes lean the same way. Side comes from the latest print vs the quote, not from each trade.",
+    edge: "Large same-direction premium in contracts that expire in days is worth a look. Treat it as a lead to check against price and positioning, not as proof of informed money.",
+    risk: "The last-print side tags the whole day's volume by one print; the print and the current quote can be from different moments. A heavy contract can be one leg of a spread or a closing trade. Never size off one contract.",
   },
   "tracked-signals": {
     title: "Tracked Signals",
@@ -32,9 +32,10 @@ const INFO: Record<string, InfoEntry> = {
   },
   "pc-flow": {
     title: "Put / Call Flow Ratio",
-    what: "Put volume divided by call volume, rolling through the session, for the index and the MAG7 names.",
-    how: "Above ~1.2 = fear is bid. Below ~0.8 = call chasing. Watch the direction of change more than the level itself.",
-    edge: "Flow shifts often front-run price. A falling ratio while price sits flat means calls are being quietly accumulated \u2014 that's a lean before the move.",
+    what: "Put volume divided by call volume (total day volume from the Schwab chain), for the index ETFs and the MAG7 names. Each tile is coloured by a z-score against that symbol's own last 60 sessions at the same time of day, not a fixed level: index puts are bought as hedges, so SPY normally runs higher than a single stock.",
+    how: "z of +1 or more = put-heavy for this symbol, -1 or less = call-heavy, in between = normal for it. NO BASELINE YET means fewer than 20 completed sessions are recorded for the symbol, so no colour is shown. Today's ratio so far is compared with each past session's ratio at the same time of day, since hedging puts tend to trade early.",
+    edge: "None claimed. Research that found predictive power in put/call ratios used volume opened by buyers (Pan and Poteshman 2006); this feed only has total volume, which mixes opening, closing and hedging trades. Use the read as context on positioning.",
+    risk: "Total volume cannot tell opening from closing trades or hedges from bets. Expiration days and index rebalances distort a single session.",
   },
   "mag7": {
     title: "MAG 7 Basket",
@@ -49,10 +50,10 @@ const INFO: Record<string, InfoEntry> = {
     edge: "Knowing which side of the flip you're on decides whether fading or following is the right trade. Same chart, opposite playbooks.",
   },
   "order-flow": {
-    title: "Order Flow \u00b7 Signed Volume",
-    what: "Every minute of SPY tape classified as buy pressure (green, hit at the ask) or sell pressure (red, hit at the bid), with a cumulative line.",
+    title: "Signed Tick Volume (1m, SPY)",
+    what: "Each 1-minute SPY bar's whole volume signed by its close-to-close change (tick rule): green if the bar closed up, red if down, with a cumulative line. It does not see individual trades or the bid/ask, so it is not Lee-Ready and not order-book imbalance.",
     how: "Read the cumulative slope against price. Rising price + rising cumulative = healthy. Rising price + falling cumulative = the move is running on fumes.",
-    edge: "Divergence between tape and price leads price. This is the closest thing to watching real money vote in real time.",
+    edge: "A divergence between the cumulative line and price is a prompt to look closer. Because the sign comes from price itself, this read partly restates price.",
     risk: "Overnight and lunch hours print thin \u2014 don't read conviction into low-volume bars.",
   },
   "thermal-heatmap": {
@@ -93,16 +94,16 @@ const INFO: Record<string, InfoEntry> = {
     edge: "When skew steepens while flow stays call-heavy, someone is buying protection on a rally they expect to continue \u2014 that combination rarely shows up in price yet.",
   },
   "ml-accuracy": {
-    title: "ML Scorecard",
-    what: "The model grades every prediction it ever logged against what actually happened: hit rate, Brier score (calibration), and trend.",
-    how: "Brier under 0.22 = usable. Over 0.27 = the model itself tells you it's noise right now \u2014 the red banner fires automatically.",
+    title: "MM Matrix Scorecard",
+    what: "Grades every MM-matrix prediction it ever logged (hand-set priors, not a trained ML model) against what actually happened: hit rate, Brier score, skill vs the base rate, a reliability curve, and trend.",
+    how: "Skill is measured against always forecasting the base rate (climatology), on one call per session. The red banner fires when that skill is significantly negative (Diebold-Mariano statistic of +2 or more); the amber one when skill is not demonstrated (DM above -2). Brier mixes calibration with sharpness, so \"calibrated\" appears only when the reliability curve passes its stated test (100+ graded forecasts, Spiegelhalter Z, every bin with 10+ forecasts inside its Wilson interval).",
     edge: "Knowing when your model is broken is worth more than the model. Most people size up exactly when their signal decays \u2014 this panel stops that.",
   },
   backtest: {
-    title: "Backtest Accuracy \u00b7 5Y",
-    what: "How often each dealer level actually held or got touched over five years of history, split by daily / weekly / monthly horizons.",
-    how: "Use the touch and hold rates as base rates when planning trades around walls and flips. It rebuilds itself automatically when stale.",
-    edge: "Base rates keep you honest. A wall that holds 60% of the time is a lean, not a law \u2014 size like it.",
+    title: "Volatility-Band Backtest \u00b7 5Y",
+    what: "How often price touched or reversed at volatility bands (ATR x VIX, sigma bands) and a 20-day EMA over five years. These are stand-ins named after dealer levels: the test contains no options data, so it does not measure the live walls or flip.",
+    how: "Read the rates as base rates for volatility bands, and compare each row with the baseline rows. Real dealer-level history needs historical option chains, which are not connected.",
+    edge: "Base rates keep you honest, but only for what was tested. A band that holds 60% of the time says nothing yet about today's gamma wall.",
   },
   regime: {
     title: "Regime Panel",
@@ -125,23 +126,24 @@ const INFO: Record<string, InfoEntry> = {
   },
   "trade-environment": {
     title: "Trade Environment",
-    what: "One fused 0\u2013100 convexity index built from seven independent reads: dealer gamma posture, the VIX term structure, realized range expansion, order-flow impulse, cross-asset canaries, whale clustering, and wall proximity.",
-    how: "Five states. STAND DOWN and CHOP mean no edge \u2014 don't force trades. NORMAL means standard playbook. LOADED means the ingredients for a big move are stacking \u2014 pre-plan both directions and set alerts. STRIKE means convexity is live: short gamma plus expanding range plus directional flow \u2014 the flushes and squeezes happen here.",
-    edge: "Most losses come from trading the wrong days. Knowing when NOT to trade \u2014 and being fully ready the moment conditions flip \u2014 is worth more than any single entry signal. The strip tells you which day type you're in before you commit capital.",
-    risk: "A quiet score can jump inside one bar on a headline. LOADED is not a trade signal \u2014 it's a readiness signal. Wait for the trigger.",
+    what: "A 0\u2013100 heuristic composite: hand-set points for seven driver reads (dealer gamma posture, the VIX term structure, realized range expansion, signed tick volume, cross-asset canaries, heavy-contract clustering, wall proximity), summed into five states. The reads overlap \u2014 short gamma, range expansion and an inverted VIX curve tend to arrive together \u2014 so they are not independent votes. The points have not been fitted to outcomes.",
+    how: "Read the state as a description of current conditions: STRIKE = short gamma, expanding range and directional tick volume at once; LOADED = several of those present; NORMAL = nothing unusual; CHOP = long gamma, quiet flow, calm vol; STAND DOWN = few drivers active. A driver marked n/a failed to load, scores 0 and makes the index read low. It gives no entry, exit or size.",
+    edge: "None claimed. Each 30-minute bucket is logged and graded against the SPY range that followed; the strip shows that fit's status, which needs 120 sessions and 1,000 graded windows before any weight is reviewed.",
+    risk: "A quiet score can jump inside one bar on a headline. Hand-set thresholds can label a normal day LOADED and miss a real one.",
   },
   "ml-forecast": {
     title: "Projected Path",
-    what: "A machine-learned forecast of where SPY goes over the next hour, drawn as three paths: base (best guess), bull (realistic best case), and bear (realistic worst case), extended to the close.",
-    how: "Read the verdict strip first \u2014 it says lean up, lean down, or flat in one sentence. Then check band width: a tight band means the model is confident, a wide band means direction is a coin-flip and you should trade the levels instead. The dealer lines on the chart (walls, flip) are where the path is most likely to stall or accelerate.",
-    edge: "The forecast is not a crystal ball \u2014 the edge is knowing when the model is confident versus guessing. Tight band + a clear lean + gamma regime agreeing is the highest-probability window this panel produces.",
+    what: "The forward 10\u201390% range for SPY over the next hour, extended (lighter, not scored) to the close. A quantile model is drawn only if it was trained on real Schwab data and beat a baseline volatility cone on out-of-sample days (the promotion gate). Until one does, the chart shows the baseline volatility cone itself: zero drift, width from today's realized SPX volatility. The label above the chart names every component of the band.",
+    how: "Read band width as the expected range. The baseline cone has no direction by design, so the verdict strip stays grey unless a promoted model is drawn. The coverage table under the chart shows how often real SPX moves landed inside the drawn band (nominal 80%), per horizon.",
+    edge: "None claimed. A promoted model beat the baseline cone on past out-of-sample days; that is not a trading edge. Use the dealer levels and your own read for direction.",
     risk: "Forecasts decay fast after news or a regime break. If price rips through a wall the whole projection re-anchors \u2014 never hold a trade just because the old path said so.",
   },
   "trade-desk": {
     title: "Trade Desk",
     what: "Position sizing, exit rules, and risk gates in one place, driven by the same data feeding every other panel.",
-    how: "Enter your setup and let the desk size it by expected value. If the gate score is below threshold, the trade doesn't clear \u2014 that's the point.",
+    how: "The 0DTE sizer only sizes grades of 72 (B-) or better, the same floor at which the alert engine fires (FIRE_GATE). Below 72 it returns no size. Grades 72\u201379 get 50% of the computed size, 80\u201384 70%, 85\u201394 85%, 95+ 100%. The computed size is the smallest of: the risk budget (default 1%, at most 5% of the account, loss at the stop incl. fees), the cash you have, the gap cap (full premium loss at most 5% of the account), and a fractional Kelly cap from the realized option win rate of that grade's bucket (its Wilson 95% lower bound until the bucket has 385 graded fires). Whole contracts, rounded down. Enter your all-in fee per contract for index options.",
     edge: "One oversized loser erases ten winners. Sizing discipline is the edge that compounds \u2014 the desk exists to enforce it when you won't.",
+    risk: "Grades are heuristic scores until the grade-to-win-rate fit has enough graded fires; the Kelly cap sizes zero when the ledger does not yet show an edge at the lower bound.",
   },
   "gex-chart": {
     title: "GEX by Strike",
@@ -177,7 +179,7 @@ export default function EdgeInfo({ id, className = "" }: { id: string; className
           e.preventDefault();
           setOpen(true);
         }}
-        className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/40 text-muted-foreground/70 transition hover:border-border hover:text-foreground active:scale-95 ${className}`}
+        className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/40 text-muted-foreground transition hover:border-border hover:text-foreground active:scale-95 ${className}`}
       >
         <Info className="h-3.5 w-3.5" />
       </button>
@@ -185,7 +187,7 @@ export default function EdgeInfo({ id, className = "" }: { id: string; className
         <DialogContent className="max-w-md gap-0 overflow-hidden border-slate-700/70 bg-slate-950 p-0 sm:rounded-xl">
           {/* Header band */}
           <div className="border-b border-slate-800 bg-slate-900/60 px-5 py-4">
-            <div className="font-mono text-[9px] uppercase tracking-[0.25em] text-slate-500">
+            <div className="font-mono text-[11px] uppercase tracking-[0.25em] text-slate-500">
               Field Manual
             </div>
             <DialogTitle className="mt-1 text-base font-semibold tracking-tight text-slate-100">
@@ -198,7 +200,7 @@ export default function EdgeInfo({ id, className = "" }: { id: string; className
               const IconComponent = s.icon;
               return (
                 <div key={s.key}>
-                  <div className={`mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest ${s.tone}`}>
+                  <div className={`mb-1 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest ${s.tone}`}>
                     <IconComponent className="h-3 w-3" />
                     {s.label}
                   </div>
@@ -208,7 +210,7 @@ export default function EdgeInfo({ id, className = "" }: { id: string; className
             })}
             {info.risk && (
               <div>
-                <div className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-rose-400">
+                <div className="mb-1 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-rose-400">
                   <AlertTriangle className="h-3 w-3" />
                   What breaks it
                 </div>
@@ -217,7 +219,7 @@ export default function EdgeInfo({ id, className = "" }: { id: string; className
             )}
           </div>
           {/* Footer */}
-          <div className="border-t border-slate-800 bg-slate-900/40 px-5 py-2.5 text-center font-mono text-[9px] uppercase tracking-widest text-slate-600">
+          <div className="border-t border-slate-800 bg-slate-900/40 px-5 py-2.5 text-center font-mono text-[11px] uppercase tracking-widest text-slate-400">
             every read is probabilistic · size accordingly
           </div>
         </DialogContent>

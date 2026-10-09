@@ -9,6 +9,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import DataStateChip from "@/components/DataStateChip";
 import { Activity, TrendingUp, TrendingDown, Target, ChevronDown, ChevronRight, Zap, BarChart3, Archive } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -61,6 +62,10 @@ interface FlowPreview {
   source: string;
   byTicker: Record<string, PreviewByTicker>;
   totalWhales: number;
+  /** Round 4: scan coverage (all / some / no tickers failed); absent on older servers. */
+  dataState?: string;
+  dataStateReason?: string | null;
+  asOfMs?: number;
   config: {
     premiumFloor: number;
     volOiRatio: number;
@@ -128,14 +133,29 @@ interface FollowEntry {
   volume: number;
   openInterest: number;
   detectedAt: string;
+  ask?: number | null;
+  bid?: number | null;
 }
 
 interface ClosingPrint {
   mark: number;
-  pctChange: number;
-  peakPctChange: number;
+  pctChange: number;      // mid to mid, FRACTION (0.12 = +12%)
+  peakPctChange: number;  // mid to mid, FRACTION
   closedAt: string;
   reason: string;
+  bid?: number | null;
+}
+
+// Tradable-price read from the server (whaleScoreboard.ts): bought at the
+// logged ask, sold at the bid, $0.65 per contract per side. netReturn is a
+// FRACTION. Terminal = final; active = what selling at the current bid nets.
+interface FollowScore {
+  basis: string;
+  netReturn: number | null;
+  pnlPerContract: number | null;
+  win: boolean | null;
+  final: boolean;
+  reason: string | null;
 }
 
 interface FollowPosition {
@@ -150,6 +170,7 @@ interface FollowPosition {
   status: string;
   statusAt: string;
   closingPrint?: ClosingPrint;
+  score?: FollowScore;
 }
 
 interface FollowupsResponse {
@@ -200,7 +221,7 @@ function SectionHeader({ icon, label, count }: { icon: React.ReactNode; label: s
       <span className="text-amber-500">{icon}</span>
       <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">{label}</span>
       {count !== undefined && (
-        <Badge variant="outline" className="ml-auto text-[9px] border-muted-foreground/40 text-muted-foreground" data-testid={`section-count-${label.toLowerCase().replace(/\s+/g, "-")}`}>
+        <Badge variant="outline" className="ml-auto text-[11px] border-muted-foreground/40 text-muted-foreground" data-testid={`section-count-${label.toLowerCase().replace(/\s+/g, "-")}`}>
           {count}
         </Badge>
       )}
@@ -234,16 +255,16 @@ function WhaleRow({ hit }: { hit: WhaleHit }) {
           {hit.sentiment}
         </span>
         {isConflux && (
-          <Badge variant="outline" className="border-fuchsia-500/60 bg-fuchsia-500/15 text-fuchsia-300 text-[9px] font-bold" data-testid={`whale-conflux-${hit.occ}`}>
+          <Badge variant="outline" className="border-fuchsia-500/60 bg-fuchsia-500/15 text-fuchsia-300 text-[11px] font-bold" data-testid={`whale-conflux-${hit.occ}`}>
             CONFLUX
           </Badge>
         )}
         {hit.isNewStrike ? (
-          <Badge variant="outline" className="border-cyan-500/50 bg-cyan-500/10 text-cyan-400 text-[9px]" data-testid={`whale-newstrike-${hit.occ}`}>
+          <Badge variant="outline" className="border-cyan-500/50 bg-cyan-500/10 text-cyan-400 text-[11px]" data-testid={`whale-newstrike-${hit.occ}`}>
             NEW STRIKE
           </Badge>
         ) : (
-          <span className="font-mono text-muted-foreground/70" data-testid={`whale-voioi-${hit.occ}`}>
+          <span className="font-mono text-muted-foreground" data-testid={`whale-voioi-${hit.occ}`}>
             vol/OI {hit.volOiRatio.toFixed(1)}x
           </span>
         )}
@@ -254,18 +275,18 @@ function WhaleRow({ hit }: { hit: WhaleHit }) {
 
       {open && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5 border-t border-border/30 px-3 py-2 font-mono text-[11px] text-muted-foreground" data-testid={`whale-detail-${hit.occ}`}>
-          <div><span className="text-muted-foreground/70">vol/OI</span> <span className="text-foreground">{hit.volume.toLocaleString()}/{hit.openInterest.toLocaleString()}</span></div>
-          <div><span className="text-muted-foreground/70">bid/ask</span> <span className="text-foreground">{hit.bid?.toFixed(2) ?? "—"}/{hit.ask?.toFixed(2) ?? "—"}</span></div>
-          <div><span className="text-muted-foreground/70">mid</span> <span className="text-foreground">${hit.mid?.toFixed(2) ?? "—"}</span></div>
-          <div><span className="text-muted-foreground/70">spread</span> <span className="text-foreground">{hit.spreadPct?.toFixed(1) ?? "—"}%</span></div>
-          <div><span className="text-muted-foreground/70">IV</span> <span className="text-foreground">{hit.iv !== undefined ? `${hit.iv.toFixed(1)}%` : "—"}</span></div>
-          <div><span className="text-muted-foreground/70">spot</span> <span className="text-foreground">{hit.spot ? hit.spot.toFixed(2) : "—"}</span></div>
-          <div><span className="text-muted-foreground/70">Δ</span> <span className="text-foreground">{hit.delta.toFixed(2)}</span></div>
-          <div><span className="text-muted-foreground/70">γ</span> <span className="text-foreground">{hit.gamma !== undefined ? hit.gamma.toFixed(4) : "—"}</span></div>
-          <div><span className="text-muted-foreground/70">θ</span> <span className="text-foreground">{hit.theta !== undefined ? hit.theta.toFixed(2) : "—"}</span></div>
-          <div><span className="text-muted-foreground/70">vega</span> <span className="text-foreground">{hit.vega !== undefined ? hit.vega.toFixed(2) : "—"}</span></div>
-          <div><span className="text-muted-foreground/70">strike vs spot</span> <span className={hit.distFromSpotPct !== undefined ? pctColor(hit.distFromSpotPct) : ""}>{hit.distFromSpotPct !== undefined ? fmtPct(hit.distFromSpotPct) : "—"}</span></div>
-          <div><span className="text-muted-foreground/70">breakeven</span> <span className="text-foreground">{hit.breakeven?.toFixed(2) ?? "—"}{hit.breakevenPct !== undefined ? ` (${fmtPct(hit.breakevenPct)})` : ""}</span></div>
+          <div><span className="text-muted-foreground">vol/OI</span> <span className="text-foreground">{hit.volume.toLocaleString()}/{hit.openInterest.toLocaleString()}</span></div>
+          <div><span className="text-muted-foreground">bid/ask</span> <span className="text-foreground">{hit.bid?.toFixed(2) ?? "—"}/{hit.ask?.toFixed(2) ?? "—"}</span></div>
+          <div><span className="text-muted-foreground">mid</span> <span className="text-foreground">${hit.mid?.toFixed(2) ?? "—"}</span></div>
+          <div><span className="text-muted-foreground">spread</span> <span className="text-foreground">{hit.spreadPct?.toFixed(1) ?? "—"}%</span></div>
+          <div><span className="text-muted-foreground">IV</span> <span className="text-foreground">{hit.iv !== undefined ? `${hit.iv.toFixed(1)}%` : "—"}</span></div>
+          <div><span className="text-muted-foreground">spot</span> <span className="text-foreground">{hit.spot ? hit.spot.toFixed(2) : "—"}</span></div>
+          <div><span className="text-muted-foreground">Δ</span> <span className="text-foreground">{hit.delta.toFixed(2)}</span></div>
+          <div><span className="text-muted-foreground">γ</span> <span className="text-foreground">{hit.gamma !== undefined ? hit.gamma.toFixed(4) : "—"}</span></div>
+          <div><span className="text-muted-foreground">θ</span> <span className="text-foreground">{hit.theta !== undefined ? hit.theta.toFixed(2) : "—"}</span></div>
+          <div><span className="text-muted-foreground">vega</span> <span className="text-foreground">{hit.vega !== undefined ? hit.vega.toFixed(2) : "—"}</span></div>
+          <div><span className="text-muted-foreground">strike vs spot</span> <span className={hit.distFromSpotPct !== undefined ? pctColor(hit.distFromSpotPct) : ""}>{hit.distFromSpotPct !== undefined ? fmtPct(hit.distFromSpotPct) : "—"}</span></div>
+          <div><span className="text-muted-foreground">breakeven</span> <span className="text-foreground">{hit.breakeven?.toFixed(2) ?? "—"}{hit.breakevenPct !== undefined ? ` (${fmtPct(hit.breakevenPct)})` : ""}</span></div>
           <div className="col-span-2 sm:col-span-3 italic text-muted-foreground/80" data-testid={`whale-reason-${hit.occ}`}>{hit.reason}</div>
         </div>
       )}
@@ -291,10 +312,10 @@ function TickerGroup({ ticker, whales, defaultOpen }: { ticker: string; whales: 
       >
         {open ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
         <span className="font-bold text-base text-foreground" data-testid={`ticker-name-${ticker}`}>{ticker}</span>
-        <Badge variant="outline" className="text-[9px] border-amber-500/40 bg-amber-500/10 text-amber-400" data-testid={`ticker-count-${ticker}`}>
+        <Badge variant="outline" className="text-[11px] border-amber-500/40 bg-amber-500/10 text-amber-400" data-testid={`ticker-count-${ticker}`}>
           {whales.length} {whales.length === 1 ? "whale" : "whales"}
         </Badge>
-        <span className={`text-[10px] font-semibold uppercase tracking-wider ${sentimentColor(dominant)}`}>
+        <span className={`text-[11px] font-semibold uppercase tracking-wider ${sentimentColor(dominant)}`}>
           {dominant}
         </span>
         <span className="ml-auto font-mono font-semibold text-amber-400 text-sm" data-testid={`ticker-total-${ticker}`}>
@@ -320,8 +341,9 @@ function TickerGroup({ ticker, whales, defaultOpen }: { ticker: string; whales: 
 // Lets you eyeball which sold-off plays are dead weight vs which are fresh accumulation.
 type FreshnessTier = "HOT" | "WARM" | "STALE" | "SOLD";
 function freshnessTier(pos: FollowPosition): FreshnessTier {
-  const peakPct = pos.live.peakPctChange ?? 0;
-  const pct = pos.live.pctChange ?? 0;
+  // Server sends fractions (0.30 = +30%); the thresholds below are in percent.
+  const peakPct = (pos.live.peakPctChange ?? 0) * 100;
+  const pct = (pos.live.pctChange ?? 0) * 100;
   const fadedFromPeak = peakPct > 30 && pct < peakPct - 25;
   if (pos.live.fadeStreak >= 3 && fadedFromPeak) return "SOLD";
   const bumpMs = new Date(pos.live.lastVolumeBumpAt).getTime();
@@ -354,22 +376,29 @@ function TrackingRow({ pos }: { pos: FollowPosition }) {
         <span className="font-mono text-muted-foreground" data-testid={`tracking-contract-${pos.occ}`}>
           {pos.strike}{pos.type === "C" ? "C" : "P"} {pos.expiration.slice(5)}
         </span>
-        <Badge variant="outline" className={`text-[9px] ${statusBadgeClass(pos.status)}`} data-testid={`tracking-status-${pos.occ}`}>
+        <Badge variant="outline" className={`text-[11px] ${statusBadgeClass(pos.status)}`} data-testid={`tracking-status-${pos.occ}`}>
           {pos.status}
         </Badge>
         <span className={`font-semibold ${sentimentColor(pos.side)}`} data-testid={`tracking-side-${pos.occ}`}>
           {pos.side}
         </span>
-        <Badge variant="outline" className={`text-[9px] uppercase tracking-wider ${freshnessBadgeClass(fresh)}`} data-testid={`tracking-fresh-${pos.occ}`}>
+        <Badge variant="outline" className={`text-[11px] uppercase tracking-wider ${freshnessBadgeClass(fresh)}`} data-testid={`tracking-fresh-${pos.occ}`}>
           {freshnessLabel(fresh, pos)}
         </Badge>
       </div>
       <div className="flex flex-wrap items-center gap-3 font-mono">
         <span className="text-muted-foreground" data-testid={`tracking-entry-${pos.occ}`}>entry ${pos.entry.mark.toFixed(2)}</span>
         <span data-testid={`tracking-mark-${pos.occ}`}>mark ${pos.live.mark.toFixed(2)}</span>
-        <span className={pctColor(pos.live.pctChange)} data-testid={`tracking-pct-${pos.occ}`}>{fmtPct(pos.live.pctChange)}</span>
-        <span className="text-emerald-400/70" data-testid={`tracking-peak-${pos.occ}`}>peak +{pos.live.peakPctChange.toFixed(1)}%</span>
-        <span className="text-muted-foreground/70" data-testid={`tracking-volse-${pos.occ}`}>volSE {pos.live.volumeSinceEntry.toLocaleString()}</span>
+        <span className={pctColor(pos.live.pctChange)} data-testid={`tracking-pct-${pos.occ}`} title="mark vs entry mark (mid to mid, no fees)">{fmtPct(pos.live.pctChange * 100)} mid</span>
+        <span className="text-emerald-400/70" data-testid={`tracking-peak-${pos.occ}`}>peak +{(pos.live.peakPctChange * 100).toFixed(1)}% mid</span>
+        {pos.score?.netReturn != null ? (
+          <span className={pctColor(pos.score.netReturn)} data-testid={`tracking-net-${pos.occ}`} title="sold at the current bid, bought at the logged ask, fees $0.65/contract/side">
+            {fmtPct(pos.score.netReturn * 100)} if sold at bid
+          </span>
+        ) : (
+          <span className="text-muted-foreground" data-testid={`tracking-net-${pos.occ}`}>{pos.score?.reason ?? "bid-exit n/a"}</span>
+        )}
+        <span className="text-muted-foreground" data-testid={`tracking-volse-${pos.occ}`}>volSE {pos.live.volumeSinceEntry.toLocaleString()}</span>
       </div>
     </div>
   );
@@ -397,7 +426,7 @@ function TrackedTickerGroup({
   const bear = positions.filter((p) => p.side === "BEARISH").length;
   const dominant = bull > bear ? "BULLISH" : bear > bull ? "BEARISH" : "MIXED";
   const avgPct = positions.length
-    ? positions.reduce((a, p) => a + (p.live.pctChange ?? 0), 0) / positions.length
+    ? (positions.reduce((a, p) => a + (p.live.pctChange ?? 0), 0) / positions.length) * 100
     : 0;
   return (
     <div className="rounded-md border border-border/40 bg-card/30" data-testid={`tracked-group-${ticker}`}>
@@ -409,23 +438,23 @@ function TrackedTickerGroup({
       >
         {open ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
         <span className="font-bold text-base text-foreground">{ticker}</span>
-        <Badge variant="outline" className="text-[9px] border-amber-500/40 bg-amber-500/10 text-amber-400">
+        <Badge variant="outline" className="text-[11px] border-amber-500/40 bg-amber-500/10 text-amber-400">
           {positions.length} {positions.length === 1 ? "pos" : "posns"}
         </Badge>
-        <span className={`text-[10px] font-semibold uppercase tracking-wider ${sentimentColor(dominant)}`}>
+        <span className={`text-[11px] font-semibold uppercase tracking-wider ${sentimentColor(dominant)}`}>
           {dominant}
         </span>
         {hotCount > 0 && (
-          <Badge variant="outline" className="text-[9px] border-cyan-500/50 bg-cyan-500/15 text-cyan-300" data-testid={`tracked-hot-${ticker}`}>
+          <Badge variant="outline" className="text-[11px] border-cyan-500/50 bg-cyan-500/15 text-cyan-300" data-testid={`tracked-hot-${ticker}`}>
             {hotCount} hot
           </Badge>
         )}
         {soldCount > 0 && (
-          <Badge variant="outline" className="text-[9px] border-rose-500/50 bg-rose-500/15 text-rose-300" data-testid={`tracked-sold-${ticker}`}>
+          <Badge variant="outline" className="text-[11px] border-rose-500/50 bg-rose-500/15 text-rose-300" data-testid={`tracked-sold-${ticker}`}>
             {soldCount} sold
           </Badge>
         )}
-        <span className={`ml-auto font-mono text-sm ${pctColor(avgPct)}`}>{fmtPct(avgPct)} avg</span>
+        <span className={`ml-auto font-mono text-sm ${pctColor(avgPct)}`}>{fmtPct(avgPct)} avg mid</span>
       </button>
       {open && (
         <div className="space-y-1.5 px-2 pb-2 pt-1">
@@ -447,10 +476,14 @@ function ClosedTickerGroup({
   defaultOpen: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  const wins = positions.filter((p) => (p.closingPrint?.pctChange ?? 0) > 0).length;
-  const losses = positions.length - wins;
-  const avgPct = positions.length
-    ? positions.reduce((a, p) => a + (p.closingPrint?.pctChange ?? 0), 0) / positions.length
+  // Scored at ask in / bid out, net of fees; positions without both quotes
+  // are counted separately, never as a 0% result.
+  const scored = positions.filter((p) => p.score?.netReturn != null);
+  const wins = scored.filter((p) => p.score!.win).length;
+  const losses = scored.length - wins;
+  const unscored = positions.length - scored.length;
+  const avgPct = scored.length
+    ? (scored.reduce((a, p) => a + (p.score!.netReturn as number), 0) / scored.length) * 100
     : 0;
   return (
     <div className="rounded-md border border-border/30 bg-card/20" data-testid={`closed-group-${ticker}`}>
@@ -462,16 +495,21 @@ function ClosedTickerGroup({
       >
         {open ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
         <span className="font-bold text-sm text-foreground">{ticker}</span>
-        <Badge variant="outline" className="text-[9px] border-muted-foreground/30 text-muted-foreground">
+        <Badge variant="outline" className="text-[11px] border-muted-foreground/30 text-muted-foreground">
           {positions.length} closed
         </Badge>
         {wins > 0 && (
-          <span className="text-[10px] text-emerald-400/80">{wins}W</span>
+          <span className="text-[11px] text-emerald-400/80">{wins}W</span>
         )}
         {losses > 0 && (
-          <span className="text-[10px] text-rose-400/80">{losses}L</span>
+          <span className="text-[11px] text-rose-400/80">{losses}L</span>
         )}
-        <span className={`ml-auto font-mono text-xs ${pctColor(avgPct)}`}>{fmtPct(avgPct)} avg</span>
+        {unscored > 0 && (
+          <span className="text-[11px] text-muted-foreground" title="no logged entry ask or exit bid">{unscored} unscored</span>
+        )}
+        <span className={`ml-auto font-mono text-xs ${scored.length ? pctColor(avgPct) : "text-muted-foreground"}`}>
+          {scored.length ? `${fmtPct(avgPct)} avg net` : "no scored exits"}
+        </span>
       </button>
       {open && (
         <div className="space-y-1.5 px-2 pb-2 pt-1">
@@ -530,14 +568,20 @@ function ClosedRow({ pos }: { pos: FollowPosition }) {
           {pos.strike}{pos.type === "C" ? "C" : "P"} {pos.expiration.slice(5)}
         </span>
         <span className={`font-semibold ${sentimentColor(pos.side)}`} data-testid={`closed-side-${pos.occ}`}>{pos.side}</span>
-        <Badge variant="outline" className="text-[9px] border-muted-foreground/30 text-muted-foreground" data-testid={`closed-status-${pos.occ}`}>
+        <Badge variant="outline" className="text-[11px] border-muted-foreground/30 text-muted-foreground" data-testid={`closed-status-${pos.occ}`}>
           {pos.status}
         </Badge>
       </div>
       {cp && (
         <div className="flex flex-wrap items-center gap-3 font-mono text-muted-foreground">
-          <span className={pctColor(cp.pctChange)} data-testid={`closed-pct-${pos.occ}`}>{fmtPct(cp.pctChange)}</span>
-          <span className="text-emerald-400/70" data-testid={`closed-peak-${pos.occ}`}>peak +{cp.peakPctChange.toFixed(1)}%</span>
+          {pos.score?.netReturn != null ? (
+            <span className={pctColor(pos.score.netReturn)} data-testid={`closed-pct-${pos.occ}`} title="bought at the logged ask, sold at the bid, fees $0.65/contract/side">
+              {fmtPct(pos.score.netReturn * 100)} net
+            </span>
+          ) : (
+            <span className="text-muted-foreground" data-testid={`closed-pct-${pos.occ}`}>{pos.score?.reason ?? "not scored"}</span>
+          )}
+          <span className="text-muted-foreground" data-testid={`closed-peak-${pos.occ}`}>peak +{(cp.peakPctChange * 100).toFixed(1)}% mid</span>
           <span className="italic truncate flex-1 min-w-0" data-testid={`closed-reason-${pos.occ}`}>{cp.reason}</span>
         </div>
       )}
@@ -567,7 +611,7 @@ function UoaRow({ cl }: { cl: UoaCluster }) {
         <span className="font-mono text-muted-foreground" data-testid={`uoa-contract-${cl.key}`}>
           {cl.strike}{cl.type} {cl.expiration.slice(5)} • {cl.dte}DTE
         </span>
-        <Badge variant="outline" className={`text-[9px] ${bucketBadge(cl.bucket)}`} data-testid={`uoa-bucket-${cl.key}`}>
+        <Badge variant="outline" className={`text-[11px] ${bucketBadge(cl.bucket)}`} data-testid={`uoa-bucket-${cl.key}`}>
           {cl.bucket}
         </Badge>
         <span className={`font-semibold ${sentimentColor(cl.sentiment)}`} data-testid={`uoa-sentiment-${cl.key}`}>
@@ -577,7 +621,7 @@ function UoaRow({ cl }: { cl: UoaCluster }) {
           {cl.hitCount} hits
         </span>
         {cl.fired && (
-          <Badge variant="outline" className="border-emerald-500/50 bg-emerald-500/10 text-emerald-400 text-[9px]" data-testid={`uoa-fired-${cl.key}`}>
+          <Badge variant="outline" className="border-emerald-500/50 bg-emerald-500/10 text-emerald-400 text-[11px]" data-testid={`uoa-fired-${cl.key}`}>
             FIRED
           </Badge>
         )}
@@ -587,15 +631,15 @@ function UoaRow({ cl }: { cl: UoaCluster }) {
       </button>
       {open && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5 border-t border-border/30 px-3 py-2 font-mono text-[11px] text-muted-foreground" data-testid={`uoa-detail-${cl.key}`}>
-          <div><span className="text-muted-foreground/70">total vol</span> <span className="text-foreground">{cl.totalVolume.toLocaleString()}</span></div>
-          <div><span className="text-muted-foreground/70">avg vol/OI</span> <span className="text-foreground">{cl.avgVolOiRatio.toFixed(1)}x</span></div>
-          <div><span className="text-muted-foreground/70">avg Δ</span> <span className="text-foreground">{cl.avgDelta.toFixed(2)}</span></div>
-          <div><span className="text-muted-foreground/70">avg IV</span> <span className="text-foreground">{cl.avgIv.toFixed(1)}%</span></div>
-          <div><span className="text-muted-foreground/70">bid/ask</span> <span className="text-foreground">{cl.bid.toFixed(2)}/{cl.ask.toFixed(2)}</span></div>
-          <div><span className="text-muted-foreground/70">spread</span> <span className="text-foreground">{cl.spreadPct.toFixed(1)}%</span></div>
-          <div><span className="text-muted-foreground/70">spot</span> <span className="text-foreground">{cl.spot ? cl.spot.toFixed(2) : "—"}</span></div>
-          <div><span className="text-muted-foreground/70">strike vs spot</span> <span className={cl.distFromSpotPct !== undefined ? pctColor(cl.distFromSpotPct) : ""}>{cl.distFromSpotPct !== undefined ? fmtPct(cl.distFromSpotPct) : "—"}</span></div>
-          <div><span className="text-muted-foreground/70">breakeven</span> <span className="text-foreground">{cl.breakeven.toFixed(2)}{cl.breakevenPct !== undefined ? ` (${fmtPct(cl.breakevenPct)})` : ""}</span></div>
+          <div><span className="text-muted-foreground">total vol</span> <span className="text-foreground">{cl.totalVolume.toLocaleString()}</span></div>
+          <div><span className="text-muted-foreground">avg vol/OI</span> <span className="text-foreground">{cl.avgVolOiRatio.toFixed(1)}x</span></div>
+          <div><span className="text-muted-foreground">avg Δ</span> <span className="text-foreground">{cl.avgDelta.toFixed(2)}</span></div>
+          <div><span className="text-muted-foreground">avg IV</span> <span className="text-foreground">{cl.avgIv.toFixed(1)}%</span></div>
+          <div><span className="text-muted-foreground">bid/ask</span> <span className="text-foreground">{cl.bid.toFixed(2)}/{cl.ask.toFixed(2)}</span></div>
+          <div><span className="text-muted-foreground">spread</span> <span className="text-foreground">{cl.spreadPct.toFixed(1)}%</span></div>
+          <div><span className="text-muted-foreground">spot</span> <span className="text-foreground">{cl.spot ? cl.spot.toFixed(2) : "—"}</span></div>
+          <div><span className="text-muted-foreground">strike vs spot</span> <span className={cl.distFromSpotPct !== undefined ? pctColor(cl.distFromSpotPct) : ""}>{cl.distFromSpotPct !== undefined ? fmtPct(cl.distFromSpotPct) : "—"}</span></div>
+          <div><span className="text-muted-foreground">breakeven</span> <span className="text-foreground">{cl.breakeven.toFixed(2)}{cl.breakevenPct !== undefined ? ` (${fmtPct(cl.breakevenPct)})` : ""}</span></div>
           <div className="col-span-2 sm:col-span-3 italic text-muted-foreground/80" data-testid={`uoa-reason-${cl.key}`}>{cl.reason}</div>
         </div>
       )}
@@ -617,11 +661,11 @@ function UoaTickerGroup({ ticker, clusters }: { ticker: string; clusters: UoaClu
       >
         {open ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
         <span className="font-bold text-base text-foreground" data-testid={`uoa-ticker-name-${ticker}`}>{ticker}</span>
-        <Badge variant="outline" className="text-[9px] border-fuchsia-500/40 bg-fuchsia-500/10 text-fuchsia-300">
+        <Badge variant="outline" className="text-[11px] border-fuchsia-500/40 bg-fuchsia-500/10 text-fuchsia-300">
           {clusters.length} {clusters.length === 1 ? "cluster" : "clusters"}
         </Badge>
         {fired > 0 && (
-          <Badge variant="outline" className="text-[9px] border-emerald-500/50 bg-emerald-500/10 text-emerald-400">
+          <Badge variant="outline" className="text-[11px] border-emerald-500/50 bg-emerald-500/10 text-emerald-400">
             {fired} FIRED
           </Badge>
         )}
@@ -644,12 +688,18 @@ interface PerformanceRow {
   wins: number;
   losses: number;
   burns: number;
-  winRate: number;
-  avgPct: number;
+  winRate: number | null;     // null when nothing was scored
+  avgPct: number | null;
   totalPnLPct: number;
-  avgPeakPct: number;
-  bestPct: number;
-  worstPct: number;
+  avgPeakPct: number | null;
+  bestPct: number | null;
+  worstPct: number | null;
+  /** "ask_in_bid_out_net_fees" (whale) or "mid_to_mid" (tracked signals). */
+  priceBasis?: string;
+  excludedNoQuote?: number;
+  /** Index-root positions not scored: no configured all-in index fee. */
+  excludedNoFee?: number;
+  burnsEvaluated?: number;
 }
 interface PerformanceSnapshot {
   asOf: number;
@@ -657,6 +707,9 @@ interface PerformanceSnapshot {
   totalTerminal: number;
   bySource: PerformanceRow[];
   overall: PerformanceRow;
+  overallBasis?: string;
+  priceBasisNote?: string;
+  midToMidNote?: string;
 }
 
 function sourceLabel(s: string): string {
@@ -689,7 +742,7 @@ function PerformanceCard() {
 
   const snap = perfQuery.data;
   const rows = snap?.bySource ?? [];
-  const showRows = rows.filter((r) => r.count > 0);
+  const showRows = rows.filter((r) => r.count > 0 || (r.excludedNoQuote ?? 0) > 0 || (r.excludedNoFee ?? 0) > 0);
 
   return (
     <section data-testid="section-performance">
@@ -700,7 +753,7 @@ function PerformanceCard() {
             Performance
           </span>
           {snap && (
-            <span className="text-[10px] text-muted-foreground font-mono">
+            <span className="text-[11px] text-muted-foreground font-mono">
               {snap.totalTerminal} closed · last {snap.windowDays}d
             </span>
           )}
@@ -710,7 +763,7 @@ function PerformanceCard() {
             <button
               key={d}
               onClick={() => setWindowDays(d as 7 | 30)}
-              className={`inline-flex min-h-[44px] items-center px-2.5 py-0.5 text-[10px] rounded border transition-colors sm:min-h-0 ${
+              className={`inline-flex min-h-[44px] items-center px-2.5 py-0.5 text-[11px] rounded border transition-colors sm:min-h-0 ${
                 windowDays === d
                   ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300"
                   : "border-border/40 text-muted-foreground hover:text-foreground"
@@ -733,12 +786,12 @@ function PerformanceCard() {
         </div>
       ) : (
         <div className="rounded-md border border-border/40 overflow-hidden" data-testid="performance-table">
-          <div className="grid grid-cols-[1.4fr_0.5fr_0.9fr_0.7fr_0.8fr_0.5fr] gap-2 px-3 py-1.5 bg-muted/20 text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
+          <div className="grid grid-cols-[1.4fr_0.5fr_0.9fr_0.7fr_0.8fr_0.5fr] gap-2 px-3 py-1.5 bg-muted/20 text-[11px] uppercase tracking-wider text-muted-foreground font-mono">
             <div>source</div>
             <div className="text-right">n</div>
             <div className="text-right">W / L</div>
             <div className="text-right">win%</div>
-            <div className="text-right">avg %</div>
+            <div className="text-right">avg net %</div>
             <div className="text-right" title="peak ≥+50% but closed flat/red">burn</div>
           </div>
           {showRows.map((r) => (
@@ -747,25 +800,30 @@ function PerformanceCard() {
               className="grid grid-cols-[1.4fr_0.5fr_0.9fr_0.7fr_0.8fr_0.5fr] gap-2 px-3 py-1.5 text-xs border-t border-border/30 items-center"
               data-testid={`row-perf-${r.source}`}
             >
-              <div className="font-medium">{sourceLabel(r.source)}</div>
+              <div className="font-medium">
+                {sourceLabel(r.source)}
+                {r.priceBasis === "mid_to_mid" && <span className="ml-1 text-[11px] text-amber-400/80" title={snap?.midToMidNote}>mid to mid, no fees</span>}
+                {!!r.excludedNoQuote && <span className="ml-1 text-[11px] text-muted-foreground" title="no logged entry ask or exit bid">+{r.excludedNoQuote} unscored</span>}
+                {!!r.excludedNoFee && <span className="ml-1 text-[11px] text-muted-foreground" title="index option: set INDEX_OPTION_FEE_PER_CONTRACT to score these">+{r.excludedNoFee} no index fee</span>}
+              </div>
               <div className="text-right font-mono text-muted-foreground">{r.count}</div>
               <div className="text-right font-mono">
                 <span className="text-emerald-400">{r.wins}</span>
-                <span className="text-muted-foreground/60"> / </span>
+                <span className="text-muted-foreground"> / </span>
                 <span className="text-red-400">{r.losses}</span>
               </div>
-              <div className={`text-right font-mono font-semibold ${winRateColor(r.winRate, r.count)}`}>
-                {(r.winRate * 100).toFixed(0)}%
+              <div className={`text-right font-mono font-semibold ${winRateColor(r.winRate ?? 0, r.count)}`}>
+                {r.winRate != null ? `${(r.winRate * 100).toFixed(0)}%` : "—"}
               </div>
-              <div className={`text-right font-mono ${pctColor(r.avgPct * 100)}`}>
-                {fmtPct(r.avgPct * 100)}
+              <div className={`text-right font-mono ${r.avgPct != null ? pctColor(r.avgPct * 100) : "text-muted-foreground"}`}>
+                {r.avgPct != null ? fmtPct(r.avgPct * 100) : "—"}
               </div>
               <div className="text-right font-mono">
                 {r.burns > 0 ? <span className="text-amber-400">{r.burns}</span> : <span className="text-muted-foreground">0</span>}
               </div>
             </div>
           ))}
-          {snap && snap.overall.count > 0 && showRows.length > 1 && (
+          {snap && snap.overall.count > 0 && showRows.length > 1 && snap.overallBasis == null && (
             <div
               className="grid grid-cols-[1.4fr_0.5fr_0.9fr_0.7fr_0.8fr_0.5fr] gap-2 px-3 py-1.5 text-xs border-t-2 border-border/60 bg-muted/10 items-center"
               data-testid="row-perf-overall"
@@ -774,20 +832,25 @@ function PerformanceCard() {
               <div className="text-right font-mono text-muted-foreground">{snap.overall.count}</div>
               <div className="text-right font-mono">
                 <span className="text-emerald-400">{snap.overall.wins}</span>
-                <span className="text-muted-foreground/60"> / </span>
+                <span className="text-muted-foreground"> / </span>
                 <span className="text-red-400">{snap.overall.losses}</span>
               </div>
-              <div className={`text-right font-mono font-semibold ${winRateColor(snap.overall.winRate, snap.overall.count)}`}>
-                {(snap.overall.winRate * 100).toFixed(0)}%
+              <div className={`text-right font-mono font-semibold ${winRateColor(snap.overall.winRate ?? 0, snap.overall.count)}`}>
+                {snap.overall.winRate != null ? `${(snap.overall.winRate * 100).toFixed(0)}%` : "—"}
               </div>
-              <div className={`text-right font-mono ${pctColor(snap.overall.avgPct * 100)}`}>
-                {fmtPct(snap.overall.avgPct * 100)}
+              <div className={`text-right font-mono ${pctColor((snap.overall.avgPct ?? 0) * 100)}`}>
+                {snap.overall.avgPct != null ? fmtPct(snap.overall.avgPct * 100) : "—"}
               </div>
               <div className="text-right font-mono">
                 {snap.overall.burns > 0 ? <span className="text-amber-400">{snap.overall.burns}</span> : <span className="text-muted-foreground">0</span>}
               </div>
             </div>
           )}
+        </div>
+      )}
+      {snap?.priceBasisNote && (
+        <div className="mt-1.5 text-[11px] text-muted-foreground" data-testid="performance-basis">
+          Whale rows: {snap.priceBasisNote}.{snap.midToMidNote ? ` ${snap.midToMidNote}.` : ""}
         </div>
       )}
     </section>
@@ -811,7 +874,7 @@ function ClosedArchive({ positions }: { positions: FollowPosition[] }) {
         <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
           Closed Archive
         </span>
-        <span className="text-[10px] text-muted-foreground font-mono">
+        <span className="text-[11px] text-muted-foreground font-mono">
           {positions.length}
         </span>
         <span className="ml-auto text-muted-foreground">
@@ -920,6 +983,21 @@ export default function WhaleFlowPanel() {
             WHALE FLOW
             <EdgeInfo id="whale-flow" />
           </CardTitle>
+          {/* State from the server's scan coverage (/api/flow/preview dataState:
+              ok / partial / unavailable), never from HTTP success alone. A server
+              that sends no state renders "unknown state"; a failed query is
+              "request failed", never an empty list. */}
+          <DataStateChip
+            state={previewQuery.isError || uoaQuery.isError || activeQuery.isError ? "failed"
+              : previewQuery.isLoading ? "loading" : (previewQuery.data?.dataState ?? "unknown")}
+            reason={previewQuery.isError ? "whale preview request failed"
+              : uoaQuery.isError ? "UOA request failed" : activeQuery.isError ? "follow-up request failed"
+              : previewQuery.data?.dataState ? (previewQuery.data.dataStateReason ?? null)
+              : "the flow endpoint sent no data state"}
+            asOf={previewQuery.data?.asOfMs ?? null}
+            source="flow scanner (Schwab chains)"
+            testId="whale-flow-state-chip"
+          />
           <span className="text-muted-foreground text-xs" data-testid="whale-flow-tracking-count">
             {trackingPositions.length} tracking
           </span>
@@ -927,7 +1005,7 @@ export default function WhaleFlowPanel() {
             {closedPositions.length} closed today
           </span>
           {cfg && (
-            <span className="text-muted-foreground text-[10px] font-mono ml-auto" data-testid="whale-flow-gate">
+            <span className="text-muted-foreground text-[11px] font-mono ml-auto" data-testid="whale-flow-gate">
               gate: ${(cfg.premiumFloor / 1_000_000).toFixed(1)}M • {cfg.volOiRatio}x • {cfg.minDte}-{cfg.maxDte}DTE • {cfg.requiredTag}
             </span>
           )}

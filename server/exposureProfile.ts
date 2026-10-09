@@ -9,16 +9,22 @@
 //   DEX   = Δ     × OI × 100 × S              ($ directional exposure)
 //   GEX   = Γ     × OI × 100 × S² × 0.01      ($ per 1% spot move)
 //   VEX   = Vanna × OI × 100 × S  × 0.01      ($ of dΔ per 1% vol)
-//   Charm = Charm × OI × 100 × S  / 365       ($ of dΔ per calendar day)
+//   Charm = [Δ(T−h) − Δ(T)] × OI × 100 × S    ($ of dΔ per calendar day)
+//     h = min(1 calendar day, T), spot and IV held. For tenors well over a day
+//     this equals charm/365 × OI × 100 × S to first order; inside a day it is
+//     the delta left to lose before settlement (charm/365 extrapolated the
+//     instantaneous rate past expiry, overstating 0DTE rows; same change as
+//     chainAudit.ts and greekExposure.ts).
 //
-// Sign convention: dealers are assumed SHORT customer-owned options, so
-//   call OI contributes +Greek (dealer short call = positive gamma for dealer
-//     when customer is long? No — dealer is SHORT gamma on call OI, hedges by
-//     buying more as price rises).
-// We follow Perfiliev / SpotGamma / MenthorQ: calls contribute +, puts −.
-// That's what makes "positive GEX = vol-suppressing" work as an intuition.
+// Sign convention (the naive dealer model of SqueezeMetrics / Perfiliev /
+// SpotGamma): customers BUY puts and SELL calls, so dealers are LONG call
+// gamma and SHORT put gamma. Calls contribute +, puts -. That is what makes
+// "positive GEX = vol-suppressing" work. The model ignores customers who sell
+// puts or buy calls; trade-classified open/close data would be needed for that.
 
-import { computeGreeks, type GreekSet } from "./greeks";
+import { computeGreeks, delta as bsDelta, type GreekSet } from "./greeks";
+import { buildGammaProfile } from "./gammaProfile";
+import { dteYears } from "./chainClock";
 
 export type OptionType = "C" | "P";
 
@@ -28,6 +34,8 @@ export interface ExposureRow {
   iv: number;     // decimal (0.15 = 15%)
   oi: number;     // open interest (contracts)
   dte: number;    // calendar days to expiry
+  expiry?: string;        // "YYYY-MM-DD" when known (more precise than dte)
+  style?: "AM" | "PM";    // settlement style when known (SPX root = AM)
 }
 
 export interface ExposurePoint {
@@ -46,7 +54,7 @@ export interface ExposureProfile {
   q: number;
   curve: ExposurePoint[];       // spot levels from lowPct·S → highPct·S
   current: ExposurePoint;       // exposures evaluated at actual current spot
-  zeroGammaSpot: number | null; // spot where GEX flips sign
+  zeroGammaSpot: number | null; // gamma flip: gammaProfile.ts re-priced definition (crossing nearest spot)
   zeroCharmSpot: number | null; // spot where Charm flips sign (primary — nearest to spot)
   zeroCharmSpots: number[];     // ALL charm sign-flips across the curve (Batcave #1 — charm-zero CLUSTER)
   zeroVannaSpot: number | null; // spot where VEX flips sign
@@ -65,12 +73,20 @@ export interface ExposureProfile {
 }
 
 /**
- * Perfiliev's convention: 262 trading days/yr, 1/262 floor for 0DTE.
- * Input dte is CALENDAR days; convert to trading days first.
+ * T for a row on the ONE clock (server/timeToExpiry.ts via chainClock):
+ * calendar minutes to the settlement instant / 525,600, 15-minute floor,
+ * 0 once settled. Replaces the old whole-trading-day rounding (1-day floor),
+ * which held 0DTE gamma at a full day all session.
  */
-function toTradingYears(dteCalendar: number): number {
-  const tradingDays = Math.max(1, Math.round(dteCalendar * (262 / 365)));
-  return tradingDays / 262;
+export function rowYears(row: ExposureRow, nowMs: number = Date.now()): number {
+  return dteYears(row.dte, { expiry: row.expiry ?? null, style: row.style, nowMs });
+}
+
+/** Black-Scholes delta at time-to-expiry T; the terminal delta (1/0, 1/2 at the strike; put = call - 1) when T <= 0. */
+function deltaAfter(S: number, K: number, sigma: number, T: number, r: number, q: number, type: OptionType): number {
+  if (T > 1e-12) return bsDelta(S, K, sigma, T, r, q, type);
+  const call = S > K ? 1 : S < K ? 0 : 0.5;
+  return type === "C" ? call : call - 1;
 }
 
 /**
@@ -90,7 +106,9 @@ function exposuresAt(
     dex += row.sign * g.delta  * oiMult * S;
     gex += row.sign * g.gamma  * oiMult * S * S * 0.01;
     vex += row.sign * g.vanna  * oiMult * S * 0.01;
-    ch  += row.sign * g.charm  * oiMult * S / 365;
+    // $ delta change over h = min(1 day, T): see the header.
+    const h = Math.min(1 / 365, row.T);
+    ch  += row.sign * (deltaAfter(S, row.strike, row.iv, row.T - h, r, q, row.type) - g.delta) * oiMult * S;
   }
   return { dex, gex, vex, charm: ch };
 }
@@ -118,13 +136,15 @@ export function buildExposureProfile(
   const hi = highPct * spot;
   const step = (hi - lo) / (nLevels - 1);
 
+  const nowMs = Date.now();
   const precomputed = rows
     .filter((row) => row.iv > 0 && row.oi > 0 && row.dte >= 0)
     .map((row) => ({
       ...row,
-      T: toTradingYears(row.dte),
+      T: rowYears(row, nowMs),
       sign: row.type === "C" ? 1 : -1,
-    }));
+    }))
+    .filter((row) => row.T > 0); // settled contracts carry no greeks
 
   const curve: ExposurePoint[] = [];
   for (let i = 0; i < nLevels; i++) {
@@ -133,8 +153,15 @@ export function buildExposureProfile(
     curve.push({ spot: S, ...e });
   }
 
-  // Zero-crossings for GEX / Charm / VEX.
-  const zeroGammaSpot = findZeroCrossing(curve.map((p) => ({ x: p.spot, y: p.gex })));
+  // Gamma flip: ONE definition app-wide -- buildGammaProfile (re-priced,
+  // bisection-refined, crossing nearest spot), fed this module's own T per row
+  // so the flip and this curve share a clock.
+  const zeroGammaSpot = buildGammaProfile(
+    precomputed.map((row) => ({ type: row.type, strike: row.strike, iv: row.iv, oi: row.oi, dte: row.dte, T: row.T })),
+    spot,
+    { r, q, nLevels, lowPct, highPct },
+  ).zeroGammaSpot;
+  // Zero-crossings for Charm / VEX.
   const charmPts = curve.map((p) => ({ x: p.spot, y: p.charm }));
   // Primary charmZero must be the dealer-relevant root — the crossing NEAREST to spot,
   // restricted to ±1.5% band. Far-out crossings at the wings (±10%) are numerical artifacts,
@@ -165,7 +192,7 @@ export function buildExposureProfile(
   // True net-C aggregate per locked formula: Σ charm_strike × OI_strike × 100.
   // No spot factor, no /365 — this matches Perfiliev Table VIII / paper Table IX inputs
   // against which the β_C regression and NETC_SD_M = $80M stdev are calibrated.
-  // Dealer sign convention: calls +1, puts −1 (dealers short customer OI).
+  // Dealer sign convention: calls +1, puts -1 (naive model: dealers long call OI, short put OI).
   let netCTrue = 0;
   for (const row of precomputed) {
     const g: GreekSet = computeGreeks(spot, row.strike, row.iv, row.T, r, q, row.type);

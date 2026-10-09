@@ -51,8 +51,10 @@ export interface GammaCurveResult {
   walls: GammaWall[];          // top 6 by |netGex|
   vacuums: VacuumZone[];       // top 3 lowest-density gaps near spot
   asymmetry: AsymmetrySummary;
-  zeroGamma: number | null;    // cumulative-flip strike from existing helper
-  source: "schwab" | "cboe";
+  zeroGamma: number | null;    // re-priced gamma flip (gammaProfile.ts), app-wide definition
+  zeroGammaCumulative?: number | null; // secondary: cumulative-by-strike sign change (legacy)
+  zeroGammaMethod?: "repriced-profile";
+  source: "schwab";
 }
 
 export async function buildGammaCurve(symbol: string): Promise<GammaCurveResult | { error: string }> {
@@ -61,6 +63,11 @@ export async function buildGammaCurve(symbol: string): Promise<GammaCurveResult 
     return { error: "chain unavailable" };
   }
   const gex = computeGEXFromChain(chain as any);
+  // No underlying last price: GEX is unavailable (computeGEXFromChain no
+  // longer substitutes spot = 1), not a curve of near-zero values.
+  if (gex.dataState === "no_spot") {
+    return { error: "spot unavailable" };
+  }
   const spot = (chain as any).underlying?.last ?? (chain as any).underlyingPrice ?? null;
   if (!gex.profile?.length || !Number.isFinite(spot)) {
     return { error: "insufficient chain data" };
@@ -167,7 +174,13 @@ export async function buildGammaCurve(symbol: string): Promise<GammaCurveResult 
       bias,
       biasNote,
     },
+    // One flip definition everywhere: computeGEXFromChain returns the
+    // re-priced flip (every contract <=45 DTE re-priced across +/-10% of spot,
+    // crossing nearest spot -- gammaProfile.ts); the cumulative-by-strike
+    // number is the labeled secondary.
     zeroGamma: gex.zeroGamma ?? null,
+    zeroGammaCumulative: gex.zeroGammaCumulative ?? null,
+    zeroGammaMethod: "repriced-profile",
     source: "schwab",
   };
 }

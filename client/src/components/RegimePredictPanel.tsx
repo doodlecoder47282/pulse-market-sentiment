@@ -16,11 +16,14 @@ type RegimeBucket =
   | "TREND_WEAK"
   | "NEUTRAL"
   | "CHOP_WEAK"
-  | "CHOP_STRONG";
+  | "CHOP_STRONG"
+  | "GAMMA_UNKNOWN";
 
 interface RegimeCandidate {
   regime: RegimeBucket;
   probability: number;
+  /** Heuristic score out of 100 (hand-set softmax weight), not a calibrated probability. */
+  score?: number;
   isCurrent: boolean;
 }
 
@@ -30,6 +33,7 @@ interface RegimePredictPayload {
   candidates: RegimeCandidate[];
   horizonMinutes: number;
   confidence: number;
+  confidenceScore?: number;
   status: "ready" | "warming" | "degraded";
   headline: string;
   driverNotes: string[];
@@ -86,6 +90,13 @@ const REGIME_META: Record<
     icon: Minus,
     play: "Range-bound — fade extremes, target midpoints.",
   },
+  GAMMA_UNKNOWN: {
+    plain: "Gamma unknown",
+    tone: "text-muted-foreground",
+    bar: "bg-muted/40",
+    icon: Minus,
+    play: "No regime reading: GEX missing or immaterial at spot, so no trend/chop bucket applies.",
+  },
   CHOP_STRONG: {
     plain: "Heavy Chop",
     tone: "text-amber-300",
@@ -97,7 +108,7 @@ const REGIME_META: Record<
 
 function CandidateRow({ c, max, rank }: { c: RegimeCandidate; max: number; rank: number }) {
   const meta = REGIME_META[c.regime];
-  const pct = Math.round(c.probability * 100);
+  const pct = Math.round(c.score ?? c.probability * 100);
   const w = max > 0 ? (c.probability / max) * 100 : 0;
   const Icon = meta.icon;
   return (
@@ -109,7 +120,7 @@ function CandidateRow({ c, max, rank }: { c: RegimeCandidate; max: number; rank:
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
           <span className={`text-sm font-semibold ${meta.tone}`}>{meta.plain}</span>
-          <span className="font-mono text-sm font-semibold tabular-nums text-foreground">{pct}%</span>
+          <span className="font-mono text-sm font-semibold tabular-nums text-foreground" title="Heuristic score out of 100 (hand-set weights), not a calibrated probability">{pct}<span className="text-[11px] font-normal text-muted-foreground">/100</span></span>
         </div>
         <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted/30">
           <div
@@ -118,7 +129,7 @@ function CandidateRow({ c, max, rank }: { c: RegimeCandidate; max: number; rank:
           />
         </div>
         {c.isCurrent && (
-          <div className="mt-1 text-[10px] uppercase tracking-wider text-cyan-300">now</div>
+          <div className="mt-1 text-[11px] uppercase tracking-wider text-cyan-300">now</div>
         )}
       </div>
     </div>
@@ -157,10 +168,25 @@ export default function RegimePredictPanel() {
     return null;
   }
 
+  // Gamma unknown (or no candidates at all): its own state, never "Neutral".
+  if (data.currentRegime === "GAMMA_UNKNOWN" || data.candidates.length === 0) {
+    return (
+      <Card className="border-border/60 bg-muted/10" data-testid="card-regime-predict-gamma-unknown">
+        <CardContent className="p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Minus className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-semibold text-foreground">What&apos;s Next — {REGIME_META.GAMMA_UNKNOWN.plain}</span>
+          </div>
+          <p className="text-sm text-muted-foreground leading-relaxed">{data.headline}</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
   const max = Math.max(...data.candidates.map((c) => c.probability));
   const top3 = data.candidates.slice(0, 3);
   const topMeta = REGIME_META[data.candidates[0].regime];
-  const conf = Math.round(data.confidence * 100);
+  const conf = Math.round(data.confidenceScore ?? data.confidence * 100);
   const isTransition = data.candidates[0].regime !== data.currentRegime;
 
   // Warming / degraded states get a calm message instead of fake numbers
@@ -210,7 +236,7 @@ export default function RegimePredictPanel() {
             data-testid="badge-regime-confidence"
           >
             <span className="w-1.5 h-1.5 rounded-full bg-current" />
-            {conf}% confidence
+            heuristic score {conf}/100
           </span>
         </div>
 
@@ -321,7 +347,7 @@ export default function RegimePredictPanel() {
 function DriverChip({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-sm border border-border bg-card/40 px-2 py-1.5">
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className="font-mono text-xs tabular-nums text-foreground">{value}</div>
     </div>
   );

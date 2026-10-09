@@ -1,6 +1,6 @@
 // server/masterAlpha.ts
 // ═══════════════════════════════════════════════════════════════════════════
-// MASTER UNIFIED ALPHA FORMULA — calibrated for the terminal
+// MASTER UNIFIED ALPHA FORMULA — hand-set weights (not yet fit to this app's data)
 //
 // Consumes what the terminal already computes (ModelHorizon.audit + PivotBundle)
 // so every number is honest to the rest of the app. No duplicated greek math.
@@ -25,12 +25,48 @@ import { vixToAtmPct } from "@shared/vol";
 import Anthropic from "@anthropic-ai/sdk";
 import type { ModelHorizon, Horizon } from "./models";
 import type { PivotBundle } from "./pivots";
+import { horizonTargetIso } from "./impliedScenario";
+import { yearsToExpiry } from "./timeToExpiry";
+import { etDate, nextTradingDay } from "./exchangeCalendar";
+import { gammaBudgetContracts } from "./sizingMath";
+import { atmContractFrom, contractsFromAsk, masterAlphaPromotionGate, promotedForecastBps, resolveMasterAlphaRiskBudget, type MasterAlphaPromotion } from "./masterAlphaFit";
+import { feeForProduct } from "./feeConfig";
+import { readFileSync } from "node:fs";
 
 const client = new Anthropic();
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TUNABLE CONSTANTS — calibrated, not hand-picked, but adjustable in one place
+// TUNABLE CONSTANTS — HAND-SET, adjustable in one place.
+// β_charm and the net-C σ are borrowed from the Baltussen-Terstegge-Whelan
+// sample (R² = 3.2%), whose net-C differs from this app's in OI coverage,
+// sign assumptions and time units; the component weights are hand-picked.
+// None of these are calibrated on this app's history. masterAlphaFit.ts
+// re-estimates them from the logged snapshots (mmPredictions) once enough
+// independent sessions exist (MASTER_ALPHA_MIN_SESSIONS); until a reviewed
+// fit is promoted, outputs carry coefficientStatus = "hand-set".
 // ═══════════════════════════════════════════════════════════════════════════
+
+export const MASTER_ALPHA_COEFFICIENT_STATUS = "hand-set" as const;
+const COEFFICIENT_NOTE =
+  "hand-set weights: β_charm and net-C σ borrowed from a published sample, component weights hand-picked; not fit to this app's history yet";
+
+// R2-C 9: direction labels (LONG/SHORT, STRONG_*) and any contract count are
+// GATED on a reviewed, promoted fit (masterAlphaFit.masterAlphaPromotionGate:
+// >= 250 sessions, out-of-sample R^2 > 0, reviewer + date). The promotion
+// record is a JSON file a reviewer writes; nothing promotes automatically.
+// Until then compositeSignal is "UNRATED", the hand-set composite is reported
+// as a heuristic score (heuristicBand keeps the old band for logging), and no
+// size is given. A size also needs the user's account input; there is no
+// default dollar budget.
+const PROMOTION_FILE = process.env.MASTER_ALPHA_PROMOTION_FILE || "data/master_alpha_promotion.json";
+let promotionCache: { at: number; rec: MasterAlphaPromotion | null } | null = null;
+function loadPromotion(): MasterAlphaPromotion | null {
+  if (promotionCache && Date.now() - promotionCache.at < 60_000) return promotionCache.rec;
+  let rec: MasterAlphaPromotion | null = null;
+  try { rec = JSON.parse(readFileSync(PROMOTION_FILE, "utf8")) as MasterAlphaPromotion; } catch { rec = null; }
+  promotionCache = { at: Date.now(), rec };
+  return rec;
+}
 
 // Charm — paper Table IX regression (β on standardised net-C)
 const BETA_CHARM       = -0.18;    // paper reported, t=2.99, R²=3.2%
@@ -68,7 +104,7 @@ const CHARM_WINDOW_DAYS: Record<Horizon, number> = {
   quarterly: 45,   // always on during the quarter
 };
 
-// Component weights (should sum to 1)
+// Component weights (should sum to 1) — hand-set
 const W_CHARM = 0.45, W_VANNA = 0.20, W_GEX = 0.15, W_GTBR = 0.10, W_OD = 0.10;
 
 // Signal thresholds (bps) — ordered so STRONG bands are checked before plain
@@ -102,7 +138,20 @@ export interface MasterAlphaInput {
   pivots?:           PivotBundle;         // prior-day classic/fib/camarilla
   prevCloseImbalance_M?: number;          // $M — negative = net selling at close [BLW]
   realisedVol?:      number;              // 20-day realised vol as decimal
-  riskBudget_M?:     number;              // $M per trade, default $1M
+  // Sizing inputs (user's own; no default budget). Used only with a promoted fit.
+  accountSize?:      number;              // $ account size
+  riskPct?:          number;              // fraction of account at risk (default 1%, cap 5%)
+  riskBudgetDollars?: number;             // explicit $ premium-at-risk budget
+  riskBudget_M?:     number;              // legacy explicit $M budget (no default)
+  /** Test/override hook; defaults to the reviewer's promotion file. */
+  promotion?:        MasterAlphaPromotion | null;
+  /**
+   * false = no LLM narrative (aiAnalysis is a fixed note). The prediction
+   * logger (mmPredictions.snapshotHorizon) discards the narrative, so it
+   * passes false: no paid model call per logged snapshot (R3-2 item 10).
+   * Default true (the interactive /api/master-alpha route).
+   */
+  narrative?:        boolean;
 }
 
 export interface AlphaComponent {
@@ -118,6 +167,8 @@ export interface AlphaComponent {
 
 export type GexRegime = "POSITIVE_GAMMA" | "NEGATIVE_GAMMA" | "NEUTRAL";
 export type CompositeSignal = "STRONG_LONG" | "LONG" | "NEUTRAL" | "SHORT" | "STRONG_SHORT";
+/** UNRATED: no promoted fit, so no direction-strength label is given. */
+export type GatedSignal = CompositeSignal | "UNRATED";
 
 export interface MasterAlphaOutput {
   // meta
@@ -136,9 +187,14 @@ export interface MasterAlphaOutput {
   components:          AlphaComponent[];
 
   // composite
-  compositeEdgeBps:    number;
-  compositeSignal:     CompositeSignal;
+  compositeEdgeBps:    number;             // fitted forecast when promoted, else the heuristic score (bps units)
+  compositeSignal:     GatedSignal;        // "UNRATED" until a reviewed fit is promoted
   compositeConfidence: number;
+  /** Band of the hand-set heuristic score (kept for logging/backtests; not a rating). */
+  heuristicBand:       CompositeSignal;
+  heuristicScoreBps:   number;
+  directionStatus:     "unrated_heuristic" | "fitted_promoted";
+  directionNote:       string;
 
   // regime snapshot (mirrored from audit)
   gexRegime:           GexRegime;
@@ -161,13 +217,21 @@ export interface MasterAlphaOutput {
     note: string;
   };
 
-  // sizing
-  recommendedContracts: number;
+  // sizing — null unless a promoted fit AND the user's account/budget input
+  recommendedContracts: number | null;     // whole contracts; premium at risk <= the user's budget
+  premiumPerContract:   number | null;     // $ per chosen contract: Schwab ask x 100 + opening fee; null when not sized
+  premiumAtRisk_M:      number | null;     // $M: recommendedContracts x premiumPerContract
   dollarGammaAggregate: number;            // $M (from audit)
-  gammaPnlAt_r_hat:     number;            // $M expected at compositeEdgeBps
+  gammaPnlAt_r_hat:     number | null;     // $M at the fitted forecast (null when unrated)
+  sizingNote:          string;
 
   // AI narrative
   aiAnalysis:          string;
+
+  // Honesty label for the coefficients (added): "hand-set" until a fit on
+  // the app's own logged history is reviewed and promoted.
+  coefficientStatus:   "hand-set" | "fitted";
+  coefficientNote:     string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -231,7 +295,7 @@ function getCalendarContext(d: Date) {
 // ═══════════════════════════════════════════════════════════════════════════
 // ───────────────────────────────────────────────────────────────────────────
 //
-//  MASTER FORMULA — calibrated, decoupled
+//  MASTER FORMULA — hand-set weights, decoupled
 //
 //  COMPOSITE EXPECTED HORIZON RETURN:
 //
@@ -473,6 +537,15 @@ function aggregate(
   };
 }
 
+/** Band of a bps forecast (used for the fitted forecast once promoted). */
+function bandOf(bps: number): CompositeSignal {
+  if (bps >= THRESH_STRONG) return "STRONG_LONG";
+  if (bps >= THRESH_NORMAL) return "LONG";
+  if (bps <= -THRESH_STRONG) return "STRONG_SHORT";
+  if (bps <= -THRESH_NORMAL) return "SHORT";
+  return "NEUTRAL";
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // POSITION SIZING [REF §5.3.8 Dollar Gamma]
 // ═══════════════════════════════════════════════════════════════════════════
@@ -483,26 +556,38 @@ function aggregate(
 //
 //  We use ATM-equivalent $Γ per contract ≈ (S² × 0.01 × gammaDensity)
 //  where gammaDensity ≈ 1/(S·σ·√T) × npdf(0) for ATM
+function horizonOptionYears(horizon: Horizon, nowMs: number = Date.now()): number {
+  const target = horizonTargetIso(horizon, new Date(nowMs));
+  let T = yearsToExpiry(target, nowMs);
+  if (!(T > 0)) T = yearsToExpiry(nextTradingDay(etDate(nowMs)), nowMs);
+  return T;
+}
+
 function sizePosition(
   spot: number, vix: number | null, dollarGamma_M: number,
   rHat_bps: number, riskBudget_M: number, horizon: Horizon
-): { contracts: number; pnl_M: number; dg_per_contract: number } {
+): { contracts: number; pnl_M: number; dg_per_contract: number; premium_per_contract: number; premiumAtRisk_M: number; binding: string } {
   const R = rHat_bps / 10000;
   const pnl_M = 50 * Math.abs(dollarGamma_M) * R * R;
   // ATM-equivalent per-contract $Γ
   const sigma = Math.max(0.08, vixToAtmPct(vix ?? 20) / 100);
-  const dtDays = horizon === "daily" ? 1 : horizon === "weekly" ? 5 : horizon === "monthly" ? 21 : 63;
-  const T = Math.max(1/365, dtDays / 252);
-  const gammaATM = 1 / (spot * sigma * Math.sqrt(T) * Math.sqrt(2 * Math.PI));
-  const dg_per_contract_M = (gammaATM * spot * spot / 100) * 100 / 1e6;  // $M/contract
-  const dgEff = Math.max(dg_per_contract_M, 0.0001);
-  const contracts = (Math.abs(rHat_bps) >= 1 && riskBudget_M > 0)
-    ? Math.min(500, Math.max(0, Math.round(riskBudget_M / (50 * dgEff * R * R))))
-    : 0;
+  // T of an option expiring at the horizon's target expiry, on the one clock
+  // (timeToExpiry: calendar minutes to the settlement instant / 525,600, the
+  // same basis as VIX). After today's close the daily target rolls to the
+  // next session.
+  const T = horizonOptionYears(horizon);
+  // Whole contracts, rounded DOWN, gamma-P&L target AND premium at risk <=
+  // budget (sizingMath.gammaBudgetContracts): the old count capped only the
+  // gamma P&L, so 500 ATM contracts could cost more than the budget.
+  const s = gammaBudgetContracts({ spot, sigma, T, rHatBps: rHat_bps, riskBudgetDollars: riskBudget_M * 1e6 });
+  const dgEff = Math.max(s.dollarGammaPerContract / 1e6, 0.0001);  // $M/contract
   return {
-    contracts,
+    contracts: s.contracts,
     pnl_M: Math.round(pnl_M * 1000) / 1000,
     dg_per_contract: Math.round(dgEff * 1000) / 1000,
+    premium_per_contract: Math.round(s.premiumPerContract * 100) / 100,                 // $ per contract
+    premiumAtRisk_M: Math.round(s.contracts * s.premiumPerContract / 1e6 * 1000) / 1000, // $M, <= budget
+    binding: s.binding,
   };
 }
 
@@ -545,8 +630,11 @@ function nearestPivot(spot: number, pb?: PivotBundle) {
 }
 
 function lockedTargetAlignment(
-  compositeSignal: CompositeSignal, spot: number, symbol: string
+  compositeSignal: GatedSignal, spot: number, symbol: string
 ): { bias: "confirms_upside" | "confirms_downside" | "mixed" | "n/a"; note: string } {
+  if (compositeSignal === "UNRATED") {
+    return { bias: "n/a", note: "Direction not rated (no promoted fit): no alignment claim." };
+  }
   // Only meaningful for SPX
   if (!symbol.includes("GSPC") && symbol !== "SPX") {
     return { bias: "n/a", note: "Locked targets are SPX-scale only." };
@@ -570,14 +658,16 @@ function lockedTargetAlignment(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AI SYSTEM PROMPT — calibrated wording, no formula hallucination
+// AI SYSTEM PROMPT — fixed wording, no formula hallucination
 // ═══════════════════════════════════════════════════════════════════════════
 
 const MASTER_SYSTEM_PROMPT = `You are the master alpha engine inside BATCAVE. You receive a fully computed data packet for a SINGLE horizon (daily/weekly/monthly/quarterly). Synthesise the packet into a brief. Use only the numbers in the packet — do not compute new ones.
 
-CALIBRATION (what the numbers mean):
+WHAT THE NUMBERS MEAN:
+- The weights and β are HAND-SET (borrowed from a published sample), not fit to this terminal's history; say so once, plainly, and do not call them calibrated.
 - r̂_final is in bps of expected horizon return. Paper baseline: 18.2bps per −$48.1M net-C on 3rd-Thu SOQ.
-- STRONG_LONG ≥ +20bps | LONG ≥ +8bps | NEUTRAL | SHORT ≤ −8bps | STRONG_SHORT ≤ −20bps
+- If directionStatus is "unrated_heuristic" (compositeSignal "UNRATED"): the composite is a hand-set HEURISTIC score. Do NOT state a direction, a strength (strong/weak long/short), a size, or an expected P&L. Report the components and levels only, and say the direction is unrated until a fit on this terminal's history is reviewed and promoted.
+- Only when directionStatus is "fitted_promoted": STRONG_LONG ≥ +20bps | LONG ≥ +8bps | NEUTRAL | SHORT ≤ −8bps | STRONG_SHORT ≤ −20bps of the fitted forecast.
 - GEX regime enters as a MULTIPLIER on composite (0.70× in POS γ, 1.15× in NEG γ), not as its own bps.
 - Charm fires only within its horizon window: daily=1d, weekly=5d, monthly=15d, quarterly=45d. OUTSIDE the window the signal is neutral by design — that is correct, not missing data.
 - Vanna is ONLY ever an amplifier on charm when sign-confluent and IV>HV. If charm is zero, vanna is zero.
@@ -588,7 +678,7 @@ CALIBRATION (what the numbers mean):
 OUTPUT FORMAT (markdown, concise):
 
 ## r̂ ${"{horizon-name-uppercase}"}
-[signal] | [X]bps | Confidence [X]%
+[signal or UNRATED] | [X]bps ([heuristic score] or [fitted forecast])
 
 ## Components
 | Component | bps | Weight | Signal | Conf |
@@ -600,7 +690,7 @@ Zero-γ [X] · Call Wall [X] · Put Wall [X] · Charm-zero [X]
 Nearest pivot: [name] @ [value] ([distBps]bps)
 
 ## Trade Setup
-Direction · GTBR trigger [X]pts · Size [N] contracts · $Γ/ctrct [X]M · Expected P&L at r̂: [X]K
+Only when directionStatus is "fitted_promoted" and recommendedContracts is present: Direction · GTBR trigger [X]pts · Size [N] contracts (premium at risk $[premiumAtRisk_M]M) · $Γ/ctrct [X]M. Otherwise write "direction unrated; no size" and the GTBR trigger only.
 
 ## Locked Framework
 [one line on lockedTargetAlignment]
@@ -618,7 +708,7 @@ Tone: senior desk, lowercase ok, direct. No disclaimers. No emojis.`.trim();
 // ═══════════════════════════════════════════════════════════════════════════
 
 export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlphaOutput> {
-  const { horizon, pivots, prevCloseImbalance_M, realisedVol, riskBudget_M } = input;
+  const { horizon, pivots, prevCloseImbalance_M, realisedVol } = input;
   const audit = horizon.audit;
   const spot = audit.spot;
   const symbol = horizon.symbol;
@@ -626,11 +716,10 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
 
   const now = new Date();
   const { daysAway, isTripleWitching, is3rdThursday, isThirdFriday, isWeeklyOpex } = getCalendarContext(now);
-  const riskBudget = riskBudget_M ?? 1.0;
 
   // --- Pull dealer net-greeks directly from the audit block (source of truth) ---
   // netCTrue is Σ charm_strike × OI_strike × 100 per Perfiliev Table VIII — the
-  // standardised net-C against which NETC_SD_M = $80M is calibrated. Falls back
+  // standardised net-C against which the paper measured NETC_SD_M = $80M. Falls back
   // to legacy charmPerDay * 1000 for older audit blocks that predate netCTrue.
   // Scale to $M (netCTrue is in raw $, divide by 1e6).
   const netCharm_M = audit.netCTrue != null
@@ -662,13 +751,59 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
 
   const components = [charmC, vannaC, gexR.component, gtbrR.component, odC];
 
-  // --- Composite ---
+  // --- Composite (hand-set heuristic) ---
   const comp = aggregate(components, gexR.compositeMultiplier, isTripleWitching, daysAway);
 
-  // --- Sizing ---
-  const size = sizePosition(spot, vix, dollarGamma_M, comp.bps, riskBudget, h);
-  const R = comp.bps / 10000;
-  const gammaPnlAt_r_hat = 50 * dollarGamma_M * R * R;
+  // --- Gate: direction label and size only from a reviewed, promoted fit ---
+  const gate = masterAlphaPromotionGate(input.promotion !== undefined ? input.promotion : loadPromotion(), h);
+  const fittedBps = gate.promoted ? promotedForecastBps(gate.model, components) : null;
+  const promoted = gate.promoted && fittedBps != null;
+  const edgeBps = promoted ? Math.round((fittedBps as number) * 10) / 10 : comp.bps;
+  const gatedSignal: GatedSignal = promoted ? bandOf(edgeBps) : "UNRATED";
+  const directionNote = promoted
+    ? gate.reason
+    : gate.promoted ? "promoted fit needs a component that is missing in this snapshot: unrated" : gate.reason;
+
+  // --- Sizing: promoted fit AND the user's own budget input ---
+  const budget = resolveMasterAlphaRiskBudget(input);
+  const size = sizePosition(spot, vix, dollarGamma_M, edgeBps, (budget.dollars ?? 0) / 1e6, h);
+  // SF-7: the count is priced on the CHOSEN contract (ATM option of the
+  // horizon's target expiry on the fitted side) at its Schwab ask plus the
+  // fee, whole contracts rounded down, never on a model premium: premium plus
+  // opening fee at risk <= the user's budget.
+  let chosen: { strike: number; ask: number; symbol: string | null; type: "C" | "P" } | null = null;
+  let sizeFromAsk: ReturnType<typeof contractsFromAsk> = null;
+  let sizeWhyNot = "";
+  const wantsSize = promoted && budget.dollars != null && budget.dollars > 0 && gatedSignal !== "NEUTRAL" && gatedSignal !== "UNRATED";
+  if (wantsSize) {
+    try {
+      const { getOptionChain } = await import("./schwab");
+      const expiryIso = horizonTargetIso(h, now).slice(0, 10);
+      const dte = Math.max(0, Math.round((Date.parse(expiryIso) - Date.parse(etDate(now.getTime()))) / 86_400_000));
+      const chain: any = await getOptionChain(symbol === "SPY" ? "SPY" : "$SPX", dte);
+      const type: "C" | "P" = gatedSignal.includes("LONG") ? "C" : "P";
+      const map = chain && !("error" in chain) ? (type === "C" ? chain.callExpDateMap : chain.putExpDateMap) ?? {} : {};
+      const key = Object.keys(map).find((k) => k.startsWith(expiryIso));
+      const atm = key ? atmContractFrom(map[key], spot) : null;
+      if (!atm) sizeWhyNot = `no Schwab quote for the ${expiryIso} ATM ${type === "C" ? "call" : "put"}`;
+      else {
+        chosen = { strike: atm.strike, ask: atm.ask, symbol: atm.symbol, type };
+        const fee = feeForProduct(atm.symbol ?? (symbol === "SPY" ? "SPY" : "SPXW"));
+        sizeFromAsk = contractsFromAsk({ budgetDollars: budget.dollars as number, ask: atm.ask, fee: fee.fee });
+        if (!sizeFromAsk) sizeWhyNot = fee.basis;
+      }
+    } catch (e: any) {
+      sizeWhyNot = `chain unavailable: ${e?.message ?? e}`;
+    }
+  }
+  const sized = wantsSize && sizeFromAsk != null;
+  const sizingNote = !promoted ? "no size: direction unrated (no promoted fit)"
+    : budget.dollars == null ? `no size: ${budget.source}`
+    : !wantsSize ? "no size: neutral forecast"
+    : !sized ? `no size: ${sizeWhyNot}`
+    : `${sizeFromAsk!.contracts} x ${chosen!.strike}${chosen!.type} at the Schwab ask $${chosen!.ask.toFixed(2)} + fee = $${sizeFromAsk!.costPerContract.toFixed(2)}/contract; premium at risk $${sizeFromAsk!.premiumAtRisk.toFixed(2)} <= ${budget.source} budget, whole contracts rounded down`;
+  const R = edgeBps / 10000;
+  const gammaPnlAt_r_hat = promoted ? 50 * dollarGamma_M * R * R : null;
 
   // --- Structural levels (mirrored from horizon.levels) ---
   const byKind = (k: string) => horizon.levels.find(l => l.kind === k)?.price ?? null;
@@ -678,7 +813,7 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
 
   // --- Pivot proximity & locked-target alignment ---
   const np = nearestPivot(spot, pivots);
-  const lta = lockedTargetAlignment(comp.signal, spot, symbol);
+  const lta = lockedTargetAlignment(gatedSignal, spot, symbol);
 
   // --- Packet to Claude ---
   const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -704,8 +839,11 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
       rawValue: r2(c.rawValue),
       source: c.source,
     })),
-    compositeEdgeBps: comp.bps,
-    compositeSignal: comp.signal,
+    compositeEdgeBps: edgeBps,
+    compositeSignal: gatedSignal,
+    directionStatus: promoted ? "fitted_promoted" : "unrated_heuristic",
+    directionNote,
+    heuristicScoreBps: comp.bps,
     compositeConfidence: Math.round(comp.confidence * 100),
     regime: gexR.regime,
     gexDollars_M: r2(gexTotal_M),
@@ -715,10 +853,16 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
     charmZero:       audit.charmZero != null ? Math.round(audit.charmZero) : null,
     gtbrPoints: gtbrR.gtbrPoints,
     gtbrPct: r2(gtbrR.gtbrPct * 100),
-    recommendedContracts: size.contracts,
+    // Size only with a promoted fit and the user's budget; premium at risk
+    // <= that budget (the most the size loses if the options expire worthless).
+    recommendedContracts: sized ? sizeFromAsk!.contracts : null,
+    premiumPerContract: sized ? sizeFromAsk!.costPerContract : null,
+    premiumAtRisk_M: sized ? sizeFromAsk!.premiumAtRisk / 1e6 : null,
+    sizeBinding: sized ? sizeFromAsk!.binding : null,
+    sizingNote,
     dollarGamma_per_contract_M: size.dg_per_contract,
     dollarGammaAggregate_M: r2(dollarGamma_M),
-    gammaPnlAt_r_hat_M: r2(gammaPnlAt_r_hat),
+    gammaPnlAt_r_hat_M: gammaPnlAt_r_hat != null ? r2(gammaPnlAt_r_hat) : null,
     netCharm_M: r2(netCharm_M),
     netVanna_M: r2(netVanna_M),
     gammaAtSpot_M: r2(gammaAtSpot_M),
@@ -726,10 +870,13 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
     nearestPivot: np,
     lockedTargetAlignment: lta,
     priorDayRange: pivots?.range != null ? r2(pivots.range) : null,
+    coefficientStatus: promoted ? "fitted" : MASTER_ALPHA_COEFFICIENT_STATUS,
   };
 
   let aiAnalysis = "Unavailable.";
-  try {
+  if (input.narrative === false) {
+    aiAnalysis = "No narrative requested (logging snapshot).";
+  } else try {
     const response = await client.messages.create({
       model: "claude-sonnet-4-20250514",
       max_tokens: 1400,
@@ -757,9 +904,13 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
     isTripleWitching,
     settlementType: "AM_SOQ",
     components,
-    compositeEdgeBps: comp.bps,
-    compositeSignal: comp.signal,
+    compositeEdgeBps: edgeBps,
+    compositeSignal: gatedSignal,
     compositeConfidence: comp.confidence,
+    heuristicBand: comp.signal,
+    heuristicScoreBps: comp.bps,
+    directionStatus: promoted ? "fitted_promoted" : "unrated_heuristic",
+    directionNote,
     gexRegime: gexR.regime,
     gexDollars_M: gexTotal_M,
     zeroGammaStrike,
@@ -770,10 +921,15 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
     gtbrPct: gtbrR.gtbrPct,
     nearestPivot: np,
     lockedTargetAlignment: lta,
-    recommendedContracts: size.contracts,
+    recommendedContracts: sized ? sizeFromAsk!.contracts : null,
+    premiumPerContract: sized ? sizeFromAsk!.costPerContract : null,
+    premiumAtRisk_M: sized ? sizeFromAsk!.premiumAtRisk / 1e6 : null,
     dollarGammaAggregate: dollarGamma_M,
     gammaPnlAt_r_hat,
+    sizingNote,
     aiAnalysis,
+    coefficientStatus: promoted ? "fitted" : MASTER_ALPHA_COEFFICIENT_STATUS,
+    coefficientNote: promoted ? gate.reason : COEFFICIENT_NOTE,
   };
 }
 
@@ -784,7 +940,9 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
 import { buildModelsSnapshot } from "./models";
 import { buildPivotBundle } from "./pivots";
 import { fetchOHLC } from "./ohlc";
-import { getQuotes as schwabGetQuotes } from "./schwab";
+import { fetchPrevDayOHLC } from "./quotes";
+import { getQuotes as schwabGetQuotes, getSchwabStatus } from "./schwab";
+import { classifyRouteError, unavailableBody } from "@shared/unavailable";
 
 export async function masterAlphaRoute(req: any, res: any) {
   try {
@@ -800,6 +958,10 @@ export async function masterAlphaRoute(req: any, res: any) {
           : "^GSPC";
     const prevCloseImbalance_M = req.body?.prevCloseImbalance_M as number | undefined;
     const realisedVol = req.body?.realisedVol as number | undefined;
+    // Sizing inputs are the user's own (no default $1M budget).
+    const accountSize = req.body?.accountSize as number | undefined;
+    const riskPct = req.body?.riskPct as number | undefined;
+    const riskBudgetDollars = req.body?.riskBudgetDollars as number | undefined;
     const riskBudget_M = req.body?.riskBudget_M as number | undefined;
 
     // pull vix from ohlc
@@ -807,7 +969,9 @@ export async function masterAlphaRoute(req: any, res: any) {
     try {
       const v  = await fetchOHLC("^VIX", "1D");
       vix = v?.price ?? v?.candles?.[v.candles.length - 1]?.c ?? null;
-      vixPrev = v?.candles?.[v.candles.length - 2]?.c ?? null;
+      // Prior SESSION close (ohlc.prevClose via dayChange), not the previous
+      // 5-minute bar of a 1D intraday series.
+      vixPrev = v?.prevClose ?? null;
     } catch { /* non-fatal */ }
     try {
       const v3 = await fetchOHLC("^VIX3M", "1D");
@@ -822,26 +986,33 @@ export async function masterAlphaRoute(req: any, res: any) {
     });
     const horizon = snapshot.horizons[horizonKey];
     if (!horizon) {
-      return res.status(500).json({ error: `Horizon ${horizonKey} build failed`, warnings: snapshot.warnings });
+      // buildModelsSnapshot records a failed horizon (Schwab chain/spot
+      // missing) as a warning: that is a missing upstream, not a bug.
+      const why = (snapshot.warnings ?? []).join("; ") || "no Schwab data for this horizon";
+      return res.status(503).json({ ...unavailableBody(`Horizon ${horizonKey} unavailable: ${why}`), error: `Horizon ${horizonKey} unavailable`, warnings: snapshot.warnings });
     }
 
-    // build prior-day pivot bundle
+    // build prior-day pivot bundle from the most recent COMPLETED daily
+    // session (fetchPrevDayOHLC, exchange-calendar aware). The old code took
+    // the second-to-last bar of a 1D intraday series: a 5-minute bar, not a day.
     let pivots: PivotBundle | undefined;
     try {
-      const ohlc = await fetchOHLC(symbol, "1D");
-      const candles = ohlc?.candles ?? [];
-      if (candles.length >= 2) {
-        const prior = candles[candles.length - 2];
-        pivots = buildPivotBundle(symbol, { o: prior.o, h: prior.h, l: prior.l, c: prior.c });
-      }
+      const prior = await fetchPrevDayOHLC(symbol);
+      if (prior) pivots = buildPivotBundle(symbol, { o: prior.o, h: prior.h, l: prior.l, c: prior.c });
     } catch { /* pivots are optional */ }
 
     const out = await runMasterAlpha({
-      horizon, pivots, prevCloseImbalance_M, realisedVol, riskBudget_M,
+      horizon, pivots, prevCloseImbalance_M, realisedVol,
+      accountSize, riskPct, riskBudgetDollars, riskBudget_M,
     });
     res.json(out);
   } catch (err: any) {
-    console.error("[masterAlpha]", err);
-    res.status(500).json({ error: err?.message ?? String(err) });
+    // Missing upstream (typed error, or Schwab not connected) -> 503 with the
+    // reason; anything else is a real bug -> 500.
+    let schwabConnected: boolean | null = null;
+    try { schwabConnected = getSchwabStatus().connected; } catch { schwabConnected = null; }
+    const out = classifyRouteError(err, "master alpha failed", { schwabConnected, key: "error" });
+    if (out.kind === "bug") console.error("[masterAlpha]", err);
+    res.status(out.status).json(out.body);
   }
 }

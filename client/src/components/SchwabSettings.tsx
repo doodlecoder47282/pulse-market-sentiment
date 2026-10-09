@@ -19,6 +19,8 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
+import { Switch } from "@/components/ui/switch";
+import { premarketGateEnabled, setPremarketGateEnabled } from "@/lib/prefs";
 import {
   CheckCircle, XCircle, AlertTriangle, ExternalLink, RefreshCw,
   Wifi, WifiOff, Loader2, Settings, Clock, Copy,
@@ -31,6 +33,15 @@ interface SchwabStatus {
   expiresIn: number;        // seconds
   refreshExpiresIn: number; // seconds
   needsReauth: boolean;
+  /** Token storage at rest (server/schwabTokenStore.ts). */
+  tokenStore?: {
+    mode: "encrypted" | "plaintext-local" | "locked";
+    encryptedAtRest: boolean;
+    reason: string | null;
+    keySource?: "env" | "file" | null;
+    /** Locked with legacy plaintext tokens still in data.db. */
+    plaintextOnDisk?: boolean;
+  };
 }
 
 interface SchwabDiag {
@@ -40,13 +51,72 @@ interface SchwabDiag {
   maxPerMinute: number;
   cooldowns: { endpoint: string; secondsRemaining: number }[];
   forbiddenStreaks: { endpoint: string; count: number }[];
-  cboeFallbackHits?: { symbol: string; count: number; secondsAgo: number }[];
+  /** Per data kind, last 5 min: cached payloads served stale (within max age) and requests left unavailable. */
+  degraded?: { kind: string; staleServed: number; unavailable: number; secondsAgo: number; lastReason: string }[];
+  /** Max age (ms) per kind at which a cached Schwab payload may still be served. */
+  maxServeAgeMs?: Record<string, number>;
   asOf: number;
 }
 
-// Bug #6 fix: removed misleading "yahoo" state. The disconnected fallback is
-// either cached Schwab snapshots or CBOE delayed chains — never Yahoo data.
-type SourceState = "schwab_live" | "schwab_cached" | "cboe_fallback" | "disconnected" | "offline";
+/** /api/schwab/stream/status (subset read here). */
+interface StreamStatus {
+  state: string;
+  mode: "live" | "connecting" | "down";
+  lastMessageAgeMs?: number | null;
+  reconnects?: number;
+  lastError?: string | null;
+  reason?: string;
+  perService?: Record<string, { lastDataAgeMs: number | null; keys: number }>;
+  subscriptions?: { options: string[]; optionsOverCap: string[] };
+  delayedSymbols?: string[];
+}
+
+/** Feed mode for quotes: Schwab Streamer live, Schwab REST snapshots, or nothing. */
+export function streamFeedLabel(connected: boolean, stream: StreamStatus | undefined): { label: string; color: string; detail: string } {
+  if (!connected) return { label: "Unavailable", color: "#f87171", detail: "Schwab not connected: no quotes" };
+  if (stream?.mode === "live") {
+    const age = stream.lastMessageAgeMs != null ? `${Math.round(stream.lastMessageAgeMs / 1000)}s since last frame` : "";
+    return { label: "Streaming live", color: "#34d399", detail: age };
+  }
+  const why = stream?.lastError ?? stream?.reason ?? (stream?.mode === "connecting" ? "stream connecting" : "stream down");
+  return { label: "REST snapshots", color: "#fbbf24", detail: why };
+}
+
+function StreamFeedRow({ connected, stream }: { connected: boolean; stream: StreamStatus | undefined }) {
+  const f = streamFeedLabel(connected, stream);
+  const svc = stream?.perService ?? {};
+  const svcAge = (k: string) => {
+    const a = svc[k]?.lastDataAgeMs;
+    return a == null ? "no data" : `${Math.round(a / 1000)}s`;
+  };
+  return (
+    <div className="space-y-1 text-[11px]" data-testid="schwab-stream-status">
+      <div className="flex items-center gap-1" style={{ color: f.color }} title={f.detail}>
+        <span className={`h-1.5 w-1.5 rounded-full ${f.label === "Streaming live" ? "animate-pulse" : ""}`} style={{ background: f.color }} />
+        <span className="font-medium">Quotes: {f.label}</span>
+        {f.detail && <span className="text-muted-foreground truncate max-w-[220px]">· {f.detail}</span>}
+      </div>
+      {connected && stream?.mode && stream.mode !== "down" && (
+        <div className="text-muted-foreground font-mono">
+          L1 eq {svcAge("LEVELONE_EQUITIES")} · chart {svcAge("CHART_EQUITY")} · options {svc.LEVELONE_OPTIONS?.keys ?? 0} keys
+          {typeof stream.reconnects === "number" ? ` · reconnects ${stream.reconnects}` : ""}
+          {stream.subscriptions?.optionsOverCap?.length ? ` · ${stream.subscriptions.optionsOverCap.length} over cap (REST)` : ""}
+          {stream.delayedSymbols?.length ? ` · delayed flag: ${stream.delayedSymbols.join(", ")} (REST used)` : ""}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Schwab is the only market-data source (user decision 2026-10-08). When it
+// cannot answer, data is served from a short-lived cache with its real age
+// (within a stated max age) or shown as unavailable: no CBOE, no Yahoo.
+type SourceState = "schwab_live" | "schwab_stale" | "unavailable" | "disconnected" | "offline";
+
+function fmtMaxAge(ms: number | undefined): string {
+  if (ms == null) return "";
+  return ms >= 3600_000 ? `${Math.round(ms / 3600_000)}h` : ms >= 60_000 ? `${Math.round(ms / 60_000)}m` : `${Math.round(ms / 1000)}s`;
+}
 
 /** Map a UI data-source row to its real live state from the diag feed. */
 function deriveEndpointState(
@@ -55,46 +125,28 @@ function deriveEndpointState(
   diag: SchwabDiag | undefined,
 ): { source: SourceState; detail: string } {
   if (!isConnected) {
-    if (key === "chains") return { source: "cboe_fallback", detail: "CBOE delayed (~15min)" };
-    // Bug #6: quotes/history have no Yahoo fallback — they're cached Schwab
-    // snapshots or stale. Surface the truth, not a fake Yahoo label.
-    return { source: "disconnected", detail: "Schwab disconnected — cached / stale" };
+    return { source: "disconnected", detail: "Schwab disconnected — data unavailable (no other source)" };
   }
 
   // Endpoint name in cooldown/forbidden maps (matches schwabFetch path keys)
   const ep =
     key === "quotes"  ? "quotes"
     : key === "history" ? "pricehistory"
-    : key === "chains" ? "chains"
     : "chains"; // gamma piggybacks on chains
+  const kinds = key === "quotes" ? ["quotes"] : key === "history" ? ["minute_bars", "daily_bars"] : ["chains"];
 
   const cool = diag?.cooldowns?.find((c) => c.endpoint.toLowerCase().includes(ep));
-  const streak = diag?.forbiddenStreaks?.find((s) => s.endpoint.toLowerCase().includes(ep));
+  const deg = (diag?.degraded ?? []).filter((d) => kinds.includes(d.kind));
+  const maxAge = fmtMaxAge(diag?.maxServeAgeMs?.[kinds[0]]);
+  const unavailable = deg.reduce((a, d) => a + d.unavailable, 0);
+  const staleServed = deg.reduce((a, d) => a + d.staleServed, 0);
+  const reason = deg[0]?.lastReason ?? (cool ? `cooldown ${cool.secondsRemaining}s` : "");
 
-  // Chains: if we've actually fallen back to CBOE in the last 5 min, that's the real source
-  if (key === "chains" || key === "gamma") {
-    const cboeHits = diag?.cboeFallbackHits ?? [];
-    if (cboeHits.length > 0) {
-      const total = cboeHits.reduce((acc, h) => acc + h.count, 0);
-      const symbols = cboeHits.slice(0, 3).map((h) => h.symbol).join(", ");
-      const more = cboeHits.length > 3 ? ` +${cboeHits.length - 3} more` : "";
-      return { source: "cboe_fallback", detail: `CBOE delayed · ${total} hits (${symbols}${more})` };
-    }
-    if (streak && streak.count >= 2) {
-      return { source: "cboe_fallback", detail: `CBOE delayed (Schwab 403 x${streak.count})` };
-    }
-    if (cool) {
-      return { source: "cboe_fallback", detail: `CBOE delayed (Schwab cooldown ${cool.secondsRemaining}s)` };
-    }
-    return { source: "schwab_live", detail: "Schwab live" };
+  if (unavailable > 0) {
+    return { source: "unavailable", detail: `Unavailable x${unavailable} in 5 min (${reason})` };
   }
-
-  // Quotes / history: cooldown means we're serving cached
-  if (cool) {
-    return { source: "schwab_cached", detail: `Cached (cooldown ${cool.secondsRemaining}s)` };
-  }
-  if (streak && streak.count >= 2) {
-    return { source: "schwab_cached", detail: `Cached (403 x${streak.count})` };
+  if (staleServed > 0 || cool) {
+    return { source: "schwab_stale", detail: `Cached Schwab, max age ${maxAge}${reason ? ` (${reason})` : ""}` };
   }
   return { source: "schwab_live", detail: "Schwab live" };
 }
@@ -134,7 +186,7 @@ export function SchwabStatusPill({ onClick }: { onClick: () => void }) {
         aria-hidden
       />
       <span
-        className="font-mono text-[9px] font-semibold uppercase tracking-wider"
+        className="font-mono text-[11px] font-semibold uppercase tracking-wider"
         style={{ color: isConnected ? "#34d399" : "#fbbf24" }}
       >
         {isConnected ? "SCHWAB LIVE" : data.connected ? "SCHWAB" : "DISCONNECTED"}
@@ -148,18 +200,18 @@ export function SchwabStatusPill({ onClick }: { onClick: () => void }) {
 function SourceBadge({ source, detail }: { source: SourceState; detail?: string }) {
   const styles: Record<SourceState, { color: string; dot: string; pulse: boolean; label: string }> = {
     schwab_live:    { color: "#34d399", dot: "bg-emerald-400", pulse: true,  label: "Schwab LIVE" },
-    schwab_cached:  { color: "#a3e635", dot: "bg-lime-400",     pulse: false, label: "Schwab cached" },
-    cboe_fallback:  { color: "#fbbf24", dot: "bg-amber-400",    pulse: false, label: "CBOE delayed" },
+    schwab_stale:   { color: "#fbbf24", dot: "bg-amber-400",    pulse: false, label: "Schwab cached (stale)" },
+    unavailable:    { color: "#f87171", dot: "bg-red-400",      pulse: false, label: "Unavailable" },
     disconnected:   { color: "#fb923c", dot: "bg-orange-400",   pulse: false, label: "Schwab disconnected" },
     offline:        { color: "#f87171", dot: "bg-red-500",      pulse: false, label: "Offline" },
   };
   const s = styles[source];
   return (
-    <span className="flex items-center gap-1 text-[10px]" style={{ color: s.color }} title={detail}>
+    <span className="flex items-center gap-1 text-[11px]" style={{ color: s.color }} title={detail}>
       <span className={`h-1.5 w-1.5 rounded-full ${s.dot} ${s.pulse ? "animate-pulse" : ""}`} />
       <span>{s.label}</span>
       {detail && source !== "schwab_live" && (
-        <span className="text-muted-foreground/70 ml-0.5 truncate max-w-[140px]">· {detail}</span>
+        <span className="text-muted-foreground ml-0.5 truncate max-w-[140px]">· {detail}</span>
       )}
     </span>
   );
@@ -197,6 +249,16 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
     queryKey: ["/api/schwab/diag"],
     queryFn: async () => {
       const r = await apiRequest("GET", "/api/schwab/diag");
+      return r.json();
+    },
+    refetchInterval: open ? 5_000 : false,
+    enabled: open,
+  });
+
+  const { data: streamStatus } = useQuery<StreamStatus>({
+    queryKey: ["/api/schwab/stream/status"],
+    queryFn: async () => {
+      const r = await apiRequest("GET", "/api/schwab/stream/status");
       return r.json();
     },
     refetchInterval: open ? 5_000 : false,
@@ -407,12 +469,12 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                     <CheckCircle className="h-4 w-4 text-emerald-400" />
                     <span className="text-sm font-medium text-emerald-300">Connected to Schwab</span>
                   </div>
-                  <span className="flex items-center gap-1 text-[10px] text-emerald-400 animate-pulse">
+                  <span className="flex items-center gap-1 text-[11px] text-emerald-400 animate-pulse">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                     LIVE
                   </span>
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-[10px] text-muted-foreground">
+                <div className="grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
                   <div className="flex items-center gap-1">
                     <Clock className="h-3 w-3" />
                     <span>Token expires: <span className="text-foreground font-mono">{formatDuration(status?.expiresIn ?? 0)}</span></span>
@@ -459,11 +521,49 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                 <WifiOff className="h-4 w-4 text-muted-foreground" />
                 <div>
                   <div className="text-sm font-medium">Schwab offline</div>
-                  <div className="text-[11px] text-muted-foreground">Schwab disconnected — serving cached snapshots or CBOE delayed data. Connect Schwab for live data.</div>
+                  <div className="text-[11px] text-muted-foreground">Schwab disconnected — market data is unavailable (Schwab is the only source). Connect Schwab for live data.</div>
                 </div>
               </div>
             )}
           </div>
+
+          {/* Token storage at rest: locked (no BATCAVE_TOKEN_KEY on a reachable
+              bind, or tokens that cannot be decrypted) blocks the connection;
+              plaintext-local is allowed on loopback only and says so. */}
+          {status?.tokenStore && (status.tokenStore.mode !== "encrypted" || status.tokenStore.reason) && (
+            <div
+              className={`rounded-md border p-2 text-[11px] ${
+                status.tokenStore.mode === "locked" || (status.tokenStore.reason && status.tokenStore.mode === "encrypted")
+                  ? "border-rose-500/40 bg-rose-500/5 text-rose-300"
+                  : "border-amber-500/30 bg-amber-500/5 text-amber-300"
+              }`}
+              data-testid="schwab-token-store"
+            >
+              <span className="font-semibold">
+                {status.tokenStore.plaintextOnDisk
+                  ? "Plaintext tokens still on disk: set BATCAVE_TOKEN_KEY or disconnect"
+                  : status.tokenStore.mode === "locked" ? "Token storage locked" : status.tokenStore.mode === "plaintext-local" ? "Tokens stored unencrypted (BATCAVE_TOKEN_PLAINTEXT_OK=1)" : "Token storage problem"}
+              </span>
+              {status.tokenStore.reason ? <span className="text-muted-foreground"> · {status.tokenStore.reason}</span> : null}
+              {status.tokenStore.plaintextOnDisk && (
+                <div className="mt-1.5">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 border-red-500/40 text-[11px] text-red-400 hover:bg-red-500/10"
+                    onClick={() => disconnectMut.mutate()}
+                    disabled={disconnectMut.isPending}
+                    data-testid="token-store-disconnect"
+                  >
+                    Disconnect and securely delete stored tokens
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+          {status?.tokenStore?.mode === "encrypted" && !status.tokenStore.reason && (
+            <div className="text-[11px] text-muted-foreground" data-testid="schwab-token-store">Tokens encrypted at rest (AES-256-GCM, key from {status.tokenStore.keySource === "file" ? "local key file" : "BATCAVE_TOKEN_KEY"}).</div>
+          )}
 
           {/* OAuth flow (show if disconnected or needs reauth) */}
           {(!isConnected) && (
@@ -475,7 +575,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
               {/* Step 1 */}
               <div className="rounded-md border border-border/40 p-3 space-y-2">
                 <div className="flex items-center gap-2">
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-bold">1</span>
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[11px] font-bold">1</span>
                   <span className="text-xs font-medium">Open Schwab authorization page</span>
                 </div>
                 <Button
@@ -490,7 +590,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                 </Button>
                 {authBlockedFallback && authUrlData?.url && (
                   <div className="mt-2 rounded border border-amber-500/40 bg-amber-500/5 p-2 space-y-2">
-                    <div className="text-[10px] font-semibold text-amber-300 uppercase tracking-wider">
+                    <div className="text-[11px] font-semibold text-amber-300 uppercase tracking-wider">
                       Popup blocked here — copy the link, open it in Safari
                     </div>
                     <Button
@@ -509,17 +609,17 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                       rows={3}
                       onFocus={(e) => e.currentTarget.select()}
                       onClick={(e) => e.currentTarget.select()}
-                      className="w-full resize-none rounded border border-border/40 bg-background/60 p-1.5 font-mono text-[10px] leading-tight text-blue-300 [user-select:text] [-webkit-user-select:text]"
+                      className="w-full resize-none rounded border border-border/40 bg-background/60 p-1.5 font-mono text-[11px] leading-tight text-blue-300 [user-select:text] [-webkit-user-select:text]"
                       data-testid="schwab-auth-url-box"
                     />
-                    <div className="text-[10px] leading-snug text-muted-foreground">
+                    <div className="text-[11px] leading-snug text-muted-foreground">
                       1. Copy · 2. Paste in Safari's address bar · 3. Log in at Schwab · 4. Copy the https://127.0.0.1/?code=... URL it lands on · 5. Come back here and paste it in step 2 below
                     </div>
                     <a
                       href={authUrlData.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="block text-[10px] text-muted-foreground underline underline-offset-2"
+                      className="block text-[11px] text-muted-foreground underline underline-offset-2"
                       data-testid="schwab-auth-fallback-link"
                     >
                       or try opening it directly (may be blocked in this app)
@@ -532,13 +632,13 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
               <div className={`rounded-md border p-3 space-y-2 transition-opacity ${step === "waiting_for_paste" ? "border-amber-500/40 bg-amber-500/5 opacity-100" : "border-border/40 opacity-60"}`}>
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-bold">2</span>
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[11px] font-bold">2</span>
                     <span className="text-xs font-medium">Paste anywhere on the page</span>
                   </div>
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-6 text-[10px] px-2"
+                    className="h-6 text-[11px] px-2"
                     onClick={handlePasteFromClipboard}
                     disabled={connectMut.isPending}
                     data-testid="paste-clipboard-btn"
@@ -546,7 +646,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                     Paste from clipboard
                   </Button>
                 </div>
-                <div className="text-[10px] text-muted-foreground leading-snug">
+                <div className="text-[11px] text-muted-foreground leading-snug">
                   After logging in, Schwab redirects to{" "}
                   <code className="rounded bg-muted px-1 text-amber-300">https://127.0.0.1/?code=...</code>.{" "}
                   Paste the full URL, just the code, or <span className="text-foreground">code=...</span> — we'll auto-connect.
@@ -563,11 +663,11 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                     }
                   }}
                   placeholder="Paste URL or code here — auto-connects"
-                  className="font-mono text-[10px] resize-none h-16"
+                  className="font-mono text-[11px] resize-none h-16"
                   data-testid="schwab-callback-url-input"
                 />
                 {connectMut.isPending && (
-                  <div className="flex items-center gap-2 text-[10px] text-amber-300">
+                  <div className="flex items-center gap-2 text-[11px] text-amber-300">
                     <Loader2 className="h-3 w-3 animate-spin" />
                     Connecting to Schwab...
                   </div>
@@ -575,7 +675,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="w-full text-[10px] h-7"
+                  className="w-full text-[11px] h-7"
                   onClick={handleConnect}
                   disabled={connectMut.isPending || !redirectedUrl.trim()}
                   data-testid="complete-connection-btn"
@@ -613,10 +713,13 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                 );
               })}
             </div>
+            <div className="rounded-md border border-border/30 bg-muted/10 px-3 py-1.5">
+              <StreamFeedRow connected={isConnected} stream={streamStatus} />
+            </div>
 
             {/* Live cooldown / rate-budget banner */}
             {diag && (diag.cooldowns.length > 0 || diag.forbiddenStreaks.length > 0 || diag.requestsLastMinute > diag.maxPerMinute * 0.8) && (
-              <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[10px] text-amber-200/90 leading-snug space-y-0.5">
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200/90 leading-snug space-y-0.5">
                 {diag.cooldowns.length > 0 && (
                   <div>
                     <span className="font-semibold">Active cooldowns:</span>{" "}
@@ -638,21 +741,41 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
               </div>
             )}
             {diag && diag.cooldowns.length === 0 && diag.forbiddenStreaks.length === 0 && (
-              <div className="text-[10px] text-muted-foreground/70">
+              <div className="text-[11px] text-muted-foreground">
                 Cache: {diag.cacheEntries} entries · Budget: {diag.requestsLastMinute}/{diag.maxPerMinute} req/min
               </div>
             )}
           </div>
 
+          <PremarketToggle />
+
           {/* Help text */}
-          <div className="rounded-md border border-border/20 bg-muted/10 p-3 text-[10px] text-muted-foreground leading-relaxed">
-            <div className="font-semibold text-foreground/70 mb-1">About Schwab Integration</div>
-            Schwab access tokens expire every 30 minutes and are silently refreshed. Refresh tokens last 7 days — re-authenticate when prompted.
-            Your credentials are stored locally in the app's SQLite database and never transmitted to third parties.
-            Option chains require Schwab — Yahoo Finance does not provide reliable chain data.
+          <div className="rounded-md border border-border/20 bg-muted/10 p-3 text-xs text-muted-foreground leading-relaxed">
+            <div className="font-semibold text-foreground/80 mb-1">About the Schwab connection</div>
+            You sign in on Schwab's own page; Batcave never sees your Schwab password. Schwab gives Batcave a token:
+            access tokens expire every 30 minutes and are refreshed automatically, refresh tokens last 7 days, so you
+            reconnect about once a week. Tokens stay on the server (encrypted when BATCAVE_TOKEN_KEY is set) and can be revoked from your Schwab account.
+            All stock, index and options data comes from Schwab only; when Schwab can't answer, panels say so.
           </div>
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function PremarketToggle() {
+  const [on, setOn] = useState(premarketGateEnabled);
+  return (
+    <label className="flex min-h-[44px] items-center justify-between gap-3 rounded-md border border-border/30 p-3 text-sm">
+      <span>
+        <span className="block font-medium">Pre-market checklist</span>
+        <span className="block text-xs text-muted-foreground">Show your trading checklist when Batcave opens.</span>
+      </span>
+      <Switch
+        checked={on}
+        onCheckedChange={(v) => { setOn(v); setPremarketGateEnabled(v); }}
+        data-testid="switch-premarket-gate"
+      />
+    </label>
   );
 }

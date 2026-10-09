@@ -1,4 +1,6 @@
 import { vixToAtmPct } from "@shared/vol";
+import { studentTSumQuantileFft, totalVarianceAt, type AtmIvPoint } from "./tickerConeMath";
+import { addDays, dayOfWeek, etDate, isTradingDay, nextTradingDay, prevTradingDay, sessionCloseMs } from "./exchangeCalendar";
 /**
  * quarterlyTrajectory.ts  —  v2 (precision pass)
  *
@@ -6,25 +8,56 @@ import { vixToAtmPct } from "@shared/vol";
  * horizon — instead of just the endpoint targets that applyTermStructureRescale
  * produces.
  *
- * v2 upgrades over v1:
+ * v2 upgrades over v1 (items 1, 2 and 4 SUPERSEDED in round 4, see below:
+ * the cone width is now the SPX ATM IV term structure with t(4) bands):
  *   1. VRP scaling — σ damped by realized-vol / implied-vol ratio (clamped 0.7–1.3).
  *   2. Term-structure σ segmentation — wk1-4 use VIX9D, wk5-8 VIX, wk9-13 VIX3M.
  *      Smooth weighted blend at boundaries so the cone doesn't kink.
- *   3. Skew-adjusted drift — CBOE SKEW (100-150) drives an extra bearish drift
+ *   3. Skew-adjusted drift — Cboe SKEW index (100-150, Schwab $SKEW quote) drives an extra bearish drift
  *      component when tail-hedging demand is elevated.
  *   4. OPEX/FOMC σ bumps — event-week sigma expands +12% on monthly OPEX (3rd
  *      Fri) and FOMC weeks; tagged in the weekly output.
  *
- * For each week k ∈ [1..13]:
- *   - σ(k) = spot · (vixSegmented(k)/100) · √(k/52) · vrpScale · damp(k) · eventBump(k)
- *   - drift(k) = (driftPerWeek) · k     (linear; sums composite + GEX + VIX term + skew)
- *   - mean(k)  = spot · (1 + drift(k)) - magnetPull(k)
- *   - bull(k)  = mean(k) + σ(k)
- *   - bear(k)  = mean(k) - σ(k)
- *   - damp(k)  = 1 - 0.15·(k/13)
+ * For each week k ∈ [1..13] (round 4):
+ *   - w(k) = SPX ATM implied total variance to week k's last close (or RV20^2 x n/252, labelled)
+ *   - base(k) = spot                     (ZERO drift: the median is spot)
+ *   - bull(k), bear(k) = spot x exp(z_{0.8413 / 0.1587}(n_k) x sqrt(w(k))), z = t(4)-sum quantile
+ *   - scenarioBase(k) = spot · (1 + tilt·k) + magnetPull(k): a LABELLED
+ *     heuristic scenario line only (tilt = composite + GEX + VIX term + SKEW
+ *     hand-set per-week tilts; anchors = walls/flip primary, max pain + JPM
+ *     secondary, pull capped at ±4%/wk).
  *
- * Anchors pull the BASE path. Walls/flip = primary (weight 1.0); max pain +
- * JPM = secondary (weight 0.4–0.6). Pull capped at ±4%/wk per anchor.
+ * Round 3 (N3-2): the hand-set tilts and anchor pulls used to move the BASE
+ * path (the median of the cone). None of them is a fitted or validated drift,
+ * so they are no longer in the median, which is spot (zero drift, as the
+ * index cone: server/multiDayProjection.ts); they survive only as the
+ * separate scenarioBase line, labelled as a heuristic scenario, never a
+ * forecast.
+ *
+ * Round 4 (cone width): the cone is no longer VIX-segmented x VRP scale x
+ * hand-set damping (1 - 0.15 k/13) x hand-set event bump (x1.12) with
+ * Gaussian +-1 sigma bands. That stack made the width effectively a multiple
+ * of 20-day realized vol with two unvalidated multipliers. It is now the
+ * single-name cone's model (server/tickerConeMath.ts, tickerProjection.ts)
+ * applied to the index:
+ *   w(T_k)  = Schwab $SPX ATM implied total variance to the close of week k's
+ *             last session, linear in total variance between listed expiries
+ *             on the running max (no calendar arbitrage): J. Gatheral, "The
+ *             Volatility Surface", Wiley 2006, ch. 3; Gatheral & Jacquier,
+ *             "Arbitrage-free SVI volatility surfaces", Quant. Finance 14(1)
+ *             2014, https://arxiv.org/abs/1204.0646 ;
+ *   log(S_k/S_0) = sqrt(w) x Z_n, Z_n the standardised sum of n iid
+ *             unit-variance Student-t(4) daily shocks (n = sessions to week
+ *             k's close): R. Cont, "Empirical properties of asset returns:
+ *             stylized facts and statistical issues", Quant. Finance 1(2) 2001;
+ *   BULL / BEAR = the 84.13% / 15.87% quantiles (the coverage of +-1 sigma
+ *             under a normal), q10/q90 also returned; median = spot.
+ * No damping, VRP multiplier or event bump: the option prices already carry
+ * FOMC/OPEX inside each expiry's ATM vol (events are still tagged). Without a
+ * usable SPX chain the cone falls back to 20-day realized vol, UNSCALED and
+ * labelled (sigmaSource "realized_20d"); with neither it is unavailable.
+ * Band coverage is untested on held-out data: heuristic bands, not
+ * calibrated probabilities.
  *
  * Returns a structure the client renders as a 3-line fan chart with anchor
  * horizontals + event markers.
@@ -39,9 +72,22 @@ export interface WeeklyPoint {
   bear: number;
   sigmaWeek: number;       // INCREMENTAL σ for this single week (events visible here)
   sigmaCum: number;        // CUMULATIVE σ thru week k = sqrt(Σ σ_i² for i=1..k) — drives bull/bear cone
-  cumDriftPct: number;     // cumulative drift % (base vs spot)
-  events?: string[];       // ["OPEX"], ["FOMC"], ["OPEX","FOMC"], etc.
+  cumDriftPct: number;     // cumulative drift % of the BASE (median) vs spot: 0 (zero drift, round 3)
+  /** Heuristic scenario line (hand-set tilts + anchor pulls), NOT the median. */
+  scenarioBase?: number;
+  /** Cumulative % of the scenario line vs spot. */
+  scenarioDriftPct?: number;
+  events?: string[];       // ["OPEX"], ["FOMC"], ["OPEX","FOMC"], etc. (tags only: no sigma bump)
   vixSegment?: "VIX9D" | "VIX" | "VIX3M" | "BLEND";
+  /** Round 4: t(4)-sum quantile bands (price) and the variance behind them. */
+  q10?: number;
+  q90?: number;
+  /** Total log variance to this week's close (decimal^2). */
+  totalVariance?: number;
+  /** Trading sessions from now to this week's close. */
+  sessions?: number;
+  /** Years (calendar, 365 d) from now to this week's close. */
+  tYears?: number;
 }
 
 export interface QuarterlyAnchor {
@@ -61,12 +107,16 @@ export interface QuarterlyTrajectory {
     compositeTilt: number;       // weekly drift contribution from composite (decimal)
     gexTilt: number;             // weekly drift contribution from GEX regime (decimal)
     vixTermTilt: number;         // weekly drift contribution from VIX term (decimal)
-    skewTilt: number;            // weekly drift contribution from CBOE SKEW (decimal)  [NEW v2]
-    totalDriftPerWeek: number;   // sum of above (decimal)
+    skewTilt: number;            // weekly drift contribution from the Cboe SKEW index (decimal)  [NEW v2]
+    totalDriftPerWeek: number;   // sum of above (decimal): SCENARIO tilt only, not in the median
+    /** Drift in the BASE (median) path per week: 0 (round 3, N3-2). */
+    medianDriftPerWeek?: number;
+    /** false: the tilts and anchor pulls are not in the median, only in scenarioBase. */
+    tiltsInMedian?: boolean;
     annualizedDrift: number;     // total*52 for display
     magnetCount: number;         // anchors actively pulling
     vrpRatio: number | null;     // RV / IV ratio (decimal, null if RV unknown)  [NEW v2]
-    vrpScale: number;            // σ multiplier from VRP (clamped 0.7-1.3)  [NEW v2]
+    vrpScale: number;            // always 1 since round 4 (not applied); was the clamped RV/IV multiplier
     eventWeeks: number;          // count of weeks with event bumps  [NEW v2]
   };
   inputs: {
@@ -79,11 +129,19 @@ export interface QuarterlyTrajectory {
     maxPain: number;
     totalGex: number;
     composite: number;
-    skew: number | null;            // CBOE SKEW value 100-150  [NEW v2]
+    skew: number | null;            // Cboe SKEW index 100-150 via Schwab $SKEW; null = unavailable  [NEW v2]
     realizedVol20d: number | null;  // 20D RV annualized decimal  [NEW v2]
   };
   methodology: string;
+  /** Cone variance source: Schwab SPX ATM IV term, or labelled 20d realized fallback. */
+  sigmaSource?: "spx_atm_iv_term" | "realized_20d";
+  /** ATM IV per listed SPX expiry behind the cone (spx_atm_iv_term only). */
+  ivTerm?: AtmIvPoint[];
+  tailModel?: string;
 }
+
+/** Thrown when neither the IV term structure nor realized vol is available. */
+export class QuarterlyConeUnavailableError extends Error {}
 
 interface BuildInputs {
   spot: number;
@@ -97,31 +155,46 @@ interface BuildInputs {
   totalGex: number;              // sign drives regime
   composite: number;             // 0..100
   jpmStrikes?: { shortPut: number; longPut: number; shortCall: number } | null;
-  skew?: number | null;          // CBOE SKEW 100-150 (tail-hedging demand)
+  skew?: number | null;          // Cboe SKEW index 100-150 via Schwab $SKEW (tail-hedging demand)
   realizedVol20d?: number | null;  // 20D realized vol, annualized decimal (e.g. 0.18)
+  /** Schwab $SPX ATM IV term structure (tickerConeMath.atmIvTermFromChain). */
+  ivTerm?: AtmIvPoint[] | null;
+  /** Clock (tests). */
+  nowMs?: number;
 }
 
 const WEEKS = 13;
 const WEEKS_PER_YEAR = 52;
-const SQRT_WEEK_FRAC = (k: number) => Math.sqrt(k / WEEKS_PER_YEAR);
 
-/** Mean-reversion damping growing with horizon. Week 1 = 1.0, week 13 = 0.85. */
-function damp(k: number): number {
-  return 1 - 0.15 * (k / WEEKS);
+const YEAR_MS = 365 * 86_400_000;
+/** Unit-variance probability of +-1 sigma under a normal: Phi(1). */
+const P_ONE_SIGMA = 0.8413447460685429;
+
+/**
+ * Week k's last session (ET): the Friday k weeks out (next Friday for k = 1,
+ * or the following one when today is Friday, as before), moved back to the
+ * prior trading day when that Friday is an exchange holiday.
+ */
+function weekEndSessionET(k: number, nowMs: number): { weekEnd: string; session: string } {
+  const today = etDate(nowMs);
+  const dow = dayOfWeek(today); // 0 = Sun .. 6 = Sat
+  const daysUntilFri = (5 - dow + 7) % 7 || 7;
+  const weekEnd = addDays(today, daysUntilFri + (k - 1) * 7);
+  return { weekEnd, session: isTradingDay(weekEnd) ? weekEnd : prevTradingDay(weekEnd) };
 }
 
-/** ET date string for a week-end (Friday close) k weeks from now. */
-function weekEndDateET(k: number): string {
-  const now = new Date();
-  // Find next Friday
-  const day = now.getDay(); // 0=Sun..6=Sat
-  const daysUntilFri = (5 - day + 7) % 7 || 7;
-  const target = new Date(now);
-  target.setDate(now.getDate() + daysUntilFri + (k - 1) * 7);
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(target);
+/** Sessions whose close is after nowMs, up to and including `last`. */
+function sessionsUntil(nowMs: number, last: string): number {
+  let d = etDate(nowMs);
+  let n = 0;
+  const closeToday = isTradingDay(d) ? sessionCloseMs(d) : null;
+  if (closeToday != null && closeToday > nowMs && d <= last) n++;
+  for (;;) {
+    d = nextTradingDay(d);
+    if (d > last) break;
+    n++;
+  }
+  return n;
 }
 
 /** Parse YYYY-MM-DD into a Date at midnight ET (using UTC math is fine here for date arithmetic). */
@@ -173,33 +246,6 @@ function isFomcWeek(weekEndISO: string): boolean {
     const fomc = parseISO(iso);
     return fomc >= monday && fomc <= friday;
   });
-}
-
-/**
- * Pick segmented IV for a given week index k (1..13).
- *   k 1..4   → VIX9D heavy
- *   k 5..8   → VIX
- *   k 9..13  → VIX3M
- * Returns { iv, segmentLabel } in percent (e.g. 17.3 not 0.173).
- *
- * Smooth blend across boundaries to avoid kinks: 80/20 blend at boundary weeks.
- * Falls back gracefully when VIX9D or VIX3M missing.
- */
-function pickSegmentedVix(
-  k: number,
-  vix: number,
-  vix9d: number | null,
-  vix3m: number | null,
-): { iv: number; segment: WeeklyPoint["vixSegment"] } {
-  // Defaults if specific segment unavailable
-  const v9 = vix9d ?? vix;
-  const v3 = vix3m ?? vix;
-
-  if (k <= 3) return { iv: v9, segment: "VIX9D" };
-  if (k === 4) return { iv: 0.6 * v9 + 0.4 * vix, segment: "BLEND" };
-  if (k <= 7) return { iv: vix, segment: "VIX" };
-  if (k === 8) return { iv: 0.4 * vix + 0.6 * v3, segment: "BLEND" };
-  return { iv: v3, segment: "VIX3M" };
 }
 
 /**
@@ -257,7 +303,8 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
     spot, vix, vix9d, vix3m, callWall, putWall, gammaFlip, maxPain,
     totalGex, composite, jpmStrikes, skew, realizedVol20d,
   } = input;
-  const asOf = Math.floor(Date.now() / 1000);
+  const nowMs = input.nowMs ?? Date.now();
+  const asOf = Math.floor(nowMs / 1000);
 
   // ─── Drift components (per week, decimal) ───
   // 1. Composite tilt
@@ -281,7 +328,7 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
   }
 
   // 4. NEW v2: Skew-adjusted drift
-  //    CBOE SKEW measures cost of OTM puts vs OTM calls. 100=neutral, 130=normal,
+  //    The Cboe SKEW index measures cost of OTM puts vs OTM calls. 100=neutral, 130=normal,
   //    150+=elevated tail hedging demand. High skew = institutions paying up for
   //    crash insurance = bearish prior. Cap contribution at ±0.0006/wk.
   let skewTilt = 0;
@@ -295,7 +342,8 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
   const totalDriftPerWeek = compositeTilt + gexTilt + vixTermTilt + skewTilt;
 
   // ─── NEW v2: VRP scaling ───
-  const { ratio: vrpRatio, scale: vrpScale } = computeVrpScale(realizedVol20d, vix);
+  // RV / IV ratio reported for context only; it no longer scales the cone.
+  const { ratio: vrpRatio } = computeVrpScale(realizedVol20d, vix);
 
   // ─── Anchor list (with weights) ───
   const anchorList: { level: number; weight: number }[] = [
@@ -311,46 +359,56 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
   }
 
   // ─── Build weekly points ───
-  // Two-pass: first compute per-week INCREMENTAL σ, then accumulate variance for
-  // the cone. This guarantees monotonic cone growth (no inversions on event
-  // weeks) and makes event bumps additive in variance space (correct).
+  // Cone variance per week from the SPX ATM IV term structure (total
+  // variance to week k's close), else 20d realized vol (labelled), else
+  // unavailable. Bands: Student-t(4) n-session sum quantiles.
+  const ivTerm = (input.ivTerm ?? []).filter((p) => p && p.T > 0 && p.atmIv > 0);
+  const rv = realizedVol20d != null && Number.isFinite(realizedVol20d) && realizedVol20d > 0 ? realizedVol20d : null;
+  const sigmaSource: "spx_atm_iv_term" | "realized_20d" | null = ivTerm.length ? "spx_atm_iv_term" : rv != null ? "realized_20d" : null;
+  if (sigmaSource == null) {
+    throw new QuarterlyConeUnavailableError("13-week cone unavailable: no Schwab SPX ATM IV term structure and no 20-day realized vol");
+  }
+  const sched = Array.from({ length: WEEKS }, (_, i) => {
+    const { weekEnd, session } = weekEndSessionET(i + 1, nowMs);
+    const closeMs = sessionCloseMs(session) ?? nowMs;
+    return { weekEnd, T: Math.max(0, closeMs - nowMs) / YEAR_MS, n: Math.max(1, sessionsUntil(nowMs, session)) };
+  });
+  const nMax = Math.max(...sched.map((x) => x.n));
+  const varianceAt = (x: { T: number; n: number }): number =>
+    sigmaSource === "spx_atm_iv_term" ? (totalVarianceAt(ivTerm, x.T) ?? 0) : (rv as number) ** 2 * x.n / 252;
+
   const weeks: WeeklyPoint[] = [];
   let cumMagnetPull = 0;
   let eventWeeksCount = 0;
-  let varianceAccum = 0;  // Σ σ_i²
-  // Pre-compute baseline σ ladder for the magnet check (cumulative)
+  let prevW = 0;
   for (let k = 1; k <= WEEKS; k++) {
-    // NEW v2: segmented IV per week
-    const { iv: ivK, segment } = pickSegmentedVix(k, vix, vix9d, vix3m);
-
-    // NEW v2: event week σ bump
-    const weekEnd = weekEndDateET(k);
+    const { weekEnd, T, n } = sched[k - 1];
     const events: string[] = [];
     if (isOpexWeek(weekEnd)) events.push("OPEX");
     if (isFomcWeek(weekEnd)) events.push("FOMC");
-    const eventBump = events.length > 0 ? 1.12 : 1.0;
     if (events.length > 0) eventWeeksCount++;
 
-    // INCREMENTAL one-week σ — spot · (iv/100) · √(1/52) · vrpScale · damp · eventBump.
-    // The damp uses the cumulative week index so longer-horizon increments are
-    // mean-reverted, but each week's piece is still one-week sized.
-    const sigmaWeekIncr = spot * (ivK / 100) * Math.sqrt(1 / WEEKS_PER_YEAR)
-      * vrpScale * damp(k) * eventBump;
+    const w = Math.max(prevW, varianceAt({ T, n })); // total variance never decreases
+    const sd = Math.sqrt(w);
+    const zUp = studentTSumQuantileFft(P_ONE_SIGMA, n, 4, nMax);
+    const zDn = studentTSumQuantileFft(1 - P_ONE_SIGMA, n, 4, nMax);
+    const z90 = studentTSumQuantileFft(0.9, n, 4, nMax);
+    const z10 = studentTSumQuantileFft(0.1, n, 4, nMax);
+    const sigmaCum = spot * sd;                                  // 1 sd of log price, in price units
+    const sigmaWeekIncr = spot * Math.sqrt(Math.max(0, w - prevW));
+    prevW = w;
 
-    // Accumulate variance → cumulative σ for the cone
-    varianceAccum += sigmaWeekIncr * sigmaWeekIncr;
-    const sigmaCum = Math.sqrt(varianceAccum);
-
+    // Heuristic scenario line (NOT the median): hand-set tilts + anchor pulls.
     const driftK = totalDriftPerWeek * k;
     const unmagBase = spot * (1 + driftK);
-
-    // Magnet pull uses the cumulative σ — anchors only relevant when within reach
     const weeklyPull = computeMagnetPull(unmagBase, sigmaCum, spot, anchorList);
     cumMagnetPull += weeklyPull / WEEKS;
-    const base = unmagBase + cumMagnetPull;
+    const scenarioBase = unmagBase + cumMagnetPull;
 
-    const bull = base + sigmaCum;
-    const bear = base - sigmaCum;
+    // Median: zero drift.
+    const base = spot;
+    const bull = spot * Math.exp(zUp * sd);
+    const bear = spot * Math.exp(zDn * sd);
 
     weeks.push({
       weekIndex: k,
@@ -361,9 +419,15 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
       bear: parseFloat(bear.toFixed(2)),
       sigmaWeek: parseFloat(sigmaWeekIncr.toFixed(2)),
       sigmaCum: parseFloat(sigmaCum.toFixed(2)),
-      cumDriftPct: parseFloat((driftK * 100).toFixed(3)),
+      cumDriftPct: 0,
+      scenarioBase: parseFloat(scenarioBase.toFixed(2)),
+      scenarioDriftPct: parseFloat((((scenarioBase - spot) / spot) * 100).toFixed(3)),
       events: events.length > 0 ? events : undefined,
-      vixSegment: segment,
+      q10: parseFloat((spot * Math.exp(z10 * sd)).toFixed(2)),
+      q90: parseFloat((spot * Math.exp(z90 * sd)).toFixed(2)),
+      totalVariance: w,
+      sessions: n,
+      tYears: T,
     });
   }
 
@@ -412,9 +476,11 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
       skewTilt,
       totalDriftPerWeek,
       annualizedDrift: totalDriftPerWeek * WEEKS_PER_YEAR,
+      medianDriftPerWeek: 0,
+      tiltsInMedian: false,
       magnetCount: activeMagnets,
       vrpRatio,
-      vrpScale,
+      vrpScale: 1, // round 4: informational ratio only, NOT applied to the cone (was clamped RV/IV)
       eventWeeks: eventWeeksCount,
     },
     inputs: {
@@ -422,10 +488,18 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
       skew: skew ?? null,
       realizedVol20d: realizedVol20d ?? null,
     },
-    methodology:
-      "13-week σ-cone. Per-week incremental σ from VIX-segmented term structure (wk1-3 VIX9D, wk4 BLEND, " +
-      "wk5-7 VIX, wk8 BLEND, wk9-13 VIX3M), scaled by VRP (RV/IV clamped 0.7-1.3) and ×1.12 on OPEX/FOMC weeks. " +
-      "Cumulative σ(k) = √(Σ σ_i²) for monotonic cone growth. Drift = composite + GEX regime + VIX term + " +
-      "CBOE SKEW. Anchored by walls, gamma flip, max pain, JPM collar (within ±15% of spot, ±2σ reach, capped ±4%/wk).",
+    methodology: sigmaSource === "spx_atm_iv_term"
+      ? "13-week cone from the Schwab $SPX ATM implied-vol term structure: total variance w(T) interpolated linearly " +
+        "between listed expiries (running max, no calendar arbitrage) to each week's last session close; log price = " +
+        "sqrt(w) x standardised sum of n iid unit-variance Student-t(4) daily shocks. BASE = spot (zero drift); " +
+        "BULL/BEAR = 84.13%/15.87% quantiles; q10/q90 also given. No damping, VRP multiplier or event bump (OPEX/FOMC " +
+        "are tagged; the option prices carry them). Band coverage untested. The SCENARIO line (not a forecast, not in " +
+        "the median) adds hand-set tilts and anchor pulls."
+      : "13-week cone FALLBACK: no usable Schwab $SPX chain, so 20-day realized vol, unscaled (w = RV^2 x sessions/252); " +
+        "Student-t(4) daily-shock sum quantiles; BASE = spot; BULL/BEAR = 84.13%/15.87% quantiles. Band coverage untested. " +
+        "The SCENARIO line (not a forecast) adds hand-set tilts and anchor pulls.",
+    sigmaSource,
+    ivTerm: sigmaSource === "spx_atm_iv_term" ? ivTerm : undefined,
+    tailModel: "standardised sum of n iid unit-variance Student-t(4) daily shocks",
   };
 }

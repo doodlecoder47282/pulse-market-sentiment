@@ -1,0 +1,587 @@
+// WS5 tests: honest labels, Cosmos, UI wording, server security.
+// Run: node --experimental-transform-types --no-warnings \
+//   --import ./tests/quant/loader/register.mjs --test tests/quant/labels-security.test.ts
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+
+function walk(dir: string, out: string[] = []): string[] {
+  for (const name of readdirSync(dir)) {
+    if (name === "node_modules" || name === "dist" || name.startsWith(".")) continue;
+    const p = path.join(dir, name);
+    const st = statSync(p);
+    if (st.isDirectory()) walk(p, out);
+    else if (/\.(ts|tsx|js|mjs|cjs|json|md)$/.test(name)) out.push(p);
+  }
+  return out;
+}
+
+// ─── F11.1 webhooks come from the environment only ─────────────────────────
+
+test("F11.1: no Discord webhook URL is hard-coded in server, client, shared or docs", () => {
+  const files = [
+    ...walk(path.join(ROOT, "server")),
+    ...walk(path.join(ROOT, "client")),
+    ...walk(path.join(ROOT, "shared")),
+    ...walk(path.join(ROOT, "docs")),
+  ];
+  // Pattern assembled at runtime so this test file never contains one.
+  const re = new RegExp(["discord", "(app)?\\.com/api/", "webhooks/\\d+/"].join(""));
+  const hits = files.filter((f) => re.test(readFileSync(f, "utf8"))).map((f) => path.relative(ROOT, f));
+  assert.deepEqual(hits, []);
+});
+
+// Fake webhook-shaped URLs, assembled at runtime (not real credentials).
+const FAKE_HOOK = ["https://discord.com", "/api/", "webhooks/", "0/test-not-a-secret"].join("");
+
+test("F11.1: webhook resolution is env-only, blank = disabled, UOA falls back to whale", async () => {
+  const { resolveDiscordWebhook, webhookFromEnv } = await import("../../server/webhookConfig.ts");
+  const url = FAKE_HOOK;
+  assert.equal(resolveDiscordWebhook("main", {}), "");
+  assert.equal(resolveDiscordWebhook("main", { PULSE_DISCORD_WEBHOOK: "   " }), "");
+  assert.equal(resolveDiscordWebhook("main", { PULSE_DISCORD_WEBHOOK: ` ${url} ` }), url);
+  assert.equal(resolveDiscordWebhook("model", { PULSE_DISCORD_WEBHOOK: url }), "", "model must not borrow main");
+  assert.equal(resolveDiscordWebhook("uoa", { PULSE_DISCORD_WHALE_WEBHOOK: url }), url);
+  assert.equal(resolveDiscordWebhook("uoa", { PULSE_DISCORD_UOA_WEBHOOK: url + "2", PULSE_DISCORD_WHALE_WEBHOOK: url }), url + "2");
+  // An invalid UOA value disables the card; it does not silently reroute to whale.
+  assert.equal(resolveDiscordWebhook("uoa", { PULSE_DISCORD_UOA_WEBHOOK: "not a url", PULSE_DISCORD_WHALE_WEBHOOK: url }), "");
+  assert.equal(webhookFromEnv("X", { X: undefined }), "");
+});
+
+test("F11.1: disabled-webhook warning is logged once per card and never contains a URL", async () => {
+  const { warnWebhookDisabledOnce, _resetWebhookWarnings } = await import("../../server/webhookConfig.ts");
+  _resetWebhookWarnings();
+  const logs: string[] = [];
+  assert.equal(warnWebhookDisabledOnce("discord:whale", "PULSE_DISCORD_WHALE_WEBHOOK", (m) => logs.push(m)), true);
+  assert.equal(warnWebhookDisabledOnce("discord:whale", "PULSE_DISCORD_WHALE_WEBHOOK", (m) => logs.push(m)), false);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /PULSE_DISCORD_WHALE_WEBHOOK/);
+  assert.doesNotMatch(logs[0], /https?:/);
+});
+
+test("F11.1: .env.local.example lists every webhook and gate variable with an empty value", () => {
+  const env = readFileSync(path.join(ROOT, ".env.local.example"), "utf8");
+  for (const name of [
+    "PULSE_DISCORD_WEBHOOK", "PULSE_DISCORD_WHALE_WEBHOOK", "PULSE_DISCORD_UOA_WEBHOOK",
+    "PULSE_DISCORD_ODTE_WEBHOOK", "PULSE_DISCORD_MODEL_WEBHOOK", "BATCAVE_ACCESS_KEY",
+    "SCHWAB_CLIENT_ID", "SCHWAB_CLIENT_SECRET",
+  ]) {
+    assert.match(env, new RegExp(`^${name}=$`, "m"), `${name} must be present and empty`);
+  }
+});
+
+// ─── F11.2 access-key gate, CORS, self-call wrapper; F11.3 log line ────────
+
+type Captured = { status?: number; body?: unknown; headers: Record<string, string>; sent?: number };
+function fakeRes(c: Captured) {
+  const res = {
+    setHeader(n: string, v: string) { c.headers[n] = v; return res; },
+    status(code: number) { c.status = code; return res; },
+    json(b: unknown) { c.body = b; return res; },
+    sendStatus(code: number) { c.sent = code; return res; },
+  };
+  return res;
+}
+
+test("F11.2: gate is open when no key is configured (previous behavior)", async () => {
+  const { makeAccessGate } = await import("../../server/accessGate.ts");
+  let passed = false;
+  const c: Captured = { headers: {} };
+  makeAccessGate("")({ method: "GET", path: "/models", headers: {} }, fakeRes(c), () => { passed = true; });
+  assert.equal(passed, true);
+  assert.equal(c.status, undefined);
+});
+
+test("F11.2: with a key, missing or wrong header gets 401 batcave_auth_required; right header passes", async () => {
+  const { makeAccessGate, keyMatches } = await import("../../server/accessGate.ts");
+  const key = "test-key-not-a-secret";
+  const gate = makeAccessGate(key);
+  for (const hdr of [undefined, "", "wrong", key + "x", ["a", "b"]]) {
+    const c: Captured = { headers: {} };
+    let passed = false;
+    gate({ method: "POST", path: "/discord/test", headers: { "x-batcave-key": hdr } }, fakeRes(c), () => { passed = true; });
+    assert.equal(passed, false, `header ${JSON.stringify(hdr)} must not pass`);
+    assert.equal(c.status, 401);
+    assert.deepEqual(c.body, { error: "batcave_auth_required" });
+  }
+  const c: Captured = { headers: {} };
+  let passed = false;
+  gate({ method: "GET", path: "/models", headers: { "x-batcave-key": key } }, fakeRes(c), () => { passed = true; });
+  assert.equal(passed, true);
+  assert.equal(keyMatches(key, ""), false, "empty configured key never matches");
+});
+
+test("F11.2: CORS headers only for allowlisted origins; preflight answered 204", async () => {
+  const { makeCorsMiddleware, parseAllowedOrigins } = await import("../../server/accessGate.ts");
+  const allowed = parseAllowedOrigins(" https://ui.example.com/ , ,https://b.example.com");
+  assert.ok(allowed.has("capacitor://localhost"));
+  assert.ok(allowed.has("https://ui.example.com"));
+  assert.ok(!allowed.has(""));
+  const mw = makeCorsMiddleware(allowed);
+
+  const ok: Captured = { headers: {} };
+  let n1 = false;
+  mw({ method: "GET", path: "/models", headers: { origin: "capacitor://localhost" } }, fakeRes(ok), () => { n1 = true; });
+  assert.equal(ok.headers["Access-Control-Allow-Origin"], "capacitor://localhost");
+  assert.match(ok.headers["Access-Control-Allow-Headers"], /x-batcave-key/);
+  assert.equal(n1, true);
+
+  const evil: Captured = { headers: {} };
+  mw({ method: "GET", path: "/models", headers: { origin: "https://evil.example" } }, fakeRes(evil), () => {});
+  assert.equal(evil.headers["Access-Control-Allow-Origin"], undefined);
+
+  const pre: Captured = { headers: {} };
+  let n2 = false;
+  mw({ method: "OPTIONS", path: "/models", headers: { origin: "capacitor://localhost" } }, fakeRes(pre), () => { n2 = true; });
+  assert.equal(pre.sent, 204);
+  assert.equal(n2, false);
+});
+
+test("F11.2 (d40db7d): self-calls to own port carry the key; other hosts never see it", async () => {
+  const { makeSelfCallFetch } = await import("../../server/accessGate.ts");
+  const seen: Array<{ url: string; key: string | null }> = [];
+  const base = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const h = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    seen.push({ url, key: h.get("x-batcave-key") });
+    return new Response("{}");
+  }) as typeof fetch;
+  const f = makeSelfCallFetch(base, "k1", 5000);
+  await f("http://127.0.0.1:5000/api/heatseeker", { headers: { Accept: "application/json" } });
+  await f(new URL("http://localhost:5000/api/models"));
+  await f(new Request("http://127.0.0.1:5000/api/quotes", { headers: { "X-Other": "1" } }));
+  await f("http://127.0.0.1:5001/health"); // ML service on another port
+  await f("https://api.schwabapi.com/marketdata/v1/quotes");
+  await f("http://127.0.0.1:50000/api/models"); // prefix must include the trailing slash
+  assert.deepEqual(seen.map((s) => s.key), ["k1", "k1", "k1", null, null, null]);
+});
+
+test("F11.3: request log line has method, path, status, duration and no body", async () => {
+  const { formatRequestLog } = await import("../../server/accessGate.ts");
+  assert.equal(formatRequestLog("GET", "/api/schwab/status", 200, 12), "GET /api/schwab/status 200 in 12ms");
+  assert.equal(formatRequestLog.length, 4, "no body parameter");
+  const idx = readFileSync(path.join(ROOT, "server/index.ts"), "utf8");
+  assert.doesNotMatch(idx, /JSON\.stringify\(captured/);
+  assert.doesNotMatch(idx, /res\.json = function/);
+});
+
+test("F11.2: every client fetch goes through queryClient and carries the key header", () => {
+  const files = walk(path.join(ROOT, "client/src")).filter((f) => /\.(ts|tsx)$/.test(f));
+  const offenders = files.filter((f) => {
+    if (f.endsWith(path.join("lib", "queryClient.ts")) || f.endsWith("ConnectionGate.tsx")) return false;
+    return /(^|[^.\w])fetch\(/.test(readFileSync(f, "utf8"));
+  });
+  assert.deepEqual(offenders.map((f) => path.relative(ROOT, f)), []);
+  const qc = readFileSync(path.join(ROOT, "client/src/lib/queryClient.ts"), "utf8");
+  assert.equal((qc.match(/authHeaders\(\)/g) ?? []).length >= 2, true);
+});
+
+// ─── F4.2 signed tick volume (tick rule) and bulk volume classification ────
+
+test("F4.2: normalCdf matches standard normal table values", async () => {
+  const { normalCdf } = await import("../../server/signedVolume.ts");
+  // Reference: scipy.stats.norm.cdf; Abramowitz & Stegun 7.1.26 error < 1.5e-7.
+  assert.ok(Math.abs(normalCdf(0) - 0.5) < 2e-7);
+  assert.ok(Math.abs(normalCdf(1) - 0.8413447461) < 2e-7);
+  assert.ok(Math.abs(normalCdf(1.96) - 0.9750021048) < 2e-7);
+  assert.ok(Math.abs(normalCdf(-1) - 0.1586552539) < 2e-7);
+});
+
+test("F4.2: tick rule on bars signs whole-bar volume, zero tick keeps the last sign", async () => {
+  const { signedTickVolumeBars } = await import("../../server/signedVolume.ts");
+  const closes = [100, 101, 101, 100, 100, 102];
+  const vols = [5, 10, 20, 30, 40, 50];
+  const bars = signedTickVolumeBars(closes.map((c, i) => ({ datetime: i, close: c, volume: vols[i] })));
+  // Hand-computed: up, zero(keep up), down, zero(keep down), up.
+  assert.deepEqual(bars.map((b) => b.direction), [1, 1, -1, -1, 1]);
+  assert.deepEqual(bars.map((b) => b.signedVolume), [10, 20, -30, -40, 50]);
+  assert.deepEqual(bars.map((b) => b.cumulative), [10, 30, 0, -40, 10]);
+  // Leading zero ticks have no prior sign: volume is left unsigned (0).
+  const flatStart = signedTickVolumeBars([100, 100, 101].map((c, i) => ({ datetime: i, close: c, volume: 7 })));
+  assert.deepEqual(flatStart.map((b) => b.signedVolume), [0, 7]);
+});
+
+test("F4.2: bulk volume classification (ELO 2012 eq. 7) with past-only sigma and missing volume left missing", async () => {
+  const { bulkVolumeClassify, BVC_MIN_PAST_CHANGES } = await import("../../server/signedVolume.ts");
+  assert.equal(BVC_MIN_PAST_CHANGES, 10);
+  // dP = ten alternating +/-1, then +2, -1, 0. Volumes 5 x10, then 100, missing, 40.
+  const dP = [1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 2, -1, 0];
+  const vols: (number | null)[] = [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 100, null, 40];
+  const closes = [100];
+  for (const d of dP) closes.push(closes[closes.length - 1] + d);
+  const candles = closes.map((c, i) => ({ datetime: i, close: c, volume: i === 0 ? 0 : vols[i - 1] }));
+  const r = bulkVolumeClassify(candles);
+  // First 10 bars have < 10 past changes: unclassified.
+  assert.deepEqual(r.buyFraction.slice(0, 10), Array(10).fill(null));
+  // Bar 11: sigma of the 10 past changes = sqrt(10/9) = 1.0540926; Phi(2/1.0540926) = 0.9711102 (scipy).
+  assert.ok(Math.abs((r.buyFraction[10] ?? 0) - 0.9711102144) < 1e-6);
+  // Bar 12: missing volume -> unclassified, not zero volume.
+  assert.equal(r.buyFraction[11], null);
+  assert.equal(r.barsMissingVolume, 1);
+  // Bar 13: dP = 0 -> 0.5.
+  assert.ok(Math.abs((r.buyFraction[12] ?? 0) - 0.5) < 2e-7); // A&S 7.1.26 error bound
+  // Signed = 100 x (2 x 0.9711102 - 1) + 40 x 0 = 94.2220429 (scipy).
+  assert.ok(Math.abs((r.cumulativeSigned ?? 0) - 94.22204289) < 1e-4); // 200 x A&S CDF error bound
+  assert.equal(r.barsClassified, 2);
+  // sigma reported for the last bar uses the 12 changes before it: 1.1645002 (numpy ddof=1).
+  assert.ok(Math.abs(r.sigma - 1.1645001529) < 1e-9);
+
+  // No look-ahead: changing a later bar never changes an earlier classification.
+  const later = candles.map((c, i) => (i === candles.length - 1 ? { ...c, close: c.close + 50 } : c));
+  const r2 = bulkVolumeClassify(later);
+  assert.deepEqual(r2.buyFraction.slice(0, 12), r.buyFraction.slice(0, 12));
+  // Too few bars: nothing classified -> null, not 0.
+  const short = bulkVolumeClassify(candles.slice(0, 5));
+  assert.equal(short.cumulativeSigned, null);
+  assert.equal(short.barsClassified, 0);
+});
+
+test("F4.2: signedVolume no longer cites trade-level studies to justify the bar-level tick rule", () => {
+  const src = readFileSync(path.join(ROOT, "server/signedVolume.ts"), "utf8");
+  assert.doesNotMatch(src, /keeps the tick rule because Chakrabarty/);
+  assert.match(src, /TRADE-level tick rule/);
+  assert.doesNotMatch(src, /candles\[i \+ 1\]\.volume \|\| 0/);
+});
+
+// ─── F4.1 / F4.2 / F12.3 wording scans ─────────────────────────────────────
+
+// Scans code lines that can reach a screen, API or alert. Pure comment lines
+// (//, *, {/* ... */}) are skipped: some engine comments in files owned by
+// other workstreams still say "Lee-Ready" and are not user-visible.
+function scan(dirs: string[], re: RegExp): string[] {
+  const out: string[] = [];
+  for (const d of dirs) {
+    for (const f of walk(path.join(ROOT, d)).filter((p) => /\.(ts|tsx)$/.test(p))) {
+      readFileSync(f, "utf8").split("\n").forEach((line, i) => {
+        const t = line.trim();
+        if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*") || t.startsWith("{/*")) return;
+        if (re.test(line)) out.push(`${path.relative(ROOT, f)}:${i + 1}`);
+      });
+    }
+  }
+  return out;
+}
+
+test("F4.1: no UI or API text calls heavy contracts 'blocks' or the last-print side 'aggressor flow'", () => {
+  const re = /Aggressor Flow|who paid up|BLOCK TRADE|Block-level activity|surgical options? blocks|whale print\(s\)|block trades,|\$\{c\.tag\} aggressor|>aggressor tag</;
+  assert.deepEqual(scan(["client/src", "server", "shared"], re), []);
+});
+
+test("F4.2/F12.3: no component or alert text calls the tick-rule read Lee-Ready or OFI", () => {
+  const re = /Lee-Ready (OFI|classifier|order-flow|classification|1-min)|\(Lee-Ready\)|OFI trend \(Lee-Ready\)|Order Flow · 1m signed volume|`OFI: |`OFI \$\{/;
+  assert.deepEqual(scan(["client/src", "server"], re), []);
+});
+
+test("F4.1: shared labels say what the data is", async () => {
+  const L = await import("../../shared/flowLabels.ts");
+  assert.equal(L.HEAVY_CONTRACTS, "heavy contracts");
+  assert.equal(L.LAST_PRINT_SIDE, "last-print side");
+  assert.equal(L.SIGNED_TICK_VOLUME, "signed tick volume");
+  assert.match(L.HEAVY_CONTRACT_NOTE, /not a block print/);
+  assert.match(L.LAST_PRINT_SIDE_NOTE, /Not trade-by-trade/);
+  assert.match(L.SIGNED_TICK_VOLUME_NOTE, /Not Lee-Ready/);
+});
+
+// ─── F9.2 / F12.1 Projected Path relabel ───────────────────────────────────
+
+test("F9.2/F12.1 + R2-F: Projected Path draws a promoted model or the labeled baseline cone, no confidence claims", () => {
+  const panel = readFileSync(path.join(ROOT, "client/src/components/MLProjectionPanel.tsx"), "utf8");
+  const info = readFileSync(path.join(ROOT, "client/src/components/EdgeInfo.tsx"), "utf8");
+  const sched = readFileSync(path.join(ROOT, "server/discordScheduler.ts"), "utf8");
+  // R2-F: the drawn band is the server's served band (promotion-gated); otherwise the baseline cone, labeled.
+  assert.match(panel, /const BASELINE_LABEL = "baseline volatility cone"/);
+  assert.match(panel, /const learned = served\?\.learned === true/);
+  // Verdict colour only when a promoted model is drawn (R2-F item 8).
+  assert.match(panel, /learned && lean === "UP"/);
+  assert.doesNotMatch(panel, /basePx = basePx \+ \(near\.value - basePx\)/, "no gamma-snap on the drawn median");
+  for (const banned of [/where the model thinks price goes/, /high conviction/, /the model is confident/, /higher confidence in the path/]) {
+    assert.doesNotMatch(panel, banned);
+  }
+  const ml = info.slice(info.indexOf('"ml-forecast"'), info.indexOf('"trade-desk"'));
+  assert.match(ml, /baseline volatility cone/);
+  assert.match(ml, /promotion gate/);
+  assert.doesNotMatch(ml, /machine-learned forecast|model is confident/);
+  assert.doesNotMatch(sched, /`ML 30m:|consider passing/);
+});
+
+// ─── F6.1 Ticker Outlook: no Kelly size, heuristic scenario weights ────────
+
+test("F6.1: Outlook reports no size and never takes kellyFrac from the composite or an LLM", async () => {
+  const M = await import("../../server/outlookVerdictMath.ts");
+  assert.deepEqual(M.noOutlookSizing(), { available: false, reason: M.NO_SIZE_REASON });
+  assert.match(M.NO_SIZE_REASON, /no fitted win probability/);
+  const src = readFileSync(path.join(ROOT, "server/tickerOutlook.ts"), "utf8");
+  // Old formulas: |c|/100 x 0.25 and Number(raw.kellyFrac ...) from the model.
+  assert.doesNotMatch(src, /Math\.abs\(c\) \/ 100\) \* 0\.25/);
+  assert.doesNotMatch(src, /raw\.kellyFrac/);
+  assert.equal((src.match(/kellyFrac: 0,/g) ?? []).length, 2, "both verdict paths pin kellyFrac to 0");
+  assert.doesNotMatch(src, /"kellyFrac": <0-1 number>/, "LLM prompt no longer asks for a size");
+  const card = readFileSync(path.join(ROOT, "client/src/components/TickerOutlookCard.tsx"), "utf8");
+  assert.doesNotMatch(card, /label="kelly"|quarter-Kelly|v\.kellyFrac \* 100/);
+  const email = readFileSync(path.join(ROOT, "server/alphaEmailComposer.ts"), "utf8");
+  assert.doesNotMatch(email, /parts\.push\(`size \$\{t\.sizingKelly\}`\)|max loss \$\{t\.maxLoss\}/);
+});
+
+test("F6.1: scenario weights are integers in [0,100] summing to exactly 100", async () => {
+  const { normalizeScenarioWeights } = await import("../../server/outlookVerdictMath.ts");
+  const fb = { bull: 30, bear: 30 };
+  // Hand-computed: 70 + 60 = 130 > 100 -> scale by 100/130: 53.85 -> 54, 46.15 -> 46, base 0.
+  assert.deepEqual(normalizeScenarioWeights(70, 60, fb), { bull: 54, base: 0, bear: 46 });
+  // Normal case: 50 / 20 -> base 30.
+  assert.deepEqual(normalizeScenarioWeights(50, 20, fb), { bull: 50, base: 30, bear: 20 });
+  // Non-numeric falls back; negatives clamp to 0.
+  assert.deepEqual(normalizeScenarioWeights("abc", undefined, fb), { bull: 30, base: 40, bear: 30 });
+  assert.deepEqual(normalizeScenarioWeights(-5, 40, fb), { bull: 0, base: 60, bear: 40 });
+  for (const [b, x] of [[33.3, 33.3], [99.6, 0.6], [150, 150], [0.4, 0.4], [100, 0]] as const) {
+    const w = normalizeScenarioWeights(b, x, fb);
+    assert.equal(w.bull + w.base + w.bear, 100, `${b}/${x}`);
+    for (const v of [w.bull, w.base, w.bear]) assert.ok(Number.isInteger(v) && v >= 0 && v <= 100);
+  }
+});
+
+// ─── F5.1 Cosmos: context only, no trade instructions, nothing consumes it ──
+
+// Phrases that would make Cosmos a trading instruction or direction call.
+const COSMOS_INSTRUCTION_RE =
+  /\b(size (up|down|longs?|normally)|normal sizing|reduce (gross |position |directional )?(exposure|size|risk|leverage)|reduce leverage|tighten stops|put spreads?|iron condors?|hedge via|hedges? on|scale-in|fade (rips|conviction)|load put|lean long|short[- ]bias|long[- ]bias|contrarian longs|favou?red|avoid (initiating|new|confrontational)|entry windows?|strong window for entries|close only|swing-long|rotate toward|trust breakouts|trimming longs|trade your system|bullish|bearish|risk-on bias|contraction bias)\b/i;
+const EMOJI_RE = /[\u{1F300}-\u{1FAFF}]/u;
+
+function cosmosTexts(C: any, date: Date): string[] {
+  const snap = C.buildCosmosSnapshot(date);
+  const out: string[] = [snap.dailyBriefMarkdown];
+  for (const s of snap.financialSignals) out.push(s.headline, s.detail, ...s.impacts);
+  for (const z of snap.zodiacReadings) out.push(z.headline, z.detail, z.luckyWindow);
+  for (const o of [C.buildWeeklyOutlook(date), C.buildMonthlyOutlook(date)]) {
+    out.push(o.markdown);
+    for (const e of o.events) out.push(e.headline, e.detail);
+  }
+  for (const v of Object.values(C.taxonomyLiveStates(snap, null)) as any[]) out.push(v.currentValue ?? "", v.badge ?? "");
+  return out;
+}
+
+test("F5.1: Cosmos output over two years has no trade instruction, direction call or emoji", async () => {
+  const C = await import("../../server/cosmos.ts");
+  const statics: string[] = [
+    C.HONEST_EDGE_ASSESSMENT, C.COSMOS_DISCLAIMER,
+    ...C.TAXONOMY.flatMap((t: any) => [t.description, ...t.tags]),
+    ...C.BOOKS.map((b: any) => b.summary),
+    ...C.ACADEMIC_PAPERS.map((p: any) => p.finding),
+    ...C.EDGE_RULES.flatMap((r: any) => [r.title, r.body]),
+  ];
+  for (const t of statics) {
+    assert.doesNotMatch(t, COSMOS_INSTRUCTION_RE, t.slice(0, 80));
+    assert.doesNotMatch(t, EMOJI_RE);
+  }
+  // Every 17 days for two years (43 dates; 17 is not a multiple of the 29.5-day
+  // lunar month, so snapshot dates sweep every phase). Each date also scans
+  // the next 30 days of events, so every station, ingress and Bradley zone
+  // change in the window is covered.
+  const start = Date.UTC(2025, 0, 1, 15);
+  let n = 0;
+  for (let d = 0; d < 730; d += 17) {
+    const date = new Date(start + d * 86_400_000);
+    for (const t of cosmosTexts(C, date)) {
+      const m = t.match(COSMOS_INSTRUCTION_RE);
+      assert.equal(m, null, `${date.toISOString()}: "${m?.[0]}" in: ${t.slice(0, 120)}`);
+      assert.doesNotMatch(t, EMOJI_RE);
+      n++;
+    }
+    const snap = C.buildCosmosSnapshot(date);
+    for (const s of snap.financialSignals) {
+      assert.equal(s.severity, "info");
+      assert.ok(typeof s.evidence === "string" && s.evidence.length > 0);
+    }
+    const w = C.buildWeeklyOutlook(date);
+    assert.equal(w.netBias, "neutral");
+    assert.ok(w.events.every((e: any) => e.bias === "neutral" && typeof e.evidence === "string"));
+    assert.match(w.markdown, /not a trading signal/);
+    assert.equal(snap.disclaimer, C.COSMOS_DISCLAIMER);
+  }
+  assert.ok(n > 500);
+});
+
+test("F5.1: only lunar, geomagnetic and SAD items claim any study; the LLM prompt forbids trades", async () => {
+  const C = await import("../../server/cosmos.ts");
+  const studied = C.TAXONOMY.filter((t: any) => t.evidence !== "no peer-reviewed support").map((t: any) => t.id).sort();
+  assert.deepEqual(studied, ["full_moon", "geomagnetic_storm", "new_moon", "sad_seasonal"]);
+  assert.equal(C.TAXONOMY.find((t: any) => t.id === "sad_seasonal").evidence, "peer-reviewed, disputed");
+  // Yuan, Zheng & Zhu (2006, JEF 13(1)): 3-5% a year; 3%/252 to 5%/252 = 1.2 to 2.0 bp a day.
+  assert.match(C.LUNAR_EVIDENCE_NOTE, /3-5% a year/);
+  assert.match(C.LUNAR_EVIDENCE_NOTE, /1-2 basis points a day/);
+  assert.match(C.OUTLOOK_SYSTEM_PROMPT, /For entertainment and context, not a trading signal\./);
+  assert.match(C.OUTLOOK_SYSTEM_PROMPT, /Do NOT give trade instructions, position sizes/);
+  assert.doesNotMatch(C.OUTLOOK_SYSTEM_PROMPT, /trade playbook|sizing, sector tilts, hedging, specific setups/);
+});
+
+test("F5.1: mean lunar node matches Meeus eq. 47.7 (replaces a stale hard-coded sign)", async () => {
+  const C = await import("../../server/cosmos.ts");
+  // T = 0 at J2000.0 (2000-01-01 12:00 TT ~ UTC here): Omega = 125.0445479 deg (Meeus 47.7).
+  assert.ok(Math.abs(C.meanLunarNodeLongitude(new Date(Date.UTC(2000, 0, 1, 12))) - 125.0445479) < 1e-6);
+  // One Julian year later: -1934.1362891/100 = -19.3413629 deg per year (plus negligible T^2 terms).
+  const a = C.meanLunarNodeLongitude(new Date(Date.UTC(2000, 0, 1, 12)));
+  const b = C.meanLunarNodeLongitude(new Date(Date.UTC(2000, 0, 1, 12) + 365.25 * 86_400_000));
+  assert.ok(Math.abs(((a - b + 360) % 360) - 19.3413629) < 1e-4);
+  const snap = C.buildCosmosSnapshot(new Date(Date.UTC(2026, 9, 8, 15)));
+  // 2026-10-08: Omega ~ 327.3 deg = Aquarius 27.3 (hand-computed from 47.7).
+  assert.match(C.taxonomyLiveStates(snap, null).node_cycle.currentValue, /Aquarius 27\.\d/);
+});
+
+test("F5.1: no engine or other panel consumes Cosmos output", () => {
+  const serverImporters = walk(path.join(ROOT, "server"))
+    .filter((f) => /\.ts$/.test(f) && !f.endsWith(path.join("server", "cosmos.ts")))
+    .filter((f) => /from ["']\.\/cosmos(\.js)?["']/.test(readFileSync(f, "utf8")))
+    .map((f) => path.relative(ROOT, f));
+  assert.deepEqual(serverImporters, ["server/routes.ts"], "only routes.ts (the Cosmos tab endpoints) may import cosmos.ts");
+  const routes = readFileSync(path.join(ROOT, "server/routes.ts"), "utf8");
+  // Engines call each other over HTTP; none may fetch the Cosmos endpoints.
+  const selfCalls = walk(path.join(ROOT, "server")).filter((f) => /\.ts$/.test(f))
+    .filter((f) => /fetch\([^)]*\/api\/cosmos/.test(readFileSync(f, "utf8")));
+  assert.deepEqual(selfCalls, []);
+  assert.ok(routes.includes('app.get("/api/cosmos"'));
+  const clientReaders = walk(path.join(ROOT, "client/src"))
+    .filter((f) => /\.(ts|tsx)$/.test(f))
+    .filter((f) => /\/api\/cosmos/.test(readFileSync(f, "utf8")))
+    .map((f) => path.relative(ROOT, f));
+  assert.deepEqual(clientReaders, ["client/src/components/CosmosPanel.tsx"]);
+});
+
+// ─── Fix round (WS4 review) ────────────────────────────────────────────────
+
+test("review 1: fail closed on a reachable bind without a key; loopback stays open", async () => {
+  const G = await import("../../server/accessGate.ts");
+  assert.equal(G.resolveBindHost({}), "127.0.0.1");
+  assert.equal(G.resolveBindHost({ RAILWAY_ENVIRONMENT: "production" }), "0.0.0.0");
+  assert.equal(G.resolveBindHost({ HOST: "::1", RAILWAY_ENVIRONMENT: "x" }), "::1");
+  for (const h of ["127.0.0.1", "127.1.2.3", "localhost", "::1", "[::1]"]) assert.equal(G.isLoopbackHost(h), true, h);
+  for (const h of ["0.0.0.0", "::", "10.0.0.5", "192.168.1.2", "example.com"]) assert.equal(G.isLoopbackHost(h), false, h);
+  assert.equal(G.gateMode({}), "open-loopback");
+  assert.equal(G.gateMode({ HOST: "0.0.0.0" }), "closed");
+  assert.equal(G.gateMode({ RAILWAY_ENVIRONMENT: "p" }), "closed");
+  assert.equal(G.gateMode({ RAILWAY_ENVIRONMENT: "p", BATCAVE_ALLOW_OPEN: "1" }), "open-explicit");
+  assert.equal(G.gateMode({ RAILWAY_ENVIRONMENT: "p", BATCAVE_ALLOW_OPEN: "true" }), "closed", "only the exact value 1 opens");
+  assert.equal(G.gateMode({ RAILWAY_ENVIRONMENT: "p", BATCAVE_ACCESS_KEY: "k".repeat(40) }), "key");
+
+  const internal = G.newInternalKey();
+  assert.equal(internal.length, 64);
+  const closed = G.makeAccessGate("", { failClosed: true, internalKey: internal });
+  const c: Captured = { headers: {} };
+  let passed = false;
+  closed({ method: "GET", path: "/models", headers: {} }, fakeRes(c), () => { passed = true; });
+  assert.equal(passed, false);
+  assert.equal(c.status, 503);
+  assert.deepEqual(c.body, { error: "batcave_access_key_required" });
+  // The engines' self-calls carry the per-process internal key and pass.
+  let selfPassed = false;
+  closed({ method: "GET", path: "/heatseeker", headers: { "x-batcave-key": internal } }, fakeRes({ headers: {} }), () => { selfPassed = true; });
+  assert.equal(selfPassed, true);
+  // Loopback, no key: open as before.
+  let openPassed = false;
+  G.makeAccessGate("", { failClosed: false })({ method: "GET", path: "/models", headers: {} }, fakeRes({ headers: {} }), () => { openPassed = true; });
+  assert.equal(openPassed, true);
+  assert.equal(G.healthPayload(false, new Date(0), true).locked, true);
+  // /api/health is registered before the gate in server/index.ts.
+  const idx = readFileSync(path.join(ROOT, "server/index.ts"), "utf8");
+  assert.ok(idx.indexOf('app.get("/api/health"') < idx.indexOf('app.use("/api", makeAccessGate('));
+  const envEx = readFileSync(path.join(ROOT, ".env.local.example"), "utf8");
+  assert.match(envEx, /^BATCAVE_ALLOW_OPEN=$/m);
+});
+
+test("review 3: short-key boot warning and per-IP slowdown on repeated 401s", async () => {
+  const G = await import("../../server/accessGate.ts");
+  const w = G.gateWarnings({ BATCAVE_ACCESS_KEY: "short-key" });
+  assert.equal(w.length, 1);
+  assert.match(w[0], /shorter than 32/);
+  assert.doesNotMatch(w[0], /short-key/, "warning never echoes the key");
+  assert.deepEqual(G.gateWarnings({ BATCAVE_ACCESS_KEY: "x".repeat(32) }), []);
+  // Delay schedule: 5 free failures, then 250, 500, 1000 ... capped at 8000 ms.
+  assert.deepEqual([1, 5, 6, 7, 8, 11, 30].map(G.failureDelayMs), [0, 0, 250, 500, 1000, 8000, 8000]);
+
+  const key = "k".repeat(40);
+  let t = 0;
+  const delays: number[] = [];
+  const gate = G.makeAccessGate(key, {
+    tracker: new G.FailureTracker(),
+    now: () => t,
+    schedule: (fn, ms) => { delays.push(ms); fn(); },
+  });
+  const hit = (k: string | undefined, ip: string) => {
+    const c: Captured = { headers: {} };
+    let passed = false;
+    gate({ method: "GET", path: "/x", headers: { "x-batcave-key": k }, ip }, fakeRes(c), () => { passed = true; });
+    return { c, passed };
+  };
+  for (let i = 0; i < 5; i++) assert.equal(hit("bad", "1.1.1.1").c.status, 401);
+  assert.deepEqual(delays, [], "first five failures are not delayed");
+  assert.equal(hit("bad", "1.1.1.1").c.status, 401);
+  assert.deepEqual(delays, [250]);
+  assert.equal(hit("bad", "2.2.2.2").c.status, 401, "other IPs are not slowed");
+  assert.deepEqual(delays, [250]);
+  assert.equal(hit(key, "1.1.1.1").passed, true, "a correct key is never delayed");
+  hit("bad", "1.1.1.1");
+  assert.deepEqual(delays, [250], "success clears the IP's failures");
+  t += G.FAIL_WINDOW_MS + 1;
+  for (let i = 0; i < 6; i++) hit("bad", "2.2.2.2");
+  assert.deepEqual(delays, [250, 250], "window resets after 10 minutes");
+});
+
+test("review 2: webhook values are validated; errors are logged without the URL", async () => {
+  const W = await import("../../server/webhookConfig.ts");
+  assert.equal(W.isValidDiscordWebhookUrl(FAKE_HOOK), true);
+  assert.equal(W.isValidDiscordWebhookUrl(FAKE_HOOK.replace("discord.com", "discordapp.com")), true);
+  for (const bad of [
+    "not a url",
+    FAKE_HOOK.replace("https:", "http:"),
+    FAKE_HOOK.replace("discord.com", "discord.com.evil.example"),
+    FAKE_HOOK.replace("discord.com", "evil.example"),
+    FAKE_HOOK.replace("https://", "https://user:pw@"),
+    FAKE_HOOK.replace("/api/webhooks/", "/other/"),
+  ]) assert.equal(W.isValidDiscordWebhookUrl(bad), false, bad);
+
+  W._resetWebhookWarnings();
+  const logs: string[] = [];
+  const secretish = "https://evil.example/" + "x".repeat(20);
+  assert.equal(W.webhookOrWarn("main", "card", { PULSE_DISCORD_WEBHOOK: secretish }, (m) => logs.push(m)), "");
+  assert.equal(W.webhookOrWarn("main", "card", { PULSE_DISCORD_WEBHOOK: secretish }, (m) => logs.push(m)), "");
+  assert.equal(logs.length, 1, "warned once");
+  assert.match(logs[0], /PULSE_DISCORD_WEBHOOK is not a valid/);
+  assert.doesNotMatch(logs[0], /evil\.example|xxxx/);
+  assert.equal(W.webhookOrWarn("model", "m", { PULSE_DISCORD_MODEL_WEBHOOK: FAKE_HOOK }), FAKE_HOOK);
+
+  // A fetch-style error whose message contains the URL is summarized without it.
+  const err = Object.assign(new TypeError(`fetch failed ${FAKE_HOOK}`), { cause: { code: "ECONNRESET" } });
+  assert.equal(W.safeErrorSummary(err), "TypeError (ECONNRESET)");
+  assert.equal(W.safeErrorSummary("boom"), "Error");
+  // No send site logs e.message any more.
+  for (const f of ["discord.ts", "calibrationCard.ts", "discordBatcaveCard.ts", "discordFlowCard.ts", "discordUoaCard.ts"]) {
+    const src = readFileSync(path.join(ROOT, "server", f), "utf8");
+    assert.doesNotMatch(src, /(webhook|\$\{ticker\}|discordUoaCard\]) failed: \$\{e\?\.message/, f);
+  }
+});
+
+test("review 4: http:// server URLs only for loopback or private-network hosts", async () => {
+  const { serverUrlProblem, isPrivateOrLoopbackHost } = await import("../../client/src/lib/serverUrl.ts");
+  for (const ok of ["https://x.up.railway.app", "http://localhost:5000", "http://127.0.0.1:5000", "http://192.168.1.20:5000",
+    "http://10.0.0.2", "http://172.16.0.1", "http://172.31.255.255", "http://[::1]:5000", "http://[fd12::1]", "http://batcave.local"]) {
+    assert.equal(serverUrlProblem(ok), null, ok);
+  }
+  for (const bad of ["http://x.up.railway.app", "http://8.8.8.8", "http://172.32.0.1", "http://192.169.0.1", "ftp://host", "nonsense"]) {
+    assert.notEqual(serverUrlProblem(bad), null, bad);
+  }
+  assert.equal(isPrivateOrLoopbackHost("169.254.1.1"), true);
+  assert.equal(isPrivateOrLoopbackHost("11.0.0.1"), false);
+});
+
+test("review 5: any training_data other than \"real\" (e.g. synthetic_gbm) is simulated; coverage wording stays true", () => {
+  const panel = readFileSync(path.join(ROOT, "client/src/components/MLProjectionPanel.tsx"), "utf8");
+  assert.match(panel, /training_data\?: string \| null;/);
+  assert.doesNotMatch(panel, /training_data\?: "synthetic" \| "real"/);
+  // Must remain true once /api/ml/coverage exists: no claim that coverage is unscored.
+  assert.doesNotMatch(panel, /not yet scored|coverage unverified/);
+  // Same rule as isSimTrained(): only "real" counts as real training.
+  const isSim = (v: string | null | undefined) => (v ?? "synthetic") !== "real";
+  assert.deepEqual(["synthetic_gbm", "synthetic", null, undefined, "real"].map(isSim), [true, true, true, true, false]);
+});

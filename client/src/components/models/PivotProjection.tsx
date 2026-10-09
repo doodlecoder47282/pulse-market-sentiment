@@ -200,7 +200,7 @@ export default function PivotProjection({
             <div className="text-[11px] uppercase tracking-[0.2em] text-amber-300/80">
               Pivot Point Projection
             </div>
-            <div className="text-[10px] text-muted-foreground">
+            <div className="text-[11px] text-muted-foreground">
               1-2 month directional outlook · monthly classic + quarterly fib +
               gamma walls + SMAs + volume nodes
             </div>
@@ -212,7 +212,7 @@ export default function PivotProjection({
                 key={s}
                 variant={symbol === s ? "secondary" : "ghost"}
                 size="sm"
-                className="h-6 px-2 text-[10px]"
+                className="h-6 px-2 text-[11px]"
                 onClick={() => setSymbol(s)}
                 data-testid={`btn-pivot-${s}`}
               >
@@ -250,13 +250,13 @@ export default function PivotProjection({
                   <Badge
                     key={i}
                     variant="outline"
-                    className={`px-2 py-1 text-[10px] ${patternColor(p.setup)}`}
+                    className={`px-2 py-1 text-[11px] ${patternColor(p.setup)}`}
                     data-testid={`badge-pattern-${p.setup}`}
                   >
                     <span className="font-bold uppercase tracking-wider">{patternLabel(p.setup)}</span>
                     <span className="ml-2 text-muted-foreground/80">{p.message}</span>
-                    <span className="ml-2 font-mono text-[9px] opacity-70">
-                      {(p.confidence * 100).toFixed(0)}%
+                    <span className="ml-2 font-mono text-[11px] opacity-70">
+                      score {(p.confidence * 100).toFixed(0)}/100
                     </span>
                   </Badge>
                 ))}
@@ -443,22 +443,22 @@ export default function PivotProjection({
               if (!lv) return null;
               const reactions = data.historicalReactions[lv.label] ?? 0;
               return (
-                <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/5 p-3 font-mono text-[10px]">
+                <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/5 p-3 font-mono text-[11px]">
                   <div className="flex items-center gap-2">
                     <Target className="h-3 w-3 text-amber-400" />
                     <span className="font-bold text-amber-300">{lv.label}</span>
                     <span className="text-muted-foreground">·</span>
                     <span className="text-foreground">{lv.price.toFixed(2)}</span>
                     <span className="text-muted-foreground">·</span>
-                    <Badge variant="outline" className="px-1 py-0 text-[8px]">
+                    <Badge variant="outline" className="px-1 py-0 text-[11px]">
                       {sourceLabel(lv.source)}
                     </Badge>
-                    <Badge variant="outline" className="px-1 py-0 text-[8px]">
+                    <Badge variant="outline" className="px-1 py-0 text-[11px]">
                       confluence ×{lv.confluence}
                     </Badge>
                     <Badge
                       variant="outline"
-                      className={`px-1 py-0 text-[8px] ${
+                      className={`px-1 py-0 text-[11px] ${
                         lv.tier === "magnet"
                           ? "border-amber-400 text-amber-300"
                           : lv.tier === "key"
@@ -492,7 +492,7 @@ export default function PivotProjection({
                     >
                       {reactions}
                     </span>{" "}
-                    <span className="text-[9px] opacity-60">
+                    <span className="text-[11px] opacity-60">
                       (touches within 0.3% that reversed 0.5%+ in 5 sessions)
                     </span>
                   </div>
@@ -501,7 +501,7 @@ export default function PivotProjection({
             })()}
 
             {/* Legend */}
-            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[9px] text-muted-foreground">
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
               <span className="inline-flex items-center gap-1">
                 <span className="inline-block h-0.5 w-6 bg-amber-500" />
                 magnet (≥3 confluence)
@@ -524,7 +524,7 @@ export default function PivotProjection({
                 <span className="inline-block h-0.5 w-6 bg-cyan-400" />
                 spot
               </span>
-              <span className="ml-auto text-muted-foreground/60">tap any line for detail</span>
+              <span className="ml-auto text-muted-foreground">tap any line for detail</span>
             </div>
           </>
         )}

@@ -23,6 +23,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import LivenessBadge from "@/components/LivenessBadge";
+import DataAgeChip from "@/components/DataAgeChip";
 import Killbox from "@/components/Killbox";
 import { useMemo, useState, useEffect } from "react";
 import {
@@ -41,6 +42,7 @@ import { Activity, AlertTriangle, Crosshair, Flame, Target, TrendingDown, Trendi
 import LiveOdteTracker from "./LiveOdteTracker";
 import DepthSkewFlow from "./DepthSkewFlow";
 import OdteContractChart from "./OdteContractChart";
+import { friendlyError } from "@/lib/friendlyError";
 
 // Contract snapshot shape from /api/odte-tracker (used to enrich drill-down meta)
 interface OdteContract {
@@ -62,20 +64,10 @@ interface OdteContract {
   lastTradeTime?: number | null;
 }
 
-// ─── User's locked SPX weekly targets (from session context) ───────────────
-const LOCKED_LEVELS: Array<{ value: number; label: string; kind: "upside" | "downside" | "pin" | "vomma" }> = [
-  { value: 7270, label: "T2 UP", kind: "upside" },
-  { value: 7265, label: "UPPER VOMMA", kind: "vomma" },
-  { value: 7140, label: "UPSIDE", kind: "upside" },
-  { value: 7128, label: "CHARM", kind: "pin" },
-  { value: 7100, label: "NEG γ", kind: "pin" },
-  { value: 7089, label: "VANNA", kind: "pin" },
-  { value: 7070, label: "ZOMMA", kind: "pin" },
-  { value: 7025, label: "MOPEX", kind: "pin" },
-  { value: 6960, label: "LOWER VOMMA", kind: "vomma" },
-  { value: 6950, label: "DOWNSIDE", kind: "downside" },
-  { value: 6885, label: "T2 DOWN", kind: "downside" },
-];
+// ─── User's SPX weekly targets ─────────────────────────────────────────────
+// No hard-coded fallback levels: the user's saved levels (server store) are the
+// only source; with none saved, no reference lines are drawn.
+const LOCKED_LEVELS: Array<{ value: number; label: string; kind: "upside" | "downside" | "pin" | "vomma" }> = [];
 
 // ─── Types matching /api/heatseeker ────────────────────────────────────────
 interface Strike {
@@ -84,7 +76,8 @@ interface Strike {
   netGex: number;
   callGex: number;
   putGex: number;
-  netDex: number;
+  /** null = no usable delta at this strike (missing, not 0). */
+  netDex: number | null;
   netVanna: number;
   netCharm: number;
   callOI: number;
@@ -115,14 +108,39 @@ interface HeatseekerData {
   strikes: Strike[];
   stickyZones: StickyZone[];
   pivotBands?: PivotBand[];
+  /** "unavailable": no chain or expiry; totals are null (render "—", never 0). */
+  dataState?: "ok" | "unavailable";
+  reason?: string | null;
   totals: {
-    netGex: number;
-    netDex: number;
-    netVanna: number;
-    netCharm: number;
+    netGex: number | null;
+    netDex: number | null;
+    /** Server heatseeker.ts: "partial" = netDex covers only contracts with a delta. */
+    dexState?: "ok" | "partial" | "unavailable";
+    dexCoverage?: { contractsWithDelta: number; contractsMissingDelta: number; oiMissingShare: number | null; basis: string };
+    netVanna: number | null;
+    netCharm: number | null;
     callWall: number | null;
     putWall: number | null;
     zeroGamma: number | null;
+    /** Secondary, legacy: cumulative-by-strike sign change (not a flip level). */
+    zeroGammaCumulative?: number | null;
+    zeroGammaMethod?: "repriced-profile";
+    /** Net GEX over the displayed strike window (netGex is the full expiry). */
+    netGexWindow?: number | null;
+    netGexScope?: "full-expiry-repriced";
+    gexAtSpotRepriced?: number | null;
+    gexSignAtSpot?: 1 | -1 | null;
+    zeroGammaInValley?: boolean;
+    exposureConvention?: string;
+  };
+  /** What the flip was computed from (weight, expiry universe, dealer convention). */
+  flipInputs?: { weight: string; universe: string; expiries: string[]; label: string };
+  /** Net GEX and flip under alternative dealer-positioning assumptions. */
+  dealerSensitivity?: {
+    assumption: string;
+    conventions: { id: string; label: string; gexAtSpot: number | null; gexSign?: 1 | -1 | null; zeroGamma: number | null }[];
+    regimeSignRobust: boolean | null;
+    note: string;
   };
   availableExpiries?: { date: string; dte: number }[];
   requestedExpiry?: string | null;
@@ -246,14 +264,14 @@ export default function Heatseeker() {
       className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border/40 bg-card/40 px-2 py-1.5"
       data-testid="heatseeker-ticker-picker"
     >
-      <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">ticker</span>
+      <span className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">ticker</span>
       <div className="flex gap-1">
         {PRESETS.map((p) => (
           <Button
             key={p}
             variant={symbol === p ? "default" : "ghost"}
             size="sm"
-            className="h-6 px-2 text-[10px] font-mono"
+            className="h-6 px-2 text-[11px] font-mono"
             onClick={() => setSymbol(p)}
             data-testid={`btn-heatseeker-symbol-${p}`}
           >
@@ -269,11 +287,11 @@ export default function Heatseeker() {
         }}
         onBlur={commitDraft}
         placeholder="custom…"
-        className="h-6 w-24 px-2 font-mono text-[10px] uppercase placeholder:normal-case"
+        className="h-6 w-24 px-2 font-mono text-[11px] uppercase placeholder:normal-case"
         data-testid="input-heatseeker-symbol"
       />
       {!PRESETS.includes(symbol as any) && (
-        <Badge variant="outline" className="border-cyan-500/40 font-mono text-[9px] text-cyan-400">
+        <Badge variant="outline" className="border-cyan-500/40 font-mono text-[11px] text-cyan-400">
           custom · {symbol}
         </Badge>
       )}
@@ -288,12 +306,12 @@ export default function Heatseeker() {
       className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border/40 bg-card/40 px-2 py-1.5"
       data-testid="heatseeker-expiry-picker"
     >
-      <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">expiry</span>
+      <span className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">expiry</span>
       <div className="flex flex-wrap gap-1">
         <Button
           variant={pickedExpiry === null ? "default" : "ghost"}
           size="sm"
-          className="h-6 px-2 text-[10px] font-mono"
+          className="h-6 px-2 text-[11px] font-mono"
           onClick={() => setPickedExpiry(null)}
           data-testid="btn-expiry-auto"
           title="Nearest expiry (0DTE if available today)"
@@ -305,14 +323,14 @@ export default function Heatseeker() {
             key={q.date}
             variant={pickedExpiry === q.date ? "default" : "ghost"}
             size="sm"
-            className="h-6 px-2 text-[10px] font-mono"
+            className="h-6 px-2 text-[11px] font-mono"
             onClick={() => setPickedExpiry(q.date)}
             data-testid={`btn-expiry-${q.date}`}
             title={q.date}
           >
             {q.label}
             {q.tag && (
-              <span className="ml-1 rounded-sm bg-amber-500/20 px-1 text-[8px] text-amber-400">{q.tag}</span>
+              <span className="ml-1 rounded-sm bg-amber-500/20 px-1 text-[11px] text-amber-400">{q.tag}</span>
             )}
           </Button>
         ))}
@@ -322,7 +340,7 @@ export default function Heatseeker() {
           value={pickedExpiry ?? ""}
           onChange={(e) => setPickedExpiry(e.target.value || null)}
           data-testid="select-expiry-custom"
-          className="h-6 rounded-md border border-border/60 bg-background px-2 font-mono text-[10px] text-foreground"
+          className="h-6 rounded-md border border-border/60 bg-background px-2 font-mono text-[11px] text-foreground"
           title="Pick any expiry from the chain"
         >
           <option value="">custom…</option>
@@ -341,7 +359,7 @@ export default function Heatseeker() {
       <button
         data-testid="heatseeker-view-live"
         onClick={() => setView("live")}
-        className={`inline-flex min-h-[44px] items-center px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest transition-colors sm:min-h-0 ${
+        className={`inline-flex min-h-[44px] items-center px-3 py-1.5 text-[11px] font-mono uppercase tracking-widest transition-colors sm:min-h-0 ${
           view === "live" ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground"
         }`}
       >
@@ -350,7 +368,7 @@ export default function Heatseeker() {
       <button
         data-testid="heatseeker-view-killbox"
         onClick={() => setView("killbox")}
-        className={`inline-flex min-h-[44px] items-center px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest transition-colors sm:min-h-0 ${
+        className={`inline-flex min-h-[44px] items-center px-3 py-1.5 text-[11px] font-mono uppercase tracking-widest transition-colors sm:min-h-0 ${
           view === "killbox" ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground"
         }`}
       >
@@ -388,7 +406,7 @@ export default function Heatseeker() {
   }
 
   if (error || !data || (data as any).error) {
-    const msg = (data as any)?.message ?? (error as Error)?.message ?? "Unable to load heatseeker";
+    const msg = friendlyError((data as any)?.message ?? error, "Heatseeker needs the Schwab option chain. Connect Schwab in Settings.");
     return (
       <div className="space-y-4">
         {header}
@@ -480,7 +498,7 @@ function LevelsEditor({
         </DialogHeader>
         <div className="max-h-[60vh] overflow-y-auto">
           <table className="w-full text-xs">
-            <thead className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+            <thead className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
               <tr>
                 <th className="pb-2 text-left">Label</th>
                 <th className="pb-2 text-right">Strike</th>
@@ -627,7 +645,7 @@ function PivotBandsLadder({ bands, spot, expiry, dte, degraded }: { bands: Pivot
           r.type === "spot" ? (
             <div key={`spot-${i}`} className="flex items-center gap-2 py-0.5" data-testid="pivot-bands-spot">
               <div className="h-px flex-1 bg-primary/40" />
-              <span className="font-mono text-[10px] font-bold tracking-widest text-primary">
+              <span className="font-mono text-[11px] font-bold tracking-widest text-primary">
                 SPOT {spot.toFixed(1)}
               </span>
               <div className="h-px flex-1 bg-primary/40" />
@@ -639,23 +657,23 @@ function PivotBandsLadder({ bands, spot, expiry, dte, degraded }: { bands: Pivot
               data-testid={`pivot-band-${r.band.center}`}
             >
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[9px] font-bold tracking-widest ${BAND_STYLE[r.band.role].chip}`}>
+                <span className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[11px] font-bold tracking-widest ${BAND_STYLE[r.band.role].chip}`}>
                   {BAND_STYLE[r.band.role].label}
                 </span>
                 <span className="font-mono text-sm font-bold">
                   {r.band.center.toFixed(1)}
-                  <span className="ml-2 text-[10px] font-normal text-muted-foreground">
+                  <span className="ml-2 text-[11px] font-normal text-muted-foreground">
                     {r.band.low.toFixed(1)} – {r.band.high.toFixed(1)}
                   </span>
                 </span>
-                <span className={`font-mono text-[10px] ${r.band.distancePct > 0 ? "text-emerald-400" : r.band.distancePct < 0 ? "text-rose-400" : "text-muted-foreground"}`}>
+                <span className={`font-mono text-[11px] ${r.band.distancePct > 0 ? "text-emerald-400" : r.band.distancePct < 0 ? "text-rose-400" : "text-muted-foreground"}`}>
                   {r.band.distancePct > 0 ? "+" : ""}{r.band.distancePct.toFixed(2)}%
                 </span>
                 <span className="ml-auto flex shrink-0 items-center gap-2">
                   <span className="h-1.5 w-12 overflow-hidden rounded-full bg-slate-800" title={`strength ${r.band.strength}/100`}>
                     <span className={`block h-full ${BAND_STYLE[r.band.role].bar}`} style={{ width: `${r.band.strength}%` }} />
                   </span>
-                  <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                  <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
                     fresh {r.band.freshness}
                   </span>
                 </span>
@@ -687,8 +705,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
   // on strikes that actually traded today. Toggle lets user bring them back.
   const [hideZeroVol, setHideZeroVol] = useState(true);
 
-  // Server-persisted user-editable sticky levels. Falls back to LOCKED_LEVELS
-  // when the API hasn't responded yet or returns an empty list.
+  // Server-persisted user-editable sticky levels; none saved = none drawn.
   const [editOpen, setEditOpen] = useState(false);
   const { data: serverLevels } = useQuery<ServerLevelsResp>({
     queryKey: ["/api/heatseeker/levels"],
@@ -721,7 +738,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
 
   // Max absolute values for heatmap normalization
   const maxAbsGex = useMemo(() => Math.max(...strikes.map((s) => Math.abs(s.netGex)), 1), [strikes]);
-  const maxAbsDex = useMemo(() => Math.max(...strikes.map((s) => Math.abs(s.netDex)), 1), [strikes]);
+  const maxAbsDex = useMemo(() => Math.max(...strikes.map((s) => Math.abs(s.netDex ?? 0)), 1), [strikes]);
   const maxAbsVanna = useMemo(() => Math.max(...strikes.map((s) => Math.abs(s.netVanna)), 1), [strikes]);
   const maxAbsCharm = useMemo(() => Math.max(...strikes.map((s) => Math.abs(s.netCharm)), 1), [strikes]);
 
@@ -786,7 +803,8 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
               <Flame className="h-7 w-7 text-orange-500" />
               <div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <LivenessBadge feedName="heatseeker" value={spot} />
+                  <LivenessBadge feedName="heatseeker" value={spot} stale={(data as any).chainStale ?? null} asOfMs={(data as any).chainAsOfMs ?? null} />
+                  <DataAgeChip asOfMs={(data as any).chainAsOfMs ?? null} stale={(data as any).chainStale ?? null} maxAgeMs={(data as any).chainMaxAgeMs ?? null} label="chain" />
                   HEATSEEKER · {symbol} · {dte}DTE · exp {expiry}
                   <EdgeInfo id="heatseeker-map" className="h-6 w-6" />
                 </div>
@@ -796,10 +814,18 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-              <Stat label="Net GEX" value={fmtM(totals.netGex)} positive={totals.netGex >= 0} />
-              <Stat label="Net DEX" value={fmtM(totals.netDex)} positive={totals.netDex >= 0} />
-              <Stat label="Net Vanna" value={fmtM(totals.netVanna)} positive={totals.netVanna >= 0} />
-              <Stat label="Net Charm" value={fmtM(totals.netCharm)} positive={totals.netCharm >= 0} />
+              <Stat
+                label={totals.gexSignAtSpot === null && totals.netGex != null ? "Net GEX (expiry, $/1%) · no material γ at spot" : "Net GEX (expiry, $/1%)"}
+                value={totals.netGex != null ? fmtM(totals.netGex) : "—"}
+                positive={totals.netGex != null ? totals.netGex >= 0 : null}
+              />
+              <Stat
+                label={dexStatLabel(totals.dexState, totals.dexCoverage)}
+                value={totals.netDex != null && totals.dexState !== "unavailable" ? fmtM(totals.netDex) : "—"}
+                positive={totals.netDex != null && totals.dexState !== "unavailable" ? totals.netDex >= 0 : null}
+              />
+              <Stat label="Net Vanna" value={totals.netVanna != null ? fmtM(totals.netVanna) : "—"} positive={totals.netVanna != null ? totals.netVanna >= 0 : null} />
+              <Stat label="Net Charm" value={totals.netCharm != null ? fmtM(totals.netCharm) : "—"} positive={totals.netCharm != null ? totals.netCharm >= 0 : null} />
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs">
               {totals.callWall !== null && (
@@ -813,8 +839,21 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                 </Badge>
               )}
               {totals.zeroGamma !== null && (
-                <Badge variant="outline" className="border-amber-500/40 bg-amber-500/5 text-amber-400">
-                  0γ {totals.zeroGamma.toFixed(0)}
+                <Badge
+                  variant="outline"
+                  className="border-amber-500/40 bg-amber-500/5 text-amber-400"
+                  title="Gamma flip: spot level where net dealer gamma changes sign, with every contract of this expiry re-priced at each hypothetical spot (same definition as the Signals panel)."
+                >
+                  0γ {totals.zeroGamma.toFixed(0)}{totals.zeroGammaInValley ? " (flat zone, level approximate)" : ""}
+                </Badge>
+              )}
+              {totals.zeroGammaCumulative != null && (
+                <Badge
+                  variant="outline"
+                  className="border-border/40 text-muted-foreground"
+                  title="Secondary reference only: first strike where cumulative per-strike GEX at today's spot changes sign. Not the gamma flip."
+                >
+                  cum-strike {totals.zeroGammaCumulative.toFixed(0)}
                 </Badge>
               )}
               <Badge variant="outline" className="font-mono">last {tickTime}</Badge>
@@ -822,7 +861,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                 type="button"
                 size="sm"
                 variant="outline"
-                className="h-11 px-3 text-[10px] font-mono uppercase tracking-wider sm:h-6 sm:px-2"
+                className="h-11 px-3 text-[11px] font-mono uppercase tracking-wider sm:h-6 sm:px-2"
                 onClick={() => setEditOpen(true)}
                 data-testid="button-edit-levels"
               >
@@ -830,6 +869,32 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
               </Button>
             </div>
           </div>
+          {(data.flipInputs || data.dealerSensitivity) && (
+            <div className="mt-3 space-y-1 border-t border-border/30 pt-2 text-[11px] text-muted-foreground" data-testid="heatseeker-flip-inputs">
+              {data.flipInputs && (
+                <div>
+                  Flip and Net GEX inputs: {data.flipInputs.label}. Net GEX covers every strike of this expiry
+                  {totals.netGexWindow != null ? ` (displayed window: ${fmtM(totals.netGexWindow)})` : ""}.
+                  Signals uses all expiries 0-45 DTE, so its flip can differ.
+                </div>
+              )}
+              {data.dealerSensitivity && data.dealerSensitivity.conventions.length > 0 && (
+                <div>
+                  Dealer-positioning assumption (Schwab has no open/close or customer-type data):{" "}
+                  {data.dealerSensitivity.conventions.map((c, i) => (
+                    <span key={c.id}>
+                      {i > 0 ? " | " : ""}
+                      {c.label}: net GEX {c.gexAtSpot != null ? `${fmtM(c.gexAtSpot)}${c.gexSign == null ? " (no material γ)" : ""}` : "n/a"}, flip {c.zeroGamma != null ? c.zeroGamma.toFixed(0) : "none in range"}
+                    </span>
+                  ))}
+                  .{" "}
+                  <span className={data.dealerSensitivity.regimeSignRobust === false ? "text-amber-400" : ""}>
+                    {data.dealerSensitivity.note}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -871,7 +936,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
               type="button"
               onClick={() => setHideZeroVol((v) => !v)}
               data-testid="toggle-hide-zero-vol"
-              className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-mono transition-colors ${
+              className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-mono transition-colors ${
                 hideZeroVol
                   ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
                   : "border-border text-muted-foreground hover:bg-muted/40"
@@ -928,7 +993,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                       <span className={isSpotRow ? "font-bold text-primary" : ""}>{fmtStrike(s.strike)}</span>
                       {lockedHit && (
                         <span
-                          className={`rounded-sm px-1 text-[9px] font-semibold ${
+                          className={`rounded-sm px-1 text-[11px] font-semibold ${
                             lockedHit.kind === "upside"
                               ? "bg-emerald-500/20 text-emerald-400"
                               : lockedHit.kind === "downside"
@@ -943,10 +1008,10 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                       )}
                     </div>
                     <GexCell callGex={s.callGex} putGex={s.putGex} max={maxAbsGex} symbol={symbol} strike={s.strike} />
-                    <HeatCell value={s.netDex} max={maxAbsDex} />
+                    {s.netDex != null ? <HeatCell value={s.netDex} max={maxAbsDex} /> : <div className="flex items-center justify-center font-mono text-[11px] text-muted-foreground" title="no usable delta at this strike">—</div>}
                     <HeatCell value={s.netVanna} max={maxAbsVanna} />
                     <HeatCell value={s.netCharm} max={maxAbsCharm} />
-                    <div className="text-right font-mono text-[10px] text-muted-foreground tabular-nums">
+                    <div className="text-right font-mono text-[11px] text-muted-foreground tabular-nums">
                       {fmtM(s.totalOI)} · {fmtM(s.totalVol)}
                     </div>
                   </div>
@@ -1193,16 +1258,31 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
 }
 
 // ─── Sub-components ────────────────────────────────────────────────────────
-function Stat({ label, value, positive }: { label: string; value: string; positive: boolean }) {
+/** Net DEX label: says when the total covers only part of the open interest. */
+function dexStatLabel(
+  state: "ok" | "partial" | "unavailable" | undefined,
+  cov: { contractsWithDelta: number; contractsMissingDelta: number; oiMissingShare: number | null } | undefined,
+): string {
+  if (state === "unavailable") return "Net DEX · unavailable (no delta)";
+  if (state === "partial" && cov) {
+    const share = cov.oiMissingShare != null ? `, ${(cov.oiMissingShare * 100).toFixed(0)}% of OI` : "";
+    return `Net DEX · partial (${cov.contractsMissingDelta} of ${cov.contractsWithDelta + cov.contractsMissingDelta} contracts no delta${share})`;
+  }
+  if (state === "partial") return "Net DEX · partial";
+  return "Net DEX";
+}
+
+function Stat({ label, value, positive }: { label: string; value: string; positive: boolean | null }) {
+  // positive === null: missing value, rendered neutral (no up/down colour or arrow).
   return (
     <div>
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</div>
       <div
         className={`flex items-center gap-1 font-mono text-lg font-semibold tabular-nums ${
-          positive ? "text-emerald-400" : "text-rose-400"
+          positive == null ? "text-muted-foreground" : positive ? "text-emerald-400" : "text-rose-400"
         }`}
       >
-        {positive ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+        {positive == null ? null : positive ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
         {value}
       </div>
     </div>
@@ -1213,7 +1293,7 @@ function HeatCell({ value, max }: { value: number; max: number }) {
   const bg = cellColor(value, max);
   return (
     <div
-      className="flex items-center justify-center rounded-sm px-2 py-1 font-mono text-[10px] tabular-nums"
+      className="flex items-center justify-center rounded-sm px-2 py-1 font-mono text-[11px] tabular-nums"
       style={{ background: bg }}
       title={fmtM(value)}
     >
@@ -1272,7 +1352,7 @@ function GexCell({ callGex, putGex, max, symbol, strike }: { callGex: number; pu
 
   return (
     <div
-      className="relative flex h-7 items-center justify-center overflow-hidden rounded-sm bg-slate-500/5 font-mono text-[10px] tabular-nums"
+      className="relative flex h-7 items-center justify-center overflow-hidden rounded-sm bg-slate-500/5 font-mono text-[11px] tabular-nums"
       title={`calls +${fmtM(callGex)} · puts -${fmtM(putGex)} · net ${fmtM(net)}${arrow && arrow.dir !== "flat" ? ` · Δ ${arrow.dir === "up" ? "+" : "-"}${arrow.pct.toFixed(0)}% from open` : ""}`}
       data-testid={symbol && strike != null ? `gex-cell-${strike}` : undefined}
     >
@@ -1288,7 +1368,7 @@ function GexCell({ callGex, putGex, max, symbol, strike }: { callGex: number; pu
       <span className={`relative z-10 ${labelColor}`}>{fmtM(net)}</span>
       {arrow && arrow.dir !== "flat" && (
         <span
-          className={`absolute right-1 top-1/2 z-10 -translate-y-1/2 text-[8px] font-semibold ${
+          className={`absolute right-1 top-1/2 z-10 -translate-y-1/2 text-[11px] font-semibold ${
             arrow.dir === "up" ? "text-emerald-400" : "text-rose-400"
           }`}
           aria-label={`gex ${arrow.dir} ${arrow.pct.toFixed(0)} percent since open`}
@@ -1327,7 +1407,7 @@ function StickyCard({ zone, spot }: { zone: StickyZone; spot: number }) {
           <div className="font-mono text-2xl font-bold tabular-nums text-orange-400">
             {zone.score.toFixed(0)}
           </div>
-          <div className="text-[10px] text-muted-foreground">SCORE</div>
+          <div className="text-[11px] text-muted-foreground">SCORE</div>
         </div>
       </div>
       <p className="mt-3 text-xs leading-relaxed text-foreground/80">{zone.interpretation}</p>
@@ -1343,7 +1423,7 @@ function StickyCard({ zone, spot }: { zone: StickyZone; spot: number }) {
 function ScoreBar({ label, value, color }: { label: string; value: number; color: "emerald" | "sky" | "amber" }) {
   const bg = color === "emerald" ? "bg-emerald-500" : color === "sky" ? "bg-sky-500" : "bg-amber-500";
   return (
-    <div className="flex items-center gap-2 text-[10px]">
+    <div className="flex items-center gap-2 text-[11px]">
       <div className="w-10 font-mono uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
         <div

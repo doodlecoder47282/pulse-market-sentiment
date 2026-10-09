@@ -8,13 +8,17 @@
 //   S = spot price
 //   K = strike
 //   σ = implied vol (decimal, 0.15 = 15%)
-//   T = time to expiry in YEARS (trading years — use 262/yr for 0DTE consistency)
+//   T = time to expiry in YEARS. Use server/timeToExpiry.ts (calendar minutes to
+//       the actual settlement instant / 525,600, 15-minute floor) so every
+//       greeks path shares one clock. The IV passed in must have been solved
+//       with the same T convention (theta/charm here are per calendar year).
 //   r = risk-free rate (decimal, 0.05 = 5%)
 //   q = dividend yield (decimal, 0.013 = 1.3%)
 //   type = "C" | "P"
 //
-// All Greeks returned in "per 1 contract, per 1 unit of the underlying driver"
-// form. Exposure scaling (×100 contract multiplier, × OI, × S, × S² ×0.01, ÷365, etc.)
+// All Greeks (and bsPrice) are per ONE unit of the underlying (per share / per
+// index point), not per contract: multiply by the contract multiplier (100 for
+// SPX/SPXW/XSP/SPY/QQQ and single-name equity options) for a contract. Exposure scaling (×100 contract multiplier, × OI, × S, × S² ×0.01, ÷365, etc.)
 // happens in exposureProfile.ts — this file only does the math.
 
 // ---------------------------------------------------------------------------

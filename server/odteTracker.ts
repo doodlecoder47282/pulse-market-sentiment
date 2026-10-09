@@ -6,12 +6,14 @@
  * Polls the Schwab option chain for $SPX with a 0DTE window. The chain layer caches
  * chains for 60 s, so the effective resolution is one snapshot per minute regardless
  * of the requested interval (the tracker clamps its cadence to that TTL rather than
- * hammering the token/CBOE layers with no-op polls). Keeps ATM ±20 strikes on each
+ * hammering the Schwab token/chain layers with no-op polls). Keeps ATM ±20 strikes on each
  * side (up to ~80 rows). For each poll, per contract:
  *   · deltaVol        = current.volume − prev.volume  (prints since last snapshot)
  *   · notional        = deltaVol × last × 100
- *   · classification  = Lee-Ready (last vs midpoint → buyer/seller; midpoint
- *                       trades fall back to tick-rule vs previous last)
+ *   · classification  = quote rule on the snapshot's last print (last vs
+ *                       midpoint; at the midpoint, tick rule vs previous last).
+ *                       Lee-Ready style, but on one last print per poll, not
+ *                       trade-level prints, so it is a rough side estimate.
  *   · buyFlag         = classification === "buy" && notional ≥ minNotional
  *
  * When a user ARMS a contract, the tracker opens an active position snapshot.
@@ -25,6 +27,11 @@
 
 import { getOptionChain, type OptionChainResponse } from "./schwab";
 import { isRthOpen } from "./sessionCache";
+import { recordOdteOptionMarks, recordOdteStreamMark, watchedAlerts, type TrackerQuote } from "./odteAuditDb";
+import { streamOptionOverlay, syncStreamOptions, addOptionQuoteObserver } from "./streamStore";
+import { etDate as calEtDate, sessionCloseMinutes as calCloseMin } from "./exchangeCalendar";
+import { spreadExceedsStop } from "./exitValuation";
+import { armedStreamSymbols, streamOwnersSyncedBy } from "./odteStreamPolicy";
 
 // getOptionChain caches chains for 60 s (schwab.ts), so polling faster than that only
 // returns the identical snapshot. Cadence is clamped to this TTL.
@@ -33,17 +40,18 @@ const OFF_HOURS_POLL_MS = 60_000;
 
 // Session window for live polling: 09:25-16:15 ET on weekdays (a few minutes of margin
 // around RTH). Outside it the tracker idles at the off-hours cadence and never falls
-// back to SPY, which had the side effect of hammering a dead Schwab token + CBOE 24/7.
+// back to SPY, which had the side effect of hammering a dead Schwab token 24/7.
 function inTrackerSession(now = new Date()): boolean {
   if (isRthOpen(now)) return true;
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
   }).formatToParts(now);
   const g = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
-  const wday = g("weekday");
-  if (wday === "Sat" || wday === "Sun") return false;
+  // Exchange calendar: no session on holidays; half days close at 13:00 ET.
+  const close = calCloseMin(calEtDate(now.getTime()));
+  if (close == null) return false;
   const mod = Number(g("hour")) * 60 + Number(g("minute"));
-  return mod >= 9 * 60 + 25 && mod <= 16 * 60 + 15;
+  return mod >= 9 * 60 + 25 && mod <= close + 15;
 }
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -70,6 +78,12 @@ export interface ContractRow {
   buyFlag: boolean;             // large notional + buy-classified
   distance: number;             // abs(strike − spot)
   lastTradeTime: number | null; // epoch ms of the contract's last actual print (Schwab tradeTimeInLong)
+  /** Schwab option symbol (streamer key). */
+  optionSymbol?: string | null;
+  /** Where bid/ask/last came from: Schwab Streamer LEVELONE_OPTIONS or the Schwab REST chain. */
+  markSource?: "stream" | "rest_chain";
+  /** Schwab quote time of bid/ask, epoch ms. */
+  quoteTimeMs?: number | null;
 }
 
 export interface TickEvent {
@@ -88,7 +102,8 @@ export interface TrackedPosition {
   contractKey: string;
   strike: number;
   side: Side;
-  buyPrice: number;             // entry last at arm
+  buyPrice: number;             // entry last at arm ($ per share)
+  buyAsk?: number | null;       // ask at arm: what a market buy pays ($ per share)
   buyVolume: number;            // cumulative volume at arm
   buyTimestamp: number;
   baselineOI: number;           // OI at arm (for OI-drop check)
@@ -99,6 +114,8 @@ export interface TrackedPosition {
   markerSellTs: number | null;
   estExitPrice: number | null;
   estExitTs: number | null;
+  /** Schwab option symbol, streamed while the position is active. */
+  optionSymbol?: string | null;
 }
 
 export interface TrackerSnapshot {
@@ -192,8 +209,8 @@ async function poll() {
     const chain: OptionChainResponse = await getOptionChain("$SPX", 0);
     if ("error" in chain) {
       // SPX unavailable. Off-hours, or when the failure is an auth failure
-      // ("schwab_required" = no token / CBOE also failed), do NOT try SPY: it just
-      // repeats the same failing token refresh and CBOE request every poll.
+      // ("schwab_required" = no Schwab token), do NOT try SPY: it just
+      // repeats the same failing token refresh every poll.
       // Note the SPY rows are keyed SPY_..., so armed $SPX positions do not update
       // during a fallback anyway.
       const authFailure = String((chain as any).error ?? "").includes("schwab_required");
@@ -206,7 +223,12 @@ async function poll() {
         };
         return;
       }
-      // Try SPY fallback for context if SPX unavailable
+      // Try SPY fallback for context if SPX unavailable. The $SPX stream
+      // subscriptions (armed "odte", fired-alert "odte_alerts") are left
+      // untouched (odteStreamPolicy): marks keep flowing for SPX alert
+      // contracts. The SPX underlying is unknown meanwhile, so stream marks
+      // carry no underlying rather than a stale one.
+      alertSpot = null;
       const spy = await getOptionChain("SPY", 0);
       if ("error" in spy) {
         lastSnapshot = {
@@ -282,10 +304,16 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
     const c = contracts?.[0];
     if (!c) return;
     const key = `${symbol}_${strike.toFixed(0)}${side === "call" ? "C" : "P"}_${expiryISO}`;
-    const bid = typeof c.bid === "number" ? c.bid : null;
-    const ask = typeof c.ask === "number" ? c.ask : null;
-    const last = typeof c.last === "number" ? c.last : (typeof c.mark === "number" ? c.mark : null);
-    const volume = typeof c.totalVolume === "number" ? c.totalVolume : 0;
+    // Mark source: Schwab Streamer LEVELONE_OPTIONS when the contract is
+    // streamed (armed) and its quote is live and not older than the chain's;
+    // else the Schwab REST chain row. Never any other vendor.
+    const optionSymbol = typeof c.symbol === "string" ? c.symbol : null;
+    const restQt = typeof c.quoteTimeInLong === "number" && c.quoteTimeInLong > 0 ? c.quoteTimeInLong : null;
+    const sq = streamOptionOverlay(optionSymbol, restQt, nowTs);
+    const bid = sq ? sq.bid : typeof c.bid === "number" ? c.bid : null;
+    const ask = sq ? sq.ask : typeof c.ask === "number" ? c.ask : null;
+    const last = sq && (sq.last ?? sq.mark) != null ? (sq.last ?? sq.mark) : typeof c.last === "number" ? c.last : (typeof c.mark === "number" ? c.mark : null);
+    const volume = sq && sq.totalVolume != null ? sq.totalVolume : typeof c.totalVolume === "number" ? c.totalVolume : 0;
     const oi = typeof c.openInterest === "number" ? c.openInterest : 0;
     const prev = prevByKey.get(key);
     const deltaVol = prev ? Math.max(0, volume - prev.volume) : 0;
@@ -294,7 +322,7 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
     const cls = deltaVol > 0 ? classify(last, bid, ask, prevLast) : "neutral";
     const notional = deltaVol > 0 && last != null ? deltaVol * last * 100 : 0;
     const buyFlag = cls === "buy" && notional >= DEFAULT_MIN_NOTIONAL;
-    const lastTradeTime = typeof c.tradeTimeInLong === "number" && c.tradeTimeInLong > 0 ? c.tradeTimeInLong : null;
+    const lastTradeTime = sq?.tradeTimeMs ?? (typeof c.tradeTimeInLong === "number" && c.tradeTimeInLong > 0 ? c.tradeTimeInLong : null);
 
     rows.push({
       key,
@@ -312,6 +340,9 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
       buyFlag,
       distance: Math.abs(strike - spot),
       lastTradeTime,
+      optionSymbol,
+      markSource: sq ? "stream" : "rest_chain",
+      quoteTimeMs: sq ? (sq.quoteTimeMs ?? restQt) : restQt,
     });
 
     prevByKey.set(key, { volume, last });
@@ -358,6 +389,39 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
   for (const s of Object.keys(callStrikesObj)) addRow(s, callStrikesObj[s], "call");
   for (const s of Object.keys(putStrikesObj)) addRow(s, putStrikesObj[s], "put");
 
+  // Option-mark ledger (review items 7.2/7.3): log the live Schwab quote of
+  // every fired 0DTE alert's contract (any strike in the chain, not only the
+  // displayed ATM window) so the grader can replay real option P&L.
+  if (symbol === "$SPX") {
+    try {
+      const quotes: TrackerQuote[] = [];
+      const collect = (obj: Record<string, any[]>, side: Side) => {
+        for (const k of Object.keys(obj)) {
+          const c = obj[k]?.[0];
+          const strike = parseFloat(k);
+          if (!c || !isFinite(strike)) continue;
+          const restQt = typeof c.quoteTimeInLong === "number" && c.quoteTimeInLong > 0 ? c.quoteTimeInLong : null;
+          const sq = streamOptionOverlay(typeof c.symbol === "string" ? c.symbol : null, restQt, nowTs);
+          quotes.push({
+            strike, side,
+            bid: sq ? sq.bid : typeof c.bid === "number" ? c.bid : null,
+            ask: sq ? sq.ask : typeof c.ask === "number" ? c.ask : null,
+            quoteTime: sq ? (sq.quoteTimeMs ?? restQt) : restQt,
+          });
+        }
+      };
+      collect(callStrikesObj, "call");
+      collect(putStrikesObj, "put");
+      recordOdteOptionMarks({ expiryISO, source: chain.source, underlying: spot, quotes, now: nowTs });
+    } catch { /* mark logging never blocks the tracker */ }
+    // Round 3: stream every fired alert's contract (not only armed
+    // positions) so its marks are logged on each LEVELONE_OPTIONS update,
+    // between chain polls. The Schwab option symbol comes from this chain.
+    if (streamOwnersSyncedBy(symbol).includes("odte_alerts")) {
+      try { syncAlertStream(expiryISO, callStrikesObj, putStrikesObj, spot, nowTs); } catch { /* optional */ }
+    }
+  }
+
   // Sort by ascending strike, calls-above-puts-at-same-strike (rendering convention)
   rows.sort((a, b) => a.strike - b.strike || (a.side === "call" ? -1 : 1));
 
@@ -402,6 +466,9 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
       });
     }
   }
+
+  // Armed positions are $SPX contracts: a SPY fallback chain never re-syncs them.
+  if (streamOwnersSyncedBy(symbol).includes("odte")) syncArmedStream(rows);
 
   lastSnapshot = {
     asOf: nowTs,
@@ -530,6 +597,52 @@ export function getContractChart(
   };
 }
 
+// Fired-alert contracts: Schwab option symbol -> alert ids (owner "odte_alerts").
+const alertSymbols = new Map<string, string[]>();
+let alertSpot: number | null = null;
+let alertObserverOff: (() => void) | null = null;
+
+function syncAlertStream(
+  expiryISO: string,
+  callObj: Record<string, any[]>,
+  putObj: Record<string, any[]>,
+  spot: number | null,
+  nowTs: number,
+): void {
+  alertSpot = spot;
+  const next = new Map<string, string[]>();
+  for (const w of watchedAlerts(nowTs)) {
+    if (!w.expiry || w.expiry !== expiryISO) continue;
+    const obj = w.isCall ? callObj : putObj;
+    for (const k of Object.keys(obj)) {
+      if (Math.abs(parseFloat(k) - w.strike) > 1e-6) continue;
+      const sym = obj[k]?.[0]?.symbol;
+      if (typeof sym === "string" && sym) next.set(sym, (next.get(sym) ?? []).concat(w.alertId));
+      break;
+    }
+  }
+  alertSymbols.clear();
+  for (const [k, v] of Array.from(next.entries())) alertSymbols.set(k, v);
+  if (!alertObserverOff && alertSymbols.size) {
+    alertObserverOff = addOptionQuoteObserver((q) => {
+      const ids = alertSymbols.get(q.symbol);
+      if (ids && ids.length) recordOdteStreamMark({ alertIds: ids, quote: q, underlying: alertSpot });
+    });
+  }
+  syncStreamOptions("odte_alerts", Array.from(alertSymbols.keys()));
+}
+
+/** Stream LEVELONE_OPTIONS for every active armed contract (streamStore owner "odte"). */
+function syncArmedStream(contracts: ReadonlyArray<{ key: string; optionSymbol?: string | null }> = lastSnapshot.contracts): void {
+  try {
+    // Remember a resolved symbol on the position so a later poll cannot drop it.
+    for (const t of tracked) {
+      if (t.status === "active" && !t.optionSymbol) t.optionSymbol = contracts.find((c) => c.key === t.contractKey)?.optionSymbol ?? null;
+    }
+    syncStreamOptions("odte", armedStreamSymbols(tracked, contracts));
+  } catch { /* streaming is optional; REST chain marks remain */ }
+}
+
 export function armPosition(args: {
   contractKey: string;
   minNotional?: number;
@@ -538,6 +651,10 @@ export function armPosition(args: {
   const row = snap.contracts.find(c => c.key === args.contractKey);
   if (!row) return { ok: false, error: "contract not found in current snapshot" };
   if (row.last == null) return { ok: false, error: "contract has no last price" };
+  // SF-3 (R2-C): the plan's option stop is bid <= 0.80 x the ask fill; a quote
+  // already there would stop on entry, and without a two-sided quote the stop is undefined.
+  const sxs = spreadExceedsStop(row.bid, row.ask);
+  if (sxs !== false) return { ok: false, error: sxs ? "SPREAD_EXCEEDS_STOP: bid at or below 0.80 x ask" : "SPREAD_EXCEEDS_STOP: no two-sided quote to define the -20% stop" };
   const existing = tracked.find(t => t.contractKey === args.contractKey && t.status === "active");
   if (existing) return { ok: true, position: existing };
 
@@ -547,6 +664,7 @@ export function armPosition(args: {
     strike: row.strike,
     side: row.side,
     buyPrice: row.last,
+    buyAsk: row.ask,
     buyVolume: row.volume,
     buyTimestamp: Date.now(),
     baselineOI: row.openInterest,
@@ -557,8 +675,10 @@ export function armPosition(args: {
     markerSellTs: null,
     estExitPrice: null,
     estExitTs: null,
+    optionSymbol: row.optionSymbol ?? null,
   };
   tracked.push(pos);
+  syncArmedStream();
   pushEvent({
     ts: pos.buyTimestamp,
     contractKey: pos.contractKey,
@@ -576,6 +696,7 @@ export function disarmPosition(id: string): boolean {
   const idx = tracked.findIndex(t => t.id === id);
   if (idx === -1) return false;
   tracked.splice(idx, 1);
+  syncArmedStream();
   return true;
 }
 

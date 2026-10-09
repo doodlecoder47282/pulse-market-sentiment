@@ -19,9 +19,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import GammaContextBanner from "./GammaContextBanner";
+import UnavailablePanel from "./UnavailablePanel";
 import OfiHistogram from "./OfiHistogram";
 import { useAlphaNewsMarkers, AlphaNewsPanel, AlphaNewsToggle } from "./AlphaNewsOverlay";
 import TickerOutlookCard from "./TickerOutlookCard";
+import DataStateChip from "./DataStateChip";
 
 type Timeframe = "1D" | "5D" | "1M" | "3M" | "1Y" | "5Y";
 const TIMEFRAMES: Timeframe[] = ["1D", "5D", "1M", "3M", "1Y", "5Y"];
@@ -30,7 +32,7 @@ type Interval = "1m" | "5m" | "15m" | "30m" | "60m" | "1d" | "1wk";
 type Engine = "svg" | "lightweight" | "tv";
 type ViewMode = "price" | "greeks" | "flow";
 
-// Allowed intraday intervals per timeframe (Schwab/CBOE constraints)
+// Allowed intraday intervals per timeframe (Schwab price-history constraints)
 const INTERVAL_OPTIONS: Record<Timeframe, Interval[]> = {
   "1D": ["1m", "5m", "15m", "30m", "60m"],
   "5D": ["5m", "15m", "30m", "60m"],
@@ -63,6 +65,12 @@ type OHLCResponse = {
   sessionLow: number | null;
   candles: Candle[];
   asOf: number;
+  /** Schwab price-history provenance (server/ohlc.ts). "empty" = Schwab answered with no bars; "unavailable" = feed/API down. */
+  dataAsOfMs?: number | null;
+  servedFromCache?: boolean;
+  stale?: boolean;
+  dataState?: "ok" | "empty" | "unavailable";
+  dataReason?: string | null;
 };
 
 type GammaResponse = {
@@ -196,7 +204,7 @@ export default function ChartPanel() {
       {/* Flow strip above the chart for quick P/C read */}
       <FlowStrip />
 
-      {/* Lee-Ready order-flow imbalance — 1-min signed vol histogram */}
+      {/* Signed tick volume — 1-min SPY bars, tick rule (not Lee-Ready, not book OFI) */}
       <OfiHistogram />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[220px_1fr]" data-testid="chart-panel">
@@ -204,7 +212,7 @@ export default function ChartPanel() {
         <aside className="space-y-2 rounded-xl border border-border/60 bg-card/40 p-3 backdrop-blur">
           <div className="mb-1 flex items-center justify-between">
             <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Watchlist</div>
-            <Badge variant="outline" className="text-[9px]">{watchlist.length}</Badge>
+            <Badge variant="outline" className="text-[11px]">{watchlist.length}</Badge>
           </div>
 
           <div className="flex gap-1">
@@ -242,7 +250,7 @@ export default function ChartPanel() {
                     <button
                       onClick={(e) => { e.stopPropagation(); removeTicker(w.symbol); }}
                       aria-label={`Remove ${w.label}`}
-                      className="flex h-11 w-11 items-center justify-center text-muted-foreground/60 opacity-100 hover:text-rose-400 sm:h-auto sm:w-auto sm:opacity-0 sm:group-hover:opacity-100"
+                      className="flex h-11 w-11 items-center justify-center text-muted-foreground opacity-100 hover:text-rose-400 sm:h-auto sm:w-auto sm:opacity-0 sm:group-hover:opacity-100"
                       data-testid={`remove-${w.symbol}`}
                     >
                       <X className="h-3.5 w-3.5" />
@@ -260,13 +268,13 @@ export default function ChartPanel() {
           {/* Recents strip — quick-flip between tickers you clicked from elsewhere */}
           {recents.length > 0 && (
             <div className="flex items-center gap-1.5 hscroll-contain pb-1">
-              <span className="shrink-0 text-[9px] uppercase tracking-wider text-muted-foreground">Recent</span>
+              <span className="shrink-0 text-[11px] uppercase tracking-wider text-muted-foreground">Recent</span>
               {recents.map((sym) => (
                 <button
                   key={sym}
                   onClick={() => focusChart(sym)}
                   className={[
-                    "shrink-0 rounded-full border px-2 py-0.5 font-mono text-[10px] font-semibold transition",
+                    "shrink-0 rounded-full border px-2 py-0.5 font-mono text-[11px] font-semibold transition",
                     sym === activeChart
                       ? "border-cyan-500/60 bg-cyan-500/15 text-cyan-200"
                       : "border-border/50 text-muted-foreground hover:border-cyan-500/40 hover:text-cyan-200",
@@ -296,7 +304,7 @@ export default function ChartPanel() {
                 </>
               )}
               {ohlc && engine !== "tv" && (
-                <div className="text-[10px] text-muted-foreground">{ohlc.displayName}</div>
+                <div className="text-[11px] text-muted-foreground">{ohlc.displayName}</div>
               )}
             </div>
 
@@ -324,7 +332,7 @@ export default function ChartPanel() {
                 <button
                   onClick={() => setShowGamma((v) => !v)}
                   className={[
-                    "flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider transition",
+                    "flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-semibold uppercase tracking-wider transition",
                     showGamma ? "border-amber-500/50 bg-amber-500/10 text-amber-300" : "border-border/40 text-muted-foreground hover:text-foreground",
                   ].join(" ")}
                   data-testid="toggle-gamma"
@@ -361,7 +369,7 @@ export default function ChartPanel() {
 
           {/* Interval sub-row */}
           {viewMode === "price" && INTERVAL_OPTIONS[tf].length > 1 && (
-            <div className="flex flex-wrap items-center gap-1 text-[10px]">
+            <div className="flex flex-wrap items-center gap-1 text-[11px]">
               <span className="pr-1 uppercase tracking-wider text-muted-foreground">Granularity</span>
               {INTERVAL_OPTIONS[tf].map((iv) => (
                 <button
@@ -384,7 +392,12 @@ export default function ChartPanel() {
           {/* Engine-agnostic GEX banner — renders above every engine including
               TV, so the user always has call wall / put wall / 0γ / max pain
               context with distance-from-spot. */}
-          {viewMode === "price" && showGamma && (
+          {/* 503 (Schwab chain unavailable) or failed request: state + reason,
+              not the "chain wired for SPX/SPY only" note meant for other tickers. */}
+          {viewMode === "price" && showGamma && gammaQuery.isError && (
+            <UnavailablePanel compact title={`Gamma walls (${activeChart})`} error={gammaQuery.error} testId="gamma-banner-unavailable" />
+          )}
+          {viewMode === "price" && showGamma && !gammaQuery.isError && (
             <GammaContextBanner
               spot={
                 engine === "tv"
@@ -419,10 +432,20 @@ export default function ChartPanel() {
               Failed to load candles. Try another ticker.
             </div>
           ) : (ohlc?.candles?.length ?? 0) === 0 ? (
-            <div className="flex h-[440px] flex-col items-center justify-center gap-1 rounded-lg border border-border/40 bg-muted/10 text-center">
-              <span className="text-sm font-medium text-muted-foreground">tape offline — Schwab feed down</span>
-              <span className="text-xs text-muted-foreground/70">reconnect Schwab to see candles for {activeChart}</span>
-            </div>
+            ohlc?.dataState === "empty" ? (
+              // Schwab answered, but with no bars (closed session, new listing, no history for this window).
+              <div className="flex h-[440px] flex-col items-center justify-center gap-1 rounded-lg border border-border/40 bg-muted/10 text-center" data-testid="chart-empty">
+                <DataStateChip state="no_data" reason={ohlc.dataReason} asOf={ohlc.dataAsOfMs ?? null} source="Schwab" showAge />
+                <span className="text-sm font-medium text-muted-foreground">Schwab returned no bars for {activeChart} in this window</span>
+                <span className="text-xs text-muted-foreground">the feed is up; try another interval or timeframe</span>
+              </div>
+            ) : (
+              <div className="flex h-[440px] flex-col items-center justify-center gap-1 rounded-lg border border-border/40 bg-muted/10 text-center" data-testid="chart-feed-down">
+                <DataStateChip state="unavailable" reason={ohlc?.dataReason} source="Schwab" />
+                <span className="text-sm font-medium text-muted-foreground">tape offline — Schwab feed down</span>
+                <span className="text-xs text-muted-foreground">reconnect Schwab to see candles for {activeChart}</span>
+              </div>
+            )
           ) : engine === "lightweight" ? (
             <div className="relative">
               <LightweightCandlestick
@@ -461,6 +484,21 @@ export default function ChartPanel() {
               <Stat label="Range" value={`${ohlc.sessionLow?.toFixed(2) ?? "—"} – ${ohlc.sessionHigh?.toFixed(2) ?? "—"}`} />
               <Stat label="Prev close" value={ohlc.prevClose?.toFixed(2) ?? "—"} />
               <Stat label="Updated" value={new Date(ohlc.asOf * 1000).toLocaleTimeString()} />
+              <div className="col-span-2 md:col-span-3 flex flex-wrap items-center gap-2" data-testid="chart-data-state">
+                <DataStateChip
+                  state={ohlc.dataState ?? "unknown"}
+                  reason={ohlc.dataReason}
+                  asOf={ohlc.dataAsOfMs ?? null}
+                  stale={ohlc.stale}
+                  source="Schwab bars"
+                  showAge
+                />
+                {ohlc.servedFromCache && (
+                  <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider text-amber-300" title="Last good Schwab response re-served from the server cache, with its real as-of time">
+                    cached
+                  </span>
+                )}
+              </div>
             </div>
           )}
 
@@ -481,7 +519,7 @@ function EngineButton({
     <button
       onClick={onClick}
       className={[
-        "flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition",
+        "flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider transition",
         active ? "bg-cyan-500/20 text-cyan-300" : "text-muted-foreground hover:text-foreground",
       ].join(" ")}
       data-testid={`engine-${label.toLowerCase()}`}
@@ -490,7 +528,7 @@ function EngineButton({
       {badge != null && badge > 0 && (
         <span
           className={[
-            "ml-0.5 rounded-full px-1 py-px font-mono text-[9px] tabular-nums leading-none",
+            "ml-0.5 rounded-full px-1 py-px font-mono text-[11px] tabular-nums leading-none",
             active
               ? "bg-amber-500/30 text-amber-200"
               : "bg-amber-500/20 text-amber-300",
@@ -507,7 +545,7 @@ function EngineButton({
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-[9px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className="font-mono tabular-nums">{value}</div>
     </div>
   );

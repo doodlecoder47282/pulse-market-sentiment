@@ -19,6 +19,7 @@ import ErrorBoundary from "./ErrorBoundary";
 import SeasonalityPanel from "./SeasonalityPanel";
 import SeasonalityResearch from "./SeasonalityResearch";
 import JPMCollarPanel from "./JPMCollarPanel";
+import { friendlyError } from "@/lib/friendlyError";
 
 type WindowKey = "w4" | "w13" | "w52";
 
@@ -37,6 +38,18 @@ type AxisReading = {
   evidence: string;
   window: WindowKey;
   conviction: number;
+  stats?: {
+    pZ: number;
+    pPersist: number;
+    qZ?: number;
+    qPersist?: number;
+    fdrFamily?: number;
+    zCrit95: number;
+    persistBand: number;
+    independentWindows: number;
+    sampleDays: number;
+    blockLength: number;
+  };
 };
 
 type AxisSummary = {
@@ -125,7 +138,7 @@ export default function RegimePanel() {
             <span className="text-sm font-medium">regime data offline — rotation snapshot failed</span>
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
-            {(error as Error)?.message ?? "Could not build the rotation snapshot."}
+            {friendlyError(error, "Could not build the rotation snapshot.")}
           </p>
         </CardContent>
       </Card>
@@ -196,15 +209,15 @@ export default function RegimePanel() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <ThemeColumn
           title="Fresh this week"
-          subtitle="New ±2σ breaches in the last 5 trading days"
+          subtitle="New breaches of the bootstrap 5% line in the last 5 trading days (BH q≤0.05 across all 21 readings)"
           themes={data.freshThemes}
           tone="fresh"
           icon={<Sparkle className="h-4 w-4" />}
-          emptyText="No fresh ±2σ breaches. Leadership is in continuation mode."
+          emptyText="No fresh significant breaches. Leadership is in continuation mode."
         />
         <ThemeColumn
           title="Durable trends"
-          subtitle="Same-direction |z|≥1.5 running 6+ weeks"
+          subtitle="Same-direction |z|≥1.5 for 6+ weeks, longer than a no-regime bootstrap allows (BH q≤0.05)"
           themes={data.durableThemes}
           tone="durable"
           icon={<Clock className="h-4 w-4" />}
@@ -254,11 +267,16 @@ export default function RegimePanel() {
       )}
 
       <details className="rounded-md border border-border/40 bg-card/30 px-3 py-2 text-[11px] text-muted-foreground">
-        <summary className="cursor-pointer select-none text-[10px] uppercase tracking-wider">Methodology</summary>
+        <summary className="cursor-pointer select-none text-[11px] uppercase tracking-wider">Methodology</summary>
         <p className="mt-2 leading-relaxed">
-          For each axis pair (e.g. SPY/TLT), we compute the ratio's rolling rate-of-change over the selected window,
-          then z-score against its own trailing 2-year distribution. Fresh = newly crossed ±2σ in last 5 days.
-          Durable = held same-sign |z|≥1.5 for 30+ trading days. Stage: ≤10d early · 11-30d mid · 30+d mature.
+          For each axis pair (e.g. SPY/TLT), the ratio's log return over the selected window is z-scored with the
+          Newey-West long-run variance of its daily returns (overlapping rolling windows over 2 years hold only a few
+          independent observations, so their own spread is not used). Fresh and durable are tested against a
+          wild bootstrap of daily returns (random signs at fixed dates, so volatility clustering is kept), the "no regime" null:
+          fresh = |z| newly beyond the bootstrap 5% critical value; durable = |z|≥1.5 for 30+ sessions and a run that
+          long is unusual under the bootstrap. Both are then corrected for testing 7 pairs × 3 windows at once
+          (Benjamini-Hochberg false discovery rate, q≤0.05). Conviction is a heuristic rank from the q-values, not a probability.
+          Stage: ≤10d early · 11-30d mid · 30+d mature.
         </p>
       </details>
 
@@ -319,8 +337,8 @@ function AxisChip({ axis }: { axis: AxisSummary }) {
     >
       <Icon className="h-3 w-3" />
       <span className="font-medium">{label}</span>
-      <span className="text-[10px] opacity-70">·</span>
-      <span className="text-[10px] opacity-80">{describeStage(axis.stage)}</span>
+      <span className="text-[11px] opacity-70">·</span>
+      <span className="text-[11px] opacity-80">{describeStage(axis.stage)}</span>
     </div>
   );
 }
@@ -348,7 +366,7 @@ function AxisCard({
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{axis.label}</div>
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{axis.label}</div>
             <CardTitle className={`mt-0.5 text-base font-semibold ${dirColor}`}>
               {axis.direction === 0
                 ? "Balanced"
@@ -362,7 +380,7 @@ function AxisCard({
             <div className="font-mono text-sm">
               <span className={dirColor}>{dirSign}{Math.abs(axis.compositeZ).toFixed(2)}σ</span>
             </div>
-            <div className={`text-[10px] uppercase tracking-wider ${stageColor}`}>{describeStage(axis.stage)}</div>
+            <div className={`text-[11px] uppercase tracking-wider ${stageColor}`}>{describeStage(axis.stage)}</div>
           </div>
         </div>
       </CardHeader>
@@ -371,7 +389,7 @@ function AxisCard({
 
         {/* conviction bar */}
         <div>
-          <div className="mb-1 flex items-center justify-between text-[10px] text-muted-foreground">
+          <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
             <span className="flex items-center gap-1">
               <GaugeIcon className="h-3 w-3" />
               Conviction
@@ -395,18 +413,26 @@ function AxisCard({
                 <div className="font-mono text-[11px] text-foreground/80">{r.label}</div>
                 <div className="flex items-center gap-1.5">
                   {r.fresh && (
-                    <Badge variant="outline" className="border-primary/50 bg-primary/10 text-[9px] text-primary">
+                    <Badge variant="outline" className="border-primary/50 bg-primary/10 text-[11px] text-primary">
                       fresh
                     </Badge>
                   )}
                   {r.durable && (
-                    <Badge variant="outline" className="border-fuchsia-500/50 bg-fuchsia-500/10 text-[9px] text-fuchsia-400">
+                    <Badge variant="outline" className="border-fuchsia-500/50 bg-fuchsia-500/10 text-[11px] text-fuchsia-400">
                       durable
                     </Badge>
                   )}
                   <span className={`font-mono text-[11px] ${r.z >= 0 ? "text-emerald-500" : "text-red-500"}`}>
                     {r.z >= 0 ? "+" : ""}{r.z.toFixed(2)}σ
                   </span>
+                  {r.stats && (
+                    <span
+                      className="font-mono text-[11px] text-muted-foreground"
+                      title={`bootstrap null: |z| 5% line ${r.stats.zCrit95.toFixed(2)}, ${r.stats.independentWindows} non-overlapping windows in ${r.stats.sampleDays} days, wild-bootstrap null`}
+                    >
+                      p {r.stats.pZ.toFixed(3)}{r.stats.qZ != null && Number.isFinite(r.stats.qZ) ? ` · q ${r.stats.qZ.toFixed(3)}` : ""}
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="mt-1.5 text-[11px] leading-snug text-muted-foreground">{r.evidence}</div>
@@ -434,12 +460,12 @@ function AxisCard({
               </div>
               <div className="flex items-center gap-1.5">
                 {catchupCount > 0 && (
-                  <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-[9px] font-mono text-amber-400">
+                  <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-[11px] font-mono text-amber-400">
                     <Zap className="mr-0.5 h-2.5 w-2.5" />
                     {catchupCount} buy
                   </Badge>
                 )}
-                <span className="text-[10px] text-muted-foreground">
+                <span className="text-[11px] text-muted-foreground">
                   {leadersLaggards.all.length} names
                 </span>
               </div>
@@ -461,7 +487,7 @@ function LeadersLaggardsTable({ ll }: { ll: LeadersLaggards }) {
       <div>
         <div className="mb-1.5 flex items-center gap-1.5">
           <Crown className="h-3 w-3 text-emerald-400" />
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">
             Leaders
           </span>
         </div>
@@ -476,10 +502,10 @@ function LeadersLaggardsTable({ ll }: { ll: LeadersLaggards }) {
       <div>
         <div className="mb-1.5 flex items-center gap-1.5">
           <Target className="h-3 w-3 text-amber-400" />
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-400">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-400">
             Laggards
           </span>
-          <span className="text-[10px] text-muted-foreground">
+          <span className="text-[11px] text-muted-foreground">
             (sorted by catch-up score)
           </span>
         </div>
@@ -520,15 +546,15 @@ function ConstituentRowCard({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="font-mono text-[11px] font-semibold text-foreground">{c.symbol}</span>
-          <span className="text-[10px] text-muted-foreground">#{c.rank}</span>
+          <span className="text-[11px] text-muted-foreground">#{c.rank}</span>
           {c.catchupCandidate && (
-            <Badge variant="outline" className="border-amber-500/60 bg-amber-500/15 font-mono text-[8.5px] text-amber-300">
+            <Badge variant="outline" className="border-amber-500/60 bg-amber-500/15 font-mono text-[11px] text-amber-300">
               <Zap className="mr-0.5 h-2 w-2" />
               catch-up {c.catchupScore}
             </Badge>
           )}
         </div>
-        <div className="flex items-center gap-2 font-mono text-[10px]">
+        <div className="flex items-center gap-2 font-mono text-[11px]">
           <span className={rocColor}>
             {c.rocPct >= 0 ? "+" : ""}{c.rocPct.toFixed(1)}%
           </span>
@@ -539,7 +565,7 @@ function ConstituentRowCard({
           )}
         </div>
       </div>
-      <div className="mt-1 text-[10px] leading-snug text-muted-foreground">{c.note}</div>
+      <div className="mt-1 text-[11px] leading-snug text-muted-foreground">{c.note}</div>
     </div>
   );
 }
@@ -579,7 +605,7 @@ function CatchupStrip({
               Higher score = better mean-reversion setup.
             </p>
           </div>
-          <Badge variant="outline" className="font-mono text-[10px] text-amber-400">
+          <Badge variant="outline" className="font-mono text-[11px] text-amber-400">
             {top.length}
           </Badge>
         </div>
@@ -600,15 +626,15 @@ function CatchupStrip({
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5">
                     <span className="font-mono text-sm font-semibold text-amber-300">{p.symbol}</span>
-                    <Badge variant="outline" className="border-amber-500/50 bg-amber-500/15 font-mono text-[9px] text-amber-300">
+                    <Badge variant="outline" className="border-amber-500/50 bg-amber-500/15 font-mono text-[11px] text-amber-300">
                       {p.catchupScore}/100
                     </Badge>
                   </div>
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
                     {axisShortLabel(p.axis)}
                   </span>
                 </div>
-                <div className="mt-1 flex items-center gap-2 font-mono text-[10px]">
+                <div className="mt-1 flex items-center gap-2 font-mono text-[11px]">
                   <span className={p.rocPct >= 0 ? "text-emerald-400" : "text-red-400"}>
                     {p.rocPct >= 0 ? "+" : ""}{p.rocPct.toFixed(1)}%
                   </span>
@@ -618,7 +644,7 @@ function CatchupStrip({
                     </span>
                   )}
                 </div>
-                <div className="mt-1 text-[10px] leading-snug text-muted-foreground">{p.note}</div>
+                <div className="mt-1 text-[11px] leading-snug text-muted-foreground">{p.note}</div>
               </div>
             ))}
           </div>
@@ -661,7 +687,7 @@ function ThemeColumn({
             </CardTitle>
             <p className="mt-0.5 text-[11px] text-muted-foreground">{subtitle}</p>
           </div>
-          <Badge variant="outline" className="font-mono text-[10px]">
+          <Badge variant="outline" className="font-mono text-[11px]">
             {themes.length}
           </Badge>
         </div>
@@ -684,7 +710,7 @@ function ThemeColumn({
                     <ChevronRight className={`h-3 w-3 ${accentClass}`} />
                     <h4 className="text-sm font-semibold leading-tight">{t.headline}</h4>
                   </div>
-                  <Badge variant="outline" className="shrink-0 font-mono text-[9px]">
+                  <Badge variant="outline" className="shrink-0 font-mono text-[11px]">
                     {t.conviction}
                   </Badge>
                 </div>

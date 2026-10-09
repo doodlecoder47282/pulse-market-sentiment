@@ -99,6 +99,8 @@ export interface VolMetric {
   value: number | null;
   prev: number | null;
   changePct: number | null;
+  /** Schwab quote stale flag: true = old during the session, null = age unknown. */
+  stale?: boolean | null;
 }
 
 export interface TermStructure {
@@ -118,12 +120,12 @@ export interface GexStrikePoint {
 
 export interface GammaStructure {
   spot: number;
-  totalGex: number;             // net dealer gamma ($ per 1% move), calls +, puts -
+  totalGex: number;             // net dealer gamma ($ per 1% move), calls +, puts -; Black-Scholes re-priced (gammaProfile.gexByStrikeFromChain)
   regime: "positive" | "negative" | "neutral";
-  callWall: number;             // strike with largest positive GEX contribution
-  callWallGex: number;
-  putWall: number;              // strike with largest negative GEX contribution
-  putWallGex: number;
+  callWall: number;             // strike at/above spot with the largest re-priced call GEX
+  callWallGex: number;          // that strike's call GEX ($ per 1%)
+  putWall: number;              // strike below spot with the largest |re-priced put GEX|
+  putWallGex: number;           // that strike's put GEX ($ per 1%, negative)
   zeroGamma: number | null;     // canonical zero-gamma spot level (Perfiliev-style) — where total γ flips as spot moves
   maxPain: number;              // nearest expiry max-pain strike
   nearestDte: number;
@@ -283,7 +285,7 @@ export interface WefThemeResponse {
 }
 
 export interface SocialPost {
-  source: "X" | "Reddit" | "News";
+  source: "X" | "Reddit" | "News" | "StockTwits";
   author?: string;
   text: string;
   url: string;
@@ -292,18 +294,29 @@ export interface SocialPost {
 }
 
 export interface SocialSentiment {
-  score: number;                   // -100 (extreme fear) ... +100 (extreme greed)
+  /** -100 (all bearish) ... +100 (all bullish); null when collection failed or the sample is too small. */
+  score: number | null;
   bullish: number;                 // raw counts
   bearish: number;
   neutral: number;
   posts: SocialPost[];
+  /** ok | partial (a source failed, was stale/undated, or posts of unknown age were dropped) | insufficient (too few tagged posts) | unavailable (no source collected). Absent on old snapshots. */
+  status?: "ok" | "partial" | "insufficient" | "unavailable";
+  /** Per-source collection state. */
+  /** Per-source collection state; posts = posts scored (ok) or collected; dropped = posts left out (undated or older than the age window). */
+  sources?: { name: string; state: "ok" | "empty" | "stale" | "undated" | "failed"; posts: number; newest?: string | null; dropped?: number }[];
+  /** Collection time, epoch ms. */
+  asOf?: number;
 }
 
 export interface Gauge {
-  name: string;
+  name: string;           // stable key (history, weights): never changes with display wording
+  /** Display text for the UI when it should differ from the history key `name`. */
+  label?: string;
   value: number;          // 0..100 where 50 = neutral
   weight: number;         // contribution weight to composite
   interpretation: string;
+  block?: string;         // correlated-gauge block (implied-vol, options-positioning, crowd, fear-greed)
 }
 
 export interface Composite {
@@ -312,6 +325,13 @@ export interface Composite {
   gauges: Gauge[];
   takeaway: string;             // short human summary
   tradingRegime: string;        // "positive gamma / mean reversion", etc.
+  method?: string;              // how gauges are weighted (heuristic, block-first)
+  /** "estimated" (HRP on gauge history, gate passed) or "heuristic" (hand-set) */
+  weightSource?: "estimated" | "heuristic";
+  /** effective number of independent gauges under the estimated weights; null when heuristic */
+  effectiveGauges?: number | null;
+  /** Implied-vol + options-positioning blocks only (no social/survey/F&G): the only score allowed into price/path calculations. */
+  marketScore?: number | null;
 }
 
 // ----- CLV Tracker (trade log + closing-line value) -----
@@ -392,14 +412,38 @@ export type IvRvRow = typeof ivRvDaily.$inferSelect;
 
 export interface Snapshot_Public {
   capturedAt: number;
-  spy: { price: number; prevClose: number; changePct: number };
+  /** prevClose / changePct are null when no honest prior close is available (never 0). */
+  spy: {
+    price: number;
+    prevClose: number | null;
+    changePct: number | null;
+    /** Schwab quote stale flag (quoteFreshness): true = old during the session, null = age unknown. */
+    stale?: boolean | null;
+    ageMs?: number | null;
+    prevCloseSource?: string;
+  };
   vol: { vix: VolMetric; vvix: VolMetric; vix9d: VolMetric; vix3m: VolMetric; skew: VolMetric };
   term: TermStructure;
   gamma: GammaStructure;
   social: SocialSentiment;
-  fearGreed: { value: number; label: string; source: string } | null;
+  fearGreed: { value: number; label: string; source: string; asOf?: string | null; stale?: boolean } | null;
   aaii: { bullish: number; bearish: number; neutral: number; asOf: string } | null;
   composite: Composite;
-  headlines: { title: string; url: string; source: string; publishedAt?: string }[];
+  headlines: { title: string; url: string; source: string; publishedAt?: string; tier?: string; tierLabel?: string }[];
+  /** Headline feed state: "unavailable" when no RSS source answered (Schwab has no news API) */
+  headlinesFeed?: {
+    status: "ok" | "partial" | "empty" | "unavailable";
+    sources: Array<{ name: string; state: "ok" | "empty" | "failed" | "stale"; items: number; newest: string | null; tier?: string }>;
+    asOf: number;
+    maxAgeHours: number;
+    note: string;
+  };
   warnings: string[];
+  /** Provenance of `gamma`: Schwab SPY chain, its asOf (epoch s) and stale flag. */
+  gammaSource?: "schwab";
+  gammaAsOf?: number | null;
+  gammaStale?: boolean;
+  /** Set when this snapshot is a stored one served because a rebuild failed (within the max age). */
+  stale?: boolean;
+  staleReason?: string | null;
 }

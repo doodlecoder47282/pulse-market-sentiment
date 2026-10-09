@@ -1,12 +1,19 @@
 /**
- * Data source adapters: Schwab (quotes), CBOE (SPY options chain),
- * CNN Fear & Greed, AAII (via fallback), and web-based X/Reddit sentiment
- * aggregated from public search pages (no login / no API key).
+ * Data source adapters: Schwab only for market data (quotes, SPY options
+ * chain for the gamma structure); CNN Fear & Greed (undocumented JSON,
+ * context only) and the StockTwits public symbol streams (social, context
+ * only). Reddit was dropped: its Data API requires OAuth. Source tiers and
+ * terms: server/sources/registry.ts.
  */
 import type {
   GammaStructure, GexStrikePoint, SocialPost, SocialSentiment,
 } from "@shared/schema";
-import { buildGammaProfile, type OptionRow } from "./gammaProfile";
+import { buildGammaProfile, gexByStrikeFromChain, type OptionRow } from "./gammaProfile";
+import { toSchwabSymbol } from "./schwabSymbols";
+import { flattenSchwabChain, chainSpot, type SchwabChainLike } from "./schwabChainRows";
+import { timeToExpiry, type SettlementStyle } from "./timeToExpiry";
+import { etDate, sessionCloseMs } from "./exchangeCalendar";
+import { fetchMarketHeadlineFeed, type HeadlineFeed } from "./news";
 
 const UA = "Mozilla/5.0 (compatible; SentimentDash/1.0)";
 
@@ -22,50 +29,42 @@ async function fetchText(url: string, headers: Record<string, string> = {}) {
   return res.text();
 }
 
-/** Quote endpoint: last-close + previous-close via Schwab getQuotes.
- *  Symbol mapping: Yahoo ^ prefix → Schwab $ prefix (e.g. ^VIX → $VIX, ^GSPC → $SPX).
- *  Bug #4 fix: renamed from yahooQuote → getQuote. Function was never calling
- *  Yahoo — the implementation has always been Schwab-only. The misleading name
- *  was a vestige from the pre-Schwab era.
+/** Quote endpoint: last + previous close via Schwab getQuotes.
+ *  Symbol mapping: Yahoo ^ prefix -> Schwab $ prefix (server/schwabSymbols.ts).
+ *  prev = the prior session's close: during the session last - netChange
+ *  (Schwab defines netChange against the previous close); after today's
+ *  close Schwab may roll its close to today's, so the prior close is resolved
+ *  against Schwab daily-bar dates (quotes.resolveSessionPrevClose). null when
+ *  no honest prior close exists -- never 0.
  */
-export async function getQuote(symbol: string): Promise<{ last: number | null; prev: number | null; }> {
+export async function getQuote(symbol: string): Promise<{
+  last: number | null; prev: number | null; stale?: boolean | null; ageMs?: number | null;
+  prevSource?: string;
+}> {
   try {
-    // Map Yahoo-style symbols to Schwab equivalents
     const schwabSymbol = toSchwabSymbol(symbol);
     const { getQuotes } = await import("./schwab");
     const quotes = await getQuotes([schwabSymbol]);
     const q = quotes.find((q) => q.symbol === schwabSymbol);
-    if (!q || q.last == null) return { last: null, prev: null };
-    // changePercent is vs prev close; back-calculate prev from last + change
+    if (!q || q.last == null) return { last: null, prev: null, prevSource: "unavailable" };
     const last = q.last;
-    const prev = (q.change != null && isFinite(q.change)) ? last - q.change : null;
-    return { last, prev };
+    let prev = (q.change != null && isFinite(q.change)) ? last - q.change : null;
+    let prevSource = prev != null ? "schwab_quote_net_change" : "unavailable";
+    const nowMs = Date.now();
+    const close = sessionCloseMs(etDate(nowMs));
+    if (close != null && nowMs >= close) {
+      try {
+        const { resolveSessionPrevClose } = await import("./quotes");
+        const pc = await resolveSessionPrevClose(schwabSymbol, etDate(nowMs));
+        prev = pc.prevClose;
+        prevSource = pc.source;
+      } catch { /* keep the netChange-based value */ }
+    }
+    // Freshness of the quote itself (server/quoteFreshness.ts).
+    return { last, prev, stale: q.stale ?? null, ageMs: q.ageMs ?? null, prevSource };
   } catch {
-    return { last: null, prev: null };
+    return { last: null, prev: null, prevSource: "unavailable" };
   }
-}
-
-/** Map Yahoo-style symbols to Schwab equivalents.
- *  Schwab cash indexes use "$" prefix WITHOUT ".X" suffix (verified empirically:
- *  $VIX returns 17.08, $VIX.X returns nothing). For SPX option chains the param
- *  is also "$SPX" (see routes.ts:1870 comment).
- */
-function toSchwabSymbol(symbol: string): string {
-  const map: Record<string, string> = {
-    "^VIX": "$VIX",
-    "^VIX9D": "$VIX9D",
-    "^VIX3M": "$VIX3M",
-    "^VVIX": "$VVIX",
-    "^SKEW": "$SKEW",
-    "^GSPC": "$SPX",
-    "^SPX": "$SPX",
-    "^VXN": "$VXN",
-    "^RVX": "$RVX",
-    "^DJI": "$DJI",
-    "^IXIC": "$COMPX",
-    "^RUT": "$RUT",
-  };
-  return map[symbol] ?? symbol;
 }
 
 export { toSchwabSymbol };
@@ -76,60 +75,59 @@ export { toSchwabSymbol };
  */
 export const yahooQuote = getQuote;
 
-/** CBOE delayed options chain for SPY (includes per-contract Greeks). */
-export async function cboeSpyChain(): Promise<any> {
-  const url = "https://cdn.cboe.com/api/global/delayed_quotes/options/SPY.json";
-  return fetchJson(url, { Referer: "https://www.cboe.com/" });
-}
+/**
+ * Gamma structure for the Signals snapshot from a Schwab option chain
+ * (SPY, 0-45 DTE; strikes and spot in SPY dollars). Was the CBOE delayed SPY
+ * chain; Schwab is now the only source (user decision 2026-10-08).
+ * Round 4: per-strike GEX, total GEX and the walls come from
+ * gammaProfile.gexByStrikeFromChain: Black-Scholes gamma re-priced on the
+ * shared clock with the flip's r and q (the same per-contract term the flip
+ * sums), call wall = largest call GEX at or above spot, put wall = largest
+ * |put GEX| below spot. The vendor gamma (undocumented T convention, -999
+ * when closed) no longer feeds anything here. OI, volume and max pain come
+ * from the chain rows; settled contracts (T <= 0) are dropped. A chain with
+ * no re-priceable strike on both sides of spot throws ("no re-priceable
+ * gamma"), which the snapshot reports as unavailable (not a 0 wall).
+ */
+export function buildGammaStructure(chain: SchwabChainLike, nowMs: number = Date.now()): GammaStructure {
+  const spot = chainSpot(chain);
+  if (spot == null) throw new Error("Schwab chain has no underlying price");
+  const S: number = spot;
 
-/** Build gamma structure from the CBOE chain, limited to 0-45 DTE. */
-export function buildGammaStructure(chain: any): GammaStructure {
-  const data = chain.data;
-  const S: number = Number(data.current_price);
-  const opts: any[] = data.options;
-
-  // OCC symbol pattern. Note: the underlying prefix is variable length for SPX
-  // but for SPY it's always "SPY". For SPX weeklys (SPXW), also match.
-  const pat = /^(SPY|SPXW|SPX)(\d{6})([CP])(\d{8})$/;
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-
-  type Row = { type: "C" | "P"; strike: number; gamma: number; iv: number; oi: number; vol: number; dte: number; expiry: string };
+  type Row = { type: "C" | "P"; strike: number; iv: number; oi: number; vol: number; dte: number; expiry: string; style: SettlementStyle };
   const rows: Row[] = [];
-  for (const o of opts) {
-    const m = pat.exec(o.option);
-    if (!m) continue;
-    const ymd = m[2];
-    const year = 2000 + parseInt(ymd.slice(0, 2));
-    const month = parseInt(ymd.slice(2, 4)) - 1;
-    const day = parseInt(ymd.slice(4, 6));
-    const exp = new Date(Date.UTC(year, month, day));
-    const dte = Math.round((exp.getTime() - today.getTime()) / 86400000);
-    if (dte < 0 || dte > 45) continue;
-    const strike = parseInt(m[4]) / 1000;
-    const gamma = Number(o.gamma) || 0;
-    const iv = Number(o.iv) || 0;
-    const oi = Number(o.open_interest) || 0;
-    if (gamma === 0 || oi === 0) continue;
-    const expiry = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  for (const c of flattenSchwabChain(chain)) {
+    if (c.dte < 0 || c.dte > 45) continue;
+    if (!(timeToExpiry(c.expiry, { nowMs, style: c.style }).years > 0)) continue; // settled
+    const oi = c.openInterest;
+    if (oi == null || oi === 0) continue;
     rows.push({
-      type: m[3] as "C" | "P",
-      strike, gamma, iv, oi,
-      vol: Number(o.volume) || 0,
-      dte,
-      expiry,
+      type: c.side,
+      strike: c.strike, iv: c.iv ?? 0, oi,
+      vol: c.volume ?? 0,
+      dte: c.dte,
+      expiry: c.expiry,
+      style: c.style,
     });
   }
 
+  // Re-priced per-strike GEX ($ per 1% move; calls +, puts -), 0-45 DTE.
+  const chainGex = gexByStrikeFromChain({ ...chain, underlying: { last: S } } as any, nowMs);
   const gexByStrike = new Map<number, number>();
+  for (const p of chainGex.profile) gexByStrike.set(p.strike, p.netGex);
+  const wallCall = chainGex.profile.find((p) => p.strike === chainGex.callWall);
+  const wallPut = chainGex.profile.find((p) => p.strike === chainGex.putWall);
+  if (chainGex.callWall == null || chainGex.putWall == null || !wallCall || !wallPut || !(wallCall.callGex > 0) || !(wallPut.putGex < 0)) {
+    throw new Error("Schwab chain unusable: no re-priceable gamma on both sides of spot (no call wall at/above or put wall below)");
+  }
+  const callWall: number = chainGex.callWall, callWallGex: number = wallCall.callGex;
+  const putWall: number = chainGex.putWall, putWallGex: number = wallPut.putGex;
+
   const callOiByStrike = new Map<number, number>();
   const putOiByStrike = new Map<number, number>();
   let totalCallOi = 0, totalPutOi = 0, callVol = 0, putVol = 0;
 
   for (const r of rows) {
-    const sign = r.type === "C" ? 1 : -1;
-    const gex = sign * r.gamma * r.oi * 100 * S * S * 0.01;
-    gexByStrike.set(r.strike, (gexByStrike.get(r.strike) || 0) + gex);
     if (r.type === "C") {
       callOiByStrike.set(r.strike, (callOiByStrike.get(r.strike) || 0) + r.oi);
       totalCallOi += r.oi; callVol += r.vol;
@@ -141,14 +139,6 @@ export function buildGammaStructure(chain: any): GammaStructure {
 
   const strikes = Array.from(gexByStrike.keys()).sort((a, b) => a - b);
   const totalGex = strikes.reduce((a, k) => a + (gexByStrike.get(k) || 0), 0);
-
-  let callWall = strikes[0], putWall = strikes[0];
-  let callWallGex = -Infinity, putWallGex = Infinity;
-  for (const k of strikes) {
-    const g = gexByStrike.get(k) || 0;
-    if (g > callWallGex) { callWallGex = g; callWall = k; }
-    if (g < putWallGex)  { putWallGex = g; putWall = k; }
-  }
 
   // GEX Crossover Strike: legacy metric — strike at which cumulative per-strike
   // GEX flips sign (where the GEX centroid lies). Kept for continuity but NOT
@@ -171,9 +161,14 @@ export function buildGammaStructure(chain: any): GammaStructure {
   // gamma flips sign. This is the level SpotGamma / MenthorQ publish.
   const profileRows: OptionRow[] = rows
     .filter((rr) => rr.iv > 0 && rr.oi > 0)
-    .map((rr) => ({ type: rr.type, strike: rr.strike, iv: rr.iv, oi: rr.oi, dte: rr.dte }));
+    // expiry date + settlement style -> the shared clock (timeToExpiry)
+    .map((rr) => ({ type: rr.type, strike: rr.strike, iv: rr.iv, oi: rr.oi, dte: rr.dte, expiry: rr.expiry, style: rr.style }));
+  // Display curve only. The flip itself comes from the same re-priced
+  // profile as the walls and total GEX (gexByStrikeFromChain: shared clock,
+  // sigma re-solved inside 3 days, FLIP_RATE / FLIP_DIV_YIELD), so flip,
+  // walls and total GEX describe one profile.
   const gammaProfile = buildGammaProfile(profileRows, S);
-  const zeroGamma: number | null = gammaProfile.zeroGammaSpot;
+  const zeroGamma: number | null = chainGex.zeroGamma;
 
   // Max pain (nearest expiry only).
   const nearestDte = rows.reduce((a, r) => Math.min(a, r.dte), 45);
@@ -270,17 +265,30 @@ export function buildGammaStructure(chain: any): GammaStructure {
   };
 }
 
-/** CNN Fear & Greed (undocumented but stable JSON endpoint). */
-export async function cnnFearGreed(): Promise<{ value: number; label: string; source: string } | null> {
+/** A CNN reading older than this is stale (the index updates every US trading day). */
+export const FEAR_GREED_MAX_AGE_MS = 4 * 24 * 3600_000;
+
+/** Pure: parse the CNN graphdata payload, keeping the reading's own timestamp. */
+export function parseFearGreed(d: any, nowMs: number = Date.now()): { value: number; label: string; source: string; asOf: string | null; stale: boolean } | null {
+  const v = d?.fear_and_greed?.score;
+  const label = d?.fear_and_greed?.rating || "";
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  const ts = d?.fear_and_greed?.timestamp;
+  const t = typeof ts === "number" ? ts : typeof ts === "string" ? Date.parse(ts) : NaN;
+  const asOf = Number.isFinite(t) ? new Date(t).toISOString() : null;
+  // unknown age is treated as stale: it cannot be shown as current
+  const stale = !Number.isFinite(t) || nowMs - t > FEAR_GREED_MAX_AGE_MS;
+  return { value: Math.round(v), label: String(label).replace(/\b\w/g, (c: string) => c.toUpperCase()), source: "CNN Fear & Greed (cnn.com)", asOf, stale };
+}
+
+/** CNN Fear & Greed (undocumented but stable JSON endpoint). Context only: never a price/options/sizing input. */
+export async function cnnFearGreed(): Promise<{ value: number; label: string; source: string; asOf: string | null; stale: boolean } | null> {
   try {
     const d = await fetchJson(
       "https://production.dataviz.cnn.io/index/fearandgreed/graphdata",
       { Referer: "https://www.cnn.com/markets/fear-and-greed" },
     );
-    const v = d?.fear_and_greed?.score;
-    const label = d?.fear_and_greed?.rating || "";
-    if (typeof v !== "number") return null;
-    return { value: Math.round(v), label: label.replace(/\b\w/g, (c: string) => c.toUpperCase()), source: "CNN" };
+    return parseFearGreed(d);
   } catch {
     return null;
   }
@@ -322,71 +330,150 @@ function decodeEntities(s: string): string {
     .replace(/&quot;/g, '"').replace(/&#x27;|&apos;/g, "'").replace(/&nbsp;/g, " ");
 }
 
+// Throws on a failed request so gatherSocial can tell "failed" from "no posts".
 async function fetchStockTwits(symbol: string, limit = 30): Promise<SocialPost[]> {
-  try {
-    const d = await fetchJson(`https://api.stocktwits.com/api/2/streams/symbol/${symbol}.json?limit=${limit}`);
-    const msgs = d?.messages ?? [];
-    return msgs.map((m: any) => {
-      const body = decodeEntities(m.body || "");
-      const explicit = m?.entities?.sentiment?.basic?.toLowerCase();
-      const tone: SocialPost["tone"] =
-        explicit === "bullish" ? "bullish"
-        : explicit === "bearish" ? "bearish"
-        : scoreText(body);
-      return {
-        source: "X" as const,
-        author: "@" + (m.user?.username ?? "?"),
-        text: body.slice(0, 240),
-        url: `https://stocktwits.com/${m.user?.username}/message/${m.id}`,
-        timestamp: m.created_at,
-        tone,
-      };
-    });
-  } catch {
-    return [];
-  }
+  const d = await fetchJson(`https://api.stocktwits.com/api/2/streams/symbol/${symbol}.json?limit=${limit}`);
+  const msgs = d?.messages ?? [];
+  return msgs.map((m: any) => {
+    const body = decodeEntities(m.body || "");
+    const explicit = m?.entities?.sentiment?.basic?.toLowerCase();
+    const tone: SocialPost["tone"] =
+      explicit === "bullish" ? "bullish"
+      : explicit === "bearish" ? "bearish"
+      : scoreText(body);
+    return {
+      source: "StockTwits" as const,
+      author: "@" + (m.user?.username ?? "?"),
+      text: body.slice(0, 240),
+      url: `https://stocktwits.com/${m.user?.username}/message/${m.id}`,
+      timestamp: m.created_at,
+      tone,
+    };
+  });
 }
 
-/** Reddit public JSON (no auth). Works well for /r/wallstreetbets + /r/options. */
-async function fetchReddit(sub: string, limit = 30): Promise<SocialPost[]> {
-  try {
-    const d = await fetchJson(`https://www.reddit.com/r/${sub}/hot.json?limit=${limit}`);
-    const items = d?.data?.children ?? [];
-    return items.map((c: any) => {
-      const t = `${c.data.title || ""} ${c.data.selftext || ""}`.slice(0, 300);
-      return {
-        source: "Reddit" as const,
-        author: "r/" + sub,
-        text: c.data.title || "",
-        url: `https://www.reddit.com${c.data.permalink}`,
-        tone: scoreText(t),
-      };
-    });
-  } catch {
-    return [];
-  }
-}
+// Reddit was dropped (round 2, R2-I): the Reddit Data API requires a
+// registered OAuth client and blocks unauthenticated traffic ("Reddit Data
+// API Wiki", https://support.reddithelp.com/hc/en-us/articles/16160319875092-Reddit-Data-API-Wiki),
+// so the keyless /hot.json read violated the terms. The gauge runs on
+// StockTwits alone and its sources list says so.
 
-/** Aggregate X + Reddit into one SocialSentiment payload. */
-export async function gatherSocial(): Promise<SocialSentiment> {
-  const [stSpy, stVix, rOpts] = await Promise.all([
-    fetchStockTwits("SPY", 30),
-    fetchStockTwits("VIX", 15),
-    fetchReddit("options", 25),
-  ]);
-  const posts = [...stSpy, ...stVix, ...rOpts];
-  const bullish = posts.filter((p) => p.tone === "bullish").length;
-  const bearish = posts.filter((p) => p.tone === "bearish").length;
-  const neutral = posts.filter((p) => p.tone === "neutral").length;
-  const tagged = bullish + bearish;
-  const score = tagged > 0 ? Math.round(((bullish - bearish) / tagged) * 100) : 0;
-  return { score, bullish, bearish, neutral, posts: posts.slice(0, 40) };
-}
-
-/** Market news headlines relevant to SPX/SPY.
- *  // TODO: Schwab-only mode — Yahoo source removed, awaiting Schwab equivalent.
- *  Returns empty array gracefully.
+/**
+ * Post age window for the score. The gauge is a same-session read that sits
+ * next to VIX, gamma and Fear & Greed in a composite refreshed every snapshot,
+ * so it should reflect the current session plus overnight/pre-market chatter:
+ * 24 hours. (A 72 h window let Friday's chatter set Monday's read.) The
+ * StockTwits SPY stream (latest 30 messages) normally spans minutes, so the
+ * window only bites when that feed is frozen; older posts are dropped
+ * rather than scored.
  */
-export async function fetchHeadlines(): Promise<{ title: string; url: string; source: string; publishedAt?: string }[]> {
-  return [];
+export const SOCIAL_MAX_AGE_HOURS = 24;
+/** Fewer tagged (bullish + bearish) posts than this gives no score: one post would read +/-100. */
+export const SOCIAL_MIN_TAGGED = 5;
+
+type SocialSourceState = NonNullable<SocialSentiment["sources"]>[number];
+
+const INVERT_TONE: Record<SocialPost["tone"], SocialPost["tone"]> = {
+  bullish: "bearish", bearish: "bullish", neutral: "neutral",
+};
+
+export interface CollectedSocialSource {
+  name: string;
+  /** null = the request failed. */
+  posts: SocialPost[] | null;
+  /** The source's tone is about an asset that moves against equities (VIX):
+   *  "bullish VIX" is bearish for stocks, so tone is inverted before scoring. */
+  invertTone?: boolean;
+}
+
+/**
+ * Pure scoring step, exported for tests. Missing, stale, undated and
+ * too-small samples yield score = null with a status, never a neutral 0
+ * (which the composite would map to a 50 "neutral" gauge). A post enters the
+ * score only with a readable timestamp inside SOCIAL_MAX_AGE_HOURS; posts of
+ * unknown age are dropped and mark the result as partial.
+ */
+export function summarizeSocial(
+  collected: CollectedSocialSource[],
+  nowMs: number = Date.now(),
+): SocialSentiment {
+  const sources: SocialSourceState[] = [];
+  const used: SocialPost[] = [];
+  const maxAgeMs = SOCIAL_MAX_AGE_HOURS * 3600_000;
+  let undatedDropped = 0;
+  for (const src of collected) {
+    if (src.posts == null) {
+      sources.push({ name: src.name, state: "failed", posts: 0, newest: null });
+      continue;
+    }
+    if (src.posts.length === 0) {
+      sources.push({ name: src.name, state: "empty", posts: 0, newest: null });
+      continue;
+    }
+    const dated = src.posts
+      .map((p) => ({ p, t: p.timestamp ? Date.parse(p.timestamp) : NaN }))
+      .filter((x) => Number.isFinite(x.t));
+    const undated = src.posts.length - dated.length;
+    undatedDropped += undated;
+    const newestMs = dated.length ? Math.max(...dated.map((x) => x.t)) : null;
+    const newest = newestMs != null ? new Date(newestMs).toISOString() : null;
+    const fresh = dated.filter((x) => nowMs - x.t <= maxAgeMs && x.t <= nowMs + 5 * 60_000).map((x) => x.p);
+    if (dated.length === 0) {
+      sources.push({ name: src.name, state: "undated", posts: src.posts.length, newest: null, dropped: undated });
+    } else if (fresh.length === 0) {
+      sources.push({ name: src.name, state: "stale", posts: src.posts.length, newest, dropped: src.posts.length });
+    } else {
+      sources.push({ name: src.name, state: "ok", posts: fresh.length, newest, dropped: src.posts.length - fresh.length });
+      used.push(...(src.invertTone ? fresh.map((p) => ({ ...p, tone: INVERT_TONE[p.tone] })) : fresh));
+    }
+  }
+  const bullish = used.filter((p) => p.tone === "bullish").length;
+  const bearish = used.filter((p) => p.tone === "bearish").length;
+  const neutral = used.filter((p) => p.tone === "neutral").length;
+  const tagged = bullish + bearish;
+  const anyUsable = sources.some((x) => x.state === "ok");
+  const degraded = undatedDropped > 0 || sources.some((x) => x.state !== "ok");
+  let status: NonNullable<SocialSentiment["status"]>;
+  let score: number | null = null;
+  if (!anyUsable) status = "unavailable";
+  else if (tagged < SOCIAL_MIN_TAGGED) status = "insufficient";
+  else {
+    score = Math.round(((bullish - bearish) / tagged) * 100);
+    status = degraded ? "partial" : "ok";
+  }
+  return { score, bullish, bearish, neutral, posts: used.slice(0, 40), status, sources, asOf: nowMs };
+}
+
+/** StockTwits SPY + VIX streams into one SocialSentiment payload (keyword/tag
+ *  tone, a heuristic). Social media: a weak, context-only source (see
+ *  server/sources/registry.ts), never a price, greeks, options or sizing input. */
+export async function gatherSocial(): Promise<SocialSentiment> {
+  const settle = async (name: string, p: Promise<SocialPost[]>, invertTone = false): Promise<CollectedSocialSource> => {
+    try { return { name, posts: await p, invertTone }; } catch { return { name, posts: null, invertTone }; }
+  };
+  const collected = await Promise.all([
+    settle("StockTwits SPY", fetchStockTwits("SPY", 30)),
+    // VIX chatter: tone inverted (bullish VIX = bearish equities); the post's
+    // tone shown on the card is the equity read, and the author is tagged.
+    settle("StockTwits VIX (tone inverted)", fetchStockTwits("VIX", 15).then((ps) =>
+      ps.map((p) => ({ ...p, author: `${p.author ?? ""} on $VIX (tone shown for equities)` }))), true),
+  ]);
+  return summarizeSocial(collected);
+}
+
+/** Market news headlines for the Signals snapshot (finding 5.8).
+ *  Schwab has no news API; this reuses the News tab's labeled RSS sources
+ *  (server/news.ts) with source, publish time and a feed status, so a failed
+ *  collection reads "unavailable" instead of an always-empty list. Context
+ *  only: headlines never feed a price, greeks, options or sizing calculation.
+ */
+export async function fetchHeadlines(): Promise<HeadlineFeed> {
+  try {
+    return await fetchMarketHeadlineFeed();
+  } catch (e: any) {
+    return {
+      items: [], status: "unavailable", sources: [], maxAgeHours: 24, undatedDropped: 0, asOf: Date.now(),
+      note: `no headline source: ${String(e?.message ?? e).slice(0, 120)}`,
+    };
+  }
 }

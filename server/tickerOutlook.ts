@@ -3,8 +3,12 @@
 // Single-name Outlook orchestrator. Fuses the pivot projection (price
 // structure + magnets) with the ticker alpha block (news + social + positioning)
 // and produces a peer-to-peer verdict card per the user's playbook:
-//   • base / bull / bear with probability weights summing to 100
-//   • position sizing (fractional Kelly), R:R (min 2:1), invalidation level
+//   • base / bull / bear with heuristic scenario weights summing to 100
+//     (hand-set or LLM-written; not calibrated probabilities)
+//   • R:R (min 2:1), invalidation level. NO position size: Kelly needs a win
+//     probability and payoff ratio fitted on graded outcomes (Kelly 1956);
+//     single-name outlooks have none, so sizing.available is false and the
+//     legacy kellyFrac field is always 0.
 //   • edge type identification, counterargument
 //   • plain-English setup tags
 //
@@ -17,6 +21,7 @@ import OpenAI from "openai";
 import { getTickerAlpha, type TickerAlpha } from "./tickerAlpha";
 import { buildPivotProjection, type PivotProjectionResponse } from "./pivotProjection";
 import { getPriceHistory } from "./schwab";
+import { noOutlookSizing, normalizeScenarioWeights } from "./outlookVerdictMath";
 
 export type Direction = "BULL" | "BEAR" | "NEUTRAL";
 
@@ -30,8 +35,12 @@ export interface OutlookVerdict {
   expectedMovePct: number | null;
   /** Risk/reward ratio (reward/risk). */
   rr: number | null;
-  /** Suggested fractional Kelly position size (0-1.0). */
+  /** Deprecated, always 0. Kept for older clients. No size is computed: there is
+   *  no fitted win probability for single-name outlooks (see `sizing`). */
   kellyFrac: number;
+  /** Position sizing status. available=false until a fitted win-probability
+   *  path exists for single names (as gradeCalibration does for 0DTE). */
+  sizing: { available: boolean; reason: string };
   /** Specific invalidation level — where the thesis dies */
   invalidation: number | null;
   /** Edge type tag */
@@ -51,6 +60,10 @@ export interface OutlookVerdict {
   /** Which engine produced this verdict */
   provider: "anthropic" | "openai" | "deterministic";
 }
+
+// NO_SIZE_REASON, the sizing state and scenario-weight normalization live in
+// the pure module outlookVerdictMath.ts (unit-tested).
+export { NO_SIZE_REASON } from "./outlookVerdictMath";
 
 export interface TickerOutlookResponse {
   ticker: string;
@@ -147,12 +160,8 @@ function deterministicVerdict(
   const baseProb = 100 - bullProb - bearProb;
 
   const confidence = Math.min(70, Math.max(25, Math.abs(c) * 0.6 + 30));
-  // Quarter-Kelly default; full Kelly = composite/100 if positive expectation
-  const expRet = (expectedMovePct ?? 0) / 100;
-  const kellyFrac =
-    rr && rr > 0
-      ? Math.max(0, Math.min(0.5, (Math.abs(c) / 100) * 0.25))
-      : 0;
+  // No position size. The former "quarter-Kelly" was |composite|/100 x 0.25,
+  // which has no win probability or payoff in it, so it was not Kelly.
 
   const counter =
     direction === "BULL"
@@ -167,14 +176,15 @@ function deterministicVerdict(
     targetPrice: target,
     expectedMovePct: expectedMovePct != null ? Number(expectedMovePct.toFixed(2)) : null,
     rr,
-    kellyFrac: Number(kellyFrac.toFixed(3)),
+    kellyFrac: 0,
+    sizing: noOutlookSizing(),
     invalidation,
     edgeType: alpha.rollup.edgeType,
     counterargument: counter,
     thesis:
       direction === "NEUTRAL"
         ? `No edge — pass. Composite ${c}. Wait for a hard catalyst or social vol spike.`
-        : `${direction === "BULL" ? "Bullish" : "Bearish"} bias from composite ${c} (news ${alpha.rollup.newsBias}/social ${alpha.rollup.socialBias}/positioning ${alpha.rollup.positioningBias}). Magnet ${target?.toFixed(2) ?? "n/a"}, invalidation ${invalidation?.toFixed(2) ?? "n/a"}.`,
+        : `${direction === "BULL" ? "Bullish" : "Bearish"} bias from composite ${c} (news ${alpha.rollup.newsBias}/social ${alpha.rollup.socialBias ?? "not available"}/positioning ${alpha.rollup.positioningBias}). Magnet ${target?.toFixed(2) ?? "n/a"}, invalidation ${invalidation?.toFixed(2) ?? "n/a"}.`,
     scenarios: {
       bull: {
         prob: bullProb,
@@ -202,7 +212,7 @@ function deterministicVerdict(
       target != null
         ? `Close ${direction === "BULL" ? "above" : "below"} ${target.toFixed(2)} confirms`
         : "No clean confirmation level — pass",
-      invalidation != null ? `Stop at ${invalidation.toFixed(2)}` : "No clean stop — small size only",
+      invalidation != null ? `Invalidation at ${invalidation.toFixed(2)}` : "No clean invalidation level",
       alpha.social.volumeZ >= 2
         ? `Social vol z=${alpha.social.volumeZ.toFixed(1)} — unusual chatter, weight behavioral edge`
         : "Social volume normal",
@@ -215,7 +225,7 @@ function deterministicVerdict(
 
 const SYNTHESIS_SYSTEM_PROMPT = `You are a senior quant + risk manager + advantage player producing a single-name outlook verdict.
 
-You receive a JSON payload with: ticker, spot price, ranked alpha news events (tier 1/2/sentiment-shift), social exposure (StockTwits + Reddit + X tone & volume), positioning (gamma walls, P/C ratios, IV skew), and a pivot projection (key levels + confluence + magnets).
+You receive a JSON payload with: ticker, spot price, ranked alpha news events (tier 1/2/sentiment-shift), social exposure (StockTwits and, when configured, X tone & volume; a null score means not available, not neutral), positioning (gamma walls, P/C ratios, IV skew), and a pivot projection (key levels + confluence + magnets).
 
 Speak peer-to-peer with no filler. Identify the edge type. Stress-test the strongest counterargument. If no edge exists, return direction NEUTRAL with confidence < 35 and edgeType "none". Passing is professional.
 
@@ -227,7 +237,6 @@ Output ONLY a single JSON object with this exact schema. No prose, no markdown, 
   "targetPrice": <number or null>,
   "expectedMovePct": <signed number or null>,
   "rr": <number or null>,
-  "kellyFrac": <0-1 number>,
   "invalidation": <number or null>,
   "edgeType": "informational" | "analytical" | "behavioral" | "environmental" | "none",
   "counterargument": "<one sentence: strongest argument AGAINST your call>",
@@ -244,11 +253,10 @@ Rules:
 - bull.prob + base.prob + bear.prob MUST equal exactly 100.
 - targetPrice + invalidation must use real magnet levels from the pivot projection where possible. Quote them in $.
 - rr = |target - spot| / |invalidation - spot|. Min 2:1 to recommend a directional trade; otherwise NEUTRAL.
-- kellyFrac is fractional Kelly (0.25 default); never above 0.5.
+- Do not output any position size, Kelly fraction or allocation. Sizing is not part of this verdict.
 - Weight news > positioning > social. Sentiment cluster events without hard catalysts get behavioral edge tag.
 - If gamma is "negative regime" (negative total GEX), bias trades toward momentum direction; if "positive", bias toward mean-reversion to nearest stacked magnet.
 - If P/C OI > 1.5, fading the crowd by going long is contrarian behavioral edge — flag it.
-- Never recommend oversizing. Right direction + wrong size = loss.
 - Speak in probabilities. Never absolutes.
 - If counterargument is stronger than the thesis, return NEUTRAL with thesis "Counter is stronger — pass."`;
 
@@ -272,6 +280,7 @@ function buildSynthesisPayload(alpha: TickerAlpha, pivots: PivotProjectionRespon
     },
     social: {
       score: alpha.social.score,
+      scoreReason: alpha.social.scoreReason,
       bullish: alpha.social.bullish,
       bearish: alpha.social.bearish,
       messageCount: alpha.social.messageCount,
@@ -369,10 +378,15 @@ async function callOpenAiSynthesis(payload: string): Promise<any | null> {
 function normalizeVerdict(raw: any, fallback: OutlookVerdict, provider: OutlookVerdict["provider"]): OutlookVerdict {
   if (!raw || typeof raw !== "object") return fallback;
   const sc = raw.scenarios || {};
-  // Force probs to sum to 100
-  const bp = Math.max(0, Math.min(100, Number(sc.bull?.prob ?? fallback.scenarios.bull.prob)));
-  const xp = Math.max(0, Math.min(100, Number(sc.bear?.prob ?? fallback.scenarios.bear.prob)));
-  const np = Math.max(0, Math.min(100, 100 - bp - xp));
+  // Heuristic weights forced to integers summing to exactly 100 (bull + bear
+  // above 100 are scaled down; non-numeric values fall back).
+  const w = normalizeScenarioWeights(sc.bull?.prob, sc.bear?.prob, {
+    bull: fallback.scenarios.bull.prob,
+    bear: fallback.scenarios.bear.prob,
+  });
+  const bp = w.bull;
+  const xp = w.bear;
+  const np = w.base;
   return {
     direction: (raw.direction === "BULL" || raw.direction === "BEAR" || raw.direction === "NEUTRAL")
       ? raw.direction : fallback.direction,
@@ -380,7 +394,9 @@ function normalizeVerdict(raw: any, fallback: OutlookVerdict, provider: OutlookV
     targetPrice: typeof raw.targetPrice === "number" ? raw.targetPrice : fallback.targetPrice,
     expectedMovePct: typeof raw.expectedMovePct === "number" ? raw.expectedMovePct : fallback.expectedMovePct,
     rr: typeof raw.rr === "number" ? raw.rr : fallback.rr,
-    kellyFrac: Math.max(0, Math.min(0.5, Number(raw.kellyFrac ?? fallback.kellyFrac))),
+    // Never take a size from a narrative model: kellyFrac is always 0.
+    kellyFrac: 0,
+    sizing: noOutlookSizing(),
     invalidation: typeof raw.invalidation === "number" ? raw.invalidation : fallback.invalidation,
     edgeType: ["informational","analytical","behavioral","environmental","none"].includes(raw.edgeType)
       ? raw.edgeType : fallback.edgeType,

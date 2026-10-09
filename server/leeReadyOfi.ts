@@ -1,13 +1,19 @@
 // server/leeReadyOfi.ts
 //
-// Wire 13 — 1-min Lee-Ready OFI session-cumulative trend (SPY volume proxy).
+// Wire 13 — 1-min SIGNED TICK VOLUME, session-cumulative trend (SPY volume proxy).
 //
-// Deterministic bar-level tick-rule approximation:
-//   close > prev.close  → buy  (direction = +1), signed volume = +volume
-//   close < prev.close  → sell (direction = -1), signed volume = -volume
+// Naming: this file keeps its historical name, but the method is a tick rule
+// on 1-minute bars, NOT Lee-Ready (Lee & Ready 1991 classify each trade
+// against the prevailing midquote) and NOT order-flow imbalance (Cont,
+// Kukanov & Stoikov 2014 measure changes in best bid/ask depth). Each bar's
+// whole volume is signed by its close-to-close change, which is close to
+// on-balance volume. The UI calls it "signed tick volume".
+//
+// Deterministic bar-level tick rule (server/signedVolume.ts):
+//   close > prev.close  → +1, signed volume = +volume
+//   close < prev.close  → -1, signed volume = -volume
 //   close == prev.close → zero-tick rule: persist last non-zero direction
 //
-// Session-cumulative signed volume tracks net order-flow imbalance (OFI).
 // slope15m = sum of signed volumes over last 15 bars (proxy for trend strength)
 // slope5m  = sum of signed volumes over last  5 bars (proxy for acceleration)
 //
@@ -18,10 +24,28 @@
 // Acceleration: slope5m vs expected (slope15m / 3). If slope5m is > 1.3x the
 // proportional expectation the trend is accelerating; < 0.7x it is decelerating.
 //
+// Bulk volume classification (Easley, Lopez de Prado & O'Hara 2012) is
+// computed alongside as bvcCumulativeNow, a diagnostic only (past-only sigma,
+// missing volume left unclassified). The trend keeps the bar-level tick rule
+// for continuity; see signedVolume.ts for what the evidence does and does not
+// say about that choice.
+//
+// Trade-level read (Schwab Streamer live): from the first full minute of the
+// current continuous stream session, each minute's signed volume is the sum of
+// LEVELONE trade blocks signed by Lee-Ready against the prior quote
+// (signedVolume.ts classifyL1Trades); earlier minutes keep the bar-level tick
+// rule from Schwab REST minute bars. method says which: "lee-ready-l1" (all
+// minutes from the stream), "hybrid-l1" (bar rule, then stream), or
+// "tick-rule-1m" (stream not live: REST bars only, as before).
+//
 // Cache: 30 seconds (Schwab free tier ~ 1 req/s; no need to hammer it).
-// Graceful degradation: returns NEUTRAL_TREND on any error.
+// Graceful degradation: returns NEUTRAL_TREND with dataState "unavailable"
+// when bars cannot be fetched, so callers can tell "no data" from "flat".
 
 import { getPriceHistory } from "./schwab.js";
+import { signedTickVolumeBars, bulkVolumeClassify, classifyL1Trades, signedVolumeBarsFromTrades, mergeSignedBars } from "./signedVolume";
+import { getActiveStreamStore } from "./streamStore";
+import { etDate, etWallToUtcMs } from "./validationMath";
 
 export type OfiBar = {
   ts: number;
@@ -30,6 +54,7 @@ export type OfiBar = {
   direction: 1 | -1 | 0;  // tick rule sign for this bar
   signedVolume: number;    // volume * direction
   cumulative: number;      // session-cumulative running sum
+  volumeMissing?: boolean; // candle had no volume; adds nothing (not a 0-volume print)
 };
 
 export type OfiTrend = {
@@ -39,6 +64,20 @@ export type OfiTrend = {
   slope5m: number;         // signed volume sum over last 5 bars
   trend: "BULLISH" | "BEARISH" | "NEUTRAL";  // from slope15m
   acceleration: "ACCELERATING" | "DECELERATING" | "FLAT";  // slope5m vs slope15m/3
+  /** Honest method label: tick rule on 1-min REST bars, Lee-Ready on streamed LEVELONE trade blocks, or both joined. */
+  method: "tick-rule-1m" | "lee-ready-l1" | "hybrid-l1";
+  /** First minute signed from streamed trade blocks (epoch ms); null when bars only. */
+  tradeLevelFromMs?: number | null;
+  /** Trade blocks signed by the quote rule / tick rule / unsigned, current stream session. */
+  tradeLevelCounts?: { quoteRule: number; tickRule: number; unsigned: number } | null;
+  label: "signed tick volume";
+  /** "unavailable" = bars could not be fetched; trend fields are placeholders, not a flat read. */
+  /** "partial" = some minute bars had no volume (they add nothing; see volumeMissingBars). */
+  dataState: "ok" | "partial" | "unavailable";
+  volumeMissingBars?: number;
+  /** Diagnostic: session buy-minus-sell volume by bulk volume classification
+   *  (past-only sigma); null when no bar could be classified. */
+  bvcCumulativeNow: number | null;
 };
 
 const CACHE_MS = 30_000;
@@ -51,6 +90,10 @@ const NEUTRAL_TREND: OfiTrend = {
   slope5m: 0,
   trend: "NEUTRAL",
   acceleration: "FLAT",
+  method: "tick-rule-1m",
+  label: "signed tick volume",
+  dataState: "unavailable",
+  bvcCumulativeNow: null,
 };
 
 export async function computeOfiTrend(): Promise<OfiTrend> {
@@ -58,38 +101,38 @@ export async function computeOfiTrend(): Promise<OfiTrend> {
 
   // SPY, not $SPX.X — Schwab reports zero volume on index candles, which made
   // every signed-volume bar 0 and the panel permanently NEUTRAL/FLAT. SPY is
-  // the liquid tradable proxy so the Lee-Ready tick rule actually has volume.
+  // the liquid tradable proxy so the tick rule actually has volume.
   const history = await getPriceHistory("SPY", "day", 1, "minute", 1);
-  if (!history.candles || history.candles.length < 2) {
+  const candles = history.candles ?? [];
+
+  // Trade-level minutes from the live Schwab stream, when available.
+  let tradeBars: OfiBar[] = [];
+  let tradeFrom: number | null = null;
+  let tradeCounts: OfiTrend["tradeLevelCounts"] = null;
+  try {
+    const st = getActiveStreamStore()?.sessionTicks("SPY");
+    if (st && st.continuousSinceMs != null && st.ticks.length > 1) {
+      const cls = classifyL1Trades(st.ticks.map((k) => ({ t: k.t, last: k.last, bid: k.bid, ask: k.ask, cumVolume: k.cumVolume })));
+      // Same window as the REST bars (today's session as Schwab returns it):
+      // never earlier than the first REST candle, or today's ET midnight when
+      // REST returned none.
+      const floorMs = candles.length ? Number(candles[0].datetime) : etWallToUtcMs(etDate(Date.now()), 0, 0);
+      tradeFrom = Math.ceil(Math.max(st.continuousSinceMs, floorMs) / 60_000) * 60_000;
+      tradeBars = signedVolumeBarsFromTrades(cls.trades, tradeFrom, Date.now());
+      tradeCounts = { quoteRule: cls.quoteRule, tickRule: cls.tickRule, unsigned: cls.unsigned };
+    }
+  } catch { tradeBars = []; }
+  const useTrades = tradeBars.length > 0 && tradeFrom != null;
+
+  if (!useTrades && candles.length < 2) {
     cache = { ts: Date.now(), trend: NEUTRAL_TREND };
     return NEUTRAL_TREND;
   }
 
-  const candles = history.candles;
-  const bars: OfiBar[] = [];
-  let lastDirection: 1 | -1 | 0 = 0;
-  let cumulative = 0;
-
-  for (let i = 1; i < candles.length; i++) {
-    const c = candles[i];
-    const prev = candles[i - 1];
-    let direction: 1 | -1 | 0;
-    if (c.close > prev.close) direction = 1;
-    else if (c.close < prev.close) direction = -1;
-    else direction = lastDirection; // zero-tick rule: persist last sign
-
-    const signedVolume = (c.volume || 0) * direction;
-    cumulative += signedVolume;
-    bars.push({
-      ts: c.datetime,
-      close: c.close,
-      volume: c.volume || 0,
-      direction,
-      signedVolume,
-      cumulative,
-    });
-    if (direction !== 0) lastDirection = direction;
-  }
+  const barRule: OfiBar[] = candles.length >= 2 ? signedTickVolumeBars(candles) : [];
+  const bars: OfiBar[] = useTrades ? mergeSignedBars(barRule, tradeBars, tradeFrom as number) : barRule;
+  const method: OfiTrend["method"] = !useTrades ? "tick-rule-1m" : bars.some((b) => b.ts < (tradeFrom as number)) ? "hybrid-l1" : "lee-ready-l1";
+  const cumulative = bars.length > 0 ? bars[bars.length - 1].cumulative : 0;
 
   // Slopes: sum of signed volumes over last N bars
   const last15 = bars.slice(-15);
@@ -99,9 +142,9 @@ export async function computeOfiTrend(): Promise<OfiTrend> {
 
   // Trend classification
   // Threshold: |slope15m| must exceed median bar volume * 5 to be meaningful
-  const medianVol = bars.length > 0
-    ? bars.map(b => b.volume).sort((a, b) => a - b)[Math.floor(bars.length / 2)]
-    : 0;
+  const volumeMissingBars = bars.filter((b) => b.volumeMissing).length;
+  const knownVols = bars.filter((b) => !b.volumeMissing).map((b) => b.volume).sort((a, b) => a - b);
+  const medianVol = knownVols.length > 0 ? knownVols[Math.floor(knownVols.length / 2)] : 0;
   const threshold = medianVol * 5;
 
   let trend: "BULLISH" | "BEARISH" | "NEUTRAL" = "NEUTRAL";
@@ -121,12 +164,22 @@ export async function computeOfiTrend(): Promise<OfiTrend> {
     slope5m,
     trend,
     acceleration,
+    method,
+    tradeLevelFromMs: useTrades ? tradeFrom : null,
+    tradeLevelCounts: useTrades ? tradeCounts : null,
+    label: "signed tick volume",
+    dataState: knownVols.length === 0 ? "unavailable" : volumeMissingBars > 0 ? "partial" : "ok",
+    volumeMissingBars,
+    bvcCumulativeNow: (() => {
+      const b = bulkVolumeClassify(candles).cumulativeSigned;
+      return b == null ? null : Math.round(b);
+    })(),
   };
   cache = { ts: Date.now(), trend: result };
   console.log(
-    `[leeReadyOfi] computeOfiTrend: bars=${bars.length} cum=${cumulative.toFixed(0)} ` +
+    `[signedTickVolume] computeOfiTrend: bars=${bars.length} cum=${cumulative.toFixed(0)} ` +
     `slope15m=${slope15m.toFixed(0)} slope5m=${slope5m.toFixed(0)} ` +
-    `trend=${trend} accel=${acceleration}`,
+    `trend=${trend} accel=${acceleration} method=${method}`,
   );
   return result;
 }

@@ -3,6 +3,8 @@
 // from the live option chain. Pairs naturally with VIX9D inversion alert.
 
 import { getOptionChain } from "./schwab";
+import { ivAtAbsDelta } from "@shared/vol";
+import { tenorWindow, tenorWindowWide } from "./schwabDataPolicy";
 
 export interface SkewPoint {
   tenorDays: number;
@@ -33,17 +35,6 @@ export interface SkewSnapshot {
 }
 
 interface ContractRow { strike: number; iv: number; delta: number; }
-
-function pickByDelta(rows: ContractRow[], target: number): ContractRow | null {
-  let best: ContractRow | null = null;
-  let bestDiff = Infinity;
-  for (const r of rows) {
-    if (!Number.isFinite(r.delta) || !Number.isFinite(r.iv) || r.iv <= 0) continue;
-    const d = Math.abs(Math.abs(r.delta) - target);
-    if (d < bestDiff) { bestDiff = d; best = r; }
-  }
-  return bestDiff <= 0.15 ? best : null;
-}
 
 function pickAtm(rows: ContractRow[], spot: number): ContractRow | null {
   let best: ContractRow | null = null;
@@ -78,31 +69,63 @@ function flattenChainSide(map: Record<string, Record<string, any[]>>, side: "C" 
   return out;
 }
 
-export async function computeSkew(symbol: string): Promise<SkewSnapshot | { error: string }> {
-  const chain = await getOptionChain(symbol, 100);
-  if (!chain || "error" in chain) return { error: "chain unavailable" };
+/** Canonical tenors: front, ~30d, ~60d, ~90d. */
+export const SKEW_TARGET_DTES = [7, 30, 60, 90] as const;
 
-  const spot = (chain as any).underlying?.last ?? (chain as any).underlyingPrice ?? null;
+/**
+ * One Schwab request per target tenor (round 3, N1-1): a narrow window around
+ * the tenor (schwabDataPolicy.tenorWindow, e.g. 86-94 DTE for 90) with strikes
+ * sized to reach the 25-delta wing ("wing25"), widened to the picker's own
+ * +-60% tolerance only when the narrow window lists no expiry (single stocks
+ * with monthly expiries). The old request was every expiry 0-100 DTE at up
+ * to 300 strikes, ~70 SPX expiries per call.
+ */
+async function fetchTenorChains(symbol: string): Promise<Array<{ target: number; chain: any | null }>> {
+  return Promise.all(SKEW_TARGET_DTES.map(async (t) => {
+    const hasExpiry = (c: any) => c && !("error" in c) && Object.keys(c.callExpDateMap ?? {}).length > 0;
+    const w = tenorWindow(t);
+    let chain: any = await getOptionChain(symbol, w.toDte, { fromDte: w.fromDte, coverage: "wing25" });
+    if (!hasExpiry(chain)) {
+      const ww = tenorWindowWide(t);
+      chain = await getOptionChain(symbol, ww.toDte, { fromDte: ww.fromDte, coverage: "wing25" });
+    }
+    return { target: t, chain: hasExpiry(chain) ? chain : null };
+  }));
+}
+
+export async function computeSkew(symbol: string): Promise<SkewSnapshot | { error: string }> {
+  const tenorChains = await fetchTenorChains(symbol);
+  const okChains = tenorChains.filter((x) => x.chain != null);
+  if (!okChains.length) return { error: "chain unavailable" };
+  const frontChain = okChains[0].chain;
+
+  const spot = frontChain.underlying?.last ?? frontChain.underlyingPrice ?? null;
   if (!Number.isFinite(spot)) return { error: "no spot" };
 
-  const callMap = flattenChainSide((chain as any).callExpDateMap, "C");
-  const putMap = flattenChainSide((chain as any).putExpDateMap, "P");
-
-  // Common expiries between call and put maps
-  const expiries: { date: string; dte: number }[] = [];
-  for (const [date, info] of callMap) {
-    if (putMap.has(date)) expiries.push({ date, dte: info.dte });
+  // Expiries common to the call and put maps, per tenor request.
+  const callMap = new Map<string, { dte: number; rows: ContractRow[] }>();
+  const putMap = new Map<string, { dte: number; rows: ContractRow[] }>();
+  const expiriesByTarget = new Map<number, { date: string; dte: number }[]>();
+  for (const { target, chain } of okChains) {
+    const c = flattenChainSide(chain.callExpDateMap, "C");
+    const p = flattenChainSide(chain.putExpDateMap, "P");
+    const list: { date: string; dte: number }[] = [];
+    for (const [date, info] of Array.from(c.entries())) {
+      if (!p.has(date)) continue;
+      list.push({ date, dte: info.dte });
+      callMap.set(date, info);
+      putMap.set(date, p.get(date)!);
+    }
+    expiriesByTarget.set(target, list.sort((a, b) => a.dte - b.dte));
   }
-  expiries.sort((a, b) => a.dte - b.dte);
 
-  // Pick canonical tenors: front, ~30d, ~60d, ~90d
-  const targetDtes = [7, 30, 60, 90];
+  // Pick the expiry nearest each canonical tenor from its own request.
   const picked: { date: string; dte: number }[] = [];
   const used = new Set<string>();
-  for (const t of targetDtes) {
+  for (const t of SKEW_TARGET_DTES) {
     let best: { date: string; dte: number } | null = null;
     let bestDiff = Infinity;
-    for (const e of expiries) {
+    for (const e of expiriesByTarget.get(t) ?? []) {
       if (used.has(e.date)) continue;
       const d = Math.abs(e.dte - t);
       if (d < bestDiff) { bestDiff = d; best = e; }
@@ -112,6 +135,8 @@ export async function computeSkew(symbol: string): Promise<SkewSnapshot | { erro
       used.add(best.date);
     }
   }
+  picked.sort((a, b) => a.dte - b.dte);
+  const chainAsOfMs = Math.min(...okChains.map((x) => Number(x.chain.asOfMs)).filter((v) => Number.isFinite(v)));
 
   const points: SkewPoint[] = picked.map(({ date, dte }) => {
     const calls = callMap.get(date)?.rows ?? [];
@@ -119,17 +144,19 @@ export async function computeSkew(symbol: string): Promise<SkewSnapshot | { erro
     const atmC = pickAtm(calls, spot);
     const atmP = pickAtm(puts, spot);
     const atmIv = atmC && atmP ? (atmC.iv + atmP.iv) / 2 : (atmC?.iv ?? atmP?.iv ?? null);
-    const c25 = pickByDelta(calls, 0.25);
-    const p25 = pickByDelta(puts, 0.25);
-    const putSkew = (p25 && atmIv != null) ? p25.iv - atmIv : null;
-    const callSkew = (c25 && atmIv != null) ? c25.iv - atmIv : null;
-    const rr = (c25 && p25) ? c25.iv - p25.iv : null;
+    // Exact 25-delta vols, interpolated in delta between bracketing strikes
+    // (the old nearest-contract pick within +/-0.15 could be 10D to 40D).
+    const c25iv = ivAtAbsDelta(calls, 0.25);
+    const p25iv = ivAtAbsDelta(puts, 0.25);
+    const putSkew = (p25iv != null && atmIv != null) ? p25iv - atmIv : null;
+    const callSkew = (c25iv != null && atmIv != null) ? c25iv - atmIv : null;
+    const rr = (c25iv != null && p25iv != null) ? c25iv - p25iv : null;
     return {
       tenorDays: dte,
       expiry: date,
       atmIv,
-      put25dIv: p25?.iv ?? null,
-      call25dIv: c25?.iv ?? null,
+      put25dIv: p25iv,
+      call25dIv: c25iv,
       putSkew,
       callSkew,
       riskReversal25d: rr,
@@ -163,7 +190,8 @@ export async function computeSkew(symbol: string): Promise<SkewSnapshot | { erro
   return {
     symbol: symbol.toUpperCase(),
     spot,
-    asOf: Date.now(),
+    // Oldest of the tenor chains (Schwab quote time; receive time fallback).
+    asOf: Number.isFinite(chainAsOfMs) ? chainAsOfMs : Date.now(),
     points,
     termStructure: { front, second, third, slope, slopeNote },
     riskReversalNow: rrNow,

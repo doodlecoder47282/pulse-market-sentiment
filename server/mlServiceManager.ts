@@ -22,6 +22,7 @@ const MAX_RESTARTS = 3;
 const ML_PORT = 5001;
 const ML_DIR = path.resolve(process.cwd(), "ml_service");
 
+// Not a self-call: this probes the separate Python ML sidecar on 127.0.0.1:5001, so it stays HTTP.
 async function _portOpen(port: number): Promise<boolean> {
   try {
     const ctrl = new AbortController();

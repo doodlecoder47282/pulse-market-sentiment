@@ -1,9 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // discordUoaCard.ts — Discord embed for UOA cluster fires.
-// One embed per cluster trigger. Routes to UOA_WEBHOOK_URL (falls back to whale).
+// One embed per cluster trigger. Routes to the "uoa" channel (falls back to whale).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { postToDiscord, UOA_WEBHOOK_URL } from "./discord";
+import { postToDiscord } from "./discord";
+import { safeErrorSummary } from "./webhookConfig";
 import type { UoaCluster } from "./uoaScanner";
 
 const COLOR_BULL = 0x16a34a;
@@ -30,8 +31,8 @@ export async function postUoaClusterAlert(c: UoaCluster): Promise<boolean> {
     const distStr = c.distFromSpotPct !== undefined ? `${c.distFromSpotPct >= 0 ? "+" : ""}${c.distFromSpotPct.toFixed(1)}%` : "—";
     const beStr = c.breakevenPct !== undefined ? `${c.breakevenPct >= 0 ? "+" : ""}${c.breakevenPct.toFixed(1)}%` : "—";
 
-    // avgIv is already in percent (Schwab chain volatility, and the CBOE adapter
-    // normalises to percent too). Multiplying by 100 again printed "IV 1850%".
+    // avgIv is already in percent (Schwab chain volatility is quoted in percent).
+    // Multiplying by 100 again printed "IV 1850%".
     const fields = [
       { name: "Cluster",  value: `${c.hitCount} hits • ${fmtPrem(c.totalPremium)} total\n${c.sentiment} • ${c.bucket} cap tier`, inline: true },
       { name: "Contract", value: `${c.symbol} ${c.strike}${c.type} ${c.expiration.slice(5)}\n${c.dte}DTE • Δ${(c.avgDelta || 0).toFixed(2)} • IV ${(c.avgIv || 0).toFixed(0)}%`, inline: true },
@@ -52,9 +53,9 @@ export async function postUoaClusterAlert(c: UoaCluster): Promise<boolean> {
       }],
     };
 
-    return await postToDiscord(payload, UOA_WEBHOOK_URL);
+    return await postToDiscord(payload, "uoa");
   } catch (e: any) {
-    console.warn(`[discordUoaCard] failed: ${e?.message ?? e}`);
+    console.warn(`[discordUoaCard] failed: ${safeErrorSummary(e)}`);
     return false;
   }
 }

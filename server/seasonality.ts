@@ -9,7 +9,7 @@
 //   - Presidential cycle analysis
 //   - Lookback selector support (?lookback=5|10|20)
 //
-// Cache: 24hr TTL (disk-backed via sessionCache). Cache key: seasonality-v2.
+// Cache: 24hr TTL (disk-backed via sessionCache). Cache key: seasonality-v3.
 
 import { readCache, writeCache } from "./sessionCache";
 
@@ -36,6 +36,68 @@ export interface OptimalWindow {
   winRate: number;
   yearsTested: number;
   confidenceLabel: "Excellent" | "Good" | "Fair" | "Weak" | "Insufficient";
+  /** Data-snooping test of the window search (added). The label above is
+   *  "Insufficient" unless the family-wise p-value is ≤ 0.05. */
+  significance?: SeasonalSignificance;
+  /** One verdict for headers and shading (UI must not infer it from `significant` alone):
+   *  validated = passed the snooping test AND beat same-length windows on
+   *  the held-out years with a calendar-shift p-value <= 0.10;
+   *  held_up_not_significant = top half on held-out years, p > 0.10;
+   *  failed_out_of_sample = bottom half out of sample; in_sample_only = too
+   *  few years for a hold-out; not_significant = failed the snooping test;
+   *  validated_window_differs = the hold-out validated the window the
+   *  search picked on the earlier years only (`testedWindow`), which is not
+   *  the full-sample window shown, so the shown window is NOT validated. */
+  verdict?: SeasonalVerdict;
+  /** The window the walk-forward hold-out actually tested (picked on the
+   *  in-sample years). The hold-out verdict applies to THIS window; the
+   *  headline buy/sell above is the full-sample best. null without a hold-out. */
+  testedWindow?: {
+    buyDayOfYear: number;
+    buyDate: string;
+    sellDayOfYear: number;
+    sellDate: string;
+    sameAsHeadline: boolean;
+  } | null;
+}
+
+export type SeasonalVerdict = "validated" | "validated_window_differs" | "held_up_not_significant" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
+
+/** Held-out significance level for "validated" (few held-out years: a 10% one-sided test). */
+export const SEASONAL_OOS_ALPHA = 0.10;
+
+/** Header and colour for a window, shared by the panels (pure). */
+export function seasonalVerdict(significant: boolean, oos: { percentile: number; pValue: number } | null): SeasonalVerdict {
+  if (!significant) return "not_significant";
+  if (oos == null) return "in_sample_only";
+  if (oos.percentile < 0.5) return "failed_out_of_sample";
+  return oos.pValue <= SEASONAL_OOS_ALPHA ? "validated" : "held_up_not_significant";
+}
+
+export interface SeasonalSignificance {
+  method: string;
+  /** Pairs searched per run (the multiple-testing family). */
+  windowsSearched: number;
+  permutations: number;
+  /** P(best score on calendar-scrambled data ≥ observed best score). */
+  pFamilywise: number;
+  significant: boolean;
+  alpha: number;
+  /** Walk-forward hold-out: window chosen on the earlier years only,
+   *  evaluated on the most recent years it never saw. null if < 8 years. */
+  outOfSample: {
+    inSampleYears: number;
+    heldOutYears: number;
+    buyDayOfYear: number;
+    sellDayOfYear: number;
+    geometricAvgReturn: number;
+    winRate: number;
+    /** Share of same-length windows (all start days) on the held-out years
+     *  whose mean log return is below the chosen window's. 0.5 = random. */
+    randomWindowPercentile: number;
+    /** One-sided held-out p-value: share of same-length windows at least as good (calendar-shift test). */
+    pValue: number;
+  } | null;
 }
 
 export interface YearlySeasonality {
@@ -195,49 +257,203 @@ function confidenceLabel(winRate: number): OptimalWindow["confidenceLabel"] {
   return "Insufficient";
 }
 
-function findOptimalWindow(
-  cumulativePaths: Map<number, number[]>, // year → cumulative return array (252 entries, 0-based)
-): OptimalWindow | null {
-  const years = [...cumulativePaths.keys()];
-  if (years.length < 5) return null;
-  const daysPerYear = 252;
+// ─── Window search + data-snooping test ──────────────────────────────────
+//
+// The search below scans ~7,000 buy/sell pairs and keeps the best one. The
+// best of thousands of windows looks good even on pure noise (review: noise
+// was rated Good/Excellent in 32 of 40 zero-drift trials). The label is now
+// earned only through a test that accounts for the whole search:
+//
+//   1. Family-wise permutation test (max-statistic, White 2000 "A Reality
+//      Check for Data Snooping", Econometrica 68:1097; applied to calendar
+//      effects by Sullivan, Timmermann & White 2001, J. Econometrics
+//      105:249). Each null replicate circularly shifts every year's daily
+//      log returns by an independent random offset, which keeps each year's
+//      return, volatility and serial dependence but destroys calendar
+//      alignment. The full search is re-run on each replicate; the p-value
+//      is the share of replicates whose BEST score beats the observed best.
+//      Positive drift is kept in the null, so a window must beat holding a
+//      random window of the market, not beat cash.
+//   2. Walk-forward hold-out: choose the window on the earlier years only
+//      and report how it did on the most recent years, ranked against every
+//      same-length window on those years.
+// Labels "Fair" and above require p ≤ 0.05; otherwise "Insufficient".
 
-  let bestScore = -Infinity;
-  let best: { buyDay: number; sellDay: number; geometric: number; winRate: number; yearsTested: number } | null = null;
+const SEASONAL_DAYS = 252;
+const SEASONAL_STEP = 2;
+const SEASONAL_MIN_LEN = 20;
+const SEASONAL_PERMUTATIONS = 199;
+const SEASONAL_ALPHA = 0.05;
 
-  // Step 5 to reduce computation while keeping granularity useful
-  for (let buyDay = 0; buyDay < daysPerYear - 20; buyDay += 2) {
-    for (let sellDay = buyDay + 20; sellDay < daysPerYear; sellDay += 2) {
-      const windowReturns: number[] = [];
-      for (const yr of years) {
-        const path = cumulativePaths.get(yr);
-        if (!path || path.length <= sellDay || path.length <= buyDay) continue;
-        const buyRet = path[buyDay] / 100; // path is in % already
-        const sellRet = path[sellDay] / 100;
-        // window return = (1 + sell) / (1 + buy) - 1
-        const wr = (1 + sellRet) / (1 + buyRet) - 1;
-        windowReturns.push(wr);
-      }
-      if (windowReturns.length < Math.min(8, years.length * 0.5)) continue;
-      const geometric = (Math.pow(
-        windowReturns.reduce((acc, r) => acc * (1 + r), 1),
-        1 / windowReturns.length,
-      ) - 1) * 100;
-      const winRate = windowReturns.filter((r) => r > 0).length / windowReturns.length;
-      if (winRate < 0.50) continue;
-      const score = geometric * winRate * Math.sqrt(windowReturns.length);
-      if (score > bestScore) {
-        bestScore = score;
-        best = { buyDay, sellDay, geometric, winRate, yearsTested: windowReturns.length };
+type WindowPick = { buyDay: number; sellDay: number; geometric: number; winRate: number; yearsTested: number; score: number };
+
+/** Paths are % cumulative-from-year-start (TARGET_DAYS entries) → log(1+r). */
+function toLogPaths(paths: number[][]): Float64Array[] {
+  return paths.map((p) => {
+    const out = new Float64Array(SEASONAL_DAYS);
+    for (let d = 0; d < SEASONAL_DAYS; d++) out[d] = Math.log(1 + (p[d] ?? p[p.length - 1]) / 100);
+    return out;
+  });
+}
+
+/** Same selection rule as before: max geometric% × winRate × √years, winRate ≥ 0.5. */
+function searchBestWindow(logPaths: Float64Array[]): { best: WindowPick | null; searched: number } {
+  const Y = logPaths.length;
+  if (Y === 0) return { best: null, searched: 0 };
+  const minYears = Math.min(8, Y * 0.5);
+  if (Y < minYears) return { best: null, searched: 0 };
+  // Mean log path: mean over years of (L[sell] − L[buy]) = M[sell] − M[buy].
+  const M = new Float64Array(SEASONAL_DAYS);
+  for (const L of logPaths) for (let d = 0; d < SEASONAL_DAYS; d++) M[d] += L[d] / Y;
+  const sqrtY = Math.sqrt(Y);
+  let best: WindowPick | null = null;
+  let searched = 0;
+  for (let buyDay = 0; buyDay < SEASONAL_DAYS - SEASONAL_MIN_LEN; buyDay += SEASONAL_STEP) {
+    for (let sellDay = buyDay + SEASONAL_MIN_LEN; sellDay < SEASONAL_DAYS; sellDay += SEASONAL_STEP) {
+      searched++;
+      let wins = 0;
+      for (let y = 0; y < Y; y++) if (logPaths[y][sellDay] > logPaths[y][buyDay]) wins++;
+      const winRate = wins / Y;
+      if (winRate < 0.5) continue;
+      const geometric = (Math.exp(M[sellDay] - M[buyDay]) - 1) * 100;
+      const score = geometric * winRate * sqrtY;
+      if (best == null || score > best.score) {
+        best = { buyDay, sellDay, geometric, winRate, yearsTested: Y, score };
       }
     }
   }
+  return { best, searched };
+}
 
+/**
+ * True when daily bars (sorted by t, epoch seconds) cover a whole calendar
+ * year: first session by Jan 10, last session on/after Dec 20, and at least
+ * 200 sessions (NYSE years have 250-253; 2001 had 248).
+ */
+export function isFullCalendarYear(sortedBars: Array<{ t: number }>): boolean {
+  if (sortedBars.length < 200) return false;
+  const first = new Date(sortedBars[0].t * 1000);
+  const last = new Date(sortedBars[sortedBars.length - 1].t * 1000);
+  return (
+    first.getUTCMonth() === 0 && first.getUTCDate() <= 10 &&
+    last.getUTCMonth() === 11 && last.getUTCDate() >= 20
+  );
+}
+
+/** Deterministic PRNG (mulberry32) so the same history gives the same p-value. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Null replicate: circularly shift each year's daily log returns. */
+function calendarScramble(logPaths: Float64Array[], rand: () => number): Float64Array[] {
+  const nInc = SEASONAL_DAYS - 1;
+  return logPaths.map((L) => {
+    const shift = Math.floor(rand() * nInc);
+    const out = new Float64Array(SEASONAL_DAYS);
+    let acc = 0;
+    for (let d = 1; d < SEASONAL_DAYS; d++) {
+      const src = ((d - 1 + shift) % nInc) + 1;
+      acc += L[src] - L[src - 1];
+      out[d] = acc;
+    }
+    return out;
+  });
+}
+
+function outOfSampleCheck(logPaths: Float64Array[]): SeasonalSignificance["outOfSample"] {
+  const Y = logPaths.length;
+  if (Y < 8) return null;
+  const hold = Math.max(2, Math.floor(Y / 3));
+  const train = logPaths.slice(0, Y - hold);
+  const test = logPaths.slice(Y - hold);
+  const pick = searchBestWindow(train).best;
+  if (!pick) return null;
+  const meanLog = (buy: number, sell: number) =>
+    test.reduce((s, L) => s + (L[sell] - L[buy]), 0) / test.length;
+  const chosen = meanLog(pick.buyDay, pick.sellDay);
+  const len = pick.sellDay - pick.buyDay;
+  let below = 0, total = 0, atLeast = 0;
+  for (let b = 0; b + len < SEASONAL_DAYS; b++) {
+    const m = meanLog(b, b + len);
+    total++;
+    if (m < chosen) below++;
+    else if (m === chosen) below += 0.5;
+    if (m >= chosen) atLeast++; // includes the chosen window itself
+  }
+  const wins = test.filter((L) => L[pick.sellDay] > L[pick.buyDay]).length;
+  return {
+    inSampleYears: train.length,
+    heldOutYears: test.length,
+    buyDayOfYear: pick.buyDay,
+    sellDayOfYear: pick.sellDay,
+    geometricAvgReturn: (Math.exp(chosen) - 1) * 100,
+    winRate: wins / test.length,
+    randomWindowPercentile: total > 0 ? below / total : 0.5,
+    // Calendar-shift randomization test on the held-out years: under the null
+    // that the chosen start day is no better than a random one, its rank is
+    // uniform, so P(share of windows at least as good <= a) <= a.
+    pValue: total > 0 ? atLeast / total : 1,
+  };
+}
+
+/**
+ * Find the best seasonal buy/sell window and test it for data snooping.
+ * `cumulativePaths` is year → % cumulative return from the year's first close
+ * (TARGET_DAYS entries). Years are used in ascending order for the hold-out.
+ */
+export function findOptimalWindow(
+  cumulativePaths: Map<number, number[]>,
+  opts: { permutations?: number; seed?: number } = {},
+): OptimalWindow | null {
+  const years = [...cumulativePaths.keys()].sort((a, b) => a - b);
+  if (years.length < 5) return null;
+  const logPaths = toLogPaths(years.map((y) => cumulativePaths.get(y) ?? []).filter((p) => p.length > 0));
+  if (logPaths.length < 5) return null;
+
+  const { best, searched } = searchBestWindow(logPaths);
   if (!best) return null;
-  const label = confidenceLabel(best.winRate);
-  if (label === "Insufficient") return null;
+
+  const B = Math.max(19, Math.floor(opts.permutations ?? SEASONAL_PERMUTATIONS));
+  const rand = mulberry32(opts.seed ?? 0x5ea5);
+  let atLeast = 0;
+  for (let i = 0; i < B; i++) {
+    const nullBest = searchBestWindow(calendarScramble(logPaths, rand)).best;
+    if (nullBest && nullBest.score >= best.score) atLeast++;
+  }
+  const pFamilywise = (1 + atLeast) / (B + 1);
+  const significant = pFamilywise <= SEASONAL_ALPHA;
+  const outOfSample = outOfSampleCheck(logPaths);
+
+  let label: OptimalWindow["confidenceLabel"] = significant ? confidenceLabel(best.winRate) : "Insufficient";
+  // A window that held up in-sample but lands in the bottom half of random
+  // same-length windows on unseen years is not a "Good" window.
+  if (significant && outOfSample && outOfSample.randomWindowPercentile < 0.5 && (label === "Excellent" || label === "Good" || label === "Fair")) {
+    label = "Weak";
+  }
+
+  // The hold-out tests the window picked on the in-sample years, not the
+  // full-sample best (round-3 finding). "validated" may only be attached to
+  // the headline window when the two are the same window; otherwise the
+  // procedure validated a different window and the headline is in-sample.
+  const sameAsHeadline = !!outOfSample && outOfSample.buyDayOfYear === best.buyDay && outOfSample.sellDayOfYear === best.sellDay;
+  let verdict: SeasonalVerdict = seasonalVerdict(significant, outOfSample ? { percentile: outOfSample.randomWindowPercentile, pValue: outOfSample.pValue } : null);
+  if (verdict === "validated" && !sameAsHeadline) verdict = "validated_window_differs";
+  // A label above Weak requires the hold-out too: "in sample only" cannot be Good/Excellent.
+  if ((verdict === "in_sample_only" || verdict === "held_up_not_significant" || verdict === "validated_window_differs") && (label === "Excellent" || label === "Good")) label = "Fair";
+  const testedWindow = outOfSample
+    ? { buyDayOfYear: outOfSample.buyDayOfYear, buyDate: dayOfYearToDate(outOfSample.buyDayOfYear), sellDayOfYear: outOfSample.sellDayOfYear, sellDate: dayOfYearToDate(outOfSample.sellDayOfYear), sameAsHeadline }
+    : null;
 
   return {
+    verdict,
     buyDayOfYear: best.buyDay,
     buyDate: dayOfYearToDate(best.buyDay),
     sellDayOfYear: best.sellDay,
@@ -246,24 +462,56 @@ function findOptimalWindow(
     winRate: best.winRate,
     yearsTested: best.yearsTested,
     confidenceLabel: label,
+    testedWindow,
+    significance: {
+      method: "max-statistic permutation test over the full window search (calendar-scrambled years, White 2000 / Sullivan-Timmermann-White 2001) + walk-forward hold-out",
+      windowsSearched: searched,
+      permutations: B,
+      pFamilywise,
+      significant,
+      alpha: SEASONAL_ALPHA,
+      outOfSample,
+    },
   };
 }
 
 export function generateAnalysisText(
   symbol: string,
   opt: OptimalWindow | null,
-  yearly: Pick<YearlySeasonality, "fullYearAvg" | "fullYearWinRate" | "presidentialCycleYear" | "presidentialCycleAvg" | "lookbackYears">,
+  yearly: Pick<YearlySeasonality, "fullYearAvg" | "fullYearWinRate" | "presidentialCycleYear" | "presidentialCycleAvg"> & { lookbackYears?: number },
   lookback: number,
 ): string {
   if (!opt || opt.confidenceLabel === "Insufficient") {
-    return `Seasonal analysis for ${symbol} over the past ${lookback} years does not show a statistically reliable buy/sell window (confidence below 50%). Full-year average return: ${yearly.fullYearAvg >= 0 ? "+" : ""}${yearly.fullYearAvg.toFixed(1)}%, win rate ${Math.round(yearly.fullYearWinRate * 100)}%.`;
+    const sig = opt?.significance;
+    const snoop = opt && sig
+      ? ` The best in-sample window (${opt.buyDate} to ${opt.sellDate}, ${Math.round(opt.winRate * 100)}% of ${opt.yearsTested} years positive) does not beat calendar-scrambled history after accounting for the ${sig.windowsSearched.toLocaleString("en-US")} windows searched (data-snooping p=${sig.pFamilywise.toFixed(2)}), so it is not a reliable pattern.`
+      : "";
+    return `Seasonal analysis for ${symbol} over the past ${lookback} years does not show a statistically reliable buy/sell window.${snoop} Full-year average return: ${yearly.fullYearAvg >= 0 ? "+" : ""}${yearly.fullYearAvg.toFixed(1)}%, win rate ${Math.round(yearly.fullYearWinRate * 100)}%.`;
   }
   const winPct = Math.round(opt.winRate * 100);
   const positiveYears = Math.round(opt.winRate * opt.yearsTested);
   const cycleNote = yearly.presidentialCycleAvg != null
     ? ` The current presidential cycle is Year ${yearly.presidentialCycleYear} (${["","post-election","midterm","pre-election","election"][yearly.presidentialCycleYear]} year), which historically averages ${yearly.presidentialCycleAvg >= 0 ? "+" : ""}${yearly.presidentialCycleAvg.toFixed(1)}%.`
     : "";
-  return `Analysis of the ${symbol} seasonal pattern above shows that a Buy Date of ${opt.buyDate} and a Sell Date of ${opt.sellDate} has resulted in a geometric average return of ${opt.geometricAvgReturn >= 0 ? "+" : ""}${opt.geometricAvgReturn.toFixed(1)}% over the past ${lookback} years. This seasonal timeframe has shown positive results in ${positiveYears} of those ${opt.yearsTested} periods (${winPct}%), rated ${opt.confidenceLabel}.${cycleNote}`;
+  const sig = opt.significance;
+  const sigNote = sig
+    ? ` Data-snooping p=${sig.pFamilywise.toFixed(2)} across ${sig.windowsSearched.toLocaleString("en-US")} windows searched${sig.outOfSample ? `; on the ${sig.outOfSample.heldOutYears} most recent held-out years the window chosen without them ranked at the ${Math.round(sig.outOfSample.randomWindowPercentile * 100)}th percentile of same-length windows` : ""}.`
+    : "";
+  const tw = opt.testedWindow;
+  const twNote = tw && !tw.sameAsHeadline
+    ? ` The held-out check tested the window picked from the earlier years only (${tw.buyDate} to ${tw.sellDate}), not the full-sample window above, so its result describes that window and the search procedure.`
+    : "";
+  const verdictNote = opt.verdict === "validated_window_differs"
+    ? ` The search procedure held up on the held-out years with a different window (${tw?.buyDate} to ${tw?.sellDate}); the full-sample window shown is NOT itself validated.`
+    : (opt.verdict === "failed_out_of_sample"
+    ? " It passed the in-sample snooping test but ranked in the bottom half of same-length windows on the held-out years, so it is NOT validated."
+    : opt.verdict === "in_sample_only"
+      ? " Too few years for a held-out check, so it is significant in-sample only, not validated."
+      : opt.verdict === "held_up_not_significant"
+        ? ` It ranked in the top half of same-length windows on the held-out years but not significantly (held-out p=${opt.significance?.outOfSample?.pValue.toFixed(2)} > ${SEASONAL_OOS_ALPHA}), so it is not validated.`
+      : "") + (opt.verdict === "validated_window_differs" ? "" : twNote);
+  const lead = opt.verdict === "validated" ? "Analysis" : "In-sample analysis";
+  return `${lead} of the ${symbol} seasonal pattern above shows that a Buy Date of ${opt.buyDate} and a Sell Date of ${opt.sellDate} has resulted in a geometric average return of ${opt.geometricAvgReturn >= 0 ? "+" : ""}${opt.geometricAvgReturn.toFixed(1)}% over the past ${lookback} years. This seasonal timeframe has shown positive results in ${positiveYears} of those ${opt.yearsTested} periods (${winPct}%), rated ${opt.confidenceLabel}.${verdictNote}${sigNote}${cycleNote}`;
 }
 
 // ─── Main compute ─────────────────────────────────────────────────────────
@@ -404,6 +652,11 @@ export function computeSeasonality(
     if (yr === currentYear) continue; // handle current year separately
     const sorted = [...yearBars].sort((a, b) => a.t - b.t);
     if (sorted.length < 20) continue; // too few bars
+    // Only full calendar years enter the day-of-year paths. A partial year
+    // (history starting mid-year, or a gap) would be stretched over 252 slots
+    // by the resample below, so its July would plot as January and its
+    // "full-year" return would be a partial-year return.
+    if (!isFullCalendarYear(sorted)) continue;
     const startClose = sorted[0].c;
     if (startClose <= 0) continue;
 
@@ -518,7 +771,7 @@ export function computeSeasonality(
 
 // ─── Cache ────────────────────────────────────────────────────────────────
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const CACHE_KEY = "seasonality-v2";
+const CACHE_KEY = "seasonality-v3"; // v3: optimal window carries the data-snooping test
 
 interface CachedSeasonality { at: number; data: SeasonalityResponse }
 let memCache: CachedSeasonality | null = null;

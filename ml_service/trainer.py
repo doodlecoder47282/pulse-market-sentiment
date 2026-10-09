@@ -6,7 +6,18 @@ Contract:
 - Atomic writes: write to .tmp file then os.rename (never half-written)
 - Write _meta.json alongside each model
 - Return {status: "INSUFFICIENT_DATA"} (no raise) when below data thresholds
-- Thresholds: score_calibrator needs >= 100 primary / >= 80 bootstrap rows
+- score_calibrator: RETIRED (R2-F item 6, review 9.3). It had no consumer
+  (server mlScoreOdte is never called), its bootstrap pooled whale-alert and
+  regime-call rows (two different label processes) and its 80-row gate let a
+  7-feature boosted model fit noise (out-of-fold AUC 0.45). A calibrator that
+  nothing reads is retired rather than re-gated; train_score_calibrator()
+  returns RETIRED and writes nothing. The old body is kept below as
+  _train_score_calibrator_legacy for reference only. If a consumer is ever
+  added: one label source per model, and n sized so the Brier-score
+  difference vs the base rate is detectable (a power calculation), not 80.
+- whale_follow: RETIRED (round 3), same rule: no consumer reads it (server
+  mlWhaleFollow is never called), so train_whale_follow() returns RETIRED and
+  writes nothing; the old body is _train_whale_follow_legacy, reference only.
 """
 from __future__ import annotations
 
@@ -245,8 +256,13 @@ def _build_feature_matrix(
 # ─── train_score_calibrator ───────────────────────────────────────────────────
 
 def train_score_calibrator() -> Dict[str, Any]:
+    """Retired (see module docstring). Never trains, never writes a model."""
+    return {"status": "RETIRED", "note": "score calibrator retired: no consumer, pooled whale + regime labels, 80-row gate"}
+
+
+def _train_score_calibrator_legacy() -> Dict[str, Any]:
     """
-    Train a calibrated LightGBM binary classifier to predict p(hit_t1).
+    LEGACY, not called. Train a calibrated LightGBM binary classifier to predict p(hit_t1).
 
     Priority:
       1. odte_alert_audit WHERE graded=1 AND hit_t1 IS NOT NULL — primary (TRAINED)
@@ -290,6 +306,18 @@ def train_score_calibrator() -> Dict[str, Any]:
         if "graded" in df_r.columns:
             df_r = df_r[df_r["graded"] == 1]
 
+        # Ungraded rows (no option mark, insufficient history, retired leverage
+        # proxy) carry hit_30 = NULL. They are missing labels, not losses:
+        # "int(None or 0)" used to turn every one of them into a 0.
+        if "hit_30" in df_w.columns:
+            df_w = df_w[df_w["hit_30"].notna()]
+        # Whale rows graded by the old leverage proxy stay stored but are not
+        # option outcomes: keep only rows graded on logged option marks.
+        if "outcome_json" in df_w.columns:
+            df_w = df_w[df_w["outcome_json"].fillna("").str.contains('"method":"option_marks_v1"', regex=False)]
+        if "hit_30" in df_r.columns:
+            df_r = df_r[df_r["hit_30"].notna()]
+
         bootstrap_n = len(df_w) + len(df_r)
 
         if bootstrap_n < MIN_ROWS_SCORE_BOOTSTRAP:
@@ -307,12 +335,12 @@ def train_score_calibrator() -> Dict[str, Any]:
         for _, row in df_w.iterrows():
             feats = _extract_bootstrap_features(row, "whale_alert")
             feat_rows.append(feats)
-            labels.append(int(row.get("hit_30") or 0))
+            labels.append(int(row["hit_30"]))
 
         for _, row in df_r.iterrows():
             feats = _extract_bootstrap_features(row, "regime_call")
             feat_rows.append(feats)
-            labels.append(int(row.get("hit_30") or 0))
+            labels.append(int(row["hit_30"]))
 
         # Sort by captured_at for temporal split
         ts_vals_w = df_w["captured_at"].tolist() if "captured_at" in df_w.columns else [0] * len(df_w)
@@ -493,9 +521,11 @@ def train_score_calibrator() -> Dict[str, Any]:
 
 def train_quantile_overlay() -> Dict[str, Any]:
     """
-    Train LightGBM quantile regressors for horizons [5, 15, 30, 60] min.
-    Uses spy_1min_history (daily bars) to synthesize intraday features + forward returns.
-    Wire 18 Model B implementation via train_quantile_impl.
+    Train LightGBM quantile regressors for horizons [5, 15, 30, 60] min on REAL
+    data only: logged live features (ml_feature_log) and Schwab SPX minute bars
+    (spx_minute_bars). Returns INSUFFICIENT_REAL_DATA, and writes no model,
+    until the sufficiency gate in train_quantile_impl is met. The synthetic
+    daily-bar simulation is removed.
     """
     try:
         from train_quantile_impl import train_quantile_overlay as _train_impl
@@ -510,11 +540,15 @@ def train_quantile_overlay() -> Dict[str, Any]:
 
 
 # ─── train_whale_follow ───────────────────────────────────────────────────────
-# ─── train_whale_follow ───────────────────────────────────────────────────────
 
 def train_whale_follow() -> Dict[str, Any]:
+    """Retired (round 3): no consumer. Writes nothing."""
+    return {"status": "RETIRED", "note": "whale_follow retired: no consumer (server mlWhaleFollow is never called)"}
+
+
+def _train_whale_follow_legacy() -> Dict[str, Any]:
     """
-    Train a calibrated LightGBM binary classifier for p(follow_through_30min).
+    LEGACY, not called. Train a calibrated LightGBM binary classifier for p(follow_through_30min).
 
     Data: whale_follows JOIN whale_alerts (first alert per OCC by detected_at).
     Uses ALL rows: closing_print_json.mark when available, else current_live_json.mark.

@@ -17,6 +17,12 @@
  * These are projections of the model's expected shape, NOT a forecast of actual bars.
  */
 
+import { sessionCloseMinutes } from "./exchangeCalendar";
+
+// Trading-minute basis for the intraday cone. Callers must pass an atmIV on
+// this same basis: /api/odte/forward converts the calendar-clock total
+// variance (timeToExpiry, sigma^2*T) over the minutes left in the session, so
+// the cone's sd to the close equals S*sqrt(sigma^2*T) and no basis is mixed.
 export const MIN_PER_YEAR = 252 * 390;
 
 /** Abramowitz-Stegun 7.1.26 normal CDF. */
@@ -89,6 +95,7 @@ export interface SessionBars {
 /** Derive session anchors from Schwab minute candles (today's RTH only). */
 export function deriveSessionBars(
   candles: Array<{ datetime: number; open: number; high: number; low: number; close: number; volume: number }>,
+  nowMs: number = Date.now(),
 ): SessionBars {
   const out: SessionBars = {
     priorClose: null, sessionHigh: null, sessionLow: null,
@@ -105,8 +112,11 @@ export function deriveSessionBars(
     return h * 60 + m;
   };
 
-  const todayKey = etKey(Date.now());
-  const today = candles.filter(c => etKey(c.datetime) === todayKey && etMinutes(c.datetime) >= 570 && etMinutes(c.datetime) < 960);
+  const todayKey = etKey(nowMs);
+  // Regular session 09:30 to today's close from the exchange calendar (13:00
+  // on half days), so after-close prints never set the session high/low/VWAP.
+  const closeMin = sessionCloseMinutes(todayKey) ?? 960;
+  const today = candles.filter(c => etKey(c.datetime) === todayKey && etMinutes(c.datetime) >= 570 && etMinutes(c.datetime) < closeMin);
   const prior = candles.filter(c => etKey(c.datetime) !== todayKey);
 
   if (prior.length) out.priorClose = prior[prior.length - 1].close;

@@ -12,21 +12,29 @@
  *  6. Unusual Volume Detection (volOiRatio > 2.0)
  *  7. Dealer Positioning Score (-100..+100)
  *  8. GEX Decay Ladder by DTE bucket
- *  9. Pinning Probability (nearest expiry)
+ *  9. Settlement probability per strike (nearest expiry, SVI implied distribution)
  * 10. Vol Risk Premium (VRP)
  */
 
 import type { OptionChainResponse } from "./schwab";
 import { etEpochMs } from "./etTime";
+import { timeToExpiry, settlementStyleOf, type SettlementStyle } from "./timeToExpiry";
+import { gamma as bsGamma, vega as bsVega, impliedVol, normCdf } from "./greeks";
+import { dollarGexPerPct, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromRows } from "./gammaProfile";
+import { cdfAt, fitImpliedDistribution, type OptionQuote } from "./breedenLitzenberger";
 
 // ─── Internal contract shape ──────────────────────────────────────────────────
 
-interface Contract {
+export interface Contract {
   strike: number;
   side: "call" | "put";
   expiry: string;              // "YYYY-MM-DD"
-  dte: number;
-  delta: number;
+  dte: number;                 // whole calendar days (bucket label only; 0 = expires today)
+  style: SettlementStyle;      // AM (SOQ, 09:30 ET open) or PM (session close)
+  tYears: number;              // timeToExpiry(): calendar minutes to settlement / 525,600, 15-min floor
+  sigma?: number;              // effectiveIV(c, spot), cached once per audit (buildChainAudit)
+  /** Vendor delta in [-1, 1]; null = missing or Schwab's -999 sentinel (never 0). */
+  delta: number | null;
   gamma: number;
   theta: number;
   vega: number;
@@ -44,6 +52,7 @@ interface Contract {
 
 // ─── Public result types ──────────────────────────────────────────────────────
 
+/** DEX values are $ delta notional: delta x OI x 100 x spot (customer-side signs: calls +, puts -). */
 export interface DEXStrike {
   strike: number;
   callDex: number;
@@ -59,6 +68,11 @@ export interface DEXResult {
   totalCallDex: number;
   totalPutDex: number;
   totalNetDex: number;
+  /** "ok": every contract with OI had a delta; "partial": totals cover only the
+   *  contracts with a delta (see dexCoverage); "unavailable": none had one
+   *  (totals are not an observed zero). */
+  dexState?: "ok" | "partial" | "unavailable";
+  dexCoverage?: { contractsWithDelta: number; contractsMissingDelta: number; oiMissingShare: number | null };
 }
 
 export interface VannaStrike {
@@ -67,9 +81,20 @@ export interface VannaStrike {
 }
 
 export interface VannaResult {
+  /** Per strike: LONG-HOLDER (aggregate open interest) vanna, calls and puts
+   *  added with their own sign as held by a long position; no dealer sign. */
   profile: VannaStrike[];
   peakVannaStrike: number | null;
-  totalVannaDollarPerVolPct: number;  // $ per 1% vol move
+  totalVannaDollarPerVolPct: number;  // $ per 1% vol move, long-holder sum
+  /** Convention of profile / peak / total above. Heatseeker's netVanna uses
+   *  the naive DEALER convention (dealers long calls, short puts:
+   *  calls minus puts), shown here as totalVannaDealerNaive. */
+  convention?: "long-holder-aggregate";
+  /** Same $ per +1 vol point with the naive dealer SIGN (calls +, puts -),
+   *  the convention of Heatseeker's Net Vanna. Not the same number: this sums
+   *  every expiry in the request at r = q = 0, Heatseeker one expiry inside
+   *  its display window on its own r/q basis. */
+  totalVannaDealerNaive?: number;
 }
 
 export interface CharmStrike {
@@ -78,9 +103,25 @@ export interface CharmStrike {
 }
 
 export interface CharmResult {
+  /** Per strike, long-holder (aggregate OI) convention, mixed horizons. */
   profile: CharmStrike[];
   peakCharmStrike: number | null;
+  /** $ delta-notional change, spot and IV unchanged, over the next calendar day
+   *  or until settlement if that is sooner (0DTE: the decay left into the close).
+   *  MIXES two horizons: kept for compatibility; use the split below. */
   totalCharmPerDay: number;
+  horizon?: "1d-or-to-settlement";
+  /** Contracts settling within the next 24 hours (time to settlement < 1
+   *  calendar day; usually today's 0DTE, after the close also tomorrow's
+   *  expiry): delta change from now to settlement (terminal delta 1 / 0).
+   *  Long-holder sum. */
+  totalCharmToSettlement?: number;
+  /** All contracts settling later than 24 hours from now: delta change over exactly one calendar day. */
+  totalCharmOneDay?: number;
+  /** Naive dealer sign (calls +, puts -), comparable with Heatseeker. */
+  totalCharmToSettlementDealerNaive?: number;
+  totalCharmOneDayDealerNaive?: number;
+  convention?: "long-holder-aggregate";
 }
 
 // Vomma: vega's sensitivity to IV (∂vega/∂σ). Tells you how vol-of-vol
@@ -142,7 +183,7 @@ export interface UnusualContract {
   volOiRatio: number;
   lastPrice: number;
   dollarVolume: number;
-  deltaNotional: number;
+  deltaNotional: number | null;   // null when the contract has no delta
 }
 
 export interface DealerScoreResult {
@@ -156,8 +197,13 @@ export interface GEXBucket {
   callWall: number | null;
   putWall: number | null;
   zeroGamma: number | null;
-  totalGex: number;
+  totalGex: number;            // $ per 1% move, same basis as the flip (see gexBasis)
   contractCount: number;
+  /** Walls, totalGex and the flip all use Black-Scholes gamma with our clock
+   *  (c.tYears) and effectiveIV, r/q = FLIP_RATE/FLIP_DIV_YIELD, so the regime
+   *  sign and the flip cannot disagree. Vendor gamma (unknown T convention)
+   *  is no longer mixed in. */
+  gexBasis?: "black-scholes-our-clock";
 }
 
 export interface GEXDecayResult {
@@ -170,8 +216,31 @@ export interface GEXDecayResult {
 
 export interface PinStrike {
   strike: number;
-  prob: number;             // percentage 0-100
+  /** Risk-neutral P(settle within [lower, upper]) in percent (0-100), from the
+   *  SVI-smoothed implied distribution of the nearest expiry. */
+  prob: number;
   distance: number;         // points from spot
+  lower?: number;           // strike - half the local strike spacing
+  upper?: number;           // strike + half the local strike spacing
+  /** prob / (upper - lower): percent per index point. Strikes are ranked by
+   *  this, so a strike in a 25-point-spaced region is not favoured over one
+   *  in a 5-point region just because its bin is wider. */
+  probPerPoint?: number;
+}
+
+export interface PinningMeta {
+  method: "svi-implied-settlement-probability";
+  measure: "risk-neutral";
+  state: "ok" | "unavailable";
+  reason: string | null;
+  expiry: string | null;
+  /** Settlement style fitted: one style only (SPX AM and SPXW PM settle at
+   *  different instants on different prices); PM preferred. */
+  settlementStyle?: SettlementStyle | null;
+  quotesUsed: number;
+  coverage: number | null;   // implied mass inside the quoted strike range
+  fitRmse: number | null;    // $ per share, OTM price residual RMSE
+  note: string;
 }
 
 export interface VRPEntry {
@@ -206,6 +275,7 @@ export interface ChainAuditResult {
   gexDecay: GEXDecayResult;
   // 9
   pinning: PinStrike[];
+  pinningMeta?: PinningMeta;
   // 10
   vrp: VRPEntry[];
 
@@ -222,11 +292,10 @@ function parseExpiryKey(key: string): string {
   return key.split(":")[0];
 }
 
-/** Parse DTE from expiry string "YYYY-MM-DD" vs today */
-function parseDTE(expiryDate: string): number {
-  const now = new Date();
+/** Parse DTE (whole calendar days, bucket label) from expiry string "YYYY-MM-DD" vs now */
+function parseDTE(expiryDate: string, nowMs: number = Date.now()): number {
   const exp = new Date(etEpochMs(expiryDate, 16, 0)); // 4pm ET, DST-aware
-  const diff = (exp.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+  const diff = (exp.getTime() - nowMs) / (1000 * 60 * 60 * 24);
   return Math.max(0, Math.round(diff));
 }
 
@@ -248,18 +317,28 @@ function normIV(rawIV: number | null | undefined): number {
 function extractContracts(
   callExpDateMap: Record<string, Record<string, any[]>>,
   putExpDateMap: Record<string, Record<string, any[]>>,
+  nowMs: number = Date.now(),
 ): Contract[] {
   const contracts: Contract[] = [];
 
   function processMap(map: Record<string, Record<string, any[]>>, side: "call" | "put") {
     for (const expKey of Object.keys(map)) {
       const expiry = parseExpiryKey(expKey);
-      const dte = parseDTE(expiry);
+      const dte = parseDTE(expiry, nowMs);
       const strikesObj = map[expKey];
       for (const strikeStr of Object.keys(strikesObj)) {
         const strike = parseFloat(strikeStr);
         if (!isFinite(strike)) continue;
         for (const c of strikesObj[strikeStr]) {
+          // Settlement-aware clock. A Schwab $SPX chain lists AM-settled SPX
+          // monthlies and PM-settled SPXW under the same expiry key; the SPX
+          // monthly settles at the 09:30 ET open, SPXW at the close. Settled
+          // contracts carry no risk, so they are dropped from every metric.
+          const style = settlementStyleOf({
+            symbol: c.symbol, optionRoot: c.optionRoot, settlementType: c.settlementType,
+          });
+          const tte = timeToExpiry(expiry, { nowMs, style });
+          if (tte.expired) continue;
           const iv = normIV(c.volatility);
           const theoreticalIV = c.theoreticalVolatility != null && isFinite(c.theoreticalVolatility)
             ? normIV(c.theoreticalVolatility)
@@ -269,7 +348,10 @@ function extractContracts(
             side,
             expiry,
             dte,
-            delta: c.delta ?? 0,
+            style,
+            tYears: tte.years,
+            // Missing / sentinel delta is missing, not an observed 0 delta.
+            delta: typeof c.delta === "number" && Number.isFinite(c.delta) && Math.abs(c.delta) <= 1 ? c.delta : null,
             gamma: c.gamma ?? 0,
             theta: c.theta ?? 0,
             vega: c.vega ?? 0,
@@ -296,16 +378,26 @@ function extractContracts(
 
 // ─── 1. DEX ───────────────────────────────────────────────────────────────────
 
-function computeDEX(contracts: Contract[], spot: number): DEXResult {
+export function computeDEX(contracts: Contract[], spot: number): DEXResult {
   const strikeMap = new Map<number, DEXStrike>();
+  let withDelta = 0, missingDelta = 0, oiMissing = 0, oiTotal = 0;
 
   for (const c of contracts) {
+    if (c.oi > 0) {
+      oiTotal += c.oi;
+      if (c.delta == null) { missingDelta++; oiMissing += c.oi; } else withDelta++;
+    }
+    if (c.delta == null) continue; // missing delta: counted above, never summed as 0
     if (!strikeMap.has(c.strike)) {
       strikeMap.set(c.strike, { strike: c.strike, callDex: 0, putDex: 0, netDex: 0 });
     }
     const row = strikeMap.get(c.strike)!;
-    // delta × OI × 100 (puts keep their negative sign naturally from Schwab)
-    const dex = c.delta * c.oi * 100;
+    // $ delta notional: delta x OI x 100 (shares per contract) x S ($/share).
+    // Puts keep their negative sign from Schwab. The old value stopped at
+    // shares (no x S) while the panel printed it with "$": 1/S of the real
+    // dollars (SPX 6,700: 1.5M delta-shares printed "$1.5M", really $10.05B). Vendor delta outside
+    // [-1, 1] (Schwab's -999 closed-market sentinel) is skipped, not summed.
+    const dex = c.delta * c.oi * 100 * spot;
     if (c.side === "call") row.callDex += dex;
     else row.putDex += dex;
     row.netDex = row.callDex + row.putDex;
@@ -353,26 +445,85 @@ function computeDEX(contracts: Contract[], spot: number): DEXResult {
     totalCallDex,
     totalPutDex,
     totalNetDex,
+    dexState: withDelta === 0 ? "unavailable" : missingDelta > 0 ? "partial" : "ok",
+    dexCoverage: {
+      contractsWithDelta: withDelta,
+      contractsMissingDelta: missingDelta,
+      oiMissingShare: oiTotal > 0 ? oiMissing / oiTotal : null,
+    },
   };
+}
+
+// ─── 2-3c shared Black-Scholes terms ─────────────────────────────────────────
+//
+// Vanna, charm, vomma and zomma are computed from one self-consistent
+// Black-Scholes evaluation per contract (r = q = 0) using:
+//   T     = c.tYears (timeToExpiry: calendar minutes to the settlement instant
+//           / 525,600, 15-minute floor), so 0DTE contracts are included until
+//           they settle;
+//   sigma = an implied vol that is valid for that T (see effectiveIV).
+// The earlier version recovered d1 from the vendor delta, used the vendor vega
+// and T = whole days / 365, and skipped every contract with dte <= 0, which
+// dropped the entire 0DTE expiry. It also mixed the vendor's own (unknown) T
+// convention with ours.
+
+/** Expiries this close (calendar years) get IV re-solved from the quote mid. */
+const RESOLVE_IV_MAX_T = 3 / 365;
+
+/**
+ * Implied vol consistent with c.tYears. An implied vol is only meaningful with
+ * the T used to solve it (Hull, "Options, Futures, and Other Derivatives",
+ * implied volatility chapter): Schwab does not document the time convention
+ * behind its "volatility" field, and for 0DTE the difference between
+ * conventions is large. For expiries within 3 days we therefore solve sigma
+ * from the two-sided quote mid with our T (r = q = 0; carry over <= 3 days is
+ * negligible). Otherwise, or if the quote is unusable, the vendor IV is used.
+ */
+function effectiveIV(c: Contract, spot: number): number {
+  if (c.sigma != null) return c.sigma;
+  if (c.tYears > 0 && c.tYears <= RESOLVE_IV_MAX_T && c.bid > 0 && c.ask >= c.bid && spot > 0) {
+    const mid = (c.bid + c.ask) / 2;
+    const solved = impliedVol(mid, spot, c.strike, c.tYears, 0, 0, c.side === "call" ? "C" : "P");
+    if (solved != null && isFinite(solved) && solved > 0.005 && solved < 4.99) return solved;
+  }
+  return c.iv;
+}
+
+interface BsTerms { T: number; sigma: number; d1: number; d2: number; phiD1: number }
+
+/** d1, d2, phi(d1) for one contract (r = q = 0), or null if not computable. */
+function bsTerms(c: Contract, spot: number): BsTerms | null {
+  const T = c.tYears;
+  if (!(T > 0) || !(spot > 0) || !(c.strike > 0)) return null;
+  const sigma = effectiveIV(c, spot);
+  if (!(sigma > 0)) return null;
+  const sRootT = sigma * Math.sqrt(T);
+  const d1 = (Math.log(spot / c.strike) + 0.5 * sigma * sigma * T) / sRootT;
+  const d2 = d1 - sRootT;
+  if (!isFinite(d1) || !isFinite(d2)) return null;
+  const phiD1 = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
+  return { T, sigma, d1, d2, phiD1 };
 }
 
 // ─── 2. Vanna ─────────────────────────────────────────────────────────────────
 
 function computeVanna(contracts: Contract[], spot: number): VannaResult {
   const strikeMap = new Map<number, number>();
+  let dealerNaive = 0;
 
   for (const c of contracts) {
-    if (c.oi <= 0 || c.iv <= 0 || c.vega === 0 || c.dte <= 0) continue;
-    const dd = recoverD1D2(c);
-    if (!dd) continue;
-    const T = c.dte / 365;
-    const sigmaRootT = c.iv * Math.sqrt(T);
-    if (sigmaRootT <= 0 || !isFinite(sigmaRootT)) continue;
-    // Institutional vanna = -vega * d2 / (S * sigma * sqrt(T))  (Black-Scholes ∂Δ/∂σ)
-    const vanna = safeDivide(-c.vega * dd.d2, spot * sigmaRootT);
-    // Vanna exposure in $ per 1% vol move = vanna × OI × 100 × S × 0.01
-    const vannaExp = vanna * c.oi * 100 * spot * 0.01;
+    if (c.oi <= 0) continue;
+    const t = bsTerms(c, spot);
+    if (!t) continue;
+    // Black-Scholes vanna = dDelta/dSigma = -phi(d1) * d2 / sigma (per 1.0 vol, per share;
+    // same for calls and puts). Computed directly, so it no longer depends on the
+    // vendor's vega units (finding 7.5).
+    const vanna = -t.phiD1 * t.d2 / t.sigma;
+    // Units: $ change in dealer-agnostic delta notional per +1 vol point
+    //   = vanna x 0.01 (one vol point) x OI x 100 (shares per contract) x S ($/share).
+    const vannaExp = vanna * 0.01 * c.oi * 100 * spot;
     strikeMap.set(c.strike, (strikeMap.get(c.strike) ?? 0) + vannaExp);
+    dealerNaive += c.side === "call" ? vannaExp : -vannaExp;
   }
 
   const profile: VannaStrike[] = Array.from(strikeMap.entries())
@@ -386,31 +537,49 @@ function computeVanna(contracts: Contract[], spot: number): VannaResult {
 
   const totalVannaDollarPerVolPct = profile.reduce((s, p) => s + p.vannaExposure, 0);
 
-  return { profile, peakVannaStrike, totalVannaDollarPerVolPct };
+  return { profile, peakVannaStrike, totalVannaDollarPerVolPct, convention: "long-holder-aggregate", totalVannaDealerNaive: dealerNaive };
 }
 
 // ─── 3. Charm ─────────────────────────────────────────────────────────────────
 
 function computeCharm(contracts: Contract[], spot: number): CharmResult {
   const strikeMap = new Map<number, number>();
+  let toSettle = 0, oneDay = 0, toSettleDealer = 0, oneDayDealer = 0;
 
   for (const c of contracts) {
-    if (c.oi <= 0 || c.dte <= 0 || c.iv <= 0) continue;
-    const dd = recoverD1D2(c);
-    if (!dd) continue;
-    const T = c.dte / 365;
-    const sigmaRootT = c.iv * Math.sqrt(T);
-    if (sigmaRootT <= 0 || !isFinite(sigmaRootT)) continue;
-    // Black-Scholes charm with r=q=0: charm = phi(d1) * d2 / (2*T), in delta/year.
-    // (Previous version had a sign flip and an extra sigma*sqrt(T) in the denominator,
-    // which inverted the drift direction and over-weighted short-dated expiries.)
-    // With q=0, charm_call = charm_put. phi = standard normal pdf.
-    const phiD1 = Math.exp(-0.5 * dd.d1 * dd.d1) / Math.sqrt(2 * Math.PI);
-    const charm = safeDivide(phiD1 * dd.d2, 2 * T);
-    // charm is in (delta units / year). Convert to per-day by /365.
-    // Exposure in $/day per 1pt move = charm × OI × 100 × S / 365
-    const charmExp = (charm * c.oi * 100 * spot) / 365;
+    if (c.oi <= 0) continue;
+    const t = bsTerms(c, spot);
+    if (!t) continue;
+    // Delta decay over h = min(1 calendar day, time to settlement), spot and IV
+    // held fixed: Delta(T - h) - Delta(T), with r = q = 0 (Black-Scholes delta
+    // N(d1); the put delta is N(d1) - 1, so the change is the same for puts).
+    // At settlement delta is terminal: 1 in the money, 0 out of it (1/2 at
+    // the strike). This replaces charm/365 (the instantaneous rate scaled to a
+    // day), which for 0DTE extrapolated a rate over a day that does not exist:
+    // K = 6610, S = 6600, sigma 15%, 2 h left, OI 1,000 read -$846M/day while
+    // the delta actually left to lose is 0.252 x 1000 x 100 x 6600 = -$166.6M.
+    // For tenors well over a day the finite difference equals charm/365 to
+    // first order.
+    const h = Math.min(1 / 365, t.T);
+    const deltaNow = normCdf(t.d1);
+    const tau = t.T - h;
+    let deltaLater: number;
+    if (tau <= 1e-12) {
+      deltaLater = spot > c.strike ? 1 : spot < c.strike ? 0 : 0.5;
+    } else {
+      const sRootTau = t.sigma * Math.sqrt(tau);
+      deltaLater = normCdf((Math.log(spot / c.strike) + 0.5 * t.sigma * t.sigma * tau) / sRootTau);
+    }
+    // Units: $ delta notional change over h = (Delta change) x OI x 100 (shares per contract) x S ($/share).
+    const charmExp = (deltaLater - deltaNow) * c.oi * 100 * spot;
     strikeMap.set(c.strike, (strikeMap.get(c.strike) ?? 0) + charmExp);
+    // Report the two horizons separately: summing "delta left to lose before
+    // a settlement inside 24 h" with "one day of decay" adds unlike quantities.
+    // The split is by the horizon actually used (h < 1 day), not by the
+    // expiry's calendar date, so the bucket always matches the arithmetic.
+    const dealer = c.side === "call" ? charmExp : -charmExp;
+    if (h < 1 / 365) { toSettle += charmExp; toSettleDealer += dealer; }
+    else { oneDay += charmExp; oneDayDealer += dealer; }
   }
 
   const profile: CharmStrike[] = Array.from(strikeMap.entries())
@@ -424,15 +593,15 @@ function computeCharm(contracts: Contract[], spot: number): CharmResult {
 
   const totalCharmPerDay = profile.reduce((s, p) => s + p.charmExposure, 0);
 
-  return { profile, peakCharmStrike, totalCharmPerDay };
+  return {
+    profile, peakCharmStrike, totalCharmPerDay, horizon: "1d-or-to-settlement",
+    totalCharmToSettlement: toSettle,
+    totalCharmOneDay: oneDay,
+    totalCharmToSettlementDealerNaive: toSettleDealer,
+    totalCharmOneDayDealerNaive: oneDayDealer,
+    convention: "long-holder-aggregate",
+  };
 }
-
-// ─── 3b/3c helpers: derive d1/d2 from Schwab greeks ──────────────────────────
-//
-// Schwab provides delta directly. For a call: delta = N(d1), so d1 = N⁻¹(delta).
-// For a put: delta = N(d1) - 1, so d1 = N⁻¹(delta + 1). Then d2 = d1 - σ√T.
-// This lets us compute vomma and zomma without re-implementing Black-Scholes
-// from scratch — we ride on Schwab's own pricing model.
 
 /** Beasley-Springer-Moro approximation of inverse normal CDF. Accurate to ~1e-7 over (0,1). */
 export function invNormCDF(p: number): number {
@@ -461,42 +630,22 @@ export function invNormCDF(p: number): number {
            ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1);
 }
 
-/** Recover d1, d2 from contract using its delta and IV. Returns null if unrecoverable. */
-function recoverD1D2(c: Contract): { d1: number; d2: number } | null {
-  if (c.iv <= 0 || c.dte <= 0) return null;
-  const T = c.dte / 365;
-  const sigmaRootT = c.iv * Math.sqrt(T);
-  if (sigmaRootT <= 0 || !isFinite(sigmaRootT)) return null;
-  let probability: number;
-  if (c.side === "call") {
-    if (c.delta <= 0 || c.delta >= 1) return null;
-    probability = c.delta;
-  } else {
-    // put delta is in (-1, 0). d1 = N⁻¹(delta + 1)
-    if (c.delta >= 0 || c.delta <= -1) return null;
-    probability = c.delta + 1;
-  }
-  const d1 = invNormCDF(probability);
-  const d2 = d1 - sigmaRootT;
-  if (!isFinite(d1) || !isFinite(d2)) return null;
-  return { d1, d2 };
-}
-
 // ─── 3b. Vomma (∂vega/∂σ) ─────────────────────────────────────────────────────
 
 function computeVomma(contracts: Contract[], spot: number): VommaResult {
   const strikeMap = new Map<number, number>();
 
   for (const c of contracts) {
-    if (c.oi <= 0 || c.iv <= 0 || c.vega === 0) continue;
-    const dd = recoverD1D2(c);
-    if (!dd) continue;
-    // Vomma per contract = vega · (d1 · d2) / σ. Units: dollars per 1.0 vol unit per contract.
-    const vomma = safeDivide(c.vega * dd.d1 * dd.d2, c.iv);
-    // Aggregate exposure for a 1% (0.01) vol move: vomma × OI × 100 × 0.01.
-    // Note: vega is already in $/contract per 1.0 vol unit (Schwab convention), so this
-    // gives $ change in *vega P&L* per 1% vol move — i.e. convexity of vol exposure.
-    const vommaExp = vomma * c.oi * 100 * 0.01;
+    if (c.oi <= 0) continue;
+    const t = bsTerms(c, spot);
+    if (!t) continue;
+    // Vomma = vega * d1 * d2 / sigma, with vega = S * phi(d1) * sqrt(T) per 1.0 vol per share.
+    const vega = bsVega(spot, c.strike, t.sigma, t.T, 0, 0);
+    const vomma = vega * t.d1 * t.d2 / t.sigma;
+    // Units: $ change in position vega (vega in $ per 1 vol point) per +1 vol point
+    //   = vomma x 0.01 x 0.01 x OI x 100 (shares per contract).
+    // Matches the previous output if Schwab's vega is quoted per 1 vol point.
+    const vommaExp = vomma * 0.01 * 0.01 * c.oi * 100;
     strikeMap.set(c.strike, (strikeMap.get(c.strike) ?? 0) + vommaExp);
   }
 
@@ -520,14 +669,18 @@ function computeZomma(contracts: Contract[], spot: number): ZommaResult {
   const strikeMap = new Map<number, number>();
 
   for (const c of contracts) {
-    if (c.oi <= 0 || c.iv <= 0 || c.gamma === 0) continue;
-    const dd = recoverD1D2(c);
-    if (!dd) continue;
-    // Zomma per contract = gamma · (d1 · d2 − 1) / σ. Units: gamma-units per 1.0 vol unit.
-    const zomma = safeDivide(c.gamma * (dd.d1 * dd.d2 - 1), c.iv);
-    // $-gamma exposure change per 1% vol move = zomma × OI × 100 × S² × 0.01.
-    // (Gamma P&L is per S²; sign convention matches dealer net-gamma convention via OI.)
-    const zommaExp = zomma * c.oi * 100 * spot * spot * 0.01;
+    if (c.oi <= 0) continue;
+    const t = bsTerms(c, spot);
+    if (!t) continue;
+    // Zomma = gamma * (d1 * d2 - 1) / sigma, per 1.0 vol (gamma per share).
+    const g = bsGamma(spot, c.strike, t.sigma, t.T, 0, 0);
+    const zomma = g * (t.d1 * t.d2 - 1) / t.sigma;
+    // Units: $ change in dollar gamma (GEX convention: gamma x OI x 100 x S^2 x 0.01,
+    // i.e. $ delta change per 1% spot move) per +1 vol point
+    //   = zomma x 0.01 (vol point) x OI x 100 x S^2 x 0.01.
+    // The previous formula omitted the vol-point 0.01, so it was per 100 vol
+    // points and 100x larger than its "per vol pct" label.
+    const zommaExp = zomma * 0.01 * c.oi * 100 * spot * spot * 0.01;
     strikeMap.set(c.strike, (strikeMap.get(c.strike) ?? 0) + zommaExp);
   }
 
@@ -563,21 +716,21 @@ function computeIVSkew(contracts: Contract[]): SkewEntry[] {
     const { dte, calls, puts } = group;
 
     // ATM IV: call and put closest to delta=0.50 / -0.50
-    const atmCall = calls.filter(c => c.iv > 0).sort((a, b) =>
-      Math.abs(Math.abs(a.delta) - 0.5) - Math.abs(Math.abs(b.delta) - 0.5)
+    const atmCall = calls.filter(c => c.iv > 0 && c.delta != null).sort((a, b) =>
+      Math.abs(Math.abs(a.delta!) - 0.5) - Math.abs(Math.abs(b.delta!) - 0.5)
     )[0];
-    const atmPut = puts.filter(c => c.iv > 0).sort((a, b) =>
-      Math.abs(Math.abs(a.delta) - 0.5) - Math.abs(Math.abs(b.delta) - 0.5)
+    const atmPut = puts.filter(c => c.iv > 0 && c.delta != null).sort((a, b) =>
+      Math.abs(Math.abs(a.delta!) - 0.5) - Math.abs(Math.abs(b.delta!) - 0.5)
     )[0];
     const atmIV = atmCall && atmPut ? (atmCall.iv + atmPut.iv) / 2
       : atmCall?.iv ?? atmPut?.iv ?? null;
 
     // 25-delta: call closest to delta=0.25, put closest to delta=-0.25
-    const call25 = calls.filter(c => c.iv > 0).sort((a, b) =>
-      Math.abs(a.delta - 0.25) - Math.abs(b.delta - 0.25)
+    const call25 = calls.filter(c => c.iv > 0 && c.delta != null).sort((a, b) =>
+      Math.abs(a.delta! - 0.25) - Math.abs(b.delta! - 0.25)
     )[0];
-    const put25 = puts.filter(c => c.iv > 0).sort((a, b) =>
-      Math.abs(a.delta + 0.25) - Math.abs(b.delta + 0.25)
+    const put25 = puts.filter(c => c.iv > 0 && c.delta != null).sort((a, b) =>
+      Math.abs(a.delta! + 0.25) - Math.abs(b.delta! + 0.25)
     )[0];
 
     const put25IV = put25?.iv ?? null;
@@ -652,7 +805,7 @@ function computeUnusualVolume(contracts: Contract[], spot: number): UnusualContr
 
     const price = c.mark > 0 ? c.mark : (c.bid + c.ask) / 2;
     const dollarVolume = price * c.volume * 100;
-    const deltaNotional = c.delta * c.oi * 100 * spot;
+    const deltaNotional = c.delta != null ? c.delta * c.oi * 100 * spot : null;
 
     flagged.push({
       symbol: `${c.side.toUpperCase()}_${c.strike}_${c.expiry}`,
@@ -685,7 +838,7 @@ function computeDealerScore(contracts: Contract[], spot: number): DealerScoreRes
   let putScore = 0;
 
   for (const c of contracts) {
-    if (c.oi <= 0) continue;
+    if (c.oi <= 0 || c.delta == null) continue;
     const weight = Math.exp(-Math.abs(c.strike - spot) / bandwidth);
     const deltaCont = Math.abs(c.delta) * c.oi * 100;
     if (c.side === "call") callScore += weight * deltaCont;
@@ -715,9 +868,12 @@ function computeSingleGEXBucket(contracts: Contract[], spot: number): GEXBucket 
   const strikeMap = new Map<number, { callGex: number; putGex: number; netGex: number }>();
 
   for (const c of contracts) {
+    const sigma = effectiveIV(c, spot);
+    if (!(sigma > 0) || !(c.tYears > 0) || !(c.oi > 0)) continue;
     if (!strikeMap.has(c.strike)) strikeMap.set(c.strike, { callGex: 0, putGex: 0, netGex: 0 });
     const row = strikeMap.get(c.strike)!;
-    const gex = c.gamma * c.oi * 100 * spot * spot * 0.01;
+    // $ per 1% move: gamma x OI x 100 x S^2 x 0.01, gamma on the flip's basis
+    const gex = dollarGexPerPct(bsGamma(spot, c.strike, sigma, c.tYears, FLIP_RATE, FLIP_DIV_YIELD), c.oi, spot);
     if (c.side === "call") row.callGex += gex;
     else row.putGex -= gex;
     row.netGex = row.callGex + row.putGex;
@@ -727,7 +883,7 @@ function computeSingleGEXBucket(contracts: Contract[], spot: number): GEXBucket 
     .map(([strike, v]) => ({ strike, ...v }))
     .sort((a, b) => a.strike - b.strike);
 
-  if (!profile.length) return { callWall: null, putWall: null, zeroGamma: null, totalGex: 0, contractCount: 0 };
+  if (!profile.length) return { callWall: null, putWall: null, zeroGamma: null, totalGex: 0, contractCount: 0, gexBasis: "black-scholes-our-clock" };
 
   const aboveSpot = profile.filter(p => p.strike >= spot);
   const belowSpot = profile.filter(p => p.strike < spot);
@@ -736,16 +892,13 @@ function computeSingleGEXBucket(contracts: Contract[], spot: number): GEXBucket 
   const putWall = belowSpot.reduce<typeof profile[0] | null>(
     (best, p) => (!best || p.putGex < best.putGex ? p : best), null);
 
-  let cumGex = 0;
-  let zeroGamma: number | null = null;
-  for (const p of profile) {
-    const prev = cumGex;
-    cumGex += p.netGex;
-    if ((prev < 0 && cumGex >= 0) || (prev > 0 && cumGex <= 0)) {
-      zeroGamma = p.strike;
-      break;
-    }
-  }
+  // Gamma flip: app-wide re-priced definition (gammaProfile.ts), not the
+  // cumulative-by-strike sign change.
+  const zeroGamma = repricedFlipFromRows(
+    contracts.map((c) => ({ type: c.side === "call" ? "C" as const : "P" as const, strike: c.strike, iv: effectiveIV(c, spot), oi: c.oi, dte: c.dte, T: c.tYears })),
+    spot,
+    { r: FLIP_RATE, q: FLIP_DIV_YIELD },
+  ).zeroGamma;
 
   const totalGex = profile.reduce((s, p) => s + p.netGex, 0);
 
@@ -755,6 +908,7 @@ function computeSingleGEXBucket(contracts: Contract[], spot: number): GEXBucket 
     zeroGamma,
     totalGex,
     contractCount: contracts.length,
+    gexBasis: "black-scholes-our-clock",
   };
 }
 
@@ -773,38 +927,81 @@ function computeGEXDecay(contracts: Contract[], spot: number): GEXDecayResult {
   };
 }
 
-// ─── 9. Pinning Probability ───────────────────────────────────────────────────
+// ─── 9. Settlement probability per strike (was "Pinning Probability") ─────────
+//
+// The old number was a gamma x OI x Gaussian(distance) score normalised to
+// sum to 100% over strikes, built on vendor gamma (including Schwab's -999
+// sentinel): a concentration index, not a probability. It is replaced by the
+// risk-neutral probability that the nearest expiry SETTLES within half a
+// strike spacing of each strike,
+//   P(K - w/2 <= S_T <= K + w/2) = F(K + w/2) - F(K - w/2),
+// read from the SVI-smoothed implied distribution (breedenLitzenberger.ts:
+// Breeden & Litzenberger 1978; Gatheral & Jacquier 2014, "Arbitrage-free SVI
+// volatility surfaces", Quantitative Finance 14(1), arXiv:1204.0646), w the
+// local strike spacing. It is a Q-measure number (contains risk premia), and a
+// smooth implied density carries no pinning dynamics: it is the market-implied
+// chance of settling near each strike, not a forecast that price is "pinned".
+// Same quality gate as the Models scenario odds: >= 10 quotes, >= 60% of the
+// implied mass inside the quoted strikes; otherwise "unavailable".
 
-function computePinning(contracts: Contract[], spot: number): PinStrike[] {
-  // Nearest expiry only
-  const sortedDTE = [...new Set(contracts.map(c => c.dte))].sort((a, b) => a - b);
-  const nearestDTE = sortedDTE[0] ?? 0;
-  const nearest = contracts.filter(c => c.dte === nearestDTE);
+const PIN_MIN_QUOTES = 10;
+const PIN_MIN_COVERAGE = 0.6;
 
-  if (!nearest.length) return [];
+function computePinning(contracts: Contract[], spot: number): { pins: PinStrike[]; meta: PinningMeta } {
+  const note = "risk-neutral P(settle within +/- half a strike spacing), SVI-smoothed implied distribution of the nearest expiry; not a model of pinning dynamics";
+  const unavailable = (reason: string, expiry: string | null = null, quotesUsed = 0): { pins: PinStrike[]; meta: PinningMeta } => ({
+    pins: [],
+    meta: { method: "svi-implied-settlement-probability", measure: "risk-neutral", state: "unavailable", reason, expiry, quotesUsed, coverage: null, fitRmse: null, note },
+  });
+  if (!(spot > 0)) return unavailable("no spot");
+  // Nearest expiry still trading (settled contracts were dropped upstream).
+  const live = contracts.filter((c) => c.tYears > 0);
+  if (!live.length) return unavailable("no live contracts");
+  let nearest = live[0];
+  for (const c of live) if (c.tYears < nearest.tYears) nearest = c;
+  const expiry = nearest.expiry;
+  const sameDate = live.filter((c) => c.expiry === expiry);
+  // ONE settlement style per fit: an SPX monthly (AM, settles on the 09:30
+  // SOQ) and SPXW (PM, settles on the close) listed under the same date are
+  // different underlyings at different instants with different clocks.
+  // PM (SPXW) preferred; AM only when the date has no PM contracts.
+  const style: SettlementStyle = sameDate.some((c) => c.style === "PM") ? "PM" : "AM";
+  const group = sameDate.filter((c) => c.style === style);
+  const T = Math.max(...group.map((c) => c.tYears));
 
-  const bandwidth = 0.005 * spot; // 0.5% of spot
-
-  const strikeMap = new Map<number, number>();
-  for (const c of nearest) {
-    const diff = c.strike - spot;
-    const pinScore = Math.abs(c.gamma) * c.oi * Math.exp(
-      -(diff * diff) / (2 * bandwidth * bandwidth)
-    );
-    strikeMap.set(c.strike, (strikeMap.get(c.strike) ?? 0) + pinScore);
+  // One mid per strike and side.
+  const calls = new Map<number, number>(), puts = new Map<number, number>();
+  for (const c of group) {
+    if (!(c.ask > 0) || !(c.bid >= 0) || c.ask < c.bid) continue;
+    const m = c.side === "call" ? calls : puts;
+    if (!m.has(c.strike)) m.set(c.strike, 0.5 * (c.bid + c.ask));
   }
+  const strikes = Array.from(new Set([...Array.from(calls.keys()), ...Array.from(puts.keys())])).sort((a, b) => a - b);
+  const quotes: OptionQuote[] = strikes.map((K) => ({ strike: K, callMid: calls.get(K) ?? null, putMid: puts.get(K) ?? null }));
+  const dist = fitImpliedDistribution(quotes, { spot, r: FLIP_RATE, T });
+  if (!dist) return unavailable("implied distribution fit failed (too few usable quotes)", expiry, quotes.length);
+  if (dist.quotesUsed < PIN_MIN_QUOTES) return unavailable(`only ${dist.quotesUsed} usable quotes (need ${PIN_MIN_QUOTES})`, expiry, dist.quotesUsed);
+  if (!(dist.coverage >= PIN_MIN_COVERAGE)) return unavailable(`quoted strikes cover ${(dist.coverage * 100).toFixed(0)}% of the implied mass (need ${PIN_MIN_COVERAGE * 100}%)`, expiry, dist.quotesUsed);
 
-  const total = Array.from(strikeMap.values()).reduce((s, v) => s + v, 0);
-  if (total <= 0) return [];
-
-  return Array.from(strikeMap.entries())
-    .map(([strike, score]) => ({
-      strike,
-      prob: total > 0 ? (score / total) * 100 : 0,
-      distance: strike - spot,
-    }))
-    .sort((a, b) => b.prob - a.prob)
-    .slice(0, 5);
+  const pins: PinStrike[] = [];
+  for (let i = 0; i < strikes.length; i++) {
+    const K = strikes[i];
+    const gaps = [i > 0 ? K - strikes[i - 1] : Infinity, i < strikes.length - 1 ? strikes[i + 1] - K : Infinity];
+    const w = Math.min(gaps[0], gaps[1]);
+    if (!Number.isFinite(w) || w <= 0) continue;
+    const lower = K - w / 2, upper = K + w / 2;
+    const p = cdfAt(dist, upper) - cdfAt(dist, lower);
+    const prob = Math.max(0, p) * 100;
+    pins.push({ strike: K, prob, distance: K - spot, lower, upper, probPerPoint: prob / w });
+  }
+  pins.sort((a, b) => (b.probPerPoint ?? 0) - (a.probPerPoint ?? 0));
+  return {
+    pins: pins.slice(0, 5),
+    meta: {
+      method: "svi-implied-settlement-probability", measure: "risk-neutral", state: "ok", reason: null,
+      expiry, settlementStyle: style, quotesUsed: dist.quotesUsed, coverage: dist.coverage, fitRmse: dist.fitRmse, note,
+    },
+  };
 }
 
 // ─── 10. Vol Risk Premium ─────────────────────────────────────────────────────
@@ -867,18 +1064,27 @@ function computeVRP(contracts: Contract[], spot: number): VRPEntry[] {
  * Build the full chain audit from a Schwab OptionChainResponse.
  * @param chain - raw Schwab chain (must be non-error variant)
  * @param spot  - current underlying price
+ * @param nowMs - valuation instant (epoch ms); defaults to now. Contracts already
+ *                settled at nowMs (0DTE after the close, AM-settled SPX monthlies
+ *                after the 09:30 ET open) are excluded from every metric.
  */
 export function buildChainAudit(
   chain: Exclude<OptionChainResponse, { error: string }>,
   spot: number,
+  nowMs: number = Date.now(),
 ): ChainAuditResult {
-  const contracts = extractContracts(chain.callExpDateMap, chain.putExpDateMap);
+  const contracts = extractContracts(chain.callExpDateMap, chain.putExpDateMap, nowMs);
+  // sigma valid for each contract's T, solved once (Newton on the mid inside 3 days)
+  for (const c of contracts) c.sigma = effectiveIV(c, spot);
 
   const expiries = [...new Set(contracts.map(c => c.expiry))];
 
   // Data quality assessment
-  const hasGreeks = contracts.some(c => c.delta !== 0 && c.gamma !== 0);
+  // Schwab sends -999 sentinels for every greek when the market is closed:
+  // only in-range values count as greeks.
+  const hasGreeks = contracts.some(c => c.delta != null && c.delta !== 0 && c.gamma > 0 && c.gamma < 900);
   const hasTheoreticalIV = contracts.some(c => c.theoreticalIV != null && c.theoreticalIV > 0);
+  const pinning = computePinning(contracts, spot);
   const dataQuality: ChainAuditResult["dataQuality"] =
     !hasGreeks ? "minimal"
     : !hasTheoreticalIV ? "partial"
@@ -895,7 +1101,8 @@ export function buildChainAudit(
     unusualVolume: computeUnusualVolume(contracts, spot),
     dealerScore: computeDealerScore(contracts, spot),
     gexDecay: computeGEXDecay(contracts, spot),
-    pinning: computePinning(contracts, spot),
+    pinning: pinning.pins,
+    pinningMeta: pinning.meta,
     vrp: computeVRP(contracts, spot),
     contractsProcessed: contracts.length,
     expiriesFound: expiries.length,

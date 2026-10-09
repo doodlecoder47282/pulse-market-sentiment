@@ -65,7 +65,7 @@ export default function AnomalyPanel() {
 
             {/* Gauge bar */}
             <div className="space-y-1">
-              <div className="flex justify-between text-[10px] text-muted-foreground">
+              <div className="flex justify-between text-[11px] text-muted-foreground">
                 <span>0%</span>
                 <span className="font-mono font-semibold text-foreground">{pctile.toFixed(1)}% percentile</span>
                 <span>100%</span>
@@ -77,7 +77,7 @@ export default function AnomalyPanel() {
                 />
                 <div className="absolute top-0 bottom-0 border-l border-rose-500/50" style={{ left: "95%" }} />
               </div>
-              <div className="text-[10px] text-muted-foreground">red line = 95% threshold</div>
+              <div className="text-[11px] text-muted-foreground">red line = 95% threshold</div>
             </div>
 
             <p className="text-xs mt-2 leading-relaxed">{anomaly.notes}</p>
@@ -89,9 +89,9 @@ export default function AnomalyPanel() {
             <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
               {anomaly.features.map(f => (
                 <div key={f.name} className="rounded border border-border/60 bg-muted/20 p-2">
-                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{f.name}</div>
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{f.name}</div>
                   <div className="text-sm font-semibold tabular-nums">{f.value.toFixed(2)}</div>
-                  <div className={`text-[10px] font-mono ${Math.abs(f.z) >= 2 ? "text-rose-500 font-semibold" : "text-muted-foreground"}`}>
+                  <div className={`text-[11px] font-mono ${Math.abs(f.z) >= 2 ? "text-rose-500 font-semibold" : "text-muted-foreground"}`}>
                     z = {f.z >= 0 ? "+" : ""}{f.z.toFixed(2)}
                   </div>
                 </div>
@@ -141,7 +141,7 @@ export default function AnomalyPanel() {
         </div>
       )}
 
-      <p className="text-[10px] text-muted-foreground leading-snug">
+      <p className="text-[11px] text-muted-foreground leading-snug">
         anomaly score = how far today's market vector (composite, VIX, GEX, P/C, 5d return) sits from history. ≥95th percentile = unusual day, look back at the closest analogs for what played out. drift = is the model getting worse over time?
       </p>
     </div>
@@ -152,9 +152,9 @@ function Tile({ label, value, hint, positive }: { label: string; value: string; 
   const color = positive == null ? "" : positive > 0 ? "text-emerald-500" : positive < 0 ? "text-rose-500" : "";
   return (
     <div className="rounded border border-border/60 bg-muted/20 p-2">
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className={`text-sm font-semibold tabular-nums ${color}`}>{value}</div>
-      {hint && <div className="text-[10px] text-muted-foreground">{hint}</div>}
+      {hint && <div className="text-[11px] text-muted-foreground">{hint}</div>}
     </div>
   );
 }

@@ -150,7 +150,7 @@ export default function SkewPanel() {
             </table>
           </div>
 
-          <p className="text-[10px] text-muted-foreground leading-snug">
+          <p className="text-[11px] text-muted-foreground leading-snug">
             negative risk reversal = puts richer than calls (downside fear paid up). contango term = market expects calm now, vol later. backwardation = front-month panic. extremes mean-revert.
           </p>
         </>
@@ -162,7 +162,7 @@ export default function SkewPanel() {
 function Tile({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded border border-border/60 bg-muted/20 p-2">
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className="text-sm font-semibold tabular-nums">{value}</div>
     </div>
   );

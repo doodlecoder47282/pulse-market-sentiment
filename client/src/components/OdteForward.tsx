@@ -299,13 +299,13 @@ export default function OdteForward() {
       {/* header */}
       <div className="flex flex-wrap items-center gap-2 mb-2">
         <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-cyan-300">0DTE Forward Map</span>
-        <span className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">{data.symbol} · exp {data.expiry} · {sessionLabel}</span>
-        <span className={`text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border ${indet ? "border-border text-muted-foreground" : longG ? "border-lime-500/40 text-lime-400" : "border-red-500/40 text-red-400"}`} data-testid="odte-regime">
+        <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">{data.symbol} · exp {data.expiry} · {sessionLabel}</span>
+        <span className={`text-[11px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border ${indet ? "border-border text-muted-foreground" : longG ? "border-lime-500/40 text-lime-400" : "border-red-500/40 text-red-400"}`} data-testid="odte-regime">
           {indet ? "greeks pending open" : longG ? "long gamma · pin" : "short gamma · amplify"}
         </span>
         <button
           onClick={() => setShowMap((v) => !v)}
-          className="ml-auto text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-border text-muted-foreground hover:text-foreground hover:border-cyan-500/40"
+          className="ml-auto text-[11px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-border text-muted-foreground hover:text-foreground hover:border-cyan-500/40"
           data-testid="button-toggle-levelmap"
         >
           {showMap ? "hide levels" : "show levels"}
@@ -315,23 +315,23 @@ export default function OdteForward() {
       {/* chips */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 mb-2">
         <div className="rounded border border-border bg-card/40 px-2 py-1.5">
-          <div className="text-[8px] font-mono uppercase tracking-wider text-muted-foreground">EM to close (1σ)</div>
+          <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">EM to close (1σ)</div>
           <div className="text-xs font-mono text-amber-400" data-testid="odte-em-sigma">{expectedMove.sigma != null ? `±${expectedMove.sigma}` : "—"}</div>
         </div>
         <div className="rounded border border-border bg-card/40 px-2 py-1.5">
-          <div className="text-[8px] font-mono uppercase tracking-wider text-muted-foreground">Proj. close</div>
+          <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Proj. close</div>
           <div className="text-xs font-mono text-cyan-300" data-testid="odte-proj-close">{projClose ?? "—"}</div>
         </div>
         <div className="rounded border border-border bg-card/40 px-2 py-1.5">
-          <div className="text-[8px] font-mono uppercase tracking-wider text-muted-foreground">0DTE net GEX</div>
+          <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">0DTE net GEX</div>
           <div className={`text-xs font-mono ${data.netGex == null ? "text-muted-foreground" : data.netGex >= 0 ? "text-lime-400" : "text-red-400"}`} data-testid="odte-net-gex">{data.netGex != null ? fmtUsd(data.netGex) : "—"}</div>
         </div>
         <div className="rounded border border-border bg-card/40 px-2 py-1.5">
-          <div className="text-[8px] font-mono uppercase tracking-wider text-muted-foreground">Pin</div>
+          <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Pin</div>
           <div className="text-xs font-mono text-amber-400" data-testid="odte-pin">{levels.pin ?? "—"}</div>
         </div>
         <div className="rounded border border-border bg-card/40 px-2 py-1.5">
-          <div className="text-[8px] font-mono uppercase tracking-wider text-muted-foreground">Wall / Flip</div>
+          <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Wall / Flip</div>
           <div className="text-xs font-mono text-foreground" data-testid="odte-walls">{levels.putWall ?? "—"}–{levels.callWall ?? "—"} <span className="text-purple-400">/{levels.gammaFlip ?? "—"}</span></div>
         </div>
       </div>
@@ -348,7 +348,7 @@ export default function OdteForward() {
       >
         <canvas ref={canvasRef} />
         {hoverCandle && (
-          <div className="absolute top-1 left-1 rounded border border-border bg-background/92 px-2 py-1 text-[9px] font-mono pointer-events-none z-10">
+          <div className="absolute top-1 left-1 rounded border border-border bg-background/92 px-2 py-1 text-[11px] font-mono pointer-events-none z-10">
             <div className="text-muted-foreground">{hoverCandle.et} ET · projected</div>
             <div className="text-cyan-300">O {hoverCandle.open} · C {hoverCandle.close}</div>
             <div className="text-foreground">H {hoverCandle.high} · L {hoverCandle.low}</div>
@@ -360,14 +360,14 @@ export default function OdteForward() {
       {/* level map */}
       {showMap && (
         <div className="mt-2" data-testid="odte-level-map">
-          <div className="text-[8px] font-mono uppercase tracking-widest text-muted-foreground mb-1">
+          <div className="text-[11px] font-mono uppercase tracking-widest text-muted-foreground mb-1">
             Level map · P(touch) before close · {untouched.length} untouched
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-0.5">
             {levelMap.slice(0, 14).map((L) => (
               <div
                 key={`${L.kind}-${L.price}`}
-                className="flex items-center gap-2 text-[9px] font-mono py-0.5 border-b border-border/40"
+                className="flex items-center gap-2 text-[11px] font-mono py-0.5 border-b border-border/40"
                 title={L.note}
                 data-testid={`level-${L.kind}-${L.price}`}
               >
@@ -397,7 +397,7 @@ export default function OdteForward() {
       )}
 
       {/* method */}
-      <div className="mt-1.5 text-[8px] font-mono text-muted-foreground leading-relaxed">
+      <div className="mt-1.5 text-[11px] font-mono text-muted-foreground leading-relaxed">
         projected shape, not a bar forecast · candles routed on median path (pin gravity + charm tilt + wall clamp), wicks scaled by bucket σ, seeded per session so it doesn't flicker · P(touch) = 2·Φ(−|L−S|/σ√t), reflection principle · ATM IV {data.atmIV}%{data.atmIVSource === "straddle" ? " straddle-derived" : ""} · prior close {data.bars.priorClose ?? "—"} · ORB {data.bars.orbLow ?? "—"}–{data.bars.orbHigh ?? "—"}
       </div>
     </div>

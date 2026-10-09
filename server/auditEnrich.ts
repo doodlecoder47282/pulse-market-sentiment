@@ -37,6 +37,8 @@ import { computeOfiTrend } from "./leeReadyOfi.js";
 import { computeWickTiming } from "./wickTiming.js";
 import { getPriceHistory, getOptionChain } from "./schwab.js";
 import { etEpochMs } from "./etTime.js";
+import { etDate, sessionCloseMinutes } from "./exchangeCalendar";
+import { gammaZoneEffect } from "./gammaZone";
 
 export interface VommaPocket {
   strike: number;
@@ -325,11 +327,12 @@ function extractVommaPockets(levels: any[], spot: number): VommaPocket[] {
 /**
  * Compute the session-aware intraday pivot + wick zones.
  *
- * Phase determined by ET minutes-since-midnight:
+ * Phase determined by ET minutes-since-midnight, against today's real close
+ * from the exchange calendar (16:00, 13:00 on half days):
  *   570 (9:30) – 660 (11:00):  GEX-anchored
- *   660 – 840 (14:00):         Hybrid blend
- *   840 – 960 (16:00):         Charm-weighted
- *   else:                       fallback to mainPivot
+ *   660 – close-120:           Hybrid blend (14:00 on a full day; none on a half day)
+ *   close-120 – close:         Charm-weighted (last two hours)
+ *   else, or no session today: fallback to mainPivot
  */
 function computeIntradayPivot(args: {
   spot: number;
@@ -338,8 +341,13 @@ function computeIntradayPivot(args: {
   levels: any[];
   audit: any;
   etMinutes: number;
+  /** Today's close, ET minutes (exchangeCalendar.sessionCloseMinutes); null = no session today. */
+  closeMin?: number | null;
 }): WickZone | null {
   const { spot, dailyEM, vix, levels, audit, etMinutes } = args;
+  const closeMin = args.closeMin === undefined ? 960 : args.closeMin;
+  const sessionEnd = closeMin ?? 960;
+  const charmStart = Math.min(840, sessionEnd - 120);
   if (!spot || spot <= 0) return null;
 
   const findLevel = (kind: string): number | null => {
@@ -369,7 +377,11 @@ function computeIntradayPivot(args: {
   let pivot: number;
   let source: string;
 
-  if (etMinutes < 570) {
+  if (closeMin === null) {
+    // Holiday / weekend: no session to phase
+    pivot = mainPivot;
+    source = "no session mainPivot";
+  } else if (etMinutes < 570) {
     // Pre-open: anchor on yesterday's main pivot
     pivot = mainPivot;
     source = "pre-open mainPivot";
@@ -377,10 +389,15 @@ function computeIntradayPivot(args: {
     // 9:30–11:00 — GEX anchor
     pivot = gexAnchor;
     source = "GEX-anchored open";
-  } else if (etMinutes < 840) {
+  } else if (etMinutes < charmStart) {
     // 11:00–14:00 — hybrid blend by gamma regime
-    const gammaPos = String(audit?.gammaZone ?? "").startsWith("y+");
-    if (gammaPos) {
+    const gEffect = gammaZoneEffect(audit?.gammaZone);
+    if (gEffect === "unknown") {
+      // Gamma unknown ("y?" / missing GEX): no dampen/amplify claim, so take
+      // the midpoint of the two regime blends below instead of picking one.
+      pivot = 0.475 * gexAnchor + 0.40 * mainPivot + 0.125 * spot;
+      source = "hybrid γ? (gamma unknown, unweighted)";
+    } else if (gEffect === "dampening") {
       // Dampening regime → magnets dominate (price pulls toward dealers)
       pivot = 0.55 * gexAnchor + 0.30 * mainPivot + 0.15 * spot;
       source = "hybrid γ+ (mag-weighted)";
@@ -389,8 +406,8 @@ function computeIntradayPivot(args: {
       pivot = 0.40 * gexAnchor + 0.50 * mainPivot + 0.10 * spot;
       source = "hybrid γ- (pivot-weighted)";
     }
-  } else if (etMinutes < 960) {
-    // 14:00–16:00 — charm pull dominates (theta forces pin)
+  } else if (etMinutes < sessionEnd) {
+    // last two hours (14:00–16:00, 11:00–13:00 on a half day) — charm pull dominates
     if (charmTarget !== null) {
       pivot = 0.6 * charmTarget + 0.4 * gexAnchor;
       source = "charm-weighted close";
@@ -404,9 +421,8 @@ function computeIntradayPivot(args: {
   }
 
   // Half-width: scaled by EM and time-remaining
-  // Session fraction remaining: 1.0 at 9:30, 0.0 at 16:00
+  // Session fraction remaining: 1.0 at 9:30, 0.0 at the close (13:00 on half days)
   const sessionStart = 570;
-  const sessionEnd = 960;
   const sessionLen = sessionEnd - sessionStart;
   const elapsed = Math.max(0, Math.min(sessionLen, etMinutes - sessionStart));
   const remainingFrac = 1 - elapsed / sessionLen;
@@ -723,8 +739,11 @@ async function getAtmIV(spot: number): Promise<number | null> {
   }
 
   try {
-    // Pull SPX 0DTE chain (current trading day)
-    const chain = await getOptionChain("$SPX.X");
+    // Pull the SPX 0-day window (today's expiry; tomorrow's after the close).
+    // It used to omit the window, which downloaded EVERY listed expiry once a
+    // minute for one ATM IV; the 0-day window is the request the 0DTE engines
+    // already make, so this shares their cached response (round 3, N1-1).
+    const chain = await getOptionChain("$SPX", 0);
     if (!chain || (chain as any).error) {
       atmIVCache = { ts: Date.now(), spot, iv: null };
       return null;
@@ -809,6 +828,7 @@ export async function enrichAudit(
       levels: daily.levels ?? [],
       audit,
       etMinutes: etMinutesNow(),
+      closeMin: sessionCloseMinutes(etDate()),
     });
 
     // 4. gex: net GEX in $M — read from audit.gexTotal (signed $ per 1%),

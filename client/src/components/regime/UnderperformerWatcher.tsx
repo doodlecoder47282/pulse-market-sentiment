@@ -75,7 +75,7 @@ export default function UnderperformerWatcher() {
             <div className="text-[11px] uppercase tracking-[0.2em] text-red-300/80">
               Prime Underperformer Watcher
             </div>
-            <div className="text-[10px] text-muted-foreground">
+            <div className="text-[11px] text-muted-foreground">
               today's biggest pullbacks · {data?.notes ?? "scanning..."}
             </div>
           </div>
@@ -86,7 +86,7 @@ export default function UnderperformerWatcher() {
                 key={m}
                 variant={mode === m ? "secondary" : "ghost"}
                 size="sm"
-                className="h-6 px-2.5 text-[10px] uppercase tracking-wider"
+                className="h-6 px-2.5 text-[11px] uppercase tracking-wider"
                 onClick={() => setMode(m)}
                 data-testid={`btn-underperf-${m}`}
               >
@@ -123,8 +123,8 @@ export default function UnderperformerWatcher() {
 
         {data && data.rows.length > 0 && (
           <div className="hscroll-contain">
-            <table className="w-full font-mono text-[10px]">
-              <thead className="text-[9px] uppercase tracking-wider text-muted-foreground/60">
+            <table className="w-full font-mono text-[11px]">
+              <thead className="text-[11px] uppercase tracking-wider text-muted-foreground">
                 <tr className="border-b border-border/40">
                   <th className="px-2 py-1.5 text-left">ticker</th>
                   <th className="px-2 py-1.5 text-left">sector</th>
@@ -198,7 +198,7 @@ export default function UnderperformerWatcher() {
                     <td className="px-2 py-1.5">
                       <Badge
                         variant="outline"
-                        className={`px-1 py-0 text-[8px] uppercase ${setupColor(r.setup)}`}
+                        className={`px-1 py-0 text-[11px] uppercase ${setupColor(r.setup)}`}
                       >
                         {setupLabel(r.setup)}
                       </Badge>
@@ -207,7 +207,7 @@ export default function UnderperformerWatcher() {
                 ))}
               </tbody>
             </table>
-            <div className="mt-2 text-[9px] text-muted-foreground/60">
+            <div className="mt-2 text-[11px] text-muted-foreground">
               setups: <span className="text-green-300">pullback / uptrend</span> = price &gt; 50d SMA but below 5d (best mean-reversion candidates) ·{" "}
               <span className="text-amber-300">stretched</span> = down &gt;1.5σ below mean ·{" "}
               <span className="text-red-300">falling knife</span> = below 20d AND 50d (skip in bounce mode). R:R = reclaim 5d / break 20d.

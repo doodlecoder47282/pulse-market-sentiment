@@ -1,0 +1,668 @@
+// server/schwabDataPolicy.ts
+//
+// Pure policy for Schwab market data (no DB, network or package imports, so it
+// is unit tested in tests/quant/data-r2.test.ts):
+//
+//   1. What kind of data a Schwab request is (quotes, chains, minute bars,
+//      daily bars, market hours).
+//   2. How long a cached Schwab response may be reused as fresh (TTL) and the
+//      hard maximum age at which it may still be served, with its real asOf,
+//      when Schwab cannot answer (403 / 429 / 5xx / throttle / network).
+//      Past the maximum age the answer is "unavailable", never older data.
+//   3. How many strikes to request from /marketdata/v1/chains for a given
+//      expiry window (strikeCount sized from the expected move), and how to
+//      verify the coverage that actually came back.
+//
+// User decision 2026-10-08: Schwab is the only market-data source. No CBOE,
+// no delayed or cached fallback presented as current.
+
+import { isRegularSessionOpen } from "./exchangeCalendar";
+
+export type SchwabDataKind = "quotes" | "chains" | "minute_bars" | "daily_bars" | "markets" | "other";
+
+/** Classify a Schwab market-data path (+ params) into a data kind. */
+export function schwabDataKind(path: string, params?: Record<string, string | number>): SchwabDataKind {
+  const p = path.replace(/^\/+/, "");
+  if (p.startsWith("marketdata/v1/quotes")) return "quotes";
+  if (p.startsWith("marketdata/v1/chains")) return "chains";
+  if (p.startsWith("marketdata/v1/pricehistory")) {
+    const ft = params ? String(params.frequencyType ?? "").toLowerCase() : "";
+    return ft === "minute" ? "minute_bars" : "daily_bars";
+  }
+  if (p.startsWith("marketdata/v1/markets")) return "markets";
+  return "other";
+}
+
+/**
+ * Fresh-reuse TTL (ms): a cached response younger than this is returned
+ * without a new request. 0 = never cached. Unchanged from the previous
+ * per-endpoint TTLs (quotes 30 s, chains 60 s, minute bars 20 s, daily+ 5 min,
+ * market hours 5 min).
+ */
+export const FRESH_TTL_MS: Record<SchwabDataKind, number> = {
+  quotes: 30_000,
+  chains: 60_000,
+  minute_bars: 20_000,
+  daily_bars: 300_000,
+  markets: 300_000,
+  other: 0,
+};
+
+/**
+ * Hard maximum age (ms) at which a cached Schwab response may still be served
+ * when a fresh request fails. Beyond it the caller gets null / unavailable.
+ *
+ * Regular session (prices move):
+ *   quotes       2 min  = quoteFreshness.QUOTE_STALE_AFTER_MS (same rule the
+ *                         quote chip already uses; 4x the 30 s TTL)
+ *   chains       3 min  = 3x the 60 s TTL. A 0DTE chain older than a few
+ *                         minutes misstates gamma/charm (theta and spot have
+ *                         moved), so we do not stretch it further.
+ *   minute bars  2 min  = the last 1-minute bar is at most ~2 bars behind
+ *   daily bars  15 min  = today's partial daily bar; completed bars do not change
+ *   market hours 6 h    = the session calendar for the day does not change
+ * Outside the regular session (no regular-hours trading; prices static apart
+ * from extended-hours equity prints and Cboe GTH index options):
+ *   quotes 15 min, chains 30 min, minute bars 30 min, daily bars 6 h, hours 24 h.
+ * These are operating limits (heuristics), stated so the UI can show them;
+ * they are not derived from a model.
+ */
+export const MAX_SERVE_AGE_MS: Record<"rth" | "closed", Record<SchwabDataKind, number>> = {
+  rth: {
+    quotes: 120_000,
+    chains: 180_000,
+    minute_bars: 120_000,
+    daily_bars: 15 * 60_000,
+    markets: 6 * 3600_000,
+    other: 0,
+  },
+  closed: {
+    quotes: 15 * 60_000,
+    chains: 30 * 60_000,
+    minute_bars: 30 * 60_000,
+    daily_bars: 6 * 3600_000,
+    markets: 24 * 3600_000,
+    other: 0,
+  },
+};
+
+export function maxServeAgeMs(kind: SchwabDataKind, nowMs: number = Date.now()): number {
+  return MAX_SERVE_AGE_MS[isRegularSessionOpen(nowMs) ? "rth" : "closed"][kind];
+}
+
+/** Provenance carried on every chain / price-history response. */
+export interface SchwabFreshness {
+  /** When Schwab produced this payload (our receive time), epoch ms. */
+  asOfMs: number;
+  /** now - asOfMs, ms. */
+  ageMs: number;
+  /** true when this payload came from the in-memory cache rather than a request made for this call. */
+  servedFromCache: boolean;
+  /**
+   * true when a refresh was attempted and failed, so an older payload (still
+   * within maxAgeMs) is being served. A normal TTL cache hit is not stale.
+   */
+  stale: boolean;
+  /** Max age this kind may be served at right now. */
+  maxAgeMs: number;
+  /** Why the payload is stale or unavailable (e.g. "403 cooldown"); null when fresh. */
+  reason: string | null;
+}
+
+export type CacheDecision =
+  | { serve: true; freshness: SchwabFreshness }
+  | { serve: false; ageMs: number | null; maxAgeMs: number; reason: string };
+
+/**
+ * May a cached payload fetched at `fetchedAtMs` be served after a failed
+ * refresh? Yes within maxServeAgeMs(kind) (stale = true, age attached);
+ * otherwise unavailable.
+ */
+export function staleServeDecision(
+  fetchedAtMs: number | null | undefined,
+  kind: SchwabDataKind,
+  reason: string,
+  nowMs: number = Date.now(),
+): CacheDecision {
+  const maxAgeMs = maxServeAgeMs(kind, nowMs);
+  if (fetchedAtMs == null || !Number.isFinite(fetchedAtMs)) {
+    return { serve: false, ageMs: null, maxAgeMs, reason: `${reason}; no cached Schwab response` };
+  }
+  const ageMs = Math.max(0, nowMs - fetchedAtMs);
+  if (maxAgeMs <= 0 || ageMs > maxAgeMs) {
+    return {
+      serve: false, ageMs, maxAgeMs,
+      reason: `${reason}; cached Schwab response is ${Math.round(ageMs / 1000)} s old (max ${Math.round(maxAgeMs / 1000)} s)`,
+    };
+  }
+  return {
+    serve: true,
+    freshness: { asOfMs: fetchedAtMs, ageMs, servedFromCache: true, stale: true, maxAgeMs, reason },
+  };
+}
+
+/** Freshness of a payload served fresh (new request) or from a TTL cache hit. */
+export function freshFreshness(
+  fetchedAtMs: number,
+  kind: SchwabDataKind,
+  servedFromCache: boolean,
+  nowMs: number = Date.now(),
+): SchwabFreshness {
+  return {
+    asOfMs: fetchedAtMs,
+    ageMs: Math.max(0, nowMs - fetchedAtMs),
+    servedFromCache,
+    stale: false,
+    maxAgeMs: maxServeAgeMs(kind, nowMs),
+    reason: null,
+  };
+}
+
+// ─── Option-chain strike coverage (finding 1.7) ──────────────────────────────
+//
+// Old request: strikeCount 60 for every symbol and window. On SPX (5-point
+// strikes near the money) that is +-150 points (about +-2.2%) if Schwab
+// counts strikes in total, or +-300 (about +-4.5%) if it counts per side:
+// narrower than the +-10% re-priced flip scan and far short of the 25-delta
+// put at 60-90 DTE (about -8% at a 0.18 ATM vol with a put-skew wing).
+//
+// New request: strikeCount sized from the expected move of the longest expiry
+// in the window:
+//   halfWidth = max(10%, z10 * wingMult * iv * sqrt(T_max)),  capped at 35%
+//   z10 = N^-1(0.90) = 1.2816: the 10-delta strike sits ~z10 * sigma * sqrt(T)
+//         from the forward, so the window brackets 25 delta on both sides
+//         (needed to interpolate IV to exactly 25 delta) with room to spare;
+//   wingMult = 1.5: OTM put IV runs well above ATM on index skews, which pushes
+//         the 10-delta put further out;
+//   10% floor = the re-priced gamma-flip scan range (gammaProfile 0.9S-1.1S).
+//   strikes per side = ceil(halfWidth * S / spacing), spacing = finest listed
+//   strike interval near the money for the symbol.
+// Schwab documents strikeCount as "the number of strikes to return above and
+// below the at-the-money price" (schwab-py client docs) without saying whether
+// that is per side or in total. Until a response tells us (inferStrikeCountSemantics),
+// we request 2x the per-side count, which covers the window under either
+// reading; the returned chain's coverage is then measured (strikeCoverage) and
+// reported on the response, so a short window is visible, not silent.
+//
+// Request-size cost (estimate; actual bytes are recorded per request in
+// /api/schwab/diag once live): a Schwab option contract object is ~1.3 KB of
+// JSON (about 50 fields). SPX 0DTE window at 10%: ~270 strikes x 2 sides x 1-2
+// expiry dates = 0.5-1.1k contracts, ~0.7-1.4 MB (was ~0.15-0.3 MB at 60).
+
+/** N^-1(0.90): standard normal quantile of the 10-delta strike. */
+export const Z_10_DELTA = 1.2815515655446004;
+/** N^-1(0.75): standard normal quantile of the 25-delta strike. */
+export const Z_25_DELTA = 0.6744897501960817;
+/**
+ * Round 3 (N1-1): windows longer than this many calendar days are "long" and
+ * their strike half-width is capped at the 25-delta wing (with the skew
+ * multiplier) instead of the 10-delta wing. Gamma of a long-dated contract
+ * far beyond its 25-delta strike is small next to the near-dated gamma the
+ * flip scan is dominated by, and the 10% floor still keeps the whole +-10%
+ * flip scan covered.
+ */
+export const LONG_TENOR_DTE = 7;
+/** Strikes per side requested for an ATM-only read (ATM IV, straddle). */
+export const ATM_STRIKES_PER_SIDE = 4;
+/** Floor of the 25-delta-wing window (decimal each side). */
+export const MIN_WING_HALF_WIDTH_PCT = 0.01;
+/** Carry bound for the forward shift of the wing window: |r - q| <= 5%/yr. */
+export const MAX_CARRY_PER_YEAR = 0.05;
+
+/**
+ * What a chain request must cover:
+ *   "gamma"  : dealer-gamma maps and the re-priced flip: max(10% flip scan,
+ *              10-delta wing x 1.5) for windows up to LONG_TENOR_DTE, and
+ *              max(10%, 25-delta wing x 1.5) for longer windows;
+ *   "wing25" : skew / 25-delta risk reversal of a single tenor: the 25-delta
+ *              wing x 1.5 plus the forward carry, no 10% floor;
+ *   "atm"    : ATM IV / straddle only: ATM_STRIKES_PER_SIDE strikes per side.
+ * Strike of a given delta (Black-Scholes, forward F, put delta -D):
+ *   ln(K/F) = -N^-1(1 - D) sigma sqrt(T) + sigma^2 T / 2   (Hull, OFOD, delta
+ *   N(d1) - 1 for a put; e.g. Wystup, "FX Options and Structured Products",
+ *   2nd ed., 2017, sec. 1.5 delta-to-strike), so the 25-delta strike lies
+ *   inside z25 x sigma_wing x sqrt(T) of the forward on both sides while
+ *   sigma sqrt(T) < 0.67; sigma_wing <= 1.5 x ATM covers index put skew.
+ */
+export type ChainCoverage = "gamma" | "wing25" | "atm";
+export const WING_IV_MULT = 1.5;
+export const MIN_HALF_WIDTH_PCT = 0.10;
+export const MAX_HALF_WIDTH_PCT = 0.35;
+/** Hard cap on the strikeCount sent to Schwab (bounds payload size on long windows). */
+export const MAX_STRIKE_COUNT = 300;
+/** strikeCount is rounded UP to this step so small spot / IV moves do not
+ *  change the request (and split the response cache) on every call. */
+export const STRIKE_COUNT_STEP = 20;
+/** Default ATM vol when no recent chain for the symbol is known. */
+export const DEFAULT_ATM_IV = 0.25;
+
+function baseSymbol(symbol: string): string {
+  let s = symbol.toUpperCase().trim();
+  if (s.startsWith("$")) s = s.slice(1);
+  if (s.endsWith(".X")) s = s.slice(0, -2);
+  if (s.startsWith("^")) s = s.slice(1);
+  return s;
+}
+
+/**
+ * Finest strike interval listed near the money (assumption per symbol class;
+ * the response's real coverage is verified afterwards).
+ *  - SPX/SPXW, RUT, XSP-style index options: 5 points near the money (SPX)
+ *  - NDX: 10 points
+ *  - VIX: 0.5-1 point (0.5 used)
+ *  - liquid ETFs (SPY, QQQ, IWM, DIA, ...): $1
+ *  - single stocks by price: <$25: $0.5, <$200: $1, <$500: $2.5, else $5
+ */
+export function strikeSpacingFor(symbol: string, spot: number | null): number {
+  const b = baseSymbol(symbol);
+  if (b === "SPX" || b === "SPXW" || b === "RUT") return 5;
+  if (b === "NDX" || b === "NDXP") return 10;
+  if (b === "VIX") return 0.5;
+  if (b === "XSP") return 1;
+  if (["SPY", "QQQ", "IWM", "DIA", "TLT", "GLD", "SLV", "XLF", "XLE", "SMH", "HYG", "EEM"].includes(b)) return 1;
+  const s = spot != null && spot > 0 ? spot : 100;
+  if (s < 25) return 0.5;
+  if (s < 200) return 1;
+  if (s < 500) return 2.5;
+  return 5;
+}
+
+export type StrikeCountSemantics = "per_side" | "unknown";
+
+export interface StrikePlan {
+  /** Target coverage each side of spot, decimal (0.10 = +-10%). */
+  halfWidthPct: number;
+  spacing: number;
+  /** Strikes needed on each side of spot to reach halfWidthPct. */
+  perSide: number;
+  /** strikeCount sent to Schwab. */
+  strikeCount: number;
+  /** true when MAX_STRIKE_COUNT cut the request below the target. */
+  capped: boolean;
+  basis: string;
+}
+
+/**
+ * strikeCount for a chain request covering expiries up to `dteMax` calendar days.
+ * @param spot   underlying price (null = unknown: falls back to 200 strikes)
+ * @param atmIv  ATM implied vol, decimal (null = DEFAULT_ATM_IV)
+ */
+export function chainStrikePlan(args: {
+  symbol: string;
+  spot: number | null;
+  dteMax: number | null | undefined;
+  atmIv?: number | null;
+  semantics?: StrikeCountSemantics;
+  /** What the request must cover (default "gamma"). */
+  coverage?: ChainCoverage;
+}): StrikePlan {
+  const dte = args.dteMax != null && Number.isFinite(args.dteMax) && args.dteMax > 0 ? args.dteMax : 1;
+  const iv = args.atmIv != null && Number.isFinite(args.atmIv) && args.atmIv > 0.01 && args.atmIv < 3 ? args.atmIv : DEFAULT_ATM_IV;
+  const T = dte / 365;
+  const coverage: ChainCoverage = args.coverage ?? "gamma";
+  const spacing = strikeSpacingFor(args.symbol, args.spot);
+  let halfWidthPct: number;
+  let basis: string;
+  if (coverage === "atm") {
+    const s = args.spot != null && args.spot > 0 ? args.spot : null;
+    halfWidthPct = s != null ? (ATM_STRIKES_PER_SIDE * spacing) / s : 0;
+    basis = `ATM only: ${ATM_STRIKES_PER_SIDE} strikes per side`;
+  } else if (coverage === "wing25") {
+    const wing = Z_25_DELTA * WING_IV_MULT * iv * Math.sqrt(T) + MAX_CARRY_PER_YEAR * T;
+    halfWidthPct = Math.min(MAX_HALF_WIDTH_PCT, Math.max(MIN_WING_HALF_WIDTH_PCT, wing));
+    basis = `+-${(halfWidthPct * 100).toFixed(1)}% = 25-delta wing: z25 ${Z_25_DELTA.toFixed(4)} x ${WING_IV_MULT} x iv ${(iv * 100).toFixed(1)}% x sqrt(${dte}/365) + carry ${(MAX_CARRY_PER_YEAR * T * 100).toFixed(2)}%`;
+  } else {
+    const long = dte > LONG_TENOR_DTE;
+    const z = long ? Z_25_DELTA : Z_10_DELTA;
+    const emWidth = z * WING_IV_MULT * iv * Math.sqrt(T);
+    halfWidthPct = Math.min(MAX_HALF_WIDTH_PCT, Math.max(MIN_HALF_WIDTH_PCT, emWidth));
+    basis = `+-${(halfWidthPct * 100).toFixed(1)}% = max(10% flip scan, ${long ? "25" : "10"}-delta wing ${(emWidth * 100).toFixed(1)}%: z${long ? "25" : "10"} ${z.toFixed(4)} x ${WING_IV_MULT} x iv ${(iv * 100).toFixed(1)}% x sqrt(${dte}/365))${long ? `; window > ${LONG_TENOR_DTE} DTE capped at the 25-delta wing` : ""}`;
+  }
+  if (args.spot == null || !(args.spot > 0)) {
+    if (coverage === "atm") return { halfWidthPct, spacing, perSide: ATM_STRIKES_PER_SIDE, strikeCount: STRIKE_COUNT_STEP, capped: false, basis: `${basis}; spot unknown` };
+    return { halfWidthPct, spacing, perSide: 100, strikeCount: 200, capped: false, basis: `${basis}; spot unknown, 200 strikes` };
+  }
+  const perSide = coverage === "atm" ? ATM_STRIKES_PER_SIDE : Math.ceil((halfWidthPct * args.spot) / spacing);
+  const wanted = args.semantics === "per_side" ? perSide : 2 * perSide;
+  const stepped = Math.ceil(wanted / STRIKE_COUNT_STEP) * STRIKE_COUNT_STEP;
+  const strikeCount = Math.min(MAX_STRIKE_COUNT, Math.max(STRIKE_COUNT_STEP, stepped));
+  return { halfWidthPct, spacing, perSide, strikeCount, capped: wanted > MAX_STRIKE_COUNT, basis };
+}
+
+/**
+ * Infer how Schwab counts strikeCount from one response: in the nearest
+ * expiry, count listed strikes strictly below and above spot. Only one
+ * conclusion is safe to draw: if BOTH sides hold at least 80% of the
+ * requested count, strikeCount must be per side (a total count cannot put
+ * that many on each side). Anything else is "unknown" -- a short listing can
+ * mimic a total count -- and the planner keeps the conservative 2x request.
+ */
+export function inferStrikeCountSemantics(requested: number, strikesBelow: number, strikesAbove: number): StrikeCountSemantics {
+  if (!(requested > 0)) return "unknown";
+  if (Math.min(strikesBelow, strikesAbove) >= 0.8 * requested) return "per_side";
+  return "unknown";
+}
+
+export interface StrikeCoverage {
+  /** Target from the plan (decimal each side). */
+  targetHalfWidthPct: number;
+  /** Worst (smallest) coverage below spot across expiries, decimal. */
+  belowPct: number | null;
+  /** Worst (smallest) coverage above spot across expiries, decimal. */
+  abovePct: number | null;
+  /** true when every expiry reaches the target on both sides (within one strike). */
+  complete: boolean;
+  expiries: number;
+  /** Strikes below / above spot in the nearest expiry (for inferStrikeCountSemantics). */
+  nearestBelow: number;
+  nearestAbove: number;
+}
+
+type ExpMap = Record<string, Record<string, unknown[]>> | null | undefined;
+
+/** Measure the strike coverage a chain response actually delivered. */
+export function strikeCoverage(
+  chain: { callExpDateMap?: ExpMap; putExpDateMap?: ExpMap },
+  spot: number,
+  targetHalfWidthPct: number,
+  spacing: number,
+): StrikeCoverage {
+  const byExp = new Map<string, Set<number>>();
+  for (const map of [chain.callExpDateMap, chain.putExpDateMap]) {
+    if (!map) continue;
+    for (const expKey of Object.keys(map)) {
+      const set = byExp.get(expKey) ?? new Set<number>();
+      for (const sk of Object.keys(map[expKey] ?? {})) {
+        const k = parseFloat(sk);
+        if (Number.isFinite(k) && k > 0) set.add(k);
+      }
+      byExp.set(expKey, set);
+    }
+  }
+  const keys = Array.from(byExp.keys()).sort();
+  if (!(spot > 0) || keys.length === 0) {
+    return { targetHalfWidthPct, belowPct: null, abovePct: null, complete: false, expiries: keys.length, nearestBelow: 0, nearestAbove: 0 };
+  }
+  let below = Infinity, above = Infinity;
+  for (const k of keys) {
+    const strikes = Array.from(byExp.get(k) ?? []);
+    if (!strikes.length) continue;
+    const lo = Math.min(...strikes), hi = Math.max(...strikes);
+    below = Math.min(below, Math.max(0, (spot - lo) / spot));
+    above = Math.min(above, Math.max(0, (hi - spot) / spot));
+  }
+  const near = Array.from(byExp.get(keys[0]) ?? []);
+  const nearestBelow = near.filter((k) => k < spot).length;
+  const nearestAbove = near.filter((k) => k > spot).length;
+  const slack = spacing / spot;
+  const belowPct = Number.isFinite(below) ? below : null;
+  const abovePct = Number.isFinite(above) ? above : null;
+  const complete = belowPct != null && abovePct != null
+    && belowPct + slack >= targetHalfWidthPct && abovePct + slack >= targetHalfWidthPct;
+  return { targetHalfWidthPct, belowPct, abovePct, complete, expiries: keys.length, nearestBelow, nearestAbove };
+}
+
+/**
+ * Is a Schwab option chain flagged as DELAYED? The chain response carries a
+ * top-level `isDelayed` boolean (schwab-go marketdata.OptionChain,
+ * `IsDelayed bool json:"isDelayed"`,
+ * https://pkg.go.dev/github.com/major/schwab-go@v0.4.3/schwab/marketdata);
+ * the underlying block may also carry `delayed`. A delayed chain is not
+ * current market data: it is excluded from greeks, gamma and sizing
+ * (getOptionChain returns it as dataState "delayed").
+ */
+export function chainIsDelayed(data: { isDelayed?: unknown; underlying?: { delayed?: unknown } | null } | null | undefined): boolean {
+  if (!data) return false;
+  return data.isDelayed === true || data.underlying?.delayed === true;
+}
+
+/**
+ * Fallback for a failed /api/models build: may the persisted session copy be
+ * served, and how is it labelled?
+ *   - "last-close": the copy was built at or after its session's close, so
+ *     its chain is the closing chain; served outside the regular session.
+ *   - "stale": built during a session; served only while its oldest chain is
+ *     within maxServeAgeMs("chains") (3 min in the session, 30 min outside).
+ *   - otherwise unavailable (503).
+ * @param savedAtMs       when the copy was written
+ * @param sessionCloseMs  close of the session the copy was built in (null = not a trading day)
+ * @param chainAsOfMs     oldest chain time inside the copy (null = unknown: falls back to savedAtMs)
+ */
+export function modelsFallbackDecision(args: {
+  savedAtMs: number;
+  sessionCloseMs: number | null;
+  chainAsOfMs: number | null;
+  nowMs?: number;
+}): { serve: boolean; label: "last-close" | "stale" | null; ageMs: number; maxAgeMs: number; reason: string } {
+  const nowMs = args.nowMs ?? Date.now();
+  const asOf = args.chainAsOfMs ?? args.savedAtMs;
+  const ageMs = Math.max(0, nowMs - asOf);
+  const maxAgeMs = maxServeAgeMs("chains", nowMs);
+  const rth = isRegularSessionOpen(nowMs);
+  const builtAfterClose = args.sessionCloseMs != null && args.savedAtMs >= args.sessionCloseMs;
+  if (!rth && builtAfterClose) {
+    return { serve: true, label: "last-close", ageMs, maxAgeMs, reason: "built after the session close" };
+  }
+  if (ageMs <= maxAgeMs) {
+    return { serve: true, label: "stale", ageMs, maxAgeMs, reason: `chain ${Math.round(ageMs / 1000)} s old (max ${Math.round(maxAgeMs / 1000)} s)` };
+  }
+  return { serve: false, label: null, ageMs, maxAgeMs, reason: `stored copy's chain is ${Math.round(ageMs / 60_000)} min old (max ${Math.round(maxAgeMs / 60_000)} min)` };
+}
+
+/** Oldest chainAsOfMs across a models payload's horizons; null when none carries one. */
+export function oldestChainAsOf(horizons: Record<string, { chainAsOfMs?: number } | null | undefined> | null | undefined): number | null {
+  let min: number | null = null;
+  for (const h of Object.values(horizons ?? {})) {
+    const t = h?.chainAsOfMs;
+    if (typeof t === "number" && Number.isFinite(t)) min = min == null ? t : Math.min(min, t);
+  }
+  return min;
+}
+
+/** ATM implied vol (decimal) of the nearest expiry: mean of the call and put vol at the strike closest to spot. */
+export function atmIvFromChain(
+  chain: { callExpDateMap?: ExpMap; putExpDateMap?: ExpMap },
+  spot: number,
+): number | null {
+  if (!(spot > 0)) return null;
+  const keys = Array.from(new Set([
+    ...Object.keys(chain.callExpDateMap ?? {}),
+    ...Object.keys(chain.putExpDateMap ?? {}),
+  ])).sort();
+  for (const key of keys) {
+    const vols: number[] = [];
+    let bestK: number | null = null;
+    for (const map of [chain.callExpDateMap, chain.putExpDateMap]) {
+      for (const sk of Object.keys(map?.[key] ?? {})) {
+        const k = parseFloat(sk);
+        if (Number.isFinite(k) && (bestK == null || Math.abs(k - spot) < Math.abs(bestK - spot))) bestK = k;
+      }
+    }
+    if (bestK == null) continue;
+    for (const map of [chain.callExpDateMap, chain.putExpDateMap]) {
+      const strikes = map?.[key] ?? {};
+      for (const sk of Object.keys(strikes)) {
+        if (parseFloat(sk) !== bestK) continue;
+        for (const c of (strikes[sk] ?? []) as any[]) {
+          const v = Number(c?.volatility);
+          if (Number.isFinite(v) && v > 0 && v < 500) vols.push(v / 100);
+        }
+      }
+    }
+    if (vols.length) return vols.reduce((a, b) => a + b, 0) / vols.length;
+  }
+  return null;
+}
+
+// ─── Chain request windows (round 3, N1-1) ───────────────────────────────────
+//
+// Payload: a Schwab chain response holds (expiries in the window) x (strikes
+// per expiry, up to strikeCount) x 2 sides contract objects of ~1.3 KB of JSON.
+// The cost driver is the number of expiries: SPX lists a PM expiry every
+// trading day, so 0-100 DTE is ~70 expiries. Before this round each horizon
+// asked for its own overlapping window (0-2, 0-7, 0-45, 0-100 for Models, 0-30
+// for the regime headline, 0-100 for skew, and auditEnrich asked for every
+// listed expiry once a minute), so the same near-dated expiries were
+// downloaded up to six times per minute.
+//
+// Now:
+//   1. Multi-expiry aggregates (Models GEX, regime headline) are assembled
+//      from a fixed, DISJOINT ladder of DTE segments, each fetched (and
+//      cached for the 60 s TTL) once and shared by every horizon that needs
+//      it: [0-2] [3-7] [8-30] [31-45] [46-100].
+//   2. Single-tenor reads (skew at 7/30/60/90 DTE) ask for a narrow window
+//      around the target tenor only (tenorWindow), sized to the 25-delta wing.
+//   3. ATM-only reads (auditEnrich ATM IV) use the 0-day window that the 0DTE
+//      engines already request, so they add no request at all.
+//   4. Long segments (> LONG_TENOR_DTE) cap strikes at the 25-delta wing.
+
+/** Upper bounds (calendar DTE, inclusive) of the shared chain ladder. */
+export const CHAIN_LADDER_DTE = [2, 7, 30, 45, 100] as const;
+
+export interface DteWindow { fromDte: number; toDte: number }
+
+/**
+ * Disjoint ladder segments that cover [0, dteMax]. The last segment ends at
+ * the first ladder bound >= dteMax (callers drop rows past their own dteMax),
+ * or at dteMax itself beyond the last bound.
+ */
+export function chainLadderSegments(dteMax: number): DteWindow[] {
+  const d = Number.isFinite(dteMax) && dteMax > 0 ? Math.ceil(dteMax) : 0;
+  const out: DteWindow[] = [];
+  let from = 0;
+  for (const b of CHAIN_LADDER_DTE) {
+    out.push({ fromDte: from, toDte: b });
+    if (b >= d) return out;
+    from = b + 1;
+  }
+  out.push({ fromDte: from, toDte: d });
+  return out;
+}
+
+/** Half-width (days) of a single-tenor window: max(2, ceil(5% of the tenor)). */
+export function tenorWindowHalfDays(targetDte: number): number {
+  return Math.max(2, Math.ceil(0.05 * Math.max(0, targetDte)));
+}
+
+/**
+ * Narrow window around one target tenor: [t - w, t + w], w = tenorWindowHalfDays.
+ * SPX/SPY list an expiry every trading day, so this holds 2-7 expiries; a
+ * single stock with only monthly expiries may have none in it, and the
+ * caller then widens to tenorWindowWide.
+ */
+export function tenorWindow(targetDte: number): DteWindow {
+  const t = Math.max(0, Math.round(targetDte));
+  const w = tenorWindowHalfDays(t);
+  return { fromDte: Math.max(0, t - w), toDte: t + w };
+}
+
+/** Fallback window [0.4 t, 1.6 t] (the skew tenor picker's own +-60% tolerance). */
+export function tenorWindowWide(targetDte: number): DteWindow {
+  const t = Math.max(1, Math.round(targetDte));
+  return { fromDte: Math.max(0, Math.floor(0.4 * t)), toDte: Math.ceil(1.6 * t) };
+}
+
+/**
+ * Upper-bound payload estimate of one chain request, bytes: expiries x
+ * strikeCount x 2 sides x bytesPerContract (default 1.3 KB). An estimate
+ * for planning; the real bytes are recorded per request (schwab.ts _chainCost).
+ */
+export function chainPayloadBoundBytes(expiries: number, strikeCount: number, bytesPerContract = 1300): number {
+  return Math.max(0, expiries) * Math.max(0, strikeCount) * 2 * bytesPerContract;
+}
+
+// ─── Chain asOf from Schwab's underlying quote time (round 3, N1-2) ─────────
+
+/** Tolerated lead of Schwab's quote time over our receive time (clock skew). */
+export const QUOTE_CLOCK_SKEW_MS = 5_000;
+
+export type ChainAsOfBasis = "underlying_quote_time" | "receive_time";
+
+/**
+ * When the market data in a chain was current. Schwab stamps the chain's
+ * underlying block with quoteTime (epoch ms of the underlying's last quote);
+ * that, not our receive time, is the age a trader cares about (after the
+ * close, or when the index stops updating, a chain received now still prices
+ * off a quote that may be hours old). Receive time is the fallback when the
+ * quote time is missing, non-positive, or ahead of the receive time by more
+ * than QUOTE_CLOCK_SKEW_MS (clock skew: not trusted). The result never lies
+ * after the receive time.
+ */
+export function chainAsOf(
+  quoteTimeMs: number | null | undefined,
+  receivedAtMs: number,
+): { asOfMs: number; basis: ChainAsOfBasis; reason: string | null } {
+  const q = typeof quoteTimeMs === "number" && Number.isFinite(quoteTimeMs) && quoteTimeMs > 0 ? quoteTimeMs : null;
+  if (q == null) return { asOfMs: receivedAtMs, basis: "receive_time", reason: "no underlying quoteTime in the chain" };
+  if (q > receivedAtMs + QUOTE_CLOCK_SKEW_MS) {
+    return { asOfMs: receivedAtMs, basis: "receive_time", reason: `underlying quoteTime ${Math.round((q - receivedAtMs) / 1000)} s ahead of receive time (clock skew)` };
+  }
+  return { asOfMs: Math.min(q, receivedAtMs), basis: "underlying_quote_time", reason: null };
+}
+
+// ─── Merging ladder segments into one chain view ─────────────────────────────
+
+export interface ChainSegmentLike {
+  underlying: { last: number | null; quoteTimeMs?: number | null; [k: string]: unknown };
+  callExpDateMap: Record<string, Record<string, any[]>>;
+  putExpDateMap: Record<string, Record<string, any[]>>;
+  asOfMs: number;
+  ageMs: number;
+  servedFromCache: boolean;
+  stale: boolean;
+  maxAgeMs: number;
+  staleReason: string | null;
+  strikeCount: number;
+  strikePlan: string;
+  strikeCoverage: StrikeCoverage | null;
+  [k: string]: unknown;
+}
+
+/**
+ * One chain view from disjoint ladder segments: expiry maps unioned (a key
+ * present twice keeps the newer segment's copy), asOf = the OLDEST segment's
+ * (the view is only as current as its oldest part), age = the largest,
+ * stale/servedFromCache as any/all, coverage = the worst side over segments,
+ * underlying = the newest segment's. Pure: the caller fetched the segments.
+ */
+export function mergeChainSegments<T extends ChainSegmentLike>(segments: T[]): T | null {
+  if (!segments.length) return null;
+  const byNew = [...segments].sort((a, b) => a.asOfMs - b.asOfMs); // oldest first, newest overwrites
+  const newest = byNew[byNew.length - 1];
+  const calls: Record<string, Record<string, any[]>> = {};
+  const puts: Record<string, Record<string, any[]>> = {};
+  for (const s of byNew) {
+    for (const k of Object.keys(s.callExpDateMap ?? {})) calls[k] = s.callExpDateMap[k];
+    for (const k of Object.keys(s.putExpDateMap ?? {})) puts[k] = s.putExpDateMap[k];
+  }
+  const covs = segments.map((s) => s.strikeCoverage).filter((c): c is StrikeCoverage => c != null);
+  const minOrNull = (xs: Array<number | null>) => {
+    const v = xs.filter((x): x is number => x != null);
+    return v.length === xs.length && v.length ? Math.min(...v) : null;
+  };
+  const coverage: StrikeCoverage | null = covs.length
+    ? {
+      targetHalfWidthPct: Math.max(...covs.map((c) => c.targetHalfWidthPct)),
+      belowPct: minOrNull(covs.map((c) => c.belowPct)),
+      abovePct: minOrNull(covs.map((c) => c.abovePct)),
+      complete: covs.length === segments.length && covs.every((c) => c.complete),
+      expiries: covs.reduce((a, c) => a + c.expiries, 0),
+      nearestBelow: covs[0].nearestBelow,
+      nearestAbove: covs[0].nearestAbove,
+    }
+    : null;
+  return {
+    ...newest,
+    callExpDateMap: calls,
+    putExpDateMap: puts,
+    asOfMs: Math.min(...segments.map((s) => s.asOfMs)),
+    ageMs: Math.max(...segments.map((s) => s.ageMs)),
+    servedFromCache: segments.every((s) => s.servedFromCache),
+    stale: segments.some((s) => s.stale),
+    maxAgeMs: Math.min(...segments.map((s) => s.maxAgeMs)),
+    staleReason: segments.map((s) => s.staleReason).filter(Boolean).join("; ") || null,
+    strikeCount: Math.max(...segments.map((s) => s.strikeCount)),
+    strikePlan: segments.map((s) => s.strikePlan).join(" | "),
+    strikeCoverage: coverage,
+  };
+}

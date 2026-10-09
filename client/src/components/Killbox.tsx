@@ -17,6 +17,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import LivenessBadge from "@/components/LivenessBadge";
+import DataAgeChip from "@/components/DataAgeChip";
 
 type Greek = "gex" | "vanna" | "charm" | "vomma" | "zomma";
 
@@ -44,10 +45,12 @@ interface ForwardResponse {
   totalVolume?: number;
   strikeCount?: number;
   source?: string;
+  /** Weight, expiry universe and dealer convention of gammaFlip (server gammaProfile.flipInputs). */
+  flipInputs?: { label: string };
 }
 
 const GREEK_LENSES: { key: Greek; label: string; sub: string; unit: string }[] = [
-  { key: "gex", label: "GAMMA", sub: "GEX · $/1pt", unit: "$" },
+  { key: "gex", label: "GAMMA", sub: "GEX · $/1% move", unit: "$" },
   { key: "vanna", label: "VANNA", sub: "∂Δ/∂σ · $/1%vol", unit: "$" },
   { key: "charm", label: "CHARM", sub: "∂Δ/∂t · $/day", unit: "$" },
   { key: "vomma", label: "VOMMA", sub: "∂vega/∂σ · $/1%vol", unit: "$" },
@@ -125,22 +128,23 @@ export default function Killbox({ symbol = "$SPX" }: { symbol?: string }) {
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-baseline gap-2">
           <div className="font-mono text-sm font-bold tracking-wide text-foreground">KILLBOX</div>
-          <div className="hidden sm:block text-[10px] uppercase tracking-wider text-muted-foreground">
+          <div className="hidden sm:block text-[11px] uppercase tracking-wider text-muted-foreground">
             {symbol} · forward dealer positioning
           </div>
         </div>
         <div className="ml-auto flex items-center gap-2">
           {data?.weightMode && data.weightMode !== "oi" && (
-            <div className="text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-amber-500/40 text-amber-400" data-testid="killbox-weight-mode">
+            <div className="text-[11px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-amber-500/40 text-amber-400" data-testid="killbox-weight-mode">
               {data.weightMode === "volume" ? "vol-weighted (OI stale)" : "hybrid"}
             </div>
           )}
           {data?.asOf && (
-            <div className="text-[10px] font-mono text-muted-foreground" data-testid="killbox-asof">
-              live · {fmtTime(data.asOf)}
+            <div className="text-[11px] font-mono text-muted-foreground" data-testid="killbox-asof">
+              Schwab chain · {fmtTime((data as any).chainAsOfMs ?? data.asOf)}
             </div>
           )}
-          <LivenessBadge feedName="options-cboe" value={data?.asOf ?? undefined} requiresSchwab={true} />
+          <DataAgeChip asOfMs={(data as any)?.chainAsOfMs ?? null} stale={(data as any)?.chainStale ?? null} maxAgeMs={(data as any)?.chainMaxAgeMs ?? null} label="chain" />
+          <LivenessBadge feedName="options" value={data?.asOf ?? undefined} requiresSchwab={true} stale={(data as any)?.chainStale ?? null} asOfMs={(data as any)?.chainAsOfMs ?? null} />
         </div>
       </div>
 
@@ -174,6 +178,11 @@ export default function Killbox({ symbol = "$SPX" }: { symbol?: string }) {
           color={GAMMA_FLIP}
         />
       </div>
+      {data?.flipInputs?.label && (
+        <div className="px-1 font-mono text-[11px] text-muted-foreground" data-testid="killbox-flip-inputs">
+          γ flip inputs: {data.flipInputs.label}. Heatseeker's flip uses one expiry, so the two can differ.
+        </div>
+      )}
 
       {/* Stability gauge */}
       {data && (
@@ -197,11 +206,11 @@ export default function Killbox({ symbol = "$SPX" }: { symbol?: string }) {
               className={`inline-flex flex-col items-start gap-0 rounded-md border px-2.5 py-1.5 text-left transition-all min-h-[44px] sm:min-h-0 ${
                 on
                   ? "border-foreground/40 bg-foreground/5 text-foreground"
-                  : "border-border/40 bg-transparent text-muted-foreground/70 hover:text-foreground"
+                  : "border-border/40 bg-transparent text-muted-foreground hover:text-foreground"
               }`}
             >
               <span className="text-[11px] font-mono font-bold">{l.label}</span>
-              <span className="text-[8px] uppercase tracking-wider opacity-70">{l.sub}</span>
+              <span className="text-[11px] uppercase tracking-wider opacity-70">{l.sub}</span>
             </button>
           );
         })}
@@ -251,10 +260,10 @@ function KeyLevel({
     <div className="flex flex-col gap-0.5">
       <div className="flex items-center gap-1">
         <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
-        <span className="text-[9px] uppercase tracking-wider text-muted-foreground">{label}</span>
+        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</span>
       </div>
       <div className="font-mono text-sm font-semibold text-foreground tabular-nums">{value}</div>
-      {subValue && <div className="text-[9px] text-muted-foreground tabular-nums">{subValue}</div>}
+      {subValue && <div className="text-[11px] text-muted-foreground tabular-nums">{subValue}</div>}
     </div>
   );
 }
@@ -283,9 +292,9 @@ function StabilityGauge({
     <div className="rounded border border-border bg-card/40 p-2.5">
       <div className="flex items-center justify-between gap-2 mb-2">
         <div className="flex items-center gap-2">
-          <span className="text-[9px] uppercase tracking-wider text-muted-foreground">stability</span>
+          <span className="text-[11px] uppercase tracking-wider text-muted-foreground">stability</span>
           <span
-            className="font-mono text-[10px] font-bold tabular-nums"
+            className="font-mono text-[11px] font-bold tabular-nums"
             style={{ color: regimeColor }}
             data-testid="killbox-regime"
           >
@@ -310,7 +319,7 @@ function StabilityGauge({
           style={{ left: `${pct}%` }}
         />
       </div>
-      <div className="flex justify-between text-[8px] text-muted-foreground mt-0.5">
+      <div className="flex justify-between text-[11px] text-muted-foreground mt-0.5">
         <span>vol expansion</span>
         <span>pinning</span>
       </div>
@@ -517,7 +526,7 @@ function RankedStrikes({
 }) {
   return (
     <div className="rounded border border-border bg-card/40 p-2">
-      <div className="text-[9px] uppercase tracking-wider text-muted-foreground mb-1.5">
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">
         top strikes — {greek.toUpperCase()} magnitude
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-1">
@@ -541,10 +550,10 @@ function RankedStrikes({
               <span className="font-mono text-[11px] font-bold tabular-nums text-foreground">
                 {p.strike}
               </span>
-              <span className="font-mono text-[10px] tabular-nums" style={{ color }}>
+              <span className="font-mono text-[11px] tabular-nums" style={{ color }}>
                 {fmtMoney(p.exposure)}
               </span>
-              <span className="text-[8px] text-muted-foreground tabular-nums">
+              <span className="text-[11px] text-muted-foreground tabular-nums">
                 {distSign}{dist.toFixed(0)}
               </span>
             </button>
@@ -580,12 +589,12 @@ function StrikeReadout({
         <div>
           <span className="font-mono text-base font-bold text-foreground">{strike}</span>
           {data.spot && (
-            <span className="ml-2 font-mono text-[10px] text-muted-foreground">
+            <span className="ml-2 font-mono text-[11px] text-muted-foreground">
               {dist > 0 ? "+" : ""}{dist.toFixed(0)} from spot
             </span>
           )}
         </div>
-        <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
+        <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
           dealer book at this strike
         </div>
       </div>
@@ -598,13 +607,13 @@ function StrikeReadout({
               key={v.greek}
               className={`flex flex-col gap-0 rounded p-1.5 ${isActive ? "bg-foreground/10" : ""}`}
             >
-              <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
                 {v.greek === "gex" ? "gamma" : v.greek}
               </div>
               <div className="font-mono text-[11px] font-semibold tabular-nums" style={{ color }}>
                 {fmtMoney(v.value)}
               </div>
-              <div className="text-[8px] text-muted-foreground">
+              <div className="text-[11px] text-muted-foreground">
                 {dealerSign(v.greek, v.value)}
               </div>
             </div>

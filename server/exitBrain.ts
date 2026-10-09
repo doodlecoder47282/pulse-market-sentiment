@@ -19,9 +19,9 @@
 //                                ▼  every 30s during RTH
 //   ┌─────────────────────────────────────────────────────────────────┐
 //   │ for each active position:                                       │
-//   │   1) read live mark from odteTracker snapshot                   │
-//   │   2) compute drawdown vs entry                                  │
-//   │   3) HARD STOP: drawdown ≤ −20%  →  EXIT immediately            │
+//   │   1) live BID: Schwab stream quote, else tracker REST chain row  │
+//   │   2) stop: bid <= 0.80 x entry ask (the alert's printed rule)   │
+//   │   3) HARD STOP hit  →  EXIT (also swept on every skipped tick)  │
 //   │   4) DYNAMIC STOP: 5-cat confluence score                       │
 //   │      a) MTF stack collapse against side                         │
 //   │      b) Reversion threat (VWAP bands + RSI(2))                  │
@@ -42,21 +42,45 @@ import { getTracked, getOdteSnapshot, type TrackedPosition, type Side } from "./
 import { getMtfStack, isStackCollapse } from "./mtfStack";
 import { getRevExtSnapshot, isReversionThreat } from "./revExtClassifier";
 import { computeRealtimeTargets } from "./realtimeTargets";
+import { streamOptionOverlay } from "./streamStore";
+import { callInternal } from "./internalApi";
+import { entryFillOf, liquidationReturn, optionStopHit, PLAN_OPTION_STOP_PCT, type EntryBasis } from "./exitValuation";
+import { feeForProduct } from "./feeConfig";
+import { exitBidUsable } from "./exitQuoteAge";
 
 // ─── Types ────────────────────────────────────────────────────────────
 
-export type ExitAction = "HOLD" | "TRIM" | "EXIT" | "TRAIL";
+/** NO_QUOTE: no bid to sell at, so the stop and P&L cannot be evaluated (never shown as HOLD at 0%). */
+export type ExitAction = "HOLD" | "TRIM" | "EXIT" | "TRAIL" | "NO_QUOTE";
 
 export interface ExitBrainEval {
   positionId: string;
   contractKey: string;
   side: Side;
-  /** Live mark used for this eval */
+  /** Price used for this eval: the live BID (what the position can be sold at). Null without a bid. */
   mark: number | null;
-  /** Entry price */
+  /** "stream": Schwab Streamer LEVELONE_OPTIONS at its quote time; "rest_chain": tracker's last Schwab chain poll; null: no quote. */
+  markSource?: "stream" | "rest_chain" | null;
+  /** Schwab quote time behind the bid, epoch ms (null when unknown). */
+  markQuoteTimeMs?: number | null;
+  /** Age of that quote at eval time, ms (null when unknown). */
+  markAgeMs?: number | null;
+  /** Why no usable bid (NO_QUOTE): none, unknown age, or older than REST_BID_MAX_AGE_MS. */
+  noQuoteReason?: string | null;
+  /** Entry fill, $ per share: the ask at arm when logged, else the last print at arm (entryBasis). */
   entry: number;
-  /** Drawdown vs entry, signed pct (e.g. -0.18 = −18%) */
-  drawdownPct: number;
+  entryBasis?: EntryBasis;
+  /** DISPLAYED P&L: net return if sold at the bid now, after the exit fee, on cash paid incl. the entry fee; FRACTION. Null without a bid or a configured fee (index roots). */
+  drawdownPct: number | null;
+  /** Decision basis (the alert's rule, before fees): (bid - entry) / entry. The -20% stop fires at <= -0.20. Null without a bid. */
+  bidReturnPct?: number | null;
+  feeBasis?: string;
+  /** Live quote (additive). */
+  bid?: number | null;
+  ask?: number | null;
+  /** "bid_net_of_exit_fee" (review item 6.6). */
+  valuation?: string;
+  feePerContract?: number;
   /** Peak unrealized return seen during the position's life, signed pct */
   peakReturnPct: number;
   /** Action verdict */
@@ -95,12 +119,16 @@ export interface ExitBrainSnapshot {
     ticks: number;
     errors: number;
     lastError?: string;
+    /** Ticks skipped because the previous full pass was still running. */
+    skippedTicks?: number;
   };
+  /** Positions at or past the hard stop, from live marks only (independent of /api/models). */
+  hardStopHits?: Array<{ positionId: string; contractKey: string; mark: number; returnPct: number; asOf: number }>;
 }
 
 // ─── Config ───────────────────────────────────────────────────────────
 
-const HARD_STOP_PCT = -0.20;       // -20% drawdown → instant exit
+const HARD_STOP_PCT = -PLAN_OPTION_STOP_PCT; // bid <= 0.80 x entry ask (alert's printed rule, before fees) → instant exit
 const EVAL_INTERVAL_MS = 30_000;   // 30s cadence (user spec)
 
 // Score thresholds (0..100):
@@ -138,31 +166,62 @@ let ticks = 0;
 let errors = 0;
 let lastError = "";
 let lastTickMs = 0;
+// In-process call timeouts (were unbounded local HTTP): /api/models is a heavy
+// rebuild on a cold cache, quotes are light. Matches discordScheduler's bounds.
+const MODELS_CALL_TIMEOUT_MS = 30_000;
+const QUOTES_CALL_TIMEOUT_MS = 4_000;
+// One evaluation pass at a time: a slow pass must not stack timers.
+let evalInFlight = false;
+let skippedTicks = 0;
+// Hard-stop sweep: computed from the live marks only (no /api/models), every
+// tick, including ticks skipped because a full pass is still running.
+let hardStopHits: Array<{ positionId: string; contractKey: string; mark: number; returnPct: number; asOf: number }> = [];
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
 async function getVix(): Promise<number | null> {
   try {
-    const port = Number(process.env.PORT ?? 5000);
-    const r = await fetch(`http://127.0.0.1:${port}/api/quotes`);
-    const d: any = await r.json();
+    // In-process /api/quotes (internalApi.ts); body read as before.
+    const d: any = (await callInternal("/api/quotes", { timeoutMs: QUOTES_CALL_TIMEOUT_MS })).body;
     return Number(d?.vix?.price ?? null) || null;
   } catch {
     return null;
   }
 }
 
-/** Get the most recent live mark (last → mid → bid mid) for a contract. */
-function getLiveMark(contractKey: string): number | null {
+/**
+ * Live bid/ask for a contract (the bid is what a long position can be sold
+ * at): the Schwab Streamer LEVELONE_OPTIONS quote when the contract is
+ * streamed and newer than the tracker's chain poll, else the tracker's last
+ * Schwab chain row. No bid -> null (NO_QUOTE upstream), never a mid or last.
+ */
+function getLiveQuote(contractKey: string, nowMs: number = Date.now()): {
+  bid: number | null; ask: number | null; source: "stream" | "rest_chain" | null; quoteTimeMs: number | null;
+  ageMs: number | null; noQuoteReason: string | null;
+} {
+  const raw = getRawQuote(contractKey);
+  // R3-2 item 9: a REST chain bid past REST_BID_MAX_AGE_MS (or of unknown
+  // age) is not a bid to decide on: NO_QUOTE upstream.
+  const u = exitBidUsable(raw.source, raw.bid, raw.quoteTimeMs, nowMs);
+  if (!u.usable) return { bid: null, ask: null, source: null, quoteTimeMs: raw.quoteTimeMs, ageMs: u.ageMs, noQuoteReason: u.reason };
+  return { ...raw, ageMs: u.ageMs, noQuoteReason: null };
+}
+
+function getRawQuote(contractKey: string): { bid: number | null; ask: number | null; source: "stream" | "rest_chain" | null; quoteTimeMs: number | null } {
   const snap = getOdteSnapshot();
   const row = snap.contracts.find((c) => c.key === contractKey);
-  if (!row) return null;
-  if (row.last != null && row.last > 0) return row.last;
-  if (row.mid != null && row.mid > 0) return row.mid;
-  if (row.bid != null && row.ask != null && row.bid > 0 && row.ask > 0) {
-    return (row.bid + row.ask) / 2;
+  if (!row) return { bid: null, ask: null, source: null, quoteTimeMs: null };
+  const clean = (b: number | null | undefined, a: number | null | undefined) => ({
+    bid: b != null && Number.isFinite(b) && b >= 0 ? b : null,
+    ask: a != null && Number.isFinite(a) && a > 0 ? a : null,
+  });
+  const sq = streamOptionOverlay(row.optionSymbol ?? null, row.quoteTimeMs ?? null);
+  if (sq && sq.bid != null) {
+    const q = clean(sq.bid, sq.ask ?? row.ask);
+    if (q.bid != null) return { ...q, source: "stream", quoteTimeMs: sq.quoteTimeMs };
   }
-  return null;
+  const q = clean(row.bid, row.ask);
+  return { ...q, source: q.bid != null ? "rest_chain" : null, quoteTimeMs: row.quoteTimeMs ?? null };
 }
 
 // ─── Per-position eval ────────────────────────────────────────────────
@@ -180,16 +239,24 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
   }
   const mem = memory.get(pos.id)!;
 
-  const mark = getLiveMark(pos.contractKey);
-  const entry = pos.buyPrice;
-  const ret = mark != null && entry > 0 ? (mark - entry) / entry : 0;
-  if (ret > mem.peakReturnPct) mem.peakReturnPct = ret;
+  // Review 6.6 / SF-3: decisions use the live BID (stream, else REST chain)
+  // against the entry ask with the alert's rule, before fees (bid <= 0.80 x
+  // ask stops); the displayed P&L is the bid net of both fees.
+  const live = getLiveQuote(pos.contractKey);
+  const quote = live;
+  const { fill: entry, basis: entryBasis } = entryFillOf(pos);
+  const feeRes = feeForProduct(pos.contractKey);
+  const liq = liquidationReturn({ entryFill: entry, bid: quote.bid, feePerContract: feeRes.fee });
+  const mark = quote.bid;
+  const ret: number | null = mark != null && entry > 0 ? (mark - entry) / entry : null;
+  const stopHit = optionStopHit(mark, entry);
+  if (ret != null && ret > mem.peakReturnPct) mem.peakReturnPct = ret;
 
   // Map option side ("call"/"put") → underlying directional side ("long"/"short")
   const underlyingSide: "long" | "short" = pos.side === "call" ? "long" : "short";
 
   // ─── Category 1: HARD STOP ─────────────────────────────────────────
-  const hardStop = ret <= HARD_STOP_PCT ? 100 : 0;
+  const hardStop = stopHit === true ? 100 : 0;
 
   // ─── Category 2: MTF STACK COLLAPSE ────────────────────────────────
   let stackCollapseScore = 0;
@@ -225,9 +292,9 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
   let targetsScore = 0;
   let targetsReason = "";
   try {
-    const port = Number(process.env.PORT ?? 5000);
-    const r = await fetch(`http://127.0.0.1:${port}/api/models?symbol=^GSPC&experimental=1`);
-    const data: any = await r.json();
+    // In-process /api/models (internalApi.ts), bounded; skipped once the hard
+    // stop has fired (it overrides every other category).
+    const data: any = hardStop >= 100 ? null : (await callInternal("/api/models?symbol=^GSPC&experimental=1", { timeoutMs: MODELS_CALL_TIMEOUT_MS })).body;
     const daily = data?.horizons?.daily;
     if (daily) {
       const rt = await computeRealtimeTargets({
@@ -297,9 +364,9 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
   let gammaScore = 0;
   let gammaReason = "";
   try {
-    const port = Number(process.env.PORT ?? 5000);
-    const r = await fetch(`http://127.0.0.1:${port}/api/models?symbol=^GSPC&experimental=1`);
-    const data: any = await r.json();
+    // In-process /api/models (internalApi.ts), bounded; skipped once the hard
+    // stop has fired (it overrides every other category).
+    const data: any = hardStop >= 100 ? null : (await callInternal("/api/models?symbol=^GSPC&experimental=1", { timeoutMs: MODELS_CALL_TIMEOUT_MS })).body;
     const daily = data?.horizons?.daily;
     if (daily) {
       const spot = daily.spot as number;
@@ -399,11 +466,13 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
   // If we've banked a fat unrealized (≥40% gain) and we've given back ≥15% from
   // peak, treat it like a confluence-driven exit.
   const trailTriggered =
-    mem.peakReturnPct >= 0.40 && ret <= mem.peakReturnPct - 0.15;
+    ret != null && mem.peakReturnPct >= 0.40 && ret <= mem.peakReturnPct - 0.15;
 
   // ─── Action verdict ────────────────────────────────────────────────
   let action: ExitAction = "HOLD";
-  if (hardStop >= 100) {
+  if (ret == null) {
+    action = "NO_QUOTE";
+  } else if (hardStop >= 100) {
     action = "EXIT";
   } else if (trailTriggered) {
     action = "TRAIL";
@@ -417,12 +486,17 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
 
   // ─── Reasons (top contributors) ───────────────────────────────────
   const reasons: string[] = [];
-  if (hardStop >= 100) {
-    reasons.push(`HARD STOP: drawdown ${(ret * 100).toFixed(0)}% ≤ -20%`);
+  if (ret == null) {
+    reasons.push(live.noQuoteReason && live.noQuoteReason !== "no bid"
+      ? `NO USABLE BID: ${live.noQuoteReason}; hard stop and P&L are not evaluated on an old price`
+      : "NO BID: hard stop and P&L cannot be evaluated until the contract has a bid");
   }
-  if (trailTriggered) {
+  if (hardStop >= 100 && ret != null) {
+    reasons.push(`HARD STOP: bid ${mark?.toFixed(2)} <= $${(entry * (1 + HARD_STOP_PCT)).toFixed(2)} (0.80 x the $${entry.toFixed(2)} fill)`);
+  }
+  if (trailTriggered && ret != null) {
     reasons.push(
-      `TRAIL: peak +${(mem.peakReturnPct * 100).toFixed(0)}%, gave back ${((mem.peakReturnPct - ret) * 100).toFixed(0)}%`,
+      `TRAIL: peak +${(mem.peakReturnPct * 100).toFixed(0)}% at the bid, gave back ${((mem.peakReturnPct - ret) * 100).toFixed(0)}%`,
     );
   }
   if (stackReason) reasons.push(stackReason);
@@ -439,8 +513,19 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
     contractKey: pos.contractKey,
     side: pos.side,
     mark,
+    markSource: live.source,
+    markQuoteTimeMs: live.quoteTimeMs,
+    markAgeMs: live.ageMs,
+    noQuoteReason: live.noQuoteReason,
     entry,
-    drawdownPct: ret,
+    entryBasis,
+    drawdownPct: liq ? liq.netReturn : null,
+    bidReturnPct: ret,
+    feeBasis: feeRes.basis,
+    bid: quote.bid,
+    ask: quote.ask,
+    valuation: "bid_net_of_exit_fee",
+    feePerContract: feeRes.fee ?? undefined,
     peakReturnPct: mem.peakReturnPct,
     action,
     exitScore,
@@ -460,7 +545,29 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
 
 // ─── Eval loop ────────────────────────────────────────────────────────
 
+/** Hard stop from live marks only: never waits on /api/models or quotes. */
+function hardStopSweep(): void {
+  // Same single rule as evaluatePosition: live bid <= 0.80 x the entry ask
+  // fill, before fees (stream quote, else REST chain). No bid: not a hit and
+  // not a pass; the full pass reports NO_QUOTE.
+  const now = Date.now();
+  const hits: typeof hardStopHits = [];
+  for (const p of getTracked().filter((x) => x.status === "active")) {
+    const { bid } = getLiveQuote(p.contractKey);
+    const { fill } = entryFillOf(p);
+    if (bid == null || !(fill > 0)) continue;
+    if (optionStopHit(bid, fill) === true) hits.push({ positionId: p.id, contractKey: p.contractKey, mark: bid, returnPct: (bid - fill) / fill, asOf: now });
+  }
+  hardStopHits = hits;
+}
+
 async function evalAll(): Promise<void> {
+  try { hardStopSweep(); } catch (e: any) { errors++; lastError = `hard-stop sweep: ${e?.message ?? String(e)}`; }
+  if (evalInFlight) {
+    skippedTicks++;
+    return;
+  }
+  evalInFlight = true;
   try {
     const positions = getTracked().filter((p) => p.status === "active");
     if (!positions.length) {
@@ -486,6 +593,7 @@ async function evalAll(): Promise<void> {
     errors++;
     lastError = e?.message ?? String(e);
   } finally {
+    evalInFlight = false;
     ticks++;
     lastTickMs = Date.now();
   }
@@ -500,7 +608,7 @@ export function startExitBrain(intervalMs = EVAL_INTERVAL_MS): void {
   timer = setInterval(() => {
     void evalAll();
   }, intervalMs);
-  console.log(`[exitBrain] started — 30s eval cadence, hard stop -20%, exit≥${EXIT_SCORE} trim≥${TRIM_SCORE}`);
+  console.log(`[exitBrain] started — 30s eval cadence, hard stop bid <= 0.80 x entry ask, exit≥${EXIT_SCORE} trim≥${TRIM_SCORE}`);
 }
 
 export function stopExitBrain(): void {
@@ -527,7 +635,9 @@ export function getExitBrainSnapshot(): ExitBrainSnapshot {
       ticks,
       errors,
       lastError: lastError || undefined,
+      skippedTicks,
     },
+    hardStopHits: hardStopHits.map((h) => ({ ...h })),
   };
 }
 

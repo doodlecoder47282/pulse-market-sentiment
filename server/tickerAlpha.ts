@@ -4,7 +4,7 @@
 // user types), fuse three independent signal streams into one alpha card:
 //
 //   1. NEWS  — ticker-tagged headlines, ranked by tier
-//   2. SOCIAL — StockTwits cashtag volume + sentiment, Reddit mention scan
+//   2. SOCIAL — StockTwits cashtag volume + sentiment (X when configured)
 //   3. POSITIONING — gamma walls, OI shifts, dealer regime, options skew
 //
 // Output: a unified "TickerAlpha" block that the synthesis layer
@@ -29,6 +29,8 @@ async function fetchJson(url: string, headers: Record<string, string> = {}): Pro
 }
 import { getAlphaEventsForTicker, type AlphaEvent } from "./alphaNews";
 import { getOptionChain, getQuotes } from "./schwab";
+import { FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
+import { contractYears, ivForClock } from "./chainClock";
 
 // ---- Types ----
 
@@ -44,8 +46,11 @@ export interface SocialPost {
 }
 
 export interface SocialExposure {
-  /** -100..100 net tone (bull - bear) / total */
-  score: number;
+  /** -100..100 net tone (bull - bear) / total. null = no tagged posts (or
+   *  none read); see scoreReason. Missing is not zero. */
+  score: number | null;
+  /** Why score is null; null when a score exists. */
+  scoreReason: string | null;
   bullish: number;
   bearish: number;
   neutral: number;
@@ -55,8 +60,9 @@ export interface SocialExposure {
   volumeZ: number;
   /** Top 8 posts by recency/quality */
   topPosts: SocialPost[];
-  /** Where the chatter is coming from */
-  bySource: { stocktwits: number; reddit: number; x: number };
+  /** Where the chatter is coming from: post counts per source; null = the
+   *  source was not read (failed, not configured, or removed), never 0 posts. */
+  bySource: { stocktwits: number | null; reddit: number | null; x: number | null };
   warnings: string[];
 }
 
@@ -101,7 +107,8 @@ export interface TickerAlpha {
   rollup: {
     /** -100..100 */
     newsBias: number;
-    socialBias: number;
+    /** null = no social tone score available (not zero) */
+    socialBias: number | null;
     positioningBias: number;
     /** Composite -100..100 */
     composite: number;
@@ -155,50 +162,18 @@ async function fetchStockTwitsForSymbol(symbol: string, limit = 30): Promise<Soc
         tone,
       };
     });
-  } catch {
-    return [];
+  } catch (e) {
+    // Rethrown so the caller reports "failed" (count null), not 0 posts.
+    throw e;
   }
 }
 
-// ---- Social: Reddit cashtag/mention scan ----
-
-const REDDIT_SUBS = ["wallstreetbets", "stocks", "options", "investing", "StockMarket"];
-
-async function fetchRedditMentions(ticker: string, perSub = 25): Promise<SocialPost[]> {
-  const out: SocialPost[] = [];
-  // Reddit search for the ticker symbol with cashtag and bare-word variants
-  const queries = [`%24${ticker}`, ticker];
-  for (const sub of REDDIT_SUBS) {
-    for (const q of queries) {
-      try {
-        const d = await fetchJson(
-          `https://www.reddit.com/r/${sub}/search.json?q=${q}&restrict_sr=1&sort=new&limit=${perSub}&t=week`
-        );
-        const items = d?.data?.children ?? [];
-        for (const c of items) {
-          const title = c?.data?.title || "";
-          const body = c?.data?.selftext || "";
-          const text = `${title} ${body}`.slice(0, 360);
-          if (!title) continue;
-          // De-duplicate
-          const url = `https://www.reddit.com${c.data.permalink}`;
-          if (out.some((p) => p.url === url)) continue;
-          out.push({
-            source: "Reddit",
-            author: `r/${sub}`,
-            text,
-            url,
-            ts: c?.data?.created_utc,
-            tone: scoreText(text),
-          });
-        }
-      } catch {
-        // continue silently
-      }
-    }
-  }
-  return out;
-}
+// ---- Social: Reddit (removed) ----
+// The keyless Reddit search was removed (round 2, R2-I): the Reddit Data API
+// requires a registered OAuth client and blocks unauthenticated traffic
+// ("Reddit Data API Wiki",
+// https://support.reddithelp.com/hc/en-us/articles/16160319875092-Reddit-Data-API-Wiki).
+// bySource.reddit is null ("not available"), never 0 posts.
 
 // ---- Social: X cashtag (when X_BEARER_TOKEN is set) ----
 
@@ -255,19 +230,26 @@ function getSocialVolumeZ(ticker: string, current: number): number {
 export async function gatherSocialForTicker(ticker: string): Promise<SocialExposure> {
   const t = ticker.toUpperCase().replace(/^[$^]/, "");
   const warnings: string[] = [];
-  const [st, rd, x] = await Promise.all([
-    fetchStockTwitsForSymbol(t, 30).catch(() => { warnings.push("StockTwits: fetch failed"); return []; }),
-    fetchRedditMentions(t, 15).catch(() => { warnings.push("Reddit: fetch failed"); return []; }),
-    fetchXCashtag(t).catch(() => []),
+  let stOk = true;
+  const xConfigured = Boolean(process.env.X_BEARER_TOKEN);
+  const [st, x] = await Promise.all([
+    fetchStockTwitsForSymbol(t, 30).catch(() => { stOk = false; warnings.push("StockTwits: fetch failed"); return [] as SocialPost[]; }),
+    fetchXCashtag(t).catch(() => [] as SocialPost[]),
   ]);
-  if (!process.env.X_BEARER_TOKEN) warnings.push("X disabled (no X_BEARER_TOKEN)");
+  if (!xConfigured) warnings.push("X disabled (no X_BEARER_TOKEN)");
+  warnings.push("Reddit not available (its Data API requires OAuth; keyless read removed)");
 
-  const all = [...st, ...rd, ...x];
+  const all = [...st, ...x];
   const bullish = all.filter((p) => p.tone === "bullish").length;
   const bearish = all.filter((p) => p.tone === "bearish").length;
   const neutral = all.filter((p) => p.tone === "neutral").length;
   const tagged = bullish + bearish;
-  const score = tagged > 0 ? Math.round(((bullish - bearish) / tagged) * 100) : 0;
+  const score = tagged > 0 ? Math.round(((bullish - bearish) / tagged) * 100) : null;
+  const scoreReason = score != null
+    ? null
+    : all.length === 0
+      ? "no posts read from any social source"
+      : "no bullish/bearish-tagged posts in the window";
   const messageCount = all.length;
   recordSocialVolume(t, messageCount);
   const volumeZ = getSocialVolumeZ(t, messageCount);
@@ -284,13 +266,14 @@ export async function gatherSocialForTicker(ticker: string): Promise<SocialExpos
 
   return {
     score,
+    scoreReason,
     bullish,
     bearish,
     neutral,
     messageCount,
     volumeZ: Number(volumeZ.toFixed(2)),
     topPosts: ranked,
-    bySource: { stocktwits: st.length, reddit: rd.length, x: x.length },
+    bySource: { stocktwits: stOk ? st.length : null, reddit: null, x: xConfigured ? x.length : null },
     warnings,
   };
 }
@@ -335,11 +318,12 @@ function approxGamma(K: number, S: number, T: number, iv: number): number {
  */
 function buildPerTickerGamma(chain: any, ticker: string): PerTickerGamma | null {
   if (!chain || chain.error) return null;
-  const S =
+  const spotRaw =
     Number(chain?.underlying?.last) ||
     Number(chain?.underlyingPrice) ||
     null;
-  if (!S || !isFinite(S)) return null;
+  if (!spotRaw || !isFinite(spotRaw)) return null;
+  const S: number = spotRaw;
 
   const callMap = chain.callExpDateMap || {};
   const putMap = chain.putExpDateMap || {};
@@ -366,7 +350,6 @@ function buildPerTickerGamma(chain: any, ticker: string): PerTickerGamma | null 
       const dteMatch = /:(\d+)/.exec(expKey);
       const dteDays = dteMatch ? parseInt(dteMatch[1]) : NaN;
       if (!isFinite(dteDays) || dteDays < 0 || dteDays > 45) continue;
-      const T = Math.max(dteDays, 1) / 365;
       const strikes = map[expKey];
       for (const strikeKey of Object.keys(strikes)) {
         const K = parseFloat(strikeKey);
@@ -374,6 +357,10 @@ function buildPerTickerGamma(chain: any, ticker: string): PerTickerGamma | null 
         const arr = strikes[strikeKey];
         if (!Array.isArray(arr) || arr.length === 0) continue;
         const c = arr[0];
+        // One clock (timeToExpiry): calendar minutes to settlement / 525,600;
+        // settled contracts are dropped. (Was max(dte, 1)/365: a full day at 0DTE.)
+        const T = contractYears(expKey, c);
+        if (!(T > 0)) continue;
         const oi = Number(c.openInterest) || 0;
         const vol = Number(c.totalVolume) || 0;
         if (oi <= 0) continue;
@@ -382,7 +369,7 @@ function buildPerTickerGamma(chain: any, ticker: string): PerTickerGamma | null 
         if (!isFinite(g) || g === 0) {
           // Compute from IV if Schwab gamma is missing
           if (isFinite(iv) && iv > 0) {
-            g = approxGamma(K, S, T, iv / 100);
+            g = approxGamma(K, S, T, ivForClock({ vendorIv: iv / 100, bid: Number(c.bid), ask: Number(c.ask), spot: S, strike: K, T, type }));
           } else {
             continue;
           }
@@ -429,33 +416,11 @@ function buildPerTickerGamma(chain: any, ticker: string): PerTickerGamma | null 
     }
   }
 
-  // Zero gamma: linear interp where cumulative GEX flips sign
-  let zeroGamma: number | null = null;
-  let cum = 0;
-  for (let i = 0; i < strikes.length - 1; i++) {
-    const k = strikes[i];
-    const kNext = strikes[i + 1];
-    const cumNext = cum + (gexByStrike.get(k) || 0);
-    if (cum <= 0 && cumNext > 0) {
-      zeroGamma = k + ((kNext - k) * -cum) / Math.max(cumNext - cum, 1);
-      break;
-    }
-    cum = cumNext;
-  }
-  if (zeroGamma == null) {
-    // fallback: strike where running sum is minimum |sum|
-    let best = Infinity;
-    let bestK = strikes[Math.floor(strikes.length / 2)];
-    let run = 0;
-    for (const k of strikes) {
-      run += gexByStrike.get(k) || 0;
-      if (Math.abs(run) < best) {
-        best = Math.abs(run);
-        bestK = k;
-      }
-    }
-    zeroGamma = bestK;
-  }
+  // Zero gamma: app-wide re-priced definition (gammaProfile.ts) over the same
+  // 0-45 DTE contracts. null when net dealer gamma never changes sign: the old
+  // fallback reported the strike with the smallest running sum as a "flip",
+  // which showed a level that does not exist.
+  const zeroGamma: number | null = repricedFlipFromChain(chain, S, { maxDte: 45, r: FLIP_RATE, q: FLIP_DIV_YIELD }).zeroGamma;
 
   // Max pain — strike that minimizes total option pain (open interest × distance)
   let maxPain: number | null = null;
@@ -609,8 +574,10 @@ function rollupBias(
   const newsBias = newsWeight > 0 ? Math.round((newsScore / newsWeight) * 100) : 0;
 
   // Social bias: tone score, dampened by low message count
-  let socialBias = social.score;
-  if (social.messageCount < 20) socialBias = Math.round(socialBias * 0.5);
+  // null when there is no tone score (missing, not zero): the composite then
+  // drops the social leg and renormalises the remaining weights.
+  let socialBias: number | null = social.score;
+  if (socialBias != null && social.messageCount < 20) socialBias = Math.round(socialBias * 0.5);
 
   // Positioning bias: combine GEX regime + P/C OI + skew
   let posBias = 0;
@@ -637,9 +604,13 @@ function rollupBias(
 
   // Composite: equal-weight by default; if news is heavy, weight news more
   const newsHeavy = (news.events?.length ?? 0) >= 3;
-  const composite = newsHeavy
-    ? Math.round(0.45 * newsBias + 0.25 * socialBias + 0.30 * posBias)
-    : Math.round(0.30 * newsBias + 0.30 * socialBias + 0.40 * posBias);
+  const composite = socialBias == null
+    ? (newsHeavy
+        ? Math.round((0.45 * newsBias + 0.30 * posBias) / 0.75)
+        : Math.round((0.30 * newsBias + 0.40 * posBias) / 0.70))
+    : newsHeavy
+      ? Math.round(0.45 * newsBias + 0.25 * socialBias + 0.30 * posBias)
+      : Math.round(0.30 * newsBias + 0.30 * socialBias + 0.40 * posBias);
 
   // Edge type
   let edgeType: TickerAlpha["rollup"]["edgeType"] = "none";
@@ -650,7 +621,7 @@ function rollupBias(
 
   return {
     newsBias: Math.max(-100, Math.min(100, newsBias)),
-    socialBias: Math.max(-100, Math.min(100, socialBias)),
+    socialBias: socialBias == null ? null : Math.max(-100, Math.min(100, socialBias)),
     positioningBias: posBias,
     composite: Math.max(-100, Math.min(100, composite)),
     edgeType,

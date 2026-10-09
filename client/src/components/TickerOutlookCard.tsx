@@ -8,10 +8,12 @@
 //   2. CATALYSTS ROW: next earnings (date, days-out, EPS est, IV expected move
 //      if available), closest macro events (FOMC/CPI/NFP/OPEX). This is the
 //      first thing under the headline so users see what's coming.
-//   3. KEY LEVELS: target / invalidation / R:R / Kelly.
+//   3. KEY LEVELS: target / invalidation / R:R / size. Size shows "none":
+//      there is no fitted win probability for single names, so no Kelly size
+//      (the old figure was |composite|/100 x 0.25 or an LLM's number).
 //   4. 60-DAY FORWARD PROJECTION: realized-vol cone chart (q10/q25/q50/q75/q90)
 //      with spot, target, and invalidation overlaid. Honest — not an ML model.
-//   5. SCENARIOS: bull/base/bear with probability bars.
+//   5. SCENARIOS: bull/base/bear with heuristic weight bars (not calibrated).
 //   6. POSITIONING: gamma walls, GEX, IV skew, max pain.
 //   7. NEWS + SOCIAL: stacked side-by-side on desktop, stacked vertically on
 //      mobile. Tier badges. Click-through to source.
@@ -43,7 +45,10 @@ interface OutlookVerdict {
   targetPrice: number | null;
   expectedMovePct: number | null;
   rr: number | null;
+  /** Deprecated: always 0 on current servers. Not displayed. */
   kellyFrac: number;
+  /** Optional for older servers. available=false: no size is shown. */
+  sizing?: { available: boolean; reason: string };
   invalidation: number | null;
   edgeType: "informational" | "analytical" | "behavioral" | "environmental" | "none";
   counterargument: string;
@@ -97,10 +102,12 @@ interface TickerOutlookResponse {
     asOf: string;
     news: { events: AlphaEvent[]; warnings: string[] };
     social: {
-      score: number;
+      score: number | null;
+      scoreReason?: string | null;
       messageCount: number;
       volumeZ: number;
-      bySource?: { stocktwits: number; reddit: number; x: number };
+      /** null = source not read (failed / not configured / removed), not 0 posts */
+      bySource?: { stocktwits: number | null; reddit: number | null; x: number | null };
       topPosts: SocialPost[];
     };
     positioning: {
@@ -119,7 +126,7 @@ interface TickerOutlookResponse {
     };
     rollup: {
       newsBias: number;
-      socialBias: number;
+      socialBias: number | null;
       positioningBias: number;
       composite: number;
       edgeType: OutlookVerdict["edgeType"];
@@ -162,6 +169,9 @@ interface TickerProjectionResponse {
   sigmaAnnualizedPct: number;
   driftDaily: number;
   volBlowupFactor: number;
+  /** "atm_iv_term": the stock's own Schwab ATM IV term structure; "realized_30d": fallback, no chain. */
+  sigmaSource?: "atm_iv_term" | "realized_30d";
+  source?: "implied_vol_cone" | "realized_vol_cone";
   bands: Array<{
     day: number;
     date: string;
@@ -174,15 +184,23 @@ interface TickerProjectionResponse {
   honestyNote: string;
 }
 
+// /api/earnings-iv response (server/routes.ts). The card used to read
+// expectedMovePct, a field the server never sends, so the IV move never showed.
 interface EarningsIvResponse {
   ticker: string;
-  expectedMoveAbs?: number;
-  expectedMovePct?: number;
-  expiry?: string;
-  warnings?: string[];
+  impliedMove: number | null;     // ATM straddle, $ per share
+  impliedMovePct: number | null;  // straddle / spot x 100
+  expiry: string | null;
+  source?: string | null;
 }
 
 // ────────────────────── helpers ──────────────────────
+
+
+/** Post count for one social source; null or missing reads "not available", never 0. */
+function srcCount(v: number | null | undefined): string {
+  return v == null ? "not available" : String(v);
+}
 
 function dirGradient(d: Direction): string {
   if (d === "BULL") return "from-emerald-500/30 via-emerald-500/10 to-transparent";
@@ -240,7 +258,7 @@ function plainEnglishThesis(v: OutlookVerdict, ticker: string, calendar: TickerC
   // 15-year-old reading level summary. Always one sentence, blunt.
   const dirWord = v.direction === "BULL" ? "going up" : v.direction === "BEAR" ? "going down" : "stuck sideways";
   const conf =
-    v.confidence >= 70 ? "high-confidence" :
+    v.confidence >= 70 ? "strong lean" :
     v.confidence >= 55 ? "lean" :
     v.confidence >= 45 ? "low-conviction" : "no edge";
   const ern = calendar?.nextEarnings;
@@ -294,9 +312,11 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
   // IV expected move — lazy, only fires if there's an upcoming earnings
   const hasEarnings = !!cal.data?.nextEarnings;
   const ivMove = useQuery<EarningsIvResponse>({
-    queryKey: ["/api/earnings-iv", ticker],
+    queryKey: ["/api/earnings-iv", ticker, cal.data?.nextEarnings?.date, cal.data?.nextEarnings?.timing],
     queryFn: async () => {
-      const r = await apiRequest("GET", `/api/earnings-iv?ticker=${encodeURIComponent(ticker)}`);
+      const ne = cal.data?.nextEarnings;
+      const q = ne ? `&after=${encodeURIComponent(ne.date)}&timing=${encodeURIComponent(ne.timing)}` : "";
+      const r = await apiRequest("GET", `/api/earnings-iv?ticker=${encodeURIComponent(ticker)}${q}`);
       return r.json();
     },
     enabled: enabled && hasEarnings,
@@ -366,7 +386,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
                 ai outlook
               </span>
               <span className="font-mono text-base font-bold text-foreground">{ticker}</span>
@@ -376,7 +396,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                 </span>
               )}
               {v?.provider && (
-                <span className="rounded border border-border/60 bg-muted/40 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                <span className="rounded border border-border/60 bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
                   {v.provider}
                 </span>
               )}
@@ -391,13 +411,16 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                   {v.direction}
                 </span>
                 <span className="font-mono text-2xl font-bold text-foreground">
-                  {v.confidence}%
+                  {v.confidence}/100
                 </span>
-                <span className="text-xs uppercase tracking-wider text-muted-foreground">
-                  confidence
+                <span
+                  className="text-xs uppercase tracking-wider text-muted-foreground"
+                  title="Heuristic score from the composite read (or the AI write-up), not a calibrated probability."
+                >
+                  score (heuristic)
                 </span>
                 {v.edgeType && v.edgeType !== "none" && (
-                  <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider ${dirBorder(dir)} ${dirText(dir)}`}>
+                  <span className={`rounded border px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider ${dirBorder(dir)} ${dirText(dir)}`}>
                     {v.edgeType} edge
                   </span>
                 )}
@@ -414,7 +437,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
             )}
           </div>
 
-          <span className="shrink-0 rounded border border-border/60 px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+          <span className="shrink-0 rounded border border-border/60 px-2 py-1 text-[11px] uppercase tracking-wider text-muted-foreground">
             {expanded ? "hide" : "show"}
           </span>
         </div>
@@ -439,9 +462,9 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                     EPS est ${cal.data.nextEarnings.epsForecast.toFixed(2)}
                   </span>
                 )}
-                {ivMove.data?.expectedMovePct != null && (
-                  <span className="font-mono text-foreground/70">
-                    · IV ±{ivMove.data.expectedMovePct.toFixed(1)}%
+                {ivMove.data?.impliedMovePct != null && (
+                  <span className="font-mono text-foreground/70" title={`ATM straddle $${ivMove.data.impliedMove?.toFixed(2) ?? "—"} per share, expiry ${ivMove.data.expiry ?? "—"}`}>
+                    · IV ±{ivMove.data.impliedMovePct.toFixed(1)}%
                   </span>
                 )}
               </div>
@@ -492,10 +515,13 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                   value={fmtMoney(v.invalidation)}
                   hint={v.rr != null ? `R:R ${v.rr.toFixed(2)}x` : undefined}
                 />
+                {/* No position size: single names have no fitted win
+                    probability, so a Kelly size cannot be computed honestly. */}
                 <KV
-                  label="kelly"
-                  value={`${(v.kellyFrac * 100).toFixed(1)}%`}
-                  hint="quarter-Kelly"
+                  label="size"
+                  value="none"
+                  hint="no fitted win prob"
+                  title={v.sizing?.reason ?? "No size: single-name outlooks have no fitted win probability."}
                 />
               </div>
 
@@ -503,17 +529,17 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
               <div className="rounded-lg border border-border/40 bg-muted/10 p-2 sm:p-3">
                 <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                       60-session forward cone
                     </span>
                     {proj.data && (
-                      <span className="font-mono text-[10px] text-muted-foreground">
-                        σ {proj.data.sigmaAnnualizedPct.toFixed(1)}% ann · vol×{proj.data.volBlowupFactor.toFixed(2)}
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        σ {proj.data.sigmaAnnualizedPct.toFixed(1)}% ann · {proj.data.sigmaSource === "realized_30d" ? "30d realized (no chain)" : "own ATM IV term"}
                       </span>
                     )}
                   </div>
-                  <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-                    realized vol · not ML
+                  <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
+                    {proj.data?.sigmaSource === "realized_30d" ? "realized vol" : "implied vol"} · not ML
                   </span>
                 </div>
                 {proj.isLoading && (
@@ -559,7 +585,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                         {/* 50% band: q25-q75 inner */}
                         <Area dataKey="q75" stroke="none" fill={dir === "BULL" ? "#10b98180" : dir === "BEAR" ? "#f43f5e80" : "#f59e0b80"} fillOpacity={0.30} isAnimationActive={false} />
                         <Area dataKey="q25" stroke="none" fill="#0a0a0a" fillOpacity={1} isAnimationActive={false} />
-                        {/* drift median */}
+                        {/* median = spot (zero drift) */}
                         <Line type="monotone" dataKey="q50" stroke={dir === "BULL" ? "#10b981" : dir === "BEAR" ? "#f43f5e" : "#f59e0b"} strokeWidth={2} dot={false} isAnimationActive={false} />
                         {/* target / invalidation */}
                         {v.targetPrice != null && (
@@ -583,7 +609,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                   </div>
                 )}
                 {proj.data && (
-                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
                     <span className="flex items-center gap-1">
                       <span className={`inline-block h-2 w-3 rounded-sm ${dir === "BULL" ? "bg-emerald-500/60" : dir === "BEAR" ? "bg-rose-500/60" : "bg-amber-500/60"}`} />
                       50% band (q25–q75)
@@ -592,26 +618,29 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                       <span className={`inline-block h-2 w-3 rounded-sm ${dir === "BULL" ? "bg-emerald-500/25" : dir === "BEAR" ? "bg-rose-500/25" : "bg-amber-500/25"}`} />
                       80% band (q10–q90)
                     </span>
-                    <span className="opacity-70">drift dampened 0.5x</span>
+                    <span className="opacity-70" title={proj.data.honestyNote}>zero drift · Student-t(4) tails · coverage untested</span>
                   </div>
                 )}
               </div>
 
               {/* Thesis + counter (detailed) */}
               <div className="rounded border border-border/40 bg-muted/10 p-2 text-xs">
-                <div className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                   detailed thesis
                 </div>
                 <div className="mt-0.5 text-foreground" data-testid="text-thesis">
                   {v.thesis}
                 </div>
                 <div className="mt-1.5 text-muted-foreground" data-testid="text-counter">
-                  <span className="text-[9px] font-semibold uppercase tracking-wider">counter:</span>{" "}
+                  <span className="text-[11px] font-semibold uppercase tracking-wider">counter:</span>{" "}
                   {v.counterargument}
                 </div>
               </div>
 
-              {/* Scenarios */}
+              {/* Scenarios: weights are heuristic (hand-set or AI-written), not calibrated */}
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                scenario weights · heuristic, not calibrated probabilities
+              </div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 <ScenarioBar label="bull" color="emerald" s={v.scenarios.bull} />
                 <ScenarioBar label="base" color="slate" s={v.scenarios.base} />
@@ -620,7 +649,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
 
               {/* Positioning row */}
               <div className="rounded border border-border/40 bg-muted/10 p-2">
-                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                   positioning
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 md:grid-cols-6">
@@ -673,10 +702,10 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                 {/* News */}
                 <div className="rounded border border-border/40 bg-muted/10 p-2">
                   <div className="mb-1.5 flex items-center justify-between">
-                    <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                       alpha news ({q.data.alpha.news.events.length})
                     </div>
-                    <div className="font-mono text-[10px] text-muted-foreground">
+                    <div className="font-mono text-[11px] text-muted-foreground">
                       bias {q.data.alpha.rollup.newsBias > 0 ? "+" : ""}
                       {q.data.alpha.rollup.newsBias}
                     </div>
@@ -691,7 +720,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                       <li key={e.id} className="text-xs" data-testid={`news-event-${e.id}`}>
                         <div className="flex items-start gap-1.5">
                           <span
-                            className={`mt-0.5 shrink-0 rounded border px-1 py-0 font-mono text-[9px] uppercase tracking-wider ${tierBadge(e.tier)}`}
+                            className={`mt-0.5 shrink-0 rounded border px-1 py-0 font-mono text-[11px] uppercase tracking-wider ${tierBadge(e.tier)}`}
                           >
                             {e.tier === "SENTIMENT_SHIFT" ? "shift" : e.tier.replace("TIER_", "T")}
                           </span>
@@ -704,7 +733,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                             {e.title}
                           </a>
                         </div>
-                        <div className="mt-0.5 ml-1 flex items-center gap-2 text-[10px] text-muted-foreground">
+                        <div className="mt-0.5 ml-1 flex items-center gap-2 text-[11px] text-muted-foreground">
                           <span>{e.source}</span>
                           <span>· {ago(e.ts * 1000)} ago</span>
                           <span>· score {e.alphaScore}</span>
@@ -728,11 +757,15 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                 {/* Social */}
                 <div className="rounded border border-border/40 bg-muted/10 p-2">
                   <div className="mb-1.5 flex items-center justify-between">
-                    <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                       social exposure
                     </div>
-                    <div className="flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
-                      <span>tone {q.data.alpha.social.score > 0 ? "+" : ""}{q.data.alpha.social.score}</span>
+                    <div className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
+                      <span title={q.data.alpha.social.scoreReason ?? undefined}>
+                        tone {q.data.alpha.social.score == null
+                          ? "not available"
+                          : `${q.data.alpha.social.score > 0 ? "+" : ""}${q.data.alpha.social.score}`}
+                      </span>
                       <span>· {q.data.alpha.social.messageCount} msgs</span>
                       {q.data.alpha.social.volumeZ >= 1 && (
                         <span className="text-amber-300">
@@ -741,17 +774,17 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                       )}
                     </div>
                   </div>
-                  <div className="mb-1.5 grid grid-cols-3 gap-1 text-[10px] text-muted-foreground">
-                    <KV label="stocktwits" value={String(q.data.alpha.social.bySource?.stocktwits ?? 0)} />
-                    <KV label="reddit" value={String(q.data.alpha.social.bySource?.reddit ?? 0)} />
-                    <KV label="x" value={String(q.data.alpha.social.bySource?.x ?? 0)} />
+                  <div className="mb-1.5 grid grid-cols-3 gap-1 text-[11px] text-muted-foreground">
+                    <KV label="stocktwits" value={srcCount(q.data.alpha.social.bySource?.stocktwits)} />
+                    <KV label="reddit" value={srcCount(q.data.alpha.social.bySource?.reddit)} />
+                    <KV label="x" value={srcCount(q.data.alpha.social.bySource?.x)} />
                   </div>
                   <ul className="space-y-1">
                     {q.data.alpha.social.topPosts.slice(0, 3).map((p, i) => (
                       <li key={i} className="text-xs" data-testid={`social-post-${i}`}>
                         <div className="flex items-start gap-1.5">
                           <span
-                            className={`shrink-0 rounded border border-border/40 px-1 py-0 font-mono text-[9px] uppercase tracking-wider ${
+                            className={`shrink-0 rounded border border-border/40 px-1 py-0 font-mono text-[11px] uppercase tracking-wider ${
                               p.tone === "bullish"
                                 ? "text-emerald-300"
                                 : p.tone === "bearish"
@@ -772,7 +805,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
               {/* Pivot magnet ladder */}
               {sortedPivots.length > 0 && (
                 <div className="rounded border border-border/40 bg-muted/10 p-2">
-                  <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                     pivot magnets · top {sortedPivots.length}
                   </div>
                   <div className="space-y-1">
@@ -784,7 +817,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                       >
                         <div className="flex items-center gap-2">
                           <span
-                            className={`rounded border px-1 py-0 font-mono text-[9px] uppercase tracking-wider ${
+                            className={`rounded border px-1 py-0 font-mono text-[11px] uppercase tracking-wider ${
                               l.tier === "major"
                                 ? "border-cyan-500/40 bg-cyan-500/15 text-cyan-300"
                                 : "border-border/60 bg-muted/30 text-muted-foreground"
@@ -793,12 +826,12 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                             {l.label}
                           </span>
                           {l.confluence > 1 && (
-                            <span className="font-mono text-[9px] text-amber-300">
+                            <span className="font-mono text-[11px] text-amber-300">
                               x{l.confluence}
                             </span>
                           )}
                           {l.stackedWith.length > 0 && (
-                            <span className="text-[10px] text-muted-foreground">
+                            <span className="text-[11px] text-muted-foreground">
                               + {l.stackedWith.join(", ")}
                             </span>
                           )}
@@ -823,7 +856,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
               {/* Triggers */}
               {v.triggers.length > 0 && (
                 <div className="rounded border border-border/40 bg-muted/10 p-2">
-                  <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                     triggers
                   </div>
                   <ul className="space-y-0.5 text-xs text-foreground/90">
@@ -838,7 +871,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
               )}
 
               {q.data.warnings.length > 0 && (
-                <div className="text-[10px] text-amber-300/80">
+                <div className="text-[11px] text-amber-300/80">
                   warnings: {q.data.warnings.join(" · ")}
                 </div>
               )}
@@ -855,17 +888,19 @@ function KV({
   value,
   hint,
   valueClass,
+  title,
 }: {
   label: string;
   value: React.ReactNode;
   hint?: string;
   valueClass?: string;
+  title?: string;
 }) {
   return (
-    <div>
-      <div className="text-[9px] uppercase tracking-wider text-muted-foreground">{label}</div>
+    <div title={title}>
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className={`font-mono text-sm tabular-nums ${valueClass ?? ""}`}>{value}</div>
-      {hint && <div className="text-[9px] text-muted-foreground">{hint}</div>}
+      {hint && <div className="text-[11px] text-muted-foreground">{hint}</div>}
     </div>
   );
 }
@@ -892,8 +927,8 @@ function ScenarioBar({
   return (
     <div className={`rounded border p-2 ${colorMap[color]}`} data-testid={`scenario-${label}`}>
       <div className="flex items-center justify-between">
-        <span className="font-mono text-[10px] uppercase tracking-wider">{label}</span>
-        <span className="font-mono text-xs font-bold tabular-nums">{s.prob}%</span>
+        <span className="font-mono text-[11px] uppercase tracking-wider">{label}</span>
+        <span className="font-mono text-xs font-bold tabular-nums">{s.prob}% wt</span>
       </div>
       <div className="mt-1 h-1 overflow-hidden rounded-full bg-black/30">
         <div
@@ -905,7 +940,7 @@ function ScenarioBar({
         {s.targetPct >= 0 ? "+" : ""}
         {s.targetPct.toFixed(2)}%
       </div>
-      <div className="mt-1 line-clamp-2 text-[10px] opacity-80">{s.thesis}</div>
+      <div className="mt-1 line-clamp-2 text-[11px] opacity-80">{s.thesis}</div>
     </div>
   );
 }

@@ -72,7 +72,7 @@ export default function CrossAssetPanel() {
                 <Badge variant="outline" className={`text-xs ${riskColor(d.regimeVerdict.risk)}`} data-testid="badge-regime-risk">
                   risk {d.regimeVerdict.risk}
                 </Badge>
-                <Badge variant="outline" className="text-xs">{d.regimeVerdict.confidence} conf</Badge>
+                <Badge variant="outline" className="text-xs" title="Rule-based agreement of SPY, HYG, TLT and DXY moves, not a probability.">{d.regimeVerdict.confidence} agreement</Badge>
               </div>
             </div>
             <div className="text-sm font-semibold mb-1" data-testid="text-regime-label">{d.regimeVerdict.label}</div>
@@ -114,7 +114,7 @@ export default function CrossAssetPanel() {
             </table>
           </div>
 
-          <p className="text-[10px] text-muted-foreground leading-snug">
+          <p className="text-[11px] text-muted-foreground leading-snug">
             correlations are vs SPY (SPY itself shows 1.00). tight = correlation behaves as expected, loose = drifting, broken = regime change in motion. clean risk-on means everything risk-correlated rallies together; mixed/suspicious = decorrelation, watch your size.
           </p>
         </>
