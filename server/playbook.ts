@@ -102,8 +102,10 @@ export type DailyPlaybook = {
   /** NEW: today's news playbook — per-event reaction map. */
   newsPlaybook?: Array<{
     event: string;            // e.g. "FOMC 2pm"
-    bullScenario: string;     // "hot print > 0.4% → break 7165 → sell 7178 stop 7185"
-    bearScenario: string;     // "cool print < 0.2% → hold 7165 → buy 7170 stop 7163"
+    bullScenario: string;     // descriptive: reaction + nearest gamma level above spot (no orders)
+    bearScenario: string;     // descriptive: reaction + nearest gamma level below spot (no orders)
+    /** "context-levels": levels are context, not entries / stops / targets. */
+    kind?: "context-levels";
   }>;
 };
 
@@ -383,8 +385,15 @@ function noLevels(side: TradeSide = "either"): TradeLevels {
   return { side, entry: null, stop: null, target1: null, target2: null, rr1: null, instruction: "WAIT — conditional setup, no entry yet" };
 }
 
-// Build a per-event news playbook from today's catalysts + key gamma levels.
-function buildNewsPlaybook(
+// Per-event news context from today's catalysts + the gamma walls.
+//
+// Round 4: this used to print "BUY x · stop · T1 · T2" for every release,
+// with stops and targets at hand-set fractions of the wall spread (0.15,
+// 0.4, 0.8). Nothing validated those fractions and an order line for an
+// unscored event is not desk practice, so the lines are now DESCRIPTIVE:
+// the reaction being described and where the nearest dealer-gamma levels sit
+// relative to spot (points and percent). No entries, stops, targets or verbs.
+export function buildNewsPlaybook(
   events: Array<{ kind: string; label: string; timeLabel?: string }>,
   spot: number,
   cw: number,
@@ -393,66 +402,29 @@ function buildNewsPlaybook(
   if (!events?.length) return undefined;
   const t = tick(spot);
   const out: NonNullable<DailyPlaybook["newsPlaybook"]> = [];
+  const okLvl = (x: number) => Number.isFinite(x) && x > 0;
+  const dist = (lvl: number) => {
+    const d = lvl - spot;
+    const pct = (d / spot) * 100;
+    return `${d >= 0 ? "+" : "-"}${fmtPrice(Math.abs(d), t === 5 ? 1 : t)} pts, ${pct >= 0 ? "+" : "-"}${Math.abs(pct).toFixed(2)}%`;
+  };
+  const above = okLvl(cw) ? `call wall ${fmtPrice(cw, t)} (${dist(cw)} from spot ${fmtPrice(spot, t)})` : "call wall unavailable";
+  const below = okLvl(pw) ? `put wall ${fmtPrice(pw, t)} (${dist(pw)} from spot ${fmtPrice(spot, t)})` : "put wall unavailable";
+  const ctx = (reaction: string, side: "up" | "down") =>
+    `${reaction}: nearest gamma level ${side === "up" ? "above" : "below"} is the ${side === "up" ? above : below}. Context only, not an entry, stop or target.`;
 
   for (const ev of events) {
     const tag = `${ev.label}${ev.timeLabel ? " · " + ev.timeLabel : ""}`;
     const k = ev.kind.toUpperCase();
     const lc = ev.label.toLowerCase();
-
-    // Hot/cool framing tied to actual call wall / put wall levels
-    const breakUp = roundToTick(cw, t);
-    const targetUp1 = roundToTick(cw + (cw - pw) * 0.4, t);
-    const targetUp2 = roundToTick(cw + (cw - pw) * 0.8, t);
-    const stopUp = roundToTick(cw - (cw - pw) * 0.15, t);
-    const breakDn = roundToTick(pw, t);
-    const targetDn1 = roundToTick(pw - (cw - pw) * 0.4, t);
-    const targetDn2 = roundToTick(pw - (cw - pw) * 0.8, t);
-    const stopDn = roundToTick(pw + (cw - pw) * 0.15, t);
-
-    if (k === "FOMC" || lc.includes("fomc") || lc.includes("powell")) {
-      out.push({
-        event: tag,
-        bullScenario: `Dovish read → break ${fmtPrice(breakUp, t)} → BUY ${fmtPrice(roundToTick(breakUp + t, t), t)} · stop ${fmtPrice(stopUp, t)} · T1 ${fmtPrice(targetUp1, t)} · T2 ${fmtPrice(targetUp2, t)}`,
-        bearScenario: `Hawkish read → reject ${fmtPrice(breakUp, t)} or break ${fmtPrice(breakDn, t)} → SELL ${fmtPrice(roundToTick(breakDn - t, t), t)} · stop ${fmtPrice(stopDn, t)} · T1 ${fmtPrice(targetDn1, t)} · T2 ${fmtPrice(targetDn2, t)}`,
-      });
-    } else if (lc.includes("cpi") || lc.includes("ppi")) {
-      out.push({
-        event: tag,
-        bullScenario: `Cool print (below consensus) → hold ${fmtPrice(breakDn, t)} → BUY ${fmtPrice(roundToTick(breakDn + 2 * t, t), t)} · stop ${fmtPrice(stopDn, t)} · T1 ${fmtPrice(breakUp, t)} · T2 ${fmtPrice(targetUp1, t)}`,
-        bearScenario: `Hot print (above consensus) → break ${fmtPrice(breakDn, t)} → SELL ${fmtPrice(roundToTick(breakDn - t, t), t)} · stop ${fmtPrice(stopDn, t)} · T1 ${fmtPrice(targetDn1, t)} · T2 ${fmtPrice(targetDn2, t)}`,
-      });
-    } else if (lc.includes("pce")) {
-      out.push({
-        event: tag,
-        bullScenario: `Cool core PCE → grind to ${fmtPrice(breakUp, t)} → BUY pullback ${fmtPrice(roundToTick(spot - 2 * t, t), t)} · stop ${fmtPrice(stopDn, t)} · T1 ${fmtPrice(targetUp1, t)} · T2 ${fmtPrice(targetUp2, t)}`,
-        bearScenario: `Hot core PCE → fail ${fmtPrice(breakUp, t)} → SELL ${fmtPrice(roundToTick(breakUp - t, t), t)} · stop ${fmtPrice(roundToTick(breakUp + 2 * t, t), t)} · T1 ${fmtPrice(breakDn, t)} · T2 ${fmtPrice(targetDn1, t)}`,
-      });
-    } else if (lc.includes("nfp") || lc.includes("payroll") || lc.includes("jobs")) {
-      out.push({
-        event: tag,
-        bullScenario: `Strong jobs → break ${fmtPrice(breakUp, t)} → BUY ${fmtPrice(roundToTick(breakUp + t, t), t)} · stop ${fmtPrice(stopUp, t)} · T1 ${fmtPrice(targetUp1, t)} · T2 ${fmtPrice(targetUp2, t)}`,
-        bearScenario: `Weak jobs (recession fear) → break ${fmtPrice(breakDn, t)} → SELL ${fmtPrice(roundToTick(breakDn - t, t), t)} · stop ${fmtPrice(stopDn, t)} · T1 ${fmtPrice(targetDn1, t)} · T2 ${fmtPrice(targetDn2, t)}`,
-      });
-    } else if (k === "EARN" || lc.includes("earn") || /\b(MSFT|AAPL|GOOGL|GOOG|META|AMZN|TSLA|NVDA)\b/.test(ev.label)) {
-      out.push({
-        event: tag,
-        bullScenario: `Beat → gap up + hold open → BUY ${fmtPrice(roundToTick(spot + 2 * t, t), t)} · stop ${fmtPrice(roundToTick(spot - 2 * t, t), t)} · T1 ${fmtPrice(breakUp, t)} · T2 ${fmtPrice(targetUp1, t)}`,
-        bearScenario: `Miss → gap fill + reject → SELL ${fmtPrice(roundToTick(spot - 2 * t, t), t)} · stop ${fmtPrice(roundToTick(spot + 3 * t, t), t)} · T1 ${fmtPrice(breakDn, t)} · T2 ${fmtPrice(targetDn1, t)}`,
-      });
-    } else if (lc.includes("jobless") || lc.includes("claims")) {
-      out.push({
-        event: tag,
-        bullScenario: `Low claims (tight labor) → hold open range → BUY breakout above prior high · T1 ${fmtPrice(breakUp, t)} · T2 ${fmtPrice(targetUp1, t)}`,
-        bearScenario: `Spike in claims (slowdown) → SELL break ${fmtPrice(breakDn, t)} · stop ${fmtPrice(stopDn, t)} · T1 ${fmtPrice(targetDn1, t)}`,
-      });
-    } else {
-      // generic econ / treasury / other
-      out.push({
-        event: tag,
-        bullScenario: `Risk-on reaction → hold ${fmtPrice(spot, t)} → BUY ${fmtPrice(roundToTick(spot + t, t), t)} · stop ${fmtPrice(roundToTick(spot - 3 * t, t), t)} · T1 ${fmtPrice(breakUp, t)} · T2 ${fmtPrice(targetUp1, t)}`,
-        bearScenario: `Risk-off reaction → fail ${fmtPrice(spot, t)} → SELL ${fmtPrice(roundToTick(spot - t, t), t)} · stop ${fmtPrice(roundToTick(spot + 3 * t, t), t)} · T1 ${fmtPrice(breakDn, t)} · T2 ${fmtPrice(targetDn1, t)}`,
-      });
-    }
+    let up = "Risk-on reaction", dn = "Risk-off reaction";
+    if (k === "FOMC" || lc.includes("fomc") || lc.includes("powell")) { up = "Dovish read"; dn = "Hawkish read"; }
+    else if (lc.includes("cpi") || lc.includes("ppi")) { up = "Cool print (below consensus)"; dn = "Hot print (above consensus)"; }
+    else if (lc.includes("pce")) { up = "Cool core PCE"; dn = "Hot core PCE"; }
+    else if (lc.includes("nfp") || lc.includes("payroll") || lc.includes("jobs")) { up = "Strong jobs"; dn = "Weak jobs (recession fear)"; }
+    else if (k === "EARN" || lc.includes("earn") || /\b(MSFT|AAPL|GOOGL|GOOG|META|AMZN|TSLA|NVDA)\b/.test(ev.label)) { up = "Beat"; dn = "Miss"; }
+    else if (lc.includes("jobless") || lc.includes("claims")) { up = "Low claims (tight labor)"; dn = "Spike in claims (slowdown)"; }
+    out.push({ event: tag, bullScenario: ctx(up, "up"), bearScenario: ctx(dn, "down"), kind: "context-levels" });
   }
 
   return out;

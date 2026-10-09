@@ -443,14 +443,14 @@ function PlaybookCard({ playbook }: { playbook: Playbook }) {
           </div>
         </div>
 
-        {/* News Playbook — per-event reaction map */}
+        {/* News context: per-event reaction + nearest gamma levels (descriptive, no orders) */}
         {playbook.newsPlaybook && playbook.newsPlaybook.length > 0 && (
           <div className="mt-4">
             <div className="mb-2 flex items-center gap-2">
               <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-400">
-                News Playbook — Today's Catalysts
+                News Context — Today's Catalysts
               </span>
-              <span className="text-[9px] text-muted-foreground">if/then per release</span>
+              <span className="text-[9px] text-muted-foreground">levels as context per release, not entries, stops or targets</span>
             </div>
             <div className="space-y-2">
               {playbook.newsPlaybook.map((np, i) => (

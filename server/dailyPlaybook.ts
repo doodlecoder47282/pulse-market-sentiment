@@ -182,7 +182,13 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
   let pBull = 0.30, pBase = 0.40, pBear = 0.30;
 
   const isPositiveGamma = totalGex >= 0;
-  const isContango = (term?.ratio30dOver3m ?? 1) < 0.95 && (term?.ratio9dOver30d ?? 1) < 0.95;
+  // Term state needs BOTH ratios (VIX9D/VIX and VIX/VIX3M): a missing VIX9D or
+  // VIX3M is "unavailable" (tilt skipped), never read as flat/backwardation.
+  const fin = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
+  const termKnown = fin(term?.ratio30dOver3m) && fin(term?.ratio9dOver30d);
+  const isContango = termKnown && (term!.ratio30dOver3m as number) < 0.95 && (term!.ratio9dOver30d as number) < 0.95;
+  const termLabel = !termKnown ? "unavailable (VIX9D or VIX3M missing): term tilt skipped"
+    : isContango ? "Contango (calm)" : "Flat/backwardation";
   // Market-data blocks only (rule 2: no social/F&G in path probabilities).
   // Unavailable -> the tilt is skipped explicitly (not a neutral 50).
   const compScore: number | null = composite?.marketScore != null && Number.isFinite(composite.marketScore) ? composite.marketScore : null;
@@ -234,7 +240,7 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
     drivers: [
       `Spot ${spot > gammaFlip ? "above" : "below"} flip (${gammaFlip.toFixed(2)})`,
       compScore != null ? `Composite (market blocks) ${compScore}/100` : "Composite (market blocks) unavailable: tilt skipped",
-      isContango ? "VIX contango (calm)" : "VIX backwardation (fragile)",
+      !termKnown ? "VIX term structure unavailable" : isContango ? "VIX contango (calm)" : "VIX flat/backwardation (fragile)",
     ],
   };
 
@@ -281,7 +287,7 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
       : `Negative gamma + offer → cascading sells. -1σ ${(putWall - sigma).toFixed(2)}.`,
     drivers: [
       `Put wall ${putWall.toFixed(2)} as last line`,
-      !isContango ? "Backwardation = stress" : "Sentiment fragile",
+      !termKnown ? "VIX term structure unavailable" : !isContango ? "Flat/backwardation = stress" : "Sentiment fragile",
       compScore != null ? `Composite (market blocks) ${compScore}/100` : "Composite (market blocks) unavailable: tilt skipped",
     ],
   };
@@ -301,8 +307,9 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
   const winnerLabel = winner === "bull" ? "lean up"
                     : winner === "bear" ? "lean down" : "pin & chop";
   const winnerProb = winner === "bull" ? pBull : winner === "bear" ? pBear : pBase;
+  // Path weights are hand-set heuristic tilts, not probabilities: say so.
   const headline =
-    `${symbol} ${spot.toFixed(2)} · ${winnerLabel} (${Math.round(winnerProb * 100)}%). ` +
+    `${symbol} ${spot.toFixed(2)} · ${winnerLabel} (${Math.round(winnerProb * 100)}% wt, heuristic). ` +
     `Range ${expectedRange.low.toFixed(2)}–${expectedRange.high.toFixed(2)} (1σ). ` +
     `Walls: put ${putWall.toFixed(2)} / call ${callWall.toFixed(2)}.`;
 
@@ -311,7 +318,7 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
     { key: "spot",      label: "Spot price",      value: spot,                source: "Schwab",       asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt },
     { key: "vix",       label: "VIX",             value: vix,                 source: "Schwab",       asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: `1σ daily ±$${sigma.toFixed(2)}` },
     { key: "vix9d",     label: "VIX9D",           value: term?.vix9d ?? "unavailable", source: "Schwab",       asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt },
-    { key: "vix3m",     label: "VIX3M",           value: term?.vix3m ?? "unavailable", source: "Schwab",       asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: isContango ? "Contango (calm)" : "Flat/backwardation" },
+    { key: "vix3m",     label: "VIX3M",           value: term?.vix3m ?? "unavailable", source: "Schwab",       asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: termLabel },
     { key: "callWall",  label: "Call Wall",       value: callWall,            source: "Schwab",        asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf, calibration: `Top call OI strike` },
     { key: "putWall",   label: "Put Wall",        value: putWall,             source: "Schwab",        asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf, calibration: `Top put OI strike` },
     { key: "gammaFlip", label: "Gamma Flip",      value: gammaFlip,           source: "Computed",     asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf, calibration: `Zero-gamma level (Perfiliev)` },

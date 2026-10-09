@@ -216,3 +216,53 @@ test("edge brief: verdict is filtered (SELL PREMIUM never reaches the chip)", ()
   assert.deepEqual(b.bullets, ["ratio: 1.3x"]);
   assert.match(src("server/edgeLabBrief.ts"), /return scrubBrief\(brief, \{ strict: true \}\);/);
 });
+
+// ── 6. News playbook descriptive; daily playbook wording and term state ─────
+import { buildNewsPlaybook } from "../../server/playbook";
+import { setSnapshotProvider, buildDailyPlaybook } from "../../server/dailyPlaybook";
+
+test("news playbook: levels as context, no BUY/SELL/stop/T1/T2", () => {
+  const out = buildNewsPlaybook(
+    [{ kind: "FOMC", label: "FOMC", timeLabel: "2pm" }, { kind: "ECON", label: "CPI" }, { kind: "ECON", label: "Treasury auction" }],
+    5800, 5850, 5750,
+  )!;
+  assert.equal(out.length, 3);
+  for (const np of out) {
+    for (const t of [np.bullScenario, np.bearScenario]) {
+      assert.match(t, /Context only, not an entry, stop or target\.$/);
+      const body = t.replace(/ Context only, not an entry, stop or target\.$/, "");
+      assert.doesNotMatch(body, /\b(BUY|SELL|buy|sell|stop|T1|T2|targets?|entry|R:R)\b/);
+    }
+    assert.equal(np.kind, "context-levels");
+  }
+  // hand: call wall 5850 is +50 pts, +0.86% from 5800; put wall 5750 is -50 pts, -0.86%
+  assert.match(out[0].bullScenario, /^Dovish read: nearest gamma level above is the call wall 5850 \(\+50 pts, \+0\.86% from spot 5800\)/);
+  assert.match(out[0].bearScenario, /^Hawkish read: nearest gamma level below is the put wall 5750 \(-50 pts, -0\.86% from spot 5800\)/);
+  assert.match(out[1].bullScenario, /^Cool print/);
+  assert.match(out[2].bullScenario, /^Risk-on reaction/);
+});
+
+test("daily playbook: headline says '% wt, heuristic'; missing VIX9D/VIX3M is unavailable", async () => {
+  const NOWs = Math.floor(Date.UTC(2026, 9, 9, 15, 0) / 1000);
+  setSnapshotProvider(async () => ({
+    capturedAt: NOWs, spy: { price: 700 },
+    gamma: { spot: 700, totalGex: 1e9, callWall: 710, putWall: 690, zeroGamma: 695, maxPain: 700 },
+    vol: { vix: { value: 18 } },
+    term: { vix9d: null, vix: 18, vix3m: 20, ratio9dOver30d: null, ratio30dOver3m: 0.9 },
+  }) as any);
+  const pb: any = await buildDailyPlaybook("SPY");
+  assert.match(pb.headline, /\(\d+% wt, heuristic\)/);
+  assert.doesNotMatch(pb.headline, /(lean up|lean down|pin & chop) \(\d+%\)/);
+  const v3 = pb.inputs.find((i: any) => i.key === "vix3m");
+  assert.match(v3.calibration, /^unavailable/);
+  assert.doesNotMatch(JSON.stringify(pb), /Flat\/backwardation|VIX backwardation/);
+  // both ratios present and in contango -> labelled contango
+  setSnapshotProvider(async () => ({
+    capturedAt: NOWs, spy: { price: 700 },
+    gamma: { spot: 700, totalGex: 1e9, callWall: 710, putWall: 690, zeroGamma: 695, maxPain: 700 },
+    vol: { vix: { value: 18 } },
+    term: { vix9d: 16, vix: 18, vix3m: 20, ratio9dOver30d: 16 / 18, ratio30dOver3m: 0.9 },
+  }) as any);
+  const pb2: any = await buildDailyPlaybook("SPY");
+  assert.equal(pb2.inputs.find((i: any) => i.key === "vix3m").calibration, "Contango (calm)");
+});
