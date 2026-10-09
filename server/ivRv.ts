@@ -101,46 +101,55 @@ interface AtmIvResult {
   spotUsed: number | null;
 }
 
+/**
+ * getOptionChain with an expiration window [fromDte, dte]. r2-a adds the
+ * optional third argument ({ fromDte }) so only the needed expiries are
+ * requested; typed through this view so the call compiles before and after
+ * that merge (without it the extra argument is ignored and the window starts
+ * at today, which is still correct, only a larger response).
+ */
+type ChainWindowFetch = (symbol: string, dte?: number, opts?: { fromDte?: number }) => ReturnType<typeof getOptionChain>;
+const getChainWindow = getOptionChain as unknown as ChainWindowFetch;
+
+/** Tenor windows (calendar DTE) requested for the 30/60/90-day ATM IV. */
+const TENOR_WINDOWS: Array<{ target: 30 | 60 | 90; from: number; to: number }> = [
+  { target: 30, from: 25, to: 35 },
+  { target: 60, from: 55, to: 65 },
+  { target: 90, from: 85, to: 95 },
+];
+
 async function atmIvByTenor(symbol: string): Promise<AtmIvResult> {
-  try {
-    const chain = await getOptionChain(symbol, 100);
-    if (!chain || "error" in chain) return { iv30: null, iv60: null, iv90: null, spotUsed: null };
-    const spot = (chain as any).underlyingPrice as number | undefined;
-    if (!Number.isFinite(spot as number)) return { iv30: null, iv60: null, iv90: null, spotUsed: null };
+  const result: AtmIvResult = { iv30: null, iv60: null, iv90: null, spotUsed: null };
+  for (const w of TENOR_WINDOWS) {
+    try {
+      const chain = await getChainWindow(symbol, w.to, { fromDte: w.from });
+      if (!chain || "error" in chain) continue;
+      const spot = (chain as any).underlyingPrice as number | undefined;
+      if (!Number.isFinite(spot as number)) continue;
+      if (result.spotUsed == null) result.spotUsed = spot as number;
 
-    const callMap = (chain as any).callExpDateMap as Record<string, Record<string, any[]>>;
-    const putMap = (chain as any).putExpDateMap as Record<string, Record<string, any[]>>;
-    if (!callMap || !putMap) return { iv30: null, iv60: null, iv90: null, spotUsed: spot ?? null };
+      const callMap = (chain as any).callExpDateMap as Record<string, Record<string, any[]>>;
+      const putMap = (chain as any).putExpDateMap as Record<string, Record<string, any[]>>;
+      if (!callMap || !putMap) continue;
 
-    const targets = [30, 60, 90];
-    const result: { [k: string]: number | null } = { iv30: null, iv60: null, iv90: null };
-
-    // Schwab key is `YYYY-MM-DD:DTE`
-    const allKeys = Object.keys(callMap);
-    const parsed = allKeys.map(k => {
-      const [date, dte] = k.split(":");
-      return { key: k, date, dte: parseInt(dte, 10) };
-    }).filter(x => Number.isFinite(x.dte));
-
-    for (const target of targets) {
-      // Find expiration whose DTE is closest to target.
-      let best: typeof parsed[0] | null = null;
-      let bestDiff = Infinity;
-      for (const p of parsed) {
-        const d = Math.abs(p.dte - target);
-        if (d < bestDiff) { bestDiff = d; best = p; }
+      // Schwab key is `YYYY-MM-DD:DTE`; keep only expiries inside the window
+      // (before the r2-a merge the response also holds shorter expiries).
+      let best: { key: string; dte: number } | null = null;
+      for (const k of Object.keys(callMap)) {
+        const dte = parseInt(k.split(":")[1] ?? "", 10);
+        if (!Number.isFinite(dte) || dte < w.from || dte > w.to) continue;
+        if (!best || Math.abs(dte - w.target) < Math.abs(best.dte - w.target)) best = { key: k, dte };
       }
-      if (!best || bestDiff > target * 0.6) continue;
+      if (!best) continue;
 
       // ATM = strike closest to spot. Average call & put IV for that strike.
       const callStrikes = callMap[best.key] ?? {};
       const putStrikes = putMap[best.key] ?? {};
-      const allStrikes = new Set([...Object.keys(callStrikes), ...Object.keys(putStrikes)]);
+      const allStrikes = Array.from(new Set([...Object.keys(callStrikes), ...Object.keys(putStrikes)]));
       let bestStrike: string | null = null;
       let bestStrikeDiff = Infinity;
       for (const s of allStrikes) {
-        const sn = parseFloat(s);
-        const d = Math.abs(sn - (spot as number));
+        const d = Math.abs(parseFloat(s) - (spot as number));
         if (d < bestStrikeDiff) { bestStrikeDiff = d; bestStrike = s; }
       }
       if (!bestStrike) continue;
@@ -148,19 +157,19 @@ async function atmIvByTenor(symbol: string): Promise<AtmIvResult> {
       const callOpt = (callStrikes[bestStrike] ?? [])[0];
       const putOpt = (putStrikes[bestStrike] ?? [])[0];
       const ivs: number[] = [];
-      if (callOpt && Number.isFinite(callOpt.volatility) && callOpt.volatility > 0) ivs.push(callOpt.volatility);
-      if (putOpt && Number.isFinite(putOpt.volatility) && putOpt.volatility > 0) ivs.push(putOpt.volatility);
+      // Schwab sends -999 when closed: only (0, 500) percent is a real IV.
+      if (callOpt && Number.isFinite(callOpt.volatility) && callOpt.volatility > 0 && callOpt.volatility < 500) ivs.push(callOpt.volatility);
+      if (putOpt && Number.isFinite(putOpt.volatility) && putOpt.volatility > 0 && putOpt.volatility < 500) ivs.push(putOpt.volatility);
       if (!ivs.length) continue;
 
       // Schwab returns IV as a percentage (e.g. 18.5). Normalize to decimal.
       const avg = ivs.reduce((a, b) => a + b, 0) / ivs.length;
-      result[`iv${target}`] = avg / 100;
+      result[`iv${w.target}` as "iv30" | "iv60" | "iv90"] = avg / 100;
+    } catch {
+      // this tenor unavailable (null), the others still try
     }
-
-    return { ...(result as any), spotUsed: spot ?? null };
-  } catch (e) {
-    return { iv30: null, iv60: null, iv90: null, spotUsed: null };
   }
+  return result;
 }
 
 // ----- Combined snapshot + persistence -----
