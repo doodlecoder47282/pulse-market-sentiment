@@ -20,6 +20,7 @@
 // internal implementation details.
 
 import { isTradingDay as calIsTradingDay, sessionCloseMinutes } from "./exchangeCalendar";
+import { internalFetch } from "./internalApi";
 
 type Slot = {
   key: string;
@@ -61,15 +62,12 @@ function isTradingDay(_dow: number, date: string): boolean {
 // Fired set: "YYYY-MM-DD|slotkey" → true. Keeps memory tiny (~4 entries/day).
 const fired = new Set<string>();
 
-const PORT = Number(process.env.PORT ?? 5000);
-const BASE = `http://127.0.0.1:${PORT}`;
 
 async function runSnapshot(): Promise<void> {
   try {
-    const res = await fetch(`${BASE}/api/mm-snapshot`, {
+    const res = await internalFetch("/api/mm-snapshot", {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ symbol: "^GSPC", horizons: ["daily", "weekly"] }),
+      body: { symbol: "^GSPC", horizons: ["daily", "weekly"] },
     });
     if (!res.ok) {
       console.warn(`[mmScheduler] snapshot HTTP ${res.status}`);
@@ -85,7 +83,7 @@ async function runSnapshot(): Promise<void> {
 
 async function runGrade(): Promise<void> {
   try {
-    const res = await fetch(`${BASE}/api/mm-grade`, { method: "POST" });
+    const res = await internalFetch("/api/mm-grade", { method: "POST" });
     if (!res.ok) {
       console.warn(`[mmScheduler] grade HTTP ${res.status}`);
       return;

@@ -22,6 +22,7 @@ import GammaContextBanner from "./GammaContextBanner";
 import OfiHistogram from "./OfiHistogram";
 import { useAlphaNewsMarkers, AlphaNewsPanel, AlphaNewsToggle } from "./AlphaNewsOverlay";
 import TickerOutlookCard from "./TickerOutlookCard";
+import DataStateChip from "./DataStateChip";
 
 type Timeframe = "1D" | "5D" | "1M" | "3M" | "1Y" | "5Y";
 const TIMEFRAMES: Timeframe[] = ["1D", "5D", "1M", "3M", "1Y", "5Y"];
@@ -63,6 +64,12 @@ type OHLCResponse = {
   sessionLow: number | null;
   candles: Candle[];
   asOf: number;
+  /** Schwab price-history provenance (server/ohlc.ts). "empty" = Schwab answered with no bars; "unavailable" = feed/API down. */
+  dataAsOfMs?: number | null;
+  servedFromCache?: boolean;
+  stale?: boolean;
+  dataState?: "ok" | "empty" | "unavailable";
+  dataReason?: string | null;
 };
 
 type GammaResponse = {
@@ -419,10 +426,20 @@ export default function ChartPanel() {
               Failed to load candles. Try another ticker.
             </div>
           ) : (ohlc?.candles?.length ?? 0) === 0 ? (
-            <div className="flex h-[440px] flex-col items-center justify-center gap-1 rounded-lg border border-border/40 bg-muted/10 text-center">
-              <span className="text-sm font-medium text-muted-foreground">tape offline — Schwab feed down</span>
-              <span className="text-xs text-muted-foreground/70">reconnect Schwab to see candles for {activeChart}</span>
-            </div>
+            ohlc?.dataState === "empty" ? (
+              // Schwab answered, but with no bars (closed session, new listing, no history for this window).
+              <div className="flex h-[440px] flex-col items-center justify-center gap-1 rounded-lg border border-border/40 bg-muted/10 text-center" data-testid="chart-empty">
+                <DataStateChip state="no_data" reason={ohlc.dataReason} asOf={ohlc.dataAsOfMs ?? null} source="Schwab" showAge />
+                <span className="text-sm font-medium text-muted-foreground">Schwab returned no bars for {activeChart} in this window</span>
+                <span className="text-xs text-muted-foreground/70">the feed is up; try another interval or timeframe</span>
+              </div>
+            ) : (
+              <div className="flex h-[440px] flex-col items-center justify-center gap-1 rounded-lg border border-border/40 bg-muted/10 text-center" data-testid="chart-feed-down">
+                <DataStateChip state="unavailable" reason={ohlc?.dataReason} source="Schwab" />
+                <span className="text-sm font-medium text-muted-foreground">tape offline — Schwab feed down</span>
+                <span className="text-xs text-muted-foreground/70">reconnect Schwab to see candles for {activeChart}</span>
+              </div>
+            )
           ) : engine === "lightweight" ? (
             <div className="relative">
               <LightweightCandlestick
@@ -461,6 +478,21 @@ export default function ChartPanel() {
               <Stat label="Range" value={`${ohlc.sessionLow?.toFixed(2) ?? "—"} – ${ohlc.sessionHigh?.toFixed(2) ?? "—"}`} />
               <Stat label="Prev close" value={ohlc.prevClose?.toFixed(2) ?? "—"} />
               <Stat label="Updated" value={new Date(ohlc.asOf * 1000).toLocaleTimeString()} />
+              <div className="col-span-2 md:col-span-3 flex flex-wrap items-center gap-2" data-testid="chart-data-state">
+                <DataStateChip
+                  state={ohlc.dataState ?? "ok"}
+                  reason={ohlc.dataReason}
+                  asOf={ohlc.dataAsOfMs ?? null}
+                  stale={ohlc.stale}
+                  source="Schwab bars"
+                  showAge
+                />
+                {ohlc.servedFromCache && (
+                  <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-amber-300" title="Last good Schwab response re-served from the server cache, with its real as-of time">
+                    cached
+                  </span>
+                )}
+              </div>
             </div>
           )}
 

@@ -687,7 +687,7 @@ export default function Dashboard() {
                   {composite.gauges.map((g) => (
                     <div key={g.name} className="rounded-md border border-border bg-card/50 p-3" data-testid={`gauge-${g.name}`}>
                       <div className="flex items-center justify-between">
-                        <div className="text-xs font-medium">{g.name}</div>
+                        <div className="text-xs font-medium">{g.label ?? g.name}</div>
                         <div className={`font-mono text-xs ${scoreColor(g.value)}`}>{Math.round(g.value)}</div>
                       </div>
                       <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">

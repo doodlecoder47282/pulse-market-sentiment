@@ -197,12 +197,16 @@ export default function DepthSkewFlow() {
     () => strikes.reduce((sum, s) => sum + s.putOI, 0),
     [strikes],
   );
-  const pcrOI = totalCallOI > 0 ? totalPutOI / totalCallOI : 0;
+  // No heatseeker rows (feed down, 503, empty chain) is "unavailable", never
+  // 0 OI / 0.00 PCR. An observed total of 0 call OI also has no PCR (null).
+  const heatUnavailable = heat.isError || strikes.length === 0;
+  const pcrOI = !heatUnavailable && totalCallOI > 0 ? totalPutOI / totalCallOI : null;
 
   const atmStrike = useMemo(() => {
     if (spot == null || !strikes.length) return null;
     return strikes.reduce((best, s) =>
       Math.abs(s.strike - spot) < Math.abs(best.strike - spot) ? s : best,
+      strikes[0],
     );
   }, [strikes, spot]);
 
@@ -294,12 +298,12 @@ export default function DepthSkewFlow() {
         <div className="mt-3 flex flex-wrap gap-4 text-[11px]">
           {mode === "depth" && (
             <>
-              <Stat label="Call OI" value={fmtK(totalCallOI)} tone="emerald" />
-              <Stat label="Put OI" value={fmtK(totalPutOI)} tone="rose" />
+              <Stat label="Call OI" value={heatUnavailable ? "unavailable" : fmtK(totalCallOI)} tone={heatUnavailable ? "muted" : "emerald"} />
+              <Stat label="Put OI" value={heatUnavailable ? "unavailable" : fmtK(totalPutOI)} tone={heatUnavailable ? "muted" : "rose"} />
               <Stat
                 label="PCR (OI)"
-                value={pcrOI.toFixed(2)}
-                tone={pcrOI > 1.05 ? "rose" : pcrOI < 0.95 ? "emerald" : "muted"}
+                value={pcrOI == null ? "unavailable" : pcrOI.toFixed(2)}
+                tone={pcrOI == null ? "muted" : pcrOI > 1.05 ? "rose" : pcrOI < 0.95 ? "emerald" : "muted"}
               />
             </>
           )}
@@ -360,7 +364,15 @@ export default function DepthSkewFlow() {
 
       <CardContent>
         <div className="h-80">
-          {mode === "depth" && (
+          {heatUnavailable && mode !== "flow" && (
+            <div
+              className="flex h-full items-center justify-center rounded-md border border-border/60 bg-muted/10 text-xs text-muted-foreground"
+              data-testid="depth-skew-flow-unavailable"
+            >
+              Heatseeker chain unavailable (Schwab did not return strikes). Nothing is shown in place of the data.
+            </div>
+          )}
+          {mode === "depth" && !heatUnavailable && (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
                 data={depthData}
@@ -399,14 +411,15 @@ export default function DepthSkewFlow() {
                   }}
                 />
                 <Legend wrapperStyle={{ fontSize: 11, paddingTop: 4 }} />
-                {spot != null && (
+                {spot != null && depthData.length > 0 && (
                   <ReferenceLine
                     y={
                       depthData.reduce((best, d) =>
                         Math.abs(d.strike - spot) < Math.abs(best.strike - spot)
                           ? d
                           : best,
-                      )?.strike
+                        depthData[0],
+                      ).strike
                     }
                     stroke="hsl(var(--primary))"
                     strokeDasharray="3 3"
@@ -434,7 +447,7 @@ export default function DepthSkewFlow() {
             </ResponsiveContainer>
           )}
 
-          {mode === "skew" && (
+          {mode === "skew" && !heatUnavailable && (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
                 data={skewData}
@@ -464,14 +477,15 @@ export default function DepthSkewFlow() {
                   formatter={(v: number) => `${v.toFixed(2)}%`}
                 />
                 <Legend wrapperStyle={{ fontSize: 11, paddingTop: 4 }} />
-                {spot != null && (
+                {spot != null && skewData.length > 0 && (
                   <ReferenceLine
                     x={
                       skewData.reduce((best, d) =>
                         Math.abs(d.strike - spot) < Math.abs(best.strike - spot)
                           ? d
                           : best,
-                      )?.strike
+                        skewData[0],
+                      ).strike
                     }
                     stroke="hsl(var(--primary))"
                     strokeDasharray="3 3"
@@ -571,7 +585,7 @@ export default function DepthSkewFlow() {
                     }}
                   />
                   <Legend wrapperStyle={{ fontSize: 11, paddingTop: 4 }} />
-                  {spot != null && (
+                  {spot != null && flowData.length > 0 && (
                     <ReferenceLine
                       x={
                         flowData.reduce((best, d) =>
@@ -579,7 +593,8 @@ export default function DepthSkewFlow() {
                           Math.abs(best.strike - spot)
                             ? d
                             : best,
-                        )?.strike
+                          flowData[0],
+                        ).strike
                       }
                       stroke="hsl(var(--primary))"
                       strokeDasharray="3 3"

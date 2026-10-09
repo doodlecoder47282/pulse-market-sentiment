@@ -10,6 +10,7 @@
  */
 
 import { etDate as calEtDate, sessionCloseMinutes as calCloseMin } from "./exchangeCalendar";
+import { callInternal } from "./internalApi";
 
 let _interval: ReturnType<typeof setInterval> | null = null;
 
@@ -37,14 +38,8 @@ async function tick() {
     // Only fill history during pre-open warm-up + RTH (9:00 ET to the close)
     if (mins < 9 * 60 || mins > closeMin) return;
 
-    const port = Number(process.env.PORT ?? 5000);
-    // Fire-and-forget; the route's side-effect records the raw regime into history.
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 4_000);
-    await fetch(`http://127.0.0.1:${port}/api/regime/predict?symbol=^GSPC&horizonMinutes=20`, {
-      signal: ctrl.signal,
-    }).catch(() => {});
-    clearTimeout(timer);
+    // The route's side-effect records the raw regime into history. In-process call (internalApi.ts).
+    await callInternal("/api/regime/predict?symbol=^GSPC&horizonMinutes=20", { timeoutMs: 4_000 });
   } catch (e: any) {
     console.warn("[regimeHistoryTicker] tick error:", e?.message);
   }

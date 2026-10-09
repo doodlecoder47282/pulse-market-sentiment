@@ -9,6 +9,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import DataStateChip from "@/components/DataStateChip";
 import { Activity, TrendingUp, TrendingDown, Target, ChevronDown, ChevronRight, Zap, BarChart3, Archive } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -978,6 +979,16 @@ export default function WhaleFlowPanel() {
             WHALE FLOW
             <EdgeInfo id="whale-flow" />
           </CardTitle>
+          {/* Request-level state only: the flow endpoints send no Schwab asOf/dataState,
+              so no age is claimed; a failed query is "request failed", never an empty list. */}
+          <DataStateChip
+            state={previewQuery.isError || uoaQuery.isError || activeQuery.isError ? "failed"
+              : previewQuery.isLoading ? "loading" : "ok"}
+            reason={previewQuery.isError ? "whale preview request failed"
+              : uoaQuery.isError ? "UOA request failed" : activeQuery.isError ? "follow-up request failed" : null}
+            source="flow scanner"
+            testId="whale-flow-state-chip"
+          />
           <span className="text-muted-foreground text-xs" data-testid="whale-flow-tracking-count">
             {trackingPositions.length} tracking
           </span>

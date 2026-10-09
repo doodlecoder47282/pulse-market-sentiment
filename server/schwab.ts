@@ -83,8 +83,15 @@ async function doRefresh(
     });
     if (!res.ok) {
       const errTxt = await res.text().catch(() => "");
-      console.warn("[schwab] token refresh failed:", res.status, errTxt);
-      _lastRefreshError = { at: now, status: res.status, message: errTxt.slice(0, 200) };
+      // Log and keep the HTTP status and OAuth error code only (RFC 6749 s5.2:
+      // a short token like "invalid_grant"); never the raw response body.
+      let errCode = "unknown";
+      try {
+        const c = JSON.parse(errTxt)?.error;
+        if (typeof c === "string" && /^[a-z_]{1,40}$/.test(c)) errCode = c;
+      } catch { /* non-JSON body: code stays "unknown" */ }
+      console.warn("[schwab] token refresh failed:", res.status, errCode);
+      _lastRefreshError = { at: now, status: res.status, message: errCode };
       if (/invalid_grant/i.test(errTxt)) {
         _refreshDead = true; // refresh token is gone; retrying is pointless until re-auth
       } else {

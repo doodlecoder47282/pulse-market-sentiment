@@ -6,6 +6,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import DataStateChip from "@/components/DataStateChip";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { TrendingUp, Target, Zap, AlertTriangle, RefreshCw, CheckCircle2 } from "lucide-react";
@@ -408,6 +409,8 @@ export default function EdgeStatsPanel() {
             <Badge variant="outline" className="ml-2 text-[10px] border-border/50 bg-card/30">
               {data.windowDays}d window
             </Badge>
+            {/* asOf is when the server computed these stats from its graded-outcome DB (not a market feed). */}
+            <DataStateChip state="ok" asOf={data.asOf} maxAgeMs={5 * 60_000} source="graded DB" className="ml-1" testId="edge-stats-state-chip" />
           </CardTitle>
           <div className="flex flex-wrap items-center gap-1.5">
             {[14, 30, 60, 90].map(d => (

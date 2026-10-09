@@ -314,7 +314,8 @@ export function computeComposite(
   const socialRaw = snap.social.score;
   if (socialRaw != null && Number.isFinite(socialRaw)) {
     gauges.push({
-      name: "Social Sentiment (StockTwits + Reddit)",
+      name: "Social Sentiment (StockTwits + Reddit)", // history key: do not rename
+      label: "Social Sentiment (StockTwits)", // display text
       value: clamp(socialScore(socialRaw)),
       block: "crowd",
       weight: 0.40,

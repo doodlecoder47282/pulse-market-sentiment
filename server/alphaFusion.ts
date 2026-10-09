@@ -3,6 +3,7 @@
 // Pulls Batcave internal state + cross-asset tape + options positioning + ML state + historical analogs.
 // Returns a single JSON blob the prompt builder serializes. NEVER throws — graceful nulls on any failure.
 
+import { internalJson } from "./internalApi";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AlphaNewsItem } from "./alphaEngine";
@@ -168,15 +169,10 @@ async function matchAnalogs(catalystTags: string[], topN = 5): Promise<FusionCon
   return scored;
 }
 
-// Local fetch helper — never throws, returns null on failure.
-async function localFetch(url: string, timeoutMs = 12000): Promise<any | null> {
+// In-process route call (internalApi.ts, no local HTTP) — never throws, returns null on failure.
+async function localFetch(path: string, timeoutMs = 12000): Promise<any | null> {
   try {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), timeoutMs);
-    const r = await fetch(url, { signal: controller.signal });
-    clearTimeout(id);
-    if (!r.ok) return null;
-    return await r.json();
+    return await internalJson(path, { timeoutMs });
   } catch {
     return null;
   }
@@ -214,8 +210,7 @@ async function gatherCrossAsset(base: string, warnings: string[]): Promise<{ row
 
 export async function buildFusionContext(items: AlphaNewsItem[]): Promise<FusionContext> {
   const warnings: string[] = [];
-  const PORT = process.env.PORT ?? "5000";
-  const base = `http://127.0.0.1:${PORT}`;
+  const base = ""; // in-process: paths only (internalApi.ts)
   const now = new Date();
 
   // All parallel — never let one slow source block the others.

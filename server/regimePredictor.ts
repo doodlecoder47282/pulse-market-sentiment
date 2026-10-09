@@ -11,7 +11,8 @@
 //     regime before _appliedRegime switches.
 //
 // What this module adds:
-//   - Forward-looking score: how likely is each candidate regime to be the
+//   - Forward-looking heuristic score (hand-set softmax weights, not calibrated
+//     probabilities): how strongly does each candidate regime score to be the
 //     APPLIED regime in the next ~15-30 minutes? Returns currentRegime,
 //     candidates[] sorted by probability, drivers, confidence.
 //
@@ -148,7 +149,15 @@ export interface RegimePredictorInput {
 
 export interface RegimeCandidate {
   regime: RegimeBucket;
+  /**
+   * Hand-set softmax weight in 0..1 (sums to 1 over candidates). It is a
+   * heuristic score, NOT a calibrated probability: the driver weights are not
+   * fitted to outcomes. Kept under this name for existing readers; the UI
+   * shows `score` (0..100) instead.
+   */
   probability: number;
+  /** probability * 100, rounded to 1 decimal: a heuristic score out of 100, not a likelihood. */
+  score: number;
   isCurrent: boolean;
 }
 
@@ -156,7 +165,11 @@ export interface RegimePredictorOutput {
   currentRegime: RegimeBucket;
   candidates: RegimeCandidate[];
   horizonMinutes: number;
-  confidence: number; // 0..1
+  confidence: number; // 0..1 heuristic (max softmax weight x sample quality), not a calibrated probability
+  /** confidence * 100, 1 decimal: heuristic confidence score out of 100. */
+  confidenceScore: number;
+  /** Always "heuristic_softmax_weight": the scores are hand-set weights, not calibrated probabilities. */
+  scoreKind: "heuristic_softmax_weight";
   /** "warming" when historySamples<5; "ready" when ok; "degraded" when missing audit fields. */
   status: "ready" | "warming" | "degraded";
   /** Plain-English headline for the UI (already synthesized server-side). */
@@ -419,6 +432,7 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   const candidates: RegimeCandidate[] = ALL_REGIMES.map((r) => ({
     regime: r,
     probability: probs[r],
+    score: Math.round(probs[r] * 1000) / 10,
     isCurrent: r === currentRaw,
   })).sort((a, b) => b.probability - a.probability);
 
@@ -439,11 +453,12 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
       return "audit incomplete — predictor running on partial data.";
     }
     if (!top) return "no signal yet.";
+    // Heuristic score out of 100 (hand-set softmax weight), not a probability.
     const pct = Math.round(top.probability * 100);
     if (isTransition) {
-      return `${prettyRegime(top.regime)} likely next (${pct}%) — flipping from ${prettyRegime(currentRaw)} in next ${horizonMinutes}min.`;
+      return `${prettyRegime(top.regime)} scores highest next (heuristic ${pct}/100) — would flip from ${prettyRegime(currentRaw)} within ${horizonMinutes}min.`;
     }
-    return `${prettyRegime(currentRaw)} holds (${pct}%) — no transition expected in next ${horizonMinutes}min.`;
+    return `${prettyRegime(currentRaw)} scores highest (heuristic ${pct}/100) — no transition indicated in next ${horizonMinutes}min.`;
   })();
 
   const driverNotes: string[] = [];
@@ -470,6 +485,8 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
     candidates,
     horizonMinutes,
     confidence,
+    confidenceScore: Math.round(confidence * 1000) / 10,
+    scoreKind: "heuristic_softmax_weight",
     status,
     headline,
     driverNotes,

@@ -4,6 +4,7 @@
 // Goal: one human sentence + 2-3 bullets the user can read in 3 seconds.
 
 import { predictTransition } from "./regimePredictor";
+import { internalJson } from "./internalApi";
 import { getWhaleAlertHistory } from "./whalePersistence";
 
 type Tab =
@@ -35,14 +36,10 @@ interface BuildArgs {
   port: number;
 }
 
-async function safeFetch<T = any>(url: string, ms = 1500): Promise<T | null> {
+async function safeFetch<T = any>(path: string, ms = 1500): Promise<T | null> {
+  // In-process route call (internalApi.ts), no local HTTP.
   try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), ms);
-    const r = await fetch(url, { signal: ctrl.signal as any });
-    clearTimeout(t);
-    if (!r.ok) return null;
-    return (await r.json()) as T;
+    return await internalJson<T>(path, { timeoutMs: ms });
   } catch {
     return null;
   }
@@ -67,7 +64,8 @@ function regimeTone(r: string): "bull" | "bear" | "neutral" | "warning" {
 
 export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
   const { tab, port } = args;
-  const base = `http://127.0.0.1:${port}`;
+  void port; // kept in BuildArgs for callers; routes are called in-process now
+  const base = "";
 
   // Always-on shared context: current regime + transition prediction
   const [regime, models, whaleHist] = await Promise.all([

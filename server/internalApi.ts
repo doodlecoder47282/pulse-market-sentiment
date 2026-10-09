@@ -38,8 +38,30 @@ export const INTERNAL_ROUTES = [
   "/api/heatseeker",
   "/api/quotes",
   "/api/odte-tracker",
+  // Round 3 (R3-4): remaining local-HTTP self-calls moved in-process.
+  "/api/ohlc",
+  "/api/edgelab/briefing",
+  "/api/regime",
+  "/api/exposures",
+  "/api/iv-rv",
+  "/api/skew",
+  "/api/mm-stats",
+  "/api/regime/predict",
+  "/api/gamma-levels-enhanced",
+  "/api/alpha-brief",
+  "/api/mm-snapshot",
+  "/api/mm-grade",
+  "/api/news",
+  "/api/cross-asset",
+  "/api/econ-week",
+  "/api/gamma-curve",
+  "/api/heatseeker/levels",
+  "/api/playbook/daily",
 ] as const;
 export type InternalRoutePath = (typeof INTERNAL_ROUTES)[number];
+
+/** Wait for a handler that returned without responding, when the caller gave no timeout. */
+export const NO_RESPONSE_DEFAULT_MS = 30_000;
 
 type Handler = (req: any, res: any, next?: (err?: unknown) => void) => unknown;
 
@@ -67,6 +89,8 @@ export interface InternalResult<T = any> {
 
 export interface InternalCallOptions {
   timeoutMs?: number;
+  /** How long to wait for a handler that returned without responding, when no timeoutMs is set. Default NO_RESPONSE_DEFAULT_MS. */
+  noResponseMs?: number;
   method?: string;
   body?: unknown;
 }
@@ -162,8 +186,18 @@ export function callInternal<T = any>(pathWithQuery: string, opts: InternalCallO
       .then(() => handler(req, res, next))
       .then(
         () => {
-          // An async handler that returned without responding (express would hang the client).
-          if (!done) queueMicrotask(() => { if (!done && !timer) finish({ ok: false, status: 500, body: null, error: "no_response" }); });
+          // An async handler that returned without responding yet: it may still
+          // respond from a callback (res.json after a timer or stream), so wait
+          // for it. Express would leave the client waiting; here we bound the
+          // wait with the caller's timeout, or NO_RESPONSE_DEFAULT_MS when the
+          // caller set none, so a handler that never responds cannot hang the
+          // engine forever.
+          if (!done && !timer) {
+            timer = setTimeout(
+              () => finish({ ok: false, status: 504, body: null, error: "no_response" }),
+              opts.noResponseMs ?? NO_RESPONSE_DEFAULT_MS,
+            );
+          }
         },
         (e: any) => finish({ ok: false, status: 500, body: { message: e?.message ?? String(e) } as any, error: e?.message ?? String(e) }),
       );
