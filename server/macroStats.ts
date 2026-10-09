@@ -430,13 +430,17 @@ export function ledoitWolf(X: number[][]): ShrunkCovariance | null {
  * toward independence, which would understate sqrt(w' R w) and inflate a
  * composite z.
  */
-export function ledoitWolfConstantCorrelation(X: number[][]): ShrunkCovariance | null {
-  const n = X.length;
-  if (n < 2) return null;
+export function ledoitWolfConstantCorrelation(X: number[][], opts: { k?: 0 | 1 } = {}): ShrunkCovariance | null {
+  const N = X.length;
+  if (N < 2) return null;
+  // Divisor: the paper's estimators use T (k = 0, the default here). The
+  // authors' covCor code demeans and then divides by N - 1 (k = 1);
+  // https://github.com/pald22/covShrinkage/blob/main/covCor.py
+  const n = N - (opts.k ?? 0);
   const p = X[0].length;
   if (p < 2 || X.some((row) => row.length !== p || row.some((v) => !Number.isFinite(v)))) return null;
   const means = new Array(p).fill(0);
-  for (const row of X) for (let j = 0; j < p; j++) means[j] += row[j] / n;
+  for (const row of X) for (let j = 0; j < p; j++) means[j] += row[j] / N;
   const Y = X.map((row) => row.map((v, j) => v - means[j]));
   const S: number[][] = Array.from({ length: p }, () => new Array(p).fill(0));
   for (const y of Y) for (let i = 0; i < p; i++) for (let j = 0; j < p; j++) S[i][j] += (y[i] * y[j]) / n;
@@ -448,10 +452,12 @@ export function ledoitWolfConstantCorrelation(X: number[][]): ShrunkCovariance |
   const F = S.map((row, i) => row.map((v, j) => (i === j ? v : rbar * sd[i] * sd[j])));
   let pi = 0;
   const piDiag = new Array(p).fill(0);
+  // pi_ij = (1/n) sum y_i^2 y_j^2 - s_ij^2 and theta_ii,ij = (1/n) sum y_i^3 y_j
+  // - s_ii s_ij: the covCor form (identical to the paper's centred form when n = N).
   for (let i = 0; i < p; i++) for (let j = 0; j < p; j++) {
     let a = 0;
-    for (const y of Y) a += (y[i] * y[j] - S[i][j]) ** 2;
-    a /= n;
+    for (const y of Y) a += y[i] * y[i] * y[j] * y[j];
+    a = a / n - S[i][j] * S[i][j];
     pi += a;
     if (i === j) piDiag[i] = a;
   }
@@ -460,11 +466,11 @@ export function ledoitWolfConstantCorrelation(X: number[][]): ShrunkCovariance |
     if (i === j) continue;
     let tii = 0, tjj = 0;
     for (const y of Y) {
-      const cij = y[i] * y[j] - S[i][j];
-      tii += (y[i] * y[i] - S[i][i]) * cij;
-      tjj += (y[j] * y[j] - S[j][j]) * cij;
+      tii += y[i] * y[i] * y[i] * y[j];
+      tjj += y[j] * y[j] * y[j] * y[i];
     }
-    tii /= n; tjj /= n;
+    tii = tii / n - S[i][i] * S[i][j];
+    tjj = tjj / n - S[j][j] * S[i][j];
     rho += (rbar / 2) * ((sd[j] / sd[i]) * tii + (sd[i] / sd[j]) * tjj);
   }
   let gamma = 0;
@@ -472,6 +478,51 @@ export function ledoitWolfConstantCorrelation(X: number[][]): ShrunkCovariance |
   const shrinkage = gamma > 0 ? Math.max(0, Math.min(1, (pi - rho) / gamma / n)) : 1;
   const cov = S.map((row, i) => row.map((v, j) => shrinkage * F[i][j] + (1 - shrinkage) * v));
   return { cov, shrinkage, mu: rbar, n, p };
+}
+
+/** Empirical quantile (type 7, linear interpolation, as numpy's default). NaN for an empty sample. */
+export function empiricalQuantile(xs: number[], q: number): number {
+  const s = xs.filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+  if (!s.length) return NaN;
+  const h = (s.length - 1) * Math.min(1, Math.max(0, q));
+  const lo = Math.floor(h);
+  return s[lo] + (h - lo) * ((s[Math.min(lo + 1, s.length - 1)]) - s[lo]);
+}
+
+/**
+ * Close-to-close history of a standardized composite: for each day t after
+ * `volWindow` days, each column's return is z-scored by the sample sd of its
+ * previous `volWindow` returns (the live canary's 20-day vol), passed through
+ * `transform` (e.g. the crude spike rule), and combined as
+ * sum(w z) / sqrt(w' R w). `X` rows are days (oldest first), columns are the
+ * risk-off-signed daily log returns.
+ */
+export function compositeHistory(
+  X: number[][],
+  w: number[],
+  R: number[][],
+  volWindow = 20,
+  transform?: (j: number, z: number) => number,
+): number[] {
+  const out: number[] = [];
+  const p = w.length;
+  for (let t = volWindow; t < X.length; t++) {
+    const z: number[] = [];
+    let ok = true;
+    for (let j = 0; j < p; j++) {
+      const col: number[] = [];
+      for (let k = t - volWindow; k < t; k++) col.push(X[k][j]);
+      const m = col.reduce((a, b) => a + b, 0) / col.length;
+      const sd = Math.sqrt(col.reduce((a, b) => a + (b - m) ** 2, 0) / (col.length - 1));
+      if (!(sd > 0)) { ok = false; break; }
+      const zj = X[t][j] / sd;
+      z.push(transform ? transform(j, zj) : zj);
+    }
+    if (!ok) continue;
+    const c = standardizedComposite(w, z, R);
+    if (c) out.push(c.z);
+  }
+  return out;
 }
 
 /** Covariance to correlation. */

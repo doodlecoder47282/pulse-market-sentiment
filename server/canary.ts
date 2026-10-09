@@ -17,7 +17,7 @@ import { sqlite } from "./storage";
 import { etClock, isRegularSessionOpen, REGULAR_OPEN_MIN, sessionMinutes } from "./exchangeCalendar";
 import { getQuotes, type NormalizedQuote } from "./schwab";
 import { postToDiscord } from "./discord";
-import { ledoitWolfConstantCorrelation, toCorrelation, standardizedComposite } from "./macroStats";
+import { ledoitWolfConstantCorrelation, toCorrelation, standardizedComposite, compositeHistory, empiricalQuantile } from "./macroStats";
 
 // Partial-session variance scaling: intraday returns are compared against a
 // FULL-day σ, which understates |z| ~3.6× at 10:00 ET. Scale σ by the elapsed
@@ -56,13 +56,16 @@ export const CANARY_SYMBOLS = ["FXA", "FXY", "CPER", "GLD", "USO", "UUP", "HYG",
 const Z_WATCH = 1.0;
 const Z_SIGNAL = 1.5;
 const SPY_FLAT_FLOOR = -0.3;   // SPY z above this = "flat-to-up", divergence eligible
-// The composite is a true z-score (finding 5.6): sum(w z) / sqrt(w' R w),
-// N(0,1) under the null. Thresholds are one-sided normal quantiles:
-// 1.645 = 5% (chirping / risk-on confirm), 1.96 = 2.5% (alarm). The old
-// weighted MEAN of correlated z's had sd well below 1, so its 1.25 alarm
-// was roughly z 1.9 at average canary correlation 0.3.
+// The composite is a standardized score (finding 5.6): sum(w z) / sqrt(w' R w).
+// It is N(0,1) only if the canary z's are Gaussian with 20-day vol as the
+// true sd, which daily returns are not (fat tails, vol clustering). So the
+// watch / alarm lines are the composite's OWN empirical one-sided 95th /
+// 97.5th percentiles (and 5th for risk-on), from its close-to-close history
+// over the same daily bars R is estimated on; the normal lines 1.645 / 1.96
+// are reported beside them and used only when the history is too short.
 const COMPOSITE_WATCH_Z = 1.645;
 const COMPOSITE_ALARM_Z = 1.96;
+const THRESH_MIN_HISTORY = 60;
 // Correlation history for R: ~6 months of daily closes.
 const CORR_LOOKBACK_DAYS = 126;
 const CORR_MIN_DAYS = 60;
@@ -125,6 +128,8 @@ export interface CanaryCorrelation {
   R: number[][];
   days: number;
   shrinkage: number;
+  /** risk-off-signed daily log returns, oldest first (vol warm-up + R window) */
+  X: number[][];
 }
 
 /**
@@ -137,15 +142,17 @@ export interface CanaryCorrelation {
  * (R uses the linear signed return); this is disclosed in the method label.
  */
 function canaryCorrelation(): CanaryCorrelation | null {
-  const series = CANARIES.map((c) => canaryCloseByDate(c, CORR_LOOKBACK_DAYS + 1));
+  // R window plus 20 extra days so the composite history has a 20-day vol warm-up.
+  const series = CANARIES.map((c) => canaryCloseByDate(c, CORR_LOOKBACK_DAYS + 21));
   const dateSets = series.map((m) => Array.from(m.keys()).sort());
   if (dateSets.some((d) => d.length < CORR_MIN_DAYS + 1)) return null;
   const common = dateSets[0].filter((d) => series.every((m) => m.has(d)));
   if (common.length < CORR_MIN_DAYS + 1) return null;
-  const X: number[][] = [];
+  const Xall: number[][] = [];
   for (let i = 1; i < common.length; i++) {
-    X.push(CANARIES.map((c, j) => c.riskOffSign * Math.log(series[j].get(common[i])! / series[j].get(common[i - 1])!)));
+    Xall.push(CANARIES.map((c, j) => c.riskOffSign * Math.log(series[j].get(common[i])! / series[j].get(common[i - 1])!)));
   }
+  const X = Xall.slice(-CORR_LOOKBACK_DAYS);
   const p = CANARIES.length;
   const sds = Array.from({ length: p }, (_, j) => {
     const col = X.map((r) => r[j]);
@@ -155,7 +162,7 @@ function canaryCorrelation(): CanaryCorrelation | null {
   if (sds.some((v) => !(v > 0))) return null;
   const lw = ledoitWolfConstantCorrelation(X.map((r) => r.map((v, j) => v / sds[j])));
   if (!lw) return null;
-  return { ids: CANARIES.map((c) => c.id), R: toCorrelation(lw.cov), days: X.length, shrinkage: lw.shrinkage };
+  return { ids: CANARIES.map((c) => c.id), R: toCorrelation(lw.cov), days: X.length, shrinkage: lw.shrinkage, X: Xall };
 }
 
 // ── snapshot ────────────────────────────────────────────────────────────────
@@ -182,6 +189,16 @@ export interface CanarySnapshot {
   compositeWeightedMean: number | null; // the old weighted mean, for reference (not a z)
   compositeEffectiveN: number | null;   // (sum w)^2 / (w' R w): independent canaries' worth
   correlation: { days: number; shrinkage: number } | null;
+  /** watch / alarm / risk-on lines actually used, with the normal lines beside them */
+  thresholds: {
+    method: "empirical" | "normal";
+    watch: number; alarm: number; riskOn: number;
+    normalWatch: number; normalAlarm: number;
+    historyDays: number;
+    /** sd of the composite's daily history (1 if it were a true z) */
+    realizedSd: number | null;
+    note: string;
+  };
   read: "confirming_risk_on" | "quiet" | "canaries_chirping" | "divergence" | "alarm" | "no_data";
   headline: string;
   canaries: CanaryRow[];
@@ -266,6 +283,31 @@ export async function buildCanarySnapshot(): Promise<CanarySnapshot> {
   let compositeEffectiveN: number | null = null;
   let compositeMethod = "insufficient canaries (need 3 with data)";
   const corr = canaryCorrelation();
+  // Empirical thresholds from the composite's own close-to-close history.
+  let thresholds: CanarySnapshot["thresholds"] = {
+    method: "normal", watch: COMPOSITE_WATCH_Z, alarm: COMPOSITE_ALARM_Z, riskOn: -COMPOSITE_WATCH_Z,
+    normalWatch: COMPOSITE_WATCH_Z, normalAlarm: COMPOSITE_ALARM_Z, historyDays: 0, realizedSd: null,
+    note: "composite history unavailable: normal one-sided lines used",
+  };
+  if (corr) {
+    const crudeIdx = CANARIES.findIndex((c) => c.id === "crude");
+    const hist = compositeHistory(corr.X, CANARIES.map((c) => c.weight), corr.R, 20,
+      // crude: a raw +2 sigma spike (risk-off signed z <= -2) is also risk-off, as live
+      (j, z) => (j === crudeIdx && -z >= 2 ? Math.abs(z) : z));
+    const m = hist.reduce((a, b) => a + b, 0) / Math.max(1, hist.length);
+    const sd = hist.length > 1 ? Math.sqrt(hist.reduce((a, b) => a + (b - m) ** 2, 0) / (hist.length - 1)) : null;
+    if (hist.length >= THRESH_MIN_HISTORY) {
+      thresholds = {
+        method: "empirical", watch: +empiricalQuantile(hist, 0.95).toFixed(2), alarm: +empiricalQuantile(hist, 0.975).toFixed(2),
+        riskOn: +empiricalQuantile(hist, 0.05).toFixed(2), normalWatch: COMPOSITE_WATCH_Z, normalAlarm: COMPOSITE_ALARM_Z,
+        historyDays: hist.length, realizedSd: sd != null ? +sd.toFixed(2) : null,
+        note: `empirical 95th / 97.5th / 5th percentiles of ${hist.length} daily close-to-close composites (in-sample: R from the same window); normal lines ${COMPOSITE_WATCH_Z} / ${COMPOSITE_ALARM_Z} for reference`,
+      };
+    } else {
+      thresholds = { ...thresholds, historyDays: hist.length, realizedSd: sd != null ? +sd.toFixed(2) : null,
+        note: `only ${hist.length} days of composite history (need ${THRESH_MIN_HISTORY}): normal one-sided lines used` };
+    }
+  }
   if (valid.length >= 3) {
     const idx = valid.map(r => CANARIES.findIndex(c => c.id === r.id));
     // With no usable history, assume perfect correlation (R = 1 1'): the
@@ -280,7 +322,7 @@ export async function buildCanarySnapshot(): Promise<CanarySnapshot> {
       compositeWeightedMean = +res.weightedMean.toFixed(2);
       compositeEffectiveN = +res.effectiveN.toFixed(2);
       compositeMethod = corr
-        ? `z-score: sum(w z) / sqrt(w' R w), R = Ledoit-Wolf (constant-correlation target) shrunk correlation of ${corr.days} days of risk-off-signed daily returns (shrinkage ${corr.shrinkage.toFixed(2)}); crude spike rule not in R`
+        ? `standardized score: sum(w z) / sqrt(w' R w) (thresholds from its own history, not a normal table), R = Ledoit-Wolf (constant-correlation target) shrunk correlation of ${corr.days} days of risk-off-signed daily returns (shrinkage ${corr.shrinkage.toFixed(2)}); crude spike rule not in R`
         : "weighted mean (correlation history unavailable: R assumed all ones, conservative), not a calibrated z";
     }
   }
@@ -291,21 +333,21 @@ export async function buildCanarySnapshot(): Promise<CanarySnapshot> {
   let read: CanarySnapshot["read"] = "no_data";
   let headline = "insufficient data — canary bars still accumulating";
   if (composite != null) {
-    if (composite >= COMPOSITE_ALARM_Z && offs.length >= 2 && spyZ != null && spyZ >= SPY_FLAT_FLOOR) {
+    if (composite >= thresholds.alarm && offs.length >= 2 && spyZ != null && spyZ >= SPY_FLAT_FLOOR) {
       read = "alarm";
       headline = `ALARM — ${offs.length} canaries risk-off (${offs.map(r => r.id).join(", ")}) while SPX holds. Equity tape is the last to know.`;
     } else if (divergers.length >= 1) {
       read = "divergence";
       headline = `divergence — ${divergers.map(r => r.label).join(" + ")} signaling risk-off against a flat/up SPX. Watch, don't chase.`;
-    } else if (offs.length >= 1 || composite >= COMPOSITE_WATCH_Z) {
+    } else if (offs.length >= 1 || composite >= thresholds.watch) {
       read = "canaries_chirping";
       headline = `chirping — risk-off pressure building (composite z ${composite}) but SPX confirming lower too. Aligned, not divergent.`;
-    } else if (composite <= -COMPOSITE_WATCH_Z) {
+    } else if (composite <= thresholds.riskOn) {
       read = "confirming_risk_on";
       headline = `risk-on confirmed — canaries tailwind (composite z ${composite}). Cross-asset agrees with the equity tape.`;
     } else {
       read = "quiet";
-      headline = `quiet — composite z ${composite}, inside the one-sided 5% line (±${COMPOSITE_WATCH_Z}). No cross-asset edge today.`;
+      headline = `quiet — composite ${composite}, inside its ${thresholds.method} 5% lines (${thresholds.riskOn} / +${thresholds.watch}). No cross-asset edge today.`;
     }
   }
 
@@ -315,6 +357,7 @@ export async function buildCanarySnapshot(): Promise<CanarySnapshot> {
     spy: { d1Pct: spyRet != null ? +(spyRet * 100).toFixed(2) : null, z: spyZ != null ? +spyZ.toFixed(2) : null },
     composite, compositeMethod, compositeWeightedMean, compositeEffectiveN,
     correlation: corr ? { days: corr.days, shrinkage: +corr.shrinkage.toFixed(3) } : null,
+    thresholds,
     read, headline, canaries: rows,
   };
   snapCache = { at: Date.now(), data };

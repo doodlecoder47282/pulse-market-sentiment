@@ -569,3 +569,39 @@ test("regime block length accounts for volatility clustering (GARCH): max of r a
   assert.ok(bA > bR, `|r| block ${bA} vs r block ${bR}`);
   assert.equal(regimeZTest(r, 20, { reps: 99, seed: 1 })!.blockLength, Math.max(bR, bA));
 });
+
+test("Ledoit-Wolf constant-correlation: reference value on the review's 80x6 fixture (paper divisor T and covCor's N-1)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const X = JSON.parse(readFileSync(new URL("./fixtures/lw_constant_correlation_X.json", import.meta.url), "utf8")) as number[][];
+  assert.equal(X.length, 80);
+  // Divisor T (Ledoit & Wolf 2004 formulas; covCor with k = 0 after demeaning): 0.16363055 (review reference).
+  assert.ok(Math.abs(ledoitWolfConstantCorrelation(X)!.shrinkage - 0.16363055267710927) < 1e-10);
+  // The authors' covCor.py default (demean, n = N - 1): 0.16347232 (numpy port of
+  // https://github.com/pald22/covShrinkage/blob/main/covCor.py on the same fixture).
+  assert.ok(Math.abs(ledoitWolfConstantCorrelation(X, { k: 1 })!.shrinkage - 0.163472318283661) < 1e-10);
+});
+
+test("canary thresholds: composite close-to-close history and empirical percentiles (known answers)", async () => {
+  const { compositeHistory, empiricalQuantile } = await import("../../server/macroStats");
+  // type-7 quantile: [1..5], q = 0.95 -> 1 + 0.95 * 4 = 4.8
+  assert.equal(empiricalQuantile([5, 1, 3, 2, 4], 0.95), 4.8);
+  assert.equal(empiricalQuantile([1, 2, 3, 4], 0.5), 2.5);
+  // One column, window 2: day 2 return 3 over sd of [1, -1] (= sqrt(2)) -> z = 3 / sqrt(2);
+  // with R = [[1]] and w = [1] the composite equals z.
+  const h = compositeHistory([[1], [-1], [3]], [1], [[1]], 2);
+  assert.equal(h.length, 1);
+  assert.ok(Math.abs(h[0] - 3 / Math.SQRT2) < 1e-12);
+  // transform hook (crude spike rule) is applied per column before combining
+  const t = compositeHistory([[1], [-1], [-3]], [1], [[1]], 2, (_j, z) => (-z >= 2 ? Math.abs(z) : z));
+  assert.ok(Math.abs(t[0] - 3 / Math.SQRT2) < 1e-12);
+  // Fat tails: Student-t(3) canaries have empirical 97.5% lines different from 1.96,
+  // which is why the alarm uses the composite's own history.
+  const rand = mulberry32(8);
+  const tdraw = () => { const z = gauss(rand); let c = 0; for (let k = 0; k < 3; k++) c += gauss(rand) ** 2; return z / Math.sqrt(c / 3); };
+  const X = Array.from({ length: 600 }, () => [tdraw(), tdraw(), tdraw()]);
+  const I3 = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  const hist = compositeHistory(X, [1, 1, 1], I3, 20);
+  const m = hist.reduce((a, b) => a + b, 0) / hist.length;
+  const sd = Math.sqrt(hist.reduce((a, b) => a + (b - m) ** 2, 0) / (hist.length - 1));
+  assert.ok(sd > 1.05, `realized sd ${sd}`); // rolling-vol z of t(3) returns is wider than N(0,1)
+});
