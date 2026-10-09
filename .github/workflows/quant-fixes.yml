@@ -159,6 +159,49 @@ jobs:
           fi
           [ "$fail" -eq 0 ] && echo "PASS no file gained tsc errors and no new file-less errors"
           exit $fail
+      - name: Screenshot every tab (no Schwab login in CI)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p rep/shots
+          npx --yes playwright@1.48.2 install --with-deps chromium >/dev/null 2>&1
+          NODE_ENV=production PORT=5070 HOST=127.0.0.1 node dist/index.cjs > rep/server-shot.log 2>&1 &
+          for i in $(seq 1 90); do curl -fsS http://127.0.0.1:5070/api/health >/dev/null 2>&1 && break; sleep 1; done
+          cat > shot.mjs <<'JS'
+          import { chromium } from "playwright";
+          const tabs = ["signals","chart","models","heatseeker","tradedesk","regime","cosmos","news","takefive","edgelab","crypto"];
+          const b = await chromium.launch();
+          async function open(vp) {
+            const p = await b.newPage({ viewport: vp });
+            const errors = [];
+            p.on("pageerror", (e) => errors.push(e.message));
+            await p.goto("http://127.0.0.1:5070/#/", { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+            await p.waitForTimeout(4000);
+            await p.keyboard.press("Enter").catch(() => {});
+            const splash = p.getByRole("button", { name: /print/i });
+            if (await splash.count()) await splash.first().click({ timeout: 3000 }).catch(() => {});
+            await p.locator('[data-testid="button-premarket-acknowledge"]').click({ timeout: 5000 }).catch(() => {});
+            await p.waitForTimeout(6000);
+            return { p, errors };
+          }
+          const { p, errors } = await open({ width: 1440, height: 900 });
+          for (const [i, t] of tabs.entries()) {
+            const btn = p.locator(`[data-testid="tab-${t}"]`);
+            if (!(await btn.count())) { console.log("missing tab", t); continue; }
+            await btn.first().click({ timeout: 5000 }).catch((e) => console.log(t, e.message.split("\n")[0]));
+            await p.waitForTimeout(7000);
+            await p.screenshot({ path: `rep/shots/${String(i + 1).padStart(2, "0")}-${t}.png`, fullPage: true });
+            console.log("shot", t);
+          }
+          console.log("desktop page errors:", errors.length, errors.slice(0, 5));
+          const m = await open({ width: 393, height: 852 });
+          await m.p.screenshot({ path: "rep/shots/12-signals-iphone.png", fullPage: false });
+          console.log("mobile page errors:", m.errors.length, m.errors.slice(0, 5));
+          await b.close();
+          JS
+          npm i --no-save playwright@1.48.2 >/dev/null 2>&1 && node shot.mjs 2>&1 | tee rep/shots/shot.log
+          pkill -f "dist/index.cjs" || true
       - name: Publish report to ci-reports-quant branch
         if: always()
         run: |
