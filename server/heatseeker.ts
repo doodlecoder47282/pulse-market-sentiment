@@ -14,7 +14,7 @@
 
 import type { OptionChainResponse } from "./schwab";
 import { contractYears, ivForClock } from "./chainClock";
-import { contractExposure } from "./greekExposure";
+import { contractExposure, deltaRQ } from "./greekExposure";
 import {
   bsGamma, cumulativeStrikeFlip, dealerConventionSensitivity, dividendYieldFor, flipInputs, FLIP_RATE,
   repricedFlipFromRows, rowsFromChain, type DealerSensitivity, type FlipInputs,
@@ -32,7 +32,12 @@ export interface HeatseekerStrike {
   netGex: number;             // $ / 1% move
   callGex: number;            // call-side GEX (always >= 0)
   putGex: number;             // put-side GEX (always >= 0, contributes negatively to net)
-  netDex: number;             // $ delta exposure
+  /** $ delta exposure. null = no contract at this strike has a usable delta
+   *  (missing, not zero); a strike with some deltas missing sums the known ones
+   *  and counts the rest in dexMissingContracts. */
+  netDex: number | null;
+  /** Contracts with open interest at this strike that have no usable delta. */
+  dexMissingContracts?: number;
   netVanna: number;           // $ / 1% vol move
   netCharm: number;           // $ / day
   // Raw OI & volume
@@ -93,6 +98,10 @@ export interface HeatseekerResult {
     netGexWindow?: number | null;
     netGexScope?: "full-expiry-repriced";
     netDex: number | null;
+    /** "ok": every contract with OI has a delta; "partial": some missing (sum
+     *  of the known ones, see dexCoverage); "unavailable": none (netDex null). */
+    dexState?: "ok" | "partial" | "unavailable";
+    dexCoverage?: { contractsWithDelta: number; contractsMissingDelta: number; oiMissingShare: number | null; basis: string };
     netVanna: number | null;
     netCharm: number | null;
     callWall: number | null;  // max positive GEX strike above spot
@@ -236,7 +245,8 @@ export function buildHeatseeker(
         netGex: 0,
         callGex: 0,
         putGex: 0,
-        netDex: 0,
+        netDex: null,
+        dexMissingContracts: 0,
         netVanna: 0,
         netCharm: 0,
         callOI: 0,
@@ -266,7 +276,6 @@ export function buildHeatseeker(
       for (const c of contracts) {
         const T = contractYears(expKey, c, nowMs);
         if (!(T > 0)) continue; // settled: no risk left
-        const delta = Number(c.delta) || 0;
         const vega = Number(c.vega) || 0;
         const theta = Number(c.theta) || 0;
         const oi = Number(c.openInterest) || 0;
@@ -303,7 +312,21 @@ export function buildHeatseeker(
         const x = ivDec > 0 ? contractExposure({ spot, strike, sigma: ivDec, T, contracts: oi, multiplier: mult, gamma: g, r, q, type: side === "call" ? "C" : "P" }) : null;
         const gex = x ? x.gexPerPct : 0;
 
-        const dexContrib = Math.abs(delta) <= 1 ? delta * oi * mult * spot : 0; // $ delta
+        // $ delta (round 3, N2-2): Black-Scholes delta on OUR clock and sigma
+        // (same basis as GEX, vanna and charm); Schwab's delta only when no
+        // sigma exists and it is a real value in [-1, 1] (not absent, not the
+        // -999 sentinel). Neither -> MISSING (counted), never a zero delta.
+        const typeCP = side === "call" ? "C" : "P";
+        const vendorDelta = c.delta != null && c.delta !== "" ? Number(c.delta) : NaN;
+        const delta: number | null = ivDec > 0
+          ? deltaRQ(spot, strike, ivDec, T, r, q, typeCP)
+          : Number.isFinite(vendorDelta) && Math.abs(vendorDelta) <= 1 ? vendorDelta : null;
+        const dexContrib: number | null = delta != null && Number.isFinite(delta) ? delta * oi * mult * spot : null;
+        if (oi > 0) {
+          if (dexContrib == null) { dexMissing.n++; dexMissing.oi += oi; s.dexMissingContracts = (s.dexMissingContracts ?? 0) + 1; }
+          else dexMissing.known++;
+        }
+        dexMissing.oiTotal += oi;
         const vannaContrib = x ? x.vannaPerVolPt : 0; // $ per +1 vol point
         const charmContrib = x ? x.charmPerDay : 0;   // $ per calendar day (or to settlement)
 
@@ -312,7 +335,7 @@ export function buildHeatseeker(
           s.callVol += vol;
           s.callGex += gex;
           s.netGex += gex;
-          s.netDex += dexContrib;
+          if (dexContrib != null) s.netDex = (s.netDex ?? 0) + dexContrib;
           s.netVanna += vannaContrib;
           s.netCharm += charmContrib;
           if (s.callIV === null && iv > 0) s.callIV = ivDec;
@@ -322,7 +345,7 @@ export function buildHeatseeker(
           s.putGex += gex;
           // Puts contribute negatively to dealer net gamma (GEXbot convention).
           s.netGex -= gex;
-          s.netDex -= dexContrib;
+          if (dexContrib != null) s.netDex = (s.netDex ?? 0) - dexContrib;
           s.netVanna -= vannaContrib;
           s.netCharm -= charmContrib;
           if (s.putIV === null && iv > 0) s.putIV = ivDec;
@@ -331,6 +354,7 @@ export function buildHeatseeker(
     }
   }
 
+  const dexMissing = { n: 0, oi: 0, known: 0, oiTotal: 0 };
   processSide(chain.callExpDateMap || {}, "call");
   processSide(chain.putExpDateMap || {}, "put");
 
@@ -389,8 +413,17 @@ export function buildHeatseeker(
     netGex: priced ? netGexAll : null,
     netGexWindow: priced ? strikes.reduce((a, s) => a + s.netGex, 0) : null,
     netGexScope: "full-expiry-repriced" as const,
-    // Empty display window: missing (null), not a zero total.
-    netDex: strikes.length ? strikes.reduce((a, s) => a + s.netDex, 0) : null,
+    // Empty display window, or no delta anywhere: missing (null), not a zero total.
+    netDex: strikes.some((s) => s.netDex != null) ? strikes.reduce((a, s) => a + (s.netDex ?? 0), 0) : null,
+    dexState: (dexMissing.known === 0 && dexMissing.n > 0) || !strikes.some((s) => s.netDex != null)
+      ? "unavailable" as const
+      : dexMissing.n > 0 ? "partial" as const : "ok" as const,
+    dexCoverage: {
+      contractsWithDelta: dexMissing.known,
+      contractsMissingDelta: dexMissing.n,
+      oiMissingShare: dexMissing.oiTotal > 0 ? dexMissing.oi / dexMissing.oiTotal : null,
+      basis: "Black-Scholes delta on the shared clock (vendor delta only without a sigma); expiry-wide counts",
+    },
     netVanna: strikes.length ? strikes.reduce((a, s) => a + s.netVanna, 0) : null,
     netCharm: strikes.length ? strikes.reduce((a, s) => a + s.netCharm, 0) : null,
     callWall,

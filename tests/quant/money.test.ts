@@ -219,7 +219,12 @@ test("heatseeker: a -999 vendor gamma contributes $0 GEX, a valid one gamma x OI
   near(s6750.netGex, g * 500 * 100 * 6700 * 6700 * 0.01, 1e-3, "valid GEX $/1%");
   near(h.totals.netGex, h.totals.gexAtSpotRepriced!, 1e-3, "Net GEX = re-priced GEX at spot");
   assert.equal(s6800.netGex, 0);
-  assert.equal(s6800.netDex, 0);
+  // Round 3 (N2-2): the sentinel row has no sigma and no valid vendor delta,
+  // so its DEX is MISSING (null), counted, never a zero delta.
+  assert.equal(s6800.netDex, null);
+  assert.equal(s6800.dexMissingContracts, 1);
+  assert.equal(h.totals.dexState, "partial");
+  assert.equal(h.totals.dexCoverage?.contractsMissingDelta, 1);
   assert.equal(h.totals.callWall, 6750);
 });
 
@@ -344,8 +349,17 @@ test("gexByStrikeFromChain: missing last price is no_spot (old: spot = 1); with 
   assert.equal(none.callWall, null);
   const g = gexByStrikeFromChain({ ...maps, underlying: { last: 6700 } }, nowMs);
   assert.equal(g.dataState, "ok");
-  near(g.profile.find((p) => p.strike === 6750)!.netGex, 44_890_000, 1e-3, "call GEX");
-  near(g.profile.find((p) => p.strike === 6600)!.netGex, -44_890_000, 1e-3, "put GEX");
+  // Round 3 (N2-2): per-strike GEX and walls use the flip's re-priced gamma
+  // (Black-Scholes, shared clock, r 5%, q 1.3%, vendor IV since T > 3 days),
+  // not the vendor gamma: GEX = gamma_BS x OI x 100 x S^2 x 0.01.
+  const T = yearsToExpiry("2026-10-16", nowMs, "PM");
+  const gBs = (K: number, sig: number) => {
+    const d1 = (Math.log(6700 / K) + (0.05 - 0.013 + 0.5 * sig * sig) * T) / (sig * Math.sqrt(T));
+    return Math.exp(-0.013 * T) * Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI) / (6700 * sig * Math.sqrt(T));
+  };
+  near(g.profile.find((p) => p.strike === 6750)!.netGex, gBs(6750, 0.15) * 500 * 100 * 6700 * 6700 * 0.01, 1e-3, "call GEX");
+  near(g.profile.find((p) => p.strike === 6600)!.netGex, -gBs(6600, 0.16) * 1000 * 100 * 6700 * 6700 * 0.01, 1e-3, "put GEX");
+  assert.equal(g.gammaBasis, "repriced-bs");
   assert.equal(g.callWall, 6750);
   assert.equal(g.putWall, 6600);
 });
