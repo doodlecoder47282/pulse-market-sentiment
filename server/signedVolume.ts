@@ -139,3 +139,164 @@ export function bulkVolumeClassify(candles: MinuteCandleLike[]): BvcResult {
     barsMissingVolume,
   };
 }
+
+// ─── Trade-level signing on Schwab LEVELONE updates ─────────────────────────
+//
+// When the Schwab Streamer is live, every LEVELONE_EQUITIES update for SPY is
+// kept (server/streamStore.ts). A trade is inferred when the session
+// cumulative volume rises between two updates; its size is the volume delta
+// and its price the update's last price. LEVELONE is conflated, so one
+// "trade block" can be several prints at different prices: this is closer to
+// trade level than 1-minute bars but still not a time-and-sales tape (Schwab
+// documents none).
+//
+// Each block is signed by the Lee-Ready algorithm:
+//   Lee & Ready (1991), "Inferring Trade Direction from Intraday Data",
+//   Journal of Finance 46(2), 733-746,
+//   https://doi.org/10.1111/j.1540-6261.1991.tb02683.x
+//   quote rule: price > prevailing midquote -> buy, < mid -> sell;
+//   at the mid: tick rule (vs the previous trade price; zero tick keeps the
+//   last non-zero sign).
+// Prevailing quote = the bid/ask held BEFORE the update that carried the
+// trade (the update's own bid/ask may already be post-trade). Lee-Ready's
+// 5-second quote lag was for 1980s reporting delays; with millisecond
+// timestamps no lag is used (Holden & Jacobsen 2014, "Liquidity Measurement
+// Problems in Fast, Competitive Markets", Journal of Finance 69(4),
+// https://doi.org/10.1111/jofi.12127; Bessembinder 2003, J. Financial Markets 6(3)).
+
+export interface L1Update {
+  /** Schwab time, epoch ms. */
+  t: number;
+  last: number | null;
+  bid: number | null;
+  ask: number | null;
+  /** Session cumulative volume after the update. */
+  cumVolume: number | null;
+}
+
+export interface L1TradeBlock {
+  t: number;
+  price: number;
+  size: number;
+  sign: 1 | -1 | 0;
+  rule: "quote" | "tick" | "none";
+}
+
+export interface L1Classification {
+  trades: L1TradeBlock[];
+  quoteRule: number;
+  tickRule: number;
+  /** Blocks with no usable quote and no prior trade: sign 0, volume still counted as unsigned. */
+  unsigned: number;
+  /** Times the cumulative volume fell (new session or correction): baseline reset, no trade inferred. */
+  volumeResets: number;
+}
+
+const validQuote = (bid: number | null, ask: number | null): boolean =>
+  bid != null && ask != null && Number.isFinite(bid) && Number.isFinite(ask) && bid > 0 && ask > 0 && ask >= bid;
+
+/** Lee-Ready classification of LEVELONE trade blocks (pure, ordered input). */
+export function classifyL1Trades(updates: L1Update[]): L1Classification {
+  const trades: L1TradeBlock[] = [];
+  let quoteRule = 0, tickRule = 0, unsigned = 0, volumeResets = 0;
+  let prevBid: number | null = null;
+  let prevAsk: number | null = null;
+  let prevVol: number | null = null;
+  let lastTradePrice: number | null = null;
+  let lastTickSign: 1 | -1 | 0 = 0;
+  for (let i = 0; i < updates.length; i++) {
+    const u = updates[i];
+    const vol = u.cumVolume != null && Number.isFinite(u.cumVolume) ? u.cumVolume : null;
+    if (i > 0 && vol != null && prevVol != null) {
+      if (vol < prevVol) {
+        volumeResets++;
+      } else if (vol > prevVol && u.last != null && Number.isFinite(u.last) && u.last > 0) {
+        const price = u.last;
+        const size = vol - prevVol;
+        let sign: 1 | -1 | 0 = 0;
+        let rule: L1TradeBlock["rule"] = "none";
+        if (validQuote(prevBid, prevAsk)) {
+          const mid = ((prevBid as number) + (prevAsk as number)) / 2;
+          // Binary floating point: (100.01 + 100.03) / 2 is not exactly 100.02,
+          // so "at the mid" is decided within a relative 1e-9.
+          const eps = 1e-9 * Math.max(1, Math.abs(mid));
+          if (price > mid + eps) { sign = 1; rule = "quote"; }
+          else if (price < mid - eps) { sign = -1; rule = "quote"; }
+        }
+        if (rule === "none" && lastTradePrice != null) {
+          if (price > lastTradePrice) sign = 1;
+          else if (price < lastTradePrice) sign = -1;
+          else sign = lastTickSign;
+          rule = sign === 0 ? "none" : "tick";
+        }
+        if (rule === "quote") quoteRule++;
+        else if (rule === "tick") tickRule++;
+        else unsigned++;
+        if (lastTradePrice != null && price !== lastTradePrice) lastTickSign = price > lastTradePrice ? 1 : -1;
+        lastTradePrice = price;
+        trades.push({ t: u.t, price, size, sign, rule });
+      }
+    }
+    if (vol != null) prevVol = vol;
+    if (u.bid != null) prevBid = u.bid;
+    if (u.ask != null) prevAsk = u.ask;
+  }
+  return { trades, quoteRule, tickRule, unsigned, volumeResets };
+}
+
+/**
+ * Signed volume per complete minute from classified trade blocks, for minutes
+ * starting at or after fromMs (rounded up to a minute) and ending at or before
+ * toMs. A minute with no trade block is volumeMissing (the stream cannot tell
+ * a quiet minute from a stalled symbol), never a 0-volume print.
+ */
+export function signedVolumeBarsFromTrades(trades: L1TradeBlock[], fromMs: number, toMs: number): SignedTickBar[] {
+  const start = Math.ceil(fromMs / 60_000) * 60_000;
+  const end = Math.floor(toMs / 60_000) * 60_000; // first minute NOT complete
+  const bars: SignedTickBar[] = [];
+  if (end <= start) return bars;
+  const byMin = new Map<number, { vol: number; signed: number; close: number }>();
+  for (const k of trades) {
+    const m = Math.floor(k.t / 60_000) * 60_000;
+    if (m < start || m >= end) continue;
+    const b = byMin.get(m) ?? { vol: 0, signed: 0, close: k.price };
+    b.vol += k.size;
+    b.signed += k.sign * k.size;
+    b.close = k.price;
+    byMin.set(m, b);
+  }
+  let cumulative = 0;
+  let lastClose: number | null = null;
+  for (const k of trades) {
+    if (k.t < start) lastClose = k.price;
+  }
+  for (let m = start; m < end; m += 60_000) {
+    const b = byMin.get(m);
+    if (!b) {
+      if (lastClose != null) bars.push({ ts: m, close: lastClose, volume: 0, direction: 0, signedVolume: 0, cumulative, volumeMissing: true });
+      continue;
+    }
+    cumulative += b.signed;
+    lastClose = b.close;
+    const direction: 1 | -1 | 0 = b.signed > 0 ? 1 : b.signed < 0 ? -1 : 0;
+    bars.push({ ts: m, close: b.close, volume: b.vol, direction, signedVolume: b.signed, cumulative });
+  }
+  return bars;
+}
+
+/** Bar-level tick-rule bars before `switchMs`, trade-level bars from it; cumulative recomputed across the join. */
+export function mergeSignedBars(barRule: SignedTickBar[], tradeLevel: SignedTickBar[], switchMs: number): SignedTickBar[] {
+  const out: SignedTickBar[] = [];
+  let cumulative = 0;
+  for (const b of barRule) {
+    if (b.ts >= switchMs) break;
+    cumulative += b.signedVolume;
+    out.push({ ...b, cumulative });
+  }
+  for (const b of tradeLevel) {
+    if (b.ts < switchMs) continue;
+    cumulative += b.signedVolume;
+    out.push({ ...b, cumulative });
+  }
+  return out;
+}
