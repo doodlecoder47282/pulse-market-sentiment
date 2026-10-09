@@ -235,7 +235,8 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
     if (c.read === "alarm") { canaryPts = 12; canaryNote = "cross-asset ALARM — credit/FX/commodities are all flashing risk-off while equities lag. the floor is being tested."; }
     else if (c.read === "divergence") { canaryPts = 8; canaryNote = "canary divergence — cross-asset stress the equity tape isn't showing yet. early warning."; }
     else if (c.read === "canaries_chirping") { canaryPts = 4; canaryNote = "some cross-asset pressure building, not confirmed."; }
-  } catch { /* quiet */ }
+    else if (c.read === "no_data") { degraded = true; canaryNote = "cross-asset canaries unavailable (too few quotes/bars) — not scored, not a quiet read."; }
+  } catch { degraded = true; canaryNote = "cross-asset canaries unavailable (fetch failed) — not scored, not a quiet read."; }
   drivers.push({ key: "canary", label: "cross-asset canaries", points: canaryPts, max: 12, note: canaryNote });
 
   // 6. Whale conflux
