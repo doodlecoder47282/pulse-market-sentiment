@@ -1183,21 +1183,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/ofi", async (_req, res) => {
     try {
       const trend = await computeOfiTrend();
-      // Trim payload — client only needs last 60 bars for the histogram
-      const tail = trend.bars.slice(-60).map(b => ({
-        ts: b.ts,
-        signedVolume: b.signedVolume,
-        cumulative: b.cumulative,
-      }));
-      res.json({
-        bars: tail,
-        cumulativeNow: trend.cumulativeNow,
-        slope15m: trend.slope15m,
-        slope5m: trend.slope5m,
-        trend: trend.trend,
-        acceleration: trend.acceleration,
-        capturedAt: Math.floor(Date.now() / 1000),
-      });
+      // Last 60 bars plus dataState, reason and per-bar volumeMissing
+      // (ofiPayload.ts): failed or partial tape is never drawn as zero flow.
+      const { ofiApiPayload } = await import("./ofiPayload");
+      res.json(ofiApiPayload(trend, Date.now()));
     } catch (e: any) {
       res.status(503).json({ message: e?.message ?? "Failed to compute OFI" });
     }
