@@ -32,7 +32,7 @@ type SnapshotLike = {
   };
   term?: { vix9d: number; vix: number; vix3m: number; ratio9dOver30d: number; ratio30dOver3m: number };
   vol: { vix?: { value: number } };
-  composite?: { score: number; label: string };
+  composite?: { score: number; label: string; marketScore?: number | null };
 };
 
 export type SnapshotProvider = () => Promise<SnapshotLike>;
@@ -165,7 +165,7 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
 
   const isPositiveGamma = totalGex >= 0;
   const isContango = (term?.ratio30dOver3m ?? 1) < 0.95 && (term?.ratio9dOver30d ?? 1) < 0.95;
-  const compScore = composite?.score ?? 50;
+  const compScore = composite?.marketScore ?? 50; // market-data blocks only (rule 2: no social/F&G in path probabilities)
   const spotVsFlip = spot - gammaFlip;
 
   // Positive gamma + contango → boost base case (pin), trim wings
@@ -297,7 +297,7 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
     { key: "gammaFlip", label: "Gamma Flip",      value: gammaFlip,           source: "Computed",     asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: `Zero-gamma level (Perfiliev)` },
     { key: "maxPain",   label: "Max Pain",        value: maxPain,             source: "Computed",     asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt },
     { key: "totalGex",  label: "Total GEX",       value: `${(totalGex / 1e9).toFixed(2)}B`, source: "Computed", asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: isPositiveGamma ? "Positive (pin)" : "Negative (momentum)" },
-    { key: "composite", label: "Composite",       value: compScore,           source: "Computed",     asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: composite?.label ?? "" },
+    { key: "composite", label: "Composite (market blocks)", value: compScore,           source: "Computed",     asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: composite?.label ?? "" },
   ];
 
   return {

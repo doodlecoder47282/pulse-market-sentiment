@@ -322,6 +322,8 @@ export interface Composite {
   takeaway: string;             // short human summary
   tradingRegime: string;        // "positive gamma / mean reversion", etc.
   method?: string;              // how gauges are weighted (heuristic, block-first)
+  /** Implied-vol + options-positioning blocks only (no social/survey/F&G): the only score allowed into price/path calculations. */
+  marketScore?: number | null;
 }
 
 // ----- CLV Tracker (trade log + closing-line value) -----
@@ -407,7 +409,7 @@ export interface Snapshot_Public {
   term: TermStructure;
   gamma: GammaStructure;
   social: SocialSentiment;
-  fearGreed: { value: number; label: string; source: string } | null;
+  fearGreed: { value: number; label: string; source: string; asOf?: string | null; stale?: boolean } | null;
   aaii: { bullish: number; bearish: number; neutral: number; asOf: string } | null;
   composite: Composite;
   headlines: { title: string; url: string; source: string; publishedAt?: string }[];

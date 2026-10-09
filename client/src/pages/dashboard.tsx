@@ -872,6 +872,12 @@ export default function Dashboard() {
                 }
               >
                 <>
+                  {social.sources && social.sources.length > 0 && (
+                    <div className="mb-2 text-[10px] text-muted-foreground" data-testid="text-social-sources">
+                      sources: {social.sources.map((x: { name: string; state: string; newest?: string | null }) => `${x.name} ${x.state}${x.newest ? ` (newest ${Math.max(0, Math.round((Date.now() - Date.parse(x.newest)) / 60_000))}m ago)` : ""}`).join(" · ")}
+                      {" "}· keyword/tag tone, a heuristic; context only
+                    </div>
+                  )}
                   <div className="mb-3 flex items-center gap-4 text-xs">
                     <span className="text-emerald-500">
                       <ArrowUpRight className="mr-1 inline h-3 w-3" />
@@ -926,6 +932,10 @@ export default function Dashboard() {
                         <div>
                           <div className="text-sm font-medium">{fearGreed.label}</div>
                           <div className="text-xs text-muted-foreground">0 (fear) · 50 (neutral) · 100 (greed)</div>
+                          <div className={`text-[10px] ${fearGreed.stale ? "text-amber-500" : "text-muted-foreground"}`} data-testid="text-fg-asof">
+                            source {fearGreed.source}{fearGreed.asOf ? ` · as of ${new Date(fearGreed.asOf).toLocaleString()}` : " · age unknown"}
+                            {fearGreed.stale ? " · STALE, left out of the composite" : ""}
+                          </div>
                           <div className="mt-2 h-1.5 w-48 overflow-hidden rounded-full bg-muted">
                             <div className={`h-full ${scoreBg(fearGreed.value)}`} style={{ width: `${fearGreed.value}%` }} />
                           </div>

@@ -236,13 +236,14 @@ export function computeComposite(
     });
   }
 
-  if (snap.fearGreed) {
+  // A stale or undated CNN reading is left out (not scored as current).
+  if (snap.fearGreed && !snap.fearGreed.stale) {
     gauges.push({
       name: "CNN Fear & Greed",
       value: snap.fearGreed.value,
       block: "fear-greed",
       weight: 1,
-      interpretation: `CNN index: ${snap.fearGreed.label}`,
+      interpretation: `CNN index: ${snap.fearGreed.label}${snap.fearGreed.asOf ? ` (as of ${snap.fearGreed.asOf.slice(0, 10)})` : ""}`,
     });
   }
 
@@ -286,6 +287,15 @@ export function computeComposite(
   const totalW = eff.reduce((a, b) => a + b, 0);
   const score = totalW ? Math.round(gauges.reduce((a, g) => a + g.value * g.weight, 0) / totalW) : 50;
 
+  // Market-data-only score (rule 2): the implied-vol and options-positioning
+  // blocks only. Social, AAII, curated voices and CNN F&G are non-price
+  // context and must not feed a price or path calculation, so consumers that
+  // tilt scenario probabilities or drift (dailyPlaybook, quarterly
+  // trajectory) read this, not `score`. null when no market gauge exists.
+  const mkt = gauges.filter((g) => g.block === "implied-vol" || g.block === "options-positioning");
+  const mktW = mkt.reduce((a, g) => a + g.weight, 0);
+  const marketScore = mktW > 0 ? Math.round(mkt.reduce((a, g) => a + g.value * g.weight, 0) / mktW) : null;
+
   const label =
     score <= 20 ? "Extreme Fear"
     : score <= 40 ? "Fear"
@@ -303,7 +313,7 @@ export function computeComposite(
   const takeaway = buildTakeaway(score, label, snap);
 
   return {
-    score, label, gauges, takeaway, tradingRegime,
+    score, label, gauges, takeaway, tradingRegime, marketScore,
     method: "heuristic: block-weighted (implied vol 30%, options positioning 30%, crowd 25%, CNN F&G 15% x 5/7 for its VIX and put/call overlap); weights renormalize over the blocks present; not a probability",
   };
 }

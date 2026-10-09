@@ -487,3 +487,35 @@ test("crypto social: cashtag + contract-address union, capped search is a lower 
   assert.equal(u.socialScore, null);
   assert.equal(u.socialStatus, "unavailable");
 });
+
+// ─── Non-price context sources: labelled with source and age, never a price input ─
+
+test("non-price sources: F&G carries source/asOf, stale is left out; marketScore excludes social/survey/F&G", async () => {
+  const { parseFearGreed, FEAR_GREED_MAX_AGE_MS } = await import("../../server/sources");
+  const { computeComposite } = await import("../../server/composite");
+  const now = Date.parse("2026-10-08T15:00:00Z");
+  const fresh = parseFearGreed({ fear_and_greed: { score: 72.4, rating: "greed", timestamp: "2026-10-08T14:00:00Z" } }, now)!;
+  assert.equal(fresh.value, 72);
+  assert.equal(fresh.stale, false);
+  assert.equal(fresh.asOf, "2026-10-08T14:00:00.000Z");
+  assert.match(fresh.source, /CNN/);
+  const old = parseFearGreed({ fear_and_greed: { score: 20, rating: "fear", timestamp: now - FEAR_GREED_MAX_AGE_MS - 1 } }, now)!;
+  assert.equal(old.stale, true);
+  assert.equal(parseFearGreed({ fear_and_greed: { score: 50, rating: "neutral" } }, now)!.stale, true); // undated
+  assert.equal(parseFearGreed({}, now), null);
+  const base: any = {
+    vol: { vix: { value: 12 }, vvix: { value: null }, vix9d: { value: null }, vix3m: { value: null }, skew: { value: null } },
+    term: { ratio9dOver30d: null, ratio30dOver3m: null },
+    gamma: { totalGex: 3e9, regime: "positive", callWall: 0, putWall: 0, maxPain: 0, zeroGamma: null, pcrOi: 0.5, pcrVol: 1 },
+    social: { score: -100, bullish: 0, bearish: 10, neutral: 0, posts: [], status: "ok" },
+    aaii: null, spy: { price: 1, prevClose: 1, changePct: 0 },
+  };
+  const withOld = computeComposite({ ...base, fearGreed: old });
+  assert.equal(withOld.gauges.some((g: any) => /Fear & Greed/.test(g.name)), false);
+  const withFresh = computeComposite({ ...base, fearGreed: fresh }, { score: -100, sampleSize: 20 });
+  assert.equal(withFresh.gauges.some((g: any) => /Fear & Greed/.test(g.name)), true);
+  // marketScore: VIX 12 -> 90 (vol block), PCR 0.5 -> 85 (.45) + gamma 3B -> 75 (.55) = 79.5;
+  // equal block weights -> (90 + 79.5) / 2 = 84.75 -> 85, unaffected by the -100 social and voices reads.
+  assert.equal(withFresh.marketScore, 85);
+  assert.ok(withFresh.score < withFresh.marketScore!);
+});

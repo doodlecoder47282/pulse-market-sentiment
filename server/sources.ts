@@ -273,17 +273,30 @@ export function buildGammaStructure(chain: any): GammaStructure {
   };
 }
 
-/** CNN Fear & Greed (undocumented but stable JSON endpoint). */
-export async function cnnFearGreed(): Promise<{ value: number; label: string; source: string } | null> {
+/** A CNN reading older than this is stale (the index updates every US trading day). */
+export const FEAR_GREED_MAX_AGE_MS = 4 * 24 * 3600_000;
+
+/** Pure: parse the CNN graphdata payload, keeping the reading's own timestamp. */
+export function parseFearGreed(d: any, nowMs: number = Date.now()): { value: number; label: string; source: string; asOf: string | null; stale: boolean } | null {
+  const v = d?.fear_and_greed?.score;
+  const label = d?.fear_and_greed?.rating || "";
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  const ts = d?.fear_and_greed?.timestamp;
+  const t = typeof ts === "number" ? ts : typeof ts === "string" ? Date.parse(ts) : NaN;
+  const asOf = Number.isFinite(t) ? new Date(t).toISOString() : null;
+  // unknown age is treated as stale: it cannot be shown as current
+  const stale = !Number.isFinite(t) || nowMs - t > FEAR_GREED_MAX_AGE_MS;
+  return { value: Math.round(v), label: String(label).replace(/\b\w/g, (c: string) => c.toUpperCase()), source: "CNN Fear & Greed (cnn.com)", asOf, stale };
+}
+
+/** CNN Fear & Greed (undocumented but stable JSON endpoint). Context only: never a price/options/sizing input. */
+export async function cnnFearGreed(): Promise<{ value: number; label: string; source: string; asOf: string | null; stale: boolean } | null> {
   try {
     const d = await fetchJson(
       "https://production.dataviz.cnn.io/index/fearandgreed/graphdata",
       { Referer: "https://www.cnn.com/markets/fear-and-greed" },
     );
-    const v = d?.fear_and_greed?.score;
-    const label = d?.fear_and_greed?.rating || "";
-    if (typeof v !== "number") return null;
-    return { value: Math.round(v), label: label.replace(/\b\w/g, (c: string) => c.toUpperCase()), source: "CNN" };
+    return parseFearGreed(d);
   } catch {
     return null;
   }

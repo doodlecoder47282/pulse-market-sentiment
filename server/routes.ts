@@ -746,7 +746,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const q = enriched.horizons?.quarterly as any;
         if (q && q.spot) {
           const snap = await getOrBuild(false);
-          const composite = snap.composite?.score ?? 50;
+          const composite = snap.composite?.marketScore ?? 50; // market-data blocks only (rule 2: no social/F&G in a price path)
           // Scale-aware level mapping:
           //  snap.gamma.* are SPY-scale (gamma chain built from SPY chain).
           //  JPM collar strikes are SPX-scale (5000s range).

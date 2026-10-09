@@ -112,6 +112,10 @@ export async function refreshAll(): Promise<Record<string, { ok: boolean; rows: 
 export interface FredObservation {
   seriesId: string;
   label: string;
+  /** Non-price context source (rule 2): labelled, dated, never a price/options/sizing input. */
+  source: "FRED (Federal Reserve Bank of St. Louis)";
+  /** Calendar days since latestDate (null when there is no observation). */
+  ageDays: number | null;
   latest: number | null;
   latestDate: string | null;
   prev: number | null;
@@ -123,6 +127,13 @@ export interface FredObservation {
   history: { date: string; value: number | null }[];
 }
 
+const FRED_SOURCE = "FRED (Federal Reserve Bank of St. Louis)" as const;
+function ageInDays(isoDate: string | null): number | null {
+  if (!isoDate) return null;
+  const t = Date.parse(`${isoDate}T00:00:00Z`);
+  return Number.isFinite(t) ? Math.max(0, Math.floor((Date.now() - t) / 86_400_000)) : null;
+}
+
 export function getFredSnapshot(): FredObservation[] {
   const out: FredObservation[] = [];
   for (const [id, label] of Object.entries(FRED_SERIES)) {
@@ -131,7 +142,7 @@ export function getFredSnapshot(): FredObservation[] {
     ).all(id) as { date: string; value: number | null }[];
     if (!rows.length) {
       out.push({
-        seriesId: id, label, latest: null, latestDate: null,
+        seriesId: id, label, source: FRED_SOURCE, ageDays: null, latest: null, latestDate: null,
         prev: null, prevDate: null, change: null, changePct: null,
         weekChange: null, monthChange: null, history: [],
       });
@@ -148,7 +159,8 @@ export function getFredSnapshot(): FredObservation[] {
     const weekChange = (latest != null && wkRow?.value != null) ? latest - wkRow.value : null;
     const monthChange = (latest != null && moRow?.value != null) ? latest - moRow.value : null;
     out.push({
-      seriesId: id, label, latest, latestDate, prev, prevDate, change, changePct,
+      seriesId: id, label, source: FRED_SOURCE, ageDays: ageInDays(latestDate),
+      latest, latestDate, prev, prevDate, change, changePct,
       weekChange, monthChange,
       history: rows.slice(0, 30).reverse(),
     });
