@@ -9,6 +9,7 @@ import {
   MIN_SERIES_SAMPLES, LAST_SAMPLE_MAX_AGE_MS, aggressorStateOf, currentVolumes,
   isFreshChain, seriesFrom, shouldAppendSample,
 } from "../../server/flowIntradayState";
+import { volumeOverOiShare, fullyOpeningShare, fullyOpeningFromShare, openingText } from "../../server/flowIntent";
 import { ofiApiPayload, ofiMethodLabel, type OfiTrendLike } from "../../server/ofiPayload";
 import {
   leeReadySign, classifyL1Trades, OptionTradeSideBook, summarizeStreamSide, optionKey,
@@ -206,4 +207,27 @@ test("R3-2.4 stream side summary: coverage of the chain's day volume", () => {
   const none = summarizeStreamSide([{ occ: "X", side: "C", dayVolume: 10 }], () => null);
   assert.equal(none.contracts, 0);
   assert.equal(none.quoteRulePct, null);
+});
+
+// ─── Item 5: opening bounds, both stated ────────────────────────────────────
+
+test("R3-2.5 opening-side bound V - OI and fully-opening bound V - 2 OI (hand-computed)", () => {
+  // V = 1,500, OI_prev = 100. Close/close trades <= 100, so >= 1,400 trades
+  // have an opening side (93.33 %). Closing sides <= 200 (100 longs + 100
+  // shorts), so >= 1,300 trades are fully opening (86.67 %).
+  near(volumeOverOiShare(1500, 100)!, 1400 / 1500, 1e-12, "opening side");
+  near(fullyOpeningShare(1500, 100)!, 1300 / 1500, 1e-12, "fully opening");
+  near(fullyOpeningFromShare(1400 / 1500)!, 1300 / 1500, 1e-12, "2s - 1");
+  // V = 150, OI = 100: an opening side on >= 50 trades (33 %), but the
+  // fully-opening bound is 150 - 200 < 0 -> 0 (nothing guaranteed fully opening).
+  near(volumeOverOiShare(150, 100)!, 50 / 150, 1e-12, "small excess");
+  assert.equal(fullyOpeningShare(150, 100), 0);
+  assert.equal(fullyOpeningFromShare(50 / 150), 0);
+  assert.equal(fullyOpeningShare(300, 0), 1);       // new strike: every trade fully opening
+  assert.equal(fullyOpeningShare(0, 100), null);    // no volume
+  assert.equal(fullyOpeningShare(100, NaN), null);  // OI unknown: missing, not 0
+  const txt = openingText(1400 / 1500)!;
+  assert.match(txt, /with an opening side >= 93% of vol; fully opening >= 87%/);
+  assert.match(txt, /which side opened is unknown/);
+  assert.equal(openingText(0), "volume within prior-day OI: may be closing");
 });

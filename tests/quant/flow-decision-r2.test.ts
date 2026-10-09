@@ -111,7 +111,7 @@ test("directionScore: hand-set heuristic, reported as a 0-1 score", () => {
   assert.equal(directionScore(1, "MID", false), 0.55);
   assert.equal(directionScore(null, "AT_ASK", false), null);
   assert.ok(!openingText(0.9333)!.includes("probab"));
-  assert.match(openingText(0.9333)!, /opening >= 93% of vol/);
+  assert.match(openingText(0.9333)!, /with an opening side >= 93% of vol/);
 });
 
 // ─── Whale scoreboard and backtest on tradable prices, net of fees ───────────
