@@ -1,140 +1,93 @@
 // server/exposures.ts
 //
-// /api/exposures — fetches a CBOE options chain for the requested symbol, parses
-// per-contract IV + OI + DTE, and returns DEX/GEX/VEX/Charm profiles across a
-// ±10% spot band. Falls back to Newton-Raphson IV solve when the chain row has
-// no impliedVolatility field.
+// /api/exposures — fetches the Schwab option chain for the requested symbol
+// (0-45 DTE), converts it to per-contract IV + OI + expiry rows
+// (schwabChainRows.exposureRowsFromSchwabChain) and returns DEX/GEX/VEX/Charm
+// profiles across a +-10% spot band. Schwab is the only source (user decision
+// 2026-10-08; this was the CBOE delayed chain): when Schwab cannot answer,
+// the build throws and the route returns unavailable.
 //
-// Supported symbols mirror the Flow panel: SPY, QQQ, IWM + Mag 7 tickers.
-// Any symbol whose CBOE chain responds works — no allow-list.
+// Supported symbols mirror the Flow panel: SPY, QQQ, IWM + Mag 7 tickers, and
+// cash indexes (SPX -> $SPX, NDX, RUT).
 
-import { buildExposureProfile, type ExposureRow, type ExposureProfile } from "./exposureProfile";
-import { impliedVol } from "./greeks";
-import { getCboeChain } from "./cboeCache";
-import { dteYears } from "./chainClock";
-import { settlementStyleOf } from "./timeToExpiry";
-
-const OCC_RE = /^([A-Z]+)(\d{6})([CP])(\d{8})$/;
-
-/**
- * Convert CBOE chain → ExposureRow[] (0-45 DTE).
- * Uses chain IV when present; otherwise solves via Newton-Raphson from mid price.
- * Fills trading-years downstream in exposureProfile.
- */
-export function chainToRows(
-  chain: any,
-  maxDte = 45,
-  r = 0.05,
-  q = 0.013,
-): { rows: ExposureRow[]; spot: number; solvedIvCount: number } {
-  const data = chain?.data ?? {};
-  const spot = Number(data.current_price);
-  if (!spot || !isFinite(spot)) return { rows: [], spot: 0, solvedIvCount: 0 };
-  const opts: any[] = data.options ?? [];
-
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-
-  const rows: ExposureRow[] = [];
-  let solvedIvCount = 0;
-
-  for (const o of opts) {
-    const m = OCC_RE.exec(String(o.option ?? ""));
-    if (!m) continue;
-    const ymd = m[2];
-    const year = 2000 + parseInt(ymd.slice(0, 2));
-    const month = parseInt(ymd.slice(2, 4)) - 1;
-    const day = parseInt(ymd.slice(4, 6));
-    const exp = new Date(Date.UTC(year, month, day));
-    const dte = Math.round((exp.getTime() - today.getTime()) / 86400000);
-    if (dte < 0 || dte > maxDte) continue;
-
-    const strike = parseInt(m[4]) / 1000;
-    const expiryIso = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    const style = settlementStyleOf(m[1]); // SPX root = AM (SOQ), SPXW / ETFs = PM
-    const oi = Number(o.open_interest ?? 0);
-    if (!oi || oi <= 0) continue;
-    const type = m[3] as "C" | "P";
-
-    let iv = Number(o.iv ?? 0);
-
-    // Fallback: solve IV from last/mid/bid+ask avg if missing or absurd.
-    // (Vendor IV inside 3 days is NOT re-solved with our clock here: this is
-    // the delayed CBOE path, which the Schwab-primary rule leaves as is.)
-    if (!isFinite(iv) || iv <= 0 || iv > 5) {
-      const bid = Number(o.bid ?? 0);
-      const ask = Number(o.ask ?? 0);
-      const last = Number(o.last_trade_price ?? 0);
-      let price = 0;
-      if (bid > 0 && ask > 0 && ask >= bid) price = (bid + ask) / 2;
-      else if (last > 0) price = last;
-      const T = dteYears(dte, { expiry: expiryIso, style });
-      if (price > 0 && T > 0) {
-        // Same clock as exposureProfile (server/timeToExpiry.ts).
-        const solved = impliedVol(price, spot, strike, T, r, q, type);
-        if (solved && solved > 0.01 && solved < 5) {
-          iv = solved;
-          solvedIvCount += 1;
-        }
-      }
-    }
-
-    if (!iv || iv <= 0) continue;
-    rows.push({ type, strike, iv, oi, dte, expiry: expiryIso, style });
-  }
-
-  return { rows, spot, solvedIvCount };
-}
+import { buildExposureProfile, type ExposureProfile } from "./exposureProfile";
+import { exposureRowsFromSchwabChain, chainSpot } from "./schwabChainRows";
+import { CASH_INDEX_TO_SCHWAB } from "./schwabSymbols";
 
 export interface ExposuresResponse {
   profile: ExposureProfile;
   meta: {
-    provider: "cboe";
+    provider: "schwab";
     symbol: string;
-    solvedIvCount: number;     // how many rows needed Newton-Raphson fallback
+    solvedIvCount: number;     // how many rows needed an IV solve (vendor IV missing)
     chainSize: number;         // rows used in the profile
     warnings: string[];
+    /** When Schwab produced the chain, epoch ms; ageMs at build time. */
+    chainAsOfMs: number;
+    chainAgeMs: number;
+    /** true = a refresh failed and an older chain (within its max age) was used. */
+    chainStale: boolean;
+    servedFromCache: boolean;
+    /** Strike coverage the chain delivered (decimal each side of spot). */
+    coverage: { belowPct: number | null; abovePct: number | null; complete: boolean } | null;
   };
 }
 
 /**
- * Build an exposure snapshot for a single symbol.
- * Throws if the CBOE chain is unavailable or empty.
+ * Build an exposure snapshot for a single symbol from the Schwab chain.
+ * Throws if Schwab cannot answer or the chain is empty.
  */
 export async function buildExposuresSnapshot(symbol: string): Promise<ExposuresResponse> {
   const warnings: string[] = [];
   const sym = symbol.toUpperCase();
+  const wire = CASH_INDEX_TO_SCHWAB[sym] ?? sym;
 
-  const chain = await getCboeChain(sym);
-  const { rows, spot, solvedIvCount } = chainToRows(chain);
-
-  if (!spot) throw new Error(`No spot price for ${sym}`);
-  if (!rows.length) throw new Error(`No valid option rows for ${sym}`);
+  const { getOptionChain } = await import("./schwab");
+  const chain = await getOptionChain(wire, 45);
+  if ("error" in chain) throw new Error(`Schwab chain unavailable for ${sym}: ${chain.reason ?? chain.error}`);
+  const spot = chainSpot(chain);
+  if (!spot) throw new Error(`No spot price for ${sym} in the Schwab chain`);
 
   // Different dividend assumption per symbol. SPY ~1.3%, QQQ ~0.6%, IWM ~1.2%,
   // single names default to 0 (no clean divs signal). Rate: 5% flat.
   const q = DIV_YIELD[sym] ?? 0;
   const r = 0.05;
 
+  const { rows, solvedIvCount, droppedNoIv } = exposureRowsFromSchwabChain(chain, { maxDte: 45, spot, r, q });
+  if (!rows.length) throw new Error(`No valid option rows for ${sym}`);
+
   const profile = buildExposureProfile(sym, rows, spot, { r, q });
 
-  if (solvedIvCount > 0) {
-    warnings.push(`Solved IV via Newton-Raphson for ${solvedIvCount} rows (chain missing IV).`);
+  if (solvedIvCount > 0) warnings.push(`Solved IV from the quote for ${solvedIvCount} rows (Schwab IV missing).`);
+  if (droppedNoIv > 0) warnings.push(`${droppedNoIv} contracts dropped: no IV and no usable quote.`);
+  if (chain.stale) warnings.push(`Schwab chain is ${Math.round(chain.ageMs / 1000)} s old (${chain.staleReason ?? "refresh failed"}).`);
+  if (chain.strikeCoverage && !chain.strikeCoverage.complete) {
+    warnings.push(`Strike coverage short of target: ${((chain.strikeCoverage.belowPct ?? 0) * 100).toFixed(1)}% below / ${((chain.strikeCoverage.abovePct ?? 0) * 100).toFixed(1)}% above spot.`);
   }
 
   return {
     profile,
     meta: {
-      provider: "cboe",
+      provider: "schwab",
       symbol: sym,
       solvedIvCount,
       chainSize: rows.length,
       warnings,
+      chainAsOfMs: chain.asOfMs,
+      chainAgeMs: chain.ageMs,
+      chainStale: chain.stale,
+      servedFromCache: chain.servedFromCache,
+      coverage: chain.strikeCoverage
+        ? { belowPct: chain.strikeCoverage.belowPct, abovePct: chain.strikeCoverage.abovePct, complete: chain.strikeCoverage.complete }
+        : null,
     },
   };
 }
 
 const DIV_YIELD: Record<string, number> = {
+  SPX: 0.013,
+  NDX: 0.006,
+  RUT: 0.012,
   SPY: 0.013,
   QQQ: 0.006,
   IWM: 0.012,

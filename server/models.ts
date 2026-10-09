@@ -31,8 +31,7 @@
 import { vixToAtmPct } from "@shared/vol";
 import type { ExposureProfile, ExposureRow } from "./exposureProfile";
 import { buildExposureProfile, rowYears } from "./exposureProfile";
-import { chainToRows } from "./exposures";
-import { getCboeChain } from "./cboeCache";
+import { exposureRowsFromSchwabChain, chainSpot } from "./schwabChainRows";
 import { computeGreeks } from "./greeks";
 import { storage } from "./storage";
 import { getQuotes as schwabGetQuotes, getOptionChain } from "./schwab";
@@ -53,7 +52,7 @@ import {
 import { fetchOHLC } from "./ohlc";
 import { buildMMMatrix } from "./mmMatrix";
 
-// Resolve real SPX spot from Schwab `$SPX`, falling back to Yahoo `^GSPC`.
+// Resolve real SPX spot from Schwab `$SPX`, else the last Schwab $SPX bar (fetchOHLC is Schwab).
 // Never derive from SPY×10 — SPY price drifts vs SPX due to accumulated dividends.
 async function resolveRealSpxSpot(): Promise<number | null> {
   // 1) Schwab $SPX quote
@@ -62,9 +61,10 @@ async function resolveRealSpxSpot(): Promise<number | null> {
     const p = qs?.[0]?.last;
     if (p != null && Number.isFinite(p) && p > 1000) return p;
   } catch { /* fall through */ }
-  // 2) Yahoo ^GSPC (same source /api/ohlc uses)
+  // 2) Schwab $SPX price history (same source /api/ohlc uses)
   try {
     const ohlc = await fetchOHLC("^GSPC", "1D");
+    if (ohlc?.stale || ohlc?.dataState === "unavailable") return null;
     const p = ohlc?.price ?? ohlc?.candles?.[ohlc.candles.length - 1]?.c ?? null;
     if (p != null && Number.isFinite(p) && p > 1000) return p;
   } catch { /* fall through */ }
@@ -271,6 +271,12 @@ export interface ModelHorizon {
   vomma: "elevated" | "normal";
   confidence: "HIGH" | "MODERATE" | "LOW";
   mmMatrix?: import("./mmMatrix").MMMatrix;
+  /** Option chain provenance: Schwab symbol, when Schwab produced it (epoch ms), stale flag, strike coverage. */
+  chainSource?: "schwab";
+  chainSymbol?: string;
+  chainAsOfMs?: number;
+  chainStale?: boolean;
+  chainCoverageComplete?: boolean | null;
 }
 
 export interface ModelsResponse {
@@ -1192,7 +1198,7 @@ function buildAudit(
 export interface ModelBuildInput {
   horizon: Horizon;
   symbol: "^GSPC" | "SPY";
-  chainSymbol: "SPY" | "SPX";              // CBOE source — SPY is always available
+  chainSymbol: "SPY" | "SPX";              // Schwab chain: "SPX" -> $SPX, "SPY" -> SPY
   vix: number | null;
   vixPrev: number | null;
   vix3m: number | null;
@@ -1200,32 +1206,29 @@ export interface ModelBuildInput {
   experimental?: boolean;
 }
 
-// SPX is priced at ~10× SPY; we use SPY's chain rescaled for strike labels if
-// the user asks for SPX view. This is a shortcut — proper SPX chain is separate.
-const SPX_OVER_SPY_HINT = 10.0;   // recomputed from actual spot each call
-
 async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
   const { horizon, symbol, chainSymbol, vix, vixPrev, vix3m, intradayChange } = input;
 
-  // Fetch SPY chain — used regardless of whether we're building SPY or SPX model
-  const chain = await getCboeChain(chainSymbol);
-  const { rows: allRows, spot: spySpot } = chainToRows(chain, DTE_MAX[horizon]);
-  if (!spySpot) throw new Error(`No spot in chain for ${chainSymbol}`);
+  // Schwab chain for the model's own index (was the CBOE SPY chain rescaled
+  // x realSPX/SPY for the SPX view). "SPX" -> $SPX (AM SPX + PM SPXW, each on
+  // its own settlement clock), "SPY" -> SPY. No other source: when Schwab
+  // cannot answer, this horizon is unavailable.
+  const chain = await getOptionChain(chainSymbol === "SPX" ? "$SPX" : "SPY", DTE_MAX[horizon]);
+  if ("error" in chain) throw new Error(`Schwab ${chainSymbol} chain unavailable: ${chain.reason ?? chain.error}`);
+  const spySpot = chainSpot(chain);
+  if (!spySpot) throw new Error(`No spot in the Schwab chain for ${chainSymbol}`);
+  const { rows: allRows } = exposureRowsFromSchwabChain(chain, { maxDte: DTE_MAX[horizon], spot: spySpot, r: 0.05, q: 0.013 });
 
-  // Resolve real SPX spot from Schwab/Yahoo (NOT SPY×10 — SPY drifts vs SPX).
-  // Compute true scale = realSpx / spySpot each call so strike rescaling stays honest.
+  // SPX view on the SPY chain: rescale strikes by the real Schwab $SPX / SPY
+  // ratio, or fail (unavailable) -- never a fixed x10 (was the fallback when
+  // the SPX quote was missing). With the $SPX chain no rescale is needed.
   let displaySpot = spySpot;
   let scale = 1;
-  if (symbol === "^GSPC") {
+  if (symbol === "^GSPC" && chainSymbol === "SPY") {
     const realSpx = await resolveRealSpxSpot();
-    if (realSpx != null && realSpx > 0 && spySpot > 0) {
-      displaySpot = realSpx;
-      scale = realSpx / spySpot;
-    } else {
-      // Fallback only if both Schwab + Yahoo failed
-      displaySpot = spySpot * SPX_OVER_SPY_HINT;
-      scale = SPX_OVER_SPY_HINT;
-    }
+    if (realSpx == null || !(realSpx > 0)) throw new Error("SPX spot unavailable from Schwab");
+    displaySpot = realSpx;
+    scale = realSpx / spySpot;
   }
 
   // Build exposure profile at SPY spot (real math), we'll rescale strikes for display
@@ -1476,6 +1479,11 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
     },
     vomma,
     confidence,
+    chainSource: "schwab",
+    chainSymbol: chainSymbol === "SPX" ? "$SPX" : "SPY",
+    chainAsOfMs: chain.asOfMs,
+    chainStale: chain.stale,
+    chainCoverageComplete: chain.strikeCoverage?.complete ?? null,
   };
 
   // MM probability matrix — 5×5 regime × zone grid with conditional probs + action tags
@@ -1490,8 +1498,8 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Options-implied context: the horizon expiry's smoothed implied distribution
-// and the same-day ATM straddle. Schwab chain (getOptionChain; its own CBOE
-// fallback is labeled by the chain's source). Missing data -> nulls, and the
+// and the same-day ATM straddle. Schwab chain (getOptionChain; Schwab only,
+// no fallback source). Missing data -> nulls, and the
 // callers fall back to labeled heuristics.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1556,6 +1564,11 @@ export async function buildModelsSnapshot(input: {
         const mh = await buildHorizon({
           horizon: h,
           symbol: primarySymbol,
+          // Schwab SPY chain, rescaled to SPX by the real $SPX/SPY ratio for the
+          // SPX view (the exact replacement of the old CBOE SPY chain, so GEX
+          // magnitudes and the HIGH/MODERATE/LOW thresholds keep their scale).
+          // chainSymbol "SPX" ($SPX chain, no rescale) is supported; switching
+          // the default is a model-calibration change (R2-B).
           chainSymbol: "SPY",
           vix: input.vix,
           vixPrev: input.vixPrev,

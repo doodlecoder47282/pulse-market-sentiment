@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // schwabFlow.ts — Schwab-native unusual options flow detector.
 //
-// Replaces the CBOE-backed buildUnusualFlow for ticker scanning. Why Schwab:
+// The unusual-flow scanner (the CBOE-backed builder was removed). Why Schwab:
 //   - No rate-limiting (we're authenticated)
 //   - Real-time greeks (delta, gamma) — needed for delta-floor sanity check
 //   - Mark price + bid/ask/last all in one payload
@@ -28,7 +28,10 @@ export interface SchwabFlowResponse {
   symbol: string;
   spot: number | null;
   contracts: SchwabFlowContract[];
+  /** Epoch ms: when Schwab produced the chain (was the time of this call). */
   asOf: number;
+  /** true = a refresh failed and an older chain (within its max age) was scanned. */
+  stale?: boolean;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -184,6 +187,7 @@ export async function buildSchwabFlow(
     symbol,
     spot,
     contracts: trimmed,
-    asOf: Date.now(),
+    asOf: chain.asOfMs,
+    stale: chain.stale,
   };
 }

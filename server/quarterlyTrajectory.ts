@@ -10,7 +10,7 @@ import { vixToAtmPct } from "@shared/vol";
  *   1. VRP scaling — σ damped by realized-vol / implied-vol ratio (clamped 0.7–1.3).
  *   2. Term-structure σ segmentation — wk1-4 use VIX9D, wk5-8 VIX, wk9-13 VIX3M.
  *      Smooth weighted blend at boundaries so the cone doesn't kink.
- *   3. Skew-adjusted drift — CBOE SKEW (100-150) drives an extra bearish drift
+ *   3. Skew-adjusted drift — Cboe SKEW index (100-150, Schwab $SKEW quote) drives an extra bearish drift
  *      component when tail-hedging demand is elevated.
  *   4. OPEX/FOMC σ bumps — event-week sigma expands +12% on monthly OPEX (3rd
  *      Fri) and FOMC weeks; tagged in the weekly output.
@@ -61,7 +61,7 @@ export interface QuarterlyTrajectory {
     compositeTilt: number;       // weekly drift contribution from composite (decimal)
     gexTilt: number;             // weekly drift contribution from GEX regime (decimal)
     vixTermTilt: number;         // weekly drift contribution from VIX term (decimal)
-    skewTilt: number;            // weekly drift contribution from CBOE SKEW (decimal)  [NEW v2]
+    skewTilt: number;            // weekly drift contribution from the Cboe SKEW index (decimal)  [NEW v2]
     totalDriftPerWeek: number;   // sum of above (decimal)
     annualizedDrift: number;     // total*52 for display
     magnetCount: number;         // anchors actively pulling
@@ -79,7 +79,7 @@ export interface QuarterlyTrajectory {
     maxPain: number;
     totalGex: number;
     composite: number;
-    skew: number | null;            // CBOE SKEW value 100-150  [NEW v2]
+    skew: number | null;            // Cboe SKEW index 100-150 via Schwab $SKEW; null = unavailable  [NEW v2]
     realizedVol20d: number | null;  // 20D RV annualized decimal  [NEW v2]
   };
   methodology: string;
@@ -97,7 +97,7 @@ interface BuildInputs {
   totalGex: number;              // sign drives regime
   composite: number;             // 0..100
   jpmStrikes?: { shortPut: number; longPut: number; shortCall: number } | null;
-  skew?: number | null;          // CBOE SKEW 100-150 (tail-hedging demand)
+  skew?: number | null;          // Cboe SKEW index 100-150 via Schwab $SKEW (tail-hedging demand)
   realizedVol20d?: number | null;  // 20D realized vol, annualized decimal (e.g. 0.18)
 }
 
@@ -191,15 +191,13 @@ function pickSegmentedVix(
   vix9d: number | null,
   vix3m: number | null,
 ): { iv: number; segment: WeeklyPoint["vixSegment"] } {
-  // Defaults if specific segment unavailable
-  const v9 = vix9d ?? vix;
-  const v3 = vix3m ?? vix;
-
-  if (k <= 3) return { iv: v9, segment: "VIX9D" };
-  if (k === 4) return { iv: 0.6 * v9 + 0.4 * vix, segment: "BLEND" };
+  // When VIX9D or VIX3M is unavailable from Schwab the segment uses VIX and
+  // is LABELLED "VIX" (flat term structure), never shown as VIX9D/VIX3M.
+  if (k <= 3) return vix9d != null ? { iv: vix9d, segment: "VIX9D" } : { iv: vix, segment: "VIX" };
+  if (k === 4) return vix9d != null ? { iv: 0.6 * vix9d + 0.4 * vix, segment: "BLEND" } : { iv: vix, segment: "VIX" };
   if (k <= 7) return { iv: vix, segment: "VIX" };
-  if (k === 8) return { iv: 0.4 * vix + 0.6 * v3, segment: "BLEND" };
-  return { iv: v3, segment: "VIX3M" };
+  if (k === 8) return vix3m != null ? { iv: 0.4 * vix + 0.6 * vix3m, segment: "BLEND" } : { iv: vix, segment: "VIX" };
+  return vix3m != null ? { iv: vix3m, segment: "VIX3M" } : { iv: vix, segment: "VIX" };
 }
 
 /**
@@ -281,7 +279,7 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
   }
 
   // 4. NEW v2: Skew-adjusted drift
-  //    CBOE SKEW measures cost of OTM puts vs OTM calls. 100=neutral, 130=normal,
+  //    The Cboe SKEW index measures cost of OTM puts vs OTM calls. 100=neutral, 130=normal,
   //    150+=elevated tail hedging demand. High skew = institutions paying up for
   //    crash insurance = bearish prior. Cap contribution at ±0.0006/wk.
   let skewTilt = 0;
@@ -426,6 +424,6 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
       "13-week σ-cone. Per-week incremental σ from VIX-segmented term structure (wk1-3 VIX9D, wk4 BLEND, " +
       "wk5-7 VIX, wk8 BLEND, wk9-13 VIX3M), scaled by VRP (RV/IV clamped 0.7-1.3) and ×1.12 on OPEX/FOMC weeks. " +
       "Cumulative σ(k) = √(Σ σ_i²) for monotonic cone growth. Drift = composite + GEX regime + VIX term + " +
-      "CBOE SKEW. Anchored by walls, gamma flip, max pain, JPM collar (within ±15% of spot, ±2σ reach, capped ±4%/wk).",
+      "Cboe SKEW index (Schwab $SKEW). Anchored by walls, gamma flip, max pain, JPM collar (within ±15% of spot, ±2σ reach, capped ±4%/wk).",
   };
 }

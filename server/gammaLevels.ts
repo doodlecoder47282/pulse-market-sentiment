@@ -4,9 +4,12 @@
 // (gamma flip, call wall, put wall, top GEX strikes) with user-defined weekly
 // targets for vanna, charm, vomma, zomma, negGamma, and mopex.
 //
-// Computed levels: from live CBOE chain via getOrBuild() snapshot.
-// User targets: locked weekly reference levels from the user's playbook.
-// Source field: "computed" | "user_targets" per level.
+// Computed levels: from the Schwab SPY chain (0-45 DTE) via the getOrBuild()
+// snapshot, in SPY dollars. User targets: locked weekly reference levels from
+// the user's playbook, in SPX points. Source field: "computed" | "user_targets"
+// per level; `units` states the scale of each source so no consumer measures
+// an SPY-scale level against SPX spot (ML features, R2-F: compute SPX
+// features from the Schwab $SPX chain instead, e.g. chainAudit/gammaProfile).
 
 export interface GammaLevelEntry {
   value: number;
@@ -33,6 +36,10 @@ export interface GammaLevelsEnhanced {
   };
   spxNow: number;
   asOf: string;
+  /** Scale of each source: computed levels are SPY dollars, user targets SPX points. */
+  units: { computed: "SPY"; userTargets: "SPX" };
+  /** Computed-level provenance: Schwab chain symbol and when Schwab produced it (epoch s). */
+  computedSource: { provider: "schwab"; chainSymbol: "SPY"; chainAsOf: number | null; stale: boolean };
 }
 
 // User's weekly SPX reference targets — sourced from the single editable store
@@ -84,6 +91,7 @@ export function buildGammaLevelsEnhanced(
     gexCrossoverStrike: number | null;
   },
   spxNow: number,
+  provenance: { chainAsOf?: number | null; stale?: boolean } = {},
 ): GammaLevelsEnhanced {
   // Top 3 absolute GEX strikes from the profile
   const topGexStrikes = gamma.profile
@@ -126,5 +134,7 @@ export function buildGammaLevelsEnhanced(
     },
     spxNow,
     asOf: new Date().toISOString(),
+    units: { computed: "SPY", userTargets: "SPX" },
+    computedSource: { provider: "schwab", chainSymbol: "SPY", chainAsOf: provenance.chainAsOf ?? null, stale: provenance.stale ?? false },
   };
 }

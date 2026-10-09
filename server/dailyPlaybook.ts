@@ -26,12 +26,16 @@ import { etClock, sessionCloseMinutes } from "./exchangeCalendar";
 type SnapshotLike = {
   capturedAt: number;
   spy?: { price?: number | null };
+  /** Schwab $SPX last, for the SPX view (real SPX/SPY ratio, not x10). */
+  spxSpot?: number | null;
   gamma: {
     spot: number; totalGex: number; callWall: number; putWall: number;
-    zeroGamma: number; maxPain: number;
+    zeroGamma: number | null; maxPain: number;
   };
-  term?: { vix9d: number; vix: number; vix3m: number; ratio9dOver30d: number; ratio30dOver3m: number };
-  vol: { vix?: { value: number } };
+  /** When Schwab produced the chain behind `gamma` (epoch s). */
+  gammaAsOf?: number | null;
+  term?: { vix9d: number | null; vix: number | null; vix3m: number | null; ratio9dOver30d: number | null; ratio30dOver3m: number | null };
+  vol: { vix?: { value: number | null } };
   composite?: { score: number; label: string };
 };
 
@@ -74,7 +78,7 @@ export interface InputManifest {
   key: string;                     // "spot", "vix", "callWall", etc.
   label: string;                   // human-readable
   value: number | string;
-  source: "Schwab" | "Schwab+CBOE" | "CBOE delayed" | "Computed" | "Yahoo";
+  source: "Schwab" | "Computed";
   asOf: number;                    // unix seconds
   freshSeconds: number;            // 0 = live now
   calibration?: string;            // "ATR(20)=±$8.40" etc.
@@ -134,17 +138,30 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
   const vol = snap.vol;
   const composite = snap.composite;
 
-  // SPX = SPY * 10 (close enough for level mapping; user typed SPX in the spec)
+  // Levels come from the Schwab SPY chain. SPX view: scale by the real
+  // Schwab $SPX / SPY ratio (was a fixed x10; SPX/SPY drifts with dividends).
   const isSPX = symbol === "SPX";
-  const scale = isSPX ? 10 : 1;
+  const spyPx = snap.spy?.price ?? g.spot;
+  let scale = 1;
+  if (isSPX) {
+    if (snap.spxSpot == null || !(snap.spxSpot > 0) || !(spyPx > 0)) {
+      throw new Error("SPX playbook unavailable: no Schwab $SPX quote to map SPY-chain levels");
+    }
+    scale = snap.spxSpot / spyPx;
+  }
+  // Missing inputs make the playbook unavailable; they are never defaulted.
+  if (g.zeroGamma == null) throw new Error("Playbook unavailable: no gamma flip in the scanned range of the Schwab SPY chain");
+  const vixIn = vol.vix?.value;
+  if (vixIn == null || !(vixIn > 0)) throw new Error("Playbook unavailable: VIX quote unavailable from Schwab");
 
-  const spot = (snap.spy?.price ?? g.spot) * scale;
+  const spot = isSPX ? (snap.spxSpot as number) : spyPx;
   const callWall = g.callWall * scale;
   const putWall = g.putWall * scale;
   const gammaFlip = g.zeroGamma * scale;
   const maxPain = g.maxPain * scale;
   const totalGex = g.totalGex; // sign only matters
-  const vix = vol.vix?.value ?? 16;
+  const vix = vixIn;
+  const chainAsOf = snap.gammaAsOf ?? snap.capturedAt;
 
   const sigma = impliedDailySigma(vix, spot);
   const expectedRange = {
@@ -290,13 +307,13 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
   const inputs: InputManifest[] = [
     { key: "spot",      label: "Spot price",      value: spot,                source: "Schwab",       asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt },
     { key: "vix",       label: "VIX",             value: vix,                 source: "Schwab",       asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: `1σ daily ±$${sigma.toFixed(2)}` },
-    { key: "vix9d",     label: "VIX9D",           value: term?.vix9d ?? 0,    source: "Schwab",       asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt },
-    { key: "vix3m",     label: "VIX3M",           value: term?.vix3m ?? 0,    source: "Schwab",       asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: isContango ? "Contango (calm)" : "Flat/backwardation" },
-    { key: "callWall",  label: "Call Wall",       value: callWall,            source: "Schwab+CBOE",  asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: `Top call OI strike` },
-    { key: "putWall",   label: "Put Wall",        value: putWall,             source: "Schwab+CBOE",  asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: `Top put OI strike` },
-    { key: "gammaFlip", label: "Gamma Flip",      value: gammaFlip,           source: "Computed",     asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: `Zero-gamma level (Perfiliev)` },
-    { key: "maxPain",   label: "Max Pain",        value: maxPain,             source: "Computed",     asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt },
-    { key: "totalGex",  label: "Total GEX",       value: `${(totalGex / 1e9).toFixed(2)}B`, source: "Computed", asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: isPositiveGamma ? "Positive (pin)" : "Negative (momentum)" },
+    { key: "vix9d",     label: "VIX9D",           value: term?.vix9d ?? "unavailable", source: "Schwab",       asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt },
+    { key: "vix3m",     label: "VIX3M",           value: term?.vix3m ?? "unavailable", source: "Schwab",       asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: isContango ? "Contango (calm)" : "Flat/backwardation" },
+    { key: "callWall",  label: "Call Wall",       value: callWall,            source: "Schwab",        asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf, calibration: `Top call OI strike` },
+    { key: "putWall",   label: "Put Wall",        value: putWall,             source: "Schwab",        asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf, calibration: `Top put OI strike` },
+    { key: "gammaFlip", label: "Gamma Flip",      value: gammaFlip,           source: "Computed",     asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf, calibration: `Zero-gamma level (Perfiliev)` },
+    { key: "maxPain",   label: "Max Pain",        value: maxPain,             source: "Computed",     asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf },
+    { key: "totalGex",  label: "Total GEX",       value: `${(totalGex / 1e9).toFixed(2)}B`, source: "Computed", asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf, calibration: isPositiveGamma ? "Positive (pin)" : "Negative (momentum)" },
     { key: "composite", label: "Composite",       value: compScore,           source: "Computed",     asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: composite?.label ?? "" },
   ];
 

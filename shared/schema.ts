@@ -99,6 +99,8 @@ export interface VolMetric {
   value: number | null;
   prev: number | null;
   changePct: number | null;
+  /** Schwab quote stale flag: true = old during the session, null = age unknown. */
+  stale?: boolean | null;
 }
 
 export interface TermStructure {
@@ -400,7 +402,16 @@ export type IvRvRow = typeof ivRvDaily.$inferSelect;
 
 export interface Snapshot_Public {
   capturedAt: number;
-  spy: { price: number; prevClose: number; changePct: number };
+  /** prevClose / changePct are null when no honest prior close is available (never 0). */
+  spy: {
+    price: number;
+    prevClose: number | null;
+    changePct: number | null;
+    /** Schwab quote stale flag (quoteFreshness): true = old during the session, null = age unknown. */
+    stale?: boolean | null;
+    ageMs?: number | null;
+    prevCloseSource?: string;
+  };
   vol: { vix: VolMetric; vvix: VolMetric; vix9d: VolMetric; vix3m: VolMetric; skew: VolMetric };
   term: TermStructure;
   gamma: GammaStructure;
@@ -410,4 +421,11 @@ export interface Snapshot_Public {
   composite: Composite;
   headlines: { title: string; url: string; source: string; publishedAt?: string }[];
   warnings: string[];
+  /** Provenance of `gamma`: Schwab SPY chain, its asOf (epoch s) and stale flag. */
+  gammaSource?: "schwab";
+  gammaAsOf?: number | null;
+  gammaStale?: boolean;
+  /** Set when this snapshot is a stored one served because a rebuild failed (within the max age). */
+  stale?: boolean;
+  staleReason?: string | null;
 }

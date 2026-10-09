@@ -340,3 +340,127 @@ test("quote shield: identical repeated observation is ignored; checkQuote helper
   assert.equal(checkQuote(106.0, trend).suspect, false);
   assert.equal(checkQuote(112.0, trend).suspect, true);
 });
+
+// ---------------------------------------------------------------------------
+// 6. Schwab chain -> rows for the former CBOE consumers (item 1)
+// ---------------------------------------------------------------------------
+
+import { flattenSchwabChain, exposureRowsFromSchwabChain, chainVolumeTotals, schwabNum, chainSpot } from "../../server/schwabChainRows";
+import { buildGammaStructure } from "../../server/sources";
+import { bsPrice } from "../../server/greeks";
+import { timeToExpiry } from "../../server/timeToExpiry";
+
+// Friday 2026-10-09 10:00 ET (EDT): AM-settled SPX of that date has settled at
+// the 09:30 open (SOQ); PM-settled SPXW settles at the 16:00 close.
+const FRI_10ET = Date.parse("2026-10-09T14:00:00Z");
+
+function contract(sym: string, extra: Record<string, unknown>) {
+  return { symbol: sym, ...extra };
+}
+
+test("flatten: Schwab -999 placeholders and missing fields are null, a reported 0 stays 0", () => {
+  const chain = {
+    callExpDateMap: {
+      "2026-10-09:0": {
+        "6700.0": [contract("SPXW  261009C06700000", { bid: 10, ask: 11, last: 10.5, totalVolume: 0, openInterest: 1200, volatility: -999, gamma: -999, delta: 0.5 })],
+      },
+    },
+    putExpDateMap: {
+      "2026-10-09:0": {
+        "6700.0": [contract("SPX   261009P06700000", { bid: 9, ask: 10, openInterest: 800, volatility: 15.5, gamma: 0.004, settlementType: "A" })],
+      },
+    },
+  };
+  const rows = flattenSchwabChain(chain);
+  const c = rows.find((r) => r.side === "C")!;
+  const p = rows.find((r) => r.side === "P")!;
+  assert.equal(c.iv, null);
+  assert.equal(c.gamma, null);
+  assert.equal(c.volume, 0);            // observed zero
+  assert.equal(p.volume, null);         // not reported
+  assert.equal(p.last, null);
+  assert.equal(p.iv, 0.155);
+  assert.equal(c.occ, "SPXW261009C06700000");
+  assert.equal(c.root, "SPXW");
+  assert.equal(c.style, "PM");
+  assert.equal(p.style, "AM");
+  assert.equal(schwabNum("-999.0"), null);
+  assert.equal(chainSpot({ underlying: { last: null, bid: 6699, ask: 6701 } }), 6700);
+  const t = chainVolumeTotals(chain);
+  assert.equal(t.volumeMissing, 1);
+  assert.equal(t.callVol, 0);
+  assert.equal(t.putOI, 800);
+});
+
+test("exposure rows: AM SPX settled at the open is dropped; vendor IV percent -> decimal; missing IV solved from the mid", () => {
+  const S = 6700, K = 6750, sigma = 0.16;
+  const T = timeToExpiry("2026-10-16", { nowMs: FRI_10ET, style: "PM" }).years;
+  const mid = bsPrice(S, K, sigma, T, 0.05, 0, "C");
+  const chain = {
+    underlying: { last: S },
+    callExpDateMap: {
+      "2026-10-09:0": {
+        "6700.0": [
+          contract("SPX   261009C06700000", { openInterest: 500, volatility: 14, settlementType: "A" }),
+          contract("SPXW  261009C06700000", { openInterest: 700, volatility: 14, bid: 0, ask: 0 }),
+        ],
+      },
+      "2026-10-16:7": {
+        "6750.0": [contract("SPXW  261016C06750000", { openInterest: 300, volatility: -999, bid: mid - 0.05, ask: mid + 0.05 })],
+        "6800.0": [contract("SPXW  261016C06800000", { openInterest: 0, volatility: 15 })],
+      },
+    },
+    putExpDateMap: {},
+  };
+  const { rows, solvedIvCount } = exposureRowsFromSchwabChain(chain, { maxDte: 45, spot: S, r: 0.05, q: 0, nowMs: FRI_10ET });
+  // AM SPX of today: settled -> dropped. SPXW today: kept, vendor IV 14% -> 0.14.
+  assert.equal(rows.filter((r) => r.dte === 0).length, 1);
+  assert.equal(rows.find((r) => r.dte === 0)!.style, "PM");
+  assert.ok(Math.abs(rows.find((r) => r.dte === 0)!.iv - 0.14) < 1e-12);
+  // Missing vendor IV: Black-Scholes IV solved from the quote mid recovers 16%.
+  const solved = rows.find((r) => r.strike === 6750)!;
+  assert.equal(solvedIvCount, 1);
+  assert.ok(Math.abs(solved.iv - sigma) < 1e-4, String(solved.iv));
+  // OI 0 carries no exposure weight.
+  assert.equal(rows.some((r) => r.strike === 6800), false);
+});
+
+test("Signals gamma structure from a Schwab SPY chain: GEX = gamma x OI x 100 x S^2 x 1%, calls +, puts -", () => {
+  const S = 670;
+  const chain = {
+    underlying: { last: S },
+    callExpDateMap: {
+      "2026-10-16:7": {
+        "680.0": [contract("SPY   261016C00680000", { openInterest: 10_000, gamma: 0.02, volatility: 15, totalVolume: 5000 })],
+      },
+    },
+    putExpDateMap: {
+      "2026-10-16:7": {
+        "660.0": [contract("SPY   261016P00660000", { openInterest: 20_000, gamma: 0.015, volatility: 18, totalVolume: 8000 })],
+        "650.0": [contract("SPY   261016P00650000", { openInterest: 5_000, gamma: -999, volatility: 19 })],
+      },
+      "2026-10-09:0": {
+        "665.0": [contract("SPY   261009P00665000", { openInterest: 9_000, gamma: 0.05, volatility: 20 })],
+      },
+    },
+  };
+  // After Friday's close the 2026-10-09 PM expiry has settled and is dropped.
+  const afterClose = Date.parse("2026-10-09T20:30:00Z");
+  const g = buildGammaStructure(chain, afterClose);
+  // Hand computation (dollars per 1% move):
+  //   call 680: 0.02 x 10,000 x 100 x 670^2 x 0.01 = 89,780,000
+  //   put 660: -0.015 x 20,000 x 100 x 670^2 x 0.01 = -134,670,000
+  //   put 650: gamma -999 (missing) -> excluded, not zero
+  //   put 665 (0DTE, settled at 16:00) -> excluded
+  const callG = 0.02 * 10_000 * 100 * S * S * 0.01;
+  const putG = -0.015 * 20_000 * 100 * S * S * 0.01;
+  assert.equal(callG, 89_780_000);
+  assert.equal(putG, -134_670_000);
+  assert.ok(Math.abs(g.totalGex - (callG + putG)) < 1e-6);
+  assert.equal(g.callWall, 680);
+  assert.equal(g.putWall, 660);
+  assert.equal(g.spot, S);
+  assert.deepEqual(g.profile.map((p) => p.strike), [660, 680]);
+  assert.equal(g.pcrOi, 2);              // 20,000 / 10,000
+  assert.throws(() => buildGammaStructure({ underlying: { last: null }, callExpDateMap: {}, putExpDateMap: {} }), /no underlying price/);
+});

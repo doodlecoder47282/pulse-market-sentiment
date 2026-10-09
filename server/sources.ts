@@ -1,5 +1,5 @@
 /**
- * Data source adapters: Schwab (quotes), CBOE (SPY options chain),
+ * Data source adapters: Schwab (quotes, SPY options chain for the gamma structure),
  * CNN Fear & Greed, AAII (via fallback), and web-based X/Reddit sentiment
  * aggregated from public search pages (no login / no API key).
  */
@@ -8,6 +8,9 @@ import type {
 } from "@shared/schema";
 import { buildGammaProfile, type OptionRow } from "./gammaProfile";
 import { toSchwabSymbol } from "./schwabSymbols";
+import { flattenSchwabChain, chainSpot, type SchwabChainLike } from "./schwabChainRows";
+import { timeToExpiry, type SettlementStyle } from "./timeToExpiry";
+import { etDate, sessionCloseMs } from "./exchangeCalendar";
 
 const UA = "Mozilla/5.0 (compatible; SentimentDash/1.0)";
 
@@ -23,27 +26,41 @@ async function fetchText(url: string, headers: Record<string, string> = {}) {
   return res.text();
 }
 
-/** Quote endpoint: last-close + previous-close via Schwab getQuotes.
- *  Symbol mapping: Yahoo ^ prefix → Schwab $ prefix (e.g. ^VIX → $VIX, ^GSPC → $SPX).
- *  Bug #4 fix: renamed from yahooQuote → getQuote. Function was never calling
- *  Yahoo — the implementation has always been Schwab-only. The misleading name
- *  was a vestige from the pre-Schwab era.
+/** Quote endpoint: last + previous close via Schwab getQuotes.
+ *  Symbol mapping: Yahoo ^ prefix -> Schwab $ prefix (server/schwabSymbols.ts).
+ *  prev = the prior session's close: during the session last - netChange
+ *  (Schwab defines netChange against the previous close); after today's
+ *  close Schwab may roll its close to today's, so the prior close is resolved
+ *  against Schwab daily-bar dates (quotes.resolveSessionPrevClose). null when
+ *  no honest prior close exists -- never 0.
  */
-export async function getQuote(symbol: string): Promise<{ last: number | null; prev: number | null; stale?: boolean | null; ageMs?: number | null }> {
+export async function getQuote(symbol: string): Promise<{
+  last: number | null; prev: number | null; stale?: boolean | null; ageMs?: number | null;
+  prevSource?: string;
+}> {
   try {
-    // Map Yahoo-style symbols to Schwab equivalents
     const schwabSymbol = toSchwabSymbol(symbol);
     const { getQuotes } = await import("./schwab");
     const quotes = await getQuotes([schwabSymbol]);
     const q = quotes.find((q) => q.symbol === schwabSymbol);
-    if (!q || q.last == null) return { last: null, prev: null };
-    // changePercent is vs prev close; back-calculate prev from last + change
+    if (!q || q.last == null) return { last: null, prev: null, prevSource: "unavailable" };
     const last = q.last;
-    const prev = (q.change != null && isFinite(q.change)) ? last - q.change : null;
+    let prev = (q.change != null && isFinite(q.change)) ? last - q.change : null;
+    let prevSource = prev != null ? "schwab_quote_net_change" : "unavailable";
+    const nowMs = Date.now();
+    const close = sessionCloseMs(etDate(nowMs));
+    if (close != null && nowMs >= close) {
+      try {
+        const { resolveSessionPrevClose } = await import("./quotes");
+        const pc = await resolveSessionPrevClose(schwabSymbol, etDate(nowMs));
+        prev = pc.prevClose;
+        prevSource = pc.source;
+      } catch { /* keep the netChange-based value */ }
+    }
     // Freshness of the quote itself (server/quoteFreshness.ts).
-    return { last, prev, stale: q.stale ?? null, ageMs: q.ageMs ?? null };
+    return { last, prev, stale: q.stale ?? null, ageMs: q.ageMs ?? null, prevSource };
   } catch {
-    return { last: null, prev: null };
+    return { last: null, prev: null, prevSource: "unavailable" };
   }
 }
 
@@ -55,48 +72,34 @@ export { toSchwabSymbol };
  */
 export const yahooQuote = getQuote;
 
-/** CBOE delayed options chain for SPY (includes per-contract Greeks). */
-export async function cboeSpyChain(): Promise<any> {
-  const url = "https://cdn.cboe.com/api/global/delayed_quotes/options/SPY.json";
-  return fetchJson(url, { Referer: "https://www.cboe.com/" });
-}
+/**
+ * Gamma structure for the Signals snapshot from a Schwab option chain
+ * (SPY, 0-45 DTE; strikes and spot in SPY dollars). Was the CBOE delayed SPY
+ * chain; Schwab is now the only source (user decision 2026-10-08).
+ * Vendor gamma (Schwab), open interest and Schwab IV; settled contracts
+ * (T <= 0 on the shared expiry clock) and Schwab's -999 placeholders are
+ * dropped, not counted as zero.
+ */
+export function buildGammaStructure(chain: SchwabChainLike, nowMs: number = Date.now()): GammaStructure {
+  const spot = chainSpot(chain);
+  if (spot == null) throw new Error("Schwab chain has no underlying price");
+  const S: number = spot;
 
-/** Build gamma structure from the CBOE chain, limited to 0-45 DTE. */
-export function buildGammaStructure(chain: any): GammaStructure {
-  const data = chain.data;
-  const S: number = Number(data.current_price);
-  const opts: any[] = data.options;
-
-  // OCC symbol pattern. Note: the underlying prefix is variable length for SPX
-  // but for SPY it's always "SPY". For SPX weeklys (SPXW), also match.
-  const pat = /^(SPY|SPXW|SPX)(\d{6})([CP])(\d{8})$/;
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-
-  type Row = { type: "C" | "P"; strike: number; gamma: number; iv: number; oi: number; vol: number; dte: number; expiry: string };
+  type Row = { type: "C" | "P"; strike: number; gamma: number; iv: number; oi: number; vol: number; dte: number; expiry: string; style: SettlementStyle };
   const rows: Row[] = [];
-  for (const o of opts) {
-    const m = pat.exec(o.option);
-    if (!m) continue;
-    const ymd = m[2];
-    const year = 2000 + parseInt(ymd.slice(0, 2));
-    const month = parseInt(ymd.slice(2, 4)) - 1;
-    const day = parseInt(ymd.slice(4, 6));
-    const exp = new Date(Date.UTC(year, month, day));
-    const dte = Math.round((exp.getTime() - today.getTime()) / 86400000);
-    if (dte < 0 || dte > 45) continue;
-    const strike = parseInt(m[4]) / 1000;
-    const gamma = Number(o.gamma) || 0;
-    const iv = Number(o.iv) || 0;
-    const oi = Number(o.open_interest) || 0;
-    if (gamma === 0 || oi === 0) continue;
-    const expiry = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  for (const c of flattenSchwabChain(chain)) {
+    if (c.dte < 0 || c.dte > 45) continue;
+    if (!(timeToExpiry(c.expiry, { nowMs, style: c.style }).years > 0)) continue; // settled
+    const gamma = c.gamma;
+    const oi = c.openInterest;
+    if (gamma == null || gamma === 0 || oi == null || oi === 0) continue;
     rows.push({
-      type: m[3] as "C" | "P",
-      strike, gamma, iv, oi,
-      vol: Number(o.volume) || 0,
-      dte,
-      expiry,
+      type: c.side,
+      strike: c.strike, gamma, iv: c.iv ?? 0, oi,
+      vol: c.volume ?? 0,
+      dte: c.dte,
+      expiry: c.expiry,
+      style: c.style,
     });
   }
 
@@ -150,8 +153,8 @@ export function buildGammaStructure(chain: any): GammaStructure {
   // gamma flips sign. This is the level SpotGamma / MenthorQ publish.
   const profileRows: OptionRow[] = rows
     .filter((rr) => rr.iv > 0 && rr.oi > 0)
-    // expiry date -> the shared clock (timeToExpiry, PM: SPY options settle on the close)
-    .map((rr) => ({ type: rr.type, strike: rr.strike, iv: rr.iv, oi: rr.oi, dte: rr.dte, expiry: rr.expiry }));
+    // expiry date + settlement style -> the shared clock (timeToExpiry)
+    .map((rr) => ({ type: rr.type, strike: rr.strike, iv: rr.iv, oi: rr.oi, dte: rr.dte, expiry: rr.expiry, style: rr.style }));
   const gammaProfile = buildGammaProfile(profileRows, S);
   const zeroGamma: number | null = gammaProfile.zeroGammaSpot;
 

@@ -54,7 +54,7 @@ export interface GammaCurveResult {
   zeroGamma: number | null;    // re-priced gamma flip (gammaProfile.ts), app-wide definition
   zeroGammaCumulative?: number | null; // secondary: cumulative-by-strike sign change (legacy)
   zeroGammaMethod?: "repriced-profile";
-  source: "schwab" | "cboe";
+  source: "schwab";
 }
 
 export async function buildGammaCurve(symbol: string): Promise<GammaCurveResult | { error: string }> {
@@ -181,6 +181,6 @@ export async function buildGammaCurve(symbol: string): Promise<GammaCurveResult 
     zeroGamma: gex.zeroGamma ?? null,
     zeroGammaCumulative: gex.zeroGammaCumulative ?? null,
     zeroGammaMethod: "repriced-profile",
-    source: (chain as any).source === "cboe" ? "cboe" : "schwab",
+    source: "schwab",
   };
 }
