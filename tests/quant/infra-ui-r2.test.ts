@@ -293,3 +293,43 @@ test("trust proxy: index.ts never sets trust proxy to true", async () => {
   assert.ok(!/set\(\s*["']trust proxy["']\s*,\s*true/.test(src));
   assert.match(src, /app\.set\("trust proxy", TRUST_PROXY_HOPS\)/);
 });
+
+// ─── Item 2 (11.7): runtime files untracked and created when missing ────────
+import { ensureParentDir, dataFilePath, schedulerStatePath } from "../../server/dbPath";
+
+test("runtime files: data dir and state path are created/resolved on a fresh checkout", async () => {
+  const { mkdtempSync, existsSync, writeFileSync, rmSync } = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const root = mkdtempSync(path.join(os.tmpdir(), "batcave-r2g-"));
+  try {
+    const p = dataFilePath("greek_gradient.db", root);
+    assert.equal(p, path.join(root, "data", "greek_gradient.db"));
+    assert.ok(existsSync(path.join(root, "data")), "data/ created before SQLite opens the file");
+    const nested = ensureParentDir(path.join(root, "a", "b", "state.json"));
+    writeFileSync(nested, "{}");
+    assert.ok(existsSync(nested));
+    assert.equal(schedulerStatePath({}, root), path.join(root, ".discord-scheduler-state.json"));
+    assert.equal(schedulerStatePath({ BATCAVE_SCHEDULER_STATE_PATH: "var/s.json" }, root), path.join(root, "var", "s.json"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runtime files: not tracked by git and ignored", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { readFileSync } = await import("node:fs");
+  const cwd = new URL("../..", import.meta.url).pathname;
+  const files = ["data/greek_gradient.db", "data/greek_gradient.db-wal", "data/greek_gradient.db-shm", ".discord-scheduler-state.json"];
+  let tracked = "";
+  try {
+    tracked = execFileSync("git", ["ls-files", "--", ...files], { cwd, encoding: "utf8" }).trim();
+  } catch {
+    return; // not a git checkout (e.g. a tarball): nothing to check
+  }
+  assert.equal(tracked, "", `still tracked: ${tracked}`);
+  const gi = readFileSync(new URL("../../.gitignore", import.meta.url), "utf8");
+  for (const f of files) assert.ok(gi.split(/\r?\n/).includes(f), `${f} in .gitignore`);
+  const sched = readFileSync(new URL("../../server/discordScheduler.ts", import.meta.url), "utf8");
+  assert.ok(!sched.includes("/home/user/workspace"), "no hard-coded sandbox path");
+});
