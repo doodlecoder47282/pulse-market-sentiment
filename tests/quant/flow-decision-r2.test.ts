@@ -538,3 +538,12 @@ test("N-3: empty groups report null rates, never 0%", () => {
   assert.equal(row.excludedNoQuote, 3);
   assert.equal(row.excludedNoFee, 2);
 });
+
+test("merge: r2-b gexSignAtSpot null (no material gamma) never yields CHOP; stop pct is the published plan's", async () => {
+  const base = { score: 0, shortGamma: false, gammaPts: 0, rangePts: 0, ofiPts: 0, volPts: 0, missing: [] as string[] };
+  assert.equal(classifyEnvState(base), "CHOP");
+  assert.equal(classifyEnvState({ ...base, noMaterialGamma: true }), "STAND_DOWN");
+  const { ODTE_PLAN_RULES } = await import("../../server/validationMath");
+  const { PLAN_OPTION_STOP_PCT } = await import("../../server/exitValuation");
+  assert.equal(PLAN_OPTION_STOP_PCT, ODTE_PLAN_RULES.optionStopPct);
+});
