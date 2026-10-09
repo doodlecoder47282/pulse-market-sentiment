@@ -312,6 +312,7 @@ export interface Gauge {
   value: number;          // 0..100 where 50 = neutral
   weight: number;         // contribution weight to composite
   interpretation: string;
+  block?: string;         // correlated-gauge block (implied-vol, options-positioning, crowd, fear-greed)
 }
 
 export interface Composite {
@@ -320,6 +321,7 @@ export interface Composite {
   gauges: Gauge[];
   takeaway: string;             // short human summary
   tradingRegime: string;        // "positive gamma / mean reversion", etc.
+  method?: string;              // how gauges are weighted (heuristic, block-first)
 }
 
 // ----- CLV Tracker (trade log + closing-line value) -----

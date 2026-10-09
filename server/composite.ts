@@ -2,11 +2,53 @@
  * Composite sentiment score. Maps each raw signal to a 0..100 sub-score
  * (0 = extreme fear, 50 = neutral, 100 = extreme greed), then combines
  * by weights. Weights are transparent so the user can reason about them.
+ *
+ * De-duplication (review finding 5.5). VIX, VVIX, the 9D/30D term ratio and
+ * SKEW are all reads of one implied-vol factor, and CNN Fear & Greed itself
+ * contains VIX and the put/call ratio (2 of its 7 indicators,
+ * https://edition.cnn.com/markets/fear-and-greed). Averaging them as if
+ * independent gave the vol factor about half the score. Gauges are now
+ * grouped into blocks and weighted hierarchically, block first, then within
+ * the block (the cluster-first allocation of Lopez de Prado 2016, "Building
+ * Diversified Portfolios that Outperform Out of Sample",
+ * https://papers.ssrn.com/abstract=2708678): adding another vol gauge cannot
+ * raise the vol factor's share. F&G's block weight is cut by its 2/7 overlap.
+ * Block and intra-block weights are hand-set heuristics, not estimated: a
+ * correlation-estimated weighting needs stored gauge history (the snapshots
+ * table holds it) and is not fitted yet. The score is a heuristic sentiment
+ * reading, not a probability.
  */
 import type { Composite, Gauge, Snapshot_Public } from "@shared/schema";
 
 /** Clamp to 0..100. */
 const clamp = (v: number) => Math.max(0, Math.min(100, v));
+
+export type GaugeBlock = "implied-vol" | "options-positioning" | "crowd" | "fear-greed";
+
+/** Block weights (hand-set heuristic). Sum 1 before F&G's overlap haircut. */
+export const BLOCK_WEIGHTS: Record<GaugeBlock, number> = {
+  "implied-vol": 0.30,          // VIX, VVIX, term, SKEW: one factor
+  "options-positioning": 0.30,  // put/call OI, dealer gamma
+  "crowd": 0.25,                // social, AAII, curated voices
+  "fear-greed": 0.15 * (5 / 7), // CNN F&G minus its VIX and put/call components
+};
+
+/**
+ * Hierarchical weights: each present block gets its block weight, shared
+ * among its present gauges by their intra-block weights; everything is then
+ * renormalized over the blocks present. Pure, exported for tests.
+ */
+export function blockWeights(gauges: Array<{ block: GaugeBlock; intra: number }>): number[] {
+  const intraSum = new Map<GaugeBlock, number>();
+  for (const g of gauges) intraSum.set(g.block, (intraSum.get(g.block) ?? 0) + g.intra);
+  let total = 0;
+  for (const [b, v] of Array.from(intraSum.entries())) if (v > 0) total += BLOCK_WEIGHTS[b];
+  if (total <= 0) return gauges.map(() => 0);
+  return gauges.map((g) => {
+    const v = intraSum.get(g.block) ?? 0;
+    return v > 0 ? (BLOCK_WEIGHTS[g.block] / total) * (g.intra / v) : 0;
+  });
+}
 
 /**
  * VIX sub-score: low VIX = greed (high score), high VIX = fear.
@@ -87,7 +129,9 @@ export function computeComposite(
   snap: Omit<Snapshot_Public, "composite">,
   voicesBias?: { score: number; sampleSize: number } | null,
 ): Composite {
-  const gauges: Gauge[] = [];
+  // `weight` here is the INTRA-block weight; blockWeights() turns it into
+  // the effective composite weight below.
+  const gauges: Array<Gauge & { block: GaugeBlock }> = [];
 
   const vix = snap.vol.vix.value;
   if (vix != null) {
@@ -95,7 +139,8 @@ export function computeComposite(
     gauges.push({
       name: "VIX Level",
       value: v,
-      weight: 0.22,
+      block: "implied-vol",
+      weight: 0.45,
       interpretation:
         vix < 14 ? "Complacent — cheap hedges, low realized vol expected"
         : vix < 20 ? "Calm — normal range, positioning friendly"
@@ -109,7 +154,8 @@ export function computeComposite(
     gauges.push({
       name: "VVIX (Vol-of-Vol)",
       value: clamp(vvixScore(vvix)),
-      weight: 0.08,
+      block: "implied-vol",
+      weight: 0.15,
       interpretation:
         vvix < 90 ? "VIX options cheap — tail risk under-priced"
         : vvix < 110 ? "Normal VIX options pricing"
@@ -123,7 +169,8 @@ export function computeComposite(
     gauges.push({
       name: "Term Structure (9D/30D)",
       value: clamp(termScore(r)),
-      weight: 0.12,
+      block: "implied-vol",
+      weight: 0.25,
       interpretation:
         r < 0.9 ? "Deep contango — front-end calm, trend-friendly"
         : r < 1.0 ? "Normal contango"
@@ -137,7 +184,8 @@ export function computeComposite(
     gauges.push({
       name: "SKEW Index",
       value: clamp(skewScore(skew)),
-      weight: 0.08,
+      block: "implied-vol",
+      weight: 0.15,
       interpretation:
         skew < 120 ? "Tail risk under-priced"
         : skew < 140 ? "Normal skew"
@@ -149,7 +197,8 @@ export function computeComposite(
   gauges.push({
     name: "Put/Call OI (0-45 DTE)",
     value: clamp(pcrScore(snap.gamma.pcrOi)),
-    weight: 0.12,
+    block: "options-positioning",
+    weight: 0.45,
     interpretation:
       snap.gamma.pcrOi < 0.8 ? "Call-heavy — speculative greed"
       : snap.gamma.pcrOi < 1.2 ? "Balanced"
@@ -160,7 +209,8 @@ export function computeComposite(
   gauges.push({
     name: "Dealer Gamma Regime",
     value: clamp(gammaScore(snap.gamma.totalGex)),
-    weight: 0.15,
+    block: "options-positioning",
+    weight: 0.55,
     interpretation:
       snap.gamma.regime === "positive"
         ? `Positive gamma — dealers buy dips / sell rips. Mean-reversion regime. Call wall at ${snap.gamma.callWall}.`
@@ -177,7 +227,8 @@ export function computeComposite(
     gauges.push({
       name: "Social Sentiment (StockTwits + Reddit)",
       value: clamp(socialScore(socialRaw)),
-      weight: 0.10,
+      block: "crowd",
+      weight: 0.40,
       interpretation:
         (socialRaw > 30 ? "Retail chatter skews bullish"
         : socialRaw > -30 ? "Retail chatter mixed"
@@ -189,7 +240,8 @@ export function computeComposite(
     gauges.push({
       name: "CNN Fear & Greed",
       value: snap.fearGreed.value,
-      weight: 0.08,
+      block: "fear-greed",
+      weight: 1,
       interpretation: `CNN index: ${snap.fearGreed.label}`,
     });
   }
@@ -201,7 +253,8 @@ export function computeComposite(
     gauges.push({
       name: "AAII Bull-Bear Spread",
       value: v,
-      weight: 0.05,
+      block: "crowd",
+      weight: 0.25,
       interpretation:
         net > 20 ? "Retail survey very bullish (contrarian bearish)"
         : net > 0 ? "Retail survey leans bullish"
@@ -217,7 +270,8 @@ export function computeComposite(
     gauges.push({
       name: "Curated Voices Bias",
       value: v,
-      weight: 0.08,
+      block: "crowd",
+      weight: 0.35,
       interpretation:
         voicesBias.score > 20 ? `Analysts lean bullish (net +${voicesBias.score.toFixed(0)}, n=${voicesBias.sampleSize})`
         : voicesBias.score > -20 ? `Analysts split (net ${voicesBias.score.toFixed(0)}, n=${voicesBias.sampleSize})`
@@ -225,8 +279,11 @@ export function computeComposite(
     });
   }
 
-  // Weighted composite (re-normalize weights that were actually supplied)
-  const totalW = gauges.reduce((a, g) => a + g.weight, 0);
+  // Hierarchical (block-first) weights; blocks with no gauge drop out and the
+  // rest renormalize. Each gauge's `weight` becomes its effective share.
+  const eff = blockWeights(gauges.map((g) => ({ block: g.block, intra: g.weight })));
+  gauges.forEach((g, i) => { g.weight = eff[i]; });
+  const totalW = eff.reduce((a, b) => a + b, 0);
   const score = totalW ? Math.round(gauges.reduce((a, g) => a + g.value * g.weight, 0) / totalW) : 50;
 
   const label =
@@ -245,7 +302,10 @@ export function computeComposite(
 
   const takeaway = buildTakeaway(score, label, snap);
 
-  return { score, label, gauges, takeaway, tradingRegime };
+  return {
+    score, label, gauges, takeaway, tradingRegime,
+    method: "heuristic: block-weighted (implied vol 30%, options positioning 30%, crowd 25%, CNN F&G 15% x 5/7 for its VIX and put/call overlap); weights renormalize over the blocks present; not a probability",
+  };
 }
 
 function buildTakeaway(score: number, label: string, snap: Omit<Snapshot_Public, "composite">): string {

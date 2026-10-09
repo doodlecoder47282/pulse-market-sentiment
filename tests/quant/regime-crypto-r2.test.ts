@@ -194,3 +194,36 @@ test("canary composite: sum(w z)/sqrt(w'Rw) is N(0,1) under the null; closed-for
   // a 1.25 weighted-mean alarm was really about z = 1.25 / sqrt(vMean)
   assert.ok(1.25 / Math.sqrt(vMean) > 1.7);
 });
+
+// ─── 5.5 composite: one vol factor, not four ──────────────────────────────
+
+test("composite: correlated vol gauges share one block weight; F&G cut for its VIX/put-call overlap", async () => {
+  const { computeComposite, blockWeights, BLOCK_WEIGHTS } = await import("../../server/composite");
+  const base: any = {
+    vol: { vix: { value: 40 }, vvix: { value: 150 }, vix9d: { value: null }, vix3m: { value: null }, skew: { value: 160 } },
+    term: { ratio9dOver30d: 1.3, ratio30dOver3m: null },
+    gamma: { totalGex: 3e9, regime: "positive", callWall: 0, putWall: 0, maxPain: 0, zeroGamma: null, pcrOi: 0.5, pcrVol: 1 },
+    social: { score: null, bullish: 0, bearish: 0, neutral: 0, posts: [], status: "unavailable" },
+    fearGreed: null, aaii: null, spy: { price: 1, prevClose: 1, changePct: 0 },
+  };
+  const c = computeComposite(base);
+  const share = (blk: string) => c.gauges.filter((g: any) => g.block === blk).reduce((a: number, g: any) => a + g.weight, 0);
+  // Two blocks present (vol, positioning), each 0.30 -> 0.5 / 0.5 after renormalization.
+  assert.ok(Math.abs(share("implied-vol") - 0.5) < 1e-12);
+  assert.ok(Math.abs(c.gauges.reduce((a: number, g: any) => a + g.weight, 0) - 1) < 1e-12);
+  // Hand-computed score: vol sub-scores VIX 40->5, VVIX 150->10, term 1.3->10, SKEW 160->25
+  // with intra weights .45/.15/.25/.15 -> 2.25 + 1.5 + 2.5 + 3.75 = 10; positioning
+  // PCR 0.5->85 (.45), gamma 3B->75 (.55) -> 79.5. Score = 0.5 * 10 + 0.5 * 79.5 = 44.75 -> 45.
+  assert.equal(c.score, 45);
+  // The old independent average would have let the vol factor carry 0.50/0.77 of it.
+  // Dropping three of four vol gauges does not change the vol block's share.
+  const onlyVix = computeComposite({ ...base, vol: { ...base.vol, vvix: { value: null }, skew: { value: null } }, term: { ratio9dOver30d: null, ratio30dOver3m: null } });
+  assert.ok(Math.abs(onlyVix.gauges.filter((g: any) => g.block === "implied-vol").reduce((a: number, g: any) => a + g.weight, 0) - 0.5) < 1e-12);
+  // F&G block weight carries the 5/7 haircut
+  assert.ok(Math.abs(BLOCK_WEIGHTS["fear-greed"] - 0.15 * 5 / 7) < 1e-15);
+  const w = blockWeights([{ block: "fear-greed", intra: 1 }, { block: "crowd", intra: 0.4 }]);
+  const tot = BLOCK_WEIGHTS["fear-greed"] + BLOCK_WEIGHTS.crowd;
+  assert.ok(Math.abs(w[0] - BLOCK_WEIGHTS["fear-greed"] / tot) < 1e-12);
+  assert.ok(Math.abs(w[1] - BLOCK_WEIGHTS.crowd / tot) < 1e-12);
+  assert.match(c.method ?? "", /heuristic/);
+});

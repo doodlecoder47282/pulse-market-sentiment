@@ -697,7 +697,7 @@ export default function Dashboard() {
                         />
                       </div>
                       <div className="mt-2 text-[11px] leading-snug text-muted-foreground">{g.interpretation}</div>
-                      <div className="mt-1 text-[10px] text-muted-foreground/70">weight {(g.weight * 100).toFixed(0)}%</div>
+                      <div className="mt-1 text-[10px] text-muted-foreground/70">weight {(g.weight * 100).toFixed(0)}%{g.block ? ` · ${g.block} block` : ""}</div>
                     </div>
                   ))}
                 </div>
