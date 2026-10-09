@@ -34,7 +34,9 @@
 
 import type { Side } from "./odteAlertEngine";
 import { minutesToSessionClose } from "./chainClock";
-import { odteProjectionFee, projectToTarget, type TargetProjection } from "./t1Projection";
+import { atmPathSigma, projectToTarget, type TargetProjection } from "./t1Projection";
+import { feeForProduct } from "./feeConfig";
+import { spreadExceedsStop } from "./exitValuation";
 
 export interface ContractDetails {
   strike: number;
@@ -75,7 +77,7 @@ export interface ContractPickResult {
 }
 
 export type ContractPickError = {
-  reason: "CONTRACT_NO_STRIKE_IN_DELTA_BAND" | "CHAIN_UNAVAILABLE" | "NO_CANDIDATES" | "CONTRACT_SPREAD_TOO_WIDE_GT_5_PCT" | "PROJECTION_UNAVAILABLE";
+  reason: "CONTRACT_NO_STRIKE_IN_DELTA_BAND" | "CHAIN_UNAVAILABLE" | "NO_CANDIDATES" | "CONTRACT_SPREAD_TOO_WIDE_GT_5_PCT" | "PROJECTION_UNAVAILABLE" | "SPREAD_EXCEEDS_STOP";
   detail?: string;
 };
 
@@ -254,13 +256,20 @@ export async function pickContractForSide(
   const MAX_SPREAD_PCT = 0.05;
   let best: Candidate | null = null;
 
+  // SF-3: a bid already at or below the plan's -20% stop of an ask fill
+  // (bid <= 0.80 x ask) would stop on entry; no two-sided quote = no stop.
+  let exceedsStop = 0;
   for (const cand of sorted) {
+    if (spreadExceedsStop(cand.bid, cand.ask) !== false) { exceedsStop++; continue; }
     if (cand.spreadPct <= MAX_SPREAD_PCT) {
       best = cand;
       break;
     }
   }
 
+  if (!best && exceedsStop === sorted.length) {
+    return { reason: "SPREAD_EXCEEDS_STOP", detail: `All ${sorted.length} candidates have no two-sided quote or a bid at/below 0.80 x ask` };
+  }
   if (!best) {
     // No candidate has a tight-enough spread
     return {
@@ -272,11 +281,14 @@ export async function pickContractForSide(
   // ─── Projected return if T1 / T2 is reached (t1Projection.ts) ────────────
   // minutesToClose = minutes until today's close (13:00 ET on half days)
   const minutesToClose = computeMinutesToClose(nowMs);
+  // N-2: path vol = ATM vol of the same expiry; the strike reprices with its own vol.
+  const expiryIso = todayKey!.split(":")[0] ?? todayEt;
+  const pathSigma = atmPathSigma(strikesObj as Record<string, any[]>, spot, side === "call" ? "C" : "P", expiryIso, nowMs);
   const proj = (targetPrice: number) => projectToTarget({
     spot, strike: best!.strike, type: side === "call" ? "C" : "P", target: targetPrice,
-    expiry: todayKey!.split(":")[0] ?? todayEt, symbol: best!.key,
+    expiry: expiryIso, symbol: best!.key,
     bid: best!.bid, ask: best!.ask, vendorIv: best!.iv, minutesToClose, nowMs,
-    feePerContract: odteProjectionFee(),
+    feePerContract: feeForProduct(best!.key).fee, pathSigma,
   });
   const t1P = proj(t1Price);
   const t2P = proj(t2Price != null ? t2Price : t1Price + (side === "call" ? 5 : -5));
@@ -310,7 +322,7 @@ export async function pickContractForSide(
     projDeltaPnl: t1P.projDeltaPnl,
     projGammaBoost: t1P.projGammaBoost,
     projThetaCost: t1P.projThetaCost,
-    projPnl: t1P.projPnlPerContract / 100,
+    projPnl: t1P.projPnlPerContract != null ? t1P.projPnlPerContract / 100 : (t1P.projectedExitBid - t1P.entryAsk),
     projectionT1: t1P,
     minutesToClose,
     // Wire 16 audit fields
