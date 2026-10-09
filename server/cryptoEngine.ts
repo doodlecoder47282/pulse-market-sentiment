@@ -86,6 +86,7 @@ export interface Candidate {
   bskyMentions1h: number | null;
   bskyMentions10m: number | null;
   bskyMentionsByAddress1h: number | null; // posts naming the contract address (identity-safe)
+  bskyMentionsByAddress10m: number | null;
   bskyCapped: boolean;                    // search cap hit inside the hour: counts are lower bounds
   pumpReplies: number | null;
   pumpCheckedAt: number | null;           // last successful pump.fun read (values older than this are stale)
@@ -353,7 +354,7 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
     boosted: false, lastRefreshAt: null,
     mintAuthorityActive: null, freezeAuthorityActive: null, top10Pct: null, top10Method: null, securityCheckedAt: null,
     rcRisks: [], rcLpLockedPct: null, rcCheckedAt: null,
-    bskyMentions1h: null, bskyMentions10m: null, bskyMentionsByAddress1h: null, bskyCapped: false,
+    bskyMentions1h: null, bskyMentions10m: null, bskyMentionsByAddress1h: null, bskyMentionsByAddress10m: null, bskyCapped: false,
     pumpReplies: null, pumpCheckedAt: null, pumpReplyPerHr: null,
     pumpLive: false, hasSocialLinks: null, socialScore: null, socialCheckedAt: null, prevPumpReplies: null,
     socialAttemptAt: null, socialStatus: null, socialSources: null, socialCoverage: null,
@@ -709,6 +710,7 @@ async function socialTick(): Promise<void> {
           c.bskyMentions1h = mc.m1h;
           c.bskyMentions10m = mc.m10;
           c.bskyMentionsByAddress1h = mc.byAddress1h;
+          c.bskyMentionsByAddress10m = mc.byAddress10m;
           c.bskyCapped = mc.capped;
           bsky = "ok";
         } catch {
@@ -718,6 +720,7 @@ async function socialTick(): Promise<void> {
           c.bskyMentions1h = null;
           c.bskyMentions10m = null;
           c.bskyMentionsByAddress1h = null;
+          c.bskyMentionsByAddress10m = null;
           c.bskyCapped = false;
         }
       }
@@ -755,7 +758,7 @@ async function socialTick(): Promise<void> {
         computeSocialScore(c, applicable),
         now,
       );
-      c.socialCoverage = socialCoverage(applicable) + (c.bskyCapped ? "; bluesky search capped (counts are lower bounds)" : "");
+      c.socialCoverage = socialCoverage(applicable) + (applicable.bsky ? "; cashtag-only mentions count half (heuristic), contract-address mentions in full" : "") + (c.bskyCapped ? "; bluesky search capped (counts are lower bounds)" : "");
       c.socialScore = next.socialScore;
       c.socialCheckedAt = next.socialCheckedAt;
       c.socialStatus = next.socialStatus;

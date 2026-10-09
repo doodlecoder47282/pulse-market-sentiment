@@ -495,7 +495,13 @@ test("crypto social: cashtag + contract-address union, capped search is a lower 
       { uri: "at://4", createdAt: iso(8), text: `ca: ${mint}` },
     ] },
   ], mint, now);
-  assert.deepEqual(mc, { m10: 2, m1h: 3, capped: true, byAddress1h: 2 });
+  assert.deepEqual(mc, { m10: 2, byAddress10m: 1, m1h: 3, capped: true, byAddress1h: 2 });
+  // Address matches count fully, cashtag-only at 0.5: 1h = 2 + 0.5 x 1 = 2.5 -> 2.5 x 2.5 = 6.25 pts;
+  // 10m = 1 + 0.5 x 1 = 1.5 -> 18 pts; Bluesky-only normalization 24.25 / 55 -> 44.
+  const { weightedMentions } = await import("../../server/cryptoStats");
+  assert.equal(weightedMentions(3, 2), 2.5);
+  assert.equal(weightedMentions(3, null), 3); // legacy rows (no split) count all
+  assert.equal(computeSocialScore({ bskyMentions10m: 2, bskyMentions1h: 3, bskyMentionsByAddress10m: 1, bskyMentionsByAddress1h: 2, pumpReplyPerHr: null, pumpLive: false, hasSocialLinks: null }, { bsky: true, pump: false }), 44);
   // normalization: Bluesky-only token with saturated Bluesky points scores 100, not 55
   const sat = { bskyMentions10m: 3, bskyMentions1h: 8, pumpReplyPerHr: null, pumpLive: false, hasSocialLinks: null };
   assert.equal(computeSocialScore(sat, { bsky: true, pump: false }), 100);

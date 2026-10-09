@@ -41,9 +41,27 @@ export interface SocialState {
 export interface SocialInputs {
   bskyMentions10m: number | null;
   bskyMentions1h: number | null;
+  /** Of the above, posts naming the contract address (identity-safe). Absent = not split (old rows). */
+  bskyMentionsByAddress10m?: number | null;
+  bskyMentionsByAddress1h?: number | null;
   pumpReplyPerHr: number | null;
   pumpLive: boolean;
   hasSocialLinks: boolean | null;
+}
+
+/**
+ * Weight of a cashtag-only mention relative to one that names the contract
+ * address. A "$SYMBOL" post can be about another coin or a plain word; the
+ * address identifies the token. Hand-set heuristic (not fitted), labelled.
+ */
+export const CASHTAG_ONLY_WEIGHT = 0.5;
+
+/** Address matches count fully, cashtag-only matches at CASHTAG_ONLY_WEIGHT. */
+export function weightedMentions(total: number | null | undefined, byAddress: number | null | undefined): number {
+  const t = total ?? 0;
+  if (byAddress == null) return t; // not split (legacy): count all
+  const a = Math.min(byAddress, t);
+  return a + CASHTAG_ONLY_WEIGHT * (t - a);
 }
 
 /** Points available per source in computeSocialScore. */
@@ -64,8 +82,8 @@ export function computeSocialScore(
   let s = 0;
   let max = 0;
   if (applicable.bsky) {
-    s += Math.min(35, (i.bskyMentions10m ?? 0) * 12);          // fresh mentions are gold
-    s += Math.min(20, (i.bskyMentions1h ?? 0) * 2.5);
+    s += Math.min(35, weightedMentions(i.bskyMentions10m, i.bskyMentionsByAddress10m) * 12); // fresh mentions are gold
+    s += Math.min(20, weightedMentions(i.bskyMentions1h, i.bskyMentionsByAddress1h) * 2.5);
     max += SOCIAL_MAX_POINTS.bsky;
   }
   if (applicable.pump) {
@@ -364,6 +382,8 @@ export function holderConcentration(
 
 export interface MentionCount {
   m10: number;
+  /** of m10, posts that contain the contract address */
+  byAddress10m: number;
   m1h: number;
   /** the search hit its page cap with posts still inside the hour: counts are lower bounds */
   capped: boolean;
@@ -395,13 +415,13 @@ export function countMentions(
       seen.set(key, { t, hasAddr: hasAddr || (prev?.hasAddr ?? false) });
     }
   }
-  let m10 = 0, m1h = 0, byAddress1h = 0;
+  let m10 = 0, m1h = 0, byAddress1h = 0, byAddress10m = 0;
   for (const v of Array.from(seen.values())) {
     const age = now - v.t;
     if (age < 0 || age >= 3600_000) continue;
     m1h++;
     if (v.hasAddr) byAddress1h++;
-    if (age < 600_000) m10++;
+    if (age < 600_000) { m10++; if (v.hasAddr) byAddress10m++; }
   }
-  return { m10, m1h, capped, byAddress1h };
+  return { m10, byAddress10m, m1h, capped, byAddress1h };
 }
