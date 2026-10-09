@@ -205,7 +205,7 @@ jobs:
       - name: Publish report to ci-reports-quant branch
         if: always()
         run: |
-          cp -f rep/* /tmp/ 2>/dev/null; mkdir -p /tmp/rep && cp -R rep/. /tmp/rep/ 2>/dev/null || true
+          mkdir -p /tmp/rep && cp -R rep/. /tmp/rep/ 2>/dev/null || true
           for f in /tmp/rep/server-*.log; do [ -f "$f" ] && tail -400 "$f" > "$f.tail" && mv "$f.tail" "$f"; done
           echo "run ${GITHUB_RUN_ID} sha ${GITHUB_SHA}" > /tmp/rep/RUN.txt
           cd /tmp/rep && git init -q && git checkout -q -b ci-reports-quant
