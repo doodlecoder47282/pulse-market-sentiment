@@ -659,3 +659,27 @@ test("sentiment weights: HRP on gauge history (known answer), sample gate, heuri
   near(e.gauges.find((g: any) => g.name === "VIX Level")!.weight, r.est.weights["VIX Level"] / tot, 1e-12);
   assert.ok(e.effectiveGauges != null);
 });
+
+test("breadth internals: Schwab $ADVN/$DECN/$UVOL/$DVOL validated; a tradeable look-alike or failure is unavailable", async () => {
+  const { breadthInternalsFromQuotes } = await import("../../server/breadthMath");
+  const q = (symbol: string, last: number | null, extra: Record<string, unknown> = {}) => ({ symbol, last, bid: null, ask: null, stale: false, quoteTimeMs: 1000, ...extra });
+  const ok = breadthInternalsFromQuotes([q("$ADVN", 1800), q("$DECN", 1200), q("$UVOL", 6e8), q("$DVOL", 2e8)]);
+  assert.equal(ok.state, "ok");
+  assert.equal(ok.advanceShare, 0.6);    // 1800 / 3000
+  assert.equal(ok.upVolumeShare, 0.75);  // 6e8 / 8e8
+  // $DVOL resolving to a tradeable instrument (bid/ask) is refused; counts still used -> partial
+  const p = breadthInternalsFromQuotes([q("$ADVN", 1800), q("$DECN", 1200), q("$UVOL", 6e8), q("$DVOL", 30, { bid: 17.75, ask: 53.23 })]);
+  assert.equal(p.state, "partial");
+  assert.equal(p.upVolumeShare, null);
+  assert.match(p.reason ?? "", /tradeable instrument/);
+  // implausible counts (not the NYSE index), no response, failure -> unavailable, never 0%
+  assert.equal(breadthInternalsFromQuotes([q("$ADVN", 12), q("$DECN", 30)]).state, "unavailable");
+  const none = breadthInternalsFromQuotes(null, "401");
+  assert.equal(none.state, "unavailable");
+  assert.equal(none.advanceShare, null);
+  assert.match(none.reason ?? "", /401/);
+  // an observed 0 decliners on a valid count is kept (0 is data, not missing)
+  assert.equal(breadthInternalsFromQuotes([q("$ADVN", 2900), q("$DECN", 0)]).advanceShare, 1);
+  // stale quotes are labelled stale
+  assert.equal(breadthInternalsFromQuotes([q("$ADVN", 1500, { stale: true }), q("$DECN", 1500)]).state, "stale");
+});

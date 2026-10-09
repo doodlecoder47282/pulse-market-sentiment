@@ -24,7 +24,31 @@
 
 import { sqlite } from "./storage";
 import { BREADTH_STOCKS } from "./stockBarsCache";
-import { computeBreadth, SECTOR_ETFS, type BarRow, type BreadthSnapshot } from "./breadthMath";
+import { computeBreadth, SECTOR_ETFS, breadthInternalsFromQuotes, INTERNALS_SYMBOLS, type BarRow, type BreadthSnapshot, type BreadthInternals } from "./breadthMath";
+import { getQuotes } from "./schwab";
+
+// NYSE internals ($ADVN/$DECN/$UVOL/$DVOL) from Schwab, refreshed in the
+// background at most every 60 s; the snapshot carries the latest validated
+// read (or "unavailable" with the reason) and names which read is primary.
+let _internals: { at: number; data: BreadthInternals } | null = null;
+let _internalsInflight = false;
+function refreshInternals(): void {
+  if (_internalsInflight || (_internals && Date.now() - _internals.at < 60_000)) return;
+  _internalsInflight = true;
+  getQuotes(Object.values(INTERNALS_SYMBOLS))
+    .then((qs) => { _internals = { at: Date.now(), data: breadthInternalsFromQuotes(qs.length ? qs : null, qs.length ? null : "empty response (not authenticated or symbols unknown)") }; })
+    .catch((e) => { _internals = { at: Date.now(), data: breadthInternalsFromQuotes(null, String(e?.message ?? e).slice(0, 80)) }; })
+    .finally(() => { _internalsInflight = false; });
+}
+function withInternals(snap: BreadthSnapshot): BreadthSnapshot {
+  refreshInternals();
+  const internals = _internals?.data ?? breadthInternalsFromQuotes(null, "first Schwab internals request pending");
+  const primary = internals.state === "ok" || internals.state === "partial" ? "nyse_internals" : "large_cap_sample";
+  const lead = primary === "nyse_internals"
+    ? `NYSE internals (Schwab): ${internals.advanceShare != null ? `${Math.round(internals.advanceShare * 100)}% of issues advancing` : "advance/decline unavailable"}${internals.upVolumeShare != null ? `, ${Math.round(internals.upVolumeShare * 100)}% of volume in advancers` : ""}. Large-cap sample: `
+    : "";
+  return { ...snap, internals, primary, read: lead + snap.read };
+}
 
 export type { BreadthSnapshot } from "./breadthMath";
 
@@ -32,7 +56,7 @@ let _cache: { at: number; snap: BreadthSnapshot } | null = null;
 
 export function getBreadthSnapshot(force = false): BreadthSnapshot {
   const now = Date.now();
-  if (!force && _cache && now - _cache.at < 10 * 60_000) return _cache.snap;
+  if (!force && _cache && now - _cache.at < 10 * 60_000) return withInternals(_cache.snap);
   try {
     const placeholders = BREADTH_STOCKS.map(() => "?").join(",");
     const rows = sqlite
@@ -45,11 +69,11 @@ export function getBreadthSnapshot(force = false): BreadthSnapshot {
       .all(...etfs) as BarRow[];
     const snap = computeBreadth({ rows, etfRows, stockSymbols: BREADTH_STOCKS, nowMs: now });
     _cache = { at: now, snap };
-    return snap;
+    return withInternals(snap);
   } catch (e: any) {
     console.warn("[breadth] snapshot failed:", e?.message ?? e);
     // A failed read is not "insufficient history": say it failed.
     const snap = computeBreadth({ rows: [], etfRows: [], stockSymbols: BREADTH_STOCKS, nowMs: now });
-    return { ...snap, dataState: "unavailable", read: "breadth unavailable (cache read failed)", note: `breadth unavailable: ${String(e?.message ?? e).slice(0, 120)}` };
+    return withInternals({ ...snap, dataState: "unavailable", read: "large-cap sample unavailable (cache read failed)", note: `breadth sample unavailable: ${String(e?.message ?? e).slice(0, 120)}` });
   }
 }

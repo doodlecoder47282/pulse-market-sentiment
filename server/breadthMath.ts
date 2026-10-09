@@ -20,6 +20,91 @@ import { etClock, etDate, isTradingDay, prevTradingDay, sessionCloseMinutes } fr
 
 export interface BarRow { symbol: string; date: string; close: number }
 
+// ─── NYSE market internals from Schwab (primary breadth read) ────────────
+// thinkorswim / Schwab index symbols for NYSE advancing and declining issues
+// and up / down volume (verified in a thinkorswim script that reads them:
+// https://usethinkscript.com/threads/advance-decline-sentiment.17912/).
+// A third-party probe of the Schwab API reported $UVOL/$DVOL candles but also
+// that some of these names can resolve to an unrelated tradeable instrument
+// (https://github.com/tnguyen0830-wq/put-screener/pull/166), so every quote is
+// validated before use: an index has no bid/ask, counts are whole numbers in
+// a plausible NYSE range, volumes are positive. Anything else is
+// "unavailable" with the reason; the hand-picked sample stays as secondary.
+export const INTERNALS_SYMBOLS = { advancers: "$ADVN", decliners: "$DECN", upVolume: "$UVOL", downVolume: "$DVOL" } as const;
+
+export interface InternalsQuote { symbol: string; last: number | null; bid?: number | null; ask?: number | null; stale?: boolean | null; quoteTimeMs?: number | null }
+
+export interface BreadthInternals {
+  state: "ok" | "partial" | "stale" | "unavailable";
+  reason: string | null;
+  source: "schwab";
+  advancers: number | null;
+  decliners: number | null;
+  /** advancers / (advancers + decliners), 0..1 */
+  advanceShare: number | null;
+  upVolume: number | null;
+  downVolume: number | null;
+  /** up volume / (up + down), 0..1 */
+  upVolumeShare: number | null;
+  asOf: number | null;
+  symbols: typeof INTERNALS_SYMBOLS;
+}
+
+/** Validate Schwab quotes for the NYSE internals (pure). */
+export function breadthInternalsFromQuotes(quotes: InternalsQuote[] | null, fetchError?: string | null): BreadthInternals {
+  const empty = (state: BreadthInternals["state"], reason: string): BreadthInternals => ({
+    state, reason, source: "schwab", advancers: null, decliners: null, advanceShare: null,
+    upVolume: null, downVolume: null, upVolumeShare: null, asOf: null, symbols: INTERNALS_SYMBOLS,
+  });
+  if (!quotes) return empty("unavailable", fetchError ? `Schwab quote request failed: ${fetchError}` : "no Schwab response");
+  const by = new Map(quotes.map((q) => [q.symbol.toUpperCase(), q]));
+  const problems: string[] = [];
+  const val = (sym: string, kind: "count" | "volume"): number | null => {
+    const q = by.get(sym);
+    if (!q) { problems.push(`${sym} not returned`); return null; }
+    if ((q.bid != null && q.bid > 0) || (q.ask != null && q.ask > 0)) { problems.push(`${sym} has a bid/ask: a tradeable instrument, not the NYSE breadth index`); return null; }
+    const v = q.last;
+    if (v == null || !Number.isFinite(v) || v < 0) { problems.push(`${sym} has no value`); return null; }
+    if (kind === "count" && Math.abs(v - Math.round(v)) > 1e-9) { problems.push(`${sym} = ${v} is not a whole count`); return null; }
+    return v;
+  };
+  const adv = val(INTERNALS_SYMBOLS.advancers, "count");
+  const dec = val(INTERNALS_SYMBOLS.decliners, "count");
+  const up = val(INTERNALS_SYMBOLS.upVolume, "volume");
+  const dn = val(INTERNALS_SYMBOLS.downVolume, "volume");
+  let advanceShare: number | null = null;
+  if (adv != null && dec != null) {
+    const n = adv + dec;
+    // NYSE lists about 3,000 issues: a sum outside 500-6000 is not that index.
+    if (n < 500 || n > 6000) problems.push(`advancers + decliners = ${n}, outside the NYSE range 500-6000`);
+    else advanceShare = adv / n;
+  }
+  let upVolumeShare: number | null = null;
+  if (up != null && dn != null) {
+    if (up + dn > 0) upVolumeShare = up / (up + dn);
+    else problems.push("up + down volume is 0");
+  }
+  const times = [INTERNALS_SYMBOLS.advancers, INTERNALS_SYMBOLS.decliners, INTERNALS_SYMBOLS.upVolume, INTERNALS_SYMBOLS.downVolume]
+    .map((s) => by.get(s)?.quoteTimeMs).filter((t): t is number => typeof t === "number" && Number.isFinite(t));
+  const anyStale = [INTERNALS_SYMBOLS.advancers, INTERNALS_SYMBOLS.decliners, INTERNALS_SYMBOLS.upVolume, INTERNALS_SYMBOLS.downVolume]
+    .some((s) => by.get(s)?.stale === true);
+  if (advanceShare == null && upVolumeShare == null) return { ...empty("unavailable", problems.join("; ") || "no usable internals"), symbols: INTERNALS_SYMBOLS };
+  const state: BreadthInternals["state"] = anyStale ? "stale" : problems.length ? "partial" : "ok";
+  return {
+    state,
+    reason: problems.length ? problems.join("; ") : anyStale ? "quote older than 2 minutes in session" : null,
+    source: "schwab",
+    advancers: advanceShare != null ? adv : null,
+    decliners: advanceShare != null ? dec : null,
+    advanceShare,
+    upVolume: upVolumeShare != null ? up : null,
+    downVolume: upVolumeShare != null ? dn : null,
+    upVolumeShare,
+    asOf: times.length ? Math.min(...times) : null,
+    symbols: INTERNALS_SYMBOLS,
+  };
+}
+
 export const SECTOR_ETFS = ["XLK", "XLF", "XLE", "XLY", "XLP", "XLI", "XLU", "XLV", "XLB", "XLRE", "XLC"];
 
 export interface BreadthSnapshot {
@@ -42,6 +127,9 @@ export interface BreadthSnapshot {
   lastBarDate: string | null;
   expectedBarDate: string | null;
   dataState: "ok" | "stale" | "insufficient" | "unavailable";
+  /** NYSE internals from Schwab: the primary read when available; the sample above is secondary */
+  internals?: BreadthInternals;
+  primary?: "nyse_internals" | "large_cap_sample";
 }
 
 export function sma(values: number[], n: number, endIdx: number): number | null {

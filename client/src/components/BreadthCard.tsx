@@ -24,6 +24,12 @@ interface BreadthSnapshot {
   lastBarDate?: string | null;
   expectedBarDate?: string | null;
   dataState?: "ok" | "stale" | "insufficient" | "unavailable";
+  internals?: {
+    state: "ok" | "partial" | "stale" | "unavailable"; reason: string | null;
+    advancers: number | null; decliners: number | null; advanceShare: number | null;
+    upVolumeShare: number | null; asOf: number | null;
+  };
+  primary?: "nyse_internals" | "large_cap_sample";
 }
 
 // Server emits PERCENT form (44.4), not fractions (0.444) — do not multiply.
@@ -78,6 +84,24 @@ export default function BreadthCard() {
         {q.isLoading && <p className="text-xs text-muted-foreground">loading…</p>}
         {b && (
           <>
+            <div className="text-xs leading-snug" data-testid="text-breadth-internals">
+              {b.internals && (b.internals.state === "ok" || b.internals.state === "partial") ? (
+                <>
+                  <span className="font-semibold">NYSE internals (Schwab):</span>{" "}
+                  {b.internals.advancers != null && b.internals.decliners != null
+                    ? `${b.internals.advancers} advancing / ${b.internals.decliners} declining (${Math.round((b.internals.advanceShare ?? 0) * 100)}%)`
+                    : "advance/decline unavailable"}
+                  {b.internals.upVolumeShare != null ? ` · up volume ${Math.round(b.internals.upVolumeShare * 100)}%` : ""}
+                  {b.internals.asOf ? ` · as of ${new Date(b.internals.asOf).toLocaleTimeString()}` : ""}
+                  {b.internals.state === "partial" && b.internals.reason ? ` · partial: ${b.internals.reason}` : ""}
+                </>
+              ) : (
+                <span className="text-muted-foreground">
+                  NYSE internals unavailable{b.internals?.reason ? `: ${b.internals.reason}` : ""}. Showing the large-cap sample below.
+                </span>
+              )}
+            </div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">large-cap sample (secondary)</div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div>
                 <div className="text-xs text-muted-foreground">above 20dma</div>
