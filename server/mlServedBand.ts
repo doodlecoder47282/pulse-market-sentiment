@@ -13,12 +13,23 @@
 // today it never is).
 //
 // Baseline volatility cone (also the yardstick in the promotion gate, same
-// math in ml_service/forecast_eval.py):
-//   sigma per 5-minute bar = rv_session_5m (RMS of today's 5-minute SPX log
-//     returns, at least 12 of them), else VIX / 100 / sqrt(252 x 78)
-//     (VIX-implied, flat across the day), else unavailable;
-//   horizon h minutes: s_h = sigma x sqrt(h / 5) (square-root-of-time,
-//     zero drift);
+// math in ml_service/forecast_eval.py, parity tested on hand-computed values):
+//   intraday periodicity f_b, b = 0..77 the 5-minute buckets from 09:30 ET
+//     (Andersen & Bollerslev, "Intraday periodicity and volatility
+//     persistence in financial markets", J. Empirical Finance 4(2-3), 1997,
+//     115-158, https://ideas.repec.org/a/eee/empfin/v4y1997i2-3p115-158.html):
+//     mean over logged sessions of each bucket's squared 5-minute SPX log
+//     return divided by that day's mean, rescaled to mean 1; fitted by the
+//     trainer from spx_minute_bars (baseline_cone_meta.json "periodicity").
+//     Flat (f = 1) until it exists (fewer than 20 logged sessions);
+//   sigma^2 per bar = rv_session_5m^2 / E (RMS of today's 5-minute SPX log
+//     returns, >= 12 of them, deseasonalized by E = mean f over the elapsed
+//     buckets), else (VIX / 100)^2 / (252 x 78) (VIX-implied, a whole-day
+//     average), else unavailable;
+//   horizon [m0, m0 + h) minutes after 09:30: s_h^2 = sigma^2 x W, W = sum of
+//     f_b x (overlap minutes / 5) over the session buckets (flat profile:
+//     W = h / 5, square-root-of-time); time after the close adds nothing, and
+//     a horizon wholly after the close has no cone;
 //   quantile q: expm1(z_q x s_h), z_q = the standard normal quantile, or,
 //     once the trainer has fitted them on real data, the empirical quantiles
 //     of standardized returns log(1 + r_h) / s_h per horizon (filtered
@@ -26,8 +37,7 @@
 //     correlations for portfolios of derivative securities", Journal of
 //     Futures Markets 19(5), 1999,
 //     https://ideas.repec.org/a/wly/jfutmk/v19y1999i5p583-602.html).
-//   Known limitation, stated: it ignores the intraday volatility U-shape, so
-//   it is a yardstick, not a forecast.
+//   It is a yardstick with zero drift, not a forecast.
 //
 // Blending quantiles (morning model) is quantile averaging ("Vincentization"):
 // Lichtendahl, Grushka-Cockayne & Winkler, "Is it better to average
@@ -58,16 +68,27 @@ export interface BaselineZ {
   fittedAt: number | null;
 }
 
+/** Intraday periodicity profile fitted by the trainer (78 buckets, mean 1). */
+export interface PeriodicityProfile {
+  f: number[];
+  nDays: number;
+}
+
+export const OPEN_MIN_ET = 570; // 09:30 ET, minutes after midnight
+
 export interface BaselineCone {
   bands: Record<string, QBands>;
   sigmaPerBar: number;
   sigmaSource: "rv_session" | "vix_implied";
   zMethod: "gaussian" | "fhs";
+  periodicity: "andersen_bollerslev" | "flat";
+  /** Horizons with no cone (wholly after the close or no time of day). */
+  unavailableHorizons: number[];
   label: string;
   versionKey: string;
 }
 
-/** Sigma per 5-minute bar for the baseline cone, or null when neither input exists. */
+/** Flat-profile sigma per 5-minute bar (no time of day), or null when neither input exists. */
 export function baselineSigmaPerBar(features: Record<string, number | null | undefined>): { sigma: number; source: "rv_session" | "vix_implied" } | null {
   const rv = Number(features.rv_session_5m);
   if (features.rv_session_5m != null && Number.isFinite(rv) && rv > 0) return { sigma: rv, source: "rv_session" };
@@ -78,34 +99,88 @@ export function baselineSigmaPerBar(features: Record<string, number | null | und
   return null;
 }
 
+function validProfile(p: PeriodicityProfile | null | undefined): number[] | null {
+  return p && Array.isArray(p.f) && p.f.length === BARS_PER_DAY_5M && p.f.every((x) => Number.isFinite(x) && x > 0) ? p.f : null;
+}
+
+/** sum_b f_b x overlap([5b, 5b + 5), [m0, m1)) / 5 over the 78 session buckets (forecast_eval._overlap_weight). */
+export function overlapWeight(m0: number, m1: number, f: number[] | null): number {
+  const lo = Math.max(0, m0), hi = Math.min(5 * BARS_PER_DAY_5M, m1);
+  if (!(hi > lo)) return 0;
+  let w = 0;
+  for (let b = Math.floor(lo / 5); b < Math.min(BARS_PER_DAY_5M, Math.ceil(hi / 5)); b++) {
+    const ov = Math.min(hi, 5 * b + 5) - Math.max(lo, 5 * b);
+    if (ov > 0) w += (f ? f[b] : 1) * ov / 5;
+  }
+  return w;
+}
+
+/**
+ * Horizon scale s_h of the baseline cone (forecast_eval.baseline_scale):
+ * null when the sigma inputs or the time of day are missing, or the horizon
+ * lies wholly outside the session.
+ */
+export function baselineScale(
+  features: Record<string, number | null | undefined>,
+  hMin: number,
+  profile: PeriodicityProfile | null = null,
+): { sH: number; sigma: number; source: "rv_session" | "vix_implied" } | null {
+  const hr = Number(features.hour_of_day);
+  if (features.hour_of_day == null || !Number.isFinite(hr)) return null;
+  const f = validProfile(profile);
+  const m0 = hr * 60 - OPEN_MIN_ET;
+  const W = overlapWeight(m0, m0 + hMin, f);
+  if (!(W > 0)) return null;
+  const s = baselineSigmaPerBar(features);
+  if (!s) return null;
+  let variance: number;
+  if (s.source === "rv_session") {
+    const E = m0 >= 5 ? overlapWeight(0, m0, f) / (m0 / 5) : 1;
+    if (!(E > 0)) return null;
+    variance = (s.sigma * s.sigma) / E;
+  } else {
+    variance = s.sigma * s.sigma;
+  }
+  return { sH: Math.sqrt(variance * W), sigma: Math.sqrt(variance), source: s.source };
+}
+
 /** Baseline volatility cone (simple forward returns) per horizon in minutes; null = unavailable. */
 export function baselineCone(
   features: Record<string, number | null | undefined>,
   horizons: number[],
   z: BaselineZ | null = null,
+  profile: PeriodicityProfile | null = null,
 ): BaselineCone | null {
-  const s = baselineSigmaPerBar(features);
-  if (!s) return null;
   const bands: Record<string, QBands> = {};
+  const unavailable: number[] = [];
   let usedFhs = false;
+  let src: { sigma: number; source: "rv_session" | "vix_implied" } | null = null;
   for (const h of horizons) {
-    const sh = s.sigma * Math.sqrt(h / 5);
+    const sc = baselineScale(features, h, profile);
+    if (!sc) { unavailable.push(h); continue; }
+    src = { sigma: sc.sigma, source: sc.source };
     const zz = z?.byHorizon?.[String(h)];
     const valid = !!zz && Q_KEYS.every((k) => Number.isFinite(zz[k]));
     if (valid) usedFhs = true;
-    const vals = Q_KEYS.map((k) => Math.expm1((valid ? zz![k] : GAUSS_Z[k]) * sh)).sort((a, b) => a - b);
+    const vals = Q_KEYS.map((k) => Math.expm1((valid ? zz![k] : GAUSS_Z[k]) * sc.sH)).sort((a, b) => a - b);
     bands[String(h)] = { q10: vals[0], q25: vals[1], q50: vals[2], q75: vals[3], q90: vals[4] };
   }
+  if (!src) return null;
+  const periodic = validProfile(profile) ? "andersen_bollerslev" : "flat";
   const zMethod = usedFhs ? "fhs" : "gaussian";
-  const sigmaTxt = s.source === "rv_session" ? "today's realized 5-min SPX volatility" : "VIX-implied volatility (under 1 hour of bars)";
+  const sigmaTxt = src.source === "rv_session" ? "today's realized 5-min SPX volatility" : "VIX-implied volatility (under 1 hour of bars)";
   const zTxt = usedFhs ? `empirical standardized quantiles from ${z!.nDays} real sessions` : "normal quantiles";
+  const perTxt = periodic === "andersen_bollerslev" ? `intraday volatility pattern from ${profile!.nDays} logged sessions` : "flat intraday volatility (no logged pattern yet)";
   return {
     bands,
-    sigmaPerBar: s.sigma,
-    sigmaSource: s.source,
+    sigmaPerBar: src.sigma,
+    sigmaSource: src.source,
     zMethod,
-    label: `baseline volatility cone (not a learned model): zero drift, ${sigmaTxt}, square-root-of-time, ${zTxt}`,
-    versionKey: `baseline_cone:${zMethod}${usedFhs && z?.fittedAt ? `:${z.fittedAt}` : ""}`,
+    periodicity: periodic,
+    unavailableHorizons: unavailable,
+    label: `baseline volatility cone (not a learned model): zero drift, ${sigmaTxt}, ${perTxt}, ${zTxt}`,
+    // Every input that changes the band is in the key, so live coverage is never pooled across them.
+    versionKey: `baseline_cone:${zMethod}:${src.source}:${periodic === "andersen_bollerslev" ? `ab${profile!.nDays}` : "flat"}${usedFhs && z?.fittedAt ? `:${z.fittedAt}` : ""}`,
   };
 }
 
@@ -236,4 +311,46 @@ export function composeServedBand(args: {
     coverageVersion: comps.map((c) => (c.name === "baseline_cone" ? c.version : `${c.name}:v${c.version}`)).join("+"),
     trainingData,
   };
+}
+
+// ─── Live-coverage demotion (R2-F fix round, item 1) ────────────────────────
+//
+// A promoted model whose live 10-90% coverage is rejected is demoted to the
+// baseline cone: at any horizon, Kupiec's unconditional-coverage test (Kupiec,
+// "Techniques for verifying the accuracy of risk measurement models",
+// J. Derivatives 3(2), 1995) on the pooled non-overlapping live outcomes of
+// that model version gives p < LIVE_DEMOTE_KUPIEC_P with at least
+// LIVE_DEMOTE_MIN_DAYS distinct scored ET days. Same rule as
+// ml_service/forecast_eval.live_coverage_demotion. 1% (not 5%) because the
+// check runs after every scoring pass: a stricter level keeps repeated looks
+// from demoting a correctly calibrated model by chance.
+
+export const LIVE_DEMOTE_KUPIEC_P = 0.01;
+export const LIVE_DEMOTE_MIN_DAYS = 20;
+
+export function liveCoverageDemotion(
+  perHorizon: Array<{ horizonMin: number; kupiecP: number | null; nDays: number }>,
+): { demote: boolean; horizons: number[]; reason: string | null } {
+  const bad = perHorizon.filter((h) => h.nDays >= LIVE_DEMOTE_MIN_DAYS && h.kupiecP != null && Number.isFinite(h.kupiecP) && h.kupiecP < LIVE_DEMOTE_KUPIEC_P);
+  return {
+    demote: bad.length > 0,
+    horizons: bad.map((h) => h.horizonMin),
+    reason: bad.length
+      ? `live 10-90% coverage rejected (Kupiec p < ${LIVE_DEMOTE_KUPIEC_P}) at ${bad.map((h) => `${h.horizonMin} min (p=${(h.kupiecP as number).toExponential(2)}, ${h.nDays} days)`).join(", ")}`
+      : null,
+  };
+}
+
+/**
+ * Sidecar models (name, version) inside a served band's coverage version key
+ * ("quantile_overlay:v7+morning_anchor:v2"). A rejected band demotes every
+ * promoted model that shapes it; the baseline cone has none.
+ */
+export function promotedComponentsOf(coverageVersion: string | null | undefined): Array<{ model: "quantile_overlay" | "quantile_overlay_morning"; version: number }> {
+  const out: Array<{ model: "quantile_overlay" | "quantile_overlay_morning"; version: number }> = [];
+  for (const part of String(coverageVersion ?? "").split("+")) {
+    const m = /^(quantile_overlay|morning_anchor):v(\d+)$/.exec(part);
+    if (m) out.push({ model: m[1] === "morning_anchor" ? "quantile_overlay_morning" : "quantile_overlay", version: Number(m[2]) });
+  }
+  return out;
 }

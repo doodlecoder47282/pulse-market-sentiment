@@ -70,13 +70,15 @@ async function kickRetrain(): Promise<void> {
 }
 
 /**
- * Boot backfill (PULSE_ML_BACKFILL_ON_BOOT=1) is disabled: the sidecar
- * backfill pulled CBOE / Alpha Vantage prices, and market data is Schwab only
- * (user rule 2026-10-08). The real-data logger (mlDataLog.ts) replaces it.
+ * Boot backfill (PULSE_ML_BACKFILL_ON_BOOT=1) is removed: the sidecar's
+ * backfill.py (CBOE GEX / Alpha Vantage SPY bars) is deleted, and market data
+ * is Schwab only (user rule 2026-10-08). The real-data logger (mlDataLog.ts)
+ * stores Schwab $SPX minute bars and the live feature dicts instead. The env
+ * flag only logs that, so an old deploy setting fails loudly, not silently.
  */
 function scheduleBootBackfill(): void {
   if (process.env.PULSE_ML_BACKFILL_ON_BOOT !== "1") return;
-  console.warn("[ml:backfill:boot] disabled: non-Schwab sources; the real-data logger (mlDataLog.ts) replaces it");
+  console.warn("[ml:backfill:boot] removed (non-Schwab sources); the real-data logger (mlDataLog.ts) replaces it");
 }
 
 /**
@@ -104,7 +106,7 @@ export function startMlRetrainCron(): void {
 
   console.log("[ml:retrain] cron scheduled: Sunday 02:00 ET");
 
-  // Boot-time backfill (opt-in)
+  // Boot-time backfill: removed; logs if the old flag is still set
   scheduleBootBackfill();
 
   // Boot-time staleness check: the Sunday cron only fires while the server is

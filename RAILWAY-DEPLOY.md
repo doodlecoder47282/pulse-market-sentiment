@@ -128,6 +128,12 @@ Alternatively run the sidecar elsewhere and point the server at it with
 A retrain writes a new quantile model only after 60 qualifying real sessions, and the
 panel draws it only if it beats the baseline cone out of sample (promotion gate in
 `ml_service/forecast_eval.py`). Until then the baseline cone is what you see.
+A promoted model is demoted back to the baseline cone when a later retrain re-scores
+it on newer out-of-sample days and it fails the same rule, or when its live 10-90%
+coverage is rejected (Kupiec p < 0.01 with at least 20 scored days at any horizon;
+the server calls the sidecar's `POST /demote`). There is no historical backfill: the
+old CBOE / Alpha Vantage `backfill.py` is removed (Schwab-only market data), so
+`PULSE_ML_BACKFILL_ON_BOOT` does nothing but log that.
 
 ## Troubleshooting
 

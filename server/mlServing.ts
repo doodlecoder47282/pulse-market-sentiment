@@ -7,8 +7,9 @@
 //   - the quantile overlay from the ML sidecar (served only if promoted);
 //   - the morning-anchor model (same gate; fingerprint from $SPX bars, the
 //     same index as the overlay features);
-//   - the baseline cone, with the trainer's fitted standardized quantiles
-//     (ml_service/models/baseline_cone_meta.json) when they exist;
+//   - the baseline cone, with the trainer's fitted standardized quantiles and
+//     intraday periodicity profile (ml_service/models/baseline_cone_meta.json)
+//     when they exist;
 //   - why no model is drawn (sidecar not installed / unreachable / no
 //     promoted model).
 
@@ -17,29 +18,40 @@ import path from "path";
 import { fetchOHLC } from "./ohlc";
 import { mlHealth, mlQuantileMorning, mlQuantileOverlay, type MLQuantileOverlayResponse } from "./mlBridge";
 import { buildMorningFingerprint, computeMorningBlendWeight, type MorningFingerprintResult } from "./mlMorningFingerprint";
-import { baselineCone, composeServedBand, type BaselineZ, type ServedBand } from "./mlServedBand";
+import { baselineCone, composeServedBand, type BaselineZ, type PeriodicityProfile, type ServedBand } from "./mlServedBand";
 import { sidecarInstallStatus } from "./mlSidecarStatus";
 
 export const OVERLAY_HORIZONS = [5, 15, 30, 60];
 export const MORNING_HORIZONS = [30, 60, 120, 180, 240];
 
 const BASELINE_META = path.resolve(process.cwd(), "ml_service", "models", "baseline_cone_meta.json");
-let _z: { mtime: number; z: BaselineZ | null } | null = null;
+let _z: { mtime: number; z: BaselineZ | null; profile: PeriodicityProfile | null } | null = null;
 
-/** Trainer-fitted standardized quantiles for the baseline cone, or null (Gaussian). */
-export function loadBaselineZ(): BaselineZ | null {
+function loadBaselineMeta(): { z: BaselineZ | null; profile: PeriodicityProfile | null } {
   try {
     const st = fs.statSync(BASELINE_META);
-    if (_z && _z.mtime === st.mtimeMs) return _z.z;
+    if (_z && _z.mtime === st.mtimeMs) return _z;
     const m = JSON.parse(fs.readFileSync(BASELINE_META, "utf8"));
     const z: BaselineZ | null = m && m.method === "fhs" && m.by_horizon
       ? { method: "fhs", byHorizon: m.by_horizon, nDays: Number(m.n_days) || 0, fittedAt: Number(m.fitted_at) || null }
       : null;
-    _z = { mtime: st.mtimeMs, z };
-    return z;
+    const p = m?.periodicity;
+    const profile: PeriodicityProfile | null = p && Array.isArray(p.f) ? { f: p.f.map(Number), nDays: Number(p.n_days) || 0 } : null;
+    _z = { mtime: st.mtimeMs, z, profile };
+    return _z;
   } catch {
-    return null;
+    return { z: null, profile: null };
   }
+}
+
+/** Trainer-fitted standardized quantiles for the baseline cone, or null (Gaussian). */
+export function loadBaselineZ(): BaselineZ | null {
+  return loadBaselineMeta().z;
+}
+
+/** Trainer-fitted intraday periodicity profile (Andersen-Bollerslev), or null (flat). */
+export function loadBaselineProfile(): PeriodicityProfile | null {
+  return loadBaselineMeta().profile;
 }
 
 let _healthCache: { at: number; ok: boolean; promoted: boolean | null } | null = null;
@@ -109,7 +121,7 @@ export async function buildServedProjection(
       ? { bands: morning.projection.bands, status: morning.projection.status, version: morning.projection.version, trainingData: morning.projection.trainingData, promoted: morning.projection.promoted ?? false }
       : null,
     morningWeight,
-    baseline: baselineCone(features, OVERLAY_HORIZONS, loadBaselineZ()),
+    baseline: baselineCone(features, OVERLAY_HORIZONS, loadBaselineZ(), loadBaselineProfile()),
     overlayHorizons: OVERLAY_HORIZONS,
     morningHorizons: MORNING_HORIZONS,
     reasonIfNoModel: promotedOverlay ? null : (overlay ? null : await noModelReason()),

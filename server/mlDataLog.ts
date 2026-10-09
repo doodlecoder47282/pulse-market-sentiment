@@ -31,6 +31,8 @@ import { isTradingDay as calIsTradingDay, sessionCloseMinutes as calCloseMin } f
 import { getPriceHistory } from "./schwab";
 import { buildMlFeatures, getLastMlFeatureProvenance, ML_FEATURE_SCHEMA_VERSION, type MlFeatureInputs } from "./mlGreekFeatures";
 import { buildServedProjection } from "./mlServing";
+import { liveCoverageDemotion, promotedComponentsOf } from "./mlServedBand";
+import { mlDemote } from "./mlBridge";
 import {
   etDate, etWallToUtcMs, forwardReturnFromBars, nonOverlappingForecasts, scoreIntervalCoverage,
   type CoverageScore, type MinuteBar,
@@ -210,6 +212,43 @@ export function computeDailyCoverage(now = Date.now()): number {
   return groups.size;
 }
 
+/**
+ * Live demotion (R2-F fix round item 1). For every served band that contains
+ * a promoted sidecar model, pool its scored non-overlapping outcomes per
+ * horizon; when Kupiec rejects 80% coverage at p < 0.01 with >= 20 scored ET
+ * days at any horizon (mlServedBand.liveCoverageDemotion), ask the sidecar to
+ * demote every promoted model in that band. The next forecast is then the
+ * baseline cone (a new coverage record). Sidecar down: retried next pass.
+ */
+const _demoted = new Set<string>();
+export async function checkLiveDemotion(): Promise<Array<{ model: string; version: number; reason: string; ok: boolean }>> {
+  const out: Array<{ model: string; version: number; reason: string; ok: boolean }> = [];
+  const bands = sqlite.prepare(`SELECT DISTINCT model, version FROM ml_forecast_log WHERE outcome = 'scored' AND status = 'PROMOTED'`).all() as Array<{ model: string; version: string | null }>;
+  for (const b of bands) {
+    const comps = promotedComponentsOf(b.version).filter((c) => !_demoted.has(`${c.model}:${c.version}`));
+    if (comps.length === 0) continue;
+    const rows = sqlite.prepare(`SELECT ts, horizon_min, q10, q90, realized_ret FROM ml_forecast_log
+                                 WHERE outcome = 'scored' AND model = ? AND COALESCE(version, '') = ? ORDER BY ts ASC`)
+      .all(b.model, b.version ?? "") as Array<{ ts: number; horizon_min: number; q10: number; q90: number; realized_ret: number }>;
+    const hs = Array.from(new Set(rows.map((r) => r.horizon_min)));
+    const per = hs.map((h) => {
+      const list = rows.filter((r) => r.horizon_min === h);
+      const kept = nonOverlappingForecasts(list.map((r) => ({ ...r, horizonMin: r.horizon_min })));
+      return { horizonMin: h, kupiecP: scoreRows(list).kupiecP, nDays: new Set(kept.map((r) => etDate(r.ts))).size };
+    });
+    const v = liveCoverageDemotion(per);
+    if (!v.demote) continue;
+    for (const c of comps) {
+      const r = await mlDemote(c.model, c.version, `${v.reason} (served band ${b.model} ${b.version ?? ""})`);
+      const ok = !!r?.demoted;
+      if (ok) _demoted.add(`${c.model}:${c.version}`);
+      console.warn(`[ml:datalog] live demotion ${c.model} v${c.version}: ${ok ? "demoted" : "sidecar did not confirm, retry next pass"}; ${v.reason}`);
+      out.push({ model: c.model, version: c.version, reason: v.reason!, ok });
+    }
+  }
+  return out;
+}
+
 export interface CoverageReport {
   asOf: number;
   nominal: number;
@@ -311,6 +350,7 @@ export function startMlDataLogger(resolveInputs: () => Promise<MlFeatureInputs>)
         if (barsDue || now - _lastBarsPersist > 6 * 3600_000) await persistSpxMinuteBars();
         scorePendingForecasts(now);
         computeDailyCoverage(now);
+        await checkLiveDemotion();
       }
     } catch (e: any) {
       console.warn(`[ml:datalog] tick failed: ${e?.message ?? e}`);
