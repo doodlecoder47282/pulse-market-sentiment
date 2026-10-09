@@ -514,7 +514,7 @@ async function evalCycle(): Promise<void> {
   try {
     // Priority first, then watchlist — sequential is fine on Schwab (no 429 risk)
     const cfg = getFlowConfig();
-    const universe = [...cfg.priority, ...cfg.watchlist];
+    const universe = Array.from(new Set([...cfg.priority, ...cfg.watchlist])); // deduped: priority/watchlist overlap scanned and counted once
     let cycleErrors = 0;
     for (const sym of universe) {
       const { hits, error } = await scanTicker(sym);
@@ -622,7 +622,7 @@ export async function previewFlow(): Promise<{
   asOfMs: number;
 }> {
   const cfg = getFlowConfig();
-  const universe = [...cfg.priority, ...cfg.watchlist];
+  const universe = Array.from(new Set([...cfg.priority, ...cfg.watchlist])); // deduped: priority/watchlist overlap scanned and counted once
   const byTicker: Record<string, { whales: WhaleHit[]; rejected: Array<{ occ: string; reason: string }> }> = {};
   let totalScanned = 0;
   let totalWhales = 0;

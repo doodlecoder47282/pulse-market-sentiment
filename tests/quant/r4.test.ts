@@ -604,3 +604,36 @@ test("regime: unknown gamma -> GAMMA_UNKNOWN (not NEUTRAL), no candidates; unkno
   assert.match(src("client/src/components/RegimePredictPanel.tsx"), /plain: "Gamma unknown"/);
   assert.match(src("server/headline.ts"), /models\?\.currentRegime \?\? "UNAVAILABLE"/);
 });
+
+// ── Follow-ups 4, 5: deduped scan universe; Signals flip from the same profile
+test("flow preview universe is deduped so a full failure reads unavailable", () => {
+  const fe = src("server/flowAlertEngine.ts");
+  assert.equal((fe.match(/const universe = Array\.from\(new Set\(\[\.\.\.cfg\.priority, \.\.\.cfg\.watchlist\]\)\)/g) ?? []).length, 2);
+  // priority [SPY, QQQ] + watchlist [SPY, NVDA]: 3 distinct tickers, all failed -> unavailable
+  const uni = Array.from(new Set(["SPY", "QQQ", "SPY", "NVDA"]));
+  assert.equal(scanCoverageState(uni.length, 3, "tickers").dataState, "unavailable");
+  assert.equal(scanCoverageState(4, 3, "tickers").dataState, "partial"); // the old miscount
+});
+
+test("Signals flip = gexByStrikeFromChain flip (same re-priced profile as walls and total GEX)", () => {
+  const S = 670, now = Date.parse("2026-10-09T20:30:00Z");
+  const C = (sym: string, x: Record<string, unknown>) => ({ symbol: sym, ...x });
+  // Put-heavy below, call-heavy above: total re-priced gamma changes sign between them.
+  const chain = {
+    underlying: { last: S },
+    callExpDateMap: { "2026-10-16:7": {
+      "680.0": [C("SPY   261016C00680000", { openInterest: 60_000, volatility: 15 })],
+      "690.0": [C("SPY   261016C00690000", { openInterest: 40_000, volatility: 15 })],
+    } },
+    putExpDateMap: { "2026-10-16:7": {
+      "660.0": [C("SPY   261016P00660000", { openInterest: 60_000, volatility: 18 })],
+      "650.0": [C("SPY   261016P00650000", { openInterest: 40_000, volatility: 19 })],
+    } },
+  };
+  const g = buildGammaStructure(chain as any, now);
+  const ref = gexByStrikeFromChain(chain as any, now);
+  assert.ok(ref.zeroGamma != null, "test chain has a flip");
+  assert.equal(g.zeroGamma, ref.zeroGamma);
+  assert.ok(g.zeroGamma! > g.putWall && g.zeroGamma! < g.callWall, "flip lies between the walls on this chain");
+  assert.match(src("server/sources.ts"), /const zeroGamma: number \| null = chainGex\.zeroGamma;/);
+});
