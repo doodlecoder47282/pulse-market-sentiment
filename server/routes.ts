@@ -111,6 +111,7 @@ import {
   buildWeeklyOutlook,
   buildMonthlyOutlook,
   OUTLOOK_SYSTEM_PROMPT,
+  filterTradeInstructions,
 } from "./cosmos";
 import {
   startOdteTracker, getOdteSnapshot, armPosition, disarmPosition,
@@ -298,7 +299,8 @@ async function buildSnapshot(): Promise<Snapshot_Public> {
     social,
     fearGreed: fg,
     aaii: null, // could be wired later via Thursday-released CSV
-    headlines,
+    headlines: headlines.items,
+    headlinesFeed: { status: headlines.status, sources: headlines.sources, asOf: headlines.asOf, maxAgeHours: headlines.maxAgeHours, note: headlines.note },
     warnings,
     gammaSource: "schwab",
     gammaAsOf: Math.floor(chain.asOfMs / 1000),
@@ -311,7 +313,9 @@ async function buildSnapshot(): Promise<Snapshot_Public> {
   if (voicesCache?.data?.items) {
     voicesBias = computeVoicesBias(voicesCache.data.items);
   }
-  const composite = computeComposite(partial, voicesBias);
+  // Block weights estimated from stored gauge history once the sample gate passes (else hand-set, labelled).
+  const { getEstimatedGaugeWeights } = await import("./compositeWeights");
+  const composite = computeComposite(partial, voicesBias, getEstimatedGaugeWeights());
   const full: Snapshot_Public = { ...partial, composite };
   await storage.saveSnapshot({
     capturedAt: full.capturedAt,
@@ -742,23 +746,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const q = enriched.horizons?.quarterly as any;
         if (q && q.spot) {
           const snap = await getOrBuild(false);
+          // Market-data blocks only (rule 2: no social/F&G in a price path). When
+          // unavailable the drift tilt is skipped (50 = zero tilt) and labelled below.
+          const marketScore = snap.composite?.marketScore;
+          const compositeAvailable = marketScore != null && Number.isFinite(marketScore);
+          const composite = compositeAvailable ? (marketScore as number) : 50;
           // Scale-aware level mapping:
           //  snap.gamma.* are SPY-scale (Schwab SPY chain).
           //  JPM collar strikes are SPX-scale.
           //  q.spot is whichever the caller asked for.
           // SPY <-> SPX uses the real Schwab $SPX / SPY ratio (was a fixed x10).
-          // Missing inputs (ratio, VIX, flip, composite) leave the trajectory
-          // unavailable rather than defaulted (VIX 16 / composite 50 before).
+          // Missing ratio, VIX or flip leave the trajectory unavailable rather
+          // than defaulted (VIX 16 before); a missing composite skips the tilt.
           const isSPX = symbol === "^GSPC";
           const spyPx = snap.spy?.price ?? null;
           const spxPx = isSPX ? q.spot : (await getQuote("^GSPC").catch(() => ({ last: null }))).last;
           const ratio = spyPx != null && spyPx > 0 && spxPx != null && spxPx > 0 ? spxPx / spyPx : null;
-          const composite = snap.composite?.score ?? null;
+          // A missing market-data composite skips the drift tilt (labelled
+          // below); ratio, VIX and flip are required inputs.
           const missing = [
             ratio == null ? "SPX/SPY ratio" : null,
             vixData.vix == null ? "VIX" : null,
             snap.gamma.zeroGamma == null ? "gamma flip" : null,
-            composite == null ? "composite" : null,
           ].filter(Boolean);
           if (missing.length) throw new Error(`inputs unavailable: ${missing.join(", ")}`);
           const gammaScale = isSPX ? (ratio as number) : 1;       // SPY -> SPX
@@ -799,6 +808,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             skew: skewVal,
             realizedVol20d,
           });
+          if (!compositeAvailable) {
+            (traj as any).compositeTiltNote = "unavailable: no market-data composite (implied-vol / positioning); composite drift tilt skipped";
+            if ((traj as any).inputs) (traj as any).inputs.composite = null;
+          }
           q.weeklyTrajectory = traj;
         }
       } catch (err: any) {
@@ -5125,6 +5138,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   // ─── Cosmos: astrology/astronomy intel brief + live engine ────────────────
+  type CosmosLlmResult = Array<{ text: string | null; error: string | null; dropped: number }>;
+  const cosmosLlmCache = new Map<string, { at: number; ttlMs: number; data: CosmosLlmResult }>();
+  const cosmosLlmInflight = new Map<string, Promise<CosmosLlmResult>>();
   // GET /api/cosmos/outlook — weekly (7d) + monthly (30d) forward astro
   // outlook. Deterministic baseline always returned. If ANTHROPIC_API_KEY /
   // OPENAI_API_KEY are set, LLM-enhanced narrative returned alongside.
@@ -5161,34 +5177,62 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         return r.output_text ?? "";
       }
 
-      const [wClaude, wGpt, mClaude, mGpt] = await Promise.allSettled([
-        enhanceWithClaude(weekly.markdown),
-        enhanceWithGpt(weekly.markdown),
-        enhanceWithClaude(monthly.markdown),
-        enhanceWithGpt(monthly.markdown),
-      ]);
-
-      const pick = (r: PromiseSettledResult<string>): string | null =>
-        r.status === "fulfilled" ? r.value : null;
-      const err = (r: PromiseSettledResult<string>): string | null =>
-        r.status === "rejected" ? String((r as any).reason?.message ?? r.reason) : null;
+      // The four LLM calls are cached per day (ET date of the request) for
+      // 6 h, or 15 min after any failure, with in-flight de-duplication, so
+      // they do not run on every request. Their text passes the
+      // deterministic trade-instruction filter before it is served.
+      const dayKey = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(date);
+      const cacheKey = `${dayKey}:${hasAnthropicKey ? 1 : 0}${hasOpenAiKey ? 1 : 0}`;
+      const hit = cosmosLlmCache.get(cacheKey);
+      let llm: CosmosLlmResult;
+      if (hit && Date.now() - hit.at < hit.ttlMs) {
+        llm = hit.data;
+      } else {
+        let pending = cosmosLlmInflight.get(cacheKey);
+        if (!pending) {
+          pending = Promise.allSettled([
+            enhanceWithClaude(weekly.markdown),
+            enhanceWithGpt(weekly.markdown),
+            enhanceWithClaude(monthly.markdown),
+            enhanceWithGpt(monthly.markdown),
+          ]).then((settled) => {
+            const data = settled.map((r) => {
+              if (r.status === "rejected") return { text: null, error: String((r as any).reason?.message ?? r.reason), dropped: 0 };
+              const f = filterTradeInstructions(r.value);
+              return { text: f.text, error: null, dropped: f.dropped };
+            }) as CosmosLlmResult;
+            const anyFailed = data.some((d) => d.error != null);
+            cosmosLlmCache.set(cacheKey, { at: Date.now(), ttlMs: anyFailed ? 15 * 60_000 : 6 * 3600_000, data });
+            if (cosmosLlmCache.size > 31) cosmosLlmCache.delete(cosmosLlmCache.keys().next().value as string);
+            return data;
+          }).finally(() => { cosmosLlmInflight.delete(cacheKey); });
+          cosmosLlmInflight.set(cacheKey, pending);
+        }
+        llm = await pending;
+      }
+      const cachedAt = cosmosLlmCache.get(cacheKey)?.at ?? Date.now();
+      const [wC, wG, mC, mG] = llm;
 
       res.json({
         weekly: {
           ...weekly,
-          claude: pick(wClaude),
-          gpt: pick(wGpt),
-          errors: { claude: err(wClaude), gpt: err(wGpt) },
+          claude: wC.text,
+          gpt: wG.text,
+          errors: { claude: wC.error, gpt: wG.error },
+          filteredSentences: { claude: wC.dropped, gpt: wG.dropped },
         },
         monthly: {
           ...monthly,
-          claude: pick(mClaude),
-          gpt: pick(mGpt),
-          errors: { claude: err(mClaude), gpt: err(mGpt) },
+          claude: mC.text,
+          gpt: mG.text,
+          errors: { claude: mC.error, gpt: mG.error },
+          filteredSentences: { claude: mC.dropped, gpt: mG.dropped },
         },
         meta: {
           llmEnhancersEnabled: { claude: hasAnthropicKey, gpt: hasOpenAiKey },
           generatedAt: new Date().toISOString(),
+          llmCachedAt: new Date(cachedAt).toISOString(),
+          llmFilter: "sentences with trade, size, hedge, options or direction instructions are removed deterministically",
         },
       });
     } catch (e) {

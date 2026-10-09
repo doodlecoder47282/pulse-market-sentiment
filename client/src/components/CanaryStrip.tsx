@@ -21,6 +21,9 @@ interface CanarySnapshot {
   asOf: string; marketSession: boolean;
   spy: { d1Pct: number | null; z: number | null };
   composite: number | null;
+  compositeMethod?: string;
+  compositeEffectiveN?: number | null;
+  thresholds?: { method: "empirical" | "normal"; watch: number; alarm: number; riskOn: number; normalWatch: number; normalAlarm: number; historyDays: number; realizedSd: number | null; note: string };
   read: "confirming_risk_on" | "quiet" | "canaries_chirping" | "divergence" | "alarm" | "no_data";
   headline: string;
   canaries: CanaryRow[];
@@ -80,8 +83,10 @@ export default function CanaryStrip() {
         <span className={`text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border ${rs.cls}`} data-testid="canary-read">
           {rs.label}
         </span>
-        <span className="ml-auto text-[9px] font-mono text-muted-foreground" data-testid="canary-composite">
-          composite {data.composite != null ? (data.composite > 0 ? "+" : "") + data.composite : "—"}σ
+        <span className="ml-auto text-[9px] font-mono text-muted-foreground" data-testid="canary-composite" title={data.compositeMethod ?? ""}>
+          composite {data.composite != null ? (data.composite > 0 ? "+" : "") + data.composite : "—"}
+          {data.compositeEffectiveN != null ? ` (≈${data.compositeEffectiveN} independent)` : ""}
+          {data.thresholds ? ` · lines ${data.thresholds.method} ${data.thresholds.watch}/${data.thresholds.alarm} (normal ${data.thresholds.normalWatch}/${data.thresholds.normalAlarm}${data.thresholds.realizedSd != null ? `, realized sd ${data.thresholds.realizedSd}` : ""})` : ""}
           {" · "}SPY {data.spy.d1Pct != null ? (data.spy.d1Pct > 0 ? "+" : "") + data.spy.d1Pct + "%" : "—"}
           {!data.marketSession && " · off-session"}
         </span>

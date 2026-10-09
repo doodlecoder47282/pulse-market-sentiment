@@ -125,6 +125,10 @@ export async function refreshAllCot(): Promise<Record<string, { ok: boolean; row
 export interface CotSnapshotRow {
   market: string;
   reportDate: string;
+  /** Non-price context source (rule 2): labelled, dated, never a price/options/sizing input. */
+  source: "CFTC Commitments of Traders";
+  /** Calendar days since the report's as-of date (positions are as of Tuesday, released Friday). */
+  ageDays: number | null;
   commercialNet: number | null;
   nonCommercialNet: number | null;
   smallSpecsNet: number | null;
@@ -162,9 +166,12 @@ export function getCotSnapshot(): CotSnapshotRow[] {
       else if (pct >= 70) bias = "tilting-long";
       else if (pct <= 30) bias = "tilting-short";
     }
+    const t = Date.parse(`${String(latest.report_date).slice(0, 10)}T00:00:00Z`);
     out.push({
       market,
       reportDate: latest.report_date,
+      source: "CFTC Commitments of Traders",
+      ageDays: Number.isFinite(t) ? Math.max(0, Math.floor((Date.now() - t) / 86_400_000)) : null,
       commercialNet: latest.commercial_net,
       nonCommercialNet: latest.non_commercial_net,
       smallSpecsNet: latest.small_specs_net,

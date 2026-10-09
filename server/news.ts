@@ -1,36 +1,55 @@
 // server/news.ts
 //
-// News snapshot = headline flow (RSS) + economic/earnings calendar.
+// News snapshot = headline flow + economic/earnings calendar + SEC filings.
+// Context only: nothing here feeds a price, greeks, options or sizing input.
 //
-// Sources (all free, no auth):
-//   Headlines:
-//     - MarketWatch top stories RSS
-//     - Reuters business RSS (via Google News proxy; Reuters killed direct feeds)
-//     - Yahoo Finance top stories RSS
-//   Calendar:
-//     - Nasdaq economic calendar JSON (next 14 days)
-//     - FRED next-release dates for big prints (CPI, NFP, PCE, Retail Sales)
-//   Earnings:
-//     - Yahoo Finance earnings calendar (optional — best-effort, may be rate-limited)
+// Sources, by tier (full table with terms of use: server/sources/registry.ts):
+//   Official primary (keyless, documented):
+//     - Federal Reserve press releases + speeches RSS
+//     - SEC press releases RSS, EDGAR latest 8-K Atom, data.sec.gov
+//       submissions for the watchlist (needs BATCAVE_SEC_USER_AGENT)
+//     - CFTC press releases RSS
+//     - BLS and BEA release calendars (iCalendar) -> exact release times
+//     - U.S. Treasury Fiscal Data upcoming_auctions -> announced auctions
+//   Professional publishers (their own RSS): MarketWatch (Dow Jones), CNBC, FT
+//   Aggregator, secondary: Google News search for Reuters stories
+//   Unofficial, secondary: Nasdaq calendar JSON (consensus values, releases
+//     not on the BLS/BEA calendars), Nasdaq earnings calendar
+//   Computed: OPEX / VIX expiration / quarterly expirations (exchange rules)
 //
-// Everything is merged into a unified timeline the client can filter by topic.
-// Macro filter buckets headlines into: FED / INFLATION / JOBS / GROWTH / GEO / EARNINGS / OTHER
+// Every headline carries source, publisher, tier, published time (UTC) and
+// fetched time; the response carries a per-source state (ok / empty / stale
+// / failed / not_configured) so an outage never reads as a quiet tape.
 
 import { etEpochMs } from "./etTime";
-
-const UA = "Mozilla/5.0 (compatible; PulseDashboard/1.0)";
+import { SOURCES, TIER_LABEL, sourceTable, type SourceTier, type SourceSpec } from "./sources/registry";
+import { sourceStatus, aggregateState, type SourceStatus, type SourceState } from "./sources/state";
+import {
+  HEADLINE_FEEDS, SIGNALS_FEED_IDS, readFeed, readBlsCalendar, readBeaCalendar, readTreasuryAuctions,
+  readEdgarCurrent8K, readEdgarWatchlist, readNasdaqEcon, type SourceRead,
+} from "./sources/official";
+import { tierItems, mergeTiered, mergeEconEvents, type TieredItem } from "./sources/merge";
+import { classifyRelease, familyOfEventName, auctionPlacementEt, auctionImportance, type IcsEvent, type EdgarFiling } from "./sources/parse";
 
 export type NewsTopic = "FED" | "INFLATION" | "JOBS" | "GROWTH" | "GEO" | "EARNINGS" | "RATES" | "OIL" | "OTHER";
 
 export interface Headline {
   id: string;
   title: string;
+  /** display name of the source, e.g. "Federal Reserve", "CNBC Markets" */
   source: string;
   url: string;
-  published: number; // epoch seconds
+  published: number; // epoch seconds (UTC); undated items are never shown
   summary: string;
   topics: NewsTopic[];
   tickers: string[]; // inferred tickers mentioned
+  sourceId: string;
+  publisher: string;
+  tier: SourceTier;
+  tierLabel: string;
+  kind: "news" | "official";
+  publishedUtc: string;   // ISO UTC
+  fetchedAtUtc: string;   // ISO UTC, when the source was last read
 }
 
 export type CalendarKind =
@@ -55,6 +74,28 @@ export interface CalendarEvent {
   source: string;
   ticker?: string; // for earnings
   notes?: string; // optional additional detail
+  sourceId?: string;
+  tier?: SourceTier;
+  tierLabel?: string;
+  /** false when the source gives a date but not the clock time */
+  timeExact?: boolean;
+  /** official page for this event when known */
+  sourceUrl?: string;
+  /** join key for one release across sources (CPI, NFP, GDP, ...) */
+  family?: string | null;
+}
+
+export interface FilingItem {
+  form: string;
+  company: string;
+  cik: string;
+  accession: string;
+  acceptedUtc: string | null;
+  filingDate: string | null;
+  items: string[];
+  url: string;
+  source: string;
+  tier: SourceTier;
 }
 
 export interface NewsResponse {
@@ -63,6 +104,14 @@ export interface NewsResponse {
   calendar: CalendarEvent[];
   topics: { topic: NewsTopic; count: number }[];
   warnings: string[];
+  /** per-source state, every source attempted for this snapshot */
+  sources: SourceStatus[];
+  /** feed-level state over the headline sources */
+  headlineState: SourceState | "unavailable";
+  calendarState: SourceState | "unavailable";
+  filings: { watchlist: FilingItem[]; wire: FilingItem[]; state: SourceState | "unavailable"; note: string };
+  /** static source table (tier, access, terms) for the Sources panel */
+  sourceTable: SourceSpec[];
 }
 
 // ---- Topic classifier ----
@@ -110,180 +159,236 @@ function extractTickers(text: string): string[] {
   return Array.from(found);
 }
 
-// ---- RSS parser (minimal) ----
-function parseRss(xml: string, sourceName: string): Headline[] {
-  const items: Headline[] = [];
-  // Split on <item> boundaries (works for both RSS 2.0 and Atom with <entry>).
-  const itemRe = /<(item|entry)\b[^>]*>([\s\S]*?)<\/\1>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = itemRe.exec(xml)) !== null) {
-    const body = m[2];
-    const title = decodeEntities(firstMatch(body, /<title[^>]*>([\s\S]*?)<\/title>/i));
-    let link = firstMatch(body, /<link[^>]*>([\s\S]*?)<\/link>/i);
-    if (!link) link = firstMatchAttr(body, /<link[^>]*href="([^"]+)"/i);
-    const descRaw = firstMatch(body, /<description[^>]*>([\s\S]*?)<\/description>/i) ||
-                    firstMatch(body, /<summary[^>]*>([\s\S]*?)<\/summary>/i) ||
-                    firstMatch(body, /<content[^>]*>([\s\S]*?)<\/content>/i);
-    const pubStr = firstMatch(body, /<pubDate[^>]*>([\s\S]*?)<\/pubDate>/i) ||
-                   firstMatch(body, /<published[^>]*>([\s\S]*?)<\/published>/i) ||
-                   firstMatch(body, /<updated[^>]*>([\s\S]*?)<\/updated>/i);
-    const guid = firstMatch(body, /<guid[^>]*>([\s\S]*?)<\/guid>/i) ||
-                 firstMatch(body, /<id[^>]*>([\s\S]*?)<\/id>/i) || link;
-    if (!title || !link) continue;
-    const published = pubStr ? Math.floor(new Date(pubStr).getTime() / 1000) : Math.floor(Date.now() / 1000);
-    const summary = stripHtml(decodeEntities(descRaw || ""));
-    const blob = `${title} ${summary}`;
-    items.push({
-      id: `${sourceName}:${guid}`,
-      title: title.trim(),
-      source: sourceName,
-      url: link.trim(),
-      published,
-      summary: summary.trim().slice(0, 320),
-      topics: classifyTopics(blob),
-      tickers: extractTickers(blob),
-    });
-  }
-  return items;
+// ---- Tiered headline items -> Headline ----
+
+function toHeadline(t: TieredItem): Headline {
+  const blob = `${t.title} ${t.summary}`;
+  return {
+    id: `${t.sourceId}:${t.guid}`,
+    title: t.title,
+    source: t.source,
+    url: t.url,
+    published: Math.floor(t.publishedMs / 1000),
+    summary: t.summary,
+    topics: classifyTopics(blob),
+    tickers: extractTickers(blob),
+    sourceId: t.sourceId,
+    publisher: t.publisher,
+    tier: t.tier,
+    tierLabel: t.tierLabel,
+    kind: t.kind,
+    publishedUtc: new Date(t.publishedMs).toISOString(),
+    fetchedAtUtc: new Date(t.fetchedAtMs).toISOString(),
+  };
 }
 
-function firstMatch(src: string, re: RegExp): string {
-  const m = re.exec(src);
-  if (!m) return "";
-  let v = m[1];
-  // Strip CDATA wrapper
-  const cd = /<!\[CDATA\[([\s\S]*?)\]\]>/.exec(v);
-  if (cd) v = cd[1];
-  return v;
-}
-function firstMatchAttr(src: string, re: RegExp): string {
-  const m = re.exec(src);
-  return m ? m[1] : "";
-}
-function stripHtml(s: string): string {
-  return s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
-}
-function decodeEntities(s: string): string {
-  return s
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_m, n) => String.fromCharCode(parseInt(n, 10)));
+/** Read the given headline feeds; returns headlines (newest first) and per-source states. */
+async function collectHeadlines(ids: string[] | null, nowMs: number): Promise<{ headlines: Headline[]; statuses: SourceStatus[] }> {
+  const defs = HEADLINE_FEEDS.filter((d) => !ids || ids.includes(d.id));
+  const reads = await Promise.all(defs.map((d) => readFeed(d).catch((e: any) => ({
+    state: "failed" as const, fetchedAtMs: null, value: null, error: String(e?.message ?? e).slice(0, 120),
+  }))));
+  const lists: TieredItem[][] = [];
+  const statuses: SourceStatus[] = [];
+  reads.forEach((r, i) => {
+    const id = defs[i].id;
+    const fetchedAt = r.fetchedAtMs ?? nowMs;
+    const t = r.value ? tierItems(id, r.value, fetchedAt, nowMs) : { items: [], undatedDropped: 0 };
+    lists.push(t.items);
+    statuses.push(sourceStatus(id, r, t.items.map((x) => ({ publishedMs: x.publishedMs })), nowMs, t.undatedDropped));
+  });
+  return { headlines: mergeTiered(lists).map(toHeadline), statuses };
 }
 
-async function fetchRss(url: string, sourceName: string, timeoutMs = 8000): Promise<Headline[]> {
-  const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const r = await fetch(url, {
-      headers: { "User-Agent": UA, Accept: "application/rss+xml, application/xml, text/xml, */*" },
-      signal: ctrl.signal,
-    });
-    if (!r.ok) throw new Error(`${sourceName} ${r.status}`);
-    const xml = await r.text();
-    return parseRss(xml, sourceName);
-  } finally {
-    clearTimeout(to);
-  }
+// ---- Signals headline feed (finding 5.8) ----
+// Schwab has no news API. The Signals snapshot reuses the News tab's labeled
+// sources (non-price context only: never feeds a price, greeks, options
+// or sizing calculation). Each item keeps its source, tier and publish time,
+// and the feed carries a status so an outage reads "unavailable", never as an
+// empty quiet tape.
+
+export interface HeadlineFeedItem { title: string; url: string; source: string; publishedAt?: string; tier?: SourceTier; tierLabel?: string }
+export interface HeadlineFeed {
+  items: HeadlineFeedItem[];
+  status: "ok" | "partial" | "empty" | "unavailable";
+  sources: Array<{ name: string; state: "ok" | "empty" | "failed" | "stale"; items: number; newest: string | null; tier?: SourceTier }>;
+  maxAgeHours: number;
+  undatedDropped: number;
+  asOf: number;
+  note: string;
 }
 
-// ---- Sources ----
+export const HEADLINE_FEED_MAX_AGE_HOURS = 24;
 
-const RSS_SOURCES: { name: string; url: string }[] = [
-  { name: "MarketWatch", url: "https://feeds.content.dj-n.com/public/rss/mw_topstories" },
-  // TODO: Schwab-only mode — Yahoo Finance RSS removed, awaiting Schwab equivalent.
-  { name: "Reuters Business", url: "https://news.google.com/rss/search?q=when:1d+site:reuters.com+business&hl=en-US&gl=US&ceid=US:en" },
-  { name: "CNBC Markets", url: "https://www.cnbc.com/id/100003114/device/rss/rss.html" },
-  { name: "FT Markets", url: "https://www.ft.com/markets?format=rss" },
-];
+type HeadlineLike = Pick<Headline, "title" | "url" | "source" | "published"> & Partial<Pick<Headline, "tier" | "tierLabel">>;
 
-// Nasdaq econ calendar: public JSON endpoint. Iterates daily across a window
-// to collect a full 14-day forward view instead of a single day.
-async function fetchEconCalendar(): Promise<CalendarEvent[]> {
-  const events: CalendarEvent[] = [];
-  const today = new Date();
-  const fmt = (d: Date) => d.toISOString().slice(0, 10);
-  const seenIds = new Set<string>();
-
-  const days: string[] = [];
-  for (let i = 0; i < 14; i++) {
-    const d = new Date(today.getTime() + i * 86400 * 1000);
-    days.push(fmt(d));
-  }
-
-  // Fetch each day in parallel (bounded) so the full window comes back fast.
-  const dayResults = await Promise.allSettled(
-    days.map(async (date) => {
-      const url = `https://api.nasdaq.com/api/calendar/economicevents?date=${date}`;
-      const r = await fetch(url, {
-        headers: { "User-Agent": UA, Accept: "application/json" },
-        // One hung Nasdaq socket used to hang the whole news snapshot
-        // (and every route awaiting it). Bound each fetch.
-        signal: AbortSignal.timeout(4000),
-      });
-      if (!r.ok) return [] as CalendarEvent[];
-      const j: any = await r.json();
-      const rows: any[] = j?.data?.rows ?? [];
-      const out: CalendarEvent[] = [];
-      for (const row of rows) {
-        const eventName = String(row.eventName ?? "");
-        const countryCode = String(row.gsi ?? row.country ?? "");
-        if (countryCode && !/US|United States/i.test(countryCode)) continue;
-        const t = String(row.time ?? "");
-        // Nasdaq times are EASTERN wall-clock. Building them with a Z suffix
-        // treated 08:30 ET as 08:30 UTC (= 04:30 ET), which made T-30min
-        // Discord news alerts fire around 4 AM.
-        const [hhS, mmS] = (t || "08:30").split(":");
-        const when = Math.floor(
-          etEpochMs(date, Number(hhS) || 8, Number(mmS) || 30) / 1000,
-        );
-        if (!Number.isFinite(when)) continue;
-        const importanceRaw = Number(row.impactLevel ?? row.impact ?? 0);
-        const importance: CalendarEvent["importance"] =
-          importanceRaw >= 3 ? "HIGH" : importanceRaw >= 2 ? "MED" : "LOW";
-        const id = `econ:${date}:${eventName}`;
-        out.push({
-          id,
-          kind: "ECON",
-          title: eventName,
-          when,
-          whenLabel: formatEtLabel(when),
-          importance,
-          previous: row.previous ?? undefined,
-          forecast: row.forecast ?? row.consensus ?? undefined,
-          actual: row.actual ?? undefined,
-          source: "Nasdaq",
-        });
-      }
-      return out;
-    }),
-  );
-
-  for (const res of dayResults) {
-    if (res.status !== "fulfilled") continue;
-    for (const ev of res.value) {
-      if (seenIds.has(ev.id)) continue;
-      seenIds.add(ev.id);
-      events.push(ev);
+/** Pure: merge per-source results (null = request failed) into the Signals feed. */
+export function summarizeHeadlineFeed(
+  results: Array<{ name: string; items: HeadlineLike[] | null; stale?: boolean; tier?: SourceTier }>,
+  nowMs: number = Date.now(),
+  limit = 15,
+): HeadlineFeed {
+  const sources: HeadlineFeed["sources"] = [];
+  const merged: HeadlineLike[] = [];
+  const seen = new Set<string>();
+  let undatedDropped = 0;
+  const minSec = nowMs / 1000 - HEADLINE_FEED_MAX_AGE_HOURS * 3600;
+  for (const r of results) {
+    if (r.items == null) { sources.push({ name: r.name, state: "failed", items: 0, newest: null, tier: r.tier }); continue; }
+    const dated = r.items.filter((h) => Number.isFinite(h.published) && h.published > 0);
+    undatedDropped += r.items.length - dated.length;
+    const fresh = dated.filter((h) => h.published >= minSec && h.published <= nowMs / 1000 + 300);
+    const newest = dated.length ? new Date(Math.max(...dated.map((h) => h.published)) * 1000).toISOString() : null;
+    sources.push({ name: r.name, state: r.stale ? "stale" : fresh.length ? "ok" : "empty", items: fresh.length, newest, tier: r.tier });
+    for (const h of fresh) {
+      const key = h.title.toLowerCase().replace(/\W+/g, " ").trim().slice(0, 120);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(h);
     }
   }
+  merged.sort((a, b) => b.published - a.published);
+  const anyOk = sources.some((x) => x.state === "ok");
+  const anyBad = sources.some((x) => x.state === "failed" || x.state === "stale");
+  const status: HeadlineFeed["status"] = !results.length || sources.every((x) => x.state === "failed")
+    ? "unavailable"
+    : !anyOk ? (merged.length ? "partial" : "empty") : anyBad ? "partial" : "ok";
+  return {
+    items: merged.slice(0, limit).map((h) => ({
+      title: h.title, url: h.url, source: h.source, publishedAt: new Date(h.published * 1000).toISOString(),
+      tier: h.tier, tierLabel: h.tierLabel,
+    })),
+    status,
+    sources,
+    maxAgeHours: HEADLINE_FEED_MAX_AGE_HOURS,
+    undatedDropped,
+    asOf: nowMs,
+    note: status === "unavailable"
+      ? "no headline source reachable (feeds failed); Schwab has no news API"
+      : `headlines (${sources.filter((x) => x.state === "ok").map((x) => x.name).join(", ") || "none"}), last ${HEADLINE_FEED_MAX_AGE_HOURS}h; context only, never a price input`,
+  };
+}
 
-  // NOTE: syntheticBaseline() removed — buildVolCalendar() now provides the
-  // canonical FOMC/CPI/NFP rhythm via fetchVolEventCalendar() below.
+export async function fetchMarketHeadlineFeed(): Promise<HeadlineFeed> {
+  const now = Date.now();
+  const defs = HEADLINE_FEEDS.filter((d) => SIGNALS_FEED_IDS.includes(d.id));
+  const reads = await Promise.all(defs.map((d) => readFeed(d).catch(() => null)));
+  return summarizeHeadlineFeed(reads.map((r, i) => {
+    const id = defs[i].id;
+    const spec = SOURCES[id];
+    if (!r || r.value == null) return { name: spec.name, items: null, tier: spec.tier };
+    const t = tierItems(id, r.value, r.fetchedAtMs ?? now, now);
+    return { name: spec.name, items: t.items.map(toHeadline), stale: r.state === "stale", tier: spec.tier };
+  }), now);
+}
 
-  // Derived market-structure events: OPEX, VIX expirations, triple witching,
-  // Treasury auctions. These are math-based so they can't fail.
-  for (const ev of buildMarketStructureEvents(today, 6)) {
-    events.push(ev);
+// ---- Official economic calendars (BLS, BEA) ----
+
+const BLS_URL = "https://www.bls.gov/schedule/news_release/";
+const BEA_URL = "https://www.bea.gov/news/schedule";
+
+/** Pure: ICS events from an official calendar -> calendar rows in [fromMs, toMs]. */
+export function officialReleaseEvents(
+  sourceId: "bls_calendar" | "bea_calendar",
+  events: IcsEvent[],
+  fromMs: number,
+  toMs: number,
+): CalendarEvent[] {
+  const spec = SOURCES[sourceId];
+  const out: CalendarEvent[] = [];
+  for (const e of events) {
+    if (e.startMs < fromMs || e.startMs > toMs) continue;
+    const cls = classifyRelease(e.summary);
+    const when = Math.floor(e.startMs / 1000);
+    out.push({
+      id: `${sourceId}:${e.uid}`,
+      kind: "ECON",
+      title: e.summary,
+      when,
+      whenLabel: e.timed ? formatEtLabel(when) : formatEtDateLabel(when),
+      importance: cls.importance,
+      source: spec.name,
+      sourceId,
+      tier: spec.tier,
+      tierLabel: TIER_LABEL[spec.tier],
+      timeExact: e.timed,
+      sourceUrl: sourceId === "bls_calendar" ? BLS_URL : BEA_URL,
+      family: cls.family,
+    });
   }
-  for (const ev of buildTreasuryAuctions(today, 21)) {
-    events.push(ev);
-  }
+  return out;
+}
 
-  return events;
+/** Pure: Nasdaq calendar rows (unofficial) -> calendar rows, US only. */
+export function nasdaqEconEvents(rows: Array<{ date: string; time: string; eventName: string; country: string; impact: number; previous?: string; forecast?: string; actual?: string }>): CalendarEvent[] {
+  const spec = SOURCES.nasdaq_econ;
+  const out: CalendarEvent[] = [];
+  for (const row of rows) {
+    if (row.country && !/US|United States/i.test(row.country)) continue;
+    if (!row.eventName) continue;
+    // Nasdaq times are Eastern wall clock. A missing or non-clock time
+    // ("All Day", "Tentative") is kept as date-only, not guessed as 8:30.
+    const tm = /^(\d{1,2}):(\d{2})$/.exec(row.time.trim());
+    const when = Math.floor(etEpochMs(row.date, tm ? Number(tm[1]) : 0, tm ? Number(tm[2]) : 0) / 1000);
+    if (!Number.isFinite(when)) continue;
+    out.push({
+      id: `econ:${row.date}:${row.eventName}`,
+      kind: "ECON",
+      title: row.eventName,
+      when,
+      whenLabel: tm ? formatEtLabel(when) : formatEtDateLabel(when),
+      importance: row.impact >= 3 ? "HIGH" : row.impact >= 2 ? "MED" : "LOW",
+      previous: row.previous || undefined,
+      forecast: row.forecast || undefined,
+      actual: row.actual || undefined,
+      source: spec.name,
+      sourceId: spec.id,
+      tier: spec.tier,
+      tierLabel: TIER_LABEL[spec.tier],
+      timeExact: Boolean(tm),
+      family: familyOfEventName(row.eventName),
+    });
+  }
+  return out;
+}
+
+/** Pure: Treasury Fiscal Data auctions -> calendar rows (date exact, close time per announcement). */
+export function treasuryAuctionEvents(auctions: Array<{ cusip: string; securityType: string; securityTerm: string; auctionDate: string; offeringUsd: number | null; reopening: boolean; issueDate: string | null }>): CalendarEvent[] {
+  const spec = SOURCES.treasury_auctions;
+  return auctions.map((a) => {
+    const { hh, mm } = auctionPlacementEt(a.securityType);
+    const when = Math.floor(etEpochMs(a.auctionDate, hh, mm) / 1000);
+    const size = a.offeringUsd != null ? `$${(a.offeringUsd / 1e9).toFixed(a.offeringUsd % 1e9 === 0 ? 0 : 1)}B` : "size n/a";
+    return {
+      id: `treas:${a.cusip || a.securityTerm}:${a.auctionDate}`,
+      kind: "TREASURY" as const,
+      title: `${a.securityTerm} ${a.securityType} Auction${a.reopening ? " (reopening)" : ""} · ${size}`,
+      when,
+      whenLabel: `${formatEtLabel(when)} (close time per announcement)`,
+      importance: auctionImportance(a as any),
+      source: spec.name,
+      sourceId: spec.id,
+      tier: spec.tier,
+      tierLabel: TIER_LABEL[spec.tier],
+      timeExact: false,
+      sourceUrl: "https://www.treasurydirect.gov/auctions/upcoming/",
+      notes: `CUSIP ${a.cusip || "n/a"}${a.issueDate ? ` · issues ${a.issueDate}` : ""} · offering amount from Treasury Fiscal Data`,
+    };
+  });
+}
+
+function toFiling(f: EdgarFiling, sourceId: string): FilingItem {
+  const spec = SOURCES[sourceId];
+  return {
+    form: f.form, company: f.company, cik: f.cik, accession: f.accession,
+    acceptedUtc: f.acceptedMs != null ? new Date(f.acceptedMs).toISOString() : null,
+    filingDate: f.filingDate, items: f.items, url: f.link,
+    source: spec.name, tier: spec.tier,
+  };
+}
+
+function isoDate(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
 }
 
 // ---- Derived market structure events ----
@@ -361,6 +466,7 @@ function buildMarketStructureEvents(from: Date, monthsAhead: number): CalendarEv
       whenLabel: formatEtLabel(opexWhen),
       importance: isWitch ? "HIGH" : "MED",
       source: "CBOE (computed)",
+      sourceId: "exchange_rules", tier: "computed", tierLabel: TIER_LABEL.computed, timeExact: true,
       notes: isWitch
         ? "Quarterly index + stock + ETF options expire on same day; historically elevated volume."
         : "Standard monthly options settle on AM SOQ / PM close.",
@@ -389,45 +495,12 @@ function buildMarketStructureEvents(from: Date, monthsAhead: number): CalendarEv
         whenLabel: formatEtLabel(vixWhen),
         importance: "MED",
         source: "CBOE (computed)",
+        sourceId: "exchange_rules", tier: "computed", tierLabel: TIER_LABEL.computed, timeExact: true,
         notes: "Special opening quotation used to settle VX futures + VIX options.",
       });
     }
   }
 
-  return out;
-}
-
-function buildTreasuryAuctions(from: Date, daysAhead: number): CalendarEvent[] {
-  // Approximate weekly auction cadence (actuals published by TreasuryDirect):
-  //   Mon 11:30 ET → 13/26W bills
-  //   Tue 13:00 ET → 3Y / 52W (rotating weeks)
-  //   Wed 13:00 ET → 10Y (first half of month) / reopens
-  //   Thu 13:00 ET → 30Y (mid-month) / 4W + 8W bills
-  // We generate a conservative schedule the user can use to anticipate
-  // liquidity/duration events. Actual sizes come from Treasury, not here.
-  const out: CalendarEvent[] = [];
-  const plan: Array<{ dow: number; hour: number; minute: number; title: string; importance: CalendarEvent["importance"] }> = [
-    { dow: 1, hour: 11, minute: 30, title: "13W / 26W T-Bill Auction", importance: "LOW" },
-    { dow: 2, hour: 13, minute: 0, title: "3Y / 52W Auction (est.)", importance: "MED" },
-    { dow: 3, hour: 13, minute: 0, title: "10Y Auction (est.)", importance: "HIGH" },
-    { dow: 4, hour: 13, minute: 0, title: "30Y Bond / 4W+8W Bill Auction (est.)", importance: "MED" },
-  ];
-  for (let i = 0; i < daysAhead; i++) {
-    const d = new Date(from.getTime() + i * 86400 * 1000);
-    const dow = d.getUTCDay();
-    const slot = plan.find((p) => p.dow === dow);
-    if (!slot) continue;
-    const when = makeUtcEvent(d, slot.hour, slot.minute);
-    out.push({
-      id: `treas:${d.toISOString().slice(0, 10)}:${slot.dow}`,
-      kind: "TREASURY",
-      title: slot.title,
-      when,
-      whenLabel: formatEtLabel(when),
-      importance: slot.importance,
-      source: "TreasuryDirect (estimated cadence)",
-    });
-  }
   return out;
 }
 
@@ -444,6 +517,11 @@ function formatEtLabel(whenSec: number): string {
     hour12: true,
   });
   return `${fmt.format(d)} ET`;
+}
+
+function formatEtDateLabel(whenSec: number): string {
+  const fmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", month: "numeric", day: "numeric" });
+  return `${fmt.format(new Date(whenSec * 1000))} (time TBA)`;
 }
 
 // ---- Aggregator ----
@@ -466,22 +544,30 @@ async function fetchVolEventCalendar(): Promise<CalendarEvent[]> {
     let title = ev.label;
     let notes: string | undefined;
     let source = "VolCalendar (computed)";
+    // Tier per row: FOMC and CPI dates are hardcoded copies of the official
+    // schedules (computed); NFP is a first-Friday rule (an estimate, weak).
+    // The official BLS calendar supersedes CPI/NFP rows when it is reachable.
+    let tier: SourceTier = "computed";
+    let family: string | null = null;
     switch (ev.type) {
       case "fomc":
         kind = "FED"; hourEt = 14; minEt = 0;
         notes = "FOMC rate decision @ 2pm ET, Powell presser @ 2:30pm ET. Largest single-day vol catalyst.";
-        source = "Federal Reserve";
+        source = "Federal Reserve schedule (hardcoded copy)";
         break;
       case "cpi":
         kind = "ECON"; hourEt = 8; minEt = 30;
         title = `${ev.label} (CPI)`;
         notes = "Inflation print @ 8:30am ET. Hot read = bond selloff + risk-off; cool = rally.";
-        source = "BLS";
+        source = "BLS schedule (hardcoded copy)";
+        family = "CPI";
         break;
       case "nfp":
         kind = "ECON"; hourEt = 8; minEt = 30;
-        notes = "Jobs print @ 8:30am ET. Watch headline + average hourly earnings + revisions.";
-        source = "BLS";
+        notes = "Jobs print @ 8:30am ET (estimated by the first-Friday rule; BLS sometimes releases on another Friday). Watch headline + average hourly earnings + revisions.";
+        source = "First-Friday rule (estimate)";
+        tier = "weak";
+        family = "NFP";
         break;
       case "monthly_opex":
         kind = "OPEX"; hourEt = 16; minEt = 0;
@@ -513,6 +599,11 @@ async function fetchVolEventCalendar(): Promise<CalendarEvent[]> {
       importance,
       source,
       notes,
+      sourceId: tier === "weak" ? "estimate" : "exchange_rules",
+      tier,
+      tierLabel: tier === "weak" ? "estimate" : TIER_LABEL[tier],
+      timeExact: tier !== "weak",
+      family,
     });
   }
   return out;
@@ -544,7 +635,11 @@ async function fetchEarningsCalendar(): Promise<CalendarEvent[]> {
           when,
           whenLabel: formatEtLabel(when),
           importance: r.isMag7 ? "HIGH" : r.importance,
-          source: "Nasdaq Earnings",
+          source: r.source === "estimated" ? "Estimated date (Nasdaq failed)" : "Nasdaq (unofficial API)",
+          sourceId: r.source === "estimated" ? "mag7_baseline" : "nasdaq_earnings",
+          tier: "weak",
+          tierLabel: r.source === "estimated" ? "estimate" : TIER_LABEL.weak,
+          timeExact: false,
           ticker: r.ticker,
           forecast: r.epsForecast != null ? `EPS est ${r.epsForecast}` : undefined,
           previous: r.lastYearEps != null ? `LY EPS ${r.lastYearEps}` : undefined,
@@ -558,72 +653,92 @@ async function fetchEarningsCalendar(): Promise<CalendarEvent[]> {
 
 export async function buildNewsSnapshot(): Promise<NewsResponse> {
   const warnings: string[] = [];
+  const nowMs = Date.now();
+  const now = Math.floor(nowMs / 1000);
+  const fromMs = nowMs - 6 * 3600_000;
+  const toMs = nowMs + 60 * 86400_000;
+  const nasdaqDays: string[] = [];
+  for (let i = 0; i < 14; i++) nasdaqDays.push(isoDate(nowMs + i * 86400_000));
 
-  const rssPromises = RSS_SOURCES.map((s) =>
-    fetchRss(s.url, s.name).catch((e) => {
-      warnings.push(`${s.name}: ${e?.message ?? "failed"}`);
-      return [] as Headline[];
+  const failedRead = (e: any) => ({ state: "failed" as const, fetchedAtMs: null, value: null, error: String(e?.message ?? e).slice(0, 120) });
+  const [head, bls, bea, treas, nasdaq, wire, watch, earningsEvents, volEvents] = await Promise.all([
+    collectHeadlines(null, nowMs),
+    readBlsCalendar().catch(failedRead),
+    readBeaCalendar().catch(failedRead),
+    readTreasuryAuctions(isoDate(nowMs - 86400_000)).catch(failedRead),
+    readNasdaqEcon(nasdaqDays).catch(failedRead),
+    readEdgarCurrent8K().catch(failedRead),
+    readEdgarWatchlist().catch(failedRead),
+    fetchEarningsCalendar().catch((e) => {
+      warnings.push(`Earnings calendar: ${e?.message ?? "failed"}`);
+      return [] as CalendarEvent[];
     }),
-  );
-  const calPromise = fetchEconCalendar().catch((e) => {
-    warnings.push(`Calendar: ${e?.message ?? "failed"}`);
-    return [] as CalendarEvent[]; // vol calendar fills the gap below
-  });
-  const earnPromise = fetchEarningsCalendar().catch((e) => {
-    warnings.push(`Earnings calendar: ${e?.message ?? "failed"}`);
-    return [] as CalendarEvent[];
-  });
-  const volPromise = fetchVolEventCalendar().catch((e) => {
-    warnings.push(`Vol calendar: ${e?.message ?? "failed"}`);
-    return [] as CalendarEvent[];
-  });
-
-  const rssAll = await Promise.all(rssPromises);
-  const [calendar, earningsEvents, volEvents] = await Promise.all([
-    calPromise,
-    earnPromise,
-    volPromise,
+    fetchVolEventCalendar().catch((e) => {
+      warnings.push(`Vol calendar: ${e?.message ?? "failed"}`);
+      return [] as CalendarEvent[];
+    }),
   ]);
-  // Merge earnings + vol-calendar events. Vol events go FIRST so their richer
-  // metadata (FOMC presser notes, CPI/NFP context) wins de-dup against any
-  // overlapping econ rows from the Nasdaq feed.
-  for (const ev of volEvents) calendar.unshift(ev);
-  for (const ev of earningsEvents) calendar.push(ev);
 
-  // Merge + dedupe by normalized title
-  const allHeadlines: Headline[] = [];
-  const seen = new Set<string>();
-  for (const arr of rssAll) {
-    for (const h of arr) {
-      const key = h.title.toLowerCase().replace(/\W+/g, " ").trim().slice(0, 120);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      allHeadlines.push(h);
-    }
+  const statuses: SourceStatus[] = [...head.statuses];
+  const pushStatus = (id: string, r: SourceRead<unknown>, items: Array<{ publishedMs: number | null }>, reason?: string) => {
+    const st = sourceStatus(id, r, items, nowMs);
+    if (reason && st.state === "ok") { st.state = "partial"; st.reason = reason; }
+    statuses.push(st);
+  };
+
+  // Official calendars
+  const blsEvents = bls.value ? officialReleaseEvents("bls_calendar", bls.value, fromMs, toMs) : [];
+  const beaEvents = bea.value ? officialReleaseEvents("bea_calendar", bea.value, fromMs, toMs) : [];
+  pushStatus("bls_calendar", bls, blsEvents.map((e) => ({ publishedMs: null })));
+  pushStatus("bea_calendar", bea, beaEvents.map((e) => ({ publishedMs: null })));
+  const treasEvents = treas.value ? treasuryAuctionEvents(treas.value) : [];
+  pushStatus("treasury_auctions", treas, treasEvents.map(() => ({ publishedMs: null })));
+  const nasdaqVal = nasdaq.value;
+  const nasdaqEvents = nasdaqVal ? nasdaqEconEvents(nasdaqVal.rows) : [];
+  pushStatus("nasdaq_econ", nasdaq, nasdaqEvents.map(() => ({ publishedMs: null })),
+    nasdaqVal && nasdaqVal.failedDays ? `${nasdaqVal.failedDays} of ${nasdaqDays.length} days failed` : undefined);
+
+  // ECON merge: official BLS/BEA set the time; Nasdaq consensus folds in;
+  // hardcoded/estimated CPI/NFP rows drop when the official schedule has them.
+  const volEcon = volEvents.filter((e) => e.kind === "ECON");
+  const volOther = volEvents.filter((e) => e.kind !== "ECON");
+  const econ = mergeEconEvents<CalendarEvent>([...blsEvents, ...beaEvents], [...nasdaqEvents, ...volEcon]);
+  const calendar: CalendarEvent[] = [
+    ...volOther,                 // FOMC + expirations from the vol calendar win kind/day dedupe
+    ...econ,
+    ...treasEvents,
+    ...buildMarketStructureEvents(new Date(nowMs), 6),
+    ...earningsEvents,
+  ];
+
+  // SEC filings
+  const wireItems = wire.value ? wire.value.map((f) => toFiling(f, "sec_edgar_current")) : [];
+  pushStatus("sec_edgar_current", wire, wireItems.map((f) => ({ publishedMs: f.acceptedUtc ? Date.parse(f.acceptedUtc) : null })));
+  const watchVal = watch.value;
+  const watchItems = watchVal ? watchVal.filings.map((f) => toFiling(f, "sec_edgar_submissions")) : [];
+  pushStatus("sec_edgar_submissions", watch, watchItems.map((f) => ({ publishedMs: f.acceptedUtc ? Date.parse(f.acceptedUtc) : null })),
+    watchVal && watchVal.failedTickers.length ? `failed: ${watchVal.failedTickers.join(", ")}` : undefined);
+  const filingStates = statuses.filter((x) => x.id === "sec_edgar_current" || x.id === "sec_edgar_submissions").map((x) => x.state);
+  const filingsState = aggregateState(filingStates);
+  const filingsNote = filingStates.every((x) => x === "not_configured")
+    ? "SEC EDGAR not configured: set BATCAVE_SEC_USER_AGENT (app name + contact email) per the SEC fair-access policy"
+    : "SEC EDGAR: watchlist filings (last 7 days) and the latest 8-K wire, acceptance time from EDGAR";
+
+  for (const st of statuses) {
+    if (st.state === "failed" || st.state === "stale") warnings.push(`${st.name}: ${st.state}${st.reason ? ` (${st.reason})` : ""}`);
   }
-  allHeadlines.sort((a, b) => b.published - a.published);
 
-  // Topic counts
+  const allHeadlines = head.headlines;
   const counts = new Map<NewsTopic, number>();
-  for (const h of allHeadlines) {
-    for (const t of h.topics) counts.set(t, (counts.get(t) ?? 0) + 1);
-  }
-  const topics = Array.from(counts.entries())
-    .map(([topic, count]) => ({ topic, count }))
-    .sort((a, b) => b.count - a.count);
-
-  // Limit headlines to a reasonable count to keep payload small
+  for (const h of allHeadlines) for (const t of h.topics) counts.set(t, (counts.get(t) ?? 0) + 1);
+  const topics = Array.from(counts.entries()).map(([topic, count]) => ({ topic, count })).sort((a, b) => b.count - a.count);
   const headlines = allHeadlines.slice(0, 80);
 
-  // Calendar: show anything from today forward through ~6 months (OPEX grid).
-  // Keep recently-past events (last 6 hours) visible so the user can see what
-  // just printed. Limit payload generously now that we have OPEX/VIX/etc.
-  const now = Math.floor(Date.now() / 1000);
+  // Calendar window: recently past (6 h) through ~7 months (OPEX grid).
   const cutoff = now - 6 * 3600;
-  const forwardLimit = now + 210 * 86400; // ~7 months
-  // Dedupe by id AND by (kind + same-day) so e.g. tentative FOMC "next meeting"
-  // gets superseded by the canonical hardcoded FOMC date when both exist.
-  // Vol-calendar events were unshifted to the FRONT so they win the dup race.
+  const forwardLimit = now + 210 * 86400;
+  // Dedupe by id AND by (kind + same day) for one-per-day kinds (FOMC,
+  // expirations): the vol-calendar rows come first and win.
   const seenIds = new Set<string>();
   const seenKindDay = new Set<string>();
   const isoDay = (whenSec: number) => new Date(whenSec * 1000).toISOString().slice(0, 10);
@@ -632,10 +747,6 @@ export async function buildNewsSnapshot(): Promise<NewsResponse> {
       if (seenIds.has(e.id)) return false;
       seenIds.add(e.id);
       if (e.when < cutoff || e.when > forwardLimit) return false;
-      // Same kind + same date → keep the first (vol-calendar wins).
-      // Earnings excluded because multiple companies report the same day;
-      // ECON excluded because one day routinely has several distinct prints
-      // (CPI + claims + retail sales) and this dedupe was dropping all but one.
       if (e.kind !== "EARNINGS" && e.kind !== "TREASURY" && e.kind !== "ECON") {
         const k = `${e.kind}:${isoDay(e.when)}`;
         if (seenKindDay.has(k)) return false;
@@ -646,11 +757,21 @@ export async function buildNewsSnapshot(): Promise<NewsResponse> {
     .sort((a, b) => a.when - b.when)
     .slice(0, 400);
 
+  const headlineState = aggregateState(head.statuses.map((x) => x.state));
+  const calendarState = aggregateState(statuses
+    .filter((x) => ["bls_calendar", "bea_calendar", "treasury_auctions", "nasdaq_econ"].includes(x.id))
+    .map((x) => x.state));
+
   return {
     asOf: now,
     headlines,
     calendar: calFiltered,
     topics,
     warnings,
+    sources: statuses,
+    headlineState,
+    calendarState,
+    filings: { watchlist: watchItems.slice(0, 40), wire: wireItems.slice(0, 40), state: filingsState, note: filingsNote },
+    sourceTable: sourceTable(),
   };
 }

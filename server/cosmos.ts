@@ -1385,6 +1385,75 @@ Rules:
 4. State the evidence plainly: only lunar (Yuan, Zheng & Zhu 2006: about 3-5% a year in aggregate, a basis point or two a day), geomagnetic (Krivelyova & Robotti 2003, a working paper) and SAD (Kamstra, Kramer & Levi 2003, disputed by Kelly & Meschke 2010) effects have studies behind them, and those effects are small. Retrogrades, Bradley, Gann, ingresses and natal charts have no peer-reviewed support.
 5. Plain markdown, no emojis, at most 250 words.`;
 
+// ─── Deterministic output filter for the LLM narrative (finding 5.3/5.8) ─
+// The no-trade-instruction rule above is only a prompt. This filter is the
+// enforcement, and it works as an ALLOW-LIST of sky talk: a sentence of the
+// model's text survives only if it mentions no market, asset or trading
+// noun (stocks, equities, market, SPX/SPY/S&P, sectors, tech, names, risk,
+// capital, traders, positions, volatility, ...), no price level (a 3-5 digit
+// number that is not a year or an angle), no trade/size/hedge/options verb
+// and no direction call. Everything else is dropped before the text reaches
+// the page, and the disclaimer is forced to be the first line. A deny-list
+// of instruction phrasings missed paraphrases ("Tech names tend to wobble
+// around Mercury stations"); the allow-list does not need to anticipate
+// them. Dropping an innocent sentence costs nothing; letting one market
+// sentence through is the failure we are guarding against.
+
+export const COSMOS_LLM_DISCLAIMER = "For entertainment and context, not a trading signal.";
+
+const TRADE_INSTRUCTION_PATTERNS: RegExp[] = [
+  // Market, asset and trading nouns: any mention makes the sentence market talk.
+  /\b(stocks?|shares?|equit(y|ies)|markets?|market-?wide|bourse|wall street|spx|spy|qqq|s\s*&\s*p|sp500|nasdaq|dow|russell|index(es)?|indices|futures?|etfs?|sectors?|tech|technology|semis?|semiconductors?|names|tickers?|risk|risky|capital|traders?|trading|trades?|investors?|investing|investments?|portfolios?|holdings?|positions?|exposure|allocation|leverage|margin|volatility|vix|vol|implied|premium|premiums|options?|calls?|puts?|strikes?|expir(y|ies|ation)|0dte|spreads?|straddles?|strangles?|condors?|butterfl(y|ies)|collars?|hedg\w*|bonds?|yields?|treasur(y|ies)|rates?|fed|fomc|dollar|usd|currenc(y|ies)|fx|gold|oil|crude|commodit(y|ies)|bitcoin|btc|crypto\w*|earnings|valuations?|prices?|priced|pricing|levels?|support (level|zone|line)s?|resistance|breakout|breakdown|tape|bids?|offers?|liquidity|flows?|buyers?|sellers?|bulls?|bears?|bullish|bearish|rally|rallies|sell-?offs?|crash(es)?|corrections?|drawdowns?|returns?|performance|outperform\w*|underperform\w*|profits?|loss(es)?|gains?|basis points?|bps)\b/i,
+  // Orders, sizing and imperatives addressed to the reader.
+  /\b(buy|buying|sell|selling|short|shorting|long|longs|go long|go short|enter|entering|exit|exiting|take profits?|stop[- ]?loss(es)?|trailing stop|price targets?|size|sizing|sized|trim|trimming|scale (in|out)|load up|accumulate|de-?risk|re-?risk|rebalanc\w*|rotate|lighten|lightening|reduce|reducing|add to|keep powder dry|stand aside|step aside|sit out|wait for|be careful|caution|cautious|defensive|aggressive|protect|protection|consider|favou?r\w*|avoid|lean)\b/i,
+  // Money and price levels: "$", a 3-5 digit number (with optional thousands
+  // separator or decimals) that is not a year (19xx/20xx) and not an angle
+  // or a percentage of illumination.
+  /\$\s?\d/,
+  /(?<![\d.,])(?!(?:19|20)\d\d(?![\d,.]))\d{1,2},\d{3}(?:\.\d+)?(?![\d°%])|(?<![\d.,])(?!(?:19|20)\d\d(?![\d,.]))\d{3,5}(?:\.\d+)?(?![\d,]|\s?(?:°|degrees?|deg\b|%|percent|km|miles?|nT|years?|days?|hours?|minutes?))/i,
+  // Forecasts of what anything will do.
+  /\b(will|should|could|may|might|likely to|expected to|poised to|set to|tends? to|tend to)\b[^.!?]*\b(rise|rises|fall|falls|climb|drop|decline|slide|gain|lose|move (higher|lower|up|down)|go (higher|lower|up|down)|wobble|weaken|strengthen|pop|dip|sink|soar|surge|jump|tumble|chop)\b/i,
+];
+
+export function isTradeInstruction(sentence: string): boolean {
+  return TRADE_INSTRUCTION_PATTERNS.some((re) => re.test(sentence));
+}
+
+/** Split a line into sentences (keeps markdown bullets/headings with their first sentence). */
+function splitSentences(line: string): string[] {
+  const parts = line.split(/(?<=[.!?])\s+(?=[*_"'(\[]*[A-Z0-9])/);
+  return parts.filter((p) => p.length > 0);
+}
+
+/**
+ * Drop every sentence that reads as a trade, size, hedge or direction
+ * instruction; force the disclaimer as the first line. Pure.
+ */
+export function filterTradeInstructions(text: string): { text: string; dropped: number; droppedSentences: string[] } {
+  const droppedSentences: string[] = [];
+  const outLines: string[] = [];
+  for (const rawLine of String(text ?? "").split(/\r?\n/)) {
+    if (rawLine.trim() === "") { outLines.push(""); continue; }
+    if (rawLine.includes(COSMOS_LLM_DISCLAIMER)) continue; // re-added below, once
+    const prefix = rawLine.match(/^\s*(#{1,6}\s+|[-*+]\s+|\d+\.\s+|>\s*)?/)?.[0] ?? "";
+    const body = rawLine.slice(prefix.length);
+    const kept = splitSentences(body).filter((sent) => {
+      if (isTradeInstruction(sent)) { droppedSentences.push(sent.trim()); return false; }
+      return true;
+    });
+    if (kept.length) outLines.push(prefix + kept.join(" "));
+  }
+  // collapse runs of blank lines left by dropped bullets
+  const collapsed: string[] = [];
+  for (const l of outLines) if (!(l === "" && (collapsed.length === 0 || collapsed[collapsed.length - 1] === ""))) collapsed.push(l);
+  while (collapsed.length && collapsed[collapsed.length - 1] === "") collapsed.pop();
+  return {
+    text: [COSMOS_LLM_DISCLAIMER, "", ...collapsed].join("\n").trim(),
+    dropped: droppedSentences.length,
+    droppedSentences,
+  };
+}
+
 // ─── NOAA Kp-index (geomagnetic storm) fetcher ──────────────────────────────
 // Pulls from NOAA SWPC free endpoints (no key). Cached 60min.
 // Kp 0-4 = quiet, 5 = G1 storm, 6 = G2, 7 = G3, 8 = G4, 9 = G5.

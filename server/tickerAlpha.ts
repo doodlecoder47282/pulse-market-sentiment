@@ -57,8 +57,9 @@ export interface SocialExposure {
   volumeZ: number;
   /** Top 8 posts by recency/quality */
   topPosts: SocialPost[];
-  /** Where the chatter is coming from */
-  bySource: { stocktwits: number; reddit: number; x: number };
+  /** Where the chatter is coming from: post counts per source; null = the
+   *  source was not read (failed, not configured, or removed), never 0 posts. */
+  bySource: { stocktwits: number | null; reddit: number | null; x: number | null };
   warnings: string[];
 }
 
@@ -157,50 +158,18 @@ async function fetchStockTwitsForSymbol(symbol: string, limit = 30): Promise<Soc
         tone,
       };
     });
-  } catch {
-    return [];
+  } catch (e) {
+    // Rethrown so the caller reports "failed" (count null), not 0 posts.
+    throw e;
   }
 }
 
-// ---- Social: Reddit cashtag/mention scan ----
-
-const REDDIT_SUBS = ["wallstreetbets", "stocks", "options", "investing", "StockMarket"];
-
-async function fetchRedditMentions(ticker: string, perSub = 25): Promise<SocialPost[]> {
-  const out: SocialPost[] = [];
-  // Reddit search for the ticker symbol with cashtag and bare-word variants
-  const queries = [`%24${ticker}`, ticker];
-  for (const sub of REDDIT_SUBS) {
-    for (const q of queries) {
-      try {
-        const d = await fetchJson(
-          `https://www.reddit.com/r/${sub}/search.json?q=${q}&restrict_sr=1&sort=new&limit=${perSub}&t=week`
-        );
-        const items = d?.data?.children ?? [];
-        for (const c of items) {
-          const title = c?.data?.title || "";
-          const body = c?.data?.selftext || "";
-          const text = `${title} ${body}`.slice(0, 360);
-          if (!title) continue;
-          // De-duplicate
-          const url = `https://www.reddit.com${c.data.permalink}`;
-          if (out.some((p) => p.url === url)) continue;
-          out.push({
-            source: "Reddit",
-            author: `r/${sub}`,
-            text,
-            url,
-            ts: c?.data?.created_utc,
-            tone: scoreText(text),
-          });
-        }
-      } catch {
-        // continue silently
-      }
-    }
-  }
-  return out;
-}
+// ---- Social: Reddit (removed) ----
+// The keyless Reddit search was removed (round 2, R2-I): the Reddit Data API
+// requires a registered OAuth client and blocks unauthenticated traffic
+// ("Reddit Data API Wiki",
+// https://support.reddithelp.com/hc/en-us/articles/16160319875092-Reddit-Data-API-Wiki).
+// bySource.reddit is null ("not available"), never 0 posts.
 
 // ---- Social: X cashtag (when X_BEARER_TOKEN is set) ----
 
@@ -257,14 +226,16 @@ function getSocialVolumeZ(ticker: string, current: number): number {
 export async function gatherSocialForTicker(ticker: string): Promise<SocialExposure> {
   const t = ticker.toUpperCase().replace(/^[$^]/, "");
   const warnings: string[] = [];
-  const [st, rd, x] = await Promise.all([
-    fetchStockTwitsForSymbol(t, 30).catch(() => { warnings.push("StockTwits: fetch failed"); return []; }),
-    fetchRedditMentions(t, 15).catch(() => { warnings.push("Reddit: fetch failed"); return []; }),
-    fetchXCashtag(t).catch(() => []),
+  let stOk = true;
+  const xConfigured = Boolean(process.env.X_BEARER_TOKEN);
+  const [st, x] = await Promise.all([
+    fetchStockTwitsForSymbol(t, 30).catch(() => { stOk = false; warnings.push("StockTwits: fetch failed"); return [] as SocialPost[]; }),
+    fetchXCashtag(t).catch(() => [] as SocialPost[]),
   ]);
-  if (!process.env.X_BEARER_TOKEN) warnings.push("X disabled (no X_BEARER_TOKEN)");
+  if (!xConfigured) warnings.push("X disabled (no X_BEARER_TOKEN)");
+  warnings.push("Reddit not available (its Data API requires OAuth; keyless read removed)");
 
-  const all = [...st, ...rd, ...x];
+  const all = [...st, ...x];
   const bullish = all.filter((p) => p.tone === "bullish").length;
   const bearish = all.filter((p) => p.tone === "bearish").length;
   const neutral = all.filter((p) => p.tone === "neutral").length;
@@ -292,7 +263,7 @@ export async function gatherSocialForTicker(ticker: string): Promise<SocialExpos
     messageCount,
     volumeZ: Number(volumeZ.toFixed(2)),
     topPosts: ranked,
-    bySource: { stocktwits: st.length, reddit: rd.length, x: x.length },
+    bySource: { stocktwits: stOk ? st.length : null, reddit: null, x: xConfigured ? x.length : null },
     warnings,
   };
 }

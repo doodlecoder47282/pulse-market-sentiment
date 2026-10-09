@@ -39,6 +39,26 @@ export interface OptimalWindow {
   /** Data-snooping test of the window search (added). The label above is
    *  "Insufficient" unless the family-wise p-value is ≤ 0.05. */
   significance?: SeasonalSignificance;
+  /** One verdict for headers and shading (UI must not infer it from `significant` alone):
+   *  validated = passed the snooping test AND beat same-length windows on
+   *  the held-out years with a calendar-shift p-value <= 0.10;
+   *  held_up_not_significant = top half on held-out years, p > 0.10;
+   *  failed_out_of_sample = bottom half out of sample; in_sample_only = too
+   *  few years for a hold-out; not_significant = failed the snooping test. */
+  verdict?: SeasonalVerdict;
+}
+
+export type SeasonalVerdict = "validated" | "held_up_not_significant" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
+
+/** Held-out significance level for "validated" (few held-out years: a 10% one-sided test). */
+export const SEASONAL_OOS_ALPHA = 0.10;
+
+/** Header and colour for a window, shared by the panels (pure). */
+export function seasonalVerdict(significant: boolean, oos: { percentile: number; pValue: number } | null): SeasonalVerdict {
+  if (!significant) return "not_significant";
+  if (oos == null) return "in_sample_only";
+  if (oos.percentile < 0.5) return "failed_out_of_sample";
+  return oos.pValue <= SEASONAL_OOS_ALPHA ? "validated" : "held_up_not_significant";
 }
 
 export interface SeasonalSignificance {
@@ -62,6 +82,8 @@ export interface SeasonalSignificance {
     /** Share of same-length windows (all start days) on the held-out years
      *  whose mean log return is below the chosen window's. 0.5 = random. */
     randomWindowPercentile: number;
+    /** One-sided held-out p-value: share of same-length windows at least as good (calendar-shift test). */
+    pValue: number;
   } | null;
 }
 
@@ -345,12 +367,13 @@ function outOfSampleCheck(logPaths: Float64Array[]): SeasonalSignificance["outOf
     test.reduce((s, L) => s + (L[sell] - L[buy]), 0) / test.length;
   const chosen = meanLog(pick.buyDay, pick.sellDay);
   const len = pick.sellDay - pick.buyDay;
-  let below = 0, total = 0;
+  let below = 0, total = 0, atLeast = 0;
   for (let b = 0; b + len < SEASONAL_DAYS; b++) {
     const m = meanLog(b, b + len);
     total++;
     if (m < chosen) below++;
     else if (m === chosen) below += 0.5;
+    if (m >= chosen) atLeast++; // includes the chosen window itself
   }
   const wins = test.filter((L) => L[pick.sellDay] > L[pick.buyDay]).length;
   return {
@@ -361,6 +384,10 @@ function outOfSampleCheck(logPaths: Float64Array[]): SeasonalSignificance["outOf
     geometricAvgReturn: (Math.exp(chosen) - 1) * 100,
     winRate: wins / test.length,
     randomWindowPercentile: total > 0 ? below / total : 0.5,
+    // Calendar-shift randomization test on the held-out years: under the null
+    // that the chosen start day is no better than a random one, its rank is
+    // uniform, so P(share of windows at least as good <= a) <= a.
+    pValue: total > 0 ? atLeast / total : 1,
   };
 }
 
@@ -399,7 +426,12 @@ export function findOptimalWindow(
     label = "Weak";
   }
 
+  const verdict = seasonalVerdict(significant, outOfSample ? { percentile: outOfSample.randomWindowPercentile, pValue: outOfSample.pValue } : null);
+  // A label above Weak requires the hold-out too: "in sample only" cannot be Good/Excellent.
+  if ((verdict === "in_sample_only" || verdict === "held_up_not_significant") && (label === "Excellent" || label === "Good")) label = "Fair";
+
   return {
+    verdict,
     buyDayOfYear: best.buyDay,
     buyDate: dayOfYearToDate(best.buyDay),
     sellDayOfYear: best.sellDay,
@@ -423,7 +455,7 @@ export function findOptimalWindow(
 export function generateAnalysisText(
   symbol: string,
   opt: OptimalWindow | null,
-  yearly: Pick<YearlySeasonality, "fullYearAvg" | "fullYearWinRate" | "presidentialCycleYear" | "presidentialCycleAvg" | "lookbackYears">,
+  yearly: Pick<YearlySeasonality, "fullYearAvg" | "fullYearWinRate" | "presidentialCycleYear" | "presidentialCycleAvg"> & { lookbackYears?: number },
   lookback: number,
 ): string {
   if (!opt || opt.confidenceLabel === "Insufficient") {
@@ -442,7 +474,15 @@ export function generateAnalysisText(
   const sigNote = sig
     ? ` Data-snooping p=${sig.pFamilywise.toFixed(2)} across ${sig.windowsSearched.toLocaleString("en-US")} windows searched${sig.outOfSample ? `; on the ${sig.outOfSample.heldOutYears} most recent held-out years the window chosen without them ranked at the ${Math.round(sig.outOfSample.randomWindowPercentile * 100)}th percentile of same-length windows` : ""}.`
     : "";
-  return `Analysis of the ${symbol} seasonal pattern above shows that a Buy Date of ${opt.buyDate} and a Sell Date of ${opt.sellDate} has resulted in a geometric average return of ${opt.geometricAvgReturn >= 0 ? "+" : ""}${opt.geometricAvgReturn.toFixed(1)}% over the past ${lookback} years. This seasonal timeframe has shown positive results in ${positiveYears} of those ${opt.yearsTested} periods (${winPct}%), rated ${opt.confidenceLabel}.${sigNote}${cycleNote}`;
+  const verdictNote = opt.verdict === "failed_out_of_sample"
+    ? " It passed the in-sample snooping test but ranked in the bottom half of same-length windows on the held-out years, so it is NOT validated."
+    : opt.verdict === "in_sample_only"
+      ? " Too few years for a held-out check, so it is significant in-sample only, not validated."
+      : opt.verdict === "held_up_not_significant"
+        ? ` It ranked in the top half of same-length windows on the held-out years but not significantly (held-out p=${opt.significance?.outOfSample?.pValue.toFixed(2)} > ${SEASONAL_OOS_ALPHA}), so it is not validated.`
+      : "";
+  const lead = opt.verdict === "validated" ? "Analysis" : "In-sample analysis";
+  return `${lead} of the ${symbol} seasonal pattern above shows that a Buy Date of ${opt.buyDate} and a Sell Date of ${opt.sellDate} has resulted in a geometric average return of ${opt.geometricAvgReturn >= 0 ? "+" : ""}${opt.geometricAvgReturn.toFixed(1)}% over the past ${lookback} years. This seasonal timeframe has shown positive results in ${positiveYears} of those ${opt.yearsTested} periods (${winPct}%), rated ${opt.confidenceLabel}.${verdictNote}${sigNote}${cycleNote}`;
 }
 
 // ─── Main compute ─────────────────────────────────────────────────────────

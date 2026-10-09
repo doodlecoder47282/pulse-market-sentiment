@@ -1,7 +1,9 @@
 /**
- * Data source adapters: Schwab (quotes, SPY options chain for the gamma structure),
- * CNN Fear & Greed, AAII (via fallback), and web-based X/Reddit sentiment
- * aggregated from public search pages (no login / no API key).
+ * Data source adapters: Schwab only for market data (quotes, SPY options
+ * chain for the gamma structure); CNN Fear & Greed (undocumented JSON,
+ * context only) and the StockTwits public symbol streams (social, context
+ * only). Reddit was dropped: its Data API requires OAuth. Source tiers and
+ * terms: server/sources/registry.ts.
  */
 import type {
   GammaStructure, GexStrikePoint, SocialPost, SocialSentiment,
@@ -11,6 +13,7 @@ import { toSchwabSymbol } from "./schwabSymbols";
 import { flattenSchwabChain, chainSpot, type SchwabChainLike } from "./schwabChainRows";
 import { timeToExpiry, type SettlementStyle } from "./timeToExpiry";
 import { etDate, sessionCloseMs } from "./exchangeCalendar";
+import { fetchMarketHeadlineFeed, type HeadlineFeed } from "./news";
 
 const UA = "Mozilla/5.0 (compatible; SentimentDash/1.0)";
 
@@ -253,17 +256,30 @@ export function buildGammaStructure(chain: SchwabChainLike, nowMs: number = Date
   };
 }
 
-/** CNN Fear & Greed (undocumented but stable JSON endpoint). */
-export async function cnnFearGreed(): Promise<{ value: number; label: string; source: string } | null> {
+/** A CNN reading older than this is stale (the index updates every US trading day). */
+export const FEAR_GREED_MAX_AGE_MS = 4 * 24 * 3600_000;
+
+/** Pure: parse the CNN graphdata payload, keeping the reading's own timestamp. */
+export function parseFearGreed(d: any, nowMs: number = Date.now()): { value: number; label: string; source: string; asOf: string | null; stale: boolean } | null {
+  const v = d?.fear_and_greed?.score;
+  const label = d?.fear_and_greed?.rating || "";
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  const ts = d?.fear_and_greed?.timestamp;
+  const t = typeof ts === "number" ? ts : typeof ts === "string" ? Date.parse(ts) : NaN;
+  const asOf = Number.isFinite(t) ? new Date(t).toISOString() : null;
+  // unknown age is treated as stale: it cannot be shown as current
+  const stale = !Number.isFinite(t) || nowMs - t > FEAR_GREED_MAX_AGE_MS;
+  return { value: Math.round(v), label: String(label).replace(/\b\w/g, (c: string) => c.toUpperCase()), source: "CNN Fear & Greed (cnn.com)", asOf, stale };
+}
+
+/** CNN Fear & Greed (undocumented but stable JSON endpoint). Context only: never a price/options/sizing input. */
+export async function cnnFearGreed(): Promise<{ value: number; label: string; source: string; asOf: string | null; stale: boolean } | null> {
   try {
     const d = await fetchJson(
       "https://production.dataviz.cnn.io/index/fearandgreed/graphdata",
       { Referer: "https://www.cnn.com/markets/fear-and-greed" },
     );
-    const v = d?.fear_and_greed?.score;
-    const label = d?.fear_and_greed?.rating || "";
-    if (typeof v !== "number") return null;
-    return { value: Math.round(v), label: label.replace(/\b\w/g, (c: string) => c.toUpperCase()), source: "CNN" };
+    return parseFearGreed(d);
   } catch {
     return null;
   }
@@ -327,23 +343,11 @@ async function fetchStockTwits(symbol: string, limit = 30): Promise<SocialPost[]
   });
 }
 
-/** Reddit public JSON (no auth). Works well for /r/wallstreetbets + /r/options. */
-// Throws on a failed request so gatherSocial can tell "failed" from "no posts".
-async function fetchReddit(sub: string, limit = 30): Promise<SocialPost[]> {
-  const d = await fetchJson(`https://www.reddit.com/r/${sub}/hot.json?limit=${limit}`);
-  const items = d?.data?.children ?? [];
-  return items.map((c: any) => {
-    const t = `${c.data.title || ""} ${c.data.selftext || ""}`.slice(0, 300);
-    return {
-      source: "Reddit" as const,
-      author: "r/" + sub,
-      text: c.data.title || "",
-      url: `https://www.reddit.com${c.data.permalink}`,
-      timestamp: typeof c.data.created_utc === "number" ? new Date(c.data.created_utc * 1000).toISOString() : undefined,
-      tone: scoreText(t),
-    };
-  });
-}
+// Reddit was dropped (round 2, R2-I): the Reddit Data API requires a
+// registered OAuth client and blocks unauthenticated traffic ("Reddit Data
+// API Wiki", https://support.reddithelp.com/hc/en-us/articles/16160319875092-Reddit-Data-API-Wiki),
+// so the keyless /hot.json read violated the terms. The gauge runs on
+// StockTwits alone and its sources list says so.
 
 /**
  * Post age window for the score. The gauge is a same-session read that sits
@@ -351,8 +355,8 @@ async function fetchReddit(sub: string, limit = 30): Promise<SocialPost[]> {
  * so it should reflect the current session plus overnight/pre-market chatter:
  * 24 hours. (A 72 h window let Friday's chatter set Monday's read.) The
  * StockTwits SPY stream (latest 30 messages) normally spans minutes, so the
- * window only bites when that feed is frozen; Reddit "hot" often carries
- * posts older than a day, and those are dropped rather than scored.
+ * window only bites when that feed is frozen; older posts are dropped
+ * rather than scored.
  */
 export const SOCIAL_MAX_AGE_HOURS = 24;
 /** Fewer tagged (bullish + bearish) posts than this gives no score: one post would read +/-100. */
@@ -431,7 +435,9 @@ export function summarizeSocial(
   return { score, bullish, bearish, neutral, posts: used.slice(0, 40), status, sources, asOf: nowMs };
 }
 
-/** Aggregate StockTwits + Reddit into one SocialSentiment payload (keyword/tag tone, a heuristic). */
+/** StockTwits SPY + VIX streams into one SocialSentiment payload (keyword/tag
+ *  tone, a heuristic). Social media: a weak, context-only source (see
+ *  server/sources/registry.ts), never a price, greeks, options or sizing input. */
 export async function gatherSocial(): Promise<SocialSentiment> {
   const settle = async (name: string, p: Promise<SocialPost[]>, invertTone = false): Promise<CollectedSocialSource> => {
     try { return { name, posts: await p, invertTone }; } catch { return { name, posts: null, invertTone }; }
@@ -442,15 +448,23 @@ export async function gatherSocial(): Promise<SocialSentiment> {
     // tone shown on the card is the equity read, and the author is tagged.
     settle("StockTwits VIX (tone inverted)", fetchStockTwits("VIX", 15).then((ps) =>
       ps.map((p) => ({ ...p, author: `${p.author ?? ""} on $VIX (tone shown for equities)` }))), true),
-    settle("Reddit r/options", fetchReddit("options", 25)),
   ]);
   return summarizeSocial(collected);
 }
 
-/** Market news headlines relevant to SPX/SPY.
- *  // TODO: Schwab-only mode — Yahoo source removed, awaiting Schwab equivalent.
- *  Returns empty array gracefully.
+/** Market news headlines for the Signals snapshot (finding 5.8).
+ *  Schwab has no news API; this reuses the News tab's labeled RSS sources
+ *  (server/news.ts) with source, publish time and a feed status, so a failed
+ *  collection reads "unavailable" instead of an always-empty list. Context
+ *  only: headlines never feed a price, greeks, options or sizing calculation.
  */
-export async function fetchHeadlines(): Promise<{ title: string; url: string; source: string; publishedAt?: string }[]> {
-  return [];
+export async function fetchHeadlines(): Promise<HeadlineFeed> {
+  try {
+    return await fetchMarketHeadlineFeed();
+  } catch (e: any) {
+    return {
+      items: [], status: "unavailable", sources: [], maxAgeHours: 24, undatedDropped: 0, asOf: Date.now(),
+      note: `no headline source: ${String(e?.message ?? e).slice(0, 120)}`,
+    };
+  }
 }

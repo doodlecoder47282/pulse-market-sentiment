@@ -105,7 +105,8 @@ interface TickerOutlookResponse {
       score: number;
       messageCount: number;
       volumeZ: number;
-      bySource?: { stocktwits: number; reddit: number; x: number };
+      /** null = source not read (failed / not configured / removed), not 0 posts */
+      bySource?: { stocktwits: number | null; reddit: number | null; x: number | null };
       topPosts: SocialPost[];
     };
     positioning: {
@@ -190,6 +191,12 @@ interface EarningsIvResponse {
 }
 
 // ────────────────────── helpers ──────────────────────
+
+
+/** Post count for one social source; null or missing reads "not available", never 0. */
+function srcCount(v: number | null | undefined): string {
+  return v == null ? "not available" : String(v);
+}
 
 function dirGradient(d: Direction): string {
   if (d === "BULL") return "from-emerald-500/30 via-emerald-500/10 to-transparent";
@@ -760,9 +767,9 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                     </div>
                   </div>
                   <div className="mb-1.5 grid grid-cols-3 gap-1 text-[10px] text-muted-foreground">
-                    <KV label="stocktwits" value={String(q.data.alpha.social.bySource?.stocktwits ?? 0)} />
-                    <KV label="reddit" value={String(q.data.alpha.social.bySource?.reddit ?? 0)} />
-                    <KV label="x" value={String(q.data.alpha.social.bySource?.x ?? 0)} />
+                    <KV label="stocktwits" value={srcCount(q.data.alpha.social.bySource?.stocktwits)} />
+                    <KV label="reddit" value={srcCount(q.data.alpha.social.bySource?.reddit)} />
+                    <KV label="x" value={srcCount(q.data.alpha.social.bySource?.x)} />
                   </div>
                   <ul className="space-y-1">
                     {q.data.alpha.social.topPosts.slice(0, 3).map((p, i) => (

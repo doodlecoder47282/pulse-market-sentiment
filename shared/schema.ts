@@ -314,6 +314,7 @@ export interface Gauge {
   value: number;          // 0..100 where 50 = neutral
   weight: number;         // contribution weight to composite
   interpretation: string;
+  block?: string;         // correlated-gauge block (implied-vol, options-positioning, crowd, fear-greed)
 }
 
 export interface Composite {
@@ -322,6 +323,13 @@ export interface Composite {
   gauges: Gauge[];
   takeaway: string;             // short human summary
   tradingRegime: string;        // "positive gamma / mean reversion", etc.
+  method?: string;              // how gauges are weighted (heuristic, block-first)
+  /** "estimated" (HRP on gauge history, gate passed) or "heuristic" (hand-set) */
+  weightSource?: "estimated" | "heuristic";
+  /** effective number of independent gauges under the estimated weights; null when heuristic */
+  effectiveGauges?: number | null;
+  /** Implied-vol + options-positioning blocks only (no social/survey/F&G): the only score allowed into price/path calculations. */
+  marketScore?: number | null;
 }
 
 // ----- CLV Tracker (trade log + closing-line value) -----
@@ -416,10 +424,18 @@ export interface Snapshot_Public {
   term: TermStructure;
   gamma: GammaStructure;
   social: SocialSentiment;
-  fearGreed: { value: number; label: string; source: string } | null;
+  fearGreed: { value: number; label: string; source: string; asOf?: string | null; stale?: boolean } | null;
   aaii: { bullish: number; bearish: number; neutral: number; asOf: string } | null;
   composite: Composite;
-  headlines: { title: string; url: string; source: string; publishedAt?: string }[];
+  headlines: { title: string; url: string; source: string; publishedAt?: string; tier?: string; tierLabel?: string }[];
+  /** Headline feed state: "unavailable" when no RSS source answered (Schwab has no news API) */
+  headlinesFeed?: {
+    status: "ok" | "partial" | "empty" | "unavailable";
+    sources: Array<{ name: string; state: "ok" | "empty" | "failed" | "stale"; items: number; newest: string | null; tier?: string }>;
+    asOf: number;
+    maxAgeHours: number;
+    note: string;
+  };
   warnings: string[];
   /** Provenance of `gamma`: Schwab SPY chain, its asOf (epoch s) and stale flag. */
   gammaSource?: "schwab";

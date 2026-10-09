@@ -1,7 +1,10 @@
 // earnings.ts
 // Earnings calendar — weekly + monthly upcoming reports, Earnings Whispers style.
-// Source: Nasdaq public API (api.nasdaq.com/api/calendar/earnings?date=YYYY-MM-DD).
-// Free, no key required. Cached ~30 minutes to be kind.
+// Source: Nasdaq's undocumented calendar JSON (api.nasdaq.com/api/calendar/
+// earnings?date=YYYY-MM-DD), the data behind nasdaq.com's calendar page. It is
+// labeled "unofficial" everywhere it is shown: there is no free, documented,
+// official source of forward earnings dates (SEC EDGAR only has filings after
+// the fact; see server/sources/registry.ts). Cached ~30 minutes.
 //
 // Fields captured per report: ticker, company, market cap (USD), fiscal quarter,
 // EPS consensus forecast, last-year EPS, # estimates, timing (BMO / AMC / DMH),
@@ -28,6 +31,9 @@ export interface EarningsRow {
   // Importance: derived from market cap + S&P / MAG7 membership.
   importance: "HIGH" | "MED" | "LOW";
   isMag7: boolean;
+  /** "nasdaq" = Nasdaq calendar row (unofficial API); "estimated" = hardcoded
+   *  MAG7 baseline shown only for a date the Nasdaq request failed. */
+  source: "nasdaq" | "estimated";
 }
 
 export interface EarningsDay {
@@ -56,6 +62,15 @@ export interface EarningsResponse {
   mag7Reports: EarningsRow[]; // highlight reel — any MAG7 in window
   weeks: EarningsWeek[];      // rolled up by ISO Monday
   warnings: string[];
+  /** source label and data state for the whole calendar */
+  sourceInfo: {
+    name: string;
+    tier: "weak";
+    note: string;
+    state: "ok" | "partial" | "failed";
+    failedDates: number;
+    estimatedRows: number;
+  };
 }
 
 const MAG7 = new Set(["AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "META", "AMZN", "TSLA"]);
@@ -104,6 +119,7 @@ function syntheticMag7Earnings(fromIso: string, toIso: string): EarningsRow[] {
         lastYearReportDate: null,
         importance: "HIGH",
         isMag7: true,
+        source: "estimated",
       });
     }
   }
@@ -204,6 +220,7 @@ async function fetchNasdaqEarnings(date: string): Promise<EarningsRow[]> {
       lastYearReportDate: parseUsDate(row.lastYearRptDt),
       importance: rankImportance(cap, ticker),
       isMag7,
+      source: "nasdaq",
     });
   }
   return out;
@@ -361,6 +378,14 @@ export async function getEarnings(horizon: "weekly" | "monthly" = "weekly"): Pro
     mag7Reports,
     weeks,
     warnings,
+    sourceInfo: {
+      name: "Nasdaq (unofficial API)",
+      tier: "weak",
+      note: "undocumented Nasdaq calendar JSON; dates are as listed by Nasdaq. Rows marked estimated are a hardcoded MAG7 baseline shown only where Nasdaq failed.",
+      state: failedDates.length === 0 ? "ok" : failedDates.length === dates.length ? "failed" : "partial",
+      failedDates: failedDates.length,
+      estimatedRows: deduped.filter((r) => r.source === "estimated").length,
+    },
   };
 
   const entry = { value: out, at: Date.now() };

@@ -2,11 +2,19 @@
 // ────────────────────────────────────────────────────────────────────────────
 // Weekly econ event feed for the Models chart's top "event band".
 //
-// Strategy: combine three sources, in priority order
-//   1) Nasdaq economic-events API (live, when reachable) — actual schedule for
-//      US ECON releases (CPI, PCE, NFP, ISM, GDP, Jobless, Retail Sales, etc.)
-//   2) Synthetic US macro pattern — fills in the standard cadence the Nasdaq
-//      feed misses on bad days. Patterns:
+// Strategy: combine sources, in priority order (tiers: server/sources/registry.ts)
+//   0) Official release calendars (primary): BLS and BEA iCalendar
+//      subscriptions -> CPI, Employment Situation, PPI, JOLTS, ECI, GDP,
+//      Personal Income and Outlays (PCE), Trade, at the exact release time.
+//   1) Nasdaq economic-events API (undocumented, labeled unofficial; cached
+//      30 min) — releases the official calendars do not carry (ISM, claims,
+//      retail sales, sentiment). A Nasdaq row of a family the official
+//      calendar has on the same day is dropped.
+//   2) Synthetic US macro pattern — ESTIMATES by cadence rule, labeled
+//      "estimate" in every chip. A synthetic CPI/NFP (BLS) or PCE/GDP (BEA)
+//      chip is dropped whenever that official calendar was read, because the
+//      official schedule then says whether the release is this week.
+//      Patterns:
 //         · Jobless Claims        — every Thursday  8:30 ET
 //         · ISM Mfg PMI           — first business day  10:00 ET
 //         · ISM Services PMI      — third business day  10:00 ET
@@ -26,7 +34,10 @@
 // All times are stored as epoch seconds + a pre-formatted ET label.
 // ────────────────────────────────────────────────────────────────────────────
 
-const UA = "Mozilla/5.0 (PulseBatcave/1.0; +https://perplexity.ai)";
+import { readBlsCalendar, readBeaCalendar, readNasdaqEcon } from "./sources/official";
+import { classifyRelease, familyOfEventName, type IcsEvent } from "./sources/parse";
+
+const UA = "Mozilla/5.0 (compatible; Batcave/1.0)";
 
 export type EconKind =
   | "FOMC"
@@ -55,6 +66,13 @@ export interface EconChip {
   ticker?: string;
   /** Optional short note (e.g. "Day 1", "BMO" before market open). */
   note?: string;
+  /** Source label and tier, e.g. "BLS" / "primary", "cadence rule" / "weak". */
+  source?: string;
+  tier?: "primary" | "computed" | "weak";
+  /** true for cadence-rule placeholders: the date is a guess, not a schedule. */
+  estimated?: boolean;
+  /** release family join key (CPI, NFP, GDP, PCE, ...) */
+  family?: string | null;
 }
 
 export interface EconDay {
@@ -72,6 +90,8 @@ export interface EconWeek {
   asOf: number;            // epoch seconds
   days: EconDay[];         // length 5 (Mon..Fri)
   source: string;          // diagnostic
+  /** per-source state for this week */
+  sources?: Array<{ name: string; tier: string; state: "ok" | "stale" | "failed" | "partial"; note?: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -89,22 +109,53 @@ export async function buildEconWeek(mondayIso?: string): Promise<EconWeek> {
   const friday = days[4];
   const weekLabel = formatWeekLabel(monday, friday);
 
-  // Fan out three sources in parallel
-  const [nasdaqEvents, earningsEvents] = await Promise.all([
-    fetchNasdaqEcon(days).catch(() => [] as EconChip[]),
-    fetchMag7Earnings(days).catch(() => [] as EconChip[]),
+  // Fan out sources in parallel
+  const failed = (e: any) => ({ state: "failed" as const, value: null, fetchedAtMs: null, error: String(e?.message ?? e).slice(0, 100) });
+  const [bls, bea, nasdaq, earningsRes] = await Promise.all([
+    readBlsCalendar().catch(failed),
+    readBeaCalendar().catch(failed),
+    readNasdaqEcon(days.map(isoDay)).catch(failed),
+    fetchMag7Earnings(days).then((v) => ({ ok: true, v }), () => ({ ok: false, v: [] as EconChip[] })),
   ]);
+  const earningsEvents = earningsRes.v;
+  const fromMs = days[0].getTime();
+  const toMs = days[4].getTime() + 2 * 86400_000;
+  const official = [
+    ...(bls.value ? officialChips("BLS", bls.value, fromMs, toMs) : []),
+    ...(bea.value ? officialChips("BEA", bea.value, fromMs, toMs) : []),
+  ];
+  const coveredFamilies = new Set<string>([
+    ...(bls.value ? ["CPI", "NFP", "PPI", "JOLTS", "ECI"] : []),
+    ...(bea.value ? ["GDP", "PCE", "TRADE"] : []),
+  ]);
+  const nasdaqEvents = nasdaq.value ? nasdaqChips(nasdaq.value.rows) : [];
 
-  // Synthetic macro pattern (never fails — pure date math)
-  const synthetic = buildSyntheticMacro(days);
+  // Synthetic macro pattern (never fails — pure date math), estimates only
+  const synthetic = buildSyntheticMacro(days).map((c) => ({ ...c, ...syntheticLabel(c) }));
 
   // Curated FOMC schedule (exact dates)
-  const fomc = buildFomcSchedule(days);
+  const fomc = buildFomcSchedule(days).map((c) => ({
+    ...c, source: "Federal Reserve schedule (hardcoded copy)", tier: "computed" as const,
+    longTitle: `${c.longTitle} · Federal Reserve schedule`,
+  }));
 
-  // Merge with dedupe (prefer Nasdaq → FOMC → synthetic → earnings)
+  // Official first; Nasdaq and estimates of an officially covered family drop.
+  const econ = mergeOfficialWeek(official, nasdaqEvents, synthetic, coveredFamilies);
+
+  const st = (r: { state: string; value: unknown }): "ok" | "stale" | "failed" =>
+    r.value == null ? "failed" : r.state === "stale" ? "stale" : "ok";
+  const sources: NonNullable<EconWeek["sources"]> = [
+    { name: "BLS", tier: "primary", state: st(bls) },
+    { name: "BEA", tier: "primary", state: st(bea) },
+    { name: "Nasdaq (unofficial API)", tier: "weak", state: nasdaq.value ? (nasdaq.value.failedDays ? "partial" : st(nasdaq)) : "failed" },
+    { name: "Cadence rule (estimate)", tier: "weak", state: "ok", note: "placeholders only for releases no official calendar covered" },
+    { name: "Nasdaq earnings (unofficial API)", tier: "weak", state: earningsRes.ok ? "ok" : "failed" },
+  ];
+
+  // Merge with dedupe (official/Nasdaq/estimates → FOMC → earnings)
   const seen = new Set<string>();
   const merged: EconChip[] = [];
-  for (const list of [nasdaqEvents, fomc, synthetic, earningsEvents]) {
+  for (const list of [econ, fomc, earningsEvents]) {
     for (const ev of list) {
       const key = `${ev.kind}|${isoDay(new Date(ev.when * 1000))}|${normalizeTitle(ev.title)}`;
       if (seen.has(key)) continue;
@@ -139,55 +190,111 @@ export async function buildEconWeek(mondayIso?: string): Promise<EconWeek> {
     weekLabel,
     asOf: Math.floor(Date.now() / 1000),
     days: result,
-    source: `nasdaq:${nasdaqEvents.length} synthetic:${synthetic.length} fomc:${fomc.length} earnings:${earningsEvents.length}`,
+    source: `official:${official.length} nasdaq:${nasdaqEvents.length} estimates:${econ.filter((c) => c.estimated).length} fomc:${fomc.length} earnings:${earningsEvents.length}`,
+    sources,
   };
 }
 
 // ---------------------------------------------------------------------------
-// Source 1: Nasdaq economic-events API (live)
+// Source 0: official BLS / BEA release calendars (exact times)
 // ---------------------------------------------------------------------------
-async function fetchNasdaqEcon(days: Date[]): Promise<EconChip[]> {
+const CHIP_NAME: Record<string, string> = { CPI: "CPI", NFP: "NFP", PPI: "PPI", JOLTS: "JOLTS", ECI: "ECI", GDP: "GDP", PCE: "PCE", TRADE: "Trade", REAL_EARNINGS: "Real Earn", IMPORT_PRICES: "Import Px", PRODUCTIVITY: "Productivity" };
+
+/** "8:30am" style chip time in Eastern. */
+function chipTime(whenSec: number): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit", hour12: true })
+    .format(new Date(whenSec * 1000)).replace(/\s?(AM|PM)$/, (m) => m.trim().toLowerCase());
+}
+
+/** Pure: official ICS events -> chips for the major release families only. */
+export function officialChips(agency: "BLS" | "BEA", events: IcsEvent[], fromMs: number, toMs: number): EconChip[] {
   const out: EconChip[] = [];
-  await Promise.all(
-    days.map(async (d) => {
-      const date = isoDay(d);
-      const url = `https://api.nasdaq.com/api/calendar/economicevents?date=${date}`;
-      // Hard 4s timeout per day so a rate-limited Nasdaq doesn't stall the
-      // whole feed (the synthetic+FOMC fallback covers any miss).
-      const ctrl = new AbortController();
-      const to = setTimeout(() => ctrl.abort(), 4000);
-      const r = await fetch(url, {
-        headers: { "User-Agent": UA, Accept: "application/json" },
-        signal: ctrl.signal,
-      }).catch(() => null);
-      clearTimeout(to);
-      if (!r || !r.ok) return;
-      const j: any = await r.json().catch(() => null);
-      const rows: any[] = j?.data?.rows ?? [];
-      for (const row of rows) {
-        const country = String(row.gsi ?? row.country ?? "");
-        if (country && !/US|United States/i.test(country)) continue;
-        const eventName = String(row.eventName ?? "").trim();
-        if (!eventName) continue;
-        const t = String(row.time ?? "08:30").slice(0, 5);
-        const when = isoToEpoch(`${date}T${t}:00`, "America/New_York");
-        if (!Number.isFinite(when)) continue;
-        const importanceRaw = Number(row.impactLevel ?? row.impact ?? 0);
-        const importance: EconChip["importance"] =
-          importanceRaw >= 3 ? "HIGH" : importanceRaw >= 2 ? "MED" : "LOW";
-        out.push({
-          id: `nasdaq:${date}:${eventName}`,
-          kind: "ECON",
-          title: shortenEventTitle(eventName, t),
-          longTitle: `${eventName} · ${formatTimeLabel(when)}`,
-          importance,
-          when,
-          timeLabel: formatTimeLabel(when),
-        });
-      }
-    }),
-  );
+  for (const e of events) {
+    if (e.startMs < fromMs || e.startMs >= toMs) continue;
+    const cls = classifyRelease(e.summary);
+    if (!cls.family) continue; // band shows market-moving releases only
+    const when = Math.floor(e.startMs / 1000);
+    const t = e.timed ? formatTimeLabel(when) : "time TBA";
+    out.push({
+      id: `${agency.toLowerCase()}:${e.uid}`,
+      kind: "ECON",
+      title: `${CHIP_NAME[cls.family] ?? cls.family} ${e.timed ? chipTime(when) : "TBA"}`,
+      longTitle: `${e.summary} · ${t} · ${agency} (official)`,
+      importance: cls.importance,
+      when,
+      timeLabel: t,
+      source: agency,
+      tier: "primary",
+      family: cls.family,
+    });
+  }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Source 1: Nasdaq economic-events API (undocumented; labeled unofficial)
+// ---------------------------------------------------------------------------
+/** Pure: Nasdaq rows -> chips. A non-clock time ("All Day") is not guessed. */
+export function nasdaqChips(rows: Array<{ date: string; time: string; eventName: string; country: string; impact: number }>): EconChip[] {
+  const out: EconChip[] = [];
+  for (const row of rows) {
+    if (row.country && !/US|United States/i.test(row.country)) continue;
+    if (!row.eventName) continue;
+    const tm = /^(\d{1,2}):(\d{2})$/.exec(row.time.trim());
+    const t = tm ? `${tm[1].padStart(2, "0")}:${tm[2]}` : null;
+    const when = isoToEpoch(`${row.date}T${t ?? "00:00"}:00`, "America/New_York");
+    if (!Number.isFinite(when)) continue;
+    const importance: EconChip["importance"] = row.impact >= 3 ? "HIGH" : row.impact >= 2 ? "MED" : "LOW";
+    const label = t ? formatTimeLabel(when) : "time TBA";
+    out.push({
+      id: `nasdaq:${row.date}:${row.eventName}`,
+      kind: "ECON",
+      title: shortenEventTitle(row.eventName, t ?? "TBA"),
+      longTitle: `${row.eventName} · ${label} · Nasdaq (unofficial)`,
+      importance,
+      when,
+      timeLabel: label,
+      source: "Nasdaq (unofficial API)",
+      tier: "weak",
+      family: familyOfEventName(row.eventName),
+    });
+  }
+  return out;
+}
+
+const SYNTHETIC_FAMILY: Record<string, string> = { nfp: "NFP", cpi: "CPI", pce: "PCE", gdp: "GDP" };
+
+function syntheticLabel(c: EconChip): Partial<EconChip> {
+  const fam = SYNTHETIC_FAMILY[c.id.split(":")[1] ?? ""] ?? null;
+  return {
+    source: "Cadence rule (estimate)",
+    tier: "weak",
+    estimated: true,
+    family: fam,
+    note: c.note ? `estimate · ${c.note}` : "estimate (cadence rule, not a published schedule)",
+    longTitle: `${c.longTitle} · ESTIMATE (cadence rule)`,
+  };
+}
+
+/**
+ * Pure merge for the week band: official chips first; a Nasdaq chip of a
+ * family the official calendar lists on the same ET day is dropped; an
+ * estimated chip of a family an official calendar covers is dropped (when
+ * the calendar was read, its schedule decides whether the release is this
+ * week), and any estimate on a day that already has a real chip of the same
+ * family is dropped.
+ */
+export function mergeOfficialWeek(official: EconChip[], nasdaq: EconChip[], synthetic: EconChip[], coveredFamilies: Set<string>): EconChip[] {
+  const day = (c: EconChip) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(c.when * 1000));
+  const offKeys = new Set(official.filter((c) => c.family).map((c) => `${c.family}|${day(c)}`));
+  const keptNasdaq = nasdaq.filter((c) => !(c.family && offKeys.has(`${c.family}|${day(c)}`)));
+  const realKeys = new Set([...official, ...keptNasdaq].filter((c) => c.family).map((c) => `${c.family}|${day(c)}`));
+  const keptSyn = synthetic.filter((c) => {
+    if (c.family && coveredFamilies.has(c.family)) return false;
+    if (c.family && realKeys.has(`${c.family}|${day(c)}`)) return false;
+    return true;
+  });
+  return [...official, ...keptNasdaq, ...keptSyn];
 }
 
 // ---------------------------------------------------------------------------
@@ -405,6 +512,7 @@ const EARNINGS_WATCHLIST = new Set([
 
 async function fetchMag7Earnings(days: Date[]): Promise<EconChip[]> {
   const out: EconChip[] = [];
+  let failedDays = 0;
   await Promise.all(
     days.map(async (d) => {
       const date = isoDay(d);
@@ -417,8 +525,9 @@ async function fetchMag7Earnings(days: Date[]): Promise<EconChip[]> {
         signal: ctrl.signal,
       }).catch(() => null);
       clearTimeout(to);
-      if (!r || !r.ok) return;
+      if (!r || !r.ok) { failedDays++; return; }
       const j: any = await r.json().catch(() => null);
+      if (!j) { failedDays++; return; }
       const rows: any[] = j?.data?.rows ?? [];
       for (const row of rows) {
         const sym = String(row.symbol ?? "").toUpperCase();
@@ -434,16 +543,20 @@ async function fetchMag7Earnings(days: Date[]): Promise<EconChip[]> {
           id: `earn:${sym}:${date}`,
           kind: "EARN",
           title: `${sym} ${tag}`,
-          longTitle: `${sym} Earnings · ${tag === "AC" ? "After Close" : tag === "BMO" ? "Before Open" : "TBD"}`,
+          longTitle: `${sym} Earnings · ${tag === "AC" ? "After Close" : tag === "BMO" ? "Before Open" : "TBD"} · Nasdaq (unofficial)`,
           importance: ["AAPL","MSFT","GOOGL","GOOG","AMZN","META","NVDA","TSLA"].includes(sym) ? "HIGH" : "MED",
           when,
           timeLabel: tag,
           ticker: sym,
           note: tag,
+          source: "Nasdaq earnings (unofficial API)",
+          tier: "weak",
         });
       }
     }),
   );
+  // Every day failed: a failed source, not a week with no earnings.
+  if (failedDays === days.length) throw new Error("every Nasdaq earnings day failed");
   return out;
 }
 

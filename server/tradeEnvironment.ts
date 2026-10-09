@@ -288,8 +288,13 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
     if (c.read === "alarm") { canaryPts = 12; canaryNote = "cross-asset ALARM — credit/FX/commodities are all flashing risk-off while equities lag. the floor is being tested."; }
     else if (c.read === "divergence") { canaryPts = 8; canaryNote = "canary divergence — cross-asset stress the equity tape isn't showing yet. early warning."; }
     else if (c.read === "canaries_chirping") { canaryPts = 4; canaryNote = "some cross-asset pressure building, not confirmed."; }
-  } catch { canaryOk = false; }
-  if (!canaryOk) { degraded = true; canaryPts = 0; canaryNote = "cross-asset canaries unavailable — not scored, not a quiet read."; }
+    else if (c.read === "no_data") { canaryNote = "cross-asset canaries unavailable (too few quotes/bars) — not scored, not a quiet read."; }
+  } catch { canaryOk = false; canaryNote = "cross-asset canaries unavailable (fetch failed) — not scored, not a quiet read."; }
+  if (!canaryOk) {
+    degraded = true;
+    canaryPts = 0;
+    if (canaryNote === "cross-asset canaries quiet.") canaryNote = "cross-asset canaries unavailable — not scored, not a quiet read.";
+  }
   drivers.push({ key: "canary", label: "cross-asset canaries", points: canaryPts, max: 12, note: canaryNote, dataState: canaryOk ? "ok" : "unavailable" });
 
   // 6. Heavy-contract conflux (whale alerts, weighted by the heuristic direction score)

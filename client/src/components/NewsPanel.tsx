@@ -1,6 +1,10 @@
 // NewsPanel.tsx
 // News tab: merged headline flow + economic/earnings calendar + macro topic filter.
-// Data: GET /api/news (3-min cache, free RSS + Nasdaq econ calendar).
+// Data: GET /api/news. Sources by tier (server/sources/registry.ts): official
+// issuers first (Fed, SEC, CFTC, BLS, BEA, Treasury), publishers' own RSS,
+// then labeled aggregator / unofficial secondaries. Every item shows its
+// source, tier and age; each source shows ok / empty / stale / failed /
+// not configured.
 
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -26,6 +30,123 @@ interface Headline {
   summary: string;
   topics: NewsTopic[];
   tickers: string[];
+  sourceId?: string;
+  publisher?: string;
+  tier?: SourceTier;
+  tierLabel?: string;
+  kind?: "news" | "official";
+  publishedUtc?: string;
+  fetchedAtUtc?: string;
+}
+
+type SourceTier = "primary" | "publisher" | "aggregator" | "computed" | "weak";
+type SourceState = "ok" | "empty" | "stale" | "failed" | "not_configured" | "partial";
+
+interface SourceStatus {
+  id: string;
+  name: string;
+  tier: SourceTier;
+  tierLabel: string;
+  unofficial: boolean;
+  state: SourceState;
+  items: number;
+  newestUtc: string | null;
+  fetchedAtUtc: string | null;
+  ageSec: number | null;
+  undatedDropped: number;
+  reason: string | null;
+}
+
+interface FilingItem {
+  form: string;
+  company: string;
+  cik: string;
+  accession: string;
+  acceptedUtc: string | null;
+  filingDate: string | null;
+  items: string[];
+  url: string;
+  source: string;
+  tier: SourceTier;
+}
+
+// Tier label colors: official = emerald, publisher = cyan, aggregator = amber,
+// unofficial / estimate = rose. Text always carries the label too.
+const TIER_COLOR: Record<string, string> = {
+  official: "border-emerald-500/50 bg-emerald-500/10 text-emerald-300",
+  publisher: "border-cyan-500/50 bg-cyan-500/10 text-cyan-300",
+  aggregator: "border-amber-500/50 bg-amber-500/10 text-amber-300",
+  computed: "border-border/40 bg-muted/20 text-muted-foreground",
+  unofficial: "border-rose-500/50 bg-rose-500/10 text-rose-300",
+  estimate: "border-rose-500/50 bg-rose-500/10 text-rose-300",
+};
+
+const STATE_LABEL: Record<SourceState, string> = {
+  ok: "ok",
+  empty: "0 items (observed)",
+  stale: "stale",
+  failed: "failed",
+  not_configured: "not configured",
+  partial: "partial",
+};
+
+const STATE_COLOR: Record<SourceState, string> = {
+  ok: "text-emerald-300",
+  empty: "text-muted-foreground",
+  stale: "text-amber-300",
+  failed: "text-rose-300",
+  not_configured: "text-muted-foreground",
+  partial: "text-amber-300",
+};
+
+function TierBadge({ label }: { label?: string }) {
+  if (!label) return null;
+  return (
+    <span className={`rounded border px-1 py-0.5 font-semibold uppercase tracking-wider ${TIER_COLOR[label] ?? TIER_COLOR.computed}`}>
+      {label}
+    </span>
+  );
+}
+
+function ageLabel(sec: number | null): string {
+  if (sec == null) return "never fetched";
+  if (sec < 60) return `${sec}s old`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m old`;
+  return `${Math.floor(sec / 3600)}h old`;
+}
+
+/** One line per source: name, tier, state and age. Failed never reads as quiet. */
+function SourceStrip({ sources, title }: { sources: SourceStatus[]; title: string }) {
+  if (!sources.length) return null;
+  return (
+    <details className="rounded border border-border/40 bg-muted/10 px-2 py-1 text-[9.5px]" data-testid={`source-strip-${title}`}>
+      <summary className="cursor-pointer select-none text-muted-foreground">
+        {title}: {sources.filter((x) => x.state === "ok").length}/{sources.length} ok
+        {sources.some((x) => x.state === "failed") && <span className="ml-1 text-rose-300">· {sources.filter((x) => x.state === "failed").length} failed</span>}
+        {sources.some((x) => x.state === "stale") && <span className="ml-1 text-amber-300">· stale</span>}
+        {sources.some((x) => x.state === "not_configured") && <span className="ml-1">· not configured: {sources.filter((x) => x.state === "not_configured").map((x) => x.name).join(", ")}</span>}
+      </summary>
+      <div className="mt-1 grid gap-0.5">
+        {sources.map((x) => (
+          <div key={x.id} className="flex flex-wrap items-center gap-1.5" title={x.reason ?? undefined}>
+            <TierBadge label={x.tierLabel} />
+            <span className="font-semibold">{x.name}</span>
+            <span className={STATE_COLOR[x.state]}>{STATE_LABEL[x.state]}</span>
+            {x.state !== "failed" && x.state !== "not_configured" && (
+              <span className="text-muted-foreground">
+                · {x.items} item{x.items === 1 ? "" : "s"} · fetched {ageLabel(x.ageSec)}
+                {x.newestUtc ? ` · newest ${timeAgo(Math.floor(Date.parse(x.newestUtc) / 1000))}` : ""}
+                {x.undatedDropped ? ` · ${x.undatedDropped} undated dropped` : ""}
+              </span>
+            )}
+            {x.reason && (x.state === "failed" || x.state === "stale" || x.state === "not_configured" || x.state === "partial") && (
+              <span className="text-muted-foreground">· {x.reason}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </details>
+  );
 }
 
 type CalendarKind = "ECON" | "FED" | "EARNINGS" | "TREASURY" | "OPEX" | "VIX_EXP" | "WITCH";
@@ -43,6 +164,11 @@ interface CalendarEvent {
   source: string;
   ticker?: string;
   notes?: string;
+  sourceId?: string;
+  tier?: SourceTier;
+  tierLabel?: string;
+  timeExact?: boolean;
+  sourceUrl?: string;
 }
 
 interface NewsResponse {
@@ -51,7 +177,15 @@ interface NewsResponse {
   calendar: CalendarEvent[];
   topics: { topic: NewsTopic; count: number }[];
   warnings: string[];
+  sources?: SourceStatus[];
+  headlineState?: SourceState | "unavailable";
+  calendarState?: SourceState | "unavailable";
+  filings?: { watchlist: FilingItem[]; wire: FilingItem[]; state: SourceState | "unavailable"; note: string };
 }
+
+const HEADLINE_SOURCE_IDS = new Set(["fed_press", "fed_speeches", "sec_press", "cftc_press", "marketwatch", "cnbc", "ft", "google_news_reuters"]);
+const CALENDAR_SOURCE_IDS = new Set(["bls_calendar", "bea_calendar", "treasury_auctions", "nasdaq_econ"]);
+const FILING_SOURCE_IDS = new Set(["sec_edgar_current", "sec_edgar_submissions"]);
 
 const TOPIC_COLOR: Record<NewsTopic, string> = {
   FED: "border-violet-500/50 bg-violet-500/10 text-violet-300",
@@ -99,9 +233,11 @@ const KIND_LABEL: Record<CalendarKind, string> = {
 
 function resolveEventUrl(e: CalendarEvent): string {
   const t = e.title.toLowerCase();
-  // Earnings → company investor relations search on Yahoo Finance
+  // The source's own page when the server knows it (BLS, BEA, Treasury).
+  if (e.sourceUrl) return e.sourceUrl;
+  // Earnings → the company's SEC EDGAR filings (8-K results are filed there)
   if (e.kind === "EARNINGS" && e.ticker) {
-    return `https://finance.yahoo.com/quote/${encodeURIComponent(e.ticker)}/`;
+    return `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${encodeURIComponent(e.ticker)}&type=8-K&dateb=&owner=include&count=40`;
   }
   // Fed / FOMC
   if (e.kind === "FED") {
@@ -594,9 +730,16 @@ export default function NewsPanel() {
           </div>
         </CardHeader>
         <CardContent className="space-y-2">
-          {filtered.length === 0 ? (
+          {data.sources && (
+            <SourceStrip title="Headline sources" sources={data.sources.filter((x) => HEADLINE_SOURCE_IDS.has(x.id))} />
+          )}
+          {data.headlineState === "unavailable" ? (
+            <div className="rounded-md border border-rose-500/40 bg-rose-500/10 p-4 text-center text-sm text-rose-200" data-testid="headlines-unavailable">
+              Headlines unavailable: no source could be read. This is a collection failure, not a quiet tape.
+            </div>
+          ) : filtered.length === 0 ? (
             <div className="rounded-md border border-border/40 bg-muted/10 p-4 text-center text-sm text-muted-foreground">
-              No stories match your filter.
+              {data.headlines.length === 0 ? "Sources answered with no dated stories." : "No stories match your filter."}
             </div>
           ) : (
             filtered.map((h) => (
@@ -618,7 +761,13 @@ export default function NewsPanel() {
                   <ExternalLink className="mt-0.5 h-3 w-3 flex-shrink-0 text-muted-foreground" />
                 </div>
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[9px]">
-                  <span className="font-semibold uppercase tracking-wider text-cyan-300">{h.source}</span>
+                  <TierBadge label={h.tierLabel} />
+                  <span
+                    className="font-semibold uppercase tracking-wider text-cyan-300"
+                    title={`${h.publisher ?? h.source}${h.publishedUtc ? ` · published ${h.publishedUtc}` : ""}${h.fetchedAtUtc ? ` · fetched ${h.fetchedAtUtc}` : ""}`}
+                  >
+                    {h.source}
+                  </span>
                   <span className="text-muted-foreground">· {timeAgo(h.published)}</span>
                   {h.topics.map((t) => (
                     <span key={t} className={`rounded border px-1 py-0.5 font-semibold uppercase tracking-wider ${TOPIC_COLOR[t]}`}>
@@ -637,11 +786,16 @@ export default function NewsPanel() {
         </CardContent>
       </Card>
 
-      {/* Compact calendar dupe + Feed warnings nuked — use Calendar tab for full event grid */}
+      {data.filings && <FilingsCard filings={data.filings} sources={(data.sources ?? []).filter((x) => FILING_SOURCE_IDS.has(x.id))} />}
     </div>
       </TabsContent>
 
       <TabsContent value="calendar" className="mt-0">
+        {data.sources && (
+          <div className="mb-2">
+            <SourceStrip title="Calendar sources" sources={data.sources.filter((x) => CALENDAR_SOURCE_IDS.has(x.id))} />
+          </div>
+        )}
         <FullCalendar events={data.calendar} asOf={data.asOf} />
       </TabsContent>
 
@@ -649,6 +803,61 @@ export default function NewsPanel() {
         <EarningsTab />
       </TabsContent>
     </Tabs>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// SEC filings (official): watchlist 8-K/10-Q/10-K and the latest 8-K wire,
+// EDGAR acceptance time. Needs BATCAVE_SEC_USER_AGENT on the server.
+// ──────────────────────────────────────────────────────────────────────────
+
+function FilingsCard({ filings, sources }: { filings: NonNullable<NewsResponse["filings"]>; sources: SourceStatus[] }) {
+  const row = (f: FilingItem) => (
+    <a
+      key={f.accession}
+      href={f.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex flex-wrap items-center gap-1.5 rounded border border-border/30 px-2 py-1 text-[10.5px] hover:border-emerald-500/40"
+    >
+      <span className="rounded border border-emerald-500/50 bg-emerald-500/10 px-1 font-mono font-semibold text-emerald-300">{f.form}</span>
+      <span className="font-semibold">{f.company}</span>
+      {f.items.length > 0 && <span className="text-muted-foreground">items {f.items.slice(0, 4).join(", ")}</span>}
+      <span className="ml-auto text-muted-foreground" title={f.acceptedUtc ?? undefined}>
+        {f.acceptedUtc ? timeAgo(Math.floor(Date.parse(f.acceptedUtc) / 1000)) : `filed ${f.filingDate ?? "date n/a"}`}
+      </span>
+    </a>
+  );
+  return (
+    <Card data-testid="filings-card">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-sm">
+          SEC filings <TierBadge label="official" />
+          <span className="text-[10px] font-normal text-muted-foreground">{filings.note}</span>
+        </CardTitle>
+        <SourceStrip title="Filing sources" sources={sources} />
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {filings.state === "unavailable" ? (
+          <div className="text-[11px] text-muted-foreground">
+            {sources.every((x) => x.state === "not_configured") ? "Not configured on the server." : "EDGAR could not be read (failed), so no filings are shown."}
+          </div>
+        ) : (
+          <>
+            <div>
+              <div className="mb-1 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Watchlist, last 7 days</div>
+              {filings.watchlist.length ? <div className="grid gap-1">{filings.watchlist.slice(0, 15).map(row)}</div>
+                : <div className="text-[11px] text-muted-foreground">No watchlist filings in 7 days (observed).</div>}
+            </div>
+            <div>
+              <div className="mb-1 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Latest 8-K wire</div>
+              {filings.wire.length ? <div className="grid gap-1">{filings.wire.slice(0, 15).map(row)}</div>
+                : <div className="text-[11px] text-muted-foreground">No 8-K entries returned.</div>}
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -702,6 +911,7 @@ interface EarningsResponse {
   mag7Reports: EarningsRow[];
   weeks: EarningsWeek[];
   warnings: string[];
+  sourceInfo?: { name: string; tier: "weak"; note: string; state: "ok" | "partial" | "failed"; failedDates: number; estimatedRows: number };
 }
 
 function formatMarketCap(cap: number | null): string {
@@ -837,9 +1047,12 @@ function EarningsTab() {
                 </h3>
                 <Badge
                   variant="outline"
-                  className="border-emerald-500/40 text-emerald-300/80 text-[10px]"
+                  className="border-rose-500/40 text-rose-300/80 text-[10px]"
+                  title={data?.sourceInfo?.note}
                 >
-                  Nasdaq
+                  Nasdaq · unofficial API
+                  {data?.sourceInfo && data.sourceInfo.state !== "ok" && ` · ${data.sourceInfo.state} (${data.sourceInfo.failedDates} day${data.sourceInfo.failedDates === 1 ? "" : "s"} failed)`}
+                  {data?.sourceInfo?.estimatedRows ? ` · ${data.sourceInfo.estimatedRows} estimated` : ""}
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground mt-1">
@@ -1083,7 +1296,7 @@ function EarningsTab() {
       )}
 
       <div className="text-[10px] text-muted-foreground text-center pt-2">
-        Data: Nasdaq earnings calendar · consensus EPS from analyst estimates · LY EPS = same fiscal quarter prior year
+        Data: Nasdaq earnings calendar (undocumented API, unofficial; no free official forward earnings-date source exists) · consensus EPS as listed by Nasdaq · LY EPS = same fiscal quarter prior year · reported results are filed on SEC EDGAR
       </div>
     </div>
   );
@@ -1317,8 +1530,11 @@ function FullCalendar({ events, asOf }: { events: CalendarEvent[]; asOf: number 
                         </span>
                         {bio}
                       </div>
-                      <div className="mt-1.5 text-[8.5px] text-[#9eff2e]/55">
-                        {e.source} · tap to open
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[8.5px] text-[#9eff2e]/55">
+                        <TierBadge label={e.tierLabel} />
+                        <span>{e.source}</span>
+                        {e.timeExact === false && <span>· time not exact</span>}
+                        <span>· tap to open</span>
                       </div>
                     </a>
                   );
