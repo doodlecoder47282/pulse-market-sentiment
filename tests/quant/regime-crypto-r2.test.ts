@@ -299,10 +299,12 @@ test("headline feed: labeled RSS items with age; all-failed is unavailable, not 
 
 test("seasonality verdict: significant but bottom-half out of sample is failed_out_of_sample, not validated", async () => {
   const { seasonalVerdict, findOptimalWindow, generateAnalysisText } = await import("../../server/seasonality");
-  assert.equal(seasonalVerdict(false, 0.9), "not_significant");
+  assert.equal(seasonalVerdict(false, { percentile: 0.99, pValue: 0.01 }), "not_significant");
   assert.equal(seasonalVerdict(true, null), "in_sample_only");
-  assert.equal(seasonalVerdict(true, 0.3), "failed_out_of_sample");
-  assert.equal(seasonalVerdict(true, 0.5), "validated");
+  assert.equal(seasonalVerdict(true, { percentile: 0.3, pValue: 0.7 }), "failed_out_of_sample");
+  // top half is not enough: "validated" needs the held-out calendar-shift p-value <= 0.10
+  assert.equal(seasonalVerdict(true, { percentile: 0.6, pValue: 0.4 }), "held_up_not_significant");
+  assert.equal(seasonalVerdict(true, { percentile: 0.95, pValue: 0.05 }), "validated");
   // A calendar effect present only in the early (training) years: the
   // in-sample search finds it, the held-out recent years do not have it.
   // Seeded fixture, 20 years: +0.5%/day on days 100-159 in the first 14
@@ -327,6 +329,8 @@ test("seasonality verdict: significant but bottom-half out of sample is failed_o
   assert.ok(w.significance!.significant, `p ${w.significance!.pFamilywise}`);
   assert.ok(w.significance!.outOfSample!.randomWindowPercentile < 0.5);
   assert.equal(w.verdict, "failed_out_of_sample");
+  // held-out p-value: share of same-length windows at least as good (here most of them)
+  assert.ok(w.significance!.outOfSample!.pValue > 0.5);
   assert.equal(w.confidenceLabel, "Weak");
   const text = generateAnalysisText("TEST", w, { fullYearAvg: 1, fullYearWinRate: 0.5, presidentialCycleYear: 2, presidentialCycleAvg: null }, 20);
   assert.match(text, /NOT validated/);

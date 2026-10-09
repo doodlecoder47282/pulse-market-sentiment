@@ -39,12 +39,12 @@ interface OptimalWindow {
   winRate: number;
   yearsTested: number;
   confidenceLabel: "Excellent" | "Good" | "Fair" | "Weak" | "Insufficient";
-  verdict?: "validated" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
+  verdict?: "validated" | "held_up_not_significant" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
   significance?: {
     windowsSearched: number;
     pFamilywise: number;
     significant: boolean;
-    outOfSample: { heldOutYears: number; randomWindowPercentile: number } | null;
+    outOfSample: { heldOutYears: number; randomWindowPercentile: number; pValue?: number } | null;
   };
 }
 
@@ -135,22 +135,25 @@ function confidenceColor(label: string): string {
 // the snooping test AND ranked in the top half out of sample is "Optimal"
 // and shaded green (a significant-but-failed-hold-out window used to read
 // "Optimal" in green next to a "Weak" badge).
-type WindowVerdict = "validated" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
+type WindowVerdict = "validated" | "held_up_not_significant" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
 function windowVerdict(opt: OptimalWindow): WindowVerdict {
   if (opt.verdict) return opt.verdict;
   const sig = opt.significance;
   if (!sig || !sig.significant) return "not_significant";
   if (!sig.outOfSample) return "in_sample_only";
-  return sig.outOfSample.randomWindowPercentile >= 0.5 ? "validated" : "failed_out_of_sample";
+  if (sig.outOfSample.randomWindowPercentile < 0.5) return "failed_out_of_sample";
+  return sig.outOfSample.pValue != null && sig.outOfSample.pValue <= 0.10 ? "validated" : "held_up_not_significant";
 }
 const WINDOW_HEADER: Record<WindowVerdict, string> = {
-  validated: "Optimal Seasonal Window (held up out of sample)",
+  validated: "Seasonal Window (significant on held-out years)",
+  held_up_not_significant: "Best In-Sample Window (top half on held-out years, not significant)",
   failed_out_of_sample: "Best In-Sample Window (failed out-of-sample check)",
   in_sample_only: "Best In-Sample Window (no hold-out, not validated)",
   not_significant: "Best In-Sample Window (not significant)",
 };
 const WINDOW_SHADE_LABEL: Record<WindowVerdict, string> = {
   validated: "",
+  held_up_not_significant: "held-out: not significant",
   failed_out_of_sample: "failed out of sample",
   in_sample_only: "in-sample only",
   not_significant: "not significant",
@@ -375,7 +378,7 @@ function YearlyView({ ticker, lookback }: { ticker: SeasonalityTicker; lookback:
             {opt.significance && (
               <span className="text-[10px] opacity-80" title={`Best of ${opt.significance.windowsSearched} windows searched, tested against calendar-scrambled history`}>
                 data-snooping p={opt.significance.pFamilywise.toFixed(2)}
-                {opt.significance.outOfSample ? ` · held-out ${opt.significance.outOfSample.heldOutYears}y rank ${Math.round(opt.significance.outOfSample.randomWindowPercentile * 100)}%` : ""}
+                {opt.significance.outOfSample ? ` · held-out ${opt.significance.outOfSample.heldOutYears}y rank ${Math.round(opt.significance.outOfSample.randomWindowPercentile * 100)}%${opt.significance.outOfSample.pValue != null ? `, p=${opt.significance.outOfSample.pValue.toFixed(2)}` : ""}` : ""}
               </span>
             )}
           </div>
