@@ -165,6 +165,16 @@ Vercel builds (vite define __ON_VERCEL__). Kept on purpose: data/sessions,
 data/analogs, data/mm-predictions (tracked runtime history; untracking would
 delete the user's local copies on pull).
 
+2026-10-09: PR #3 merged into main (8537193, CI 37998352961 green on its
+head). Vercel production deployed 8537193 ("Deployment has completed");
+the page itself was not viewed from here (workspace cannot reach vercel.app).
+Merged work branches r2-a..i, r3-1..5, r4 still exist on GitHub: deleting
+branches is blocked from this workspace; the owner can delete them in
+GitHub > Branches (all are fully contained in main). Kept: ios-capacitor,
+feat/capacitor-ios (unmerged iOS work, on hold), ci-reports-* (CI output).
+Next step: create the Railway server (user approval for the paid service),
+after rotating the Schwab secret and Discord webhooks.
+
 ## Current objective
 
 Save the credit-conserving resume framework and assess reuse of the existing
