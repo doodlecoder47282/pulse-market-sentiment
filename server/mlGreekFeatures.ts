@@ -1,323 +1,108 @@
 // server/mlGreekFeatures.ts
 //
-// Greek-aware feature builder for the ML quantile overlay (Model B).
+// Live feature dict for the ML quantile forecaster (Model B), feature schema
+// v2. IO only: the math is in mlFeatureMath.ts (pure, tested).
 //
-// Pulls live state from:
-//   - buildGammaLevelsEnhanced output (computed + user-target dealer levels)
-//   - fetchOHLC("^SPX", "1D", "5m")     (today's 5min RTH bars)
-//   - snapshot helpers (VIX, prev VIX, etc.)
+// Inputs, all from Schwab and all on the SAME index:
+//   - today's $SPX 5-minute bars (fetchOHLC "^SPX", Schwab price history);
+//   - $SPX spot;
+//   - dealer levels computed from the Schwab $SPX option chain (the caller
+//     passes the chain; mlFeatureMath.dealerLevelsFromChain), never the
+//     Signals snapshot gamma (that was CBOE SPY points measured against SPX
+//     spot: review R2-F item 1);
+//   - VIX and its previous close.
 //
-// Training data (review items 9.1/9.2): the models served up to v4 were
-//   trained on simulated minute bars with random dealer levels, so these
-//   features meant nothing in training. The synthetic trainer is removed. The
-//   dict built here is now LOGGED every few minutes during RTH
-//   (mlDataLog.ts -> ml_feature_log, with a list of placeholder features),
-//   next to real Schwab SPX minute bars (spx_minute_bars), and the trainer
-//   learns only from those logs once enough real days exist.
+// Missing inputs give NaN features (JSON null on the wire and in the log),
+// never 0 or a training median: the served model routes NaN exactly as it was
+// trained (LightGBM native missing values). The dict is logged every few
+// minutes in RTH by mlDataLog.ts (ml_feature_log, with schema_version) next
+// to real Schwab SPX minute bars; the trainer uses only schema-v2 rows.
 //
-// All returned values are guaranteed finite numbers (NaN/null/undefined → 0).
-// Result is cached for 30s to keep DB / chain pulls reasonable.
+// Result is cached for 30 s.
 
-import type { GammaLevelsEnhanced } from "./gammaLevels";
-import type { ChainAuditResult } from "./chainAudit";
 import { fetchOHLC } from "./ohlc";
-import { etDate, sessionCloseMinutes } from "./exchangeCalendar";
+import {
+  computeMlFeatures, dealerLevelsFromChain, ML_FEATURE_SCHEMA_VERSION,
+  type ChainLike, type DealerLevels, type FeatureBuildResult,
+} from "./mlFeatureMath";
 
-// ─── Cache ──────────────────────────────────────────────────────────────────
+export { ML_FEATURE_SCHEMA_VERSION };
 
 let CACHE: { at: number; data: Record<string, number> } | null = null;
 const CACHE_MS = 30_000;
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-function _safe(n: any): number {
-  if (n == null) return 0;
-  const v = Number(n);
-  if (!Number.isFinite(v)) return 0;
-  return v;
-}
-
-function _logRet(a: number, b: number): number {
-  if (!a || !b || a <= 0 || b <= 0) return 0;
-  return Math.log(b / a);
-}
-
-function _stdev(xs: number[]): number {
-  if (xs.length < 2) return 0;
-  const m = xs.reduce((s, x) => s + x, 0) / xs.length;
-  const v = xs.reduce((s, x) => s + (x - m) * (x - m), 0) / (xs.length - 1);
-  return Math.sqrt(Math.max(0, v));
-}
-
-function _mean(xs: number[]): number {
-  if (xs.length === 0) return 0;
-  return xs.reduce((s, x) => s + x, 0) / xs.length;
-}
-
-function _atrFromBars(bars: { h: number; l: number; c: number }[], lookback: number): number {
-  if (bars.length < 2) return 0;
-  const slice = bars.slice(-lookback);
-  if (slice.length < 2) return 0;
-  let sum = 0;
-  let n = 0;
-  for (let i = 1; i < slice.length; i++) {
-    const tr = Math.max(
-      slice[i].h - slice[i].l,
-      Math.abs(slice[i].h - slice[i - 1].c),
-      Math.abs(slice[i].l - slice[i - 1].c),
-    );
-    if (Number.isFinite(tr)) {
-      sum += tr;
-      n += 1;
-    }
-  }
-  return n > 0 ? sum / n : 0;
-}
-
-// ─── Feature builder ────────────────────────────────────────────────────────
-
 export interface MlFeatureInputs {
-  /** GammaLevelsEnhanced object (already built by caller). */
-  levels: GammaLevelsEnhanced | null;
-  /** Current SPX spot. */
+  /** $SPX spot (Schwab). */
   spxNow: number | null;
-  /** Current VIX value. */
+  /** Symbol of spxNow and of the dealer chain's underlying. */
+  spotUnderlying?: string;
   vix: number | null;
-  /** Previous-session VIX close (for intraday change pct). */
   vixPrev: number | null;
+  /** Schwab $SPX option chain (any error variant -> pass null). */
+  spxChain?: ChainLike | null;
+  /** When the chain was fetched (used when the chain carries no asOfMs). */
+  chainFetchedAtMs?: number | null;
+  /** Why spxChain is null, when it is. */
+  chainReason?: string | null;
   /**
-   * Optional live chain audit. When present, zomma + vomma peak strikes are
-   * sourced from real dealer-positioning compute (chainAudit.ts) instead of
-   * the static USER_TARGETS in gammaLevels.ts. This is the fix for Bug #3:
-   * we no longer rely on the hardcoded 7070/7265/6960 placeholders when live
-   * peaks are available from Schwab chain data.
+   * Optional injected $SPX 5-minute bars (e.g. aggregated from R2-H's
+   * streamed spx_minute_bars). Absent: Schwab price history (fetchOHLC).
+   * Either way only today's session bars are used (computeMlFeatures).
+   * New feature inputs (e.g. R2-H's ml_tick_rv_log) plug in here as
+   * optional fields; adding a feature means a new ML_FEATURE_SCHEMA_VERSION.
    */
-  chainAudit?: ChainAuditResult | null;
+  bars5m?: Array<{ t: number; o: number; h: number; l: number; c: number; v?: number | null }> | null;
 }
 
-/**
- * Build feature dict from injected inputs. All values numeric & finite.
- * Pulls today's SPX 5min bars internally for vol / ATR / trend features.
- */
-export async function buildMlFeaturesFromInputs(
-  inputs: MlFeatureInputs,
-): Promise<Record<string, number>> {
-  const { levels, vix, vixPrev } = inputs;
-  let { spxNow } = inputs;
+export interface MlFeatureProvenance {
+  at: number;
+  schemaVersion: number;
+  missing: string[];
+  reasons: Record<string, string>;
+  bars5m: number;
+  liveChainAudit: boolean;
+  dealerAsOfMs: number | null;
+  dealer: DealerLevels | null;
+  /** Why `dealer` is null, when it is. */
+  dealerReason: string | null;
+}
 
-  // Pull today's 5min SPX bars (cached upstream by /api/ohlc cache).
-  let bars: { t: number; o: number; h: number; l: number; c: number; v: number | null }[] = [];
+let _lastProvenance: MlFeatureProvenance | null = null;
+
+/** Build the schema-v2 feature dict from injected inputs (NaN = missing). */
+export async function buildMlFeaturesFromInputs(inputs: MlFeatureInputs, nowMs = Date.now()): Promise<Record<string, number>> {
+  let bars: Array<{ t: number; o: number; h: number; l: number; c: number; v: number | null }> = [];
+  const spot = inputs.spxNow;
   try {
-    const ohlc = await fetchOHLC("^SPX", "1D", "5m");
-    bars = ohlc?.candles ?? [];
-    if (spxNow == null && ohlc?.price != null) spxNow = ohlc.price;
+    const ohlc = inputs.bars5m ? null : await fetchOHLC("^SPX", "1D", "5m");
+    bars = inputs.bars5m ? inputs.bars5m.map((b) => ({ ...b, v: b.v ?? null })) : (ohlc?.candles ?? []);
+    // No fallback to ohlc.price (age unknown, may be a prior close): without a
+    // fresh $SPX quote, spot is the last close of TODAY's session bars
+    // (computeMlFeatures), else missing.
   } catch {
     bars = [];
   }
-
-  const spot = _safe(spxNow ?? bars[bars.length - 1]?.c ?? 0);
-
-  // ── Time features (ET, but we use raw NY-local hour from the bar timestamp) ──
-  const now = new Date();
-  // Use America/New_York wall clock via Intl
-  const nyParts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    hour12: false,
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).formatToParts(now);
-  const partMap: Record<string, string> = {};
-  for (const p of nyParts) partMap[p.type] = p.value;
-  const hourEt = Number(partMap.hour ?? "12");
-  const minEt = Number(partMap.minute ?? "0");
-  const dowMap: Record<string, number> = { Sun: 6, Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5 };
-  const dow = dowMap[partMap.weekday ?? "Wed"] ?? 2;
-  const fracHour = hourEt + minEt / 60;
-  const isFirst30 = fracHour >= 9.5 && fracHour < 10.0 ? 1 : 0;
-  // The last 30 minutes run up to today's real close (exchange calendar):
-  // 15:30-16:00, or 12:30-13:00 on a half day (no post-lunch window then).
-  const closeHour = (sessionCloseMinutes(etDate(now.getTime())) ?? 16 * 60) / 60;
-  const isPostLunch = fracHour >= 13.0 && fracHour < Math.min(15.5, closeHour - 0.5) ? 1 : 0;
-  const isLast30 = fracHour >= closeHour - 0.5 && fracHour < closeHour ? 1 : 0;
-
-  // ── Vol / ATR / trend over recent bars ───────────────────────────────────
-  // 5-minute log returns
-  const logRets: number[] = [];
-  for (let i = 1; i < bars.length; i++) logRets.push(_logRet(bars[i - 1].c, bars[i].c));
-
-  // Last 30min = 6 bars; last 5min = 1 bar (just last log return)
-  const last6 = logRets.slice(-6);
-  const last1 = logRets.slice(-1);
-
-  // Annualization factor for intraday RTH: 78 5min bars/day × 252 days
-  const ANN = Math.sqrt(78 * 252);
-  const realizedVol30m = _stdev(last6) * ANN;
-  const realizedVol5m = _stdev(last1.length > 0 ? last1 : [0]) * ANN;
-  const trend30m = _mean(last6);
-  const trend5m = _mean(last1);
-  const atr5m = _atrFromBars(bars, 6);
-  const atr30m = _atrFromBars(bars, 6); // 30min window approx
-
-  // Use ATR_30m as denominator for distance features. Floor at small value.
-  const atrDen = atr30m > 0.5 ? atr30m : Math.max(1, spot * 0.001);
-
-  // ── Greek levels (with safe nullish defaults) ────────────────────────────
-  const callWall = _safe(levels?.callWall?.value);
-  const putWall = _safe(levels?.putWall?.value);
-  const flip = _safe(levels?.gammaFlip?.value ?? spot); // fall back to spot
-  const maxPain = _safe(levels?.mopex?.value);
-
-  // ── Live-greek preference (Bug #3 fix) ──
-  // When chainAudit is supplied, prefer the live-computed peak strikes for
-  // zomma / vomma over the static USER_TARGETS dealer-target placeholders.
-  // This keeps the ML feature set anchored to actual dealer positioning rather
-  // than a frozen 7070/7265/6960 snapshot from manual entry.
-  const liveZommaPeak = inputs.chainAudit?.zomma?.peakZommaStrike ?? null;
-  const liveVommaPeak = inputs.chainAudit?.vomma?.peakVommaStrike ?? null;
-  const zomma = _safe(liveZommaPeak ?? levels?.zomma?.value);
-  // For vomma we still have upper / lower hardcoded targets; if live peak exists,
-  // collapse both legs to the live peak (single strike is honest — a 1-strike
-  // peak doesn't have an "upper" / "lower" leg from the audit). When live is
-  // absent, retain the legacy two-leg user targets so existing models don't drift.
-  const upVomma = _safe(liveVommaPeak ?? levels?.vommaUpper?.value);
-  const dnVomma = _safe(liveVommaPeak ?? levels?.vommaLower?.value);
-  const vannaLvl = _safe(inputs.chainAudit?.vanna?.peakVannaStrike ?? levels?.vanna?.value);
-  const charmLvl = _safe(inputs.chainAudit?.charm?.peakCharmStrike ?? levels?.charm?.value);
-
-  const distAtr = (lvl: number) => (lvl > 0 ? (lvl - spot) / atrDen : 0);
-
-  const distCall = distAtr(callWall);
-  const distPut = distAtr(putWall);
-  const distFlip = distAtr(flip);
-  const distMaxPain = distAtr(maxPain);
-  const distZomma = distAtr(zomma);
-  const distUpVomma = distAtr(upVomma);
-  const distDnVomma = distAtr(dnVomma);
-  const distVanna = distAtr(vannaLvl);
-  const distCharm = distAtr(charmLvl);
-
-  // Net GEX sign: +1 above flip (positive gamma regime), -1 below, 0 if no flip
-  let netGexSign = 0;
-  if (flip > 0 && spot > 0) {
-    if (spot > flip) netGexSign = 1;
-    else if (spot < flip) netGexSign = -1;
-  }
-
-  // GEX magnitude — sum of |gex| across top strikes, normalized by 1e9
-  let netGexMag = 0;
-  const topGex = levels?.topGexStrikes ?? [];
-  for (const s of topGex) netGexMag += Math.abs(_safe(s.gex));
-  netGexMag = netGexMag / 1e9;
-
-  // VIX features
-  const vixLevel = _safe(vix);
-  const vixPrevSafe = _safe(vixPrev);
-  const vixChangePct =
-    vixPrevSafe > 0 && vixLevel > 0 ? (vixLevel - vixPrevSafe) / vixPrevSafe : 0;
-
-  // ── Legacy v2 feature names (so v2 model can still consume the dict) ─────
-  // The v2 model expects: hour_of_day, minute_of_hour, day_of_week,
-  // gex_regime_ord, net_gex_b, realized_vol_5min, realized_vol_30min,
-  // bar_return_1min, momentum_15min, distance_from_open_pct,
-  // is_post_lunch, is_first_30min, is_last_30min.
-  const openPrice = bars[0]?.o ?? spot;
-  const distFromOpen = openPrice > 0 ? (spot - openPrice) / openPrice : 0;
-  const momentum15 = logRets.slice(-3).reduce((s, x) => s + x, 0); // 3 × 5m = 15m
-  const barReturn1 = logRets.slice(-1)[0] ?? 0;
-  // ordinal-style regime: -1 / 0 / 1 mapping
-  const gexRegimeOrd = netGexSign;
-  const netGexB = netGexMag; // already normalized to ~bn scale
-  // Keep these in the un-annualized stdev form the v2 model was trained on
-  const rv5Raw = _stdev(last1.length > 0 ? last1 : [0]);
-  const rv30Raw = _stdev(last6);
-
-  const out: Record<string, number> = {
-    // ── Time ──
-    hour_of_day: fracHour,
-    minute_of_hour: minEt,
-    day_of_week: dow,
-    is_first_30min: isFirst30,
-    is_post_lunch: isPostLunch,
-    is_last_30min: isLast30,
-
-    // ── Spot + macro ──
-    spx_spot: spot,
-    vix_level: vixLevel,
-    vix_change_pct: vixChangePct,
-
-    // ── Vol / ATR / trend ──
-    realized_vol_30m: realizedVol30m,
-    realized_vol_5m: realizedVol5m,
-    atr_5m: atr5m,
-    trend_30m: trend30m,
-    trend_5m: trend5m,
-
-    // ── Distance-to-level (in ATR units) ──
-    dist_to_callwall_atr: distCall,
-    dist_to_putwall_atr: distPut,
-    dist_to_flip_atr: distFlip,
-    dist_to_maxpain_atr: distMaxPain,
-    dist_to_zomma_atr: distZomma,
-    dist_to_upvomma_atr: distUpVomma,
-    dist_to_dnvomma_atr: distDnVomma,
-    vanna_level_dist_atr: distVanna,
-    charm_level_dist_atr: distCharm,
-
-    // ── Regime ──
-    net_gex_sign: netGexSign,
-    net_gex_magnitude: netGexMag,
-
-    // ── Legacy v2 names (also acceptable by v2 model) ──
-    realized_vol_5min: rv5Raw,
-    realized_vol_30min: rv30Raw,
-    bar_return_1min: barReturn1,
-    momentum_15min: momentum15,
-    distance_from_open_pct: distFromOpen,
-    gex_regime_ord: gexRegimeOrd,
-    net_gex_b: netGexB,
-    vix_pct_of_5d_avg: 1.0, // unknown in this fast path; safe default
+  const underlying = inputs.spotUnderlying ?? "$SPX";
+  const dl = inputs.spxChain
+    ? dealerLevelsFromChain(inputs.spxChain, underlying, { nowMs, fetchedAtMs: inputs.chainFetchedAtMs ?? undefined })
+    : { levels: null, reason: inputs.chainReason ?? "chain_unavailable" };
+  const r: FeatureBuildResult = computeMlFeatures({
+    nowMs, bars, spot, spotUnderlying: underlying, vix: inputs.vix, vixPrev: inputs.vixPrev,
+    dealer: dl.levels, dealerReason: dl.reason,
+  });
+  _lastProvenance = {
+    at: nowMs, schemaVersion: r.schemaVersion, missing: r.missing, reasons: r.reasons, bars5m: bars.length,
+    liveChainAudit: r.liveChain, dealerAsOfMs: r.dealerAsOfMs, dealer: dl.levels, dealerReason: dl.reason,
   };
-
-  // Final NaN sweep
-  for (const k of Object.keys(out)) {
-    const v = out[k];
-    if (!Number.isFinite(v)) out[k] = 0;
-  }
-
-  // Provenance for the training log: which features are a 0 placeholder for
-  // MISSING input rather than an observed value (data-state rule: missing is
-  // not zero). The served dict keeps 0 for the predictor contract; the logger
-  // records this list so training can treat those cells as missing.
-  const missing: string[] = [];
-  if (!(spot > 0)) missing.push("spx_spot");
-  if (!(vixLevel > 0)) missing.push("vix_level", "vix_change_pct");
-  else if (!(vixPrevSafe > 0)) missing.push("vix_change_pct");
-  if (bars.length < 7) missing.push("realized_vol_30m", "realized_vol_5m", "atr_5m", "trend_30m", "trend_5m",
-    "realized_vol_5min", "realized_vol_30min", "bar_return_1min", "momentum_15min", "distance_from_open_pct");
-  const lvlMissing: Array<[number, string]> = [
-    [callWall, "dist_to_callwall_atr"], [putWall, "dist_to_putwall_atr"], [maxPain, "dist_to_maxpain_atr"],
-    [zomma, "dist_to_zomma_atr"], [upVomma, "dist_to_upvomma_atr"], [dnVomma, "dist_to_dnvomma_atr"],
-    [vannaLvl, "vanna_level_dist_atr"], [charmLvl, "charm_level_dist_atr"],
-  ];
-  for (const [v, name] of lvlMissing) if (!(v > 0)) missing.push(name);
-  if (levels?.gammaFlip?.value == null) missing.push("dist_to_flip_atr", "net_gex_sign", "gex_regime_ord");
-  if (topGex.length === 0) missing.push("net_gex_magnitude", "net_gex_b");
-  missing.push("vix_pct_of_5d_avg"); // always a placeholder in this fast path
-  _lastProvenance = { at: Date.now(), missing: Array.from(new Set(missing)), bars5m: bars.length, liveChainAudit: !!inputs.chainAudit };
-  return out;
+  return r.features;
 }
 
-let _lastProvenance: { at: number; missing: string[]; bars5m: number; liveChainAudit: boolean } | null = null;
-
-/** Which features of the most recent build were placeholders for missing inputs. */
-export function getLastMlFeatureProvenance(): { at: number; missing: string[]; bars5m: number; liveChainAudit: boolean } | null {
+/** Provenance of the most recent build: missing features with reasons, dealer levels used. */
+export function getLastMlFeatureProvenance(): MlFeatureProvenance | null {
   return _lastProvenance;
 }
 
-/**
- * Cached wrapper. Caller injects level/snapshot accessor to avoid circular imports.
- */
+/** Cached wrapper. Caller injects the input resolver to avoid circular imports. */
 export async function buildMlFeatures(
   resolveInputs: () => Promise<MlFeatureInputs>,
 ): Promise<Record<string, number>> {

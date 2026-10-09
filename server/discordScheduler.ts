@@ -27,7 +27,6 @@ import { settleDay } from "./calibration";
 import { postCalibrationCard } from "./calibrationCard";
 import { getTodayEventContext } from "./volCalendar";
 import { persistOdteAuditOnFire, persistOdteAuditOnReject, persistOdteEvaluationLog } from "./odteAuditDb";
-import { mlQuantileOverlay } from "./mlBridge";
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -170,45 +169,27 @@ function _buildMlFeatures(
 
 /**
  * Build an ML augmentation line for the Discord card.
- * - Calls mlQuantileOverlay (30min horizon only for 0DTE).
- * - Returns null on any ML failure — never throws.
- * - Models A (score_calibrator=BOOTSTRAP) and C (whale_follow=low_signal) are
- *   gated off — only Model B (quantile_overlay, status=TRAINED) is surfaced.
+ * R2-F: the line shows the server's most recent SERVED band (mlServing, the
+ * same band the Projected Path panel draws and the coverage logger scores),
+ * and only when that band is a promoted real-data quantile model. The old
+ * path sent this module's own legacy feature dict (zeros for missing inputs)
+ * to the sidecar, which a schema-v2 model would misread. Never throws.
  */
 async function _buildMlLine(
-  a: { asOf: number; side: string; spot: number; wire15?: any; grade?: any },
-  audit: { gexTier?: string | null; gex?: number | null; sessionOpen?: number | null },
-  hh: number,
-  mm: number,
-  dow: number,
+  _a: { asOf: number; side: string; spot: number; wire15?: any; grade?: any },
+  _audit: { gexTier?: string | null; gex?: number | null; sessionOpen?: number | null },
+  _hh: number,
+  _mm: number,
+  _dow: number,
 ): Promise<string | undefined> {
   try {
-    const features = _buildMlFeatures(a, audit, hh, mm, dow);
-    const overlay = await mlQuantileOverlay(features, [30]);
-    // Null or non-TRAINED → no line
-    if (!overlay || overlay.status !== "TRAINED") return undefined;
-    const band30 = overlay.bands["30"];
+    const { getRecentServedBand } = await import("./mlServing");
+    const rec = getRecentServedBand(10 * 60_000);
+    if (!rec || !rec.served.learned) return undefined;
+    const band30 = rec.served.bands?.["30"];
     if (!band30) return undefined;
-
-    const q50 = band30.q50;
-    const q90 = band30.q90;
-    const q10 = band30.q10;
-
-    const isCallSide = a.side === "call";
-    // Directional sign check: BULLISH alert expects positive q50, BEARISH expects negative q50
-    const counter = isCallSide ? q50 < 0 : q50 > 0;
-
     const fmt = (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
-    const q50Sign = q50 >= 0 ? "+" : "";
-    const q50Pct = `${q50Sign}${(q50 * 100).toFixed(2)}%`;
-
-    if (counter) {
-      return `Vol cone 30m (simulated training): median ${q50Pct}, against alert side`;
-    } else {
-      const q90Pct = `+${(q90 * 100).toFixed(2)}%`;
-      const q10Pct = `${(q10 * 100).toFixed(2)}%`;
-      return `Vol cone 30m (simulated training): q50 ${q50Pct} · q90 ${q90Pct} / q10 ${q10Pct}`;
-    }
+    return `SPX 30m range (${rec.served.label}): q10 ${fmt(band30.q10)} · q50 ${fmt(band30.q50)} · q90 ${fmt(band30.q90)}`;
   } catch {
     return undefined;
   }

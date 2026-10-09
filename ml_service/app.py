@@ -12,7 +12,6 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from predictor import ModelRegistry
-import backfill as _backfill_mod
 
 app = FastAPI(title="Pulse Batcave ML Service", version="0.1.0")
 registry = ModelRegistry()
@@ -23,26 +22,41 @@ _jobs: Dict[str, Dict[str, Any]] = {}
 
 # ─── Request / response models ───────────────────────────────────────────────
 
+# Feature values may be null: the server sends a missing input as JSON null
+# (it has no NaN), and the predictor turns it into NaN for the model (R2-F 2).
 class FeaturesRequest(BaseModel):
-    features: Dict[str, float]
+    features: Dict[str, Optional[float]]
 
 
 class QuantileRequest(BaseModel):
-    features: Dict[str, float]
+    features: Dict[str, Optional[float]]
     horizons: List[int] = [5, 15, 30, 60]
+    # Feature schema of `features` (server ML_FEATURE_SCHEMA_VERSION); a model
+    # trained on another schema is not served. None = the current schema.
+    schema_version: Optional[int] = None
 
 
 class MorningQuantileRequest(BaseModel):
-    features: Dict[str, float]
+    features: Dict[str, Optional[float]]
     horizons: List[int] = [30, 60, 120, 180, 240]
+    schema_version: Optional[int] = None
+
+
+class DemoteRequest(BaseModel):
+    model: str
+    version: int
+    reason: str
 
 
 class RetrainRequest(BaseModel):
-    models: List[str] = ["score_calibrator", "quantile_overlay", "whale_follow"]
+    # score_calibrator is retired (R2-F item 6).
+    models: List[str] = ["quantile_overlay", "whale_follow"]
 
 
 class BackfillRequest(BaseModel):
-    sources: List[str] = ["spy_1min", "cboe_gex"]
+    # The CBOE / Alpha Vantage backfill is removed (Schwab only); kept so old
+    # clients get a clear answer.
+    sources: List[str] = []
 
 
 # ─── /health ─────────────────────────────────────────────────────────────────
@@ -67,10 +81,36 @@ def health():
     return {
         "status": "ok",
         "models": {
-            "score_calibrator": _meta("score_calibrator"),
-            "quantile_overlay": _meta("quantile_overlay"),
+            "score_calibrator": {"status": "RETIRED", "version": 0, "trained_at": None, "n_train": 0, "auc": None,
+                                 "low_signal": None, "training_data": None,
+                                 "note": "retired: no consumer; pooled whale and regime labels; 80-row gate"},
+            "quantile_overlay": _quantile_health("quantile_overlay"),
+            "quantile_overlay_morning": _quantile_health("quantile_overlay_morning"),
             "whale_follow": _meta("whale_follow"),
         },
+    }
+
+
+def _quantile_health(name: str) -> Dict[str, Any]:
+    """Served (promoted) version if any, plus the latest trained version and why it is or is not served."""
+    latest = registry.get_meta(name) or {}
+    served = registry.promoted_meta(name)
+    m = served or latest
+    return {
+        "status": (m.get("status", "TRAINED") if served else ("NO_PROMOTED_MODEL" if latest else "INSUFFICIENT_DATA")),
+        "version": m.get("version", 0),
+        "trained_at": m.get("trained_at"),
+        "n_train": m.get("n_train"),
+        "auc": None,
+        "low_signal": None,
+        "training_data": m.get("training_data"),
+        "promoted": served is not None,
+        "served_version": served.get("version") if served else None,
+        "latest_version": latest.get("version"),
+        "latest_status": latest.get("status"),
+        "latest_training_data": latest.get("training_data"),
+        "latest_promotion": (latest.get("promotion") or {}).get("rule") if latest else None,
+        "latest_promoted": latest.get("promoted") is True,
     }
 
 
@@ -78,16 +118,8 @@ def health():
 
 @app.post("/score/odte")
 def score_odte(req: FeaturesRequest):
-    try:
-        p = registry.predict_score_calibrator(req.features)
-        meta = registry.get_meta("score_calibrator") or {}
-        status = meta.get("status", "INSUFFICIENT_DATA")
-        version = meta.get("version", 0)
-    except Exception:
-        p = None
-        status = "INSUFFICIENT_DATA"
-        version = 0
-    return {"p_hit_t1": p, "status": status, "version": version}
+    # Retired (R2-F item 6): no consumer; never a probability.
+    return {"p_hit_t1": None, "status": "RETIRED", "version": 0}
 
 
 # ─── /score/whale_follow ─────────────────────────────────────────────────────
@@ -115,38 +147,45 @@ def score_whale_follow(req: FeaturesRequest):
 
 # ─── /quantile/overlay ───────────────────────────────────────────────────────
 
+def _served_quantile(name: str, features: Dict[str, Optional[float]], horizons: List[int], predict,
+                     schema_version: Optional[int] = None) -> Dict[str, Any]:
+    """Bands only from a promoted real-data version of the request's feature schema; otherwise empty bands."""
+    try:
+        served = registry.promoted_meta(name, schema_version)
+        if served is None:
+            latest = registry.get_meta(name) or {}
+            return {"bands": {}, "status": "NO_PROMOTED_MODEL", "version": latest.get("version", 0),
+                    "training_data": latest.get("training_data"), "promoted": False}
+        bands = predict(features, horizons, schema_version)
+        return {"bands": bands, "status": served.get("status", "TRAINED"), "version": served.get("version", 0),
+                "training_data": served.get("training_data"), "promoted": True}
+    except Exception:
+        return {"bands": {}, "status": "INSUFFICIENT_DATA", "version": 0, "training_data": None, "promoted": False}
+
+
 @app.post("/quantile/overlay")
 def quantile_overlay(req: QuantileRequest):
-    try:
-        bands = registry.predict_quantile_overlay(req.features, req.horizons)
-        meta = registry.get_meta("quantile_overlay") or {}
-        status = meta.get("status", "INSUFFICIENT_DATA")
-        version = meta.get("version", 0)
-        training_data = meta.get("training_data")
-    except Exception:
-        bands = {}
-        status = "INSUFFICIENT_DATA"
-        version = 0
-        training_data = None
-    return {"bands": bands, "status": status, "version": version, "training_data": training_data}
+    return _served_quantile("quantile_overlay", req.features, req.horizons, registry.predict_quantile_overlay, req.schema_version)
 
 
 # ─── /quantile/morning — Model D Morning Anchor ───────────────────────
 
 @app.post("/quantile/morning")
 def quantile_morning(req: MorningQuantileRequest):
-    try:
-        bands = registry.predict_quantile_morning(req.features, req.horizons)
-        meta = registry.get_meta("quantile_overlay_morning") or {}
-        status = meta.get("status", "INSUFFICIENT_DATA")
-        version = meta.get("version", 0)
-        training_data = meta.get("training_data")
-    except Exception:
-        bands = {}
-        status = "INSUFFICIENT_DATA"
-        version = 0
-        training_data = None
-    return {"bands": bands, "status": status, "version": version, "training_data": training_data}
+    return _served_quantile("quantile_overlay_morning", req.features, req.horizons, registry.predict_quantile_morning, req.schema_version)
+
+
+# ─── /demote: live-coverage demotion from the server (R2-F) ──────────────────
+
+@app.post("/demote")
+def demote(req: DemoteRequest):
+    """The server demotes a model whose live 10-90% coverage is rejected (Kupiec p < 0.01 on >= 20 days)."""
+    if req.model not in ("quantile_overlay", "quantile_overlay_morning"):
+        raise HTTPException(status_code=400, detail="unknown model")
+    import train_quantile_impl
+    ok = train_quantile_impl.demote_version(req.model, req.version, req.reason)
+    registry.reload(req.model)
+    return {"demoted": ok, "model": req.model, "version": req.version}
 
 
 # ─── /retrain ────────────────────────────────────────────────────────────────
@@ -165,7 +204,7 @@ async def _run_retrain(job_id: str, models: List[str]):
     for name in models:
         try:
             if name == "score_calibrator":
-                r = await asyncio.to_thread(trainer.train_score_calibrator)
+                r = {"status": "RETIRED", "note": "score calibrator retired (R2-F item 6)"}
             elif name == "quantile_overlay":
                 r = await asyncio.to_thread(trainer.train_quantile_overlay)
             elif name == "whale_follow":
@@ -191,28 +230,12 @@ def retrain_status(job_id: str):
     return job
 
 
-# ─── /backfill ────────────────────────────────────────────────────────────────
+# ─── /backfill (removed) ──────────────────────────────────────────────────────
+# The CBOE / Alpha Vantage backfill (backfill.py) is removed: market data is
+# Schwab only, and the server's real-data logger (server/mlDataLog.ts) stores
+# Schwab $SPX minute bars and the live feature dicts the trainer uses.
 
 @app.post("/backfill")
 async def backfill(req: BackfillRequest):
-    job_id = str(uuid.uuid4())
-    _jobs[job_id] = {"status": "running", "type": "backfill", "sources": req.sources, "results": {}}
-    asyncio.create_task(_run_backfill(job_id, req.sources))
-    return {"started": True, "job_id": job_id}
-
-
-async def _run_backfill(job_id: str, sources: List[str]):
-    results = {}
-    for source in sources:
-        try:
-            if source == "spy_1min":
-                r = await asyncio.to_thread(_backfill_mod.backfill_spy_1min)
-            elif source == "cboe_gex":
-                r = await asyncio.to_thread(_backfill_mod.backfill_cboe_gex_history)
-            else:
-                r = {"status": "UNKNOWN_SOURCE"}
-            results[source] = r
-        except Exception as e:
-            results[source] = {"status": "ERROR", "error": str(e)}
-    _jobs[job_id]["status"] = "done"
-    _jobs[job_id]["results"] = results
+    return {"started": False, "status": "REMOVED",
+            "note": "non-Schwab backfill removed; the server logs Schwab $SPX minute bars (server/mlDataLog.ts)"}

@@ -1,23 +1,36 @@
 /**
  * Pulse Batcave — ML Retrain Cron (Wire 20)
  *
- * Schedules weekly Sunday 02:00 ET retrain of all 3 ML models.
+ * Schedules a weekly Sunday 02:00 ET retrain of the quantile overlay and the
+ * whale-follow model (the score calibrator is retired, R2-F item 6).
  * ENV gate: only runs if PULSE_ML_RETRAIN_ENABLED !== "0".
  * Uses node-cron with America/New_York timezone.
+ *
+ * No silent failure (review 9.5): when the Python sidecar is not installed on
+ * this host (e.g. the default Railway Node build, see RAILWAY-DEPLOY.md), the
+ * run logs "[ml:retrain:skipped] ML sidecar not installed: <reason>" and
+ * returns. A retrain writes a new quantile model only when the real-data gate
+ * is met, and that model is served only if it passes the promotion gate.
  */
 
 import cron from "node-cron";
+import { sidecarInstallStatus } from "./mlSidecarStatus";
 
 const ML_URL = () => process.env.PULSE_ML_URL ?? "http://127.0.0.1:5001";
 
 async function kickRetrain(): Promise<void> {
+  const inst = sidecarInstallStatus(true);
+  if (!inst.installed) {
+    console.warn(`[ml:retrain:skipped] ML sidecar not installed: ${inst.reason ?? "unknown"}`);
+    return;
+  }
   console.log("[ml:retrain:kicked] Starting weekly ML retrain...");
   try {
     const res = await fetch(`${ML_URL()}/retrain`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        models: ["score_calibrator", "quantile_overlay", "whale_follow"],
+        models: ["quantile_overlay", "whale_follow"],
       }),
     });
 
@@ -57,29 +70,15 @@ async function kickRetrain(): Promise<void> {
 }
 
 /**
- * Fire one-shot backfill 30s after boot (opt-in via PULSE_ML_BACKFILL_ON_BOOT=1).
- * Never blocks server startup.
+ * Boot backfill (PULSE_ML_BACKFILL_ON_BOOT=1) is removed: the sidecar's
+ * backfill.py (CBOE GEX / Alpha Vantage SPY bars) is deleted, and market data
+ * is Schwab only (user rule 2026-10-08). The real-data logger (mlDataLog.ts)
+ * stores Schwab $SPX minute bars and the live feature dicts instead. The env
+ * flag only logs that, so an old deploy setting fails loudly, not silently.
  */
 function scheduleBootBackfill(): void {
   if (process.env.PULSE_ML_BACKFILL_ON_BOOT !== "1") return;
-
-  setTimeout(() => {
-    console.log("[ml:backfill:boot] Firing POST /backfill (30s post-boot)...");
-    fetch(`${ML_URL()}/backfill`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sources: ["spy_1min", "cboe_gex"] }),
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          console.warn(`[ml:backfill:boot] HTTP ${res.status}`);
-          return;
-        }
-        const data = await res.json() as { started: boolean; job_id: string };
-        console.log(`[ml:backfill:boot] started job_id=${data.job_id}`);
-      })
-      .catch((e) => console.warn(`[ml:backfill:boot] error: ${e?.message ?? e}`));
-  }, 30_000);
+  console.warn("[ml:backfill:boot] removed (non-Schwab sources); the real-data logger (mlDataLog.ts) replaces it");
 }
 
 /**
@@ -107,7 +106,7 @@ export function startMlRetrainCron(): void {
 
   console.log("[ml:retrain] cron scheduled: Sunday 02:00 ET");
 
-  // Boot-time backfill (opt-in)
+  // Boot-time backfill: removed; logs if the old flag is still set
   scheduleBootBackfill();
 
   // Boot-time staleness check: the Sunday cron only fires while the server is
@@ -121,13 +120,16 @@ export function startMlRetrainCron(): void {
       const h = await res.json() as { models?: Record<string, { trained_at?: number }> };
       const staleSec = 7 * 24 * 60 * 60;
       const nowSec = Math.floor(Date.now() / 1000);
-      const oldest = Math.min(...Object.values(h.models ?? {}).map(m => m.trained_at ?? 0));
+      // Models with no trained_at (retired, never trained) do not count.
+      const stamps = Object.values(h.models ?? {}).map(m => m.trained_at ?? 0).filter((t) => t > 0);
+      const oldest = stamps.length ? Math.min(...stamps) : 0;
       if (oldest > 0 && nowSec - oldest > staleSec) {
         console.log(`[ml:retrain] models stale (oldest trained ${Math.round((nowSec - oldest) / 86400)}d ago) — kicking boot retrain`);
         kickRetrain().catch((e) => console.error(`[ml:retrain:failed] boot: ${e?.message ?? e}`));
       }
     } catch {
-      // sidecar unreachable — nothing to do
+      const inst = sidecarInstallStatus();
+      console.warn(`[ml:retrain] boot check: ${inst.installed ? "ML sidecar unreachable" : `ML sidecar not installed: ${inst.reason ?? "unknown"}`}`);
     }
   }, 45_000);
 }

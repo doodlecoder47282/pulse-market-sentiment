@@ -3,8 +3,19 @@ Pulse Batcave — Model Predictor (Wire 17)
 ModelRegistry caches loaded models, watches mtime, reloads on file change.
 All predictions return None on any error (ML never blocks).
 
-score_calibrator: CalibratedClassifierCV (sklearn/joblib) wrapping LGBMClassifier.
-Other models: lgb.Booster (native format).
+score_calibrator: RETIRED (R2-F item 6). It had no consumer (mlScoreOdte is
+never called), pooled whale and regime rows and was gated at 80 rows; it is no
+longer trained or served.
+
+Quantile models (quantile_overlay, quantile_overlay_morning), R2-F items 2/3/5:
+  - Served version = the highest version whose meta says promoted = true AND
+    training_data = "real" (it passed the walk-forward promotion gate against
+    the baseline volatility cone, forecast_eval.py). Unpromoted or synthetic
+    versions (v1-v4, morning v1) are never served; the server then draws the
+    baseline cone, labeled.
+  - Missing features: models trained with missing_policy = "native_nan" get
+    NaN for a missing or null feature, exactly as in training (LightGBM routes
+    NaN natively); they are never filled with medians or 0.
 """
 from __future__ import annotations
 
@@ -15,6 +26,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 MODELS_DIR = Path(__file__).resolve().parent / "models"
+# Feature schema the live server sends (server/mlFeatureMath.ts ML_FEATURE_SCHEMA_VERSION);
+# kept equal to train_quantile_impl.FEATURE_SCHEMA_VERSION (tested).
+CURRENT_FEATURE_SCHEMA = 2
 
 
 class _CachedModel:
@@ -146,36 +160,8 @@ class ModelRegistry:
     # ─── Public: predictions ─────────────────────────────────────────────────
 
     def predict_score_calibrator(self, features: Dict[str, float]) -> Optional[float]:
-        """
-        Returns float probability p(hit_t1) or None on any failure.
-        Uses sklearn CalibratedClassifierCV (joblib format).
-        Feature alignment: fill missing with stored medians from training.
-        """
-        try:
-            entry = self._maybe_load_sklearn("score_calibrator")
-            if entry is None:
-                return None
-            meta = entry.meta
-            feature_names: List[str] = meta.get("feature_names", [])
-            if not feature_names:
-                return None
-
-            medians: Dict[str, float] = meta.get("medians", {})
-
-            import numpy as np
-            # Build feature vector: use input value if present, else training median, else 0
-            x_row = []
-            for f in feature_names:
-                if f in features and features[f] is not None:
-                    x_row.append(float(features[f]))
-                else:
-                    x_row.append(float(medians.get(f, 0.0)))
-
-            x = np.array([x_row], dtype=np.float32)
-            proba = entry.model.predict_proba(x)
-            return float(proba[0, 1])
-        except Exception:
-            return None
+        """Retired (R2-F item 6): no consumer, pooled whale + regime labels, 80-row gate. Always None."""
+        return None
 
     def predict_whale_follow(self, features: Dict[str, float]) -> Optional[float]:
         """
@@ -208,17 +194,46 @@ class ModelRegistry:
         except Exception:
             return None
 
-    def _maybe_load_joblib_dict(self, name: str) -> Optional[_CachedModel]:
-        """Load a joblib dict of {(horizon, quantile): LGBMRegressor} model file."""
-        path = self._latest_model_path(name)
-        if path is None or not path.exists():
-            self._cache[name] = None
+    # ─── Quantile models: promoted-only serving ──────────────────────────────
+
+    def promoted_meta(self, name: str, schema_version: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """
+        Meta of the highest promoted real-data version of `name` whose model
+        file exists AND whose feature_schema_version equals `schema_version`
+        (default: the trainer's current FEATURE_SCHEMA_VERSION), else None. A
+        model trained on another feature schema is never fed this dict.
+        """
+        want = int(schema_version) if schema_version is not None else CURRENT_FEATURE_SCHEMA
+        best = None
+        for p in MODELS_DIR.glob(f"{name}_v*_meta.json"):
+            try:
+                v = int(p.stem.split("_v")[1].split("_meta")[0])
+                m = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if m.get("promoted") is not True or m.get("training_data") != "real":
+                continue
+            if m.get("feature_schema_version") != want:
+                continue
+            if not (MODELS_DIR / f"{name}_v{v}.lgb").exists():
+                continue
+            if best is None or v > best[0]:
+                best = (v, m)
+        if best is None:
             return None
+        meta = dict(best[1])
+        meta["version"] = best[0]
+        return meta
+
+    def _load_joblib_version(self, name: str, version: int, meta: Dict[str, Any]) -> Optional[_CachedModel]:
+        """Load one specific version of a joblib dict {(horizon, quantile): regressor}."""
+        path = MODELS_DIR / f"{name}_v{version}.lgb"
+        key = f"{name}@v{version}"
         try:
             mtime = path.stat().st_mtime
         except OSError:
             return None
-        cached = self._cache.get(name)
+        cached = self._cache.get(key)
         if cached is not None and cached.mtime == mtime:
             return cached
         try:
@@ -227,82 +242,93 @@ class ModelRegistry:
             if not isinstance(model, dict):
                 raise ValueError("Not a dict model")
         except Exception:
-            self._cache[name] = None
+            self._cache[key] = None
             return None
-        meta = self._load_meta(name)
         entry = _CachedModel(model=model, mtime=mtime, meta=meta)
-        self._cache[name] = entry
+        self._cache[key] = entry
         return entry
 
     def predict_quantile_overlay(
         self,
-        features: Dict[str, float],
+        features: Dict[str, Optional[float]],
         horizons: List[int],
+        schema_version: Optional[int] = None,
     ) -> Dict[str, Dict[str, Optional[float]]]:
-        return self._predict_quantile_named("quantile_overlay", features, horizons)
+        return self._predict_quantile_named("quantile_overlay", features, horizons, schema_version)
 
     def predict_quantile_morning(
         self,
-        features: Dict[str, float],
+        features: Dict[str, Optional[float]],
         horizons: List[int],
+        schema_version: Optional[int] = None,
     ) -> Dict[str, Dict[str, Optional[float]]]:
-        """Morning Anchor (Model D). Same return contract as predict_quantile_overlay."""
-        return self._predict_quantile_named("quantile_overlay_morning", features, horizons)
+        """Morning Anchor (Model D). Same contract; served only if promoted on real data."""
+        return self._predict_quantile_named("quantile_overlay_morning", features, horizons, schema_version)
 
     def _predict_quantile_named(
         self,
         model_name: str,
-        features: Dict[str, float],
+        features: Dict[str, Optional[float]],
         horizons: List[int],
+        schema_version: Optional[int] = None,
     ) -> Dict[str, Dict[str, Optional[float]]]:
         """
-        Returns { "5": {q10, q25, q50, q75, q90}, "15": {...}, ... }.
-        Model is a joblib dict keyed by (horizon, quantile) -> LGBMRegressor.
-        Quantile crossing fix: sort 5 values ascending before returning.
-        Returns empty dict on any failure.
+        Returns { "5": {q10, q25, q50, q75, q90}, ... } from the promoted
+        version, or {} when no version is promoted (or on any failure).
+        Quantile crossing fix: the five values are sorted ascending.
         """
         try:
-            import numpy as np
-
-            entry = self._maybe_load_joblib_dict(model_name)
-            if entry is None:
+            meta = self.promoted_meta(model_name, schema_version)
+            if meta is None:
                 return {}
-            meta = entry.meta
+            entry = self._load_joblib_version(model_name, int(meta["version"]), meta)
+            if entry is None or not isinstance(entry.model, dict):
+                return {}
             feature_names: List[str] = meta.get("feature_names", [])
-            training_medians: Dict[str, float] = meta.get("training_medians", {})
-
-            if not feature_names or not isinstance(entry.model, dict):
+            if not feature_names:
                 return {}
-
-            # Build feature vector: reorder/fill missing with training_medians
-            x_vals = []
-            for f in feature_names:
-                val = features.get(f)
-                if val is None or (isinstance(val, float) and val != val):  # NaN check
-                    val = float(training_medians.get(f, 0.0))
-                x_vals.append(float(val))
-            x = np.array([x_vals], dtype=np.float32)
+            x = feature_vector(features, feature_names, meta)
 
             QUANTILE_KEYS = [0.10, 0.25, 0.50, 0.75, 0.90]
             Q_NAMES = ["q10", "q25", "q50", "q75", "q90"]
-
             bands: Dict[str, Any] = {}
             for h in horizons:
                 raw_preds = []
                 for q in QUANTILE_KEYS:
                     model = entry.model.get((h, q))
                     if model is None:
-                        raw_preds.append(0.0)
-                    else:
-                        pred = float(model.predict(x)[0])
-                        raw_preds.append(pred)
-                # Quantile crossing fix: sort ascending
+                        raw_preds = []
+                        break  # a horizon the model was not trained for is not served
+                    raw_preds.append(float(model.predict(x)[0]))
+                if not raw_preds:
+                    continue
                 sorted_preds = sorted(raw_preds)
                 bands[str(h)] = {name: round(val, 8) for name, val in zip(Q_NAMES, sorted_preds)}
-
             return bands
         except Exception:
             return {}
+
+
+def feature_vector(features: Dict[str, Optional[float]], feature_names: List[str], meta: Dict[str, Any]):
+    """
+    (1, n) float array in training column order. missing_policy "native_nan"
+    (every real-data model): missing / null / non-finite -> NaN, as in
+    training. Legacy metas without it: training median (old behavior).
+    """
+    import numpy as np
+    native = meta.get("missing_policy") == "native_nan"
+    medians: Dict[str, Any] = meta.get("training_medians", {}) or {}
+    row = []
+    for f in feature_names:
+        v = features.get(f)
+        try:
+            v = float(v) if v is not None else float("nan")
+        except (TypeError, ValueError):
+            v = float("nan")
+        if v != v or v in (float("inf"), float("-inf")):
+            v = float("nan") if native else float(medians.get(f) or 0.0)
+        row.append(v)
+    return np.array([row], dtype=np.float32)
 
 
 # ─── Module-level convenience functions ───────────────────────────────────────

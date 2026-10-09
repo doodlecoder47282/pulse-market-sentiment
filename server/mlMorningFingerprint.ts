@@ -87,8 +87,10 @@ const EMPTY: MorningFingerprintResult = {
 };
 
 /**
- * Build the morning fingerprint from today's SPY 5min RTH bars.
- * symbol: "SPY" for the SPY-scale projector; "^SPX" for the SPX-scale path.
+ * Build the morning fingerprint from today's 5min RTH bars of `symbol`.
+ * The served path (mlServing.ts) passes "^SPX" with the $SPX feature ATR, so
+ * bars, spot and ATR are on one index (an SPX ATR against SPY bars was 10x off).
+ * The model it feeds is blended in only when promoted (mlServedBand.ts).
  * prevClose: previous session close (for gap feature)
  * atrUnit: ATR-like denominator in points; we use atr5m * sqrt(78) ≈ daily.
  *          When called from the route, prefer to pass atr5m directly.
@@ -161,7 +163,8 @@ export async function buildMorningFingerprint(opts: {
 
   // Gap from prior close
   const prevC = _safe(prevClose);
-  const gap = prevC > 0 ? openPrice - prevC : 0;
+  // No previous close = gap unknown (NaN, sent as null), not a zero gap.
+  const gap = prevC > 0 ? openPrice - prevC : NaN;
 
   // VWAP of first 3 bars (using close as proxy for typical price)
   const vwap = (morning[0].c + morning[1].c + morning[2].c) / 3;
@@ -181,7 +184,7 @@ export async function buildMorningFingerprint(opts: {
     morn_orb_lo_pct: orbLoPct,
     morn_open_drive_atr: dailyAtr > 0 ? drive / dailyAtr : 0,
     morn_opening_vol_z: Math.max(-3, Math.min(3, openingVolZ)),
-    morn_gap_atr: dailyAtr > 0 ? gap / dailyAtr : 0,
+    morn_gap_atr: dailyAtr > 0 ? gap / dailyAtr : NaN,
     morn_vwap_dev_atr: dailyAtr > 0 ? vwapDev / dailyAtr : 0,
     bars_since_anchor: barsSinceAnchor,
     spot_vs_anchor_atr: spotVsAnchor,

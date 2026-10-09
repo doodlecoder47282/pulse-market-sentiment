@@ -6,7 +6,15 @@ Contract:
 - Atomic writes: write to .tmp file then os.rename (never half-written)
 - Write _meta.json alongside each model
 - Return {status: "INSUFFICIENT_DATA"} (no raise) when below data thresholds
-- Thresholds: score_calibrator needs >= 100 primary / >= 80 bootstrap rows
+- score_calibrator: RETIRED (R2-F item 6, review 9.3). It had no consumer
+  (server mlScoreOdte is never called), its bootstrap pooled whale-alert and
+  regime-call rows (two different label processes) and its 80-row gate let a
+  7-feature boosted model fit noise (out-of-fold AUC 0.45). A calibrator that
+  nothing reads is retired rather than re-gated; train_score_calibrator()
+  returns RETIRED and writes nothing. The old body is kept below as
+  _train_score_calibrator_legacy for reference only. If a consumer is ever
+  added: one label source per model, and n sized so the Brier-score
+  difference vs the base rate is detectable (a power calculation), not 80.
 """
 from __future__ import annotations
 
@@ -245,8 +253,13 @@ def _build_feature_matrix(
 # ─── train_score_calibrator ───────────────────────────────────────────────────
 
 def train_score_calibrator() -> Dict[str, Any]:
+    """Retired (see module docstring). Never trains, never writes a model."""
+    return {"status": "RETIRED", "note": "score calibrator retired: no consumer, pooled whale + regime labels, 80-row gate"}
+
+
+def _train_score_calibrator_legacy() -> Dict[str, Any]:
     """
-    Train a calibrated LightGBM binary classifier to predict p(hit_t1).
+    LEGACY, not called. Train a calibrated LightGBM binary classifier to predict p(hit_t1).
 
     Priority:
       1. odte_alert_audit WHERE graded=1 AND hit_t1 IS NOT NULL — primary (TRAINED)

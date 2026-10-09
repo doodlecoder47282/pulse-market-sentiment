@@ -1,6 +1,6 @@
 // MLProjectionPanel.tsx — TOS-style SPY Forward Projection
 //
-// Live SPY 5min candles + dealer levels (rescaled SPX/10) + 3 forward path
+// Live SPY 5min candles + dealer levels ($SPX chain x live SPY/SPX ratio) + 3 forward path
 // scenarios drawn into the future space (right of "now") in the style of a
 // ThinkOrSwim chart: bull (q90) green dashed, base (q50) bold white, bear
 // (q10) red dashed. All anchored at the last candle close, extended through
@@ -12,20 +12,23 @@
 // never draws invented candles (the old server filled the gap with a
 // simulated walk). The synthetic flag below is kept for older payloads.
 //
-// Honesty rules:
-//   • Gamma-snap is applied to the BASE line only (it is a deterministic
-//     post-process). Bull/bear are scenarios, not predictions, and stay
-//     untouched.
-//   • Linear extrapolation past 60min uses the 30→60 slope, capped ±1.5%,
-//     and ends at 16:00 ET.
-//
-//   • Label: the served quantile model was trained on simulated random-walk
-//     minutes with random dealer-level features (ml_service v4 meta), so the
-//     panel is labeled "volatility cone (simulated training)" and the TRAINED
-//     badge reads SIM-TRAINED, unless /api/ml/health reports
-//     training_data: "real" for quantile_overlay (WS4 real-data retrain).
-//     The band is a cone width, not model confidence; this panel does not
-//     show the band's live 10-90% coverage (scored separately, if at all).
+// Honesty rules (R2-F items 3, 4, 5, 8):
+//   • The drawn band is the server's `served` band: a quantile model only if
+//     it was trained on real data AND passed the walk-forward promotion gate
+//     against a baseline volatility cone; otherwise the baseline cone itself.
+//     The label lists every component (`served.label`); the morning-anchor
+//     model is blended in only under the same gate.
+//   • The base line is the band's q50, unadjusted (the old gamma-snap moved it
+//     toward dealer levels with an untested rule, so the drawn line was not
+//     the scored median).
+//   • Past the last model horizon the paths are a linear extension of the
+//     30->60 slope, capped ±1.5%, to 16:00 ET: drawn lighter, labeled, and
+//     NOT scored.
+//   • The verdict strip is neutral grey unless a promoted real-data model
+//     contributes to the band (a baseline cone has zero drift by design).
+//   • Live coverage of the drawn 10-90% band (/api/ml/coverage, same
+//     model + version keys) is shown per horizon: Wilson 95% interval,
+//     Kupiec and Christoffersen tests.
 //
 // No localStorage / sessionStorage / cookies. No emojis.
 
@@ -73,6 +76,12 @@ interface MLModelHealth {
   trained_at: string | null;
   n_train: number;
   auc: number | null;
+  /** Quantile models: a version passed the promotion gate and is served. */
+  promoted?: boolean;
+  served_version?: number | null;
+  latest_version?: number | null;
+  latest_status?: string | null;
+  latest_training_data?: string | null;
   /** Optional; absent = treat as simulated. Set to "real" only by a real-data retrain. */
   /** ml_service meta value, e.g. "synthetic_gbm" or "real". Anything other than
    *  "real" (including absent/null) is treated as simulated training. */
@@ -106,8 +115,8 @@ interface GammaLevelEntry {
 
 interface GammaLevels {
   gammaFlip: GammaLevelEntry | null;
-  callWall: GammaLevelEntry;
-  putWall: GammaLevelEntry;
+  callWall: GammaLevelEntry | null;
+  putWall: GammaLevelEntry | null;
   topGexStrikes: Array<{ strike: number; gex: number }>;
   vanna: GammaLevelEntry | null;
   charm: GammaLevelEntry | null;
@@ -124,6 +133,11 @@ interface GammaLevels {
   };
   spxNow: number;
   asOf: string;
+  /** Server (R2-F): levels come from the Schwab $SPX chain; "unavailable" with a reason otherwise. */
+  dataState?: "ok" | "unavailable";
+  reason?: string | null;
+  display?: string;
+  scale?: number | null;
 }
 
 interface MorningPayload {
@@ -143,6 +157,49 @@ interface BlendPayload {
   bands: Record<string, QuantileBand> | null;
 }
 
+interface ServedComponent {
+  name: "quantile_overlay" | "morning_anchor" | "baseline_cone";
+  version: string;
+  trainingData: string | null;
+  promoted: boolean;
+  weight: number;
+  horizons: number[];
+  note: string;
+}
+
+interface ServedBandPayload {
+  source: "quantile_overlay" | "baseline_cone" | "unavailable";
+  bands: Record<string, QuantileBand> | null;
+  components: ServedComponent[];
+  learned: boolean;
+  label: string;
+  reason: string | null;
+  coverageModel: string;
+  coverageVersion: string;
+  trainingData: string | null;
+}
+
+interface CoverageRow {
+  horizonMin: number;
+  n: number;
+  covered: number;
+  rate: number | null;
+  wilsonLo: number | null;
+  wilsonHi: number | null;
+  kupiecP: number | null;
+  independenceP: number | null;
+}
+
+interface CoverageReportPayload {
+  nominal: number;
+  model: string | null;
+  version: string | null;
+  pooled: Array<CoverageRow & { windowDays: number }>;
+  daily: Array<CoverageRow & { day: string }>;
+  pending: number;
+  noPrice: number;
+}
+
 interface ProjectionSpyResponse {
   ok: boolean;
   candles: OHLCCandle[];
@@ -156,7 +213,10 @@ interface ProjectionSpyResponse {
   };
   morning?: MorningPayload;
   blend?: BlendPayload;
-  features: Record<string, number>;
+  /** null = feature missing (input unavailable), never 0. */
+  features: Record<string, number | null>;
+  /** The band actually drawn and scored, with every component named. */
+  served?: ServedBandPayload;
   synthetic?: boolean;
   syntheticReason?: string | null;
   /** "ok" = real bars; "no_data" = empty tape (dataStateReason says why). */
@@ -223,11 +283,7 @@ function fmtMinuteAxis(min: number): string {
 
 // ─── Status strip (preserved testids) ────────────────────────────────────────
 
-/** True unless the service says this model was trained on real data. */
-function isSimTrained(m: MLModelHealth | undefined | null): boolean {
-  return (m?.training_data ?? "synthetic") !== "real";
-}
-const SIM_LABEL = "volatility cone (simulated training)";
+const BASELINE_LABEL = "baseline volatility cone";
 
 function statusVariant(s: string): "default" | "secondary" | "destructive" | "outline" {
   if (s === "TRAINED") return "default";
@@ -282,33 +338,31 @@ function MLStatusStrip() {
     <div className="flex flex-wrap gap-3 text-xs">
       <div className="flex items-center gap-1.5" data-testid="text-ml-status-score_calibrator">
         <span className="text-muted-foreground font-medium">score_calibrator</span>
-        <Badge variant={statusVariant(score_calibrator?.status ?? "")} className={`text-xs h-5 ${statusColor(score_calibrator?.status ?? "")}`}>
-          {score_calibrator?.status ?? "—"}
+        <Badge variant="outline" className="text-xs h-5 text-muted-foreground" title="Retired: no consumer; pooled whale and regime labels; 80-row gate.">
+          {score_calibrator?.status === "RETIRED" ? "RETIRED" : (score_calibrator?.status ?? "—")}
         </Badge>
       </div>
       <Separator orientation="vertical" className="h-4 self-center" />
       <div className="flex items-center gap-1.5" data-testid="text-ml-status-quantile_overlay">
         <span className="text-muted-foreground font-medium">quantile_overlay</span>
-        {quantile_overlay?.status === "TRAINED" && isSimTrained(quantile_overlay) ? (
+        {quantile_overlay?.promoted ? (
+          <Badge variant="default" className="text-xs h-5 text-green-500" title="Real-data model that passed the walk-forward promotion gate against the baseline cone.">
+            PROMOTED v{quantile_overlay.served_version ?? quantile_overlay.version}
+          </Badge>
+        ) : (
           <Badge
             variant="secondary"
             className="text-xs h-5 text-amber-500"
-            title="Trained on simulated random-walk minutes and random dealer-level features, not real market data."
+            title="No quantile model has passed the promotion gate; the panel draws the baseline volatility cone."
             data-testid="badge-ml-sim-trained"
           >
-            SIM-TRAINED
-          </Badge>
-        ) : (
-          <Badge variant={statusVariant(quantile_overlay?.status ?? "")} className={`text-xs h-5 ${statusColor(quantile_overlay?.status ?? "")}`}>
-            {quantile_overlay?.status ?? "—"}
+            NOT SERVED
           </Badge>
         )}
-        {quantile_overlay?.version != null && (
-          <span className="text-muted-foreground">v{quantile_overlay.version}</span>
-        )}
-        {quantile_overlay?.n_train != null && (
+        {!quantile_overlay?.promoted && quantile_overlay?.latest_version != null && (
           <span className="text-muted-foreground">
-            n={quantile_overlay.n_train}{isSimTrained(quantile_overlay) ? " simulated rows" : ""}
+            latest v{quantile_overlay.latest_version}
+            {quantile_overlay.latest_training_data && quantile_overlay.latest_training_data !== "real" ? " (simulated training)" : quantile_overlay.latest_status ? ` (${quantile_overlay.latest_status.toLowerCase()})` : ""}
           </span>
         )}
       </div>
@@ -437,33 +491,23 @@ function SyntheticWatermark(props: any) {
 
 // ─── Main panel ──────────────────────────────────────────────────────────────
 
-// Model status pill (which model is producing the projection now)
-function ModelStatusPill({
-  activeModel,
-  weight,
-  morningReady,
-}: {
-  activeModel: "v3" | "blend" | "morning";
-  weight: number;
-  morningReady: boolean;
-}) {
-  let label = "v3 (intraday)";
+// Status pill: every component of the drawn band, with its weight.
+function ModelStatusPill({ served }: { served: ServedBandPayload | null }) {
+  let label = "no band";
   let cls = "bg-slate-700/60 text-slate-200 border-slate-600";
-  if (activeModel === "morning") {
-    label = `morning anchor ${(weight * 100).toFixed(0)}%`;
-    cls = "bg-cyan-500/15 text-cyan-200 border-cyan-500/40";
-  } else if (activeModel === "blend") {
-    label = `blend (morning ${(weight * 100).toFixed(0)}%)`;
-    cls = "bg-violet-500/15 text-violet-200 border-violet-500/40";
-  } else if (morningReady) {
-    label = "v3 (morning warmup)";
-    cls = "bg-amber-500/15 text-amber-200 border-amber-500/40";
+  if (served && served.components.length > 0) {
+    label = served.components
+      .map((c) => c.name === "baseline_cone" ? "baseline cone"
+        : c.name === "quantile_overlay" ? `model v${c.version}${c.weight < 1 ? ` ${(c.weight * 100).toFixed(0)}%` : ""}`
+        : `morning v${c.version} ${(c.weight * 100).toFixed(0)}%`)
+      .join(" + ");
+    cls = served.learned ? "bg-emerald-500/15 text-emerald-200 border-emerald-500/40" : "bg-amber-500/15 text-amber-200 border-amber-500/40";
   }
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium font-mono ${cls}`}
       data-testid="badge-ml-active-model"
-      title="Active model producing the forward projection"
+      title={served?.label ?? "No band is drawn"}
     >
       <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
       {label}
@@ -492,7 +536,11 @@ export default function MLProjectionPanel() {
     refetchInterval: 60_000,
     retry: false,
   });
-  const simTrained = isSimTrained(health?.models?.quantile_overlay);
+  void health;
+  const served = data?.served ?? null;
+  // Learned = a promoted real-data model contributes to the drawn band.
+  const learned = served?.learned === true;
+  const bandLabel = served?.label ?? BASELINE_LABEL;
 
   const candles = data?.candles ?? [];
   const levels = data?.levels ?? null;
@@ -506,15 +554,27 @@ export default function MLProjectionPanel() {
   const noDataReason = data?.dataStateReason ?? null;
   const spot = data?.spot ?? candles[candles.length - 1]?.c ?? null;
 
-  // Choose effective bands: blended if available, else v3.
-  const effectiveBands = blend?.bands && Object.keys(blend.bands).length > 0
-    ? blend.bands
-    : v3Projection?.bands ?? null;
+  // Drawn bands = the server's served band (also what coverage scores).
+  // Older payloads without `served` fall back to blend / raw projection.
+  const effectiveBands = served
+    ? served.bands
+    : blend?.bands && Object.keys(blend.bands).length > 0
+      ? blend.bands
+      : v3Projection?.bands ?? null;
   const activeModel = blend?.activeModel ?? "v3";
-  const blendWeight = blend?.weight ?? 0;
   const projection = effectiveBands
-    ? { bands: effectiveBands, status: v3Projection?.status ?? "UNAVAILABLE", version: v3Projection?.version ?? "" }
+    ? { bands: effectiveBands, status: learned ? "PROMOTED" : "BASELINE", version: served?.coverageVersion ?? v3Projection?.version ?? "" }
     : v3Projection;
+
+  // Live coverage of THIS band (same model + version keys as the logger).
+  const covKey = served && served.coverageModel !== "none" ? `model=${encodeURIComponent(served.coverageModel)}&version=${encodeURIComponent(served.coverageVersion)}` : null;
+  const { data: coverage } = useQuery<CoverageReportPayload>({
+    queryKey: ["/api/ml/coverage", covKey],
+    queryFn: () => apiRequest("GET", `/api/ml/coverage?days=30&${covKey}`).then((r) => r.json()),
+    enabled: !!covKey,
+    refetchInterval: 5 * 60_000,
+    retry: false,
+  });
 
   // Horizons available depend on which model produced the bands.
   const activeHorizons = useMemo(() => {
@@ -589,7 +649,6 @@ export default function MLProjectionPanel() {
         nearest: string | null;
       }>;
     }
-    const netGexSign = features.net_gex_sign ?? 0;
     const out: Array<{
       minute: number;
       bull: number;
@@ -614,22 +673,11 @@ export default function MLProjectionPanel() {
       if (!band) continue;
       const bullPx = anchorPrice * (1 + band.q90);
       const bearPx = anchorPrice * (1 + band.q10);
-      let basePx = anchorPrice * (1 + band.q50);
-
-      // Gamma-snap to BASE only.
-      let snapApplied = false;
-      let nearestKey: string | null = null;
+      // Base = the band's median, unadjusted (what coverage and the label describe).
+      const basePx = anchorPrice * (1 + band.q50);
+      const snapApplied = false;
       const near = nearestLevel(basePx, levelSpecs, 0.005);
-      if (near) {
-        nearestKey = near.label;
-        if (netGexSign > 0) {
-          basePx = basePx + (near.value - basePx) * 0.25;
-          snapApplied = true;
-        } else if (netGexSign < 0) {
-          basePx = basePx - (near.value - basePx) * 0.15;
-          snapApplied = true;
-        }
-      }
+      const nearestKey: string | null = near ? near.label : null;
 
       out.push({
         minute: anchorMinute + h,
@@ -641,7 +689,7 @@ export default function MLProjectionPanel() {
       });
     }
     return out;
-  }, [projection, levelSpecs, anchorPrice, anchorMinute, features.net_gex_sign, activeHorizons]);
+  }, [projection, levelSpecs, anchorPrice, anchorMinute, activeHorizons]);
 
   // Linear extrapolation of each path's 30→60 slope to RTH close, capped ±1.5%.
   const extRows = useMemo(() => {
@@ -803,7 +851,7 @@ export default function MLProjectionPanel() {
     return (
       <Card data-testid="panel-ml-projection" className="border-border/60">
         <CardHeader>
-          <CardTitle>SPY — Projected Path · {simTrained ? SIM_LABEL : "quantile model"}</CardTitle>
+          <CardTitle>SPY — Projected Path</CardTitle>
         </CardHeader>
         <CardContent>
           <Skeleton className="h-[480px] w-full" />
@@ -816,7 +864,7 @@ export default function MLProjectionPanel() {
     return (
       <Card data-testid="panel-ml-projection" className="border-border/60">
         <CardHeader>
-          <CardTitle>SPY — Projected Path · {simTrained ? SIM_LABEL : "quantile model"}</CardTitle>
+          <CardTitle>SPY — Projected Path</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-between rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm">
@@ -862,16 +910,16 @@ export default function MLProjectionPanel() {
   const flipDistDollar =
     levels?.gammaFlip?.value && spot ? levels.gammaFlip.value - spot : null;
 
-  const netGexSign = features.net_gex_sign ?? 0;
+  // null = dealer gamma unavailable (chain missing): never shown as neutral.
+  const netGexSign = typeof features.net_gex_sign === "number" && Number.isFinite(features.net_gex_sign) ? features.net_gex_sign : null;
   const regimeLabel =
-    netGexSign > 0 ? "positive gamma" : netGexSign < 0 ? "negative gamma" : "neutral";
+    netGexSign == null ? "unavailable" : netGexSign > 0 ? "positive gamma" : netGexSign < 0 ? "negative gamma" : "zero net gamma";
 
   const proj60 = pathRows[pathRows.length - 1] ?? null;
   const bullPrice = proj60?.bull ?? null;
   const basePrice = proj60?.base ?? null;
   const bearPrice = proj60?.bear ?? null;
   const bandWidth = proj60 ? proj60.bull - proj60.bear : 0;
-  const snapApplied = pathRows.some((p) => p.snapApplied);
 
   const pctVsAnchor = (px: number | null) =>
     px != null && anchorPrice ? (px - anchorPrice) / anchorPrice : null;
@@ -899,8 +947,10 @@ export default function MLProjectionPanel() {
     interpretations.push("positive gamma — pin behavior. dealers buy dips, sell rips.");
   } else if (regimeLabel === "negative gamma") {
     interpretations.push("negative gamma — vol regime, moves accelerate.");
+  } else if (regimeLabel === "unavailable") {
+    interpretations.push("dealer gamma unavailable (Schwab SPX chain missing or stale) — no regime read.");
   } else {
-    interpretations.push("neutral — near gamma flip, no dominant dealer hedging bias.");
+    interpretations.push("net dealer gamma about zero — no dominant hedging bias.");
   }
   if (callDistPct != null && Math.abs(callDistPct) < 0.005 && levels?.callWall?.value) {
     interpretations.push(
@@ -920,7 +970,7 @@ export default function MLProjectionPanel() {
   if (bandWidth > 0 && spot) {
     const widthPct = bandWidth / spot;
     if (widthPct < 0.004) {
-      interpretations.push(`narrow cone ($${bandWidth.toFixed(2)} width) — width is not confidence; coverage not shown here.`);
+      interpretations.push(`narrow cone ($${bandWidth.toFixed(2)} width) — width is not confidence; check live coverage below.`);
     } else {
       interpretations.push(`wide cone ($${bandWidth.toFixed(2)}) — trade levels, not direction.`);
     }
@@ -934,14 +984,18 @@ export default function MLProjectionPanel() {
   const convictionTight = bandWidth > 0 && spot ? bandWidth / spot < 0.004 : false;
   const verdictText =
     basePrice == null || spot == null
-      ? "projection warming up — cone appears when the model has enough tape."
-      : lean === "FLAT"
-        ? `cone center flat — base path near $${fmtPrice(basePrice)}. ${convictionTight ? "narrow cone" : "wide cone: trade the levels, not a direction"}.${simTrained ? " simulated training: not a learned forecast." : ""}`
-        : `cone center drifts ${lean === "UP" ? "higher" : "lower"} — base path $${fmtPrice(basePrice)} (${fmtPct(leanPct)}), upper $${fmtPrice(bullPrice)}, lower $${fmtPrice(bearPrice)}.${simTrained ? " simulated training: the drift is not learned from real data." : ""}`;
+      ? (served?.source === "unavailable" ? `no band — ${served.reason ?? "inputs unavailable"}.` : "projection warming up — cone appears when there is enough tape.")
+      : !learned
+        ? `baseline volatility cone, zero drift: upper $${fmtPrice(bullPrice)}, lower $${fmtPrice(bearPrice)} at ${activeHorizons[activeHorizons.length - 1] ?? 60} min. not a directional forecast${served?.reason ? ` (${served.reason})` : ""}.`
+        : lean === "FLAT"
+          ? `model median flat — base path near $${fmtPrice(basePrice)}. ${convictionTight ? "narrow cone" : "wide cone: trade the levels, not a direction"}.`
+          : `model median drifts ${lean === "UP" ? "higher" : "lower"} — base path $${fmtPrice(basePrice)} (${fmtPct(leanPct)}), upper $${fmtPrice(bullPrice)}, lower $${fmtPrice(bearPrice)}.`;
+  // Colour only when a promoted real-data model is drawn (item 8); neutral otherwise.
   const verdictStyle =
-    lean === "UP" ? "border-emerald-800 bg-emerald-950/40 text-emerald-200"
-    : lean === "DOWN" ? "border-rose-800 bg-rose-950/40 text-rose-200"
+    learned && lean === "UP" ? "border-emerald-800 bg-emerald-950/40 text-emerald-200"
+    : learned && lean === "DOWN" ? "border-rose-800 bg-rose-950/40 text-rose-200"
     : "border-slate-700 bg-slate-900/60 text-slate-200";
+  const verdictTag = !learned ? "BASELINE" : lean === "UP" ? "LEAN UP" : lean === "DOWN" ? "LEAN DOWN" : "FLAT";
 
   return (
     <Card data-testid="panel-ml-projection" className="border-border/60">
@@ -951,21 +1005,23 @@ export default function MLProjectionPanel() {
             <CardTitle className="flex items-center gap-2">
               <Activity className="w-4 h-4 shrink-0" />
               SPY — Projected Path
-              {simTrained && (
-                <Badge variant="outline" className="border-amber-500/50 text-amber-400 text-[10px] font-mono" data-testid="badge-ml-cone-label">
-                  {SIM_LABEL}
-                </Badge>
-              )}
+              <Badge
+                variant="outline"
+                className={`text-[10px] font-mono ${learned ? "border-emerald-500/50 text-emerald-400" : "border-amber-500/50 text-amber-400"}`}
+                data-testid="badge-ml-cone-label"
+                title={bandLabel}
+              >
+                {learned ? "promoted quantile model" : BASELINE_LABEL}
+              </Badge>
               <EdgeInfo id="ml-forecast" />
             </CardTitle>
-            <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
-              {simTrained
-                ? "live candles, dealer levels, and a volatility cone: base, upper and lower paths from a quantile model trained on simulated data, not real market history. not a learned forecast; this panel does not show the band\u2019s coverage on real outcomes. updates every 5s during market hours."
-                : "live candles, dealer levels, and three forward paths: base, upper and lower quantiles. this panel does not show the band\u2019s live 10-90% coverage. updates every 5s during market hours."}
+            <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed" data-testid="text-ml-band-label">
+              drawn band: {bandLabel}. paths past the last horizon are a linear extension (lighter, not a forecast, not scored).
+              live 10-90% coverage of this band is below. updates every 5s during market hours.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <ModelStatusPill activeModel={activeModel} weight={blendWeight} morningReady={!!morning?.ready} />
+            <ModelStatusPill served={served} />
             <Button
               size="sm"
               variant="outline"
@@ -998,7 +1054,7 @@ export default function MLProjectionPanel() {
         )}
         {hasCandles && !hasBands && (
           <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-muted-foreground">
-            projection pending — waiting for dealer levels to settle
+            no band drawn — {served?.reason ?? "waiting for the projection service"}
             <Button
               size="sm"
               variant="ghost"
@@ -1021,7 +1077,7 @@ export default function MLProjectionPanel() {
           data-testid="ml-verdict-strip"
         >
           <span className="shrink-0 rounded bg-black/30 px-2 py-0.5 font-mono text-[10px] font-bold tracking-widest">
-            {lean === "UP" ? "LEAN UP" : lean === "DOWN" ? "LEAN DOWN" : "FLAT"}
+            {verdictTag}
           </span>
           <span className="text-xs leading-snug">{verdictText}</span>
         </div>
@@ -1098,7 +1154,7 @@ export default function MLProjectionPanel() {
                   }
                   if (name === "base") {
                     const p = pctVsAnchor(Number(value));
-                    const tag = row?.snapApplied ? ` (snap → ${row?.nearest ?? "wall"})` : "";
+                    const tag = row?.nearest ? ` (near ${row.nearest})` : "";
                     return [`$${fmtPrice(Number(value))}  ${fmtPct(p)}${tag}`, "base (q50)"];
                   }
                   if (name === "bear") {
@@ -1106,13 +1162,13 @@ export default function MLProjectionPanel() {
                     return [`$${fmtPrice(Number(value))}  ${fmtPct(p)}`, "bear (q10)"];
                   }
                   if (name === "bullExt") {
-                    return [`$${fmtPrice(Number(value))} (linear ext)`, "bull ext"];
+                    return [`$${fmtPrice(Number(value))} (linear extension, not scored)`, "bull ext"];
                   }
                   if (name === "baseExt") {
-                    return [`$${fmtPrice(Number(value))} (linear ext)`, "base ext"];
+                    return [`$${fmtPrice(Number(value))} (linear extension, not scored)`, "base ext"];
                   }
                   if (name === "bearExt") {
-                    return [`$${fmtPrice(Number(value))} (linear ext)`, "bear ext"];
+                    return [`$${fmtPrice(Number(value))} (linear extension, not scored)`, "bear ext"];
                   }
                   return [fmtPrice(Number(value)), String(name)];
                 }}
@@ -1314,6 +1370,16 @@ export default function MLProjectionPanel() {
             <p className="text-[10px] leading-snug text-muted-foreground/70">
               how far price sits from the walls and the flip — small distances mean the level is in play right now.
             </p>
+            {levels?.dataState === "unavailable" && (
+              <p className="text-[10px] leading-snug text-amber-400" data-testid="text-ml-levels-unavailable">
+                dealer levels unavailable ({levels.reason ?? "unknown"}), not zero.
+              </p>
+            )}
+            {levels?.dataState === "ok" && (
+              <p className="text-[10px] leading-snug text-muted-foreground/70">
+                from the Schwab $SPX option chain{levels.display === "SPY" && levels.scale ? `, x ${levels.scale.toFixed(5)} (live SPY/SPX quotes)` : ""}.
+              </p>
+            )}
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">spot</span>
               <span className="font-mono">
@@ -1347,7 +1413,7 @@ export default function MLProjectionPanel() {
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">regime</span>
               <Badge
-                variant={netGexSign > 0 ? "default" : netGexSign < 0 ? "destructive" : "secondary"}
+                variant={netGexSign == null ? "outline" : netGexSign > 0 ? "default" : netGexSign < 0 ? "destructive" : "secondary"}
                 className="h-5 text-xs"
               >
                 {regimeLabel}
@@ -1364,7 +1430,9 @@ export default function MLProjectionPanel() {
               <span>scenarios ({activeHorizons[activeHorizons.length - 1] ?? 60}min)</span>
             </div>
             <p className="text-[10px] leading-snug text-muted-foreground/70">
-              three paths: base is the model's best guess, bull and bear are the realistic best and worst cases.
+              {learned
+                ? "base is the promoted model's median (q50); bull and bear are its 90th and 10th percentiles."
+                : "baseline cone: base is its zero-drift median; bull and bear are its 90th and 10th percentiles. not a learned forecast."}
             </p>
             {(activeModel === "morning" || activeModel === "blend") && morning?.anchorTimeEt && (
               <div className="font-mono text-[10px] text-cyan-300/80">anchor {morning.anchorTimeEt}</div>
@@ -1392,10 +1460,8 @@ export default function MLProjectionPanel() {
               <span className="font-mono">${bandWidth.toFixed(2)}</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">gamma-snap</span>
-              <Badge variant={snapApplied ? "default" : "outline"} className="h-5 text-xs">
-                {snapApplied ? "applied" : "not applied"}
-              </Badge>
+              <span className="text-muted-foreground">base line</span>
+              <span className="font-mono text-xs">q50, unadjusted</span>
             </div>
           </div>
 
@@ -1423,7 +1489,86 @@ export default function MLProjectionPanel() {
             </ul>
           </div>
         </div>
+
+        <CoverageTable report={coverage ?? null} servedLabel={bandLabel} />
       </CardContent>
     </Card>
+  );
+}
+
+// ─── Live coverage of the drawn band (R2-F item 4) ───────────────────────────
+
+function fmtP(p: number | null | undefined): string {
+  if (p == null || !Number.isFinite(p)) return "—";
+  return p < 0.001 ? "<0.001" : p.toFixed(3);
+}
+
+function CoverageCells({ r }: { r: CoverageRow | undefined }) {
+  if (!r || r.n === 0) {
+    return <td className="px-2 py-1 text-muted-foreground" colSpan={3}>no scored forecasts yet</td>;
+  }
+  const off = r.wilsonLo != null && r.wilsonHi != null && (0.8 < r.wilsonLo || 0.8 > r.wilsonHi);
+  return (
+    <>
+      <td className="px-2 py-1 font-mono text-right">{r.n}</td>
+      <td className={`px-2 py-1 font-mono text-right ${off ? "text-amber-400" : ""}`}>
+        {r.rate != null ? `${(r.rate * 100).toFixed(0)}%` : "—"}
+      </td>
+      <td className="px-2 py-1 font-mono text-right text-muted-foreground">
+        {r.wilsonLo != null && r.wilsonHi != null ? `${(r.wilsonLo * 100).toFixed(0)}-${(r.wilsonHi * 100).toFixed(0)}%` : "—"}
+      </td>
+    </>
+  );
+}
+
+function CoverageTable({ report, servedLabel }: { report: CoverageReportPayload | null; servedLabel: string }) {
+  const latestDay = report?.daily?.[0]?.day ?? null;
+  const horizons = (report?.pooled ?? []).map((p) => p.horizonMin);
+  return (
+    <div className="rounded-md border border-border/60 bg-muted/10 p-3 space-y-2" data-testid="box-ml-coverage">
+      <div className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">
+        live coverage of the drawn 10-90% band (nominal 80%)
+      </div>
+      <p className="text-[10px] leading-snug text-muted-foreground/70">
+        scored on realized SPX returns, one non-overlapping forecast per horizon window, for this exact band ({servedLabel}).
+        95% Wilson interval; Kupiec p &lt; 0.05 rejects 80% coverage; Christoffersen p &lt; 0.05 means misses cluster.
+        a different band (another model version, or the baseline) starts its own record.
+      </p>
+      {!report ? (
+        <div className="text-xs text-muted-foreground">coverage unavailable (not logged yet or the server could not read it).</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-muted-foreground">
+                <th className="px-2 py-1 text-left font-medium">horizon</th>
+                <th className="px-2 py-1 text-right font-medium" colSpan={3}>{latestDay ? `latest day ${latestDay}: n / covered / 95% CI` : "latest day"}</th>
+                <th className="px-2 py-1 text-right font-medium" colSpan={3}>30 days: n / covered / 95% CI</th>
+                <th className="px-2 py-1 text-right font-medium">Kupiec p</th>
+                <th className="px-2 py-1 text-right font-medium">Christoffersen p</th>
+              </tr>
+            </thead>
+            <tbody>
+              {horizons.map((h) => {
+                const pooled = report.pooled.find((p) => p.horizonMin === h);
+                const day = latestDay ? report.daily.find((d) => d.day === latestDay && d.horizonMin === h) : undefined;
+                return (
+                  <tr key={h} className="border-t border-border/40" data-testid={`row-ml-coverage-${h}`}>
+                    <td className="px-2 py-1 font-mono">{h} min</td>
+                    <CoverageCells r={day} />
+                    <CoverageCells r={pooled} />
+                    <td className="px-2 py-1 font-mono text-right">{pooled && pooled.n > 0 ? fmtP(pooled.kupiecP) : "—"}</td>
+                    <td className="px-2 py-1 font-mono text-right">{pooled && pooled.n > 0 ? fmtP(pooled.independenceP) : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div className="mt-1 text-[10px] text-muted-foreground/70">
+            pending (horizon not yet passed): {report.pending} · no price for the window: {report.noPrice}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

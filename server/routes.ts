@@ -6069,30 +6069,41 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   // ─── ML quantile projection (ML Lab) ───────────────────────────────────
-  // Helper: resolve live inputs for the Greek feature builder.
-  // Captured here so mlGreekFeatures.ts stays free of circular imports on
-  // routes.ts (it cannot reach getOrBuild directly).
+  // Live inputs for the feature builder (feature schema v2, R2-F item 1),
+  // all from Schwab and all on $SPX: spot and VIX quotes (stale quotes are
+  // missing, not used) and the $SPX option chain the dealer levels are
+  // computed from (mlFeatureMath.dealerLevelsFromChain). The Signals snapshot
+  // gamma is NOT used: it was the CBOE SPY chain in SPY points, measured
+  // against SPX spot. Chain cached 60 s; the feature dict is cached 30 s.
+  let mlChainCache: { at: number; chain: any; reason: string | null } | null = null;
   const resolveMlFeatureInputs = async () => {
-    const { buildGammaLevelsEnhanced } = await import("./gammaLevels");
-    let levels: any = null;
     let spxNow: number | null = null;
     let vix: number | null = null;
     let vixPrev: number | null = null;
     try {
-      const snap = await getOrBuild(false);
-      const g = snap.gamma;
-      const spy = snap.spy.price ?? g.spot;
-      levels = buildGammaLevelsEnhanced(g, spy);
-      // SPX cash spot: prefer ^SPX 5min last close from the OHLC fetcher.
+      const qs = await schwabGetQuotes(["$SPX", "$VIX"]);
+      const spx = qs.find((q) => q.symbol === "$SPX");
+      const vq = qs.find((q) => q.symbol === "$VIX");
+      // Only quotes known to be fresh: stale null (no quote time, age unknown) is missing too.
+      if (spx && spx.stale === false && spx.last != null && spx.last > 0) spxNow = spx.last;
+      if (vq && vq.stale === false && vq.last != null && vq.last > 0) { vix = vq.last; vixPrev = vq.prevClose ?? null; }
+    } catch { /* missing, not zero */ }
+    if (!mlChainCache || Date.now() - mlChainCache.at > 60_000) {
+      const at = Date.now();
       try {
-        const { fetchOHLC } = await import("./ohlc");
-        const ohlc = await fetchOHLC("^SPX", "1D", "5m");
-        spxNow = ohlc?.price ?? null;
-      } catch { /* leave null */ }
-      vix = snap.vol.vix.value ?? null;
-      vixPrev = snap.vol.vix.prev ?? null;
-    } catch { /* fall through with nulls */ }
-    return { levels, spxNow, vix, vixPrev };
+        const ch = await schwabGetOptionChain("$SPX", 45);
+        if ("error" in ch) mlChainCache = { at, chain: null, reason: `chain_${ch.error}` };
+        else if (ch.source !== "schwab") mlChainCache = { at, chain: null, reason: `chain_source_${ch.source}_refused` };
+        // The guard reads the chain's own symbol when the fetch layer reports one.
+        else mlChainCache = { at, chain: { ...ch, symbol: (ch as any).symbol ?? "$SPX" }, reason: null };
+      } catch {
+        mlChainCache = { at, chain: null, reason: "chain_fetch_failed" };
+      }
+    }
+    return {
+      spxNow, spotUnderlying: "$SPX", vix, vixPrev,
+      spxChain: mlChainCache.chain, chainFetchedAtMs: mlChainCache.at, chainReason: mlChainCache.reason,
+    };
   };
 
   // F9.1 / F9.3 — deterministic real-data logger for the quantile forecaster
@@ -6101,13 +6112,15 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   import("./mlDataLog").then((m) => m.startMlDataLogger(resolveMlFeatureInputs))
     .catch((e) => console.warn("[ml:datalog] not started:", e?.message ?? e));
 
-  // GET /api/ml/coverage?days=30 — live coverage of the served 10-90% band.
+  // GET /api/ml/coverage?days=30[&model=&version=] — live coverage of the
+  // drawn 10-90% band (default: the most recently scored served band).
   app.get("/api/ml/coverage", async (req, res) => {
     try {
       const { getCoverageReport } = await import("./mlDataLog");
       const days = Math.max(1, Math.min(365, Number(req.query.days) || 30));
       const version = typeof req.query.version === "string" && req.query.version ? req.query.version : undefined;
-      res.json(getCoverageReport(days, Date.now(), version));
+      const model = typeof req.query.model === "string" && req.query.model ? req.query.model : undefined;
+      res.json(getCoverageReport(days, Date.now(), version, model));
     } catch (e: any) {
       res.status(500).json({ error: "coverage_failed", message: e?.message ?? String(e) });
     }
@@ -6159,23 +6172,25 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
     // UI route — user tolerates latency. 2500ms covers FastAPI cold-start; hot-path Discord still 100ms.
     const result = await mlQuantileOverlay(features, horizons, { timeoutMs: 2500 });
-    if (!result) return res.status(503).json({ ok: false, error: "ML service unreachable" });
+    // The sidecar serves only a promoted real-data model: no bands = none
+    // passed the gate, or the sidecar is not running (GET /api/ml/health says which).
+    if (!result) return res.status(503).json({ ok: false, error: "no promoted quantile model, or ML sidecar unreachable (see /api/ml/health)" });
     res.json({ ok: true, ...result });
   });
 
   // ─── ML Lab unified SPX endpoint ───────────────────────────────────────
-  // Single payload the ML Lab panel consumes: candles + dealer levels +
-  // forward projection bands + the feature dict that produced the projection.
+  // Candles + dealer levels + the SERVED band (mlServing: a promoted real-data
+  // model, else the labeled baseline cone) + the feature dict behind it.
   app.get("/api/ml/projection-spx", async (_req, res) => {
     try {
-      const { mlQuantileOverlay } = await import("./mlBridge");
-      const { buildMlFeatures } = await import("./mlGreekFeatures");
+      const { buildMlFeatures, getLastMlFeatureProvenance } = await import("./mlGreekFeatures");
+      const { buildServedProjection } = await import("./mlServing");
       const { fetchOHLC } = await import("./ohlc");
-      const { buildGammaLevelsEnhanced } = await import("./gammaLevels");
+      const { userTargets } = await import("./gammaLevels");
+      const { mlLabLevels } = await import("./mlFeatureMath");
 
       const features = await buildMlFeatures(resolveMlFeatureInputs);
-      const horizons = [5, 15, 30, 60];
-      const projection = await mlQuantileOverlay(features, horizons, { timeoutMs: 2500 });
+      const sp = await buildServedProjection(features);
 
       // Today's RTH SPX 5min bars
       let candles: any[] = [];
@@ -6188,12 +6203,12 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         prevClose = ohlc?.prevClose ?? null;
       } catch { /* empty */ }
 
-      // Levels (re-build cheaply — getOrBuild is cached internally)
-      let levels: any = null;
-      try {
-        const snap = await getOrBuild(false);
-        levels = buildGammaLevelsEnhanced(snap.gamma, snap.spy.price ?? snap.gamma.spot);
-      } catch { /* null levels */ }
+      // Levels: the dealer levels the features were built from (Schwab $SPX
+      // chain, same index as the candles), never the Signals snapshot gamma.
+      const prov = getLastMlFeatureProvenance();
+      let targets: any = {};
+      try { targets = userTargets(); } catch { targets = {}; }
+      const levels = mlLabLevels(prov?.dealer ?? null, prov?.dealerReason ?? "features_not_built", { scale: 1, display: "$SPX", targets });
 
       res.json({
         ok: true,
@@ -6201,10 +6216,12 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         spot,
         prevClose,
         levels,
-        projection: projection
-          ? { bands: projection.bands, status: projection.status, version: projection.version }
+        projection: sp.served.bands
+          ? { bands: sp.served.bands, status: sp.served.learned ? "PROMOTED" : "BASELINE", version: sp.served.coverageVersion }
           : { bands: null, status: "UNAVAILABLE", version: "-" },
+        served: sp.served,
         features,
+        featureMissing: prov ? { schemaVersion: prov.schemaVersion, missing: prov.missing, reasons: prov.reasons, dealerAsOfMs: prov.dealerAsOfMs } : null,
         asOf: new Date().toISOString(),
       });
     } catch (e: any) {
@@ -6213,21 +6230,24 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   // ─── ML Lab unified SPY endpoint ───────────────────────────────────────
-  // SPY-scale variant of projection-spx: live SPY 5min candles + dealer levels
-  // (rescaled SPX→SPY by /10) + 60min projection bands. When the Schwab tape is
-  // unavailable the route synthesizes a deterministic GBM walk anchored on the
-  // current snapshot price so the panel still renders end-to-end.
+  // SPY 5min candles + dealer levels ($SPX chain x live SPY/SPX ratio) +
+  // the served forward-return band drawn on SPY. The band is the same one the
+  // coverage logger scores (mlServing.buildServedProjection): a promoted
+  // real-data quantile model, else the baseline volatility cone, with the
+  // morning-anchor model blended in only if it too passed the gate. `served`
+  // names every component of the drawn band. An empty tape is dataState
+  // "no_data" (no candles are generated).
   app.get("/api/ml/projection-spy", async (_req, res) => {
     try {
-      const { mlQuantileOverlay, mlQuantileMorning } = await import("./mlBridge");
-      const { buildMlFeatures } = await import("./mlGreekFeatures");
+      const { buildMlFeatures, getLastMlFeatureProvenance } = await import("./mlGreekFeatures");
+      const { buildServedProjection } = await import("./mlServing");
       const { fetchOHLC } = await import("./ohlc");
-      const { buildGammaLevelsEnhanced } = await import("./gammaLevels");
-      const { buildMorningFingerprint, computeMorningBlendWeight, blendBands } = await import("./mlMorningFingerprint");
+      const { userTargets } = await import("./gammaLevels");
+      const { mlLabLevels, spyPerSpxRatio } = await import("./mlFeatureMath");
 
       const features = await buildMlFeatures(resolveMlFeatureInputs);
-      const horizons = [5, 15, 30, 60];
-      const projection = await mlQuantileOverlay(features, horizons, { timeoutMs: 2500 });
+      const sp = await buildServedProjection(features);
+      const served = sp.served;
 
       // Today's RTH SPY 5min bars
       let candles: any[] = [];
@@ -6241,82 +6261,32 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       } catch { /* empty */ }
 
       // Snapshot fallback for spot/prevClose only (no candles are generated).
-      let snapSpy: { price: number | null; prevClose: number | null; changePct: number | null } = {
-        price: null, prevClose: null, changePct: null,
-      };
       try {
         const snap = await getOrBuild(false);
-        snapSpy = {
-          price: snap.spy?.price ?? null,
-          prevClose: snap.spy?.prevClose ?? null,
-          changePct: snap.spy?.changePct ?? null,
-        };
-        if (spot == null) spot = snapSpy.price;
-        if (prevClose == null) prevClose = snapSpy.prevClose;
+        if (spot == null) spot = snap.spy?.price ?? null;
+        if (prevClose == null) prevClose = snap.spy?.prevClose ?? null;
       } catch { /* leave nulls */ }
 
-      // Levels — fetch SPX-scale and divide every numeric value by 10 for SPY.
-      let levels: any = null;
+      // Levels: the $SPX-chain dealer levels behind the features, drawn on SPY
+      // through the live Schwab SPY/SPX quote ratio (not a fixed /10, and
+      // never the Signals snapshot gamma, which was CBOE SPY points). No fresh
+      // ratio -> levels unavailable with the reason.
+      let ratio: { ratio: number | null; reason: string | null } = { ratio: null, reason: "quotes_unavailable" };
       try {
-        const snap = await getOrBuild(false);
-        const spxLevels = buildGammaLevelsEnhanced(snap.gamma, snap.spy.price ?? snap.gamma.spot);
-        levels = rescaleLevelsForSpy(spxLevels, 10);
-      } catch { /* null levels */ }
+        const qs = await schwabGetQuotes(["$SPX", "SPY"]);
+        ratio = spyPerSpxRatio(qs.find((q) => q.symbol === "$SPX"), qs.find((q) => q.symbol === "SPY"));
+      } catch { /* ratio stays unavailable */ }
+      let targets: any = {};
+      try { targets = userTargets(); } catch { targets = {}; }
+      const provL = getLastMlFeatureProvenance();
+      const levels = mlLabLevels(provL?.dealer ?? null, provL?.dealerReason ?? "features_not_built",
+        { scale: ratio.ratio, scaleReason: ratio.reason, display: "SPY", targets });
 
-      // Empty tape: no bars and an explicit data state. This route used to
-      // fill an empty tape with a seeded random walk anchored on the snapshot
-      // spot (fabricated market data); the reader now shows "no data".
-      // `synthetic` stays in the payload, always false, for older readers.
       const synthetic = false;
       const tape = intradayTapeState(candles.length);
-      const dataState = tape.dataState;
-      const dataStateReason = tape.reason;
-      const syntheticReason: string | null = null;
-
-      // ─── Model D Morning Anchor blend ─────────────────────────────
-      // Compute morning fingerprint from SPY tape; fold into features dict;
-      // call /quantile/morning; blend with v3 by time-of-day weight.
-      let morningFp: any = { ready: false };
-      let morningProjection: any = null;
-      let blendWeight = 0;
-      let blendedBands: any = projection?.bands ?? null;
-      try {
-        const atr5m = Number(features?.atr_5m ?? 0);
-        morningFp = await buildMorningFingerprint({
-          symbol: "SPY",
-          prevClose,
-          atr5m,
-          spot: Number(spot ?? 0),
-        });
-        if (morningFp.ready) {
-          const morningFeatures = {
-            ...features,
-            morn_orb_range_atr: morningFp.morn_orb_range_atr,
-            morn_orb_hi_pct: morningFp.morn_orb_hi_pct,
-            morn_orb_lo_pct: morningFp.morn_orb_lo_pct,
-            morn_open_drive_atr: morningFp.morn_open_drive_atr,
-            morn_opening_vol_z: morningFp.morn_opening_vol_z,
-            morn_gap_atr: morningFp.morn_gap_atr,
-            morn_vwap_dev_atr: morningFp.morn_vwap_dev_atr,
-            bars_since_anchor: morningFp.bars_since_anchor,
-            spot_vs_anchor_atr: morningFp.spot_vs_anchor_atr,
-          };
-          morningProjection = await mlQuantileMorning(
-            morningFeatures,
-            [30, 60, 120, 180, 240],
-            { timeoutMs: 2500 },
-          );
-          blendWeight = computeMorningBlendWeight();
-          blendedBands = blendBands(
-            projection?.bands ?? null,
-            morningProjection?.bands ?? null,
-            blendWeight,
-          );
-        }
-      } catch (err) {
-        // Morning model is optional — v3 stays as the floor. Never block.
-        console.warn("[ml:projection-spy] morning blend skipped:", (err as any)?.message);
-      }
+      const fp = sp.morning?.fingerprint ?? null;
+      const morningComp = served.components.find((c) => c.name === "morning_anchor") ?? null;
+      const prov = getLastMlFeatureProvenance();
 
       res.json({
         ok: true,
@@ -6324,41 +6294,46 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         spot,
         prevClose,
         levels,
-        projection: projection
-          ? { bands: projection.bands, status: projection.status, version: projection.version }
+        // Raw overlay as the sidecar answered (bands only when promoted).
+        projection: sp.overlay
+          ? { bands: sp.overlay.bands, status: sp.overlay.status, version: sp.overlay.version }
           : { bands: null, status: "UNAVAILABLE", version: "-" },
         morning: {
-          ready: !!morningFp?.ready,
-          reason: morningFp?.reason ?? null,
-          anchorClose: morningFp?.anchor_close ?? null,
-          anchorTimeEt: morningFp?.anchor_time_et ?? null,
-          barsSinceAnchor: morningFp?.bars_since_anchor ?? 0,
-          fingerprint: morningFp?.ready
+          ready: !!fp?.ready,
+          reason: fp?.reason ?? null,
+          anchorClose: fp?.anchor_close ?? null,
+          anchorTimeEt: fp?.anchor_time_et ?? null,
+          barsSinceAnchor: fp?.bars_since_anchor ?? 0,
+          fingerprint: fp?.ready
             ? {
-                orb_range_atr: morningFp.morn_orb_range_atr,
-                orb_hi_pct: morningFp.morn_orb_hi_pct,
-                orb_lo_pct: morningFp.morn_orb_lo_pct,
-                open_drive_atr: morningFp.morn_open_drive_atr,
-                opening_vol_z: morningFp.morn_opening_vol_z,
-                gap_atr: morningFp.morn_gap_atr,
-                vwap_dev_atr: morningFp.morn_vwap_dev_atr,
+                orb_range_atr: fp.morn_orb_range_atr,
+                orb_hi_pct: fp.morn_orb_hi_pct,
+                orb_lo_pct: fp.morn_orb_lo_pct,
+                open_drive_atr: fp.morn_open_drive_atr,
+                opening_vol_z: fp.morn_opening_vol_z,
+                gap_atr: fp.morn_gap_atr,
+                vwap_dev_atr: fp.morn_vwap_dev_atr,
               }
             : null,
-          projection: morningProjection
-            ? { bands: morningProjection.bands, status: morningProjection.status, version: morningProjection.version }
+          projection: sp.morning?.projection
+            ? { bands: sp.morning.projection.bands, status: sp.morning.projection.status, version: sp.morning.projection.version }
             : null,
+          // Blended only when promoted on real data (never so far).
+          inBlend: !!morningComp,
         },
+        // Kept for older readers: bands = the served (drawn) band.
         blend: {
-          weight: blendWeight,
-          activeModel:
-            blendWeight <= 0 ? "v3" : blendWeight >= 0.5 ? "morning" : "blend",
-          bands: blendedBands,
+          weight: morningComp?.weight ?? 0,
+          activeModel: !morningComp ? "v3" : morningComp.weight >= 0.5 ? "morning" : "blend",
+          bands: served.bands,
         },
+        served,
         features,
+        featureMissing: prov ? { schemaVersion: prov.schemaVersion, missing: prov.missing, reasons: prov.reasons, dealerAsOfMs: prov.dealerAsOfMs } : null,
         synthetic,
-        syntheticReason,
-        dataState,
-        dataStateReason,
+        syntheticReason: null,
+        dataState: tape.dataState,
+        dataStateReason: tape.reason,
         asOf: new Date().toISOString(),
       });
     } catch (e: any) {
@@ -6367,11 +6342,22 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   // ─── ML service health (Wires 17–20) ────────────────────────────────────
+  // 503 with an explicit reason when the sidecar is not installed on this
+  // host (no Python or missing packages) versus installed but not answering.
   app.get("/api/ml/health", async (_req, res) => {
     const { mlHealth } = await import("./mlBridge");
+    const { sidecarInstallStatus } = await import("./mlSidecarStatus");
     // UI route — longer timeout for dashboard consumption.
     const health = await mlHealth({ timeoutMs: 2500 });
-    if (!health) return res.status(503).json({ ok: false, error: "ML service unreachable" });
+    if (!health) {
+      const inst = sidecarInstallStatus();
+      return res.status(503).json({
+        ok: false,
+        error: inst.installed ? "ML sidecar unreachable" : "ML sidecar not installed",
+        sidecar: inst,
+        served: "baseline volatility cone (computed in the server; no sidecar needed)",
+      });
+    }
     res.json({ ok: true, ...health });
   });
 
