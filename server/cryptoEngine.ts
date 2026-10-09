@@ -31,8 +31,10 @@
 
 import { sqlite } from "./storage";
 import {
-  computeSocialScore, resolveSocialCollection, expireSocial, summarizeSignalCounts,
-  CRYPTO_SIGNAL_COUNTS_SQL, type SocialStatus, type SocialSourceStatus, type CryptoSignalStats,
+  computeSocialScore, resolveSocialCollection, expireSocial,
+  CRYPTO_SIGNAL_COUNTS_SQL, type SocialStatus, type SocialSourceStatus,
+  observedNumber, gradeSignal, cryptoCoinCountsSql, summarizeDeskStats, type CryptoDeskStats,
+  holderConcentration, countMentions, socialCoverage, type HolderAccount, type DexPool,
 } from "./cryptoStats";
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -71,7 +73,8 @@ export interface Candidate {
   // on-chain security (public Solana RPC — free, no keys)
   mintAuthorityActive: boolean | null;   // null = unchecked
   freezeAuthorityActive: boolean | null;
-  top10Pct: number | null;               // top-10 holder share ex-largest (AMM vault heuristic)
+  top10Pct: number | null;               // top-10 holder share excluding IDENTIFIED pool vaults / burn only
+  top10Method: string | null;            // how the pool vault was identified (or that it was not)
   securityCheckedAt: number | null;
 
   // rugcheck.xyz cached report (keyless)
@@ -82,7 +85,10 @@ export interface Candidate {
   // social velocity (bluesky keyless search + pump.fun coin object)
   bskyMentions1h: number | null;
   bskyMentions10m: number | null;
+  bskyMentionsByAddress1h: number | null; // posts naming the contract address (identity-safe)
+  bskyCapped: boolean;                    // search cap hit inside the hour: counts are lower bounds
   pumpReplies: number | null;
+  pumpCheckedAt: number | null;           // last successful pump.fun read (values older than this are stale)
   pumpReplyPerHr: number | null;   // measured between polls
   pumpLive: boolean;               // livestream running = raw attention
   hasSocialLinks: boolean | null;  // twitter/telegram/website on the token
@@ -91,6 +97,7 @@ export interface Candidate {
   socialAttemptAt: number | null;  // last attempt, success or not
   socialStatus: SocialStatus | null;
   socialSources: { bsky: SocialSourceStatus; pump: SocialSourceStatus } | null;
+  socialCoverage: string | null;   // which sources the score is normalized over
   prevPumpReplies: { count: number; t: number } | null;
 
   // rolling history for sustained-flow gating (whale-blink filter)
@@ -101,7 +108,7 @@ export interface Candidate {
   volAccel: number | null;        // m5 volume annualized vs h1 baseline
   netBuyRatio5m: number | null;   // buys/(buys+sells)
   fomoScore: number | null;       // 0-100
-  memeScore: number | null;       // 0-100
+  memeScore: number | null;       // 0-100 name heuristic (hand-set features, no measured link to outcomes)
   narrativeHits: string[];
   rugFlags: string[];
   hardKill: boolean;
@@ -249,13 +256,14 @@ function persistSignal(c: Candidate): void {
       c.verdict, c.score, c.marketCap, c.priceUsd, c.liquidityUsd,
       JSON.stringify({
         volAccel: c.volAccel, netBuyRatio5m: c.netBuyRatio5m, fomo: c.fomoScore,
-        meme: c.memeScore, narrativeHits: c.narrativeHits, rugFlags: c.rugFlags,
+        meme: c.memeScore, memeMethod: MEME_SCORE_METHOD, narrativeHits: c.narrativeHits, rugFlags: c.rugFlags,
         boosted: c.boosted, pumpfunGraduate: c.pumpfunGraduate,
         ageMinutes: c.ageMinutes, reasons: c.verdictReasons,
         mintAuthorityActive: c.mintAuthorityActive, freezeAuthorityActive: c.freezeAuthorityActive,
-        top10Pct: c.top10Pct, securityCheckedAt: c.securityCheckedAt,
+        top10Pct: c.top10Pct, top10Method: c.top10Method, securityCheckedAt: c.securityCheckedAt,
         rcRisks: c.rcRisks, rcLpLockedPct: c.rcLpLockedPct,
-        socialScore: c.socialScore, socialStatus: c.socialStatus, bskyMentions1h: c.bskyMentions1h,
+        socialScore: c.socialScore, socialStatus: c.socialStatus, socialCoverage: c.socialCoverage,
+        bskyMentions1h: c.bskyMentions1h, bskyMentionsByAddress1h: c.bskyMentionsByAddress1h, bskyCapped: c.bskyCapped,
         pumpReplyPerHr: c.pumpReplyPerHr, pumpLive: c.pumpLive,
       }),
       JSON.stringify(c.risk),
@@ -343,11 +351,12 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
     buys5m: null, sells5m: null, buys1h: null, sells1h: null,
     chg5m: null, chg1h: null, chg24h: null,
     boosted: false, lastRefreshAt: null,
-    mintAuthorityActive: null, freezeAuthorityActive: null, top10Pct: null, securityCheckedAt: null,
+    mintAuthorityActive: null, freezeAuthorityActive: null, top10Pct: null, top10Method: null, securityCheckedAt: null,
     rcRisks: [], rcLpLockedPct: null, rcCheckedAt: null,
-    bskyMentions1h: null, bskyMentions10m: null, pumpReplies: null, pumpReplyPerHr: null,
+    bskyMentions1h: null, bskyMentions10m: null, bskyMentionsByAddress1h: null, bskyCapped: false,
+    pumpReplies: null, pumpCheckedAt: null, pumpReplyPerHr: null,
     pumpLive: false, hasSocialLinks: null, socialScore: null, socialCheckedAt: null, prevPumpReplies: null,
-    socialAttemptAt: null, socialStatus: null, socialSources: null,
+    socialAttemptAt: null, socialStatus: null, socialSources: null, socialCoverage: null,
     hist: [],
     ageMinutes: null, volAccel: null, netBuyRatio5m: null,
     fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
@@ -356,8 +365,9 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
   // GT gives a coarse first look — momentum engine refines with DexScreener.
   c.marketCap = effMcap ?? c.marketCap;
   c.fdv = Number.isFinite(fdv) ? fdv : c.fdv;
-  c.priceUsd = Number(attrs.base_token_price_usd ?? NaN) || c.priceUsd;
-  c.liquidityUsd = Number(attrs.reserve_in_usd ?? NaN) || c.liquidityUsd;
+  // observed 0 stays 0 (a drained pool); only an absent field keeps the old value
+  c.priceUsd = observedNumber(attrs.base_token_price_usd) ?? c.priceUsd;
+  c.liquidityUsd = observedNumber(attrs.reserve_in_usd) ?? c.liquidityUsd;
   if (!existing) tracked.set(key, c);
 }
 
@@ -396,6 +406,8 @@ async function scannerTick(): Promise<void> {
 
 let boostedTokens = new Set<string>();
 let lastBoostFetch = 0;
+/** token mint -> its DEX pools with base reserves (from the latest DexScreener read) */
+const tokenPools = new Map<string, { at: number; pools: DexPool[] }>();
 
 async function momentumTick(): Promise<void> {
   // Refresh boosts at most every 5 min (60 rpm budget, this uses ~0.2 rpm)
@@ -430,23 +442,37 @@ async function momentumTick(): Promise<void> {
       throw new Error(`dexscreener batch failed: ${String(e?.message ?? e).slice(0, 120)}`);
     }
     const pairs: any[] = resp?.pairs ?? [];
+    // Every pool of each token (tracked or not), with its base-token reserve:
+    // the security check uses these to identify pool vaults among holders.
+    const poolsByToken = new Map<string, DexPool[]>();
+    for (const p of pairs) {
+      const mint = String(p?.baseToken?.address ?? "");
+      if (!mint || !p?.pairAddress) continue;
+      const arr = poolsByToken.get(mint) ?? [];
+      arr.push({ pairAddress: String(p.pairAddress), baseAmount: observedNumber(p?.liquidity?.base) });
+      poolsByToken.set(mint, arr);
+    }
+    for (const [mint, pools] of Array.from(poolsByToken.entries())) tokenPools.set(mint, { at: Date.now(), pools });
     for (const p of pairs) {
       const key = `${String(p?.chainId ?? "solana")}:${String(p?.pairAddress ?? "")}`;
       const c = tracked.get(key);
       if (!c) continue;
       c.symbol = String(p?.baseToken?.symbol ?? c.symbol);
       c.name = String(p?.baseToken?.name ?? c.name);
-      c.priceUsd = Number(p?.priceUsd ?? NaN) || null;
-      c.marketCap = Number(p?.marketCap ?? NaN) || null;
-      c.fdv = Number(p?.fdv ?? NaN) || null;
-      c.liquidityUsd = Number(p?.liquidity?.usd ?? NaN) || null;
-      c.vol5m = Number(p?.volume?.m5 ?? NaN) || 0;
-      c.vol1h = Number(p?.volume?.h1 ?? NaN) || 0;
-      c.vol24h = Number(p?.volume?.h24 ?? NaN) || 0;
-      c.buys5m = Number(p?.txns?.m5?.buys ?? NaN) || 0;
-      c.sells5m = Number(p?.txns?.m5?.sells ?? NaN) || 0;
-      c.buys1h = Number(p?.txns?.h1?.buys ?? NaN) || 0;
-      c.sells1h = Number(p?.txns?.h1?.sells ?? NaN) || 0;
+      // DexScreener Pair: liquidity (object) and liquidity.usd, marketCap,
+      // fdv, priceUsd are nullable. Absent = null (missing); observed 0 = 0
+      // (a full liquidity pull must read as $0, not as "unknown").
+      c.priceUsd = observedNumber(p?.priceUsd);
+      c.marketCap = observedNumber(p?.marketCap);
+      c.fdv = observedNumber(p?.fdv);
+      c.liquidityUsd = observedNumber(p?.liquidity?.usd);
+      c.vol5m = observedNumber(p?.volume?.m5);
+      c.vol1h = observedNumber(p?.volume?.h1);
+      c.vol24h = observedNumber(p?.volume?.h24);
+      c.buys5m = observedNumber(p?.txns?.m5?.buys);
+      c.sells5m = observedNumber(p?.txns?.m5?.sells);
+      c.buys1h = observedNumber(p?.txns?.h1?.buys);
+      c.sells1h = observedNumber(p?.txns?.h1?.sells);
       c.chg5m = Number(p?.priceChange?.m5 ?? NaN);
       c.chg1h = Number(p?.priceChange?.h1 ?? NaN);
       c.chg24h = Number(p?.priceChange?.h24 ?? NaN);
@@ -472,8 +498,10 @@ async function momentumTick(): Promise<void> {
 //   - freeze authority active = dev can freeze YOUR tokens (can't sell)
 //   - top-10 holders > 45%   = coordinated dump risk
 // All readable from the free public RPC (api.mainnet-beta.solana.com), no key.
-// Heuristic: the single largest token account is almost always the AMM vault,
-// so concentration = top-10 EXCLUDING the largest, over total supply. Disclosed.
+// Concentration = top-10 token accounts over supply, excluding only accounts
+// identified as a pool vault (owner = one of the token's DEX pair addresses,
+// or balance = the pool's DexScreener base reserve) or burned (incinerator
+// owner). The largest holder is no longer excluded by rank (finding 10.3).
 //
 // Budget: 3 RPC calls per token, 3 tokens per 45s tick — far under public
 // RPC limits. Each candidate is checked once; re-checked every 30 min only
@@ -543,6 +571,8 @@ async function securityTick(): Promise<void> {
       c.mintAuthorityActive = info.mintAuthority != null;
       c.freezeAuthorityActive = info.freezeAuthority != null;
       const total = Number(info.supply ?? 0);
+      const decimals = Number(info.decimals ?? 0);
+      const supplyUi = Number.isFinite(decimals) ? total / Math.pow(10, decimals) : NaN;
 
       // BEST-EFFORT: holder concentration (indexed — mainnet-beta only, gentle)
       if (!concentrationDone && total > 0 && Date.now() > indexedCooldownUntil) {
@@ -551,11 +581,28 @@ async function securityTick(): Promise<void> {
           await sleep(800);
           const largest = await solRpc("getTokenLargestAccounts", [c.tokenAddress], RPC_INDEXED);
           const accts: any[] = largest?.value ?? [];
-          if (accts.length > 1) {
-            // exclude the single largest account (AMM vault heuristic)
-            const rest = accts.slice(1, 11);
-            const top = rest.reduce((s: number, a: any) => s + Number(a?.amount ?? 0), 0);
-            c.top10Pct = Number(((top / total) * 100).toFixed(1));
+          if (accts.length > 0 && supplyUi > 0) {
+            // Exclude only IDENTIFIED pool vaults and burned supply, never
+            // "the largest account" by rank (a whale or the deployer at the
+            // top is what this flag exists to catch). Owners come from one
+            // non-indexed getMultipleAccounts read; reserve matching against
+            // DexScreener liquidity.base works even without owners.
+            const holders: HolderAccount[] = accts.map((a: any) => ({
+              address: String(a?.address ?? ""),
+              uiAmount: observedNumber(a?.uiAmountString ?? a?.uiAmount),
+            }));
+            try {
+              const multi = await solRpc("getMultipleAccounts", [holders.map((h) => h.address), { encoding: "jsonParsed" }], RPC_ACCOUNT);
+              const vals: any[] = multi?.value ?? [];
+              holders.forEach((h, i) => { h.owner = vals[i]?.data?.parsed?.info?.owner ?? null; });
+            } catch { /* owners optional */ }
+            const known = tokenPools.get(c.tokenAddress)?.pools ?? [];
+            const pools = known.some((p) => p.pairAddress === c.pairAddress)
+              ? known
+              : [...known, { pairAddress: c.pairAddress, baseAmount: null }];
+            const conc = holderConcentration(holders, pools, supplyUi);
+            c.top10Pct = conc.top10Pct;
+            c.top10Method = conc.method;
           }
         } catch (e: any) {
           if (/429/.test(String(e?.message))) indexedCooldownUntil = Date.now() + 5 * 60_000;
@@ -595,7 +642,9 @@ async function securityTick(): Promise<void> {
 // sources that actually work from this server (tested):
 //   - bluesky search via api.bsky.app (the "public." host CDN-blocks
 //     datacenter IPs; the main host serves keyless reads) — mention counts
-//     for "$SYMBOL" in the last 10m/60m.
+//     for "$SYMBOL" and for the contract address in the last 10m/60m
+//     (app.bsky.feed.searchPosts: q, sort, since, limit <= 100, cursor;
+//     https://github.com/bluesky-social/atproto/blob/main/lexicons/app/bsky/feed/searchPosts.json).
 //   - pump.fun /coins/{mint} — reply_count (velocity between polls),
 //     livestream flag, twitter/telegram/website links.
 // Reddit blocks datacenter IPs outright — excluded, disclosed.
@@ -604,6 +653,24 @@ async function securityTick(): Promise<void> {
 const SOCIAL_MS = 90_000;
 const BSKY = "https://api.bsky.app/xrpc/app.bsky.feed.searchPosts";
 const PUMP = "https://frontend-api-v3.pump.fun";
+
+const BSKY_LIMIT = 100;     // app.bsky.feed.searchPosts max page size
+const BSKY_MAX_PAGES = 3;
+
+/** One Bluesky search over the last hour, paginated; `capped` when pages ran out before the hour did. */
+async function bskySearchHour(q: string, since: string): Promise<{ posts: Array<{ uri?: string; createdAt?: string; text?: string }>; capped: boolean }> {
+  const posts: Array<{ uri?: string; createdAt?: string; text?: string }> = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < BSKY_MAX_PAGES; page++) {
+    const url = `${BSKY}?q=${encodeURIComponent(q)}&sort=latest&limit=${BSKY_LIMIT}&since=${encodeURIComponent(since)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+    const r = await getJson(url);
+    const batch: any[] = r?.posts ?? [];
+    for (const p of batch) posts.push({ uri: p?.uri, createdAt: p?.record?.createdAt ?? p?.indexedAt, text: p?.record?.text });
+    cursor = typeof r?.cursor === "string" && r.cursor ? r.cursor : undefined;
+    if (batch.length < BSKY_LIMIT || !cursor) return { posts, capped: false };
+  }
+  return { posts, capped: true };
+}
 
 async function socialTick(): Promise<void> {
   // refresh the best candidates first (they gate ENTER); 4 per tick,
@@ -623,18 +690,26 @@ async function socialTick(): Promise<void> {
       c.socialAttemptAt = now;
       let bsky: SocialSourceStatus = "skipped";
       let pump: SocialSourceStatus = "skipped";
-      // ── bluesky mentions: "$SYMBOL" (cashtag form degens actually post) ──
+      // ── bluesky mentions: "$SYMBOL" cashtag AND the contract address ──
+      // A cashtag alone collides with other coins and plain words; the mint
+      // address is the token's identity. Both searches use `since` = 1 h ago,
+      // limit 100 (the lexicon max) and up to BSKY_MAX_PAGES pages; if a
+      // search is still returning full pages inside the hour the counts are
+      // a lower bound and flagged as capped (finding 10.2).
       const sym = c.symbol.replace(/[^A-Za-z0-9]/g, "");
-      if (sym.length >= 3) {
+      const queries: Array<{ kind: "cashtag" | "address"; q: string }> = [];
+      if (sym.length >= 3) queries.push({ kind: "cashtag", q: `$${sym}` });
+      if (c.tokenAddress && c.tokenAddress.length >= 32) queries.push({ kind: "address", q: c.tokenAddress });
+      if (queries.length) {
         try {
-          const q = encodeURIComponent(`$${sym}`);
-          const r = await getJson(`${BSKY}?q=${q}&sort=latest&limit=25`);
-          const posts: any[] = r?.posts ?? [];
-          const ts = posts
-            .map((p) => Date.parse(p?.record?.createdAt ?? p?.indexedAt ?? ""))
-            .filter((t) => Number.isFinite(t));
-          c.bskyMentions1h = ts.filter((t) => now - t < 3600_000).length;
-          c.bskyMentions10m = ts.filter((t) => now - t < 600_000).length;
+          const since = new Date(now - 3600_000).toISOString();
+          const results = [];
+          for (const qq of queries) results.push({ kind: qq.kind, ...(await bskySearchHour(qq.q, since)) });
+          const mc = countMentions(results, c.tokenAddress, now);
+          c.bskyMentions1h = mc.m1h;
+          c.bskyMentions10m = mc.m10;
+          c.bskyMentionsByAddress1h = mc.byAddress1h;
+          c.bskyCapped = mc.capped;
           bsky = "ok";
         } catch {
           // bsky is enhancement — never blocks the tick. A failed fetch is
@@ -642,6 +717,8 @@ async function socialTick(): Promise<void> {
           bsky = "failed";
           c.bskyMentions1h = null;
           c.bskyMentions10m = null;
+          c.bskyMentionsByAddress1h = null;
+          c.bskyCapped = false;
         }
       }
 
@@ -658,6 +735,7 @@ async function socialTick(): Promise<void> {
             c.prevPumpReplies = { count: replies, t: now };
             c.pumpReplies = replies;
           }
+          c.pumpCheckedAt = now;
           c.pumpLive = Boolean(coin?.is_currently_live);
           c.hasSocialLinks = Boolean(coin?.twitter || coin?.telegram || coin?.website);
           pump = "ok";
@@ -668,13 +746,16 @@ async function socialTick(): Promise<void> {
         }
       }
 
-      // ── social score 0-100: published only from a complete collection ──
+      // ── social score 0-100: published only from a complete collection,
+      // normalized over the sources that apply to this token ──
+      const applicable = { bsky: bsky !== "skipped", pump: pump !== "skipped" };
       const next = resolveSocialCollection(
         { socialScore: c.socialScore, socialCheckedAt: c.socialCheckedAt, socialStatus: c.socialStatus },
         { bsky, pump },
-        computeSocialScore(c),
+        computeSocialScore(c, applicable),
         now,
       );
+      c.socialCoverage = socialCoverage(applicable) + (c.bskyCapped ? "; bluesky search capped (counts are lower bounds)" : "");
       c.socialScore = next.socialScore;
       c.socialCheckedAt = next.socialCheckedAt;
       c.socialStatus = next.socialStatus;
@@ -696,6 +777,12 @@ async function socialTick(): Promise<void> {
 }
 
 // ─── 3. RUG FILTER + scoring ────────────────────────────────────────────
+
+// Name "virality" (finding 10.5): HAND-SET features (lexicon themes, a
+// chantable 3-6 letter ticker +8, all caps +4, a short name +6, an emoji +4).
+// A labelled heuristic with no measured link to outcomes yet; it is logged
+// in features_json so the graded audit can test it later.
+export const MEME_SCORE_METHOD = "heuristic: hand-set name features, not fitted to outcomes";
 
 function scoreMeme(nameIn: string, symbolIn: string): { score: number; tags: string[] } {
   const s = `${nameIn} ${symbolIn}`;
@@ -726,11 +813,16 @@ function scoreCandidate(c: Candidate): void {
     .filter((n) => new RegExp(`\\b${n.term}\\b`, "i").test(`${c.name} ${c.symbol}`))
     .map((n) => n.term);
 
-  // flow: volume acceleration = m5 pace vs h1 pace
-  const paceM5 = (c.vol5m ?? 0) / 5;
-  const paceH1 = (c.vol1h ?? 0) / 60;
-  c.volAccel = paceH1 > 0 ? paceM5 / paceH1 : (paceM5 > 0 ? 5 : 0);
-  const t5 = (c.buys5m ?? 0) + (c.sells5m ?? 0);
+  // flow: volume acceleration = m5 pace vs h1 pace (null when the source
+  // did not report volume: missing is not zero flow)
+  if (c.vol5m == null || c.vol1h == null) {
+    c.volAccel = null;
+  } else {
+    const paceM5 = c.vol5m / 5;
+    const paceH1 = c.vol1h / 60;
+    c.volAccel = paceH1 > 0 ? paceM5 / paceH1 : (paceM5 > 0 ? 5 : 0);
+  }
+  const t5 = c.buys5m != null && c.sells5m != null ? c.buys5m + c.sells5m : 0;
   c.netBuyRatio5m = t5 > 0 ? (c.buys5m ?? 0) / t5 : null;
 
   // FOMO score: acceleration + one-sided tape + trending/boost presence
@@ -755,9 +847,14 @@ function scoreCandidate(c: Candidate): void {
   // rug filter
   const flags: string[] = [];
   let hardKill = false;
-  const liq = c.liquidityUsd ?? 0;
+  // Liquidity: missing (not reported) and observed $0 (pulled) are different
+  // states; both kill, with different reasons.
+  const liqObs = c.liquidityUsd;
+  const liq = liqObs ?? 0;
   const mcap = c.marketCap ?? c.fdv ?? 0;
-  if (liq < LIQ_FLOOR_USD) { flags.push(`liquidity $${(liq / 1000).toFixed(1)}k < $${LIQ_FLOOR_USD / 1000}k floor — cannot exit`); hardKill = true; }
+  if (liqObs == null) { flags.push("liquidity not reported by the source (missing) — exit cannot be verified"); hardKill = true; }
+  else if (liqObs === 0) { flags.push("liquidity $0 observed — pool drained / liquidity pulled"); hardKill = true; }
+  else if (liq < LIQ_FLOOR_USD) { flags.push(`liquidity $${(liq / 1000).toFixed(1)}k < $${LIQ_FLOOR_USD / 1000}k floor — cannot exit`); hardKill = true; }
   if (mcap > 0 && liq > 0 && liq / mcap < 0.03) { flags.push(`liq/mcap ${(100 * liq / mcap).toFixed(1)}% < 3% — exit door too small`); hardKill = true; }
   if (mcap > 0 && liq > mcap * 2) flags.push("liquidity >> mcap — weird pool, likely mispriced data");
   if ((c.buys1h ?? 0) >= 25 && (c.sells1h ?? 0) === 0) { flags.push("buys but ZERO sells in 1h — honeypot pattern"); hardKill = true; }
@@ -768,7 +865,7 @@ function scoreCandidate(c: Candidate): void {
   // on-chain security facts (public RPC)
   if (c.mintAuthorityActive === true) { flags.push("MINT AUTHORITY ACTIVE — dev can print supply into your bid"); hardKill = true; }
   if (c.freezeAuthorityActive === true) { flags.push("FREEZE AUTHORITY ACTIVE — dev can lock your tokens"); hardKill = true; }
-  if ((c.top10Pct ?? 0) > 45) flags.push(`top-10 holders ${c.top10Pct}% of supply (ex-pool) — coordinated dump risk`);
+  if ((c.top10Pct ?? 0) > 45) flags.push(`top-10 holders ${c.top10Pct}% of supply (${c.top10Method?.startsWith("top-10 holders INCLUDING") ? "pool vault not identified, may include pool" : "ex-pool"}) — coordinated dump risk`);
   // rugcheck cached report — LP lock + named risks (non-fatal: cached data)
   if (c.rcLpLockedPct != null && c.rcLpLockedPct < 50) flags.push(`LP only ${c.rcLpLockedPct}% locked (rugcheck) — pull risk`);
   for (const r of c.rcRisks) flags.push(`rugcheck: ${r}`);
@@ -787,7 +884,7 @@ function scoreCandidate(c: Candidate): void {
   const reasons: string[] = [];
   let verdict: Candidate["verdict"] = "PASS";
   if (hardKill) {
-    reasons.push("hard kill: " + flags.filter((f) => /floor|honeypot|mid-rug|exit door/.test(f)).join("; "));
+    reasons.push("hard kill: " + flags.filter((f) => /floor|honeypot|mid-rug|exit door|liquidity not reported|liquidity \$0|AUTHORITY/.test(f)).join("; "));
   } else if (mcap <= 0 || c.priceUsd == null) {
     reasons.push("no reliable mcap/price yet");
   } else if (mcap > MCAP_ENTRY_MAX) {
@@ -808,7 +905,7 @@ function scoreCandidate(c: Candidate): void {
     } else {
       verdict = "ENTER";
       reasons.push(`score ${c.score}, flow sustained ${c.volAccel?.toFixed(1)}x, ${Math.round((c.netBuyRatio5m ?? 0) * 100)}% buys, security checked`);
-      if (c.top10Pct != null) reasons.push(`top-10 holders ${c.top10Pct}% ex-pool`);
+      if (c.top10Pct != null) reasons.push(`top-10 holders ${c.top10Pct}% (${c.top10Method ?? "method unknown"})`);
       if (c.narrativeHits.length) reasons.push(`narrative confirm: ${c.narrativeHits.join(", ")}`);
     }
   } else if (c.score >= 50) {
@@ -834,7 +931,7 @@ function scoreCandidate(c: Candidate): void {
       notes: [
         "size = 0.5% of pool liquidity — the exit is the constraint, not the entry",
         "most signals here still lose; the math needs the 4-5x winners",
-        "UNCALIBRATED: tracking mode until graded hit rate exists (n>=50)",
+        "UNCALIBRATED: tracking mode until at least 50 distinct coins are graded (a minimum sample, not a calibration)",
       ],
     };
   } else {
@@ -924,30 +1021,30 @@ async function graderTick(): Promise<void> {
       try {
         const resp = await getJson(`${DS_BASE}/latest/dex/pairs/${row.chain}/${row.pair_address}`);
         const p = resp?.pairs?.[0] ?? resp?.pair;
-        mcap = Number(p?.marketCap ?? p?.fdv ?? NaN) || null;
-        liq = Number(p?.liquidity?.usd ?? NaN) || null;
+        // observed 0 stays 0: a full liquidity pull must grade RUGGED
+        mcap = observedNumber(p?.marketCap) ?? observedNumber(p?.fdv);
+        liq = observedNumber(p?.liquidity?.usd);
       } catch {
         // transient fetch error: retry next tick, unless it has failed for a week
         if (age > NO_DATA_AFTER_ERRORS_MS) markNoData.run(now, row.id);
         continue;
       }
     }
-    if (mcap == null) {
-      // the source answered but has no price for the pair: past the horizon
-      // that is a missing outcome, not a dead or rugged coin
-      if (age > GRADE_HORIZON_MS) markNoData.run(now, row.id);
-      continue;
-    }
-    const peak = Math.max(Number(row.peak_mcap ?? 0), mcap);
-    const entryMcap = Number(row.mcap_at_signal ?? 0);
-    const entryLiq = Number(row.liquidity_at_signal ?? 0);
-    let outcome = "OPEN";
-    if (peak >= TARGET_MCAP) outcome = "HIT_5M";
-    else if (entryLiq > 0 && liq != null && liq < entryLiq * 0.15) outcome = "RUGGED";
-    else if (entryMcap > 0 && mcap < entryMcap * 0.1) outcome = "RUGGED";
-    else if (age > GRADE_HORIZON_MS) outcome = peak >= entryMcap * 2 ? "DOUBLED" : "DEAD";
-    mark.run(peak, peak > Number(row.peak_mcap ?? 0) ? now : row.peak_at ?? null, mcap, liq,
-      outcome, outcome === "OPEN" ? null : now, row.id);
+    // Pure grading rule (cryptoStats.gradeSignal): an observed liquidity pull
+    // is RUGGED even without a market cap; no mcap past the horizon is
+    // NO_DATA (missing), never DEAD.
+    const prevPeak = row.peak_mcap != null ? Number(row.peak_mcap) : null;
+    const g = gradeSignal({
+      entryMcap: Number(row.mcap_at_signal ?? 0),
+      entryLiq: Number(row.liquidity_at_signal ?? 0),
+      prevPeak, mcap, liq, ageMs: age,
+      targetMcap: TARGET_MCAP, horizonMs: GRADE_HORIZON_MS,
+    });
+    if (g.outcome === "NO_DATA") { markNoData.run(now, row.id); continue; }
+    if (g.outcome === "OPEN" && mcap == null) continue; // nothing new to record
+    const peakImproved = g.peak != null && g.peak > (prevPeak ?? 0);
+    mark.run(g.peak, peakImproved ? now : row.peak_at ?? null, mcap, liq,
+      g.outcome, g.outcome === "OPEN" ? null : now, row.id);
   }
 }
 
@@ -1023,17 +1120,23 @@ export function getCryptoHealth(): { engines: EngineHealth[]; trackedCount: numb
 
 export function getCryptoSignals(): {
   signals: any[];
-  stats: CryptoSignalStats & { listLimit: number };
+  stats: CryptoDeskStats & { listLimit: number };
 } {
-  // The list is the latest 100 for display; the stats come from ONE aggregate
-  // query over every logged signal, so total/open/graded share one window.
-  // (Before, total was all-time while open/hit/doubled counted only the
-  // latest 100, overstating graded = total − open.)
+  // The list is the latest 100 for display; the stats come from aggregate
+  // queries over every logged signal, so total/open/graded share one window.
+  // Top-level counts and the sampleReady gate are over DISTINCT COINS (first
+  // signal per coin): one coin logs WATCH and ENTER rows on several days,
+  // and counting rows overstated the sample. Row counts and first-ENTER-per-
+  // coin counts ride along for reference.
   const LIST_LIMIT = 100;
   const signals = sqlite.prepare(
     `SELECT * FROM crypto_signals ORDER BY detected_at DESC LIMIT ?`,
   ).all(LIST_LIMIT) as any[];
-  const stats = summarizeSignalCounts(sqlite.prepare(CRYPTO_SIGNAL_COUNTS_SQL).get() as any);
+  const stats = summarizeDeskStats(
+    sqlite.prepare(CRYPTO_SIGNAL_COUNTS_SQL).get() as any,
+    sqlite.prepare(cryptoCoinCountsSql()).get() as any,
+    sqlite.prepare(cryptoCoinCountsSql("ENTER")).get() as any,
+  );
   return {
     signals: signals.map((s) => ({
       ...s,

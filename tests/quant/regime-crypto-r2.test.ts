@@ -360,3 +360,130 @@ test("cosmos filter drops trade, size, hedge and direction sentences; keeps sky 
     assert.ok(!isTradeInstruction(s), s);
   }
 });
+
+// ─── Sector 10: crypto data states, coin-level stats, holders, social ────
+
+test("crypto: observed $0 liquidity is a pull (RUGGED), absent liquidity is missing", async () => {
+  const { observedNumber, gradeSignal } = await import("../../server/cryptoStats");
+  // DexScreener Pair: liquidity / liquidity.usd / marketCap / fdv / priceUsd are nullable.
+  assert.equal(observedNumber(0), 0);
+  assert.equal(observedNumber("0"), 0);
+  assert.equal(observedNumber("0.00012"), 0.00012);
+  assert.equal(observedNumber(undefined), null);
+  assert.equal(observedNumber(null), null);
+  assert.equal(observedNumber(""), null);
+  assert.equal(observedNumber("n/a"), null);
+  const base = { entryMcap: 400_000, entryLiq: 40_000, prevPeak: 420_000, targetMcap: 5_000_000, horizonMs: 72 * 3600_000 };
+  // full pull: liquidity 0 observed, market cap missing -> RUGGED (used to be "missing" -> NO_DATA)
+  assert.equal(gradeSignal({ ...base, mcap: null, liq: 0, ageMs: 3600_000 }).outcome, "RUGGED");
+  // liquidity field absent, mcap absent, inside horizon -> still OPEN; past horizon -> NO_DATA, never DEAD
+  assert.equal(gradeSignal({ ...base, mcap: null, liq: null, ageMs: 3600_000 }).outcome, "OPEN");
+  assert.equal(gradeSignal({ ...base, mcap: null, liq: null, ageMs: 80 * 3600_000 }).outcome, "NO_DATA");
+  // observed mcap 0 -> RUGGED (below 10% of entry), not missing
+  assert.equal(gradeSignal({ ...base, mcap: 0, liq: 30_000, ageMs: 3600_000 }).outcome, "RUGGED");
+  // ordinary paths unchanged
+  assert.equal(gradeSignal({ ...base, mcap: 5_100_000, liq: 300_000, ageMs: 3600_000 }).outcome, "HIT_5M");
+  assert.equal(gradeSignal({ ...base, mcap: 300_000, liq: 30_000, ageMs: 80 * 3600_000 }).outcome, "DEAD");
+  const d = gradeSignal({ ...base, mcap: 300_000, liq: 30_000, ageMs: 80 * 3600_000, prevPeak: 900_000 });
+  assert.equal(d.outcome, "DOUBLED");
+  assert.equal(d.peak, 900_000);
+});
+
+test("crypto stats: gate and counts on distinct coins (first signal per coin), NO_DATA share (node:sqlite)", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { CRYPTO_SIGNAL_COUNTS_SQL, cryptoCoinCountsSql, summarizeDeskStats } = await import("../../server/cryptoStats");
+  const db = new DatabaseSync(":memory:");
+  db.exec(`CREATE TABLE crypto_signals (id TEXT PRIMARY KEY, detected_at INTEGER, chain TEXT, pair_address TEXT, token_address TEXT, verdict TEXT, outcome TEXT)`);
+  const ins = db.prepare(`INSERT INTO crypto_signals VALUES (?, ?, 'solana', ?, ?, ?, ?)`);
+  // coin A: WATCH day 1 (DEAD), ENTER day 1 (DEAD), WATCH day 2 (DEAD) -> 3 rows, 1 coin
+  ins.run("a1", 1000, "pA", "mintA", "WATCH", "DEAD");
+  ins.run("a2", 2000, "pA", "mintA", "ENTER", "DEAD");
+  ins.run("a3", 90_000_000, "pA", "mintA", "WATCH", "DEAD");
+  // coin B: two pairs of the same mint, first signal HIT_5M
+  ins.run("b1", 1500, "pB1", "mintB", "ENTER", "HIT_5M");
+  ins.run("b2", 1600, "pB2", "mintB", "WATCH", "RUGGED");
+  // coin C: unknown mint -> identity falls back to the pair
+  ins.run("c1", 1700, "pC", "", "WATCH", "NO_DATA");
+  // coin D: still open
+  ins.run("d1", 1800, "pD", "mintD", "WATCH", "OPEN");
+  const st = summarizeDeskStats(
+    db.prepare(CRYPTO_SIGNAL_COUNTS_SQL).get() as any,
+    db.prepare(cryptoCoinCountsSql()).get() as any,
+    db.prepare(cryptoCoinCountsSql("ENTER")).get() as any,
+  );
+  assert.equal(st.rows.total, 7);
+  assert.equal(st.rows.graded, 5);
+  assert.equal(st.total, 4);      // A, B, C, D
+  assert.equal(st.graded, 2);     // A DEAD, B HIT_5M (first signals)
+  assert.equal(st.dead, 1);
+  assert.equal(st.hit5m, 1);
+  assert.equal(st.rugged, 0);     // B's later RUGGED row is not its first signal
+  assert.equal(st.noData, 1);
+  assert.equal(st.open, 1);
+  assert.ok(Math.abs((st.noDataShare ?? 0) - 1 / 3) < 1e-12);
+  assert.equal(st.enterCoins.total, 2); // A and B have an ENTER row
+  assert.equal(st.sampleReady, false);
+  // the gate uses graded COINS: 60 graded rows from 10 coins is not ready
+  const many = summarizeDeskStats({ total: 60, open: 0, hit5m: 0, doubled: 0, rugged: 0, dead: 60 }, { total: 10, open: 0, hit5m: 0, doubled: 0, rugged: 0, dead: 10 }, null);
+  assert.equal(many.rows.sampleReady, true);
+  assert.equal(many.sampleReady, false);
+});
+
+test("crypto holders: only identified pool vaults and burn are excluded; a whale at #1 counts", async () => {
+  const { holderConcentration, SOLANA_INCINERATOR } = await import("../../server/cryptoStats");
+  const supply = 1_000_000_000;
+  // #1 is a whale (25%), #2 the Raydium-style vault matching the pool's base reserve (20%),
+  // #3 burned (10%), #4 a pool-owned vault of a second pool (5%), then 10 holders of 2% each.
+  const accounts = [
+    { address: "whale", uiAmount: 250_000_000, owner: "WhaleWallet" },
+    { address: "vaultR", uiAmount: 200_000_000, owner: "RaydiumAuthority" },
+    { address: "burnAcct", uiAmount: 100_000_000, owner: SOLANA_INCINERATOR },
+    { address: "vaultO", uiAmount: 50_000_000, owner: "pool2" },
+    ...Array.from({ length: 10 }, (_, i) => ({ address: `h${i}`, uiAmount: 20_000_000, owner: `w${i}` })),
+  ];
+  const pools = [{ pairAddress: "pool1", baseAmount: 201_000_000 }, { pairAddress: "pool2", baseAmount: 49_000_000 }];
+  const r = holderConcentration(accounts, pools, supply);
+  // top-10 non-pool non-burn: whale 25% + nine 2% holders = 43%
+  assert.equal(r.top10Pct, 43);
+  assert.deepEqual(r.excluded.map((e) => [e.address, e.reason]).sort(), [["burnAcct", "burn"], ["vaultO", "pool-owned"], ["vaultR", "pool-reserve-match"]]);
+  assert.equal(r.poolsMatched, 2);
+  // the old rule (drop the largest, sum the next ten) would have hidden the whale:
+  const old = accounts.slice(1, 11).reduce((s, a) => s + a.uiAmount, 0) / supply * 100;
+  assert.equal(old, 49); // 20 vault + 10 burn + 5 pool2 + 7 x 2: counts pool and burn, drops the whale
+  // no pool identifiable (no owners, no reserves): nothing excluded, labelled as overstated
+  const blind = holderConcentration(accounts.map((a) => ({ ...a, owner: null })), [{ pairAddress: "pool1", baseAmount: null }], supply);
+  assert.equal(blind.top10Pct, 25 + 20 + 10 + 5 + 6 * 2);
+  assert.match(blind.method, /INCLUDING/);
+  assert.equal(holderConcentration([], pools, supply).top10Pct, null);
+});
+
+test("crypto social: cashtag + contract-address union, capped search is a lower bound, score normalized over applicable sources", async () => {
+  const { countMentions, computeSocialScore, socialCoverage, resolveSocialCollection } = await import("../../server/cryptoStats");
+  const now = Date.parse("2026-10-08T15:00:00Z");
+  const iso = (minAgo: number) => new Date(now - minAgo * 60_000).toISOString();
+  const mint = "So1anaMint1111111111111111111111111111111pump";
+  const mc = countMentions([
+    { kind: "cashtag", capped: false, posts: [
+      { uri: "at://1", createdAt: iso(5), text: "$CAT to the moon" },
+      { uri: "at://2", createdAt: iso(30), text: `$CAT ${mint}` },
+      { uri: "at://3", createdAt: iso(90), text: "$CAT old" },
+    ] },
+    { kind: "address", capped: true, posts: [
+      { uri: "at://2", createdAt: iso(30), text: `$CAT ${mint}` }, // duplicate of the cashtag hit
+      { uri: "at://4", createdAt: iso(8), text: `ca: ${mint}` },
+    ] },
+  ], mint, now);
+  assert.deepEqual(mc, { m10: 2, m1h: 3, capped: true, byAddress1h: 2 });
+  // normalization: Bluesky-only token with saturated Bluesky points scores 100, not 55
+  const sat = { bskyMentions10m: 3, bskyMentions1h: 8, pumpReplyPerHr: null, pumpLive: false, hasSocialLinks: null };
+  assert.equal(computeSocialScore(sat, { bsky: true, pump: false }), 100);
+  assert.equal(computeSocialScore(sat), 55); // both sources applicable: unchanged scale
+  // pump-only: 40 replies/hr (30) + live (10) + links (5) = 45/45 -> 100
+  assert.equal(computeSocialScore({ bskyMentions10m: null, bskyMentions1h: null, pumpReplyPerHr: 40, pumpLive: true, hasSocialLinks: true }, { bsky: false, pump: true }), 100);
+  assert.equal(computeSocialScore(sat, { bsky: false, pump: false }), null);
+  assert.match(socialCoverage({ bsky: true, pump: false }), /pump.fun n\/a/);
+  // a complete collection with no applicable source is unavailable, not a 0 score
+  const u = resolveSocialCollection({ socialScore: null, socialCheckedAt: null, socialStatus: null }, { bsky: "ok", pump: "skipped" }, null, now);
+  assert.equal(u.socialScore, null);
+  assert.equal(u.socialStatus, "unavailable");
+});

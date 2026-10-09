@@ -27,10 +27,13 @@ interface Candidate {
   chg5m: number | null; chg1h: number | null; chg24h: number | null;
   boosted: boolean; ageMinutes: number | null;
   mintAuthorityActive: boolean | null; freezeAuthorityActive: boolean | null;
-  top10Pct: number | null; securityCheckedAt: number | null;
+  top10Pct: number | null; top10Method?: string | null; securityCheckedAt: number | null;
   rcRisks: string[]; rcLpLockedPct: number | null;
   bskyMentions1h: number | null; bskyMentions10m: number | null;
-  pumpReplies: number | null; pumpReplyPerHr: number | null;
+  bskyMentionsByAddress1h?: number | null; bskyCapped?: boolean;
+  pumpReplies: number | null; pumpReplyPerHr: number | null; pumpCheckedAt?: number | null;
+  socialSources?: { bsky: "ok" | "failed" | "skipped"; pump: "ok" | "failed" | "skipped" } | null;
+  socialCoverage?: string | null;
   pumpLive: boolean; socialScore: number | null; socialCheckedAt: number | null;
   // collection state: a failed/stale collection is NOT zero attention
   socialStatus?: "ok" | "partial" | "failed" | "stale" | "unavailable" | null;
@@ -56,14 +59,22 @@ interface HealthResp {
   trackedCount: number; asOf: number;
 }
 
+interface SignalCounts {
+  total: number; open: number; hit5m: number; doubled: number; rugged: number; dead: number;
+  graded: number; sampleReady: boolean; minGradedForSample: number;
+  noData?: number; // past the 72h horizon but unpriceable: missing, not dead
+}
+
 interface SignalsResp {
   signals: any[];
-  // one aggregate query over all logged signals; sampleReady = graded ≥ 50
-  // (a sample-size flag, not calibration)
-  stats: {
-    total: number; open: number; hit5m: number; doubled: number; rugged: number; dead: number;
-    graded: number; sampleReady: boolean; minGradedForSample: number;
-    noData?: number; // past the 72h horizon but unpriceable: missing, not dead
+  // top-level counts = DISTINCT COINS (first signal per coin); sampleReady =
+  // graded coins ≥ 50 (a sample-size flag, not calibration). rows = every
+  // logged WATCH/ENTER row; enterCoins = first ENTER per coin.
+  stats: SignalCounts & {
+    basis?: string;
+    noDataShare?: number | null;
+    rows?: SignalCounts;
+    enterCoins?: SignalCounts;
   };
 }
 
@@ -119,8 +130,8 @@ export default function CryptoPanel() {
               </Badge>
             </div>
             <p className="mt-1 max-w-xl text-xs leading-snug text-muted-foreground">
-              solana launches + pump.fun graduations, scored on flow acceleration, catchy-name power,
-              narrative confirms, and rug filters. sized off exit liquidity. PASS is the default verdict.
+              solana launches + pump.fun graduations, scored on flow acceleration, a hand-set catchy-name
+              heuristic (not fitted to outcomes), narrative confirms, and rug filters. sized off exit liquidity. PASS is the default verdict.
             </p>
           </div>
           <AgentStrip health={healthQ.data} />
@@ -247,7 +258,7 @@ function TrackingBanner({ sig, view }: { sig?: SignalsResp; view: string }) {
       <p className="text-[11px] leading-snug text-amber-200/90">
         <span className="font-semibold">tracking mode.</span> every ENTER/WATCH is logged and graded
         (5M hit / doubled / rugged / dead) but nothing here is stakeable until the audited hit rate exists
-        — same n≥50 rule as the 0DTE desk{graded != null ? ` (${graded} graded so far)` : ""}. sub-1M memes
+        — same n≥50 rule as the 0DTE desk, counted in distinct coins{graded != null ? ` (${graded} graded coins so far)` : ""}. sub-1M memes
         are a &gt;90% loss-rate arena; the math only works small, cut fast, and letting 4-5x winners pay for everything.
       </p>
     </div>
@@ -402,8 +413,8 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
                   freeze {c.freezeAuthorityActive ? "ACTIVE" : "none ✓"}
                 </span>
                 {c.top10Pct != null && (
-                  <span className={`rounded px-1.5 py-0.5 font-semibold ${c.top10Pct > 45 ? "bg-rose-500/20 text-rose-300" : c.top10Pct > 30 ? "bg-amber-500/15 text-amber-300" : "bg-emerald-500/15 text-emerald-300"}`}>
-                    top10 {c.top10Pct}%
+                  <span title={c.top10Method ?? undefined} className={`rounded px-1.5 py-0.5 font-semibold ${c.top10Pct > 45 ? "bg-rose-500/20 text-rose-300" : c.top10Pct > 30 ? "bg-amber-500/15 text-amber-300" : "bg-emerald-500/15 text-emerald-300"}`}>
+                    top10 {c.top10Pct}%{c.top10Method?.includes("INCLUDING") ? " (incl. pool?)" : ""}
                   </span>
                 )}
                 {c.rcLpLockedPct != null && (
@@ -419,10 +430,22 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
               <span>
                 social · bsky{" "}
                 {c.bskyMentions1h != null
-                  ? `${c.bskyMentions1h} mentions/1h (${c.bskyMentions10m ?? 0} last 10m)`
+                  ? `${c.bskyCapped ? "≥" : ""}${c.bskyMentions1h} mentions/1h (${c.bskyCapped ? "≥" : ""}${c.bskyMentions10m ?? 0} last 10m${c.bskyMentionsByAddress1h != null ? `, ${c.bskyMentionsByAddress1h} by contract address` : ""})${c.bskyCapped ? " · search capped, lower bound" : ""}`
                   : "unavailable (fetch failed or not searched)"}
               </span>
-              {c.pumpReplies != null && <span>· pump.fun {c.pumpReplies} replies{c.pumpReplyPerHr != null ? ` (${c.pumpReplyPerHr >= 0 ? "+" : ""}${c.pumpReplyPerHr}/hr)` : ""}</span>}
+              {c.pumpReplies != null && (() => {
+                // pump.fun values are kept from the last successful read; mark
+                // them stale when the latest attempt failed or they are old.
+                const stale = c.socialSources?.pump === "failed" || (c.pumpCheckedAt != null && Date.now() - c.pumpCheckedAt > 15 * 60_000);
+                const at = c.pumpCheckedAt != null ? new Date(c.pumpCheckedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
+                return (
+                  <span className={stale ? "text-amber-300/80" : undefined} title={stale ? "last successful pump.fun read; the latest attempt failed or is old" : undefined}>
+                    · pump.fun {c.pumpReplies} replies{c.pumpReplyPerHr != null ? ` (${c.pumpReplyPerHr >= 0 ? "+" : ""}${c.pumpReplyPerHr}/hr)` : ""}
+                    {stale ? ` · STALE${at ? ` (as of ${at})` : ""}` : ""}
+                  </span>
+                );
+              })()}
+              {c.socialCoverage && <span>· score over {c.socialCoverage}</span>}
             </div>
           )}
           <p className="text-[9px] text-muted-foreground">
@@ -470,7 +493,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
     <div className="space-y-3" data-testid="crypto-signal-log">
       <div className="grid grid-cols-3 gap-2 sm:grid-cols-7">
         {[
-          ["logged", stats.total, "text-foreground"],
+          ["coins", stats.total, "text-foreground"],
           ["open", stats.open, "text-sky-300"],
           ["hit 5M", stats.hit5m, "text-lime-300"],
           ["doubled", stats.doubled, "text-emerald-300"],
@@ -484,9 +507,14 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
           </div>
         ))}
       </div>
+      <p className="text-[10px] text-muted-foreground" data-testid="crypto-stats-basis">
+        counts are distinct coins (first signal per coin){stats.rows ? `; ${stats.rows.total} logged rows` : ""}
+        {stats.enterCoins ? ` · first-ENTER coins: ${stats.enterCoins.total} (${stats.enterCoins.graded} graded, ${stats.enterCoins.hit5m + stats.enterCoins.doubled} hit 5M or doubled)` : ""}
+        {stats.noDataShare != null ? ` · no-data share ${Math.round(stats.noDataShare * 100)}% of resolved coins (missing outcomes, not losses)` : ""}
+      </p>
       {!stats.sampleReady && (
         <p className="text-[10px] text-muted-foreground">
-          sample-ready at {stats.minGradedForSample ?? 50} graded outcomes ({stats.graded ?? 0} so far) — a minimum sample, not a calibration. until then these stats are the whole product: proving or killing the edge.
+          sample-ready at {stats.minGradedForSample ?? 50} graded coins ({stats.graded ?? 0} so far) — a minimum sample, not a calibration. until then these stats are the whole product: proving or killing the edge.
         </p>
       )}
       <div className="space-y-1.5">
