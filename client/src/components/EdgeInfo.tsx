@@ -22,7 +22,7 @@ const INFO: Record<string, InfoEntry> = {
     what: "A live detector for heavy contracts: $2.5M+ of cumulative day premium (volume x mid) on one contract, 15x volume vs open interest or a brand-new strike, last print at or above the ask, 1\u20133 days to expiry. The chain snapshot has no trade sizes, so a heavy contract can be thousands of small trades \u2014 it is not a block print.",
     how: "Expand a ticker to see each heavy contract's strike, last-print side, and premium. CONFLUX means several heavy contracts on adjacent strikes lean the same way. Side comes from the latest print vs the quote, not from each trade.",
     edge: "Large same-direction premium in contracts that expire in days is worth a look. Treat it as a lead to check against price and positioning, not as proof of informed money.",
-    risk: "The last-print side tags the whole day's volume by one print; on the delayed feed the print and quote can be from different moments. A heavy contract can be one leg of a spread or a closing trade. Never size off one contract.",
+    risk: "The last-print side tags the whole day's volume by one print; the print and the current quote can be from different moments. A heavy contract can be one leg of a spread or a closing trade. Never size off one contract.",
   },
   "tracked-signals": {
     title: "Tracked Signals",

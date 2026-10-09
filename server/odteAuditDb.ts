@@ -144,12 +144,12 @@ function watchedAlerts(now: number): Array<{ alertId: string; strike: number; is
  */
 export function recordOdteOptionMarks(args: {
   expiryISO: string;
-  source: "schwab" | "cboe";
+  source: "schwab";
   underlying: number | null;
   quotes: TrackerQuote[];
   now?: number;
 }): number {
-  if (args.source !== "schwab") return 0; // never treat delayed quotes as executable marks
+  if (args.source !== "schwab") return 0; // only Schwab quotes are logged as marks
   const now = args.now ?? Date.now();
   let written = 0;
   try {

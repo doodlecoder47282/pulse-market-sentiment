@@ -9,7 +9,8 @@
 //   contract whose cumulative day volume x mid is large; it can be thousands
 //   of small trades, so it is not a block print.
 // - "Last-print side" tags a contract's whole day volume by where its most
-//   recent print sat against the current bid/ask (both possibly delayed). It
+//   recent print sat against the current bid/ask (the chain snapshot's last
+//   print and quote, which can be from different moments). It
 //   is not trade-by-trade aggressor classification (Lee & Ready 1991 classify
 //   each trade against the prevailing quote).
 // - "Signed tick volume" signs each 1-minute SPY bar's whole volume by the
@@ -26,7 +27,7 @@ export const HEAVY_CONTRACT_NOTE =
   "Heavy contract = cumulative day volume x mid on one contract (can be many small trades), not a block print.";
 
 export const LAST_PRINT_SIDE_NOTE =
-  "Last-print side: each contract's whole day volume is tagged by where its latest print sat versus the current bid/ask. Not trade-by-trade aggressor data; on the delayed feed the print and quote can be from different moments. Directional color only.";
+  "Last-print side: each contract's whole day volume is tagged by where its latest print sat versus the current bid/ask. Not trade-by-trade aggressor data; the latest print and the current quote can be from different moments. Directional color only.";
 
 export const SIGNED_TICK_VOLUME_NOTE =
   "Signed tick volume: tick rule on 1-minute SPY closes; each bar's whole volume takes the sign of its close-to-close change (zero change keeps the last sign). Not Lee-Ready trade classification and not order-book OFI.";
