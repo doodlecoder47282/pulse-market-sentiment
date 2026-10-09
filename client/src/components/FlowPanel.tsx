@@ -133,6 +133,24 @@ interface IntradayFlowTicker {
   /** Optional for older servers. "unavailable" = no chain data; zeros are placeholders. */
   aggressorState?: "live" | "cached" | "unavailable";
   sideMethod?: string;
+  /** Lee-Ready on streamed LEVELONE_OPTIONS trade blocks, streamed contracts only (server/signedVolume.ts). */
+  streamSide?: StreamSideSummary | null;
+  streamSideState?: "live" | "stream_down" | "none_streamed" | "unavailable";
+}
+
+interface StreamSideSummary {
+  method: string;
+  contracts: number;
+  boughtCallVol: number; soldCallVol: number; unsignedCallVol: number;
+  boughtPutVol: number; soldPutVol: number; unsignedPutVol: number;
+  boughtCallPrem: number; soldCallPrem: number; boughtPutPrem: number; soldPutPrem: number;
+  streamedVol: number;
+  chainDayVol: number;
+  coveragePct: number | null;
+  quoteRulePct: number | null;
+  tickRulePct: number | null;
+  firstMs: number | null;
+  lastMs: number | null;
 }
 
 interface IntradayFlowResponse {
@@ -608,6 +626,28 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
             tone="neutral"
           />
         </div>
+      </div>
+
+      {/* ─── TRADE-LEVEL SIDE: Lee-Ready on streamed option trade blocks (streamed contracts only) ─── */}
+      <div className="rounded-md border border-border/40 bg-card/20 p-2" data-testid="flow-stream-side">
+        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground" title={ticker.streamSide?.method ?? "Lee-Ready on Schwab LEVELONE_OPTIONS trade blocks for streamed contracts only."}>Trade-level side · streamed contracts</span>
+          <span className="text-[9px] font-mono text-muted-foreground">
+            {ticker.streamSide
+              ? `${ticker.streamSide.contracts} contract${ticker.streamSide.contracts === 1 ? "" : "s"} · covers ${ticker.streamSide.coveragePct == null ? "—" : ticker.streamSide.coveragePct.toFixed(1)}% of chain day vol · quote rule ${ticker.streamSide.quoteRulePct?.toFixed(0) ?? "—"}%${ticker.streamSideState === "stream_down" ? " · stream down, totals to last block" : ""}`
+              : ticker.streamSideState === "none_streamed" ? "no contract of this chain is streamed: not classified"
+              : ticker.streamSideState === "stream_down" ? "Schwab stream not connected: not classified"
+              : "no fresh chain this poll: coverage unknown"}
+          </span>
+        </div>
+        {ticker.streamSide && (
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <StatBox label="Calls buyer-init $" value={fmtDollar(ticker.streamSide.boughtCallPrem)} tone="up" />
+            <StatBox label="Calls seller-init $" value={fmtDollar(ticker.streamSide.soldCallPrem)} tone="down" />
+            <StatBox label="Puts buyer-init $" value={fmtDollar(ticker.streamSide.boughtPutPrem)} tone="down" />
+            <StatBox label="Puts seller-init $" value={fmtDollar(ticker.streamSide.soldPutPrem)} tone="up" />
+          </div>
+        )}
       </div>
 
       {/* Chart */}

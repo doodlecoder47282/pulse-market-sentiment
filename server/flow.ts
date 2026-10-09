@@ -27,6 +27,8 @@ import {
   aggressorStateOf, currentVolumes, isFreshChain, seriesFrom, shouldAppendSample,
   type ChainRead, type IntradaySeriesState, type IntradayVolumeState,
 } from "./flowIntradayState";
+import { summarizeStreamSide, type StreamSideSummary } from "./signedVolume";
+import { getActiveStreamStore } from "./streamStore";
 
 /** Expiry window (calendar days) of the chains behind every flow figure. */
 export const FLOW_DTE = 7;
@@ -245,6 +247,12 @@ export interface IntradayFlowTicker {
   aggressorState: "live" | "cached" | "unavailable";
   /** Honest label for the side classification shown in the UI. */
   sideMethod: string;
+  /** Trade-level side (Lee-Ready) for the chain contracts streamed on LEVELONE_OPTIONS; null when none. */
+  streamSide: StreamSideSummary | null;
+  /** "live" = streamed blocks classified, stream connected; "stream_down" = stream not connected
+   *  (totals so far kept, coverage stopped); "none_streamed" = no chain contract is streamed;
+   *  "unavailable" = no fresh chain this poll (coverage base unknown). */
+  streamSideState: "live" | "stream_down" | "none_streamed" | "unavailable";
 }
 
 export interface IntradayFlowResponse {
@@ -355,12 +363,13 @@ export async function buildIntradayFlowSnapshot(): Promise<IntradayFlowResponse>
     let callVol = 0, putVol = 0;
     let agg: AggressorBreakdown | null = null;
     let read = false, stale = false;
+    let opts: FlatContract[] = [];
     try {
       const chain = await flowChain(tk.chainSymbol);
       if (chain) {
         read = true;
         stale = !!(chain as any).stale;
-        const opts = flattenSchwabChain(chain);
+        opts = flattenSchwabChain(chain);
         for (const o of opts) {
           const v = o.volume ?? 0;
           if (o.side === "C") callVol += v;
@@ -373,6 +382,21 @@ export async function buildIntradayFlowSnapshot(): Promise<IntradayFlowResponse>
     }
     const chainRead: ChainRead = { read, stale, callVol, putVol };
     const fresh = isFreshChain(chainRead);
+
+    // Trade-level side for streamed contracts (R3-2 item 4); coverage vs the
+    // fresh chain's day volume.
+    let streamSide: StreamSideSummary | null = null;
+    let streamSideState: IntradayFlowTicker["streamSideState"] = "unavailable";
+    if (fresh) {
+      const store = getActiveStreamStore();
+      if (!store) streamSideState = "stream_down";
+      else {
+        const nowMs = Date.now();
+        const sum = summarizeStreamSide(opts.map((o) => ({ occ: o.occ, side: o.side, dayVolume: o.volume })), (occ) => store.optionSides.get(occ, nowMs));
+        if (sum.contracts > 0) { streamSide = sum; streamSideState = store.connected ? "live" : "stream_down"; }
+        else streamSideState = store.connected ? "none_streamed" : "stream_down";
+      }
+    }
 
     let buf = volBuffers.get(tk.symbol);
     // Reset buffer daily
@@ -453,6 +477,8 @@ export async function buildIntradayFlowSnapshot(): Promise<IntradayFlowResponse>
       netAggressorPrem,
       aggressorState,
       sideMethod: LAST_PRINT_SIDE_NOTE,
+      streamSide,
+      streamSideState,
     });
   }
 

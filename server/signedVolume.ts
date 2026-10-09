@@ -195,6 +195,37 @@ export interface L1Classification {
 const validQuote = (bid: number | null, ask: number | null): boolean =>
   bid != null && ask != null && Number.isFinite(bid) && Number.isFinite(ask) && bid > 0 && ask > 0 && ask >= bid;
 
+/**
+ * One Lee-Ready step: quote rule against the prevailing (prior) quote, tick
+ * rule at the mid (zero tick keeps the last non-zero sign), "none" when
+ * neither applies.
+ */
+export function leeReadySign(
+  price: number,
+  prevBid: number | null,
+  prevAsk: number | null,
+  lastTradePrice: number | null,
+  lastTickSign: 1 | -1 | 0,
+): { sign: 1 | -1 | 0; rule: L1TradeBlock["rule"] } {
+  let sign: 1 | -1 | 0 = 0;
+  let rule: L1TradeBlock["rule"] = "none";
+  if (validQuote(prevBid, prevAsk)) {
+    const mid = ((prevBid as number) + (prevAsk as number)) / 2;
+    // Binary floating point: (100.01 + 100.03) / 2 is not exactly 100.02,
+    // so "at the mid" is decided within a relative 1e-9.
+    const eps = 1e-9 * Math.max(1, Math.abs(mid));
+    if (price > mid + eps) { sign = 1; rule = "quote"; }
+    else if (price < mid - eps) { sign = -1; rule = "quote"; }
+  }
+  if (rule === "none" && lastTradePrice != null) {
+    if (price > lastTradePrice) sign = 1;
+    else if (price < lastTradePrice) sign = -1;
+    else sign = lastTickSign;
+    rule = sign === 0 ? "none" : "tick";
+  }
+  return { sign, rule };
+}
+
 /** Lee-Ready classification of LEVELONE trade blocks (pure, ordered input). */
 export function classifyL1Trades(updates: L1Update[]): L1Classification {
   const trades: L1TradeBlock[] = [];
@@ -213,22 +244,7 @@ export function classifyL1Trades(updates: L1Update[]): L1Classification {
       } else if (vol > prevVol && u.last != null && Number.isFinite(u.last) && u.last > 0) {
         const price = u.last;
         const size = vol - prevVol;
-        let sign: 1 | -1 | 0 = 0;
-        let rule: L1TradeBlock["rule"] = "none";
-        if (validQuote(prevBid, prevAsk)) {
-          const mid = ((prevBid as number) + (prevAsk as number)) / 2;
-          // Binary floating point: (100.01 + 100.03) / 2 is not exactly 100.02,
-          // so "at the mid" is decided within a relative 1e-9.
-          const eps = 1e-9 * Math.max(1, Math.abs(mid));
-          if (price > mid + eps) { sign = 1; rule = "quote"; }
-          else if (price < mid - eps) { sign = -1; rule = "quote"; }
-        }
-        if (rule === "none" && lastTradePrice != null) {
-          if (price > lastTradePrice) sign = 1;
-          else if (price < lastTradePrice) sign = -1;
-          else sign = lastTickSign;
-          rule = sign === 0 ? "none" : "tick";
-        }
+        const { sign, rule } = leeReadySign(price, prevBid, prevAsk, lastTradePrice, lastTickSign);
         if (rule === "quote") quoteRule++;
         else if (rule === "tick") tickRule++;
         else unsigned++;
@@ -298,5 +314,184 @@ export function mergeSignedBars(barRule: SignedTickBar[], tradeLevel: SignedTick
     cumulative += b.signedVolume;
     out.push({ ...b, cumulative });
   }
+  return out;
+}
+
+// ─── Streamed option trade blocks: per-contract side book (R3-2 item 4) ────
+//
+// The chain snapshot only supports a last-print side (each contract's whole
+// day volume tagged by its latest print vs the current quote). For contracts
+// streamed on Schwab LEVELONE_OPTIONS (the 0DTE tracker and whale follow-up
+// subscriptions), each update that raises TOTAL_VOLUME is a trade block: size
+// = the volume delta, price = the update's last, signed by Lee-Ready against
+// the quote held BEFORE that update (leeReadySign, same rule as the SPY
+// equity read above). Totals are per contract, per ET session date, from the
+// first update the stream delivered (coverage starts at subscription; volume
+// traded before it, or during a disconnect, is not classified and is
+// reported as uncovered, never as zero or as a side).
+// Option premium = size x price x 100 (standard equity/index option
+// multiplier; Cboe SPX / SPY contract specifications).
+
+export interface OptionSideTotals {
+  /** ET session date the totals belong to. */
+  day: string;
+  buyVol: number;
+  sellVol: number;
+  unsignedVol: number;
+  buyPrem: number;
+  sellPrem: number;
+  quoteRule: number;
+  tickRule: number;
+  unsigned: number;
+  /** Schwab time of the first / last classified block. */
+  firstMs: number | null;
+  lastMs: number | null;
+  /** Stream sessions (reconnects) whose baseline was reset; volume across a gap is not classified. */
+  baselineResets: number;
+}
+
+interface OptionSideState {
+  epoch: number;
+  prevBid: number | null;
+  prevAsk: number | null;
+  prevVol: number | null;
+  lastTradePrice: number | null;
+  lastTickSign: 1 | -1 | 0;
+  totals: OptionSideTotals;
+}
+
+const etDayOf = (() => {
+  let memoMin = NaN;
+  let memoDay = "";
+  const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" });
+  return (t: number): string => {
+    const m = Math.floor(t / 60_000);
+    if (m !== memoMin) { memoMin = m; memoDay = fmt.format(new Date(t)); }
+    return memoDay;
+  };
+})();
+
+const emptyTotals = (day: string): OptionSideTotals => ({
+  day, buyVol: 0, sellVol: 0, unsignedVol: 0, buyPrem: 0, sellPrem: 0,
+  quoteRule: 0, tickRule: 0, unsigned: 0, firstMs: null, lastMs: null, baselineResets: 0,
+});
+
+/** Normalized option key: Schwab streamer symbols are space-padded, chain OCC keys are not. */
+export const optionKey = (symbol: string): string => symbol.replace(/\s+/g, "");
+
+export class OptionTradeSideBook {
+  private st = new Map<string, OptionSideState>();
+
+  /**
+   * Apply one merged LEVELONE_OPTIONS update (post-update bid/ask/last and
+   * session cumulative volume). `epoch` is the stream session: a new one
+   * resets the baseline so the first update after a reconnect is not read
+   * as one giant block.
+   */
+  update(symbol: string, u: L1Update, epoch: number): void {
+    const key = optionKey(symbol);
+    const day = etDayOf(u.t);
+    let s = this.st.get(key);
+    if (!s || s.totals.day !== day) {
+      s = { epoch, prevBid: null, prevAsk: null, prevVol: null, lastTradePrice: null, lastTickSign: 0, totals: emptyTotals(day) };
+      this.st.set(key, s);
+    } else if (s.epoch !== epoch) {
+      s.epoch = epoch;
+      s.prevVol = null; s.prevBid = null; s.prevAsk = null;
+      s.totals.baselineResets++;
+    }
+    const vol = u.cumVolume != null && Number.isFinite(u.cumVolume) ? u.cumVolume : null;
+    if (vol != null && s.prevVol != null && vol > s.prevVol && u.last != null && Number.isFinite(u.last) && u.last > 0) {
+      const size = vol - s.prevVol;
+      const { sign, rule } = leeReadySign(u.last, s.prevBid, s.prevAsk, s.lastTradePrice, s.lastTickSign);
+      const prem = size * u.last * 100;
+      const T = s.totals;
+      if (sign > 0) { T.buyVol += size; T.buyPrem += prem; }
+      else if (sign < 0) { T.sellVol += size; T.sellPrem += prem; }
+      else T.unsignedVol += size;
+      if (rule === "quote") T.quoteRule++; else if (rule === "tick") T.tickRule++; else T.unsigned++;
+      if (T.firstMs == null) T.firstMs = u.t;
+      T.lastMs = u.t;
+      if (s.lastTradePrice != null && u.last !== s.lastTradePrice) s.lastTickSign = u.last > s.lastTradePrice ? 1 : -1;
+      s.lastTradePrice = u.last;
+    }
+    if (vol != null) s.prevVol = vol;
+    if (u.bid != null) s.prevBid = u.bid;
+    if (u.ask != null) s.prevAsk = u.ask;
+  }
+
+  /** Totals for a contract on an ET date (default: the date of `nowMs`), or null when never streamed that day. */
+  get(symbol: string, nowMs: number = Date.now()): OptionSideTotals | null {
+    const s = this.st.get(optionKey(symbol));
+    if (!s || s.totals.day !== etDayOf(nowMs)) return null;
+    return { ...s.totals };
+  }
+
+  get size(): number { return this.st.size; }
+}
+
+export interface StreamSideContract {
+  occ: string;
+  side: "C" | "P";
+  /** Chain day volume of the contract (Schwab), null when omitted. */
+  dayVolume: number | null;
+}
+
+export interface StreamSideSummary {
+  method: string;
+  /** Chain contracts with at least one streamed, classified block today. */
+  contracts: number;
+  boughtCallVol: number; soldCallVol: number; unsignedCallVol: number;
+  boughtPutVol: number; soldPutVol: number; unsignedPutVol: number;
+  boughtCallPrem: number; soldCallPrem: number; boughtPutPrem: number; soldPutPrem: number;
+  /** Volume in streamed blocks (signed + unsigned). */
+  streamedVol: number;
+  /** Day volume of the whole chain window; share covered = streamedVol / chainDayVol. */
+  chainDayVol: number;
+  coveragePct: number | null;
+  /** Of the streamed blocks: share signed by the quote rule / tick rule. */
+  quoteRulePct: number | null;
+  tickRulePct: number | null;
+  firstMs: number | null;
+  lastMs: number | null;
+}
+
+export const STREAM_SIDE_METHOD =
+  "Lee-Ready on Schwab LEVELONE_OPTIONS trade blocks (volume delta between streamed updates, signed vs the prior quote; tick rule at the mid), only for streamed contracts and only since their subscription; the rest of the chain volume is not classified here.";
+
+/** Aggregate the side book over the chain's contracts. Pure given the book. */
+export function summarizeStreamSide(
+  contracts: ReadonlyArray<StreamSideContract>,
+  lookup: (occ: string) => OptionSideTotals | null,
+): StreamSideSummary {
+  const out: StreamSideSummary = {
+    method: STREAM_SIDE_METHOD, contracts: 0,
+    boughtCallVol: 0, soldCallVol: 0, unsignedCallVol: 0, boughtPutVol: 0, soldPutVol: 0, unsignedPutVol: 0,
+    boughtCallPrem: 0, soldCallPrem: 0, boughtPutPrem: 0, soldPutPrem: 0,
+    streamedVol: 0, chainDayVol: 0, coveragePct: null, quoteRulePct: null, tickRulePct: null, firstMs: null, lastMs: null,
+  };
+  let quote = 0, tick = 0, blocks = 0;
+  for (const c of contracts) {
+    if (c.dayVolume != null && Number.isFinite(c.dayVolume)) out.chainDayVol += c.dayVolume;
+    const t = lookup(c.occ);
+    if (!t) continue;
+    const v = t.buyVol + t.sellVol + t.unsignedVol;
+    if (v <= 0) continue;
+    out.contracts++;
+    out.streamedVol += v;
+    if (c.side === "C") {
+      out.boughtCallVol += t.buyVol; out.soldCallVol += t.sellVol; out.unsignedCallVol += t.unsignedVol;
+      out.boughtCallPrem += t.buyPrem; out.soldCallPrem += t.sellPrem;
+    } else {
+      out.boughtPutVol += t.buyVol; out.soldPutVol += t.sellVol; out.unsignedPutVol += t.unsignedVol;
+      out.boughtPutPrem += t.buyPrem; out.soldPutPrem += t.sellPrem;
+    }
+    quote += t.quoteRule; tick += t.tickRule; blocks += t.quoteRule + t.tickRule + t.unsigned;
+    if (t.firstMs != null) out.firstMs = out.firstMs == null ? t.firstMs : Math.min(out.firstMs, t.firstMs);
+    if (t.lastMs != null) out.lastMs = out.lastMs == null ? t.lastMs : Math.max(out.lastMs, t.lastMs);
+  }
+  out.coveragePct = out.chainDayVol > 0 ? (out.streamedVol / out.chainDayVol) * 100 : null;
+  out.quoteRulePct = blocks > 0 ? (quote / blocks) * 100 : null;
+  out.tickRulePct = blocks > 0 ? (tick / blocks) * 100 : null;
   return out;
 }

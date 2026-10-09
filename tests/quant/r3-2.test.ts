@@ -9,6 +9,10 @@ import {
   MIN_SERIES_SAMPLES, LAST_SAMPLE_MAX_AGE_MS, aggressorStateOf, currentVolumes,
   isFreshChain, seriesFrom, shouldAppendSample,
 } from "../../server/flowIntradayState";
+import { ofiApiPayload, ofiMethodLabel, type OfiTrendLike } from "../../server/ofiPayload";
+import {
+  leeReadySign, classifyL1Trades, OptionTradeSideBook, summarizeStreamSide, optionKey,
+} from "../../server/signedVolume";
 
 const near = (got: number, want: number, tol: number, what: string) =>
   assert.ok(Math.abs(got - want) <= tol, `${what}: got ${got}, want ${want} +- ${tol}`);
@@ -103,4 +107,103 @@ test("R3-2.2 side breakdown re-used only within the same max age", () => {
   assert.equal(aggressorStateOf(false, 100, 400), "cached");
   assert.equal(aggressorStateOf(false, 100, 401), "unavailable");
   assert.equal(aggressorStateOf(false, null, 100), "unavailable");
+});
+
+// ─── Item 3: OFI payload carries the signing method ─────────────────────────
+
+const ofiTrend = (method?: OfiTrendLike["method"], from: number | null = null, counts: OfiTrendLike["tradeLevelCounts"] = null): OfiTrendLike => ({
+  bars: Array.from({ length: 20 }, (_, i) => ({ ts: 1_760_000_000_000 + i * 60_000, signedVolume: 10, cumulative: 10 * (i + 1) })),
+  cumulativeNow: 200, slope15m: 150, slope5m: 50, trend: "BULLISH", acceleration: "FLAT", dataState: "ok",
+  method, tradeLevelFromMs: from, tradeLevelCounts: counts,
+});
+
+test("R3-2.3 payload passes method, tradeLevelFromMs, tradeLevelCounts; label follows the method", () => {
+  const bars = ofiApiPayload(ofiTrend("tick-rule-1m"), Date.now());
+  assert.equal(bars.method, "tick-rule-1m");
+  assert.match(bars.methodLabel, /tick volume/i);
+  assert.doesNotMatch(bars.methodLabel, /Lee-Ready/);
+  assert.equal(bars.tradeLevelCoveragePct, null);
+
+  // 80 quote-rule, 15 tick-rule, 5 unsigned blocks: 80 %, 15 %, 5 %; signed share 95 %.
+  const counts = { quoteRule: 80, tickRule: 15, unsigned: 5 };
+  const lr = ofiApiPayload(ofiTrend("lee-ready-l1", 1_760_000_000_000, counts), Date.now());
+  assert.equal(lr.method, "lee-ready-l1");
+  assert.match(lr.methodLabel, /Lee-Ready on streamed trades/);
+  assert.deepEqual(lr.tradeLevelCounts, counts);
+  assert.equal(lr.tradeLevelFromMs, 1_760_000_000_000);
+  assert.equal(lr.tradeLevelCoveragePct, 95);
+  assert.match(lr.methodNote, /100 trade blocks.*80% quote rule, 15% tick rule.*5% unsigned/);
+
+  // 2025-10-09 14:00 UTC = 10:00 ET (EDT, UTC-4).
+  const from = Date.UTC(2025, 9, 9, 14, 0);
+  const hy = ofiApiPayload(ofiTrend("hybrid-l1", from, counts), Date.now());
+  assert.match(hy.methodLabel, /tick rule, Lee-Ready from 10:00 AM ET/);
+  // Older trend objects without a method read as the bar tick rule.
+  assert.equal(ofiApiPayload(ofiTrend(undefined), Date.now()).method, "tick-rule-1m");
+  assert.equal(ofiMethodLabel("lee-ready-l1", null, null).tradeLevelCoveragePct, null);
+});
+
+// ─── Item 4: streamed option trade blocks signed by Lee-Ready ───────────────
+
+test("R3-2.4 leeReadySign: quote rule vs prior mid, tick rule at the mid (Lee & Ready 1991)", () => {
+  assert.deepEqual(leeReadySign(1.20, 1.00, 1.20, null, 0), { sign: 1, rule: "quote" });
+  assert.deepEqual(leeReadySign(1.05, 1.00, 1.20, null, 0), { sign: -1, rule: "quote" });
+  assert.deepEqual(leeReadySign(1.10, 1.00, 1.20, 1.05, 0), { sign: 1, rule: "tick" });   // uptick at the mid
+  assert.deepEqual(leeReadySign(1.10, 1.00, 1.20, 1.10, -1), { sign: -1, rule: "tick" }); // zero tick keeps last sign
+  assert.deepEqual(leeReadySign(1.10, null, null, null, 0), { sign: 0, rule: "none" });
+  // Refactor regression: classifyL1Trades still signs the same way.
+  const c = classifyL1Trades([
+    { t: 1, last: 100, bid: 99.9, ask: 100.1, cumVolume: 1000 },
+    { t: 2, last: 100.1, bid: 100.0, ask: 100.2, cumVolume: 1100 },
+    { t: 3, last: 100.1, bid: 100.0, ask: 100.2, cumVolume: 1150 },
+  ]);
+  // Second block sits at the mid (100.1) with a zero tick and no earlier
+  // non-zero tick: unsigned, never guessed.
+  assert.deepEqual(c.trades.map((k) => [k.sign, k.rule, k.size]), [[1, "quote", 100], [0, "none", 50]]);
+});
+
+test("R3-2.4 option side book: hand-computed blocks, premium x100, reconnect and day resets", () => {
+  const book = new OptionTradeSideBook();
+  const T0 = Date.UTC(2026, 9, 9, 14, 0); // 10:00 ET
+  const sym = "SPY   261009C00670000";
+  book.update(sym, { t: T0, last: 1.15, bid: 1.00, ask: 1.20, cumVolume: 100 }, 1);          // baseline, no block
+  book.update(sym, { t: T0 + 1000, last: 1.20, bid: 1.00, ask: 1.20, cumVolume: 110 }, 1);   // 1.20 > mid 1.10: buy 10, $1,200
+  book.update(sym, { t: T0 + 2000, last: 1.20, bid: 1.10, ask: 1.30, cumVolume: 110 }, 1);   // quote only
+  book.update(sym, { t: T0 + 3000, last: 1.10, bid: 1.10, ask: 1.30, cumVolume: 115 }, 1);   // 1.10 < mid 1.20: sell 5, $550
+  book.update(sym, { t: T0 + 4000, last: 1.20, bid: 1.10, ask: 1.30, cumVolume: 117 }, 1);   // at mid, uptick: buy 2, $240
+  let t = book.get(optionKey(sym), T0 + 5000)!;
+  assert.equal(t.buyVol, 12); assert.equal(t.sellVol, 5); assert.equal(t.unsignedVol, 0);
+  near(t.buyPrem, 1200 + 240, 1e-9, "buy premium"); near(t.sellPrem, 550, 1e-9, "sell premium");
+  assert.equal(t.quoteRule, 2); assert.equal(t.tickRule, 1);
+  assert.equal(t.firstMs, T0 + 1000); assert.equal(t.lastMs, T0 + 4000);
+  // Reconnect (epoch 2): the first update re-baselines; volume across the gap is not classified.
+  book.update(sym, { t: T0 + 60_000, last: 1.30, bid: 1.20, ask: 1.40, cumVolume: 300 }, 2);
+  t = book.get(sym, T0 + 61_000)!;
+  assert.equal(t.buyVol + t.sellVol + t.unsignedVol, 17);
+  assert.equal(t.baselineResets, 1);
+  // Padded streamer symbol and unpadded chain OCC key are the same contract.
+  assert.ok(book.get("SPY261009C00670000", T0 + 61_000));
+  // Next ET day: yesterday's totals are not returned.
+  assert.equal(book.get(sym, T0 + 24 * 3600_000), null);
+});
+
+test("R3-2.4 stream side summary: coverage of the chain's day volume", () => {
+  const book = new OptionTradeSideBook();
+  const T0 = Date.UTC(2026, 9, 9, 14, 0);
+  book.update("SPY261009P00660000", { t: T0, last: 2.0, bid: 1.9, ask: 2.1, cumVolume: 500 }, 1);
+  book.update("SPY261009P00660000", { t: T0 + 1, last: 2.1, bid: 1.9, ask: 2.1, cumVolume: 540 }, 1); // buy 40 puts, $8,400
+  const s = summarizeStreamSide([
+    { occ: "SPY261009P00660000", side: "P", dayVolume: 540 },
+    { occ: "SPY261009C00670000", side: "C", dayVolume: 1460 },
+    { occ: "SPY261009C00680000", side: "C", dayVolume: null },
+  ], (occ) => book.get(occ, T0 + 2));
+  assert.equal(s.contracts, 1);
+  assert.equal(s.boughtPutVol, 40);
+  near(s.boughtPutPrem, 8400, 1e-9, "put premium");
+  assert.equal(s.chainDayVol, 2000);
+  near(s.coveragePct!, 2, 1e-12, "coverage 40 / 2000");
+  assert.equal(s.quoteRulePct, 100);
+  const none = summarizeStreamSide([{ occ: "X", side: "C", dayVolume: 10 }], () => null);
+  assert.equal(none.contracts, 0);
+  assert.equal(none.quoteRulePct, null);
 });
