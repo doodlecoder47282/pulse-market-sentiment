@@ -1,13 +1,12 @@
 # Adds or updates an npm dependency from CI (the dev workspace cannot reach the
 # npm registry) and commits package.json + package-lock.json to the branch the
-# workflow was run on. Manual trigger only.
+# request came from. Trigger: push a change to .github/npm-add.txt (one line of
+# space-separated package specs). workflow_dispatch only works from the
+# default branch, so a request file is used instead.
 name: Add npm dependency
 on:
-  workflow_dispatch:
-    inputs:
-      packages:
-        description: "Package spec(s), space separated, e.g. @vercel/speed-insights@1.2.0"
-        required: true
+  push:
+    paths: [".github/npm-add.txt"]
 permissions:
   contents: write
 jobs:
@@ -19,14 +18,13 @@ jobs:
         with:
           node-version: 20
       - name: Install
-        env:
-          PKGS: ${{ inputs.packages }}
         run: |
           set -euo pipefail
+          PKGS="$(head -n1 .github/npm-add.txt | tr -d '\r')"
+          echo "PKGS=$PKGS" >> "$GITHUB_ENV"
           # Only plain package specs: letters, digits, @ / . - _ ^ ~ and spaces.
           [[ "$PKGS" =~ ^[A-Za-z0-9@/._^~\ -]+$ ]] || { echo "bad package spec"; exit 1; }
           npm install $PKGS --save --no-audit --no-fund
-          npm ls $(for p in $PKGS; do echo "${p%@*}" | sed 's/^$/'"$p"'/'; done) || true
       - name: Commit
         run: |
           set -euo pipefail
@@ -34,5 +32,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json
           git diff --cached --quiet && { echo "no change"; exit 0; }
-          git commit -m "deps: add ${{ inputs.packages }} (via CI)"
+          git commit -m "deps: add $PKGS (via CI)"
           git push origin HEAD:${{ github.ref_name }}
