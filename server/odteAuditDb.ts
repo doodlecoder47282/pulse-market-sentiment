@@ -79,12 +79,15 @@ sqlite.exec(`
 //   option_status   'graded' | 'ungraded' (NULL = graded before option marks existed)
 //   option_reason   exit reason or why ungraded
 //   option_entry    $/share paid (the ask at fire)
-//   option_exit     $/share received (bid at exit, or settlement value)
+//   option_exit     $/share received: quantity-weighted average of the plan's
+//                   fills (bids at exit, settlement value for a settled runner)
 //   option_exit_at  epoch ms of the exit quote / settlement
 //   option_return   realized (exit - entry) / entry, fraction of premium
 //   option_mfe      best bid-based return before exit (diagnostic only)
-//   realized_pct    underlying close-out return % for the first-touch plan
+//   realized_pct    underlying close-out return % of the replayed plan
 //                   (pct_return keeps the best favorable excursion as a diagnostic)
+//   option_settled_frac  fraction of the position held to cash settlement
+//                   (no closing fee on it); NULL on rows graded before plan v2
 for (const col of [
   "option_status TEXT",
   "option_reason TEXT",
@@ -94,6 +97,7 @@ for (const col of [
   "option_return REAL",
   "option_mfe REAL",
   "realized_pct REAL",
+  "option_settled_frac REAL",
 ]) {
   try { sqlite.exec(`ALTER TABLE odte_alert_audit ADD COLUMN ${col}`); } catch { /* column exists */ }
 }
@@ -228,6 +232,8 @@ export function persistOdteAuditOnFire(alert: any): void {
       t1EstPct: alert?.t1?.estPctGain ?? null,
       t2Price: alert?.t2?.price ?? null,
       t2TriggerLevel: alert?.t2TriggerLevel ?? null,
+      // Runner stop once armed (published plan; the grader replays it).
+      t2TrailingStopLevel: alert?.t2TrailingStopLevel ?? null,
       regimeText: alert?.regime ?? null,
       greekSignals: alert?.greekSignals ?? null,
       fireHourEt: Number(new Date(now).toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false })),

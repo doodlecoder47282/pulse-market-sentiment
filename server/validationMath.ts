@@ -1,8 +1,8 @@
 // server/validationMath.ts
 //
 // Pure math for the validation ledgers, sizing evidence and forecast-coverage
-// checks. No DB, network or framework imports, so tests/quant/validation.test.ts
-// can load it on plain Node. DB-facing modules (odteGrader, outcomeLogger,
+// checks. No DB, network or framework imports (only the pure exchangeCalendar),
+// so tests/quant/validation*.test.ts can load it on plain Node. DB-facing modules (odteGrader, outcomeLogger,
 // whaleBacktest, positionSizer, mlDataLog) call into these helpers.
 //
 // Units convention used throughout this file:
@@ -32,6 +32,8 @@
 //     call at expiry is max(S_T - K, 0), of a long put max(K - S_T, 0).
 //   Cboe SPXW (Weeklys) specification: PM-settled, cash-settled, $100 multiplier
 //     https://cboe.com/tradable_products/sp_500/spx_weekly_options/specifications/
+
+import { sessionCloseMinutes } from "./exchangeCalendar";
 
 // ─── Time (America/New_York) ────────────────────────────────────────────────
 
@@ -80,8 +82,21 @@ export function etWallToUtcMs(ymd: string, hour: number, minute: number): number
   return guess;
 }
 
-/** 16:00 ET regular close on a calendar date (half-days not modelled: callers treat missing bars as ungraded). */
+/**
+ * Regular-session close on a calendar date from the exchange calendar:
+ * 16:00 ET, or 13:00 ET on an early-close day (Cboe SPXW specification:
+ * "Trading in SPXW options will ordinarily cease on the day of expiration,
+ * 4:00 pm ET, and at 1:00 pm ET for any half day holiday",
+ * https://www.cboe.com/tradable_products/sp_500/spx_options/specifications/).
+ * The old 16:00 hard-code left half-day 0DTE and whale exits waiting for
+ * bars and quotes that never come. A date the calendar marks closed (no
+ * listed expiry should fall on one) keeps the 16:00 wall clock.
+ */
 export function etCloseMs(ymd: string): number {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+    const m = sessionCloseMinutes(ymd);
+    if (m != null) return etWallToUtcMs(ymd, Math.floor(m / 60), m % 60);
+  }
   return etWallToUtcMs(ymd, 16, 0);
 }
 
@@ -274,11 +289,23 @@ export function logOptimalKelly(returns: number[]): number {
  * (exit - entry) x mult - fees, over entry x mult. Fees are per contract per
  * side; a cash-settled hold or a worthless expiry pays the opening fee only.
  * The sizer's planned loss includes fees, so the ledger it compares with must too.
+ *
+ * `settled` may be the FRACTION of the position held to cash settlement (a
+ * plan that sells half at T1 and lets the runner settle pays the closing fee
+ * on half): fees = fee x (1 + (1 - settledFraction)) per contract, and `exit`
+ * is the position's quantity-weighted average exit price.
  */
-export function netOptionReturn(entry: number, exit: number, feePerContract: number, settled: boolean, multiplier = OPTION_MULTIPLIER): number | null {
+export function netOptionReturn(entry: number, exit: number, feePerContract: number, settled: boolean | number, multiplier = OPTION_MULTIPLIER): number | null {
   if (!(entry > 0) || !Number.isFinite(exit)) return null;
-  const d = optionTradeDollars({ entry, exit, contracts: 1, multiplier, feePerContract, settled });
-  return d.perContractNet / (toCents(entry * multiplier) / 100);
+  if (typeof settled === "boolean") {
+    const d = optionTradeDollars({ entry, exit, contracts: 1, multiplier, feePerContract, settled });
+    return d.perContractNet / (toCents(entry * multiplier) / 100);
+  }
+  const s = Math.max(0, Math.min(1, Number.isFinite(settled) ? settled : 0));
+  const fee = Math.max(0, feePerContract);
+  const premium = toCents(entry * multiplier) / 100;
+  const gross = (exit - entry) * multiplier;
+  return (gross - fee * (2 - s)) / premium;
 }
 
 /** Summarize realized option returns into a ledger bucket. Wins are returns > 0. */
@@ -358,43 +385,198 @@ export function optionTradeDollars(args: {
 export interface OptionMark { ts: number; bid: number | null; ask: number | null; mid?: number | null }
 export interface MinuteBar { datetime: number; open: number; high: number; low: number; close: number }
 
-export type OdteExitReason = "t1_touch" | "underlying_stop" | "option_stop" | "settled_at_close";
+/**
+ * The published 0DTE trade plan, replayed exactly (review item 7.1 of the
+ * round-2 re-grade). The alert text (odteAlertEngine.formatOdteAlert) prints
+ * these same rules; ODTE_PLAN_RULES is the one wording both use.
+ *
+ *  1. Entry: buy at the ask at the fire.
+ *  2. Stop, whole position: the option bid at or below entry x (1 - 20%)
+ *     (what can actually be sold), OR a 5-minute candle closing beyond the
+ *     stop level (CALL: close < stop; PUT: close > stop). 5-minute candles are
+ *     clock-aligned from 09:30 ET; a candle's close is the close of its last
+ *     1-minute bar, known when that minute ends.
+ *  3. T1: on the first 1-minute bar whose high (CALL) / low (PUT) reaches T1,
+ *     sell HALF when the alert has a T2, ALL when it has none.
+ *  4. Runner (the other half): keeps the stops of rule 2 until a 5-minute
+ *     candle closes beyond T1 (CALL: close > T1); from then its level stop is
+ *     the trail level (T1 - 3 for a CALL, T1 + 3 for a PUT). It is sold on the
+ *     first bar that reaches T2 (counted from the bar after the T1 bar).
+ *  5. Anything still open at the session close (16:00 ET, 13:00 ET on half
+ *     days) cash-settles at intrinsic on the closing value (SPXW is PM- and
+ *     cash-settled, Cboe SPXW specification).
+ * Ordering when two rules trigger on the same 1-minute bar: the stop is
+ * taken first (the bar's sequence is unknown; this is the pessimistic order),
+ * and a runner's T2 is never credited on the bar that hit T1.
+ *
+ * Path-dependent exits evaluated in time order with the first barrier hit
+ * deciding the outcome are the triple-barrier labelling of Lopez de Prado,
+ * "Advances in Financial Machine Learning" (Wiley 2018), ch. 3 (Labeling),
+ * https://www.wiley.com/en-us/Advances+in+Financial+Machine+Learning-p-9781119482086
+ */
+export const ODTE_PLAN_RULES = {
+  version: "odte-plan-v2",
+  optionStopPct: 0.20,
+  partialFractionAtT1: 0.5,
+  trailOffsetPts: 3,
+  stopRule: "5-min candle close beyond the level (clock-aligned from 09:30 ET)",
+  optionStopRule: "option bid at or below entry x 0.80",
+} as const;
+
+export type OdteExitReason = "t1_touch" | "t2_touch" | "underlying_stop" | "trail_stop" | "option_stop" | "settled_at_close";
+
+export interface OdtePlanInput {
+  isCall: boolean;
+  entryTs: number;
+  closeMs: number;
+  t1: number;
+  /** Level for the 5-minute-close stop (whole position before the runner arms). */
+  stopLevel: number;
+  /** Runner target. Null/absent (or not beyond T1) -> everything is sold at T1. */
+  t2?: number | null;
+  /** Runner level stop once a 5-minute close beyond T1 arms it; default T1 -/+ ODTE_PLAN_RULES.trailOffsetPts. */
+  trailStopLevel?: number | null;
+  /** Fraction sold at T1 when a T2 exists (default 0.5). */
+  partialFraction?: number;
+  /** Spot at the fire, the reference for the favorable excursion (default: open of the first bar after the fire). */
+  spot0?: number | null;
+}
+
+/** One underlying-triggered exit of the plan: `time` = when it is known (bar close). */
+export interface PlanLeg { kind: Exclude<OdteExitReason, "option_stop" | "settled_at_close">; time: number; fraction: number; underlyingPx: number }
+
+export interface PlanReplay {
+  status: "ok" | "no_bars" | "bar_gap" | "no_close_bar";
+  gapAt: number | null;
+  legs: PlanLeg[];
+  /** Fraction still open at the session close (settles at intrinsic). */
+  remaining: number;
+  /** T1 reached before the whole position was stopped. */
+  hitT1: boolean;
+  /** Whole position stopped (5-min close) before T1. */
+  stoppedBeforeT1: boolean;
+  trailArmedAt: number | null;
+  lastClose: number | null;
+  /** Best favorable excursion (index points) on bars after the fire, up to the final exit. */
+  mfePts: number;
+  barsUsed: number;
+}
+
+const MIN = 60_000;
+const isWindowEndBar = (barOpenMs: number) => (Math.floor(barOpenMs / MIN) + 1) % 5 === 0;
+
+/**
+ * Replay rules 2-5 of the plan on 1-minute index bars (bar `datetime` = bar
+ * open). Bars must be contiguous from the fire to the final exit: one missing
+ * minute could hide a touch or a 5-minute close, so a hole returns
+ * "bar_gap" (never filled or interpolated). Bars that opened before the fire
+ * are used only for a 5-minute close that ends after the fire (that close is
+ * observable after the alert); their highs and lows are not (look-ahead).
+ */
+export function replayOdtePlan(plan: OdtePlanInput, allBars: MinuteBar[]): PlanReplay {
+  const { isCall, entryTs, closeMs, t1, stopLevel } = plan;
+  const hasT2 = plan.t2 != null && Number.isFinite(plan.t2) && plan.t2 > 0 && (isCall ? plan.t2 > t1 : plan.t2 < t1);
+  const t2 = hasT2 ? (plan.t2 as number) : null;
+  const partial = hasT2 ? Math.max(0, Math.min(1, plan.partialFraction ?? ODTE_PLAN_RULES.partialFractionAtT1)) : 1;
+  const trail = plan.trailStopLevel != null && Number.isFinite(plan.trailStopLevel) && plan.trailStopLevel > 0
+    ? plan.trailStopLevel
+    : (isCall ? t1 - ODTE_PLAN_RULES.trailOffsetPts : t1 + ODTE_PLAN_RULES.trailOffsetPts);
+  const out: PlanReplay = { status: "ok", gapAt: null, legs: [], remaining: 1, hitT1: false, stoppedBeforeT1: false, trailArmedAt: null, lastClose: null, mfePts: 0, barsUsed: 0 };
+
+  // First bar that matters: the minute containing the fire if it closes a
+  // 5-minute candle after the fire, else the first minute opening at/after it.
+  let chainStart = Math.floor(entryTs / MIN) * MIN;
+  if (chainStart < entryTs && !isWindowEndBar(chainStart)) chainStart += MIN;
+  const byOpen = new Map<number, MinuteBar>();
+  for (const b of allBars) {
+    if (b.datetime >= chainStart && b.datetime < closeMs && [b.open, b.high, b.low, b.close].every((v) => Number.isFinite(v))) byOpen.set(b.datetime, b);
+  }
+  if (!Array.from(byOpen.keys()).some((t) => t >= entryTs)) return { ...out, status: "no_bars" };
+
+  const spot0Ref = { v: NaN };
+  let phase: "pre" | "runner" | "armed" = "pre";
+  let remaining = 1;
+  for (let t = chainStart; t < closeMs && remaining > 1e-12; t += MIN) {
+    const b = byOpen.get(t);
+    if (!b) return { ...out, status: "bar_gap", gapAt: t, legs: out.legs, remaining };
+    out.barsUsed++;
+    out.lastClose = b.close;
+    const known = t + MIN;
+    const touchBar = t >= entryTs;
+    if (touchBar && !Number.isFinite(spot0Ref.v)) spot0Ref.v = plan.spot0 != null && plan.spot0 > 0 ? plan.spot0 : b.open;
+    if (touchBar) {
+      const fav = isCall ? b.high - spot0Ref.v : spot0Ref.v - b.low;
+      if (fav > out.mfePts) out.mfePts = fav;
+    }
+    const windowEnd = isWindowEndBar(t);
+    // (A) 5-minute close stop, with the level in force before this bar's events.
+    if (windowEnd) {
+      const lvl = phase === "armed" ? trail : stopLevel;
+      if (lvl > 0 && (isCall ? b.close < lvl : b.close > lvl)) {
+        out.legs.push({ kind: phase === "armed" ? "trail_stop" : "underlying_stop", time: known, fraction: remaining, underlyingPx: b.close });
+        if (phase === "pre") out.stoppedBeforeT1 = true;
+        remaining = 0;
+        break;
+      }
+    }
+    // (B) touches, on bars that opened at or after the fire.
+    if (touchBar) {
+      if (phase === "pre" && (isCall ? b.high >= t1 : b.low <= t1)) {
+        out.legs.push({ kind: "t1_touch", time: known, fraction: partial, underlyingPx: t1 });
+        remaining -= partial;
+        out.hitT1 = true;
+        phase = "runner";
+      } else if (phase !== "pre" && t2 != null && (isCall ? b.high >= t2 : b.low <= t2)) {
+        out.legs.push({ kind: "t2_touch", time: known, fraction: remaining, underlyingPx: t2 });
+        remaining = 0;
+        break;
+      }
+    }
+    if (remaining <= 1e-12) { remaining = 0; break; }
+    // (C) arm the runner's trail on a 5-minute close beyond T1.
+    if (windowEnd && phase === "runner" && (isCall ? b.close > t1 : b.close < t1)) {
+      phase = "armed";
+      out.trailArmedAt = known;
+    }
+  }
+  out.remaining = Math.max(0, remaining);
+  if (out.remaining > 0) {
+    // Held to the close: the final minute (opening at close - 1 min) must exist.
+    if (!byOpen.has(closeMs - MIN)) return { ...out, status: "no_close_bar" };
+    out.lastClose = (byOpen.get(closeMs - MIN) as MinuteBar).close;
+  }
+  return out;
+}
+
+export interface OdteOptionFill { kind: OdteExitReason; fraction: number; price: number; ts: number; underlyingPx: number | null }
 
 export interface OdteOptionGrade {
   status: "graded" | "ungraded";
-  reason: OdteExitReason | "no_entry_quote" | "no_exit_mark" | "no_close_bar" | "no_bars" | "no_marks_logged" | "mark_gap";
+  reason: OdteExitReason | "no_entry_quote" | "no_exit_mark" | "no_close_bar" | "no_bars" | "no_marks_logged" | "mark_gap" | "bar_gap";
   entryPrice: number | null;       // $ per share, the ask at fire
-  exitPrice: number | null;        // $ per share, bid at exit or settlement value
-  exitTs: number | null;
-  realizedReturn: number | null;   // (exit - entry) / entry
-  optionMfe: number | null;        // best bid-based return before exit (diagnostic only)
+  exitPrice: number | null;        // $ per share, quantity-weighted average of the fills
+  exitTs: number | null;           // time of the last fill (or the close for a settled runner)
+  realizedReturn: number | null;   // (exit - entry) / entry, before fees
+  optionMfe: number | null;        // best bid-based return before the final exit (diagnostic only)
   underlyingAtExit: number | null;
-  settled: boolean;                // true when held to cash settlement (no closing fee)
-}
-
-function markMid(m: OptionMark): number | null {
-  if (m.mid != null && Number.isFinite(m.mid) && m.mid > 0) return m.mid;
-  if (m.bid != null && m.ask != null && m.ask >= m.bid && m.ask > 0) return (m.bid + m.ask) / 2;
-  return null;
+  settled: boolean;                // true when the WHOLE position was held to cash settlement
+  settledFraction: number;         // fraction of the position that cash-settled (no closing fee on it)
+  fills: OdteOptionFill[];
+  plan: PlanReplay | null;
 }
 
 /**
- * Realized 0DTE option P&L from logged option marks (review items 7.2/7.3).
- * Plan replayed: buy at the ask at fire; exit on the first of
- *   - option stop: a logged mark whose mid is <= entry * (1 - optionStopPct);
- *     filled at that quote's bid (the exit brain watches the mid; a market
- *     sell fills at the bid);
- *   - underlying stop or T1 first touch on 1-minute bars that open at or after
- *     the fire (same-bar tie = stop, conservative); known at the bar's close,
- *     filled at the bid of the first logged mark at or after that, within
- *     maxMarkLagMs;
- *   - no trigger: held to the close and cash-settled at intrinsic on the
- *     closing value (Cboe SPXW: PM-settled, cash-settled).
- * Missing entry quote, no logged marks, a gap longer than maxMarkGapMs in the
- * marks between fire and exit (an option stop could have hit unseen), or no
- * exit mark -> "ungraded", never estimated. Without the gap check, trades that
- * would have stopped out while the logger was down would grade as holds and
- * bias the ledger upward.
+ * Realized 0DTE option P&L of the published plan on logged Schwab marks
+ * (review items 7.2/7.3; round-2 item 7.1). Underlying-triggered exits come
+ * from replayOdtePlan; each is filled at the bid of the first logged mark at
+ * or after the moment it is known, within maxMarkLagMs. The -20% option stop
+ * fires on the first logged mark whose BID is at or below entry x (1 -
+ * optionStopPct) and sells everything still open at that bid. A runner still
+ * open at the close settles at intrinsic on the official close.
+ * Missing entry quote, no logged marks, a hole in the bars or a gap longer
+ * than maxMarkGapMs in the marks between the fire and the final exit (an
+ * option stop could have hit unseen), or no exit mark -> "ungraded", never
+ * estimated.
  */
 export function gradeOdteOptionPnl(input: {
   isCall: boolean;
@@ -407,29 +589,31 @@ export function gradeOdteOptionPnl(input: {
   closeMs: number;
   bars: MinuteBar[];
   marks: OptionMark[];
+  t2?: number | null;
+  trailStopLevel?: number | null;
+  partialFraction?: number;
   maxMarkLagMs?: number;
   maxMarkGapMs?: number;
-  /** Official index close for the day (SPXW PM settlement value). Falls back to the 15:59 bar close when absent. */
+  /** Official index close for the day (SPXW PM settlement value). Falls back to the last minute-bar close when absent. */
   settlementValue?: number | null;
 }): OdteOptionGrade {
   const lag = input.maxMarkLagMs ?? 180_000;
   const maxGap = input.maxMarkGapMs ?? 300_000;
-  const blank = (reason: OdteOptionGrade["reason"]): OdteOptionGrade => ({
+  const blank = (reason: OdteOptionGrade["reason"], plan: PlanReplay | null = null): OdteOptionGrade => ({
     status: "ungraded", reason, entryPrice: input.entryAsk ?? null, exitPrice: null, exitTs: null,
-    realizedReturn: null, optionMfe: null, underlyingAtExit: null, settled: false,
+    realizedReturn: null, optionMfe: null, underlyingAtExit: null, settled: false, settledFraction: 0, fills: [], plan,
   });
   const entry = input.entryAsk;
   if (entry == null || !Number.isFinite(entry) || entry <= 0) return blank("no_entry_quote");
-  // Bars that OPEN at or after the fire: the fire-minute bar's high/low may
-  // have printed before the alert existed (look-ahead), so it is excluded.
-  const bars = input.bars
-    .filter((b) => b.datetime >= input.entryTs && b.datetime < input.closeMs)
-    .sort((a, b) => a.datetime - b.datetime);
-  if (bars.length === 0) return blank("no_bars");
+  const plan = replayOdtePlan({
+    isCall: input.isCall, entryTs: input.entryTs, closeMs: input.closeMs, t1: input.t1, stopLevel: input.stopLevel,
+    t2: input.t2, trailStopLevel: input.trailStopLevel, partialFraction: input.partialFraction,
+  }, input.bars);
+  if (plan.status !== "ok") return blank(plan.status, plan);
   const marks = input.marks
     .filter((m) => m.ts >= input.entryTs && m.ts <= input.closeMs)
     .sort((a, b) => a.ts - b.ts);
-  if (marks.length === 0) return blank("no_marks_logged");
+  if (marks.length === 0) return blank("no_marks_logged", plan);
   /** True when logged marks cover [entryTs, t] with no hole longer than maxGap. */
   const covered = (t: number): boolean => {
     let prev = input.entryTs;
@@ -440,73 +624,130 @@ export function gradeOdteOptionPnl(input: {
     }
     return t - prev <= maxGap;
   };
-
-  let uTrigger: { time: number; kind: "t1_touch" | "underlying_stop"; level: number } | null = null;
-  for (const b of bars) {
-    const stopHit = input.stopLevel > 0 && (input.isCall ? b.low <= input.stopLevel : b.high >= input.stopLevel);
-    const t1Hit = input.t1 > 0 && (input.isCall ? b.high >= input.t1 : b.low <= input.t1);
-    if (stopHit) { uTrigger = { time: b.datetime + 60_000, kind: "underlying_stop", level: input.stopLevel }; break; }
-    if (t1Hit) { uTrigger = { time: b.datetime + 60_000, kind: "t1_touch", level: input.t1 }; break; }
-  }
-
   const stopPx = entry * (1 - input.optionStopPct);
-  const horizonEnd = uTrigger ? Math.min(uTrigger.time, input.closeMs) : input.closeMs;
-  let oTrigger: OptionMark | null = null;
-  if (input.optionStopPct > 0) {
-    for (const m of marks) {
-      if (m.ts > horizonEnd) break;
-      const mid = markMid(m);
-      if (mid != null && mid <= stopPx && m.bid != null && m.bid >= 0) { oTrigger = m; break; }
-    }
+  const optStop = input.optionStopPct > 0
+    ? marks.find((m) => m.bid != null && Number.isFinite(m.bid) && m.bid >= 0 && m.bid <= stopPx + 1e-12) ?? null
+    : null;
+
+  const fills: OdteOptionFill[] = [];
+  let open = 1;
+  for (const leg of plan.legs) {
+    // optStop is the FIRST mark at or under the stop price, so if it is not
+    // before this leg it is after every fill so far.
+    if (optStop && optStop.ts <= leg.time) break;
+    const fill = marks.find((m) => m.ts >= leg.time && m.ts <= leg.time + lag && m.bid != null && m.bid >= 0);
+    if (!fill) return blank("no_exit_mark", plan);
+    const frac = Math.min(open, leg.fraction);
+    fills.push({ kind: leg.kind, fraction: frac, price: fill.bid as number, ts: fill.ts, underlyingPx: leg.underlyingPx });
+    open -= frac;
+    if (open <= 1e-12) { open = 0; break; }
   }
-
-  const mfeUpTo = (t: number): number | null => {
-    let best: number | null = null;
-    for (const m of marks) {
-      if (m.ts > t) break;
-      if (m.bid == null || !(m.bid >= 0)) continue;
-      const r = (m.bid - entry) / entry;
-      if (best == null || r > best) best = r;
-    }
-    return best;
-  };
-  const underlyingAt = (t: number): number | null => {
-    let px: number | null = null;
-    for (const b of bars) { if (b.datetime + 60_000 <= t) px = b.close; else break; }
-    return px;
-  };
-  const done = (reason: OdteExitReason, exitPrice: number, exitTs: number, uPx: number | null, settled: boolean): OdteOptionGrade => {
-    const mfe = mfeUpTo(exitTs);
-    const realized = (exitPrice - entry) / entry;
-    return {
-      status: "graded", reason, entryPrice: entry, exitPrice, exitTs,
-      realizedReturn: realized,
-      optionMfe: mfe == null ? realized : Math.max(mfe, realized),
-      underlyingAtExit: uPx,
-      settled,
-    };
-  };
-
-  if (oTrigger) {
-    if (!covered(oTrigger.ts)) return blank("mark_gap");
-    return done("option_stop", oTrigger.bid as number, oTrigger.ts, underlyingAt(oTrigger.ts), false);
+  if (open > 0 && optStop) {
+    // The option stop comes before the next underlying exit, or while the runner is held to the close.
+    fills.push({ kind: "option_stop", fraction: open, price: optStop.bid as number, ts: optStop.ts, underlyingPx: null });
+    open = 0;
   }
-
-  if (uTrigger && uTrigger.time < input.closeMs) {
-    const t = uTrigger.time;
-    if (!covered(t)) return blank("mark_gap");
-    const fill = marks.find((m) => m.ts >= t && m.ts <= t + lag && m.bid != null && m.bid >= 0);
-    if (!fill) return blank("no_exit_mark");
-    return done(uTrigger.kind, fill.bid as number, fill.ts, uTrigger.level, false);
+  let settledFraction = 0;
+  if (open > 0) {
+    const S = input.settlementValue != null && input.settlementValue > 0 ? input.settlementValue : (plan.lastClose as number);
+    const intrinsic = input.isCall ? Math.max(0, S - input.strike) : Math.max(0, input.strike - S);
+    fills.push({ kind: "settled_at_close", fraction: open, price: intrinsic, ts: input.closeMs, underlyingPx: S });
+    settledFraction = open;
+    open = 0;
   }
+  const last = fills[fills.length - 1];
+  if (!covered(last.kind === "settled_at_close" ? input.closeMs : last.ts)) return blank("mark_gap", plan);
+  const exitAvg = fills.reduce((s, f) => s + f.fraction * f.price, 0);
+  let mfe: number | null = null;
+  for (const m of marks) {
+    if (m.ts > last.ts) break;
+    if (m.bid == null || !(m.bid >= 0)) continue;
+    const r = (m.bid - entry) / entry;
+    if (mfe == null || r > mfe) mfe = r;
+  }
+  const realized = (exitAvg - entry) / entry;
+  return {
+    status: "graded",
+    reason: last.kind,
+    entryPrice: entry,
+    exitPrice: exitAvg,
+    exitTs: last.ts,
+    realizedReturn: realized,
+    optionMfe: mfe == null ? realized : Math.max(mfe, realized),
+    underlyingAtExit: last.underlyingPx,
+    settled: settledFraction >= 1 - 1e-12,
+    settledFraction,
+    fills,
+    plan,
+  };
+}
 
-  // Held to the close: settle at intrinsic on the closing value (the 15:59 bar close).
-  const last = bars[bars.length - 1];
-  if (last.datetime + 60_000 < input.closeMs - 120_000) return blank("no_close_bar");
-  if (!covered(input.closeMs)) return blank("mark_gap");
-  const S = input.settlementValue != null && input.settlementValue > 0 ? input.settlementValue : last.close;
-  const intrinsic = input.isCall ? Math.max(0, S - input.strike) : Math.max(0, input.strike - S);
-  return done("settled_at_close", intrinsic, input.closeMs, S, true);
+/**
+ * Underlying close-out of the replayed plan, % of spot at the fire, signed in
+ * the trade's direction: each leg at its level (T1/T2) or 5-minute close
+ * (stops), the rest at the session's last close. Statistics use this; the
+ * best favorable excursion stays a diagnostic (review item 7.3).
+ */
+export function planUnderlyingCloseOutPct(isCall: boolean, spot0: number, plan: PlanReplay): number {
+  if (!(spot0 > 0)) return NaN;
+  let pct = 0;
+  for (const leg of plan.legs) pct += leg.fraction * underlyingCloseOutPct(isCall, spot0, leg.underlyingPx);
+  if (plan.remaining > 0) {
+    if (plan.lastClose == null) return NaN;
+    pct += plan.remaining * underlyingCloseOutPct(isCall, spot0, plan.lastClose);
+  }
+  return pct;
+}
+
+// ─── Persisted minute bars (review item 7.7) ────────────────────────────────
+
+/**
+ * SELECT for the persisted Schwab $SPX 1-minute bars in spx_minute_bars,
+ * given that table's column names (PRAGMA table_info). Two writers create
+ * the table with different columns (mlDataLog: t/open/high/low/close;
+ * hazardEngine: ts/o/h/l/c) and whichever runs first owns the schema, so the
+ * reader adapts. Both key the bar by its open, epoch ms. Two parameters:
+ * [fromMs, toMs). Null when the table is missing or has neither layout.
+ */
+export function savedMinuteBarsSql(columns: string[]): string | null {
+  const has = (c: string) => columns.includes(c);
+  if (has("t") && has("open") && has("high") && has("low") && has("close")) {
+    return `SELECT t AS datetime, open, high, low, close FROM spx_minute_bars WHERE t >= ? AND t < ? ORDER BY t ASC`;
+  }
+  if (has("ts") && has("o") && has("h") && has("l") && has("c")) {
+    return `SELECT ts AS datetime, o AS open, h AS high, l AS low, c AS close FROM spx_minute_bars WHERE ts >= ? AND ts < ? ORDER BY ts ASC`;
+  }
+  return null;
+}
+
+/** Merge persisted and live bars by bar open; live wins on a duplicate. Sorted by time. */
+export function mergeMinuteBars(saved: MinuteBar[], live: MinuteBar[]): MinuteBar[] {
+  const byT = new Map<number, MinuteBar>();
+  for (const b of saved) byT.set(b.datetime, b);
+  for (const b of live) byT.set(b.datetime, b);
+  return Array.from(byT.values()).sort((a, b) => a.datetime - b.datetime);
+}
+
+// ─── Grade labels vs the realized ledger (review item 7.6) ──────────────────
+
+/**
+ * A grade letter is a hand-weighted heuristic score until its bucket of the
+ * realized option ledger is large enough that the sizer uses the bucket's
+ * point win rate (MIN_FIRES_FOR_POINT_ESTIMATE, the same evidence bar).
+ */
+export function gradeLabelStatus(n: number): "heuristic" | "ledger_backed" {
+  return n >= MIN_FIRES_FOR_POINT_ESTIMATE ? "ledger_backed" : "heuristic";
+}
+
+/** One-line evidence text for a grade bucket: realized option hit rate, Wilson 95% interval and n. */
+export function gradeEvidenceLine(bucket: { label: string; n: number; wins: number } | null): string {
+  if (!bucket) return "no ledger bucket for this score: heuristic score only";
+  const status = gradeLabelStatus(bucket.n);
+  const tag = status === "heuristic" ? `heuristic score (ledger-backed at ${MIN_FIRES_FOR_POINT_ESTIMATE} fires)` : "ledger-backed";
+  if (!(bucket.n > 0)) return `ledger ${bucket.label}: no option-graded fires yet, ${tag}`;
+  const w = wilsonInterval(bucket.wins, bucket.n);
+  const pc = (x: number) => `${Math.round(x * 100)}%`;
+  return `ledger ${bucket.label}: ${bucket.wins}/${bucket.n} option wins = ${pc(bucket.wins / bucket.n)} (95% CI ${pc(w.lo)}-${pc(w.hi)}), ${tag}`;
 }
 
 /**
