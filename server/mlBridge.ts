@@ -46,6 +46,8 @@ export interface MLQuantileOverlayResponse {
    * every model up to quantile_overlay v4). Null when the sidecar does not say.
    */
   trainingData: string | null;
+  /** Sidecar says this model passed the walk-forward promotion gate (R2-F). */
+  promoted?: boolean;
 }
 
 export interface MLModelHealth {
@@ -176,6 +178,7 @@ export async function mlQuantileOverlay(
     status: string;
     version: number | string;
     training_data?: string | null;
+    promoted?: boolean;
   }>("/quantile/overlay", { features, horizons }, "mlQuantileOverlay", opts?.timeoutMs);
 
   if (!raw || !raw.bands || Object.keys(raw.bands).length === 0) return null;
@@ -184,6 +187,7 @@ export async function mlQuantileOverlay(
     status: String(raw.status),
     version: String(raw.version),
     trainingData: raw.training_data ?? null,
+    promoted: raw.promoted === true,
   };
 }
 
@@ -201,6 +205,7 @@ export async function mlQuantileMorning(
     status: string;
     version: number | string;
     training_data?: string | null;
+    promoted?: boolean;
   }>("/quantile/morning", { features, horizons }, "mlQuantileMorning", opts?.timeoutMs);
 
   if (!raw || !raw.bands || Object.keys(raw.bands).length === 0) return null;
@@ -209,6 +214,7 @@ export async function mlQuantileMorning(
     status: String(raw.status),
     version: String(raw.version),
     trainingData: raw.training_data ?? null,
+    promoted: raw.promoted === true,
   };
 }
 

@@ -132,9 +132,9 @@ const INFO: Record<string, InfoEntry> = {
   },
   "ml-forecast": {
     title: "Projected Path",
-    what: "A volatility cone for SPY over the next hour, extended to the close: base, upper and lower paths from a quantile model. The served model was trained on simulated random-walk minutes with random dealer-level features, not real market data, so treat it as a volatility cone (simulated training), not a learned forecast.",
-    how: "Read band width as a rough size of the expected range. The lean of the base path and the dealer lines are not learned from real data in this model version. Coverage of the 10\u201390% band on real outcomes has not been verified yet.",
-    edge: "None claimed until the model is retrained on real minute bars and logged greeks and its live 10\u201390% coverage is scored. Use the dealer levels and your own read for direction.",
+    what: "The forward 10\u201390% range for SPY over the next hour, extended (lighter, not scored) to the close. A quantile model is drawn only if it was trained on real Schwab data and beat a baseline volatility cone on out-of-sample days (the promotion gate). Until one does, the chart shows the baseline volatility cone itself: zero drift, width from today's realized SPX volatility. The label above the chart names every component of the band.",
+    how: "Read band width as the expected range. The baseline cone has no direction by design, so the verdict strip stays grey unless a promoted model is drawn. The coverage table under the chart shows how often real SPX moves landed inside the drawn band (nominal 80%), per horizon.",
+    edge: "None claimed. A promoted model beat the baseline cone on past out-of-sample days; that is not a trading edge. Use the dealer levels and your own read for direction.",
     risk: "Forecasts decay fast after news or a regime break. If price rips through a wall the whole projection re-anchors \u2014 never hold a trade just because the old path said so.",
   },
   "trade-desk": {
