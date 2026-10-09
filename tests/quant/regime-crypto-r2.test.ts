@@ -332,33 +332,48 @@ test("seasonality verdict: significant but bottom-half out of sample is failed_o
 
 // ─── Cosmos: deterministic trade-instruction filter on the LLM narrative ──
 
-test("cosmos filter drops trade, size, hedge and direction sentences; keeps sky facts; forces the disclaimer", async () => {
+test("cosmos filter is an allow-list of sky talk: market sentences dropped (adversarial set), sky facts kept, disclaimer forced", async () => {
   const { filterTradeInstructions, isTradeInstruction, COSMOS_LLM_DISCLAIMER } = await import("../../server/cosmos");
-  const llm = [
-    "## Week ahead",
-    "Mercury stations direct on Tue Oct 13. The full Moon falls on Thu Oct 15.",
-    "- **Oct 15** Full Moon [lunar study] — Yuan, Zheng & Zhu (2006) found returns a basis point or two lower around full moons. Consider put spreads into the date.",
-    "- Venus enters Libra on Oct 17. Size longs normally this week.",
-    "- Iron condors are favored while the Moon is void of course.",
-    "Stocks will likely rally after the eclipse.",
-    "Stay defensive and trim exposure into Friday.",
+  // Eight paraphrased market sentences with no order verb (the review's
+  // adversarial set: 7 of 8 slipped past the old deny-list).
+  const adversarial = [
+    "Equities have historically drifted lower in the week after a full moon.",
+    "Tech names tend to wobble around Mercury stations.",
+    "SPX 5,800 is a level to watch into the new moon.",
+    "Traders may want to keep powder dry until Mercury goes direct.",
+    "The S&P has had a soft patch around the equinox.",
+    "Capital preservation matters most while the Moon is void of course.",
+    "Defensive sectors held up better during past geomagnetic storms.",
+    "Risk appetite often fades into an eclipse.",
+  ];
+  // Benign sky sentences that must survive.
+  const benign = [
+    "Mercury stations direct on Tue Oct 13.",
+    "The full Moon falls on Thu Oct 15 at 14:20 ET.",
+    "Venus enters Libra on Oct 17.",
+    "The Moon is void of course from 09:12 to 15:40 ET.",
+    "Saturn is retrograde in Pisces.",
+    "Kp reached 5 (a G1 storm) on Oct 10.",
+    "Jupiter trines Saturn (120 degrees) on Oct 20.",
+    "The Moon exits Virgo late on Oct 21.",
+    "Krivelyova and Robotti (2003) is a single working paper.",
     "Bradley turns on Oct 20; it has no peer-reviewed support.",
-  ].join("\n");
+  ];
+  for (const s of adversarial) assert.ok(isTradeInstruction(s), `should drop: ${s}`);
+  for (const s of benign) assert.ok(!isTradeInstruction(s), `should keep: ${s}`);
+  // order and direction forms are dropped too
+  for (const s of ["Buy the dip on Monday.", "Go long into the new moon.", "Hedge with puts.", "A bullish week.", "Take profits before Friday.", "Consider lightening up before the eclipse.", "Stay defensive into Friday."]) {
+    assert.ok(isTradeInstruction(s), s);
+  }
+  const llm = ["## Week ahead", benign[0] + " " + adversarial[1], "- " + adversarial[2], "- " + benign[2], ...adversarial.slice(3), benign[9]].join("\n");
   const f = filterTradeInstructions(llm);
   assert.ok(f.text.startsWith(COSMOS_LLM_DISCLAIMER));
-  for (const bad of [/put spreads/i, /Size longs/i, /condor/i, /rally/i, /defensive/i, /trim/i]) assert.doesNotMatch(f.text, bad);
-  for (const good of [/Mercury stations direct/, /full Moon falls/, /Venus enters Libra/, /Yuan, Zheng & Zhu/, /no peer-reviewed support/, /## Week ahead/]) assert.match(f.text, good);
-  assert.equal(f.dropped, 5);
+  for (const s of adversarial.slice(1)) assert.ok(!f.text.includes(s), s);
+  for (const s of [benign[0], benign[2], benign[9], "## Week ahead"]) assert.ok(f.text.includes(s), s);
+  assert.equal(f.dropped, 7);
   // the disclaimer appears exactly once even if the model already wrote it
   const twice = filterTradeInstructions(`${COSMOS_LLM_DISCLAIMER}\n\nThe Moon is waxing.`);
   assert.equal(twice.text.split(COSMOS_LLM_DISCLAIMER).length - 1, 1);
-  // instruction forms
-  for (const s of ["Buy the dip on Monday.", "Go long SPX into the new moon.", "Hedge with puts.", "Markets could slide after the eclipse.", "A bullish week.", "Take profits before Friday.", "Enter a position at the open."]) {
-    assert.ok(isTradeInstruction(s), s);
-  }
-  for (const s of ["The Moon exits Virgo at 14:00 ET.", "Saturn is retrograde.", "Kp reached 5 (G1 storm).", "Planetary positions are from VSOP87."]) {
-    assert.ok(!isTradeInstruction(s), s);
-  }
 });
 
 // ─── Sector 10: crypto data states, coin-level stats, holders, social ────

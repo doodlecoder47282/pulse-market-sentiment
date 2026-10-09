@@ -1387,30 +1387,32 @@ Rules:
 
 // ─── Deterministic output filter for the LLM narrative (finding 5.3/5.8) ─
 // The no-trade-instruction rule above is only a prompt. This filter is the
-// enforcement: every sentence of the model's text that names a trade, an
-// order, a position size, an options structure, a hedge or a market
-// direction call is dropped before the text reaches the page, and the
-// disclaimer is forced to be the first line. It is deliberately strict:
-// dropping an innocent sentence costs nothing, letting one instruction
-// through is the failure we are guarding against.
+// enforcement, and it works as an ALLOW-LIST of sky talk: a sentence of the
+// model's text survives only if it mentions no market, asset or trading
+// noun (stocks, equities, market, SPX/SPY/S&P, sectors, tech, names, risk,
+// capital, traders, positions, volatility, ...), no price level (a 3-5 digit
+// number that is not a year or an angle), no trade/size/hedge/options verb
+// and no direction call. Everything else is dropped before the text reaches
+// the page, and the disclaimer is forced to be the first line. A deny-list
+// of instruction phrasings missed paraphrases ("Tech names tend to wobble
+// around Mercury stations"); the allow-list does not need to anticipate
+// them. Dropping an innocent sentence costs nothing; letting one market
+// sentence through is the failure we are guarding against.
 
 export const COSMOS_LLM_DISCLAIMER = "For entertainment and context, not a trading signal.";
 
 const TRADE_INSTRUCTION_PATTERNS: RegExp[] = [
-  // orders, entries, exits, stops, targets (sky verbs like "Venus enters
-  // Libra" or "the Moon exits Virgo" are not matched)
-  /\b(buy|buying|sell|selling|short|shorting|go long|going long|go short|get long|get short|take profits?|profit[- ]taking|stop[- ]?loss(es)?|trailing stop|price targets?)\b/i,
-  /\b(enter|entering|exit|exiting|close|closing|open|opening|take|initiate|add)\s+(a\s+|the\s+|your\s+|new\s+)?(trade|trades|position|positions|long|longs|short|shorts)\b/i,
-  /\b(entry|exit)\s+(point|price|level|signal|timing)s?\b/i,
-  // sizing and allocation
-  /\b(size|sizing|sized|position[- ]siz\w*|allocat(e|es|ed|ion|ions)|overweight|underweight|exposure|leverage|risk budget|trim|scale (in|out)|load up|accumulate|de-?risk|re-?risk|rebalanc\w*|rotate into)\b/i,
-  // hedges and options structures
-  /\b(hedg\w*|calls?|puts?|spreads?|straddles?|strangles?|condors?|iron fly|butterfl(y|ies)|collars?|covered call|protective put|options? (play|trade|strateg\w*))\b/i,
-  // direction calls and forecasts
-  /\b(bullish|bearish|risk[- ]on|risk[- ]off|long bias|short bias|upside|downside|rally|sell-?off|crash|correction|breakout|breakdown|bounce|rebound|top(ping)? out|bottom(ing)? out)\b/i,
-  /\b(stocks?|markets?|equities|indices|index|spx|spy|s&p|nasdaq|dow|bitcoin|crypto|gold|bonds?|the tape)\b[^.!?]*\b(will|should|could|may|might|likely to|expected to|poised to|set to|tends? to)\b[^.!?]*\b(rise|rises|fall|falls|climb|drop|decline|rally|slide|gain|lose|move (higher|lower|up|down)|go (higher|lower|up|down)|outperform|underperform)\b/i,
-  /\b(favou?r(s|ed|ing)?|avoid|stay (long|short|flat|out|neutral|defensive|aggressive)|lean (long|short|into|against)|be (cautious|defensive|aggressive))\b/i,
-  /\b(neutral|cautious|defensive|aggressive) (stance|bias|posture|positioning|outlook)\b/i,
+  // Market, asset and trading nouns: any mention makes the sentence market talk.
+  /\b(stocks?|shares?|equit(y|ies)|markets?|market-?wide|bourse|wall street|spx|spy|qqq|s\s*&\s*p|sp500|nasdaq|dow|russell|index(es)?|indices|futures?|etfs?|sectors?|tech|technology|semis?|semiconductors?|names|tickers?|risk|risky|capital|traders?|trading|trades?|investors?|investing|investments?|portfolios?|holdings?|positions?|exposure|allocation|leverage|margin|volatility|vix|vol|implied|premium|premiums|options?|calls?|puts?|strikes?|expir(y|ies|ation)|0dte|spreads?|straddles?|strangles?|condors?|butterfl(y|ies)|collars?|hedg\w*|bonds?|yields?|treasur(y|ies)|rates?|fed|fomc|dollar|usd|currenc(y|ies)|fx|gold|oil|crude|commodit(y|ies)|bitcoin|btc|crypto\w*|earnings|valuations?|prices?|priced|pricing|levels?|support (level|zone|line)s?|resistance|breakout|breakdown|tape|bids?|offers?|liquidity|flows?|buyers?|sellers?|bulls?|bears?|bullish|bearish|rally|rallies|sell-?offs?|crash(es)?|corrections?|drawdowns?|returns?|performance|outperform\w*|underperform\w*|profits?|loss(es)?|gains?|basis points?|bps)\b/i,
+  // Orders, sizing and imperatives addressed to the reader.
+  /\b(buy|buying|sell|selling|short|shorting|long|longs|go long|go short|enter|entering|exit|exiting|take profits?|stop[- ]?loss(es)?|trailing stop|price targets?|size|sizing|sized|trim|trimming|scale (in|out)|load up|accumulate|de-?risk|re-?risk|rebalanc\w*|rotate|lighten|lightening|reduce|reducing|add to|keep powder dry|stand aside|step aside|sit out|wait for|be careful|caution|cautious|defensive|aggressive|protect|protection|consider|favou?r\w*|avoid|lean)\b/i,
+  // Money and price levels: "$", a 3-5 digit number (with optional thousands
+  // separator or decimals) that is not a year (19xx/20xx) and not an angle
+  // or a percentage of illumination.
+  /\$\s?\d/,
+  /(?<![\d.,])(?!(?:19|20)\d\d(?![\d,.]))\d{1,2},\d{3}(?:\.\d+)?(?![\d°%])|(?<![\d.,])(?!(?:19|20)\d\d(?![\d,.]))\d{3,5}(?:\.\d+)?(?![\d,]|\s?(?:°|degrees?|deg\b|%|percent|km|miles?|nT|years?|days?|hours?|minutes?))/i,
+  // Forecasts of what anything will do.
+  /\b(will|should|could|may|might|likely to|expected to|poised to|set to|tends? to|tend to)\b[^.!?]*\b(rise|rises|fall|falls|climb|drop|decline|slide|gain|lose|move (higher|lower|up|down)|go (higher|lower|up|down)|wobble|weaken|strengthen|pop|dip|sink|soar|surge|jump|tumble|chop)\b/i,
 ];
 
 export function isTradeInstruction(sentence: string): boolean {
