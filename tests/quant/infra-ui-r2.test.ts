@@ -435,3 +435,20 @@ test("internal api: timeout behaves like an aborted fetch; sync handlers work", 
   assert.equal(nr.error, "no_response");
   _resetInternalRoutes();
 });
+
+test("internal api: every allow-listed route is registered in routes.ts; converted engines have no local-HTTP hop", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { INTERNAL_ROUTES } = await import("../../server/internalApi");
+  const read = (f: string) => readFileSync(new URL(`../../server/${f}`, import.meta.url), "utf8");
+  const routes = read("routes.ts");
+  for (const p of INTERNAL_ROUTES) {
+    assert.ok(routes.includes(`app.get("${p}", internalRoute("${p}",`), `${p} registered`);
+  }
+  for (const f of ["tradeEnvironment.ts", "exitBrain.ts"]) {
+    assert.ok(!/127\.0\.0\.1/.test(read(f)), `${f} still calls local HTTP`);
+  }
+  // In routes.ts the only remaining self-calls to these endpoints are in
+  // /api/experimental/bl-pdf (R2-A is rewriting that block for Schwab-only data).
+  const selfCalls = routes.split("\n").filter((l) => /127\.0\.0\.1:\$\{\w+\}\/api\/(models|heatseeker|quotes|odte-tracker)/.test(l));
+  assert.ok(selfCalls.length <= 2, selfCalls.join("\n"));
+});
