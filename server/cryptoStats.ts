@@ -311,15 +311,48 @@ export function sampleGate(c: CryptoSignalStats): { ready: boolean; reason: stri
 }
 
 /**
- * How peaks are observed: OPEN signals are re-priced by the grader every
- * CRYPTO_PEAK_SAMPLE_MIN minutes (live-tracked coins at their refresh), so
- * a spike that tops and fades between two samples is missed. HIT_5M and
- * DOUBLED are therefore LOWER bounds and the peak market cap is a sampled
- * peak, not the true high. (Faster sampling would need an OHLC source;
- * DexScreener's pair endpoint has no candles.)
+ * How peaks are observed (round 4): every momentum refresh of a tracked coin
+ * (DexScreener batch, no extra API call) raises peak_mcap on that coin's OPEN
+ * signal rows; the grader (every CRYPTO_PEAK_SAMPLE_MIN minutes, at most
+ * CRYPTO_GRADER_BATCH OPEN rows per pass, oldest first) re-prices rows whose
+ * coin is no longer tracked. Before round 4 only the grader wrote peaks, so
+ * under a backlog of more than CRYPTO_GRADER_BATCH open rows new signals got
+ * no peak samples at all. A spike that tops and fades between two samples is
+ * still missed: HIT_5M and DOUBLED are LOWER bounds and the peak market cap
+ * is a sampled peak, not the true high. (Faster sampling would need an OHLC
+ * source; DexScreener's pair endpoint has no candles.)
  */
 export const CRYPTO_PEAK_SAMPLE_MIN = 10;
-export const CRYPTO_PEAK_SAMPLING_NOTE = `peaks sampled about every ${CRYPTO_PEAK_SAMPLE_MIN} min: spikes between samples are missed, so HIT_5M and DOUBLED are lower bounds`;
+export const CRYPTO_GRADER_BATCH = 60;
+export const CRYPTO_PEAK_SAMPLING_NOTE = `peaks sampled at each momentum refresh of a tracked coin and by the grader every ${CRYPTO_PEAK_SAMPLE_MIN} min (oldest ${CRYPTO_GRADER_BATCH} open rows per pass) once a coin is no longer tracked: spikes between samples are missed, so HIT_5M and DOUBLED are lower bounds`;
+
+/**
+ * Sampling label with the live refresh cadence: a tracked coin is refreshed
+ * once per ceil(tracked / perTick) momentum ticks of tickMs.
+ */
+export function peakSamplingNote(tracked: number | null | undefined, tickMs: number, perTick: number): string {
+  if (tracked == null || !Number.isFinite(tracked) || tracked <= 0 || !(perTick > 0) || !(tickMs > 0)) return CRYPTO_PEAK_SAMPLING_NOTE;
+  const everySec = Math.ceil(tracked / perTick) * tickMs / 1000;
+  return `peaks sampled at each momentum refresh of a tracked coin (about every ${everySec} s with ${tracked} tracked) and by the grader every ${CRYPTO_PEAK_SAMPLE_MIN} min (oldest ${CRYPTO_GRADER_BATCH} open rows per pass) once a coin is no longer tracked: spikes between samples are missed, so HIT_5M and DOUBLED are lower bounds`;
+}
+
+/**
+ * Peak sample for every OPEN row of one pair (params: ?1 mcap, ?2 sample time
+ * ms, ?3 liquidity, ?4 chain, ?5 pair address). SQLite evaluates each SET
+ * expression on the pre-update row, so peak_at moves only with the peak.
+ */
+export const CRYPTO_PEAK_SAMPLE_SQL = `UPDATE crypto_signals SET
+  peak_at = CASE WHEN peak_mcap IS NULL OR ?1 > peak_mcap THEN ?2 ELSE peak_at END,
+  peak_mcap = CASE WHEN peak_mcap IS NULL OR ?1 > peak_mcap THEN ?1 ELSE peak_mcap END,
+  last_mcap = ?1, last_liquidity = ?3
+WHERE outcome = 'OPEN' AND chain = ?4 AND pair_address = ?5`;
+
+/** New sampled peak from one observation: null mcap (missing) leaves the peak unchanged; observed 0 is a valid sample. */
+export function nextPeak(prevPeak: number | null, mcap: number | null): { peak: number | null; improved: boolean } {
+  if (mcap == null || !Number.isFinite(mcap)) return { peak: prevPeak, improved: false };
+  if (prevPeak == null || mcap > prevPeak) return { peak: mcap, improved: true };
+  return { peak: prevPeak, improved: false };
+}
 
 export interface CryptoDeskStats extends CryptoSignalStats {
   /** what the top-level counts are: distinct coins, first signal each */
@@ -349,6 +382,7 @@ export function summarizeDeskStats(
   rowCounts: Partial<CryptoSignalCounts> | null | undefined,
   coinCounts: Partial<CryptoSignalCounts> | null | undefined,
   enterCounts: Partial<CryptoSignalCounts> | null | undefined,
+  peakNote: string = CRYPTO_PEAK_SAMPLING_NOTE,
 ): CryptoDeskStats {
   const coins = summarizeSignalCounts(coinCounts);
   const enter = summarizeSignalCounts(enterCounts);
@@ -366,7 +400,7 @@ export function summarizeDeskStats(
     sampleBasis: "first-ENTER coins",
     sampleReason: `first-ENTER coins: ${gEnter.reason}`,
     allCoinsSampleReady: gAll.ready,
-    peakSampling: CRYPTO_PEAK_SAMPLING_NOTE,
+    peakSampling: peakNote,
   };
 }
 

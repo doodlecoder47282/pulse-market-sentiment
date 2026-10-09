@@ -358,3 +358,48 @@ test("ML Lab: extension caption is sqrt-time; no TAPE SYNTHETIC path; server nev
   assert.doesNotMatch(routes, /synthetic:\s*true/);
   assert.match(routes, /const synthetic = false;/);
 });
+
+// ── 9. Crypto: peak sampled on every momentum refresh; ENTER needs holders ──
+import { DatabaseSync } from "node:sqlite";
+import { CRYPTO_PEAK_SAMPLE_SQL, CRYPTO_GRADER_BATCH, peakSamplingNote, nextPeak, summarizeDeskStats } from "../../server/cryptoStats";
+
+test("crypto peak sample SQL: raises peak only upward, peak_at moves with it, only OPEN rows of that pair", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`CREATE TABLE crypto_signals (id TEXT PRIMARY KEY, chain TEXT, pair_address TEXT, outcome TEXT,
+    peak_mcap REAL, peak_at INTEGER, last_mcap REAL, last_liquidity REAL)`);
+  const ins = db.prepare(`INSERT INTO crypto_signals (id, chain, pair_address, outcome, peak_mcap, peak_at) VALUES (?, ?, ?, ?, ?, ?)`);
+  ins.run("a", "solana", "P1", "OPEN", null, null);
+  ins.run("b", "solana", "P1", "OPEN", 500_000, 100);
+  ins.run("c", "solana", "P1", "DEAD", 100, 1);
+  ins.run("d", "solana", "P2", "OPEN", 10, 1);
+  const st = db.prepare(CRYPTO_PEAK_SAMPLE_SQL);
+  st.run(400_000, 200, 50_000, "solana", "P1");
+  const get = (id: string) => db.prepare(`SELECT * FROM crypto_signals WHERE id = ?`).get(id) as any;
+  assert.equal(get("a").peak_mcap, 400_000); assert.equal(get("a").peak_at, 200);   // first sample
+  assert.equal(get("b").peak_mcap, 500_000); assert.equal(get("b").peak_at, 100);   // lower sample: unchanged
+  assert.equal(get("b").last_mcap, 400_000); assert.equal(get("b").last_liquidity, 50_000);
+  assert.equal(get("c").peak_mcap, 100);                                            // resolved row untouched
+  assert.equal(get("d").peak_mcap, 10);                                             // other pair untouched
+  st.run(900_000, 300, 60_000, "solana", "P1");
+  assert.equal(get("b").peak_mcap, 900_000); assert.equal(get("b").peak_at, 300);
+  st.run(0, 400, 0, "solana", "P1");                                                // observed 0: sample, never a new peak
+  assert.equal(get("b").peak_mcap, 900_000); assert.equal(get("b").last_mcap, 0);
+  db.close();
+});
+
+test("crypto peak: helper, label and wiring", () => {
+  assert.deepEqual(nextPeak(null, null), { peak: null, improved: false });
+  assert.deepEqual(nextPeak(5, null), { peak: 5, improved: false });
+  assert.deepEqual(nextPeak(5, 7), { peak: 7, improved: true });
+  assert.deepEqual(nextPeak(5, 0), { peak: 5, improved: false });
+  // 200 tracked, 90 per 75 s tick -> 3 ticks -> every 225 s
+  assert.match(peakSamplingNote(200, 75_000, 90), /about every 225 s with 200 tracked/);
+  assert.match(peakSamplingNote(200, 75_000, 90), /lower bounds/);
+  assert.equal(summarizeDeskStats(null, null, null, "x").peakSampling, "x");
+  const eng = src("server/cryptoEngine.ts");
+  assert.match(eng, /persistSignal\(c\);\n\s*recordPeakSample\(c\);/);
+  assert.match(eng, /LIMIT \?`,\n\s*\)\.all\(CRYPTO_GRADER_BATCH\)/);
+  assert.equal(CRYPTO_GRADER_BATCH, 60);
+  // ENTER held at WATCH when holder concentration is unavailable (fail-closed)
+  assert.match(eng, /\} else if \(c\.top10Pct == null\) \{\n[^\n]*\n[^\n]*\n\s*verdict = "WATCH";/);
+});

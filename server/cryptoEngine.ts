@@ -48,6 +48,7 @@ import {
   computeSocialScore, resolveSocialCollection, expireSocial,
   CRYPTO_SIGNAL_COUNTS_SQL, type SocialStatus, type SocialSourceStatus,
   observedNumber, gradeSignal, cryptoCoinCountsSql, summarizeDeskStats, type CryptoDeskStats,
+  CRYPTO_GRADER_BATCH, CRYPTO_PEAK_SAMPLE_SQL, peakSamplingNote,
   holderConcentration, countMentions, socialCoverage, type HolderAccount, type DexPool,
   momentumPoints, honeypotRead, jupiterAllowsEnter,
 } from "./cryptoStats";
@@ -172,6 +173,7 @@ const MAX_TRACKED = 220;           // memory + rate-budget cap
 const CANDIDATE_TTL_MS = 48 * 3600_000; // drop after 48h without a signal
 const SCANNER_MS = 60_000;
 const MOMENTUM_MS = 75_000;
+const MOMENTUM_BATCH = 90; // tracked coins refreshed per momentum tick (3 DexScreener calls)
 const NARRATIVE_MS = 5 * 60_000;
 const MAJORS_MS = 60_000;
 const WATCHDOG_MS = 30_000;
@@ -451,7 +453,7 @@ async function momentumTick(): Promise<void> {
   // Refresh oldest-first in batches of 30 token addresses (1 DS call each).
   const list = [...tracked.values()]
     .sort((a, b) => (a.lastRefreshAt ?? 0) - (b.lastRefreshAt ?? 0));
-  const batch = list.slice(0, 90); // 3 calls/tick max — far under budget
+  const batch = list.slice(0, MOMENTUM_BATCH); // 3 calls/tick max — far under budget
   const byToken = new Map<string, Candidate[]>();
   for (const c of batch) {
     if (!c.tokenAddress) continue;
@@ -543,7 +545,26 @@ async function momentumTick(): Promise<void> {
       c.hist.push({ t: c.lastRefreshAt, volAccel: c.volAccel, netBuyRatio5m: c.netBuyRatio5m, mcap: c.marketCap });
       if (c.hist.length > 20) c.hist.shift();
       persistSignal(c);
+      recordPeakSample(c);
     }
+  }
+}
+
+// Peak sampling on every momentum refresh (round 4): the refresh already has
+// the coin's market cap, so its OPEN signal rows get the sample here with no
+// extra API call. The grader reads at most CRYPTO_GRADER_BATCH OPEN rows per
+// pass (oldest first), so under a backlog new signals used to get no peak
+// samples until the old ones resolved. SQLite evaluates every SET expression
+// on the pre-update row, so peak_at moves only when the peak does. A missing
+// market cap (null) is not a sample; an observed 0 is (it never raises a peak).
+let _peakStmt: ReturnType<typeof sqlite.prepare> | null = null;
+function recordPeakSample(c: Candidate): void {
+  if (c.marketCap == null || !Number.isFinite(c.marketCap)) return;
+  try {
+    _peakStmt = _peakStmt ?? sqlite.prepare(CRYPTO_PEAK_SAMPLE_SQL);
+    _peakStmt.run(c.marketCap, c.lastRefreshAt ?? Date.now(), c.liquidityUsd, c.chain, c.pairAddress);
+  } catch (e: any) {
+    console.warn(`[crypto:peak] ${e?.message ?? e}`);
   }
 }
 
@@ -978,12 +999,16 @@ function scoreCandidate(c: Candidate): void {
     } else if (hp === "sells_missing") {
       verdict = "WATCH";
       reasons.push(`score ${c.score}, flow sustained — held at WATCH: 1h sell count missing, honeypot check not possible`);
+    } else if (c.top10Pct == null) {
+      // Fail-closed like Jupiter / sells (round 4): concentration not read
+      // (owners unreadable, RPC cooldown, not yet checked) is not a pass.
+      verdict = "WATCH";
+      reasons.push(`score ${c.score}, flow sustained — held at WATCH: top-10 holder concentration unavailable${c.top10Method ? ` (${c.top10Method})` : " (not read yet)"}`);
     } else {
       verdict = "ENTER";
       reasons.push(`score ${c.score}, flow sustained ${c.volAccel?.toFixed(1)}x, ${Math.round((c.netBuyRatio5m ?? 0) * 100)}% buys, security checked`);
       reasons.push(`pool price confirmed by Jupiter (${c.jupGapPct}% gap)`);
-      if (c.top10Pct != null) reasons.push(`top-10 holders ${c.top10Pct}% (${c.top10Method ?? "method unknown"})`);
-      else if (c.top10Method?.startsWith("unavailable")) reasons.push("top-10 holders unavailable (owners unreadable)");
+      reasons.push(`top-10 holders ${c.top10Pct}% (${c.top10Method ?? "method unknown"})`);
       if (c.narrativeHits.length) reasons.push(`narrative confirm: ${c.narrativeHits.join(", ")}`);
     }
   } else if (c.score >= 50) {
@@ -1064,8 +1089,8 @@ const NO_DATA_AFTER_ERRORS_MS = 7 * 24 * 3600_000; // fetch errors this long aft
 
 async function graderTick(): Promise<void> {
   const open = sqlite.prepare(
-    `SELECT id, pair_address, chain, detected_at, mcap_at_signal, liquidity_at_signal, peak_mcap, peak_at FROM crypto_signals WHERE outcome = 'OPEN' ORDER BY detected_at ASC LIMIT 60`,
-  ).all() as any[];
+    `SELECT id, pair_address, chain, detected_at, mcap_at_signal, liquidity_at_signal, peak_mcap, peak_at FROM crypto_signals WHERE outcome = 'OPEN' ORDER BY detected_at ASC LIMIT ?`,
+  ).all(CRYPTO_GRADER_BATCH) as any[];
   if (open.length === 0) return;
 
   const mark = sqlite.prepare(
@@ -1225,6 +1250,7 @@ export function getCryptoSignals(): {
     sqlite.prepare(CRYPTO_SIGNAL_COUNTS_SQL).get() as any,
     sqlite.prepare(cryptoCoinCountsSql()).get() as any,
     sqlite.prepare(cryptoCoinCountsSql("ENTER")).get() as any,
+    peakSamplingNote(tracked.size, MOMENTUM_MS, MOMENTUM_BATCH),
   );
   return {
     signals: signals.map((s) => ({
