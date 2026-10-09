@@ -47,6 +47,56 @@ interface SchwabDiag {
   asOf: number;
 }
 
+/** /api/schwab/stream/status (subset read here). */
+interface StreamStatus {
+  state: string;
+  mode: "live" | "connecting" | "down";
+  lastMessageAgeMs?: number | null;
+  reconnects?: number;
+  lastError?: string | null;
+  reason?: string;
+  perService?: Record<string, { lastDataAgeMs: number | null; keys: number }>;
+  subscriptions?: { options: string[]; optionsOverCap: string[] };
+  delayedSymbols?: string[];
+}
+
+/** Feed mode for quotes: Schwab Streamer live, Schwab REST snapshots, or nothing. */
+export function streamFeedLabel(connected: boolean, stream: StreamStatus | undefined): { label: string; color: string; detail: string } {
+  if (!connected) return { label: "Unavailable", color: "#f87171", detail: "Schwab not connected: no quotes" };
+  if (stream?.mode === "live") {
+    const age = stream.lastMessageAgeMs != null ? `${Math.round(stream.lastMessageAgeMs / 1000)}s since last frame` : "";
+    return { label: "Streaming live", color: "#34d399", detail: age };
+  }
+  const why = stream?.lastError ?? stream?.reason ?? (stream?.mode === "connecting" ? "stream connecting" : "stream down");
+  return { label: "REST snapshots", color: "#fbbf24", detail: why };
+}
+
+function StreamFeedRow({ connected, stream }: { connected: boolean; stream: StreamStatus | undefined }) {
+  const f = streamFeedLabel(connected, stream);
+  const svc = stream?.perService ?? {};
+  const svcAge = (k: string) => {
+    const a = svc[k]?.lastDataAgeMs;
+    return a == null ? "no data" : `${Math.round(a / 1000)}s`;
+  };
+  return (
+    <div className="space-y-1 text-[10px]" data-testid="schwab-stream-status">
+      <div className="flex items-center gap-1" style={{ color: f.color }} title={f.detail}>
+        <span className={`h-1.5 w-1.5 rounded-full ${f.label === "Streaming live" ? "animate-pulse" : ""}`} style={{ background: f.color }} />
+        <span className="font-medium">Quotes: {f.label}</span>
+        {f.detail && <span className="text-muted-foreground/70 truncate max-w-[220px]">· {f.detail}</span>}
+      </div>
+      {connected && stream?.mode && stream.mode !== "down" && (
+        <div className="text-muted-foreground font-mono">
+          L1 eq {svcAge("LEVELONE_EQUITIES")} · chart {svcAge("CHART_EQUITY")} · options {svc.LEVELONE_OPTIONS?.keys ?? 0} keys
+          {typeof stream.reconnects === "number" ? ` · reconnects ${stream.reconnects}` : ""}
+          {stream.subscriptions?.optionsOverCap?.length ? ` · ${stream.subscriptions.optionsOverCap.length} over cap (REST)` : ""}
+          {stream.delayedSymbols?.length ? ` · delayed flag: ${stream.delayedSymbols.join(", ")} (REST used)` : ""}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Schwab is the only market-data source (user decision 2026-10-08). When it
 // cannot answer, data is served from a short-lived cache with its real age
 // (within a stated max age) or shown as unavailable: no CBOE, no Yahoo.
@@ -188,6 +238,16 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
     queryKey: ["/api/schwab/diag"],
     queryFn: async () => {
       const r = await apiRequest("GET", "/api/schwab/diag");
+      return r.json();
+    },
+    refetchInterval: open ? 5_000 : false,
+    enabled: open,
+  });
+
+  const { data: streamStatus } = useQuery<StreamStatus>({
+    queryKey: ["/api/schwab/stream/status"],
+    queryFn: async () => {
+      const r = await apiRequest("GET", "/api/schwab/stream/status");
       return r.json();
     },
     refetchInterval: open ? 5_000 : false,
@@ -603,6 +663,9 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                   </div>
                 );
               })}
+            </div>
+            <div className="rounded-md border border-border/30 bg-muted/10 px-3 py-1.5">
+              <StreamFeedRow connected={isConnected} stream={streamStatus} />
             </div>
 
             {/* Live cooldown / rate-budget banner */}
