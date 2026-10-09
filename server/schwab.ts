@@ -354,9 +354,9 @@ export async function schwabFetchMeta(
   // Self-throttle
   _trimReqLog();
   if (_reqLog.length >= MAX_REQ_PER_MIN) {
-    if (_cache.has(cacheKey)) {
-      const s = serveStale("self-throttle (100 requests/min)");
-      if (s.data != null) return s;
+    const entry = _cache.get(cacheKey);
+    if (entry && staleServeDecision(entry.fetchedAt, kind, "self-throttle").serve) {
+      return serveStale("self-throttle (100 requests/min)");
     }
     // Wait until oldest request ages out
     const waitMs = Math.max(0, _reqLog[0] + 60_000 - Date.now()) + 50;

@@ -610,7 +610,8 @@ async function buildEdgeSynthesisContext(symbol: string): Promise<any> {
     const dgs10 = findVal("DGS10");
     const dxy = findVal("DTWEXBGS");
     const parts: string[] = [];
-    if (isFinite(vix)) parts.push(`VIX ${vix.toFixed(1)}`);
+    // FRED VIXCLS is the prior daily close (context only, not the live Schwab $VIX).
+    if (isFinite(vix)) parts.push(`VIX close (FRED VIXCLS) ${vix.toFixed(1)}`);
     if (isFinite(dgs10)) parts.push(`10y ${dgs10.toFixed(2)}%`);
     if (isFinite(dxy)) parts.push(`DXY ${dxy.toFixed(1)}`);
     const bias = isFinite(vix) && vix > 22 ? "risk-off" : isFinite(vix) && vix < 14 ? "risk-on" : "mixed";
