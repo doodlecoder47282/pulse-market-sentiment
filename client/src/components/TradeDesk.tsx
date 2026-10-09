@@ -78,6 +78,8 @@ type GammaMap = {
   netGex: number;
   narrative: string;
   gexCrossoverStrike?: number | null;
+  /** Weight, expiry universe and dealer convention of zeroGamma. */
+  flipInputs?: { label: string };
   gammaProfile?: { spot: number; gex: number }[];
 };
 
@@ -1086,6 +1088,12 @@ function GammaMapCard({ gammaMap, spot }: { gammaMap: GammaMap; spot: number | n
             </span>
           }/>
         </div>
+
+        {gammaMap.flipInputs?.label && (
+          <p className="mb-2 font-mono text-[10px] text-muted-foreground" data-testid="text-gamma-flip-inputs">
+            Flip inputs: {gammaMap.flipInputs.label}. Heatseeker's flip uses one expiry, so the two can differ.
+          </p>
+        )}
 
         {/* Narrative */}
         <p className="mb-4 rounded-sm border border-border bg-card/30 p-3 text-[11.5px] leading-relaxed text-muted-foreground" data-testid="text-gamma-narrative">

@@ -547,6 +547,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ...baseGammaMap,
         gammaProfile: snap.gamma.gammaProfile,
         gexCrossoverStrike: snap.gamma.gexCrossoverStrike,
+        // sources.buildGammaStructure: SPY chain rows 0-45 DTE, OI-weighted
+        flipInputs: flipInputs({ weight: "open_interest", universe: "all-expiries-in-request", expiryKeys: [], dteRange: [0, 45] }),
       };
 
       const squeeze = computeSqueezeIndicator({

@@ -406,3 +406,76 @@ test("HAR-RV vol forecast: constant-vol random walk forecasts its own vol; sprea
   assert.equal(spreadZScore(0.04, past.slice(0, 30)).z, null);
   assert.equal(spreadVerdict(null), "insufficient");
 });
+
+// ─── Fix round (R2-A review) ────────────────────────────────────────────────
+
+import { contractExposure, deltaRQ } from "../../server/greekExposure";
+import { repricedFlipFromRows } from "../../server/gammaProfile";
+
+test("fix 1: no material gamma at spot -> null sign; a flip inside a sub-floor valley is flagged", () => {
+  // 1 h to settlement, strikes 3% either side: at spot every term is ~e^-55 of its peak.
+  const T = 1 / (24 * 365);
+  const far: OptionRow[] = [
+    { type: "C", strike: 6900, iv: 0.12, oi: 10000, dte: 0, T },
+    { type: "P", strike: 6500, iv: 0.16, oi: 10000, dte: 0, T },
+  ];
+  const f = repricedFlipFromRows(far, 6700, { r: 0, q: 0, lowPct: 0.95, highPct: 1.05, nLevels: 201 });
+  assert.ok(f.gexAtSpot != null && Math.abs(f.gexAtSpot) < f.noiseFloor!, "immaterial at spot");
+  assert.equal(f.gexSignAtSpot, null);
+  // The only crossing sits in the flat zone between the two lobes.
+  assert.equal(f.zeroGammaInValley, true);
+  assert.ok(f.valleyCrossings!.length === 1 && f.zeroGamma! > 6500 && f.zeroGamma! < 6900);
+  // A smooth 20-day two-lobe profile: material sign, crossing not in a valley.
+  const T20 = 20 / 365;
+  const smooth = repricedFlipFromRows([
+    { type: "C", strike: 6750, iv: 0.15, oi: 3000, dte: 20, T: T20 },
+    { type: "P", strike: 6650, iv: 0.15, oi: 1000, dte: 20, T: T20 },
+  ], 6700, { r: 0, q: 0 });
+  assert.equal(smooth.gexSignAtSpot, 1);
+  assert.equal(smooth.zeroGammaInValley, false);
+});
+
+test("fix 2: a convention with all-zero weights is an observed 0, not missing; robustness over conventions with values", () => {
+  const T = 10 / 365;
+  const callsOnly: OptionRow[] = [{ type: "C", strike: 6700, iv: 0.14, oi: 3000, dte: 10, T }];
+  const s = dealerConventionSensitivity(callsOnly, 6700, { r: 0, q: 0 });
+  const flat = s.conventions.find((c) => c.id === "calls-flat")!;
+  assert.equal(flat.gexAtSpot, 0, "observed zero");
+  assert.equal(flat.gexSign, null);
+  assert.equal(s.regimeSignRobust, false); // naive +, all-short -
+  assert.match(s.note, /no material gamma under: calls-flat/);
+  const putsOnly: OptionRow[] = [{ type: "P", strike: 6650, iv: 0.16, oi: 2000, dte: 10, T }];
+  const p = dealerConventionSensitivity(putsOnly, 6700, { r: 0, q: 0 });
+  assert.equal(p.regimeSignRobust, true); // every convention shorts the puts
+  assert.equal(dealerConventionSensitivity([], 6700).regimeSignRobust, null);
+});
+
+test("fix 4: Heatseeker on an empty chain returns null totals and dataState unavailable, never zeros", () => {
+  const h = buildHeatseeker({ underlying: { last: 6700 }, callExpDateMap: {}, putExpDateMap: {} } as any, "$SPX", 6700, null, Date.UTC(2026, 9, 8, 15, 0));
+  assert.equal(h.dataState, "unavailable");
+  assert.equal(h.totals.netGex, null);
+  assert.equal(h.totals.netDex, null);
+  assert.equal(h.totals.netVanna, null);
+  assert.equal(h.totals.netCharm, null);
+});
+
+test("fix 11: one r/q basis; q = 0 for single names; carry-aware vanna and charm vs finite differences", () => {
+  const nowMs = Date.UTC(2026, 9, 8, 15, 0);
+  const chain: any = chainFor0dte("2026-10-08", [{ K: 6700, side: "C", oi: 1000, iv: 0.12, vendorGamma: 0.001 }]);
+  assert.deepEqual(buildHeatseeker(chain, "$SPX", 6700, null, nowMs).totals.basis, { r: 0.05, q: 0.013 });
+  assert.deepEqual(buildHeatseeker(chain, "AAPL", 6700, null, nowMs).totals.basis, { r: 0.05, q: 0 });
+  // Vanna = d(delta)/d(sigma) with carry; check against a central difference of deltaRQ.
+  const S = 100, K = 105, sig = 0.25, T = 0.5, r = 0.05, q = 0.02, n = 10, m = 100;
+  const x = contractExposure({ spot: S, strike: K, sigma: sig, T, contracts: n, r, q, type: "C" });
+  const h = 1e-5;
+  const vannaFd = (deltaRQ(S, K, sig + h, T, r, q, "C") - deltaRQ(S, K, sig - h, T, r, q, "C")) / (2 * h);
+  near(x.vannaPerVolPt, vannaFd * 0.01 * n * m * S, 1e-6 * Math.abs(vannaFd * n * m * S), "vanna with carry");
+  // Charm: put and call one-day delta changes differ by e^(-q(T-h)) - e^(-qT) when q != 0.
+  const xp = contractExposure({ spot: S, strike: K, sigma: sig, T, contracts: n, r, q, type: "P" });
+  const d = 1 / 365;
+  near((x.charmPerDay - xp.charmPerDay) / (n * m * S), Math.exp(-q * (T - d)) - Math.exp(-q * T), 1e-9, "call - put charm");
+  // r = q = 0 default is unchanged: put and call charm equal.
+  const c0 = contractExposure({ spot: S, strike: K, sigma: sig, T, contracts: n });
+  const p0 = contractExposure({ spot: S, strike: K, sigma: sig, T, contracts: n, type: "P" });
+  near(c0.charmPerDay, p0.charmPerDay, 1e-9, "r = q = 0");
+});

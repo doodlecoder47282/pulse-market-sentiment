@@ -89,6 +89,17 @@ export interface GammaProfile {
   /** Sign changes found only between sub-floor points (far-wing underflow),
    *  reported for transparency and NOT used as flips. */
   discardedCrossings: number[];
+  /** Kept crossings whose bracket spans a sub-floor valley (net gamma ~0 over
+   *  a stretch of spot): a real change of sign between two material lobes,
+   *  but its exact location inside the valley is not meaningful. */
+  valleyCrossings: number[];
+  /** true when zeroGammaSpot is one of valleyCrossings. */
+  zeroGammaInValley: boolean;
+  /** |currentGex| >= noiseFloor: there is material dealer gamma at spot. */
+  currentGexMaterial: boolean;
+  /** Sign of currentGex when material; null = "no material gamma at spot"
+   *  (or no contracts), never a long/short call. */
+  currentGexSign: 1 | -1 | null;
   /** Dealer sign per call / put contract used for this profile. */
   callSign: number;
   putSign: number;
@@ -114,6 +125,18 @@ function rowT(row: OptionRow, nowMs: number): number | null {
  */
 export const FLIP_RATE = 0.05;
 export const FLIP_DIV_YIELD = 0.013;
+
+/**
+ * Dividend yield for a chain's underlying. FLIP_DIV_YIELD is the S&P 500
+ * index yield, so it applies only to S&P 500 underlyings (SPX, SPXW, XSP,
+ * SPY). Any other symbol gets q = 0 unless a yield is known: an index yield
+ * is not a single name's yield, and for the short tenors these maps weight q
+ * barely moves gamma anyway.
+ */
+export function dividendYieldFor(symbol: string | null | undefined): number {
+  const s = String(symbol ?? "").toUpperCase().replace(/^\$/, "").replace(/\.X$/, "");
+  return s === "SPX" || s === "SPXW" || s === "XSP" || s === "SPY" || s === "^GSPC" || s === "GSPC" ? FLIP_DIV_YIELD : 0;
+}
 
 /**
  * Dollar gamma of a position, in $ per 1% move of the underlying:
@@ -181,16 +204,20 @@ function refineRoot(
  */
 function findCrossings(
   curve: GammaProfilePoint[], rows: PricedRow[], r: number, q: number, floor = 0,
-): number[] {
-  const out: number[] = [];
+): Array<{ x: number; valley: boolean }> {
+  const out: Array<{ x: number; valley: boolean }> = [];
   let prev: GammaProfilePoint | null = null;
+  let skipped = false; // a zero / sub-floor point lies between prev and p
   for (const p of curve) {
-    if (!(p.gex !== 0 && Number.isFinite(p.gex))) continue;
-    if (Math.abs(p.gex) < floor) continue; // below the materiality floor: plateau
+    if (!(p.gex !== 0 && Number.isFinite(p.gex)) || Math.abs(p.gex) < floor) {
+      skipped = true; // underflow or below the materiality floor: plateau
+      continue;
+    }
     if (prev && Math.sign(prev.gex) !== Math.sign(p.gex)) {
-      out.push(refineRoot(rows, r, q, prev.spot, prev.gex, p.spot));
+      out.push({ x: refineRoot(rows, r, q, prev.spot, prev.gex, p.spot), valley: skipped });
     }
     prev = p;
+    skipped = false;
   }
   return out;
 }
@@ -261,8 +288,10 @@ export function buildGammaProfile(
   let peak = 0;
   for (const p of curve) if (Number.isFinite(p.gex)) peak = Math.max(peak, Math.abs(p.gex));
   const noiseFloor = GEX_NOISE_REL * peak;
-  const zeroCrossings = findCrossings(curve, precomputed, r, q, noiseFloor);
-  const rawCrossings = findCrossings(curve, precomputed, r, q, 0);
+  const kept = findCrossings(curve, precomputed, r, q, noiseFloor);
+  const zeroCrossings = kept.map((c) => c.x);
+  const valleyCrossings = kept.filter((c) => c.valley).map((c) => c.x);
+  const rawCrossings = findCrossings(curve, precomputed, r, q, 0).map((c) => c.x);
   const discardedCrossings = rawCrossings.filter((z) => !zeroCrossings.some((k) => Math.abs(k - z) <= 1e-6 * Math.max(1, Math.abs(z))));
   // The flip that matters to the trader is the one nearest current spot: it is
   // the level whose crossing changes the sign of dealer gamma from here.
@@ -276,6 +305,11 @@ export function buildGammaProfile(
   // Evaluate current spot GEX by re-running the sum at S (for a consistent
   // "this is what the profile says right now" number).
   const currentGex = netGexAt(precomputed, spot, r, q);
+  // Regime sign at spot only when the gamma there is material (same floor as
+  // the crossings): a 0DTE spot far from every strike has |GEX| ~ 0 and its
+  // sign is set by underflow, not hedging.
+  const currentGexMaterial = precomputed.length > 0 && Number.isFinite(currentGex) && currentGex !== 0 && Math.abs(currentGex) >= noiseFloor;
+  const currentGexSign: 1 | -1 | null = currentGexMaterial ? (currentGex > 0 ? 1 : -1) : null;
 
   const values = curve.map((p) => p.gex);
   return {
@@ -290,6 +324,10 @@ export function buildGammaProfile(
     method: "repriced-profile",
     noiseFloor,
     discardedCrossings,
+    valleyCrossings,
+    zeroGammaInValley: zeroGammaSpot != null && valleyCrossings.includes(zeroGammaSpot),
+    currentGexMaterial,
+    currentGexSign,
     callSign,
     putSign,
   };
@@ -405,6 +443,13 @@ export interface RepricedFlip {
   method: "repriced-profile";
   /** Sub-noise far-wing sign changes that were NOT used (see GEX_NOISE_REL). */
   discardedCrossings?: number[];
+  /** Materiality floor ($ per 1%) of this profile; null without contracts. */
+  noiseFloor?: number | null;
+  /** Sign of gexAtSpot when material; null = no material gamma at spot. */
+  gexSignAtSpot?: 1 | -1 | null;
+  /** The flip lies inside a sub-floor valley (location not meaningful). */
+  zeroGammaInValley?: boolean;
+  valleyCrossings?: number[];
 }
 
 /** Re-priced gamma flip straight from a chain: rowsFromChain + buildGammaProfile. */
@@ -423,7 +468,7 @@ export function repricedFlipFromRows(
   opts: GammaProfileOptions = {},
 ): RepricedFlip {
   if (!(spot > 0) || rows.length === 0) {
-    return { zeroGamma: null, zeroCrossings: [], gexAtSpot: null, rowsUsed: 0, method: "repriced-profile", discardedCrossings: [] };
+    return { zeroGamma: null, zeroCrossings: [], gexAtSpot: null, rowsUsed: 0, method: "repriced-profile", discardedCrossings: [], noiseFloor: null, gexSignAtSpot: null, zeroGammaInValley: false, valleyCrossings: [] };
   }
   const p = buildGammaProfile(rows, spot, opts);
   return {
@@ -433,6 +478,10 @@ export function repricedFlipFromRows(
     rowsUsed: p.rowsUsed,
     method: "repriced-profile",
     discardedCrossings: p.discardedCrossings,
+    noiseFloor: p.rowsUsed > 0 ? p.noiseFloor : null,
+    gexSignAtSpot: p.currentGexSign,
+    zeroGammaInValley: p.zeroGammaInValley,
+    valleyCrossings: p.valleyCrossings,
   };
 }
 
@@ -468,16 +517,18 @@ export function flipInputs(args: {
   weight: FlipWeight;
   universe: FlipInputs["universe"];
   expiryKeys: ReadonlyArray<string>;
+  /** When expiry keys are not at hand: the DTE window the rows were filtered to. */
+  dteRange?: [number, number];
 }): FlipInputs {
   const parsed = Array.from(new Set(args.expiryKeys.map((k) => k.slice(0, 10)))).sort();
   const dtes = args.expiryKeys.map((k) => dteFromKey(k)).filter((x) => Number.isFinite(x));
-  const dteRange: [number, number] | null = dtes.length ? [Math.min(...dtes), Math.max(...dtes)] : null;
+  const dteRange: [number, number] | null = args.dteRange ?? (dtes.length ? [Math.min(...dtes), Math.max(...dtes)] : null);
   const w = args.weight === "open_interest" ? "OI-weighted"
     : args.weight === "volume" ? "volume-weighted"
     : "OI + 0.25 x volume";
   const u = args.universe === "single-expiry"
     ? `single expiry ${parsed[0] ?? "?"}${dteRange ? ` (${dteRange[0]} DTE)` : ""}`
-    : `${parsed.length} expiries${dteRange ? `, ${dteRange[0]}-${dteRange[1]} DTE` : ""}`;
+    : `${parsed.length ? `${parsed.length} expiries` : "all expiries"}${dteRange ? `, ${dteRange[0]}-${dteRange[1]} DTE` : ""}`;
   return {
     weight: args.weight,
     universe: args.universe,
@@ -516,7 +567,12 @@ export interface DealerConventionResult {
   label: string;
   callSign: number;
   putSign: number;
-  gexAtSpot: number | null;      // $ per 1% move
+  /** $ per 1% move. 0 is an OBSERVED zero (the convention gives every usable
+   *  contract zero weight, e.g. "calls flat" on a calls-only chain); null only
+   *  when there are no usable contracts at all. */
+  gexAtSpot: number | null;
+  /** Sign at spot when material (>= the naive profile's floor); null = no material gamma. */
+  gexSign: 1 | -1 | null;
   zeroGamma: number | null;      // re-priced flip nearest spot under this convention
 }
 
@@ -533,17 +589,32 @@ export function dealerConventionSensitivity(
   spot: number,
   opts: GammaProfileOptions = {},
 ): DealerSensitivity {
+  // One materiality floor for every convention: the naive profile's (the
+  // largest |GEX| scale the chain supports), so a convention is not judged
+  // material against its own, possibly tiny, peak.
+  const naive = repricedFlipFromRows(rows, spot, { ...opts, callSign: 1, putSign: -1 });
+  const usable = naive.rowsUsed > 0;
+  const floor = naive.noiseFloor ?? 0;
   const conventions: DealerConventionResult[] = DEALER_CONVENTIONS.map((c) => {
     const f = repricedFlipFromRows(rows, spot, { ...opts, callSign: c.callSign, putSign: c.putSign });
-    return { id: c.id, label: c.label, callSign: c.callSign, putSign: c.putSign, gexAtSpot: f.gexAtSpot, zeroGamma: f.zeroGamma };
+    // Usable contracts but none weighted under this convention: observed 0.
+    const g = f.gexAtSpot != null ? f.gexAtSpot : usable ? 0 : null;
+    const gexSign: 1 | -1 | null = g != null && g !== 0 && Math.abs(g) >= floor ? (g > 0 ? 1 : -1) : null;
+    return { id: c.id, label: c.label, callSign: c.callSign, putSign: c.putSign, gexAtSpot: g, gexSign, zeroGamma: f.zeroGamma };
   });
-  const signs = conventions.map((c) => c.gexAtSpot).filter((g): g is number => g != null && g !== 0).map(Math.sign);
-  const regimeSignRobust = signs.length === conventions.length ? signs.every((s) => s === signs[0]) : null;
-  const note = regimeSignRobust == null
+  // Robustness over the conventions that HAVE a material value: an observed
+  // zero has no sign to disagree with, and is reported, not dropped as missing.
+  const signs = conventions.map((c) => c.gexSign).filter((x): x is 1 | -1 => x != null);
+  const regimeSignRobust = !usable || signs.length === 0 ? null : signs.every((x) => x === signs[0]);
+  const zeros = conventions.filter((c) => c.gexAtSpot != null && c.gexSign == null).map((c) => c.id);
+  const zNote = zeros.length ? ` (no material gamma under: ${zeros.join(", ")})` : "";
+  const note = !usable
     ? "sensitivity unavailable: no usable contracts"
-    : regimeSignRobust
-      ? "gamma sign at spot is the same under every dealer convention tested"
-      : "gamma sign at spot DEPENDS on the dealer-positioning assumption: treat the long/short gamma call as unconfirmed";
+    : signs.length === 0
+      ? "no material gamma at spot under any convention"
+      : regimeSignRobust
+        ? `gamma sign at spot is the same under every convention with material gamma${zNote}`
+        : `gamma sign at spot DEPENDS on the dealer-positioning assumption: treat the long/short gamma call as unconfirmed${zNote}`;
   return { assumption: "naive-dealer-long-calls-short-puts", conventions, regimeSignRobust, note };
 }
 

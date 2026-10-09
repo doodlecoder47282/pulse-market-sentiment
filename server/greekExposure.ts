@@ -4,8 +4,11 @@
 // heatmap (Killbox, thermal heatmap, 0DTE forward, Heatseeker). Pure: no
 // imports, so the tests load it on plain Node.
 //
-// Black-Scholes with r = q = 0 (carry is negligible for the short tenors these
-// maps weight most; the same choice chainAudit.ts makes). T is calendar years
+// Black-Scholes, by default with r = q = 0 (carry is negligible for the short
+// tenors these maps weight most; the same choice chainAudit.ts makes). A caller
+// that must match another module's basis (Heatseeker matches the gamma flip's
+// r and q) passes r, q and the option type; with q != 0 a put's delta change
+// differs from a call's, so the type matters for charm. T is calendar years
 // on the one clock (timeToExpiry via chainClock), sigma must be valid for that
 // T (chainClock.ivForClock). Per-share Greeks (Hull, "Options, Futures, and
 // Other Derivatives", ch. 19; Haug, "The Complete Guide to Option Pricing
@@ -48,6 +51,19 @@ function normCdf(x: number): number {
   return 0.5 * (1 + sign * y);
 }
 
+/** Black-Scholes delta with carry: call e^(-qT) N(d1), put e^(-qT) (N(d1) - 1);
+ *  terminal value (call 1 / 0 / 0.5, put -1 / 0 / -0.5 at the strike) when T <= 0. */
+export function deltaRQ(S: number, K: number, sigma: number, T: number, r: number, q: number, type: "C" | "P"): number {
+  if (!(T > 1e-12)) {
+    const c = S > K ? 1 : S < K ? 0 : 0.5;
+    return type === "C" ? c : c - 1;
+  }
+  const v = sigma * Math.sqrt(T);
+  const n = normCdf((Math.log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / v);
+  const eq = Math.exp(-q * T);
+  return type === "C" ? eq * n : eq * (n - 1);
+}
+
 /** Call delta N(d1) at r = q = 0; terminal value (1 / 0 / 0.5 at the strike) when T <= 0. */
 export function callDelta0(S: number, K: number, sigma: number, T: number): number {
   if (!(T > 1e-12)) return S > K ? 1 : S < K ? 0 : 0.5;
@@ -61,9 +77,14 @@ export interface ContractExposureInput {
   sigma: number;          // decimal, valid for T
   T: number;              // calendar years to settlement (> 0)
   contracts: number;      // OI, volume, or a blend: the caller's weight
-  /** Gamma per share to use for GEX (the caller's basis); default Black-Scholes r = q = 0. */
+  /** Gamma per share to use for GEX (the caller's basis); default Black-Scholes with r, q below. */
   gamma?: number;
   multiplier?: number;
+  /** Rate and dividend yield (decimal); default 0. */
+  r?: number;
+  q?: number;
+  /** Option type; only matters for charm when q != 0. Default call. */
+  type?: "C" | "P";
 }
 
 export interface ContractExposure {
@@ -81,20 +102,27 @@ export function contractExposure(inp: ContractExposureInput): ContractExposure {
   const { spot: S, strike: K, sigma, T, contracts: n } = inp;
   const m = inp.multiplier != null && inp.multiplier > 0 ? inp.multiplier : CONTRACT_MULTIPLIER;
   if (!(S > 0) || !(K > 0) || !(sigma > 0) || !(T > 0) || !(n > 0)) return { ...ZERO };
+  const r = inp.r != null && Number.isFinite(inp.r) ? inp.r : 0;
+  const q = inp.q != null && Number.isFinite(inp.q) ? inp.q : 0;
+  const type = inp.type ?? "C";
   const sqrtT = Math.sqrt(T);
   const v = sigma * sqrtT;
-  const d1 = (Math.log(S / K) + 0.5 * v * v) / v;
+  const d1 = (Math.log(S / K) + (r - q) * T + 0.5 * v * v) / v;
   const d2 = d1 - v;
   if (!Number.isFinite(d1) || !Number.isFinite(d2)) return { ...ZERO };
+  const eq = Math.exp(-q * T);
   const pd1 = phi(d1);
-  const bsGamma = pd1 / (S * v);
+  // With carry (Haug 2007, sec. 2.3): gamma, vanna and vega carry e^(-qT).
+  const bsGamma = eq * pd1 / (S * v);
   const gamma = inp.gamma != null && Number.isFinite(inp.gamma) ? inp.gamma : bsGamma;
-  const vanna = -pd1 * d2 / sigma;
-  const vega = S * pd1 * sqrtT;
+  const vanna = -eq * pd1 * d2 / sigma;
+  const vega = S * eq * pd1 * sqrtT;
   const vomma = vega * d1 * d2 / sigma;
   const zomma = bsGamma * (d1 * d2 - 1) / sigma;
   const h = Math.min(ONE_DAY_YEARS, T);
-  const deltaChange = callDelta0(S, K, sigma, T - h) - callDelta0(S, K, sigma, T);
+  const deltaChange = r === 0 && q === 0
+    ? callDelta0(S, K, sigma, T - h) - callDelta0(S, K, sigma, T)
+    : deltaRQ(S, K, sigma, T - h, r, q, type) - deltaRQ(S, K, sigma, T, r, q, type);
   return {
     gexPerPct: gamma * n * m * S * S * 0.01,
     vannaPerVolPt: vanna * 0.01 * n * m * S,

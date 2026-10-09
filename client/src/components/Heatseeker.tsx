@@ -115,11 +115,14 @@ interface HeatseekerData {
   strikes: Strike[];
   stickyZones: StickyZone[];
   pivotBands?: PivotBand[];
+  /** "unavailable": no chain or expiry; totals are null (render "—", never 0). */
+  dataState?: "ok" | "unavailable";
+  reason?: string | null;
   totals: {
-    netGex: number;
-    netDex: number;
-    netVanna: number;
-    netCharm: number;
+    netGex: number | null;
+    netDex: number | null;
+    netVanna: number | null;
+    netCharm: number | null;
     callWall: number | null;
     putWall: number | null;
     zeroGamma: number | null;
@@ -127,9 +130,11 @@ interface HeatseekerData {
     zeroGammaCumulative?: number | null;
     zeroGammaMethod?: "repriced-profile";
     /** Net GEX over the displayed strike window (netGex is the full expiry). */
-    netGexWindow?: number;
+    netGexWindow?: number | null;
     netGexScope?: "full-expiry-repriced";
     gexAtSpotRepriced?: number | null;
+    gexSignAtSpot?: 1 | -1 | null;
+    zeroGammaInValley?: boolean;
     exposureConvention?: string;
   };
   /** What the flip was computed from (weight, expiry universe, dealer convention). */
@@ -137,7 +142,7 @@ interface HeatseekerData {
   /** Net GEX and flip under alternative dealer-positioning assumptions. */
   dealerSensitivity?: {
     assumption: string;
-    conventions: { id: string; label: string; gexAtSpot: number | null; zeroGamma: number | null }[];
+    conventions: { id: string; label: string; gexAtSpot: number | null; gexSign?: 1 | -1 | null; zeroGamma: number | null }[];
     regimeSignRobust: boolean | null;
     note: string;
   };
@@ -813,10 +818,14 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-              <Stat label="Net GEX (expiry, $/1%)" value={fmtM(totals.netGex)} positive={totals.netGex >= 0} />
-              <Stat label="Net DEX" value={fmtM(totals.netDex)} positive={totals.netDex >= 0} />
-              <Stat label="Net Vanna" value={fmtM(totals.netVanna)} positive={totals.netVanna >= 0} />
-              <Stat label="Net Charm" value={fmtM(totals.netCharm)} positive={totals.netCharm >= 0} />
+              <Stat
+                label={totals.gexSignAtSpot === null && totals.netGex != null ? "Net GEX (expiry, $/1%) · no material γ at spot" : "Net GEX (expiry, $/1%)"}
+                value={totals.netGex != null ? fmtM(totals.netGex) : "—"}
+                positive={totals.netGex != null ? totals.netGex >= 0 : null}
+              />
+              <Stat label="Net DEX" value={totals.netDex != null ? fmtM(totals.netDex) : "—"} positive={totals.netDex != null ? totals.netDex >= 0 : null} />
+              <Stat label="Net Vanna" value={totals.netVanna != null ? fmtM(totals.netVanna) : "—"} positive={totals.netVanna != null ? totals.netVanna >= 0 : null} />
+              <Stat label="Net Charm" value={totals.netCharm != null ? fmtM(totals.netCharm) : "—"} positive={totals.netCharm != null ? totals.netCharm >= 0 : null} />
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs">
               {totals.callWall !== null && (
@@ -835,7 +844,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                   className="border-amber-500/40 bg-amber-500/5 text-amber-400"
                   title="Gamma flip: spot level where net dealer gamma changes sign, with every contract of this expiry re-priced at each hypothetical spot (same definition as the Signals panel)."
                 >
-                  0γ {totals.zeroGamma.toFixed(0)}
+                  0γ {totals.zeroGamma.toFixed(0)}{totals.zeroGammaInValley ? " (flat zone, level approximate)" : ""}
                 </Badge>
               )}
               {totals.zeroGammaCumulative != null && (
@@ -875,7 +884,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                   {data.dealerSensitivity.conventions.map((c, i) => (
                     <span key={c.id}>
                       {i > 0 ? " | " : ""}
-                      {c.label}: net GEX {c.gexAtSpot != null ? fmtM(c.gexAtSpot) : "n/a"}, flip {c.zeroGamma != null ? c.zeroGamma.toFixed(0) : "none in range"}
+                      {c.label}: net GEX {c.gexAtSpot != null ? `${fmtM(c.gexAtSpot)}${c.gexSign == null ? " (no material γ)" : ""}` : "n/a"}, flip {c.zeroGamma != null ? c.zeroGamma.toFixed(0) : "none in range"}
                     </span>
                   ))}
                   .{" "}
@@ -1249,16 +1258,17 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
 }
 
 // ─── Sub-components ────────────────────────────────────────────────────────
-function Stat({ label, value, positive }: { label: string; value: string; positive: boolean }) {
+function Stat({ label, value, positive }: { label: string; value: string; positive: boolean | null }) {
+  // positive === null: missing value, rendered neutral (no up/down colour or arrow).
   return (
     <div>
       <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</div>
       <div
         className={`flex items-center gap-1 font-mono text-lg font-semibold tabular-nums ${
-          positive ? "text-emerald-400" : "text-rose-400"
+          positive == null ? "text-muted-foreground" : positive ? "text-emerald-400" : "text-rose-400"
         }`}
       >
-        {positive ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+        {positive == null ? null : positive ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
         {value}
       </div>
     </div>

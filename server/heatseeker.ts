@@ -16,7 +16,7 @@ import type { OptionChainResponse } from "./schwab";
 import { contractYears, ivForClock } from "./chainClock";
 import { contractExposure } from "./greekExposure";
 import {
-  bsGamma, cumulativeStrikeFlip, dealerConventionSensitivity, flipInputs, FLIP_DIV_YIELD, FLIP_RATE,
+  bsGamma, cumulativeStrikeFlip, dealerConventionSensitivity, dividendYieldFor, flipInputs, FLIP_RATE,
   repricedFlipFromRows, rowsFromChain, type DealerSensitivity, type FlipInputs,
 } from "./gammaProfile";
 
@@ -81,17 +81,20 @@ export interface HeatseekerResult {
   strikes: HeatseekerStrike[];
   stickyZones: StickyZone[];  // top 5 ranked
   pivotBands: PivotBand[];    // tight confluence bands, sorted by price
+  /** "unavailable": no chain / no expiry, every total is null (missing, not 0). */
+  dataState: "ok" | "unavailable";
+  reason?: string | null;
   totals: {
     /** Net dealer GEX, $ per 1% move, over EVERY strike of this expiry,
      *  re-priced gamma: equals gexAtSpotRepriced, so its sign is the regime
-     *  sign Trade Desk uses. */
-    netGex: number;
+     *  sign Trade Desk uses. null when no contract has a usable sigma. */
+    netGex: number | null;
     /** Same, summed over the displayed strike window only. */
-    netGexWindow?: number;
+    netGexWindow?: number | null;
     netGexScope?: "full-expiry-repriced";
-    netDex: number;
-    netVanna: number;
-    netCharm: number;
+    netDex: number | null;
+    netVanna: number | null;
+    netCharm: number | null;
     callWall: number | null;  // max positive GEX strike above spot
     putWall: number | null;   // max negative GEX strike below spot
     /** Gamma flip: spot level where re-priced net dealer gamma (every contract
@@ -104,6 +107,13 @@ export interface HeatseekerResult {
     zeroGammaMethod?: "repriced-profile";
     /** Re-priced net dealer GEX at spot over the full expiry (sign = regime). */
     gexAtSpotRepriced?: number | null;
+    /** Sign of gexAtSpotRepriced when material (>= 1e-6 of the profile's
+     *  peak |GEX|); null = "no material gamma at spot", not long or short. */
+    gexSignAtSpot?: 1 | -1 | null;
+    /** The flip sits inside a valley where net gamma is ~0: its exact level is not meaningful. */
+    zeroGammaInValley?: boolean;
+    /** r and q of every Black-Scholes term here (GEX, vanna, charm, flip). */
+    basis?: { r: number; q: number };
     /** Sign convention of netGex / netDex / netVanna / netCharm. */
     exposureConvention?: "dealer-naive: calls +, puts -";
   };
@@ -162,9 +172,10 @@ export function buildHeatseeker(
       strikes: [],
       stickyZones: [],
       pivotBands: [],
-      // No chain: totals are missing, not zero activity (strikes is empty;
-      // Trade Desk reads an empty strike list as "unknown").
-      totals: { netGex: 0, netDex: 0, netVanna: 0, netCharm: 0, callWall: null, putWall: null, zeroGamma: null, zeroGammaCumulative: null, zeroGammaMethod: "repriced-profile", gexAtSpotRepriced: null },
+      // No chain: totals are missing (null), not zero activity.
+      dataState: "unavailable",
+      reason: "no expiries in the chain",
+      totals: { netGex: null, netGexWindow: null, netDex: null, netVanna: null, netCharm: null, callWall: null, putWall: null, zeroGamma: null, zeroGammaCumulative: null, zeroGammaMethod: "repriced-profile", gexAtSpotRepriced: null, gexSignAtSpot: null },
       availableExpiries: [],
       requestedExpiry: targetExpiry ?? null,
     };
@@ -207,6 +218,11 @@ export function buildHeatseeker(
   // A contract that has settled (T = 0) is dropped. Replaces dte/365 and the
   // hard-coded 16:00 close.
   const nowMs = nowMsArg ?? Date.now();
+  // ONE Black-Scholes basis for every term (GEX, vanna, charm, flip): the
+  // flip's rate and this underlying's dividend yield (S&P 500 index yield for
+  // SPX/SPY/XSP, 0 for anything else unless known).
+  const r = FLIP_RATE;
+  const q = dividendYieldFor(symbol);
 
   // 2. Aggregate per-strike
   const strikeMap = new Map<number, HeatseekerStrike>();
@@ -277,14 +293,14 @@ export function buildHeatseeker(
         // per-strike bars and the Trade Desk regime sign all agree. The vendor
         // gamma (undocumented T convention; -999 sentinels when closed) is no
         // longer used.
-        const g = ivDec > 0 ? bsGamma(spot, strike, ivDec, T, FLIP_RATE, FLIP_DIV_YIELD, side === "call" ? "C" : "P") : 0;
+        const g = ivDec > 0 ? bsGamma(spot, strike, ivDec, T, r, q, side === "call" ? "C" : "P") : 0;
 
         // Vanna and charm in $ from strike, spot, sigma and our T
-        // (server/greekExposure.ts, r = q = 0), so the vendor's undocumented
+        // (server/greekExposure.ts, same r and q as GEX), so the vendor's undocumented
         // delta clock is not mixed with ours. Charm is the $ delta change over
         // min(1 calendar day, T): for the 0DTE expiry Heatseeker defaults to,
         // charm/365 extrapolated the instantaneous rate past settlement.
-        const x = ivDec > 0 ? contractExposure({ spot, strike, sigma: ivDec, T, contracts: oi, multiplier: mult, gamma: g }) : null;
+        const x = ivDec > 0 ? contractExposure({ spot, strike, sigma: ivDec, T, contracts: oi, multiplier: mult, gamma: g, r, q, type: side === "call" ? "C" : "P" }) : null;
         const gex = x ? x.gexPerPct : 0;
 
         const dexContrib = Math.abs(delta) <= 1 ? delta * oi * mult * spot : 0; // $ delta
@@ -355,8 +371,8 @@ export function buildHeatseeker(
   // (rowsFromChain defaults to chainClock.contractYears).
   const flipRows = rowsFromChain(chain, { expiryKeys: [expKey], spot, nowMs });
   const flipOpts = {
-    r: FLIP_RATE,
-    q: FLIP_DIV_YIELD,
+    r,
+    q,
     lowPct: 1 - windowPct / 100,
     highPct: 1 + windowPct / 100,
     nLevels: 121,
@@ -368,19 +384,24 @@ export function buildHeatseeker(
   // Legacy cumulative-by-strike number, kept as a labeled secondary only.
   const zeroGammaCumulative = cumulativeStrikeFlip(strikes);
 
+  const priced = flip.rowsUsed > 0;
   const totals = {
-    netGex: netGexAll,
-    netGexWindow: strikes.reduce((a, s) => a + s.netGex, 0),
+    netGex: priced ? netGexAll : null,
+    netGexWindow: priced ? strikes.reduce((a, s) => a + s.netGex, 0) : null,
     netGexScope: "full-expiry-repriced" as const,
-    netDex: strikes.reduce((a, s) => a + s.netDex, 0),
-    netVanna: strikes.reduce((a, s) => a + s.netVanna, 0),
-    netCharm: strikes.reduce((a, s) => a + s.netCharm, 0),
+    // Empty display window: missing (null), not a zero total.
+    netDex: strikes.length ? strikes.reduce((a, s) => a + s.netDex, 0) : null,
+    netVanna: strikes.length ? strikes.reduce((a, s) => a + s.netVanna, 0) : null,
+    netCharm: strikes.length ? strikes.reduce((a, s) => a + s.netCharm, 0) : null,
     callWall,
     putWall,
     zeroGamma,
     zeroGammaCumulative,
     zeroGammaMethod: "repriced-profile" as const,
     gexAtSpotRepriced: flip.rowsUsed > 0 ? flip.gexAtSpot : null,
+    gexSignAtSpot: flip.gexSignAtSpot ?? null,
+    zeroGammaInValley: flip.zeroGammaInValley ?? false,
+    basis: { r, q },
     exposureConvention: "dealer-naive: calls +, puts -" as const,
   };
 
@@ -522,6 +543,8 @@ export function buildHeatseeker(
     strikes,
     stickyZones,
     pivotBands,
+    dataState: strikes.length > 0 ? "ok" : "unavailable",
+    reason: strikes.length > 0 ? null : "no strikes with data inside the display window",
     totals,
     flipInputs: flipInputs({ weight: "open_interest", universe: "single-expiry", expiryKeys: [expKey] }),
     dealerSensitivity,
