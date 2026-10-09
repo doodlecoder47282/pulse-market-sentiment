@@ -427,8 +427,9 @@ function evaluateAxis(
   // Overlapping w-day rocs over ~2 years hold only floor(T/w) independent
   // windows (2 for 52W), so their sample sd is not a valid baseline. The z
   // is the HAC (Newey-West) z of the w-day log return built from DAILY
-  // returns, and "fresh" / "durable" are judged against a Politis-Romano
-  // stationary bootstrap of the daily returns (see server/macroStats.ts).
+  // returns, and "fresh" / "durable" are judged against a wild bootstrap
+  // of the demeaned daily returns that keeps the volatility path (see
+  // server/macroStats.ts).
   const logRet: number[] = [];
   for (let i = 1; i < ratio.length; i++) {
     const a = ratio[i - 1].close, b = ratio[i].close;

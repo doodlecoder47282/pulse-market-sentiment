@@ -271,7 +271,7 @@ export default function RegimePanel() {
           For each axis pair (e.g. SPY/TLT), the ratio's log return over the selected window is z-scored with the
           Newey-West long-run variance of its daily returns (overlapping rolling windows over 2 years hold only a few
           independent observations, so their own spread is not used). Fresh and durable are tested against a
-          stationary bootstrap of daily returns (Politis-Romano, Politis-White block length), the "no regime" null:
+          wild bootstrap of daily returns (random signs at fixed dates, so volatility clustering is kept), the "no regime" null:
           fresh = |z| newly beyond the bootstrap 5% critical value; durable = |z|≥1.5 for 30+ sessions and a run that
           long is unusual under the bootstrap. Both are then corrected for testing 7 pairs × 3 windows at once
           (Benjamini-Hochberg false discovery rate, q≤0.05). Conviction is a heuristic rank from the q-values, not a probability.
@@ -427,7 +427,7 @@ function AxisCard({
                   {r.stats && (
                     <span
                       className="font-mono text-[10px] text-muted-foreground"
-                      title={`bootstrap null: |z| 5% line ${r.stats.zCrit95.toFixed(2)}, ${r.stats.independentWindows} non-overlapping windows in ${r.stats.sampleDays} days, mean block ${r.stats.blockLength}d`}
+                      title={`bootstrap null: |z| 5% line ${r.stats.zCrit95.toFixed(2)}, ${r.stats.independentWindows} non-overlapping windows in ${r.stats.sampleDays} days, wild-bootstrap null`}
                     >
                       p {r.stats.pZ.toFixed(3)}{r.stats.qZ != null && Number.isFinite(r.stats.qZ) ? ` · q ${r.stats.qZ.toFixed(3)}` : ""}
                     </span>

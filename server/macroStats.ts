@@ -16,17 +16,19 @@
 //         https://www.nber.org/papers/t0055; lag rule floor(4 (T/100)^(2/9))
 //         from Newey & West 1994, Review of Economic Studies 61(4):631-653,
 //         https://ideas.repec.org/a/oup/restud/v61y1994i4p631-653..html);
-//      - "fresh" and "durable" are tested against a null built with the
-//        stationary bootstrap of daily returns (Politis & Romano 1994,
-//        JASA 89(428):1303-1313, https://gnosis.library.ucy.ac.cy/handle/7/57533),
-//        whose mean block length is chosen by Politis & White (2004),
-//        Econometric Reviews 23(1):53-70, with the Patton, Politis & White
-//        (2009) correction, Econometric Reviews 28(4):372-375,
-//        https://public.econ.duke.edu/~ap172/Patton_Politis_White_2009.pdf
-//        (reference code https://public.econ.duke.edu/~ap172/ppw.R.txt).
-//      The bootstrap resamples blocks of daily returns, so short-range
-//      dependence and volatility clustering survive while any regime longer
-//      than a block is destroyed: it is exactly the "no regime" null. The
+//      - "fresh" and "durable" are tested against a no-regime null built
+//        with a Rademacher wild bootstrap of the demeaned daily returns
+//        (round 3; Liu 1988, Annals of Statistics 16(4):1696-1708;
+//        Goncalves & Kilian 2004, J. Econometrics 123(1):89-120,
+//        https://users.ssc.wisc.edu/~bhansen/718/GoncalvesKilian2004.pdf):
+//        random signs at fixed dates keep the realized volatility path
+//        (volatility clustering) and destroy any drift run. Round 2 used the
+//        Politis-Romano stationary bootstrap with a Politis-White block
+//        length (Politis & White 2004, Econometric Reviews 23(1):53-70;
+//        Patton, Politis & White 2009, Econometric Reviews 28(4):372-375,
+//        https://public.econ.duke.edu/~ap172/Patton_Politis_White_2009.pdf);
+//        the Politis-White length of r is still reported as a diagnostic.
+//      The
 //      persistence test asks how often a run of |z| >= band as long as the
 //      observed one ends on the last day under that null.
 //
@@ -240,15 +242,16 @@ export interface RegimeZTest {
   zSeries: number[];
   /** days the |z| >= band run (same sign as today) has lasted, ending today */
   persistence: number;
-  /** stationary-bootstrap two-sided p-value of |z| under the no-regime null */
+  /** wild-bootstrap two-sided p-value of |z| under the no-regime null */
   pZ: number;
-  /** stationary-bootstrap p-value of a terminal run at least this long (1 when run = 0) */
+  /** wild-bootstrap p-value of a terminal run at least this long (1 when run = 0) */
   pPersist: number;
   /** bootstrap 95th percentile of |z| (the two-sided 5% critical value) */
   zCrit95: number;
   /** bootstrap 95th percentile of the terminal run length */
   runCrit95: number;
   band: number;
+  /** Politis-White block length of r, days (diagnostic: the serial-dependence scale; the null is a wild bootstrap) */
   blockLength: number;
   nwLag: number;
   /** floor(T / w): how many non-overlapping windows the history holds */
@@ -279,15 +282,27 @@ export function regimeZTest(
   if (!zSeries.length) return null;
   const z = zSeries[zSeries.length - 1];
   const persistence = terminalRun(zSeries, band);
-  // Volatility clustering: daily returns are nearly uncorrelated while their
-  // magnitudes are strongly autocorrelated, so a block length chosen on r
-  // alone (often 1-2) lets the bootstrap destroy the clustering and the null
-  // comes out too thin (oversized tests under GARCH). Use the larger of the
-  // Politis-White lengths of r and |r|.
+  // Null resampling (round 3): wild bootstrap of the demeaned daily returns
+  // with Rademacher signs, r*_t = (r_t - mean) * s_t, s_t = +/-1 i.i.d.
+  // (Liu 1988; for heteroskedasticity of unknown form in time series,
+  // Goncalves & Kilian 2004, "Bootstrapping autoregressions with conditional
+  // heteroskedasticity of unknown form", J. Econometrics 123(1):89-120,
+  // https://users.ssc.wisc.edu/~bhansen/718/GoncalvesKilian2004.pdf).
+  // Every |residual| stays at its own date, so the realized volatility path,
+  // including the last window's, is kept exactly; under GARCH with symmetric
+  // shocks the signs are independent of the magnitudes, so given |r| the
+  // last-window sum is a Rademacher sum in both the data and the bootstrap.
+  // A drift regime is a run of same-signed residuals; random signs destroy
+  // it: the "no regime" null. Linear serial dependence is not resampled; the
+  // statistic is HAC-studentized in the data and in each replicate.
+  // Alternatives measured (seeded Monte Carlo, 1000 nulls x w = 20/65/252,
+  // tests/quant/r3-3.test.ts and the report): the round-2 stationary
+  // bootstrap and a Bartlett dependent wild bootstrap (Shao 2010, JASA
+  // 105(489):218-235) with the Politis-White bandwidth; the latter was
+  // undersized (1-3% at w = 20) because NW in the replicate misses the
+  // multiplier-induced autocorrelation.
   const bR = politisWhiteBlockLength(r);
-  const absR = Array.from(r as ArrayLike<number>, (x) => Math.abs(x));
-  const bA = politisWhiteBlockLength(absR);
-  const b = Math.min(bR.bMax, Math.max(bR.b, bA.b));
+  const mu = mean(r);
   const rand = mulberry32(opts.seed ?? 0x5e9e);
   const buf = new Float64Array(T);
   const absZ: number[] = [];
@@ -295,8 +310,7 @@ export function regimeZTest(
   let zAtLeast = 0;
   let runAtLeast = 0;
   for (let rep = 0; rep < reps; rep++) {
-    const idx = stationaryBootstrapIndices(T, b, rand);
-    for (let t = 0; t < T; t++) buf[t] = r[idx[t]];
+    for (let t = 0; t < T; t++) buf[t] = (rand() < 0.5 ? -1 : 1) * (r[t] - mu);
     const zs = horizonZSeries(buf, w, neweyWestLRV(buf, lag));
     if (!zs.length) continue;
     const zb = Math.abs(zs[zs.length - 1]);
@@ -321,12 +335,12 @@ export function regimeZTest(
     zCrit95: q95(absZ),
     runCrit95: q95(runs),
     band,
-    blockLength: b,
+    blockLength: bR.b,
     nwLag: lag,
     independentWindows: Math.floor(T / w),
     bootstrapReps: B,
     sampleDays: T,
-    method: "HAC z (Newey-West) of the w-day return; p-values from a Politis-Romano stationary bootstrap of daily returns (Politis-White block length)",
+    method: "HAC z (Newey-West) of the w-day return; p-values from a Rademacher wild bootstrap of demeaned daily returns (Liu 1988; Goncalves-Kilian 2004), which keeps the realized volatility path",
   };
 }
 

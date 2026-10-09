@@ -121,3 +121,29 @@ test("seasonality: hold-out verdict attaches to the training-picked window, not 
   assert.deepEqual([s.buyDayOfYear, s.sellDayOfYear], [s.testedWindow!.buyDayOfYear, s.testedWindow!.sellDayOfYear]);
   assert.match(generateAnalysisText("TEST", s, yearly, 15), /^Analysis/);
 });
+
+// ─── 3. Regime null: size under GARCH within Monte Carlo error ────────────
+
+test("regime z test: wild-bootstrap null is sized under GARCH(1,1) (grader's model, w = 65)", async () => {
+  const { regimeZTest } = await import("../../server/macroStats");
+  // The grader's null (regrade2/g2/regime_null.ts): zero-drift GARCH(1,1),
+  // omega 2e-6, alpha 0.08, beta 0.90, 504 days. Round-2 stationary bootstrap
+  // read ~10% at 5% on 150 trials. Full study (1000 nulls per cell, 199 reps;
+  // iid, two GARCH, AR(0.2); w = 20/65/252) put every z-test size in
+  // [0.039, 0.063], inside 0.05 +/- 2 MC s.e. (0.014). Here a 300-trial check:
+  // 0.05 +/- 3 s.e. (s.e. 0.0126).
+  const rand = mulberry32(7);
+  const N = 300;
+  let rejZ = 0, rejP = 0;
+  for (let k = 0; k < N; k++) {
+    let h = 1e-4, e = 0;
+    const r: number[] = [];
+    for (let t = 0; t < 504; t++) { h = 2e-6 + 0.08 * e * e + 0.9 * h; e = Math.sqrt(h) * gauss(rand); r.push(e); }
+    const t = regimeZTest(r, 65, { seed: k + 1, reps: 99 })!;
+    if (t.pZ <= 0.05) rejZ++;
+    if (t.pPersist <= 0.05) rejP++;
+  }
+  const se = Math.sqrt(0.05 * 0.95 / N);
+  assert.ok(Math.abs(rejZ / N - 0.05) <= 3 * se, `z-test size ${rejZ}/${N}`);
+  assert.ok(rejP / N <= 0.05 + 3 * se, `persistence-test size ${rejP}/${N}`);
+});

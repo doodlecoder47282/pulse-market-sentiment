@@ -569,7 +569,7 @@ test("regime FDR: Benjamini-Hochberg q-values (hand-computed) gate fresh and dur
   assert.ok(Math.abs(f[2].qPersist - 0.042) < 1e-12);
 });
 
-test("regime block length accounts for volatility clustering (GARCH): max of r and |r| lengths", async () => {
+test("regime block length diagnostic: |r| is more persistent than r under GARCH; the reported length is r's (round 3: wild-bootstrap null)", async () => {
   const { politisWhiteBlockLength, regimeZTest } = await import("../../server/macroStats");
   // GARCH(1,1) a = 0.10, b = 0.88, 1000 days after burn-in: returns ~uncorrelated,
   // |returns| persistent (seeded; across 20 seeds |r| always gave the longer block).
@@ -580,7 +580,9 @@ test("regime block length accounts for volatility clustering (GARCH): max of r a
   const bR = politisWhiteBlockLength(r).b;
   const bA = politisWhiteBlockLength(r.map(Math.abs)).b;
   assert.ok(bA > bR, `|r| block ${bA} vs r block ${bR}`);
-  assert.equal(regimeZTest(r, 20, { reps: 99, seed: 1 })!.blockLength, Math.max(bR, bA));
+  const t = regimeZTest(r, 20, { reps: 99, seed: 1 })!;
+  assert.equal(t.blockLength, bR);
+  assert.match(t.method, /wild bootstrap/);
 });
 
 test("Ledoit-Wolf constant-correlation: reference value on the review's 80x6 fixture (paper divisor T and covCor's N-1)", async () => {
