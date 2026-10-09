@@ -52,6 +52,8 @@ function regimeWord(r: string): string {
     case "NEUTRAL": return "neutral";
     case "CHOP_WEAK": return "light chop";
     case "CHOP_STRONG": return "heavy chop";
+    case "GAMMA_UNKNOWN": return "gamma unknown";
+    case "UNAVAILABLE": return "unavailable";
     default: return r.toLowerCase();
   }
 }
@@ -74,7 +76,8 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
     Promise.resolve(getWhaleAlertHistory({ days: 1, symbol: "SPY", limit: 50 })).catch(() => []),
   ]);
 
-  const currentRegime = String(models?.currentRegime ?? "NEUTRAL");
+  // Missing predictor output is "UNAVAILABLE", never read as NEUTRAL.
+  const currentRegime = String(models?.currentRegime ?? "UNAVAILABLE");
   const headlineRegime = String(models?.headline ?? "");
   const tone = regimeTone(currentRegime);
 
@@ -151,7 +154,9 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
           ? "Heavy chop: price has been pinning around strikes (descriptive, not a trade call)."
           : tone === "bull"
           ? "Trend regime: estimated dealer hedging tends to add to moves (descriptive, no edge claimed)."
-          : "Neutral regime: no dominant estimated hedging pressure.",
+          : currentRegime === "NEUTRAL"
+          ? "Neutral regime: no dominant estimated hedging pressure."
+          : `Regime ${regimeWord(currentRegime)}: no hedging-pressure reading.`,
         bullets: [
           "Live Greeks across ATM ±20 strikes, refreshed every 4s.",
           "Hot zones = strike clusters with rising volume + Greek velocity.",

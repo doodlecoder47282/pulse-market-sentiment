@@ -71,7 +71,7 @@ test("gammaZone consumers: discord, scheduler, 0DTE card, auditEnrich use the un
 test("regimePredictor: unknown gamma makes no trend/chop claim and is degraded", () => {
   _resetPredictorHistory();
   const out = predictTransition({ audit: { dfi: 4, gammaZone: "y?", slope: "UP 0.5° → 1.0" }, nowMs: Date.UTC(2026, 9, 9, 15, 0) });
-  assert.equal(out.currentRegime, "NEUTRAL");
+  assert.equal(out.currentRegime, "GAMMA_UNKNOWN");
   assert.equal(out.status, "degraded");
   _resetPredictorHistory();
   const k = predictTransition({ audit: { dfi: 4, gammaZone: "y-", slope: "UP 0.5° → 1.0" }, nowMs: Date.UTC(2026, 9, 9, 15, 0) });
@@ -575,4 +575,32 @@ test("crypto grader mark SQL: never lowers a peak raised meanwhile; HIT/DOUBLED 
   const eng = src("server/cryptoEngine.ts");
   assert.doesNotMatch(eng, /SET peak_mcap = \?, peak_at = \?/);
   assert.match(eng, /const fresh = freshPeak\.get\(row\.id\)/);
+});
+
+// ── Follow-up 3: unknown gamma is its own regime state ──────────────────────
+import { flipRateOf } from "../../server/regimePredictor";
+
+test("regime: unknown gamma -> GAMMA_UNKNOWN (not NEUTRAL), no candidates; unknown samples excluded from flip rate", () => {
+  _resetPredictorHistory();
+  const out = predictTransition({ audit: { dfi: 0.2, gammaZone: "y?", slope: "UP 0.1° → 0.1" }, nowMs: Date.UTC(2026, 9, 9, 15, 0) });
+  assert.equal(out.currentRegime, "GAMMA_UNKNOWN");
+  assert.deepEqual(out.candidates, []);
+  assert.equal(out.confidence, 0);
+  assert.equal(out.status, "degraded");
+  assert.match(out.headline, /^gamma unknown/);
+  // known A, unknown, known A, unknown, known A: 0 flips (dropouts are not flips)
+  const h = [
+    { ts: 0, raw: "CHOP_WEAK" }, { ts: 60_000, raw: "GAMMA_UNKNOWN" }, { ts: 120_000, raw: "CHOP_WEAK" },
+    { ts: 180_000, raw: "GAMMA_UNKNOWN" }, { ts: 240_000, raw: "CHOP_WEAK" },
+  ];
+  assert.deepEqual(flipRateOf(h), { rate: 0, flips: 0, samples: 3 });
+  // a real change between known samples still counts: 1 flip over 4 min
+  const h2 = h.map((x, i) => (i === 4 ? { ...x, raw: "TREND_WEAK" } : x));
+  assert.equal(flipRateOf(h2).flips, 1);
+  assert.equal(flipRateOf(h2).rate, 1 / 4);
+  const rt = src("server/realtimeTargets.ts");
+  assert.match(rt, /return "GAMMA_UNKNOWN";/);
+  assert.match(rt, /if \(rawRegime === "GAMMA_UNKNOWN"\) \{/);
+  assert.match(src("client/src/components/RegimePredictPanel.tsx"), /plain: "Gamma unknown"/);
+  assert.match(src("server/headline.ts"), /models\?\.currentRegime \?\? "UNAVAILABLE"/);
 });

@@ -37,7 +37,10 @@ type RegimeBucket =
   | "TREND_WEAK"
   | "NEUTRAL"
   | "CHOP_WEAK"
-  | "CHOP_STRONG";
+  | "CHOP_STRONG"
+  // Round 4: GEX missing or immaterial ("y?"). Its own state, never NEUTRAL:
+  // the buckets below are defined by the gamma sign, so none applies.
+  | "GAMMA_UNKNOWN";
 
 const ALL_REGIMES: RegimeBucket[] = [
   "TREND_STRONG",
@@ -103,14 +106,23 @@ function dfiSlopeFromHistory(): { slope: number; samples: number } {
   return { slope: (last.dfi - first.dfi) / dtMin, samples: window.length };
 }
 
-function flipRateFromHistory(): { rate: number; flips: number; samples: number } {
-  if (_history.length < 3) return { rate: 0, flips: 0, samples: _history.length };
+/**
+ * Regime flips per minute over the known-gamma samples only: a GAMMA_UNKNOWN
+ * sample is a data dropout, so known -> unknown -> known is not two flips.
+ */
+export function flipRateOf(history: ReadonlyArray<{ ts: number; raw: string }>): { rate: number; flips: number; samples: number } {
+  const h = history.filter((x) => x.raw !== "GAMMA_UNKNOWN");
+  if (h.length < 3) return { rate: 0, flips: 0, samples: h.length };
   let flips = 0;
-  for (let i = 1; i < _history.length; i++) {
-    if (_history[i].raw !== _history[i - 1].raw) flips++;
+  for (let i = 1; i < h.length; i++) {
+    if (h[i].raw !== h[i - 1].raw) flips++;
   }
-  const dtMin = Math.max(0.5, (_history[_history.length - 1].ts - _history[0].ts) / 60_000);
-  return { rate: flips / dtMin, flips, samples: _history.length };
+  const dtMin = Math.max(0.5, (h[h.length - 1].ts - h[0].ts) / 60_000);
+  return { rate: flips / dtMin, flips, samples: h.length };
+}
+
+function flipRateFromHistory(): { rate: number; flips: number; samples: number } {
+  return flipRateOf(_history);
 }
 
 /**
@@ -121,8 +133,8 @@ function flipRateFromHistory(): { rate: number; flips: number; samples: number }
 function rawRegimeFor(dfi: number, gZone: string, slopeMag: number): RegimeBucket {
   const inGammaPocket = gZone === "y" || gZone === "y+";
   // Gamma unknown ("y?" / missing GEX): the trend/chop split below rests on
-  // the gamma regime, so make no regime claim at all.
-  if (gammaZoneEffect(gZone) === "unknown" && gZone !== "y") return "NEUTRAL";
+  // the gamma regime, so make no regime claim at all (own state).
+  if (gammaZoneEffect(gZone) === "unknown" && gZone !== "y") return "GAMMA_UNKNOWN";
   const adfi = Math.abs(dfi);
   if (adfi >= 3.5 && !inGammaPocket) return "TREND_STRONG";
   if (adfi >= 2.0 && !inGammaPocket) return "TREND_WEAK";
@@ -293,6 +305,7 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
     NEUTRAL: 0,
     CHOP_WEAK: 0,
     CHOP_STRONG: 0,
+    GAMMA_UNKNOWN: 0, // never scored: not in ALL_REGIMES
   };
 
   // 1) projected raw regime gets the largest base bump
@@ -485,15 +498,19 @@ export function predictTransition(input: RegimePredictorInput): RegimePredictorO
   else if (sessionFrac > 0.75) driverNotes.push(`first 1.5hr of RTH — direction-setting window.`);
   if (flipRate > 0.3) driverNotes.push(`high flip rate (${flipRate.toFixed(2)}/min) — uncertain regime.`);
 
+  // Gamma unknown: no bucket applies, so no candidates and no confidence.
+  const gammaUnknown = currentRaw === "GAMMA_UNKNOWN";
   return {
     currentRegime: currentRaw,
-    candidates,
+    candidates: gammaUnknown ? [] : candidates,
     horizonMinutes,
-    confidence,
-    confidenceScore: Math.round(confidence * 1000) / 10,
+    confidence: gammaUnknown ? 0 : confidence,
+    confidenceScore: gammaUnknown ? 0 : Math.round(confidence * 1000) / 10,
     scoreKind: "heuristic_softmax_weight",
     status,
-    headline,
+    headline: gammaUnknown
+      ? "gamma unknown (GEX missing or immaterial at spot): no regime reading; the trend/chop buckets need the gamma sign."
+      : headline,
     driverNotes,
     drivers: {
       dfi,
@@ -524,5 +541,6 @@ function prettyRegime(r: RegimeBucket): string {
     case "NEUTRAL":      return "neutral";
     case "CHOP_WEAK":    return "light chop";
     case "CHOP_STRONG":  return "heavy chop";
+    case "GAMMA_UNKNOWN": return "gamma unknown";
   }
 }

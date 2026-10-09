@@ -141,7 +141,8 @@ async function fetchSessionRange(symbol: string): Promise<SessionRange> {
 
 // ─── Regime detection ──────────────────────────────────────────────────
 
-type RegimeBucket = "TREND_STRONG" | "TREND_WEAK" | "NEUTRAL" | "CHOP_WEAK" | "CHOP_STRONG";
+// GAMMA_UNKNOWN (round 4): GEX missing or immaterial; its own state, not NEUTRAL.
+type RegimeBucket = "TREND_STRONG" | "TREND_WEAK" | "NEUTRAL" | "CHOP_WEAK" | "CHOP_STRONG" | "GAMMA_UNKNOWN";
 
 function detectRegime(audit: any): RegimeBucket {
   const dfi = Math.abs(Number(audit?.dfi ?? 0));
@@ -150,7 +151,7 @@ function detectRegime(audit: any): RegimeBucket {
   const inGammaPocket = gZone === "y" || gZone === "y+";
   // Gamma unknown ("y?" / missing GEX): the trend/chop split below rests on
   // the gamma regime, so make no regime claim at all.
-  if (gammaZoneEffect(gZone) === "unknown" && gZone !== "y") return "NEUTRAL";
+  if (gammaZoneEffect(gZone) === "unknown" && gZone !== "y") return "GAMMA_UNKNOWN";
   // Slope text e.g. "DN 0.70° → -1.40" — magnitude proxy
   const slopeText = String(audit?.slope ?? "");
   const slopeMag = Math.abs(parseFloat(slopeText.match(/-?\d+(\.\d+)?/g)?.[1] ?? "0"));
@@ -170,6 +171,8 @@ const REGIME_WEIGHTS: Record<
   TREND_STRONG: { reanchor: 0.55, sqrt: 0.30, range: 0.15 },
   TREND_WEAK: { reanchor: 0.40, sqrt: 0.40, range: 0.20 },
   NEUTRAL: { reanchor: 0.20, sqrt: 0.55, range: 0.25 },
+  // No regime tilt available: the same unweighted blend as NEUTRAL, labelled separately.
+  GAMMA_UNKNOWN: { reanchor: 0.20, sqrt: 0.55, range: 0.25 },
   CHOP_WEAK: { reanchor: 0.10, sqrt: 0.40, range: 0.50 },
   CHOP_STRONG: { reanchor: 0.05, sqrt: 0.30, range: 0.65 },
 };
@@ -191,6 +194,12 @@ function applyRegimeHysteresis(rawRegime: RegimeBucket): {
   streak: number;
   switched: boolean;
 } {
+  // Gamma unknown applies at once (holding the last known bucket would keep
+  // a gamma claim the data no longer supports) and leaves the known-regime
+  // state untouched, so a dropout does not reset the hysteresis.
+  if (rawRegime === "GAMMA_UNKNOWN") {
+    return { applied: "GAMMA_UNKNOWN", raw: rawRegime, streak: 0, switched: _appliedRegime !== "GAMMA_UNKNOWN" };
+  }
   // First-ever observation — lock in immediately
   if (_appliedRegime == null) {
     _appliedRegime = rawRegime;
