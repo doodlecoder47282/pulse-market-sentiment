@@ -539,6 +539,28 @@ export function compositeHistory(
   return out;
 }
 
+/**
+ * compositeHistory on a subset of the columns (original indices `cols`):
+ * the weights, the correlation block and the per-column transform are all
+ * restricted to the same set, so a threshold drawn from this history is the
+ * distribution of the composite actually computed live from those inputs
+ * (round 3: canary thresholds used all canaries while the live z used only
+ * the ones with a quote). `transform` receives the ORIGINAL column index.
+ */
+export function compositeHistorySubset(
+  X: number[][],
+  w: number[],
+  R: number[][],
+  cols: number[],
+  volWindow = 20,
+  transform?: (j: number, z: number) => number,
+): number[] {
+  const Xs = X.map((row) => cols.map((j) => row[j]));
+  const ws = cols.map((j) => w[j]);
+  const Rs = cols.map((i) => cols.map((j) => R[i][j]));
+  return compositeHistory(Xs, ws, Rs, volWindow, transform ? (k, z) => transform(cols[k], z) : undefined);
+}
+
 /** Covariance to correlation. */
 export function toCorrelation(cov: number[][]): number[][] {
   const sd = cov.map((row, i) => Math.sqrt(Math.max(0, row[i])));

@@ -147,3 +147,27 @@ test("regime z test: wild-bootstrap null is sized under GARCH(1,1) (grader's mod
   assert.ok(Math.abs(rejZ / N - 0.05) <= 3 * se, `z-test size ${rejZ}/${N}`);
   assert.ok(rejP / N <= 0.05 + 3 * se, `persistence-test size ${rejP}/${N}`);
 });
+
+// ─── 4. Canary: thresholds from the same canary set as the live z ─────────
+
+test("canary thresholds: history built on the live subset (weights, R block, transform by original index)", async () => {
+  const { compositeHistory, compositeHistorySubset, standardizedComposite } = await import("../../server/macroStats");
+  const rand = mulberry32(99);
+  // 4 columns; columns 0 and 1 identical (rho 1), 2 and 3 independent.
+  const X: number[][] = [];
+  for (let t = 0; t < 400; t++) { const a = gauss(rand); X.push([a, a, gauss(rand), gauss(rand)]); }
+  const R = [[1, 1, 0, 0], [1, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]];
+  const w = [0.4, 0.3, 0.2, 0.1];
+  const cols = [0, 2, 3];
+  const sub = compositeHistorySubset(X, w, R, cols, 20, (j, z) => (j === 3 ? 2 * z : z));
+  const manual = compositeHistory(X.map((r) => [r[0], r[2], r[3]]), [0.4, 0.2, 0.1], [[1, 0, 0], [0, 1, 0], [0, 0, 1]], 20, (k, z) => (k === 2 ? 2 * z : z));
+  assert.equal(sub.length, manual.length);
+  for (let i = 0; i < sub.length; i++) near(sub[i], manual[i], 1e-12);
+  // Closed form for one day: the subset composite uses only the subset's w and R.
+  const z = [1, -0.5, 2];
+  const c = standardizedComposite([0.4, 0.2, 0.1], z, [[1, 0, 0], [0, 1, 0], [0, 0, 1]])!;
+  near(c.z, (0.4 - 0.1 + 0.2) / Math.sqrt(0.16 + 0.04 + 0.01), 1e-12);
+  // The full-set history is a different distribution (0 and 1 duplicate):
+  const full = compositeHistory(X, w, R, 20);
+  assert.notEqual(full.length ? full[0] : NaN, sub[0]);
+});

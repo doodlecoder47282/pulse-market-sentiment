@@ -17,7 +17,7 @@ import { sqlite } from "./storage";
 import { etClock, isRegularSessionOpen, REGULAR_OPEN_MIN, sessionMinutes } from "./exchangeCalendar";
 import { getQuotes, type NormalizedQuote } from "./schwab";
 import { postToDiscord } from "./discord";
-import { ledoitWolfConstantCorrelation, toCorrelation, standardizedComposite, compositeHistory, empiricalQuantile } from "./macroStats";
+import { ledoitWolfConstantCorrelation, toCorrelation, standardizedComposite, compositeHistorySubset, empiricalQuantile } from "./macroStats";
 
 // Partial-session variance scaling: intraday returns are compared against a
 // FULL-day σ, which understates |z| ~3.6× at 10:00 ET. Scale σ by the elapsed
@@ -289,9 +289,16 @@ export async function buildCanarySnapshot(): Promise<CanarySnapshot> {
     normalWatch: COMPOSITE_WATCH_Z, normalAlarm: COMPOSITE_ALARM_Z, historyDays: 0, realizedSd: null,
     note: "composite history unavailable: normal one-sided lines used",
   };
+  // Thresholds come from the history of the SAME composite as the live one:
+  // the canaries with a live z today (when 3+ do), with their weights and
+  // correlation block. A composite of 4 canaries has a different spread from
+  // one of 6, so mixing the two mis-states how rare today's reading is.
+  const liveCols = valid.map((r) => CANARIES.findIndex((c) => c.id === r.id)).filter((i) => i >= 0);
+  const threshCols = liveCols.length >= 3 ? liveCols : CANARIES.map((_, i) => i);
+  const threshSet = threshCols.length === CANARIES.length ? "all canaries" : `the ${threshCols.length} canaries live today (${threshCols.map((i) => CANARIES[i].id).join(", ")})`;
   if (corr) {
     const crudeIdx = CANARIES.findIndex((c) => c.id === "crude");
-    const hist = compositeHistory(corr.X, CANARIES.map((c) => c.weight), corr.R, 20,
+    const hist = compositeHistorySubset(corr.X, CANARIES.map((c) => c.weight), corr.R, threshCols, 20,
       // crude: a raw +2 sigma spike (risk-off signed z <= -2) is also risk-off, as live
       (j, z) => (j === crudeIdx && -z >= 2 ? Math.abs(z) : z));
     const m = hist.reduce((a, b) => a + b, 0) / Math.max(1, hist.length);
@@ -301,7 +308,7 @@ export async function buildCanarySnapshot(): Promise<CanarySnapshot> {
         method: "empirical", watch: +empiricalQuantile(hist, 0.95).toFixed(2), alarm: +empiricalQuantile(hist, 0.975).toFixed(2),
         riskOn: +empiricalQuantile(hist, 0.05).toFixed(2), normalWatch: COMPOSITE_WATCH_Z, normalAlarm: COMPOSITE_ALARM_Z,
         historyDays: hist.length, realizedSd: sd != null ? +sd.toFixed(2) : null,
-        note: `empirical 95th / 97.5th / 5th percentiles of ${hist.length} daily close-to-close composites (in-sample: R from the same window); normal lines ${COMPOSITE_WATCH_Z} / ${COMPOSITE_ALARM_Z} for reference`,
+        note: `empirical 95th / 97.5th / 5th percentiles of ${hist.length} daily close-to-close composites of ${threshSet}, the same set as the live score (in-sample: R from the same window); normal lines ${COMPOSITE_WATCH_Z} / ${COMPOSITE_ALARM_Z} for reference`,
       };
     } else {
       thresholds = { ...thresholds, historyDays: hist.length, realizedSd: sd != null ? +sd.toFixed(2) : null,
