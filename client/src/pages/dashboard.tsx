@@ -363,7 +363,7 @@ export default function Dashboard() {
             </div>
 
             {/* Live quotes on tablet (not desktop) */}
-            <div className="hidden sm:flex lg:hidden">
+            <div className="hidden sm:flex md:hidden">
               <ErrorBoundary compact label="LiveQuoteStrip">
                 <LiveQuoteStrip />
               </ErrorBoundary>
@@ -425,7 +425,7 @@ export default function Dashboard() {
               onClick={toggleCompact}
               title={compact ? "Expand all cards" : "Compact all cards"}
               aria-label="Toggle compact mode"
-              className={`hidden items-center rounded-md border p-1.5 transition md:flex ${
+              className={`hidden items-center rounded-md border p-1.5 transition lg:flex ${
                 compact
                   ? "border-amber-500/70 text-amber-500 hover:border-amber-400"
                   : "border-border/60 text-muted-foreground hover:border-border hover:text-muted-foreground"
@@ -440,7 +440,7 @@ export default function Dashboard() {
               type="button"
               onClick={() => setHelpOpen(true)}
               title="Keyboard shortcuts (?)"
-              className="hidden items-center rounded-md border border-border/60 p-1.5 text-muted-foreground transition hover:border-border hover:text-muted-foreground md:flex"
+              className="hidden items-center rounded-md border border-border/60 p-1.5 text-muted-foreground transition hover:border-border hover:text-muted-foreground lg:flex"
               data-testid="button-shortcuts-hint"
             >
               <Keyboard className="h-3.5 w-3.5" />
@@ -460,11 +460,11 @@ export default function Dashboard() {
       {/* Ticker tape — flows across the top under the header on every tab */}
       <MacroTicker />
 
-      <main className="mx-auto max-w-[1800px] space-y-4 px-3 py-4 pb-24 text-[14px] sm:space-y-6 sm:px-4 sm:py-6 sm:text-[14px] md:pb-6 md:px-8 md:text-[15px] xl:px-10 xl:text-[16px]">
+      <main className="mx-auto max-w-[1800px] space-y-4 px-3 py-4 pb-24 text-[14px] sm:space-y-6 sm:px-4 sm:py-6 sm:text-[14px] lg:pb-6 md:px-8 md:text-[15px] xl:px-10 xl:text-[16px]">
 
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)} className="w-full">
           {/* Desktop tab bar — single inline row. Hidden on mobile (replaced by bottom-nav). */}
-          <div className="mb-4 hidden md:block">
+          <div className="mb-4 hidden lg:block">
             <TabsList
               className="flex h-10 w-full flex-nowrap items-center justify-center gap-0 p-1 xl:h-12 xl:gap-1 xl:p-1.5 [&>[data-state=active]]:bg-primary/15 [&>[data-state=active]]:text-primary [&>[data-state=active]]:shadow-none"
               data-testid="tabs-dashboard"
@@ -1021,7 +1021,7 @@ export default function Dashboard() {
 
       {/* Mobile bottom-nav — fixed, horizontally scrollable, 10 tabs in locked order */}
       <nav
-        className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:hidden"
+        className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:hidden"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
         data-testid="mobile-bottom-nav"
         aria-label="Mobile tab navigation"
