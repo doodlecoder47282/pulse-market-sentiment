@@ -35,6 +35,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { sqrtTimeExtension } from "@shared/coneExtension";
 import {
   Card,
   CardContent,
@@ -217,6 +218,8 @@ interface ProjectionSpyResponse {
   features: Record<string, number | null>;
   /** The band actually drawn and scored, with every component named. */
   served?: ServedBandPayload;
+  /** Today's close in minutes after 09:30 ET (390, or 210 on a 13:00 half day); null = no session today. */
+  sessionCloseMin?: number | null;
   synthetic?: boolean;
   syntheticReason?: string | null;
   /** "ok" = real bars; "no_data" = empty tape (dataStateReason says why). */
@@ -691,42 +694,24 @@ export default function MLProjectionPanel() {
     return out;
   }, [projection, levelSpecs, anchorPrice, anchorMinute, activeHorizons]);
 
-  // Linear extrapolation of each path's 30→60 slope to RTH close, capped ±1.5%.
+  // Past the last fitted horizon the band grows with sqrt(time) from the
+  // band itself and the median is held (shared/coneExtension.ts), up to
+  // today's close from the exchange calendar (13:00 ET on half days; none on
+  // a non-trading day). It used to extend each line's 30->60 slope linearly
+  // to 16:00 with a +-1.5% cap.
+  const sessionCloseMin = data?.sessionCloseMin === undefined ? RTH_CLOSE_MIN : data.sessionCloseMin;
   const extRows = useMemo(() => {
-    if (pathRows.length < 3) return [] as Array<{
-      minute: number;
-      bullExt: number;
-      baseExt: number;
-      bearExt: number;
-    }>;
+    if (pathRows.length < 2) return [] as Array<{ minute: number; bullExt: number; baseExt: number; bearExt: number }>;
     const last = pathRows[pathRows.length - 1];
-    const prev = pathRows[pathRows.length - 2];
-    if (!last || !prev || last.minute >= RTH_CLOSE_MIN) return [];
-    const dm = Math.max(1, last.minute - prev.minute);
-    const slopeBull = (last.bull - prev.bull) / dm;
-    const slopeBase = (last.base - prev.base) / dm;
-    const slopeBear = (last.bear - prev.bear) / dm;
-    const cap = anchorPrice * 0.015;
-    const cl = (raw: number) =>
-      raw > anchorPrice + cap
-        ? anchorPrice + cap
-        : raw < anchorPrice - cap
-          ? anchorPrice - cap
-          : raw;
-    const out: Array<{ minute: number; bullExt: number; baseExt: number; bearExt: number }> = [
-      { minute: last.minute, bullExt: last.bull, baseExt: last.base, bearExt: last.bear },
-    ];
-    for (let m = last.minute + 5; m <= RTH_CLOSE_MIN; m += 5) {
-      const dt = m - last.minute;
-      out.push({
-        minute: m,
-        bullExt: cl(last.bull + slopeBull * dt),
-        baseExt: cl(last.base + slopeBase * dt),
-        bearExt: cl(last.bear + slopeBear * dt),
-      });
-    }
-    return out;
-  }, [pathRows, anchorPrice]);
+    return sqrtTimeExtension({
+      anchorMinute: pathRows[0].minute,
+      lastMinute: last.minute,
+      base: last.base,
+      bull: last.bull,
+      bear: last.bear,
+      closeMinute: sessionCloseMin,
+    });
+  }, [pathRows, sessionCloseMin]);
 
   // Chart data — keyed on minute. Lines pull from this; candles render via custom layer.
   const chartData = useMemo(() => {

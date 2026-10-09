@@ -1,8 +1,9 @@
 /**
  * Pulse Batcave — ML Retrain Cron (Wire 20)
  *
- * Schedules a weekly Sunday 02:00 ET retrain of the quantile overlay and the
- * whale-follow model (the score calibrator is retired, R2-F item 6).
+ * Schedules a weekly Sunday 02:00 ET retrain of the quantile overlay. The
+ * score calibrator (R2-F item 6) and the whale-follow model (round 3) are
+ * retired: neither had a consumer.
  * ENV gate: only runs if PULSE_ML_RETRAIN_ENABLED !== "0".
  * Uses node-cron with America/New_York timezone.
  *
@@ -30,7 +31,7 @@ async function kickRetrain(): Promise<void> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        models: ["quantile_overlay", "whale_follow"],
+        models: ["quantile_overlay"],
       }),
     });
 

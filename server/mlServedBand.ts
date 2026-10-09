@@ -24,8 +24,9 @@
 //     Flat (f = 1) until it exists (fewer than 20 logged sessions);
 //   sigma^2 per bar = rv_session_5m^2 / E (RMS of today's 5-minute SPX log
 //     returns, >= 12 of them, deseasonalized by E = mean f over the elapsed
-//     buckets), else (VIX / 100)^2 / (252 x 78) (VIX-implied, a whole-day
-//     average), else unavailable;
+//     buckets), else KAPPA x (VIX / 100)^2 / (252 x 78) (VIX-implied, scaled
+//     to the intraday realized variance the session RV measures; see
+//     VIX_INTRADAY_VARIANCE_RATIO), else unavailable;
 //   horizon [m0, m0 + h) minutes after 09:30: s_h^2 = sigma^2 x W, W = sum of
 //     f_b x (overlap minutes / 5) over the session buckets (flat profile:
 //     W = h / 5, square-root-of-time); time after the close adds nothing, and
@@ -59,6 +60,30 @@ export const GAUSS_Z: QBands = {
 
 export const BARS_PER_DAY_5M = 78;
 export const TRADING_DAYS = 252;
+
+/**
+ * KAPPA: intraday 5-minute realized variance of the S&P 500 index per unit of
+ * VIX-implied variance (round 3, Sector 9). VIX^2 is the risk-neutral
+ * expectation of 30-day close-to-close variance: it includes the overnight
+ * (close-to-open) variance and the variance risk premium, neither of which an
+ * intraday 5-minute cone should carry, so (VIX/100)^2 / (252 x 78) overstated
+ * the per-bar sigma. Factor: Bollerslev, Tauchen & Zhou, "Expected Stock
+ * Returns and Variance Risk Premia", Review of Financial Studies 22(11), 2009
+ * (FEDS 2007-11, https://www.federalreserve.gov/Pubs/Feds/2007/200711/200711pap.pdf),
+ * Table 1, 1990Q1-2005Q1: mean implied variance (VIX^2, monthly %^2) 36.30,
+ * mean realized variance 14.90, where RV sums the 78 five-minute S&P 500 index
+ * returns of the trading day plus the close-to-open return; on the cash index
+ * that close-to-open return is ~2.8% of daily variance (Ahoniemi, Fuertes &
+ * Olmo, "Overnight News and Daily Equity Trading Risk Limits", J. Financial
+ * Econometrics 14(3), 2016, 1997-2011), so 14.90 / 36.30 = 0.4105 is, to
+ * within ~3%, the intraday 5-minute realized variance per unit of VIX^2: the
+ * same construction as rv_session_5m (RMS of today's 5-minute SPX log
+ * returns). A long-run sample average, not a conditional estimate: the
+ * ratio moves with the regime (the VRP widens in stress), which is why the
+ * session RV, once >= 12 returns exist, replaces this fallback. sqrt(KAPPA)
+ * = 0.6407 scales the VIX sigma.
+ */
+export const VIX_INTRADAY_VARIANCE_RATIO = 14.90 / 36.30;
 
 /** Empirical standardized-return quantiles fitted by the trainer (FHS). */
 export interface BaselineZ {
@@ -94,7 +119,7 @@ export function baselineSigmaPerBar(features: Record<string, number | null | und
   if (features.rv_session_5m != null && Number.isFinite(rv) && rv > 0) return { sigma: rv, source: "rv_session" };
   const vix = Number(features.vix_level);
   if (features.vix_level != null && Number.isFinite(vix) && vix > 0) {
-    return { sigma: vix / 100 / Math.sqrt(TRADING_DAYS * BARS_PER_DAY_5M), source: "vix_implied" };
+    return { sigma: Math.sqrt(VIX_INTRADAY_VARIANCE_RATIO) * vix / 100 / Math.sqrt(TRADING_DAYS * BARS_PER_DAY_5M), source: "vix_implied" };
   }
   return null;
 }
@@ -168,7 +193,7 @@ export function baselineCone(
   if (!src) return null;
   const periodic = validProfile(profile) ? "andersen_bollerslev" : "flat";
   const zMethod = usedFhs ? "fhs" : "gaussian";
-  const sigmaTxt = src.source === "rv_session" ? "today's realized 5-min SPX volatility" : "VIX-implied volatility (under 1 hour of bars)";
+  const sigmaTxt = src.source === "rv_session" ? "today's realized 5-min SPX volatility" : "VIX-implied volatility scaled to intraday realized (x0.64, BTZ 2009; under 1 hour of bars)";
   const zTxt = usedFhs ? `empirical standardized quantiles from ${z!.nDays} real sessions` : "normal quantiles";
   const perTxt = periodic === "andersen_bollerslev" ? `intraday volatility pattern from ${profile!.nDays} logged sessions` : "flat intraday volatility (no logged pattern yet)";
   return {

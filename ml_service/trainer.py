@@ -15,6 +15,9 @@ Contract:
   _train_score_calibrator_legacy for reference only. If a consumer is ever
   added: one label source per model, and n sized so the Brier-score
   difference vs the base rate is detectable (a power calculation), not 80.
+- whale_follow: RETIRED (round 3), same rule: no consumer reads it (server
+  mlWhaleFollow is never called), so train_whale_follow() returns RETIRED and
+  writes nothing; the old body is _train_whale_follow_legacy, reference only.
 """
 from __future__ import annotations
 
@@ -537,11 +540,15 @@ def train_quantile_overlay() -> Dict[str, Any]:
 
 
 # ─── train_whale_follow ───────────────────────────────────────────────────────
-# ─── train_whale_follow ───────────────────────────────────────────────────────
 
 def train_whale_follow() -> Dict[str, Any]:
+    """Retired (round 3): no consumer. Writes nothing."""
+    return {"status": "RETIRED", "note": "whale_follow retired: no consumer (server mlWhaleFollow is never called)"}
+
+
+def _train_whale_follow_legacy() -> Dict[str, Any]:
     """
-    Train a calibrated LightGBM binary classifier for p(follow_through_30min).
+    LEGACY, not called. Train a calibrated LightGBM binary classifier for p(follow_through_30min).
 
     Data: whale_follows JOIN whale_alerts (first alert per OCC by detected_at).
     Uses ALL rows: closing_print_json.mark when available, else current_live_json.mark.
