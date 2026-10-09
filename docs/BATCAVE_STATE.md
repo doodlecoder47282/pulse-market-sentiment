@@ -154,6 +154,17 @@ VITE_API_BASE in Vercel, add CORS for the Vercel origin on the server, set
 BATCAVE_ACCESS_KEY / BATCAVE_TOKEN_KEY, register the Schwab callback URL, and
 rotate the exposed Schwab secret and Discord webhooks first.
 
+Cleanup (f4d1d85 + CI dependency commit 7c21b60): removed unreferenced root
+scripts, 8 unused components, 23 unused shadcn UI files, splash CSS, the 9
+tracked ML model files (none had the current feature schema, so none could be
+served; ml_service/models/*.lgb and *_meta.json are now gitignored runtime
+outputs) and 21 npm packages used only by removed files. The dev workspace
+cannot reach npm; .github/workflows/npm-add.yml installs/uninstalls from
+.github/npm-add.txt and commits the lockfile. Speed Insights renders only on
+Vercel builds (vite define __ON_VERCEL__). Kept on purpose: data/sessions,
+data/analogs, data/mm-predictions (tracked runtime history; untracking would
+delete the user's local copies on pull).
+
 ## Current objective
 
 Save the credit-conserving resume framework and assess reuse of the existing
