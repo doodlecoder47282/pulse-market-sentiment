@@ -3,7 +3,7 @@
 //   --import ./tests/quant/loader/register.mjs --test tests/quant/sources-r2.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SOURCES, sourceTable, TIER_RANK } from "../../server/sources/registry";
+import { SOURCES, CONTEXT_SOURCES, sourceTable, TIER_RANK } from "../../server/sources/registry";
 import { SourceCache, sourceStatus, aggregateState } from "../../server/sources/state";
 import {
   parseFeed, parseIcs, parseEdgarAtom, parseEdgarSubmissions, parseUpcomingAuctions,
@@ -15,7 +15,7 @@ import { secUserAgent } from "../../server/sources/official";
 // ─── Registry ──────────────────────────────────────────────────────────────
 
 test("registry: every source has a tier, terms and what it feeds; weak sources say why", () => {
-  for (const s of Object.values(SOURCES)) {
+  for (const s of [...Object.values(SOURCES), ...Object.values(CONTEXT_SOURCES)]) {
     assert.ok(s.name && s.publisher && s.access && s.terms && s.feeds, `${s.id} incomplete`);
     assert.equal(s.cost, "free", `${s.id} must be free (no new paid service)`);
     assert.ok(s.tier in TIER_RANK, s.id);

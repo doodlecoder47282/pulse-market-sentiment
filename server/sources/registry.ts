@@ -46,7 +46,7 @@
 
 export type SourceTier = "primary" | "publisher" | "aggregator" | "computed" | "weak";
 
-export type SourceArea = "news" | "calendar" | "filings" | "earnings" | "sentiment" | "crypto-majors" | "crypto-dex" | "crypto-news" | "crypto-social";
+export type SourceArea = "news" | "calendar" | "filings" | "earnings" | "sentiment" | "crypto-majors" | "crypto-dex" | "crypto-news" | "crypto-social" | "macro-context";
 
 export interface SourceSpec {
   id: string;
@@ -291,6 +291,54 @@ export const SOURCES: Record<string, SourceSpec> = {
   },
 };
 
+/**
+ * Context sources read by modules outside this workstream (inventory only:
+ * listed so the source table is complete; their adapters live in the named
+ * files). Terms marked "not re-verified" were not re-checked this round.
+ */
+export const CONTEXT_SOURCES: Record<string, SourceSpec> = {
+  fred: {
+    id: "fred", name: "FRED", publisher: "Federal Reserve Bank of St. Louis",
+    tier: "primary", area: "macro-context", access: "fredgraph.csv public series download (server/fredClient.ts)", cost: "free", key: "none",
+    terms: "public download link behind FRED graphs; the documented FRED API needs a free key. Not re-verified this round",
+    termsUrl: "https://fred.stlouisfed.org/docs/api/terms_of_use.html", feeds: "Regime / macro context (never a price input)", minIntervalMs: HOUR,
+  },
+  cftc_cot: {
+    id: "cftc_cot", name: "CFTC COT", publisher: "Commodity Futures Trading Commission",
+    tier: "primary", area: "macro-context", access: "publicreporting.cftc.gov Socrata API (server/cotClient.ts)", cost: "free", key: "none",
+    terms: "official public reporting API; weekly data. Not re-verified this round", termsUrl: "https://publicreporting.cftc.gov/",
+    feeds: "Positioning context (never a price input)", minIntervalMs: HOUR,
+  },
+  noaa_swpc: {
+    id: "noaa_swpc", name: "NOAA SWPC", publisher: "NOAA Space Weather Prediction Center",
+    tier: "primary", area: "macro-context", access: "services.swpc.noaa.gov JSON (server/cosmos.ts)", cost: "free", key: "none",
+    terms: "U.S. government public data. Not re-verified this round", termsUrl: "https://www.swpc.noaa.gov/",
+    feeds: "Cosmos tab (Kp index)", minIntervalMs: HOUR,
+  },
+  frankfurter: {
+    id: "frankfurter", name: "Frankfurter (ECB rates)", publisher: "Frankfurter open-source API serving ECB euro reference rates",
+    tier: "aggregator", area: "macro-context", access: "api.frankfurter.dev (server/macro.ts)", cost: "free", key: "none",
+    terms: "keyless open API; ECB reference rates are published for information only, once per business day. Not re-verified this round",
+    termsUrl: "https://frankfurter.dev/", feeds: "FX context (never a price input)", minIntervalMs: HOUR,
+  },
+  google_news_voices: {
+    id: "google_news_voices", name: "Google News (Voices)", publisher: "Google News aggregator",
+    tier: "aggregator", weakReason: "aggregator search", area: "macro-context", access: "Google News RSS search per named commentator (server/voices.ts)", cost: "free", key: "none",
+    terms: "aggregator RSS search; secondary context only", termsUrl: null, feeds: "Voices panel", minIntervalMs: 10 * MIN,
+  },
+  x_api: {
+    id: "x_api", name: "X API", publisher: "X Corp.",
+    tier: "weak", weakReason: "social media", area: "macro-context", access: "api.twitter.com v2 recent search with optional X_BEARER_TOKEN (server/x.ts, server/tickerAlpha.ts)", cost: "free", key: "optional env",
+    terms: "official API, keyed; social posts, context only; disabled when the token is empty", termsUrl: "https://developer.x.com/en/developer-terms",
+    feeds: "Voices panel, Ticker Outlook social", minIntervalMs: 5 * MIN,
+  },
+  stocktwits_ticker: {
+    id: "stocktwits_ticker", name: "StockTwits (Ticker Outlook)", publisher: "StockTwits",
+    tier: "weak", weakReason: "social media", area: "macro-context", access: "public symbol stream JSON (server/tickerAlpha.ts)", cost: "free", key: "none",
+    terms: "public stream, no registration; social chatter, context only", termsUrl: null, feeds: "Ticker Outlook social", minIntervalMs: 5 * MIN,
+  },
+};
+
 export const TIER_RANK: Record<SourceTier, number> = { primary: 0, publisher: 1, aggregator: 2, computed: 3, weak: 4 };
 
 export const TIER_LABEL: Record<SourceTier, string> = {
@@ -309,7 +357,7 @@ export function sourceSpec(id: string): SourceSpec {
 
 /** Public, client-safe view of the table (no secrets live here; it is static). */
 export function sourceTable(area?: SourceArea): SourceSpec[] {
-  return Object.values(SOURCES)
+  return [...Object.values(SOURCES), ...Object.values(CONTEXT_SOURCES)]
     .filter((s) => !area || s.area === area)
     .sort((a, b) => TIER_RANK[a.tier] - TIER_RANK[b.tier] || a.name.localeCompare(b.name));
 }
