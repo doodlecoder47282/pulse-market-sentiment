@@ -34,6 +34,11 @@ export type QuoteSeries = {
   prevCloseDate?: string | null;
   /** ET date of the session the latest price belongs to. */
   priceSessionDate?: string | null;
+  /** Schwab price-history provenance (asOf above is the data time when known). */
+  servedFromCache?: boolean;
+  stale?: boolean;
+  dataState?: "ok" | "empty" | "unavailable";
+  dataReason?: string | null;
 };
 
 export type DailyOHLC = {
@@ -63,6 +68,7 @@ import {
   resolvePrevClose, dayChange, dailyBarSessionDate, intradayBarSessionDate,
 } from "./dayChange";
 import { etClock, etDate, prevTradingDay, sessionCloseMs } from "./exchangeCalendar";
+import { toSchwabSymbol } from "./schwabSymbols";
 
 // ─── Prior close (shared by quotes.ts, ohlc.ts, mag7.ts, macro.ts) ───────────
 //
@@ -85,7 +91,7 @@ async function _flushQuoteBatch(): Promise<void> {
   for (const [sym, waiters] of Array.from(batch)) {
     const q = bySym.get(sym);
     const info: QuoteCloseLike | null = q
-      ? { closePrice: q.prevClose ?? null, lastPrice: q.last, netChange: q.change }
+      ? { closePrice: q.prevClose ?? null, lastPrice: q.last, netChange: q.change, regularMarketLast: q.regularMarketLast ?? null }
       : null;
     for (const w of waiters) w(info);
   }
@@ -124,12 +130,18 @@ export async function resolveSessionPrevClose(
   dailyBars?: { t: number; c: number }[] | null,
 ): Promise<PrevCloseResult> {
   const schwabSym = toSchwabSymbol(symbol);
-  const todayEt = etDate();
+  const nowMs = Date.now();
+  const todayEt = etDate(nowMs);
   const sessionDate = priceSessionDate ?? todayEt;
   const quote = sessionDate === todayEt ? await fetchQuoteClose(schwabSym).catch(() => null) : null;
   let bars = dailyBars ?? null;
   const quoteUsable = quote != null && ((quote.closePrice ?? 0) > 0 || (quote.lastPrice != null && quote.netChange != null));
-  if (!quoteUsable && !bars) {
+  // After today's close Schwab may roll closePrice to today's close: fetch
+  // daily bars (5-minute Schwab cache) so dayChange.resolvePrevClose can check
+  // the quote close against the bar dates.
+  const todayClose = sessionCloseMs(todayEt);
+  const afterSessionClose = todayClose != null && nowMs >= todayClose;
+  if ((!quoteUsable || afterSessionClose) && !bars) {
     try {
       const resp = await getPriceHistory(schwabSym, "month", 1, "daily", 1);
       bars = resp.candles.map((c) => ({ t: Math.floor(c.datetime / 1000), c: c.close }));
@@ -141,6 +153,7 @@ export async function resolveSessionPrevClose(
     prevTradingDate: prevTradingDay(todayEt),
     quote,
     dailyBars: bars,
+    afterSessionClose,
   });
 }
 
@@ -162,18 +175,6 @@ function normalizeBars(result: any): Bar[] {
   return bars;
 }
 
-// Map Yahoo-style symbols to Schwab equivalents.
-// Schwab cash indexes use "$" prefix WITHOUT ".X" suffix.
-function toSchwabSymbol(symbol: string): string {
-  const map: Record<string, string> = {
-    "^VIX": "$VIX", "^VIX9D": "$VIX9D", "^VIX3M": "$VIX3M",
-    "^VVIX": "$VVIX", "^SKEW": "$SKEW",
-    "^GSPC": "$SPX", "^SPX": "$SPX",
-    "^VXN": "$VXN", "^RVX": "$RVX",
-  };
-  return map[symbol] ?? symbol;
-}
-
 /** Fetch an intraday chart via Schwab. Default: 1d range, 1m interval. */
 export async function fetchIntraday(
   symbol: string,
@@ -188,9 +189,18 @@ export async function fetchIntraday(
 
   let bars: Bar[] = [];
   let price: number | null = null;
+  let dataAsOfMs: number | null = null;
+  let servedFromCache = false, stale = false;
+  let dataState: "ok" | "empty" | "unavailable" = "unavailable";
+  let dataReason: string | null = null;
 
   try {
     const resp = await getPriceHistory(schwabSym, "day", period, "minute", frequency);
+    dataAsOfMs = resp.asOfMs ?? null;
+    servedFromCache = resp.servedFromCache ?? false;
+    stale = resp.stale ?? false;
+    dataState = resp.dataState ?? (resp.candles.length ? "ok" : "unavailable");
+    dataReason = resp.reason ?? null;
     if (resp.candles.length > 0) {
       bars = resp.candles
         .map((c) => ({
@@ -221,7 +231,7 @@ export async function fetchIntraday(
 
   // Quote-shield observer (flag-only — never alters returned data).
   try {
-    if (price != null && isFinite(price)) observeQuote(symbol, price);
+    if (price != null && isFinite(price) && lastBar) observeQuote(symbol, price, lastBar.t * 1000);
   } catch { /* shield must never break ingest */ }
 
   const { change, changePct } = dayChange(price, prevClose);
@@ -242,10 +252,15 @@ export async function fetchIntraday(
     bars,
     interval,
     range,
-    asOf: Math.floor(Date.now() / 1000),
+    // Data time from Schwab (receive time of the bars), not the time of this call.
+    asOf: Math.floor((dataAsOfMs ?? Date.now()) / 1000),
     prevCloseSource: pc.source,
     prevCloseDate: pc.prevCloseDate,
     priceSessionDate,
+    servedFromCache,
+    stale,
+    dataState,
+    dataReason,
   };
 }
 

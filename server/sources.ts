@@ -7,6 +7,7 @@ import type {
   GammaStructure, GexStrikePoint, SocialPost, SocialSentiment,
 } from "@shared/schema";
 import { buildGammaProfile, type OptionRow } from "./gammaProfile";
+import { toSchwabSymbol } from "./schwabSymbols";
 
 const UA = "Mozilla/5.0 (compatible; SentimentDash/1.0)";
 
@@ -44,29 +45,6 @@ export async function getQuote(symbol: string): Promise<{ last: number | null; p
   } catch {
     return { last: null, prev: null };
   }
-}
-
-/** Map Yahoo-style symbols to Schwab equivalents.
- *  Schwab cash indexes use "$" prefix WITHOUT ".X" suffix (verified empirically:
- *  $VIX returns 17.08, $VIX.X returns nothing). For SPX option chains the param
- *  is also "$SPX" (see routes.ts:1870 comment).
- */
-function toSchwabSymbol(symbol: string): string {
-  const map: Record<string, string> = {
-    "^VIX": "$VIX",
-    "^VIX9D": "$VIX9D",
-    "^VIX3M": "$VIX3M",
-    "^VVIX": "$VVIX",
-    "^SKEW": "$SKEW",
-    "^GSPC": "$SPX",
-    "^SPX": "$SPX",
-    "^VXN": "$VXN",
-    "^RVX": "$RVX",
-    "^DJI": "$DJI",
-    "^IXIC": "$COMPX",
-    "^RUT": "$RUT",
-  };
-  return map[symbol] ?? symbol;
 }
 
 export { toSchwabSymbol };

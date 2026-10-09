@@ -7,6 +7,7 @@ import { getPriceHistory } from "./schwab";
 import { resolveSessionPrevClose, latestStartedSessionDate } from "./quotes";
 import { dayChange, dailyBarSessionDate, intradayBarSessionDate, type PrevCloseSource } from "./dayChange";
 import { aggregateCandles } from "./candleAggregate";
+import { toSchwabSymbol } from "./schwabSymbols";
 
 export type Candle = {
   t: number;   // epoch seconds (bar open time)
@@ -37,24 +38,13 @@ export type OHLCResponse = {
   prevCloseSource?: PrevCloseSource;
   /** ET date of the session whose close is prevClose, when known. */
   prevCloseDate?: string | null;
+  /** Schwab price-history provenance: when Schwab produced the candles (epoch ms), cache use, staleness. */
+  dataAsOfMs?: number | null;
+  servedFromCache?: boolean;
+  stale?: boolean;
+  dataState?: "ok" | "empty" | "unavailable";
+  dataReason?: string | null;
 };
-
-// Map Yahoo-style symbols to Schwab equivalents.
-// Schwab cash indexes use "$" prefix WITHOUT ".X" suffix.
-function toSchwabSymbol(symbol: string): string {
-  const map: Record<string, string> = {
-    "^VIX": "$VIX",
-    "^VIX9D": "$VIX9D",
-    "^VIX3M": "$VIX3M",
-    "^VVIX": "$VVIX",
-    "^SKEW": "$SKEW",
-    "^GSPC": "$SPX",
-    "^SPX": "$SPX",
-    "^VXN": "$VXN",
-    "^RVX": "$RVX",
-  };
-  return map[symbol] ?? symbol;
-}
 
 type SchwabParams = {
   periodType: "day" | "month" | "year";
@@ -128,6 +118,8 @@ export async function fetchOHLC(symbol: string, tf: Timeframe, intervalOverride?
   const params = tfToSchwab(tf, intervalOverride);
 
   let candles: Candle[] = [];
+  let prov: Pick<OHLCResponse, "dataAsOfMs" | "servedFromCache" | "stale" | "dataState" | "dataReason"> =
+    { dataAsOfMs: null, servedFromCache: false, stale: false, dataState: "unavailable", dataReason: null };
   try {
     const resp = await getPriceHistory(
       schwabSym,
@@ -136,6 +128,11 @@ export async function fetchOHLC(symbol: string, tf: Timeframe, intervalOverride?
       params.frequencyType,
       params.frequency,
     );
+    prov = {
+      dataAsOfMs: resp.asOfMs ?? null, servedFromCache: resp.servedFromCache ?? false,
+      stale: resp.stale ?? false, dataState: resp.dataState ?? (resp.candles.length ? "ok" : "unavailable"),
+      dataReason: resp.reason ?? null,
+    };
     // Schwab candles: { datetime (ms), open, high, low, close, volume }
     candles = resp.candles
       .map((c) => ({
@@ -164,6 +161,7 @@ export async function fetchOHLC(symbol: string, tf: Timeframe, intervalOverride?
       asOf: Math.floor(Date.now() / 1000),
       prevCloseSource: "unavailable",
       prevCloseDate: null,
+      ...prov,
     };
   }
 
@@ -205,8 +203,10 @@ export async function fetchOHLC(symbol: string, tf: Timeframe, intervalOverride?
     sessionHigh: sessionHighs.length > 0 ? Math.max(...sessionHighs) : null,
     sessionLow: sessionLows.length > 0 ? Math.min(...sessionLows) : null,
     candles,
-    asOf: Math.floor(Date.now() / 1000),
+    // Data time from Schwab (receive time of the candles), not the time of this call.
+    asOf: Math.floor((prov.dataAsOfMs ?? Date.now()) / 1000),
     prevCloseSource,
     prevCloseDate,
+    ...prov,
   };
 }
