@@ -15,7 +15,7 @@
 // Engineering contract (preserved from prior segments):
 //   - try/catch wrapped, fail silently
 //   - never modifies existing calcs (signals/regime/dfi/models/composite)
-//   - read-only observer over buildUnusualFlow output
+//   - read-only observer over buildSchwabFlow output (Schwab chain only)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { buildSchwabFlow, type SchwabFlowContract } from "./schwabFlow";
