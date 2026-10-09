@@ -8,16 +8,22 @@
  *   verdict: string (1-3 word call: "edge", "no edge", "rich", "compressed", etc),
  *   verdictColor: "emerald" | "rose" | "amber" | "neutral",
  *   edgeType: "informational" | "analytical" | "behavioral" | "timing" | "environmental" | "none",
- *   confidence: 0..100,
+ *   confidence: null,           // no hand-set number (R3-2 item 7)
  *   summary: string (2-4 sentences, plain english, 15-year-old understandable),
- *   baseCase: { thesis: string, prob: number },
- *   bullCase: { thesis: string, prob: number },
- *   bearCase: { thesis: string, prob: number },
- *   actionable: string,         // what a trader does with this RIGHT NOW
+ *   baseCase: { thesis: string, prob: null },   // scenarios, no weights
+ *   bullCase: { thesis: string, prob: null },
+ *   bearCase: { thesis: string, prob: null },
+ *   actionable: string,         // "what to watch" (field name kept for the client); never trade or size advice
  *   invalidation: string,       // condition where the read flips
  *   counterargument: string,    // strongest opposing read
  *   bullets: string[]           // 2-5 short "what stands out" lines
  * }
+ *
+ * Both paths (LLM and deterministic) pass through scrubBrief
+ * (edgeBriefText.ts): confidence and case weights become null and any
+ * sentence with trade, structure, sizing, probability or edge-claim
+ * language is dropped. The old hand-set weights (55/25/20, 60/25/15) and
+ * confidence (70/65/60) were never estimated from data.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -31,6 +37,7 @@ import { getFredSnapshot } from "./fredClient";
 import { getCotSnapshot } from "./cotClient";
 import { scoreAnomalyToday, computeDrift } from "./anomalyDetector";
 import { getClvSummary } from "./clvTracker";
+import { scrubBrief } from "./edgeBriefText";
 
 export type PanelName =
   | "clv"
@@ -47,11 +54,14 @@ export interface EdgeBrief {
   verdict: string;
   verdictColor: "emerald" | "rose" | "amber" | "neutral";
   edgeType: "informational" | "analytical" | "behavioral" | "timing" | "environmental" | "none";
-  confidence: number;
+  /** Always null: no hand-set confidence number (kept for API shape). */
+  confidence: number | null;
   summary: string;
-  baseCase: { thesis: string; prob: number };
-  bullCase: { thesis: string; prob: number };
-  bearCase: { thesis: string; prob: number };
+  /** Scenario theses; prob is always null (no hand-set weights). */
+  baseCase: { thesis: string; prob: number | null };
+  bullCase: { thesis: string; prob: number | null };
+  bearCase: { thesis: string; prob: number | null };
+  /** What to watch (descriptive); never trade, structure or size advice. */
   actionable: string;
   invalidation: string;
   counterargument: string;
@@ -59,39 +69,36 @@ export interface EdgeBrief {
   panel: PanelName;
   asOf: number;
   source: "claude" | "openai" | "deterministic";
+  /** Sentences or bullets dropped by the output filter (scrubBrief). */
+  removedSentences?: number;
   contextSnapshot?: any;
 }
 
-const SYSTEM_PROMPT = `You are a senior quant + risk manager + advantage player writing internal briefs for a peer trader. Voice rules:
+const SYSTEM_PROMPT = `You are a senior quant writing a short internal note that DESCRIBES what one data panel shows. Voice: direct, plain english, lowercase is fine; a 15-year-old should follow the summary. never use emojis.
 
-- direct, sharp, peer-to-peer, casual lowercase ("look", "the read here", "boss")
-- never speak in absolutes — think probabilities, base/bull/bear with rough probability weights that sum to 100
-- identify edge type on every brief: informational, analytical, behavioral, timing, environmental, or none
-- if no edge exists, say "no edge — pass". passing is professional.
-- every brief includes an actionable step, an invalidation level/condition, and the strongest counterargument
-- a 15-year-old should understand the summary. no jargon dumps. if you use a term, briefly translate it.
-- never use emojis
-- never recommend oversizing. flat or fractional Kelly only
-- "insufficient data" is a valid answer when the data is thin
+Hard rules (a filter deletes any sentence that breaks them):
+- describe the data; do not recommend a trade. no buy/sell/long/short calls, no option structures (spreads, condors, straddles, calendars, collars), no hedging instructions.
+- no position sizing of any kind (no "size up/down", no percentages of size, no Kelly).
+- no probabilities, odds, likelihood percentages or confidence numbers. the panel scores are hand-set heuristics, not calibrated probabilities.
+- do not claim an edge exists. say what the data shows and what would change the read. "insufficient data" is a valid answer.
+- name the source and age of macro or sentiment context (FRED, CFTC COT); they are context, not price signals.
 
 Return ONLY valid JSON matching this exact schema (no prose before/after, no code fences):
 {
-  "verdict": "1-3 word call",
+  "verdict": "1-3 word description of the reading",
   "verdictColor": "emerald" | "rose" | "amber" | "neutral",
   "edgeType": "informational" | "analytical" | "behavioral" | "timing" | "environmental" | "none",
-  "confidence": integer 0-100,
-  "summary": "2-4 sentences plain english",
-  "baseCase": { "thesis": "string", "prob": integer },
-  "bullCase": { "thesis": "string", "prob": integer },
-  "bearCase": { "thesis": "string", "prob": integer },
-  "actionable": "what a trader does with this right now",
+  "summary": "2-4 sentences plain english describing the data",
+  "baseCase": { "thesis": "what continues if nothing changes" },
+  "bullCase": { "thesis": "the upside scenario" },
+  "bearCase": { "thesis": "the downside scenario" },
+  "actionable": "what to watch next (a level, a series or an event), never a trade",
   "invalidation": "condition that flips the read",
   "counterargument": "strongest opposing case",
   "bullets": ["2-5 short observations"]
 }
 
-Probabilities for baseCase + bullCase + bearCase should sum to 100.
-Color guidance: emerald = clear edge / favorable, rose = unfavorable / risk-off, amber = mixed / fair, neutral = no edge / insufficient data.`;
+Color guidance: emerald = reading leans favorable, rose = reading leans risk-off, amber = mixed, neutral = nothing notable or insufficient data.`;
 
 function safeJsonParse(text: string): any | null {
   if (!text) return null;
@@ -140,16 +147,19 @@ async function callOpenAi(userPayload: string): Promise<any | null> {
   }
 }
 
+// Deterministic read when no LLM answers. Descriptive only (R3-2 item 7):
+// no case weights, no confidence number, no trade / structure / size advice
+// and no claim that an edge exists. `actionable` carries "what to watch".
 function deterministicFallback(panel: PanelName, ctx: any): EdgeBrief {
   const base: EdgeBrief = {
     verdict: "data only",
     verdictColor: "neutral",
     edgeType: "none",
-    confidence: 0,
+    confidence: null,
     summary: "",
-    baseCase: { thesis: "", prob: 60 },
-    bullCase: { thesis: "", prob: 20 },
-    bearCase: { thesis: "", prob: 20 },
+    baseCase: { thesis: "", prob: null },
+    bullCase: { thesis: "", prob: null },
+    bearCase: { thesis: "", prob: null },
     actionable: "",
     invalidation: "",
     counterargument: "",
@@ -158,6 +168,11 @@ function deterministicFallback(panel: PanelName, ctx: any): EdgeBrief {
     asOf: Date.now(),
     source: "deterministic",
     contextSnapshot: ctx,
+  };
+  const cases = (b: string, u: string, d: string) => {
+    base.baseCase = { thesis: b, prob: null };
+    base.bullCase = { thesis: u, prob: null };
+    base.bearCase = { thesis: d, prob: null };
   };
 
   try {
@@ -171,47 +186,39 @@ function deterministicFallback(panel: PanelName, ctx: any): EdgeBrief {
         base.verdict = "insufficient sample";
         base.verdictColor = "neutral";
         base.edgeType = "none";
-        base.confidence = 20;
-        base.summary = `only ${total} graded fills logged. need 30+ before CLV says anything real. log more trades, then check back.`;
-        base.actionable = "keep logging fills with timestamps. revisit at 30+ samples.";
-        base.invalidation = "sample reaches 30 and mean stays negative — that's a real signal, not noise.";
-        base.counterargument = "small samples can flatter or punish you randomly. don't read into it yet.";
+        base.summary = `only ${total} graded fills logged. CLV on fewer than 30 fills is mostly noise.`;
+        base.actionable = "watch: the graded count. the read means little before 30+ fills.";
+        base.invalidation = "sample reaches 30 and the mean keeps its sign.";
+        base.counterargument = "small samples can flatter or punish entries at random.";
         base.bullets = [`graded: ${total}`, `mean bps: ${mean.toFixed(1)}`, `positive%: ${pos.toFixed(0)}%`];
       } else if (mean > 2 && pos > 55) {
-        base.verdict = "real edge";
+        base.verdict = "positive CLV";
         base.verdictColor = "emerald";
         base.edgeType = "informational";
-        base.confidence = 70;
-        base.summary = `you're beating the close by ${mean.toFixed(1)} bps on average across ${total} fills, with ${pos.toFixed(0)}% positive. that's a skill signal — your entries are pricing in info before the market closes the gap.`;
-        base.baseCase = { thesis: "current CLV edge persists at similar magnitude", prob: 60 };
-        base.bullCase = { thesis: `rolling 20 (${r20.toFixed(1)} bps) confirms edge isn't decaying`, prob: 25 };
-        base.bearCase = { thesis: "edge erodes as market adapts or sample regression hits", prob: 15 };
-        base.actionable = "keep position sizing where it is. don't oversize on a hot streak — let the edge compound.";
+        base.summary = `entries beat the close by ${mean.toFixed(1)} bps on average across ${total} fills, ${pos.toFixed(0)}% positive. descriptive only: no significance test or out-of-sample check is applied here.`;
+        cases("CLV stays near its current mean", `rolling 20 (${r20.toFixed(1)} bps) stays above the full-sample mean`, "CLV regresses toward zero as the sample grows");
+        base.actionable = `watch: rolling 20 (${r20.toFixed(1)} bps) against the full-sample mean.`;
         base.invalidation = "rolling 20 turns negative for 2 consecutive weeks.";
-        base.counterargument = "CLV is path-dependent on liquidity environment. low-vol regime can flatter fills.";
+        base.counterargument = "CLV depends on the liquidity environment; a low-vol regime can flatter fills.";
         base.bullets = [`mean: +${mean.toFixed(1)} bps`, `positive: ${pos.toFixed(0)}%`, `rolling 20: ${r20.toFixed(1)} bps`, `total $: ${(e.totalDollars ?? 0).toFixed(0)}`];
       } else if (mean < -2) {
         base.verdict = "negative CLV";
         base.verdictColor = "rose";
         base.edgeType = "none";
-        base.confidence = 65;
-        base.summary = `you're losing ${Math.abs(mean).toFixed(1)} bps to the close on average. either entries are late or you're chasing — the market is fading you. fix execution before scaling size.`;
-        base.baseCase = { thesis: "execution lag persists, slow bleed continues", prob: 55 };
-        base.bullCase = { thesis: "recent process changes already turning rolling 20 around", prob: 20 };
-        base.bearCase = { thesis: "adverse selection — edge thesis itself is wrong", prob: 25 };
-        base.actionable = "cut size 50%. audit last 20 entries — late fills, chasing, or wrong-side adds?";
+        base.summary = `entries lose ${Math.abs(mean).toFixed(1)} bps to the close on average across ${total} fills: fills tend to come after the move.`;
+        cases("execution lag persists", "rolling 20 turns positive", "the entry signal itself is late");
+        base.actionable = "watch: timestamps of the last 20 entries vs the signal time (late fills or chasing).";
         base.invalidation = "rolling 20 flips positive for 2 weeks straight.";
-        base.counterargument = "could be regime mismatch — strategy is fine, market just isn't paying for this style right now.";
+        base.counterargument = "could be a regime mismatch rather than an execution problem.";
         base.bullets = [`mean: ${mean.toFixed(1)} bps`, `positive: ${pos.toFixed(0)}%`, `rolling 20: ${r20.toFixed(1)} bps`];
       } else {
-        base.verdict = "flat";
+        base.verdict = "flat CLV";
         base.verdictColor = "amber";
         base.edgeType = "none";
-        base.confidence = 50;
-        base.summary = `CLV is hovering near zero (${mean.toFixed(1)} bps). no informational edge in entries — you're a coin flip vs the close. profit has to come from sizing/exits, not entries.`;
-        base.actionable = "focus on exit discipline and risk management. entries aren't your edge right now.";
+        base.summary = `CLV is near zero (${mean.toFixed(1)} bps): entries are neither ahead of nor behind the close on average.`;
+        base.actionable = "watch: whether results come from exits or hold time rather than entries.";
         base.invalidation = "rolling 20 breaks above +3 bps or below -3 bps cleanly.";
-        base.counterargument = "flat CLV with positive PnL is fine — exits or hold time may carry the edge.";
+        base.counterargument = "flat CLV with positive PnL is possible: exits or hold time may carry the result.";
         base.bullets = [`mean: ${mean.toFixed(1)} bps`, `positive: ${pos.toFixed(0)}%`, `total fills: ${total}`];
       }
     } else if (panel === "iv-rv") {
@@ -219,79 +226,80 @@ function deterministicFallback(panel: PanelName, ctx: any): EdgeBrief {
       const v = ctx?.verdict ?? "";
       const r = ctx?.ratio;
       const ratioRaw = typeof r === "number" ? r : (r?.iv30_rv20 ?? r?.iv30_rv30 ?? r?.iv60_rv60);
-      const ratio: number = (ratioRaw == null || !isFinite(Number(ratioRaw))) ? 0 : Number(ratioRaw);
+      const ratio: number | null = (ratioRaw == null || !isFinite(Number(ratioRaw))) ? null : Number(ratioRaw);
       const iv30 = ctx?.iv?.iv30;
       const rv20 = ctx?.rv?.rv20;
       const ivStr = (iv30 == null) ? "n/a" : (iv30 * (iv30 < 5 ? 100 : 1)).toFixed(1) + "%";
       const rvStr = (rv20 == null) ? "n/a" : (rv20 * (rv20 < 5 ? 100 : 1)).toFixed(1) + "%";
-      if (!ratio || v === "insufficient") {
+      if (ratio == null || ratio <= 0 || v === "insufficient") {
         base.verdict = "insufficient data";
         base.verdictColor = "neutral";
         base.edgeType = "none";
-        base.confidence = 20;
-        base.summary = `${sym} option chain or daily bars too thin to score IV/RV right now. ${ctx?.notes ?? ""}`;
-        base.actionable = "wait for the chain to populate. retry during regular hours.";
-        base.invalidation = "chain returns full data and ratio crosses 0.85 or 1.25.";
-        base.counterargument = "missing data is missing data — don't infer.";
+        base.summary = `${sym} option chain or daily bars too thin to compare IV with RV right now. ${ctx?.notes ?? ""}`.trim();
+        base.actionable = "watch: the chain during regular hours.";
+        base.invalidation = "chain returns full data.";
+        base.counterargument = "missing data is missing data: nothing to infer.";
         base.bullets = [`IV30: ${ivStr}`, `RV20: ${rvStr}`, `model: ${v}`];
       } else if (ratio > 1.25) {
-        base.verdict = "options rich";
-        base.verdictColor = "emerald";
+        // IV above RV on average is the variance risk premium: Carr & Wu (2009),
+        // "Variance Risk Premiums", Review of Financial Studies 22(3),
+        // https://doi.org/10.1093/rfs/hhn038. A high ratio is therefore not by
+        // itself a mispricing, and the brief does not call it an edge.
+        base.verdict = "IV above RV";
+        base.verdictColor = "amber";
         base.edgeType = "analytical";
-        base.confidence = 65;
-        base.summary = `${sym} IV/RV ratio is ${ratio.toFixed(2)}x — options are pricing way more vol than the stock has actually delivered. premium sellers have edge here.`;
-        base.baseCase = { thesis: "IV mean-reverts toward RV, premium decays in your favor", prob: 55 };
-        base.bullCase = { thesis: "vol crush within days as event premium bleeds out", prob: 25 };
-        base.bearCase = { thesis: "realized vol catches up — gap event prints, IV was right", prob: 20 };
-        base.actionable = "sell premium structures (iron condors, credit spreads) sized small. defined risk only.";
-        base.invalidation = "RV jumps above IV in next 5 sessions — vol regime shifted.";
-        base.counterargument = "IV is forward-looking. if there's a known catalyst, the premium is fair.";
+        base.summary = `${sym} IV/RV is ${ratio.toFixed(2)}x: options price more volatility than the stock has realized over 20 days. IV usually sits above RV (the variance risk premium); the ratio alone does not say whether this premium is fair.`;
+        cases("IV drifts toward RV", "IV falls after a scheduled event passes", "realized volatility rises to meet IV");
+        base.actionable = "watch: RV over the next 5 sessions and any scheduled catalyst inside the expiry.";
+        base.invalidation = "RV rises above IV.";
+        base.counterargument = "IV is forward-looking: a known catalyst can justify the gap.";
         base.bullets = [`IV: ${ivStr}`, `RV20: ${rvStr}`, `ratio: ${ratio.toFixed(2)}x`];
       } else if (ratio < 0.85) {
-        base.verdict = "options cheap";
-        base.verdictColor = "emerald";
+        base.verdict = "IV below RV";
+        base.verdictColor = "amber";
         base.edgeType = "analytical";
-        base.confidence = 60;
-        base.summary = `${sym} IV/RV ratio at ${ratio.toFixed(2)}x — options are underpricing the actual movement. long premium has edge.`;
-        base.baseCase = { thesis: "IV catches up to RV, long vol structures appreciate", prob: 50 };
-        base.bullCase = { thesis: "vol expansion accelerates on next catalyst", prob: 30 };
-        base.bearCase = { thesis: "RV decays before IV expands, theta bleed wins", prob: 20 };
-        base.actionable = "long straddles or calendars on liquid expiries. small size, defined max loss.";
-        base.invalidation = "RV collapses next 5 days while IV holds — thesis dies.";
-        base.counterargument = "cheap IV often means market knows something is settling — don't fight known calm.";
+        base.summary = `${sym} IV/RV at ${ratio.toFixed(2)}x: options price less volatility than the stock has realized over 20 days.`;
+        cases("IV rises toward RV", "volatility expands further on the next catalyst", "RV decays before IV moves");
+        base.actionable = "watch: whether the recent realized moves continue or settle.";
+        base.invalidation = "RV falls back under IV over the next 5 sessions.";
+        base.counterargument = "low IV after a burst often means the market expects calm to return.";
         base.bullets = [`IV: ${ivStr}`, `RV20: ${rvStr}`, `ratio: ${ratio.toFixed(2)}x`];
       } else {
-        base.verdict = "fair";
+        base.verdict = "IV near RV";
         base.verdictColor = "neutral";
         base.edgeType = "none";
-        base.confidence = 40;
-        base.summary = `${sym} IV/RV at ${ratio.toFixed(2)}x — options are roughly fair. no vol arb edge here. pass and look elsewhere.`;
-        base.actionable = "no trade. wait for ratio to push above 1.25 or below 0.85.";
+        base.summary = `${sym} IV/RV at ${ratio.toFixed(2)}x: implied and realized volatility are close.`;
+        base.actionable = "watch: the ratio leaving the 0.85-1.25 band.";
         base.invalidation = "ratio breaks the band cleanly.";
-        base.counterargument = "fair IV doesn't mean no opportunity — directional setups still work.";
+        base.counterargument = "a ratio near 1 says nothing about direction.";
         base.bullets = [`IV: ${ivStr}`, `RV20: ${rvStr}`, `ratio: ${ratio.toFixed(2)}x`, v ? `model: ${v}` : ""].filter(Boolean) as string[];
       }
     } else if (panel === "gamma-curve") {
       const sym = ctx?.symbol ?? "";
-      const spot = Number(ctx?.spot ?? 0);
-      const zg = Number(ctx?.zeroGamma ?? 0);
+      const spot = Number(ctx?.spot ?? NaN);
+      const zg = Number(ctx?.zeroGamma ?? NaN);
       const asymObj = ctx?.asymmetry;
-      const asymRatio = typeof asymObj === "number" ? asymObj : Number(asymObj?.asymmetryRatio ?? 0);
+      const asymRatio = typeof asymObj === "number" ? asymObj : Number(asymObj?.asymmetryRatio ?? NaN);
       const bias = asymObj?.bias ?? "";
-      const above = spot > zg;
-      base.verdict = above ? "positive gamma" : "negative gamma";
-      base.verdictColor = above ? "emerald" : "rose";
-      base.edgeType = "environmental";
-      base.confidence = 60;
       const wall = ctx?.walls?.[0];
-      base.summary = `${sym} ${spot.toFixed(2)} vs zero-gamma ${zg.toFixed(2)} — ${above ? "dealers long gamma, they sell rallies / buy dips. expect mean reversion and pinning." : "dealers short gamma, they chase moves. expect trending and acceleration into walls."}${wall ? ` nearest wall: ${wall.strike} (${wall.type ?? ""}).` : ""}`;
-      base.baseCase = { thesis: above ? "chop in the zero-gamma corridor, fade extremes" : "trend continues until a wall absorbs it", prob: 55 };
-      base.bullCase = { thesis: above ? "price pins to highest call wall into expiry" : "breakout through nearest wall triggers cascade", prob: 25 };
-      base.bearCase = { thesis: above ? "flip below zero-gamma flips regime to trend" : "squeeze back through zero-gamma into pin", prob: 20 };
-      base.actionable = above ? "fade wall touches with defined risk. avoid breakout chases." : "trade with the trend until walls. tight stops, no fades.";
-      base.invalidation = above ? `clean break below ${zg.toFixed(2)} flips regime` : `reclaim of ${zg.toFixed(2)} ends short-gamma trend`;
-      base.counterargument = "gamma is a positioning snapshot. fundamentals or macro shocks override dealer flow.";
-      base.bullets = [`spot: ${spot.toFixed(2)}`, `zero-γ: ${zg.toFixed(2)}`, `asym: ${asymRatio.toFixed(2)}`, bias ? `bias: ${bias}` : "", wall ? `wall: ${wall.strike}` : ""].filter(Boolean) as string[];
+      if (!Number.isFinite(spot) || !Number.isFinite(zg) || zg <= 0) {
+        base.verdict = "insufficient data";
+        base.summary = `${sym} gamma curve unavailable${ctx?.error ? `: ${ctx.error}` : ""}.`;
+        base.actionable = "watch: the chain during regular hours.";
+      } else {
+        const above = spot > zg;
+        base.verdict = above ? "above zero-gamma" : "below zero-gamma";
+        base.verdictColor = above ? "emerald" : "rose";
+        base.edgeType = "environmental";
+        base.summary = `${sym} ${spot.toFixed(2)} vs zero-gamma ${zg.toFixed(2)}: ${above ? "estimated dealer gamma is positive, so hedging flow tends to lean against moves (mean reversion, pinning)." : "estimated dealer gamma is negative, so hedging flow tends to add to moves (trending, acceleration into walls)."} the dealer sign is a model assumption, not observed positions.${wall ? ` nearest wall: ${wall.strike} (${wall.type ?? ""}).` : ""}`;
+        cases(above ? "price stays inside the zero-gamma corridor" : "the move continues until a wall absorbs it",
+          above ? "price pins near the largest call wall into expiry" : "a break through the nearest wall extends",
+          above ? "a break below zero-gamma changes the regime" : "price reclaims zero-gamma and the regime flips");
+        base.actionable = `watch: price relative to zero-gamma ${zg.toFixed(2)}${wall ? ` and the ${wall.strike} wall` : ""}.`;
+        base.invalidation = above ? `clean break below ${zg.toFixed(2)} flips the regime` : `reclaim of ${zg.toFixed(2)} ends the short-gamma regime`;
+        base.counterargument = "gamma is a positioning snapshot. macro shocks override dealer hedging flow.";
+        base.bullets = [`spot: ${spot.toFixed(2)}`, `zero-γ: ${zg.toFixed(2)}`, Number.isFinite(asymRatio) ? `asym: ${asymRatio.toFixed(2)}` : "", bias ? `bias: ${bias}` : "", wall ? `wall: ${wall.strike}` : ""].filter(Boolean) as string[];
+      }
     } else if (panel === "cross-asset") {
       const rv = ctx?.regimeVerdict;
       // regimeVerdict can be either a string or {label, confidence, risk, notes}
@@ -302,121 +310,107 @@ function deterministicFallback(panel: PanelName, ctx: any): EdgeBrief {
       base.verdict = verdictLabel;
       base.verdictColor = isRisk ? "emerald" : isOff ? "rose" : "amber";
       base.edgeType = "environmental";
-      base.confidence = 55;
-      base.summary = `cross-asset matrix says ${verdictLabel}. ${isRisk ? "stocks, credit, cyclicals moving together — clean risk-on tape, lean into longs." : isOff ? "safe-haven bid in bonds/dollar/gold while equities/credit lag — defensive regime, trim risk." : "correlations are decoupled — regime is in transition. wait for confirmation before taking macro views."}`;
-      base.baseCase = { thesis: `${verdictLabel} regime persists near-term`, prob: 55 };
-      base.bullCase = { thesis: "correlations tighten in current direction, trend extends", prob: 25 };
-      base.bearCase = { thesis: "regime flip on next macro print or liquidity event", prob: 20 };
-      base.actionable = isRisk ? "size up directional longs in equities/credit. tight stops on bonds." : isOff ? "reduce equity beta. bonds/gold/dollar have edge." : "smaller size across the board until matrix confirms direction.";
+      base.summary = `cross-asset matrix reads ${verdictLabel}. ${isRisk ? "stocks, credit and cyclicals are moving together." : isOff ? "bonds, dollar and gold are bid while equities and credit lag." : "correlations are decoupled: the regime is in transition."}`;
+      cases(`${verdictLabel} regime persists near-term`, "correlations tighten in the current direction", "regime flips on the next macro print or liquidity event");
+      base.actionable = "watch: whether the matrix verdict holds for 3+ sessions.";
       base.invalidation = "matrix flips verdict and holds 3+ sessions.";
-      base.counterargument = "correlation is path-dependent. one liquidity event can rewrite the whole matrix.";
+      base.counterargument = "correlation is path-dependent. one liquidity event can rewrite the matrix.";
       base.bullets = [`regime: ${verdictLabel}`, `assets tracked: ${rows.length}`];
     } else if (panel === "skew") {
       const sym = ctx?.symbol ?? "";
-      const skew25 = Number(ctx?.skew25 ?? ctx?.skew?.skew25 ?? 0);
+      const raw = ctx?.skew25 ?? ctx?.skew?.skew25;
+      const skew25 = raw == null || !Number.isFinite(Number(raw)) ? null : Number(raw);
       const verdict = ctx?.verdict ?? "";
-      const isFear = skew25 > 5;
-      const isGreed = skew25 < -2;
-      base.verdict = isFear ? "put fear bid" : isGreed ? "call greed bid" : "balanced";
-      base.verdictColor = isFear ? "rose" : isGreed ? "emerald" : "neutral";
-      base.edgeType = "behavioral";
-      base.confidence = 55;
-      base.summary = `${sym} 25d skew ${skew25.toFixed(2)}. ${isFear ? "crowd is paying up for downside protection — fear is priced. classic fade-the-skew setup." : isGreed ? "upside calls richer than puts — speculative greed. reversal often follows." : "skew is balanced — no behavioral extreme to fade."}`;
-      base.baseCase = { thesis: isFear ? "skew compresses as fear unwinds" : isGreed ? "skew normalizes as call demand cools" : "skew chops in current band", prob: 55 };
-      base.bullCase = { thesis: "contrarian setup pays — fade succeeds", prob: 25 };
-      base.bearCase = { thesis: "skew is right — tail event prints", prob: 20 };
-      base.actionable = isFear ? "sell put spreads / put ratio if you're directional bullish." : isGreed ? "sell call spreads or buy puts on the upside extreme." : "no skew trade. look elsewhere.";
-      base.invalidation = "skew expands further past current extreme — crowd was right.";
-      base.counterargument = "skew often persists for valid macro reasons. don't fade on level alone — need a catalyst.";
-      base.bullets = [`25d skew: ${skew25.toFixed(2)}`, verdict ? `model: ${verdict}` : ""].filter(Boolean) as string[];
+      if (skew25 == null) {
+        base.verdict = "insufficient data";
+        base.summary = `${sym} 25-delta skew unavailable${ctx?.error ? `: ${ctx.error}` : ""}.`;
+        base.actionable = "watch: the chain during regular hours.";
+      } else {
+        const isFear = skew25 > 5;
+        const isGreed = skew25 < -2;
+        base.verdict = isFear ? "puts bid" : isGreed ? "calls bid" : "balanced";
+        base.verdictColor = isFear ? "rose" : isGreed ? "emerald" : "neutral";
+        base.edgeType = "behavioral";
+        base.summary = `${sym} 25d skew ${skew25.toFixed(2)}. ${isFear ? "downside protection is priced above upside calls: demand for puts is high." : isGreed ? "upside calls are richer than puts: speculative call demand." : "skew is balanced: no extreme in either wing."}`;
+        cases(isFear ? "skew compresses as protection demand fades" : isGreed ? "skew normalizes as call demand cools" : "skew stays in its current band", "skew moves back toward its usual level", "skew was right: a tail move prints");
+        base.actionable = "watch: skew relative to its own recent range and any catalyst that explains it.";
+        base.invalidation = "skew expands further past the current extreme.";
+        base.counterargument = "skew often persists for valid macro reasons; a level alone is not a signal.";
+        base.bullets = [`25d skew: ${skew25.toFixed(2)}`, verdict ? `model: ${verdict}` : ""].filter(Boolean) as string[];
+      }
     } else if (panel === "macro-flow") {
       const f = ctx?.fred ?? {};
       const c = ctx?.cot ?? {};
       base.verdict = "macro snapshot";
       base.verdictColor = "neutral";
       base.edgeType = "environmental";
-      base.confidence = 50;
       const parts: string[] = [];
       if (f.dgs10) parts.push(`10y at ${f.dgs10}`);
-      if (f.vixcls) parts.push(`VIX ${f.vixcls}`);
+      if (f.vixcls) parts.push(`VIX close (FRED) ${f.vixcls}`);
       if (f.dxy) parts.push(`DXY ${f.dxy}`);
-      base.summary = `macro stack: ${parts.join(", ") || "data loading"}. use as regime input — ${c?.summary ? "COT positioning shows " + c.summary : "check positioning before sizing macro views."}`;
-      base.actionable = "frame your trades against this regime. don't fight rates/dollar trends without a clear catalyst.";
-      base.invalidation = "key levels break: 10y above 5%, VIX above 25, DXY above 110 = regime shift.";
-      base.counterargument = "macro signals lag intraday flow. don't trade off macro alone — pair with technicals.";
+      base.summary = `macro context (FRED, CFTC COT; daily or weekly, not live): ${parts.join(", ") || "data loading"}.${c?.summary ? " COT positioning: " + c.summary : ""}`;
+      base.actionable = "watch: rates and dollar trend against any equity read.";
+      base.invalidation = "10y above 5%, VIX above 25 or DXY above 110 marks a regime shift.";
+      base.counterargument = "macro data lags intraday flow by days.";
       base.bullets = parts;
     } else if (panel === "anomaly") {
       const a = ctx?.anomaly ?? {};
       const dr = ctx?.drift ?? {};
-      const pct = Number(a?.pctileVsHistory ?? 0);
-      const score = pct / 10; // map 0-100 to 0-10 scale
-      const driftScore = Number(dr?.driftScore ?? dr?.score ?? 0);
-      const isAnom = !!a?.isAnomaly || pct >= 95;
-      const isHot = isAnom || score > 7;
-      const isCold = score < 3;
-      const drift = driftScore;
-      base.verdict = isHot ? "anomalous tape" : isCold ? "baseline" : "mild";
-      base.verdictColor = isHot ? "amber" : "neutral";
-      base.edgeType = isHot ? "timing" : "none";
-      base.confidence = isHot ? 60 : 40;
-      base.summary = `today sits at the ${pct.toFixed(0)}th percentile vs history (score ${score.toFixed(1)}/10), drift ${drift.toFixed(2)}. ${isHot ? "tape is statistically unusual — something's moving the model didn't expect. tighten risk and watch for follow-through." : isCold ? "normal regime, indicators aligned with baseline. no urgency." : "mildly elevated — keep eyes open but no action required."}`;
-      base.actionable = isHot ? "cut size or use defined-risk only. anomaly days punish complacency." : "trade your normal book.";
-      base.invalidation = "score drops back under 5 — tape normalized.";
-      base.counterargument = "anomaly score can flag noise as signal. wait for confirmation before reacting hard.";
-      base.bullets = [`pctile: ${pct.toFixed(0)}`, `score: ${score.toFixed(1)}/10`, `drift: ${drift.toFixed(2)}`, `analogs: ${(a?.closestDates?.length ?? 0)}`];
+      const pctRaw = a?.pctileVsHistory;
+      const pct = pctRaw == null || !Number.isFinite(Number(pctRaw)) ? null : Number(pctRaw);
+      if (pct == null) {
+        base.verdict = "insufficient data";
+        base.summary = `anomaly score unavailable${a?.error ? `: ${a.error}` : ""}.`;
+        base.actionable = "watch: the feature history filling in.";
+      } else {
+        const score = pct / 10; // map 0-100 to 0-10 scale
+        const drift = Number(dr?.driftScore ?? dr?.score ?? NaN);
+        const isAnom = !!a?.isAnomaly || pct >= 95;
+        const isHot = isAnom || score > 7;
+        const isCold = score < 3;
+        base.verdict = isHot ? "unusual tape" : isCold ? "baseline" : "mild";
+        base.verdictColor = isHot ? "amber" : "neutral";
+        base.edgeType = isHot ? "timing" : "none";
+        base.summary = `today sits at the ${pct.toFixed(0)}th percentile vs history (score ${score.toFixed(1)}/10)${Number.isFinite(drift) ? `, drift ${drift.toFixed(2)}` : ""}. ${isHot ? "the market vector is statistically unusual against its history." : isCold ? "indicators are close to their baseline." : "mildly elevated."}`;
+        base.actionable = isHot ? "watch: the closest analog dates and whether the unusual features persist." : "watch: nothing unusual in the feature vector.";
+        base.invalidation = "score drops back under 5.";
+        base.counterargument = "an anomaly score can flag noise as signal.";
+        base.bullets = [`pctile: ${pct.toFixed(0)}`, `score: ${score.toFixed(1)}/10`, Number.isFinite(drift) ? `drift: ${drift.toFixed(2)}` : "", `analogs: ${(a?.closestDates?.length ?? 0)}`].filter(Boolean) as string[];
+      }
     } else if (panel === "backtest") {
       const lr = ctx?.lastRun ?? {};
       const winRate = lr.winRate ?? 0;
       const pf = lr.profitFactor ?? 0;
       const trades = lr.trades ?? 0;
-      const isGood = winRate > 0.55 && pf > 1.4;
-      base.verdict = isGood ? "backtest passes" : trades < 30 ? "insufficient sample" : "weak";
-      base.verdictColor = isGood ? "emerald" : trades < 30 ? "neutral" : "rose";
-      base.edgeType = isGood ? "analytical" : "none";
-      base.confidence = trades < 30 ? 25 : isGood ? 65 : 60;
-      base.summary = `${trades} trades, ${(winRate * 100).toFixed(0)}% win rate, PF ${pf.toFixed(2)}. ${isGood ? "strategy has historical edge. forward-test small size before committing capital." : trades < 30 ? "sample too small for confidence. need 100+ trades minimum to trust the result." : "edge isn't there in-sample. don't deploy."}`;
-      base.actionable = isGood ? "paper-trade or 25% size for 4 weeks. confirm forward." : "don't deploy. iterate the rules or kill it.";
+      const passes = trades >= 30 && winRate > 0.55 && pf > 1.4;
+      base.verdict = trades < 30 ? "insufficient sample" : passes ? "in-sample positive" : "in-sample weak";
+      base.verdictColor = trades < 30 ? "neutral" : passes ? "emerald" : "rose";
+      base.edgeType = passes ? "analytical" : "none";
+      base.summary = `${trades} trades, ${(winRate * 100).toFixed(0)}% win rate, PF ${pf.toFixed(2)}. ${trades < 30 ? "sample too small to say anything." : passes ? "in-sample results are positive; in-sample fit is not evidence of out-of-sample performance." : "in-sample results do not hold up."}`;
+      base.actionable = "watch: the same rules on out-of-sample dates, with fees and spread.";
       base.invalidation = "out-of-sample win rate drops below 50% over 30+ trades.";
-      base.counterargument = "backtest fit is half the story. live execution friction (slippage, missed fills) eats edge fast.";
+      base.counterargument = "backtest fit is half the story: slippage and missed fills cost real money.";
       base.bullets = [`trades: ${trades}`, `win: ${(winRate * 100).toFixed(0)}%`, `PF: ${pf.toFixed(2)}`];
     } else if (panel === "edge-synthesis") {
       const sigs: any[] = ctx?.signals ?? [];
       const conf = ctx?.confluence ?? { bullish: 0, bearish: 0, neutral: 0, total: 0 };
       const sym = ctx?.symbol ?? "SPY";
       const total = sigs.length || 1;
-      const bullPct = (conf.bullish / total) * 100;
-      const bearPct = (conf.bearish / total) * 100;
       const dominant = conf.bullish > conf.bearish + 1 ? "bullish" : conf.bearish > conf.bullish + 1 ? "bearish" : "mixed";
       const strong = Math.max(conf.bullish, conf.bearish) >= 4;
 
-      base.verdict = strong ? (dominant === "bullish" ? "strong bull" : dominant === "bearish" ? "strong bear" : "mixed") : dominant === "bullish" ? "lean bull" : dominant === "bearish" ? "lean bear" : "no edge";
+      base.verdict = dominant === "mixed" ? "mixed" : `${strong ? "broad" : "partial"} ${dominant === "bullish" ? "bull" : "bear"} agreement`;
       base.verdictColor = dominant === "bullish" ? "emerald" : dominant === "bearish" ? "rose" : "amber";
-      base.edgeType = strong ? "environmental" : conf.neutral > total / 2 ? "none" : "analytical";
-      base.confidence = strong ? 70 : dominant === "mixed" ? 35 : 55;
-
-      // Build summary listing the cross-panel reads
-      const sigSummaries = sigs.map(s => `${s.label}: ${s.bias}`).join(" · ");
-      base.summary = `${sym} fused read across ${total} edge panels — ${conf.bullish} bullish, ${conf.bearish} bearish, ${conf.neutral} neutral/mixed. ${dominant === "mixed" ? "signals are split — no clean confluence, sit on hands or trade smaller." : strong ? `${dominant} confluence is real — ${conf.bullish > conf.bearish ? conf.bullish : conf.bearish} of ${total} panels confirming.` : `${dominant} lean but not strong enough for size — wait for more confirmation.`}`;
-
-      base.baseCase = { thesis: dominant === "mixed" ? "chop continues until a panel breaks the tie" : `${dominant} read holds, current confluence stays intact`, prob: 55 };
-      base.bullCase = { thesis: dominant === "bullish" ? "more panels flip bullish, confluence strengthens" : dominant === "bearish" ? "contrarian setup pays — crowd is wrong" : "a clean bull catalyst breaks the tie", prob: 25 };
-      base.bearCase = { thesis: dominant === "bearish" ? "bearish confluence accelerates into a real downside event" : dominant === "bullish" ? "a tail event flips multiple panels at once" : "chop persists, theta bleed wins for premium sellers", prob: 20 };
-
-      base.actionable = strong
-        ? (dominant === "bullish" ? "size up directional longs / sell put spreads. tight stops on bonds." : "reduce equity beta / buy downside / sell call spreads. defined risk only.")
-        : dominant === "mixed"
-          ? "sit on hands or take small defined-risk plays. wait for confluence."
-          : `lean ${dominant === "bullish" ? "long" : "short"} with 25-50% normal size. add only if more panels align.`;
-
-      base.invalidation = "two or more panels flip direction — the fused read inverts, exit and reassess.";
-      base.counterargument = strong
-        ? "confluence reads are vulnerable to single-event reversals. macro shock or liquidity event can flip everything in one print."
-        : "mixed signals can resolve sharply in either direction — don't assume chop persists if a major catalyst is on the calendar.";
-
+      base.edgeType = conf.neutral > total / 2 ? "none" : "environmental";
+      base.summary = `${sym} read across ${total} edge panels: ${conf.bullish} bullish, ${conf.bearish} bearish, ${conf.neutral} neutral or mixed. the panels overlap (they share inputs), so agreement is not independent confirmation.`;
+      cases(dominant === "mixed" ? "panels stay split" : `${dominant} agreement holds`, "more panels move to the bullish side", "more panels move to the bearish side");
+      base.actionable = "watch: which panels flip first; two or more flipping inverts the read.";
+      base.invalidation = "two or more panels flip direction.";
+      base.counterargument = "a single macro or liquidity event can flip several panels at once.";
       base.bullets = sigs.slice(0, 6).map(s => `${s.label}: ${s.bias} (${s.value})`);
     } else {
-      base.summary = "data loaded — no rule-based read available for this panel.";
-      base.actionable = "read the panel data directly.";
+      base.summary = "data loaded: no rule-based read available for this panel.";
+      base.actionable = "watch: the panel data directly.";
     }
   } catch (e) {
     console.error("[edgeLabBrief] deterministic fallback error:", (e as any)?.message);
@@ -432,7 +426,7 @@ function buildClvContext(): any {
   const s = getClvSummary();
   return {
     panel: "clv",
-    description: "Closing Line Value — measures whether trades got filled at better prices than the close. Positive CLV = real skill edge.",
+    description: "Closing Line Value — measures whether trades got filled at better prices than the close. Descriptive; no significance test is applied.",
     counts: { total: s.count, graded: s.gradedCount },
     edge: {
       meanBps: Number(s.meanBps?.toFixed(2)),
@@ -452,7 +446,7 @@ async function buildIvRvContext(symbol: string): Promise<any> {
   const snap = await computeIvRvSnapshot(symbol);
   return {
     panel: "iv-rv",
-    description: "compares implied vol (what option markets price in) to realized vol (what actually happened). Rich = options expensive, sell premium edge. Cheap = options cheap, buy premium edge.",
+    description: "compares implied vol (what option markets price in) to realized vol (what actually happened). IV usually exceeds RV (variance risk premium); the ratio alone does not say whether options are mispriced.",
     symbol: snap.symbol,
     spot: snap.spot,
     rv: snap.rv,
@@ -469,7 +463,7 @@ async function buildGammaContext(symbol: string): Promise<any> {
   if ("error" in c) return { panel: "gamma-curve", error: c.error };
   return {
     panel: "gamma-curve",
-    description: "Gamma exposure curve — where dealers have the most options exposure. Walls = price magnets. Vacuums = thin pockets where price moves fast. Asymmetry tells you bias.",
+    description: "Gamma exposure curve — estimated from open interest with an assumed dealer sign (not observed dealer positions). Walls = strikes with the largest exposure. Vacuums = strikes with little exposure.",
     symbol: c.symbol,
     spot: c.spot,
     zeroGamma: c.zeroGamma,
@@ -509,7 +503,7 @@ function buildMacroContext(): any {
   const cot = getCotSnapshot();
   return {
     panel: "macro-flow",
-    description: "FRED = official macro plumbing (rates, fed balance sheet, credit spreads, financial conditions). COT = how big specs are positioned in futures — extremes mean-revert.",
+    description: "FRED = official macro series (rates, fed balance sheet, credit spreads, financial conditions; daily or slower). CFTC COT = weekly futures positioning by trader category. Context only, not price signals.",
     fred: fred.slice(0, 18),
     cot: cot.slice(0, 9),
   };
@@ -556,8 +550,8 @@ async function buildEdgeSynthesisContext(symbol: string): Promise<any> {
     const ratioRaw = typeof r === "number" ? r : (r?.iv30_rv20 ?? r?.iv30_rv30 ?? r?.iv60_rv60);
     const ratio = Number(ratioRaw) || 0;
     if (ratio > 0) {
-      const bias = ratio > 1.25 ? "sell-vol" : ratio < 0.85 ? "buy-vol" : "neutral";
-      signals.push({ key: "iv-rv", label: "IV vs RV", bias, value: ratio.toFixed(2) + "x", note: bias === "sell-vol" ? "options pricing more vol than realized — premium sellers paid" : bias === "buy-vol" ? "options underpricing actual movement — long premium edge" : "options fair vs realized" });
+      const bias = ratio > 1.25 ? "iv-above-rv" : ratio < 0.85 ? "iv-below-rv" : "neutral";
+      signals.push({ key: "iv-rv", label: "IV vs RV", bias, value: ratio.toFixed(2) + "x", note: bias === "iv-above-rv" ? "options price more vol than realized" : bias === "iv-below-rv" ? "options price less vol than realized" : "IV close to realized" });
     } else {
       signals.push({ key: "iv-rv", label: "IV vs RV", bias: "insufficient", value: "n/a", note: "chain too thin to grade" });
     }
@@ -593,7 +587,7 @@ async function buildEdgeSynthesisContext(symbol: string): Promise<any> {
       const rr = Number(skew?.riskReversalNow ?? 0);
       // negative RR = puts richer = fear. positive RR = calls richer = greed
       const bias = rr < -1.5 ? "fear-priced" : rr > 1.5 ? "greed-priced" : "balanced";
-      signals.push({ key: "skew", label: "skew RR", bias, value: rr.toFixed(2), note: bias === "fear-priced" ? "crowd paying up for puts — contrarian fade setup if catalyst lines up" : bias === "greed-priced" ? "calls richer than puts — speculative bid, watch for reversal" : "skew balanced, no behavioral extreme" });
+      signals.push({ key: "skew", label: "skew RR", bias, value: rr.toFixed(2), note: bias === "fear-priced" ? "puts priced above calls: protection demand" : bias === "greed-priced" ? "calls richer than puts: speculative call demand" : "skew balanced, no extreme" });
     } else {
       signals.push({ key: "skew", label: "skew RR", bias: "insufficient", value: "n/a", note: skew?.error });
     }
@@ -624,17 +618,17 @@ async function buildEdgeSynthesisContext(symbol: string): Promise<any> {
     const pct = Number(a?.pctileVsHistory ?? 0);
     const isAnom = !!a?.isAnomaly || pct >= 95;
     const bias = isAnom ? "anomalous" : pct > 80 ? "elevated" : "baseline";
-    signals.push({ key: "anomaly", label: "anomaly", bias, value: pct.toFixed(0) + "th pctile", note: isAnom ? "tape statistically unusual — model didn't expect this — tighten risk" : pct > 80 ? "mildly elevated — keep eyes open" : "normal regime, indicators baseline" });
+    signals.push({ key: "anomaly", label: "anomaly", bias, value: pct.toFixed(0) + "th pctile", note: isAnom ? "market vector statistically unusual vs history" : pct > 80 ? "mildly elevated" : "indicators near baseline" });
   } catch {}
 
   // Confluence scoring
-  const bullishSignals = signals.filter(s => /buy-vol|mean-revert|risk-on|greed-priced/.test(s.bias)).length;
-  const bearishSignals = signals.filter(s => /sell-vol|trending|risk-off|fear-priced|anomalous/.test(s.bias)).length;
+  const bullishSignals = signals.filter(s => /iv-below-rv|mean-revert|risk-on|greed-priced/.test(s.bias)).length;
+  const bearishSignals = signals.filter(s => /iv-above-rv|trending|risk-off|fear-priced|anomalous/.test(s.bias)).length;
   const neutralSignals = signals.filter(s => /neutral|mixed|balanced|baseline|elevated|insufficient/.test(s.bias)).length;
 
   return {
     panel: "edge-synthesis",
-    description: "fused read across IV/RV, dealer gamma, cross-asset, skew, macro, anomaly. confluence = multiple signals same direction = high conviction.",
+    description: "fused read across IV/RV, dealer gamma, cross-asset, skew, macro, anomaly. the panels share inputs, so agreement is not independent confirmation.",
     symbol: sym,
     signals,
     confluence: {
@@ -688,7 +682,7 @@ Timestamp: ${new Date().toISOString()}
 DATA CONTEXT:
 ${JSON.stringify(ctx, null, 2)}
 
-Read the data, identify the edge type (or say "no edge — pass"), and write a peer brief in the JSON schema. The summary should be the kind of thing a sharp trader friend would tell another trader in 3 sentences. The actionable line should be specific. The invalidation should name a real number or condition.`;
+Read the data and describe it in the JSON schema: what it shows, what to watch next, and what would change the read. No trade, structure or size advice and no probabilities. The invalidation should name a real number or condition.`;
 
   // Try Claude first, then OpenAI, then deterministic
   let parsed = await callClaude(userPayload);
@@ -698,7 +692,7 @@ Read the data, identify the edge type (or say "no edge — pass"), and write a p
     source = "openai";
   }
   if (!parsed) {
-    return deterministicFallback(panel, ctx);
+    return scrubBrief(deterministicFallback(panel, ctx));
   }
 
   // normalize
@@ -709,20 +703,12 @@ Read the data, identify the edge type (or say "no edge — pass"), and write a p
     verdict: String(parsed.verdict ?? "—").slice(0, 40),
     verdictColor: colorOk.includes(parsed.verdictColor) ? parsed.verdictColor : "neutral",
     edgeType: edgeOk.includes(parsed.edgeType) ? parsed.edgeType : "none",
-    confidence: Math.max(0, Math.min(100, Number(parsed.confidence) || 0)),
+    // Any number the model returns for confidence or case weights is discarded.
+    confidence: null,
     summary: String(parsed.summary ?? ""),
-    baseCase: {
-      thesis: String(parsed.baseCase?.thesis ?? "—"),
-      prob: Math.max(0, Math.min(100, Number(parsed.baseCase?.prob) || 0)),
-    },
-    bullCase: {
-      thesis: String(parsed.bullCase?.thesis ?? "—"),
-      prob: Math.max(0, Math.min(100, Number(parsed.bullCase?.prob) || 0)),
-    },
-    bearCase: {
-      thesis: String(parsed.bearCase?.thesis ?? "—"),
-      prob: Math.max(0, Math.min(100, Number(parsed.bearCase?.prob) || 0)),
-    },
+    baseCase: { thesis: String(parsed.baseCase?.thesis ?? "—"), prob: null },
+    bullCase: { thesis: String(parsed.bullCase?.thesis ?? "—"), prob: null },
+    bearCase: { thesis: String(parsed.bearCase?.thesis ?? "—"), prob: null },
     actionable: String(parsed.actionable ?? "—"),
     invalidation: String(parsed.invalidation ?? "—"),
     counterargument: String(parsed.counterargument ?? "—"),
@@ -733,5 +719,5 @@ Read the data, identify the edge type (or say "no edge — pass"), and write a p
     contextSnapshot: ctx,
   };
 
-  return brief;
+  return scrubBrief(brief);
 }

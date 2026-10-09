@@ -46,6 +46,7 @@ import { streamOptionOverlay } from "./streamStore";
 import { callInternal } from "./internalApi";
 import { entryFillOf, liquidationReturn, optionStopHit, PLAN_OPTION_STOP_PCT, type EntryBasis } from "./exitValuation";
 import { feeForProduct } from "./feeConfig";
+import { exitBidUsable } from "./exitQuoteAge";
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -62,6 +63,10 @@ export interface ExitBrainEval {
   markSource?: "stream" | "rest_chain" | null;
   /** Schwab quote time behind the bid, epoch ms (null when unknown). */
   markQuoteTimeMs?: number | null;
+  /** Age of that quote at eval time, ms (null when unknown). */
+  markAgeMs?: number | null;
+  /** Why no usable bid (NO_QUOTE): none, unknown age, or older than REST_BID_MAX_AGE_MS. */
+  noQuoteReason?: string | null;
   /** Entry fill, $ per share: the ask at arm when logged, else the last print at arm (entryBasis). */
   entry: number;
   entryBasis?: EntryBasis;
@@ -190,7 +195,19 @@ async function getVix(): Promise<number | null> {
  * streamed and newer than the tracker's chain poll, else the tracker's last
  * Schwab chain row. No bid -> null (NO_QUOTE upstream), never a mid or last.
  */
-function getLiveQuote(contractKey: string): { bid: number | null; ask: number | null; source: "stream" | "rest_chain" | null; quoteTimeMs: number | null } {
+function getLiveQuote(contractKey: string, nowMs: number = Date.now()): {
+  bid: number | null; ask: number | null; source: "stream" | "rest_chain" | null; quoteTimeMs: number | null;
+  ageMs: number | null; noQuoteReason: string | null;
+} {
+  const raw = getRawQuote(contractKey);
+  // R3-2 item 9: a REST chain bid past REST_BID_MAX_AGE_MS (or of unknown
+  // age) is not a bid to decide on: NO_QUOTE upstream.
+  const u = exitBidUsable(raw.source, raw.bid, raw.quoteTimeMs, nowMs);
+  if (!u.usable) return { bid: null, ask: null, source: null, quoteTimeMs: raw.quoteTimeMs, ageMs: u.ageMs, noQuoteReason: u.reason };
+  return { ...raw, ageMs: u.ageMs, noQuoteReason: null };
+}
+
+function getRawQuote(contractKey: string): { bid: number | null; ask: number | null; source: "stream" | "rest_chain" | null; quoteTimeMs: number | null } {
   const snap = getOdteSnapshot();
   const row = snap.contracts.find((c) => c.key === contractKey);
   if (!row) return { bid: null, ask: null, source: null, quoteTimeMs: null };
@@ -470,7 +487,9 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
   // ─── Reasons (top contributors) ───────────────────────────────────
   const reasons: string[] = [];
   if (ret == null) {
-    reasons.push("NO BID: hard stop and P&L cannot be evaluated until the contract has a bid");
+    reasons.push(live.noQuoteReason && live.noQuoteReason !== "no bid"
+      ? `NO USABLE BID: ${live.noQuoteReason}; hard stop and P&L are not evaluated on an old price`
+      : "NO BID: hard stop and P&L cannot be evaluated until the contract has a bid");
   }
   if (hardStop >= 100 && ret != null) {
     reasons.push(`HARD STOP: bid ${mark?.toFixed(2)} <= $${(entry * (1 + HARD_STOP_PCT)).toFixed(2)} (0.80 x the $${entry.toFixed(2)} fill)`);
@@ -496,6 +515,8 @@ async function evaluatePosition(pos: TrackedPosition): Promise<ExitBrainEval> {
     mark,
     markSource: live.source,
     markQuoteTimeMs: live.quoteTimeMs,
+    markAgeMs: live.ageMs,
+    noQuoteReason: live.noQuoteReason,
     entry,
     entryBasis,
     drawdownPct: liq ? liq.netReturn : null,

@@ -18,11 +18,17 @@
 // Source rows: schwabChainRows.flattenSchwabChain (side, volume, OI, bid, ask, last).
 
 import { LAST_PRINT_SIDE_NOTE } from "@shared/flowLabels";
-import { etDate, isRegularSessionOpen, isTradingDay, sessionCloseMinutes, sessionCloseMs, sessionOpenMs } from "./exchangeCalendar";
+import { etDate, isRegularSessionOpen, isTradingDay, sessionCloseMs, sessionOpenMs } from "./exchangeCalendar";
 import { pcrReadAtClock, type PcrRead, type PcrZone } from "./pcrHistory";
 import { loadPcrSessions, recordPcrSnapshot, sessionMinuteOf } from "./pcrHistoryStore";
 
 import { flattenSchwabChain, chainVolumeTotals, chainSpot, type FlatContract } from "./schwabChainRows";
+import {
+  aggressorStateOf, currentVolumes, isFreshChain, seriesFrom, shouldAppendSample,
+  type ChainRead, type IntradaySeriesState, type IntradayVolumeState,
+} from "./flowIntradayState";
+import { summarizeStreamSide, type StreamSideSummary } from "./signedVolume";
+import { getActiveStreamStore } from "./streamStore";
 
 /** Expiry window (calendar days) of the chains behind every flow figure. */
 export const FLOW_DTE = 7;
@@ -210,15 +216,27 @@ export interface AggressorBreakdown {
 export interface IntradayFlowTicker {
   symbol: string;
   label: string;
+  /** Observed samples from fresh Schwab chains only; empty until there are enough. */
   series: IntradayVolSample[];
-  currentCallVol: number;
-  currentPutVol: number;
+  /** "insufficient_samples" = fewer than MIN_SERIES_SAMPLES fresh reads today (series empty). */
+  seriesState: IntradaySeriesState;
+  seriesReason: string | null;
+  /** null when volumeState is "unavailable" (never a placeholder 0). */
+  currentCallVol: number | null;
+  currentPutVol: number | null;
   currentPcr: number | null;
-  isEstimated: boolean; // true until real rolling sampler kicks in
+  /** "live" = this poll's fresh chain; "last_sample" = last fresh sample within its max age; "unavailable". */
+  volumeState: IntradayVolumeState;
+  /** Epoch seconds the current volumes were observed at. */
+  volumeAsOf: number | null;
+  /** This poll's chain: fresh, stale (not sampled) or unavailable. */
+  chainState: "fresh" | "stale" | "unavailable";
+  /** Always false: the synthesized U-curve series was removed (kept for older clients). */
+  isEstimated: boolean;
   // Classification of the snapshot
   aggressor: AggressorBreakdown;
-  // Convenience: total overall contract volume (calls + puts)
-  totalVol: number;
+  // Convenience: total overall contract volume (calls + puts); null when unavailable
+  totalVol: number | null;
   totalPrem: number;
   // Net aggressor score: (boughtCall + soldPut) - (soldCall + boughtPut)
   // positive = bullish aggression, negative = bearish aggression (premium $)
@@ -229,6 +247,12 @@ export interface IntradayFlowTicker {
   aggressorState: "live" | "cached" | "unavailable";
   /** Honest label for the side classification shown in the UI. */
   sideMethod: string;
+  /** Trade-level side (Lee-Ready) for the chain contracts streamed on LEVELONE_OPTIONS; null when none. */
+  streamSide: StreamSideSummary | null;
+  /** "live" = streamed blocks classified, stream connected; "stream_down" = stream not connected
+   *  (totals so far kept, coverage stopped); "none_streamed" = no chain contract is streamed;
+   *  "unavailable" = no fresh chain this poll (coverage base unknown). */
+  streamSideState: "live" | "stream_down" | "none_streamed" | "unavailable";
 }
 
 export interface IntradayFlowResponse {
@@ -245,6 +269,8 @@ interface VolBuffer {
   lastCallVol: number;
   lastPutVol: number;
   lastAggressor: AggressorBreakdown | null;
+  /** Epoch seconds of the fresh chain behind lastAggressor. */
+  lastAggressorAsOf: number | null;
 }
 const volBuffers = new Map<string, VolBuffer>();
 
@@ -269,73 +295,6 @@ function getTimeLabel(epochSecs: number): string {
   const etStr = d.toLocaleTimeString("en-US", { timeZone: "America/New_York",
     hour: "2-digit", minute: "2-digit", hour12: false });
   return etStr;
-}
-
-// Synthesize a U-shaped intraday volume distribution when real samples are scarce
-// Uses a typical opening/closing volume surge pattern
-function synthesizeIntradaySeries(
-  totalCallVol: number,
-  totalPutVol: number,
-  agg: AggressorBreakdown | null,
-  now: Date,
-): IntradayVolSample[] {
-  const samples: IntradayVolSample[] = [];
-  // 30-min buckets from 9:30 to today's close (exchange calendar: 13 on a
-  // full day, 7 on a 13:00 half day).
-  const marketOpenH = 9 * 60 + 30; // minutes since midnight ET
-  const marketCloseH = sessionCloseMinutes(etDate(now.getTime())) ?? 16 * 60;
-  const nowEt = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
-  const nowMins = nowEt.getHours() * 60 + nowEt.getMinutes();
-  // U-curve weights for each 30-min bucket (higher at open/close). On a half
-  // day keep the U: the first buckets of the full-day curve plus its last
-  // ones, so the cumulative fraction reaches 1 at the real close.
-  const FULL_DAY_WEIGHTS = [0.15, 0.09, 0.07, 0.06, 0.06, 0.06, 0.06, 0.07, 0.08, 0.09, 0.10, 0.08, 0.07];
-  const nBuckets = Math.max(1, Math.min(FULL_DAY_WEIGHTS.length, Math.round((marketCloseH - marketOpenH) / 30)));
-  const weights = nBuckets === FULL_DAY_WEIGHTS.length
-    ? FULL_DAY_WEIGHTS
-    : [...FULL_DAY_WEIGHTS.slice(0, Math.ceil(nBuckets / 2)), ...FULL_DAY_WEIGHTS.slice(FULL_DAY_WEIGHTS.length - Math.floor(nBuckets / 2))];
-  const totalWeight = weights.reduce((a, b) => a + b, 0);
-  // ET-aware 09:30 open epoch. The old version re-parsed an ET wall-clock string as
-  // server-local time, so on a UTC host every sample stamp was shifted by the ET offset.
-  const marketOpenEpoch = (() => {
-    // ET offset from UTC in ms (negative), independent of the host zone.
-    const etOffsetMs = nowEt.getTime() - new Date(now.toLocaleString("en-US", { timeZone: "UTC" })).getTime();
-    const openAsIfUtc = Date.UTC(nowEt.getFullYear(), nowEt.getMonth(), nowEt.getDate(), 9, 30, 0, 0);
-    return Math.floor((openAsIfUtc - etOffsetMs) / 1000);
-  })();
-
-  for (let i = 0; i < weights.length; i++) {
-    const bucketMins = marketOpenH + i * 30;
-    if (bucketMins > Math.min(nowMins, marketCloseH)) break;
-    const elapsed = (bucketMins - marketOpenH) / 30;
-    const t = marketOpenEpoch + elapsed * 1800;
-    const fraction = weights.slice(0, i + 1).reduce((a, b) => a + b, 0) / totalWeight;
-    // The old "dayFraction" blend was algebraically x*f*d + x*(1-d)*f = x*f, i.e. a no-op.
-    // These samples are a synthetic U-curve backfill of today's cumulative volume, not
-    // observed intraday prints.
-    const cumCall = Math.round(totalCallVol * fraction);
-    const cumPut = Math.round(totalPutVol * fraction);
-    // Still used (as a genuine scale) by the premium backfill below.
-    const dayFraction = Math.min(1, (nowMins - marketOpenH) / (marketCloseH - marketOpenH));
-    samples.push({
-      t,
-      timeLabel: getTimeLabel(t),
-      callVolume: cumCall,
-      putVolume: cumPut,
-      pcRatio: cumCall > 0 ? cumPut / cumCall : null,
-      boughtCallVol: Math.round(cumCall * (agg && agg.boughtCallVol + agg.soldCallVol + agg.unknownCallVol > 0 ? agg.boughtCallVol / (agg.boughtCallVol + agg.soldCallVol + agg.unknownCallVol) : 0.5)),
-      soldCallVol: Math.round(cumCall * (agg && agg.boughtCallVol + agg.soldCallVol + agg.unknownCallVol > 0 ? agg.soldCallVol / (agg.boughtCallVol + agg.soldCallVol + agg.unknownCallVol) : 0.5)),
-      unknownCallVol: agg && agg.boughtCallVol + agg.soldCallVol + agg.unknownCallVol > 0 ? Math.round(cumCall * agg.unknownCallVol / (agg.boughtCallVol + agg.soldCallVol + agg.unknownCallVol)) : 0,
-      boughtPutVol: Math.round(cumPut * (agg && agg.boughtPutVol + agg.soldPutVol + agg.unknownPutVol > 0 ? agg.boughtPutVol / (agg.boughtPutVol + agg.soldPutVol + agg.unknownPutVol) : 0.5)),
-      soldPutVol: Math.round(cumPut * (agg && agg.boughtPutVol + agg.soldPutVol + agg.unknownPutVol > 0 ? agg.soldPutVol / (agg.boughtPutVol + agg.soldPutVol + agg.unknownPutVol) : 0.5)),
-      unknownPutVol: agg && agg.boughtPutVol + agg.soldPutVol + agg.unknownPutVol > 0 ? Math.round(cumPut * agg.unknownPutVol / (agg.boughtPutVol + agg.soldPutVol + agg.unknownPutVol)) : 0,
-      boughtCallPrem: agg ? Math.round(agg.boughtCallPrem * fraction * dayFraction) : 0,
-      soldCallPrem: agg ? Math.round(agg.soldCallPrem * fraction * dayFraction) : 0,
-      boughtPutPrem: agg ? Math.round(agg.boughtPutPrem * fraction * dayFraction) : 0,
-      soldPutPrem: agg ? Math.round(agg.soldPutPrem * fraction * dayFraction) : 0,
-    });
-  }
-  return samples;
 }
 
 // ─── Last-print side classifier (quote rule on each contract's latest print) ─
@@ -396,96 +355,100 @@ export function classifyAggressor(options: ReadonlyArray<Pick<FlatContract, "sid
 export async function buildIntradayFlowSnapshot(): Promise<IntradayFlowResponse> {
   const today = getEtDateString();
   const open = isMarketOpen();
-  const now = new Date();
+  const nowEpoch = Math.floor(Date.now() / 1000);
   const tickers: IntradayFlowTicker[] = [];
-  let anyEstimated = false;
 
   for (const tk of INTRADAY_TICKERS) {
-    // Current snapshot from the Schwab chain (0-FLOW_DTE)
+    // Current snapshot from the Schwab chain (0-FLOW_DTE).
     let callVol = 0, putVol = 0;
     let agg: AggressorBreakdown | null = null;
-    let chainRows = 0;
+    let read = false, stale = false;
+    let opts: FlatContract[] = [];
     try {
       const chain = await flowChain(tk.chainSymbol);
-      const opts = chain ? flattenSchwabChain(chain) : [];
-      chainRows = opts.length;
-      for (const o of opts) {
-        const v = o.volume ?? 0;
-        if (o.side === "C") callVol += v;
-        else putVol += v;
+      if (chain) {
+        read = true;
+        stale = !!(chain as any).stale;
+        opts = flattenSchwabChain(chain);
+        for (const o of opts) {
+          const v = o.volume ?? 0;
+          if (o.side === "C") callVol += v;
+          else putVol += v;
+        }
+        agg = classifyAggressor(opts);
       }
-      if (chain) agg = classifyAggressor(opts);
     } catch (_) {
-      // fallback to buffer if available
+      read = false;
+    }
+    const chainRead: ChainRead = { read, stale, callVol, putVol };
+    const fresh = isFreshChain(chainRead);
+
+    // Trade-level side for streamed contracts (R3-2 item 4); coverage vs the
+    // fresh chain's day volume.
+    let streamSide: StreamSideSummary | null = null;
+    let streamSideState: IntradayFlowTicker["streamSideState"] = "unavailable";
+    if (fresh) {
+      const store = getActiveStreamStore();
+      if (!store) streamSideState = "stream_down";
+      else {
+        const nowMs = Date.now();
+        const sum = summarizeStreamSide(opts.map((o) => ({ occ: o.occ, side: o.side, dayVolume: o.volume })), (occ) => store.optionSides.get(occ, nowMs));
+        if (sum.contracts > 0) { streamSide = sum; streamSideState = store.connected ? "live" : "stream_down"; }
+        else streamSideState = store.connected ? "none_streamed" : "stream_down";
+      }
     }
 
     let buf = volBuffers.get(tk.symbol);
     // Reset buffer daily
     if (!buf || buf.lastResetDay !== today) {
-      buf = { lastResetDay: today, samples: [], lastCallVol: 0, lastPutVol: 0, lastAggressor: null };
+      buf = { lastResetDay: today, samples: [], lastCallVol: 0, lastPutVol: 0, lastAggressor: null, lastAggressorAsOf: null };
       volBuffers.set(tk.symbol, buf);
     }
 
-    const nowEpoch = Math.floor(now.getTime() / 1000);
-    const hasRealData = callVol > 0 || putVol > 0;
-
-    if (hasRealData) {
-      // Only add a new sample if time has advanced meaningfully (>= 60s)
-      const lastSample = buf.samples[buf.samples.length - 1];
-      if (!lastSample || nowEpoch - lastSample.t >= 55) {
-        const pcRatio = callVol > 0 ? putVol / callVol : null;
-        buf.samples.push({
-          t: nowEpoch,
-          timeLabel: getTimeLabel(nowEpoch),
-          callVolume: callVol,
-          putVolume: putVol,
-          pcRatio,
-          boughtCallVol: agg?.boughtCallVol ?? 0,
-          soldCallVol: agg?.soldCallVol ?? 0,
-          unknownCallVol: agg?.unknownCallVol ?? 0,
-          boughtPutVol: agg?.boughtPutVol ?? 0,
-          soldPutVol: agg?.soldPutVol ?? 0,
-          unknownPutVol: agg?.unknownPutVol ?? 0,
-          boughtCallPrem: agg?.boughtCallPrem ?? 0,
-          soldCallPrem: agg?.soldCallPrem ?? 0,
-          boughtPutPrem: agg?.boughtPutPrem ?? 0,
-          soldPutPrem: agg?.soldPutPrem ?? 0,
-        });
-        // Keep max 390 samples (1 per minute for 6.5h session)
-        if (buf.samples.length > 390) buf.samples.shift();
-      }
+    // Samples only from fresh chains (an observed zero is a sample; a stale
+    // or failed chain is not).
+    const lastSample = buf.samples[buf.samples.length - 1] ?? null;
+    if (shouldAppendSample(chainRead, lastSample?.t ?? null, nowEpoch)) {
+      buf.samples.push({
+        t: nowEpoch,
+        timeLabel: getTimeLabel(nowEpoch),
+        callVolume: callVol,
+        putVolume: putVol,
+        pcRatio: callVol > 0 ? putVol / callVol : null,
+        boughtCallVol: agg?.boughtCallVol ?? 0,
+        soldCallVol: agg?.soldCallVol ?? 0,
+        unknownCallVol: agg?.unknownCallVol ?? 0,
+        boughtPutVol: agg?.boughtPutVol ?? 0,
+        soldPutVol: agg?.soldPutVol ?? 0,
+        unknownPutVol: agg?.unknownPutVol ?? 0,
+        boughtCallPrem: agg?.boughtCallPrem ?? 0,
+        soldCallPrem: agg?.soldCallPrem ?? 0,
+        boughtPutPrem: agg?.boughtPutPrem ?? 0,
+        soldPutPrem: agg?.soldPutPrem ?? 0,
+      });
+      // Keep max 390 samples (1 per minute for 6.5h session)
+      if (buf.samples.length > 390) buf.samples.shift();
+    }
+    if (fresh) {
       buf.lastCallVol = callVol;
       buf.lastPutVol = putVol;
-      if (agg) buf.lastAggressor = agg;
+      if (agg) { buf.lastAggressor = agg; buf.lastAggressorAsOf = nowEpoch; }
     }
 
-    // Use real samples if we have them, else synthesize
-    let series: IntradayVolSample[];
-    let isEstimated: boolean;
-    if (buf.samples.length >= 2) {
-      series = [...buf.samples];
-      isEstimated = false;
-    } else {
-      // Synthesize from cumulative total
-      const totalCall = hasRealData ? callVol : buf.lastCallVol;
-      const totalPut = hasRealData ? putVol : buf.lastPutVol;
-      series = synthesizeIntradaySeries(totalCall, totalPut, agg ?? buf.lastAggressor, now);
-      isEstimated = true;
-      anyEstimated = true;
-    }
+    // Observed samples only; no synthesized backfill (R3-2 item 2).
+    const { series, seriesState, seriesReason } = seriesFrom(buf.samples);
+    const cur = currentVolumes(chainRead, buf.samples[buf.samples.length - 1] ?? null, nowEpoch);
 
-    const currentCall = hasRealData ? callVol : buf.lastCallVol;
-    const currentPut = hasRealData ? putVol : buf.lastPutVol;
-    // Data state for the side breakdown: never present a failed fetch as a $0 read.
-    const aggressorState: IntradayFlowTicker["aggressorState"] =
-      agg && chainRows > 0 ? "live" : !agg && buf.lastAggressor ? "cached" : "unavailable";
-    const effectiveAgg: AggressorBreakdown = agg ?? buf.lastAggressor ?? {
+    // Data state for the side breakdown: never present a failed fetch as a $0 read,
+    // and re-use the last breakdown only within LAST_SAMPLE_MAX_AGE_MS.
+    const aggressorState = aggressorStateOf(fresh && agg != null, buf.lastAggressorAsOf, nowEpoch);
+    const effectiveAgg: AggressorBreakdown = (fresh ? agg : aggressorState === "cached" ? buf.lastAggressor : null) ?? {
       boughtCallVol: 0, soldCallVol: 0, unknownCallVol: 0,
       boughtPutVol: 0, soldPutVol: 0, unknownPutVol: 0,
       boughtCallPrem: 0, soldCallPrem: 0, boughtPutPrem: 0, soldPutPrem: 0,
       classifiedPct: 0,
     };
-    const totalVol = currentCall + currentPut;
+    const totalVol = cur.callVol != null && cur.putVol != null ? cur.callVol + cur.putVol : null;
     const totalPrem = effectiveAgg.boughtCallPrem + effectiveAgg.soldCallPrem + effectiveAgg.boughtPutPrem + effectiveAgg.soldPutPrem;
     // Bullish aggression = bought calls + sold puts (premium paid for upside / premium collected on downside)
     // Bearish aggression = sold calls + bought puts
@@ -499,16 +462,23 @@ export async function buildIntradayFlowSnapshot(): Promise<IntradayFlowResponse>
       symbol: tk.symbol,
       label: tk.label,
       series,
-      currentCallVol: currentCall,
-      currentPutVol: currentPut,
-      currentPcr: currentCall > 0 ? currentPut / currentCall : null,
-      isEstimated,
+      seriesState,
+      seriesReason,
+      currentCallVol: cur.callVol,
+      currentPutVol: cur.putVol,
+      currentPcr: cur.pcr,
+      volumeState: cur.volumeState,
+      volumeAsOf: cur.volumeAsOf,
+      chainState: !read ? "unavailable" : stale ? "stale" : "fresh",
+      isEstimated: false,
       aggressor: effectiveAgg,
       totalVol,
       totalPrem,
       netAggressorPrem,
       aggressorState,
       sideMethod: LAST_PRINT_SIDE_NOTE,
+      streamSide,
+      streamSideState,
     });
   }
 
@@ -516,7 +486,7 @@ export async function buildIntradayFlowSnapshot(): Promise<IntradayFlowResponse>
     tickers,
     asOf: new Date().toISOString(),
     marketOpen: open,
-    estimated: anyEstimated,
+    estimated: false,
   };
 }
 
@@ -611,7 +581,10 @@ export async function buildFlowSnapshot(): Promise<FlowResponse> {
   const mag7Pcr = volumePcr(mag7Group);
   const combinedPcr = volumePcr([...indexTickers, ...mag7Group]);
 
-  if (indexPcr != null && mag7Pcr != null && combinedPcr != null) {
+  // The aggregate ring takes only polls where every constituent chain was
+  // read fresh: a stale or missing name would change the basket mid-series.
+  const allFresh = [...indexTickers, ...mag7Group].every((t) => t.dataState === "ok" && !t.chainStale);
+  if (allFresh && indexPcr != null && mag7Pcr != null && combinedPcr != null) {
     const now = Math.floor(Date.now() / 1000);
     if (
       intradayRing.length === 0 ||
@@ -621,7 +594,7 @@ export async function buildFlowSnapshot(): Promise<FlowResponse> {
       if (intradayRing.length > RING_MAX) intradayRing.shift();
     }
   } else {
-    warnings.push("Intraday aggregate unavailable for at least one group.");
+    warnings.push("Intraday P/C sample skipped: at least one constituent chain was stale or unavailable.");
   }
 
   return attachPcrHistory({

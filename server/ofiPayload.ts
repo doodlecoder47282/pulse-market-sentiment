@@ -17,8 +17,54 @@
 //     incomplete, so trendComplete is false and the client withholds the trend
 //     and acceleration badges instead of showing a biased read.
 //   - asOfMs is the last bar's timestamp (data time), not the request time.
+//   - The signing method travels with the payload (R3-2 item 3): "tick-rule-1m"
+//     (bar-level tick rule on Schwab REST minute bars), "lee-ready-l1" (every
+//     minute from Schwab LEVELONE trade blocks signed by Lee-Ready against the
+//     prior quote) or "hybrid-l1" (bar rule, then trade blocks from
+//     tradeLevelFromMs). methodLabel / methodNote are what the UI shows, so
+//     the panel never calls a Lee-Ready read "tick rule" or the reverse.
+//     Lee & Ready (1991), "Inferring Trade Direction from Intraday Data",
+//     J. Finance 46(2), https://doi.org/10.1111/j.1540-6261.1991.tb02683.x
 
 export type OfiDataState = "ok" | "partial" | "unavailable";
+export type OfiMethod = "tick-rule-1m" | "lee-ready-l1" | "hybrid-l1";
+export type OfiTradeLevelCounts = { quoteRule: number; tickRule: number; unsigned: number };
+
+/** UI label and note for the signing method; counts give the Lee-Ready coverage of trade blocks. */
+export function ofiMethodLabel(
+  method: OfiMethod | undefined,
+  tradeLevelFromMs: number | null | undefined,
+  counts: OfiTradeLevelCounts | null | undefined,
+): { methodLabel: string; methodNote: string; tradeLevelCoveragePct: number | null } {
+  const total = counts ? counts.quoteRule + counts.tickRule + counts.unsigned : 0;
+  const pct = (n: number) => (total > 0 ? Math.round((n / total) * 1000) / 10 : 0);
+  const coverage = counts && total > 0
+    ? `${total} trade blocks this stream session: ${pct(counts.quoteRule)}% quote rule, ${pct(counts.tickRule)}% tick rule (at the mid), ${pct(counts.unsigned)}% unsigned.`
+    : "";
+  const blockNote = "A LEVELONE trade block is the volume between two streamed updates (one or more prints at the update's last price); Schwab provides no time-and-sales tape.";
+  const from = tradeLevelFromMs != null
+    ? new Date(tradeLevelFromMs).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }) + " ET"
+    : null;
+  if (method === "lee-ready-l1") {
+    return {
+      methodLabel: "Signed volume · Lee-Ready on streamed trades (SPY)",
+      methodNote: `Every minute shown is the sum of Schwab LEVELONE trade blocks signed by Lee-Ready against the prior quote (quote rule; tick rule at the mid). ${blockNote} ${coverage}`.trim(),
+      tradeLevelCoveragePct: total > 0 ? pct(counts!.quoteRule + counts!.tickRule) : null,
+    };
+  }
+  if (method === "hybrid-l1") {
+    return {
+      methodLabel: `Signed volume · tick rule, Lee-Ready from ${from ?? "stream start"} (SPY)`,
+      methodNote: `Minutes before ${from ?? "the stream start"}: tick rule on 1-minute Schwab bars (whole bar volume signed by close-to-close change). From then: Schwab LEVELONE trade blocks signed by Lee-Ready against the prior quote. ${blockNote} ${coverage}`.trim(),
+      tradeLevelCoveragePct: total > 0 ? pct(counts!.quoteRule + counts!.tickRule) : null,
+    };
+  }
+  return {
+    methodLabel: "Signed tick volume · 1m (SPY proxy)",
+    methodNote: "Signed tick volume: tick rule on 1-minute SPY closes; each bar's whole volume takes the sign of its close-to-close change (zero change keeps the last sign). Not Lee-Ready trade classification and not order-book OFI. The Schwab stream is not live, so no trade-level read.",
+    tradeLevelCoveragePct: null,
+  };
+}
 
 export interface OfiTrendLike {
   bars: Array<{ ts: number; signedVolume: number; cumulative: number; volumeMissing?: boolean }>;
@@ -29,6 +75,9 @@ export interface OfiTrendLike {
   acceleration: "ACCELERATING" | "DECELERATING" | "FLAT";
   dataState: OfiDataState;
   volumeMissingBars?: number;
+  method?: OfiMethod;
+  tradeLevelFromMs?: number | null;
+  tradeLevelCounts?: OfiTradeLevelCounts | null;
 }
 
 export interface OfiApiBar {
@@ -86,6 +135,7 @@ export function ofiApiPayload(trend: OfiTrendLike, nowMs: number) {
     dataStateReason = `${volumeMissingBars} of ${all.length} minute bars arrived without volume (shown as gaps)`;
   }
 
+  const m = ofiMethodLabel(trend.method, trend.tradeLevelFromMs, trend.tradeLevelCounts);
   return {
     bars: tail,
     // Unknown once any bar lacked volume (not "the sum of the known bars").
@@ -103,6 +153,12 @@ export function ofiApiPayload(trend: OfiTrendLike, nowMs: number) {
     trendComplete,
     asOfMs: all.length > 0 ? all[all.length - 1].ts : null,
     capturedAt: Math.floor(nowMs / 1000),
+    method: trend.method ?? "tick-rule-1m",
+    methodLabel: m.methodLabel,
+    methodNote: m.methodNote,
+    tradeLevelFromMs: trend.tradeLevelFromMs ?? null,
+    tradeLevelCounts: trend.tradeLevelCounts ?? null,
+    tradeLevelCoveragePct: m.tradeLevelCoveragePct,
   };
 }
 

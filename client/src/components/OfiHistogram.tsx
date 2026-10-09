@@ -54,6 +54,10 @@ type OfiResponse = {
   trendComplete?: boolean;
   asOfMs?: number | null;
   capturedAt: number;
+  /** Signing method (server/ofiPayload.ts ofiMethodLabel); label follows it. */
+  method?: "tick-rule-1m" | "lee-ready-l1" | "hybrid-l1";
+  methodLabel?: string;
+  methodNote?: string;
 };
 
 // Last minute bar older than 5 minutes = stale (server/ofiPayload.ts OFI_MAX_AGE_MS).
@@ -157,8 +161,8 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
   return (
     <div className="rounded-md border border-border/60 bg-card/40 p-2.5" data-testid="ofi-histogram">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-muted-foreground" title={SIGNED_TICK_VOLUME_NOTE}>
-          Signed tick volume · 1m (SPY proxy)
+        <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-muted-foreground" title={data.methodNote ?? SIGNED_TICK_VOLUME_NOTE} data-testid="ofi-method-label">
+          {data.methodLabel ?? "Signed tick volume · 1m (SPY proxy)"}
         </span>
         <EdgeInfo id="order-flow" className="h-6 w-6" />
         <DataStateChip

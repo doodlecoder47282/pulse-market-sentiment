@@ -22,7 +22,7 @@
 //
 // The indicator outputs:
 //   score: -100..+100 (positive = upside squeeze risk, negative = downside crash risk)
-//   probability: 0..100 (conviction that a >1.5% move could materialize in <3 sessions)
+//   probability: 0..100 intensity (sum of hand-set rule points; NOT a probability, field name is historical)
 //   direction: "up" | "down" | "neutral"
 //   triggers: string[]  (the rules that actually fired)
 
@@ -96,7 +96,9 @@ export type DailyPlaybook = {
     resistance: Array<{ level: number; label: string }>;
     support: Array<{ level: number; label: string }>;
   };
-  gameplan: string[];        // actionable bullets
+  gameplan: string[];        // descriptive context bullets (no trade, structure or size advice)
+  /** Inputs that were unavailable and added no points (never read as 0 / 1.00). */
+  unavailableInputs?: string[];
   /** NEW: today's news playbook — per-event reaction map. */
   newsPlaybook?: Array<{
     event: string;            // e.g. "FOMC 2pm"
@@ -164,7 +166,9 @@ export function computeSqueezeIndicator(inp: SqueezeInputs): SqueezeIndicator {
 
   // 3. Term structure (vol regime)
   const termRatio = term.ratio9dOver30d;
-  if (termRatio != null) {
+  if (termRatio == null || !Number.isFinite(termRatio)) {
+    risks.push("VIX 9D/30D term ratio unavailable: the term-structure rule did not run");
+  } else {
     if (termRatio > 1.05) {
       downFuel += 15;
       triggers.push(`VIX term backwardated (9D/30D=${termRatio.toFixed(3)}) — near-term stress priced in`);
@@ -175,11 +179,15 @@ export function computeSqueezeIndicator(inp: SqueezeInputs): SqueezeIndicator {
   }
 
   // 4. VIX level dynamics
-  const v = vix.value ?? 0;
-  if (v != null && v > 25 && (vix.changePct ?? 0) > 5) {
+  // Missing VIX (or its change) is unavailable, not 0: no VIX rule fires.
+  const v = vix.value != null && Number.isFinite(vix.value) ? vix.value : null;
+  const vc = vix.changePct != null && Number.isFinite(vix.changePct) ? vix.changePct : null;
+  if (v == null || vc == null) {
+    risks.push("VIX level or change unavailable from Schwab: the VIX rules did not run");
+  } else if (v > 25 && vc > 5) {
     downFuel += 12;
     triggers.push(`VIX ${v.toFixed(1)} and rising — hedging demand active, short-gamma dealers forced to press`);
-  } else if (v < 16 && (vix.changePct ?? 0) < -3) {
+  } else if (v < 16 && vc < -3) {
     upFuel += 10;
     triggers.push(`VIX ${v.toFixed(1)} and compressing — vanna/charm flows supportive, systematic vol-sellers re-leveraging`);
   }
@@ -303,9 +311,14 @@ type PlaybookInputs = {
   pivots: PivotBundle | null;
   term: TermStructure;
   vix: VolMetric;
-  compositeScore: number;        // 0..100 (fear..greed)
-  compositeLabel: string;
-  voicesBiasScore?: number | null;  // -100..+100
+  /**
+   * Market-only composite (0..100): the implied-vol and options-positioning
+   * gauges of composite.ts (Schwab price/options inputs). null when no market
+   * gauge was available. The full composite (which blends sentiment, news and
+   * COT context) and the StockTwits/Reddit voices bias are NOT inputs: non-price
+   * context never feeds the bias (user rule 2; R3-2 item 6).
+   */
+  marketScore: number | null;
   squeeze: SqueezeIndicator;
   /** Optional: today's catalyst events from the news calendar (FOMC/CPI/PCE/NFP/earnings). */
   todaysEvents?: Array<{ kind: string; label: string; timeLabel?: string }>;
@@ -445,36 +458,52 @@ function buildNewsPlaybook(
   return out;
 }
 
+/**
+ * Bias points (hand-set heuristic, not fitted). Inputs: the market-only
+ * composite, the estimated gamma regime, the squeeze direction, the VIX
+ * 9D/30D ratio and the VIX level. A missing input adds no points to either
+ * side (unavailable, never read as VIX 0 or a flat 1.00 term ratio).
+ */
+export function playbookBiasPoints(inp: Pick<PlaybookInputs, "marketScore" | "gamma" | "squeeze" | "term" | "vix">): {
+  bullPts: number; bearPts: number; marketScore: number | null; v: number | null; vChg: number | null; termRatio: number | null;
+  unavailable: string[];
+} {
+  const fin = (x: number | null | undefined): number | null => (x != null && Number.isFinite(x) ? x : null);
+  const marketScore = fin(inp.marketScore);
+  const v = fin(inp.vix.value);
+  const vChg = fin(inp.vix.changePct);
+  const termRatio = fin(inp.term.ratio9dOver30d);
+  const unavailable: string[] = [];
+  if (marketScore == null) unavailable.push("market composite");
+  if (v == null) unavailable.push("VIX");
+  if (termRatio == null) unavailable.push("VIX 9D/30D ratio");
+  const bullPts =
+    (marketScore == null ? 0 : marketScore > 60 ? 2 : marketScore > 50 ? 1 : 0) +
+    (inp.gamma.regime === "positive" ? 2 : 0) +
+    (inp.squeeze.direction === "up" ? 2 : 0) +
+    (termRatio != null && termRatio < 0.95 ? 1 : 0);
+  const bearPts =
+    (marketScore == null ? 0 : marketScore < 40 ? 2 : marketScore < 50 ? 1 : 0) +
+    (inp.gamma.regime === "negative" ? 2 : 0) +
+    (inp.squeeze.direction === "down" ? 2 : 0) +
+    (termRatio != null && termRatio > 1.05 ? 1 : 0) +
+    (v != null && v > 25 ? 1 : 0);
+  return { bullPts, bearPts, marketScore, v, vChg, termRatio, unavailable };
+}
+
 export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
-  const { spot, gamma, pivots, term, vix, compositeScore, voicesBiasScore, squeeze } = inp;
-  const v = vix.value ?? 0;
-  const vChg = vix.changePct ?? 0;
-  const termRatio = term.ratio9dOver30d ?? 1;
+  const { spot, gamma, pivots, squeeze } = inp;
+  const { bullPts, bearPts, marketScore, v, vChg, termRatio, unavailable } = playbookBiasPoints(inp);
 
   // Determine bias
   let bias: DailyPlaybook["bias"] = "neutral";
   let conviction: DailyPlaybook["conviction"] = "moderate";
 
-  // Bias heuristic: combine composite (0-100), gamma regime, squeeze direction, voices.
-  const bullPts =
-    (compositeScore > 60 ? 2 : compositeScore > 50 ? 1 : 0) +
-    (gamma.regime === "positive" ? 2 : 0) +
-    (squeeze.direction === "up" ? 2 : 0) +
-    ((voicesBiasScore ?? 0) > 15 ? 1 : 0) +
-    (termRatio < 0.95 ? 1 : 0);
-  const bearPts =
-    (compositeScore < 40 ? 2 : compositeScore < 50 ? 1 : 0) +
-    (gamma.regime === "negative" ? 2 : 0) +
-    (squeeze.direction === "down" ? 2 : 0) +
-    ((voicesBiasScore ?? 0) < -15 ? 1 : 0) +
-    (termRatio > 1.05 ? 1 : 0) +
-    (v > 25 ? 1 : 0);
-
   if (bullPts - bearPts >= 4) { bias = "bullish"; conviction = "high"; }
   else if (bullPts - bearPts >= 2) { bias = "bullish"; conviction = "moderate"; }
   else if (bearPts - bullPts >= 4) { bias = "bearish"; conviction = "high"; }
   else if (bearPts - bullPts >= 2) { bias = "bearish"; conviction = "moderate"; }
-  else if (Math.abs(squeeze.score) > 50 || v > 30) { bias = "volatile"; conviction = "moderate"; }
+  else if (Math.abs(squeeze.score) > 50 || (v != null && v > 30)) { bias = "volatile"; conviction = "moderate"; }
   else { bias = "neutral"; conviction = "low"; }
 
   // Build scenarios
@@ -600,12 +629,15 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
 
   // Gameplan bullets
   const gameplan: string[] = [];
+  // Descriptive context only (R3-2 item 6): no structure (condors, spreads,
+  // hedges) and no sizing advice. The gamma regime is a model estimate from
+  // OI with an assumed dealer sign, not observed dealer positions.
   if (gamma.regime === "positive") {
-    gameplan.push(`Favor fading extremes. Buy dips to ${pw.toFixed(0)}, sell rips at ${cw.toFixed(0)}. 0DTE iron condors with short strikes at/outside walls favored.`);
+    gameplan.push(`Estimated dealer gamma is positive: hedging flow tends to lean against moves, so the ${pw.toFixed(0)} put wall and ${cw.toFixed(0)} call wall are the levels to watch for reversion.`);
   } else if (gamma.regime === "negative") {
-    gameplan.push(`Favor trend continuation. Avoid catching knives below ${pw.toFixed(0)}. 0DTE debit spreads in the direction of first-30min break.`);
+    gameplan.push(`Estimated dealer gamma is negative: hedging flow tends to add to moves, so a break of ${pw.toFixed(0)} or ${cw.toFixed(0)} can extend further than in a positive-gamma tape.`);
   } else {
-    gameplan.push(`Wait for first-30min close relative to zero-gamma ${zg?.toFixed(1) ?? "flip"}. Size half of normal until regime confirms.`);
+    gameplan.push(`Estimated dealer gamma is near zero: the first 30-minute close relative to zero-gamma ${zg?.toFixed(1) ?? "(unavailable)"} shows which regime the session is in.`);
   }
 
   if (pivots) {
@@ -617,13 +649,13 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
   }
 
   if (squeeze.direction === "up" && squeeze.probability > 50) {
-    gameplan.push(`Gamma-squeeze setup skewed UP (score ${squeeze.score}, intensity ${squeeze.probability}/100, heuristic). Consider 0-3 DTE call spreads above ${cw.toFixed(0)} for ${squeeze.timeHorizon}.`);
+    gameplan.push(`Gamma-squeeze read skewed UP (score ${squeeze.score}, intensity ${squeeze.probability}/100, hand-set heuristic, not a probability); the ${cw.toFixed(0)} call wall is the level it refers to.`);
   } else if (squeeze.direction === "down" && squeeze.probability > 50) {
-    gameplan.push(`Gamma-squeeze setup skewed DOWN (score ${squeeze.score}, intensity ${squeeze.probability}/100, heuristic). Protect longs with 0-3 DTE put hedges at/below ${pw.toFixed(0)} for ${squeeze.timeHorizon}.`);
+    gameplan.push(`Gamma-squeeze read skewed DOWN (score ${squeeze.score}, intensity ${squeeze.probability}/100, hand-set heuristic, not a probability); the ${pw.toFixed(0)} put wall is the level it refers to.`);
   }
 
-  if (v > 25) {
-    gameplan.push(`VIX ${v.toFixed(1)} (${vChg > 0 ? "+" : ""}${vChg.toFixed(1)}%) — risk-off regime. Reduce position size and widen stops beyond noise.`);
+  if (v != null && v > 25) {
+    gameplan.push(`VIX ${v.toFixed(1)}${vChg != null ? ` (${vChg > 0 ? "+" : ""}${vChg.toFixed(1)}%)` : ""}: above 25, a stressed implied-vol level; ranges are wider than in calm tape.`);
   }
 
   // Summary narrative
@@ -631,8 +663,15 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
     const parts: string[] = [];
     parts.push(`Dealer gamma is ${gamma.regime === "positive" ? "NET LONG" : gamma.regime === "negative" ? "NET SHORT" : "NEAR ZERO"} (${(gamma.totalGex / 1e9).toFixed(2)}B/1%).`);
     parts.push(`${gamma.regime === "positive" ? "Expect mean-reversion and pinning." : gamma.regime === "negative" ? "Expect trend amplification and range expansion." : "Unstable regime; wait for the flip to resolve."}`);
-    parts.push(`VIX at ${v.toFixed(2)} (${vChg > 0 ? "+" : ""}${vChg.toFixed(1)}% d/d); term ratio ${termRatio.toFixed(3)} ${termRatio > 1 ? "(backwardation = near-term stress)" : "(contango = calm front-end)"}.`);
-    parts.push(`Composite sentiment ${compositeScore}/100 (${bias === "bullish" ? "tilted bullish" : bias === "bearish" ? "tilted bearish" : "mixed"}).`);
+    parts.push(v != null
+      ? `VIX at ${v.toFixed(2)}${vChg != null ? ` (${vChg > 0 ? "+" : ""}${vChg.toFixed(1)}% d/d)` : " (change unavailable)"}.`
+      : "VIX unavailable from Schwab.");
+    parts.push(termRatio != null
+      ? `VIX 9D/30D ratio ${termRatio.toFixed(3)} ${termRatio > 1 ? "(backwardation = near-term stress)" : "(contango = calm front-end)"}.`
+      : "VIX 9D/30D term ratio unavailable.");
+    parts.push(marketScore != null
+      ? `Market-only composite ${marketScore}/100 (implied-vol and options-positioning gauges; ${bias === "bullish" ? "tilted bullish" : bias === "bearish" ? "tilted bearish" : "mixed"}).`
+      : "Market-only composite unavailable.");
     if (squeeze.probability > 40) {
       parts.push(`Gamma-squeeze intensity ${squeeze.probability}/100 (heuristic) with a ${squeeze.direction.toUpperCase()} skew (${squeeze.timeHorizon}).`);
     }
@@ -640,12 +679,13 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
   })();
 
   const headline = (() => {
-    if (bias === "bullish" && conviction === "high") return "Structural Bid — Lean Long Into Key Levels";
-    if (bias === "bullish") return "Modest Upside Lean — Fade Pullbacks";
-    if (bias === "bearish" && conviction === "high") return "Risk-Off Regime — Rallies Are For Sale";
-    if (bias === "bearish") return "Defensive Tilt — Protect Longs, Size Down";
-    if (bias === "volatile") return "Unstable Regime — Trade The Flip, Not The Trend";
-    return "Balanced Tape — Let Levels Do The Talking";
+    // Descriptive headlines: what the inputs read, not what to trade.
+    if (bias === "bullish" && conviction === "high") return "Inputs Lean Bullish — Strong Agreement";
+    if (bias === "bullish") return "Inputs Lean Bullish — Partial Agreement";
+    if (bias === "bearish" && conviction === "high") return "Inputs Lean Bearish — Strong Agreement";
+    if (bias === "bearish") return "Inputs Lean Bearish — Partial Agreement";
+    if (bias === "volatile") return "Unstable Regime — Near The Gamma Flip Or Elevated VIX";
+    return "Balanced Inputs — No Directional Lean";
   })();
 
   // Key levels for the header
@@ -682,5 +722,6 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
     newsPlaybook,
     keyLevels: { resistance, support },
     gameplan,
+    unavailableInputs: unavailable,
   };
 }

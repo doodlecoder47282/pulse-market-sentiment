@@ -132,7 +132,8 @@ export async function snapshotHorizon(horizon: ModelHorizon, horizonKey: string)
   // at the same moment and can be graded against the same forward outcome.
   let masterAlpha: MasterAlphaSnap | undefined;
   try {
-    const ma = await runMasterAlpha({ horizon });
+    // narrative: false — the logged row keeps only the numbers, so no LLM call.
+    const ma = await runMasterAlpha({ horizon, narrative: false });
     masterAlpha = {
       compositeEdgeBps: Number((ma.compositeEdgeBps ?? 0).toFixed(2)),
       compositeSignal: ma.heuristicBand, // band of the logged score; the API signal is gated (UNRATED until a fit is promoted)

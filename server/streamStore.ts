@@ -34,6 +34,7 @@
 // never used as current (user rule: no delayed data shown as current).
 
 import { quoteFreshness } from "./quoteFreshness";
+import { OptionTradeSideBook } from "./signedVolume";
 
 // ─── Field maps (numeric keys in Schwab Streamer content items) ─────────────
 
@@ -244,6 +245,8 @@ export class StreamStore {
   lastDataAtMs: Partial<Record<StreamService, number>> = {};
   equities = new Map<string, StreamEquityQuote>();
   options = new Map<string, StreamOptionQuote>();
+  /** Lee-Ready side of streamed option trade blocks, per contract per ET day (signedVolume.ts). */
+  optionSides = new OptionTradeSideBook();
   ticks = new Map<string, TickRing>();
   /** Per tick symbol: receive time of the first update of the current session (continuous coverage start). */
   continuousSince = new Map<string, number>();
@@ -391,6 +394,9 @@ export class StreamStore {
     q.epoch = this.epoch;
     q.updates = (fresh ? 0 : base.updates) + 1;
     this.options.set(symbol, q);
+    if (!q.delayed) {
+      this.optionSides.update(symbol, { t: q.tradeTimeMs ?? q.quoteTimeMs ?? now, last: q.last, bid: q.bid, ask: q.ask, cumVolume: q.totalVolume }, this.epoch);
+    }
   }
 
   private applyChart(it: any, now: number): void {

@@ -584,9 +584,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         pivots: spyPivots,
         term: snap.term,
         vix: snap.vol.vix,
-        compositeScore: snap.composite.score,
-        compositeLabel: snap.composite.label,
-        voicesBiasScore: voicesData?.voicesBias?.score ?? null,
+        marketScore: snap.composite.marketScore ?? null,
         squeeze,
         todaysEvents,
       });

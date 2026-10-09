@@ -47,7 +47,7 @@ import { internalJson } from "./internalApi";
 import { ofiTrendWindowComplete, ofiTapeStale } from "./ofiPayload";
 import { fitConvexityWeights, forwardRange, type ConvexityFit, type ConvexitySample } from "./convexityFit";
 
-import { classifyEnvState, type TradeEnvState } from "./tradeEnvState";
+import { classifyEnvState, volTermPoints, type TradeEnvState } from "./tradeEnvState";
 export type { TradeEnvState };
 
 export interface EnvDriver {
@@ -198,21 +198,24 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
     const [vix, vix9d, vix3m] = await Promise.all([
       getQuote("^VIX"), getQuote("^VIX9D"), getQuote("^VIX3M"),
     ]);
-    if (vix.last != null) {
-      const inverted9d = vix9d.last != null && vix9d.last > vix.last;
-      const backwardated = vix3m.last != null && vix3m.last < vix.last;
-      if (inverted9d) volPts += 12;
-      if (backwardated) volPts += 10;
-      if (vix.last >= 20 && !backwardated) volPts += 4;
+    // All three legs required (volTermPoints): a missing VIX9D or VIX3M is
+    // not "no inversion" / "no backwardation"; the driver is unavailable.
+    const vt = volTermPoints(vix.last ?? null, vix9d.last ?? null, vix3m.last ?? null);
+    if (!vt.ok) {
+      degraded = true;
+      vixNote = `vol term structure unavailable: ${vt.missing.join(", ")} missing from Schwab (not scored, not a calm-curve read).`;
+    } else {
+      const { inverted9d, backwardated } = vt;
+      volPts = vt.points;
       volOk = true;
       vixNote = backwardated
         ? "VIX term structure is BACKWARDATED — the market is paying up for protection NOW. crisis posture."
         : inverted9d
           ? "9-day vol above 30-day — near-term event stress is priced. expect bigger swings this week."
-          : vix.last >= 20
+          : (vix.last as number) >= 20
             ? "VIX elevated but curve normal — energy available, no panic."
             : "vol is cheap and the curve is calm — big sustained moves need a catalyst.";
-    } else { degraded = true; }
+    }
   } catch { degraded = true; }
   drivers.push({ key: "vol", label: "vol term structure", points: volPts, max: 22, note: vixNote, dataState: volOk ? "ok" : "unavailable" });
 

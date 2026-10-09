@@ -42,6 +42,19 @@ const STATE_STYLE: Record<TradeEnv["state"], { chip: string; bar: string; label:
   UNAVAILABLE: { chip: "bg-slate-900 text-slate-500 border-slate-700 border-dashed", bar: "bg-slate-700", label: "UNAVAILABLE" },
 };
 
+// What each state asserts (server/tradeEnvState.ts). STRIKE needs short
+// gamma, expanding range and directional tick volume all observed; a high
+// index without them is LOADED.
+const STATE_MEANING: Record<TradeEnv["state"], string> = {
+  STAND_DOWN: "few drivers active",
+  CHOP: "long gamma, quiet tick volume, calm vol curve",
+  NORMAL: "no unusual combination of drivers",
+  LOADED: "index 45+ (or 70+ without all three STRIKE conditions)",
+  STRIKE: "index 70+ AND short gamma, expanding range and directional tick volume all observed",
+  PARTIAL: "a core driver is unavailable: index is a lower bound, no quiet state claimed",
+  UNAVAILABLE: "gamma, vol term structure and range all unavailable",
+};
+
 export default function TradeEnvironmentStrip() {
   const [open, setOpen] = useState(false);
   const { data } = useQuery<TradeEnv>({
@@ -66,6 +79,7 @@ export default function TradeEnvironmentStrip() {
         <span
           className={`shrink-0 rounded border px-2 py-0.5 font-mono text-[10px] font-bold tracking-widest ${st.chip}`}
           data-testid="trade-environment-state"
+          title={STATE_MEANING[data.state as TradeEnv["state"]] ?? ""}
         >
           {st.label}
         </span>

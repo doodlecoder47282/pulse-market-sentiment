@@ -13,11 +13,14 @@ export interface EdgeBriefData {
   verdict: string;
   verdictColor: "emerald" | "rose" | "amber" | "neutral";
   edgeType: "informational" | "analytical" | "behavioral" | "timing" | "environmental" | "none";
-  confidence: number;
+  /** null: the server no longer sends a hand-set confidence (older servers may). */
+  confidence: number | null;
   summary: string;
-  baseCase: { thesis: string; prob: number };
-  bullCase: { thesis: string; prob: number };
-  bearCase: { thesis: string; prob: number };
+  /** prob is null: scenarios carry no hand-set weights. */
+  baseCase: { thesis: string; prob: number | null };
+  bullCase: { thesis: string; prob: number | null };
+  bearCase: { thesis: string; prob: number | null };
+  /** What to watch (descriptive); no trade or size advice. */
   actionable: string;
   invalidation: string;
   counterargument: string;
@@ -25,6 +28,7 @@ export interface EdgeBriefData {
   panel: string;
   asOf: number;
   source: "claude" | "openai" | "deterministic";
+  removedSentences?: number;
 }
 
 interface Props {
@@ -96,7 +100,6 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
               <Badge variant="outline" className={`text-[10px] py-0 px-1.5 h-4 ${edgeBadgeClass(d.edgeType)}`}>
                 {d.edgeType}
               </Badge>
-              <span className="text-[10px] text-muted-foreground" title="Heuristic score 0-100, not a calibrated probability.">score {d.confidence}/100</span>
             </>
           )}
         </div>
@@ -146,7 +149,7 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
               </p>
 
               <div className="rounded border border-border/40 bg-background/40 p-2">
-                <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">actionable</div>
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">what to watch</div>
                 <p className="text-xs leading-snug">{d.actionable}</p>
               </div>
 
@@ -167,7 +170,7 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
                 data-testid={`button-brief-expand-${panel}`}
               >
                 {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                {expanded ? "hide breakdown" : "base / bull / bear breakdown"}
+                {expanded ? "hide scenarios" : "base / bull / bear scenarios"}
               </button>
 
               {expanded && (
@@ -189,6 +192,8 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
 
                   <div className="text-[10px] text-muted-foreground/70 pt-1">
                     source: {d.source} · {new Date(d.asOf).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                    {" · descriptive only: no probabilities, trade or size advice"}
+                    {d.removedSentences ? ` · ${d.removedSentences} sentence${d.removedSentences === 1 ? "" : "s"} removed by the filter` : ""}
                   </div>
                 </div>
               )}
@@ -200,17 +205,14 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
   );
 }
 
-function CaseRow({ label, tone, thesis, prob }: { label: string; tone: "emerald" | "rose" | "amber"; thesis: string; prob: number }) {
+// Scenario theses only: the old hand-set weights (55/25/20) are not shown,
+// even if an older server still sends them.
+function CaseRow({ label, tone, thesis }: { label: string; tone: "emerald" | "rose" | "amber"; thesis: string; prob?: number | null }) {
   const color = tone === "emerald" ? "text-emerald-400 border-emerald-500/30" : tone === "rose" ? "text-rose-400 border-rose-500/30" : "text-amber-400 border-amber-500/30";
-  const barColor = tone === "emerald" ? "bg-emerald-500/40" : tone === "rose" ? "bg-rose-500/40" : "bg-amber-500/40";
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-xs">
         <span className={`font-mono uppercase font-semibold ${color}`}>{label}</span>
-        <span className="font-mono text-muted-foreground" title="Heuristic case weight, not a calibrated probability.">{prob}% wt</span>
-      </div>
-      <div className="h-1 rounded bg-muted/30 overflow-hidden">
-        <div className={`h-full ${barColor}`} style={{ width: `${Math.max(0, Math.min(100, prob))}%` }} />
       </div>
       <p className="text-xs leading-snug text-foreground/90">{thesis}</p>
     </div>
