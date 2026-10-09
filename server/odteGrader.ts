@@ -468,15 +468,20 @@ export function getOptionLedgerSummary(now: number = Date.now(), feePerContract 
 }
 
 /**
- * Fee the alert's ledger line is net of: BATCAVE_INDEX_FEE_PER_CONTRACT ($ per
- * contract per side, SPXW) through the sizer's fee rule (resolveFeePerContract:
- * index roots carry no default). Null = not configured: the line says
- * "gross of fees".
+ * Fee the alert's ledger line is net of: the all-in index fee, $ per contract
+ * per side, from INDEX_OPTION_FEE_PER_CONTRACT (alias ODTE_FEE_PER_CONTRACT),
+ * the same variables R2-C's feeConfig.feeForProduct reads, through the
+ * sizer's fee rule (resolveFeePerContract: index roots carry no default).
+ * Null = not configured: the line says "gross of fees".
  */
 export function configuredIndexFee(): number | null {
-  const raw = process.env.BATCAVE_INDEX_FEE_PER_CONTRACT;
-  const v = raw != null && raw.trim() !== "" && Number.isFinite(Number(raw)) ? Number(raw) : null;
-  return resolveFeePerContract(v, "SPXW");
+  const read = (name: string): number | null => {
+    const raw = process.env[name];
+    if (raw == null || raw.trim() === "") return null;
+    const v = Number(raw);
+    return Number.isFinite(v) && v >= 0 ? v : null;
+  };
+  return resolveFeePerContract(read("INDEX_OPTION_FEE_PER_CONTRACT") ?? read("ODTE_FEE_PER_CONTRACT"), "SPXW");
 }
 
 /** Ledger evidence for the alert text (never throws: null when the DB is unavailable). */
