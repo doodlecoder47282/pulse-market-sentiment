@@ -43,7 +43,14 @@ $VIX, vega units), the SPX exchange fee (sizer requires it for index roots),
 EOD brief still has hard-coded default weekly targets in routes.ts,
 `data/greek_gradient.db*` still tracked.
 
-Next step: user reviews and merges the quant-fixes PR.
+Re-grade (independent graders, same rubric, branch at 8403510): overall
+C- -> C+. Sectors: 1 B-, 2 B, 3 B-, 4 B-, 5 C+, 6 B-, 7 B-, 8 B-, 9 C, 10 C+,
+11 B- (deploy blocked until webhooks/Schwab secret revoked), 12 C+. Full
+table and fix-next list in the review doc. Top open items: ML feature log
+mixes SPY/SPX scales; Models/Exposures read the CBOE chain as primary;
+edge-survival card ignores the option ledger; picker T1 projection biased low.
+
+Next step: user reviews and merges PR #3, then approves the fix-next list.
 
 ## Current objective
 
