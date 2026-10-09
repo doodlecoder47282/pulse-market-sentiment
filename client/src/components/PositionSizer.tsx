@@ -365,7 +365,7 @@ export function PositionSizer() {
                 <span>adverse scenario</span>
                 <span data-testid="text-adverse-ev">{s.adverseNetEvPct == null ? "not computed" : `${s.adverseNetEvPct >= 0 ? "+" : ""}${s.adverseNetEvPct.toFixed(1)}%`}</span>
               </div>
-              {(s.stress ?? []).map((row, i) => (
+              {(s.stress ?? []).map((row: SurvivalRow, i: number) => (
                 <div key={`st-${i}`} className="flex justify-between text-[11px] font-mono tabular-nums text-muted-foreground/80" title={row.note}>
                   <span>&nbsp;&nbsp;stress: {row.label}</span>
                   <span>{row.pct.toFixed(1)}%</span>
@@ -374,7 +374,7 @@ export function PositionSizer() {
               {(s.reference ?? []).length > 0 && (
                 <div className="pt-1 text-[11px] text-muted-foreground/80">this quote's costs (already in realized returns, not deducted again):</div>
               )}
-              {(s.reference ?? []).map((row, i) => (
+              {(s.reference ?? []).map((row: SurvivalRow, i: number) => (
                 <div key={`rf-${i}`} className="flex justify-between text-[11px] font-mono tabular-nums text-muted-foreground/80" title={row.note}>
                   <span>&nbsp;&nbsp;{row.label}</span>
                   <span>{row.pct.toFixed(1)}%</span>

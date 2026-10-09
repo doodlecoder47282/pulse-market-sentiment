@@ -108,7 +108,7 @@ export function computeEdgeStats(windowDays: number = 30): EdgeStats {
   // rows stay stored but are excluded (and counted). Pending rows (no outcome
   // yet) and ungraded_no_mark rows are counted, never treated as misses.
   const whaleAll = allRows.filter((r) => r.kind === "whale_alert");
-  const whaleRows = whaleAll.filter((r) => r.graded === 1 && isOutcomeOnOptionMarks(r));
+  const whaleRows = whaleAll.filter((r: (typeof allRows)[number]) => r.graded === 1 && isOutcomeOnOptionMarks(r));
   const regimeRows = allRows.filter((r) => r.kind === "regime_call");
   const { suggestions, tests } = deriveSuggestions(whaleRows);
 

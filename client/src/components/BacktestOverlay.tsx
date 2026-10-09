@@ -23,10 +23,20 @@ export type BacktestLevelKind =
   | "upsidePivot" | "downsidePivot" | "mopexMaxPain"
   | "extremeVac" | "vommaPocket";
 
+interface NonOverlap {
+  n: number;
+  touchRate: number | null; touchWilsonLo: number | null; touchWilsonHi: number | null;
+  holdRate: number | null; holdWilsonLo: number | null; holdWilsonHi: number | null;
+  medianAbsDistBps: number | null;
+}
+
 interface BacktestRow {
   horizon: BacktestHorizon;
   levelKind: BacktestLevelKind;
+  /** Pooled count: every trading day, overlapping windows (overstates evidence). */
   sampleSize: number;
+  /** Non-overlapping windows: the counts and rates shown. */
+  nonOverlapping?: NonOverlap;
   touchRate: number;
   holdRate: number;
   avgAbsDistBps: number;
@@ -39,8 +49,22 @@ interface BacktestSummary {
   label?: string;
   levelSource?: "volatility_band_proxy" | "historical_chain";
   dealerLevelsFromChains?: boolean;
+  dataState?: string;
+  dealerLevelsTested?: boolean;
+  blockedOn?: string | null;
+  touchRule?: string;
+  legacyTolerance?: boolean;
   computedAt: number | null;
   byLevel: Record<string, BacktestRow>;
+}
+
+/** Non-overlapping touch/hold when the server has them; pooled otherwise (labelled). */
+function shown(r: BacktestRow): { n: number; touch: number; hold: number; lo: number | null; hi: number | null; nonOverlap: boolean } {
+  const no = r.nonOverlapping;
+  if (no && no.n > 0 && no.touchRate != null && no.holdRate != null) {
+    return { n: no.n, touch: no.touchRate, hold: no.holdRate, lo: no.touchWilsonLo, hi: no.touchWilsonHi, nonOverlap: true };
+  }
+  return { n: r.sampleSize, touch: r.touchRate, hold: r.holdRate, lo: null, hi: null, nonOverlap: false };
 }
 
 // Map Models panel level kinds → backtest kinds
@@ -107,17 +131,19 @@ export function BacktestBadge({
   const mapped = KIND_MAP[kind];
   if (!mapped || !data) return null;
   const row = data.byLevel[`${horizon}|${mapped}`];
-  if (!row || row.sampleSize < 20) return null;
+  if (!row) return null;
+  const v = shown(row);
+  if (v.n < 20) return null;
 
   return (
     <TooltipProvider delayDuration={100}>
       <Tooltip>
         <TooltipTrigger asChild>
           <span
-            className={`ml-1 cursor-help font-mono text-[8px] font-bold ${rateColor(row.touchRate, "touch")}`}
+            className={`ml-1 cursor-help font-mono text-[8px] font-bold ${rateColor(v.touch, "touch")}`}
             data-testid={`backtest-badge-${horizon}-${kind}`}
           >
-            {pct(row.touchRate)}
+            {pct(v.touch)}
           </span>
         </TooltipTrigger>
         <TooltipContent side="left" className="max-w-xs bg-black/95 font-mono text-[10px]">
@@ -130,8 +156,8 @@ export function BacktestBadge({
             </div>
           )}
           <div className="space-y-0.5 text-muted-foreground">
-            <div>Touched: <span className={rateColor(row.touchRate, "touch")}>{pct(row.touchRate)}</span> of <span className="text-white">{row.sampleSize}</span> obs</div>
-            <div>Held (reversed ≥50%): <span className={rateColor(row.holdRate, "hold")}>{pct(row.holdRate)}</span></div>
+            <div>Touched: <span className={rateColor(v.touch, "touch")}>{pct(v.touch)}</span>{v.lo != null && v.hi != null ? ` (95% CI ${pct(v.lo)}-${pct(v.hi)})` : ""} of <span className="text-white">{v.n}</span> {v.nonOverlap ? "non-overlapping windows" : "overlapping obs"}</div>
+            <div>Held (reversed ≥50%): <span className={rateColor(v.hold, "hold")}>{pct(v.hold)}</span></div>
             <div>Avg miss at close: <span className="text-white">{row.avgAbsDistBps.toFixed(0)}bps</span></div>
             <div>Breached &gt;1%: <span className="text-rose-400">{pct(row.breachBeyondPct)}</span></div>
           </div>
@@ -166,8 +192,8 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
       const r = data.byLevel[k];
       if (r.horizon === horizon) out.push(r);
     }
-    // sort by touch rate descending, so strongest levels float up
-    return out.sort((a, b) => b.touchRate - a.touchRate);
+    // sort by (non-overlapping) touch rate descending, so strongest levels float up
+    return out.sort((a, b) => shown(b).touch - shown(a).touch);
   }, [data, horizon]);
 
   const computedStr = data?.computedAt
@@ -253,8 +279,10 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
               {rebuild.isPending ? "Rebuilding…" : "Rebuild"}
             </Button>
 
-            <span className="font-mono text-[9px] text-muted-foreground/60">
-              Volatility bands, not option chains. See tooltip.
+            <span className="font-mono text-[9px] text-muted-foreground/60" data-testid="text-backtest-datastate">
+              {data?.dealerLevelsTested
+                ? "Dealer levels from historical chains."
+                : `Volatility bands, not option chains: no dealer level is tested. Blocked on ${data?.blockedOn ?? "historical option chains"}.`}
             </span>
           </div>
 
@@ -281,28 +309,30 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
                       <th className="px-2 py-1.5 text-right text-[9px] uppercase tracking-wider">Avg Miss</th>
                       <th className="px-2 py-1.5 text-right text-[9px] uppercase tracking-wider">Median Miss</th>
                       <th className="px-2 py-1.5 text-right text-[9px] uppercase tracking-wider">Breach &gt;1%</th>
-                      <th className="px-2 py-1.5 text-right text-[9px] uppercase tracking-wider">n</th>
+                      <th className="px-2 py-1.5 text-right text-[9px] uppercase tracking-wider" title="non-overlapping windows / pooled overlapping observations">n (pooled)</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map(r => (
+                    {rows.map(r => { const v = shown(r); return (
                       <tr key={r.levelKind} className="border-b border-border/20 hover:bg-violet-500/5" data-testid={`bt-row-${r.levelKind}`}>
-                        <td className="px-2 py-1.5 text-white">{LABELS[r.levelKind]}</td>
-                        <td className={`px-2 py-1.5 text-right font-semibold ${rateColor(r.touchRate, "touch")}`}>{pct(r.touchRate)}</td>
-                        <td className={`px-2 py-1.5 text-right ${rateColor(r.holdRate, "hold")}`}>{pct(r.holdRate)}</td>
+                        <td className="px-2 py-1.5 text-white">{LABELS[r.levelKind] ?? r.levelKind}</td>
+                        <td className={`px-2 py-1.5 text-right font-semibold ${rateColor(v.touch, "touch")}`} title={v.lo != null && v.hi != null ? `95% CI ${pct(v.lo)}-${pct(v.hi)}` : undefined}>
+                          {pct(v.touch)}{v.lo != null && v.hi != null && <span className="ml-1 font-normal text-muted-foreground/70">[{pct(v.lo)}-{pct(v.hi)}]</span>}
+                        </td>
+                        <td className={`px-2 py-1.5 text-right ${rateColor(v.hold, "hold")}`}>{pct(v.hold)}</td>
                         <td className="px-2 py-1.5 text-right text-muted-foreground">{r.avgAbsDistBps.toFixed(0)} bps</td>
                         <td className="px-2 py-1.5 text-right text-muted-foreground">{r.medianAbsDistBps.toFixed(0)} bps</td>
                         <td className="px-2 py-1.5 text-right text-rose-400/80">{pct(r.breachBeyondPct)}</td>
-                        <td className="px-2 py-1.5 text-right text-muted-foreground/70">{r.sampleSize}</td>
+                        <td className="px-2 py-1.5 text-right text-muted-foreground/70">{v.nonOverlap ? `${v.n} (${r.sampleSize})` : `${r.sampleSize} pooled`}</td>
                       </tr>
-                    ))}
+                    ); })}
                   </tbody>
                 </table>
               </div>
 
               <div className="space-y-0.5 pt-1 font-mono text-[9px] leading-tight text-muted-foreground/60">
                 <div>
-                  <span className="text-amber-400">Touch %:</span> price came within tolerance of level during horizon window.
+                  <span className="text-amber-400">Touch %:</span> {data?.touchRule ?? "price came within tolerance of level during horizon window."} Rates and n use non-overlapping windows (every Nth day, N = horizon); [ ] = Wilson 95% interval; the pooled count overlaps and overstates the evidence.
                 </div>
                 <div>
                   <span className="text-amber-400">Hold %:</span> touched AND reversed ≥50% back toward spot (stickiness).

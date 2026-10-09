@@ -422,3 +422,61 @@ test("whale coverage: ungraded_no_mark is counted and shown, never a miss; legac
   assert.equal(c.legacyProxyExcluded, 1);
   assert.equal(c.total, 7);
 });
+
+// ─── Items 6 and 9: one touch rule, non-overlapping counts, data state ──────
+
+import {
+  touchTolerancePts, scoreLevelObservation, nonOverlappingDates, nonOverlappingStats, TOUCH_TOL_ATR_FRACTION,
+  DEALER_LEVEL_DATA_STATE,
+} from "../../server/backtestMath";
+import { wilsonInterval } from "../../server/validationMath";
+
+test("backtest: one ATR-scaled touch rule for every level kind and baseline", () => {
+  assert.equal(TOUCH_TOL_ATR_FRACTION, 0.25);
+  assert.equal(touchTolerancePts(40), 10);
+  assert.equal(touchTolerancePts(NaN), null);
+  assert.equal(touchTolerancePts(0), null);
+  // Level 6050 from a 6000 close, ATR 40 -> tol 10: a 6041 high touches, 6039 does not,
+  // whatever the level is called (the old table gave walls 25 bps, pivots 40, vacuum 50).
+  const bars = (h: number) => [{ date: "d1", h, l: 5990, c: 6000 }];
+  for (const kind of ["callWall", "upsidePivot", "extremeVac", "baselineRandom"]) {
+    assert.equal(scoreLevelObservation("d0", "daily", kind, 6050, 6000, bars(6041), 40)!.touched, 1, kind);
+    assert.equal(scoreLevelObservation("d0", "daily", kind, 6050, 6000, bars(6039), 40)!.touched, 0, kind);
+  }
+  // Vol scaling: in a regime with ATR 80 the band is 20 points, so 6031 touches.
+  assert.equal(scoreLevelObservation("d0", "daily", "callWall", 6050, 6000, bars(6031), 80)!.touched, 1);
+  // No ATR -> not scored (never a default band)
+  assert.equal(scoreLevelObservation("d0", "daily", "callWall", 6050, 6000, bars(6050), NaN), null);
+  // Held: resistance 6050 touched (high 6045 >= 6040) and then a low at or under
+  // 6050 - max(0.5 x 50, 0.5 x 40) = 6025: 6026 is not held, 6024 is.
+  assert.equal(scoreLevelObservation("d0", "weekly", "callWall", 6050, 6000, [{ date: "d1", h: 6045, l: 6030, c: 6040 }, { date: "d2", h: 6040, l: 6026, c: 6030 }], 40)!.held, 0);
+  assert.equal(scoreLevelObservation("d0", "weekly", "callWall", 6050, 6000, [{ date: "d1", h: 6045, l: 6030, c: 6040 }, { date: "d2", h: 6040, l: 6024, c: 6030 }], 40)!.held, 1);
+});
+
+test("backtest: non-overlapping windows never share a bar (seeded holes), with Wilson intervals", () => {
+  const r = lcg(99);
+  for (const H of [1, 5, 21, 63]) {
+    // 600 trading days, ~10% missing (no VIX close): forecast from day i covers days i+1..i+H.
+    const all = Array.from({ length: 600 }, (_, i) => `d${String(i).padStart(4, "0")}`);
+    const scored = all.filter(() => r() > 0.1);
+    const kept = Array.from(nonOverlappingDates(scored, H)).sort();
+    const idx = kept.map((d) => all.indexOf(d));
+    for (let k = 1; k < idx.length; k++) assert.ok(idx[k] - idx[k - 1] >= H, `H=${H}: windows overlap`);
+    assert.ok(kept.length >= Math.floor(scored.length / H));
+  }
+  const kept = new Set(["a", "c"]);
+  const st = nonOverlappingStats([
+    { date: "a", touched: 1, held: 0, absDistBps: 10 }, { date: "b", touched: 1, held: 1, absDistBps: 20 },
+    { date: "c", touched: 0, held: 0, absDistBps: 30 },
+  ], kept);
+  assert.equal(st.n, 2);
+  assert.equal(st.touchRate, 0.5);
+  near(st.touchWilsonLo!, wilsonInterval(1, 2).lo, 1e-12);
+  assert.equal(st.medianAbsDistBps, 20);
+});
+
+test("backtest data state says no dealer level is tested until historical chains exist", () => {
+  assert.equal(DEALER_LEVEL_DATA_STATE.dealerLevelsTested, false);
+  assert.equal(DEALER_LEVEL_DATA_STATE.dataState, "proxy_no_options_data");
+  assert.match(DEALER_LEVEL_DATA_STATE.blockedOn, /historical option chains/);
+});
