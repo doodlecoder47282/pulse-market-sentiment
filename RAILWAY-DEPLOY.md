@@ -10,6 +10,12 @@ This puts Pulse on Railway's infrastructure — runs 24/7, no GCP Akamai block, 
 - Auto-redeploys when you push to GitHub
 - ~$5/month after $5 free credit
 
+Market data: Schwab only (quotes, chains, price history, index levels). There
+is no CBOE or other fallback; when Schwab is disconnected or refuses a request,
+market panels show "unavailable" (or a cached Schwab payload with its age,
+within the max ages in `server/schwabDataPolicy.ts`). Check `/api/schwab/diag`
+for cooldowns, stale serves and chain request sizes.
+
 ## Steps
 
 ### 1. Sign up
