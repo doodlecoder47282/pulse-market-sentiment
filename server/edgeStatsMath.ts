@@ -22,6 +22,15 @@
 //   https://docs.originlab.com/origin-help/pss-two-prop-algorithm/ (equal n;
 //   the same expression with 1/n1 + 1/n2 for unequal groups).
 
+//   Cameron & Miller (2015), "A Practitioner's Guide to Cluster-Robust
+//     Inference", J. Human Resources 50(2):317-372,
+//     https://jhr.uwpress.org/content/50/2/317 : cluster-robust (CR1)
+//     variance with the G/(G-1) factor and T(G-1) critical values when the
+//     number of clusters G is modest. Alerts that fire on the same day share
+//     one index path, so their hits are not independent; the day is the cluster.
+//   Student-t CDF via the regularized incomplete beta function, continued
+//     fraction as in Press et al., "Numerical Recipes" (3rd ed.), sec. 6.4.
+
 import { wilsonInterval } from "./validationMath";
 
 // ─── Whale grading coverage (round-2 item 8) ────────────────────────────────
@@ -106,6 +115,8 @@ export function twoProportionZ(h1: number, n1: number, h2: number, n2: number, c
 export interface WfRow {
   /** When the alert fired (time order). */
   t: number;
+  /** Cluster key for the out-of-sample inference; default the ET trading date of `t`. */
+  cluster?: string;
   /** When its outcome became known (expiry close / grading due time). */
   knownAt: number;
   hit: 0 | 1;
@@ -120,6 +131,110 @@ export const WF_MIN_FILTERED = 10;      // rows a threshold must keep (same as t
  * fields (premium, vol/OI, delta): alpha = 0.05 / 3 = 0.01667 -> z = 2.128.
  */
 export const WF_Z_CRIT = 2.128;
+
+/** Out-of-sample rows must span at least this many distinct days (clusters) for a suggestion. */
+export const WF_MIN_CLUSTERS = 10;
+/** One-sided level per field (Bonferroni over the three swept fields). */
+export const WF_ALPHA = 0.05 / 3;
+
+/** ET calendar date of an epoch-ms time (the default cluster). */
+export function etDayKey(ms: number): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
+}
+
+function logGamma(x: number): number {
+  // Lanczos (g = 7, n = 9), relative error ~1e-15 for x > 0.
+  const c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059,
+    12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+  if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - logGamma(1 - x);
+  x -= 1;
+  let a = c[0];
+  const t = x + 7.5;
+  for (let i = 1; i < 9; i++) a += c[i] / (x + i);
+  return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a);
+}
+
+function betacf(a: number, b: number, x: number): number {
+  const FPMIN = 1e-300;
+  let c = 1, d = 1 - ((a + b) * x) / (a + 1);
+  if (Math.abs(d) < FPMIN) d = FPMIN;
+  d = 1 / d;
+  let h = d;
+  for (let m = 1; m <= 300; m++) {
+    const m2 = 2 * m;
+    let aa = (m * (b - m) * x) / ((a - 1 + m2) * (a + m2));
+    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d; h *= d * c;
+    aa = (-(a + m) * (a + b + m) * x) / ((a + m2) * (a + 1 + m2));
+    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d;
+    const del = d * c;
+    h *= del;
+    if (Math.abs(del - 1) < 1e-15) break;
+  }
+  return h;
+}
+
+/** Regularized incomplete beta I_x(a, b). */
+export function incompleteBeta(x: number, a: number, b: number): number {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  const bt = Math.exp(logGamma(a + b) - logGamma(a) - logGamma(b) + a * Math.log(x) + b * Math.log(1 - x));
+  return x < (a + 1) / (a + b + 2) ? (bt * betacf(a, b, x)) / a : 1 - (bt * betacf(b, a, 1 - x)) / b;
+}
+
+/** Student-t CDF with df degrees of freedom. */
+export function studentTCdf(t: number, df: number): number {
+  const x = df / (df + t * t);
+  const tail = 0.5 * incompleteBeta(x, df / 2, 0.5);
+  return t >= 0 ? 1 - tail : tail;
+}
+
+/** Student-t quantile by bisection on the CDF (|error| < 1e-10). */
+export function studentTQuantile(p: number, df: number): number {
+  if (!(p > 0 && p < 1) || !(df > 0)) return NaN;
+  let lo = -1e3, hi = 1e3;
+  for (let i = 0; i < 200; i++) {
+    const m = (lo + hi) / 2;
+    if (studentTCdf(m, df) < p) lo = m; else hi = m;
+    if (hi - lo < 1e-11) break;
+  }
+  return (lo + hi) / 2;
+}
+
+/**
+ * Kept-minus-dropped hit-rate difference with a day-clustered (CR1) standard
+ * error. With p_k, p_d the two rates, each cluster g contributes
+ *   u_g = S_kg / n_k - S_dg / n_d,  S_xg = sum over g's rows in x of (hit - p_x),
+ * and Var(p_k - p_d) = G/(G-1) sum_g u_g^2 (the cluster-robust sandwich for
+ * the regression of hit on a kept dummy; Cameron & Miller 2015). The
+ * continuity-corrected difference (as in twoProportionZ) is divided by it.
+ * deff = clustered variance / independent (unpooled) variance.
+ */
+export function clusteredDiffZ(rows: Array<{ kept: boolean; hit: 0 | 1; cluster: string }>, continuity = true): { diff: number; se: number; z: number; clusters: number; deff: number | null } | null {
+  let nK = 0, hK = 0, nD = 0, hD = 0;
+  for (const r of rows) { if (r.kept) { nK++; hK += r.hit; } else { nD++; hD += r.hit; } }
+  if (!(nK > 0) || !(nD > 0)) return null;
+  const pK = hK / nK, pD = hD / nD;
+  const u = new Map<string, number>();
+  for (const r of rows) {
+    const v = r.kept ? (r.hit - pK) / nK : -(r.hit - pD) / nD;
+    u.set(r.cluster, (u.get(r.cluster) ?? 0) + v);
+  }
+  const G = u.size;
+  if (G < 2) return null;
+  let ss = 0;
+  for (const v of Array.from(u.values())) ss += v * v;
+  const varC = (G / (G - 1)) * ss;
+  const se = Math.sqrt(varC);
+  if (!(se > 0)) return null;
+  const diff = pK - pD;
+  const adj = continuity ? Math.max(0, Math.abs(diff) - 0.5 * (1 / nK + 1 / nD)) * Math.sign(diff) : diff;
+  const varI = (pK * (1 - pK)) / nK + (pD * (1 - pD)) / nD;
+  return { diff, se, z: adj / se, clusters: G, deff: varI > 0 ? varC / varI : null };
+}
 
 /** Standard normal CDF, Abramowitz & Stegun 26.2.17 polynomial (absolute error < 7.5e-8). */
 export function normCdf(x: number): number {
@@ -206,7 +321,15 @@ export interface WalkForwardResult {
     droppedN: number; droppedHits: number; droppedRate: number | null;
     allRate: number | null;
     lift: number | null;          // keptRate - allRate on the test folds
-    z: number | null;             // kept vs dropped, pooled two-proportion
+    z: number | null;             // kept vs dropped, pooled two-proportion (rows treated as independent)
+    /** kept vs dropped z with a day-clustered (CR1) SE: the test that decides */
+    zCluster: number | null;
+    /** distinct days (clusters) among the out-of-sample rows */
+    clusters: number;
+    /** one-sided T(G-1) critical value at WF_ALPHA for zCluster */
+    zClusterCrit: number | null;
+    /** design effect: clustered / independent variance of the difference */
+    designEffect: number | null;
   };
   /** True only when the out-of-sample kept rows beat the dropped rows at WF_Z_CRIT with enough rows on both sides. */
   supported: boolean;
@@ -237,7 +360,7 @@ export interface WalkForwardResult {
 export function walkForwardThreshold(rowsIn: WfRow[], sweep: number[], opts: { screen?: "strict" | "loose" } = {}): WalkForwardResult {
   const screen = opts.screen ?? "loose";
   const rows = rowsIn.filter((r) => Number.isFinite(r.t) && Number.isFinite(r.value)).sort((a, b) => a.t - b.t);
-  const emptyOos = { keptN: 0, keptHits: 0, keptRate: null, keptWilsonLo: null, keptWilsonHi: null, droppedN: 0, droppedHits: 0, droppedRate: null, allRate: null, lift: null, z: null };
+  const emptyOos = { keptN: 0, keptHits: 0, keptRate: null, keptWilsonLo: null, keptWilsonHi: null, droppedN: 0, droppedHits: 0, droppedRate: null, allRate: null, lift: null, z: null, zCluster: null, clusters: 0, zClusterCrit: null, designEffect: null };
   const fullSampleValue = selectThresholdInFold(rows, sweep, screen);
   const allRate = rows.length ? rows.reduce((s, r) => s + r.hit, 0) / rows.length : null;
   const expectedPower = (): WalkForwardResult["power"] => {
@@ -257,6 +380,7 @@ export function walkForwardThreshold(rowsIn: WfRow[], sweep: number[], opts: { s
   const foldSize = Math.ceil((rows.length - firstTest) / WF_TEST_FOLDS);
   const folds: WalkForwardResult["folds"] = [];
   let kN = 0, kH = 0, dN = 0, dH = 0;
+  const oosRows: Array<{ kept: boolean; hit: 0 | 1; cluster: string }> = [];
   for (let f = 0; f < WF_TEST_FOLDS; f++) {
     const a = firstTest + f * foldSize;
     const b = Math.min(rows.length, a + foldSize);
@@ -270,6 +394,7 @@ export function walkForwardThreshold(rowsIn: WfRow[], sweep: number[], opts: { s
     if (selected != null) {
       for (const r of test) {
         if (r.value >= selected) { keptN++; keptHits += r.hit; } else { droppedN++; droppedHits += r.hit; }
+        oosRows.push({ kept: r.value >= selected, hit: r.hit, cluster: r.cluster ?? etDayKey(r.t) });
       }
     }
     kN += keptN; kH += keptHits; dN += droppedN; dH += droppedHits;
@@ -284,12 +409,25 @@ export function walkForwardThreshold(rowsIn: WfRow[], sweep: number[], opts: { s
     allRate: allN > 0 ? (kH + dH) / allN : null,
     lift: kN > 0 && allN > 0 ? kH / kN - (kH + dH) / allN : null,
     z: twoProportionZ(kH, kN, dH, dN, true),
+    zCluster: null as number | null,
+    clusters: new Set(oosRows.map((r) => r.cluster)).size,
+    zClusterCrit: null as number | null,
+    designEffect: null as number | null,
   };
+  const cz = clusteredDiffZ(oosRows);
+  if (cz) {
+    oos.zCluster = cz.z;
+    oos.designEffect = cz.deff;
+    oos.zClusterCrit = studentTQuantile(1 - WF_ALPHA, cz.clusters - 1);
+  }
+  // Same-day clustering inflates the variance by the design effect: power
+  // is computed on effective sizes n / deff (deff >= 1 only; Kish).
+  const de = oos.designEffect != null && oos.designEffect > 1 ? oos.designEffect : 1;
   const power: WalkForwardResult["power"] = kN > 0 && dN > 0
     ? {
       oosRows: allN, keptN: kN, droppedN: dN, baseRate: oos.droppedRate,
-      mde80: oos.droppedRate != null ? minimumDetectableLift(kN, dN, oos.droppedRate) : null,
-      powerAt10pts: oos.droppedRate != null ? twoProportionPower(kN, dN, oos.droppedRate, 0.10) : null,
+      mde80: oos.droppedRate != null ? minimumDetectableLift(kN / de, dN / de, oos.droppedRate) : null,
+      powerAt10pts: oos.droppedRate != null ? twoProportionPower(kN / de, dN / de, oos.droppedRate, 0.10) : null,
       basis: "observed out-of-sample split",
     }
     : expectedPower();
@@ -297,13 +435,20 @@ export function walkForwardThreshold(rowsIn: WfRow[], sweep: number[], opts: { s
     return { status: "no_selection", fullSampleValue, folds, oos, supported: false, screen, power, reason: "no threshold passed the in-fold screen in any training window" };
   }
   const enough = kN >= WF_MIN_FILTERED && dN >= WF_MIN_FILTERED;
-  const supported = enough && oos.z != null && oos.z >= WF_Z_CRIT && fullSampleValue != null;
+  const enoughDays = oos.clusters >= WF_MIN_CLUSTERS;
+  const clusterPass = oos.zCluster != null && oos.zClusterCrit != null && oos.zCluster >= oos.zClusterCrit;
+  const supported = enough && enoughDays && oos.z != null && oos.z >= WF_Z_CRIT && clusterPass && fullSampleValue != null;
+  const deffNote = oos.designEffect != null ? `, design effect ${oos.designEffect.toFixed(2)}` : "";
   const reason = !enough
     ? `out-of-sample kept ${kN} / dropped ${dN} rows (need ${WF_MIN_FILTERED} each)`
-    : oos.z == null || oos.z < WF_Z_CRIT
-      ? `out-of-sample z ${oos.z == null ? "n/a" : oos.z.toFixed(2)} < ${WF_Z_CRIT} (one-sided, Bonferroni over 3 fields)`
-      : fullSampleValue == null
-        ? "no threshold passes on the whole window"
-        : `out-of-sample z ${oos.z.toFixed(2)} >= ${WF_Z_CRIT}`;
+    : !enoughDays
+      ? `out-of-sample rows span ${oos.clusters} days (need ${WF_MIN_CLUSTERS}): same-day alerts share one path, too few independent days`
+      : oos.z == null || oos.z < WF_Z_CRIT
+        ? `out-of-sample z ${oos.z == null ? "n/a" : oos.z.toFixed(2)} < ${WF_Z_CRIT} (one-sided, Bonferroni over 3 fields)`
+        : !clusterPass
+          ? `day-clustered z ${oos.zCluster == null ? "n/a" : oos.zCluster.toFixed(2)} < ${oos.zClusterCrit == null ? "n/a" : oos.zClusterCrit.toFixed(2)} (T(${oos.clusters - 1}) one-sided, ${oos.clusters} days${deffNote})`
+          : fullSampleValue == null
+            ? "no threshold passes on the whole window"
+            : `out-of-sample z ${oos.z.toFixed(2)} >= ${WF_Z_CRIT}; day-clustered z ${oos.zCluster!.toFixed(2)} >= ${oos.zClusterCrit!.toFixed(2)} (${oos.clusters} days${deffNote})`;
   return { status: "ok", fullSampleValue, folds, oos, supported, reason, screen, power };
 }

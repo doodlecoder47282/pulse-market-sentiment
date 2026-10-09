@@ -267,3 +267,61 @@ test("0DTE grader bars provenance: counts by origin; stream-last-price bars are 
   assert.match(savedMinuteBarsSql(["t", "open", "high", "low", "close", "volume", "source"])!, /close, source FROM/);
   assert.doesNotMatch(savedMinuteBarsSql(["t", "open", "high", "low", "close"])!, /source/);
 });
+
+// ─── 6. Edge Lab: day-clustered out-of-sample inference ───────────────────
+
+test("edge stats: Student-t quantiles (table values) and the CR1 clustered difference (hand computed)", async () => {
+  const { studentTQuantile, studentTCdf, clusteredDiffZ } = await import("../../server/edgeStatsMath");
+  // NIST/standard t table: t_{0.975,10} = 2.228139, t_{0.99,5} = 3.364930, t_{0.95,1} = 6.313752.
+  near(studentTQuantile(0.975, 10), 2.228139, 1e-5);
+  near(studentTQuantile(0.99, 5), 3.364930, 1e-5);
+  near(studentTQuantile(0.95, 1), 6.313752, 1e-5);
+  near(studentTCdf(0, 7), 0.5, 1e-12);
+  near(studentTQuantile(1 - 0.05 / 3, 1e6), 2.128045, 1e-4); // -> the normal z used before
+  // Two days. A: kept 1, kept 1, dropped 0. B: kept 0, dropped 1, dropped 0.
+  // p_k = 2/3, p_d = 1/3; u_A = (1/3 + 1/3)/3 + (1/3)/3 = 1/3, u_B = -1/3;
+  // Var = 2/(2-1) x (1/9 + 1/9) = 4/9, se = 2/3; z (no continuity) = (1/3)/(2/3) = 0.5;
+  // independent variance (2/9)/3 + (2/9)/3 = 4/27 -> design effect 3.
+  const rows = [
+    { kept: true, hit: 1 as const, cluster: "A" }, { kept: true, hit: 1 as const, cluster: "A" }, { kept: false, hit: 0 as const, cluster: "A" },
+    { kept: true, hit: 0 as const, cluster: "B" }, { kept: false, hit: 1 as const, cluster: "B" }, { kept: false, hit: 0 as const, cluster: "B" },
+  ];
+  const c = clusteredDiffZ(rows, false)!;
+  near(c.se, 2 / 3, 1e-12);
+  near(c.z, 0.5, 1e-12);
+  near(c.deff!, 3, 1e-12);
+  assert.equal(c.clusters, 2);
+  // with continuity, |diff| 1/3 - (1/3 + 1/3)/2 = 0
+  near(clusteredDiffZ(rows)!.z, 0, 1e-12);
+});
+
+test("edge stats: same-day alerts share a path -> the independent z over-rejects, the day-clustered test holds its level", async () => {
+  const { clusteredDiffZ, twoProportionZ, studentTQuantile, WF_ALPHA, WF_Z_CRIT } = await import("../../server/edgeStatsMath");
+  // Null: no relation between the cut-off and the hit. Each of 40 days has
+  // 8 alerts; the day's path sets a shared hit probability (0.15 or 0.65)
+  // and the day's flow sets a shared premium level, so whole days fall on
+  // one side of the cut-off. 1500 seeded replications (this seed: independent
+  // z 6.9%, clustered 1.6% vs alpha 1.67%).
+  const rand = mulberry32(2026);
+  const R = 1500, D = 40, K = 8;
+  let rejI = 0, rejC = 0, used = 0;
+  for (let rep = 0; rep < R; rep++) {
+    const rows: Array<{ kept: boolean; hit: 0 | 1; cluster: string }> = [];
+    for (let d = 0; d < D; d++) {
+      const p = rand() < 0.5 ? 0.15 : 0.65;
+      const dayKept = rand() < 0.5;
+      for (let k = 0; k < K; k++) rows.push({ kept: rand() < 0.9 ? dayKept : !dayKept, hit: rand() < p ? 1 : 0, cluster: `d${d}` });
+    }
+    let kN = 0, kH = 0, dN = 0, dH = 0;
+    for (const r of rows) { if (r.kept) { kN++; kH += r.hit; } else { dN++; dH += r.hit; } }
+    const zi = twoProportionZ(kH, kN, dH, dN, true);
+    const c = clusteredDiffZ(rows);
+    if (zi == null || !c) continue;
+    used++;
+    if (zi >= WF_Z_CRIT) rejI++;
+    if (c.z >= studentTQuantile(1 - WF_ALPHA, c.clusters - 1)) rejC++;
+  }
+  const a = WF_ALPHA, se = Math.sqrt(a * (1 - a) / used);
+  assert.ok(rejI / used > 3 * a, `independent z rejects ${rejI}/${used} (should over-reject)`);
+  assert.ok(rejC / used <= a + 3 * se, `clustered test rejects ${rejC}/${used} vs alpha ${a.toFixed(4)}`);
+});

@@ -48,7 +48,8 @@ interface Suggestion {
   rationale: string;
   liftHit30: number;
   alertReductionPct: number;
-  oos?: { n: number; hitRate: number | null; wilsonLo: number | null; wilsonHi: number | null; droppedN: number; droppedHitRate: number | null; z: number | null; zCrit: number; method: string };
+  oos?: { n: number; hitRate: number | null; wilsonLo: number | null; wilsonHi: number | null; droppedN: number; droppedHitRate: number | null; z: number | null; zCrit: number; zCluster?: number | null; zClusterCrit?: number | null; days?: number; method: string };
+  validation?: { kind: "procedure"; foldPicks: Array<number | null>; suggestedMatchesEveryFoldPick: boolean; note: string };
 }
 interface SuggestionTest {
   field: string;
@@ -323,6 +324,13 @@ function SuggestionsPanel({ suggestions, tests, windowDays }: { suggestions: Sug
                   out of sample: {s.oos.hitRate != null ? pct(s.oos.hitRate, 0) : "—"} hit-30
                   {s.oos.wilsonLo != null ? ` (95% CI ${pct(s.oos.wilsonLo, 0)}–${pct(s.oos.wilsonHi ?? 0, 0)})` : ""}, n={s.oos.n};
                   {" "}dropped {s.oos.droppedHitRate != null ? pct(s.oos.droppedHitRate, 0) : "—"} (n={s.oos.droppedN}); z {s.oos.z?.toFixed(2)} vs {s.oos.zCrit}
+                  {s.oos.zCluster != null ? `; day-clustered z ${s.oos.zCluster.toFixed(2)} vs ${s.oos.zClusterCrit?.toFixed(2) ?? "—"} over ${s.oos.days ?? "—"} days` : ""}
+                </p>
+              )}
+              {s.validation && (
+                <p className="text-[11px] text-amber-400/90 mt-1" data-testid={`text-suggestion-validation-${s.field}`}>
+                  full-window pick; the walk-forward validated the selection procedure
+                  {s.validation.suggestedMatchesEveryFoldPick ? " (every fold picked this value)" : ` (fold picks ${s.validation.foldPicks.map((x) => (x == null ? "none" : String(x))).join(" / ")})`}
                 </p>
               )}
               <div className="flex items-center gap-3 mt-1.5 text-xs">
