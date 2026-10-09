@@ -446,3 +446,30 @@ test("ticker projection: no Schwab chain and too few bars is upstream-unavailabl
   const i = route.indexOf('app.get("/api/ticker-projection"');
   assert.match(route.slice(i, i + 800), /if \(sendIfUnavailable\(res, e\)\) return;/);
 });
+
+// ── 12. 0DTE tracker: SPY fallback keeps the $SPX stream subscriptions ──────
+import { streamOwnersSyncedBy, armedStreamSymbols } from "../../server/odteStreamPolicy";
+import { syncStreamOptions, wantedOptionSymbols, _resetOptionWants } from "../../server/streamStore";
+
+test("0DTE stream policy: only the $SPX chain re-syncs odte / odte_alerts; SPY fallback leaves them", () => {
+  assert.deepEqual(streamOwnersSyncedBy("$SPX"), ["odte", "odte_alerts"]);
+  assert.deepEqual(streamOwnersSyncedBy("SPY"), []);
+  // Simulate: SPX poll subscribed an alert contract; a SPY fallback poll must not clear it.
+  _resetOptionWants();
+  syncStreamOptions("odte_alerts", ["SPXW  261009C06700000"]);
+  for (const owner of streamOwnersSyncedBy("SPY")) syncStreamOptions(owner, []); // no-op by policy
+  assert.deepEqual(wantedOptionSymbols(10).symbols, ["SPXW  261009C06700000"]);
+  _resetOptionWants();
+  // Armed symbols: a remembered symbol survives a snapshot without the row.
+  const tracked = [
+    { status: "active", contractKey: "$SPX_6700C_2026-10-09", optionSymbol: "SPXW  261009C06700000" },
+    { status: "active", contractKey: "$SPX_6690P_2026-10-09", optionSymbol: null },
+    { status: "closed", contractKey: "$SPX_6710C_2026-10-09", optionSymbol: "SPXW  261009C06710000" },
+  ];
+  assert.deepEqual(armedStreamSymbols(tracked, [{ key: "SPY_670C_2026-10-09", optionSymbol: "SPY   261009C00670000" }]), ["SPXW  261009C06700000"]);
+  assert.deepEqual(armedStreamSymbols(tracked, [{ key: "$SPX_6690P_2026-10-09", optionSymbol: "SPXW  261009P06690000" }]), ["SPXW  261009C06700000", "SPXW  261009P06690000"]);
+  const trk = src("server/odteTracker.ts");
+  assert.match(trk, /if \(streamOwnersSyncedBy\(symbol\)\.includes\("odte_alerts"\)\) \{\n\s*try \{ syncAlertStream\(/);
+  assert.match(trk, /if \(streamOwnersSyncedBy\(symbol\)\.includes\("odte"\)\) syncArmedStream\(rows\);/);
+  assert.match(trk, /alertSpot = null;\n\s*const spy = await getOptionChain\("SPY", 0\);/);
+});

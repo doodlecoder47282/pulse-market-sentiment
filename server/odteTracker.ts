@@ -31,6 +31,7 @@ import { recordOdteOptionMarks, recordOdteStreamMark, watchedAlerts, type Tracke
 import { streamOptionOverlay, syncStreamOptions, addOptionQuoteObserver } from "./streamStore";
 import { etDate as calEtDate, sessionCloseMinutes as calCloseMin } from "./exchangeCalendar";
 import { spreadExceedsStop } from "./exitValuation";
+import { armedStreamSymbols, streamOwnersSyncedBy } from "./odteStreamPolicy";
 
 // getOptionChain caches chains for 60 s (schwab.ts), so polling faster than that only
 // returns the identical snapshot. Cadence is clamped to this TTL.
@@ -222,7 +223,12 @@ async function poll() {
         };
         return;
       }
-      // Try SPY fallback for context if SPX unavailable
+      // Try SPY fallback for context if SPX unavailable. The $SPX stream
+      // subscriptions (armed "odte", fired-alert "odte_alerts") are left
+      // untouched (odteStreamPolicy): marks keep flowing for SPX alert
+      // contracts. The SPX underlying is unknown meanwhile, so stream marks
+      // carry no underlying rather than a stale one.
+      alertSpot = null;
       const spy = await getOptionChain("SPY", 0);
       if ("error" in spy) {
         lastSnapshot = {
@@ -411,7 +417,9 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
     // Round 3: stream every fired alert's contract (not only armed
     // positions) so its marks are logged on each LEVELONE_OPTIONS update,
     // between chain polls. The Schwab option symbol comes from this chain.
-    try { syncAlertStream(expiryISO, callStrikesObj, putStrikesObj, spot, nowTs); } catch { /* optional */ }
+    if (streamOwnersSyncedBy(symbol).includes("odte_alerts")) {
+      try { syncAlertStream(expiryISO, callStrikesObj, putStrikesObj, spot, nowTs); } catch { /* optional */ }
+    }
   }
 
   // Sort by ascending strike, calls-above-puts-at-same-strike (rendering convention)
@@ -459,7 +467,8 @@ function processChain(chain: Exclude<OptionChainResponse, { error: string }>, sy
     }
   }
 
-  syncArmedStream();
+  // Armed positions are $SPX contracts: a SPY fallback chain never re-syncs them.
+  if (streamOwnersSyncedBy(symbol).includes("odte")) syncArmedStream(rows);
 
   lastSnapshot = {
     asOf: nowTs,
@@ -624,15 +633,13 @@ function syncAlertStream(
 }
 
 /** Stream LEVELONE_OPTIONS for every active armed contract (streamStore owner "odte"). */
-function syncArmedStream(): void {
+function syncArmedStream(contracts: ReadonlyArray<{ key: string; optionSymbol?: string | null }> = lastSnapshot.contracts): void {
   try {
-    const syms: string[] = [];
+    // Remember a resolved symbol on the position so a later poll cannot drop it.
     for (const t of tracked) {
-      if (t.status !== "active") continue;
-      const sym = t.optionSymbol ?? lastSnapshot.contracts.find((c) => c.key === t.contractKey)?.optionSymbol ?? null;
-      if (sym) syms.push(sym);
+      if (t.status === "active" && !t.optionSymbol) t.optionSymbol = contracts.find((c) => c.key === t.contractKey)?.optionSymbol ?? null;
     }
-    syncStreamOptions("odte", syms);
+    syncStreamOptions("odte", armedStreamSymbols(tracked, contracts));
   } catch { /* streaming is optional; REST chain marks remain */ }
 }
 
