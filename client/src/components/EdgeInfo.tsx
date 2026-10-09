@@ -32,9 +32,10 @@ const INFO: Record<string, InfoEntry> = {
   },
   "pc-flow": {
     title: "Put / Call Flow Ratio",
-    what: "Put volume divided by call volume, rolling through the session, for the index and the MAG7 names.",
-    how: "Above ~1.2 = fear is bid. Below ~0.8 = call chasing. Watch the direction of change more than the level itself.",
-    edge: "Flow shifts often front-run price. A falling ratio while price sits flat means calls are being quietly accumulated \u2014 that's a lean before the move.",
+    what: "Put volume divided by call volume (total day volume from the Schwab chain), for the index ETFs and the MAG7 names. Each tile is coloured by a z-score against that symbol's own last 60 completed sessions, not a fixed level: index puts are bought as hedges, so SPY normally runs higher than a single stock.",
+    how: "z of +1 or more = put-heavy for this symbol, -1 or less = call-heavy, in between = normal for it. NO BASELINE YET means fewer than 20 completed sessions are recorded for the symbol, so no colour is shown. Today is a partial session compared with full-session history; read it with that in mind.",
+    edge: "None claimed. Research that found predictive power in put/call ratios used volume opened by buyers (Pan and Poteshman 2006); this feed only has total volume, which mixes opening, closing and hedging trades. Use the read as context on positioning.",
+    risk: "Total volume cannot tell opening from closing trades or hedges from bets. Expiration days and index rebalances distort a single session.",
   },
   "mag7": {
     title: "MAG 7 Basket",

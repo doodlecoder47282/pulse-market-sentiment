@@ -26,6 +26,21 @@ import { FlowAlertsPanel } from "./FlowAlertsPanel";
 import LivenessBadge from "./LivenessBadge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
+// Zone vs the symbol's OWN history (server/pcrHistory.ts): z-score of
+// ln((puts+0.5)/(calls+0.5)) over its last 60 completed Schwab sessions.
+// No fixed cut-offs; without 20 sessions the zone is "insufficient_history".
+type PcrZone = "bullish" | "neutral" | "bearish" | "insufficient_history" | "unavailable";
+type PcrRead = {
+  zone: PcrZone;
+  z: number | null;
+  n: number;
+  percentile: number | null;
+  bullishBelow: number | null;
+  bearishAbove: number | null;
+  method: string;
+  reason: string | null;
+};
+
 type FlowTicker = {
   symbol: string;
   label: string;
@@ -37,7 +52,8 @@ type FlowTicker = {
   pcrVolume: number | null;
   pcrOI: number | null;
   changeFromOpen: number | null;
-  zone: "bullish" | "neutral" | "bearish";
+  zone: PcrZone;
+  pcrRead?: PcrRead;
   asOf: number;
 };
 
@@ -49,7 +65,8 @@ type FlowResponse = {
     indexPcr: number | null;
     mag7Pcr: number | null;
     combinedPcr: number | null;
-    zone: "bullish" | "neutral" | "bearish";
+    zone: PcrZone;
+    pcrRead?: PcrRead;
   };
   cboe: {
     equityPcr: number | null;
@@ -118,7 +135,7 @@ interface IntradayFlowResponse {
   estimated: boolean;
 }
 
-function zoneColor(zone: "bullish" | "neutral" | "bearish") {
+function zoneColor(zone: PcrZone) {
   if (zone === "bearish") return {
     text: "text-rose-400",
     bg: "bg-rose-500/10",
@@ -130,6 +147,12 @@ function zoneColor(zone: "bullish" | "neutral" | "bearish") {
     bg: "bg-emerald-500/10",
     border: "border-emerald-500/50",
     fill: "#10b981",
+  };
+  if (zone === "insufficient_history" || zone === "unavailable") return {
+    text: "text-muted-foreground",
+    bg: "bg-muted/10",
+    border: "border-border/50",
+    fill: "#64748b",
   };
   return {
     text: "text-amber-300",
@@ -143,10 +166,19 @@ function fmtPcr(pcr: number | null): string {
   return pcr == null ? "—" : pcr.toFixed(2);
 }
 
-function zoneLabel(zone: "bullish" | "neutral" | "bearish"): string {
-  if (zone === "bearish") return "HEDGING / BEARISH";
-  if (zone === "bullish") return "CALL-HEAVY / BULLISH";
-  return "NEUTRAL";
+function zoneLabel(zone: PcrZone): string {
+  if (zone === "bearish") return "PUT-HEAVY VS OWN HISTORY";
+  if (zone === "bullish") return "CALL-HEAVY VS OWN HISTORY";
+  if (zone === "insufficient_history") return "NO BASELINE YET";
+  if (zone === "unavailable") return "UNAVAILABLE";
+  return "NORMAL FOR SYMBOL";
+}
+
+function zDetail(r: PcrRead | undefined): string {
+  if (!r) return "";
+  if (r.z != null) return `z ${r.z >= 0 ? "+" : ""}${r.z.toFixed(1)} · ${r.n}d`;
+  if (r.zone === "insufficient_history") return `${r.n}/20 sessions`;
+  return "";
 }
 
 function fmtVol(v: number): string {
@@ -282,6 +314,9 @@ function FlowTile({ tick }: { tick: FlowTicker }) {
         <span>·</span>
         <span>OI {fmtPcr(tick.pcrOI)}</span>
       </div>
+      <div className="text-[9px] text-muted-foreground" title={tick.pcrRead?.reason ?? tick.pcrRead?.method ?? ""}>
+        {zDetail(tick.pcrRead)}
+      </div>
     </div>
   );
 }
@@ -306,7 +341,7 @@ function StatBox({ label, value, tone = "neutral" }: { label: string; value: str
   );
 }
 
-function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; estimated: boolean }) {
+function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlowTicker; estimated: boolean; pcrRead?: PcrRead }) {
   const [view, setView] = useState<ViewMode>("flow");
   const series = ticker.series;
   // A failed chain fetch is not a $0 read: show "—" instead of zeros.
@@ -489,7 +524,7 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
       <div className="grid grid-cols-3 gap-2">
         <StatBox label="Total Calls" value={fmtVol(ticker.currentCallVol)} tone="up" />
         <StatBox label="Total Puts" value={fmtVol(ticker.currentPutVol)} tone="down" />
-        <StatBox label="P/C" value={fmtPcr(ticker.currentPcr)} tone={ticker.currentPcr != null && ticker.currentPcr > 1.05 ? "down" : ticker.currentPcr != null && ticker.currentPcr < 0.75 ? "up" : "warn"} />
+        <StatBox label={`P/C${pcrRead?.z != null ? ` · z ${pcrRead.z >= 0 ? "+" : ""}${pcrRead.z.toFixed(1)}` : ""}`} value={fmtPcr(ticker.currentPcr)} tone={pcrRead?.zone === "bearish" ? "down" : pcrRead?.zone === "bullish" ? "up" : "neutral"} />
       </div>
 
       {/* ─── LAST-PRINT SIDE: day volume tagged by each contract's latest print vs quote ─── */}
@@ -741,9 +776,13 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
               <XAxis dataKey="timeLabel" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
               <YAxis domain={[0, 2]} tickFormatter={(v) => v.toFixed(1)} tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} width={32} />
               <Tooltip formatter={(v: any) => [typeof v === "number" ? v.toFixed(2) : "—", "P/C"]} />
-              <ReferenceLine y={0.7} stroke="#10b981" strokeDasharray="3 4" strokeWidth={1} opacity={0.5} label={{ value: "0.7 bullish", position: "right", fontSize: 8, fill: "#10b981", opacity: 0.6 }} />
+              {pcrRead?.bullishBelow != null && (
+                <ReferenceLine y={pcrRead.bullishBelow} stroke="#10b981" strokeDasharray="3 4" strokeWidth={1} opacity={0.5} label={{ value: `${pcrRead.bullishBelow.toFixed(2)} (-1 sd)`, position: "right", fontSize: 8, fill: "#10b981", opacity: 0.6 }} />
+              )}
               <ReferenceLine y={1.0} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" strokeWidth={1} opacity={0.4} />
-              <ReferenceLine y={1.3} stroke="#ef4444" strokeDasharray="3 4" strokeWidth={1} opacity={0.5} label={{ value: "1.3 bearish", position: "right", fontSize: 8, fill: "#ef4444", opacity: 0.6 }} />
+              {pcrRead?.bearishAbove != null && (
+                <ReferenceLine y={pcrRead.bearishAbove} stroke="#ef4444" strokeDasharray="3 4" strokeWidth={1} opacity={0.5} label={{ value: `${pcrRead.bearishAbove.toFixed(2)} (+1 sd)`, position: "right", fontSize: 8, fill: "#ef4444", opacity: 0.6 }} />
+              )}
               <Line type="monotone" dataKey="pcRatio" stroke="#f59e0b" strokeWidth={1.75} dot={false} connectNulls name="P/C" isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
@@ -774,7 +813,9 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
             <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-rose-500" /> Puts (cumulative)</span>
           </>
         ) : (
-          <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-amber-500" /> P/C ratio (bullish &lt; 0.7 · bearish &gt; 1.3)</span>
+          <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-amber-500" /> P/C ratio{pcrRead?.bullishBelow != null && pcrRead?.bearishAbove != null
+            ? ` · lines = this symbol's ±1 sd over ${pcrRead.n} sessions (partial day vs full days)`
+            : ` · no zone lines: ${pcrRead?.reason ?? "symbol history unavailable"}`}</span>
         )}
       </div>
     </div>
@@ -782,7 +823,7 @@ function IntradayVolChart({ ticker, estimated }: { ticker: IntradayFlowTicker; e
 }
 
 // ─── Intraday flow section wrapper ────────────────────────────────────────────
-function IntradayFlowSection() {
+function IntradayFlowSection({ flow }: { flow?: FlowResponse }) {
   const [selectedTicker, setSelectedTicker] = useState("SPY");
 
   const { data, isLoading } = useQuery<IntradayFlowResponse>({
@@ -840,7 +881,13 @@ function IntradayFlowSection() {
         </div>
       </div>
 
-      {ticker && <IntradayVolChart ticker={ticker} estimated={ticker.isEstimated} />}
+      {ticker && (
+        <IntradayVolChart
+          ticker={ticker}
+          estimated={ticker.isEstimated}
+          pcrRead={[...(flow?.indexGroup ?? []), ...(flow?.mag7Group ?? [])].find((t) => t.symbol === ticker.symbol)?.pcrRead}
+        />
+      )}
     </div>
   );
 }
@@ -858,7 +905,7 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
     refetchOnWindowFocus: true,
   });
 
-  const color = useMemo(() => zoneColor(data?.aggregate.zone ?? "neutral"), [data?.aggregate.zone]);
+  const color = useMemo(() => zoneColor(data?.aggregate.zone ?? "unavailable"), [data?.aggregate.zone]);
 
   if (isLoading && !data) {
     return (
@@ -938,6 +985,9 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
                 {agg.zone === "bearish" ? <TrendingDown className="mr-1 h-2.5 w-2.5" /> : agg.zone === "bullish" ? <TrendingUp className="mr-1 h-2.5 w-2.5" /> : <Minus className="mr-1 h-2.5 w-2.5" />}
                 {zoneLabel(agg.zone)}
               </Badge>
+              {agg.pcrRead && (
+                <div className="text-[9px] text-muted-foreground" title={agg.pcrRead.reason ?? agg.pcrRead.method}>{zDetail(agg.pcrRead)}</div>
+              )}
               <div className="flex gap-3 text-[10px] text-muted-foreground">
                 <span>Idx <span className="font-mono text-foreground">{fmtPcr(agg.indexPcr)}</span></span>
                 <span>Mag7 <span className="font-mono text-foreground">{fmtPcr(agg.mag7Pcr)}</span></span>
@@ -956,9 +1006,10 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
 
           {/* Interpretation key */}
           <div className="hidden flex-col justify-center gap-1 text-[9px] text-muted-foreground md:flex">
-            <div className="flex items-center gap-1"><span className="h-1.5 w-3 rounded-sm bg-emerald-500" /> &lt; 0.75 bullish</div>
-            <div className="flex items-center gap-1"><span className="h-1.5 w-3 rounded-sm bg-amber-500" /> 0.75 – 1.05 neutral</div>
-            <div className="flex items-center gap-1"><span className="h-1.5 w-3 rounded-sm bg-rose-500" /> &gt; 1.05 bearish/hedging</div>
+            <div className="flex items-center gap-1"><span className="h-1.5 w-3 rounded-sm bg-emerald-500" /> z ≤ −1 call-heavy for symbol</div>
+            <div className="flex items-center gap-1"><span className="h-1.5 w-3 rounded-sm bg-amber-500" /> |z| &lt; 1 normal for symbol</div>
+            <div className="flex items-center gap-1"><span className="h-1.5 w-3 rounded-sm bg-rose-500" /> z ≥ +1 put-heavy for symbol</div>
+            <div className="text-muted-foreground/70">vs own last 60 sessions · descriptive, not a forecast</div>
           </div>
         </div>
 
@@ -985,7 +1036,7 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
         )}
 
         {/* ─── Intraday Call/Put Volume Chart ─── */}
-        <IntradayFlowSection />
+        <IntradayFlowSection flow={data} />
       </CardContent>
     </Card>
   );

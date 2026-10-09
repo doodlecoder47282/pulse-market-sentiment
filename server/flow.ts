@@ -5,15 +5,18 @@
 //
 // Ratio convention:
 //   pcr = totalPutVolume / totalCallVolume
-//   pcr > 1.05 → bearish / hedging pressure
-//   pcr < 0.75 → bullish / call-heavy
+// Zones are NOT fixed cut-offs: each symbol's ratio is z-scored against its
+// own completed Schwab sessions (pcrHistory.ts, review item 4.5); without 20
+// recorded sessions the zone is "insufficient_history".
 //
 // CBOE endpoint: https://cdn.cboe.com/api/global/delayed_quotes/options/{SYMBOL}.json
 // Returns: { data: { options: [{ option: "SPY250509C00500000", volume, open_interest, ... }] } }
 // OCC format: ROOT + YYMMDD + C/P + STRIKE(8 digits) — we parse side from pos[-17].
 
 import { LAST_PRINT_SIDE_NOTE } from "@shared/flowLabels";
-import { etDate, isRegularSessionOpen, sessionCloseMinutes } from "./exchangeCalendar";
+import { etDate, isRegularSessionOpen, isTradingDay, sessionCloseMinutes, sessionCloseMs } from "./exchangeCalendar";
+import { pcrReadFromHistory, type PcrRead, type PcrZone } from "./pcrHistory";
+import { loadPcrHistory, recordPcrSnapshot } from "./pcrHistoryStore";
 
 const UA = "Mozilla/5.0 (compatible; PulseDashboard/1.0)";
 
@@ -28,7 +31,10 @@ export type FlowTicker = {
   pcrVolume: number | null;
   pcrOI: number | null;
   changeFromOpen: number | null;
-  zone: "bullish" | "neutral" | "bearish";
+  /** Zone vs this symbol's own history (pcrHistory.ts); never a fixed cut-off. */
+  zone: PcrZone;
+  /** z-score detail behind `zone` (added; absent until attachPcrHistory runs). */
+  pcrRead?: PcrRead;
   asOf: number;
 };
 
@@ -40,7 +46,8 @@ export type FlowResponse = {
     indexPcr: number | null;
     mag7Pcr: number | null;
     combinedPcr: number | null;
-    zone: "bullish" | "neutral" | "bearish";
+    zone: PcrZone;
+    pcrRead?: PcrRead;
   };
   cboe: {
     equityPcr: number | null;
@@ -103,11 +110,10 @@ function parseSide(name: string): "C" | "P" | null {
   return m ? (m[1] as "C" | "P") : null;
 }
 
-function zoneFor(pcr: number | null): "bullish" | "neutral" | "bearish" {
-  if (pcr == null) return "neutral";
-  if (pcr > 1.05) return "bearish";
-  if (pcr < 0.75) return "bullish";
-  return "neutral";
+// Placeholder until attachPcrHistory z-scores the ratio against the symbol's
+// own history: missing volume is "unavailable", never "neutral".
+function zoneFor(pcr: number | null): PcrZone {
+  return pcr == null ? "unavailable" : "insufficient_history";
 }
 
 async function fetchTickerFlow(
@@ -528,6 +534,53 @@ function mean(nums: (number | null)[]): number | null {
   return xs.reduce((a, b) => a + b, 0) / xs.length;
 }
 
+// ─── Per-symbol P/C history (review item 4.5) ───────────────────────────────
+// Records each symbol's day volume from Schwab snapshots and replaces every
+// zone with a z-score against that symbol's own completed sessions.
+const PCR_COMBINED_KEY = "__COMBINED";
+
+export function attachPcrHistory(resp: FlowResponse, nowMs: number = Date.now()): FlowResponse {
+  const today = etDate(nowMs);
+  const readFor = (key: string, putVol: number, callVol: number, observed: boolean): PcrRead => {
+    if (observed) recordPcrSnapshot({ symbol: key, putVol, callVol, provider: resp.provider, capturedAtMs: nowMs });
+    const hist = loadPcrHistory(key, today);
+    return pcrReadFromHistory(observed ? { putVol, callVol } : null, hist, { today });
+  };
+  for (const t of [...resp.indexGroup, ...resp.mag7Group]) {
+    const observed = t.putVol + t.callVol > 0 && t.pcrVolume != null;
+    const r = readFor(t.symbol, t.putVol, t.callVol, observed);
+    t.pcrRead = r;
+    t.zone = r.zone;
+  }
+  let puts = 0, calls = 0;
+  for (const t of [...resp.indexGroup, ...resp.mag7Group]) {
+    if (t.symbol === "^VIX") continue;
+    puts += t.putVol || 0; calls += t.callVol || 0;
+  }
+  const r = readFor(PCR_COMBINED_KEY, puts, calls, resp.aggregate.combinedPcr != null && puts + calls > 0);
+  resp.aggregate.pcrRead = r;
+  resp.aggregate.zone = r.zone;
+  ensurePcrCloseRecorder();
+  return resp;
+}
+
+// The day's full-session ratio must be captured in the last minutes of the
+// session even when nobody has the panel open: a deterministic timer (no AI)
+// rebuilds the snapshot every 5 minutes from 10 minutes before to 15 minutes
+// after the close on trading days.
+let pcrRecorder: ReturnType<typeof setInterval> | null = null;
+function ensurePcrCloseRecorder(): void {
+  if (pcrRecorder) return;
+  pcrRecorder = setInterval(() => {
+    const now = Date.now();
+    const d = etDate(now);
+    const close = isTradingDay(d) ? sessionCloseMs(d) : null;
+    if (close == null || now < close - 10 * 60_000 || now > close + 15 * 60_000) return;
+    buildFlowSnapshot().catch((e: any) => console.warn(`[flow] close P/C record failed: ${e?.message ?? e}`));
+  }, 5 * 60_000);
+  (pcrRecorder as any).unref?.();
+}
+
 export async function buildFlowSnapshot(): Promise<FlowResponse> {
   const warnings: string[] = [];
 
@@ -565,7 +618,7 @@ export async function buildFlowSnapshot(): Promise<FlowResponse> {
     warnings.push("Intraday aggregate unavailable for at least one group.");
   }
 
-  return {
+  return attachPcrHistory({
     provider: "cboe",
     indexGroup,
     mag7Group,
@@ -584,5 +637,5 @@ export async function buildFlowSnapshot(): Promise<FlowResponse> {
     intradaySeries: [...intradayRing],
     warnings,
     asOf: Math.floor(Date.now() / 1000),
-  };
+  });
 }
