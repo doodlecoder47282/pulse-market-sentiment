@@ -359,3 +359,50 @@ function erf(x: number): number {
   const t = 1 / (1 + 0.3275911 * a);
   return s * (1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-a * a));
 }
+
+// ─── Item 11: HAR-RV forecast and spread z-score ───────────────────────────
+
+import { fitHar, harForecastVariance, harVolForecast, spreadVerdict, spreadZScore, squaredLogReturns } from "../../server/harRv";
+
+test("HAR-RV: OLS recovers known coefficients from a simulated HAR process (Corsi 2009 eq. 8)", () => {
+  // RV_{t+1} = 0.1 + 0.4 RV_t + 0.3 RV^(w)_t + 0.2 RV^(m)_t + e, e ~ N(0, 0.05^2):
+  // stationary mean 0.1 / (1 - 0.9) = 1.
+  const u = rng(7), z = gauss(u);
+  const rv: number[] = new Array(22).fill(1);
+  for (let t = 21; t < 8000; t++) {
+    const d = rv[t], w = rv.slice(t - 4, t + 1).reduce((a, b) => a + b, 0) / 5, m = rv.slice(t - 21, t + 1).reduce((a, b) => a + b, 0) / 22;
+    rv.push(Math.max(1e-3, 0.1 + 0.4 * d + 0.3 * w + 0.2 * m + 0.05 * z()));
+  }
+  const fit = fitHar(rv.slice(500), 1)!;
+  near(fit.coef[0], 0.1, 0.03, "c");
+  near(fit.coef[1], 0.4, 0.03, "b_d");
+  near(fit.coef[2], 0.3, 0.05, "b_w");
+  near(fit.coef[3], 0.2, 0.05, "b_m");
+  // Forecast = c + b . regressors at the last date (hand computation).
+  const r = rv.slice(500); const t = r.length - 1;
+  const w = r.slice(t - 4).reduce((a, b) => a + b, 0) / 5, m = r.slice(t - 21).reduce((a, b) => a + b, 0) / 22;
+  near(harForecastVariance(r, fit)!, fit.coef[0] + fit.coef[1] * r[t] + fit.coef[2] * w + fit.coef[3] * m, 1e-12, "forecast");
+});
+
+test("HAR-RV vol forecast: constant-vol random walk forecasts its own vol; spread z-score and verdict", () => {
+  // Daily log returns N(0, 0.01^2): annualized vol 0.01 x sqrt(252) = 15.87%.
+  const u = rng(99), z = gauss(u);
+  const closes = [100];
+  for (let i = 0; i < 1500; i++) closes.push(closes[closes.length - 1] * Math.exp(0.01 * z()));
+  assert.equal(squaredLogReturns(closes).length, 1500);
+  const f = harVolForecast(closes, 21)!;
+  near(f.annualVol, 0.01 * Math.sqrt(252), 0.015, "forecast ~ true vol");
+  assert.equal(harVolForecast(closes.slice(0, 100), 21), null, "too few returns: no forecast");
+  // z-score: past spreads 0.02 +- 0.01 (alternating), today 0.04 -> z = (0.04 - 0.02)/sd.
+  const past = Array.from({ length: 80 }, (_, i) => (i % 2 ? 0.03 : 0.01));
+  const sd = Math.sqrt(80 * 0.0001 / 79);
+  const s = spreadZScore(0.04, past);
+  near(s.z!, 0.02 / sd, 1e-9, "z");
+  assert.equal(s.percentile, 1);
+  assert.equal(spreadVerdict(s.z), "rich");
+  assert.equal(spreadVerdict(spreadZScore(0.02, past).z), "fair");
+  assert.equal(spreadVerdict(spreadZScore(0.0, past).z), "cheap");
+  // Too little history: no verdict, never a default "fair".
+  assert.equal(spreadZScore(0.04, past.slice(0, 30)).z, null);
+  assert.equal(spreadVerdict(null), "insufficient");
+});
