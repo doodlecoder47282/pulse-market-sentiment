@@ -228,10 +228,11 @@ test("baseline cone: hand-computed quantiles (same numbers as the Python checks)
   assert.equal(c.bands["20"].q50, 0);
   assert.equal(c.zMethod, "gaussian");
   assert.equal(c.sigmaSource, "rv_session");
-  // VIX 20 and no session RV: sigma = 0.20 / sqrt(252 x 78) = 0.0014265350; h = 30 -> q90 = 0.0044881453.
+  // VIX 20 and no session RV (round 3: scaled to intraday by KAPPA = 14.90 / 36.30, BTZ 2009):
+  // sigma = sqrt(0.41046832) x 0.20 / sqrt(252 x 78) = 0.6406780 x 0.0014265350 = 0.0009139496; h = 30 -> q90 = expm1(1.2815516 x 0.0009139496 x sqrt(6)) = 0.0028731421.
   const v = baselineCone({ rv_session_5m: null, vix_level: 20, hour_of_day: 10.5 }, [30])!;
-  near(v.sigmaPerBar, 0.0014265349750363764, 1e-15);
-  near(v.bands["30"].q90, 0.004488145268269908, 1e-15);
+  near(v.sigmaPerBar, 0.0009139495968634681, 1e-15);
+  near(v.bands["30"].q90, 0.0028731420979910874, 1e-15);
   assert.equal(v.sigmaSource, "vix_implied");
   // Neither input -> unavailable, never a default width.
   assert.equal(baselineCone({ rv_session_5m: null, vix_level: null, hour_of_day: 10.5 }, [30]), null);
@@ -255,8 +256,8 @@ test("baseline cone with intraday periodicity (Andersen-Bollerslev): hand-comput
   // 15:45 ET, h = 30: only 15 minutes are left in the session (W = 3 x 11/12 = 2.75);
   // E = (12 + 69 x 11/12) / 75 -> s_h = 0.0016555554.
   near(baselineScale({ rv_session_5m: 0.001, hour_of_day: 15.75 }, 30, prof)!.sH, 0.0016555554316830998, 1e-15);
-  // VIX-implied sigma, flat, 15:45, h = 30: W = 3 -> 0.0014265350 x sqrt(3).
-  near(baselineScale({ vix_level: 20, hour_of_day: 15.75 }, 30, null)!.sH, 0.002470831055537004, 1e-15);
+  // VIX-implied sigma, flat, 15:45, h = 30: W = 3 -> 0.0009139496 x sqrt(3) (intraday-scaled VIX sigma).
+  near(baselineScale({ vix_level: 20, hour_of_day: 15.75 }, 30, null)!.sH, 0.0015830071373246198, 1e-15);
   // A horizon wholly after the close has no cone (never a zero-width band).
   assert.equal(baselineScale({ rv_session_5m: 0.001, hour_of_day: 16 }, 5, prof), null);
   const c = baselineCone({ rv_session_5m: 0.001, hour_of_day: 16 }, [5], null, prof);

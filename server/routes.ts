@@ -3293,7 +3293,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   // Classifies into 6 regimes with a one-sentence verdict + color tier.
   app.get("/api/regime/headline", async (_req, res) => {
     try {
-      const { getOptionChain } = await import("./schwab");
+      const { getOptionChainLadder } = await import("./schwab");
       const { getQuote } = await import("./sources");
 
       // 1) VIX term structure — Schwab cash indexes via getQuote (returns {last, prev})
@@ -3329,7 +3329,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       let spot: number | null = null;
       let weightMode: "oi" | "volume" | "hybrid" = "oi";
       try {
-        const chain = await getOptionChain("$SPX", 30);
+        // 0-30 DTE from the shared chain ladder ([0-2] [3-7] [8-30]), the
+        // same cached segments the Models horizons use (round 3, N1-1).
+        const chain = await getOptionChainLadder("$SPX", 30);
         if (!("error" in chain)) {
           spot = chain.underlying.last ?? null;
           let totalOI = 0, totalVol = 0;
@@ -6413,6 +6415,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         syntheticReason: null,
         dataState: tape.dataState,
         dataStateReason: tape.reason,
+        // Today's close, minutes after 09:30 ET (210 on a 13:00 half day); null = no session.
+        sessionCloseMin: (() => { const c = sessionCloseMinutes(etDate()); return c == null ? null : c - REGULAR_OPEN_MIN; })(),
         asOf: new Date().toISOString(),
       });
     } catch (e: any) {

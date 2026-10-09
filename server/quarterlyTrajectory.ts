@@ -17,14 +17,20 @@ import { vixToAtmPct } from "@shared/vol";
  *
  * For each week k ∈ [1..13]:
  *   - σ(k) = spot · (vixSegmented(k)/100) · √(k/52) · vrpScale · damp(k) · eventBump(k)
- *   - drift(k) = (driftPerWeek) · k     (linear; sums composite + GEX + VIX term + skew)
- *   - mean(k)  = spot · (1 + drift(k)) - magnetPull(k)
- *   - bull(k)  = mean(k) + σ(k)
- *   - bear(k)  = mean(k) - σ(k)
+ *   - base(k) = spot                     (ZERO drift: the median is spot)
+ *   - bull(k) = spot + σ(k), bear(k) = spot - σ(k)
  *   - damp(k)  = 1 - 0.15·(k/13)
+ *   - scenarioBase(k) = spot · (1 + tilt·k) + magnetPull(k): a LABELLED
+ *     heuristic scenario line only (tilt = composite + GEX + VIX term + SKEW
+ *     hand-set per-week tilts; anchors = walls/flip primary, max pain + JPM
+ *     secondary, pull capped at ±4%/wk).
  *
- * Anchors pull the BASE path. Walls/flip = primary (weight 1.0); max pain +
- * JPM = secondary (weight 0.4–0.6). Pull capped at ±4%/wk per anchor.
+ * Round 3 (N3-2): the hand-set tilts and anchor pulls used to move the BASE
+ * path (the median of the cone). None of them is a fitted or validated drift,
+ * so they are no longer in the median, which is spot (zero drift, as the
+ * index cone: server/multiDayProjection.ts); they survive only as the
+ * separate scenarioBase line, labelled as a heuristic scenario, never a
+ * forecast.
  *
  * Returns a structure the client renders as a 3-line fan chart with anchor
  * horizontals + event markers.
@@ -39,7 +45,11 @@ export interface WeeklyPoint {
   bear: number;
   sigmaWeek: number;       // INCREMENTAL σ for this single week (events visible here)
   sigmaCum: number;        // CUMULATIVE σ thru week k = sqrt(Σ σ_i² for i=1..k) — drives bull/bear cone
-  cumDriftPct: number;     // cumulative drift % (base vs spot)
+  cumDriftPct: number;     // cumulative drift % of the BASE (median) vs spot: 0 (zero drift, round 3)
+  /** Heuristic scenario line (hand-set tilts + anchor pulls), NOT the median. */
+  scenarioBase?: number;
+  /** Cumulative % of the scenario line vs spot. */
+  scenarioDriftPct?: number;
   events?: string[];       // ["OPEX"], ["FOMC"], ["OPEX","FOMC"], etc.
   vixSegment?: "VIX9D" | "VIX" | "VIX3M" | "BLEND";
 }
@@ -62,7 +72,11 @@ export interface QuarterlyTrajectory {
     gexTilt: number;             // weekly drift contribution from GEX regime (decimal)
     vixTermTilt: number;         // weekly drift contribution from VIX term (decimal)
     skewTilt: number;            // weekly drift contribution from the Cboe SKEW index (decimal)  [NEW v2]
-    totalDriftPerWeek: number;   // sum of above (decimal)
+    totalDriftPerWeek: number;   // sum of above (decimal): SCENARIO tilt only, not in the median
+    /** Drift in the BASE (median) path per week: 0 (round 3, N3-2). */
+    medianDriftPerWeek?: number;
+    /** false: the tilts and anchor pulls are not in the median, only in scenarioBase. */
+    tiltsInMedian?: boolean;
     annualizedDrift: number;     // total*52 for display
     magnetCount: number;         // anchors actively pulling
     vrpRatio: number | null;     // RV / IV ratio (decimal, null if RV unknown)  [NEW v2]
@@ -339,14 +353,16 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
     varianceAccum += sigmaWeekIncr * sigmaWeekIncr;
     const sigmaCum = Math.sqrt(varianceAccum);
 
+    // Heuristic scenario line (NOT the median): hand-set tilts + anchor pulls.
     const driftK = totalDriftPerWeek * k;
     const unmagBase = spot * (1 + driftK);
-
     // Magnet pull uses the cumulative σ — anchors only relevant when within reach
     const weeklyPull = computeMagnetPull(unmagBase, sigmaCum, spot, anchorList);
     cumMagnetPull += weeklyPull / WEEKS;
-    const base = unmagBase + cumMagnetPull;
+    const scenarioBase = unmagBase + cumMagnetPull;
 
+    // Median: zero drift.
+    const base = spot;
     const bull = base + sigmaCum;
     const bear = base - sigmaCum;
 
@@ -359,7 +375,9 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
       bear: parseFloat(bear.toFixed(2)),
       sigmaWeek: parseFloat(sigmaWeekIncr.toFixed(2)),
       sigmaCum: parseFloat(sigmaCum.toFixed(2)),
-      cumDriftPct: parseFloat((driftK * 100).toFixed(3)),
+      cumDriftPct: 0,
+      scenarioBase: parseFloat(scenarioBase.toFixed(2)),
+      scenarioDriftPct: parseFloat((((scenarioBase - spot) / spot) * 100).toFixed(3)),
       events: events.length > 0 ? events : undefined,
       vixSegment: segment,
     });
@@ -410,6 +428,8 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
       skewTilt,
       totalDriftPerWeek,
       annualizedDrift: totalDriftPerWeek * WEEKS_PER_YEAR,
+      medianDriftPerWeek: 0,
+      tiltsInMedian: false,
       magnetCount: activeMagnets,
       vrpRatio,
       vrpScale,
@@ -423,7 +443,8 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
     methodology:
       "13-week σ-cone. Per-week incremental σ from VIX-segmented term structure (wk1-3 VIX9D, wk4 BLEND, " +
       "wk5-7 VIX, wk8 BLEND, wk9-13 VIX3M), scaled by VRP (RV/IV clamped 0.7-1.3) and ×1.12 on OPEX/FOMC weeks. " +
-      "Cumulative σ(k) = √(Σ σ_i²) for monotonic cone growth. Drift = composite + GEX regime + VIX term + " +
-      "Cboe SKEW index (Schwab $SKEW). Anchored by walls, gamma flip, max pain, JPM collar (within ±15% of spot, ±2σ reach, capped ±4%/wk).",
+      "Cumulative σ(k) = √(Σ σ_i²) for monotonic cone growth. BASE = spot (zero drift); BULL/BEAR = spot ± σ(k). " +
+      "The SCENARIO line (not a forecast, not in the median) adds hand-set tilts (composite + GEX regime + VIX term + " +
+      "Cboe SKEW index via Schwab $SKEW) and anchor pulls (walls, gamma flip, max pain, JPM collar within ±15% of spot, ±2σ reach, capped ±4%/wk).",
   };
 }

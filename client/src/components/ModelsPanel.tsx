@@ -95,7 +95,7 @@ interface ModelAudit {
   vexPerVolPct: number;
   vannaBias: "positive" | "negative";
   vannaM: number;
-  gammaZone: "y+" | "y-";
+  gammaZone: "y+" | "y-" | "y?";
   gammaZoneLabel: string;
   gammaAtSpot: number;
   dfi: number;
@@ -202,7 +202,9 @@ interface TrajectoryWeek {
   bear: number;
   sigmaWeek: number;          // INCREMENTAL one-week σ (event bumps visible here)
   sigmaCum?: number;          // CUMULATIVE σ thru week k — drives the cone
-  cumDriftPct?: number;       // cumulative drift % vs spot
+  cumDriftPct?: number;       // cumulative drift % of the median vs spot (0: zero drift)
+  /** Heuristic scenario line (hand-set tilts + anchor pulls), not the median. */
+  scenarioBase?: number;
   /** @deprecated renamed to cumDriftPct — kept for one release for old payloads */
   driftPct?: number;
   events?: string[];
@@ -1646,9 +1648,9 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
   const chartData = useMemo(() => {
     const rows: Array<{
       wk: string; date: string; bull: number; base: number; bear: number;
-      sigma: number; sigmaIncr?: number; drift: number; events: string; segment: string;
+      sigma: number; sigmaIncr?: number; drift: number; events: string; segment: string; scenario?: number;
     }> = [
-      { wk: "NOW", date: "today", bull: traj.spot, base: traj.spot, bear: traj.spot, sigma: 0, sigmaIncr: 0, drift: 0, events: "", segment: "" },
+      { wk: "NOW", date: "today", bull: traj.spot, base: traj.spot, bear: traj.spot, sigma: 0, sigmaIncr: 0, drift: 0, events: "", segment: "", scenario: traj.spot },
     ];
     for (const w of traj.weeks) {
       // Prefer cumulative σ (drives the cone). Fall back to incremental for old payloads.
@@ -1665,6 +1667,7 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
         drift: cumDrift,
         events: (w.events ?? []).join(","),
         segment: w.vixSegment ?? "",
+        scenario: w.scenarioBase,
       });
     }
     return rows;
@@ -1757,7 +1760,7 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
         <span className={driftDirColor + " font-bold"}>{driftDirLabel}</span>
         <span className="text-border">|</span>
         <span className="text-cyan-400/80">
-          DRIFT {(traj.drivers.annualizedDrift * 100).toFixed(1)}%/yr
+          BASE = SPOT (ZERO DRIFT) · SCENARIO TILT {(traj.drivers.annualizedDrift * 100).toFixed(1)}%/yr (HEURISTIC)
         </span>
         <span className="text-border">|</span>
         <span className="text-muted-foreground">{traj.drivers.magnetCount} ANCHORS PULLING</span>
@@ -1848,6 +1851,16 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
             />
             <Line
               type="monotone"
+              dataKey="scenario"
+              name="SCENARIO (heuristic tilt, not median)"
+              stroke="#22d3ee"
+              strokeWidth={1}
+              strokeDasharray="4 3"
+              dot={false}
+              isAnimationActive={false}
+            />
+            <Line
+              type="monotone"
               dataKey="bear"
               name="BEAR"
               stroke="#ef4444"
@@ -1882,7 +1895,7 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
 
         {/* Drivers — v2 with 4 components */}
         <div className="rounded border border-cyan-500/20 bg-black/50 p-2 font-mono text-[10px]">
-          <div className="mb-1 text-[9px] uppercase tracking-widest text-cyan-400/80">DRIFT DRIVERS (PER WEEK)</div>
+          <div className="mb-1 text-[9px] uppercase tracking-widest text-cyan-400/80">SCENARIO TILT DRIVERS (PER WEEK, HEURISTIC, NOT IN BASE)</div>
           <div className="grid grid-cols-4 gap-2 text-[10px]">
             <div>
               <div className="text-[8px] text-muted-foreground/70">COMPOSITE</div>

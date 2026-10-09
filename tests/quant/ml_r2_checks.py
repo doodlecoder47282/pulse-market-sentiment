@@ -40,10 +40,10 @@ class BaselineCone(unittest.TestCase):
         self.assertAlmostEqual(q[0, 0], -0.0025598211868448975, places=15)
         self.assertAlmostEqual(q[0, 3], 0.0013498897825096905, places=15)
         self.assertEqual(q[0, 2], 0.0)
-        # VIX 20, no session RV: sigma = 0.20 / sqrt(252 * 78) = 0.00142653; h = 30 -> q90 = 0.0044881453
+        # VIX 20, no session RV (round 3: x sqrt(KAPPA), KAPPA = 14.90 / 36.30): sigma = 0.6406780 * 0.20 / sqrt(252 * 78) = 0.00091395; h = 30 -> q90 = 0.0028731421
         s = fe.baseline_sigma_per_bar(np.array([np.nan]), np.array([20.0]))
-        self.assertAlmostEqual(s[0], 0.0014265349750363764, places=15)
-        self.assertAlmostEqual(fe.baseline_quantiles(s, 30)[0, 4], 0.004488145268269908, places=15)
+        self.assertAlmostEqual(s[0], 0.0009139495968634681, places=15)
+        self.assertAlmostEqual(fe.baseline_quantiles(s, 30)[0, 4], 0.0028731420979910874, places=15)
         # neither input -> NaN, never a default
         self.assertTrue(np.isnan(fe.baseline_sigma_per_bar(np.array([np.nan]), np.array([np.nan]))[0]))
 
@@ -56,7 +56,7 @@ class BaselineCone(unittest.TestCase):
         self.assertAlmostEqual(fe.baseline_quantiles_from_scale(s)[0, 4], 0.0024918940657702128, places=15)
         self.assertAlmostEqual(fe.baseline_scale(0.001, np.nan, 15.75, 30, f)[0][0], 0.0016555554316830998, places=15)
         s, src = fe.baseline_scale(np.nan, 20.0, 15.75, 30, None)
-        self.assertAlmostEqual(s[0], 0.002470831055537004, places=15)
+        self.assertAlmostEqual(s[0], 0.0015830071373246198, places=15)
         self.assertEqual(src[0], "vix_implied")
         # After the close: no cone; no time of day: no cone.
         self.assertTrue(np.isnan(fe.baseline_scale(0.001, np.nan, 16.0, 5, f)[0][0]))

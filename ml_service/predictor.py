@@ -7,6 +7,12 @@ score_calibrator: RETIRED (R2-F item 6). It had no consumer (mlScoreOdte is
 never called), pooled whale and regime rows and was gated at 80 rows; it is no
 longer trained or served.
 
+whale_follow: RETIRED (round 3) for the same reason: nothing reads it (the
+server's mlWhaleFollow is never called; whale outcomes are graded by the
+deterministic follow-through tracker), and it filled missing features with
+training medians. predict_whale_follow returns None; the old body is kept as
+_predict_whale_follow_legacy for reference only.
+
 Quantile models (quantile_overlay, quantile_overlay_morning), R2-F items 2/3/5:
   - Served version = the highest version whose meta says promoted = true AND
     training_data = "real" (it passed the walk-forward promotion gate against
@@ -164,8 +170,12 @@ class ModelRegistry:
         return None
 
     def predict_whale_follow(self, features: Dict[str, float]) -> Optional[float]:
+        """Retired (round 3): no consumer. Always None."""
+        return None
+
+    def _predict_whale_follow_legacy(self, features: Dict[str, float]) -> Optional[float]:
         """
-        Returns float probability p(follow_30min) or None on any failure.
+        LEGACY, not called. Returns float probability p(follow_30min) or None on any failure.
         Uses sklearn CalibratedClassifierCV (joblib format).
         Feature alignment: fill missing with training_medians from meta.
         """

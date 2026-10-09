@@ -14,7 +14,16 @@ tested in tests/quant/ml-r2.test.ts + tests/quant/ml_r2_checks.py):
   rescaled to mean 1. Flat (f = 1) below MIN_PERIODICITY_DAYS sessions.
   Sigma: per-bar variance sigma^2 = rv_session_5m^2 / E (E = mean f over the
   elapsed part of today's session: the realized RMS is deseasonalized), else
-  (VIX / 100)^2 / (252 * 78) (VIX-implied, a whole-day average), else missing.
+  KAPPA * (VIX / 100)^2 / (252 * 78) (VIX-implied, scaled to intraday realized
+  variance), else missing. KAPPA = VIX_INTRADAY_VARIANCE_RATIO = 14.90 / 36.30:
+  Bollerslev, Tauchen & Zhou, "Expected Stock Returns and Variance Risk
+  Premia", RFS 22(11), 2009, Table 1 (1990Q1-2005Q1; FEDS 2007-11,
+  https://www.federalreserve.gov/Pubs/Feds/2007/200711/200711pap.pdf): mean
+  VIX^2 36.30 vs mean 5-minute S&P 500 realized variance 14.90 (trading-day
+  5-minute returns plus the cash-index close-to-open return, ~2.8% of daily
+  variance per Ahoniemi, Fuertes & Olmo, J. Financial Econometrics 14(3),
+  2016). VIX^2 carries overnight variance and the variance risk premium; an
+  intraday cone should carry neither. Same constant in server/mlServedBand.ts.
   Horizon [m0, m0 + h) minutes after 09:30: s_h^2 = sigma^2 * W, W = sum over
   buckets of f_b * (overlap minutes / 5), so with f = 1 inside the session
   W = h / 5 (square-root-of-time); time after the close adds nothing, and a
@@ -72,6 +81,7 @@ Q_NAMES = ["q10", "q25", "q50", "q75", "q90"]
 GAUSS_Z = np.array([-1.2815515655446004, -0.6744897501960817, 0.0, 0.6744897501960817, 1.2815515655446004])
 BARS_PER_DAY_5M = 78
 TRADING_DAYS = 252
+VIX_INTRADAY_VARIANCE_RATIO = 14.90 / 36.30  # see the module docstring (BTZ 2009 Table 1)
 NOMINAL = 0.80
 OPEN_MIN = 570  # 09:30 ET
 MIN_PERIODICITY_DAYS = 20
@@ -182,7 +192,7 @@ def baseline_scale(rv_session, vix, hour_of_day, h_min: float, profile: Optional
             var = rv[i] ** 2 / E
             src[i] = "rv_session"
         elif np.isfinite(vx[i]) and vx[i] > 0:
-            var = (vx[i] / 100.0) ** 2 / (TRADING_DAYS * BARS_PER_DAY_5M)
+            var = VIX_INTRADAY_VARIANCE_RATIO * (vx[i] / 100.0) ** 2 / (TRADING_DAYS * BARS_PER_DAY_5M)
             src[i] = "vix_implied"
         else:
             continue
@@ -200,7 +210,8 @@ def baseline_sigma_per_bar(rv_session, vix) -> np.ndarray:
     """Flat-profile per-bar sigma (no periodicity, no time of day): rv else VIX-implied else NaN."""
     rv = np.asarray(rv_session, dtype=float)
     vx = np.asarray(vix, dtype=float)
-    vix_sigma = np.where(np.isfinite(vx) & (vx > 0), vx / 100.0 / math.sqrt(TRADING_DAYS * BARS_PER_DAY_5M), np.nan)
+    vix_sigma = np.where(np.isfinite(vx) & (vx > 0),
+                         math.sqrt(VIX_INTRADAY_VARIANCE_RATIO) * vx / 100.0 / math.sqrt(TRADING_DAYS * BARS_PER_DAY_5M), np.nan)
     return np.where(np.isfinite(rv) & (rv > 0), rv, vix_sigma)
 
 

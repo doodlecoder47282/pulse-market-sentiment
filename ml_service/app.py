@@ -49,8 +49,8 @@ class DemoteRequest(BaseModel):
 
 
 class RetrainRequest(BaseModel):
-    # score_calibrator is retired (R2-F item 6).
-    models: List[str] = ["quantile_overlay", "whale_follow"]
+    # score_calibrator (R2-F item 6) and whale_follow (round 3) are retired.
+    models: List[str] = ["quantile_overlay"]
 
 
 class BackfillRequest(BaseModel):
@@ -86,7 +86,9 @@ def health():
                                  "note": "retired: no consumer; pooled whale and regime labels; 80-row gate"},
             "quantile_overlay": _quantile_health("quantile_overlay"),
             "quantile_overlay_morning": _quantile_health("quantile_overlay_morning"),
-            "whale_follow": _meta("whale_follow"),
+            "whale_follow": {"status": "RETIRED", "version": 0, "trained_at": None, "n_train": 0, "auc": None,
+                             "low_signal": None, "training_data": None,
+                             "note": "retired: no consumer (server mlWhaleFollow is never called); whale outcomes are graded by the deterministic tracker"},
         },
     }
 
@@ -126,23 +128,8 @@ def score_odte(req: FeaturesRequest):
 
 @app.post("/score/whale_follow")
 def score_whale_follow(req: FeaturesRequest):
-    try:
-        p = registry.predict_whale_follow(req.features)
-        meta = registry.get_meta("whale_follow") or {}
-        status = meta.get("status", "INSUFFICIENT_DATA")
-        version = meta.get("version", 0)
-        low_signal = meta.get("low_signal", None)
-    except Exception:
-        p = None
-        status = "INSUFFICIENT_DATA"
-        version = 0
-        low_signal = None
-    return {
-        "p_follow_30min": p,
-        "status": status,
-        "version": version,
-        "low_signal": low_signal,
-    }
+    # Retired (round 3, like the score calibrator): no consumer; never a probability.
+    return {"p_follow_30min": None, "status": "RETIRED", "version": 0, "low_signal": None}
 
 
 # ─── /quantile/overlay ───────────────────────────────────────────────────────
@@ -208,7 +195,7 @@ async def _run_retrain(job_id: str, models: List[str]):
             elif name == "quantile_overlay":
                 r = await asyncio.to_thread(trainer.train_quantile_overlay)
             elif name == "whale_follow":
-                r = await asyncio.to_thread(trainer.train_whale_follow)
+                r = {"status": "RETIRED", "note": "whale_follow retired (round 3): no consumer"}
             else:
                 r = {"status": "UNKNOWN_MODEL"}
             results[name] = r

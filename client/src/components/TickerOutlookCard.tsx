@@ -169,6 +169,9 @@ interface TickerProjectionResponse {
   sigmaAnnualizedPct: number;
   driftDaily: number;
   volBlowupFactor: number;
+  /** "atm_iv_term": the stock's own Schwab ATM IV term structure; "realized_30d": fallback, no chain. */
+  sigmaSource?: "atm_iv_term" | "realized_30d";
+  source?: "implied_vol_cone" | "realized_vol_cone";
   bands: Array<{
     day: number;
     date: string;
@@ -531,12 +534,12 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                     </span>
                     {proj.data && (
                       <span className="font-mono text-[10px] text-muted-foreground">
-                        σ {proj.data.sigmaAnnualizedPct.toFixed(1)}% ann · vol×{proj.data.volBlowupFactor.toFixed(2)}
+                        σ {proj.data.sigmaAnnualizedPct.toFixed(1)}% ann · {proj.data.sigmaSource === "realized_30d" ? "30d realized (no chain)" : "own ATM IV term"}
                       </span>
                     )}
                   </div>
                   <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-                    realized vol · not ML
+                    {proj.data?.sigmaSource === "realized_30d" ? "realized vol" : "implied vol"} · not ML
                   </span>
                 </div>
                 {proj.isLoading && (
@@ -582,7 +585,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                         {/* 50% band: q25-q75 inner */}
                         <Area dataKey="q75" stroke="none" fill={dir === "BULL" ? "#10b98180" : dir === "BEAR" ? "#f43f5e80" : "#f59e0b80"} fillOpacity={0.30} isAnimationActive={false} />
                         <Area dataKey="q25" stroke="none" fill="#0a0a0a" fillOpacity={1} isAnimationActive={false} />
-                        {/* drift median */}
+                        {/* median = spot (zero drift) */}
                         <Line type="monotone" dataKey="q50" stroke={dir === "BULL" ? "#10b981" : dir === "BEAR" ? "#f43f5e" : "#f59e0b"} strokeWidth={2} dot={false} isAnimationActive={false} />
                         {/* target / invalidation */}
                         {v.targetPrice != null && (
@@ -615,7 +618,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                       <span className={`inline-block h-2 w-3 rounded-sm ${dir === "BULL" ? "bg-emerald-500/25" : dir === "BEAR" ? "bg-rose-500/25" : "bg-amber-500/25"}`} />
                       80% band (q10–q90)
                     </span>
-                    <span className="opacity-70">drift dampened 0.5x</span>
+                    <span className="opacity-70" title={proj.data.honestyNote}>zero drift · Student-t(4) tails · coverage untested</span>
                   </div>
                 )}
               </div>

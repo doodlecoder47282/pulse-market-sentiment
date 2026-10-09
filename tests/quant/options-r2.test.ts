@@ -74,7 +74,8 @@ test("heatseeker: Net GEX is the full-expiry re-priced sum, so its sign matches 
   assert.equal(h.flipInputs?.weight, "open_interest");
   assert.equal(h.flipInputs?.universe, "single-expiry");
   assert.deepEqual(h.flipInputs?.expiries, ["2026-10-08"]);
-  assert.ok(h.dealerSensitivity && h.dealerSensitivity.conventions.length === 3);
+  // Round 3: five cases, two moving gamma toward short and two toward long.
+  assert.ok(h.dealerSensitivity && h.dealerSensitivity.conventions.length === 5);
 });
 
 // ─── Item 3: far-wing zero crossings below numeric materiality are dropped ──
@@ -130,10 +131,14 @@ test("dealer sensitivity: all-short GEX = -(call GEX + put GEX); calls-flat = -p
   near(byId["naive"].gexAtSpot!, callOnly - putOnly, 1e-6 * callOnly, "naive");
   near(byId["dealer-short-all"].gexAtSpot!, -(callOnly + putOnly), 1e-6 * callOnly, "all short");
   near(byId["calls-flat"].gexAtSpot!, -putOnly, 1e-6 * callOnly, "calls flat");
-  // Call-heavy at spot: naive says long gamma, the others say short gamma.
+  // Round 3 (two-sided): the long-side cases are +C (puts flat) and C + P (all long).
+  near(byId["puts-flat"].gexAtSpot!, callOnly, 1e-6 * callOnly, "puts flat");
+  near(byId["dealer-long-all"].gexAtSpot!, callOnly + putOnly, 1e-6 * callOnly, "all long");
+  // Robustness = breakeven misattributed share f* = (C - P) / (2C) vs 25%.
   assert.ok(byId["naive"].gexAtSpot! > 0);
-  assert.equal(s.regimeSignRobust, false);
-  assert.match(s.note, /DEPENDS/);
+  const fStar = (callOnly - putOnly) / (2 * callOnly);
+  near(s.breakevenMisattribution!, fStar, 1e-9, "f*");
+  assert.equal(s.regimeSignRobust, fStar >= 0.25);
   // Under all-short every term is negative: no flip can exist.
   assert.equal(byId["dealer-short-all"].zeroGamma, null);
 });
@@ -442,7 +447,10 @@ test("fix 2: a convention with all-zero weights is an observed 0, not missing; r
   const flat = s.conventions.find((c) => c.id === "calls-flat")!;
   assert.equal(flat.gexAtSpot, 0, "observed zero");
   assert.equal(flat.gexSign, null);
-  assert.equal(s.regimeSignRobust, false); // naive +, all-short -
+  // Round 3: a calls-only chain is long under naive and survives any
+  // misattribution below 50% (f* = 0.5), the mirror of the puts-only case.
+  assert.equal(s.breakevenMisattribution, 0.5);
+  assert.equal(s.regimeSignRobust, true);
   assert.match(s.note, /no material gamma under: calls-flat/);
   const putsOnly: OptionRow[] = [{ type: "P", strike: 6650, iv: 0.16, oi: 2000, dte: 10, T }];
   const p = dealerConventionSensitivity(putsOnly, 6700, { r: 0, q: 0 });

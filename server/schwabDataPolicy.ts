@@ -191,6 +191,40 @@ export function freshFreshness(
 
 /** N^-1(0.90): standard normal quantile of the 10-delta strike. */
 export const Z_10_DELTA = 1.2815515655446004;
+/** N^-1(0.75): standard normal quantile of the 25-delta strike. */
+export const Z_25_DELTA = 0.6744897501960817;
+/**
+ * Round 3 (N1-1): windows longer than this many calendar days are "long" and
+ * their strike half-width is capped at the 25-delta wing (with the skew
+ * multiplier) instead of the 10-delta wing. Gamma of a long-dated contract
+ * far beyond its 25-delta strike is small next to the near-dated gamma the
+ * flip scan is dominated by, and the 10% floor still keeps the whole +-10%
+ * flip scan covered.
+ */
+export const LONG_TENOR_DTE = 7;
+/** Strikes per side requested for an ATM-only read (ATM IV, straddle). */
+export const ATM_STRIKES_PER_SIDE = 4;
+/** Floor of the 25-delta-wing window (decimal each side). */
+export const MIN_WING_HALF_WIDTH_PCT = 0.01;
+/** Carry bound for the forward shift of the wing window: |r - q| <= 5%/yr. */
+export const MAX_CARRY_PER_YEAR = 0.05;
+
+/**
+ * What a chain request must cover:
+ *   "gamma"  : dealer-gamma maps and the re-priced flip: max(10% flip scan,
+ *              10-delta wing x 1.5) for windows up to LONG_TENOR_DTE, and
+ *              max(10%, 25-delta wing x 1.5) for longer windows;
+ *   "wing25" : skew / 25-delta risk reversal of a single tenor: the 25-delta
+ *              wing x 1.5 plus the forward carry, no 10% floor;
+ *   "atm"    : ATM IV / straddle only: ATM_STRIKES_PER_SIDE strikes per side.
+ * Strike of a given delta (Black-Scholes, forward F, put delta -D):
+ *   ln(K/F) = -N^-1(1 - D) sigma sqrt(T) + sigma^2 T / 2   (Hull, OFOD, delta
+ *   N(d1) - 1 for a put; e.g. Wystup, "FX Options and Structured Products",
+ *   2nd ed., 2017, sec. 1.5 delta-to-strike), so the 25-delta strike lies
+ *   inside z25 x sigma_wing x sqrt(T) of the forward on both sides while
+ *   sigma sqrt(T) < 0.67; sigma_wing <= 1.5 x ATM covers index put skew.
+ */
+export type ChainCoverage = "gamma" | "wing25" | "atm";
 export const WING_IV_MULT = 1.5;
 export const MIN_HALF_WIDTH_PCT = 0.10;
 export const MAX_HALF_WIDTH_PCT = 0.35;
@@ -259,18 +293,36 @@ export function chainStrikePlan(args: {
   dteMax: number | null | undefined;
   atmIv?: number | null;
   semantics?: StrikeCountSemantics;
+  /** What the request must cover (default "gamma"). */
+  coverage?: ChainCoverage;
 }): StrikePlan {
   const dte = args.dteMax != null && Number.isFinite(args.dteMax) && args.dteMax > 0 ? args.dteMax : 1;
   const iv = args.atmIv != null && Number.isFinite(args.atmIv) && args.atmIv > 0.01 && args.atmIv < 3 ? args.atmIv : DEFAULT_ATM_IV;
   const T = dte / 365;
-  const emWidth = Z_10_DELTA * WING_IV_MULT * iv * Math.sqrt(T);
-  const halfWidthPct = Math.min(MAX_HALF_WIDTH_PCT, Math.max(MIN_HALF_WIDTH_PCT, emWidth));
+  const coverage: ChainCoverage = args.coverage ?? "gamma";
   const spacing = strikeSpacingFor(args.symbol, args.spot);
-  const basis = `+-${(halfWidthPct * 100).toFixed(1)}% = max(10% flip scan, 10-delta wing ${(emWidth * 100).toFixed(1)}%: z10 ${Z_10_DELTA.toFixed(4)} x ${WING_IV_MULT} x iv ${(iv * 100).toFixed(1)}% x sqrt(${dte}/365))`;
+  let halfWidthPct: number;
+  let basis: string;
+  if (coverage === "atm") {
+    const s = args.spot != null && args.spot > 0 ? args.spot : null;
+    halfWidthPct = s != null ? (ATM_STRIKES_PER_SIDE * spacing) / s : 0;
+    basis = `ATM only: ${ATM_STRIKES_PER_SIDE} strikes per side`;
+  } else if (coverage === "wing25") {
+    const wing = Z_25_DELTA * WING_IV_MULT * iv * Math.sqrt(T) + MAX_CARRY_PER_YEAR * T;
+    halfWidthPct = Math.min(MAX_HALF_WIDTH_PCT, Math.max(MIN_WING_HALF_WIDTH_PCT, wing));
+    basis = `+-${(halfWidthPct * 100).toFixed(1)}% = 25-delta wing: z25 ${Z_25_DELTA.toFixed(4)} x ${WING_IV_MULT} x iv ${(iv * 100).toFixed(1)}% x sqrt(${dte}/365) + carry ${(MAX_CARRY_PER_YEAR * T * 100).toFixed(2)}%`;
+  } else {
+    const long = dte > LONG_TENOR_DTE;
+    const z = long ? Z_25_DELTA : Z_10_DELTA;
+    const emWidth = z * WING_IV_MULT * iv * Math.sqrt(T);
+    halfWidthPct = Math.min(MAX_HALF_WIDTH_PCT, Math.max(MIN_HALF_WIDTH_PCT, emWidth));
+    basis = `+-${(halfWidthPct * 100).toFixed(1)}% = max(10% flip scan, ${long ? "25" : "10"}-delta wing ${(emWidth * 100).toFixed(1)}%: z${long ? "25" : "10"} ${z.toFixed(4)} x ${WING_IV_MULT} x iv ${(iv * 100).toFixed(1)}% x sqrt(${dte}/365))${long ? `; window > ${LONG_TENOR_DTE} DTE capped at the 25-delta wing` : ""}`;
+  }
   if (args.spot == null || !(args.spot > 0)) {
+    if (coverage === "atm") return { halfWidthPct, spacing, perSide: ATM_STRIKES_PER_SIDE, strikeCount: STRIKE_COUNT_STEP, capped: false, basis: `${basis}; spot unknown` };
     return { halfWidthPct, spacing, perSide: 100, strikeCount: 200, capped: false, basis: `${basis}; spot unknown, 200 strikes` };
   }
-  const perSide = Math.ceil((halfWidthPct * args.spot) / spacing);
+  const perSide = coverage === "atm" ? ATM_STRIKES_PER_SIDE : Math.ceil((halfWidthPct * args.spot) / spacing);
   const wanted = args.semantics === "per_side" ? perSide : 2 * perSide;
   const stepped = Math.ceil(wanted / STRIKE_COUNT_STEP) * STRIKE_COUNT_STEP;
   const strikeCount = Math.min(MAX_STRIKE_COUNT, Math.max(STRIKE_COUNT_STEP, stepped));
@@ -440,4 +492,177 @@ export function atmIvFromChain(
     if (vols.length) return vols.reduce((a, b) => a + b, 0) / vols.length;
   }
   return null;
+}
+
+// ─── Chain request windows (round 3, N1-1) ───────────────────────────────────
+//
+// Payload: a Schwab chain response holds (expiries in the window) x (strikes
+// per expiry, up to strikeCount) x 2 sides contract objects of ~1.3 KB of JSON.
+// The cost driver is the number of expiries: SPX lists a PM expiry every
+// trading day, so 0-100 DTE is ~70 expiries. Before this round each horizon
+// asked for its own overlapping window (0-2, 0-7, 0-45, 0-100 for Models, 0-30
+// for the regime headline, 0-100 for skew, and auditEnrich asked for every
+// listed expiry once a minute), so the same near-dated expiries were
+// downloaded up to six times per minute.
+//
+// Now:
+//   1. Multi-expiry aggregates (Models GEX, regime headline) are assembled
+//      from a fixed, DISJOINT ladder of DTE segments, each fetched (and
+//      cached for the 60 s TTL) once and shared by every horizon that needs
+//      it: [0-2] [3-7] [8-30] [31-45] [46-100].
+//   2. Single-tenor reads (skew at 7/30/60/90 DTE) ask for a narrow window
+//      around the target tenor only (tenorWindow), sized to the 25-delta wing.
+//   3. ATM-only reads (auditEnrich ATM IV) use the 0-day window that the 0DTE
+//      engines already request, so they add no request at all.
+//   4. Long segments (> LONG_TENOR_DTE) cap strikes at the 25-delta wing.
+
+/** Upper bounds (calendar DTE, inclusive) of the shared chain ladder. */
+export const CHAIN_LADDER_DTE = [2, 7, 30, 45, 100] as const;
+
+export interface DteWindow { fromDte: number; toDte: number }
+
+/**
+ * Disjoint ladder segments that cover [0, dteMax]. The last segment ends at
+ * the first ladder bound >= dteMax (callers drop rows past their own dteMax),
+ * or at dteMax itself beyond the last bound.
+ */
+export function chainLadderSegments(dteMax: number): DteWindow[] {
+  const d = Number.isFinite(dteMax) && dteMax > 0 ? Math.ceil(dteMax) : 0;
+  const out: DteWindow[] = [];
+  let from = 0;
+  for (const b of CHAIN_LADDER_DTE) {
+    out.push({ fromDte: from, toDte: b });
+    if (b >= d) return out;
+    from = b + 1;
+  }
+  out.push({ fromDte: from, toDte: d });
+  return out;
+}
+
+/** Half-width (days) of a single-tenor window: max(2, ceil(5% of the tenor)). */
+export function tenorWindowHalfDays(targetDte: number): number {
+  return Math.max(2, Math.ceil(0.05 * Math.max(0, targetDte)));
+}
+
+/**
+ * Narrow window around one target tenor: [t - w, t + w], w = tenorWindowHalfDays.
+ * SPX/SPY list an expiry every trading day, so this holds 2-7 expiries; a
+ * single stock with only monthly expiries may have none in it, and the
+ * caller then widens to tenorWindowWide.
+ */
+export function tenorWindow(targetDte: number): DteWindow {
+  const t = Math.max(0, Math.round(targetDte));
+  const w = tenorWindowHalfDays(t);
+  return { fromDte: Math.max(0, t - w), toDte: t + w };
+}
+
+/** Fallback window [0.4 t, 1.6 t] (the skew tenor picker's own +-60% tolerance). */
+export function tenorWindowWide(targetDte: number): DteWindow {
+  const t = Math.max(1, Math.round(targetDte));
+  return { fromDte: Math.max(0, Math.floor(0.4 * t)), toDte: Math.ceil(1.6 * t) };
+}
+
+/**
+ * Upper-bound payload estimate of one chain request, bytes: expiries x
+ * strikeCount x 2 sides x bytesPerContract (default 1.3 KB). An estimate
+ * for planning; the real bytes are recorded per request (schwab.ts _chainCost).
+ */
+export function chainPayloadBoundBytes(expiries: number, strikeCount: number, bytesPerContract = 1300): number {
+  return Math.max(0, expiries) * Math.max(0, strikeCount) * 2 * bytesPerContract;
+}
+
+// ─── Chain asOf from Schwab's underlying quote time (round 3, N1-2) ─────────
+
+/** Tolerated lead of Schwab's quote time over our receive time (clock skew). */
+export const QUOTE_CLOCK_SKEW_MS = 5_000;
+
+export type ChainAsOfBasis = "underlying_quote_time" | "receive_time";
+
+/**
+ * When the market data in a chain was current. Schwab stamps the chain's
+ * underlying block with quoteTime (epoch ms of the underlying's last quote);
+ * that, not our receive time, is the age a trader cares about (after the
+ * close, or when the index stops updating, a chain received now still prices
+ * off a quote that may be hours old). Receive time is the fallback when the
+ * quote time is missing, non-positive, or ahead of the receive time by more
+ * than QUOTE_CLOCK_SKEW_MS (clock skew: not trusted). The result never lies
+ * after the receive time.
+ */
+export function chainAsOf(
+  quoteTimeMs: number | null | undefined,
+  receivedAtMs: number,
+): { asOfMs: number; basis: ChainAsOfBasis; reason: string | null } {
+  const q = typeof quoteTimeMs === "number" && Number.isFinite(quoteTimeMs) && quoteTimeMs > 0 ? quoteTimeMs : null;
+  if (q == null) return { asOfMs: receivedAtMs, basis: "receive_time", reason: "no underlying quoteTime in the chain" };
+  if (q > receivedAtMs + QUOTE_CLOCK_SKEW_MS) {
+    return { asOfMs: receivedAtMs, basis: "receive_time", reason: `underlying quoteTime ${Math.round((q - receivedAtMs) / 1000)} s ahead of receive time (clock skew)` };
+  }
+  return { asOfMs: Math.min(q, receivedAtMs), basis: "underlying_quote_time", reason: null };
+}
+
+// ─── Merging ladder segments into one chain view ─────────────────────────────
+
+export interface ChainSegmentLike {
+  underlying: { last: number | null; quoteTimeMs?: number | null; [k: string]: unknown };
+  callExpDateMap: Record<string, Record<string, any[]>>;
+  putExpDateMap: Record<string, Record<string, any[]>>;
+  asOfMs: number;
+  ageMs: number;
+  servedFromCache: boolean;
+  stale: boolean;
+  maxAgeMs: number;
+  staleReason: string | null;
+  strikeCount: number;
+  strikePlan: string;
+  strikeCoverage: StrikeCoverage | null;
+  [k: string]: unknown;
+}
+
+/**
+ * One chain view from disjoint ladder segments: expiry maps unioned (a key
+ * present twice keeps the newer segment's copy), asOf = the OLDEST segment's
+ * (the view is only as current as its oldest part), age = the largest,
+ * stale/servedFromCache as any/all, coverage = the worst side over segments,
+ * underlying = the newest segment's. Pure: the caller fetched the segments.
+ */
+export function mergeChainSegments<T extends ChainSegmentLike>(segments: T[]): T | null {
+  if (!segments.length) return null;
+  const byNew = [...segments].sort((a, b) => a.asOfMs - b.asOfMs); // oldest first, newest overwrites
+  const newest = byNew[byNew.length - 1];
+  const calls: Record<string, Record<string, any[]>> = {};
+  const puts: Record<string, Record<string, any[]>> = {};
+  for (const s of byNew) {
+    for (const k of Object.keys(s.callExpDateMap ?? {})) calls[k] = s.callExpDateMap[k];
+    for (const k of Object.keys(s.putExpDateMap ?? {})) puts[k] = s.putExpDateMap[k];
+  }
+  const covs = segments.map((s) => s.strikeCoverage).filter((c): c is StrikeCoverage => c != null);
+  const minOrNull = (xs: Array<number | null>) => {
+    const v = xs.filter((x): x is number => x != null);
+    return v.length === xs.length && v.length ? Math.min(...v) : null;
+  };
+  const coverage: StrikeCoverage | null = covs.length
+    ? {
+      targetHalfWidthPct: Math.max(...covs.map((c) => c.targetHalfWidthPct)),
+      belowPct: minOrNull(covs.map((c) => c.belowPct)),
+      abovePct: minOrNull(covs.map((c) => c.abovePct)),
+      complete: covs.length === segments.length && covs.every((c) => c.complete),
+      expiries: covs.reduce((a, c) => a + c.expiries, 0),
+      nearestBelow: covs[0].nearestBelow,
+      nearestAbove: covs[0].nearestAbove,
+    }
+    : null;
+  return {
+    ...newest,
+    callExpDateMap: calls,
+    putExpDateMap: puts,
+    asOfMs: Math.min(...segments.map((s) => s.asOfMs)),
+    ageMs: Math.max(...segments.map((s) => s.ageMs)),
+    servedFromCache: segments.every((s) => s.servedFromCache),
+    stale: segments.some((s) => s.stale),
+    maxAgeMs: Math.min(...segments.map((s) => s.maxAgeMs)),
+    staleReason: segments.map((s) => s.staleReason).filter(Boolean).join("; ") || null,
+    strikeCount: Math.max(...segments.map((s) => s.strikeCount)),
+    strikePlan: segments.map((s) => s.strikePlan).join(" | "),
+    strikeCoverage: coverage,
+  };
 }

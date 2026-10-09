@@ -85,7 +85,8 @@ interface Strike {
   netGex: number;
   callGex: number;
   putGex: number;
-  netDex: number;
+  /** null = no usable delta at this strike (missing, not 0). */
+  netDex: number | null;
   netVanna: number;
   netCharm: number;
   callOI: number;
@@ -744,7 +745,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
 
   // Max absolute values for heatmap normalization
   const maxAbsGex = useMemo(() => Math.max(...strikes.map((s) => Math.abs(s.netGex)), 1), [strikes]);
-  const maxAbsDex = useMemo(() => Math.max(...strikes.map((s) => Math.abs(s.netDex)), 1), [strikes]);
+  const maxAbsDex = useMemo(() => Math.max(...strikes.map((s) => Math.abs(s.netDex ?? 0)), 1), [strikes]);
   const maxAbsVanna = useMemo(() => Math.max(...strikes.map((s) => Math.abs(s.netVanna)), 1), [strikes]);
   const maxAbsCharm = useMemo(() => Math.max(...strikes.map((s) => Math.abs(s.netCharm)), 1), [strikes]);
 
@@ -1010,7 +1011,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                       )}
                     </div>
                     <GexCell callGex={s.callGex} putGex={s.putGex} max={maxAbsGex} symbol={symbol} strike={s.strike} />
-                    <HeatCell value={s.netDex} max={maxAbsDex} />
+                    {s.netDex != null ? <HeatCell value={s.netDex} max={maxAbsDex} /> : <div className="flex items-center justify-center font-mono text-[10px] text-muted-foreground" title="no usable delta at this strike">—</div>}
                     <HeatCell value={s.netVanna} max={maxAbsVanna} />
                     <HeatCell value={s.netCharm} max={maxAbsCharm} />
                     <div className="text-right font-mono text-[10px] text-muted-foreground tabular-nums">

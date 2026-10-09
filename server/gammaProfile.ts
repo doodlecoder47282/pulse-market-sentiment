@@ -547,26 +547,53 @@ export function flipInputs(args: {
  * (dealers long calls, short puts: SqueezeMetrics 2016/2017; Perfiliev calls
  * it "a crude approximation ... true to some extent on an index level",
  * https://perfiliev.com/blog/how-to-calculate-gamma-exposure-and-zero-gamma-level/)
- * is the default everywhere. These alternatives show how much a conclusion
- * depends on it:
- *   dealer-short-all   customers net long every option (e.g. 0DTE call AND put
- *                      buying): dealers short calls and puts;
- *   calls-flat         call OI split evenly between customer buyers and
- *                      writers (dealer flat calls), dealers short puts.
- * Professional desks replace the assumption with trade-classified open/close
- * data (e.g. Cboe Open-Close), which Batcave does not have.
+ * is the default everywhere. End users being net long index puts (dealers
+ * short them) is documented in Garleanu, Pedersen & Poteshman, "Demand-Based
+ * Option Pricing", Review of Financial Studies 22(10), 2009,
+ * https://doi.org/10.1093/rfs/hhp005; the call side is the weaker leg
+ * (customers both buy calls and overwrite).
+ *
+ * Stress cases, shown side by side, in BOTH directions (round 3, N2-1; the
+ * round-2 set only ever moved gamma down, so a long-gamma reading could never
+ * be called robust while a short one always was):
+ *   toward short gamma
+ *     dealer-short-all  customers net long every option: dealers short both;
+ *     calls-flat        call OI split evenly between customer buyers and writers;
+ *   toward long gamma
+ *     dealer-long-all   customers net short every option (overwriting AND
+ *                       put-writing / cash-secured puts): dealers long both;
+ *     puts-flat         put OI split evenly (customers write as many puts as
+ *                       they buy), dealers long calls.
+ *
+ * Robustness is not "every stress case agrees": dealer-long-all is exactly
+ * minus dealer-short-all, so no reading could ever pass. It is the share of
+ * open interest that may sit on the other side of the naive assumption before
+ * the sign at spot flips. With C, P >= 0 the call and put dollar gamma at spot,
+ * a fraction f of each side misassigned moves the dealer signs to
+ * (1 - 2f, -1) in the worst case for a long reading and (1, -(1 - 2f)) for a
+ * short one, so the sign survives up to the breakeven fraction
+ *   f* = |C - P| / (2 max(C, P))     (in [0, 0.5]; symmetric in C and P),
+ * and the reading is called robust when f* >= ROBUST_MISATTRIBUTION (25%, a
+ * stated heuristic tolerance, not an estimate of the true misattribution).
  */
 export const DEALER_CONVENTIONS = [
-  { id: "naive", label: "naive: dealers long calls, short puts (SqueezeMetrics)", callSign: 1, putSign: -1 },
-  { id: "dealer-short-all", label: "dealers short calls and puts (customers net long both)", callSign: -1, putSign: -1 },
-  { id: "calls-flat", label: "dealers flat calls, short puts", callSign: 0, putSign: -1 },
+  { id: "naive", label: "naive: dealers long calls, short puts (SqueezeMetrics)", callSign: 1, putSign: -1, direction: "base" },
+  { id: "dealer-short-all", label: "dealers short calls and puts (customers net long both)", callSign: -1, putSign: -1, direction: "toward-short" },
+  { id: "calls-flat", label: "dealers flat calls, short puts", callSign: 0, putSign: -1, direction: "toward-short" },
+  { id: "dealer-long-all", label: "dealers long calls and puts (customers write both)", callSign: 1, putSign: 1, direction: "toward-long" },
+  { id: "puts-flat", label: "dealers long calls, flat puts (customers write half the puts)", callSign: 1, putSign: 0, direction: "toward-long" },
 ] as const;
+
+/** Misattributed share of open interest the naive sign must survive to be called robust (heuristic). */
+export const ROBUST_MISATTRIBUTION = 0.25;
 
 export interface DealerConventionResult {
   id: string;
   label: string;
   callSign: number;
   putSign: number;
+  /** Which way this case moves dealer gamma relative to the naive convention. */
+  direction?: "base" | "toward-short" | "toward-long";
   /** $ per 1% move. 0 is an OBSERVED zero (the convention gives every usable
    *  contract zero weight, e.g. "calls flat" on a calls-only chain); null only
    *  when there are no usable contracts at all. */
@@ -579,9 +606,25 @@ export interface DealerConventionResult {
 export interface DealerSensitivity {
   assumption: "naive-dealer-long-calls-short-puts";
   conventions: DealerConventionResult[];
-  /** true when every convention gives the same gamma sign at spot. */
+  /** true when the naive sign at spot survives ROBUST_MISATTRIBUTION of the
+   *  open interest on the other side (two-sided: long and short readings are
+   *  tested the same way); null without usable contracts or material gamma. */
   regimeSignRobust: boolean | null;
+  /** Call and put dollar gamma at spot (magnitudes, $ per 1%), the inputs of the test. */
+  callGexAtSpot?: number | null;
+  putGexAtSpot?: number | null;
+  /** f* = |C - P| / (2 max(C, P)): share of OI that must be misassigned to flip the sign. */
+  breakevenMisattribution?: number | null;
+  robustAt?: number;
   note: string;
+}
+
+/** Breakeven misattributed share f* = |C - P| / (2 max(C, P)); null when both are 0 or not finite. */
+export function breakevenMisattribution(callGex: number, putGex: number): number | null {
+  const c = Math.abs(callGex), p = Math.abs(putGex);
+  const m = Math.max(c, p);
+  if (!(m > 0) || !Number.isFinite(m)) return null;
+  return Math.abs(c - p) / (2 * m);
 }
 
 export function dealerConventionSensitivity(
@@ -600,22 +643,53 @@ export function dealerConventionSensitivity(
     // Usable contracts but none weighted under this convention: observed 0.
     const g = f.gexAtSpot != null ? f.gexAtSpot : usable ? 0 : null;
     const gexSign: 1 | -1 | null = g != null && g !== 0 && Math.abs(g) >= floor ? (g > 0 ? 1 : -1) : null;
-    return { id: c.id, label: c.label, callSign: c.callSign, putSign: c.putSign, gexAtSpot: g, gexSign, zeroGamma: f.zeroGamma };
+    return { id: c.id, label: c.label, callSign: c.callSign, putSign: c.putSign, direction: c.direction, gexAtSpot: g, gexSign, zeroGamma: f.zeroGamma };
   });
-  // Robustness over the conventions that HAVE a material value: an observed
-  // zero has no sign to disagree with, and is reported, not dropped as missing.
-  const signs = conventions.map((c) => c.gexSign).filter((x): x is 1 | -1 => x != null);
-  const regimeSignRobust = !usable || signs.length === 0 ? null : signs.every((x) => x === signs[0]);
+  const byId = (id: string) => conventions.find((c) => c.id === id);
+  // C = call gamma at spot ("puts-flat" = +C), P = put gamma at spot ("calls-flat" = -P).
+  const C = usable ? Math.max(0, byId("puts-flat")?.gexAtSpot ?? 0) : null;
+  const P = usable ? Math.max(0, -(byId("calls-flat")?.gexAtSpot ?? 0)) : null;
+  const naiveSign = byId("naive")?.gexSign ?? null;
+  const fStar = C != null && P != null ? breakevenMisattribution(C, P) : null;
+  const regimeSignRobust = !usable || naiveSign == null || fStar == null ? null : fStar >= ROBUST_MISATTRIBUTION;
   const zeros = conventions.filter((c) => c.gexAtSpot != null && c.gexSign == null).map((c) => c.id);
   const zNote = zeros.length ? ` (no material gamma under: ${zeros.join(", ")})` : "";
+  const side = naiveSign === 1 ? "long" : "short";
+  const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
   const note = !usable
     ? "sensitivity unavailable: no usable contracts"
-    : signs.length === 0
-      ? "no material gamma at spot under any convention"
+    : naiveSign == null
+      ? `no material gamma at spot under the naive convention: no long/short call${zNote}`
       : regimeSignRobust
-        ? `gamma sign at spot is the same under every convention with material gamma${zNote}`
-        : `gamma sign at spot DEPENDS on the dealer-positioning assumption: treat the long/short gamma call as unconfirmed${zNote}`;
-  return { assumption: "naive-dealer-long-calls-short-puts", conventions, regimeSignRobust, note };
+        ? `${side}-gamma reading holds unless more than ${pct(fStar!)} of the dominant side's open interest is on the other side of the naive assumption (robust at ${pct(ROBUST_MISATTRIBUTION)})${zNote}`
+        : `${side}-gamma reading flips if ${pct(fStar ?? 0)} of the dominant side's open interest is misassigned (below the ${pct(ROBUST_MISATTRIBUTION)} tolerance): treat the long/short gamma call as unconfirmed${zNote}`;
+  return {
+    assumption: "naive-dealer-long-calls-short-puts",
+    conventions,
+    regimeSignRobust,
+    callGexAtSpot: C,
+    putGexAtSpot: P,
+    breakevenMisattribution: fStar,
+    robustAt: ROBUST_MISATTRIBUTION,
+    note,
+  };
+}
+
+/**
+ * Dealer gamma regime from a re-priced value at spot (round 3, N3-3): the
+ * sign only when there are usable contracts and |GEX at spot| clears the
+ * materiality floor (GEX_NOISE_REL x the profile's peak |GEX|). Missing data,
+ * an exact 0 and sub-floor noise are "unknown", never "negative".
+ */
+export function gexRegime(
+  gexAtSpot: number | null | undefined,
+  profilePeakAbs: number | null | undefined,
+  contracts: number,
+): "positive" | "negative" | "unknown" {
+  if (!(contracts > 0) || gexAtSpot == null || !Number.isFinite(gexAtSpot) || gexAtSpot === 0) return "unknown";
+  const floor = GEX_NOISE_REL * Math.max(Math.abs(gexAtSpot), profilePeakAbs != null && Number.isFinite(profilePeakAbs) ? Math.abs(profilePeakAbs) : 0);
+  if (Math.abs(gexAtSpot) < floor) return "unknown";
+  return gexAtSpot > 0 ? "positive" : "negative";
 }
 
 // ─── Per-strike GEX from a chain (Signals snapshot, gamma curve, killbox DB) ──
@@ -632,16 +706,32 @@ export interface ChainGex {
   dataState: "ok" | "no_spot";
   /** Weight and universe of the flip (0-45 DTE, OI-weighted). */
   flipInputs?: FlipInputs;
+  /** Gamma behind the per-strike GEX and the walls (round 3, N2-2): Black-Scholes
+   *  on the shared clock, the flip's r and q, sigma valid for that clock. */
+  gammaBasis?: "repriced-bs";
+  /** Contracts with open interest dropped because no usable sigma exists
+   *  (no vendor IV and no two-sided quote): missing, not zero gamma. */
+  contractsNoSigma?: number;
 }
 
+/** Signals per-strike / wall / flip universe: expiries 0-45 DTE in the request. */
+export const SIGNALS_MAX_DTE = 45;
+
 /**
- * Per-strike dealer GEX, $ per 1% move: vendor gamma x OI x 100 x S^2 x 0.01
+ * Per-strike dealer GEX, $ per 1% move: gamma x OI x 100 x S^2 x 0.01
  * (calls +, puts -), call/put walls, the app-wide re-priced flip and the
- * legacy cumulative flip. Settled contracts (chainClock.contractYears = 0)
- * and Schwab's -999 gamma sentinel are dropped. Without a real spot
- * (underlying.last missing or <= 0) nothing is computed: the old code used
- * spot = 1, which scaled every GEX by 1/S^2 and placed both walls by
- * comparing strikes with 1.
+ * legacy cumulative flip.
+ *
+ * Round 3 (N2-2): the gamma is the SAME per-contract term the flip sums
+ * (rowsFromChain: shared clock T per contract, AM SPX vs PM SPXW, sigma
+ * re-solved from the mid inside 3 days; bsGamma at spot with FLIP_RATE /
+ * FLIP_DIV_YIELD) over the same 0-45 DTE universe, so the walls and the flip
+ * describe one profile. The vendor gamma (undocumented T convention, -999
+ * sentinels when closed) is no longer used; a contract with no usable sigma
+ * is dropped and counted (contractsNoSigma), never priced as zero gamma.
+ * Without a real spot (underlying.last missing or <= 0) nothing is computed:
+ * the old code used spot = 1, which scaled every GEX by 1/S^2 and placed
+ * both walls by comparing strikes with 1.
  */
 export function gexByStrikeFromChain(
   chain: ChainMapsLike & { underlying?: { last?: number | null } | null },
@@ -652,39 +742,42 @@ export function gexByStrikeFromChain(
   if (spot == null) {
     return { callWall: null, putWall: null, zeroGamma: null, zeroGammaCumulative: null, profile: [], dataState: "no_spot" };
   }
-  const strikeMap = new Map<number, GexStrike>();
-  const processMap = (map: Record<string, Record<string, any[]>> | null | undefined, side: "call" | "put") => {
+  const r = FLIP_RATE, q = FLIP_DIV_YIELD;
+  const rows = rowsFromChain(chain, { maxDte: SIGNALS_MAX_DTE, spot, nowMs });
+  // Contracts with OI and time left but no usable sigma (dropped above).
+  let withOi = 0;
+  for (const map of [chain.callExpDateMap, chain.putExpDateMap]) {
     for (const expKey of Object.keys(map ?? {})) {
-      const strikesObj = map![expKey];
-      for (const strikeStr of Object.keys(strikesObj)) {
-        const strike = parseFloat(strikeStr);
-        if (!isFinite(strike)) continue;
-        for (const c of strikesObj[strikeStr] ?? []) {
-          if (!(contractYears(expKey, c, nowMs) > 0)) continue;
-          const rawGamma = Number(c?.gamma ?? 0);
-          const gamma = rawGamma <= -999 || !isFinite(rawGamma) ? 0 : rawGamma;
-          const gex = dollarGexPerPct(gamma, Number(c?.openInterest ?? 0) || 0, spot);
-          let row = strikeMap.get(strike);
-          if (!row) { row = { strike, callGex: 0, putGex: 0, netGex: 0 }; strikeMap.set(strike, row); }
-          if (side === "call") row.callGex += gex;
-          else row.putGex -= gex; // puts invert
-          row.netGex = row.callGex + row.putGex;
+      const d = dteFromKey(expKey);
+      if (Number.isFinite(d) && d > SIGNALS_MAX_DTE) continue;
+      for (const sk of Object.keys(map![expKey] ?? {})) {
+        for (const c of map![expKey][sk] ?? []) {
+          if ((Number(c?.openInterest) || 0) > 0 && contractYears(expKey, c, nowMs) > 0) withOi++;
         }
       }
     }
-  };
-  processMap(chain.callExpDateMap, "call");
-  processMap(chain.putExpDateMap, "put");
+  }
+  const strikeMap = new Map<number, GexStrike>();
+  for (const row of rows) {
+    const T = row.T as number;
+    const gex = dollarGexPerPct(bsGamma(spot, row.strike, row.iv, T, r, q, row.type), row.oi, spot);
+    let s = strikeMap.get(row.strike);
+    if (!s) { s = { strike: row.strike, callGex: 0, putGex: 0, netGex: 0 }; strikeMap.set(row.strike, s); }
+    if (row.type === "C") s.callGex += gex;
+    else s.putGex -= gex; // puts invert (naive dealer convention)
+    s.netGex = s.callGex + s.putGex;
+  }
 
   const profile = Array.from(strikeMap.values()).sort((a, b) => a.strike - b.strike);
-  if (!profile.length) return { callWall: null, putWall: null, zeroGamma: null, zeroGammaCumulative: null, profile: [], dataState: "ok" };
+  const contractsNoSigma = Math.max(0, withOi - rows.length);
+  if (!profile.length) return { callWall: null, putWall: null, zeroGamma: null, zeroGammaCumulative: null, profile: [], dataState: "ok", gammaBasis: "repriced-bs", contractsNoSigma };
 
   const callWall = profile.filter((p) => p.strike >= spot).reduce<GexStrike | null>((best, p) => (!best || p.callGex > best.callGex ? p : best), null);
   const putWall = profile.filter((p) => p.strike < spot).reduce<GexStrike | null>((best, p) => (!best || p.putGex < best.putGex ? p : best), null);
-  // Flip: re-priced profile, same 0-45 DTE universe as the Signals snapshot.
-  const zeroGamma = repricedFlipFromChain(chain, spot, { maxDte: 45, r: FLIP_RATE, q: FLIP_DIV_YIELD, nowMs }).zeroGamma;
+  // Flip: re-priced profile of the very same rows.
+  const zeroGamma = repricedFlipFromRows(rows, spot, { r, q, nowMs }).zeroGamma;
   const keys = Array.from(new Set([...Object.keys(chain.callExpDateMap ?? {}), ...Object.keys(chain.putExpDateMap ?? {})]))
-    .filter((k) => { const d = dteFromKey(k); return Number.isFinite(d) && d <= 45; });
+    .filter((k) => { const d = dteFromKey(k); return Number.isFinite(d) && d <= SIGNALS_MAX_DTE; });
   return {
     callWall: callWall?.strike ?? null,
     putWall: putWall?.strike ?? null,
@@ -693,5 +786,7 @@ export function gexByStrikeFromChain(
     profile,
     dataState: "ok",
     flipInputs: flipInputs({ weight: "open_interest", universe: "all-expiries-in-request", expiryKeys: keys }),
+    gammaBasis: "repriced-bs",
+    contractsNoSigma,
   };
 }
