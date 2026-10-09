@@ -400,3 +400,58 @@ test("CoinGecko reference needs the optional Demo key; no key means not called",
   assert.equal(coingeckoDemoKey({ BATCAVE_COINGECKO_DEMO_KEY: "bad key!" }), null);
   assert.equal(coingeckoDemoKey({ BATCAVE_COINGECKO_DEMO_KEY: "CG-abcdefgh1234" }), "CG-abcdefgh1234");
 });
+
+// ─── Models event band (econWeek) ──────────────────────────────────────────
+
+test("econ week: official BLS chip at the exact time; estimates of covered families drop", async () => {
+  const { officialChips, nasdaqChips, mergeOfficialWeek } = await import("../../server/econWeek");
+  const from = Date.UTC(2026, 9, 12), to = Date.UTC(2026, 9, 18);
+  const off = officialChips("BLS", [
+    { uid: "cpi", summary: "Consumer Price Index for September 2026", startMs: Date.UTC(2026, 9, 14, 12, 30), timed: true },
+    { uid: "minor", summary: "County Employment and Wages", startMs: Date.UTC(2026, 9, 14, 14, 0), timed: true },
+  ], from, to);
+  assert.equal(off.length, 1); // minor releases stay off the band
+  assert.equal(off[0].title, "CPI 8:30am");
+  assert.equal(off[0].when, Date.UTC(2026, 9, 14, 12, 30) / 1000);
+  assert.equal(off[0].tier, "primary");
+  const nq = nasdaqChips([
+    { date: "2026-10-14", time: "08:30", eventName: "CPI m/m", country: "US", impact: 3 },
+    { date: "2026-10-15", time: "08:30", eventName: "Initial Jobless Claims", country: "US", impact: 2 },
+    { date: "2026-10-16", time: "Tentative", eventName: "Business Inventories", country: "US", impact: 1 },
+  ]);
+  assert.equal(nq[2].timeLabel, "time TBA");
+  const syn = [
+    { id: "syn:cpi:2026-10-13", kind: "ECON", title: "CPI 8:30am", longTitle: "x", importance: "HIGH" as const, when: Date.UTC(2026, 9, 13, 12, 30) / 1000, timeLabel: "", estimated: true, family: "CPI" },
+    { id: "syn:retail:2026-10-15", kind: "ECON", title: "Retail", longTitle: "x", importance: "MED" as const, when: Date.UTC(2026, 9, 15, 12, 30) / 1000, timeLabel: "", estimated: true, family: null },
+  ];
+  const m = mergeOfficialWeek(off, nq, syn as any, new Set(["CPI", "NFP"]));
+  const ids = m.map((c) => c.id);
+  assert.ok(ids.includes("bls:cpi"));
+  assert.ok(!ids.includes("nasdaq:2026-10-14:CPI m/m")); // official wins the same day
+  assert.ok(ids.includes("nasdaq:2026-10-15:Initial Jobless Claims"));
+  assert.ok(!ids.includes("syn:cpi:2026-10-13")); // BLS read: its schedule decides
+  assert.ok(ids.includes("syn:retail:2026-10-15")); // not covered: estimate stays, labeled
+  // With BLS unreachable the CPI estimate stays (labeled estimate).
+  assert.ok(mergeOfficialWeek([], [], syn as any, new Set()).some((c) => c.id === "syn:cpi:2026-10-13"));
+});
+
+// ─── Alpha news: corroboration and SEC filings ─────────────────────────────
+
+test("alpha news: one outlet repeating a story is one source; 8-K is an official tier-1 event", async () => {
+  const { distinctSourceCount, filingEvents } = await import("../../server/sources/alphaSources");
+  const byId = new Map([
+    ["a", { sourceId: "cnbc", source: "CNBC" }], ["b", { sourceId: "cnbc", source: "CNBC" }], ["c", { sourceId: "ft", source: "FT" }],
+  ]);
+  assert.equal(distinctSourceCount(["a", "b"], byId), 1);
+  assert.equal(distinctSourceCount(["a", "b", "c"], byId), 2);
+  const ev = filingEvents("aapl", [
+    { form: "8-K", company: "Apple Inc. (AAPL)", accession: "0000320193-26-000101", acceptedUtc: "2026-10-09T02:30:32.000Z", filingDate: "2026-10-08", items: ["2.02", "9.01"], url: "https://www.sec.gov/x" },
+    { form: "10-Q", company: "Apple Inc. (AAPL)", accession: "0000320193-26-000050", acceptedUtc: null, filingDate: "2026-08-01", items: [], url: "u" },
+    { form: "8-K", company: "Microsoft Corp (MSFT)", accession: "1", acceptedUtc: "2026-10-09T02:30:32.000Z", filingDate: null, items: [], url: "u" },
+  ]);
+  assert.equal(ev.length, 1); // undated filing and other tickers excluded
+  assert.equal(ev[0].tier, "TIER_1");
+  assert.equal(ev[0].category, "MATERIAL_8K");
+  assert.equal(ev[0].sourceTierLabel, "official");
+  assert.equal(ev[0].published, Date.UTC(2026, 9, 9, 2, 30, 32) / 1000);
+});

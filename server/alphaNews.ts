@@ -16,6 +16,7 @@
 // and an LLM positioning call.
 
 import { buildNewsSnapshot, type Headline, type CalendarEvent, type NewsTopic } from "./news";
+import { distinctSourceCount, filingEvents } from "./sources/alphaSources";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 
@@ -46,6 +47,13 @@ export interface AlphaEvent {
   clusterZ?: number;
   /** Related headline IDs that cluster with this event (for the sigma shift detection). */
   clusterIds?: string[];
+  /** Publisher tier of the source (primary = official issuer, publisher,
+   *  aggregator, weak) and its display label; UTC publish time. */
+  sourceTier?: string;
+  sourceTierLabel?: string;
+  publishedUtc?: string;
+  /** distinct sources in the cluster (one outlet repeating itself is one) */
+  distinctSources?: number;
 }
 
 export interface AlphaScenario {
@@ -248,6 +256,7 @@ export async function getAlphaEventsForTicker(ticker: string): Promise<AlphaNews
   const clusters = clusterHeadlines(tickerHeadlines);
   // Map headline id -> cluster (size, z-score, sibling ids)
   const idToCluster = new Map<string, { z: number; size: number; ids: string[] }>();
+  const byId = new Map(tickerHeadlines.map((h) => [h.id, h] as const));
   for (const c of clusters) {
     const z = clusterZScore(c.size);
     for (const id of c.ids) idToCluster.set(id, { z, size: c.size, ids: c.ids });
@@ -274,9 +283,11 @@ export async function getAlphaEventsForTicker(ticker: string): Promise<AlphaNews
     const eventTicker = explicitTicker ?? ticker.toUpperCase();
 
     if (tierMatch) {
-      // Cluster amplification: a tier-1 event corroborated by 2+ headlines is
-      // scored higher than an isolated single source.
-      const clusterBonus = cluster && cluster.size > 1 ? Math.min(8, cluster.size * 2) : 0;
+      // Cluster amplification: a tier-1 event corroborated by 2+ DISTINCT
+      // sources is scored higher than an isolated single source; an official
+      // issuer (Fed, SEC, CFTC) is itself the primary record.
+      const distinct = cluster ? distinctSourceCount(cluster.ids, byId) : 1;
+      const clusterBonus = distinct > 1 ? Math.min(8, distinct * 2) : 0;
       events.push({
         id: h.id,
         ticker: eventTicker,
@@ -291,6 +302,10 @@ export async function getAlphaEventsForTicker(ticker: string): Promise<AlphaNews
         alphaScore: Math.min(100, tierMatch.score + clusterBonus),
         clusterZ: cluster?.z,
         clusterIds: cluster && cluster.size > 1 ? cluster.ids : undefined,
+        sourceTier: h.tier,
+        sourceTierLabel: h.tierLabel,
+        publishedUtc: h.publishedUtc,
+        distinctSources: distinct,
       });
     } else if (isSigmaShift) {
       events.push({
@@ -302,13 +317,27 @@ export async function getAlphaEventsForTicker(ticker: string): Promise<AlphaNews
         source: h.source,
         url: h.url,
         published: h.published,
-        summary: `${cluster!.size} correlated headlines clustering on this story (z=${cluster!.z.toFixed(2)}σ).`,
+        summary: `${cluster!.size} correlated headlines from ${distinctSourceCount(cluster!.ids, byId)} distinct source(s) clustering on this story (z=${cluster!.z.toFixed(2)}σ vs an assumed baseline).`,
         initialBias: "NEUTRAL",
         alphaScore: Math.min(100, 55 + cluster!.z * 8),
         clusterZ: cluster!.z,
         clusterIds: cluster!.ids,
+        sourceTier: h.tier,
+        sourceTierLabel: h.tierLabel,
+        publishedUtc: h.publishedUtc,
+        distinctSources: distinctSourceCount(cluster!.ids, byId),
       });
     }
+  }
+
+  // SEC EDGAR filings for this ticker (official, exact acceptance time).
+  // Needs BATCAVE_SEC_USER_AGENT; when unset the snapshot's filings note says so.
+  const seenAcc = new Set(events.map((e) => e.id));
+  for (const fe of filingEvents(ticker, snapshot.filings?.watchlist ?? [])) {
+    if (!seenAcc.has(fe.id)) events.push(fe);
+  }
+  if (snapshot.filings && snapshot.filings.state !== "ok" && snapshot.filings.state !== "empty") {
+    warnings.push(`SEC filings ${snapshot.filings.state}: ${snapshot.filings.note}`);
   }
 
   // Sort by alpha score descending, then by recency
@@ -354,6 +383,7 @@ Rules:
 - Direction is the side with the highest probability AND favorable R:R.
 - If no edge exists, return direction "NEUTRAL", confidence < 35, edgeType "none".
 - Be honest about uncertainty. Single-source rumor != hard catalyst.
+- event.sourceTier "official" is the issuer's own record (Fed, SEC filing); "publisher" is a newsroom's report; "aggregator" or "unofficial" needs confirmation and caps confidence below 50. distinctSources counts independent outlets.
 - For sentiment-cluster events (no single hard catalyst), treat as a behavioral/timing edge with lower confidence.
 - Never recommend oversized positioning. Right direction + wrong size is still a loss.
 - If you don't know real historical stats, return a plausible estimate based on the catalyst type with sampleSize <= 20.`;
@@ -366,6 +396,8 @@ function buildVerdictPayload(event: AlphaEvent, context?: { spot?: number; vix?:
       category: event.category,
       title: event.title,
       source: event.source,
+      sourceTier: event.sourceTierLabel ?? "unknown",
+      distinctSources: event.distinctSources ?? 1,
       summary: event.summary,
       publishedAgoMin: Math.max(0, Math.round((Date.now() / 1000 - event.published) / 60)),
       clusterSize: event.clusterIds?.length ?? 1,
