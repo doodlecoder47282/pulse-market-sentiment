@@ -144,3 +144,92 @@ test("flipInputs: weight, universe and DTE range label", () => {
   assert.deepEqual(f.dteRange, [0, 43]);
   assert.match(f.label, /OI \+ 0\.25 x volume, 3 expiries, 0-43 DTE/);
 });
+
+// ─── Items 7 and 8: Chain Audit conventions and settlement probability ─────
+
+import { buildChainAudit } from "../../server/chainAudit";
+import { black76 } from "../../server/breedenLitzenberger";
+import { normCdf } from "../../server/greeks";
+import { yearsToExpiry } from "../../server/timeToExpiry";
+
+/** Schwab-shaped chain priced exactly by Black-76 (flat vol, r = 0), tight two-sided quotes. */
+function flatVolChain(expDate: string, dteTag: number, F: number, sigma: number, T: number, strikes: number[], oi = 1000) {
+  const key = `${expDate}:${dteTag}`;
+  const callExpDateMap: any = { [key]: {} }, putExpDateMap: any = { [key]: {} };
+  const ymd = expDate.slice(2).replace(/-/g, "");
+  for (const K of strikes) {
+    const w = sigma * sigma * T;
+    const c = black76(F, K, w, "C"), p = black76(F, K, w, "P");
+    const ks = String(K * 1000).padStart(8, "0"); // OCC strike field
+    callExpDateMap[key][K.toFixed(1)] = [{ symbol: `SPXW  ${ymd}C${ks}`, bid: Math.max(0, c - 0.05), ask: c + 0.05, volatility: sigma * 100, openInterest: oi, totalVolume: 0, delta: 0.5, gamma: 0.001 }];
+    putExpDateMap[key][K.toFixed(1)] = [{ symbol: `SPXW  ${ymd}P${ks}`, bid: Math.max(0, p - 0.05), ask: p + 0.05, volatility: sigma * 100, openInterest: oi, totalVolume: 0, delta: -0.5, gamma: 0.001 }];
+  }
+  return { underlying: { last: F }, callExpDateMap, putExpDateMap };
+}
+
+test("chain audit: settlement probability per strike = lognormal N(d2(K-w/2)) - N(d2(K+w/2)) on a flat-vol chain", () => {
+  // Black-76 with flat sigma: P(S_T > K) = N(d2), d2 = [ln(F/K) - w/2]/sqrt(w) (Hull, OFOD ch. 18).
+  // Nearest expiry 9 calendar days out (vendor IV path; no 3-day re-solve); r enters
+  // only the discount factor, so price with r = 0 and compare against D-adjusted F.
+  const nowMs = Date.UTC(2026, 9, 7, 15, 0); // 2026-10-07 11:00 ET
+  const T = yearsToExpiry("2026-10-16", nowMs, "PM");
+  const sigma = 0.16, F = 6700;
+  const strikes: number[] = [];
+  for (let K = 6300; K <= 7100; K += 5) strikes.push(K);
+  const chain: any = flatVolChain("2026-10-16", 9, F, sigma, T, strikes);
+  const a = buildChainAudit(chain, F, nowMs);
+  assert.equal(a.pinningMeta?.state, "ok", a.pinningMeta?.reason ?? "");
+  assert.equal(a.pinning.length, 5);
+  // The quotes are undiscounted Black-76 prices; the fit treats them as
+  // discounted at r = FLIP_RATE and divides by D = e^(-rT), so its parity
+  // forward is F/D and the implied lognormal is centred there.
+  const D = Math.exp(-0.05 * T);
+  const Ffit = F / D;
+  const w = sigma * sigma * T;
+  const P = (K: number) => normCdf((Math.log(Ffit / K) - w / 2) / Math.sqrt(w)); // P(S_T > K)
+  for (const pin of a.pinning) {
+    const want = (P(pin.strike - 2.5) - P(pin.strike + 2.5)) * 100;
+    near(pin.prob, want, 0.02, `P(settle near ${pin.strike}) %`);
+    assert.equal(pin.upper! - pin.lower!, 5);
+  }
+  // Most likely bin is at the mode of the lognormal: F exp(-1.5 w) ~ F (w tiny).
+  assert.ok(Math.abs(a.pinning[0].strike - F) <= 5);
+  // Probabilities, not shares: the top 5 bins of 5 points hold far less than 100%.
+  const top5 = a.pinning.reduce((s, p) => s + p.prob, 0);
+  assert.ok(top5 > 5 && top5 < 30, `top-5 mass ${top5}%`);
+});
+
+test("chain audit: settlement probability is 'unavailable' on a thin chain, never a made-up share", () => {
+  const nowMs = Date.UTC(2026, 9, 7, 15, 0);
+  const T = yearsToExpiry("2026-10-16", nowMs, "PM");
+  const chain: any = flatVolChain("2026-10-16", 9, 6700, 0.16, T, [6650, 6700, 6750]);
+  const a = buildChainAudit(chain, 6700, nowMs);
+  assert.deepEqual(a.pinning, []);
+  assert.equal(a.pinningMeta?.state, "unavailable");
+  assert.ok(a.pinningMeta?.reason);
+});
+
+test("chain audit: charm reported separately for 0DTE (to settlement) and other expiries (one day); vanna conventions labeled", () => {
+  // 2026-10-08 11:00 ET: the 10-08 SPXW expiry settles at 16:00 today (T < 1 day),
+  // the 10-16 expiry is 8 days out.
+  const nowMs = Date.UTC(2026, 9, 8, 15, 0);
+  const mk = (exp: string, tag: number) => flatVolChain(exp, tag, 6700, 0.15, yearsToExpiry(exp, nowMs, "PM"), [6650, 6700, 6750], 1000);
+  const c0 = mk("2026-10-08", 0), c8 = mk("2026-10-16", 8);
+  const chain: any = {
+    underlying: { last: 6700 },
+    callExpDateMap: { ...c0.callExpDateMap, ...c8.callExpDateMap },
+    putExpDateMap: { ...c0.putExpDateMap, ...c8.putExpDateMap },
+  };
+  const a = buildChainAudit(chain, 6700, nowMs);
+  const only0 = buildChainAudit(c0 as any, 6700, nowMs);
+  const only8 = buildChainAudit(c8 as any, 6700, nowMs);
+  near(a.charm.totalCharmToSettlement!, only0.charm.totalCharmPerDay, 1e-6, "0DTE bucket = 0DTE-only total");
+  near(a.charm.totalCharmOneDay!, only8.charm.totalCharmPerDay, 1e-6, "1-day bucket = 8DTE-only total");
+  near(a.charm.totalCharmToSettlement! + a.charm.totalCharmOneDay!, a.charm.totalCharmPerDay, 1e-3, "buckets add up");
+  assert.equal(only0.charm.totalCharmOneDay, 0);
+  // Vanna: long-holder profile vs naive-dealer total. Equal call and put OI
+  // at every strike: dealer (calls - puts) vanna is ~0 while the long-holder
+  // sum is twice the call side.
+  assert.equal(a.vanna.convention, "long-holder-aggregate");
+  assert.ok(Math.abs(a.vanna.totalVannaDealerNaive!) < 0.05 * Math.abs(a.vanna.totalVannaDollarPerVolPct) + 1);
+});

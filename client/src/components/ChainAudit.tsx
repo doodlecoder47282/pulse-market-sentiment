@@ -36,12 +36,18 @@ interface VannaResult {
   profile: { strike: number; vannaExposure: number }[];
   peakVannaStrike: number | null;
   totalVannaDollarPerVolPct: number;
+  convention?: string;
+  totalVannaDealerNaive?: number;
 }
 
 interface CharmResult {
   profile: { strike: number; charmExposure: number }[];
   peakCharmStrike: number | null;
   totalCharmPerDay: number;
+  totalCharmToSettlement?: number;
+  totalCharmOneDay?: number;
+  totalCharmToSettlementDealerNaive?: number;
+  totalCharmOneDayDealerNaive?: number;
 }
 
 interface SkewEntry {
@@ -98,7 +104,19 @@ interface GEXDecayResult {
   combined: GEXBucket;
 }
 
-interface PinStrike { strike: number; prob: number; distance: number }
+interface PinStrike { strike: number; prob: number; distance: number; lower?: number; upper?: number }
+
+interface PinningMeta {
+  method: string;
+  measure: string;
+  state: "ok" | "unavailable";
+  reason: string | null;
+  expiry: string | null;
+  quotesUsed: number;
+  coverage: number | null;
+  fitRmse: number | null;
+  note: string;
+}
 
 interface VRPEntry {
   expiry: string;
@@ -119,6 +137,7 @@ interface ChainAuditResult {
   dealerScore: DealerScoreResult;
   gexDecay: GEXDecayResult;
   pinning: PinStrike[];
+  pinningMeta?: PinningMeta;
   vrp: VRPEntry[];
   contractsProcessed: number;
   expiriesFound: number;
@@ -432,16 +451,18 @@ export default function ChainAudit() {
                 testId="kpi-dex-flip"
               />
               <KPICard
-                label="Peak Vanna Strike"
+                label="Peak Vanna Strike (long-holder OI)"
                 value={fmtStrike(audit.vanna.peakVannaStrike)}
-                sub={`${fmtDollar(audit.vanna.totalVannaDollarPerVolPct)} / 1% vol`}
+                sub={`${fmtDollar(audit.vanna.totalVannaDollarPerVolPct)} / 1 vol pt, all OI as held${audit.vanna.totalVannaDealerNaive != null ? ` · dealer (calls - puts) ${fmtDollar(audit.vanna.totalVannaDealerNaive)}` : ""}`}
                 color="#a78bfa"
                 testId="kpi-vanna-peak"
               />
               <KPICard
-                label="Peak Charm Strike"
+                label="Peak Charm Strike (long-holder OI)"
                 value={fmtStrike(audit.charm.peakCharmStrike)}
-                sub={`${fmtDollar(audit.charm.totalCharmPerDay)} / day (or to settlement)`}
+                sub={audit.charm.totalCharmToSettlement != null && audit.charm.totalCharmOneDay != null
+                  ? `0DTE to settlement ${fmtDollar(audit.charm.totalCharmToSettlement)} · other expiries next 1 day ${fmtDollar(audit.charm.totalCharmOneDay)}`
+                  : `${fmtDollar(audit.charm.totalCharmPerDay)} / day (or to settlement)`}
                 color="#f97316"
                 testId="kpi-charm-peak"
               />
@@ -663,9 +684,11 @@ export default function ChainAudit() {
           </Section>
 
           {/* Row 5: Pinning Probability */}
-          <Section title="Pinning Probability — Nearest Expiry" testId="section-pinning">
+          <Section title="Settlement Probability per Strike — Nearest Expiry (risk-neutral)" testId="section-pinning">
             {audit.pinning.length === 0 ? (
-              <div className="font-mono text-[11px] text-muted-foreground text-center py-4">no pinning data — chain may be thin</div>
+              <div className="font-mono text-[11px] text-muted-foreground text-center py-4">
+                unavailable{audit.pinningMeta?.reason ? `: ${audit.pinningMeta.reason}` : " (chain may be thin)"}
+              </div>
             ) : (
               <Card className="bg-card/60 border-border/40">
                 <CardContent className="px-2 pt-3 pb-2">
@@ -690,7 +713,7 @@ export default function ChainAudit() {
                         />
                         <Tooltip
                           contentStyle={{ background: "#0a0a0f", border: "1px solid #1e293b", fontSize: 10, fontFamily: "var(--font-mono)" }}
-                          formatter={(v: number) => [`${v.toFixed(2)}%`, "Pin Probability"]}
+                          formatter={(v: number) => [`${v.toFixed(2)}%`, "P(settle within half a strike spacing)"]}
                         />
                         <Bar dataKey="prob" isAnimationActive={false}>
                           {audit.pinning.map((p, i) => (
@@ -711,6 +734,12 @@ export default function ChainAudit() {
                       </div>
                     ))}
                   </div>
+                  {audit.pinningMeta && (
+                    <div className="mt-2 px-2 font-mono text-[9px] text-muted-foreground/70" data-testid="pinning-note">
+                      {audit.pinningMeta.note}. exp {audit.pinningMeta.expiry ?? "?"}, {audit.pinningMeta.quotesUsed} quotes
+                      {audit.pinningMeta.coverage != null ? `, ${(audit.pinningMeta.coverage * 100).toFixed(0)}% of mass inside quoted strikes` : ""}.
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
