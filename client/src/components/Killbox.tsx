@@ -141,7 +141,7 @@ export default function Killbox({ symbol = "$SPX" }: { symbol?: string }) {
               Schwab chain · {fmtTime((data as any).chainAsOfMs ?? data.asOf)}
             </div>
           )}
-          <DataAgeChip asOfMs={(data as any)?.chainAsOfMs ?? null} stale={(data as any)?.chainStale ?? null} label="chain" />
+          <DataAgeChip asOfMs={(data as any)?.chainAsOfMs ?? null} stale={(data as any)?.chainStale ?? null} maxAgeMs={(data as any)?.chainMaxAgeMs ?? null} label="chain" />
           <LivenessBadge feedName="options" value={data?.asOf ?? undefined} requiresSchwab={true} stale={(data as any)?.chainStale ?? null} asOfMs={(data as any)?.chainAsOfMs ?? null} />
         </div>
       </div>

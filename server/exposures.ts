@@ -27,6 +27,8 @@ export interface ExposuresResponse {
     chainAgeMs: number;
     /** true = a refresh failed and an older chain (within its max age) was used. */
     chainStale: boolean;
+    /** Max age (ms) the chain may be shown at right now. */
+    chainMaxAgeMs: number;
     servedFromCache: boolean;
     /** Strike coverage the chain delivered (decimal each side of spot). */
     coverage: { belowPct: number | null; abovePct: number | null; complete: boolean } | null;
@@ -76,6 +78,7 @@ export async function buildExposuresSnapshot(symbol: string): Promise<ExposuresR
       chainAsOfMs: chain.asOfMs,
       chainAgeMs: chain.ageMs,
       chainStale: chain.stale,
+      chainMaxAgeMs: chain.maxAgeMs,
       servedFromCache: chain.servedFromCache,
       coverage: chain.strikeCoverage
         ? { belowPct: chain.strikeCoverage.belowPct, abovePct: chain.strikeCoverage.abovePct, complete: chain.strikeCoverage.complete }

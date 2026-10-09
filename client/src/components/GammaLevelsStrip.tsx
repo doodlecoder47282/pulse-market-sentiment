@@ -46,6 +46,7 @@ interface EnhancedGammaResponse {
   /** When Schwab produced the SPY chain behind the calc levels (epoch s), and its stale flag. */
   chainAsOf?: number | null;
   chainStale?: boolean;
+  chainMaxAgeMs?: number | null;
 }
 
 type DotColor = "green" | "red" | "amber";
@@ -226,7 +227,7 @@ export default function GammaLevelsStrip() {
           <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             Gamma Levels
           </span>
-          <DataAgeChip asOfMs={data.chainAsOf ?? null} stale={data.chainStale ?? null} label="chain" />
+          <DataAgeChip asOfMs={data.chainAsOf ?? null} stale={data.chainStale ?? null} maxAgeMs={data.chainMaxAgeMs ?? null} label="chain" />
         </div>
         {expanded ? (
           <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />

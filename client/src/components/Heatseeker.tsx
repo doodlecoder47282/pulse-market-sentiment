@@ -791,7 +791,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
               <div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <LivenessBadge feedName="heatseeker" value={spot} stale={(data as any).chainStale ?? null} asOfMs={(data as any).chainAsOfMs ?? null} />
-                  <DataAgeChip asOfMs={(data as any).chainAsOfMs ?? null} stale={(data as any).chainStale ?? null} label="chain" />
+                  <DataAgeChip asOfMs={(data as any).chainAsOfMs ?? null} stale={(data as any).chainStale ?? null} maxAgeMs={(data as any).chainMaxAgeMs ?? null} label="chain" />
                   HEATSEEKER · {symbol} · {dte}DTE · exp {expiry}
                   <EdgeInfo id="heatseeker-map" className="h-6 w-6" />
                 </div>

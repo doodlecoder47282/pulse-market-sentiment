@@ -1995,7 +1995,7 @@ function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; sessio
           </span>
           <span className="text-border">|</span>
           <span className="text-foreground font-bold">SPOT {fmtK(horizon.spot)}</span>
-          <DataAgeChip asOfMs={(horizon as any).chainAsOfMs ?? null} stale={(horizon as any).chainStale ?? null} label={`${(horizon as any).chainSymbol ?? "chain"} chain`} />
+          <DataAgeChip asOfMs={(horizon as any).chainAsOfMs ?? null} stale={(horizon as any).chainStale ?? null} maxAgeMs={session === "live" ? ((horizon as any).chainMaxAgeMs ?? null) : null} label={`${(horizon as any).chainSymbol ?? "chain"} chain`} />
           <span className="text-border">|</span>
           <span className={a.dfi >= 0 ? "text-green-400" : "text-red-400"}>
             DFI {a.dfi >= 0 ? "+" : ""}{a.dfi.toFixed(2)} {a.dfiLabel}
@@ -2226,13 +2226,13 @@ export default function ModelsPanel() {
           <Badge
             variant="outline"
             className={
-              data.session === "live"
+              data.session === "live" && !(data as any).stale
                 ? "border-green-500/40 font-mono text-[9px] text-green-400"
                 : "border-amber-500/40 font-mono text-[9px] text-amber-300"
             }
             data-testid="badge-models-session"
           >
-            {data.session === "live" ? "● LIVE" : "◌ LAST SESSION"}
+            {(data as any).stale ? "◌ STALE (stored build)" : data.session === "live" ? "● LIVE" : "◌ LAST SESSION"}
           </Badge>
         )}
 
@@ -2241,7 +2241,7 @@ export default function ModelsPanel() {
             variant="outline"
             className="border-cyan-500/30 font-mono text-[9px] text-cyan-300/90"
             data-testid="badge-models-updated"
-            title="Bull / Base / Bear scenarios refresh every 30 minutes"
+            title="Bull / Base / Bear scenarios refresh every 30 minutes, and sooner whenever the Schwab chain behind them is older than its max age"
           >
             <span className={`mr-1 inline-block h-1.5 w-1.5 rounded-full bg-cyan-400 ${isFetching ? "animate-pulse" : ""}`} />
             UPDATED {updatedAgo} · NEXT 30M

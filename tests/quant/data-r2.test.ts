@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import {
   schwabDataKind, staleServeDecision, freshFreshness, maxServeAgeMs, MAX_SERVE_AGE_MS,
   chainStrikePlan, strikeCoverage, inferStrikeCountSemantics, atmIvFromChain,
-  Z_10_DELTA, MAX_STRIKE_COUNT,
+  Z_10_DELTA, MAX_STRIKE_COUNT, STRIKE_COUNT_STEP, chainIsDelayed, modelsFallbackDecision, oldestChainAsOf,
 } from "../../server/schwabDataPolicy";
 import { toSchwabSymbol } from "../../server/schwabSymbols";
 import { resolvePrevClose, dayChange } from "../../server/dayChange";
@@ -91,7 +91,7 @@ test("strike plan: SPX 0DTE covers the +-10% re-priced flip scan", () => {
   assert.equal(p.spacing, 5);
   assert.equal(p.halfWidthPct, 0.10);
   assert.equal(p.perSide, 134);           // ceil(670 / 5)
-  assert.equal(p.strikeCount, 268);       // 2x per side until Schwab's semantics are known
+  assert.equal(p.strikeCount, 280);       // 2 x 134 = 268, rounded up to a step of 20
   assert.equal(p.capped, false);
   // the old request: 60 strikes, at best 30 per side = 150 points = 2.2%
   assert.ok((30 * 5) / 6700 < 0.023);
@@ -115,7 +115,7 @@ test("strike plan: 90 DTE window reaches past the 25-delta put even when capped"
   // the old 60-strike request (30 per side, 2.2%) did not reach it
   assert.ok((30 * 5) / S < Math.abs(Math.exp(k25) - 1));
   // once Schwab is known to count per side, the request halves
-  assert.equal(chainStrikePlan({ symbol: "$SPX", spot: S, dteMax: 90, atmIv: iv, semantics: "per_side" }).strikeCount, 231);
+  assert.equal(chainStrikePlan({ symbol: "$SPX", spot: S, dteMax: 90, atmIv: iv, semantics: "per_side" }).strikeCount, 240); // 231 -> step 20
 });
 
 test("strike plan: spacing by symbol and unknown spot", () => {
@@ -463,4 +463,50 @@ test("Signals gamma structure from a Schwab SPY chain: GEX = gamma x OI x 100 x 
   assert.deepEqual(g.profile.map((p) => p.strike), [660, 680]);
   assert.equal(g.pcrOi, 2);              // 20,000 / 10,000
   assert.throws(() => buildGammaStructure({ underlying: { last: null }, callExpDateMap: {}, putExpDateMap: {} }), /no underlying price/);
+});
+
+// ---------------------------------------------------------------------------
+// 7. Review fixes (R2-G): strikeCount step, delayed chains, models fallback age
+// ---------------------------------------------------------------------------
+
+test("strikeCount: rounded up to a step of 20, so small spot/IV moves keep one cache key", () => {
+  const a = chainStrikePlan({ symbol: "$SPX", spot: 6700, dteMax: 0, atmIv: 0.18 });
+  const b = chainStrikePlan({ symbol: "$SPX", spot: 6712, dteMax: 0, atmIv: 0.19 });
+  assert.equal(a.strikeCount % STRIKE_COUNT_STEP, 0);
+  assert.equal(a.strikeCount, b.strikeCount);           // 268 and 270 both -> 280
+  assert.ok(a.strikeCount >= 2 * a.perSide);            // rounding never shrinks coverage
+});
+
+test("delayed chain: Schwab isDelayed=true (or underlying.delayed) is flagged; absent/false is not", () => {
+  assert.equal(chainIsDelayed({ isDelayed: true }), true);
+  assert.equal(chainIsDelayed({ isDelayed: false, underlying: { delayed: true } }), true);
+  assert.equal(chainIsDelayed({ isDelayed: false, underlying: { delayed: false } }), false);
+  assert.equal(chainIsDelayed({}), false);
+  assert.equal(chainIsDelayed(null), false);
+  assert.equal(chainIsDelayed({ isDelayed: "true" as unknown as boolean }), false); // only a real boolean true
+});
+
+test("models fallback: in the session a stored build is served only within the chain max age, flagged stale", () => {
+  // 2026-10-07 11:00 ET (session open). Copy written 10:58, chain 10:57:30.
+  const savedAtMs = RTH - 120_000, close = Date.parse("2026-10-07T20:00:00Z");
+  const ok = modelsFallbackDecision({ savedAtMs, sessionCloseMs: close, chainAsOfMs: RTH - 150_000, nowMs: RTH });
+  assert.equal(ok.serve, true);
+  assert.equal(ok.label, "stale");
+  assert.equal(ok.ageMs, 150_000);
+  const old = modelsFallbackDecision({ savedAtMs, sessionCloseMs: close, chainAsOfMs: RTH - 181_000, nowMs: RTH });
+  assert.equal(old.serve, false);                         // -> 503, never a 30-min-old chain as current
+});
+
+test("models fallback: 'last-close' only for a copy built at or after the session close, served outside the session", () => {
+  const close = Date.parse("2026-10-07T20:00:00Z");      // 16:00 ET
+  const after = modelsFallbackDecision({ savedAtMs: close + 60_000, sessionCloseMs: close, chainAsOfMs: close + 30_000, nowMs: CLOSED });
+  assert.equal(after.serve, true);
+  assert.equal(after.label, "last-close");
+  // Built at 14:00 ET, now 19:00 ET: not a closing copy and 5 h old -> unavailable.
+  const intraday = modelsFallbackDecision({ savedAtMs: close - 2 * 3600_000, sessionCloseMs: close, chainAsOfMs: close - 2 * 3600_000, nowMs: CLOSED });
+  assert.equal(intraday.serve, false);
+  assert.equal(intraday.label, null);
+  // Oldest chain across horizons drives the age.
+  assert.equal(oldestChainAsOf({ daily: { chainAsOfMs: 5 }, weekly: { chainAsOfMs: 3 }, monthly: null }), 3);
+  assert.equal(oldestChainAsOf({ daily: {} }), null);
 });

@@ -47,6 +47,20 @@ export async function readCache<T>(key: string): Promise<T | null> {
   }
 }
 
+/** Like readCache but keeps the write time `at` (epoch ms), so callers can
+ *  bound the age of what they serve. */
+export async function readCacheEntry<T>(key: string): Promise<{ at: number; data: T } | null> {
+  try {
+    const file = path.join(CACHE_DIR, `${safeKey(key)}.json`);
+    const raw = await fs.readFile(file, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.at !== "number" || parsed.data == null) return null;
+    return { at: parsed.at, data: parsed.data as T };
+  } catch {
+    return null;
+  }
+}
+
 // Return RTH session date (America/New_York) in YYYY-MM-DD form.
 // Before 9:30 ET we use the prior trading day — that way the "current session"
 // key stays stable until the next open. Weekends roll back to Friday.

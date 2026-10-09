@@ -276,12 +276,17 @@ export interface ModelHorizon {
   chainSymbol?: string;
   chainAsOfMs?: number;
   chainStale?: boolean;
+  chainMaxAgeMs?: number;
   chainCoverageComplete?: boolean | null;
 }
 
 export interface ModelsResponse {
   asOf: number;
   session: "live" | "last-close";          // persisted session vs. live
+  /** Set when a stored copy is served after a failed live build (within the chain max age). */
+  stale?: boolean;
+  /** Oldest chain time behind the served payload, epoch ms. */
+  chainAsOfMs?: number | null;
   horizons: Record<Horizon, ModelHorizon | null>;
   warnings: string[];
   experimental?: boolean;                  // true when ?experimental=1 — client can surface extra dealer-map kinds
@@ -1483,6 +1488,7 @@ async function buildHorizon(input: ModelBuildInput): Promise<ModelHorizon> {
     chainSymbol: chainSymbol === "SPX" ? "$SPX" : "SPY",
     chainAsOfMs: chain.asOfMs,
     chainStale: chain.stale,
+    chainMaxAgeMs: chain.maxAgeMs,
     chainCoverageComplete: chain.strikeCoverage?.complete ?? null,
   };
 

@@ -265,7 +265,7 @@ export default function TradeDesk() {
       {/* Gamma Map */}
       <section>
         <div className="flex justify-end">
-          <DataAgeChip asOfMs={(data as any).gammaAsOf ?? null} stale={(data as any).gammaStale ?? null} label="gamma map · Schwab SPY chain" />
+          <DataAgeChip asOfMs={(data as any).gammaAsOf ?? null} stale={(data as any).gammaStale ?? null} maxAgeMs={(data as any).gammaMaxAgeMs ?? null} label="gamma map · Schwab SPY chain" />
         </div>
         <GammaMapCard gammaMap={data.gammaMap} spot={data.quotes.spy?.price ?? null} />
       </section>

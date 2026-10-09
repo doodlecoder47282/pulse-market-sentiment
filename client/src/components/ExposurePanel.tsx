@@ -117,7 +117,7 @@ export default function ExposurePanel({ symbol }: Props) {
           <div className="space-y-0.5">
             <CardTitle className="flex items-center gap-2 text-base" data-testid="text-exposure-title">
               Dealer exposure — {sym}
-              <DataAgeChip asOfMs={(data.meta as any).chainAsOfMs ?? null} stale={(data.meta as any).chainStale ?? null} label="chain" />
+              <DataAgeChip asOfMs={(data.meta as any).chainAsOfMs ?? null} stale={(data.meta as any).chainStale ?? null} maxAgeMs={(data.meta as any).chainMaxAgeMs ?? null} label="chain" />
             </CardTitle>
             <div className="text-xs text-muted-foreground">
               {data.meta.chainSize.toLocaleString()} contracts · 0-45 DTE · spot {p.currentSpot.toFixed(2)} · r {(p.r * 100).toFixed(1)}% · q {(p.q * 100).toFixed(1)}%

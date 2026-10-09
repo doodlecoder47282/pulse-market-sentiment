@@ -374,7 +374,7 @@ export default function ChainAudit() {
         {data && (
           <Badge variant="outline" className="border-cyan-500/40 font-mono text-[9px] text-cyan-400">
             {data.symbol} · {data.audit.contractsProcessed.toLocaleString()} contracts · {data.audit.expiriesFound} expiries
-            {" "}<DataAgeChip asOfMs={(data as any).chainAsOfMs ?? null} stale={(data as any).chainStale ?? null} label="chain" />
+            {" "}<DataAgeChip asOfMs={(data as any).chainAsOfMs ?? null} stale={(data as any).chainStale ?? null} maxAgeMs={(data as any).chainMaxAgeMs ?? null} label="chain" />
           </Badge>
         )}
         {data?.audit?.dataQuality === "partial" && (

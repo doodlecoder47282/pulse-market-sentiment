@@ -13,7 +13,7 @@ import { quoteFreshness } from "./quoteFreshness";
 import { gexByStrikeFromChain } from "./gammaProfile";
 import {
   FRESH_TTL_MS, schwabDataKind, staleServeDecision, freshFreshness, maxServeAgeMs,
-  chainStrikePlan, strikeCoverage, inferStrikeCountSemantics, atmIvFromChain,
+  chainStrikePlan, strikeCoverage, inferStrikeCountSemantics, atmIvFromChain, chainIsDelayed,
   type SchwabDataKind, type SchwabFreshness, type StrikeCoverage, type StrikeCountSemantics,
 } from "./schwabDataPolicy";
 
@@ -712,7 +712,14 @@ export type OptionChainOk = {
 };
 
 /** Error: "schwab_required" = not connected (auth); "schwab_unavailable" = Schwab could not answer (or cache past max age). */
-export type OptionChainResponse = OptionChainOk | { error: "schwab_required" | "schwab_unavailable"; source: null; reason?: string };
+/** Error: "schwab_required" = not connected (auth); "schwab_unavailable" = Schwab could not answer (or cache past max age);
+ *  "schwab_delayed" = Schwab answered with a chain flagged isDelayed: not current, so kept out of greeks, gamma and sizing. */
+export type OptionChainResponse = OptionChainOk | {
+  error: "schwab_required" | "schwab_unavailable" | "schwab_delayed";
+  source: null;
+  reason?: string;
+  dataState?: "unavailable" | "delayed";
+};
 
 // Last known spot and ATM IV per wire symbol: sizes the next strikeCount.
 const _chainHints = new Map<string, { spot: number; atmIv: number | null; at: number }>();
@@ -771,7 +778,14 @@ export async function getOptionChain(
     const r = await schwabFetchMeta("marketdata/v1/chains", params);
     const data = r.data;
     if (!data || !(data.callExpDateMap || data.putExpDateMap) || !r.freshness) {
-      return { error: "schwab_unavailable", source: null, reason: r.reason ?? "Schwab returned no chain" };
+      return { error: "schwab_unavailable", source: null, dataState: "unavailable", reason: r.reason ?? "Schwab returned no chain" };
+    }
+    if (chainIsDelayed(data)) {
+      _recordDegraded("chains", false, "Schwab chain flagged isDelayed");
+      return {
+        error: "schwab_delayed", source: null, dataState: "delayed",
+        reason: "Schwab returned a DELAYED chain (isDelayed=true): not current, excluded from greeks, gamma and sizing",
+      };
     }
     const u = data.underlying ?? {};
     const num = (x: any) => (typeof x === "number" && Number.isFinite(x) ? x : null);

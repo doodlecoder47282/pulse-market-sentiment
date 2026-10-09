@@ -196,6 +196,9 @@ export const MIN_HALF_WIDTH_PCT = 0.10;
 export const MAX_HALF_WIDTH_PCT = 0.35;
 /** Hard cap on the strikeCount sent to Schwab (bounds payload size on long windows). */
 export const MAX_STRIKE_COUNT = 300;
+/** strikeCount is rounded UP to this step so small spot / IV moves do not
+ *  change the request (and split the response cache) on every call. */
+export const STRIKE_COUNT_STEP = 20;
 /** Default ATM vol when no recent chain for the symbol is known. */
 export const DEFAULT_ATM_IV = 0.25;
 
@@ -269,7 +272,8 @@ export function chainStrikePlan(args: {
   }
   const perSide = Math.ceil((halfWidthPct * args.spot) / spacing);
   const wanted = args.semantics === "per_side" ? perSide : 2 * perSide;
-  const strikeCount = Math.min(MAX_STRIKE_COUNT, Math.max(10, wanted));
+  const stepped = Math.ceil(wanted / STRIKE_COUNT_STEP) * STRIKE_COUNT_STEP;
+  const strikeCount = Math.min(MAX_STRIKE_COUNT, Math.max(STRIKE_COUNT_STEP, stepped));
   return { halfWidthPct, spacing, perSide, strikeCount, capped: wanted > MAX_STRIKE_COUNT, basis };
 }
 
@@ -344,6 +348,63 @@ export function strikeCoverage(
   const complete = belowPct != null && abovePct != null
     && belowPct + slack >= targetHalfWidthPct && abovePct + slack >= targetHalfWidthPct;
   return { targetHalfWidthPct, belowPct, abovePct, complete, expiries: keys.length, nearestBelow, nearestAbove };
+}
+
+/**
+ * Is a Schwab option chain flagged as DELAYED? The chain response carries a
+ * top-level `isDelayed` boolean (schwab-go marketdata.OptionChain,
+ * `IsDelayed bool json:"isDelayed"`,
+ * https://pkg.go.dev/github.com/major/schwab-go@v0.4.3/schwab/marketdata);
+ * the underlying block may also carry `delayed`. A delayed chain is not
+ * current market data: it is excluded from greeks, gamma and sizing
+ * (getOptionChain returns it as dataState "delayed").
+ */
+export function chainIsDelayed(data: { isDelayed?: unknown; underlying?: { delayed?: unknown } | null } | null | undefined): boolean {
+  if (!data) return false;
+  return data.isDelayed === true || data.underlying?.delayed === true;
+}
+
+/**
+ * Fallback for a failed /api/models build: may the persisted session copy be
+ * served, and how is it labelled?
+ *   - "last-close": the copy was built at or after its session's close, so
+ *     its chain is the closing chain; served outside the regular session.
+ *   - "stale": built during a session; served only while its oldest chain is
+ *     within maxServeAgeMs("chains") (3 min in the session, 30 min outside).
+ *   - otherwise unavailable (503).
+ * @param savedAtMs       when the copy was written
+ * @param sessionCloseMs  close of the session the copy was built in (null = not a trading day)
+ * @param chainAsOfMs     oldest chain time inside the copy (null = unknown: falls back to savedAtMs)
+ */
+export function modelsFallbackDecision(args: {
+  savedAtMs: number;
+  sessionCloseMs: number | null;
+  chainAsOfMs: number | null;
+  nowMs?: number;
+}): { serve: boolean; label: "last-close" | "stale" | null; ageMs: number; maxAgeMs: number; reason: string } {
+  const nowMs = args.nowMs ?? Date.now();
+  const asOf = args.chainAsOfMs ?? args.savedAtMs;
+  const ageMs = Math.max(0, nowMs - asOf);
+  const maxAgeMs = maxServeAgeMs("chains", nowMs);
+  const rth = isRegularSessionOpen(nowMs);
+  const builtAfterClose = args.sessionCloseMs != null && args.savedAtMs >= args.sessionCloseMs;
+  if (!rth && builtAfterClose) {
+    return { serve: true, label: "last-close", ageMs, maxAgeMs, reason: "built after the session close" };
+  }
+  if (ageMs <= maxAgeMs) {
+    return { serve: true, label: "stale", ageMs, maxAgeMs, reason: `chain ${Math.round(ageMs / 1000)} s old (max ${Math.round(maxAgeMs / 1000)} s)` };
+  }
+  return { serve: false, label: null, ageMs, maxAgeMs, reason: `stored copy's chain is ${Math.round(ageMs / 60_000)} min old (max ${Math.round(maxAgeMs / 60_000)} min)` };
+}
+
+/** Oldest chainAsOfMs across a models payload's horizons; null when none carries one. */
+export function oldestChainAsOf(horizons: Record<string, { chainAsOfMs?: number } | null | undefined> | null | undefined): number | null {
+  let min: number | null = null;
+  for (const h of Object.values(horizons ?? {})) {
+    const t = h?.chainAsOfMs;
+    if (typeof t === "number" && Number.isFinite(t)) min = min == null ? t : Math.min(min, t);
+  }
+  return min;
 }
 
 /** ATM implied vol (decimal) of the nearest expiry: mean of the call and put vol at the strike closest to spot. */

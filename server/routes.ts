@@ -39,7 +39,7 @@ import { computeRND, type CallStrike } from "./breedenLitzenberger";
 import { dollarGexPerPct, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
 import { contractYears, expiryOfKey, ivForClock } from "./chainClock";
 import { timeToExpiry } from "./timeToExpiry";
-import { etDate, intradayTapeState, isRegularSessionOpen, REGULAR_OPEN_MIN, sessionCloseMinutes } from "./exchangeCalendar";
+import { etDate, intradayTapeState, isRegularSessionOpen, REGULAR_OPEN_MIN, sessionCloseMinutes, sessionCloseMs } from "./exchangeCalendar";
 import { gamma as bsGammaOurClock } from "./greeks";
 import { charmTiltNorm, contractExposure } from "./greekExposure";
 import { pickEarningsExpiry } from "./impliedScenario";
@@ -66,8 +66,8 @@ import { gatherPositioningForTicker } from "./tickerAlpha";
 import { buildEconWeek, type EconWeek } from "./econWeek";
 import { buildModelsSnapshot, type ModelsResponse, type Horizon } from "./models";
 import type { Snapshot_Public, VolMetric } from "@shared/schema";
-import { readCache, writeCache, rthSessionKey } from "./sessionCache";
-import { maxServeAgeMs } from "./schwabDataPolicy";
+import { readCacheEntry, writeCache, rthSessionKey } from "./sessionCache";
+import { maxServeAgeMs, modelsFallbackDecision, oldestChainAsOf } from "./schwabDataPolicy";
 import { buildSeasonalitySnapshot, fetchBars, computeSeasonality, generateAnalysisText } from "./seasonality";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
@@ -317,14 +317,15 @@ async function getOrBuild(force = false): Promise<Snapshot_Public> {
     .then((d) => { lastResult = { at: Date.now(), data: d }; inflight = null; return d; })
     .catch(async (e) => {
       inflight = null;
-      // A rebuild failed: the last stored snapshot is served only within the
-      // chain max age (3 min in the session, 30 min outside), marked stale
+      // A rebuild failed: the last stored snapshot is served only within
+      // min(quote, chain) max age (2 min in the session, 15 min outside), marked stale
       // with its capturedAt. Past that the snapshot is unavailable.
       const last = await storage.getLatestSnapshot();
       if (last) {
         const snap = JSON.parse(last.payload) as Snapshot_Public;
         const ageMs = Date.now() - snap.capturedAt * 1000;
-        const maxAge = maxServeAgeMs("chains");
+        // The snapshot carries quotes and a chain: the tighter max age applies.
+        const maxAge = Math.min(maxServeAgeMs("quotes"), maxServeAgeMs("chains"));
         if (ageMs <= maxAge) {
           return {
             ...snap,
@@ -563,6 +564,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // Gamma map provenance: Schwab SPY chain time (epoch s) and stale flag.
         gammaAsOf: snap.gammaAsOf ?? null,
         gammaStale: !!(snap.gammaStale || snap.stale),
+        gammaMaxAgeMs: maxServeAgeMs("chains"),
         squeeze,
         playbook,
         composite: { score: snap.composite.score, label: snap.composite.label },
@@ -675,7 +677,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const cacheKey = `${symbol}${experimental ? ":exp" : ""}`;
     // Cache hit
     const cached = modelsCache.get(cacheKey);
-    if (cached && Date.now() - cached.at < MODELS_CACHE_MS) return cached.data;
+    // The 30-min rebuild cadence never serves chain-derived numbers past the
+    // chain max age (3 min in the session): an older build is a miss.
+    const cachedChainAsOf = cached ? oldestChainAsOf(cached.data.horizons as any) : null;
+    if (cached && Date.now() - cached.at < MODELS_CACHE_MS
+        && (cachedChainAsOf == null || Date.now() - cachedChainAsOf <= maxServeAgeMs("chains"))) {
+      return cached.data;
+    }
     // Existing build in flight
     const pending = modelsInFlight.get(cacheKey);
     if (pending) return pending;
@@ -794,14 +802,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       try {
         const symbol = (String(req.query.symbol ?? "^GSPC").toUpperCase() === "SPY" ? "SPY" : "^GSPC") as "SPY" | "^GSPC";
         const experimental = String(req.query.experimental ?? "") === "1";
-        const stale = await readCache<ModelsResponse>(`models-${symbol}${experimental ? "-exp" : ""}-${rthSessionKey()}`);
-        if (stale) {
-          stale.session = "last-close";
-          stale.warnings = [...(stale.warnings ?? []), `Live build failed: ${e?.message ?? e} — serving last RTH close.`];
-          return res.json(stale);
+        const entry = await readCacheEntry<ModelsResponse>(`models-${symbol}${experimental ? "-exp" : ""}-${rthSessionKey()}`);
+        if (entry) {
+          // "last-close" only for a copy built at or after its session close,
+          // served outside the session; otherwise only within the chain max
+          // age, flagged stale with its real chain time; else 503.
+          const chainAsOfMs = oldestChainAsOf(entry.data.horizons as any);
+          const d = modelsFallbackDecision({
+            savedAtMs: entry.at,
+            sessionCloseMs: sessionCloseMs(etDate(entry.at)),
+            chainAsOfMs,
+          });
+          if (d.serve) {
+            const out: ModelsResponse = {
+              ...entry.data,
+              session: d.label === "last-close" ? "last-close" : entry.data.session,
+              stale: d.label === "stale",
+              chainAsOfMs: chainAsOfMs ?? entry.at,
+              warnings: [...(entry.data.warnings ?? []), d.label === "last-close"
+                ? `Live build failed: ${e?.message ?? e} — serving the copy built after the last close.`
+                : `Live build failed: ${e?.message ?? e} — serving a stored build (${d.reason}).`],
+            };
+            return res.json(out);
+          }
+          return res.status(503).json({ dataState: "unavailable", message: `${e?.message ?? "Failed to build models"}; ${d.reason}` });
         }
       } catch {}
-      res.status(503).json({ message: e?.message ?? "Failed to build models" });
+      res.status(503).json({ dataState: "unavailable", message: e?.message ?? "Failed to build models" });
     }
   });
 
@@ -990,7 +1017,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (cached && Date.now() - cached.at < UNUSUAL_FLOW_CACHE_MS) {
       return res.json(cached.data);
     }
-    const unavailable = (note: string) => ({
+    const unavailable = (note: string, dataState: "unavailable" | "delayed" = "unavailable") => ({
       provider: "schwab" as const,
       symbol,
       spot: null,
@@ -1002,7 +1029,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         netSentimentNotional: null, topTag: null,
       },
       asOf: Math.floor(Date.now() / 1000),
-      dataState: "unavailable" as const,
+      dataState,
       note,
     });
     const staleCached = () => {
@@ -1018,6 +1045,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if ("error" in sf) {
         const st = staleCached();
         if (st) return res.json(st);
+        if (sf.error === "schwab_delayed") {
+          return res.json(unavailable(`Schwab returned a DELAYED chain for ${symbol}: not current, not scanned.`, "delayed"));
+        }
         return res.json(unavailable(`Schwab chain unavailable for ${symbol}: ${sf.error}`));
       }
       const data = schwabToUnusual(sf, symbol);
@@ -2841,7 +2871,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const g = snap.gamma;
       const spxNow = snap.spy.price ?? g.spot; // Use SPY price units to match computed chain levels
       const enhanced = buildGammaLevelsEnhanced(g, spxNow, { chainAsOf: snap.gammaAsOf ?? null, stale: !!(snap.gammaStale || snap.stale) });
-      res.json({ symbol: "SPY", supported: true, enhanced, asOf: snap.capturedAt, chainAsOf: snap.gammaAsOf ?? null, chainStale: !!(snap.gammaStale || snap.stale) });
+      res.json({ symbol: "SPY", supported: true, enhanced, asOf: snap.capturedAt, chainAsOf: snap.gammaAsOf ?? null, chainStale: !!(snap.gammaStale || snap.stale), chainMaxAgeMs: maxServeAgeMs("chains") });
     } catch (e: any) {
       res.status(500).json({ message: e?.message ?? "Failed to build enhanced gamma levels" });
     }
@@ -3079,7 +3109,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       if ("error" in chain) {
         return res.status(503).json({
           error: chain.error,
-          dataState: "unavailable",
+          dataState: chain.dataState ?? "unavailable",
           message: chain.error === "schwab_required"
             ? "Schwab connection required for chain audit. Please connect Schwab in Settings."
             : `Schwab chain unavailable for ${symbol}: ${chain.reason ?? "no answer"}`,
@@ -3146,6 +3176,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         asOf: chain.asOfMs,
         chainAsOfMs: chain.asOfMs,
         chainStale: chain.stale,
+        chainMaxAgeMs: chain.maxAgeMs,
         chainSource: "schwab" as const,
         audit,
       };
@@ -3421,7 +3452,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const { getOptionChain } = await import("./schwab");
       const chain = await getOptionChain(symbol, dte);
       if ("error" in chain) {
-        return res.status(503).json({ error: chain.error, message: "Option chain unavailable" });
+        return res.status(503).json({ error: chain.error, dataState: chain.dataState ?? "unavailable", message: `Option chain unavailable: ${chain.reason ?? chain.error}` });
       }
       const spot = chain.underlying.last ?? null;
       if (!spot || spot <= 0) {
@@ -3891,7 +3922,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const { getOptionChain } = await import("./schwab");
       const chain = await getOptionChain(symbol, dte);
       if ("error" in chain) {
-        return res.status(503).json({ error: chain.error, message: "Option chain unavailable" });
+        return res.status(503).json({ error: chain.error, dataState: chain.dataState ?? "unavailable", message: `Option chain unavailable: ${chain.reason ?? chain.error}` });
       }
       const spot = chain.underlying.last ?? null;
       if (!spot || spot <= 0) {
@@ -4057,6 +4088,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         // When Schwab produced the chain (asOf above is the computation time).
         chainAsOfMs: chain.asOfMs,
         chainStale: chain.stale,
+        chainMaxAgeMs: chain.maxAgeMs,
         chainSource: "schwab",
         spot,
         weightMode,
@@ -4135,7 +4167,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       if ("error" in chain) {
         return res.status(503).json({
           error: "data_unavailable",
-          dataState: "unavailable",
+          dataState: chain.dataState ?? "unavailable",
           message: `Schwab options chain unavailable for ${symbol}: ${chain.reason ?? chain.error}`,
         });
       }
@@ -4157,6 +4189,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       result.chainSource = "schwab";
       result.chainAsOfMs = chain.asOfMs;
       result.chainStale = chain.stale;
+      result.chainMaxAgeMs = chain.maxAgeMs;
       result.chainCoverage = chain.strikeCoverage
         ? { belowPct: chain.strikeCoverage.belowPct, abovePct: chain.strikeCoverage.abovePct, complete: chain.strikeCoverage.complete }
         : null;

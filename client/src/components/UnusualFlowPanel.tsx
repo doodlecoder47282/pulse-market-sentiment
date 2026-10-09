@@ -65,7 +65,7 @@ interface UnusualContract {
 interface UnusualResponse {
   provider: "schwab";
   /** "unavailable" = Schwab did not answer: summary figures are null, not zero. */
-  dataState?: "ok" | "unavailable";
+  dataState?: "ok" | "unavailable" | "delayed";
   symbol: string;
   spot: number | null;
   contracts: UnusualContract[];
@@ -958,13 +958,13 @@ export default function UnusualFlowPanel({ symbol }: Props) {
     );
   }
 
-  if (data.dataState === "unavailable") {
+  if (data.dataState === "unavailable" || data.dataState === "delayed") {
     return (
       <Card data-testid="unusual-flow-panel">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-sm">
             <Flame className="h-4 w-4 text-amber-400" /> Unusual Options Flow — {sym}
-            <Badge variant="outline" className="ml-1 border-rose-500/40 text-[9px] text-rose-300">SCHWAB · unavailable</Badge>
+            <Badge variant="outline" className="ml-1 border-rose-500/40 text-[9px] text-rose-300">SCHWAB · {data.dataState === "delayed" ? "delayed (not used)" : "unavailable"}</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
