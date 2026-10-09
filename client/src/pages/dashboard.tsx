@@ -336,10 +336,10 @@ export default function Dashboard() {
           <div className="flex items-center gap-3">
             <div className="text-primary"><Logo className="h-7 w-7" /></div>
             <div>
-              <div className="font-semibold leading-none">Pulse</div>
+              <div className="font-semibold leading-none">Batcave</div>
               <div className="hidden items-center gap-1 xs:flex">
                 <BatmanLogoSmall className="h-3 w-6 text-amber-500" />
-                <span className="font-mono text-[10px] uppercase tracking-widest text-amber-500/80">BATCAVE</span>
+                <span className="font-mono text-[10px] uppercase tracking-widest text-amber-500/80">TERMINAL</span>
               </div>
             </div>
           </div>

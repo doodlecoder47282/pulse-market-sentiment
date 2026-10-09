@@ -4,7 +4,7 @@ import { TrendingUp, TrendingDown, Activity, AlertTriangle } from "lucide-react"
 type Tier = "bullish" | "bearish" | "neutral" | "warning";
 
 interface HeadlineResponse {
-  regime: "vol_expansion" | "gamma_squeeze" | "pinning" | "mean_reversion" | "trend_continuation" | "neutral";
+  regime: "vol_expansion" | "gamma_squeeze" | "pinning" | "mean_reversion" | "trend_continuation" | "neutral" | "unavailable";
   headline: string;
   confidence: "high" | "medium" | "low";
   tier: Tier;
@@ -49,6 +49,7 @@ const REGIME_LABEL: Record<HeadlineResponse["regime"], string> = {
   mean_reversion: "MEAN REVERSION",
   trend_continuation: "TREND",
   neutral: "NEUTRAL",
+  unavailable: "UNAVAILABLE",
 };
 
 export default function RegimeHeadline() {
@@ -100,7 +101,9 @@ export default function RegimeHeadline() {
           </span>
           <span>
             <span className="opacity-60">NET GEX </span>
-            <span className={gexShare >= 0 ? "text-emerald-400" : "text-rose-400"}>{sharePct}%</span>
+            {data.inputs.gexRegime === "unknown"
+              ? <span>—</span>
+              : <span className={gexShare >= 0 ? "text-emerald-400" : "text-rose-400"}>{sharePct}%</span>}
           </span>
           <span className="opacity-60 uppercase">{data.confidence}</span>
         </div>

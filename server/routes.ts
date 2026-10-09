@@ -3450,14 +3450,16 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         | "pinning"
         | "mean_reversion"
         | "trend_continuation"
-        | "neutral";
+        | "neutral"
+        | "unavailable";
 
       let regime: RegimeKey = "neutral";
       let confidence: "high" | "medium" | "low" = "low";
-      let headline = "Neutral regime — no clear edge, size down.";
+      let headline = "Neutral — no decisive regime signal.";
       let tier: "bullish" | "bearish" | "neutral" | "warning" = "neutral";
 
-      const vixPct = vixChg ?? 0;
+      // Missing VIX change is missing, not 0%: NaN fails every rule that needs it.
+      const vixPct = vixChg ?? NaN;
       const absShare = Math.abs(gexShare);
 
       // Volatility expansion — backwardation + VIX up + dealers short gamma
@@ -3503,6 +3505,14 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         const gexLabel = gexRegime === "long_gamma" ? "long gamma" : "short gamma";
         const termLabel = termState === "contango" ? "contango" : termState === "backwardation" ? "backwardation" : "flat term";
         headline = `Neutral — ${gexLabel} (${(gexShare * 100).toFixed(0)}%), VIX ${termLabel}, no decisive edge.`;
+      }
+      // Inputs missing (e.g. Schwab not answering): say so, never default to a neutral read.
+      else {
+        regime = "unavailable";
+        confidence = "low";
+        tier = "neutral";
+        const missing = [gexRegime === "unknown" ? "dealer gamma" : null, termState === "unknown" ? "VIX term structure" : null].filter(Boolean).join(" and ");
+        headline = `Regime unavailable — ${missing} missing from Schwab; no regime read.`;
       }
 
       res.json({
