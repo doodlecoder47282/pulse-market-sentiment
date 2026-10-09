@@ -17,6 +17,9 @@ interface ByType { type: "CALL" | "PUT"; n: number; hit30Rate: number; avgPctRet
 interface ByTier { tier: string; n: number; hit30Rate: number; avgPctReturn: number; }
 interface WhaleEdge {
   total: number; graded: number; pending: number;
+  // Resolved alerts with no usable logged mark: not graded, not misses.
+  ungradedNoMark?: number; ungradedShare?: number | null; ungradedReasons?: Record<string, number>;
+  legacyProxyExcluded?: number;
   hit30Rate: number; hit50Rate: number; hit100Rate: number;
   avgPctReturn: number;
   bySymbol: BySymbol[]; byType: ByType[];
@@ -45,6 +48,17 @@ interface Suggestion {
   rationale: string;
   liftHit30: number;
   alertReductionPct: number;
+  oos?: { n: number; hitRate: number | null; wilsonLo: number | null; wilsonHi: number | null; droppedN: number; droppedHitRate: number | null; z: number | null; zCrit: number; method: string };
+}
+interface SuggestionTest {
+  field: string;
+  current?: number;
+  candidates?: number[];
+  inSampleValue: number | null;
+  walkForward: {
+    status: string; supported: boolean; reason: string;
+    power?: { oosRows: number; keptN: number; droppedN: number; mde80: number | null; powerAt10pts: number | null; basis: string };
+  };
 }
 interface EdgeStats {
   asOf: number;
@@ -52,6 +66,8 @@ interface EdgeStats {
   whaleAlerts: WhaleEdge;
   regimeCalls: RegimeEdge;
   suggestions: Suggestion[];
+  suggestionTests?: SuggestionTest[];
+  suggestionWindowDays?: number;
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -83,7 +99,14 @@ function HeadlineCards({ w, r }: { w: WhaleEdge; r: RegimeEdge }) {
         <div className={`text-2xl font-semibold ${rateColor(w.hit30Rate)}`} data-testid="text-whale-hit30">
           {w.graded ? pct(w.hit30Rate) : "—"}
         </div>
-        <div className="text-[11px] text-muted-foreground">{w.graded} graded · {w.pending} pending</div>
+        <div className="text-[11px] text-muted-foreground" data-testid="text-whale-coverage">
+          {w.graded} graded · {w.pending} pending
+          {w.ungradedNoMark != null && (
+            <span title={Object.entries(w.ungradedReasons ?? {}).map(([k, v]) => `${k}: ${v}`).join(", ") || undefined}>
+              {" "}· {w.ungradedNoMark} no mark{w.ungradedShare != null ? ` (${pct(w.ungradedShare, 0)} of resolved)` : ""}
+            </span>
+          )}
+        </div>
       </div>
       <div className="rounded-md border border-border/50 bg-card/40 p-3">
         <div className="text-[10px] uppercase text-muted-foreground tracking-wider">Whale Hit-50</div>
@@ -236,7 +259,7 @@ function CalibrationPlot({ r }: { r: RegimeEdge }) {
   );
 }
 
-function SuggestionsPanel({ suggestions }: { suggestions: Suggestion[] }) {
+function SuggestionsPanel({ suggestions, tests, windowDays }: { suggestions: Suggestion[]; tests?: SuggestionTest[]; windowDays?: number }) {
   const [appliedField, setAppliedField] = useState<string | null>(null);
   const [errorField, setErrorField] = useState<string | null>(null);
 
@@ -261,7 +284,20 @@ function SuggestionsPanel({ suggestions }: { suggestions: Suggestion[] }) {
   if (suggestions.length === 0) {
     return (
       <div className="rounded-md border border-border/50 bg-card/40 p-3 text-sm text-muted-foreground" data-testid="text-no-suggestions">
-        no threshold tweaks suggested. current gates look reasonable based on the rolling window.
+        no threshold tweaks suggested. a suggestion needs out-of-sample support (walk-forward hold-out over the last {windowDays ?? 180} days), not just a better in-sample hit rate.
+        {(tests ?? []).map((t) => {
+          const pw = t.walkForward.power;
+          return (
+            <div key={t.field} className="mt-1 text-[11px]" data-testid={`text-suggestion-test-${t.field}`}>
+              {t.field}{t.current != null ? ` (live ${t.current}; tested ${t.candidates && t.candidates.length ? t.candidates.join(", ") : "none above the gate"})` : ""}: {t.inSampleValue != null ? `pick ${t.inSampleValue}; ` : "no pick; "}{t.walkForward.reason}
+              {pw && (
+                <span data-testid={`text-suggestion-power-${t.field}`}>
+                  {" "}· power: with {pw.keptN} kept / {pw.droppedN} dropped out-of-sample alerts the test detects a lift of {pw.mde80 != null ? `${(pw.mde80 * 100).toFixed(0)} pts` : "no realistic size"} at 80% power; chance of catching a +10 pt lift {pw.powerAt10pts != null ? pct(pw.powerAt10pts, 0) : "—"}
+                </span>
+              )}
+            </div>
+          );
+        })}
       </div>
     );
   }
@@ -282,8 +318,15 @@ function SuggestionsPanel({ suggestions }: { suggestions: Suggestion[] }) {
                 </span>
               </div>
               <p className="text-sm mt-1.5">{s.rationale}</p>
+              {s.oos && (
+                <p className="text-[11px] text-muted-foreground mt-1" data-testid={`text-suggestion-oos-${s.field}`}>
+                  out of sample: {s.oos.hitRate != null ? pct(s.oos.hitRate, 0) : "—"} hit-30
+                  {s.oos.wilsonLo != null ? ` (95% CI ${pct(s.oos.wilsonLo, 0)}–${pct(s.oos.wilsonHi ?? 0, 0)})` : ""}, n={s.oos.n};
+                  {" "}dropped {s.oos.droppedHitRate != null ? pct(s.oos.droppedHitRate, 0) : "—"} (n={s.oos.droppedN}); z {s.oos.z?.toFixed(2)} vs {s.oos.zCrit}
+                </p>
+              )}
               <div className="flex items-center gap-3 mt-1.5 text-xs">
-                <span className="text-emerald-400 tabular-nums">+{pct(s.liftHit30)} lift</span>
+                <span className="text-emerald-400 tabular-nums">+{pct(s.liftHit30)} lift (in-sample)</span>
                 <span className="text-muted-foreground tabular-nums">−{pct(s.alertReductionPct, 0)} alerts</span>
               </div>
             </div>
@@ -417,6 +460,7 @@ export default function EdgeStatsPanel() {
             {data.whaleAlerts.graded === 0 ? (
               <div className="rounded-md border border-border/50 bg-card/40 p-6 text-sm text-muted-foreground text-center">
                 no graded whale alerts in this window yet. predictions populate as alerts fire and grading dates pass.
+                {(data.whaleAlerts.ungradedNoMark ?? 0) > 0 && ` ${data.whaleAlerts.ungradedNoMark} resolved alerts had no usable logged mark and are not graded (not counted as misses).`}
               </div>
             ) : (
               <HitMatrix w={data.whaleAlerts} />
@@ -432,7 +476,7 @@ export default function EdgeStatsPanel() {
             )}
           </TabsContent>
           <TabsContent value="suggestions" className="mt-3">
-            <SuggestionsPanel suggestions={data.suggestions} />
+            <SuggestionsPanel suggestions={data.suggestions} tests={data.suggestionTests} windowDays={data.suggestionWindowDays} />
           </TabsContent>
         </Tabs>
 

@@ -42,6 +42,7 @@
 // fresh transitions detected via in-memory history.
 
 import { minutesToSessionClose, modelThetaToClose, projectedThetaCost } from "./chainClock";
+import { gradeEvidenceLine, t1SaleContracts, ODTE_PLAN_RULES, type GradeEvidence } from "./validationMath";
 
 export type OdteSetupKind = "FAILED_BREAK" | "PIVOT_RECLAIM" | "WALL_REJECT";
 export type Side = "call" | "put";
@@ -2408,7 +2409,21 @@ function computeMinutesToCloseSync(nowMs: number, _hourET: number, _minuteET: nu
 }
 
 // ─── Format the alert as the user's mockup ────────────────────────────────
-export function formatOdteAlert(a: OdteAlert): { content: string } {
+/**
+ * Alert text. The STOP / T1 / RUNNER lines state the plan exactly as the
+ * grader replays it (validationMath.replayOdtePlan, ODTE_PLAN_RULES): a
+ * 5-minute CLOSE beyond the stop, the -20% stop on the option bid, half at
+ * T1 when there is a T2, the runner's trail armed by a 5-minute close beyond
+ * T1. Levels print unrounded so the text and the replay use the same number.
+ * `evidence` is the realized option-ledger bucket of the score (odteGrader.
+ * gradeEvidenceFor): the letter is a hand-weighted heuristic score, shown
+ * with the bucket's realized hit rate, Wilson interval and n (review 7.6).
+ */
+export function formatOdteAlert(
+  a: OdteAlert,
+  evidence?: GradeEvidence | null,
+  plan?: { contracts: number; source: "configured" | "reference" },
+): { content: string } {
   const sideUpper = a.side.toUpperCase();
   const contractType = a.side === "call" ? "C" : "P";
   const setupLabel =
@@ -2433,15 +2448,24 @@ export function formatOdteAlert(a: OdteAlert): { content: string } {
     ? Math.round(a.wire15.projReturnPctT2 * 100)
     : (a.t2 ? Math.round(a.t2.estPctGain) : null);
 
-  // NEW_STOP per spec: CALL = T1-3, PUT = T1+3
-  const newStop = a.side === "call"
-    ? Math.round(a.t1.price) - 3
-    : Math.round(a.t1.price) + 3;
+  // Exact level text: integers as-is, anything else to the cent (the replay uses the exact value).
+  const lvl = (x: number) => (Number.isInteger(x) ? String(x) : x.toFixed(2));
+  const below = a.side === "call" ? "BELOW" : "ABOVE";
+  const beyondT1 = a.side === "call" ? "ABOVE" : "BELOW";
+  // Runner trail (engine: T1 - 3 for a call, T1 + 3 for a put).
+  const trail = Number.isFinite(a.t2TrailingStopLevel) && a.t2TrailingStopLevel > 0
+    ? a.t2TrailingStopLevel
+    : (a.side === "call" ? a.t1.price - ODTE_PLAN_RULES.trailOffsetPts : a.t1.price + ODTE_PLAN_RULES.trailOffsetPts);
+  const hasT2 = !!a.t2 && (a.side === "call" ? a.t2.price > a.t1.price : a.t2.price < a.t1.price);
+  const stopPctTxt = Math.round(ODTE_PLAN_RULES.optionStopPct * 100);
+  const ask = Number(a.contract.ask);
+  const optStopPx = ask > 0 ? ` (bid <= $${(Math.floor(ask * (1 - ODTE_PLAN_RULES.optionStopPct) * 100 + 1e-9) / 100).toFixed(2)} on a $${ask.toFixed(2)} fill)` : "";
 
   const lines: string[] = [];
   lines.push(`SPX 0DTE TRADE ALERT  |  ${etTime} ET`);
   lines.push("─".repeat(40));
-  lines.push(`${sideUpper} ALERT  |  ${setupLabel}  |  CONFIDENCE ${a.grade.letter}  (${a.grade.score}/100)`);
+  lines.push(`${sideUpper} ALERT  |  ${setupLabel}  |  SCORE ${a.grade.letter}  (${a.grade.score}/100)`);
+  lines.push(`  score = hand-weighted heuristic, not a win probability. ${evidence === undefined ? "ledger not loaded" : gradeEvidenceLine(evidence)}`);
   lines.push("");
   lines.push(`CONTRACT:  SPX ${a.contract.strike} ${contractType}  |  SPX @ ${a.spot.toFixed(1)}  (delta ${deltaStr})`);
   lines.push("");
@@ -2454,18 +2478,26 @@ export function formatOdteAlert(a: OdteAlert): { content: string } {
   lines.push(`REVERSION:  ${reversionLine}`);
   lines.push(`ENTRY:  ${entryDesc}`);
   lines.push("");
-  lines.push(`STOP:  -20%  OR  5-min close ${a.side === "call" ? "BELOW" : "ABOVE"} ${Math.round(a.stopLevel)}`);
+  lines.push(`STOP (all):  option bid -${stopPctTxt}% before fees${optStopPx}  OR  5-min close ${below} ${lvl(a.stopLevel)}`);
   // Wire 16: projection tier tag
   const projTier = a.wire15?.projTier ?? null;
   const tierTag = projTier ? `  [${projTier}]` : "";
   // Signed: an A-(85) override can fire below the 30% floor, even negative ("+-12%" before).
   const sgn = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
-  lines.push(`T1:  ${Math.round(a.t1.price)}  (${a.t1.name})  ${sgn(projT1Pct)}% est${tierTag}`);
-  if (a.t2) {
+  // Whole contracts: T1 sells floor(n/2) of n (all when n = 1 or no T2).
+  const nPlan = Math.max(1, Math.floor(plan?.contracts ?? ODTE_PLAN_RULES.referenceContracts));
+  const kT1 = t1SaleContracts(nPlan, hasT2);
+  const sizeTag = `${nPlan} contract${nPlan === 1 ? "" : "s"}${plan?.source === "configured" ? "" : " (reference size)"}`;
+  const t1Sale = hasT2
+    ? (nPlan >= 2 ? `sell ${kT1} of ${nPlan} on first touch (floor(n/2); 1 contract: sell it)` : "sell the 1 contract on first touch (floor(n/2) rule; no runner)")
+    : "sell ALL on first touch";
+  lines.push(`T1:  ${lvl(a.t1.price)}  (${a.t1.name})  ${sgn(projT1Pct)}% est${tierTag}  ->  ${t1Sale}  [plan: ${sizeTag}]`);
+  if (hasT2 && a.t2 && nPlan - kT1 > 0) {
     const t2ProjStr = projT2Pct != null ? `${sgn(projT2Pct)}% est` : "+—% est";
-    lines.push(`  IF T1 BREAKS: stop -> ${a.side === "call" ? "BELOW" : "ABOVE"} ${newStop}  |  T2: ${Math.round(a.t2.price)} (${a.t2.name}) ${t2ProjStr}`);
-    lines.push(`  T2 activates on: 5-min candle close ${a.side === "call" ? "ABOVE" : "BELOW"} ${Math.round(a.t1.price)}`);
+    lines.push(`  RUNNER (${nPlan - kT1}): keeps the stop above until a 5-min close ${beyondT1} ${lvl(a.t1.price)}; then stop -> 5-min close ${below} ${lvl(trail)}; the -${stopPctTxt}% bid stop always applies`);
+    lines.push(`  T2:  ${lvl(a.t2.price)} (${a.t2.name}) ${t2ProjStr}  ->  sell the rest on first touch`);
   }
+  lines.push(`  Still open at the close (16:00 ET, 13:00 on half days): SPXW cash-settles at intrinsic.`);
   lines.push("");
   lines.push(`Greek signals:  ${a.greekSignals}`);
   lines.push(`Regime:  ${a.regime}`);

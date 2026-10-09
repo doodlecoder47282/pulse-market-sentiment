@@ -7,6 +7,14 @@ import { predictionOutcomes } from "@shared/schema";
 import { isOutcomeOnOptionMarks } from "./validationMath";
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { reliabilityCurve, wilsonInterval, firstPerSession, type ReliabilityReport } from "./stats";
+import {
+  whaleGradingCoverage, walkForwardThreshold, sweepAboveGate, WF_Z_CRIT,
+  type WalkForwardResult, type WfRow,
+} from "./edgeStatsMath";
+import { getFlowConfig } from "./flowConfig";
+
+/** Threshold suggestions are tested on at least this much history (walk-forward needs rows). */
+export const SUGGESTION_WINDOW_DAYS = 180;
 
 // The event a regime call's hit_30 records (outcomeLogger.gradeRegimeCall):
 // a proxy, not the regime itself.
@@ -20,12 +28,33 @@ export interface EdgeStats {
   whaleAlerts: WhaleAlertEdge;
   regimeCalls: RegimeCallEdge;
   suggestions: ThresholdSuggestion[];
+  /** Every swept field with its walk-forward result, suggested or not (round-2 item 7). */
+  suggestionTests: SuggestionTest[];
+  /** History the suggestion tests used (max(windowDays, SUGGESTION_WINDOW_DAYS)). */
+  suggestionWindowDays: number;
+}
+
+export interface SuggestionTest {
+  field: ThresholdSuggestion["field"];
+  /** live gate from getFlowConfig() */
+  current: number;
+  /** candidate cut-offs, all strictly tighter than the live gate */
+  candidates: number[];
+  inSampleValue: number | null;
+  walkForward: WalkForwardResult;
 }
 
 interface WhaleAlertEdge {
   total: number;
   graded: number;
   pending: number;
+  /** Resolved alerts with no usable logged mark: never graded, never counted as misses (round-2 item 8). */
+  ungradedNoMark: number;
+  /** ungradedNoMark / (graded + ungradedNoMark); null when nothing resolved. */
+  ungradedShare: number | null;
+  ungradedReasons: Record<string, number>;
+  /** Old leverage-proxy rows in the window, excluded from every rate. */
+  legacyProxyExcluded: number;
   hit30Rate: number;
   hit50Rate: number;
   hit100Rate: number;
@@ -65,8 +94,14 @@ export interface ThresholdSuggestion {
   currentNote: string;
   suggested: number;
   rationale: string;
-  liftHit30: number; // how much hit-30 would have improved
+  liftHit30: number; // in-sample lift of hit-30 on the whole window
   alertReductionPct: number; // how many fewer alerts (0..1)
+  /** Out-of-sample evidence the suggestion passed (walk-forward). */
+  oos: {
+    n: number; hits: number; hitRate: number | null; wilsonLo: number | null; wilsonHi: number | null;
+    droppedN: number; droppedHitRate: number | null; lift: number | null; z: number | null; zCrit: number;
+    method: string;
+  };
 }
 
 export function computeEdgeStats(windowDays: number = 30): EdgeStats {
@@ -79,26 +114,43 @@ export function computeEdgeStats(windowDays: number = 30): EdgeStats {
     .where(gte(predictionOutcomes.capturedAt, windowFrom))
     .all();
 
-  // Only whale outcomes graded on real option marks; proxy-graded rows stay stored but are excluded.
-  const whaleRows = allRows.filter((r) => r.kind === "whale_alert" && isOutcomeOnOptionMarks(r));
+  // Rates use only whale outcomes graded on real option marks; proxy-graded
+  // rows stay stored but are excluded (and counted). Pending rows (no outcome
+  // yet) and ungraded_no_mark rows are counted, never treated as misses.
+  const whaleAll = allRows.filter((r) => r.kind === "whale_alert");
+  const whaleRows = whaleAll.filter((r: (typeof allRows)[number]) => r.graded === 1 && isOutcomeOnOptionMarks(r));
   const regimeRows = allRows.filter((r) => r.kind === "regime_call");
+  // Suggestions use a longer history than the display window: the
+  // walk-forward needs rows to have any power (round-2 fix item 4).
+  const suggestionWindowDays = Math.max(windowDays, SUGGESTION_WINDOW_DAYS);
+  const sugFrom = now - suggestionWindowDays * 24 * 60 * 60 * 1000;
+  const sugRows = suggestionWindowDays === windowDays ? whaleRows : db
+    .select()
+    .from(predictionOutcomes)
+    .where(gte(predictionOutcomes.capturedAt, sugFrom))
+    .all()
+    .filter((r: (typeof allRows)[number]) => r.kind === "whale_alert" && r.graded === 1 && isOutcomeOnOptionMarks(r));
+  const { suggestions, tests } = deriveSuggestions(sugRows);
 
   return {
     asOf: now,
     windowDays,
     windowFrom,
-    whaleAlerts: aggregateWhaleAlerts(whaleRows),
+    whaleAlerts: aggregateWhaleAlerts(whaleRows, whaleAll),
     regimeCalls: aggregateRegimeCalls(regimeRows),
-    suggestions: deriveSuggestions(whaleRows),
+    suggestions,
+    suggestionTests: tests,
+    suggestionWindowDays,
   };
 }
 
 // ─── Whale alerts aggregation ────────────────────────────────────────────────
 
-function aggregateWhaleAlerts(rows: any[]): WhaleAlertEdge {
-  const total = rows.length;
+function aggregateWhaleAlerts(rows: any[], allWhaleRows: any[]): WhaleAlertEdge {
+  const cov = whaleGradingCoverage(allWhaleRows, isOutcomeOnOptionMarks);
+  const total = cov.total;
   const graded = rows.filter((r) => r.graded === 1 && r.pctReturn != null);
-  const pending = rows.filter((r) => r.graded === 0).length;
+  const pending = cov.pending;
   const hit30 = graded.filter((r) => r.hit30 === 1).length;
   const hit50 = graded.filter((r) => r.hit50 === 1).length;
   const hit100 = graded.filter((r) => r.hit100 === 1).length;
@@ -116,6 +168,10 @@ function aggregateWhaleAlerts(rows: any[]): WhaleAlertEdge {
     total,
     graded: graded.length,
     pending,
+    ungradedNoMark: cov.ungradedNoMark,
+    ungradedShare: cov.ungradedShare,
+    ungradedReasons: cov.ungradedReasons,
+    legacyProxyExcluded: cov.legacyProxyExcluded,
     hit30Rate: graded.length ? hit30 / graded.length : 0,
     hit50Rate: graded.length ? hit50 / graded.length : 0,
     hit100Rate: graded.length ? hit100 / graded.length : 0,
@@ -281,92 +337,77 @@ function aggregateRegimeCalls(rows: any[]): RegimeCallEdge {
 }
 
 // ─── Threshold suggestion engine ─────────────────────────────────────────────
+//
+// Round-2 item 7 (review 8.5): thresholds used to be mined and tested on the
+// same 30-day window. Now every candidate field is run through an anchored
+// walk-forward with purging (edgeStatsMath.walkForwardThreshold): the
+// threshold is chosen on earlier rows whose outcome was already known, then
+// scored on later rows it never saw. A suggestion appears only when the
+// out-of-sample rows it keeps beat the rows it drops (one-sided pooled
+// two-proportion z >= WF_Z_CRIT, Bonferroni over the three fields) with at
+// least 10 rows on each side; its out-of-sample hit rate is reported with a
+// Wilson 95% interval. The in-sample bar (5 points and 2 SE) still applies
+// to pick the candidate.
 
-// Minimum lift required before a threshold suggestion fires: at least 5pp AND
-// 2 standard errors of the hit-rate difference. Prevents suggestions appearing
-// by chance from small samples (SE at n=10 is ~15pp).
-function liftBar(hit: number, n: number, baseHit: number, baseN: number): number {
-  const se = Math.sqrt((hit * (1 - hit)) / Math.max(1, n) + (baseHit * (1 - baseHit)) / Math.max(1, baseN));
-  return Math.max(0.05, 2 * se);
+// Candidate grids; only values strictly tighter than the LIVE gate
+// (getFlowConfig(): defaults $2.5M premium, 15x vol/OI, 0.20 delta) are swept,
+// and the "current" label is the live value, not a hard-coded one.
+const PREMIUM_GRID = [1_500_000, 2_000_000, 2_500_000, 3_000_000, 4_000_000, 5_000_000, 7_500_000, 10_000_000];
+const VOLOI_GRID = [10, 12, 15, 20, 25, 30, 40, 50];
+const DELTA_GRID = [0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5];
+
+function sweeps(): Array<{ field: ThresholdSuggestion["field"]; current: number; currentNote: string; values: number[]; get: (p: any) => number; label: (v: number) => string }> {
+  const cfg = getFlowConfig();
+  return [
+    { field: "premiumFloor", current: cfg.premiumFloor, currentNote: `$${(cfg.premiumFloor / 1e6).toFixed(1)}M`, values: sweepAboveGate(cfg.premiumFloor, PREMIUM_GRID), get: (p) => Number(p.premium ?? 0), label: (v) => `$${(v / 1e6).toFixed(1)}M premium floor` },
+    { field: "volOiRatio", current: cfg.volOiRatio, currentNote: `${cfg.volOiRatio}x`, values: sweepAboveGate(cfg.volOiRatio, VOLOI_GRID), get: (p) => Number(p.volOiRatio ?? 0), label: (v) => `vol/OI ${v}x` },
+    { field: "deltaMin", current: cfg.deltaMin, currentNote: cfg.deltaMin.toFixed(2), values: sweepAboveGate(cfg.deltaMin, DELTA_GRID), get: (p) => Math.abs(Number(p.delta ?? 0)), label: (v) => `delta floor ${v.toFixed(2)}` },
+  ];
 }
 
-function deriveSuggestions(whaleRows: any[]): ThresholdSuggestion[] {
+function deriveSuggestions(whaleRows: any[]): { suggestions: ThresholdSuggestion[]; tests: SuggestionTest[] } {
   const suggestions: ThresholdSuggestion[] = [];
-  const graded = whaleRows.filter((r) => r.graded === 1 && r.pctReturn != null);
-  if (graded.length < 20) return suggestions;
+  const tests: SuggestionTest[] = [];
+  const graded = whaleRows.filter((r) => r.graded === 1 && r.pctReturn != null && r.hit30 != null);
+  const parsed = graded.map((r) => {
+    let p: any = {};
+    try { p = JSON.parse(r.predictionJson || "{}"); } catch { /* noop */ }
+    return { r, p };
+  });
+  const overallHit30 = graded.length ? graded.filter((r) => r.hit30 === 1).length / graded.length : 0;
 
-  const overallHit30 = graded.filter((r) => r.hit30 === 1).length / graded.length;
-
-  // Premium floor sweep — what if we'd been stricter?
-  for (const floor of [1_500_000, 2_000_000, 2_500_000, 5_000_000]) {
-    const filtered = graded.filter((r) => {
-      const prem = JSON.parse(r.predictionJson || "{}").premium ?? 0;
-      return prem >= floor;
+  for (const sw of sweeps()) {
+    const rows: WfRow[] = parsed.map(({ r, p }) => ({
+      t: Number(r.capturedAt),
+      knownAt: Number(r.gradingDueAt ?? r.gradedAt),
+      hit: r.hit30 === 1 ? 1 : 0,
+      value: sw.get(p),
+    }));
+    const wf = walkForwardThreshold(rows, sw.values);
+    tests.push({ field: sw.field, current: sw.current, candidates: sw.values, inSampleValue: wf.fullSampleValue, walkForward: wf });
+    if (!wf.supported || wf.fullSampleValue == null) continue;
+    const v = wf.fullSampleValue;
+    const kept = rows.filter((x) => x.value >= v);
+    const hit = kept.reduce((s, x) => s + x.hit, 0) / kept.length;
+    const o = wf.oos;
+    const pc = (x: number | null) => (x == null ? "n/a" : `${(x * 100).toFixed(0)}%`);
+    suggestions.push({
+      field: sw.field,
+      currentNote: sw.currentNote,
+      suggested: v,
+      rationale: `${sw.label(v)}: in-sample (${graded.length} graded) hit-30 ${pc(overallHit30)} -> ${pc(hit)}; ` +
+        `out-of-sample (walk-forward, ${o.keptN + o.droppedN} later alerts) kept ${pc(o.keptRate)} ` +
+        `(95% CI ${pc(o.keptWilsonLo)}-${pc(o.keptWilsonHi)}, n=${o.keptN}) vs dropped ${pc(o.droppedRate)} (n=${o.droppedN}), z ${o.z?.toFixed(2)}.`,
+      liftHit30: hit - overallHit30,
+      alertReductionPct: rows.length ? 1 - kept.length / rows.length : 0,
+      oos: {
+        n: o.keptN, hits: o.keptHits, hitRate: o.keptRate, wilsonLo: o.keptWilsonLo, wilsonHi: o.keptWilsonHi,
+        droppedN: o.droppedN, droppedHitRate: o.droppedRate, lift: o.lift, z: o.z, zCrit: WF_Z_CRIT,
+        method: `anchored walk-forward, ${wf.folds.length} test folds over the later half, purged training (outcome known before each fold), in-fold screen = largest kept-vs-dropped z, out-of-sample z with continuity correction`,
+      },
     });
-    if (filtered.length < 10) continue;
-    const hit = filtered.filter((r) => r.hit30 === 1).length / filtered.length;
-    const lift = hit - overallHit30;
-    const reduction = 1 - filtered.length / graded.length;
-    if (lift >= liftBar(hit, filtered.length, overallHit30, graded.length)) {
-      suggestions.push({
-        field: "premiumFloor",
-        currentNote: "$1M",
-        suggested: floor,
-        rationale: `Last ${graded.length} graded alerts: tightening to $${(floor / 1e6).toFixed(1)}M would lift hit-30 from ${(overallHit30 * 100).toFixed(0)}% to ${(hit * 100).toFixed(0)}%.`,
-        liftHit30: lift,
-        alertReductionPct: reduction,
-      });
-      break; // one premium suggestion is enough
-    }
   }
-
-  // Vol/OI ratio sweep
-  for (const minRatio of [15, 20, 30]) {
-    const filtered = graded.filter((r) => {
-      const v = JSON.parse(r.predictionJson || "{}").volOiRatio ?? 0;
-      return v >= minRatio;
-    });
-    if (filtered.length < 10) continue;
-    const hit = filtered.filter((r) => r.hit30 === 1).length / filtered.length;
-    const lift = hit - overallHit30;
-    const reduction = 1 - filtered.length / graded.length;
-    if (lift >= liftBar(hit, filtered.length, overallHit30, graded.length)) {
-      suggestions.push({
-        field: "volOiRatio",
-        currentNote: "10x",
-        suggested: minRatio,
-        rationale: `Tightening vol/OI to ${minRatio}x would lift hit-30 from ${(overallHit30 * 100).toFixed(0)}% to ${(hit * 100).toFixed(0)}%.`,
-        liftHit30: lift,
-        alertReductionPct: reduction,
-      });
-      break;
-    }
-  }
-
-  // Delta floor
-  for (const dMin of [0.25, 0.3, 0.35]) {
-    const filtered = graded.filter((r) => {
-      const d = Math.abs(JSON.parse(r.predictionJson || "{}").delta ?? 0);
-      return d >= dMin;
-    });
-    if (filtered.length < 10) continue;
-    const hit = filtered.filter((r) => r.hit30 === 1).length / filtered.length;
-    const lift = hit - overallHit30;
-    const reduction = 1 - filtered.length / graded.length;
-    if (lift >= liftBar(hit, filtered.length, overallHit30, graded.length)) {
-      suggestions.push({
-        field: "deltaMin",
-        currentNote: "0.20",
-        suggested: dMin,
-        rationale: `Tightening delta floor to ${dMin.toFixed(2)} would lift hit-30 from ${(overallHit30 * 100).toFixed(0)}% to ${(hit * 100).toFixed(0)}%.`,
-        liftHit30: lift,
-        alertReductionPct: reduction,
-      });
-      break;
-    }
-  }
-
-  return suggestions;
+  return { suggestions, tests };
 }
 
 // ─── Regime-conditioned conviction multiplier ─────────────────────────────────

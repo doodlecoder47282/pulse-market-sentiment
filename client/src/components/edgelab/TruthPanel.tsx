@@ -11,8 +11,12 @@ import { Badge } from "@/components/ui/badge";
 interface CalBucket { label: string; n: number; wins: number; winRate: number | null; wilsonLo: number | null; wilsonHi: number | null; fitted: number | null; prior: number }
 interface CalReport { source: "fitted" | "prior"; totalGradedFires: number; buckets: CalBucket[]; rejectedCounterfactual: { n: number; winRate: number | null; note: string }; note: string }
 
-interface WfRow { horizon: string; levelKind: string; pooledN: number; pooledTouchRate: number; wfN: number; wfTouchRate: number | null; wfHoldRate: number | null }
-interface WfSummary { rows: WfRow[]; methodology: string; note: string }
+interface WfRow { horizon: string; levelKind: string; pooledN: number; pooledTouchRate: number; wfN: number; wfTouchRate: number | null; wfTouchWilsonLo?: number | null; wfTouchWilsonHi?: number | null; wfHoldRate: number | null }
+interface WfSummary { rows: WfRow[]; methodology: string; note: string; dealerLevelsTested?: boolean; blockedOn?: string | null; touchRule?: string }
+
+// Realized option-P&L ledger per grade bucket (GET /api/odte/option-ledger): the evidence a letter grade is shown with.
+interface LedgerBucket { label: string; n: number; wins: number; winRate: number | null; wilsonLo: number | null; wilsonHi: number | null; labelStatus?: "heuristic" | "ledger_backed"; minFiresForLedgerBacked?: number }
+interface LedgerReport { buckets: LedgerBucket[]; note: string }
 
 interface OrthoBucket { bucket: string; n: number; winRate: number; lift: number; trusted: boolean }
 interface OrthoFeature { feature: string; buckets: OrthoBucket[]; spread: number; verdict: string }
@@ -23,7 +27,9 @@ const pctFmt = (x: number | null | undefined, dash = "—") =>
 
 function CalibrationCard() {
   const q = useQuery<CalReport>({ queryKey: ["/api/edge/calibration"], refetchInterval: 5 * 60_000 });
+  const lq = useQuery<LedgerReport>({ queryKey: ["/api/odte/option-ledger"], refetchInterval: 5 * 60_000 });
   const r = q.data;
+  const ledger = new Map<string, LedgerBucket>((lq.data?.buckets ?? []).map((b: LedgerBucket) => [b.label, b] as [string, LedgerBucket]));
   return (
     <Card data-testid="card-calibration">
       <CardHeader className="pb-2">
@@ -36,7 +42,7 @@ function CalibrationCard() {
           )}
         </div>
         <p className="text-xs text-muted-foreground leading-snug">
-          the sizer converts grade to win probability. until this table converges, that conversion is a hypothesis, not a fact — the source badge tells you which one you're trading on.
+          a grade is a hand-weighted heuristic score, not a probability. "realized" = underlying reached T1 before the plan's stop. "option ledger" columns: realized option P&amp;L of the published plan (what the sizer bets on), win = net return &gt; 0, where net return = (sale proceeds − premium paid − fees) / premium paid and premium paid = entry ask × 100 × contracts (T1 sells floor(n/2) of n contracts), with Wilson 95% interval and n. a bucket stays "heuristic" until it has {lq.data?.buckets?.[0]?.minFiresForLedgerBacked ?? 385} option-graded fires.
         </p>
       </CardHeader>
       <CardContent className="pt-0 space-y-2">
@@ -52,7 +58,11 @@ function CalibrationCard() {
                     <th className="text-right py-1 px-2 font-medium">realized</th>
                     <th className="text-right py-1 px-2 font-medium">95% CI</th>
                     <th className="text-right py-1 px-2 font-medium">fitted</th>
-                    <th className="text-right py-1 pl-2 font-medium">prior</th>
+                    <th className="text-right py-1 px-2 font-medium">prior</th>
+                    <th className="text-right py-1 px-2 font-medium">option n</th>
+                    <th className="text-right py-1 px-2 font-medium">option win</th>
+                    <th className="text-right py-1 px-2 font-medium">95% CI</th>
+                    <th className="text-right py-1 pl-2 font-medium">label</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -65,7 +75,18 @@ function CalibrationCard() {
                         {b.wilsonLo != null ? `${pctFmt(b.wilsonLo)}–${pctFmt(b.wilsonHi)}` : "—"}
                       </td>
                       <td className="text-right py-1 px-2 font-mono tabular-nums">{pctFmt(b.fitted)}</td>
-                      <td className="text-right py-1 pl-2 font-mono tabular-nums text-muted-foreground">{pctFmt(b.prior)}</td>
+                      <td className="text-right py-1 px-2 font-mono tabular-nums text-muted-foreground">{pctFmt(b.prior)}</td>
+                      {(() => {
+                        const l = ledger.get(b.label);
+                        return (
+                          <>
+                            <td className="text-right py-1 px-2 font-mono tabular-nums" data-testid={`text-ledger-n-${b.label}`}>{l ? l.n : "—"}</td>
+                            <td className="text-right py-1 px-2 font-mono tabular-nums">{l && l.n > 0 ? `${l.wins}/${l.n} ${pctFmt(l.winRate)}` : "—"}</td>
+                            <td className="text-right py-1 px-2 font-mono tabular-nums text-muted-foreground">{l && l.wilsonLo != null ? `${pctFmt(l.wilsonLo)}–${pctFmt(l.wilsonHi)}` : "—"}</td>
+                            <td className="text-right py-1 pl-2 font-mono text-muted-foreground" data-testid={`text-ledger-status-${b.label}`}>{l?.labelStatus === "ledger_backed" ? "ledger-backed" : "heuristic"}</td>
+                          </>
+                        );
+                      })()}
                     </tr>
                   ))}
                 </tbody>
@@ -96,6 +117,12 @@ function WalkForwardCard() {
         <p className="text-xs text-muted-foreground leading-snug">
           pooled numbers score every day with overlapping forward windows — autocorrelated and flattering. wf columns stride the calendar so windows never overlap. a level only matters if it beats BOTH baseline rows at the same horizon.
         </p>
+        {r && (
+          <p className="text-xs text-muted-foreground leading-snug" data-testid="text-wf-datastate">
+            {r.dealerLevelsTested ? "dealer levels from historical chains." : `no dealer level is tested: these are volatility bands and an EMA. blocked on ${r.blockedOn ?? "historical option chains"}.`}
+            {r.touchRule ? ` ${r.touchRule}.` : ""}
+          </p>
+        )}
       </CardHeader>
       <CardContent className="pt-0 space-y-3">
         {q.isLoading && <p className="text-xs text-muted-foreground">loading…</p>}
@@ -117,6 +144,7 @@ function WalkForwardCard() {
                       <th className="text-right py-1 px-2 font-medium">pooled touch</th>
                       <th className="text-right py-1 px-2 font-medium">wf n</th>
                       <th className="text-right py-1 px-2 font-medium">wf touch</th>
+                      <th className="text-right py-1 px-2 font-medium">95% CI</th>
                       <th className="text-right py-1 pl-2 font-medium">wf hold</th>
                     </tr>
                   </thead>
@@ -128,6 +156,7 @@ function WalkForwardCard() {
                         <td className="text-right py-1 px-2 font-mono tabular-nums text-muted-foreground">{pctFmt(x.pooledTouchRate)}</td>
                         <td className="text-right py-1 px-2 font-mono tabular-nums">{x.wfN}</td>
                         <td className="text-right py-1 px-2 font-mono tabular-nums font-semibold">{pctFmt(x.wfTouchRate)}</td>
+                        <td className="text-right py-1 px-2 font-mono tabular-nums text-muted-foreground">{x.wfTouchWilsonLo != null ? `${pctFmt(x.wfTouchWilsonLo)}–${pctFmt(x.wfTouchWilsonHi)}` : "—"}</td>
                         <td className="text-right py-1 pl-2 font-mono tabular-nums">{pctFmt(x.wfHoldRate)}</td>
                       </tr>
                     ))}

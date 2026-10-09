@@ -21,7 +21,8 @@
  *
  *   For each historical date D and each horizon H:
  *     predict level at D, then walk [D+1, D+H] and check:
- *       touched  = price came within tolerance (20-50 bps by level kind)
+ *       touched  = price came within 0.25 x ATR20 of the level (one rule for
+ *                  every level and baseline: backtestMath.TOUCH_RULE)
  *       held     = touched AND reversed ≥50% back into range within horizon
  *       absDist  = |closeAtHorizonEnd - predictedLevel| in bps
  *       breach1% = realized went >1% past level
@@ -40,8 +41,14 @@ import { db } from "./storage";
 import { backtestLevels, backtestObservations } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import { levelsFromChainSnapshot, type HistoricalChainSnapshot } from "./validationMath";
+import {
+  scoreLevelObservation, nonOverlappingDates, nonOverlappingStats, TOUCH_RULE, DEALER_LEVEL_DATA_STATE,
+  type NonOverlapStats,
+} from "./backtestMath";
 
-const METHODOLOGY = "proxy-vol-regime-v1"; // stored per row; kept for continuity with existing rows
+// Stored per row. v2 = one ATR-scaled touch rule for every level kind (round-2
+// item 6); v1 rows (per-kind 20-50 bps bands) are reported as legacy until rebuilt.
+const METHODOLOGY = "proxy-vol-regime-v2";
 export const VOL_BAND_LABEL = "Volatility-band backtest (ATR/VIX bands and a 20-day EMA, no options data)";
 
 // ─── Pluggable historical chain source ──────────────────────────────────────
@@ -99,21 +106,6 @@ const MAX_DROP_PCT: Record<BacktestHorizon, number> = {
   weekly: 0.05,
   monthly: 0.07,
   quarterly: 0.12,
-};
-
-// Tolerance bands for "touched" (basis points from level)
-const TOUCH_BPS: Record<LevelKind, number> = {
-  callWall: 25,
-  putWall: 25,
-  zeroGamma: 20,
-  dominantMag: 30,
-  upsidePivot: 40,
-  downsidePivot: 40,
-  mopexMaxPain: 25,
-  extremeVac: 50,
-  vommaPocket: 40,
-  baselineSpot: 30,     // middle-of-the-road tolerance — fair comparison band
-  baselineRandom: 30,
 };
 
 // Deterministic per-date pseudo-random in [0,1) — keeps baselineRandom stable
@@ -317,55 +309,8 @@ function scoreLevel(
   forwardBars: Bar[],
   atr: number,
 ): Observation | null {
-  if (forwardBars.length === 0) return null;
-  let hi = -Infinity, lo = Infinity;
-  for (const b of forwardBars) {
-    if (b.h > hi) hi = b.h;
-    if (b.l < lo) lo = b.l;
-  }
-  const endClose = forwardBars[forwardBars.length - 1].c;
-
-  const tolBps = TOUCH_BPS[kind];
-  const tol = (tolBps / 10000) * predicted;
-  const touched = (lo <= predicted + tol && hi >= predicted - tol) ? 1 : 0;
-
-  // Held: touched AND reversed away from the level by a meaningful amount.
-  // Reversal distance is floored at 0.5·ATR — for near-spot levels (EMA20,
-  // round-25 max pain) "halfway back" was pennies, so held was trivially true.
-  let held = 0;
-  if (touched) {
-    const initDist = Math.abs(predicted - startClose);
-    const revDist = Math.max(0.5 * initDist, 0.5 * (atr > 0 ? atr : initDist));
-    const reversalTarget = predicted > startClose
-      ? predicted - revDist   // resistance: price should fall back off the level
-      : predicted + revDist;  // support:    price should bounce off the level
-    if (predicted > startClose) {
-      // after touching resistance, did any subsequent low come back down?
-      let touchedIdx = -1;
-      for (let i = 0; i < forwardBars.length; i++) if (forwardBars[i].h >= predicted - tol) { touchedIdx = i; break; }
-      if (touchedIdx >= 0) {
-        for (let j = touchedIdx; j < forwardBars.length; j++) if (forwardBars[j].l <= reversalTarget) { held = 1; break; }
-      }
-    } else {
-      let touchedIdx = -1;
-      for (let i = 0; i < forwardBars.length; i++) if (forwardBars[i].l <= predicted + tol) { touchedIdx = i; break; }
-      if (touchedIdx >= 0) {
-        for (let j = touchedIdx; j < forwardBars.length; j++) if (forwardBars[j].h >= reversalTarget) { held = 1; break; }
-      }
-    }
-  }
-
-  const absDistBps = Math.abs(endClose - predicted) / predicted * 10000;
-  const breachBeyondPct = (predicted > startClose ? hi > predicted * 1.01 : lo < predicted * 0.99) ? 1 : 0;
-
-  return {
-    date, horizon, levelKind: kind,
-    predictedPrice: predicted,
-    realizedClose: endClose,
-    realizedHigh: hi,
-    realizedLow: lo,
-    touched, held, absDistBps, breachBeyondPct,
-  };
+  // One touch rule for every kind (backtestMath.scoreLevelObservation).
+  return scoreLevelObservation(date, horizon, kind, predicted, startClose, forwardBars, atr) as Observation | null;
 }
 
 // ---- aggregation ----
@@ -409,7 +354,7 @@ export async function runBackfill(yearsLookback = 5): Promise<{
     // 3. Walk each date, compute levels (volatility-band stand-ins, or the
     //    plugged-in historical chain), score forward
     const chainProvider = _chainProvider;
-    const methodology = chainProvider ? `historical-chain:${chainProvider.id}` : METHODOLOGY;
+    const methodology = chainProvider ? `historical-chain:${chainProvider.id}:v2` : METHODOLOGY;
     const observations: Observation[] = [];
     const maxHorizon = HORIZON_DAYS.quarterly;
 
@@ -533,8 +478,18 @@ export interface BacktestSummary {
   levelSource: "volatility_band_proxy" | "historical_chain";
   /** False: the levels are ATR/VIX bands and an EMA, not dealer levels from option chains. */
   dealerLevelsFromChains: boolean;
+  /** Round-2 item 9: "proxy_no_options_data" until a historical chain provider is plugged in. */
+  dataState: "proxy_no_options_data" | "historical_chains";
+  dealerLevelsTested: boolean;
+  blockedOn: string | null;
+  /** The touch rule the stored rows were scored with. */
+  touchRule: string;
+  /** True when the stored rows predate the uniform touch rule (rebuild to apply it). */
+  legacyTolerance: boolean;
   computedAt: number | null;
   byLevel: Record<string, {
+    /** Non-overlapping forecast windows (every Nth date, N = horizon days): the honest sample. */
+    nonOverlapping?: NonOverlapStats;
     horizon: BacktestHorizon;
     levelKind: LevelKind;
     sampleSize: number;
@@ -567,14 +522,43 @@ export function getBacktestSummary(): BacktestSummary {
     if (r.computedAt > maxComputed) maxComputed = r.computedAt;
   }
   const fromChains = storedMethodology != null && storedMethodology.startsWith("historical-chain:");
+  const legacyTolerance = storedMethodology != null && !storedMethodology.endsWith("v2");
+  // Non-overlapping counts per row, from the stored observations (cached with the walk-forward summary).
+  const no = nonOverlapByKey();
+  for (const k of Object.keys(byLevel)) byLevel[k].nonOverlapping = no.get(k);
   return {
     methodology: storedMethodology ?? METHODOLOGY,
     label: fromChains ? `Dealer-level backtest (${storedMethodology})` : VOL_BAND_LABEL,
     levelSource: fromChains ? "historical_chain" : "volatility_band_proxy",
     dealerLevelsFromChains: fromChains,
+    dataState: fromChains ? "historical_chains" : DEALER_LEVEL_DATA_STATE.dataState,
+    dealerLevelsTested: fromChains,
+    blockedOn: fromChains ? null : DEALER_LEVEL_DATA_STATE.blockedOn,
+    touchRule: legacyTolerance ? "legacy per-kind bands (20-50 bps); rebuild to apply the uniform ATR rule" : TOUCH_RULE,
+    legacyTolerance,
     computedAt: maxComputed || null,
     byLevel,
   };
+}
+
+let _noCache: { at: number; byKey: Map<string, NonOverlapStats> } | null = null;
+function nonOverlapByKey(): Map<string, NonOverlapStats> {
+  const now = Date.now();
+  if (_noCache && now - _noCache.at < 10 * 60_000) return _noCache.byKey;
+  const byKey = new Map<string, NonOverlapStats>();
+  try {
+    const obs = db.select().from(backtestObservations).all() as Array<{ date: string; horizon: string; levelKind: string; touched: number; held: number; absDistBps: number }>;
+    for (const h of Object.keys(HORIZON_DAYS) as BacktestHorizon[]) {
+      const hObs = obs.filter((o) => o.horizon === h);
+      if (hObs.length === 0) continue;
+      const kept = nonOverlappingDates(hObs.map((o) => o.date), HORIZON_DAYS[h]);
+      for (const k of Array.from(new Set(hObs.map((o) => o.levelKind)))) {
+        byKey.set(`${h}|${k}`, nonOverlappingStats(hObs.filter((o) => o.levelKind === k), kept));
+      }
+    }
+  } catch { /* table missing: no non-overlap stats */ }
+  _noCache = { at: now, byKey };
+  return byKey;
 }
 
 // ─── MISSION FIX #4 — walk-forward (non-overlapping) summary ─────────────────
@@ -596,6 +580,8 @@ export interface WalkForwardRow {
   pooledTouchRate: number;
   wfN: number;
   wfTouchRate: number | null;
+  wfTouchWilsonLo: number | null;
+  wfTouchWilsonHi: number | null;
   wfHoldRate: number | null;
   wfMedianAbsDistBps: number | null;
 }
@@ -605,6 +591,10 @@ export interface WalkForwardSummary {
   methodology: string;
   label: string;
   dealerLevelsFromChains: boolean;
+  dataState: BacktestSummary["dataState"];
+  dealerLevelsTested: boolean;
+  blockedOn: string | null;
+  touchRule: string;
   rows: WalkForwardRow[];
   note: string;
 }
@@ -629,23 +619,25 @@ export function getWalkForwardSummary(force = false): WalkForwardSummary {
     if (hObs.length === 0) continue;
 
     // Distinct sorted dates for this horizon; keep every `stride`-th date.
-    const dates = Array.from(new Set(hObs.map((o) => o.date))).sort();
-    const kept = new Set(dates.filter((_, i) => i % stride === 0));
+    const kept = nonOverlappingDates(hObs.map((o) => o.date), stride);
 
     const kinds = Array.from(new Set(hObs.map((o) => o.levelKind)));
     for (const k of kinds) {
       const pooled = hObs.filter((o) => o.levelKind === k);
-      const wf = pooled.filter((o) => kept.has(o.date));
+      const st = nonOverlappingStats(pooled, kept);
       const pooledTouch = pooled.reduce((s, o) => s + o.touched, 0) / pooled.length;
+      const r3 = (x: number | null) => (x == null ? null : Number(x.toFixed(3)));
       rows.push({
         horizon: h,
         levelKind: k as LevelKind,
         pooledN: pooled.length,
         pooledTouchRate: Number(pooledTouch.toFixed(3)),
-        wfN: wf.length,
-        wfTouchRate: wf.length > 0 ? Number((wf.reduce((s, o) => s + o.touched, 0) / wf.length).toFixed(3)) : null,
-        wfHoldRate: wf.length > 0 ? Number((wf.reduce((s, o) => s + o.held, 0) / wf.length).toFixed(3)) : null,
-        wfMedianAbsDistBps: wf.length > 0 ? Number(median(wf.map((o) => o.absDistBps)).toFixed(1)) : null,
+        wfN: st.n,
+        wfTouchRate: r3(st.touchRate),
+        wfTouchWilsonLo: r3(st.touchWilsonLo),
+        wfTouchWilsonHi: r3(st.touchWilsonHi),
+        wfHoldRate: r3(st.holdRate),
+        wfMedianAbsDistBps: st.medianAbsDistBps == null ? null : Number(st.medianAbsDistBps.toFixed(1)),
       });
     }
   }
@@ -655,9 +647,14 @@ export function getWalkForwardSummary(force = false): WalkForwardSummary {
     computedAt: now,
     label: src.label,
     dealerLevelsFromChains: src.dealerLevelsFromChains,
+    dataState: src.dataState,
+    dealerLevelsTested: src.dealerLevelsTested,
+    blockedOn: src.blockedOn,
+    touchRule: src.touchRule,
     methodology: "stride-sampled walk-forward: every Nth distinct date per horizon (N = horizon days) so forward windows never overlap. Pooled numbers shown for contrast are autocorrelated and overstate effective sample size — treat them as deprecated.",
     rows,
-    note: "compare each level against baselineSpot and baselineRandom rows: a level only carries information if it beats both at the same horizon.",
+    note: "compare each level against baselineSpot and baselineRandom rows at the same horizon: a level only carries information if its wf touch interval sits above both. " +
+      (src.dealerLevelsTested ? "" : "These are volatility bands and an EMA, not dealer levels: no options data is tested (blocked on historical option chains)."),
   };
   _wfCache = { at: now, data };
   return data;

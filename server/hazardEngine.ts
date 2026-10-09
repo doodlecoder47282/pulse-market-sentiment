@@ -23,37 +23,21 @@
 
 import { sqlite } from "./storage";
 import { schwabFetch } from "./schwab";
+import { ensureSpxMinuteBarsTable, etDayMod } from "./spxMinuteBars";
 
 // ─── Minute bar store ─────────────────────────────────────────────────
+// One schema for spx_minute_bars (server/spxMinuteBars.ts): t/open/high/low/
+// close/volume/source, shared with mlDataLog. A legacy table in this module's
+// old layout (ts/date/mod/o/h/l/c/v) is migrated in place. The ET date and
+// minute-of-session are derived on read.
 
-sqlite.exec(`
-  CREATE TABLE IF NOT EXISTS spx_minute_bars (
-    ts INTEGER PRIMARY KEY,      -- epoch ms (bar open)
-    date TEXT NOT NULL,          -- ET yyyy-mm-dd
-    mod INTEGER NOT NULL,        -- minutes since 9:30 ET (0..389)
-    o REAL NOT NULL, h REAL NOT NULL, l REAL NOT NULL, c REAL NOT NULL,
-    v INTEGER NOT NULL DEFAULT 0
-  );
-  CREATE INDEX IF NOT EXISTS idx_spx_minute_date ON spx_minute_bars(date, mod);
-`);
+ensureSpxMinuteBarsTable(sqlite);
 
-const etFmt = new Intl.DateTimeFormat("en-US", {
-  timeZone: "America/New_York",
-  year: "numeric", month: "2-digit", day: "2-digit",
-  hour: "2-digit", minute: "2-digit", hour12: false,
-});
-
-function etParts(ts: number): { date: string; mod: number } {
-  const parts = etFmt.formatToParts(ts);
-  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "00";
-  const date = `${get("year")}-${get("month")}-${get("day")}`;
-  const mod = (Number(get("hour")) - 9) * 60 + Number(get("minute")) - 30;
-  return { date, mod };
-}
+const etParts = etDayMod;
 
 const insertBar = sqlite.prepare(
-  `INSERT OR IGNORE INTO spx_minute_bars (ts, date, mod, o, h, l, c, v)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  `INSERT OR IGNORE INTO spx_minute_bars (t, open, high, low, close, volume, source)
+   VALUES (?, ?, ?, ?, ?, ?, 'schwab')`,
 );
 
 function storeCandles(candles: any[]): number {
@@ -62,9 +46,9 @@ function storeCandles(candles: any[]): number {
     for (const cd of rows) {
       const ts = Number(cd.datetime);
       if (!Number.isFinite(ts)) continue;
-      const { date, mod } = etParts(ts);
+      const { mod } = etParts(ts);
       if (mod < 0 || mod > 389) continue; // RTH only
-      const r = insertBar.run(ts, date, mod, cd.open, cd.high, cd.low, cd.close, cd.volume ?? 0);
+      const r = insertBar.run(ts, cd.open, cd.high, cd.low, cd.close, cd.volume ?? 0);
       added += r.changes;
     }
   });
@@ -141,9 +125,28 @@ export function startHazardBackfill(): void {
   console.log("[hazard] backfiller started — full sweep at boot, 6h freshness ticks");
 }
 
+/** Distinct ET sessions with stored RTH bars. */
 function coverageDays(): number {
-  const r = sqlite.prepare("SELECT COUNT(DISTINCT date) AS n FROM spx_minute_bars").get() as any;
-  return r?.n ?? 0;
+  return loadRthRows().dates;
+}
+
+/** RTH rows with derived ET date and minute-of-session (cached with the day cache). */
+let rthCache: { rows: Array<{ date: string; mod: number; h: number; l: number; c: number }>; dates: number } | null = null;
+function loadRthRows(): { rows: Array<{ date: string; mod: number; h: number; l: number; c: number }>; dates: number } {
+  if (rthCache) return rthCache;
+  const raw = sqlite
+    .prepare("SELECT t, high AS h, low AS l, close AS c FROM spx_minute_bars ORDER BY t")
+    .all() as Array<{ t: number; h: number; l: number; c: number }>;
+  const rows: Array<{ date: string; mod: number; h: number; l: number; c: number }> = [];
+  const dates = new Set<string>();
+  for (const r of raw) {
+    const { date, mod } = etParts(r.t);
+    if (mod < 0 || mod > 389) continue; // RTH only (mlDataLog may store extended-hours bars)
+    rows.push({ date, mod, h: r.h, l: r.l, c: r.c });
+    dates.add(date);
+  }
+  rthCache = { rows, dates: dates.size };
+  return rthCache;
 }
 
 // ─── Day cache ────────────────────────────────────────────────────────
@@ -160,15 +163,14 @@ let refUnitCache: number | null = null;
 
 function invalidateCaches(): void {
   dayCache = null;
+  rthCache = null;
   refUnitCache = null;
   simCache.clear();
 }
 
 function loadDays(): DayPath[] {
   if (dayCache) return dayCache;
-  const rows = sqlite
-    .prepare("SELECT date, mod, h, l, c FROM spx_minute_bars ORDER BY date, mod")
-    .all() as Array<{ date: string; mod: number; h: number; l: number; c: number }>;
+  const rows = loadRthRows().rows;
   const map = new Map<string, DayPath>();
   for (const r of rows) {
     let d = map.get(r.date);
