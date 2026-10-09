@@ -103,8 +103,8 @@ LGBM_PARAMS = dict(
 # ─── Data ────────────────────────────────────────────────────────────────────
 
 def _et_day(ms: np.ndarray) -> np.ndarray:
-    ts = pd.to_datetime(ms, unit="ms", utc=True).tz_convert("America/New_York")
-    return np.asarray(ts.strftime("%Y-%m-%d"))
+    """ET calendar date per epoch-ms timestamp (same as forecast_eval._et_day_minute)."""
+    return fe._et_day_minute(np.asarray(ms, dtype=np.int64))[0]
 
 
 def price_at(bar_open_ms: np.ndarray, bar_close: np.ndarray, t_ms: np.ndarray, max_stale_ms: int = MAX_STALE_MS) -> np.ndarray:
@@ -128,7 +128,7 @@ def build_frame(conn: sqlite3.Connection, schema_version: int = FEATURE_SCHEMA_V
             return pd.DataFrame()
         feats = pd.read_sql_query("SELECT ts, features_json, missing_json FROM ml_feature_log WHERE schema_version = ? ORDER BY ts",
                                   conn, params=(int(schema_version),))
-        bars = pd.read_sql_query("SELECT t, close FROM spx_minute_bars ORDER BY t", conn)
+        bars = read_minute_bars(conn)
     except Exception as e:  # tables not created yet
         logger.warning("real-data tables unavailable: %s", e)
         return pd.DataFrame()
@@ -147,7 +147,7 @@ def build_frame(conn: sqlite3.Connection, schema_version: int = FEATURE_SCHEMA_V
             v = f.get(name)
             row[name] = np.nan if (name in missing or v is None) else float(v)
         # Baseline-cone inputs, kept even if the model drops the feature.
-        for src, dst in (("rv_session_5m", "_base_rv"), ("vix_level", "_base_vix")):
+        for src, dst in (("rv_session_5m", "_base_rv"), ("vix_level", "_base_vix"), ("hour_of_day", "_base_hour")):
             v = f.get(src)
             row[dst] = np.nan if (src in missing or v is None) else float(v)
         rows.append(row)
@@ -168,6 +168,27 @@ def build_frame(conn: sqlite3.Connection, schema_version: int = FEATURE_SCHEMA_V
         df[f"ret_{h}"] = np.where(same_day & np.isfinite(p0) & np.isfinite(p1) & (p0 > 0), r, np.nan)
     df["day"] = day0
     return df
+
+
+def bars_for_periodicity(conn: sqlite3.Connection) -> Dict[str, np.ndarray]:
+    """1-minute bars (t, open, close, ET day) for the baseline's intraday periodicity profile (fitted per fold)."""
+    b = read_minute_bars(conn)
+    t = b["t"].to_numpy(dtype=np.int64)
+    return {"t": t, "open": b["open"].to_numpy(dtype=float), "close": b["close"].to_numpy(dtype=float), "day": _et_day(t)}
+
+
+def read_minute_bars(conn: sqlite3.Connection) -> pd.DataFrame:
+    """
+    spx_minute_bars in either layout: canonical (t, open, high, low, close,
+    volume, source; mlDataLog / R2-D's spxMinuteBars.ts) or the legacy
+    hazardEngine one (ts, date, mod, o, h, l, c, v). Returns t, open, close.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(spx_minute_bars)").fetchall()}
+    if {"t", "open", "close"} <= cols:
+        return pd.read_sql_query("SELECT t, open, close FROM spx_minute_bars ORDER BY t", conn)
+    if {"ts", "o", "c"} <= cols:
+        return pd.read_sql_query("SELECT ts AS t, o AS open, c AS close FROM spx_minute_bars ORDER BY ts", conn)
+    raise RuntimeError("spx_minute_bars has an unknown layout")
 
 
 # ─── Gate and folds ──────────────────────────────────────────────────────────
@@ -236,11 +257,71 @@ def _atomic_json(path: Path, obj: Dict[str, Any]) -> None:
     os.rename(str(tmp), str(path))
 
 
+def _active_features(frame: pd.DataFrame) -> Tuple[List[str], List[str]]:
+    """Features with at most MISSING_THRESH missing cells in `frame` (a training set)."""
+    active, dropped = [], []
+    for f in FEATURE_NAMES:
+        (dropped if frame[f].isna().mean() > MISSING_THRESH else active).append(f)
+    return active, dropped
+
+
+def _promoted_incumbent(out_dir: Path) -> Optional[Tuple[int, Dict[str, Any]]]:
+    """Highest promoted real-data quantile_overlay version of the current feature schema, with its meta."""
+    best = None
+    for p in out_dir.glob("quantile_overlay_v*_meta.json"):
+        try:
+            v = int(p.stem.split("_v")[1].split("_meta")[0])
+            m = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if m.get("promoted") is not True or m.get("training_data") != "real":
+            continue
+        if m.get("feature_schema_version") != FEATURE_SCHEMA_VERSION or not (out_dir / f"quantile_overlay_v{v}.lgb").exists():
+            continue
+        if best is None or v > best[0]:
+            best = (v, m)
+    return best
+
+
+def demote_version(name: str, version: int, reason: str, models_dir: Optional[Path] = None) -> bool:
+    """Marks a model version not promoted (status DEMOTED) with the reason; the predictor stops serving it."""
+    out_dir = Path(models_dir) if models_dir else MODELS_DIR
+    path = out_dir / f"{name}_v{int(version)}_meta.json"
+    try:
+        meta = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    meta["promoted"] = False
+    meta["status"] = "DEMOTED"
+    meta["demoted"] = {"at": int(time.time()), "reason": reason}
+    _atomic_json(path, meta)
+    return True
+
+
+def _qmatrix(models: Dict[Tuple[int, float], Any], h: int, X: np.ndarray) -> Optional[np.ndarray]:
+    cols = []
+    for q in QUANTILES:
+        m = models.get((h, q))
+        if m is None:
+            return None
+        cols.append(m.predict(X))
+    return np.sort(np.column_stack(cols), axis=1)
+
+
 def train_quantile_overlay(db_path: Optional[Path] = None, make_regressor=None, models_dir: Optional[Path] = None) -> Dict[str, Any]:
     """
     Train on real logged data only (schema-v2 feature rows). Writes nothing
     below the sufficiency gate. `make_regressor(alpha)` builds one quantile
     regressor (default LightGBM; tests inject another NaN-native learner).
+
+    Per walk-forward fold, everything is fitted on that fold's training days
+    only: the feature set (missing-share rule), the model, the baseline's
+    intraday periodicity profile and its standardized quantiles. Then the
+    candidate is gated against the baseline, and the current promoted model
+    (the incumbent) is re-scored on the out-of-sample days after its own
+    training window: it is demoted if it now fails the same rule, and a
+    passing candidate replaces it only if its pinball loss on those days is
+    lower (otherwise the incumbent is kept).
     """
     t0 = time.time()
     path = Path(db_path) if db_path else DB_PATH
@@ -249,6 +330,7 @@ def train_quantile_overlay(db_path: Optional[Path] = None, make_regressor=None, 
     try:
         with closing(sqlite3.connect(str(path))) as conn:
             df = build_frame(conn)
+            bars = bars_for_periodicity(conn) if not df.empty else None
     except Exception as e:
         return {"status": "INSUFFICIENT_REAL_DATA", "error": str(e)}
 
@@ -262,58 +344,119 @@ def train_quantile_overlay(db_path: Optional[Path] = None, make_regressor=None, 
     import joblib
 
     lab = df.dropna(subset=[f"ret_{h}" for h in HORIZONS]).sort_values("ts").reset_index(drop=True)
-    active, dropped = [], []
-    for f in FEATURE_NAMES:
-        (dropped if lab[f].isna().mean() > MISSING_THRESH else active).append(f)
-    X = lab[active].to_numpy(dtype=np.float32)  # NaN kept: LightGBM routes missing values natively
     days = lab["day"].to_numpy()
-    sigma = fe.baseline_sigma_per_bar(lab["_base_rv"].to_numpy(), lab["_base_vix"].to_numpy())
+    rv, vix, hour = (lab[c].to_numpy(dtype=float) for c in ("_base_rv", "_base_vix", "_base_hour"))
     folds = walk_forward_day_folds(list(days))
+
+    fold_info = []
+    for train_days, test_days in folds:
+        tr = np.isin(days, train_days)
+        te = np.isin(days, test_days)
+        act, _ = _active_features(lab.loc[tr])
+        bm = np.isin(bars["day"], train_days)
+        prof = fe.periodicity_profile(bars["t"][bm], bars["open"][bm], bars["close"][bm])
+        fold_info.append((tr, te, act, prof["f"] if prof else None))
+
+    active, dropped = _active_features(lab)
+    X_all = lab[active].to_numpy(dtype=np.float32)  # NaN kept: LightGBM routes missing values natively
+    prof_all = fe.periodicity_profile(bars["t"], bars["open"], bars["close"])
+    f_all = prof_all["f"] if prof_all else None
 
     models: Dict[Tuple[int, float], Any] = {}
     cv: Dict[str, Any] = {}
     verdicts: Dict[str, Any] = {}
     fhs: Dict[str, Any] = {}
+    oos: Dict[int, Dict[str, np.ndarray]] = {}
     for h in HORIZONS:
         y = lab[f"ret_{h}"].to_numpy(dtype=np.float64)
         losses = {q: [] for q in QUANTILES}
-        inside, total = 0, 0
-        oos_y, oos_m, oos_b, oos_d = [], [], [], []
-        for train_days, test_days in folds:
-            tr = np.isin(days, train_days)
-            te = np.isin(days, test_days)
+        idx_l, qm_l, qb_l = [], [], []
+        for tr, te, act, prof in fold_info:
+            Xtr = lab.loc[tr, act].to_numpy(dtype=np.float32)
+            Xte = lab.loc[te, act].to_numpy(dtype=np.float32)
             preds = {}
             for q in QUANTILES:
                 m = factory(q)
-                m.fit(X[tr], y[tr])
-                preds[q] = m.predict(X[te])
+                m.fit(Xtr, y[tr])
+                preds[q] = m.predict(Xte)
                 losses[q].append(pinball(y[te], preds[q], q))
             qm = np.sort(np.column_stack([preds[q] for q in QUANTILES]), axis=1)
-            inside += int(np.sum((y[te] >= qm[:, 0]) & (y[te] <= qm[:, 4])))
-            total += int(te.sum())
-            # Baseline cone on the same rows, standardized quantiles fitted on the training days only.
-            z = fe.fit_fhs_z(y[tr], sigma[tr], h)
-            qb = fe.baseline_quantiles(sigma[te], h, z)
-            oos_y.append(y[te]); oos_m.append(qm); oos_b.append(qb); oos_d.append(days[te])
-        if oos_y:
-            verdicts[str(h)] = fe.horizon_verdict(np.concatenate(oos_y), np.vstack(oos_m), np.vstack(oos_b), np.concatenate(oos_d))
+            s_tr, _ = fe.baseline_scale(rv[tr], vix[tr], hour[tr], h, prof)
+            s_te, _ = fe.baseline_scale(rv[te], vix[te], hour[te], h, prof)
+            qb = fe.baseline_quantiles_from_scale(s_te, fe.fit_fhs_z(y[tr], s_tr))
+            idx_l.append(np.flatnonzero(te)); qm_l.append(qm); qb_l.append(qb)
+        if idx_l:
+            idx = np.concatenate(idx_l)
+            oos[h] = {"idx": idx, "qm": np.vstack(qm_l), "qb": np.vstack(qb_l)}
+            verdicts[str(h)] = fe.horizon_verdict(y[idx], oos[h]["qm"], oos[h]["qb"], days[idx])
         else:
-            verdicts[str(h)] = {"pass": False, "reason": "no walk-forward folds"}
+            verdicts[str(h)] = {"pass": False, "reasons": ["no walk-forward folds"]}
+        qm_all = oos.get(h, {}).get("qm")
         cv[str(h)] = {
             "pinball": {str(q): (float(np.mean(v)) if v else None) for q, v in losses.items()},
-            "coverage_10_90": (inside / total) if total else None,
-            "n_test": total,
+            "coverage_10_90": fe.coverage_10_90(y[oos[h]["idx"]], qm_all) if h in oos else None,
+            "n_test": int(oos[h]["idx"].size) if h in oos else 0,
         }
         for q in QUANTILES:
             m = factory(q)
-            m.fit(X, y)
+            m.fit(X_all, y)
             models[(h, q)] = m
-        zall = fe.fit_fhs_z(y, sigma, h)
+        s_all, _ = fe.baseline_scale(rv, vix, hour, h, f_all)
+        zall = fe.fit_fhs_z(y, s_all)
         if zall is not None:
             fhs[str(h)] = dict(zip(fe.Q_NAMES, zall))
 
     promotion = fe.promotion_decision(verdicts)
     promoted = bool(promotion["promoted"])
+
+    # ── Incumbent: re-score on the newest out-of-sample days, keep the winner ──
+    incumbent_report: Optional[Dict[str, Any]] = None
+    inc = _promoted_incumbent(out_dir)
+    if inc is not None and oos:
+        v_inc, meta_inc = inc
+        try:
+            models_inc = joblib.load(out_dir / f"quantile_overlay_v{v_inc}.lgb")
+        except Exception as e:
+            models_inc = None
+            incumbent_report = {"version": v_inc, "error": f"could not load: {e}"}
+        if models_inc is not None:
+            last = str(meta_inc.get("last_day") or "")
+            inc_verdicts, h2h = {}, {}
+            new_days: List[str] = []
+            for h in HORIZONS:
+                if h not in oos:
+                    continue
+                o = oos[h]
+                sel = np.array([str(d) > last for d in days[o["idx"]]])
+                if not sel.any():
+                    continue
+                rows = o["idx"][sel]
+                new_days = sorted(set(days[rows].tolist()))
+                Xi = lab.reindex(columns=meta_inc.get("feature_names", [])).loc[rows].to_numpy(dtype=np.float32)
+                qi = _qmatrix(models_inc, h, Xi)
+                if qi is None:
+                    continue
+                y = lab[f"ret_{h}"].to_numpy(dtype=np.float64)[rows]
+                inc_verdicts[str(h)] = fe.horizon_verdict(y, qi, o["qb"][sel], days[rows])
+                h2h[str(h)] = {"pinball_candidate": float(fe.pinball_rows(y, o["qm"][sel]).mean()),
+                               "pinball_incumbent": float(fe.pinball_rows(y, qi).mean()), "n": int(rows.size)}
+            incumbent_report = {"version": v_inc, "new_days": len(new_days), "rescore": inc_verdicts, "head_to_head": h2h}
+            demoted = False
+            if len(new_days) >= fe.MIN_DM_DAYS and inc_verdicts and not fe.promotion_decision(inc_verdicts)["promoted"]:
+                reason = f"re-scored on {len(new_days)} out-of-sample days after its training window: fails the promotion rule vs the baseline cone"
+                demoted = demote_version("quantile_overlay", v_inc, reason, out_dir)
+                incumbent_report["demoted"] = reason
+            if promoted and not demoted:
+                if not h2h:
+                    promoted = False
+                    promotion["kept_incumbent"] = f"no out-of-sample days after incumbent v{v_inc}'s training window; incumbent kept"
+                else:
+                    cand = sum(v["pinball_candidate"] for v in h2h.values())
+                    incl = sum(v["pinball_incumbent"] for v in h2h.values())
+                    if not cand < incl:
+                        promoted = False
+                        promotion["kept_incumbent"] = f"incumbent v{v_inc} has lower pinball on the newest out-of-sample days ({incl:.6g} <= {cand:.6g})"
+    promotion["promoted"] = promoted
 
     versions = []
     for p in out_dir.glob("quantile_overlay_v*_meta.json"):
@@ -331,6 +474,7 @@ def train_quantile_overlay(db_path: Optional[Path] = None, make_regressor=None, 
         "status": "TRAINED" if promoted else "NOT_PROMOTED",
         "promoted": promoted,
         "promotion": promotion,
+        "incumbent": incumbent_report,
         "version": version,
         "trained_at": int(time.time()),
         "training_data": "real",
@@ -338,13 +482,13 @@ def train_quantile_overlay(db_path: Optional[Path] = None, make_regressor=None, 
         "missing_policy": "native_nan",
         "n_train": int(len(lab)),
         "n_days": gate["qualifying_days"],
-        "first_day": gate["first_day"],
-        "last_day": gate["last_day"],
+        "first_day": str(days.min()) if len(days) else gate["first_day"],
+        "last_day": str(days.max()) if len(days) else gate["last_day"],
         "feature_names": active,
         "dropped_features": dropped,
         "training_medians": {f: (float(lab[f].median()) if lab[f].notna().any() else None) for f in active},
         "cv": cv,
-        "cv_scheme": f"walk-forward on whole ET days, {len(folds)} folds, embargo {EMBARGO_DAYS} day(s)",
+        "cv_scheme": f"walk-forward on whole ET days, {len(folds)} folds, embargo {EMBARGO_DAYS} day(s); features, model, periodicity and baseline quantiles fitted per fold on training days only",
         "horizons": HORIZONS,
         "quantiles": QUANTILES,
         "label": "SPX simple return over [t, t+h] from Schwab 1-minute bar closes, same session",
@@ -352,16 +496,17 @@ def train_quantile_overlay(db_path: Optional[Path] = None, make_regressor=None, 
         "elapsed_sec": round(time.time() - t0, 1),
     }
     _atomic_json(out_dir / f"quantile_overlay_v{version}_meta.json", meta)
-    # Baseline cone quantiles for the server (only from real data that met the gate).
+    # Baseline cone parameters for the server (only from real data that met the gate).
     if fhs:
         _atomic_json(out_dir / "baseline_cone_meta.json", {
             "method": "fhs", "by_horizon": fhs, "n_days": gate["qualifying_days"], "fitted_at": int(time.time()),
             "feature_schema_version": FEATURE_SCHEMA_VERSION,
+            "periodicity": prof_all,
             "oos_coverage_10_90": {h: v.get("coverage_baseline") for h, v in verdicts.items()},
-            "note": "standardized-return quantiles log(1+r_h)/(sigma*sqrt(h/5)) per horizon; sigma = rv_session_5m else VIX-implied",
+            "note": "standardized-return quantiles log(1+r_h)/s_h per horizon; s_h from rv_session_5m (deseasonalized) or VIX-implied sigma and the intraday periodicity profile",
         })
     return {"status": meta["status"], "promoted": promoted, "version": version, "n_train": meta["n_train"],
-            "n_days": meta["n_days"], "cv": cv, "promotion": promotion}
+            "n_days": meta["n_days"], "cv": cv, "promotion": promotion, "incumbent": incumbent_report}
 
 
 def train_quantile_v3() -> Dict[str, Any]:

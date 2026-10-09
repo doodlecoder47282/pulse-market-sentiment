@@ -26,6 +26,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 MODELS_DIR = Path(__file__).resolve().parent / "models"
+# Feature schema the live server sends (server/mlFeatureMath.ts ML_FEATURE_SCHEMA_VERSION);
+# kept equal to train_quantile_impl.FEATURE_SCHEMA_VERSION (tested).
+CURRENT_FEATURE_SCHEMA = 2
 
 
 class _CachedModel:
@@ -193,8 +196,14 @@ class ModelRegistry:
 
     # ─── Quantile models: promoted-only serving ──────────────────────────────
 
-    def promoted_meta(self, name: str) -> Optional[Dict[str, Any]]:
-        """Meta of the highest promoted real-data version of `name` whose model file exists, else None."""
+    def promoted_meta(self, name: str, schema_version: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """
+        Meta of the highest promoted real-data version of `name` whose model
+        file exists AND whose feature_schema_version equals `schema_version`
+        (default: the trainer's current FEATURE_SCHEMA_VERSION), else None. A
+        model trained on another feature schema is never fed this dict.
+        """
+        want = int(schema_version) if schema_version is not None else CURRENT_FEATURE_SCHEMA
         best = None
         for p in MODELS_DIR.glob(f"{name}_v*_meta.json"):
             try:
@@ -203,6 +212,8 @@ class ModelRegistry:
             except Exception:
                 continue
             if m.get("promoted") is not True or m.get("training_data") != "real":
+                continue
+            if m.get("feature_schema_version") != want:
                 continue
             if not (MODELS_DIR / f"{name}_v{v}.lgb").exists():
                 continue
@@ -241,22 +252,25 @@ class ModelRegistry:
         self,
         features: Dict[str, Optional[float]],
         horizons: List[int],
+        schema_version: Optional[int] = None,
     ) -> Dict[str, Dict[str, Optional[float]]]:
-        return self._predict_quantile_named("quantile_overlay", features, horizons)
+        return self._predict_quantile_named("quantile_overlay", features, horizons, schema_version)
 
     def predict_quantile_morning(
         self,
         features: Dict[str, Optional[float]],
         horizons: List[int],
+        schema_version: Optional[int] = None,
     ) -> Dict[str, Dict[str, Optional[float]]]:
         """Morning Anchor (Model D). Same contract; served only if promoted on real data."""
-        return self._predict_quantile_named("quantile_overlay_morning", features, horizons)
+        return self._predict_quantile_named("quantile_overlay_morning", features, horizons, schema_version)
 
     def _predict_quantile_named(
         self,
         model_name: str,
         features: Dict[str, Optional[float]],
         horizons: List[int],
+        schema_version: Optional[int] = None,
     ) -> Dict[str, Dict[str, Optional[float]]]:
         """
         Returns { "5": {q10, q25, q50, q75, q90}, ... } from the promoted
@@ -264,7 +278,7 @@ class ModelRegistry:
         Quantile crossing fix: the five values are sorted ascending.
         """
         try:
-            meta = self.promoted_meta(model_name)
+            meta = self.promoted_meta(model_name, schema_version)
             if meta is None:
                 return {}
             entry = self._load_joblib_version(model_name, int(meta["version"]), meta)

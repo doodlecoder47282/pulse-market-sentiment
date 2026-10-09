@@ -31,11 +31,21 @@ class FeaturesRequest(BaseModel):
 class QuantileRequest(BaseModel):
     features: Dict[str, Optional[float]]
     horizons: List[int] = [5, 15, 30, 60]
+    # Feature schema of `features` (server ML_FEATURE_SCHEMA_VERSION); a model
+    # trained on another schema is not served. None = the current schema.
+    schema_version: Optional[int] = None
 
 
 class MorningQuantileRequest(BaseModel):
     features: Dict[str, Optional[float]]
     horizons: List[int] = [30, 60, 120, 180, 240]
+    schema_version: Optional[int] = None
+
+
+class DemoteRequest(BaseModel):
+    model: str
+    version: int
+    reason: str
 
 
 class RetrainRequest(BaseModel):
@@ -44,7 +54,9 @@ class RetrainRequest(BaseModel):
 
 
 class BackfillRequest(BaseModel):
-    sources: List[str] = ["spy_1min", "cboe_gex"]
+    # The CBOE / Alpha Vantage backfill is removed (Schwab only); kept so old
+    # clients get a clear answer.
+    sources: List[str] = []
 
 
 # ─── /health ─────────────────────────────────────────────────────────────────
@@ -135,15 +147,16 @@ def score_whale_follow(req: FeaturesRequest):
 
 # ─── /quantile/overlay ───────────────────────────────────────────────────────
 
-def _served_quantile(name: str, features: Dict[str, Optional[float]], horizons: List[int], predict) -> Dict[str, Any]:
-    """Bands only from a promoted real-data version; otherwise empty bands and NO_PROMOTED_MODEL."""
+def _served_quantile(name: str, features: Dict[str, Optional[float]], horizons: List[int], predict,
+                     schema_version: Optional[int] = None) -> Dict[str, Any]:
+    """Bands only from a promoted real-data version of the request's feature schema; otherwise empty bands."""
     try:
-        served = registry.promoted_meta(name)
+        served = registry.promoted_meta(name, schema_version)
         if served is None:
             latest = registry.get_meta(name) or {}
             return {"bands": {}, "status": "NO_PROMOTED_MODEL", "version": latest.get("version", 0),
                     "training_data": latest.get("training_data"), "promoted": False}
-        bands = predict(features, horizons)
+        bands = predict(features, horizons, schema_version)
         return {"bands": bands, "status": served.get("status", "TRAINED"), "version": served.get("version", 0),
                 "training_data": served.get("training_data"), "promoted": True}
     except Exception:
@@ -152,14 +165,27 @@ def _served_quantile(name: str, features: Dict[str, Optional[float]], horizons: 
 
 @app.post("/quantile/overlay")
 def quantile_overlay(req: QuantileRequest):
-    return _served_quantile("quantile_overlay", req.features, req.horizons, registry.predict_quantile_overlay)
+    return _served_quantile("quantile_overlay", req.features, req.horizons, registry.predict_quantile_overlay, req.schema_version)
 
 
 # ─── /quantile/morning — Model D Morning Anchor ───────────────────────
 
 @app.post("/quantile/morning")
 def quantile_morning(req: MorningQuantileRequest):
-    return _served_quantile("quantile_overlay_morning", req.features, req.horizons, registry.predict_quantile_morning)
+    return _served_quantile("quantile_overlay_morning", req.features, req.horizons, registry.predict_quantile_morning, req.schema_version)
+
+
+# ─── /demote: live-coverage demotion from the server (R2-F) ──────────────────
+
+@app.post("/demote")
+def demote(req: DemoteRequest):
+    """The server demotes a model whose live 10-90% coverage is rejected (Kupiec p < 0.01 on >= 20 days)."""
+    if req.model not in ("quantile_overlay", "quantile_overlay_morning"):
+        raise HTTPException(status_code=400, detail="unknown model")
+    import train_quantile_impl
+    ok = train_quantile_impl.demote_version(req.model, req.version, req.reason)
+    registry.reload(req.model)
+    return {"demoted": ok, "model": req.model, "version": req.version}
 
 
 # ─── /retrain ────────────────────────────────────────────────────────────────
@@ -204,29 +230,12 @@ def retrain_status(job_id: str):
     return job
 
 
-# ─── /backfill ────────────────────────────────────────────────────────────────
+# ─── /backfill (removed) ──────────────────────────────────────────────────────
+# The CBOE / Alpha Vantage backfill (backfill.py) is removed: market data is
+# Schwab only, and the server's real-data logger (server/mlDataLog.ts) stores
+# Schwab $SPX minute bars and the live feature dicts the trainer uses.
 
 @app.post("/backfill")
 async def backfill(req: BackfillRequest):
-    job_id = str(uuid.uuid4())
-    _jobs[job_id] = {"status": "running", "type": "backfill", "sources": req.sources, "results": {}}
-    asyncio.create_task(_run_backfill(job_id, req.sources))
-    return {"started": True, "job_id": job_id}
-
-
-async def _run_backfill(job_id: str, sources: List[str]):
-    results = {}
-    for source in sources:
-        try:
-            # Disabled (user rule 2026-10-08: Schwab only for market data). backfill.py
-            # pulls CBOE / Alpha Vantage prices; the quantile trainer no longer reads
-            # them (it trains on logged Schwab features and minute bars only).
-            if source in ("spy_1min", "cboe_gex"):
-                r = {"status": "DISABLED_NON_SCHWAB_SOURCE", "note": "market data must come from Schwab; the real-data logger (server/mlDataLog.ts) replaces this backfill"}
-            else:
-                r = {"status": "UNKNOWN_SOURCE"}
-            results[source] = r
-        except Exception as e:
-            results[source] = {"status": "ERROR", "error": str(e)}
-    _jobs[job_id]["status"] = "done"
-    _jobs[job_id]["results"] = results
+    return {"started": False, "status": "REMOVED",
+            "note": "non-Schwab backfill removed; the server logs Schwab $SPX minute bars (server/mlDataLog.ts)"}
