@@ -1,0 +1,395 @@
+// server/macroStats.ts
+//
+// Pure statistics for the Regime and Canary engines (no DB, no network), so
+// every threshold can be tested against a known answer.
+//
+// 1. Regime z-scores on overlapping windows (review finding 5.4).
+//    A w-day rate of change sampled every day over a ~2-year history holds
+//    only about T/w independent observations (2 for a 52-week window), so the
+//    sample standard deviation of overlapping rolling returns is noisy and
+//    biased low, and a normal table overstates how rare |z| >= 2 is
+//    (Hansen & Hodrick 1980; Valkanov 2003). Here:
+//      - the horizon-w return is z-scored with the Newey-West long-run
+//        variance of DAILY returns, scaled to w days, with the exact finite-
+//        sample factor (1 - w/T) for a demeaned sum
+//        (Newey & West 1987, Econometrica 55(3):703-708,
+//         https://www.nber.org/papers/t0055; lag rule floor(4 (T/100)^(2/9))
+//         from Newey & West 1994, Review of Economic Studies 61(4):631-653,
+//         https://ideas.repec.org/a/oup/restud/v61y1994i4p631-653..html);
+//      - "fresh" and "durable" are tested against a null built with the
+//        stationary bootstrap of daily returns (Politis & Romano 1994,
+//        JASA 89(428):1303-1313, https://gnosis.library.ucy.ac.cy/handle/7/57533),
+//        whose mean block length is chosen by Politis & White (2004),
+//        Econometric Reviews 23(1):53-70, with the Patton, Politis & White
+//        (2009) correction, Econometric Reviews 28(4):372-375,
+//        https://public.econ.duke.edu/~ap172/Patton_Politis_White_2009.pdf
+//        (reference code https://public.econ.duke.edu/~ap172/ppw.R.txt).
+//      The bootstrap resamples blocks of daily returns, so short-range
+//      dependence and volatility clustering survive while any regime longer
+//      than a block is destroyed: it is exactly the "no regime" null. The
+//      persistence test asks how often a run of |z| >= band as long as the
+//      observed one ends on the last day under that null.
+//
+// 2. Canary composite as a true z-score (finding 5.6).
+//    A weighted sum of correlated unit-variance z-scores has standard
+//    deviation sqrt(w' R w), not sum(w). Dividing by it gives a statistic
+//    that is N(0,1) under the null. R is estimated from daily history with
+//    Ledoit-Wolf shrinkage toward the identity (Ledoit & Wolf 2004, "A
+//    well-conditioned estimator for large-dimensional covariance matrices",
+//    J. Multivariate Analysis 88(2):365-411,
+//    https://econpapers.repec.org/RePEc:eee:jmvana:v:88:y:2004:i:2:p:365-411),
+//    because 6 series over ~120 days is a small sample.
+
+// ─── PRNG ──────────────────────────────────────────────────────────────────
+
+/** Deterministic PRNG (mulberry32) so the same history gives the same p-value. */
+export function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Stable 32-bit seed from a string (FNV-1a), so each axis/window has its own fixed seed. */
+export function seedFromString(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+// ─── Moments ───────────────────────────────────────────────────────────────
+
+export function mean(xs: ArrayLike<number>): number {
+  const n = xs.length;
+  if (!n) return 0;
+  let s = 0;
+  for (let i = 0; i < n; i++) s += xs[i];
+  return s / n;
+}
+
+/** Sample autocovariance at lag k, divisor T (the positive-semidefinite form). */
+export function autocov(xs: ArrayLike<number>, k: number, mu = mean(xs)): number {
+  const n = xs.length;
+  if (k >= n) return 0;
+  let s = 0;
+  for (let i = k; i < n; i++) s += (xs[i] - mu) * (xs[i - k] - mu);
+  return s / n;
+}
+
+/** Newey-West (1994) rule-of-thumb lag for the Bartlett kernel: floor(4 (T/100)^(2/9)). */
+export function neweyWestLag(T: number): number {
+  if (T < 2) return 0;
+  return Math.max(0, Math.floor(4 * Math.pow(T / 100, 2 / 9)));
+}
+
+/**
+ * Newey-West long-run variance of a series (variance of sqrt(T) * mean):
+ * gamma0 + 2 * sum_{k=1..L} (1 - k/(L+1)) gamma_k. Bartlett weights keep it
+ * non-negative. With L = 0 it is the (divisor-T) sample variance.
+ */
+export function neweyWestLRV(xs: ArrayLike<number>, lag = neweyWestLag(xs.length)): number {
+  const mu = mean(xs);
+  let v = autocov(xs, 0, mu);
+  for (let k = 1; k <= lag; k++) v += 2 * (1 - k / (lag + 1)) * autocov(xs, k, mu);
+  return Math.max(0, v);
+}
+
+// ─── Politis-White automatic block length (stationary bootstrap) ──────────
+
+function flatTop(t: number): number {
+  const a = Math.abs(t);
+  if (a <= 0.5) return 1;
+  if (a <= 1) return 2 * (1 - a);
+  return 0;
+}
+
+export interface BlockLengthResult {
+  /** optimal mean block length for the stationary bootstrap, rounded, in [1, bMax] */
+  b: number;
+  /** unrounded estimate before the cap */
+  bRaw: number;
+  mHat: number;
+  M: number;
+  bMax: number;
+}
+
+/**
+ * Politis & White (2004) with the Patton-Politis-White (2009) correction,
+ * stationary-bootstrap branch, following the authors' reference code:
+ *   K_N = max(5, ceil(log10 n)), m_max = ceil(sqrt n) + K_N,
+ *   b_max = ceil(min(3 sqrt n, n / 3)), c = 1.96 (qnorm 0.975),
+ *   m_hat = first lag that starts a run of K_N insignificant autocorrelations
+ *           (|rho| < c sqrt(log10 n / n)); else the largest significant lag; else 1,
+ *   M = min(2 m_hat, m_max),
+ *   G = sum_{|k|<=M} lambda(k/M) |k| R(k),  D_SB = 2 (sum_{|k|<=M} lambda(k/M) R(k))^2,
+ *   b = (2 G^2 / D_SB)^(1/3) n^(1/3).
+ */
+export function politisWhiteBlockLength(xs: ArrayLike<number>): BlockLengthResult {
+  const n = xs.length;
+  const bMax = Math.max(1, Math.ceil(Math.min(3 * Math.sqrt(n), n / 3)));
+  if (n < 10) return { b: 1, bRaw: 1, mHat: 1, M: 1, bMax };
+  const KN = Math.max(5, Math.ceil(Math.log10(n)));
+  const mMax = Math.ceil(Math.sqrt(n)) + KN;
+  const c = 1.959963984540054;
+  const mu = mean(xs);
+  const g0 = autocov(xs, 0, mu);
+  if (!(g0 > 0)) return { b: 1, bRaw: 1, mHat: 1, M: 1, bMax };
+  const rho: number[] = [0];
+  for (let k = 1; k <= mMax; k++) rho.push(autocov(xs, k, mu) / g0);
+  const thresh = c * Math.sqrt(Math.log10(n) / n);
+  const insig = rho.map((r) => Math.abs(r) < thresh);
+  let mHat = -1;
+  for (let j = 1; j + KN - 1 <= mMax; j++) {
+    let all = true;
+    for (let k = j; k < j + KN; k++) if (!insig[k]) { all = false; break; }
+    if (all) { mHat = j; break; }
+  }
+  if (mHat < 0) {
+    let lastSig = -1;
+    for (let k = 1; k <= mMax; k++) if (!insig[k]) lastSig = k;
+    mHat = lastSig > 0 ? lastSig : 1;
+  }
+  const M = Math.min(2 * mHat, mMax);
+  let G = 0;
+  let g = 0;
+  for (let k = -M; k <= M; k++) {
+    const R = autocov(xs, Math.abs(k), mu);
+    const lam = flatTop(k / M);
+    G += lam * Math.abs(k) * R;
+    g += lam * R;
+  }
+  const D = 2 * g * g;
+  const bRaw = D > 0 ? Math.pow((2 * G * G) / D, 1 / 3) * Math.pow(n, 1 / 3) : 1;
+  const b = Math.min(bMax, Math.max(1, Math.round(bRaw)));
+  return { b, bRaw, mHat, M, bMax };
+}
+
+// ─── Stationary bootstrap ─────────────────────────────────────────────────
+
+/**
+ * Politis-Romano stationary bootstrap indices: blocks start at a uniform
+ * random index, have geometric length with mean `meanBlock`, and wrap around
+ * the end of the sample (circular), so the resampled series is stationary.
+ */
+export function stationaryBootstrapIndices(T: number, meanBlock: number, rand: () => number): Int32Array {
+  const idx = new Int32Array(T);
+  const p = 1 / Math.max(1, meanBlock);
+  let cur = Math.floor(rand() * T);
+  for (let t = 0; t < T; t++) {
+    if (t > 0) {
+      if (rand() < p) cur = Math.floor(rand() * T);
+      else cur = (cur + 1) % T;
+    }
+    idx[t] = cur;
+  }
+  return idx;
+}
+
+// ─── Horizon z-scores and persistence ─────────────────────────────────────
+
+/**
+ * z_t of the w-day demeaned sum ending at each t (t = w-1 .. T-1):
+ *   z_t = (S_t - w * mean) / sqrt(LRV * w * (1 - w/T)).
+ * For i.i.d. returns Var(S - w * mean) = sigma^2 * w * (1 - w/T) exactly,
+ * because the sample mean contains the window's own returns.
+ */
+export function horizonZSeries(r: ArrayLike<number>, w: number, lrv: number): number[] {
+  const T = r.length;
+  if (w < 1 || w >= T || !(lrv > 0)) return [];
+  const mu = mean(r);
+  const sd = Math.sqrt(lrv * w * (1 - w / T));
+  const out: number[] = [];
+  let s = 0;
+  for (let i = 0; i < T; i++) {
+    s += r[i];
+    if (i >= w) s -= r[i - w];
+    if (i >= w - 1) out.push((s - w * mu) / sd);
+  }
+  return out;
+}
+
+/** Length of the run ending at the last point with z on the same side of +/-band as the last z. */
+export function terminalRun(z: ArrayLike<number>, band: number): number {
+  const n = z.length;
+  if (!n) return 0;
+  const last = z[n - 1];
+  const sign = last >= 0 ? 1 : -1;
+  let run = 0;
+  for (let i = n - 1; i >= 0; i--) {
+    if (sign > 0 ? z[i] >= band : z[i] <= -band) run++;
+    else break;
+  }
+  return run;
+}
+
+export interface RegimeZTest {
+  /** z of the latest w-day return (HAC, finite-sample scaled) */
+  z: number;
+  /** full z series, oldest first (one point per day from day w) */
+  zSeries: number[];
+  /** days the |z| >= band run (same sign as today) has lasted, ending today */
+  persistence: number;
+  /** stationary-bootstrap two-sided p-value of |z| under the no-regime null */
+  pZ: number;
+  /** stationary-bootstrap p-value of a terminal run at least this long (1 when run = 0) */
+  pPersist: number;
+  /** bootstrap 95th percentile of |z| (the two-sided 5% critical value) */
+  zCrit95: number;
+  /** bootstrap 95th percentile of the terminal run length */
+  runCrit95: number;
+  band: number;
+  blockLength: number;
+  nwLag: number;
+  /** floor(T / w): how many non-overlapping windows the history holds */
+  independentWindows: number;
+  bootstrapReps: number;
+  sampleDays: number;
+  method: string;
+}
+
+export const REGIME_BOOTSTRAP_REPS = 299;
+
+/**
+ * Regime z-score with a bootstrap null. `r` = daily log returns (oldest first).
+ * Returns null when there is not enough history for the window.
+ */
+export function regimeZTest(
+  r: ArrayLike<number>,
+  w: number,
+  opts: { reps?: number; seed?: number; band?: number } = {},
+): RegimeZTest | null {
+  const T = r.length;
+  if (w < 1 || T < w + 30) return null;
+  const band = opts.band ?? 1.5;
+  const reps = Math.max(99, Math.floor(opts.reps ?? REGIME_BOOTSTRAP_REPS));
+  const lag = neweyWestLag(T);
+  const lrv = neweyWestLRV(r, lag);
+  const zSeries = horizonZSeries(r, w, lrv);
+  if (!zSeries.length) return null;
+  const z = zSeries[zSeries.length - 1];
+  const persistence = terminalRun(zSeries, band);
+  const { b } = politisWhiteBlockLength(r);
+  const rand = mulberry32(opts.seed ?? 0x5e9e);
+  const buf = new Float64Array(T);
+  const absZ: number[] = [];
+  const runs: number[] = [];
+  let zAtLeast = 0;
+  let runAtLeast = 0;
+  for (let rep = 0; rep < reps; rep++) {
+    const idx = stationaryBootstrapIndices(T, b, rand);
+    for (let t = 0; t < T; t++) buf[t] = r[idx[t]];
+    const zs = horizonZSeries(buf, w, neweyWestLRV(buf, lag));
+    if (!zs.length) continue;
+    const zb = Math.abs(zs[zs.length - 1]);
+    const rb = terminalRun(zs, band);
+    absZ.push(zb);
+    runs.push(rb);
+    if (zb >= Math.abs(z)) zAtLeast++;
+    if (rb >= persistence) runAtLeast++;
+  }
+  const B = absZ.length;
+  const q95 = (xs: number[]) => {
+    if (!xs.length) return NaN;
+    const s = xs.slice().sort((a, c) => a - c);
+    return s[Math.min(s.length - 1, Math.ceil(0.95 * s.length) - 1)];
+  };
+  return {
+    z,
+    zSeries,
+    persistence,
+    pZ: (1 + zAtLeast) / (B + 1),
+    pPersist: persistence > 0 ? (1 + runAtLeast) / (B + 1) : 1,
+    zCrit95: q95(absZ),
+    runCrit95: q95(runs),
+    band,
+    blockLength: b,
+    nwLag: lag,
+    independentWindows: Math.floor(T / w),
+    bootstrapReps: B,
+    sampleDays: T,
+    method: "HAC z (Newey-West) of the w-day return; p-values from a Politis-Romano stationary bootstrap of daily returns (Politis-White block length)",
+  };
+}
+
+// ─── Ledoit-Wolf shrinkage and the canary composite z ────────────────────
+
+export interface ShrunkCovariance {
+  cov: number[][];
+  /** shrinkage intensity toward mu * I, in [0, 1] */
+  shrinkage: number;
+  /** scale of the identity target, trace(S) / p */
+  mu: number;
+  n: number;
+  p: number;
+}
+
+/**
+ * Ledoit-Wolf (2004) shrinkage of the sample covariance toward mu * I.
+ * X has one row per observation (n x p). Uses the paper's estimators with
+ * divisor n and the normalized Frobenius norm ||A||^2 = tr(A A') / p:
+ *   m = tr(S)/p, d2 = ||S - m I||^2, bbar2 = (1/n^2) sum_k ||x_k x_k' - S||^2,
+ *   b2 = min(bbar2, d2), shrinkage = b2 / d2, S* = shrinkage m I + (1 - shrinkage) S.
+ */
+export function ledoitWolf(X: number[][]): ShrunkCovariance | null {
+  const n = X.length;
+  if (n < 2) return null;
+  const p = X[0].length;
+  if (!p || X.some((row) => row.length !== p || row.some((v) => !Number.isFinite(v)))) return null;
+  const means = new Array(p).fill(0);
+  for (const row of X) for (let j = 0; j < p; j++) means[j] += row[j] / n;
+  const Xc = X.map((row) => row.map((v, j) => v - means[j]));
+  const S: number[][] = Array.from({ length: p }, () => new Array(p).fill(0));
+  for (const x of Xc) for (let i = 0; i < p; i++) for (let j = 0; j < p; j++) S[i][j] += (x[i] * x[j]) / n;
+  let m = 0;
+  for (let i = 0; i < p; i++) m += S[i][i] / p;
+  let d2 = 0;
+  for (let i = 0; i < p; i++) for (let j = 0; j < p; j++) d2 += (S[i][j] - (i === j ? m : 0)) ** 2 / p;
+  let bbar2 = 0;
+  for (const x of Xc) {
+    let f = 0;
+    for (let i = 0; i < p; i++) for (let j = 0; j < p; j++) f += (x[i] * x[j] - S[i][j]) ** 2 / p;
+    bbar2 += f;
+  }
+  bbar2 /= n * n;
+  const b2 = Math.min(bbar2, d2);
+  const shrinkage = d2 > 0 ? b2 / d2 : 1;
+  const cov = S.map((row, i) => row.map((v, j) => shrinkage * (i === j ? m : 0) + (1 - shrinkage) * v));
+  return { cov, shrinkage, mu: m, n, p };
+}
+
+/** Covariance to correlation. */
+export function toCorrelation(cov: number[][]): number[][] {
+  const sd = cov.map((row, i) => Math.sqrt(Math.max(0, row[i])));
+  return cov.map((row, i) => row.map((v, j) => (sd[i] > 0 && sd[j] > 0 ? v / (sd[i] * sd[j]) : i === j ? 1 : 0)));
+}
+
+/**
+ * Standardized weighted composite: sum(w_i z_i) / sqrt(w' R w). With R the
+ * correlation of unit-variance inputs this is N(0,1) under the null. Also
+ * returns the plain weighted mean for reference and the effective number of
+ * independent inputs, (sum w)^2 / (w' R w) (equals the count for equal
+ * weights and R = I, and 1 for perfectly correlated inputs).
+ */
+export function standardizedComposite(
+  w: number[],
+  z: number[],
+  R: number[][],
+): { z: number; sd: number; weightedMean: number; effectiveN: number } | null {
+  const k = w.length;
+  if (!k || z.length !== k || R.length !== k) return null;
+  let num = 0;
+  let wsum = 0;
+  for (let i = 0; i < k; i++) { num += w[i] * z[i]; wsum += w[i]; }
+  let q = 0;
+  for (let i = 0; i < k; i++) for (let j = 0; j < k; j++) q += w[i] * w[j] * R[i][j];
+  if (!(q > 0) || !(wsum > 0)) return null;
+  const sd = Math.sqrt(q);
+  return { z: num / sd, sd, weightedMean: num / wsum, effectiveN: (wsum * wsum) / q };
+}

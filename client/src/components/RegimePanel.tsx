@@ -37,6 +37,15 @@ type AxisReading = {
   evidence: string;
   window: WindowKey;
   conviction: number;
+  stats?: {
+    pZ: number;
+    pPersist: number;
+    zCrit95: number;
+    persistBand: number;
+    independentWindows: number;
+    sampleDays: number;
+    blockLength: number;
+  };
 };
 
 type AxisSummary = {
@@ -196,15 +205,15 @@ export default function RegimePanel() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <ThemeColumn
           title="Fresh this week"
-          subtitle="New ±2σ breaches in the last 5 trading days"
+          subtitle="New breaches of the bootstrap 5% line in the last 5 trading days"
           themes={data.freshThemes}
           tone="fresh"
           icon={<Sparkle className="h-4 w-4" />}
-          emptyText="No fresh ±2σ breaches. Leadership is in continuation mode."
+          emptyText="No fresh significant breaches. Leadership is in continuation mode."
         />
         <ThemeColumn
           title="Durable trends"
-          subtitle="Same-direction |z|≥1.5 running 6+ weeks"
+          subtitle="Same-direction |z|≥1.5 for 6+ weeks, longer than a no-regime bootstrap allows (p≤0.05)"
           themes={data.durableThemes}
           tone="durable"
           icon={<Clock className="h-4 w-4" />}
@@ -256,9 +265,13 @@ export default function RegimePanel() {
       <details className="rounded-md border border-border/40 bg-card/30 px-3 py-2 text-[11px] text-muted-foreground">
         <summary className="cursor-pointer select-none text-[10px] uppercase tracking-wider">Methodology</summary>
         <p className="mt-2 leading-relaxed">
-          For each axis pair (e.g. SPY/TLT), we compute the ratio's rolling rate-of-change over the selected window,
-          then z-score against its own trailing 2-year distribution. Fresh = newly crossed ±2σ in last 5 days.
-          Durable = held same-sign |z|≥1.5 for 30+ trading days. Stage: ≤10d early · 11-30d mid · 30+d mature.
+          For each axis pair (e.g. SPY/TLT), the ratio's log return over the selected window is z-scored with the
+          Newey-West long-run variance of its daily returns (overlapping rolling windows over 2 years hold only a few
+          independent observations, so their own spread is not used). Fresh and durable are tested against a
+          stationary bootstrap of daily returns (Politis-Romano, Politis-White block length), the "no regime" null:
+          fresh = |z| newly beyond the bootstrap 5% critical value; durable = |z|≥1.5 for 30+ sessions and a run that
+          long has bootstrap p≤0.05. Conviction is a heuristic rank from those p-values, not a probability.
+          Stage: ≤10d early · 11-30d mid · 30+d mature.
         </p>
       </details>
 
@@ -407,6 +420,14 @@ function AxisCard({
                   <span className={`font-mono text-[11px] ${r.z >= 0 ? "text-emerald-500" : "text-red-500"}`}>
                     {r.z >= 0 ? "+" : ""}{r.z.toFixed(2)}σ
                   </span>
+                  {r.stats && (
+                    <span
+                      className="font-mono text-[10px] text-muted-foreground"
+                      title={`bootstrap null: |z| 5% line ${r.stats.zCrit95.toFixed(2)}, ${r.stats.independentWindows} non-overlapping windows in ${r.stats.sampleDays} days, mean block ${r.stats.blockLength}d`}
+                    >
+                      p {r.stats.pZ.toFixed(2)}
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="mt-1.5 text-[11px] leading-snug text-muted-foreground">{r.evidence}</div>
