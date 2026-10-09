@@ -4,13 +4,14 @@
 // scenarios drawn into the future space (right of "now") in the style of a
 // ThinkOrSwim chart: bull (q90) green dashed, base (q50) bold white, bear
 // (q10) red dashed. All anchored at the last candle close, extended through
-// the 60min ML horizon and linearly extrapolated to the 4:00 ET close,
-// capped ±1.5%.
+// the 60min ML horizon and extended to the session close by the
+// square-root-of-time rule (shared/coneExtension.ts; median held flat).
 //
 // When the Schwab tape is empty the server returns no candles and
 // dataState "no_data" with a reason; the panel shows NO INTRADAY DATA and
 // never draws invented candles (the old server filled the gap with a
-// simulated walk). The synthetic flag below is kept for older payloads.
+// simulated walk). The server never sends synthetic=true any more, so the
+// old "TAPE SYNTHETIC" banner / watermark / grey-candle path is removed.
 //
 // Honesty rules (R2-F items 3, 4, 5, 8):
 //   • The drawn band is the server's `served` band: a quantile model only if
@@ -21,9 +22,9 @@
 //   • The base line is the band's q50, unadjusted (the old gamma-snap moved it
 //     toward dealer levels with an untested rule, so the drawn line was not
 //     the scored median).
-//   • Past the last model horizon the paths are a linear extension of the
-//     30->60 slope, capped ±1.5%, to 16:00 ET: drawn lighter, labeled, and
-//     NOT scored.
+//   • Past the last model horizon the band is extended by sqrt(time) from the
+//     last horizon's band (median held, not extrapolated) to the session
+//     close: drawn lighter, labeled, and NOT scored.
 //   • The verdict strip is neutral grey unless a promoted real-data model
 //     contributes to the band (a baseline cone has zero drift by design).
 //   • Live coverage of the drawn 10-90% band (/api/ml/coverage, same
@@ -106,7 +107,6 @@ interface OHLCCandle {
   l: number;
   c: number;
   v: number | null;
-  synthetic?: boolean;
 }
 
 interface GammaLevelEntry {
@@ -220,8 +220,6 @@ interface ProjectionSpyResponse {
   served?: ServedBandPayload;
   /** Today's close in minutes after 09:30 ET (390, or 210 on a 13:00 half day); null = no session today. */
   sessionCloseMin?: number | null;
-  synthetic?: boolean;
-  syntheticReason?: string | null;
   /** "ok" = real bars; "no_data" = empty tape (dataStateReason says why). */
   dataState?: "ok" | "no_data";
   dataStateReason?: string | null;
@@ -242,9 +240,6 @@ const COLOR_UP_BODY = "#10b981";
 const COLOR_UP_BORDER = "#047857";
 const COLOR_DN_BODY = "#ef4444";
 const COLOR_DN_BORDER = "#b91c1c";
-const COLOR_SYNTH_UP = "#6b7280";
-const COLOR_SYNTH_DN = "#4b5563";
-const COLOR_SYNTH_BORDER = "#374151";
 
 // ─── Time helpers ────────────────────────────────────────────────────────────
 
@@ -435,14 +430,9 @@ function CandlesLayer(props: any) {
         const yL = yScale(c.l);
         if (![yO, yC, yH, yL].every(Number.isFinite)) return null;
         const isUp = c.c >= c.o;
-        const synth = !!c.synthetic;
-        const fill = synth
-          ? (isUp ? COLOR_SYNTH_UP : COLOR_SYNTH_DN)
-          : (isUp ? COLOR_UP_BODY : COLOR_DN_BODY);
-        const stroke = synth
-          ? COLOR_SYNTH_BORDER
-          : (isUp ? COLOR_UP_BORDER : COLOR_DN_BORDER);
-        const opacity = synth ? 0.55 : 1;
+        const fill = isUp ? COLOR_UP_BODY : COLOR_DN_BODY;
+        const stroke = isUp ? COLOR_UP_BORDER : COLOR_DN_BORDER;
+        const opacity = 1;
         const top = Math.min(yO, yC);
         const h = Math.max(1, Math.abs(yC - yO));
         return (
@@ -454,7 +444,6 @@ function CandlesLayer(props: any) {
               y2={yL}
               stroke={stroke}
               strokeWidth={1}
-              strokeDasharray={synth ? "2 2" : undefined}
             />
             <rect
               x={x - bodyW / 2}
@@ -469,26 +458,6 @@ function CandlesLayer(props: any) {
         );
       })}
     </g>
-  );
-}
-
-// Synthetic watermark
-function SyntheticWatermark(props: any) {
-  const { offset } = props;
-  const { left = 60, top = 10, width = 600 } = offset || {};
-  return (
-    <text
-      x={left + width - 10}
-      y={top + 22}
-      textAnchor="end"
-      fontSize={11}
-      fontWeight={700}
-      fill="#f59e0b"
-      opacity={0.85}
-      style={{ letterSpacing: "0.12em" }}
-    >
-      SYNTHETIC
-    </text>
   );
 }
 
@@ -551,8 +520,6 @@ export default function MLProjectionPanel() {
   const morning = data?.morning ?? null;
   const blend = data?.blend ?? null;
   const features = data?.features ?? {};
-  const synthetic = !!data?.synthetic;
-  const syntheticReason = data?.syntheticReason ?? null;
   const noData = data != null && (data.dataState === "no_data" || (data.candles ?? []).length === 0);
   const noDataReason = data?.dataStateReason ?? null;
   const spot = data?.spot ?? candles[candles.length - 1]?.c ?? null;
@@ -629,7 +596,6 @@ export default function MLProjectionPanel() {
           l: c.l,
           c: c.c,
           v: c.v,
-          synthetic: c.synthetic,
           t: c.t,
         }))
         .filter((r) => r.minute >= -10 && r.minute <= 400),
@@ -640,7 +606,7 @@ export default function MLProjectionPanel() {
   const anchorMinute = lastCandle?.minute ?? nowMinuteOfDay();
   const anchorPrice = lastCandle?.c ?? spot ?? 0;
 
-  // Forward projection rows for bull/base/bear at 5/15/30/60min + linear ext.
+  // Forward projection rows for bull/base/bear at 5/15/30/60min + sqrt-time ext.
   const pathRows = useMemo(() => {
     if (!projection?.bands || !anchorPrice || anchorPrice <= 0) {
       return [] as Array<{
@@ -729,7 +695,6 @@ export default function MLProjectionPanel() {
       row.l = c.l;
       row.c = c.c;
       row.v = c.v;
-      row.synthetic = c.synthetic;
     }
     for (const p of pathRows) {
       const row = ensure(p.minute);
@@ -911,11 +876,6 @@ export default function MLProjectionPanel() {
 
   // Plain-English interpretation
   const interpretations: string[] = [];
-  if (synthetic) {
-    interpretations.push(
-      "tape simulated - read interpretation as rough regime context, not real intraday flow.",
-    );
-  }
   if (activeModel === "morning" || activeModel === "blend") {
     const fp = morning?.fingerprint;
     if (fp) {
@@ -1001,7 +961,7 @@ export default function MLProjectionPanel() {
               <EdgeInfo id="ml-forecast" />
             </CardTitle>
             <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed" data-testid="text-ml-band-label">
-              drawn band: {bandLabel}. paths past the last horizon are a linear extension (lighter, not a forecast, not scored).
+              drawn band: {bandLabel}. paths past the last horizon are a square-root-of-time extension of the last band to the close, median held flat (lighter, not a forecast, not scored).
               live 10-90% coverage of this band is below. updates every 5s during market hours.
             </p>
           </div>
@@ -1023,14 +983,6 @@ export default function MLProjectionPanel() {
       </CardHeader>
 
       <CardContent className="space-y-4">
-        {/* Synthetic banner */}
-        {synthetic && (
-          <div className="rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-200 font-medium">
-            TAPE SYNTHETIC — Schwab intraday unavailable. Candles simulated from current spot. Refresh when token resumes.
-            {syntheticReason ? <span className="text-amber-300/70 font-normal ml-2">({syntheticReason})</span> : null}
-          </div>
-        )}
-
         {/* Empty-state banner: no intraday bars, nothing invented */}
         {noData && (
           <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-muted-foreground" data-testid="ml-no-data">
@@ -1147,13 +1099,13 @@ export default function MLProjectionPanel() {
                     return [`$${fmtPrice(Number(value))}  ${fmtPct(p)}`, "bear (q10)"];
                   }
                   if (name === "bullExt") {
-                    return [`$${fmtPrice(Number(value))} (linear extension, not scored)`, "bull ext"];
+                    return [`$${fmtPrice(Number(value))} (sqrt-time extension, not scored)`, "bull ext"];
                   }
                   if (name === "baseExt") {
-                    return [`$${fmtPrice(Number(value))} (linear extension, not scored)`, "base ext"];
+                    return [`$${fmtPrice(Number(value))} (sqrt-time extension, not scored)`, "base ext"];
                   }
                   if (name === "bearExt") {
-                    return [`$${fmtPrice(Number(value))} (linear extension, not scored)`, "bear ext"];
+                    return [`$${fmtPrice(Number(value))} (sqrt-time extension, not scored)`, "bear ext"];
                   }
                   return [fmtPrice(Number(value)), String(name)];
                 }}
@@ -1334,10 +1286,6 @@ export default function MLProjectionPanel() {
                 connectNulls
               />
 
-              {/* Synthetic watermark */}
-              {synthetic && (
-                <Customized component={(p: any) => <SyntheticWatermark {...p} />} />
-              )}
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -1369,8 +1317,8 @@ export default function MLProjectionPanel() {
               <span className="text-muted-foreground">spot</span>
               <span className="font-mono">
                 ${fmtPrice(spot)}{" "}
-                <span className={`text-xs ${synthetic ? "text-amber-400" : "text-emerald-400"}`}>
-                  {synthetic ? "synthetic" : "live"}
+                <span className={`text-xs ${noData ? "text-amber-400" : "text-emerald-400"}`}>
+                  {noData ? "no intraday bars" : "live"}
                 </span>
               </span>
             </div>

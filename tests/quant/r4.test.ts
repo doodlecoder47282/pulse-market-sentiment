@@ -347,3 +347,14 @@ test("quarterly cone: term interpolation is linear in total variance; fallback r
 test("models path label does not use the raw GEX sign when gamma is unknown", () => {
   assert.match(src("server/models.ts"), /if \(gammaZone === "y\?"\) path = "gamma unknown \(no path claim\)"/);
 });
+
+// ── 8. ML Lab caption says sqrt-time; dead synthetic banner removed ─────────
+test("ML Lab: extension caption is sqrt-time; no TAPE SYNTHETIC path; server never sends synthetic=true", () => {
+  const ui = src("client/src/components/MLProjectionPanel.tsx").split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+  assert.doesNotMatch(ui, /linear extension/);
+  assert.match(ui, /square-root-of-time extension of the last band/);
+  assert.doesNotMatch(ui, /TAPE SYNTHETIC|SyntheticWatermark|COLOR_SYNTH/);
+  const routes = src("server/routes.ts");
+  assert.doesNotMatch(routes, /synthetic:\s*true/);
+  assert.match(routes, /const synthetic = false;/);
+});
