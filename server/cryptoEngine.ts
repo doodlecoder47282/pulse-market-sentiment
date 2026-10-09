@@ -48,7 +48,7 @@ import {
   computeSocialScore, resolveSocialCollection, expireSocial,
   CRYPTO_SIGNAL_COUNTS_SQL, type SocialStatus, type SocialSourceStatus,
   observedNumber, gradeSignal, cryptoCoinCountsSql, summarizeDeskStats, type CryptoDeskStats,
-  CRYPTO_GRADER_BATCH, CRYPTO_PEAK_SAMPLE_SQL, peakSamplingNote,
+  CRYPTO_GRADER_BATCH, CRYPTO_PEAK_SAMPLE_SQL, CRYPTO_GRADER_MARK_SQL, CRYPTO_GRADER_NO_DATA_SQL, peakSamplingNote,
   holderConcentration, countMentions, socialCoverage, type HolderAccount, type DexPool,
   momentumPoints, honeypotRead, jupiterAllowsEnter,
 } from "./cryptoStats";
@@ -1093,12 +1093,10 @@ async function graderTick(): Promise<void> {
   ).all(CRYPTO_GRADER_BATCH) as any[];
   if (open.length === 0) return;
 
-  const mark = sqlite.prepare(
-    `UPDATE crypto_signals SET peak_mcap = ?, peak_at = ?, last_mcap = ?, last_liquidity = ?, outcome = ?, graded_at = ? WHERE id = ?`,
-  );
-  const markNoData = sqlite.prepare(
-    `UPDATE crypto_signals SET outcome = 'NO_DATA', graded_at = ? WHERE id = ? AND outcome = 'OPEN'`,
-  );
+  // Monotonic peak + outcome from the max (cryptoStats.CRYPTO_GRADER_MARK_SQL).
+  const mark = sqlite.prepare(CRYPTO_GRADER_MARK_SQL);
+  const freshPeak = sqlite.prepare(`SELECT peak_mcap FROM crypto_signals WHERE id = ? AND outcome = 'OPEN'`);
+  const markNoData = sqlite.prepare(CRYPTO_GRADER_NO_DATA_SQL);
   const now = Date.now();
   for (const row of open) {
     const key = `${row.chain}:${row.pair_address}`;
@@ -1117,25 +1115,27 @@ async function graderTick(): Promise<void> {
         liq = observedNumber(p?.liquidity?.usd);
       } catch {
         // transient fetch error: retry next tick, unless it has failed for a week
-        if (age > NO_DATA_AFTER_ERRORS_MS) markNoData.run(now, row.id);
+        if (age > NO_DATA_AFTER_ERRORS_MS) markNoData.run(now, row.id, TARGET_MCAP);
         continue;
       }
     }
     // Pure grading rule (cryptoStats.gradeSignal): an observed liquidity pull
     // is RUGGED even without a market cap; no mcap past the horizon is
     // NO_DATA (missing), never DEAD.
-    const prevPeak = row.peak_mcap != null ? Number(row.peak_mcap) : null;
+    // Re-read the peak AFTER the awaits above: a momentum refresh may have
+    // raised it since the batch SELECT (synchronous from here to the write).
+    const fresh = freshPeak.get(row.id) as { peak_mcap: number | null } | undefined;
+    if (!fresh) continue; // resolved meanwhile
+    const prevPeak = fresh.peak_mcap != null ? Number(fresh.peak_mcap) : null;
     const g = gradeSignal({
       entryMcap: Number(row.mcap_at_signal ?? 0),
       entryLiq: Number(row.liquidity_at_signal ?? 0),
       prevPeak, mcap, liq, ageMs: age,
       targetMcap: TARGET_MCAP, horizonMs: GRADE_HORIZON_MS,
     });
-    if (g.outcome === "NO_DATA") { markNoData.run(now, row.id); continue; }
+    if (g.outcome === "NO_DATA") { markNoData.run(now, row.id, TARGET_MCAP); continue; }
     if (g.outcome === "OPEN" && mcap == null) continue; // nothing new to record
-    const peakImproved = g.peak != null && g.peak > (prevPeak ?? 0);
-    mark.run(g.peak, peakImproved ? now : row.peak_at ?? null, mcap, liq,
-      g.outcome, g.outcome === "OPEN" ? null : now, row.id);
+    mark.run(g.peak, now, mcap, liq, g.outcome, TARGET_MCAP, row.id);
   }
 }
 

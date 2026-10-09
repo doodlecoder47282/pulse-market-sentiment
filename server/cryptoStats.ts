@@ -347,6 +347,38 @@ export const CRYPTO_PEAK_SAMPLE_SQL = `UPDATE crypto_signals SET
   last_mcap = ?1, last_liquidity = ?3
 WHERE outcome = 'OPEN' AND chain = ?4 AND pair_address = ?5`;
 
+/**
+ * Grader write (round 4 follow-up): MONOTONIC peak. The grader awaits network
+ * fetches between reading a row and writing it, and a momentum refresh can
+ * raise peak_mcap meanwhile; a plain "peak_mcap = ?" would lower it. The peak
+ * is max(stored, sample), peak_at moves only when the sample raises it, and
+ * the outcome is re-derived from that max: >= target -> HIT_5M (first rule
+ * of gradeSignal), a DEAD whose max peak doubled the entry -> DOUBLED.
+ * graded_at follows the final outcome. Only OPEN rows are written.
+ * Params: ?1 sampled peak (null = no sample), ?2 now ms, ?3 last mcap,
+ * ?4 last liquidity, ?5 outcome from gradeSignal, ?6 target mcap, ?7 id.
+ */
+export const CRYPTO_GRADER_MARK_SQL = `UPDATE crypto_signals SET
+  peak_at = CASE WHEN ?1 IS NOT NULL AND (peak_mcap IS NULL OR ?1 > peak_mcap) THEN ?2 ELSE peak_at END,
+  peak_mcap = MAX(COALESCE(peak_mcap, ?1), COALESCE(?1, peak_mcap)),
+  last_mcap = ?3, last_liquidity = ?4,
+  outcome = CASE
+    WHEN MAX(COALESCE(peak_mcap, ?1, 0), COALESCE(?1, peak_mcap, 0)) >= ?6 THEN 'HIT_5M'
+    WHEN ?5 = 'DEAD' AND mcap_at_signal > 0 AND MAX(COALESCE(peak_mcap, ?1, 0), COALESCE(?1, peak_mcap, 0)) >= 2 * mcap_at_signal THEN 'DOUBLED'
+    ELSE ?5 END,
+  graded_at = CASE
+    WHEN MAX(COALESCE(peak_mcap, ?1, 0), COALESCE(?1, peak_mcap, 0)) >= ?6 THEN ?2
+    WHEN ?5 = 'OPEN' THEN NULL
+    ELSE ?2 END
+WHERE id = ?7 AND outcome = 'OPEN'`;
+
+/** NO_DATA close-out, unless a sampled peak already reached the target
+ *  (then HIT_5M: the hit was observed). Params: ?1 now, ?2 id, ?3 target. */
+export const CRYPTO_GRADER_NO_DATA_SQL = `UPDATE crypto_signals SET
+  outcome = CASE WHEN peak_mcap IS NOT NULL AND peak_mcap >= ?3 THEN 'HIT_5M' ELSE 'NO_DATA' END,
+  graded_at = ?1
+WHERE id = ?2 AND outcome = 'OPEN'`;
+
 /** New sampled peak from one observation: null mcap (missing) leaves the peak unchanged; observed 0 is a valid sample. */
 export function nextPeak(prevPeak: number | null, mcap: number | null): { peak: number | null; improved: boolean } {
   if (mcap == null || !Number.isFinite(mcap)) return { peak: prevPeak, improved: false };

@@ -361,7 +361,7 @@ test("ML Lab: extension caption is sqrt-time; no TAPE SYNTHETIC path; server nev
 
 // ── 9. Crypto: peak sampled on every momentum refresh; ENTER needs holders ──
 import { DatabaseSync } from "node:sqlite";
-import { CRYPTO_PEAK_SAMPLE_SQL, CRYPTO_GRADER_BATCH, peakSamplingNote, nextPeak, summarizeDeskStats } from "../../server/cryptoStats";
+import { CRYPTO_PEAK_SAMPLE_SQL, CRYPTO_GRADER_MARK_SQL, CRYPTO_GRADER_NO_DATA_SQL, CRYPTO_GRADER_BATCH, peakSamplingNote, nextPeak, summarizeDeskStats } from "../../server/cryptoStats";
 
 test("crypto peak sample SQL: raises peak only upward, peak_at moves with it, only OPEN rows of that pair", () => {
   const db = new DatabaseSync(":memory:");
@@ -529,4 +529,50 @@ test("edge brief verdict: strict allow-list of descriptive labels", () => {
     "clean risk-on", "mixed regime", "suspicious rally", "risk-off", "stagflation-flavor", "data only"];
   for (const v of det) assert.equal(scrubVerdict(v), v, v);
   assert.match(src("client/src/components/edgelab/EdgeBrief.tsx") + src("client/src/components/edgelab/EdgeBriefing.tsx"), /AI summary of the data \(not advice\)/);
+});
+
+// ── Follow-up 2: grader write is monotonic; outcome from the max peak ───────
+test("crypto grader mark SQL: never lowers a peak raised meanwhile; HIT/DOUBLED from the max", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`CREATE TABLE crypto_signals (id TEXT PRIMARY KEY, chain TEXT, pair_address TEXT, outcome TEXT, mcap_at_signal REAL,
+    peak_mcap REAL, peak_at INTEGER, last_mcap REAL, last_liquidity REAL, graded_at INTEGER)`);
+  const ins = db.prepare(`INSERT INTO crypto_signals (id, chain, pair_address, outcome, mcap_at_signal, peak_mcap, peak_at) VALUES (?, 'solana', ?, 'OPEN', ?, ?, ?)`);
+  const T = 5_000_000;
+  const get = (id: string) => db.prepare(`SELECT * FROM crypto_signals WHERE id = ?`).get(id) as any;
+  const mark = db.prepare(CRYPTO_GRADER_MARK_SQL);
+  // Race: grader read peak 300k, momentum raised it to 6M meanwhile, grader writes its stale g.peak 400k as OPEN.
+  ins.run("a", "P1", 200_000, 300_000, 10);
+  db.prepare(CRYPTO_PEAK_SAMPLE_SQL).run(6_000_000, 20, 90_000, "solana", "P1");
+  mark.run(400_000, 30, 400_000, 80_000, "OPEN", T, "a");
+  assert.equal(get("a").peak_mcap, 6_000_000);       // not lowered
+  assert.equal(get("a").peak_at, 20);                // peak time kept
+  assert.equal(get("a").outcome, "HIT_5M");          // re-derived from the max
+  assert.equal(get("a").graded_at, 30);
+  // DEAD with a max peak >= 2x entry -> DOUBLED
+  ins.run("b", "P2", 100_000, 250_000, 5);
+  mark.run(150_000, 40, 50_000, 10_000, "DEAD", T, "b");
+  assert.equal(get("b").outcome, "DOUBLED");
+  assert.equal(get("b").peak_mcap, 250_000);
+  // Higher sample raises the peak and its time; OPEN keeps graded_at null
+  ins.run("c", "P3", 100_000, 120_000, 5);
+  mark.run(180_000, 50, 180_000, 10_000, "OPEN", T, "c");
+  assert.equal(get("c").peak_mcap, 180_000); assert.equal(get("c").peak_at, 50);
+  assert.equal(get("c").outcome, "OPEN"); assert.equal(get("c").graded_at, null);
+  // No sample (null): peak unchanged
+  mark.run(null, 60, null, 5, "OPEN", T, "c");
+  assert.equal(get("c").peak_mcap, 180_000); assert.equal(get("c").peak_at, 50);
+  // Resolved rows are never rewritten
+  mark.run(9_000_000, 70, 9_000_000, 1, "OPEN", T, "a");
+  assert.equal(get("a").peak_mcap, 6_000_000);
+  // NO_DATA close-out keeps an observed hit
+  ins.run("d", "P4", 100_000, 5_500_000, 5);
+  ins.run("e", "P5", 100_000, 150_000, 5);
+  const nd = db.prepare(CRYPTO_GRADER_NO_DATA_SQL);
+  nd.run(80, "d", T); nd.run(80, "e", T);
+  assert.equal(get("d").outcome, "HIT_5M");
+  assert.equal(get("e").outcome, "NO_DATA");
+  db.close();
+  const eng = src("server/cryptoEngine.ts");
+  assert.doesNotMatch(eng, /SET peak_mcap = \?, peak_at = \?/);
+  assert.match(eng, /const fresh = freshPeak\.get\(row\.id\)/);
 });
