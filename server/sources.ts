@@ -163,8 +163,12 @@ export function buildGammaStructure(chain: SchwabChainLike, nowMs: number = Date
     .filter((rr) => rr.iv > 0 && rr.oi > 0)
     // expiry date + settlement style -> the shared clock (timeToExpiry)
     .map((rr) => ({ type: rr.type, strike: rr.strike, iv: rr.iv, oi: rr.oi, dte: rr.dte, expiry: rr.expiry, style: rr.style }));
+  // Display curve only. The flip itself comes from the same re-priced
+  // profile as the walls and total GEX (gexByStrikeFromChain: shared clock,
+  // sigma re-solved inside 3 days, FLIP_RATE / FLIP_DIV_YIELD), so flip,
+  // walls and total GEX describe one profile.
   const gammaProfile = buildGammaProfile(profileRows, S);
-  const zeroGamma: number | null = gammaProfile.zeroGammaSpot;
+  const zeroGamma: number | null = chainGex.zeroGamma;
 
   // Max pain (nearest expiry only).
   const nearestDte = rows.reduce((a, r) => Math.min(a, r.dte), 45);
