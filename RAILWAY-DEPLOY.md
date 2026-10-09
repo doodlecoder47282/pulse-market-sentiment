@@ -81,6 +81,54 @@ Schwab reauth happens once a week via the Connect button in the app, from any de
 
 When you push code to GitHub, Railway auto-rebuilds and redeploys in ~2 min.
 
+## ML sidecar (Projected Path model): optional, not installed by default
+
+The Railway build above is Node only (`railway.json`: `npm install && npm run build`).
+It does not install Python or the packages in `ml_service/requirements.txt`, so the
+FastAPI sidecar (`ml_service/app.py`, normally spawned by `server/mlServiceManager.ts`)
+cannot start there. That is a supported state, and the server says so instead of
+failing silently:
+
+- `GET /api/ml/health` returns 503 with `"error": "ML sidecar not installed"` and the
+  missing piece (`python not runnable`, or `missing Python packages: ...`).
+- The Projected Path panel draws the baseline volatility cone (computed in Node, no
+  sidecar needed), labeled with that reason.
+- Feature and band logging and the live 10-90% coverage table keep running (Node and
+  SQLite only).
+- The weekly retrain logs `[ml:retrain:skipped] ML sidecar not installed: ...`.
+- Set `PULSE_ML_AUTOSTART=0` to stop the spawn attempts; set `PULSE_ML_DATALOG=0` to
+  stop the logger.
+
+Persistence matters more than the sidecar. The logger writes `ml_feature_log`,
+`spx_minute_bars` and `ml_forecast_log` into `data.db` in the working directory.
+Schwab serves only about 10 days of minute history, so these rows are the only real
+training set. A Railway container's filesystem is replaced on every deploy: without a
+Railway volume holding `data.db` (and `ml_service/models/` if you retrain there), the
+collected days are lost on each redeploy and the 60-session training gate is never met.
+
+To run the sidecar on Railway (not verified on Railway; changes the build, so decide
+before doing it): add a `nixpacks.toml` next to `railway.json` that keeps the Node
+plan and adds Python and a virtualenv where `mlServiceManager.ts` looks for it
+(`ml_service/.venv/bin/python`):
+
+```toml
+[phases.setup]
+nixPkgs = ['...', 'python311']
+
+[phases.install]
+cmds = ['...', 'python3 -m venv ml_service/.venv', 'ml_service/.venv/bin/pip install -r ml_service/requirements.txt']
+```
+
+(`'...'` keeps the generated Node steps; syntax per https://nixpacks.com/docs/configuration/file.)
+LightGBM's wheel needs the OpenMP runtime (`libgomp.so.1`); if the sidecar log shows it
+missing, add it to the image. Then check `GET /api/ml/health` returns `ok: true`.
+Alternatively run the sidecar elsewhere and point the server at it with
+`PULSE_ML_URL=https://...` and `PULSE_ML_AUTOSTART=0`.
+
+A retrain writes a new quantile model only after 60 qualifying real sessions, and the
+panel draws it only if it beats the baseline cone out of sample (promotion gate in
+`ml_service/forecast_eval.py`). Until then the baseline cone is what you see.
+
 ## Troubleshooting
 
 **Build fails on "npm run build":**
