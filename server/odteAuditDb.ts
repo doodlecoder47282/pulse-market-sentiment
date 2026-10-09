@@ -88,6 +88,8 @@ sqlite.exec(`
 //                   (pct_return keeps the best favorable excursion as a diagnostic)
 //   option_settled_frac  fraction of the position held to cash settlement
 //                   (no closing fee on it); NULL on rows graded before plan v2
+//   plan_contracts  whole contracts the plan was graded with (T1 sells
+//                   floor(n/2)); the ledger reports returns per that position
 for (const col of [
   "option_status TEXT",
   "option_reason TEXT",
@@ -98,8 +100,23 @@ for (const col of [
   "option_mfe REAL",
   "realized_pct REAL",
   "option_settled_frac REAL",
+  "plan_contracts INTEGER",
 ]) {
   try { sqlite.exec(`ALTER TABLE odte_alert_audit ADD COLUMN ${col}`); } catch { /* column exists */ }
+}
+
+// ─── Plan position size (whole contracts) ────────────────────────────────────
+
+/**
+ * Contracts the published plan is sized and graded with. BATCAVE_ODTE_PLAN_CONTRACTS
+ * (a whole number >= 1) when configured, else the reference size of 2 (the
+ * smallest position that exercises the T1 / runner split), labelled as such.
+ * Logged on every fire so the grader replays the actual split.
+ */
+export function odtePlanContracts(): { contracts: number; source: "configured" | "reference" } {
+  const raw = Number(process.env.BATCAVE_ODTE_PLAN_CONTRACTS ?? "");
+  if (Number.isFinite(raw) && raw >= 1) return { contracts: Math.floor(raw), source: "configured" };
+  return { contracts: 2, source: "reference" };
 }
 
 // ─── Option-mark logging (called by odteTracker on every Schwab chain poll) ──
@@ -210,6 +227,7 @@ function _scoreTier(score: number): "STANDARD" | "BANGER" | "MOONSHOT" {
 export function persistOdteAuditOnFire(alert: any): void {
   try {
     const now = Date.now();
+    const plan = odtePlanContracts();
     const alertId: string =
       alert?.id ??
       alert?.alertId ??
@@ -234,6 +252,9 @@ export function persistOdteAuditOnFire(alert: any): void {
       t2TriggerLevel: alert?.t2TriggerLevel ?? null,
       // Runner stop once armed (published plan; the grader replays it).
       t2TrailingStopLevel: alert?.t2TrailingStopLevel ?? null,
+      // Whole-contract position the plan is graded with (T1 sells floor(n/2)).
+      planContracts: plan.contracts,
+      planContractsSource: plan.source,
       regimeText: alert?.regime ?? null,
       greekSignals: alert?.greekSignals ?? null,
       fireHourEt: Number(new Date(now).toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false })),

@@ -42,7 +42,7 @@
 // fresh transitions detected via in-memory history.
 
 import { minutesToSessionClose, modelThetaToClose, projectedThetaCost } from "./chainClock";
-import { gradeEvidenceLine, ODTE_PLAN_RULES } from "./validationMath";
+import { gradeEvidenceLine, t1SaleContracts, ODTE_PLAN_RULES, type GradeEvidence } from "./validationMath";
 
 export type OdteSetupKind = "FAILED_BREAK" | "PIVOT_RECLAIM" | "WALL_REJECT";
 export type Side = "call" | "put";
@@ -2419,7 +2419,11 @@ function computeMinutesToCloseSync(nowMs: number, _hourET: number, _minuteET: nu
  * gradeEvidenceFor): the letter is a hand-weighted heuristic score, shown
  * with the bucket's realized hit rate, Wilson interval and n (review 7.6).
  */
-export function formatOdteAlert(a: OdteAlert, evidence?: { label: string; n: number; wins: number } | null): { content: string } {
+export function formatOdteAlert(
+  a: OdteAlert,
+  evidence?: GradeEvidence | null,
+  plan?: { contracts: number; source: "configured" | "reference" },
+): { content: string } {
   const sideUpper = a.side.toUpperCase();
   const contractType = a.side === "call" ? "C" : "P";
   const setupLabel =
@@ -2474,16 +2478,23 @@ export function formatOdteAlert(a: OdteAlert, evidence?: { label: string; n: num
   lines.push(`REVERSION:  ${reversionLine}`);
   lines.push(`ENTRY:  ${entryDesc}`);
   lines.push("");
-  lines.push(`STOP (all):  option bid -${stopPctTxt}%${optStopPx}  OR  5-min close ${below} ${lvl(a.stopLevel)}`);
+  lines.push(`STOP (all):  option bid -${stopPctTxt}% before fees${optStopPx}  OR  5-min close ${below} ${lvl(a.stopLevel)}`);
   // Wire 16: projection tier tag
   const projTier = a.wire15?.projTier ?? null;
   const tierTag = projTier ? `  [${projTier}]` : "";
   // Signed: an A-(85) override can fire below the 30% floor, even negative ("+-12%" before).
   const sgn = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
-  lines.push(`T1:  ${lvl(a.t1.price)}  (${a.t1.name})  ${sgn(projT1Pct)}% est${tierTag}  ->  sell ${hasT2 ? "HALF" : "ALL"} on first touch`);
-  if (hasT2 && a.t2) {
+  // Whole contracts: T1 sells floor(n/2) of n (all when n = 1 or no T2).
+  const nPlan = Math.max(1, Math.floor(plan?.contracts ?? ODTE_PLAN_RULES.referenceContracts));
+  const kT1 = t1SaleContracts(nPlan, hasT2);
+  const sizeTag = `${nPlan} contract${nPlan === 1 ? "" : "s"}${plan?.source === "configured" ? "" : " (reference size)"}`;
+  const t1Sale = hasT2
+    ? (nPlan >= 2 ? `sell ${kT1} of ${nPlan} on first touch (floor(n/2); 1 contract: sell it)` : "sell the 1 contract on first touch (floor(n/2) rule; no runner)")
+    : "sell ALL on first touch";
+  lines.push(`T1:  ${lvl(a.t1.price)}  (${a.t1.name})  ${sgn(projT1Pct)}% est${tierTag}  ->  ${t1Sale}  [plan: ${sizeTag}]`);
+  if (hasT2 && a.t2 && nPlan - kT1 > 0) {
     const t2ProjStr = projT2Pct != null ? `${sgn(projT2Pct)}% est` : "+—% est";
-    lines.push(`  RUNNER: keeps the stop above until a 5-min close ${beyondT1} ${lvl(a.t1.price)}; then stop -> 5-min close ${below} ${lvl(trail)}`);
+    lines.push(`  RUNNER (${nPlan - kT1}): keeps the stop above until a 5-min close ${beyondT1} ${lvl(a.t1.price)}; then stop -> 5-min close ${below} ${lvl(trail)}; the -${stopPctTxt}% bid stop always applies`);
     lines.push(`  T2:  ${lvl(a.t2.price)} (${a.t2.name}) ${t2ProjStr}  ->  sell the rest on first touch`);
   }
   lines.push(`  Still open at the close (16:00 ET, 13:00 on half days): SPXW cash-settles at intrinsic.`);

@@ -42,7 +42,7 @@ function CalibrationCard() {
           )}
         </div>
         <p className="text-xs text-muted-foreground leading-snug">
-          a grade is a hand-weighted heuristic score, not a probability. "realized" = underlying reached T1 before the plan's stop. "option ledger" columns: realized option P&amp;L of the published plan (what the sizer bets on), win = return &gt; 0, with Wilson 95% interval and n. a bucket stays "heuristic" until it has {lq.data?.buckets?.[0]?.minFiresForLedgerBacked ?? 385} option-graded fires.
+          a grade is a hand-weighted heuristic score, not a probability. "realized" = underlying reached T1 before the plan's stop. "option ledger" columns: realized option P&amp;L of the published plan (what the sizer bets on), win = net return &gt; 0, where net return = (sale proceeds − premium paid − fees) / premium paid and premium paid = entry ask × 100 × contracts (T1 sells floor(n/2) of n contracts), with Wilson 95% interval and n. a bucket stays "heuristic" until it has {lq.data?.buckets?.[0]?.minFiresForLedgerBacked ?? 385} option-graded fires.
         </p>
       </CardHeader>
       <CardContent className="pt-0 space-y-2">

@@ -390,15 +390,18 @@ export interface MinuteBar { datetime: number; open: number; high: number; low: 
  * round-2 re-grade). The alert text (odteAlertEngine.formatOdteAlert) prints
  * these same rules; ODTE_PLAN_RULES is the one wording both use.
  *
- *  1. Entry: buy at the ask at the fire.
- *  2. Stop, whole position: the option bid at or below entry x (1 - 20%)
- *     (what can actually be sold), OR a 5-minute candle closing beyond the
+ *  1. Entry: buy n contracts at the ask at the fire. A fire whose entry bid
+ *     is already at or below entry x 0.80 is untradable (the stop would fire
+ *     on the first quote): it is not graded as a trade, win or loss.
+ *  2. Stop, whole position: the option bid at or below entry x (1 - 20%),
+ *     before fees (what can actually be sold), OR a 5-minute candle closing beyond the
  *     stop level (CALL: close < stop; PUT: close > stop). 5-minute candles are
  *     clock-aligned from 09:30 ET; a candle's close is the close of its last
  *     1-minute bar, known when that minute ends.
  *  3. T1: on the first 1-minute bar whose high (CALL) / low (PUT) reaches T1,
- *     sell HALF when the alert has a T2, ALL when it has none.
- *  4. Runner (the other half): keeps the stops of rule 2 until a 5-minute
+ *     sell floor(n/2) of the n contracts when the alert has a T2 (all of
+ *     them when n = 1 or there is no T2). Whole contracts only.
+ *  4. Runner (the rest): keeps the stops of rule 2 until a 5-minute
  *     candle closes beyond T1 (CALL: close > T1); from then its level stop is
  *     the trail level (T1 - 3 for a CALL, T1 + 3 for a PUT). It is sold on the
  *     first bar that reaches T2 (counted from the bar after the T1 bar).
@@ -417,11 +420,25 @@ export interface MinuteBar { datetime: number; open: number; high: number; low: 
 export const ODTE_PLAN_RULES = {
   version: "odte-plan-v2",
   optionStopPct: 0.20,
-  partialFractionAtT1: 0.5,
+  /** Position size the ledger grades when no size is configured (the smallest that exercises the runner rule). */
+  referenceContracts: 2,
   trailOffsetPts: 3,
   stopRule: "5-min candle close beyond the level (clock-aligned from 09:30 ET)",
-  optionStopRule: "option bid at or below entry x 0.80",
+  optionStopRule: "option bid at or below entry x 0.80, before fees",
+  t1SaleRule: "sell floor(n/2) of n contracts at T1 (all when n = 1 or there is no T2)",
 } as const;
+
+/** Whole contracts sold at T1 (ODTE_PLAN_RULES.t1SaleRule). */
+export function t1SaleContracts(n: number, hasT2: boolean): number {
+  const k = Math.max(1, Math.floor(n));
+  return hasT2 && k >= 2 ? Math.floor(k / 2) : k;
+}
+
+/** True when the entry quote already sits at or under the option stop: untradable, not a loss. */
+export function untradableAtEntry(entryAsk: number | null, entryBid: number | null | undefined, optionStopPct: number = ODTE_PLAN_RULES.optionStopPct): boolean {
+  if (entryAsk == null || !(entryAsk > 0) || entryBid == null || !Number.isFinite(entryBid)) return false;
+  return entryBid <= entryAsk * (1 - optionStopPct) + 1e-12;
+}
 
 export type OdteExitReason = "t1_touch" | "t2_touch" | "underlying_stop" | "trail_stop" | "option_stop" | "settled_at_close";
 
@@ -436,8 +453,8 @@ export interface OdtePlanInput {
   t2?: number | null;
   /** Runner level stop once a 5-minute close beyond T1 arms it; default T1 -/+ ODTE_PLAN_RULES.trailOffsetPts. */
   trailStopLevel?: number | null;
-  /** Fraction sold at T1 when a T2 exists (default 0.5). */
-  partialFraction?: number;
+  /** Contracts in the position (whole number, default ODTE_PLAN_RULES.referenceContracts); sets the T1 split. */
+  contracts?: number;
   /** Spot at the fire, the reference for the favorable excursion (default: open of the first bar after the fire). */
   spot0?: number | null;
 }
@@ -477,7 +494,8 @@ export function replayOdtePlan(plan: OdtePlanInput, allBars: MinuteBar[]): PlanR
   const { isCall, entryTs, closeMs, t1, stopLevel } = plan;
   const hasT2 = plan.t2 != null && Number.isFinite(plan.t2) && plan.t2 > 0 && (isCall ? plan.t2 > t1 : plan.t2 < t1);
   const t2 = hasT2 ? (plan.t2 as number) : null;
-  const partial = hasT2 ? Math.max(0, Math.min(1, plan.partialFraction ?? ODTE_PLAN_RULES.partialFractionAtT1)) : 1;
+  const n = Math.max(1, Math.floor(plan.contracts ?? ODTE_PLAN_RULES.referenceContracts));
+  const partial = t1SaleContracts(n, hasT2) / n;
   const trail = plan.trailStopLevel != null && Number.isFinite(plan.trailStopLevel) && plan.trailStopLevel > 0
     ? plan.trailStopLevel
     : (isCall ? t1 - ODTE_PLAN_RULES.trailOffsetPts : t1 + ODTE_PLAN_RULES.trailOffsetPts);
@@ -552,7 +570,7 @@ export interface OdteOptionFill { kind: OdteExitReason; fraction: number; price:
 
 export interface OdteOptionGrade {
   status: "graded" | "ungraded";
-  reason: OdteExitReason | "no_entry_quote" | "no_exit_mark" | "no_close_bar" | "no_bars" | "no_marks_logged" | "mark_gap" | "bar_gap";
+  reason: OdteExitReason | "no_entry_quote" | "untradable_at_entry" | "no_exit_mark" | "no_close_bar" | "no_bars" | "no_marks_logged" | "mark_gap" | "bar_gap";
   entryPrice: number | null;       // $ per share, the ask at fire
   exitPrice: number | null;        // $ per share, quantity-weighted average of the fills
   exitTs: number | null;           // time of the last fill (or the close for a settled runner)
@@ -591,7 +609,9 @@ export function gradeOdteOptionPnl(input: {
   marks: OptionMark[];
   t2?: number | null;
   trailStopLevel?: number | null;
-  partialFraction?: number;
+  contracts?: number;
+  /** Bid at the fire: an entry bid at or under the option stop makes the fire untradable (ungraded, not a loss). */
+  entryBid?: number | null;
   maxMarkLagMs?: number;
   maxMarkGapMs?: number;
   /** Official index close for the day (SPXW PM settlement value). Falls back to the last minute-bar close when absent. */
@@ -605,9 +625,12 @@ export function gradeOdteOptionPnl(input: {
   });
   const entry = input.entryAsk;
   if (entry == null || !Number.isFinite(entry) || entry <= 0) return blank("no_entry_quote");
+  // The stop would fire on the entry quote itself: the trade cannot be put on
+  // under the plan. Not a loss, not in the ledger (the engine rejects these).
+  if (untradableAtEntry(entry, input.entryBid, input.optionStopPct)) return blank("untradable_at_entry");
   const plan = replayOdtePlan({
     isCall: input.isCall, entryTs: input.entryTs, closeMs: input.closeMs, t1: input.t1, stopLevel: input.stopLevel,
-    t2: input.t2, trailStopLevel: input.trailStopLevel, partialFraction: input.partialFraction,
+    t2: input.t2, trailStopLevel: input.trailStopLevel, contracts: input.contracts,
   }, input.bars);
   if (plan.status !== "ok") return blank(plan.status, plan);
   const marks = input.marks
@@ -637,6 +660,9 @@ export function gradeOdteOptionPnl(input: {
     if (optStop && optStop.ts <= leg.time) break;
     const fill = marks.find((m) => m.ts >= leg.time && m.ts <= leg.time + lag && m.bid != null && m.bid >= 0);
     if (!fill) return blank("no_exit_mark", plan);
+    // The option stop prints inside this leg's fill delay (at or before the
+    // fill quote): the whole remainder goes out at the stop mark.
+    if (optStop && optStop.ts <= fill.ts) break;
     const frac = Math.min(open, leg.fraction);
     fills.push({ kind: leg.kind, fraction: frac, price: fill.bid as number, ts: fill.ts, underlyingPx: leg.underlyingPx });
     open -= frac;
@@ -739,15 +765,28 @@ export function gradeLabelStatus(n: number): "heuristic" | "ledger_backed" {
   return n >= MIN_FIRES_FOR_POINT_ESTIMATE ? "ledger_backed" : "heuristic";
 }
 
+/** Evidence a grade is printed with: the ledger bucket plus what its returns are net of and which position size they grade. */
+export interface GradeEvidence {
+  label: string;
+  n: number;
+  wins: number;
+  /** e.g. "net of $0.95/contract/side" or "gross of fees (no index fee configured)" */
+  feeNote?: string;
+  /** e.g. "2-contract plan (reference size)" */
+  positionNote?: string;
+}
+
 /** One-line evidence text for a grade bucket: realized option hit rate, Wilson 95% interval and n. */
-export function gradeEvidenceLine(bucket: { label: string; n: number; wins: number } | null): string {
+export function gradeEvidenceLine(bucket: GradeEvidence | null): string {
   if (!bucket) return "no ledger bucket for this score: heuristic score only";
   const status = gradeLabelStatus(bucket.n);
   const tag = status === "heuristic" ? `heuristic score (ledger-backed at ${MIN_FIRES_FOR_POINT_ESTIMATE} fires)` : "ledger-backed";
-  if (!(bucket.n > 0)) return `ledger ${bucket.label}: no option-graded fires yet, ${tag}`;
+  const basis = [bucket.positionNote, bucket.feeNote].filter(Boolean).join(", ");
+  const basisTxt = basis ? ` [${basis}]` : "";
+  if (!(bucket.n > 0)) return `ledger ${bucket.label}: no option-graded fires yet, ${tag}${basisTxt}`;
   const w = wilsonInterval(bucket.wins, bucket.n);
   const pc = (x: number) => `${Math.round(x * 100)}%`;
-  return `ledger ${bucket.label}: ${bucket.wins}/${bucket.n} option wins = ${pc(bucket.wins / bucket.n)} (95% CI ${pc(w.lo)}-${pc(w.hi)}), ${tag}`;
+  return `ledger ${bucket.label}: ${bucket.wins}/${bucket.n} option wins = ${pc(bucket.wins / bucket.n)} (95% CI ${pc(w.lo)}-${pc(w.hi)}), ${tag}${basisTxt}`;
 }
 
 /**

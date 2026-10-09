@@ -37,12 +37,16 @@
 
 import { sqlite } from "./storage";
 import { getPriceHistory } from "./schwab";
-import { loadOdteOptionMarks } from "./odteAuditDb";
+import { loadOdteOptionMarks, odtePlanContracts } from "./odteAuditDb";
+
+export { odtePlanContracts };
+import { resolveFeePerContract } from "./sizingMath";
+import { ensureSpxMinuteBarsTable } from "./spxMinuteBars";
 import {
   etCloseMs as etCloseForDate, etDate, gradeOdteOptionPnl, replayOdtePlan, planUnderlyingCloseOutPct,
   summarizeOptionReturns, gradeBucketFor, netOptionReturn, wilsonInterval, gradeLabelStatus,
-  ODTE_PLAN_RULES, MIN_FIRES_FOR_POINT_ESTIMATE, savedMinuteBarsSql, mergeMinuteBars,
-  type OptionLedgerBucket, type MinuteBar,
+  ODTE_PLAN_RULES, MIN_FIRES_FOR_POINT_ESTIMATE, savedMinuteBarsSql, mergeMinuteBars, t1SaleContracts,
+  type OptionLedgerBucket, type MinuteBar, type GradeEvidence,
 } from "./validationMath";
 
 const MAX_LOOKBACK_DAYS = 9; // Schwab live minute history reaches ~10 days back
@@ -112,6 +116,7 @@ let _savedSql: string | null = null;
 export function loadSavedSpxMinuteBars(fromMs: number, toMs: number): Candle[] {
   try {
     if (!_savedSql) {
+      try { ensureSpxMinuteBarsTable(sqlite); } catch { /* read whatever layout exists */ }
       const cols = (sqlite.prepare("PRAGMA table_info(spx_minute_bars)").all() as Array<{ name: string }>).map((c) => c.name);
       _savedSql = savedMinuteBarsSql(cols);
     }
@@ -171,10 +176,11 @@ interface RowGrade {
     ret: number | null;
     mfe: number | null;
     settledFrac: number | null;
+    contracts: number | null;
   };
 }
 
-const NO_OPTION: RowGrade["option"] = { status: null, reason: null, entry: null, exit: null, exitAt: null, ret: null, mfe: null, settledFrac: null };
+const NO_OPTION: RowGrade["option"] = { status: null, reason: null, entry: null, exit: null, exitAt: null, ret: null, mfe: null, settledFrac: null, contracts: null };
 
 export function gradeRow(
   row: AuditRow,
@@ -197,6 +203,11 @@ export function gradeRow(
   const trailRaw = Number(features.t2TrailingStopLevel ?? NaN);
   const trail = Number.isFinite(trailRaw) && trailRaw > 0 ? trailRaw : null; // null -> engine rule T1 -/+ 3
   const isFire = row.tier !== "REJECTED";
+  // Whole-contract position logged on the fire; rows from before it was logged
+  // use the reference size (labelled in the outcome).
+  const loggedN = Number(features.planContracts);
+  const contracts = Number.isFinite(loggedN) && loggedN >= 1 ? Math.floor(loggedN) : ODTE_PLAN_RULES.referenceContracts;
+  const contractsSource = Number.isFinite(loggedN) && loggedN >= 1 ? String(features.planContractsSource ?? "logged") : "reference (not logged on this fire)";
 
   const empty = (outcome: Record<string, unknown>, retryable = false): RowGrade =>
     ({ outcome, pctReturn: null, realizedPct: null, hit30: null, hit50: null, hitT1: null, retryable, option: NO_OPTION });
@@ -205,7 +216,7 @@ export function gradeRow(
   if (!(stopLevel > 0)) return empty({ result: "insufficient_inputs", reason: "no stop level logged (no stop is invented)" });
 
   const closeMs = etCloseMs(row.detected_at);
-  const planIn = { isCall, entryTs: row.detected_at, closeMs, t1, stopLevel, t2, trailStopLevel: trail, spot0: spotAtFire > 0 ? spotAtFire : null };
+  const planIn = { isCall, entryTs: row.detected_at, closeMs, t1, stopLevel, t2, trailStopLevel: trail, contracts, spot0: spotAtFire > 0 ? spotAtFire : null };
   const plan = replayOdtePlan(planIn, candles);
   if (plan.status !== "ok") {
     return empty({ result: "insufficient_history", reason: plan.status, gapAt: plan.gapAt, bars: plan.barsUsed }, true);
@@ -224,6 +235,7 @@ export function gradeRow(
   if (isFire) {
     const strike = Number(contract.strike);
     const entryAsk = Number(contract.ask);
+    const entryBid = Number(contract.bid);
     const g = gradeOdteOptionPnl({
       isCall,
       strike,
@@ -233,6 +245,8 @@ export function gradeRow(
       stopLevel,
       t2,
       trailStopLevel: trail,
+      contracts,
+      entryBid: Number.isFinite(entryBid) && entryBid >= 0 ? entryBid : null,
       optionStopPct: OPTION_STOP_PCT,
       closeMs,
       bars: candles,
@@ -248,6 +262,7 @@ export function gradeRow(
       ret: g.realizedReturn,
       mfe: g.optionMfe,
       settledFrac: g.status === "graded" ? g.settledFraction : null,
+      contracts,
     };
     fills = g.fills.map((f) => ({ kind: f.kind, fraction: f.fraction, price: f.price, ts: f.ts }));
     if (g.status === "graded" && g.realizedReturn != null) {
@@ -271,6 +286,9 @@ export function gradeRow(
       trailStop: trail ?? (isCall ? t1 - ODTE_PLAN_RULES.trailOffsetPts : t1 + ODTE_PLAN_RULES.trailOffsetPts),
       trailArmedAt: plan.trailArmedAt,
       legs,
+      contracts,
+      contractsSource,
+      t1Sale: `${t1SaleContracts(contracts, t2 != null && (isCall ? t2 > t1 : t2 < t1))} of ${contracts} at T1`,
       remainingAtClose: plan.remaining,
       bars: plan.barsUsed,
       bestFavorablePct: Number(bestFavorablePct.toFixed(3)),
@@ -303,7 +321,7 @@ export async function gradeOdteAlerts(now: number = Date.now()): Promise<OdteGra
       UPDATE odte_alert_audit
       SET outcome_json = ?, pct_return = ?, realized_pct = ?, hit_30 = ?, hit_50 = ?, hit_t1 = ?, graded = 1, graded_at = ?,
           option_status = ?, option_reason = ?, option_entry = ?, option_exit = ?, option_exit_at = ?, option_return = ?, option_mfe = ?,
-          option_settled_frac = ?
+          option_settled_frac = ?, plan_contracts = ?
       WHERE id = ?
     `);
 
@@ -327,7 +345,7 @@ export async function gradeOdteAlerts(now: number = Date.now()): Promise<OdteGra
         const o = g.option;
         mark.run(JSON.stringify({ ...g.outcome, barsSource: savedUsed ? "schwab_live+saved_spx_minute_bars" : "schwab_live" }),
           g.pctReturn, g.realizedPct, g.hit30, g.hit50, g.hitT1, now,
-          o.status, o.reason, o.entry, o.exit, o.exitAt, o.ret, o.mfe, o.settledFrac, r.id);
+          o.status, o.reason, o.entry, o.exit, o.exitAt, o.ret, o.mfe, o.settledFrac, o.contracts, r.id);
         if (savedUsed) summary.fromSavedBars++;
         if (g.hitT1 === 1) { summary.graded++; summary.wins++; }
         else if (g.hitT1 === 0) { summary.graded++; summary.losses++; }
@@ -349,18 +367,18 @@ export async function gradeOdteAlerts(now: number = Date.now()): Promise<OdteGra
 
 // ─── Option-P&L ledger by grade bucket (feeds positionSizer) ─────────────────
 
-type LedgerRow = { score: number; entry: number; exit: number; settled: boolean | number };
+type LedgerRow = { score: number; entry: number; exit: number; settled: boolean | number; contracts: number | null };
 let _ledgerCache: { at: number; rows: LedgerRow[] } | null = null;
 
-/** Option-graded fires (entry ask, quantity-weighted exit, settled fraction); cached 5 min. */
+/** Option-graded fires (entry ask, quantity-weighted exit, settled fraction, position size); cached 5 min. */
 function loadLedgerRows(now: number): LedgerRow[] {
   if (_ledgerCache && now - _ledgerCache.at < 5 * 60_000) return _ledgerCache.rows;
   let rows: LedgerRow[] = [];
   try {
     rows = (sqlite
-      .prepare(`SELECT score, option_entry, option_exit, option_reason, option_settled_frac FROM odte_alert_audit
+      .prepare(`SELECT score, option_entry, option_exit, option_reason, option_settled_frac, plan_contracts FROM odte_alert_audit
                 WHERE option_status = 'graded' AND option_entry > 0 AND option_exit IS NOT NULL AND tier != 'REJECTED'`)
-      .all() as Array<{ score: number; option_entry: number; option_exit: number; option_reason: string; option_settled_frac: number | null }>)
+      .all() as Array<{ score: number; option_entry: number; option_exit: number; option_reason: string; option_settled_frac: number | null; plan_contracts: number | null }>)
       .map((r) => ({
         score: Number(r.score),
         entry: Number(r.option_entry),
@@ -371,6 +389,8 @@ function loadLedgerRows(now: number): LedgerRow[] {
         settled: r.option_settled_frac != null && Number.isFinite(Number(r.option_settled_frac))
           ? Number(r.option_settled_frac)
           : r.option_reason === "settled_at_close" || Number(r.option_exit) === 0,
+        // NULL = graded before the plan was sized in whole contracts (single exit, 1 position).
+        contracts: r.plan_contracts != null && Number(r.plan_contracts) >= 1 ? Number(r.plan_contracts) : null,
       }));
   } catch { /* table or columns missing: empty ledger */ }
   _ledgerCache = { at: now, rows };
@@ -381,9 +401,13 @@ function loadLedgerRows(now: number): LedgerRow[] {
  * Ledger buckets with realized returns NET of `feePerContract` ($ per
  * contract per side): the stored option_return is gross, and the sizer's
  * planned loss includes fees, so p, b, L and the log-optimal Kelly must too.
+ * Each return is per premium dollar of the whole graded position:
+ *   (sale proceeds - premium paid - fees) / premium paid,
+ *   premium paid = entry ask x 100 x contracts.
  */
-function loadLedger(now: number, feePerContract: number): Map<string, OptionLedgerBucket> {
+function loadLedger(now: number, feePerContract: number): { byLabel: Map<string, OptionLedgerBucket>; sizes: Map<string, Record<string, number>> } {
   const groups = new Map<string, number[]>();
+  const sizes = new Map<string, Record<string, number>>();
   for (const r of loadLedgerRows(now)) {
     const b = gradeBucketFor(r.score);
     if (!b) continue;
@@ -391,17 +415,21 @@ function loadLedger(now: number, feePerContract: number): Map<string, OptionLedg
     if (net == null) continue;
     if (!groups.has(b.label)) groups.set(b.label, []);
     groups.get(b.label)!.push(net);
+    const sz = sizes.get(b.label) ?? {};
+    const k = r.contracts == null ? "unsized (pre-v2 single exit)" : String(r.contracts);
+    sz[k] = (sz[k] ?? 0) + 1;
+    sizes.set(b.label, sz);
   }
   const byLabel = new Map<string, OptionLedgerBucket>();
   for (const [label, rets] of Array.from(groups)) byLabel.set(label, summarizeOptionReturns(label, rets));
-  return byLabel;
+  return { byLabel, sizes };
 }
 
 /** Realized option-P&L bucket for a grade, net of fees (null when the grade has no bucket). n = 0 when no fire is option-graded yet. */
 export function loadOptionLedgerBucket(score: number, now: number = Date.now(), feePerContract = 0): OptionLedgerBucket | null {
   const b = gradeBucketFor(score);
   if (!b) return null;
-  return loadLedger(now, feePerContract).get(b.label) ?? { label: b.label, n: 0, wins: 0, avgWinReturn: null, avgLossReturn: null, returns: [] };
+  return loadLedger(now, feePerContract).byLabel.get(b.label) ?? { label: b.label, n: 0, wins: 0, avgWinReturn: null, avgLossReturn: null, returns: [] };
 }
 
 /** Ledger bucket plus the evidence a grade letter is shown with (review item 7.6). */
@@ -412,13 +440,19 @@ export type OptionLedgerBucketReport = OptionLedgerBucket & {
   /** "heuristic" until the bucket has MIN_FIRES_FOR_POINT_ESTIMATE option-graded fires. */
   labelStatus: "heuristic" | "ledger_backed";
   minFiresForLedgerBacked: number;
+  /** Graded fires by whole-contract position size: what position the returns describe. */
+  positionContracts: Record<string, number>;
+  returnDefinition: string;
 };
+
+export const LEDGER_RETURN_DEFINITION =
+  "per graded position: (sale proceeds - premium paid - fees) / premium paid, premium paid = entry ask x 100 x contracts; T1 sells floor(n/2) of n contracts";
 
 /** Whole ledger, for display: every bucket with its realized option stats, net of feePerContract. */
 export function getOptionLedgerSummary(now: number = Date.now(), feePerContract = 0): OptionLedgerBucketReport[] {
-  const m = loadLedger(now, feePerContract);
+  const { byLabel, sizes } = loadLedger(now, feePerContract);
   return ["72-79", "80-84", "85-89", "90-94", "95-100"].map((label) => {
-    const b = m.get(label) ?? { label, n: 0, wins: 0, avgWinReturn: null, avgLossReturn: null, returns: [] };
+    const b = byLabel.get(label) ?? { label, n: 0, wins: 0, avgWinReturn: null, avgLossReturn: null, returns: [] };
     const w = wilsonInterval(b.wins, b.n);
     return {
       ...b,
@@ -427,11 +461,38 @@ export function getOptionLedgerSummary(now: number = Date.now(), feePerContract 
       wilsonHi: b.n > 0 ? w.hi : null,
       labelStatus: gradeLabelStatus(b.n),
       minFiresForLedgerBacked: MIN_FIRES_FOR_POINT_ESTIMATE,
+      positionContracts: sizes.get(label) ?? {},
+      returnDefinition: LEDGER_RETURN_DEFINITION,
     };
   });
 }
 
-/** Gross ledger bucket for the alert text (never throws: null when the DB is unavailable). */
-export function gradeEvidenceFor(score: number): OptionLedgerBucket | null {
-  try { return loadOptionLedgerBucket(score); } catch { return null; }
+/**
+ * Fee the alert's ledger line is net of: BATCAVE_INDEX_FEE_PER_CONTRACT ($ per
+ * contract per side, SPXW) through the sizer's fee rule (resolveFeePerContract:
+ * index roots carry no default). Null = not configured: the line says
+ * "gross of fees".
+ */
+export function configuredIndexFee(): number | null {
+  const raw = process.env.BATCAVE_INDEX_FEE_PER_CONTRACT;
+  const v = raw != null && raw.trim() !== "" && Number.isFinite(Number(raw)) ? Number(raw) : null;
+  return resolveFeePerContract(v, "SPXW");
+}
+
+/** Ledger evidence for the alert text (never throws: null when the DB is unavailable). */
+export function gradeEvidenceFor(score: number): GradeEvidence | null {
+  try {
+    const fee = configuredIndexFee();
+    const gb = gradeBucketFor(score);
+    if (!gb) return null;
+    const { byLabel, sizes } = loadLedger(Date.now(), fee ?? 0);
+    const b = byLabel.get(gb.label) ?? { label: gb.label, n: 0, wins: 0 };
+    const sz = sizes.get(b.label) ?? {};
+    const sizeTxt = Object.keys(sz).length ? Object.entries(sz).map(([k, v]) => (k.startsWith("unsized") ? `${v} unsized` : `${v} x ${k}-contract`)).join(", ") : "no graded positions";
+    return {
+      label: b.label, n: b.n, wins: b.wins,
+      feeNote: fee != null ? `net of $${fee.toFixed(2)}/contract/side` : "gross of fees (no index fee configured)",
+      positionNote: `positions: ${sizeTxt}`,
+    };
+  } catch { return null; }
 }

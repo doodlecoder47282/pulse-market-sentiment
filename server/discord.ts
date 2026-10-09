@@ -503,8 +503,8 @@ export async function postLevelClusterAlert(args: {
 // mlLine is an optional augmentation line (Wires 17–20). If provided,
 // it is appended below the formatted alert body. Card still fires without it.
 export async function postOdteBangerAlert(a: OdteAlert, mlLine?: string): Promise<boolean> {
-  const { gradeEvidenceFor } = await import("./odteGrader");
-  const { content } = formatOdteAlert(a, gradeEvidenceFor(a.grade.score));
+  const { gradeEvidenceFor, odtePlanContracts } = await import("./odteGrader");
+  const { content } = formatOdteAlert(a, gradeEvidenceFor(a.grade.score), odtePlanContracts());
   const isCall = a.side === "call";
   // A-tier (score >= 80) = directional color; below = warning amber
   const color =

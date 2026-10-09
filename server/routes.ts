@@ -4705,10 +4705,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
       // readOnly: the preview endpoint is polled by the UI and must not mutate engine state.
       const diag = await diagnoseOdte(args, { readOnly: true });
-      const { gradeEvidenceFor } = await import("./odteGrader");
+      const { gradeEvidenceFor, odtePlanContracts } = await import("./odteGrader");
       const previews = diag.fireable.map((a) => ({
         ...a,
-        formatted: formatOdteAlert(a, gradeEvidenceFor(a.grade.score)).content,
+        formatted: formatOdteAlert(a, gradeEvidenceFor(a.grade.score), odtePlanContracts()).content,
       }));
       const rejectedSummary = diag.rejected.map(({ alert, reason }) => ({
         setup: alert.setup,
@@ -6199,7 +6199,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       res.json({
         asOf: Date.now(),
         feePerContract: fee,
-        note: "Replay of the published plan (5-min close stop or -20% on the bid; half at T1, runner to T2; PM settlement at intrinsic) of fired 0DTE alerts on logged Schwab marks: ask in, bid out. Grades are heuristic scores until a bucket has labelStatus 'ledger_backed'. " +
+        note: "Replay of the published plan (5-min close stop or -20% on the bid; half at T1, runner to T2; PM settlement at intrinsic) of fired 0DTE alerts on logged Schwab marks: ask in, bid out. Return per graded position = (sale proceeds - premium paid - fees) / premium paid, premium paid = entry ask x 100 x contracts (see positionContracts). Grades are heuristic scores until a bucket has labelStatus 'ledger_backed'. " +
           (fee > 0 ? `Returns net of $${fee.toFixed(2)} per contract per side.` : "Returns before fees (pass ?fee= for net).") +
           " Fires without marks are ungraded and excluded.",
         buckets: getOptionLedgerSummary(Date.now(), fee).map(({ returns: _r, ...b }) => {

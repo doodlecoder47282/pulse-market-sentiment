@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import {
   replayOdtePlan, gradeOdteOptionPnl, planUnderlyingCloseOutPct, netOptionReturn, etCloseMs, etDate,
-  gradeLabelStatus, gradeEvidenceLine, savedMinuteBarsSql, mergeMinuteBars, ODTE_PLAN_RULES,
+  gradeLabelStatus, gradeEvidenceLine, savedMinuteBarsSql, mergeMinuteBars, ODTE_PLAN_RULES, t1SaleContracts, untradableAtEntry,
   MIN_FIRES_FOR_POINT_ESTIMATE, type MinuteBar, type OptionMark,
 } from "../../server/validationMath";
 import { formatOdteAlert } from "../../server/odteAlertEngine";
@@ -197,15 +197,22 @@ function sampleAlert(over: Record<string, unknown> = {}): any {
 }
 
 test("alert text states the replayed plan with the exact levels", () => {
-  const txt = formatOdteAlert(sampleAlert(), { label: "85-89", n: 10, wins: 8 }).content;
-  assert.match(txt, /STOP \(all\):  option bid -20% \(bid <= \$8\.00 on a \$10\.00 fill\)  OR  5-min close BELOW 5990\.60/);
-  assert.match(txt, /T1:  6010 .* ->  sell HALF on first touch/);
-  assert.match(txt, /RUNNER: keeps the stop above until a 5-min close ABOVE 6010; then stop -> 5-min close BELOW 6007/);
+  const txt = formatOdteAlert(sampleAlert(), { label: "85-89", n: 10, wins: 8, feeNote: "gross of fees (no index fee configured)" }).content;
+  assert.match(txt, /STOP \(all\):  option bid -20% before fees \(bid <= \$8\.00 on a \$10\.00 fill\)  OR  5-min close BELOW 5990\.60/);
+  assert.match(txt, /T1:  6010 .* ->  sell 1 of 2 on first touch \(floor\(n\/2\); 1 contract: sell it\)  \[plan: 2 contracts \(reference size\)\]/);
+  assert.match(txt, /RUNNER \(1\): keeps the stop above until a 5-min close ABOVE 6010; then stop -> 5-min close BELOW 6007; the -20% bid stop always applies/);
   assert.match(txt, /T2:  6025 .* sell the rest on first touch/);
   assert.match(txt, /SCORE A  \(86\/100\)/);
   assert.doesNotMatch(txt, /CONFIDENCE/);
   // Wilson 95% for 8 of 10 = 49.0%-94.3% (Wilson 1927; see validation.test.ts)
-  assert.match(txt, /ledger 85-89: 8\/10 option wins = 80% \(95% CI 49%-94%\), heuristic score/);
+  assert.match(txt, /ledger 85-89: 8\/10 option wins = 80% \(95% CI 49%-94%\), heuristic score .*\[gross of fees \(no index fee configured\)\]/);
+  // Configured 5 contracts: 2 at T1, 3 runners; 1 contract: sold at T1, no runner line
+  const five = formatOdteAlert(sampleAlert(), null, { contracts: 5, source: "configured" }).content;
+  assert.match(five, /sell 2 of 5 on first touch .*\[plan: 5 contracts\]/);
+  assert.match(five, /RUNNER \(3\)/);
+  const one = formatOdteAlert(sampleAlert(), null, { contracts: 1, source: "configured" }).content;
+  assert.match(one, /sell the 1 contract on first touch/);
+  assert.doesNotMatch(one, /RUNNER/);
   // No T2 -> all out at T1 and no runner line
   const noT2 = formatOdteAlert(sampleAlert({ t2: undefined }), null).content;
   assert.match(noT2, /sell ALL on first touch/);
@@ -219,6 +226,47 @@ test("alert text states the replayed plan with the exact levels", () => {
   setBar(bars, 4, { close: 5990.59 });
   assert.equal(replayOdtePlan({ isCall: true, entryTs: T0, closeMs: CLOSE, t1: a.t1.price, stopLevel: a.stopLevel }, bars).legs[0].kind, "underlying_stop");
   assert.equal(ODTE_PLAN_RULES.optionStopPct, 0.2);
+});
+
+test("whole contracts: T1 sells floor(n/2); the graded split matches the position", () => {
+  assert.deepEqual([1, 2, 3, 4, 5].map((n) => t1SaleContracts(n, true)), [1, 1, 1, 2, 2]);
+  assert.deepEqual([1, 3].map((n) => t1SaleContracts(n, false)), [1, 3]);
+  const bars = flatBars(6000);
+  setBar(bars, 10, { high: 6011, close: 6008 });
+  setBar(bars, 30, { high: 6026, close: 6024 });
+  for (let i = 31; i < bars.length; i++) setBar(bars, i, { open: 6024, high: 6024, low: 6024, close: 6024 });
+  const marks = marksFrom((t) => (t < T0 + 11 * M ? { bid: 9.9, ask: 10.1 } : t < T0 + 31 * M ? { bid: 13.0, ask: 13.2 } : { bid: 22.0, ask: 22.4 }));
+  // 3 contracts: 1 sold at 13.00, 2 at 22.00 -> exit (13 + 44) / 3 = 19.00, return +90%
+  const g3 = gradeOdteOptionPnl({ ...callPlan, t2: 6025, contracts: 3, bars, marks });
+  near(g3.fills[0].fraction, 1 / 3, 1e-12);
+  near(g3.exitPrice!, 19, 1e-12);
+  near(g3.realizedReturn!, 0.9, 1e-12);
+  // 1 contract: all at T1, +30%
+  const g1 = gradeOdteOptionPnl({ ...callPlan, t2: 6025, contracts: 1, bars, marks });
+  assert.deepEqual(g1.fills.map((f) => [f.kind, f.fraction]), [["t1_touch", 1]]);
+  // Fees, 3 contracts at $0.65/side, none settled: (19 - 10) x 300 = 2,700.00 gross; fees 0.65 x 6 = 3.90;
+  // net 2,696.10 / premium 3,000.00 = 0.8987 = netOptionReturn per contract average
+  near(netOptionReturn(10, 19, 0.65, 0)!, (900 - 1.3) / 1000, 1e-12);
+});
+
+test("untradable entry: bid already at or under 0.80 x ask is not a trade (not a loss)", () => {
+  assert.equal(untradableAtEntry(10, 8.0), true);   // boundary: 8.00 <= 8.00
+  assert.equal(untradableAtEntry(10, 8.05), false);
+  assert.equal(untradableAtEntry(10, null), false);
+  const g = gradeOdteOptionPnl({ ...callPlan, entryBid: 7.9, bars: flatBars(6000), marks: marksFrom(() => ({ bid: 7.9, ask: 10 })) });
+  assert.equal(g.status, "ungraded");
+  assert.equal(g.reason, "untradable_at_entry");
+  assert.equal(g.realizedReturn, null);
+});
+
+test("option stop inside a leg's fill delay: the remainder exits at the stop mark", () => {
+  // T1 known at 10:11; the first mark after it (10:11:01) already has bid 7.80 <= 8.00.
+  const bars = flatBars(6000);
+  setBar(bars, 10, { high: 6011, close: 6008 });
+  const marks = marksFrom((t) => (t < T0 + 11 * M ? { bid: 9.9, ask: 10.1 } : { bid: 7.8, ask: 8.0 }));
+  const g = gradeOdteOptionPnl({ ...callPlan, t2: 6025, bars, marks });
+  assert.deepEqual(g.fills.map((f) => [f.kind, f.fraction, f.price]), [["option_stop", 1, 7.8]]);
+  near(g.realizedReturn!, -0.22, 1e-12);
 });
 
 // ─── Item 3: grade letters are heuristic until the bucket has evidence ───────
@@ -479,4 +527,34 @@ test("backtest data state says no dealer level is tested until historical chains
   assert.equal(DEALER_LEVEL_DATA_STATE.dealerLevelsTested, false);
   assert.equal(DEALER_LEVEL_DATA_STATE.dataState, "proxy_no_options_data");
   assert.match(DEALER_LEVEL_DATA_STATE.blockedOn, /historical option chains/);
+});
+
+// ─── spx_minute_bars: one schema, legacy migration ──────────────────────────
+
+import { ensureSpxMinuteBarsTable, etDayMod } from "../../server/spxMinuteBars";
+
+test("spx_minute_bars: legacy hazardEngine table migrates in place to the one schema (real SQLite)", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`CREATE TABLE spx_minute_bars (ts INTEGER PRIMARY KEY, date TEXT NOT NULL, mod INTEGER NOT NULL, o REAL NOT NULL, h REAL NOT NULL, l REAL NOT NULL, c REAL NOT NULL, v INTEGER NOT NULL DEFAULT 0);
+           CREATE INDEX idx_spx_minute_date ON spx_minute_bars(date, mod);`);
+  db.prepare(`INSERT INTO spx_minute_bars VALUES (?, '2026-07-15', 30, 6000, 6002, 5999, 6001, 120)`).run(T0);
+  db.prepare(`INSERT INTO spx_minute_bars VALUES (?, '2026-07-15', 31, 6001, 6003, 6000, 6002, 80)`).run(T0 + M);
+  assert.equal(ensureSpxMinuteBarsTable(db), "migrated_legacy");
+  const cols = (db.prepare("PRAGMA table_info(spx_minute_bars)").all() as Array<{ name: string }>).map((c) => c.name);
+  assert.deepEqual(cols, ["t", "open", "high", "low", "close", "volume", "source"]);
+  const rows = db.prepare("SELECT t, open, high, low, close, volume, source FROM spx_minute_bars ORDER BY t").all() as any[];
+  assert.deepEqual(rows.map((r) => [r.t, r.open, r.high, r.low, r.close, r.volume, r.source]),
+    [[T0, 6000, 6002, 5999, 6001, 120, "schwab"], [T0 + M, 6001, 6003, 6000, 6002, 80, "schwab"]]);
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'spx_minute_bars_legacy_hazard'").all() as any[])[0].n, 0);
+  // idempotent, and the mlDataLog insert now works
+  assert.equal(ensureSpxMinuteBarsTable(db), "created_or_present");
+  db.prepare(`INSERT OR IGNORE INTO spx_minute_bars (t, open, high, low, close, volume, source) VALUES (?, 1, 1, 1, 1, NULL, 'schwab')`).run(T0 + 2 * M);
+  const sql = savedMinuteBarsSql(cols)!;
+  assert.equal((db.prepare(sql).all(T0, T0 + 10 * M) as any[]).length, 3);
+  // fresh database: canonical table created
+  const fresh = new DatabaseSync(":memory:");
+  assert.equal(ensureSpxMinuteBarsTable(fresh), "created_or_present");
+  // derived ET date and minute-of-session (what the legacy table stored): 10:00 EDT = mod 30
+  assert.deepEqual(etDayMod(T0), { date: "2026-07-15", mod: 30 });
+  assert.deepEqual(etDayMod(Date.UTC(2026, 11, 15, 14, 30)), { date: "2026-12-15", mod: 0 }); // 09:30 EST
 });
