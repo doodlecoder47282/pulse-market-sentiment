@@ -87,7 +87,8 @@ function PctCell({ v }: { v: number }) {
 const fmtMoney = (n: number | null | undefined) =>
   n == null || !Number.isFinite(n) ? "—" : `$${n.toFixed(2)}`;
 
-const fmtProb = (p: number) => `${Math.round(p * 100)}%`;
+// Playbook path weights are heuristic (they sum to 100%), not calibrated probabilities.
+const fmtProb = (p: number) => `${Math.round(p * 100)}% wt`;
 
 const importanceColor = (imp: string) => {
   if (imp === "HIGH") return "border-rose-500/40 bg-rose-500/10 text-rose-400";
@@ -163,7 +164,7 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
                 <Badge variant="outline" className={`text-[10px] uppercase tracking-wider font-bold ${verdictPill(d.verdictColor)}`}>
                   {d.verdict}
                 </Badge>
-                <Badge variant="outline" className="text-[10px]">conf {d.confidence}%</Badge>
+                <Badge variant="outline" className="text-[10px]" title="Heuristic score 0-100, not a calibrated probability.">score {d.confidence}/100</Badge>
               </>
             )}
           </div>

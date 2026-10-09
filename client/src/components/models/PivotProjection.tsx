@@ -256,7 +256,7 @@ export default function PivotProjection({
                     <span className="font-bold uppercase tracking-wider">{patternLabel(p.setup)}</span>
                     <span className="ml-2 text-muted-foreground/80">{p.message}</span>
                     <span className="ml-2 font-mono text-[9px] opacity-70">
-                      {(p.confidence * 100).toFixed(0)}%
+                      score {(p.confidence * 100).toFixed(0)}/100
                     </span>
                   </Badge>
                 ))}

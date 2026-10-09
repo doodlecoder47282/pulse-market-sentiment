@@ -10,6 +10,7 @@
  */
 
 import type express from "express";
+import { internalJson, isInternalRoute } from "./internalApi";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -99,6 +100,8 @@ const DEFAULT_PORT = Number(process.env.PORT ?? 5000);
 const BASE = `http://127.0.0.1:${DEFAULT_PORT}`;
 
 async function safeFetch<T = any>(path: string, timeoutMs = 4500): Promise<T | null> {
+  // /api/models, /api/quotes run in-process with the same timeout (internalApi.ts).
+  if (isInternalRoute(path)) return internalJson<T>(path, { timeoutMs });
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);

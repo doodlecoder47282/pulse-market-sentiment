@@ -45,6 +45,42 @@ export function resolveBindHost(env: EnvLike): string {
   return env.RAILWAY_ENVIRONMENT || env.RENDER || env.FLY_APP_NAME ? "0.0.0.0" : "127.0.0.1";
 }
 
+// ── Reverse proxy trust (client IP for the 401 slowdown) ───────────────────
+/**
+ * Number of reverse-proxy hops to trust for req.ip (Express "trust proxy").
+ * Without it, every request behind a platform proxy has the proxy's address,
+ * so the wrong-key slowdown is one shared bucket for all clients.
+ *
+ *   BATCAVE_TRUST_PROXY_HOPS=<0..5>  explicit (0 = trust nothing)
+ *   else RAILWAY_ENVIRONMENT / RENDER / FLY_APP_NAME present  -> 1
+ *   else 0 (local / unknown: the socket address is the client)
+ *
+ * Why 1 and not `true`: with n = 1 Express takes the right-most
+ * X-Forwarded-For entry, the one appended by the proxy that connects to us.
+ * A client can prepend fake entries but cannot change that one, so the
+ * bucket cannot be spoofed as long as every request comes through the proxy
+ * (true on these platforms, where the container is reachable only via the
+ * edge). The cost: if the platform puts a second hop (a CDN) in front, the
+ * right-most entry is that hop, so clients behind one CDN edge share a
+ * bucket (coarser, never spoofable). Trusting more hops than exist (or
+ * `true`) lets a client pick its own IP and dodge the slowdown.
+ * Express, "Express behind proxies":
+ *   https://expressjs.com/en/guide/behind-proxies.html
+ * Railway's own staff answers disagree on whether its edge strips client
+ * X-Forwarded-For (station.railway.com question 613e5cb6), which is why the
+ * right-most-entry rule is used instead of the left-most client value.
+ */
+export const MAX_TRUST_PROXY_HOPS = 5;
+export function trustProxyHops(env: EnvLike): number {
+  const raw = (env.BATCAVE_TRUST_PROXY_HOPS ?? "").trim();
+  if (raw !== "") {
+    const n = Number(raw);
+    if (Number.isInteger(n) && n >= 0 && n <= MAX_TRUST_PROXY_HOPS) return n;
+    return 0; // malformed: trust nothing rather than guess
+  }
+  return env.RAILWAY_ENVIRONMENT || env.RENDER || env.FLY_APP_NAME ? 1 : 0;
+}
+
 /** True only for loopback binds, which are unreachable from other machines. */
 export function isLoopbackHost(host: string): boolean {
   const h = host.trim().toLowerCase().replace(/^\[|\]$/g, "");

@@ -32,6 +32,9 @@ import { buildCanarySnapshot } from "./canary";
 import { sqlite } from "./storage";
 import { postToDiscord } from "./discord";
 import { etDate as calEtDate, sessionCloseMinutes as calCloseMin } from "./exchangeCalendar";
+import { internalJson } from "./internalApi";
+import { ofiTrendWindowComplete, ofiTapeStale } from "./ofiPayload";
+import { isRegularSessionOpen } from "./exchangeCalendar";
 
 export type TradeEnvState = "STAND_DOWN" | "CHOP" | "NORMAL" | "LOADED" | "STRIKE";
 
@@ -119,9 +122,9 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
   let putWall: number | null = null;
   let callWall: number | null = null;
   try {
-    const port = process.env.PORT || 5000;
-    const r = await fetch(`http://127.0.0.1:${port}/api/heatseeker?symbol=$SPX`);
-    const hs: any = r.ok ? await r.json() : null;
+    // In-process /api/heatseeker handler (internalApi.ts): same cache and
+    // payload as the route, no local HTTP hop. Non-2xx -> null, as before.
+    const hs: any = await internalJson("/api/heatseeker?symbol=$SPX");
     // An empty chain is missing data, not "long gamma": report it as unknown.
     if (hs && Array.isArray(hs.strikes) && hs.strikes.length > 0) {
       spot = hs.spot ?? null;
@@ -217,6 +220,11 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
     const ofi = await computeOfiTrend();
     if (ofi.dataState === "unavailable") {
       ofiNote = "signed tick volume unavailable (no SPY minute bars) — not scored, not a flat read.";
+    } else if (ofiTapeStale(ofi.bars, Date.now(), isRegularSessionOpen())) {
+      ofiNote = "signed tick volume stale (last SPY minute bar older than 5 min in the session) — not scored.";
+    } else if (!ofiTrendWindowComplete(ofi.bars)) {
+      // dataState "partial" (or < 15 bars): the 15m slope is an incomplete sum.
+      ofiNote = "signed tick volume incomplete (fewer than 15 bars, or bars missing volume in the 15-bar window) — not scored.";
     } else if (ofi.trend !== "NEUTRAL") {
       ofiPts += 5;
       if (ofi.acceleration === "ACCELERATING") ofiPts += 5;

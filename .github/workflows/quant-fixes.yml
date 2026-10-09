@@ -34,16 +34,25 @@ jobs:
         run: |
           git worktree add ../base origin/main
           cd ../base && npm ci --no-audit --no-fund
-      - name: Type check head and base (reported per file)
-        continue-on-error: true
+      # Per-file tsc error counts, head vs base. The comparison is computed
+      # here (never fails, so the later steps still run and report); the
+      # "Type-check gate" step below fails the job when any file has more
+      # errors on head than on base (a new file with errors counts, base 0).
+      - name: Type check head and base (per file)
         run: |
           mkdir -p rep
+          export LC_ALL=C   # sort and join must agree on collation
           npx tsc --noEmit -p tsconfig.json > rep/tsc-head.log 2>&1 || true
           (cd ../base && npx tsc --noEmit -p tsconfig.json > "$GITHUB_WORKSPACE/rep/tsc-base.log" 2>&1 || true)
-          for f in head base; do grep -oE '^[^(]+\(' rep/tsc-$f.log | sed 's/($//' | sort | uniq -c | sort -k2 > rep/tsc-$f-byfile.txt; done
+          for f in head base; do grep -oE '^[^(]+\([0-9]+,[0-9]+\): error TS' rep/tsc-$f.log | sed -E 's/\(.*//' | sort | uniq -c | awk '{print $2, $1}' | sort -k1,1 > rep/tsc-$f-byfile.txt; done
           echo "tsc errors: head=$(grep -c 'error TS' rep/tsc-head.log) base=$(grep -c 'error TS' rep/tsc-base.log)" | tee rep/tsc-summary.txt
-          echo "--- files with MORE errors on head ---" >> rep/tsc-summary.txt
-          join -1 2 -2 2 -a 1 -e 0 -o 0,1.1,2.1 rep/tsc-head-byfile.txt rep/tsc-base-byfile.txt | awk '$2>$3' >> rep/tsc-summary.txt
+          echo "--- files with MORE errors on head (file head base) ---" >> rep/tsc-summary.txt
+          join -a 1 -e 0 -o 0,1.2,2.2 rep/tsc-head-byfile.txt rep/tsc-base-byfile.txt | awk '$2>$3' | tee rep/tsc-regressed.txt >> rep/tsc-summary.txt
+          # Errors with no file (config / missing type library, e.g. "error TS2688"):
+          # any such line on head that base does not have is also a regression.
+          for f in head base; do { grep -E '^error TS[0-9]+' rep/tsc-$f.log || true; } | sort -u > rep/tsc-$f-global.txt; done
+          echo "--- file-less tsc errors new on head ---" >> rep/tsc-summary.txt
+          comm -23 rep/tsc-head-global.txt rep/tsc-base-global.txt | tee rep/tsc-global-new.txt >> rep/tsc-summary.txt
           cat rep/tsc-summary.txt
       - name: Quant tests
         run: |
@@ -112,6 +121,23 @@ jobs:
             check "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5063/api/health)" 200 "health stays open when locked"
             pkill -f "dist/index.cjs" || true
           fi
+          exit $fail
+      - name: Type-check gate (no file may gain tsc errors vs base)
+        shell: bash
+        run: |
+          if [ ! -f rep/tsc-regressed.txt ] || [ ! -f rep/tsc-global-new.txt ]; then echo "FAIL type-check comparison did not run"; exit 1; fi
+          fail=0
+          if [ -s rep/tsc-regressed.txt ]; then
+            echo "FAIL files with more tsc errors on head than base (file head base):"
+            cat rep/tsc-regressed.txt
+            fail=1
+          fi
+          if [ -s rep/tsc-global-new.txt ]; then
+            echo "FAIL file-less tsc errors on head that base does not have:"
+            cat rep/tsc-global-new.txt
+            fail=1
+          fi
+          [ "$fail" -eq 0 ] && echo "PASS no file gained tsc errors and no new file-less errors"
           exit $fail
       - name: Publish report to ci-reports-quant branch
         if: always()

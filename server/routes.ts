@@ -1,7 +1,8 @@
 import { vixToAtmPct } from "@shared/vol";
 import { getWidgetLayout, saveWidgetLayout, resetWidgetLayout } from "./widgetLayouts";
 import { buildTradeEnvironment, startTradeEnvironmentWatch } from "./tradeEnvironment";
-import type { Express } from "express";
+import type { Express, Request as ExRequest, Response as ExResponse } from "express";
+import { internalRoute, callInternal, internalJson, internalFetch } from "./internalApi";
 import type { Server } from "node:http";
 import { storage } from "./storage";
 import {
@@ -718,7 +719,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     modelsInFlight.set(cacheKey, buildPromise);
     return buildPromise;
   }
-  app.get("/api/models", async (req, res) => {
+  // In-process callers use this same handler (internalApi.ts).
+  app.get("/api/models", internalRoute("/api/models", async (req: ExRequest, res: ExResponse) => {
     try {
       const symbol = (String(req.query.symbol ?? "^GSPC").toUpperCase() === "SPY" ? "SPY" : "^GSPC") as "SPY" | "^GSPC";
       // Dealer-map kinds (vanna flip, zomma bridge, charm target, neg-γ
@@ -841,7 +843,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       } catch {}
       res.status(503).json({ dataState: "unavailable", message: e?.message ?? "Failed to build models" });
     }
-  });
+  }));
 
   // ───── MM-matrix prediction logger ─────
   // POST /api/mm-snapshot — capture current cell probabilities for each horizon.
@@ -1158,21 +1160,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/ofi", async (_req, res) => {
     try {
       const trend = await computeOfiTrend();
-      // Trim payload — client only needs last 60 bars for the histogram
-      const tail = trend.bars.slice(-60).map(b => ({
-        ts: b.ts,
-        signedVolume: b.signedVolume,
-        cumulative: b.cumulative,
-      }));
-      res.json({
-        bars: tail,
-        cumulativeNow: trend.cumulativeNow,
-        slope15m: trend.slope15m,
-        slope5m: trend.slope5m,
-        trend: trend.trend,
-        acceleration: trend.acceleration,
-        capturedAt: Math.floor(Date.now() / 1000),
-      });
+      // Last 60 bars plus dataState, reason and per-bar volumeMissing
+      // (ofiPayload.ts): failed or partial tape is never drawn as zero flow.
+      const { ofiApiPayload } = await import("./ofiPayload");
+      res.json(ofiApiPayload(trend, Date.now()));
     } catch (e: any) {
       res.status(503).json({ message: e?.message ?? "Failed to compute OFI" });
     }
@@ -1475,7 +1466,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Reuses lastResult cache so it never triggers a full snapshot rebuild.
   let quotesCache: { at: number; data: { spy: { price: number | null; changePct: number | null }; vix: { price: number | null; changePct: number | null }; timestamp: number } } | null = null;
   const QUOTES_CACHE_MS = 4_000; // 4s so 5s client poll always gets fresh data
-  app.get("/api/quotes", async (_req, res) => {
+  // In-process callers use this same handler (internalApi.ts).
+  app.get("/api/quotes", internalRoute("/api/quotes", async (_req: ExRequest, res: ExResponse) => {
     try {
       if (quotesCache && Date.now() - quotesCache.at < QUOTES_CACHE_MS) {
         return res.json(quotesCache.data);
@@ -1509,7 +1501,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
       res.status(500).json({ message: e?.message ?? "Failed to fetch quotes" });
     }
-  });
+  }));
 
   // ---- Seasonality: 20-year monthly + weekly avg return patterns ----
   // 24-hour cache (historical data doesn't change intraday). Heavy fetch.
@@ -4147,7 +4139,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     }
   });
 
-  app.get("/api/heatseeker", async (req, res) => {
+  // In-process callers use this same handler (internalApi.ts).
+  app.get("/api/heatseeker", internalRoute("/api/heatseeker", async (req: ExRequest, res: ExResponse) => {
     try {
       const rawSymbol = String(req.query.symbol || "$SPX").trim();
       const symbol = rawSymbol.toUpperCase();
@@ -4214,7 +4207,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       console.error("[heatseeker]", e?.message);
       res.status(500).json({ error: "internal", message: e?.message ?? "Heatseeker failed" });
     }
-  });
+  }));
 
   // ─── Backtest accuracy overlay ────────────────────────────────────────────
   app.get("/api/backtest/levels", async (_req, res) => {
@@ -4252,13 +4245,14 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   }, 8_000);
 
   // ─── 0DTE live tracker ────────────────────────────────────────────────────
-  app.get("/api/odte-tracker", (_req, res) => {
+  // In-process callers use this same handler (internalApi.ts).
+  app.get("/api/odte-tracker", internalRoute("/api/odte-tracker", (_req: ExRequest, res: ExResponse) => {
     try {
       res.json(getOdteSnapshot());
     } catch (e: any) {
       res.status(500).json({ error: "odte_tracker_failed", message: e?.message });
     }
-  });
+  }));
 
   app.get("/api/odte-tracker/sparkline", (req, res) => {
     try {
@@ -4305,9 +4299,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   // Quick health-check endpoint to verify Wire 9 fields are populated.
   app.get("/api/odte/diagnose", async (_req, res) => {
     try {
-      const port = process.env.PORT || "5000";
-      const modelsResp = await fetch(`http://127.0.0.1:${port}/api/models?symbol=^GSPC&experimental=1`).catch(() => null);
-      const models: any = modelsResp && modelsResp.ok ? await modelsResp.json().catch(() => null) : null;
+      // In-process /api/models (internalApi.ts): same handler, cache and dedup.
+      const models: any = await internalJson("/api/models?symbol=^GSPC&experimental=1");
       const daily = models?.horizons?.daily;
       const audit = daily?.audit ?? {};
       const { getSpotHistoryInfo, getChopRegime } = await import("./odteAlertEngine");
@@ -4499,10 +4492,11 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     try {
       const { diagnoseOdte } = await import("./odteAlertEngine");
       const { persistOdteAuditOnReject } = await import("./odteAuditDb");
-      const port = process.env.PORT || "5000";
+      // In-process route calls (internalApi.ts); Response-shaped so the
+      // status checks below are unchanged.
       const [modelsResp, odteResp] = await Promise.all([
-        fetch(`http://127.0.0.1:${port}/api/models?symbol=^GSPC&experimental=1`),
-        fetch(`http://127.0.0.1:${port}/api/odte-tracker`),
+        internalFetch("/api/models?symbol=^GSPC&experimental=1"),
+        internalFetch("/api/odte-tracker"),
       ]);
       if (!modelsResp.ok || !odteResp.ok) {
         return res.status(503).json({ error: "upstream_unavailable", models: modelsResp.status, odte: odteResp.status });
@@ -4570,9 +4564,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const { getOdteSnapshot } = await import("./odteTracker");
 
       // Snapshot models via local /api/models (re-uses cache + in-flight dedup)
-      const port = process.env.PORT || "5000";
-      const modelsResp = await fetch(`http://127.0.0.1:${port}/api/models?symbol=^GSPC&experimental=1`).catch(() => null);
-      const models: any = modelsResp && modelsResp.ok ? await modelsResp.json().catch(() => null) : null;
+      const models: any = await internalJson("/api/models?symbol=^GSPC&experimental=1");
       const odte = getOdteSnapshot();
       if (!models?.horizons?.daily) {
         return res.status(503).json({ error: "models_unavailable" });
@@ -4710,9 +4702,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const { computeRealtimeTargets } = await import("./realtimeTargets");
       const symbol = String(req.query.symbol || "^GSPC");
       // Pull live SPX models from local endpoint
-      const port = Number(process.env.PORT ?? 5000);
-      const r = await fetch(`http://127.0.0.1:${port}/api/models?symbol=${encodeURIComponent(symbol)}&experimental=1`);
-      const data: any = await r.json();
+      // In-process /api/models (internalApi.ts). Body read regardless of
+      // status, as before; a missing daily horizon answers 503 below.
+      const data: any = (await callInternal(`/api/models?symbol=${encodeURIComponent(symbol)}&experimental=1`)).body;
       const daily = data?.horizons?.daily;
       if (!daily) return res.status(503).json({ error: "no_daily_horizon" });
       const out = await computeRealtimeTargets({
@@ -5024,9 +5016,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const { predictTransition } = await import("./regimePredictor");
       const symbol = String(req.query.symbol || "^GSPC");
       const horizonMinutes = Math.max(5, Math.min(120, Number(req.query.horizonMinutes) || 20));
-      const port = Number(process.env.PORT ?? 5000);
-      const r = await fetch(`http://127.0.0.1:${port}/api/models?symbol=${encodeURIComponent(symbol)}&experimental=1`);
-      const data: any = await r.json();
+      // In-process /api/models (internalApi.ts). Body read regardless of
+      // status, as before; a missing daily horizon answers 503 below.
+      const data: any = (await callInternal(`/api/models?symbol=${encodeURIComponent(symbol)}&experimental=1`)).body;
       const daily = data?.horizons?.daily;
       if (!daily) return res.status(503).json({ error: "no_daily_horizon" });
 
@@ -5921,10 +5913,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   let dfiCloud: Particle[] = initParticles(200);
   app.get("/api/experimental/particle-dfi", async (_req, res) => {
     try {
-      const PORT = Number(process.env.PORT ?? 5000);
-      const m = await fetch(`http://127.0.0.1:${PORT}/api/models?symbol=SPX`)
-        .then((r) => r.ok ? r.json() : null)
-        .catch(() => null);
+      const m: any = await internalJson("/api/models?symbol=SPX"); // in-process (internalApi.ts)
       const dfiRaw = m?.horizons?.daily?.audit?.dfi;
       if (typeof dfiRaw !== "number" || !isFinite(dfiRaw)) {
         return res.status(503).json({ note: "no live DFI value" });
@@ -6011,10 +6000,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         probBear == null || oneDayEM == null
       ) {
         try {
-          const PORT = Number(process.env.PORT ?? 5000);
-          const m = await fetch(`http://127.0.0.1:${PORT}/api/models?symbol=SPX`)
-            .then((r) => r.ok ? r.json() : null)
-            .catch(() => null);
+          const m: any = await internalJson("/api/models?symbol=SPX"); // in-process (internalApi.ts)
           const d = m?.horizons?.daily;
           if (d) {
             const sp = d.audit?.scenarioProb ?? null;

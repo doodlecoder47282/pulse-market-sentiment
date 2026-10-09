@@ -247,7 +247,7 @@ function plainEnglishThesis(v: OutlookVerdict, ticker: string, calendar: TickerC
   // 15-year-old reading level summary. Always one sentence, blunt.
   const dirWord = v.direction === "BULL" ? "going up" : v.direction === "BEAR" ? "going down" : "stuck sideways";
   const conf =
-    v.confidence >= 70 ? "high-confidence" :
+    v.confidence >= 70 ? "strong lean" :
     v.confidence >= 55 ? "lean" :
     v.confidence >= 45 ? "low-conviction" : "no edge";
   const ern = calendar?.nextEarnings;
@@ -400,13 +400,13 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                   {v.direction}
                 </span>
                 <span className="font-mono text-2xl font-bold text-foreground">
-                  {v.confidence}%
+                  {v.confidence}/100
                 </span>
                 <span
                   className="text-xs uppercase tracking-wider text-muted-foreground"
                   title="Heuristic score from the composite read (or the AI write-up), not a calibrated probability."
                 >
-                  confidence (heuristic)
+                  score (heuristic)
                 </span>
                 {v.edgeType && v.edgeType !== "none" && (
                   <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider ${dirBorder(dir)} ${dirText(dir)}`}>
@@ -913,7 +913,7 @@ function ScenarioBar({
     <div className={`rounded border p-2 ${colorMap[color]}`} data-testid={`scenario-${label}`}>
       <div className="flex items-center justify-between">
         <span className="font-mono text-[10px] uppercase tracking-wider">{label}</span>
-        <span className="font-mono text-xs font-bold tabular-nums">{s.prob}%</span>
+        <span className="font-mono text-xs font-bold tabular-nums">{s.prob}% wt</span>
       </div>
       <div className="mt-1 h-1 overflow-hidden rounded-full bg-black/30">
         <div

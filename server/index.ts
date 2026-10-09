@@ -21,7 +21,10 @@ import {
   gateMode,
   gateWarnings,
   newInternalKey,
+  trustProxyHops,
 } from "./accessGate";
+import { tokenKeyWarnings } from "./tokenCrypto";
+import { resolveTokenKeyPolicy } from "./tokenKeyFile";
 
 // Global safety nets — do NOT let a stray promise reject or exception kill the
 // long-running server process. Crashes here previously took down /api/* during
@@ -35,6 +38,13 @@ process.on("uncaughtException", (err: any) => {
 
 const app = express();
 const httpServer = createServer(app);
+
+// Client IP behind a platform proxy (Railway/Render/Fly): trust exactly the
+// configured hop count so req.ip, and with it the wrong-key slowdown bucket in
+// accessGate.ts, is per client. Never `true`: see trustProxyHops for the
+// spoofing trade-off. Local/unknown hosts trust nothing (socket address).
+const TRUST_PROXY_HOPS = trustProxyHops(process.env);
+if (TRUST_PROXY_HOPS > 0) app.set("trust proxy", TRUST_PROXY_HOPS);
 
 declare module "http" {
   interface IncomingMessage {
@@ -93,10 +103,12 @@ const GATE_MODE = gateMode(process.env);
 // Fail closed still lets the engines' own self-calls through, using a random
 // per-process key that never leaves this process.
 const INTERNAL_KEY = GATE_MODE === "closed" ? newInternalKey() : "";
-// The engines call each other over local HTTP (trade environment -> heatseeker,
-// Discord cards -> models, exit brain -> quotes, ...; ~25 call sites). When the
-// gate is on, attach the key to every request this process sends to its own
-// port so those internal calls keep working (ios-capacitor d40db7d).
+// The trading-critical engine calls (trade environment -> heatseeker, exit
+// brain -> quotes/models, Discord cards and decision support -> models) now
+// run in-process (internalApi.ts). The remaining local-HTTP self-calls (news,
+// regime ticker, mm scheduler, alpha brief, ...) still need the key: when the
+// gate is on, attach it to every request this process sends to its own port
+// (ios-capacitor d40db7d).
 const SELF_CALL_KEY = ACCESS_KEY || INTERNAL_KEY;
 if (SELF_CALL_KEY) {
   globalThis.fetch = makeSelfCallFetch(globalThis.fetch.bind(globalThis), SELF_CALL_KEY, process.env.PORT || "5000");
@@ -117,6 +129,10 @@ app.get("/api/schwab/stream/status", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.json(getStreamStatus());
 });
+// Schwab token storage at rest (tokenCrypto.ts): plaintext-local / locked reasons.
+// Resolves (and on a loopback bind without BATCAVE_TOKEN_KEY, creates) the
+// local key file at boot so the log says where the key lives (never the key).
+for (const w of tokenKeyWarnings(process.env, resolveTokenKeyPolicy(process.env).local)) log(w, "security");
 
 (async () => {
   await registerRoutes(httpServer, app);

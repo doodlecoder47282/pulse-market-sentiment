@@ -22,9 +22,10 @@
  */
 
 import Database from "better-sqlite3";
-import path from "path";
+import { dataFilePath } from "./dbPath";
 
-const dbPath = path.join(process.cwd(), "data", "greek_gradient.db");
+// Runtime file, untracked in git (11.7): created on first use, data/ included.
+const dbPath = dataFilePath("greek_gradient.db");
 let db: Database.Database | null = null;
 
 function getDb(): Database.Database {

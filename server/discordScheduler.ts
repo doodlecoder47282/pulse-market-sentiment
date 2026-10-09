@@ -30,6 +30,8 @@ import { persistOdteAuditOnFire, persistOdteAuditOnReject, persistOdteEvaluation
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { schedulerStatePath } from "./dbPath";
+import { internalFetch, isInternalRoute } from "./internalApi";
 import { isTradingDay as calIsTradingDay, sessionCloseMinutes } from "./exchangeCalendar";
 
 const PORT = Number(process.env.PORT ?? 5000);
@@ -39,7 +41,12 @@ const BASE = `http://127.0.0.1:${PORT}`;
 // Light endpoints get 4 s; /api/models is a heavy recompute so it gets a looser bound.
 const FETCH_TIMEOUT_MS = 4_000;
 const MODELS_FETCH_TIMEOUT_MS = 30_000;
+// /api/models, /api/odte-tracker and /api/quotes run in-process (same route
+// handler, same timeout semantics: a timeout rejects like an aborted fetch);
+// other paths (e.g. /api/news) still go over local HTTP.
 function ifetch(url: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<Response> {
+  const path = url.startsWith(BASE) ? url.slice(BASE.length) : url;
+  if (isInternalRoute(path)) return internalFetch(path, { timeoutMs });
   return fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
 }
 
@@ -49,7 +56,8 @@ function ifetch(url: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<Response> {
 // to empty, so the next tick thought the most-recent 30-min slot hadn't fired
 // yet and re-posted it. Persisting to a JSON file inside workspace fixes that
 // without adding a DB table.
-const SCHEDULER_STATE_PATH = "/home/user/workspace/sentiment-app/.discord-scheduler-state.json";
+// Untracked runtime file (11.7); created on first save (dbPath.ts).
+const SCHEDULER_STATE_PATH = schedulerStatePath();
 
 interface SchedulerPersistedState {
   dailyFired: string[];

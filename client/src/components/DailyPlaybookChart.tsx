@@ -355,7 +355,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
                     )}
                   </div>
                   <span className="font-mono text-[12px] font-bold" style={{ color: PATH_COLORS[k], textDecoration: isDead ? "line-through" : "none" }}>
-                    {Math.round(p.probability * 100)}%
+                    <span title="Heuristic path weight (bull + base + bear = 100%), not a calibrated probability.">{Math.round(p.probability * 100)}% wt</span>
                   </span>
                 </div>
                 <div className={`text-[11px] leading-snug ${isDead ? "text-muted-foreground" : "text-foreground/80"}`}>{p.oneLiner}</div>
@@ -565,7 +565,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
               </div>
             ))}
             <div className="pt-2 text-[10px] text-muted-foreground italic border-t border-border/20">
-              Method: 1σ daily range from VIX/√252; path probabilities tilt on gamma sign,
+              Method: 1σ daily range from VIX/√252; path weights (heuristic) tilt on gamma sign,
               VIX term structure, composite tilt, and spot vs gamma flip.
             </div>
           </div>

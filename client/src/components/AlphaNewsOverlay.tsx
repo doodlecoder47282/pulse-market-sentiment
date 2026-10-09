@@ -245,7 +245,7 @@ export function AlphaNewsPanel({
                   </span>
                 </div>
                 <div className="flex items-center gap-3 text-[11px] tabular-nums">
-                  <span><span className="text-zinc-500">Conf</span> <span className="font-semibold text-zinc-200">{verdict.confidence}%</span></span>
+                  <span><span className="text-zinc-500" title="Heuristic score 0-100 from the AI write-up, not a calibrated probability.">Score</span> <span className="font-semibold text-zinc-200">{verdict.confidence}/100</span></span>
                   <span><span className="text-zinc-500">R:R</span> <span className="font-semibold text-zinc-200">{verdict.rrRatio.toFixed(1)}</span></span>
                 </div>
               </div>
@@ -277,7 +277,7 @@ export function AlphaNewsPanel({
                   <span className="mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
                   <div className="flex-1">
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400">Bull · {verdict.bull.prob}%</span>
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400">Bull · {verdict.bull.prob}% wt</span>
                       <span className="font-mono text-[10px] text-emerald-400">{fmtMove(verdict.bull.targetMovePct)}</span>
                     </div>
                     <p className="text-zinc-300">{verdict.bull.thesis}</p>
@@ -287,7 +287,7 @@ export function AlphaNewsPanel({
                   <span className="mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full bg-amber-500" />
                   <div className="flex-1">
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-400">Base · {verdict.base.prob}%</span>
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-400">Base · {verdict.base.prob}% wt</span>
                       <span className="font-mono text-[10px] text-amber-400">{fmtMove(verdict.base.targetMovePct)}</span>
                     </div>
                     <p className="text-zinc-300">{verdict.base.thesis}</p>
@@ -297,7 +297,7 @@ export function AlphaNewsPanel({
                   <span className="mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full bg-rose-500" />
                   <div className="flex-1">
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-rose-400">Bear · {verdict.bear.prob}%</span>
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-rose-400">Bear · {verdict.bear.prob}% wt</span>
                       <span className="font-mono text-[10px] text-rose-400">{fmtMove(verdict.bear.targetMovePct)}</span>
                     </div>
                     <p className="text-zinc-300">{verdict.bear.thesis}</p>

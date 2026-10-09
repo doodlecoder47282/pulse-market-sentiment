@@ -5,8 +5,8 @@
  * no Yahoo. When Schwab cannot answer, callers get null / an error state.
  */
 
-import { db, schwabTokens } from "./storage";
-import { eq } from "drizzle-orm";
+// Token row access goes through the encrypted store (AES-256-GCM, BATCAVE_TOKEN_KEY).
+import { readSchwabTokens, writeSchwabTokens, deleteSchwabTokens, tokenStoreStatus, type TokenStoreStatus } from "./schwabTokenStore";
 import { observeQuote } from "./quoteShield";
 import { etDate, addDays } from "./exchangeCalendar";
 import { quoteFreshness } from "./quoteFreshness";
@@ -48,8 +48,9 @@ export async function getAccessToken(lookaheadMs = 60_000): Promise<string | nul
   const CLIENT_ID = getClientId();
   const CLIENT_SECRET = getClientSecret();
   if (!CLIENT_ID || !CLIENT_SECRET) return null;
-  const row = db.select().from(schwabTokens).where(eq(schwabTokens.id, 1)).get();
-  if (!row) return null;
+  const tok = readSchwabTokens(); // decrypts; null when none, locked or undecryptable
+  if (tok.status !== "ok") return null;
+  const row = tok.row;
   const now = Date.now();
   if (row.refreshExpiresAt < now) return null; // refresh token expired — needs full re-auth
   if (row.expiresAt > now + lookaheadMs) return row.accessToken; // still valid
@@ -99,16 +100,14 @@ async function doRefresh(
     const newRefreshExpiresAt = data.refresh_token
       ? now + 7 * 24 * 60 * 60 * 1000
       : row.refreshExpiresAt;
-    db.update(schwabTokens)
-      .set({
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token || row.refreshToken,
-        expiresAt: newExpiresAt,
-        refreshExpiresAt: newRefreshExpiresAt,
-        updatedAt: now,
-      })
-      .where(eq(schwabTokens.id, 1))
-      .run();
+    const saved = writeSchwabTokens({
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token || row.refreshToken,
+      expiresAt: newExpiresAt,
+      refreshExpiresAt: newRefreshExpiresAt,
+      updatedAt: now,
+    });
+    if (!saved.ok) console.warn("[schwab] refreshed token not persisted:", saved.reason);
     console.log("[schwab] token refreshed successfully");
     _lastRefreshError = null;
     return data.access_token;
@@ -150,18 +149,10 @@ export async function exchangeCodeForTokens(code: string): Promise<{ ok: true } 
     const now = Date.now();
     const expiresAt = now + (data.expires_in ?? 1800) * 1000;
     const refreshExpiresAt = now + 7 * 24 * 60 * 60 * 1000;
-    // Upsert row id=1
-    const existing = db.select().from(schwabTokens).where(eq(schwabTokens.id, 1)).get();
-    if (existing) {
-      db.update(schwabTokens)
-        .set({ accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt, refreshExpiresAt, updatedAt: now })
-        .where(eq(schwabTokens.id, 1))
-        .run();
-    } else {
-      db.insert(schwabTokens)
-        .values({ id: 1, accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt, refreshExpiresAt, updatedAt: now })
-        .run();
-    }
+    // Upsert row id=1, encrypted at rest (schwabTokenStore.ts); refuses to
+    // store when the token key is missing on a reachable bind.
+    const saved = writeSchwabTokens({ accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt, refreshExpiresAt, updatedAt: now });
+    if (!saved.ok) return { ok: false, error: `Token storage locked: ${saved.reason}` };
     console.log("[schwab] tokens persisted — connected!");
     clearRefreshBackoff(); // fresh tokens: forget any invalid_grant dead state
     return { ok: true };
@@ -188,9 +179,13 @@ export function getSchwabStatus(): {
   needsReauth: boolean;
   staleAccessToken: boolean;
   lastRefreshError: { at: number; status: number; message: string } | null;
+  /** Token storage at rest: mode (encrypted / plaintext-local / locked) and why. */
+  tokenStore: TokenStoreStatus;
 } {
-  const row = db.select().from(schwabTokens).where(eq(schwabTokens.id, 1)).get();
-  if (!row) {
+  const tok = readSchwabTokens();
+  if (tok.status !== "ok") {
+    // none, locked (no key on a reachable bind) or decrypt_failed: not connected,
+    // with tokenStore.reason saying which.
     return {
       connected: false,
       expiresIn: 0,
@@ -198,8 +193,10 @@ export function getSchwabStatus(): {
       needsReauth: true,
       staleAccessToken: false,
       lastRefreshError: _lastRefreshError,
+      tokenStore: tokenStoreStatus(),
     };
   }
+  const row = tok.row;
   const now = Date.now();
   const refreshExpired = row.refreshExpiresAt < now;
   const accessExpired = row.expiresAt < now;
@@ -219,6 +216,7 @@ export function getSchwabStatus(): {
     needsReauth,
     staleAccessToken: accessExpired && !refreshExpired,
     lastRefreshError: _lastRefreshError,
+    tokenStore: tokenStoreStatus(),
   };
 }
 
@@ -234,7 +232,7 @@ export function getAuthUrl(): string {
 
 /** Clears stored tokens (disconnect). */
 export function clearTokens(): void {
-  db.delete(schwabTokens).where(eq(schwabTokens.id, 1)).run();
+  deleteSchwabTokens();
 }
 
 // ─── Generic Schwab fetch with cache + 429 backoff + self-throttle ────────────

@@ -4,6 +4,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import DataStateChip from "@/components/DataStateChip";
 
 interface GammaCurveResult {
   symbol: string;
@@ -80,10 +81,21 @@ export default function GammaCurvePanel() {
       </div>
 
       {q.isLoading && <div className="text-xs text-muted-foreground">loading gamma curve for {active}…</div>}
-      {isError && <div className="text-xs text-rose-500">error: {(d as any).error}</div>}
+      {q.isError && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <DataStateChip state="failed" reason={(q.error as any)?.message ?? null} /> gamma curve request failed; nothing shown in its place
+        </div>
+      )}
+      {isError && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid="gamma-curve-unavailable">
+          <DataStateChip state={/spot/i.test(String((d as any).error)) ? "no_spot" : "unavailable"} reason={(d as any).error} source="Schwab" />
+          {String((d as any).error)}
+        </div>
+      )}
 
       {data && !spotUsable && !q.isLoading && (
         <div className="rounded border border-border p-4 text-xs text-muted-foreground">
+          <DataStateChip state="no_spot" source="Schwab" className="mr-2" />
           no live spot for {data.symbol} — Schwab feed is disconnected, so the gamma curve can't anchor to a price.
         </div>
       )}

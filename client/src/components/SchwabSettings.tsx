@@ -31,6 +31,15 @@ interface SchwabStatus {
   expiresIn: number;        // seconds
   refreshExpiresIn: number; // seconds
   needsReauth: boolean;
+  /** Token storage at rest (server/schwabTokenStore.ts). */
+  tokenStore?: {
+    mode: "encrypted" | "plaintext-local" | "locked";
+    encryptedAtRest: boolean;
+    reason: string | null;
+    keySource?: "env" | "file" | null;
+    /** Locked with legacy plaintext tokens still in data.db. */
+    plaintextOnDisk?: boolean;
+  };
 }
 
 interface SchwabDiag {
@@ -515,6 +524,44 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
               </div>
             )}
           </div>
+
+          {/* Token storage at rest: locked (no BATCAVE_TOKEN_KEY on a reachable
+              bind, or tokens that cannot be decrypted) blocks the connection;
+              plaintext-local is allowed on loopback only and says so. */}
+          {status?.tokenStore && (status.tokenStore.mode !== "encrypted" || status.tokenStore.reason) && (
+            <div
+              className={`rounded-md border p-2 text-[11px] ${
+                status.tokenStore.mode === "locked" || (status.tokenStore.reason && status.tokenStore.mode === "encrypted")
+                  ? "border-rose-500/40 bg-rose-500/5 text-rose-300"
+                  : "border-amber-500/30 bg-amber-500/5 text-amber-300"
+              }`}
+              data-testid="schwab-token-store"
+            >
+              <span className="font-semibold">
+                {status.tokenStore.plaintextOnDisk
+                  ? "Plaintext tokens still on disk: set BATCAVE_TOKEN_KEY or disconnect"
+                  : status.tokenStore.mode === "locked" ? "Token storage locked" : status.tokenStore.mode === "plaintext-local" ? "Tokens stored unencrypted (BATCAVE_TOKEN_PLAINTEXT_OK=1)" : "Token storage problem"}
+              </span>
+              {status.tokenStore.reason ? <span className="text-muted-foreground"> · {status.tokenStore.reason}</span> : null}
+              {status.tokenStore.plaintextOnDisk && (
+                <div className="mt-1.5">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 border-red-500/40 text-[10px] text-red-400 hover:bg-red-500/10"
+                    onClick={() => disconnectMut.mutate()}
+                    disabled={disconnectMut.isPending}
+                    data-testid="token-store-disconnect"
+                  >
+                    Disconnect and securely delete stored tokens
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+          {status?.tokenStore?.mode === "encrypted" && !status.tokenStore.reason && (
+            <div className="text-[10px] text-muted-foreground" data-testid="schwab-token-store">Tokens encrypted at rest (AES-256-GCM, key from {status.tokenStore.keySource === "file" ? "local key file" : "BATCAVE_TOKEN_KEY"}).</div>
+          )}
 
           {/* OAuth flow (show if disconnected or needs reauth) */}
           {(!isConnected) && (

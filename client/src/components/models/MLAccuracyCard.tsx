@@ -246,7 +246,8 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
   return (
     <Card className="border-cyan-500/20 bg-gradient-to-b from-cyan-950/10 to-card">
       <CardContent className="p-4">
-        {/* Honesty banner — only renders when skill vs the base rate is significantly negative */}
+        {/* Honesty banner — only renders when skill vs the base rate is significantly negative.
+            It reports the test; nothing makes the matrix abstain, so it does not say so. */}
         {isMisCalibrated && (
           <div
             className="mb-3 flex items-start gap-2 rounded-md border border-rose-500/50 bg-rose-500/10 p-3"
@@ -255,11 +256,12 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" />
             <div>
               <div className="text-[11px] font-bold uppercase tracking-wider text-rose-200">
-                model abstaining · worse than the base rate
+                significantly worse than the base rate
               </div>
               <div className="mt-0.5 text-[11px] leading-snug text-rose-100/90">
-                Brier {skill!.brier?.toFixed(3)} vs base rate {skill!.climatologyBrier?.toFixed(3)} (skill {skill!.bss != null ? `${(skill!.bss * 100).toFixed(0)}%` : "n/a"}; {dmText(skill!)}). Treat these probabilities as noise this regime —
-                fade or ignore until hit rate recovers. Position size from your own thesis, not from this output.
+                Brier {skill!.brier?.toFixed(3)} vs base rate {skill!.climatologyBrier?.toFixed(3)} (skill {skill!.bss != null ? `${(skill!.bss * 100).toFixed(0)}%` : "n/a"}; {dmText(skill!)}).
+                On the graded sessions the matrix odds scored worse than always forecasting the base rate, and the gap is
+                statistically significant. The matrix keeps publishing; this is a test result, not a trade instruction.
               </div>
             </div>
           </div>
@@ -272,7 +274,7 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" />
             <div className="text-[11px] leading-snug text-amber-100/90">
               <strong>no demonstrated skill.</strong> Not significantly better than always forecasting the base rate ({dmText(skill!)}).
-              Do not size from these probabilities. Cross-check with positioning + flow.
+              The graded record does not support reading these odds as an edge.
             </div>
           </div>
         )}
