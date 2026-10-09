@@ -19,6 +19,8 @@ interface CollarQuarter {
   longPut: number;
   shortPut: number;
   shortCall: number;
+  verification?: "verified" | "partial" | "unverified";
+  source?: string;
 }
 
 interface JPMCollarData {
@@ -242,6 +244,7 @@ export default function JPMCollarPanel() {
                 <th className="pb-1.5 text-right text-[10px] uppercase tracking-wider text-emerald-400/70">Long Put</th>
                 <th className="pb-1.5 text-right text-[10px] uppercase tracking-wider text-amber-400/70">Short Put</th>
                 <th className="pb-1.5 text-right text-[10px] uppercase tracking-wider text-rose-400/70">Short Call</th>
+                <th className="pb-1.5 pl-2 text-left text-[10px] uppercase tracking-wider text-muted-foreground">Source</th>
               </tr>
             </thead>
             <tbody>
@@ -249,17 +252,22 @@ export default function JPMCollarPanel() {
                 <tr key={q.quarter} className={`border-b border-border/20 ${i === 0 ? "bg-cyan-500/5" : ""}`}>
                   <td className="py-1.5 font-semibold">
                     {q.quarter}
-                    {i === 0 && <Badge variant="outline" className="ml-1.5 text-[9px] border-cyan-500/50 text-cyan-400">Current</Badge>}
+                    {i === 0 && (current.expired
+                      ? <Badge variant="outline" className="ml-1.5 text-[9px] border-amber-500/50 text-amber-400">Expired</Badge>
+                      : <Badge variant="outline" className="ml-1.5 text-[9px] border-cyan-500/50 text-cyan-400">Current</Badge>)}
                   </td>
                   <td className="py-1.5 text-right font-mono tabular-nums text-emerald-400">{q.longPut.toLocaleString()}</td>
                   <td className="py-1.5 text-right font-mono tabular-nums text-amber-400">{q.shortPut.toLocaleString()}</td>
                   <td className="py-1.5 text-right font-mono tabular-nums text-rose-400">{q.shortCall.toLocaleString()}</td>
+                  <td className="py-1.5 pl-2 text-[10px] text-muted-foreground" title={q.source ?? ""}>
+                    {q.verification ?? "unverified"}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
           <p className="mt-3 text-[10px] text-muted-foreground/60 italic">
-            * Strikes approximate — verify with latest JHEQX 13F filing. Dealer hedging of these positions creates price gravity near strikes.
+            * Hand-entered strikes; hover "source" for provenance. Only "verified" rows are confirmed by reputable reporting; the fund discloses exact positions in Form N-PORT (60-day lag). Dealer hedging of these positions is often cited as price gravity near the strikes; that effect is not measured here.
           </p>
         </CardContent>
       </Card>

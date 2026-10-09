@@ -2,7 +2,10 @@
 //
 // JPMorgan Hedged Equity Fund (JHEQX) collar data.
 // The fund rolls quarterly on the last trading day of each quarter.
-// Strikes are approximate — exact strikes only known from 13F filings.
+// Exact strikes are disclosed by the fund itself only in its portfolio
+// holdings (Form N-PORT, public with a 60-day lag; annual/semiannual N-CSR).
+// 13F does not cover these index options. Each row below says how it was
+// verified; rows without a reputable source are labeled "unverified".
 //
 // Structure: long put (floor) + short put (spread) + short call (cap).
 // Dealers must hedge the short put and short call exposure, creating
@@ -11,11 +14,16 @@
 import { getQuote } from "./sources";
 
 export interface CollarQuarter {
-  quarter: string;   // "Q2 2026"
-  rollDate: string;  // "2026-06-30" — last trading day of the quarter
+  quarter: string;   // "Q2 2026": the quarter the collar covers
+  rollDate: string;  // "2026-06-30": expiry = the next roll (last trading day of the quarter)
   longPut: number;   // Dealer sees long put = floor protection
   shortPut: number;  // Short put spread leg
   shortCall: number; // Cap / ceiling
+  /** "verified": every strike stated by reputable reporting or the fund's
+   *  filings; "partial": at least one strike confirmed; "unverified":
+   *  secondary/vendor sources only. */
+  verification?: "verified" | "partial" | "unverified";
+  source?: string;
 }
 
 export interface JPMCollarResponse {
@@ -39,12 +47,15 @@ export interface JPMCollarResponse {
   asOf: string;
 }
 
-// Hardcoded collar strikes — current + history.
-// Sources: VolSignals (Q2 2026 confirmed), Tickmill institutional note,
-// SpotGamma, JHEQX 13F disclosures. Strikes are exact at the roll.
+// Hand-entered collar strikes, newest first. A row's rollDate is the date the
+// collar EXPIRES (the next quarterly roll); it is set at the previous roll.
 //
-// Q2 2026: 5,210 / 6,180 put spread vs 6,865 short call (live as of Mar 31 2026 close)
-// Executed via CME SME (Month-End) product, BTIC at 4pm fix.
+// Not entered (round-2 research, 2026-10-08): the collar set at the
+// 2026-06-30 roll (expired 2026-09-30) and the one set at the 2026-09-30 roll
+// (live until 2026-12-31). The only strikes found for them were unsourced
+// estimates (a blog and social-media posts); the fund's 2026-06-30 N-PORT
+// (JPMorgan Trust I, accession 0002071691-26-021121) would state them but
+// could not be read in full. Enter them only with a reputable source.
 const COLLAR_DATA: CollarQuarter[] = [
   {
     quarter: "Q2 2026",
@@ -52,6 +63,9 @@ const COLLAR_DATA: CollarQuarter[] = [
     longPut: 6180,
     shortPut: 5210,
     shortCall: 6865,
+    // Executed via CME SME (Month-End) product, BTIC at 4pm fix (vendor note).
+    verification: "unverified",
+    source: "VolSignals / Tickmill notes (secondary); not confirmed by a news wire or fund filing",
   },
   {
     quarter: "Q1 2026",
@@ -59,13 +73,18 @@ const COLLAR_DATA: CollarQuarter[] = [
     longPut: 6475,
     shortPut: 5310,
     shortCall: 7155,
+    verification: "partial",
+    source: "6,475 confirmed: MarketWatch (Dow Jones), 'A trap door could open up under the S&P 500 after this influential options trade expires on Tuesday', 2026-03-31; 5,310 and 7,155 from secondary sources",
   },
   {
+    // Corrected in round 2: the table had 5,900 / 4,980 / 6,640.
     quarter: "Q4 2025",
     rollDate: "2025-12-31",
-    longPut: 5900,
-    shortPut: 4980,
-    shortCall: 6640,
+    longPut: 6330,
+    shortPut: 5340,
+    shortCall: 7000,
+    verification: "verified",
+    source: "MarketWatch (Dow Jones), Steve Goldstein, 'A giant JPMorgan fund just reset its hedging strategy. What it did and what it means.', 2025-10-01: put spread 5,340-6,330, call sold at 7,000",
   },
   {
     quarter: "Q3 2025",
@@ -73,6 +92,8 @@ const COLLAR_DATA: CollarQuarter[] = [
     longPut: 5550,
     shortPut: 4760,
     shortCall: 6310,
+    verification: "unverified",
+    source: "secondary sources (vendor notes); not confirmed",
   },
   {
     quarter: "Q2 2025",
@@ -80,6 +101,8 @@ const COLLAR_DATA: CollarQuarter[] = [
     longPut: 5290,
     shortPut: 4460,
     shortCall: 5880,
+    verification: "unverified",
+    source: "secondary sources (vendor notes); not confirmed",
   },
 ];
 
@@ -116,7 +139,7 @@ export async function buildJPMCollarSnapshot(): Promise<JPMCollarResponse> {
   const todayEt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
   const expired = todayEt > current.rollDate;
   const staleNote = expired
-    ? `Strikes on file expired at the ${current.rollDate} roll; the newer reset strikes have not been entered. Shown as historical reference only.`
+    ? `Strikes on file expired at the ${current.rollDate} roll. The resets of 2026-06-30 and 2026-09-30 are not entered: no reputable source for their strikes was found (only unsourced estimates). Shown as historical reference only.`
     : null;
 
   const distToLongPut = spxNow != null ? spxNow - current.longPut : null;
