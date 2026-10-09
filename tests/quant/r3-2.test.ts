@@ -16,6 +16,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { classifyEnvState, strikeConditionsMet, volTermPoints } from "../../server/tradeEnvState";
+import { exitBidUsable, REST_BID_MAX_AGE_MS } from "../../server/exitQuoteAge";
+import { FRESH_TTL_MS } from "../../server/schwabDataPolicy";
 import { ofiApiPayload, ofiMethodLabel, type OfiTrendLike } from "../../server/ofiPayload";
 import {
   leeReadySign, classifyL1Trades, OptionTradeSideBook, summarizeStreamSide, optionKey,
@@ -397,4 +399,25 @@ test("R3-2.8 STRIKE requires short gamma, expanding range and directional tick v
   assert.equal(strikeConditionsMet({ ...all, missing: ["range"] }), false);
   // Below 70 the conditions alone do not make STRIKE.
   assert.equal(classifyEnvState({ ...all, score: 60 }), "LOADED");
+});
+
+// ─── Item 9: REST chain bid max age ─────────────────────────────────────────
+
+test("R3-2.9 REST chain bid older than the max age is not usable (NO_QUOTE)", () => {
+  // 75 s = 60 s chain cache TTL + 15 s poll / stamp latency.
+  assert.equal(REST_BID_MAX_AGE_MS, FRESH_TTL_MS.chains + 15_000);
+  const now = 1_760_000_000_000;
+  assert.deepEqual(exitBidUsable("rest_chain", 1.25, now - 75_000, now), { usable: true, ageMs: 75_000, reason: null });
+  const old = exitBidUsable("rest_chain", 1.25, now - 75_001, now);
+  assert.equal(old.usable, false);
+  assert.match(old.reason!, /75 s old \(max 75 s\)/);
+  // A failed poll keeps the tracker's last rows: a 4-minute-old bid must not drive a stop.
+  assert.equal(exitBidUsable("rest_chain", 0.40, now - 240_000, now).usable, false);
+  // Unknown quote time: age unknown, not usable.
+  assert.deepEqual(exitBidUsable("rest_chain", 1.25, null, now), { usable: false, ageMs: null, reason: "REST chain bid has no Schwab quote time (age unknown)" });
+  // Stream quotes are age-checked upstream (streamRecordUsable).
+  assert.equal(exitBidUsable("stream", 1.25, now - 90_000, now).usable, true);
+  assert.equal(exitBidUsable(null, null, null, now).reason, "no bid");
+  // A future quote stamp (clock skew) reads as age 0, not negative.
+  assert.equal(exitBidUsable("rest_chain", 1.0, now + 2_000, now).ageMs, 0);
 });
