@@ -96,20 +96,20 @@ export default function CanaryStrip() {
         {data.headline}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-1">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-4 gap-y-1">
         {data.canaries.map((c) => {
           const mag = c.riskOffZ != null ? Math.min(Math.abs(c.riskOffZ) / 2.5, 1) : 0;
           const off = (c.riskOffZ ?? 0) > 0;
           return (
             <div
               key={c.id}
-              className={`flex items-center gap-2 text-[11px] font-mono py-1 px-1.5 rounded border ${c.diverging ? "border-amber-500/50 bg-amber-500/5" : "border-transparent"}`}
+              className={`flex min-w-0 items-center gap-1.5 text-[11px] font-mono py-1 px-1.5 rounded border ${c.diverging ? "border-amber-500/50 bg-amber-500/5" : "border-transparent"}`}
               title={c.note}
               data-testid={`canary-${c.id}`}
             >
               <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: STATUS_DOT[c.status] }} />
-              <span className="w-32 shrink-0 truncate text-foreground">{c.label}</span>
-              <span className="w-14 shrink-0 tabular-nums text-muted-foreground">{c.value ?? "—"}</span>
+              <span className="w-24 shrink-0 truncate text-foreground sm:w-32">{c.label}</span>
+              <span className="w-12 shrink-0 tabular-nums text-muted-foreground">{c.value ?? "—"}</span>
               <span className={`w-12 shrink-0 tabular-nums ${c.d1Pct == null ? "text-muted-foreground" : c.d1Pct >= 0 ? "text-lime-400" : "text-red-400"}`}>
                 {c.d1Pct != null ? (c.d1Pct > 0 ? "+" : "") + c.d1Pct + "%" : "—"}
               </span>

@@ -131,6 +131,18 @@ ET. Phone CLS 0.28-0.34 -> under 0.05. Note: the audit doc wrongly said the
 DISCONNECTED pill is not clickable; it already opens Schwab settings.
 Remaining from the fix list: items 7-8 (phone nav, chrome height), 11-26.
 
+UX batch 2 (edfd745..HEAD; CI 37983452339 at 2e516e2 green, tsc 162 vs
+182, no route regressions): bottom tab bar (4 tabs + More sheet) below
+1024px, tab row above; FX/crypto carousel removed from above the tabs; tab
+explainers collapse to one line (content starts ~210px down on a laptop, was
+~440); all text-[8-10.5px] raised to 11px and faded muted greys removed
+(text under 10px per tab 6-384 -> 0-10, contrast failures 2-14 -> 1-4,
+mostly separators); one brand-colored active tab; Connect Schwab notice on
+Schwab-fed tabs; layout shift 0 on every screen. Canary rows narrowed after
+that run (not yet CI-verified). Remaining: tap targets under 24px on touch
+(42-79 per screen size, mostly chips), designed empty states per panel,
+visual hierarchy, fonts, brand kit, professional mode, CI thresholds.
+
 ## Current objective
 
 Save the credit-conserving resume framework and assess reuse of the existing
