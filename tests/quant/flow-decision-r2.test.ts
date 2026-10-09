@@ -7,6 +7,10 @@ import assert from "node:assert/strict";
 import { logPcr, pcrReadFromHistory, isCompleteSessionSnapshot, type PcrDay } from "../../server/pcrHistory";
 import { volumeOverOiShare, directionScore, openingText } from "../../server/flowIntent";
 import { scoreAskToBid, buildScoreboardRow, netGroupStats, netReturnOnCost } from "../../server/whaleScoreboard";
+import { firstPassage, projectToTarget } from "../../server/t1Projection";
+import { bsPrice, delta as bsDelta, gamma as bsGamma } from "../../server/greeks";
+import { cdf } from "../../server/stats";
+import { modelThetaToClose } from "../../server/chainClock";
 
 const near = (got: number, want: number, tol: number, what: string) =>
   assert.ok(Math.abs(got - want) <= tol, `${what}: got ${got}, want ${want} +- ${tol}`);
@@ -162,4 +166,115 @@ test("buildScoreboardRow / netGroupStats: wins counted net, the same basis as $ 
   assert.equal(g.totalDollarPnl, -304.5);
   near(netReturnOnCost(48.7, 2.0, 0.65)!, 48.7 / 200.65, 1e-12, "netReturnOnCost");
   assert.equal(netReturnOnCost(null, 2.0, 0.65), null);
+});
+
+// ─── 6.7 / R2-C 7: T1 projection by repricing at the target ───────────────────
+
+// Seeded uniform RNG (mulberry32) and Box-Muller normals for reproducible MC.
+function mulberry32(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+test("firstPassage: closed form = numerical integral of the first-passage density", () => {
+  // Density f(t) = a / sqrt(2 pi t^3) exp(-a^2 / 2t) (reflection principle).
+  // P(tau <= T) = int_0^T f, E[tau; tau <= T] = int_0^T t f; Simpson with 20,000 panels.
+  const sigma = 0.15, T = 240 / 525600, d = Math.log(6715 / 6700);
+  const a = d / sigma;
+  const f = (t: number) => (t <= 0 ? 0 : (a / Math.sqrt(2 * Math.PI * t ** 3)) * Math.exp(-(a * a) / (2 * t)));
+  const N = 20000, h = T / N;
+  let p = 0, m = 0;
+  for (let i = 0; i <= N; i++) {
+    const t = i * h, w = i === 0 || i === N ? 1 : i % 2 ? 4 : 2;
+    p += w * f(t); m += w * t * f(t);
+  }
+  p *= h / 3; m *= h / 3;
+  const fp = firstPassage(d, sigma, T)!;
+  // Reference: P = 2 (1 - Phi(a / sqrt T)) = 2 (1 - Phi(0.697701)) = 0.485355
+  near(fp.pHit, 2 * (1 - cdf(a / Math.sqrt(T))), 1e-12, "closed form P");
+  near(fp.pHit, p, 2e-6, "P vs integral");
+  near(fp.condMeanYears, m / p, 1e-6 * T, "E[tau | hit] vs integral");
+  near(fp.pHit, 0.485355, 2e-5, "P hand value");
+  // Already at the level: touch now.
+  assert.deepEqual(firstPassage(0, sigma, T), { pHit: 1, condMeanYears: 0 });
+  assert.equal(firstPassage(d, 0, T), null);
+});
+
+test("firstPassage: seeded Monte Carlo (Brownian-bridge crossing) agrees within tolerance", () => {
+  // 20,000 paths, 400 steps, crossing inside a step detected with the bridge
+  // probability exp(-2 (a - x0)(a - x1) / (sigma^2 dt)) (Glasserman, Monte Carlo
+  // Methods in Financial Engineering, sec. 6.4); the touch time is taken at the
+  // step midpoint, so E[tau] carries O(dt) bias, well inside the tolerance.
+  const sigma = 0.15, T = 240 / 525600, d = Math.log(6715 / 6700);
+  const rng = mulberry32(20261008);
+  const steps = 400, dt = T / steps, sd = sigma * Math.sqrt(dt);
+  let hits = 0, sumTau = 0;
+  const paths = 20000;
+  for (let k = 0; k < paths; k++) {
+    let x = 0;
+    for (let i = 0; i < steps; i++) {
+      const u1 = Math.max(rng(), 1e-12), u2 = rng();
+      const x1 = x + sd * Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+      const cross = x1 >= d || rng() < Math.exp((-2 * (d - x) * (d - x1)) / (sigma * sigma * dt));
+      if (cross) { hits++; sumTau += (i + 0.5) * dt; break; }
+      x = x1;
+    }
+  }
+  const fp = firstPassage(d, sigma, T)!;
+  const pMc = hits / paths;
+  near(pMc, fp.pHit, 4 * Math.sqrt(fp.pHit * (1 - fp.pHit) / paths), "P(hit) MC, 4 se");
+  near(sumTau / hits, fp.condMeanYears, 0.05 * fp.condMeanYears, "E[tau | hit] MC within 5%");
+});
+
+test("projectToTarget: equals direct Black-Scholes repricing at T1 with E[tau | hit], net of half spread and fees", () => {
+  // 2026-07-15 12:00 ET (16:00 UTC), SPXW 6705 call, PM settlement 16:00 ET: T = 240 min.
+  const nowMs = Date.UTC(2026, 6, 15, 16, 0);
+  const T = 240 / 525600, sigma = 0.15, S = 6700, K = 6705, H = 6715;
+  const p = bsPrice(S, K, sigma, T, 0, 0, "C");
+  const bid = Math.round((p - 0.05) * 100) / 100, ask = Math.round((p + 0.05) * 100) / 100;
+  const r = projectToTarget({ spot: S, strike: K, type: "C", target: H, expiry: "2026-07-15", symbol: "SPXW", bid, ask, vendorIv: 0.2, minutesToClose: 240, nowMs, feePerContract: 0.65 })!;
+  // sigma re-solved from the mid on our clock: ~0.15.
+  const sig = r.sigma;
+  near(sig, sigma, 2e-3, "solved sigma");
+  // Independent closed form for E[tau | tau <= T].
+  const a = Math.log(H / S) / sig;
+  const P = 2 * (1 - cdf(a / Math.sqrt(T)));
+  const tau = (a * Math.sqrt(2 * T / Math.PI) * Math.exp(-(a * a) / (2 * T)) - a * a * P) / P;
+  near(r.minutesToTarget, tau * 525600, 1e-6, "minutes to T1");
+  const mid = (bid + ask) / 2;
+  const projMid = mid + bsPrice(H, K, sig, T - tau, 0, 0, "C") - bsPrice(S, K, sig, T, 0, 0, "C");
+  const exitBid = projMid - (ask - bid) / 2;
+  const want = (exitBid * 100 - 0.65 - (ask * 100 + 0.65)) / (ask * 100 + 0.65);
+  near(r.projReturnPct, want, 1e-9, "return vs direct repricing");
+  near(r.projectedMid, projMid, 1e-9, "projected mid");
+  assert.ok(r.projThetaCost < 0 && r.spreadCost > 0 && r.feesPerContract === 1.3);
+  // Decomposition adds up: mid + delta + gamma + theta = projected mid.
+  near(mid + r.projDeltaPnl + r.projGammaBoost + r.projThetaCost, r.projectedMid, 2e-3, "decomposition");
+});
+
+test("projectToTarget: the old time-now Greeks + full decay to the close read far lower (Gate 3 bias)", () => {
+  const nowMs = Date.UTC(2026, 6, 15, 16, 0);
+  const T = 240 / 525600, S = 6700, K = 6705, H = 6715;
+  const p = bsPrice(S, K, 0.15, T, 0, 0, "C");
+  const bid = Math.round((p - 0.05) * 100) / 100, ask = Math.round((p + 0.05) * 100) / 100;
+  const r = projectToTarget({ spot: S, strike: K, type: "C", target: H, expiry: "2026-07-15", bid, ask, vendorIv: 0.15, minutesToClose: 240, nowMs, feePerContract: 0.65 })!;
+  // Old: |delta| x move + 0.5 gamma move^2 + theta to the close (= minus the extrinsic at spot).
+  const sig = r.sigma, move = H - S;
+  const theta = modelThetaToClose({ spot: S, strike: K, type: "C", expiry: "2026-07-15", bid, ask, vendorIv: 0.15, minutesToClose: 240, nowMs })!;
+  const old = (Math.abs(bsDelta(S, K, sig, T, 0, 0, "C")) * move + 0.5 * bsGamma(S, K, sig, T, 0, 0) * move * move + theta) / ask;
+  assert.ok(r.projReturnPct - old > 0.15, `new ${r.projReturnPct.toFixed(3)} vs old ${old.toFixed(3)}`);
+});
+
+test("projectToTarget: unavailable without a two-sided quote or after settlement (never a silent pass)", () => {
+  const nowMs = Date.UTC(2026, 6, 15, 16, 0);
+  const base = { spot: 6700, strike: 6705, type: "C" as const, target: 6715, expiry: "2026-07-15", vendorIv: 0.15, minutesToClose: 240, nowMs };
+  assert.equal(projectToTarget({ ...base, bid: null, ask: 10 }), null);
+  assert.equal(projectToTarget({ ...base, bid: 11, ask: 10 }), null);
+  assert.equal(projectToTarget({ ...base, bid: 9, ask: 10, nowMs: Date.UTC(2026, 6, 15, 21, 0) }), null);
 });
