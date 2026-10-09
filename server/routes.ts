@@ -4930,12 +4930,15 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   // MISSION FIX #2 — POST /api/edge/survival
-  // Net-EV waterfall: does the edge survive spread, slippage, theta, and
-  // model uncertainty? body: { gradeScore, bid, ask, targetPct, stopPct, theta?, expectedHoldMin? }
+  // Does the edge survive costs? Evidence = the realized option ledger the
+  // sizer uses (net of the fee); theta repriced when contract inputs are sent.
+  // body: { gradeScore, bid, ask, targetPct, stopPct, expectedHoldMin?, feePerContract?, product?,
+  //         spot?, strike?, type? ("C"|"P"), expiry? (YYYY-MM-DD), symbol?, iv? }
   app.post("/api/edge/survival", async (req, res) => {
     try {
       const { computeEdgeSurvival } = await import("./edgeSurvival");
       const { resolveFeePerContract } = await import("./sizingMath");
+      const { loadOptionLedgerBucket } = await import("./odteGrader");
       const b = req.body ?? {};
       const gradeScore = Number(b.gradeScore);
       const bid = Number(b.bid), ask = Number(b.ask);
@@ -4943,17 +4946,23 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       if (!isFinite(gradeScore) || !isFinite(bid) || !isFinite(ask) || !isFinite(targetPct) || !isFinite(stopPct)) {
         return res.status(400).json({ error: "bad_input", message: "gradeScore, bid, ask, targetPct, stopPct required (numbers)" });
       }
+      const num = (v: any) => (v != null && v !== "" && isFinite(Number(v)) ? Number(v) : null);
+      // Same fee rule as the sizer: explicit fee, else $0.65 for equity/ETF
+      // options, else (index root, no fee) not counted and labelled.
+      const fee = resolveFeePerContract(num(b.feePerContract), typeof b.product === "string" ? b.product : null);
+      let bucket = null;
+      try { bucket = loadOptionLedgerBucket(gradeScore, Date.now(), fee ?? 0); } catch { bucket = null; }
       res.json(computeEdgeSurvival({
         gradeScore, bid, ask, targetPct, stopPct,
-        theta: b.theta != null ? Number(b.theta) : null,
-        expectedHoldMin: b.expectedHoldMin != null ? Number(b.expectedHoldMin) : undefined,
-        // Same fee rule as the sizer: explicit fee, else $0.65 for equity/ETF
-        // options, else (index root, no fee) not counted and labelled.
-        feePerContract: resolveFeePerContract(
-          b.feePerContract != null && b.feePerContract !== "" && isFinite(Number(b.feePerContract)) ? Number(b.feePerContract) : null,
-          typeof b.product === "string" ? b.product : null,
-        ),
-      }));
+        theta: num(b.theta),
+        expectedHoldMin: num(b.expectedHoldMin) ?? undefined,
+        feePerContract: fee,
+        spot: num(b.spot), strike: num(b.strike),
+        type: b.type === "C" || b.type === "P" ? b.type : null,
+        expiry: typeof b.expiry === "string" ? b.expiry.slice(0, 10) : null,
+        symbol: typeof b.symbol === "string" ? b.symbol : null,
+        iv: num(b.iv),
+      }, bucket));
     } catch (e: any) {
       res.status(500).json({ error: "survival_failed", message: e?.message ?? String(e) });
     }

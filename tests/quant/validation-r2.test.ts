@@ -260,3 +260,91 @@ test("saved spx_minute_bars are read in either writer's layout (real SQLite)", (
   assert.equal(merged.length, 1);
   assert.equal(merged[0].close, 2);
 });
+
+// ─── Item 5: edge survival on the realized ledger ───────────────────────────
+
+import { computeEdgeSurvival, repricedThetaOverHold } from "../../server/edgeSurvival";
+import { kellyFromLedger, summarizeOptionReturns } from "../../server/validationMath";
+
+const survIn = { gradeScore: 86, bid: 9.8, ask: 10.0, targetPct: 50, stopPct: 20, expectedHoldMin: 45 };
+
+test("edge survival: no ledger evidence is never EXPRESS", () => {
+  assert.equal(computeEdgeSurvival(survIn, null).verdict, "INSUFFICIENT_EVIDENCE");
+  const empty = summarizeOptionReturns("85-89", []);
+  const r = computeEdgeSurvival(survIn, empty);
+  assert.equal(r.verdict, "INSUFFICIENT_EVIDENCE");
+  assert.equal(r.pSource, "no_evidence");
+});
+
+test("edge survival: a losing ledger stands down; a thin winning ledger is insufficient (sizer also 0)", () => {
+  // 3 wins of +40%, 7 losses of -20%: mean = 0.3 x 0.4 - 0.7 x 0.2 = -0.02
+  const losing = summarizeOptionReturns("85-89", [0.4, 0.4, 0.4, -0.2, -0.2, -0.2, -0.2, -0.2, -0.2, -0.2]);
+  const a = computeEdgeSurvival(survIn, losing);
+  assert.equal(a.verdict, "STAND_DOWN");
+  near(a.grossEvPct, -2.0, 1e-9);
+  // 3 wins of +50%, 2 losses of -20%: mean +22%, but the Wilson 95% lower bound of 3/5 is
+  // 23.07% (center 0.55655, half-width 0.32584; Wilson 1927) -> 0.2307 x 0.5 - 0.7693 x 0.2 = -0.038
+  const thin = summarizeOptionReturns("85-89", [0.5, 0.5, 0.5, -0.2, -0.2]);
+  const b = computeEdgeSurvival(survIn, thin);
+  near(b.grossEvPct, 22.0, 1e-9);              // 0.6 x 50 - 0.4 x 20
+  near(b.pUsed, 0.231, 1e-3);                  // Wilson lower bound of 3/5
+  assert.equal(b.verdict, "INSUFFICIENT_EVIDENCE");
+  const k = kellyFromLedger({ bucket: thin, plannedB: 0.5, plannedL: 0.2 });
+  assert.equal(k.fApplied, 0, "the sizer sizes zero on the same evidence");
+  // gross - rows = net (the waterfall adds up)
+  near(b.grossEvPct + b.rows.reduce((s, r) => s + r.pct, 0), b.netEvPct, 0.11);
+});
+
+test("edge survival: strong ledger + repriced theta -> EXPRESS; without contract inputs at most MARGINAL", () => {
+  // 240 wins of +50%, 160 losses of -20% (n = 400 >= 385: point estimate p = 0.6)
+  const rets = [...Array(240).fill(0.5), ...Array(160).fill(-0.2)];
+  const strong = summarizeOptionReturns("85-89", rets);
+  const noContract = computeEdgeSurvival(survIn, strong);
+  near(noContract.netEvPct, 22.0, 1e-9);       // 0.6 x 0.5 - 0.4 x 0.2
+  assert.equal(noContract.verdict, "MARGINAL");
+  assert.equal(noContract.adverseNetEvPct, null);
+  // ATM SPXW call, 12:00 EDT, 240 min to the 16:00 settlement, sigma 15%:
+  // C = S (2N(sigma sqrt(T)/2) - 1) ~ S sigma sqrt(T) / sqrt(2 pi) = 8.567 (chainClock note)
+  const now = Date.UTC(2026, 6, 15, 16, 0, 0);
+  const S = 6700, sig = 0.15, T = 240 / 525_600;
+  const c0 = S * sig * Math.sqrt(T) / Math.sqrt(2 * Math.PI);
+  const full = computeEdgeSurvival({ ...survIn, bid: c0 - 0.05, ask: c0 + 0.05, spot: S, strike: S, type: "C", expiry: "2026-07-15", symbol: "SPXW", nowMs: now }, strong);
+  assert.equal(full.theta.source, "repriced_black_scholes");
+  assert.equal(full.verdict, "EXPRESS");
+  // adverse = 22 - half spread (0.05 / ask) - extra theta (45 -> 67.5 min)
+  const ask = c0 + 0.05;
+  const extra = -S * sig * (Math.sqrt(195 / 525_600) - Math.sqrt(172.5 / 525_600)) / Math.sqrt(2 * Math.PI) / ask * 100;
+  near(full.adverseNetEvPct!, 22 - (0.05 / ask) * 100 + extra, 0.15);
+});
+
+test("repriced theta over the hold (Black-Scholes ATM closed form; settles inside the hold = all extrinsic)", () => {
+  const now = Date.UTC(2026, 6, 15, 16, 0, 0);   // 12:00 EDT
+  const S = 6700, sig = 0.15;
+  const c = (min: number) => S * sig * Math.sqrt(min / 525_600) / Math.sqrt(2 * Math.PI);
+  const r = repricedThetaOverHold({ spot: S, strike: S, type: "C", expiry: "2026-07-15", symbol: "SPXW", bid: c(240) - 0.05, ask: c(240) + 0.05, holdMin: 45, nowMs: now })!;
+  near(r.sigma, sig, 2e-4);
+  near(r.cost, c(195) - c(240), 0.01);          // -0.84 per share: not 45/390 of a day's theta
+  // 15:30 EDT, 45-minute hold passes the 16:00 PM settlement: the whole extrinsic value is lost.
+  const late = Date.UTC(2026, 6, 15, 19, 30, 0);
+  const r2 = repricedThetaOverHold({ spot: S, strike: S, type: "C", expiry: "2026-07-15", symbol: "SPXW", bid: c(30) - 0.02, ask: c(30) + 0.02, holdMin: 45, nowMs: late })!;
+  assert.equal(r2.settlesWithinHold, true);
+  near(r2.cost, -c(30), 0.01);
+  assert.equal(repricedThetaOverHold({ spot: S, strike: S, type: "C", expiry: "bad", bid: 1, ask: 1.1, holdMin: 45, nowMs: now }), null);
+});
+
+test("edge survival never says EXPRESS when the sizer's Kelly is zero (seeded random ledgers)", () => {
+  let seed = 12345;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const now = Date.UTC(2026, 6, 15, 16, 0, 0);
+  for (let k = 0; k < 300; k++) {
+    const n = 1 + Math.floor(rnd() * 500);
+    const pWin = rnd();
+    const rets = Array.from({ length: n }, () => (rnd() < pWin ? 0.1 + rnd() * 1.5 : -(0.05 + rnd() * 0.9)));
+    const bucket = summarizeOptionReturns("85-89", rets);
+    const target = 20 + rnd() * 80, stop = 10 + rnd() * 30;
+    const r = computeEdgeSurvival({ ...survIn, targetPct: target, stopPct: stop, bid: 8.5, ask: 8.6, spot: 6700, strike: 6700, type: "C", expiry: "2026-07-15", symbol: "SPXW", nowMs: now }, bucket);
+    const kelly = kellyFromLedger({ bucket, plannedB: target / 100, plannedL: stop / 100 });
+    if (r.verdict === "EXPRESS") assert.ok(kelly.fApplied > 0, `EXPRESS with Kelly 0 at n=${n}`);
+    if (kelly.fApplied <= 0) assert.notEqual(r.verdict, "EXPRESS");
+  }
+});

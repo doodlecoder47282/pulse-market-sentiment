@@ -32,13 +32,16 @@ interface SizingResult {
 // MISSION FIX #2 — edge survival waterfall (POST /api/edge/survival)
 interface SurvivalRow { label: string; pct: number; note: string }
 interface SurvivalResult {
-  grossEvPct: number;
+  grossEvPct: number;            // realized ledger mean, % of premium
   rows: SurvivalRow[];
   netEvPct: number;
-  adverseNetEvPct: number;
-  verdict: "EXPRESS" | "MARGINAL" | "STAND_DOWN";
+  adverseNetEvPct: number | null; // null: theta not repriced (no contract inputs)
+  stress?: SurvivalRow[];
+  reference?: SurvivalRow[];     // this quote's costs, already inside realized returns
+  verdict: "EXPRESS" | "MARGINAL" | "STAND_DOWN" | "INSUFFICIENT_EVIDENCE";
   pUsed: number;
-  pSource: "fitted" | "prior";
+  pSource: string;
+  evidence?: { bucket: string | null; n: number; wins: number };
   note: string;
 }
 
@@ -108,7 +111,9 @@ export function PositionSizer() {
   const s = survMut.data;
 
   const verdictStyle = (v: SurvivalResult["verdict"]) =>
-    v === "EXPRESS"
+    v === "INSUFFICIENT_EVIDENCE"
+      ? "border-border bg-muted/20 text-muted-foreground"
+      : v === "EXPRESS"
       ? "border-green-500/30 bg-green-500/5 text-green-500"
       : v === "MARGINAL"
         ? "border-amber-500/30 bg-amber-500/5 text-amber-500"
@@ -333,15 +338,17 @@ export function PositionSizer() {
           <div className={`rounded-md border p-3 space-y-2 ${verdictStyle(s.verdict)}`} data-testid="card-edge-survival">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="text-sm font-semibold" data-testid="text-survival-verdict">
-                edge survival: {s.verdict.replace("_", " ")}
+                edge survival: {s.verdict.replace(/_/g, " ")}
               </div>
               <div className="text-xs opacity-90">
-                p(win) {(s.pUsed * 100).toFixed(0)}% ({s.pSource})
+                {s.evidence && s.evidence.n > 0
+                  ? `ledger ${s.evidence.bucket}: ${s.evidence.wins}/${s.evidence.n} wins, p used ${(s.pUsed * 100).toFixed(0)}% (${s.pSource.replace(/_/g, " ")})`
+                  : "no realized ledger evidence"}
               </div>
             </div>
             <div className="space-y-1">
               <div className="flex justify-between text-xs font-mono tabular-nums">
-                <span className="text-foreground">gross EV</span>
+                <span className="text-foreground">realized EV (ledger mean)</span>
                 <span>{s.grossEvPct >= 0 ? "+" : ""}{s.grossEvPct.toFixed(1)}%</span>
               </div>
               {s.rows.map((row, i) => (
@@ -356,8 +363,23 @@ export function PositionSizer() {
               </div>
               <div className="flex justify-between text-xs font-mono tabular-nums text-muted-foreground">
                 <span>adverse scenario</span>
-                <span data-testid="text-adverse-ev">{s.adverseNetEvPct >= 0 ? "+" : ""}{s.adverseNetEvPct.toFixed(1)}%</span>
+                <span data-testid="text-adverse-ev">{s.adverseNetEvPct == null ? "not computed" : `${s.adverseNetEvPct >= 0 ? "+" : ""}${s.adverseNetEvPct.toFixed(1)}%`}</span>
               </div>
+              {(s.stress ?? []).map((row, i) => (
+                <div key={`st-${i}`} className="flex justify-between text-[11px] font-mono tabular-nums text-muted-foreground/80" title={row.note}>
+                  <span>&nbsp;&nbsp;stress: {row.label}</span>
+                  <span>{row.pct.toFixed(1)}%</span>
+                </div>
+              ))}
+              {(s.reference ?? []).length > 0 && (
+                <div className="pt-1 text-[11px] text-muted-foreground/80">this quote's costs (already in realized returns, not deducted again):</div>
+              )}
+              {(s.reference ?? []).map((row, i) => (
+                <div key={`rf-${i}`} className="flex justify-between text-[11px] font-mono tabular-nums text-muted-foreground/80" title={row.note}>
+                  <span>&nbsp;&nbsp;{row.label}</span>
+                  <span>{row.pct.toFixed(1)}%</span>
+                </div>
+              ))}
             </div>
             <p className="text-xs text-muted-foreground leading-snug">{s.note}</p>
           </div>
