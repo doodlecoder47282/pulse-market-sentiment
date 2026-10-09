@@ -6,17 +6,17 @@
 // Ratio convention:
 //   pcr = totalPutVolume / totalCallVolume
 // Zones are NOT fixed cut-offs: each symbol's ratio is z-scored against its
-// own completed Schwab sessions (pcrHistory.ts, review item 4.5); without 20
-// recorded sessions the zone is "insufficient_history".
+// own Schwab history at the same clock time (pcrHistory.ts, review item 4.5,
+// SF-5); without 20 recorded sessions the zone is "insufficient_history".
 //
 // CBOE endpoint: https://cdn.cboe.com/api/global/delayed_quotes/options/{SYMBOL}.json
 // Returns: { data: { options: [{ option: "SPY250509C00500000", volume, open_interest, ... }] } }
 // OCC format: ROOT + YYMMDD + C/P + STRIKE(8 digits) — we parse side from pos[-17].
 
 import { LAST_PRINT_SIDE_NOTE } from "@shared/flowLabels";
-import { etDate, isRegularSessionOpen, isTradingDay, sessionCloseMinutes, sessionCloseMs } from "./exchangeCalendar";
-import { pcrReadFromHistory, type PcrRead, type PcrZone } from "./pcrHistory";
-import { loadPcrHistory, recordPcrSnapshot } from "./pcrHistoryStore";
+import { etDate, isRegularSessionOpen, isTradingDay, sessionCloseMinutes, sessionCloseMs, sessionOpenMs } from "./exchangeCalendar";
+import { pcrReadAtClock, type PcrRead, type PcrZone } from "./pcrHistory";
+import { loadPcrSessions, recordPcrSnapshot, sessionMinuteOf } from "./pcrHistoryStore";
 
 const UA = "Mozilla/5.0 (compatible; PulseDashboard/1.0)";
 
@@ -541,10 +541,12 @@ const PCR_COMBINED_KEY = "__COMBINED";
 
 export function attachPcrHistory(resp: FlowResponse, nowMs: number = Date.now()): FlowResponse {
   const today = etDate(nowMs);
+  // Minute of today's session; outside the session the full-day value is compared.
+  const at = sessionMinuteOf(nowMs);
+  const minute = at && at.date === today ? at.minute : 24 * 60;
   const readFor = (key: string, putVol: number, callVol: number, observed: boolean): PcrRead => {
     if (observed) recordPcrSnapshot({ symbol: key, putVol, callVol, provider: resp.provider, capturedAtMs: nowMs });
-    const hist = loadPcrHistory(key, today);
-    return pcrReadFromHistory(observed ? { putVol, callVol } : null, hist, { today });
+    return pcrReadAtClock(observed ? { putVol, callVol } : null, minute, loadPcrSessions(key, today), { today });
   };
   for (const t of [...resp.indexGroup, ...resp.mag7Group]) {
     const observed = t.putVol + t.callVol > 0 && t.pcrVolume != null;
@@ -564,10 +566,9 @@ export function attachPcrHistory(resp: FlowResponse, nowMs: number = Date.now())
   return resp;
 }
 
-// The day's full-session ratio must be captured in the last minutes of the
-// session even when nobody has the panel open: a deterministic timer (no AI)
-// rebuilds the snapshot every 5 minutes from 10 minutes before to 15 minutes
-// after the close on trading days.
+// Every 30-minute bucket must be captured even when nobody has the panel
+// open: a deterministic timer (no AI) rebuilds the snapshot every 10 minutes
+// from the open to 15 minutes after the close on trading days.
 let pcrRecorder: ReturnType<typeof setInterval> | null = null;
 function ensurePcrCloseRecorder(): void {
   if (pcrRecorder) return;
@@ -575,9 +576,10 @@ function ensurePcrCloseRecorder(): void {
     const now = Date.now();
     const d = etDate(now);
     const close = isTradingDay(d) ? sessionCloseMs(d) : null;
-    if (close == null || now < close - 10 * 60_000 || now > close + 15 * 60_000) return;
-    buildFlowSnapshot().catch((e: any) => console.warn(`[flow] close P/C record failed: ${e?.message ?? e}`));
-  }, 5 * 60_000);
+    const open = close != null ? sessionOpenMs(d) : null;
+    if (close == null || open == null || now < open || now > close + 15 * 60_000) return;
+    buildFlowSnapshot().catch((e: any) => console.warn(`[flow] P/C record failed: ${e?.message ?? e}`));
+  }, 10 * 60_000);
   (pcrRecorder as any).unref?.();
 }
 

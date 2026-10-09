@@ -814,7 +814,7 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
           </>
         ) : (
           <span className="flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-amber-500" /> P/C ratio{pcrRead?.bullishBelow != null && pcrRead?.bearishAbove != null
-            ? ` · lines = this symbol's ±1 sd over ${pcrRead.n} sessions (partial day vs full days)`
+            ? ` · lines = this symbol's ±1 sd over ${pcrRead.n} sessions at the same clock time`
             : ` · no zone lines: ${pcrRead?.reason ?? "symbol history unavailable"}`}</span>
         )}
       </div>
@@ -1009,7 +1009,7 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
             <div className="flex items-center gap-1"><span className="h-1.5 w-3 rounded-sm bg-emerald-500" /> z ≤ −1 call-heavy for symbol</div>
             <div className="flex items-center gap-1"><span className="h-1.5 w-3 rounded-sm bg-amber-500" /> |z| &lt; 1 normal for symbol</div>
             <div className="flex items-center gap-1"><span className="h-1.5 w-3 rounded-sm bg-rose-500" /> z ≥ +1 put-heavy for symbol</div>
-            <div className="text-muted-foreground/70">vs own last 60 sessions · descriptive, not a forecast</div>
+            <div className="text-muted-foreground/70">vs own last 60 sessions at this clock time · descriptive, not a forecast</div>
           </div>
         </div>
 

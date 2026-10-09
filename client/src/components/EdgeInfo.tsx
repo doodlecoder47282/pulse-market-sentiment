@@ -32,8 +32,8 @@ const INFO: Record<string, InfoEntry> = {
   },
   "pc-flow": {
     title: "Put / Call Flow Ratio",
-    what: "Put volume divided by call volume (total day volume from the Schwab chain), for the index ETFs and the MAG7 names. Each tile is coloured by a z-score against that symbol's own last 60 completed sessions, not a fixed level: index puts are bought as hedges, so SPY normally runs higher than a single stock.",
-    how: "z of +1 or more = put-heavy for this symbol, -1 or less = call-heavy, in between = normal for it. NO BASELINE YET means fewer than 20 completed sessions are recorded for the symbol, so no colour is shown. Today is a partial session compared with full-session history; read it with that in mind.",
+    what: "Put volume divided by call volume (total day volume from the Schwab chain), for the index ETFs and the MAG7 names. Each tile is coloured by a z-score against that symbol's own last 60 sessions at the same time of day, not a fixed level: index puts are bought as hedges, so SPY normally runs higher than a single stock.",
+    how: "z of +1 or more = put-heavy for this symbol, -1 or less = call-heavy, in between = normal for it. NO BASELINE YET means fewer than 20 completed sessions are recorded for the symbol, so no colour is shown. Today's ratio so far is compared with each past session's ratio at the same time of day, since hedging puts tend to trade early.",
     edge: "None claimed. Research that found predictive power in put/call ratios used volume opened by buyers (Pan and Poteshman 2006); this feed only has total volume, which mixes opening, closing and hedging trades. Use the read as context on positioning.",
     risk: "Total volume cannot tell opening from closing trades or hedges from bets. Expiration days and index rebalances distort a single session.",
   },

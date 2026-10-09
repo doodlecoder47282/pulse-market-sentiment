@@ -31,10 +31,9 @@
 // (call-heavy), else "neutral". The thresholds are also reported back in
 // ratio units, exp(mean +- 1 sd), so the chart can draw them.
 //
-// Comparability: today's value is a PARTIAL session while history holds full
-// sessions; the read says so. Only sessions whose last snapshot was taken in
-// the final 10 minutes of the session or after the close are "complete" and
-// enter the history (pcrHistoryStore.ts).
+// Comparability (SF-5): today's partial-session ratio is compared with each
+// history session's ratio at the SAME minute after the open (pcrReadAtClock
+// below), not with full-session ratios.
 
 export const PCR_HISTORY_WINDOW = 60;
 export const PCR_HISTORY_MIN = 20;
@@ -133,4 +132,57 @@ export function pcrReadFromHistory(
 export function isCompleteSessionSnapshot(capturedAtMs: number, sessionCloseMs: number | null, withinMin = 10): boolean {
   if (sessionCloseMs == null || !Number.isFinite(capturedAtMs)) return false;
   return capturedAtMs >= sessionCloseMs - withinMin * 60_000;
+}
+
+// ─── Same clock time (SF-5) ─────────────────────────────────────────────────
+// Cumulative day volume has an intraday pattern (index puts are bought early
+// as hedges, calls chase late), so a 10:30 partial-day ratio is compared with
+// each history session's ratio AT 10:30, not with its full-day ratio. The
+// store keeps the cumulative put/call volume at the last snapshot of every
+// 30-minute bucket of each session; a history session's value at minute m of
+// the session is linearly interpolated between the two stored points that
+// bracket m (from 0 at the open before the first point). A session without a
+// point at or after m is excluded at that clock time, never extrapolated.
+
+export interface PcrPoint {
+  /** Minutes after the 09:30 open (session length or more = after the close). */
+  minute: number;
+  putVol: number;
+  callVol: number;
+}
+
+/** Cumulative put/call volume of one session at `minute`, or null when no stored point brackets it. */
+export function cumulativeAt(points: PcrPoint[], minute: number): { putVol: number; callVol: number } | null {
+  const ps = points.filter((p) => Number.isFinite(p.minute) && p.minute >= 0).sort((a, b) => a.minute - b.minute);
+  if (ps.length === 0 || !(minute >= 0)) return null;
+  let prev: PcrPoint = { minute: 0, putVol: 0, callVol: 0 };
+  for (const p of ps) {
+    if (p.minute >= minute) {
+      const span = p.minute - prev.minute;
+      const w = span > 0 ? (minute - prev.minute) / span : 1;
+      return { putVol: prev.putVol + w * (p.putVol - prev.putVol), callVol: prev.callVol + w * (p.callVol - prev.callVol) };
+    }
+    prev = p;
+  }
+  return null;
+}
+
+export const PCR_CLOCK_METHOD =
+  "z-score of ln((puts+0.5)/(calls+0.5)) vs this symbol's last 60 sessions AT THE SAME CLOCK TIME (cumulative volume interpolated " +
+  "between stored 30-minute points; min 20 sessions); |z| >= 1 colours the tile; total volume, not opening volume";
+
+/** Today's cumulative ratio at `minute` vs each history session's ratio at the same minute. */
+export function pcrReadAtClock(
+  current: { putVol: number; callVol: number } | null,
+  minute: number,
+  sessions: Array<{ date: string; points: PcrPoint[] }>,
+  opts: { today?: string; window?: number; min?: number; zThreshold?: number } = {},
+): PcrRead {
+  const days: PcrDay[] = [];
+  for (const s of sessions) {
+    const v = cumulativeAt(s.points, minute);
+    if (v) days.push({ date: s.date, putVol: v.putVol, callVol: v.callVol });
+  }
+  const r = pcrReadFromHistory(current, days, opts);
+  return { ...r, method: PCR_CLOCK_METHOD };
 }
