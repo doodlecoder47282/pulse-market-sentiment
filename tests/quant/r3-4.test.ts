@@ -8,7 +8,8 @@ const read = (p: string) => readFileSync(new URL(`../../${p}`, import.meta.url),
 
 test("regime predictor: candidates carry a 0..100 heuristic score, not a probability claim", async () => {
   const { predictTransition } = await import("../../server/regimePredictor");
-  const out: any = predictTransition({ audit: { dfi: 1.2, gammaZone: "positive" } } as any);
+  // Round 4: models emits y+ / y- / y?; anything else reads as gamma unknown.
+  const out: any = predictTransition({ audit: { dfi: 1.2, gammaZone: "y+" } } as any);
   assert.equal(out.scoreKind, "heuristic_softmax_weight");
   let sum = 0;
   for (const c of out.candidates) {
