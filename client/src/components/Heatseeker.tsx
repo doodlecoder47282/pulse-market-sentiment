@@ -126,6 +126,20 @@ interface HeatseekerData {
     /** Secondary, legacy: cumulative-by-strike sign change (not a flip level). */
     zeroGammaCumulative?: number | null;
     zeroGammaMethod?: "repriced-profile";
+    /** Net GEX over the displayed strike window (netGex is the full expiry). */
+    netGexWindow?: number;
+    netGexScope?: "full-expiry-repriced";
+    gexAtSpotRepriced?: number | null;
+    exposureConvention?: string;
+  };
+  /** What the flip was computed from (weight, expiry universe, dealer convention). */
+  flipInputs?: { weight: string; universe: string; expiries: string[]; label: string };
+  /** Net GEX and flip under alternative dealer-positioning assumptions. */
+  dealerSensitivity?: {
+    assumption: string;
+    conventions: { id: string; label: string; gexAtSpot: number | null; zeroGamma: number | null }[];
+    regimeSignRobust: boolean | null;
+    note: string;
   };
   availableExpiries?: { date: string; dte: number }[];
   requestedExpiry?: string | null;
@@ -799,7 +813,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-              <Stat label="Net GEX" value={fmtM(totals.netGex)} positive={totals.netGex >= 0} />
+              <Stat label="Net GEX (expiry, $/1%)" value={fmtM(totals.netGex)} positive={totals.netGex >= 0} />
               <Stat label="Net DEX" value={fmtM(totals.netDex)} positive={totals.netDex >= 0} />
               <Stat label="Net Vanna" value={fmtM(totals.netVanna)} positive={totals.netVanna >= 0} />
               <Stat label="Net Charm" value={fmtM(totals.netCharm)} positive={totals.netCharm >= 0} />
@@ -846,6 +860,32 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
               </Button>
             </div>
           </div>
+          {(data.flipInputs || data.dealerSensitivity) && (
+            <div className="mt-3 space-y-1 border-t border-border/30 pt-2 text-[11px] text-muted-foreground" data-testid="heatseeker-flip-inputs">
+              {data.flipInputs && (
+                <div>
+                  Flip and Net GEX inputs: {data.flipInputs.label}. Net GEX covers every strike of this expiry
+                  {totals.netGexWindow != null ? ` (displayed window: ${fmtM(totals.netGexWindow)})` : ""}.
+                  Signals uses all expiries 0-45 DTE, so its flip can differ.
+                </div>
+              )}
+              {data.dealerSensitivity && data.dealerSensitivity.conventions.length > 0 && (
+                <div>
+                  Dealer-positioning assumption (Schwab has no open/close or customer-type data):{" "}
+                  {data.dealerSensitivity.conventions.map((c, i) => (
+                    <span key={c.id}>
+                      {i > 0 ? " | " : ""}
+                      {c.label}: net GEX {c.gexAtSpot != null ? fmtM(c.gexAtSpot) : "n/a"}, flip {c.zeroGamma != null ? c.zeroGamma.toFixed(0) : "none in range"}
+                    </span>
+                  ))}
+                  .{" "}
+                  <span className={data.dealerSensitivity.regimeSignRobust === false ? "text-amber-400" : ""}>
+                    {data.dealerSensitivity.note}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 
