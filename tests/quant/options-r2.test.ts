@@ -301,3 +301,61 @@ test("stableTail: modified z-score uses Phi^-1(0.75) = 0.6745; percentile compar
   assert.equal(flat.dataState, "degenerate");
   assert.ok(Number.isNaN(flat.tailZ));
 });
+
+// ─── Item 10: reflection-principle touch probability ───────────────────────
+
+import { rateAdjustedTouchProb, reflectionTouchProb, scenarioOddsFromCdf, touchSigmaFromRate } from "../../server/impliedScenario";
+
+test("touch probability: reflection formula vs seeded Brownian Monte Carlo (Broadie-Glasserman-Kou continuity correction)", () => {
+  // P(max_{t<=1} W_t >= d) = 2(1 - N(d)) (Shreve II, 3.7.3). A path monitored
+  // at m steps touches less often; Broadie, Glasserman & Kou (1997), "A
+  // continuity correction for discrete barrier options", Math. Finance 7(4):
+  // discrete ~ continuous with the barrier shifted out by 0.5826 sigma sqrt(dt).
+  const u = rng(424242), z = gauss(u);
+  const m = 500, paths = 40_000, dt = 1 / m, sq = Math.sqrt(dt);
+  const ds = [0.5, 1.0, 2.0];
+  const hits = ds.map(() => 0);
+  for (let p = 0; p < paths; p++) {
+    let w = 0, mx = 0;
+    for (let i = 0; i < m; i++) { w += z() * sq; if (w > mx) mx = w; }
+    ds.forEach((d, k) => { if (mx >= d) hits[k]++; });
+  }
+  ds.forEach((d, k) => {
+    const mc = hits[k] / paths;
+    const se = Math.sqrt(mc * (1 - mc) / paths);
+    const corrected = reflectionTouchProb(d + 0.5826 * sq, 1);
+    assert.ok(Math.abs(mc - corrected) < 4 * se + 1e-3, `d=${d}: MC ${mc} vs ${corrected} (se ${se})`);
+    // and the continuous formula is the upper limit
+    assert.ok(reflectionTouchProb(d, 1) >= mc - 4 * se);
+  });
+  near(reflectionTouchProb(1, 1), 2 * (1 - 0.841345), 1e-6, "2(1 - N(1)) = 0.31731");
+});
+
+test("target derivation touch odds: equal the walk-forward rate at the median distance, normal-tail fall-off beyond", () => {
+  // 50% base rate at a 40 bps median distance: s = 40 / N^-1(0.75) = 40 / 0.67449 = 59.30 bps.
+  near(touchSigmaFromRate(0.5, 40)!, 40 / 0.6744898, 1e-3, "fitted s");
+  near(rateAdjustedTouchProb(0.5, 40, 40), 0.5, 1e-6, "rate reproduced at the median");
+  // Three times further: 2(1 - N(3 x 0.67449)) = 0.04302 (the old 1/distance rule gave 0.1667).
+  near(rateAdjustedTouchProb(0.5, 40, 120), 0.04302, 1e-4, "3x median distance");
+  assert.ok(rateAdjustedTouchProb(0.5, 40, 20) > 0.5 && rateAdjustedTouchProb(0.5, 40, 20) < 1);
+  assert.equal(rateAdjustedTouchProb(0, 40, 10), 0);
+});
+
+// ─── Item 13: touch odds of a target already crossed ───────────────────────
+
+test("scenario odds: a bull target at or below spot has touch probability 1, not 2 x P(close above)", () => {
+  // Normal CDF around 100 with sd 2 as the implied distribution.
+  const cdf = (K: number) => 0.5 * (1 + erf((K - 100) / (2 * Math.SQRT2)));
+  const o = scenarioOddsFromCdf(cdf, 100, { bull: 99.5, base: 98, bear: 95 })!;
+  assert.equal(o.pTouchBull, 1);
+  const o2 = scenarioOddsFromCdf(cdf, 100, { bull: 104, base: 100, bear: 96 })!;
+  near(o2.pCloseBeyondBull, 1 - cdf(104), 1e-12, "P(close beyond)");
+  near(o2.pTouchBull, 2 * (1 - cdf(104)), 1e-12, "reflection");
+});
+
+/** erf via A&S 7.1.26 (|error| < 1.5e-7). */
+function erf(x: number): number {
+  const s = x < 0 ? -1 : 1; const a = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * a);
+  return s * (1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-a * a));
+}

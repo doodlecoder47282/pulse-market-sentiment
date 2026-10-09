@@ -9,14 +9,25 @@
 // Approach: instead of arbitrary point offsets, targets come from the
 // walk-forward backtest (1,162 dates / 51k observations, stride-sampled so
 // forward windows never overlap). Each level kind carries an honest daily
-// touch rate and a median tag distance. A level's touch probability is
-// distance-dependent, so we adjust the base rate by how far the level sits
-// today vs its historical median distance:
+// touch rate and a median tag distance. A level's touch probability depends
+// on its distance through the reflection principle for driftless Brownian
+// motion (Shreve, Stochastic Calculus for Finance II, sec. 3.7.3):
 //
-//   adjProb = wfTouchRate * clamp(medianDistBps / todayDistBps, 0.25, 2.5)
+//   P(touch at distance d) = 2 (1 - N(d / s)),
 //
-// This is a first-order adjustment, not a fitted model — disclosed in the
-// basis string of every target. Levels with no walk-forward table entry
+// with s, the effective 1-day move for that level kind, chosen so the formula
+// reproduces the walk-forward rate at the kind's median distance:
+//
+//   s = medianDistBps / N^-1(1 - wfTouchRate / 2)    (impliedScenario.ts)
+//
+// so adjProb = wfTouchRate exactly at the median distance and falls off as a
+// normal tail away from it. This replaces the old 1/distance scaling
+// (wfTouchRate x clamp(median/today, 0.25, 2.5)), which gave far levels too
+// much probability: at 3x the median distance with a 50% base rate the old
+// rule said 16.7%, the barrier formula says 4.3%. Approximations, disclosed in
+// the basis string: one s per kind fitted at the median (not over the whole
+// distance distribution), no drift, no intraday vol clustering; still an
+// ordering aid, not calibrated odds. Levels with no walk-forward table entry
 // (vanna/zomma/charm/negGamma third-order strikes) are EXCLUDED from
 // derivation rather than given invented probabilities, and listed in caveats.
 //
@@ -28,6 +39,7 @@
 // Read-only, pure w.r.t. inputs; walk-forward summary is cached upstream.
 
 import { getWalkForwardSummary, type LevelKind } from "./backtest";
+import { rateAdjustedTouchProb } from "./impliedScenario";
 
 export interface CandidateLevel {
   kind: string;   // caller-facing kind (callWall, hvl, upside, ...)
@@ -85,12 +97,15 @@ const T1_MIN_PROB = 0.30;
 const T2_MIN_PROB = 0.10;
 const MAX_DIST_BPS = 400;        // beyond ~4% on the day is fantasy for 0-1d targets
 const MIN_DIST_BPS = 3;          // sitting on top of spot is not a target
-const RATIO_CLAMP_LO = 0.25;     // distance-adjustment bounds
-const RATIO_CLAMP_HI = 2.5;
 const PROB_CAP = 0.95;
 
 const METHOD =
-  "walk-forward daily touch rates (stride-sampled, non-overlapping) with first-order distance adjustment: adjProb = wfTouchRate * clamp(medianDistBps/todayDistBps, 0.25, 2.5)";
+  "walk-forward daily touch rates (stride-sampled, non-overlapping), distance-adjusted by the reflection principle: adjProb = 2(1 - N(todayDistBps / s)), s = medianDistBps / N^-1(1 - wfTouchRate/2)";
+
+/** Distance-adjusted touch probability for one level kind, capped. */
+function adjustedTouchProb(wfTouchRate: number, medDistBps: number, distBps: number): number {
+  return Math.min(PROB_CAP, rateAdjustedTouchProb(wfTouchRate, Math.max(medDistBps, 1), distBps));
+}
 
 export function deriveTargets(args: {
   spot: number;
@@ -156,8 +171,7 @@ export function deriveTargets(args: {
     if (seenPrices.has(key)) continue;
     seenPrices.add(key);
 
-    const ratio = Math.min(RATIO_CLAMP_HI, Math.max(RATIO_CLAMP_LO, stats.medDistBps / Math.max(distBps, 1)));
-    const adjProb = Math.min(PROB_CAP, stats.touchRate * ratio);
+    const adjProb = adjustedTouchProb(stats.touchRate, stats.medDistBps, distBps);
 
     cands.push({
       name: lv.name, kind: lv.kind, wfKind, price: lv.price,
@@ -166,7 +180,7 @@ export function deriveTargets(args: {
       wfTouchRate: Number(stats.touchRate.toFixed(3)),
       wfMedianDistBps: Number(stats.medDistBps.toFixed(1)),
       adjProb: Number(adjProb.toFixed(3)),
-      basis: `${wfKind} wf touch ${(stats.touchRate * 100).toFixed(1)}% @ median ${stats.medDistBps.toFixed(0)}bps, today ${distBps.toFixed(0)}bps → adj ${(adjProb * 100).toFixed(0)}%`,
+      basis: `${wfKind} wf touch ${(stats.touchRate * 100).toFixed(1)}% @ median ${stats.medDistBps.toFixed(0)}bps, today ${distBps.toFixed(0)}bps → barrier-adjusted ${(adjProb * 100).toFixed(0)}%`,
     });
   }
 
@@ -205,7 +219,7 @@ export function deriveTargets(args: {
     if (!t2) caveats.push("no viable T2 beyond T1 — single-target setup");
   }
 
-  caveats.push("adjusted probabilities are first-order distance scaling of unconditional rates, not a fitted conditional model — treat as ordering, not odds");
+  caveats.push("adjusted probabilities scale unconditional walk-forward rates by the reflection-principle barrier formula fitted at each kind's median distance; not a fitted conditional model and not calibrated — treat as ordering, not odds");
 
   return {
     side, spot, t1, t2,

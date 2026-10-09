@@ -72,6 +72,10 @@ interface ModelPath {
   probability: number;
   probabilitySource?: "risk-neutral-implied" | "hand-set-heuristic";
   probabilityEvent?: string;
+  /** Risk-neutral P(close at or beyond the target) (bull/bear, implied only). */
+  pCloseBeyond?: number | null;
+  /** ~ min(1, 2 x pCloseBeyond), reflection principle; 1 if already crossed. */
+  pTouch?: number | null;
   target: number;
   waypoints: ModelPathWaypoint[];
   color: "base" | "bull" | "bear";
@@ -472,10 +476,11 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
 
       {/* Scenario projections */}
       <RailDivider label={a.scenarioProbSource === "risk-neutral-implied" ? "scenarios (risk-neutral)" : "scenarios (heuristic)"} />
-      {/* Path odds (path targets); audit.scenarioProb is the graded-event set */}
-      <RailRow label={`BULL ${pathPct(horizon, "bull", probs.bull)}%`} value={bullRange} color={COLORS.bull} />
-      <RailRow label={`BASE ${pathPct(horizon, "base", probs.base)}%`} value={baseRange} color={COLORS.base} />
-      <RailRow label={`BEAR ${pathPct(horizon, "bear", probs.bear)}%`} value={bearRange} color={COLORS.bear} />
+      {/* Region odds (close inside the region around each path target), plus
+          the target-specific odds: P(close at or beyond) and P(touch). */}
+      <RailRow label={`BULL region ${pathPct(horizon, "bull", probs.bull)}%`} value={bullRange} sub={targetOddsText(horizon, "bull")} color={COLORS.bull} />
+      <RailRow label={`BASE region ${pathPct(horizon, "base", probs.base)}%`} value={baseRange} color={COLORS.base} />
+      <RailRow label={`BEAR region ${pathPct(horizon, "bear", probs.bear)}%`} value={bearRange} sub={targetOddsText(horizon, "bear")} color={COLORS.bear} />
 
       {/* Downside */}
       <RailDivider label="support" />
@@ -690,6 +695,18 @@ function pathPct(h: ModelHorizon, kind: "bull" | "base" | "bear", fallback: numb
   return p && p.probabilitySource === "risk-neutral-implied" ? Math.round(p.probability * 100) : fallback;
 }
 
+// Target-specific odds next to the region odds: P(close at or beyond the
+// path target) and P(touch it before the horizon), both risk-neutral and
+// only when the implied distribution was usable. Region odds answer "where
+// does it close", these answer "does it get there".
+function targetOddsText(h: ModelHorizon, kind: "bull" | "bear"): string | undefined {
+  const p = h.paths.find((x) => x.kind === kind);
+  if (!p || p.probabilitySource !== "risk-neutral-implied" || p.pCloseBeyond == null) return undefined;
+  const cmp = kind === "bull" ? ">=" : "<=";
+  const touch = p.pTouch != null ? ` · touch ${Math.round(p.pTouch * 100)}%` : "";
+  return `close ${cmp} tgt ${Math.round(p.pCloseBeyond * 100)}%${touch}`;
+}
+
 function scenarioSourceLabel(src: ModelAudit["scenarioProbSource"]): string {
   return src === "risk-neutral-implied" ? "risk-neutral, options-implied" : "heuristic, hand-set";
 }
@@ -715,7 +732,7 @@ function ScenarioLegend({ horizon }: { horizon: ModelHorizon }) {
       </div>
       {bullPath && (
         <div className="text-green-400">
-          BULL {pathPct(horizon, "bull", probs.bull)}% → Clear {zg ? `${fmtK(zg)} Gamma Zero` : "resistance"}
+          BULL region {pathPct(horizon, "bull", probs.bull)}%{targetOddsText(horizon, "bull") ? ` (${targetOddsText(horizon, "bull")})` : ""} → Clear {zg ? `${fmtK(zg)} Gamma Zero` : "resistance"}
           {charmZ ? ` + ${fmtK(charmZ)} Charm Zero` : ""}
           {cw ? ` → ${fmtK(cw)} Call Wall` : ""}
           {" → CLOSE "}
@@ -724,14 +741,14 @@ function ScenarioLegend({ horizon }: { horizon: ModelHorizon }) {
       )}
       {basePath && (
         <div className="text-cyan-400">
-          BASE {pathPct(horizon, "base", probs.base)}% → Chop {fmtK(spot * 0.997)}-{fmtK(spot * 1.003)} → Gamma Zero Ceiling
+          BASE region {pathPct(horizon, "base", probs.base)}% → Chop {fmtK(spot * 0.997)}-{fmtK(spot * 1.003)} → Gamma Zero Ceiling
           {" → CLOSE "}
           <span className="text-cyan-300">{fmtK(basePath.target * 0.999)}-{fmtK(basePath.target * 1.001)}</span>
         </div>
       )}
       {bearPath && (
         <div className="text-red-400">
-          BEAR {pathPct(horizon, "bear", probs.bear)}% → Break {pw ? `${fmtK(pw)} Put Wall` : "support"} → Vol expansion
+          BEAR region {pathPct(horizon, "bear", probs.bear)}%{targetOddsText(horizon, "bear") ? ` (${targetOddsText(horizon, "bear")})` : ""} → Break {pw ? `${fmtK(pw)} Put Wall` : "support"} → Vol expansion
           {" → CLOSE "}
           <span className="text-red-300">{fmtK(bearPath.target * 0.999)}-{fmtK(bearPath.target * 1.001)}</span>
         </div>
@@ -1119,7 +1136,7 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
                   dot={{ r: 4, fill: stroke, strokeWidth: 0 }}
                   activeDot={{ r: 6, fill: stroke, strokeWidth: 2, stroke: "#fff" }}
                   isAnimationActive={false}
-                  name={`${p.name} ${prob}%`}
+                  name={`${p.name} region ${prob}%`}
                 >
                   {showPrints && (
                     <LabelList
