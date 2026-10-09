@@ -416,11 +416,11 @@ export interface Snapshot_Public {
   fearGreed: { value: number; label: string; source: string; asOf?: string | null; stale?: boolean } | null;
   aaii: { bullish: number; bearish: number; neutral: number; asOf: string } | null;
   composite: Composite;
-  headlines: { title: string; url: string; source: string; publishedAt?: string }[];
+  headlines: { title: string; url: string; source: string; publishedAt?: string; tier?: string; tierLabel?: string }[];
   /** Headline feed state: "unavailable" when no RSS source answered (Schwab has no news API) */
   headlinesFeed?: {
     status: "ok" | "partial" | "empty" | "unavailable";
-    sources: Array<{ name: string; state: "ok" | "empty" | "failed"; items: number; newest: string | null }>;
+    sources: Array<{ name: string; state: "ok" | "empty" | "failed" | "stale"; items: number; newest: string | null; tier?: string }>;
     asOf: number;
     maxAgeHours: number;
     note: string;
