@@ -35,12 +35,27 @@ export interface OfiApiBar {
   ts: number;
   /** null when the minute candle carried no volume (gap, not zero). */
   signedVolume: number | null;
-  cumulative: number;
+  /** Session-cumulative signed volume; null from the first bar without volume onward (an unknown term makes every later sum unknown). */
+  cumulative: number | null;
   volumeMissing: boolean;
 }
 
 export const OFI_TREND_WINDOW = 15;
 export const OFI_TAIL_BARS = 60;
+/**
+ * Max age of the last minute bar (bar start time) before the tape counts as
+ * stale during the regular session: a completed bar is ~1-2 min old when
+ * Schwab publishes it, so 5 min means at least two bars are missing.
+ * Operating limit (heuristic), shared by the panel and the trade environment.
+ */
+export const OFI_MAX_AGE_MS = 5 * 60_000;
+
+/** During the session, the tape is stale when its last bar is older than OFI_MAX_AGE_MS (or there is none). Outside the session: not judged (false). */
+export function ofiTapeStale(bars: Array<{ ts: number }>, nowMs: number, sessionOpen: boolean): boolean {
+  if (!sessionOpen) return false;
+  if (!bars.length) return true;
+  return nowMs - bars[bars.length - 1].ts > OFI_MAX_AGE_MS;
+}
 
 /** True when the last 15 bars all carry volume (the 15m slope is a complete sum). */
 export function ofiTrendWindowComplete(bars: Array<{ volumeMissing?: boolean }>): boolean {
@@ -50,9 +65,12 @@ export function ofiTrendWindowComplete(bars: Array<{ volumeMissing?: boolean }>)
 
 export function ofiApiPayload(trend: OfiTrendLike, nowMs: number) {
   const all = trend.bars;
-  const tail: OfiApiBar[] = all.slice(-OFI_TAIL_BARS).map((b) => {
+  const firstGap = all.findIndex((b) => b.volumeMissing === true);
+  const tailStart = Math.max(0, all.length - OFI_TAIL_BARS);
+  const tail: OfiApiBar[] = all.slice(tailStart).map((b, i) => {
     const missing = b.volumeMissing === true;
-    return { ts: b.ts, signedVolume: missing ? null : b.signedVolume, cumulative: b.cumulative, volumeMissing: missing };
+    const afterGap = firstGap >= 0 && tailStart + i >= firstGap;
+    return { ts: b.ts, signedVolume: missing ? null : b.signedVolume, cumulative: afterGap ? null : b.cumulative, volumeMissing: missing };
   });
   const window = all.slice(-OFI_TREND_WINDOW);
   const trendWindowMissingBars = window.filter((b) => b.volumeMissing === true).length;
@@ -70,7 +88,9 @@ export function ofiApiPayload(trend: OfiTrendLike, nowMs: number) {
 
   return {
     bars: tail,
-    cumulativeNow: trend.cumulativeNow,
+    // Unknown once any bar lacked volume (not "the sum of the known bars").
+    cumulativeNow: firstGap >= 0 ? null : trend.cumulativeNow,
+    cumulativeNote: firstGap >= 0 ? `cumulative unknown from ${volumeMissingBars} bar(s) without volume onward` : null,
     slope15m: trend.slope15m,
     slope5m: trend.slope5m,
     trend: trend.trend,

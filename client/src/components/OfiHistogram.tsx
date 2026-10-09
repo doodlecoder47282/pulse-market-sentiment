@@ -26,19 +26,22 @@ import {
 } from "recharts";
 import { TrendingUp, TrendingDown, Activity } from "lucide-react";
 import DataStateChip from "@/components/DataStateChip";
+import { ageFromAsOf, effectiveDataState } from "@shared/dataState";
 import type { ReactNode } from "react";
 
 type OfiBar = {
   ts: number;
   /** null = the minute candle had no volume (a gap, not zero flow). */
   signedVolume: number | null;
-  cumulative: number;
+  /** null from the first bar without volume onward (unknown, not zero). */
+  cumulative: number | null;
   volumeMissing?: boolean;
 };
 
 type OfiResponse = {
   bars: OfiBar[];
-  cumulativeNow: number;
+  cumulativeNow: number | null;
+  cumulativeNote?: string | null;
   slope15m: number;
   slope5m: number;
   trend: "BULLISH" | "BEARISH" | "NEUTRAL";
@@ -53,8 +56,8 @@ type OfiResponse = {
   capturedAt: number;
 };
 
-// Schwab minute bars: older than 3 minutes during the session is stale.
-const OFI_MAX_AGE_MS = 3 * 60_000;
+// Last minute bar older than 5 minutes = stale (server/ofiPayload.ts OFI_MAX_AGE_MS).
+const OFI_MAX_AGE_MS = 5 * 60_000;
 const MIN_BARS = 5;
 
 function fmtVol(v: number): string {
@@ -124,7 +127,9 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
   // Observed zero: every bar has real volume and nets to zero signed flow.
   // That is a reading, not a dead feed, and is labelled as such.
   const observedZero = data.bars.every(b => !b.volumeMissing && b.signedVolume === 0) && data.cumulativeNow === 0;
-  const trendComplete = data.trendComplete === true && !observedZero;
+  // A stale tape (last bar past the max age) never carries a trend badge.
+  const tapeStale = effectiveDataState(state, ageFromAsOf(data.asOfMs ?? null, Date.now()), OFI_MAX_AGE_MS) === "stale";
+  const trendComplete = data.trendComplete === true && !observedZero && !tapeStale;
   const missingInWindow = data.trendWindowMissingBars ?? 0;
   const trendColor =
     data.trend === "BULLISH" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
@@ -177,7 +182,9 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
           </>
         ) : (
           <span className="ml-auto font-mono text-[9px] text-muted-foreground" data-testid="ofi-trend-withheld">
-            {observedZero
+            {tapeStale
+              ? "trend withheld: tape stale"
+              : observedZero
               ? "no trend: signed volume nets to 0"
               : missingInWindow > 0
                 ? `trend withheld: ${missingInWindow} of last 15 bars missing volume`
@@ -195,7 +202,7 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
             contentStyle={{ background: "rgba(15,15,20,0.95)", border: "1px solid #333", fontSize: 10 }}
             formatter={(value: any, name: string) => {
               if (name === "signed") return value == null ? ["no volume (gap)", "signed tick vol"] : [fmtVol(value), "signed tick vol"];
-              if (name === "cum") return [fmtVol(value), "cumulative"];
+              if (name === "cum") return value == null ? ["unknown (after a bar without volume)", "cumulative"] : [fmtVol(value), "cumulative"];
               return [value, name];
             }}
           />
@@ -215,6 +222,11 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
           />
         </ComposedChart>
       </ResponsiveContainer>
+      {data.cumulativeNote ? (
+        <div className="mt-1 font-mono text-[9px] text-amber-300/80" data-testid="ofi-cumulative-note">
+          cyan line stops at the first bar without volume: {data.cumulativeNote}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -33,7 +33,8 @@ import { sqlite } from "./storage";
 import { postToDiscord } from "./discord";
 import { etDate as calEtDate, sessionCloseMinutes as calCloseMin } from "./exchangeCalendar";
 import { internalJson } from "./internalApi";
-import { ofiTrendWindowComplete } from "./ofiPayload";
+import { ofiTrendWindowComplete, ofiTapeStale } from "./ofiPayload";
+import { isRegularSessionOpen } from "./exchangeCalendar";
 
 export type TradeEnvState = "STAND_DOWN" | "CHOP" | "NORMAL" | "LOADED" | "STRIKE";
 
@@ -219,6 +220,8 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
     const ofi = await computeOfiTrend();
     if (ofi.dataState === "unavailable") {
       ofiNote = "signed tick volume unavailable (no SPY minute bars) — not scored, not a flat read.";
+    } else if (ofiTapeStale(ofi.bars, Date.now(), isRegularSessionOpen())) {
+      ofiNote = "signed tick volume stale (last SPY minute bar older than 5 min in the session) — not scored.";
     } else if (!ofiTrendWindowComplete(ofi.bars)) {
       // dataState "partial" (or < 15 bars): the 15m slope is an incomplete sum.
       ofiNote = "signed tick volume incomplete (fewer than 15 bars, or bars missing volume in the 15-bar window) — not scored.";

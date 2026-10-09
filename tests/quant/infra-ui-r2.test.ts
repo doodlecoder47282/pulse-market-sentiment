@@ -549,3 +549,44 @@ test("token docs: key is documented as base64 (not hex) with the openssl base64 
     assert.match(src, /openssl rand -base64 32/, f);
   }
 });
+
+test("ofi fix round: cumulative is null from the first gap onward; stale tape refuses a trend", async () => {
+  const { ofiTapeStale, OFI_MAX_AGE_MS } = await import("../../server/ofiPayload");
+  const b = bars(30, [20]);
+  const p = ofiApiPayload(trend(b, "partial"), Date.now());
+  assert.equal(p.bars[19].cumulative, b[19].cumulative, "before the gap: known");
+  assert.equal(p.bars[20].cumulative, null);
+  assert.equal(p.bars[29].cumulative, null, "an unknown term makes every later sum unknown");
+  assert.equal(p.cumulativeNow, null);
+  assert.match(p.cumulativeNote ?? "", /cumulative unknown/);
+  const ok = ofiApiPayload(trend(bars(30), "ok"), Date.now());
+  assert.equal(ok.cumulativeNow, ok.bars[29].cumulative);
+  assert.equal(ok.cumulativeNote, null);
+  // Staleness (regular session only).
+  const t0 = b[29].ts;
+  assert.equal(ofiTapeStale(b, t0 + OFI_MAX_AGE_MS, true), false);
+  assert.equal(ofiTapeStale(b, t0 + OFI_MAX_AGE_MS + 1, true), true);
+  assert.equal(ofiTapeStale([], t0, true), true);
+  assert.equal(ofiTapeStale(b, t0 + 10 * OFI_MAX_AGE_MS, false), false);
+  const { readFileSync } = await import("node:fs");
+  const te = readFileSync(new URL("../../server/tradeEnvironment.ts", import.meta.url), "utf8");
+  assert.match(te, /ofiTapeStale\(ofi\.bars, Date\.now\(\), isRegularSessionOpen\(\)\)/);
+  const panel = readFileSync(new URL("../../client/src/components/OfiHistogram.tsx", import.meta.url), "utf8");
+  assert.match(panel, /!tapeStale/);
+});
+
+test("exit brain fix round: bounded in-process calls, one pass at a time, hard stop from marks only", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../../server/exitBrain.ts", import.meta.url), "utf8");
+  const calls = src.split("\n").filter((l) => l.includes("callInternal(\""));
+  assert.ok(calls.length >= 3);
+  for (const l of calls) assert.match(l, /timeoutMs: (MODELS|QUOTES)_CALL_TIMEOUT_MS/, l);
+  assert.match(src, /const MODELS_CALL_TIMEOUT_MS = 30_000;/);
+  assert.match(src, /const QUOTES_CALL_TIMEOUT_MS = 4_000;/);
+  assert.match(src, /if \(evalInFlight\) \{\s*skippedTicks\+\+;/);
+  assert.match(src, /evalInFlight = false;/);
+  // Sweep runs before the in-flight check and never touches /api/models.
+  const sweep = src.slice(src.indexOf("function hardStopSweep"), src.indexOf("async function evalAll"));
+  assert.ok(!/callInternal|await/.test(sweep));
+  assert.ok(src.indexOf("hardStopSweep(); }") < src.indexOf("if (evalInFlight)"));
+});
