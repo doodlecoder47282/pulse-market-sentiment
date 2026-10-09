@@ -473,3 +473,60 @@ test("0DTE stream policy: only the $SPX chain re-syncs odte / odte_alerts; SPY f
   assert.match(trk, /if \(streamOwnersSyncedBy\(symbol\)\.includes\("odte"\)\) syncArmedStream\(rows\);/);
   assert.match(trk, /alertSpot = null;\n\s*const spy = await getOptionChain\("SPY", 0\);/);
 });
+
+// ── Follow-up 1: adversarial evaluative advice; verdict allow-list ──────────
+const ADVERSARIAL = [
+  "Calls are the better vehicle here, ideally 0DTE strikes near 5800.",
+  "Loading 0DTE calls above 5800 is the move.",
+  "A long position above 5800 is warranted.",
+  "Upside exposure makes sense if 5800 holds.",
+  "The 5750 puts are worth owning into the close.",
+  "Shorts are best covered near 5750.",
+  "Two contracts is the right allocation.",
+  "Expect a pin; positioning for it is sensible.",
+  "Calls above 5800 are the trade.",
+  "Profit-taking near 5820 is prudent.",
+  "Picking up 5800 calls on a dip is attractive.",
+  "Upside calls look cheap and are worth accumulating.",
+  "Premium sellers are rewarded when vol is this high.",
+  "The risk/reward is favorable for longs above 5800.",
+  "This is a high-conviction long.",
+  // own additions
+  "Puts are the smarter hedge into CPI.",
+  "The 5800 strike is the ideal entry.",
+  "Put on a small call spread above 5800.",
+  "Longs should be trimmed near the call wall.",
+  "Owning premium here is justified by the skew.",
+  "Accumulating 0DTE calls is the play.",
+  "Selling the 5750 puts is the best risk/reward.",
+];
+const KEEP = [
+  "Put volume exceeded call volume by 1.4x in the first hour.",
+  "The put wall at 5700 held twice.",
+  "IV is above realized by 1.3x.",
+  "A short squeeze is possible.",
+  "Estimated dealer positioning is short gamma below 5790.",
+  "Spot sits 12 points above the flip at 5790.",
+  "25-delta skew is -3.1, near its 20-day average.",
+  "Call open interest is concentrated at 5800.",
+];
+
+test("edge brief follow-up: evaluative / recommendation phrasings dropped, descriptive kept", () => {
+  for (const c of ADVERSARIAL) {
+    assert.equal(scrubBriefText(c, { strict: true }), REMOVED_NOTE, `strict leaked: ${c}`);
+  }
+  for (const d of KEEP) assert.equal(scrubBriefText(d, { strict: true }), d, `strict dropped: ${d}`);
+});
+
+test("edge brief verdict: strict allow-list of descriptive labels", () => {
+  for (const v of ["CALLS ABOVE 5800", "ACCUMULATE", "SELL PREMIUM", "GO LONG", "BUY THE DIP", "LONG", "load calls", "5800 pin", "fade rallies"]) {
+    assert.equal(scrubVerdict(v), VERDICT_REMOVED, v);
+  }
+  // Every label the deterministic brief can emit passes unchanged.
+  const det = ["insufficient sample", "positive CLV", "negative CLV", "flat CLV", "insufficient data", "IV above RV", "IV below RV",
+    "IV near RV", "above zero-gamma", "below zero-gamma", "puts bid", "calls bid", "balanced", "macro snapshot", "unusual tape",
+    "baseline", "mild", "in-sample positive", "in-sample weak", "mixed", "broad bull agreement", "partial bear agreement",
+    "clean risk-on", "mixed regime", "suspicious rally", "risk-off", "stagflation-flavor", "data only"];
+  for (const v of det) assert.equal(scrubVerdict(v), v, v);
+  assert.match(src("client/src/components/edgelab/EdgeBrief.tsx") + src("client/src/components/edgelab/EdgeBriefing.tsx"), /AI summary of the data \(not advice\)/);
+});

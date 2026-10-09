@@ -38,7 +38,7 @@ export const BRIEF_BANNED: ReadonlyArray<{ kind: string; re: RegExp }> = [
  * mood). "watch" is not here: "watch: X" is a monitoring note, and any order
  * inside it is still caught by BRIEF_BANNED.
  */
-const IMPERATIVE_START = /^(?:[-*+>"'(\[]\s*)*(buy|sell|short|go|take|use|risk|consider|load|add|trim|cut|size|hedge|fade|enter|exit|stop|set|place|avoid|wait|play|grab|scale|close|open|roll|lean|target|bet|put|keep|stay|let'?s|try|aim|protect|lock|book|own|write|collect|harvest|get|stack|chase|cover|reduce|increase|double|halve|tighten|widen|hold|look to|you should|you could|you can|we would|i would|i'd|traders should)\b/i;
+const IMPERATIVE_START = /^(?:[-*+>"'(\[]\s*)*(buy|sell|short|go|take|use|risk|consider|load|add|trim|cut|size|hedge|fade|enter|exit|stop|set|place|avoid|wait|play|grab|scale|close|open|roll|lean|target|bet|put(?=\s+(?:on|in|an?|the\s+\d|\d))|keep|stay|expect|pick|accumulate|favou?r|prefer|lighten|position|allocate|deploy|let'?s|try|aim|protect|lock|book|own|write|collect|harvest|get|stack|chase|cover|reduce|increase|double|halve|tighten|widen|hold|look to|you should|you could|you can|we would|i would|i'd|traders should)\b/i;
 
 /**
  * Descriptive-verb allow-list for LLM text (strict mode). A sentence must
@@ -52,21 +52,68 @@ const IMPERATIVE_START = /^(?:[-*+>"'(\[]\s*)*(buy|sell|short|go|take|use|risk|c
 const DESCRIPTIVE_VERB = /\b(is|are|was|were|has|have|had|held|holds|sits|sat|remains|remained|stays|stayed|shows|showed|reads|lies|exceeds|exceeded|trails|trailed|lags|lagged|leads|rose|fell|dropped|climbed|declined|moved|closed|opened|printed|prints|measures|measured|implies|indicates|reflects|means|tends|stands|equals|ranges|spans|covers|includes|contains|came|comes|ended|ends|beat|beats|lost|loses|widened|narrowed|flattened|steepened|inverted|expanded|compressed|rises|falls|increased|decreased|changed|flipped|crossed|broke|touched|tested|rejected|bounced|sits|averages|averaged|peaked|bottomed|diverged|converged|tracks|tracked|matches|matched|differs|depends|carries|carried|prices|priced)\b/i;
 const LABEL_NOTE = /^\s*[A-Za-z][\w /&().-]{0,30}:\s*\S/;
 
+/**
+ * Recommendation by evaluation (round 4 follow-up): "Calls are the better
+ * vehicle here", "A long position above 5800 is warranted", "Two contracts
+ * is the right allocation". These have a copula, so the descriptive-verb
+ * test alone let them through. A sentence that names an instrument or a
+ * position AND carries an evaluative / recommendation word is advice, not a
+ * description, and is dropped. A few words are advice on their own.
+ */
+const INSTRUMENT = /\b(calls?|puts?|longs?|shorts?|long[- ]position|short[- ]position|exposure|positions?|positioning|contracts?|lots?|premium|strikes?|options?|upside|downside|vehicle|allocation|sellers?|buyers?|entr(y|ies)|exits?|profit[- ]taking|profits?|0dte|spreads?|\d{3,5}\s*(calls?|puts?|strikes?|[cp]\b))\b/i;
+const EVALUATIVE = /\b(warranted|worth|prudent|attractive|makes? sense|the move|the trade|the play|better|best|ideal(ly)?|right|good|great|smart(er|est)?|wis(e|er|est)|safer|safest|hedge|sensible|favou?rable|rewarded|rewarding|cheap|rich|bargain|compelling|appealing|preferred|preferable|recommend\w*|suggest(s|ed)?|optimal|conviction|deserv\w*|justif\w*|opportunit\w*|accumulat\w*|load(ing|ed)?|pick(ing|ed)? up|cover(ed|ing)?|tak(e|ing) (profits?|gains?)|should|ought|must|needs? to|time to|in play for|set up for|positioned for|risk\/reward|reward\/risk|r:r|upside (is|remains) (open|attractive))\b/i;
+const ADVICE_ALONE = /\b(warranted|prudent|makes? sense|is the (move|trade|play)|are the (move|trade|play)|better vehicle|high[- ]conviction|risk\/reward|reward\/risk|worth (owning|buying|selling|accumulating|holding|adding)|positioning for|position for|is sensible|are sensible)\b/i;
+
+/** True when a sentence evaluates an instrument / position as a choice (advice). */
+export function isAdviceByEvaluation(sentence: string): boolean {
+  const x = String(sentence ?? "");
+  return ADVICE_ALONE.test(x) || (INSTRUMENT.test(x) && EVALUATIVE.test(x));
+}
+
 /** Strict (LLM) check: true when a sentence is allowed through. */
 export function isDescriptiveSentence(sentence: string): boolean {
   const x = String(sentence ?? "").trim();
   if (!x) return false;
   if (bannedKinds(x).length > 0) return false;
   if (IMPERATIVE_START.test(x)) return false;
+  if (isAdviceByEvaluation(x)) return false;
   return DESCRIPTIVE_VERB.test(x) || LABEL_NOTE.test(x);
 }
 
-/** A verdict (1-3 word label) passes only when it is not an order or odds call. */
+/**
+ * Verdict chip: a STRICT allow-list of descriptive labels. Every word must be
+ * a descriptive term (the deterministic brief's labels and plain regime /
+ * vol / sample words); "calls" / "puts" only in "calls bid" / "puts bid";
+ * no numbers (a strike makes it an order: "CALLS ABOVE 5800"). Anything else
+ * ("SELL PREMIUM", "ACCUMULATE", "GO LONG") becomes VERDICT_REMOVED.
+ */
+const VERDICT_WORDS = new Set([
+  "iv", "rv", "above", "below", "near", "zero-gamma", "gamma", "positive", "negative", "flat", "clv",
+  "insufficient", "sample", "data", "only", "risk-on", "risk-off", "clean", "mixed", "regime", "suspicious",
+  "rally", "stagflation-flavor", "balanced", "macro", "snapshot", "unusual", "tape", "baseline", "mild",
+  "in-sample", "weak", "broad", "partial", "bull", "bear", "agreement", "elevated", "low", "high", "normal",
+  "compressed", "expanded", "inverted", "contango", "backwardation", "transition", "skew", "pin", "pinned",
+  "chop", "choppy", "trend", "trending", "range", "range-bound", "volatile", "calm", "stress", "neutral",
+  "dealer", "vol", "volatility", "steep", "steepening", "flattening", "bid", "offered", "quiet", "hot",
+  "cold", "noise", "no", "signal", "reading", "unavailable", "stale", "dampened", "amplifying", "dampening",
+  "rich", "cheap", "premium", "discount", "spread", "wide", "tight", "divergence", "decoupled", "coupled",
+  "and", "vs", "of", "the", "at", "to", "in", "on", "watch", "context", "sentiment", "fear", "greed", "extreme",
+  "drift", "realized", "implied", "term", "structure", "curve", "breadth", "flow", "flows",
+]);
+const VERDICT_PHRASES = /^(calls bid|puts bid|short gamma|long gamma|data only)$/i;
+
+/** A verdict passes only when it is a descriptive label from the allow-list. */
 export function scrubVerdict(v: string | null | undefined): string {
   const x = String(v ?? "").trim();
-  if (!x) return "\u2014";
-  if (bannedKinds(x).length > 0 || IMPERATIVE_START.test(x)) return VERDICT_REMOVED;
-  return x;
+  if (!x || x === "\u2014" || x === "-" || x === "\u2014") return "\u2014";
+  if (bannedKinds(x).length > 0) return VERDICT_REMOVED;
+  if (VERDICT_PHRASES.test(x)) return x;
+  const words = x.toLowerCase().replace(/[()/,:]/g, " ").split(/\s+/).filter(Boolean);
+  if (!words.length || words.some((w) => /\d/.test(w))) return VERDICT_REMOVED;
+  // Every word from the allow-list ("calls"/"puts" only in the phrases above).
+  // The allow-list holds no verb, so no order can be spelled from it.
+  if (words.every((w) => VERDICT_WORDS.has(w))) return x;
+  return VERDICT_REMOVED;
 }
 export const VERDICT_REMOVED = "reading (label removed)";
 

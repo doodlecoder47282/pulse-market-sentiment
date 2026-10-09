@@ -145,6 +145,9 @@ export default function EdgeBrief({ panel, symbol, manual = false, extra, title 
           {d && (
             <>
               <p className="text-xs leading-relaxed text-foreground/95" data-testid={`text-brief-summary-${panel}`}>
+                {d.source !== "deterministic" && (
+                  <span className="mr-1 font-semibold text-amber-400" data-testid={`text-brief-ai-label-${panel}`}>AI summary of the data (not advice):</span>
+                )}
                 {d.summary}
               </p>
 
