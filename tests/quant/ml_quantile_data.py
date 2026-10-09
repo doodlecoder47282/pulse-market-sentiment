@@ -27,9 +27,10 @@ def _db_with(bars, feats):
     os.close(fd)
     conn = sqlite3.connect(path)
     conn.execute("CREATE TABLE spx_minute_bars (t INTEGER PRIMARY KEY, open REAL, high REAL, low REAL, close REAL, volume REAL, source TEXT)")
-    conn.execute("CREATE TABLE ml_feature_log (ts INTEGER PRIMARY KEY, spot REAL, features_json TEXT, missing_json TEXT, live_chain INTEGER)")
+    # schema_version 2 = current feature schema (R2-F); v1 rows are never trained on (ml_r2_checks.py).
+    conn.execute("CREATE TABLE ml_feature_log (ts INTEGER PRIMARY KEY, spot REAL, features_json TEXT, missing_json TEXT, live_chain INTEGER, schema_version INTEGER, reasons_json TEXT)")
     conn.executemany("INSERT INTO spx_minute_bars VALUES (?,?,?,?,?,NULL,'test')", [(t, c, c, c, c) for t, c in bars])
-    conn.executemany("INSERT INTO ml_feature_log VALUES (?,?,?,?,1)", feats)
+    conn.executemany("INSERT INTO ml_feature_log VALUES (?,?,?,?,1,2,'{}')", feats)
     conn.commit()
     return conn, path
 

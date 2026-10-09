@@ -31,6 +31,22 @@ This is a heuristic floor, not a power calculation.
 Out-of-sample check (Gneiting & Raftery 2007): per horizon, the fraction of
 test-fold outcomes inside [q10, q90] (nominal 0.80) and the pinball loss per
 quantile are stored in the meta.
+
+Feature schema (R2-F item 1): only ml_feature_log rows with schema_version ==
+FEATURE_SCHEMA_VERSION are used. Schema-1 rows (logged before the column
+existed) measured CBOE SPY-point dealer levels against SPX spot and are never
+trained on. Missing cells (JSON null / listed in missing_json) stay NaN, and
+the meta records missing_policy = "native_nan" so the predictor passes NaN at
+serve time exactly as in training (LightGBM docs, Missing Value Handle:
+https://lightgbm.readthedocs.io/en/stable/Advanced-Topics.html).
+
+Promotion gate (R2-F item 3, forecast_eval.py): the same walk-forward folds
+score the model against the baseline volatility cone; the model file is
+always written for audit, but meta.promoted is true only if every horizon
+passes (pinball margin, Diebold-Mariano, coverage). The predictor serves only
+promoted real-data models; otherwise the server draws the baseline cone. The
+baseline's fitted standardized quantiles are written to
+baseline_cone_meta.json for the server.
 """
 from __future__ import annotations
 
@@ -40,17 +56,21 @@ import math
 import os
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
+import forecast_eval as fe
+
 logger = logging.getLogger("ml.quantile_overlay")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[%(name)s] %(message)s")
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data.db"
+FEATURE_SCHEMA_VERSION = 2
 MODELS_DIR = Path(__file__).resolve().parent / "models"
 MODELS_DIR.mkdir(exist_ok=True)
 
@@ -71,7 +91,7 @@ FEATURE_NAMES = [
     "dist_to_callwall_atr", "dist_to_putwall_atr", "dist_to_flip_atr", "dist_to_maxpain_atr",
     "dist_to_zomma_atr", "dist_to_upvomma_atr", "dist_to_dnvomma_atr",
     "vanna_level_dist_atr", "charm_level_dist_atr",
-    "net_gex_sign", "net_gex_magnitude",
+    "net_gex_sign", "net_gex_magnitude", "rv_session_5m",
 ]
 
 LGBM_PARAMS = dict(
@@ -99,10 +119,15 @@ def price_at(bar_open_ms: np.ndarray, bar_close: np.ndarray, t_ms: np.ndarray, m
     return out
 
 
-def build_frame(conn: sqlite3.Connection) -> pd.DataFrame:
-    """Feature rows from ml_feature_log with real forward-return labels from spx_minute_bars."""
+def build_frame(conn: sqlite3.Connection, schema_version: int = FEATURE_SCHEMA_VERSION) -> pd.DataFrame:
+    """Feature rows of ONE schema version from ml_feature_log with real forward-return labels from spx_minute_bars."""
     try:
-        feats = pd.read_sql_query("SELECT ts, features_json, missing_json FROM ml_feature_log ORDER BY ts", conn)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(ml_feature_log)").fetchall()}
+        if "schema_version" not in cols:
+            logger.info("ml_feature_log has no schema_version column: every row is schema 1, none usable")
+            return pd.DataFrame()
+        feats = pd.read_sql_query("SELECT ts, features_json, missing_json FROM ml_feature_log WHERE schema_version = ? ORDER BY ts",
+                                  conn, params=(int(schema_version),))
         bars = pd.read_sql_query("SELECT t, close FROM spx_minute_bars ORDER BY t", conn)
     except Exception as e:  # tables not created yet
         logger.warning("real-data tables unavailable: %s", e)
@@ -121,6 +146,10 @@ def build_frame(conn: sqlite3.Connection) -> pd.DataFrame:
         for name in FEATURE_NAMES:
             v = f.get(name)
             row[name] = np.nan if (name in missing or v is None) else float(v)
+        # Baseline-cone inputs, kept even if the model drops the feature.
+        for src, dst in (("rv_session_5m", "_base_rv"), ("vix_level", "_base_vix")):
+            v = f.get(src)
+            row[dst] = np.nan if (src in missing or v is None) else float(v)
         rows.append(row)
     df = pd.DataFrame(rows)
     if df.empty:
@@ -196,22 +225,29 @@ def pinball(y: np.ndarray, q_pred: np.ndarray, alpha: float) -> float:
 
 # ─── Training ────────────────────────────────────────────────────────────────
 
-def _next_version() -> int:
-    versions = []
-    for p in MODELS_DIR.glob("quantile_overlay_v*_meta.json"):
-        try:
-            versions.append(int(p.stem.split("_v")[1].split("_meta")[0]))
-        except (IndexError, ValueError):
-            pass
-    return max(versions) + 1 if versions else 1
+def _lgbm_factory(alpha: float):
+    from lightgbm import LGBMRegressor  # imported here so the gate and tests run without lightgbm
+    return LGBMRegressor(objective="quantile", alpha=alpha, **LGBM_PARAMS)
 
 
-def train_quantile_overlay(db_path: Optional[Path] = None) -> Dict[str, Any]:
-    """Train on real logged data only. Writes nothing below the sufficiency gate."""
+def _atomic_json(path: Path, obj: Dict[str, Any]) -> None:
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(obj, default=str), encoding="utf-8")
+    os.rename(str(tmp), str(path))
+
+
+def train_quantile_overlay(db_path: Optional[Path] = None, make_regressor=None, models_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """
+    Train on real logged data only (schema-v2 feature rows). Writes nothing
+    below the sufficiency gate. `make_regressor(alpha)` builds one quantile
+    regressor (default LightGBM; tests inject another NaN-native learner).
+    """
     t0 = time.time()
     path = Path(db_path) if db_path else DB_PATH
+    out_dir = Path(models_dir) if models_dir else MODELS_DIR
+    out_dir.mkdir(exist_ok=True)
     try:
-        with sqlite3.connect(str(path)) as conn:
+        with closing(sqlite3.connect(str(path))) as conn:
             df = build_frame(conn)
     except Exception as e:
         return {"status": "INSUFFICIENT_REAL_DATA", "error": str(e)}
@@ -220,9 +256,9 @@ def train_quantile_overlay(db_path: Optional[Path] = None) -> Dict[str, Any]:
     if not gate["sufficient"]:
         logger.info("real-data gate not met: %s", gate)
         return {"status": "INSUFFICIENT_REAL_DATA", "gate": gate,
-                "note": "no synthetic fallback: the model is trained only on logged live features and real SPX minute bars"}
+                "note": "no synthetic fallback: the model is trained only on logged live features (schema v2) and real SPX minute bars"}
 
-    from lightgbm import LGBMRegressor  # imported here so the gate and tests run without lightgbm
+    factory = make_regressor or _lgbm_factory
     import joblib
 
     lab = df.dropna(subset=[f"ret_{h}" for h in HORIZONS]).sort_values("ts").reset_index(drop=True)
@@ -231,54 +267,82 @@ def train_quantile_overlay(db_path: Optional[Path] = None) -> Dict[str, Any]:
         (dropped if lab[f].isna().mean() > MISSING_THRESH else active).append(f)
     X = lab[active].to_numpy(dtype=np.float32)  # NaN kept: LightGBM routes missing values natively
     days = lab["day"].to_numpy()
+    sigma = fe.baseline_sigma_per_bar(lab["_base_rv"].to_numpy(), lab["_base_vix"].to_numpy())
     folds = walk_forward_day_folds(list(days))
 
     models: Dict[Tuple[int, float], Any] = {}
     cv: Dict[str, Any] = {}
+    verdicts: Dict[str, Any] = {}
+    fhs: Dict[str, Any] = {}
     for h in HORIZONS:
         y = lab[f"ret_{h}"].to_numpy(dtype=np.float64)
         losses = {q: [] for q in QUANTILES}
         inside, total = 0, 0
+        oos_y, oos_m, oos_b, oos_d = [], [], [], []
         for train_days, test_days in folds:
             tr = np.isin(days, train_days)
             te = np.isin(days, test_days)
             preds = {}
             for q in QUANTILES:
-                m = LGBMRegressor(objective="quantile", alpha=q, **LGBM_PARAMS)
+                m = factory(q)
                 m.fit(X[tr], y[tr])
                 preds[q] = m.predict(X[te])
                 losses[q].append(pinball(y[te], preds[q], q))
-            lo = np.minimum(preds[0.10], preds[0.90])
-            hi = np.maximum(preds[0.10], preds[0.90])
-            inside += int(np.sum((y[te] >= lo) & (y[te] <= hi)))
+            qm = np.sort(np.column_stack([preds[q] for q in QUANTILES]), axis=1)
+            inside += int(np.sum((y[te] >= qm[:, 0]) & (y[te] <= qm[:, 4])))
             total += int(te.sum())
+            # Baseline cone on the same rows, standardized quantiles fitted on the training days only.
+            z = fe.fit_fhs_z(y[tr], sigma[tr], h)
+            qb = fe.baseline_quantiles(sigma[te], h, z)
+            oos_y.append(y[te]); oos_m.append(qm); oos_b.append(qb); oos_d.append(days[te])
+        if oos_y:
+            verdicts[str(h)] = fe.horizon_verdict(np.concatenate(oos_y), np.vstack(oos_m), np.vstack(oos_b), np.concatenate(oos_d))
+        else:
+            verdicts[str(h)] = {"pass": False, "reason": "no walk-forward folds"}
         cv[str(h)] = {
             "pinball": {str(q): (float(np.mean(v)) if v else None) for q, v in losses.items()},
             "coverage_10_90": (inside / total) if total else None,
             "n_test": total,
         }
         for q in QUANTILES:
-            m = LGBMRegressor(objective="quantile", alpha=q, **LGBM_PARAMS)
+            m = factory(q)
             m.fit(X, y)
             models[(h, q)] = m
+        zall = fe.fit_fhs_z(y, sigma, h)
+        if zall is not None:
+            fhs[str(h)] = dict(zip(fe.Q_NAMES, zall))
 
-    version = _next_version()
-    model_path = MODELS_DIR / f"quantile_overlay_v{version}.lgb"
+    promotion = fe.promotion_decision(verdicts)
+    promoted = bool(promotion["promoted"])
+
+    versions = []
+    for p in out_dir.glob("quantile_overlay_v*_meta.json"):
+        try:
+            versions.append(int(p.stem.split("_v")[1].split("_meta")[0]))
+        except (IndexError, ValueError):
+            pass
+    version = max(versions) + 1 if versions else 1
+    model_path = out_dir / f"quantile_overlay_v{version}.lgb"
     tmp = model_path.with_suffix(".lgb.tmp")
     joblib.dump(models, tmp)
     os.rename(str(tmp), str(model_path))
     meta = {
-        "status": "TRAINED",
+        # TRAINED = passed the promotion gate and is served; NOT_PROMOTED = kept for audit, never served.
+        "status": "TRAINED" if promoted else "NOT_PROMOTED",
+        "promoted": promoted,
+        "promotion": promotion,
         "version": version,
         "trained_at": int(time.time()),
         "training_data": "real",
+        "feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "missing_policy": "native_nan",
         "n_train": int(len(lab)),
         "n_days": gate["qualifying_days"],
         "first_day": gate["first_day"],
         "last_day": gate["last_day"],
         "feature_names": active,
         "dropped_features": dropped,
-        "training_medians": {f: (float(lab[f].median()) if lab[f].notna().any() else 0.0) for f in active},
+        "training_medians": {f: (float(lab[f].median()) if lab[f].notna().any() else None) for f in active},
         "cv": cv,
         "cv_scheme": f"walk-forward on whole ET days, {len(folds)} folds, embargo {EMBARGO_DAYS} day(s)",
         "horizons": HORIZONS,
@@ -287,11 +351,17 @@ def train_quantile_overlay(db_path: Optional[Path] = None) -> Dict[str, Any]:
         "model_path": str(model_path),
         "elapsed_sec": round(time.time() - t0, 1),
     }
-    meta_path = MODELS_DIR / f"quantile_overlay_v{version}_meta.json"
-    tmp_meta = meta_path.with_suffix(".json.tmp")
-    tmp_meta.write_text(json.dumps(meta, default=str), encoding="utf-8")
-    os.rename(str(tmp_meta), str(meta_path))
-    return {"status": "TRAINED", "version": version, "n_train": meta["n_train"], "n_days": meta["n_days"], "cv": cv}
+    _atomic_json(out_dir / f"quantile_overlay_v{version}_meta.json", meta)
+    # Baseline cone quantiles for the server (only from real data that met the gate).
+    if fhs:
+        _atomic_json(out_dir / "baseline_cone_meta.json", {
+            "method": "fhs", "by_horizon": fhs, "n_days": gate["qualifying_days"], "fitted_at": int(time.time()),
+            "feature_schema_version": FEATURE_SCHEMA_VERSION,
+            "oos_coverage_10_90": {h: v.get("coverage_baseline") for h, v in verdicts.items()},
+            "note": "standardized-return quantiles log(1+r_h)/(sigma*sqrt(h/5)) per horizon; sigma = rv_session_5m else VIX-implied",
+        })
+    return {"status": meta["status"], "promoted": promoted, "version": version, "n_train": meta["n_train"],
+            "n_days": meta["n_days"], "cv": cv, "promotion": promotion}
 
 
 def train_quantile_v3() -> Dict[str, Any]:
