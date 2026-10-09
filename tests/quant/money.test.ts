@@ -22,6 +22,7 @@ import { buildHeatseeker } from "../../server/heatseeker";
 import { buildExposureProfile, rowYears, type ExposureRow } from "../../server/exposureProfile";
 import { pickEarningsExpiry } from "../../server/impliedScenario";
 import { toCents } from "../../server/validationMath";
+import { yearsToExpiry } from "../../server/timeToExpiry";
 import { gammaBudgetContracts, roundTripFeePct, resolveFeePerContract } from "../../server/sizingMath";
 
 const near = (got: number, want: number, tol: number, what: string) =>
@@ -194,8 +195,11 @@ test("chainAudit DEX: delta x OI x 100 x S dollars; Schwab -999 sentinel skipped
 // ─── 4. Heatseeker: sentinel gamma is not a wall ──────────────────────────────
 
 test("heatseeker: a -999 vendor gamma contributes $0 GEX, a valid one gamma x OI x 100 x S^2 x 0.01", () => {
-  // Valid call K = 6,750, gamma 0.002, OI 500, S = 6,700:
-  //   0.002 x 500 x 100 = 100; 6,700^2 = 44,890,000; 100 x 44,890,000 x 0.01 = $44,890,000 per 1% move.
+  // Valid call K = 6,750, OI 500, S = 6,700, sigma 15% (vendor IV; T > 3 days).
+  // Since round 2 Heatseeker uses Black-Scholes gamma on the shared clock with
+  // the flip's r = 5%, q = 1.3% (not the vendor gamma), so its GEX equals the
+  // re-priced profile's: gamma = e^(-qT) phi(d1) / (S sigma sqrt T),
+  // GEX = gamma x 500 x 100 x 6,700^2 x 0.01 $ per 1% move (Hull, OFOD, ch. 19).
   // The sentinel row (gamma -999, OI 900) would have read -999 x 900 x 100 x 44,890,000 x 0.01 = -$40.4T.
   const chain: any = {
     underlying: { last: 6700 },
@@ -205,10 +209,15 @@ test("heatseeker: a -999 vendor gamma contributes $0 GEX, a valid one gamma x OI
     } },
     putExpDateMap: {},
   };
-  const h = buildHeatseeker(chain, "$SPX", 6700, "2027-12-17");
+  const nowMs = Date.UTC(2026, 9, 8, 15, 0); // 2026-10-08 11:00 ET
+  const h = buildHeatseeker(chain, "$SPX", 6700, "2027-12-17", nowMs);
   const s6750 = h.strikes.find((s) => s.strike === 6750)!;
   const s6800 = h.strikes.find((s) => s.strike === 6800)!;
-  near(s6750.netGex, 44_890_000, 1, "valid GEX $/1%");
+  const T = yearsToExpiry("2027-12-17", nowMs, "PM");
+  const d1 = (Math.log(6700 / 6750) + (0.05 - 0.013 + 0.5 * 0.15 * 0.15) * T) / (0.15 * Math.sqrt(T));
+  const g = Math.exp(-0.013 * T) * Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI) / (6700 * 0.15 * Math.sqrt(T));
+  near(s6750.netGex, g * 500 * 100 * 6700 * 6700 * 0.01, 1e-3, "valid GEX $/1%");
+  near(h.totals.netGex, h.totals.gexAtSpotRepriced!, 1e-3, "Net GEX = re-priced GEX at spot");
   assert.equal(s6800.netGex, 0);
   assert.equal(s6800.netDex, 0);
   assert.equal(h.totals.callWall, 6750);

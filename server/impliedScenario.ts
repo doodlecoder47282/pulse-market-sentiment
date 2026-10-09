@@ -9,6 +9,7 @@
 
 import { black76, fitImpliedDistribution, type ImpliedDistribution, type OptionQuote } from "./breedenLitzenberger";
 import { settlementStyleOf, timeToExpiry } from "./timeToExpiry";
+import { normCdf } from "./greeks";
 
 // ─── (a) Straddle expected move ─────────────────────────────────────────────
 //
@@ -130,8 +131,8 @@ export interface ScenarioOdds {
   lower: number;             // region boundary (price)
   pCloseBeyondBull: number;  // P(S_T > bull target)
   pCloseBeyondBear: number;  // P(S_T < bear target)
-  pTouchBull: number;        // ~ min(1, 2 * pCloseBeyondBull)
-  pTouchBear: number;        // ~ min(1, 2 * pCloseBeyondBear)
+  pTouchBull: number;        // ~ min(1, 2 * pCloseBeyondBull); 1 if the target is already at or below spot
+  pTouchBear: number;        // ~ min(1, 2 * pCloseBeyondBear); 1 if the target is already at or above spot
 }
 
 /**
@@ -167,9 +168,66 @@ export function scenarioOddsFromCdf(
     lower,
     pCloseBeyondBull: beyondBull,
     pCloseBeyondBear: beyondBear,
-    pTouchBull: Math.min(1, 2 * beyondBull),
-    pTouchBear: Math.min(1, 2 * beyondBear),
+    // The reflection rule holds for a barrier on the far side of spot; a
+    // target already reached has been touched (probability 1).
+    pTouchBull: bull <= spot ? 1 : Math.min(1, 2 * beyondBull),
+    pTouchBear: bear >= spot ? 1 : Math.min(1, 2 * beyondBear),
   };
+}
+
+// ─── Barrier touch probability (reflection principle) ───────────────────────
+//
+// For driftless Brownian motion X with X_0 = 0 and standard deviation s over
+// the horizon, P(max_{t<=T} X_t >= d) = 2 P(X_T >= d) = 2 (1 - N(d / s)) for
+// d >= 0 (Shreve, "Stochastic Calculus for Finance II", Springer 2004,
+// sec. 3.7.3, reflection principle). Units of d and s must match (index
+// points, bps, or log return). It falls off like a normal tail, so a level
+// three times further away is far less than a third as likely, unlike the
+// 1/distance scaling it replaces in targetDerivation.ts.
+
+/** P(touch a level `distance` away within a horizon whose 1-sd move is `sigmaH`). */
+export function reflectionTouchProb(distance: number, sigmaH: number): number {
+  if (!Number.isFinite(distance) || !Number.isFinite(sigmaH)) return NaN;
+  const d = Math.abs(distance);
+  if (d === 0) return 1;
+  if (!(sigmaH > 0)) return 0;
+  return Math.min(1, 2 * (1 - normCdf(d / sigmaH)));
+}
+
+/** Standard normal quantile by bisection on normCdf (|error| ~1e-7). */
+export function normInv(p: number): number {
+  if (!(p > 0 && p < 1)) return NaN;
+  let lo = -10, hi = 10;
+  for (let i = 0; i < 80; i++) {
+    const mid = 0.5 * (lo + hi);
+    if (normCdf(mid) < p) lo = mid; else hi = mid;
+  }
+  return 0.5 * (lo + hi);
+}
+
+/**
+ * The 1-sd horizon move that makes the reflection formula reproduce an
+ * observed touch rate `rate` at distance `distance`:
+ *   rate = 2 (1 - N(d / s))  =>  s = d / N^-1(1 - rate / 2).
+ * null when the rate is outside (0, 1) or the distance is not positive.
+ */
+export function touchSigmaFromRate(rate: number, distance: number): number | null {
+  if (!(rate > 0 && rate < 1) || !(distance > 0)) return null;
+  const z = normInv(1 - rate / 2);
+  return z > 0 ? distance / z : null;
+}
+
+/**
+ * Touch probability at `distance` for a level kind whose observed touch rate
+ * is `rate` at its median distance `medDistance` (same units): reflection
+ * formula with s fitted so the result equals `rate` at `medDistance`.
+ * rate <= 0 gives 0, rate >= 1 gives 1 (no information on the fall-off).
+ */
+export function rateAdjustedTouchProb(rate: number, medDistance: number, distance: number): number {
+  if (!(rate > 0)) return 0;
+  if (rate >= 1) return 1;
+  const s = touchSigmaFromRate(rate, medDistance);
+  return s == null ? 0 : reflectionTouchProb(distance, s);
 }
 
 /**

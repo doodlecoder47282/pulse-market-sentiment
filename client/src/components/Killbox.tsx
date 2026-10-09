@@ -45,6 +45,8 @@ interface ForwardResponse {
   totalVolume?: number;
   strikeCount?: number;
   source?: string;
+  /** Weight, expiry universe and dealer convention of gammaFlip (server gammaProfile.flipInputs). */
+  flipInputs?: { label: string };
 }
 
 const GREEK_LENSES: { key: Greek; label: string; sub: string; unit: string }[] = [
@@ -176,6 +178,11 @@ export default function Killbox({ symbol = "$SPX" }: { symbol?: string }) {
           color={GAMMA_FLIP}
         />
       </div>
+      {data?.flipInputs?.label && (
+        <div className="px-1 font-mono text-[10px] text-muted-foreground" data-testid="killbox-flip-inputs">
+          γ flip inputs: {data.flipInputs.label}. Heatseeker's flip uses one expiry, so the two can differ.
+        </div>
+      )}
 
       {/* Stability gauge */}
       {data && (

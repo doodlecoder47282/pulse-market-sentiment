@@ -12,6 +12,9 @@ interface IvRvSnapshot {
   iv: { iv30: number | null; iv60: number | null; iv90: number | null };
   ratio: { iv30_rv20: number | null; iv30_rv30: number | null; iv60_rv60: number | null };
   verdict: "rich" | "fair" | "cheap" | "insufficient";
+  verdictBasis?: string;
+  forecast?: { harVol21d: number | null; r2: number | null; returnsUsed: number; method: string };
+  spread?: { spread: number | null; z: number | null; percentile: number | null; historyN: number; minHistory: number; zCut: number };
   notes: string;
   rvCones: { window: number; current: number | null; p10: number | null; p50: number | null; p90: number | null }[];
   spot: number | null;
@@ -67,7 +70,7 @@ export default function IvRvPanel() {
 
       {data && (
         <>
-          {(data.verdict === "insufficient" || (data.iv.iv30 == null && data.iv.iv60 == null && data.iv.iv90 == null)) && (
+          {(data.iv.iv30 == null && data.iv.iv60 == null && data.iv.iv90 == null) && (
             <div className="rounded border border-amber-500/30 bg-amber-500/5 p-2.5 text-[11px] text-amber-400" data-testid="ivrv-offline-banner">
               no live implied vol for {data.symbol} — Schwab option surface is down. Realized-vol cones below are still good; IV/RV ratios need the option feed.
             </div>
@@ -141,7 +144,14 @@ export default function IvRvPanel() {
               <Tile label="IV60 / RV60" value={ratio(data.ratio.iv60_rv60)} />
             </div>
             <div className="text-[11px] text-muted-foreground mt-2 leading-snug">
-              ratio &gt; 1.25 = options rich (sell premium edge). ratio &lt; 0.95 = options cheap (buy premium edge). between = fair.
+              ratios are descriptive. The verdict compares IV30 with a HAR-RV forecast of realized vol over the same ~21 sessions
+              (Corsi 2009) and grades the spread against its own history: z &gt;= +{data.spread?.zCut ?? 1} rich, z &lt;= -{data.spread?.zCut ?? 1} cheap
+              (a convention, not a tested edge). Needs {data.spread?.minHistory ?? 60} past daily snapshots.
+            </div>
+            <div className="grid grid-cols-3 gap-2 mt-2">
+              <Tile label="HAR fcst 21d" value={pct(data.forecast?.harVol21d)} />
+              <Tile label="IV30 - fcst" value={data.spread?.spread != null && Number.isFinite(data.spread.spread) ? `${(data.spread.spread * 100).toFixed(1)} pts` : "—"} />
+              <Tile label={`z (n=${data.spread?.historyN ?? 0})`} value={data.spread?.z != null ? data.spread.z.toFixed(2) : "—"} />
             </div>
           </div>
 

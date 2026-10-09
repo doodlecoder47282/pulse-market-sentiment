@@ -36,7 +36,16 @@ import { resolutionScore, gradeResolution } from "./stats";
 import { watchdogStatus } from "./cusumWatchdog";
 import { shieldStatus } from "./quoteShield";
 import { computeRND, type CallStrike } from "./breedenLitzenberger";
-import { dollarGexPerPct, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
+import { dollarGexPerPct, flipInputs, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain, type FlipWeight } from "./gammaProfile";
+
+/** Flip weight label for the killbox / thermal weight modes. */
+function flipWeightOf(mode: string): FlipWeight {
+  return mode === "oi" ? "open_interest" : mode === "volume" ? "volume" : "oi_plus_quarter_volume";
+}
+/** Every expiry key a chain response carries (flip universe label). */
+function chainExpiryKeys(chain: any): string[] {
+  return Array.from(new Set([...Object.keys(chain?.callExpDateMap ?? {}), ...Object.keys(chain?.putExpDateMap ?? {})]));
+}
 import { contractYears, expiryOfKey, ivForClock } from "./chainClock";
 import { timeToExpiry } from "./timeToExpiry";
 import { etDate, intradayTapeState, isRegularSessionOpen, REGULAR_OPEN_MIN, sessionCloseMinutes, sessionCloseMs } from "./exchangeCalendar";
@@ -513,6 +522,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ...baseGammaMap,
         gammaProfile: snap.gamma.gammaProfile,
         gexCrossoverStrike: snap.gamma.gexCrossoverStrike,
+        // sources.buildGammaStructure: SPY chain rows 0-45 DTE, OI-weighted
+        flipInputs: flipInputs({ weight: "open_interest", universe: "all-expiries-in-request", expiryKeys: [], dteRange: [0, 45] }),
       };
 
       const squeeze = computeSqueezeIndicator({
@@ -3647,6 +3658,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         maxAbs,
         strikeTotals,
         levels: { callWall, callWallValue, putWall, putWallValue, gammaFlip },
+        // weight and expiry universe of gammaFlip (differs from Heatseeker's single-expiry flip)
+        flipInputs: flipInputs({ weight: flipWeightOf(weightMode), universe: "all-expiries-in-request", expiryKeys: chainExpiryKeys(chain) }),
         source: chain.source,
       });
     } catch (e: any) {
@@ -3904,6 +3917,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         gexBasis: "Black-Scholes gamma (r 5%, q 1.3%), time to the real settlement instant, sigma solved from the mid inside 3 days; same basis as Killbox and the gamma flip",
         gexContracts: { priced: validGammaCount, unpriced: unpricedGammaCount },
         levels: gexValid ? { callWall, putWall, gammaFlip: gammaFlip != null ? +gammaFlip.toFixed(0) : null, pin } : { callWall: null, putWall: null, gammaFlip: null, pin: null },
+        flipInputs: flipInputs({ weight: "oi_plus_quarter_volume", universe: "single-expiry", expiryKeys: [nearestKey] }),
         weightTotals: { oi: totalOI, volume: totalVol },
         path,
         strikes: rows.map(r => ({ strike: r.strike, gex: +r.gex.toFixed(0), callOI: r.callOI, putOI: r.putOI })),
@@ -4096,6 +4110,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         totalVolume: totalVol,
         profiles,
         levels: { callWall, callWallValue, putWall, putWallValue, gammaFlip },
+        flipInputs: flipInputs({ weight: flipWeightOf(weightMode), universe: "all-expiries-in-request", expiryKeys: chainExpiryKeys(chain) }),
         stability,
         regime,
         strikeCount: allStrikes.length,

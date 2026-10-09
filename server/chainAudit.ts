@@ -12,7 +12,7 @@
  *  6. Unusual Volume Detection (volOiRatio > 2.0)
  *  7. Dealer Positioning Score (-100..+100)
  *  8. GEX Decay Ladder by DTE bucket
- *  9. Pinning Probability (nearest expiry)
+ *  9. Settlement probability per strike (nearest expiry, SVI implied distribution)
  * 10. Vol Risk Premium (VRP)
  */
 
@@ -21,6 +21,7 @@ import { etEpochMs } from "./etTime";
 import { timeToExpiry, settlementStyleOf, type SettlementStyle } from "./timeToExpiry";
 import { gamma as bsGamma, vega as bsVega, impliedVol, normCdf } from "./greeks";
 import { dollarGexPerPct, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromRows } from "./gammaProfile";
+import { cdfAt, fitImpliedDistribution, type OptionQuote } from "./breedenLitzenberger";
 
 // ─── Internal contract shape ──────────────────────────────────────────────────
 
@@ -74,9 +75,20 @@ export interface VannaStrike {
 }
 
 export interface VannaResult {
+  /** Per strike: LONG-HOLDER (aggregate open interest) vanna, calls and puts
+   *  added with their own sign as held by a long position; no dealer sign. */
   profile: VannaStrike[];
   peakVannaStrike: number | null;
-  totalVannaDollarPerVolPct: number;  // $ per 1% vol move
+  totalVannaDollarPerVolPct: number;  // $ per 1% vol move, long-holder sum
+  /** Convention of profile / peak / total above. Heatseeker's netVanna uses
+   *  the naive DEALER convention (dealers long calls, short puts:
+   *  calls minus puts), shown here as totalVannaDealerNaive. */
+  convention?: "long-holder-aggregate";
+  /** Same $ per +1 vol point with the naive dealer SIGN (calls +, puts -),
+   *  the convention of Heatseeker's Net Vanna. Not the same number: this sums
+   *  every expiry in the request at r = q = 0, Heatseeker one expiry inside
+   *  its display window on its own r/q basis. */
+  totalVannaDealerNaive?: number;
 }
 
 export interface CharmStrike {
@@ -85,12 +97,25 @@ export interface CharmStrike {
 }
 
 export interface CharmResult {
+  /** Per strike, long-holder (aggregate OI) convention, mixed horizons. */
   profile: CharmStrike[];
   peakCharmStrike: number | null;
   /** $ delta-notional change, spot and IV unchanged, over the next calendar day
-   *  or until settlement if that is sooner (0DTE: the decay left into the close). */
+   *  or until settlement if that is sooner (0DTE: the decay left into the close).
+   *  MIXES two horizons: kept for compatibility; use the split below. */
   totalCharmPerDay: number;
   horizon?: "1d-or-to-settlement";
+  /** Contracts settling within the next 24 hours (time to settlement < 1
+   *  calendar day; usually today's 0DTE, after the close also tomorrow's
+   *  expiry): delta change from now to settlement (terminal delta 1 / 0).
+   *  Long-holder sum. */
+  totalCharmToSettlement?: number;
+  /** All contracts settling later than 24 hours from now: delta change over exactly one calendar day. */
+  totalCharmOneDay?: number;
+  /** Naive dealer sign (calls +, puts -), comparable with Heatseeker. */
+  totalCharmToSettlementDealerNaive?: number;
+  totalCharmOneDayDealerNaive?: number;
+  convention?: "long-holder-aggregate";
 }
 
 // Vomma: vega's sensitivity to IV (∂vega/∂σ). Tells you how vol-of-vol
@@ -185,8 +210,31 @@ export interface GEXDecayResult {
 
 export interface PinStrike {
   strike: number;
-  prob: number;             // percentage 0-100
+  /** Risk-neutral P(settle within [lower, upper]) in percent (0-100), from the
+   *  SVI-smoothed implied distribution of the nearest expiry. */
+  prob: number;
   distance: number;         // points from spot
+  lower?: number;           // strike - half the local strike spacing
+  upper?: number;           // strike + half the local strike spacing
+  /** prob / (upper - lower): percent per index point. Strikes are ranked by
+   *  this, so a strike in a 25-point-spaced region is not favoured over one
+   *  in a 5-point region just because its bin is wider. */
+  probPerPoint?: number;
+}
+
+export interface PinningMeta {
+  method: "svi-implied-settlement-probability";
+  measure: "risk-neutral";
+  state: "ok" | "unavailable";
+  reason: string | null;
+  expiry: string | null;
+  /** Settlement style fitted: one style only (SPX AM and SPXW PM settle at
+   *  different instants on different prices); PM preferred. */
+  settlementStyle?: SettlementStyle | null;
+  quotesUsed: number;
+  coverage: number | null;   // implied mass inside the quoted strike range
+  fitRmse: number | null;    // $ per share, OTM price residual RMSE
+  note: string;
 }
 
 export interface VRPEntry {
@@ -221,6 +269,7 @@ export interface ChainAuditResult {
   gexDecay: GEXDecayResult;
   // 9
   pinning: PinStrike[];
+  pinningMeta?: PinningMeta;
   // 10
   vrp: VRPEntry[];
 
@@ -442,6 +491,7 @@ function bsTerms(c: Contract, spot: number): BsTerms | null {
 
 function computeVanna(contracts: Contract[], spot: number): VannaResult {
   const strikeMap = new Map<number, number>();
+  let dealerNaive = 0;
 
   for (const c of contracts) {
     if (c.oi <= 0) continue;
@@ -455,6 +505,7 @@ function computeVanna(contracts: Contract[], spot: number): VannaResult {
     //   = vanna x 0.01 (one vol point) x OI x 100 (shares per contract) x S ($/share).
     const vannaExp = vanna * 0.01 * c.oi * 100 * spot;
     strikeMap.set(c.strike, (strikeMap.get(c.strike) ?? 0) + vannaExp);
+    dealerNaive += c.side === "call" ? vannaExp : -vannaExp;
   }
 
   const profile: VannaStrike[] = Array.from(strikeMap.entries())
@@ -468,13 +519,14 @@ function computeVanna(contracts: Contract[], spot: number): VannaResult {
 
   const totalVannaDollarPerVolPct = profile.reduce((s, p) => s + p.vannaExposure, 0);
 
-  return { profile, peakVannaStrike, totalVannaDollarPerVolPct };
+  return { profile, peakVannaStrike, totalVannaDollarPerVolPct, convention: "long-holder-aggregate", totalVannaDealerNaive: dealerNaive };
 }
 
 // ─── 3. Charm ─────────────────────────────────────────────────────────────────
 
 function computeCharm(contracts: Contract[], spot: number): CharmResult {
   const strikeMap = new Map<number, number>();
+  let toSettle = 0, oneDay = 0, toSettleDealer = 0, oneDayDealer = 0;
 
   for (const c of contracts) {
     if (c.oi <= 0) continue;
@@ -503,6 +555,13 @@ function computeCharm(contracts: Contract[], spot: number): CharmResult {
     // Units: $ delta notional change over h = (Delta change) x OI x 100 (shares per contract) x S ($/share).
     const charmExp = (deltaLater - deltaNow) * c.oi * 100 * spot;
     strikeMap.set(c.strike, (strikeMap.get(c.strike) ?? 0) + charmExp);
+    // Report the two horizons separately: summing "delta left to lose before
+    // a settlement inside 24 h" with "one day of decay" adds unlike quantities.
+    // The split is by the horizon actually used (h < 1 day), not by the
+    // expiry's calendar date, so the bucket always matches the arithmetic.
+    const dealer = c.side === "call" ? charmExp : -charmExp;
+    if (h < 1 / 365) { toSettle += charmExp; toSettleDealer += dealer; }
+    else { oneDay += charmExp; oneDayDealer += dealer; }
   }
 
   const profile: CharmStrike[] = Array.from(strikeMap.entries())
@@ -516,7 +575,14 @@ function computeCharm(contracts: Contract[], spot: number): CharmResult {
 
   const totalCharmPerDay = profile.reduce((s, p) => s + p.charmExposure, 0);
 
-  return { profile, peakCharmStrike, totalCharmPerDay, horizon: "1d-or-to-settlement" };
+  return {
+    profile, peakCharmStrike, totalCharmPerDay, horizon: "1d-or-to-settlement",
+    totalCharmToSettlement: toSettle,
+    totalCharmOneDay: oneDay,
+    totalCharmToSettlementDealerNaive: toSettleDealer,
+    totalCharmOneDayDealerNaive: oneDayDealer,
+    convention: "long-holder-aggregate",
+  };
 }
 
 /** Beasley-Springer-Moro approximation of inverse normal CDF. Accurate to ~1e-7 over (0,1). */
@@ -843,38 +909,81 @@ function computeGEXDecay(contracts: Contract[], spot: number): GEXDecayResult {
   };
 }
 
-// ─── 9. Pinning Probability ───────────────────────────────────────────────────
+// ─── 9. Settlement probability per strike (was "Pinning Probability") ─────────
+//
+// The old number was a gamma x OI x Gaussian(distance) score normalised to
+// sum to 100% over strikes, built on vendor gamma (including Schwab's -999
+// sentinel): a concentration index, not a probability. It is replaced by the
+// risk-neutral probability that the nearest expiry SETTLES within half a
+// strike spacing of each strike,
+//   P(K - w/2 <= S_T <= K + w/2) = F(K + w/2) - F(K - w/2),
+// read from the SVI-smoothed implied distribution (breedenLitzenberger.ts:
+// Breeden & Litzenberger 1978; Gatheral & Jacquier 2014, "Arbitrage-free SVI
+// volatility surfaces", Quantitative Finance 14(1), arXiv:1204.0646), w the
+// local strike spacing. It is a Q-measure number (contains risk premia), and a
+// smooth implied density carries no pinning dynamics: it is the market-implied
+// chance of settling near each strike, not a forecast that price is "pinned".
+// Same quality gate as the Models scenario odds: >= 10 quotes, >= 60% of the
+// implied mass inside the quoted strikes; otherwise "unavailable".
 
-function computePinning(contracts: Contract[], spot: number): PinStrike[] {
-  // Nearest expiry only
-  const sortedDTE = [...new Set(contracts.map(c => c.dte))].sort((a, b) => a - b);
-  const nearestDTE = sortedDTE[0] ?? 0;
-  const nearest = contracts.filter(c => c.dte === nearestDTE);
+const PIN_MIN_QUOTES = 10;
+const PIN_MIN_COVERAGE = 0.6;
 
-  if (!nearest.length) return [];
+function computePinning(contracts: Contract[], spot: number): { pins: PinStrike[]; meta: PinningMeta } {
+  const note = "risk-neutral P(settle within +/- half a strike spacing), SVI-smoothed implied distribution of the nearest expiry; not a model of pinning dynamics";
+  const unavailable = (reason: string, expiry: string | null = null, quotesUsed = 0): { pins: PinStrike[]; meta: PinningMeta } => ({
+    pins: [],
+    meta: { method: "svi-implied-settlement-probability", measure: "risk-neutral", state: "unavailable", reason, expiry, quotesUsed, coverage: null, fitRmse: null, note },
+  });
+  if (!(spot > 0)) return unavailable("no spot");
+  // Nearest expiry still trading (settled contracts were dropped upstream).
+  const live = contracts.filter((c) => c.tYears > 0);
+  if (!live.length) return unavailable("no live contracts");
+  let nearest = live[0];
+  for (const c of live) if (c.tYears < nearest.tYears) nearest = c;
+  const expiry = nearest.expiry;
+  const sameDate = live.filter((c) => c.expiry === expiry);
+  // ONE settlement style per fit: an SPX monthly (AM, settles on the 09:30
+  // SOQ) and SPXW (PM, settles on the close) listed under the same date are
+  // different underlyings at different instants with different clocks.
+  // PM (SPXW) preferred; AM only when the date has no PM contracts.
+  const style: SettlementStyle = sameDate.some((c) => c.style === "PM") ? "PM" : "AM";
+  const group = sameDate.filter((c) => c.style === style);
+  const T = Math.max(...group.map((c) => c.tYears));
 
-  const bandwidth = 0.005 * spot; // 0.5% of spot
-
-  const strikeMap = new Map<number, number>();
-  for (const c of nearest) {
-    const diff = c.strike - spot;
-    const pinScore = Math.abs(c.gamma) * c.oi * Math.exp(
-      -(diff * diff) / (2 * bandwidth * bandwidth)
-    );
-    strikeMap.set(c.strike, (strikeMap.get(c.strike) ?? 0) + pinScore);
+  // One mid per strike and side.
+  const calls = new Map<number, number>(), puts = new Map<number, number>();
+  for (const c of group) {
+    if (!(c.ask > 0) || !(c.bid >= 0) || c.ask < c.bid) continue;
+    const m = c.side === "call" ? calls : puts;
+    if (!m.has(c.strike)) m.set(c.strike, 0.5 * (c.bid + c.ask));
   }
+  const strikes = Array.from(new Set([...Array.from(calls.keys()), ...Array.from(puts.keys())])).sort((a, b) => a - b);
+  const quotes: OptionQuote[] = strikes.map((K) => ({ strike: K, callMid: calls.get(K) ?? null, putMid: puts.get(K) ?? null }));
+  const dist = fitImpliedDistribution(quotes, { spot, r: FLIP_RATE, T });
+  if (!dist) return unavailable("implied distribution fit failed (too few usable quotes)", expiry, quotes.length);
+  if (dist.quotesUsed < PIN_MIN_QUOTES) return unavailable(`only ${dist.quotesUsed} usable quotes (need ${PIN_MIN_QUOTES})`, expiry, dist.quotesUsed);
+  if (!(dist.coverage >= PIN_MIN_COVERAGE)) return unavailable(`quoted strikes cover ${(dist.coverage * 100).toFixed(0)}% of the implied mass (need ${PIN_MIN_COVERAGE * 100}%)`, expiry, dist.quotesUsed);
 
-  const total = Array.from(strikeMap.values()).reduce((s, v) => s + v, 0);
-  if (total <= 0) return [];
-
-  return Array.from(strikeMap.entries())
-    .map(([strike, score]) => ({
-      strike,
-      prob: total > 0 ? (score / total) * 100 : 0,
-      distance: strike - spot,
-    }))
-    .sort((a, b) => b.prob - a.prob)
-    .slice(0, 5);
+  const pins: PinStrike[] = [];
+  for (let i = 0; i < strikes.length; i++) {
+    const K = strikes[i];
+    const gaps = [i > 0 ? K - strikes[i - 1] : Infinity, i < strikes.length - 1 ? strikes[i + 1] - K : Infinity];
+    const w = Math.min(gaps[0], gaps[1]);
+    if (!Number.isFinite(w) || w <= 0) continue;
+    const lower = K - w / 2, upper = K + w / 2;
+    const p = cdfAt(dist, upper) - cdfAt(dist, lower);
+    const prob = Math.max(0, p) * 100;
+    pins.push({ strike: K, prob, distance: K - spot, lower, upper, probPerPoint: prob / w });
+  }
+  pins.sort((a, b) => (b.probPerPoint ?? 0) - (a.probPerPoint ?? 0));
+  return {
+    pins: pins.slice(0, 5),
+    meta: {
+      method: "svi-implied-settlement-probability", measure: "risk-neutral", state: "ok", reason: null,
+      expiry, settlementStyle: style, quotesUsed: dist.quotesUsed, coverage: dist.coverage, fitRmse: dist.fitRmse, note,
+    },
+  };
 }
 
 // ─── 10. Vol Risk Premium ─────────────────────────────────────────────────────
@@ -953,8 +1062,11 @@ export function buildChainAudit(
   const expiries = [...new Set(contracts.map(c => c.expiry))];
 
   // Data quality assessment
-  const hasGreeks = contracts.some(c => c.delta !== 0 && c.gamma !== 0);
+  // Schwab sends -999 sentinels for every greek when the market is closed:
+  // only in-range values count as greeks.
+  const hasGreeks = contracts.some(c => c.delta !== 0 && Math.abs(c.delta) <= 1 && c.gamma > 0 && c.gamma < 900);
   const hasTheoreticalIV = contracts.some(c => c.theoreticalIV != null && c.theoreticalIV > 0);
+  const pinning = computePinning(contracts, spot);
   const dataQuality: ChainAuditResult["dataQuality"] =
     !hasGreeks ? "minimal"
     : !hasTheoreticalIV ? "partial"
@@ -971,7 +1083,8 @@ export function buildChainAudit(
     unusualVolume: computeUnusualVolume(contracts, spot),
     dealerScore: computeDealerScore(contracts, spot),
     gexDecay: computeGEXDecay(contracts, spot),
-    pinning: computePinning(contracts, spot),
+    pinning: pinning.pins,
+    pinningMeta: pinning.meta,
     vrp: computeVRP(contracts, spot),
     contractsProcessed: contracts.length,
     expiriesFound: expiries.length,

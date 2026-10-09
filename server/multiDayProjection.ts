@@ -4,27 +4,52 @@ import { vixToAtmPct } from "@shared/vol";
 // Multi-day forward vol cone for SPX / SPY.
 //
 // This is NOT a trained ML model. It's a realized-vol cone with regime
-// adjustment — labeled honestly. Bands are:
-//   q10/q90 = ±1.282σ * √t
-//   q25/q75 = ±0.674σ * √t
-//   q50     = drift line (recent 10d slope, dampened)
+// adjustment — labeled honestly. Bands (log price, n sessions ahead):
+//   qP = ln(spot) + z_P(n) * sigma * sqrt(n),  P in {1,5,10,25,75,90,95,99}%
+// where z_P(n) is the P-quantile of the standardised sum of n iid
+// unit-variance Student-t(nu = 4) daily shocks (studentTSumQuantile below).
+// Why Student-t: daily index returns have power-law tails with tail index
+// "higher than two and less than five for most data sets" (R. Cont, 2001,
+// "Empirical properties of asset returns: stylized facts and statistical
+// issues", Quantitative Finance 1(2), 223-236,
+// https://ideas.repec.org/a/taf/quantf/v1y2001i2p223-236.html; quoted in
+// arXiv:2311.07738). A t with nu degrees of freedom has tail index nu.
+// Scaled to unit variance, its two-sided tail probability crosses the
+// normal's at about 1.95 sigma (P(|X| > 1.955) = 5.06% for both; numerical
+// root of the two survival functions): inside that the t is NARROWER (its
+// 10/90% quantiles are +-1.085 vs +-1.282), beyond it wider (1/99%: +-2.65 vs
+// +-2.33). The n-day sum converges to normal (central limit), so the honest
+// fat-tail content is in q01/q99 (and q05/q95) at short horizons. Not modelled: volatility clustering (GARCH-type), which is
+// what fattens multi-day tails in stressed regimes. Coverage of these bands
+// has NOT been tested on held-out data: they are not "calibrated".
 //
-// σ is realized daily log-return stdev from last 30 sessions. We adjust σ up
-// by the current VIX/realized ratio when available (vol-of-vol overlay).
+// sigma is the realized daily log-return stdev from the last 30 sessions,
+// scaled by the VIX/realized ratio when available (vol-of-vol overlay).
 //
-// Drift comes from the median 10-day log return, dampened by 0.5 (we don't
-// want to extrapolate a parabolic rally into a parabolic cone).
+// Drift: zero (the q50 line is spot). Earlier code carried 0.5 x the median
+// of the last 10 daily log returns forward; there is no evidence that
+// one-to-two-week index momentum is strong enough for that (at 1-4 week
+// horizons the documented effect is, if anything, short-term reversal:
+// Lehmann 1990, "Fads, Martingales, and Market Efficiency", QJE 105(1);
+// Jegadeesh 1990, "Evidence of Predictable Behavior of Security Returns",
+// J. Finance 45(3)). The risk-neutral alternative, r - q, is ~3%/yr, i.e.
+// ~0.1% over 10 sessions, an order of magnitude inside the q25-q75 band, so
+// the martingale (zero) drift is used and stated.
 //
 // Output: bands for N=1..10 trading days forward.
 
 export type ConeBand = {
   day: number;          // 1..10 forward sessions
   date: string;         // approximate ISO date (calendar — not skipping weekends)
+  q01?: number;         // Student-t tail bands (see header)
+  q05?: number;
   q10: number;
   q25: number;
-  q50: number;          // drift mid
+  q50: number;          // median: spot (zero drift)
   q75: number;
   q90: number;
+  q95?: number;
+  q99?: number;
 };
 
 export type MultiDayConeResp = {
@@ -33,13 +58,120 @@ export type MultiDayConeResp = {
   asOfTs: number;
   sigmaDaily: number;     // realized daily stdev (log returns)
   sigmaAnnualizedPct: number;
-  driftDaily: number;     // log return per day (dampened)
+  driftDaily: number;     // log return per day: 0 (martingale; see header)
+  driftBasis?: string;
+  tailModel?: string;
   volBlowupFactor: number; // VIX/realized ratio applied to σ (1.0 if no VIX)
   bands: ConeBand[];
   source: "realized_vol_cone";
   honestyNote: string;
   computedAt: string;
 };
+
+// ─── Pure helpers (no I/O; tested in tests/quant/options-r2.test.ts) ───────
+
+/** Degrees of freedom of the Student-t daily shock (tail index 4; Cont 2001: 2-5). */
+export const CONE_T_DOF = 4;
+
+/** Student-t(nu) density. */
+function tPdf(x: number, nu: number): number {
+  // Gamma((nu+1)/2) / (sqrt(nu pi) Gamma(nu/2)) via log-gamma (Lanczos).
+  const lg = logGamma((nu + 1) / 2) - logGamma(nu / 2) - 0.5 * Math.log(nu * Math.PI);
+  return Math.exp(lg - ((nu + 1) / 2) * Math.log(1 + (x * x) / nu));
+}
+
+/** log Gamma(x), Lanczos g = 7, n = 9 (Numerical Recipes 3rd ed., sec. 6.1). */
+function logGamma(x: number): number {
+  const c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313,
+    -176.61502916214059, 12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+  if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - logGamma(1 - x);
+  x -= 1;
+  let a = c[0];
+  const t = x + 7.5;
+  for (let i = 1; i < 9; i++) a += c[i] / (x + i);
+  return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a);
+}
+
+const _tSumCache = new Map<string, { x: number[]; cdf: number[] }>();
+
+/**
+ * CDF of S_n / sqrt(n), S_n the sum of n iid Student-t(nu) shocks scaled to
+ * unit variance (nu > 2): numerical n-fold convolution of the density on a
+ * uniform grid (step 0.05; one-day support +-25 sd, mass beyond ~1e-5 for
+ * nu = 4), trapezoid CDF renormalised to 1. Cached per (nu, n).
+ */
+function tSumCdf(nu: number, n: number): { x: number[]; cdf: number[] } {
+  const key = `${nu}:${n}`;
+  const hit = _tSumCache.get(key);
+  if (hit) return hit;
+  const scale = Math.sqrt((nu - 2) / nu); // unit-variance t: X = scale * T_nu
+  const h = 0.05;
+  const half1 = Math.round(25 / h);
+  const f1 = new Float64Array(2 * half1 + 1);
+  for (let i = 0; i < f1.length; i++) f1[i] = tPdf(((i - half1) * h) / scale, nu) / scale;
+  let half = half1;
+  let f = Float64Array.from(f1);
+  // Build every k = 1..n in one pass and cache each (the cone asks for 1..10).
+  for (let k = 1; k <= n; k++) {
+    if (k > 1) {
+      const newHalf = half + half1;
+      const g = new Float64Array(2 * newHalf + 1);
+      // g(x) = sum_j f(x_j) f1(x - x_j) h
+      for (let j = 0; j < f.length; j++) {
+        const fj = f[j] * h;
+        if (fj === 0) continue;
+        const base = j - half + newHalf - half1; // index in g of x_j - L1
+        for (let i = 0; i < f1.length; i++) g[base + i] += fj * f1[i];
+      }
+      f = g;
+      half = newHalf;
+    }
+    const kKey = `${nu}:${k}`;
+    if (_tSumCache.has(kKey)) continue;
+    const x: number[] = [], cdf: number[] = [];
+    let c = 0;
+    const sq = Math.sqrt(k);
+    for (let i = 0; i < f.length; i++) {
+      if (i > 0) c += 0.5 * (f[i] + f[i - 1]) * h;
+      x.push(((i - half) * h) / sq);
+      cdf.push(c);
+    }
+    for (let i = 0; i < cdf.length; i++) cdf[i] /= c;
+    _tSumCache.set(kKey, { x, cdf });
+  }
+  return _tSumCache.get(key)!;
+}
+
+/** P-quantile of the standardised n-day sum of unit-variance Student-t(nu) shocks. */
+export function studentTSumQuantile(p: number, n: number, nu: number = CONE_T_DOF): number {
+  if (!(p > 0 && p < 1) || !(n >= 1) || !(nu > 2)) return NaN;
+  const { x, cdf } = tSumCdf(nu, Math.round(n));
+  let lo = 0, hi = cdf.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (cdf[mid] < p) lo = mid; else hi = mid;
+  }
+  const t = (p - cdf[lo]) / Math.max(1e-300, cdf[hi] - cdf[lo]);
+  return x[lo] + t * (x[hi] - x[lo]);
+}
+
+export const CONE_PROBS = [0.01, 0.05, 0.10, 0.25, 0.75, 0.90, 0.95, 0.99] as const;
+
+/** Cone band prices n sessions ahead: spot x exp(z_P(n) sigma sqrt(n)), zero drift. */
+export function coneBandPrices(spot: number, sigmaDaily: number, n: number, nu: number = CONE_T_DOF) {
+  const z = (p: number) => studentTSumQuantile(p, n, nu) * sigmaDaily * Math.sqrt(n);
+  return {
+    q01: spot * Math.exp(z(0.01)),
+    q05: spot * Math.exp(z(0.05)),
+    q10: spot * Math.exp(z(0.10)),
+    q25: spot * Math.exp(z(0.25)),
+    q50: spot,
+    q75: spot * Math.exp(z(0.75)),
+    q90: spot * Math.exp(z(0.90)),
+    q95: spot * Math.exp(z(0.95)),
+    q99: spot * Math.exp(z(0.99)),
+  };
+}
 
 function nextWeekdayDate(start: Date, sessions: number): Date {
   const d = new Date(start);
@@ -50,13 +182,6 @@ function nextWeekdayDate(start: Date, sessions: number): Date {
     if (dow !== 0 && dow !== 6) added += 1;
   }
   return d;
-}
-
-function median(arr: number[]): number {
-  if (!arr.length) return 0;
-  const sorted = [...arr].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
 function std(arr: number[]): number {
@@ -120,9 +245,9 @@ export async function buildMultiDayCone(symbol: string): Promise<MultiDayConeRes
   const sigmaDaily = std(recentRets);
   const sigmaAnnualizedPct = sigmaDaily * Math.sqrt(252) * 100;
 
-  // Drift = median of last 10 log returns, dampened by 0.5
-  const last10 = logRets.slice(-10);
-  const driftDaily = median(last10) * 0.5;
+  // Drift: zero (martingale); see the header for why the old 0.5 x 10-day
+  // median momentum drift was removed.
+  const driftDaily = 0;
 
   // Vol blowup = VIX / realized annualized (clamped 0.7..2.0)
   let volBlowupFactor = 1.0;
@@ -145,21 +270,10 @@ export async function buildMultiDayCone(symbol: string): Promise<MultiDayConeRes
 
   const bands: ConeBand[] = [];
   for (let n = 1; n <= 10; n++) {
-    const t = Math.sqrt(n);
-    const midLog = driftDaily * n;
-    const mid = spot * Math.exp(midLog);
-
-    const z90 = 1.282 * sigmaAdj * t;
-    const z75 = 0.674 * sigmaAdj * t;
-
     bands.push({
       day: n,
       date: nextWeekdayDate(now, n).toISOString().slice(0, 10),
-      q10: spot * Math.exp(midLog - z90),
-      q25: spot * Math.exp(midLog - z75),
-      q50: mid,
-      q75: spot * Math.exp(midLog + z75),
-      q90: spot * Math.exp(midLog + z90),
+      ...coneBandPrices(spot, sigmaAdj, n),
     });
   }
 
@@ -170,11 +284,13 @@ export async function buildMultiDayCone(symbol: string): Promise<MultiDayConeRes
     sigmaDaily,
     sigmaAnnualizedPct,
     driftDaily,
+    driftBasis: "zero drift (martingale): no evidence for 1-2 week index momentum; r - q over 10 sessions is ~0.1%, inside the noise",
+    tailModel: `iid Student-t(${CONE_T_DOF}) daily shocks, unit variance (tail index ${CONE_T_DOF}; Cont 2001: 2-5); volatility clustering not modelled; band coverage not tested`,
     volBlowupFactor,
     bands,
     source: "realized_vol_cone",
     honestyNote:
-      "Vol cone (not a trained ML model). σ from 30d realized daily stdev, drift from 10d median, dampened 0.5x. VIX/realized used as vol-blowup factor (clamped 0.7-2.0).",
+      "Vol cone (not a trained ML model, coverage not tested). σ from 30d realized daily stdev; zero drift; Student-t(4) daily shocks for the tails (q01/q99), no volatility clustering. VIX/realized used as vol-blowup factor (clamped 0.7-2.0).",
     computedAt: new Date().toISOString(),
   };
 }
