@@ -29,7 +29,8 @@ import { horizonTargetIso } from "./impliedScenario";
 import { yearsToExpiry } from "./timeToExpiry";
 import { etDate, nextTradingDay } from "./exchangeCalendar";
 import { gammaBudgetContracts } from "./sizingMath";
-import { masterAlphaPromotionGate, promotedForecastBps, resolveMasterAlphaRiskBudget, type MasterAlphaPromotion } from "./masterAlphaFit";
+import { atmContractFrom, contractsFromAsk, masterAlphaPromotionGate, promotedForecastBps, resolveMasterAlphaRiskBudget, type MasterAlphaPromotion } from "./masterAlphaFit";
+import { feeForProduct } from "./feeConfig";
 import { readFileSync } from "node:fs";
 
 const client = new Anthropic();
@@ -211,7 +212,7 @@ export interface MasterAlphaOutput {
 
   // sizing — null unless a promoted fit AND the user's account/budget input
   recommendedContracts: number | null;     // whole contracts; premium at risk <= the user's budget
-  premiumPerContract:   number | null;     // $ per ATM contract (model, Brenner-Subrahmanyam); null when not sized
+  premiumPerContract:   number | null;     // $ per chosen contract: Schwab ask x 100 + opening fee; null when not sized
   premiumAtRisk_M:      number | null;     // $M: recommendedContracts x premiumPerContract
   dollarGammaAggregate: number;            // $M (from audit)
   gammaPnlAt_r_hat:     number | null;     // $M at the fitted forecast (null when unrated)
@@ -759,10 +760,41 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
   // --- Sizing: promoted fit AND the user's own budget input ---
   const budget = resolveMasterAlphaRiskBudget(input);
   const size = sizePosition(spot, vix, dollarGamma_M, edgeBps, (budget.dollars ?? 0) / 1e6, h);
-  const sized = promoted && budget.dollars != null && budget.dollars > 0;
+  // SF-7: the count is priced on the CHOSEN contract (ATM option of the
+  // horizon's target expiry on the fitted side) at its Schwab ask plus the
+  // fee, whole contracts rounded down, never on a model premium: premium plus
+  // opening fee at risk <= the user's budget.
+  let chosen: { strike: number; ask: number; symbol: string | null; type: "C" | "P" } | null = null;
+  let sizeFromAsk: ReturnType<typeof contractsFromAsk> = null;
+  let sizeWhyNot = "";
+  const wantsSize = promoted && budget.dollars != null && budget.dollars > 0 && gatedSignal !== "NEUTRAL" && gatedSignal !== "UNRATED";
+  if (wantsSize) {
+    try {
+      const { getOptionChain } = await import("./schwab");
+      const expiryIso = horizonTargetIso(h, now).slice(0, 10);
+      const dte = Math.max(0, Math.round((Date.parse(expiryIso) - Date.parse(etDate(now.getTime()))) / 86_400_000));
+      const chain: any = await getOptionChain(symbol === "SPY" ? "SPY" : "$SPX", dte);
+      const type: "C" | "P" = gatedSignal.includes("LONG") ? "C" : "P";
+      const map = chain && !("error" in chain) ? (type === "C" ? chain.callExpDateMap : chain.putExpDateMap) ?? {} : {};
+      const key = Object.keys(map).find((k) => k.startsWith(expiryIso));
+      const atm = key ? atmContractFrom(map[key], spot) : null;
+      if (!atm) sizeWhyNot = `no Schwab quote for the ${expiryIso} ATM ${type === "C" ? "call" : "put"}`;
+      else {
+        chosen = { strike: atm.strike, ask: atm.ask, symbol: atm.symbol, type };
+        const fee = feeForProduct(atm.symbol ?? (symbol === "SPY" ? "SPY" : "SPXW"));
+        sizeFromAsk = contractsFromAsk({ budgetDollars: budget.dollars as number, ask: atm.ask, fee: fee.fee });
+        if (!sizeFromAsk) sizeWhyNot = fee.basis;
+      }
+    } catch (e: any) {
+      sizeWhyNot = `chain unavailable: ${e?.message ?? e}`;
+    }
+  }
+  const sized = wantsSize && sizeFromAsk != null;
   const sizingNote = !promoted ? "no size: direction unrated (no promoted fit)"
-    : !sized ? `no size: ${budget.source}`
-    : `sized from ${budget.source}; premium at risk <= budget, whole contracts rounded down`;
+    : budget.dollars == null ? `no size: ${budget.source}`
+    : !wantsSize ? "no size: neutral forecast"
+    : !sized ? `no size: ${sizeWhyNot}`
+    : `${sizeFromAsk!.contracts} x ${chosen!.strike}${chosen!.type} at the Schwab ask $${chosen!.ask.toFixed(2)} + fee = $${sizeFromAsk!.costPerContract.toFixed(2)}/contract; premium at risk $${sizeFromAsk!.premiumAtRisk.toFixed(2)} <= ${budget.source} budget, whole contracts rounded down`;
   const R = edgeBps / 10000;
   const gammaPnlAt_r_hat = promoted ? 50 * dollarGamma_M * R * R : null;
 
@@ -816,10 +848,10 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
     gtbrPct: r2(gtbrR.gtbrPct * 100),
     // Size only with a promoted fit and the user's budget; premium at risk
     // <= that budget (the most the size loses if the options expire worthless).
-    recommendedContracts: sized ? size.contracts : null,
-    premiumPerContract: sized ? size.premium_per_contract : null,
-    premiumAtRisk_M: sized ? size.premiumAtRisk_M : null,
-    sizeBinding: sized ? size.binding : null,
+    recommendedContracts: sized ? sizeFromAsk!.contracts : null,
+    premiumPerContract: sized ? sizeFromAsk!.costPerContract : null,
+    premiumAtRisk_M: sized ? sizeFromAsk!.premiumAtRisk / 1e6 : null,
+    sizeBinding: sized ? sizeFromAsk!.binding : null,
     sizingNote,
     dollarGamma_per_contract_M: size.dg_per_contract,
     dollarGammaAggregate_M: r2(dollarGamma_M),
@@ -880,9 +912,9 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
     gtbrPct: gtbrR.gtbrPct,
     nearestPivot: np,
     lockedTargetAlignment: lta,
-    recommendedContracts: sized ? size.contracts : null,
-    premiumPerContract: sized ? size.premium_per_contract : null,
-    premiumAtRisk_M: sized ? size.premiumAtRisk_M : null,
+    recommendedContracts: sized ? sizeFromAsk!.contracts : null,
+    premiumPerContract: sized ? sizeFromAsk!.costPerContract : null,
+    premiumAtRisk_M: sized ? sizeFromAsk!.premiumAtRisk / 1e6 : null,
     dollarGammaAggregate: dollarGamma_M,
     gammaPnlAt_r_hat,
     sizingNote,

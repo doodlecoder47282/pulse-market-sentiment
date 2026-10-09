@@ -11,7 +11,12 @@ import { firstPassage, projectToTarget } from "../../server/t1Projection";
 import { bsPrice, delta as bsDelta, gamma as bsGamma } from "../../server/greeks";
 import { cdf } from "../../server/stats";
 import { modelThetaToClose } from "../../server/chainClock";
-import { liquidationReturn, entryFillOf } from "../../server/exitValuation";
+import { liquidationReturn, entryFillOf, optionStopHit, spreadExceedsStop, optionStopLevel } from "../../server/exitValuation";
+import { feeForProduct } from "../../server/feeConfig";
+import { classifyEnvState } from "../../server/tradeEnvState";
+import { cumulativeAt, pcrReadAtClock } from "../../server/pcrHistory";
+import { contractsFromAsk, atmContractFrom } from "../../server/masterAlphaFit";
+import { atmPathSigma, noTouchExpectation } from "../../server/t1Projection";
 import { invert, olsClustered, fitConvexityWeights, forwardRange, CONVEXITY_DRIVERS, type ConvexitySample } from "../../server/convexityFit";
 import { masterAlphaPromotionGate, promotedForecastBps, resolveMasterAlphaRiskBudget, type MasterAlphaPromotion } from "../../server/masterAlphaFit";
 
@@ -136,15 +141,17 @@ test("scoreAskToBid: a gross winner that loses after fees is a LOSS; worthless e
   near(z.netReturn, -1, 1e-12, "total loss");
   assert.equal(z.settled, true);
   // Missing quotes are not scored (never a 0% result); a crossed entry quote is unusable.
-  assert.equal(scoreAskToBid({ entryAsk: null, exitBid: 1 }), null);
-  assert.equal(scoreAskToBid({ entryAsk: 2, exitBid: null }), null);
-  assert.equal(scoreAskToBid({ entryBid: 2.2, entryAsk: 2, exitBid: 1 }), null);
+  assert.equal(scoreAskToBid({ entryAsk: null, exitBid: 1, feePerContract: 0.65 }), null);
+  assert.equal(scoreAskToBid({ entryAsk: 2, exitBid: null, feePerContract: 0.65 }), null);
+  assert.equal(scoreAskToBid({ entryBid: 2.2, entryAsk: 2, exitBid: 1, feePerContract: 0.65 }), null);
+  // SF-2: index root without a configured fee -> not scored (no guessed fee).
+  assert.equal(scoreAskToBid({ entryAsk: 2, exitBid: 2.5, feePerContract: null }), null);
 });
 
 test("buildScoreboardRow / netGroupStats: wins counted net, the same basis as $ P&L", () => {
-  const a = scoreAskToBid({ entryAsk: 2.0, exitBid: 2.5 })!;   // +48.70
-  const b = scoreAskToBid({ entryAsk: 2.0, exitBid: 2.01 })!;  // -0.30 (gross winner)
-  const c = scoreAskToBid({ entryAsk: 2.0, exitBid: 0 })!;     // -200.65
+  const a = scoreAskToBid({ entryAsk: 2.0, exitBid: 2.5, feePerContract: 0.65 })!;   // +48.70
+  const b = scoreAskToBid({ entryAsk: 2.0, exitBid: 2.01, feePerContract: 0.65 })!;  // -0.30 (gross winner)
+  const c = scoreAskToBid({ entryAsk: 2.0, exitBid: 0, feePerContract: 0.65 })!;     // -200.65
   const row = buildScoreboardRow("whale", [
     { trade: a, peakNetReturn: 0.6 },
     { trade: b, peakNetReturn: 0.55 },   // peak >= +50% then closed <= 0: a burn
@@ -235,7 +242,7 @@ test("firstPassage: seeded Monte Carlo (Brownian-bridge crossing) agrees within 
   near(sumTau / hits, fp.condMeanYears, 0.05 * fp.condMeanYears, "E[tau | hit] MC within 5%");
 });
 
-test("projectToTarget: equals direct Black-Scholes repricing at T1 with E[tau | hit], net of half spread and fees", () => {
+test("projectToTarget: equals Black-Scholes repricing at T1 averaged over the touch-time density, net of half spread and fees", () => {
   // 2026-07-15 12:00 ET (16:00 UTC), SPXW 6705 call, PM settlement 16:00 ET: T = 240 min.
   const nowMs = Date.UTC(2026, 6, 15, 16, 0);
   const T = 240 / 525600, sigma = 0.15, S = 6700, K = 6705, H = 6715;
@@ -249,13 +256,28 @@ test("projectToTarget: equals direct Black-Scholes repricing at T1 with E[tau | 
   const a = Math.log(H / S) / sig;
   const P = 2 * (1 - cdf(a / Math.sqrt(T)));
   const tau = (a * Math.sqrt(2 * T / Math.PI) * Math.exp(-(a * a) / (2 * T)) - a * a * P) / P;
-  near(r.minutesToTarget, tau * 525600, 1e-6, "minutes to T1");
+  // The module adds the risk-neutral log drift -sigma^2/2; over 4 hours it moves E[tau | hit] by < 0.01 min.
+  near(r.minutesToTarget, tau * 525600, 0.01, "minutes to T1");
   const mid = (bid + ask) / 2;
-  const projMid = mid + bsPrice(H, K, sig, T - tau, 0, 0, "C") - bsPrice(S, K, sig, T, 0, 0, "C");
+  // N-1: E[BS(H, T - t) | touch] by an independent midpoint rule on a plain
+  // t grid (200,000 cells) with the first-passage density; the module uses
+  // Simpson on t = T u^2.
+  // Drifted first-passage density (nu = -sigma^2/2, Shreve II sec. 7.2); its own mass is the touch probability.
+  const nu = -0.5 * sig * sig, dd = Math.log(H / S);
+  const f = (t: number) => (dd / (sig * Math.sqrt(2 * Math.PI * t ** 3))) * Math.exp(-((dd - nu * t) ** 2) / (2 * sig * sig * t));
+  const N = 200000, h = T / N;
+  let num = 0, mass = 0;
+  for (let i = 0; i < N; i++) { const t = (i + 0.5) * h; num += bsPrice(H, K, sig, T - t, 0, 0, "C") * f(t) * h; mass += f(t) * h; }
+  near(r.pHit, mass, 1e-5, "touch probability = density mass");
+  const projMid = mid + num / mass - bsPrice(S, K, sig, T, 0, 0, "C");
   const exitBid = projMid - (ask - bid) / 2;
   const want = (exitBid * 100 - 0.65 - (ask * 100 + 0.65)) / (ask * 100 + 0.65);
-  near(r.projReturnPct, want, 1e-9, "return vs direct repricing");
-  near(r.projectedMid, projMid, 1e-9, "projected mid");
+  near(r.projectedMid, projMid, 2e-4, "projected mid (averaged)");
+  near(r.projReturnPct, want, 1e-4, "return vs direct repricing");
+  // The plug-in at the mean touch time differs by little here, but it is not what is reported.
+  const plug = mid + bsPrice(H, K, sig, T - tau, 0, 0, "C") - bsPrice(S, K, sig, T, 0, 0, "C");
+  assert.ok(Math.abs(plug - r.projectedMid) < 0.5, `plug-in ${plug} vs averaged ${r.projectedMid}`);
+  assert.equal(r.gateTests, "return_if_t1_reached");
   assert.ok(r.projThetaCost < 0 && r.spreadCost > 0 && r.feesPerContract === 1.3);
   // Decomposition adds up: mid + delta + gamma + theta = projected mid.
   near(mid + r.projDeltaPnl + r.projGammaBoost + r.projThetaCost, r.projectedMid, 2e-3, "decomposition");
@@ -292,9 +314,11 @@ test("liquidationReturn: sold at the bid after the exit fee, on cash paid incl. 
   assert.equal(l.costBasis, 500.65);
   assert.equal(l.liquidationValue, 409.35);
   near(l.netReturn, (409.35 - 500.65) / 500.65, 1e-12, "net at bid");
-  // Bid 3.95 (mid 4.05 = -19% on mid): 395 - 0.65 = 394.35 -> -21.232%: the stop fires at the bid.
+  // Bid 3.95 (mid 4.05 = -19% on mid): 395 - 0.65 = 394.35 -> -21.232% net displayed.
   const s2 = liquidationReturn({ entryFill: 5.0, bid: 3.95, feePerContract: 0.65 })!;
   assert.ok(s2.netReturn <= -0.2, `${s2.netReturn}`);
+  // Index root without a configured fee: no net figure (the stop still works on the bid).
+  assert.equal(liquidationReturn({ entryFill: 5.0, bid: 4.1, feePerContract: null }), null);
   // Zero bid: nothing to sell, no closing fee: -100%.
   near(liquidationReturn({ entryFill: 5.0, bid: 0, feePerContract: 0.65 })!.netReturn, -1, 1e-12, "zero bid");
   // No bid: missing, not 0%.
@@ -397,4 +421,120 @@ test("forwardRange: high-low over the next 30 one-minute bars; too few bars -> n
   // window (t0, t0 + 30m] holds bars 1..30: max high 502, min low 498.5 -> 3.5
   assert.equal(forwardRange(bars, t0), 3.5);
   assert.equal(forwardRange(bars.slice(0, 10), t0), null);
+});
+
+// ─── Fix round (R2-B review) ─────────────────────────────────────────────────
+
+test("SF-3: one stop rule = the alert's printed rule, bid <= 0.80 x ask fill, before fees", () => {
+  // $10.00 fill: stop level $8.00. Bid 8.00 stops, 8.01 does not (the old net-of-fee rule stopped at 8.01).
+  assert.equal(optionStopLevel(10), 8);
+  assert.equal(optionStopHit(8.0, 10), true);
+  assert.equal(optionStopHit(8.01, 10), false);
+  assert.equal(optionStopHit(null, 10), null);
+  // Displayed net at the stop: (800 - 0.65 - 1000.65) / 1000.65 = -20.13%: the fee, not slippage.
+  near(liquidationReturn({ entryFill: 10, bid: 8, feePerContract: 0.65 })!.netReturn, (799.35 - 1000.65) / 1000.65, 1e-12, "net at stop");
+  // Entry check: a bid already at/below 0.80 x ask is untradable (SPREAD_EXCEEDS_STOP); no quote -> null.
+  assert.equal(spreadExceedsStop(7.99, 10), true);
+  assert.equal(spreadExceedsStop(8.0, 10), true);
+  assert.equal(spreadExceedsStop(8.01, 10), false);
+  assert.equal(spreadExceedsStop(null, 10), null);
+  assert.equal(spreadExceedsStop(10.5, 10), null);
+});
+
+test("SF-2: fee rule per root: $0.65 equity/ETF, index roots only with a configured all-in fee", () => {
+  assert.equal(feeForProduct("SPY", { indexFee: null }).fee, 0.65);
+  assert.equal(feeForProduct("QQQ   261016C00500000", { indexFee: null }).fee, 0.65);
+  assert.equal(feeForProduct("SPXW  261016C06700000", { indexFee: null }).fee, null);
+  assert.equal(feeForProduct("SPXW_7100C_20260423", { indexFee: null }).fee, null);
+  assert.equal(feeForProduct("SPXW", { indexFee: 1.25 }).fee, 1.25);
+  // Projection without an index fee: returns before fees, no dollar P&L.
+  const nowMs = Date.UTC(2026, 6, 15, 16, 0);
+  const p = bsPrice(6700, 6705, 0.15, 240 / 525600, 0, 0, "C");
+  const r = projectToTarget({ spot: 6700, strike: 6705, type: "C", target: 6715, expiry: "2026-07-15", symbol: "SPXW", bid: p - 0.05, ask: p + 0.05, vendorIv: 0.15, minutesToClose: 240, nowMs, feePerContract: null })!;
+  assert.equal(r.feeIncluded, false);
+  assert.equal(r.projPnlPerContract, null);
+});
+
+test("SF-6: EV under the pricing measure is minus the costs (martingale), and the no-touch density has mass 1 - pHit", () => {
+  // Same vol for path and price, 0DTE settling at the close: E[option value at
+  // min(touch, close)] = price now (optional stopping; Shreve II sec. 8.2). With
+  // no fee, EV of the exit value = mid - pHit x half spread (spread paid only on
+  // a touch exit; cash settlement has none), so EV return = (mid - pHit x half - ask) / ask.
+  const nowMs = Date.UTC(2026, 6, 15, 16, 0);
+  const T = 240 / 525600, S = 6700, K = 6705, H = 6715;
+  const p = bsPrice(S, K, 0.15, T, 0, 0, "C");
+  const bid = p - 0.05, ask = p + 0.05, half = 0.05;
+  const r = projectToTarget({ spot: S, strike: K, type: "C", target: H, expiry: "2026-07-15", symbol: "SPXW", bid, ask, vendorIv: 0.15, minutesToClose: 240, nowMs, feePerContract: 0 })!;
+  const want = (p - r.pHit * half - ask) / ask;
+  near(r.evReturnPct, want, 2e-4, "EV = -costs");
+  assert.ok(r.evReturnPct < 0);
+  // Mass of the no-touch density (with the risk-neutral drift -sigma^2/2).
+  const d = Math.log(H / S);
+  near(noTouchExpectation(() => 1, d, r.pathSigma, T, true, 2000, -0.5 * r.pathSigma ** 2), 1 - r.pHit, 1e-6, "no-touch mass");
+  // Put mirror: target below spot.
+  const pp = bsPrice(S, 6695, 0.15, T, 0, 0, "P");
+  const rp = projectToTarget({ spot: S, strike: 6695, type: "P", target: 6685, expiry: "2026-07-15", symbol: "SPXW", bid: pp - 0.05, ask: pp + 0.05, vendorIv: 0.15, minutesToClose: 240, nowMs, feePerContract: 0 })!;
+  near(rp.evReturnPct, (pp - rp.pHit * 0.05 - (pp + 0.05)) / (pp + 0.05), 2e-4, "put EV = -costs");
+});
+
+test("N-2: ATM path vol solved from the ATM mid on the app clock; picker reprices with the strike's own vol", () => {
+  const nowMs = Date.UTC(2026, 6, 15, 16, 0);
+  const T = 240 / 525600;
+  const mk = (k: number, v: number) => { const m = bsPrice(6700, k, v, T, 0, 0, "C"); return [{ bid: m - 0.05, ask: m + 0.05, volatility: 99 }]; };
+  const strikes = { "6690": mk(6690, 0.18), "6700": mk(6700, 0.14), "6710": mk(6710, 0.12) };
+  near(atmPathSigma(strikes, 6700, "C", "2026-07-15", nowMs)!, 0.14, 2e-3, "ATM vol");
+  assert.equal(atmPathSigma({}, 6700, "C", "2026-07-15", nowMs), null);
+});
+
+test("SF-1: missing gamma/vol/range never reads CHOP or STAND_DOWN", () => {
+  const base = { score: 0, shortGamma: false, gammaPts: 0, rangePts: 0, ofiPts: 0, volPts: 0, missing: [] as string[] };
+  assert.equal(classifyEnvState(base), "CHOP");
+  assert.equal(classifyEnvState({ ...base, missing: ["gamma"] }), "PARTIAL");
+  assert.equal(classifyEnvState({ ...base, missing: ["gamma", "vol", "range"] }), "UNAVAILABLE");
+  assert.equal(classifyEnvState({ ...base, missing: ["canary"] }), "PARTIAL");
+  // A high score with a non-core driver missing stays LOADED (missing points can only raise it).
+  assert.equal(classifyEnvState({ ...base, score: 50, shortGamma: true, gammaPts: 20, missing: ["canary"] }), "LOADED");
+  assert.equal(classifyEnvState({ ...base, score: 50, shortGamma: true, gammaPts: 20, missing: ["range"] }), "PARTIAL");
+});
+
+test("SF-5: P/C vs history at the same clock time (interpolated cumulative volume)", () => {
+  // A session with points at minute 30 (P 300 / C 600) and 60 (P 400 / C 1,000):
+  // at minute 45, P = 350, C = 800; before the first point it scales from 0 at the open.
+  assert.deepEqual(cumulativeAt([{ minute: 30, putVol: 300, callVol: 600 }, { minute: 60, putVol: 400, callVol: 1000 }], 45), { putVol: 350, callVol: 800 });
+  assert.deepEqual(cumulativeAt([{ minute: 30, putVol: 300, callVol: 600 }], 15), { putVol: 150, callVol: 300 });
+  assert.equal(cumulativeAt([{ minute: 30, putVol: 300, callVol: 600 }], 31), null); // no extrapolation
+  // History: morning ratio 2.0 (puts early), full-day 1.0. Today at minute 30 with ratio 2.0 is NORMAL for the
+  // clock time; the old full-day comparison would have called it put-heavy.
+  const sessions = Array.from({ length: 25 }, (_, i) => ({
+    date: `2026-06-${String(i + 1).padStart(2, "0")}`,
+    points: [{ minute: 30, putVol: 2000 * (1 + 0.01 * (i % 5)), callVol: 1000 }, { minute: 390, putVol: 10000, callVol: 10000 * (1 + 0.01 * (i % 3)) }],
+  }));
+  const r = pcrReadAtClock({ putVol: 2040, callVol: 1000 }, 30, sessions, { today: "2026-07-01" });
+  assert.equal(r.n, 25);
+  assert.equal(r.zone, "neutral");
+  const full = pcrReadAtClock({ putVol: 2040, callVol: 1000 }, 390, sessions, { today: "2026-07-01" });
+  assert.equal(full.zone, "bearish");
+});
+
+test("SF-7: masterAlpha size = whole contracts of the chosen contract at its Schwab ask + fee", () => {
+  // Budget $2,500; ask $12.35, fee $1.25: cost 1,235.00 + 1.25 = $1,236.25 -> 2 contracts, $2,472.50 at risk.
+  assert.deepEqual(contractsFromAsk({ budgetDollars: 2500, ask: 12.35, fee: 1.25 }), { contracts: 2, costPerContract: 1236.25, premiumAtRisk: 2472.5, binding: "budget" });
+  // Exactly at the budget: 2 x 1,250.00 = 2,500.00 fits.
+  assert.equal(contractsFromAsk({ budgetDollars: 2500, ask: 12.4, fee: 10 })!.contracts, 2);
+  assert.equal(contractsFromAsk({ budgetDollars: 2500, ask: 12.35, fee: null }), null); // index fee not configured
+  assert.equal(contractsFromAsk({ budgetDollars: 2500, ask: null, fee: 0.65 }), null);
+  const atm = atmContractFrom({ "6700": [{ bid: 10, ask: 10.4, symbol: "SPXW  261016C06700000" }], "6710": [{ bid: 6, ask: 6.3 }] }, 6702);
+  assert.equal(atm!.strike, 6700);
+});
+
+test("N-3: empty groups report null rates, never 0%", () => {
+  const g = netGroupStats([]);
+  assert.equal(g.winRate, null);
+  assert.equal(g.avgPctReturn, null);
+  assert.equal(g.medianPctReturn, null);
+  const row = buildScoreboardRow("whale", [], 3, undefined, 2);
+  assert.equal(row.winRate, null);
+  assert.equal(row.avgPct, null);
+  assert.equal(row.excludedNoQuote, 3);
+  assert.equal(row.excludedNoFee, 2);
 });

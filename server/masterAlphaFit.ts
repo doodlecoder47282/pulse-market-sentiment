@@ -229,3 +229,37 @@ export function resolveMasterAlphaRiskBudget(b: {
   if (m > 0) return { dollars: Math.floor(m * 1e6 * 100) / 100, source: "riskBudget_M input" };
   return { dollars: null, source: "no account size or risk budget given" };
 }
+
+/**
+ * Whole contracts of the CHOSEN contract that fit a premium-at-risk budget
+ * (SF-7): floor(budget / (ask x m + fee)) in integer cents, so contracts x
+ * (ask x m + opening fee) <= budget (a long option's maximum loss if it
+ * expires worthless: no closing fee). `cap` is an optional extra limit (the
+ * gamma-target count). Null without a Schwab ask or a fee (index root with no
+ * configured fee): no size, never a guessed premium.
+ */
+export function contractsFromAsk(args: { budgetDollars: number; ask: number | null; fee: number | null; multiplier?: number; cap?: number | null }): {
+  contracts: number; costPerContract: number; premiumAtRisk: number; binding: "budget" | "cap";
+} | null {
+  const m = args.multiplier ?? 100;
+  if (args.ask == null || !(args.ask > 0) || args.fee == null || !(args.fee >= 0) || !(args.budgetDollars > 0)) return null;
+  const costC = Math.round(args.ask * m * 100) + Math.round(args.fee * 100);
+  const budgetC = Math.floor(args.budgetDollars * 100 + 1e-9);
+  const byBudget = Math.floor(budgetC / costC);
+  const cap = args.cap != null && Number.isFinite(args.cap) && args.cap >= 0 ? Math.floor(args.cap) : Infinity;
+  const contracts = Math.max(0, Math.min(byBudget, cap));
+  return { contracts, costPerContract: costC / 100, premiumAtRisk: (contracts * costC) / 100, binding: cap < byBudget ? "cap" : "budget" };
+}
+
+/** Nearest-to-spot contract with a two-sided Schwab quote in an expDateMap slice ({ strike: [contract] }). */
+export function atmContractFrom(strikes: Record<string, any[]> | null | undefined, spot: number): { strike: number; bid: number; ask: number; symbol: string | null } | null {
+  if (!strikes || !(spot > 0)) return null;
+  let best: { strike: number; bid: number; ask: number; symbol: string | null } | null = null;
+  for (const [ks, arr] of Object.entries(strikes)) {
+    const k = parseFloat(ks);
+    const c = Array.isArray(arr) ? arr[0] : null;
+    if (!Number.isFinite(k) || !c || !(typeof c.ask === "number" && c.ask > 0 && typeof c.bid === "number" && c.bid >= 0 && c.bid <= c.ask)) continue;
+    if (!best || Math.abs(k - spot) < Math.abs(best.strike - spot)) best = { strike: k, bid: c.bid, ask: c.ask, symbol: typeof c.symbol === "string" ? c.symbol : null };
+  }
+  return best;
+}
