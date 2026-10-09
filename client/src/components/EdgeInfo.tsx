@@ -126,10 +126,10 @@ const INFO: Record<string, InfoEntry> = {
   },
   "trade-environment": {
     title: "Trade Environment",
-    what: "One fused 0\u2013100 convexity index built from seven independent reads: dealer gamma posture, the VIX term structure, realized range expansion, order-flow impulse, cross-asset canaries, whale clustering, and wall proximity.",
-    how: "Five states. STAND DOWN and CHOP mean no edge \u2014 don't force trades. NORMAL means standard playbook. LOADED means the ingredients for a big move are stacking \u2014 pre-plan both directions and set alerts. STRIKE means convexity is live: short gamma plus expanding range plus directional flow \u2014 the flushes and squeezes happen here.",
-    edge: "Most losses come from trading the wrong days. Knowing when NOT to trade \u2014 and being fully ready the moment conditions flip \u2014 is worth more than any single entry signal. The strip tells you which day type you're in before you commit capital.",
-    risk: "A quiet score can jump inside one bar on a headline. LOADED is not a trade signal \u2014 it's a readiness signal. Wait for the trigger.",
+    what: "A 0\u2013100 heuristic composite: hand-set points for seven driver reads (dealer gamma posture, the VIX term structure, realized range expansion, signed tick volume, cross-asset canaries, heavy-contract clustering, wall proximity), summed into five states. The reads overlap \u2014 short gamma, range expansion and an inverted VIX curve tend to arrive together \u2014 so they are not independent votes. The points have not been fitted to outcomes.",
+    how: "Read the state as a description of current conditions: STRIKE = short gamma, expanding range and directional tick volume at once; LOADED = several of those present; NORMAL = nothing unusual; CHOP = long gamma, quiet flow, calm vol; STAND DOWN = few drivers active. A driver marked n/a failed to load, scores 0 and makes the index read low. It gives no entry, exit or size.",
+    edge: "None claimed. Each 30-minute bucket is logged and graded against the SPY range that followed; the strip shows that fit's status, which needs 120 sessions and 1,000 graded windows before any weight is reviewed.",
+    risk: "A quiet score can jump inside one bar on a headline. Hand-set thresholds can label a normal day LOADED and miss a real one.",
   },
   "ml-forecast": {
     title: "Projected Path",
@@ -141,8 +141,9 @@ const INFO: Record<string, InfoEntry> = {
   "trade-desk": {
     title: "Trade Desk",
     what: "Position sizing, exit rules, and risk gates in one place, driven by the same data feeding every other panel.",
-    how: "Enter your setup and let the desk size it by expected value. If the gate score is below threshold, the trade doesn't clear \u2014 that's the point.",
+    how: "The 0DTE sizer only sizes grades of 72 (B-) or better, the same floor at which the alert engine fires (FIRE_GATE). Below 72 it returns no size. Grades 72\u201379 get 50% of the computed size, 80\u201384 70%, 85\u201394 85%, 95+ 100%. The computed size is the smallest of: the risk budget (default 1%, at most 5% of the account, loss at the stop incl. fees), the cash you have, the gap cap (full premium loss at most 5% of the account), and a fractional Kelly cap from the realized option win rate of that grade's bucket (its Wilson 95% lower bound until the bucket has 385 graded fires). Whole contracts, rounded down. Enter your all-in fee per contract for index options.",
     edge: "One oversized loser erases ten winners. Sizing discipline is the edge that compounds \u2014 the desk exists to enforce it when you won't.",
+    risk: "Grades are heuristic scores until the grade-to-win-rate fit has enough graded fires; the Kelly cap sizes zero when the ledger does not yet show an edge at the lower bound.",
   },
   "gex-chart": {
     title: "GEX by Strike",
