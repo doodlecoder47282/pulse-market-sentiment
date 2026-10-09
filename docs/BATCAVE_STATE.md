@@ -1,6 +1,6 @@
 # Batcave checkpoint
 
-Updated: 2026-10-08. This is a compact handoff, not a live-health certificate.
+Updated: 2026-10-09. This is a compact handoff, not a live-health certificate.
 
 ## 2026-10-08: quant-fixes branch (PR to main)
 
@@ -50,7 +50,55 @@ table and fix-next list in the review doc. Top open items: ML feature log
 mixes SPY/SPX scales; Models/Exposures read the CBOE chain as primary;
 edge-survival card ignores the option ledger; picker T1 projection biased low.
 
-Next step: user reviews and merges PR #3, then approves the fix-next list.
+## 2026-10-09: rounds 2-4 on quant-fixes (PR #3), HEAD 98ebb45
+
+User rules added: Schwab is the ONLY source for stock/index/options data and
+every calculation and ML input built on it (CBOE removed; when Schwab can't
+answer, routes return 503 or a labeled partial, never delayed/old data or a
+500). Closest-to-tick data via the Schwab Streamer (LEVELONE equities and
+options, CHART_EQUITY; Schwab has no time-and-sales stream). News and crypto
+from professional-grade external sources, tiered and labeled (official SEC,
+Fed, BLS, BEA, Treasury, CFTC first; Coinbase + Kraken for majors;
+DexScreener + Jupiter for Solana DEX). Agents ran on Opus 5.5 medium effort
+(math, review, grading) and Sonnet 5.5 (mechanical work).
+
+Process: 9 round-2 workstreams with rotating peer review and fix rounds,
+5 round-3 workstreams from the re-grade's "needs code" list, a round-4 fix
+pass, an independent verifier, CI on every merge.
+
+Evidence:
+- Independent re-grade at 36e2883 (before round 4): 1 A-, 2 A-, 3 B+, 4 A-,
+  5 A-, 6 B+, 7 A-, 8 A-, 9 B+, 10 B+, 11 B+ (code), 12 B; overall B+
+  (was C- at the start). Round 4 then fixed the graders' remaining
+  "needs code" items; an independent verifier checked them (quarterly cone
+  re-derived in scipy to the cent) and its 3 partial findings were fixed.
+- Quant tests: 500 pass, 0 fail (local and CI). New parse test over every
+  server/shared file (caught a bundle-breaking duplicate declaration).
+- CI run 37912521652 (98ebb45): build OK; no route regressions; every head
+  5xx is a 503 with dataState; access gate incl. fail-closed; tsc 163 vs
+  main 182, no file worse than main.
+
+What blocks an A on the remaining sectors is real data, not code: graded
+live 0DTE/whale fires, 60+ real ML sessions and a promoted model, cone and
+odds coverage on held-out data, historical option chains (paid, needs
+approval), dealer open/close data (not offered by Schwab).
+
+Blockers (owner action):
+- Revoke/regenerate the Discord webhooks and the Schwab app secret (public
+  git history). Delete pre-encryption backups/ (plaintext tokens).
+- Set INDEX_OPTION_FEE_PER_CONTRACT from a real SPX trade confirm (index
+  dollar P&L is shown before fees until then).
+- Weekly targets live in the Heatseeker levels store (seeded with an old
+  week's values; update them each week).
+- Merging untracks data/greek_gradient.db* and the scheduler state file: stop
+  the server before pulling on Windows.
+
+Not verified live: Schwab Streamer login and index symbols ($VIX9D etc.),
+strikeCount semantics, closePrice roll after 16:00, request sizes, Railway
+deploy of the ML sidecar, client rendering in a browser.
+
+Next step: user reviews and merges PR #3; then one live session with Schwab
+connected to confirm the streamer and the unverified fields above.
 
 ## Current objective
 
