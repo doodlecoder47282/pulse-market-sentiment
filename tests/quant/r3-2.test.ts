@@ -15,6 +15,7 @@ import { bannedKinds, scrubBriefText, scrubBrief, REMOVED_NOTE } from "../../ser
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { classifyEnvState, strikeConditionsMet, volTermPoints } from "../../server/tradeEnvState";
 import { ofiApiPayload, ofiMethodLabel, type OfiTrendLike } from "../../server/ofiPayload";
 import {
   leeReadySign, classifyL1Trades, OptionTradeSideBook, summarizeStreamSide, optionKey,
@@ -365,4 +366,35 @@ test("R3-2.7 deterministic brief source: no hand-set weights / confidence, no tr
   assert.doesNotMatch(src, /Number\(parsed\.(baseCase|bullCase|bearCase)\?\.prob\)/);
   assert.match(src, /return scrubBrief\(brief\)/);
   assert.match(src, /return scrubBrief\(deterministicFallback\(panel, ctx\)\)/);
+});
+
+// ─── Item 8: trade environment ──────────────────────────────────────────────
+
+test("R3-2.8 vol term: VIX9D or VIX3M missing -> driver unavailable, not a calm curve", () => {
+  // VIX 22, 9D 24 (inverted +12), 3M 21 (backwardated +10); VIX >= 20 bonus needs a normal back end -> 22.
+  assert.deepEqual(volTermPoints(22, 24, 21), { ok: true, points: 22, inverted9d: true, backwardated: true, missing: [] });
+  // VIX 22, 9D 20, 3M 24: no inversion, contango, VIX >= 20 -> 4.
+  assert.equal(volTermPoints(22, 20, 24).points, 4);
+  // Calm: VIX 14, 9D 12, 3M 17 -> 0, but observed (ok).
+  assert.deepEqual(volTermPoints(14, 12, 17), { ok: true, points: 0, inverted9d: false, backwardated: false, missing: [] });
+  // Partial: the old code read a missing 3M as "not backwardated" and scored 4 + 12.
+  const partial = volTermPoints(22, 24, null);
+  assert.deepEqual(partial, { ok: false, points: 0, inverted9d: null, backwardated: null, missing: ["VIX3M"] });
+  assert.deepEqual(volTermPoints(22, null, 21).missing, ["VIX9D"]);
+  assert.deepEqual(volTermPoints(null, null, null).missing, ["VIX", "VIX9D", "VIX3M"]);
+  assert.equal(volTermPoints(22, 0, 21).ok, false); // a zero quote is not a VIX level
+});
+
+test("R3-2.8 STRIKE requires short gamma, expanding range and directional tick volume", () => {
+  const all = { score: 75, shortGamma: true, gammaPts: 20, rangePts: 8, ofiPts: 5, volPts: 22, missing: [] as string[] };
+  assert.equal(classifyEnvState(all), "STRIKE");
+  // 75 points from long-gamma vol + canary + whales + wall, no range expansion: LOADED, not STRIKE.
+  assert.equal(classifyEnvState({ ...all, rangePts: 0 }), "LOADED");
+  assert.equal(classifyEnvState({ ...all, shortGamma: false }), "LOADED");
+  assert.equal(classifyEnvState({ ...all, ofiPts: 0 }), "LOADED");
+  // Tick volume unavailable cannot confirm STRIKE (missing non-core driver keeps LOADED valid).
+  assert.equal(classifyEnvState({ ...all, ofiPts: 0, missing: ["ofi"] }), "LOADED");
+  assert.equal(strikeConditionsMet({ ...all, missing: ["range"] }), false);
+  // Below 70 the conditions alone do not make STRIKE.
+  assert.equal(classifyEnvState({ ...all, score: 60 }), "LOADED");
 });
