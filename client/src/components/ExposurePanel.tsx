@@ -1,6 +1,6 @@
 // ExposurePanel.tsx
 // Dealer exposure profiles — DEX / GEX / VEX / Charm across ±10% spot band.
-// Data source: GET /api/exposures?symbol=SYM (backed by CBOE chain + full BS Greeks).
+// Data source: GET /api/exposures?symbol=SYM (Schwab option chain + full BS Greeks).
 //
 // Layout: 2×2 grid of mini area charts. Each shows the exposure curve with:
 //   - vertical dashed line at current spot
@@ -15,6 +15,7 @@ import {
 import { Info, RefreshCw, Zap, TrendingUp, Clock, Activity, HelpCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import DataAgeChip from "./DataAgeChip";
 import { apiRequest } from "@/lib/queryClient";
 import {
   Tooltip as UITooltip,
@@ -69,7 +70,7 @@ export default function ExposurePanel({ symbol }: Props) {
       const r = await apiRequest("GET", `/api/exposures?symbol=${encodeURIComponent(sym)}`);
       return r.json();
     },
-    // Exposures are structural, not tick-level — 5 min refresh keeps CBOE happy.
+    // Exposures are structural, not tick-level — 5 min refresh keeps the Schwab request budget low.
     refetchInterval: 5 * 60_000,
     staleTime: 4 * 60_000,
   });
@@ -92,7 +93,7 @@ export default function ExposurePanel({ symbol }: Props) {
           <Info className="h-5 w-5 text-amber-500" />
           <div>Couldn't compute exposures for {sym}.</div>
           <div className="text-xs opacity-70">
-            {(error as any)?.message ?? "CBOE chain may be unavailable. SPY/QQQ/IWM + Mag7 work best."}
+            {(error as any)?.message ?? "Schwab option chain unavailable for this symbol."}
           </div>
           <button
             className="mt-2 rounded-md border border-border/60 px-3 py-1 text-xs hover:bg-muted"
@@ -114,8 +115,9 @@ export default function ExposurePanel({ symbol }: Props) {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <div className="space-y-0.5">
-            <CardTitle className="text-base" data-testid="text-exposure-title">
+            <CardTitle className="flex items-center gap-2 text-base" data-testid="text-exposure-title">
               Dealer exposure — {sym}
+              <DataAgeChip asOfMs={(data.meta as any).chainAsOfMs ?? null} stale={(data.meta as any).chainStale ?? null} label="chain" />
             </CardTitle>
             <div className="text-xs text-muted-foreground">
               {data.meta.chainSize.toLocaleString()} contracts · 0-45 DTE · spot {p.currentSpot.toFixed(2)} · r {(p.r * 100).toFixed(1)}% · q {(p.q * 100).toFixed(1)}%

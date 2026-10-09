@@ -208,7 +208,7 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
             {d.spot == null && (
               <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 text-[11px] text-amber-400 flex items-center gap-2" data-testid="briefing-offline-banner">
                 <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
-                no live spot for {d.symbol} — Schwab feed is down. CBOE-derived levels and models below are still good; price-anchored reads are stale.
+                no live spot for {d.symbol} — Schwab feed is down. Chain-derived levels and models below are from the last Schwab chain (see their age chips) or unavailable; price-anchored reads are not current.
               </div>
             )}
 

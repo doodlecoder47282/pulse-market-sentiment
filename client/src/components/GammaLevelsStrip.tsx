@@ -4,6 +4,7 @@
 // Collapsible on mobile (horizontal scroll chip row).
 
 import { useState } from "react";
+import DataAgeChip from "./DataAgeChip";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -42,6 +43,9 @@ interface EnhancedGammaResponse {
   supported: boolean;
   enhanced: GammaLevelsEnhanced;
   asOf: number;
+  /** When Schwab produced the SPY chain behind the calc levels (epoch s), and its stale flag. */
+  chainAsOf?: number | null;
+  chainStale?: boolean;
 }
 
 type DotColor = "green" | "red" | "amber";
@@ -222,6 +226,7 @@ export default function GammaLevelsStrip() {
           <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             Gamma Levels
           </span>
+          <DataAgeChip asOfMs={data.chainAsOf ?? null} stale={data.chainStale ?? null} label="chain" />
         </div>
         {expanded ? (
           <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
@@ -307,8 +312,8 @@ export default function GammaLevelsStrip() {
           })()}
 
           <div className="mt-2 px-1 text-[9px] text-muted-foreground/40 leading-tight">
-            <span className={SOURCE_TAG_CLASS.computed}>calc</span> = from CBOE chain ·{" "}
-            <span className={SOURCE_TAG_CLASS.user_targets}>tgt</span> = user weekly targets
+            <span className={SOURCE_TAG_CLASS.computed}>calc</span> = from the Schwab SPY chain (SPY $) ·{" "}
+            <span className={SOURCE_TAG_CLASS.user_targets}>tgt</span> = user weekly targets (SPX pts)
           </div>
         </div>
       )}

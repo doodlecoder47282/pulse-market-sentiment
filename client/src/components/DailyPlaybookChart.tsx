@@ -51,7 +51,7 @@ interface InputManifest {
   key: string;
   label: string;
   value: number | string;
-  source: "Schwab" | "Schwab+CBOE" | "CBOE delayed" | "Computed" | "Yahoo";
+  source: "Schwab" | "Computed";
   asOf: number;
   freshSeconds: number;
   calibration?: string;
@@ -550,16 +550,10 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
                     style={{
                       color:
                         inp.source === "Schwab" ? "#34d399"
-                        : inp.source === "Schwab+CBOE" ? "#a3e635"
-                        : inp.source === "CBOE delayed" ? "#fbbf24"
-                        : inp.source === "Computed" ? "#60a5fa"
-                        : "#fb923c",
+                        : "#60a5fa",
                       background:
                         inp.source === "Schwab" ? "rgba(16,185,129,0.08)"
-                        : inp.source === "Schwab+CBOE" ? "rgba(163,230,53,0.08)"
-                        : inp.source === "CBOE delayed" ? "rgba(251,191,36,0.08)"
-                        : inp.source === "Computed" ? "rgba(96,165,250,0.08)"
-                        : "rgba(251,146,60,0.08)",
+                        : "rgba(96,165,250,0.08)",
                     }}
                   >
                     {inp.source}

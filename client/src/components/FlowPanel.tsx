@@ -39,10 +39,15 @@ type FlowTicker = {
   changeFromOpen: number | null;
   zone: "bullish" | "neutral" | "bearish";
   asOf: number;
+  /** "unavailable" = Schwab returned no chain: volumes are not observed (shown as —). */
+  dataState?: "ok" | "unavailable";
+  chainStale?: boolean;
 };
 
 type FlowResponse = {
-  provider: "schwab"; // TODO: Schwab-only mode — yahoo provider removed
+  provider: "schwab";
+  /** What the volumes cover (expiry and strike window of the Schwab chains). */
+  coverage?: string;
   indexGroup: FlowTicker[];
   mag7Group: FlowTicker[];
   aggregate: {
@@ -50,12 +55,6 @@ type FlowResponse = {
     mag7Pcr: number | null;
     combinedPcr: number | null;
     zone: "bullish" | "neutral" | "bearish";
-  };
-  cboe: {
-    equityPcr: number | null;
-    indexPcr: number | null;
-    totalPcr: number | null;
-    asOf: number | null;
   };
   intradaySeries: { t: number; combined: number; index: number; mag7: number }[];
   warnings: string[];
@@ -276,9 +275,9 @@ function FlowTile({ tick }: { tick: FlowTicker }) {
       </div>
       <div className={`font-mono text-lg font-bold tabular-nums ${c.text}`}>{fmtPcr(tick.pcrVolume)}</div>
       <div className="flex items-center justify-between text-[9px] text-muted-foreground">
-        <span>P {(tick.putVol / 1000).toFixed(0)}k</span>
+        <span>P {tick.dataState === "unavailable" ? "—" : `${(tick.putVol / 1000).toFixed(0)}k`}</span>
         <span>·</span>
-        <span>C {(tick.callVol / 1000).toFixed(0)}k</span>
+        <span>C {tick.dataState === "unavailable" ? "—" : `${(tick.callVol / 1000).toFixed(0)}k`}</span>
         <span>·</span>
         <span>OI {fmtPcr(tick.pcrOI)}</span>
       </div>
@@ -896,7 +895,7 @@ export default function FlowPanel({ onOpenSettings }: { onOpenSettings?: () => v
             <EdgeInfo id="pc-flow" />
           </CardTitle>
           <div className="text-[10px] text-muted-foreground">
-            Provider: {data.provider.toUpperCase()} · {new Date(data.asOf * 1000).toLocaleTimeString()}
+            <span title={data.coverage}>Schwab chains 0-7 DTE</span> · {new Date(data.asOf * 1000).toLocaleTimeString()}
           </div>
         </div>
       </CardHeader>

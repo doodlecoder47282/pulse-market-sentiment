@@ -30,7 +30,7 @@ type Interval = "1m" | "5m" | "15m" | "30m" | "60m" | "1d" | "1wk";
 type Engine = "svg" | "lightweight" | "tv";
 type ViewMode = "price" | "greeks" | "flow";
 
-// Allowed intraday intervals per timeframe (Schwab/CBOE constraints)
+// Allowed intraday intervals per timeframe (Schwab price-history constraints)
 const INTERVAL_OPTIONS: Record<Timeframe, Interval[]> = {
   "1D": ["1m", "5m", "15m", "30m", "60m"],
   "5D": ["5m", "15m", "30m", "60m"],

@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { fmt } from "@/lib/format";
 import LivenessBadge from "@/components/LivenessBadge";
+import DataAgeChip from "@/components/DataAgeChip";
 import {
   LineChart, Line, XAxis, YAxis, ReferenceLine, ResponsiveContainer,
   Tooltip as RTooltip, CartesianGrid, Area, AreaChart,
@@ -250,7 +251,7 @@ export default function TradeDesk() {
         />
         <OfiHistogram />
         <IntradayChart
-          title="CBOE Volatility Index"
+          title="Cboe Volatility Index (Schwab $VIX)"
           symbol="^VIX"
           quote={data.quotes.vix}
           pivots={data.pivots.vix}
@@ -263,6 +264,9 @@ export default function TradeDesk() {
 
       {/* Gamma Map */}
       <section>
+        <div className="flex justify-end">
+          <DataAgeChip asOfMs={(data as any).gammaAsOf ?? null} stale={(data as any).gammaStale ?? null} label="gamma map · Schwab SPY chain" />
+        </div>
         <GammaMapCard gammaMap={data.gammaMap} spot={data.quotes.spy?.price ?? null} />
       </section>
 

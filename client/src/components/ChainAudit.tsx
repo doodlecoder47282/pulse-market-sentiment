@@ -5,6 +5,7 @@
  */
 
 import { useState } from "react";
+import DataAgeChip from "./DataAgeChip";
 import { useQuery } from "@tanstack/react-query";
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip,
@@ -344,6 +345,7 @@ export default function ChainAudit() {
   const audit = data?.audit;
   const isSchwabError = (error as any)?.status === 503
     || (data as any)?.error === "schwab_required"
+    || (data as any)?.error === "schwab_unavailable"
     || (isError && String((error as any)?.message ?? "").includes("schwab"));
 
   return (
@@ -372,6 +374,7 @@ export default function ChainAudit() {
         {data && (
           <Badge variant="outline" className="border-cyan-500/40 font-mono text-[9px] text-cyan-400">
             {data.symbol} · {data.audit.contractsProcessed.toLocaleString()} contracts · {data.audit.expiriesFound} expiries
+            {" "}<DataAgeChip asOfMs={(data as any).chainAsOfMs ?? null} stale={(data as any).chainStale ?? null} label="chain" />
           </Badge>
         )}
         {data?.audit?.dataQuality === "partial" && (

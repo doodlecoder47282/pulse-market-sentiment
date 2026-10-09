@@ -488,7 +488,7 @@ export default function Dashboard() {
               vix9d={vol.vix9d.value}
               vvix={vol.vvix.value}
               ratio9dOver30d={term.ratio9dOver30d}
-              spot={spy.price ? spy.price * 10 : null}
+              spot={spy.price ?? null /* SPY $: same scale as gamma.zeroGamma (Schwab SPY chain); was SPY x10 vs an SPY-scale flip */}
               zeroGamma={gamma.zeroGamma ?? null}
             />
             <ErrorBoundary label="Chart Panel">
@@ -506,7 +506,7 @@ export default function Dashboard() {
               vix9d={vol.vix9d.value}
               vvix={vol.vvix.value}
               ratio9dOver30d={term.ratio9dOver30d}
-              spot={spy.price ? spy.price * 10 : null}
+              spot={spy.price ?? null /* SPY $: same scale as gamma.zeroGamma (Schwab SPY chain); was SPY x10 vs an SPY-scale flip */}
               zeroGamma={gamma.zeroGamma ?? null}
             />
             <ErrorBoundary label="Models Panel">
@@ -557,7 +557,7 @@ export default function Dashboard() {
               vix9d={vol.vix9d.value}
               vvix={vol.vvix.value}
               ratio9dOver30d={term.ratio9dOver30d}
-              spot={spy.price ? spy.price * 10 : null}
+              spot={spy.price ?? null /* SPY $: same scale as gamma.zeroGamma (Schwab SPY chain); was SPY x10 vs an SPY-scale flip */}
               zeroGamma={gamma.zeroGamma ?? null}
             />
             <ErrorBoundary label="Trade Desk">
@@ -633,7 +633,7 @@ export default function Dashboard() {
               vix9d={vol.vix9d.value}
               vvix={vol.vvix.value}
               ratio9dOver30d={term.ratio9dOver30d}
-              spot={spy.price ? spy.price * 10 : null}
+              spot={spy.price ?? null /* SPY $: same scale as gamma.zeroGamma (Schwab SPY chain); was SPY x10 vs an SPY-scale flip */}
               zeroGamma={gamma.zeroGamma ?? null}
             />
 
@@ -779,7 +779,7 @@ export default function Dashboard() {
                   </ErrorBoundary>
                   <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
                     Bars above zero = dealers long gamma at that strike (stabilizing). Bars below zero = short gamma
-                    (amplifying). Computed from CBOE delayed options chain; calls contribute +, puts contribute − weighted by
+                    (amplifying). Computed from the Schwab SPY options chain (0-45 DTE); calls contribute +, puts contribute − weighted by
                     Γ × OI × 100 × S² × 1%.
                   </p>
                 </>

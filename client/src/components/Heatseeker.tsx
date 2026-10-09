@@ -23,6 +23,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import LivenessBadge from "@/components/LivenessBadge";
+import DataAgeChip from "@/components/DataAgeChip";
 import Killbox from "@/components/Killbox";
 import { useMemo, useState, useEffect } from "react";
 import {
@@ -789,7 +790,8 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
               <Flame className="h-7 w-7 text-orange-500" />
               <div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <LivenessBadge feedName="heatseeker" value={spot} />
+                  <LivenessBadge feedName="heatseeker" value={spot} stale={(data as any).chainStale ?? null} asOfMs={(data as any).chainAsOfMs ?? null} />
+                  <DataAgeChip asOfMs={(data as any).chainAsOfMs ?? null} stale={(data as any).chainStale ?? null} label="chain" />
                   HEATSEEKER · {symbol} · {dte}DTE · exp {expiry}
                   <EdgeInfo id="heatseeker-map" className="h-6 w-6" />
                 </div>

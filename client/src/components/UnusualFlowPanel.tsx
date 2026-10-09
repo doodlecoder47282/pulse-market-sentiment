@@ -1,5 +1,5 @@
 // UnusualFlowPanel.tsx
-// CBOE-derived unusual options flow for the active chart symbol.
+// Unusual options flow (Schwab option chain) for the active chart symbol.
 // Mounted as a sub-view of the Chart tab (ViewMode: "flow").
 //
 // Features:
@@ -63,11 +63,13 @@ interface UnusualContract {
 }
 
 interface UnusualResponse {
-  provider: "cboe" | "schwab";
+  provider: "schwab";
+  /** "unavailable" = Schwab did not answer: summary figures are null, not zero. */
+  dataState?: "ok" | "unavailable";
   symbol: string;
   spot: number | null;
   contracts: UnusualContract[];
-  /** Optional human-readable note (e.g. "CBOE rate-limited — using Schwab fallback"). */
+  /** Optional human-readable note (e.g. why the scan is unavailable or stale). */
   note?: string;
   summary: {
     flaggedCount: number;
@@ -479,7 +481,7 @@ function ContractRow({ c, onClick, symbol, trackedIds }: { c: UnusualContract; o
       className={`border-b border-border/20 last:border-b-0 hover:bg-muted/30 ${onClick ? "cursor-pointer" : ""}`}
       data-testid={`flow-row-${c.occ}`}
     >
-      {/* Time stub — CBOE chain doesn't carry per-contract time; show expiry short */}
+      {/* Time stub — the chain snapshot has no per-trade time; show expiry short */}
       <td className="px-2 py-1.5 text-[10px] text-muted-foreground font-mono">
         {fmtExpiryShort(c.expiration)}
       </td>
@@ -735,7 +737,7 @@ function UnusualFlowModal({
   onRowClick: (c: UnusualContract) => void;
 }) {
   const open = clicked !== null;
-  // API returns asOf in seconds (CBOE) or ms — detect and normalize
+  // API returns asOf in epoch seconds (some older payloads in ms) — detect and normalize
   const asOfMs = asOf < 1e12 ? asOf * 1000 : asOf;
   const tsFmt = new Date(asOfMs).toLocaleString("en-US", { hour12: false, timeZoneName: "short" });
 
@@ -956,6 +958,24 @@ export default function UnusualFlowPanel({ symbol }: Props) {
     );
   }
 
+  if (data.dataState === "unavailable") {
+    return (
+      <Card data-testid="unusual-flow-panel">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Flame className="h-4 w-4 text-amber-400" /> Unusual Options Flow — {sym}
+            <Badge variant="outline" className="ml-1 border-rose-500/40 text-[9px] text-rose-300">SCHWAB · unavailable</Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-md border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-[11px] text-rose-300" data-testid="unusual-flow-unavailable">
+            {data.note ?? "Schwab did not return an option chain. No flow figures are shown (not zero: not observed)."}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   const s = data.summary;
   const callPutRatio = s.callPutNotionalRatio;
   const leaning: "CALLS" | "PUTS" | "BALANCED" =
@@ -970,7 +990,7 @@ export default function UnusualFlowPanel({ symbol }: Props) {
           <CardTitle className="flex items-center gap-2 text-sm">
             <Flame className="h-4 w-4 text-amber-400" /> Unusual Options Flow — {sym}
             <Badge variant="outline" className="ml-1 border-amber-500/40 text-[9px] text-amber-300">
-              {data.provider.toUpperCase()} · {data.provider === "cboe" ? "15m delayed" : "real-time"}
+              SCHWAB · chain as of {new Date(data.asOf * 1000).toLocaleTimeString()}
             </Badge>
           </CardTitle>
           <div className="text-[10px] text-muted-foreground">
@@ -1205,9 +1225,6 @@ export default function UnusualFlowPanel({ symbol }: Props) {
             Mid price = last-trade if it falls inside the bid-ask spread, else (bid+ask)/2.
             Notional = volume × mid × 100 (OCC contract multiplier).
           </div>
-          {data.provider === "cboe" && (
-            <div>CBOE data is 15-min delayed — Schwab integration will enable true real-time tape.</div>
-          )}
         </div>
       </CardContent>
     </Card>

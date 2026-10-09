@@ -41,6 +41,7 @@ import { BatmanLogo } from "./BatmanLogo";
 import { apiRequest } from "@/lib/queryClient";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ChainAudit from "@/components/ChainAudit";
+import DataAgeChip from "@/components/DataAgeChip";
 import { BacktestBadge, BacktestPanel, type BacktestHorizon } from "@/components/BacktestOverlay";
 import PivotProjection from "@/components/models/PivotProjection";
 import MLAccuracyCard from "@/components/models/MLAccuracyCard";
@@ -1994,6 +1995,7 @@ function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; sessio
           </span>
           <span className="text-border">|</span>
           <span className="text-foreground font-bold">SPOT {fmtK(horizon.spot)}</span>
+          <DataAgeChip asOfMs={(horizon as any).chainAsOfMs ?? null} stale={(horizon as any).chainStale ?? null} label={`${(horizon as any).chainSymbol ?? "chain"} chain`} />
           <span className="text-border">|</span>
           <span className={a.dfi >= 0 ? "text-green-400" : "text-red-400"}>
             DFI {a.dfi >= 0 ? "+" : ""}{a.dfi.toFixed(2)} {a.dfiLabel}

@@ -40,13 +40,22 @@ interface SchwabDiag {
   maxPerMinute: number;
   cooldowns: { endpoint: string; secondsRemaining: number }[];
   forbiddenStreaks: { endpoint: string; count: number }[];
-  cboeFallbackHits?: { symbol: string; count: number; secondsAgo: number }[];
+  /** Per data kind, last 5 min: cached payloads served stale (within max age) and requests left unavailable. */
+  degraded?: { kind: string; staleServed: number; unavailable: number; secondsAgo: number; lastReason: string }[];
+  /** Max age (ms) per kind at which a cached Schwab payload may still be served. */
+  maxServeAgeMs?: Record<string, number>;
   asOf: number;
 }
 
-// Bug #6 fix: removed misleading "yahoo" state. The disconnected fallback is
-// either cached Schwab snapshots or CBOE delayed chains — never Yahoo data.
-type SourceState = "schwab_live" | "schwab_cached" | "cboe_fallback" | "disconnected" | "offline";
+// Schwab is the only market-data source (user decision 2026-10-08). When it
+// cannot answer, data is served from a short-lived cache with its real age
+// (within a stated max age) or shown as unavailable: no CBOE, no Yahoo.
+type SourceState = "schwab_live" | "schwab_stale" | "unavailable" | "disconnected" | "offline";
+
+function fmtMaxAge(ms: number | undefined): string {
+  if (ms == null) return "";
+  return ms >= 3600_000 ? `${Math.round(ms / 3600_000)}h` : ms >= 60_000 ? `${Math.round(ms / 60_000)}m` : `${Math.round(ms / 1000)}s`;
+}
 
 /** Map a UI data-source row to its real live state from the diag feed. */
 function deriveEndpointState(
@@ -55,46 +64,28 @@ function deriveEndpointState(
   diag: SchwabDiag | undefined,
 ): { source: SourceState; detail: string } {
   if (!isConnected) {
-    if (key === "chains") return { source: "cboe_fallback", detail: "CBOE delayed (~15min)" };
-    // Bug #6: quotes/history have no Yahoo fallback — they're cached Schwab
-    // snapshots or stale. Surface the truth, not a fake Yahoo label.
-    return { source: "disconnected", detail: "Schwab disconnected — cached / stale" };
+    return { source: "disconnected", detail: "Schwab disconnected — data unavailable (no other source)" };
   }
 
   // Endpoint name in cooldown/forbidden maps (matches schwabFetch path keys)
   const ep =
     key === "quotes"  ? "quotes"
     : key === "history" ? "pricehistory"
-    : key === "chains" ? "chains"
     : "chains"; // gamma piggybacks on chains
+  const kinds = key === "quotes" ? ["quotes"] : key === "history" ? ["minute_bars", "daily_bars"] : ["chains"];
 
   const cool = diag?.cooldowns?.find((c) => c.endpoint.toLowerCase().includes(ep));
-  const streak = diag?.forbiddenStreaks?.find((s) => s.endpoint.toLowerCase().includes(ep));
+  const deg = (diag?.degraded ?? []).filter((d) => kinds.includes(d.kind));
+  const maxAge = fmtMaxAge(diag?.maxServeAgeMs?.[kinds[0]]);
+  const unavailable = deg.reduce((a, d) => a + d.unavailable, 0);
+  const staleServed = deg.reduce((a, d) => a + d.staleServed, 0);
+  const reason = deg[0]?.lastReason ?? (cool ? `cooldown ${cool.secondsRemaining}s` : "");
 
-  // Chains: if we've actually fallen back to CBOE in the last 5 min, that's the real source
-  if (key === "chains" || key === "gamma") {
-    const cboeHits = diag?.cboeFallbackHits ?? [];
-    if (cboeHits.length > 0) {
-      const total = cboeHits.reduce((acc, h) => acc + h.count, 0);
-      const symbols = cboeHits.slice(0, 3).map((h) => h.symbol).join(", ");
-      const more = cboeHits.length > 3 ? ` +${cboeHits.length - 3} more` : "";
-      return { source: "cboe_fallback", detail: `CBOE delayed · ${total} hits (${symbols}${more})` };
-    }
-    if (streak && streak.count >= 2) {
-      return { source: "cboe_fallback", detail: `CBOE delayed (Schwab 403 x${streak.count})` };
-    }
-    if (cool) {
-      return { source: "cboe_fallback", detail: `CBOE delayed (Schwab cooldown ${cool.secondsRemaining}s)` };
-    }
-    return { source: "schwab_live", detail: "Schwab live" };
+  if (unavailable > 0) {
+    return { source: "unavailable", detail: `Unavailable x${unavailable} in 5 min (${reason})` };
   }
-
-  // Quotes / history: cooldown means we're serving cached
-  if (cool) {
-    return { source: "schwab_cached", detail: `Cached (cooldown ${cool.secondsRemaining}s)` };
-  }
-  if (streak && streak.count >= 2) {
-    return { source: "schwab_cached", detail: `Cached (403 x${streak.count})` };
+  if (staleServed > 0 || cool) {
+    return { source: "schwab_stale", detail: `Cached Schwab, max age ${maxAge}${reason ? ` (${reason})` : ""}` };
   }
   return { source: "schwab_live", detail: "Schwab live" };
 }
@@ -148,8 +139,8 @@ export function SchwabStatusPill({ onClick }: { onClick: () => void }) {
 function SourceBadge({ source, detail }: { source: SourceState; detail?: string }) {
   const styles: Record<SourceState, { color: string; dot: string; pulse: boolean; label: string }> = {
     schwab_live:    { color: "#34d399", dot: "bg-emerald-400", pulse: true,  label: "Schwab LIVE" },
-    schwab_cached:  { color: "#a3e635", dot: "bg-lime-400",     pulse: false, label: "Schwab cached" },
-    cboe_fallback:  { color: "#fbbf24", dot: "bg-amber-400",    pulse: false, label: "CBOE delayed" },
+    schwab_stale:   { color: "#fbbf24", dot: "bg-amber-400",    pulse: false, label: "Schwab cached (stale)" },
+    unavailable:    { color: "#f87171", dot: "bg-red-400",      pulse: false, label: "Unavailable" },
     disconnected:   { color: "#fb923c", dot: "bg-orange-400",   pulse: false, label: "Schwab disconnected" },
     offline:        { color: "#f87171", dot: "bg-red-500",      pulse: false, label: "Offline" },
   };
@@ -459,7 +450,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                 <WifiOff className="h-4 w-4 text-muted-foreground" />
                 <div>
                   <div className="text-sm font-medium">Schwab offline</div>
-                  <div className="text-[11px] text-muted-foreground">Schwab disconnected — serving cached snapshots or CBOE delayed data. Connect Schwab for live data.</div>
+                  <div className="text-[11px] text-muted-foreground">Schwab disconnected — market data is unavailable (Schwab is the only source). Connect Schwab for live data.</div>
                 </div>
               </div>
             )}

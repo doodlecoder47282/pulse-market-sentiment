@@ -17,6 +17,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import LivenessBadge from "@/components/LivenessBadge";
+import DataAgeChip from "@/components/DataAgeChip";
 
 type Greek = "gex" | "vanna" | "charm" | "vomma" | "zomma";
 
@@ -137,10 +138,11 @@ export default function Killbox({ symbol = "$SPX" }: { symbol?: string }) {
           )}
           {data?.asOf && (
             <div className="text-[10px] font-mono text-muted-foreground" data-testid="killbox-asof">
-              live · {fmtTime(data.asOf)}
+              Schwab chain · {fmtTime((data as any).chainAsOfMs ?? data.asOf)}
             </div>
           )}
-          <LivenessBadge feedName="options-cboe" value={data?.asOf ?? undefined} requiresSchwab={true} />
+          <DataAgeChip asOfMs={(data as any)?.chainAsOfMs ?? null} stale={(data as any)?.chainStale ?? null} label="chain" />
+          <LivenessBadge feedName="options" value={data?.asOf ?? undefined} requiresSchwab={true} stale={(data as any)?.chainStale ?? null} asOfMs={(data as any)?.chainAsOfMs ?? null} />
         </div>
       </div>
 
