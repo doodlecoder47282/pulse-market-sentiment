@@ -1,7 +1,8 @@
 // MISSION FIX #6 — participation breadth card (GET /api/breadth).
 // Sampled internals from the Schwab daily-bars cache: % above 20/50dma,
 // advancers, RSP/SPY equal-weight ratio trend, and a thin-tape divergence flag.
-// Honest about being a 36-stock sample, not full NYSE internals.
+// Honest about being a 36-stock hand-picked large-cap sample, not full NYSE
+// internals and not the median stock; sector-ETF participation sits beside it.
 
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,6 +20,10 @@ interface BreadthSnapshot {
   history: { date: string; pctAbove20: number }[];
   read: string;
   note: string;
+  sectorBreadth?: { pctAbove20dma: number | null; pctAbove50dma: number | null; sectors: number };
+  lastBarDate?: string | null;
+  expectedBarDate?: string | null;
+  dataState?: "ok" | "stale" | "insufficient" | "unavailable";
 }
 
 // Server emits PERCENT form (44.4), not fractions (0.444) — do not multiply.
@@ -54,6 +59,11 @@ export default function BreadthCard() {
           <CardTitle className="flex items-center gap-2 text-sm font-semibold tracking-tight">
             <Layers className="w-4 h-4" /> participation breadth
           </CardTitle>
+          {b?.dataState && b.dataState !== "ok" && (
+            <Badge variant="outline" className="text-amber-500 border-amber-500/30" data-testid="badge-breadth-state">
+              {b.dataState === "stale" ? `stale: last bar ${b.lastBarDate}` : b.dataState}
+            </Badge>
+          )}
           {b?.divergence && (
             <Badge variant="outline" className="text-rose-500 border-rose-500/30" data-testid="badge-breadth-divergence">
               thin tape — index up, troops not following
@@ -61,7 +71,7 @@ export default function BreadthCard() {
           )}
         </div>
         <p className="text-xs text-muted-foreground leading-snug">
-          is the index move confirmed underneath? sampled internals ({b?.sampleSize ?? "…"} large caps) from cached daily bars — zero extra api calls.
+          is the index move confirmed underneath? {b?.sampleSize ?? "…"} hand-picked large caps (large-cap participation, not the median stock), the 11 sector ETFs and RSP/SPY, from cached Schwab daily bars.
         </p>
       </CardHeader>
       <CardContent className="pt-0 space-y-3">
@@ -78,7 +88,7 @@ export default function BreadthCard() {
                 <div className="text-lg font-semibold font-mono tabular-nums" data-testid="text-pct-above-50">{pct(b.pctAbove50dma)}</div>
               </div>
               <div>
-                <div className="text-xs text-muted-foreground">advancers today</div>
+                <div className="text-xs text-muted-foreground">advancers (last session{b.lastBarDate ? ` ${b.lastBarDate}` : ""})</div>
                 <div className="text-lg font-semibold font-mono tabular-nums" data-testid="text-advancers">{pct(b.advancersPct)}</div>
               </div>
               <div>
@@ -88,6 +98,12 @@ export default function BreadthCard() {
                 </div>
               </div>
             </div>
+            {b.sectorBreadth && (
+              <div className="text-xs text-muted-foreground" data-testid="text-sector-breadth">
+                sectors above 20dma {pct(b.sectorBreadth.pctAbove20dma)} · above 50dma {pct(b.sectorBreadth.pctAbove50dma)}
+                {" "}({b.sectorBreadth.sectors} of 11 SPDR sectors with history, each counted once)
+              </div>
+            )}
             <MiniBars history={b.history} />
             <p className="text-xs leading-snug" data-testid="text-breadth-read">{b.read}</p>
             <p className="text-xs text-muted-foreground leading-snug">{b.note}</p>

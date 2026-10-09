@@ -227,3 +227,40 @@ test("composite: correlated vol gauges share one block weight; F&G cut for its V
   assert.ok(Math.abs(w[1] - BLOCK_WEIGHTS.crowd / tot) < 1e-12);
   assert.match(c.method ?? "", /heuristic/);
 });
+
+// ─── 5.7 breadth sample labelled; sector participation; stale bars ────────
+
+test("breadth: sample labelled as hand-picked large caps; sector participation counts each sector once; stale bars flagged", async () => {
+  const { computeBreadth, SECTOR_ETFS, lastCompletedSession } = await import("../../server/breadthMath");
+  const { nextTradingDay } = await import("../../server/exchangeCalendar");
+  const dates: string[] = [];
+  let d = "2026-05-01";
+  while (dates.length < 110) { dates.push(d); d = nextTradingDay(d); }
+  const last = dates[dates.length - 1];
+  const up = (sym: string) => dates.map((date, i) => ({ symbol: sym, date, close: 100 + i }));
+  const down = (sym: string) => dates.map((date, i) => ({ symbol: sym, date, close: 300 - i }));
+  const stocks = Array.from({ length: 36 }, (_, i) => `S${i}`);
+  // 27 of 36 rising -> 75% above 20dma; 8 of 11 sectors rising -> 72.7%
+  const rows = stocks.flatMap((s, i) => (i < 27 ? up(s) : down(s)));
+  const etfRows = [...up("SPY"), ...up("RSP"), ...SECTOR_ETFS.flatMap((s, i) => (i < 8 ? up(s) : down(s)))];
+  // "now" = 17:00 ET on the last date: that session is complete and present.
+  const nowOk = Date.parse(`${last}T21:00:00Z`);
+  assert.equal(lastCompletedSession(nowOk), last);
+  const b = computeBreadth({ rows, etfRows, stockSymbols: stocks, nowMs: nowOk });
+  assert.equal(b.pctAbove20dma, 75);
+  assert.equal(b.sectorBreadth.pctAbove20dma, Number(((8 / 11) * 100).toFixed(1)));
+  assert.equal(b.sectorBreadth.sectors, 11);
+  assert.equal(b.sample.random, false);
+  assert.match(b.note, /not the median stock/);
+  assert.equal(b.dataState, "ok");
+  // Two sessions later with no new bars: stale, and the read says so.
+  const later = nextTradingDay(nextTradingDay(last));
+  const b2 = computeBreadth({ rows, etfRows, stockSymbols: stocks, nowMs: Date.parse(`${later}T21:00:00Z`) });
+  assert.equal(b2.dataState, "stale");
+  assert.equal(b2.lastBarDate, last);
+  assert.match(b2.read, /stale/);
+  // No SPY history: insufficient, never a 0% reading.
+  const b3 = computeBreadth({ rows, etfRows: [], stockSymbols: stocks, nowMs: nowOk });
+  assert.equal(b3.dataState, "insufficient");
+  assert.equal(b3.pctAbove20dma, null);
+});
