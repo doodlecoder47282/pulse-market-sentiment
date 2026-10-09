@@ -102,7 +102,8 @@ interface TickerOutlookResponse {
     asOf: string;
     news: { events: AlphaEvent[]; warnings: string[] };
     social: {
-      score: number;
+      score: number | null;
+      scoreReason?: string | null;
       messageCount: number;
       volumeZ: number;
       /** null = source not read (failed / not configured / removed), not 0 posts */
@@ -125,7 +126,7 @@ interface TickerOutlookResponse {
     };
     rollup: {
       newsBias: number;
-      socialBias: number;
+      socialBias: number | null;
       positioningBias: number;
       composite: number;
       edgeType: OutlookVerdict["edgeType"];
@@ -757,7 +758,11 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                       social exposure
                     </div>
                     <div className="flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
-                      <span>tone {q.data.alpha.social.score > 0 ? "+" : ""}{q.data.alpha.social.score}</span>
+                      <span title={q.data.alpha.social.scoreReason ?? undefined}>
+                        tone {q.data.alpha.social.score == null
+                          ? "not available"
+                          : `${q.data.alpha.social.score > 0 ? "+" : ""}${q.data.alpha.social.score}`}
+                      </span>
                       <span>· {q.data.alpha.social.messageCount} msgs</span>
                       {q.data.alpha.social.volumeZ >= 1 && (
                         <span className="text-amber-300">

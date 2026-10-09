@@ -184,7 +184,7 @@ function deterministicVerdict(
     thesis:
       direction === "NEUTRAL"
         ? `No edge — pass. Composite ${c}. Wait for a hard catalyst or social vol spike.`
-        : `${direction === "BULL" ? "Bullish" : "Bearish"} bias from composite ${c} (news ${alpha.rollup.newsBias}/social ${alpha.rollup.socialBias}/positioning ${alpha.rollup.positioningBias}). Magnet ${target?.toFixed(2) ?? "n/a"}, invalidation ${invalidation?.toFixed(2) ?? "n/a"}.`,
+        : `${direction === "BULL" ? "Bullish" : "Bearish"} bias from composite ${c} (news ${alpha.rollup.newsBias}/social ${alpha.rollup.socialBias ?? "not available"}/positioning ${alpha.rollup.positioningBias}). Magnet ${target?.toFixed(2) ?? "n/a"}, invalidation ${invalidation?.toFixed(2) ?? "n/a"}.`,
     scenarios: {
       bull: {
         prob: bullProb,
@@ -280,6 +280,7 @@ function buildSynthesisPayload(alpha: TickerAlpha, pivots: PivotProjectionRespon
     },
     social: {
       score: alpha.social.score,
+      scoreReason: alpha.social.scoreReason,
       bullish: alpha.social.bullish,
       bearish: alpha.social.bearish,
       messageCount: alpha.social.messageCount,

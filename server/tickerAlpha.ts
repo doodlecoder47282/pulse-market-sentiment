@@ -4,7 +4,7 @@
 // user types), fuse three independent signal streams into one alpha card:
 //
 //   1. NEWS  — ticker-tagged headlines, ranked by tier
-//   2. SOCIAL — StockTwits cashtag volume + sentiment, Reddit mention scan
+//   2. SOCIAL — StockTwits cashtag volume + sentiment (X when configured)
 //   3. POSITIONING — gamma walls, OI shifts, dealer regime, options skew
 //
 // Output: a unified "TickerAlpha" block that the synthesis layer
@@ -46,8 +46,11 @@ export interface SocialPost {
 }
 
 export interface SocialExposure {
-  /** -100..100 net tone (bull - bear) / total */
-  score: number;
+  /** -100..100 net tone (bull - bear) / total. null = no tagged posts (or
+   *  none read); see scoreReason. Missing is not zero. */
+  score: number | null;
+  /** Why score is null; null when a score exists. */
+  scoreReason: string | null;
   bullish: number;
   bearish: number;
   neutral: number;
@@ -104,7 +107,8 @@ export interface TickerAlpha {
   rollup: {
     /** -100..100 */
     newsBias: number;
-    socialBias: number;
+    /** null = no social tone score available (not zero) */
+    socialBias: number | null;
     positioningBias: number;
     /** Composite -100..100 */
     composite: number;
@@ -240,7 +244,12 @@ export async function gatherSocialForTicker(ticker: string): Promise<SocialExpos
   const bearish = all.filter((p) => p.tone === "bearish").length;
   const neutral = all.filter((p) => p.tone === "neutral").length;
   const tagged = bullish + bearish;
-  const score = tagged > 0 ? Math.round(((bullish - bearish) / tagged) * 100) : 0;
+  const score = tagged > 0 ? Math.round(((bullish - bearish) / tagged) * 100) : null;
+  const scoreReason = score != null
+    ? null
+    : all.length === 0
+      ? "no posts read from any social source"
+      : "no bullish/bearish-tagged posts in the window";
   const messageCount = all.length;
   recordSocialVolume(t, messageCount);
   const volumeZ = getSocialVolumeZ(t, messageCount);
@@ -257,6 +266,7 @@ export async function gatherSocialForTicker(ticker: string): Promise<SocialExpos
 
   return {
     score,
+    scoreReason,
     bullish,
     bearish,
     neutral,
@@ -564,8 +574,10 @@ function rollupBias(
   const newsBias = newsWeight > 0 ? Math.round((newsScore / newsWeight) * 100) : 0;
 
   // Social bias: tone score, dampened by low message count
-  let socialBias = social.score;
-  if (social.messageCount < 20) socialBias = Math.round(socialBias * 0.5);
+  // null when there is no tone score (missing, not zero): the composite then
+  // drops the social leg and renormalises the remaining weights.
+  let socialBias: number | null = social.score;
+  if (socialBias != null && social.messageCount < 20) socialBias = Math.round(socialBias * 0.5);
 
   // Positioning bias: combine GEX regime + P/C OI + skew
   let posBias = 0;
@@ -592,9 +604,13 @@ function rollupBias(
 
   // Composite: equal-weight by default; if news is heavy, weight news more
   const newsHeavy = (news.events?.length ?? 0) >= 3;
-  const composite = newsHeavy
-    ? Math.round(0.45 * newsBias + 0.25 * socialBias + 0.30 * posBias)
-    : Math.round(0.30 * newsBias + 0.30 * socialBias + 0.40 * posBias);
+  const composite = socialBias == null
+    ? (newsHeavy
+        ? Math.round((0.45 * newsBias + 0.30 * posBias) / 0.75)
+        : Math.round((0.30 * newsBias + 0.40 * posBias) / 0.70))
+    : newsHeavy
+      ? Math.round(0.45 * newsBias + 0.25 * socialBias + 0.30 * posBias)
+      : Math.round(0.30 * newsBias + 0.30 * socialBias + 0.40 * posBias);
 
   // Edge type
   let edgeType: TickerAlpha["rollup"]["edgeType"] = "none";
@@ -605,7 +621,7 @@ function rollupBias(
 
   return {
     newsBias: Math.max(-100, Math.min(100, newsBias)),
-    socialBias: Math.max(-100, Math.min(100, socialBias)),
+    socialBias: socialBias == null ? null : Math.max(-100, Math.min(100, socialBias)),
     positioningBias: posBias,
     composite: Math.max(-100, Math.min(100, composite)),
     edgeType,
