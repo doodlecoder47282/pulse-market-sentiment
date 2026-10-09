@@ -748,7 +748,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const q = enriched.horizons?.quarterly as any;
         if (q && q.spot) {
           const snap = await getOrBuild(false);
-          const composite = snap.composite?.marketScore ?? 50; // market-data blocks only (rule 2: no social/F&G in a price path)
+          // Market-data blocks only (rule 2: no social/F&G in a price path). When
+          // unavailable the drift tilt is skipped (50 = zero tilt) and labelled below.
+          const marketScore = snap.composite?.marketScore;
+          const compositeAvailable = marketScore != null && Number.isFinite(marketScore);
+          const composite = compositeAvailable ? (marketScore as number) : 50;
           // Scale-aware level mapping:
           //  snap.gamma.* are SPY-scale (gamma chain built from SPY chain).
           //  JPM collar strikes are SPX-scale (5000s range).
@@ -792,6 +796,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             skew: skewVal,
             realizedVol20d,
           });
+          if (!compositeAvailable) {
+            (traj as any).compositeTiltNote = "unavailable: no market-data composite (implied-vol / positioning); composite drift tilt skipped";
+            if ((traj as any).inputs) (traj as any).inputs.composite = null;
+          }
           q.weeklyTrajectory = traj;
         }
       } catch (err: any) {

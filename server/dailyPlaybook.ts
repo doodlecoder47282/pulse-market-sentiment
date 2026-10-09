@@ -165,7 +165,9 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
 
   const isPositiveGamma = totalGex >= 0;
   const isContango = (term?.ratio30dOver3m ?? 1) < 0.95 && (term?.ratio9dOver30d ?? 1) < 0.95;
-  const compScore = composite?.marketScore ?? 50; // market-data blocks only (rule 2: no social/F&G in path probabilities)
+  // Market-data blocks only (rule 2: no social/F&G in path probabilities).
+  // Unavailable -> the tilt is skipped explicitly (not a neutral 50).
+  const compScore: number | null = composite?.marketScore != null && Number.isFinite(composite.marketScore) ? composite.marketScore : null;
   const spotVsFlip = spot - gammaFlip;
 
   // Positive gamma + contango → boost base case (pin), trim wings
@@ -176,7 +178,7 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
   if (!isPositiveGamma){ pBase -= 0.10; pBull += 0.05; pBear += 0.05; }
 
   // Composite tilt: 50 = neutral; ±25 points → ±10% probability shift
-  const compTilt = (compScore - 50) / 250; // ±0.10 max
+  const compTilt = compScore != null ? (compScore - 50) / 250 : 0; // ±0.10 max; 0 = skipped when unavailable
   pBull += compTilt;
   pBear -= compTilt;
 
@@ -213,7 +215,7 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
       : `Negative gamma + bid → momentum higher. Targets +1σ ${(callWall + sigma).toFixed(2)}.`,
     drivers: [
       `Spot ${spot > gammaFlip ? "above" : "below"} flip (${gammaFlip.toFixed(2)})`,
-      `Composite ${compScore}/100`,
+      compScore != null ? `Composite (market blocks) ${compScore}/100` : "Composite (market blocks) unavailable: tilt skipped",
       isContango ? "VIX contango (calm)" : "VIX backwardation (fragile)",
     ],
   };
@@ -262,7 +264,7 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
     drivers: [
       `Put wall ${putWall.toFixed(2)} as last line`,
       !isContango ? "Backwardation = stress" : "Sentiment fragile",
-      `Composite ${compScore}/100`,
+      compScore != null ? `Composite (market blocks) ${compScore}/100` : "Composite (market blocks) unavailable: tilt skipped",
     ],
   };
 
@@ -297,7 +299,7 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
     { key: "gammaFlip", label: "Gamma Flip",      value: gammaFlip,           source: "Computed",     asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: `Zero-gamma level (Perfiliev)` },
     { key: "maxPain",   label: "Max Pain",        value: maxPain,             source: "Computed",     asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt },
     { key: "totalGex",  label: "Total GEX",       value: `${(totalGex / 1e9).toFixed(2)}B`, source: "Computed", asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: isPositiveGamma ? "Positive (pin)" : "Negative (momentum)" },
-    { key: "composite", label: "Composite (market blocks)", value: compScore,           source: "Computed",     asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: composite?.label ?? "" },
+    { key: "composite", label: "Composite (market blocks)", value: compScore ?? "unavailable", source: "Computed", asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: compScore != null ? (composite?.label ?? "") : "unavailable: no implied-vol / positioning gauge; scenario tilt skipped" },
   ];
 
   return {
