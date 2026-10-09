@@ -5066,7 +5066,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         maxDte: params.maxDte,
         feePerContract: params.feePerContract != null ? Number(params.feePerContract) : undefined,
       });
-      res.json(summary);
+      // A failed alert-history read is an error with its reason, not "no trades".
+      res.status(summary.dataState === "error" ? 503 : 200).json(summary);
     } catch (e: any) {
       res.status(500).json({ error: "backtest_failed", message: e?.message ?? String(e) });
     }
@@ -5601,6 +5602,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
           trackedBySource.get(s.source)!.push(s);
         }
 
+        // Tracked signals (signalTracker) only log marks, so their rows stay
+        // MID TO MID and say so; they are listed but never mixed into the
+        // overall row, which uses the whale ask-in / bid-out net-of-fee basis.
         const buildTrackedRow = (source: string, list: any[]) => {
           let wins = 0, losses = 0, burns = 0;
           let sumPct = 0, sumPeak = 0;
@@ -5620,59 +5624,33 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
             source,
             count: list.length,
             wins, losses, burns,
+            burnsEvaluated: list.length,
             winRate: decided > 0 ? wins / decided : 0,
             avgPct: list.length > 0 ? sumPct / list.length : 0,
             totalPnLPct: sumPct,
             avgPeakPct: list.length > 0 ? sumPeak / list.length : 0,
             bestPct: bestPct === -Infinity ? 0 : bestPct,
             worstPct: worstPct === Infinity ? 0 : worstPct,
+            excludedNoQuote: 0,
+            priceBasis: "mid_to_mid",
           };
         };
 
-        const bySource = [...whaleSnap.bySource];
+        const bySource: any[] = [...whaleSnap.bySource];
         for (const [src, list] of trackedBySource) bySource.push(buildTrackedRow(src, list));
         bySource.sort((a, b) => b.count - a.count);
-
-        // Recompute overall across both sources
-        let totalCount = whaleSnap.totalTerminal;
-        let oWins = whaleSnap.overall.wins;
-        let oLosses = whaleSnap.overall.losses;
-        let oBurns = whaleSnap.overall.burns;
-        let oSumPct = whaleSnap.overall.totalPnLPct;
-        let oSumPeak = whaleSnap.overall.avgPeakPct * whaleSnap.totalTerminal;
-        let oBest = whaleSnap.overall.bestPct;
-        let oWorst = whaleSnap.overall.worstPct;
-        for (const list of trackedBySource.values()) {
-          totalCount += list.length;
-          for (const s of list) {
-            const pct = (s.live?.pctChange ?? 0) as number;
-            const peakPct = (s.live?.peakPctChange ?? 0) as number;
-            if (pct > 0) oWins++; else oLosses++;
-            if (peakPct >= 0.5 && pct <= 0) oBurns++;
-            oSumPct += pct;
-            oSumPeak += peakPct;
-            if (pct > oBest) oBest = pct;
-            if (pct < oWorst) oWorst = pct;
-          }
-        }
-        const oDecided = oWins + oLosses;
-        const overall = {
-          source: "overall",
-          count: totalCount,
-          wins: oWins, losses: oLosses, burns: oBurns,
-          winRate: oDecided > 0 ? oWins / oDecided : 0,
-          avgPct: totalCount > 0 ? oSumPct / totalCount : 0,
-          totalPnLPct: oSumPct,
-          avgPeakPct: totalCount > 0 ? oSumPeak / totalCount : 0,
-          bestPct: oBest, worstPct: oWorst,
-        };
 
         res.json({
           asOf: Date.now(),
           windowDays,
-          totalTerminal: totalCount,
+          totalTerminal: whaleSnap.totalTerminal + Array.from(trackedBySource.values()).reduce((a, l) => a + l.length, 0),
           bySource,
-          overall,
+          // Overall = whale positions only, on the ask-in / bid-out net-of-fee
+          // basis; mid-to-mid tracked rows are not mixed into it.
+          overall: whaleSnap.overall,
+          overallBasis: "ask_in_bid_out_net_fees",
+          priceBasisNote: whaleSnap.priceBasisNote,
+          midToMidNote: "tracked-signal rows (flow alerts, UOA, manual) are mid to mid with no fees: they overstate a tradable result by the round-trip spread",
         });
       } catch (e: any) {
         res.status(500).json({ error: "performance_failed", message: e?.message ?? String(e) });

@@ -19,7 +19,12 @@
 //   - dollars: whole contracts that fit the per-trade notional
 //     (floor(notional / (ask x 100 + fee))), fees per contract per side
 //     (default $0.65); pnlPerContract and dollarPnl are after fees.
-//   - pctReturn = (exit - ask) / ask, before fees.
+//   - pctReturn = (exit - ask) / ask, before fees (kept per trade for reference).
+//   - netPctReturn = pnlPerContract / (ask x 100 + fee): every total (winners,
+//     win rate, mean/median return, by-symbol/type/exit-source) is NET of fees,
+//     the same basis as the $ P&L (whaleScoreboard.netGroupStats).
+//   - A DB failure returns dataState "error" with its note, never a summary
+//     that looks like "no trades".
 // 0DTE alerts use the same hold-to-close rule (the detection day is the expiry).
 
 import { db } from "./storage";
@@ -28,6 +33,7 @@ import { and, gte, lte, eq } from "drizzle-orm";
 import { getPriceHistory } from "./schwab";
 import { loadWhaleEntryQuote, loadWhaleExitQuote } from "./whalePersistence";
 import { acceptExitQuote, etCloseMs, evaluateWhaleTrade } from "./validationMath";
+import { netGroupStats, netReturnOnCost } from "./whaleScoreboard";
 
 /** Assumed fee: Schwab's published $0.65 per contract per side (index options carry extra exchange fees). */
 const DEFAULT_FEE_PER_CONTRACT = 0.65;
@@ -65,7 +71,8 @@ export interface BacktestTrade {
   exitAt: number | null;
   underlyingMovePct: number | null;
   delta: number;
-  pctReturn: number | null;  // option return, ask in / exit out, before fees
+  pctReturn: number | null;  // option return, ask in / exit out, BEFORE fees (reference only)
+  netPctReturn?: number | null; // pnlPerContract / (ask x 100 + fee): the basis of every total
   dollarPnl: number | null;  // $ for `contracts` whole contracts, after fees
   reason: "ok" | "no_history" | "no_exit_bar" | "no_delta" | "filtered" | "no_entry_quote" | "am_settled" | "below_one_contract";
   // Added: option prices are $ per share; one contract = 100x
@@ -78,6 +85,11 @@ export interface BacktestTrade {
 }
 
 export interface BacktestSummary {
+  /** "error" when the alert history could not be read: totals are then not a result. */
+  dataState: "ok" | "error";
+  note?: string;
+  /** All totals are net of fees. */
+  returnBasis?: "net_of_fees";
   asOf: number;
   windowFrom: number;
   windowTo: number;
@@ -96,9 +108,9 @@ export interface BacktestSummary {
     skipped: number;
     winners: number;
     losers: number;
-    winRate: number; // 0..1
-    avgPctReturn: number; // mean across executed trades
-    medianPctReturn: number;
+    winRate: number; // 0..1, win = P&L after fees > 0
+    avgPctReturn: number; // mean NET return across executed trades
+    medianPctReturn: number; // median NET return
     totalDollarPnl: number;
     bestTrade: BacktestTrade | null;
     worstTrade: BacktestTrade | null;
@@ -127,13 +139,6 @@ function toEpochMs(v: string | number | undefined, fallback: number): number {
   if (typeof v === "number") return v;
   const n = Date.parse(v);
   return isFinite(n) ? n : fallback;
-}
-
-function median(nums: number[]): number {
-  if (nums.length === 0) return 0;
-  const s = [...nums].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
 interface Candle {
@@ -289,15 +294,16 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestSumma
         pnlPerContract: ev.pnlPerContract,
         feesDollars: ev.feesDollars,
       };
+      const netPctReturn = netReturnOnCost(ev.pnlPerContract, ev.entryAsk, feePerContract);
       if ((ev.reason === "ok_logged_mark" || ev.reason === "ok_modeled_expiry") && ev.contracts === 0) {
         // One contract costs more than the per-trade notional: not a trade at
         // this notional. The per-contract result is kept for reference only.
-        trades.push({ ...common, pctReturn: ev.pctReturn, dollarPnl: null, reason: "below_one_contract" });
+        trades.push({ ...common, pctReturn: ev.pctReturn, netPctReturn, dollarPnl: null, reason: "below_one_contract" });
         skipped++;
         continue;
       }
       if (ev.reason === "ok_logged_mark" || ev.reason === "ok_modeled_expiry") {
-        trades.push({ ...common, pctReturn: ev.pctReturn, dollarPnl: ev.dollarPnl, reason: "ok" });
+        trades.push({ ...common, pctReturn: ev.pctReturn, netPctReturn, dollarPnl: ev.dollarPnl, reason: "ok" });
         continue;
       }
       const reason: BacktestTrade["reason"] =
@@ -310,22 +316,16 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestSumma
     }
   }
 
-  // ─── Aggregate ───
+  // ─── Aggregate (all net of fees) ───
   const executed = trades.filter((t) => t.reason === "ok");
-  const winners = executed.filter((t) => (t.pctReturn ?? 0) > 0);
-  const losers = executed.filter((t) => (t.pctReturn ?? 0) < 0);
-  const returns = executed.map((t) => t.pctReturn ?? 0);
-  const totalDollarPnl = executed.reduce((a, t) => a + (t.dollarPnl ?? 0), 0);
-  const avgPct = returns.length ? returns.reduce((a, b) => a + b, 0) / returns.length : 0;
-  const medPct = median(returns);
-  const best = executed.reduce<BacktestTrade | null>(
-    (b, t) => (b == null || (t.pctReturn ?? 0) > (b.pctReturn ?? 0) ? t : b),
-    null,
-  );
-  const worst = executed.reduce<BacktestTrade | null>(
-    (b, t) => (b == null || (t.pctReturn ?? 0) < (b.pctReturn ?? 0) ? t : b),
-    null,
-  );
+  const all = netGroupStats(executed.map((t) => ({ netPctReturn: t.netPctReturn ?? null, pnlPerContract: t.pnlPerContract ?? null, dollarPnl: t.dollarPnl })));
+  const netOf = (t: BacktestTrade) => t.netPctReturn ?? -Infinity;
+  const best = executed.reduce<BacktestTrade | null>((b, t) => (b == null || netOf(t) > netOf(b) ? t : b), null);
+  const worst = executed.reduce<BacktestTrade | null>((b, t) => (b == null || netOf(t) < netOf(b) ? t : b), null);
+  const groupStats = (ts: BacktestTrade[]) => {
+    const g = netGroupStats(ts.map((t) => ({ netPctReturn: t.netPctReturn ?? null, pnlPerContract: t.pnlPerContract ?? null, dollarPnl: t.dollarPnl })));
+    return { n: g.n, winRate: g.winRate, avgPctReturn: g.avgPctReturn, totalDollarPnl: g.totalDollarPnl };
+  };
 
   // bySymbol breakdown
   const symGroups = new Map<string, BacktestTrade[]>();
@@ -333,52 +333,39 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestSumma
     if (!symGroups.has(t.symbol)) symGroups.set(t.symbol, []);
     symGroups.get(t.symbol)!.push(t);
   }
-  const bySymbolStats = Array.from(symGroups.entries()).map(([symbol, ts]) => {
-    const w = ts.filter((t) => (t.pctReturn ?? 0) > 0).length;
-    const avg = ts.reduce((a, t) => a + (t.pctReturn ?? 0), 0) / ts.length;
-    const pnl = ts.reduce((a, t) => a + (t.dollarPnl ?? 0), 0);
-    return { symbol, n: ts.length, winRate: w / ts.length, avgPctReturn: avg, totalDollarPnl: pnl };
-  }).sort((a, b) => b.totalDollarPnl - a.totalDollarPnl);
+  const bySymbolStats = Array.from(symGroups.entries())
+    .map(([symbol, ts]) => ({ symbol, ...groupStats(ts) }))
+    .sort((a, b) => b.totalDollarPnl - a.totalDollarPnl);
 
   // byType
-  const callTs = executed.filter((t) => t.type === "CALL");
-  const putTs = executed.filter((t) => t.type === "PUT");
   const byType: BacktestSummary["byType"] = [];
-  for (const [k, ts] of [["CALL", callTs], ["PUT", putTs]] as const) {
-    if (!ts.length) continue;
-    const w = ts.filter((t) => (t.pctReturn ?? 0) > 0).length;
-    const avg = ts.reduce((a, t) => a + (t.pctReturn ?? 0), 0) / ts.length;
-    const pnl = ts.reduce((a, t) => a + (t.dollarPnl ?? 0), 0);
-    byType.push({ type: k as "CALL" | "PUT", n: ts.length, winRate: w / ts.length, avgPctReturn: avg, totalDollarPnl: pnl });
+  for (const k of ["CALL", "PUT"] as const) {
+    const ts = executed.filter((t) => t.type === k);
+    if (ts.length) byType.push({ type: k, ...groupStats(ts) });
   }
 
   return {
+    dataState: "ok",
+    returnBasis: "net_of_fees",
     asOf: now,
     windowFrom,
     windowTo,
     filters: { symbol: params.symbol, type: params.type, maxDte, notional, feePerContract },
     costModel: COST_MODEL,
-    byExitSource: (["logged_bid", "modeled_expiry"] as const).map((src) => {
-      const ts = executed.filter((t) => (src === "logged_bid" ? t.exitSource === "logged_bid" : t.exitSource !== "logged_bid"));
-      const w = ts.filter((t) => (t.pctReturn ?? 0) > 0).length;
-      return {
-        exitSource: src,
-        n: ts.length,
-        winRate: ts.length ? w / ts.length : 0,
-        avgPctReturn: ts.length ? ts.reduce((a, t) => a + (t.pctReturn ?? 0), 0) / ts.length : 0,
-        totalDollarPnl: ts.reduce((a, t) => a + (t.dollarPnl ?? 0), 0),
-      };
-    }),
+    byExitSource: (["logged_bid", "modeled_expiry"] as const).map((src) => ({
+      exitSource: src,
+      ...groupStats(executed.filter((t) => (src === "logged_bid" ? t.exitSource === "logged_bid" : t.exitSource !== "logged_bid"))),
+    })),
     totals: {
       alertsConsidered: rows.length,
       tradesExecuted: executed.length,
       skipped,
-      winners: winners.length,
-      losers: losers.length,
-      winRate: executed.length ? winners.length / executed.length : 0,
-      avgPctReturn: avgPct,
-      medianPctReturn: medPct,
-      totalDollarPnl,
+      winners: all.winners,
+      losers: all.losers,
+      winRate: all.winRate,
+      avgPctReturn: all.avgPctReturn,
+      medianPctReturn: all.medianPctReturn,
+      totalDollarPnl: all.totalDollarPnl,
       bestTrade: best,
       worstTrade: worst,
     },
@@ -392,6 +379,7 @@ const COST_MODEL =
   "long option held to expiry: bought at the ask logged at detection; sold at the logged bid at the expiry close when available, " +
   "else intrinsic on the expiry-day close (cash-settled index) or intrinsic minus half the entry spread (physical); full time decay; " +
   "fees per contract per side; whole contracts within the per-trade notional. Alerts without a logged entry quote are not traded. " +
+  "Win rate and returns are NET of fees (win = P&L after fees > 0; return = net P&L / (ask x 100 + fee)), the same basis as the dollar P&L. " +
   "Alerts where one contract costs more than the notional are reason below_one_contract and are excluded from every total. " +
   "Totals mix logged-bid exits (the outcome grader's definition) with modeled expiry exits; byExitSource reports them separately. " +
   "The default fee ($0.65 per contract per side) is Schwab's equity/ETF option commission; index options (SPX, SPXW, XSP, NDX, RUT, VIX) " +
@@ -439,7 +427,10 @@ function emptySummary(
   maxDte: number,
   note: string,
 ): BacktestSummary {
+  // A failed read is an error state with its reason, not an empty result.
   return {
+    dataState: "error",
+    note,
     asOf: Date.now(),
     windowFrom: from,
     windowTo: to,

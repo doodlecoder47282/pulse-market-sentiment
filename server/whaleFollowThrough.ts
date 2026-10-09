@@ -28,8 +28,9 @@ import { buildSchwabFlow, type SchwabFlowContract } from "./schwabFlow";
 // Static import instead of bare require(): the package is ESM and under `tsx` dev every
 // require() threw inside its try/catch, so nothing persisted and hydrateFromDb loaded 0
 // rows, silently. whalePersistence only imports a *type* from this file, so no cycle.
-import { persistFollowState, persistWhaleAlert, loadAllFollows } from "./whalePersistence";
-import { etCloseMs, whaleFireSnapshot } from "./validationMath";
+import { persistFollowState, persistWhaleAlert, loadAllFollows, loadWhaleEntryQuote } from "./whalePersistence";
+import { acceptExitQuote, etCloseMs, whaleFireSnapshot } from "./validationMath";
+import { buildScoreboardRow, scoreAskToBid, SCOREBOARD_BASIS_NOTE, SCOREBOARD_FEE_PER_CONTRACT, type ScoreboardRow, type ScoredTrade } from "./whaleScoreboard";
 
 // Persistence wrappers — fail-soft, never let DB hiccups break tracking.
 function safePersistFollow(p: FollowPosition): void {
@@ -65,6 +66,9 @@ export interface FollowPosition {
     volume: number;        // running session volume at detection
     openInterest: number;
     detectedAt: number;
+    /** Quote at detection, $ per share (additive; older rows fall back to whale_alert_quotes). */
+    bid?: number | null;
+    ask?: number | null;
   };
   /** Live-updated position state */
   live: {
@@ -95,6 +99,8 @@ export interface FollowPosition {
     /** Latest re-fire of this contract (additive): premium $ = volume x mark x 100, same moment. */
     lastFire?: { premium: number; volume: number; mark: number | null; at: number } | null;
     refireCount?: number;
+    /** Highest bid seen while the position was live (scoreboard "burn" test on sellable prices). */
+    peakBid?: number | null;
   };
   status: FollowStatus;
   /** When status transitioned to its current value */
@@ -106,6 +112,8 @@ export interface FollowPosition {
     peakPctChange: number;
     closedAt: number;
     reason: string;
+    /** Bid at the terminal moment, $ per share (additive): the scoreboard exit price. */
+    bid?: number | null;
   };
 }
 
@@ -159,6 +167,8 @@ export function registerWhale(hit: WhaleHit): void {
       volume: hit.volume,
       openInterest: hit.openInterest,
       detectedAt: hit.detectedAt,
+      bid: Number.isFinite(hit.bid as number) ? (hit.bid as number) : null,
+      ask: Number.isFinite(hit.ask as number) ? (hit.ask as number) : null,
     },
     live: {
       mark: entryMark,
@@ -311,8 +321,12 @@ function applyTick(p: FollowPosition, live: SchwabFlowContract, now: number, quo
     ask: p.live.ask,
     quoteAt: p.live.quoteAt,
     preExpiryQuote: p.live.preExpiryQuote,
+    lastFire: p.live.lastFire,
+    refireCount: p.live.refireCount,
+    peakBid: p.live.peakBid ?? null,
   };
   recordQuote(p, live, quoteAt);
+  if (p.live.bid != null && (p.live.peakBid == null || p.live.bid > p.live.peakBid)) p.live.peakBid = p.live.bid;
 
   // ─── Status transitions ──────────────────────────────────────────────────
   // CLOSED: mark went to ~0. Note this is "premium blew up / worthless", not evidence of
@@ -367,16 +381,29 @@ function transitionToTerminal(
     peakPctChange: p.live.peakPctChange,
     closedAt: now,
     reason,
+    bid: p.live.bid ?? null,
   };
 }
 
 // ─── Read-only API for routes ────────────────────────────────────────────────
 
+/** Tradable-price read attached to each position in the snapshot (additive). */
+export interface FollowScore {
+  basis: "ask_in_bid_out_net_fees";
+  /** Terminal: final result. Active: what selling at the current bid would net. Null when a quote is missing. */
+  netReturn: number | null;
+  pnlPerContract: number | null;
+  win: boolean | null;
+  final: boolean;
+  reason: string | null;
+}
+
 export interface FollowSnapshot {
   asOf: number;
   total: number;
   byStatus: Record<FollowStatus, number>;
-  positions: FollowPosition[];
+  positions: Array<FollowPosition & { score?: FollowScore }>;
+  priceBasisNote?: string;
 }
 
 export function getFollowSnapshot(filter?: {
@@ -439,8 +466,27 @@ export function getFollowSnapshot(filter?: {
     asOf: Date.now(),
     total: all.length,
     byStatus,
-    positions: filtered,
+    positions: filtered.map((p) => ({ ...p, score: followScore(p) })),
+    priceBasisNote: SCOREBOARD_BASIS_NOTE,
   };
+}
+
+function followScore(p: FollowPosition): FollowScore {
+  const terminal = p.status === "CLOSED" || p.status === "EXPIRED";
+  const base: FollowScore = { basis: "ask_in_bid_out_net_fees", netReturn: null, pnlPerContract: null, win: null, final: terminal, reason: null };
+  try {
+    if (terminal) {
+      const s = scoreFollowPosition(p);
+      return s ? { ...base, netReturn: s.trade.netReturn, pnlPerContract: s.trade.pnlPerContract, win: s.trade.win }
+        : { ...base, reason: "no logged entry ask or exit bid: not scored" };
+    }
+    const e = entryQuote(p);
+    const t = scoreAskToBid({ entryBid: e.bid, entryAsk: e.ask, exitBid: p.live.bid ?? null });
+    return t ? { ...base, netReturn: t.netReturn, pnlPerContract: t.pnlPerContract, win: t.win }
+      : { ...base, reason: e.ask == null ? "no logged entry ask" : "no current bid" };
+  } catch {
+    return { ...base, reason: "score unavailable" };
+  }
 }
 
 /** For tests / debug: clear all tracking. */
@@ -449,20 +495,13 @@ export function _clearFollows(): void {
 }
 
 // ─── Performance rollup ──────────────────────────────────────────────────────
+// Scored on tradable prices (whaleScoreboard.ts): logged ask at detection in,
+// logged bid at the terminal moment out, fees per contract per side, win =
+// positive net P&L. It used to be mid-to-mid (closingPrint.pctChange), which
+// overstated every result by the round-trip spread.
 
-export interface PerformanceRow {
-  source: string;
-  count: number;
-  wins: number;
-  losses: number;
-  burns: number;     // peak ≥+50% but closed flat/negative (left money on table)
-  winRate: number;   // wins / (wins+losses)
-  avgPct: number;    // mean closingPrint.pctChange
-  totalPnLPct: number;
-  avgPeakPct: number;
-  bestPct: number;
-  worstPct: number;
-}
+/** Kept for API compatibility: the row now carries the scoreboard fields too. */
+export type PerformanceRow = ScoreboardRow;
 
 export interface PerformanceSnapshot {
   asOf: number;
@@ -471,6 +510,36 @@ export interface PerformanceSnapshot {
   bySource: PerformanceRow[];
   /** Aggregate across all sources */
   overall: PerformanceRow;
+  priceBasisNote?: string;
+}
+
+const EXIT_QUOTE_MAX_AGE_MS = 20 * 60_000;
+
+/** Exit bid for a terminal position, or null when none was logged in time. */
+function terminalExitBid(p: FollowPosition): number | null {
+  if (p.status === "EXPIRED") {
+    const acc = acceptExitQuote(p.live.preExpiryQuote ?? null, expiryCloseMs(p.expiration), EXIT_QUOTE_MAX_AGE_MS);
+    return acc.ok ? acc.bid : null;
+  }
+  const b = p.closingPrint?.bid;
+  return b != null && Number.isFinite(b) && b >= 0 ? b : null;
+}
+
+function entryQuote(p: FollowPosition): { bid: number | null; ask: number | null } {
+  if (p.entry.ask != null) return { bid: p.entry.bid ?? null, ask: p.entry.ask };
+  try {
+    const q = loadWhaleEntryQuote(p.occ, p.entry.detectedAt);
+    return { bid: q?.bid ?? null, ask: q?.ask ?? null };
+  } catch { return { bid: null, ask: null }; }
+}
+
+/** Score one terminal position at ask in / bid out, net of fees; null when a quote is missing. */
+export function scoreFollowPosition(p: FollowPosition, feePerContract = SCOREBOARD_FEE_PER_CONTRACT): { trade: ScoredTrade; peakNetReturn: number | null } | null {
+  const e = entryQuote(p);
+  const trade = scoreAskToBid({ entryBid: e.bid, entryAsk: e.ask, exitBid: terminalExitBid(p), feePerContract });
+  if (!trade) return null;
+  const peak = p.live.peakBid != null ? scoreAskToBid({ entryBid: e.bid, entryAsk: e.ask, exitBid: p.live.peakBid, feePerContract }) : null;
+  return { trade, peakNetReturn: peak ? peak.netReturn : null };
 }
 
 /**
@@ -489,56 +558,21 @@ export function getPerformanceSnapshot(opts?: { windowDays?: number }): Performa
       p.closingPrint != null,
   );
 
-  const groups = new Map<string, FollowPosition[]>();
+  const scored: Array<{ trade: ScoredTrade; peakNetReturn: number | null }> = [];
+  let excluded = 0;
   for (const p of terminal) {
-    const src = "whale"; // whaleFollowThrough only tracks whale-source positions
-    if (!groups.has(src)) groups.set(src, []);
-    groups.get(src)!.push(p);
+    const s = scoreFollowPosition(p);
+    if (s) scored.push(s); else excluded++;
   }
-
-  const buildRow = (source: string, list: FollowPosition[]): PerformanceRow => {
-    let wins = 0, losses = 0, burns = 0;
-    let sumPct = 0, sumPeakPct = 0;
-    let bestPct = -Infinity, worstPct = Infinity;
-    for (const p of list) {
-      const pct = p.closingPrint!.pctChange;
-      const peakPct = p.closingPrint!.peakPctChange;
-      if (pct > 0) wins++;
-      else losses++;
-      // burn = peak ≥+50% but closed ≤0% (left money on table)
-      if (peakPct >= 0.5 && pct <= 0) burns++;
-      sumPct += pct;
-      sumPeakPct += peakPct;
-      if (pct > bestPct) bestPct = pct;
-      if (pct < worstPct) worstPct = pct;
-    }
-    const decided = wins + losses;
-    return {
-      source,
-      count: list.length,
-      wins,
-      losses,
-      burns,
-      winRate: decided > 0 ? wins / decided : 0,
-      avgPct: list.length > 0 ? sumPct / list.length : 0,
-      totalPnLPct: sumPct,
-      avgPeakPct: list.length > 0 ? sumPeakPct / list.length : 0,
-      bestPct: bestPct === -Infinity ? 0 : bestPct,
-      worstPct: worstPct === Infinity ? 0 : worstPct,
-    };
-  };
-
-  const bySource: PerformanceRow[] = [];
-  for (const [src, list] of groups) bySource.push(buildRow(src, list));
-  bySource.sort((a, b) => b.count - a.count);
-  const overall = buildRow("overall", terminal);
-
+  // whaleFollowThrough only tracks whale-source positions
+  const row = buildScoreboardRow("whale", scored, excluded);
   return {
     asOf: Date.now(),
     windowDays,
     totalTerminal: terminal.length,
-    bySource,
-    overall,
+    bySource: terminal.length > 0 ? [row] : [],
+    overall: { ...row, source: "overall" },
+    priceBasisNote: SCOREBOARD_BASIS_NOTE,
   };
 }
 

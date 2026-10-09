@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 
 import { logPcr, pcrReadFromHistory, isCompleteSessionSnapshot, type PcrDay } from "../../server/pcrHistory";
 import { volumeOverOiShare, directionScore, openingText } from "../../server/flowIntent";
+import { scoreAskToBid, buildScoreboardRow, netGroupStats, netReturnOnCost } from "../../server/whaleScoreboard";
 
 const near = (got: number, want: number, tol: number, what: string) =>
   assert.ok(Math.abs(got - want) <= tol, `${what}: got ${got}, want ${want} +- ${tol}`);
@@ -99,4 +100,66 @@ test("directionScore: hand-set heuristic, reported as a 0-1 score", () => {
   assert.equal(directionScore(null, "AT_ASK", false), null);
   assert.ok(!openingText(0.9333)!.includes("probab"));
   assert.match(openingText(0.9333)!, /opening >= 93% of vol/);
+});
+
+// ─── Whale scoreboard and backtest on tradable prices, net of fees ───────────
+
+test("scoreAskToBid: ask in, bid out, $0.65/side (hand-computed dollars)", () => {
+  // ask 2.00 -> bid 2.50: gross (2.50 - 2.00) x 100 = $50.00, fees 2 x 0.65 = $1.30,
+  // net $48.70 per contract; cash paid 200 + 0.65 = $200.65; return 48.70 / 200.65 = 0.2427112.
+  const t = scoreAskToBid({ entryAsk: 2.0, exitBid: 2.5, feePerContract: 0.65 })!;
+  assert.equal(t.pnlPerContract, 48.7);
+  near(t.netReturn, 48.7 / 200.65, 1e-12, "net return");
+  assert.equal(t.win, true);
+  // Mid to mid this trade (1.95/2.05 in, 2.15/2.25 out) read +10%; on tradable prices:
+  // (2.15 - 2.05) x 100 - 1.30 = $8.70 on $205.65 paid = +4.2305%.
+  const m = scoreAskToBid({ entryBid: 1.95, entryAsk: 2.05, exitBid: 2.15, feePerContract: 0.65 })!;
+  assert.equal(m.pnlPerContract, 8.7);
+  near(m.netReturn, 8.7 / 205.65, 1e-12, "vs +10% mid to mid");
+});
+
+test("scoreAskToBid: a gross winner that loses after fees is a LOSS; worthless expiry pays one fee", () => {
+  // ask 2.00 -> bid 2.01: gross +$1.00, fees $1.30 -> net -$0.30: loss.
+  const t = scoreAskToBid({ entryAsk: 2.0, exitBid: 2.01, feePerContract: 0.65 })!;
+  assert.equal(t.pnlPerContract, -0.3);
+  assert.equal(t.win, false);
+  // bid 0: no closing trade, one fee: -200 - 0.65 = -$200.65 = -100% of cash paid.
+  const z = scoreAskToBid({ entryAsk: 2.0, exitBid: 0, feePerContract: 0.65 })!;
+  assert.equal(z.pnlPerContract, -200.65);
+  near(z.netReturn, -1, 1e-12, "total loss");
+  assert.equal(z.settled, true);
+  // Missing quotes are not scored (never a 0% result); a crossed entry quote is unusable.
+  assert.equal(scoreAskToBid({ entryAsk: null, exitBid: 1 }), null);
+  assert.equal(scoreAskToBid({ entryAsk: 2, exitBid: null }), null);
+  assert.equal(scoreAskToBid({ entryBid: 2.2, entryAsk: 2, exitBid: 1 }), null);
+});
+
+test("buildScoreboardRow / netGroupStats: wins counted net, the same basis as $ P&L", () => {
+  const a = scoreAskToBid({ entryAsk: 2.0, exitBid: 2.5 })!;   // +48.70
+  const b = scoreAskToBid({ entryAsk: 2.0, exitBid: 2.01 })!;  // -0.30 (gross winner)
+  const c = scoreAskToBid({ entryAsk: 2.0, exitBid: 0 })!;     // -200.65
+  const row = buildScoreboardRow("whale", [
+    { trade: a, peakNetReturn: 0.6 },
+    { trade: b, peakNetReturn: 0.55 },   // peak >= +50% then closed <= 0: a burn
+    { trade: c, peakNetReturn: null },   // peak bid not logged: not evaluated for burns
+  ], 2);
+  assert.equal(row.wins, 1);
+  assert.equal(row.losses, 2);
+  near(row.winRate, 1 / 3, 1e-12, "win rate");
+  assert.equal(row.burns, 1);
+  assert.equal(row.burnsEvaluated, 2);
+  assert.equal(row.excludedNoQuote, 2);
+  // mean $ per contract: (48.70 - 0.30 - 200.65) / 3 = -50.75
+  assert.equal(row.avgPnlPerContract, -50.75);
+  const g = netGroupStats([
+    { netPctReturn: a.netReturn, pnlPerContract: a.pnlPerContract, dollarPnl: 97.4 },
+    { netPctReturn: b.netReturn, pnlPerContract: b.pnlPerContract, dollarPnl: -0.6 },
+    { netPctReturn: c.netReturn, pnlPerContract: c.pnlPerContract, dollarPnl: -401.3 },
+  ]);
+  assert.equal(g.winners, 1);
+  assert.equal(g.losers, 2);
+  near(g.medianPctReturn, -0.3 / 200.65, 1e-12, "median net");
+  assert.equal(g.totalDollarPnl, -304.5);
+  near(netReturnOnCost(48.7, 2.0, 0.65)!, 48.7 / 200.65, 1e-12, "netReturnOnCost");
+  assert.equal(netReturnOnCost(null, 2.0, 0.65), null);
 });

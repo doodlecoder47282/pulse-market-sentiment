@@ -128,14 +128,29 @@ interface FollowEntry {
   volume: number;
   openInterest: number;
   detectedAt: string;
+  ask?: number | null;
+  bid?: number | null;
 }
 
 interface ClosingPrint {
   mark: number;
-  pctChange: number;
-  peakPctChange: number;
+  pctChange: number;      // mid to mid, FRACTION (0.12 = +12%)
+  peakPctChange: number;  // mid to mid, FRACTION
   closedAt: string;
   reason: string;
+  bid?: number | null;
+}
+
+// Tradable-price read from the server (whaleScoreboard.ts): bought at the
+// logged ask, sold at the bid, $0.65 per contract per side. netReturn is a
+// FRACTION. Terminal = final; active = what selling at the current bid nets.
+interface FollowScore {
+  basis: string;
+  netReturn: number | null;
+  pnlPerContract: number | null;
+  win: boolean | null;
+  final: boolean;
+  reason: string | null;
 }
 
 interface FollowPosition {
@@ -150,6 +165,7 @@ interface FollowPosition {
   status: string;
   statusAt: string;
   closingPrint?: ClosingPrint;
+  score?: FollowScore;
 }
 
 interface FollowupsResponse {
@@ -320,8 +336,9 @@ function TickerGroup({ ticker, whales, defaultOpen }: { ticker: string; whales: 
 // Lets you eyeball which sold-off plays are dead weight vs which are fresh accumulation.
 type FreshnessTier = "HOT" | "WARM" | "STALE" | "SOLD";
 function freshnessTier(pos: FollowPosition): FreshnessTier {
-  const peakPct = pos.live.peakPctChange ?? 0;
-  const pct = pos.live.pctChange ?? 0;
+  // Server sends fractions (0.30 = +30%); the thresholds below are in percent.
+  const peakPct = (pos.live.peakPctChange ?? 0) * 100;
+  const pct = (pos.live.pctChange ?? 0) * 100;
   const fadedFromPeak = peakPct > 30 && pct < peakPct - 25;
   if (pos.live.fadeStreak >= 3 && fadedFromPeak) return "SOLD";
   const bumpMs = new Date(pos.live.lastVolumeBumpAt).getTime();
@@ -367,8 +384,15 @@ function TrackingRow({ pos }: { pos: FollowPosition }) {
       <div className="flex flex-wrap items-center gap-3 font-mono">
         <span className="text-muted-foreground" data-testid={`tracking-entry-${pos.occ}`}>entry ${pos.entry.mark.toFixed(2)}</span>
         <span data-testid={`tracking-mark-${pos.occ}`}>mark ${pos.live.mark.toFixed(2)}</span>
-        <span className={pctColor(pos.live.pctChange)} data-testid={`tracking-pct-${pos.occ}`}>{fmtPct(pos.live.pctChange)}</span>
-        <span className="text-emerald-400/70" data-testid={`tracking-peak-${pos.occ}`}>peak +{pos.live.peakPctChange.toFixed(1)}%</span>
+        <span className={pctColor(pos.live.pctChange)} data-testid={`tracking-pct-${pos.occ}`} title="mark vs entry mark (mid to mid, no fees)">{fmtPct(pos.live.pctChange * 100)} mid</span>
+        <span className="text-emerald-400/70" data-testid={`tracking-peak-${pos.occ}`}>peak +{(pos.live.peakPctChange * 100).toFixed(1)}% mid</span>
+        {pos.score?.netReturn != null ? (
+          <span className={pctColor(pos.score.netReturn)} data-testid={`tracking-net-${pos.occ}`} title="sold at the current bid, bought at the logged ask, fees $0.65/contract/side">
+            {fmtPct(pos.score.netReturn * 100)} if sold at bid
+          </span>
+        ) : (
+          <span className="text-muted-foreground/70" data-testid={`tracking-net-${pos.occ}`}>{pos.score?.reason ?? "bid-exit n/a"}</span>
+        )}
         <span className="text-muted-foreground/70" data-testid={`tracking-volse-${pos.occ}`}>volSE {pos.live.volumeSinceEntry.toLocaleString()}</span>
       </div>
     </div>
@@ -397,7 +421,7 @@ function TrackedTickerGroup({
   const bear = positions.filter((p) => p.side === "BEARISH").length;
   const dominant = bull > bear ? "BULLISH" : bear > bull ? "BEARISH" : "MIXED";
   const avgPct = positions.length
-    ? positions.reduce((a, p) => a + (p.live.pctChange ?? 0), 0) / positions.length
+    ? (positions.reduce((a, p) => a + (p.live.pctChange ?? 0), 0) / positions.length) * 100
     : 0;
   return (
     <div className="rounded-md border border-border/40 bg-card/30" data-testid={`tracked-group-${ticker}`}>
@@ -425,7 +449,7 @@ function TrackedTickerGroup({
             {soldCount} sold
           </Badge>
         )}
-        <span className={`ml-auto font-mono text-sm ${pctColor(avgPct)}`}>{fmtPct(avgPct)} avg</span>
+        <span className={`ml-auto font-mono text-sm ${pctColor(avgPct)}`}>{fmtPct(avgPct)} avg mid</span>
       </button>
       {open && (
         <div className="space-y-1.5 px-2 pb-2 pt-1">
@@ -447,10 +471,14 @@ function ClosedTickerGroup({
   defaultOpen: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  const wins = positions.filter((p) => (p.closingPrint?.pctChange ?? 0) > 0).length;
-  const losses = positions.length - wins;
-  const avgPct = positions.length
-    ? positions.reduce((a, p) => a + (p.closingPrint?.pctChange ?? 0), 0) / positions.length
+  // Scored at ask in / bid out, net of fees; positions without both quotes
+  // are counted separately, never as a 0% result.
+  const scored = positions.filter((p) => p.score?.netReturn != null);
+  const wins = scored.filter((p) => p.score!.win).length;
+  const losses = scored.length - wins;
+  const unscored = positions.length - scored.length;
+  const avgPct = scored.length
+    ? (scored.reduce((a, p) => a + (p.score!.netReturn as number), 0) / scored.length) * 100
     : 0;
   return (
     <div className="rounded-md border border-border/30 bg-card/20" data-testid={`closed-group-${ticker}`}>
@@ -471,7 +499,12 @@ function ClosedTickerGroup({
         {losses > 0 && (
           <span className="text-[10px] text-rose-400/80">{losses}L</span>
         )}
-        <span className={`ml-auto font-mono text-xs ${pctColor(avgPct)}`}>{fmtPct(avgPct)} avg</span>
+        {unscored > 0 && (
+          <span className="text-[10px] text-muted-foreground" title="no logged entry ask or exit bid">{unscored} unscored</span>
+        )}
+        <span className={`ml-auto font-mono text-xs ${scored.length ? pctColor(avgPct) : "text-muted-foreground"}`}>
+          {scored.length ? `${fmtPct(avgPct)} avg net` : "no scored exits"}
+        </span>
       </button>
       {open && (
         <div className="space-y-1.5 px-2 pb-2 pt-1">
@@ -536,8 +569,14 @@ function ClosedRow({ pos }: { pos: FollowPosition }) {
       </div>
       {cp && (
         <div className="flex flex-wrap items-center gap-3 font-mono text-muted-foreground">
-          <span className={pctColor(cp.pctChange)} data-testid={`closed-pct-${pos.occ}`}>{fmtPct(cp.pctChange)}</span>
-          <span className="text-emerald-400/70" data-testid={`closed-peak-${pos.occ}`}>peak +{cp.peakPctChange.toFixed(1)}%</span>
+          {pos.score?.netReturn != null ? (
+            <span className={pctColor(pos.score.netReturn)} data-testid={`closed-pct-${pos.occ}`} title="bought at the logged ask, sold at the bid, fees $0.65/contract/side">
+              {fmtPct(pos.score.netReturn * 100)} net
+            </span>
+          ) : (
+            <span className="text-muted-foreground" data-testid={`closed-pct-${pos.occ}`}>{pos.score?.reason ?? "not scored"}</span>
+          )}
+          <span className="text-muted-foreground/70" data-testid={`closed-peak-${pos.occ}`}>peak +{(cp.peakPctChange * 100).toFixed(1)}% mid</span>
           <span className="italic truncate flex-1 min-w-0" data-testid={`closed-reason-${pos.occ}`}>{cp.reason}</span>
         </div>
       )}
@@ -650,6 +689,10 @@ interface PerformanceRow {
   avgPeakPct: number;
   bestPct: number;
   worstPct: number;
+  /** "ask_in_bid_out_net_fees" (whale) or "mid_to_mid" (tracked signals). */
+  priceBasis?: string;
+  excludedNoQuote?: number;
+  burnsEvaluated?: number;
 }
 interface PerformanceSnapshot {
   asOf: number;
@@ -657,6 +700,9 @@ interface PerformanceSnapshot {
   totalTerminal: number;
   bySource: PerformanceRow[];
   overall: PerformanceRow;
+  overallBasis?: string;
+  priceBasisNote?: string;
+  midToMidNote?: string;
 }
 
 function sourceLabel(s: string): string {
@@ -689,7 +735,7 @@ function PerformanceCard() {
 
   const snap = perfQuery.data;
   const rows = snap?.bySource ?? [];
-  const showRows = rows.filter((r) => r.count > 0);
+  const showRows = rows.filter((r) => r.count > 0 || (r.excludedNoQuote ?? 0) > 0);
 
   return (
     <section data-testid="section-performance">
@@ -738,7 +784,7 @@ function PerformanceCard() {
             <div className="text-right">n</div>
             <div className="text-right">W / L</div>
             <div className="text-right">win%</div>
-            <div className="text-right">avg %</div>
+            <div className="text-right">avg net %</div>
             <div className="text-right" title="peak ≥+50% but closed flat/red">burn</div>
           </div>
           {showRows.map((r) => (
@@ -747,7 +793,11 @@ function PerformanceCard() {
               className="grid grid-cols-[1.4fr_0.5fr_0.9fr_0.7fr_0.8fr_0.5fr] gap-2 px-3 py-1.5 text-xs border-t border-border/30 items-center"
               data-testid={`row-perf-${r.source}`}
             >
-              <div className="font-medium">{sourceLabel(r.source)}</div>
+              <div className="font-medium">
+                {sourceLabel(r.source)}
+                {r.priceBasis === "mid_to_mid" && <span className="ml-1 text-[9px] text-amber-400/80" title={snap?.midToMidNote}>mid to mid, no fees</span>}
+                {!!r.excludedNoQuote && <span className="ml-1 text-[9px] text-muted-foreground" title="no logged entry ask or exit bid">+{r.excludedNoQuote} unscored</span>}
+              </div>
               <div className="text-right font-mono text-muted-foreground">{r.count}</div>
               <div className="text-right font-mono">
                 <span className="text-emerald-400">{r.wins}</span>
@@ -755,17 +805,17 @@ function PerformanceCard() {
                 <span className="text-red-400">{r.losses}</span>
               </div>
               <div className={`text-right font-mono font-semibold ${winRateColor(r.winRate, r.count)}`}>
-                {(r.winRate * 100).toFixed(0)}%
+                {r.count > 0 ? `${(r.winRate * 100).toFixed(0)}%` : "—"}
               </div>
-              <div className={`text-right font-mono ${pctColor(r.avgPct * 100)}`}>
-                {fmtPct(r.avgPct * 100)}
+              <div className={`text-right font-mono ${r.count > 0 ? pctColor(r.avgPct * 100) : "text-muted-foreground"}`}>
+                {r.count > 0 ? fmtPct(r.avgPct * 100) : "—"}
               </div>
               <div className="text-right font-mono">
                 {r.burns > 0 ? <span className="text-amber-400">{r.burns}</span> : <span className="text-muted-foreground">0</span>}
               </div>
             </div>
           ))}
-          {snap && snap.overall.count > 0 && showRows.length > 1 && (
+          {snap && snap.overall.count > 0 && showRows.length > 1 && snap.overallBasis == null && (
             <div
               className="grid grid-cols-[1.4fr_0.5fr_0.9fr_0.7fr_0.8fr_0.5fr] gap-2 px-3 py-1.5 text-xs border-t-2 border-border/60 bg-muted/10 items-center"
               data-testid="row-perf-overall"
@@ -788,6 +838,11 @@ function PerformanceCard() {
               </div>
             </div>
           )}
+        </div>
+      )}
+      {snap?.priceBasisNote && (
+        <div className="mt-1.5 text-[10px] text-muted-foreground" data-testid="performance-basis">
+          Whale rows: {snap.priceBasisNote}.{snap.midToMidNote ? ` ${snap.midToMidNote}.` : ""}
         </div>
       )}
     </section>
