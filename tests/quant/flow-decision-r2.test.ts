@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { logPcr, pcrReadFromHistory, isCompleteSessionSnapshot, type PcrDay } from "../../server/pcrHistory";
+import { volumeOverOiShare, directionScore, openingText } from "../../server/flowIntent";
 
 const near = (got: number, want: number, tol: number, what: string) =>
   assert.ok(Math.abs(got - want) <= tol, `${what}: got ${got}, want ${want} +- ${tol}`);
@@ -76,4 +77,26 @@ test("isCompleteSessionSnapshot: last 10 minutes of the session or after the clo
   assert.equal(isCompleteSessionSnapshot(close - 10 * 60_000, close), true);
   assert.equal(isCompleteSessionSnapshot(close + 3600_000, close), true);
   assert.equal(isCompleteSessionSnapshot(close, null), false);
+});
+
+// ─── 4.6 opening share from volume vs prior-day OI ──────────────────────────
+
+test("volumeOverOiShare: lower bound on opening share = 1 - OI_prev / V (hand-computed)", () => {
+  // 1,500 traded vs 100 open yesterday: at most 100 can be closes of old
+  // contracts, so >= 1,400 / 1,500 = 0.93333 are opening (no same-day round trips).
+  near(volumeOverOiShare(1500, 100)!, 1400 / 1500, 1e-12, "15x");
+  assert.equal(volumeOverOiShare(300, 0), 1);         // new strike: nothing to close
+  assert.equal(volumeOverOiShare(50, 100), 0);        // volume within OI: no bound
+  assert.equal(volumeOverOiShare(0, 100), null);      // no volume: nothing to say
+  assert.equal(volumeOverOiShare(100, NaN), null);    // OI unknown: missing, not 0
+});
+
+test("directionScore: hand-set heuristic, reported as a 0-1 score", () => {
+  // 0.93333 x 0.9 (ask-side last print) = 0.84; x 0.5 spread-leg discount = 0.42
+  assert.equal(directionScore(1400 / 1500, "AT_ASK", false), 0.84);
+  assert.equal(directionScore(1400 / 1500, "AT_ASK", true), 0.42);
+  assert.equal(directionScore(1, "MID", false), 0.55);
+  assert.equal(directionScore(null, "AT_ASK", false), null);
+  assert.ok(!openingText(0.9333)!.includes("probab"));
+  assert.match(openingText(0.9333)!, /opening >= 93% of vol/);
 });
