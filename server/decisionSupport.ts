@@ -63,7 +63,7 @@ export function formatDecisionBlock(inp: DecisionInputs): string {
   // Close band
   let p05 = NaN, p95 = NaN;
   try {
-    const dailySigma = inp.oneDayEM; // EM ≈ 1σ daily (Schwab/cboe convention)
+    const dailySigma = inp.oneDayEM; // EM ≈ 1σ daily (Schwab expected-move input)
     p05 = normPpf(0.05, inp.spot, dailySigma);
     p95 = normPpf(0.95, inp.spot, dailySigma);
   } catch { /* keep NaN */ }

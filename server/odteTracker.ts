@@ -6,7 +6,7 @@
  * Polls the Schwab option chain for $SPX with a 0DTE window. The chain layer caches
  * chains for 60 s, so the effective resolution is one snapshot per minute regardless
  * of the requested interval (the tracker clamps its cadence to that TTL rather than
- * hammering the token/CBOE layers with no-op polls). Keeps ATM ±20 strikes on each
+ * hammering the Schwab token/chain layers with no-op polls). Keeps ATM ±20 strikes on each
  * side (up to ~80 rows). For each poll, per contract:
  *   · deltaVol        = current.volume − prev.volume  (prints since last snapshot)
  *   · notional        = deltaVol × last × 100
@@ -39,7 +39,7 @@ const OFF_HOURS_POLL_MS = 60_000;
 
 // Session window for live polling: 09:25-16:15 ET on weekdays (a few minutes of margin
 // around RTH). Outside it the tracker idles at the off-hours cadence and never falls
-// back to SPY, which had the side effect of hammering a dead Schwab token + CBOE 24/7.
+// back to SPY, which had the side effect of hammering a dead Schwab token 24/7.
 function inTrackerSession(now = new Date()): boolean {
   if (isRthOpen(now)) return true;
   const parts = new Intl.DateTimeFormat("en-US", {

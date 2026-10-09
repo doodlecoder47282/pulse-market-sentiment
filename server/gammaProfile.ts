@@ -357,7 +357,7 @@ export function cumulativeStrikeFlip(
   return null;
 }
 
-/** Minimal Schwab-shaped chain (the CBOE adapter emits the same shape). */
+/** Minimal Schwab-shaped chain (the shape returned by the Schwab option chain). */
 export interface ChainMapsLike {
   callExpDateMap?: Record<string, Record<string, any[]>> | null;
   putExpDateMap?: Record<string, Record<string, any[]>> | null;
@@ -388,7 +388,7 @@ function dteFromKey(expKey: string): number {
 }
 
 /**
- * Convert a Schwab/CBOE-adapter chain into re-pricing rows. IV is Schwab's
+ * Convert a Schwab option chain into re-pricing rows. IV is Schwab's
  * percent `volatility`; Schwab's -999 sentinel, NaN and absurd values are
  * dropped rather than treated as zero.
  */
