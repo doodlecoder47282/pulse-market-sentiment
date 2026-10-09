@@ -472,10 +472,14 @@ test("crypto holders: only identified pool vaults and burn are excluded; a whale
   // the old rule (drop the largest, sum the next ten) would have hidden the whale:
   const old = accounts.slice(1, 11).reduce((s, a) => s + a.uiAmount, 0) / supply * 100;
   assert.equal(old, 49); // 20 vault + 10 burn + 5 pool2 + 7 x 2: counts pool and burn, drops the whale
-  // no pool identifiable (no owners, no reserves): nothing excluded, labelled as overstated
+  // owners unreadable (round 3): concentration is unavailable, never guessed
   const blind = holderConcentration(accounts.map((a) => ({ ...a, owner: null })), [{ pairAddress: "pool1", baseAmount: null }], supply);
-  assert.equal(blind.top10Pct, 25 + 20 + 10 + 5 + 6 * 2);
-  assert.match(blind.method, /INCLUDING/);
+  assert.equal(blind.top10Pct, null);
+  assert.equal(blind.state, "unavailable");
+  // owners known but no pool identifiable: nothing excluded, labelled as overstated
+  const noPool = holderConcentration(accounts.filter((a) => a.owner !== SOLANA_INCINERATOR && a.owner !== "pool2"), [{ pairAddress: "pool1", baseAmount: null }], supply);
+  assert.equal(noPool.top10Pct, 25 + 20 + 8 * 2);
+  assert.match(noPool.method, /INCLUDING/);
   assert.equal(holderConcentration([], pools, supply).top10Pct, null);
 });
 

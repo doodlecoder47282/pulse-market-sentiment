@@ -325,3 +325,65 @@ test("edge stats: same-day alerts share a path -> the independent z over-rejects
   assert.ok(rejI / used > 3 * a, `independent z rejects ${rejI}/${used} (should over-reject)`);
   assert.ok(rejC / used <= a + 3 * se, `clustered test rejects ${rejC}/${used} vs alpha ${a.toFixed(4)}`);
 });
+
+// ─── 7. Crypto: survivorship, ENTER-coin gate, fail-closed checks, no double count ─
+
+test("crypto survivorship: worst-case rug rate counts NO_DATA as RUGGED; gate on first-ENTER coins and the no-data share", async () => {
+  const { summarizeDeskStats, survivorship, sampleGate, summarizeSignalCounts, CRYPTO_NO_DATA_MAX_SHARE } = await import("../../server/cryptoStats");
+  // 60 graded ENTER coins: 6 HIT_5M, 4 DOUBLED, 20 RUGGED, 30 DEAD; 15 NO_DATA.
+  const enter = { total: 80, open: 5, hit5m: 6, doubled: 4, rugged: 20, dead: 30, noData: 15 };
+  const sv = survivorship(summarizeSignalCounts(enter));
+  near(sv.ruggedRateObserved!, 20 / 60, 1e-12);
+  near(sv.ruggedRateWorstCase!, 35 / 75, 1e-12);   // (20 + 15) / (60 + 15)
+  near(sv.winRateWorstCase!, 10 / 75, 1e-12);
+  near(sv.noDataShare!, 15 / 75, 1e-12);          // 0.20: at the limit, still readable
+  assert.equal(sampleGate(summarizeSignalCounts(enter)).ready, true);
+  // one more NO_DATA pushes the share over 20%: not sample-ready even with 60 graded
+  const over = { ...enter, noData: 16 };
+  assert.ok(16 / 76 > CRYPTO_NO_DATA_MAX_SHARE);
+  const g = sampleGate(summarizeSignalCounts(over));
+  assert.equal(g.ready, false);
+  assert.match(g.reason, /no-data share 21%/);
+  // top-level sampleReady follows the ENTER coins, not all coins
+  const allCoins = { total: 300, open: 10, hit5m: 10, doubled: 10, rugged: 50, dead: 200, noData: 20 };
+  const st = summarizeDeskStats(allCoins, allCoins, { total: 30, open: 0, hit5m: 2, doubled: 1, rugged: 7, dead: 20, noData: 0 });
+  assert.equal(st.allCoinsSampleReady, true);
+  assert.equal(st.sampleReady, false);           // 30 graded ENTER coins < 50
+  assert.equal(st.sampleBasis, "first-ENTER coins");
+  assert.match(st.peakSampling, /lower bounds/);
+  near(st.survivorship.coins.ruggedRateWorstCase!, 70 / 290, 1e-12);
+});
+
+test("crypto checks: missing sells is not ZERO sells; Jupiter fail-closed; holders need owners; FOMO not double counted", async () => {
+  const { honeypotRead, jupiterAllowsEnter, momentumPoints, holderConcentration } = await import("../../server/cryptoStats");
+  assert.equal(honeypotRead(40, 0), "honeypot");          // observed 0 sells
+  assert.equal(honeypotRead(40, null), "sells_missing");  // missing: unverifiable, not a honeypot
+  assert.equal(honeypotRead(10, 0), "ok");
+  assert.equal(honeypotRead(40, 3), "ok");
+  for (const s of ["agree", "watch"]) assert.equal(jupiterAllowsEnter(s), true);
+  for (const s of ["failed", "unchecked", "diverge", "no-reliable-price", null]) assert.equal(jupiterAllowsEnter(s as any), false);
+  // momentum: accel 3x (30 pts), 70% buys (20 pts), trending (10): FOMO 60 displayed;
+  // flow = 35 x 50/90 = 19.444, attention = 10 x 10/18 = 5.556 -> 25.0 composite points.
+  // Round 2 counted min(35, 0.35 x 60) + 0.10 x 60 = 21 + 6 = 27 with FOMO's tape and accel in both.
+  const m = momentumPoints({ volAccel: 3, netBuyRatio5m: 0.7, trending: true, boosted: false });
+  near(m.fomoScore, 60, 1e-9);
+  near(m.flowPts, 35 * 50 / 90, 1e-9);
+  near(m.attentionPts, 10 * 10 / 18, 1e-9);
+  // maximum flow + attention is 45, as before, but each input counts once
+  const mx = momentumPoints({ volAccel: 10, netBuyRatio5m: 1, trending: true, boosted: true });
+  near(mx.flowPts + mx.attentionPts, 45, 1e-9);
+  // reserve match needs a known owner, and never takes an account whose owner holds another top account
+  const supply = 1_000_000_000;
+  const pools = [{ pairAddress: "pool1", baseAmount: 200_000_000 }];
+  const whaleTwoAccts = [
+    { address: "w1", uiAmount: 200_000_000, owner: "Whale" },   // matches the reserve by size...
+    { address: "w2", uiAmount: 50_000_000, owner: "Whale" },    // ...but its owner holds a 2nd account
+    ...Array.from({ length: 9 }, (_, i) => ({ address: `h${i}`, uiAmount: 10_000_000, owner: `o${i}` })),
+  ];
+  const r = holderConcentration(whaleTwoAccts, pools, supply);
+  assert.equal(r.poolsMatched, 0);
+  assert.equal(r.top10Pct, 20 + 5 + 8 * 1);                   // the whale is counted
+  const partial = holderConcentration([{ address: "a", uiAmount: 200_000_000, owner: null }, { address: "b", uiAmount: 1, owner: "x" }], pools, supply);
+  assert.equal(partial.state, "unavailable");
+  assert.equal(partial.top10Pct, null);
+});

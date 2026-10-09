@@ -49,6 +49,7 @@ import {
   CRYPTO_SIGNAL_COUNTS_SQL, type SocialStatus, type SocialSourceStatus,
   observedNumber, gradeSignal, cryptoCoinCountsSql, summarizeDeskStats, type CryptoDeskStats,
   holderConcentration, countMentions, socialCoverage, type HolderAccount, type DexPool,
+  momentumPoints, honeypotRead, jupiterAllowsEnter,
 } from "./cryptoStats";
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -462,7 +463,11 @@ async function momentumTick(): Promise<void> {
   // Jupiter cross-check: one keyless call per tick (<= 50 mints; the keyless
   // limit is 0.5 req/s and the tick is 75 s). A failed call marks the check
   // failed for this tick; it never blocks the DexScreener refresh.
-  const jupMints = addrs.slice(0, JUP_MAX_IDS);
+  // Highest-scoring mints first: with the check fail-closed (an unchecked
+  // mint cannot be ENTER), the 50-mint budget goes to the candidates that
+  // could reach ENTER.
+  const bestScore = (m: string) => Math.max(...(byToken.get(m) ?? []).map((c) => c.score ?? 0));
+  const jupMints = addrs.slice().sort((a, b) => bestScore(b) - bestScore(a)).slice(0, JUP_MAX_IDS);
   let jup: { prices: Map<string, number>; omitted: Set<string>; failed: boolean; at: number } | null = null;
   if (jupMints.length) {
     try {
@@ -879,11 +884,9 @@ function scoreCandidate(c: Candidate): void {
   c.netBuyRatio5m = t5 > 0 ? (c.buys5m ?? 0) / t5 : null;
 
   // FOMO score: acceleration + one-sided tape + trending/boost presence
-  let fomo = 0;
-  if (c.volAccel != null) fomo += Math.min(40, c.volAccel * 10);          // 4x accel = max
-  if (c.netBuyRatio5m != null) fomo += Math.max(0, (c.netBuyRatio5m - 0.5) * 100); // up to +50
-  if (c.discoveredVia === "trending") fomo += 10;
-  if (c.boosted) fomo += 8; // paid promo IS fomo — but it's flagged as manufactured below
+  // (displayed). The composite uses its parts once each (round 3:
+  // cryptoStats.momentumPoints), not FOMO on top of the flow it contains.
+  const mp = momentumPoints({ volAccel: c.volAccel, netBuyRatio5m: c.netBuyRatio5m, trending: c.discoveredVia === "trending", boosted: !!c.boosted });
   // Social velocity (Bluesky mentions + pump.fun reply rate) is a low-grade
   // attention proxy from social media and an undocumented frontend API
   // (R2-I): it is shown and logged in features_json for later testing, but
@@ -896,7 +899,7 @@ function scoreCandidate(c: Candidate): void {
   );
   c.socialScore = soc.socialScore;
   c.socialStatus = soc.socialStatus;
-  c.fomoScore = Math.min(100, fomo);
+  c.fomoScore = mp.fomoScore;
 
   // rug filter
   const flags: string[] = [];
@@ -911,7 +914,11 @@ function scoreCandidate(c: Candidate): void {
   else if (liq < LIQ_FLOOR_USD) { flags.push(`liquidity $${(liq / 1000).toFixed(1)}k < $${LIQ_FLOOR_USD / 1000}k floor — cannot exit`); hardKill = true; }
   if (mcap > 0 && liq > 0 && liq / mcap < 0.03) { flags.push(`liq/mcap ${(100 * liq / mcap).toFixed(1)}% < 3% — exit door too small`); hardKill = true; }
   if (mcap > 0 && liq > mcap * 2) flags.push("liquidity >> mcap — weird pool, likely mispriced data");
-  if ((c.buys1h ?? 0) >= 25 && (c.sells1h ?? 0) === 0) { flags.push("buys but ZERO sells in 1h — honeypot pattern"); hardKill = true; }
+  // Honeypot: an OBSERVED 0 sells is the pattern; a MISSING sell count is
+  // an unverifiable sell side (holds ENTER at WATCH below), never "zero".
+  const hp = honeypotRead(c.buys1h, c.sells1h);
+  if (hp === "honeypot") { flags.push("buys but ZERO sells in 1h (observed) — honeypot pattern"); hardKill = true; }
+  else if (hp === "sells_missing") flags.push("1h sell count not reported (missing) — honeypot check not possible");
   if ((c.chg1h ?? 0) < -55) { flags.push(`price ${c.chg1h?.toFixed(0)}% in 1h — mid-rug or post-dump`); hardKill = true; }
   if ((c.ageMinutes ?? 1e9) < 10) flags.push("under 10 min old — sniper zone, spreads brutal");
   if (c.boosted) flags.push("paid DexScreener boost — manufactured attention, discount the FOMO");
@@ -919,6 +926,7 @@ function scoreCandidate(c: Candidate): void {
   // on-chain security facts (public RPC)
   if (c.mintAuthorityActive === true) { flags.push("MINT AUTHORITY ACTIVE — dev can print supply into your bid"); hardKill = true; }
   if (c.freezeAuthorityActive === true) { flags.push("FREEZE AUTHORITY ACTIVE — dev can lock your tokens"); hardKill = true; }
+  if (c.top10Pct == null && c.top10Method?.startsWith("unavailable")) flags.push("holder concentration unavailable (token-account owners unreadable)");
   if ((c.top10Pct ?? 0) > 45) flags.push(`top-10 holders ${c.top10Pct}% of supply (${c.top10Method?.startsWith("top-10 holders INCLUDING") ? "pool vault not identified, may include pool" : "ex-pool"}) — coordinated dump risk`);
   // rugcheck cached report — LP lock + named risks (non-fatal: cached data)
   if (c.rcLpLockedPct != null && c.rcLpLockedPct < 50) flags.push(`LP only ${c.rcLpLockedPct}% locked (rugcheck) — pull risk`);
@@ -926,22 +934,25 @@ function scoreCandidate(c: Candidate): void {
   // Jupiter cross-check of the pool price (aggregator; flags, not hard kills)
   if (c.jupState === "diverge") flags.push(`pool price ${c.jupGapPct}% off Jupiter — price unverified, no entry`);
   else if (c.jupState === "no-reliable-price") flags.push("Jupiter has no reliable price for this mint — price unverified");
+  else if (c.jupState === "failed" || c.jupState === "unchecked") flags.push(`Jupiter cross-check ${c.jupState} — pool price unverified`);
   c.rugFlags = flags;
   c.hardKill = hardKill;
 
-  // composite: flow 35, structure 25 (inverse rug pressure), meme 15, narrative 15, fomo 10
-  const flow = Math.min(35, (c.fomoScore ?? 0) * 0.35);
+  // composite: flow 35 (acceleration + tape), structure 25 (inverse rug
+  // pressure), meme 15, narrative 15, attention 10 (trending/boost). Each
+  // input counted once (round 3; was flow = 0.35 x FOMO plus 0.10 x FOMO).
+  const flow = Math.min(35, mp.flowPts);
   const structure = hardKill ? 0 : Math.max(0, 25 - flags.length * 5);
   const memePts = (c.memeScore ?? 0) * 0.15;
   const narrPts = Math.min(15, c.narrativeHits.length * 7.5);
-  const fomoPts = (c.fomoScore ?? 0) * 0.10;
-  c.score = Math.round(Math.min(100, flow + structure + memePts + narrPts + fomoPts));
+  const attnPts = mp.attentionPts;
+  c.score = Math.round(Math.min(100, flow + structure + memePts + narrPts + attnPts));
 
   // verdict
   const reasons: string[] = [];
   let verdict: Candidate["verdict"] = "PASS";
   if (hardKill) {
-    reasons.push("hard kill: " + flags.filter((f) => /floor|honeypot|mid-rug|exit door|liquidity not reported|liquidity \$0|AUTHORITY/.test(f)).join("; "));
+    reasons.push("hard kill: " + flags.filter((f) => /floor|honeypot pattern|mid-rug|exit door|liquidity not reported|liquidity \$0|AUTHORITY/.test(f)).join("; "));
   } else if (mcap <= 0 || c.priceUsd == null) {
     reasons.push("no reliable mcap/price yet");
   } else if (mcap > MCAP_ENTRY_MAX) {
@@ -959,16 +970,20 @@ function scoreCandidate(c: Candidate): void {
     } else if (c.securityCheckedAt == null) {
       verdict = "WATCH";
       reasons.push(`score ${c.score}, flow sustained — held at WATCH pending on-chain security check (mint/freeze/holders)`);
-    } else if (c.jupState === "diverge" || c.jupState === "no-reliable-price") {
+    } else if (!jupiterAllowsEnter(c.jupState)) {
+      // Fail-closed (round 3): a failed or skipped Jupiter check is not a
+      // pass. Only "agree" or "watch" (<= 15% gap) lets ENTER stand.
       verdict = "WATCH";
-      reasons.push(`score ${c.score}, flow sustained — held at WATCH: DexScreener price not confirmed by Jupiter (${c.jupState}${c.jupGapPct != null ? ` ${c.jupGapPct}%` : ""})`);
+      reasons.push(`score ${c.score}, flow sustained — held at WATCH: DexScreener price not confirmed by Jupiter (${c.jupState}${c.jupGapPct != null ? ` ${c.jupGapPct}%` : ""}${c.jupState === "failed" || c.jupState === "unchecked" ? ", cross-check did not run" : ""})`);
+    } else if (hp === "sells_missing") {
+      verdict = "WATCH";
+      reasons.push(`score ${c.score}, flow sustained — held at WATCH: 1h sell count missing, honeypot check not possible`);
     } else {
       verdict = "ENTER";
       reasons.push(`score ${c.score}, flow sustained ${c.volAccel?.toFixed(1)}x, ${Math.round((c.netBuyRatio5m ?? 0) * 100)}% buys, security checked`);
-      reasons.push(c.jupState === "agree" || c.jupState === "watch"
-        ? `pool price confirmed by Jupiter (${c.jupGapPct}% gap)`
-        : `pool price not cross-checked (Jupiter ${c.jupState})`);
+      reasons.push(`pool price confirmed by Jupiter (${c.jupGapPct}% gap)`);
       if (c.top10Pct != null) reasons.push(`top-10 holders ${c.top10Pct}% (${c.top10Method ?? "method unknown"})`);
+      else if (c.top10Method?.startsWith("unavailable")) reasons.push("top-10 holders unavailable (owners unreadable)");
       if (c.narrativeHits.length) reasons.push(`narrative confirm: ${c.narrativeHits.join(", ")}`);
     }
   } else if (c.score >= 50) {
@@ -994,7 +1009,7 @@ function scoreCandidate(c: Candidate): void {
       notes: [
         "size = 0.5% of pool liquidity — the exit is the constraint, not the entry",
         "most signals here still lose; the math needs the 4-5x winners",
-        "UNCALIBRATED: tracking mode until at least 50 distinct coins are graded (a minimum sample, not a calibration)",
+        "UNCALIBRATED: tracking mode until at least 50 first-ENTER coins are graded with a no-data share of 20% or less (a minimum sample, not a calibration)",
       ],
     };
   } else {

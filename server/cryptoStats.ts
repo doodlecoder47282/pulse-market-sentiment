@@ -267,6 +267,60 @@ export function cryptoCoinCountsSql(verdict?: "ENTER" | "WATCH"): string {
   FROM firsts WHERE rn = 1`;
 }
 
+/**
+ * Survivorship (round 3). A pair DexScreener stops returning after a rug
+ * (pool closed, pair delisted) becomes NO_DATA and leaves the graded set, so
+ * the observed rug rate is biased DOWN exactly where it matters. Bounds:
+ *   observed  = RUGGED / graded,
+ *   worst case = (RUGGED + NO_DATA) / (graded + NO_DATA)  (every NO_DATA a rug),
+ * reported side by side (Manski-style bounds for missing outcomes:
+ * Manski 1989, "Anatomy of the Selection Problem", J. Human Resources 24(3):343-360,
+ * https://ideas.repec.org/a/uwp/jhriss/v24y1989i3p343-360.html).
+ * The sample gate also requires the NO_DATA share to stay at or below
+ * CRYPTO_NO_DATA_MAX_SHARE (heuristic, stated): beyond it the graded sample
+ * is too selected to read.
+ */
+export const CRYPTO_NO_DATA_MAX_SHARE = 0.2;
+
+export interface Survivorship {
+  noDataShare: number | null;
+  ruggedRateObserved: number | null;
+  ruggedRateWorstCase: number | null;
+  /** HIT_5M + DOUBLED over graded + NO_DATA: the win rate if every NO_DATA were a loss */
+  winRateWorstCase: number | null;
+}
+
+export function survivorship(c: CryptoSignalStats): Survivorship {
+  const resolved = c.graded + c.noData;
+  return {
+    noDataShare: resolved > 0 ? c.noData / resolved : null,
+    ruggedRateObserved: c.graded > 0 ? c.rugged / c.graded : null,
+    ruggedRateWorstCase: resolved > 0 ? (c.rugged + c.noData) / resolved : null,
+    winRateWorstCase: resolved > 0 ? (c.hit5m + c.doubled) / resolved : null,
+  };
+}
+
+/** Sample gate: enough graded coins AND a NO_DATA share low enough to read the graded set. */
+export function sampleGate(c: CryptoSignalStats): { ready: boolean; reason: string } {
+  const sv = survivorship(c);
+  if (c.graded < CRYPTO_SAMPLE_READY_MIN_GRADED) return { ready: false, reason: `${c.graded} graded (need ${CRYPTO_SAMPLE_READY_MIN_GRADED})` };
+  if (sv.noDataShare != null && sv.noDataShare > CRYPTO_NO_DATA_MAX_SHARE) {
+    return { ready: false, reason: `no-data share ${Math.round(sv.noDataShare * 100)}% > ${Math.round(CRYPTO_NO_DATA_MAX_SHARE * 100)}%: delisted pairs (likely rugs) are missing from the graded set` };
+  }
+  return { ready: true, reason: `${c.graded} graded, no-data share ${sv.noDataShare == null ? "n/a" : `${Math.round(sv.noDataShare * 100)}%`}` };
+}
+
+/**
+ * How peaks are observed: OPEN signals are re-priced by the grader every
+ * CRYPTO_PEAK_SAMPLE_MIN minutes (live-tracked coins at their refresh), so
+ * a spike that tops and fades between two samples is missed. HIT_5M and
+ * DOUBLED are therefore LOWER bounds and the peak market cap is a sampled
+ * peak, not the true high. (Faster sampling would need an OHLC source;
+ * DexScreener's pair endpoint has no candles.)
+ */
+export const CRYPTO_PEAK_SAMPLE_MIN = 10;
+export const CRYPTO_PEAK_SAMPLING_NOTE = `peaks sampled about every ${CRYPTO_PEAK_SAMPLE_MIN} min: spikes between samples are missed, so HIT_5M and DOUBLED are lower bounds`;
+
 export interface CryptoDeskStats extends CryptoSignalStats {
   /** what the top-level counts are: distinct coins, first signal each */
   basis: "distinct coins (first signal per coin)";
@@ -276,22 +330,43 @@ export interface CryptoDeskStats extends CryptoSignalStats {
   rows: CryptoSignalStats;
   /** first ENTER per coin: the verdict a trader would act on */
   enterCoins: CryptoSignalStats;
+  /** survivorship bounds over all coins and over first-ENTER coins (round 3) */
+  survivorship: { coins: Survivorship; enterCoins: Survivorship };
+  /** the top-level sampleReady is decided on first-ENTER coins (round 3) */
+  sampleBasis: "first-ENTER coins";
+  sampleReason: string;
+  /** all-coins gate, for reference */
+  allCoinsSampleReady: boolean;
+  peakSampling: string;
 }
 
-/** Combine the three aggregate rows; sampleReady is decided on graded COINS. */
+/**
+ * Combine the three aggregate rows. sampleReady is decided on graded
+ * first-ENTER COINS (the verdict a trader acts on) and requires the NO_DATA
+ * share to be readable (round 3); the all-coins gate is kept for reference.
+ */
 export function summarizeDeskStats(
   rowCounts: Partial<CryptoSignalCounts> | null | undefined,
   coinCounts: Partial<CryptoSignalCounts> | null | undefined,
   enterCounts: Partial<CryptoSignalCounts> | null | undefined,
 ): CryptoDeskStats {
   const coins = summarizeSignalCounts(coinCounts);
+  const enter = summarizeSignalCounts(enterCounts);
   const resolved = coins.graded + coins.noData;
+  const gEnter = sampleGate(enter);
+  const gAll = sampleGate(coins);
   return {
     ...coins,
     basis: "distinct coins (first signal per coin)",
     noDataShare: resolved > 0 ? coins.noData / resolved : null,
     rows: summarizeSignalCounts(rowCounts),
-    enterCoins: summarizeSignalCounts(enterCounts),
+    enterCoins: { ...enter, sampleReady: gEnter.ready },
+    survivorship: { coins: survivorship(coins), enterCoins: survivorship(enter) },
+    sampleReady: gEnter.ready,
+    sampleBasis: "first-ENTER coins",
+    sampleReason: `first-ENTER coins: ${gEnter.reason}`,
+    allCoinsSampleReady: gAll.ready,
+    peakSampling: CRYPTO_PEAK_SAMPLING_NOTE,
   };
 }
 
@@ -311,6 +386,8 @@ export interface ConcentrationResult {
   poolsMatched: number;
   poolsTotal: number;
   ownersResolved: boolean;
+  /** "unavailable" when token-account owners could not be read (round 3) */
+  state: "ok" | "unavailable";
   method: string;
 }
 
@@ -335,7 +412,16 @@ export function holderConcentration(
   const tol = opts.tol ?? 0.02;
   const ownersResolved = accounts.length > 0 && accounts.every((a) => a.owner != null);
   if (!(supplyUi > 0) || accounts.length === 0) {
-    return { top10Pct: null, excluded: [], poolsMatched: 0, poolsTotal: pools.length, ownersResolved, method: "no holder data" };
+    return { top10Pct: null, excluded: [], poolsMatched: 0, poolsTotal: pools.length, ownersResolved, state: "unavailable", method: "no holder data" };
+  }
+  // Round 3: without owners, a balance that happens to match a pool reserve
+  // could be a whale, and an unmatched vault would be counted as a holder;
+  // neither number is trustworthy. Concentration is unavailable, not guessed.
+  if (!ownersResolved) {
+    return {
+      top10Pct: null, excluded: [], poolsMatched: 0, poolsTotal: pools.length, ownersResolved, state: "unavailable",
+      method: "unavailable: token-account owners could not be read, so pool vaults cannot be told apart from whales",
+    };
   }
   const poolAddrs = new Set(pools.map((p) => p.pairAddress));
   const excluded: ConcentrationResult["excluded"] = [];
@@ -352,9 +438,15 @@ export function holderConcentration(
       excludedSet.add(a.address);
     }
   }
+  // Reserve match (owners known): one account per pool, and never an account
+  // whose owner also holds another top account (a wallet spreading a bag
+  // over several token accounts is a holder, not a vault).
+  const ownerCount = new Map<string, number>();
+  for (const a of sorted) if (a.owner) ownerCount.set(a.owner, (ownerCount.get(a.owner) ?? 0) + 1);
   for (const p of pools) {
     if (matchedPools.has(p.pairAddress) || p.baseAmount == null || !(p.baseAmount > 0)) continue;
-    const hit = sorted.find((a) => !excludedSet.has(a.address) && a.uiAmount != null &&
+    const hit = sorted.find((a) => !excludedSet.has(a.address) && a.uiAmount != null && a.owner != null &&
+      (ownerCount.get(a.owner) ?? 0) === 1 &&
       Math.abs(a.uiAmount - p.baseAmount!) <= tol * p.baseAmount!);
     if (hit) {
       excluded.push({ address: hit.address, reason: "pool-reserve-match", pct: 100 * (hit.uiAmount ?? 0) / supplyUi });
@@ -374,8 +466,48 @@ export function holderConcentration(
     poolsMatched,
     poolsTotal: pools.length,
     ownersResolved,
+    state: "ok",
     method,
   };
+}
+
+// ─── Round 3: flow vs attention (no FOMO double count) ───────────────────
+
+/**
+ * Components of the momentum read. The round-2 composite added
+ * min(35, 0.35 x FOMO) as "flow" AND 0.10 x FOMO as "fomo", while FOMO
+ * itself was acceleration + one-sided tape + trending/boost: the same
+ * inputs counted twice (up to 45 of 100 points). Now:
+ *   flowPts      = 35 x (accelPts + tapePts) / 90  (acceleration, tape only)
+ *   attentionPts = 10 x (trending 10 + boosted 8) / 18
+ * and fomoScore (displayed) = accel + tape + trending + boost, capped 100,
+ * unchanged, but it no longer enters the composite on its own.
+ */
+export function momentumPoints(i: { volAccel: number | null; netBuyRatio5m: number | null; trending: boolean; boosted: boolean }): { fomoScore: number; flowPts: number; attentionPts: number } {
+  const accelPts = i.volAccel != null ? Math.min(40, i.volAccel * 10) : 0;
+  const tapePts = i.netBuyRatio5m != null ? Math.max(0, (i.netBuyRatio5m - 0.5) * 100) : 0;
+  const attn = (i.trending ? 10 : 0) + (i.boosted ? 8 : 0);
+  return {
+    fomoScore: Math.min(100, accelPts + tapePts + attn),
+    flowPts: (35 * (accelPts + tapePts)) / 90,
+    attentionPts: (10 * attn) / 18,
+  };
+}
+
+/**
+ * Honeypot read on the 1 h sell count. An OBSERVED 0 sells against 25+
+ * buys is the honeypot pattern (hard kill); a MISSING sell count is not
+ * "zero sells", it is an unverifiable sell side (blocks ENTER, not a kill).
+ */
+export function honeypotRead(buys1h: number | null, sells1h: number | null): "honeypot" | "sells_missing" | "ok" {
+  if (sells1h == null) return "sells_missing";
+  if ((buys1h ?? 0) >= 25 && sells1h === 0) return "honeypot";
+  return "ok";
+}
+
+/** Jupiter states that let an ENTER stand; anything else holds at WATCH (fail-closed). */
+export function jupiterAllowsEnter(state: string | null | undefined): boolean {
+  return state === "agree" || state === "watch";
 }
 
 // ─── Round 2: Bluesky mention counting with an honest cap ────────────────
