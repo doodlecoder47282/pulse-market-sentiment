@@ -118,11 +118,19 @@ export default function TradingViewWidget({
   }, [symbol, interval, theme]);
 
   return (
-    <div
-      ref={hostRef}
-      className="rounded-lg border border-border/40 bg-black/20 overflow-hidden"
-      style={{ height, width: "100%" }}
-      data-testid={`tv-widget-${symbol}`}
-    />
+    <div>
+      <div
+        className="mb-1 text-[10px] text-muted-foreground"
+        data-testid={`tv-widget-label-${symbol}`}
+      >
+        TradingView chart (third-party display data; not used in any Batcave calculation)
+      </div>
+      <div
+        ref={hostRef}
+        className="rounded-lg border border-border/40 bg-black/20 overflow-hidden"
+        style={{ height, width: "100%" }}
+        data-testid={`tv-widget-${symbol}`}
+      />
+    </div>
   );
 }
