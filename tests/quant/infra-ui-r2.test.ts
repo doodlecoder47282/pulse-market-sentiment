@@ -452,3 +452,14 @@ test("internal api: every allow-listed route is registered in routes.ts; convert
   const selfCalls = routes.split("\n").filter((l) => /127\.0\.0\.1:\$\{\w+\}\/api\/(models|heatseeker|quotes|odte-tracker)/.test(l));
   assert.ok(selfCalls.length <= 2, selfCalls.join("\n"));
 });
+
+test("ofi: trend-window completeness rule shared by the panel payload and the trade-environment driver", async () => {
+  const { ofiTrendWindowComplete } = await import("../../server/ofiPayload");
+  assert.equal(ofiTrendWindowComplete(bars(15)), true);
+  assert.equal(ofiTrendWindowComplete(bars(14)), false);
+  assert.equal(ofiTrendWindowComplete(bars(30, [29])), false);
+  assert.equal(ofiTrendWindowComplete(bars(30, [0])), true);
+  const { readFileSync } = await import("node:fs");
+  const te = readFileSync(new URL("../../server/tradeEnvironment.ts", import.meta.url), "utf8");
+  assert.match(te, /ofiTrendWindowComplete\(ofi\.bars\)/);
+});

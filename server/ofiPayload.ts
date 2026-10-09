@@ -42,6 +42,12 @@ export interface OfiApiBar {
 export const OFI_TREND_WINDOW = 15;
 export const OFI_TAIL_BARS = 60;
 
+/** True when the last 15 bars all carry volume (the 15m slope is a complete sum). */
+export function ofiTrendWindowComplete(bars: Array<{ volumeMissing?: boolean }>): boolean {
+  const w = bars.slice(-OFI_TREND_WINDOW);
+  return w.length >= OFI_TREND_WINDOW && w.every((b) => b.volumeMissing !== true);
+}
+
 export function ofiApiPayload(trend: OfiTrendLike, nowMs: number) {
   const all = trend.bars;
   const tail: OfiApiBar[] = all.slice(-OFI_TAIL_BARS).map((b) => {
@@ -51,8 +57,7 @@ export function ofiApiPayload(trend: OfiTrendLike, nowMs: number) {
   const window = all.slice(-OFI_TREND_WINDOW);
   const trendWindowMissingBars = window.filter((b) => b.volumeMissing === true).length;
   const volumeMissingBars = trend.volumeMissingBars ?? all.filter((b) => b.volumeMissing === true).length;
-  const trendComplete =
-    trend.dataState !== "unavailable" && window.length >= OFI_TREND_WINDOW && trendWindowMissingBars === 0;
+  const trendComplete = trend.dataState !== "unavailable" && ofiTrendWindowComplete(all);
 
   let dataStateReason: string | null = null;
   if (trend.dataState === "unavailable") {
