@@ -991,7 +991,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           return res.json(stale);
         }
       }
-      res.status(503).json({ message: e?.message ?? `Failed to build exposures for ${symbol}` });
+      res.status(503).json({ dataState: "unavailable", reason: e?.message ?? `Failed to build exposures for ${symbol}`, message: e?.message ?? `Failed to build exposures for ${symbol}` });
     }
   });
 
@@ -1126,7 +1126,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json(data);
     } catch (e: any) {
       if (newsCache) return res.json(newsCache.data);
-      res.status(503).json({ message: e?.message ?? "Failed to build news snapshot" });
+      res.status(503).json({ dataState: "unavailable", reason: e?.message ?? "Failed to build news snapshot", message: e?.message ?? "Failed to build news snapshot" });
     }
   });
 
@@ -1149,7 +1149,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       alphaEventsCache.set(ticker, { at: Date.now(), data });
       res.json(data);
     } catch (e: any) {
-      res.status(503).json({ message: e?.message ?? "Failed to fetch alpha news" });
+      res.status(503).json({ dataState: "unavailable", reason: e?.message ?? "Failed to fetch alpha news", message: e?.message ?? "Failed to fetch alpha news" });
     }
   });
 
@@ -1171,7 +1171,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const verdict = await getAlphaVerdict(event, context, !!body.force);
       res.json({ event, verdict });
     } catch (e: any) {
-      res.status(503).json({ message: e?.message ?? "Failed to generate alpha verdict" });
+      res.status(503).json({ dataState: "unavailable", reason: e?.message ?? "Failed to generate alpha verdict", message: e?.message ?? "Failed to generate alpha verdict" });
     }
   });
 
@@ -1191,7 +1191,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       econWeekCache.set(cacheKey, { at: Date.now(), data });
       res.json(data);
     } catch (e: any) {
-      res.status(503).json({ message: e?.message ?? "Failed to build econ week" });
+      res.status(503).json({ dataState: "unavailable", reason: e?.message ?? "Failed to build econ week", message: e?.message ?? "Failed to build econ week" });
     }
   });
 
@@ -1205,7 +1205,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const { ofiApiPayload } = await import("./ofiPayload");
       res.json(ofiApiPayload(trend, Date.now()));
     } catch (e: any) {
-      res.status(503).json({ message: e?.message ?? "Failed to compute OFI" });
+      res.status(503).json({ dataState: "unavailable", reason: e?.message ?? "Failed to compute OFI", message: e?.message ?? "Failed to compute OFI" });
     }
   });
 
@@ -1438,7 +1438,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             console.log(`[pivot] Schwab fetch failed for ${symbol}, using stale cache (${cached.bars.length} bars)`);
             bars = cached.bars;
           } else {
-            return res.status(503).json({ message: `Schwab fetch failed for ${symbol}: ${fetchErr?.message ?? fetchErr}` });
+            return res.status(503).json({ dataState: "unavailable", reason: `Schwab fetch failed for ${symbol}: ${fetchErr?.message ?? fetchErr}`, message: `Schwab fetch failed for ${symbol}: ${fetchErr?.message ?? fetchErr}` });
           }
         }
       }
@@ -1448,7 +1448,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         if (cached && cached.bars.length >= 30) {
           bars = cached.bars;
         } else {
-          return res.status(503).json({ message: `Insufficient bars for ${symbol} (${bars.length})` });
+          return res.status(503).json({ dataState: "unavailable", reason: `Insufficient bars for ${symbol} (${bars.length})`, message: `Insufficient bars for ${symbol} (${bars.length})` });
         }
       }
       const spot = bars[bars.length - 1].close;
@@ -2013,7 +2013,7 @@ Be precise. No hedging language. If inputs are insufficient, say so and stop —
   app.get("/api/killbox/third-order", async (req, res) => {
     const symbol = String(req.query.symbol || "$SPX").trim().toUpperCase() || "$SPX";
     const t = await computeThirdOrderStrikes(symbol);
-    if (!t) return res.status(503).json({ error: "unavailable", message: "chain or greeks unavailable" });
+    if (!t) return res.status(503).json({ dataState: "unavailable", reason: "chain or greeks unavailable", error: "unavailable", message: "chain or greeks unavailable" });
     res.json({ symbol, source: "computed", ...t });
   });
 
@@ -3136,7 +3136,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const dte = req.query.dte !== undefined ? parseInt(String(req.query.dte)) : undefined;
       const chain = await schwabGetOptionChain(symbol, dte);
       if ("error" in chain) {
-        return res.status(503).json(chain);
+        return res.status(503).json({ ...chain, dataState: chain.dataState ?? "unavailable", reason: chain.reason ?? chain.error });
       }
       // Augment with computed GEX levels
       const gex = computeGEXFromChain(chain);
@@ -3187,6 +3187,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
       if (!spot || spot <= 0) {
         return res.status(503).json({
+          dataState: "no_spot",
+          reason: "Unable to determine underlying spot price from chain data.",
           error: "no_spot",
           message: "Unable to determine underlying spot price from chain data.",
         });
@@ -3523,7 +3525,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       }
       const spot = chain.underlying.last ?? null;
       if (!spot || spot <= 0) {
-        return res.status(503).json({ error: "no_spot", message: "Spot price unavailable" });
+        return res.status(503).json({ dataState: "no_spot", reason: "Spot price unavailable", error: "no_spot", message: "Spot price unavailable" });
       }
 
       // First pass: totals for weighting mode
@@ -3739,19 +3741,19 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         getPriceHistory(symbol, "day", 2, "minute", 5, false).catch(() => ({ candles: [] as any[] })),
       ]);
       if ("error" in chain) {
-        return res.status(503).json({ error: (chain as any).error, message: "Option chain unavailable" });
+        return res.status(503).json({ dataState: "unavailable", reason: "Option chain unavailable", error: (chain as any).error, message: "Option chain unavailable" });
       }
       const spot = chain.underlying.last ?? null;
-      if (!spot || spot <= 0) return res.status(503).json({ error: "no_spot" });
+      if (!spot || spot <= 0) return res.status(503).json({ dataState: "no_spot", reason: "no underlying spot in the Schwab $SPX chain", error: "no_spot" });
 
       // ── nearest expiry (min DTE) across both maps ──
       const dteOf = (ek: string) => { const n = parseFloat(ek.split(":")[1] || "99"); return isFinite(n) ? n : 99; };
       const allKeys = [...Object.keys(chain.callExpDateMap || {}), ...Object.keys(chain.putExpDateMap || {})];
-      if (allKeys.length === 0) return res.status(503).json({ error: "no_expiries" });
+      if (allKeys.length === 0) return res.status(503).json({ dataState: "unavailable", reason: "the Schwab chain returned no expiries", error: "no_expiries" });
       // Nearest expiry that has not settled yet (after the close today's key
       // can still be listed; its contracts carry no risk).
       const liveKeys = allKeys.filter((k) => !timeToExpiry(expiryOfKey(k)).expired);
-      if (liveKeys.length === 0) return res.status(503).json({ error: "no_live_expiries" });
+      if (liveKeys.length === 0) return res.status(503).json({ dataState: "unavailable", reason: "the Schwab chain has no unsettled expiry", error: "no_live_expiries" });
       const nearestKey = liveKeys.sort((a, b) => dteOf(a) - dteOf(b))[0];
       const nearestDte = dteOf(nearestKey);
       const expiryDate = nearestKey.split(":")[0];
@@ -3861,7 +3863,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       }
 
       const rows = [...agg.values()].filter(r => Math.abs(r.strike - spot) / spot <= 0.03).sort((a, b) => a.strike - b.strike);
-      if (rows.length === 0) return res.status(503).json({ error: "no_strikes" });
+      if (rows.length === 0) return res.status(503).json({ dataState: "unavailable", reason: "the Schwab chain has no usable strikes", error: "no_strikes" });
       const netGex = rows.reduce((s, r) => s + r.gex, 0);
       const netCharm = rows.reduce((s, r) => s + r.charm, 0);
       const totalAbsGex = rows.reduce((s, r) => s + Math.abs(r.gex), 0) || 1;
@@ -3998,7 +4000,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       }
       const spot = chain.underlying.last ?? null;
       if (!spot || spot <= 0) {
-        return res.status(503).json({ error: "no_spot", message: "Spot price unavailable" });
+        return res.status(503).json({ dataState: "no_spot", reason: "Spot price unavailable", error: "no_spot", message: "Spot price unavailable" });
       }
 
       type StrikeAgg = {
@@ -4202,7 +4204,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const env = await buildTradeEnvironment();
       res.json(env);
     } catch (e: any) {
-      res.status(503).json({ message: e?.message ?? "Failed to build trade environment" });
+      res.status(503).json({ dataState: "unavailable", reason: e?.message ?? "Failed to build trade environment", message: e?.message ?? "Failed to build trade environment" });
     }
   });
 
@@ -4254,6 +4256,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
       if (!spot || spot <= 0) {
         return res.status(503).json({
+          dataState: "no_spot",
+          reason: "Unable to determine underlying spot price.",
           error: "no_spot",
           message: "Unable to determine underlying spot price.",
         });
@@ -4567,12 +4571,12 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         internalFetch("/api/odte-tracker"),
       ]);
       if (!modelsResp.ok || !odteResp.ok) {
-        return res.status(503).json({ error: "upstream_unavailable", models: modelsResp.status, odte: odteResp.status });
+        return res.status(503).json({ dataState: "unavailable", reason: `upstream unavailable: /api/models ${modelsResp.status}, /api/odte/forward ${odteResp.status}`, error: "upstream_unavailable", models: modelsResp.status, odte: odteResp.status });
       }
       const models: any = await modelsResp.json();
       const odte: any = await odteResp.json();
       const daily = models.horizons?.daily;
-      if (!daily) return res.status(503).json({ error: "models_no_daily" });
+      if (!daily) return res.status(503).json({ dataState: "unavailable", reason: "no daily horizon from /api/models (Schwab chain or spot unavailable)", error: "models_no_daily" });
       const audit = daily.audit ?? {};
       const spot = odte.spot ?? daily.spot ?? 0;
       const oneDayEM = daily.expectedMove ?? daily.oneDayEM ?? audit?.scenarioTargets?.oneDayEM ?? audit?.oneDayEM ?? 0;
@@ -4635,7 +4639,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const models: any = await internalJson("/api/models?symbol=^GSPC&experimental=1");
       const odte = getOdteSnapshot();
       if (!models?.horizons?.daily) {
-        return res.status(503).json({ error: "models_unavailable" });
+        return res.status(503).json({ dataState: "unavailable", reason: "/api/models unavailable (Schwab chain or spot unavailable)", error: "models_unavailable" });
       }
       const daily = models.horizons.daily;
       const audit = daily.audit ?? {};
@@ -4776,7 +4780,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       // status, as before; a missing daily horizon answers 503 below.
       const data: any = (await callInternal(`/api/models?symbol=${encodeURIComponent(symbol)}&experimental=1`)).body;
       const daily = data?.horizons?.daily;
-      if (!daily) return res.status(503).json({ error: "no_daily_horizon" });
+      if (!daily) return res.status(503).json({ dataState: "unavailable", reason: "no daily horizon from /api/models (Schwab chain or spot unavailable)", error: "no_daily_horizon" });
       const out = await computeRealtimeTargets({
         spot: daily.spot,
         scenarioTargets: daily.audit?.scenarioTargets ?? { bull: daily.spot, base: daily.spot, bear: daily.spot, oneDayEM: 0 },
@@ -5092,7 +5096,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       // status, as before; a missing daily horizon answers 503 below.
       const data: any = (await callInternal(`/api/models?symbol=${encodeURIComponent(symbol)}&experimental=1`)).body;
       const daily = data?.horizons?.daily;
-      if (!daily) return res.status(503).json({ error: "no_daily_horizon" });
+      if (!daily) return res.status(503).json({ dataState: "unavailable", reason: "no daily horizon from /api/models (Schwab chain or spot unavailable)", error: "no_daily_horizon" });
 
       // Macro snapshot — fail-soft
       let macro: { vixTermRatio: number | null; dxyDelta: number | null; tnxDelta: number | null } | null = null;
@@ -5976,7 +5980,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         .map((b: any) => b.close ?? b.c)
         .filter((c: any) => typeof c === "number" && isFinite(c));
       if (closes.length < 31) {
-        return res.status(503).json({ note: "need ≥31 daily closes" });
+        return res.status(503).json({ dataState: "unavailable", reason: "need ≥31 daily closes", note: "need ≥31 daily closes" });
       }
       const returns: number[] = [];
       for (let i = 1; i < closes.length; i++) {
@@ -6002,7 +6006,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const m: any = await internalJson("/api/models?symbol=SPX"); // in-process (internalApi.ts)
       const dfiRaw = m?.horizons?.daily?.audit?.dfi;
       if (typeof dfiRaw !== "number" || !isFinite(dfiRaw)) {
-        return res.status(503).json({ note: "no live DFI value" });
+        return res.status(503).json({ dataState: "unavailable", reason: "no live DFI value", note: "no live DFI value" });
       }
       const stepped = stepFilter(dfiCloud, dfiRaw);
       dfiCloud = stepped.particles;
