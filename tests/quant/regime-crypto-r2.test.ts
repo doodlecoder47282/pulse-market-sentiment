@@ -622,9 +622,10 @@ test("canary thresholds: composite close-to-close history and empirical percenti
 test("sentiment weights: HRP on gauge history (known answer), sample gate, heuristic fallback labelled", async () => {
   const { estimateGaugeWeights, computeComposite, WEIGHT_MIN_DAYS } = await import("../../server/composite");
   // Independent daily changes, variances VIX 1, SKEW 4 (implied-vol block), PCR 2 (positioning).
-  // HRP with fixed clusters: within vol 1/1 : 1/4 -> 0.8 / 0.2, block var 0.64 + 0.04 * 4 = 0.8;
-  // between 1/0.8 : 1/2 -> 0.714 / 0.286. Effective weights 0.571, 0.143, 0.286;
-  // effective N = 1 / sum w^2 = 2.34 for independent gauges.
+  // Round 3: HRP on the CORRELATION of changes (sub-scores share one 0..100
+  // scale, so change variance is not a precision measure). Within vol: equal
+  // 1/2, 1/2, block z-variance 1/4 + 1/4 = 1/2; PCR block 1; between blocks
+  // 2 : 1 -> 2/3, 1/3. Effective weights 1/3 each; effective N = 3.
   const rand = mulberry32(12);
   const hist: Array<Record<string, number>> = [];
   let a = 50, b = 50, c = 50;
@@ -635,10 +636,10 @@ test("sentiment weights: HRP on gauge history (known answer), sample gate, heuri
   const r = estimateGaugeWeights(hist);
   assert.ok(r.ok);
   if (!r.ok) return;
-  near(r.est.weights["VIX Level"], 0.8 / 1.4, 0.03, "VIX");
-  near(r.est.weights["SKEW Index"], 0.2 / 1.4, 0.02, "SKEW");
-  near(r.est.weights["Put/Call OI (0-45 DTE)"], 0.4 / 1.4, 0.03, "PCR");
-  near(r.est.effectiveN, 1 / ((0.8 / 1.4) ** 2 + (0.2 / 1.4) ** 2 + (0.4 / 1.4) ** 2), 0.15, "effective N");
+  near(r.est.weights["VIX Level"], 1 / 3, 0.03, "VIX");
+  near(r.est.weights["SKEW Index"], 1 / 3, 0.03, "SKEW");
+  near(r.est.weights["Put/Call OI (0-45 DTE)"], 1 / 3, 0.03, "PCR");
+  near(r.est.effectiveN, 3, 0.15, "effective N");
   // Two copies of one factor count about once: effective N falls toward 1 + PCR.
   const dup = hist.map((h) => ({ ...h, "VVIX (Vol-of-Vol)": h["VIX Level"] * 1.0 }));
   const r2 = estimateGaugeWeights(dup);
