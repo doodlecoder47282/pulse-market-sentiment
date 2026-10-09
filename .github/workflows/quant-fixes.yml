@@ -81,18 +81,35 @@ jobs:
           wait_up 5061 || echo "WARN base server did not start"
           sleep 20   # let schedulers settle so both sides see similar warm-up
 
-          probe() { while read -r r; do printf '%s %s\n' "$r" "$(curl -s -o /dev/null -m 45 -w '%{http_code}' "http://127.0.0.1:$1$r")"; done < rep/routes.txt; }
-          probe 5061 > rep/routes-base.txt &
+          # Each probe line: route, HTTP code, top-level dataState of a JSON body ("-" when none).
+          # A 503 whose JSON body carries dataState is the intended "unavailable" contract
+          # (Schwab cannot answer: shared/unavailable.ts), not a regression.
+          dstate() { [ -s "$1" ] || { echo "-"; return; }; node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);console.log(j&&typeof j==="object"&&!Array.isArray(j)&&typeof j.dataState==="string"&&j.dataState?j.dataState.replace(/\s+/g,"_"):"-")}catch(e){console.log("-")}})' < "$1"; }
+          probe() { while read -r r; do rm -f "rep/probe-$1.body"; code=$(curl -s -o "rep/probe-$1.body" -m 45 -w '%{http_code}' "http://127.0.0.1:$1$r"); printf '%s %s %s\n' "$r" "$code" "$(dstate "rep/probe-$1.body")"; done < rep/routes.txt; rm -f "rep/probe-$1.body"; }
+          probe 5061 > rep/routes-base-states.txt &
           BASE_PROBE=$!
-          probe 5060 > rep/routes-head.txt
+          probe 5060 > rep/routes-head-states.txt
           wait "$BASE_PROBE"   # a bare wait would also wait on the head server and hang until timeout
+          cut -d' ' -f1,2 rep/routes-base-states.txt > rep/routes-base.txt
+          cut -d' ' -f1,2 rep/routes-head-states.txt > rep/routes-head.txt
           join rep/routes-base.txt rep/routes-head.txt > rep/routes-both.txt
+          # route base_code base_state head_code head_state
+          join rep/routes-base-states.txt rep/routes-head-states.txt > rep/routes-states.txt
           echo "--- routes whose status changed (route base head) ---"
           awk '$2!=$3' rep/routes-both.txt | tee rep/routes-changed.txt
-          REGRESS=$(awk '$2 ~ /^[234]/ && $3 ~ /^5|000/' rep/routes-both.txt | wc -l)
-          echo "head 5xx/timeout where base was OK: $REGRESS"
-          awk '$2 ~ /^[234]/ && $3 ~ /^5|000/' rep/routes-both.txt | sed 's/^/REGRESSION /'
+          echo "--- head dataState per route (route head_code head_state), non-'-' only ---"
+          awk '$5!="-" {print $1, $4, $5}' rep/routes-states.txt
+          UNAVAIL=$(awk '$4=="503" && $5!="-"' rep/routes-states.txt | wc -l)
+          echo "head 503 with dataState (structured unavailable, accepted): $UNAVAIL"
+          awk '$4=="503" && $5!="-" {print "UNAVAILABLE", $1, $4, $5}' rep/routes-states.txt
+          # Regression: base answered 2xx/3xx/4xx and head answers 000 (timeout/no
+          # response), any 5xx other than 503, or a 503 without a dataState body.
+          isreg='$2 ~ /^[234]/ && ($4 == "000" || ($4 ~ /^5/ && !($4 == "503" && $5 != "-")))'
+          REGRESS=$(awk "$isreg" rep/routes-states.txt | wc -l)
+          echo "head 500/000 (or 503 without dataState) where base was OK: $REGRESS"
+          awk "$isreg"' {print "REGRESSION", $1, $2, $4, $5}' rep/routes-states.txt
           [ "$REGRESS" -eq 0 ] && echo "PASS no route regressions" || { echo "FAIL route regressions"; fail=1; }
+          echo "head 500s: $(awk '$4 ~ /^5/ && $4 != "503"' rep/routes-states.txt | wc -l)  base 500s: $(awk '$2 ~ /^5/ && $2 != "503"' rep/routes-states.txt | wc -l)"
           echo "head 5xx count: $(awk '$3 ~ /^5/' rep/routes-both.txt | wc -l)  base 5xx count: $(awk '$2 ~ /^5/' rep/routes-both.txt | wc -l)"
           check "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5060/)" 200 "UI index served"
           { grep -E "uncaughtException|unhandledRejection|TypeError|ReferenceError" rep/server-head.log || true; } | sort | uniq -c | sort -rn | head -30 > rep/server-head-errors.txt
