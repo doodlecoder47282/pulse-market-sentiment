@@ -85,3 +85,39 @@ test("gauge weights: block of near-duplicates counts about once (correlation HRP
   // Scale does not matter: PCR's change sd is 1/6 of SKEW's yet it is not up-weighted.
   assert.deepEqual(r.est.excluded, {});
 });
+
+// ─── 2. Seasonality: "validated" belongs to the window the hold-out tested ──
+
+test("seasonality: hold-out verdict attaches to the training-picked window, not the full-sample best", async () => {
+  const { findOptimalWindow, generateAnalysisText } = await import("../../server/seasonality");
+  // 15 years, +0.3%/day on trading days 100-159, 1%/day noise.
+  const market = (seed: number) => {
+    const r = mulberry32(seed);
+    const m = new Map<number, number[]>();
+    for (let y = 0; y < 15; y++) {
+      let L = 0;
+      const p = [0];
+      for (let d = 1; d < 252; d++) { L += (d >= 100 && d < 160 ? 0.003 : 0) + 0.01 * gauss(r); p.push((Math.exp(L) - 1) * 100); }
+      m.set(2000 + y, p);
+    }
+    return m;
+  };
+  const yearly = { fullYearAvg: 1, fullYearWinRate: 0.5, presidentialCycleYear: 2, presidentialCycleAvg: null };
+  // Seed 6: the hold-out validates the window picked on the first 10 years
+  // (days 98-182) but the full-sample best is days 40-236: not validated.
+  const d = findOptimalWindow(market(6), { permutations: 49 })!;
+  assert.equal(d.verdict, "validated_window_differs");
+  assert.equal(d.testedWindow!.sameAsHeadline, false);
+  assert.deepEqual([d.testedWindow!.buyDayOfYear, d.testedWindow!.sellDayOfYear], [98, 182]);
+  assert.notDeepEqual([d.buyDayOfYear, d.sellDayOfYear], [98, 182]);
+  assert.ok(d.confidenceLabel !== "Good" && d.confidenceLabel !== "Excellent", d.confidenceLabel);
+  const t = generateAnalysisText("TEST", d, yearly, 15);
+  assert.match(t, /^In-sample analysis/);
+  assert.match(t, /NOT itself validated/);
+  // Seed 12: the training pick IS the full-sample best (days 100-156): validated.
+  const s = findOptimalWindow(market(12), { permutations: 49 })!;
+  assert.equal(s.verdict, "validated");
+  assert.equal(s.testedWindow!.sameAsHeadline, true);
+  assert.deepEqual([s.buyDayOfYear, s.sellDayOfYear], [s.testedWindow!.buyDayOfYear, s.testedWindow!.sellDayOfYear]);
+  assert.match(generateAnalysisText("TEST", s, yearly, 15), /^Analysis/);
+});

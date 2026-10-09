@@ -39,7 +39,8 @@ interface OptimalWindow {
   winRate: number;
   yearsTested: number;
   confidenceLabel: "Excellent" | "Good" | "Fair" | "Weak" | "Insufficient";
-  verdict?: "validated" | "held_up_not_significant" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
+  verdict?: "validated" | "validated_window_differs" | "held_up_not_significant" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
+  testedWindow?: { buyDate: string; sellDate: string; sameAsHeadline: boolean } | null;
   significance?: {
     windowsSearched: number;
     pFamilywise: number;
@@ -135,7 +136,7 @@ function confidenceColor(label: string): string {
 // the snooping test AND ranked in the top half out of sample is "Optimal"
 // and shaded green (a significant-but-failed-hold-out window used to read
 // "Optimal" in green next to a "Weak" badge).
-type WindowVerdict = "validated" | "held_up_not_significant" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
+type WindowVerdict = "validated" | "validated_window_differs" | "held_up_not_significant" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
 function windowVerdict(opt: OptimalWindow): WindowVerdict {
   if (opt.verdict) return opt.verdict;
   const sig = opt.significance;
@@ -146,6 +147,7 @@ function windowVerdict(opt: OptimalWindow): WindowVerdict {
 }
 const WINDOW_HEADER: Record<WindowVerdict, string> = {
   validated: "Seasonal Window (significant on held-out years)",
+  validated_window_differs: "Best In-Sample Window (hold-out validated a different window)",
   held_up_not_significant: "Best In-Sample Window (top half on held-out years, not significant)",
   failed_out_of_sample: "Best In-Sample Window (failed out-of-sample check)",
   in_sample_only: "Best In-Sample Window (no hold-out, not validated)",
@@ -153,6 +155,7 @@ const WINDOW_HEADER: Record<WindowVerdict, string> = {
 };
 const WINDOW_SHADE_LABEL: Record<WindowVerdict, string> = {
   validated: "",
+  validated_window_differs: "not this window",
   held_up_not_significant: "held-out: not significant",
   failed_out_of_sample: "failed out of sample",
   in_sample_only: "in-sample only",
@@ -379,6 +382,11 @@ function YearlyView({ ticker, lookback }: { ticker: SeasonalityTicker; lookback:
               <span className="text-[10px] opacity-80" title={`Best of ${opt.significance.windowsSearched} windows searched, tested against calendar-scrambled history`}>
                 data-snooping p={opt.significance.pFamilywise.toFixed(2)}
                 {opt.significance.outOfSample ? ` · held-out ${opt.significance.outOfSample.heldOutYears}y rank ${Math.round(opt.significance.outOfSample.randomWindowPercentile * 100)}%${opt.significance.outOfSample.pValue != null ? `, p=${opt.significance.outOfSample.pValue.toFixed(2)}` : ""}` : ""}
+              </span>
+            )}
+            {opt.testedWindow && !opt.testedWindow.sameAsHeadline && (
+              <span className="text-[10px] opacity-80" title="The walk-forward hold-out tests the window picked on the earlier years only; its result applies to that window, not the full-sample window shown">
+                hold-out tested {opt.testedWindow.buyDate} to {opt.testedWindow.sellDate} (picked on earlier years)
               </span>
             )}
           </div>
