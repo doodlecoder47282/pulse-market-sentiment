@@ -62,6 +62,10 @@ interface FlowPreview {
   source: string;
   byTicker: Record<string, PreviewByTicker>;
   totalWhales: number;
+  /** Round 4: scan coverage (all / some / no tickers failed); absent on older servers. */
+  dataState?: string;
+  dataStateReason?: string | null;
+  asOfMs?: number;
   config: {
     premiumFloor: number;
     volOiRatio: number;
@@ -979,14 +983,19 @@ export default function WhaleFlowPanel() {
             WHALE FLOW
             <EdgeInfo id="whale-flow" />
           </CardTitle>
-          {/* Request-level state only: the flow endpoints send no Schwab asOf/dataState,
-              so no age is claimed; a failed query is "request failed", never an empty list. */}
+          {/* State from the server's scan coverage (/api/flow/preview dataState:
+              ok / partial / unavailable), never from HTTP success alone. A server
+              that sends no state renders "unknown state"; a failed query is
+              "request failed", never an empty list. */}
           <DataStateChip
             state={previewQuery.isError || uoaQuery.isError || activeQuery.isError ? "failed"
-              : previewQuery.isLoading ? "loading" : "ok"}
+              : previewQuery.isLoading ? "loading" : (previewQuery.data?.dataState ?? "unknown")}
             reason={previewQuery.isError ? "whale preview request failed"
-              : uoaQuery.isError ? "UOA request failed" : activeQuery.isError ? "follow-up request failed" : null}
-            source="flow scanner"
+              : uoaQuery.isError ? "UOA request failed" : activeQuery.isError ? "follow-up request failed"
+              : previewQuery.data?.dataState ? (previewQuery.data.dataStateReason ?? null)
+              : "the flow endpoint sent no data state"}
+            asOf={previewQuery.data?.asOfMs ?? null}
+            source="flow scanner (Schwab chains)"
             testId="whale-flow-state-chip"
           />
           <span className="text-muted-foreground text-xs" data-testid="whale-flow-tracking-count">

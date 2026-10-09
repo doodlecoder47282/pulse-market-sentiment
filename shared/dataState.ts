@@ -152,3 +152,23 @@ export function effectiveDataState(
   if ((s === "ok" || s === "partial") && classifyAge(ageMs, maxAgeMs) === "stale") return "stale";
   return s;
 }
+
+// ── Scan coverage (round 4) ──────────────────────────────────────────────────
+
+/**
+ * State of a multi-symbol scan from how many symbols answered: every symbol
+ * failed -> "unavailable"; some failed -> "partial"; none failed -> "ok"
+ * (zero hits on a complete scan is an observed zero, not missing). An empty
+ * universe is "no_data".
+ */
+export function scanCoverageState(
+  scanned: number,
+  failed: number,
+  what = "symbols",
+): { dataState: "ok" | "partial" | "unavailable" | "no_data"; reason: string | null } {
+  if (!(scanned > 0)) return { dataState: "no_data", reason: `no ${what} in the scan universe` };
+  const f = Math.max(0, Math.min(scanned, failed));
+  if (f === scanned) return { dataState: "unavailable", reason: `all ${scanned} ${what} failed to load` };
+  if (f > 0) return { dataState: "partial", reason: `${f} of ${scanned} ${what} failed to load; hits cover the rest only` };
+  return { dataState: "ok", reason: null };
+}

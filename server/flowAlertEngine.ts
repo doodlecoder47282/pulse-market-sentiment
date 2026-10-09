@@ -32,6 +32,7 @@ import { regimeConvictionMultiplier } from "./edgeStats";
 import { logWhaleAlertPrediction } from "./outcomeLogger";
 import { isRegularSessionOpen } from "./exchangeCalendar";
 import { directionScore, volumeOverOiShare } from "./flowIntent";
+import { scanCoverageState } from "@shared/dataState";
 
 // Fire-once Discord poster for UOA. Posts the exact cluster returned by ingestContract.
 // It used to look up "any cluster for this ticker fired in the last 10 s", which posted
@@ -614,6 +615,11 @@ export async function previewFlow(): Promise<{
   byTicker: Record<string, { whales: WhaleHit[]; rejected: Array<{ occ: string; reason: string }> }>;
   totalScanned: number;
   totalWhales: number;
+  dataState: "ok" | "partial" | "unavailable" | "no_data";
+  dataStateReason: string | null;
+  tickersFailed: number;
+  tickersScanned: number;
+  asOfMs: number;
 }> {
   const cfg = getFlowConfig();
   const universe = [...cfg.priority, ...cfg.watchlist];
@@ -677,5 +683,12 @@ export async function previewFlow(): Promise<{
     byTicker,
     totalScanned,
     totalWhales,
+    // Scan coverage (round 4): a ticker whose Schwab chain failed is not an
+    // observed zero. The client chip reads this instead of HTTP success.
+    ...(() => {
+      const failed = Object.values(byTicker).filter((t) => t.rejected.some((r) => r.occ === "ERROR")).length;
+      const cov = scanCoverageState(universe.length, failed, "tickers");
+      return { dataState: cov.dataState, dataStateReason: cov.reason, tickersFailed: failed, tickersScanned: universe.length, asOfMs: Date.now() };
+    })(),
   };
 }

@@ -403,3 +403,28 @@ test("crypto peak: helper, label and wiring", () => {
   // ENTER held at WATCH when holder concentration is unavailable (fail-closed)
   assert.match(eng, /\} else if \(c\.top10Pct == null\) \{\n[^\n]*\n[^\n]*\n\s*verdict = "WATCH";/);
 });
+
+// ── 10. Data-state chips and heuristic wording ──────────────────────────────
+import { scanCoverageState, describeDataState } from "../../shared/dataState";
+
+test("flow scan coverage: all failed -> unavailable, some -> partial, none -> ok (0 hits observed)", () => {
+  assert.deepEqual(scanCoverageState(10, 10, "tickers").dataState, "unavailable");
+  const p = scanCoverageState(10, 3, "tickers");
+  assert.equal(p.dataState, "partial");
+  assert.match(p.reason!, /3 of 10 tickers failed/);
+  assert.deepEqual(scanCoverageState(10, 0), { dataState: "ok", reason: null });
+  assert.equal(scanCoverageState(0, 0).dataState, "no_data");
+  // A missing state renders as "unknown state", never "ok".
+  assert.equal(describeDataState("unknown").label, "unknown state");
+  assert.notEqual(describeDataState("unknown").state, "ok");
+  const ui = src("client/src/components/WhaleFlowPanel.tsx");
+  assert.match(ui, /previewQuery\.data\?\.dataState \?\? "unknown"/);
+  assert.doesNotMatch(ui, /previewQuery\.isLoading \? "loading" : "ok"/);
+  assert.match(src("client/src/components/ChartPanel.tsx"), /ohlc\.dataState \?\? "unknown"/);
+  assert.match(src("server/flowAlertEngine.ts"), /scanCoverageState\(universe\.length, failed, "tickers"\)/);
+});
+
+test("headline wording: no 'probability' for heuristic numbers, no edge claim", () => {
+  const h = src("server/headline.ts");
+  assert.doesNotMatch(h, /Composite probability score|scores transition probability|Confidence ≥70% = transition signal worth acting on|has best edge/);
+});

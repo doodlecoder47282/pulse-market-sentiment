@@ -486,7 +486,7 @@ export default function ChartPanel() {
               <Stat label="Updated" value={new Date(ohlc.asOf * 1000).toLocaleTimeString()} />
               <div className="col-span-2 md:col-span-3 flex flex-wrap items-center gap-2" data-testid="chart-data-state">
                 <DataStateChip
-                  state={ohlc.dataState ?? "ok"}
+                  state={ohlc.dataState ?? "unknown"}
                   reason={ohlc.dataReason}
                   asOf={ohlc.dataAsOfMs ?? null}
                   stale={ohlc.stale}

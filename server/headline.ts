@@ -139,7 +139,7 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
           "Model D (morning anchor) blends in 9:45-16:00 ET when opening fingerprint is set.",
         ],
         asOf: Date.now(),
-        whatThisIs: "Composite probability score plus the ML forward-path projection (1-4 hours out).",
+        whatThisIs: "Composite heuristic score (hand-set weights, not a probability) plus the ML forward-path projection (1-4 hours out).",
       };
 
     case "heatseeker":
@@ -148,10 +148,10 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
         tone,
         topLine: "0DTE SPX live Greek scanner — $1M+ premium, hot strikes, sticky zones.",
         subLine: tone === "warning"
-          ? "Heavy chop — pin behavior favors deep OTM premium decay, not directional 0DTE."
+          ? "Heavy chop: price has been pinning around strikes (descriptive, not a trade call)."
           : tone === "bull"
-          ? "Trend regime — ATM/slightly-OTM 0DTE in the trend direction has best edge."
-          : "Neutral regime — only chase 0DTE on confirmed dealer level breaks.",
+          ? "Trend regime: estimated dealer hedging tends to add to moves (descriptive, no edge claimed)."
+          : "Neutral regime: no dominant estimated hedging pressure.",
         bullets: [
           "Live Greeks across ATM ±20 strikes, refreshed every 4s.",
           "Hot zones = strike clusters with rising volume + Greek velocity.",
@@ -166,11 +166,11 @@ export async function buildHeadline(args: BuildArgs): Promise<HeadlinePayload> {
         tab,
         tone,
         topLine: `${regimeWord(currentRegime)} regime — what's the next 20-min likely look like?`,
-        subLine: "What's Next panel below scores transition probability across regime buckets.",
+        subLine: "What's Next panel below scores regime transitions with heuristic weights (not calibrated probabilities).",
         bullets: [
           "Predictor uses DFI slope, gamma flip, vanna, charm, IV term, VIX term, whale pressure.",
-          "Confidence ≥70% = transition signal worth acting on. <40% = stand aside.",
-          "Warming-up state means <5 samples collected — wait, don't trade on it.",
+          "Heuristic score 70+/100 = strong transition reading, under 40 = weak; uncalibrated.",
+          "Warming-up state means <5 samples collected: the reading is not formed yet.",
         ],
         asOf: Date.now(),
         whatThisIs: "Forward-looking regime forecast — what the next 20 minutes likely look like.",
