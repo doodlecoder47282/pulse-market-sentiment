@@ -48,6 +48,11 @@ jobs:
           echo "tsc errors: head=$(grep -c 'error TS' rep/tsc-head.log) base=$(grep -c 'error TS' rep/tsc-base.log)" | tee rep/tsc-summary.txt
           echo "--- files with MORE errors on head (file head base) ---" >> rep/tsc-summary.txt
           join -a 1 -e 0 -o 0,1.2,2.2 rep/tsc-head-byfile.txt rep/tsc-base-byfile.txt | awk '$2>$3' | tee rep/tsc-regressed.txt >> rep/tsc-summary.txt
+          # Errors with no file (config / missing type library, e.g. "error TS2688"):
+          # any such line on head that base does not have is also a regression.
+          for f in head base; do { grep -E '^error TS[0-9]+' rep/tsc-$f.log || true; } | sort -u > rep/tsc-$f-global.txt; done
+          echo "--- file-less tsc errors new on head ---" >> rep/tsc-summary.txt
+          comm -23 rep/tsc-head-global.txt rep/tsc-base-global.txt | tee rep/tsc-global-new.txt >> rep/tsc-summary.txt
           cat rep/tsc-summary.txt
       - name: Quant tests
         run: |
@@ -120,13 +125,20 @@ jobs:
       - name: Type-check gate (no file may gain tsc errors vs base)
         shell: bash
         run: |
-          if [ ! -f rep/tsc-regressed.txt ]; then echo "FAIL type-check comparison did not run"; exit 1; fi
+          if [ ! -f rep/tsc-regressed.txt ] || [ ! -f rep/tsc-global-new.txt ]; then echo "FAIL type-check comparison did not run"; exit 1; fi
+          fail=0
           if [ -s rep/tsc-regressed.txt ]; then
             echo "FAIL files with more tsc errors on head than base (file head base):"
             cat rep/tsc-regressed.txt
-            exit 1
+            fail=1
           fi
-          echo "PASS no file gained tsc errors"
+          if [ -s rep/tsc-global-new.txt ]; then
+            echo "FAIL file-less tsc errors on head that base does not have:"
+            cat rep/tsc-global-new.txt
+            fail=1
+          fi
+          [ "$fail" -eq 0 ] && echo "PASS no file gained tsc errors and no new file-less errors"
+          exit $fail
       - name: Publish report to ci-reports-quant branch
         if: always()
         run: |
