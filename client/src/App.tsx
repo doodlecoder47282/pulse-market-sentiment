@@ -12,6 +12,11 @@ import PreMarketGate from "@/components/PreMarketGate";
 import ConnectionGate from "@/components/ConnectionGate";
 import { useState } from "react";
 import { premarketGateEnabled } from "@/lib/prefs";
+import { SpeedInsights } from "@vercel/speed-insights/react";
+
+// Set by vite.config.ts: Vercel Speed Insights only on Vercel builds, so other
+// hosts never request Vercel's script.
+declare const __ON_VERCEL__: boolean;
 
 function AppRouter() {
   return (
@@ -34,6 +39,7 @@ function App() {
       <ThemeProvider>
       <TooltipProvider>
         <Toaster />
+        {__ON_VERCEL__ ? <SpeedInsights /> : null}
         <ConnectionGate />
         <TickerProvider>
           {showPremarket && (

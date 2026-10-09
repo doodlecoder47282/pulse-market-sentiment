@@ -30,3 +30,7 @@ data/greek_gradient.db-shm
 data/greek_gradient.db-wal
 data/greek_gradient.db-journal
 .discord-scheduler-state.json
+
+# Trained ML artifacts are runtime outputs (ml_service trains and versions them)
+ml_service/models/*.lgb
+ml_service/models/*_meta.json

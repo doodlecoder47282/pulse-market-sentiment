@@ -4,6 +4,8 @@ import path from "node:path";
 
 export default defineConfig({
   plugins: [react()],
+  // True only when Vercel builds the site (it sets VERCEL=1 at build time).
+  define: { __ON_VERCEL__: JSON.stringify(!!process.env.VERCEL) },
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "client", "src"),
@@ -29,9 +31,6 @@ export default defineConfig({
             if (id.includes("recharts") || id.includes("victory-vendor")) return "vendor-charts";
             if (id.includes("@radix-ui")) return "vendor-radix";
             if (id.includes("lucide-react")) return "vendor-icons";
-            // framer-motion is only used by the lazy LaunchSplash; isolate it so
-            // it never gets pulled back into the entry/vendor critical path.
-            if (id.includes("framer-motion") || id.includes("/motion-dom/") || id.includes("/motion-utils/")) return "vendor-motion";
             // react-markdown + remark/micromark stack is only used by lazy tab
             // panels (News, Trade Desk); split it out of the entry vendor chunk.
             if (

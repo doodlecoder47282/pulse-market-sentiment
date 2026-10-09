@@ -684,11 +684,6 @@
   color: rgb(245 158 11);
 }
 
-@keyframes take5-fab-shift {
-  from { background-position: 0% 50%; }
-  to   { background-position: 200% 50%; }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .vault-shell,
   .vault-shell::before,
@@ -698,60 +693,6 @@
   .take5-quote,
   .breath-circle,
   .take5-fab {
-    animation: none;
-  }
-}
-
-/* ──────────────────────────────────────────────────────────────────────── */
-/* BATCAVE Launch Splash — falling bill keyframes                           */
-/* ──────────────────────────────────────────────────────────────────────── */
-
-@keyframes bill-fall-0 {
-  0%   { transform: translateY(-80px); opacity: 0; }
-  5%   { opacity: 1; }
-  90%  { opacity: 0.85; }
-  100% { transform: translateY(110vh); opacity: 0; }
-}
-
-@keyframes bill-fall-1 {
-  0%   { transform: translateY(-80px) translateX(-8px); opacity: 0; }
-  5%   { opacity: 1; }
-  50%  { transform: translateY(55vh) translateX(12px); }
-  90%  { opacity: 0.8; }
-  100% { transform: translateY(110vh) translateX(-5px); opacity: 0; }
-}
-
-@keyframes bill-fall-2 {
-  0%   { transform: translateY(-80px) translateX(5px); opacity: 0; }
-  5%   { opacity: 0.9; }
-  40%  { transform: translateY(40vh) translateX(-15px); }
-  80%  { transform: translateY(85vh) translateX(8px); opacity: 0.7; }
-  100% { transform: translateY(110vh) translateX(-3px); opacity: 0; }
-}
-
-@keyframes bill-fall-3 {
-  0%   { transform: translateY(-80px) rotate(-5deg); opacity: 0; }
-  5%   { opacity: 1; }
-  60%  { transform: translateY(65vh) rotate(8deg); }
-  100% { transform: translateY(110vh) rotate(-3deg); opacity: 0; }
-}
-
-@keyframes bill-fall-4 {
-  0%   { transform: translateY(-80px) translateX(-12px); opacity: 0; }
-  8%   { opacity: 0.95; }
-  45%  { transform: translateY(48vh) translateX(18px); }
-  75%  { transform: translateY(78vh) translateX(-10px); }
-  100% { transform: translateY(110vh) translateX(5px); opacity: 0; }
-}
-
-@keyframes bill-spin {
-  from { transform: rotateY(0deg) rotate(0deg); }
-  to   { transform: rotateY(360deg) rotate(15deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  [class^="bill-fall-"],
-  .bill-spin {
     animation: none;
   }
 }

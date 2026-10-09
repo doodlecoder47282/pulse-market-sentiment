@@ -1,8 +1,9 @@
 # Adds or updates an npm dependency from CI (the dev workspace cannot reach the
 # npm registry) and commits package.json + package-lock.json to the branch the
-# request came from. Trigger: push a change to .github/npm-add.txt (one line of
-# space-separated package specs). workflow_dispatch only works from the
-# default branch, so a request file is used instead.
+# request came from. Trigger: push a change to .github/npm-add.txt. Each line
+# is "install <specs>" or "uninstall <names>" (a bare line of specs means
+# install). workflow_dispatch only works from the default branch, so a request
+# file is used instead.
 name: Add npm dependency
 on:
   push:
@@ -17,14 +18,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Install
+      - name: Install / uninstall
         run: |
           set -euo pipefail
-          PKGS="$(head -n1 .github/npm-add.txt | tr -d '\r')"
-          echo "PKGS=$PKGS" >> "$GITHUB_ENV"
-          # Only plain package specs: letters, digits, @ / . - _ ^ ~ and spaces.
-          [[ "$PKGS" =~ ^[A-Za-z0-9@/._^~\ -]+$ ]] || { echo "bad package spec"; exit 1; }
-          npm install $PKGS --save --no-audit --no-fund
+          SUMMARY=""
+          while IFS= read -r line || [ -n "$line" ]; do
+            line="$(echo "$line" | tr -d '\r')"
+            [ -z "$line" ] && continue
+            # Only plain package specs: letters, digits, @ / . - _ ^ ~ and spaces.
+            [[ "$line" =~ ^[A-Za-z0-9@/._^~\ -]+$ ]] || { echo "bad line: $line"; exit 1; }
+            set -- $line
+            case "$1" in
+              install) shift; npm install "$@" --save --no-audit --no-fund ;;
+              uninstall) shift; npm uninstall "$@" --no-audit --no-fund ;;
+              *) npm install "$@" --save --no-audit --no-fund ;;
+            esac
+            SUMMARY="$SUMMARY $line;"
+          done < .github/npm-add.txt
+          echo "PKGS=$SUMMARY" >> "$GITHUB_ENV"
       - name: Commit
         run: |
           set -euo pipefail
@@ -32,5 +43,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json
           git diff --cached --quiet && { echo "no change"; exit 0; }
-          git commit -m "deps: add $PKGS (via CI)"
+          git commit -m "deps:$PKGS (via CI)"
           git push origin HEAD:${{ github.ref_name }}
