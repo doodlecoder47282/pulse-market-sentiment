@@ -44,11 +44,24 @@ export interface OptimalWindow {
    *  the held-out years with a calendar-shift p-value <= 0.10;
    *  held_up_not_significant = top half on held-out years, p > 0.10;
    *  failed_out_of_sample = bottom half out of sample; in_sample_only = too
-   *  few years for a hold-out; not_significant = failed the snooping test. */
+   *  few years for a hold-out; not_significant = failed the snooping test;
+   *  validated_window_differs = the hold-out validated the window the
+   *  search picked on the earlier years only (`testedWindow`), which is not
+   *  the full-sample window shown, so the shown window is NOT validated. */
   verdict?: SeasonalVerdict;
+  /** The window the walk-forward hold-out actually tested (picked on the
+   *  in-sample years). The hold-out verdict applies to THIS window; the
+   *  headline buy/sell above is the full-sample best. null without a hold-out. */
+  testedWindow?: {
+    buyDayOfYear: number;
+    buyDate: string;
+    sellDayOfYear: number;
+    sellDate: string;
+    sameAsHeadline: boolean;
+  } | null;
 }
 
-export type SeasonalVerdict = "validated" | "held_up_not_significant" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
+export type SeasonalVerdict = "validated" | "validated_window_differs" | "held_up_not_significant" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
 
 /** Held-out significance level for "validated" (few held-out years: a 10% one-sided test). */
 export const SEASONAL_OOS_ALPHA = 0.10;
@@ -426,9 +439,18 @@ export function findOptimalWindow(
     label = "Weak";
   }
 
-  const verdict = seasonalVerdict(significant, outOfSample ? { percentile: outOfSample.randomWindowPercentile, pValue: outOfSample.pValue } : null);
+  // The hold-out tests the window picked on the in-sample years, not the
+  // full-sample best (round-3 finding). "validated" may only be attached to
+  // the headline window when the two are the same window; otherwise the
+  // procedure validated a different window and the headline is in-sample.
+  const sameAsHeadline = !!outOfSample && outOfSample.buyDayOfYear === best.buyDay && outOfSample.sellDayOfYear === best.sellDay;
+  let verdict: SeasonalVerdict = seasonalVerdict(significant, outOfSample ? { percentile: outOfSample.randomWindowPercentile, pValue: outOfSample.pValue } : null);
+  if (verdict === "validated" && !sameAsHeadline) verdict = "validated_window_differs";
   // A label above Weak requires the hold-out too: "in sample only" cannot be Good/Excellent.
-  if ((verdict === "in_sample_only" || verdict === "held_up_not_significant") && (label === "Excellent" || label === "Good")) label = "Fair";
+  if ((verdict === "in_sample_only" || verdict === "held_up_not_significant" || verdict === "validated_window_differs") && (label === "Excellent" || label === "Good")) label = "Fair";
+  const testedWindow = outOfSample
+    ? { buyDayOfYear: outOfSample.buyDayOfYear, buyDate: dayOfYearToDate(outOfSample.buyDayOfYear), sellDayOfYear: outOfSample.sellDayOfYear, sellDate: dayOfYearToDate(outOfSample.sellDayOfYear), sameAsHeadline }
+    : null;
 
   return {
     verdict,
@@ -440,6 +462,7 @@ export function findOptimalWindow(
     winRate: best.winRate,
     yearsTested: best.yearsTested,
     confidenceLabel: label,
+    testedWindow,
     significance: {
       method: "max-statistic permutation test over the full window search (calendar-scrambled years, White 2000 / Sullivan-Timmermann-White 2001) + walk-forward hold-out",
       windowsSearched: searched,
@@ -474,13 +497,19 @@ export function generateAnalysisText(
   const sigNote = sig
     ? ` Data-snooping p=${sig.pFamilywise.toFixed(2)} across ${sig.windowsSearched.toLocaleString("en-US")} windows searched${sig.outOfSample ? `; on the ${sig.outOfSample.heldOutYears} most recent held-out years the window chosen without them ranked at the ${Math.round(sig.outOfSample.randomWindowPercentile * 100)}th percentile of same-length windows` : ""}.`
     : "";
-  const verdictNote = opt.verdict === "failed_out_of_sample"
+  const tw = opt.testedWindow;
+  const twNote = tw && !tw.sameAsHeadline
+    ? ` The held-out check tested the window picked from the earlier years only (${tw.buyDate} to ${tw.sellDate}), not the full-sample window above, so its result describes that window and the search procedure.`
+    : "";
+  const verdictNote = opt.verdict === "validated_window_differs"
+    ? ` The search procedure held up on the held-out years with a different window (${tw?.buyDate} to ${tw?.sellDate}); the full-sample window shown is NOT itself validated.`
+    : (opt.verdict === "failed_out_of_sample"
     ? " It passed the in-sample snooping test but ranked in the bottom half of same-length windows on the held-out years, so it is NOT validated."
     : opt.verdict === "in_sample_only"
       ? " Too few years for a held-out check, so it is significant in-sample only, not validated."
       : opt.verdict === "held_up_not_significant"
         ? ` It ranked in the top half of same-length windows on the held-out years but not significantly (held-out p=${opt.significance?.outOfSample?.pValue.toFixed(2)} > ${SEASONAL_OOS_ALPHA}), so it is not validated.`
-      : "";
+      : "") + (opt.verdict === "validated_window_differs" ? "" : twNote);
   const lead = opt.verdict === "validated" ? "Analysis" : "In-sample analysis";
   return `${lead} of the ${symbol} seasonal pattern above shows that a Buy Date of ${opt.buyDate} and a Sell Date of ${opt.sellDate} has resulted in a geometric average return of ${opt.geometricAvgReturn >= 0 ? "+" : ""}${opt.geometricAvgReturn.toFixed(1)}% over the past ${lookback} years. This seasonal timeframe has shown positive results in ${positiveYears} of those ${opt.yearsTested} periods (${winPct}%), rated ${opt.confidenceLabel}.${verdictNote}${sigNote}${cycleNote}`;
 }

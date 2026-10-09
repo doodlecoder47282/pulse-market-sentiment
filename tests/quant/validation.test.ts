@@ -231,13 +231,14 @@ test("0DTE grade: missing data stays ungraded (never estimated)", () => {
   assert.equal(gradeOdteOptionPnl({ ...baseGrade, entryAsk: null, bars: flatBars(6000), marks: minuteMarks(10, 10.2) }).reason, "no_entry_quote");
   const gappy = minuteMarks(10, 10.2).filter((m) => m.ts < T0 + 30 * 60_000 || m.ts > T0 + 90 * 60_000);
   assert.equal(gradeOdteOptionPnl({ ...baseGrade, bars: flatBars(6000), marks: gappy }).reason, "mark_gap");
-  // same-bar tie: T1 touched on the 10:04 bar whose close (the 10:00-10:05
-  // candle's close) is below the stop -> stop wins (conservative). The stop is
-  // a 5-minute CLOSE rule since round 2 (published plan), not a 1-minute touch.
+  // same-bar order (round 3): T1 touched on the 10:04 bar whose close (the
+  // 10:00-10:05 candle's close) is below the stop. The touch is intrabar and
+  // the stop is judged on the close, the bar's last print, so T1 came first:
+  // with no T2 the whole position sells at T1. (Round 2 let the stop win.)
   const bars = flatBars(6000);
   bars[4] = { ...bars[4], high: 6011, low: 5988, close: 5989 };
   const g = gradeOdteOptionPnl({ ...baseGrade, bars, marks: minuteMarks(10, 10.2) });
-  assert.equal(g.reason, "underlying_stop");
+  assert.equal(g.reason, "t1_touch");
 });
 
 test("0DTE: realized close-out vs MFE", () => {

@@ -396,6 +396,10 @@ export class StreamStore {
     this.options.set(symbol, q);
     if (!q.delayed) {
       this.optionSides.update(symbol, { t: q.tradeTimeMs ?? q.quoteTimeMs ?? now, last: q.last, bid: q.bid, ask: q.ask, cumVolume: q.totalVolume }, this.epoch);
+      // Observers (fired-alert mark ledger): real-time updates only.
+      for (const fn of _optionObservers) {
+        try { fn({ ...q }); } catch { /* observer must not break ingest */ }
+      }
     }
   }
 
@@ -593,12 +597,23 @@ export function streamOptionOverlay(
   return { bid: q.bid, ask: q.ask, last: q.last, mark: q.mark, totalVolume: q.totalVolume, quoteTimeMs: q.quoteTimeMs, tradeTimeMs: q.tradeTimeMs };
 }
 
+// Option-update observers: called with every real-time LEVELONE_OPTIONS
+// update after it is merged (odteTracker logs fired-alert marks from it).
+const _optionObservers: Array<(q: StreamOptionQuote) => void> = [];
+export function addOptionQuoteObserver(fn: (q: StreamOptionQuote) => void): () => void {
+  _optionObservers.push(fn);
+  return () => {
+    const i = _optionObservers.indexOf(fn);
+    if (i >= 0) _optionObservers.splice(i, 1);
+  };
+}
+
 // Dynamic option subscriptions: consumers declare the set they want by owner;
 // the connection manager subscribes the union (see schwabStream.ts).
 const _optionWants = new Map<string, string[]>();
 let _optionListener: (() => void) | null = null;
 
-/** Replace the option symbols wanted by one owner ("odte", "whale"). Order = priority (first kept under the cap). */
+/** Replace the option symbols wanted by one owner ("odte", "odte_alerts", "whale"). Order = priority (first kept under the cap). */
 export function syncStreamOptions(owner: string, symbols: string[]): void {
   const clean = Array.from(new Set(symbols.filter((s) => typeof s === "string" && s.trim().length > 0)));
   const prev = _optionWants.get(owner) ?? [];
@@ -610,7 +625,7 @@ export function syncStreamOptions(owner: string, symbols: string[]): void {
 }
 
 /** Union of wanted option symbols, owners in the given priority order, capped. */
-export function wantedOptionSymbols(cap: number, ownerPriority: string[] = ["odte", "whale"]): { symbols: string[]; overCap: string[] } {
+export function wantedOptionSymbols(cap: number, ownerPriority: string[] = ["odte", "odte_alerts", "whale"]): { symbols: string[]; overCap: string[] } {
   const owners = ownerPriority.concat(Array.from(_optionWants.keys()).filter((o) => !ownerPriority.includes(o)));
   const all: string[] = [];
   for (const o of owners) for (const s of _optionWants.get(o) ?? []) if (!all.includes(s)) all.push(s);

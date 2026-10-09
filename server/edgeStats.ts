@@ -100,7 +100,20 @@ export interface ThresholdSuggestion {
   oos: {
     n: number; hits: number; hitRate: number | null; wilsonLo: number | null; wilsonHi: number | null;
     droppedN: number; droppedHitRate: number | null; lift: number | null; z: number | null; zCrit: number;
+    /** day-clustered z, its T(G-1) critical value, and the number of days (round 3) */
+    zCluster: number | null; zClusterCrit: number | null; days: number; designEffect: number | null;
     method: string;
+  };
+  /**
+   * What was validated (round 3): the suggested value is picked on the WHOLE
+   * window; the walk-forward test validated the selection PROCEDURE (pick
+   * on earlier data, score on later data), whose per-fold picks can differ.
+   */
+  validation: {
+    kind: "procedure";
+    foldPicks: Array<number | null>;
+    suggestedMatchesEveryFoldPick: boolean;
+    note: string;
   };
 }
 
@@ -391,19 +404,29 @@ function deriveSuggestions(whaleRows: any[]): { suggestions: ThresholdSuggestion
     const hit = kept.reduce((s, x) => s + x.hit, 0) / kept.length;
     const o = wf.oos;
     const pc = (x: number | null) => (x == null ? "n/a" : `${(x * 100).toFixed(0)}%`);
+    const foldPicks = wf.folds.map((f) => f.selected);
+    const matchesAll = foldPicks.length > 0 && foldPicks.every((x) => x != null && Math.abs(x - v) < 1e-12);
     suggestions.push({
       field: sw.field,
       currentNote: sw.currentNote,
       suggested: v,
-      rationale: `${sw.label(v)}: in-sample (${graded.length} graded) hit-30 ${pc(overallHit30)} -> ${pc(hit)}; ` +
-        `out-of-sample (walk-forward, ${o.keptN + o.droppedN} later alerts) kept ${pc(o.keptRate)} ` +
-        `(95% CI ${pc(o.keptWilsonLo)}-${pc(o.keptWilsonHi)}, n=${o.keptN}) vs dropped ${pc(o.droppedRate)} (n=${o.droppedN}), z ${o.z?.toFixed(2)}.`,
+      rationale: `${sw.label(v)} is the full-window pick (${graded.length} graded: hit-30 ${pc(overallHit30)} -> ${pc(hit)}, in-sample). ` +
+        `The pick-on-earlier, score-on-later PROCEDURE held up out of sample (walk-forward, ${o.keptN + o.droppedN} later alerts over ${o.clusters} days): kept ${pc(o.keptRate)} ` +
+        `(95% CI ${pc(o.keptWilsonLo)}-${pc(o.keptWilsonHi)}, n=${o.keptN}) vs dropped ${pc(o.droppedRate)} (n=${o.droppedN}), z ${o.z?.toFixed(2)}, day-clustered z ${o.zCluster?.toFixed(2)}. ` +
+        `Fold picks ${foldPicks.map((x) => (x == null ? "none" : String(x))).join(" / ")}; this exact value was ${matchesAll ? "the pick in every fold" : "not the pick in every fold, so it is validated only as the output of that procedure"}.`,
       liftHit30: hit - overallHit30,
       alertReductionPct: rows.length ? 1 - kept.length / rows.length : 0,
       oos: {
         n: o.keptN, hits: o.keptHits, hitRate: o.keptRate, wilsonLo: o.keptWilsonLo, wilsonHi: o.keptWilsonHi,
         droppedN: o.droppedN, droppedHitRate: o.droppedRate, lift: o.lift, z: o.z, zCrit: WF_Z_CRIT,
-        method: `anchored walk-forward, ${wf.folds.length} test folds over the later half, purged training (outcome known before each fold), in-fold screen = largest kept-vs-dropped z, out-of-sample z with continuity correction`,
+        zCluster: o.zCluster, zClusterCrit: o.zClusterCrit, days: o.clusters, designEffect: o.designEffect,
+        method: `anchored walk-forward, ${wf.folds.length} test folds over the later half, purged training (outcome known before each fold), in-fold screen = largest kept-vs-dropped z, out-of-sample z with continuity correction, and a day-clustered (CR1) z against T(days-1) (alerts on one day share a path)`,
+      },
+      validation: {
+        kind: "procedure",
+        foldPicks,
+        suggestedMatchesEveryFoldPick: matchesAll,
+        note: "the suggested cut-off is picked on the full window; the hold-out validated the selection procedure, not this value by itself",
       },
     });
   }

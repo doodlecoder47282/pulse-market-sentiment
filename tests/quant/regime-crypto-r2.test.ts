@@ -472,10 +472,14 @@ test("crypto holders: only identified pool vaults and burn are excluded; a whale
   // the old rule (drop the largest, sum the next ten) would have hidden the whale:
   const old = accounts.slice(1, 11).reduce((s, a) => s + a.uiAmount, 0) / supply * 100;
   assert.equal(old, 49); // 20 vault + 10 burn + 5 pool2 + 7 x 2: counts pool and burn, drops the whale
-  // no pool identifiable (no owners, no reserves): nothing excluded, labelled as overstated
+  // owners unreadable (round 3): concentration is unavailable, never guessed
   const blind = holderConcentration(accounts.map((a) => ({ ...a, owner: null })), [{ pairAddress: "pool1", baseAmount: null }], supply);
-  assert.equal(blind.top10Pct, 25 + 20 + 10 + 5 + 6 * 2);
-  assert.match(blind.method, /INCLUDING/);
+  assert.equal(blind.top10Pct, null);
+  assert.equal(blind.state, "unavailable");
+  // owners known but no pool identifiable: nothing excluded, labelled as overstated
+  const noPool = holderConcentration(accounts.filter((a) => a.owner !== SOLANA_INCINERATOR && a.owner !== "pool2"), [{ pairAddress: "pool1", baseAmount: null }], supply);
+  assert.equal(noPool.top10Pct, 25 + 20 + 8 * 2);
+  assert.match(noPool.method, /INCLUDING/);
   assert.equal(holderConcentration([], pools, supply).top10Pct, null);
 });
 
@@ -569,7 +573,7 @@ test("regime FDR: Benjamini-Hochberg q-values (hand-computed) gate fresh and dur
   assert.ok(Math.abs(f[2].qPersist - 0.042) < 1e-12);
 });
 
-test("regime block length accounts for volatility clustering (GARCH): max of r and |r| lengths", async () => {
+test("regime block length diagnostic: |r| is more persistent than r under GARCH; the reported length is r's (round 3: wild-bootstrap null)", async () => {
   const { politisWhiteBlockLength, regimeZTest } = await import("../../server/macroStats");
   // GARCH(1,1) a = 0.10, b = 0.88, 1000 days after burn-in: returns ~uncorrelated,
   // |returns| persistent (seeded; across 20 seeds |r| always gave the longer block).
@@ -580,7 +584,9 @@ test("regime block length accounts for volatility clustering (GARCH): max of r a
   const bR = politisWhiteBlockLength(r).b;
   const bA = politisWhiteBlockLength(r.map(Math.abs)).b;
   assert.ok(bA > bR, `|r| block ${bA} vs r block ${bR}`);
-  assert.equal(regimeZTest(r, 20, { reps: 99, seed: 1 })!.blockLength, Math.max(bR, bA));
+  const t = regimeZTest(r, 20, { reps: 99, seed: 1 })!;
+  assert.equal(t.blockLength, bR);
+  assert.match(t.method, /wild bootstrap/);
 });
 
 test("Ledoit-Wolf constant-correlation: reference value on the review's 80x6 fixture (paper divisor T and covCor's N-1)", async () => {
@@ -622,9 +628,10 @@ test("canary thresholds: composite close-to-close history and empirical percenti
 test("sentiment weights: HRP on gauge history (known answer), sample gate, heuristic fallback labelled", async () => {
   const { estimateGaugeWeights, computeComposite, WEIGHT_MIN_DAYS } = await import("../../server/composite");
   // Independent daily changes, variances VIX 1, SKEW 4 (implied-vol block), PCR 2 (positioning).
-  // HRP with fixed clusters: within vol 1/1 : 1/4 -> 0.8 / 0.2, block var 0.64 + 0.04 * 4 = 0.8;
-  // between 1/0.8 : 1/2 -> 0.714 / 0.286. Effective weights 0.571, 0.143, 0.286;
-  // effective N = 1 / sum w^2 = 2.34 for independent gauges.
+  // Round 3: HRP on the CORRELATION of changes (sub-scores share one 0..100
+  // scale, so change variance is not a precision measure). Within vol: equal
+  // 1/2, 1/2, block z-variance 1/4 + 1/4 = 1/2; PCR block 1; between blocks
+  // 2 : 1 -> 2/3, 1/3. Effective weights 1/3 each; effective N = 3.
   const rand = mulberry32(12);
   const hist: Array<Record<string, number>> = [];
   let a = 50, b = 50, c = 50;
@@ -635,10 +642,10 @@ test("sentiment weights: HRP on gauge history (known answer), sample gate, heuri
   const r = estimateGaugeWeights(hist);
   assert.ok(r.ok);
   if (!r.ok) return;
-  near(r.est.weights["VIX Level"], 0.8 / 1.4, 0.03, "VIX");
-  near(r.est.weights["SKEW Index"], 0.2 / 1.4, 0.02, "SKEW");
-  near(r.est.weights["Put/Call OI (0-45 DTE)"], 0.4 / 1.4, 0.03, "PCR");
-  near(r.est.effectiveN, 1 / ((0.8 / 1.4) ** 2 + (0.2 / 1.4) ** 2 + (0.4 / 1.4) ** 2), 0.15, "effective N");
+  near(r.est.weights["VIX Level"], 1 / 3, 0.03, "VIX");
+  near(r.est.weights["SKEW Index"], 1 / 3, 0.03, "SKEW");
+  near(r.est.weights["Put/Call OI (0-45 DTE)"], 1 / 3, 0.03, "PCR");
+  near(r.est.effectiveN, 3, 0.15, "effective N");
   // Two copies of one factor count about once: effective N falls toward 1 + PCR.
   const dup = hist.map((h) => ({ ...h, "VVIX (Vol-of-Vol)": h["VIX Level"] * 1.0 }));
   const r2 = estimateGaugeWeights(dup);

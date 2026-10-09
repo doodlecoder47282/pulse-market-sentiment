@@ -44,7 +44,7 @@ interface OptimalWindow {
   winRate: number;
   yearsTested: number;
   confidenceLabel: "Excellent" | "Good" | "Fair" | "Weak" | "Insufficient";
-  verdict?: "validated" | "held_up_not_significant" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
+  verdict?: "validated" | "validated_window_differs" | "held_up_not_significant" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
   significance?: {
     windowsSearched: number;
     pFamilywise: number;
@@ -117,7 +117,7 @@ function confidenceColor(label: string): string {
 // the snooping test AND ranked in the top half out of sample is "Optimal"
 // and shaded green (a significant-but-failed-hold-out window used to read
 // "Optimal" in green next to a "Weak" badge).
-type WindowVerdict = "validated" | "held_up_not_significant" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
+type WindowVerdict = "validated" | "validated_window_differs" | "held_up_not_significant" | "failed_out_of_sample" | "in_sample_only" | "not_significant";
 function windowVerdict(opt: OptimalWindow): WindowVerdict {
   if (opt.verdict) return opt.verdict;
   const sig = opt.significance;
@@ -128,6 +128,7 @@ function windowVerdict(opt: OptimalWindow): WindowVerdict {
 }
 const WINDOW_HEADER: Record<WindowVerdict, string> = {
   validated: "Seasonal Window (significant on held-out years)",
+  validated_window_differs: "Best In-Sample Window (hold-out validated a different window)",
   held_up_not_significant: "Best In-Sample Window (top half on held-out years, not significant)",
   failed_out_of_sample: "Best In-Sample Window (failed out-of-sample check)",
   in_sample_only: "Best In-Sample Window (no hold-out, not validated)",
@@ -135,6 +136,7 @@ const WINDOW_HEADER: Record<WindowVerdict, string> = {
 };
 const WINDOW_SHADE_LABEL: Record<WindowVerdict, string> = {
   validated: "",
+  validated_window_differs: "not this window",
   held_up_not_significant: "held-out: not significant",
   failed_out_of_sample: "failed out of sample",
   in_sample_only: "in-sample only",

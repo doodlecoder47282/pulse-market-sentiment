@@ -95,6 +95,13 @@ interface SignalCounts {
   noData?: number; // past the 72h horizon but unpriceable: missing, not dead
 }
 
+interface Survivorship {
+  noDataShare: number | null;
+  ruggedRateObserved: number | null;
+  ruggedRateWorstCase: number | null;
+  winRateWorstCase: number | null;
+}
+
 interface SignalsResp {
   signals: any[];
   // top-level counts = DISTINCT COINS (first signal per coin); sampleReady =
@@ -105,6 +112,12 @@ interface SignalsResp {
     noDataShare?: number | null;
     rows?: SignalCounts;
     enterCoins?: SignalCounts;
+    // round 3: sampleReady is decided on first-ENTER coins and needs a
+    // readable no-data share; survivorship bounds count NO_DATA as RUGGED.
+    survivorship?: { coins: Survivorship; enterCoins: Survivorship };
+    sampleBasis?: string;
+    sampleReason?: string;
+    peakSampling?: string;
   };
 }
 
@@ -361,14 +374,16 @@ function AgentStrip({ health }: { health?: HealthResp }) {
 // ─── tracking banner ────────────────────────────────────────────────────
 
 function TrackingBanner({ sig, view }: { sig?: SignalsResp; view: string }) {
-  const graded = sig ? sig.stats.graded : null;
+  // Round 3: the gate a trader cares about is on first-ENTER coins.
+  const enter = sig?.stats.enterCoins;
+  const graded = enter ? enter.graded : sig ? sig.stats.graded : null;
   return (
     <div className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2">
       <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
       <p className="text-[11px] leading-snug text-amber-200/90">
         <span className="font-semibold">tracking mode.</span> every ENTER/WATCH is logged and graded
         (5M hit / doubled / rugged / dead) but nothing here is stakeable until the audited hit rate exists
-        — same n≥50 rule as the 0DTE desk, counted in distinct coins{graded != null ? ` (${graded} graded coins so far)` : ""}. sub-1M memes
+        — same n≥50 rule as the 0DTE desk, counted in distinct first-ENTER coins with a no-data share of 20% or less{graded != null ? ` (${graded} graded ENTER coins so far${sig?.stats.sampleReady ? ", sample-ready" : ""})` : ""}. sub-1M memes
         are a &gt;90% loss-rate arena; the math only works small, cut fast, and letting 4-5x winners pay for everything.
       </p>
     </div>
@@ -525,6 +540,11 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
                 <span className={`rounded px-1.5 py-0.5 font-semibold ${c.freezeAuthorityActive ? "bg-rose-500/20 text-rose-300" : "bg-emerald-500/15 text-emerald-300"}`}>
                   freeze {c.freezeAuthorityActive ? "ACTIVE" : "none ✓"}
                 </span>
+                {c.top10Pct == null && c.top10Method?.startsWith("unavailable") && (
+                  <span title={c.top10Method} className="rounded px-1.5 py-0.5 font-semibold bg-amber-500/15 text-amber-300">
+                    top10 unavailable
+                  </span>
+                )}
                 {c.top10Pct != null && (
                   <span title={c.top10Method ?? undefined} className={`rounded px-1.5 py-0.5 font-semibold ${c.top10Pct > 45 ? "bg-rose-500/20 text-rose-300" : c.top10Pct > 30 ? "bg-amber-500/15 text-amber-300" : "bg-emerald-500/15 text-emerald-300"}`}>
                     top10 {c.top10Pct}%{c.top10Method?.includes("INCLUDING") ? " (incl. pool?)" : ""}
@@ -568,8 +588,8 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
               {c.jupState === "agree" || c.jupState === "watch" || c.jupState === "diverge"
                 ? `${c.jupState} (${c.jupGapPct}% vs DexScreener)`
                 : c.jupState === "no-reliable-price" ? "has no reliable price for this mint"
-                : c.jupState === "failed" ? "request failed (not cross-checked)"
-                : "not checked yet"}
+                : c.jupState === "failed" ? "request failed (not cross-checked; ENTER held at WATCH)"
+                : "not checked yet (ENTER held at WATCH until checked)"}
             </span>
           </p>
           <p className="text-[9px] text-muted-foreground">
@@ -609,6 +629,8 @@ function ScoreRing({ score, accent }: { score: number; accent: string }) {
 
 // ─── signal log ─────────────────────────────────────────────────────────
 
+const pctOrDash = (x: number | null | undefined) => (x == null ? "—" : `${Math.round(x * 100)}%`);
+
 function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
   if (loading) return <FeedSkeleton />;
   if (!sig) return <p className="text-xs text-muted-foreground">no signal data yet.</p>;
@@ -636,9 +658,18 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
         {stats.enterCoins ? ` · first-ENTER coins: ${stats.enterCoins.total} (${stats.enterCoins.graded} graded, ${stats.enterCoins.hit5m + stats.enterCoins.doubled} hit 5M or doubled)` : ""}
         {stats.noDataShare != null ? ` · no-data share ${Math.round(stats.noDataShare * 100)}% of resolved coins (missing outcomes, not losses)` : ""}
       </p>
+      {stats.survivorship && (
+        <p className="text-[10px] text-muted-foreground" data-testid="crypto-survivorship">
+          rug rate, first-ENTER coins: observed {pctOrDash(stats.survivorship.enterCoins.ruggedRateObserved)}, worst case {pctOrDash(stats.survivorship.enterCoins.ruggedRateWorstCase)} (every no-data pair counted as rugged: delisted pairs are often rugs)
+          {" "}· all coins: observed {pctOrDash(stats.survivorship.coins.ruggedRateObserved)}, worst case {pctOrDash(stats.survivorship.coins.ruggedRateWorstCase)}
+        </p>
+      )}
+      {stats.peakSampling && (
+        <p className="text-[10px] text-muted-foreground" data-testid="crypto-peak-sampling">{stats.peakSampling}</p>
+      )}
       {!stats.sampleReady && (
         <p className="text-[10px] text-muted-foreground">
-          sample-ready at {stats.minGradedForSample ?? 50} graded coins ({stats.graded ?? 0} so far) — a minimum sample, not a calibration. until then these stats are the whole product: proving or killing the edge.
+          not sample-ready{stats.sampleReason ? ` (${stats.sampleReason})` : ` at ${stats.minGradedForSample ?? 50} graded coins (${stats.graded ?? 0} so far)`} — a minimum sample, not a calibration. until then these stats are the whole product: proving or killing the edge.
         </p>
       )}
       <div className="space-y-1.5">

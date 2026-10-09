@@ -45,7 +45,7 @@ import { ensureSpxMinuteBarsTable } from "./spxMinuteBars";
 import {
   etCloseMs as etCloseForDate, etDate, gradeOdteOptionPnl, replayOdtePlan, planUnderlyingCloseOutPct,
   summarizeOptionReturns, gradeBucketFor, netOptionReturn, wilsonInterval, gradeLabelStatus,
-  ODTE_PLAN_RULES, MIN_FIRES_FOR_POINT_ESTIMATE, savedMinuteBarsSql, mergeMinuteBars, t1SaleContracts,
+  ODTE_PLAN_RULES, MIN_FIRES_FOR_POINT_ESTIMATE, savedMinuteBarsSql, mergeMinuteBars, minuteBarsProvenance, t1SaleContracts,
   type OptionLedgerBucket, type MinuteBar, type GradeEvidence,
 } from "./validationMath";
 
@@ -113,7 +113,7 @@ async function getSpxMinuteCandles(): Promise<Candle[]> {
  * column layout the table actually has (validationMath.savedMinuteBarsSql).
  */
 let _savedSql: string | null = null;
-export function loadSavedSpxMinuteBars(fromMs: number, toMs: number): Candle[] {
+export function loadSavedSpxMinuteBars(fromMs: number, toMs: number): Array<Candle & { source?: string | null }> {
   try {
     if (!_savedSql) {
       try { ensureSpxMinuteBarsTable(sqlite); } catch { /* read whatever layout exists */ }
@@ -121,17 +121,17 @@ export function loadSavedSpxMinuteBars(fromMs: number, toMs: number): Candle[] {
       _savedSql = savedMinuteBarsSql(cols);
     }
     if (!_savedSql) return [];
-    return (sqlite.prepare(_savedSql).all(fromMs, toMs) as Candle[])
+    return (sqlite.prepare(_savedSql).all(fromMs, toMs) as Array<Candle & { source?: string | null }>)
       .filter((b) => [b.datetime, b.open, b.high, b.low, b.close].every((v) => typeof v === "number" && Number.isFinite(v)));
   } catch { return []; }
 }
 
 /** Live and saved bars for one session window, de-duplicated by bar open (live wins). */
-function barsForWindow(live: Candle[], fromMs: number, toMs: number): { bars: Candle[]; savedUsed: boolean } {
+function barsForWindow(live: Candle[], fromMs: number, toMs: number): { bars: Candle[]; savedUsed: boolean; provenance: ReturnType<typeof minuteBarsProvenance> } {
   const saved = loadSavedSpxMinuteBars(fromMs, toMs);
   const liveIn = live.filter((b) => b.datetime >= fromMs && b.datetime < toMs);
   const bars = mergeMinuteBars(saved, liveIn);
-  return { bars, savedUsed: saved.length > 0 && liveIn.length < bars.length };
+  return { bars, savedUsed: saved.length > 0 && liveIn.length < bars.length, provenance: minuteBarsProvenance(saved, liveIn) };
 }
 
 /**
@@ -334,7 +334,7 @@ export async function gradeOdteAlerts(now: number = Date.now()): Promise<OdteGra
       try {
         const tooOld = now - r.detected_at > MAX_LOOKBACK_DAYS * 24 * 3600_000;
         const closeMs = etCloseMs(r.detected_at);
-        const { bars, savedUsed } = barsForWindow(tooOld ? [] : live, r.detected_at - 5 * 60_000, closeMs);
+        const { bars, savedUsed, provenance } = barsForWindow(tooOld ? [] : live, r.detected_at - 5 * 60_000, closeMs);
         const marks = r.tier !== "REJECTED" ? loadOdteOptionMarks(r.alert_id) : [];
         const g = gradeRow(r, bars, now, marks, closes.get(etDate(r.detected_at)) ?? null);
         if (g.retryable && !tooOld) { summary.deferred++; continue; } // bars may still arrive
@@ -343,7 +343,15 @@ export async function gradeOdteAlerts(now: number = Date.now()): Promise<OdteGra
           if (r.tier !== "REJECTED") g.option = { ...g.option, status: "ungraded", reason: "beyond_minute_history" };
         }
         const o = g.option;
-        mark.run(JSON.stringify({ ...g.outcome, barsSource: savedUsed ? "schwab_live+saved_spx_minute_bars" : "schwab_live" }),
+        // barsSource kept for readers; barsProvenance says how many bars came
+        // from where, including bars built from stream last prices (round 3).
+        mark.run(JSON.stringify({
+          ...g.outcome,
+          barsSource: savedUsed ? (provenance.fromStreamLastPrices ? "schwab_live+saved_spx_minute_bars(incl_stream_last_price_bars)" : "schwab_live+saved_spx_minute_bars") : "schwab_live",
+          barsProvenance: provenance.counts,
+          barsFromStreamLastPrices: provenance.fromStreamLastPrices,
+          barsSourceLabel: provenance.label,
+        }),
           g.pctReturn, g.realizedPct, g.hit30, g.hit50, g.hitT1, now,
           o.status, o.reason, o.entry, o.exit, o.exitAt, o.ret, o.mfe, o.settledFrac, o.contracts, r.id);
         if (savedUsed) summary.fromSavedBars++;
