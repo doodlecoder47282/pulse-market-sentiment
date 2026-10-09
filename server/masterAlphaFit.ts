@@ -25,6 +25,7 @@
 // (Campbell & Thompson 2008, RFS 21:1509 — OOS R² vs the training mean).
 
 import { olsFit } from "./stats";
+import { DEFAULT_RISK_PCT, MAX_RISK_PCT } from "./sizingMath";
 
 export const MASTER_ALPHA_MIN_SESSIONS = 250;
 const OOS_FRACTION = 0.3;
@@ -146,4 +147,85 @@ export function fitMasterAlphaWeights(
     oosR2,
     note: "fit available for review; live formula still uses hand-set weights until a reviewed fit is promoted",
   };
+}
+
+// ─── Promotion gate (R2-C 9) ─────────────────────────────────────────────────
+// masterAlpha may print a direction label (LONG / SHORT, STRONG_*) and a
+// contract count ONLY from a fit that a person reviewed and promoted. The
+// promotion record is a JSON file written by that reviewer (no endpoint, no
+// automatic swap); this gate re-checks it independently so a record cannot
+// promote an under-sampled or out-of-sample-failing fit:
+//   - sessions >= MASTER_ALPHA_MIN_SESSIONS (250, power argument above)
+//   - out-of-sample R^2 > 0 against the training mean (Campbell & Thompson 2008)
+//   - finite intercept and multipliers, horizon matches, reviewer and date set
+// Until then the composite is a hand-set HEURISTIC score: no direction-strength
+// label and no size.
+
+export interface MasterAlphaPromotion {
+  horizon: string;
+  promotedAt: string;           // ISO date of the review
+  reviewer: string;
+  sessions: number;
+  oosR2: number;
+  intercept: number;
+  coefficients: Array<{ component: string; multiplier: number }>;
+}
+
+export type MasterAlphaGate =
+  | { promoted: true; reason: string; model: MasterAlphaPromotion }
+  | { promoted: false; reason: string };
+
+export function masterAlphaPromotionGate(
+  rec: MasterAlphaPromotion | null | undefined,
+  horizon: string,
+  minSessions: number = MASTER_ALPHA_MIN_SESSIONS,
+): MasterAlphaGate {
+  if (!rec) return { promoted: false, reason: "no reviewed fit promoted: heuristic score only (hand-set weights)" };
+  if (rec.horizon !== horizon) return { promoted: false, reason: `promoted fit is for ${rec.horizon}, not ${horizon}` };
+  if (!rec.reviewer || !rec.promotedAt) return { promoted: false, reason: "promotion record lacks reviewer or date" };
+  if (!(rec.sessions >= minSessions)) return { promoted: false, reason: `promoted fit has ${rec.sessions} sessions < ${minSessions}` };
+  if (!(Number.isFinite(rec.oosR2) && rec.oosR2 > 0)) return { promoted: false, reason: `promoted fit out-of-sample R^2 ${rec.oosR2} is not > 0` };
+  if (!Number.isFinite(rec.intercept) || !Array.isArray(rec.coefficients) || rec.coefficients.length === 0
+      || rec.coefficients.some((c) => !c || typeof c.component !== "string" || !Number.isFinite(c.multiplier))) {
+    return { promoted: false, reason: "promotion record has missing or non-finite coefficients" };
+  }
+  return { promoted: true, reason: `fit promoted ${rec.promotedAt} by ${rec.reviewer}: ${rec.sessions} sessions, OOS R^2 ${rec.oosR2.toFixed(3)}`, model: rec };
+}
+
+/** Fitted forecast (bps) from a promoted model; null when a used component is missing (never filled with 0). */
+export function promotedForecastBps(
+  model: MasterAlphaPromotion,
+  components: Array<{ name: string; directionBps: number }>,
+): number | null {
+  let y = model.intercept;
+  for (const c of model.coefficients) {
+    const comp = components.find((x) => componentKey(x.name) === c.component);
+    if (!comp || !Number.isFinite(comp.directionBps)) return null;
+    y += c.multiplier * comp.directionBps;
+  }
+  return y;
+}
+
+/**
+ * Premium-at-risk budget for a masterAlpha size, from the USER's inputs only
+ * (no default dollar amount; the old route defaulted to $1M):
+ *   accountSize x riskPct (default 1%, capped at 5%: sizingMath limits), or an
+ *   explicit riskBudgetDollars, or the legacy explicit riskBudget_M.
+ * Null when the request carries none of them.
+ */
+export function resolveMasterAlphaRiskBudget(b: {
+  accountSize?: unknown; riskPct?: unknown; riskBudgetDollars?: unknown; riskBudget_M?: unknown;
+}): { dollars: number | null; source: string } {
+  const num = (v: unknown) => (v == null || v === "" ? NaN : Number(v));
+  const acct = num(b.accountSize);
+  if (acct > 0) {
+    const req = num(b.riskPct);
+    const pct = Number.isFinite(req) && req > 0 ? Math.min(MAX_RISK_PCT, req) : DEFAULT_RISK_PCT;
+    return { dollars: Math.floor(acct * pct * 100) / 100, source: `account ${acct} x ${(pct * 100).toFixed(2)}%` };
+  }
+  const usd = num(b.riskBudgetDollars);
+  if (usd > 0) return { dollars: Math.floor(usd * 100) / 100, source: "riskBudgetDollars input" };
+  const m = num(b.riskBudget_M);
+  if (m > 0) return { dollars: Math.floor(m * 1e6 * 100) / 100, source: "riskBudget_M input" };
+  return { dollars: null, source: "no account size or risk budget given" };
 }

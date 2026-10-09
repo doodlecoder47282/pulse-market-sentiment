@@ -12,6 +12,7 @@ import { bsPrice, delta as bsDelta, gamma as bsGamma } from "../../server/greeks
 import { cdf } from "../../server/stats";
 import { modelThetaToClose } from "../../server/chainClock";
 import { liquidationReturn, entryFillOf } from "../../server/exitValuation";
+import { masterAlphaPromotionGate, promotedForecastBps, resolveMasterAlphaRiskBudget, type MasterAlphaPromotion } from "../../server/masterAlphaFit";
 
 const near = (got: number, want: number, tol: number, what: string) =>
   assert.ok(Math.abs(got - want) <= tol, `${what}: got ${got}, want ${want} +- ${tol}`);
@@ -299,4 +300,37 @@ test("liquidationReturn: sold at the bid after the exit fee, on cash paid incl. 
   assert.equal(liquidationReturn({ entryFill: 5.0, bid: null, feePerContract: 0.65 }), null);
   assert.deepEqual(entryFillOf({ buyPrice: 4.9, buyAsk: 5.0 }), { fill: 5.0, basis: "ask_at_arm" });
   assert.deepEqual(entryFillOf({ buyPrice: 4.9, buyAsk: null }), { fill: 4.9, basis: "last_at_arm" });
+});
+
+// ─── R2-C 9: masterAlpha direction and size gated on a promoted fit ────────────
+
+test("masterAlphaPromotionGate: no record, short sample, failing OOS, wrong horizon -> unrated", () => {
+  const ok: MasterAlphaPromotion = {
+    horizon: "daily", promotedAt: "2027-10-01", reviewer: "desk", sessions: 260, oosR2: 0.012,
+    intercept: 0.5, coefficients: [{ component: "charm", multiplier: 0.3 }, { component: "vanna", multiplier: 0.1 }],
+  };
+  assert.equal(masterAlphaPromotionGate(null, "daily").promoted, false);
+  assert.equal(masterAlphaPromotionGate({ ...ok, sessions: 249 }, "daily").promoted, false);
+  assert.equal(masterAlphaPromotionGate({ ...ok, oosR2: 0 }, "daily").promoted, false);
+  assert.equal(masterAlphaPromotionGate({ ...ok, oosR2: -0.02 }, "daily").promoted, false);
+  assert.equal(masterAlphaPromotionGate(ok, "weekly").promoted, false);
+  assert.equal(masterAlphaPromotionGate({ ...ok, reviewer: "" }, "daily").promoted, false);
+  assert.equal(masterAlphaPromotionGate({ ...ok, coefficients: [{ component: "charm", multiplier: NaN }] }, "daily").promoted, false);
+  const g = masterAlphaPromotionGate(ok, "daily");
+  assert.equal(g.promoted, true);
+  // Forecast = 0.5 + 0.3 x 12 + 0.1 x (-4) = 3.7 bps; a missing used component -> null, never 0.
+  if (g.promoted) {
+    near(promotedForecastBps(g.model, [{ name: "Charm — daily window", directionBps: 12 }, { name: "Vanna amp", directionBps: -4 }])!, 3.7, 1e-12, "forecast");
+    assert.equal(promotedForecastBps(g.model, [{ name: "Charm — daily window", directionBps: 12 }]), null);
+  }
+});
+
+test("resolveMasterAlphaRiskBudget: from the user's account input only, never a default $1M", () => {
+  assert.deepEqual(resolveMasterAlphaRiskBudget({}).dollars, null);
+  // $250,000 x 1% default = $2,500; 2% requested = $5,000; 10% requested is capped at 5% = $12,500.
+  assert.equal(resolveMasterAlphaRiskBudget({ accountSize: 250000 }).dollars, 2500);
+  assert.equal(resolveMasterAlphaRiskBudget({ accountSize: 250000, riskPct: 0.02 }).dollars, 5000);
+  assert.equal(resolveMasterAlphaRiskBudget({ accountSize: 250000, riskPct: 0.10 }).dollars, 12500);
+  assert.equal(resolveMasterAlphaRiskBudget({ riskBudgetDollars: 1234.567 }).dollars, 1234.56);
+  assert.equal(resolveMasterAlphaRiskBudget({ riskBudget_M: 0.5 }).dollars, 500000);
 });

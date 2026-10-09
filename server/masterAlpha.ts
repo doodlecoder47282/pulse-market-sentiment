@@ -29,6 +29,8 @@ import { horizonTargetIso } from "./impliedScenario";
 import { yearsToExpiry } from "./timeToExpiry";
 import { etDate, nextTradingDay } from "./exchangeCalendar";
 import { gammaBudgetContracts } from "./sizingMath";
+import { masterAlphaPromotionGate, promotedForecastBps, resolveMasterAlphaRiskBudget, type MasterAlphaPromotion } from "./masterAlphaFit";
+import { readFileSync } from "node:fs";
 
 const client = new Anthropic();
 
@@ -46,6 +48,24 @@ const client = new Anthropic();
 export const MASTER_ALPHA_COEFFICIENT_STATUS = "hand-set" as const;
 const COEFFICIENT_NOTE =
   "hand-set weights: β_charm and net-C σ borrowed from a published sample, component weights hand-picked; not fit to this app's history yet";
+
+// R2-C 9: direction labels (LONG/SHORT, STRONG_*) and any contract count are
+// GATED on a reviewed, promoted fit (masterAlphaFit.masterAlphaPromotionGate:
+// >= 250 sessions, out-of-sample R^2 > 0, reviewer + date). The promotion
+// record is a JSON file a reviewer writes; nothing promotes automatically.
+// Until then compositeSignal is "UNRATED", the hand-set composite is reported
+// as a heuristic score (heuristicBand keeps the old band for logging), and no
+// size is given. A size also needs the user's account input; there is no
+// default dollar budget.
+const PROMOTION_FILE = process.env.MASTER_ALPHA_PROMOTION_FILE || "data/master_alpha_promotion.json";
+let promotionCache: { at: number; rec: MasterAlphaPromotion | null } | null = null;
+function loadPromotion(): MasterAlphaPromotion | null {
+  if (promotionCache && Date.now() - promotionCache.at < 60_000) return promotionCache.rec;
+  let rec: MasterAlphaPromotion | null = null;
+  try { rec = JSON.parse(readFileSync(PROMOTION_FILE, "utf8")) as MasterAlphaPromotion; } catch { rec = null; }
+  promotionCache = { at: Date.now(), rec };
+  return rec;
+}
 
 // Charm — paper Table IX regression (β on standardised net-C)
 const BETA_CHARM       = -0.18;    // paper reported, t=2.99, R²=3.2%
@@ -117,7 +137,13 @@ export interface MasterAlphaInput {
   pivots?:           PivotBundle;         // prior-day classic/fib/camarilla
   prevCloseImbalance_M?: number;          // $M — negative = net selling at close [BLW]
   realisedVol?:      number;              // 20-day realised vol as decimal
-  riskBudget_M?:     number;              // $M per trade, default $1M
+  // Sizing inputs (user's own; no default budget). Used only with a promoted fit.
+  accountSize?:      number;              // $ account size
+  riskPct?:          number;              // fraction of account at risk (default 1%, cap 5%)
+  riskBudgetDollars?: number;             // explicit $ premium-at-risk budget
+  riskBudget_M?:     number;              // legacy explicit $M budget (no default)
+  /** Test/override hook; defaults to the reviewer's promotion file. */
+  promotion?:        MasterAlphaPromotion | null;
 }
 
 export interface AlphaComponent {
@@ -133,6 +159,8 @@ export interface AlphaComponent {
 
 export type GexRegime = "POSITIVE_GAMMA" | "NEGATIVE_GAMMA" | "NEUTRAL";
 export type CompositeSignal = "STRONG_LONG" | "LONG" | "NEUTRAL" | "SHORT" | "STRONG_SHORT";
+/** UNRATED: no promoted fit, so no direction-strength label is given. */
+export type GatedSignal = CompositeSignal | "UNRATED";
 
 export interface MasterAlphaOutput {
   // meta
@@ -151,9 +179,14 @@ export interface MasterAlphaOutput {
   components:          AlphaComponent[];
 
   // composite
-  compositeEdgeBps:    number;
-  compositeSignal:     CompositeSignal;
+  compositeEdgeBps:    number;             // fitted forecast when promoted, else the heuristic score (bps units)
+  compositeSignal:     GatedSignal;        // "UNRATED" until a reviewed fit is promoted
   compositeConfidence: number;
+  /** Band of the hand-set heuristic score (kept for logging/backtests; not a rating). */
+  heuristicBand:       CompositeSignal;
+  heuristicScoreBps:   number;
+  directionStatus:     "unrated_heuristic" | "fitted_promoted";
+  directionNote:       string;
 
   // regime snapshot (mirrored from audit)
   gexRegime:           GexRegime;
@@ -176,12 +209,13 @@ export interface MasterAlphaOutput {
     note: string;
   };
 
-  // sizing
-  recommendedContracts: number;            // whole contracts; premium at risk <= riskBudget_M
-  premiumPerContract:   number;            // $ per ATM contract (model, Brenner-Subrahmanyam)
-  premiumAtRisk_M:      number;            // $M: recommendedContracts x premiumPerContract
+  // sizing — null unless a promoted fit AND the user's account/budget input
+  recommendedContracts: number | null;     // whole contracts; premium at risk <= the user's budget
+  premiumPerContract:   number | null;     // $ per ATM contract (model, Brenner-Subrahmanyam); null when not sized
+  premiumAtRisk_M:      number | null;     // $M: recommendedContracts x premiumPerContract
   dollarGammaAggregate: number;            // $M (from audit)
-  gammaPnlAt_r_hat:     number;            // $M expected at compositeEdgeBps
+  gammaPnlAt_r_hat:     number | null;     // $M at the fitted forecast (null when unrated)
+  sizingNote:          string;
 
   // AI narrative
   aiAnalysis:          string;
@@ -495,6 +529,15 @@ function aggregate(
   };
 }
 
+/** Band of a bps forecast (used for the fitted forecast once promoted). */
+function bandOf(bps: number): CompositeSignal {
+  if (bps >= THRESH_STRONG) return "STRONG_LONG";
+  if (bps >= THRESH_NORMAL) return "LONG";
+  if (bps <= -THRESH_STRONG) return "STRONG_SHORT";
+  if (bps <= -THRESH_NORMAL) return "SHORT";
+  return "NEUTRAL";
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // POSITION SIZING [REF §5.3.8 Dollar Gamma]
 // ═══════════════════════════════════════════════════════════════════════════
@@ -579,8 +622,11 @@ function nearestPivot(spot: number, pb?: PivotBundle) {
 }
 
 function lockedTargetAlignment(
-  compositeSignal: CompositeSignal, spot: number, symbol: string
+  compositeSignal: GatedSignal, spot: number, symbol: string
 ): { bias: "confirms_upside" | "confirms_downside" | "mixed" | "n/a"; note: string } {
+  if (compositeSignal === "UNRATED") {
+    return { bias: "n/a", note: "Direction not rated (no promoted fit): no alignment claim." };
+  }
   // Only meaningful for SPX
   if (!symbol.includes("GSPC") && symbol !== "SPX") {
     return { bias: "n/a", note: "Locked targets are SPX-scale only." };
@@ -612,7 +658,8 @@ const MASTER_SYSTEM_PROMPT = `You are the master alpha engine inside BATCAVE. Yo
 WHAT THE NUMBERS MEAN:
 - The weights and β are HAND-SET (borrowed from a published sample), not fit to this terminal's history; say so once, plainly, and do not call them calibrated.
 - r̂_final is in bps of expected horizon return. Paper baseline: 18.2bps per −$48.1M net-C on 3rd-Thu SOQ.
-- STRONG_LONG ≥ +20bps | LONG ≥ +8bps | NEUTRAL | SHORT ≤ −8bps | STRONG_SHORT ≤ −20bps
+- If directionStatus is "unrated_heuristic" (compositeSignal "UNRATED"): the composite is a hand-set HEURISTIC score. Do NOT state a direction, a strength (strong/weak long/short), a size, or an expected P&L. Report the components and levels only, and say the direction is unrated until a fit on this terminal's history is reviewed and promoted.
+- Only when directionStatus is "fitted_promoted": STRONG_LONG ≥ +20bps | LONG ≥ +8bps | NEUTRAL | SHORT ≤ −8bps | STRONG_SHORT ≤ −20bps of the fitted forecast.
 - GEX regime enters as a MULTIPLIER on composite (0.70× in POS γ, 1.15× in NEG γ), not as its own bps.
 - Charm fires only within its horizon window: daily=1d, weekly=5d, monthly=15d, quarterly=45d. OUTSIDE the window the signal is neutral by design — that is correct, not missing data.
 - Vanna is ONLY ever an amplifier on charm when sign-confluent and IV>HV. If charm is zero, vanna is zero.
@@ -623,7 +670,7 @@ WHAT THE NUMBERS MEAN:
 OUTPUT FORMAT (markdown, concise):
 
 ## r̂ ${"{horizon-name-uppercase}"}
-[signal] | [X]bps | Confidence [X]%
+[signal or UNRATED] | [X]bps ([heuristic score] or [fitted forecast])
 
 ## Components
 | Component | bps | Weight | Signal | Conf |
@@ -635,7 +682,7 @@ Zero-γ [X] · Call Wall [X] · Put Wall [X] · Charm-zero [X]
 Nearest pivot: [name] @ [value] ([distBps]bps)
 
 ## Trade Setup
-Direction · GTBR trigger [X]pts · Size [N] contracts (premium at risk $[premiumAtRisk_M]M) · $Γ/ctrct [X]M · Expected P&L at r̂: [X]K
+Only when directionStatus is "fitted_promoted" and recommendedContracts is present: Direction · GTBR trigger [X]pts · Size [N] contracts (premium at risk $[premiumAtRisk_M]M) · $Γ/ctrct [X]M. Otherwise write "direction unrated; no size" and the GTBR trigger only.
 
 ## Locked Framework
 [one line on lockedTargetAlignment]
@@ -653,7 +700,7 @@ Tone: senior desk, lowercase ok, direct. No disclaimers. No emojis.`.trim();
 // ═══════════════════════════════════════════════════════════════════════════
 
 export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlphaOutput> {
-  const { horizon, pivots, prevCloseImbalance_M, realisedVol, riskBudget_M } = input;
+  const { horizon, pivots, prevCloseImbalance_M, realisedVol } = input;
   const audit = horizon.audit;
   const spot = audit.spot;
   const symbol = horizon.symbol;
@@ -661,7 +708,6 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
 
   const now = new Date();
   const { daysAway, isTripleWitching, is3rdThursday, isThirdFriday, isWeeklyOpex } = getCalendarContext(now);
-  const riskBudget = riskBudget_M ?? 1.0;
 
   // --- Pull dealer net-greeks directly from the audit block (source of truth) ---
   // netCTrue is Σ charm_strike × OI_strike × 100 per Perfiliev Table VIII — the
@@ -697,13 +743,28 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
 
   const components = [charmC, vannaC, gexR.component, gtbrR.component, odC];
 
-  // --- Composite ---
+  // --- Composite (hand-set heuristic) ---
   const comp = aggregate(components, gexR.compositeMultiplier, isTripleWitching, daysAway);
 
-  // --- Sizing ---
-  const size = sizePosition(spot, vix, dollarGamma_M, comp.bps, riskBudget, h);
-  const R = comp.bps / 10000;
-  const gammaPnlAt_r_hat = 50 * dollarGamma_M * R * R;
+  // --- Gate: direction label and size only from a reviewed, promoted fit ---
+  const gate = masterAlphaPromotionGate(input.promotion !== undefined ? input.promotion : loadPromotion(), h);
+  const fittedBps = gate.promoted ? promotedForecastBps(gate.model, components) : null;
+  const promoted = gate.promoted && fittedBps != null;
+  const edgeBps = promoted ? Math.round((fittedBps as number) * 10) / 10 : comp.bps;
+  const gatedSignal: GatedSignal = promoted ? bandOf(edgeBps) : "UNRATED";
+  const directionNote = promoted
+    ? gate.reason
+    : gate.promoted ? "promoted fit needs a component that is missing in this snapshot: unrated" : gate.reason;
+
+  // --- Sizing: promoted fit AND the user's own budget input ---
+  const budget = resolveMasterAlphaRiskBudget(input);
+  const size = sizePosition(spot, vix, dollarGamma_M, edgeBps, (budget.dollars ?? 0) / 1e6, h);
+  const sized = promoted && budget.dollars != null && budget.dollars > 0;
+  const sizingNote = !promoted ? "no size: direction unrated (no promoted fit)"
+    : !sized ? `no size: ${budget.source}`
+    : `sized from ${budget.source}; premium at risk <= budget, whole contracts rounded down`;
+  const R = edgeBps / 10000;
+  const gammaPnlAt_r_hat = promoted ? 50 * dollarGamma_M * R * R : null;
 
   // --- Structural levels (mirrored from horizon.levels) ---
   const byKind = (k: string) => horizon.levels.find(l => l.kind === k)?.price ?? null;
@@ -713,7 +774,7 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
 
   // --- Pivot proximity & locked-target alignment ---
   const np = nearestPivot(spot, pivots);
-  const lta = lockedTargetAlignment(comp.signal, spot, symbol);
+  const lta = lockedTargetAlignment(gatedSignal, spot, symbol);
 
   // --- Packet to Claude ---
   const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -739,8 +800,11 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
       rawValue: r2(c.rawValue),
       source: c.source,
     })),
-    compositeEdgeBps: comp.bps,
-    compositeSignal: comp.signal,
+    compositeEdgeBps: edgeBps,
+    compositeSignal: gatedSignal,
+    directionStatus: promoted ? "fitted_promoted" : "unrated_heuristic",
+    directionNote,
+    heuristicScoreBps: comp.bps,
     compositeConfidence: Math.round(comp.confidence * 100),
     regime: gexR.regime,
     gexDollars_M: r2(gexTotal_M),
@@ -750,15 +814,16 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
     charmZero:       audit.charmZero != null ? Math.round(audit.charmZero) : null,
     gtbrPoints: gtbrR.gtbrPoints,
     gtbrPct: r2(gtbrR.gtbrPct * 100),
-    recommendedContracts: size.contracts,
-    // ATM premium per contract ($) and premium at risk ($M, <= riskBudget_M):
-    // the most the recommended size loses if the options expire worthless.
-    premiumPerContract: size.premium_per_contract,
-    premiumAtRisk_M: size.premiumAtRisk_M,
-    sizeBinding: size.binding,
+    // Size only with a promoted fit and the user's budget; premium at risk
+    // <= that budget (the most the size loses if the options expire worthless).
+    recommendedContracts: sized ? size.contracts : null,
+    premiumPerContract: sized ? size.premium_per_contract : null,
+    premiumAtRisk_M: sized ? size.premiumAtRisk_M : null,
+    sizeBinding: sized ? size.binding : null,
+    sizingNote,
     dollarGamma_per_contract_M: size.dg_per_contract,
     dollarGammaAggregate_M: r2(dollarGamma_M),
-    gammaPnlAt_r_hat_M: r2(gammaPnlAt_r_hat),
+    gammaPnlAt_r_hat_M: gammaPnlAt_r_hat != null ? r2(gammaPnlAt_r_hat) : null,
     netCharm_M: r2(netCharm_M),
     netVanna_M: r2(netVanna_M),
     gammaAtSpot_M: r2(gammaAtSpot_M),
@@ -766,7 +831,7 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
     nearestPivot: np,
     lockedTargetAlignment: lta,
     priorDayRange: pivots?.range != null ? r2(pivots.range) : null,
-    coefficientStatus: MASTER_ALPHA_COEFFICIENT_STATUS,
+    coefficientStatus: promoted ? "fitted" : MASTER_ALPHA_COEFFICIENT_STATUS,
   };
 
   let aiAnalysis = "Unavailable.";
@@ -798,9 +863,13 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
     isTripleWitching,
     settlementType: "AM_SOQ",
     components,
-    compositeEdgeBps: comp.bps,
-    compositeSignal: comp.signal,
+    compositeEdgeBps: edgeBps,
+    compositeSignal: gatedSignal,
     compositeConfidence: comp.confidence,
+    heuristicBand: comp.signal,
+    heuristicScoreBps: comp.bps,
+    directionStatus: promoted ? "fitted_promoted" : "unrated_heuristic",
+    directionNote,
     gexRegime: gexR.regime,
     gexDollars_M: gexTotal_M,
     zeroGammaStrike,
@@ -811,14 +880,15 @@ export async function runMasterAlpha(input: MasterAlphaInput): Promise<MasterAlp
     gtbrPct: gtbrR.gtbrPct,
     nearestPivot: np,
     lockedTargetAlignment: lta,
-    recommendedContracts: size.contracts,
-    premiumPerContract: size.premium_per_contract,
-    premiumAtRisk_M: size.premiumAtRisk_M,
+    recommendedContracts: sized ? size.contracts : null,
+    premiumPerContract: sized ? size.premium_per_contract : null,
+    premiumAtRisk_M: sized ? size.premiumAtRisk_M : null,
     dollarGammaAggregate: dollarGamma_M,
     gammaPnlAt_r_hat,
+    sizingNote,
     aiAnalysis,
-    coefficientStatus: MASTER_ALPHA_COEFFICIENT_STATUS,
-    coefficientNote: COEFFICIENT_NOTE,
+    coefficientStatus: promoted ? "fitted" : MASTER_ALPHA_COEFFICIENT_STATUS,
+    coefficientNote: promoted ? gate.reason : COEFFICIENT_NOTE,
   };
 }
 
@@ -846,6 +916,10 @@ export async function masterAlphaRoute(req: any, res: any) {
           : "^GSPC";
     const prevCloseImbalance_M = req.body?.prevCloseImbalance_M as number | undefined;
     const realisedVol = req.body?.realisedVol as number | undefined;
+    // Sizing inputs are the user's own (no default $1M budget).
+    const accountSize = req.body?.accountSize as number | undefined;
+    const riskPct = req.body?.riskPct as number | undefined;
+    const riskBudgetDollars = req.body?.riskBudgetDollars as number | undefined;
     const riskBudget_M = req.body?.riskBudget_M as number | undefined;
 
     // pull vix from ohlc
@@ -883,7 +957,8 @@ export async function masterAlphaRoute(req: any, res: any) {
     } catch { /* pivots are optional */ }
 
     const out = await runMasterAlpha({
-      horizon, pivots, prevCloseImbalance_M, realisedVol, riskBudget_M,
+      horizon, pivots, prevCloseImbalance_M, realisedVol,
+      accountSize, riskPct, riskBudgetDollars, riskBudget_M,
     });
     res.json(out);
   } catch (err: any) {
