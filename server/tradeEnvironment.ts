@@ -1,20 +1,21 @@
 // server/tradeEnvironment.ts
 //
-// TRADE ENVIRONMENT ENGINE — one fused answer to "should I be trading right now,
-// and if so, how aggressively?"
+// TRADE ENVIRONMENT — a HEURISTIC composite of market conditions (R2-C 5/8).
 //
 // The terminal already computes the raw ingredients in separate modules. This
-// engine fuses them into a single 0-100 CONVEXITY INDEX and a discrete state:
+// module adds hand-set points into a 0-100 "convexity index" and a discrete
+// state. The points are NOT fitted to outcomes and the index is not a
+// forecast; it gives no entry, sizing or "edge" instruction:
 //
-//   STAND_DOWN  — no edge visible. Quiet tape, no flow, nothing to do. Don't trade.
-//   CHOP        — long-gamma pin day. Moves get sold. Scalp band edges small or skip.
-//   NORMAL      — standard playbook. Trade the levels, normal size.
-//   LOADED      — spring is compressing. Conditions for a big move are stacking.
-//                 Get flat-footed: alerts on, size ready, watch the trigger levels.
-//   STRIKE      — convexity is LIVE. Short gamma + expanding range + directional
-//                 flow = flushes and squeezes travel. This is the window.
+//   STAND_DOWN  — few drivers active.
+//   CHOP        — dealers long gamma, quiet tick volume, calm vol curve.
+//   NORMAL      — no unusual combination of drivers.
+//   LOADED      — several move-related conditions present at once.
+//   STRIKE      — short gamma + expanding range + directional tick volume together.
 //
-// Scoring components (independent, transparent, summed):
+// Scoring components (hand-set points, summed). They are NOT independent:
+// short gamma, range expansion and an inverted VIX curve tend to occur
+// together, so the sum double-counts shared information.
 //   1. Dealer gamma posture   (0-28)  net GEX sign/magnitude, distance to flip
 //   2. Vol term structure     (0-22)  VIX9D>VIX inversion, VIX3M<VIX backwardation, VIX level
 //   3. Range expansion        (0-15)  last-30m realized range vs time-scaled ATR(20)
@@ -22,6 +23,16 @@
 //   5. Canary stress          (0-12)  cross-asset divergence/alarm composite
 //   6. Whale conflux          (0-10)  same-direction $2.5M+ blocks in last 60m
 //   7. Wall proximity         (0-8)   spot hugging put/call wall while short gamma
+//
+// A driver whose input failed is dataState "unavailable" and scores 0 with a
+// note saying so (the index is then understated and `degraded` is true);
+// it is never shown as a quiet reading.
+//
+// Calibration pipeline (convexityFit.ts): each 30-minute RTH bucket logs the
+// driver points; 30 minutes later the realized SPY range is graded against
+// the time-scaled ATR. fitConvexityWeights reports, behind a session-count
+// gate, whether the points relate to forward range. The live index keeps the
+// hand-set points until a reviewed fit is promoted.
 //
 // This module touches NO locked engines. It reads public helpers only.
 
@@ -31,7 +42,8 @@ import { computeOfiTrend } from "./leeReadyOfi";
 import { buildCanarySnapshot } from "./canary";
 import { sqlite } from "./storage";
 import { postToDiscord } from "./discord";
-import { etDate as calEtDate, sessionCloseMinutes as calCloseMin } from "./exchangeCalendar";
+import { etDate as calEtDate, sessionCloseMinutes as calCloseMin, sessionOpenMs as calOpenMs } from "./exchangeCalendar";
+import { fitConvexityWeights, forwardRange, type ConvexityFit, type ConvexitySample } from "./convexityFit";
 
 export type TradeEnvState = "STAND_DOWN" | "CHOP" | "NORMAL" | "LOADED" | "STRIKE";
 
@@ -41,18 +53,27 @@ export interface EnvDriver {
   points: number;       // contribution to the index
   max: number;          // max possible for this component
   note: string;         // plain-language read of what this component sees
+  /** "unavailable": the input failed; points are 0 and the index is understated. */
+  dataState?: "ok" | "unavailable";
 }
 
 export interface TradeEnvironment {
   state: TradeEnvState;
   score: number;              // 0-100 convexity index
-  headline: string;           // one-liner verdict
-  instructions: string[];     // 2-4 concrete "what to do" lines
+  headline: string;           // one-line description of the state (not advice)
+  instructions: string[];     // context notes (field name kept for the client); no entry or size instructions
   drivers: EnvDriver[];
   session: "premarket" | "rth" | "afterhours" | "closed";
   asOf: number;
   degraded: boolean;          // true when key inputs were unavailable
+  /** Honesty label shown with the index. */
+  label: string;
+  /** Fit of the driver points to forward realized range, behind a sample gate. */
+  calibration?: Pick<ConvexityFit, "status" | "sessions" | "windows" | "minSessions" | "minWindows" | "note" | "oosR2" | "coefficients">;
 }
+
+export const TRADE_ENV_LABEL =
+  "heuristic composite: hand-set points, not fitted to outcomes, not a forecast; drivers overlap (not independent)";
 
 function sessionET(): TradeEnvironment["session"] {
   const p = new Intl.DateTimeFormat("en-US", {
@@ -72,11 +93,11 @@ function sessionET(): TradeEnvironment["session"] {
 }
 
 // ── whale conflux from whale_alerts (units-agnostic on detected_at) ──────────
-// MISSION FIX #5 — conflux is now confidence-weighted: a block classified as
-// a likely spread leg or closing flow counts fractionally, not as a full vote.
-// Rows without intent data (legacy) count 0.75 — the old behavior, mildly
-// discounted for unknown intent.
-function whaleConflux60m(): { bull: number; bear: number } {
+// MISSION FIX #5 — conflux is weighted by the heuristic direction score: a
+// heavy contract flagged as a likely spread leg or with volume inside prior OI
+// counts fractionally. Rows without a score (legacy) count 0.75. Null when the
+// alert table cannot be read (unavailable, not "no clustering").
+function whaleConflux60m(): { bull: number; bear: number } | null {
   try {
     const rows = sqlite
       .prepare("SELECT sentiment, detected_at, directional_confidence FROM whale_alerts ORDER BY detected_at DESC LIMIT 300")
@@ -95,7 +116,7 @@ function whaleConflux60m(): { bull: number; bear: number } {
     }
     return { bull, bear };
   } catch {
-    return { bull: 0, bear: 0 };
+    return null;
   }
 }
 
@@ -110,8 +131,8 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
   const drivers: EnvDriver[] = [];
   let degraded = false;
 
-  // 1. Dealer gamma posture — from our own heatseeker endpoint (gets Schwab→CBOE
-  // fallback + SPY→SPX rescale for free).
+  // 1. Dealer gamma posture — from the app's own heatseeker endpoint (its data
+  // source is the heatseeker's; an empty chain is "unavailable").
   let gammaPts = 0;
   let shortGamma = false;
   let nearFlip = false;
@@ -154,13 +175,15 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
       });
     } else { degraded = true; }
   } catch { degraded = true; }
-  if (degraded && drivers.length === 0) {
-    drivers.push({ key: "gamma", label: "dealer gamma", points: 0, max: 28, note: "chain unavailable — gamma posture unknown." });
+  const gammaOk = drivers.length > 0;
+  if (!gammaOk) {
+    drivers.push({ key: "gamma", label: "dealer gamma", points: 0, max: 28, note: "chain unavailable — gamma posture unknown (not scored, not a long-gamma read).", dataState: "unavailable" });
   }
 
   // 2. Vol term structure
   let volPts = 0;
-  let vixNote = "vol term structure unavailable.";
+  let volOk = false;
+  let vixNote = "vol term structure unavailable (not scored).";
   try {
     const [vix, vix9d, vix3m] = await Promise.all([
       getQuote("^VIX"), getQuote("^VIX9D"), getQuote("^VIX3M"),
@@ -171,6 +194,7 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
       if (inverted9d) volPts += 12;
       if (backwardated) volPts += 10;
       if (vix.last >= 20 && !backwardated) volPts += 4;
+      volOk = true;
       vixNote = backwardated
         ? "VIX term structure is BACKWARDATED — the market is paying up for protection NOW. crisis posture."
         : inverted9d
@@ -180,16 +204,20 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
             : "vol is cheap and the curve is calm — big sustained moves need a catalyst.";
     } else { degraded = true; }
   } catch { degraded = true; }
-  drivers.push({ key: "vol", label: "vol term structure", points: volPts, max: 22, note: vixNote });
+  drivers.push({ key: "vol", label: "vol term structure", points: volPts, max: 22, note: vixNote, dataState: volOk ? "ok" : "unavailable" });
 
   // 3. Range expansion — last 30m realized vs time-scaled ATR(20)
   let rangePts = 0;
-  let rangeNote = "range data unavailable.";
+  let rangeOk = false;
+  let rangeNote = "range data unavailable (not scored).";
+  let minuteBars: Array<{ datetime: number; high: number; low: number }> = [];
+  let expected30mPts: number | null = null;
   try {
     const [mins, days] = await Promise.all([
       getPriceHistory("SPY", "day", 1, "minute", 1),
       getPriceHistory("SPY", "month", 1, "daily", 1),
     ]);
+    minuteBars = (mins.candles ?? []) as any;
     const mBars = mins.candles.slice(-30);
     const dBars = days.candles.slice(-21, -1);
     if (mBars.length >= 10 && dBars.length >= 10) {
@@ -198,7 +226,9 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
       const r30 = hi - lo;
       const atr = dBars.reduce((a: number, c: any) => a + (c.high - c.low), 0) / dBars.length;
       const expected30m = atr * Math.sqrt(30 / 390);
+      if (expected30m > 0) expected30mPts = expected30m;
       const ratio = expected30m > 0 ? r30 / expected30m : 0;
+      rangeOk = expected30m > 0;
       if (ratio >= 1.6) rangePts = 15;
       else if (ratio >= 1.15) rangePts = 8;
       rangeNote = ratio >= 1.6
@@ -207,15 +237,18 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
           ? `range running ${ratio.toFixed(1)}x normal — slightly hot, watch for follow-through.`
           : `range is ${ratio.toFixed(1)}x normal — inside the expected envelope, nothing breaking out.`;
     }
-  } catch { /* keep defaults */ }
-  drivers.push({ key: "range", label: "range expansion", points: rangePts, max: 15, note: rangeNote });
+  } catch { degraded = true; }
+  if (!rangeOk) degraded = true;
+  drivers.push({ key: "range", label: "range expansion", points: rangePts, max: 15, note: rangeNote, dataState: rangeOk ? "ok" : "unavailable" });
 
-  // 4. Order-flow impulse
+  // 4. Signed tick volume (tick rule on SPY 1m bars; not order-flow imbalance)
   let ofiPts = 0;
+  let ofiOk = true;
   let ofiNote = "signed tick volume flat.";
   try {
     const ofi = await computeOfiTrend();
     if (ofi.dataState === "unavailable") {
+      ofiOk = false;
       ofiNote = "signed tick volume unavailable (no SPY minute bars) — not scored, not a flat read.";
     } else if (ofi.trend !== "NEUTRAL") {
       ofiPts += 5;
@@ -224,43 +257,51 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
     } else {
       ofiNote = "signed tick volume is balanced.";
     }
-  } catch { ofiNote = "signed tick volume unavailable (error) — not scored."; }
-  drivers.push({ key: "ofi", label: "tick-volume impulse", points: ofiPts, max: 10, note: ofiNote });
+  } catch { ofiOk = false; ofiNote = "signed tick volume unavailable (error) — not scored."; }
+  if (!ofiOk) degraded = true;
+  drivers.push({ key: "ofi", label: "tick-volume impulse", points: ofiPts, max: 10, note: ofiNote, dataState: ofiOk ? "ok" : "unavailable" });
 
   // 5. Canary stress
   let canaryPts = 0;
+  let canaryOk = false;
   let canaryNote = "cross-asset canaries quiet.";
   try {
     const c = await buildCanarySnapshot();
+    canaryOk = c != null && typeof c.read === "string" && c.read !== "no_data";
     if (c.read === "alarm") { canaryPts = 12; canaryNote = "cross-asset ALARM — credit/FX/commodities are all flashing risk-off while equities lag. the floor is being tested."; }
     else if (c.read === "divergence") { canaryPts = 8; canaryNote = "canary divergence — cross-asset stress the equity tape isn't showing yet. early warning."; }
     else if (c.read === "canaries_chirping") { canaryPts = 4; canaryNote = "some cross-asset pressure building, not confirmed."; }
-  } catch { /* quiet */ }
-  drivers.push({ key: "canary", label: "cross-asset canaries", points: canaryPts, max: 12, note: canaryNote });
+  } catch { canaryOk = false; }
+  if (!canaryOk) { degraded = true; canaryPts = 0; canaryNote = "cross-asset canaries unavailable — not scored, not a quiet read."; }
+  drivers.push({ key: "canary", label: "cross-asset canaries", points: canaryPts, max: 12, note: canaryNote, dataState: canaryOk ? "ok" : "unavailable" });
 
-  // 6. Whale conflux
+  // 6. Heavy-contract conflux (whale alerts, weighted by the heuristic direction score)
   const wc = whaleConflux60m();
-  const confluxN = Math.max(wc.bull, wc.bear);  // confidence-weighted sum, not raw count
+  if (!wc) degraded = true;
+  const confluxN = wc ? Math.max(wc.bull, wc.bear) : 0;  // score-weighted sum, not raw count
   const whalePts = confluxN >= 2.5 ? 10 : confluxN >= 1.5 ? 5 : 0;
   drivers.push({
     key: "whales", label: "whale conflux", points: whalePts, max: 10,
-    note: confluxN >= 2.5
-      ? `${confluxN.toFixed(1)} confidence-weighted same-direction whale votes (${wc.bull >= wc.bear ? "bullish" : "bearish"}) in the last hour — informed money looks positioned for a move.`
-      : confluxN >= 1.5
-        ? "some same-direction whale weight in the last hour — watch for more."
-        : "no meaningful whale clustering in the last hour.",
+    dataState: wc ? "ok" : "unavailable",
+    note: !wc
+      ? "whale alert history unavailable — not scored, not a quiet read."
+      : confluxN >= 2.5
+        ? `${confluxN.toFixed(1)} score-weighted same-direction heavy contracts (${wc.bull >= wc.bear ? "call-side" : "put-side"} by last-print side) in the last hour. Heavy day premium can be hedges, spread legs or closing trades; it is not evidence of informed positioning.`
+        : confluxN >= 1.5
+          ? "some same-direction heavy-contract premium in the last hour."
+          : "no meaningful heavy-contract clustering in the last hour.",
   });
 
   // 7. Wall proximity (only matters when short gamma — that's when breaks travel)
   let wallPts = 0;
-  let wallNote = "not pressing a wall.";
+  let wallNote = gammaOk ? "not pressing a wall." : "walls unavailable (no chain) — not scored.";
   if (spot && shortGamma) {
     const nearPut = putWall != null && Math.abs(spot - putWall) / spot < 0.003 && spot >= putWall;
     const nearCall = callWall != null && Math.abs(spot - callWall) / spot < 0.003 && spot <= callWall;
     if (nearPut) { wallPts = 8; wallNote = `price is sitting ON the put wall (${putWall}) while short gamma — if it gives, the flush accelerates. floor-break watch.`; }
     else if (nearCall) { wallPts = 8; wallNote = `price is pressing the call wall (${callWall}) while short gamma — a break runs, squeeze watch.`; }
   }
-  drivers.push({ key: "wall", label: "wall proximity", points: wallPts, max: 8, note: wallNote });
+  drivers.push({ key: "wall", label: "wall proximity", points: wallPts, max: 8, note: wallNote, dataState: gammaOk ? "ok" : "unavailable" });
 
   const score = Math.min(100, Math.round(drivers.reduce((a, d) => a + d.points, 0)));
 
@@ -274,39 +315,107 @@ export async function buildTradeEnvironment(): Promise<TradeEnvironment> {
   if (score < 25 && !shortGamma && ofiPts === 0 && volPts === 0) state = "CHOP";
   else if (score < 25 && state !== "CHOP") state = "STAND_DOWN";
 
+  // R2-C 5/8: descriptive only. The old text issued orders ("size up on
+  // confirmation", "trade WITH the break", "normal size", "no trade") from
+  // hand-set points that have never been fitted to outcomes.
   const headline =
-    state === "STRIKE" ? "convexity is LIVE — short gamma, expanding range, directional flow. this is the window to capture the big move." :
-    state === "LOADED" ? "the spring is loading — conditions for a big move are stacking. get ready, watch the trigger levels." :
-    state === "NORMAL" ? "tradeable tape — standard playbook, normal size, trade the levels." :
-    state === "CHOP" ? "pin day — dealers long gamma, quiet flow, calm vol. moves get sold. scalp small or sit out." :
-    "no edge visible — quiet tape, no flow, nothing stacked. flat is a position.";
+    state === "STRIKE" ? "short gamma, expanding range and directional tick volume are present together (heuristic composite)." :
+    state === "LOADED" ? "several conditions associated with larger moves are present at once (heuristic composite)." :
+    state === "NORMAL" ? "no unusual combination of drivers (heuristic composite)." :
+    state === "CHOP" ? "dealers long gamma, quiet tick volume, calm vol curve: range-bound conditions (heuristic composite)." :
+    "few drivers active (heuristic composite).";
 
+  const CONTEXT_ONLY = "context only: hand-set points, not a forecast; no entry or size comes from this index";
   const instructions =
     state === "STRIKE" ? [
-      "trade WITH the break, not against it — short gamma means moves extend",
-      "size up on confirmation, but honor stops — accelerant cuts both ways",
-      "watch the pivot bands: accelerant bands are go-zones, not fade-zones",
+      "dealer short gamma tends to amplify moves in both directions; realized range is already above normal",
+      CONTEXT_ONLY,
     ] : state === "LOADED" ? [
-      "no chasing yet — wait for the trigger (wall break or flip cross on volume)",
-      "pre-plan both directions: know your entry, stop, and target before it moves",
-      "alerts on — this can go from LOADED to STRIKE inside one 15-min bar",
-    ] : state === "NORMAL" ? [
-      "trade the levels: fade exhaustion bands, respect accelerant bands",
-      "normal size, standard risk — no reason to press",
+      "the drivers below name the levels involved (flip, walls); check them against your own plan",
+      CONTEXT_ONLY,
     ] : state === "CHOP" ? [
-      "fade the edges of the expected range, small size, quick targets",
-      "or don't trade at all — chop days pay patience, not conviction",
-    ] : [
-      "no trade. preserve capital and attention for a LOADED/STRIKE day",
-      "use the time: review levels, set alerts at the walls and flip",
-    ];
+      "long-gamma hedging tends to damp moves while it lasts",
+      CONTEXT_ONLY,
+    ] : [CONTEXT_ONLY];
+  if (degraded) instructions.push("some drivers are unavailable and score 0, so the index is understated");
+
+  // Calibration pipeline: log this bucket's driver points, grade older
+  // buckets against the realized range that followed, report the gated fit.
+  try { logAndGradeConvexity(drivers, session, minuteBars, expected30mPts); } catch { /* never blocks the read */ }
 
   const data: TradeEnvironment = {
     state, score, headline, instructions, drivers, session,
     asOf: Date.now(), degraded,
+    label: TRADE_ENV_LABEL,
+    calibration: convexityCalibration(),
   };
   _cache = { at: Date.now(), data };
   return data;
+}
+
+// ── convexity calibration log (convexityFit.ts) ─────────────────────────────
+try {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS trade_env_log (
+      bucket TEXT PRIMARY KEY,           -- session date + 30-minute bucket index
+      session_date TEXT NOT NULL,
+      ts INTEGER NOT NULL,               -- ms of the logged read
+      drivers_json TEXT NOT NULL,        -- {key: {points|null, max}}
+      expected30m REAL,                  -- ATR20 x sqrt(30/390), SPY points
+      fwd_range REAL,                    -- realized SPY high-low over (ts, ts+30m]
+      graded_at INTEGER
+    );
+  `);
+} catch (e) {
+  console.warn("[tradeEnv] trade_env_log init failed:", (e as Error).message);
+}
+
+function logAndGradeConvexity(
+  drivers: EnvDriver[],
+  session: TradeEnvironment["session"],
+  bars: Array<{ datetime: number; high: number; low: number }>,
+  expected30m: number | null,
+): void {
+  const now = Date.now();
+  const d = calEtDate(now);
+  const open = calOpenMs(d);
+  if (session === "rth" && open != null && now >= open) {
+    const bucket = `${d}#${Math.floor((now - open) / 1_800_000)}`;
+    const dj: Record<string, { points: number | null; max: number }> = {};
+    for (const x of drivers) dj[x.key] = { points: x.dataState === "unavailable" ? null : x.points, max: x.max };
+    sqlite.prepare(`INSERT OR IGNORE INTO trade_env_log (bucket, session_date, ts, drivers_json, expected30m) VALUES (?, ?, ?, ?, ?)`)
+      .run(bucket, d, now, JSON.stringify(dj), expected30m);
+  }
+  if (!bars.length) return;
+  const pending = sqlite.prepare(`SELECT bucket, ts FROM trade_env_log WHERE graded_at IS NULL AND session_date = ? AND ts <= ?`)
+    .all(d, now - 31 * 60_000) as Array<{ bucket: string; ts: number }>;
+  for (const r of pending) {
+    const fr = forwardRange(bars, r.ts);
+    // Too few bars (gap, half-day close) stays ungraded and is excluded, never a 0 range.
+    sqlite.prepare(`UPDATE trade_env_log SET fwd_range = ?, graded_at = ? WHERE bucket = ?`).run(fr, now, r.bucket);
+  }
+}
+
+let fitCache: { at: number; fit: ConvexityFit } | null = null;
+function convexityCalibration(): TradeEnvironment["calibration"] {
+  try {
+    if (!fitCache || Date.now() - fitCache.at > 10 * 60_000) {
+      const rows = sqlite.prepare(`SELECT session_date, ts, drivers_json, expected30m, fwd_range FROM trade_env_log WHERE fwd_range IS NOT NULL`)
+        .all() as Array<{ session_date: string; ts: number; drivers_json: string; expected30m: number | null; fwd_range: number }>;
+      const samples: ConvexitySample[] = rows.map((r) => {
+        const dj = JSON.parse(r.drivers_json) as Record<string, { points: number | null; max: number }>;
+        const points: Record<string, number | null> = {};
+        const max: Record<string, number> = {};
+        for (const [k, v] of Object.entries(dj)) { points[k] = v.points; max[k] = v.max; }
+        return { sessionDate: r.session_date, ts: r.ts, points, max, fwdRatio: r.expected30m && r.expected30m > 0 ? r.fwd_range / r.expected30m : null };
+      });
+      fitCache = { at: Date.now(), fit: fitConvexityWeights(samples) };
+    }
+    const f = fitCache.fit;
+    return { status: f.status, sessions: f.sessions, windows: f.windows, minSessions: f.minSessions, minWindows: f.minWindows, note: f.note, oosR2: f.oosR2, coefficients: f.coefficients };
+  } catch {
+    return undefined;
+  }
 }
 
 // ── watch loop: alert on upward state transitions during RTH ────────────────
@@ -332,7 +441,7 @@ export function startTradeEnvironmentWatch(): void {
           .map(d => `• ${d.note}`).join("\n");
         await postToDiscord({
           username: "BATCAVE",
-          content: `**TRADE ENVIRONMENT → ${env.state}** (convexity ${env.score}/100)\n${env.headline}\n${top}`,
+          content: `**TRADE ENVIRONMENT → ${env.state}** (heuristic convexity index ${env.score}/100, hand-set points)\n${env.headline}\n${top}`,
         }).catch(() => {});
       }
     } catch { /* never crash the loop */ }

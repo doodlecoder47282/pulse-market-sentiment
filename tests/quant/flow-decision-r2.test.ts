@@ -12,6 +12,7 @@ import { bsPrice, delta as bsDelta, gamma as bsGamma } from "../../server/greeks
 import { cdf } from "../../server/stats";
 import { modelThetaToClose } from "../../server/chainClock";
 import { liquidationReturn, entryFillOf } from "../../server/exitValuation";
+import { invert, olsClustered, fitConvexityWeights, forwardRange, CONVEXITY_DRIVERS, type ConvexitySample } from "../../server/convexityFit";
 import { masterAlphaPromotionGate, promotedForecastBps, resolveMasterAlphaRiskBudget, type MasterAlphaPromotion } from "../../server/masterAlphaFit";
 
 const near = (got: number, want: number, tol: number, what: string) =>
@@ -333,4 +334,67 @@ test("resolveMasterAlphaRiskBudget: from the user's account input only, never a 
   assert.equal(resolveMasterAlphaRiskBudget({ accountSize: 250000, riskPct: 0.10 }).dollars, 12500);
   assert.equal(resolveMasterAlphaRiskBudget({ riskBudgetDollars: 1234.567 }).dollars, 1234.56);
   assert.equal(resolveMasterAlphaRiskBudget({ riskBudget_M: 0.5 }).dollars, 500000);
+});
+
+// ─── 6.5 / R2-C 8: convexity index fit to forward realized range ───────────────
+
+test("olsClustered: one observation per cluster reduces to White HC1 (closed form, simple regression)", () => {
+  // y = 1 + 2x + e on 6 points; HC0 Var(b1) = sum (x - xbar)^2 e^2 / (sum (x - xbar)^2)^2,
+  // HC1 = HC0 x n/(n-k); CR1 with G = n gives G/(G-1) x (n-1)/(n-k) = n/(n-k).
+  const x = [0, 1, 2, 3, 4, 5], e0 = [0.3, -0.2, 0.1, -0.4, 0.25, -0.05];
+  const y = x.map((v, i) => 1 + 2 * v + e0[i]);
+  const f = olsClustered(x.map((v) => [1, v]), y, x.map((_, i) => `s${i}`));
+  const xbar = 2.5, sxx = x.reduce((a, v) => a + (v - xbar) ** 2, 0);
+  const b1 = x.reduce((a, v, i) => a + (v - xbar) * y[i], 0) / sxx;
+  const b0 = y.reduce((a, v) => a + v, 0) / 6 - b1 * xbar;
+  const e = x.map((v, i) => y[i] - b0 - b1 * v);
+  const hc0 = x.reduce((a, v, i) => a + (v - xbar) ** 2 * e[i] ** 2, 0) / sxx ** 2;
+  near(f.coef[1], b1, 1e-12, "slope");
+  near(f.se[1], Math.sqrt(hc0 * 6 / 4), 1e-12, "CR1 = HC1");
+  assert.deepEqual(invert([[2, 1], [1, 1]]), [[1, -1], [-1, 2]]);
+  assert.equal(invert([[1, 2], [2, 4]]), null);
+});
+
+function synthConvexity(sessions: number, perSession: number, seed: number): ConvexitySample[] {
+  const rng = mulberry32(seed);
+  const max: Record<string, number> = { gamma: 28, vol: 22, range: 15, ofi: 10, canary: 12, whales: 10, wall: 8 };
+  const out: ConvexitySample[] = [];
+  for (let d = 0; d < sessions; d++) {
+    const day = `2027-${String(1 + Math.floor(d / 28)).padStart(2, "0")}-${String(1 + (d % 28)).padStart(2, "0")}`;
+    const dayEffect = (rng() - 0.5) * 0.4;               // shared within the session -> clustering
+    for (let w = 0; w < perSession; w++) {
+      const points: Record<string, number | null> = {};
+      for (const k of CONVEXITY_DRIVERS) points[k] = Math.round(rng() * max[k]);
+      const x = (k: string) => (points[k] as number) / max[k];
+      // True model: ln ratio = -0.1 + 0.5 x_gamma + 0.3 x_range + day effect + noise
+      const lnr = -0.1 + 0.5 * x("gamma") + 0.3 * x("range") + dayEffect + (rng() - 0.5) * 0.6;
+      out.push({ sessionDate: day, ts: d * 86_400_000 + w * 1_800_000, points, max, fwdRatio: Math.exp(lnr) });
+    }
+  }
+  return out;
+}
+
+test("fitConvexityWeights: recovers known weights on seeded data; gate counts sessions; missing drivers are dropped, not zero", () => {
+  const data = synthConvexity(130, 10, 7);
+  const f = fitConvexityWeights(data);
+  assert.equal(f.status, "fit-ready");
+  assert.equal(f.sessions, 130);
+  const b = (k: string) => f.coefficients.find((c) => c.driver === k)!;
+  near(b("gamma").b, 0.5, 4 * b("gamma").seCluster, "gamma weight within 4 cluster SE");
+  near(b("range").b, 0.3, 4 * b("range").seCluster, "range weight within 4 cluster SE");
+  near(b("canary").b, 0, 4 * b("canary").seCluster, "no-information driver near 0");
+  assert.ok(f.oosR2! > 0, `oos ${f.oosR2}`);
+  const few = fitConvexityWeights(synthConvexity(119, 10, 7));
+  assert.equal(few.status, "insufficient-data");
+  const withGap = synthConvexity(130, 10, 7);
+  withGap[0].points.canary = null;
+  assert.equal(fitConvexityWeights(withGap).droppedIncomplete, 1);
+});
+
+test("forwardRange: high-low over the next 30 one-minute bars; too few bars -> null, not 0", () => {
+  const t0 = Date.UTC(2026, 6, 15, 15, 0);
+  const bars = Array.from({ length: 40 }, (_, i) => ({ datetime: t0 + (i + 1) * 60_000, high: 500 + (i === 10 ? 2 : 0.5), low: 500 - (i === 20 ? 1.5 : 0.5) }));
+  // window (t0, t0 + 30m] holds bars 1..30: max high 502, min low 498.5 -> 3.5
+  assert.equal(forwardRange(bars, t0), 3.5);
+  assert.equal(forwardRange(bars.slice(0, 10), t0), null);
 });
