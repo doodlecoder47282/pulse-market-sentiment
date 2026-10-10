@@ -8,7 +8,8 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
 import { startMlRetrainCron } from "./mlRetrainCron";
-import { bootSchwabStream } from "./schwab";
+import { bootSchwabStream, exchangeCodeForTokens } from "./schwab";
+import { OAUTH_CALLBACK_PATH, consumeOAuthState } from "./schwabOAuth";
 import { getStreamStatus } from "./schwabStream";
 import {
   parseAllowedOrigins,
@@ -117,6 +118,25 @@ if (SELF_CALL_KEY) {
 app.get("/api/health", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.json(healthPayload(!!ACCESS_KEY, new Date(), GATE_MODE === "closed"));
+});
+// Schwab sign-in return (automatic flow). Schwab's redirect cannot carry the
+// access-key header, so this route sits before the gate; the one-time `state`
+// issued with the login link (schwabOAuth.ts) is required instead, so a code
+// can only finish a sign-in this server started in the last 15 minutes.
+app.get(OAUTH_CALLBACK_PATH, async (req, res) => {
+  const back = (q: string) => res.redirect(302, `/?schwab=${q}#/`);
+  const err = typeof req.query.error === "string" ? req.query.error : "";
+  if (err) return back(`error&reason=${encodeURIComponent(err.slice(0, 80))}`);
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  const state = typeof req.query.state === "string" ? req.query.state : "";
+  if (!code) return back("error&reason=no_code");
+  if (!consumeOAuthState(state)) return back("error&reason=expired_or_unknown_sign_in");
+  try {
+    const r = await exchangeCodeForTokens(code);
+    return r.ok ? back("connected") : back(`error&reason=${encodeURIComponent(r.error.slice(0, 80))}`);
+  } catch {
+    return back("error&reason=token_exchange_failed");
+  }
 });
 app.use("/api", makeAccessGate(ACCESS_KEY, { failClosed: GATE_MODE === "closed", internalKey: INTERNAL_KEY || undefined }));
 app.get("/api/health/auth", (_req, res) => {

@@ -3073,10 +3073,13 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     }
   });
 
-  app.get("/api/schwab/auth-url", (_req, res) => {
+  app.get("/api/schwab/auth-url", async (_req, res) => {
     try {
+      const { schwabConfigProblem, isAutomaticCallback } = await import("./schwabOAuth");
+      const problem = schwabConfigProblem();
+      if (problem) return res.status(503).json({ dataState: "unavailable", reason: problem });
       const url = getAuthUrl();
-      res.json({ url });
+      res.json({ url, automatic: isAutomaticCallback(process.env.SCHWAB_REDIRECT_URI ?? "") });
     } catch (e: any) {
       res.status(500).json({ message: e?.message ?? "Failed to build auth URL" });
     }

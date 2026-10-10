@@ -172,8 +172,15 @@ Merged work branches r2-a..i, r3-1..5, r4 still exist on GitHub: deleting
 branches is blocked from this workspace; the owner can delete them in
 GitHub > Branches (all are fully contained in main). Kept: ios-capacitor,
 feat/capacitor-ios (unmerged iOS work, on hold), ci-reports-* (CI output).
-Next step: create the Railway server (user approval for the paid service),
-after rotating the Schwab secret and Discord webhooks.
+2026-10-10: user bought Railway ($5 plan). PR #4 merged (d94e669): ML spawn
+'error' handler (missing python crashed the server), railway.json health
+check + npm run build, nixpacks.toml Node 20, analogs seed fallback for a
+volume on /app/data, RAILWAY-DEPLOY.md rewritten (volume, variables incl.
+PULSE_ML_AUTOSTART=0, keep the registered Schwab callback and use the
+paste-back Connect flow). Not verified: an actual Railway build (no access
+from this workspace).
+Next step: user attaches the /app/data volume, sets the variables, deploys;
+paste build/deploy log errors back if any.
 
 ## Current objective
 

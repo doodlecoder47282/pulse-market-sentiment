@@ -22,6 +22,7 @@ import {
 import { streamEquityQuote } from "./streamStore";
 import { parseStreamerInfo, startSchwabStream, streamConfigFromEnv, type StreamerInfo, type WebSocketLike } from "./schwabStream";
 import { oauthErrorCode } from "./oauthError";
+import { newOAuthState } from "./schwabOAuth";
 
 // ─── Credentials from environment (read lazily to avoid import-order issues) ──
 const getClientId = () => process.env.SCHWAB_CLIENT_ID ?? "";
@@ -235,6 +236,9 @@ export function getAuthUrl(): string {
     response_type: "code",
     client_id: getClientId(),
     redirect_uri: getRedirectUri(),
+    // One-time value checked by the automatic callback (login-CSRF guard);
+    // harmless for the paste-back flow.
+    state: newOAuthState(),
   });
   return `${SCHWAB_BASE}/v1/oauth/authorize?${params.toString()}`;
 }
