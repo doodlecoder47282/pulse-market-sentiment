@@ -1,0 +1,80 @@
+6:42:01 PM [security] BATCAVE_ACCESS_KEY not set and bind host 0.0.0.0 is reachable: /api returns 503 until the key is set (or BATCAVE_ALLOW_OPEN=1).
+6:42:01 PM [security] BATCAVE_TOKEN_KEY not set and bind host 0.0.0.0 is reachable: Schwab token storage is locked until the key is set (32 bytes, base64: openssl rand -base64 32)
+[odteTracker] started, polling every 60000ms in session (60000ms off-hours) for ATM ±20 0DTE $SPX contracts
+[crypto] engines started — scanner/momentum/narratives/security/social/grader + watchdog
+[mmScheduler] started — 10:00/13:00/15:30 ET snapshots, 16:30 ET grading (weekdays only, holidays skipped)
+[discordScheduler] started — daily 9:30 ET + 9:30 0DTE pre-open scan + 10:00 regime snapshot + 30-min cadence (10:00–16:00 ET) + 0DTE bangers (9:45–15:45 ET), alerts on level breaks + gamma flips + macro news
+[tradeEnv] watch started — 60s cadence, alerts on LOADED/STRIKE transitions, 30min refire cap
+[outcomeGrader] started — 30-min cadence, grades whale + regime predictions
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty candles
+[seedSpotHistory] no bars available from Schwab, spotHistory not seeded
+[dbBackup] started — daily snapshots, retention 7
+[scheduler] seedSpotHistory: seeded=0 oldestTs=null newestTs=null
+[playbookScheduler] started — 9:00 ET lock + 5min drift refresh
+[regimeHistoryTicker] started — 60s cadence during 9:00–16:00 ET
+[ml-service] starting on port 5001 (cwd=/home/runner/work/pulse-market-sentiment/pulse-market-sentiment/ml_service, py=python3)
+[stockBars] started — 6h cadence, 16 stock symbols
+[hazard] backfiller started — full sweep at boot, 6h freshness ticks
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[canary] watch started — 5min cadence RTH, divergence/alarm to Discord, 4h refire cap
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[exitBrain] started — 30s eval cadence, hard stop bid <= 0.80 x entry ask, exit≥75 trim≥55
+[flowAlerts] started — 30s eval, WHALE-ONLY (prem≥$2.5M, vol/OI≥15x OR new-strike, AT_ASK, dte 1-3), 60s coalesce
+[flowAlerts] dedup hydrated — 0 keys from whale_alerts (last 18h)
+[schwab] background token refresh cycle started (10min interval)
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[ml:datalog] started: features + forecasts every 5 min in RTH; minute bars, scoring and daily coverage after the close
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[stockBars] refresh — fetched=0 cached=0 failed=41 (failed: TSLA,NVDA,AAPL,MSFT,META,GOOGL,AMZN,AMD,AVGO,PLTR,COIN,MSTR,NFLX,BAC,JPM,F,CPER,USO,FXA,FXY,LLY,XOM,UNH,WMT,JNJ,V,MA,PG,HD,CVX,KO,MRK,ORCL,CRM,COST,ABBV,PEP,MCD,CAT,GE,RSP)
+6:42:01 PM [express] serving on 0.0.0.0:5063
+[ml:retrain] cron scheduled: Sunday 02:00 ET
+[ml-service] /usr/bin/python3: No module named uvicorn
+[ml-service] exited code=1 signal=null
+[ml-service] restarting in 2000ms (attempt 1/3)
+[voices] warmed cache: 34 items, X disabled
+6:42:02 PM [express] GET /api/health 200 in 3ms
+6:42:02 PM [express] GET /api/schwab/status 503 in 1ms
+6:42:02 PM [express] GET /api/health 200 in 0ms

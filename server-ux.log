@@ -1,0 +1,400 @@
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+6:47:55 PM [express] GET /api/quotes 200 in 0ms
+6:47:55 PM [express] GET /api/edgelab/briefing 200 in 261ms
+6:47:55 PM [express] GET /api/macro 200 in 198ms
+6:47:58 PM [express] GET /api/crypto/feed 200 in 2ms
+6:47:58 PM [express] GET /api/crypto/health 200 in 0ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+6:48:00 PM [express] GET /api/quotes 200 in 1ms
+6:48:00 PM [express] GET /api/health 200 in 1ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+6:48:01 PM [express] GET /api/snapshot 200 in 131ms
+6:48:01 PM [express] GET /api/quotes 200 in 1ms
+6:48:01 PM [express] GET /api/schwab/status 200 in 1ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+6:48:01 PM [express] GET /api/regime/headline 200 in 1ms
+6:48:01 PM [express] GET /api/trade-environment 200 in 0ms
+6:48:01 PM [express] GET /api/macro 200 in 1ms
+6:48:01 PM [express] GET /api/regime 200 in 1ms
+6:48:01 PM [express] GET /api/layout/signals 200 in 0ms
+6:48:01 PM [express] GET /api/whales/performance 200 in 1ms
+6:48:01 PM [express] GET /api/flow/preview 200 in 1ms
+6:48:01 PM [express] GET /api/flow/followups 200 in 0ms
+6:48:01 PM [express] GET /api/flow/followups 200 in 0ms
+6:48:01 PM [express] GET /api/uoa/preview 200 in 1ms
+6:48:01 PM [express] GET /api/signals/tracked 200 in 1ms
+6:48:01 PM [express] GET /api/flow 200 in 2ms
+6:48:01 PM [express] GET /api/headline 200 in 1ms
+6:48:01 PM [express] GET /api/breadth 200 in 3ms
+6:48:01 PM [express] GET /api/signals/tracked 200 in 1ms
+6:48:01 PM [express] GET /api/flow-intraday 200 in 1ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+6:48:06 PM [express] GET /api/quotes 200 in 0ms
+6:48:08 PM [express] GET /api/headline 200 in 2ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+6:48:09 PM [express] GET /api/mag7 200 in 1ms
+[schwab] not authenticated, returning empty candles
+6:48:09 PM [express] GET /api/ofi 200 in 1ms
+[schwab] not authenticated, returning empty candles
+6:48:09 PM [express] GET /api/ticker-outlook 200 in 2ms
+6:48:09 PM [express] GET /api/ticker-calendar 200 in 1ms
+[schwab] not authenticated, returning empty candles
+6:48:09 PM [express] GET /api/ohlc 200 in 3ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+6:48:09 PM [express] GET /api/flow/unusual 200 in 1ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+6:48:09 PM [express] GET /api/ticker-projection 503 in 4ms
+6:48:09 PM [express] GET /api/alpha-news 200 in 128ms
+6:48:09 PM [express] GET /api/gamma-levels 503 in 387ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+6:48:11 PM [express] GET /api/macro 200 in 1ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+6:48:11 PM [express] GET /api/quotes 200 in 0ms
+6:48:11 PM [express] GET /api/headline 200 in 2ms
+6:48:11 PM [express] GET /api/backtest/levels 200 in 2ms
+[schwab] not authenticated, returning empty candles
+6:48:11 PM [express] GET /api/projection/multiday 503 in 2ms
+[schwab] not authenticated, returning empty candles
+6:48:11 PM [express] GET /api/pivot-projection 503 in 1ms
+6:48:11 PM [express] GET /api/chain-audit 503 in 0ms
+6:48:11 PM [express] GET /api/models 200 in 1ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+6:48:11 PM [express] GET /api/ml/accuracy-history 200 in 21ms
+6:48:11 PM [express] GET /api/playbook/daily/drift 200 in 0ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[ml:bridge:miss] mlQuantileOverlay fetch failed
+[schwab] not authenticated, returning empty candles
+[ml:bridge:miss] mlHealth fetch failed
+6:48:11 PM [express] GET /api/ml/health 503 in 24ms
+[schwab] not authenticated, returning empty quotes
+6:48:11 PM [express] GET /api/ml/projection-spy 200 in 128ms
+6:48:11 PM [express] GET /api/playbook/daily 503 in 121ms
+[ml:bridge:miss] mlHealth fetch failed
+6:48:11 PM [express] GET /api/ml/health 503 in 2ms
+6:48:12 PM [express] GET /api/chain-audit 503 in 1ms
+[schwab] not authenticated, returning empty candles
+6:48:13 PM [express] GET /api/projection/multiday 503 in 1ms
+[schwab] not authenticated, returning empty candles
+6:48:13 PM [express] GET /api/pivot-projection 503 in 1ms
+6:48:14 PM [express] GET /api/headline 200 in 2ms
+[schwab] not authenticated, returning empty candles
+6:48:14 PM [express] GET /api/odte/forward 503 in 0ms
+6:48:14 PM [express] GET /api/heatseeker 503 in 1ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+6:48:16 PM [express] GET /api/quotes 200 in 1ms
+6:48:17 PM [express] GET /api/headline 200 in 3ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+6:48:17 PM [express] GET /api/trade-desk 503 in 157ms
+6:48:17 PM [express] GET /api/regime/predict 503 in 1ms
+6:48:17 PM [express] GET /api/edge/stats 200 in 2ms
+[schwab] not authenticated, returning empty candles
+6:48:17 PM [express] GET /api/ohlc 200 in 1ms
+6:48:17 PM [express] GET /api/models 304 in 1ms
+6:48:20 PM [express] GET /api/headline 200 in 1ms
+6:48:20 PM [express] GET /api/layout/regime 200 in 0ms
+[schwab] not authenticated, returning empty quotes
+6:48:20 PM [express] GET /api/canary 200 in 5ms
+6:48:20 PM [express] GET /api/heatmap/thermal 503 in 1ms
+6:48:20 PM [express] GET /api/sector-web 200 in 0ms
+6:48:20 PM [express] GET /api/underperformers 200 in 2ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+6:48:21 PM [express] GET /api/macro 200 in 3ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+6:48:21 PM [express] GET /api/quotes 200 in 2ms
+6:48:23 PM [express] GET /api/headline 200 in 2ms
+6:48:23 PM [express] GET /api/cosmos 200 in 8ms
+6:48:23 PM [express] GET /api/cosmos/outlook 200 in 103ms
+6:48:25 PM [express] GET /api/headline 200 in 2ms
+6:48:25 PM [express] GET /api/news 200 in 105ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+6:48:26 PM [express] GET /api/quotes 200 in 1ms
+6:48:28 PM [express] GET /api/headline 200 in 2ms
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+[schwab] not authenticated, returning empty candles
+6:48:31 PM [express] GET /api/macro 200 in 2ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+6:48:31 PM [express] GET /api/quotes 200 in 1ms
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+6:48:31 PM [express] GET /api/iv-rv 200 in 2ms
+6:48:31 PM [express] GET /api/edgelab/briefing 200 in 172ms
+6:48:34 PM [express] GET /api/crypto/feed 200 in 4ms
+6:48:34 PM [express] GET /api/crypto/health 200 in 0ms
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[crypto:peak] Too many parameter values were provided
+[schwab] not authenticated, returning empty quotes
+[schwab] not authenticated, returning empty quotes
+6:48:36 PM [express] GET /api/quotes 200 in 0ms

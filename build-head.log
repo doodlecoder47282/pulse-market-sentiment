@@ -1,0 +1,40 @@
+[2m../dist/public/[22m[2massets/[22m[36mDepthSkewFlow-8ChpbLno.js        [39m[1m[2m  9.87 kB[22m[1m[22m[2m │ gzip:   3.19 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mOdteForward-CjYTRtsr.js          [39m[1m[2m 11.47 kB[22m[1m[22m[2m │ gzip:   4.08 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mDailyPlaybookChart-BReG13oB.js   [39m[1m[2m 12.39 kB[22m[1m[22m[2m │ gzip:   4.31 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mMLAccuracyCard-DK7c3cys.js       [39m[1m[2m 14.44 kB[22m[1m[22m[2m │ gzip:   4.06 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-icons-Ct_ohidp.js         [39m[1m[2m 21.38 kB[22m[1m[22m[2m │ gzip:   6.78 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mCryptoPanel-BNBQRAm4.js          [39m[1m[2m 24.79 kB[22m[1m[22m[2m │ gzip:   7.62 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mCosmosPanel-BRDVrb2S.js          [39m[1m[2m 29.62 kB[22m[1m[22m[2m │ gzip:   7.80 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mMLProjectionPanel-k4XNB_iL.js    [39m[1m[2m 29.92 kB[22m[1m[22m[2m │ gzip:   9.73 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mLiveOdteTracker-RyyjwMAS.js      [39m[1m[2m 31.89 kB[22m[1m[22m[2m │ gzip:   8.51 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mWhaleFlowPanel-BrWC-QQd.js       [39m[1m[2m 33.44 kB[22m[1m[22m[2m │ gzip:   6.90 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mHeatseeker-r94xQwB0.js           [39m[1m[2m 44.99 kB[22m[1m[22m[2m │ gzip:  13.25 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mFlowPanel-BSYvXehg.js            [39m[1m[2m 45.37 kB[22m[1m[22m[2m │ gzip:  11.35 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mTradeDesk-BxbARRyB.js            [39m[1m[2m 90.55 kB[22m[1m[22m[2m │ gzip:  23.09 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-radix-BSLxl6Ss.js         [39m[1m[2m 99.97 kB[22m[1m[22m[2m │ gzip:  29.40 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mChartPanel-DKlP7RvB.js           [39m[1m[2m103.53 kB[22m[1m[22m[2m │ gzip:  26.69 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mModelsPanel-Qv-Drqbg.js          [39m[1m[2m119.42 kB[22m[1m[22m[2m │ gzip:  28.78 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mRegimePanel-_zrxRNAr.js          [39m[1m[2m124.18 kB[22m[1m[22m[2m │ gzip:  29.64 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-markdown-Bn-alDSy.js      [39m[1m[2m141.60 kB[22m[1m[22m[2m │ gzip:  41.66 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-charts-HkloXy8n.js        [39m[1m[2m272.93 kB[22m[1m[22m[2m │ gzip:  62.77 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mindex-BtxWSLGV.js                [39m[1m[2m279.64 kB[22m[1m[22m[2m │ gzip:  75.06 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-CKNYhDUM.js               [39m[1m[2m587.15 kB[22m[1m[22m[2m │ gzip: 194.29 kB[22m
+[32m✓ built in 8.38s[39m
+building server...
+▲ [WARNING] Duplicate key "mainPivot" in object literal [duplicate-object-key]
+
+    server/discordBatcaveCard.ts:199:2:
+      199 │   mainPivot: "MAIN PIVOT",
+          ╵   ~~~~~~~~~
+
+  The original key "mainPivot" is here:
+
+    server/discordBatcaveCard.ts:180:2:
+      180 │   mainPivot: "MAIN PIVOT",
+          ╵   ~~~~~~~~~
+
+1 warning
+
+  dist/index.cjs  2.2mb ⚠️
+
+⚡ Done in 224ms

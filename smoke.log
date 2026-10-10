@@ -1,0 +1,71 @@
+routes: 122
+--- routes whose status changed (route base head) ---
+--- head dataState per route (route head_code head_state), non-'-' only ---
+/api/backtest/levels 200 proxy_no_options_data
+/api/breadth 200 insufficient
+/api/chain-audit 503 unavailable
+/api/edge/walkforward 200 proxy_no_options_data
+/api/experimental/bl-pdf 503 unavailable
+/api/experimental/particle-dfi 503 unavailable
+/api/experimental/tail-z 503 unavailable
+/api/exposures 503 unavailable
+/api/flow/preview 200 unavailable
+/api/flow/unusual 200 unavailable
+/api/gamma-levels 503 unavailable
+/api/gamma-levels-enhanced 503 unavailable
+/api/heatmap/thermal 503 unavailable
+/api/heatseeker 503 unavailable
+/api/killbox/forward 503 unavailable
+/api/killbox/third-order 503 unavailable
+/api/master-alpha 503 unavailable
+/api/ml/projection-spy 200 no_data
+/api/odte-alert/preview 503 unavailable
+/api/odte/forward 503 unavailable
+/api/ofi 200 unavailable
+/api/pivot-projection 503 unavailable
+/api/playbook/daily 503 unavailable
+/api/projection/multiday 503 unavailable
+/api/realtime-targets 503 unavailable
+/api/regime 200 unavailable
+/api/regime/predict 503 unavailable
+/api/schwab/auth-url 503 unavailable
+/api/snapshot 200 partial
+/api/trade-desk 503 unavailable
+head 503 with dataState (structured unavailable, accepted): 21
+UNAVAILABLE /api/chain-audit 503 unavailable
+UNAVAILABLE /api/experimental/bl-pdf 503 unavailable
+UNAVAILABLE /api/experimental/particle-dfi 503 unavailable
+UNAVAILABLE /api/experimental/tail-z 503 unavailable
+UNAVAILABLE /api/exposures 503 unavailable
+UNAVAILABLE /api/gamma-levels 503 unavailable
+UNAVAILABLE /api/gamma-levels-enhanced 503 unavailable
+UNAVAILABLE /api/heatmap/thermal 503 unavailable
+UNAVAILABLE /api/heatseeker 503 unavailable
+UNAVAILABLE /api/killbox/forward 503 unavailable
+UNAVAILABLE /api/killbox/third-order 503 unavailable
+UNAVAILABLE /api/master-alpha 503 unavailable
+UNAVAILABLE /api/odte-alert/preview 503 unavailable
+UNAVAILABLE /api/odte/forward 503 unavailable
+UNAVAILABLE /api/pivot-projection 503 unavailable
+UNAVAILABLE /api/playbook/daily 503 unavailable
+UNAVAILABLE /api/projection/multiday 503 unavailable
+UNAVAILABLE /api/realtime-targets 503 unavailable
+UNAVAILABLE /api/regime/predict 503 unavailable
+UNAVAILABLE /api/schwab/auth-url 503 unavailable
+UNAVAILABLE /api/trade-desk 503 unavailable
+head 500/000 (or 503 without dataState) where base was OK: 0
+PASS no route regressions
+head 500s: 0  base 500s: 0
+head 5xx count: 22  base 5xx count: 22
+PASS UI index served (200)
+--- runtime errors head vs base (count) ---
+0 rep/server-head-errors.txt
+0 rep/server-base-errors.txt
+0 total
+PASS gate blocks without key (401)
+PASS gate blocks wrong key (401)
+PASS gate allows right key (200)
+gated gamma driver: chain unavailable — gamma posture unknown (not scored, not a long-gamma read).
+gated server 401 log lines: 2
+PASS public bind without key fails closed (503)
+PASS health stays open when locked (200)

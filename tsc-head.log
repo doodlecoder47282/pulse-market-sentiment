@@ -1,0 +1,171 @@
+client/src/components/ChartPanel.tsx(425,63): error TS2367: This comparison appears to be unintentional because the types 'Interval' and '"tick"' have no overlap.
+client/src/components/DailyPlaybookChart.tsx(438,19): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: Props): Area', gave the following error.
+    Type '(d: any) => any' is not assignable to type 'number | Coordinate[] | undefined'.
+  Overload 2 of 2, '(props: Props, context: any): Area', gave the following error.
+    Type '(d: any) => any' is not assignable to type 'number | Coordinate[] | undefined'.
+client/src/components/LightweightCandlestick.tsx(327,32): error TS2802: Type 'MapIterator<[number, NewsMarker]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+client/src/components/WhaleFlowPanel.tsx(537,21): error TS2802: Type 'MapIterator<FollowPosition[]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+client/src/components/WhaleFlowPanel.tsx(538,15): error TS7006: Parameter 'a' implicitly has an 'any' type.
+client/src/components/WhaleFlowPanel.tsx(538,18): error TS7006: Parameter 'b' implicitly has an 'any' type.
+server/alphaFusion.ts(145,19): error TS2802: Type 'Set<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/alphaNews.ts(185,19): error TS2802: Type 'Set<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/alphaNews.ts(206,27): error TS2802: Type 'Set<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/auditEnrich.ts(29,15): error TS2459: Module '"./routes"' declares 'ModelsResponse' locally, but it is not exported.
+server/backtest.ts(443,28): error TS2802: Type 'Map<string, Observation[]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/backtest.ts(446,37): error TS7006: Parameter 'a' implicitly has an 'any' type.
+server/backtest.ts(446,40): error TS7006: Parameter 'b' implicitly has an 'any' type.
+server/backtest.ts(447,37): error TS7006: Parameter 'a' implicitly has an 'any' type.
+server/backtest.ts(447,40): error TS7006: Parameter 'b' implicitly has an 'any' type.
+server/backtest.ts(448,38): error TS7006: Parameter 'a' implicitly has an 'any' type.
+server/backtest.ts(448,41): error TS7006: Parameter 'b' implicitly has an 'any' type.
+server/backtest.ts(449,41): error TS7006: Parameter 'a' implicitly has an 'any' type.
+server/backtest.ts(450,38): error TS7006: Parameter 'a' implicitly has an 'any' type.
+server/backtest.ts(450,41): error TS7006: Parameter 'b' implicitly has an 'any' type.
+server/chainAudit.ts(715,33): error TS2802: Type 'Map<string, { dte: number; calls: Contract[]; puts: Contract[]; }>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/chainAudit.ts(719,34): error TS7006: Parameter 'c' implicitly has an 'any' type.
+server/chainAudit.ts(719,74): error TS7006: Parameter 'a' implicitly has an 'any' type.
+server/chainAudit.ts(719,77): error TS7006: Parameter 'b' implicitly has an 'any' type.
+server/chainAudit.ts(722,32): error TS7006: Parameter 'c' implicitly has an 'any' type.
+server/chainAudit.ts(722,72): error TS7006: Parameter 'a' implicitly has an 'any' type.
+server/chainAudit.ts(722,75): error TS7006: Parameter 'b' implicitly has an 'any' type.
+server/chainAudit.ts(729,33): error TS7006: Parameter 'c' implicitly has an 'any' type.
+server/chainAudit.ts(729,73): error TS7006: Parameter 'a' implicitly has an 'any' type.
+server/chainAudit.ts(729,76): error TS7006: Parameter 'b' implicitly has an 'any' type.
+server/chainAudit.ts(732,31): error TS7006: Parameter 'c' implicitly has an 'any' type.
+server/chainAudit.ts(732,71): error TS7006: Parameter 'a' implicitly has an 'any' type.
+server/chainAudit.ts(732,74): error TS7006: Parameter 'b' implicitly has an 'any' type.
+server/chainAudit.ts(765,33): error TS2802: Type 'Map<string, { dte: number; contracts: Contract[]; }>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/chainAudit.ts(768,30): error TS7006: Parameter 'c' implicitly has an 'any' type.
+server/chainAudit.ts(768,51): error TS7006: Parameter 'a' implicitly has an 'any' type.
+server/chainAudit.ts(768,54): error TS7006: Parameter 'b' implicitly has an 'any' type.
+server/chainAudit.ts(772,35): error TS7006: Parameter 'c' implicitly has an 'any' type.
+server/chainAudit.ts(773,34): error TS7006: Parameter 'c' implicitly has an 'any' type.
+server/chainAudit.ts(1018,33): error TS2802: Type 'Map<string, { dte: number; contracts: Contract[]; }>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/chainAudit.ts(1022,15): error TS7006: Parameter 'c' implicitly has an 'any' type.
+server/chainAudit.ts(1023,14): error TS7006: Parameter 'a' implicitly has an 'any' type.
+server/chainAudit.ts(1023,17): error TS7006: Parameter 'b' implicitly has an 'any' type.
+server/chainAudit.ts(1032,40): error TS7006: Parameter 'c' implicitly has an 'any' type.
+server/chainAudit.ts(1032,58): error TS7006: Parameter 'v' implicitly has an 'any' type.
+server/chainAudit.ts(1033,63): error TS7006: Parameter 'a' implicitly has an 'any' type.
+server/chainAudit.ts(1033,66): error TS7006: Parameter 'b' implicitly has an 'any' type.
+server/chainAudit.ts(1037,12): error TS7006: Parameter 'c' implicitly has an 'any' type.
+server/chainAudit.ts(1038,16): error TS7006: Parameter 'v' implicitly has an 'any' type.
+server/chainAudit.ts(1040,32): error TS7006: Parameter 'a' implicitly has an 'any' type.
+server/chainAudit.ts(1040,35): error TS7006: Parameter 'b' implicitly has an 'any' type.
+server/chainAudit.ts(1080,24): error TS2802: Type 'Set<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/crossAsset.ts(46,22): error TS2802: Type 'MapIterator<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/cryptoEngine.ts(421,24): error TS2802: Type 'Map<string, Candidate>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/cryptoEngine.ts(427,24): error TS2802: Type 'MapIterator<[string, Candidate]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/cryptoEngine.ts(454,20): error TS2802: Type 'MapIterator<Candidate>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/cryptoEngine.ts(464,21): error TS2802: Type 'MapIterator<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/cryptoEngine.ts(565,32): error TS2554: Expected 1 arguments, but got 5.
+server/cryptoEngine.ts(630,19): error TS2802: Type 'MapIterator<Candidate>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/cryptoEngine.ts(756,19): error TS2802: Type 'MapIterator<Candidate>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/cryptoEngine.ts(877,18): error TS1501: This regular expression flag is only available when targeting 'es6' or later.
+server/cryptoEngine.ts(878,57): error TS2802: Type 'Set<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/cryptoEngine.ts(1161,19): error TS2802: Type 'MapIterator<EngineHealth>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/cryptoEngine.ts(1211,20): error TS2802: Type 'MapIterator<Candidate>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/cryptoEngine.ts(1232,25): error TS2802: Type 'MapIterator<EngineHealth>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/dailyPlaybook.ts(296,9): error TS2322: Type '{ level: number; label: string; kind: string; strength: string; }[]' is not assignable to type 'LevelMagnet[]'.
+  Type '{ level: number; label: string; kind: string; strength: string; }' is not assignable to type 'LevelMagnet'.
+    Types of property 'kind' are incompatible.
+      Type 'string' is not assignable to type '"spot" | "callWall" | "putWall" | "gammaFlip" | "maxPain"'.
+server/discord.ts(203,26): error TS2802: Type 'MapIterator<{ names: string[]; price: number; distBps: number; status: string; side: string; }>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/discordBatcaveCard.ts(199,3): error TS1117: An object literal cannot have multiple properties with the same name.
+server/earnings.ts(336,30): error TS2802: Type 'MapIterator<[string, EarningsRow[]]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/earnings.ts(343,32): error TS7006: Parameter 'r' implicitly has an 'any' type.
+server/econWeek.ts(178,22): error TS2802: Type 'MapIterator<EconChip[]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/econWeek.ts(179,16): error TS7006: Parameter 'a' implicitly has an 'any' type.
+server/econWeek.ts(179,19): error TS7006: Parameter 'b' implicitly has an 'any' type.
+server/econWeek.ts(179,25): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type '{ readonly HIGH: 0; readonly MED: 1; readonly LOW: 2; }'.
+server/econWeek.ts(179,49): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type '{ readonly HIGH: 0; readonly MED: 1; readonly LOW: 2; }'.
+server/exitBrain.ts(589,22): error TS2802: Type 'MapIterator<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/flowAlertEngine.ts(236,24): error TS2802: Type 'Map<string, { volume: number; ts: number; }>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/flowAlertEngine.ts(528,29): error TS2802: Type 'MapIterator<[string, number]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/flowAlertEngine.ts(578,19): error TS2802: Type 'MapIterator<Timeout>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/flowAlertEngine.ts(585,24): error TS2802: Type 'MapIterator<[string, WhaleHit[]]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/flowAlertEngine.ts(672,5): error TS2353: Object literal may only specify known properties, and 'source' does not exist in type '{ config: { premiumFloor: number; volOiRatio: number; minDte: number; maxDte: number; deltaMin: number; deltaMax: number; requiredTag: string; universe: string[]; }; byTicker: Record<string, { whales: WhaleHit[]; rejected: { ...; }[]; }>; ... 6 more ...; asOfMs: number; }'.
+server/hazardEngine.ts(185,19): error TS2802: Type 'MapIterator<DayPath>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/heatseekerLevels.ts(83,7): error TS2322: Type 'Set<string>' is not assignable to type 'Set<LevelKind>'.
+  Type 'string' is not assignable to type 'LevelKind'.
+server/masterAlpha.ts(1001,52): error TS2345: Argument of type '{ o: number; h: number; l: number; c: number; }' is not assignable to parameter of type 'DailyOHLC'.
+  Property 't' is missing in type '{ o: number; h: number; l: number; c: number; }' but required in type 'DailyOHLC'.
+server/mmPredictions.ts(257,26): error TS2802: Type 'MapIterator<[string, Bkt]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/mmPredictions.ts(424,26): error TS2802: Type 'MapIterator<[string, { up: number; down: number; pin: number; sumPriorUp: number; sumPriorDown: number; sumPriorPin: number; sumAbsMove: number; n: number; }]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/models.ts(1082,26): error TS2339: Property 'charmPerDay' does not exist on type 'ExposurePoint'.
+server/models.ts(1083,44): error TS2339: Property 'charmPerDay' does not exist on type 'ExposurePoint'.
+server/odteAlertEngine.ts(2062,27): error TS2345: Argument of type '{ strike: number; delta: number; gamma: any; theta: any; vega: any; midPrice: number; iv: number; bid: number | null; ask: number | null; key: any; expiry: string; openInterest: any; volume: any; }' is not assignable to parameter of type 'null'.
+server/odteAlertEngine.ts(2075,72): error TS2339: Property 'strike' does not exist on type 'never'.
+server/odteAlertEngine.ts(2075,90): error TS2339: Property 'strike' does not exist on type 'never'.
+server/odteAlertEngine.ts(2078,18): error TS2339: Property 'strike' does not exist on type 'never'.
+server/odteAlertEngine.ts(2078,52): error TS2339: Property 'strike' does not exist on type 'never'.
+server/odteAlertEngine.ts(2091,27): error TS2339: Property 'key' does not exist on type 'never'.
+server/odteAlertEngine.ts(2092,30): error TS2339: Property 'strike' does not exist on type 'never'.
+server/odteAlertEngine.ts(2094,27): error TS2339: Property 'bid' does not exist on type 'never'.
+server/odteAlertEngine.ts(2095,27): error TS2339: Property 'ask' does not exist on type 'never'.
+server/odteAlertEngine.ts(2096,27): error TS2339: Property 'midPrice' does not exist on type 'never'.
+server/odteAlertEngine.ts(2098,30): error TS2339: Property 'volume' does not exist on type 'never'.
+server/odteAlertEngine.ts(2099,36): error TS2339: Property 'openInterest' does not exist on type 'never'.
+server/odteAlertEngine.ts(2100,30): error TS2339: Property 'expiry' does not exist on type 'never'.
+server/odteAlertEngine.ts(2101,26): error TS2339: Property 'iv' does not exist on type 'never'.
+server/odteAlertEngine.ts(2103,46): error TS2339: Property 'delta' does not exist on type 'never'.
+server/odteAlertEngine.ts(2104,35): error TS2339: Property 'midPrice' does not exist on type 'never'.
+server/odteAlertEngine.ts(2129,32): error TS2339: Property 'midPrice' does not exist on type 'never'.
+server/odteAlertEngine.ts(2132,37): error TS2339: Property 'bid' does not exist on type 'never'.
+server/odteAlertEngine.ts(2133,37): error TS2339: Property 'ask' does not exist on type 'never'.
+server/odteAlertEngine.ts(2135,40): error TS2339: Property 'bid' does not exist on type 'never'.
+server/odteAlertEngine.ts(2135,70): error TS2339: Property 'ask' does not exist on type 'never'.
+server/odteAlertEngine.ts(2136,25): error TS2339: Property 'ask' does not exist on type 'never'.
+server/odteAlertEngine.ts(2136,46): error TS2339: Property 'bid' does not exist on type 'never'.
+server/odteAlertEngine.ts(2140,44): error TS2339: Property 'bid' does not exist on type 'never'.
+server/odteAlertEngine.ts(2140,74): error TS2339: Property 'ask' does not exist on type 'never'.
+server/odteAlertEngine.ts(2141,25): error TS2339: Property 'ask' does not exist on type 'never'.
+server/odteAlertEngine.ts(2141,46): error TS2339: Property 'bid' does not exist on type 'never'.
+server/odteAlertEngine.ts(2192,34): error TS2339: Property 'iv' does not exist on type 'never'.
+server/odteAlertEngine.ts(2192,58): error TS2339: Property 'iv' does not exist on type 'never'.
+server/odteAlertEngine.ts(2373,37): error TS2339: Property 'strike' does not exist on type 'never'.
+server/odteAlertEngine.ts(2374,61): error TS2339: Property 'delta' does not exist on type 'never'.
+server/odteAlertEngine.ts(2396,28): error TS2339: Property 'strike' does not exist on type 'never'.
+server/odteAlertEngine.ts(2398,25): error TS2339: Property 'bid' does not exist on type 'never'.
+server/odteAlertEngine.ts(2399,25): error TS2339: Property 'ask' does not exist on type 'never'.
+server/odteAlertEngine.ts(2400,36): error TS2339: Property 'delta' does not exist on type 'never'.
+server/odteAlertEngine.ts(2401,25): error TS2339: Property 'key' does not exist on type 'never'.
+server/odteAlertEngine.ts(2402,28): error TS2339: Property 'expiry' does not exist on type 'never'.
+server/odteAlertEngine.ts(2403,27): error TS2339: Property 'gamma' does not exist on type 'never'.
+server/odteAlertEngine.ts(2404,27): error TS2339: Property 'theta' does not exist on type 'never'.
+server/odteAlertEngine.ts(2405,26): error TS2339: Property 'vega' does not exist on type 'never'.
+server/odteAlertEngine.ts(2406,24): error TS2339: Property 'iv' does not exist on type 'never'.
+server/odteAlertEngine.ts(2407,30): error TS2339: Property 'midPrice' does not exist on type 'never'.
+server/odteProjection.ts(206,19): error TS2802: Type 'MapIterator<{ price: number; kind: LevelKind; label: string; strength: number; note: string; }>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/odteTracker.ts(554,20): error TS2802: Type 'MapIterator<number>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/routes.ts(3713,26): error TS2802: Type 'MapIterator<Map<number, Cell>>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/routes.ts(3899,24): error TS2802: Type 'MapIterator<Row>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/routes.ts(5254,22): error TS1252: Function declarations are not allowed inside blocks in strict mode when targeting 'ES5'. Modules are automatically in strict mode.
+server/routes.ts(5267,22): error TS1252: Function declarations are not allowed inside blocks in strict mode when targeting 'ES5'. Modules are automatically in strict mode.
+server/routes.ts(5721,35): error TS2802: Type 'Map<string, any[]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/routes.ts(6154,21): error TS2304: Cannot find name 'formatDecisionBlock'.
+server/routes.ts(6208,103): error TS2339: Property 'source' does not exist on type 'never'.
+server/seasonality.ts(416,21): error TS2802: Type 'MapIterator<number>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/seasonality.ts(512,16): error TS2367: This comparison appears to be unintentional because the types '"validated" | "held_up_not_significant" | "failed_out_of_sample" | "in_sample_only" | "not_significant" | undefined' and '"validated_window_differs"' have no overlap.
+server/seasonality.ts(575,31): error TS2802: Type 'Map<string, DailyBar[]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/seasonality.ts(615,31): error TS2802: Type 'Map<string, DailyBar[]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/seasonality.ts(651,32): error TS2802: Type 'Map<number, DailyBar[]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/seasonality.ts(715,31): error TS2802: Type 'MapIterator<[number, number]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/signalTracker.ts(161,19): error TS2802: Type 'MapIterator<TrackedGroup>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/signalTracker.ts(162,19): error TS7006: Parameter 'a' implicitly has an 'any' type.
+server/signalTracker.ts(162,22): error TS7006: Parameter 'b' implicitly has an 'any' type.
+server/signalTracker.ts(202,30): error TS2802: Type 'MapIterator<[string, TrackedSignal[]]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/underperformers.ts(119,29): error TS2802: Type 'MapIterator<[string, DailyBar[]]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/underperformers.ts(123,30): error TS7006: Parameter 'b' implicitly has an 'any' type.
+server/uoaScanner.ts(147,24): error TS2802: Type 'Map<string, ClusterEntry>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/uoaScanner.ts(150,24): error TS2802: Type 'Map<string, { volume: number; at: number; }>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/uoaScanner.ts(375,20): error TS2802: Type 'MapIterator<ClusterEntry>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/uoaScanner.ts(377,18): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type 'Record<McapBucket, UoaTier>'.
+server/uoaScanner.ts(378,39): error TS7006: Parameter 's' implicitly has an 'any' type.
+server/uoaScanner.ts(378,42): error TS7006: Parameter 'h' implicitly has an 'any' type.
+server/volumeProfile.ts(98,30): error TS2802: Type 'Map<number, number>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/volumeProfile.ts(111,29): error TS2802: Type 'MapIterator<[number, number]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/whaleBacktest.ts(249,34): error TS2802: Type 'MapIterator<[string, any[]]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/whaleFollowThrough.ts(151,26): error TS2802: Type 'Map<string, FollowPosition>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/whaleFollowThrough.ts(230,33): error TS2802: Type 'Map<string, FollowPosition[]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.

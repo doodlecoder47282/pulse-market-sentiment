@@ -1,0 +1,3071 @@
+TAP version 13
+# Subtest: schwab data kind: quotes, chains, minute vs daily bars
+ok 1 - schwab data kind: quotes, chains, minute vs daily bars
+  ---
+  duration_ms: 1.785551
+  type: 'test'
+  ...
+# Subtest: stale serve: a cached chain within its session max age is served stale with its real asOf
+ok 2 - stale serve: a cached chain within its session max age is served stale with its real asOf
+  ---
+  duration_ms: 0.916555
+  type: 'test'
+  ...
+# Subtest: stale serve: past the max age the answer is unavailable, never older data
+ok 3 - stale serve: past the max age the answer is unavailable, never older data
+  ---
+  duration_ms: 0.514352
+  type: 'test'
+  ...
+# Subtest: stale serve: outside the session the limits are longer but still finite
+ok 4 - stale serve: outside the session the limits are longer but still finite
+  ---
+  duration_ms: 0.488304
+  type: 'test'
+  ...
+# Subtest: fresh payloads (new request or TTL hit) are not stale and carry their fetch time
+ok 5 - fresh payloads (new request or TTL hit) are not stale and carry their fetch time
+  ---
+  duration_ms: 1.032131
+  type: 'test'
+  ...
+# Subtest: strike plan: SPX 0DTE covers the +-10% re-priced flip scan
+ok 6 - strike plan: SPX 0DTE covers the +-10% re-priced flip scan
+  ---
+  duration_ms: 0.589002
+  type: 'test'
+  ...
+# Subtest: strike plan: 90 DTE window reaches past the 25-delta put (round 3: long windows capped at the 25-delta wing)
+ok 7 - strike plan: 90 DTE window reaches past the 25-delta put (round 3: long windows capped at the 25-delta wing)
+  ---
+  duration_ms: 0.589814
+  type: 'test'
+  ...
+# Subtest: strike plan: spacing by symbol and unknown spot
+ok 8 - strike plan: spacing by symbol and unknown spot
+  ---
+  duration_ms: 0.252041
+  type: 'test'
+  ...
+# Subtest: strike coverage: measured on the response, worst expiry wins
+ok 9 - strike coverage: measured on the response, worst expiry wins
+  ---
+  duration_ms: 5.585842
+  type: 'test'
+  ...
+# Subtest: strike-count semantics: only 'per side' is ever inferred
+ok 10 - strike-count semantics: only 'per side' is ever inferred
+  ---
+  duration_ms: 0.506989
+  type: 'test'
+  ...
+# Subtest: ATM IV from the nearest expiry
+ok 11 - ATM IV from the nearest expiry
+  ---
+  duration_ms: 0.953975
+  type: 'test'
+  ...
+# Subtest: Schwab index symbols: $ prefix, no .X suffix
+ok 12 - Schwab index symbols: $ prefix, no .X suffix
+  ---
+  duration_ms: 0.227055
+  type: 'test'
+  ...
+# Subtest: day change: closePrice not rolled (equals the prior session bar) is used
+ok 13 - day change: closePrice not rolled (equals the prior session bar) is used
+  ---
+  duration_ms: 2.019289
+  type: 'test'
+  ...
+# Subtest: day change: closePrice rolled to today's close is detected; the prior daily bar is used
+ok 14 - day change: closePrice rolled to today's close is detected; the prior daily bar is used
+  ---
+  duration_ms: 0.259285
+  type: 'test'
+  ...
+# Subtest: day change: after the close with no bars, close == last is ambiguous -> unavailable, not 0
+ok 15 - day change: after the close with no bars, close == last is ambiguous -> unavailable, not 0
+  ---
+  duration_ms: 0.153377
+  type: 'test'
+  ...
+# Subtest: day change: a truly flat day with bars stays an observed 0
+ok 16 - day change: a truly flat day with bars stays an observed 0
+  ---
+  duration_ms: 0.22436
+  type: 'test'
+  ...
+# Subtest: day change: during the session the quote close is used as is
+ok 17 - day change: during the session the quote close is used as is
+  ---
+  duration_ms: 0.161853
+  type: 'test'
+  ...
+# Subtest: quote shield: a quiet tape followed by an ordinary move is not flagged (the old level test flagged it)
+ok 18 - quote shield: a quiet tape followed by an ordinary move is not flagged (the old level test flagged it)
+  ---
+  duration_ms: 12.931096
+  type: 'test'
+  ...
+# Subtest: quote shield: seeded GBM at 20% vol has no false alarms; a 1% bad print is flagged, its reversion is not
+ok 19 - quote shield: seeded GBM at 20% vol has no false alarms; a 1% bad print is flagged, its reversion is not
+  ---
+  duration_ms: 79.967059
+  type: 'test'
+  ...
+# Subtest: quote shield: a real level shift is accepted after 3 consistent prints
+ok 20 - quote shield: a real level shift is accepted after 3 consistent prints
+  ---
+  duration_ms: 0.495136
+  type: 'test'
+  ...
+# Subtest: quote shield: identical repeated observation is ignored; checkQuote helper agrees
+ok 21 - quote shield: identical repeated observation is ignored; checkQuote helper agrees
+  ---
+  duration_ms: 3.903514
+  type: 'test'
+  ...
+# Subtest: flatten: Schwab -999 placeholders and missing fields are null, a reported 0 stays 0
+ok 22 - flatten: Schwab -999 placeholders and missing fields are null, a reported 0 stays 0
+  ---
+  duration_ms: 1.533089
+  type: 'test'
+  ...
+# Subtest: exposure rows: AM SPX settled at the open is dropped; vendor IV percent -> decimal; missing IV solved from the mid
+ok 23 - exposure rows: AM SPX settled at the open is dropped; vendor IV percent -> decimal; missing IV solved from the mid
+  ---
+  duration_ms: 1.577061
+  type: 'test'
+  ...
+# Subtest: Signals gamma structure from a Schwab SPY chain: GEX = gamma x OI x 100 x S^2 x 1%, calls +, puts -
+ok 24 - Signals gamma structure from a Schwab SPY chain: GEX = gamma x OI x 100 x S^2 x 1%, calls +, puts -
+  ---
+  duration_ms: 5.842833
+  type: 'test'
+  ...
+# Subtest: strikeCount: rounded up to a step of 20, so small spot/IV moves keep one cache key
+ok 25 - strikeCount: rounded up to a step of 20, so small spot/IV moves keep one cache key
+  ---
+  duration_ms: 0.319017
+  type: 'test'
+  ...
+# Subtest: delayed chain: Schwab isDelayed=true (or underlying.delayed) is flagged; absent/false is not
+ok 26 - delayed chain: Schwab isDelayed=true (or underlying.delayed) is flagged; absent/false is not
+  ---
+  duration_ms: 0.210735
+  type: 'test'
+  ...
+# Subtest: models fallback: in the session a stored build is served only within the chain max age, flagged stale
+ok 27 - models fallback: in the session a stored build is served only within the chain max age, flagged stale
+  ---
+  duration_ms: 0.359904
+  type: 'test'
+  ...
+# Subtest: models fallback: 'last-close' only for a copy built at or after the session close, served outside the session
+ok 28 - models fallback: 'last-close' only for a copy built at or after the session close, served outside the session
+  ---
+  duration_ms: 0.326371
+  type: 'test'
+  ...
+# [exchangeCalendar] 2029-06-06 is outside the verified 2026-2028 holiday table; treating weekdays as trading days. Add the next NYSE calendar to server/exchangeCalendar.ts.
+# Subtest: calendar: NYSE full holidays 2026-2028
+ok 29 - calendar: NYSE full holidays 2026-2028
+  ---
+  duration_ms: 2.307227
+  type: 'test'
+  ...
+# Subtest: calendar: early closes at 1:00 p.m. ET
+ok 30 - calendar: early closes at 1:00 p.m. ET
+  ---
+  duration_ms: 1.814095
+  type: 'test'
+  ...
+# Subtest: calendar: next/prev trading day and DST-aware session times
+ok 31 - calendar: next/prev trading day and DST-aware session times
+  ---
+  duration_ms: 0.671526
+  type: 'test'
+  ...
+# Subtest: calendar: outside the verified table falls back to weekdays and says so
+ok 32 - calendar: outside the verified table falls back to weekdays and says so
+  ---
+  duration_ms: 2.036331
+  type: 'test'
+  ...
+# Subtest: tte: PM-settled 0DTE uses true minutes to 16:00 ET
+ok 33 - tte: PM-settled 0DTE uses true minutes to 16:00 ET
+  ---
+  duration_ms: 0.431067
+  type: 'test'
+  ...
+# Subtest: tte: half day settles at 13:00 ET
+ok 34 - tte: half day settles at 13:00 ET
+  ---
+  duration_ms: 0.43284
+  type: 'test'
+  ...
+# Subtest: tte: AM-settled SPX monthly settles at the 09:30 ET open
+ok 35 - tte: AM-settled SPX monthly settles at the 09:30 ET open
+  ---
+  duration_ms: 3.754465
+  type: 'test'
+  ...
+# Subtest: tte: 15-minute floor until settlement, then expired
+ok 36 - tte: 15-minute floor until settlement, then expired
+  ---
+  duration_ms: 0.290003
+  type: 'test'
+  ...
+# Subtest: tte: trading basis counts only regular-session minutes
+ok 37 - tte: trading basis counts only regular-session minutes
+  ---
+  duration_ms: 1.004038
+  type: 'test'
+  ...
+# Subtest: tte: settlement style resolution
+ok 38 - tte: settlement style resolution
+  ---
+  duration_ms: 0.674532
+  type: 'test'
+  ...
+# Subtest: chainAudit: 0DTE vanna/charm included with intraday T and IV re-solved from mid
+ok 39 - chainAudit: 0DTE vanna/charm included with intraday T and IV re-solved from mid
+  ---
+  duration_ms: 9.186449
+  type: 'test'
+  ...
+# Subtest: chainAudit: charm over a 30-day tenor is the 1-day delta change (~ charm/365)
+ok 40 - chainAudit: charm over a 30-day tenor is the 1-day delta change (~ charm/365)
+  ---
+  duration_ms: 3.422273
+  type: 'test'
+  ...
+# Subtest: chainAudit: settled contracts are dropped (AM SPX after the open, 0DTE after the close)
+ok 41 - chainAudit: settled contracts are dropped (AM SPX after the open, 0DTE after the close)
+  ---
+  duration_ms: 6.080257
+  type: 'test'
+  ...
+# Subtest: dayChange: quote closePrice for a price from today's session
+ok 42 - dayChange: quote closePrice for a price from today's session
+  ---
+  duration_ms: 0.742659
+  type: 'test'
+  ...
+# Subtest: dayChange: price from an earlier session uses the daily bar before that session
+ok 43 - dayChange: price from an earlier session uses the daily bar before that session
+  ---
+  duration_ms: 0.245519
+  type: 'test'
+  ...
+# Subtest: dayChange: nothing honest available -> null, never a first-bar or previous-candle close
+ok 44 - dayChange: nothing honest available -> null, never a first-bar or previous-candle close
+  ---
+  duration_ms: 0.190386
+  type: 'test'
+  ...
+# Subtest: dayChange: daily-bar dating is robust to midnight CT, ET or UTC stamps
+ok 45 - dayChange: daily-bar dating is robust to midnight CT, ET or UTC stamps
+  ---
+  duration_ms: 0.903411
+  type: 'test'
+  ...
+# Subtest: candles: 2m from 1m and 60m from 30m, anchored at 09:30 ET
+ok 46 - candles: 2m from 1m and 60m from 30m, anchored at 09:30 ET
+  ---
+  duration_ms: 1.116609
+  type: 'test'
+  ...
+# Subtest: social: failed collection is unavailable, not neutral
+ok 47 - social: failed collection is unavailable, not neutral
+  ---
+  duration_ms: 140.64729
+  type: 'test'
+  ...
+# Subtest: social: VIX tone inverted, unknown-age posts dropped, 24 h window
+ok 48 - social: VIX tone inverted, unknown-age posts dropped, 24 h window
+  ---
+  duration_ms: 1.841766
+  type: 'test'
+  ...
+# Subtest: social: composite leaves out an unavailable social gauge instead of scoring it 50
+ok 49 - social: composite leaves out an unavailable social gauge instead of scoring it 50
+  ---
+  duration_ms: 52.569003
+  type: 'test'
+  ...
+# Subtest: quote freshness: stale only during the session, unknown age is not live
+ok 50 - quote freshness: stale only during the session, unknown age is not live
+  ---
+  duration_ms: 5.776863
+  type: 'test'
+  ...
+# Subtest: logPcr: Haldane-Anscombe corrected log ratio; observed zero stays finite, nothing observed is null
+ok 51 - logPcr: Haldane-Anscombe corrected log ratio; observed zero stays finite, nothing observed is null
+  ---
+  duration_ms: 2.128754
+  type: 'test'
+  ...
+# Subtest: pcrReadFromHistory: z-score against own history (hand-computed)
+ok 52 - pcrReadFromHistory: z-score against own history (hand-computed)
+  ---
+  duration_ms: 0.782173
+  type: 'test'
+  ...
+# Subtest: pcrReadFromHistory: SPY normally near 1.3 reads NORMAL, where the old fixed 1.05 cut-off said bearish
+ok 53 - pcrReadFromHistory: SPY normally near 1.3 reads NORMAL, where the old fixed 1.05 cut-off said bearish
+  ---
+  duration_ms: 0.481351
+  type: 'test'
+  ...
+# Subtest: pcrReadFromHistory: below 20 completed sessions -> insufficient_history, never a fixed cut-off
+ok 54 - pcrReadFromHistory: below 20 completed sessions -> insufficient_history, never a fixed cut-off
+  ---
+  duration_ms: 0.316332
+  type: 'test'
+  ...
+# Subtest: pcrReadFromHistory: today and later sessions are excluded (no look-ahead); missing volume is unavailable
+ok 55 - pcrReadFromHistory: today and later sessions are excluded (no look-ahead); missing volume is unavailable
+  ---
+  duration_ms: 0.387966
+  type: 'test'
+  ...
+# Subtest: pcrReadFromHistory: an observed-zero put day is a real reading (call-heavy), not missing
+ok 56 - pcrReadFromHistory: an observed-zero put day is a real reading (call-heavy), not missing
+  ---
+  duration_ms: 0.304149
+  type: 'test'
+  ...
+# Subtest: isCompleteSessionSnapshot: last 10 minutes of the session or after the close
+ok 57 - isCompleteSessionSnapshot: last 10 minutes of the session or after the close
+  ---
+  duration_ms: 0.273101
+  type: 'test'
+  ...
+# Subtest: volumeOverOiShare: lower bound on opening share = 1 - OI_prev / V (hand-computed)
+ok 58 - volumeOverOiShare: lower bound on opening share = 1 - OI_prev / V (hand-computed)
+  ---
+  duration_ms: 0.209522
+  type: 'test'
+  ...
+# Subtest: directionScore: hand-set heuristic, reported as a 0-1 score
+ok 59 - directionScore: hand-set heuristic, reported as a 0-1 score
+  ---
+  duration_ms: 0.597388
+  type: 'test'
+  ...
+# Subtest: scoreAskToBid: ask in, bid out, $0.65/side (hand-computed dollars)
+ok 60 - scoreAskToBid: ask in, bid out, $0.65/side (hand-computed dollars)
+  ---
+  duration_ms: 1.050145
+  type: 'test'
+  ...
+# Subtest: scoreAskToBid: a gross winner that loses after fees is a LOSS; worthless expiry pays one fee
+ok 61 - scoreAskToBid: a gross winner that loses after fees is a LOSS; worthless expiry pays one fee
+  ---
+  duration_ms: 0.394388
+  type: 'test'
+  ...
+# Subtest: buildScoreboardRow / netGroupStats: wins counted net, the same basis as $ P&L
+ok 62 - buildScoreboardRow / netGroupStats: wins counted net, the same basis as $ P&L
+  ---
+  duration_ms: 0.761556
+  type: 'test'
+  ...
+# Subtest: firstPassage: closed form = numerical integral of the first-passage density
+ok 63 - firstPassage: closed form = numerical integral of the first-passage density
+  ---
+  duration_ms: 15.533065
+  type: 'test'
+  ...
+# Subtest: firstPassage: seeded Monte Carlo (Brownian-bridge crossing) agrees within tolerance
+ok 64 - firstPassage: seeded Monte Carlo (Brownian-bridge crossing) agrees within tolerance
+  ---
+  duration_ms: 771.931285
+  type: 'test'
+  ...
+# Subtest: projectToTarget: equals Black-Scholes repricing at T1 averaged over the touch-time density, net of half spread and fees
+ok 65 - projectToTarget: equals Black-Scholes repricing at T1 averaged over the touch-time density, net of half spread and fees
+  ---
+  duration_ms: 57.440762
+  type: 'test'
+  ...
+# Subtest: projectToTarget: the old time-now Greeks + full decay to the close read far lower (Gate 3 bias)
+ok 66 - projectToTarget: the old time-now Greeks + full decay to the close read far lower (Gate 3 bias)
+  ---
+  duration_ms: 2.045497
+  type: 'test'
+  ...
+# Subtest: projectToTarget: unavailable without a two-sided quote or after settlement (never a silent pass)
+ok 67 - projectToTarget: unavailable without a two-sided quote or after settlement (never a silent pass)
+  ---
+  duration_ms: 0.233407
+  type: 'test'
+  ...
+# Subtest: liquidationReturn: sold at the bid after the exit fee, on cash paid incl. the entry fee (hand-computed)
+ok 68 - liquidationReturn: sold at the bid after the exit fee, on cash paid incl. the entry fee (hand-computed)
+  ---
+  duration_ms: 0.312756
+  type: 'test'
+  ...
+# Subtest: masterAlphaPromotionGate: no record, short sample, failing OOS, wrong horizon -> unrated
+ok 69 - masterAlphaPromotionGate: no record, short sample, failing OOS, wrong horizon -> unrated
+  ---
+  duration_ms: 0.583051
+  type: 'test'
+  ...
+# Subtest: resolveMasterAlphaRiskBudget: from the user's account input only, never a default $1M
+ok 70 - resolveMasterAlphaRiskBudget: from the user's account input only, never a default $1M
+  ---
+  duration_ms: 0.327743
+  type: 'test'
+  ...
+# Subtest: olsClustered: one observation per cluster reduces to White HC1 (closed form, simple regression)
+ok 71 - olsClustered: one observation per cluster reduces to White HC1 (closed form, simple regression)
+  ---
+  duration_ms: 1.62491
+  type: 'test'
+  ...
+# Subtest: fitConvexityWeights: recovers known weights on seeded data; gate counts sessions; missing drivers are dropped, not zero
+ok 72 - fitConvexityWeights: recovers known weights on seeded data; gate counts sessions; missing drivers are dropped, not zero
+  ---
+  duration_ms: 86.348181
+  type: 'test'
+  ...
+# Subtest: forwardRange: high-low over the next 30 one-minute bars; too few bars -> null, not 0
+ok 73 - forwardRange: high-low over the next 30 one-minute bars; too few bars -> null, not 0
+  ---
+  duration_ms: 3.672643
+  type: 'test'
+  ...
+# Subtest: SF-3: one stop rule = the alert's printed rule, bid <= 0.80 x ask fill, before fees
+ok 74 - SF-3: one stop rule = the alert's printed rule, bid <= 0.80 x ask fill, before fees
+  ---
+  duration_ms: 0.326581
+  type: 'test'
+  ...
+# Subtest: SF-2: fee rule per root: $0.65 equity/ETF, index roots only with a configured all-in fee
+ok 75 - SF-2: fee rule per root: $0.65 equity/ETF, index roots only with a configured all-in fee
+  ---
+  duration_ms: 11.235594
+  type: 'test'
+  ...
+# Subtest: SF-6: EV under the pricing measure is minus the costs (martingale), and the no-touch density has mass 1 - pHit
+ok 76 - SF-6: EV under the pricing measure is minus the costs (martingale), and the no-touch density has mass 1 - pHit
+  ---
+  duration_ms: 9.486311
+  type: 'test'
+  ...
+# Subtest: N-2: ATM path vol solved from the ATM mid on the app clock; picker reprices with the strike's own vol
+ok 77 - N-2: ATM path vol solved from the ATM mid on the app clock; picker reprices with the strike's own vol
+  ---
+  duration_ms: 0.734084
+  type: 'test'
+  ...
+# Subtest: SF-1: missing gamma/vol/range never reads CHOP or STAND_DOWN
+ok 78 - SF-1: missing gamma/vol/range never reads CHOP or STAND_DOWN
+  ---
+  duration_ms: 0.375854
+  type: 'test'
+  ...
+# Subtest: SF-5: P/C vs history at the same clock time (interpolated cumulative volume)
+ok 79 - SF-5: P/C vs history at the same clock time (interpolated cumulative volume)
+  ---
+  duration_ms: 4.213995
+  type: 'test'
+  ...
+# Subtest: SF-7: masterAlpha size = whole contracts of the chosen contract at its Schwab ask + fee
+ok 80 - SF-7: masterAlpha size = whole contracts of the chosen contract at its Schwab ask + fee
+  ---
+  duration_ms: 0.444151
+  type: 'test'
+  ...
+# Subtest: N-3: empty groups report null rates, never 0%
+ok 81 - N-3: empty groups report null rates, never 0%
+  ---
+  duration_ms: 0.212447
+  type: 'test'
+  ...
+# Subtest: merge: r2-b gexSignAtSpot null (no material gamma) never yields CHOP; stop pct is the published plan's
+ok 82 - merge: r2-b gexSignAtSpot null (no material gamma) never yields CHOP; stop pct is the published plan's
+  ---
+  duration_ms: 59.436036
+  type: 'test'
+  ...
+# Subtest: dataState: known states keep their meaning; unknown/empty fail closed
+ok 83 - dataState: known states keep their meaning; unknown/empty fail closed
+  ---
+  duration_ms: 1.954056
+  type: 'test'
+  ...
+# Subtest: dataState: failed, missing, stale, partial and observed-zero are distinct
+ok 84 - dataState: failed, missing, stale, partial and observed-zero are distinct
+  ---
+  duration_ms: 0.563364
+  type: 'test'
+  ...
+# Subtest: dataState: age formatting never turns unknown into 0s
+ok 85 - dataState: age formatting never turns unknown into 0s
+  ---
+  duration_ms: 0.239318
+  type: 'test'
+  ...
+# Subtest: dataState: age classification and as-of parsing (ms, s, ISO)
+ok 86 - dataState: age classification and as-of parsing (ms, s, ISO)
+  ---
+  duration_ms: 0.554938
+  type: 'test'
+  ...
+# Subtest: ofi payload: complete tape passes dataState ok and a complete trend
+ok 87 - ofi payload: complete tape passes dataState ok and a complete trend
+  ---
+  duration_ms: 1.033794
+  type: 'test'
+  ...
+# Subtest: ofi payload: missing-volume bars are gaps (null), not zero, and withhold the trend
+ok 88 - ofi payload: missing-volume bars are gaps (null), not zero, and withhold the trend
+  ---
+  duration_ms: 0.35826
+  type: 'test'
+  ...
+# Subtest: ofi payload: unavailable says why and is never a flat read
+ok 89 - ofi payload: unavailable says why and is never a flat read
+  ---
+  duration_ms: 0.422581
+  type: 'test'
+  ...
+# Subtest: ofi payload: fewer than 15 bars is not a 15-minute slope
+ok 90 - ofi payload: fewer than 15 bars is not a 15-minute slope
+  ---
+  duration_ms: 0.21898
+  type: 'test'
+  ...
+# Subtest: tokens: AES-256-GCM known answer (McGrew-Viega GCM spec, Test Case 16)
+ok 91 - tokens: AES-256-GCM known answer (McGrew-Viega GCM spec, Test Case 16)
+  ---
+  duration_ms: 1.139763
+  type: 'test'
+  ...
+# Subtest: tokens: key parsing is strict (32 bytes, base64 or base64url) and never echoes the key
+ok 92 - tokens: key parsing is strict (32 bytes, base64 or base64url) and never echoes the key
+  ---
+  duration_ms: 1.968744
+  type: 'test'
+  ...
+# Subtest: tokens: policy fails closed on a reachable bind without a key; local uses a key file, plaintext only by opt-in
+ok 93 - tokens: policy fails closed on a reachable bind without a key; local uses a key file, plaintext only by opt-in
+  ---
+  duration_ms: 0.680273
+  type: 'test'
+  ...
+# Subtest: tokens: encrypt/decrypt round trip; random IV; AAD binds row and column; tamper fails
+ok 94 - tokens: encrypt/decrypt round trip; random IV; AAD binds row and column; tamper fails
+  ---
+  duration_ms: 2.135205
+  type: 'test'
+  ...
+# Subtest: tokens: legacy plaintext row migrates transparently on first read
+ok 95 - tokens: legacy plaintext row migrates transparently on first read
+  ---
+  duration_ms: 0.883603
+  type: 'test'
+  ...
+# Subtest: tokens: swapped ciphertexts, wrong key, missing key and rotation
+ok 96 - tokens: swapped ciphertexts, wrong key, missing key and rotation
+  ---
+  duration_ms: 1.842067
+  type: 'test'
+  ...
+# Subtest: tokens: explicit plaintext opt-in keeps plaintext (no rewrite, no encryption)
+ok 97 - tokens: explicit plaintext opt-in keeps plaintext (no rewrite, no encryption)
+  ---
+  duration_ms: 0.183334
+  type: 'test'
+  ...
+# Subtest: trust proxy: 1 hop on Railway/Render/Fly, 0 locally, explicit override bounded
+ok 98 - trust proxy: 1 hop on Railway/Render/Fly, 0 locally, explicit override bounded
+  ---
+  duration_ms: 0.201167
+  type: 'test'
+  ...
+# Subtest: trust proxy: index.ts never sets trust proxy to true
+ok 99 - trust proxy: index.ts never sets trust proxy to true
+  ---
+  duration_ms: 28.270818
+  type: 'test'
+  ...
+# Subtest: runtime files: data dir and state path are created/resolved on a fresh checkout
+ok 100 - runtime files: data dir and state path are created/resolved on a fresh checkout
+  ---
+  duration_ms: 3.816721
+  type: 'test'
+  ...
+# Subtest: runtime files: not tracked by git and ignored
+ok 101 - runtime files: not tracked by git and ignored
+  ---
+  duration_ms: 29.570671
+  type: 'test'
+  ...
+# Subtest: wording: MLAccuracyCard banner reports the test, not an abstention or a trade instruction
+ok 102 - wording: MLAccuracyCard banner reports the test, not an abstention or a trade instruction
+  ---
+  duration_ms: 1.493083
+  type: 'test'
+  ...
+# Subtest: wording: swept panels show heuristic scores as /100 or % wt, never as a bare % confidence/probability
+ok 103 - wording: swept panels show heuristic scores as /100 or % wt, never as a bare % confidence/probability
+  ---
+  duration_ms: 4.506973
+  type: 'test'
+  ...
+# Subtest: internal api: handler gets the parsed query and its JSON body comes back as on the wire
+ok 104 - internal api: handler gets the parsed query and its JSON body comes back as on the wire
+  ---
+  duration_ms: 1.146315
+  type: 'test'
+  ...
+# Subtest: internal api: status codes and error bodies are preserved; internalJson maps non-2xx to null
+ok 105 - internal api: status codes and error bodies are preserved; internalJson maps non-2xx to null
+  ---
+  duration_ms: 30.245063
+  type: 'test'
+  ...
+# Subtest: internal api: thrown handler is a 500 with message; unregistered allow-listed route is 503, never HTTP
+ok 106 - internal api: thrown handler is a 500 with message; unregistered allow-listed route is 503, never HTTP
+  ---
+  duration_ms: 0.378649
+  type: 'test'
+  ...
+# Subtest: internal api: timeout behaves like an aborted fetch; sync handlers work
+ok 107 - internal api: timeout behaves like an aborted fetch; sync handlers work
+  ---
+  duration_ms: 63.332531
+  type: 'test'
+  ...
+# Subtest: internal api: every allow-listed route is registered in routes.ts; converted engines have no local-HTTP hop
+ok 108 - internal api: every allow-listed route is registered in routes.ts; converted engines have no local-HTTP hop
+  ---
+  duration_ms: 13.745439
+  type: 'test'
+  ...
+# Subtest: ofi: trend-window completeness rule shared by the panel payload and the trade-environment driver
+ok 109 - ofi: trend-window completeness rule shared by the panel payload and the trade-environment driver
+  ---
+  duration_ms: 4.057773
+  type: 'test'
+  ...
+# Subtest: token key file: created once with mode 0600, reused, never inside the repo or data/
+ok 110 - token key file: created once with mode 0600, reused, never inside the repo or data/
+  ---
+  duration_ms: 5.387772
+  type: 'test'
+  ...
+# Subtest: tokens: locked with a plaintext row says so; disconnect is the way out
+ok 111 - tokens: locked with a plaintext row says so; disconnect is the way out
+  ---
+  duration_ms: 3.669386
+  type: 'test'
+  ...
+# Subtest: tokens: never overwrite an encrypted row with plaintext
+ok 112 - tokens: never overwrite an encrypted row with plaintext
+  ---
+  duration_ms: 0.438751
+  type: 'test'
+  ...
+# Subtest: token docs: key is documented as base64 (not hex) with the openssl base64 command
+ok 113 - token docs: key is documented as base64 (not hex) with the openssl base64 command
+  ---
+  duration_ms: 4.552479
+  type: 'test'
+  ...
+# Subtest: ofi fix round: cumulative is null from the first gap onward; stale tape refuses a trend
+ok 114 - ofi fix round: cumulative is null from the first gap onward; stale tape refuses a trend
+  ---
+  duration_ms: 6.998586
+  type: 'test'
+  ...
+# Subtest: exit brain fix round: bounded in-process calls, one pass at a time, hard stop from marks only
+ok 115 - exit brain fix round: bounded in-process calls, one pass at a time, hard stop from marks only
+  ---
+  duration_ms: 4.431562
+  type: 'test'
+  ...
+# Subtest: AM-settled SPX monthly has settled by 10:00 ET; SPXW has 360 minutes left
+ok 116 - AM-settled SPX monthly has settled by 10:00 ET; SPXW has 360 minutes left
+  ---
+  duration_ms: 2.359104
+  type: 'test'
+  ...
+# Subtest: gamma rows: the settled AM contract drops out at 10:00 ET on expiry day
+ok 117 - gamma rows: the settled AM contract drops out at 10:00 ET on expiry day
+  ---
+  duration_ms: 1.798264
+  type: 'test'
+  ...
+# Subtest: half day: SPXW settles at 13:00 ET, so 12:00 ET leaves 60 minutes
+ok 118 - half day: SPXW settles at 13:00 ET, so 12:00 ET leaves 60 minutes
+  ---
+  duration_ms: 0.856472
+  type: 'test'
+  ...
+# Subtest: half-day theta cost at 12:00 ET (hand-computed $)
+ok 119 - half-day theta cost at 12:00 ET (hand-computed $)
+  ---
+  duration_ms: 1.314189
+  type: 'test'
+  ...
+# Subtest: ivForClock re-solves 0DTE sigma from the mid with our T; longer tenors keep vendor IV
+ok 120 - ivForClock re-solves 0DTE sigma from the mid with our T; longer tenors keep vendor IV
+  ---
+  duration_ms: 0.627524
+  type: 'test'
+  ...
+# Subtest: implied-scenario adapter prefers the PM-settled SPXW contract by root, not only settlementType
+ok 121 - implied-scenario adapter prefers the PM-settled SPXW contract by root, not only settlementType
+  ---
+  duration_ms: 17.926953
+  type: 'test'
+  ...
+# Subtest: market-hours checks follow the exchange calendar (holiday, 13:00 half day)
+ok 122 - market-hours checks follow the exchange calendar (holiday, 13:00 half day)
+  ---
+  duration_ms: 17.271969
+  type: 'test'
+  ...
+# Subtest: F11.1: no Discord webhook URL is hard-coded in server, client, shared or docs
+ok 123 - F11.1: no Discord webhook URL is hard-coded in server, client, shared or docs
+  ---
+  duration_ms: 56.462038
+  type: 'test'
+  ...
+# Subtest: F11.1: webhook resolution is env-only, blank = disabled, UOA falls back to whale
+ok 124 - F11.1: webhook resolution is env-only, blank = disabled, UOA falls back to whale
+  ---
+  duration_ms: 19.541876
+  type: 'test'
+  ...
+# Subtest: F11.1: disabled-webhook warning is logged once per card and never contains a URL
+ok 125 - F11.1: disabled-webhook warning is logged once per card and never contains a URL
+  ---
+  duration_ms: 1.657091
+  type: 'test'
+  ...
+# Subtest: F11.1: .env.local.example lists every webhook and gate variable with an empty value
+ok 126 - F11.1: .env.local.example lists every webhook and gate variable with an empty value
+  ---
+  duration_ms: 0.669022
+  type: 'test'
+  ...
+# Subtest: F11.2: gate is open when no key is configured (previous behavior)
+ok 127 - F11.2: gate is open when no key is configured (previous behavior)
+  ---
+  duration_ms: 34.631945
+  type: 'test'
+  ...
+# Subtest: F11.2: with a key, missing or wrong header gets 401 batcave_auth_required; right header passes
+ok 128 - F11.2: with a key, missing or wrong header gets 401 batcave_auth_required; right header passes
+  ---
+  duration_ms: 2.001685
+  type: 'test'
+  ...
+# Subtest: F11.2: CORS headers only for allowlisted origins; preflight answered 204
+ok 129 - F11.2: CORS headers only for allowlisted origins; preflight answered 204
+  ---
+  duration_ms: 1.408806
+  type: 'test'
+  ...
+# Subtest: F11.2 (d40db7d): self-calls to own port carry the key; other hosts never see it
+ok 130 - F11.2 (d40db7d): self-calls to own port carry the key; other hosts never see it
+  ---
+  duration_ms: 34.264004
+  type: 'test'
+  ...
+# Subtest: F11.3: request log line has method, path, status, duration and no body
+ok 131 - F11.3: request log line has method, path, status, duration and no body
+  ---
+  duration_ms: 6.094733
+  type: 'test'
+  ...
+# Subtest: F11.2: every client fetch goes through queryClient and carries the key header
+ok 132 - F11.2: every client fetch goes through queryClient and carries the key header
+  ---
+  duration_ms: 18.59803
+  type: 'test'
+  ...
+# Subtest: F4.2: normalCdf matches standard normal table values
+ok 133 - F4.2: normalCdf matches standard normal table values
+  ---
+  duration_ms: 29.064585
+  type: 'test'
+  ...
+# Subtest: F4.2: tick rule on bars signs whole-bar volume, zero tick keeps the last sign
+ok 134 - F4.2: tick rule on bars signs whole-bar volume, zero tick keeps the last sign
+  ---
+  duration_ms: 1.821769
+  type: 'test'
+  ...
+# Subtest: F4.2: bulk volume classification (ELO 2012 eq. 7) with past-only sigma and missing volume left missing
+ok 135 - F4.2: bulk volume classification (ELO 2012 eq. 7) with past-only sigma and missing volume left missing
+  ---
+  duration_ms: 1.347882
+  type: 'test'
+  ...
+# Subtest: F4.2: signedVolume no longer cites trade-level studies to justify the bar-level tick rule
+ok 136 - F4.2: signedVolume no longer cites trade-level studies to justify the bar-level tick rule
+  ---
+  duration_ms: 0.537096
+  type: 'test'
+  ...
+# Subtest: F4.1: no UI or API text calls heavy contracts 'blocks' or the last-print side 'aggressor flow'
+ok 137 - F4.1: no UI or API text calls heavy contracts 'blocks' or the last-print side 'aggressor flow'
+  ---
+  duration_ms: 50.823853
+  type: 'test'
+  ...
+# Subtest: F4.2/F12.3: no component or alert text calls the tick-rule read Lee-Ready or OFI
+ok 138 - F4.2/F12.3: no component or alert text calls the tick-rule read Lee-Ready or OFI
+  ---
+  duration_ms: 78.187934
+  type: 'test'
+  ...
+# Subtest: F4.1: shared labels say what the data is
+ok 139 - F4.1: shared labels say what the data is
+  ---
+  duration_ms: 5.64895
+  type: 'test'
+  ...
+# Subtest: F9.2/F12.1 + R2-F: Projected Path draws a promoted model or the labeled baseline cone, no confidence claims
+ok 140 - F9.2/F12.1 + R2-F: Projected Path draws a promoted model or the labeled baseline cone, no confidence claims
+  ---
+  duration_ms: 1.157465
+  type: 'test'
+  ...
+# Subtest: F6.1: Outlook reports no size and never takes kellyFrac from the composite or an LLM
+ok 141 - F6.1: Outlook reports no size and never takes kellyFrac from the composite or an LLM
+  ---
+  duration_ms: 4.584539
+  type: 'test'
+  ...
+# Subtest: F6.1: scenario weights are integers in [0,100] summing to exactly 100
+ok 142 - F6.1: scenario weights are integers in [0,100] summing to exactly 100
+  ---
+  duration_ms: 1.102082
+  type: 'test'
+  ...
+# Subtest: F5.1: Cosmos output over two years has no trade instruction, direction call or emoji
+ok 143 - F5.1: Cosmos output over two years has no trade instruction, direction call or emoji
+  ---
+  duration_ms: 7164.754958
+  type: 'test'
+  ...
+# Subtest: F5.1: only lunar, geomagnetic and SAD items claim any study; the LLM prompt forbids trades
+ok 144 - F5.1: only lunar, geomagnetic and SAD items claim any study; the LLM prompt forbids trades
+  ---
+  duration_ms: 2.111541
+  type: 'test'
+  ...
+# Subtest: F5.1: mean lunar node matches Meeus eq. 47.7 (replaces a stale hard-coded sign)
+ok 145 - F5.1: mean lunar node matches Meeus eq. 47.7 (replaces a stale hard-coded sign)
+  ---
+  duration_ms: 15.153214
+  type: 'test'
+  ...
+# Subtest: F5.1: no engine or other panel consumes Cosmos output
+ok 146 - F5.1: no engine or other panel consumes Cosmos output
+  ---
+  duration_ms: 49.386124
+  type: 'test'
+  ...
+# Subtest: review 1: fail closed on a reachable bind without a key; loopback stays open
+ok 147 - review 1: fail closed on a reachable bind without a key; loopback stays open
+  ---
+  duration_ms: 4.716335
+  type: 'test'
+  ...
+# Subtest: review 3: short-key boot warning and per-IP slowdown on repeated 401s
+ok 148 - review 3: short-key boot warning and per-IP slowdown on repeated 401s
+  ---
+  duration_ms: 3.434647
+  type: 'test'
+  ...
+# Subtest: review 2: webhook values are validated; errors are logged without the URL
+ok 149 - review 2: webhook values are validated; errors are logged without the URL
+  ---
+  duration_ms: 2.127401
+  type: 'test'
+  ...
+# Subtest: review 4: http:// server URLs only for loopback or private-network hosts
+ok 150 - review 4: http:// server URLs only for loopback or private-network hosts
+  ---
+  duration_ms: 3.577224
+  type: 'test'
+  ...
+# Subtest: review 5: any training_data other than "real" (e.g. synthetic_gbm) is simulated; coverage wording stays true
+ok 151 - review 5: any training_data other than "real" (e.g. synthetic_gbm) is simulated; coverage wording stays true
+  ---
+  duration_ms: 0.652822
+  type: 'test'
+  ...
+# Subtest: decision block shows no size from scenario odds (finding 6.1)
+ok 152 - decision block shows no size from scenario odds (finding 6.1)
+  ---
+  duration_ms: 180.632067
+  type: 'test'
+  ...
+# Subtest: tick rule flags bars with missing volume and adds nothing for them
+ok 153 - tick rule flags bars with missing volume and adds nothing for them
+  ---
+  duration_ms: 22.575944
+  type: 'test'
+  ...
+# Subtest: loader resolves @shared alias
+ok 154 - loader resolves @shared alias
+  ---
+  duration_ms: 21.467801
+  type: 'test'
+  ...
+# Subtest: unit guard: a SPY-scale level is never measured against SPX spot
+ok 155 - unit guard: a SPY-scale level is never measured against SPX spot
+  ---
+  duration_ms: 2.547096
+  type: 'test'
+  ...
+# Subtest: dealer levels from the Schwab $SPX chain: walls, max pain, gamma sign (hand-checked)
+ok 156 - dealer levels from the Schwab $SPX chain: walls, max pain, gamma sign (hand-checked)
+  ---
+  duration_ms: 14.497889
+  type: 'test'
+  ...
+# Subtest: dealer levels refuse a non-Schwab, stale or spot-less chain (unavailable, never a substitute)
+ok 157 - dealer levels refuse a non-Schwab, stale or spot-less chain (unavailable, never a substitute)
+  ---
+  duration_ms: 0.308517
+  type: 'test'
+  ...
+# Subtest: dealer levels: cached, flagged-stale, unknown-age or other-symbol chains are missing (fix round items 2, 7)
+ok 158 - dealer levels: cached, flagged-stale, unknown-age or other-symbol chains are missing (fix round items 2, 7)
+  ---
+  duration_ms: 14.285681
+  type: 'test'
+  ...
+# Subtest: feature dict v2: same-index distances, gamma sign at spot, NaN for missing (never 0)
+ok 159 - feature dict v2: same-index distances, gamma sign at spot, NaN for missing (never 0)
+  ---
+  duration_ms: 3.812134
+  type: 'test'
+  ...
+# Subtest: feature dict v2: SPY-scale dealer levels against SPX spot are all missing, with a reason
+ok 160 - feature dict v2: SPY-scale dealer levels against SPX spot are all missing, with a reason
+  ---
+  duration_ms: 1.363942
+  type: 'test'
+  ...
+# Subtest: feature dict v2: no chain, no bars, no VIX -> NaN + reasons, serialized as JSON null
+ok 161 - feature dict v2: no chain, no bars, no VIX -> NaN + reasons, serialized as JSON null
+  ---
+  duration_ms: 0.732821
+  type: 'test'
+  ...
+# Subtest: features use only today's ET session bars: yesterday's bars never leak in (fix round item 3)
+ok 162 - features use only today's ET session bars: yesterday's bars never leak in (fix round item 3)
+  ---
+  duration_ms: 3.755357
+  type: 'test'
+  ...
+# Subtest: session realized vol per bar: RMS of 5-minute log returns, NaN below 12 returns
+ok 163 - session realized vol per bar: RMS of 5-minute log returns, NaN below 12 returns
+  ---
+  duration_ms: 0.456865
+  type: 'test'
+  ...
+# Subtest: baseline cone: hand-computed quantiles (same numbers as the Python checks)
+ok 164 - baseline cone: hand-computed quantiles (same numbers as the Python checks)
+  ---
+  duration_ms: 0.923358
+  type: 'test'
+  ...
+# Subtest: baseline cone with intraday periodicity (Andersen-Bollerslev): hand-computed, parity with forecast_eval.py
+ok 165 - baseline cone with intraday periodicity (Andersen-Bollerslev): hand-computed, parity with forecast_eval.py
+  ---
+  duration_ms: 0.628586
+  type: 'test'
+  ...
+# Subtest: served band: an unpromoted or synthetic model is never drawn; the baseline cone is, labeled
+ok 166 - served band: an unpromoted or synthetic model is never drawn; the baseline cone is, labeled
+  ---
+  duration_ms: 0.933477
+  type: 'test'
+  ...
+# Subtest: served band: the synthetic morning model is never blended; a promoted one is, and the label says so
+ok 167 - served band: the synthetic morning model is never blended; a promoted one is, and the label says so
+  ---
+  duration_ms: 1.01574
+  type: 'test'
+  ...
+# Subtest: live demotion: Kupiec p < 0.01 on >= 20 scored days at any horizon demotes every promoted model in the band
+ok 168 - live demotion: Kupiec p < 0.01 on >= 20 scored days at any horizon demotes every promoted model in the band
+  ---
+  duration_ms: 1.565218
+  type: 'test'
+  ...
+# Subtest: ML Lab levels: $SPX chain levels, SPY through the live quote ratio, unavailable without one
+ok 169 - ML Lab levels: $SPX chain levels, SPY through the live quote ratio, unavailable without one
+  ---
+  duration_ms: 0.821497
+  type: 'test'
+  ...
+# Subtest: ML sidecar (python): DM size (fixed-smoothing), periodicity, promotion gate, incumbent demotion, false promotions, schema-checked serving
+ok 170 - ML sidecar (python): DM size (fixed-smoothing), periodicity, promotion gate, incumbent demotion, false promotions, schema-checked serving # SKIP python3 with numpy, pandas, scipy, scikit-learn and joblib not available
+  ---
+  duration_ms: 173.337176
+  type: 'test'
+  ...
+# Subtest: contractExposure: $ GEX, vanna, charm, vomma, zomma for 10 contracts (hand-computed)
+ok 171 - contractExposure: $ GEX, vanna, charm, vomma, zomma for 10 contracts (hand-computed)
+  ---
+  duration_ms: 2.473859
+  type: 'test'
+  ...
+# Subtest: contractExposure: each $ figure equals a finite difference of Black-Scholes
+ok 172 - contractExposure: each $ figure equals a finite difference of Black-Scholes
+  ---
+  duration_ms: 0.79615
+  type: 'test'
+  ...
+# Subtest: 0DTE charm: $ delta left to lose to settlement, not an extrapolated rate (before/after)
+ok 173 - 0DTE charm: $ delta left to lose to settlement, not an extrapolated rate (before/after)
+  ---
+  duration_ms: 0.330609
+  type: 'test'
+  ...
+# Subtest: contractExposure: unusable inputs give zeros, never NaN
+ok 174 - contractExposure: unusable inputs give zeros, never NaN
+  ---
+  duration_ms: 0.460792
+  type: 'test'
+  ...
+# Subtest: charmTiltNorm: -netCharm / gross $GEX, clamped at +-0.15
+ok 175 - charmTiltNorm: -netCharm / gross $GEX, clamped at +-0.15
+  ---
+  duration_ms: 0.213269
+  type: 'test'
+  ...
+# Subtest: modelThetaToClose: PM 0DTE loses its whole extrinsic by the close (vs theta x minutes)
+ok 176 - modelThetaToClose: PM 0DTE loses its whole extrinsic by the close (vs theta x minutes)
+  ---
+  duration_ms: 3.296909
+  type: 'test'
+  ...
+# Subtest: modelThetaToClose: half day, ITM put keeps intrinsic; a 1DTE keeps value past the close
+ok 177 - modelThetaToClose: half day, ITM put keeps intrinsic; a 1DTE keeps value past the close
+  ---
+  duration_ms: 0.797362
+  type: 'test'
+  ...
+# Subtest: modelThetaToClose: settled contract or no sigma -> null (caller falls back)
+ok 178 - modelThetaToClose: settled contract or no sigma -> null (caller falls back)
+  ---
+  duration_ms: 0.51292
+  type: 'test'
+  ...
+# Subtest: chainAudit DEX: delta x OI x 100 x S dollars; Schwab -999 sentinel skipped
+ok 179 - chainAudit DEX: delta x OI x 100 x S dollars; Schwab -999 sentinel skipped
+  ---
+  duration_ms: 8.766915
+  type: 'test'
+  ...
+# Subtest: heatseeker: a -999 vendor gamma contributes $0 GEX, a valid one gamma x OI x 100 x S^2 x 0.01
+ok 180 - heatseeker: a -999 vendor gamma contributes $0 GEX, a valid one gamma x OI x 100 x S^2 x 0.01
+  ---
+  duration_ms: 8.69488
+  type: 'test'
+  ...
+# Subtest: exposureProfile charm: finite delta change over one day x OI x 100 x S (r, q as given)
+ok 181 - exposureProfile charm: finite delta change over one day x OI x 100 x S (r, q as given)
+  ---
+  duration_ms: 3.423927
+  type: 'test'
+  ...
+# Subtest: pickEarningsExpiry: AMC needs an expiry after the report day, BMO may use it
+ok 182 - pickEarningsExpiry: AMC needs an expiry after the report day, BMO may use it
+  ---
+  duration_ms: 0.448429
+  type: 'test'
+  ...
+# Subtest: CLV/trade-log dollars: toCents rounds halves away from zero for losses
+ok 183 - CLV/trade-log dollars: toCents rounds halves away from zero for losses
+  ---
+  duration_ms: 0.193402
+  type: 'test'
+  ...
+# Subtest: gammaBudgetContracts: $1M budget, S 6,700, sigma 17%, 1 day, 10 bp -> 420 contracts, $998,930 premium
+ok 184 - gammaBudgetContracts: $1M budget, S 6,700, sigma 17%, 1 day, 10 bp -> 420 contracts, $998,930 premium
+  ---
+  duration_ms: 0.425195
+  type: 'test'
+  ...
+# Subtest: roundTripFeePct: 2 x fee / (ask x 100); index root without a fee is not $0
+ok 185 - roundTripFeePct: 2 x fee / (ask x 100); index root without a fee is not $0
+  ---
+  duration_ms: 0.41145
+  type: 'test'
+  ...
+# Subtest: deriveSessionBars: a 13:00 half day ignores prints after the close
+ok 186 - deriveSessionBars: a 13:00 half day ignores prints after the close
+  ---
+  duration_ms: 3.905989
+  type: 'test'
+  ...
+# Subtest: intradayTapeState: an empty tape is no_data with its reason, never bars
+ok 187 - intradayTapeState: an empty tape is no_data with its reason, never bars
+  ---
+  duration_ms: 1.38961
+  type: 'test'
+  ...
+# Subtest: gexByStrikeFromChain: missing last price is no_spot (old: spot = 1); with spot, $ per 1% by strike
+ok 188 - gexByStrikeFromChain: missing last price is no_spot (old: spot = 1); with spot, $ per 1% by strike
+  ---
+  duration_ms: 1.926464
+  type: 'test'
+  ...
+# Subtest: whaleFireSnapshot: premium = volume x mark x 100 for the same fire
+ok 189 - whaleFireSnapshot: premium = volume x mark x 100 for the same fire
+  ---
+  duration_ms: 0.242794
+  type: 'test'
+  ...
+# Subtest: 0DTE forward GEX basis: Black-Scholes gamma with r 5%, q 1.3%, our T (same as Killbox)
+ok 190 - 0DTE forward GEX basis: Black-Scholes gamma with r 5%, q 1.3%, our T (same as Killbox)
+  ---
+  duration_ms: 0.170359
+  type: 'test'
+  ...
+# Subtest: dollar gamma: $ per 1% move per contract, multiplier 100 (hand-computed)
+ok 191 - dollar gamma: $ per 1% move per contract, multiplier 100 (hand-computed)
+  ---
+  duration_ms: 2.949399
+  type: 'test'
+  ...
+# Subtest: put gamma form equals call gamma form for any r, q (Hull: identical gamma)
+ok 192 - put gamma form equals call gamma form for any r, q (Hull: identical gamma)
+  ---
+  duration_ms: 0.627113
+  type: 'test'
+  ...
+# Subtest: re-priced flip matches the closed-form root (equal weights)
+ok 193 - re-priced flip matches the closed-form root (equal weights)
+  ---
+  duration_ms: 0.859178
+  type: 'test'
+  ...
+# Subtest: put-heavy 0DTE chain: re-priced flip exists, cumulative-by-strike finds none
+ok 194 - put-heavy 0DTE chain: re-priced flip exists, cumulative-by-strike finds none
+  ---
+  duration_ms: 0.911546
+  type: 'test'
+  ...
+# Subtest: 15 minutes to expiry: underflowed zeros are not reported as crossings
+ok 195 - 15 minutes to expiry: underflowed zeros are not reported as crossings
+  ---
+  duration_ms: 0.98304
+  type: 'test'
+  ...
+# Subtest: no usable contracts -> flip and GEX are missing (null), not zero
+ok 196 - no usable contracts -> flip and GEX are missing (null), not zero
+  ---
+  duration_ms: 0.22428
+  type: 'test'
+  ...
+# Subtest: rowsFromChain: Schwab shape, percent IV, -999 sentinel dropped, T override
+ok 197 - rowsFromChain: Schwab shape, percent IV, -999 sentinel dropped, T override
+  ---
+  duration_ms: 1.414997
+  type: 'test'
+  ...
+# Subtest: BL on noisy flat-vol 0DTE calls: smoothed P(up>1%) ~ true, raw is far off
+ok 198 - BL on noisy flat-vol 0DTE calls: smoothed P(up>1%) ~ true, raw is far off
+  ---
+  duration_ms: 434.847654
+  type: 'test'
+  ...
+# Subtest: BL density is non-negative, integrates to 1, and recovers a clean skewed smile exactly
+ok 199 - BL density is non-negative, integrates to 1, and recovers a clean skewed smile exactly
+  ---
+  duration_ms: 514.611285
+  type: 'test'
+  ...
+# Subtest: BL on noisy skewed puts+calls: probabilities within 0.01 of truth
+ok 200 - BL on noisy skewed puts+calls: probabilities within 0.01 of truth
+  ---
+  duration_ms: 143.120141
+  type: 'test'
+  ...
+# Subtest: straddle EM: hand-computed ATM case and Brenner-Subrahmanyam 0.8 rule
+ok 201 - straddle EM: hand-computed ATM case and Brenner-Subrahmanyam 0.8 rule
+  ---
+  duration_ms: 0.572171
+  type: 'test'
+  ...
+# Subtest: straddle EM off-ATM: parity forward and bracketing interpolation recover F and v
+ok 202 - straddle EM off-ATM: parity forward and bracketing interpolation recover F and v
+  ---
+  duration_ms: 0.297937
+  type: 'test'
+  ...
+# Subtest: straddle EM: no two-sided ATM quotes -> null (caller falls back, labeled)
+ok 203 - straddle EM: no two-sided ATM quotes -> null (caller falls back, labeled)
+  ---
+  duration_ms: 0.114515
+  type: 'test'
+  ...
+# Subtest: scenario odds: lognormal known answer, sums to 1, falls with distance
+ok 204 - scenario odds: lognormal known answer, sums to 1, falls with distance
+  ---
+  duration_ms: 1.815106
+  type: 'test'
+  ...
+# Subtest: toPercentTriple always sums to 100
+ok 205 - toPercentTriple always sums to 100
+  ---
+  duration_ms: 0.266899
+  type: 'test'
+  ...
+# Subtest: Schwab expiry adapter: mids, PM-settled preference, expiry pick
+ok 206 - Schwab expiry adapter: mids, PM-settled preference, expiry pick
+  ---
+  duration_ms: 0.671306
+  type: 'test'
+  ...
+# Subtest: horizon target expiries (ET calendar)
+ok 207 - horizon target expiries (ET calendar)
+  ---
+  duration_ms: 18.495779
+  type: 'test'
+  ...
+# Subtest: 25-delta IV interpolated in delta space; no bracket -> null
+ok 208 - 25-delta IV interpolated in delta space; no bracket -> null
+  ---
+  duration_ms: 3.172626
+  type: 'test'
+  ...
+# Subtest: dollarGexPerPct: $ per 1% move, x100 contract multiplier (hand-computed)
+ok 209 - dollarGexPerPct: $ per 1% move, x100 contract multiplier (hand-computed)
+  ---
+  duration_ms: 3.475874
+  type: 'test'
+  ...
+# Subtest: rows with a supplied T <= 0 are settled and dropped; tYears sees the contract
+ok 210 - rows with a supplied T <= 0 are settled and dropped; tYears sees the contract
+  ---
+  duration_ms: 1.588101
+  type: 'test'
+  ...
+# Subtest: audit scenarioProb = Q-probability of exactly the graded events (calibration.ts)
+ok 211 - audit scenarioProb = Q-probability of exactly the graded events (calibration.ts)
+  ---
+  duration_ms: 1.362329
+  type: 'test'
+  ...
+# Subtest: heatseeker: Net GEX is the full-expiry re-priced sum, so its sign matches gexAtSpotRepriced even when vendor gamma disagrees
+ok 212 - heatseeker: Net GEX is the full-expiry re-priced sum, so its sign matches gexAtSpotRepriced even when vendor gamma disagrees
+  ---
+  duration_ms: 20.265802
+  type: 'test'
+  ...
+# Subtest: gammaProfile: two-lobe flip matches the closed form S* = sqrt(K1 K2) exp(-sigma^2 T / 2)
+ok 213 - gammaProfile: two-lobe flip matches the closed form S* = sqrt(K1 K2) exp(-sigma^2 T / 2)
+  ---
+  duration_ms: 0.41286
+  type: 'test'
+  ...
+# Subtest: gammaProfile: a 0DTE far-wing sign change below 1e-6 of peak |GEX| is discarded, real flips kept
+ok 214 - gammaProfile: a 0DTE far-wing sign change below 1e-6 of peak |GEX| is discarded, real flips kept
+  ---
+  duration_ms: 0.380633
+  type: 'test'
+  ...
+# Subtest: dealer sensitivity: all-short GEX = -(call GEX + put GEX); calls-flat = -put GEX; robustness flag
+ok 215 - dealer sensitivity: all-short GEX = -(call GEX + put GEX); calls-flat = -put GEX; robustness flag
+  ---
+  duration_ms: 3.006529
+  type: 'test'
+  ...
+# Subtest: flipInputs: weight, universe and DTE range label
+ok 216 - flipInputs: weight, universe and DTE range label
+  ---
+  duration_ms: 0.435635
+  type: 'test'
+  ...
+# Subtest: chain audit: settlement probability per strike = lognormal N(d2(K-w/2)) - N(d2(K+w/2)) on a flat-vol chain
+ok 217 - chain audit: settlement probability per strike = lognormal N(d2(K-w/2)) - N(d2(K+w/2)) on a flat-vol chain
+  ---
+  duration_ms: 190.031234
+  type: 'test'
+  ...
+# Subtest: chain audit: settlement probability is 'unavailable' on a thin chain, never a made-up share
+ok 218 - chain audit: settlement probability is 'unavailable' on a thin chain, never a made-up share
+  ---
+  duration_ms: 2.087236
+  type: 'test'
+  ...
+# Subtest: chain audit: charm reported separately for 0DTE (to settlement) and other expiries (one day); vanna conventions labeled
+ok 219 - chain audit: charm reported separately for 0DTE (to settlement) and other expiries (one day); vanna conventions labeled
+  ---
+  duration_ms: 13.663768
+  type: 'test'
+  ...
+# Subtest: cone tails: 1-day Student-t(4) quantile matches the closed form; n-day sums match seeded Monte Carlo
+ok 220 - cone tails: 1-day Student-t(4) quantile matches the closed form; n-day sums match seeded Monte Carlo
+  ---
+  duration_ms: 1289.024554
+  type: 'test'
+  ...
+# Subtest: cone: zero drift (q50 = spot) and symmetric log bands
+ok 221 - cone: zero drift (q50 = spot) and symmetric log bands
+  ---
+  duration_ms: 0.959536
+  type: 'test'
+  ...
+# Subtest: stableTail: modified z-score uses Phi^-1(0.75) = 0.6745; percentile compares like with like; missing is NaN, not 0
+ok 222 - stableTail: modified z-score uses Phi^-1(0.75) = 0.6745; percentile compares like with like; missing is NaN, not 0
+  ---
+  duration_ms: 3.974077
+  type: 'test'
+  ...
+# Subtest: touch probability: reflection formula vs seeded Brownian Monte Carlo (Broadie-Glasserman-Kou continuity correction)
+ok 223 - touch probability: reflection formula vs seeded Brownian Monte Carlo (Broadie-Glasserman-Kou continuity correction)
+  ---
+  duration_ms: 1433.598955
+  type: 'test'
+  ...
+# Subtest: target derivation touch odds: equal the walk-forward rate at the median distance, normal-tail fall-off beyond
+ok 224 - target derivation touch odds: equal the walk-forward rate at the median distance, normal-tail fall-off beyond
+  ---
+  duration_ms: 0.357158
+  type: 'test'
+  ...
+# Subtest: scenario odds: a bull target at or below spot has touch probability 1, not 2 x P(close above)
+ok 225 - scenario odds: a bull target at or below spot has touch probability 1, not 2 x P(close above)
+  ---
+  duration_ms: 0.519142
+  type: 'test'
+  ...
+# Subtest: HAR-RV: OLS recovers known coefficients from a simulated HAR process (Corsi 2009 eq. 8)
+ok 226 - HAR-RV: OLS recovers known coefficients from a simulated HAR process (Corsi 2009 eq. 8)
+  ---
+  duration_ms: 31.514456
+  type: 'test'
+  ...
+# Subtest: HAR-RV vol forecast: constant-vol random walk forecasts its own vol; spread z-score and verdict
+ok 227 - HAR-RV vol forecast: constant-vol random walk forecasts its own vol; spread z-score and verdict
+  ---
+  duration_ms: 4.92728
+  type: 'test'
+  ...
+# Subtest: fix 1: no material gamma at spot -> null sign; a flip inside a sub-floor valley is flagged
+ok 228 - fix 1: no material gamma at spot -> null sign; a flip inside a sub-floor valley is flagged
+  ---
+  duration_ms: 0.409136
+  type: 'test'
+  ...
+# Subtest: fix 2: a convention with all-zero weights is an observed 0, not missing; robustness over conventions with values
+ok 229 - fix 2: a convention with all-zero weights is an observed 0, not missing; robustness over conventions with values
+  ---
+  duration_ms: 0.866591
+  type: 'test'
+  ...
+# Subtest: fix 4: Heatseeker on an empty chain returns null totals and dataState unavailable, never zeros
+ok 230 - fix 4: Heatseeker on an empty chain returns null totals and dataState unavailable, never zeros
+  ---
+  duration_ms: 0.21366
+  type: 'test'
+  ...
+# Subtest: fix 11: one r/q basis; q = 0 for single names; carry-aware vanna and charm vs finite differences
+ok 231 - fix 11: one r/q basis; q = 0 for single names; carry-aware vanna and charm vs finite differences
+  ---
+  duration_ms: 2.172785
+  type: 'test'
+  ...
+# Subtest: fix 8/10: pin fit uses one settlement style (PM over AM); strikes ranked per point; -999 greeks are not 'greeks'
+ok 232 - fix 8/10: pin fit uses one settlement style (PM over AM); strikes ranked per point; -999 greeks are not 'greeks'
+  ---
+  duration_ms: 789.289529
+  type: 'test'
+  ...
+# Subtest: all server/shared .ts files parse after type stripping
+ok 233 - all server/shared .ts files parse after type stripping
+  ---
+  duration_ms: 898.659541
+  type: 'test'
+  ...
+# Subtest: N1-1 ladder: disjoint segments that compose every Models horizon and the 30-DTE headline
+ok 234 - N1-1 ladder: disjoint segments that compose every Models horizon and the 30-DTE headline
+  ---
+  duration_ms: 2.579296
+  type: 'test'
+  ...
+# Subtest: N1-1 single-tenor windows: +-max(2, ceil(5% t)) days, wide fallback 0.4t-1.6t
+ok 235 - N1-1 single-tenor windows: +-max(2, ceil(5% t)) days, wide fallback 0.4t-1.6t
+  ---
+  duration_ms: 0.292187
+  type: 'test'
+  ...
+# Subtest: N1-1 strike plans: 25-delta wing for skew, ATM-only for ATM IV
+ok 236 - N1-1 strike plans: 25-delta wing for skew, ATM-only for ATM IV
+  ---
+  duration_ms: 0.779048
+  type: 'test'
+  ...
+# Subtest: N1-1 / N1-2 merge: union of disjoint segments, oldest asOf, worst coverage, newest underlying
+ok 237 - N1-1 / N1-2 merge: union of disjoint segments, oldest asOf, worst coverage, newest underlying
+  ---
+  duration_ms: 0.706972
+  type: 'test'
+  ...
+# Subtest: N1-2 chain asOf: Schwab underlying quoteTime, receive time only as fallback
+ok 238 - N1-2 chain asOf: Schwab underlying quoteTime, receive time only as fallback
+  ---
+  duration_ms: 0.280716
+  type: 'test'
+  ...
+# Subtest: N2-1 sensitivity is two-sided: f* = |C - P| / (2 max(C, P)) decides long AND short readings
+ok 239 - N2-1 sensitivity is two-sided: f* = |C - P| / (2 max(C, P)) decides long AND short readings
+  ---
+  duration_ms: 5.443686
+  type: 'test'
+  ...
+# Subtest: N3-3 regime: missing, exact 0 and sub-floor GEX are unknown, never negative
+ok 240 - N3-3 regime: missing, exact 0 and sub-floor GEX are unknown, never negative
+  ---
+  duration_ms: 0.335147
+  type: 'test'
+  ...
+# Subtest: N2-2 walls use the flip's re-priced gamma: a vendor-gamma outlier no longer sets the call wall
+ok 241 - N2-2 walls use the flip's re-priced gamma: a vendor-gamma outlier no longer sets the call wall
+  ---
+  duration_ms: 2.995756
+  type: 'test'
+  ...
+# Subtest: N2-2 Heatseeker DEX: BS delta on our clock; vendor delta only without sigma; neither -> null, counted
+ok 242 - N2-2 Heatseeker DEX: BS delta on our clock; vendor delta only without sigma; neither -> null, counted
+  ---
+  duration_ms: 7.007181
+  type: 'test'
+  ...
+# Subtest: N3-1 Student-t sum quantiles by FFT: closed-form t(4) at n = 1, direct convolution at n = 5, 10
+ok 243 - N3-1 Student-t sum quantiles by FFT: closed-form t(4) at n = 1, direct convolution at n = 5, 10
+  ---
+  duration_ms: 933.863163
+  type: 'test'
+  ...
+# Subtest: N3-1 ATM IV term structure: strike interpolation to spot, total-variance interpolation in T, monotone
+ok 244 - N3-1 ATM IV term structure: strike interpolation to spot, total-variance interpolation in T, monotone
+  ---
+  duration_ms: 0.9194
+  type: 'test'
+  ...
+# Subtest: N3-1 cone bands: zero drift (median = spot), qP = spot x exp(z_P(n) sqrt(w))
+ok 245 - N3-1 cone bands: zero drift (median = spot), qP = spot x exp(z_P(n) sqrt(w))
+  ---
+  duration_ms: 282.003031
+  type: 'test'
+  ...
+# Subtest: N3-2 quarterly trajectory: BASE = spot every week, tilts only in the labelled scenario line
+ok 246 - N3-2 quarterly trajectory: BASE = spot every week, tilts only in the labelled scenario line
+  ---
+  duration_ms: 292.876497
+  type: 'test'
+  ...
+# Subtest: S9 band extension: sqrt-time from the 60-min band, median held, stops at the (half-day) close
+ok 247 - S9 band extension: sqrt-time from the 60-min band, median held, stops at the (half-day) close
+  ---
+  duration_ms: 0.735026
+  type: 'test'
+  ...
+# Subtest: S9 VIX fallback: per-bar sigma = sqrt(14.90 / 36.30) x VIX / 100 / sqrt(252 x 78)
+ok 248 - S9 VIX fallback: per-bar sigma = sqrt(14.90 / 36.30) x VIX / 100 / sqrt(252 x 78)
+  ---
+  duration_ms: 0.226314
+  type: 'test'
+  ...
+# Subtest: R3-2.1 bands are exp(mean -+ sd) of the history, not fixed 0.75 / 1.05
+ok 249 - R3-2.1 bands are exp(mean -+ sd) of the history, not fixed 0.75 / 1.05
+  ---
+  duration_ms: 1.711382
+  type: 'test'
+  ...
+# Subtest: R3-2.1 no history -> no bands, the value is not coloured as a zone
+ok 250 - R3-2.1 no history -> no bands, the value is not coloured as a zone
+  ---
+  duration_ms: 0.244207
+  type: 'test'
+  ...
+# Subtest: R3-2.2 only fresh chains append samples
+ok 251 - R3-2.2 only fresh chains append samples
+  ---
+  duration_ms: 0.177522
+  type: 'test'
+  ...
+# Subtest: R3-2.2 fewer than MIN_SERIES_SAMPLES -> empty series, insufficient_samples (no synthesis)
+ok 252 - R3-2.2 fewer than MIN_SERIES_SAMPLES -> empty series, insufficient_samples (no synthesis)
+  ---
+  duration_ms: 0.726529
+  type: 'test'
+  ...
+# Subtest: R3-2.2 current volumes: live / last_sample within max age / unavailable as null
+ok 253 - R3-2.2 current volumes: live / last_sample within max age / unavailable as null
+  ---
+  duration_ms: 0.355635
+  type: 'test'
+  ...
+# Subtest: R3-2.2 side breakdown re-used only within the same max age
+ok 254 - R3-2.2 side breakdown re-used only within the same max age
+  ---
+  duration_ms: 0.157695
+  type: 'test'
+  ...
+# Subtest: R3-2.3 payload passes method, tradeLevelFromMs, tradeLevelCounts; label follows the method
+ok 255 - R3-2.3 payload passes method, tradeLevelFromMs, tradeLevelCounts; label follows the method
+  ---
+  duration_ms: 1.234069
+  type: 'test'
+  ...
+# Subtest: R3-2.4 leeReadySign: quote rule vs prior mid, tick rule at the mid (Lee & Ready 1991)
+ok 256 - R3-2.4 leeReadySign: quote rule vs prior mid, tick rule at the mid (Lee & Ready 1991)
+  ---
+  duration_ms: 0.565267
+  type: 'test'
+  ...
+# Subtest: R3-2.4 option side book: hand-computed blocks, premium x100, reconnect and day resets
+ok 257 - R3-2.4 option side book: hand-computed blocks, premium x100, reconnect and day resets
+  ---
+  duration_ms: 0.811999
+  type: 'test'
+  ...
+# Subtest: R3-2.4 stream side summary: coverage of the chain's day volume
+ok 258 - R3-2.4 stream side summary: coverage of the chain's day volume
+  ---
+  duration_ms: 0.634407
+  type: 'test'
+  ...
+# Subtest: R3-2.5 opening-side bound V - OI and fully-opening bound V - 2 OI (hand-computed)
+ok 259 - R3-2.5 opening-side bound V - OI and fully-opening bound V - 2 OI (hand-computed)
+  ---
+  duration_ms: 0.309449
+  type: 'test'
+  ...
+# Subtest: R3-2.6 bias points: missing VIX / term ratio / market score add nothing (not VIX 0, not ratio 1.00)
+ok 260 - R3-2.6 bias points: missing VIX / term ratio / market score add nothing (not VIX 0, not ratio 1.00)
+  ---
+  duration_ms: 0.34189
+  type: 'test'
+  ...
+# Subtest: R3-2.6 playbook text: no structure / size advice; missing VIX says unavailable
+ok 261 - R3-2.6 playbook text: no structure / size advice; missing VIX says unavailable
+  ---
+  duration_ms: 2.358373
+  type: 'test'
+  ...
+# Subtest: R3-2.6 squeeze: missing VIX / term ratio do not fire rules and are listed as unavailable
+ok 262 - R3-2.6 squeeze: missing VIX / term ratio do not fire rules and are listed as unavailable
+  ---
+  duration_ms: 0.430986
+  type: 'test'
+  ...
+# Subtest: R3-2.7 output filter drops trade, structure, size, probability and edge-claim sentences
+ok 263 - R3-2.7 output filter drops trade, structure, size, probability and edge-claim sentences
+  ---
+  duration_ms: 4.616599
+  type: 'test'
+  ...
+# Subtest: R3-2.7 scrubBrief nulls confidence and case weights whatever the model returned
+ok 264 - R3-2.7 scrubBrief nulls confidence and case weights whatever the model returned
+  ---
+  duration_ms: 0.43301
+  type: 'test'
+  ...
+# Subtest: R3-2.7 deterministic brief source: no hand-set weights / confidence, no trade or size text
+ok 265 - R3-2.7 deterministic brief source: no hand-set weights / confidence, no trade or size text
+  ---
+  duration_ms: 3.881964
+  type: 'test'
+  ...
+# Subtest: R3-2.8 vol term: VIX9D or VIX3M missing -> driver unavailable, not a calm curve
+ok 266 - R3-2.8 vol term: VIX9D or VIX3M missing -> driver unavailable, not a calm curve
+  ---
+  duration_ms: 0.243296
+  type: 'test'
+  ...
+# Subtest: R3-2.8 STRIKE requires short gamma, expanding range and directional tick volume
+ok 267 - R3-2.8 STRIKE requires short gamma, expanding range and directional tick volume
+  ---
+  duration_ms: 0.262491
+  type: 'test'
+  ...
+# Subtest: R3-2.9 REST chain bid older than the max age is not usable (NO_QUOTE)
+ok 268 - R3-2.9 REST chain bid older than the max age is not usable (NO_QUOTE)
+  ---
+  duration_ms: 0.219101
+  type: 'test'
+  ...
+# Subtest: R3-2.10 prediction logger asks masterAlpha for no narrative; the LLM call is gated
+ok 269 - R3-2.10 prediction logger asks masterAlpha for no narrative; the LLM call is gated
+  ---
+  duration_ms: 0.489566
+  type: 'test'
+  ...
+# Subtest: gauge weights: grader's pinned dealer-gamma case is excluded, not 98% of the composite
+ok 270 - gauge weights: grader's pinned dealer-gamma case is excluded, not 98% of the composite
+  ---
+  duration_ms: 38.821214
+  type: 'test'
+  ...
+# Subtest: gauge weights: block of near-duplicates counts about once (correlation HRP known answer)
+ok 271 - gauge weights: block of near-duplicates counts about once (correlation HRP known answer)
+  ---
+  duration_ms: 89.738317
+  type: 'test'
+  ...
+# Subtest: seasonality: hold-out verdict attaches to the training-picked window, not the full-sample best
+ok 272 - seasonality: hold-out verdict attaches to the training-picked window, not the full-sample best
+  ---
+  duration_ms: 150.394333
+  type: 'test'
+  ...
+# Subtest: regime z test: wild-bootstrap null is sized under GARCH(1,1) (grader's model, w = 65)
+ok 273 - regime z test: wild-bootstrap null is sized under GARCH(1,1) (grader's model, w = 65)
+  ---
+  duration_ms: 1227.328034
+  type: 'test'
+  ...
+# Subtest: canary thresholds: history built on the live subset (weights, R block, transform by original index)
+ok 274 - canary thresholds: history built on the live subset (weights, R block, transform by original index)
+  ---
+  duration_ms: 17.97828
+  type: 'test'
+  ...
+# Subtest: 0DTE replay: a T1 touch in the bar that closes a 5-minute candle below the stop happened first
+ok 275 - 0DTE replay: a T1 touch in the bar that closes a 5-minute candle below the stop happened first
+  ---
+  duration_ms: 40.993774
+  type: 'test'
+  ...
+# Subtest: stream: every real-time option update reaches observers (never a delayed one); alert owner ranks after armed
+ok 276 - stream: every real-time option update reaches observers (never a delayed one); alert owner ranks after armed
+  ---
+  duration_ms: 50.507709
+  type: 'test'
+  ...
+# Subtest: stream marks: bid/ask changes all logged, unchanged quote on a 5 s heartbeat, delayed never, quote time used
+ok 277 - stream marks: bid/ask changes all logged, unchanged quote on a 5 s heartbeat, delayed never, quote time used
+  ---
+  duration_ms: 1.351692
+  type: 'test'
+  ...
+# Subtest: 0DTE grader bars provenance: counts by origin; stream-last-price bars are named
+ok 278 - 0DTE grader bars provenance: counts by origin; stream-last-price bars are named
+  ---
+  duration_ms: 2.098881
+  type: 'test'
+  ...
+# Subtest: edge stats: Student-t quantiles (table values) and the CR1 clustered difference (hand computed)
+ok 279 - edge stats: Student-t quantiles (table values) and the CR1 clustered difference (hand computed)
+  ---
+  duration_ms: 29.569767
+  type: 'test'
+  ...
+# Subtest: edge stats: same-day alerts share a path -> the independent z over-rejects, the day-clustered test holds its level
+ok 280 - edge stats: same-day alerts share a path -> the independent z over-rejects, the day-clustered test holds its level
+  ---
+  duration_ms: 155.542108
+  type: 'test'
+  ...
+# Subtest: crypto survivorship: worst-case rug rate counts NO_DATA as RUGGED; gate on first-ENTER coins and the no-data share
+ok 281 - crypto survivorship: worst-case rug rate counts NO_DATA as RUGGED; gate on first-ENTER coins and the no-data share
+  ---
+  duration_ms: 24.1096
+  type: 'test'
+  ...
+# Subtest: crypto checks: missing sells is not ZERO sells; Jupiter fail-closed; holders need owners; FOMO not double counted
+ok 282 - crypto checks: missing sells is not ZERO sells; Jupiter fail-closed; holders need owners; FOMO not double counted
+  ---
+  duration_ms: 5.20511
+  type: 'test'
+  ...
+# Subtest: regime predictor: candidates carry a 0..100 heuristic score, not a probability claim
+ok 283 - regime predictor: candidates carry a 0..100 heuristic score, not a probability claim
+  ---
+  duration_ms: 98.330665
+  type: 'test'
+  ...
+# Subtest: composite: social gauge has a display label, history key unchanged
+ok 284 - composite: social gauge has a display label, history key unchanged
+  ---
+  duration_ms: 87.119147
+  type: 'test'
+  ...
+# Subtest: internal api: a handler that responds after returning is awaited; one that never responds ends in no_response
+ok 285 - internal api: a handler that responds after returning is awaited; one that never responds ends in no_response
+  ---
+  duration_ms: 77.786263
+  type: 'test'
+  ...
+# Subtest: self-calls: converted engines make no local HTTP hop; new routes are registered and allow-listed
+ok 286 - self-calls: converted engines make no local HTTP hop; new routes are registered and allow-listed
+  ---
+  duration_ms: 4.658747
+  type: 'test'
+  ...
+# Subtest: schwab token refresh failure logs status and error code only, never the body
+ok 287 - schwab token refresh failure logs status and error code only, never the body
+  ---
+  duration_ms: 0.53421
+  type: 'test'
+  ...
+# Subtest: UI: unavailable heatseeker is never 0, empty/feed-down chart states differ, one shared chip
+ok 288 - UI: unavailable heatseeker is never 0, empty/feed-down chart states differ, one shared chip
+  ---
+  duration_ms: 1.254387
+  type: 'test'
+  ...
+# Subtest: classifyRouteError: typed upstream error -> 503 with dataState and reason
+ok 289 - classifyRouteError: typed upstream error -> 503 with dataState and reason
+  ---
+  duration_ms: 1.796973
+  type: 'test'
+  ...
+# Subtest: classifyRouteError: Schwab disconnected + plain Error -> 503; connected -> 500; engine bug -> 500 either way
+ok 290 - classifyRouteError: Schwab disconnected + plain Error -> 503; connected -> 500; engine bug -> 500 either way
+  ---
+  duration_ms: 0.259706
+  type: 'test'
+  ...
+# Subtest: isUpstreamUnavailable recognises a duck-typed copy (second module instance)
+ok 291 - isUpstreamUnavailable recognises a duck-typed copy (second module instance)
+  ---
+  duration_ms: 0.152726
+  type: 'test'
+  ...
+# Subtest: parseUnavailableError: client reads 503 bodies as unavailable with reason, others as failed
+ok 292 - parseUnavailableError: client reads 503 bodies as unavailable with reason, others as failed
+  ---
+  duration_ms: 0.693497
+  type: 'test'
+  ...
+# Subtest: snapshot, unauthenticated Schwab: throws the typed error carrying a partial; route answers 200 partial
+ok 293 - snapshot, unauthenticated Schwab: throws the typed error carrying a partial; route answers 200 partial
+  ---
+  duration_ms: 0.88707
+  type: 'test'
+  ...
+# Subtest: snapshot: nothing useful left (no quotes, chain, social, F&G or headlines) -> 503 unavailable
+ok 294 - snapshot: nothing useful left (no quotes, chain, social, F&G or headlines) -> 503 unavailable
+  ---
+  duration_ms: 0.225181
+  type: 'test'
+  ...
+# Subtest: snapshot: a non-upstream error is not turned into 503/partial
+ok 295 - snapshot: a non-upstream error is not turned into 503/partial
+  ---
+  duration_ms: 0.222166
+  type: 'test'
+  ...
+# Subtest: snapshot: partial quotes (chain down, some quotes up) -> quotes section partial, values kept
+ok 296 - snapshot: partial quotes (chain down, some quotes up) -> quotes section partial, values kept
+  ---
+  duration_ms: 0.204613
+  type: 'test'
+  ...
+# Subtest: snapshot: chain with no underlying price -> upstream unavailable; other gamma errors are rethrown
+ok 297 - snapshot: chain with no underlying price -> upstream unavailable; other gamma errors are rethrown
+  ---
+  duration_ms: 0.90887
+  type: 'test'
+  ...
+# Subtest: snapshot: live chain assembles the full snapshot unchanged (SPY from chain spot when quote missing)
+ok 298 - snapshot: live chain assembles the full snapshot unchanged (SPY from chain spot when quote missing)
+  ---
+  duration_ms: 0.559988
+  type: 'test'
+  ...
+# Subtest: trade desk: snapshot and every intraday quote unavailable -> 503 with reason
+ok 299 - trade desk: snapshot and every intraday quote unavailable -> 503 with reason
+  ---
+  duration_ms: 0.278201
+  type: 'test'
+  ...
+# Subtest: trade desk: quotes present, snapshot unavailable -> 200 partial, gamma/squeeze/playbook/composite null
+ok 300 - trade desk: quotes present, snapshot unavailable -> 200 partial, gamma/squeeze/playbook/composite null
+  ---
+  duration_ms: 0.267932
+  type: 'test'
+  ...
+# Subtest: voices: no snapshot -> metrics null and claims 'unverified' (0 used to flag every VIX claim as conflicting)
+ok 301 - voices: no snapshot -> metrics null and claims 'unverified' (0 used to flag every VIX claim as conflicting)
+  ---
+  duration_ms: 1.150774
+  type: 'test'
+  ...
+# Subtest: daily playbook: unavailable snapshot propagates as the typed error (route 503), missing VIX too
+ok 302 - daily playbook: unavailable snapshot propagates as the typed error (route 503), missing VIX too
+  ---
+  duration_ms: 0.974433
+  type: 'test'
+  ...
+# Subtest: gammaZone: y? / missing / garbage normalise to unknown, never a regime
+ok 303 - gammaZone: y? / missing / garbage normalise to unknown, never a regime
+  ---
+  duration_ms: 1.993471
+  type: 'test'
+  ...
+# Subtest: gammaZone flip: no alert into or out of unknown; known->known fires once
+ok 304 - gammaZone flip: no alert into or out of unknown; known->known fires once
+  ---
+  duration_ms: 0.268843
+  type: 'test'
+  ...
+# Subtest: gammaZone consumers: discord, scheduler, 0DTE card, auditEnrich use the unknown state
+ok 305 - gammaZone consumers: discord, scheduler, 0DTE card, auditEnrich use the unknown state
+  ---
+  duration_ms: 2.304403
+  type: 'test'
+  ...
+# Subtest: regimePredictor: unknown gamma makes no trend/chop claim and is degraded
+ok 306 - regimePredictor: unknown gamma makes no trend/chop claim and is degraded
+  ---
+  duration_ms: 2.20196
+  type: 'test'
+  ...
+# Subtest: daily card: missing scenario / gamma / dfi / term render unavailable, not defaults
+ok 307 - daily card: missing scenario / gamma / dfi / term render unavailable, not defaults
+  ---
+  duration_ms: 0.478295
+  type: 'test'
+  ...
+# Subtest: daily card: observed values and the scenario source label are printed
+ok 308 - daily card: observed values and the scenario source label are printed
+  ---
+  duration_ms: 1.387106
+  type: 'test'
+  ...
+# Subtest: oauthErrorCode keeps only the RFC 6749 error code
+ok 309 - oauthErrorCode keeps only the RFC 6749 error code
+  ---
+  duration_ms: 0.678069
+  type: 'test'
+  ...
+# Subtest: Signals gamma: walls bracket spot and come from re-priced GEX, not vendor gamma
+ok 310 - Signals gamma: walls bracket spot and come from re-priced GEX, not vendor gamma
+  ---
+  duration_ms: 13.931519
+  type: 'test'
+  ...
+# Subtest: chain audit DEX: missing delta is excluded and reported, not summed as 0
+ok 311 - chain audit DEX: missing delta is excluded and reported, not summed as 0
+  ---
+  duration_ms: 1.933688
+  type: 'test'
+  ...
+# Subtest: edge brief: every order / odds phrasing is dropped in both modes; descriptive sentences kept
+ok 312 - edge brief: every order / odds phrasing is dropped in both modes; descriptive sentences kept
+  ---
+  duration_ms: 11.050678
+  type: 'test'
+  ...
+# Subtest: edge brief: verdict is filtered (SELL PREMIUM never reaches the chip)
+ok 313 - edge brief: verdict is filtered (SELL PREMIUM never reaches the chip)
+  ---
+  duration_ms: 1.10086
+  type: 'test'
+  ...
+# Subtest: news playbook: levels as context, no BUY/SELL/stop/T1/T2
+ok 314 - news playbook: levels as context, no BUY/SELL/stop/T1/T2
+  ---
+  duration_ms: 1.082766
+  type: 'test'
+  ...
+# Subtest: daily playbook: headline says '% wt, heuristic'; missing VIX9D/VIX3M is unavailable
+ok 315 - daily playbook: headline says '% wt, heuristic'; missing VIX9D/VIX3M is unavailable
+  ---
+  duration_ms: 1.710651
+  type: 'test'
+  ...
+# Subtest: quarterly cone: t(4)-sum quantile used by the cone matches a seeded Monte Carlo (n = 6)
+ok 316 - quarterly cone: t(4)-sum quantile used by the cone matches a seeded Monte Carlo (n = 6)
+  ---
+  duration_ms: 800.709818
+  type: 'test'
+  ...
+# Subtest: quarterly cone: flat 20% ATM IV -> known answer at week 1 and week 13, no damping or event bump
+ok 317 - quarterly cone: flat 20% ATM IV -> known answer at week 1 and week 13, no damping or event bump
+  ---
+  duration_ms: 362.789603
+  type: 'test'
+  ...
+# Subtest: quarterly cone: term interpolation is linear in total variance; fallback realized vol labelled; none -> unavailable
+ok 318 - quarterly cone: term interpolation is linear in total variance; fallback realized vol labelled; none -> unavailable
+  ---
+  duration_ms: 11.263789
+  type: 'test'
+  ...
+# Subtest: models path label does not use the raw GEX sign when gamma is unknown
+ok 319 - models path label does not use the raw GEX sign when gamma is unknown
+  ---
+  duration_ms: 1.11579
+  type: 'test'
+  ...
+# Subtest: ML Lab: extension caption is sqrt-time; no TAPE SYNTHETIC path; server never sends synthetic=true
+ok 320 - ML Lab: extension caption is sqrt-time; no TAPE SYNTHETIC path; server never sends synthetic=true
+  ---
+  duration_ms: 2.00185
+  type: 'test'
+  ...
+# Subtest: crypto peak sample SQL: raises peak only upward, peak_at moves with it, only OPEN rows of that pair
+ok 321 - crypto peak sample SQL: raises peak only upward, peak_at moves with it, only OPEN rows of that pair
+  ---
+  duration_ms: 0.801361
+  type: 'test'
+  ...
+# Subtest: crypto peak: helper, label and wiring
+ok 322 - crypto peak: helper, label and wiring
+  ---
+  duration_ms: 0.897481
+  type: 'test'
+  ...
+# Subtest: flow scan coverage: all failed -> unavailable, some -> partial, none -> ok (0 hits observed)
+ok 323 - flow scan coverage: all failed -> unavailable, some -> partial, none -> ok (0 hits observed)
+  ---
+  duration_ms: 0.815538
+  type: 'test'
+  ...
+# Subtest: headline wording: no 'probability' for heuristic numbers, no edge claim
+ok 324 - headline wording: no 'probability' for heuristic numbers, no edge claim
+  ---
+  duration_ms: 0.223368
+  type: 'test'
+  ...
+# Subtest: ticker projection: no Schwab chain and too few bars is upstream-unavailable (503 + dataState), not 500
+ok 325 - ticker projection: no Schwab chain and too few bars is upstream-unavailable (503 + dataState), not 500
+  ---
+  duration_ms: 1.447361
+  type: 'test'
+  ...
+# Subtest: 0DTE stream policy: only the $SPX chain re-syncs odte / odte_alerts; SPY fallback leaves them
+ok 326 - 0DTE stream policy: only the $SPX chain re-syncs odte / odte_alerts; SPY fallback leaves them
+  ---
+  duration_ms: 0.607157
+  type: 'test'
+  ...
+# Subtest: edge brief follow-up: evaluative / recommendation phrasings dropped, descriptive kept
+ok 327 - edge brief follow-up: evaluative / recommendation phrasings dropped, descriptive kept
+  ---
+  duration_ms: 0.399469
+  type: 'test'
+  ...
+# Subtest: edge brief verdict: strict allow-list of descriptive labels
+ok 328 - edge brief verdict: strict allow-list of descriptive labels
+  ---
+  duration_ms: 0.686406
+  type: 'test'
+  ...
+# Subtest: crypto grader mark SQL: never lowers a peak raised meanwhile; HIT/DOUBLED from the max
+ok 329 - crypto grader mark SQL: never lowers a peak raised meanwhile; HIT/DOUBLED from the max
+  ---
+  duration_ms: 1.386968
+  type: 'test'
+  ...
+# Subtest: regime: unknown gamma -> GAMMA_UNKNOWN (not NEUTRAL), no candidates; unknown samples excluded from flip rate
+ok 330 - regime: unknown gamma -> GAMMA_UNKNOWN (not NEUTRAL), no candidates; unknown samples excluded from flip rate
+  ---
+  duration_ms: 1.064605
+  type: 'test'
+  ...
+# Subtest: flow preview universe is deduped so a full failure reads unavailable
+ok 331 - flow preview universe is deduped so a full failure reads unavailable
+  ---
+  duration_ms: 0.275376
+  type: 'test'
+  ...
+# Subtest: Signals flip = gexByStrikeFromChain flip (same re-priced profile as walls and total GEX)
+ok 332 - Signals flip = gexByStrikeFromChain flip (same re-priced profile as walls and total GEX)
+  ---
+  duration_ms: 3.742911
+  type: 'test'
+  ...
+# Subtest: Newey-West: lag rule and long-run variance of an MA(1) (seeded MC)
+ok 333 - Newey-West: lag rule and long-run variance of an MA(1) (seeded MC)
+  ---
+  duration_ms: 38.689046
+  type: 'test'
+  ...
+# Subtest: horizon z: exact finite-sample scaling sigma^2 w (1 - w/T) for a demeaned sum
+ok 334 - horizon z: exact finite-sample scaling sigma^2 w (1 - w/T) for a demeaned sum
+  ---
+  duration_ms: 104.554101
+  type: 'test'
+  ...
+# Subtest: Politis-White block length: ~1-2 for i.i.d., larger for AR(1) 0.5; bootstrap mean block = 1/p
+ok 335 - Politis-White block length: ~1-2 for i.i.d., larger for AR(1) 0.5; bootstrap mean block = 1/p
+  ---
+  duration_ms: 23.324803
+  type: 'test'
+  ...
+# Subtest: regime null test is correctly sized on random walks and detects an injected regime
+ok 336 - regime null test is correctly sized on random walks and detects an injected regime
+  ---
+  duration_ms: 578.598148
+  type: 'test'
+  ...
+# Subtest: Ledoit-Wolf shrinkage: hand-computed case and Frobenius-loss improvement (seeded MC)
+ok 337 - Ledoit-Wolf shrinkage: hand-computed case and Frobenius-loss improvement (seeded MC)
+  ---
+  duration_ms: 338.002153
+  type: 'test'
+  ...
+# Subtest: canary composite: sum(w z)/sqrt(w'Rw) is N(0,1) under the null; closed-form limits
+ok 338 - canary composite: sum(w z)/sqrt(w'Rw) is N(0,1) under the null; closed-form limits
+  ---
+  duration_ms: 31.072092
+  type: 'test'
+  ...
+# Subtest: composite: correlated vol gauges share one block weight; F&G cut for its VIX/put-call overlap
+ok 339 - composite: correlated vol gauges share one block weight; F&G cut for its VIX/put-call overlap
+  ---
+  duration_ms: 34.103199
+  type: 'test'
+  ...
+# Subtest: breadth: sample labelled as hand-picked large caps; sector participation counts each sector once; stale bars flagged
+ok 340 - breadth: sample labelled as hand-picked large caps; sector participation counts each sector once; stale bars flagged
+  ---
+  duration_ms: 109.552083
+  type: 'test'
+  ...
+# Subtest: headline feed: labeled RSS items with age; all-failed is unavailable, not an empty quiet list
+ok 341 - headline feed: labeled RSS items with age; all-failed is unavailable, not an empty quiet list
+  ---
+  duration_ms: 103.718249
+  type: 'test'
+  ...
+# Subtest: seasonality verdict: significant but bottom-half out of sample is failed_out_of_sample, not validated
+ok 342 - seasonality verdict: significant but bottom-half out of sample is failed_out_of_sample, not validated
+  ---
+  duration_ms: 113.578282
+  type: 'test'
+  ...
+# Subtest: cosmos filter is an allow-list of sky talk: market sentences dropped (adversarial set), sky facts kept, disclaimer forced
+ok 343 - cosmos filter is an allow-list of sky talk: market sentences dropped (adversarial set), sky facts kept, disclaimer forced
+  ---
+  duration_ms: 39.8745
+  type: 'test'
+  ...
+# Subtest: crypto: observed $0 liquidity is a pull (RUGGED), absent liquidity is missing
+ok 344 - crypto: observed $0 liquidity is a pull (RUGGED), absent liquidity is missing
+  ---
+  duration_ms: 12.256087
+  type: 'test'
+  ...
+# Subtest: crypto stats: gate and counts on distinct coins (first signal per coin), NO_DATA share (node:sqlite)
+ok 345 - crypto stats: gate and counts on distinct coins (first signal per coin), NO_DATA share (node:sqlite)
+  ---
+  duration_ms: 3.472584
+  type: 'test'
+  ...
+# Subtest: crypto holders: only identified pool vaults and burn are excluded; a whale at \#1 counts
+ok 346 - crypto holders: only identified pool vaults and burn are excluded; a whale at \#1 counts
+  ---
+  duration_ms: 2.478873
+  type: 'test'
+  ...
+# Subtest: crypto social: cashtag + contract-address union, capped search is a lower bound, score normalized over applicable sources
+ok 347 - crypto social: cashtag + contract-address union, capped search is a lower bound, score normalized over applicable sources
+  ---
+  duration_ms: 2.104134
+  type: 'test'
+  ...
+# Subtest: non-price sources: F&G carries source/asOf, stale is left out; marketScore excludes social/survey/F&G
+ok 348 - non-price sources: F&G carries source/asOf, stale is left out; marketScore excludes social/survey/F&G
+  ---
+  duration_ms: 45.956171
+  type: 'test'
+  ...
+# Subtest: regime FDR: Benjamini-Hochberg q-values (hand-computed) gate fresh and durable across the 21 readings
+ok 349 - regime FDR: Benjamini-Hochberg q-values (hand-computed) gate fresh and durable across the 21 readings
+  ---
+  duration_ms: 1.857148
+  type: 'test'
+  ...
+# Subtest: regime block length diagnostic: |r| is more persistent than r under GARCH; the reported length is r's (round 3: wild-bootstrap null)
+ok 350 - regime block length diagnostic: |r| is more persistent than r under GARCH; the reported length is r's (round 3: wild-bootstrap null)
+  ---
+  duration_ms: 9.464929
+  type: 'test'
+  ...
+# Subtest: Ledoit-Wolf constant-correlation: reference value on the review's 80x6 fixture (paper divisor T and covCor's N-1)
+ok 351 - Ledoit-Wolf constant-correlation: reference value on the review's 80x6 fixture (paper divisor T and covCor's N-1)
+  ---
+  duration_ms: 5.056209
+  type: 'test'
+  ...
+# Subtest: canary thresholds: composite close-to-close history and empirical percentiles (known answers)
+ok 352 - canary thresholds: composite close-to-close history and empirical percentiles (known answers)
+  ---
+  duration_ms: 10.820368
+  type: 'test'
+  ...
+# Subtest: sentiment weights: HRP on gauge history (known answer), sample gate, heuristic fallback labelled
+ok 353 - sentiment weights: HRP on gauge history (known answer), sample gate, heuristic fallback labelled
+  ---
+  duration_ms: 50.927014
+  type: 'test'
+  ...
+# Subtest: breadth internals: Schwab $ADVN/$DECN/$UVOL/$DVOL validated; a tradeable look-alike or failure is unavailable
+ok 354 - breadth internals: Schwab $ADVN/$DECN/$UVOL/$DVOL validated; a tradeable look-alike or failure is unavailable
+  ---
+  duration_ms: 6.371975
+  type: 'test'
+  ...
+# Subtest: config problem names every missing variable, null when complete
+ok 355 - config problem names every missing variable, null when complete
+  ---
+  duration_ms: 1.286229
+  type: 'test'
+  ...
+# Subtest: automatic callback only for this app's callback route
+ok 356 - automatic callback only for this app's callback route
+  ---
+  duration_ms: 0.307496
+  type: 'test'
+  ...
+# Subtest: state is single-use and expires after 15 minutes
+ok 357 - state is single-use and expires after 15 minutes
+  ---
+  duration_ms: 0.625351
+  type: 'test'
+  ...
+# Subtest: registry: every source has a tier, terms and what it feeds; weak sources say why
+ok 358 - registry: every source has a tier, terms and what it feeds; weak sources say why
+  ---
+  duration_ms: 13.621555
+  type: 'test'
+  ...
+# Subtest: SEC User-Agent comes only from the env, needs a contact, is never defaulted
+ok 359 - SEC User-Agent comes only from the env, needs a contact, is never defaulted
+  ---
+  duration_ms: 0.300884
+  type: 'test'
+  ...
+# Subtest: parseFeed: RSS dates read as UTC instants, entities decoded, undated kept as null
+ok 360 - parseFeed: RSS dates read as UTC instants, entities decoded, undated kept as null
+  ---
+  duration_ms: 4.794119
+  type: 'test'
+  ...
+# Subtest: parseFeed: Atom entries with link href and an explicit offset
+ok 361 - parseFeed: Atom entries with link href and an explicit offset
+  ---
+  duration_ms: 0.666809
+  type: 'test'
+  ...
+# Subtest: parseIcs: TZID Eastern is DST-aware, UTC Z kept, all-day not timed, unknown zone skipped
+ok 362 - parseIcs: TZID Eastern is DST-aware, UTC Z kept, all-day not timed, unknown zone skipped
+  ---
+  duration_ms: 12.404355
+  type: 'test'
+  ...
+# Subtest: classifyRelease and familyOfEventName join BLS/BEA titles with Nasdaq names
+ok 363 - classifyRelease and familyOfEventName join BLS/BEA titles with Nasdaq names
+  ---
+  duration_ms: 1.524896
+  type: 'test'
+  ...
+# Subtest: parseEdgarAtom: one row per accession, CIK padded, items and acceptance time
+ok 364 - parseEdgarAtom: one row per accession, CIK padded, items and acceptance time
+  ---
+  duration_ms: 1.706025
+  type: 'test'
+  ...
+# Subtest: parseEdgarSubmissions: forms filter, since window, acceptance read as UTC, archive link
+ok 365 - parseEdgarSubmissions: forms filter, since window, acceptance read as UTC, archive link
+  ---
+  duration_ms: 0.444051
+  type: 'test'
+  ...
+# Subtest: parseUpcomingAuctions: newest record wins per CUSIP+date, 'null' stays null, sorted
+ok 366 - parseUpcomingAuctions: newest record wins per CUSIP+date, 'null' stays null, sorted
+  ---
+  duration_ms: 0.897511
+  type: 'test'
+  ...
+# Subtest: tierItems drops undated and future-stamped items and counts them
+ok 367 - tierItems drops undated and future-stamped items and counts them
+  ---
+  duration_ms: 0.693289
+  type: 'test'
+  ...
+# Subtest: mergeTiered: the official release beats a publisher write-up with the same title
+ok 368 - mergeTiered: the official release beats a publisher write-up with the same title
+  ---
+  duration_ms: 0.440746
+  type: 'test'
+  ...
+# Subtest: mergeEconEvents: official time wins, Nasdaq consensus folds in, estimates near an official row drop
+ok 369 - mergeEconEvents: official time wins, Nasdaq consensus folds in, estimates near an official row drop
+  ---
+  duration_ms: 1.659849
+  type: 'test'
+  ...
+# Subtest: SourceCache: fresh within TTL, stale-if-error inside max age, then failed; one in-flight call
+ok 370 - SourceCache: fresh within TTL, stale-if-error inside max age, then failed; one in-flight call
+  ---
+  duration_ms: 16.83851
+  type: 'test'
+  ...
+# Subtest: sourceStatus and aggregateState keep failed, stale, empty, not_configured distinct
+ok 371 - sourceStatus and aggregateState keep failed, stale, empty, not_configured distinct
+  ---
+  duration_ms: 0.711944
+  type: 'test'
+  ...
+# Subtest: news calendar rows: official time exact, Nasdaq date-only time not guessed, auction close placed
+ok 372 - news calendar rows: official time exact, Nasdaq date-only time not guessed, auction close placed
+  ---
+  duration_ms: 44.77045
+  type: 'test'
+  ...
+# Subtest: Coinbase trades: `side` is the maker side, so the taker (aggressor) is the opposite
+ok 373 - Coinbase trades: `side` is the maker side, so the taker (aggressor) is the opposite
+  ---
+  duration_ms: 0.582311
+  type: 'test'
+  ...
+# Subtest: Kraken: pair keys resolved (XXBTZUSD), b/s is the taker side, 24h volume and VWAP
+ok 374 - Kraken: pair keys resolved (XXBTZUSD), b/s is the taker side, 24h volume and VWAP
+  ---
+  duration_ms: 2.374658
+  type: 'test'
+  ...
+# Subtest: tradeFlow: taker-buy share and VWAP by hand; coverage reported when the batch is short
+ok 375 - tradeFlow: taker-buy share and VWAP by hand; coverage reported when the batch is short
+  ---
+  duration_ms: 2.042596
+  type: 'test'
+  ...
+# Subtest: crossCheck: bps divergence by hand; diverged venues give no reference price
+ok 376 - crossCheck: bps divergence by hand; diverged venues give no reference price
+  ---
+  duration_ms: 0.299571
+  type: 'test'
+  ...
+# Subtest: majors row: a venue with no recent trade is stale and leaves the cross-check
+ok 377 - majors row: a venue with no recent trade is stale and leaves the cross-check
+  ---
+  duration_ms: 0.737691
+  type: 'test'
+  ...
+# Subtest: Jupiter cross-check: omitted mint is no-reliable-price, gap thresholds by hand
+ok 378 - Jupiter cross-check: omitted mint is no-reliable-price, gap thresholds by hand
+  ---
+  duration_ms: 0.451255
+  type: 'test'
+  ...
+# Subtest: narrative heat counts only dated titles from the last 24 h; failed and empty feeds differ
+ok 379 - narrative heat counts only dated titles from the last 24 h; failed and empty feeds differ
+  ---
+  duration_ms: 0.787194
+  type: 'test'
+  ...
+# Subtest: CoinGecko reference needs the optional Demo key; no key means not called
+ok 380 - CoinGecko reference needs the optional Demo key; no key means not called
+  ---
+  duration_ms: 8.734711
+  type: 'test'
+  ...
+# Subtest: econ week: official BLS chip at the exact time; estimates of covered families drop
+ok 381 - econ week: official BLS chip at the exact time; estimates of covered families drop
+  ---
+  duration_ms: 33.56288
+  type: 'test'
+  ...
+# Subtest: alpha news: one outlet repeating a story is one source; 8-K is an official tier-1 event
+ok 382 - alpha news: one outlet repeating a story is one source; 8-K is an official tier-1 event
+  ---
+  duration_ms: 3.049412
+  type: 'test'
+  ...
+# Subtest: ADF 5% critical value matches MacKinnon (2010) response surface
+ok 383 - ADF 5% critical value matches MacKinnon (2010) response surface
+  ---
+  duration_ms: 4.838493
+  type: 'test'
+  ...
+# Subtest: OU band false-positive rate on seeded random walks is near the 5% test size
+ok 384 - OU band false-positive rate on seeded random walks is near the 5% test size
+  ---
+  duration_ms: 778.333435
+  type: 'test'
+  ...
+# Subtest: OU gate keeps its size on a drifting, higher-vol random walk (SPX-like)
+ok 385 - OU gate keeps its size on a drifting, higher-vol random walk (SPX-like)
+  ---
+  duration_ms: 343.977825
+  type: 'test'
+  ...
+# Subtest: random walk returns 'not mean-reverting' with no half-life or target
+ok 386 - random walk returns 'not mean-reverting' with no half-life or target
+  ---
+  duration_ms: 3.821137
+  type: 'test'
+  ...
+# Subtest: OU band detects a true OU process and recovers its half-life
+ok 387 - OU band detects a true OU process and recovers its half-life
+  ---
+  duration_ms: 237.091168
+  type: 'test'
+  ...
+# Subtest: Kendall / Marriott-Pope AR(1) bias correction removes most of the small-sample bias
+ok 388 - Kendall / Marriott-Pope AR(1) bias correction removes most of the small-sample bias
+  ---
+  duration_ms: 67.147976
+  type: 'test'
+  ...
+# Subtest: adfTest rejects a strongly stationary series and returns its sample size
+ok 389 - adfTest rejects a strongly stationary series and returns its sample size
+  ---
+  duration_ms: 1.155595
+  type: 'test'
+  ...
+# Subtest: olsFit reproduces a hand-computed simple regression
+ok 390 - olsFit reproduces a hand-computed simple regression
+  ---
+  duration_ms: 0.269284
+  type: 'test'
+  ...
+# Subtest: climatology baseline: Brier of the base-rate forecaster is 1 - sum f^2
+ok 391 - climatology baseline: Brier of the base-rate forecaster is 1 - sum f^2
+  ---
+  duration_ms: 1.105221
+  type: 'test'
+  ...
+# Subtest: watchdog flags a model that is always worse than climatology (old CUSUM read HEALTHY)
+ok 392 - watchdog flags a model that is always worse than climatology (old CUSUM read HEALTHY)
+  ---
+  duration_ms: 3.583082
+  type: 'test'
+  ...
+# Subtest: watchdog reads HEALTHY for a model with real skill over climatology
+ok 393 - watchdog reads HEALTHY for a model with real skill over climatology
+  ---
+  duration_ms: 0.350998
+  type: 'test'
+  ...
+# Subtest: Diebold-Mariano: hand-computed values (h = 1 is the one-sample t; h = 2 Bartlett + HLN)
+ok 394 - Diebold-Mariano: hand-computed values (h = 1 is the one-sample t; h = 2 Bartlett + HLN)
+  ---
+  duration_ms: 0.153708
+  type: 'test'
+  ...
+# Subtest: Diebold-Mariano size: ~5% on iid nulls, and the HAC variance fixes overlapping (MA(1)) differentials
+ok 395 - Diebold-Mariano size: ~5% on iid nulls, and the HAC variance fixes overlapping (MA(1)) differentials
+  ---
+  duration_ms: 63.73329
+  type: 'test'
+  ...
+# Subtest: binary skill test: skill, no demonstrated skill and significantly worse (banner trigger)
+ok 396 - binary skill test: skill, no demonstrated skill and significantly worse (banner trigger)
+  ---
+  duration_ms: 1.95901
+  type: 'test'
+  ...
+# Subtest: watchdog: a model no better than climatology is NO_SKILL, never HEALTHY
+ok 397 - watchdog: a model no better than climatology is NO_SKILL, never HEALTHY
+  ---
+  duration_ms: 0.344576
+  type: 'test'
+  ...
+# Subtest: cusum anchored to a target accumulates a persistent offset
+ok 398 - cusum anchored to a target accumulates a persistent offset
+  ---
+  duration_ms: 0.158236
+  type: 'test'
+  ...
+# Subtest: Wilson interval matches the textbook value for 8/10
+ok 399 - Wilson interval matches the textbook value for 8/10
+  ---
+  duration_ms: 0.169929
+  type: 'test'
+  ...
+# Subtest: reliability test: calibrated forecasts pass, miscalibrated fail, small samples are untested
+ok 400 - reliability test: calibrated forecasts pass, miscalibrated fail, small samples are untested
+  ---
+  duration_ms: 39.552807
+  type: 'test'
+  ...
+# Subtest: calibration evidence: one call per ET session, and the test names its event
+ok 401 - calibration evidence: one call per ET session, and the test names its event
+  ---
+  duration_ms: 1.078891
+  type: 'test'
+  ...
+# Subtest: seasonal window on zero-drift noise is rarely rated Good/Excellent (review: 32 of 40)
+ok 402 - seasonal window on zero-drift noise is rarely rated Good/Excellent (review: 32 of 40)
+  ---
+  duration_ms: 1752.983261
+  type: 'test'
+  ...
+# Subtest: seasonal window detects a real calendar effect and reports the hold-out
+ok 403 - seasonal window detects a real calendar effect and reports the hold-out
+  ---
+  duration_ms: 172.402699
+  type: 'test'
+  ...
+# Subtest: seasonality uses only full calendar years (a partial first year is not stretched over 252 days)
+ok 404 - seasonality uses only full calendar years (a partial first year is not stretched over 252 days)
+  ---
+  duration_ms: 9.1763
+  type: 'test'
+  ...
+# Subtest: masterAlpha fit recovers known multipliers once the sample gate is met
+ok 405 - masterAlpha fit recovers known multipliers once the sample gate is met
+  ---
+  duration_ms: 11.523052
+  type: 'test'
+  ...
+# Subtest: masterAlpha sample gate is the 80%-power size for R^2 = 3.2%
+ok 406 - masterAlpha sample gate is the 80%-power size for R^2 = 3.2%
+  ---
+  duration_ms: 0.200084
+  type: 'test'
+  ...
+# Subtest: masterAlpha fit: a missing component drops the session (never 0 bps) and is counted
+ok 407 - masterAlpha fit: a missing component drops the session (never 0 bps) and is counted
+  ---
+  duration_ms: 11.83351
+  type: 'test'
+  ...
+# Subtest: masterAlpha fit stays 'hand-set' below the sample gate
+ok 408 - masterAlpha fit stays 'hand-set' below the sample gate
+  ---
+  duration_ms: 0.590535
+  type: 'test'
+  ...
+# Subtest: crypto social: failed collection is never zero; stale scores expire
+ok 409 - crypto social: failed collection is never zero; stale scores expire
+  ---
+  duration_ms: 3.664827
+  type: 'test'
+  ...
+# Subtest: crypto signal stats come from one window and sampleReady is a count flag
+ok 410 - crypto signal stats come from one window and sampleReady is a count flag
+  ---
+  duration_ms: 0.381815
+  type: 'test'
+  ...
+# Subtest: ML reliability uses one daily forecast per session (first snapshot), no weekly overlap
+ok 411 - ML reliability uses one daily forecast per session (first snapshot), no weekly overlap
+  ---
+  duration_ms: 0.333213
+  type: 'test'
+  ...
+# Subtest: parzen kernel: closed-form weights; c* = 3.5134
+ok 412 - parzen kernel: closed-form weights; c* = 3.5134
+  ---
+  duration_ms: 3.568174
+  type: 'test'
+  ...
+# Subtest: realized kernel: H = 0 is plain RV; hand-computed alternating series
+ok 413 - realized kernel: H = 0 is plain RV; hand-computed alternating series
+  ---
+  duration_ms: 0.220784
+  type: 'test'
+  ...
+# Subtest: TSRV: hand-computed small series (K = 2), including a negative small-sample value
+ok 414 - TSRV: hand-computed small series (K = 2), including a negative small-sample value
+  ---
+  duration_ms: 0.83265
+  type: 'test'
+  ...
+# Subtest: previous-tick sampling and m = 2 end jittering
+ok 415 - previous-tick sampling and m = 2 end jittering
+  ---
+  duration_ms: 1.112094
+  type: 'test'
+  ...
+# Subtest: seeded MC: TSRV and the realized kernel recover known IV under noise; naive RV does not
+ok 416 - seeded MC: TSRV and the realized kernel recover known IV under noise; naive RV does not
+  ---
+  duration_ms: 558.281173
+  type: 'test'
+  ...
+# Subtest: seeded MC without noise: all three estimators agree with IV
+ok 417 - seeded MC without noise: all three estimators agree with IV
+  ---
+  duration_ms: 22.914271
+  type: 'test'
+  ...
+# Subtest: realized vol: too few observations is insufficient (null), never 0
+ok 418 - realized vol: too few observations is insufficient (null), never 0
+  ---
+  duration_ms: 0.809045
+  type: 'test'
+  ...
+# Subtest: field lists: per-service numbering (BID is 1 on equities, 2 on options)
+ok 419 - field lists: per-service numbering (BID is 1 on equities, 2 on options)
+  ---
+  duration_ms: 0.29322
+  type: 'test'
+  ...
+# Subtest: store: LEVELONE delta frames merge into the snapshot; observed zero stays zero
+ok 420 - store: LEVELONE delta frames merge into the snapshot; observed zero stays zero
+  ---
+  duration_ms: 2.281874
+  type: 'test'
+  ...
+# Subtest: store validity: live session, silence, reconnect epoch, delayed flag, RTH age
+ok 421 - store validity: live session, silence, reconnect epoch, delayed flag, RTH age
+  ---
+  duration_ms: 2.114831
+  type: 'test'
+  ...
+# Subtest: store consumer helpers: no active store -> null with reason; option overlay respects REST quote time
+ok 422 - store consumer helpers: no active store -> null with reason; option overlay respects REST quote time
+  ---
+  duration_ms: 1.275899
+  type: 'test'
+  ...
+# Subtest: tick ring: fixed capacity keeps the newest, counts drops; since() filters by receive time
+ok 423 - tick ring: fixed capacity keeps the newest, counts drops; since() filters by receive time
+  ---
+  duration_ms: 0.435215
+  type: 'test'
+  ...
+# Subtest: store ticks: trade flag from cumulative volume increase; Schwab trade time used
+ok 424 - store ticks: trade flag from cumulative volume increase; Schwab trade time used
+  ---
+  duration_ms: 1.512413
+  type: 'test'
+  ...
+# Subtest: bars: $SPX synthesized from LEVELONE last; partial first minute never final; chart bar wins
+ok 425 - bars: $SPX synthesized from LEVELONE last; partial first minute never final; chart bar wins
+  ---
+  duration_ms: 1.38834
+  type: 'test'
+  ...
+# Subtest: option wants: union by owner priority, capped; over-cap listed
+ok 426 - option wants: union by owner priority, capped; over-cap listed
+  ---
+  duration_ms: 0.463969
+  type: 'test'
+  ...
+# Subtest: Lee-Ready on L1: prior-quote midpoint rule, tick rule at the mid, zero tick, unsigned
+ok 427 - Lee-Ready on L1: prior-quote midpoint rule, tick rule at the mid, zero tick, unsigned
+  ---
+  duration_ms: 0.676316
+  type: 'test'
+  ...
+# Subtest: signed volume bars from trade blocks: complete minutes only; a minute with no blocks is missing, not 0
+ok 428 - signed volume bars from trade blocks: complete minutes only; a minute with no blocks is missing, not 0
+  ---
+  duration_ms: 0.602088
+  type: 'test'
+  ...
+# Subtest: streamer: LOGIN with the access token, then SUBS equities, SUBS chart, ADD $SPX chart separately
+ok 429 - streamer: LOGIN with the access token, then SUBS equities, SUBS chart, ADD $SPX chart separately
+  ---
+  duration_ms: 114.383841
+  type: 'test'
+  ...
+# Subtest: streamer: data frames reach the store; consumer helper serves the stream quote; stale socket falls back
+ok 430 - streamer: data frames reach the store; consumer helper serves the stream quote; stale socket falls back
+  ---
+  duration_ms: 30.033045
+  type: 'test'
+  ...
+# Subtest: streamer: disconnect -> backoff -> reconnect with a refreshed token -> resubscribe; old quotes invalid until resent
+ok 431 - streamer: disconnect -> backoff -> reconnect with a refreshed token -> resubscribe; old quotes invalid until resent
+  ---
+  duration_ms: 67.597117
+  type: 'test'
+  ...
+# Subtest: streamer: heartbeats keep the session; silence past the timeout forces a reconnect
+ok 432 - streamer: heartbeats keep the session; silence past the timeout forces a reconnect
+  ---
+  duration_ms: 783.329887
+  type: 'test'
+  ...
+# Subtest: streamer: LOGIN_DENIED (code 3) forces one token refresh check, retries, then waits longer
+ok 433 - streamer: LOGIN_DENIED (code 3) forces one token refresh check, retries, then waits longer
+  ---
+  duration_ms: 194.929291
+  type: 'test'
+  ...
+# Subtest: streamer: no token -> no socket, state no_token; status says why
+ok 434 - streamer: no token -> no socket, state no_token; status says why
+  ---
+  duration_ms: 17.189067
+  type: 'test'
+  ...
+# Subtest: streamer: server notice (non-zero code) ends the session and reconnects after the long backoff
+ok 435 - streamer: server notice (non-zero code) ends the session and reconnects after the long backoff
+  ---
+  duration_ms: 215.749055
+  type: 'test'
+  ...
+# Subtest: streamer: dynamic option subscriptions (SUBS, ADD, UNSUBS), cap, and resubscribe after reconnect
+ok 436 - streamer: dynamic option subscriptions (SUBS, ADD, UNSUBS), cap, and resubscribe after reconnect
+  ---
+  duration_ms: 177.184826
+  type: 'test'
+  ...
+# Subtest: streamer: final bars go to the sink from the watchdog tick
+ok 437 - streamer: final bars go to the sink from the watchdog tick
+  ---
+  duration_ms: 32.877754
+  type: 'test'
+  ...
+# Subtest: streamerInfo parsing from userPreference
+ok 438 - streamerInfo parsing from userPreference
+  ---
+  duration_ms: 0.476382
+  type: 'test'
+  ...
+# Subtest: backoff: doubles from base, capped, jitter in [0.5, 1]
+ok 439 - backoff: doubles from base, capped, jitter in [0.5, 1]
+  ---
+  duration_ms: 0.175278
+  type: 'test'
+  ...
+# Subtest: config from env: lists and bounded option cap; default subscription set
+ok 440 - config from env: lists and bounded option cap; default subscription set
+  ---
+  duration_ms: 0.320541
+  type: 'test'
+  ...
+# Subtest: blank BATCAVE_STREAM_MAX_OPTIONS keeps the default, an explicit 0 is honoured
+ok 441 - blank BATCAVE_STREAM_MAX_OPTIONS keeps the default, an explicit 0 is honoured
+  ---
+  duration_ms: 2.118919
+  type: 'test'
+  ...
+# Subtest: SPX weekly targets are never shown as SPY levels
+ok 442 - SPX weekly targets are never shown as SPY levels
+  ---
+  duration_ms: 1.354246
+  type: 'test'
+  ...
+# Subtest: seed or stale weekly targets are hidden even for SPX
+ok 443 - seed or stale weekly targets are hidden even for SPX
+  ---
+  duration_ms: 0.460482
+  type: 'test'
+  ...
+# Subtest: fresh SPX weekly targets are shown and labelled
+ok 444 - fresh SPX weekly targets are shown and labelled
+  ---
+  duration_ms: 0.346469
+  type: 'test'
+  ...
+# Subtest: walls come from the symbol's own routes only, not the targets store
+ok 445 - walls come from the symbol's own routes only, not the targets store
+  ---
+  duration_ms: 0.188734
+  type: 'test'
+  ...
+# Subtest: no inputs: insufficient data and no score
+ok 446 - no inputs: insufficient data and no score
+  ---
+  duration_ms: 0.439763
+  type: 'test'
+  ...
+# Subtest: blank cross-asset rows and a no-reading regime do not count as inputs
+ok 447 - blank cross-asset rows and a no-reading regime do not count as inputs
+  ---
+  duration_ms: 0.279053
+  type: 'test'
+  ...
+# Subtest: real inputs still produce a read
+ok 448 - real inputs still produce a read
+  ---
+  duration_ms: 0.43797
+  type: 'test'
+  ...
+# Subtest: plan: a 1-minute poke through the stop does not stop; a 5-minute CLOSE beyond it does
+ok 449 - plan: a 1-minute poke through the stop does not stop; a 5-minute CLOSE beyond it does
+  ---
+  duration_ms: 3.748161
+  type: 'test'
+  ...
+# Subtest: plan: half at T1, runner sold at T2; option P&L is the quantity-weighted fill
+ok 450 - plan: half at T1, runner sold at T2; option P&L is the quantity-weighted fill
+  ---
+  duration_ms: 4.465785
+  type: 'test'
+  ...
+# Subtest: plan: runner trail arms only on a 5-minute close beyond T1, then stops on a 5-minute close below the trail
+ok 451 - plan: runner trail arms only on a 5-minute close beyond T1, then stops on a 5-minute close below the trail
+  ---
+  duration_ms: 1.025591
+  type: 'test'
+  ...
+# Subtest: plan: runner held to the close settles half at intrinsic; fees charge one side on the settled half
+ok 452 - plan: runner held to the close settles half at intrinsic; fees charge one side on the settled half
+  ---
+  duration_ms: 0.917579
+  type: 'test'
+  ...
+# Subtest: plan: -20% stop is on the BID (what can be sold), and after T1 it stops only the runner
+ok 453 - plan: -20% stop is on the BID (what can be sold), and after T1 it stops only the runner
+  ---
+  duration_ms: 1.802837
+  type: 'test'
+  ...
+# Subtest: plan: missing minute bars are never filled: a hole before the exit is ungraded (bar_gap)
+ok 454 - plan: missing minute bars are never filled: a hole before the exit is ungraded (bar_gap)
+  ---
+  duration_ms: 1.303071
+  type: 'test'
+  ...
+# Subtest: plan: a fire inside a candle's last minute uses that candle's close but not its high/low
+ok 455 - plan: a fire inside a candle's last minute uses that candle's close but not its high/low
+  ---
+  duration_ms: 0.71001
+  type: 'test'
+  ...
+# Subtest: half-day session: SPXW stops at 13:00 ET (Cboe), so exits and settlement use 13:00
+ok 456 - half-day session: SPXW stops at 13:00 ET (Cboe), so exits and settlement use 13:00
+  ---
+  duration_ms: 0.603691
+  type: 'test'
+  ...
+# Subtest: alert text states the replayed plan with the exact levels
+ok 457 - alert text states the replayed plan with the exact levels
+  ---
+  duration_ms: 3.184585
+  type: 'test'
+  ...
+# Subtest: whole contracts: T1 sells floor(n/2); the graded split matches the position
+ok 458 - whole contracts: T1 sells floor(n/2); the graded split matches the position
+  ---
+  duration_ms: 1.455646
+  type: 'test'
+  ...
+# Subtest: untradable entry: bid already at or under 0.80 x ask is not a trade (not a loss)
+ok 459 - untradable entry: bid already at or under 0.80 x ask is not a trade (not a loss)
+  ---
+  duration_ms: 0.371526
+  type: 'test'
+  ...
+# Subtest: option stop inside a leg's fill delay: the remainder exits at the stop mark
+ok 460 - option stop inside a leg's fill delay: the remainder exits at the stop mark
+  ---
+  duration_ms: 0.843439
+  type: 'test'
+  ...
+# Subtest: grade label status uses the same evidence bar as the sizer's point estimate
+ok 461 - grade label status uses the same evidence bar as the sizer's point estimate
+  ---
+  duration_ms: 0.244267
+  type: 'test'
+  ...
+# Subtest: saved spx_minute_bars are read in either writer's layout (real SQLite)
+ok 462 - saved spx_minute_bars are read in either writer's layout (real SQLite)
+  ---
+  duration_ms: 1.022905
+  type: 'test'
+  ...
+# Subtest: edge survival: no ledger evidence is never EXPRESS
+ok 463 - edge survival: no ledger evidence is never EXPRESS
+  ---
+  duration_ms: 0.819816
+  type: 'test'
+  ...
+# Subtest: edge survival: a losing ledger stands down; a thin winning ledger is insufficient (sizer also 0)
+ok 464 - edge survival: a losing ledger stands down; a thin winning ledger is insufficient (sizer also 0)
+  ---
+  duration_ms: 0.53956
+  type: 'test'
+  ...
+# Subtest: edge survival: strong ledger + repriced theta -> EXPRESS; without contract inputs at most MARGINAL
+ok 465 - edge survival: strong ledger + repriced theta -> EXPRESS; without contract inputs at most MARGINAL
+  ---
+  duration_ms: 1.717968
+  type: 'test'
+  ...
+# Subtest: repriced theta over the hold (Black-Scholes ATM closed form; settles inside the hold = all extrinsic)
+ok 466 - repriced theta over the hold (Black-Scholes ATM closed form; settles inside the hold = all extrinsic)
+  ---
+  duration_ms: 0.458528
+  type: 'test'
+  ...
+# Subtest: edge survival never says EXPRESS when the sizer's Kelly is zero (seeded random ledgers)
+ok 467 - edge survival never says EXPRESS when the sizer's Kelly is zero (seeded random ledgers)
+  ---
+  duration_ms: 68.085232
+  type: 'test'
+  ...
+# Subtest: two-proportion z (NIST 7.3.3) and the Bonferroni critical value
+ok 468 - two-proportion z (NIST 7.3.3) and the Bonferroni critical value
+  ---
+  duration_ms: 0.218961
+  type: 'test'
+  ...
+# Subtest: walk-forward: a real effect survives out of sample; noise mined in-sample does not
+ok 469 - walk-forward: a real effect survives out of sample; noise mined in-sample does not
+  ---
+  duration_ms: 1939.94754
+  type: 'test'
+  ...
+# Subtest: power and minimum detectable lift of the out-of-sample test (scipy known answers)
+ok 470 - power and minimum detectable lift of the out-of-sample test (scipy known answers)
+  ---
+  duration_ms: 0.376003
+  type: 'test'
+  ...
+# Subtest: walk-forward screen: the z-maximizing in-fold screen keeps size at its 1.67% target (sampling slack 1 pt) and beats the strict screen on power
+ok 471 - walk-forward screen: the z-maximizing in-fold screen keeps size at its 1.67% target (sampling slack 1 pt) and beats the strict screen on power
+  ---
+  duration_ms: 6396.908335
+  type: 'test'
+  ...
+# Subtest: walk-forward purges training rows whose outcome was not known before the test fold
+ok 472 - walk-forward purges training rows whose outcome was not known before the test fold
+  ---
+  duration_ms: 0.30479
+  type: 'test'
+  ...
+# Subtest: whale coverage: ungraded_no_mark is counted and shown, never a miss; legacy proxy rows are excluded
+ok 473 - whale coverage: ungraded_no_mark is counted and shown, never a miss; legacy proxy rows are excluded
+  ---
+  duration_ms: 0.428532
+  type: 'test'
+  ...
+# Subtest: backtest: one ATR-scaled touch rule for every level kind and baseline
+ok 474 - backtest: one ATR-scaled touch rule for every level kind and baseline
+  ---
+  duration_ms: 0.547004
+  type: 'test'
+  ...
+# Subtest: backtest: non-overlapping windows never share a bar (seeded holes), with Wilson intervals
+ok 475 - backtest: non-overlapping windows never share a bar (seeded holes), with Wilson intervals
+  ---
+  duration_ms: 1.791041
+  type: 'test'
+  ...
+# Subtest: backtest data state says no dealer level is tested until historical chains exist
+ok 476 - backtest data state says no dealer level is tested until historical chains exist
+  ---
+  duration_ms: 0.119534
+  type: 'test'
+  ...
+# Subtest: spx_minute_bars: legacy hazardEngine table migrates in place to the one schema (real SQLite)
+ok 477 - spx_minute_bars: legacy hazardEngine table migrates in place to the one schema (real SQLite)
+  ---
+  duration_ms: 1.425598
+  type: 'test'
+  ...
+# Subtest: Wilson 95% interval, 8 of 10 (Wilson 1927 closed form)
+ok 478 - Wilson 95% interval, 8 of 10 (Wilson 1927 closed form)
+  ---
+  duration_ms: 2.58404
+  type: 'test'
+  ...
+# Subtest: Kelly f* = p/L - q/b (Thorp 2006 f* = m/(ab))
+ok 479 - Kelly f* = p/L - q/b (Thorp 2006 f* = m/(ab))
+  ---
+  duration_ms: 0.230793
+  type: 'test'
+  ...
+# Subtest: kellyFromLedger uses the Wilson lower bound below 385 fires and caps at half Kelly
+ok 480 - kellyFromLedger uses the Wilson lower bound below 385 fires and caps at half Kelly
+  ---
+  duration_ms: 0.795991
+  type: 'test'
+  ...
+# Subtest: summarizeOptionReturns and grade buckets
+ok 481 - summarizeOptionReturns and grade buckets
+  ---
+  duration_ms: 0.40086
+  type: 'test'
+  ...
+# Subtest: sizer: $30,000, 1% risk, 1.50 entry, 1.20 stop, no fees -> exactly 10 contracts ($300 at risk)
+ok 482 - sizer: $30,000, 1% risk, 1.50 entry, 1.20 stop, no fees -> exactly 10 contracts ($300 at risk)
+  ---
+  duration_ms: 6.768088
+  type: 'test'
+  ...
+# Subtest: sizer: fees and stop slippage are inside the risk budget
+ok 483 - sizer: fees and stop slippage are inside the risk budget
+  ---
+  duration_ms: 0.908061
+  type: 'test'
+  ...
+# Subtest: sizer: small account cannot afford one contract's risk -> 0, min-contract
+ok 484 - sizer: small account cannot afford one contract's risk -> 0, min-contract
+  ---
+  duration_ms: 1.00865
+  type: 'test'
+  ...
+# Subtest: sizer: no option-graded evidence -> Kelly sizes zero
+ok 485 - sizer: no option-graded evidence -> Kelly sizes zero
+  ---
+  duration_ms: 0.813514
+  type: 'test'
+  ...
+# Subtest: sizer: risk above the 5% ceiling is lowered, a tiny risk is never raised, cash caps notional
+ok 486 - sizer: risk above the 5% ceiling is lowered, a tiny risk is never raised, cash caps notional
+  ---
+  duration_ms: 2.232131
+  type: 'test'
+  ...
+# Subtest: sizer invariants hold for random accounts (seeded)
+ok 487 - sizer invariants hold for random accounts (seeded)
+  ---
+  duration_ms: 820.719958
+  type: 'test'
+  ...
+# Subtest: optionTradeDollars: 3 contracts 1.50 -> 1.75 with $0.65/side
+ok 488 - optionTradeDollars: 3 contracts 1.50 -> 1.75 with $0.65/side
+  ---
+  duration_ms: 0.318486
+  type: 'test'
+  ...
+# Subtest: 0DTE grade: T1 touch exits at the next logged bid
+ok 489 - 0DTE grade: T1 touch exits at the next logged bid
+  ---
+  duration_ms: 2.443051
+  type: 'test'
+  ...
+# Subtest: 0DTE grade: -20% option stop on the mid fills at the bid
+ok 490 - 0DTE grade: -20% option stop on the mid fills at the bid
+  ---
+  duration_ms: 0.789758
+  type: 'test'
+  ...
+# Subtest: 0DTE grade: no trigger settles at intrinsic on the close
+ok 491 - 0DTE grade: no trigger settles at intrinsic on the close
+  ---
+  duration_ms: 0.987467
+  type: 'test'
+  ...
+# Subtest: 0DTE grade: missing data stays ungraded (never estimated)
+ok 492 - 0DTE grade: missing data stays ungraded (never estimated)
+  ---
+  duration_ms: 1.100029
+  type: 'test'
+  ...
+# Subtest: 0DTE: realized close-out vs MFE
+ok 493 - 0DTE: realized close-out vs MFE
+  ---
+  duration_ms: 0.162324
+  type: 'test'
+  ...
+# Subtest: whale: exit quote must be at or shortly before the exit time
+ok 494 - whale: exit quote must be at or shortly before the exit time
+  ---
+  duration_ms: 0.344674
+  type: 'test'
+  ...
+# Subtest: whale backtest: theta and spread at expiry
+ok 495 - whale backtest: theta and spread at expiry
+  ---
+  duration_ms: 0.622816
+  type: 'test'
+  ...
+# Subtest: 16:00 ET close is DST-correct
+ok 496 - 16:00 ET close is DST-correct
+  ---
+  duration_ms: 0.228116
+  type: 'test'
+  ...
+# Subtest: erfc and interval score
+ok 497 - erfc and interval score
+  ---
+  duration_ms: 0.168024
+  type: 'test'
+  ...
+# Subtest: coverage: 8 of 10 inside a 10-90% band is nominal; 70 of 100 rejects at 5%
+ok 498 - coverage: 8 of 10 inside a 10-90% band is nominal; 70 of 100 rejects at 5%
+  ---
+  duration_ms: 0.706492
+  type: 'test'
+  ...
+# Subtest: forward returns from minute bars refuse gaps; overlapping forecasts are thinned
+ok 499 - forward returns from minute bars refuse gaps; overlapping forecasts are thinned
+  ---
+  duration_ms: 0.366235
+  type: 'test'
+  ...
+# Subtest: max pain and chain walls from a toy chain
+ok 500 - max pain and chain walls from a toy chain
+  ---
+  duration_ms: 0.431628
+  type: 'test'
+  ...
+# Subtest: ML quantile pipeline: real-data labels, day-based gate, purged walk-forward folds (python)
+ok 501 - ML quantile pipeline: real-data labels, day-based gate, purged walk-forward folds (python) # SKIP python3 with numpy and pandas not available
+  ---
+  duration_ms: 126.479626
+  type: 'test'
+  ...
+# Subtest: per-trade Sharpe is annualized by trades per year (Lo 2002), Sortino by full-sample downside deviation
+ok 502 - per-trade Sharpe is annualized by trades per year (Lo 2002), Sortino by full-sample downside deviation
+  ---
+  duration_ms: 1.511819
+  type: 'test'
+  ...
+# Subtest: client path: mid + spread is converted to an ask fill; true loss at stop stays inside the budget
+ok 503 - client path: mid + spread is converted to an ask fill; true loss at stop stays inside the budget
+  ---
+  duration_ms: 1.163367
+  type: 'test'
+  ...
+# Subtest: gap cap bounds the full-premium loss (WS3 repro: $25k, 5% risk, 2.00 entry, 1.90 stop, half Kelly)
+ok 504 - gap cap bounds the full-premium loss (WS3 repro: $25k, 5% risk, 2.00 entry, 1.90 stop, half Kelly)
+  ---
+  duration_ms: 1.88146
+  type: 'test'
+  ...
+# Subtest: log-optimal Kelly on realized returns (Kelly 1956 / Thorp 2006: max E log(1 + f X))
+ok 505 - log-optimal Kelly on realized returns (Kelly 1956 / Thorp 2006: max E log(1 + f X))
+  ---
+  duration_ms: 0.761054
+  type: 'test'
+  ...
+# Subtest: ledger returns are net of fees; index options require an explicit fee
+ok 506 - ledger returns are net of fees; index options require an explicit fee
+  ---
+  duration_ms: 0.634236
+  type: 'test'
+  ...
+# Subtest: Christoffersen independence test (1998) on a miss sequence
+ok 507 - Christoffersen independence test (1998) on a miss sequence
+  ---
+  duration_ms: 0.278922
+  type: 'test'
+  ...
+# Subtest: chain walls use gamma for every strike or for none
+ok 508 - chain walls use gamma for every strike or for none
+  ---
+  duration_ms: 0.236874
+  type: 'test'
+  ...
+# Subtest: proxy-graded whale outcomes are excluded at query time, not rewritten
+ok 509 - proxy-graded whale outcomes are excluded at query time, not rewritten
+  ---
+  duration_ms: 0.212268
+  type: 'test'
+  ...
+# Subtest: whale trade smaller than one contract is flagged by zero contracts
+ok 510 - whale trade smaller than one contract is flagged by zero contracts
+  ---
+  duration_ms: 0.211054
+  type: 'test'
+  ...
+1..510
+# tests 510
+# suites 0
+# pass 508
+# fail 0
+# cancelled 0
+# skipped 2
+# todo 0
+# duration_ms 21759.523014
