@@ -60,6 +60,15 @@ function _spawn() {
     if (s) console.log(`[ml-service] ${s}`);
   });
 
+  // Python missing (ENOENT) or not executable: an unhandled "error" event on a
+  // child process crashes Node. Log once and give up; the server keeps running
+  // and /api/ml/health reports the sidecar as not installed.
+  child.on("error", (err: NodeJS.ErrnoException) => {
+    console.warn(`[ml-service] could not start ${py}: ${err.code ?? err.message}; ML sidecar disabled`);
+    _proc = null;
+    _restarts = MAX_RESTARTS;
+  });
+
   child.on("exit", (code, signal) => {
     console.warn(`[ml-service] exited code=${code} signal=${signal}`);
     _proc = null;

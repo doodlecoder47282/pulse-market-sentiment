@@ -1,10 +1,10 @@
-# Deploy Pulse to Railway
+# Deploy Batcave to Railway
 
-This puts Pulse on Railway's infrastructure — runs 24/7, no GCP Akamai block, no PC dependency.
+This puts Batcave on Railway's infrastructure — runs 24/7, no GCP Akamai block, no PC dependency.
 
 ## What this gets you
 
-- Pulse running at a public URL like `pulse-batcave.up.railway.app`
+- Batcave running at a public URL like `pulse-market-sentiment-production.up.railway.app`
 - Schwab connects from Railway's IP (not blocked)
 - Server stays up when your PC is off
 - Auto-redeploys when you push to GitHub
@@ -30,23 +30,36 @@ for cooldowns, stale serves and chain request sizes.
 - Search and select `doodlecoder47282/pulse-market-sentiment`
 - Railway auto-detects the build (it'll see railway.json)
 
-### 3. Wait for first build (~3 min)
-- Railway runs: `npm install && npm run build`
-- Then: `npm start`
-- Watch the Build Logs tab — should end with "serving on port..."
-- If it fails: copy the error and paste back here
+### 3. Add a volume (before the first deploy if you can)
+- Right-click the service (or Command palette) → "Attach Volume"
+- Mount path: `/app/data`
+- This keeps the database (Schwab tokens, graded alerts, ML training rows)
+  across redeploys. Without it every deploy starts empty and needs a Schwab
+  reconnect.
 
-### 4. Add environment variables
-- Click your service → "Variables" tab
-- Click "+ New Variable" three times, paste:
+### 4. Wait for the build (~3 min)
+- Railway installs packages (`npm ci`), runs `npm run build`, then `npm start`
+  (Node 20, pinned in `nixpacks.toml`)
+- Deploy Logs should show "serving on port ..."; the health check is
+  `/api/health`
+- If it fails: copy the error and paste it back here
+
+### 5. Add environment variables
+- Click your service → "Variables" tab → "Raw Editor", paste and fill in:
 
 ```
-SCHWAB_CLIENT_ID = YOUR_SCHWAB_CLIENT_ID
-SCHWAB_CLIENT_SECRET = YOUR_SCHWAB_CLIENT_SECRET
-SCHWAB_REDIRECT_URI = https://YOUR-RAILWAY-URL/api/schwab/callback
+SCHWAB_CLIENT_ID = <your Schwab app key>
+SCHWAB_CLIENT_SECRET = <your Schwab app secret, freshly rotated>
+SCHWAB_REDIRECT_URI = <exactly the Callback URL registered on developer.schwab.com, e.g. https://127.0.0.1>
+PULSE_ML_AUTOSTART = 0
 ```
 
-You won't know the Railway URL yet — leave the third one as `https://127.0.0.1` for now, we update it in step 6.
+Keep `SCHWAB_REDIRECT_URI` identical to the callback already registered on
+your Schwab app. Do not change the callback on developer.schwab.com: an
+edited app can go back into Schwab's review. Connect works with any callback:
+after you log in, Schwab sends the browser to the callback address (with
+`https://127.0.0.1` the page fails to load, which is expected); copy that full
+address from the address bar and paste it into Batcave's Connect dialog.
 
 Also add the access key. On Railway the server binds 0.0.0.0, so without a
 key it fails closed: every `/api` call except `/api/health` returns 503.
@@ -100,25 +113,16 @@ Discord cards are optional: set `PULSE_DISCORD_WEBHOOK` (and the
 `https://discord.com/api/webhooks/...` URLs; unset or malformed values
 disable that card.
 
-### 5. Generate public URL
-- Click "Settings" tab → "Networking" → "Generate Domain"
-- Railway creates something like `pulse-batcave-production.up.railway.app`
-- Copy that URL
+### 6. Generate the public URL
+- Service → "Settings" → "Networking" → "Generate Domain" (port 8080 or the
+  one Railway suggests; the server listens on Railway's `PORT`)
 
-### 6. Update Schwab redirect_uri
-- Update Railway env var `SCHWAB_REDIRECT_URI` to: `https://YOUR-RAILWAY-URL.up.railway.app`
-- Go to [developer.schwab.com](https://developer.schwab.com) → your app → Edit
-- Change the Callback URL to the EXACT same Railway URL
-- Save. Schwab may take a few min to propagate the change.
-
-### 7. First reauth (the moment of truth)
-- Open `https://YOUR-RAILWAY-URL.up.railway.app` in any browser
-- Hit Schwab Connect button
-- Login + approve
-- Schwab redirects to Railway → Railway calls Schwab from its IP → ✅ works
-- Tokens save to `data.db` on the container disk, encrypted with
-  `BATCAVE_TOKEN_KEY`. They survive restarts; a redeploy without a Railway
-  volume starts with an empty disk and needs one reconnect
+### 7. Connect Schwab
+- Open the Railway URL, enter the access key once when asked
+- Settings (gear) → Connect Schwab → open the login link, log in, approve
+- Copy the address Schwab redirected to and paste it into the dialog
+- Tokens are stored in `data/greek_gradient.db` on the volume, encrypted with
+  `BATCAVE_TOKEN_KEY`; they survive restarts and redeploys
 
 ## After this point
 
@@ -198,4 +202,4 @@ old CBOE / Alpha Vantage `backfill.py` is removed (Schwab-only market data), so
 
 ## Cost watch
 
-Free $5 of credit on signup. Pulse uses ~$3–5/mo at idle. Watch the "Usage" tab. If it gets expensive (rare unless we add heavy data feeds), tell me and we tighten things up.
+Free $5 of credit on signup. Batcave uses ~$3–5/mo at idle. Watch the "Usage" tab. If it gets expensive (rare unless we add heavy data feeds), tell me and we tighten things up.

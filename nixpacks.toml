@@ -1,0 +1,4 @@
+# Railway build (Nixpacks): pin Node 20 for better-sqlite3 prebuilt binaries
+# and Vite. The Python ML sidecar is not installed here (see RAILWAY-DEPLOY.md).
+[variables]
+NIXPACKS_NODE_VERSION = "20"
