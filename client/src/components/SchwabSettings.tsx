@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, AUTH_REQUIRED_EVENT } from "@/lib/queryClient";
 import {
   Dialog,
   DialogContent,
@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
+import { friendlyError } from "@/lib/friendlyError";
 import { Switch } from "@/components/ui/switch";
 import { premarketGateEnabled, setPremarketGateEnabled } from "@/lib/prefs";
 import {
@@ -265,15 +266,19 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
     enabled: open,
   });
 
-  const { data: authUrlData } = useQuery<{ url: string }>({
+  // A fresh link each time the dialog opens: it carries a one-time state value.
+  const { data: authUrlData, error: authUrlError, refetch: refetchAuthUrl } = useQuery<{ url: string; automatic?: boolean }>({
     queryKey: ["/api/schwab/auth-url"],
     queryFn: async () => {
       const r = await apiRequest("GET", "/api/schwab/auth-url");
       return r.json();
     },
     enabled: open,
-    staleTime: Infinity,
+    staleTime: 10 * 60_000,
+    gcTime: 0,
+    retry: false,
   });
+  const authUrlNeedsKey = !!authUrlError && /^401\b/.test(String((authUrlError as Error).message));
 
   // Normalize whatever the user pastes into a full redirect URL the server understands.
   // Accepts: full URL, code= fragment, or raw code string.
@@ -332,28 +337,6 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
       refetchStatus();
     },
   });
-
-  const handleOpenAuth = () => {
-    if (!authUrlData?.url) return;
-    // window.open returns null when blocked (sandboxed iframe, popup blocker,
-    // iOS WebView). Detect that and fall back to surfacing the URL inline so
-    // the user can long-press it / open it in a real Safari tab.
-    let win: Window | null = null;
-    try {
-      win = window.open(authUrlData.url, "_blank", "noopener,noreferrer");
-    } catch {
-      win = null;
-    }
-    if (!win) {
-      setAuthBlockedFallback(true);
-      // Same user gesture — piggyback the copy so the link is already on the
-      // clipboard by the time the fallback UI appears.
-      void copyAuthUrl();
-    }
-    // Either way, advance to paste step — if the popup did open, user logs in;
-    // if it didn't, user opens manually via the fallback link.
-    setStep("waiting_for_paste");
-  };
 
   // iOS webview reality: window.open is blocked, target="_blank" anchors are
   // silently eaten by the iframe sandbox, and navigator.clipboard often throws.
@@ -485,16 +468,19 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                   </div>
                 </div>
                 <div className="flex gap-2 pt-1">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="border-amber-500/40 text-amber-300 hover:bg-amber-500/10 text-[11px]"
-                    onClick={handleOpenAuth}
-                    data-testid="reauth-schwab-btn"
-                  >
-                    <RefreshCw className="mr-1 h-3 w-3" />
-                    Re-authenticate
-                  </Button>
+                  {authUrlData?.url ? (
+                    <a
+                      href={authUrlData.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => setStep("waiting_for_paste")}
+                      className="inline-flex min-h-[36px] items-center rounded-md border border-amber-500/40 px-3 text-xs text-amber-300 hover:bg-amber-500/10"
+                      data-testid="reauth-schwab-btn"
+                    >
+                      <RefreshCw className="mr-1 h-3 w-3" />
+                      Re-authenticate
+                    </a>
+                  ) : null}
                   <Button
                     size="sm"
                     variant="outline"
@@ -578,16 +564,62 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                   <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[11px] font-bold">1</span>
                   <span className="text-xs font-medium">Open Schwab authorization page</span>
                 </div>
-                <Button
-                  size="sm"
-                  className="w-full bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs"
-                  onClick={handleOpenAuth}
-                  disabled={!authUrlData?.url}
-                  data-testid="open-schwab-auth-btn"
-                >
-                  <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
-                  Open Schwab Login
-                </Button>
+                {authUrlError ? (
+                  <div className="rounded border border-rose-500/40 bg-rose-500/5 p-2 text-xs leading-snug text-foreground" data-testid="schwab-auth-url-error">
+                    {authUrlNeedsKey ? (
+                      <>
+                        Enter your Batcave access key first; the server rejected this browser.
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="mt-2 w-full min-h-[44px] text-xs"
+                          onClick={() => window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT))}
+                          data-testid="schwab-enter-access-key"
+                        >
+                          Enter access key
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        Can't build the Schwab login link: {friendlyError(authUrlError, "the server did not answer")}
+                        <Button size="sm" variant="outline" className="mt-2 w-full min-h-[44px] text-xs" onClick={() => refetchAuthUrl()}>
+                          Try again
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                ) : !authUrlData?.url ? (
+                  <div className="text-xs text-muted-foreground">Preparing the Schwab login link...</div>
+                ) : (
+                  <>
+                    {/* A real link, not window.open: Safari and iOS treat a tapped
+                        link as a user action and open it in a new tab. */}
+                    <a
+                      href={authUrlData.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => setStep("waiting_for_paste")}
+                      className="flex min-h-[44px] w-full items-center justify-center rounded-md bg-amber-500 px-3 text-sm font-semibold text-black hover:bg-amber-400"
+                      data-testid="open-schwab-auth-btn"
+                    >
+                      <ExternalLink className="mr-1.5 h-4 w-4" />
+                      Open Schwab Login
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => { setAuthBlockedFallback(true); void copyAuthUrl(); }}
+                      className="w-full min-h-[40px] text-xs text-muted-foreground underline underline-offset-2"
+                      data-testid="copy-schwab-auth-link"
+                    >
+                      Didn't open? Copy the link instead
+                    </button>
+                    <div className="text-xs leading-snug text-muted-foreground">
+                      {authUrlData.automatic
+                        ? "After you approve, Schwab sends you straight back to Batcave and the connection finishes by itself."
+                        : "After you approve, Schwab sends you to your callback address (the page may not load; that is expected). Copy that full address and paste it in step 2."}
+                    </div>
+                  </>
+                )}
                 {authBlockedFallback && authUrlData?.url && (
                   <div className="mt-2 rounded border border-amber-500/40 bg-amber-500/5 p-2 space-y-2">
                     <div className="text-[11px] font-semibold text-amber-300 uppercase tracking-wider">

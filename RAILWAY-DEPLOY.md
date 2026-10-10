@@ -117,6 +117,15 @@ disable that card.
 - Service → "Settings" → "Networking" → "Generate Domain" (port 8080 or the
   one Railway suggests; the server listens on Railway's `PORT`)
 
+### Optional: one-tap sign-in (no pasting, best on iPhone)
+Add `https://YOUR-RAILWAY-DOMAIN/api/schwab/oauth/callback` as a Callback URL
+on your Schwab app (developer.schwab.com, comma-separate it from the existing
+one if Schwab allows several) and set `SCHWAB_REDIRECT_URI` to that same
+address. Schwab then returns you to Batcave after you approve and the
+connection finishes by itself. Editing the app may put it back into Schwab's
+review for a while; until it shows "Ready For Use" again, keep the old
+callback.
+
 ### 7. Connect Schwab
 - Open the Railway URL, enter the access key once when asked
 - Settings (gear) → Connect Schwab → open the login link, log in, approve

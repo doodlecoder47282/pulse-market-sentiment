@@ -10,7 +10,8 @@ import { TickerProvider } from "@/components/TickerContext";
 import { ThemeProvider } from "@/components/ThemeContext";
 import PreMarketGate from "@/components/PreMarketGate";
 import ConnectionGate from "@/components/ConnectionGate";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { toast } from "@/hooks/use-toast";
 import { premarketGateEnabled } from "@/lib/prefs";
 import { SpeedInsights } from "@vercel/speed-insights/react";
 
@@ -32,6 +33,23 @@ function App() {
   // checklist is a personal opt-in (Settings), off by default, and never
   // required to reach the app.
   const [showPremarket, setShowPremarket] = useState(premarketGateEnabled);
+
+  // Return from Schwab's sign-in page (automatic callback): show the result
+  // once, refresh Schwab-fed data, and clean the address bar.
+  useEffect(() => {
+    let params: URLSearchParams;
+    try { params = new URLSearchParams(window.location.search); } catch { return; }
+    const result = params.get("schwab");
+    if (!result) return;
+    if (result === "connected") {
+      toast({ title: "Schwab connected", description: "Live data is loading." });
+      void queryClient.invalidateQueries();
+    } else {
+      const reason = (params.get("reason") || "unknown error").replace(/_/g, " ");
+      toast({ title: "Schwab sign-in did not finish", description: `${reason}. Open Settings and try Connect again.`, variant: "destructive" });
+    }
+    try { window.history.replaceState(null, "", window.location.pathname + window.location.hash); } catch { /* ignore */ }
+  }, []);
   const gateActive = showPremarket;
 
   return (
