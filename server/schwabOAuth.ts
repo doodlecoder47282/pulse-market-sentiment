@@ -30,7 +30,7 @@ export function isAutomaticCallback(redirectUri: string): boolean {
 }
 
 function prune(now: number) {
-  for (const [s, exp] of pending) if (exp <= now) pending.delete(s);
+  pending.forEach((exp, s) => { if (exp <= now) pending.delete(s); });
   while (pending.size > MAX_PENDING) pending.delete(pending.keys().next().value as string);
 }
 
