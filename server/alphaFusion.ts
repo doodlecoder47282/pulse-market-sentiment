@@ -91,8 +91,11 @@ let _analogsCache: AnalogRow[] | null = null;
 async function loadAnalogs(): Promise<AnalogRow[]> {
   if (_analogsCache) return _analogsCache;
   try {
+    // data/ may be a mounted volume (Railway) that hides the tracked file;
+    // fall back to the copy shipped with the server source.
     const p = path.join(process.cwd(), "data", "analogs", "macro-analogs.json");
-    const raw = await fs.readFile(p, "utf-8");
+    const seed = path.join(process.cwd(), "server", "seed", "macro-analogs.json");
+    const raw = await fs.readFile(p, "utf-8").catch(() => fs.readFile(seed, "utf-8"));
     const parsed = JSON.parse(raw);
     _analogsCache = (parsed?.analogs ?? []) as AnalogRow[];
     return _analogsCache;
