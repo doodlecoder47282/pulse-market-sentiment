@@ -179,8 +179,15 @@ volume on /app/data, RAILWAY-DEPLOY.md rewritten (volume, variables incl.
 PULSE_ML_AUTOSTART=0, keep the registered Schwab callback and use the
 paste-back Connect flow). Not verified: an actual Railway build (no access
 from this workspace).
-Next step: user attaches the /app/data volume, sets the variables, deploys;
-paste build/deploy log errors back if any.
+User report: Railway variables were empty (invalid_client); then the Connect
+button was a dud (disabled when /api/schwab/auth-url failed, no reason
+shown; window.open after async blocked on Safari/iOS). PR #5 (480708c):
+login button is a real link, copy fallback always shown, dialog explains a
+missing access key or missing SCHWAB_* variables (auth-url now 503 with the
+names), optional automatic callback /api/schwab/oauth/callback with a
+one-time state (tests/quant/schwab-oauth.test.ts). Not verified live.
+Next step: user redeploys main on Railway, enters the access key, connects
+Schwab; report what the Connect dialog says if it still fails.
 
 ## Current objective
 

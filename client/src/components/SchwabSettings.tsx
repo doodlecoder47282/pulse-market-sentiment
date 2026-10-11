@@ -467,6 +467,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                     <span>Refresh valid: <span className="text-foreground font-mono">{formatDuration(status?.refreshExpiresIn ?? 0)}</span></span>
                   </div>
                 </div>
+                <SchwabSelfTest />
                 <div className="flex gap-2 pt-1">
                   {authUrlData?.url ? (
                     <a
@@ -809,5 +810,47 @@ function PremarketToggle() {
         data-testid="switch-premarket-gate"
       />
     </label>
+  );
+}
+
+interface SelfTestItem { name: string; ok: boolean; status: number | null; detail: string }
+
+/** One button that checks each Schwab API live and says what is wrong. */
+function SchwabSelfTest() {
+  const [busy, setBusy] = useState(false);
+  const [items, setItems] = useState<SelfTestItem[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const r = await apiRequest("GET", "/api/schwab/selftest");
+      const j = await r.json();
+      setItems(j.items ?? []);
+    } catch (e) {
+      setErr(friendlyError(e, "The server did not answer."));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="space-y-2 pt-1" data-testid="schwab-selftest">
+      <Button size="sm" variant="outline" className="min-h-[40px] w-full text-xs" onClick={run} disabled={busy} data-testid="schwab-selftest-btn">
+        {busy ? "Testing Schwab data..." : "Test Schwab data"}
+      </Button>
+      {err && <div className="text-xs text-rose-400">{err}</div>}
+      {items && (
+        <ul className="space-y-1.5">
+          {items.map((it) => (
+            <li key={it.name} className="rounded border border-border/40 p-2 text-xs leading-snug">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium text-foreground">{it.name}</span>
+                <span className={it.ok ? "text-emerald-400" : "text-rose-400"}>{it.ok ? "OK" : `Failed${it.status ? ` (${it.status})` : ""}`}</span>
+              </div>
+              <div className="mt-0.5 text-muted-foreground">{it.detail}</div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
