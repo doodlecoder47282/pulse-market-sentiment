@@ -272,3 +272,10 @@ export function intradayTapeState(barCount: number, ms: number = Date.now()): { 
   if (c.minutes < REGULAR_OPEN_MIN) return { dataState: "no_data", reason: "pre-market: no regular-session bars yet" };
   return { dataState: "no_data", reason: "intraday tape returned no bars (feed failed or empty)" };
 }
+
+/** ET calendar date of the newest candle (epoch-ms `datetime`), or null. */
+export function lastSessionDate(candles: Array<{ datetime?: unknown }>): string | null {
+  let maxT = -Infinity;
+  for (const c of candles) if (typeof c?.datetime === "number" && c.datetime > maxT) maxT = c.datetime;
+  return Number.isFinite(maxT) ? etDate(maxT) : null;
+}

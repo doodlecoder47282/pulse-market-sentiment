@@ -9,7 +9,7 @@
 import type { ChainSegmentLike } from "./schwabDataPolicy";
 import { readSchwabTokens, writeSchwabTokens, deleteSchwabTokens, tokenStoreStatus, type TokenStoreStatus } from "./schwabTokenStore";
 import { observeQuote } from "./quoteShield";
-import { etDate, addDays } from "./exchangeCalendar";
+import { etDate, addDays, isRegularSessionOpen, lastSessionDate } from "./exchangeCalendar";
 import { quoteFreshness } from "./quoteFreshness";
 import { gexByStrikeFromChain } from "./gammaProfile";
 import {
@@ -566,7 +566,52 @@ function _normalizeIndexSymbol(sym: string): string {
  */
 export async function getStreamerInfo(): Promise<StreamerInfo | null> {
   const meta = await schwabFetchMeta("trader/v1/userPreference");
+  if (!meta.data && /\b401\b/.test(meta.reason ?? "")) {
+    // Market data can work while the Trader API refuses the token: the app on
+    // developer.schwab.com lacks "Accounts and Trading Production".
+    throw new Error("Schwab 401 on trader/v1/userPreference: the Schwab app is not enabled for the Trader API (Accounts and Trading Production), so streaming is off; REST market data still works");
+  }
   return meta.data ? parseStreamerInfo(meta.data) : null;
+}
+
+export interface SchwabSelfTestItem { name: string; ok: boolean; status: number | null; detail: string }
+
+/**
+ * Live check of each Schwab API this app uses, uncached, with plain-language
+ * results for the Settings panel. Never returns tokens or account ids.
+ */
+export async function schwabSelfTest(): Promise<{ connected: boolean; items: SchwabSelfTestItem[] }> {
+  const token = await getAccessToken();
+  if (!token) return { connected: false, items: [{ name: "Sign-in", ok: false, status: null, detail: "Schwab is not connected or the sign-in expired. Use Connect Schwab." }] };
+  const probe = async (name: string, url: string, summarize: (j: any) => string): Promise<SchwabSelfTestItem> => {
+    try {
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
+      if (r.ok) {
+        let j: any = null;
+        try { j = await r.json(); } catch { /* empty body */ }
+        return { name, ok: true, status: r.status, detail: summarize(j) };
+      }
+      const why =
+        r.status === 401 ? "Schwab refused the sign-in for this API (401). If only this line fails, your Schwab app lacks the product this API belongs to; if every line fails, reconnect Schwab and check SCHWAB_CLIENT_SECRET." :
+        r.status === 403 ? "Schwab says this app is not entitled to this data (403). Check the API products on developer.schwab.com." :
+        r.status === 429 ? "Rate limited by Schwab (429). Try again in a minute." :
+        `Schwab answered ${r.status}.`;
+      return { name, ok: false, status: r.status, detail: why };
+    } catch (e: any) {
+      return { name, ok: false, status: null, detail: `Could not reach Schwab: ${e?.message ?? "network error"}` };
+    }
+  };
+  const items = await Promise.all([
+    probe("Quotes (SPY, $SPX, $VIX)", `${MARKET_BASE}/quotes?symbols=${encodeURIComponent("SPY,$SPX,$VIX")}&fields=quote`,
+      (j) => { const n = j ? Object.keys(j).length : 0; const spy = j?.SPY?.quote?.lastPrice; return `${n} of 3 symbols returned${typeof spy === "number" ? `; SPY last ${spy}` : ""}`; }),
+    probe("Daily price history (SPY, 1 month)", `${MARKET_BASE}/pricehistory?symbol=SPY&periodType=month&period=1&frequencyType=daily&frequency=1`,
+      (j) => `${Array.isArray(j?.candles) ? j.candles.length : 0} daily bars`),
+    probe("Option chain (SPY, 4 strikes)", `${MARKET_BASE}/chains?symbol=SPY&strikeCount=4&contractType=ALL`,
+      (j) => { const exps = j?.callExpDateMap ? Object.keys(j.callExpDateMap).length : 0; return exps ? `${exps} expirations returned` : `answered with no expirations (status ${j?.status ?? "?"})`; }),
+    probe("Streaming info (Trader API)", `${SCHWAB_BASE}/trader/v1/userPreference`,
+      (j) => (Array.isArray(j?.streamerInfo) && j.streamerInfo.length ? "streamer info returned" : "no streamer info in the answer")),
+  ]);
+  return { connected: true, items };
 }
 
 /**
@@ -773,13 +818,27 @@ export async function getPriceHistory(
     }
     const r = await schwabFetchMeta("marketdata/v1/pricehistory", params);
     if (r.data == null || !r.freshness) return unavailable(r.reason ?? "Schwab price history unavailable");
-    const f = r.freshness;
-    const candles = Array.isArray(r.data?.candles) ? r.data.candles : [];
+    let f = r.freshness;
+    let candles: any[] = Array.isArray(r.data?.candles) ? r.data.candles : [];
+    let reason = f.reason;
+    // Market closed (weekend, holiday, before the open): a one-day window ending
+    // now has no bars. Show the last session instead, labelled, so intraday
+    // charts are not blank all weekend.
+    if (!candles.length && frequencyType === "minute" && periodType === "day" && period <= 1 && !isRegularSessionOpen()) {
+      const r2 = await schwabFetchMeta("marketdata/v1/pricehistory", { ...params, period: 5 });
+      const all: any[] = r2.data && Array.isArray(r2.data.candles) ? r2.data.candles : [];
+      const lastDay = lastSessionDate(all);
+      if (lastDay && r2.freshness) {
+        candles = all.filter((c) => typeof c?.datetime === "number" && etDate(c.datetime) === lastDay);
+        f = r2.freshness;
+        reason = `market closed: last session ${lastDay}`;
+      }
+    }
     return {
       symbol, candles, source: "schwab",
       dataState: candles.length ? "ok" : "empty",
       asOfMs: f.asOfMs, ageMs: f.ageMs, servedFromCache: f.servedFromCache, stale: f.stale, maxAgeMs: f.maxAgeMs,
-      reason: f.reason,
+      reason,
     };
   } catch (e: any) {
     console.warn("[schwab] getPriceHistory error:", e?.message);

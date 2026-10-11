@@ -26,3 +26,14 @@ test("state is single-use and expires after 15 minutes", () => {
   assert.equal(consumeOAuthState(null, t0), false);
   assert.equal(consumeOAuthState("forged", t0), false);
 });
+
+import { lastSessionDate } from "../../server/exchangeCalendar";
+
+test("last session date is the ET date of the newest bar", () => {
+  // Fri 2026-10-09 15:59 ET and Thu 2026-10-08 10:00 ET (EDT = UTC-4)
+  const fri = Date.parse("2026-10-09T19:59:00Z");
+  const thu = Date.parse("2026-10-08T14:00:00Z");
+  assert.equal(lastSessionDate([{ datetime: thu }, { datetime: fri }]), "2026-10-09");
+  assert.equal(lastSessionDate([]), null);
+  assert.equal(lastSessionDate([{ datetime: "x" }]), null);
+});

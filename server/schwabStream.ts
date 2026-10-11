@@ -299,7 +299,9 @@ export class SchwabStreamer {
     if (!info) {
       this.state = "no_streamer_info";
       if (!this.lastError?.startsWith("userPreference")) this.fail("Schwab userPreference returned no streamerInfo");
-      this.scheduleReconnect();
+      // A 401 here is an app-permission problem that retrying will not fix:
+      // check again in 30 minutes instead of every minute.
+      this.scheduleReconnect(/\b401\b/.test(this.lastError ?? "") ? 30 * 60_000 : undefined);
       return;
     }
     let ws: WebSocketLike;

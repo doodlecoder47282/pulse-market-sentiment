@@ -3073,6 +3073,17 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     }
   });
 
+  // Live check of each Schwab API with plain-language results (Settings panel).
+  app.get("/api/schwab/selftest", async (_req, res) => {
+    try {
+      const { schwabSelfTest } = await import("./schwab");
+      res.setHeader("Cache-Control", "no-store");
+      res.json(await schwabSelfTest());
+    } catch (e: any) {
+      res.status(500).json({ error: String(e?.message || e) });
+    }
+  });
+
   app.get("/api/schwab/auth-url", async (_req, res) => {
     try {
       const { schwabConfigProblem, isAutomaticCallback } = await import("./schwabOAuth");
