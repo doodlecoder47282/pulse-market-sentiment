@@ -186,8 +186,15 @@ login button is a real link, copy fallback always shown, dialog explains a
 missing access key or missing SCHWAB_* variables (auth-url now 503 with the
 names), optional automatic callback /api/schwab/oauth/callback with a
 one-time state (tests/quant/schwab-oauth.test.ts). Not verified live.
-Next step: user redeploys main on Railway, enters the access key, connects
-Schwab; report what the Connect dialog says if it still fails.
+2026-10-11: user connected Schwab on Railway; panels still empty. Logs:
+repeated 401 on trader/v1/userPreference (Trader API refused: app likely
+lacks "Accounts and Trading Production"; streamer off, REST market data
+unaffected), token refresh OK, no marketdata errors in the excerpt. PR #6
+(ac5bd34): Settings "Test Schwab data" (/api/schwab/selftest: quotes,
+daily history, chain, Trader API with plain-language results); intraday
+minute bars fall back to the last session when the market is closed (were
+blank all weekend); streamer retries a 401 every 30 min. Not verified live.
+Next step: user redeploys, runs Test Schwab data, reports the four lines.
 
 ## Current objective
 
