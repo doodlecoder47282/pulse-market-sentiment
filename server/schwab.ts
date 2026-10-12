@@ -883,6 +883,8 @@ export async function getPriceHistory(
 
 /** Schwab chain underlying block (index points or $/share). */
 export interface ChainUnderlying {
+  /** Wire symbol of the underlying ($SPX, SPY, ...): sets the dividend-yield basis of every gamma consumer. */
+  symbol?: string | null;
   last: number | null;
   bid: number | null;
   ask: number | null;
@@ -1023,6 +1025,7 @@ export async function getOptionChain(
     const ao = chainAsOf(quoteTimeMs, f.asOfMs);
     return {
       underlying: {
+        symbol: wireSymbol,
         last,
         bid: num(u.bid),
         ask: num(u.ask),

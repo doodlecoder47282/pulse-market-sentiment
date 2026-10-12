@@ -4,12 +4,15 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Flame, Activity, AlertTriangle } from "lucide-react";
 
+import DataStateChip from "@/components/DataStateChip";
+
 type Cell = {
   expIdx: number; strikeIdx: number;
   expiry: string; dte: number; strike: number;
   exposure: number;
   gex: number; vanna: number; charm: number; vomma: number; zomma: number;
   callOI: number; putOI: number;
+  callVolume?: number; putVolume?: number;
 };
 type ThermalResp = {
   symbol: string;
@@ -18,21 +21,37 @@ type ThermalResp = {
   greek: "gex" | "vanna" | "charm" | "vomma" | "zomma";
   weightMode: string;
   strikes: number[];
-  expiries: Array<{ label: string; dte: number }>;
+  expiries: Array<{ label: string; dte: number; maxAbs?: number }>;
   cells: Cell[];
   maxAbs: number;
   strikeTotals: Array<{ strike: number; total: number; totalAbs: number }>;
   levels: { callWall: number | null; putWall: number | null; gammaFlip: number | null };
+  /** Method and assumptions (server/thermalHeatmap.ts). Older servers omit it. */
+  method?: {
+    position: string;
+    positionAsOf: string;
+    dealerSignNote: string;
+    r: number;
+    q: number;
+    units: Record<string, string>;
+    contractsUsed: number;
+    contractsWithoutOI: number;
+    contractsSettled: number;
+    contractsNoSigma: number;
+  };
+  dataState?: "ok" | "no_iv" | "empty";
+  reason?: string | null;
+  chain?: { asOfMs: number | null; ageMs: number | null; servedFromCache: boolean; stale: boolean; staleReason: string | null };
   source: string;
 };
 
 type Greek = "gex" | "vanna" | "charm" | "vomma" | "zomma";
-const GREEKS: Array<{ key: Greek; label: string; desc: string }> = [
-  { key: "gex", label: "GEX", desc: "Gamma exposure — dealer hedging flow" },
-  { key: "vanna", label: "Vanna", desc: "Delta sensitivity to IV" },
-  { key: "charm", label: "Charm", desc: "Delta decay over time" },
-  { key: "vomma", label: "Vomma", desc: "Vega convexity" },
-  { key: "zomma", label: "Zomma", desc: "Gamma sensitivity to IV" },
+const GREEKS: Array<{ key: Greek; label: string; desc: string; unit: string }> = [
+  { key: "gex", label: "GEX", desc: "Dealer gamma: $ of delta hedge per 1% move", unit: "$ delta hedge per 1% spot move" },
+  { key: "vanna", label: "Vanna", desc: "Dealer delta change per +1 vol point", unit: "$ delta hedge per +1 vol point" },
+  { key: "charm", label: "Charm", desc: "Dealer delta change over one day", unit: "$ delta hedge over 1 day" },
+  { key: "vomma", label: "Vomma", desc: "Dealer vega change per +1 vol point", unit: "$ vega per +1 vol point" },
+  { key: "zomma", label: "Zomma", desc: "GEX change per +1 vol point", unit: "$ GEX per +1 vol point" },
 ];
 
 // Diverging color: positive = emerald (long gamma / support), negative = rose (short gamma / risk)
@@ -91,8 +110,9 @@ export default function ThermalHeatmap() {
 
   // Layout constants — cells sized to carry their dollar value (hover-free
   // reading on mobile; the reference grid puts the number in the cell)
-  const rowH = 18;
-  const marginTop = 30;
+  // 10 px in-cell text is the floor the UX audit holds every screen to.
+  const rowH = 20;
+  const marginTop = 44;
   const marginLeft = 56;
   const marginRight = 90;
   const marginBottom = 26;
@@ -142,7 +162,7 @@ export default function ThermalHeatmap() {
     const nExps = data.expiries.length;
     if (!nStrikes || !nExps) return null;
     const height = marginTop + nStrikes * rowH + marginBottom;
-    const cellW = 64;
+    const cellW = 72;
     const width = marginLeft + nExps * cellW + marginRight;
     return { height, width, cellW, nStrikes, nExps };
   }, [data]);
@@ -192,7 +212,7 @@ export default function ThermalHeatmap() {
       if (Math.abs(c.exposure) >= 1e-9) {
         const t = Math.min(1, Math.abs(c.exposure) / (norm || 1));
         const hot = Math.pow(t, 0.55) > 0.45;
-        ctx.font = isExtreme ? "bold 8.5px ui-monospace, monospace" : "8.5px ui-monospace, monospace";
+        ctx.font = isExtreme ? "bold 10px ui-monospace, monospace" : "10px ui-monospace, monospace";
         ctx.fillStyle = isExtreme
           ? "rgba(255,255,255,0.98)"
           : hot
@@ -203,11 +223,22 @@ export default function ThermalHeatmap() {
     }
     ctx.textBaseline = "alphabetic";
 
+    // Rows run high strike (top) to low strike (bottom); a level between two
+    // strikes is drawn between their rows, not snapped to the next strike.
+    const yOfLevel = (level: number): number | null => {
+      const ks = data.strikes;
+      if (!ks.length || level < ks[0] || level > ks[ks.length - 1]) return null;
+      let i = 0;
+      while (i < ks.length - 1 && ks[i + 1] < level) i++;
+      const lo = ks[i], hi = ks[Math.min(i + 1, ks.length - 1)];
+      const f = hi > lo ? (level - lo) / (hi - lo) : 0;
+      const rowCenter = (idx: number) => marginTop + (grid.nStrikes - 1 - idx) * rowH + rowH / 2;
+      return rowCenter(i) + f * (rowCenter(Math.min(i + 1, ks.length - 1)) - rowCenter(i));
+    };
     // Spot line
-    const spotIdx = data.strikes.findIndex(s => s >= data.spot);
-    if (spotIdx >= 0) {
-      const yIdx = grid.nStrikes - 1 - spotIdx;
-      const y = marginTop + yIdx * rowH + rowH / 2;
+    const spotY = yOfLevel(data.spot);
+    if (spotY != null) {
+      const y = spotY;
       ctx.strokeStyle = "rgba(250, 204, 21, 0.9)";
       ctx.lineWidth = 1.5;
       ctx.setLineDash([4, 4]);
@@ -225,10 +256,9 @@ export default function ThermalHeatmap() {
     // Gamma flip line (only for gex)
     if (greek === "gex" && data.levels.gammaFlip != null) {
       const flip = data.levels.gammaFlip;
-      const flipIdx = data.strikes.findIndex(s => s >= flip);
-      if (flipIdx >= 0) {
-        const yIdx = grid.nStrikes - 1 - flipIdx;
-        const y = marginTop + yIdx * rowH + rowH / 2;
+      const flipY = yOfLevel(flip);
+      if (flipY != null) {
+        const y = flipY;
         ctx.strokeStyle = "rgba(139, 92, 246, 0.8)";
         ctx.lineWidth = 1;
         ctx.setLineDash([2, 3]);
@@ -256,20 +286,28 @@ export default function ThermalHeatmap() {
       ctx.fillText(String(strike), marginLeft - 6, y);
     }
 
-    // Expiry labels (X axis, DTE)
+    // Expiry labels (X axis): DTE, and under it the column's own max when each
+    // date is shaded to its own scale (so a dim far date is not read as heavy).
     ctx.fillStyle = "rgba(148,163,184,0.75)";
     ctx.textAlign = "center";
+    ctx.font = "10px ui-monospace, monospace";
     for (let j = 0; j < grid.nExps; j++) {
       const exp = data.expiries[j];
       const x = marginLeft + j * grid.cellW + grid.cellW / 2;
-      ctx.fillText(`${exp.dte}d`, x, marginTop - 8);
+      ctx.fillText(`${exp.dte}d`, x, marginTop - 20);
+      const cm = colMax[j];
+      if (scaleMode === "per-date" && cm > 0) {
+        ctx.fillStyle = "rgba(148,163,184,0.6)";
+        ctx.fillText(`max ${fmtCell(cm).replace(/^[+-]/, "")}`, x, marginTop - 8);
+        ctx.fillStyle = "rgba(148,163,184,0.75)";
+      }
     }
 
     // Title band
     ctx.fillStyle = "rgba(226,232,240,0.85)";
     ctx.font = "10px ui-monospace, monospace";
     ctx.textAlign = "left";
-    ctx.fillText(`${greek.toUpperCase()} notional · strike × expiry · ${scaleMode} scale · weight ${data.weightMode}`, marginLeft, marginTop - 18);
+    ctx.fillText(`${greek.toUpperCase()} · strike × expiry · ${scaleMode === "per-date" ? "each date to its own max" : "one scale"} · open interest only`, marginLeft, marginTop - 32);
   }, [data, grid, greek, scaleMode, colMax]);
 
   // Hover handler
@@ -365,21 +403,46 @@ export default function ThermalHeatmap() {
                 </div>
               )}
               <div className="text-[11px] text-slate-500 mt-1">OI c/{hover.callOI} p/{hover.putOI}</div>
+              {(hover.callVolume != null || hover.putVolume != null) && (
+                <div className="text-[11px] text-slate-500">traded today c/{hover.callVolume ?? 0} p/{hover.putVolume ?? 0} (not in exposure)</div>
+              )}
             </div>
           )}
         </div>
       )}
 
+      {data && data.dataState && data.dataState !== "ok" && (
+        <div className="mt-2 flex items-center gap-2 text-xs text-amber-300" data-testid="thermal-heatmap-state">
+          <AlertTriangle className="w-3.5 h-3.5" />
+          {data.dataState === "no_iv" ? "Exposure cannot be priced: " : "Nothing to show: "}{data.reason ?? data.dataState}
+        </div>
+      )}
+
       {data && (
-        <div className="mt-3 flex items-center justify-between text-[11px] font-mono text-slate-500">
-          <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-emerald-500/70" /> long gamma / support</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-rose-500/70" /> short gamma / risk</span>
-            {greek === "gex" && data.levels.callWall && <span className="text-emerald-400">call wall {data.levels.callWall}</span>}
-            {greek === "gex" && data.levels.putWall && <span className="text-rose-400">put wall {data.levels.putWall}</span>}
+        <div className="mt-3 space-y-1.5 text-[11px] font-mono text-slate-500" data-testid="thermal-heatmap-legend">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-emerald-500/70" /> dealers long gamma (hedging tends to damp moves)</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-rose-500/70" /> dealers short gamma (hedging tends to amplify moves)</span>
+              {greek === "gex" && data.levels.callWall && <span className="text-emerald-400">call wall {data.levels.callWall}</span>}
+              {greek === "gex" && data.levels.putWall && <span className="text-rose-400">put wall {data.levels.putWall}</span>}
+              {greek === "gex" && data.levels.gammaFlip != null && <span className="text-violet-300">flip {data.levels.gammaFlip.toFixed(0)}</span>}
+            </div>
+            <div className="flex items-center gap-2">
+              {data.chain && data.chain.asOfMs != null ? (
+                <DataStateChip state={data.chain.stale ? "stale" : "ok"} reason={data.chain.staleReason} asOf={data.chain.asOfMs} source="Schwab" showAge testId="thermal-chain-age" />
+              ) : (
+                <span className="flex items-center gap-1"><Activity className="w-3 h-3" /> {new Date(data.asOf).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-1">
-            <Activity className="w-3 h-3" /> {new Date(data.asOf).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          <div className="text-slate-500" data-testid="thermal-heatmap-method">
+            {GREEKS.find((g) => g.key === greek)?.unit} · open interest as of the prior close (OCC posts it once a day), marked at live spot and vol
+            {data.method ? ` · r ${(data.method.r * 100).toFixed(1)}% q ${(data.method.q * 100).toFixed(1)}% · ${data.method.contractsUsed} contracts priced` : ""}
+            {data.method && data.method.contractsNoSigma > 0 ? `, ${data.method.contractsNoSigma} without an implied vol` : ""}
+          </div>
+          <div className="text-slate-600">
+            Dealer side is assumed (long every call, short every put), not observed. A heuristic read of positioning, not a forecast or advice.
           </div>
         </div>
       )}

@@ -1,4 +1,7 @@
-// UX audit: every tab at six viewports. Screenshots + layout/readability metrics.
+// UX audit: every tab at eight viewports (two phones, iPad portrait and
+// landscape, a 13-inch iPad landscape, laptop, wide). Screenshots +
+// layout/readability metrics. Touch viewports emulate a coarse pointer
+// through CDP so the CSS touch rules apply exactly as on a real iPhone/iPad.
 // Run in CI against a production build on BASE_URL. Writes rep/ux/.
 import { chromium } from "playwright";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -9,8 +12,9 @@ const tabs = ["signals", "chart", "models", "heatseeker", "tradedesk", "regime",
 const viewports = [
   { name: "phone-se", width: 375, height: 667, mobile: true },
   { name: "phone-15", width: 393, height: 852, mobile: true },
-  { name: "tablet-portrait", width: 768, height: 1024, mobile: true },
-  { name: "tablet-landscape", width: 1024, height: 768, mobile: true },
+  { name: "tablet-portrait", width: 820, height: 1180, mobile: true },    // iPad Air / Pro 11
+  { name: "tablet-landscape", width: 1180, height: 820, mobile: true },
+  { name: "tablet-13-landscape", width: 1376, height: 1032, mobile: true }, // iPad Pro 13
   { name: "laptop", width: 1440, height: 900, mobile: false },
   { name: "wide", width: 1920, height: 1080, mobile: false },
 ];
@@ -52,6 +56,28 @@ function measure(isMobile) {
     const hidesX = cs.overflowX === "hidden" || cs.overflow === "hidden";
     if (hidesX && el.scrollWidth > el.clientWidth + 2 && cs.textOverflow !== "ellipsis") clipped.push(label(el));
   }
+  // Overlapping text: two text-bearing elements whose boxes intersect while
+  // neither contains the other (labels drawn over each other, cards colliding).
+  // Ignores tooltips/popovers (position fixed/absolute) and sub-4px grazes.
+  const textLeaves = all.filter((el) => {
+    if (!Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.textContent.trim())) return false;
+    const pos = getComputedStyle(el).position;
+    return pos !== "fixed" && pos !== "absolute";
+  }).map((el) => ({ el, r: el.getBoundingClientRect() })).filter((x) => x.r.width > 4 && x.r.height > 4 && x.r.top < 20000);
+  textLeaves.sort((a, b) => a.r.top - b.r.top);
+  const overlaps = [];
+  for (let i = 0; i < textLeaves.length; i++) {
+    const A = textLeaves[i];
+    for (let j = i + 1; j < textLeaves.length; j++) {
+      const B = textLeaves[j];
+      if (B.r.top >= A.r.bottom - 4) break;
+      if (A.el.contains(B.el) || B.el.contains(A.el)) continue;
+      const ix = Math.min(A.r.right, B.r.right) - Math.max(A.r.left, B.r.left);
+      const iy = Math.min(A.r.bottom, B.r.bottom) - Math.max(A.r.top, B.r.top);
+      if (ix > 4 && iy > 4) { overlaps.push(`${label(A.el)} x ${label(B.el)}`); if (overlaps.length >= 40) break; }
+    }
+    if (overlaps.length >= 40) break;
+  }
   // Tap targets (mobile): interactive elements under 44x44 CSS px (Apple HIG) / 24x24 (WCAG 2.2 minimum).
   const interactive = all.filter((el) => el.matches("button, a[href], [role=button], [role=tab], input, select, textarea, [role=switch], [role=checkbox]"));
   const smallTargets = [], tinyTargets = [];
@@ -92,6 +118,7 @@ function measure(isMobile) {
     docOverflowX, scrollHeight: document.documentElement.scrollHeight,
     offscreenCount: offscreen.length, offscreen: offscreen.slice(0, 10),
     clippedCount: clipped.length, clipped: clipped.slice(0, 10),
+    overlapCount: overlaps.length, overlaps: overlaps.slice(0, 10),
     interactiveCount: interactive.length,
     smallTargetCount: smallTargets.length, smallTargets: smallTargets.slice(0, 10),
     tinyTargetCount: tinyTargets.length, tinyTargets: tinyTargets.slice(0, 10),
@@ -108,6 +135,12 @@ for (const vp of viewports) {
   mkdirSync(`${OUT}/${vp.name}`, { recursive: true });
   const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, isMobile: vp.mobile, hasTouch: vp.mobile, deviceScaleFactor: 1 });
   const p = await ctx.newPage();
+  if (vp.mobile) {
+    // Real iPhones and iPads report (pointer: coarse) and (hover: none); the
+    // CSS touch rules key on them, so force them whatever Playwright's version does.
+    const cdp = await ctx.newCDPSession(p);
+    await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "pointer", value: "coarse" }, { name: "hover", value: "none" }, { name: "any-pointer", value: "coarse" }] });
+  }
   const errors = [];
   p.on("pageerror", (e) => errors.push(e.message));
   p.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text().slice(0, 160)); });
@@ -198,6 +231,7 @@ console.log("ux audit done", report.length);
       docOverflowX: Math.max(0, ...tabsHere.map((e) => e.docOverflowX ?? 0)),
       clippedText: sum("clippedCount"),
       offscreen: sum("offscreenCount"),
+      overlappingText: sum("overlapCount"),
       tapTargetsUnder24: sum("tinyTargetCount"),
       pageErrorsExcluding503: (meta.pageErrors ?? []).filter((x) => !/\b503\b/.test(x)).length,
       worstTab: {
@@ -211,7 +245,7 @@ console.log("ux audit done", report.length);
     scorecard[vp] = s;
     const pv = budget.perViewport;
     for (const k of ["docOverflowX", "clippedText", "pageErrorsExcluding503"]) if (s[k] > pv[k]) failures.push(`${vp}: ${k} ${s[k]} > ${pv[k]}`);
-    for (const k of ["offscreen", "tapTargetsUnder24"]) if (s[k] > pick(pv[k], vp)) failures.push(`${vp}: ${k} ${s[k]} > ${pick(pv[k], vp)}`);
+    for (const k of ["offscreen", "tapTargetsUnder24", "overlappingText"]) if (pv[k] != null && s[k] > pick(pv[k], vp)) failures.push(`${vp}: ${k} ${s[k]} > ${pick(pv[k], vp)}`);
     for (const [k, lim] of Object.entries(budget.perTab)) if (s.worstTab[k] > lim) failures.push(`${vp}: worst tab ${k} ${s.worstTab[k]} > ${lim}`);
     if (s.tabsMeasured < tabs.length) failures.push(`${vp}: only ${s.tabsMeasured} of ${tabs.length} tabs measured`);
   }

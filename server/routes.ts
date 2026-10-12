@@ -52,6 +52,7 @@ import { timeToExpiry } from "./timeToExpiry";
 import { etDate, intradayTapeState, isRegularSessionOpen, REGULAR_OPEN_MIN, sessionCloseMinutes, sessionCloseMs } from "./exchangeCalendar";
 import { gamma as bsGammaOurClock } from "./greeks";
 import { charmTiltNorm, contractExposure } from "./greekExposure";
+import { buildThermalHeatmap, THERMAL_GREEKS, type ThermalGreek } from "./thermalHeatmap";
 import { pickEarningsExpiry } from "./impliedScenario";
 import { fitOUBand, shouldShowOUBand } from "./ouBand";
 import { flagTailEvent } from "./stableTail";
@@ -3572,7 +3573,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     try {
       const symbol = String(req.query.symbol || "$SPX").trim().toUpperCase() || "$SPX";
       const dte = req.query.dte ? Math.max(1, parseInt(String(req.query.dte), 10) || 60) : 60;
-      const greek = String(req.query.greek || "gex").toLowerCase() as "gex" | "vanna" | "charm" | "vomma" | "zomma";
+      const greekRaw = String(req.query.greek || "gex").toLowerCase();
+      const greek = (THERMAL_GREEKS as readonly string[]).includes(greekRaw) ? (greekRaw as ThermalGreek) : "gex";
 
       const { getOptionChain } = await import("./schwab");
       const chain = await getOptionChain(symbol, dte);
@@ -3583,198 +3585,12 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       if (!spot || spot <= 0) {
         return res.status(503).json({ dataState: "no_spot", reason: "Spot price unavailable", error: "no_spot", message: "Spot price unavailable" });
       }
-
-      // First pass: totals for weighting mode
-      let totalOI = 0, totalVol = 0;
-      const passes: Array<{ side: "C" | "P"; map: any }> = [
-        { side: "C", map: chain.callExpDateMap },
-        { side: "P", map: chain.putExpDateMap },
-      ];
-      for (const { map } of passes) {
-        for (const ek of Object.keys(map || {})) {
-          for (const sk of Object.keys(map[ek] || {})) {
-            for (const c of map[ek][sk] || []) {
-              totalOI += (c.openInterest || 0);
-              totalVol += (c.totalVolume || 0);
-            }
-          }
-        }
-      }
-      const useVolume = totalOI < 1000 && totalVol > 1000;
-      const weightMode: "oi" | "volume" | "hybrid" = useVolume ? "volume" : (totalOI > 0 && totalVol > totalOI * 5 ? "hybrid" : "oi");
-
-      const SQRT_2PI = Math.sqrt(2 * Math.PI);
-      const phi = (x: number) => Math.exp(-0.5 * x * x) / SQRT_2PI;
-      const invN = (p: number): number => {
-        const a = [-39.6968302866538, 220.946098424521, -275.928510446969, 138.357751867269, -30.6647980661472, 2.50662827745924];
-        const b = [-54.4760987982241, 161.585836858041, -155.698979859887, 66.8013118877197, -13.2806815528857];
-        const c = [-0.00778489400243029, -0.322396458041136, -2.40075827716184, -2.54973253934373, 4.37466414146497, 2.93816398269878];
-        const d = [0.00778469570904146, 0.32246712907004, 2.445134137143, 3.75440866190742];
-        const plow = 0.02425, phigh = 1 - plow;
-        let q: number, r: number;
-        const clamped = Math.max(1e-6, Math.min(1 - 1e-6, p));
-        if (clamped < plow) { q = Math.sqrt(-2 * Math.log(clamped)); return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
-        if (clamped > phigh) { q = Math.sqrt(-2 * Math.log(1 - clamped)); return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
-        q = clamped - 0.5; r = q * q;
-        return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
-      };
-
-      // matrix[expiryKey][strike] = exposure for selected greek
-      // Also compute all-greek exposure for tooltip
-      type Cell = { gex: number; vanna: number; charm: number; vomma: number; zomma: number; callOI: number; putOI: number };
-      const matrix = new Map<string, Map<number, Cell>>();
-      const expiryDTE = new Map<string, number>();
-      const strikeSet = new Set<number>();
-
-      const getCell = (ek: string, k: number): Cell => {
-        let em = matrix.get(ek);
-        if (!em) { em = new Map(); matrix.set(ek, em); }
-        let c = em.get(k);
-        if (!c) { c = { gex: 0, vanna: 0, charm: 0, vomma: 0, zomma: 0, callOI: 0, putOI: 0 }; em.set(k, c); }
-        return c;
-      };
-
-      for (const { side, map } of passes) {
-        for (const ek of Object.keys(map || {})) {
-          const dteStr = ek.split(":")[1] || "30";
-          const dteDays = Math.max(1 / 365, parseFloat(dteStr) || 30);
-          expiryDTE.set(ek, dteDays);
-          // T per contract below: one clock (timeToExpiry via chainClock)
-          for (const sk of Object.keys(map[ek] || {})) {
-            const strike = parseFloat(sk);
-            if (!isFinite(strike)) continue;
-            strikeSet.add(strike);
-            const cell = getCell(ek, strike);
-            for (const c of map[ek][sk] || []) {
-              const oi = c.openInterest || 0;
-              const vol = c.totalVolume || 0;
-              if (oi === 0 && vol === 0) continue;
-              // One clock: calendar minutes to the real settlement instant
-              // (AM SPX vs PM SPXW, half days) / 525,600; settled -> skip.
-              const T = contractYears(ek, c);
-              if (!(T > 0)) continue;
-              const sqrtT = Math.sqrt(T);
-              const ivPct = c.volatility || 0;
-              // sigma valid for our T (re-solved from the mid inside 3 days)
-              const sigma = ivForClock({
-                vendorIv: ivPct > 0 && ivPct < 500 ? ivPct / 100 : 0,
-                bid: Number(c.bid), ask: Number(c.ask), spot, strike, T, type: side,
-              });
-              // Gamma on the same basis as the flip (Black-Scholes, our T);
-              // vendor gamma only when no usable sigma.
-              const gamma = sigma > 0 ? bsGammaOurClock(spot, strike, sigma, T, FLIP_RATE, FLIP_DIV_YIELD) : (c.gamma ?? 0);
-              if (side === "C") cell.callOI += oi; else cell.putOI += oi;
-
-              let weight = 0;
-              if (weightMode === "oi") weight = oi;
-              else if (weightMode === "volume") weight = vol;
-              else weight = oi + vol * 0.25;
-              if (weight <= 0) continue;
-
-              const sign = side === "C" ? 1 : -1;
-              // $ per 1% move: gamma x contracts x 100 x S^2 x 0.01 (the x100
-              // contract multiplier was missing, understating GEX 100x).
-              cell.gex += sign * dollarGexPerPct(gamma, weight, spot);
-
-              if (sigma > 0) {
-                // Dollar exposures, one definition (server/greekExposure.ts):
-                // vanna $ delta per +1 vol pt, charm $ delta over min(1 day, T),
-                // vomma $ vega per +1 vol pt, zomma $ GEX per +1 vol pt. The old
-                // inline math gave share-units per 1.00 vol and a charm off by
-                // -1/(sigma sqrt T) while the client labelled them $/1%vol, $/day.
-                const x = contractExposure({ spot, strike, sigma, T, contracts: weight });
-                cell.vanna += sign * x.vannaPerVolPt;
-                cell.charm += sign * x.charmPerDay;
-                cell.vomma += sign * x.vommaPerVolPt;
-                cell.zomma += sign * x.zommaPerVolPt;
-              }
-            }
-          }
-        }
-      }
-
-      // Filter strikes to ±15% band around spot to keep the grid tight
-      const strikeMin = spot * 0.85;
-      const strikeMax = spot * 1.15;
-      const strikes = Array.from(strikeSet)
-        .filter(s => s >= strikeMin && s <= strikeMax)
-        .sort((a, b) => a - b);
-
-      const expiries = Array.from(matrix.keys())
-        .map(ek => ({ key: ek, dte: expiryDTE.get(ek) || 30, label: ek.split(":")[0] }))
-        .sort((a, b) => a.dte - b.dte)
-        .slice(0, 12); // cap at 12 expiries for readable columns
-
-      // Build flat cell array with selected greek exposure
-      const cells: Array<{ expIdx: number; strikeIdx: number; expiry: string; dte: number; strike: number; exposure: number; gex: number; vanna: number; charm: number; vomma: number; zomma: number; callOI: number; putOI: number }> = [];
-      let maxAbs = 0;
-      for (let ei = 0; ei < expiries.length; ei++) {
-        const ek = expiries[ei].key;
-        const em = matrix.get(ek);
-        if (!em) continue;
-        for (let si = 0; si < strikes.length; si++) {
-          const strike = strikes[si];
-          const cell = em.get(strike);
-          if (!cell) continue;
-          const exposure = cell[greek] || 0;
-          if (Math.abs(exposure) < 1e-9 && cell.callOI + cell.putOI === 0) continue;
-          if (Math.abs(exposure) > maxAbs) maxAbs = Math.abs(exposure);
-          cells.push({
-            expIdx: ei, strikeIdx: si,
-            expiry: expiries[ei].label, dte: expiries[ei].dte, strike,
-            exposure,
-            gex: cell.gex, vanna: cell.vanna, charm: cell.charm, vomma: cell.vomma, zomma: cell.zomma,
-            callOI: cell.callOI, putOI: cell.putOI,
-          });
-        }
-      }
-
-      // Compute per-strike totals (across all expiries) for the side rail
-      const strikeTotals = strikes.map(strike => {
-        let total = 0, totalAbs = 0;
-        for (const em of matrix.values()) {
-          const cell = em.get(strike);
-          if (cell) { total += cell[greek] || 0; totalAbs += Math.abs(cell[greek] || 0); }
-        }
-        return { strike, total, totalAbs };
-      });
-
-      // Key levels reused from killbox math (call wall, put wall, gamma flip on gex)
-      let callWall: number | null = null, callWallValue = 0;
-      let putWall: number | null = null, putWallValue = 0;
-      let gammaFlip: number | null = null;
-      if (greek === "gex") {
-        for (const st of strikeTotals) {
-          if (st.strike >= spot && st.total > callWallValue) { callWallValue = st.total; callWall = st.strike; }
-          if (st.strike <= spot && st.total < putWallValue) { putWallValue = st.total; putWall = st.strike; }
-        }
-        // Gamma flip: app-wide re-priced definition (gammaProfile.ts), same
-        // weighting as the cells. The old cumulative loop fired on the first
-        // strike (cum starts at 0), so it always returned the lowest strike.
-        gammaFlip = repricedFlipFromChain(chain, spot, {
-          r: FLIP_RATE,
-          q: FLIP_DIV_YIELD,
-          weight: (c: any) => weightMode === "oi" ? (Number(c?.openInterest) || 0)
-            : weightMode === "volume" ? (Number(c?.totalVolume) || 0)
-            : (Number(c?.openInterest) || 0) + (Number(c?.totalVolume) || 0) * 0.25,
-        }).zeroGamma;
-      }
-
+      // Method, units and assumptions: server/thermalHeatmap.ts (pure, tested).
+      const out = buildThermalHeatmap(chain, symbol, spot, greek);
       res.json({
-        symbol,
-        asOf: Date.now(),
-        spot,
-        greek,
-        weightMode,
-        strikes,
-        expiries: expiries.map(e => ({ label: e.label, dte: e.dte })),
-        cells,
-        maxAbs,
-        strikeTotals,
-        levels: { callWall, callWallValue, putWall, putWallValue, gammaFlip },
-        // weight and expiry universe of gammaFlip (differs from Heatseeker's single-expiry flip)
-        flipInputs: flipInputs({ weight: flipWeightOf(weightMode), universe: "all-expiries-in-request", expiryKeys: chainExpiryKeys(chain) }),
-        source: chain.source,
+        ...out,
+        asOf: chain.asOfMs ?? out.asOf,
+        chain: { asOfMs: chain.asOfMs, ageMs: chain.ageMs, servedFromCache: chain.servedFromCache, stale: chain.stale, staleReason: chain.staleReason ?? null },
       });
     } catch (e: any) {
       if (sendIfUnavailable(res, e)) return;

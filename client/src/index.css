@@ -198,23 +198,24 @@
     @apply border-border;
   }
 
-  /* Touch screens, and every width below 1024 px (the phone/tablet layout with
-     the bottom tab bar): each control is at least 44 x 44 CSS px (Apple HIG;
-     WCAG 2.2 asks for 24). In the base layer, so a component that sets its own
-     min-height or min-width utility still wins. Switches, checkboxes and
-     radios keep their drawn size; mark any other exception data-tap-exempt.
+  /* Touch screens (pointer: coarse: every iPhone and iPad, any width) and
+     every window below 1024 px: each control is at least 44 x 44 CSS px
+     (Apple HIG; WCAG 2.2 asks for 24). !important on purpose: a utility
+     class that shrinks a control for the desktop (lg:min-h-8, h-6 w-6)
+     must not win on a touch screen. Switches, checkboxes and radios keep
+     their drawn size; mark any other exception data-tap-exempt.
      Checked by tests/ux/ux-audit.mjs (tap-target budget). */
   @media (pointer: coarse), (max-width: 1023px) {
-    :where(button:not([role="switch"], [role="checkbox"], [role="radio"], [data-tap-exempt]),
-      [role="button"]:not([data-tap-exempt]),
-      [role="tab"]:not([data-tap-exempt]),
-      input:not([type="checkbox"], [type="radio"], [type="range"], [type="hidden"]),
-      select) {
-      min-height: 44px;
+    button:not([role="switch"], [role="checkbox"], [role="radio"], [data-tap-exempt]),
+    [role="button"]:not([data-tap-exempt]),
+    [role="tab"]:not([data-tap-exempt]),
+    input:not([type="checkbox"], [type="radio"], [type="range"], [type="hidden"]),
+    select {
+      min-height: 44px !important;
     }
-    :where(button:not([role="switch"], [role="checkbox"], [role="radio"], [data-tap-exempt]),
-      [role="button"]:not([data-tap-exempt])) {
-      min-width: 44px;
+    button:not([role="switch"], [role="checkbox"], [role="radio"], [data-tap-exempt]),
+    [role="button"]:not([data-tap-exempt]) {
+      min-width: 44px !important;
     }
     /* 16 px text inputs stop iOS from zooming the page on focus (beats text-sm on purpose). */
     input:not([type="checkbox"], [type="radio"], [type="range"]), select, textarea {

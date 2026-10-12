@@ -116,6 +116,34 @@ jobs:
           sleep 40
           xcrun simctl io "$UDID" screenshot reports/ios-safari.png 2>&1 | tee -a reports/07-sim.log
           grep -c "GET /api" reports/server-demo.log | xargs -I{} echo "demo server API requests: {}" | tee -a reports/07-sim.log
+      - name: iPad simulator screenshots (portrait and landscape, three sizes)
+        continue-on-error: true
+        run: |
+          APP=$(find build/dd/Build/Products -name 'App.app' -maxdepth 3 | head -1)
+          xcrun simctl list devices available | grep -i ipad | tee -a reports/07-sim.log
+          for want in "iPad Pro 13-inch" "iPad Air 11-inch" "iPad mini"; do
+            UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json,sys
+          w=sys.argv[1]
+          d=json.load(sys.stdin)['devices']
+          c=[x for k,v in d.items() if 'iOS' in k for x in v if x['name'].startswith(w)]
+          print(c[-1]['udid'] if c else '')" "$want")
+            [ -z "$UDID" ] && { echo "no simulator for $want" | tee -a reports/07-sim.log; continue; }
+            tag=$(echo "$want" | tr -c 'A-Za-z0-9' '-' | sed 's/-*$//')
+            xcrun simctl boot "$UDID" 2>&1 | tee -a reports/07-sim.log
+            xcrun simctl bootstatus "$UDID" -b 2>&1 | tail -1 | tee -a reports/07-sim.log
+            xcrun simctl status_bar "$UDID" override --time "9:41" --batteryState charged --batteryLevel 100 2>/dev/null || true
+            xcrun simctl ui "$UDID" appearance dark 2>/dev/null || true
+            xcrun simctl install "$UDID" "$APP" 2>&1 | tee -a reports/07-sim.log
+            xcrun simctl launch "$UDID" com.batcave.terminal 2>&1 | tee -a reports/07-sim.log
+            sleep 45
+            xcrun simctl io "$UDID" screenshot "reports/ipad-$tag-portrait.png" 2>&1 | tee -a reports/07-sim.log
+            # Rotate to landscape (simctl has no rotate verb; the app re-lays out on the resize event).
+            osascript -e 'tell application "Simulator" to activate' -e 'tell application "System Events" to keystroke "l" using {command down}' 2>&1 | tee -a reports/07-sim.log || true
+            sleep 8
+            xcrun simctl io "$UDID" screenshot "reports/ipad-$tag-landscape.png" 2>&1 | tee -a reports/07-sim.log
+            xcrun simctl shutdown "$UDID" 2>/dev/null || true
+          done
           pkill -f "dist/index.cjs" || true
       - name: Rebuild the bundled UI for the zip (no test server baked in)
         env:

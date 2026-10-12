@@ -236,10 +236,21 @@ jobs:
             curl -s -o /dev/null -D - "$B/api/schwab/oauth/callback?code=a&state=b" | grep -qi 'location: .*demo_edition' && echo "PASS oauth callback refused" || { echo "FAIL oauth callback"; fail=1; }
             sleep 45
             echo "--- data endpoints on sample data (status, first 300 bytes) ---"
-            for pth in /api/schwab/selftest /api/snapshot /api/trade-environment /api/regime /api/gamma-levels /api/models /api/heatseeker /api/iv-rv /api/chain-audit /api/edgelab/briefing; do
+            for pth in /api/schwab/selftest /api/snapshot /api/trade-environment /api/regime /api/gamma-levels /api/models /api/heatseeker /api/iv-rv /api/chain-audit /api/edgelab/briefing "/api/heatmap/thermal?symbol=%24SPX&greek=gex" "/api/heatmap/thermal?symbol=%24SPX&greek=charm"; do
               code=$(curl -s -o rep/demo/body.json -m 60 -w '%{http_code}' "$B$pth")
               echo "$pth -> $code $(head -c 300 rep/demo/body.json | tr '\n' ' ')"
             done
+            # Thermal heatmap on the sample chain: open-interest only, every contract accounted for, walls either side of spot.
+            curl -s -m 60 "$B/api/heatmap/thermal?symbol=%24SPX&greek=gex" > rep/demo/thermal.json
+            node -e '
+              const j = JSON.parse(require("fs").readFileSync("rep/demo/thermal.json", "utf8"));
+              const m = j.method, L = j.levels;
+              const ok = j.dataState === "ok" && j.weightMode === "oi" && m.position === "open_interest" && j.cells.length > 0
+                && L.putWall < j.spot && L.callWall > j.spot && L.gammaFlip >= j.strikes[0] && L.gammaFlip <= j.strikes[j.strikes.length - 1]
+                && j.cells.every((c) => Number.isFinite(c.exposure));
+              console.log((ok ? "PASS" : "FAIL") + " thermal heatmap: state " + j.dataState + ", " + j.cells.length + " cells, " + m.contractsUsed + " priced, " + m.contractsNoSigma + " no IV, put wall " + L.putWall + " < spot " + j.spot + " < call wall " + L.callWall + ", flip " + L.gammaFlip);
+            '
+
             grep -ciE "api\.schwabapi\.com|\[schwab\] (401|403|fetch)" rep/server-demo.log | xargs -I{} echo "schwab network lines in log: {}"
           } 2>&1 | tee rep/demo/smoke.log
           grep -q '^FAIL' rep/demo/smoke.log && fail=1

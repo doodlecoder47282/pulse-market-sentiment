@@ -737,7 +737,7 @@ export const SIGNALS_MAX_DTE = 45;
  * both walls by comparing strikes with 1.
  */
 export function gexByStrikeFromChain(
-  chain: ChainMapsLike & { underlying?: { last?: number | null } | null },
+  chain: ChainMapsLike & { underlying?: { last?: number | null; symbol?: string | null } | null; symbol?: string | null },
   nowMs: number = Date.now(),
 ): ChainGex {
   const last = chain.underlying?.last;
@@ -745,7 +745,10 @@ export function gexByStrikeFromChain(
   if (spot == null) {
     return { callWall: null, putWall: null, zeroGamma: null, zeroGammaCumulative: null, profile: [], dataState: "no_spot" };
   }
-  const r = FLIP_RATE, q = FLIP_DIV_YIELD;
+  // Same q basis as the thermal heatmap: the symbol's yield when the chain
+  // names its underlying, else the S&P 500 yield (the chains this serves).
+  const sym = chain.symbol ?? chain.underlying?.symbol ?? null;
+  const r = FLIP_RATE, q = sym ? dividendYieldFor(sym) : FLIP_DIV_YIELD;
   const rows = rowsFromChain(chain, { maxDte: SIGNALS_MAX_DTE, spot, nowMs });
   // Contracts with OI and time left but no usable sigma (dropped above).
   let withOi = 0;
