@@ -226,7 +226,7 @@ export function buildThermalHeatmap(
     .sort((a, b) => a.dte - b.dte)
     .slice(0, maxExpiries);
   const strikeSet = new Set<number>();
-  for (const e of expiryList) for (const k of matrix.get(e.key)!.keys()) strikeSet.add(k);
+  for (const e of expiryList) matrix.get(e.key)!.forEach((_cell, k) => strikeSet.add(k));
   const strikes = Array.from(strikeSet)
     .filter((s) => s >= spot * (1 - bandPct) && s <= spot * (1 + bandPct))
     .sort((a, b) => a - b);
@@ -257,11 +257,11 @@ export function buildThermalHeatmap(
   const shown = new Set(expiryList.map((e) => e.key));
   const strikeTotals = strikes.map((strike) => {
     let total = 0, totalAbs = 0;
-    for (const [ek, em] of matrix) {
-      if (!shown.has(ek)) continue;
+    matrix.forEach((em, ek) => {
+      if (!shown.has(ek)) return;
       const cell = em.get(strike);
       if (cell) { const v = cell[greek] || 0; total += v; totalAbs += Math.abs(v); }
-    }
+    });
     return { strike, total, totalAbs };
   });
 

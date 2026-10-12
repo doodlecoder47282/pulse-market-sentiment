@@ -56,28 +56,55 @@ function measure(isMobile) {
     const hidesX = cs.overflowX === "hidden" || cs.overflow === "hidden";
     if (hidesX && el.scrollWidth > el.clientWidth + 2 && cs.textOverflow !== "ellipsis") clipped.push(label(el));
   }
-  // Overlapping text: two text-bearing elements whose boxes intersect while
-  // neither contains the other (labels drawn over each other, cards colliding).
-  // Ignores tooltips/popovers (position fixed/absolute) and sub-4px grazes.
-  const textLeaves = all.filter((el) => {
-    if (!Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.textContent.trim())) return false;
-    const pos = getComputedStyle(el).position;
-    return pos !== "fixed" && pos !== "absolute";
-  }).map((el) => ({ el, r: el.getBoundingClientRect() })).filter((x) => x.r.width > 4 && x.r.height > 4 && x.r.top < 20000);
-  textLeaves.sort((a, b) => a.r.top - b.r.top);
-  const overlaps = [];
-  for (let i = 0; i < textLeaves.length; i++) {
-    const A = textLeaves[i];
-    for (let j = i + 1; j < textLeaves.length; j++) {
-      const B = textLeaves[j];
-      if (B.r.top >= A.r.bottom - 4) break;
-      if (A.el.contains(B.el) || B.el.contains(A.el)) continue;
-      const ix = Math.min(A.r.right, B.r.right) - Math.max(A.r.left, B.r.left);
-      const iy = Math.min(A.r.bottom, B.r.bottom) - Math.max(A.r.top, B.r.top);
-      if (ix > 4 && iy > 4) { overlaps.push(`${label(A.el)} x ${label(B.el)}`); if (overlaps.length >= 40) break; }
+  // Overlapping text: two text-bearing elements whose VISIBLE boxes intersect
+  // while neither contains the other (labels drawn over each other, cards
+  // colliding). Boxes are clipped to overflow-hidden/scroll ancestors (a
+  // marquee's off-screen text is not an overlap), elements inside fixed or
+  // absolute layers (bottom bar, pills, tooltips) are skipped, SVG text is
+  // counted separately (chart tick labels).
+  const clipBox = (el) => {
+    let r = el.getBoundingClientRect();
+    let box = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+      const cs = getComputedStyle(p);
+      if (cs.position === "fixed" || cs.position === "absolute") return null;
+      const ox = cs.overflowX, oy = cs.overflowY;
+      if (ox !== "visible" || oy !== "visible") {
+        const pr = p.getBoundingClientRect();
+        if (ox !== "visible") { box.left = Math.max(box.left, pr.left); box.right = Math.min(box.right, pr.right); }
+        if (oy !== "visible") { box.top = Math.max(box.top, pr.top); box.bottom = Math.min(box.bottom, pr.bottom); }
+      }
     }
-    if (overlaps.length >= 40) break;
+    return box.right - box.left > 4 && box.bottom - box.top > 4 ? box : null;
+  };
+  const ownText = (el) => Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.textContent.trim());
+  const textLeaves = [], svgLeaves = [];
+  for (const el of all) {
+    if (!ownText(el) || !(el.innerText || el.textContent || "").trim()) continue;
+    const cs = getComputedStyle(el);
+    if (cs.position === "fixed" || cs.position === "absolute") continue;
+    const box = clipBox(el);
+    if (!box) continue;
+    (el.ownerSVGElement ? svgLeaves : textLeaves).push({ el, r: box });
   }
+  const findOverlaps = (items, cap) => {
+    items.sort((a, b) => a.r.top - b.r.top);
+    const out = [];
+    for (let i = 0; i < items.length && out.length < cap; i++) {
+      const A = items[i];
+      for (let j = i + 1; j < items.length; j++) {
+        const B = items[j];
+        if (B.r.top >= A.r.bottom - 4) break;
+        if (A.el.contains(B.el) || B.el.contains(A.el)) continue;
+        const ix = Math.min(A.r.right, B.r.right) - Math.max(A.r.left, B.r.left);
+        const iy = Math.min(A.r.bottom, B.r.bottom) - Math.max(A.r.top, B.r.top);
+        if (ix > 4 && iy > 4) { out.push(`${label(A.el)} x ${label(B.el)}`); if (out.length >= cap) break; }
+      }
+    }
+    return out;
+  };
+  const overlaps = findOverlaps(textLeaves, 40);
+  const svgOverlaps = findOverlaps(svgLeaves, 40);
   // Tap targets (mobile): interactive elements under 44x44 CSS px (Apple HIG) / 24x24 (WCAG 2.2 minimum).
   const interactive = all.filter((el) => el.matches("button, a[href], [role=button], [role=tab], input, select, textarea, [role=switch], [role=checkbox]"));
   const smallTargets = [], tinyTargets = [];
@@ -119,6 +146,7 @@ function measure(isMobile) {
     offscreenCount: offscreen.length, offscreen: offscreen.slice(0, 10),
     clippedCount: clipped.length, clipped: clipped.slice(0, 10),
     overlapCount: overlaps.length, overlaps: overlaps.slice(0, 10),
+    svgOverlapCount: svgOverlaps.length, svgOverlaps: svgOverlaps.slice(0, 6),
     interactiveCount: interactive.length,
     smallTargetCount: smallTargets.length, smallTargets: smallTargets.slice(0, 10),
     tinyTargetCount: tinyTargets.length, tinyTargets: tinyTargets.slice(0, 10),
@@ -197,6 +225,12 @@ for (const vp of viewports) {
     }
     await p.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
     entry.switchMs = Date.now() - c0;
+    // Layout shift in two windows: while the tab loads (skeleton -> content,
+    // expected in a data app, kept under a loose ceiling) and after its data
+    // has arrived (shifts while the user is reading: the strict budget).
+    entry.clsLoad = await p.evaluate(() => Math.round(window.__cls * 1000) / 1000);
+    if (entry.clsLoad > 0.05) entry.shiftsLoad = await p.evaluate(() => window.__shifts.sort((a, b) => b.v - a.v).slice(0, 6));
+    await p.evaluate(() => { window.__cls = 0; window.__shifts = []; });
     await p.waitForTimeout(2500);
     entry.cls = await p.evaluate(() => Math.round(window.__cls * 1000) / 1000);
     if (entry.cls > 0.05) entry.shifts = await p.evaluate(() => window.__shifts.sort((a, b) => b.v - a.v).slice(0, 6));
@@ -232,12 +266,14 @@ console.log("ux audit done", report.length);
       clippedText: sum("clippedCount"),
       offscreen: sum("offscreenCount"),
       overlappingText: sum("overlapCount"),
+      overlappingSvgText: sum("svgOverlapCount"),
       tapTargetsUnder24: sum("tinyTargetCount"),
       pageErrorsExcluding503: (meta.pageErrors ?? []).filter((x) => !/\b503\b/.test(x)).length,
       worstTab: {
         textUnder10px: Math.max(0, ...tabsHere.map((e) => e.tinyText ?? 0)),
         contrastFailures: Math.max(0, ...tabsHere.map((e) => e.lowContrast ?? 0)),
         cls: Math.max(0, ...tabsHere.map((e) => e.cls ?? 0)),
+        clsLoad: Math.max(0, ...tabsHere.map((e) => e.clsLoad ?? 0)),
         tabSwitchMs: Math.max(0, ...tabsHere.map((e) => e.switchMs ?? 0)),
       },
       tabsMeasured: tabsHere.length,

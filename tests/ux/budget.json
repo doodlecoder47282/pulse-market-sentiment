@@ -1,5 +1,5 @@
 {
-  "_comment": "UX budgets checked by tests/ux/ux-audit.mjs on every CI run. Numbers are ceilings: lower them as screens improve, never raise them without a reason in the commit message.",
+  "_comment": "UX budgets checked by tests/ux/ux-audit.mjs on every CI run. Numbers are ceilings: lower them as screens improve, never raise them without a reason in the commit message. cls = layout shift after a tab's data has loaded (reading time); clsLoad = shift while it loads (skeleton to content).",
   "perViewport": {
     "docOverflowX": 0,
     "clippedText": 0,
@@ -21,6 +21,7 @@
     "textUnder10px": 3,
     "contrastFailures": 3,
     "cls": 0.1,
-    "tabSwitchMs": 1500
+    "tabSwitchMs": 1500,
+    "clsLoad": 0.6
   }
 }
