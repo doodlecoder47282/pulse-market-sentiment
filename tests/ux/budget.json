@@ -5,14 +5,14 @@
     "clippedText": 0,
     "pageErrorsExcluding503": 0,
     "offscreen": {
-      "phone-se": 7,
+      "phone-se": 1,
       "default": 0
     },
     "tapTargetsUnder24": {
       "phone-se": 0,
       "phone-15": 0,
-      "tablet-portrait": 40,
-      "tablet-landscape": 40,
+      "tablet-portrait": 0,
+      "tablet-landscape": 29,
       "default": 0
     }
   },

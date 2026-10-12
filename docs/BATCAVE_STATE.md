@@ -264,6 +264,30 @@ data to others is not (redistribution).
   Fix by enlarging those chips (Chart engine/timeframe toggles, News topics,
   Regime pivots, Cosmos thermal, crypto sections) rather than raising budgets.
 
+2026-10-12 iPhone 17 batch (quant-fixes 7e0483f..ac9ca4c, CI 38222385015 green,
+iOS CI 38219184330 green; not on main yet):
+- Edge to edge on iPhone (viewport-fit=cover, contentInset never, safe-area
+  padding, dark status-bar band, UIUserInterfaceStyle Dark). Verified on an
+  iPhone 17 simulator (Xcode 26.3) against a demo server on the Mac runner:
+  header below the Dynamic Island, bottom bar above the home indicator.
+- Touch: 44px minimum below 1024px (base-layer rule + Button variants +
+  header controls). UX audit: phone-15 controls under 44px went from ~10 per
+  tab to 0-1; under 24px 48 -> 0 on phones and tablets; sub-10px text worst
+  tab 11 -> 3; low-contrast 5 -> 3; off-screen phone-se 7 -> 1. Budget
+  ratcheted to these values. The audit now names layout-shift sources.
+- Original app icon ("B" over a level line, amber on near-black) and a black
+  launch screen with a 120pt mark replace the Capacitor placeholders. The
+  web favicon resembles a famous comic-book logo; not used for the app icon.
+- Try the demo button (VITE_DEMO_URL from repo variable BATCAVE_DEMO_URL);
+  demo Settings can switch back to your own server (iOS only).
+- Fixed: server listen used reusePort (Linux only) and could not start on
+  macOS (ENOTSUP). Fixed: crypto peak/grader SQL used ?N placeholders that
+  better-sqlite3 rejects, so live crypto outcomes were never recorded (new
+  test runs the SQL under better-sqlite3 in CI). Fixed: gamma/short-vol
+  banners gave sizing/hedging instructions; no-advice check widened.
+- Demo: price tape reads Sample. Known gap: whale flow is always empty on
+  the demo (simulated volume never reaches the whale gate).
+
 ## Current objective
 
 Save the credit-conserving resume framework and assess reuse of the existing
@@ -327,7 +351,6 @@ native value for App Review 4.2 (push alerts, Face ID lock, haptics).
 
 ## Next step
 
-iPhone 17 fit batch (awaiting user go): viewport-fit=cover + safe-area header,
-44pt tap targets for the listed chips (also clears the flaky UX budget),
-smaller splash images, a "Try the demo" button on the server screen, CI
-screenshot on an iPhone 17 simulator against a demo server.
+Owner: deploy the demo service (docs/DEMO.md), then set repo variable
+BATCAVE_DEMO_URL so the app shows Try the demo. Agent, after approval: merge
+quant-fixes to main (Railway redeploys the personal server).
