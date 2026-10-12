@@ -104,6 +104,12 @@ jobs:
           xcrun simctl io "$UDID" screenshot reports/ios-launch.png 2>&1 | tee -a reports/07-sim.log
           sleep 50
           xcrun simctl io "$UDID" screenshot reports/ios-sim.png 2>&1 | tee -a reports/07-sim.log
+          # Diagnostics: how fast the demo answers the dashboard's first calls.
+          for pth in /api/snapshot /api/regime /api/macro; do
+            echo "$pth -> $(curl -s -o /dev/null -m 60 -w '%{http_code} in %{time_total}s' http://127.0.0.1:5080$pth)" | tee -a reports/07-sim.log
+          done
+          sleep 20
+          xcrun simctl io "$UDID" screenshot reports/ios-sim-later.png 2>&1 | tee -a reports/07-sim.log
           # The same demo in Mobile Safari on the same phone (the website path).
           xcrun simctl terminate "$UDID" com.batcave.terminal 2>&1 | tee -a reports/07-sim.log
           xcrun simctl openurl "$UDID" "http://127.0.0.1:5080/#/" 2>&1 | tee -a reports/07-sim.log
