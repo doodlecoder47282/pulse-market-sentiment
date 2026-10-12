@@ -118,13 +118,16 @@ jobs:
           grep -c "GET /api" reports/server-demo.log | xargs -I{} echo "demo server API requests: {}" | tee -a reports/07-sim.log
       - name: iPad simulator screenshots (three sizes)
         continue-on-error: true
-        timeout-minutes: 12
+        timeout-minutes: 20
         run: |
-          # Each simctl call is bounded (perl alarm: macOS has no coreutils timeout);
-          # a simulator that fails to boot is skipped, never waited on.
+          # Full trace of this step goes to the report (the raw job log is not
+          # reachable from the dev workspace). Each simctl call is bounded with
+          # perl alarm (macOS has no coreutils timeout).
+          exec > >(tee -a reports/07-ipad.log) 2>&1
+          set -x
           t() { perl -e 'alarm shift; exec @ARGV' "$@"; }
           APP=$(find build/dd/Build/Products -name 'App.app' -maxdepth 3 | head -1)
-          xcrun simctl list devices available | grep -i ipad | tee -a reports/07-sim.log
+          t 60 xcrun simctl shutdown all || true
           for want in "iPad Pro 13-inch" "iPad Air 11-inch" "iPad mini"; do
             UDID=$(xcrun simctl list devices available -j | python3 -c "
           import json,sys
@@ -132,18 +135,18 @@ jobs:
           d=json.load(sys.stdin)['devices']
           c=[x for k,v in d.items() if 'iOS' in k for x in v if x['name'].startswith(w)]
           print(c[-1]['udid'] if c else '')" "$want")
-            [ -z "$UDID" ] && { echo "no simulator for $want" | tee -a reports/07-sim.log; continue; }
+            if [ -z "$UDID" ]; then echo "no simulator for $want"; continue; fi
             tag=$(echo "$want" | tr -c 'A-Za-z0-9' '-' | sed 's/-*$//')
-            echo "--- $want ($UDID)" | tee -a reports/07-sim.log
-            t 90 xcrun simctl boot "$UDID" 2>&1 | tee -a reports/07-sim.log || true
-            t 120 xcrun simctl bootstatus "$UDID" -b 2>&1 | tail -1 | tee -a reports/07-sim.log || { echo "boot timed out: $want" | tee -a reports/07-sim.log; continue; }
-            t 30 xcrun simctl status_bar "$UDID" override --time "9:41" --batteryState charged --batteryLevel 100 2>/dev/null || true
-            t 30 xcrun simctl ui "$UDID" appearance dark 2>/dev/null || true
-            t 120 xcrun simctl install "$UDID" "$APP" 2>&1 | tee -a reports/07-sim.log || continue
-            t 60 xcrun simctl launch "$UDID" com.batcave.terminal 2>&1 | tee -a reports/07-sim.log || continue
+            echo "--- $want ($UDID)"
+            t 180 xcrun simctl boot "$UDID" || true
+            if ! t 180 xcrun simctl bootstatus "$UDID" -b; then echo "boot timed out: $want"; t 60 xcrun simctl shutdown "$UDID" || true; continue; fi
+            t 30 xcrun simctl status_bar "$UDID" override --time "9:41" --batteryState charged --batteryLevel 100 || true
+            t 30 xcrun simctl ui "$UDID" appearance dark || true
+            t 180 xcrun simctl install "$UDID" "$APP" || { t 60 xcrun simctl shutdown "$UDID" || true; continue; }
+            t 60 xcrun simctl launch "$UDID" com.batcave.terminal || { t 60 xcrun simctl shutdown "$UDID" || true; continue; }
             sleep 45
-            t 60 xcrun simctl io "$UDID" screenshot "reports/ipad-$tag.png" 2>&1 | tee -a reports/07-sim.log || true
-            t 60 xcrun simctl shutdown "$UDID" 2>/dev/null || true
+            t 60 xcrun simctl io "$UDID" screenshot "reports/ipad-$tag.png" || true
+            t 60 xcrun simctl shutdown "$UDID" || true
           done
           pkill -f "dist/index.cjs" || true
       - name: Rebuild the bundled UI for the zip (no test server baked in)
