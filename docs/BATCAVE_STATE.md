@@ -240,6 +240,30 @@ are a labelled demo (no Schwab data) or invite-only per-tester deployments
 on each tester's own Schwab app; a shared server showing the owner's Schwab
 data to others is not (redistribution).
 
+2026-10-12 iOS + free link (quant-fixes 522930b, 6c68583, cccbebb; not on main yet):
+- iOS: Capacitor 8 project ported from ios-capacitor (no generated assets
+  committed). .github/workflows/ios-build.yml compiles for the Simulator
+  (Xcode 26.3, BUILD SUCCEEDED, launched, screenshot) and publishes
+  Batcave-iOS-Xcode.zip to ci-reports-ios. Rebuild after UI changes by editing
+  .github/ios-build.txt. Capacitor deps added via npm-add (devDependencies).
+  User opened the folder instead of App.xcodeproj once; their Mac needs an
+  update before it can run the iOS 26 simulator. Not yet run on a device.
+- Demo edition (BATCAVE_EDITION=demo, docs/DEMO.md): server/demoMarket.ts
+  simulates quotes, minute/daily bars and BSM chains behind schwabFetchMeta;
+  Schwab never called, sign-in refused, /api read-only for visitors (loopback
+  schedulers allowed), gate "open-demo", SAMPLE DATA strip in the sticky
+  header, chips credit "Sample". 13 tests (tests/quant/demo-market.test.ts);
+  526/526 quant tests pass locally. CI run 38207537360: demo guards all PASS,
+  10 data endpoints return populated JSON, 0 page errors, strip visible.
+  Not deployed: needs a second Railway service (owner step, usage cost).
+- Testers (docs/TESTERS.md): each tester forks, deploys their own Railway
+  service (investor edition) with their own Schwab individual app.
+- CI run 38207537360 FAILED only on the UX budget: tap targets <24px rose by
+  5 on phones/tablets and one clipped line, from live news topic chips,
+  social posts and crypto rows (content varies by time), not from the demo.
+  Fix by enlarging those chips (Chart engine/timeframe toggles, News topics,
+  Regime pivots, Cosmos thermal, crypto sections) rather than raising budgets.
+
 ## Current objective
 
 Save the credit-conserving resume framework and assess reuse of the existing
@@ -295,16 +319,15 @@ Do not repeat prior “all green means complete coverage” claims:
 
 ## iOS direction
 
-Proposed: bundled React UI through Capacitor plus the existing separately hosted
-backend. Keep polling, SQLite, brokerage credentials, and grading on the server.
-Do not simply point a released app at a temporary Computer preview.
-
-Before implementation: confirm Mac/Xcode access and whether the first target is
-personal-device use or TestFlight/App Store distribution. Choose persistent HTTPS
-backend hosting, per-user authentication, origin policy, and OAuth redirect flow.
+Capacitor shell over the bundled React UI; data engine stays on the server.
+A customer iPhone can only show the sample demo or that customer's own server
+until multi-user + Schwab commercial approval. Customer installs need TestFlight
+or the App Store (paid Apple Developer Program, user decision) and enough
+native value for App Review 4.2 (push alerts, Face ID lock, haptics).
 
 ## Next step
 
-Ask the user whether they have access to a Mac with Xcode and want personal-device
-testing first. Resolve exposed credentials before broad distribution. Do not
-start an iOS rewrite or unattended AI monitor while waiting.
+iPhone 17 fit batch (awaiting user go): viewport-fit=cover + safe-area header,
+44pt tap targets for the listed chips (also clears the flaky UX budget),
+smaller splash images, a "Try the demo" button on the server screen, CI
+screenshot on an iPhone 17 simulator against a demo server.
