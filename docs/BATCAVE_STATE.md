@@ -219,6 +219,19 @@ after it earns it. Decided with the user:
   and Streamer are process-global; access gate is one shared key; Discord
   webhooks and schedulers are global.
 
+2026-10-12 trust pass (bb59820, CI 38202063956 green: 511 tests, tsc 162 vs
+162, UX budget all pass): the user's questions are now checks.
+"Can I trust it" -> tests/quant/no-advice-language.test.ts (fails on
+trade-instruction phrases in subscriber-facing text; personal-edition files
+exempt with reasons). BATCAVE_EDITION=investor hides/403s EOD trade setups
+and disables Discord trade cards; default personal edition unchanged.
+"Does it fit my device / react to my touch / can I read it" ->
+tests/ux/budget.json ceilings checked by ux-audit.mjs; the CI step now fails
+when any is exceeded (ratchet: lower ceilings as screens improve). Fixed two
+misattributed Take Five quotes. Next on this track: position sizer as a
+plain user-driven risk calculator in the investor edition, live checks of
+our Greeks/IV against Schwab's chain fields, tap targets under 24 px.
+
 ## Current objective
 
 Save the credit-conserving resume framework and assess reuse of the existing
