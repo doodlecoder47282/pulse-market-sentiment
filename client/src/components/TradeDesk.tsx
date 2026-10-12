@@ -43,6 +43,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { friendlyError } from "@/lib/friendlyError";
+import { useEdition } from "@/lib/useEdition";
 
 // --- Types matching /api/trade-desk payload ----------------------------------
 
@@ -153,6 +154,7 @@ type PivotSystem = "classic" | "fib" | "cam" | "all";
 // -----------------------------------------------------------------------------
 
 export default function TradeDesk() {
+  const edition = useEdition();
   const [range, setRange] = useState<"1d" | "5d">("1d");
   const [pivotSystem, setPivotSystem] = useState<PivotSystem>("classic");
 
@@ -210,10 +212,12 @@ export default function TradeDesk() {
         <TradeDeskFeed data={data} range={range} setRange={setRange} pivotSystem={pivotSystem} setPivotSystem={setPivotSystem} secReason={secReason} />
       )}
 
-      {/* EOD Play Maker */}
-      <section>
-        <EodPlayMaker />
-      </section>
+      {/* EOD Play Maker: personal edition only (trade setups are not offered to subscribers) */}
+      {edition !== "investor" && (
+        <section>
+          <EodPlayMaker />
+        </section>
+      )}
     </div>
   );
 }
@@ -1782,7 +1786,7 @@ function EodPlayMaker() {
                 <LiveField value={resolve("pcRatio")} onChange={(v) => setOverride("pcRatio", v)} onClear={() => clearOverride("pcRatio")} status={isOverridden("pcRatio") ? "edit" : isLive("pcRatio") ? "live" : isLocked("pcRatio") ? "lock" : "cold"} testId="input-pc-ratio" />
               </FieldRow>
               <FieldRow label="OPEX Today">
-                <div className="flex items-center gap-2" data-testid="checkbox-opex"><span className={`inline-flex h-3 w-3 items-center justify-center rounded border ${opex ? "border-amber-500 bg-amber-500/80 text-[11px] text-black" : "border-border/60 bg-transparent"}`}>{opex ? "✓" : ""}</span><span className="text-[11px] text-muted-foreground">{opex ? "YES — size down 30-50% (auto-detected)" : "No — normal sizing"}</span></div>
+                <div className="flex items-center gap-2" data-testid="checkbox-opex"><span className={`inline-flex h-3 w-3 items-center justify-center rounded border ${opex ? "border-amber-500 bg-amber-500/80 text-[11px] text-black" : "border-border/60 bg-transparent"}`}>{opex ? "✓" : ""}</span><span className="text-[11px] text-muted-foreground">{opex ? "YES — OPEX day (auto-detected)" : "No"}</span></div>
               </FieldRow>
             </div>
 

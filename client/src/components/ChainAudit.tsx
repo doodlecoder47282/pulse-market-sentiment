@@ -834,25 +834,25 @@ export default function ChainAudit() {
                 {/* VRP reading guide — how to trade the signal */}
                 <div className="mx-3 my-2 rounded border border-border/40 bg-muted/20 px-3 py-2">
                   <div className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground mb-1.5">
-                    How to read — your edge in one glance
+                    How to read the volatility risk premium
                   </div>
                   <div className="grid grid-cols-1 gap-1.5 md:grid-cols-3 font-mono text-[11px] leading-snug">
                     <div className="rounded border border-red-500/30 bg-red-500/5 px-2 py-1.5">
-                      <div className="text-red-400 font-semibold">VRP &gt; +2pp · Sell Vol</div>
+                      <div className="text-red-400 font-semibold">VRP &gt; +2pp · IV rich</div>
                       <div className="text-muted-foreground/80 text-[11px] mt-0.5">
-                        Market IV rich vs fair value. Short straddles, sell premium, credit spreads, iron condors.
+                        Implied volatility is above the model's fair value: options are priced richly relative to expected movement.
                       </div>
                     </div>
                     <div className="rounded border border-border/40 px-2 py-1.5">
                       <div className="text-muted-foreground font-semibold">|VRP| ≤ 2pp · Fair</div>
                       <div className="text-muted-foreground/80 text-[11px] mt-0.5">
-                        No edge on vol. Trade direction, not premium. Wait for skew.
+                        Implied volatility is close to fair value: no meaningful premium either way.
                       </div>
                     </div>
                     <div className="rounded border border-green-500/30 bg-green-500/5 px-2 py-1.5">
-                      <div className="text-green-400 font-semibold">VRP &lt; −2pp · Buy Vol</div>
+                      <div className="text-green-400 font-semibold">VRP &lt; −2pp · IV cheap</div>
                       <div className="text-muted-foreground/80 text-[11px] mt-0.5">
-                        Market IV cheap vs fair value. Long straddles, long gamma, debit spreads, calendars.
+                        Implied volatility is below the model's fair value: options are priced cheaply relative to expected movement.
                       </div>
                     </div>
                   </div>

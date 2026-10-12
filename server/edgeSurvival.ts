@@ -256,7 +256,7 @@ export function computeEdgeSurvival(inp: EdgeSurvivalInput, bucket: OptionLedger
     note = "ledger edge survives at the lower bound; adverse case not computed (theta not repriced without contract inputs)";
   } else if (!(adverse > 0)) {
     verdict = "MARGINAL";
-    note = "ledger edge survives the base case only: dies under a wider exit spread and a longer hold. size down or pass";
+    note = "ledger edge survives the base case only: it disappears under a wider exit spread and a longer hold";
   } else {
     verdict = "EXPRESS";
     note = `ledger edge survives at the Wilson lower bound and under the adverse case (${n} fires). still a heuristic, not a calibrated probability`;

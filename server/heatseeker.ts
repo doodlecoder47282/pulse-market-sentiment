@@ -537,10 +537,10 @@ export function buildHeatseeker(
     const c = center.toFixed(1);
     const read =
       role === "flip" ? `gamma flips sign near ${c} — crossing it changes the whole tape from damped to amplified` :
-      role === "accelerant" ? `dealers are short gamma at ${c} — a push through this band speeds up, don't fade the first touch` :
+      role === "accelerant" ? `dealers are short gamma at ${c} — a push through this band tends to speed up` :
       role === "pin" ? `heavy long-gamma directly ${side === "at" ? "at spot" : "nearby"} — price gets pulled back to ${c}, moves away stall` :
-      role === "exhaust-high" ? `rallies run out of fuel into ${c} — dealers sell here; look for volume exhaustion before fading` :
-      `flushes find a floor near ${c} — dealers buy here; watch for the bounce unless volume keeps expanding`;
+      role === "exhaust-high" ? `rallies have tended to run out of fuel into ${c} — dealer hedging sells here` :
+      `flushes have tended to find a floor near ${c} — dealer hedging buys here, unless volume keeps expanding`;
 
     rawBands.push({
       center: Math.round(center * 10) / 10,

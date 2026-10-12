@@ -1,0 +1,16 @@
+{
+  "_comment": "UX budgets checked by tests/ux/ux-audit.mjs on every CI run. Numbers are ceilings: lower them as screens improve, never raise them without a reason in the commit message.",
+  "perViewport": {
+    "docOverflowX": 0,
+    "clippedText": 0,
+    "pageErrorsExcluding503": 0,
+    "offscreen": { "phone-se": 7, "default": 0 },
+    "tapTargetsUnder24": { "phone-se": 42, "phone-15": 43, "tablet-portrait": 78, "tablet-landscape": 79, "default": 0 }
+  },
+  "perTab": {
+    "textUnder10px": 10,
+    "contrastFailures": 4,
+    "cls": 0.1,
+    "tabSwitchMs": 1500
+  }
+}

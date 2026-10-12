@@ -186,8 +186,51 @@ login button is a real link, copy fallback always shown, dialog explains a
 missing access key or missing SCHWAB_* variables (auth-url now 503 with the
 names), optional automatic callback /api/schwab/oauth/callback with a
 one-time state (tests/quant/schwab-oauth.test.ts). Not verified live.
-Next step: user redeploys main on Railway, enters the access key, connects
-Schwab; report what the Connect dialog says if it still fails.
+2026-10-11: user connected Schwab on Railway; panels still empty. Logs:
+repeated 401 on trader/v1/userPreference (Trader API refused: app likely
+lacks "Accounts and Trading Production"; streamer off, REST market data
+unaffected), token refresh OK, no marketdata errors in the excerpt. PR #6
+(ac5bd34): Settings "Test Schwab data" (/api/schwab/selftest: quotes,
+daily history, chain, Trader API with plain-language results); intraday
+minute bars fall back to the last session when the market is closed (were
+blank all weekend); streamer retries a 401 every 30 min. Not verified live.
+Next step: user redeploys, runs Test Schwab data, reports the four lines.
+
+## 2026-10-11: product direction (user decisions, keep for every session)
+
+Goal: a paid subscription service for self-directed Schwab investors, only
+after it earns it. Decided with the user:
+- Model A: each client connects their OWN Schwab account (per-user OAuth,
+  read-only). Never serve one Schwab account's data to other users
+  (redistribution: Schwab API terms + exchange OPRA/Cboe rules).
+- Investors only: self-directed individuals; no order placement, no advice,
+  no sizing instructions; disclosures reviewed by counsel before charging.
+- Schwab commercial approval is required before other clients can connect;
+  public reports (WealthLab, NinjaTrader) show it is slow; fallback is each
+  pilot user registering their own individual Schwab app key.
+- Proposal to Schwab drafted as a Claude Doc "Batcave x Schwab: Developer
+  Partnership Proposal": https://claude.ai/code/artifact/aa5ae289-0995-407f-b5e2-e415fe90794a
+  (asks Schwab for approval path, Streamer without Trader scope, token
+  lifetime, display/derived-data rules, and their Greek/IV methodology).
+- Gates before paid launch: (1) Railway stable 2 weeks, (2) Schwab commercial
+  approval + counsel review, (3) 3 months of graded alerts published.
+- Known single-user assumptions to remove for multi-client: token store is
+  one row (schwabTokenStore.ts ROW_ID=1); schwab.ts REST cache, rate budget
+  and Streamer are process-global; access gate is one shared key; Discord
+  webhooks and schedulers are global.
+
+2026-10-12 trust pass (bb59820, CI 38202063956 green: 511 tests, tsc 162 vs
+162, UX budget all pass): the user's questions are now checks.
+"Can I trust it" -> tests/quant/no-advice-language.test.ts (fails on
+trade-instruction phrases in subscriber-facing text; personal-edition files
+exempt with reasons). BATCAVE_EDITION=investor hides/403s EOD trade setups
+and disables Discord trade cards; default personal edition unchanged.
+"Does it fit my device / react to my touch / can I read it" ->
+tests/ux/budget.json ceilings checked by ux-audit.mjs; the CI step now fails
+when any is exceeded (ratchet: lower ceilings as screens improve). Fixed two
+misattributed Take Five quotes. Next on this track: position sizer as a
+plain user-driven risk calculator in the investor edition, live checks of
+our Greeks/IV against Schwab's chain fields, tap targets under 24 px.
 
 ## Current objective
 

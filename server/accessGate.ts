@@ -28,6 +28,7 @@
 // No express import: middleware uses minimal structural types.
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import type { Edition } from "../shared/edition";
 
 export const ACCESS_KEY_HEADER = "x-batcave-key";
 export const AUTH_REQUIRED_ERROR = "batcave_auth_required";
@@ -256,8 +257,8 @@ export function makeAccessGate(accessKey: string, opts: AccessGateOptions = {}) 
 }
 
 /** /api/health body. `locked` = the server refuses /api until a key is configured. */
-export function healthPayload(authRequired: boolean, now: Date = new Date(), locked: boolean = false) {
-  return { ok: true, service: "batcave", authRequired, locked, time: now.toISOString() };
+export function healthPayload(authRequired: boolean, now: Date = new Date(), locked: boolean = false, edition: Edition = "personal") {
+  return { ok: true, service: "batcave", authRequired, locked, edition, time: now.toISOString() };
 }
 
 // ── Self-call wrapper ──────────────────────────────────────────────────────
