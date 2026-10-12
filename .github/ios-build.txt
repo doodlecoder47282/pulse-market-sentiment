@@ -1,1 +1,1 @@
-rebuild 7: iPad screenshots, heatmap
+rebuild 8: bounded iPad step

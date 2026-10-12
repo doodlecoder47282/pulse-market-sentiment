@@ -25,7 +25,10 @@ function measure(isMobile) {
   const visible = (el) => {
     const r = el.getBoundingClientRect();
     const cs = getComputedStyle(el);
-    return r.width > 0 && r.height > 0 && cs.visibility !== "hidden" && cs.display !== "none" && cs.opacity !== "0";
+    if (!(r.width > 0 && r.height > 0 && cs.visibility !== "hidden" && cs.display !== "none" && cs.opacity !== "0")) return false;
+    // Closed <details> content and other content-visibility: hidden subtrees keep a box but draw nothing.
+    if (typeof el.checkVisibility === "function" && !el.checkVisibility({ contentVisibilityAuto: true, visibilityProperty: true })) return false;
+    return true;
   };
   const label = (el) => {
     const t = (el.innerText || el.getAttribute("aria-label") || el.getAttribute("placeholder") || "").trim().replace(/\s+/g, " ").slice(0, 60);
@@ -62,43 +65,50 @@ function measure(isMobile) {
   // marquee's off-screen text is not an overlap), elements inside fixed or
   // absolute layers (bottom bar, pills, tooltips) are skipped, SVG text is
   // counted separately (chart tick labels).
-  const clipBox = (el) => {
-    let r = el.getBoundingClientRect();
-    let box = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+  // Clip boxes: one per line box (getClientRects), so an inline span that
+  // wraps across lines is not reported as covering the whole paragraph.
+  const clipBoxes = (el) => {
+    const limits = { left: -Infinity, top: -Infinity, right: Infinity, bottom: Infinity };
     for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
       const cs = getComputedStyle(p);
       if (cs.position === "fixed" || cs.position === "absolute") return null;
       const ox = cs.overflowX, oy = cs.overflowY;
       if (ox !== "visible" || oy !== "visible") {
         const pr = p.getBoundingClientRect();
-        if (ox !== "visible") { box.left = Math.max(box.left, pr.left); box.right = Math.min(box.right, pr.right); }
-        if (oy !== "visible") { box.top = Math.max(box.top, pr.top); box.bottom = Math.min(box.bottom, pr.bottom); }
+        if (ox !== "visible") { limits.left = Math.max(limits.left, pr.left); limits.right = Math.min(limits.right, pr.right); }
+        if (oy !== "visible") { limits.top = Math.max(limits.top, pr.top); limits.bottom = Math.min(limits.bottom, pr.bottom); }
       }
     }
-    return box.right - box.left > 4 && box.bottom - box.top > 4 ? box : null;
+    const out = [];
+    for (const r of Array.from(el.getClientRects())) {
+      const b = { left: Math.max(r.left, limits.left), top: Math.max(r.top, limits.top), right: Math.min(r.right, limits.right), bottom: Math.min(r.bottom, limits.bottom) };
+      if (b.right - b.left > 4 && b.bottom - b.top > 4) out.push(b);
+    }
+    return out.length ? out : null;
   };
   const ownText = (el) => Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.textContent.trim());
   const textLeaves = [], svgLeaves = [];
   for (const el of all) {
-    if (!ownText(el) || !(el.innerText || el.textContent || "").trim()) continue;
+    if (!ownText(el) || !(el.innerText ?? "").trim()) continue; // innerText: what is drawn, not what is in the DOM
     const cs = getComputedStyle(el);
     if (cs.position === "fixed" || cs.position === "absolute") continue;
-    const box = clipBox(el);
-    if (!box) continue;
-    (el.ownerSVGElement ? svgLeaves : textLeaves).push({ el, r: box });
+    const boxes = clipBoxes(el);
+    if (!boxes) continue;
+    const top = Math.min(...boxes.map((b) => b.top)), bottom = Math.max(...boxes.map((b) => b.bottom));
+    (el.ownerSVGElement ? svgLeaves : textLeaves).push({ el, boxes, top, bottom });
   }
+  const boxesMeet = (A, B) => A.boxes.some((a) => B.boxes.some((b) =>
+    Math.min(a.right, b.right) - Math.max(a.left, b.left) > 4 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 4));
   const findOverlaps = (items, cap) => {
-    items.sort((a, b) => a.r.top - b.r.top);
+    items.sort((a, b) => a.top - b.top);
     const out = [];
     for (let i = 0; i < items.length && out.length < cap; i++) {
       const A = items[i];
       for (let j = i + 1; j < items.length; j++) {
         const B = items[j];
-        if (B.r.top >= A.r.bottom - 4) break;
+        if (B.top >= A.bottom - 4) break;
         if (A.el.contains(B.el) || B.el.contains(A.el)) continue;
-        const ix = Math.min(A.r.right, B.r.right) - Math.max(A.r.left, B.r.left);
-        const iy = Math.min(A.r.bottom, B.r.bottom) - Math.max(A.r.top, B.r.top);
-        if (ix > 4 && iy > 4) { out.push(`${label(A.el)} x ${label(B.el)}`); if (out.length >= cap) break; }
+        if (boxesMeet(A, B)) { out.push(`${label(A.el)} x ${label(B.el)}`); if (out.length >= cap) break; }
       }
     }
     return out;
