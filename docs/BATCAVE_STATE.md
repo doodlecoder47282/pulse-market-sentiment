@@ -232,6 +232,14 @@ misattributed Take Five quotes. Next on this track: position sizer as a
 plain user-driven risk calculator in the investor edition, live checks of
 our Greeks/IV against Schwab's chain fields, tap targets under 24 px.
 
+2026-10-12 design + access: color directions canvas for the user to pick
+(Design artifact https://claude.ai/artifact/SYBtywydPiTERPHoahGKv6: today,
+A Night Desk (recommended), B Institutional Navy, C Signal Contrast; sample
+data). User wants a free website link before subscriptions: allowed shapes
+are a labelled demo (no Schwab data) or invite-only per-tester deployments
+on each tester's own Schwab app; a shared server showing the owner's Schwab
+data to others is not (redistribution).
+
 ## Current objective
 
 Save the credit-conserving resume framework and assess reuse of the existing
