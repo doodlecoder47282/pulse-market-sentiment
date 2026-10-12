@@ -210,6 +210,79 @@ jobs:
           JS
           npm i --no-save playwright@1.48.2 >/dev/null 2>&1 && node shot.mjs 2>&1 | tee rep/shots/shot.log
           pkill -f "dist/index.cjs" || true
+      - name: Demo edition (sample data) smoke test and screenshots
+        if: always()
+        shell: bash
+        run: |
+          set -u
+          mkdir -p rep/demo
+          npx --yes playwright@1.48.2 install --with-deps chromium >/dev/null 2>&1
+          npm ls playwright >/dev/null 2>&1 || npm i --no-save playwright@1.48.2 >/dev/null 2>&1
+          # Public bind, no key: the demo must be open, read-only and Schwab-free.
+          NODE_ENV=production PORT=5072 HOST=0.0.0.0 BATCAVE_EDITION=demo PULSE_ML_AUTOSTART=0 node dist/index.cjs > rep/server-demo.log 2>&1 &
+          for i in $(seq 1 90); do curl -fsS http://127.0.0.1:5072/api/health >/dev/null 2>&1 && break; sleep 1; done
+          IP=$(hostname -I | awk '{print $1}')
+          B="http://$IP:5072"
+          fail=0
+          check() { if [ "$1" = "$2" ]; then echo "PASS $3 ($1)"; else echo "FAIL $3 (got $1, want $2)"; fail=1; fi; }
+          {
+            curl -s "$B/api/health" | grep -q '"edition":"demo"' && echo "PASS health edition demo" || { echo "FAIL health edition"; fail=1; }
+            curl -s "$B/api/health" | grep -q '"locked":false' && echo "PASS open without a key" || { echo "FAIL locked"; fail=1; }
+            curl -s "$B/api/schwab/status" | grep -q '"demo":true' && echo "PASS status demo" || { echo "FAIL status demo"; fail=1; }
+            check "$(curl -s -o /dev/null -w '%{http_code}' "$B/api/schwab/auth-url")" 403 "sign-in link refused"
+            check "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' "$B/api/signals/track")" 403 "visitor write refused"
+            check "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"redirectedUrl":"https://x/?code=a"}' "$B/api/schwab/callback")" 403 "token paste refused"
+            check "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH -H 'Content-Type: application/json' -d '{}' "$B/api/flow/config")" 403 "config change refused"
+            curl -s -o /dev/null -D - "$B/api/schwab/oauth/callback?code=a&state=b" | grep -qi 'location: .*demo_edition' && echo "PASS oauth callback refused" || { echo "FAIL oauth callback"; fail=1; }
+            sleep 45
+            echo "--- data endpoints on sample data (status, first 300 bytes) ---"
+            for pth in /api/schwab/selftest /api/snapshot /api/trade-environment /api/regime /api/gamma-levels /api/models /api/heatseeker /api/iv-rv /api/chain-audit /api/edgelab/briefing; do
+              code=$(curl -s -o rep/demo/body.json -m 60 -w '%{http_code}' "$B$pth")
+              echo "$pth -> $code $(head -c 300 rep/demo/body.json | tr '\n' ' ')"
+            done
+            grep -ciE "api\.schwabapi\.com|\[schwab\] (401|403|fetch)" rep/server-demo.log | xargs -I{} echo "schwab network lines in log: {}"
+          } 2>&1 | tee rep/demo/smoke.log
+          grep -q '^FAIL' rep/demo/smoke.log && fail=1
+          cat > demo-shot.mjs <<'JS'
+          import { chromium } from "playwright";
+          const base = process.env.DEMO_BASE;
+          const tabs = ["signals","chart","models","heatseeker","tradedesk","regime","cosmos","news","takefive","edgelab","crypto"];
+          const b = await chromium.launch();
+          async function open(vp) {
+            const p = await b.newPage({ viewport: vp });
+            const errors = [];
+            p.on("pageerror", (e) => errors.push(e.message));
+            await p.goto(`${base}/#/`, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+            await p.waitForTimeout(4000);
+            for (let k = 0; k < 4; k++) {
+              await p.evaluate(() => document.querySelectorAll("div").forEach((d) => {
+                if (d.scrollHeight > d.clientHeight + 10) { d.scrollTop = d.scrollHeight; d.dispatchEvent(new Event("scroll")); }
+              }));
+              await p.mouse.wheel(0, 5000).catch(() => {});
+              await p.waitForTimeout(700);
+            }
+            await p.locator('[data-testid="button-premarket-acknowledge"]').click({ timeout: 8000 }).catch(() => {});
+            await p.waitForTimeout(8000);
+            return { p, errors };
+          }
+          const { p, errors } = await open({ width: 1440, height: 900 });
+          console.log("demo strip visible:", await p.locator('[data-testid="demo-strip"]').isVisible().catch(() => false));
+          for (const [i, t] of tabs.entries()) {
+            const btn = p.locator(`[data-testid="tab-${t}"]`);
+            if (!(await btn.count())) { console.log("missing tab", t); continue; }
+            await btn.first().click({ timeout: 5000 }).catch((e) => console.log(t, e.message.split("\n")[0]));
+            await p.waitForTimeout(7000);
+            await p.screenshot({ path: `rep/demo/${String(i + 1).padStart(2, "0")}-${t}.png`, fullPage: true });
+          }
+          console.log("desktop page errors:", errors.length, errors.slice(0, 5));
+          const m = await open({ width: 393, height: 852 });
+          await m.p.screenshot({ path: "rep/demo/12-signals-iphone.png", fullPage: false });
+          console.log("mobile page errors:", m.errors.length, m.errors.slice(0, 5));
+          await b.close();
+          JS
+          DEMO_BASE="$B" node demo-shot.mjs 2>&1 | tee rep/demo/shot.log
+          pkill -f "dist/index.cjs" || true
+          exit $fail
       - name: UX audit (every tab at six screen sizes)
         if: always()
         shell: bash

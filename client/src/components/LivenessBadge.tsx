@@ -21,6 +21,8 @@ import { apiRequest } from "@/lib/queryClient";
 interface SchwabStatus {
   connected: boolean;
   needsReauth: boolean;
+  /** Demo edition: simulated sample data. */
+  demo?: boolean;
 }
 
 type LivenessState = "LIVE" | "CONTEXT" | "STALE" | "OFFLINE";
@@ -93,18 +95,20 @@ export default function LivenessBadge({
   const ageSec = asOfMs != null && Number.isFinite(asOfMs) ? Math.max(0, Math.round((Date.now() - asOfMs) / 1000)) : null;
 
   const s = STATE_STYLE[state];
+  // Demo edition: "connected" to the simulated market, so LIVE reads SAMPLE.
+  const label = status?.demo && state === "LIVE" ? "SAMPLE" : s.label;
 
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-full border border-current/30 px-1.5 py-0.5 text-[11px] font-medium ${s.text} ${className ?? ""}`}
       data-testid={`liveness-${feedName}`}
-      title={`${feedName} · ${s.label}${ageSec != null ? ` · data ${ageSec < 120 ? `${ageSec}s` : `${Math.round(ageSec / 60)}m`} old` : ""}`}
+      title={`${feedName} · ${label}${ageSec != null ? ` · data ${ageSec < 120 ? `${ageSec}s` : `${Math.round(ageSec / 60)}m`} old` : ""}`}
     >
       <span
         className={`h-1.5 w-1.5 rounded-full ${s.dot} ${s.pulse ? "animate-pulse" : ""}`}
         aria-hidden
       />
-      {s.label}
+      {label}
     </span>
   );
 }

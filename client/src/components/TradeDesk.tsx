@@ -44,6 +44,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { friendlyError } from "@/lib/friendlyError";
 import { useEdition } from "@/lib/useEdition";
+import { featureAllowed } from "@shared/edition";
 
 // --- Types matching /api/trade-desk payload ----------------------------------
 
@@ -213,7 +214,7 @@ export default function TradeDesk() {
       )}
 
       {/* EOD Play Maker: personal edition only (trade setups are not offered to subscribers) */}
-      {edition !== "investor" && (
+      {edition != null && featureAllowed("eod-trade-setup", edition) && (
         <section>
           <EodPlayMaker />
         </section>

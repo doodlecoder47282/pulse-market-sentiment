@@ -28,7 +28,7 @@
 // No express import: middleware uses minimal structural types.
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import type { Edition } from "../shared/edition";
+import { editionFromEnv, type Edition } from "../shared/edition";
 
 export const ACCESS_KEY_HEADER = "x-batcave-key";
 export const AUTH_REQUIRED_ERROR = "batcave_auth_required";
@@ -88,7 +88,7 @@ export function isLoopbackHost(host: string): boolean {
   return h === "localhost" || h === "::1" || /^127(\.\d{1,3}){3}$/.test(h);
 }
 
-export type GateMode = "key" | "open-loopback" | "open-explicit" | "closed";
+export type GateMode = "key" | "open-loopback" | "open-explicit" | "open-demo" | "closed";
 
 /**
  * key           BATCAVE_ACCESS_KEY set: header required.
@@ -100,6 +100,9 @@ export function gateMode(env: EnvLike): GateMode {
   if ((env.BATCAVE_ACCESS_KEY || "").trim()) return "key";
   if (isLoopbackHost(resolveBindHost(env))) return "open-loopback";
   if ((env.BATCAVE_ALLOW_OPEN || "").trim() === "1") return "open-explicit";
+  // The public demo holds no brokerage data (simulated market, Schwab sign-in
+  // refused) and its /api is read-only (makeDemoReadOnly), so it may be open.
+  if (editionFromEnv(env) === "demo") return "open-demo";
   return "closed";
 }
 
@@ -113,6 +116,7 @@ export function gateWarnings(env: EnvLike): string[] {
   }
   if (mode === "open-loopback") out.push(`BATCAVE_ACCESS_KEY not set: /api is open on loopback ${host} only.`);
   if (mode === "open-explicit") out.push(`BATCAVE_ALLOW_OPEN=1: /api is OPEN to anyone who can reach ${host}. Set BATCAVE_ACCESS_KEY instead.`);
+  if (mode === "open-demo") out.push(`BATCAVE_EDITION=demo: /api is open and read-only on ${host}; simulated sample data, no Schwab.`);
   if (mode === "closed") out.push(`BATCAVE_ACCESS_KEY not set and bind host ${host} is reachable: /api returns 503 until the key is set (or BATCAVE_ALLOW_OPEN=1).`);
   return out;
 }
@@ -292,4 +296,40 @@ export function makeSelfCallFetch(baseFetch: FetchFn, accessKey: string, port: s
 /** One log line per API request. Deliberately has no body parameter. */
 export function formatRequestLog(method: string, path: string, status: number, durationMs: number): string {
   return `${method} ${path} ${status} in ${durationMs}ms`;
+}
+
+// ── Demo edition: read-only /api ───────────────────────────────────────────
+// The public demo is open to anyone, so nothing a visitor does may change
+// shared state, reach a paid or keyed service, or touch Schwab sign-in.
+// Allowed writes are pure calculations on the request body or the sample market.
+export const DEMO_ALLOWED_WRITES: readonly string[] = [
+  "/position-sizer",
+  "/heatseeker/levels",
+  "/edge/survival",
+  "/snapshot/refresh",
+];
+
+/** true when a request may run on the demo: any GET/HEAD/OPTIONS, or a listed calculation. `path` is relative to /api. */
+export function demoRequestAllowed(method: string, path: string): boolean {
+  const m = method.toUpperCase();
+  if (m === "GET" || m === "HEAD" || m === "OPTIONS") return true;
+  return m === "POST" && DEMO_ALLOWED_WRITES.includes(path.replace(/\/+$/, ""));
+}
+
+/** true for this machine's own socket address (the engines' self-calls). Never read from headers. */
+export function isLoopbackSocket(addr: string | undefined | null): boolean {
+  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
+}
+
+/** Mounted at app.use("/api", ...) in the demo edition only. The server's own
+ *  schedulers (loopback socket) keep working; visitors are read-only. */
+export function makeDemoReadOnly() {
+  return (req: { method: string; path: string; socket?: { remoteAddress?: string } }, res: any, next: () => void) => {
+    if (demoRequestAllowed(req.method, req.path) || isLoopbackSocket(req.socket?.remoteAddress)) return next();
+    res.status(403).json({
+      error: "demo_read_only",
+      dataState: "unavailable",
+      reason: "This is a read-only demo running on simulated sample data. Changes and sign-in are turned off.",
+    });
+  };
 }

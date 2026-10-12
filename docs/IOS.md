@@ -64,6 +64,6 @@ Never put Schwab or API keys there; the app must not carry server secrets.
 
 - Not signed, not on TestFlight, not tested on a physical device.
 - Schwab "Connect" opens the Schwab login in Safari; the server receives the
-  callback and stores the tokens. Pull to refresh in the app afterwards.
+  callback and stores the tokens. Tap Refresh in the app afterwards.
 - App Store release needs app-specific value beyond a wrapped website
   (Apple guideline 4.2) and an Apple Developer Program membership.

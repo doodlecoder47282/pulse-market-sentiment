@@ -46,7 +46,9 @@ function App() {
       void queryClient.invalidateQueries();
     } else {
       const reason = (params.get("reason") || "unknown error").replace(/_/g, " ");
-      toast({ title: "Schwab sign-in did not finish", description: `${reason}. Open Settings and try Connect again.`, variant: "destructive" });
+      if (reason === "demo edition") {
+        toast({ title: "Sample-data demo", description: "Schwab sign-in is turned off in the demo." });
+      } else toast({ title: "Schwab sign-in did not finish", description: `${reason}. Open Settings and try Connect again.`, variant: "destructive" });
     }
     try { window.history.replaceState(null, "", window.location.pathname + window.location.hash); } catch { /* ignore */ }
   }, []);

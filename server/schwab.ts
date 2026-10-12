@@ -23,6 +23,17 @@ import { streamEquityQuote } from "./streamStore";
 import { parseStreamerInfo, startSchwabStream, streamConfigFromEnv, type StreamerInfo, type WebSocketLike } from "./schwabStream";
 import { oauthErrorCode } from "./oauthError";
 import { newOAuthState } from "./schwabOAuth";
+import { editionFromEnv } from "../shared/edition";
+import { demoSchwabPayload } from "./demoMarket";
+
+// Demo edition (BATCAVE_EDITION=demo): a simulated market answers every
+// Schwab REST call (server/demoMarket.ts). Schwab is never called, sign-in is
+// refused, stored tokens are ignored and the streamer stays off.
+const DEMO_TOKEN = "demo-sample-data";
+export function isDemoEdition(): boolean {
+  return editionFromEnv() === "demo";
+}
+const DEMO_SIGN_IN_OFF = "This demo runs on simulated sample data; Schwab sign-in is turned off.";
 
 // ─── Credentials from environment (read lazily to avoid import-order issues) ──
 const getClientId = () => process.env.SCHWAB_CLIENT_ID ?? "";
@@ -50,6 +61,7 @@ export function clearRefreshBackoff(): void {
 
 /** Retrieve a valid access token, auto-refreshing if needed. Returns null if not connected. */
 export async function getAccessToken(lookaheadMs = 60_000): Promise<string | null> {
+  if (isDemoEdition()) return DEMO_TOKEN;
   const CLIENT_ID = getClientId();
   const CLIENT_SECRET = getClientSecret();
   if (!CLIENT_ID || !CLIENT_SECRET) return null;
@@ -129,6 +141,7 @@ async function doRefresh(
 
 /** Exchange an authorization code for tokens and persist them. */
 export async function exchangeCodeForTokens(code: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (isDemoEdition()) return { ok: false, error: DEMO_SIGN_IN_OFF };
   const CLIENT_ID = getClientId();
   const CLIENT_SECRET = getClientSecret();
   const REDIRECT_URI = getRedirectUri();
@@ -191,7 +204,15 @@ export function getSchwabStatus(): {
   lastRefreshError: { at: number; status: number; message: string } | null;
   /** Token storage at rest: mode (encrypted / plaintext-local / locked) and why. */
   tokenStore: TokenStoreStatus;
+  /** Demo edition: "connected" to the simulated market, not to Schwab. */
+  demo?: boolean;
 } {
+  if (isDemoEdition()) {
+    return {
+      connected: true, expiresIn: 1800, refreshExpiresIn: 7 * 86400, needsReauth: false,
+      staleAccessToken: false, lastRefreshError: null, tokenStore: tokenStoreStatus(), demo: true,
+    };
+  }
   const tok = readSchwabTokens();
   if (tok.status !== "ok") {
     // none, locked (no key on a reachable bind) or decrypt_failed: not connected,
@@ -232,6 +253,7 @@ export function getSchwabStatus(): {
 
 /** Returns the OAuth authorize URL to open in a new tab. */
 export function getAuthUrl(): string {
+  if (isDemoEdition()) throw new Error(DEMO_SIGN_IN_OFF);
   const params = new URLSearchParams({
     response_type: "code",
     client_id: getClientId(),
@@ -324,6 +346,12 @@ export async function schwabFetchMeta(
   params?: Record<string, string | number>,
   opts?: { skipCache?: boolean },
 ): Promise<SchwabFetchResult> {
+  if (isDemoEdition()) {
+    const now = Date.now();
+    const data = demoSchwabPayload(path, params, now);
+    if (data == null) return { data: null, freshness: null, reason: "Demo edition: no Schwab streamer for sample data" };
+    return { data, freshness: freshFreshness(now, schwabDataKind(path, params), false), reason: null };
+  }
   const token = await getAccessToken();
   if (!token) return { data: null, freshness: null, reason: "Schwab not connected" };
 
@@ -507,7 +535,7 @@ export function getSchwabDiagnostics() {
 let _refreshInterval: ReturnType<typeof setInterval> | null = null;
 
 export function startTokenRefreshCycle(): void {
-  if (_refreshInterval) return;
+  if (_refreshInterval || isDemoEdition()) return;
   // 10-min cadence with a 25-min lookahead: tokens live 30 min, so the old
   // 20-min timer + 1-min lookahead could let a token lapse between ticks and
   // leave a dead window for every poller in between.
@@ -581,6 +609,9 @@ export interface SchwabSelfTestItem { name: string; ok: boolean; status: number 
  * results for the Settings panel. Never returns tokens or account ids.
  */
 export async function schwabSelfTest(): Promise<{ connected: boolean; items: SchwabSelfTestItem[] }> {
+  if (isDemoEdition()) {
+    return { connected: true, items: [{ name: "Demo edition", ok: true, status: null, detail: "Simulated sample data. Schwab is not called in this edition." }] };
+  }
   const token = await getAccessToken();
   if (!token) return { connected: false, items: [{ name: "Sign-in", ok: false, status: null, detail: "Schwab is not connected or the sign-in expired. Use Connect Schwab." }] };
   const probe = async (name: string, url: string, summarize: (j: any) => string): Promise<SchwabSelfTestItem> => {
@@ -621,6 +652,10 @@ export async function schwabSelfTest(): Promise<{ connected: boolean; items: Sch
  * WebSocket, else the `ws` package.
  */
 export async function bootSchwabStream(): Promise<void> {
+  if (isDemoEdition()) {
+    console.log("[schwab-stream] demo edition: simulated sample data, no streamer");
+    return;
+  }
   if (process.env.BATCAVE_STREAM === "0") {
     console.log("[schwab-stream] disabled (BATCAVE_STREAM=0): REST snapshots only");
     return;

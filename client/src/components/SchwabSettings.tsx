@@ -31,6 +31,8 @@ import {
 
 interface SchwabStatus {
   connected: boolean;
+  /** Demo edition: simulated sample data, Schwab sign-in off. */
+  demo?: boolean;
   expiresIn: number;        // seconds
   refreshExpiresIn: number; // seconds
   needsReauth: boolean;
@@ -166,6 +168,20 @@ export function SchwabStatusPill({ onClick }: { onClick: () => void }) {
   });
 
   if (!data) return null;
+
+  if (data.demo) {
+    return (
+      <button
+        onClick={onClick}
+        className="flex min-h-[44px] items-center gap-1.5 rounded-full border border-indigo-400/40 bg-indigo-500/10 px-2 py-0.5 transition hover:opacity-80 sm:min-h-0"
+        data-testid="schwab-status-pill"
+        title="Demo: simulated sample data, not Schwab. Click for details."
+      >
+        <span className="h-1.5 w-1.5 rounded-full bg-indigo-300" aria-hidden />
+        <span className="font-mono text-[11px] font-semibold uppercase tracking-wider text-indigo-200">SAMPLE DATA</span>
+      </button>
+    );
+  }
 
   const isConnected = data.connected && !data.needsReauth;
 
@@ -416,6 +432,28 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
   };
 
   const isConnected = status?.connected === true && !status?.needsReauth;
+
+  if (status?.demo) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="max-w-lg" data-testid="schwab-settings-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Settings className="h-4 w-4" />
+              Batcave demo
+            </DialogTitle>
+            <DialogDescription>
+              Every price, option chain, flow alert and score in this demo comes from a simulated market built for the preview. None of it is a real quote, and nothing here is investment advice.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-sm text-muted-foreground" data-testid="demo-settings">
+            <p>The calculations are the same ones the full app runs on live Schwab data, so the screens show how Batcave reads a market, not what the market is doing today.</p>
+            <p>Schwab sign-in is turned off here. In the full app each person connects their own Schwab account, and their sign-in stays on their own server.</p>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

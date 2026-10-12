@@ -23,6 +23,7 @@ import {
   gateWarnings,
   newInternalKey,
   trustProxyHops,
+  makeDemoReadOnly,
 } from "./accessGate";
 import { tokenKeyWarnings } from "./tokenCrypto";
 import { resolveTokenKeyPolicy } from "./tokenKeyFile";
@@ -126,6 +127,7 @@ app.get("/api/health", (_req, res) => {
 // can only finish a sign-in this server started in the last 15 minutes.
 app.get(OAUTH_CALLBACK_PATH, async (req, res) => {
   const back = (q: string) => res.redirect(302, `/?schwab=${q}#/`);
+  if (editionFromEnv() === "demo") return back("error&reason=demo_edition");
   const err = typeof req.query.error === "string" ? req.query.error : "";
   if (err) return back(`error&reason=${encodeURIComponent(err.slice(0, 80))}`);
   const code = typeof req.query.code === "string" ? req.query.code : "";
@@ -140,6 +142,7 @@ app.get(OAUTH_CALLBACK_PATH, async (req, res) => {
   }
 });
 app.use("/api", makeAccessGate(ACCESS_KEY, { failClosed: GATE_MODE === "closed", internalKey: INTERNAL_KEY || undefined }));
+if (editionFromEnv() === "demo") app.use("/api", makeDemoReadOnly());
 app.get("/api/health/auth", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.json({ ok: true });
