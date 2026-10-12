@@ -237,7 +237,7 @@ function TradeDeskFeed({
     <div className="space-y-4">
       {/* Command bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/20 bg-gradient-to-r from-amber-500/5 to-transparent px-4 py-2.5">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Crosshair className="h-4 w-4 text-amber-500" />
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-500">Trade Desk</div>
           <EdgeInfo id="trade-desk" className="h-6 w-6" />
@@ -250,7 +250,7 @@ function TradeDeskFeed({
             <DataStateChip state={data.dataState} reason={data.dataStateReason ?? null} source="Schwab" testId="chip-trade-desk-state" />
           ) : null}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <ToggleGroup
             label="Window"
             value={range}

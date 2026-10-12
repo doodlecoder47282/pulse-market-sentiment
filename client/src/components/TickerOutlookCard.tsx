@@ -728,7 +728,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                             href={e.url}
                             target="_blank"
                             rel="noreferrer"
-                            className="line-clamp-2 flex-1 text-foreground hover:text-cyan-300"
+                            className="line-clamp-2 min-w-0 flex-1 [overflow-wrap:anywhere] text-foreground hover:text-cyan-300"
                           >
                             {e.title}
                           </a>
@@ -794,7 +794,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                           >
                             {p.source}
                           </span>
-                          <span className="line-clamp-2 text-foreground/90">{p.text}</span>
+                          <span className="line-clamp-2 min-w-0 [overflow-wrap:anywhere] text-foreground/90">{p.text}</span>
                         </div>
                       </li>
                     ))}
@@ -940,7 +940,7 @@ function ScenarioBar({
         {s.targetPct >= 0 ? "+" : ""}
         {s.targetPct.toFixed(2)}%
       </div>
-      <div className="mt-1 line-clamp-2 text-[11px] opacity-80">{s.thesis}</div>
+      <div className="mt-1 line-clamp-2 [overflow-wrap:anywhere] text-[11px] opacity-80">{s.thesis}</div>
     </div>
   );
 }

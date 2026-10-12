@@ -198,12 +198,13 @@
     @apply border-border;
   }
 
-  /* Touch screens: every control is at least 44 x 44 CSS px (Apple HIG; WCAG
-     2.2 asks for 24). In the base layer, so a component that sets its own
+  /* Touch screens, and every width below 1024 px (the phone/tablet layout with
+     the bottom tab bar): each control is at least 44 x 44 CSS px (Apple HIG;
+     WCAG 2.2 asks for 24). In the base layer, so a component that sets its own
      min-height or min-width utility still wins. Switches, checkboxes and
      radios keep their drawn size; mark any other exception data-tap-exempt.
      Checked by tests/ux/ux-audit.mjs (tap-target budget). */
-  @media (pointer: coarse), (max-width: 767px) {
+  @media (pointer: coarse), (max-width: 1023px) {
     :where(button:not([role="switch"], [role="checkbox"], [role="radio"], [data-tap-exempt]),
       [role="button"]:not([data-tap-exempt]),
       [role="tab"]:not([data-tap-exempt]),

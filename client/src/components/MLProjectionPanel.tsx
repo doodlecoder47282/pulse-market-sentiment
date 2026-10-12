@@ -946,8 +946,8 @@ export default function MLProjectionPanel() {
     <Card data-testid="panel-ml-projection" className="border-border/60">
       <CardHeader className="space-y-2">
         <div className="flex flex-col items-start gap-3 sm:flex-row sm:justify-between">
-          <div className="space-y-1">
-            <CardTitle className="flex items-center gap-2">
+          <div className="min-w-0 max-w-full space-y-1">
+            <CardTitle className="flex flex-wrap items-center gap-2">
               <Activity className="w-4 h-4 shrink-0" />
               SPY — Projected Path
               <Badge
