@@ -1,0 +1,110 @@
+name: iOS build (Xcode project)
+
+# Builds the web UI, syncs it into the Capacitor Xcode project, compiles the
+# app for the iOS Simulator without signing, takes a simulator screenshot and
+# publishes a ready-to-open Xcode zip to the ci-reports-ios branch.
+# Runs when the iOS project changes; to rebuild after UI-only changes, edit
+# .github/ios-build.txt. Nothing is committed back to the source branch.
+
+on:
+  push:
+    branches: [quant-fixes, main]
+    paths:
+      - "ios/**"
+      - "capacitor.config.json"
+      - ".github/ios-build.txt"
+      - ".github/workflows/ios-build.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Toolchain
+        run: |
+          mkdir -p reports
+          { xcodebuild -version; node -v; npm -v; sw_vers; } 2>&1 | tee reports/00-toolchain.log
+      - name: Install dependencies
+        run: |
+          set -o pipefail
+          npm ci --no-audit --no-fund --ignore-scripts 2>&1 | tail -20 | tee reports/01-npm-ci.log
+          if ! grep -q '"@capacitor/ios"' package.json; then
+            npm install --no-save --no-audit --no-fund --ignore-scripts @capacitor/cli@8.5.2 @capacitor/core@8.5.2 @capacitor/ios@8.5.2 2>&1 | tail -20 | tee -a reports/01-npm-ci.log
+          fi
+          npx cap --version 2>&1 | tee -a reports/01-npm-ci.log
+      - name: Build web bundle for the app
+        env:
+          # Optional default server URL (a repository variable, never a secret).
+          VITE_API_BASE: ${{ vars.BATCAVE_API_BASE }}
+        run: |
+          set -o pipefail
+          npx vite build 2>&1 | tail -30 | tee reports/02-vite.log
+      - name: Sync the Xcode project
+        run: |
+          set -o pipefail
+          npx cap sync ios 2>&1 | tee reports/03-cap.log
+          find ios -maxdepth 3 -not -path '*/public/*' | sort | tee -a reports/03-cap.log
+      - name: Compile for iOS Simulator (no signing)
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/dd CODE_SIGNING_ALLOWED=NO build > reports/04-xcodebuild-full.log 2>&1
+          rc=$?
+          grep -E "error:|BUILD (SUCCEEDED|FAILED)" reports/04-xcodebuild-full.log | head -60 > reports/04-xcodebuild.log || true
+          tail -40 reports/04-xcodebuild-full.log >> reports/04-xcodebuild.log
+          exit $rc
+      - name: Launch in iOS Simulator and screenshot
+        continue-on-error: true
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; c=[x for k,v in d.items() if 'iOS' in k for x in v if x['name'].startswith('iPhone')]; print(c[-1]['udid'] if c else '')")
+          echo "simulator: $UDID" | tee reports/07-sim.log
+          xcrun simctl boot "$UDID" 2>&1 | tee -a reports/07-sim.log
+          xcrun simctl bootstatus "$UDID" -b 2>&1 | tail -2 | tee -a reports/07-sim.log
+          APP=$(find build/dd/Build/Products -name 'App.app' -maxdepth 3 | head -1)
+          xcrun simctl install "$UDID" "$APP" 2>&1 | tee -a reports/07-sim.log
+          xcrun simctl launch "$UDID" com.batcave.terminal 2>&1 | tee -a reports/07-sim.log
+          sleep 25
+          xcrun simctl io "$UDID" screenshot reports/ios-sim.png 2>&1 | tee -a reports/07-sim.log
+      - name: Package Xcode project zip
+        run: |
+          mkdir -p out/Batcave-iOS
+          rsync -a --exclude 'build' --exclude 'DerivedData' --exclude 'xcuserdata' ios/ out/Batcave-iOS/ios/
+          cp capacitor.config.json out/Batcave-iOS/
+          cp .github/ios-OPEN-ME.txt out/Batcave-iOS/OPEN-ME.txt
+          echo "Built from ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7} on $(date -u +%Y-%m-%dT%H:%MZ) with $(xcodebuild -version | head -1)" >> out/Batcave-iOS/OPEN-ME.txt
+          cd out && ditto -c -k --sequesterRsrc --keepParent Batcave-iOS Batcave-iOS-Xcode.zip && ls -la | tee -a ../reports/05-package.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Batcave-iOS-Xcode
+          path: out/Batcave-iOS-Xcode.zip
+      - name: Publish build report to ci-reports-ios branch
+        if: always()
+        run: |
+          mkdir -p /tmp/rep && cp -R reports/. /tmp/rep/ 2>/dev/null || true
+          rm -f /tmp/rep/04-xcodebuild-full.log
+          tail -300 reports/04-xcodebuild-full.log > /tmp/rep/04-xcodebuild-tail.log 2>/dev/null || true
+          cp out/Batcave-iOS-Xcode.zip /tmp/rep/ 2>/dev/null || true
+          echo "run ${GITHUB_RUN_ID} ref ${GITHUB_REF_NAME} sha ${GITHUB_SHA}" > /tmp/rep/RUN.txt
+          cd /tmp/rep && git init -q && git checkout -q -b ci-reports-ios
+          git -c user.name=batcave-ci -c user.email=batcave-ci@users.noreply.github.com add -A
+          git -c user.name=batcave-ci -c user.email=batcave-ci@users.noreply.github.com commit -qm "ios report ${GITHUB_RUN_ID}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-reports-ios

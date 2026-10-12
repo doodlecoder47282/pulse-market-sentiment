@@ -8,7 +8,10 @@
     "build": "tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "build:web": "vite build",
+    "ios:sync": "vite build && cap sync ios",
+    "ios:open": "cap open ios"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",

@@ -1,0 +1,10 @@
+{
+  "appId": "com.batcave.terminal",
+  "appName": "Batcave",
+  "webDir": "dist/public",
+  "backgroundColor": "#000000",
+  "ios": {
+    "contentInset": "always",
+    "backgroundColor": "#000000"
+  }
+}

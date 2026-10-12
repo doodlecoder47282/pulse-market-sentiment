@@ -1,0 +1,36 @@
+Batcave for iPhone - Xcode project
+==================================
+
+You need: a Mac with Xcode 26 or newer (free from the Mac App Store).
+No Node, npm or Terminal needed: the app's screens are already bundled in
+ios/App/App/public.
+
+See it in the iPhone Simulator (no Apple account needed)
+1. Double-click ios/App/App.xcodeproj. Xcode opens it. The first open
+   downloads the Capacitor Swift package (about a minute; watch the
+   progress bar at the top).
+2. At the top of the Xcode window, click the device menu next to "App"
+   and pick any iPhone simulator, for example "iPhone 17".
+3. Press the Run button (the triangle), or Command-R.
+4. The app opens on "Connect to your Batcave server". Type your server
+   address, for example https://your-app.up.railway.app, and the access
+   key if your server sets BATCAVE_ACCESS_KEY. Both stay on the device.
+
+Run it on your own iPhone
+5. Click "App" in the left sidebar, then the App target, then
+   Signing & Capabilities. Set Team to your Apple Account (the free
+   Personal Team works). If Xcode says the bundle identifier is taken,
+   change com.batcave.terminal to something unique, such as
+   com.yourname.batcave.
+6. Plug in the iPhone, pick it as the run destination and press Run.
+   On the phone: Settings > General > VPN & Device Management > trust
+   your developer certificate; turn on Developer Mode if asked.
+   Apps signed with a free Personal Team expire after 7 days; press Run
+   again to reinstall.
+
+What the app is
+- A native shell around the Batcave web UI. All data, math and Schwab
+  tokens stay on your server. The app holds no Schwab keys.
+- Connect Schwab from the website or from Settings in the app; the login
+  opens in Safari and the server stores the tokens.
+
