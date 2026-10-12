@@ -1,1 +1,1 @@
-rebuild 4: macOS listen fix
+rebuild 5: banner wording, wrapped rows
