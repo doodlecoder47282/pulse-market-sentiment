@@ -392,7 +392,7 @@ export default function Dashboard() {
               onClick={() => refreshMut.mutate()}
               disabled={refreshMut.isPending}
               data-testid="button-refresh"
-              className="h-10 w-10 min-h-0 p-0 sm:h-auto sm:w-auto sm:px-3"
+              className="h-11 w-11 p-0 sm:w-auto sm:px-3 lg:h-auto lg:min-h-8"
             >
               <RefreshCw className={`h-3.5 w-3.5 sm:mr-2 ${refreshMut.isPending ? "animate-spin" : ""}`} />
               <span className="hidden sm:inline">Refresh</span>
@@ -409,7 +409,7 @@ export default function Dashboard() {
               type="button"
               onClick={() => setSettingsOpen(true)}
               title="Schwab & Settings"
-              className="flex items-center justify-center rounded-md border border-border/60 h-10 w-10 sm:h-auto sm:w-auto sm:p-1.5 text-muted-foreground transition hover:border-border hover:text-muted-foreground"
+              className="flex items-center justify-center rounded-md border border-border/60 h-11 w-11 sm:w-auto sm:px-2 lg:h-auto lg:p-1.5 text-muted-foreground transition hover:border-border hover:text-muted-foreground"
               data-testid="button-settings"
             >
               <Settings className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
@@ -819,7 +819,7 @@ export default function Dashboard() {
                                 type="button"
                                 onClick={() => setPcrBucket(b.label)}
                                 data-testid={`pcr-bucket-${b.label}`}
-                                className={`inline-flex min-h-[44px] items-center rounded-md border px-2 py-0.5 text-[11px] font-mono transition sm:min-h-0 ${
+                                className={`inline-flex min-h-[44px] items-center rounded-md border px-2 py-0.5 text-[11px] font-mono transition lg:min-h-0 ${
                                   b.label === active.label
                                     ? "border-amber-400 bg-amber-400/20 text-amber-200"
                                     : "border-border bg-muted/30 text-muted-foreground hover:bg-muted/60"

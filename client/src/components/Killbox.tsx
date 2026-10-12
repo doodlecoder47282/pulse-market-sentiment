@@ -203,7 +203,7 @@ export default function Killbox({ symbol = "$SPX" }: { symbol?: string }) {
               key={l.key}
               data-testid={`killbox-lens-${l.key}`}
               onClick={() => setGreek(l.key)}
-              className={`inline-flex flex-col items-start gap-0 rounded-md border px-2.5 py-1.5 text-left transition-all min-h-[44px] sm:min-h-0 ${
+              className={`inline-flex flex-col items-start gap-0 rounded-md border px-2.5 py-1.5 text-left transition-all min-h-[44px] lg:min-h-0 ${
                 on
                   ? "border-foreground/40 bg-foreground/5 text-foreground"
                   : "border-border/40 bg-transparent text-muted-foreground hover:text-foreground"

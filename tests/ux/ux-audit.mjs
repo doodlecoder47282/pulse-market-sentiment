@@ -112,9 +112,22 @@ for (const vp of viewports) {
   p.on("pageerror", (e) => errors.push(e.message));
   p.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text().slice(0, 160)); });
   await p.addInitScript(() => {
-    window.__cls = 0; window.__longTasks = 0;
+    window.__cls = 0; window.__longTasks = 0; window.__shifts = [];
     try {
-      new PerformanceObserver((l) => { for (const e of l.getEntries()) if (!e.hadRecentInput) window.__cls += e.value; }).observe({ type: "layout-shift", buffered: true });
+      new PerformanceObserver((l) => {
+        for (const e of l.getEntries()) {
+          if (e.hadRecentInput) continue;
+          window.__cls += e.value;
+          // Which elements moved (largest shifts first in the report).
+          for (const s of e.sources || []) {
+            const n = s.node;
+            if (!n || n.nodeType !== 1) continue;
+            const tid = n.getAttribute("data-testid");
+            const txt = (n.innerText || "").trim().replace(/\s+/g, " ").slice(0, 40);
+            window.__shifts.push({ v: Math.round(e.value * 1000) / 1000, el: `${n.tagName.toLowerCase()}${tid ? `[${tid}]` : ""} "${txt}"`, dy: Math.round((s.currentRect?.y ?? 0) - (s.previousRect?.y ?? 0)) });
+          }
+        }
+      }).observe({ type: "layout-shift", buffered: true });
       new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__longTasks += e.duration; }).observe({ type: "longtask", buffered: true });
     } catch {}
   });
@@ -138,7 +151,7 @@ for (const vp of viewports) {
     const entry = { viewport: vp.name, width: vp.width, tab: t };
     if (!(await btn.count())) { entry.missing = true; report.push(entry); continue; }
     entry.tabButtonVisible = await btn.first().isVisible();
-    await p.evaluate(() => { window.__cls = 0; window.__longTasks = 0; window.scrollTo(0, 0); });
+    await p.evaluate(() => { window.__cls = 0; window.__longTasks = 0; window.__shifts = []; window.scrollTo(0, 0); });
     const c0 = Date.now();
     if (!entry.tabButtonVisible && btn === bottom && (await p.locator('[data-testid="bottomnav-more"]').count())) {
       // Phone: secondary tabs live in the "More" sheet.
@@ -153,6 +166,7 @@ for (const vp of viewports) {
     entry.switchMs = Date.now() - c0;
     await p.waitForTimeout(2500);
     entry.cls = await p.evaluate(() => Math.round(window.__cls * 1000) / 1000);
+    if (entry.cls > 0.05) entry.shifts = await p.evaluate(() => window.__shifts.sort((a, b) => b.v - a.v).slice(0, 6));
     entry.longTaskMs = await p.evaluate(() => Math.round(window.__longTasks));
     Object.assign(entry, await p.evaluate(measure, vp.mobile));
     await p.screenshot({ path: `${OUT}/${vp.name}/${String(i + 1).padStart(2, "0")}-${t}.png` });

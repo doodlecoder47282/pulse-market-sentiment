@@ -763,7 +763,7 @@ function PerformanceCard() {
             <button
               key={d}
               onClick={() => setWindowDays(d as 7 | 30)}
-              className={`inline-flex min-h-[44px] items-center px-2.5 py-0.5 text-[11px] rounded border transition-colors sm:min-h-0 ${
+              className={`inline-flex min-h-[44px] items-center px-2.5 py-0.5 text-[11px] rounded border transition-colors lg:min-h-0 ${
                 windowDays === d
                   ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300"
                   : "border-border/40 text-muted-foreground hover:text-foreground"

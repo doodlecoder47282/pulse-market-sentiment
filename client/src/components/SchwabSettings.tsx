@@ -173,7 +173,7 @@ export function SchwabStatusPill({ onClick }: { onClick: () => void }) {
     return (
       <button
         onClick={onClick}
-        className="flex min-h-[44px] items-center gap-1.5 rounded-full border border-indigo-400/40 bg-indigo-500/10 px-2 py-0.5 transition hover:opacity-80 sm:min-h-0"
+        className="flex min-h-[44px] items-center gap-1.5 rounded-full border border-indigo-400/40 bg-indigo-500/10 px-2 py-0.5 transition hover:opacity-80 lg:min-h-0"
         data-testid="schwab-status-pill"
         title="Demo: simulated sample data, not Schwab. Click for details."
       >
@@ -188,7 +188,7 @@ export function SchwabStatusPill({ onClick }: { onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="flex min-h-[44px] items-center gap-1.5 rounded-full border px-2 py-0.5 transition hover:opacity-80 sm:min-h-0"
+      className="flex min-h-[44px] items-center gap-1.5 rounded-full border px-2 py-0.5 transition hover:opacity-80 lg:min-h-0"
       style={{
         borderColor: isConnected ? "rgb(16 185 129 / 0.4)" : "rgb(245 158 11 / 0.4)",
         background: isConnected ? "rgb(16 185 129 / 0.08)" : "rgb(245 158 11 / 0.08)",

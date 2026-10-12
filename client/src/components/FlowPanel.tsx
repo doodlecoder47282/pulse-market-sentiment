@@ -937,7 +937,7 @@ function IntradayFlowSection({ flow }: { flow?: FlowResponse }) {
               onClick={() => setSelectedTicker(t.symbol)}
               data-testid={`flow-intraday-ticker-${t.symbol}`}
               className={[
-                "inline-flex min-h-[44px] items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold transition sm:min-h-0",
+                "inline-flex min-h-[44px] items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold transition lg:min-h-0",
                 selectedTicker === t.symbol
                   ? "border-cyan-500/60 bg-cyan-500/15 text-cyan-300"
                   : "border-border/50 text-muted-foreground hover:border-cyan-500/30",

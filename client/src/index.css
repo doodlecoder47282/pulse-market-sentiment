@@ -686,8 +686,8 @@
   align-items: center;
   justify-content: center;
   gap: 0.4rem;
-  height: 40px;
-  min-width: 40px;
+  height: 44px;
+  min-width: 44px;
   padding: 0 0.6rem;
   border-radius: 0.375rem;
   font-size: 0.75rem;
@@ -699,7 +699,7 @@
   cursor: pointer;
   transition: border-color 150ms ease, color 150ms ease;
 }
-@media (min-width: 640px) {
+@media (min-width: 1024px) {
   .take5-fab { height: auto; min-height: 30px; }
 }
 
