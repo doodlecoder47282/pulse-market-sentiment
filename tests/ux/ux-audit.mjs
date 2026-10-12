@@ -31,7 +31,7 @@ function measure(isMobile) {
     return true;
   };
   const label = (el) => {
-    const t = (el.innerText || el.getAttribute("aria-label") || el.getAttribute("placeholder") || "").trim().replace(/\s+/g, " ").slice(0, 60);
+    const t = ((el.ownerSVGElement ? el.textContent : el.innerText) || el.getAttribute("aria-label") || el.getAttribute("placeholder") || "").trim().replace(/\s+/g, " ").slice(0, 60);
     const tid = el.getAttribute("data-testid");
     return `${el.tagName.toLowerCase()}${tid ? `[${tid}]` : ""} "${t}"`;
   };
@@ -89,7 +89,8 @@ function measure(isMobile) {
   const ownText = (el) => Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.textContent.trim());
   const textLeaves = [], svgLeaves = [];
   for (const el of all) {
-    if (!ownText(el) || !(el.innerText ?? "").trim()) continue; // innerText: what is drawn, not what is in the DOM
+    // innerText is what is drawn (HTML only); SVG text has no innerText, so its textContent is used.
+    if (!ownText(el) || !((el.ownerSVGElement ? el.textContent : el.innerText) ?? "").trim()) continue;
     const cs = getComputedStyle(el);
     if (cs.position === "fixed" || cs.position === "absolute") continue;
     const boxes = clipBoxes(el);

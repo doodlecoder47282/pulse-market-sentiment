@@ -15,7 +15,8 @@
       "tablet-landscape": 29,
       "tablet-13-landscape": 29,
       "default": 0
-    }
+    },
+    "overlappingText": 0
   },
   "perTab": {
     "textUnder10px": 3,
