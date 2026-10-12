@@ -12,7 +12,7 @@ import { editionFromEnv, featureAllowed } from "../../shared/edition";
 
 const ROOT = new URL("../../", import.meta.url).pathname;
 
-const INSTRUCTION = /\b(buy (the )?(dip|dips|calls|puts)|sell (the )?(rip|rips|calls|puts|premium|wings)|size (up|down|half)|half size|full size|go long|go short|take (the )?profits?|take the trade|enter (long|short|now)|act on (it|this|the)|fade (the|into|rallies|extremes)|ride (the )?(trend|pullbacks)|load up|scale (in|out)|stand aside|you should (buy|sell|enter)|cut size)\b/gi;
+const INSTRUCTION = /\b(buy (the )?(dip|dips|calls|puts)|sell (the )?(rip|rips|calls|puts|premium|wings)|size (up|down|half)|half size|full size|go long|go short|take (the )?profits?|take the trade|enter (long|short|now)|act on (it|this|the)|fade (the|into|rallies|extremes)|ride (the )?(trend|pullbacks)|load up|scale (in|out)|stand aside|you should (buy|sell|enter)|cut size|size accordingly|reduce [\w-]+( [\w-]+){0,2} size|hedge with|tighten (gamma )?exposure)\b/gi;
 
 // Files exempt from the check, with the reason.
 const EXEMPT: Record<string, string> = {

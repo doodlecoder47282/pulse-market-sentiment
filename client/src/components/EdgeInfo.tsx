@@ -220,7 +220,7 @@ export default function EdgeInfo({ id, className = "" }: { id: string; className
           </div>
           {/* Footer */}
           <div className="border-t border-slate-800 bg-slate-900/40 px-5 py-2.5 text-center font-mono text-[11px] uppercase tracking-widest text-slate-400">
-            every read is probabilistic · size accordingly
+            every read is probabilistic · not a forecast or advice
           </div>
         </DialogContent>
       </Dialog>
