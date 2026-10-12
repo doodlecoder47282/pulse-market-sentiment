@@ -19,6 +19,7 @@
 //
 // Pure module: no network, no DB. Safe to import from tests.
 
+import { editionFromEnv } from "../shared/edition";
 export type EnvLike = Record<string, string | undefined>;
 
 /** Returns the trimmed value, or "" when the variable is unset or blank. */
@@ -95,6 +96,8 @@ export function webhookStatus(
   env: EnvLike = process.env,
 ): { url: string; state: WebhookState; envName: string } {
   const envName = DISCORD_CHANNEL_ENV[channel];
+  // Investor edition: Discord trade cards are a personal-edition feature.
+  if (editionFromEnv(env) === "investor") return { url: "", state: "unset", envName };
   const own = webhookFromEnv(envName, env);
   if (own) {
     return isValidDiscordWebhookUrl(own) ? { url: own, state: "ok", envName } : { url: "", state: "invalid", envName };

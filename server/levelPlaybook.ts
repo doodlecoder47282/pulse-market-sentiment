@@ -93,7 +93,7 @@ export function playbookCopy(
   if (status === "approaching") {
     if (isRes) {
       if (k.includes("callwall")) {
-        return `dealer call wall — reversion favored, push only on power-hour vol · if breaks ${upTo}`;
+        return `dealer call wall — dealer hedging tends to damp moves here; breaks usually need heavy volume · if it breaks: ${upTo}`;
       }
       if (k.includes("vanna")) {
         return `vanna peak — dealer long premium max, hard ceiling unless held · if breaks ${upTo}`;
@@ -102,12 +102,12 @@ export function playbookCopy(
         return `charm flip — break + hold = momentum unlock · if breaks ${upTo}`;
       }
       if (k.includes("vomma") || k.includes("t2up")) {
-        return `thin gamma above — reversion likely unless power-hour push · if breaks ${upTo}`;
+        return `thin gamma above — little dealer support or resistance · if it breaks: ${upTo}`;
       }
-      return `resistance test — fade favored, breakout requires hold · if breaks ${upTo}`;
+      return `resistance test — a breakout needs a hold above · if it breaks: ${upTo}`;
     } else {
       if (k.includes("putwall")) {
-        return `dealer put wall — bounce favored, breakdown only on heavy flow · if breaks ${dnTo}`;
+        return `dealer put wall — dealer hedging tends to damp moves here; breakdowns usually need heavy flow · if it breaks: ${dnTo}`;
       }
       if (k.includes("charm")) {
         return `charm floor — break = drag releases · if breaks ${dnTo}`;
@@ -118,15 +118,15 @@ export function playbookCopy(
       if (k.includes("pivot") || k.includes("main")) {
         return `bull/bear line — break + hold below = trend flip · if breaks ${dnTo}`;
       }
-      return `support test — bounce favored, breakdown requires hold · if breaks ${dnTo}`;
+      return `support test — a breakdown needs a hold below · if it breaks: ${dnTo}`;
     }
   }
 
   // Held (rarely fires as alert, included for completeness)
   if (isRes) {
-    return `holding — ceiling intact, fade rallies into ${upStr || "open air"}`;
+    return `holding — ceiling intact; next level above ${upStr || "open air"}`;
   }
-  return `holding — floor intact, buy dips into ${dnStr || "open air"}`;
+  return `holding — floor intact; next level below ${dnStr || "open air"}`;
 }
 
 // Compute "upside target" and "downside target" for any pivot — first level

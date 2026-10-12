@@ -164,3 +164,49 @@ for (const vp of viewports) {
 await browser.close();
 writeFileSync(`${OUT}/metrics.json`, JSON.stringify(report, null, 1));
 console.log("ux audit done", report.length);
+
+// ── Scorecard: the user's questions as pass/fail checks ────────────────────
+// "Does it fit my device?" (overflow, clipped text, off-screen), "does it
+// react to my touch?" (tap targets, switch time, layout shift), "can I read
+// it?" (tiny text, contrast), "does it work?" (page errors). Ceilings live in
+// tests/ux/budget.json; this run fails when any is exceeded.
+{
+  const { readFileSync } = await import("node:fs");
+  const budget = JSON.parse(readFileSync(new URL("./budget.json", import.meta.url), "utf8"));
+  const pick = (m, vp) => (typeof m === "number" ? m : (m[vp] ?? m.default));
+  const failures = [];
+  const scorecard = {};
+  for (const vp of viewports.map((v) => v.name)) {
+    const tabsHere = report.filter((e) => e.viewport === vp && e.tab && !e.missing);
+    const meta = report.find((e) => e.viewport === vp && !e.tab) ?? {};
+    const sum = (k) => tabsHere.reduce((a, e) => a + (e[k] ?? 0), 0);
+    const s = {
+      docOverflowX: Math.max(0, ...tabsHere.map((e) => e.docOverflowX ?? 0)),
+      clippedText: sum("clippedCount"),
+      offscreen: sum("offscreenCount"),
+      tapTargetsUnder24: sum("tinyTargetCount"),
+      pageErrorsExcluding503: (meta.pageErrors ?? []).filter((x) => !/\b503\b/.test(x)).length,
+      worstTab: {
+        textUnder10px: Math.max(0, ...tabsHere.map((e) => e.tinyText ?? 0)),
+        contrastFailures: Math.max(0, ...tabsHere.map((e) => e.lowContrast ?? 0)),
+        cls: Math.max(0, ...tabsHere.map((e) => e.cls ?? 0)),
+        tabSwitchMs: Math.max(0, ...tabsHere.map((e) => e.switchMs ?? 0)),
+      },
+      tabsMeasured: tabsHere.length,
+    };
+    scorecard[vp] = s;
+    const pv = budget.perViewport;
+    for (const k of ["docOverflowX", "clippedText", "pageErrorsExcluding503"]) if (s[k] > pv[k]) failures.push(`${vp}: ${k} ${s[k]} > ${pv[k]}`);
+    for (const k of ["offscreen", "tapTargetsUnder24"]) if (s[k] > pick(pv[k], vp)) failures.push(`${vp}: ${k} ${s[k]} > ${pick(pv[k], vp)}`);
+    for (const [k, lim] of Object.entries(budget.perTab)) if (s.worstTab[k] > lim) failures.push(`${vp}: worst tab ${k} ${s.worstTab[k]} > ${lim}`);
+    if (s.tabsMeasured < tabs.length) failures.push(`${vp}: only ${s.tabsMeasured} of ${tabs.length} tabs measured`);
+  }
+  writeFileSync(`${OUT}/scorecard.json`, JSON.stringify({ scorecard, failures }, null, 1));
+  console.log("UX scorecard:", JSON.stringify(scorecard));
+  if (failures.length) {
+    console.log("UX budget exceeded:\n  " + failures.join("\n  "));
+    process.exitCode = 1;
+  } else {
+    console.log("UX budget: all checks pass");
+  }
+}

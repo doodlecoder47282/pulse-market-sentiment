@@ -119,6 +119,7 @@ import {
   startOdteTracker, getOdteSnapshot, armPosition, disarmPosition,
   getSparkline, getTracked, getContractChart,
 } from "./odteTracker";
+import { editionFromEnv } from "../shared/edition";
 import { buildDeterministicAlphaBrief } from "./alphaEngine";
 import { buildFusionContext, fusionContextToPromptBlock, type FusionContext } from "./alphaFusion";
 import { composeAlphaEmail } from "./alphaEmailComposer";
@@ -2030,6 +2031,13 @@ Be precise. No hedging language. If inputs are insufficient, say so and stop —
   });
 
   app.post("/api/eod-setup", async (req, res) => {
+    // Trade setups (entries, stops, size) exist only in the personal edition.
+    if (editionFromEnv() === "investor") {
+      return res.status(403).json({
+        dataState: "unavailable",
+        reason: "Trade setups are not part of the investor edition. Levels, flow and context remain available.",
+      });
+    }
     try {
       // Compute live third-order strikes; body values still win if explicitly passed.
       const to = await computeThirdOrderStrikes(String(req.body?.symbol || "$SPX"));

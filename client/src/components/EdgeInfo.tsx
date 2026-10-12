@@ -97,7 +97,7 @@ const INFO: Record<string, InfoEntry> = {
     title: "MM Matrix Scorecard",
     what: "Grades every MM-matrix prediction it ever logged (hand-set priors, not a trained ML model) against what actually happened: hit rate, Brier score, skill vs the base rate, a reliability curve, and trend.",
     how: "Skill is measured against always forecasting the base rate (climatology), on one call per session. The red banner fires when that skill is significantly negative (Diebold-Mariano statistic of +2 or more); the amber one when skill is not demonstrated (DM above -2). Brier mixes calibration with sharpness, so \"calibrated\" appears only when the reliability curve passes its stated test (100+ graded forecasts, Spiegelhalter Z, every bin with 10+ forecasts inside its Wilson interval).",
-    edge: "Knowing when your model is broken is worth more than the model. Most people size up exactly when their signal decays \u2014 this panel stops that.",
+    edge: "Knowing when your model is broken is worth more than the model. Most people add risk exactly when their signal decays \u2014 this panel stops that.",
   },
   backtest: {
     title: "Volatility-Band Backtest \u00b7 5Y",
@@ -108,7 +108,7 @@ const INFO: Record<string, InfoEntry> = {
   regime: {
     title: "Regime Panel",
     what: "The current market state condensed into one read: gamma sign, VIX term structure, breadth, and what they add up to.",
-    how: "The regime picks the playbook. Long gamma = fade extremes back to the middle. Short gamma = ride momentum and don't step in front.",
+    how: "The regime describes how dealer hedging moves price. Long gamma: moves have tended to revert toward the middle. Short gamma: moves have tended to extend.",
     edge: "Most losing trades are right ideas in the wrong regime. Check this before every entry \u2014 it's the cheapest edge on the site.",
   },
   canary: {
@@ -120,7 +120,7 @@ const INFO: Record<string, InfoEntry> = {
   "pivot-bands": {
     title: "Pivot Bands",
     what: "Tight, machine-computed pivot zones for the selected expiry \u2014 each band is a weighted center of gamma notional, today's option volume, open interest, and charm, with sub-strike precision instead of a wide strike-to-strike range.",
-    how: "Each band has a role. EXHAUST bands are where rallies or flushes run out of fuel \u2014 fade zones once volume dries up. ACCELERANT bands are short-gamma zones \u2014 breaks through them speed up, never fade the first touch. PIN means price gets pulled back. FLIP is the line where the whole tape changes character. FRESH shows how much of the positioning is today's flow versus stale open interest.",
+    how: "Each band has a role. EXHAUST bands are where rallies or flushes have tended to run out of fuel. ACCELERANT bands are short-gamma zones \u2014 breaks through them have tended to speed up. PIN means price gets pulled back. FLIP is the line where the whole tape changes character. FRESH shows how much of the positioning is today's flow versus stale open interest.",
     edge: "Everyone sees the same wide walls. The edge is precision: knowing the exact 3\u20135 point zone where dealer hedging actually kicks in lets you enter closer, stop tighter, and fade or follow with structure instead of vibes.",
     risk: "Bands move as flow updates \u2014 a band that was exhaust in the morning can flip to accelerant after a big print. Re-check before every entry, and volume expansion through a band overrides its label.",
   },

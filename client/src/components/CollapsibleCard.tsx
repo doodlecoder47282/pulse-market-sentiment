@@ -60,7 +60,7 @@ export function CollapsibleCard({
           <button
             type="button"
             onClick={cycleSize}
-            title={size === "full" ? "Size down" : size === "compact" ? "Collapse" : "Expand"}
+            title={size === "full" ? "Make smaller" : size === "compact" ? "Collapse" : "Expand"}
             aria-label="Resize card"
             data-testid={`button-card-size-${id}`}
             className="flex h-11 w-11 sm:h-6 sm:w-6 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground"

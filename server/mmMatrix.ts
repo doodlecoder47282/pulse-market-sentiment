@@ -466,7 +466,7 @@ function buildSummary(c: MMCell): string {
   const actionVerb: Record<DealerAction, string> = {
     defend:     "defend level",
     accelerate: "chase direction",
-    fade:       "fade the move",
+    fade:       "lean against the move",
     pin:        "pin spot",
     capitulate: "step aside",
   };

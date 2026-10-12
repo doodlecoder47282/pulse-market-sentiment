@@ -26,6 +26,7 @@ import {
 } from "./accessGate";
 import { tokenKeyWarnings } from "./tokenCrypto";
 import { resolveTokenKeyPolicy } from "./tokenKeyFile";
+import { editionFromEnv } from "../shared/edition";
 
 // Global safety nets — do NOT let a stray promise reject or exception kill the
 // long-running server process. Crashes here previously took down /api/* during
@@ -117,7 +118,7 @@ if (SELF_CALL_KEY) {
 
 app.get("/api/health", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
-  res.json(healthPayload(!!ACCESS_KEY, new Date(), GATE_MODE === "closed"));
+  res.json(healthPayload(!!ACCESS_KEY, new Date(), GATE_MODE === "closed", editionFromEnv()));
 });
 // Schwab sign-in return (automatic flow). Schwab's redirect cannot carry the
 // access-key header, so this route sits before the gate; the one-time `state`

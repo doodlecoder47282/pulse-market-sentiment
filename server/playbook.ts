@@ -586,7 +586,7 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
       name: "Unstable Regime — Trade the Flip",
       trigger: `First 30-min close decides: above ${fmtPrice(flip, tk)} = long-gamma pin day; below = short-gamma trend day`,
       target: `Long: drift to ${fmtPrice(cw, tk)}. Short: cascade to ${fmtPrice(pw, tk)} then ${fmtPrice(roundToTick(pw - range * 0.4, tk), tk)}`,
-      invalidation: `Chop back through ${fmtPrice(flip, tk)} — stand aside`,
+      invalidation: `Chop back through ${fmtPrice(flip, tk)} — the read no longer holds`,
       odds: "primary",
       levels: buildLevels(
         "either",

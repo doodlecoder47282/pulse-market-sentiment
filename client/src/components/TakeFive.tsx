@@ -44,8 +44,8 @@ const QUOTES: Quote[] = [
     attr: "Mark Douglas",
   },
   {
-    text: "Trading is a pattern-recognition numbers game. We use our analytics to identify patterns, define the risk, and determine when to take profits.",
-    attr: "Mark Douglas",
+    text: "Trading is a pattern-recognition numbers game: identify the pattern, define the risk, and decide the exit before the entry.",
+    attr: "Batcave",
   },
   {
     text: "The hard, cold reality of trading is that every trade has an uncertain outcome.",
@@ -72,7 +72,7 @@ const QUOTES: Quote[] = [
   // Linda Raschke
   {
     text: "It's not about how much money you make. It's about how much money you keep, how hard it works for you, and how many generations you keep it for.",
-    attr: "Linda Raschke",
+    attr: "Robert Kiyosaki",
   },
   // Market Wizards-adjacent
   { text: "Markets are never wrong — opinions are.", attr: "Jesse Livermore" },
@@ -105,7 +105,7 @@ const HARD_RULES: string[] = [
   "Max 3 trades per day — no revenge, no over-trading.",
   "Hit my $300–$500 goal → close the app. I made my number. Protect it.",
   "Trim into the move. Pay me first — I earned it.",
-  "After a loss → size down. Re-prove the setup.",
+  "After a loss → slow down. Re-prove the setup.",
   "No trading chop. No trading news I don't understand.",
   "No trading after a big win — euphoria is a tax.",
   "No Friday revenge trades. Walk away from the keyboard.",
@@ -113,7 +113,7 @@ const HARD_RULES: string[] = [
 
 const STOP_CONDITIONS: string[] = [
   "Hit max daily loss → done. No 'one more try'.",
-  "Feel the urge to size up to 'get it back' → STOP. That is the signal to stop.",
+  "Feel the urge to 'get it back' → STOP. That is the signal to stop.",
   "3 losses in a row → 30-minute break away from screens.",
   "Friday and I'm in the red → 'save the week' is a trap. Don't trade out of it.",
 ];

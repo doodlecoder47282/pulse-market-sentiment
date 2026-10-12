@@ -67,28 +67,28 @@ const REGIME_META: Record<
     tone: "text-emerald-300",
     bar: "bg-emerald-500/70",
     icon: TrendingUp,
-    play: "Direction is set — ride pullbacks, don't fade.",
+    play: "Direction is set: dealer hedging tends to extend moves; pullbacks have tended to be shallow.",
   },
   TREND_WEAK: {
     plain: "Weak Trend",
     tone: "text-emerald-200",
     bar: "bg-emerald-500/40",
     icon: TrendingUp,
-    play: "Direction soft — small fades may hold, trim into walls.",
+    play: "Direction soft: moves can stall into the walls.",
   },
   NEUTRAL: {
     plain: "Neutral",
     tone: "text-slate-200",
     bar: "bg-slate-500/50",
     icon: Minus,
-    play: "No conviction — stand aside or scalp keys only.",
+    play: "No conviction: no dominant dealer pressure; key levels matter most.",
   },
   CHOP_WEAK: {
     plain: "Light Chop",
     tone: "text-amber-200",
     bar: "bg-amber-500/40",
     icon: Minus,
-    play: "Range-bound — fade extremes, target midpoints.",
+    play: "Range-bound: price has tended to revert from the extremes toward the middle.",
   },
   GAMMA_UNKNOWN: {
     plain: "Gamma unknown",
@@ -102,7 +102,7 @@ const REGIME_META: Record<
     tone: "text-amber-300",
     bar: "bg-amber-500/70",
     icon: TrendingDown,
-    play: "Pin pressure heavy — sell wings, no trend chases.",
+    play: "Pin pressure heavy: price tends to be pulled toward the pin strike; trends struggle.",
   },
 };
 

@@ -212,15 +212,19 @@ jobs:
           pkill -f "dist/index.cjs" || true
       - name: UX audit (every tab at six screen sizes)
         if: always()
-        continue-on-error: true
         shell: bash
         run: |
+          set -o pipefail
           npx --yes playwright@1.48.2 install --with-deps chromium >/dev/null 2>&1
           npm ls playwright >/dev/null 2>&1 || npm i --no-save playwright@1.48.2 >/dev/null 2>&1
           NODE_ENV=production PORT=5071 HOST=127.0.0.1 node dist/index.cjs > rep/server-ux.log 2>&1 &
           for i in $(seq 1 90); do curl -fsS http://127.0.0.1:5071/api/health >/dev/null 2>&1 && break; sleep 1; done
-          BASE_URL=http://127.0.0.1:5071 UX_OUT=rep/ux timeout 1500 node tests/ux/ux-audit.mjs 2>&1 | tail -20 | tee rep/ux-run.log
+          rc=0
+          BASE_URL=http://127.0.0.1:5071 UX_OUT=rep/ux timeout 1500 node tests/ux/ux-audit.mjs 2>&1 | tail -40 | tee rep/ux-run.log || rc=$?
           pkill -f "dist/index.cjs" || true
+          # The UX scorecard (tests/ux/budget.json) gates the build: a screen that
+          # got worse on any device fails this step.
+          exit $rc
       - name: Publish report to ci-reports-quant branch
         if: always()
         run: |
