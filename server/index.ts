@@ -199,7 +199,9 @@ for (const w of tokenKeyWarnings(process.env, resolveTokenKeyPolicy(process.env)
     {
       port,
       host,
-      reusePort: true,
+      // SO_REUSEPORT exists on Linux only; macOS and Windows reject the
+      // listen with ENOTSUP, so the server could not start on a Mac.
+      reusePort: process.platform === "linux",
     },
     () => {
       log(`serving on ${host}:${port}`);
