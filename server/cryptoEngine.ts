@@ -49,6 +49,7 @@ import {
   CRYPTO_SIGNAL_COUNTS_SQL, type SocialStatus, type SocialSourceStatus,
   observedNumber, gradeSignal, cryptoCoinCountsSql, summarizeDeskStats, type CryptoDeskStats,
   CRYPTO_GRADER_BATCH, CRYPTO_PEAK_SAMPLE_SQL, CRYPTO_GRADER_MARK_SQL, CRYPTO_GRADER_NO_DATA_SQL, peakSamplingNote,
+  peakSampleParams, graderMarkParams, graderNoDataParams,
   holderConcentration, countMentions, socialCoverage, type HolderAccount, type DexPool,
   momentumPoints, honeypotRead, jupiterAllowsEnter,
 } from "./cryptoStats";
@@ -562,7 +563,7 @@ function recordPeakSample(c: Candidate): void {
   if (c.marketCap == null || !Number.isFinite(c.marketCap)) return;
   try {
     _peakStmt = _peakStmt ?? sqlite.prepare(CRYPTO_PEAK_SAMPLE_SQL);
-    _peakStmt.run(c.marketCap, c.lastRefreshAt ?? Date.now(), c.liquidityUsd, c.chain, c.pairAddress);
+    _peakStmt.run(peakSampleParams(c.marketCap, c.lastRefreshAt ?? Date.now(), c.liquidityUsd, c.chain, c.pairAddress));
   } catch (e: any) {
     console.warn(`[crypto:peak] ${e?.message ?? e}`);
   }
@@ -1115,7 +1116,7 @@ async function graderTick(): Promise<void> {
         liq = observedNumber(p?.liquidity?.usd);
       } catch {
         // transient fetch error: retry next tick, unless it has failed for a week
-        if (age > NO_DATA_AFTER_ERRORS_MS) markNoData.run(now, row.id, TARGET_MCAP);
+        if (age > NO_DATA_AFTER_ERRORS_MS) markNoData.run(graderNoDataParams(now, row.id, TARGET_MCAP));
         continue;
       }
     }
@@ -1133,9 +1134,9 @@ async function graderTick(): Promise<void> {
       prevPeak, mcap, liq, ageMs: age,
       targetMcap: TARGET_MCAP, horizonMs: GRADE_HORIZON_MS,
     });
-    if (g.outcome === "NO_DATA") { markNoData.run(now, row.id, TARGET_MCAP); continue; }
+    if (g.outcome === "NO_DATA") { markNoData.run(graderNoDataParams(now, row.id, TARGET_MCAP)); continue; }
     if (g.outcome === "OPEN" && mcap == null) continue; // nothing new to record
-    mark.run(g.peak, now, mcap, liq, g.outcome, TARGET_MCAP, row.id);
+    mark.run(graderMarkParams(g.peak, now, mcap, liq, g.outcome, TARGET_MCAP, row.id));
   }
 }
 
