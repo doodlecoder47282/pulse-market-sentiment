@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useIsDemo } from "@/lib/useEdition";
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
 
 type MacroCategory = "equities" | "bonds" | "credit" | "commods" | "fx" | "crypto";
@@ -126,6 +127,7 @@ function QuotePill({ q, compact = false }: { q: MacroQuote; compact?: boolean })
 
 export function MacroTicker() {
   const { data, isLoading } = useMacroQuery();
+  const isDemo = useIsDemo();
 
   if (isLoading || !data) {
     return (
@@ -143,14 +145,21 @@ export function MacroTicker() {
       className="relative overflow-hidden border-y border-border/50 bg-gradient-to-r from-black/40 via-black/20 to-black/40 py-2"
       data-testid="macro-ticker-tape"
     >
-      {/* Live pulse indicator */}
-      <div className="pointer-events-none absolute left-3 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-full border border-emerald-500/40 bg-background/80 px-2 py-0.5 backdrop-blur">
-        <span className="relative flex h-1.5 w-1.5">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
-        </span>
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">Live</span>
-      </div>
+      {/* Live pulse indicator (Sample on the demo: those prices are simulated) */}
+      {isDemo ? (
+        <div className="pointer-events-none absolute left-3 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-full border border-indigo-400/40 bg-background/80 px-2 py-0.5 backdrop-blur" data-testid="macro-tape-label">
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-indigo-300" />
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-indigo-200">Sample</span>
+        </div>
+      ) : (
+        <div className="pointer-events-none absolute left-3 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-full border border-emerald-500/40 bg-background/80 px-2 py-0.5 backdrop-blur" data-testid="macro-tape-label">
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          </span>
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">Live</span>
+        </div>
+      )}
 
       <div
         className="flex gap-6 pl-20 animate-[marquee_80s_linear_infinite] will-change-transform"
