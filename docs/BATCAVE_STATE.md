@@ -285,8 +285,15 @@ iOS CI 38219184330 green; not on main yet):
   better-sqlite3 rejects, so live crypto outcomes were never recorded (new
   test runs the SQL under better-sqlite3 in CI). Fixed: gamma/short-vol
   banners gave sizing/hedging instructions; no-advice check widened.
-- Demo: price tape reads Sample. Known gap: whale flow is always empty on
-  the demo (simulated volume never reaches the whale gate).
+- Demo: price tape reads Sample. Known gaps: whale flow is always empty on
+  the demo (simulated volume never reaches the whale gate); tape symbols not
+  in demoMarket TABLE get hash prices (e.g. Oil 195.74), add their bases.
+- Risk seen once (iOS CI 38224381267): the app sat on the loading skeleton
+  for 50 s; the demo server logged only /api/health, no /api/snapshot. The
+  rerun (38226102296) served /api/snapshot in 2.3 s and loaded. Cause
+  unknown; getOrBuild shares one in-flight build with no timeout, so a hung
+  upstream fetch would hold every client on the skeleton. Candidate fix: a
+  timeout on the shared build that falls back to the stale/unavailable path.
 
 ## Current objective
 
