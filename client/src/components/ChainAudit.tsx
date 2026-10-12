@@ -523,9 +523,9 @@ export default function ChainAudit() {
                           }))}
                           margin={{ top: 4, right: 12, left: 0, bottom: 4 }}
                         >
-                          <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#64748b" }} tickLine={false} axisLine={false} />
+                          <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#64748b" }} tickLine={false} axisLine={false} />
                           <YAxis
-                            tick={{ fontSize: 9, fill: "#64748b" }}
+                            tick={{ fontSize: 10, fill: "#64748b" }}
                             tickFormatter={v => `${v}%`}
                             width={36}
                             tickLine={false}
@@ -626,13 +626,13 @@ export default function ChainAudit() {
                           >
                             <XAxis
                               dataKey="strike"
-                              tick={{ fontSize: 8, fill: "#64748b" }}
+                              tick={{ fontSize: 10, fill: "#64748b" }}
                               tickLine={false}
                               axisLine={false}
                               tickFormatter={v => v.toLocaleString()}
                             />
                             <YAxis
-                              tick={{ fontSize: 9, fill: "#64748b" }}
+                              tick={{ fontSize: 10, fill: "#64748b" }}
                               tickFormatter={v => {
                                 const abs = Math.abs(v);
                                 if (abs >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
@@ -715,7 +715,7 @@ export default function ChainAudit() {
                       >
                         <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#64748b" }} tickLine={false} axisLine={false} />
                         <YAxis
-                          tick={{ fontSize: 9, fill: "#64748b" }}
+                          tick={{ fontSize: 10, fill: "#64748b" }}
                           tickFormatter={v => `${v.toFixed(0)}%`}
                           width={32}
                           tickLine={false}
@@ -938,9 +938,9 @@ export default function ChainAudit() {
                           margin={{ top: 4, right: 4, left: 0, bottom: 4 }}
                           barSize={6}
                         >
-                          <XAxis dataKey="strike" tick={{ fontSize: 8, fill: "#64748b" }} tickLine={false} axisLine={false} tickFormatter={v => v.toLocaleString()} />
+                          <XAxis dataKey="strike" tick={{ fontSize: 10, fill: "#64748b" }} tickLine={false} axisLine={false} tickFormatter={v => v.toLocaleString()} />
                           <YAxis
-                            tick={{ fontSize: 9, fill: "#64748b" }}
+                            tick={{ fontSize: 10, fill: "#64748b" }}
                             tickFormatter={v => {
                               const abs = Math.abs(v);
                               if (abs >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
@@ -995,9 +995,9 @@ export default function ChainAudit() {
                           margin={{ top: 4, right: 4, left: 0, bottom: 4 }}
                           barSize={6}
                         >
-                          <XAxis dataKey="strike" tick={{ fontSize: 8, fill: "#64748b" }} tickLine={false} axisLine={false} tickFormatter={v => v.toLocaleString()} />
+                          <XAxis dataKey="strike" tick={{ fontSize: 10, fill: "#64748b" }} tickLine={false} axisLine={false} tickFormatter={v => v.toLocaleString()} />
                           <YAxis
-                            tick={{ fontSize: 9, fill: "#64748b" }}
+                            tick={{ fontSize: 10, fill: "#64748b" }}
                             tickFormatter={v => {
                               const abs = Math.abs(v);
                               if (abs >= 1e9) return `${(v / 1e9).toFixed(1)}B`;

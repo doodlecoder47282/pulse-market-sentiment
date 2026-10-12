@@ -45,21 +45,30 @@ jobs:
       - name: Install dependencies
         run: |
           set -o pipefail
-          npm ci --no-audit --no-fund --ignore-scripts 2>&1 | tail -20 | tee reports/01-npm-ci.log
+          # Install scripts run: the demo server needs the better-sqlite3 binary.
+          npm ci --no-audit --no-fund 2>&1 | tail -20 | tee reports/01-npm-ci.log
           if ! grep -q '"@capacitor/ios"' package.json; then
             npm install --no-save --no-audit --no-fund --ignore-scripts @capacitor/cli@8.5.2 @capacitor/core@8.5.2 @capacitor/ios@8.5.2 2>&1 | tail -20 | tee -a reports/01-npm-ci.log
           fi
           npx cap --version 2>&1 | tee -a reports/01-npm-ci.log
-      - name: Build web bundle for the app
+      - name: Build app and server for the simulator check
         env:
-          # Optional default server URL (a repository variable, never a secret).
-          VITE_API_BASE: ${{ vars.BATCAVE_API_BASE }}
+          # Screenshot build only: the app talks to a demo server on this runner.
+          VITE_API_BASE: http://127.0.0.1:5080
         run: |
           set -o pipefail
-          npx vite build 2>&1 | tail -30 | tee reports/02-vite.log
+          npm run build 2>&1 | tail -30 | tee reports/02-build.log
+      - name: Start a sample-data demo server
+        run: |
+          NODE_ENV=production PORT=5080 HOST=127.0.0.1 BATCAVE_EDITION=demo PULSE_ML_AUTOSTART=0 node dist/index.cjs > reports/server-demo.log 2>&1 &
+          for i in $(seq 1 90); do curl -fsS http://127.0.0.1:5080/api/health >/dev/null 2>&1 && break; sleep 1; done
+          curl -s http://127.0.0.1:5080/api/health | tee reports/06-demo-health.log
       - name: Sync the Xcode project
         run: |
           set -o pipefail
+          # CI-only: allow plain http to the runner's demo server. Reverted before packaging.
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" ios/App/App/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" ios/App/App/Info.plist
           npx cap sync ios 2>&1 | tee reports/03-cap.log
           find ios -maxdepth 3 -not -path '*/public/*' | sort | tee -a reports/03-cap.log
       - name: Compile for iOS Simulator (no signing)
@@ -69,21 +78,49 @@ jobs:
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build/dd CODE_SIGNING_ALLOWED=NO build > reports/04-xcodebuild-full.log 2>&1
           rc=$?
-          grep -E "error:|BUILD (SUCCEEDED|FAILED)" reports/04-xcodebuild-full.log | head -60 > reports/04-xcodebuild.log || true
+          grep -E "error:|warning: .*(launch|Launch)|BUILD (SUCCEEDED|FAILED)" reports/04-xcodebuild-full.log | head -60 > reports/04-xcodebuild.log || true
           tail -40 reports/04-xcodebuild-full.log >> reports/04-xcodebuild.log
           exit $rc
-      - name: Launch in iOS Simulator and screenshot
+      - name: iPhone 17 simulator screenshots
         continue-on-error: true
         run: |
-          UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; c=[x for k,v in d.items() if 'iOS' in k for x in v if x['name'].startswith('iPhone')]; print(c[-1]['udid'] if c else '')")
-          echo "simulator: $UDID" | tee reports/07-sim.log
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)['devices']
+          c=[x for k,v in d.items() if 'iOS' in k for x in v if x['name'].startswith('iPhone')]
+          exact=[x for x in c if x['name']=='iPhone 17']
+          near=[x for x in c if x['name'].startswith('iPhone 17')]
+          pick=(exact or near or c)
+          print(pick[-1]['udid'] if pick else '')")
+          xcrun simctl list devices available | grep "$UDID" | tee reports/07-sim.log
           xcrun simctl boot "$UDID" 2>&1 | tee -a reports/07-sim.log
           xcrun simctl bootstatus "$UDID" -b 2>&1 | tail -2 | tee -a reports/07-sim.log
+          xcrun simctl status_bar "$UDID" override --time "9:41" --batteryState charged --batteryLevel 100 2>&1 | tee -a reports/07-sim.log
+          xcrun simctl ui "$UDID" appearance dark 2>&1 | tee -a reports/07-sim.log
           APP=$(find build/dd/Build/Products -name 'App.app' -maxdepth 3 | head -1)
           xcrun simctl install "$UDID" "$APP" 2>&1 | tee -a reports/07-sim.log
           xcrun simctl launch "$UDID" com.batcave.terminal 2>&1 | tee -a reports/07-sim.log
-          sleep 25
+          sleep 1
+          xcrun simctl io "$UDID" screenshot reports/ios-launch.png 2>&1 | tee -a reports/07-sim.log
+          sleep 50
           xcrun simctl io "$UDID" screenshot reports/ios-sim.png 2>&1 | tee -a reports/07-sim.log
+          # The same demo in Mobile Safari on the same phone (the website path).
+          xcrun simctl terminate "$UDID" com.batcave.terminal 2>&1 | tee -a reports/07-sim.log
+          xcrun simctl openurl "$UDID" "http://127.0.0.1:5080/#/" 2>&1 | tee -a reports/07-sim.log
+          sleep 40
+          xcrun simctl io "$UDID" screenshot reports/ios-safari.png 2>&1 | tee -a reports/07-sim.log
+          grep -c "GET /api" reports/server-demo.log | xargs -I{} echo "demo server API requests: {}" | tee -a reports/07-sim.log
+          pkill -f "dist/index.cjs" || true
+      - name: Rebuild the bundled UI for the zip (no test server baked in)
+        env:
+          VITE_DEMO_URL: ${{ vars.BATCAVE_DEMO_URL }}
+          VITE_API_BASE: ${{ vars.BATCAVE_API_BASE }}
+        run: |
+          set -o pipefail
+          git checkout -- ios/App/App/Info.plist
+          npx vite build 2>&1 | tail -5 | tee reports/08-vite-zip.log
+          npx cap copy ios 2>&1 | tail -5 | tee -a reports/08-vite-zip.log
+          grep -rl "127.0.0.1:5080" ios/App/App/public && { echo "test server URL leaked into the zip"; exit 1; } || echo "zip bundle clean" | tee -a reports/08-vite-zip.log
       - name: Package Xcode project zip
         run: |
           mkdir -p out/Batcave-iOS

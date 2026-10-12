@@ -39,7 +39,7 @@ const STATE_STYLE: Record<TradeEnv["state"], { chip: string; bar: string; label:
   LOADED:     { chip: "bg-orange-950/60 text-orange-400 border-orange-800", bar: "bg-orange-500", label: "LOADED" },
   STRIKE:     { chip: "bg-rose-950/70 text-rose-300 border-rose-800 animate-pulse", bar: "bg-rose-500", label: "STRIKE" },
   PARTIAL:    { chip: "bg-slate-900 text-amber-300 border-amber-700 border-dashed", bar: "bg-amber-700", label: "PARTIAL" },
-  UNAVAILABLE: { chip: "bg-slate-900 text-slate-500 border-slate-700 border-dashed", bar: "bg-slate-700", label: "UNAVAILABLE" },
+  UNAVAILABLE: { chip: "bg-slate-900 text-slate-300 border-slate-600 border-dashed", bar: "bg-slate-700", label: "UNAVAILABLE" },
 };
 
 // What each state asserts (server/tradeEnvState.ts). STRIKE needs short

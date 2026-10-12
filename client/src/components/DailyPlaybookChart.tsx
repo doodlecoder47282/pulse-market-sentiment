@@ -468,7 +468,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
                     value={`${m.label} ${fmt$(m.level)}`}
                     position="right"
                     fill={MAGNET_COLORS[m.kind]}
-                    fontSize={9}
+                    fontSize={10}
                     offset={5}
                   />
                 </ReferenceLine>
@@ -492,7 +492,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
                       value={`${k} trigger`}
                       position="insideLeft"
                       fill={regimeAccent}
-                      fontSize={8}
+                      fontSize={10}
                       offset={4}
                       opacity={isAlive ? 0.85 : 0.4}
                     />

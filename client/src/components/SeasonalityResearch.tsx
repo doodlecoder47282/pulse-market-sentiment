@@ -444,7 +444,7 @@ function ResearchResults({ ticker, lookback }: { ticker: SeasonalityTicker; look
                     fill={windowVerdict(opt) === "validated" ? "#10b981" : "#64748b"}
                     fillOpacity={windowVerdict(opt) === "validated" ? 0.06 : 0.04}
                     strokeOpacity={0}
-                    label={windowVerdict(opt) === "validated" ? undefined : { value: WINDOW_SHADE_LABEL[windowVerdict(opt)], position: "insideTop", fontSize: 9, fill: "#94a3b8" }}
+                    label={windowVerdict(opt) === "validated" ? undefined : { value: WINDOW_SHADE_LABEL[windowVerdict(opt)], position: "insideTop", fontSize: 10, fill: "#94a3b8" }}
                   />
                 )}
                 {todayDay != null && (
@@ -453,7 +453,7 @@ function ResearchResults({ ticker, lookback }: { ticker: SeasonalityTicker; look
                     stroke="#f59e0b"
                     strokeWidth={1.5}
                     strokeDasharray="4 3"
-                    label={{ value: "TODAY", position: "insideTopLeft", fontSize: 9, fill: "#f59e0b" }}
+                    label={{ value: "TODAY", position: "insideTopLeft", fontSize: 10, fill: "#f59e0b" }}
                   />
                 )}
                 <Area type="monotone" dataKey="bandHigh" stroke="none" fill="#64748b" fillOpacity={0.12} legendType="none" />
@@ -494,13 +494,13 @@ function ResearchResults({ ticker, lookback }: { ticker: SeasonalityTicker; look
                     const mi = Math.round((v / 252) * 12);
                     return MONTH_LABELS[Math.min(mi, 11)];
                   }}
-                  tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
                   axisLine={false} tickLine={false}
                 />
                 <YAxis
                   domain={[0, 100]}
                   tickFormatter={(v) => `${v}%`}
-                  tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
                   axisLine={false} tickLine={false}
                   width={36}
                 />

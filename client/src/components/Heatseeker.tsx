@@ -1180,7 +1180,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                             : "rgba(245,158,11,0.45)"
                     }
                     strokeDasharray="4 3"
-                    label={{ value: l.label, fontSize: 9, fill: "rgba(148,163,184,0.9)", position: "insideTop" }}
+                    label={{ value: l.label, fontSize: 10, fill: "rgba(148,163,184,0.9)", position: "insideTop" }}
                   />
                 ))}
                 <Bar

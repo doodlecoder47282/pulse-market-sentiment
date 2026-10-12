@@ -285,14 +285,14 @@ function ExposureChart({ title, subtitle, data, dataKey, spot, zeroSpot, flipLab
               x={spot}
               stroke="hsl(var(--foreground))"
               strokeDasharray="4 2"
-              label={{ value: `Spot ${spot.toFixed(2)}`, position: "insideTopRight", fill: "hsl(var(--foreground))", fontSize: 9 }}
+              label={{ value: `Spot ${spot.toFixed(2)}`, position: "insideTopRight", fill: "hsl(var(--foreground))", fontSize: 10 }}
             />
             {zeroSpot != null && flipLabel && (
               <ReferenceLine
                 x={zeroSpot}
                 stroke="#f59e0b"
                 strokeDasharray="3 3"
-                label={{ value: `${flipLabel} ${zeroSpot.toFixed(1)}`, position: "insideBottomLeft", fill: "#f59e0b", fontSize: 9 }}
+                label={{ value: `${flipLabel} ${zeroSpot.toFixed(1)}`, position: "insideBottomLeft", fill: "#f59e0b", fontSize: 10 }}
               />
             )}
             {/* Positive side fill */}

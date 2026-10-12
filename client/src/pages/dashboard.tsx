@@ -321,7 +321,10 @@ export default function Dashboard() {
     data?.sections?.[k]?.reason ?? snapReason ?? "Schwab did not answer";
 
   return (
-    <div className="min-h-screen bg-background">
+    <div
+      className="min-h-screen bg-background"
+      style={{ paddingLeft: "env(safe-area-inset-left)", paddingRight: "env(safe-area-inset-right)" }}
+    >
       {/* Floating Take Five launcher — visible on every tab */}
       <TakeFive mode="overlay" open={take5Open} onClose={() => setTake5Open(false)} />
 
@@ -332,7 +335,10 @@ export default function Dashboard() {
       <SchwabSettings open={settingsOpen} onOpenChange={setSettingsOpen} />
 
       {/* Header */}
-      <header className="sticky top-0 z-10 border-b border-border bg-background md:bg-background/80 md:backdrop-blur">
+      <header
+        className="sticky top-0 z-10 border-b border-border bg-background md:bg-background/80 md:backdrop-blur"
+        style={{ paddingTop: "env(safe-area-inset-top)" }}
+      >
         <DemoStrip />
         <div className="mx-auto flex max-w-[1800px] items-center justify-between gap-2 px-3 py-3 sm:px-4 md:px-8 xl:px-10">
           {/* Left: Logo + name + BATCAVE tag */}
@@ -462,7 +468,7 @@ export default function Dashboard() {
       {/* Ticker tape — flows across the top under the header on every tab */}
       <MacroTicker />
 
-      <main className="mx-auto max-w-[1800px] space-y-4 px-3 py-4 pb-24 text-[14px] sm:space-y-6 sm:px-4 sm:py-6 sm:text-[14px] lg:pb-6 md:px-8 md:text-[15px] xl:px-10 xl:text-[16px]">
+      <main className="mx-auto max-w-[1800px] space-y-4 px-3 py-4 pb-[calc(6rem+env(safe-area-inset-bottom))] text-[14px] sm:space-y-6 sm:px-4 sm:py-6 sm:text-[14px] lg:pb-6 md:px-8 md:text-[15px] xl:px-10 xl:text-[16px]">
 
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)} className="w-full">
           {/* Desktop tab bar — single inline row. Hidden on mobile (replaced by bottom-nav). */}
@@ -1024,7 +1030,11 @@ export default function Dashboard() {
       {/* Mobile bottom-nav — fixed, horizontally scrollable, 10 tabs in locked order */}
       <nav
         className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:hidden"
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        style={{
+          paddingBottom: "env(safe-area-inset-bottom)",
+          paddingLeft: "env(safe-area-inset-left)",
+          paddingRight: "env(safe-area-inset-right)",
+        }}
         data-testid="mobile-bottom-nav"
         aria-label="Mobile tab navigation"
       >
@@ -1090,7 +1100,7 @@ function TermBar({ label, value, max, highlight }: { label: string; value: numbe
 
 function DashboardSkeleton() {
   return (
-    <div className="min-h-screen bg-background p-4 md:p-8">
+    <div className="min-h-screen bg-background p-4 md:p-8" style={{ paddingTop: "calc(1rem + env(safe-area-inset-top))" }}>
       <div className="mx-auto max-w-[1800px] space-y-6">
         <Skeleton className="h-14 w-full" />
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">

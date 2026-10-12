@@ -817,7 +817,7 @@ function IntradayChart({
                 <CartesianGrid strokeDasharray="3 6" stroke="hsl(var(--border))" strokeOpacity={0.25} vertical={false} />
                 <XAxis
                   dataKey="label"
-                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9, fontFamily: "var(--font-mono)" }}
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10, fontFamily: "var(--font-mono)" }}
                   stroke="hsl(var(--border))"
                   minTickGap={40}
                   interval={range === "5d" ? 50 : 30}
@@ -868,7 +868,7 @@ function IntradayChart({
                         position: "insideLeft",
                         fill: lv.color,
                         fillOpacity: Math.min(1, lv.intensity + 0.3),
-                        fontSize: 9.5,
+                        fontSize: 10,
                         fontWeight: 600,
                         fontFamily: "var(--font-mono)",
                         offset: 6,
@@ -887,7 +887,7 @@ function IntradayChart({
                       value: `Prev ${quote.prevClose.toFixed(2)}`,
                       position: "insideTopLeft",
                       fill: "hsl(var(--muted-foreground))",
-                      fontSize: 9,
+                      fontSize: 10,
                       fontFamily: "var(--font-mono)",
                     }}
                   />
@@ -988,7 +988,7 @@ function GammaProfileCurve({
               dataKey="spot"
               type="number"
               domain={["dataMin", "dataMax"]}
-              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9, fontFamily: "var(--font-mono)" }}
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10, fontFamily: "var(--font-mono)" }}
               stroke="hsl(var(--border))"
               tickFormatter={(v) => v.toFixed(0)}
               minTickGap={50}
@@ -996,7 +996,7 @@ function GammaProfileCurve({
             <YAxis
               orientation="right"
               domain={[-maxAbs * 1.08, maxAbs * 1.08]}
-              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9, fontFamily: "var(--font-mono)" }}
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10, fontFamily: "var(--font-mono)" }}
               stroke="hsl(var(--border))"
               width={44}
               tickFormatter={(v) => (v >= 0 ? "+" : "") + v.toFixed(1) + "B"}
@@ -1048,7 +1048,7 @@ function GammaProfileCurve({
                   value: `Zero-γ ${zeroGamma.toFixed(2)}`,
                   position: "insideTopRight",
                   fill: "#f59e0b",
-                  fontSize: 9,
+                  fontSize: 10,
                   fontFamily: "var(--font-mono)",
                 }}
               />
@@ -1063,7 +1063,7 @@ function GammaProfileCurve({
                   value: `Spot ${spot.toFixed(2)}`,
                   position: "insideBottomRight",
                   fill: "hsl(var(--muted-foreground))",
-                  fontSize: 9,
+                  fontSize: 10,
                   fontFamily: "var(--font-mono)",
                 }}
               />
@@ -1095,8 +1095,8 @@ function GammaMapCard({ gammaMap, spot }: { gammaMap: GammaMap; spot: number | n
   const zoneColor: Record<string, string> = {
     "call-wall": "text-red-400",
     "put-wall": "text-emerald-400",
-    "secondary-resistance": "text-red-400/70",
-    "secondary-support": "text-emerald-400/70",
+    "secondary-resistance": "text-red-300",
+    "secondary-support": "text-emerald-300",
     "local-extreme": "text-amber-500",
   };
 
@@ -1747,7 +1747,7 @@ function EodPlayMaker() {
           <span className="text-[11px] font-semibold uppercase tracking-[0.15em] text-amber-400">
             EOD 0DTE SPX PLAY MAKER — BATCAVE
           </span>
-          <Badge variant="outline" className="text-[11px] text-amber-500/60 border-amber-500/30">
+          <Badge variant="outline" className="text-[11px] text-amber-400 border-amber-500/30">
             Claude + GPT
           </Badge>
         </div>

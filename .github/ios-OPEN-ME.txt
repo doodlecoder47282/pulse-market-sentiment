@@ -15,6 +15,8 @@ See it in the iPhone Simulator (no Apple account needed)
 4. The app opens on "Connect to your Batcave server". Type your server
    address, for example https://your-app.up.railway.app, and the access
    key if your server sets BATCAVE_ACCESS_KEY. Both stay on the device.
+   If the screen shows "Try the demo", that opens the sample-data demo
+   instead (simulated market, labelled SAMPLE DATA on every screen).
 
 Run it on your own iPhone
 5. Click "App" in the left sidebar, then the App target, then

@@ -4,7 +4,7 @@
   "webDir": "dist/public",
   "backgroundColor": "#000000",
   "ios": {
-    "contentInset": "always",
+    "contentInset": "never",
     "backgroundColor": "#000000"
   }
 }

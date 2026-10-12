@@ -309,7 +309,7 @@ export default function PivotProjection({
                         x={PAD_L - 6}
                         y={y + 3}
                         textAnchor="end"
-                        fontSize={9}
+                        fontSize={10}
                         fill="#64748b"
                         fontFamily="monospace"
                       >
@@ -373,7 +373,7 @@ export default function PivotProjection({
                       <text
                         x={PAD_L + PLOT_W + 6}
                         y={y + 3}
-                        fontSize={9}
+                        fontSize={10}
                         fill={isSelected ? "#000" : tierColor(lv.tier)}
                         fontFamily="monospace"
                         fontWeight={lv.tier === "magnet" ? 700 : 400}
@@ -399,7 +399,7 @@ export default function PivotProjection({
                 <text
                   x={PAD_L + 4}
                   y={lineY(data.spot) - 4}
-                  fontSize={9}
+                  fontSize={10}
                   fill="#22d3ee"
                   fontFamily="monospace"
                 >
@@ -419,7 +419,7 @@ export default function PivotProjection({
                 <text
                   x={projectionX + 3}
                   y={PAD_T + 9}
-                  fontSize={8}
+                  fontSize={10}
                   fill="#94a3b8"
                   fontFamily="monospace"
                 >
@@ -428,7 +428,7 @@ export default function PivotProjection({
                 <text
                   x={projectionX + 3}
                   y={PAD_T + PLOT_H - 4}
-                  fontSize={8}
+                  fontSize={10}
                   fill="#94a3b8"
                   fontFamily="monospace"
                 >

@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient, AUTH_REQUIRED_EVENT } from "@/lib/queryClient";
+import { apiRequest, queryClient, AUTH_REQUIRED_EVENT, API_BASE_STORAGE_KEY, isNativeApp } from "@/lib/queryClient";
 import {
   Dialog,
   DialogContent,
@@ -449,6 +449,19 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
           <div className="space-y-3 text-sm text-muted-foreground" data-testid="demo-settings">
             <p>The calculations are the same ones the full app runs on live Schwab data, so the screens show how Batcave reads a market, not what the market is doing today.</p>
             <p>Schwab sign-in is turned off here. In the full app each person connects their own Schwab account, and their sign-in stays on their own server.</p>
+            {isNativeApp() && (
+              <Button
+                variant="outline"
+                className="w-full"
+                data-testid="demo-use-own-server"
+                onClick={() => {
+                  try { window.localStorage.removeItem(API_BASE_STORAGE_KEY); } catch { /* storage unavailable */ }
+                  window.location.reload();
+                }}
+              >
+                Use my own Batcave server
+              </Button>
+            )}
           </div>
         </DialogContent>
       </Dialog>

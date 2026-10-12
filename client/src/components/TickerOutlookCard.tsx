@@ -560,14 +560,14 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                         <XAxis
                           dataKey="day"
                           stroke="rgba(255,255,255,0.4)"
-                          fontSize={9}
+                          fontSize={10}
                           tickLine={false}
                           ticks={[0, 10, 20, 30, 40, 50, 60]}
                           tickFormatter={(d: number) => d === 0 ? "now" : `+${d}d`}
                         />
                         <YAxis
                           stroke="rgba(255,255,255,0.4)"
-                          fontSize={9}
+                          fontSize={10}
                           tickLine={false}
                           width={40}
                           domain={[(min: number) => min * 0.96, (max: number) => max * 1.04]}
@@ -593,7 +593,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                             y={v.targetPrice}
                             stroke="#22d3ee"
                             strokeDasharray="3 3"
-                            label={{ value: `target ${fmtMoney(v.targetPrice)}`, position: "right", fill: "#22d3ee", fontSize: 9 }}
+                            label={{ value: `target ${fmtMoney(v.targetPrice)}`, position: "right", fill: "#22d3ee", fontSize: 10 }}
                           />
                         )}
                         {v.invalidation != null && (
@@ -601,7 +601,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                             y={v.invalidation}
                             stroke="#f59e0b"
                             strokeDasharray="3 3"
-                            label={{ value: `stop ${fmtMoney(v.invalidation)}`, position: "right", fill: "#f59e0b", fontSize: 9 }}
+                            label={{ value: `stop ${fmtMoney(v.invalidation)}`, position: "right", fill: "#f59e0b", fontSize: 10 }}
                           />
                         )}
                       </ComposedChart>

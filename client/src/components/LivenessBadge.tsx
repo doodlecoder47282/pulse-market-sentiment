@@ -31,7 +31,7 @@ const STATE_STYLE: Record<LivenessState, { dot: string; text: string; label: str
   LIVE:    { dot: "bg-emerald-400", text: "text-emerald-400", label: "live",    pulse: true },
   CONTEXT: { dot: "bg-sky-400",     text: "text-sky-400",     label: "context", pulse: false },
   STALE:   { dot: "bg-amber-400",   text: "text-amber-400",   label: "stale",   pulse: false },
-  OFFLINE: { dot: "bg-zinc-500",    text: "text-zinc-500",    label: "offline", pulse: false },
+  OFFLINE: { dot: "bg-zinc-500",    text: "text-zinc-400",    label: "offline", pulse: false },
 };
 
 // A value is "usable" if it's present and finite. An observed 0 is a value:

@@ -315,11 +315,11 @@ function PcrSparkline({
       )}
       {showAxis && (
         <>
-          <text x={leftPad + innerW + 3} y={scaleY(yMax) + 3} fontSize={8} fill="hsl(var(--muted-foreground))" opacity={0.7}>{yMax.toFixed(2)}</text>
-          <text x={leftPad + innerW + 3} y={neutralY + 3} fontSize={8} fill="hsl(var(--muted-foreground))" opacity={0.7}>1.00</text>
-          <text x={leftPad + innerW + 3} y={scaleY(yMin) + 3} fontSize={8} fill="hsl(var(--muted-foreground))" opacity={0.7}>{yMin.toFixed(2)}</text>
+          <text x={leftPad + innerW + 3} y={scaleY(yMax) + 3} fontSize={10} fill="hsl(var(--muted-foreground))" opacity={0.7}>{yMax.toFixed(2)}</text>
+          <text x={leftPad + innerW + 3} y={neutralY + 3} fontSize={10} fill="hsl(var(--muted-foreground))" opacity={0.7}>1.00</text>
+          <text x={leftPad + innerW + 3} y={scaleY(yMin) + 3} fontSize={10} fill="hsl(var(--muted-foreground))" opacity={0.7}>{yMin.toFixed(2)}</text>
           {hasData && (
-            <text x={xOf(ys.length - 1) - 2} y={scaleY(last!.combined) - 6} textAnchor="end" fontSize={9} fill={lastColor} fontWeight={600}>
+            <text x={xOf(ys.length - 1) - 2} y={scaleY(last!.combined) - 6} textAnchor="end" fontSize={10} fill={lastColor} fontWeight={600}>
               {last!.combined.toFixed(2)}
             </text>
           )}
@@ -676,7 +676,7 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.25} />
               <XAxis
                 dataKey="timeLabel"
-                tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
                 axisLine={false}
                 tickLine={false}
                 interval="preserveStartEnd"
@@ -684,7 +684,7 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
               <YAxis
                 yAxisId="vol"
                 tickFormatter={(v) => fmtVol(Math.abs(v))}
-                tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
                 axisLine={false}
                 tickLine={false}
                 width={46}
@@ -693,7 +693,7 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
                 yAxisId="total"
                 orientation="right"
                 tickFormatter={(v) => fmtVol(v)}
-                tick={{ fontSize: 9, fill: "#94a3b8" }}
+                tick={{ fontSize: 10, fill: "#94a3b8" }}
                 axisLine={false}
                 tickLine={false}
                 width={40}
@@ -768,7 +768,7 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
               <XAxis
                 dataKey="timeLabel"
-                tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
                 axisLine={false}
                 tickLine={false}
                 interval="preserveStartEnd"
@@ -776,7 +776,7 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
               <YAxis
                 yAxisId="vol"
                 tickFormatter={(v) => fmtVol(Math.abs(v))}
-                tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
                 axisLine={false}
                 tickLine={false}
                 width={42}
@@ -787,7 +787,7 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
                 orientation="right"
                 domain={[0, 2]}
                 tickFormatter={(v) => v.toFixed(1)}
-                tick={{ fontSize: 9, fill: "hsl(var(--amber-400, 245 158 11))" }}
+                tick={{ fontSize: 10, fill: "hsl(var(--amber-400, 245 158 11))" }}
                 axisLine={false}
                 tickLine={false}
                 width={32}
@@ -826,8 +826,8 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={series} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.4} />
-              <XAxis dataKey="timeLabel" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-              <YAxis tickFormatter={(v) => fmtVol(v)} tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} width={42} domain={[0, maxVol * 1.1]} />
+              <XAxis dataKey="timeLabel" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+              <YAxis tickFormatter={(v) => fmtVol(v)} tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} width={42} domain={[0, maxVol * 1.1]} />
               <Tooltip content={<AreaTip />} />
               <Area type="monotone" dataKey="callVolume" stroke="#10b981" strokeWidth={2.5} fill="#10b981" fillOpacity={0.12} dot={false} name="Calls" isAnimationActive={false} />
               <Area type="monotone" dataKey="putVolume" stroke="#ef4444" strokeWidth={2.5} fill="#ef4444" fillOpacity={0.12} dot={false} name="Puts" isAnimationActive={false} />
@@ -841,15 +841,15 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={series} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
-              <XAxis dataKey="timeLabel" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-              <YAxis domain={[0, 2]} tickFormatter={(v) => v.toFixed(1)} tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} width={32} />
+              <XAxis dataKey="timeLabel" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+              <YAxis domain={[0, 2]} tickFormatter={(v) => v.toFixed(1)} tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} width={32} />
               <Tooltip formatter={(v: any) => [typeof v === "number" ? v.toFixed(2) : "—", "P/C"]} />
               {pcrRead?.bullishBelow != null && (
-                <ReferenceLine y={pcrRead.bullishBelow} stroke="#10b981" strokeDasharray="3 4" strokeWidth={1} opacity={0.5} label={{ value: `${pcrRead.bullishBelow.toFixed(2)} (-1 sd)`, position: "right", fontSize: 8, fill: "#10b981", opacity: 0.6 }} />
+                <ReferenceLine y={pcrRead.bullishBelow} stroke="#10b981" strokeDasharray="3 4" strokeWidth={1} opacity={0.5} label={{ value: `${pcrRead.bullishBelow.toFixed(2)} (-1 sd)`, position: "right", fontSize: 10, fill: "#10b981", opacity: 0.6 }} />
               )}
               <ReferenceLine y={1.0} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" strokeWidth={1} opacity={0.4} />
               {pcrRead?.bearishAbove != null && (
-                <ReferenceLine y={pcrRead.bearishAbove} stroke="#ef4444" strokeDasharray="3 4" strokeWidth={1} opacity={0.5} label={{ value: `${pcrRead.bearishAbove.toFixed(2)} (+1 sd)`, position: "right", fontSize: 8, fill: "#ef4444", opacity: 0.6 }} />
+                <ReferenceLine y={pcrRead.bearishAbove} stroke="#ef4444" strokeDasharray="3 4" strokeWidth={1} opacity={0.5} label={{ value: `${pcrRead.bearishAbove.toFixed(2)} (+1 sd)`, position: "right", fontSize: 10, fill: "#ef4444", opacity: 0.6 }} />
               )}
               <Line type="monotone" dataKey="pcRatio" stroke="#f59e0b" strokeWidth={1.75} dot={false} connectNulls name="P/C" isAnimationActive={false} />
             </LineChart>

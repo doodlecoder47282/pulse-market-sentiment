@@ -440,7 +440,7 @@ function YearlyView({ ticker, lookback }: { ticker: SeasonalityTicker; lookback:
                     fill={windowVerdict(opt) === "validated" ? "#10b981" : "#64748b"}
                     fillOpacity={windowVerdict(opt) === "validated" ? 0.05 : 0.04}
                     strokeOpacity={0}
-                    label={windowVerdict(opt) === "validated" ? undefined : { value: WINDOW_SHADE_LABEL[windowVerdict(opt)], position: "insideTop", fontSize: 9, fill: "#94a3b8" }}
+                    label={windowVerdict(opt) === "validated" ? undefined : { value: WINDOW_SHADE_LABEL[windowVerdict(opt)], position: "insideTop", fontSize: 10, fill: "#94a3b8" }}
                   />
                 )}
 
@@ -451,7 +451,7 @@ function YearlyView({ ticker, lookback }: { ticker: SeasonalityTicker; lookback:
                     stroke="#f59e0b"
                     strokeWidth={1.5}
                     strokeDasharray="4 3"
-                    label={{ value: "TODAY", position: "insideTopLeft", fontSize: 9, fill: "#f59e0b" }}
+                    label={{ value: "TODAY", position: "insideTopLeft", fontSize: 10, fill: "#f59e0b" }}
                   />
                 )}
 
@@ -528,13 +528,13 @@ function YearlyView({ ticker, lookback }: { ticker: SeasonalityTicker; lookback:
                     const mi = Math.round((v / 252) * 12);
                     return MONTH_LABELS[Math.min(mi, 11)];
                   }}
-                  tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
                   axisLine={false} tickLine={false}
                 />
                 <YAxis
                   domain={[0, 100]}
                   tickFormatter={(v) => `${v}%`}
-                  tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
                   axisLine={false} tickLine={false}
                   width={36}
                 />
@@ -781,7 +781,7 @@ function WeeklyView({ ticker }: { ticker: SeasonalityTicker }) {
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartData} margin={{ top: 4, right: 12, left: 0, bottom: 4 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.5} />
-                <XAxis dataKey="label" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} interval={7} />
+                <XAxis dataKey="label" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} interval={7} />
                 <YAxis tickFormatter={(v) => `${v.toFixed(1)}%`} tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} width={48} />
                 <Tooltip content={<BarTooltip />} />
                 <ReferenceLine y={0} stroke="hsl(var(--border))" strokeWidth={1} />

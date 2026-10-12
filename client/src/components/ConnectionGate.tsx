@@ -19,6 +19,9 @@ import { serverUrlProblem } from "@/lib/serverUrl";
 
 type Mode = "hidden" | "setup" | "key" | "unreachable" | "locked";
 
+/** Public sample-data demo (BATCAVE_EDITION=demo), baked in at build time. Empty = no demo button. */
+export const DEMO_URL = (((import.meta as any).env?.VITE_DEMO_URL as string | undefined) || "").trim().replace(/\/+$/, "");
+
 interface Health {
   ok: boolean;
   authRequired: boolean;
@@ -153,6 +156,20 @@ export default function ConnectionGate() {
     window.location.reload();
   };
 
+  const tryDemo = async () => {
+    setBusy(true);
+    setStatus("Opening the sample-data demo...");
+    const h = await probe(DEMO_URL);
+    if (h === "unreachable") {
+      setStatus("The demo is not reachable right now. Try again in a minute.");
+      setBusy(false);
+      return;
+    }
+    write(API_BASE_STORAGE_KEY, DEMO_URL);
+    write(ACCESS_KEY_STORAGE_KEY, "");
+    window.location.reload();
+  };
+
   const title =
     mode === "setup"
       ? "Connect to your Batcave server"
@@ -163,7 +180,10 @@ export default function ConnectionGate() {
           : "Access key required";
 
   return (
-    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/95 p-4 font-sans">
+    <div
+      className="fixed inset-0 z-[10000] flex items-center justify-center overflow-y-auto bg-black/95 p-4 font-sans"
+      style={{ paddingTop: "max(1rem, env(safe-area-inset-top))", paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
+    >
       <div className="w-full max-w-sm rounded-lg border border-yellow-500/30 bg-zinc-950 p-5 text-zinc-100 shadow-2xl">
         <div className="mb-1 text-2xl tracking-wider text-yellow-400" style={{ fontFamily: "'Bebas Neue', Impact, sans-serif" }}>BATCAVE</div>
         <h2 className="mb-3 text-base font-semibold">{title}</h2>
@@ -171,7 +191,7 @@ export default function ConnectionGate() {
           {mode === "locked"
             ? "This server is reachable from the network but has no BATCAVE_ACCESS_KEY, so it refuses data requests. Set BATCAVE_ACCESS_KEY on the server (or BATCAVE_ALLOW_OPEN=1 to run it open on purpose), restart it, then reload."
             : showServer
-              ? "The app runs its data engine on your hosted server. Enter that server's address, for example https://your-app.up.railway.app."
+              ? "Batcave reads the market through your own Batcave server, connected to your Schwab account. Enter its address, for example https://your-app.up.railway.app."
               : "This server is protected. Enter the access key set as BATCAVE_ACCESS_KEY on the server."}
         </p>
         <form
@@ -223,6 +243,20 @@ export default function ConnectionGate() {
             {busy ? "Connecting..." : "Connect"}
           </button>
         </form>
+        {showServer && DEMO_URL && (
+          <div className="mt-4 border-t border-zinc-800 pt-4">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void tryDemo()}
+              className="w-full rounded border border-indigo-400/50 bg-indigo-500/10 py-2 text-sm font-semibold text-indigo-100 disabled:opacity-60"
+              data-testid="gate-try-demo"
+            >
+              Try the demo
+            </button>
+            <p className="mt-2 text-center text-xs text-zinc-400">Sample data from a simulated market. No account needed.</p>
+          </div>
+        )}
       </div>
     </div>
   );

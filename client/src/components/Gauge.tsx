@@ -73,8 +73,8 @@ export default function Gauge({ value, label, size = 260 }: GaugeProps) {
           );
         })}
         {/* sentiment zone labels at bottom edge */}
-        <text x={cx - r * 0.7} y={cy + 16} textAnchor="middle" fontSize="9" fill="hsl(var(--muted-foreground))" letterSpacing="1">FEAR</text>
-        <text x={cx + r * 0.7} y={cy + 16} textAnchor="middle" fontSize="9" fill="hsl(var(--muted-foreground))" letterSpacing="1">GREED</text>
+        <text x={cx - r * 0.7} y={cy + 16} textAnchor="middle" fontSize="10" fill="hsl(var(--muted-foreground))" letterSpacing="1">FEAR</text>
+        <text x={cx + r * 0.7} y={cy + 16} textAnchor="middle" fontSize="10" fill="hsl(var(--muted-foreground))" letterSpacing="1">GREED</text>
         {/* needle */}
         <line x1={cx} y1={cy} x2={px} y2={py}
           stroke="hsl(var(--foreground))" strokeWidth={3} strokeLinecap="round" />

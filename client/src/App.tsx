@@ -59,6 +59,14 @@ function App() {
       <ThemeProvider>
       <TooltipProvider>
         <Toaster />
+        {/* iPhone status bar / Dynamic Island strip (0 px on screens without one).
+            The app draws edge to edge (viewport-fit=cover), so this keeps the
+            light status-bar text on a dark band in either theme. */}
+        <div
+          aria-hidden
+          className="pointer-events-none fixed inset-x-0 top-0 z-[10001] bg-black dark:bg-background"
+          style={{ height: "env(safe-area-inset-top)" }}
+        />
         {__ON_VERCEL__ ? <SpeedInsights /> : null}
         <ConnectionGate />
         <TickerProvider>

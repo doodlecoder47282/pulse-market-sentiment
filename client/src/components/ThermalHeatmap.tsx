@@ -238,7 +238,7 @@ export default function ThermalHeatmap() {
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.fillStyle = "rgba(139, 92, 246, 0.9)";
-        ctx.font = "9px ui-monospace, monospace";
+        ctx.font = "10px ui-monospace, monospace";
         ctx.fillText(`flip ${flip.toFixed(0)}`, marginLeft + grid.nExps * grid.cellW + 4, y + 3);
       }
     }
@@ -246,7 +246,7 @@ export default function ThermalHeatmap() {
     // Strike labels (Y axis — every row at 18px pitch; every 2nd beyond 40 strikes)
     const strikeStep = grid.nStrikes > 40 ? 2 : 1;
     ctx.fillStyle = "rgba(203,213,225,0.85)";
-    ctx.font = "9px ui-monospace, monospace";
+    ctx.font = "10px ui-monospace, monospace";
     ctx.textAlign = "right";
     for (let i = 0; i < grid.nStrikes; i++) {
       if (i % strikeStep !== 0) continue;

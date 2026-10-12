@@ -59,3 +59,11 @@ Railway → Usage after a day.
 - The site opens with no access key and shows the SAMPLE DATA strip.
 - `https://<demo-domain>/api/schwab/auth-url` answers 403.
 - iPhone app: type the demo URL into "Connect to your Batcave server".
+
+## Put a "Try the demo" button in the iPhone app
+
+GitHub → repo Settings → Secrets and variables → Actions → **Variables** →
+New variable `BATCAVE_DEMO_URL` = the demo's https address (not a secret).
+Then edit `.github/ios-build.txt` (any change) so CI rebuilds the Xcode zip;
+the app's first screen then offers **Try the demo**, and the demo's Settings
+offers **Use my own Batcave server** to switch back.
