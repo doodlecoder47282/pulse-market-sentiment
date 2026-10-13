@@ -93,6 +93,13 @@ export const getQueryFn: <T>(options: {
     return await res.json();
   };
 
+// networkMode "always": react-query's default pauses every query while
+// navigator.onLine is false. WKWebView (the iOS app) reports offline for a
+// while after a device or simulator boots and does not always fire "online"
+// afterwards, so the dashboard sat on its loading skeleton forever even though
+// the connection screen's plain fetch had reached the server (CI runs
+// 38224381267 and 38317228098: /api/health answered, nothing else was ever
+// requested). Real connectivity failures still surface as fetch errors.
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -101,9 +108,11 @@ export const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
       staleTime: Infinity,
       retry: false,
+      networkMode: "always",
     },
     mutations: {
       retry: false,
+      networkMode: "always",
     },
   },
 });

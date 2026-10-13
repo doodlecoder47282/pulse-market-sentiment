@@ -196,7 +196,15 @@ for (const vp of viewports) {
             if (!n || n.nodeType !== 1) continue;
             const tid = n.getAttribute("data-testid");
             const txt = (n.innerText || "").trim().replace(/\s+/g, " ").slice(0, 40);
-            window.__shifts.push({ v: Math.round(e.value * 1000) / 1000, el: `${n.tagName.toLowerCase()}${tid ? `[${tid}]` : ""} "${txt}"`, dy: Math.round((s.currentRect?.y ?? 0) - (s.previousRect?.y ?? 0)) });
+            const card = n.closest("[data-testid]");
+            window.__shifts.push({
+              v: Math.round(e.value * 1000) / 1000,
+              t: Math.round(e.startTime - (window.__clsT0 ?? 0)),
+              el: `${n.tagName.toLowerCase()}${tid ? `[${tid}]` : ""} "${txt}"`,
+              in: card && card !== n ? card.getAttribute("data-testid") : null,
+              dy: Math.round((s.currentRect?.y ?? 0) - (s.previousRect?.y ?? 0)),
+              prevH: Math.round(s.previousRect?.height ?? 0), curH: Math.round(s.currentRect?.height ?? 0),
+            });
           }
         }
       }).observe({ type: "layout-shift", buffered: true });
@@ -223,7 +231,7 @@ for (const vp of viewports) {
     const entry = { viewport: vp.name, width: vp.width, tab: t };
     if (!(await btn.count())) { entry.missing = true; report.push(entry); continue; }
     entry.tabButtonVisible = await btn.first().isVisible();
-    await p.evaluate(() => { window.__cls = 0; window.__longTasks = 0; window.__shifts = []; window.scrollTo(0, 0); });
+    await p.evaluate(() => { window.__cls = 0; window.__longTasks = 0; window.__shifts = []; window.__clsT0 = performance.now(); window.scrollTo(0, 0); });
     const c0 = Date.now();
     if (!entry.tabButtonVisible && btn === bottom && (await p.locator('[data-testid="bottomnav-more"]').count())) {
       // Phone: secondary tabs live in the "More" sheet.
@@ -241,7 +249,7 @@ for (const vp of viewports) {
     // has arrived (shifts while the user is reading: the strict budget).
     entry.clsLoad = await p.evaluate(() => Math.round(window.__cls * 1000) / 1000);
     if (entry.clsLoad > 0.05) entry.shiftsLoad = await p.evaluate(() => window.__shifts.sort((a, b) => b.v - a.v).slice(0, 6));
-    await p.evaluate(() => { window.__cls = 0; window.__shifts = []; });
+    await p.evaluate(() => { window.__cls = 0; window.__shifts = []; window.__clsT0 = performance.now(); });
     await p.waitForTimeout(2500);
     entry.cls = await p.evaluate(() => Math.round(window.__cls * 1000) / 1000);
     if (entry.cls > 0.05) entry.shifts = await p.evaluate(() => window.__shifts.sort((a, b) => b.v - a.v).slice(0, 6));
