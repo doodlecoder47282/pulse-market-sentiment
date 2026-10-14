@@ -270,6 +270,14 @@ jobs:
                 && (j.strikes || []).every((s) => Math.abs(s.gexPt - Math.round(s.gexPct / (j.spot / 100))) <= 1);
               console.log((ok ? "PASS" : "FAIL") + " 0DTE map: state " + j.dataState + ", spot " + j.spot + ", " + (j.strikes || []).length + " strikes, labels " + labelled.join("/") + ", straddle " + (j.range && j.range.straddle) + ", band " + JSON.stringify(j.band && [j.band.low, j.band.high]) + ", zones " + j.zones + ", ledger " + (j.ledger && j.ledger.why));
             '
+            # Decision-support block from the live /api/models odds (the route used to throw ReferenceError: formatDecisionBlock was never imported).
+            dcode=$(curl -s -o rep/demo/decision.json -m 60 -w '%{http_code}' "$B/api/decision-support")
+            node -e '
+              const code = process.argv[1];
+              const j = JSON.parse(require("fs").readFileSync("rep/demo/decision.json", "utf8"));
+              const ok = code === "200" && typeof j.block === "string" && Array.isArray(j.lines) && j.lines.length >= 3 && j.inputs && j.inputs.spot > 0;
+              console.log((ok ? "PASS" : "FAIL") + " decision support: " + code + ", " + (j.lines ? j.lines.length : 0) + " lines, spot " + (j.inputs && j.inputs.spot) + (ok ? "" : " body " + JSON.stringify(j).slice(0, 200)));
+            ' "$dcode"
             wcode=$(curl -s -o /dev/null -m 30 -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{"tokenAddress":"So11111111111111111111111111111111111111112"}' "$B/api/crypto/community")
             [ "$wcode" = "405" ] || [ "$wcode" = "403" ] && echo "PASS community write refused ($wcode)" || { echo "FAIL community write returned $wcode"; fail=1; }
 

@@ -34,6 +34,7 @@ import { postBatcaveDailyCard } from "./discordBatcaveCard";
 import { postCalibrationCard } from "./calibrationCard";
 import { rollingBrier, settleDay, recentForecastProbs } from "./calibration";
 import { resolutionScore, gradeResolution } from "./stats";
+import { formatDecisionBlock } from "./decisionSupport";
 import { watchdogStatus } from "./cusumWatchdog";
 import { shieldStatus } from "./quoteShield";
 import { computeRND, type CallStrike } from "./breedenLitzenberger";
