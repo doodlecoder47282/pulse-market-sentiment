@@ -187,21 +187,58 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
             </Button>
           </div>
         </div>
-        {d && (
-          <p className="text-xs text-muted-foreground leading-snug pt-1">{d.oneLiner}</p>
-        )}
+        {/* One line reserved while loading so the body does not move down when the read arrives. */}
+        <p className="text-xs text-muted-foreground leading-snug pt-1 min-h-[1.25rem]">{d ? d.oneLiner : q.isLoading ? "\u00a0" : ""}</p>
       </CardHeader>
 
-      {/* The body keeps the same minimum height while loading and once loaded
-          (tablet and up), so the briefing's arrival does not move the panels
-          below it; the skeleton inside is shaped like the loaded body. */}
+      {/* While loading, the skeleton has the loaded body's sections and grids
+          (levels strip, regime + cross-asset, three playbook paths, two model
+          cards, week ahead, headlines, footer), so it is about the loaded
+          height at every breakpoint and the panels below barely move when the
+          briefing arrives (CI UX audit: the old four-bar skeleton was ~600 px
+          short on tablets, a 0.3+ layout shift). The minimum height keeps a
+          short or failed briefing from collapsing the card (tablet and up). */}
       <CardContent className="space-y-4 sm:min-h-[740px]">
         {q.isLoading && (
-          <div className="space-y-2" data-testid="briefing-skeleton">
-            <Skeleton className="h-24 w-full" />
-            <Skeleton className="h-40 w-full" />
-            <Skeleton className="h-56 w-full" />
-            <Skeleton className="h-40 w-full" />
+          <div className="space-y-4" data-testid="briefing-skeleton" aria-busy="true">
+            <div className="space-y-1">
+              <Skeleton className="h-3.5 w-40" />
+              <div className="flex flex-wrap gap-1.5">
+                {Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="h-12 w-[88px]" />)}
+              </div>
+              <Skeleton className="h-3.5 w-72 max-w-full" />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <Skeleton className="h-[248px] w-full" />
+              <Skeleton className="h-[248px] w-full" />
+            </div>
+            <div className="space-y-1.5">
+              <Skeleton className="h-3.5 w-48" />
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <Skeleton className="h-[236px] w-full" />
+                <Skeleton className="h-[236px] w-full" />
+                <Skeleton className="h-[236px] w-full" />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-24 w-full" />
+            </div>
+            <div className="space-y-1.5">
+              <Skeleton className="h-3.5 w-24" />
+              <div className="grid grid-cols-1 sm:grid-cols-5 gap-1.5">
+                {Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-20 w-full" />)}
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Skeleton className="h-3.5 w-24" />
+              <div className="space-y-1">
+                {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-7 w-full" />)}
+              </div>
+            </div>
+            <div className="border-t border-border/30 pt-2">
+              <Skeleton className="h-3.5 w-36" />
+            </div>
           </div>
         )}
 

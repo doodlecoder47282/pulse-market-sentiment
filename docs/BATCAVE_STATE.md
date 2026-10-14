@@ -430,8 +430,22 @@ thermal, community, decision support (200, 5 lines) and the write gates,
 FAIL only on the 0DTE check above (map priced, 36 strikes, pin labelled,
 state stale_session at 18:29 ET); UX audit 0 page errors, 0 overflow, 0
 overlapping text, 0 tap targets under 24 px, CLS 0 (0.009 wide), Signals
-SVG overlap gone, the Models overlap above the only one left. Run for
-item 8: PENDING.
+SVG overlap gone, the Models overlap above the only one left. Run 38649141417 on c447dc8 (item 8): all steps green except the UX
+audit, tablet-portrait Edge Lab CLS 0.34 (budget 0.1): the briefing's
+skeleton-to-content transition landed inside the strict 2.5 s window after
+networkidle. Shift sources: the body moved down 27 px (the one-liner and
+verdict badges appear in the header) and the panels card below moved out
+of the viewport (the four-bar skeleton was ~600 px shorter than the loaded
+body on every viewport, the sm:min-h-[740px] floor well under it). Same
+tab was 0 on the runs earlier today, so it is timing-dependent, not a
+regression from these commits (none touch Edge Lab).
+9. (next commit) EdgeBriefing: the skeleton now mirrors the loaded
+   sections and grids (levels strip, regime + cross-asset, three playbook
+   paths, model cards, week ahead, headlines, footer) so it is about the
+   loaded height at every breakpoint, and the one-liner row is reserved
+   while loading. If the audit still flags this tab, treat it as a timing
+   flake of the measurement (one more diagnosis, no further blind tuning).
+Run for item 9: PENDING.
 
 Not changed, still open: Schwab fetches themselves have no timeout (the
 retry loop can wait up to the undici default); demo whale flow is always
