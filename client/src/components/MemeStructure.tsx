@@ -202,7 +202,7 @@ function CommunityWatchCard({ watch, loading, error, picked, onPick }: {
               <div className="mt-1.5"><RangeBar r={r} /></div>
               <div className="mt-1.5 grid grid-cols-3 gap-x-3 gap-y-1 sm:grid-cols-6">
                 <Stat label="range" value={r?.rangePosition != null ? `${Math.round(r.rangePosition * 100)}%` : "—"} title="position in the 90-day close range: 0% at the low, 100% at the high" />
-                <Stat label="from high" value={r?.drawdownFromHighPct != null ? `-${fmtPct(r.drawdownFromHighPct, 0)}` : "—"} title={r?.daysSinceHigh != null ? `${r.daysSinceHigh} days since the window high` : undefined} />
+                <Stat label="from high" value={r?.drawdownFromHighPct != null ? (r.drawdownFromHighPct >= 0.5 ? `-${fmtPct(r.drawdownFromHighPct, 0)}` : "at high") : "—"} title={r?.daysSinceHigh != null ? `${r.daysSinceHigh} days since the window high` : undefined} />
                 <Stat label="70% dips" value={r && r.dataState !== "no_data" ? `${r.deepDipsReclaimed}${r.deepDipOpen ? " +1 open" : ""}` : "—"} title="dips of 70% or more from a running high that later closed at or above that high (count reclaimed; +1 open = a deep dip not yet reclaimed)" />
                 <Stat label="liq" value={fmtUsd(e.liquidityUsd)} title="pool liquidity, both sides (DexScreener)" />
                 <Stat label="$1k trip" value={e.cost1k?.roundTripPct != null ? fmtPct(e.cost1k.roundTripPct) : e.cost1k ? COST_STATE[e.cost1k.dataState] || "—" : "—"} title="cost of a $1,000 buy and zero-edge sell at this depth: pool fee 0.25% and app fee 1% per swap, constant-product impact" />

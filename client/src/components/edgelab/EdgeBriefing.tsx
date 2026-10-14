@@ -194,10 +194,14 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
 
       <CardContent className="space-y-4">
         {q.isLoading && (
-          <div className="space-y-2">
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-32 w-full" />
+          // Sized like the loaded body (levels strip, regime + cross-asset,
+          // three paths, the rest) so the briefing's arrival does not push
+          // the panels below it by half a screen (tablet-portrait CLS 0.55).
+          <div className="space-y-2" data-testid="briefing-skeleton">
             <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-40 w-full" />
+            <Skeleton className="h-56 w-full" />
+            <Skeleton className="h-40 w-full" />
           </div>
         )}
 

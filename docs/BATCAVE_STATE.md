@@ -320,19 +320,34 @@ Completed objectives (branch quant-fixes, commits after 881665f):
    the Crypto tab, structure chips and the exact round-trip cost on every
    tracked launch. Independent review: 13 findings, all fixed; 34 + 6 tests.
 
+3. Heatmap 3D surface (e1dd85f): `shared/surfaceProjection.ts`,
+   `client/src/lib/surfaceDraw.ts`, `client/src/components/ThermalSurface.tsx`;
+   grid / 3D toggle in the thermal panel; docs/HEATMAP.md section 7. 9 tests
+   plus a headless Chromium render of the sample chain at 375 / 820 / 1180 px.
+4. CI findings fixed (82606b4): missing pickPool import (tsc gate); Chart
+   tab crash on every viewport, pre-existing and exposed once queries stopped
+   pausing on navigator.onLine: no Schwab spot made the outlook's expected
+   move NaN, JSON turned it into null, the scenario card called toFixed.
+
+Verified in CI (run 38525331878 on 5632d3b): demo smoke PASS for
+/api/crypto/community (3 sample rows, reclaimed dips 1/1/0, $1k trips
+2.69 / 3.12 / 5.21%), writes refused; UX scorecard for the crypto tab: no
+overflow, no overlapping text, no tap targets under 24 px; demo screenshot
+of the Structure section inspected.
+
 Not verified: live DexScreener / GeckoTerminal calls (unreachable from the
-dev environment); the CI build and UX audit for the new cards (check the
-ci-reports-quant branch for the latest run); the iPhone/iPad layout of the
-new cards (ios-build.yml runs on ios/ changes; edit .github/ios-build.txt).
+dev environment); the iPhone/iPad layout of the new cards (ios-build.yml
+runs on ios/ changes; edit .github/ios-build.txt to rebuild); the CI run for
+82606b4 and later (read ci-reports-quant RUN.txt for the sha).
 
 Known risks: the watch classifier is tentative until holder concentration
-and mint authority are read for watch tokens; the thermal heatmap 3D view
-and the 0DTE map composer are still pending; the edgelab tablet-portrait
-CLS (0.55) is instrumented but not fixed.
+and mint authority are read for watch tokens; the 0DTE map composer is still
+pending; the edgelab tablet-portrait CLS (0.55) is instrumented but not
+fixed; overlappingSvgText 2 (Signals: "Spot" x "ZERO-Γ FLIP" tspans) is
+pre-existing and outside the text-overlap budget.
 
-Next step: push, read the CI report for this commit (tsc per-file gate,
-build, demo smoke, UX audit on the crypto tab), fix anything it flags, then
-start the 3D surface mode for the heatmap.
+Next step: confirm the CI run for the latest sha is green (tsc gate, UX
+audit), then the 0DTE map composer and comparison harness (Trade Desk).
 
 ## Current objective
 
