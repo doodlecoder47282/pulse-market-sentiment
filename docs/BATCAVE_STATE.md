@@ -346,8 +346,13 @@ pending; the edgelab tablet-portrait CLS (0.55) is instrumented but not
 fixed; overlappingSvgText 2 (Signals: "Spot" x "ZERO-Γ FLIP" tspans) is
 pre-existing and outside the text-overlap budget.
 
-Next step: confirm the CI run for the latest sha is green (tsc gate, UX
-audit), then the 0DTE map composer and comparison harness (Trade Desk).
+CI green at 96ded05 (run 38529009336): tsc head 159 errors vs base 162, no
+file gained any; 628 quant tests, 626 pass, 0 fail; demo smoke 11 PASS;
+UX audit on seven viewports: 0 page errors, 0 overflow, 0 overlapping text,
+worst-tab CLS 0 (edgelab fixed by the sized skeleton), tap targets under
+24 px 0 except one on tablet-13-landscape (budget 29).
+
+Next step: the 0DTE map composer and comparison harness (Trade Desk).
 
 ## Current objective
 
