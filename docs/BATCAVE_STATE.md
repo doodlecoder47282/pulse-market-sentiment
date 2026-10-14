@@ -365,9 +365,18 @@ worst-tab CLS 0 (edgelab fixed by the sized skeleton), tap targets under
    The friend's map scale matches $ per point, not per 1%; the per-point
    switch is there for the live comparison. No tuning to his numbers.
 
-Next step: read CI for this commit; owner checks the Trade Desk card during
-a session and the ledger after 16:06 ET; then run /api/odte/map/compare on a
-day with a published map to measure agreement.
+CI green at 4564720 (run 38600631607): tsc head 158 vs base 162, no file
+gained errors; 659 tests, 657 pass, 0 fail; demo smoke PASS for
+/api/odte/map (23 strikes, pin and wall labelled, straddle 21.9, zones
+null in the demo) and the community watch; UX audit 0 page errors, 0
+overflow, 0 overlaps, 0 tap targets under 24 px, worst CLS 0 on every
+viewport. The demo Trade Desk screenshot showed "gap: open not available":
+the normalized Schwab chain dropped underlying.openPrice; fixed in b037c93
+(CI for that commit not yet read).
+
+Next step: owner checks the Trade Desk card during a session (gap, map,
+zones) and the ledger after 16:06 ET; on a day with a published map, POST
+/api/odte/map/compare to measure agreement.
 
 ## Current objective
 
