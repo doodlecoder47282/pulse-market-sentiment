@@ -19,7 +19,7 @@ export function parseEdition(v: unknown): Edition | null {
 }
 
 /** Features that exist only in the personal edition. */
-export const PERSONAL_ONLY_FEATURES = ["eod-trade-setup", "discord-trade-cards"] as const;
+export const PERSONAL_ONLY_FEATURES = ["eod-trade-setup", "discord-trade-cards", "community-watchlist"] as const;
 
 export function featureAllowed(feature: (typeof PERSONAL_ONLY_FEATURES)[number], edition: Edition): boolean {
   return edition === "personal" || !PERSONAL_ONLY_FEATURES.includes(feature);

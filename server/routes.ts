@@ -91,6 +91,7 @@ import { classifyRouteError, isUpstreamUnavailable, UpstreamUnavailableError } f
 import { runBackfill, getBacktestSummary } from "./backtest";
 import { deriveTargets, deriveBothSides, type CandidateLevel } from "./targetDerivation";
 import { startCryptoEngines, getCryptoFeed, getCryptoHealth, getCryptoSignals } from "./cryptoEngine";
+import { startCommunityEngine, getCommunityWatch, addCommunityToken, removeCommunityToken } from "./cryptoCommunity";
 import { buildChainAudit } from "./chainAudit";
 import { buildHeatseeker } from "./heatseeker";
 import {
@@ -4854,6 +4855,27 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     catch (e: any) { res.status(500).json({ error: "crypto_signals_failed", message: e?.message ?? String(e) }); }
   });
 
+  // COMMUNITY WATCH — settled tokens: range position, survival counts and
+  // execution cost (server/cryptoCommunity.ts). Writes are personal-edition only.
+  app.get("/api/crypto/community", (_req, res) => {
+    try { res.json(getCommunityWatch()); }
+    catch (e: any) { res.status(500).json({ error: "crypto_community_failed", message: e?.message ?? String(e) }); }
+  });
+  app.post("/api/crypto/community", (req, res) => {
+    if (!featureAllowed("community-watchlist", editionFromEnv())) {
+      return res.status(403).json({ error: "personal_edition_only", message: "the watchlist is edited by the owner in the personal edition" });
+    }
+    const out = addCommunityToken(String(req.body?.tokenAddress ?? ""), req.body?.label ?? null);
+    if (!out.ok) return res.status(400).json({ error: "invalid_token", message: out.error });
+    res.json({ ok: true, entry: out.entry });
+  });
+  app.delete("/api/crypto/community/:tokenAddress", (req, res) => {
+    if (!featureAllowed("community-watchlist", editionFromEnv())) {
+      return res.status(403).json({ error: "personal_edition_only", message: "the watchlist is edited by the owner in the personal edition" });
+    }
+    res.json({ ok: true, removed: removeCommunityToken(String(req.params.tokenAddress ?? "")) });
+  });
+
   // T1/T2 AUTO-DERIVATION — POST /api/edge/targets
   // Body: { spot: number, side?: "call"|"put", levels: [{kind, name, price}] }
   // Omit side to get both directions. Same engine the eod-setup brief uses.
@@ -5210,6 +5232,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   // Crypto degen desk — GeckoTerminal/DexScreener/RSS engines + watchdog.
   // Free public APIs, no keys, independent of the Schwab data path.
   try { startCryptoEngines(); } catch (e: any) { console.warn(`[crypto] failed to start: ${e?.message ?? e}`); }
+  try { startCommunityEngine(); } catch (e: any) { console.warn(`[community] failed to start: ${e?.message ?? e}`); }
 
   // Kick off MM-matrix scheduler (10/13/15:30 ET snapshots, 16:30 grading)
   startMmScheduler();

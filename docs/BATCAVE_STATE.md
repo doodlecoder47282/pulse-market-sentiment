@@ -1,6 +1,6 @@
 # Batcave checkpoint
 
-Updated: 2026-10-09. This is a compact handoff, not a live-health certificate.
+Updated: 2026-10-14. This is a compact handoff, not a live-health certificate.
 
 ## 2026-10-08: quant-fixes branch (PR to main)
 
@@ -294,6 +294,45 @@ iOS CI 38219184330 green; not on main yet):
   unknown; getOrBuild shares one in-flight build with no timeout, so a hung
   upstream fetch would hold every client on the skeleton. Candidate fix: a
   timeout on the shared build that falls back to the stale/unavailable path.
+
+## 2026-10-14: options flow attribution, meme structure
+
+Completed objectives (branch quant-fixes, commits after 881665f):
+
+1. Options flow: how whales are picked and tracked. Verified by an
+   independent agent against the Schwab snapshot facts (cumulative volume,
+   last print only, NBBO, no prints). Eight defects fixed:
+   `server/flowAttribution.ts` (per-contract ledger: increments attributed
+   to the print inside the interval at its price, pre-scan volume at the
+   first mid, high-water mark, ordering guard, prior-session restart,
+   stale-quote side unknown, 5-minute burst, coverage-gated ask share that
+   says it is an estimate), `server/flowDedup.ts` (one dedup key for live
+   and restart; hydrated keys never matched before, so a restart re-fired
+   18 h of whales), gate reasons and the Discord card name the premium and
+   side basis, the second volume memory is gone, demo volume is monotone.
+   Tests: flow-attribution 11, flow-gate-review 31, demo-market 14; full
+   suite 575 pass / 1 skipped before the meme work.
+2. Meme structure (the user's "community coins" thread), `docs/MEME_STRUCTURE.md`:
+   `shared/memeStructure.ts` (execution cost from pool depth, line
+   position, three categories, range / survival stats, hold-vs-rotate with
+   timing on a slider), community watch (`server/cryptoCommunity*.ts`,
+   `/api/crypto/community`, personal-edition writes, demo sample), cards in
+   the Crypto tab, structure chips and the exact round-trip cost on every
+   tracked launch. Independent review: 13 findings, all fixed; 34 + 6 tests.
+
+Not verified: live DexScreener / GeckoTerminal calls (unreachable from the
+dev environment); the CI build and UX audit for the new cards (check the
+ci-reports-quant branch for the latest run); the iPhone/iPad layout of the
+new cards (ios-build.yml runs on ios/ changes; edit .github/ios-build.txt).
+
+Known risks: the watch classifier is tentative until holder concentration
+and mint authority are read for watch tokens; the thermal heatmap 3D view
+and the 0DTE map composer are still pending; the edgelab tablet-portrait
+CLS (0.55) is instrumented but not fixed.
+
+Next step: push, read the CI report for this commit (tsc per-file gate,
+build, demo smoke, UX audit on the crypto tab), fix anything it flags, then
+start the 3D surface mode for the heatmap.
 
 ## Current objective
 

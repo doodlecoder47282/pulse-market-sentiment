@@ -251,6 +251,19 @@ jobs:
               console.log((ok ? "PASS" : "FAIL") + " thermal heatmap: state " + j.dataState + ", " + j.cells.length + " cells, " + m.contractsUsed + " priced, " + m.contractsNoSigma + " no IV, put wall " + L.putWall + " < spot " + j.spot + " < call wall " + L.callWall + ", flip " + L.gammaFlip);
             '
 
+            # Community watch on the demo: sample rows with ranges and costs; writes refused (read-only demo).
+            curl -s -m 30 "$B/api/crypto/community" > rep/demo/community.json
+            node -e '
+              const j = JSON.parse(require("fs").readFileSync("rep/demo/community.json", "utf8"));
+              const e = j.entries || [];
+              const ok = j.edition === "demo" && j.writable === false && e.length >= 3
+                && e.every((x) => x.quoteState === "ok" && x.range && x.range.rangePosition != null && x.cost1k && x.cost1k.roundTripPct != null && x.structure && x.line)
+                && e.some((x) => x.range.deepDipsReclaimed >= 1);
+              console.log((ok ? "PASS" : "FAIL") + " community watch: " + e.length + " sample rows, reclaimed dips " + e.map((x) => x.range && x.range.deepDipsReclaimed).join("/") + ", $1k trips " + e.map((x) => x.cost1k && x.cost1k.roundTripPct).join("/") + "%");
+            '
+            wcode=$(curl -s -o /dev/null -m 30 -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{"tokenAddress":"So11111111111111111111111111111111111111112"}' "$B/api/crypto/community")
+            [ "$wcode" = "405" ] || [ "$wcode" = "403" ] && echo "PASS community write refused ($wcode)" || { echo "FAIL community write returned $wcode"; fail=1; }
+
             grep -ciE "api\.schwabapi\.com|\[schwab\] (401|403|fetch)" rep/server-demo.log | xargs -I{} echo "schwab network lines in log: {}"
           } 2>&1 | tee rep/demo/smoke.log
           grep -q '^FAIL' rep/demo/smoke.log && fail=1
