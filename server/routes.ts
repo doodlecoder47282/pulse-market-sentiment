@@ -88,6 +88,7 @@ import { computeOfiTrend } from "./leeReadyOfi";
 import { buildGammaLevelsEnhanced } from "./gammaLevels";
 import { assembleSnapshot, snapshotFailureResponse, tradeDeskDegraded, liveMetricsFromSnapshot, factCheckMetrics } from "./snapshotDegrade";
 import { classifyRouteError, isUpstreamUnavailable, UpstreamUnavailableError } from "@shared/unavailable";
+import { waitFor } from "@shared/waitFor";
 import { runBackfill, getBacktestSummary } from "./backtest";
 import { deriveTargets, deriveBothSides, type CandidateLevel } from "./targetDerivation";
 import { startCryptoEngines, getCryptoFeed, getCryptoHealth, getCryptoSignals } from "./cryptoEngine";
@@ -318,38 +319,56 @@ function sendIfUnavailable(res: ExResponse, e: unknown): boolean {
 let lastPartialSnapshot: { at: number; status: number; body: unknown } | null = null;
 const PARTIAL_CACHE_MS = 30_000;
 
+// A rebuild that hangs (an upstream that never answers) must not hold every
+// client on the loading state: each waiter gives up after BUILD_WAIT_MS and
+// takes the stored-snapshot / unavailable path below; the build itself keeps
+// running so the next request can pick up its result.
+const BUILD_WAIT_MS = 20_000;
+let inflightSince = 0;
+
+/** After a failed (or overdue) rebuild: the last stored snapshot is served
+ *  only within min(quote, chain) max age (2 min in the session, 15 min
+ *  outside), marked stale with its capturedAt. Past that the snapshot is
+ *  unavailable with the reason. */
+async function storedSnapshotOrThrow(e: any): Promise<Snapshot_Public> {
+  const last = await storage.getLatestSnapshot();
+  if (last) {
+    const snap = JSON.parse(last.payload) as Snapshot_Public;
+    const ageMs = Date.now() - snap.capturedAt * 1000;
+    // The snapshot carries quotes and a chain: the tighter max age applies.
+    const maxAge = Math.min(maxServeAgeMs("quotes"), maxServeAgeMs("chains"));
+    if (ageMs <= maxAge) {
+      return {
+        ...snap,
+        stale: true,
+        staleReason: `rebuild failed (${e?.message ?? "error"}); stored snapshot from ${Math.round(ageMs / 1000)} s ago`,
+        warnings: [...(snap.warnings ?? []), `Stale snapshot: captured ${Math.round(ageMs / 1000)} s ago; live rebuild failed.`],
+      };
+    }
+    const msg = `Snapshot unavailable: ${e?.message ?? "rebuild failed"}; last stored snapshot is ${Math.round(ageMs / 60_000)} min old (max ${Math.round(maxAge / 60_000)} min)`;
+    // An upstream failure stays an upstream failure (503 / partial), with its partial context.
+    if (isUpstreamUnavailable(e)) throw new UpstreamUnavailableError(msg, { upstream: e.upstream, partial: e.partial });
+    throw new Error(msg);
+  }
+  throw e;
+}
+
 async function getOrBuild(force = false): Promise<Snapshot_Public> {
   if (!force && lastResult && Date.now() - lastResult.at < CACHE_MS) return lastResult.data;
-  if (inflight) return inflight;
-  inflight = buildSnapshot()
-    .then((d) => { lastResult = { at: Date.now(), data: d }; inflight = null; return d; })
-    .catch(async (e) => {
-      inflight = null;
-      // A rebuild failed: the last stored snapshot is served only within
-      // min(quote, chain) max age (2 min in the session, 15 min outside), marked stale
-      // with its capturedAt. Past that the snapshot is unavailable.
-      const last = await storage.getLatestSnapshot();
-      if (last) {
-        const snap = JSON.parse(last.payload) as Snapshot_Public;
-        const ageMs = Date.now() - snap.capturedAt * 1000;
-        // The snapshot carries quotes and a chain: the tighter max age applies.
-        const maxAge = Math.min(maxServeAgeMs("quotes"), maxServeAgeMs("chains"));
-        if (ageMs <= maxAge) {
-          return {
-            ...snap,
-            stale: true,
-            staleReason: `rebuild failed (${e?.message ?? "error"}); stored snapshot from ${Math.round(ageMs / 1000)} s ago`,
-            warnings: [...(snap.warnings ?? []), `Stale snapshot: captured ${Math.round(ageMs / 1000)} s ago; live rebuild failed.`],
-          };
-        }
-        const msg = `Snapshot unavailable: ${e?.message ?? "rebuild failed"}; last stored snapshot is ${Math.round(ageMs / 60_000)} min old (max ${Math.round(maxAge / 60_000)} min)`;
-        // An upstream failure stays an upstream failure (503 / partial), with its partial context.
-        if (isUpstreamUnavailable(e)) throw new UpstreamUnavailableError(msg, { upstream: e.upstream, partial: e.partial });
-        throw new Error(msg);
-      }
-      throw e;
-    });
-  return inflight;
+  if (!inflight) {
+    inflightSince = Date.now();
+    inflight = buildSnapshot()
+      .then((d) => { lastResult = { at: Date.now(), data: d }; inflight = null; return d; })
+      .catch(async (e) => { inflight = null; return storedSnapshotOrThrow(e); });
+  }
+  try {
+    return await waitFor(inflight, BUILD_WAIT_MS, "snapshot build");
+  } catch (e: any) {
+    if (e?.name !== "WaitTimeoutError") throw e;
+    const runningS = Math.round((Date.now() - inflightSince) / 1000);
+    console.warn(`[snapshot] build still running after ${runningS} s; answering from the stored snapshot or unavailable`);
+    return storedSnapshotOrThrow(new UpstreamUnavailableError(`snapshot build still running after ${runningS} s (an upstream has not answered)`));
+  }
 }
 
 /**
