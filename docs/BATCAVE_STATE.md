@@ -445,7 +445,18 @@ regression from these commits (none touch Edge Lab).
    loaded height at every breakpoint, and the one-liner row is reserved
    while loading. If the audit still flags this tab, treat it as a timing
    flake of the measurement (one more diagnosis, no further blind tuning).
-Run for item 9: PENDING.
+Run 38651208710 on ee2e494 (item 9): GREEN. tsc head 53 vs base 162, no
+file gained errors; quant tests 664, 662 pass, 0 fail, 2 skipped; build,
+route regression pass; demo smoke 13 PASS, 0 FAIL (snapshot, thermal,
+community, 0DTE map stale_session after the close, decision support 200,
+write gates); UX audit all budgets pass: 0 page errors, 0 overflow, 0
+overlapping text, 0 SVG overlaps (Signals and Models fixed), 0 tap
+targets under 24 px, Edge Lab CLS 0 on all seven viewports (worst CLS on
+the run 0.009, wide).
+
+Next step: owner reviews the Signals GEX chart and the Models chart labels
+live during a session (CI only sees the no-Schwab and demo renders), then
+approves merging quant-fixes to main.
 
 Not changed, still open: Schwab fetches themselves have no timeout (the
 retry loop can wait up to the undici default); demo whale flow is always
