@@ -250,6 +250,18 @@ const TABLE: Record<string, { kind: Kind } & Omit<Spec, "kind" | "idioSeed"> & {
   GLD: { kind: "equity", ...EQ(372, 0.05, 0.009, 9e6, 0.9, "SPDR Gold Shares") },
   HYG: { kind: "equity", ...EQ(80, 0.25, 0.002, 30e6, 0.5, "iShares High Yield Corporate Bond ETF") },
   UUP: { kind: "equity", ...EQ(27, -0.1, 0.003, 3e6, 0.5, "Invesco DB US Dollar Index Bullish Fund") },
+  // Rest of the macro tape (server/macro.ts UNIVERSE): plausible sample
+  // levels so the tape never shows a hashed price such as "Oil 195.74".
+  SHY: { kind: "equity", ...EQ(82.6, -0.02, 0.001, 4e6, 0.3, "iShares 1-3 Year Treasury Bond ETF") },
+  IEF: { kind: "equity", ...EQ(96.4, -0.1, 0.003, 8e6, 0.5, "iShares 7-10 Year Treasury Bond ETF") },
+  LQD: { kind: "equity", ...EQ(112.3, 0.1, 0.003, 25e6, 0.5, "iShares iBoxx $ Investment Grade Corporate Bond ETF") },
+  JNK: { kind: "equity", ...EQ(97.2, 0.25, 0.002, 6e6, 0.5, "SPDR Bloomberg High Yield Bond ETF") },
+  USO: { kind: "equity", ...EQ(72.4, 0.3, 0.018, 5e6, 1.8, "United States Oil Fund") },
+  UNG: { kind: "equity", ...EQ(13.9, 0.1, 0.030, 10e6, 2.5, "United States Natural Gas Fund") },
+  SLV: { kind: "equity", ...EQ(43.1, 0.2, 0.014, 25e6, 1.6, "iShares Silver Trust") },
+  CPER: { kind: "equity", ...EQ(31.2, 0.5, 0.012, 0.3e6, 1.4, "United States Copper Index Fund") },
+  CORN: { kind: "equity", ...EQ(18.7, 0.1, 0.010, 0.2e6, 1.2, "Teucrium Corn Fund") },
+  WEAT: { kind: "equity", ...EQ(4.6, 0.05, 0.012, 0.5e6, 1.3, "Teucrium Wheat Fund") },
 };
 
 const VOLS: Record<string, string> = {

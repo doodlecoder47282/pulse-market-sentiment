@@ -4,6 +4,7 @@
 // the real engines run their math on it.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { bsm, demoChain, demoPriceHistory, demoQuote, demoSchwabPayload, sessionState, volumeProgress } from "../../server/demoMarket";
 import { etWallToEpochMs } from "../../server/exchangeCalendar";
 import { gexByStrikeFromChain } from "../../server/gammaProfile";
@@ -84,6 +85,25 @@ test("quotes: deterministic, Schwab-shaped, change = last - close", () => {
   assert.equal(demoQuote("/ES", OPEN), null);
   const multi = demoSchwabPayload("marketdata/v1/quotes", { symbols: "SPY,$VIX,/ES" }, OPEN);
   assert.deepEqual(Object.keys(multi).sort(), ["$VIX", "SPY"]);
+});
+
+test("quotes: every plain-ticker macro tape symbol has a named sample level, not a hashed price", () => {
+  // server/macro.ts cannot be imported here (it pulls the quote store), so
+  // its UNIVERSE is read from the source. Yahoo-style FX/crypto symbols are
+  // not Schwab symbols and stay absent (null), like any unsupported symbol.
+  const src = readFileSync(new URL("../../server/macro.ts", import.meta.url), "utf8");
+  const syms = Array.from(src.matchAll(/\{ symbol: "([^"]+)", label: "([^"]+)"/g)).map((m) => ({ symbol: m[1], label: m[2] }));
+  assert.ok(syms.length >= 20, `found ${syms.length} tape symbols`);
+  for (const { symbol, label } of syms) {
+    const q = demoQuote(symbol, OPEN);
+    if (!/^[A-Z][A-Z.]{0,5}$/.test(symbol)) { assert.equal(q, null, `${symbol} (${label}) is not a Schwab symbol`); continue; }
+    assert.ok(q, `${symbol} (${label}) missing`);
+    assert.doesNotMatch(q.reference.description, new RegExp(`^${symbol} \\(sample\\)`), `${symbol} (${label}) falls back to a hashed price`);
+    assert.ok(q.quote.lastPrice > 0, `${symbol} price`);
+  }
+  // The commodity ETFs sit at ETF-like levels (the old hash put Oil near 196).
+  assert.ok(demoQuote("USO", OPEN).quote.lastPrice < 120, "USO is an ETF price, not a barrel price");
+  assert.ok(demoQuote("WEAT", OPEN).quote.lastPrice < 10);
 });
 
 test("quotes: pre-market shows no change; weekend shows the last session vs the one before", () => {
