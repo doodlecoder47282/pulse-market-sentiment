@@ -378,6 +378,66 @@ Next step: owner checks the Trade Desk card during a session (gap, map,
 zones) and the ledger after 16:06 ET; on a day with a published map, POST
 /api/odte/map/compare to measure agreement.
 
+## 2026-10-14 (evening): fixes after "what else can we fix"
+
+Pick stated at the start of the work (no objective had been chosen): the
+bounded user-facing and CI-hygiene fixes below, one commit each, on
+quant-fixes after e10b4e8.
+
+1. 861a5db Data-state chips: a 503 whose body says `no_spot`, `empty`,
+   `delayed` or `no_data` was shown as "request failed". The client parser
+   (`shared/unavailable.ts`) now keeps the body's own state through the
+   shared vocabulary (`empty` -> no_data; new alias `delayed` -> stale; a 503
+   claiming ok, or an unknown string, fails closed to unavailable). A 500 is
+   still a bug and a 503 without a dataState still a failure.
+2. b46b097 tsconfig: `target ES2022` (tsc is noEmit; Vite/esbuild build) with
+   `useDefineForClassFields: false` so the class-field semantics the bundlers
+   derived from the old target do not change. Removes the 50 TS2802 Map/Set
+   iteration errors and a few dependent ones; no new error code locally.
+3. 98abe93 no-advice-language test also walks shared/ (clean today).
+4. 7918eba Snapshot: `getOrBuild` shared one in-flight build with no bound
+   (Schwab fetches have no timeout), the iOS "stuck on the skeleton" risk.
+   Each waiter now gives up after 20 s (`shared/waitFor.ts`, tested) and takes
+   the existing stored-snapshot-within-max-age (stale) or 503 unavailable
+   path; the build keeps running for the next request.
+5. d13f6be /api/decision-support threw ReferenceError on every call
+   (`formatDecisionBlock` was never imported; tsc TS2304 since the initial
+   import). Imported; demo smoke now checks the route answers 200.
+6. af3f875 Signals GEX chart: "Spot" and "ZERO-Γ FLIP" labels overlapped on
+   phones (CI UX audit svgOverlapCount 1). Labels are now row-stacked
+   elements clamped inside the plot; the lightning emoji is gone.
+7. 1f34669 Demo tape: ten macro ETFs (SHY, IEF, LQD, JNK, USO, UNG, SLV,
+   CPER, CORN, WEAT) had hashed prices ("Oil 195.74"); named sample levels
+   added, with a test that reads the macro UNIVERSE from source.
+
+Local evidence: full quant suite 663 tests, 662 pass, 1 skipped, 0 fail
+(before item 7; demo-market file 15 pass after it). Local tsc (6.0.3, no
+node_modules) on the whole project: ES5 12724 vs ES2022 12620 errors, no
+new code. npm registry unreachable from the session, so TypeScript 5.6.3
+could not be installed locally; the CI per-file gate is the proof.
+
+8. (next commit) Models chart: "NOW $..." label moved from over the y-axis
+   ticks to inside the plot with a halo (CI UX audit on 1f34669 found
+   "690.00" x "NOW $689.78" on every viewport once the demo anchor sat near a
+   round tick). The 0DTE demo smoke check from the previous objective only
+   accepted "ok"; after the close the map is correctly "stale_session"
+   (session closed), so the check now accepts that too.
+
+CI evidence, run 38647320485 on 1f34669 (steps 1-7): tsc head 53 vs base
+162, no file gained errors (the ES2022 target removed 105); quant tests
+pass; build pass; route regression pass; demo smoke PASS for snapshot,
+thermal, community, decision support (200, 5 lines) and the write gates,
+FAIL only on the 0DTE check above (map priced, 36 strikes, pin labelled,
+state stale_session at 18:29 ET); UX audit 0 page errors, 0 overflow, 0
+overlapping text, 0 tap targets under 24 px, CLS 0 (0.009 wide), Signals
+SVG overlap gone, the Models overlap above the only one left. Run for
+item 8: PENDING.
+
+Not changed, still open: Schwab fetches themselves have no timeout (the
+retry loop can wait up to the undici default); demo whale flow is always
+empty; `routes.ts` 5896 `ch.source !== "schwab"` is a type-only `never`
+comparison; TS7006/TS2339 in older files.
+
 ## Current objective
 
 Save the credit-conserving resume framework and assess reuse of the existing

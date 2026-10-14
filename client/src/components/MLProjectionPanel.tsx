@@ -1142,10 +1142,14 @@ export default function MLProjectionPanel() {
                   className="animate-pulse"
                   label={{
                     value: `NOW $${anchorPrice.toFixed(2)}`,
-                    position: "left",
+                    // Inside the plot, not over the y-axis ticks: "left" sat on
+                    // the tick text whenever the anchor was within a tick of a
+                    // round level (CI UX audit: "690.00" x "NOW $689.78").
+                    position: "insideLeft",
                     fill: "#67e8f9",
                     fontSize: 10,
                     fontWeight: 600,
+                    style: { paintOrder: "stroke", stroke: "#0f172a", strokeWidth: 4, strokeLinejoin: "round" } as any,
                   }}
                 />
               )}

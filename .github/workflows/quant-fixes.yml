@@ -266,7 +266,9 @@ jobs:
             node -e '
               const j = JSON.parse(require("fs").readFileSync("rep/demo/odte-map.json", "utf8"));
               const labelled = (j.strikes || []).filter((s) => s.label).map((s) => s.label);
-              const ok = j.dataState === "ok" && (j.strikes || []).length > 5 && labelled.includes("pin") && j.zones === null && j.range && j.range.straddle > 0 && j.ledger && j.ledger.kept === false
+              // In the session the map is "ok"; after the close it is "stale_session" (the card marks it), never "no_gex" on the sample chain.
+              const priced = j.dataState === "ok" || (j.dataState === "stale_session" && j.session && j.session.state === "closed");
+              const ok = priced && (j.strikes || []).length > 5 && labelled.includes("pin") && j.zones === null && j.range && j.range.straddle > 0 && j.ledger && j.ledger.kept === false
                 && (j.strikes || []).every((s) => Math.abs(s.gexPt - Math.round(s.gexPct / (j.spot / 100))) <= 1);
               console.log((ok ? "PASS" : "FAIL") + " 0DTE map: state " + j.dataState + ", spot " + j.spot + ", " + (j.strikes || []).length + " strikes, labels " + labelled.join("/") + ", straddle " + (j.range && j.range.straddle) + ", band " + JSON.stringify(j.band && [j.band.low, j.band.high]) + ", zones " + j.zones + ", ledger " + (j.ledger && j.ledger.why));
             '
