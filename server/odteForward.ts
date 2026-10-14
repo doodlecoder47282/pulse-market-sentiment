@@ -24,7 +24,8 @@ export interface OdteForwardDeps {
 
 export async function buildOdteForward(symbolIn: string, nowMs: number = Date.now(), depsIn?: OdteForwardDeps): Promise<OdteForwardResult> {
   const symbol = String(symbolIn || "$SPX").trim().toUpperCase() || "$SPX";
-  const deps: OdteForwardDeps = depsIn ?? (await import("./schwab"));
+  // schwab.ts has narrower parameter types than the generic deps shape; the calls below stay inside them.
+  const deps: OdteForwardDeps = depsIn ?? ((await import("./schwab")) as unknown as OdteForwardDeps);
   const proj = await import("./odteProjection");
   const [chain, hist] = await Promise.all([
     deps.getOptionChain(symbol, 1),

@@ -170,7 +170,7 @@ export function startOdteMapLedger(symbols: string[] = ["$SPX"]): void {
         }
       }
       if (m >= SETTLE_WINDOW_MIN[0] && m <= SETTLE_WINDOW_MIN[1]) {
-        const deps = await import("./schwab");
+        const deps = (await import("./schwab")) as unknown as SettleDeps;
         for (const s of symbols) {
           const r = await settleToday(s, deps, now);
           if (r.ok) console.log(`[odte-map] settled ${s} ${etDate(now)}`);
