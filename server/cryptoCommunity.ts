@@ -21,7 +21,7 @@ import { sqlite } from "./storage";
 import { editionFromEnv } from "../shared/edition";
 
 import {
-  applyHistory, applyPool, blankEntry, deriveEntry, parseOhlcv, sampleBars,
+  applyHistory, applyPool, blankEntry, deriveEntry, parseOhlcv, pickPool, sampleBars,
   type CommunityEntry, type CommunityWatch,
 } from "./cryptoCommunityCore";
 export type { CommunityEntry, CommunityWatch, QuoteState, HistoryState } from "./cryptoCommunityCore";

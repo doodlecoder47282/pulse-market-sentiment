@@ -912,7 +912,7 @@ function ScenarioBar({
 }: {
   label: string;
   color: "emerald" | "slate" | "rose";
-  s: { prob: number; targetPct: number; thesis: string };
+  s: { prob: number; targetPct: number | null; thesis: string };
 }) {
   const colorMap = {
     emerald: "bg-emerald-500/20 border-emerald-500/40 text-emerald-300",
@@ -937,8 +937,7 @@ function ScenarioBar({
         />
       </div>
       <div className="mt-1 font-mono text-[11px] tabular-nums">
-        {s.targetPct >= 0 ? "+" : ""}
-        {s.targetPct.toFixed(2)}%
+        {s.targetPct != null && Number.isFinite(s.targetPct) ? `${s.targetPct >= 0 ? "+" : ""}${s.targetPct.toFixed(2)}%` : "n/a"}
       </div>
       <div className="mt-1 line-clamp-2 [overflow-wrap:anywhere] text-[11px] opacity-80">{s.thesis}</div>
     </div>
