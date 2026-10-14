@@ -5,6 +5,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Flame, Activity, AlertTriangle } from "lucide-react";
 
 import DataStateChip from "@/components/DataStateChip";
+import ThermalSurface from "@/components/ThermalSurface";
 
 type Cell = {
   expIdx: number; strikeIdx: number;
@@ -94,6 +95,9 @@ export default function ThermalHeatmap() {
   // up green at its hottest strike and shades out from there. global: one scale
   // across the whole grid (near-dated OI dominates and far dates look dead).
   const [scaleMode, setScaleMode] = useState<"per-date" | "global">("per-date");
+  // grid: the strike x expiry table with the dollar in every cell; surface: the
+  // same numbers as a 3D height field on one scale (ThermalSurface.tsx).
+  const [viewMode, setViewMode] = useState<"grid" | "surface">("grid");
   const [hover, setHover] = useState<Cell | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -168,7 +172,7 @@ export default function ThermalHeatmap() {
   }, [data]);
 
   useEffect(() => {
-    if (!data || !grid) return;
+    if (!data || !grid || viewMode !== "grid") return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const dpr = window.devicePixelRatio || 1;
@@ -308,7 +312,7 @@ export default function ThermalHeatmap() {
     ctx.font = "10px ui-monospace, monospace";
     ctx.textAlign = "left";
     ctx.fillText(`${greek.toUpperCase()} · strike × expiry · ${scaleMode === "per-date" ? "each date to its own max" : "one scale"} · open interest only`, marginLeft, marginTop - 32);
-  }, [data, grid, greek, scaleMode, colMax]);
+  }, [data, grid, greek, scaleMode, colMax, viewMode]);
 
   // Hover handler
   function onMove(ev: React.MouseEvent<HTMLCanvasElement>) {
@@ -335,6 +339,22 @@ export default function ThermalHeatmap() {
           <EdgeInfo id="thermal-heatmap" />
         </div>
         <div className="flex flex-wrap items-center gap-1" data-testid="thermal-greek-selector">
+          {(["grid", "surface"] as const).map(m => (
+            <button
+              key={m}
+              data-testid={`thermal-view-${m}`}
+              onClick={() => setViewMode(m)}
+              className={`px-2 py-0.5 text-[11px] rounded font-mono uppercase tracking-wider transition ${
+                viewMode === m
+                  ? "bg-sky-500/20 text-sky-300 border border-sky-500/40"
+                  : "text-slate-400 hover:text-slate-200 border border-transparent"
+              }`}
+              title={m === "grid" ? "Strike x expiry table with the dollar value in every cell" : "The same numbers as a 3D surface: strikes across, expiries back, exposure as height, one scale"}
+            >
+              {m === "grid" ? "grid" : "3D"}
+            </button>
+          ))}
+          <span className="mx-1 h-3 w-px bg-slate-700" />
           {(["per-date", "global"] as const).map(m => (
             <button
               key={m}
@@ -377,7 +397,10 @@ export default function ThermalHeatmap() {
           <AlertTriangle className="w-3.5 h-3.5" /> heatmap unavailable — {String((error as Error).message)}
         </div>
       )}
-      {data && grid && (
+      {data && grid && viewMode === "surface" && (
+        <ThermalSurface data={data} greek={greek} />
+      )}
+      {data && grid && viewMode === "grid" && (
         <div className="relative hscroll-contain">
           <canvas
             ref={canvasRef}

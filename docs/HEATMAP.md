@@ -147,6 +147,36 @@ for **execution-grade signals**, which it does not claim.
   contract counts: "N contracts priced, 0 without an implied vol" during the
   session means every OI contract was priced.
 
+## 7. The 3D surface view (added 2026-10-14)
+
+The grid's "3D" button draws the same payload as a height field:
+strikes across, expiries into the depth, signed dollar exposure as height
+(`client/src/components/ThermalSurface.tsx`, drawing in
+`client/src/lib/surfaceDraw.ts`, geometry in `shared/surfaceProjection.ts`).
+
+- One scale across every date (the grid's per-date shading would misstate
+  relative size as height). Height is linear by default; "compressed" is
+  sign(v)·|v/max|^0.55 and the title says so.
+- Orthographic projection with yaw (rotate) and tilt sliders; quads drawn
+  back to front; a missing contract leaves a hole rather than an
+  interpolated value. The expiry axis is drawn at 45% of the strike axis so a
+  120 x 12 grid is not a ribbon.
+- Spot and flip are polylines across the surface at the interpolated strike;
+  walls are marked above their tallest node. Axis labels are thinned to a
+  36 px pitch and the level labels are laid out as boxes so none overlaps the
+  strike labels or each other, at any width.
+- Flat far strikes (under 1% of the max across every expiry) are trimmed from
+  the footprint and the caption says how many; values are never changed.
+- Phones: at least 5 px per strike, the canvas scrolls sideways (like the
+  grid) and opens centred on spot. Tap a point to read it; the tooltip gives
+  the dollar figure, OI and the share of the surface max.
+- Verification: `tests/quant/surface-projection.test.ts` (height scaling,
+  every corner inside the canvas across a yaw / tilt / size sweep, painter's
+  order, holes, label thinning, picking, trimming, label stacking), plus a
+  headless render of the sample chain at 375 / 820 / 1180 px (Chromium,
+  `drawSurface` on the demo payload: 15-30 ms per frame) inspected by eye for
+  overlap and legibility.
+
 ## Sources
 
 - SqueezeMetrics, "Gamma Exposure (GEX)", white paper.
