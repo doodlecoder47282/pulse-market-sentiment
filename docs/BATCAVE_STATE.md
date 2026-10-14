@@ -352,7 +352,22 @@ UX audit on seven viewports: 0 page errors, 0 overflow, 0 overlapping text,
 worst-tab CLS 0 (edgelab fixed by the sized skeleton), tap targets under
 24 px 0 except one on tablet-13-landscape (budget 29).
 
-Next step: the 0DTE map composer and comparison harness (Trade Desk).
+5. 0DTE map (docs/ODTE_MAP.md): `shared/odteMap.ts` composer (gap,
+   straddle and sigma ranges, labelled strikes in $/1% and $/pt, band from
+   the re-priced crossings, ladders, personal-edition zones, text block,
+   comparison helper), `shared/odteSettle.ts` (settle evaluation, tally),
+   `server/odteForward.ts` (the forward moved out of routes.ts, injectable
+   sources, additive gammaCrossings / sessionOpen / priorClose),
+   `server/odteMapLedger.ts` (09:35 ET morning plan, 16:06 ET settle, SQLite
+   ledger, investor view without zones), Trade Desk card, routes
+   /api/odte/map, /api/odte/map/ledger, /api/odte/map/compare (personal).
+   Independent review: 12 findings, all fixed; 31 tests across three files.
+   The friend's map scale matches $ per point, not per 1%; the per-point
+   switch is there for the live comparison. No tuning to his numbers.
+
+Next step: read CI for this commit; owner checks the Trade Desk card during
+a session and the ledger after 16:06 ET; then run /api/odte/map/compare on a
+day with a published map to measure agreement.
 
 ## Current objective
 
