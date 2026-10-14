@@ -192,11 +192,11 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
         )}
       </CardHeader>
 
-      <CardContent className="space-y-4">
+      {/* The body keeps the same minimum height while loading and once loaded
+          (tablet and up), so the briefing's arrival does not move the panels
+          below it; the skeleton inside is shaped like the loaded body. */}
+      <CardContent className="space-y-4 sm:min-h-[740px]">
         {q.isLoading && (
-          // Sized like the loaded body (levels strip, regime + cross-asset,
-          // three paths, the rest) so the briefing's arrival does not push
-          // the panels below it by half a screen (tablet-portrait CLS 0.55).
           <div className="space-y-2" data-testid="briefing-skeleton">
             <Skeleton className="h-24 w-full" />
             <Skeleton className="h-40 w-full" />
