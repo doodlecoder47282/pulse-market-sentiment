@@ -152,7 +152,7 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     }
   }
 
-  const rows = [...agg.values()].filter(r => Math.abs(r.strike - spot) / spot <= 0.03).sort((a, b) => a.strike - b.strike);
+  const rows = Array.from(agg.values()).filter(r => Math.abs(r.strike - spot) / spot <= 0.03).sort((a, b) => a.strike - b.strike);
   if (rows.length === 0) return { status: 503, body: { dataState: "unavailable", reason: "the Schwab chain has no usable strikes", error: "no_strikes" } };
   const netGex = rows.reduce((s, r) => s + r.gex, 0);
   const netCharm = rows.reduce((s, r) => s + r.charm, 0);
