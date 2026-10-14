@@ -98,6 +98,33 @@ test("parseUnavailableError: client reads 503 bodies as unavailable with reason,
   assert.equal(describeDataState("failed").blocksSignal, true);
 });
 
+test("parseUnavailableError: a 503 keeps the body's own state (no spot, empty window, delayed feed are not 'request failed')", () => {
+  const at = (body: unknown, status = 503) => parseUnavailableError(new Error(`${status}: ${JSON.stringify(body)}`));
+  // /api/odte/forward, /api/heatseeker, /api/chain-audit: chain present, no underlying price
+  assert.deepEqual(at({ dataState: "no_spot", reason: "no underlying spot in the Schwab $SPX chain", error: "no_spot" }),
+    { dataState: "no_spot", reason: "no underlying spot in the Schwab $SPX chain", status: 503 });
+  // candles answered with nothing (server/schwab.ts dataState "empty")
+  assert.equal(at({ dataState: "empty", reason: "no candles" })?.dataState, "no_data");
+  // Schwab chain flagged isDelayed is refused as not current: the "stale" state, never "ok"
+  const delayed = at({ error: "schwab_delayed", dataState: "delayed", reason: "Schwab returned a DELAYED chain (isDelayed=true)" });
+  assert.equal(delayed?.dataState, "stale");
+  assert.equal(describeDataState(delayed!.dataState).blocksSignal, true);
+  assert.equal(at({ dataState: "no_data", reason: "no session today" })?.dataState, "no_data");
+  // every parsed state blocks the signal and is labelled by name, not "unknown state"
+  for (const s of ["no_spot", "no_data", "stale", "unavailable"]) {
+    assert.equal(describeDataState(s).blocksSignal, true, s);
+    assert.notEqual(describeDataState(s).label, "unknown state", s);
+  }
+  // a 503 claiming a healthy state, or an unknown string, fails closed to "unavailable"
+  assert.equal(at({ dataState: "ok", reason: "x" })?.dataState, "unavailable");
+  assert.equal(at({ dataState: "observed_zero", reason: "x" })?.dataState, "unavailable");
+  assert.equal(at({ dataState: "whatever", reason: "x" })?.dataState, "unavailable");
+  // the status contract still holds: a 500 is a bug even with a dataState, a 503 without one is a failure
+  assert.equal(at({ dataState: "no_spot", reason: "x" }, 500)?.dataState, "failed");
+  assert.equal(at({ error: "ML sidecar unreachable" })?.dataState, "failed");
+  assert.equal(at({ dataState: "", reason: "x" })?.dataState, "failed");
+});
+
 // ── Snapshot (Signals) ──────────────────────────────────────────────────────
 
 test("snapshot, unauthenticated Schwab: throws the typed error carrying a partial; route answers 200 partial", () => {

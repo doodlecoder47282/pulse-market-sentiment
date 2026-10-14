@@ -16,6 +16,8 @@
 //   unavailable  the source could not answer (fetch failed / not connected)
 //   no_data      the source answered with nothing (empty tape, holiday)
 //   no_spot      chain present but no underlying price, so nothing S-scaled
+//   empty        (alias of no_data) candles answered with no bars
+//   delayed      (alias of stale) Schwab chain flagged isDelayed, refused
 // Client-side extras:
 //   observed_zero a real reading of 0 (not missing)
 //   loading       request in flight, nothing to show yet
@@ -69,6 +71,8 @@ const ALIASES: Record<string, DataState> = {
   missing: "unavailable",
   error: "unavailable",
   empty: "no_data",
+  // Schwab chain flagged isDelayed (server/schwab.ts): refused as not current.
+  delayed: "stale",
 };
 
 function recognize(raw: string | null | undefined): DataState | null {

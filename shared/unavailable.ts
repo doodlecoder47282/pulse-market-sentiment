@@ -16,6 +16,8 @@
 //   - a real bug (TypeError, bad state): 500 { message }
 // A missing upstream is never a 500 and never a 200 with zeros.
 
+import { normalizeDataState, type DataState } from "./dataState";
+
 export type UpstreamSource = "schwab";
 
 /** Thrown by builders when an upstream (Schwab) could not answer. `partial`
@@ -98,17 +100,27 @@ export function classifyRouteError(e: unknown, fallback: string, ctx: RouteError
   return { status: 500, body: { [ctx.key ?? "message"]: msg }, kind: "bug" };
 }
 
+/** States a 503 body can carry: the server's own data-state vocabulary minus
+ *  the ones that make no sense for an error response. */
+export type UnavailableState = Exclude<DataState, "ok" | "loading" | "observed_zero">;
+
 export interface ParsedUnavailable {
-  /** "unavailable" for a 503 with a dataState body; "failed" for any other error. */
-  dataState: "unavailable" | "failed";
+  /** The 503 body's own state ("unavailable", "no_spot", "no_data", "stale"
+   *  for a delayed feed, ...), normalized; "failed" for any other error. */
+  dataState: UnavailableState | "failed";
   reason: string;
   status: number | null;
 }
 
+// A 503 claiming a healthy state is a contract violation: fail closed.
+const NOT_AN_ERROR_STATE: ReadonlySet<DataState> = new Set<DataState>(["ok", "loading", "observed_zero"]);
+
 /**
  * Client side: turns a react-query error from apiRequest/getQueryFn
  * ("<status>: <body text>") into a state and reason for DataStateChip.
- * A 503 whose JSON body carries dataState is "unavailable" with its reason;
+ * A 503 whose JSON body carries a dataState keeps that state (missing spot,
+ * empty window, delayed feed and "could not answer" are different states and
+ * are labelled differently; an unknown string is "unavailable", never "ok");
  * anything else is "failed" (never "ok", never a blank panel).
  */
 export function parseUnavailableError(err: unknown): ParsedUnavailable | null {
@@ -130,8 +142,9 @@ export function parseUnavailableError(err: unknown): ParsedUnavailable | null {
     return null;
   };
   const reason = pick("reason", "note", "message", "error") ?? (text.trim() || raw);
-  if (status === 503 && body && body.dataState === "unavailable") {
-    return { dataState: "unavailable", reason, status };
+  if (status === 503 && body && typeof body.dataState === "string" && body.dataState.trim()) {
+    const state = normalizeDataState(body.dataState);
+    return { dataState: NOT_AN_ERROR_STATE.has(state) ? "unavailable" : (state as UnavailableState), reason, status };
   }
   return { dataState: "failed", reason, status };
 }
