@@ -41,7 +41,9 @@ function stripComments(src: string): string {
 }
 
 test("no trade-instruction language in subscriber-facing text", () => {
-  const files = [...walk(join(ROOT, "client/src")), ...walk(join(ROOT, "server"))];
+  // shared/ holds the pure composers whose strings reach every edition
+  // (0DTE map labels and zones, meme-structure categories, data-state titles).
+  const files = [...walk(join(ROOT, "client/src")), ...walk(join(ROOT, "server")), ...walk(join(ROOT, "shared"))];
   const hits: string[] = [];
   for (const abs of files) {
     const rel = abs.slice(ROOT.length);
