@@ -890,6 +890,8 @@ export interface ChainUnderlying {
   ask: number | null;
   /** Schwab underlying.close: previous session close as reported by the chain. */
   close?: number | null;
+  /** Schwab underlying.openPrice: today's regular-session open as reported by the chain (the 0DTE map's gap). */
+  openPrice?: number | null;
   /** Schwab underlying.quoteTime, epoch ms. */
   quoteTimeMs?: number | null;
   /** Schwab chain isDelayed flag (true would mean the entitlement serves delayed data). */
@@ -1030,6 +1032,7 @@ export async function getOptionChain(
         bid: num(u.bid),
         ask: num(u.ask),
         close: num(u.close),
+        openPrice: num(u.openPrice),
         quoteTimeMs,
         delayed: typeof data.isDelayed === "boolean" ? data.isDelayed : typeof u.delayed === "boolean" ? u.delayed : null,
       },
