@@ -207,3 +207,28 @@ test("chains: today's expiry disappears after the close; no chain for non-option
   assert.equal(demoChain({ symbol: "$VIX", strikeCount: 20 }, OPEN).status, "FAILED");
   assert.equal(demoSchwabPayload("trader/v1/userPreference", undefined, OPEN), null);
 });
+
+test("chains: open interest is static and totalVolume is monotone within a session (feeds the flow ledger without drops)", () => {
+  const params = { symbol: "$SPX", contractType: "ALL", strikeCount: 60, includeUnderlyingQuote: "true", fromDate: "2026-10-12", toDate: "2026-10-16" };
+  const times = [10 * 60, 11 * 60, 12 * 60 + 30, 14 * 60, 15 * 60 + 55].map((m) => etWallToEpochMs("2026-10-12", m));
+  const snaps = times.map((t) => demoChain(params, t));
+  let checked = 0;
+  for (const side of ["callExpDateMap", "putExpDateMap"] as const) {
+    for (const k of Object.keys(snaps[0][side])) {
+      for (const sk of Object.keys(snaps[0][side][k])) {
+        let prevVol = -1;
+        let oi: number | null = null;
+        for (const ch of snaps) {
+          const c = ch[side][k]?.[sk]?.[0];
+          if (!c) continue;
+          if (oi == null) oi = c.openInterest;
+          assert.equal(c.openInterest, oi, `${side} ${k} ${sk}: OI moved during the session`);
+          assert.ok(c.totalVolume >= prevVol, `${side} ${k} ${sk}: volume fell ${prevVol} -> ${c.totalVolume}`);
+          prevVol = c.totalVolume;
+          checked++;
+        }
+      }
+    }
+  }
+  assert.ok(checked > 500);
+});

@@ -20,6 +20,8 @@ import { whaleAlerts, whaleFollows } from "@shared/schema";
 import type { WhaleAlert, WhaleFollow } from "@shared/schema";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import type { WhaleHit } from "./flowAlertEngine";
+import { dedupKeysFor } from "./flowDedup";
+import { getFlowConfig } from "./flowConfig";
 import type { FollowPosition } from "./whaleFollowThrough";
 
 // ─── Entry-quote ledger (review items 4.4 / 8.2) ─────────────────────────────
@@ -290,13 +292,13 @@ export function loadRecentDedupKeys(windowMs = 24 * 60 * 60 * 1000): Array<{
       .orderBy(desc(whaleAlerts.detectedAt))
       .all() as WhaleAlert[];
     // Collapse to most-recent-detection per dedup key.
+    // Same keys the engine writes (flowDedup.ts), with the floor in force now.
+    const premiumFloor = getFlowConfig().premiumFloor;
     const seen = new Map<string, number>();
     for (const r of rows) {
-      const tier = Math.ceil(r.premium / 1_000_000);
-      const key = `${r.occ}|t${tier}`;
-      if (!seen.has(key)) seen.set(key, r.detectedAt);
-      const coarse = `coarse|${r.symbol}|${r.type}|${r.strike}|${r.expiration}|t${tier}`;
-      if (!seen.has(coarse)) seen.set(coarse, r.detectedAt);
+      const k = dedupKeysFor({ occ: r.occ, symbol: r.symbol, type: r.type, strike: r.strike, expiration: r.expiration, premium: r.premium, premiumFloor });
+      if (!seen.has(k.fine)) seen.set(k.fine, r.detectedAt);
+      if (!seen.has(k.coarse)) seen.set(k.coarse, r.detectedAt);
     }
     return Array.from(seen.entries()).map(([dedupKey, detectedAt]) => ({
       dedupKey,

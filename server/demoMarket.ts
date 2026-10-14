@@ -734,17 +734,27 @@ export function demoChain(params: Record<string, string | number> | undefined, t
     const T = Math.max(expMs - t, 5 * 60_000) / (365 * 86_400_000);
     const dte = Math.max(0, Math.round((Date.parse(`${exp}T12:00:00Z`) - Date.parse(`${today}T12:00:00Z`)) / 86_400_000));
     const atm = atmVol(idx, m, Math.max(T * 365, 0.25)) * spec.ivMult;
+    // Prior close's ATM vol (m = null gives the session close level) for the
+    // static OI / volume-profile moneyness below.
+    const atmPrev = (st.phase === "pre" ? atm : atmVol(idx - 1, null, dte + 0.5) * spec.ivMult) || atm;
     if (atmIvFront == null) atmIvFront = atm;
     const F = S * Math.exp((RATE - q) * T);
+    // Open interest is the prior close's figure and must not move with spot
+    // during the session; the volume profile hangs off the same static
+    // moneyness so totalVolume is monotone within a session (only volProg
+    // and the fixed per-contract draw enter).
+    const Tprev = (dte + 0.5) / 365;
+    const Fprev = Sprev * Math.exp((RATE - q) * Tprev);
     const monthly = isThirdFriday(exp);
     const expW = dte === 0 ? 0.7 : monthly ? 2.4 : dayOfWeek(exp) === 5 ? 1.4 : 0.8;
     const ck: Record<string, any[]> = {};
     const pk: Record<string, any[]> = {};
     for (const K of strikes) {
       const mStd = clamp(Math.log(K / F) / (atm * Math.sqrt(Math.max(T, 1 / 365))), -6, 6);
+      const mStdPrev = clamp(Math.log(K / Fprev) / (atmPrev * Math.sqrt(Tprev)), -6, 6);
       const skewSlope = spec.kind === "index" ? 0.18 : 0.08;
       const iv = clamp(atm * (1 - skewSlope * mStd + 0.03 * mStd * mStd), atm * 0.5, atm * 4);
-      const bell = Math.exp(-0.5 * (mStd / 1.6) ** 2) + 0.08 * Math.exp(-0.5 * (mStd / 3.5) ** 2);
+      const bell = Math.exp(-0.5 * (mStdPrev / 1.6) ** 2) + 0.08 * Math.exp(-0.5 * (mStdPrev / 3.5) ** 2);
       const roundBoost = K % (bigStep * 2) === 0 ? 2.6 : K % bigStep === 0 ? 1.8 : K % (spacing * 5) === 0 ? 1.3 : 1;
       for (const call of [true, false]) {
         const g = bsm(call, S, K, T, RATE, q, iv);
@@ -763,11 +773,11 @@ export function demoChain(params: Record<string, string | number> | undefined, t
         bid = r2(bid);
         ask = r2(ask);
         const mark = r2((bid + ask) / 2);
-        const side = call ? (K > S ? 1.15 : 0.55) : K < S ? 1.35 : 0.5;
+        const side = call ? (K > Sprev ? 1.15 : 0.55) : K < Sprev ? 1.35 : 0.5;
         const wall = dte <= 30 && ((call && K === callWall) || (!call && K === putWall)) ? 3.5 : 1;
         const rnd = 0.55 + 0.9 * uniform(`${sym}:oi:${exp}:${K}:${call ? "C" : "P"}:${tradeDate}`);
         const oi = Math.round(oiScale * bell * roundBoost * side * expW * wall * rnd);
-        const vr = dte === 0 ? 1.6 * Math.exp(-0.5 * (mStd / 1.2) ** 2) + 0.1 : 0.12 * bell + 0.02;
+        const vr = dte === 0 ? 1.6 * Math.exp(-0.5 * (mStdPrev / 1.2) ** 2) + 0.1 : 0.12 * bell + 0.02;
         const vol = Math.round(oi * vr * volProg * (0.5 + uniform(`${sym}:vo:${exp}:${K}:${call ? "C" : "P"}:${tradeDate}`)));
         const closePx = r2(Math.max(0, mark - g.delta * (S - Sprev)));
         const openPx = r2(Math.max(0, mark - g.delta * (S - Sopen)));
