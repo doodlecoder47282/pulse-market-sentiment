@@ -88,6 +88,10 @@ function buildRows(chain: any, opts: { minVolOi: number; minVolume: number; maxD
           const volume = Number(c.totalVolume ?? 0);
           if (volume < opts.minVolume) continue;
           const openInterest = zeroOi.has(String(c.symbol)) ? 0 : Number(c.openInterest ?? 0);
+          // The demo's sample sweeps (demoMarket.ts demoSweeps: vol/OI >= 15x,
+          // lifted at the ask) are real whale-shaped rows; this fixture tests
+          // the gate on ordinary rows plus its own three forced new strikes.
+          if (openInterest > 0 && volume / openInterest >= 15) continue;
           const isNewStrike = openInterest === 0;
           const volOiRatio = isNewStrike ? Number.POSITIVE_INFINITY : volume / openInterest;
           if (!isNewStrike && volOiRatio < opts.minVolOi) continue;
@@ -157,8 +161,9 @@ const T1 = etWallToEpochMs(DAY, 11 * 60);
 const T2 = T1 + 60_000;
 const PARAMS = { symbol: "SPY", contractType: "ALL", strikeCount: 200, includeUnderlyingQuote: "true", fromDate: DAY, toDate: addDays(DAY, 90) };
 // The engine filters minVolume 100 / minVolOi 2 / maxDte 90 / top 200. The demo
-// market never reaches vol/OI 2 (BATCAVE_STATE: "whale flow is always empty on
-// the demo"; simulated vol/OI peaks at 0.74 for 0DTE and 0.07 beyond), so the
+// market's formula volume never reaches vol/OI 2 (simulated vol/OI peaks at
+// 0.74 for 0DTE and 0.07 beyond; the sample sweeps added later are excluded in
+// buildRows so this fixture keeps its ordinary rows), so the
 // fixture relaxes minVolOi to 0.05 to get rows into the ledger and zeroes the OI
 // of three non-0DTE rows (new-strike path) so the full gate is exercised (only
 // one 1-3 DTE row reaches the demo's top 200, so the DTE band is widened in the

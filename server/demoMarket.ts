@@ -693,6 +693,49 @@ function occSymbol(root: string, date: IsoDate, call: boolean, strike: number): 
 const _chains = new Map<string, { at: number; data: any }>();
 const CHAIN_CAP = 6;
 
+/** One sample sweep: a block of contracts lifted at the ask at a fixed session minute. */
+interface DemoSweep {
+  exp: IsoDate;
+  call: boolean;
+  /** |delta| the strike is chosen for (0.30-0.55: the whale gate's band). */
+  targetDelta: number;
+  /** Session minute the volume lands; the contract shows the day's base trade before it. */
+  minute: number;
+  /** Premium of the block at the contract's mark. */
+  premiumUsd: number;
+}
+
+/**
+ * Sample unusual activity: the formula volume never exceeds open interest
+ * by the whale gate's 15x, so without these the demo's whale panel is
+ * always empty. A few sweeps per symbol and trade date, deterministic:
+ * 1-3 DTE, strike by target delta, premium $4M-$10M at the prior close's
+ * price (the gate's $2.5M floor holds through an intraday repricing), at a fixed
+ * minute at the ask, on a thin strike (small static OI). Nothing is
+ * labelled as real: the chain stays sample data.
+ */
+function demoSweeps(sym: string, tradeDate: IsoDate, exps: IsoDate[], today: IsoDate, sessionMinutes: number): DemoSweep[] {
+  const near = exps.filter((e) => {
+    const dte = Math.round((Date.parse(`${e}T12:00:00Z`) - Date.parse(`${today}T12:00:00Z`)) / 86_400_000);
+    return dte >= 1 && dte <= 3;
+  });
+  if (near.length === 0) return [];
+  const u = (k: string) => uniform(`${sym}:sweep:${tradeDate}:${k}`);
+  const major = DAILY_EXPIRY.has(sym);
+  const n = major ? 1 + Math.floor(u("n") * 3) : Math.floor(u("n") * 3); // majors 1-3, single names 0-2
+  const out: DemoSweep[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push({
+      exp: near[Math.floor(u(`e${i}`) * near.length)],
+      call: u(`c${i}`) < 0.6,
+      targetDelta: 0.3 + u(`d${i}`) * 0.25,
+      minute: 15 + Math.floor(u(`m${i}`) * Math.max(1, sessionMinutes - 45)),
+      premiumUsd: 4_000_000 + u(`p${i}`) * 6_000_000,
+    });
+  }
+  return out;
+}
+
 export function demoChain(params: Record<string, string | number> | undefined, t: number): any | null {
   const sym = String(params?.symbol ?? "");
   const spec = specFor(sym);
@@ -740,6 +783,7 @@ export function demoChain(params: Record<string, string | number> | undefined, t
   const putMap: Record<string, Record<string, any[]>> = {};
   let contracts = 0;
   let atmIvFront: number | null = null;
+  const sweeps = demoSweeps(sym, tradeDate, exps, today, L);
 
   for (const exp of exps) {
     const expMs = etWallToEpochMs(exp, REGULAR_OPEN_MIN + simSessionMinutes(exp));
@@ -761,6 +805,20 @@ export function demoChain(params: Record<string, string | number> | undefined, t
     const expW = dte === 0 ? 0.7 : monthly ? 2.4 : dayOfWeek(exp) === 5 ? 1.4 : 0.8;
     const ck: Record<string, any[]> = {};
     const pk: Record<string, any[]> = {};
+    // Sweeps on this expiry: the listed strike whose delta at the prior close
+    // is nearest the target, and the block size at the prior close's price, so
+    // the strike, its open interest and the block are fixed for the day.
+    const sweepAt = new Map<string, { sweep: DemoSweep; size: number }>();
+    for (const sw of sweeps) {
+      if (sw.exp !== exp) continue;
+      let bestK = strikes[0], bestD = Infinity, bestPx = 0;
+      for (const K of strikes) {
+        const g0 = bsm(sw.call, Sprev, K, Tprev, RATE, q, atmPrev);
+        const d = Math.abs(Math.abs(g0.delta) - sw.targetDelta);
+        if (d < bestD) { bestD = d; bestK = K; bestPx = g0.price; }
+      }
+      if (bestPx > 0) sweepAt.set(`${bestK}|${sw.call ? "C" : "P"}`, { sweep: sw, size: Math.max(1, Math.round(sw.premiumUsd / (bestPx * 100))) });
+    }
     for (const K of strikes) {
       const mStd = clamp(Math.log(K / F) / (atm * Math.sqrt(Math.max(T, 1 / 365))), -6, 6);
       const mStdPrev = clamp(Math.log(K / Fprev) / (atmPrev * Math.sqrt(Tprev)), -6, 6);
@@ -788,12 +846,22 @@ export function demoChain(params: Record<string, string | number> | undefined, t
         const side = call ? (K > Sprev ? 1.15 : 0.55) : K < Sprev ? 1.35 : 0.5;
         const wall = dte <= 30 && ((call && K === callWall) || (!call && K === putWall)) ? 3.5 : 1;
         const rnd = 0.55 + 0.9 * uniform(`${sym}:oi:${exp}:${K}:${call ? "C" : "P"}:${tradeDate}`);
-        const oi = Math.round(oiScale * bell * roundBoost * side * expW * wall * rnd);
+        const hit = sweepAt.get(`${K}|${call ? "C" : "P"}`) ?? null;
+        const sweep = hit?.sweep ?? null;
+        const sweepSize = hit?.size ?? 0;
+        // A sweep strike is thin: its open interest is small and, like every
+        // strike's, fixed for the day; the block arrives at the sweep minute.
+        const oi = sweep
+          ? 10 + Math.round(sweepSize / (18 + 30 * uniform(`${sym}:so:${exp}:${K}:${call}:${tradeDate}`)))
+          : Math.round(oiScale * bell * roundBoost * side * expW * wall * rnd);
         const vr = dte === 0 ? 1.6 * Math.exp(-0.5 * (mStdPrev / 1.2) ** 2) + 0.1 : 0.12 * bell + 0.02;
-        const vol = Math.round(oi * vr * volProg * (0.5 + uniform(`${sym}:vo:${exp}:${K}:${call ? "C" : "P"}:${tradeDate}`)));
+        const sweptNow = !!sweep && volProg > 0 && (m == null || m >= sweep.minute);
+        const vol = Math.round(oi * vr * volProg * (0.5 + uniform(`${sym}:vo:${exp}:${K}:${call ? "C" : "P"}:${tradeDate}`))) + (sweptNow ? sweepSize : 0);
         const closePx = r2(Math.max(0, mark - g.delta * (S - Sprev)));
         const openPx = r2(Math.max(0, mark - g.delta * (S - Sopen)));
-        const lastPx = vol > 0 ? r2(Math.max(0, mark + (uniform(`${sym}:lp:${exp}:${K}:${call}:${minuteKey}`) - 0.5) * (ask - bid))) : closePx;
+        // After the sweep the last print is the lift at the ask.
+        const lastPx = sweptNow ? ask : vol > 0 ? r2(Math.max(0, mark + (uniform(`${sym}:lp:${exp}:${K}:${call}:${minuteKey}`) - 0.5) * (ask - bid))) : closePx;
+        const sweepMs = sweep ? etWallToEpochMs(tradeDate, REGULAR_OPEN_MIN + sweep.minute) : 0;
         const contract = {
           putCall: call ? "CALL" : "PUT",
           symbol: occSymbol(root, exp, call, K),
@@ -805,13 +873,13 @@ export function demoChain(params: Record<string, string | number> | undefined, t
           mark,
           bidSize: 1 + Math.floor(uniform(`${sym}:bz:${exp}:${K}:${call}:${minuteKey}`) * 40),
           askSize: 1 + Math.floor(uniform(`${sym}:az:${exp}:${K}:${call}:${minuteKey}`) * 40),
-          lastSize: vol > 0 ? 1 + Math.floor(uniform(`${sym}:lz:${exp}:${K}:${call}:${minuteKey}`) * 10) : 0,
+          lastSize: sweptNow ? Math.min(sweepSize, 500) : vol > 0 ? 1 + Math.floor(uniform(`${sym}:lz:${exp}:${K}:${call}:${minuteKey}`) * 10) : 0,
           highPrice: r2(Math.max(openPx, mark, closePx) * 1.04),
           lowPrice: r2(Math.min(openPx, mark, closePx) * 0.96),
           openPrice: openPx,
           closePrice: closePx,
           totalVolume: vol,
-          tradeTimeInLong: vol > 0 ? nowQuoteMs - Math.floor(uniform(`${sym}:tt:${exp}:${K}:${call}:${minuteKey}`) * 50_000) : 0,
+          tradeTimeInLong: sweptNow ? Math.min(sweepMs, nowQuoteMs) : vol > 0 ? nowQuoteMs - Math.floor(uniform(`${sym}:tt:${exp}:${K}:${call}:${minuteKey}`) * 50_000) : 0,
           quoteTimeInLong: nowQuoteMs,
           netChange: r2(mark - closePx),
           volatility: r2(iv * 100),

@@ -293,10 +293,14 @@ export function gateInputs(c: SchwabFlowContract, s: FlowSummary | null): {
     const read = askSideRead(s);
     return { premium, premiumBasis: "observed-prices", askSide: read.askSide, sideBasis: read.basis, sideDetail: read.detail };
   }
-  // First scan (or nothing traded since): the day's volume at the current mid, side from the last print.
+  // First scan, or nothing traded since: the day's volume at the first scan's
+  // mid (held while the ledger lives, so a quote that drifts between scans
+  // cannot lower the premium and drop the dedup tier); the current mid only
+  // when the first scan had no usable quote. Side from the last print.
   const askSide = c.tag === "AT_ASK" || c.tag === "ABOVE_ASK";
   const side = askSide ? "ask" : c.tag === "AT_BID" || c.tag === "BELOW_BID" ? "bid" : "mid";
-  return { premium: c.notional, premiumBasis: "volume-x-mid", askSide, sideBasis: "last-print-only", sideDetail: `last print only (${side}); no prints attributed yet this session` };
+  const premium = s && s.preScanPremiumAtMid > 0 ? s.preScanPremiumAtMid : c.notional;
+  return { premium, premiumBasis: "volume-x-mid", askSide, sideBasis: "last-print-only", sideDetail: `last print only (${side}); no prints attributed yet this session` };
 }
 
 export function isWhale(c: SchwabFlowContract, s: FlowSummary | null = null): { whale: boolean; reason: string } {

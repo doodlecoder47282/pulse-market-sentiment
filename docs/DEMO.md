@@ -19,6 +19,13 @@ flow alert and score is sample data, and every screen says so.
 - The status pill reads **SAMPLE DATA**; freshness chips credit "Sample", not
   Schwab; live badges read **SAMPLE**.
 - Settings explains the demo and has no Schwab sign-in.
+- The whale-flow panel shows a few **sample sweeps** a day (`demoSweeps` in
+  `server/demoMarket.ts`): 1-3 DTE blocks of $4M-$10M lifted at the ask on
+  thin strikes at a fixed session minute, one to three on SPX/SPY/QQQ and up
+  to two on a single name when it has a 1-3 DTE expiry. They are the only
+  contracts whose volume exceeds open interest by the whale gate's 15x; the
+  rest of the chain trades its formula volume. Nothing is shown before the
+  open or in the first 15 minutes of the session.
 
 ## Safety rules the code enforces
 

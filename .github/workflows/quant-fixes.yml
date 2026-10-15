@@ -280,6 +280,19 @@ jobs:
               const ok = code === "200" && typeof j.block === "string" && Array.isArray(j.lines) && j.lines.length >= 3 && j.inputs && j.inputs.spot > 0;
               console.log((ok ? "PASS" : "FAIL") + " decision support: " + code + ", " + (j.lines ? j.lines.length : 0) + " lines, spot " + (j.inputs && j.inputs.spot) + (ok ? "" : " body " + JSON.stringify(j).slice(0, 200)));
             ' "$dcode"
+            # Whale flow on the sample chains: the sample sweeps (1-3 DTE, lifted at the ask) pass the gate once the
+            # session is 15 minutes old; pre-market and the first minutes after the open legitimately have none.
+            curl -s -m 120 "$B/api/flow/preview" > rep/demo/flow-preview.json
+            node -e '
+              const j = JSON.parse(require("fs").readFileSync("rep/demo/flow-preview.json", "utf8"));
+              const p = {}; for (const x of new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour12: false, hour: "2-digit", minute: "2-digit", weekday: "short" }).formatToParts(new Date())) p[x.type] = x.value;
+              const mins = (Number(p.hour) % 24) * 60 + Number(p.minute);
+              const quiet = !["Sat", "Sun"].includes(p.weekday) && mins < 9 * 60 + 45;
+              const whales = Object.values(j.byTicker || {}).flatMap((t) => t.whales || []);
+              const reasonsOk = whales.every((w) => /premium \((at observed prices|volume x mid, first scan)\)/.test(w.reason || ""));
+              const ok = j.dataState === "ok" && j.tickersScanned >= 10 && reasonsOk && (quiet ? true : whales.length >= 1);
+              console.log((ok ? "PASS" : "FAIL") + " whale flow preview: state " + j.dataState + ", " + j.tickersScanned + " tickers, " + j.totalScanned + " contracts, " + whales.length + " whales" + (quiet ? " (pre-open: none expected)" : "") + (whales[0] ? ", e.g. " + whales[0].symbol + " " + whales[0].occ.trim() + " " + whales[0].reason : ""));
+            '
             wcode=$(curl -s -o /dev/null -m 30 -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{"tokenAddress":"So11111111111111111111111111111111111111112"}' "$B/api/crypto/community")
             [ "$wcode" = "405" ] || [ "$wcode" = "403" ] && echo "PASS community write refused ($wcode)" || { echo "FAIL community write returned $wcode"; fail=1; }
 

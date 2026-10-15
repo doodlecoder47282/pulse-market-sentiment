@@ -252,3 +252,60 @@ test("chains: open interest is static and totalVolume is monotone within a sessi
   }
   assert.ok(checked > 500);
 });
+
+// Sample sweeps: without them the formula volume never exceeds open interest
+// by the whale gate's 15x and the demo's whale panel is always empty.
+function contractsOf(ch: any): any[] {
+  const out: any[] = [];
+  for (const map of [ch.callExpDateMap, ch.putExpDateMap]) {
+    for (const [k, byStrike] of Object.entries<any>(map)) {
+      const dte = Number(k.split(":")[1]);
+      for (const arr of Object.values<any[]>(byStrike)) for (const c of arr) out.push({ ...c, dte });
+    }
+  }
+  return out;
+}
+const whaleShaped = (c: any) =>
+  c.dte >= 1 && c.dte <= 3 && c.openInterest > 0 && c.totalVolume / c.openInterest >= 15
+  && c.totalVolume * c.mark * 100 >= 2_500_000 && c.last === c.ask && Math.abs(c.delta) >= 0.2 && Math.abs(c.delta) <= 0.8;
+
+test("chains: sample sweeps are whale-shaped (1-3 DTE, lifted at the ask, >= $2.5M, vol/OI >= 15x), OI fixed all day, none pre-market", () => {
+  const params = { symbol: "SPY", contractType: "ALL", strikeCount: 60, fromDate: "2026-10-12", toDate: "2026-10-16" };
+  const post = contractsOf(demoChain(params, POST));
+  const whales = post.filter(whaleShaped);
+  assert.ok(whales.length >= 1 && whales.length <= 3, `SPY sweeps after the close: ${whales.length}`);
+  for (const w of whales) {
+    // Same contract during the session: identical open interest, volume no higher than at the close.
+    const open = contractsOf(demoChain(params, OPEN)).find((c) => c.symbol === w.symbol);
+    assert.ok(open, "sweep strike listed in the session");
+    assert.equal(open.openInterest, w.openInterest, "open interest is the prior close's figure all day");
+    assert.ok(open.totalVolume <= w.totalVolume);
+    assert.ok(w.tradeTimeInLong <= w.quoteTimeInLong && w.tradeTimeInLong > 0, "the lift has a trade time inside the session");
+    assert.ok(w.lastSize >= 100, "the last print is a block");
+    assert.match(w.description, /\(sample\)$/);
+  }
+  // Nothing traded before the open: no sweep, no premium.
+  assert.equal(contractsOf(demoChain(params, PRE)).filter(whaleShaped).length, 0);
+  // Deterministic across calls and a different minute of the same day keeps the same sweep strikes.
+  const again = contractsOf(demoChain(params, POST + 60_000)).filter(whaleShaped).map((c) => c.symbol).sort();
+  assert.deepEqual(again, whales.map((c) => c.symbol).sort());
+  // The sweep strikes are thin: without the block, volume stays under the gate.
+  for (const w of whales) assert.ok(w.openInterest < w.totalVolume / 15 && w.openInterest >= 10);
+});
+
+test("chains: single names only get sweeps when a 1-3 DTE expiry is listed (Fridays)", () => {
+  const monday = { symbol: "NVDA", contractType: "ALL", strikeCount: 60, fromDate: "2026-10-12", toDate: "2026-10-30" };
+  const dtes = contractsOf(demoChain(monday, POST)).map((c) => c.dte);
+  assert.ok(!dtes.some((d) => d >= 1 && d <= 3), "NVDA has no 1-3 DTE expiry on a Monday");
+  assert.equal(contractsOf(demoChain(monday, POST)).filter(whaleShaped).length, 0);
+  // Wednesday 2026-10-14 17:00 ET: Friday is 2 DTE, sweeps possible (0-2, deterministic).
+  const wed = etWallToEpochMs("2026-10-14", 17 * 60);
+  const n = contractsOf(demoChain({ ...monday, fromDate: "2026-10-14" }, wed)).filter(whaleShaped).length;
+  assert.ok(n >= 0 && n <= 2, `NVDA sweeps on a Wednesday: ${n}`);
+  // Across the single-name watchlist at least one name sweeps that day.
+  let total = 0;
+  for (const sym of ["NVDA", "TSLA", "AAPL", "MSFT", "META", "GOOGL", "AMZN", "AMD", "AVGO"]) {
+    total += contractsOf(demoChain({ ...monday, symbol: sym, fromDate: "2026-10-14" }, wed)).filter(whaleShaped).length;
+  }
+  assert.ok(total >= 1, `single-name sweeps on 2026-10-14: ${total}`);
+});
