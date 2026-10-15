@@ -396,3 +396,29 @@ test("quote freshness: stale only during the session, unknown age is not live", 
   const saturday = ms("2026-10-10T12:00:00-04:00");
   assert.deepEqual(quoteFreshness(null, saturday), { ageMs: null, stale: false, marketOpen: false });
 });
+
+// VRP: the vendor's theoretical vol is only a premium basis when it differs
+// from the market IV; a field that repeats the IV reads "no model", never
+// "fair". Sign: market - theoretical (positive = implied above the model).
+test("chainAudit VRP: identical vendor vol is no_model; an independent one gives rich/cheap/fair by sign, descriptively", () => {
+  const S = 6600, sigma = 0.15, T = 120 / 525_600;
+  const now = ms("2026-10-09T14:00:00-04:00");
+  const mk = (theoPct: number | null, mktPct = 20) => {
+    const c: any = contract("SPXW  261009C06600000", 6600, "C", S, sigma, T, mktPct);
+    c.theoreticalVolatility = theoPct;
+    return { underlying: { last: S, bid: S, ask: S }, source: "schwab", callExpDateMap: { "2026-10-09:0": { "6600.0": [c] } }, putExpDateMap: {} } as any;
+  };
+  const same = buildChainAudit(mk(20), S, now).vrp[0];
+  assert.equal(same.signal, "no_model");
+  assert.equal(same.vrp, null);
+  assert.ok(same.marketIV != null && same.theoreticalIV != null, "the IVs are still shown");
+  const rich = buildChainAudit(mk(15), S, now).vrp[0];     // market 20 vs model 15: implied above the model
+  assert.equal(rich.signal, "iv_rich");
+  assert.ok(rich.vrp != null && Math.abs(rich.vrp - 0.05) < 1e-9, `vrp ${rich.vrp}`);
+  const cheap = buildChainAudit(mk(26), S, now).vrp[0];
+  assert.equal(cheap.signal, "iv_cheap");
+  assert.ok(cheap.vrp != null && cheap.vrp < -0.02);
+  assert.equal(buildChainAudit(mk(21), S, now).vrp[0].signal, "fair");
+  assert.equal(buildChainAudit(mk(null), S, now).vrp[0].signal, "n/a");
+  for (const s of [same, rich, cheap]) assert.doesNotMatch(s.signal, /sell|buy/, "signals describe, they do not instruct");
+});
