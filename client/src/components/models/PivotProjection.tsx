@@ -115,7 +115,7 @@ function patternLabel(s: Pattern["setup"]): string {
 const CHART_W = 720;
 const CHART_H = 360;
 const PAD_L = 50;
-const PAD_R = 110;
+const PAD_R = 150; // right-edge labels up to "zeroGamma · 6881.08 ×2" (monospace 10 px)
 const PAD_T = 12;
 const PAD_B = 28;
 const PLOT_W = CHART_W - PAD_L - PAD_R;
