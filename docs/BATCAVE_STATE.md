@@ -454,9 +454,30 @@ overlapping text, 0 SVG overlaps (Signals and Models fixed), 0 tap
 targets under 24 px, Edge Lab CLS 0 on all seven viewports (worst CLS on
 the run 0.009, wide).
 
-Next step: owner reviews the Signals GEX chart and the Models chart labels
-live during a session (CI only sees the no-Schwab and demo renders), then
-approves merging quant-fixes to main.
+Later the same evening (owner away, authorized to continue without
+questions):
+10. 513dbf8 Schwab fetches bounded: 30 s per data attempt
+    (SCHWAB_FETCH_TIMEOUT_MS overrides), 15 s token, 10 s self-test probe;
+    timeouts say "timed out after N s". Source-guard test.
+11. 30f79d7 Demo sample sweeps (docs/DEMO.md) so the whale panel is not
+    always empty; flowAlertEngine.gateInputs holds the first-scan premium
+    while the ledger lives (a drifting quote could lower it and drop the
+    dedup tier). CI 38678412937 GREEN: 667 tests, 665 pass; demo smoke
+    "8 whales, e.g. SPX SPXW 261016P06950000 $6.97M premium (volume x mid,
+    first scan) / vol/OI 33.1x / AT_ASK last print / 2DTE"; UX budgets pass.
+12. d72da0e The remaining 53 tsc errors cleared (head should read 0 vs
+    base 162). Two were real defects: the Daily Playbook scenario bands
+    filled from the axis floor (function `baseLine` is not a recharts prop;
+    now a range area), and the models base-target "charm drift" was always
+    0 (field never existed; made explicit, base target = spot).
+13. d913fad Pivot projection right-edge labels spread apart
+    (shared/labelStack.ts) with connectors; they printed on top of each
+    other for levels a few points apart.
+CI evidence for 12-13: PENDING.
+
+Next step: owner reviews the Signals GEX chart, the Models chart labels and
+the Daily Playbook bands live during a session (CI only sees the no-Schwab
+and demo renders), then approves merging quant-fixes to main.
 
 Not changed, still open: Schwab fetches themselves have no timeout (the
 retry loop can wait up to the undici default); demo whale flow is always
