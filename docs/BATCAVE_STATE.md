@@ -473,7 +473,23 @@ questions):
 13. d913fad Pivot projection right-edge labels spread apart
     (shared/labelStack.ts) with connectors; they printed on top of each
     other for levels a few points apart.
-CI evidence for 12-13: PENDING.
+14. 2bc4935 Daily Playbook magnet labels spread with connectors (they
+    stacked at the same y) and the right margin widened (labels clipped);
+    pivot projection gutter 110 -> 150 px (labels clipped once spread).
+15. c767112 Chain audit VRP: Schwab's theoreticalVolatility mirrors the IV,
+    so every expiry read "+0.0pp Neutral"; rows now say "No model vol" with
+    the IVs shown and the panel says why. Sign now market - theoretical as
+    the guide says, 2 pp threshold as the guide says (code used 1 pp), and
+    the "Sell Vol" / "Buy Vol" badges are "IV rich" / "IV cheap" / "Fair".
+16. 9d9fdef no-advice check also catches "sell/buy vol|volatility|gamma";
+    the 0DTE contract chart's volume labels read buy-side / sell-side.
+
+CI evidence: run 38679745905 (6ac8d5e, items 12-13) and 38681724045
+(2bc4935, item 14) and 38683594295 (9d9fdef, items 15-16), all GREEN:
+tsc head 0 vs base 162 (no tsc error left on the branch); 671 tests,
+669 pass, 0 fail, 2 skipped; demo smoke 14 PASS, 0 FAIL; UX budgets pass
+on all seven viewports. Demo Models screenshot checked by eye: playbook
+bands between Lo and Hi, playbook and pivot labels spread, none clipped.
 
 Next step: owner reviews the Signals GEX chart, the Models chart labels and
 the Daily Playbook bands live during a session (CI only sees the no-Schwab
