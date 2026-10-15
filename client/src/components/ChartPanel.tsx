@@ -422,7 +422,7 @@ export default function ChartPanel() {
           <>
           {/* The chart — engine-specific */}
           {engine === "tv" ? (
-            <TradingViewWidget symbol={activeChart} interval={interval === "tick" ? "1m" : interval} height={640} />
+            <TradingViewWidget symbol={activeChart} interval={interval} height={640} />
           ) : ohlcQuery.isLoading && !ohlc ? (
             <div className="flex h-[440px] items-center justify-center rounded-lg border border-border/40 bg-muted/10 text-sm text-muted-foreground">
               Loading candles…

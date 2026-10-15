@@ -2029,18 +2029,21 @@ function buildAlert(
 
 
   // Try picking from Schwab chain via wire15 context
-  let pickedContract: {
+  type PickedContract = {
     strike: number; delta: number; gamma: number; theta: number; vega: number;
     midPrice: number; iv: number; bid: number | null; ask: number | null;
     key: string; expiry: string; openInterest: number; volume: number;
-  } | null = null;
+  };
+  // (A named type: `typeof pickedContract` below this `= null` narrows to
+  // null, which made the candidate list `null[]` and every field read `never`.)
+  let pickedContract: PickedContract | null = null;
 
   if (args.wire15?.schwabChain && args.wire15.todayExpKey) {
     const expMap = (side === "call"
       ? args.wire15.schwabChain.callExpDateMap
       : args.wire15.schwabChain.putExpDateMap) ?? {};
     const strikesObj = expMap[args.wire15.todayExpKey] ?? {};
-    const bandCandidates: typeof pickedContract[] = [];
+    const bandCandidates: PickedContract[] = [];
     for (const [strikeStr, contracts] of Object.entries(strikesObj as Record<string, any[]>)) {
       const sk = parseFloat(strikeStr);
       if (!isFinite(sk)) continue;
@@ -2072,9 +2075,9 @@ function buildAlert(
     // Prefer between spot and T1
     const lo = Math.min(args.spot, t1Lv.price);
     const hi = Math.max(args.spot, t1Lv.price);
-    const betweenCands = bandCandidates.filter((c) => c !== null && c!.strike > lo && c!.strike < hi);
+    const betweenCands = bandCandidates.filter((c) => c.strike > lo && c.strike < hi);
     const pool = betweenCands.length > 0 ? betweenCands : bandCandidates;
-    pickedContract = (pool as NonNullable<typeof pickedContract>[]).reduce((a, b) =>
+    pickedContract = pool.reduce((a, b) =>
       Math.abs(a.strike - args.spot) <= Math.abs(b.strike - args.spot) ? a : b,
     );
   }
@@ -2160,9 +2163,7 @@ function buildAlert(
     // implied vol), buy at the ask, sell at projected mid - half spread, fee
     // per contract per side. The old version used time-now delta/gamma plus
     // the whole decay to the close charged at spot and no exit cost.
-    // Explicitly typed view: tsc infers pickedContract as never here (the
-    // `typeof pickedContract[]` candidate array is typed while it is null).
-    const pc: { strike: number; expiry: string; key: string; bid: number | null; ask: number | null; iv: number } = pickedContract;
+    const pc: PickedContract = pickedContract;
     // N-2: the path uses the ATM vol of the same expiry (solved on our clock);
     // the picked strike is repriced with its own vol (sticky strike).
     const sideMap = args.wire15?.schwabChain

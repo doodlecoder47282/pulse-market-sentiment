@@ -426,17 +426,19 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
                 }}
               />
 
-              {/* Path bands (Hi - Lo as area) */}
+              {/* Path bands: a range area between Lo and Hi. (A function
+                  `baseLine` is not a recharts prop: it was overridden by the
+                  computed baseline, so each band filled from the axis floor.) */}
               {ordered.map(k => (
                 <Area
                   key={`band-${k}`}
-                  dataKey={`${k}Hi`}
+                  name={`${k}Band`}
+                  dataKey={(d: any) => [d[`${k}Lo`], d[`${k}Hi`]]}
                   stroke="none"
                   fill={PATH_FILLS[k]}
                   isAnimationActive={false}
-                  // Use the lower bound as the baseline so the area renders between Lo and Hi
-                  baseLine={(d: any) => d[`${k}Lo`]}
                   legendType="none"
+                  tooltipType="none"
                 />
               ))}
 

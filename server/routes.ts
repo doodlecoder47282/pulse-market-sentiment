@@ -5893,7 +5893,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       try {
         const ch = await schwabGetOptionChain("$SPX", 45);
         if ("error" in ch) mlChainCache = { at, chain: null, reason: `chain_${ch.error}` };
-        else if (ch.source !== "schwab") mlChainCache = { at, chain: null, reason: `chain_source_${ch.source}_refused` };
+        else if ((ch as { source?: string }).source !== "schwab") mlChainCache = { at, chain: null, reason: `chain_source_${(ch as { source?: string }).source}_refused` };
         // The guard reads the chain's own symbol when the fetch layer reports one.
         else mlChainCache = { at, chain: { ...ch, symbol: (ch as any).symbol ?? "$SPX" }, reason: null };
       } catch {
