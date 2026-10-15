@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Activity, Target, AlertTriangle, RefreshCw } from "lucide-react";
+import { spreadLabels } from "@shared/labelStack";
 
 type Level = {
   label: string;
@@ -341,9 +342,14 @@ export default function PivotProjection({
                   </g>
                 ))}
 
-                {/* Pivot levels — horizontal lines + right-edge labels */}
-                {data.levels.map((lv, i) => {
+                {/* Pivot levels — horizontal lines + right-edge labels. Labels
+                    of levels a few points apart are spread so none overlaps,
+                    with a short connector back to the level's line. */}
+                {(() => {
+                  const slots = spreadLabels(data.levels.map((l) => lineY(l.price)), 13, PAD_T + 6, PAD_T + PLOT_H - 6);
+                  return data.levels.map((lv, i) => {
                   const y = lineY(lv.price);
+                  const ly = slots[i];
                   const isSelected = selectedLevel === lv.label;
                   return (
                     <g
@@ -362,17 +368,20 @@ export default function PivotProjection({
                         strokeDasharray={tierDash(lv.tier)}
                         opacity={lv.tier === "minor" ? 0.5 : 0.85}
                       />
+                      {Math.abs(ly - y) > 1 && (
+                        <line x1={PAD_L + PLOT_W} y1={y} x2={PAD_L + PLOT_W + 4} y2={ly} stroke={tierColor(lv.tier)} strokeWidth={0.75} opacity={0.7} />
+                      )}
                       <rect
-                        x={PAD_L + PLOT_W + 2}
-                        y={y - 6}
-                        width={PAD_R - 6}
+                        x={PAD_L + PLOT_W + 4}
+                        y={ly - 6}
+                        width={PAD_R - 8}
                         height={12}
                         fill={isSelected ? tierColor(lv.tier) : "#000"}
                         opacity={isSelected ? 0.9 : 0.55}
                       />
                       <text
-                        x={PAD_L + PLOT_W + 6}
-                        y={y + 3}
+                        x={PAD_L + PLOT_W + 7}
+                        y={ly + 3}
                         fontSize={10}
                         fill={isSelected ? "#000" : tierColor(lv.tier)}
                         fontFamily="monospace"
@@ -383,7 +392,8 @@ export default function PivotProjection({
                       </text>
                     </g>
                   );
-                })}
+                  });
+                })()}
 
                 {/* Current spot — bright cyan line */}
                 <line
