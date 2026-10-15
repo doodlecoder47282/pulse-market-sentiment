@@ -37,3 +37,20 @@ test("last session date is the ET date of the newest bar", () => {
   assert.equal(lastSessionDate([]), null);
   assert.equal(lastSessionDate([{ datetime: "x" }]), null);
 });
+
+// Every Schwab request is bounded (server/schwab.ts): a request that never
+// answered used to hold its caller for the undici default of five minutes,
+// which is what put every client on the loading skeleton. schwab.ts cannot
+// be imported here (it opens the token store), so the guard reads the source.
+import { readFileSync } from "node:fs";
+test("schwab: every fetch carries an AbortSignal.timeout", () => {
+  const src = readFileSync(new URL("../../server/schwab.ts", import.meta.url), "utf8");
+  const calls = Array.from(src.matchAll(/await fetch\(([\s\S]*?)\);/g));
+  assert.ok(calls.length >= 4, `found ${calls.length} fetch calls`);
+  for (const m of calls) {
+    assert.match(m[1], /signal: AbortSignal\.timeout\(SCHWAB_[A-Z_]+_TIMEOUT_MS\)/, `unbounded fetch: ${m[0].slice(0, 80)}`);
+  }
+  // Timeouts name themselves in the degraded reason rather than "The operation was aborted".
+  assert.match(src, /name === "TimeoutError"/);
+  assert.match(src, /timed out after \$\{Math\.round\(timeoutMs \/ 1000\)\} s/);
+});

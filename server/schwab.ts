@@ -41,6 +41,19 @@ const getClientSecret = () => process.env.SCHWAB_CLIENT_SECRET ?? "";
 const getRedirectUri = () => process.env.SCHWAB_REDIRECT_URI ?? "https://127.0.0.1";
 
 const SCHWAB_BASE = "https://api.schwabapi.com";
+// Every Schwab request is bounded: a request that never answers used to hold
+// its caller (and anything joining a shared build) for the undici default of
+// five minutes. Data requests get 30 s per attempt (a 45-DTE SPY chain is a
+// few MB), token calls 15 s, the self-test probes 10 s.
+const SCHWAB_FETCH_TIMEOUT_MS = (() => { const n = Number(process.env.SCHWAB_FETCH_TIMEOUT_MS); return Number.isFinite(n) && n >= 1000 ? n : 30_000; })();
+const SCHWAB_TOKEN_TIMEOUT_MS = 15_000;
+const SCHWAB_PROBE_TIMEOUT_MS = 10_000;
+/** "timed out after N s" for an AbortSignal.timeout abort, else the error's message. */
+function fetchErrorText(e: unknown, timeoutMs: number): string {
+  const x = e as { name?: unknown; message?: unknown } | null;
+  if (x && (x.name === "TimeoutError" || x.name === "AbortError")) return `timed out after ${Math.round(timeoutMs / 1000)} s`;
+  return typeof x?.message === "string" && x.message ? x.message : "network";
+}
 const TOKEN_URL = `${SCHWAB_BASE}/v1/oauth/token`;
 const MARKET_BASE = `${SCHWAB_BASE}/marketdata/v1`;
 
@@ -89,6 +102,7 @@ async function doRefresh(
     const basic = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64");
     const res = await fetch(TOKEN_URL, {
       method: "POST",
+      signal: AbortSignal.timeout(SCHWAB_TOKEN_TIMEOUT_MS),
       headers: {
         Authorization: `Basic ${basic}`,
         "Content-Type": "application/x-www-form-urlencoded",
@@ -132,8 +146,9 @@ async function doRefresh(
     _lastRefreshError = null;
     return data.access_token;
   } catch (e: any) {
-    console.warn("[schwab] token refresh exception:", e?.message);
-    _lastRefreshError = { at: Date.now(), status: 0, message: e?.message ?? "unknown" };
+    const why = fetchErrorText(e, SCHWAB_TOKEN_TIMEOUT_MS);
+    console.warn("[schwab] token refresh exception:", why);
+    _lastRefreshError = { at: Date.now(), status: 0, message: why };
     _refreshFailUntil = Date.now() + 60_000;
     return null;
   }
@@ -151,6 +166,7 @@ export async function exchangeCodeForTokens(code: string): Promise<{ ok: true } 
     const decodedCode = decodeURIComponent(code);
     const res = await fetch(TOKEN_URL, {
       method: "POST",
+      signal: AbortSignal.timeout(SCHWAB_TOKEN_TIMEOUT_MS),
       headers: {
         Authorization: `Basic ${basic}`,
         "Content-Type": "application/x-www-form-urlencoded",
@@ -180,7 +196,7 @@ export async function exchangeCodeForTokens(code: string): Promise<{ ok: true } 
     clearRefreshBackoff(); // fresh tokens: forget any invalid_grant dead state
     return { ok: true };
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? "Unknown error" };
+    return { ok: false, error: fetchErrorText(e, SCHWAB_TOKEN_TIMEOUT_MS) };
   }
 }
 
@@ -422,6 +438,7 @@ export async function schwabFetchMeta(
     _reqLog.push(Date.now());
     try {
       const res = await fetch(url.toString(), {
+        signal: AbortSignal.timeout(SCHWAB_FETCH_TIMEOUT_MS),
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: "application/json",
@@ -479,12 +496,13 @@ export async function schwabFetchMeta(
       console.warn("[schwab] fetch failed:", res.status, path);
       return serveStale(`Schwab HTTP ${res.status}`);
     } catch (e: any) {
-      console.warn("[schwab] fetch exception:", e?.message, path);
+      const why = fetchErrorText(e, SCHWAB_FETCH_TIMEOUT_MS);
+      console.warn("[schwab] fetch exception:", why, path);
       if (attempt < maxAttempts) {
         await sleep(500 * attempt);
         continue;
       }
-      return serveStale(`Schwab request failed (${e?.message ?? "network"})`);
+      return serveStale(`Schwab request failed (${why})`);
     }
   }
   console.warn("[schwab] all retries exhausted:", path, "last:", lastStatus);
@@ -616,7 +634,7 @@ export async function schwabSelfTest(): Promise<{ connected: boolean; items: Sch
   if (!token) return { connected: false, items: [{ name: "Sign-in", ok: false, status: null, detail: "Schwab is not connected or the sign-in expired. Use Connect Schwab." }] };
   const probe = async (name: string, url: string, summarize: (j: any) => string): Promise<SchwabSelfTestItem> => {
     try {
-      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
+      const r = await fetch(url, { signal: AbortSignal.timeout(SCHWAB_PROBE_TIMEOUT_MS), headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
       if (r.ok) {
         let j: any = null;
         try { j = await r.json(); } catch { /* empty body */ }
@@ -629,7 +647,7 @@ export async function schwabSelfTest(): Promise<{ connected: boolean; items: Sch
         `Schwab answered ${r.status}.`;
       return { name, ok: false, status: r.status, detail: why };
     } catch (e: any) {
-      return { name, ok: false, status: null, detail: `Could not reach Schwab: ${e?.message ?? "network error"}` };
+      return { name, ok: false, status: null, detail: `Could not reach Schwab: ${fetchErrorText(e, SCHWAB_PROBE_TIMEOUT_MS)}` };
     }
   };
   const items = await Promise.all([
