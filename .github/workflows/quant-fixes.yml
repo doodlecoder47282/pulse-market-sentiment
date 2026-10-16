@@ -333,12 +333,45 @@ jobs:
             await p.screenshot({ path: `rep/demo/${String(i + 1).padStart(2, "0")}-${t}.png`, fullPage: true });
           }
           console.log("desktop page errors:", errors.length, errors.slice(0, 5));
+          // 3D exposure surface (Regime -> Thermal Gamma Map -> 3D): WebGL via SwiftShader.
+          try {
+            const g = await chromium.launch({ args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] });
+            const gp = await g.newPage({ viewport: { width: 1440, height: 900 } });
+            const gerr = [];
+            gp.on("pageerror", (e) => gerr.push(e.message));
+            await gp.goto(`${base}/#/`, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+            await gp.locator('[data-testid="button-premarket-acknowledge"]').click({ timeout: 8000 }).catch(() => {});
+            await gp.locator('[data-testid="tab-regime"]').first().click({ timeout: 5000 });
+            await gp.locator('[data-testid="thermal-view-3d"]').waitFor({ timeout: 30000 });
+            const enabled = await gp.locator('[data-testid="thermal-view-3d"]').isEnabled();
+            if (!enabled) {
+              console.log("SKIP 3D surface: WebGL not available in this CI browser (button disabled, 2.5D fallback shown)");
+            } else {
+              await gp.locator('[data-testid="thermal-view-3d"]').click();
+              await gp.locator('[data-testid="thermal-heatmap"] canvas').first().waitFor({ timeout: 30000 });
+              await gp.waitForTimeout(6000);
+              const txt = await gp.locator('[data-testid="thermal-heatmap"]').innerText();
+              const signs = /long gamma/i.test(txt) && /short gamma/i.test(txt);
+              const canvases = await gp.locator('[data-testid="thermal-heatmap"] canvas').count();
+              await gp.locator('[data-testid="thermal-heatmap"]').screenshot({ path: "rep/demo/13-regime-3d.png" });
+              const cx = await gp.locator('[data-testid="thermal-heatmap"] canvas').first().boundingBox();
+              await gp.mouse.click(cx.x + cx.width * 0.5, cx.y + cx.height * 0.55);
+              await gp.waitForTimeout(1500);
+              const readout = await gp.locator('[data-testid="thermal-heatmap"]').innerText();
+              const read = /OI c\//.test(readout);
+              await gp.locator('[data-testid="thermal-heatmap"]').screenshot({ path: "rep/demo/14-regime-3d-readout.png" });
+              const ok = canvases >= 1 && signs && gerr.length === 0;
+              console.log((ok ? "PASS" : "FAIL") + " 3D surface: " + canvases + " canvas, sign labels " + signs + ", readout after tap " + read + ", page errors " + gerr.length + (gerr[0] ? " " + gerr[0].slice(0, 160) : ""));
+            }
+            await g.close();
+          } catch (e) { console.log("FAIL 3D surface: " + String(e && e.message || e).split("\n")[0]); }
           const m = await open({ width: 393, height: 852 });
           await m.p.screenshot({ path: "rep/demo/12-signals-iphone.png", fullPage: false });
           console.log("mobile page errors:", m.errors.length, m.errors.slice(0, 5));
           await b.close();
           JS
           DEMO_BASE="$B" node demo-shot.mjs 2>&1 | tee rep/demo/shot.log
+          grep -q '^FAIL' rep/demo/shot.log && fail=1
           pkill -f "dist/index.cjs" || true
           exit $fail
       - name: UX audit (every tab at six screen sizes)

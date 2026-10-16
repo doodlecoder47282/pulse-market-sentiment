@@ -286,26 +286,31 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
     enabled: open,
   });
 
-  // A fresh link each time the dialog opens: it carries a one-time state value.
+  // The login link carries a one-time state value the server keeps for 15
+  // minutes. One link is kept for 14 of them, across closing and reopening
+  // the dialog: copying the link, signing in at Schwab, then reopening
+  // Settings to paste the callback must find the same state, or the paste is
+  // refused as belonging to a different sign-in. A new link is minted only
+  // after that, or on the explicit "fresh link" buttons.
+  const AUTH_URL_KEEP_MS = 14 * 60_000;
   const { data: authUrlData, error: authUrlError, refetch: refetchAuthUrl } = useQuery<{ url: string; automatic?: boolean }>({
     queryKey: ["/api/schwab/auth-url"],
     queryFn: async () => {
       return apiJson<{ url: string; automatic?: boolean }>("GET", "/api/schwab/auth-url");
     },
     enabled: open,
-    staleTime: Infinity,
+    staleTime: AUTH_URL_KEEP_MS,
+    gcTime: AUTH_URL_KEEP_MS,
     refetchOnWindowFocus: false,
-    gcTime: 0,
+    refetchOnReconnect: false,
     retry: false,
   });
   const authUrlNeedsKey = !!authUrlError && /^401\b/.test(String((authUrlError as Error).message));
 
-  // Refresh only when explicitly requested or the dialog opens, not on focus:
-  // coming back from Schwab must not replace the state for an active sign-in.
+  // Closing the dialog clears the paste box and step, never the link.
   useEffect(() => {
-    if (open) void refetchAuthUrl();
-    else { setRedirectedUrl(""); setConnectionError(""); setStep("idle"); }
-  }, [open, refetchAuthUrl]);
+    if (!open) { setRedirectedUrl(""); setConnectionError(""); setStep("idle"); }
+  }, [open]);
 
   useEffect(() => {
     if (status?.connected && !wasConnected.current) {

@@ -157,11 +157,19 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
         else boxes.push(r);
       }
     };
-    const render = () => { renderer.render(scene, camera); labels.render(scene, camera); declutter(); };
+    // Declutter reads every label's box (a forced layout), so during an orbit
+    // it runs at most ~12 times a second; the resting frame always gets one.
+    let lastDeclutter = 0;
+    const render = (settle = true) => {
+      renderer.render(scene, camera); labels.render(scene, camera);
+      const now = performance.now();
+      if (settle || now - lastDeclutter > 80) { declutter(); lastDeclutter = now; }
+    };
     const tick = () => {
       const moved = controls.update();
-      render();
-      raf = moved || interacting ? requestAnimationFrame(tick) : 0;
+      const more = moved || interacting;
+      render(!more);
+      raf = more ? requestAnimationFrame(tick) : 0;
     };
     const kick = () => { if (!raf) raf = requestAnimationFrame(tick); };
     controls.addEventListener("start", () => { interacting = true; kick(); });
@@ -410,7 +418,7 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
   }
 
   const btn = (active: boolean) =>
-    `min-h-[44px] rounded border px-2.5 py-1 font-mono text-xs uppercase tracking-wider text-foreground disabled:opacity-40 ${active ? "border-primary bg-primary/15" : "border-border"}`;
+    `min-h-[44px] min-w-[44px] rounded border px-2.5 py-1 font-mono text-xs uppercase tracking-wider text-foreground disabled:opacity-40 ${active ? "border-primary bg-primary/15" : "border-border"}`;
   const G = greek.toUpperCase();
   const pickMax = picked ? (model.split ? (picked.value >= 0 ? model.posMax : model.negMax) : model.scaleMax) : 0;
   const pct = picked && pickMax > 0 ? (100 * Math.abs(picked.value)) / pickMax : null;
@@ -522,7 +530,7 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
         {" "}Open interest is the prior close, not intraday positioning.
         {spacing === "dte" ? " Expiry depth is proportional to days to expiry." : " Expiries are evenly spaced, not proportional to time."}
         {model.holeCount > 0 ? ` ${model.holeCount} grid squares with an unobserved or unpriced corner are left open, not drawn as zero.` : ""}
-        {trimmed > 0 ? ` ${trimmed} far strikes under 1% of the maximum are hidden; choose "all" to show them.` : ""}
+        {trimmed > 0 ? ` ${trimmed} far strikes under 1% of the net maximum are hidden (the same strikes in every layer); choose "all" to show them.` : ""}
         {!sides ? " This server does not send the call/put split, so only the net layer is available." : ""}
       </p>
     </div>
