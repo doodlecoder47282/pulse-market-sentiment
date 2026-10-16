@@ -55,12 +55,26 @@ export function layerScaleMax(data: Data3D, layer: Layer): number {
   return m;
 }
 
-export type ScaleMode = "layer" | "shared";
+/** layer: fit this layer; shared: one scale over net/call/put; split: above and below zero each fit their own largest value. */
+export type ScaleMode = "layer" | "shared" | "split";
+
+/** Largest positive and largest |negative| value in one layer. */
+export function sideMaxima(data: Data3D, layer: Layer): { pos: number; neg: number } {
+  let pos = 0, neg = 0;
+  for (const c of data.cells) { const v = layerValue(c, layer); if (v == null) continue; if (v > 0) pos = Math.max(pos, v); else neg = Math.max(neg, -v); }
+  return { pos, neg };
+}
 
 export interface SurfaceModel {
   nx: number; // strikes
   nz: number; // expiries
   scaleMax: number;
+  /** Dollar value at full height above / below zero (equal to scaleMax unless split). */
+  posMax: number;
+  negMax: number;
+  split: boolean;
+  /** Height-axis tick values in dollars, low to high. */
+  ticks: number[];
   /** xyz per vertex, vertex k = j * nx + i (j expiry, i strike). */
   positions: Float32Array;
   /** rgb per vertex in 0..1. */
@@ -102,11 +116,16 @@ export function divergingColor(value: number, scaleMax: number): [number, number
 export function buildSurfaceModel(data: Data3D, opts: { layer: Layer; spacing: Spacing; heightScale: HeightScale; scale?: ScaleMode }): SurfaceModel {
   const nx = data.strikes.length, nz = data.expiries.length;
   // Shared: one scale over net, call and put so layers compare. Layer (default): fit this layer.
-  const scaleMax = (opts.scale ?? "layer") === "shared" ? sharedScaleMax(data) : layerScaleMax(data, opts.layer);
+  const mode = opts.scale ?? "layer";
+  const scaleMax = mode === "shared" ? sharedScaleMax(data) : layerScaleMax(data, opts.layer);
+  const split = mode === "split";
+  const sm = split ? sideMaxima(data, opts.layer) : { pos: scaleMax, neg: scaleMax };
+  const posMax = sm.pos, negMax = sm.neg;
+  const sideMax = (v: number) => (v >= 0 ? posMax : negMax);
   const fr = expiryFractions(data.expiries, opts.spacing);
   const xOfIndex = (i: number) => (nx <= 1 ? 0 : -WORLD_WIDTH / 2 + (i / (nx - 1)) * WORLD_WIDTH);
   const zOfExpiry = (j: number) => WORLD_DEPTH / 2 - (fr[j] ?? 0) * WORLD_DEPTH;
-  const yOfValue = (v: number) => heightFraction(v, scaleMax, opts.heightScale) * WORLD_HEIGHT;
+  const yOfValue = (v: number) => { const m = sideMax(v); return m > 0 ? heightFraction(v, m, opts.heightScale) * WORLD_HEIGHT : 0; };
 
   const count = nx * nz;
   const positions = new Float32Array(count * 3);
@@ -127,7 +146,7 @@ export function buildSurfaceModel(data: Data3D, opts: { layer: Layer; spacing: S
     const k = c.expIdx * nx + c.strikeIdx;
     present[k] = 1; values[k] = v; cellByK[k] = c;
     positions[k * 3 + 1] = yOfValue(v);
-    const [r, g, b] = divergingColor(v, scaleMax);
+    const [r, g, b] = divergingColor(v, sideMax(v));
     colors[k * 3] = r; colors[k * 3 + 1] = g; colors[k * 3 + 2] = b;
   }
   const idx: number[] = [];
@@ -137,7 +156,9 @@ export function buildSurfaceModel(data: Data3D, opts: { layer: Layer; spacing: S
     if (present[a] && present[b] && present[c] && present[d]) { idx.push(a, c, b, b, c, d); quadCount++; } else holeCount++;
   }
   return {
-    nx, nz, scaleMax, positions, colors, present, values,
+    nx, nz, scaleMax, posMax, negMax, split,
+    ticks: split ? splitTicks(posMax, negMax) : heightTicks(scaleMax),
+    positions, colors, present, values,
     indices: Uint32Array.from(idx), quadCount, holeCount,
     xOfIndex, zOfExpiry, yOfValue,
     xOfLevel: (level) => {
@@ -172,4 +193,58 @@ export function expiryTickIndices(fractions: number[], minGap = 0.07): number[] 
 export function heightTicks(scaleMax: number): number[] {
   if (!(scaleMax > 0)) return [0];
   return [-scaleMax, -scaleMax / 2, 0, scaleMax / 2, scaleMax];
+}
+
+/** Ticks for split scaling: each side gets its own half and full marks. */
+export function splitTicks(posMax: number, negMax: number): number[] {
+  const out: number[] = [];
+  if (negMax > 0) out.push(-negMax, -negMax / 2);
+  out.push(0);
+  if (posMax > 0) out.push(posMax / 2, posMax);
+  return out;
+}
+
+/**
+ * Contour line at one dollar level, as flat xyz segment pairs lifted to the
+ * level's height. Marching squares over quads with all four corners present,
+ * so a contour never crosses a hole.
+ */
+export function contourSegments(model: SurfaceModel, level: number): number[] {
+  const { nx, nz, values, present, positions: P } = model;
+  const y = model.yOfValue(level);
+  const out: number[] = [];
+  const cross = (a: number, b: number): [number, number] | null => {
+    const va = values[a], vb = values[b];
+    if ((va - level) * (vb - level) > 0 || va === vb) return null;
+    if (va === level && vb === level) return null;
+    const t = (level - va) / (vb - va);
+    return [P[a * 3] + (P[b * 3] - P[a * 3]) * t, P[a * 3 + 2] + (P[b * 3 + 2] - P[a * 3 + 2]) * t];
+  };
+  for (let j = 0; j < nz - 1; j++) for (let i = 0; i < nx - 1; i++) {
+    const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;
+    if (!(present[a] && present[b] && present[c] && present[d])) continue;
+    const pts = [cross(a, b), cross(b, d), cross(d, c), cross(c, a)].filter((p): p is [number, number] => p != null);
+    for (let k = 0; k + 1 < pts.length; k += 2) out.push(pts[k][0], y + 0.006, pts[k][1], pts[k + 1][0], y + 0.006, pts[k + 1][1]);
+  }
+  return out;
+}
+
+/**
+ * Surface height under a vertical level line at world x, one value per expiry
+ * (null where the strikes either side are unobserved). Markers are drawn from
+ * the zero plane to this height only, never as full-height walls.
+ */
+export function ribbonHeights(model: SurfaceModel, x: number): Array<number | null> {
+  const { nx, nz, present, positions: P } = model;
+  const f = nx <= 1 ? 0 : ((x + WORLD_WIDTH / 2) / WORLD_WIDTH) * (nx - 1);
+  const i0 = Math.max(0, Math.min(nx - 1, Math.floor(f))), i1 = Math.min(nx - 1, i0 + 1), t = f - i0;
+  const out: Array<number | null> = [];
+  for (let j = 0; j < nz; j++) {
+    const a = j * nx + i0, b = j * nx + i1;
+    if (present[a] && present[b]) out.push(P[a * 3 + 1] + (P[b * 3 + 1] - P[a * 3 + 1]) * t);
+    else if (present[a] && t < 0.5) out.push(P[a * 3 + 1]);
+    else if (present[b] && t >= 0.5) out.push(P[b * 3 + 1]);
+    else out.push(null);
+  }
+  return out;
 }

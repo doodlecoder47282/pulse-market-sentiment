@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  buildSurfaceModel, expiryFractions, expiryTickIndices, hasSides, heightTicks, layerValue, sharedScaleMax, strikeTickIndices,
+  buildSurfaceModel, contourSegments, ribbonHeights, sideMaxima, splitTicks, expiryFractions, expiryTickIndices, hasSides, heightTicks, layerValue, sharedScaleMax, strikeTickIndices,
   WORLD_DEPTH, WORLD_HEIGHT, WORLD_WIDTH, type Data3D,
 } from "../../client/src/lib/surface3dModel";
 import { buildThermalHeatmap } from "../../server/thermalHeatmap";
@@ -133,4 +133,44 @@ test("fit-to-layer scale fills the height for the chosen layer; shared keeps lay
   const putShared = buildSurfaceModel(d, { layer: "put", spacing: "even", heightScale: "linear", scale: "shared" });
   assert.equal(putShared.scaleMax, 80);
   assert.ok(Math.abs(putShared.positions[1] + WORLD_HEIGHT / 2) < 1e-6);
+});
+
+test("split scale fits above and below zero separately and labels each side", () => {
+  const d = base();
+  assert.deepEqual(sideMaxima(d, "net"), { pos: 80, neg: 30 });
+  const m = buildSurfaceModel(d, { layer: "net", spacing: "even", heightScale: "linear", scale: "split" });
+  assert.equal(m.split, true);
+  assert.equal(m.posMax, 80); assert.equal(m.negMax, 30);
+  // (0,0) net -30 is the most negative: full depth below zero.
+  assert.ok(Math.abs(m.positions[1] + WORLD_HEIGHT) < 1e-6);
+  // (0,1) net -15: half depth on the below-zero scale.
+  assert.ok(Math.abs(m.positions[(1 * 3) * 3 + 1] + WORLD_HEIGHT / 2) < 1e-6);
+  // (2,0) net +80: full height above.
+  assert.ok(Math.abs(m.positions[2 * 3 + 1] - WORLD_HEIGHT) < 1e-6);
+  assert.deepEqual(m.ticks, [-30, -15, 0, 40, 80]);
+  assert.deepEqual(splitTicks(10, 0), [0, 5, 10]);
+  // Default and shared modes keep one symmetric scale.
+  const f = buildSurfaceModel(d, { layer: "net", spacing: "even", heightScale: "linear" });
+  assert.equal(f.split, false); assert.equal(f.posMax, f.negMax);
+});
+
+test("contours cross only observed quads, at the level's height", () => {
+  const m = buildSurfaceModel(base(), { layer: "net", spacing: "even", heightScale: "linear" });
+  const seg = contourSegments(m, 40);
+  // One quad (strikes 105-110, expiries 0-1) brackets +40; the row with the hole draws nothing.
+  assert.equal(seg.length, 6);
+  assert.ok(Math.abs(seg[1] - (m.yOfValue(40) + 0.006)) < 1e-6);
+  assert.equal(contourSegments(m, 1000).length, 0);
+});
+
+test("level ribbons follow the surface height and stop at holes", () => {
+  const m = buildSurfaceModel(base(), { layer: "net", spacing: "even", heightScale: "linear" });
+  const hs = ribbonHeights(m, m.xOfIndex(1));
+  assert.equal(hs.length, 3);
+  assert.ok(Math.abs((hs[0] as number) - m.yOfValue(25)) < 1e-6);
+  assert.ok(Math.abs((hs[1] as number) - m.yOfValue(10)) < 1e-6);
+  assert.equal(hs[2], null);
+  // Halfway between strikes interpolates the two neighbours.
+  const mid = ribbonHeights(m, (m.xOfIndex(0) + m.xOfIndex(1)) / 2);
+  assert.ok(Math.abs((mid[0] as number) - (m.yOfValue(-30) + m.yOfValue(25)) / 2) < 1e-6);
 });

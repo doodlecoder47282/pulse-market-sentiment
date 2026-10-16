@@ -17,6 +17,14 @@
 | Camera | Sliders | Reset / top / front / side presets, rotate and zoom buttons (44 px, keyboard reachable) |
 | Missing data | — | Grid squares with any unobserved or unpriced corner are left open, never drawn as zero |
 
+## Readability pass (sign and relief)
+
+- **$0 is a see-through divider, not a floor.** It is drawn after the surface without writing depth, so troughs below zero stay visible through it. The back wall is tinted green above zero and red below. Axis labels read "+ long gamma" and "− short gamma" (other Greeks: "+ positive" / "− negative"), and the caption always carries the same sign key.
+- **Camera:** the default is about 35° elevation and slightly off-axis. **Front** is a true side elevation, so height reads directly against the ticks.
+- **Markers are ribbons clipped to the surface:** spot, flip and walls run from $0 to the surface height only, with a dashed floor trace and the label at the ribbon top. They are no longer full-height walls that extend below the floor.
+- **Relief:** a stronger key light, plus contour lines on the surface at every non-zero height tick.
+- **Split ± scale:** above and below zero each fit their own largest value, so one huge strike does not flatten the other side. The caption shows both maxima, and the readout states which side's maximum the % refers to.
+
 ## Honest boundaries
 
 - Dealer side is the assumed convention (long calls, short puts), not observed inventory. Open interest is the prior close, not intraday positioning.
@@ -31,6 +39,7 @@ three.js is split into its own chunk (`vendor-three`, ~124 KB gzip) and is reque
 
 - `tests/quant/surface3d-model.test.ts` (9): shared vs fit scale, holes for missing cells, DTE spacing, level positions, compression, older-server fallback, tick spacing, and a real demo-chain payload whose call + put layers reproduce the net.
 - `tests/quant/thermal-heatmap.test.ts` (+1): per-side split sums to net for all five Greeks; GEX call side ≥ 0, put side ≤ 0.
-- Full suite: 730 tests, 728 pass, 2 skipped (native SQLite / Python sidecar dependencies), 0 fail after one wording fix flagged by the no-advice language guard.
+- `tests/quant/surface3d-model.test.ts` (+3): split scaling and ticks, contours only across observed quads at the right height, ribbon heights that follow the surface and stop at holes.
+- Full suite: 733 tests, 731 pass, 2 skipped (native SQLite / Python sidecar dependencies), 0 fail.
 - Browser (Chromium, real WebGL via SwiftShader): desktop 1440 px and phone 390 px; three.js not loaded before 3D opens; drag orbit, presets, zoom, rotate, all layer/spacing/scale/strike toggles; tap and hover readout (calls + puts = net confirmed on screen); no document overflow; all controls ≥ 44 px; one WebGL canvas after view switches (no context leak); WebGL-disabled device falls back to 2.5D; zero page errors.
 - Not verified: physical iPhone Safari, low-end GPU frame rate, live Schwab data.

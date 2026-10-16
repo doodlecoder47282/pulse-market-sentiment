@@ -17,7 +17,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CSS2DRenderer, CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import { fmtCell, trimForSurface } from "@/lib/surfaceDraw";
 import {
-  buildSurfaceModel, expiryFractions, expiryTickIndices, hasSides, heightTicks, layerValue, strikeTickIndices,
+  buildSurfaceModel, contourSegments, expiryFractions, expiryTickIndices, hasSides, layerValue, ribbonHeights, strikeTickIndices,
   WORLD_DEPTH, WORLD_HEIGHT, WORLD_WIDTH,
   type Cell3D, type Data3D, type HeightScale, type Layer, type ScaleMode, type Spacing,
 } from "@/lib/surface3dModel";
@@ -36,11 +36,13 @@ const LEVEL_STYLE = {
   putWall: { color: 0xfb7185, css: "#fb7185", name: "put wall" },
 } as const;
 
-const DEFAULT_CAM = new THREE.Vector3(0, 6.2, 11.5);
+// ~35° elevation, slightly off-axis so ridges and troughs separate instead of foreshortening into one band.
+const DEFAULT_CAM = new THREE.Vector3(3.5, 7.6, 10.4);
 const VIEWS: Record<"reset" | "top" | "front" | "side", THREE.Vector3> = {
   reset: DEFAULT_CAM,
   top: new THREE.Vector3(0, 14, 0.01),
-  front: new THREE.Vector3(0, 1.2, 13),
+  // True side elevation: height reads straight against the axis ticks.
+  front: new THREE.Vector3(0, 0.2, 13.5),
   side: new THREE.Vector3(13, 2.5, 0),
 };
 
@@ -117,8 +119,8 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
     scene.fog = new THREE.Fog(0x020617, 22, 48);
     const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 200);
     camera.position.copy(DEFAULT_CAM);
-    scene.add(new THREE.HemisphereLight(0xdbeafe, 0x0f172a, 0.7));
-    const key = new THREE.DirectionalLight(0xffffff, 1.0); key.position.set(6, 10, 7); scene.add(key);
+    scene.add(new THREE.HemisphereLight(0xdbeafe, 0x0f172a, 0.5));
+    const key = new THREE.DirectionalLight(0xffffff, 1.35); key.position.set(5, 9, 4); scene.add(key);
     const rim = new THREE.DirectionalLight(0x93c5fd, 0.45); rim.position.set(-8, 4, -6); scene.add(rim);
 
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -226,9 +228,17 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
     const wg = new THREE.BufferGeometry(); wg.setAttribute("position", new THREE.Float32BufferAttribute(wire, 3));
     content.add(new THREE.LineSegments(wg, new THREE.LineBasicMaterial({ color: 0xe2e8f0, transparent: true, opacity: 0.07 })));
 
-    // Zero plane with floor grid.
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false }));
-    floor.rotation.x = -Math.PI / 2; content.add(floor);
+    // $0 is a see-through divider, not a floor: drawn after the surface without
+    // writing depth, so troughs below zero stay visible through it.
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshBasicMaterial({ color: 0x64748b, transparent: true, opacity: 0.14, side: THREE.DoubleSide, depthWrite: false }));
+    floor.rotation.x = -Math.PI / 2; floor.renderOrder = 2; content.add(floor);
+    const zedge = new THREE.BufferGeometry(); zedge.setAttribute("position", new THREE.Float32BufferAttribute([-W / 2, 0, D / 2, W / 2, 0, D / 2, W / 2, 0, D / 2, W / 2, 0, -D / 2, W / 2, 0, -D / 2, -W / 2, 0, -D / 2, -W / 2, 0, -D / 2, -W / 2, 0, D / 2], 3));
+    content.add(new THREE.LineSegments(zedge, new THREE.LineBasicMaterial({ color: 0xcbd5e1, transparent: true, opacity: 0.55 })));
+    // Back wall tinted by sign: green above zero, red below.
+    for (const [y0, col] of [[H / 2, 0x10b981], [-H / 2, 0xf43f5e]] as const) {
+      const band = new THREE.Mesh(new THREE.PlaneGeometry(W, H), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.06, side: THREE.DoubleSide, depthWrite: false }));
+      band.position.set(0, y0, -D / 2 - 0.002); content.add(band);
+    }
     const grid: number[] = [];
     const sTicks = strikeTickIndices(nx, 9);
     const fr = expiryFractions(data.expiries, spacing);
@@ -236,7 +246,7 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
     for (const i of sTicks) { const x = model.xOfIndex(i); grid.push(x, 0, D / 2, x, 0, -D / 2); }
     for (const j of eTicks) { const z = model.zOfExpiry(j); grid.push(-W / 2, 0, z, W / 2, 0, z); }
     // Back wall height grid.
-    const hT = heightTicks(model.scaleMax);
+    const hT = model.ticks;
     for (const v of hT) { const y = model.yOfValue(v); grid.push(-W / 2, y, -D / 2, W / 2, y, -D / 2); }
     grid.push(-W / 2, -H, -D / 2, -W / 2, H, -D / 2);
     const gg = new THREE.BufferGeometry(); gg.setAttribute("position", new THREE.Float32BufferAttribute(grid, 3));
@@ -249,10 +259,24 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
       const l = label(`${e.dte}d`, "s3d-tick"); l.position.set(W / 2 + 0.5, 0, model.zOfExpiry(j)); content.add(l);
     }
     for (const v of hT) { const l = label(v === 0 ? "$0" : fmtCell(v), "s3d-tick s3d-tick-y"); l.position.set(-W / 2 - 0.55, model.yOfValue(v), -D / 2); content.add(l); }
+    const plusTxt = greek === "gex" ? "+ long gamma" : `+ positive ${greek}`;
+    const minusTxt = greek === "gex" ? "\u2212 short gamma" : `\u2212 negative ${greek}`;
+    const lp = label(plusTxt, "s3d-axis s3d-sign", "#34d399"); lp.position.set(-W / 2 - 0.55, H + 0.32, -D / 2); content.add(lp);
+    const lm = label(minusTxt, "s3d-axis s3d-sign", "#fb7185"); lm.position.set(-W / 2 - 0.55, -H - 0.32, -D / 2); content.add(lm);
+    // Contours at each non-zero height tick, drawn on the surface.
+    for (const v of hT) {
+      if (v === 0) continue;
+      const seg = contourSegments(model, v);
+      if (!seg.length) continue;
+      const cg = new THREE.BufferGeometry(); cg.setAttribute("position", new THREE.Float32BufferAttribute(seg, 3));
+      content.add(new THREE.LineSegments(cg, new THREE.LineBasicMaterial({ color: v > 0 ? 0xa7f3d0 : 0xfecdd3, transparent: true, opacity: 0.75 })));
+    }
     const ax = label("strike", "s3d-axis"); ax.position.set(0, 0, D / 2 + 1.05); content.add(ax);
     const az = label(spacing === "dte" ? "days to expiry (to scale)" : "expiry (even spacing)", "s3d-axis"); az.position.set(W / 2 + 0.6, 0, -D / 2 - 0.75); content.add(az);
 
-    // Level planes.
+    // Level markers: thin ribbons from the zero plane up (or down) to the
+    // surface only, label at the top of the ribbon. Never full-height walls,
+    // which read as exposure where there is none.
     const levels: Array<[keyof typeof LEVEL_STYLE, number | null]> = [
       ["spot", data.spot], ["flip", data.levels.gammaFlip], ["callWall", data.levels.callWall], ["putWall", data.levels.putWall],
     ];
@@ -261,13 +285,31 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
       const x = model.xOfLevel(lv);
       if (x == null || lv == null) continue;
       const st = LEVEL_STYLE[k];
-      const plane = new THREE.Mesh(new THREE.PlaneGeometry(D, 2 * H), new THREE.MeshBasicMaterial({ color: st.color, transparent: true, opacity: k === "spot" ? 0.13 : 0.09, side: THREE.DoubleSide, depthWrite: false }));
-      plane.rotation.y = Math.PI / 2; plane.position.set(x, 0, 0); content.add(plane);
-      const eg = new THREE.BufferGeometry(); eg.setAttribute("position", new THREE.Float32BufferAttribute([x, H, D / 2, x, H, -D / 2, x, 0, D / 2, x, 0, -D / 2, x, -H, D / 2, x, H, D / 2], 3));
-      content.add(new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: st.color, transparent: true, opacity: 0.75 })));
-      // Stagger labels whose planes sit close together.
+      const hs = ribbonHeights(model, x);
+      const tri: number[] = [], top: number[] = [], base: number[] = [];
+      let peak = 0;
+      for (let j = 0; j < hs.length - 1; j++) {
+        const h0 = hs[j], h1 = hs[j + 1];
+        if (h0 == null || h1 == null) continue;
+        const z0 = model.zOfExpiry(j), z1 = model.zOfExpiry(j + 1);
+        tri.push(x, 0, z0, x, h0, z0, x, 0, z1, x, h0, z0, x, h1, z1, x, 0, z1);
+        top.push(x, h0, z0, x, h1, z1); base.push(x, 0.003, z0, x, 0.003, z1);
+        peak = Math.max(peak, h0, h1);
+      }
+      if (tri.length) {
+        const rg = new THREE.BufferGeometry(); rg.setAttribute("position", new THREE.Float32BufferAttribute(tri, 3));
+        const rib = new THREE.Mesh(rg, new THREE.MeshBasicMaterial({ color: st.color, transparent: true, opacity: k === "spot" ? 0.38 : 0.3, side: THREE.DoubleSide, depthWrite: false }));
+        rib.renderOrder = 3; content.add(rib);
+        const tg = new THREE.BufferGeometry(); tg.setAttribute("position", new THREE.Float32BufferAttribute(top, 3));
+        content.add(new THREE.LineSegments(tg, new THREE.LineBasicMaterial({ color: st.color, transparent: true, opacity: 0.95 })));
+      }
+      // Floor trace across the full depth so the strike is findable even where the surface is flat.
+      const bg = new THREE.BufferGeometry(); bg.setAttribute("position", new THREE.Float32BufferAttribute([x, 0.004, D / 2, x, 0.004, -D / 2], 3));
+      const trace = new THREE.LineSegments(bg, new THREE.LineDashedMaterial({ color: st.color, transparent: true, opacity: 0.7, dashSize: 0.12, gapSize: 0.08 }));
+      trace.computeLineDistances(); content.add(trace);
       const tier = used.filter((u) => Math.abs(u - x) < 2.6).length; used.push(x);
-      const l = label(`${st.name} ${Math.abs(lv) >= 1000 ? lv.toFixed(0) : lv.toFixed(2)}`, "s3d-level", st.css); l.position.set(x, H + 0.25 + tier * 0.45, D / 2); content.add(l);
+      const l = label(`${st.name} ${Math.abs(lv) >= 1000 ? lv.toFixed(0) : lv.toFixed(2)}`, "s3d-level", st.css);
+      l.position.set(x, Math.max(0, peak) + 0.3 + tier * 0.42, D / 2); content.add(l);
     }
     ctx.renderer.domElement.setAttribute("aria-label", `${greek.toUpperCase()} ${layer} exposure, 3D surface by strike and expiry. Exact values are in the data table below.`);
     render();
@@ -362,7 +404,9 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
   const btn = (active: boolean) =>
     `min-h-[44px] rounded border px-2.5 py-1 font-mono text-xs uppercase tracking-wider text-foreground disabled:opacity-40 ${active ? "border-primary bg-primary/15" : "border-border"}`;
   const G = greek.toUpperCase();
-  const pct = picked && model.scaleMax > 0 ? (100 * Math.abs(picked.value)) / model.scaleMax : null;
+  const pickMax = picked ? (model.split ? (picked.value >= 0 ? model.posMax : model.negMax) : model.scaleMax) : 0;
+  const pct = picked && pickMax > 0 ? (100 * Math.abs(picked.value)) / pickMax : null;
+  const scaleName = scaleMode === "shared" ? "shared" : scaleMode === "split" ? (picked && picked.value < 0 ? "below-zero" : "above-zero") : "layer";
 
   return (
     <div ref={wrapRef} className="relative" data-testid="thermal-surface3d">
@@ -370,6 +414,7 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
         .s3d-tick{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#cbd5e1;white-space:nowrap;text-shadow:0 1px 2px #020617}
         .s3d-tick-y{color:#94a3b8;transform:translateX(-50%)}
         .s3d-axis{font:11px ui-sans-serif,system-ui,sans-serif;color:#94a3b8;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+        .s3d-axis.s3d-sign{font-weight:600;text-transform:none;letter-spacing:0}
         .s3d-level{font:600 11px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;padding:1px 4px;border-radius:3px;background:rgba(2,6,23,.75)}
       `}</style>
 
@@ -403,6 +448,7 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
           <span className="mr-1">scale</span>
           <button type="button" className={btn(scaleMode === "layer")} aria-pressed={scaleMode === "layer"} onClick={() => setScaleMode("layer")} data-testid="surface3d-scale-layer" title="Fit the height to this layer's largest value">fit layer</button>
           <button type="button" className={btn(scaleMode === "shared")} aria-pressed={scaleMode === "shared"} onClick={() => setScaleMode("shared")} disabled={!sides} data-testid="surface3d-scale-shared" title="One scale across net, calls and puts so heights compare between layers">shared</button>
+          <button type="button" className={btn(scaleMode === "split")} aria-pressed={scaleMode === "split"} onClick={() => setScaleMode("split")} data-testid="surface3d-scale-split" title="Above and below zero each fit their own largest value, so one huge strike on one side does not flatten the other">split ±</button>
         </div>
         <div className="flex flex-wrap items-center gap-1" role="group" aria-label="strikes">
           <span className="mr-1">strikes</span>
@@ -414,7 +460,10 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
       <div className="relative overflow-hidden rounded-md border border-border bg-slate-950">
         <div ref={hostRef} className="relative w-full touch-none select-none" data-testid="thermal-surface3d-host" />
         <div className="pointer-events-none absolute left-2 top-2 font-mono text-[11px] text-slate-400" data-testid="surface3d-caption">
-          {G} {layer} · {scaleMode === "shared" ? "shared scale" : "fit to layer"} ±{fmtCell(model.scaleMax).replace("+", "")} · {heightScale}
+          {G} {layer} · {scaleMode === "shared" ? `shared scale ±${fmtCell(model.scaleMax).replace("+", "")}` : scaleMode === "split" ? `split scale ${fmtCell(model.posMax)} / ${fmtCell(-model.negMax)}` : `fit to layer ±${fmtCell(model.scaleMax).replace("+", "")}`} · {heightScale}
+          <div className="mt-0.5" data-testid="surface3d-sign-key">
+            <span className="text-emerald-400">▲ {greek === "gex" ? "+ long gamma" : "+ positive"}</span> above $0 · <span className="text-rose-400">▼ {greek === "gex" ? "\u2212 short gamma" : "\u2212 negative"}</span> below $0
+          </div>
         </div>
         {picked && (
           <div className="pointer-events-none z-10 mt-0 hidden min-w-[190px] rounded border border-slate-700 bg-slate-950/95 px-3 py-2 font-mono text-xs text-slate-200 sm:absolute sm:right-2 sm:top-2 sm:block" data-testid="thermal-surface3d-readout">
@@ -425,7 +474,7 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
             {sides && layer === "net" && <div className="text-[11px] text-slate-400">calls {fmtCell(picked.cell.callExposure!)} · puts {fmtCell(picked.cell.putExposure!)}</div>}
             <div className="text-[11px] text-slate-500">OI c/{picked.cell.callOI} p/{picked.cell.putOI}</div>
             {(picked.cell.callVolume != null || picked.cell.putVolume != null) && <div className="text-[11px] text-slate-500">traded today c/{picked.cell.callVolume ?? 0} p/{picked.cell.putVolume ?? 0}</div>}
-            {pct != null && <div className="text-[11px] text-slate-500">{pct.toFixed(0)}% of the {scaleMode === "shared" ? "shared" : "layer"} max</div>}
+            {pct != null && <div className="text-[11px] text-slate-500">{pct.toFixed(0)}% of the {scaleName} max</div>}
           </div>
         )}
       </div>
@@ -448,19 +497,19 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
         <div className="mt-2 rounded border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-200 sm:hidden" data-testid="thermal-surface3d-readout-phone" role="status">
           <div className="text-[11px] text-slate-400">{picked.cell.expiry} · {picked.cell.dte}d · strike {picked.cell.strike}</div>
           <div className={picked.value >= 0 ? "text-emerald-300" : "text-rose-300"}>{G} {layer}: {fmtCell(picked.value)}{sides && layer === "net" ? ` (calls ${fmtCell(picked.cell.callExposure!)} · puts ${fmtCell(picked.cell.putExposure!)})` : ""}</div>
-          <div className="text-[11px] text-slate-500">OI c/{picked.cell.callOI} p/{picked.cell.putOI}{pct != null ? ` · ${pct.toFixed(0)}% of the ${scaleMode === "shared" ? "shared" : "layer"} max` : ""}</div>
+          <div className="text-[11px] text-slate-500">OI c/{picked.cell.callOI} p/{picked.cell.putOI}{pct != null ? ` · ${pct.toFixed(0)}% of the ${scaleName} max` : ""}</div>
         </div>
       )}
       <div className="mt-2 flex flex-wrap items-center gap-2 font-mono text-[11px] text-muted-foreground" data-testid="surface3d-legend">
-        <span>{fmtCell(-model.scaleMax)}</span>
+        <span>{fmtCell(-model.negMax)}</span>
         <span aria-hidden className="h-2.5 w-40 rounded-sm" style={{ background: "linear-gradient(90deg,#f5405e,#33404f,#10d194)" }} />
-        <span>{fmtCell(model.scaleMax)}</span>
+        <span>{fmtCell(model.posMax)}</span>
         {unit && <span>· {unit}</span>}
         {Object.values(LEVEL_STYLE).map((s) => <span key={s.name} style={{ color: s.css }}>▍{s.name}</span>)}
       </div>
 
       <p className="mt-2 text-xs leading-relaxed text-muted-foreground" data-testid="thermal-surface3d-explanation">
-        Drag to rotate, pinch or scroll to zoom, two fingers or right-drag to pan; tap a point to read it. Height is signed {G} exposure, {scaleMode === "shared" ? "on one scale shared by the net, call and put layers" : "scaled to this layer\u2019s largest value (choose shared to compare layers)"}.
+        Drag to rotate, pinch or scroll to zoom, two fingers or right-drag to pan; tap a point to read it. Height is signed {G} exposure, {scaleMode === "shared" ? "on one scale shared by the net, call and put layers" : scaleMode === "split" ? "with above-zero and below-zero heights on separate scales, so equal heights above and below are not equal dollars" : "scaled to this layer\u2019s largest value (choose shared to compare layers)"}.
         {greek === "gex" ? " Dealer long calls / short puts is an assumed convention, not observed inventory." : " The sign is not a long/short gamma classification."}
         {" "}Open interest is the prior close, not intraday positioning.
         {spacing === "dte" ? " Expiry depth is proportional to days to expiry." : " Expiries are evenly spaced, not proportional to time."}
