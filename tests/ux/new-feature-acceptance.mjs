@@ -58,7 +58,11 @@ export async function runSchwabHandoffQA(browser, base, out) {
         checks.push("manual: pasting alone never submits");
         state.fail = true;
         const response = page.waitForResponse(r => r.url().endsWith("/api/schwab/callback"));
-        await page.getByTestId("complete-connection-btn").dblclick();
+        // Native double input must not wait/retry after the first click disables
+        // the button, or the harness itself can accidentally submit again.
+        await page.getByTestId("complete-connection-btn").scrollIntoViewIfNeeded();
+        const submitBox = await page.getByTestId("complete-connection-btn").boundingBox();
+        await page.mouse.click(submitBox.x + submitBox.width / 2, submitBox.y + submitBox.height / 2, { clickCount: 2 });
         await response;
         await page.getByTestId("schwab-connection-error").waitFor();
         assert.equal(state.posts, 1);

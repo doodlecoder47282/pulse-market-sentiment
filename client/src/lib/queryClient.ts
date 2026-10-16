@@ -1,4 +1,5 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { withRequestDeadline } from "@shared/requestDeadline";
 
 // API base resolution, highest priority first:
 //   1. Server URL saved on this device (native iOS app setup screen)
@@ -81,6 +82,7 @@ export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
+  signal?: AbortSignal,
 ): Promise<Response> {
   const res = await fetch(`${getApiBase()}${url}`, {
     method,
@@ -90,6 +92,7 @@ export async function apiRequest(
     },
     body: data ? JSON.stringify(data) : undefined,
     credentials: "same-origin",
+    signal,
   });
   await signalIfAuthRequired(res);
 
@@ -97,15 +100,24 @@ export async function apiRequest(
   return res;
 }
 
+/** A bounded JSON read/write. The deadline also covers a stalled response body. */
+export function apiJson<T = any>(method: string, url: string, data?: unknown, signal?: AbortSignal): Promise<T> {
+  return withRequestDeadline(async boundedSignal => {
+    const response = await apiRequest(method, url, data, boundedSignal);
+    return response.json() as Promise<T>;
+  }, 25_000, signal);
+}
+
 type UnauthorizedBehavior = "returnNull" | "throw";
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
-  async ({ queryKey }) => {
+  async ({ queryKey, signal }) => withRequestDeadline(async boundedSignal => {
     const res = await fetch(`${getApiBase()}${queryKey.join("/")}`, {
       headers: authHeaders(),
       credentials: "same-origin",
+      signal: boundedSignal,
     });
     await signalIfAuthRequired(res);
 
@@ -115,7 +127,7 @@ export const getQueryFn: <T>(options: {
 
     await throwIfResNotOk(res);
     return await res.json();
-  };
+  }, 25_000, signal);
 
 // networkMode "always": react-query's default pauses every query while
 // navigator.onLine is false. WKWebView (the iOS app) reports offline for a

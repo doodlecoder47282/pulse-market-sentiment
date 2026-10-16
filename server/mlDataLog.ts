@@ -27,6 +27,7 @@
 // scoring pass (at most every 15 minutes).
 
 import { sqlite } from "./storage";
+import { editionFromEnv } from "../shared/edition";
 import { isTradingDay as calIsTradingDay, sessionCloseMinutes as calCloseMin } from "./exchangeCalendar";
 import { getPriceHistory } from "./schwab";
 import { getActiveStreamStore, type StreamBar } from "./streamStore";
@@ -131,6 +132,7 @@ let _lastBarsPersist = 0;
  * 'schwab_stream_l1'); REST rows are never overwritten. Returns rows written.
  */
 export async function persistSpxMinuteBars(): Promise<number> {
+  if (editionFromEnv() === "demo") return 0;
   const resp = await getPriceHistory("$SPX", "day", 10, "minute", 1);
   const candles = (resp?.candles ?? []) as any[];
   const stmt = sqlite.prepare(`INSERT INTO spx_minute_bars (t, open, high, low, close, volume, source) VALUES (?, ?, ?, ?, ?, ?, 'schwab')
@@ -159,6 +161,7 @@ export async function persistSpxMinuteBars(): Promise<number> {
  * REST candle replaces a streamed one (persistSpxMinuteBars). Returns rows written.
  */
 export function persistStreamSpxBars(bars: StreamBar[], symbol = "$SPX"): number {
+  if (editionFromEnv() === "demo") return 0;
   const stmt = sqlite.prepare(`INSERT OR IGNORE INTO spx_minute_bars (t, open, high, low, close, volume, source) VALUES (?, ?, ?, ?, ?, ?, ?)`);
   let n = 0;
   const tx = sqlite.transaction((rows: StreamBar[]) => {
@@ -179,6 +182,7 @@ export function persistStreamSpxBars(bars: StreamBar[], symbol = "$SPX"): number
  * SPY. dataState "insufficient" rows are logged too (never as 0).
  */
 export function logTickRealizedVol(now = Date.now(), symbols: string[] = ["$SPX", "SPY"]): number {
+  if (editionFromEnv() === "demo") return 0;
   const store = getActiveStreamStore();
   if (!store) return 0;
   const ins = sqlite.prepare(`INSERT OR REPLACE INTO ml_tick_rv_log (ts, symbol, from_ms, to_ms, n_obs, rv_naive, rv_sparse_20m, tsrv, tsrv_k,
@@ -205,6 +209,7 @@ function loadBars(from: number, to: number): MinuteBar[] {
 // ─── 2/3. Feature + forecast logging ─────────────────────────────────────────
 
 export async function logMlSnapshot(resolveInputs: () => Promise<MlFeatureInputs>, now = Date.now()): Promise<{ features: boolean; forecasts: number }> {
+  if (editionFromEnv() === "demo") return { features: false, forecasts: 0 };
   const features = await buildMlFeatures(resolveInputs);
   const prov = getLastMlFeatureProvenance();
   // JSON.stringify writes NaN (missing) as null; the trainer reads null as NaN.
@@ -231,6 +236,7 @@ export async function logMlSnapshot(resolveInputs: () => Promise<MlFeatureInputs
 
 /** Score pending forecasts whose horizon has passed, using persisted minute bars. */
 export function scorePendingForecasts(now = Date.now()): { scored: number; noPrice: number } {
+  if (editionFromEnv() === "demo") return { scored: 0, noPrice: 0 };
   const pending = sqlite.prepare(`SELECT id, ts, horizon_min FROM ml_forecast_log WHERE outcome = 'pending' AND ts + horizon_min * 60000 <= ? ORDER BY ts ASC LIMIT 5000`)
     .all(now - 5 * 60_000) as Array<{ id: number; ts: number; horizon_min: number }>;
   if (pending.length === 0) return { scored: 0, noPrice: 0 };
@@ -256,6 +262,7 @@ function scoreRows(rows: Array<{ ts: number; horizon_min: number; q10: number; q
 
 /** Recompute and store coverage for every ET day, horizon and served band (model + version) with scored forecasts. */
 export function computeDailyCoverage(now = Date.now()): number {
+  if (editionFromEnv() === "demo") return 0;
   const rows = sqlite.prepare(`SELECT ts, horizon_min, q10, q90, realized_ret, model, version, training_data FROM ml_forecast_log
                                WHERE outcome = 'scored' ORDER BY ts ASC`)
     .all() as Array<{ ts: number; horizon_min: number; q10: number; q90: number; realized_ret: number; model: string; version: string | null; training_data: string | null }>;
@@ -287,6 +294,7 @@ export function computeDailyCoverage(now = Date.now()): number {
  */
 const _demoted = new Set<string>();
 export async function checkLiveDemotion(): Promise<Array<{ model: string; version: number; reason: string; ok: boolean }>> {
+  if (editionFromEnv() === "demo") return [];
   const out: Array<{ model: string; version: number; reason: string; ok: boolean }> = [];
   const bands = sqlite.prepare(`SELECT DISTINCT model, version FROM ml_forecast_log WHERE outcome = 'scored' AND status = 'PROMOTED'`).all() as Array<{ model: string; version: string | null }>;
   for (const b of bands) {
@@ -397,9 +405,12 @@ let _lastScore = 0;
  * Set PULSE_ML_DATALOG=0 to disable.
  */
 export function startMlDataLogger(resolveInputs: () => Promise<MlFeatureInputs>): void {
-  if (_started || process.env.PULSE_ML_DATALOG === "0") return;
+  if (_started || editionFromEnv() === "demo" || process.env.PULSE_ML_DATALOG === "0") return;
   _started = true;
+  let running = false;
   const tick = async () => {
+    if (running || editionFromEnv() === "demo") return;
+    running = true;
     const now = Date.now();
     const { mod, weekday, day } = etMinuteOfDay(now);
     try {
@@ -420,6 +431,8 @@ export function startMlDataLogger(resolveInputs: () => Promise<MlFeatureInputs>)
       }
     } catch (e: any) {
       console.warn(`[ml:datalog] tick failed: ${e?.message ?? e}`);
+    } finally {
+      running = false;
     }
   };
   setTimeout(tick, 90_000);

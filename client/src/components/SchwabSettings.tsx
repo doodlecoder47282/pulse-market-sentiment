@@ -6,7 +6,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient, AUTH_REQUIRED_EVENT, API_BASE_STORAGE_KEY, isNativeApp } from "@/lib/queryClient";
+import { apiJson, queryClient, AUTH_REQUIRED_EVENT, API_BASE_STORAGE_KEY, isNativeApp } from "@/lib/queryClient";
+import PersonalServerHandoff from "./PersonalServerHandoff";
 import {
   Dialog,
   DialogContent,
@@ -77,12 +78,14 @@ interface StreamStatus {
 /** Feed mode for quotes: Schwab Streamer live, Schwab REST snapshots, or nothing. */
 export function streamFeedLabel(connected: boolean, stream: StreamStatus | undefined): { label: string; color: string; detail: string } {
   if (!connected) return { label: "Unavailable", color: "#f87171", detail: "Schwab not connected: no quotes" };
-  if (stream?.mode === "live") {
+  if (stream?.mode === "live" && stream.lastMessageAgeMs != null && stream.lastMessageAgeMs >= 0 && stream.lastMessageAgeMs <= 60_000
+      && (stream.perService?.LEVELONE_EQUITIES?.lastDataAgeMs ?? Infinity) >= 0
+      && (stream.perService?.LEVELONE_EQUITIES?.lastDataAgeMs ?? Infinity) <= 60_000) {
     const age = stream.lastMessageAgeMs != null ? `${Math.round(stream.lastMessageAgeMs / 1000)}s since last frame` : "";
     return { label: "Streaming live", color: "#34d399", detail: age };
   }
   const why = stream?.lastError ?? stream?.reason ?? (stream?.mode === "connecting" ? "stream connecting" : "stream down");
-  return { label: "REST snapshots", color: "#fbbf24", detail: why };
+  return { label: "Feed not verified", color: "#fbbf24", detail: why };
 }
 
 function StreamFeedRow({ connected, stream }: { connected: boolean; stream: StreamStatus | undefined }) {
@@ -114,7 +117,7 @@ function StreamFeedRow({ connected, stream }: { connected: boolean; stream: Stre
 // Schwab is the only market-data source (user decision 2026-10-08). When it
 // cannot answer, data is served from a short-lived cache with its real age
 // (within a stated max age) or shown as unavailable: no CBOE, no Yahoo.
-type SourceState = "schwab_live" | "schwab_stale" | "unavailable" | "disconnected" | "offline";
+type SourceState = "schwab_live" | "schwab_stale" | "unavailable" | "disconnected" | "offline" | "unverified";
 
 function fmtMaxAge(ms: number | undefined): string {
   if (ms == null) return "";
@@ -151,7 +154,7 @@ function deriveEndpointState(
   if (staleServed > 0 || cool) {
     return { source: "schwab_stale", detail: `Cached Schwab, max age ${maxAge}${reason ? ` (${reason})` : ""}` };
   }
-  return { source: "schwab_live", detail: "Schwab live" };
+  return { source: "unverified", detail: "Authorized; use the data check to verify this endpoint." };
 }
 
 // ─── Status pill (used in header) ────────────────────────────────────────────
@@ -160,8 +163,7 @@ export function SchwabStatusPill({ onClick }: { onClick: () => void }) {
   const { data } = useQuery<SchwabStatus>({
     queryKey: ["/api/schwab/status"],
     queryFn: async () => {
-      const r = await apiRequest("GET", "/api/schwab/status");
-      return r.json();
+      return apiJson<SchwabStatus>("GET", "/api/schwab/status");
     },
     refetchInterval: 60_000,
     staleTime: 55_000,
@@ -194,7 +196,7 @@ export function SchwabStatusPill({ onClick }: { onClick: () => void }) {
         background: isConnected ? "rgb(16 185 129 / 0.08)" : "rgb(245 158 11 / 0.08)",
       }}
       data-testid="schwab-status-pill"
-      title={isConnected ? "Schwab Live — click to manage" : "Schwab disconnected — click to connect"}
+      title={isConnected ? "Schwab authorized; feed availability is checked separately" : "Schwab disconnected — click to connect"}
     >
       <span
         className={`h-1.5 w-1.5 rounded-full ${
@@ -206,7 +208,7 @@ export function SchwabStatusPill({ onClick }: { onClick: () => void }) {
         className="font-mono text-[11px] font-semibold uppercase tracking-wider"
         style={{ color: isConnected ? "#34d399" : "#fbbf24" }}
       >
-        {isConnected ? "SCHWAB LIVE" : data.connected ? "SCHWAB" : "DISCONNECTED"}
+        {isConnected ? "SCHWAB LINKED" : data.connected ? "SCHWAB" : "DISCONNECTED"}
       </span>
     </button>
   );
@@ -221,6 +223,7 @@ function SourceBadge({ source, detail }: { source: SourceState; detail?: string 
     unavailable:    { color: "#f87171", dot: "bg-red-400",      pulse: false, label: "Unavailable" },
     disconnected:   { color: "#fb923c", dot: "bg-orange-400",   pulse: false, label: "Schwab disconnected" },
     offline:        { color: "#f87171", dot: "bg-red-500",      pulse: false, label: "Offline" },
+    unverified:     { color: "#fbbf24", dot: "bg-amber-400", pulse: false, label: "Not verified" },
   };
   const s = styles[source];
   return (
@@ -257,8 +260,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
   const { data: status, isLoading: statusLoading, refetch: refetchStatus } = useQuery<SchwabStatus>({
     queryKey: ["/api/schwab/status"],
     queryFn: async () => {
-      const r = await apiRequest("GET", "/api/schwab/status");
-      return r.json();
+      return apiJson<SchwabStatus>("GET", "/api/schwab/status");
     },
     refetchInterval: open ? 10_000 : false,
     staleTime: 8_000,
@@ -268,8 +270,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
   const { data: diag } = useQuery<SchwabDiag>({
     queryKey: ["/api/schwab/diag"],
     queryFn: async () => {
-      const r = await apiRequest("GET", "/api/schwab/diag");
-      return r.json();
+      return apiJson<SchwabDiag>("GET", "/api/schwab/diag");
     },
     refetchInterval: open ? 5_000 : false,
     enabled: open,
@@ -278,8 +279,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
   const { data: streamStatus } = useQuery<StreamStatus>({
     queryKey: ["/api/schwab/stream/status"],
     queryFn: async () => {
-      const r = await apiRequest("GET", "/api/schwab/stream/status");
-      return r.json();
+      return apiJson<StreamStatus>("GET", "/api/schwab/stream/status");
     },
     refetchInterval: open ? 5_000 : false,
     enabled: open,
@@ -289,8 +289,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
   const { data: authUrlData, error: authUrlError, refetch: refetchAuthUrl } = useQuery<{ url: string; automatic?: boolean }>({
     queryKey: ["/api/schwab/auth-url"],
     queryFn: async () => {
-      const r = await apiRequest("GET", "/api/schwab/auth-url");
-      return r.json();
+      return apiJson<{ url: string; automatic?: boolean }>("GET", "/api/schwab/auth-url");
     },
     enabled: open,
     staleTime: Infinity,
@@ -322,10 +321,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
     mutationFn: async (url: string) => {
       const state = authUrlData?.url ? new URL(authUrlData.url).searchParams.get("state") : null;
       if (!state) throw new Error("Start a fresh sign-in first.");
-      const r = await apiRequest("POST", "/api/schwab/callback", { redirectedUrl: url.trim(), state });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.message ?? "Connection failed");
-      return data;
+      return apiJson("POST", "/api/schwab/callback", { redirectedUrl: url.trim(), state });
     },
     onSuccess: () => {
       toast({ title: "Schwab authorization saved", description: "Checking connection and data availability. Authorization alone does not confirm live feed access." });
@@ -346,8 +342,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
   // Disconnect mutation
   const disconnectMut = useMutation({
     mutationFn: async () => {
-      const r = await apiRequest("POST", "/api/schwab/disconnect");
-      return r.json();
+      return apiJson("POST", "/api/schwab/disconnect");
     },
     onSuccess: () => {
       toast({ title: "Disconnected from Schwab" });
@@ -443,7 +438,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
   if (status?.demo) {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-lg" data-testid="schwab-settings-dialog">
+        <DialogContent className="max-w-lg grid-cols-[minmax(0,1fr)] [&>*]:min-w-0" data-testid="schwab-settings-dialog">
           <DialogHeader className="pr-12">
             <DialogTitle className="flex items-center gap-2">
               <Settings className="h-4 w-4" />
@@ -456,6 +451,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
           <div className="space-y-3 text-sm text-muted-foreground" data-testid="demo-settings">
             <p>The stock/options screens demonstrate calculations, not current market conditions. Passing the tests does not establish forecast accuracy or a trading edge.</p>
             <p>Schwab sign-in is turned off. Live use requires rotated developer credentials and a verified protected server. This is not a multi-user brokerage service.</p>
+            {!isNativeApp() && <PersonalServerHandoff />}
             {isNativeApp() && (
               <Button
                 variant="outline"
@@ -512,7 +508,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                   </div>
                   <span className="flex items-center gap-1 text-[11px] text-emerald-400 animate-pulse">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                    LIVE
+                    AUTHORIZED
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
@@ -907,8 +903,7 @@ function SchwabSelfTest() {
   const run = async () => {
     setBusy(true); setErr(null);
     try {
-      const r = await apiRequest("GET", "/api/schwab/selftest");
-      const j = await r.json();
+      const j = await apiJson("GET", "/api/schwab/selftest");
       setItems(j.items ?? []);
     } catch (e) {
       setErr(friendlyError(e, "The server did not answer."));

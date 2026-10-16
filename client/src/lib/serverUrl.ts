@@ -27,8 +27,18 @@ export function serverUrlProblem(raw: string): string | null {
   } catch {
     return "Server URL is not a valid URL.";
   }
+  if (u.username || u.password || u.search || u.hash || u.pathname !== "/") {
+    return "Use only the server origin, without credentials, a path, query or fragment.";
+  }
   if (u.protocol === "https:") return null;
   if (u.protocol === "http:" && isPrivateOrLoopbackHost(u.hostname)) return null;
   if (u.protocol === "http:") return "http:// is allowed only for localhost or a private-network address. Use https://.";
   return "Server URL must start with https://.";
+}
+
+/** Browser handoff uses HTTPS and never sends an access key. */
+export function personalServerHref(raw: string): string | null {
+  if (serverUrlProblem(raw)) return null;
+  const url = new URL(raw);
+  return url.protocol === "https:" ? url.origin + "/" : null;
 }

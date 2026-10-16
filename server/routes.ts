@@ -3122,6 +3122,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const { schwabConfigProblem, isAutomaticCallback } = await import("./schwabOAuth");
       const problem = schwabConfigProblem();
       if (problem) return res.status(503).json({ dataState: "unavailable", reason: problem });
+      const { tokenStoreStatus } = await import("./schwabTokenStore");
+      if (tokenStoreStatus().mode === "locked") {
+        return res.status(503).json({ dataState: "unavailable", reason: "Token storage is locked. Configure protected token encryption before starting Schwab sign-in." });
+      }
       const url = getAuthUrl();
       res.setHeader("Cache-Control", "no-store");
       res.json({ url, automatic: isAutomaticCallback(process.env.SCHWAB_REDIRECT_URI ?? "") });
