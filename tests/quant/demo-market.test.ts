@@ -34,7 +34,7 @@ test("gate: demo is open-demo on a public bind, a key still wins", () => {
   assert.equal(gateMode({ RAILWAY_ENVIRONMENT: "p", BATCAVE_EDITION: "personal" }), "closed");
 });
 
-test("demo /api is read-only except listed calculations and the server's own calls", () => {
+test("demo /api is read-only except listed calculations and authenticated server self-calls", () => {
   assert.equal(demoRequestAllowed("GET", "/schwab/status"), true);
   assert.equal(demoRequestAllowed("POST", "/position-sizer"), true);
   for (const p of ["/schwab/callback", "/schwab/disconnect", "/signals/track", "/flow/config", "/alpha-brief", "/eod-setup"]) {
@@ -44,7 +44,7 @@ test("demo /api is read-only except listed calculations and the server's own cal
   assert.equal(demoRequestAllowed("DELETE", "/layout/signals"), false);
   assert.equal(isLoopbackSocket("::ffff:127.0.0.1"), true);
   assert.equal(isLoopbackSocket("10.0.0.5"), false);
-  const mw = makeDemoReadOnly();
+  const mw = makeDemoReadOnly("internal-fixture-proof");
   let status = 0;
   let nexted = false;
   const res = { status(n: number) { status = n; return { json() {} }; } };
@@ -52,6 +52,10 @@ test("demo /api is read-only except listed calculations and the server's own cal
   assert.equal(status, 403);
   assert.equal(nexted, false);
   mw({ method: "POST", path: "/mm-snapshot", socket: { remoteAddress: "127.0.0.1" } }, res, () => { nexted = true; });
+  assert.equal(nexted, false, "loopback proxy is not authentication");
+  mw({ method: "POST", path: "/mm-snapshot", headers: { "x-batcave-key": "wrong" }, socket: { remoteAddress: "127.0.0.1" } }, res, () => { nexted = true; });
+  assert.equal(nexted, false);
+  mw({ method: "POST", path: "/mm-snapshot", headers: { "x-batcave-key": "internal-fixture-proof" }, socket: { remoteAddress: "127.0.0.1" } }, res, () => { nexted = true; });
   assert.equal(nexted, true);
 });
 

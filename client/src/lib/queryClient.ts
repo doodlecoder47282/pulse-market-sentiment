@@ -5,7 +5,10 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 //   2. VITE_API_BASE baked in at build time (e.g. the hosted backend URL)
 //   3. Preview port token (replaced by the legacy preview host; inert otherwise)
 //   4. "" = same origin (normal web deployment, backend serves the UI)
-const PORT_TOKEN_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
+// Private-preview bootstrap is injected into HTML, where the host rewrites
+// port placeholders. Keep it out of compiled JS: constant folding broke the
+// old token check. Normal Railway/native builds use their existing settings.
+const PREVIEW_API_BASE = typeof window === "undefined" ? "" : ((window as any).__BATCAVE_PREVIEW_API_BASE__ as string | undefined) || "";
 const BUILD_API_BASE = ((import.meta as any).env?.VITE_API_BASE as string | undefined) || "";
 
 export const API_BASE_STORAGE_KEY = "batcave.apiBase";
@@ -44,7 +47,8 @@ export function isNativeApp(): boolean {
 }
 
 export function getApiBase(): string {
-  const base = readConnectionSetting(API_BASE_STORAGE_KEY) || BUILD_API_BASE || PORT_TOKEN_BASE;
+  const base = readConnectionSetting(API_BASE_STORAGE_KEY) || BUILD_API_BASE || PREVIEW_API_BASE;
+  if (base.startsWith("__PORT_")) throw new Error("Preview backend was not connected. Reopen the deployed Batcave preview.");
   return base.replace(/\/+$/, "");
 }
 
@@ -85,6 +89,7 @@ export async function apiRequest(
       ...authHeaders(),
     },
     body: data ? JSON.stringify(data) : undefined,
+    credentials: "same-origin",
   });
   await signalIfAuthRequired(res);
 
@@ -100,6 +105,7 @@ export const getQueryFn: <T>(options: {
   async ({ queryKey }) => {
     const res = await fetch(`${getApiBase()}${queryKey.join("/")}`, {
       headers: authHeaders(),
+      credentials: "same-origin",
     });
     await signalIfAuthRequired(res);
 

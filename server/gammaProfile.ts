@@ -364,6 +364,9 @@ export interface ChainMapsLike {
 }
 
 export interface ChainRowOptions {
+  /** Carry used to solve near-expiry IV, matching subsequent repricing. */
+  r?: number;
+  q?: number;
   /** Only these "YYYY-MM-DD:N" expiry keys (default: every expiry). */
   expiryKeys?: ReadonlyArray<string>;
   /** Drop expiries beyond this many calendar days. */
@@ -421,7 +424,7 @@ export function rowsFromChain(chain: ChainMapsLike, opts: ChainRowOptions = {}):
           const ivPct = Number(c?.volatility);
           const vendorIv = Number.isFinite(ivPct) && ivPct > 0 && ivPct < 500 ? ivPct / 100 : NaN;
           const iv = opts.spot != null && opts.spot > 0
-            ? ivForClock({ vendorIv, bid: Number(c?.bid), ask: Number(c?.ask), spot: opts.spot, strike, T, type: side })
+            ? ivForClock({ vendorIv, bid: Number(c?.bid), ask: Number(c?.ask), spot: opts.spot, strike, T, type: side, r: opts.r, q: opts.q })
             : vendorIv;
           if (!(Number.isFinite(iv) && iv > 0)) continue;
           rows.push({ type: side, strike, iv, oi: w, dte, T });
@@ -458,7 +461,7 @@ export function repricedFlipFromChain(
   spot: number,
   opts: ChainRowOptions & GammaProfileOptions = {},
 ): RepricedFlip {
-  const rows = rowsFromChain(chain, { ...opts, spot: opts.spot ?? spot });
+  const rows = rowsFromChain(chain, { ...opts, r: opts.r ?? FLIP_RATE, q: opts.q ?? FLIP_DIV_YIELD, spot: opts.spot ?? spot });
   return repricedFlipFromRows(rows, spot, opts);
 }
 
@@ -749,7 +752,7 @@ export function gexByStrikeFromChain(
   // names its underlying, else the S&P 500 yield (the chains this serves).
   const sym = chain.symbol ?? chain.underlying?.symbol ?? null;
   const r = FLIP_RATE, q = sym ? dividendYieldFor(sym) : FLIP_DIV_YIELD;
-  const rows = rowsFromChain(chain, { maxDte: SIGNALS_MAX_DTE, spot, nowMs });
+  const rows = rowsFromChain(chain, { maxDte: SIGNALS_MAX_DTE, spot, nowMs, r, q });
   // Contracts with OI and time left but no usable sigma (dropped above).
   let withOi = 0;
   for (const map of [chain.callExpDateMap, chain.putExpDateMap]) {

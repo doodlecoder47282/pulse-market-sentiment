@@ -112,7 +112,7 @@ test("rowOfLevel: fractional row between strikes; outside the grid is null", () 
 });
 
 // ── Drawing helpers (client/src/lib/surfaceDraw.ts, no React) ────────────────
-import { trimForSurface, stackLabels, type SurfaceData } from "@/lib/surfaceDraw";
+import { trimForSurface, stackLabels, drawSurface, type SurfaceData } from "@/lib/surfaceDraw";
 
 function sampleData(rowMaxFrac: number[], spotRow: number): SurfaceData {
   const strikes = rowMaxFrac.map((_, i) => 6000 + i * 5);
@@ -157,4 +157,23 @@ test("stackLabels: boxes that would overlap drop a line; obstacles count; slante
   const o = stackLabels([{ x: 100, y: 50, width: 50 }], 4, 12, 11, [{ l: 80, r: 130, t: 48, b: 60 }]);
   assert.equal(o[0], 1);
   assert.deepEqual(stackLabels([], 4, 12, 11), []);
+});
+
+test("drawn wall labels stay inside phone canvas and below the title band", () => {
+  const data = sampleData([-1, 0, 1], 1);
+  data.levels = { callWall: data.strikes[2], putWall: data.strikes[0], gammaFlip: null };
+  for (const width of [280, 317, 800]) for (const yawDeg of [0,25,85]) for (const pitchDeg of [15,42,75]) {
+    const labels: Array<{text:string,x:number,y:number}> = [];
+    const ctx = new Proxy({ measureText: (text:string) => ({width:text.length * 6}), fillText:(text:string,x:number,y:number) => labels.push({text,x,y}) }, {
+      get(target, key) { return key in target ? target[key as keyof typeof target] : () => {}; },
+      set() { return true; },
+    }) as unknown as CanvasRenderingContext2D;
+    drawSurface(ctx, data, view({width,height:280,nStrikes:3,nExpiries:3,yawDeg,pitchDeg,heightPx:56,padding:28}), "gex", null);
+    const walls = labels.filter(l => /^(call|put) wall/.test(l.text));
+    assert.equal(walls.length,2);
+    for(const l of walls) {
+      assert.ok(l.x-l.text.length*3 >= 0 && l.x+l.text.length*3 <= width);
+      assert.ok(l.y>=48 && l.y<=268);
+    }
+  }
 });

@@ -321,11 +321,12 @@ export function isLoopbackSocket(addr: string | undefined | null): boolean {
   return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
 }
 
-/** Mounted at app.use("/api", ...) in the demo edition only. The server's own
- *  schedulers (loopback socket) keep working; visitors are read-only. */
-export function makeDemoReadOnly() {
-  return (req: { method: string; path: string; socket?: { remoteAddress?: string } }, res: any, next: () => void) => {
-    if (demoRequestAllowed(req.method, req.path) || isLoopbackSocket(req.socket?.remoteAddress)) return next();
+/** Socket location alone is not identity: a reverse proxy may be loopback.
+ *  Self-writes require both loopback and an unexposed per-process proof. */
+export function makeDemoReadOnly(internalKey = "") {
+  return (req: { method: string; path: string; headers?: Record<string, string | string[] | undefined>; socket?: { remoteAddress?: string } }, res: any, next: () => void) => {
+    const internal = isLoopbackSocket(req.socket?.remoteAddress) && keyMatches(req.headers?.[ACCESS_KEY_HEADER], internalKey);
+    if (demoRequestAllowed(req.method, req.path) || internal) return next();
     res.status(403).json({
       error: "demo_read_only",
       dataState: "unavailable",

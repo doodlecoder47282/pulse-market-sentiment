@@ -181,7 +181,12 @@ export function drawSurface(ctx: CanvasRenderingContext2D, data: SurfaceData, vi
       ctx.fill();
       ctx.font = "10px ui-monospace, monospace";
       ctx.textAlign = "center";
-      ctx.fillText(label, top.x, top.y - 12);
+      // Wall names may sit at either edge or above the tallest peak.
+      // Keep them inside the canvas and below the two-line title band.
+      const half = ctx.measureText(label).width / 2;
+      const x = Math.max(half + 6, Math.min(view.width - half - 6, top.x));
+      const y = Math.max(48, Math.min(view.height - 12, top.y - 12));
+      ctx.fillText(label, x, y);
     };
     markWall(data.levels.callWall, "rgba(110,231,183,0.95)", `call wall ${data.levels.callWall ?? ""}`);
     markWall(data.levels.putWall, "rgba(253,164,175,0.95)", `put wall ${data.levels.putWall ?? ""}`);

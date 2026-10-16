@@ -594,10 +594,39 @@ test("11. demo $SPX chain: put wall < spot < call wall, flip inside the strikes,
 });
 
 // ─── 12. Vendor sentinels ───────────────────────────────────────────────────
+test("near-expiry IV inversion uses the same r/q as thermal and shared GEX repricing", () => {
+  const expiry = "2026-10-14";
+  const T = pmT(expiry), sigma = 0.24, K = 6710, oi = 200;
+  for (const side of ["C", "P"] as const) {
+    const [d1, d2] = d12(SPOT, K, sigma, T, R, Q);
+    // Independently constructed BSM quote, not the production pricing helper.
+    const mid = side === "C"
+      ? SPOT * Math.exp(-Q * T) * N(d1) - K * Math.exp(-R * T) * N(d2)
+      : K * Math.exp(-R * T) * N(-d2) - SPOT * Math.exp(-Q * T) * N(-d1);
+    const chain = chainOf([{ side, expiry, strike: K, oi, ivPct: 11, bid: mid - .01, ask: mid + .01 }]);
+    const h = build(chain);
+    const expected = dealerSign(side) * bsGammaFP(SPOT, K, sigma, T, R, Q) * oi * MULT * SPOT ** 2 * .01;
+    assertRel(cellAt(h, expiry, K).gex, expected, `${side} recovered sigma with carry`, 2e-4);
+    const shared = gexByStrikeFromChain(chain, NOW);
+    assertRel(shared.profile.find(p => p.strike === K)!.netGex, expected, `${side} shared GEX basis`, 2e-4);
+  }
+});
+
 test("12. Schwab -999 sentinels (closed market: volatility -999, gamma -999) are missing data, not exposure", () => {
   const h = build(chainOf([{ side: "C", expiry: FAR, strike: 6700, oi: 100, ivPct: -999, gamma: -999 }]));
   const cell = h.cells.find((c) => c.strike === 6700);
   const gex = cell?.gex ?? 0;
   assert.equal(gex, 0, `no usable sigma and a sentinel gamma must not price: got gex ${gex} (= -999 x 100 x 100 x S^2 x 0.01 would be ${-999 * 100 * MULT * SPOT * SPOT * 0.01})`);
   assert.equal(h.method.contractsUsed, 0, "a contract with no usable greeks is not 'used'");
+});
+
+test("unpriced contracts with traded volume leave holes instead of zero-height surface nodes", () => {
+  const h = build(chainOf([
+    { side: "C", expiry: FAR, strike: 6700, oi: 100, vol: 200, ivPct: -999 },
+    { side: "C", expiry: FAR, strike: 6750, oi: 100, vol: 200, ivPct: 18 },
+  ]));
+  assert.equal(h.dataState, "ok");
+  assert.equal(h.method.contractsNoSigma, 1);
+  assert.equal(h.cells.some(c => c.strike === 6700), false);
+  assert.ok(h.cells.some(c => c.strike === 6750));
 });

@@ -3123,6 +3123,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const problem = schwabConfigProblem();
       if (problem) return res.status(503).json({ dataState: "unavailable", reason: problem });
       const url = getAuthUrl();
+      res.setHeader("Cache-Control", "no-store");
       res.json({ url, automatic: isAutomaticCallback(process.env.SCHWAB_REDIRECT_URI ?? "") });
     } catch (e: any) {
       res.status(500).json({ message: e?.message ?? "Failed to build auth URL" });
@@ -3130,17 +3131,33 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   app.post("/api/schwab/callback", async (req, res) => {
+    if (editionFromEnv() === "demo") return res.status(403).json({ message: "Schwab sign-in is disabled in this sample-data preview." });
     try {
-      const { redirectedUrl } = req.body as { redirectedUrl?: string };
-      if (!redirectedUrl) return res.status(400).json({ message: "redirectedUrl required" });
-      const url = new URL(redirectedUrl);
-      const code = url.searchParams.get("code");
-      if (!code) return res.status(400).json({ message: "No code found in URL" });
-      const result = await exchangeCodeForTokens(code);
-      if (!result.ok) return res.status(400).json({ message: result.error });
+      const { redirectedUrl, state } = req.body ?? {};
+      const { parseSchwabCallback } = await import("../shared/schwabCallback");
+      const { consumeOAuthState, isAutomaticCallback } = await import("./schwabOAuth");
+      if (isAutomaticCallback(process.env.SCHWAB_REDIRECT_URI ?? "")) {
+        return res.status(400).json({ message: "This server uses automatic sign-in. Return from Schwab and check connection; do not paste a saved code." });
+      }
+      if (typeof redirectedUrl !== "string" || typeof state !== "string") {
+        return res.status(400).json({ message: "Start a new Schwab sign-in and use its fresh callback." });
+      }
+      let parsed: { code: string; state: string };
+      try {
+        parsed = parseSchwabCallback(redirectedUrl, state, process.env.SCHWAB_REDIRECT_URI ?? "");
+      } catch {
+        return res.status(400).json({ message: "Callback does not match this sign-in. Use the fresh callback from the latest login link." });
+      }
+      // Consume before awaiting: duplicate taps cannot exchange the code twice.
+      if (!consumeOAuthState(parsed.state)) {
+        return res.status(400).json({ message: "This sign-in has expired or was already submitted. Start a new Schwab sign-in." });
+      }
+      const result = await exchangeCodeForTokens(parsed.code);
+      if (!result.ok) return res.status(400).json({ message: "Schwab did not complete the exchange. Start a fresh sign-in; if it repeats, check server callback and app configuration." });
+      res.setHeader("Cache-Control", "no-store");
       res.json({ ok: true, status: getSchwabStatus() });
-    } catch (e: any) {
-      res.status(500).json({ message: e?.message ?? "Callback failed" });
+    } catch {
+      res.status(500).json({ message: "Connection could not be completed. Check connection status before starting a fresh sign-in." });
     }
   });
 
@@ -3153,6 +3170,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   app.post("/api/schwab/disconnect", (_req, res) => {
+    if (editionFromEnv() === "demo") return res.status(403).json({ message: "Brokerage changes are disabled in this sample-data preview." });
     try {
       clearTokens();
       res.json({ ok: true });

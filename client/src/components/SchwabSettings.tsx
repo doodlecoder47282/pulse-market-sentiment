@@ -245,6 +245,9 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
   const { toast } = useToast();
   const [redirectedUrl, setRedirectedUrl] = useState("");
   const [step, setStep] = useState<"idle" | "waiting_for_paste">("idle");
+  const connectionInFlight = useRef(false);
+  const [connectionError, setConnectionError] = useState("");
+  const wasConnected = useRef(false);
   // Sandbox-blocked auth: when window.open is silently refused (iframe sandbox,
   // iOS Safari popup blocker, etc.) we surface the URL as a tappable fallback
   // link the user can long-press / open manually. This is the fix for the
@@ -290,56 +293,55 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
       return r.json();
     },
     enabled: open,
-    staleTime: 10 * 60_000,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
     gcTime: 0,
     retry: false,
   });
   const authUrlNeedsKey = !!authUrlError && /^401\b/.test(String((authUrlError as Error).message));
 
-  // Normalize whatever the user pastes into a full redirect URL the server understands.
-  // Accepts: full URL, code= fragment, or raw code string.
-  const normalizeInput = (raw: string): string => {
-    const s = raw.trim();
-    if (!s) return "";
-    if (s.startsWith("http")) return s;
-    if (s.includes("code=")) return `https://127.0.0.1/?${s.replace(/^[?&]/, "")}`;
-    // Assume raw code
-    return `https://127.0.0.1/?code=${encodeURIComponent(s)}`;
-  };
+  // Refresh only when explicitly requested or the dialog opens, not on focus:
+  // coming back from Schwab must not replace the state for an active sign-in.
+  useEffect(() => {
+    if (open) void refetchAuthUrl();
+    else { setRedirectedUrl(""); setConnectionError(""); setStep("idle"); }
+  }, [open, refetchAuthUrl]);
+
+  useEffect(() => {
+    if (status?.connected && !wasConnected.current) {
+      setRedirectedUrl("");
+      setConnectionError("");
+      setStep("idle");
+      void queryClient.invalidateQueries({ predicate: q => q.queryKey[0] !== "/api/schwab/auth-url" });
+    }
+    wasConnected.current = !!status?.connected;
+  }, [status?.connected]);
 
   // Connect mutation
   const connectMut = useMutation({
     mutationFn: async (url: string) => {
-      const normalized = normalizeInput(url);
-      const r = await apiRequest("POST", "/api/schwab/callback", { redirectedUrl: normalized });
+      const state = authUrlData?.url ? new URL(authUrlData.url).searchParams.get("state") : null;
+      if (!state) throw new Error("Start a fresh sign-in first.");
+      const r = await apiRequest("POST", "/api/schwab/callback", { redirectedUrl: url.trim(), state });
       const data = await r.json();
       if (!r.ok) throw new Error(data.message ?? "Connection failed");
       return data;
     },
     onSuccess: () => {
-      toast({ title: "Schwab connected", description: "Live market data is now active." });
+      toast({ title: "Schwab authorization saved", description: "Checking connection and data availability. Authorization alone does not confirm live feed access." });
       setRedirectedUrl("");
       setStep("idle");
-      queryClient.invalidateQueries({ queryKey: ["/api/schwab/status"] });
+      void queryClient.invalidateQueries({ predicate: q => q.queryKey[0] !== "/api/schwab/auth-url" });
       refetchStatus();
     },
-    onError: (e: Error) => {
-      toast({ title: "Connection failed", description: e.message, variant: "destructive" });
+    onError: () => {
+      // Do not echo provider errors or callback secrets into the page/toast.
+      const message = "Connection was not confirmed. Check connection status first. If disconnected, use a fresh login link and its new callback, not a saved code.";
+      setConnectionError(message);
+      toast({ title: "Connection not confirmed", description: message, variant: "destructive" });
     },
+    onSettled: () => { connectionInFlight.current = false; },
   });
-
-  // Auto-submit when a valid-looking URL is pasted
-  useEffect(() => {
-    const s = redirectedUrl.trim();
-    if (!s || connectMut.isPending) return;
-    const looksValid =
-      (s.startsWith("http") && s.includes("code=")) ||
-      (s.includes("code=") && s.length > 10);
-    if (looksValid) {
-      const t = setTimeout(() => connectMut.mutate(s), 250);
-      return () => clearTimeout(t);
-    }
-  }, [redirectedUrl]);
 
   // Disconnect mutation
   const disconnectMut = useMutation({
@@ -387,7 +389,9 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
       }
     }
     if (ok) {
-      toast({ title: "Login link copied", description: "Open Safari, paste it in the address bar, log in, then come back and paste the redirect URL below." });
+      toast({ title: "Login link copied", description: authUrlData?.automatic
+        ? "Open it in your browser, approve at Schwab, then return here and check connection."
+        : "Open it in your browser, approve at Schwab, then paste the fresh callback here and tap Complete connection." });
     } else {
       const box = authUrlBoxRef.current;
       if (box) {
@@ -400,10 +404,13 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
   };
 
   const handleConnect = () => {
+    if (connectionInFlight.current || authUrlData?.automatic) return;
     if (!redirectedUrl.trim()) {
       toast({ title: "Paste the redirected URL first", variant: "destructive" });
       return;
     }
+    connectionInFlight.current = true;
+    setConnectionError("");
     connectMut.mutate(redirectedUrl.trim());
   };
 
@@ -412,7 +419,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
       const text = await navigator.clipboard.readText();
       if (text) {
         setRedirectedUrl(text);
-        // effect will auto-submit if valid
+        setConnectionError("");
       } else {
         toast({ title: "Clipboard is empty", variant: "destructive" });
       }
@@ -470,7 +477,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg" data-testid="schwab-settings-dialog">
+      <DialogContent className="max-w-lg grid-cols-[minmax(0,1fr)] [&>*]:min-w-0 [&_button]:whitespace-normal [&_button]:h-auto [&_button]:max-w-full [&_textarea]:min-w-0" data-testid="schwab-settings-dialog">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Settings className="h-4 w-4" />
@@ -609,6 +616,11 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
               <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Connect Your Schwab Account
               </div>
+              <p className="text-sm leading-relaxed text-muted-foreground" data-testid="schwab-credential-guidance">
+                Your Batcave access key unlocks this app. Schwab authorization is separate.
+                Enter your Schwab password only on Schwab's website; never paste it here.
+                A callback code is single-use, not a code to save and reuse.
+              </p>
 
               {/* Step 1 */}
               <div className="rounded-md border border-border/40 p-3 space-y-2">
@@ -697,7 +709,9 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                       data-testid="schwab-auth-url-box"
                     />
                     <div className="text-[11px] leading-snug text-muted-foreground">
-                      1. Copy · 2. Paste in Safari's address bar · 3. Log in at Schwab · 4. Copy the https://127.0.0.1/?code=... URL it lands on · 5. Come back here and paste it in step 2 below
+                      {authUrlData.automatic
+                        ? "Open the link in your browser, approve at Schwab, then return here and check connection. No callback code is needed."
+                        : "Open the link in your browser, approve at Schwab, then copy the complete callback address and paste it in step 2. The callback page itself may not load."}
                     </div>
                     <a
                       href={authUrlData.url}
@@ -712,17 +726,24 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                 )}
               </div>
 
-              {/* Step 2 */}
-              <div className={`rounded-md border p-3 space-y-2 transition-opacity ${step === "waiting_for_paste" ? "border-amber-500/40 bg-amber-500/5 opacity-100" : "border-border/40 opacity-60"}`}>
-                <div className="flex items-center justify-between gap-2">
+              {authUrlData?.automatic ? (
+                <div className="rounded-md border border-border p-3 space-y-2" data-testid="schwab-automatic-return">
+                  <p className="text-sm">After approving at Schwab, return here. Connection status refreshes automatically while this dialog is open.</p>
+                  <Button variant="outline" className="min-h-[44px] w-full" onClick={() => refetchStatus()} data-testid="schwab-check-connection">
+                    Check connection
+                  </Button>
+                </div>
+              ) : authUrlData?.url ? (
+              <div className={`rounded-md border p-3 space-y-2 ${step === "waiting_for_paste" ? "border-amber-500/40 bg-amber-500/5" : "border-border/40"}`}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[11px] font-bold">2</span>
-                    <span className="text-xs font-medium">Paste anywhere on the page</span>
+                    <label htmlFor="schwab-callback-input" className="text-sm font-medium">Paste the fresh callback below</label>
                   </div>
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-6 text-[11px] px-2"
+                    className="min-h-[44px] text-xs px-2"
                     onClick={handlePasteFromClipboard}
                     disabled={connectMut.isPending}
                     data-testid="paste-clipboard-btn"
@@ -730,43 +751,55 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                     Paste from clipboard
                   </Button>
                 </div>
-                <div className="text-[11px] text-muted-foreground leading-snug">
-                  After logging in, Schwab redirects to{" "}
-                  <code className="rounded bg-muted px-1 text-amber-300">https://127.0.0.1/?code=...</code>.{" "}
-                  Paste the full URL, just the code, or <span className="text-foreground">code=...</span> — we'll auto-connect.
+                <div className="text-sm text-muted-foreground leading-relaxed">
+                  Copy the full callback address from the sign-in you just completed.
+                  Paste it here, then tap Complete connection once. Pasting alone will not submit it.
                 </div>
                 <Textarea
+                  id="schwab-callback-input"
                   value={redirectedUrl}
-                  onChange={(e) => setRedirectedUrl(e.target.value)}
+                  onChange={(e) => { setRedirectedUrl(e.target.value); setConnectionError(""); }}
+                  disabled={connectMut.isPending}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  spellCheck={false}
                   onPaste={(e) => {
-                    // Immediate update from paste event for fastest auto-submit
                     const text = e.clipboardData?.getData("text") ?? "";
                     if (text) {
                       e.preventDefault();
                       setRedirectedUrl(text);
                     }
                   }}
-                  placeholder="Paste URL or code here — auto-connects"
-                  className="font-mono text-[11px] resize-none h-16"
+                  placeholder="Paste the fresh callback address"
+                  className="font-mono text-sm resize-none min-h-[88px]"
                   data-testid="schwab-callback-url-input"
                 />
                 {connectMut.isPending && (
-                  <div className="flex items-center gap-2 text-[11px] text-amber-300">
+                  <div role="status" className="flex items-center gap-2 text-sm text-foreground">
                     <Loader2 className="h-3 w-3 animate-spin" />
                     Connecting to Schwab...
                   </div>
                 )}
                 <Button
                   size="sm"
-                  variant="ghost"
-                  className="w-full text-[11px] h-7"
+                  className="w-full text-sm min-h-[44px]"
                   onClick={handleConnect}
                   disabled={connectMut.isPending || !redirectedUrl.trim()}
                   data-testid="complete-connection-btn"
                 >
-                  {connectMut.isPending ? "connecting..." : "Connect manually"}
+                  {connectMut.isPending ? "Connecting..." : "Complete connection"}
                 </Button>
               </div>
+              ) : null}
+              {connectionError && <p role="alert" className="text-sm text-foreground rounded-md border border-destructive p-3" data-testid="schwab-connection-error">{connectionError}</p>}
+              {authUrlData?.url && (
+                <div className="flex flex-wrap gap-2">
+                  {!authUrlData.automatic && <Button variant="outline" className="min-h-[44px]" onClick={() => refetchStatus()} data-testid="schwab-check-connection">Check connection</Button>}
+                  <Button variant="outline" className="min-h-[44px]" disabled={connectMut.isPending}
+                    onClick={() => { setRedirectedUrl(""); setConnectionError(""); setStep("idle"); void refetchAuthUrl(); }}
+                    data-testid="schwab-fresh-login">Get a fresh login link</Button>
+                </div>
+              )}
             </div>
           )}
 

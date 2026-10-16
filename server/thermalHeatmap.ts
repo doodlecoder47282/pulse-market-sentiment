@@ -139,7 +139,7 @@ export const THERMAL_UNITS: Record<ThermalGreek, string> = {
   zomma: "$ change in GEX (per 1% move) per +1 implied-vol point",
 };
 
-type Cell = { gex: number; vanna: number; charm: number; vomma: number; zomma: number; callOI: number; putOI: number; callVolume: number; putVolume: number };
+type Cell = { gex: number; vanna: number; charm: number; vomma: number; zomma: number; callOI: number; putOI: number; callVolume: number; putVolume: number; unpricedOI: number };
 
 const num = (x: unknown): number => (typeof x === "number" && Number.isFinite(x) ? x : 0);
 
@@ -173,7 +173,7 @@ export function buildThermalHeatmap(
     let em = matrix.get(ek);
     if (!em) { em = new Map(); matrix.set(ek, em); }
     let c = em.get(k);
-    if (!c) { c = { gex: 0, vanna: 0, charm: 0, vomma: 0, zomma: 0, callOI: 0, putOI: 0, callVolume: 0, putVolume: 0 }; em.set(k, c); }
+    if (!c) { c = { gex: 0, vanna: 0, charm: 0, vomma: 0, zomma: 0, callOI: 0, putOI: 0, callVolume: 0, putVolume: 0, unpricedOI: 0 }; em.set(k, c); }
     return c;
   };
 
@@ -199,9 +199,9 @@ export function buildThermalHeatmap(
           const ivPct = num(c?.volatility);
           const sigma = ivForClock({
             vendorIv: ivPct > 0 && ivPct < 500 ? ivPct / 100 : 0,
-            bid: num(c?.bid), ask: num(c?.ask), spot, strike, T, type: side,
+            bid: num(c?.bid), ask: num(c?.ask), spot, strike, T, type: side, r, q,
           });
-          if (!(sigma > 0)) { contractsNoSigma++; continue; }
+          if (!(sigma > 0)) { contractsNoSigma++; cell.unpricedOI += oi; continue; }
           const gamma = bsGamma(spot, strike, sigma, T, r, q);
           if (side === "C") cell.callOI += oi; else cell.putOI += oi;
           contractsUsed++;
@@ -240,6 +240,8 @@ export function buildThermalHeatmap(
     strikes.forEach((strike, si) => {
       const cell = em.get(strike);
       if (!cell) return;
+      // A traded contract with missing IV is unknown, not a zero-height node.
+      if (cell.unpricedOI > 0 && cell.callOI + cell.putOI === 0) return;
       if (cell.callOI + cell.putOI === 0 && cell.callVolume + cell.putVolume === 0) return;
       const exposure = cell[greek] || 0;
       const a = Math.abs(exposure);

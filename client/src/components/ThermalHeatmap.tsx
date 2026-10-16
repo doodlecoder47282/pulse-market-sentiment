@@ -99,6 +99,7 @@ export default function ThermalHeatmap() {
   // same numbers as a 3D height field on one scale (ThermalSurface.tsx).
   const [viewMode, setViewMode] = useState<"grid" | "surface">("grid");
   const [hover, setHover] = useState<Cell | null>(null);
+  const [showTable, setShowTable] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const { data: raw, isLoading, error } = useQuery<ThermalResp>({
@@ -148,6 +149,8 @@ export default function ThermalHeatmap() {
     };
   }, [raw]);
   const data = view;
+  const canPlot = !!data && !error && data.dataState === "ok" && data.cells.length > 0;
+  useEffect(() => { setHover(null); }, [raw, greek]);
 
   // Max |exposure| per expiry column — drives per-date shading
   const colMax = useMemo(() => {
@@ -331,11 +334,11 @@ export default function ThermalHeatmap() {
   }
 
   return (
-    <div data-testid="thermal-heatmap" className="relative rounded-xl border border-slate-700/60 bg-slate-900/40 p-4">
+    <div data-testid="thermal-heatmap" className="relative rounded-xl border border-border bg-card p-4">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
         <div className="flex items-center gap-2">
           <Flame className="w-4 h-4 text-amber-400" />
-          <div className="text-slate-100 font-semibold text-sm tracking-wide">Thermal · dealer gamma map</div>
+          <div className="text-foreground font-semibold text-sm tracking-wide">Thermal · dealer exposure map</div>
           <EdgeInfo id="thermal-heatmap" />
         </div>
         <div className="flex flex-wrap items-center gap-1" data-testid="thermal-greek-selector">
@@ -343,11 +346,12 @@ export default function ThermalHeatmap() {
             <button
               key={m}
               data-testid={`thermal-view-${m}`}
+              aria-pressed={viewMode === m}
               onClick={() => setViewMode(m)}
-              className={`px-2 py-0.5 text-[11px] rounded font-mono uppercase tracking-wider transition ${
+              className={`min-h-[44px] px-2 py-0.5 text-xs rounded font-mono uppercase tracking-wider transition text-foreground ${
                 viewMode === m
-                  ? "bg-sky-500/20 text-sky-300 border border-sky-500/40"
-                  : "text-slate-400 hover:text-slate-200 border border-transparent"
+                  ? "bg-primary/15 border border-primary"
+                  : "border border-border"
               }`}
               title={m === "grid" ? "Strike x expiry table with the dollar value in every cell" : "The same numbers as a 3D surface: strikes across, expiries back, exposure as height, one scale"}
             >
@@ -359,11 +363,13 @@ export default function ThermalHeatmap() {
             <button
               key={m}
               data-testid={`thermal-scale-${m}`}
+              aria-pressed={scaleMode === m}
+              disabled={viewMode !== "grid"}
               onClick={() => setScaleMode(m)}
-              className={`px-2 py-0.5 text-[11px] rounded font-mono uppercase tracking-wider transition ${
+              className={`min-h-[44px] px-2 py-0.5 text-xs rounded font-mono uppercase tracking-wider transition text-foreground disabled:opacity-50 ${
                 scaleMode === m
-                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
-                  : "text-slate-400 hover:text-slate-200 border border-transparent"
+                  ? "bg-primary/15 border border-primary"
+                  : "border border-border"
               }`}
               title={m === "per-date" ? "Each expiry date normalizes to its own max — hottest strike lights up green, shading out within that date" : "One scale across the whole grid"}
             >
@@ -375,11 +381,12 @@ export default function ThermalHeatmap() {
             <button
               key={g.key}
               data-testid={`thermal-greek-${g.key}`}
+              aria-pressed={greek === g.key}
               onClick={() => setGreek(g.key)}
-              className={`px-2 py-0.5 text-[11px] rounded font-mono uppercase tracking-wider transition ${
+              className={`min-h-[44px] px-2 py-0.5 text-xs rounded font-mono uppercase tracking-wider transition text-foreground ${
                 greek === g.key
-                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
-                  : "text-slate-400 hover:text-slate-200 border border-transparent"
+                  ? "bg-primary/15 border border-primary"
+                  : "border border-border"
               }`}
               title={g.desc}
             >
@@ -397,17 +404,25 @@ export default function ThermalHeatmap() {
           <AlertTriangle className="w-3.5 h-3.5" /> heatmap unavailable — {String((error as Error).message)}
         </div>
       )}
-      {data && grid && viewMode === "surface" && (
+      {data?.method && data.method.contractsNoSigma > 0 && canPlot && (
+        <p role="status" className="mb-3 text-sm text-foreground" data-testid="thermal-partial-coverage">
+          Partial exposure: {data.method.contractsNoSigma} contracts have no usable implied volatility and are excluded.
+          Missing-only cells are omitted, not priced at zero. Totals cover priced contracts only.
+        </p>
+      )}
+      {canPlot && data && grid && viewMode === "surface" && (
         <ThermalSurface data={data} greek={greek} />
       )}
-      {data && grid && viewMode === "grid" && (
-        <div className="relative hscroll-contain">
+      {canPlot && data && grid && viewMode === "grid" && (
+        <div className="relative hscroll-contain rounded-md bg-slate-950">
           <canvas
             ref={canvasRef}
             onMouseMove={onMove}
             onClick={onMove}
             onMouseLeave={() => setHover(null)}
             data-testid="thermal-heatmap-canvas"
+            role="img"
+            aria-label={`${greek.toUpperCase()} exposure grid. Exact values are available in the data table below.`}
             className="cursor-crosshair"
           />
           {hover && (
@@ -435,18 +450,34 @@ export default function ThermalHeatmap() {
       )}
 
       {data && data.dataState && data.dataState !== "ok" && (
-        <div className="mt-2 flex items-center gap-2 text-xs text-amber-300" data-testid="thermal-heatmap-state">
+        <div role="status" className="mt-2 flex items-center gap-2 text-sm text-foreground" data-testid="thermal-heatmap-state">
           <AlertTriangle className="w-3.5 h-3.5" />
           {data.dataState === "no_iv" ? "Exposure cannot be priced: " : "Nothing to show: "}{data.reason ?? data.dataState}
         </div>
       )}
 
+      {canPlot && data && (
+        <details className="mt-3 text-xs text-foreground" onToggle={e => setShowTable(e.currentTarget.open)} data-testid="thermal-data-table">
+          <summary className="cursor-pointer min-h-[44px] py-3">Read exact {greek.toUpperCase()} values</summary>
+          {showTable && <div className="max-h-80 overflow-auto">
+            <table className="w-full text-left tabular-nums">
+              <caption className="text-left pb-2">{GREEKS.find(g => g.key === greek)?.unit}. Signed model exposure, not observed dealer inventory.</caption>
+              <thead><tr><th scope="col">Expiry</th><th scope="col">Strike</th><th scope="col">Exposure ($)</th><th scope="col">Call OI</th><th scope="col">Put OI</th></tr></thead>
+              <tbody>{data.cells.map(c => <tr key={`${c.expIdx}-${c.strikeIdx}`} className="border-t border-border">
+                <td className="py-2 pr-2">{c.expiry}</td><td className="pr-2">{c.strike}</td>
+                <td className="pr-2">{c.exposure.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td><td className="pr-2">{c.callOI}</td><td>{c.putOI}</td>
+              </tr>)}</tbody>
+            </table>
+          </div>}
+        </details>
+      )}
+
       {data && (
-        <div className="mt-3 space-y-1.5 text-[11px] font-mono text-slate-500" data-testid="thermal-heatmap-legend">
+        <div className="mt-3 space-y-1.5 text-xs leading-relaxed font-mono text-muted-foreground" data-testid="thermal-heatmap-legend">
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-emerald-500/70" /> dealers long gamma (hedging tends to damp moves)</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-rose-500/70" /> dealers short gamma (hedging tends to amplify moves)</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-emerald-500/70" /> positive {greek.toUpperCase()} exposure (model)</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-rose-500/70" /> negative {greek.toUpperCase()} exposure (model)</span>
               {greek === "gex" && data.levels.callWall && <span className="text-emerald-400">call wall {data.levels.callWall}</span>}
               {greek === "gex" && data.levels.putWall && <span className="text-rose-400">put wall {data.levels.putWall}</span>}
               {greek === "gex" && data.levels.gammaFlip != null && <span className="text-violet-300">flip {data.levels.gammaFlip.toFixed(0)}</span>}
@@ -459,12 +490,12 @@ export default function ThermalHeatmap() {
               )}
             </div>
           </div>
-          <div className="text-slate-500" data-testid="thermal-heatmap-method">
-            {GREEKS.find((g) => g.key === greek)?.unit} · open interest as of the prior close (OCC posts it once a day), marked at live spot and vol
-            {data.method ? ` · r ${(data.method.r * 100).toFixed(1)}% q ${(data.method.q * 100).toFixed(1)}% · ${data.method.contractsUsed} contracts priced` : ""}
+          <div data-testid="thermal-heatmap-method">
+            {GREEKS.find((g) => g.key === greek)?.unit} · reported open interest, not intraday inventory, marked with the supplied spot and volatility
+            {data.method ? ` · assumed r ${(data.method.r * 100).toFixed(1)}% q ${(data.method.q * 100).toFixed(1)}% · ${data.method.contractsUsed} contracts priced` : ""}
             {data.method && data.method.contractsNoSigma > 0 ? `, ${data.method.contractsNoSigma} without an implied vol` : ""}
           </div>
-          <div className="text-slate-600">
+          <div>
             Dealer side is assumed (long every call, short every put), not observed. A heuristic read of positioning, not a forecast or advice.
           </div>
         </div>
