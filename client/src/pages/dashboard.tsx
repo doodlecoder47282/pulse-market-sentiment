@@ -29,7 +29,6 @@ import GlobalEdgeBanner from "@/components/GlobalEdgeBanner";
 import { RegimeChip } from "@/components/RegimeChip";
 import TakeFive, { TakeFiveFab } from "@/components/TakeFive";
 import EdgeLabPanel from "@/components/EdgeLabPanel";
-const CryptoPanel = lazy(() => import("@/components/CryptoPanel"));
 import { MacroTicker } from "@/components/MacroCarousel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTickers, type TabKey } from "@/components/TickerContext";
@@ -56,6 +55,7 @@ import TrackedSignalsPanel from "@/components/signals/TrackedSignalsPanel";
 import { useEffect, useState, useRef, lazy, Suspense } from "react";
 
 // ── Lazy-loaded heavy components (code splitting) ──────────────────────────
+const CryptoPanel = lazy(() => import("@/components/CryptoPanel"));
 const ModelsPanel = lazy(() => import("@/components/ModelsPanel"));
 const DailyPlaybookChart = lazy(() => import("@/components/DailyPlaybookChart"));
 const TabHeadline = lazy(() => import("@/components/TabHeadline"));

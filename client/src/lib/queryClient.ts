@@ -12,11 +12,29 @@ export const API_BASE_STORAGE_KEY = "batcave.apiBase";
 export const ACCESS_KEY_STORAGE_KEY = "batcave.accessKey";
 export const AUTH_REQUIRED_EVENT = "batcave:auth-required";
 
-function readStored(key: string): string {
+// The current connection must still work when browser storage is blocked.
+// Never persist a secret anywhere else or log it; this fallback lasts only
+// until this page closes/reloads.
+const connectionSession = new Map<string, string>();
+
+export function readConnectionSetting(key: string): string {
+  if (connectionSession.has(key)) return connectionSession.get(key) || "";
   try {
     return window.localStorage.getItem(key) || "";
   } catch {
     return "";
+  }
+}
+
+export function saveConnectionSettings(base: string, key: string): void {
+  for (const [name, value] of [[API_BASE_STORAGE_KEY, base], [ACCESS_KEY_STORAGE_KEY, key]]) {
+    connectionSession.set(name, value);
+    try {
+      if (value) window.localStorage.setItem(name, value);
+      else window.localStorage.removeItem(name);
+    } catch {
+      // Session-only connection; do not reload and lose it.
+    }
   }
 }
 
@@ -26,13 +44,13 @@ export function isNativeApp(): boolean {
 }
 
 export function getApiBase(): string {
-  const base = readStored(API_BASE_STORAGE_KEY) || BUILD_API_BASE || PORT_TOKEN_BASE;
+  const base = readConnectionSetting(API_BASE_STORAGE_KEY) || BUILD_API_BASE || PORT_TOKEN_BASE;
   return base.replace(/\/+$/, "");
 }
 
 /** Headers every API call carries: the optional shared access key. */
 export function authHeaders(): Record<string, string> {
-  const key = readStored(ACCESS_KEY_STORAGE_KEY);
+  const key = readConnectionSetting(ACCESS_KEY_STORAGE_KEY);
   return key ? { "x-batcave-key": key } : {};
 }
 

@@ -68,7 +68,7 @@ function App() {
           style={{ height: "env(safe-area-inset-top)" }}
         />
         {__ON_VERCEL__ ? <SpeedInsights /> : null}
-        <ConnectionGate />
+        <ConnectionGate>
         <TickerProvider>
           {showPremarket && (
             <PreMarketGate onAcknowledge={() => setShowPremarket(false)} />
@@ -85,6 +85,7 @@ function App() {
             </Router>
           </div>
         </TickerProvider>
+        </ConnectionGate>
       </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>

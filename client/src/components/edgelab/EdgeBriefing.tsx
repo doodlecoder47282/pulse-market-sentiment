@@ -176,13 +176,14 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
               value={symbolInput}
               onChange={(e) => setSymbolInput(e.target.value.toUpperCase())}
               onKeyDown={(e) => { if (e.key === "Enter") setActive(symbolInput); }}
-              className="h-7 w-20 text-xs font-mono"
+              aria-label="Ticker symbol for the briefing"
+              className="min-h-11 w-24 text-base font-mono"
               data-testid="briefing-symbol-input"
             />
-            <Button size="sm" variant="outline" onClick={() => setActive(symbolInput)} className="h-7 text-xs" data-testid="briefing-go">
-              go
+            <Button size="sm" variant="outline" onClick={() => setActive(symbolInput)} className="min-h-11 px-3 text-sm" data-testid="briefing-go">
+              Search
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => q.refetch()} className="h-7 w-7 p-0" data-testid="briefing-refresh">
+            <Button size="sm" variant="ghost" onClick={() => q.refetch()} aria-label="Refresh ticker briefing" className="min-h-11 min-w-11 p-0" data-testid="briefing-refresh">
               <RefreshCw className={`h-3 w-3 ${q.isFetching ? "animate-spin" : ""}`} />
             </Button>
           </div>
@@ -403,7 +404,8 @@ export default function EdgeBriefing({ defaultSymbol = "SPY" }: Props) {
             {/* News */}
             {d.news.length > 0 && (
               <div className="space-y-1.5">
-                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">headlines</div>
+                <div className="text-xs uppercase tracking-wider text-muted-foreground">Market headlines</div>
+                <p className="text-xs text-muted-foreground">Broad-market context, not verified ticker-specific news.</p>
                 <div className="space-y-1">
                   {d.news.slice(0, 6).map((n, i) => (
                     <a
