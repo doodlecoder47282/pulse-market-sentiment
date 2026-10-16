@@ -43,6 +43,16 @@ The final style delta was followed by another successful type check, production 
 
 Local evidence: `real-data-validation-full-tests.log`, `real-data-validation-tests.log`, `real-data-validation-check.log`, `real-data-validation-build.log`, `real-data-validation-qa/`, and `real-data-validation-handoff-qa/` in the workspace.
 
+## Private preview release
+
+Implementation commit: `f1a53b1` on the local `review/railway-device-verification` branch. The existing Batcave private preview was updated in place; the isolated demo backend remains on port 5090. No source credentials or databases were included in the frontend release.
+
+Hosted opaque-iframe testing confirmed that Settings opens, the new validation endpoint returns an explicit demo-blocked result, the Railway origin is prefilled, and the modal fits phone and desktop widths without horizontal overflow. No preview page errors were observed.
+
+The Connect link navigated to the exact configured Railway origin with `?connect=schwab` and no opener reference. A popup inheriting a restrictive sandbox remained blank. Opening Railway as a standalone page showed its existing **Access key required** screen; no key was entered and no brokerage sign-in was performed. The existing Settings copy-address/direct-browser fallback remains necessary when an embedded browser blocks the remote application. This is not a successful end-to-end OAuth acceptance.
+
+The Railway access key protects the app itself and is distinct from Schwab developer credentials. No authentication gate was removed. The currently deployed Railway build has not been updated with these local changes.
+
 ## Next gate: validate actual outputs, not merely inputs
 
 1. **Establish the deployment:** Confirm the actual Railway source branch/revision and promote the reviewed changes without overwriting concurrent work. Keep developer credentials and encryption keys in server configuration. Rotate previously exposed credentials before live acceptance.
