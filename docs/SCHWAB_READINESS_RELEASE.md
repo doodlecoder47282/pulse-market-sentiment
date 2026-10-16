@@ -53,3 +53,13 @@ No financial coefficients, targets or model weights were tuned to make sample ou
 This pass improves bounded request behavior and removes unnecessary demo training/backfill work. It does not constitute a production load test or a complete audit of the large legacy codebase. Earlier dependency-audit findings, tenant isolation and historical branch reconciliation remain open.
 
 No GitHub push, Railway deployment, real Schwab authorization, exposed-credential reuse, or native iOS change was performed. The existing private preview alone is being redeployed with the separate demo runtime.
+
+## Private-preview acceptance
+
+Local implementation commit: `35bfd39`. The existing Batcave asset was updated in place using its original static-output folder; the backend now runs on port 5090 from `batcave-demo-runtime-20261016-clean`. The previous demo process on 5089 was stopped after successful deployment. The original legacy backend and its data were not changed.
+
+Hosted checks passed: mobile Settings, validated handoff activated against an isolated destination fixture, 3D canvas, no document overflow/page exceptions in the tested states, reload, and the actual Refresh button (`POST /api/snapshot/refresh`, HTTP 200). A probe of the nonexistent/unapproved `/api/refresh` path returned 403 as expected from the demo gate; it is not the button's endpoint. Brokerage callback remains 403.
+
+Settings also rendered inside a legacy opaque-origin iframe with browser storage blocked. The new panel's measured light-theme text/control contrast ratios ranged from 5.74:1 to 17.93:1. This is scoped contrast verification, not an app-wide WCAG certification.
+
+For live authorization, open the protected personal server directly in Safari or Chrome. Embedded hosts can restrict new tabs or pass their sandbox restrictions to popups; the handoff is not a claim that an embedded preview can complete brokerage OAuth. Do not use the old Railway build with unrotated credentials. Evidence: `schwab-readiness-qa/hosted-results.json` and hosted screenshots.
