@@ -270,6 +270,11 @@ jobs:
               const priced = j.dataState === "ok" || (j.dataState === "stale_session" && j.session && j.session.state === "closed");
               // In the last half hour 0DTE gamma sits on a handful of strikes, so few clear the 1% share floor.
               const nearClose = j.session && j.session.state === "open" && j.session.minutesToClose <= 30;
+              // From Friday's close to Monday's open the one-day chain window holds no expiry: "unavailable / no_expiries" is the honest answer.
+              const et = {}; for (const x of new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour12: false, hour: "2-digit", minute: "2-digit", weekday: "short" }).formatToParts(new Date())) et[x.type] = x.value;
+              const etMin = (Number(et.hour) % 24) * 60 + Number(et.minute);
+              const weekendGap = et.weekday === "Sat" || et.weekday === "Sun" || (et.weekday === "Fri" && etMin >= 16 * 60) || (et.weekday === "Mon" && etMin < 9 * 60 + 30);
+              if (weekendGap && j.dataState === "unavailable" && j.error === "no_expiries") { console.log("PASS 0DTE map: no expiry inside the one-day window between Friday's close and Monday's open (unavailable / no_expiries, as it should be)"); process.exit(0); }
               const ok = priced && (j.strikes || []).length > (nearClose ? 2 : 5) && labelled.includes("pin") && j.zones === null && j.range && j.range.straddle > 0 && j.ledger && j.ledger.kept === false
                 && (j.strikes || []).every((s) => Math.abs(s.gexPt - Math.round(s.gexPct / (j.spot / 100))) <= 1);
               console.log((ok ? "PASS" : "FAIL") + " 0DTE map: state " + j.dataState + ", spot " + j.spot + ", " + (j.strikes || []).length + " strikes, labels " + labelled.join("/") + ", straddle " + (j.range && j.range.straddle) + ", band " + JSON.stringify(j.band && [j.band.low, j.band.high]) + ", zones " + j.zones + ", ledger " + (j.ledger && j.ledger.why));
