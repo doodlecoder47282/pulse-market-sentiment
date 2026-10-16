@@ -2,8 +2,8 @@ import { useIsDemo } from "@/lib/useEdition";
 
 /**
  * Always-visible label on the public demo (BATCAVE_EDITION=demo). Sits inside
- * the sticky header so it never scrolls away: every number on the page comes
- * from the simulated market in server/demoMarket.ts, not from Schwab.
+ * the sticky header. Stocks/options are simulated; public crypto/news adapters
+ * retain their separately sourced data and availability states.
  */
 export default function DemoStrip() {
   const demo = useIsDemo();
@@ -12,11 +12,11 @@ export default function DemoStrip() {
     <div
       role="status"
       data-testid="demo-strip"
-      className="border-b border-indigo-400/30 bg-indigo-500/15 px-3 py-1 text-center font-mono text-[11px] uppercase tracking-wider text-indigo-100"
+      className="border-b border-border bg-muted px-3 py-1 text-center font-mono text-xs uppercase tracking-wider text-foreground"
     >
-      <span className="font-semibold">Sample data</span>
-      <span className="opacity-90"> · simulated market, not real prices</span>
-      <span className="hidden opacity-90 sm:inline"> · demo of Batcave · not investment advice</span>
+      <span className="font-semibold">Test preview</span>
+      <span> · stocks/options simulated · Schwab off</span>
+      <span className="hidden sm:inline"> · crypto/news use separate public feeds · not investment advice</span>
     </div>
   );
 }

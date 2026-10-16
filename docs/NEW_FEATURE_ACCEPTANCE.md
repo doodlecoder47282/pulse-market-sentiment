@@ -75,3 +75,5 @@ Implementation checkpoint: local commit `a57c5b6`. The existing Batcave app asse
 - Evidence: `new-feature-qa/hosted-results.json`, `hosted-desktop.png`, `hosted-phone-settings.png`, `hosted-legacy.png`, `hosted-crypto-phone.png`.
 
 The preview is usable for reviewing features with sample market data. **It is not a live trading deployment or a successful Schwab sign-in.** Vercel publishing remains canceled, Railway was not changed, and iOS remains paused.
+
+Final disclosure polish distinguishes simulated stock/options data from separately sourced public crypto/news feeds. The settings copy no longer says every number is simulated or implies multi-user brokerage support; the demo notice is theme-aware and the dialog reserves room for its close control. This wording-only delta does not change calculations or access controls. Its focused callback/demo suite passed **25/25** in addition to the complete suite recorded above.

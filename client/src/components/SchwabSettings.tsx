@@ -444,18 +444,18 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-lg" data-testid="schwab-settings-dialog">
-          <DialogHeader>
+          <DialogHeader className="pr-12">
             <DialogTitle className="flex items-center gap-2">
               <Settings className="h-4 w-4" />
               Batcave demo
             </DialogTitle>
             <DialogDescription>
-              Every price, option chain, flow alert and score in this demo comes from a simulated market built for the preview. None of it is a real quote, and nothing here is investment advice.
+              Stock/index prices, option chains and derived market scores use simulated data in this preview. Crypto and news may come from separate public feeds and retain their own source and freshness limits. Nothing here is investment advice.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 text-sm text-muted-foreground" data-testid="demo-settings">
-            <p>The calculations are the same ones the full app runs on live Schwab data, so the screens show how Batcave reads a market, not what the market is doing today.</p>
-            <p>Schwab sign-in is turned off here. In the full app each person connects their own Schwab account, and their sign-in stays on their own server.</p>
+            <p>The stock/options screens demonstrate calculations, not current market conditions. Passing the tests does not establish forecast accuracy or a trading edge.</p>
+            <p>Schwab sign-in is turned off. Live use requires rotated developer credentials and a verified protected server. This is not a multi-user brokerage service.</p>
             {isNativeApp() && (
               <Button
                 variant="outline"
@@ -478,7 +478,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg grid-cols-[minmax(0,1fr)] [&>*]:min-w-0 [&_button]:whitespace-normal [&_button]:h-auto [&_button]:max-w-full [&_textarea]:min-w-0" data-testid="schwab-settings-dialog">
-        <DialogHeader>
+        <DialogHeader className="pr-12">
           <DialogTitle className="flex items-center gap-2">
             <Settings className="h-4 w-4" />
             Schwab Integration Settings
