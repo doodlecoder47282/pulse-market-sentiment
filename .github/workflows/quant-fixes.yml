@@ -6,7 +6,7 @@ name: Batcave quant fixes check
 
 on:
   push:
-    branches: [quant-fixes]
+    branches: [quant-fixes, "feat/**"]
   workflow_dispatch:
 
 permissions:
