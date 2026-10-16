@@ -67,6 +67,10 @@ export interface ThermalCell {
   /** Contracts traded today (Schwab totalVolume), context only: not in any exposure. */
   callVolume: number;
   putVolume: number;
+  /** Selected greek from call contracts only (dealer sign +1). exposure = callExposure + putExposure. */
+  callExposure: number;
+  /** Selected greek from put contracts only (dealer sign -1 already applied). */
+  putExposure: number;
 }
 
 export interface ThermalExpiry {
@@ -139,7 +143,9 @@ export const THERMAL_UNITS: Record<ThermalGreek, string> = {
   zomma: "$ change in GEX (per 1% move) per +1 implied-vol point",
 };
 
-type Cell = { gex: number; vanna: number; charm: number; vomma: number; zomma: number; callOI: number; putOI: number; callVolume: number; putVolume: number; unpricedOI: number };
+type Greeks = { gex: number; vanna: number; charm: number; vomma: number; zomma: number };
+const zeroGreeks = (): Greeks => ({ gex: 0, vanna: 0, charm: 0, vomma: 0, zomma: 0 });
+type Cell = Greeks & { callOI: number; putOI: number; callVolume: number; putVolume: number; unpricedOI: number; call: Greeks; put: Greeks };
 
 const num = (x: unknown): number => (typeof x === "number" && Number.isFinite(x) ? x : 0);
 
@@ -173,7 +179,7 @@ export function buildThermalHeatmap(
     let em = matrix.get(ek);
     if (!em) { em = new Map(); matrix.set(ek, em); }
     let c = em.get(k);
-    if (!c) { c = { gex: 0, vanna: 0, charm: 0, vomma: 0, zomma: 0, callOI: 0, putOI: 0, callVolume: 0, putVolume: 0, unpricedOI: 0 }; em.set(k, c); }
+    if (!c) { c = { ...zeroGreeks(), callOI: 0, putOI: 0, callVolume: 0, putVolume: 0, unpricedOI: 0, call: zeroGreeks(), put: zeroGreeks() }; em.set(k, c); }
     return c;
   };
 
@@ -206,12 +212,16 @@ export function buildThermalHeatmap(
           if (side === "C") cell.callOI += oi; else cell.putOI += oi;
           contractsUsed++;
           const sign = side === "C" ? 1 : -1;
-          cell.gex += sign * dollarGexPerPct(gamma, oi, spot);
           const x = contractExposure({ spot, strike, sigma, T, contracts: oi, r, q, type: side });
-          cell.vanna += sign * x.vannaPerVolPt;
-          cell.charm += sign * x.charmPerDay;
-          cell.vomma += sign * x.vommaPerVolPt;
-          cell.zomma += sign * x.zommaPerVolPt;
+          const add: Greeks = {
+            gex: sign * dollarGexPerPct(gamma, oi, spot),
+            vanna: sign * x.vannaPerVolPt,
+            charm: sign * x.charmPerDay,
+            vomma: sign * x.vommaPerVolPt,
+            zomma: sign * x.zommaPerVolPt,
+          };
+          const sideSum = side === "C" ? cell.call : cell.put;
+          for (const g of THERMAL_GREEKS) { cell[g] += add[g]; sideSum[g] += add[g]; }
         }
       }
     }
@@ -251,6 +261,7 @@ export function buildThermalHeatmap(
         expIdx: ei, strikeIdx: si, expiry: exp.label, dte: exp.dte, strike, exposure,
         gex: cell.gex, vanna: cell.vanna, charm: cell.charm, vomma: cell.vomma, zomma: cell.zomma,
         callOI: cell.callOI, putOI: cell.putOI, callVolume: cell.callVolume, putVolume: cell.putVolume,
+        callExposure: cell.call[greek] || 0, putExposure: cell.put[greek] || 0,
       });
     });
   });

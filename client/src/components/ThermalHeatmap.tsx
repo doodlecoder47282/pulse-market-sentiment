@@ -1,11 +1,16 @@
 import EdgeInfo from "@/components/EdgeInfo";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Flame, Activity, AlertTriangle } from "lucide-react";
 
 import DataStateChip from "@/components/DataStateChip";
 import ThermalSurface from "@/components/ThermalSurface";
+// three.js is fetched only when the 3D view opens.
+const ThermalSurface3D = lazy(() => import("@/components/ThermalSurface3D"));
+function canWebGL(): boolean {
+  try { const c = document.createElement("canvas"); return !!(c.getContext("webgl2") || c.getContext("webgl")); } catch { return false; }
+}
 
 type Cell = {
   expIdx: number; strikeIdx: number;
@@ -14,6 +19,8 @@ type Cell = {
   gex: number; vanna: number; charm: number; vomma: number; zomma: number;
   callOI: number; putOI: number;
   callVolume?: number; putVolume?: number;
+  /** Per-side split of the selected greek (newer servers). exposure = callExposure + putExposure. */
+  callExposure?: number; putExposure?: number;
 };
 type ThermalResp = {
   symbol: string;
@@ -97,7 +104,8 @@ export default function ThermalHeatmap() {
   const [scaleMode, setScaleMode] = useState<"per-date" | "global">("per-date");
   // grid: the strike x expiry table with the dollar in every cell; surface: the
   // same numbers as a 3D height field on one scale (ThermalSurface.tsx).
-  const [viewMode, setViewMode] = useState<"grid" | "surface">("grid");
+  const [viewMode, setViewMode] = useState<"grid" | "3d" | "surface">("grid");
+  const webgl = useMemo(() => canWebGL(), []);
   const [hover, setHover] = useState<Cell | null>(null);
   const [showTable, setShowTable] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -342,7 +350,7 @@ export default function ThermalHeatmap() {
           <EdgeInfo id="thermal-heatmap" />
         </div>
         <div className="flex flex-wrap items-center gap-1" data-testid="thermal-greek-selector">
-          {(["grid", "surface"] as const).map(m => (
+          {(["grid", "3d", "surface"] as const).map(m => (
             <button
               key={m}
               data-testid={`thermal-view-${m}`}
@@ -353,9 +361,10 @@ export default function ThermalHeatmap() {
                   ? "bg-primary/15 border border-primary"
                   : "border border-border"
               }`}
-              title={m === "grid" ? "Strike x expiry table with the dollar value in every cell" : "The same numbers as a 3D surface: strikes across, expiries back, exposure as height, one scale"}
+              disabled={m === "3d" && !webgl}
+              title={m === "grid" ? "Strike x expiry table with the dollar value in every cell" : m === "3d" ? (webgl ? "Interactive 3D: drag to rotate, pinch to zoom, call/put/net layers" : "WebGL is not available on this device; use 2.5D") : "Projected surface with rotate/tilt sliders (works without WebGL)"}
             >
-              {m === "grid" ? "grid" : "3D"}
+              {m === "grid" ? "grid" : m === "3d" ? "3D" : "2.5D"}
             </button>
           ))}
           <span className="mx-1 h-3 w-px bg-slate-700" />
@@ -412,6 +421,11 @@ export default function ThermalHeatmap() {
       )}
       {canPlot && data && grid && viewMode === "surface" && (
         <ThermalSurface data={data} greek={greek} />
+      )}
+      {canPlot && data && grid && viewMode === "3d" && (
+        <Suspense fallback={<div className="py-8 text-center text-xs text-slate-400" data-testid="thermal-surface3d-loading">loading 3D view…</div>}>
+          <ThermalSurface3D data={data} greek={greek} unit={GREEKS.find(g => g.key === greek)?.unit} />
+        </Suspense>
       )}
       {canPlot && data && grid && viewMode === "grid" && (
         <div className="relative hscroll-contain rounded-md bg-slate-950">

@@ -630,3 +630,20 @@ test("unpriced contracts with traded volume leave holes instead of zero-height s
   assert.equal(h.cells.some(c => c.strike === 6700), false);
   assert.ok(h.cells.some(c => c.strike === 6750));
 });
+
+// ─── Per-side split for the 3D call / put / net layers ──────────────────────
+test("call and put exposure split sums to the net cell for every greek; GEX sides carry the dealer sign", () => {
+  const ch = demoChain({ symbol: "$SPX", contractType: "ALL", strikeCount: 120, fromDate: "2026-10-12", toDate: "2026-10-23" }, NOW);
+  for (const g of THERMAL_GREEKS) {
+    const h = buildThermalHeatmap(ch, "$SPX", SPOT, g, { nowMs: NOW, r: R, q: Q });
+    assert.ok(h.cells.length > 0);
+    for (const c of h.cells) {
+      assert.ok(Number.isFinite(c.callExposure) && Number.isFinite(c.putExposure));
+      const tol = 1e-6 * Math.max(1, Math.abs(c.exposure));
+      assert.ok(Math.abs(c.callExposure + c.putExposure - c.exposure) <= tol, `${g} split ${c.strike}/${c.expiry}`);
+      if (c.callOI === 0) assert.equal(c.callExposure, 0);
+      if (c.putOI === 0) assert.equal(c.putExposure, 0);
+      if (g === "gex") { assert.ok(c.callExposure >= 0); assert.ok(c.putExposure <= 0); }
+    }
+  }
+});

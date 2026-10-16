@@ -30,6 +30,8 @@ export default defineConfig({
             // libs (recharts is the big one).
             if (id.includes("recharts") || id.includes("victory-vendor")) return "vendor-charts";
             if (id.includes("@radix-ui")) return "vendor-radix";
+            // three.js is self-contained and only used by the lazy 3D surface.
+            if (id.includes("/node_modules/three/")) return "vendor-three";
             if (id.includes("lucide-react")) return "vendor-icons";
             // react-markdown + remark/micromark stack is only used by lazy tab
             // panels (News, Trade Desk); split it out of the entry vendor chunk.
