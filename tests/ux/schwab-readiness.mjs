@@ -15,6 +15,7 @@ export async function runReadinessQA(browser, base, out) {
     await page.goto(base, { waitUntil: "domcontentloaded" });
     await page.getByTestId("button-settings").click({ timeout: 30000 });
     await page.getByTestId("personal-server-address").waitFor();
+    await page.getByTestId("personal-server-address").fill("");
     assert.equal(await page.getByTestId("personal-server-open-disabled").isDisabled(), true);
     for (const value of ["http://owned.example", "https://owned.example/?code=secret", "https://user:secret@owned.example", "https://owned.example/callback"]) {
       await page.getByTestId("personal-server-address").fill(value);
@@ -27,7 +28,7 @@ export async function runReadinessQA(browser, base, out) {
     await page.keyboard.press("Enter");
     const popup = await popupWait;
     await popup.waitForLoadState("domcontentloaded");
-    assert.equal(popup.url(), "https://owned.example/");
+    assert.equal(popup.url(), "https://owned.example/?connect=schwab");
     assert.equal(await popup.evaluate(() => window.opener === null), true);
     await popup.close();
     checks.push("HTTPS handoff activated by keyboard; exact destination; no opener; callback/userinfo/path rejected");

@@ -207,7 +207,7 @@ export default function Dashboard() {
   const { theme, toggleTheme, compact, toggleCompact } = useTheme();
   // Take Five overlay state — shared by floating FAB and tab "peek" button.
   const [take5Open, setTake5Open] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(() => new URLSearchParams(window.location.search).get("connect") === "schwab");
   // Keyboard shortcuts help modal
   const [helpOpen, setHelpOpen] = useState(false);
   // PCR DTE bucket selector — drives which horizon of put/call ratio the KeyStat shows.
@@ -297,7 +297,9 @@ export default function Dashboard() {
     tickerInputRef,
   });
 
-  if (isLoading) return <DashboardSkeleton />;
+  // Keep recovery controls mounted while the first snapshot loads or fails.
+  // Replacing the entire shell with a skeleton can cause shared-query children
+  // to remount/retry repeatedly, hiding Settings precisely when it is needed.
 
   // Snapshot unavailable or partial (Schwab not answering): the app shell and
   // all 11 tabs still render; Schwab-dependent cards show the state and
@@ -340,6 +342,9 @@ export default function Dashboard() {
         style={{ paddingTop: "env(safe-area-inset-top)" }}
       >
         <DemoStrip />
+        {isLoading && <p role="status" className="px-4 py-2 text-sm text-muted-foreground" data-testid="snapshot-loading-status">
+          Loading market snapshot. Settings and navigation remain available.
+        </p>}
         <div className="mx-auto flex max-w-[1800px] items-center justify-between gap-2 px-3 py-3 sm:px-4 md:px-8 xl:px-10">
           {/* Left: Logo + name + BATCAVE tag */}
           <div className="flex items-center gap-3">
@@ -1093,27 +1098,6 @@ function TermBar({ label, value, max, highlight }: { label: string; value: numbe
           className={`h-full ${highlight ? "bg-primary" : "bg-muted-foreground/50"} transition-all`}
           style={{ width: `${pct}%` }}
         />
-      </div>
-    </div>
-  );
-}
-
-function DashboardSkeleton() {
-  return (
-    <div className="min-h-screen bg-background p-4 md:p-8" style={{ paddingTop: "calc(1rem + env(safe-area-inset-top))" }}>
-      <div className="mx-auto max-w-[1800px] space-y-6">
-        <Skeleton className="h-14 w-full" />
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-          <Skeleton className="h-[420px] lg:col-span-5" />
-          <div className="grid grid-cols-3 gap-3 lg:col-span-7">
-            {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24" />)}
-          </div>
-        </div>
-        <Skeleton className="h-48 w-full" />
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-          <Skeleton className="h-[360px] lg:col-span-8" />
-          <Skeleton className="h-[360px] lg:col-span-4" />
-        </div>
       </div>
     </div>
   );

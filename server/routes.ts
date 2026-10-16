@@ -3109,8 +3109,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const { schwabSelfTest } = await import("./schwab");
       res.setHeader("Cache-Control", "no-store");
       res.json(await schwabSelfTest());
-    } catch (e: any) {
-      res.status(500).json({ error: String(e?.message || e) });
+    } catch {
+      res.status(503).json({ error: "Validation could not complete. No market-data approval was issued." });
     }
   });
 

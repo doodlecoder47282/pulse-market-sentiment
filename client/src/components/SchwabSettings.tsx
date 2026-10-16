@@ -8,6 +8,7 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiJson, queryClient, AUTH_REQUIRED_EVENT, API_BASE_STORAGE_KEY, isNativeApp } from "@/lib/queryClient";
 import PersonalServerHandoff from "./PersonalServerHandoff";
+import type { MarketDataValidation } from "@shared/marketDataValidation";
 import {
   Dialog,
   DialogContent,
@@ -452,6 +453,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
             <p>The stock/options screens demonstrate calculations, not current market conditions. Passing the tests does not establish forecast accuracy or a trading edge.</p>
             <p>Schwab sign-in is turned off. Live use requires rotated developer credentials and a verified protected server. This is not a multi-user brokerage service.</p>
             {!isNativeApp() && <PersonalServerHandoff />}
+            <SchwabSelfTest />
             {isNativeApp() && (
               <Button
                 variant="outline"
@@ -893,43 +895,62 @@ function PremarketToggle() {
   );
 }
 
-interface SelfTestItem { name: string; ok: boolean; status: number | null; detail: string }
-
-/** One button that checks each Schwab API live and says what is wrong. */
+/** On-demand input validation, not an HTTP reachability or prediction certificate. */
 function SchwabSelfTest() {
   const [busy, setBusy] = useState(false);
-  const [items, setItems] = useState<SelfTestItem[] | null>(null);
+  const inFlight = useRef(false);
+  const [report, setReport] = useState<MarketDataValidation | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!report) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [report]);
   const run = async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setReport(null);
     setBusy(true); setErr(null);
     try {
-      const j = await apiJson("GET", "/api/schwab/selftest");
-      setItems(j.items ?? []);
-    } catch (e) {
-      setErr(friendlyError(e, "The server did not answer."));
+      const j = await apiJson<MarketDataValidation>("GET", "/api/schwab/selftest");
+      if (j.version !== 1 || !Array.isArray(j.items) || !Number.isFinite(j.expiresAt) ||
+          !j.items.every(item => ["pass", "partial", "fail", "blocked"].includes(item.verdict))) {
+        throw new Error("Validation report not supported.");
+      }
+      setReport(j); setNow(Date.now());
+    } catch {
+      setErr("No validation result. The server may be unavailable or running an older build; no data-quality pass was issued.");
     } finally {
       setBusy(false);
+      inFlight.current = false;
     }
   };
+  const expired = !!report && now >= report.expiresAt;
   return (
     <div className="space-y-2 pt-1" data-testid="schwab-selftest">
-      <Button size="sm" variant="outline" className="min-h-[40px] w-full text-xs" onClick={run} disabled={busy} data-testid="schwab-selftest-btn">
-        {busy ? "Testing Schwab data..." : "Test Schwab data"}
+      <Button size="sm" variant="outline" className="h-auto min-h-[44px] w-full whitespace-normal py-2 text-sm leading-snug" onClick={run} disabled={busy} data-testid="schwab-selftest-btn">
+        {busy ? "Checking real observations..." : "Validate real market data"}
       </Button>
-      {err && <div className="text-xs text-rose-400">{err}</div>}
-      {items && (
+      {err && <div role="status" className="text-sm text-foreground" data-testid="market-validation-error">{err}</div>}
+      {report && <>
+        <p role="status" className="text-sm text-foreground" data-testid="market-validation-summary">
+          {expired ? "Check expired. Run again before relying on these results." : report.marketInputsValid ? "Sampled input checks passed. Full output validation is still required." : "Real-data validation incomplete. Review the gaps below."}
+        </p>
+        <p className="text-xs text-muted-foreground">{report.cached ? "Recent app-side check" : "Checked"} at {new Date(report.checkedAt).toLocaleTimeString()}. {report.scope}</p>
         <ul className="space-y-1.5">
-          {items.map((it) => (
-            <li key={it.name} className="rounded border border-border/40 p-2 text-xs leading-snug">
-              <div className="flex items-center justify-between gap-2">
+          {report.items.map((it) => (
+            <li key={it.name} className="rounded border border-border/40 p-2 text-xs leading-snug" data-testid={`market-check-${it.name.replace(/\W/g, "-")}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-medium text-foreground">{it.name}</span>
-                <span className={it.ok ? "text-emerald-400" : "text-rose-400"}>{it.ok ? "OK" : `Failed${it.status ? ` (${it.status})` : ""}`}</span>
+                <span className="font-semibold uppercase text-foreground">{expired ? "Expired" : it.verdict}</span>
               </div>
               <div className="mt-0.5 text-muted-foreground">{it.detail}</div>
+              <div className="mt-1 text-muted-foreground">{it.source}{it.observedAt != null ? ` · Observed ${new Date(it.observedAt).toLocaleString()}` : ""}</div>
             </li>
           ))}
         </ul>
-      )}
+      </>}
     </div>
   );
 }

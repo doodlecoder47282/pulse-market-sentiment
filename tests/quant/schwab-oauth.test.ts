@@ -43,14 +43,18 @@ test("last session date is the ET date of the newest bar", () => {
 // which is what put every client on the loading skeleton. schwab.ts cannot
 // be imported here (it opens the token store), so the guard reads the source.
 import { readFileSync } from "node:fs";
-test("schwab: every fetch carries an AbortSignal.timeout", () => {
+test("schwab: legacy fetches have timeouts and extracted validation bounds transport plus body", () => {
   const src = readFileSync(new URL("../../server/schwab.ts", import.meta.url), "utf8");
   const calls = Array.from(src.matchAll(/await fetch\(([\s\S]*?)\);/g));
-  assert.ok(calls.length >= 4, `found ${calls.length} fetch calls`);
+  assert.ok(calls.length >= 3, `found ${calls.length} legacy fetch calls`);
   for (const m of calls) {
     assert.match(m[1], /signal: AbortSignal\.timeout\(SCHWAB_[A-Z_]+_TIMEOUT_MS\)/, `unbounded fetch: ${m[0].slice(0, 80)}`);
   }
   // Timeouts name themselves in the degraded reason rather than "The operation was aborted".
   assert.match(src, /name === "TimeoutError"/);
   assert.match(src, /timed out after \$\{Math\.round\(timeoutMs \/ 1000\)\} s/);
+  assert.match(src, /schwabSelfTest = createSchwabInputValidator\(/);
+  const validator = readFileSync(new URL("../../server/schwabInputValidation.ts", import.meta.url), "utf8");
+  assert.match(validator, /withRequestDeadline\(async signal => \{[\s\S]*?deps\.fetch\([\s\S]*?\{ signal,[\s\S]*?await res\.json\(\)[\s\S]*?\}, 10_000\)/);
+  assert.equal(Array.from(validator.matchAll(/await deps\.fetch\(/g)).length, 1);
 });

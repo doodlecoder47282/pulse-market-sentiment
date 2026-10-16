@@ -25,6 +25,7 @@ import { oauthErrorCode } from "./oauthError";
 import { newOAuthState } from "./schwabOAuth";
 import { editionFromEnv } from "../shared/edition";
 import { demoSchwabPayload } from "./demoMarket";
+import { createSchwabInputValidator } from "./schwabInputValidation";
 
 // Demo edition (BATCAVE_EDITION=demo): a simulated market answers every
 // Schwab REST call (server/demoMarket.ts). Schwab is never called, sign-in is
@@ -47,7 +48,6 @@ const SCHWAB_BASE = "https://api.schwabapi.com";
 // few MB), token calls 15 s, the self-test probes 10 s.
 const SCHWAB_FETCH_TIMEOUT_MS = (() => { const n = Number(process.env.SCHWAB_FETCH_TIMEOUT_MS); return Number.isFinite(n) && n >= 1000 ? n : 30_000; })();
 const SCHWAB_TOKEN_TIMEOUT_MS = 15_000;
-const SCHWAB_PROBE_TIMEOUT_MS = 10_000;
 /** "timed out after N s" for an AbortSignal.timeout abort, else the error's message. */
 function fetchErrorText(e: unknown, timeoutMs: number): string {
   const x = e as { name?: unknown; message?: unknown } | null;
@@ -620,48 +620,12 @@ export async function getStreamerInfo(): Promise<StreamerInfo | null> {
   return meta.data ? parseStreamerInfo(meta.data) : null;
 }
 
-export interface SchwabSelfTestItem { name: string; ok: boolean; status: number | null; detail: string }
-
-/**
- * Live check of each Schwab API this app uses, uncached, with plain-language
- * results for the Settings panel. Never returns tokens or account ids.
- */
-export async function schwabSelfTest(): Promise<{ connected: boolean; items: SchwabSelfTestItem[] }> {
-  if (isDemoEdition()) {
-    return { connected: true, items: [{ name: "Demo edition", ok: true, status: null, detail: "Simulated sample data. Schwab is not called in this edition." }] };
-  }
-  const token = await getAccessToken();
-  if (!token) return { connected: false, items: [{ name: "Sign-in", ok: false, status: null, detail: "Schwab is not connected or the sign-in expired. Use Connect Schwab." }] };
-  const probe = async (name: string, url: string, summarize: (j: any) => string): Promise<SchwabSelfTestItem> => {
-    try {
-      const r = await fetch(url, { signal: AbortSignal.timeout(SCHWAB_PROBE_TIMEOUT_MS), headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
-      if (r.ok) {
-        let j: any = null;
-        try { j = await r.json(); } catch { /* empty body */ }
-        return { name, ok: true, status: r.status, detail: summarize(j) };
-      }
-      const why =
-        r.status === 401 ? "Schwab refused the sign-in for this API (401). If only this line fails, your Schwab app lacks the product this API belongs to; if every line fails, reconnect Schwab and check SCHWAB_CLIENT_SECRET." :
-        r.status === 403 ? "Schwab says this app is not entitled to this data (403). Check the API products on developer.schwab.com." :
-        r.status === 429 ? "Rate limited by Schwab (429). Try again in a minute." :
-        `Schwab answered ${r.status}.`;
-      return { name, ok: false, status: r.status, detail: why };
-    } catch (e: any) {
-      return { name, ok: false, status: null, detail: `Could not reach Schwab: ${fetchErrorText(e, SCHWAB_PROBE_TIMEOUT_MS)}` };
-    }
-  };
-  const items = await Promise.all([
-    probe("Quotes (SPY, $SPX, $VIX)", `${MARKET_BASE}/quotes?symbols=${encodeURIComponent("SPY,$SPX,$VIX")}&fields=quote`,
-      (j) => { const n = j ? Object.keys(j).length : 0; const spy = j?.SPY?.quote?.lastPrice; return `${n} of 3 symbols returned${typeof spy === "number" ? `; SPY last ${spy}` : ""}`; }),
-    probe("Daily price history (SPY, 1 month)", `${MARKET_BASE}/pricehistory?symbol=SPY&periodType=month&period=1&frequencyType=daily&frequency=1`,
-      (j) => `${Array.isArray(j?.candles) ? j.candles.length : 0} daily bars`),
-    probe("Option chain (SPY, 4 strikes)", `${MARKET_BASE}/chains?symbol=SPY&strikeCount=4&contractType=ALL`,
-      (j) => { const exps = j?.callExpDateMap ? Object.keys(j.callExpDateMap).length : 0; return exps ? `${exps} expirations returned` : `answered with no expirations (status ${j?.status ?? "?"})`; }),
-    probe("Streaming info (Trader API)", `${SCHWAB_BASE}/trader/v1/userPreference`,
-      (j) => (Array.isArray(j?.streamerInfo) && j.streamerInfo.length ? "streamer info returned" : "no streamer info in the answer")),
-  ]);
-  return { connected: true, items };
-}
+/** Shared single-flight probe; raw credentials and account identifiers never leave the server. */
+export const schwabSelfTest = createSchwabInputValidator({
+  demo: isDemoEdition,
+  token: getAccessToken,
+  fetch: (input, init) => globalThis.fetch(input, init),
+});
 
 /**
  * Start the one Schwab Streamer connection (server/schwabStream.ts) with this
