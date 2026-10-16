@@ -63,3 +63,15 @@ The original `sentiment-app` checkout, private historical ledger and original ru
 ### Known carry-forward gaps
 
 Broader light-theme polish, complete live-source coverage, the separate old Trade Brief/evidence-ledger lineage, unresolved dependency-audit findings, tenant isolation, and the disabled/unaccepted ML sidecar are not closed by this repair. A working 3D visualization is not a validated prediction model.
+
+## Hosted preview acceptance
+
+Implementation checkpoint: local commit `a57c5b6`. The existing Batcave app asset was updated in place, not duplicated. Because the host retains the original deployment-folder binding, the reviewed static preview bundle was staged in `sentiment-app/dist/public`; its preceding generated build is preserved in `sentiment-app/dist/public-before-2026-10-16-3d`. The original source, database and brokerage configuration were not changed.
+
+- Hosted direct-origin check: rewritten backend bootstrap, HTTP 200 health and thermal responses, rendered 3D canvas, mobile Crypto navigation, sample-only settings, refresh POST 200 and page reload all passed with no page exceptions or document overflow.
+- Hosted opaque-origin iframe check: browser storage deliberately unavailable, backend reads and refresh POST 200 still worked; iframe reload passed. A brokerage callback POST returned 403.
+- Final backend check: auth-link GET, callback POST, disconnect POST and an unapproved configuration write all returned 403. The test-edition thermal response contained finite calculated exposures from the sample chain.
+- Crypto was navigable, but its initial live-source widgets were warming up. This is not a signoff on complete crypto coverage, social feeds, or live-source freshness.
+- Evidence: `new-feature-qa/hosted-results.json`, `hosted-desktop.png`, `hosted-phone-settings.png`, `hosted-legacy.png`, `hosted-crypto-phone.png`.
+
+The preview is usable for reviewing features with sample market data. **It is not a live trading deployment or a successful Schwab sign-in.** Vercel publishing remains canceled, Railway was not changed, and iOS remains paused.
