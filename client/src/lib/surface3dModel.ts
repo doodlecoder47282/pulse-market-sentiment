@@ -16,16 +16,18 @@ export type Layer = "net" | "call" | "put";
 export type Spacing = "even" | "dte";
 export type HeightScale = "linear" | "compressed";
 
-export type Cell3D = SurfaceCell & { callExposure?: number; putExposure?: number; callVolume?: number; putVolume?: number };
+export type Cell3D = SurfaceCell & { callExposure?: number | null; putExposure?: number | null; callUnpricedOI?: number; putUnpricedOI?: number; callVolume?: number; putVolume?: number };
 export type Data3D = Omit<SurfaceData, "cells"> & { cells: Cell3D[] };
 
 export const WORLD_WIDTH = 10;
 export const WORLD_DEPTH = 6;
 export const WORLD_HEIGHT = 2.6;
 
-/** True when the server sent the per-side split (older servers send net only). */
+/** True when the server sent the per-side split (older servers send net only). A side is
+ *  null where it had open interest but no usable IV: unknown, drawn as a hole in that layer. */
 export function hasSides(data: Data3D): boolean {
-  return data.cells.length > 0 && data.cells.every((c) => Number.isFinite(c.callExposure) && Number.isFinite(c.putExposure));
+  return data.cells.length > 0 && data.cells.every((c) => c.callExposure !== undefined && c.putExposure !== undefined
+    && (c.callExposure === null || Number.isFinite(c.callExposure)) && (c.putExposure === null || Number.isFinite(c.putExposure)));
 }
 
 export function layerValue(c: Cell3D, layer: Layer): number | null {
@@ -43,7 +45,7 @@ export function sharedScaleMax(data: Data3D): number {
   let m = 0;
   for (const c of data.cells) {
     m = Math.max(m, Math.abs(c.exposure || 0));
-    if (sides) m = Math.max(m, Math.abs(c.callExposure!), Math.abs(c.putExposure!));
+    if (sides) m = Math.max(m, Math.abs(c.callExposure ?? 0), Math.abs(c.putExposure ?? 0));
   }
   return m;
 }

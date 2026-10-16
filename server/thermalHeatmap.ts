@@ -67,10 +67,14 @@ export interface ThermalCell {
   /** Contracts traded today (Schwab totalVolume), context only: not in any exposure. */
   callVolume: number;
   putVolume: number;
-  /** Selected greek from call contracts only (dealer sign +1). exposure = callExposure + putExposure. */
-  callExposure: number;
-  /** Selected greek from put contracts only (dealer sign -1 already applied). */
-  putExposure: number;
+  /** Selected greek from call contracts only (dealer sign +1). exposure = callExposure + putExposure
+   *  when both sides priced. null: this side had open interest but no usable IV (unknown, not zero). */
+  callExposure: number | null;
+  /** Selected greek from put contracts only (dealer sign -1 already applied); null as above. */
+  putExposure: number | null;
+  /** Open interest on each side that could not be priced (no usable IV). */
+  callUnpricedOI: number;
+  putUnpricedOI: number;
 }
 
 export interface ThermalExpiry {
@@ -145,7 +149,7 @@ export const THERMAL_UNITS: Record<ThermalGreek, string> = {
 
 type Greeks = { gex: number; vanna: number; charm: number; vomma: number; zomma: number };
 const zeroGreeks = (): Greeks => ({ gex: 0, vanna: 0, charm: 0, vomma: 0, zomma: 0 });
-type Cell = Greeks & { callOI: number; putOI: number; callVolume: number; putVolume: number; unpricedOI: number; call: Greeks; put: Greeks };
+type Cell = Greeks & { callOI: number; putOI: number; callVolume: number; putVolume: number; unpricedOI: number; callUnpricedOI: number; putUnpricedOI: number; call: Greeks; put: Greeks };
 
 const num = (x: unknown): number => (typeof x === "number" && Number.isFinite(x) ? x : 0);
 
@@ -179,7 +183,7 @@ export function buildThermalHeatmap(
     let em = matrix.get(ek);
     if (!em) { em = new Map(); matrix.set(ek, em); }
     let c = em.get(k);
-    if (!c) { c = { ...zeroGreeks(), callOI: 0, putOI: 0, callVolume: 0, putVolume: 0, unpricedOI: 0, call: zeroGreeks(), put: zeroGreeks() }; em.set(k, c); }
+    if (!c) { c = { ...zeroGreeks(), callOI: 0, putOI: 0, callVolume: 0, putVolume: 0, unpricedOI: 0, callUnpricedOI: 0, putUnpricedOI: 0, call: zeroGreeks(), put: zeroGreeks() }; em.set(k, c); }
     return c;
   };
 
@@ -207,7 +211,7 @@ export function buildThermalHeatmap(
             vendorIv: ivPct > 0 && ivPct < 500 ? ivPct / 100 : 0,
             bid: num(c?.bid), ask: num(c?.ask), spot, strike, T, type: side, r, q,
           });
-          if (!(sigma > 0)) { contractsNoSigma++; cell.unpricedOI += oi; continue; }
+          if (!(sigma > 0)) { contractsNoSigma++; cell.unpricedOI += oi; if (side === "C") cell.callUnpricedOI += oi; else cell.putUnpricedOI += oi; continue; }
           const gamma = bsGamma(spot, strike, sigma, T, r, q);
           if (side === "C") cell.callOI += oi; else cell.putOI += oi;
           contractsUsed++;
@@ -261,7 +265,10 @@ export function buildThermalHeatmap(
         expIdx: ei, strikeIdx: si, expiry: exp.label, dte: exp.dte, strike, exposure,
         gex: cell.gex, vanna: cell.vanna, charm: cell.charm, vomma: cell.vomma, zomma: cell.zomma,
         callOI: cell.callOI, putOI: cell.putOI, callVolume: cell.callVolume, putVolume: cell.putVolume,
-        callExposure: cell.call[greek] || 0, putExposure: cell.put[greek] || 0,
+        // A side with open interest but no priced contract is unknown, never a zero-height layer point.
+        callExposure: cell.callUnpricedOI > 0 && cell.callOI === 0 ? null : cell.call[greek] || 0,
+        putExposure: cell.putUnpricedOI > 0 && cell.putOI === 0 ? null : cell.put[greek] || 0,
+        callUnpricedOI: cell.callUnpricedOI, putUnpricedOI: cell.putUnpricedOI,
       });
     });
   });

@@ -19,8 +19,9 @@ type Cell = {
   gex: number; vanna: number; charm: number; vomma: number; zomma: number;
   callOI: number; putOI: number;
   callVolume?: number; putVolume?: number;
-  /** Per-side split of the selected greek (newer servers). exposure = callExposure + putExposure. */
-  callExposure?: number; putExposure?: number;
+  /** Per-side split of the selected greek (newer servers). exposure = callExposure + putExposure
+   *  when both priced; null = that side had open interest but no usable IV (unknown, not zero). */
+  callExposure?: number | null; putExposure?: number | null; callUnpricedOI?: number; putUnpricedOI?: number;
 };
 type ThermalResp = {
   symbol: string;

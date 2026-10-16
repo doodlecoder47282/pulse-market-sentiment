@@ -16,11 +16,19 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CSS2DRenderer, CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import { fmtCell, trimForSurface } from "@/lib/surfaceDraw";
+
 import {
   buildSurfaceModel, contourSegments, expiryFractions, expiryTickIndices, hasSides, layerValue, ribbonHeights, strikeTickIndices,
   WORLD_DEPTH, WORLD_HEIGHT, WORLD_WIDTH,
   type Cell3D, type Data3D, type HeightScale, type Layer, type ScaleMode, type Spacing,
 } from "@/lib/surface3dModel";
+/** A side's exposure, or "unpriced" when it had open interest but no usable IV (unknown, not zero). */
+const fmtSide = (v: number | null | undefined): string => (v == null ? "unpriced" : fmtCell(v));
+/** Open interest per side; an unpriced side says so instead of reading as zero. */
+const fmtOI = (c: Cell3D): string => {
+  const side = (oi: number, un: number | undefined) => (oi === 0 && (un ?? 0) > 0 ? `${un} unpriced` : String(oi));
+  return `c/${side(c.callOI, c.callUnpricedOI)} p/${side(c.putOI, c.putUnpricedOI)}`;
+};
 
 export function webglAvailable(): boolean {
   try {
@@ -471,8 +479,8 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
             <div className="font-semibold text-slate-100">strike {picked.cell.strike}</div>
             <div className={`mt-1 ${picked.value >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{G} {layer}: {fmtCell(picked.value)}</div>
             {sides && layer !== "net" && <div className="text-[11px] text-slate-400">net {fmtCell(picked.cell.exposure)}</div>}
-            {sides && layer === "net" && <div className="text-[11px] text-slate-400">calls {fmtCell(picked.cell.callExposure!)} · puts {fmtCell(picked.cell.putExposure!)}</div>}
-            <div className="text-[11px] text-slate-500">OI c/{picked.cell.callOI} p/{picked.cell.putOI}</div>
+            {sides && layer === "net" && <div className="text-[11px] text-slate-400">calls {fmtSide(picked.cell.callExposure)} · puts {fmtSide(picked.cell.putExposure)}</div>}
+            <div className="text-[11px] text-slate-500">OI {fmtOI(picked.cell)}</div>
             {(picked.cell.callVolume != null || picked.cell.putVolume != null) && <div className="text-[11px] text-slate-500">traded today c/{picked.cell.callVolume ?? 0} p/{picked.cell.putVolume ?? 0}</div>}
             {pct != null && <div className="text-[11px] text-slate-500">{pct.toFixed(0)}% of the {scaleName} max</div>}
           </div>
@@ -496,8 +504,8 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
       {picked && (
         <div className="mt-2 rounded border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-200 sm:hidden" data-testid="thermal-surface3d-readout-phone" role="status">
           <div className="text-[11px] text-slate-400">{picked.cell.expiry} · {picked.cell.dte}d · strike {picked.cell.strike}</div>
-          <div className={picked.value >= 0 ? "text-emerald-300" : "text-rose-300"}>{G} {layer}: {fmtCell(picked.value)}{sides && layer === "net" ? ` (calls ${fmtCell(picked.cell.callExposure!)} · puts ${fmtCell(picked.cell.putExposure!)})` : ""}</div>
-          <div className="text-[11px] text-slate-500">OI c/{picked.cell.callOI} p/{picked.cell.putOI}{pct != null ? ` · ${pct.toFixed(0)}% of the ${scaleName} max` : ""}</div>
+          <div className={picked.value >= 0 ? "text-emerald-300" : "text-rose-300"}>{G} {layer}: {fmtCell(picked.value)}{sides && layer === "net" ? ` (calls ${fmtSide(picked.cell.callExposure)} · puts ${fmtSide(picked.cell.putExposure)})` : ""}</div>
+          <div className="text-[11px] text-slate-500">OI {fmtOI(picked.cell)}{pct != null ? ` · ${pct.toFixed(0)}% of the ${scaleName} max` : ""}</div>
         </div>
       )}
       <div className="mt-2 flex flex-wrap items-center gap-2 font-mono text-[11px] text-muted-foreground" data-testid="surface3d-legend">

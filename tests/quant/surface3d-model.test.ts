@@ -174,3 +174,19 @@ test("level ribbons follow the surface height and stop at holes", () => {
   const mid = ribbonHeights(m, (m.xOfIndex(0) + m.xOfIndex(1)) / 2);
   assert.ok(Math.abs((mid[0] as number) - (m.yOfValue(-30) + m.yOfValue(25)) / 2) < 1e-6);
 });
+
+test("a null side (open interest, no usable IV) is a hole in that layer and does not disable the per-side split", async () => {
+  const { buildSurfaceModel, hasSides, layerValue } = await import("../../client/src/lib/surface3dModel");
+  const cell = (expIdx: number, strikeIdx: number, call: number | null, put: number | null): any =>
+    ({ expIdx, strikeIdx, expiry: "e", dte: 1, strike: 100 + strikeIdx, exposure: (call ?? 0) + (put ?? 0), callExposure: call, putExposure: put, callOI: call ? 10 : 0, putOI: put ? 10 : 0, putUnpricedOI: put === null ? 5 : 0 });
+  const data: any = { spot: 101, greek: "gex", strikes: [100, 101], expiries: [{ label: "e", dte: 1 }, { label: "f", dte: 2 }],
+    cells: [cell(0, 0, 5, -3), cell(0, 1, 4, null), cell(1, 0, 2, -1), cell(1, 1, 3, -2)], maxAbs: 5, levels: { callWall: null, putWall: null, gammaFlip: null } };
+  assert.equal(hasSides(data), true);
+  assert.equal(layerValue(data.cells[1], "put"), null);
+  assert.equal(layerValue(data.cells[1], "call"), 4);
+  const puts = buildSurfaceModel(data, { layer: "put", spacing: "even", heightScale: "linear" });
+  assert.equal(puts.present[1], 0, "the unpriced put vertex is absent");
+  assert.equal(puts.quadCount, 0, "the only quad has a missing corner: a hole, not a zero");
+  const calls = buildSurfaceModel(data, { layer: "call", spacing: "even", heightScale: "linear" });
+  assert.equal(calls.quadCount, 1);
+});

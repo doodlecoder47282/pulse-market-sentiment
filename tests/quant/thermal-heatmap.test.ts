@@ -638,12 +638,33 @@ test("call and put exposure split sums to the net cell for every greek; GEX side
     const h = buildThermalHeatmap(ch, "$SPX", SPOT, g, { nowMs: NOW, r: R, q: Q });
     assert.ok(h.cells.length > 0);
     for (const c of h.cells) {
+      // The demo chain prices every contract, so both sides are numbers here.
       assert.ok(Number.isFinite(c.callExposure) && Number.isFinite(c.putExposure));
+      assert.equal(c.callUnpricedOI + c.putUnpricedOI, 0);
       const tol = 1e-6 * Math.max(1, Math.abs(c.exposure));
-      assert.ok(Math.abs(c.callExposure + c.putExposure - c.exposure) <= tol, `${g} split ${c.strike}/${c.expiry}`);
+      assert.ok(Math.abs(c.callExposure! + c.putExposure! - c.exposure) <= tol, `${g} split ${c.strike}/${c.expiry}`);
       if (c.callOI === 0) assert.equal(c.callExposure, 0);
       if (c.putOI === 0) assert.equal(c.putExposure, 0);
-      if (g === "gex") { assert.ok(c.callExposure >= 0); assert.ok(c.putExposure <= 0); }
+      if (g === "gex") { assert.ok(c.callExposure! >= 0); assert.ok(c.putExposure! <= 0); }
     }
   }
+});
+
+test("a side with open interest but no usable IV is null (unknown), never a zero-height point in that layer", () => {
+  const h = build(chainOf([
+    { side: "C", expiry: FAR, strike: 6700, oi: 100, vol: 200, ivPct: 18 },
+    { side: "P", expiry: FAR, strike: 6700, oi: 80, vol: 50, ivPct: -999 },
+    { side: "C", expiry: FAR, strike: 6750, oi: 100, vol: 200, ivPct: 18 },
+    { side: "P", expiry: FAR, strike: 6750, oi: 60, vol: 10, ivPct: 20 },
+  ]));
+  const a = h.cells.find((c) => c.strike === 6700)!;
+  const b = h.cells.find((c) => c.strike === 6750)!;
+  assert.ok(a && b);
+  assert.ok(Number.isFinite(a.callExposure) && a.callExposure! > 0);
+  assert.equal(a.putExposure, null, "unpriced put side is unknown");
+  assert.equal(a.putOI, 0);
+  assert.equal(a.putUnpricedOI, 80);
+  assert.equal(a.exposure, a.callExposure, "net carries the priced side only (partial)");
+  assert.ok(Number.isFinite(b.putExposure) && b.putExposure! < 0);
+  assert.equal(b.putUnpricedOI, 0);
 });
