@@ -341,6 +341,10 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
       const message = "Connection was not confirmed. Check connection status first. If disconnected, use a fresh login link and its new callback, not a saved code.";
       setConnectionError(message);
       toast({ title: "Connection not confirmed", description: message, variant: "destructive" });
+      // The server consumes the sign-in state before the exchange, so the link
+      // shown is dead after any failure: mint a new one rather than let the
+      // user re-copy a link that will be refused.
+      void refetchAuthUrl();
     },
     onSettled: () => { connectionInFlight.current = false; },
   });

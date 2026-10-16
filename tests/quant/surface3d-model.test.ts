@@ -163,6 +163,23 @@ test("contours cross only observed quads, at the level's height", () => {
   assert.equal(contourSegments(m, 1000).length, 0);
 });
 
+test("contours sit on the mesh in compressed and split modes (crossings interpolated in height, not dollars)", () => {
+  // One quad, edge from +1000 to -400 across strikes; split scale: posMax 1000, negMax 400.
+  const cell = (expIdx: number, strikeIdx: number, v: number): any =>
+    ({ expIdx, strikeIdx, expiry: "e", dte: 1, strike: 100 + strikeIdx, exposure: v, callOI: 1, putOI: 1 });
+  const data: any = { spot: 100.5, greek: "gex", strikes: [100, 101], expiries: [{ label: "e", dte: 1 }, { label: "f", dte: 2 }],
+    cells: [cell(0, 0, 1000), cell(0, 1, -400), cell(1, 0, 1000), cell(1, 1, -400)], maxAbs: 1000, levels: { callWall: null, putWall: null, gammaFlip: null } };
+  for (const opts of [{ heightScale: "compressed" as const, scale: "layer" as const }, { heightScale: "linear" as const, scale: "split" as const }, { heightScale: "compressed" as const, scale: "split" as const }]) {
+    const m = buildSurfaceModel(data, { layer: "net", spacing: "even", ...opts });
+    const seg = contourSegments(m, 500);
+    assert.equal(seg.length, 6, `one segment in ${JSON.stringify(opts)}`);
+    // The mesh edge is linear in height between the two vertices: height at the crossing x must equal the contour's height.
+    const x = seg[0], x0 = m.xOfIndex(0), x1 = m.xOfIndex(1);
+    const yMesh = m.yOfValue(1000) + ((x - x0) / (x1 - x0)) * (m.yOfValue(-400) - m.yOfValue(1000));
+    assert.ok(Math.abs(yMesh - m.yOfValue(500)) < 1e-6, `${JSON.stringify(opts)}: mesh ${yMesh} vs contour ${m.yOfValue(500)}`);
+  }
+});
+
 test("level ribbons follow the surface height and stop at holes", () => {
   const m = buildSurfaceModel(base(), { layer: "net", spacing: "even", heightScale: "linear" });
   const hs = ribbonHeights(m, m.xOfIndex(1));

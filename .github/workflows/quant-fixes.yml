@@ -334,8 +334,9 @@ jobs:
           }
           console.log("desktop page errors:", errors.length, errors.slice(0, 5));
           // 3D exposure surface (Regime -> Thermal Gamma Map -> 3D): WebGL via SwiftShader.
+          let g = null;
           try {
-            const g = await chromium.launch({ args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] });
+            g = await chromium.launch({ args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] });
             const gp = await g.newPage({ viewport: { width: 1440, height: 900 } });
             const gerr = [];
             gp.on("pageerror", (e) => gerr.push(e.message));
@@ -361,10 +362,10 @@ jobs:
               const read = /OI c\//.test(readout);
               await gp.locator('[data-testid="thermal-heatmap"]').screenshot({ path: "rep/demo/14-regime-3d-readout.png" });
               const ok = canvases >= 1 && signs && gerr.length === 0;
-              console.log((ok ? "PASS" : "FAIL") + " 3D surface: " + canvases + " canvas, sign labels " + signs + ", readout after tap " + read + ", page errors " + gerr.length + (gerr[0] ? " " + gerr[0].slice(0, 160) : ""));
+              console.log((ok ? "PASS" : "FAIL") + " 3D surface: " + canvases + " canvas, sign labels " + signs + ", readout after a blind centre tap " + read + " (informational: the tap can miss the mesh), page errors " + gerr.length + (gerr[0] ? " " + gerr[0].slice(0, 160) : ""));
             }
-            await g.close();
           } catch (e) { console.log("FAIL 3D surface: " + String(e && e.message || e).split("\n")[0]); }
+          finally { if (g) await g.close().catch(() => {}); }
           const m = await open({ width: 393, height: 852 });
           await m.p.screenshot({ path: "rep/demo/12-signals-iphone.png", fullPage: false });
           console.log("mobile page errors:", m.errors.length, m.errors.slice(0, 5));

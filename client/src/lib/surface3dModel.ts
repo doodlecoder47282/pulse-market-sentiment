@@ -212,14 +212,16 @@ export function splitTicks(posMax: number, negMax: number): number[] {
  * so a contour never crosses a hole.
  */
 export function contourSegments(model: SurfaceModel, level: number): number[] {
-  const { nx, nz, values, present, positions: P } = model;
+  const { nx, nz, present, positions: P } = model;
   const y = model.yOfValue(level);
   const out: number[] = [];
+  // Interpolate on the vertices' world height, not on dollars: the mesh edge
+  // is linear in height, and value -> height is not linear in compressed or
+  // split mode, so a dollar-space crossing would float off the surface.
   const cross = (a: number, b: number): [number, number] | null => {
-    const va = values[a], vb = values[b];
-    if ((va - level) * (vb - level) > 0 || va === vb) return null;
-    if (va === level && vb === level) return null;
-    const t = (level - va) / (vb - va);
+    const ya = P[a * 3 + 1], yb = P[b * 3 + 1];
+    if ((ya - y) * (yb - y) > 0 || ya === yb) return null;
+    const t = (y - ya) / (yb - ya);
     return [P[a * 3] + (P[b * 3] - P[a * 3]) * t, P[a * 3 + 2] + (P[b * 3 + 2] - P[a * 3 + 2]) * t];
   };
   for (let j = 0; j < nz - 1; j++) for (let i = 0; i < nx - 1; i++) {

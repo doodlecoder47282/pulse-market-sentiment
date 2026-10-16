@@ -207,7 +207,13 @@ export default function Dashboard() {
   const { theme, toggleTheme, compact, toggleCompact } = useTheme();
   // Take Five overlay state — shared by floating FAB and tab "peek" button.
   const [take5Open, setTake5Open] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(() => new URLSearchParams(window.location.search).get("connect") === "schwab");
+  // ?connect=schwab opens Settings (handoff link); ?schwab=connected|error is
+  // the automatic sign-in's return (server/index.ts OAUTH_CALLBACK_PATH): open
+  // Settings so the result is seen, and say which outcome it was.
+  const [settingsOpen, setSettingsOpen] = useState(() => {
+    const q = new URLSearchParams(window.location.search);
+    return q.get("connect") === "schwab" || q.has("schwab");
+  });
   // Keyboard shortcuts help modal
   const [helpOpen, setHelpOpen] = useState(false);
   // PCR DTE bucket selector — drives which horizon of put/call ratio the KeyStat shows.
@@ -219,6 +225,24 @@ export default function Dashboard() {
   // into the Chart tab via the TickerContext bridge.
   const { activeTab, setActiveTab } = useTickers();
   const { toast } = useToast();
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const result = q.get("schwab");
+    if (!result) return;
+    const reasons: Record<string, string> = {
+      authorization_not_completed: "Schwab did not complete the authorization.",
+      no_code: "Schwab returned without a code.",
+      expired_or_unknown_sign_in: "This sign-in expired or was already used (links last 15 minutes). Start a new one from Settings.",
+      token_exchange_failed: "Schwab did not complete the token exchange. Start a new sign-in; if it repeats, check the app configuration.",
+      demo_edition: "Schwab sign-in is disabled in the sample-data preview.",
+    };
+    if (result === "connected") toast({ title: "Schwab connected", description: "The automatic sign-in completed." });
+    else toast({ title: "Schwab sign-in not completed", description: reasons[q.get("reason") ?? ""] ?? "The sign-in did not complete. Start a new one from Settings.", variant: "destructive" });
+    // Clear the one-shot result from the address bar so a reload does not repeat it.
+    q.delete("schwab"); q.delete("reason");
+    const rest = q.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}${window.location.hash}`);
+  }, [toast]);
 
   // Ref for Chart tab ticker input (for "/" shortcut)
   const tickerInputRef = useRef<HTMLInputElement | null>(null);

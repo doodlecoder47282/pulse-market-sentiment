@@ -26,9 +26,11 @@ import {
 const fmtSide = (v: number | null | undefined): string => (v == null ? "unpriced" : fmtCell(v));
 /** Open interest per side; an unpriced side says so instead of reading as zero. */
 const fmtOI = (c: Cell3D): string => {
-  const side = (oi: number, un: number | undefined) => (oi === 0 && (un ?? 0) > 0 ? `${un} unpriced` : String(oi));
+  const side = (oi: number, un: number | undefined) => (oi === 0 && (un ?? 0) > 0 ? `${un} unpriced` : (un ?? 0) > 0 ? `${oi} +${un} unpriced` : String(oi));
   return `c/${side(c.callOI, c.callUnpricedOI)} p/${side(c.putOI, c.putUnpricedOI)}`;
 };
+/** True when some open interest in the cell could not be priced: its numbers cover the priced contracts only. */
+const isPartial = (c: Cell3D): boolean => (c.callUnpricedOI ?? 0) + (c.putUnpricedOI ?? 0) > 0;
 
 export function webglAvailable(): boolean {
   try {
@@ -97,7 +99,7 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
   // Persistent renderer / camera / controls; scene content rebuilt per model.
   const ctxRef = useRef<{
     renderer: THREE.WebGLRenderer; labels: CSS2DRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera;
-    controls: OrbitControls; content: THREE.Group; marker: THREE.Group; mesh: THREE.Mesh | null; render: () => void; fit: number;
+    controls: OrbitControls; content: THREE.Group; marker: THREE.Group; mesh: THREE.Mesh | null; render: (settle?: boolean) => void; fit: number;
   } | null>(null);
 
   useEffect(() => {
@@ -195,15 +197,19 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
       if (first) { camera.position.copy(DEFAULT_CAM).multiplyScalar(fit); controls.update(); first = false; }
       render();
     };
-    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(resize) : null;
-    ro?.observe(host); if (!ro) window.addEventListener("resize", resize);
+    // Setting the host's height inside its own ResizeObserver callback trips the
+    // "loop completed with undelivered notifications" error; defer a frame.
+    let resizeRaf = 0;
+    const onResize = () => { if (!resizeRaf) resizeRaf = requestAnimationFrame(() => { resizeRaf = 0; resize(); }); };
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(onResize) : null;
+    ro?.observe(host); if (!ro) window.addEventListener("resize", onResize);
 
     ctxRef.current = { renderer, labels, scene, camera, controls, content, marker, mesh: null, render, fit: 1 };
     resize();
 
     return () => {
       cancelAnimationFrame(raf);
-      ro?.disconnect(); if (!ro) window.removeEventListener("resize", resize);
+      ro?.disconnect(); if (!ro) window.removeEventListener("resize", onResize); if (resizeRaf) cancelAnimationFrame(resizeRaf);
       controls.dispose();
       disposeTree(content); disposeTree(marker);
       renderer.dispose();
@@ -344,7 +350,7 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
       const lg = new THREE.BufferGeometry(); lg.setAttribute("position", new THREE.Float32BufferAttribute([x, 0, z, x, y, z, x, 0, WORLD_DEPTH / 2, x, 0, -WORLD_DEPTH / 2, -WORLD_WIDTH / 2, 0, z, WORLD_WIDTH / 2, 0, z], 3));
       ctx.marker.add(new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 })));
     }
-    ctx.render();
+    ctx.render(false);
   }, [picked, model]);
 
   // Picking: hover on desktop, tap (not drag) on touch.
@@ -372,7 +378,8 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
       }
       const cell = model.cellAtVertex(best);
       const v = cell ? layerValue(cell, layer) : null;
-      setPicked(cell && v != null ? { cell, value: v } : null);
+      // Same cell as before: nothing to rebuild (the marker effect disposes and re-creates geometry).
+      setPicked((prev) => (prev && cell && prev.cell === cell && prev.value === v ? prev : cell && v != null ? { cell, value: v } : null));
     };
     const onDown = (e: PointerEvent) => { down = { x: e.clientX, y: e.clientY }; };
     const onUp = (e: PointerEvent) => {
@@ -485,7 +492,7 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
           <div className="pointer-events-none z-10 mt-0 hidden min-w-[190px] rounded border border-slate-700 bg-slate-950/95 px-3 py-2 font-mono text-xs text-slate-200 sm:absolute sm:right-2 sm:top-2 sm:block" data-testid="thermal-surface3d-readout">
             <div className="mb-1 text-[11px] text-slate-400">{picked.cell.expiry} · {picked.cell.dte}d</div>
             <div className="font-semibold text-slate-100">strike {picked.cell.strike}</div>
-            <div className={`mt-1 ${picked.value >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{G} {layer}: {fmtCell(picked.value)}</div>
+            <div className={`mt-1 ${picked.value >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{G} {layer}: {fmtCell(picked.value)}{isPartial(picked.cell) ? <span className="text-amber-300"> (partial: priced contracts only)</span> : null}</div>
             {sides && layer !== "net" && <div className="text-[11px] text-slate-400">net {fmtCell(picked.cell.exposure)}</div>}
             {sides && layer === "net" && <div className="text-[11px] text-slate-400">calls {fmtSide(picked.cell.callExposure)} · puts {fmtSide(picked.cell.putExposure)}</div>}
             <div className="text-[11px] text-slate-500">OI {fmtOI(picked.cell)}</div>
@@ -512,7 +519,7 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
       {picked && (
         <div className="mt-2 rounded border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-200 sm:hidden" data-testid="thermal-surface3d-readout-phone" role="status">
           <div className="text-[11px] text-slate-400">{picked.cell.expiry} · {picked.cell.dte}d · strike {picked.cell.strike}</div>
-          <div className={picked.value >= 0 ? "text-emerald-300" : "text-rose-300"}>{G} {layer}: {fmtCell(picked.value)}{sides && layer === "net" ? ` (calls ${fmtSide(picked.cell.callExposure)} · puts ${fmtSide(picked.cell.putExposure)})` : ""}</div>
+          <div className={picked.value >= 0 ? "text-emerald-300" : "text-rose-300"}>{G} {layer}: {fmtCell(picked.value)}{sides && layer === "net" ? ` (calls ${fmtSide(picked.cell.callExposure)} · puts ${fmtSide(picked.cell.putExposure)})` : ""}{isPartial(picked.cell) ? <span className="text-amber-300"> (partial: priced contracts only)</span> : null}</div>
           <div className="text-[11px] text-slate-500">OI {fmtOI(picked.cell)}{pct != null ? ` · ${pct.toFixed(0)}% of the ${scaleName} max` : ""}</div>
         </div>
       )}
