@@ -1,0 +1,27 @@
+PASS health edition demo
+PASS open without a key
+PASS status demo
+PASS sign-in link refused (403)
+PASS visitor write refused (403)
+PASS token paste refused (403)
+PASS config change refused (403)
+PASS oauth callback refused
+--- data endpoints on sample data (status, first 300 bytes) ---
+/api/schwab/selftest -> 200 {"version":1,"connected":false,"realDataChecked":false,"marketInputsValid":false,"checkedAt":1792267470991,"expiresAt":1792267500991,"cached":false,"scope":"Sampled Schwab input checks only. Not a calibration, execution, full-chain or prediction-accuracy certificate.","items":[{"name":"Real-data val
+/api/snapshot -> 200 {"capturedAt":1792267425,"spy":{"price":706.25,"prevClose":699.06,"changePct":1.028524017966992,"stale":false,"ageMs":86621697,"prevCloseSource":"schwab_quote_net_change"},"vol":{"vix":{"symbol":"^VIX","name":"VIX (30-day implied vol)","value":12.88,"prev":14.16,"changePct":-9.039548022598867,"stale
+/api/trade-environment -> 200 {"state":"PARTIAL","score":5,"headline":"partial read: canary unavailable, so the index (5) is a lower bound and no quiet state is claimed.","instructions":["context only: hand-set points, not a forecast; no entry or size comes from this index","some drivers are unavailable and score 0, so the index
+/api/regime -> 200 {"capturedAt":1792267473,"window":"w4","headline":"No dominant rotation","narrative":"All four axes are sitting close to their 2-year baselines. Leadership is balanced across risk, style, sector cohort, and size. Wait for a catalyst before assuming a new regime.","axes":[{"axis":"risk","label":"Risk
+/api/gamma-levels -> 200 {"symbol":"SPY","supported":true,"spot":706.25,"levels":{"callWall":710,"callWallGex":15781830557.62371,"putWall":680,"putWallGex":-7389317156.439572,"zeroGamma":699.9642532230434,"flip":699.9642532230434,"maxPain":699,"totalGex":25149025736.60965,"regime":"positive","profile":[{"strike":647,"gex":-
+/api/models -> 200 {"asOf":1792267473,"session":"live","horizons":{"daily":{"horizon":"daily","label":"SPX DAILY MODEL","symbol":"^GSPC","displaySymbol":"SPX","spot":7082.91,"spotAnchorDate":"SAT 10/17","targetDate":"SAT 10/17 CLOSE","targetDateLong":"SAT OCT 17, 2026","priceRange":[6890.35513699115,7275.4648630088495
+/api/heatseeker -> 200 {"symbol":"$SPX","spot":7082.91,"expiry":"2026-10-19","dte":2,"asOf":1792267477296,"strikes":[{"strike":6590,"distancePct":-6.959145323038128,"netGex":-1181194.6747340895,"callGex":904961.366283132,"putGex":2086156.0410172215,"netDex":49956645.92288315,"dexMissingContracts":0,"netVanna":171778.51468
+/api/iv-rv -> 200 {"symbol":"SPY","asOf":"2026-10-17","rv":{"rv5":0.10029515695794,"rv10":0.10660891542033123,"rv20":0.10048899451943878,"rv30":0.11392581272297163,"rv60":0.13761260921271012},"iv":{"iv30":null,"iv60":null,"iv90":null},"ratio":{"iv30_rv20":null,"iv30_rv30":null,"iv60_rv60":null},"verdict":"insufficien
+/api/chain-audit -> 200 {"symbol":"$SPX","requestedSymbol":"$SPX","spot":7082.91,"asOf":1792180800000,"chainAsOfMs":1792180800000,"chainStale":false,"chainMaxAgeMs":1800000,"chainSource":"schwab","audit":{"dex":{"profile":[{"strike":6335,"callDex":13548586890.96,"putDex":-1700608107.582,"netDex":11847978783.377998},{"strik
+/api/edgelab/briefing -> 200 {"asOf":1792267482417,"symbol":"SPY","spot":706.25,"verdict":"strong bull","verdictColor":"emerald","confidence":75,"oneLiner":"strong bull · 4 of 5 inputs · no dominant rotation · vix 12.9 · spy w1 +3.17%","regime":{"headline":"No dominant rotation","narrative":"All four axes are sitting close 
+/api/heatmap/thermal?symbol=%24SPX&greek=gex -> 200 {"symbol":"$SPX","asOf":1792180800000,"spot":7082.91,"greek":"gex","weightMode":"oi","strikes":[6335,6340,6345,6350,6355,6360,6365,6370,6375,6380,6385,6390,6395,6400,6405,6410,6415,6420,6425,6430,6435,6440,6445,6450,6455,6460,6465,6470,6475,6480,6485,6490,6495,6500,6505,6510,6515,6520,6525,6530,6535
+/api/heatmap/thermal?symbol=%24SPX&greek=charm -> 200 {"symbol":"$SPX","asOf":1792180800000,"spot":7082.91,"greek":"charm","weightMode":"oi","strikes":[6335,6340,6345,6350,6355,6360,6365,6370,6375,6380,6385,6390,6395,6400,6405,6410,6415,6420,6425,6430,6435,6440,6445,6450,6455,6460,6465,6470,6475,6480,6485,6490,6495,6500,6505,6510,6515,6520,6525,6530,65
+PASS thermal heatmap: state ok, 3600 cells, 19800 priced, 0 no IV, put wall 6900 < spot 7082.91 < call wall 7100, flip 7024.392736057616
+PASS community watch: 3 sample rows, reclaimed dips 1/1/0, $1k trips 2.69/3.12/5.21%
+PASS decision support: 200, 5 lines, spot 7082.91
+PASS whale flow preview: state ok, 15 tickers, 7 contracts, 5 whales, e.g. SPX SPXW  261020C07040000 $22.57M premium (volume x mid, first scan) • vol/OI 28.1x • AT_ASK last print • 3DTE • Δ 0.66
+PASS community write refused (403)
+schwab network lines in log: 1
