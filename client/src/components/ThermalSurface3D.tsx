@@ -56,27 +56,28 @@ const VIEWS: Record<"reset" | "top" | "front" | "side", THREE.Vector3> = {
   side: new THREE.Vector3(13, 2.5, 0),
 };
 /**
- * Camera position along a preset direction so the data box fits the frame
- * at this aspect: the eight corners of the box (strikes x the layer's own
- * height range x expiries, with room for labels) are projected and the
- * distance adjusted until the farthest corner sits inside 92% of the frame.
- * A sphere fit left a side view a third of the frame on an ultrawide, and
- * centring on the full +-height put a one-signed surface in the top half.
+ * Camera position along a preset direction so the drawn surface fits the
+ * frame at this aspect: the surface's own vertices, the floor corners and
+ * the sign labels' anchors are projected and the distance adjusted until
+ * the farthest point sits inside 92% of the frame. Fitting a box or a
+ * sphere left a side view a third of the frame on an ultrawide, because
+ * the box's empty near-top corners sit close to the camera.
  */
-function frameCamera(dir: THREE.Vector3, camera: THREE.PerspectiveCamera, box: { yMin: number; yMax: number }): { position: THREE.Vector3; target: THREE.Vector3 } {
-  const hx = WORLD_WIDTH / 2 + 0.8, hz = WORLD_DEPTH / 2 + 0.8;
-  const yMin = Math.min(box.yMin, -0.6) - 0.5, yMax = Math.max(box.yMax, 0.6) + 0.5;
-  const target = new THREE.Vector3(0, (yMin + yMax) / 2, 0);
-  const corners: THREE.Vector3[] = [];
-  for (const x of [-hx, hx]) for (const y of [yMin, yMax]) for (const z of [-hz, hz]) corners.push(new THREE.Vector3(x, y, z));
+function frameCamera(dir: THREE.Vector3, camera: THREE.PerspectiveCamera, pts: Float32Array, present: Uint8Array, yBox: { yMin: number; yMax: number }): { position: THREE.Vector3; target: THREE.Vector3 } {
+  const hx = WORLD_WIDTH / 2, hz = WORLD_DEPTH / 2;
+  const target = new THREE.Vector3(0, (Math.min(yBox.yMin, 0) + Math.max(yBox.yMax, 0)) / 2, 0);
+  const anchors: THREE.Vector3[] = [];
+  for (let k = 0; k < present.length; k++) if (present[k]) anchors.push(new THREE.Vector3(pts[k * 3], pts[k * 3 + 1], pts[k * 3 + 2]));
+  for (const x of [-hx - 0.6, hx + 0.6]) for (const z of [-hz - 0.6, hz + 0.6]) anchors.push(new THREE.Vector3(x, 0, z));
+  anchors.push(new THREE.Vector3(-hx - 0.55, Math.max(yBox.yMax, 0.6) + 0.4, -hz), new THREE.Vector3(-hx - 0.55, Math.min(yBox.yMin, -0.6) - 0.4, -hz));
   const probe = camera.clone();
   const d = dir.clone().normalize();
-  let dist = Math.hypot(hx, (yMax - yMin) / 2, hz) * 2;
-  for (let it = 0; it < 4; it++) {
+  let dist = Math.hypot(hx, WORLD_HEIGHT, hz) * 2;
+  for (let it = 0; it < 5; it++) {
     probe.position.copy(target).add(d.clone().multiplyScalar(dist));
     probe.lookAt(target); probe.updateMatrixWorld(); probe.updateProjectionMatrix();
     let m = 0;
-    for (const c of corners) { const p = c.clone().project(probe); m = Math.max(m, Math.abs(p.x), Math.abs(p.y)); }
+    for (const c of anchors) { const p = c.clone().project(probe); m = Math.max(m, Math.abs(p.x), Math.abs(p.y)); }
     if (!(m > 0)) break;
     dist *= m / 0.92;
   }
@@ -147,6 +148,7 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
     return { yMin: lo, yMax: hi };
   }, [model]);
   const yBoxRef = useRef(yBox); yBoxRef.current = yBox;
+  const modelRef = useRef(model); modelRef.current = model;
 
   // Persistent renderer / camera / controls; scene content rebuilt per model.
   const ctxRef = useRef<{
@@ -276,7 +278,7 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
       // Narrow, tall frames need more distance to fit the 10-unit-wide surface.
       const fit = w / h < 1.2 ? 1.28 : 1;
       if (ctxRef.current) ctxRef.current.fit = fit;
-      if (first) { const f = frameCamera(DEFAULT_CAM, camera, yBoxRef.current); camera.position.copy(f.position); controls.target.copy(f.target); controls.update(); first = false; }
+      if (first) { const m0 = modelRef.current; const f = frameCamera(DEFAULT_CAM, camera, m0.positions, m0.present, yBoxRef.current); camera.position.copy(f.position); controls.target.copy(f.target); controls.update(); first = false; }
       render();
     };
     // Setting the host's height inside its own ResizeObserver callback trips the
@@ -486,7 +488,7 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
 
   const goView = (v: keyof typeof VIEWS) => {
     const ctx = ctxRef.current; if (!ctx) return;
-    const f = frameCamera(VIEWS[v], ctx.camera, yBox);
+    const f = frameCamera(VIEWS[v], ctx.camera, model.positions, model.present, yBox);
     ctx.camera.position.copy(f.position); ctx.controls.target.copy(f.target); ctx.controls.update(); ctx.render();
   };
   const zoom = (f: number) => {
