@@ -31,6 +31,8 @@ User default: conserve Computer credits without skipping necessary correctness o
 - Never embed brokerage secrets in browser or iOS code. Never request that the user paste keys into chat; use a secure credential workflow.
 - Do not stage runtime database files, WAL/SHM files, token files, logs, or unrelated work. Stage explicit paths and inspect the staged diff.
 - Verify repository visibility; do not assume it is private. A clean working tree does not mean history contains no secrets.
+- Before mobile distribution or additional brokerage users, read `SECURITY.md`.
+  Shared-account architecture is not multi-user-safe; never claim full security or NIST conformance from a successful build.
 
 ## Stop and save
 

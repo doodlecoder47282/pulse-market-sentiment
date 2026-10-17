@@ -2,7 +2,17 @@
 // Clean reseed: ETF-only universe, DTE forced ≥7 calendar days, captured/expiry both inside daily_bars range.
 const Database = require('better-sqlite3');
 const { randomUUID } = require('crypto');
-const db = new Database('./data.db');
+const { resolve } = require('path');
+const { realpathSync } = require('fs');
+const fixturePath = process.env.BATCAVE_SYNTHETIC_DB;
+if (process.env.BATCAVE_ALLOW_SYNTHETIC_TEST_DATA !== '1' || !fixturePath) {
+  throw new Error('Synthetic reseeding is disabled. Use an explicit disposable test DB and opt in; never production data.db.');
+}
+const resolvedFixture = realpathSync(fixturePath);
+if (resolvedFixture === resolve('./data.db') || /(?:^|[/\\])data\.db$/.test(resolvedFixture)) {
+  throw new Error('Refusing to seed a production-named data.db.');
+}
+const db = new Database(resolvedFixture, { fileMustExist: true });
 
 // 1. Inspect daily_bars range
 const range = db.prepare("SELECT MIN(date) as min_d, MAX(date) as max_d FROM daily_bars WHERE symbol='SPY'").get();

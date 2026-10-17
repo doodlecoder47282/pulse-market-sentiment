@@ -26,7 +26,7 @@ export type TabKey =
   | "regime"
   | "cosmos"
   | "news"
-  | "voices"
+  | "cosmos"
   | "takefive"
   | "edgelab"
   | "crypto";

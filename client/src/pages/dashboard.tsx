@@ -30,6 +30,7 @@ import { RegimeChip } from "@/components/RegimeChip";
 import TakeFive, { TakeFiveFab } from "@/components/TakeFive";
 import EdgeLabPanel from "@/components/EdgeLabPanel";
 import { MacroTicker } from "@/components/MacroCarousel";
+import { TradeBriefSearch } from "@/components/TradeBriefSearch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTickers, type TabKey } from "@/components/TickerContext";
 import ErrorBoundary from "@/components/ErrorBoundary";
@@ -548,6 +549,10 @@ export default function Dashboard() {
                 Crypto
               </TabsTrigger>
             </TabsList>
+          </div>
+          {/* Stock research (Trade Brief): kept mounted, shown on the Signals tab. */}
+          <div hidden={activeTab !== "signals"} data-testid="stock-research-workspace">
+            <ErrorBoundary label="Stock research"><TradeBriefSearch /></ErrorBoundary>
           </div>
 
           {/* ── Chart tab (lazy) ── */}

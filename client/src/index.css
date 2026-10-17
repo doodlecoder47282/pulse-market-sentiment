@@ -231,12 +231,10 @@
   html {
     /* Kills the white rubber-band void on iOS Safari when overscrolling */
     overscroll-behavior-y: none;
-    /* Wide tables (heatmap strike ladder) must scroll INSIDE their own
-       container — never pan the whole page sideways on a phone swipe.
-       clip > hidden: clip doesn't create a scroll container (iOS quirk where
-       hidden can hijack page scrolling). hidden kept as fallback. */
-    overflow-x: hidden;
-    overflow-x: clip;
+    /* Containment belongs on each wide table/strip, not the document:
+       clipping here would conceal inaccessible shell controls. */
+    scroll-padding-top: calc(var(--batcave-scroll-top, 0px) + 0.5rem);
+    scroll-padding-bottom: calc(var(--batcave-scroll-bottom, 0px) + 0.5rem);
     background-color: hsl(var(--background));
     /* No gray flash on iOS taps — we provide our own press feedback */
     -webkit-tap-highlight-color: transparent;
@@ -279,8 +277,6 @@
   body {
     @apply font-sans antialiased bg-background text-foreground;
     overscroll-behavior-y: none;
-    overflow-x: hidden;
-    overflow-x: clip;
     overscroll-behavior-x: none;
     min-height: 100vh;
     min-height: 100dvh;
@@ -420,6 +416,431 @@
 .tabs-scroll-container {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* Batcave workspace chrome: restrained glass, readable type, persistent tabs.
+   No filters or transforms on the content: charts and market values stay sharp. */
+.batcave-shell {
+  --batcave-header-height: 0px;
+  --batcave-banner-height: 0px;
+  --batcave-desktop-dock-height: 0px;
+  --batcave-mobile-dock-height: 0px;
+  --batcave-top-offset: 0px;
+  --batcave-bottom-offset: 0px;
+  --batcave-dock-gap: 8px;
+  --batcave-glass-fill: hsl(var(--background) / 0.96);
+  --batcave-glass-edge: hsl(var(--foreground) / 0.12);
+}
+.batcave-content-width { max-width: 1920px; }
+.batcave-glass {
+  background: var(--batcave-glass-fill);
+  border-color: var(--batcave-glass-edge);
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .batcave-glass {
+    background: linear-gradient(145deg, hsl(var(--foreground) / 0.035), transparent 55%),
+      hsl(var(--background) / 0.86);
+    -webkit-backdrop-filter: blur(22px) saturate(135%);
+    backdrop-filter: blur(22px) saturate(135%);
+  }
+}
+.batcave-header {
+  padding-top: env(safe-area-inset-top, 0px);
+  box-shadow: 0 1px 0 hsl(var(--foreground) / 0.035);
+}
+.batcave-header-row,
+.batcave-header-actions {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.batcave-brand { flex: 0 0 auto; }
+.batcave-header-actions {
+  flex: 0 1 auto;
+  max-width: 100%;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+.batcave-header-actions > *,
+.batcave-header-quotes { min-width: 0; max-width: 100%; }
+.batcave-header-actions button {
+  flex-shrink: 0;
+  min-width: 44px;
+  min-height: 44px;
+  height: auto;
+  justify-content: center;
+}
+.batcave-header [data-testid="live-quote-strip"],
+.batcave-header [data-testid="live-quote-strip"] > div {
+  flex-wrap: wrap;
+}
+.batcave-header button:focus-visible,
+.batcave-skip-link:focus-visible,
+.batcave-main:focus-visible,
+.batcave-nav-scroll-button:focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
+}
+.batcave-skip-link {
+  position: fixed;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 100;
+  min-height: 44px;
+  max-width: calc(100% - 1rem);
+  padding: 0.5rem 1rem;
+  border: 1px solid hsl(var(--primary));
+  border-radius: 0.5rem;
+  background: hsl(var(--background));
+  transform: translateY(calc(-100% - 1rem));
+}
+.batcave-skip-link:focus { transform: none; }
+.batcave-banner {
+  position: sticky;
+  top: var(--batcave-header-height);
+  z-index: 36;
+  background: hsl(var(--background));
+}
+.batcave-banner [data-testid="regime-headline"] { position: static; }
+.batcave-banner [data-testid="regime-headline"] > div,
+.batcave-banner [data-testid="regime-headline-meta"] { flex-wrap: wrap; }
+.batcave-banner [data-testid="regime-headline-text"] {
+  min-width: min(100%, 16rem);
+  white-space: normal;
+  overflow: visible;
+  text-overflow: initial;
+  overflow-wrap: anywhere;
+}
+/* The original semantic utilities are dark-surface tints. Keep their meaning,
+   but use readable foreground shades when the user selects the light theme. */
+:root:not(.dark) .batcave-banner .text-emerald-300,
+:root:not(.dark) .batcave-banner .text-emerald-400 { color: #047857; }
+:root:not(.dark) .batcave-banner .text-rose-200,
+:root:not(.dark) .batcave-banner .text-rose-400 { color: #be123c; }
+:root:not(.dark) .batcave-banner .text-amber-200,
+:root:not(.dark) .batcave-banner .text-amber-400 { color: #92400e; }
+:root:not(.dark) .batcave-banner .text-slate-200,
+:root:not(.dark) .batcave-banner .text-slate-400 { color: #334155; }
+.batcave-tabs-dock {
+  position: sticky;
+  top: calc(var(--batcave-top-offset) + var(--batcave-dock-gap));
+  z-index: 35;
+}
+.batcave-tabs-scroll {
+  position: relative;
+  border: 1px solid var(--batcave-glass-edge);
+  border-radius: 18px;
+  padding: 5px;
+  box-shadow: 0 8px 24px hsl(0 0% 0% / 0.14), inset 0 1px 0 hsl(var(--foreground) / 0.06);
+}
+.batcave-nav-scroller { display: flex; align-items: stretch; gap: 4px; min-width: 0; }
+.batcave-nav-strip {
+  flex: 1 1 0%;
+  min-width: 0;
+  padding: 3px;
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent;
+  scroll-padding-inline: 3px;
+}
+.batcave-nav-scroll-button {
+  display: inline-flex;
+  flex: 0 0 44px;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 13px;
+  color: hsl(var(--foreground));
+  background: hsl(var(--foreground) / 0.035);
+}
+.batcave-nav-scroll-button svg { width: 1.1rem; height: 1.1rem; }
+.batcave-nav-scroll-button[aria-disabled="true"] { opacity: 0.4; }
+.batcave-nav-scroller[data-overflow="false"] > .batcave-nav-scroll-button { display: none; }
+.batcave-primary-tabs {
+  height: auto;
+  width: max-content;
+  min-width: 100%;
+  padding: 0;
+  gap: 3px;
+  border-radius: 13px;
+  background: transparent;
+}
+.batcave-primary-tabs [role="tab"] {
+  flex: 1 0 auto;
+  min-height: 44px;
+  padding: 0.6rem clamp(0.6rem, 1vw, 1.1rem);
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: transparent;
+  background-image: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+  transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease;
+}
+.batcave-primary-tabs [role="tab"]:hover {
+  background-color: hsl(var(--foreground) / 0.045);
+  color: hsl(var(--foreground));
+}
+.batcave-primary-tabs [role="tab"][data-state="active"] {
+  background: linear-gradient(160deg, hsl(var(--foreground) / 0.075), hsl(var(--primary) / 0.08));
+  border-color: hsl(var(--foreground) / 0.12);
+  color: hsl(var(--foreground));
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.08), 0 2px 7px hsl(0 0% 0% / 0.08);
+  font-weight: 650;
+}
+.batcave-primary-tabs [role="tab"]:focus-visible,
+.batcave-mobile-dock button:focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: -3px;
+}
+.batcave-tabs-root > [role="tabpanel"] {
+  position: relative;
+  isolation: isolate;
+  z-index: 0;
+  scroll-margin-top: 0.5rem;
+}
+/* Dashboard card headings share the shell's reflow contract. These used to
+   protrude beyond the page once the document overflow mask was removed. */
+.batcave-main [data-card-id] > :first-child,
+.batcave-main [data-card-id] > :first-child > div {
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+/* Live P/C title/provider and aggregate details must reflow at enlarged text
+   sizes. Scope to this card's header and aggregate grid, not its chart/tables. */
+.batcave-main [data-testid="flow-panel"] > :first-child > div,
+.batcave-main [data-testid="flow-panel"] > :nth-child(2) > .grid > :first-child {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.batcave-main [data-testid="flow-panel"] > :first-child > div > div,
+.batcave-main [data-testid="flow-panel"] > :nth-child(2) > .grid > :first-child > :last-child {
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+.batcave-main [data-testid="flow-panel"] > :nth-child(2) > .grid > :first-child > :last-child > div {
+  flex-wrap: wrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+/* Loaded alert counts/status add another row that is absent in offline states.
+   Keep the title, both count badges, connection status and both actions present. */
+.batcave-main .batcave-flow-alerts-header,
+.batcave-main [data-testid="flow-alerts-toggle"],
+.batcave-main .batcave-flow-alerts-summary,
+.batcave-main .batcave-flow-alerts-counts {
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+.batcave-main [data-testid="flow-alerts-toggle"] { min-width: 44px; }
+.batcave-main [data-testid="flow-alerts-toggle"] svg { flex-shrink: 0; }
+.batcave-main [data-testid="dismiss-all-alerts"] {
+  min-width: 44px;
+  min-height: 44px;
+  white-space: normal;
+}
+.batcave-main [data-testid="flow-alerts-toggle"]:focus-visible,
+.batcave-main [data-testid="dismiss-all-alerts"]:focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
+}
+.batcave-mobile-dock {
+  left: max(8px, env(safe-area-inset-left, 0px));
+  right: max(8px, env(safe-area-inset-right, 0px));
+  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  padding: 4px;
+  border: 1px solid var(--batcave-glass-edge);
+  border-radius: 22px;
+  box-shadow: 0 8px 32px hsl(0 0% 0% / 0.2), inset 0 1px 0 hsl(var(--foreground) / 0.06);
+}
+.batcave-mobile-dock button { border-radius: 16px; }
+.batcave-mobile-dock button[aria-current="page"] {
+  box-shadow: inset 0 0 0 1px hsl(var(--primary) / 0.2);
+}
+.batcave-mobile-items { display: flex; width: max-content; min-width: 100%; gap: 3px; }
+.batcave-mobile-primary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; }
+.batcave-mobile-primary .batcave-mobile-tab { min-width: 0; padding-inline: .25rem; white-space: normal; overflow-wrap: anywhere; }
+.brief-summary { display: grid; gap: 1.25rem; }
+.brief-summary-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: .75rem; }
+.brief-eyebrow { font-size: .75rem; color: hsl(var(--muted-foreground)); line-height: 1.5; }
+.brief-state { border: 1px solid hsl(var(--primary) / .3); background: hsl(var(--primary) / .07); border-radius: .4rem; padding: .35rem .6rem; font-size: .75rem; font-weight: 600; }
+.brief-price-row { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 1.25rem; align-items: start; }
+.brief-price { font-size: 1.65rem; line-height: 1.4; font-weight: 650; font-variant-numeric: tabular-nums; margin-block: .15rem; }
+.brief-session-note span { font-size: .875rem; font-weight: 600; }
+.brief-session-note p, .brief-next-action > p, .brief-finding > p { font-size: .875rem; line-height: 1.6; margin-top: .35rem; }
+.brief-session-note p { color: hsl(var(--muted-foreground)); }
+.brief-session-context { border-block: 1px solid hsl(var(--border)); padding-block: 1rem; }
+.brief-history-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; margin-block: .75rem; }
+.brief-history-grid dt { font-size: .75rem; color: hsl(var(--muted-foreground)); }
+.brief-history-grid dd { font-size: .875rem; font-weight: 600; line-height: 1.7; font-variant-numeric: tabular-nums; }
+.brief-key-findings { display: grid; gap: .6rem; }
+.brief-finding { border-bottom: 1px solid hsl(var(--border)); padding-bottom: .7rem; }
+.brief-next-action { background: hsl(var(--muted) / .3); border-radius: .6rem; padding: .9rem; }
+.brief-coverage-strip { display: flex; flex-wrap: wrap; gap: .35rem .8rem; font-size: .75rem; color: hsl(var(--muted-foreground)); }
+.brief-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; margin-top: 1.25rem; }
+.brief-tools details, .brief-full-record { min-width: 0; border: 1px solid hsl(var(--border)); border-radius: .6rem; }
+.brief-tools details[open] { grid-column: 1 / -1; }
+.brief-tools summary, .brief-full-record > summary { cursor: pointer; min-height: 48px; padding: .85rem; font-size: .875rem; font-weight: 500; }
+.brief-tools summary:focus-visible, .brief-full-record > summary:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: 2px; }
+.brief-tools details > section { border: 0; margin-top: 0; background: none; }
+.brief-full-record { margin-top: .5rem; }
+.brief-full-record[open] { padding: 0 .85rem .85rem; }
+@media (max-width: 600px) {
+  .brief-price-row { grid-template-columns: minmax(0, 1fr); gap: .8rem; }
+  .brief-history-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .brief-tools { grid-template-columns: minmax(0, 1fr); }
+}
+.batcave-mobile-tab {
+  display: inline-flex;
+  flex: 1 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 76px;
+  min-height: 56px;
+  padding: 0.5rem 0.75rem;
+  white-space: nowrap;
+}
+.batcave-shell[data-shell-flow="true"] .batcave-header,
+.batcave-shell[data-shell-flow="true"] .batcave-banner {
+  position: static;
+}
+@media (max-width: 767px) {
+  .batcave-main { padding-bottom: calc(var(--batcave-bottom-offset) + 1rem); }
+}
+@media (min-width: 1024px) {
+  /* A modest 6.25% rem-scale lift, plus a floor for legacy 8–11px labels.
+     Pixel dimensions and SVG/canvas chart coordinates are not zoomed. */
+  html { font-size: 17px; }
+  .batcave-shell [class~="text-[8px]"],
+  .batcave-shell [class~="text-[9px]"],
+  .batcave-shell [class~="text-[10px]"] { font-size: 12px; line-height: 1.45; }
+  .batcave-shell [class~="text-[11px]"] { font-size: 13px; line-height: 1.5; }
+  .batcave-shell [class~="text-[12px]"],
+  .batcave-shell .text-xs { font-size: 0.764706rem; line-height: 1.5; }
+  .batcave-shell [class~="text-[13px]"] { font-size: 14px; line-height: 1.45; }
+  .batcave-shell .text-sm { font-size: 0.882353rem; line-height: 1.5; }
+  .batcave-main { line-height: 1.55; }
+  .batcave-primary-tabs [role="tab"] { font-size: 0.882353rem; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .batcave-glass { background: hsl(var(--background)); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .batcave-primary-tabs [role="tab"] { transition: none; }
+  .batcave-shell button:active { transform: none; }
+}
+
+.crypto-desk { display: grid; gap: 20px; min-width: 0; font-size: 14px; line-height: 1.5; }
+.crypto-desk-header { display: flex; justify-content: space-between; gap: 20px; align-items: center; padding: 8px 0; }
+.crypto-desk-header h2 { font-size: 20px; font-weight: 650; margin: 5px 0; letter-spacing: -.02em; }
+.crypto-desk-header p, .crypto-box-heading p { color: hsl(var(--muted-foreground)); font-size: 13px; }
+.crypto-eyebrow { display: flex; align-items: center; gap: 7px; font-size: 12px; letter-spacing: .06em; color: hsl(var(--muted-foreground)); }
+.crypto-header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 10px; max-width: 320px; }
+.crypto-status { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 8px; border: 1px solid hsl(var(--border)); border-radius: 5px; white-space: nowrap; font-size: 12px; color: hsl(var(--muted-foreground)); background: hsl(var(--muted) / .4); }
+.crypto-status.is-healthy { color: hsl(var(--foreground)); }
+.crypto-status.is-healthy::before { content: ""; width: 5px; height: 5px; margin-right: 6px; border-radius: 50%; background: hsl(var(--primary)); }
+.crypto-status.is-unavailable { color: hsl(var(--foreground)); border-style: dashed; }
+.crypto-control { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; border: 1px solid hsl(var(--border)); padding: 8px 14px; border-radius: 8px; background: hsl(var(--card)); font-size: 13px; font-weight: 550; }
+.crypto-control:hover:not(:disabled) { border-color: hsl(var(--primary) / .6); }
+.crypto-control:disabled { opacity: .65; cursor: wait; }
+.crypto-kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid hsl(var(--border)); border-radius: 12px; background: hsl(var(--card) / .65); overflow: hidden; }
+.crypto-kpi { display: flex; flex-direction: column; gap: 7px; padding: 18px 22px; border-right: 1px solid hsl(var(--border) / .7); }
+.crypto-kpi:last-child { border-right: 0; }
+.crypto-kpi span { font-size: 13px; color: hsl(var(--muted-foreground)); }
+.crypto-kpi strong { font-size: 25px; font-weight: 600; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.crypto-kpi small { font-size: 12px; color: hsl(var(--muted-foreground)); }
+.crypto-group-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; overscroll-behavior-x: contain; border-bottom: 1px solid hsl(var(--border)); }
+.crypto-group-tabs button { flex: 0 0 auto; min-height: 44px; padding: 8px 14px; border-radius: 7px; color: hsl(var(--muted-foreground)); font-size: 13px; }
+.crypto-group-tabs button[aria-current="page"] { background: hsl(var(--primary) / .1); color: hsl(var(--foreground)); font-weight: 600; box-shadow: inset 0 -2px hsl(var(--primary)); }
+.crypto-safety-line { display: flex; align-items: flex-start; gap: 9px; font-size: 12px; color: hsl(var(--muted-foreground)); }
+.crypto-safety-line svg { flex-shrink: 0; margin-top: 1px; color: hsl(var(--primary)); }
+.crypto-overview-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.crypto-box { min-width: 0; background: hsl(var(--card) / .5); border: 1px solid hsl(var(--border) / .85); border-radius: 12px; padding: 22px; }
+.crypto-box-heading { margin-bottom: 18px; }
+.crypto-box-heading h3 { font-size: 16px; font-weight: 600; letter-spacing: -.015em; margin-bottom: 4px; }
+.crypto-lede { font-size: 15px; max-width: 68ch; }
+.crypto-reason-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 22px 0; }
+.crypto-reason-grid div { display: flex; flex-direction: column; gap: 5px; }
+.crypto-reason-grid strong { font-size: 22px; font-weight: 550; }
+.crypto-reason-grid span { font-size: 12px; color: hsl(var(--muted-foreground)); }
+.crypto-footnote { color: hsl(var(--muted-foreground)); font-size: 12px; line-height: 1.5; }
+.crypto-text-button { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-size: 13px; font-weight: 600; margin-top: 8px; }
+.crypto-coverage-row { margin: 16px 0; }
+.crypto-coverage-row > div { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; margin-bottom: 8px; }
+.crypto-coverage-row strong { font-weight: 550; font-variant-numeric: tabular-nums; }
+.crypto-coverage-row progress { display: block; width: 100%; height: 4px; border: 0; accent-color: hsl(var(--primary)); }
+.crypto-coverage-row progress::-webkit-progress-bar { background: hsl(var(--muted)); border-radius: 3px; }
+.crypto-coverage-row progress::-webkit-progress-value { background: hsl(var(--primary) / .75); border-radius: 3px; }
+.crypto-candidate-row { display: grid; grid-template-columns: 1fr auto; width: 100%; text-align: left; gap: 8px 16px; padding: 14px 0; border-top: 1px solid hsl(var(--border) / .7); }
+.crypto-candidate-row > div { display: flex; flex-direction: column; min-width: 0; }
+.crypto-candidate-row > div:nth-child(2) { text-align: right; }
+.crypto-candidate-row strong { font-size: 14px; overflow-wrap: anywhere; }
+.crypto-candidate-row span, .crypto-candidate-row p { font-size: 12px; color: hsl(var(--muted-foreground)); }
+.crypto-candidate-row p { grid-column: 1 / -1; }
+.crypto-news-list a { display: block; padding: 14px 0; border-top: 1px solid hsl(var(--border) / .7); }
+.crypto-news-list a:hover .crypto-news-title { text-decoration: underline; text-underline-offset: 3px; }
+.crypto-news-title { display: flex; gap: 9px; align-items: flex-start; font-size: 14px; line-height: 1.5; margin-top: 6px; }
+.crypto-news-title svg { flex-shrink: 0; margin-top: 3px; }
+.crypto-news-list .crypto-eyebrow { letter-spacing: 0; }
+.crypto-filter-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 12px; }
+.crypto-search { display: flex; align-items: center; gap: 10px; flex: 1 1 220px; border: 1px solid hsl(var(--border)); border-radius: 8px; min-height: 44px; padding: 0 12px; background: hsl(var(--background)); }
+.crypto-search input { width: 100%; min-width: 0; background: transparent; outline: none; font-size: 14px; min-height: 44px; }
+.crypto-select { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: hsl(var(--muted-foreground)); }
+.crypto-select select { color: hsl(var(--foreground)); background: hsl(var(--background)); border: 1px solid hsl(var(--border)); border-radius: 8px; padding: 8px 12px; min-height: 44px; font-size: 13px; }
+.crypto-token-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 15px; align-items: start; }
+.crypto-desk .crypto-token-grid [class*="text-["] { font-size: 12px; line-height: 1.5; }
+.crypto-quote { padding: 22px; border: 1px solid hsl(var(--border)); background: hsl(var(--card) / .6); border-radius: 12px; }
+.crypto-quote h3 { font-weight: 600; }
+.crypto-quote-price { font-size: 30px; line-height: 1.3; font-weight: 550; margin-top: 22px; font-variant-numeric: tabular-nums; }
+.crypto-quote-change { font-size: 13px; color: hsl(var(--muted-foreground)); margin: 6px 0 20px; }
+.crypto-definition-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-bottom: 22px; }
+.crypto-definition-grid dt { font-size: 12px; color: hsl(var(--muted-foreground)); margin-bottom: 5px; }
+.crypto-definition-grid dd { font-size: 14px; overflow-wrap: anywhere; }
+.crypto-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
+.crypto-info-grid h4 { font-weight: 600; margin-bottom: 8px; }
+.crypto-info-grid p { color: hsl(var(--muted-foreground)); }
+.crypto-macro-grid, .crypto-engine-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; }
+.crypto-macro-grid a, .crypto-engine-grid > div { display: flex; flex-direction: column; gap: 7px; padding: 15px; background: hsl(var(--muted) / .25); border-radius: 7px; }
+.crypto-macro-grid a > strong { font-size: 19px; font-weight: 550; }
+.crypto-macro-grid small, .crypto-macro-grid span, .crypto-engine-grid p { font-size: 12px; color: hsl(var(--muted-foreground)); }
+.crypto-source-list { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+.crypto-source-list article { border-top: 1px solid hsl(var(--border)); padding-top: 15px; }
+.crypto-source-list a { display: inline-flex; align-items: center; gap: 6px; font-weight: 550; }
+.crypto-source-list p { font-size: 12px; margin-top: 7px; color: hsl(var(--muted-foreground)); }
+.crypto-source-list small { display: block; font-size: 12px; margin-top: 7px; }
+.crypto-gap-list { display: grid; gap: 14px; }
+.crypto-gap-list li { display: flex; align-items: flex-start; gap: 10px; }
+.crypto-gap-list svg { margin-top: 3px; flex-shrink: 0; color: hsl(var(--muted-foreground)); }
+.crypto-methodology { border-top: 1px solid hsl(var(--border)); margin-top: 22px; padding-top: 10px; }
+.crypto-methodology summary { cursor: pointer; min-height: 44px; padding-top: 10px; font-weight: 600; }
+.crypto-methodology p { margin: 12px 0; }
+.crypto-methodology code { overflow-wrap: anywhere; font-size: 12px; }
+.crypto-empty, .crypto-loading { padding: 20px 0; color: hsl(var(--muted-foreground)); }
+.crypto-error { padding: 14px; border: 1px solid hsl(var(--primary) / .35); border-radius: 8px; font-size: 13px; }
+.crypto-desk button:focus-visible, .crypto-desk a:focus-visible, .crypto-desk select:focus-visible, .crypto-search:focus-within, .crypto-methodology summary:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: 3px; }
+@media (max-width: 1000px) {
+  .crypto-overview-grid { grid-template-columns: 1fr; }
+  .crypto-macro-grid, .crypto-engine-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .crypto-desk { gap: 16px; }
+  .crypto-desk-header { display: block; }
+  .crypto-header-actions { margin-top: 14px; justify-content: flex-start; max-width: none; }
+  .crypto-kpi-grid { grid-template-columns: 1fr 1fr; }
+  .crypto-kpi { padding: 15px; border-bottom: 1px solid hsl(var(--border)); }
+  .crypto-kpi:nth-child(2n) { border-right: 0; }
+  .crypto-kpi:nth-child(n+3) { border-bottom: 0; }
+  .crypto-kpi strong { font-size: 23px; }
+  .crypto-box, .crypto-quote { padding: 16px; }
+  .crypto-token-grid, .crypto-source-list, .crypto-info-grid, .crypto-macro-grid, .crypto-engine-grid { grid-template-columns: minmax(0, 1fr); }
+  .crypto-reason-grid { grid-template-columns: 1fr 1fr; gap: 18px; }
+  .crypto-definition-grid { gap: 16px 10px; }
+  .crypto-desk-header p { max-width: 40ch; }
 }
 
 /* ──────────────────────────────────────────────────────────────────────── */
@@ -702,6 +1123,13 @@
 }
 @media (min-width: 1024px) {
   .take5-fab { height: auto; min-height: 30px; }
+}
+
+/* The dashboard launcher participates in header reflow rather than floating
+   over controls or requiring another guessed bottom-dock offset. */
+.batcave-header .take5-fab {
+  position: static;
+  flex-shrink: 0;
 }
 
 .take5-fab:hover {

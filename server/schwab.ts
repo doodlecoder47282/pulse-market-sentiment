@@ -35,6 +35,9 @@ export function isDemoEdition(): boolean {
   return editionFromEnv() === "demo";
 }
 const DEMO_SIGN_IN_OFF = "This demo runs on simulated sample data; Schwab sign-in is turned off.";
+import { makeEvidenceAcquisition, type EvidenceAcquisition } from "../shared/evidenceAcquisition";
+import { createHash } from "node:crypto";
+import { serialize, deserialize } from "node:v8";
 
 // ─── Credentials from environment (read lazily to avoid import-order issues) ──
 const getClientId = () => process.env.SCHWAB_CLIENT_ID ?? "";
@@ -294,13 +297,25 @@ export function clearTokens(): void {
 // maxServeAgeMs(kind) and is marked stale with its age; past that the caller
 // gets null (unavailable). Policy and limits: server/schwabDataPolicy.ts.
 
-type CacheEntry = { data: any; fetchedAt: number; expiresAt: number };
+type CacheEntry = { data: any; fetchedAt: number; expiresAt: number; fingerprint?: string };
+// Evidence receipts (Trade Brief): the successful body receipt is tied to the
+// parsed payload. Opt-in readers verify the fingerprint and take an isolated copy;
+// a missing fingerprint or a changed payload stays unverified.
+const payloadFingerprint = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+function fingerprintPayload(data: any): string | undefined {
+  try { return payloadFingerprint(serialize(data)); } catch { return undefined; }
+}
+type SchwabFetchOpts = { skipCache?: boolean; onAcquisition?: (metadata: EvidenceAcquisition) => void;
+  priority?: "interactive"; onBudgetBlocked?: () => void };
 const _cache = new Map<string, CacheEntry>();
 
 // Self-throttle: track requests in last 60s. Schwab limit ~120/min on marketdata.
 // We cap at 100/min to leave headroom.
 const _reqLog: number[] = [];
 const MAX_REQ_PER_MIN = 100;
+// Keep manual, bounded stock research usable during collector startup bursts.
+// This is a reservation inside the existing limit, never extra provider capacity.
+const BACKGROUND_REQ_PER_MIN = 85;
 
 function _trimReqLog() {
   const cutoff = Date.now() - 60_000;
@@ -352,7 +367,7 @@ export interface SchwabFetchResult {
 export async function schwabFetch(
   path: string,
   params?: Record<string, string | number>,
-  opts?: { skipCache?: boolean },
+  opts?: SchwabFetchOpts,
 ): Promise<any | null> {
   return (await schwabFetchMeta(path, params, opts)).data;
 }
@@ -360,7 +375,7 @@ export async function schwabFetch(
 export async function schwabFetchMeta(
   path: string,
   params?: Record<string, string | number>,
-  opts?: { skipCache?: boolean },
+  opts?: SchwabFetchOpts,
 ): Promise<SchwabFetchResult> {
   if (isDemoEdition()) {
     const now = Date.now();
@@ -383,12 +398,27 @@ export async function schwabFetchMeta(
   const cacheKey = `${path}|${paramStr}`;
   const kind = schwabDataKind(path, params);
   const ttl = FRESH_TTL_MS[kind];
+  // Opt-in receipt metadata only; never changes data, TTL, retry or fallback behavior.
+  const deliver = (r: SchwabFetchResult, provenance: "transport_response" | "cache_hit" | "stale_cache_fallback",
+    receipt?: number, fingerprint?: string): SchwabFetchResult => {
+    if (r.data == null || !opts?.onAcquisition) return r;
+    let receivedAt: number | null = null;
+    try {
+      const bytes = serialize(r.data);
+      if (fingerprint !== undefined && payloadFingerprint(bytes) === fingerprint) receivedAt = receipt ?? null;
+      r = { ...r, data: deserialize(bytes) };
+    } catch { /* no provable original payload means no receipt */ }
+    const kindOut = provenance === "transport_response" && receivedAt === null ? "unverified_adapter_return" : provenance;
+    const metadata = makeEvidenceAcquisition(kindOut, receivedAt, Date.now());
+    if (metadata) { try { opts.onAcquisition(Object.freeze(metadata)); } catch { /* observers cannot change behavior */ } }
+    return r;
+  };
 
   // Fresh cache hit (younger than the TTL): real fetch time, not stale.
   if (!opts?.skipCache && ttl > 0) {
     const hit = _cache.get(cacheKey);
     if (hit && hit.expiresAt > Date.now()) {
-      return { data: hit.data, freshness: freshFreshness(hit.fetchedAt, kind, true), reason: null };
+      return deliver({ data: hit.data, freshness: freshFreshness(hit.fetchedAt, kind, true), reason: null }, "cache_hit", hit.fetchedAt, hit.fingerprint);
     }
   }
 
@@ -397,7 +427,7 @@ export async function schwabFetchMeta(
     const entry = _cache.get(cacheKey);
     const d = staleServeDecision(entry?.fetchedAt, kind, reason);
     _recordDegraded(kind, d.serve, d.serve ? reason : d.reason);
-    if (d.serve && entry) return { data: entry.data, freshness: d.freshness, reason };
+    if (d.serve && entry) return deliver({ data: entry.data, freshness: d.freshness, reason }, "stale_cache_fallback", entry.fetchedAt, entry.fingerprint);
     return { data: null, freshness: null, reason: d.serve ? reason : d.reason };
   };
 
@@ -409,8 +439,12 @@ export async function schwabFetchMeta(
   }
 
   // Self-throttle
+  const requestLimit = opts?.priority === "interactive" ? MAX_REQ_PER_MIN : BACKGROUND_REQ_PER_MIN;
+  const budgetBlocked = () => {
+    try { opts?.onBudgetBlocked?.(); } catch { /* diagnostic observers do not control transport */ }
+  };
   _trimReqLog();
-  if (_reqLog.length >= MAX_REQ_PER_MIN) {
+  if (_reqLog.length >= requestLimit) {
     const entry = _cache.get(cacheKey);
     if (entry && staleServeDecision(entry.fetchedAt, kind, "self-throttle").serve) {
       return serveStale("self-throttle (100 requests/min)");
@@ -422,6 +456,7 @@ export async function schwabFetchMeta(
       _trimReqLog();
     } else {
       console.warn("[schwab] self-throttle hit, skipping:", path);
+      budgetBlocked();
       return serveStale("self-throttle (100 requests/min)");
     }
   }
@@ -435,6 +470,13 @@ export async function schwabFetchMeta(
   const maxAttempts = 3;
   let lastStatus = 0;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // Recheck after waits and before EVERY retry; concurrent callers cannot
+    // spend the reserved slots or exceed the cap through the retry path.
+    _trimReqLog();
+    if (_reqLog.length >= requestLimit) {
+      budgetBlocked();
+      return serveStale("request budget reserved for interactive reads");
+    }
     _reqLog.push(Date.now());
     try {
       const res = await fetch(url.toString(), {
@@ -453,8 +495,9 @@ export async function schwabFetchMeta(
         _lastResponseBytes = bytes;
         const data = JSON.parse(text);
         const fetchedAt = Date.now();
-        if (ttl > 0) _cache.set(cacheKey, { data, fetchedAt, expiresAt: fetchedAt + ttl });
-        return { data, freshness: freshFreshness(fetchedAt, kind, false), reason: null, bytes };
+        const fingerprint = opts?.onAcquisition || ttl > 0 ? fingerprintPayload(data) : undefined;
+        if (ttl > 0) _cache.set(cacheKey, { data, fetchedAt, expiresAt: fetchedAt + ttl, fingerprint });
+        return deliver({ data, freshness: freshFreshness(fetchedAt, kind, false), reason: null, bytes }, "transport_response", fetchedAt, fingerprint);
       }
       // 401 → token issue, no retry
       if (res.status === 401) {

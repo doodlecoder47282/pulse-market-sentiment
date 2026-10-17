@@ -40,6 +40,8 @@ export interface Headline {
   source: string;
   url: string;
   published: number; // epoch seconds (UTC); undated items are never shown
+  /** False/absent means the legacy display time may be an update/retrieval fallback. */
+  publication_verified?: boolean;
   summary: string;
   topics: NewsTopic[];
   tickers: string[]; // inferred tickers mentioned
@@ -179,6 +181,8 @@ function toHeadline(t: TieredItem): Headline {
     kind: t.kind,
     publishedUtc: new Date(t.publishedMs).toISOString(),
     fetchedAtUtc: new Date(t.fetchedAtMs).toISOString(),
+    // Tiered sources drop undated items, so every shown time is a publication time.
+    publication_verified: true,
   };
 }
 
@@ -651,6 +655,12 @@ async function fetchEarningsCalendar(): Promise<CalendarEvent[]> {
   return out;
 }
 
+let latestNewsSnapshot: NewsResponse | null = null;
+/** Cache-only access: never invokes RSS/calendar providers. Treat returned data as read-only. */
+export function getCachedNewsSnapshot(): NewsResponse | null {
+  return latestNewsSnapshot;
+}
+
 export async function buildNewsSnapshot(): Promise<NewsResponse> {
   const warnings: string[] = [];
   const nowMs = Date.now();
@@ -762,7 +772,7 @@ export async function buildNewsSnapshot(): Promise<NewsResponse> {
     .filter((x) => ["bls_calendar", "bea_calendar", "treasury_auctions", "nasdaq_econ"].includes(x.id))
     .map((x) => x.state));
 
-  return {
+  const snapshot: NewsResponse = {
     asOf: now,
     headlines,
     calendar: calFiltered,
@@ -774,4 +784,6 @@ export async function buildNewsSnapshot(): Promise<NewsResponse> {
     filings: { watchlist: watchItems.slice(0, 40), wire: wireItems.slice(0, 40), state: filingsState, note: filingsNote },
     sourceTable: sourceTable(),
   };
+  latestNewsSnapshot = snapshot;
+  return snapshot;
 }

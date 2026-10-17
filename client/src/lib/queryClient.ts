@@ -71,6 +71,19 @@ async function signalIfAuthRequired(res: Response) {
   }
 }
 
+/** Raw request through the configured API base and access header (Trade Brief). */
+export async function transportRequest(method: string, path: string, data?: unknown, signal?: AbortSignal): Promise<Response> {
+  const res = await fetch(`${getApiBase()}${path}`, {
+    method,
+    headers: { ...(data ? { "Content-Type": "application/json" } : {}), ...authHeaders() },
+    body: data ? JSON.stringify(data) : undefined,
+    credentials: "same-origin",
+    signal,
+  });
+  await signalIfAuthRequired(res);
+  return res;
+}
+
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;

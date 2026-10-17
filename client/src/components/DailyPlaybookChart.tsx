@@ -144,6 +144,25 @@ function pathIcon(k: PathKey) {
   return <Minus className="h-3.5 w-3.5" />;
 }
 
+/** Keep exact level labels outside the SVG: nearby prices must not collide, and
+ * a fixed right gutter cannot accommodate every label at narrow widths. */
+function MagnetLegend({ magnets }: { magnets: LevelMagnet[] }) {
+  return (
+    <ul aria-label="Chart level magnets" data-testid="playbook-magnet-legend"
+      className="flex min-w-0 flex-wrap gap-2 text-xs">
+      {magnets.map(m => (
+        <li key={`${m.kind}-${m.level}`}
+          className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 rounded border border-border/40 px-2 py-1">
+          <span aria-hidden="true" className="inline-block w-4 shrink-0 border-t-2"
+            style={{ borderColor: MAGNET_COLORS[m.kind], borderTopStyle: m.strength === "primary" ? "solid" : "dashed" }} />
+          <span>{m.label}</span>
+          <span className="font-mono text-foreground">{fmt$(m.level)}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** Build the fan-chart series. Each path is anchored at spot at t=0 and
  *  arcs to (target.low, target.high) at t=1 (EOD). Returns an array of
  *  rows the chart can render. */
@@ -448,16 +467,22 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
                 tickFormatter={(v) => `$${v.toFixed(0)}`}
               />
               <Tooltip
-                contentStyle={{ background: "#0a0a0a", border: "1px solid #374151", fontSize: 11, borderRadius: 6 }}
+                contentStyle={{ backgroundColor: "hsl(var(--popover))", color: "hsl(var(--popover-foreground))", border: "1px solid hsl(var(--border))", fontSize: 11, borderRadius: 6 }}
+                labelStyle={{ color: "hsl(var(--popover-foreground))" }}
+                itemStyle={{ color: "hsl(var(--popover-foreground))" }}
                 labelFormatter={(v) => v === 0 ? "Now (spot)" : v === 1 ? "End of day" : `${Math.round(Number(v) * 100)}% through session`}
-                formatter={(val: any, name: string) => {
+                formatter={(val, name) => {
                   const labels: Record<string, string> = {
                     bullMid: "Bull mid", baseMid: "Base mid", bearMid: "Bear mid",
                     bullLo: "Bull low", bullHi: "Bull high",
                     baseLo: "Base low", baseHi: "Base high",
                     bearLo: "Bear low", bearHi: "Bear high",
+                    bullBand: "Bull range", baseBand: "Base range", bearBand: "Bear range",
                   };
-                  return [`$${Number(val).toFixed(2)}`, labels[name] ?? name];
+                  const value = Array.isArray(val)
+                    ? val.map(v => `$${Number(v).toFixed(2)}`).join(" – ")
+                    : `$${Number(val).toFixed(2)}`;
+                  return [value, labels[String(name)] ?? name];
                 }}
               />
 
@@ -535,6 +560,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
             </ComposedChart>
           </ResponsiveContainer>
         </div>
+        <MagnetLegend magnets={magnets} />
 
         {/* Drift overlay notes */}
         {drift?.hasLock && drift.notes.length > 0 && (

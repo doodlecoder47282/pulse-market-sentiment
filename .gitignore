@@ -34,3 +34,24 @@ data/greek_gradient.db-journal
 # Trained ML artifacts are runtime outputs (ml_service trains and versions them)
 ml_service/models/*.lgb
 ml_service/models/*_meta.json
+# Native build products and signing material (source project is tracked)
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+ios/App/App/config.xml
+ios/App/Pods/
+ios/App/build/
+ios/DerivedData/
+**/xcuserdata/
+*.p12
+*.mobileprovision
+
+# Isolated AI worker IPC key and persistent call budget: runtime only.
+data/brief-ai/
+
+# Private bounded evidence archive and receipt-signing key; never bundle/commit.
+data/evidence-ledger/
+
+# Encrypted local recovery packages, isolated drills and separate recovery keys.
+# Encryption does not make these appropriate for public source distribution.
+data/evidence-recovery/
+data/evidence-recovery-keys/

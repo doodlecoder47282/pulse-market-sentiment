@@ -1,4 +1,10 @@
 import { vixToAtmPct } from "@shared/vol";
+import { getCryptoContext } from "./cryptoContext";
+import { createTradeBriefService, registerTradeBriefRoutes } from "./tradeBrief";
+import { registerTradeBriefAiRoutes } from "./tradeBriefAi";
+import { openEvidenceLedger, type EvidenceLedger } from "./evidenceLedger";
+import { registerEvidenceLedgerRoutes } from "./evidenceLedgerRoutes";
+import { spyProjectionRoute } from "./spyProjection";
 import { getWidgetLayout, saveWidgetLayout, resetWidgetLayout } from "./widgetLayouts";
 import { buildTradeEnvironment, startTradeEnvironmentWatch } from "./tradeEnvironment";
 import type { Express, Request as ExRequest, Response as ExResponse } from "express";
@@ -16,6 +22,7 @@ import {
   gatherSocial, fetchHeadlines,
 } from "./sources";
 import { computeComposite } from "./composite";
+import { formatDecisionBlock } from "./decisionSupport";
 import { fetchAllVoices, factCheckItem, listVoices, computeVoicesBias } from "./voices";
 import { xEnabled } from "./x";
 import { fetchIntraday, fetchPrevDayOHLC } from "./quotes";
@@ -34,7 +41,6 @@ import { postBatcaveDailyCard } from "./discordBatcaveCard";
 import { postCalibrationCard } from "./calibrationCard";
 import { rollingBrier, settleDay, recentForecastProbs } from "./calibration";
 import { resolutionScore, gradeResolution } from "./stats";
-import { formatDecisionBlock } from "./decisionSupport";
 import { watchdogStatus } from "./cusumWatchdog";
 import { shieldStatus } from "./quoteShield";
 import { computeRND, type CallStrike } from "./breedenLitzenberger";
@@ -423,6 +429,13 @@ function rescaleLevelsForSpy(input: any, factor = 10): any {
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  // Bounded read-only stock/ETF research; stays inside the existing API boundary.
+  let evidenceLedger: EvidenceLedger | undefined;
+  const getEvidenceLedger = () => evidenceLedger ??= openEvidenceLedger();
+  const tradeBriefService = createTradeBriefService(undefined, brief => getEvidenceLedger().capture(brief));
+  registerTradeBriefRoutes(app, tradeBriefService);
+  registerTradeBriefAiRoutes(app, id => tradeBriefService.getSnapshot(id));
+  registerEvidenceLedgerRoutes(app, getEvidenceLedger);
   // ── Widget layout persistence (customizable dashboard stacks) ──
   app.get("/api/layout/:tab", (req, res) => {
     try {
@@ -793,6 +806,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const q = enriched.horizons?.quarterly as any;
         if (q && q.spot) {
           const snap = await getOrBuild(false);
+          // A missing crossing is unknown, not a zero-price anchor. Omit this
+          // optional trajectory rather than inventing a flip for its drift math.
+          const zeroGamma = snap.gamma.zeroGamma;
+          if (zeroGamma == null || !Number.isFinite(zeroGamma) || zeroGamma <= 0) {
+            throw new Error("Quarterly trajectory unavailable: no valid gamma flip");
+          }
           // Market-data blocks only (rule 2: no social/F&G in a price path). When
           // unavailable the drift tilt is skipped (50 = zero tilt) and labelled below.
           const marketScore = snap.composite?.marketScore;
@@ -862,7 +881,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             vix3m: vixData.vix3m,
             callWall: snap.gamma.callWall * gammaScale,
             putWall: snap.gamma.putWall * gammaScale,
-            gammaFlip: (snap.gamma.zeroGamma as number) * gammaScale,
+            gammaFlip: zeroGamma * gammaScale,
             maxPain: snap.gamma.maxPain * gammaScale,
             totalGex: snap.gamma.totalGex,
             composite: composite as number,
@@ -4690,6 +4709,13 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
 
   // CRYPTO DEGEN DESK — feed / health / signals
+  app.get("/api/crypto/context", async (_req, res) => {
+    try {
+      const context = await getCryptoContext();
+      res.json(context);
+    }
+    catch { res.status(503).json({ error: "crypto_context_unavailable", message: "Context is unavailable; no missing value is treated as zero." }); }
+  });
   app.get("/api/crypto/feed", (_req, res) => {
     try { res.json(getCryptoFeed()); }
     catch (e: any) { res.status(500).json({ error: "crypto_feed_failed", message: e?.message ?? String(e) }); }
@@ -6166,6 +6192,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       res.status(500).json({ ok: false, error: e?.message ?? "projection-spy failed" });
     }
   });
+
+  // Local real-observation SPY pipeline (research-only, forecasts disabled), kept under its own path.
+  app.get("/api/ml/spy-real-observation", spyProjectionRoute);
 
   // ─── ML service health (Wires 17–20) ────────────────────────────────────
   // 503 with an explicit reason when the sidecar is not installed on this
