@@ -4,7 +4,7 @@
  * Opened via the gear icon in the header.
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiJson, queryClient, AUTH_REQUIRED_EVENT, API_BASE_STORAGE_KEY, isNativeApp } from "@/lib/queryClient";
 import PersonalServerHandoff from "./PersonalServerHandoff";
@@ -256,7 +256,15 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
   // iOS Safari popup blocker, etc.) we surface the URL as a tappable fallback
   // link the user can long-press / open manually. This is the fix for the
   // "Connect button does nothing" bug on iPhone inside the Perplexity webview.
-  const [authBlockedFallback, setAuthBlockedFallback] = useState(false);
+  // Inside the Perplexity preview (or any iframe) a tapped link opens Schwab in
+  // a sandboxed tab without cookies, where its login page fails. There the
+  // copy-and-open-in-your-browser path is the primary one, shown up front.
+  const embedded = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    if ("__BATCAVE_PREVIEW_API_BASE__" in window) return true;
+    try { return window.self !== window.top; } catch { return true; }
+  }, []);
+  const [authBlockedFallback, setAuthBlockedFallback] = useState(embedded);
 
   const { data: status, isLoading: statusLoading, refetch: refetchStatus } = useQuery<SchwabStatus>({
     queryKey: ["/api/schwab/status"],
@@ -661,7 +669,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                   </div>
                 ) : !authUrlData?.url ? (
                   <div className="text-xs text-muted-foreground">Preparing the Schwab login link...</div>
-                ) : (
+                ) : embedded ? null : (
                   <>
                     {/* A real link, not window.open: Safari and iOS treat a tapped
                         link as a user action and open it in a new tab. */}
@@ -694,8 +702,13 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                 {authBlockedFallback && authUrlData?.url && (
                   <div className="mt-2 rounded border border-amber-500/40 bg-amber-500/5 p-2 space-y-2">
                     <div className="text-[11px] font-semibold text-amber-300 uppercase tracking-wider">
-                      Popup blocked here — copy the link, open it in Safari
+                      {embedded ? "Copy the link, then open it in Safari or Chrome" : "Popup blocked here — copy the link, open it in Safari"}
                     </div>
+                    {embedded && (
+                      <p className="text-xs leading-snug text-foreground" data-testid="schwab-embedded-note">
+                        Schwab's sign-in page can't run inside this preview window. Copy the link, paste it into your phone's or computer's browser address bar, log in and approve, then come back here for step 2. The link stays valid for 14 minutes.
+                      </p>
+                    )}
                     <Button
                       size="sm"
                       className="w-full bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs"
