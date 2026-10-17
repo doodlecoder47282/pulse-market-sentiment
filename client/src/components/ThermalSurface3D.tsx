@@ -55,6 +55,19 @@ const VIEWS: Record<"reset" | "top" | "front" | "side", THREE.Vector3> = {
   front: new THREE.Vector3(0, 0.2, 13.5),
   side: new THREE.Vector3(13, 2.5, 0),
 };
+/**
+ * Camera distance along a preset direction so the whole box (strikes x
+ * +-height x expiries, with room for the labels) fits the frustum at this
+ * aspect: a side view on a phone used to sit in the top third with the
+ * negative ribbons cut off below the frame.
+ */
+function framedPosition(dir: THREE.Vector3, camera: THREE.PerspectiveCamera): THREE.Vector3 {
+  const r = Math.hypot(WORLD_WIDTH / 2 + 0.8, WORLD_HEIGHT + 0.6, WORLD_DEPTH / 2 + 0.8);
+  const vfov = (camera.fov * Math.PI) / 180;
+  const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
+  const dist = (r / Math.sin(Math.min(vfov, hfov) / 2)) * 0.92;
+  return dir.clone().normalize().multiplyScalar(dist);
+}
 
 function label(text: string, cls: string, color?: string): CSS2DObject {
   const el = document.createElement("div");
@@ -180,11 +193,21 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
         const grp = ticks.filter((t) => t.classList.contains(cls));
         if (grp.length) { ends.add(grp[0]); ends.add(grp[grp.length - 1]); }
       }
+      // An axis seen nearly edge-on squeezes its ticks into a few pixels; only its ends then mean anything.
+      const squeezed = new Set<HTMLElement>();
+      for (const cls of ["s3d-tick-x", "s3d-tick-z"]) {
+        const grp = ticks.filter((t) => t.classList.contains(cls) && t.style.display !== "none");
+        if (grp.length < 3) continue;
+        const cs = grp.map((t) => { const r = t.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+        const spread = Math.hypot(Math.max(...cs.map((c) => c[0])) - Math.min(...cs.map((c) => c[0])), Math.max(...cs.map((c) => c[1])) - Math.min(...cs.map((c) => c[1])));
+        if (spread < 18 * (grp.length - 1)) for (const t of grp) if (!ends.has(t)) squeezed.add(t);
+      }
       const els = [...q(".s3d-level"), ...q(".s3d-axis"), ...ticks.filter((t) => ends.has(t)), ...ticks.filter((t) => !ends.has(t))];
       const boxes: DOMRect[] = [];
       for (const el of els) {
         el.style.visibility = "";
         if (el.style.display === "none") continue;
+        if (squeezed.has(el)) { el.style.visibility = "hidden"; continue; }
         const r = el.getBoundingClientRect();
         if (boxes.some((b) => r.left < b.right + GAP && r.right > b.left - GAP && r.top < b.bottom + GAP && r.bottom > b.top - GAP)) el.style.visibility = "hidden";
         else boxes.push(r);
@@ -232,7 +255,7 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
       // Narrow, tall frames need more distance to fit the 10-unit-wide surface.
       const fit = w / h < 1.2 ? 1.28 : 1;
       if (ctxRef.current) ctxRef.current.fit = fit;
-      if (first) { camera.position.copy(DEFAULT_CAM).multiplyScalar(fit); controls.update(); first = false; }
+      if (first) { camera.position.copy(framedPosition(DEFAULT_CAM, camera)); controls.target.set(0, 0, 0); controls.update(); first = false; }
       render();
     };
     // Setting the host's height inside its own ResizeObserver callback trips the
@@ -442,7 +465,7 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
 
   const goView = (v: keyof typeof VIEWS) => {
     const ctx = ctxRef.current; if (!ctx) return;
-    ctx.camera.position.copy(VIEWS[v]).multiplyScalar(ctx.fit); ctx.controls.target.set(0, 0.2, 0); ctx.controls.update(); ctx.render();
+    ctx.camera.position.copy(framedPosition(VIEWS[v], ctx.camera)); ctx.controls.target.set(0, 0, 0); ctx.controls.update(); ctx.render();
   };
   const zoom = (f: number) => {
     const ctx = ctxRef.current; if (!ctx) return;
