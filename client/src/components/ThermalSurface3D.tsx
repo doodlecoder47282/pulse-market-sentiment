@@ -56,17 +56,31 @@ const VIEWS: Record<"reset" | "top" | "front" | "side", THREE.Vector3> = {
   side: new THREE.Vector3(13, 2.5, 0),
 };
 /**
- * Camera distance along a preset direction so the whole box (strikes x
- * +-height x expiries, with room for the labels) fits the frustum at this
- * aspect: a side view on a phone used to sit in the top third with the
- * negative ribbons cut off below the frame.
+ * Camera position along a preset direction so the data box fits the frame
+ * at this aspect: the eight corners of the box (strikes x the layer's own
+ * height range x expiries, with room for labels) are projected and the
+ * distance adjusted until the farthest corner sits inside 92% of the frame.
+ * A sphere fit left a side view a third of the frame on an ultrawide, and
+ * centring on the full +-height put a one-signed surface in the top half.
  */
-function framedPosition(dir: THREE.Vector3, camera: THREE.PerspectiveCamera): THREE.Vector3 {
-  const r = Math.hypot(WORLD_WIDTH / 2 + 0.8, WORLD_HEIGHT + 0.6, WORLD_DEPTH / 2 + 0.8);
-  const vfov = (camera.fov * Math.PI) / 180;
-  const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
-  const dist = (r / Math.sin(Math.min(vfov, hfov) / 2)) * 0.92;
-  return dir.clone().normalize().multiplyScalar(dist);
+function frameCamera(dir: THREE.Vector3, camera: THREE.PerspectiveCamera, box: { yMin: number; yMax: number }): { position: THREE.Vector3; target: THREE.Vector3 } {
+  const hx = WORLD_WIDTH / 2 + 0.8, hz = WORLD_DEPTH / 2 + 0.8;
+  const yMin = Math.min(box.yMin, -0.6) - 0.5, yMax = Math.max(box.yMax, 0.6) + 0.5;
+  const target = new THREE.Vector3(0, (yMin + yMax) / 2, 0);
+  const corners: THREE.Vector3[] = [];
+  for (const x of [-hx, hx]) for (const y of [yMin, yMax]) for (const z of [-hz, hz]) corners.push(new THREE.Vector3(x, y, z));
+  const probe = camera.clone();
+  const d = dir.clone().normalize();
+  let dist = Math.hypot(hx, (yMax - yMin) / 2, hz) * 2;
+  for (let it = 0; it < 4; it++) {
+    probe.position.copy(target).add(d.clone().multiplyScalar(dist));
+    probe.lookAt(target); probe.updateMatrixWorld(); probe.updateProjectionMatrix();
+    let m = 0;
+    for (const c of corners) { const p = c.clone().project(probe); m = Math.max(m, Math.abs(p.x), Math.abs(p.y)); }
+    if (!(m > 0)) break;
+    dist *= m / 0.92;
+  }
+  return { position: target.clone().add(d.multiplyScalar(dist)), target };
 }
 
 function label(text: string, cls: string, color?: string): CSS2DObject {
@@ -126,6 +140,13 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
   const trimmed = full.strikes.length - data.strikes.length;
   const model = useMemo(() => buildSurfaceModel(data, { layer, spacing, heightScale, scale: scaleMode }), [data, layer, spacing, heightScale, scaleMode]);
   useEffect(() => { setPicked(null); }, [full, greek, layer, allStrikes]);
+  // Height range of the drawn surface, for framing the camera on the data rather than the full +-height.
+  const yBox = useMemo(() => {
+    let lo = 0, hi = 0;
+    for (let k = 0; k < model.present.length; k++) if (model.present[k]) { const y = model.positions[k * 3 + 1]; if (y < lo) lo = y; if (y > hi) hi = y; }
+    return { yMin: lo, yMax: hi };
+  }, [model]);
+  const yBoxRef = useRef(yBox); yBoxRef.current = yBox;
 
   // Persistent renderer / camera / controls; scene content rebuilt per model.
   const ctxRef = useRef<{
@@ -255,7 +276,7 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
       // Narrow, tall frames need more distance to fit the 10-unit-wide surface.
       const fit = w / h < 1.2 ? 1.28 : 1;
       if (ctxRef.current) ctxRef.current.fit = fit;
-      if (first) { camera.position.copy(framedPosition(DEFAULT_CAM, camera)); controls.target.set(0, 0, 0); controls.update(); first = false; }
+      if (first) { const f = frameCamera(DEFAULT_CAM, camera, yBoxRef.current); camera.position.copy(f.position); controls.target.copy(f.target); controls.update(); first = false; }
       render();
     };
     // Setting the host's height inside its own ResizeObserver callback trips the
@@ -465,7 +486,8 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
 
   const goView = (v: keyof typeof VIEWS) => {
     const ctx = ctxRef.current; if (!ctx) return;
-    ctx.camera.position.copy(framedPosition(VIEWS[v], ctx.camera)); ctx.controls.target.set(0, 0, 0); ctx.controls.update(); ctx.render();
+    const f = frameCamera(VIEWS[v], ctx.camera, yBox);
+    ctx.camera.position.copy(f.position); ctx.controls.target.copy(f.target); ctx.controls.update(); ctx.render();
   };
   const zoom = (f: number) => {
     const ctx = ctxRef.current; if (!ctx) return;
