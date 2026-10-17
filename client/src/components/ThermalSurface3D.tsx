@@ -18,7 +18,7 @@ import { CSS2DRenderer, CSS2DObject } from "three/examples/jsm/renderers/CSS2DRe
 import { fmtCell, trimForSurface } from "@/lib/surfaceDraw";
 
 import {
-  buildSurfaceModel, contourSegments, expiryFractions, expiryTickIndices, hasSides, layerValue, ribbonHeights, strikeTickIndices,
+  buildSurfaceModel, contourSegments, expiryFractions, expiryTickIndices, hasSides, layerValue, ribbonHeights, spikeRatio, strikeTickIndices,
   WORLD_DEPTH, WORLD_HEIGHT, WORLD_WIDTH,
   type Cell3D, type Data3D, type HeightScale, type Layer, type ScaleMode, type Spacing,
 } from "@/lib/surface3dModel";
@@ -88,6 +88,24 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
   const [scaleMode, setScaleMode] = useState<ScaleMode>("layer");
   const [picked, setPicked] = useState<Picked | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const canFullscreen = typeof document !== "undefined" && !!(document.documentElement as any).requestFullscreen;
+  useEffect(() => {
+    const onChange = () => {
+      const on = !!document.fullscreenElement && !!wrapRef.current?.contains(document.fullscreenElement);
+      setFullscreen(on);
+      // The host is sized by its ResizeObserver; in full screen it fills the box.
+      const host = hostRef.current;
+      if (host) host.style.height = on ? "calc(100vh - 56px)" : "";
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+  const toggleFullscreen = () => {
+    const w = wrapRef.current; if (!w) return;
+    if (document.fullscreenElement) void document.exitFullscreen?.();
+    else void (w as any).requestFullscreen?.().catch(() => {});
+  };
 
   const sides = useMemo(() => hasSides(full), [full]);
   useEffect(() => { if (!sides && layer !== "net") setLayer("net"); }, [sides, layer]);
@@ -121,7 +139,7 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
 
     const labels = new CSS2DRenderer();
     labels.domElement.style.position = "absolute";
-    labels.domElement.style.inset = "0";
+    labels.domElement.style.top = "0"; labels.domElement.style.bottom = "0"; labels.domElement.style.left = "0";
     labels.domElement.style.pointerEvents = "none";
     host.appendChild(labels.domElement);
 
@@ -148,14 +166,27 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
     let raf = 0, interacting = false;
     // Hide tick labels that collide on screen (edge-on views foreshorten an axis).
     const declutter = () => {
-      // Level labels first so a wall/spot label wins over a tick label.
-      const els = [...Array.from(labels.domElement.querySelectorAll<HTMLElement>(".s3d-level")), ...Array.from(labels.domElement.querySelectorAll<HTMLElement>(".s3d-tick, .s3d-axis"))];
+      // Priority: level labels (spot, flip, walls), then axis names and the
+      // sign labels, then the first and last tick of each axis (so an axis
+      // always keeps its range), then the remaining ticks. A label is hidden
+      // when it would come within GAP px of one already kept: touching
+      // labels read as one word ("13d11d10d") even when their boxes do not
+      // overlap, which is what a rotated expiry axis produced.
+      const GAP = 6;
+      const q = (sel: string): HTMLElement[] => Array.from((labels.domElement as HTMLElement).querySelectorAll<HTMLElement>(sel));
+      const ticks = q(".s3d-tick");
+      const ends = new Set<HTMLElement>();
+      for (const cls of ["s3d-tick-x", "s3d-tick-z", "s3d-tick-y"]) {
+        const grp = ticks.filter((t) => t.classList.contains(cls));
+        if (grp.length) { ends.add(grp[0]); ends.add(grp[grp.length - 1]); }
+      }
+      const els = [...q(".s3d-level"), ...q(".s3d-axis"), ...ticks.filter((t) => ends.has(t)), ...ticks.filter((t) => !ends.has(t))];
       const boxes: DOMRect[] = [];
       for (const el of els) {
         el.style.visibility = "";
         if (el.style.display === "none") continue;
         const r = el.getBoundingClientRect();
-        if (boxes.some((b) => r.left < b.right + 2 && r.right > b.left - 2 && r.top < b.bottom && r.bottom > b.top)) el.style.visibility = "hidden";
+        if (boxes.some((b) => r.left < b.right + GAP && r.right > b.left - GAP && r.top < b.bottom + GAP && r.bottom > b.top - GAP)) el.style.visibility = "hidden";
         else boxes.push(r);
       }
     };
@@ -180,13 +211,20 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
 
     let first = true;
     const resize = () => {
-      const w = Math.max(240, host.clientWidth);
-      const h = Math.round(Math.min(620, Math.max(340, w * (w < 640 ? 0.98 : 0.52))));
+      // Ultrawide windows: cap the canvas width and centre it, so a flat
+      // surface does not become a thin strip; full screen uses the whole box.
+      const fs = !!document.fullscreenElement && wrapRef.current?.contains(document.fullscreenElement);
+      const w = fs ? Math.max(240, host.clientWidth) : Math.max(240, Math.min(host.clientWidth, 1360));
+      const h = fs ? Math.max(340, host.clientHeight) : Math.round(Math.min(720, Math.max(340, w * (w < 640 ? 0.98 : w < 1000 ? 0.6 : 0.52))));
+      const ml = fs || host.clientWidth <= w ? 0 : Math.round((host.clientWidth - w) / 2);
+      renderer.domElement.style.marginLeft = `${ml}px`;
+      // The label layer must sit exactly over the canvas (labels are placed in canvas pixels).
+      labels.domElement.style.left = `${ml}px`; labels.domElement.style.right = "auto"; labels.domElement.style.width = `${w}px`;
       renderer.setSize(w, h, false);
       renderer.domElement.style.width = w + "px";
       renderer.domElement.style.height = h + "px";
       labels.setSize(w, h);
-      host.style.height = h + "px";
+      if (!fs) host.style.height = h + "px";
       camera.aspect = w / h;
       // Phones: pull back so the whole surface fits the narrower frustum.
       camera.fov = w < 640 ? 44 : 38;
@@ -275,10 +313,10 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
     content.add(new THREE.LineSegments(gg, new THREE.LineBasicMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.22 })));
 
     // Axis labels.
-    for (const i of sTicks) { const l = label(String(data.strikes[i]), "s3d-tick"); l.position.set(model.xOfIndex(i), 0, D / 2 + 0.45); content.add(l); }
+    for (const i of sTicks) { const l = label(String(data.strikes[i]), "s3d-tick s3d-tick-x"); l.position.set(model.xOfIndex(i), 0, D / 2 + 0.45); content.add(l); }
     for (const j of eTicks) {
       const e = data.expiries[j];
-      const l = label(`${e.dte}d`, "s3d-tick"); l.position.set(W / 2 + 0.5, 0, model.zOfExpiry(j)); content.add(l);
+      const l = label(`${e.dte}d`, "s3d-tick s3d-tick-z"); l.position.set(W / 2 + 0.5, 0, model.zOfExpiry(j)); content.add(l);
     }
     for (const v of hT) { const l = label(v === 0 ? "$0" : fmtCell(v), "s3d-tick s3d-tick-y"); l.position.set(-W / 2 - 0.55, model.yOfValue(v), -D / 2); content.add(l); }
     const plusTxt = greek === "gex" ? "+ long gamma" : `+ positive ${greek}`;
@@ -430,9 +468,20 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
   const pickMax = picked ? (model.split ? (picked.value >= 0 ? model.posMax : model.negMax) : model.scaleMax) : 0;
   const pct = picked && pickMax > 0 ? (100 * Math.abs(picked.value)) / pickMax : null;
   const scaleName = scaleMode === "shared" ? "shared" : scaleMode === "split" ? (picked && picked.value < 0 ? "below-zero" : "above-zero") : "layer";
+  // One strike dominating the layer flattens everything else at linear height.
+  const spike = useMemo(() => spikeRatio(model), [model]);
+  const spiky = heightScale === "linear" && spike != null && spike > 12;
 
   return (
-    <div ref={wrapRef} className="relative" data-testid="thermal-surface3d">
+    <div ref={wrapRef} className={`relative ${fullscreen ? "overflow-auto bg-slate-950 p-2" : ""}`} data-testid="thermal-surface3d"
+      tabIndex={0} aria-label="3D exposure surface: arrow keys rotate and zoom"
+      onKeyDown={(e) => {
+        if (e.key === "ArrowLeft") { rotate(-15); e.preventDefault(); }
+        else if (e.key === "ArrowRight") { rotate(15); e.preventDefault(); }
+        else if (e.key === "ArrowUp") { zoom(1 / 1.18); e.preventDefault(); }
+        else if (e.key === "ArrowDown") { zoom(1.18); e.preventDefault(); }
+        else if (e.key === "Escape" && fullscreen) { toggleFullscreen(); }
+      }}>
       <style>{`
         .s3d-tick{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#cbd5e1;white-space:nowrap;text-shadow:0 1px 2px #020617}
         .s3d-tick-y{color:#94a3b8;transform:translateX(-50%)}
@@ -514,8 +563,19 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
             <button key={a} type="button" aria-label={a} onClick={fn} data-testid={`surface3d-${a.replace(" ", "-")}`}
               className="min-h-[44px] min-w-[44px] rounded border border-border font-mono text-base text-foreground">{t}</button>
           ))}
+          {canFullscreen && (
+            <button type="button" onClick={toggleFullscreen} data-testid="surface3d-fullscreen" aria-pressed={fullscreen}
+              className="min-h-[44px] rounded border border-border px-2 font-mono text-[11px] uppercase text-foreground"
+              title="Fill the screen; on a phone, turn it sideways for the widest view. Esc leaves.">{fullscreen ? "exit full screen" : "full screen"}</button>
+          )}
         </div>
       </div>
+      {spiky && (
+        <p className="mt-2 text-[11px] text-amber-300/90" role="status" data-testid="surface3d-spike-hint">
+          One strike is about {Math.round(spike!)}x the typical cell, so at linear height the rest of the surface is flat.{" "}
+          <button type="button" className="underline underline-offset-2" onClick={() => setHeightScale("compressed")}>Switch to compressed height</button> to see the shape (ticks still show the dollar values).
+        </p>
+      )}
       {picked && (
         <div className="mt-2 rounded border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-200 sm:hidden" data-testid="thermal-surface3d-readout-phone" role="status">
           <div className="text-[11px] text-slate-400">{picked.cell.expiry} · {picked.cell.dte}d · strike {picked.cell.strike}</div>
