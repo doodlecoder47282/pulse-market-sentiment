@@ -7,7 +7,7 @@
     "dev": "NODE_ENV=development tsx server/index.ts",
     "build": "tsx script/build.ts",
     "build:ios": "vite build --config vite.native.config.ts --mode native",
-    "ios:sync": "npm run build:ios && cap sync ios",
+    "ios:sync": "vite build && cap sync ios",
     "ios:open": "cap open ios",
     "ios:preflight": "node scripts/ios-preflight.mjs",
     "ios:verify": "bash scripts/ios-verify.sh",
@@ -23,9 +23,7 @@
     "evidence:backup": "tsx scripts/evidence-backup.ts",
     "test:evidence-foundation": "tsx --test tests/evidence-ledger.test.ts tests/evidence-backup.test.ts tests/evidence-acquisition.test.ts tests/evidence-policy.test.ts tests/equity-calendar.test.ts tests/trade-brief.test.ts tests/trade-brief-enrichment.test.ts tests/trade-brief-ai.test.ts",
     "db:push": "drizzle-kit push",
-    "build:web": "vite build",
-    "ios:sync": "vite build && cap sync ios",
-    "ios:open": "cap open ios"
+    "build:web": "vite build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
