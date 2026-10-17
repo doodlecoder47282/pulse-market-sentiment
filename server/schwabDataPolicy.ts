@@ -16,7 +16,7 @@
 // User decision 2026-10-08: Schwab is the only market-data source. No CBOE,
 // no delayed or cached fallback presented as current.
 
-import { isRegularSessionOpen } from "./exchangeCalendar";
+import { isRegularSessionOpen, isTradingDay, etDate } from "./exchangeCalendar";
 
 export type SchwabDataKind = "quotes" | "chains" | "minute_bars" | "daily_bars" | "markets" | "other";
 
@@ -85,6 +85,25 @@ export const MAX_SERVE_AGE_MS: Record<"rth" | "closed", Record<SchwabDataKind, n
     other: 0,
   },
 };
+
+/**
+ * Fresh TTL on non-trading days (weekend/holiday). Prices cannot move until
+ * Sunday-evening futures / Monday's session, so re-reading Friday's close every
+ * 20 s only burns the shared Schwab budget. Refreshed every few minutes instead;
+ * fetch time stays the real fetch time. Weekday overnight keeps FRESH_TTL_MS.
+ */
+export const NON_TRADING_DAY_TTL_MS: Record<SchwabDataKind, number> = {
+  quotes: 5 * 60_000,
+  chains: 15 * 60_000,
+  minute_bars: 15 * 60_000,
+  daily_bars: 60 * 60_000,
+  markets: 6 * 3600_000,
+  other: 0,
+};
+
+export function freshTtlMs(kind: SchwabDataKind, nowMs: number = Date.now()): number {
+  return isTradingDay(etDate(nowMs)) ? FRESH_TTL_MS[kind] : Math.max(FRESH_TTL_MS[kind], NON_TRADING_DAY_TTL_MS[kind]);
+}
 
 export function maxServeAgeMs(kind: SchwabDataKind, nowMs: number = Date.now()): number {
   return MAX_SERVE_AGE_MS[isRegularSessionOpen(nowMs) ? "rth" : "closed"][kind];

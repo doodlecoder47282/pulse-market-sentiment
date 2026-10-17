@@ -400,6 +400,16 @@ export default function ChainAudit() {
             {" "}<DataAgeChip asOfMs={(data as any).chainAsOfMs ?? null} stale={(data as any).chainStale ?? null} maxAgeMs={(data as any).chainMaxAgeMs ?? null} label="chain" />
           </Badge>
         )}
+        {(data as any)?.audit?.oiState && (data as any).audit.oiState.source !== "live" && (
+          <Badge variant="outline" className="border-amber-500/40 font-mono text-[11px] text-amber-300" data-testid="chain-audit-oi-state" title={(data as any).audit.oiState.note ?? undefined}>
+            {(data as any).audit.oiState.source === "held" ? `OI held from ${(data as any).audit.oiState.sessionDate}` : "No OI from Schwab (weekend): OI-weighted rows read 0"}
+          </Badge>
+        )}
+        {(data as any)?.stale && (
+          <Badge variant="outline" className="border-amber-500/40 font-mono text-[11px] text-amber-300" data-testid="chain-audit-stale">
+            Last good audit · {Math.round(((data as any).staleAgeSec ?? 0) / 60)} min old
+          </Badge>
+        )}
         {data?.audit?.dataQuality === "partial" && (
           <Badge variant="outline" className="border-amber-500/40 font-mono text-[11px] text-amber-400">
             Partial Data

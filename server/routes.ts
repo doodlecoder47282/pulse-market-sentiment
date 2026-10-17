@@ -656,10 +656,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Macro carousel — cross-asset quotes grouped by category for ticker tape + carousel.
   // Short cache keeps the Schwab request budget low (~25 symbols per refresh).
   let macroCache: { at: number; data: MacroResponse } | null = null;
-  const MACRO_CACHE_MS = 10_000; // 10s cache — near-realtime ticker tape
+  // 15 s in the regular session; 5 min otherwise (prices barely move and each
+  // rebuild costs ~2 Schwab reads per symbol).
+  const macroCacheMs = () => (isRegularSessionOpen() ? 15_000 : 5 * 60_000);
   app.get("/api/macro", async (_req, res) => {
     try {
-      if (macroCache && Date.now() - macroCache.at < MACRO_CACHE_MS) {
+      if (macroCache && Date.now() - macroCache.at < macroCacheMs()) {
         return res.json(macroCache.data);
       }
       const data = await buildMacroSnapshot();
@@ -1462,7 +1464,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const rawSymbol = String(req.query.symbol ?? "SPY").toUpperCase();
       // Schwab uses $SPX for the S&P 500 cash index, not ^GSPC (Yahoo's symbol).
       // Map up-front so Models tab's ^GSPC default doesn't 503.
-      const symbol = rawSymbol === "^GSPC" ? "$SPX" : rawSymbol;
+      // Cash indices need Schwab's "$" prefix; bare "SPX" returned zero bars.
+      const INDEX_SYMS: Record<string, string> = { "^GSPC": "$SPX", SPX: "$SPX", "^SPX": "$SPX", NDX: "$NDX", "^NDX": "$NDX", RUT: "$RUT", "^RUT": "$RUT", VIX: "$VIX", "^VIX": "$VIX" };
+      const symbol = INDEX_SYMS[rawSymbol] ?? rawSymbol;
       const { getPriceHistory } = await import("./schwab");
       const { buildPivotProjection } = await import("./pivotProjection");
 
@@ -3274,10 +3278,18 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
       // Fetch chain — Schwab only. No SPY substitute for SPX (a different
       // instrument, scale and multiplier): unavailable instead.
-      const chain = await schwabGetOptionChain(symbol, dte);
+      // A 60-DTE $SPX chain in one request is ~600 KB+ and Schwab answers 502;
+      // the ladder splits it into expiry segments and merges them.
+      const { getOptionChainLadder } = await import("./schwab");
+      let chain = dte > 14 ? await getOptionChainLadder(symbol, dte) : await schwabGetOptionChain(symbol, dte);
+      if ("error" in chain && dte > 14) chain = await schwabGetOptionChain(symbol, Math.min(dte, 14));
       const usedSymbol = symbol;
 
       if ("error" in chain) {
+        // Last good audit beats a blank panel; it is labeled with its real age.
+        if (cached) {
+          return res.json({ ...cached.data, stale: true, staleAgeSec: Math.round((Date.now() - cached.at) / 1000), staleReason: chain.reason ?? chain.error });
+        }
         return res.status(503).json({
           error: chain.error,
           dataState: chain.dataState ?? "unavailable",
@@ -3306,6 +3318,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       audit.chainSource = "schwab";
       audit.chainAsOfMs = chain.asOfMs;
       audit.chainStale = chain.stale;
+      (audit as any).oiState = chain.oiState ?? null;
       audit.chainCoverage = chain.strikeCoverage
         ? { belowPct: chain.strikeCoverage.belowPct, abovePct: chain.strikeCoverage.abovePct, complete: chain.strikeCoverage.complete }
         : null;
@@ -3315,7 +3328,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       // Never let a DB failure (or empty chain) break the audit response.
       try {
         // History rows only from a chain fetched for this call (never a re-served one).
-        if (audit.dataQuality !== "minimal" && !chain.stale) {
+        // No OI-weighted history from an all-zero-OI chain (Schwab weekends).
+        if (audit.dataQuality !== "minimal" && !chain.stale && chain.oiState?.source !== "none") {
           const ts = Date.now();
           const rows: GreekSnapshotRow[] = [];
           for (const p of audit.vanna.profile) {
@@ -3638,8 +3652,9 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       const greekRaw = String(req.query.greek || "gex").toLowerCase();
       const greek = (THERMAL_GREEKS as readonly string[]).includes(greekRaw) ? (greekRaw as ThermalGreek) : "gex";
 
-      const { getOptionChain } = await import("./schwab");
-      const chain = await getOptionChain(symbol, dte);
+      const { getOptionChain, getOptionChainLadder } = await import("./schwab");
+      // One 60-DTE $SPX request is too large (Schwab 502); the ladder splits it.
+      const chain = dte > 14 ? await getOptionChainLadder(symbol, dte) : await getOptionChain(symbol, dte);
       if ("error" in chain) {
         return res.status(503).json({ error: chain.error, dataState: chain.dataState ?? "unavailable", message: `Option chain unavailable: ${chain.reason ?? chain.error}` });
       }
@@ -3653,6 +3668,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         ...out,
         asOf: chain.asOfMs ?? out.asOf,
         chain: { asOfMs: chain.asOfMs, ageMs: chain.ageMs, servedFromCache: chain.servedFromCache, stale: chain.stale, staleReason: chain.staleReason ?? null },
+        oiState: chain.oiState ?? null,
       });
     } catch (e: any) {
       if (sendIfUnavailable(res, e)) return;
@@ -4009,6 +4025,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       result.chainAsOfMs = chain.asOfMs;
       result.chainStale = chain.stale;
       result.chainMaxAgeMs = chain.maxAgeMs;
+      result.oiState = chain.oiState ?? null;
       result.chainCoverage = chain.strikeCoverage
         ? { belowPct: chain.strikeCoverage.belowPct, abovePct: chain.strikeCoverage.abovePct, complete: chain.strikeCoverage.complete }
         : null;
@@ -6221,7 +6238,8 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   // bands at q10/q25/q50/q75/q90, drift dampened 0.5x, VIX/realized blowup.
   app.get("/api/projection/multiday", async (req, res) => {
     try {
-      const symbol = String(req.query.symbol ?? "^GSPC").toUpperCase();
+      const rawSym = String(req.query.symbol ?? "^GSPC").toUpperCase();
+      const symbol = rawSym === "SPX" ? "$SPX" : rawSym; // bare SPX has no Schwab history
       const { buildMultiDayCone } = await import("./multiDayProjection");
       const cone = await buildMultiDayCone(symbol);
       res.json(cone);

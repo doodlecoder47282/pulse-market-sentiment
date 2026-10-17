@@ -6,6 +6,7 @@
  */
 
 // Token row access goes through the encrypted store (AES-256-GCM, BATCAVE_TOKEN_KEY).
+import { applyOiHold, type ChainOiState } from "./oiHold";
 import type { ChainSegmentLike } from "./schwabDataPolicy";
 import { readSchwabTokens, writeSchwabTokens, deleteSchwabTokens, tokenStoreStatus, type TokenStoreStatus } from "./schwabTokenStore";
 import { observeQuote } from "./quoteShield";
@@ -13,7 +14,7 @@ import { etDate, addDays, isRegularSessionOpen, lastSessionDate } from "./exchan
 import { quoteFreshness } from "./quoteFreshness";
 import { gexByStrikeFromChain } from "./gammaProfile";
 import {
-  FRESH_TTL_MS, schwabDataKind, staleServeDecision, freshFreshness, maxServeAgeMs,
+  FRESH_TTL_MS, freshTtlMs, schwabDataKind, staleServeDecision, freshFreshness, maxServeAgeMs,
   chainStrikePlan, strikeCoverage, inferStrikeCountSemantics, atmIvFromChain, chainIsDelayed,
   chainAsOf, chainLadderSegments, mergeChainSegments,
   type SchwabDataKind, type SchwabFreshness, type StrikeCoverage, type StrikeCountSemantics,
@@ -312,6 +313,8 @@ const _cache = new Map<string, CacheEntry>();
 // Self-throttle: track requests in last 60s. Schwab limit ~120/min on marketdata.
 // We cap at 100/min to leave headroom.
 const _reqLog: number[] = [];
+// Who spends the budget: recent requests by caller (path + symbol + stack frame), diag only.
+const _reqWho: Array<{ t: number; k: string }> = [];
 const MAX_REQ_PER_MIN = 100;
 // Keep manual, bounded stock research usable during collector startup bursts.
 // This is a reservation inside the existing limit, never extra provider capacity.
@@ -320,6 +323,7 @@ const BACKGROUND_REQ_PER_MIN = 85;
 function _trimReqLog() {
   const cutoff = Date.now() - 60_000;
   while (_reqLog.length && _reqLog[0] < cutoff) _reqLog.shift();
+  while (_reqWho.length && _reqWho[0].t < cutoff) _reqWho.shift();
 }
 
 // Per-endpoint cooldown after 429. Map<endpoint-prefix, expiresAt>.
@@ -397,7 +401,7 @@ export async function schwabFetchMeta(
   const paramStr = cacheParams ? Object.entries(cacheParams).sort().map(([k, v]) => `${k}=${v}`).join("&") : "";
   const cacheKey = `${path}|${paramStr}`;
   const kind = schwabDataKind(path, params);
-  const ttl = FRESH_TTL_MS[kind];
+  const ttl = freshTtlMs(kind);
   // Opt-in receipt metadata only; never changes data, TTL, retry or fallback behavior.
   const deliver = (r: SchwabFetchResult, provenance: "transport_response" | "cache_hit" | "stale_cache_fallback",
     receipt?: number, fingerprint?: string): SchwabFetchResult => {
@@ -478,6 +482,12 @@ export async function schwabFetchMeta(
       return serveStale("request budget reserved for interactive reads");
     }
     _reqLog.push(Date.now());
+    {
+      const frame = (new Error().stack ?? "").split("\n").slice(2).map((l) => l.trim())
+        .find((l) => !/schwab\.(ts|js)|schwabFetch|node:internal|processTicksAndRejections/.test(l)) ?? "?";
+      const sym = params ? String((params as any).symbol ?? (params as any).symbols ?? "").slice(0, 24) : "";
+      _reqWho.push({ t: Date.now(), k: `${path.replace("marketdata/v1/", "")}${sym ? " " + sym : ""} <- ${frame.replace(/^at /, "").slice(0, 90)}` });
+    }
     try {
       const res = await fetch(url.toString(), {
         signal: AbortSignal.timeout(SCHWAB_FETCH_TIMEOUT_MS),
@@ -562,6 +572,8 @@ export function getSchwabDiagnostics() {
   return {
     cacheEntries: _cache.size,
     requestsLastMinute: _reqLog.length,
+    requestsByCaller: Object.entries(_reqWho.reduce((m, r) => { m[r.k] = (m[r.k] ?? 0) + 1; return m; }, {} as Record<string, number>))
+      .sort((a, b) => b[1] - a[1]).slice(0, 25).map(([k, n]) => ({ n, k })),
     maxPerMinute: MAX_REQ_PER_MIN,
     cooldowns: Array.from(_cooldown.entries())
       .filter(([_, exp]) => exp > now)
@@ -946,6 +958,8 @@ export type OptionChainOk = {
   strikeCount: number;
   strikePlan: string;
   strikeCoverage: StrikeCoverage | null;
+  /** live = Schwab OI; held = last trading day's saved OI (weekend/holiday); none = no OI anywhere. */
+  oiState?: ChainOiState;
 };
 
 /** Error: "schwab_required" = not connected (auth); "schwab_unavailable" = Schwab could not answer (or cache past max age). */
@@ -1027,6 +1041,7 @@ export async function getOptionChain(
         reason: "Schwab returned a DELAYED chain (isDelayed=true): not current, excluded from greeks, gamma and sizing",
       };
     }
+    const oiState = applyOiHold(wireSymbol, data.callExpDateMap ?? {}, data.putExpDateMap ?? {});
     const u = data.underlying ?? {};
     const num = (x: any) => (typeof x === "number" && Number.isFinite(x) ? x : null);
     const last = num(u.last);
@@ -1075,6 +1090,7 @@ export async function getOptionChain(
       strikeCount: plan.strikeCount,
       strikePlan: plan.basis,
       strikeCoverage: coverage,
+      oiState,
     };
   } catch (e: any) {
     console.warn("[schwab] getOptionChain error:", e?.message);
@@ -1100,6 +1116,15 @@ export async function getOptionChainLadder(symbol: string, dteMax: number): Prom
   // OptionChainOk has no index signature; the merge keeps every field it is given.
   const merged = mergeChainSegments(ok as unknown as ChainSegmentLike[]) as unknown as OptionChainOk | null;
   if (!merged) return { error: "schwab_unavailable", source: null, dataState: "unavailable", reason: "no chain segments" };
+  {
+    const st = ok.map((p) => p.oiState).filter((x): x is ChainOiState => !!x);
+    const held = st.find((x) => x.source === "held");
+    const live = st.some((x) => x.source === "live");
+    merged.oiState = held
+      ? { ...held, contractsWithOi: st.reduce((a, x) => a + x.contractsWithOi, 0) }
+      : live ? { source: "live", sessionDate: null, contractsWithOi: st.reduce((a, x) => a + x.contractsWithOi, 0), note: null }
+      : st[0];
+  }
   const keep = (m: Record<string, Record<string, any[]>>) => {
     const out: Record<string, Record<string, any[]>> = {};
     for (const k of Object.keys(m)) {

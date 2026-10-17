@@ -230,6 +230,35 @@ function cellColor(value: number, max: number): string {
 // SPY/QQQ/IWM = the tradeable ETF equivalents. Users can type anything else.
 const PRESETS = ["$SPX", "SPY", "QQQ", "IWM", "NDX", "RUT"] as const;
 
+type OiState = { source: "live" | "held" | "none"; sessionDate: string | null; contractsWithOi: number; note: string | null };
+
+// Where the open interest behind every GEX/OI number came from. Schwab posts 0
+// SPX OI on weekends; the server holds the last trading day's OI instead.
+function OiStateBanner({ oiState, symbol, onSwitch }: { oiState: OiState | null; symbol: string; onSwitch: (s: string) => void }) {
+  if (!oiState || oiState.source === "live") return null;
+  const held = oiState.source === "held";
+  return (
+    <div
+      role="status"
+      data-testid="heatseeker-oi-state"
+      className={`flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-xs ${held ? "border-amber-500/40 bg-amber-500/5 text-amber-200" : "border-border/60 bg-muted/20 text-muted-foreground"}`}
+    >
+      <span className="font-semibold">{held ? `Open interest held from ${oiState.sessionDate}` : "No open interest from Schwab"}</span>
+      {oiState.note ? <span>{oiState.note}</span> : null}
+      {!held && symbol === "$SPX" ? (
+        <button
+          type="button"
+          onClick={() => onSwitch("SPY")}
+          className="min-h-[36px] rounded-md border border-border px-3 text-foreground hover:bg-muted/40"
+          data-testid="heatseeker-switch-spy"
+        >
+          View SPY (OI posted)
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export default function Heatseeker() {
   const [symbol, setSymbol] = useState("$SPX");
   const [draft, setDraft] = useState("");
@@ -426,6 +455,7 @@ export default function Heatseeker() {
   return (
     <div className="space-y-4">
       {header}
+      <OiStateBanner oiState={(data as any).oiState ?? null} symbol={symbol} onSwitch={(sym) => setSymbol(sym)} />
       <HeatseekerView data={data} />
     </div>
   );
