@@ -18,6 +18,7 @@
  * - hideWhenOk: render nothing for a fresh "ok" (keeps quiet panels quiet).
  */
 import { useEffect, useState } from "react";
+import { useIsDemo } from "@/lib/useEdition";
 import {
   ageFromAsOf,
   describeDataState,
@@ -72,6 +73,9 @@ export default function DataStateChip({
   className,
   testId,
 }: DataStateChipProps) {
+  // Demo edition: the data is simulated, so never credit it to Schwab.
+  const isDemo = useIsDemo();
+  if (isDemo && source && /schwab/i.test(source)) source = "Sample";
   const hasAsOf = asOf != null && asOf !== "";
   const now = useNow(15_000, hasAsOf);
   const ageMs = hasAsOf ? ageFromAsOf(asOf ?? null, now) : null;

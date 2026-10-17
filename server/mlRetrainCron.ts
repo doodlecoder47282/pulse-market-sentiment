@@ -4,7 +4,7 @@
  * Schedules a weekly Sunday 02:00 ET retrain of the quantile overlay. The
  * score calibrator (R2-F item 6) and the whale-follow model (round 3) are
  * retired: neither had a consumer.
- * ENV gate: only runs if PULSE_ML_RETRAIN_ENABLED !== "0".
+ * Explicit opt-in: PULSE_ML_RETRAIN_ENABLED=1, and never in demo edition.
  * Uses node-cron with America/New_York timezone.
  *
  * No silent failure (review 9.5): when the Python sidecar is not installed on
@@ -16,10 +16,26 @@
 
 import cron from "node-cron";
 import { sidecarInstallStatus } from "./mlSidecarStatus";
+import { editionFromEnv } from "../shared/edition";
+import { withRequestDeadline } from "../shared/requestDeadline";
 
 const ML_URL = () => process.env.PULSE_ML_URL ?? "http://127.0.0.1:5001";
 
-async function kickRetrain(): Promise<void> {
+export function retrainEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return editionFromEnv(env) !== "demo" && env.PULSE_ML_RETRAIN_ENABLED === "1";
+}
+
+/** Boot and weekly jobs share one flight, including its completion polling. */
+export function singleFlight(operation: () => Promise<void>): () => Promise<void> {
+  let pending: Promise<void> | null = null;
+  return () => {
+    if (!pending) pending = Promise.resolve().then(operation).finally(() => { pending = null; });
+    return pending;
+  };
+}
+
+const kickRetrain = singleFlight(async (): Promise<void> => {
+  if (!retrainEnabled()) return;
   const inst = sidecarInstallStatus(true);
   if (!inst.installed) {
     console.warn(`[ml:retrain:skipped] ML sidecar not installed: ${inst.reason ?? "unknown"}`);
@@ -27,20 +43,19 @@ async function kickRetrain(): Promise<void> {
   }
   console.log("[ml:retrain:kicked] Starting weekly ML retrain...");
   try {
-    const res = await fetch(`${ML_URL()}/retrain`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        models: ["quantile_overlay"],
-      }),
-    });
-
-    if (!res.ok) {
-      console.error(`[ml:retrain:failed] HTTP ${res.status}`);
+    const data = await withRequestDeadline(async signal => {
+      const res = await fetch(`${ML_URL()}/retrain`, {
+        method: "POST", signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ models: ["quantile_overlay"] }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json() as { started: boolean; job_id: string };
+    }, 15_000);
+    if (data.started !== true || typeof data.job_id !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(data.job_id)) {
+      console.warn("[ml:retrain:skipped] No valid new training job acknowledged");
       return;
     }
-
-    const data = await res.json() as { started: boolean; job_id: string };
     console.log(`[ml:retrain:kicked] job_id=${data.job_id}`);
 
     // Poll for completion (up to 30 min)
@@ -51,11 +66,18 @@ async function kickRetrain(): Promise<void> {
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, pollIntervalMs));
       try {
-        const statusRes = await fetch(`${ML_URL()}/retrain/status/${data.job_id}`);
-        if (statusRes.ok) {
-          const statusData = await statusRes.json() as { status: string; results?: Record<string, unknown> };
+        const statusData = await withRequestDeadline(async signal => {
+          const res = await fetch(`${ML_URL()}/retrain/status/${encodeURIComponent(data.job_id)}`, { signal });
+          if (!res.ok) return null;
+          return await res.json() as { status: string; results?: Record<string, unknown> };
+        }, 10_000);
+        if (statusData) {
           if (statusData.status === "done") {
             console.log(`[ml:retrain:done] job_id=${data.job_id}`, JSON.stringify(statusData.results ?? {}));
+            return;
+          }
+          if (["failed", "error", "cancelled"].includes(statusData.status)) {
+            console.warn(`[ml:retrain:failed] job_id=${data.job_id} ended without a model`);
             return;
           }
         }
@@ -68,7 +90,7 @@ async function kickRetrain(): Promise<void> {
   } catch (err: any) {
     console.error(`[ml:retrain:failed] ${err?.message ?? err}`);
   }
-}
+});
 
 /**
  * Boot backfill (PULSE_ML_BACKFILL_ON_BOOT=1) is removed: the sidecar's
@@ -86,11 +108,14 @@ function scheduleBootBackfill(): void {
  * Call once at server startup from server/index.ts.
  * Registers the Sunday 02:00 ET cron job.
  */
+let scheduled = false;
 export function startMlRetrainCron(): void {
-  if (process.env.PULSE_ML_RETRAIN_ENABLED === "0") {
-    console.log("[ml:retrain] cron disabled via PULSE_ML_RETRAIN_ENABLED=0");
+  if (scheduled) return;
+  if (!retrainEnabled()) {
+    console.log("[ml:retrain] disabled: requires non-demo edition and PULSE_ML_RETRAIN_ENABLED=1");
     return;
   }
+  scheduled = true;
 
   // Sunday at 02:00 ET
   cron.schedule(
@@ -116,9 +141,12 @@ export function startMlRetrainCron(): void {
   // logged history 45s after boot (non-blocking, skipped if sidecar is down).
   setTimeout(async () => {
     try {
-      const res = await fetch(`${ML_URL()}/health`, { signal: AbortSignal.timeout(3000) });
-      if (!res.ok) return;
-      const h = await res.json() as { models?: Record<string, { trained_at?: number }> };
+      const h = await withRequestDeadline(async signal => {
+        const res = await fetch(`${ML_URL()}/health`, { signal });
+        if (!res.ok) return null;
+        return await res.json() as { models?: Record<string, { trained_at?: number }> };
+      }, 3000);
+      if (!h) return;
       const staleSec = 7 * 24 * 60 * 60;
       const nowSec = Math.floor(Date.now() / 1000);
       // Models with no trained_at (retired, never trained) do not count.

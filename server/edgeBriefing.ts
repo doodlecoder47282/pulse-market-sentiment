@@ -126,6 +126,19 @@ function safe(n: any): number | null {
 const SPX_SCALE = new Set(["SPX", "$SPX", "$SPX.X", "^GSPC", "SPXW"]);
 const TARGETS_MAX_AGE_MS = 7 * 86_400_000;
 
+export function briefingSymbol(symbol: string): string {
+  const normalized = symbol.trim().toUpperCase();
+  return SPX_SCALE.has(normalized) ? "SPX" : normalized;
+}
+
+/** A query parameter is not provenance: some upstream routes silently
+ * default unsupported symbols to SPY/SPX. Require the returned identity. */
+export function ownsBriefingSymbol(symbol: string, payload: any): boolean {
+  const expected = briefingSymbol(symbol);
+  const identities = [payload?.symbol, payload?.displaySymbol].filter(v => typeof v === "string" && v.trim());
+  return !!expected && identities.length > 0 && identities.every(v => briefingSymbol(v) === expected);
+}
+
 /** The weekly targets are typed in by the user on the SPX scale. They are shown
  *  only for an SPX-scale symbol and only when set within the last 7 days; never
  *  relabelled as another symbol's levels and never shown from the seed file. */
@@ -146,6 +159,8 @@ export function weeklyTargetsGate(symbol: string, updatedAt: number | null | und
 }
 
 export function buildLevels(symbol: string, heatseeker: any, playbook: any, gammaCurve: any, now = Date.now()): BriefingLevels {
+  playbook = ownsBriefingSymbol(symbol, playbook) ? playbook : null;
+  gammaCurve = ownsBriefingSymbol(symbol, gammaCurve) ? gammaCurve : null;
   const lv = (heatseeker?.levels ?? []) as any[];
   const updatedAt = safe(heatseeker?.updatedAt);
   const gate = weeklyTargetsGate(symbol, updatedAt, now);
@@ -251,9 +266,9 @@ function buildNews(news: any): BriefingNewsItem[] {
   }));
 }
 
-function buildModels(models: any): { daily: BriefingModelHorizon | null; weekly: BriefingModelHorizon | null } {
+export function buildModels(models: any, symbol: string): { daily: BriefingModelHorizon | null; weekly: BriefingModelHorizon | null } {
   const horizon = (h: any): BriefingModelHorizon | null => {
-    if (!h) return null;
+    if (!ownsBriefingSymbol(symbol, h)) return null;
     return {
       label: String(h.label ?? ""),
       symbol: String(h.displaySymbol ?? h.symbol ?? ""),
@@ -375,42 +390,58 @@ export function synthesizeVerdict(b: Omit<BriefingPayload, "verdict" | "verdictC
 
 // ─── Main builder ────────────────────────────────────────────────────────────
 
+export function scopedBriefingVerdict(symbol: string, partial: Parameters<typeof synthesizeVerdict>[0]) {
+  if (!partial.playbook && !partial.models.daily) {
+    return {
+      verdict: "insufficient data" as const,
+      verdictColor: "neutral" as const,
+      confidence: null,
+      oneLiner: `${briefingSymbol(symbol)}: reference levels and market context only. No verified symbol-specific playbook or daily model; no directional verdict.`,
+    };
+  }
+  return synthesizeVerdict(partial);
+}
+
 export async function buildBriefing(symbol: string): Promise<BriefingPayload> {
-  const sym = symbol.toUpperCase();
+  const sym = briefingSymbol(symbol);
+  const hasSymbolModels = sym === "SPY" || sym === "SPX";
 
   const [regime, crossAsset, playbook, econ, news, models, heatseeker, gammaCurve, quotes] = await Promise.all([
     safeFetch<any>(`/api/regime`),
     safeFetch<any>(`/api/cross-asset`),
-    safeFetch<any>(`/api/playbook/daily?symbol=${encodeURIComponent(sym)}`),
+    hasSymbolModels ? safeFetch<any>(`/api/playbook/daily?symbol=${encodeURIComponent(sym)}`) : Promise.resolve(null),
     safeFetch<any>(`/api/econ-week`),
     safeFetch<any>(`/api/news`),
-    safeFetch<any>(`/api/models`),
+    hasSymbolModels ? safeFetch<any>(`/api/models?symbol=${encodeURIComponent(sym === "SPX" ? "^GSPC" : sym)}`) : Promise.resolve(null),
     safeFetch<any>(`/api/heatseeker/levels?symbol=${encodeURIComponent(sym)}`),
     safeFetch<any>(`/api/gamma-curve?symbol=${encodeURIComponent(sym)}`),
     safeFetch<any>(`/api/quotes`),
   ]);
 
+  const matchingPlaybook = ownsBriefingSymbol(sym, playbook) ? playbook : null;
+  const matchingGamma = ownsBriefingSymbol(sym, gammaCurve) ? gammaCurve : null;
+  const matchingModels = buildModels(models, sym);
   const partial = {
     regime: buildRegime(regime),
     crossAsset: buildCrossAsset(crossAsset, quotes),
-    playbook: buildPlaybook(playbook),
+    playbook: buildPlaybook(matchingPlaybook),
     weekAhead: buildWeekAhead(econ),
     news: buildNews(news),
-    models: buildModels(models),
-    levels: buildLevels(sym, heatseeker, playbook, gammaCurve),
+    models: matchingModels,
+    levels: buildLevels(sym, heatseeker, matchingPlaybook, matchingGamma),
   };
 
-  const synth = synthesizeVerdict(partial);
+  const synth = scopedBriefingVerdict(sym, partial);
 
   const panelHealth = [
     { name: "regime", ok: !!regime },
     { name: "cross-asset", ok: !!crossAsset },
-    { name: "playbook", ok: !!playbook },
+    { name: "playbook", ok: !!matchingPlaybook, note: matchingPlaybook ? undefined : "No matching-symbol playbook; fallback data withheld." },
     { name: "econ-week", ok: !!econ },
     { name: "news", ok: !!news },
-    { name: "models", ok: !!models },
+    { name: "models", ok: !!(matchingModels.daily || matchingModels.weekly), note: matchingModels.daily || matchingModels.weekly ? undefined : "No matching-symbol model; broad-market models are not ticker forecasts." },
     { name: "heatseeker-levels", ok: !!heatseeker },
-    { name: "gamma-curve", ok: !!gammaCurve },
+    { name: "gamma-curve", ok: !!matchingGamma },
     { name: "quotes", ok: !!quotes },
   ];
 

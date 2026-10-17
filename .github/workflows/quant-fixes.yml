@@ -6,7 +6,7 @@ name: Batcave quant fixes check
 
 on:
   push:
-    branches: [quant-fixes]
+    branches: [quant-fixes, "feat/**"]
   workflow_dispatch:
 
 permissions:
@@ -210,6 +210,176 @@ jobs:
           JS
           npm i --no-save playwright@1.48.2 >/dev/null 2>&1 && node shot.mjs 2>&1 | tee rep/shots/shot.log
           pkill -f "dist/index.cjs" || true
+      - name: Demo edition (sample data) smoke test and screenshots
+        if: always()
+        shell: bash
+        run: |
+          set -u
+          mkdir -p rep/demo
+          npx --yes playwright@1.48.2 install --with-deps chromium >/dev/null 2>&1
+          npm ls playwright >/dev/null 2>&1 || npm i --no-save playwright@1.48.2 >/dev/null 2>&1
+          # Public bind, no key: the demo must be open, read-only and Schwab-free.
+          NODE_ENV=production PORT=5072 HOST=0.0.0.0 BATCAVE_EDITION=demo PULSE_ML_AUTOSTART=0 node dist/index.cjs > rep/server-demo.log 2>&1 &
+          for i in $(seq 1 90); do curl -fsS http://127.0.0.1:5072/api/health >/dev/null 2>&1 && break; sleep 1; done
+          IP=$(hostname -I | awk '{print $1}')
+          B="http://$IP:5072"
+          fail=0
+          check() { if [ "$1" = "$2" ]; then echo "PASS $3 ($1)"; else echo "FAIL $3 (got $1, want $2)"; fail=1; fi; }
+          {
+            curl -s "$B/api/health" | grep -q '"edition":"demo"' && echo "PASS health edition demo" || { echo "FAIL health edition"; fail=1; }
+            curl -s "$B/api/health" | grep -q '"locked":false' && echo "PASS open without a key" || { echo "FAIL locked"; fail=1; }
+            curl -s "$B/api/schwab/status" | grep -q '"demo":true' && echo "PASS status demo" || { echo "FAIL status demo"; fail=1; }
+            check "$(curl -s -o /dev/null -w '%{http_code}' "$B/api/schwab/auth-url")" 403 "sign-in link refused"
+            check "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' "$B/api/signals/track")" 403 "visitor write refused"
+            check "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"redirectedUrl":"https://x/?code=a"}' "$B/api/schwab/callback")" 403 "token paste refused"
+            check "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH -H 'Content-Type: application/json' -d '{}' "$B/api/flow/config")" 403 "config change refused"
+            curl -s -o /dev/null -D - "$B/api/schwab/oauth/callback?code=a&state=b" | grep -qi 'location: .*demo_edition' && echo "PASS oauth callback refused" || { echo "FAIL oauth callback"; fail=1; }
+            sleep 45
+            echo "--- data endpoints on sample data (status, first 300 bytes) ---"
+            for pth in /api/schwab/selftest /api/snapshot /api/trade-environment /api/regime /api/gamma-levels /api/models /api/heatseeker /api/iv-rv /api/chain-audit /api/edgelab/briefing "/api/heatmap/thermal?symbol=%24SPX&greek=gex" "/api/heatmap/thermal?symbol=%24SPX&greek=charm"; do
+              code=$(curl -s -o rep/demo/body.json -m 60 -w '%{http_code}' "$B$pth")
+              echo "$pth -> $code $(head -c 300 rep/demo/body.json | tr '\n' ' ')"
+            done
+            # Thermal heatmap on the sample chain: open-interest only, every contract accounted for, walls either side of spot.
+            curl -s -m 60 "$B/api/heatmap/thermal?symbol=%24SPX&greek=gex" > rep/demo/thermal.json
+            node -e '
+              const j = JSON.parse(require("fs").readFileSync("rep/demo/thermal.json", "utf8"));
+              const m = j.method, L = j.levels;
+              const ok = j.dataState === "ok" && j.weightMode === "oi" && m.position === "open_interest" && j.cells.length > 0
+                && L.putWall < j.spot && L.callWall > j.spot && L.gammaFlip >= j.strikes[0] && L.gammaFlip <= j.strikes[j.strikes.length - 1]
+                && j.cells.every((c) => Number.isFinite(c.exposure));
+              console.log((ok ? "PASS" : "FAIL") + " thermal heatmap: state " + j.dataState + ", " + j.cells.length + " cells, " + m.contractsUsed + " priced, " + m.contractsNoSigma + " no IV, put wall " + L.putWall + " < spot " + j.spot + " < call wall " + L.callWall + ", flip " + L.gammaFlip);
+            '
+
+            # Community watch on the demo: sample rows with ranges and costs; writes refused (read-only demo).
+            curl -s -m 30 "$B/api/crypto/community" > rep/demo/community.json
+            node -e '
+              const j = JSON.parse(require("fs").readFileSync("rep/demo/community.json", "utf8"));
+              const e = j.entries || [];
+              const ok = j.edition === "demo" && j.writable === false && e.length >= 3
+                && e.every((x) => x.quoteState === "ok" && x.range && x.range.rangePosition != null && x.cost1k && x.cost1k.roundTripPct != null && x.structure && x.line)
+                && e.some((x) => x.range.deepDipsReclaimed >= 1);
+              console.log((ok ? "PASS" : "FAIL") + " community watch: " + e.length + " sample rows, reclaimed dips " + e.map((x) => x.range && x.range.deepDipsReclaimed).join("/") + ", $1k trips " + e.map((x) => x.cost1k && x.cost1k.roundTripPct).join("/") + "%");
+            '
+            # 0DTE map on the sample chain: priced, labelled, no zones in the demo (investor limits), text free of instructions.
+            curl -s -m 60 "$B/api/odte/map?symbol=%24SPX" > rep/demo/odte-map.json
+            node -e '
+              const j = JSON.parse(require("fs").readFileSync("rep/demo/odte-map.json", "utf8"));
+              const labelled = (j.strikes || []).filter((s) => s.label).map((s) => s.label);
+              // In the session the map is "ok"; after the close it is "stale_session" (the card marks it), never "no_gex" on the sample chain.
+              const priced = j.dataState === "ok" || (j.dataState === "stale_session" && j.session && j.session.state === "closed");
+              // In the last half hour 0DTE gamma sits on a handful of strikes, so few clear the 1% share floor.
+              const nearClose = j.session && j.session.state === "open" && j.session.minutesToClose <= 30;
+              // From Friday's close to Monday's open the one-day chain window holds no expiry: "unavailable / no_expiries" is the honest answer.
+              const et = {}; for (const x of new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour12: false, hour: "2-digit", minute: "2-digit", weekday: "short" }).formatToParts(new Date())) et[x.type] = x.value;
+              const etMin = (Number(et.hour) % 24) * 60 + Number(et.minute);
+              const weekendGap = et.weekday === "Sat" || et.weekday === "Sun" || (et.weekday === "Fri" && etMin >= 16 * 60) || (et.weekday === "Mon" && etMin < 9 * 60 + 30);
+              if (weekendGap && j.dataState === "unavailable" && j.error === "no_expiries") { console.log("PASS 0DTE map: no expiry inside the one-day window between Friday's close and Monday's open (unavailable / no_expiries, as it should be)"); process.exit(0); }
+              const ok = priced && (j.strikes || []).length > (nearClose ? 2 : 5) && labelled.includes("pin") && j.zones === null && j.range && j.range.straddle > 0 && j.ledger && j.ledger.kept === false
+                && (j.strikes || []).every((s) => Math.abs(s.gexPt - Math.round(s.gexPct / (j.spot / 100))) <= 1);
+              console.log((ok ? "PASS" : "FAIL") + " 0DTE map: state " + j.dataState + ", spot " + j.spot + ", " + (j.strikes || []).length + " strikes, labels " + labelled.join("/") + ", straddle " + (j.range && j.range.straddle) + ", band " + JSON.stringify(j.band && [j.band.low, j.band.high]) + ", zones " + j.zones + ", ledger " + (j.ledger && j.ledger.why));
+            '
+            # Decision-support block from the live /api/models odds (the route used to throw ReferenceError: formatDecisionBlock was never imported).
+            dcode=$(curl -s -o rep/demo/decision.json -m 60 -w '%{http_code}' "$B/api/decision-support")
+            node -e '
+              const code = process.argv[1];
+              const j = JSON.parse(require("fs").readFileSync("rep/demo/decision.json", "utf8"));
+              const ok = code === "200" && typeof j.block === "string" && Array.isArray(j.lines) && j.lines.length >= 3 && j.inputs && j.inputs.spot > 0;
+              console.log((ok ? "PASS" : "FAIL") + " decision support: " + code + ", " + (j.lines ? j.lines.length : 0) + " lines, spot " + (j.inputs && j.inputs.spot) + (ok ? "" : " body " + JSON.stringify(j).slice(0, 200)));
+            ' "$dcode"
+            # Whale flow on the sample chains: the sample sweeps (1-3 DTE, lifted at the ask) pass the gate once the
+            # session is 15 minutes old; pre-market and the first minutes after the open legitimately have none.
+            curl -s -m 120 "$B/api/flow/preview" > rep/demo/flow-preview.json
+            node -e '
+              const j = JSON.parse(require("fs").readFileSync("rep/demo/flow-preview.json", "utf8"));
+              const p = {}; for (const x of new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour12: false, hour: "2-digit", minute: "2-digit", weekday: "short" }).formatToParts(new Date())) p[x.type] = x.value;
+              const mins = (Number(p.hour) % 24) * 60 + Number(p.minute);
+              const quiet = !["Sat", "Sun"].includes(p.weekday) && mins < 9 * 60 + 45;
+              const whales = Object.values(j.byTicker || {}).flatMap((t) => t.whales || []);
+              const reasonsOk = whales.every((w) => /premium \((at observed prices|volume x mid, first scan)\)/.test(w.reason || ""));
+              const ok = j.dataState === "ok" && j.tickersScanned >= 10 && reasonsOk && (quiet ? true : whales.length >= 1);
+              console.log((ok ? "PASS" : "FAIL") + " whale flow preview: state " + j.dataState + ", " + j.tickersScanned + " tickers, " + j.totalScanned + " contracts, " + whales.length + " whales" + (quiet ? " (pre-open: none expected)" : "") + (whales[0] ? ", e.g. " + whales[0].symbol + " " + whales[0].occ.trim() + " " + whales[0].reason : ""));
+            '
+            wcode=$(curl -s -o /dev/null -m 30 -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{"tokenAddress":"So11111111111111111111111111111111111111112"}' "$B/api/crypto/community")
+            [ "$wcode" = "405" ] || [ "$wcode" = "403" ] && echo "PASS community write refused ($wcode)" || { echo "FAIL community write returned $wcode"; fail=1; }
+
+            grep -ciE "api\.schwabapi\.com|\[schwab\] (401|403|fetch)" rep/server-demo.log | xargs -I{} echo "schwab network lines in log: {}"
+          } 2>&1 | tee rep/demo/smoke.log
+          grep -q '^FAIL' rep/demo/smoke.log && fail=1
+          cat > demo-shot.mjs <<'JS'
+          import { chromium } from "playwright";
+          const base = process.env.DEMO_BASE;
+          const tabs = ["signals","chart","models","heatseeker","tradedesk","regime","cosmos","news","takefive","edgelab","crypto"];
+          const b = await chromium.launch();
+          async function open(vp) {
+            const p = await b.newPage({ viewport: vp });
+            const errors = [];
+            p.on("pageerror", (e) => errors.push(e.message));
+            await p.goto(`${base}/#/`, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+            await p.waitForTimeout(4000);
+            for (let k = 0; k < 4; k++) {
+              await p.evaluate(() => document.querySelectorAll("div").forEach((d) => {
+                if (d.scrollHeight > d.clientHeight + 10) { d.scrollTop = d.scrollHeight; d.dispatchEvent(new Event("scroll")); }
+              }));
+              await p.mouse.wheel(0, 5000).catch(() => {});
+              await p.waitForTimeout(700);
+            }
+            await p.locator('[data-testid="button-premarket-acknowledge"]').click({ timeout: 8000 }).catch(() => {});
+            await p.waitForTimeout(8000);
+            return { p, errors };
+          }
+          const { p, errors } = await open({ width: 1440, height: 900 });
+          console.log("demo strip visible:", await p.locator('[data-testid="demo-strip"]').isVisible().catch(() => false));
+          for (const [i, t] of tabs.entries()) {
+            const btn = p.locator(`[data-testid="tab-${t}"]`);
+            if (!(await btn.count())) { console.log("missing tab", t); continue; }
+            await btn.first().click({ timeout: 5000 }).catch((e) => console.log(t, e.message.split("\n")[0]));
+            await p.waitForTimeout(7000);
+            await p.screenshot({ path: `rep/demo/${String(i + 1).padStart(2, "0")}-${t}.png`, fullPage: true });
+          }
+          console.log("desktop page errors:", errors.length, errors.slice(0, 5));
+          // 3D exposure surface (Regime -> Thermal Gamma Map -> 3D): WebGL via SwiftShader.
+          let g = null;
+          try {
+            g = await chromium.launch({ args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] });
+            const gp = await g.newPage({ viewport: { width: 1440, height: 900 } });
+            const gerr = [];
+            gp.on("pageerror", (e) => gerr.push(e.message));
+            await gp.goto(`${base}/#/`, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+            await gp.locator('[data-testid="button-premarket-acknowledge"]').click({ timeout: 8000 }).catch(() => {});
+            await gp.locator('[data-testid="tab-regime"]').first().click({ timeout: 5000 });
+            await gp.locator('[data-testid="thermal-view-3d"]').waitFor({ timeout: 30000 });
+            const enabled = await gp.locator('[data-testid="thermal-view-3d"]').isEnabled();
+            if (!enabled) {
+              console.log("SKIP 3D surface: WebGL not available in this CI browser (button disabled, 2.5D fallback shown)");
+            } else {
+              await gp.locator('[data-testid="thermal-view-3d"]').click();
+              await gp.locator('[data-testid="thermal-heatmap"] canvas').first().waitFor({ timeout: 30000 });
+              await gp.waitForTimeout(6000);
+              const txt = await gp.locator('[data-testid="thermal-heatmap"]').innerText();
+              const signs = /long gamma/i.test(txt) && /short gamma/i.test(txt);
+              const canvases = await gp.locator('[data-testid="thermal-heatmap"] canvas').count();
+              await gp.locator('[data-testid="thermal-heatmap"]').screenshot({ path: "rep/demo/13-regime-3d.png" });
+              const cx = await gp.locator('[data-testid="thermal-heatmap"] canvas').first().boundingBox();
+              await gp.mouse.click(cx.x + cx.width * 0.5, cx.y + cx.height * 0.55);
+              await gp.waitForTimeout(1500);
+              const readout = await gp.locator('[data-testid="thermal-heatmap"]').innerText();
+              const read = /OI c\//.test(readout);
+              await gp.locator('[data-testid="thermal-heatmap"]').screenshot({ path: "rep/demo/14-regime-3d-readout.png" });
+              const ok = canvases >= 1 && signs && gerr.length === 0;
+              console.log((ok ? "PASS" : "FAIL") + " 3D surface: " + canvases + " canvas, sign labels " + signs + ", readout after a blind centre tap " + read + " (informational: the tap can miss the mesh), page errors " + gerr.length + (gerr[0] ? " " + gerr[0].slice(0, 160) : ""));
+            }
+          } catch (e) { console.log("FAIL 3D surface: " + String(e && e.message || e).split("\n")[0]); }
+          finally { if (g) await g.close().catch(() => {}); }
+          const m = await open({ width: 393, height: 852 });
+          await m.p.screenshot({ path: "rep/demo/12-signals-iphone.png", fullPage: false });
+          console.log("mobile page errors:", m.errors.length, m.errors.slice(0, 5));
+          await b.close();
+          JS
+          DEMO_BASE="$B" node demo-shot.mjs 2>&1 | tee rep/demo/shot.log
+          grep -q '^FAIL' rep/demo/shot.log && fail=1
+          pkill -f "dist/index.cjs" || true
+          exit $fail
       - name: UX audit (every tab at six screen sizes)
         if: always()
         shell: bash

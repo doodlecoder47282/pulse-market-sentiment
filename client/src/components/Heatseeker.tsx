@@ -359,7 +359,7 @@ export default function Heatseeker() {
       <button
         data-testid="heatseeker-view-live"
         onClick={() => setView("live")}
-        className={`inline-flex min-h-[44px] items-center px-3 py-1.5 text-[11px] font-mono uppercase tracking-widest transition-colors sm:min-h-0 ${
+        className={`inline-flex min-h-[44px] items-center px-3 py-1.5 text-[11px] font-mono uppercase tracking-widest transition-colors lg:min-h-0 ${
           view === "live" ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground"
         }`}
       >
@@ -368,7 +368,7 @@ export default function Heatseeker() {
       <button
         data-testid="heatseeker-view-killbox"
         onClick={() => setView("killbox")}
-        className={`inline-flex min-h-[44px] items-center px-3 py-1.5 text-[11px] font-mono uppercase tracking-widest transition-colors sm:min-h-0 ${
+        className={`inline-flex min-h-[44px] items-center px-3 py-1.5 text-[11px] font-mono uppercase tracking-widest transition-colors lg:min-h-0 ${
           view === "killbox" ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground"
         }`}
       >
@@ -1180,7 +1180,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                             : "rgba(245,158,11,0.45)"
                     }
                     strokeDasharray="4 3"
-                    label={{ value: l.label, fontSize: 9, fill: "rgba(148,163,184,0.9)", position: "insideTop" }}
+                    label={{ value: l.label, fontSize: 10, fill: "rgba(148,163,184,0.9)", position: "insideTop" }}
                   />
                 ))}
                 <Bar

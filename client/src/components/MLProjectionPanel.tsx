@@ -946,8 +946,8 @@ export default function MLProjectionPanel() {
     <Card data-testid="panel-ml-projection" className="border-border/60">
       <CardHeader className="space-y-2">
         <div className="flex flex-col items-start gap-3 sm:flex-row sm:justify-between">
-          <div className="space-y-1">
-            <CardTitle className="flex items-center gap-2">
+          <div className="min-w-0 max-w-full space-y-1">
+            <CardTitle className="flex flex-wrap items-center gap-2">
               <Activity className="w-4 h-4 shrink-0" />
               SPY — Projected Path
               <Badge
@@ -1142,10 +1142,14 @@ export default function MLProjectionPanel() {
                   className="animate-pulse"
                   label={{
                     value: `NOW $${anchorPrice.toFixed(2)}`,
-                    position: "left",
+                    // Inside the plot, not over the y-axis ticks: "left" sat on
+                    // the tick text whenever the anchor was within a tick of a
+                    // round level (CI UX audit: "690.00" x "NOW $689.78").
+                    position: "insideLeft",
                     fill: "#67e8f9",
                     fontSize: 10,
                     fontWeight: 600,
+                    style: { paintOrder: "stroke", stroke: "#0f172a", strokeWidth: 4, strokeLinejoin: "round" } as any,
                   }}
                 />
               )}

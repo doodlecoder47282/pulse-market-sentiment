@@ -128,7 +128,7 @@ export default function OdteForward() {
     ctx.fillRect(padL, padT, iw, ih);
 
     // ── grid + time labels ──
-    ctx.font = "9px ui-monospace, monospace";
+    ctx.font = "10px ui-monospace, monospace";
     ctx.strokeStyle = "rgba(148,163,184,0.08)";
     ctx.fillStyle = "rgba(148,163,184,0.5)";
     ctx.lineWidth = 1;

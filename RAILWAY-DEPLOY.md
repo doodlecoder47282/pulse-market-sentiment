@@ -183,6 +183,10 @@ missing, add it to the image. Then check `GET /api/ml/health` returns `ok: true`
 Alternatively run the sidecar elsewhere and point the server at it with
 `PULSE_ML_URL=https://...` and `PULSE_ML_AUTOSTART=0`.
 
+The weekly retrain is **off unless `PULSE_ML_RETRAIN_ENABLED=1`** is set (it used to run
+by default whenever the sidecar answered). Set it together with the sidecar; the boot log
+says `[ml:retrain] disabled` otherwise.
+
 A retrain writes a new quantile model only after 60 qualifying real sessions, and the
 panel draws it only if it beats the baseline cone out of sample (promotion gate in
 `ml_service/forecast_eval.py`). Until then the baseline cone is what you see.

@@ -11,6 +11,7 @@ import EdgeStatsPanel from "@/components/EdgeStatsPanel";
 import { PositionSizer } from "@/components/PositionSizer";
 import OfiHistogram from "@/components/OfiHistogram";
 import { RegimeChip } from "@/components/RegimeChip";
+import OdteMapCard from "@/components/OdteMapCard";
 import type { GammaStructure } from "@shared/schema";
 import { vixToAtmPct } from "@shared/vol";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -44,6 +45,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { friendlyError } from "@/lib/friendlyError";
 import { useEdition } from "@/lib/useEdition";
+import { featureAllowed } from "@shared/edition";
 
 // --- Types matching /api/trade-desk payload ----------------------------------
 
@@ -187,6 +189,9 @@ export default function TradeDesk() {
       </div>
 
       {/* Regime transition forecast — forward-looking probability scoring */}
+      {/* 0DTE map: the day's dealer-gamma plan (shared/odteMap.ts); zones only in the personal edition */}
+      <OdteMapCard />
+
       <RegimePredictPanel />
 
       {/* Closed-loop edge tracking — rolling hit-rates + threshold tuning suggestions */}
@@ -213,7 +218,7 @@ export default function TradeDesk() {
       )}
 
       {/* EOD Play Maker: personal edition only (trade setups are not offered to subscribers) */}
-      {edition !== "investor" && (
+      {edition != null && featureAllowed("eod-trade-setup", edition) && (
         <section>
           <EodPlayMaker />
         </section>
@@ -236,7 +241,7 @@ function TradeDeskFeed({
     <div className="space-y-4">
       {/* Command bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/20 bg-gradient-to-r from-amber-500/5 to-transparent px-4 py-2.5">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Crosshair className="h-4 w-4 text-amber-500" />
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-500">Trade Desk</div>
           <EdgeInfo id="trade-desk" className="h-6 w-6" />
@@ -249,7 +254,7 @@ function TradeDeskFeed({
             <DataStateChip state={data.dataState} reason={data.dataStateReason ?? null} source="Schwab" testId="chip-trade-desk-state" />
           ) : null}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <ToggleGroup
             label="Window"
             value={range}
@@ -816,7 +821,7 @@ function IntradayChart({
                 <CartesianGrid strokeDasharray="3 6" stroke="hsl(var(--border))" strokeOpacity={0.25} vertical={false} />
                 <XAxis
                   dataKey="label"
-                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9, fontFamily: "var(--font-mono)" }}
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10, fontFamily: "var(--font-mono)" }}
                   stroke="hsl(var(--border))"
                   minTickGap={40}
                   interval={range === "5d" ? 50 : 30}
@@ -867,7 +872,7 @@ function IntradayChart({
                         position: "insideLeft",
                         fill: lv.color,
                         fillOpacity: Math.min(1, lv.intensity + 0.3),
-                        fontSize: 9.5,
+                        fontSize: 10,
                         fontWeight: 600,
                         fontFamily: "var(--font-mono)",
                         offset: 6,
@@ -886,7 +891,7 @@ function IntradayChart({
                       value: `Prev ${quote.prevClose.toFixed(2)}`,
                       position: "insideTopLeft",
                       fill: "hsl(var(--muted-foreground))",
-                      fontSize: 9,
+                      fontSize: 10,
                       fontFamily: "var(--font-mono)",
                     }}
                   />
@@ -987,7 +992,7 @@ function GammaProfileCurve({
               dataKey="spot"
               type="number"
               domain={["dataMin", "dataMax"]}
-              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9, fontFamily: "var(--font-mono)" }}
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10, fontFamily: "var(--font-mono)" }}
               stroke="hsl(var(--border))"
               tickFormatter={(v) => v.toFixed(0)}
               minTickGap={50}
@@ -995,7 +1000,7 @@ function GammaProfileCurve({
             <YAxis
               orientation="right"
               domain={[-maxAbs * 1.08, maxAbs * 1.08]}
-              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9, fontFamily: "var(--font-mono)" }}
+              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10, fontFamily: "var(--font-mono)" }}
               stroke="hsl(var(--border))"
               width={44}
               tickFormatter={(v) => (v >= 0 ? "+" : "") + v.toFixed(1) + "B"}
@@ -1047,7 +1052,7 @@ function GammaProfileCurve({
                   value: `Zero-γ ${zeroGamma.toFixed(2)}`,
                   position: "insideTopRight",
                   fill: "#f59e0b",
-                  fontSize: 9,
+                  fontSize: 10,
                   fontFamily: "var(--font-mono)",
                 }}
               />
@@ -1062,7 +1067,7 @@ function GammaProfileCurve({
                   value: `Spot ${spot.toFixed(2)}`,
                   position: "insideBottomRight",
                   fill: "hsl(var(--muted-foreground))",
-                  fontSize: 9,
+                  fontSize: 10,
                   fontFamily: "var(--font-mono)",
                 }}
               />
@@ -1094,8 +1099,8 @@ function GammaMapCard({ gammaMap, spot }: { gammaMap: GammaMap; spot: number | n
   const zoneColor: Record<string, string> = {
     "call-wall": "text-red-400",
     "put-wall": "text-emerald-400",
-    "secondary-resistance": "text-red-400/70",
-    "secondary-support": "text-emerald-400/70",
+    "secondary-resistance": "text-red-300",
+    "secondary-support": "text-emerald-300",
     "local-extreme": "text-amber-500",
   };
 
@@ -1746,7 +1751,7 @@ function EodPlayMaker() {
           <span className="text-[11px] font-semibold uppercase tracking-[0.15em] text-amber-400">
             EOD 0DTE SPX PLAY MAKER — BATCAVE
           </span>
-          <Badge variant="outline" className="text-[11px] text-amber-500/60 border-amber-500/30">
+          <Badge variant="outline" className="text-[11px] text-amber-400 border-amber-500/30">
             Claude + GPT
           </Badge>
         </div>

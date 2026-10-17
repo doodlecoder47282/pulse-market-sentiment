@@ -560,14 +560,14 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                         <XAxis
                           dataKey="day"
                           stroke="rgba(255,255,255,0.4)"
-                          fontSize={9}
+                          fontSize={10}
                           tickLine={false}
                           ticks={[0, 10, 20, 30, 40, 50, 60]}
                           tickFormatter={(d: number) => d === 0 ? "now" : `+${d}d`}
                         />
                         <YAxis
                           stroke="rgba(255,255,255,0.4)"
-                          fontSize={9}
+                          fontSize={10}
                           tickLine={false}
                           width={40}
                           domain={[(min: number) => min * 0.96, (max: number) => max * 1.04]}
@@ -593,7 +593,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                             y={v.targetPrice}
                             stroke="#22d3ee"
                             strokeDasharray="3 3"
-                            label={{ value: `target ${fmtMoney(v.targetPrice)}`, position: "right", fill: "#22d3ee", fontSize: 9 }}
+                            label={{ value: `target ${fmtMoney(v.targetPrice)}`, position: "right", fill: "#22d3ee", fontSize: 10 }}
                           />
                         )}
                         {v.invalidation != null && (
@@ -601,7 +601,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                             y={v.invalidation}
                             stroke="#f59e0b"
                             strokeDasharray="3 3"
-                            label={{ value: `stop ${fmtMoney(v.invalidation)}`, position: "right", fill: "#f59e0b", fontSize: 9 }}
+                            label={{ value: `stop ${fmtMoney(v.invalidation)}`, position: "right", fill: "#f59e0b", fontSize: 10 }}
                           />
                         )}
                       </ComposedChart>
@@ -728,7 +728,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                             href={e.url}
                             target="_blank"
                             rel="noreferrer"
-                            className="line-clamp-2 flex-1 text-foreground hover:text-cyan-300"
+                            className="line-clamp-2 min-w-0 flex-1 [overflow-wrap:anywhere] text-foreground hover:text-cyan-300"
                           >
                             {e.title}
                           </a>
@@ -794,7 +794,7 @@ export default function TickerOutlookCard({ ticker }: { ticker: string }) {
                           >
                             {p.source}
                           </span>
-                          <span className="line-clamp-2 text-foreground/90">{p.text}</span>
+                          <span className="line-clamp-2 min-w-0 [overflow-wrap:anywhere] text-foreground/90">{p.text}</span>
                         </div>
                       </li>
                     ))}
@@ -912,7 +912,7 @@ function ScenarioBar({
 }: {
   label: string;
   color: "emerald" | "slate" | "rose";
-  s: { prob: number; targetPct: number; thesis: string };
+  s: { prob: number; targetPct: number | null; thesis: string };
 }) {
   const colorMap = {
     emerald: "bg-emerald-500/20 border-emerald-500/40 text-emerald-300",
@@ -937,10 +937,9 @@ function ScenarioBar({
         />
       </div>
       <div className="mt-1 font-mono text-[11px] tabular-nums">
-        {s.targetPct >= 0 ? "+" : ""}
-        {s.targetPct.toFixed(2)}%
+        {s.targetPct != null && Number.isFinite(s.targetPct) ? `${s.targetPct >= 0 ? "+" : ""}${s.targetPct.toFixed(2)}%` : "n/a"}
       </div>
-      <div className="mt-1 line-clamp-2 text-[11px] opacity-80">{s.thesis}</div>
+      <div className="mt-1 line-clamp-2 [overflow-wrap:anywhere] text-[11px] opacity-80">{s.thesis}</div>
     </div>
   );
 }

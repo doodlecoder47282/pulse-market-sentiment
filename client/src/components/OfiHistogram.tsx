@@ -199,8 +199,8 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
       <ResponsiveContainer width="100%" height={height}>
         <ComposedChart data={chartData} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
           <XAxis dataKey="time" hide />
-          <YAxis yAxisId="bar" tick={{ fontSize: 9 }} tickFormatter={fmtVol} width={42} />
-          <YAxis yAxisId="line" orientation="right" tick={{ fontSize: 9 }} tickFormatter={fmtVol} width={42} />
+          <YAxis yAxisId="bar" tick={{ fontSize: 10 }} tickFormatter={fmtVol} width={42} />
+          <YAxis yAxisId="line" orientation="right" tick={{ fontSize: 10 }} tickFormatter={fmtVol} width={42} />
           <ReferenceLine yAxisId="bar" y={0} stroke="rgba(255,255,255,0.2)" />
           <Tooltip
             contentStyle={{ background: "rgba(15,15,20,0.95)", border: "1px solid #333", fontSize: 10 }}

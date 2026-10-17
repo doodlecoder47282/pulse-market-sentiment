@@ -46,7 +46,9 @@ function App() {
       void queryClient.invalidateQueries();
     } else {
       const reason = (params.get("reason") || "unknown error").replace(/_/g, " ");
-      toast({ title: "Schwab sign-in did not finish", description: `${reason}. Open Settings and try Connect again.`, variant: "destructive" });
+      if (reason === "demo edition") {
+        toast({ title: "Sample-data demo", description: "Schwab sign-in is turned off in the demo." });
+      } else toast({ title: "Schwab sign-in did not finish", description: `${reason}. Open Settings and try Connect again.`, variant: "destructive" });
     }
     try { window.history.replaceState(null, "", window.location.pathname + window.location.hash); } catch { /* ignore */ }
   }, []);
@@ -57,8 +59,16 @@ function App() {
       <ThemeProvider>
       <TooltipProvider>
         <Toaster />
+        {/* iPhone status bar / Dynamic Island strip (0 px on screens without one).
+            The app draws edge to edge (viewport-fit=cover), so this keeps the
+            light status-bar text on a dark band in either theme. */}
+        <div
+          aria-hidden
+          className="pointer-events-none fixed inset-x-0 top-0 z-[10001] bg-black dark:bg-background"
+          style={{ height: "env(safe-area-inset-top)" }}
+        />
         {__ON_VERCEL__ ? <SpeedInsights /> : null}
-        <ConnectionGate />
+        <ConnectionGate>
         <TickerProvider>
           {showPremarket && (
             <PreMarketGate onAcknowledge={() => setShowPremarket(false)} />
@@ -75,6 +85,7 @@ function App() {
             </Router>
           </div>
         </TickerProvider>
+        </ConnectionGate>
       </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>

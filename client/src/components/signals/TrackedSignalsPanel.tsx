@@ -212,7 +212,7 @@ export default function TrackedSignalsPanel() {
               key={s}
               type="button"
               onClick={() => setSourceFilter(s)}
-              className={`inline-flex min-h-[44px] items-center rounded border px-2.5 py-0.5 text-[11px] uppercase tracking-wider transition-colors sm:min-h-0 ${
+              className={`inline-flex min-h-[44px] items-center rounded border px-2.5 py-0.5 text-[11px] uppercase tracking-wider transition-colors lg:min-h-0 ${
                 sourceFilter === s
                   ? "border-foreground/60 bg-foreground/10 text-foreground"
                   : "border-border bg-transparent text-muted-foreground hover:bg-card/50"
@@ -228,7 +228,7 @@ export default function TrackedSignalsPanel() {
               key={s}
               type="button"
               onClick={() => setStatusFilter(s)}
-              className={`inline-flex min-h-[44px] items-center rounded border px-2.5 py-0.5 text-[11px] uppercase tracking-wider transition-colors sm:min-h-0 ${
+              className={`inline-flex min-h-[44px] items-center rounded border px-2.5 py-0.5 text-[11px] uppercase tracking-wider transition-colors lg:min-h-0 ${
                 statusFilter === s
                   ? "border-foreground/60 bg-foreground/10 text-foreground"
                   : "border-border bg-transparent text-muted-foreground hover:bg-card/50"

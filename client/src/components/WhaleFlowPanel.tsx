@@ -51,6 +51,16 @@ interface WhaleHit {
   distFromSpotPct?: number;
   breakeven?: number;
   breakevenPct?: number;
+  // flow attribution (server/flowAttribution.ts): what the premium and side rest on
+  premiumBasis?: "observed-prices" | "volume-x-mid";
+  premiumPreScan?: number;
+  burstPremium5m?: number | null;
+  burstSide?: string | null;
+  askShare?: number | null;
+  attributedCoverage?: number | null;
+  sideBasis?: string;
+  sideDetail?: string;
+  lastPrintAgeMs?: number | null;
 }
 
 interface PreviewByTicker {
@@ -287,6 +297,11 @@ function WhaleRow({ hit }: { hit: WhaleHit }) {
           <div><span className="text-muted-foreground">vega</span> <span className="text-foreground">{hit.vega !== undefined ? hit.vega.toFixed(2) : "—"}</span></div>
           <div><span className="text-muted-foreground">strike vs spot</span> <span className={hit.distFromSpotPct !== undefined ? pctColor(hit.distFromSpotPct) : ""}>{hit.distFromSpotPct !== undefined ? fmtPct(hit.distFromSpotPct) : "—"}</span></div>
           <div><span className="text-muted-foreground">breakeven</span> <span className="text-foreground">{hit.breakeven?.toFixed(2) ?? "—"}{hit.breakevenPct !== undefined ? ` (${fmtPct(hit.breakevenPct)})` : ""}</span></div>
+          <div><span className="text-muted-foreground">premium basis</span> <span className="text-foreground">{hit.premiumBasis === "observed-prices" ? "observed prices" : hit.premiumBasis === "volume-x-mid" ? "day volume x mid" : "—"}</span></div>
+          <div><span className="text-muted-foreground">ask share</span> <span className="text-foreground">{hit.askShare != null ? `${Math.round(hit.askShare * 100)}%` : "—"}{hit.attributedCoverage != null ? ` (${Math.round(hit.attributedCoverage * 100)}% labelled)` : ""}</span></div>
+          <div><span className="text-muted-foreground">5m burst</span> <span className="text-foreground">{hit.burstPremium5m != null && hit.burstPremium5m > 0 ? `${fmtPrem(hit.burstPremium5m)}${hit.burstSide ? ` ${hit.burstSide}` : ""}` : "—"}</span></div>
+          <div><span className="text-muted-foreground">last print</span> <span className="text-foreground">{hit.tag}{hit.lastPrintAgeMs != null ? ` ${Math.round(hit.lastPrintAgeMs / 1000)}s ago` : ""}</span></div>
+          {hit.sideDetail && <div className="col-span-2 sm:col-span-3 text-muted-foreground/90" data-testid={`whale-side-${hit.occ}`}>side: {hit.sideDetail}</div>}
           <div className="col-span-2 sm:col-span-3 italic text-muted-foreground/80" data-testid={`whale-reason-${hit.occ}`}>{hit.reason}</div>
         </div>
       )}
@@ -763,7 +778,7 @@ function PerformanceCard() {
             <button
               key={d}
               onClick={() => setWindowDays(d as 7 | 30)}
-              className={`inline-flex min-h-[44px] items-center px-2.5 py-0.5 text-[11px] rounded border transition-colors sm:min-h-0 ${
+              className={`inline-flex min-h-[44px] items-center px-2.5 py-0.5 text-[11px] rounded border transition-colors lg:min-h-0 ${
                 windowDays === d
                   ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300"
                   : "border-border/40 text-muted-foreground hover:text-foreground"

@@ -8,7 +8,8 @@
  *                     reason="Schwab SPY options chain unavailable: Schwab not connected" />
  *
  * `error` (a react-query error) may be passed instead of state/reason; it is
- * parsed with shared/unavailable.ts (503 with dataState -> "unavailable",
+ * parsed with shared/unavailable.ts (a 503 keeps its body's dataState:
+ * "unavailable", "no_spot", "no_data", "stale" for a delayed feed;
  * anything else -> "failed").
  */
 import DataStateChip from "./DataStateChip";

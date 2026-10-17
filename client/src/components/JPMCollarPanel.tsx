@@ -165,7 +165,7 @@ export default function JPMCollarPanel() {
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.4} />
                 <XAxis
                   dataKey="date"
-                  tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
                   axisLine={false}
                   tickLine={false}
                   interval={14}
@@ -173,7 +173,7 @@ export default function JPMCollarPanel() {
                 <YAxis
                   domain={[yMin, yMax]}
                   tickFormatter={(v) => v.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
                   axisLine={false}
                   tickLine={false}
                   width={52}
@@ -194,7 +194,7 @@ export default function JPMCollarPanel() {
                   stroke="#22c55e"
                   strokeDasharray="5 3"
                   strokeWidth={1.5}
-                  label={{ value: `Long Put ${current.longPut.toLocaleString()}`, position: "insideTopLeft", fill: "#22c55e", fontSize: 9 }}
+                  label={{ value: `Long Put ${current.longPut.toLocaleString()}`, position: "insideTopLeft", fill: "#22c55e", fontSize: 10 }}
                 />
 
                 {/* Short Put — amber dotted */}
@@ -203,7 +203,7 @@ export default function JPMCollarPanel() {
                   stroke="#f59e0b"
                   strokeDasharray="2 4"
                   strokeWidth={1.5}
-                  label={{ value: `Short Put ${current.shortPut.toLocaleString()}`, position: "insideBottomLeft", fill: "#f59e0b", fontSize: 9 }}
+                  label={{ value: `Short Put ${current.shortPut.toLocaleString()}`, position: "insideBottomLeft", fill: "#f59e0b", fontSize: 10 }}
                 />
 
                 {/* Short Call — red dashed (ceiling) */}
@@ -212,7 +212,7 @@ export default function JPMCollarPanel() {
                   stroke="#ef4444"
                   strokeDasharray="5 3"
                   strokeWidth={1.5}
-                  label={{ value: `Short Call ${current.shortCall.toLocaleString()}`, position: "insideTopRight", fill: "#ef4444", fontSize: 9 }}
+                  label={{ value: `Short Call ${current.shortCall.toLocaleString()}`, position: "insideTopRight", fill: "#ef4444", fontSize: 10 }}
                 />
 
                 <Area

@@ -361,7 +361,7 @@ test("ML Lab: extension caption is sqrt-time; no TAPE SYNTHETIC path; server nev
 
 // ── 9. Crypto: peak sampled on every momentum refresh; ENTER needs holders ──
 import { DatabaseSync } from "node:sqlite";
-import { CRYPTO_PEAK_SAMPLE_SQL, CRYPTO_GRADER_MARK_SQL, CRYPTO_GRADER_NO_DATA_SQL, CRYPTO_GRADER_BATCH, peakSamplingNote, nextPeak, summarizeDeskStats } from "../../server/cryptoStats";
+import { CRYPTO_PEAK_SAMPLE_SQL, CRYPTO_GRADER_MARK_SQL, CRYPTO_GRADER_NO_DATA_SQL, CRYPTO_GRADER_BATCH, peakSamplingNote, nextPeak, summarizeDeskStats, peakSampleParams, graderMarkParams, graderNoDataParams } from "../../server/cryptoStats";
 
 test("crypto peak sample SQL: raises peak only upward, peak_at moves with it, only OPEN rows of that pair", () => {
   const db = new DatabaseSync(":memory:");
@@ -373,16 +373,16 @@ test("crypto peak sample SQL: raises peak only upward, peak_at moves with it, on
   ins.run("c", "solana", "P1", "DEAD", 100, 1);
   ins.run("d", "solana", "P2", "OPEN", 10, 1);
   const st = db.prepare(CRYPTO_PEAK_SAMPLE_SQL);
-  st.run(400_000, 200, 50_000, "solana", "P1");
+  st.run(peakSampleParams(400_000, 200, 50_000, "solana", "P1"));
   const get = (id: string) => db.prepare(`SELECT * FROM crypto_signals WHERE id = ?`).get(id) as any;
   assert.equal(get("a").peak_mcap, 400_000); assert.equal(get("a").peak_at, 200);   // first sample
   assert.equal(get("b").peak_mcap, 500_000); assert.equal(get("b").peak_at, 100);   // lower sample: unchanged
   assert.equal(get("b").last_mcap, 400_000); assert.equal(get("b").last_liquidity, 50_000);
   assert.equal(get("c").peak_mcap, 100);                                            // resolved row untouched
   assert.equal(get("d").peak_mcap, 10);                                             // other pair untouched
-  st.run(900_000, 300, 60_000, "solana", "P1");
+  st.run(peakSampleParams(900_000, 300, 60_000, "solana", "P1"));
   assert.equal(get("b").peak_mcap, 900_000); assert.equal(get("b").peak_at, 300);
-  st.run(0, 400, 0, "solana", "P1");                                                // observed 0: sample, never a new peak
+  st.run(peakSampleParams(0, 400, 0, "solana", "P1"));                                                // observed 0: sample, never a new peak
   assert.equal(get("b").peak_mcap, 900_000); assert.equal(get("b").last_mcap, 0);
   db.close();
 });
@@ -542,33 +542,33 @@ test("crypto grader mark SQL: never lowers a peak raised meanwhile; HIT/DOUBLED 
   const mark = db.prepare(CRYPTO_GRADER_MARK_SQL);
   // Race: grader read peak 300k, momentum raised it to 6M meanwhile, grader writes its stale g.peak 400k as OPEN.
   ins.run("a", "P1", 200_000, 300_000, 10);
-  db.prepare(CRYPTO_PEAK_SAMPLE_SQL).run(6_000_000, 20, 90_000, "solana", "P1");
-  mark.run(400_000, 30, 400_000, 80_000, "OPEN", T, "a");
+  db.prepare(CRYPTO_PEAK_SAMPLE_SQL).run(peakSampleParams(6_000_000, 20, 90_000, "solana", "P1"));
+  mark.run(graderMarkParams(400_000, 30, 400_000, 80_000, "OPEN", T, "a"));
   assert.equal(get("a").peak_mcap, 6_000_000);       // not lowered
   assert.equal(get("a").peak_at, 20);                // peak time kept
   assert.equal(get("a").outcome, "HIT_5M");          // re-derived from the max
   assert.equal(get("a").graded_at, 30);
   // DEAD with a max peak >= 2x entry -> DOUBLED
   ins.run("b", "P2", 100_000, 250_000, 5);
-  mark.run(150_000, 40, 50_000, 10_000, "DEAD", T, "b");
+  mark.run(graderMarkParams(150_000, 40, 50_000, 10_000, "DEAD", T, "b"));
   assert.equal(get("b").outcome, "DOUBLED");
   assert.equal(get("b").peak_mcap, 250_000);
   // Higher sample raises the peak and its time; OPEN keeps graded_at null
   ins.run("c", "P3", 100_000, 120_000, 5);
-  mark.run(180_000, 50, 180_000, 10_000, "OPEN", T, "c");
+  mark.run(graderMarkParams(180_000, 50, 180_000, 10_000, "OPEN", T, "c"));
   assert.equal(get("c").peak_mcap, 180_000); assert.equal(get("c").peak_at, 50);
   assert.equal(get("c").outcome, "OPEN"); assert.equal(get("c").graded_at, null);
   // No sample (null): peak unchanged
-  mark.run(null, 60, null, 5, "OPEN", T, "c");
+  mark.run(graderMarkParams(null, 60, null, 5, "OPEN", T, "c"));
   assert.equal(get("c").peak_mcap, 180_000); assert.equal(get("c").peak_at, 50);
   // Resolved rows are never rewritten
-  mark.run(9_000_000, 70, 9_000_000, 1, "OPEN", T, "a");
+  mark.run(graderMarkParams(9_000_000, 70, 9_000_000, 1, "OPEN", T, "a"));
   assert.equal(get("a").peak_mcap, 6_000_000);
   // NO_DATA close-out keeps an observed hit
   ins.run("d", "P4", 100_000, 5_500_000, 5);
   ins.run("e", "P5", 100_000, 150_000, 5);
   const nd = db.prepare(CRYPTO_GRADER_NO_DATA_SQL);
-  nd.run(80, "d", T); nd.run(80, "e", T);
+  nd.run(graderNoDataParams(80, "d", T)); nd.run(graderNoDataParams(80, "e", T));
   assert.equal(get("d").outcome, "HIT_5M");
   assert.equal(get("e").outcome, "NO_DATA");
   db.close();

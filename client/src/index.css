@@ -198,6 +198,31 @@
     @apply border-border;
   }
 
+  /* Touch screens (pointer: coarse: every iPhone and iPad, any width) and
+     every window below 1024 px: each control is at least 44 x 44 CSS px
+     (Apple HIG; WCAG 2.2 asks for 24). !important on purpose: a utility
+     class that shrinks a control for the desktop (lg:min-h-8, h-6 w-6)
+     must not win on a touch screen. Switches, checkboxes and radios keep
+     their drawn size; mark any other exception data-tap-exempt.
+     Checked by tests/ux/ux-audit.mjs (tap-target budget). */
+  @media (pointer: coarse), (max-width: 1023px) {
+    button:not([role="switch"], [role="checkbox"], [role="radio"], [data-tap-exempt]),
+    [role="button"]:not([data-tap-exempt]),
+    [role="tab"]:not([data-tap-exempt]),
+    input:not([type="checkbox"], [type="radio"], [type="range"], [type="hidden"]),
+    select {
+      min-height: 44px !important;
+    }
+    button:not([role="switch"], [role="checkbox"], [role="radio"], [data-tap-exempt]),
+    [role="button"]:not([data-tap-exempt]) {
+      min-width: 44px !important;
+    }
+    /* 16 px text inputs stop iOS from zooming the page on focus (beats text-sm on purpose). */
+    input:not([type="checkbox"], [type="radio"], [type="range"]), select, textarea {
+      font-size: max(16px, 1em);
+    }
+  }
+
   html, body, #root {
     background-color: hsl(var(--background));
     min-height: 100%;
@@ -265,7 +290,7 @@
      pan-x/pan-y = finger drags scroll this element, not the page. */
   .hscroll-contain {
     overflow-x: auto;
-    touch-action: pan-x pan-y;
+    touch-action: pan-x pan-y pinch-zoom;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-x: contain;
   }
@@ -662,8 +687,8 @@
   align-items: center;
   justify-content: center;
   gap: 0.4rem;
-  height: 40px;
-  min-width: 40px;
+  height: 44px;
+  min-width: 44px;
   padding: 0 0.6rem;
   border-radius: 0.375rem;
   font-size: 0.75rem;
@@ -675,7 +700,7 @@
   cursor: pointer;
   transition: border-color 150ms ease, color 150ms ease;
 }
-@media (min-width: 640px) {
+@media (min-width: 1024px) {
   .take5-fab { height: auto; min-height: 30px; }
 }
 

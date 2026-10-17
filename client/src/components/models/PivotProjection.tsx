@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Activity, Target, AlertTriangle, RefreshCw } from "lucide-react";
+import { spreadLabels } from "@shared/labelStack";
 
 type Level = {
   label: string;
@@ -114,7 +115,7 @@ function patternLabel(s: Pattern["setup"]): string {
 const CHART_W = 720;
 const CHART_H = 360;
 const PAD_L = 50;
-const PAD_R = 110;
+const PAD_R = 150; // right-edge labels up to "zeroGamma · 6881.08 ×2" (monospace 10 px)
 const PAD_T = 12;
 const PAD_B = 28;
 const PLOT_W = CHART_W - PAD_L - PAD_R;
@@ -309,7 +310,7 @@ export default function PivotProjection({
                         x={PAD_L - 6}
                         y={y + 3}
                         textAnchor="end"
-                        fontSize={9}
+                        fontSize={10}
                         fill="#64748b"
                         fontFamily="monospace"
                       >
@@ -341,9 +342,14 @@ export default function PivotProjection({
                   </g>
                 ))}
 
-                {/* Pivot levels — horizontal lines + right-edge labels */}
-                {data.levels.map((lv, i) => {
+                {/* Pivot levels — horizontal lines + right-edge labels. Labels
+                    of levels a few points apart are spread so none overlaps,
+                    with a short connector back to the level's line. */}
+                {(() => {
+                  const slots = spreadLabels(data.levels.map((l) => lineY(l.price)), 13, PAD_T + 6, PAD_T + PLOT_H - 6);
+                  return data.levels.map((lv, i) => {
                   const y = lineY(lv.price);
+                  const ly = slots[i];
                   const isSelected = selectedLevel === lv.label;
                   return (
                     <g
@@ -362,18 +368,21 @@ export default function PivotProjection({
                         strokeDasharray={tierDash(lv.tier)}
                         opacity={lv.tier === "minor" ? 0.5 : 0.85}
                       />
+                      {Math.abs(ly - y) > 1 && (
+                        <line x1={PAD_L + PLOT_W} y1={y} x2={PAD_L + PLOT_W + 4} y2={ly} stroke={tierColor(lv.tier)} strokeWidth={0.75} opacity={0.7} />
+                      )}
                       <rect
-                        x={PAD_L + PLOT_W + 2}
-                        y={y - 6}
-                        width={PAD_R - 6}
+                        x={PAD_L + PLOT_W + 4}
+                        y={ly - 6}
+                        width={PAD_R - 8}
                         height={12}
                         fill={isSelected ? tierColor(lv.tier) : "#000"}
                         opacity={isSelected ? 0.9 : 0.55}
                       />
                       <text
-                        x={PAD_L + PLOT_W + 6}
-                        y={y + 3}
-                        fontSize={9}
+                        x={PAD_L + PLOT_W + 7}
+                        y={ly + 3}
+                        fontSize={10}
                         fill={isSelected ? "#000" : tierColor(lv.tier)}
                         fontFamily="monospace"
                         fontWeight={lv.tier === "magnet" ? 700 : 400}
@@ -383,7 +392,8 @@ export default function PivotProjection({
                       </text>
                     </g>
                   );
-                })}
+                  });
+                })()}
 
                 {/* Current spot — bright cyan line */}
                 <line
@@ -399,7 +409,7 @@ export default function PivotProjection({
                 <text
                   x={PAD_L + 4}
                   y={lineY(data.spot) - 4}
-                  fontSize={9}
+                  fontSize={10}
                   fill="#22d3ee"
                   fontFamily="monospace"
                 >
@@ -419,7 +429,7 @@ export default function PivotProjection({
                 <text
                   x={projectionX + 3}
                   y={PAD_T + 9}
-                  fontSize={8}
+                  fontSize={10}
                   fill="#94a3b8"
                   fontFamily="monospace"
                 >
@@ -428,7 +438,7 @@ export default function PivotProjection({
                 <text
                   x={projectionX + 3}
                   y={PAD_T + PLOT_H - 4}
-                  fontSize={8}
+                  fontSize={10}
                   fill="#94a3b8"
                   fontFamily="monospace"
                 >

@@ -16,6 +16,8 @@ import {
   Flame, Radar, Newspaper, Activity, ShieldAlert, Rocket, Skull,
   Eye, XCircle, Zap, HeartPulse, TrendingUp, Clock,
 } from "lucide-react";
+import MemeStructureSection, { CategoryChip, LineChip } from "@/components/MemeStructure";
+import type { LinePosition, MemeClass, TradeCost } from "@shared/memeStructure";
 
 // ─── types (mirror server) ──────────────────────────────────────────────
 
@@ -52,6 +54,7 @@ interface Candidate {
     targetMcap: number; targetMultiple: number | null; estSlippagePct: number;
     holdHorizonHours: number; notes: string[];
   } | null;
+  structure?: { line: LinePosition; category: MemeClass; cost: TradeCost } | null;
 }
 
 interface TradeFlow {
@@ -339,6 +342,7 @@ export default function CryptoPanel() {
               />
             </>
           )}
+          <MemeStructureSection />
         </div>
       ) : (
         <SignalLog sig={sigQ.data} loading={sigQ.isLoading} />
@@ -436,7 +440,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
         {/* score ring */}
         <ScoreRing score={c.score ?? 0} accent={accent} />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             <span className="truncate font-mono text-sm font-bold">{c.symbol}</span>
             {c.pumpfunGraduate && (
               <span className="rounded bg-emerald-500/15 px-1 py-px text-[11px] font-semibold text-emerald-300" title="graduated the pump.fun bonding curve">
@@ -453,6 +457,8 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
                 news: {c.narrativeHits[0]}
               </span>
             )}
+            <LineChip line={c.structure?.line} />
+            <CategoryChip k={c.structure?.category} />
           </div>
           <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
             <span className="truncate">{c.name}</span>
@@ -526,8 +532,17 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
               <Stat label="liq bail" value={`${c.risk.liquidityExitStopPct}% liq`} />
               <Stat label="target" value={fmtUsd(c.risk.targetMcap, 0)} />
               <Stat label="multiple" value={c.risk.targetMultiple ? `${c.risk.targetMultiple}x` : "—"} />
-              <Stat label="slippage" value={`~${c.risk.estSlippagePct}%`} />
+              <Stat label="round trip" value={c.structure?.cost.roundTripPct != null ? `${c.structure.cost.roundTripPct}%` : "not reported"} />
             </div>
+          )}
+          {c.structure && (
+            <p className="text-[11px] leading-snug text-muted-foreground" data-testid={`crypto-structure-${c.pairAddress.slice(0, 8)}`}>
+              structure · {c.structure.line.note}
+              {c.structure.cost.roundTripPct != null
+                ? ` · a ${c.structure.cost.sizeUsd >= 1000 ? `$${(c.structure.cost.sizeUsd / 1000).toFixed(1)}k` : `$${Math.round(c.structure.cost.sizeUsd)}`} round trip here costs ${c.structure.cost.roundTripPct}% (fees ${c.structure.cost.feesRoundTripPct}% + impact ${c.structure.cost.impactBuyPct}% / ${c.structure.cost.impactSellPct}%)${c.structure.cost.breakEvenMovePct != null ? `, break-even +${c.structure.cost.breakEvenMovePct}%` : ""}`
+                : c.structure.cost.dataState === "unavailable" ? " · round-trip cost unknown: pool liquidity not reported" : ""}
+              {" · "}{c.structure.category.reasons.join("; ")}
+            </p>
           )}
           <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
             {c.securityCheckedAt == null ? (

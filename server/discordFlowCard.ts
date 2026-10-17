@@ -39,7 +39,8 @@ function fmtHit(h: WhaleHit): string {
     `**${h.strike}${side}** ${exp} (${h.dte}d)`,
     `${fmtMoney(h.premium)}`,
     ratioPart,
-    `last print ${h.tag}`,
+    h.sideDetail || `last print only (${String(h.tag).toLowerCase()})`,
+    h.premiumBasis === "observed-prices" ? "premium at observed prices" : "premium = day volume x current mid",
   ];
   // Intent read (review item 4.6, flowIntent.ts): the opening share is a
   // bound from volume vs prior-day OI, and the direction score is a hand-set
@@ -99,7 +100,7 @@ export async function postWhaleFlowAlert(
         footer: { text: (() => {
           const cfg = getFlowConfig();
           const tag = cfg.requiredTag === "AT_ASK" ? "AT/ABOVE_ASK" : cfg.requiredTag;
-          return `heavy-contract gate: ${fmtMoney(cfg.premiumFloor)}+ day premium • vol/OI ${cfg.volOiRatio}x+ OR new-strike • last print ${tag} • dte ${cfg.minDte}-${cfg.maxDte}`;
+          return `heavy-contract gate: ${fmtMoney(cfg.premiumFloor)}+ day premium (observed prices once scanned across intervals) • vol/OI ${cfg.volOiRatio}x+ OR new-strike • ask side by attributed prints, else last print ${tag} • dte ${cfg.minDte}-${cfg.maxDte} • snapshot estimates, no prints visible`;
         })() },
         timestamp: new Date().toISOString(),
       }],

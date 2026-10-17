@@ -287,11 +287,11 @@ export default function OdteContractChart({
                   <div className="font-mono text-[12px] font-semibold text-rose-400 tabular-nums">${stats.low.toFixed(2)}</div>
                 </div>
                 <div>
-                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Buy vol</div>
+                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Buy-side vol</div>
                   <div className="font-mono text-[12px] font-semibold text-emerald-400 tabular-nums">{stats.totalBuy.toLocaleString()}</div>
                 </div>
                 <div>
-                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Sell vol</div>
+                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Sell-side vol</div>
                   <div className="font-mono text-[12px] font-semibold text-rose-400 tabular-nums">{stats.totalSell.toLocaleString()}</div>
                 </div>
               </div>
@@ -449,8 +449,8 @@ export default function OdteContractChart({
                     cursor={{ fill: "hsl(var(--muted))", opacity: 0.15 }}
                     formatter={(v: any, name: string) => {
                       const n = Math.abs(Number(v)).toLocaleString();
-                      if (name === "buyVol") return [n, "buy vol"];
-                      if (name === "sellVolNeg") return [n, "sell vol"];
+                      if (name === "buyVol") return [n, "buy-side vol"];
+                      if (name === "sellVolNeg") return [n, "sell-side vol"];
                       if (name === "otherVol") return [n, "other"];
                       return [v, name];
                     }}
@@ -466,8 +466,8 @@ export default function OdteContractChart({
             <div className="flex items-center justify-between gap-2 pt-0.5 text-[11px] text-muted-foreground px-1">
               <div className="flex items-center gap-3">
                 <LegendDot color="#38bdf8" label="close price" />
-                <LegendDot color="#10b981" label="buy vol" />
-                <LegendDot color="#ef4444" label="sell vol" />
+                <LegendDot color="#10b981" label="buy-side vol" />
+                <LegendDot color="#ef4444" label="sell-side vol" />
                 <LegendDot color="hsl(var(--muted-foreground))" label="other" />
               </div>
               <button
@@ -576,8 +576,8 @@ function DetailsPane({
               value={`${stats.change >= 0 ? "+" : ""}${stats.change.toFixed(2)} (${stats.changePct >= 0 ? "+" : ""}${stats.changePct.toFixed(1)}%)`}
               tone={stats.change >= 0 ? "up" : "down"}
             />
-            <DetailRow label="Buy vol" value={stats.totalBuy.toLocaleString()} tone="up" />
-            <DetailRow label="Sell vol" value={stats.totalSell.toLocaleString()} tone="down" />
+            <DetailRow label="Buy-side vol" value={stats.totalBuy.toLocaleString()} tone="up" />
+            <DetailRow label="Sell-side vol" value={stats.totalSell.toLocaleString()} tone="down" />
             <DetailRow
               label="Flow bias"
               value={`${stats.dominance >= 0 ? "+" : ""}${stats.dominance.toFixed(0)}% ${stats.dominance >= 0 ? "BUY" : "SELL"}`}

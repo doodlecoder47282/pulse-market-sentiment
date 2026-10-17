@@ -1,6 +1,6 @@
 # Batcave checkpoint
 
-Updated: 2026-10-09. This is a compact handoff, not a live-health certificate.
+Updated: 2026-10-14. This is a compact handoff, not a live-health certificate.
 
 ## 2026-10-08: quant-fixes branch (PR to main)
 
@@ -232,6 +232,274 @@ misattributed Take Five quotes. Next on this track: position sizer as a
 plain user-driven risk calculator in the investor edition, live checks of
 our Greeks/IV against Schwab's chain fields, tap targets under 24 px.
 
+2026-10-12 design + access: color directions canvas for the user to pick
+(Design artifact https://claude.ai/artifact/SYBtywydPiTERPHoahGKv6: today,
+A Night Desk (recommended), B Institutional Navy, C Signal Contrast; sample
+data). User wants a free website link before subscriptions: allowed shapes
+are a labelled demo (no Schwab data) or invite-only per-tester deployments
+on each tester's own Schwab app; a shared server showing the owner's Schwab
+data to others is not (redistribution).
+
+2026-10-12 iOS + free link (quant-fixes 522930b, 6c68583, cccbebb; not on main yet):
+- iOS: Capacitor 8 project ported from ios-capacitor (no generated assets
+  committed). .github/workflows/ios-build.yml compiles for the Simulator
+  (Xcode 26.3, BUILD SUCCEEDED, launched, screenshot) and publishes
+  Batcave-iOS-Xcode.zip to ci-reports-ios. Rebuild after UI changes by editing
+  .github/ios-build.txt. Capacitor deps added via npm-add (devDependencies).
+  User opened the folder instead of App.xcodeproj once; their Mac needs an
+  update before it can run the iOS 26 simulator. Not yet run on a device.
+- Demo edition (BATCAVE_EDITION=demo, docs/DEMO.md): server/demoMarket.ts
+  simulates quotes, minute/daily bars and BSM chains behind schwabFetchMeta;
+  Schwab never called, sign-in refused, /api read-only for visitors (loopback
+  schedulers allowed), gate "open-demo", SAMPLE DATA strip in the sticky
+  header, chips credit "Sample". 13 tests (tests/quant/demo-market.test.ts);
+  526/526 quant tests pass locally. CI run 38207537360: demo guards all PASS,
+  10 data endpoints return populated JSON, 0 page errors, strip visible.
+  Not deployed: needs a second Railway service (owner step, usage cost).
+- Testers (docs/TESTERS.md): each tester forks, deploys their own Railway
+  service (investor edition) with their own Schwab individual app.
+- CI run 38207537360 FAILED only on the UX budget: tap targets <24px rose by
+  5 on phones/tablets and one clipped line, from live news topic chips,
+  social posts and crypto rows (content varies by time), not from the demo.
+  Fix by enlarging those chips (Chart engine/timeframe toggles, News topics,
+  Regime pivots, Cosmos thermal, crypto sections) rather than raising budgets.
+
+2026-10-12 iPhone 17 batch (quant-fixes 7e0483f..ac9ca4c, CI 38222385015 green,
+iOS CI 38219184330 green; not on main yet):
+- Edge to edge on iPhone (viewport-fit=cover, contentInset never, safe-area
+  padding, dark status-bar band, UIUserInterfaceStyle Dark). Verified on an
+  iPhone 17 simulator (Xcode 26.3) against a demo server on the Mac runner:
+  header below the Dynamic Island, bottom bar above the home indicator.
+- Touch: 44px minimum below 1024px (base-layer rule + Button variants +
+  header controls). UX audit: phone-15 controls under 44px went from ~10 per
+  tab to 0-1; under 24px 48 -> 0 on phones and tablets; sub-10px text worst
+  tab 11 -> 3; low-contrast 5 -> 3; off-screen phone-se 7 -> 1. Budget
+  ratcheted to these values. The audit now names layout-shift sources.
+- Original app icon ("B" over a level line, amber on near-black) and a black
+  launch screen with a 120pt mark replace the Capacitor placeholders. The
+  web favicon resembles a famous comic-book logo; not used for the app icon.
+- Try the demo button (VITE_DEMO_URL from repo variable BATCAVE_DEMO_URL);
+  demo Settings can switch back to your own server (iOS only).
+- Fixed: server listen used reusePort (Linux only) and could not start on
+  macOS (ENOTSUP). Fixed: crypto peak/grader SQL used ?N placeholders that
+  better-sqlite3 rejects, so live crypto outcomes were never recorded (new
+  test runs the SQL under better-sqlite3 in CI). Fixed: gamma/short-vol
+  banners gave sizing/hedging instructions; no-advice check widened.
+- Demo: price tape reads Sample. Former gaps, both closed 2026-10-14: whale
+  flow was always empty (now sample sweeps, docs/DEMO.md); tape symbols not
+  in demoMarket TABLE got hash prices (bases added).
+- Risk seen once (iOS CI 38224381267): the app sat on the loading skeleton
+  for 50 s; the demo server logged only /api/health, no /api/snapshot. The
+  rerun (38226102296) served /api/snapshot in 2.3 s and loaded. Cause
+  unknown; getOrBuild shares one in-flight build with no timeout, so a hung
+  upstream fetch would hold every client on the skeleton. Candidate fix: a
+  timeout on the shared build that falls back to the stale/unavailable path.
+
+## 2026-10-14: options flow attribution, meme structure
+
+Completed objectives (branch quant-fixes, commits after 881665f):
+
+1. Options flow: how whales are picked and tracked. Verified by an
+   independent agent against the Schwab snapshot facts (cumulative volume,
+   last print only, NBBO, no prints). Eight defects fixed:
+   `server/flowAttribution.ts` (per-contract ledger: increments attributed
+   to the print inside the interval at its price, pre-scan volume at the
+   first mid, high-water mark, ordering guard, prior-session restart,
+   stale-quote side unknown, 5-minute burst, coverage-gated ask share that
+   says it is an estimate), `server/flowDedup.ts` (one dedup key for live
+   and restart; hydrated keys never matched before, so a restart re-fired
+   18 h of whales), gate reasons and the Discord card name the premium and
+   side basis, the second volume memory is gone, demo volume is monotone.
+   Tests: flow-attribution 11, flow-gate-review 31, demo-market 14; full
+   suite 575 pass / 1 skipped before the meme work.
+2. Meme structure (the user's "community coins" thread), `docs/MEME_STRUCTURE.md`:
+   `shared/memeStructure.ts` (execution cost from pool depth, line
+   position, three categories, range / survival stats, hold-vs-rotate with
+   timing on a slider), community watch (`server/cryptoCommunity*.ts`,
+   `/api/crypto/community`, personal-edition writes, demo sample), cards in
+   the Crypto tab, structure chips and the exact round-trip cost on every
+   tracked launch. Independent review: 13 findings, all fixed; 34 + 6 tests.
+
+3. Heatmap 3D surface (e1dd85f): `shared/surfaceProjection.ts`,
+   `client/src/lib/surfaceDraw.ts`, `client/src/components/ThermalSurface.tsx`;
+   grid / 3D toggle in the thermal panel; docs/HEATMAP.md section 7. 9 tests
+   plus a headless Chromium render of the sample chain at 375 / 820 / 1180 px.
+4. CI findings fixed (82606b4): missing pickPool import (tsc gate); Chart
+   tab crash on every viewport, pre-existing and exposed once queries stopped
+   pausing on navigator.onLine: no Schwab spot made the outlook's expected
+   move NaN, JSON turned it into null, the scenario card called toFixed.
+
+Verified in CI (run 38525331878 on 5632d3b): demo smoke PASS for
+/api/crypto/community (3 sample rows, reclaimed dips 1/1/0, $1k trips
+2.69 / 3.12 / 5.21%), writes refused; UX scorecard for the crypto tab: no
+overflow, no overlapping text, no tap targets under 24 px; demo screenshot
+of the Structure section inspected.
+
+Not verified: live DexScreener / GeckoTerminal calls (unreachable from the
+dev environment); the iPhone/iPad layout of the new cards (ios-build.yml
+runs on ios/ changes; edit .github/ios-build.txt to rebuild); the CI run for
+82606b4 and later (read ci-reports-quant RUN.txt for the sha).
+
+Known risks: the watch classifier is tentative until holder concentration
+and mint authority are read for watch tokens; the 0DTE map composer is still
+pending; the edgelab tablet-portrait CLS (0.55) is instrumented but not
+fixed; overlappingSvgText 2 (Signals: "Spot" x "ZERO-Γ FLIP" tspans) is
+pre-existing and outside the text-overlap budget.
+
+CI green at 96ded05 (run 38529009336): tsc head 159 errors vs base 162, no
+file gained any; 628 quant tests, 626 pass, 0 fail; demo smoke 11 PASS;
+UX audit on seven viewports: 0 page errors, 0 overflow, 0 overlapping text,
+worst-tab CLS 0 (edgelab fixed by the sized skeleton), tap targets under
+24 px 0 except one on tablet-13-landscape (budget 29).
+
+5. 0DTE map (docs/ODTE_MAP.md): `shared/odteMap.ts` composer (gap,
+   straddle and sigma ranges, labelled strikes in $/1% and $/pt, band from
+   the re-priced crossings, ladders, personal-edition zones, text block,
+   comparison helper), `shared/odteSettle.ts` (settle evaluation, tally),
+   `server/odteForward.ts` (the forward moved out of routes.ts, injectable
+   sources, additive gammaCrossings / sessionOpen / priorClose),
+   `server/odteMapLedger.ts` (09:35 ET morning plan, 16:06 ET settle, SQLite
+   ledger, investor view without zones), Trade Desk card, routes
+   /api/odte/map, /api/odte/map/ledger, /api/odte/map/compare (personal).
+   Independent review: 12 findings, all fixed; 31 tests across three files.
+   The friend's map scale matches $ per point, not per 1%; the per-point
+   switch is there for the live comparison. No tuning to his numbers.
+
+CI green at 4564720 (run 38600631607): tsc head 158 vs base 162, no file
+gained errors; 659 tests, 657 pass, 0 fail; demo smoke PASS for
+/api/odte/map (23 strikes, pin and wall labelled, straddle 21.9, zones
+null in the demo) and the community watch; UX audit 0 page errors, 0
+overflow, 0 overlaps, 0 tap targets under 24 px, worst CLS 0 on every
+viewport. The demo Trade Desk screenshot showed "gap: open not available":
+the normalized Schwab chain dropped underlying.openPrice; fixed in b037c93
+(CI for that commit not yet read).
+
+Next step: owner checks the Trade Desk card during a session (gap, map,
+zones) and the ledger after 16:06 ET; on a day with a published map, POST
+/api/odte/map/compare to measure agreement.
+
+## 2026-10-14 (evening): fixes after "what else can we fix"
+
+Pick stated at the start of the work (no objective had been chosen): the
+bounded user-facing and CI-hygiene fixes below, one commit each, on
+quant-fixes after e10b4e8.
+
+1. 861a5db Data-state chips: a 503 whose body says `no_spot`, `empty`,
+   `delayed` or `no_data` was shown as "request failed". The client parser
+   (`shared/unavailable.ts`) now keeps the body's own state through the
+   shared vocabulary (`empty` -> no_data; new alias `delayed` -> stale; a 503
+   claiming ok, or an unknown string, fails closed to unavailable). A 500 is
+   still a bug and a 503 without a dataState still a failure.
+2. b46b097 tsconfig: `target ES2022` (tsc is noEmit; Vite/esbuild build) with
+   `useDefineForClassFields: false` so the class-field semantics the bundlers
+   derived from the old target do not change. Removes the 50 TS2802 Map/Set
+   iteration errors and a few dependent ones; no new error code locally.
+3. 98abe93 no-advice-language test also walks shared/ (clean today).
+4. 7918eba Snapshot: `getOrBuild` shared one in-flight build with no bound
+   (Schwab fetches have no timeout), the iOS "stuck on the skeleton" risk.
+   Each waiter now gives up after 20 s (`shared/waitFor.ts`, tested) and takes
+   the existing stored-snapshot-within-max-age (stale) or 503 unavailable
+   path; the build keeps running for the next request.
+5. d13f6be /api/decision-support threw ReferenceError on every call
+   (`formatDecisionBlock` was never imported; tsc TS2304 since the initial
+   import). Imported; demo smoke now checks the route answers 200.
+6. af3f875 Signals GEX chart: "Spot" and "ZERO-Γ FLIP" labels overlapped on
+   phones (CI UX audit svgOverlapCount 1). Labels are now row-stacked
+   elements clamped inside the plot; the lightning emoji is gone.
+7. 1f34669 Demo tape: ten macro ETFs (SHY, IEF, LQD, JNK, USO, UNG, SLV,
+   CPER, CORN, WEAT) had hashed prices ("Oil 195.74"); named sample levels
+   added, with a test that reads the macro UNIVERSE from source.
+
+Local evidence: full quant suite 663 tests, 662 pass, 1 skipped, 0 fail
+(before item 7; demo-market file 15 pass after it). Local tsc (6.0.3, no
+node_modules) on the whole project: ES5 12724 vs ES2022 12620 errors, no
+new code. npm registry unreachable from the session, so TypeScript 5.6.3
+could not be installed locally; the CI per-file gate is the proof.
+
+8. (next commit) Models chart: "NOW $..." label moved from over the y-axis
+   ticks to inside the plot with a halo (CI UX audit on 1f34669 found
+   "690.00" x "NOW $689.78" on every viewport once the demo anchor sat near a
+   round tick). The 0DTE demo smoke check from the previous objective only
+   accepted "ok"; after the close the map is correctly "stale_session"
+   (session closed), so the check now accepts that too.
+
+CI evidence, run 38647320485 on 1f34669 (steps 1-7): tsc head 53 vs base
+162, no file gained errors (the ES2022 target removed 105); quant tests
+pass; build pass; route regression pass; demo smoke PASS for snapshot,
+thermal, community, decision support (200, 5 lines) and the write gates,
+FAIL only on the 0DTE check above (map priced, 36 strikes, pin labelled,
+state stale_session at 18:29 ET); UX audit 0 page errors, 0 overflow, 0
+overlapping text, 0 tap targets under 24 px, CLS 0 (0.009 wide), Signals
+SVG overlap gone, the Models overlap above the only one left. Run 38649141417 on c447dc8 (item 8): all steps green except the UX
+audit, tablet-portrait Edge Lab CLS 0.34 (budget 0.1): the briefing's
+skeleton-to-content transition landed inside the strict 2.5 s window after
+networkidle. Shift sources: the body moved down 27 px (the one-liner and
+verdict badges appear in the header) and the panels card below moved out
+of the viewport (the four-bar skeleton was ~600 px shorter than the loaded
+body on every viewport, the sm:min-h-[740px] floor well under it). Same
+tab was 0 on the runs earlier today, so it is timing-dependent, not a
+regression from these commits (none touch Edge Lab).
+9. (next commit) EdgeBriefing: the skeleton now mirrors the loaded
+   sections and grids (levels strip, regime + cross-asset, three playbook
+   paths, model cards, week ahead, headlines, footer) so it is about the
+   loaded height at every breakpoint, and the one-liner row is reserved
+   while loading. If the audit still flags this tab, treat it as a timing
+   flake of the measurement (one more diagnosis, no further blind tuning).
+Run 38651208710 on ee2e494 (item 9): GREEN. tsc head 53 vs base 162, no
+file gained errors; quant tests 664, 662 pass, 0 fail, 2 skipped; build,
+route regression pass; demo smoke 13 PASS, 0 FAIL (snapshot, thermal,
+community, 0DTE map stale_session after the close, decision support 200,
+write gates); UX audit all budgets pass: 0 page errors, 0 overflow, 0
+overlapping text, 0 SVG overlaps (Signals and Models fixed), 0 tap
+targets under 24 px, Edge Lab CLS 0 on all seven viewports (worst CLS on
+the run 0.009, wide).
+
+Later the same evening (owner away, authorized to continue without
+questions):
+10. 513dbf8 Schwab fetches bounded: 30 s per data attempt
+    (SCHWAB_FETCH_TIMEOUT_MS overrides), 15 s token, 10 s self-test probe;
+    timeouts say "timed out after N s". Source-guard test.
+11. 30f79d7 Demo sample sweeps (docs/DEMO.md) so the whale panel is not
+    always empty; flowAlertEngine.gateInputs holds the first-scan premium
+    while the ledger lives (a drifting quote could lower it and drop the
+    dedup tier). CI 38678412937 GREEN: 667 tests, 665 pass; demo smoke
+    "8 whales, e.g. SPX SPXW 261016P06950000 $6.97M premium (volume x mid,
+    first scan) / vol/OI 33.1x / AT_ASK last print / 2DTE"; UX budgets pass.
+12. d72da0e The remaining 53 tsc errors cleared (head should read 0 vs
+    base 162). Two were real defects: the Daily Playbook scenario bands
+    filled from the axis floor (function `baseLine` is not a recharts prop;
+    now a range area), and the models base-target "charm drift" was always
+    0 (field never existed; made explicit, base target = spot).
+13. d913fad Pivot projection right-edge labels spread apart
+    (shared/labelStack.ts) with connectors; they printed on top of each
+    other for levels a few points apart.
+14. 2bc4935 Daily Playbook magnet labels spread with connectors (they
+    stacked at the same y) and the right margin widened (labels clipped);
+    pivot projection gutter 110 -> 150 px (labels clipped once spread).
+15. c767112 Chain audit VRP: Schwab's theoreticalVolatility mirrors the IV,
+    so every expiry read "+0.0pp Neutral"; rows now say "No model vol" with
+    the IVs shown and the panel says why. Sign now market - theoretical as
+    the guide says, 2 pp threshold as the guide says (code used 1 pp), and
+    the "Sell Vol" / "Buy Vol" badges are "IV rich" / "IV cheap" / "Fair".
+16. 9d9fdef no-advice check also catches "sell/buy vol|volatility|gamma";
+    the 0DTE contract chart's volume labels read buy-side / sell-side.
+
+CI evidence: run 38679745905 (6ac8d5e, items 12-13) and 38681724045
+(2bc4935, item 14) and 38683594295 (9d9fdef, items 15-16), all GREEN:
+tsc head 0 vs base 162 (no tsc error left on the branch); 671 tests,
+669 pass, 0 fail, 2 skipped; demo smoke 14 PASS, 0 FAIL; UX budgets pass
+on all seven viewports. Demo Models screenshot checked by eye: playbook
+bands between Lo and Hi, playbook and pivot labels spread, none clipped.
+
+Next step: owner reviews the Signals GEX chart, the Models chart labels and
+the Daily Playbook bands live during a session (CI only sees the no-Schwab
+and demo renders), then approves merging quant-fixes to main.
+
+Not changed, still open: Schwab fetches themselves have no timeout (the
+retry loop can wait up to the undici default); demo whale flow is always
+empty; `routes.ts` 5896 `ch.source !== "schwab"` is a type-only `never`
+comparison; TS7006/TS2339 in older files.
+
 ## Current objective
 
 Save the credit-conserving resume framework and assess reuse of the existing
@@ -287,16 +555,14 @@ Do not repeat prior “all green means complete coverage” claims:
 
 ## iOS direction
 
-Proposed: bundled React UI through Capacitor plus the existing separately hosted
-backend. Keep polling, SQLite, brokerage credentials, and grading on the server.
-Do not simply point a released app at a temporary Computer preview.
-
-Before implementation: confirm Mac/Xcode access and whether the first target is
-personal-device use or TestFlight/App Store distribution. Choose persistent HTTPS
-backend hosting, per-user authentication, origin policy, and OAuth redirect flow.
+Capacitor shell over the bundled React UI; data engine stays on the server.
+A customer iPhone can only show the sample demo or that customer's own server
+until multi-user + Schwab commercial approval. Customer installs need TestFlight
+or the App Store (paid Apple Developer Program, user decision) and enough
+native value for App Review 4.2 (push alerts, Face ID lock, haptics).
 
 ## Next step
 
-Ask the user whether they have access to a Mac with Xcode and want personal-device
-testing first. Resolve exposed credentials before broad distribution. Do not
-start an iOS rewrite or unattended AI monitor while waiting.
+Owner: deploy the demo service (docs/DEMO.md), then set repo variable
+BATCAVE_DEMO_URL so the app shows Try the demo. Agent, after approval: merge
+quant-fixes to main (Railway redeploys the personal server).

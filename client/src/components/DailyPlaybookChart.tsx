@@ -13,7 +13,8 @@
  * Plain-English first: every number explained inline, no jargon required.
  */
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { spreadLabels } from "@shared/labelStack";
 import { useQuery } from "@tanstack/react-query";
 import {
   ComposedChart, Line, Area, ReferenceLine, ReferenceDot,
@@ -167,6 +168,21 @@ function buildPathSeries(pb: DailyPlaybook) {
   return rows;
 }
 
+/** Right-edge label for a horizontal reference line, shifted by `dy` to its
+ *  spread slot, with a connector back to the line when shifted. recharts
+ *  clones the element with the line's viewBox. */
+function LevelLabel({ viewBox, text, fill, dy }: { viewBox?: { x: number; y: number; width: number; height: number }; text: string; fill: string; dy: number }) {
+  if (!viewBox) return null;
+  const x0 = viewBox.x + viewBox.width;
+  const y = viewBox.y + dy;
+  return (
+    <g>
+      {Math.abs(dy) > 1 && <line x1={x0} y1={viewBox.y} x2={x0 + 4} y2={y} stroke={fill} strokeWidth={0.75} opacity={0.7} />}
+      <text x={x0 + 5} y={y + 3} fill={fill} fontSize={10}>{text}</text>
+    </g>
+  );
+}
+
 // ─── Component ──────────────────────────────────────────────────────────────
 
 interface Props {
@@ -195,6 +211,18 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
   });
 
   const series = useMemo(() => (pb ? buildPathSeries(pb) : []), [pb]);
+  // Plot height for spreading the right-edge level labels (they are placed
+  // by level, so levels a few dollars apart printed on top of each other).
+  const chartRef = useRef<HTMLDivElement>(null);
+  const [chartH, setChartH] = useState(0);
+  useEffect(() => {
+    const el = chartRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    setChartH(el.getBoundingClientRect().height);
+    const ro = new ResizeObserver((es) => setChartH(es[0].contentRect.height));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [pb]);
 
   // 503 (Schwab chain/VIX/$SPX unavailable) or a failed request: show the
   // state and reason. It used to sit on the loading skeleton forever.
@@ -242,6 +270,13 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
   const minLevel = Math.min(...magnets.map(m => m.level), expectedRange.low);
   const maxLevel = Math.max(...magnets.map(m => m.level), expectedRange.high);
   const yPad = (maxLevel - minLevel) * 0.05;
+  // Label slots in pixels: y-axis domain mapped onto the plot (margin top 10,
+  // x-axis + bottom margin ~46 px); exact enough to keep labels 12 px apart.
+  const plotTop = 10, plotH = Math.max(40, chartH - 56);
+  const dLo = minLevel - yPad, dHi = maxLevel + yPad;
+  const pxOf = (lv: number) => plotTop + (1 - (lv - dLo) / Math.max(1e-9, dHi - dLo)) * plotH;
+  const magnetPx = magnets.map((m) => pxOf(m.level));
+  const magnetSlots = spreadLabels(magnetPx, 12, plotTop + 5, plotTop + plotH - 5);
 
   return (
     <ErrorBoundary label="DailyPlaybookChart">
@@ -392,9 +427,9 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
         </div>
 
         {/* Fan chart */}
-        <div className="h-64 sm:h-72">
+        <div className="h-64 sm:h-72" ref={chartRef}>
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={series} margin={{ top: 10, right: 60, left: 8, bottom: 16 }}>
+            <ComposedChart data={series} margin={{ top: 10, right: 104, left: 8, bottom: 16 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" strokeOpacity={0.3} />
               <XAxis
                 dataKey="t"
@@ -426,17 +461,19 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
                 }}
               />
 
-              {/* Path bands (Hi - Lo as area) */}
+              {/* Path bands: a range area between Lo and Hi. (A function
+                  `baseLine` is not a recharts prop: it was overridden by the
+                  computed baseline, so each band filled from the axis floor.) */}
               {ordered.map(k => (
                 <Area
                   key={`band-${k}`}
-                  dataKey={`${k}Hi`}
+                  name={`${k}Band`}
+                  dataKey={(d: any) => [d[`${k}Lo`], d[`${k}Hi`]]}
                   stroke="none"
                   fill={PATH_FILLS[k]}
                   isAnimationActive={false}
-                  // Use the lower bound as the baseline so the area renders between Lo and Hi
-                  baseLine={(d: any) => d[`${k}Lo`]}
                   legendType="none"
+                  tooltipType="none"
                 />
               ))}
 
@@ -455,7 +492,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
               ))}
 
               {/* Level magnets */}
-              {magnets.map(m => (
+              {magnets.map((m, i) => (
                 <ReferenceLine
                   key={`${m.kind}-${m.level}`}
                   y={m.level}
@@ -463,15 +500,8 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
                   strokeDasharray={m.strength === "primary" ? "0" : "3 3"}
                   strokeWidth={m.strength === "primary" ? 1.25 : 1}
                   strokeOpacity={0.7}
-                >
-                  <Label
-                    value={`${m.label} ${fmt$(m.level)}`}
-                    position="right"
-                    fill={MAGNET_COLORS[m.kind]}
-                    fontSize={9}
-                    offset={5}
-                  />
-                </ReferenceLine>
+                  label={<LevelLabel text={`${m.label} ${fmt$(m.level)}`} fill={MAGNET_COLORS[m.kind]} dy={magnetSlots[i] - magnetPx[i]} />}
+                />
               ))}
 
               {/* Trigger lines — tinted by current regime (long gamma = cool, short = hot) */}
@@ -492,7 +522,7 @@ export default function DailyPlaybookChart({ symbol = "SPY" }: Props) {
                       value={`${k} trigger`}
                       position="insideLeft"
                       fill={regimeAccent}
-                      fontSize={8}
+                      fontSize={10}
                       offset={4}
                       opacity={isAlive ? 0.85 : 0.4}
                     />

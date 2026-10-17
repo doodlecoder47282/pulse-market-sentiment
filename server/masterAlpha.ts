@@ -998,7 +998,7 @@ export async function masterAlphaRoute(req: any, res: any) {
     let pivots: PivotBundle | undefined;
     try {
       const prior = await fetchPrevDayOHLC(symbol);
-      if (prior) pivots = buildPivotBundle(symbol, { o: prior.o, h: prior.h, l: prior.l, c: prior.c });
+      if (prior) pivots = buildPivotBundle(symbol, { t: prior.t, o: prior.o, h: prior.h, l: prior.l, c: prior.c });
     } catch { /* pivots are optional */ }
 
     const out = await runMasterAlpha({

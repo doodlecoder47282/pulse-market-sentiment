@@ -15,6 +15,7 @@
 import { spawn, ChildProcess } from "child_process";
 import path from "path";
 import fs from "fs";
+import { editionFromEnv } from "../shared/edition";
 
 let _proc: ChildProcess | null = null;
 let _restarts = 0;
@@ -86,7 +87,7 @@ function _spawn() {
 }
 
 export async function startMlService(): Promise<void> {
-  if (process.env.PULSE_ML_AUTOSTART === "0") {
+  if (editionFromEnv() === "demo" || process.env.PULSE_ML_AUTOSTART === "0") {
     console.log(`[ml-service] autostart disabled via PULSE_ML_AUTOSTART=0`);
     return;
   }

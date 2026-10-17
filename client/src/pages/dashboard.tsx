@@ -29,7 +29,6 @@ import GlobalEdgeBanner from "@/components/GlobalEdgeBanner";
 import { RegimeChip } from "@/components/RegimeChip";
 import TakeFive, { TakeFiveFab } from "@/components/TakeFive";
 import EdgeLabPanel from "@/components/EdgeLabPanel";
-const CryptoPanel = lazy(() => import("@/components/CryptoPanel"));
 import { MacroTicker } from "@/components/MacroCarousel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTickers, type TabKey } from "@/components/TickerContext";
@@ -49,12 +48,14 @@ import {
 } from "lucide-react";
 import SchwabSettings, { SchwabStatusPill } from "@/components/SchwabSettings";
 import SchwabRequiredNotice from "@/components/SchwabRequiredNotice";
+import DemoStrip from "@/components/DemoStrip";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import WhaleFlowPanel from "@/components/WhaleFlowPanel";
 import TrackedSignalsPanel from "@/components/signals/TrackedSignalsPanel";
 import { useEffect, useState, useRef, lazy, Suspense } from "react";
 
 // ── Lazy-loaded heavy components (code splitting) ──────────────────────────
+const CryptoPanel = lazy(() => import("@/components/CryptoPanel"));
 const ModelsPanel = lazy(() => import("@/components/ModelsPanel"));
 const DailyPlaybookChart = lazy(() => import("@/components/DailyPlaybookChart"));
 const TabHeadline = lazy(() => import("@/components/TabHeadline"));
@@ -206,7 +207,13 @@ export default function Dashboard() {
   const { theme, toggleTheme, compact, toggleCompact } = useTheme();
   // Take Five overlay state — shared by floating FAB and tab "peek" button.
   const [take5Open, setTake5Open] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // ?connect=schwab opens Settings (handoff link); ?schwab=connected|error is
+  // the automatic sign-in's return (server/index.ts OAUTH_CALLBACK_PATH): open
+  // Settings so the result is seen, and say which outcome it was.
+  const [settingsOpen, setSettingsOpen] = useState(() => {
+    const q = new URLSearchParams(window.location.search);
+    return q.get("connect") === "schwab" || q.has("schwab");
+  });
   // Keyboard shortcuts help modal
   const [helpOpen, setHelpOpen] = useState(false);
   // PCR DTE bucket selector — drives which horizon of put/call ratio the KeyStat shows.
@@ -218,6 +225,24 @@ export default function Dashboard() {
   // into the Chart tab via the TickerContext bridge.
   const { activeTab, setActiveTab } = useTickers();
   const { toast } = useToast();
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const result = q.get("schwab");
+    if (!result) return;
+    const reasons: Record<string, string> = {
+      authorization_not_completed: "Schwab did not complete the authorization.",
+      no_code: "Schwab returned without a code.",
+      expired_or_unknown_sign_in: "This sign-in expired or was already used (links last 15 minutes). Start a new one from Settings.",
+      token_exchange_failed: "Schwab did not complete the token exchange. Start a new sign-in; if it repeats, check the app configuration.",
+      demo_edition: "Schwab sign-in is disabled in the sample-data preview.",
+    };
+    if (result === "connected") toast({ title: "Schwab connected", description: "The automatic sign-in completed." });
+    else toast({ title: "Schwab sign-in not completed", description: reasons[q.get("reason") ?? ""] ?? "The sign-in did not complete. Start a new one from Settings.", variant: "destructive" });
+    // Clear the one-shot result from the address bar so a reload does not repeat it.
+    q.delete("schwab"); q.delete("reason");
+    const rest = q.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}${window.location.hash}`);
+  }, [toast]);
 
   // Ref for Chart tab ticker input (for "/" shortcut)
   const tickerInputRef = useRef<HTMLInputElement | null>(null);
@@ -296,7 +321,9 @@ export default function Dashboard() {
     tickerInputRef,
   });
 
-  if (isLoading) return <DashboardSkeleton />;
+  // Keep recovery controls mounted while the first snapshot loads or fails.
+  // Replacing the entire shell with a skeleton can cause shared-query children
+  // to remount/retry repeatedly, hiding Settings precisely when it is needed.
 
   // Snapshot unavailable or partial (Schwab not answering): the app shell and
   // all 11 tabs still render; Schwab-dependent cards show the state and
@@ -320,7 +347,10 @@ export default function Dashboard() {
     data?.sections?.[k]?.reason ?? snapReason ?? "Schwab did not answer";
 
   return (
-    <div className="min-h-screen bg-background">
+    <div
+      className="min-h-screen bg-background"
+      style={{ paddingLeft: "env(safe-area-inset-left)", paddingRight: "env(safe-area-inset-right)" }}
+    >
       {/* Floating Take Five launcher — visible on every tab */}
       <TakeFive mode="overlay" open={take5Open} onClose={() => setTake5Open(false)} />
 
@@ -331,7 +361,14 @@ export default function Dashboard() {
       <SchwabSettings open={settingsOpen} onOpenChange={setSettingsOpen} />
 
       {/* Header */}
-      <header className="sticky top-0 z-10 border-b border-border bg-background md:bg-background/80 md:backdrop-blur">
+      <header
+        className="sticky top-0 z-10 border-b border-border bg-background md:bg-background/80 md:backdrop-blur"
+        style={{ paddingTop: "env(safe-area-inset-top)" }}
+      >
+        <DemoStrip />
+        {isLoading && <p role="status" className="px-4 py-2 text-sm text-muted-foreground" data-testid="snapshot-loading-status">
+          Loading market snapshot. Settings and navigation remain available.
+        </p>}
         <div className="mx-auto flex max-w-[1800px] items-center justify-between gap-2 px-3 py-3 sm:px-4 md:px-8 xl:px-10">
           {/* Left: Logo + name + BATCAVE tag */}
           <div className="flex items-center gap-3">
@@ -384,7 +421,7 @@ export default function Dashboard() {
               onClick={() => refreshMut.mutate()}
               disabled={refreshMut.isPending}
               data-testid="button-refresh"
-              className="h-10 w-10 min-h-0 p-0 sm:h-auto sm:w-auto sm:px-3"
+              className="h-11 w-11 p-0 sm:w-auto sm:px-3 lg:h-auto lg:min-h-8"
             >
               <RefreshCw className={`h-3.5 w-3.5 sm:mr-2 ${refreshMut.isPending ? "animate-spin" : ""}`} />
               <span className="hidden sm:inline">Refresh</span>
@@ -401,7 +438,7 @@ export default function Dashboard() {
               type="button"
               onClick={() => setSettingsOpen(true)}
               title="Schwab & Settings"
-              className="flex items-center justify-center rounded-md border border-border/60 h-10 w-10 sm:h-auto sm:w-auto sm:p-1.5 text-muted-foreground transition hover:border-border hover:text-muted-foreground"
+              className="flex items-center justify-center rounded-md border border-border/60 h-11 w-11 sm:w-auto sm:px-2 lg:h-auto lg:p-1.5 text-muted-foreground transition hover:border-border hover:text-muted-foreground"
               data-testid="button-settings"
             >
               <Settings className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
@@ -460,7 +497,7 @@ export default function Dashboard() {
       {/* Ticker tape — flows across the top under the header on every tab */}
       <MacroTicker />
 
-      <main className="mx-auto max-w-[1800px] space-y-4 px-3 py-4 pb-24 text-[14px] sm:space-y-6 sm:px-4 sm:py-6 sm:text-[14px] lg:pb-6 md:px-8 md:text-[15px] xl:px-10 xl:text-[16px]">
+      <main className="mx-auto max-w-[1800px] space-y-4 px-3 py-4 pb-[calc(6rem+env(safe-area-inset-bottom))] text-[14px] sm:space-y-6 sm:px-4 sm:py-6 sm:text-[14px] lg:pb-6 md:px-8 md:text-[15px] xl:px-10 xl:text-[16px]">
 
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)} className="w-full">
           {/* Desktop tab bar — single inline row. Hidden on mobile (replaced by bottom-nav). */}
@@ -811,7 +848,7 @@ export default function Dashboard() {
                                 type="button"
                                 onClick={() => setPcrBucket(b.label)}
                                 data-testid={`pcr-bucket-${b.label}`}
-                                className={`inline-flex min-h-[44px] items-center rounded-md border px-2 py-0.5 text-[11px] font-mono transition sm:min-h-0 ${
+                                className={`inline-flex min-h-[44px] items-center rounded-md border px-2 py-0.5 text-[11px] font-mono transition lg:min-h-0 ${
                                   b.label === active.label
                                     ? "border-amber-400 bg-amber-400/20 text-amber-200"
                                     : "border-border bg-muted/30 text-muted-foreground hover:bg-muted/60"
@@ -1022,7 +1059,11 @@ export default function Dashboard() {
       {/* Mobile bottom-nav — fixed, horizontally scrollable, 10 tabs in locked order */}
       <nav
         className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:hidden"
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        style={{
+          paddingBottom: "env(safe-area-inset-bottom)",
+          paddingLeft: "env(safe-area-inset-left)",
+          paddingRight: "env(safe-area-inset-right)",
+        }}
         data-testid="mobile-bottom-nav"
         aria-label="Mobile tab navigation"
       >
@@ -1081,27 +1122,6 @@ function TermBar({ label, value, max, highlight }: { label: string; value: numbe
           className={`h-full ${highlight ? "bg-primary" : "bg-muted-foreground/50"} transition-all`}
           style={{ width: `${pct}%` }}
         />
-      </div>
-    </div>
-  );
-}
-
-function DashboardSkeleton() {
-  return (
-    <div className="min-h-screen bg-background p-4 md:p-8">
-      <div className="mx-auto max-w-[1800px] space-y-6">
-        <Skeleton className="h-14 w-full" />
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-          <Skeleton className="h-[420px] lg:col-span-5" />
-          <div className="grid grid-cols-3 gap-3 lg:col-span-7">
-            {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24" />)}
-          </div>
-        </div>
-        <Skeleton className="h-48 w-full" />
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-          <Skeleton className="h-[360px] lg:col-span-8" />
-          <Skeleton className="h-[360px] lg:col-span-4" />
-        </div>
       </div>
     </div>
   );

@@ -142,8 +142,8 @@ function ReliabilityDiagram({ rel }: { rel: Reliability }) {
           </circle>
         </g>
       ))}
-      <text x={sx(0.5)} y={H - 2} textAnchor="middle" fontSize={7} fill="#64748b">predicted</text>
-      <text x={3} y={sy(0.5)} fontSize={7} fill="#64748b" transform={`rotate(-90 6 ${sy(0.5)})`}>observed</text>
+      <text x={sx(0.5)} y={H - 2} textAnchor="middle" fontSize={9} fill="#64748b">predicted</text>
+      <text x={3} y={sy(0.5)} fontSize={9} fill="#64748b" transform={`rotate(-90 6 ${sy(0.5)})`}>observed</text>
     </svg>
   );
 }

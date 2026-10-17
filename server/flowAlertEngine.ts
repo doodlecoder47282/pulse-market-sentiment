@@ -32,6 +32,16 @@ import { regimeConvictionMultiplier } from "./edgeStats";
 import { logWhaleAlertPrediction } from "./outcomeLogger";
 import { isRegularSessionOpen } from "./exchangeCalendar";
 import { directionScore, volumeOverOiShare } from "./flowIntent";
+import { FlowLedgerStore, askSideRead, summarize, type FlowSummary } from "./flowAttribution";
+import { dedupKeysFor } from "./flowDedup";
+
+// Per-contract ledgers across scans (flowAttribution.ts): volume increments
+// attributed to the side of the print that landed in the interval, premium at
+// the prices seen, burst windows. Replaces "cumulative volume x current mid"
+// and "side of the last print" as the whale gate's inputs when enough prints
+// have been seen; otherwise the gate falls back to the last print and says so.
+const ledgers = new FlowLedgerStore();
+export function _flowLedgers(): FlowLedgerStore { return ledgers; }
 import { scanCoverageState } from "@shared/dataState";
 
 // Fire-once Discord poster for UOA. Posts the exact cluster returned by ingestContract.
@@ -106,6 +116,21 @@ export interface WhaleHit {
   distFromSpotPct?: number;  // (strike - spot) / spot * 100
   breakeven?: number;        // C: strike + mid ; P: strike - mid
   breakevenPct?: number;     // (breakeven - spot) / spot * 100
+  // Snapshot attribution (flowAttribution.ts): what the premium and side are based on.
+  /** "observed-prices": today's traded premium at the prices seen (attributed + unattributed + pre-scan at first mid); "volume-x-mid": first scan. */
+  premiumBasis?: "observed-prices" | "volume-x-mid";
+  /** Pre-scan part of the premium (volume already traded at the first scan, at that scan's mid). */
+  premiumPreScan?: number;
+  /** Largest 5-minute burst of traded premium seen, and its side. */
+  burstPremium5m?: number;
+  burstSide?: string | null;
+  /** Share of attributed contracts printed at the ask, and how much of today's volume since first scan was attributable. */
+  askShare?: number | null;
+  attributedCoverage?: number | null;
+  /** "attributed-prints" | "last-print-only" | "none": what the side read rests on. */
+  sideBasis?: string;
+  sideDetail?: string;
+  lastPrintAgeMs?: number | null;
   // Closed-loop edge-conditioned conviction (read-only metadata, additive).
   // Computed at queueHit time from rolling 45d edge stats. Never alters
   // gating, sizing, or any decision — surfaces in alert metadata only.
@@ -226,32 +251,24 @@ export function enrichHit(hit: WhaleHit, c: SchwabFlowContract, spot: number | n
 }
 
 // ─── MISSION FIX #5 — whale intent classifier ──────────────────────────
-// Per-contract volume memory across scans — lets us convert cumulative daily
-// volume into incremental prints (same pattern as odteTracker deltaVol).
-const volMemory = new Map<string, { volume: number; ts: number }>();
-const VOL_MEMORY_TTL = 12 * 3600_000;
-
-function pruneVolMemory(now: number): void {
-  if (volMemory.size < 4000) return;
-  for (const [k, v] of volMemory) if (now - v.ts > VOL_MEMORY_TTL) volMemory.delete(k);
-}
+// Incremental premium comes from the flow ledger (flowAttribution.ts), the
+// same bookkeeping the gate uses; there is no second volume memory.
 
 /** Compute intent fields for a batch of hits from one ticker scan.
  *  Spread detection: two same-expiry contracts firing in the same scan with
  *  notional within 2.5x of each other reads as a spread/roll structure. */
 function classifyIntent(hits: WhaleHit[], contracts: SchwabFlowContract[], now: number): void {
-  pruneVolMemory(now);
   const byOcc = new Map(contracts.map((c) => [c.occ, c]));
   for (const h of hits) {
     const c = byOcc.get(h.occ);
     if (!c) continue;
-    // Incremental premium since last scan
-    const prev = volMemory.get(h.occ);
-    const mid = h.mid && h.mid > 0 ? h.mid : 0;
-    if (prev && c.volume >= prev.volume && mid > 0) {
-      h.incrementalPremium = Math.round((c.volume - prev.volume) * mid * 100);
+    // Incremental premium since the last scan: the ledger's latest increment
+    // (at its printed price), one bookkeeping for the whole engine.
+    const led = ledgers.get(h.occ);
+    const lastInc = led?.recent.length ? led.recent[led.recent.length - 1] : null;
+    if (lastInc && led && lastInc.atMs === led.lastObs.atMs) {
+      h.incrementalPremium = Math.round(lastInc.contracts * lastInc.price * 100);
     }
-    volMemory.set(h.occ, { volume: c.volume, ts: now });
 
     // Opening share bound from today's volume vs prior-day OI (flowIntent.ts),
     // replacing the hand-set 0.92/0.85/0.75 "probabilities".
@@ -267,19 +284,39 @@ function classifyIntent(hits: WhaleHit[], contracts: SchwabFlowContract[], now: 
 }
 
 // ─── Whale gate — single contract test ────────────────────────────────────────
-export function isWhale(c: SchwabFlowContract): { whale: boolean; reason: string } {
-  const cfg = getFlowConfig();
-  // Premium floor
-  if (c.notional < cfg.premiumFloor) {
-    return { whale: false, reason: `premium $${(c.notional / 1000).toFixed(0)}K < $${(cfg.premiumFloor / 1_000_000).toFixed(2)}M` };
+/** Premium and side for the gate from the contract's ledger summary (when it has one). */
+export function gateInputs(c: SchwabFlowContract, s: FlowSummary | null): {
+  premium: number; premiumBasis: "observed-prices" | "volume-x-mid"; askSide: boolean; sideBasis: string; sideDetail: string;
+} {
+  if (s && s.sinceFirstScan > 0) {
+    const premium = s.preScanPremiumAtMid + s.premiumSinceFirstScan;
+    const read = askSideRead(s);
+    return { premium, premiumBasis: "observed-prices", askSide: read.askSide, sideBasis: read.basis, sideDetail: read.detail };
   }
-  // Aggressor side. Tags come from a stale `last` vs the live NBBO: real lifts of the
-  // offer land as AT_ASK and ABOVE_ASK is mostly a quote-moved artifact, so requiring
-  // exactly ABOVE_ASK excluded real buyers. AT_ASK now means "ask side" (AT or ABOVE).
+  // First scan, or nothing traded since: the day's volume at the first scan's
+  // mid (held while the ledger lives, so a quote that drifts between scans
+  // cannot lower the premium and drop the dedup tier); the current mid only
+  // when the first scan had no usable quote. Side from the last print.
+  const askSide = c.tag === "AT_ASK" || c.tag === "ABOVE_ASK";
+  const side = askSide ? "ask" : c.tag === "AT_BID" || c.tag === "BELOW_BID" ? "bid" : "mid";
+  const premium = s && s.preScanPremiumAtMid > 0 ? s.preScanPremiumAtMid : c.notional;
+  return { premium, premiumBasis: "volume-x-mid", askSide, sideBasis: "last-print-only", sideDetail: `last print only (${side}); no prints attributed yet this session` };
+}
+
+export function isWhale(c: SchwabFlowContract, s: FlowSummary | null = null): { whale: boolean; reason: string } {
+  const cfg = getFlowConfig();
+  const g = gateInputs(c, s);
+  // Premium floor: today's traded premium at observed prices when the ledger has
+  // seen the contract across scans; volume x current mid on the first scan.
+  if (g.premium < cfg.premiumFloor) {
+    return { whale: false, reason: `premium $${(g.premium / 1000).toFixed(0)}K < $${(cfg.premiumFloor / 1_000_000).toFixed(2)}M (${g.premiumBasis})` };
+  }
+  // Aggressor side. With enough attributed prints the day's ask share decides;
+  // otherwise the last print (last vs the live NBBO, which can be stale) decides,
+  // and the reason says which. AT_ASK means "ask side" (at or above).
   if (cfg.requiredTag !== "ANY") {
-    const askSide = c.tag === "AT_ASK" || c.tag === "ABOVE_ASK";
-    const tagOk = cfg.requiredTag === "AT_ASK" ? askSide : c.tag === cfg.requiredTag;
-    if (!tagOk) return { whale: false, reason: `tag=${c.tag} (need ${cfg.requiredTag === "AT_ASK" ? "AT_ASK/ABOVE_ASK" : cfg.requiredTag})` };
+    const tagOk = cfg.requiredTag === "AT_ASK" ? g.askSide : c.tag === cfg.requiredTag;
+    if (!tagOk) return { whale: false, reason: `not ask-side: ${g.sideDetail}` };
   }
   // DTE band — surgical 1–3DTE window kills hedges/LEAPS, keeps urgency money
   if (c.dte < cfg.minDte) {
@@ -301,10 +338,10 @@ export function isWhale(c: SchwabFlowContract): { whale: boolean; reason: string
   }
   // Build why-fired reason
   const reasonParts: string[] = [];
-  reasonParts.push(`$${(c.notional / 1_000_000).toFixed(2)}M premium`);
+  reasonParts.push(`$${(g.premium / 1_000_000).toFixed(2)}M premium (${g.premiumBasis === "observed-prices" ? "at observed prices" : "volume x mid, first scan"})`);
   if (newStrikeOk) reasonParts.push(`NEW STRIKE (OI=0)`);
   else reasonParts.push(`vol/OI ${c.volOiRatio.toFixed(1)}x`);
-  reasonParts.push(`${c.tag} last print`);
+  reasonParts.push(g.sideBasis === "attributed-prints" ? `ask side: ${g.sideDetail}` : `${c.tag} last print`);
   reasonParts.push(`${c.dte}DTE`);
   if ((c.delta ?? 0) !== 0) reasonParts.push(`Δ ${c.delta.toFixed(2)}`);
   return { whale: true, reason: reasonParts.join(" • ") };
@@ -332,20 +369,28 @@ async function scanTicker(symbol: string): Promise<{ hits: WhaleHit[]; error: st
         if (out.fired && out.cluster) { void fireUoaDiscord(out.cluster); }
       } catch { /* never blocks whale path */ }
 
-      const { whale, reason } = isWhale(c);
-      if (!whale) continue;
+      // Ledger: every scanned contract, so the gate reads prints across scans.
+      let summary: FlowSummary | null = null;
+      try {
+        const led = ledgers.record(c.occ, {
+          atMs: flow.asOf || now, volume: c.volume, last: c.last, bid: c.bid, ask: c.ask, mark: c.mark,
+          tradeTimeMs: c.tradeTimeMs, quoteTimeMs: c.quoteTimeMs,
+        });
+        summary = summarize(led, now);
+      } catch { summary = null; }
 
-      // Primary dedup keyed on (occ, premium-tier) — only whale DOUBLINGS re-fire.
-      // The old tier was ceil(notional / $1M), so a $4.99M -> $5.01M mark oscillation with
-      // zero new volume refired every +$1M. log2 of notional/floor changes only on doublings.
-      const tier = Math.floor(Math.log2(Math.max(1, c.notional / Math.max(1, cfg.premiumFloor))));
-      const dedupKey = `${c.occ}|t${tier}`;
+      const { whale, reason } = isWhale(c, summary);
+      if (!whale) continue;
+      const g = gateInputs(c, summary);
+
+      // Dedup (flowDedup.ts, shared with restart hydration): a whale re-fires
+      // only when its premium has doubled since it last fired. The coarse key
+      // catches OCC spelling drift for the same contract surface.
+      const keys = dedupKeysFor({ occ: c.occ, symbol, type: c.type, strike: c.strike, expiration: c.expiration, premium: g.premium, premiumFloor: cfg.premiumFloor });
+      const dedupKey = keys.fine;
       const lastSeen = recentlySeen.get(dedupKey);
       if (lastSeen && now - lastSeen < DEDUP_WINDOW_MS) continue;
-
-      // Fallback dedup catches OCC format drift (same contract surface, different occ string).
-      // Intentionally NOT tiered: with the tier it was identical to the primary key.
-      const coarseKey = `coarse|${symbol}|${c.type}|${c.strike}|${c.expiration}`;
+      const coarseKey = keys.coarse;
       const coarseLast = recentlySeen.get(coarseKey);
       if (coarseLast && now - coarseLast < DEDUP_COARSE_WINDOW_MS) continue;
 
@@ -363,12 +408,21 @@ async function scanTicker(symbol: string): Promise<{ hits: WhaleHit[]; error: st
         openInterest: c.openInterest,
         volOiRatio: c.volOiRatio,
         isNewStrike: c.isNewStrike,
-        premium: c.notional,
+        premium: g.premium,
         tag: c.tag,
         sentiment: c.sentiment,
         delta: c.delta,
         detectedAt: now,
         reason,
+        premiumBasis: g.premiumBasis,
+        premiumPreScan: summary?.preScanPremiumAtMid,
+        burstPremium5m: summary?.burstPremium,
+        burstSide: summary?.burstSide ?? null,
+        askShare: summary?.askShare ?? null,
+        attributedCoverage: summary?.attributedCoverage ?? null,
+        sideBasis: g.sideBasis,
+        sideDetail: g.sideDetail,
+        lastPrintAgeMs: summary?.lastPrintAgeMs ?? null,
       };
       hits.push(enrichHit(baseHit, c, flow.spot ?? null));
     }
@@ -611,6 +665,7 @@ export function getFlowSnapshot(): FlowSnapshot {
 
 // ─── Single-shot preview for /api/flow/preview ───────────────────────────────
 export async function previewFlow(): Promise<{
+  source: "schwab";
   config: FlowSnapshot["config"];
   byTicker: Record<string, { whales: WhaleHit[]; rejected: Array<{ occ: string; reason: string }> }>;
   totalScanned: number;
@@ -645,14 +700,22 @@ export async function previewFlow(): Promise<{
           const out = ingestUoaContract(c, sym, flow.spot ?? null);
           if (out.fired && out.cluster) { void fireUoaDiscord(out.cluster); }
         } catch { /* */ }
-        const { whale, reason } = isWhale(c);
+        // Preview reads the ledger the live scan keeps (no new observation: a
+        // preview must not shift the attribution the live gate uses).
+        const led = ledgers.get(c.occ);
+        const summary = led ? summarize(led, now) : null;
+        const { whale, reason } = isWhale(c, summary);
         if (whale) {
+          const g = gateInputs(c, summary);
           const base: WhaleHit = {
             symbol: sym, occ: c.occ, type: c.type, strike: c.strike,
             expiration: c.expiration, dte: c.dte, volume: c.volume,
             openInterest: c.openInterest, volOiRatio: c.volOiRatio,
-            isNewStrike: c.isNewStrike, premium: c.notional, tag: c.tag,
+            isNewStrike: c.isNewStrike, premium: g.premium, tag: c.tag,
             sentiment: c.sentiment, delta: c.delta, detectedAt: now, reason,
+            premiumBasis: g.premiumBasis, askShare: summary?.askShare ?? null, attributedCoverage: summary?.attributedCoverage ?? null,
+            sideBasis: g.sideBasis, sideDetail: g.sideDetail, burstPremium5m: summary?.burstPremium, burstSide: summary?.burstSide ?? null,
+            lastPrintAgeMs: summary?.lastPrintAgeMs ?? null,
           };
           whales.push(enrichHit(base, c, flow.spot ?? null));
         } else {

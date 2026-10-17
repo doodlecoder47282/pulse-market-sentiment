@@ -146,7 +146,9 @@ function deterministicVerdict(
     invalidation = direction === "BULL" ? spot * 0.98 : spot * 1.02;
   }
 
-  const expectedMovePct = target != null ? ((target - spot) / spot) * 100 : null;
+  // Without a spot (no Schwab) the move is undefined: null, never NaN (NaN
+  // serialises as null and crashed the card's toFixed).
+  const expectedMovePct = target != null && spot > 0 ? ((target - spot) / spot) * 100 : null;
   let rr: number | null = null;
   if (target != null && invalidation != null) {
     const reward = Math.abs(target - spot);
@@ -405,17 +407,17 @@ function normalizeVerdict(raw: any, fallback: OutlookVerdict, provider: OutlookV
     scenarios: {
       bull: {
         prob: bp,
-        targetPct: Number(sc.bull?.targetPct ?? fallback.scenarios.bull.targetPct),
+        targetPct: finiteOr(Number(sc.bull?.targetPct), fallback.scenarios.bull.targetPct),
         thesis: String(sc.bull?.thesis ?? fallback.scenarios.bull.thesis),
       },
       base: {
         prob: np,
-        targetPct: Number(sc.base?.targetPct ?? fallback.scenarios.base.targetPct),
+        targetPct: finiteOr(Number(sc.base?.targetPct), fallback.scenarios.base.targetPct),
         thesis: String(sc.base?.thesis ?? fallback.scenarios.base.thesis),
       },
       bear: {
         prob: xp,
-        targetPct: Number(sc.bear?.targetPct ?? fallback.scenarios.bear.targetPct),
+        targetPct: finiteOr(Number(sc.bear?.targetPct), fallback.scenarios.bear.targetPct),
         thesis: String(sc.bear?.thesis ?? fallback.scenarios.bear.thesis),
       },
     },
@@ -426,6 +428,8 @@ function normalizeVerdict(raw: any, fallback: OutlookVerdict, provider: OutlookV
 }
 
 // ---- 10-min synthesis cache ----
+
+const finiteOr = (n: number, fallback: number): number => (Number.isFinite(n) ? n : Number.isFinite(fallback) ? fallback : 0);
 
 const _verdictCache = new Map<string, { ts: number; verdict: OutlookVerdict }>();
 const VERDICT_TTL_MS = 10 * 60 * 1000;

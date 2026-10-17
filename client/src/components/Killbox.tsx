@@ -203,7 +203,7 @@ export default function Killbox({ symbol = "$SPX" }: { symbol?: string }) {
               key={l.key}
               data-testid={`killbox-lens-${l.key}`}
               onClick={() => setGreek(l.key)}
-              className={`inline-flex flex-col items-start gap-0 rounded-md border px-2.5 py-1.5 text-left transition-all min-h-[44px] sm:min-h-0 ${
+              className={`inline-flex flex-col items-start gap-0 rounded-md border px-2.5 py-1.5 text-left transition-all min-h-[44px] lg:min-h-0 ${
                 on
                   ? "border-foreground/40 bg-foreground/5 text-foreground"
                   : "border-border/40 bg-transparent text-muted-foreground hover:text-foreground"
@@ -433,7 +433,7 @@ function ForwardChart({
           return (
             <g>
               <line x1={labelW} y1={y} x2={wrapW - 12} y2={y} stroke={CALL_WALL} strokeWidth="1" strokeDasharray="2,4" opacity="0.55" />
-              <text x={wrapW - 14} y={y - 2} fill={CALL_WALL} fontSize="9" fontFamily="ui-monospace, monospace" textAnchor="end">
+              <text x={wrapW - 14} y={y - 2} fill={CALL_WALL} fontSize="10" fontFamily="ui-monospace, monospace" textAnchor="end">
                 call wall
               </text>
             </g>
@@ -448,7 +448,7 @@ function ForwardChart({
           return (
             <g>
               <line x1={labelW} y1={y} x2={wrapW - 12} y2={y} stroke={PUT_WALL} strokeWidth="1" strokeDasharray="2,4" opacity="0.55" />
-              <text x={wrapW - 14} y={y - 2} fill={PUT_WALL} fontSize="9" fontFamily="ui-monospace, monospace" textAnchor="end">
+              <text x={wrapW - 14} y={y - 2} fill={PUT_WALL} fontSize="10" fontFamily="ui-monospace, monospace" textAnchor="end">
                 put wall
               </text>
             </g>
@@ -499,7 +499,7 @@ function ForwardChart({
                   x={isPos ? x + 4 : x + w - 4}
                   y={y + rowH / 2 + 3}
                   fill="rgba(0,0,0,0.7)"
-                  fontSize="9"
+                  fontSize="10"
                   fontFamily="ui-monospace, monospace"
                   fontWeight="bold"
                   textAnchor={isPos ? "start" : "end"}

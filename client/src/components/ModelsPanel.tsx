@@ -1570,7 +1570,7 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
             <XAxis
               dataKey="label"
               stroke="#64748b"
-              tick={{ fontSize: 9, fill: "#64748b" }}
+              tick={{ fontSize: 10, fill: "#64748b" }}
               tickLine={false}
               axisLine={{ stroke: "#1e293b" }}
               interval={"preserveStartEnd"}
@@ -1579,7 +1579,7 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
             <YAxis
               domain={[yMin, yMax]}
               stroke="#64748b"
-              tick={{ fontSize: 9, fill: "#64748b" }}
+              tick={{ fontSize: 10, fill: "#64748b" }}
               tickFormatter={(v) => fmtK(v)}
               width={52}
               tickLine={false}
@@ -1598,27 +1598,27 @@ function SpxIntradayChart({ symbol, horizon }: { symbol: string; horizon: ModelH
             />
             {prevClose != null && (
               <ReferenceLine y={prevClose} stroke="#64748b" strokeDasharray="2 4" strokeOpacity={0.6}>
-                <Label value={`PREV ${fmtK(prevClose)}`} position="right" offset={4} fill="#64748b" fontSize={9} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`PREV ${fmtK(prevClose)}`} position="right" offset={4} fill="#64748b" fontSize={10} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             {cw != null && (
               <ReferenceLine y={cw} stroke={COLORS.callWall} strokeDasharray="4 3" strokeOpacity={0.55} strokeWidth={1}>
-                <Label value={`CW ${fmtK(cw)}`} position="right" offset={4} fill={COLORS.callWall} fontSize={9} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`CW ${fmtK(cw)}`} position="right" offset={4} fill={COLORS.callWall} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             {zg != null && (
               <ReferenceLine y={zg} stroke={COLORS.zeroGamma} strokeDasharray="4 3" strokeOpacity={0.55} strokeWidth={1}>
-                <Label value={`0Γ ${fmtK(zg)}`} position="right" offset={4} fill={COLORS.zeroGamma} fontSize={9} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`0Γ ${fmtK(zg)}`} position="right" offset={4} fill={COLORS.zeroGamma} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             {dm != null && dm !== cw && dm !== pw && (
               <ReferenceLine y={dm} stroke="#14b8a6" strokeDasharray="4 3" strokeOpacity={0.45} strokeWidth={1}>
-                <Label value={`DM ${fmtK(dm)}`} position="right" offset={4} fill="#14b8a6" fontSize={9} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`DM ${fmtK(dm)}`} position="right" offset={4} fill="#14b8a6" fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             {pw != null && (
               <ReferenceLine y={pw} stroke={COLORS.putWall} strokeDasharray="4 3" strokeOpacity={0.55} strokeWidth={1}>
-                <Label value={`PW ${fmtK(pw)}`} position="right" offset={4} fill={COLORS.putWall} fontSize={9} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
+                <Label value={`PW ${fmtK(pw)}`} position="right" offset={4} fill={COLORS.putWall} fontSize={10} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} />
               </ReferenceLine>
             )}
             <Line
@@ -1802,7 +1802,7 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
                   value={`${a.label} ${fmtPrice(a.level)}`}
                   position="right"
                   fill={anchorColor(a.kind)}
-                  fontSize={9}
+                  fontSize={10}
                   fontFamily="monospace"
                   offset={5}
                 />

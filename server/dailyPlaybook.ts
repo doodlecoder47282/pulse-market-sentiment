@@ -293,13 +293,13 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
   };
 
   // ─── Level magnets (for chart overlays) ─────────────────────────────────────
-  const magnets: LevelMagnet[] = [
+  const magnets: LevelMagnet[] = ([
     { level: callWall,  label: "Call Wall",  kind: "callWall",  strength: "primary"   },
     { level: putWall,   label: "Put Wall",   kind: "putWall",   strength: "primary"   },
     { level: gammaFlip, label: "Gamma Flip", kind: "gammaFlip", strength: "primary"   },
     { level: maxPain,   label: "Max Pain",   kind: "maxPain",   strength: "secondary" },
     { level: spot,      label: "Spot",       kind: "spot",      strength: "secondary" },
-  ].sort((a, b) => a.level - b.level);
+  ] as LevelMagnet[]).sort((a, b) => a.level - b.level);
 
   // ─── Headline ───────────────────────────────────────────────────────────────
   const winner: PathKey = pBase >= pBull && pBase >= pBear ? "base"

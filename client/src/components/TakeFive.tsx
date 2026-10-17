@@ -404,6 +404,7 @@ export default function TakeFive({ mode = "embedded", open = true, onClose }: Ta
     return (
       <div
         className="fixed inset-0 z-[60] overflow-y-auto"
+        style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}
         role="dialog"
         aria-modal="true"
         aria-label="Take Five"

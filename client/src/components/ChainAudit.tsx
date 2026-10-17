@@ -128,7 +128,7 @@ interface VRPEntry {
   marketIV: number | null;
   theoreticalIV: number | null;
   vrp: number | null;
-  signal: "sell_vol" | "buy_vol" | "neutral" | "n/a";
+  signal: "iv_rich" | "iv_cheap" | "fair" | "no_model" | "n/a";
 }
 
 interface ChainAuditResult {
@@ -299,9 +299,10 @@ function DealerGauge({ score, regime }: { score: number; regime: string }) {
 // ─── VRP signal badge ────────────────────────────────────────────────────────
 
 function VRPSignalBadge({ signal }: { signal: VRPEntry["signal"] }) {
-  if (signal === "sell_vol") return <Badge className="bg-red-500/20 text-red-400 border-red-500/40 font-mono text-[11px]">Sell Vol</Badge>;
-  if (signal === "buy_vol") return <Badge className="bg-green-500/20 text-green-400 border-green-500/40 font-mono text-[11px]">Buy Vol</Badge>;
-  if (signal === "neutral") return <Badge className="bg-muted/30 text-muted-foreground border-border/40 font-mono text-[11px]">Neutral</Badge>;
+  if (signal === "iv_rich") return <Badge className="bg-red-500/20 text-red-400 border-red-500/40 font-mono text-[11px]">IV rich</Badge>;
+  if (signal === "iv_cheap") return <Badge className="bg-green-500/20 text-green-400 border-green-500/40 font-mono text-[11px]">IV cheap</Badge>;
+  if (signal === "fair") return <Badge className="bg-muted/30 text-muted-foreground border-border/40 font-mono text-[11px]">Fair</Badge>;
+  if (signal === "no_model") return <Badge variant="outline" className="font-mono text-[11px] text-amber-400/80 border-amber-500/30" title="Schwab's theoretical vol equals the market IV on this expiry: not an independent model, so no premium can be read.">No model vol</Badge>;
   return <Badge variant="outline" className="font-mono text-[11px] text-muted-foreground">N/A</Badge>;
 }
 
@@ -523,9 +524,9 @@ export default function ChainAudit() {
                           }))}
                           margin={{ top: 4, right: 12, left: 0, bottom: 4 }}
                         >
-                          <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#64748b" }} tickLine={false} axisLine={false} />
+                          <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#64748b" }} tickLine={false} axisLine={false} />
                           <YAxis
-                            tick={{ fontSize: 9, fill: "#64748b" }}
+                            tick={{ fontSize: 10, fill: "#64748b" }}
                             tickFormatter={v => `${v}%`}
                             width={36}
                             tickLine={false}
@@ -626,13 +627,13 @@ export default function ChainAudit() {
                           >
                             <XAxis
                               dataKey="strike"
-                              tick={{ fontSize: 8, fill: "#64748b" }}
+                              tick={{ fontSize: 10, fill: "#64748b" }}
                               tickLine={false}
                               axisLine={false}
                               tickFormatter={v => v.toLocaleString()}
                             />
                             <YAxis
-                              tick={{ fontSize: 9, fill: "#64748b" }}
+                              tick={{ fontSize: 10, fill: "#64748b" }}
                               tickFormatter={v => {
                                 const abs = Math.abs(v);
                                 if (abs >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
@@ -715,7 +716,7 @@ export default function ChainAudit() {
                       >
                         <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#64748b" }} tickLine={false} axisLine={false} />
                         <YAxis
-                          tick={{ fontSize: 9, fill: "#64748b" }}
+                          tick={{ fontSize: 10, fill: "#64748b" }}
                           tickFormatter={v => `${v.toFixed(0)}%`}
                           width={32}
                           tickLine={false}
@@ -857,7 +858,7 @@ export default function ChainAudit() {
                     </div>
                   </div>
                   <div className="mt-1.5 font-mono text-[11px] text-muted-foreground leading-snug">
-                    VRP = Market IV − Theoretical IV (bookdown realized-vol estimate). Positive = overpriced, negative = underpriced. Signal column auto-classifies per-expiry.
+                    VRP = Market IV − Theoretical IV, where Theoretical IV is Schwab's own model-vol field for the ATM contracts (not a realized-vol estimate). Positive = implied above the model vol, negative = below. When Schwab's field simply repeats the market IV, no premium can be read and the row says so.
                   </div>
                 </div>
                 <div className="hscroll-contain" data-testid="table-vrp">
@@ -890,7 +891,7 @@ export default function ChainAudit() {
                           </TableCell>
                           <TableCell className="font-mono text-[11px] py-1.5 text-right">
                             {row.vrp != null ? (
-                              <span className={row.vrp < -0.01 ? "text-red-400" : row.vrp > 0.01 ? "text-green-400" : "text-muted-foreground"}>
+                              <span className={row.vrp > 0.02 ? "text-red-400" : row.vrp < -0.02 ? "text-green-400" : "text-muted-foreground"}>
                                 {row.vrp >= 0 ? "+" : ""}{(row.vrp * 100).toFixed(1)}pp
                               </span>
                             ) : <span className="text-muted-foreground">N/A</span>}
@@ -903,7 +904,12 @@ export default function ChainAudit() {
                     </TableBody>
                   </Table>
                 </div>
-                {audit.vrp.every(r => r.vrp == null) && (
+                {audit.vrp.length > 0 && audit.vrp.every(r => r.signal === "no_model") && (
+                  <div className="font-mono text-[11px] text-amber-400/80 text-center py-3" data-testid="vrp-no-model">
+                    Schwab's theoretical vol equals the market IV on every expiry: it is not an independent model, so no volatility risk premium can be read from this chain. The table shows the IVs only.
+                  </div>
+                )}
+                {audit.vrp.length > 0 && audit.vrp.every(r => r.theoreticalIV == null) && (
                   <div className="font-mono text-[11px] text-muted-foreground text-center py-3">
                     Theoretical IV not available in chain data — Schwab may not provide theoreticalVolatility for this symbol.
                   </div>
@@ -938,9 +944,9 @@ export default function ChainAudit() {
                           margin={{ top: 4, right: 4, left: 0, bottom: 4 }}
                           barSize={6}
                         >
-                          <XAxis dataKey="strike" tick={{ fontSize: 8, fill: "#64748b" }} tickLine={false} axisLine={false} tickFormatter={v => v.toLocaleString()} />
+                          <XAxis dataKey="strike" tick={{ fontSize: 10, fill: "#64748b" }} tickLine={false} axisLine={false} tickFormatter={v => v.toLocaleString()} />
                           <YAxis
-                            tick={{ fontSize: 9, fill: "#64748b" }}
+                            tick={{ fontSize: 10, fill: "#64748b" }}
                             tickFormatter={v => {
                               const abs = Math.abs(v);
                               if (abs >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
@@ -995,9 +1001,9 @@ export default function ChainAudit() {
                           margin={{ top: 4, right: 4, left: 0, bottom: 4 }}
                           barSize={6}
                         >
-                          <XAxis dataKey="strike" tick={{ fontSize: 8, fill: "#64748b" }} tickLine={false} axisLine={false} tickFormatter={v => v.toLocaleString()} />
+                          <XAxis dataKey="strike" tick={{ fontSize: 10, fill: "#64748b" }} tickLine={false} axisLine={false} tickFormatter={v => v.toLocaleString()} />
                           <YAxis
-                            tick={{ fontSize: 9, fill: "#64748b" }}
+                            tick={{ fontSize: 10, fill: "#64748b" }}
                             tickFormatter={v => {
                               const abs = Math.abs(v);
                               if (abs >= 1e9) return `${(v / 1e9).toFixed(1)}B`;

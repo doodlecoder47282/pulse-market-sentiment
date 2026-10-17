@@ -23,6 +23,7 @@ import {
   gateWarnings,
   newInternalKey,
   trustProxyHops,
+  makeDemoReadOnly,
 } from "./accessGate";
 import { tokenKeyWarnings } from "./tokenCrypto";
 import { resolveTokenKeyPolicy } from "./tokenKeyFile";
@@ -104,14 +105,14 @@ const BIND_HOST = resolveBindHost(process.env);
 const GATE_MODE = gateMode(process.env);
 // Fail closed still lets the engines' own self-calls through, using a random
 // per-process key that never leaves this process.
-const INTERNAL_KEY = GATE_MODE === "closed" ? newInternalKey() : "";
+const INTERNAL_KEY = GATE_MODE === "closed" || editionFromEnv() === "demo" ? newInternalKey() : "";
 // The trading-critical engine calls (trade environment -> heatseeker, exit
 // brain -> quotes/models, Discord cards and decision support -> models) now
 // run in-process (internalApi.ts). The remaining local-HTTP self-calls (news,
 // regime ticker, mm scheduler, alpha brief, ...) still need the key: when the
 // gate is on, attach it to every request this process sends to its own port
 // (ios-capacitor d40db7d).
-const SELF_CALL_KEY = ACCESS_KEY || INTERNAL_KEY;
+const SELF_CALL_KEY = editionFromEnv() === "demo" ? INTERNAL_KEY : ACCESS_KEY || INTERNAL_KEY;
 if (SELF_CALL_KEY) {
   globalThis.fetch = makeSelfCallFetch(globalThis.fetch.bind(globalThis), SELF_CALL_KEY, process.env.PORT || "5000");
 }
@@ -126,20 +127,22 @@ app.get("/api/health", (_req, res) => {
 // can only finish a sign-in this server started in the last 15 minutes.
 app.get(OAUTH_CALLBACK_PATH, async (req, res) => {
   const back = (q: string) => res.redirect(302, `/?schwab=${q}#/`);
+  if (editionFromEnv() === "demo") return back("error&reason=demo_edition");
   const err = typeof req.query.error === "string" ? req.query.error : "";
-  if (err) return back(`error&reason=${encodeURIComponent(err.slice(0, 80))}`);
+  if (err) return back("error&reason=authorization_not_completed");
   const code = typeof req.query.code === "string" ? req.query.code : "";
   const state = typeof req.query.state === "string" ? req.query.state : "";
   if (!code) return back("error&reason=no_code");
   if (!consumeOAuthState(state)) return back("error&reason=expired_or_unknown_sign_in");
   try {
     const r = await exchangeCodeForTokens(code);
-    return r.ok ? back("connected") : back(`error&reason=${encodeURIComponent(r.error.slice(0, 80))}`);
+    return r.ok ? back("connected") : back("error&reason=token_exchange_failed");
   } catch {
     return back("error&reason=token_exchange_failed");
   }
 });
 app.use("/api", makeAccessGate(ACCESS_KEY, { failClosed: GATE_MODE === "closed", internalKey: INTERNAL_KEY || undefined }));
+if (editionFromEnv() === "demo") app.use("/api", makeDemoReadOnly(INTERNAL_KEY));
 app.get("/api/health/auth", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.json({ ok: true });
@@ -196,7 +199,9 @@ for (const w of tokenKeyWarnings(process.env, resolveTokenKeyPolicy(process.env)
     {
       port,
       host,
-      reusePort: true,
+      // SO_REUSEPORT exists on Linux only; macOS and Windows reject the
+      // listen with ENOTSUP, so the server could not start on a Mac.
+      reusePort: process.platform === "linux",
     },
     () => {
       log(`serving on ${host}:${port}`);

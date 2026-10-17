@@ -60,7 +60,7 @@ export default function GlobalEdgeBanner({
         tone: "red",
         icon: <AlertTriangle className="h-4 w-4" />,
         title: "VIX9D > VIX — front-end backwardation",
-        body: `9D/30D ratio ${ratio?.toFixed(3) ?? "—"}. Short-dated fear elevated. Reduce 0DTE long-gamma size; iron flies risky into close.`,
+        body: `9D/30D ratio ${ratio?.toFixed(3) ?? "—"}. Short-dated implied vol is above 30-day: same-day options are pricing more fear than usual.`,
       });
     }
 
@@ -71,7 +71,7 @@ export default function GlobalEdgeBanner({
         tone: "amber",
         icon: <Activity className="h-4 w-4" />,
         title: `VVIX ${vvix.toFixed(1)} — vol-of-vol elevated`,
-        body: "0DTE tail risk priced in. Expect VIX gap-risk; tighten gamma exposure or hedge with OTM puts.",
+        body: "Same-day tail risk is priced in: options imply a higher than usual chance of a VIX gap.",
       });
     }
 
@@ -84,7 +84,7 @@ export default function GlobalEdgeBanner({
           tone: "amber",
           icon: <Zap className="h-4 w-4" />,
           title: `Spot ${spot.toFixed(2)} at dealer flip ${zeroGamma.toFixed(2)}`,
-          body: "Crossing zero-gamma reverses dealer hedging. Above flip = vol suppression; below = trend amplification. Size accordingly.",
+          body: "Crossing zero gamma flips how dealers hedge: above the flip their hedging tends to damp moves, below it their hedging tends to amplify them.",
         });
       }
     }

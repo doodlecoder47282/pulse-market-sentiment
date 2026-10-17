@@ -59,7 +59,7 @@ export function dteYears(
 
 /**
  * Sigma valid for T. Within RESOLVE_IV_MAX_T, solve from the bid/ask mid
- * (r = q = 0; carry over <= 3 days is negligible); otherwise, or when the
+ * (using the caller's pricing carry, zero by default); otherwise, or when the
  * quote is unusable, return the vendor IV (decimal).
  */
 export function ivForClock(args: {
@@ -70,10 +70,14 @@ export function ivForClock(args: {
   strike: number;
   T: number;
   type: "C" | "P";
+  r?: number;
+  q?: number;
 }): number {
   const { vendorIv, bid, ask, spot, strike, T, type } = args;
   if (T > 0 && T <= RESOLVE_IV_MAX_T && bid != null && ask != null && bid > 0 && ask >= bid && spot > 0 && strike > 0) {
-    const solved = impliedVol((bid + ask) / 2, spot, strike, T, 0, 0, type);
+    const r = Number.isFinite(args.r) ? args.r! : 0;
+    const q = Number.isFinite(args.q) ? args.q! : 0;
+    const solved = impliedVol((bid + ask) / 2, spot, strike, T, r, q, type);
     if (solved != null && Number.isFinite(solved) && solved > 0.005 && solved < 4.99) return solved;
   }
   return vendorIv;

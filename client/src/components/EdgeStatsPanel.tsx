@@ -222,13 +222,13 @@ function CalibrationPlot({ r }: { r: RegimeEdge }) {
                   <line x1={cx} x2={cx} y1={size - pad - p.wilsonLo * inner} y2={size - pad - p.wilsonHi * inner} stroke="currentColor" strokeOpacity="0.35" />
                 )}
                 <circle cx={cx} cy={cy} r={radius} className={fill} />
-                <text x={cx} y={cy - radius - 3} textAnchor="middle" fontSize="9" fill="currentColor" opacity="0.6">n={p.n}</text>
+                <text x={cx} y={cy - radius - 3} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.6">n={p.n}</text>
               </g>
             );
           })}
           {/* axis labels */}
-          <text x={size / 2} y={size - 4} textAnchor="middle" fontSize="9" fill="currentColor" opacity="0.5">predicted</text>
-          <text x={8} y={size / 2} textAnchor="middle" fontSize="9" fill="currentColor" opacity="0.5" transform={`rotate(-90 8 ${size / 2})`}>actual</text>
+          <text x={size / 2} y={size - 4} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.5">predicted</text>
+          <text x={8} y={size / 2} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.5" transform={`rotate(-90 8 ${size / 2})`}>actual</text>
         </svg>
         <div className="flex-1 space-y-1.5 text-sm">
           <div className="text-[11px] uppercase text-muted-foreground tracking-wider">By Confidence</div>

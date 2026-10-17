@@ -23,6 +23,18 @@ import { streamEquityQuote } from "./streamStore";
 import { parseStreamerInfo, startSchwabStream, streamConfigFromEnv, type StreamerInfo, type WebSocketLike } from "./schwabStream";
 import { oauthErrorCode } from "./oauthError";
 import { newOAuthState } from "./schwabOAuth";
+import { editionFromEnv } from "../shared/edition";
+import { demoSchwabPayload } from "./demoMarket";
+import { createSchwabInputValidator } from "./schwabInputValidation";
+
+// Demo edition (BATCAVE_EDITION=demo): a simulated market answers every
+// Schwab REST call (server/demoMarket.ts). Schwab is never called, sign-in is
+// refused, stored tokens are ignored and the streamer stays off.
+const DEMO_TOKEN = "demo-sample-data";
+export function isDemoEdition(): boolean {
+  return editionFromEnv() === "demo";
+}
+const DEMO_SIGN_IN_OFF = "This demo runs on simulated sample data; Schwab sign-in is turned off.";
 
 // ─── Credentials from environment (read lazily to avoid import-order issues) ──
 const getClientId = () => process.env.SCHWAB_CLIENT_ID ?? "";
@@ -30,6 +42,18 @@ const getClientSecret = () => process.env.SCHWAB_CLIENT_SECRET ?? "";
 const getRedirectUri = () => process.env.SCHWAB_REDIRECT_URI ?? "https://127.0.0.1";
 
 const SCHWAB_BASE = "https://api.schwabapi.com";
+// Every Schwab request is bounded: a request that never answers used to hold
+// its caller (and anything joining a shared build) for the undici default of
+// five minutes. Data requests get 30 s per attempt (a 45-DTE SPY chain is a
+// few MB), token calls 15 s, the self-test probes 10 s.
+const SCHWAB_FETCH_TIMEOUT_MS = (() => { const n = Number(process.env.SCHWAB_FETCH_TIMEOUT_MS); return Number.isFinite(n) && n >= 1000 ? n : 30_000; })();
+const SCHWAB_TOKEN_TIMEOUT_MS = 15_000;
+/** "timed out after N s" for an AbortSignal.timeout abort, else the error's message. */
+function fetchErrorText(e: unknown, timeoutMs: number): string {
+  const x = e as { name?: unknown; message?: unknown } | null;
+  if (x && (x.name === "TimeoutError" || x.name === "AbortError")) return `timed out after ${Math.round(timeoutMs / 1000)} s`;
+  return typeof x?.message === "string" && x.message ? x.message : "network";
+}
 const TOKEN_URL = `${SCHWAB_BASE}/v1/oauth/token`;
 const MARKET_BASE = `${SCHWAB_BASE}/marketdata/v1`;
 
@@ -50,6 +74,7 @@ export function clearRefreshBackoff(): void {
 
 /** Retrieve a valid access token, auto-refreshing if needed. Returns null if not connected. */
 export async function getAccessToken(lookaheadMs = 60_000): Promise<string | null> {
+  if (isDemoEdition()) return DEMO_TOKEN;
   const CLIENT_ID = getClientId();
   const CLIENT_SECRET = getClientSecret();
   if (!CLIENT_ID || !CLIENT_SECRET) return null;
@@ -77,6 +102,7 @@ async function doRefresh(
     const basic = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64");
     const res = await fetch(TOKEN_URL, {
       method: "POST",
+      signal: AbortSignal.timeout(SCHWAB_TOKEN_TIMEOUT_MS),
       headers: {
         Authorization: `Basic ${basic}`,
         "Content-Type": "application/x-www-form-urlencoded",
@@ -120,8 +146,9 @@ async function doRefresh(
     _lastRefreshError = null;
     return data.access_token;
   } catch (e: any) {
-    console.warn("[schwab] token refresh exception:", e?.message);
-    _lastRefreshError = { at: Date.now(), status: 0, message: e?.message ?? "unknown" };
+    const why = fetchErrorText(e, SCHWAB_TOKEN_TIMEOUT_MS);
+    console.warn("[schwab] token refresh exception:", why);
+    _lastRefreshError = { at: Date.now(), status: 0, message: why };
     _refreshFailUntil = Date.now() + 60_000;
     return null;
   }
@@ -129,6 +156,7 @@ async function doRefresh(
 
 /** Exchange an authorization code for tokens and persist them. */
 export async function exchangeCodeForTokens(code: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (isDemoEdition()) return { ok: false, error: DEMO_SIGN_IN_OFF };
   const CLIENT_ID = getClientId();
   const CLIENT_SECRET = getClientSecret();
   const REDIRECT_URI = getRedirectUri();
@@ -138,6 +166,7 @@ export async function exchangeCodeForTokens(code: string): Promise<{ ok: true } 
     const decodedCode = decodeURIComponent(code);
     const res = await fetch(TOKEN_URL, {
       method: "POST",
+      signal: AbortSignal.timeout(SCHWAB_TOKEN_TIMEOUT_MS),
       headers: {
         Authorization: `Basic ${basic}`,
         "Content-Type": "application/x-www-form-urlencoded",
@@ -167,7 +196,7 @@ export async function exchangeCodeForTokens(code: string): Promise<{ ok: true } 
     clearRefreshBackoff(); // fresh tokens: forget any invalid_grant dead state
     return { ok: true };
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? "Unknown error" };
+    return { ok: false, error: fetchErrorText(e, SCHWAB_TOKEN_TIMEOUT_MS) };
   }
 }
 
@@ -191,7 +220,15 @@ export function getSchwabStatus(): {
   lastRefreshError: { at: number; status: number; message: string } | null;
   /** Token storage at rest: mode (encrypted / plaintext-local / locked) and why. */
   tokenStore: TokenStoreStatus;
+  /** Demo edition: "connected" to the simulated market, not to Schwab. */
+  demo?: boolean;
 } {
+  if (isDemoEdition()) {
+    return {
+      connected: true, expiresIn: 1800, refreshExpiresIn: 7 * 86400, needsReauth: false,
+      staleAccessToken: false, lastRefreshError: null, tokenStore: tokenStoreStatus(), demo: true,
+    };
+  }
   const tok = readSchwabTokens();
   if (tok.status !== "ok") {
     // none, locked (no key on a reachable bind) or decrypt_failed: not connected,
@@ -232,6 +269,7 @@ export function getSchwabStatus(): {
 
 /** Returns the OAuth authorize URL to open in a new tab. */
 export function getAuthUrl(): string {
+  if (isDemoEdition()) throw new Error(DEMO_SIGN_IN_OFF);
   const params = new URLSearchParams({
     response_type: "code",
     client_id: getClientId(),
@@ -324,6 +362,12 @@ export async function schwabFetchMeta(
   params?: Record<string, string | number>,
   opts?: { skipCache?: boolean },
 ): Promise<SchwabFetchResult> {
+  if (isDemoEdition()) {
+    const now = Date.now();
+    const data = demoSchwabPayload(path, params, now);
+    if (data == null) return { data: null, freshness: null, reason: "Demo edition: no Schwab streamer for sample data" };
+    return { data, freshness: freshFreshness(now, schwabDataKind(path, params), false), reason: null };
+  }
   const token = await getAccessToken();
   if (!token) return { data: null, freshness: null, reason: "Schwab not connected" };
 
@@ -394,6 +438,7 @@ export async function schwabFetchMeta(
     _reqLog.push(Date.now());
     try {
       const res = await fetch(url.toString(), {
+        signal: AbortSignal.timeout(SCHWAB_FETCH_TIMEOUT_MS),
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: "application/json",
@@ -451,12 +496,13 @@ export async function schwabFetchMeta(
       console.warn("[schwab] fetch failed:", res.status, path);
       return serveStale(`Schwab HTTP ${res.status}`);
     } catch (e: any) {
-      console.warn("[schwab] fetch exception:", e?.message, path);
+      const why = fetchErrorText(e, SCHWAB_FETCH_TIMEOUT_MS);
+      console.warn("[schwab] fetch exception:", why, path);
       if (attempt < maxAttempts) {
         await sleep(500 * attempt);
         continue;
       }
-      return serveStale(`Schwab request failed (${e?.message ?? "network"})`);
+      return serveStale(`Schwab request failed (${why})`);
     }
   }
   console.warn("[schwab] all retries exhausted:", path, "last:", lastStatus);
@@ -507,7 +553,7 @@ export function getSchwabDiagnostics() {
 let _refreshInterval: ReturnType<typeof setInterval> | null = null;
 
 export function startTokenRefreshCycle(): void {
-  if (_refreshInterval) return;
+  if (_refreshInterval || isDemoEdition()) return;
   // 10-min cadence with a 25-min lookahead: tokens live 30 min, so the old
   // 20-min timer + 1-min lookahead could let a token lapse between ticks and
   // leave a dead window for every poller in between.
@@ -574,45 +620,12 @@ export async function getStreamerInfo(): Promise<StreamerInfo | null> {
   return meta.data ? parseStreamerInfo(meta.data) : null;
 }
 
-export interface SchwabSelfTestItem { name: string; ok: boolean; status: number | null; detail: string }
-
-/**
- * Live check of each Schwab API this app uses, uncached, with plain-language
- * results for the Settings panel. Never returns tokens or account ids.
- */
-export async function schwabSelfTest(): Promise<{ connected: boolean; items: SchwabSelfTestItem[] }> {
-  const token = await getAccessToken();
-  if (!token) return { connected: false, items: [{ name: "Sign-in", ok: false, status: null, detail: "Schwab is not connected or the sign-in expired. Use Connect Schwab." }] };
-  const probe = async (name: string, url: string, summarize: (j: any) => string): Promise<SchwabSelfTestItem> => {
-    try {
-      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
-      if (r.ok) {
-        let j: any = null;
-        try { j = await r.json(); } catch { /* empty body */ }
-        return { name, ok: true, status: r.status, detail: summarize(j) };
-      }
-      const why =
-        r.status === 401 ? "Schwab refused the sign-in for this API (401). If only this line fails, your Schwab app lacks the product this API belongs to; if every line fails, reconnect Schwab and check SCHWAB_CLIENT_SECRET." :
-        r.status === 403 ? "Schwab says this app is not entitled to this data (403). Check the API products on developer.schwab.com." :
-        r.status === 429 ? "Rate limited by Schwab (429). Try again in a minute." :
-        `Schwab answered ${r.status}.`;
-      return { name, ok: false, status: r.status, detail: why };
-    } catch (e: any) {
-      return { name, ok: false, status: null, detail: `Could not reach Schwab: ${e?.message ?? "network error"}` };
-    }
-  };
-  const items = await Promise.all([
-    probe("Quotes (SPY, $SPX, $VIX)", `${MARKET_BASE}/quotes?symbols=${encodeURIComponent("SPY,$SPX,$VIX")}&fields=quote`,
-      (j) => { const n = j ? Object.keys(j).length : 0; const spy = j?.SPY?.quote?.lastPrice; return `${n} of 3 symbols returned${typeof spy === "number" ? `; SPY last ${spy}` : ""}`; }),
-    probe("Daily price history (SPY, 1 month)", `${MARKET_BASE}/pricehistory?symbol=SPY&periodType=month&period=1&frequencyType=daily&frequency=1`,
-      (j) => `${Array.isArray(j?.candles) ? j.candles.length : 0} daily bars`),
-    probe("Option chain (SPY, 4 strikes)", `${MARKET_BASE}/chains?symbol=SPY&strikeCount=4&contractType=ALL`,
-      (j) => { const exps = j?.callExpDateMap ? Object.keys(j.callExpDateMap).length : 0; return exps ? `${exps} expirations returned` : `answered with no expirations (status ${j?.status ?? "?"})`; }),
-    probe("Streaming info (Trader API)", `${SCHWAB_BASE}/trader/v1/userPreference`,
-      (j) => (Array.isArray(j?.streamerInfo) && j.streamerInfo.length ? "streamer info returned" : "no streamer info in the answer")),
-  ]);
-  return { connected: true, items };
-}
+/** Shared single-flight probe; raw credentials and account identifiers never leave the server. */
+export const schwabSelfTest = createSchwabInputValidator({
+  demo: isDemoEdition,
+  token: getAccessToken,
+  fetch: (input, init) => globalThis.fetch(input, init),
+});
 
 /**
  * Start the one Schwab Streamer connection (server/schwabStream.ts) with this
@@ -621,6 +634,10 @@ export async function schwabSelfTest(): Promise<{ connected: boolean; items: Sch
  * WebSocket, else the `ws` package.
  */
 export async function bootSchwabStream(): Promise<void> {
+  if (isDemoEdition()) {
+    console.log("[schwab-stream] demo edition: simulated sample data, no streamer");
+    return;
+  }
   if (process.env.BATCAVE_STREAM === "0") {
     console.log("[schwab-stream] disabled (BATCAVE_STREAM=0): REST snapshots only");
     return;
@@ -848,11 +865,15 @@ export async function getPriceHistory(
 
 /** Schwab chain underlying block (index points or $/share). */
 export interface ChainUnderlying {
+  /** Wire symbol of the underlying ($SPX, SPY, ...): sets the dividend-yield basis of every gamma consumer. */
+  symbol?: string | null;
   last: number | null;
   bid: number | null;
   ask: number | null;
   /** Schwab underlying.close: previous session close as reported by the chain. */
   close?: number | null;
+  /** Schwab underlying.openPrice: today's regular-session open as reported by the chain (the 0DTE map's gap). */
+  openPrice?: number | null;
   /** Schwab underlying.quoteTime, epoch ms. */
   quoteTimeMs?: number | null;
   /** Schwab chain isDelayed flag (true would mean the entitlement serves delayed data). */
@@ -988,10 +1009,12 @@ export async function getOptionChain(
     const ao = chainAsOf(quoteTimeMs, f.asOfMs);
     return {
       underlying: {
+        symbol: wireSymbol,
         last,
         bid: num(u.bid),
         ask: num(u.ask),
         close: num(u.close),
+        openPrice: num(u.openPrice),
         quoteTimeMs,
         delayed: typeof data.isDelayed === "boolean" ? data.isDelayed : typeof u.delayed === "boolean" ? u.delayed : null,
       },

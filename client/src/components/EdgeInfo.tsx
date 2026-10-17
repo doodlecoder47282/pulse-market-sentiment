@@ -58,9 +58,10 @@ const INFO: Record<string, InfoEntry> = {
   },
   "thermal-heatmap": {
     title: "Thermal \u00b7 Dealer Gamma Map",
-    what: "Gamma notional at every strike and expiry date. Green = dealers long gamma (they defend, price stabilizes). Red = short gamma (they chase, moves accelerate). Per-date scale lights each date at its own max.",
-    how: "Find the brightest green band near spot \u2014 that's where dealers defend hardest. Bright red below spot is an air pocket. Hover or tap a cell for exact numbers and its % of that date's max.",
-    edge: "Price gravitates toward heavy green and slides fast through red. You're reading the terrain before the battle \u2014 most traders only see the price.",
+    what: "Estimated dealer gamma at every strike and expiry: for each contract, Black-Scholes gamma from Schwab's implied vol, times open interest, times 100, times spot squared, times 1%. That is the dollar delta hedge dealers would need per 1% move. Calls count as dealer-long (green), puts as dealer-short (red): the SqueezeMetrics convention, an assumption about who holds what, not observed positioning. Open interest is the prior close's (OCC posts it once a day), so positions opened today are not in the map. Volume is never blended in.",
+    how: "Green near spot: dealers who are long gamma hedge against the move (selling as price rises, buying as it falls), which tends to damp moves. Red: short gamma, hedging goes with the move and tends to amplify it. Each date is shaded to its own max by default; the max is printed under the date so a dim far column is not mistaken for a heavy one. Switch to one scale to compare dates. Tap a cell for the exact dollars, open interest and today's volume.",
+    edge: "Published evidence is about volatility, not direction: large negative dealer gamma goes with intraday momentum and bigger moves (Barbon and Buraschi, Gamma Fragility; Baltussen, Da, Lammers and Martens, J. Financial Economics 2021), and hedging clusters closes near heavy strikes on expiry days (Ni, Pearson and Poteshman 2005). After controlling for VIX, GEX adds little next-day volatility information. Batcave claims no edge from this map and grades no trades off it.",
+    risk: "The dealer-side assumption can be wrong for a given strike (Cboe's tagged 0DTE data found market-maker flow close to balanced). Open interest lags a day. A headline moves price through any wall.",
   },
   "heatseeker-map": {
     title: "0DTE Greek Heatmap",
@@ -220,7 +221,7 @@ export default function EdgeInfo({ id, className = "" }: { id: string; className
           </div>
           {/* Footer */}
           <div className="border-t border-slate-800 bg-slate-900/40 px-5 py-2.5 text-center font-mono text-[11px] uppercase tracking-widest text-slate-400">
-            every read is probabilistic · size accordingly
+            every read is probabilistic · not a forecast or advice
           </div>
         </DialogContent>
       </Dialog>

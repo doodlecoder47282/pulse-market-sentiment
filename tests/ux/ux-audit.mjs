@@ -1,4 +1,7 @@
-// UX audit: every tab at six viewports. Screenshots + layout/readability metrics.
+// UX audit: every tab at eight viewports (two phones, iPad portrait and
+// landscape, a 13-inch iPad landscape, laptop, wide). Screenshots +
+// layout/readability metrics. Touch viewports emulate a coarse pointer
+// through CDP so the CSS touch rules apply exactly as on a real iPhone/iPad.
 // Run in CI against a production build on BASE_URL. Writes rep/ux/.
 import { chromium } from "playwright";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -9,8 +12,9 @@ const tabs = ["signals", "chart", "models", "heatseeker", "tradedesk", "regime",
 const viewports = [
   { name: "phone-se", width: 375, height: 667, mobile: true },
   { name: "phone-15", width: 393, height: 852, mobile: true },
-  { name: "tablet-portrait", width: 768, height: 1024, mobile: true },
-  { name: "tablet-landscape", width: 1024, height: 768, mobile: true },
+  { name: "tablet-portrait", width: 820, height: 1180, mobile: true },    // iPad Air / Pro 11
+  { name: "tablet-landscape", width: 1180, height: 820, mobile: true },
+  { name: "tablet-13-landscape", width: 1376, height: 1032, mobile: true }, // iPad Pro 13
   { name: "laptop", width: 1440, height: 900, mobile: false },
   { name: "wide", width: 1920, height: 1080, mobile: false },
 ];
@@ -21,10 +25,13 @@ function measure(isMobile) {
   const visible = (el) => {
     const r = el.getBoundingClientRect();
     const cs = getComputedStyle(el);
-    return r.width > 0 && r.height > 0 && cs.visibility !== "hidden" && cs.display !== "none" && cs.opacity !== "0";
+    if (!(r.width > 0 && r.height > 0 && cs.visibility !== "hidden" && cs.display !== "none" && cs.opacity !== "0")) return false;
+    // Closed <details> content and other content-visibility: hidden subtrees keep a box but draw nothing.
+    if (typeof el.checkVisibility === "function" && !el.checkVisibility({ contentVisibilityAuto: true, visibilityProperty: true })) return false;
+    return true;
   };
   const label = (el) => {
-    const t = (el.innerText || el.getAttribute("aria-label") || el.getAttribute("placeholder") || "").trim().replace(/\s+/g, " ").slice(0, 60);
+    const t = ((el.ownerSVGElement ? el.textContent : el.innerText) || el.getAttribute("aria-label") || el.getAttribute("placeholder") || "").trim().replace(/\s+/g, " ").slice(0, 60);
     const tid = el.getAttribute("data-testid");
     return `${el.tagName.toLowerCase()}${tid ? `[${tid}]` : ""} "${t}"`;
   };
@@ -52,6 +59,63 @@ function measure(isMobile) {
     const hidesX = cs.overflowX === "hidden" || cs.overflow === "hidden";
     if (hidesX && el.scrollWidth > el.clientWidth + 2 && cs.textOverflow !== "ellipsis") clipped.push(label(el));
   }
+  // Overlapping text: two text-bearing elements whose VISIBLE boxes intersect
+  // while neither contains the other (labels drawn over each other, cards
+  // colliding). Boxes are clipped to overflow-hidden/scroll ancestors (a
+  // marquee's off-screen text is not an overlap), elements inside fixed or
+  // absolute layers (bottom bar, pills, tooltips) are skipped, SVG text is
+  // counted separately (chart tick labels).
+  // Clip boxes: one per line box (getClientRects), so an inline span that
+  // wraps across lines is not reported as covering the whole paragraph.
+  const clipBoxes = (el) => {
+    const limits = { left: -Infinity, top: -Infinity, right: Infinity, bottom: Infinity };
+    for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+      const cs = getComputedStyle(p);
+      if (cs.position === "fixed" || cs.position === "absolute") return null;
+      const ox = cs.overflowX, oy = cs.overflowY;
+      if (ox !== "visible" || oy !== "visible") {
+        const pr = p.getBoundingClientRect();
+        if (ox !== "visible") { limits.left = Math.max(limits.left, pr.left); limits.right = Math.min(limits.right, pr.right); }
+        if (oy !== "visible") { limits.top = Math.max(limits.top, pr.top); limits.bottom = Math.min(limits.bottom, pr.bottom); }
+      }
+    }
+    const out = [];
+    for (const r of Array.from(el.getClientRects())) {
+      const b = { left: Math.max(r.left, limits.left), top: Math.max(r.top, limits.top), right: Math.min(r.right, limits.right), bottom: Math.min(r.bottom, limits.bottom) };
+      if (b.right - b.left > 4 && b.bottom - b.top > 4) out.push(b);
+    }
+    return out.length ? out : null;
+  };
+  const ownText = (el) => Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.textContent.trim());
+  const textLeaves = [], svgLeaves = [];
+  for (const el of all) {
+    // innerText is what is drawn (HTML only); SVG text has no innerText, so its textContent is used.
+    if (!ownText(el) || !((el.ownerSVGElement ? el.textContent : el.innerText) ?? "").trim()) continue;
+    const cs = getComputedStyle(el);
+    if (cs.position === "fixed" || cs.position === "absolute") continue;
+    const boxes = clipBoxes(el);
+    if (!boxes) continue;
+    const top = Math.min(...boxes.map((b) => b.top)), bottom = Math.max(...boxes.map((b) => b.bottom));
+    (el.ownerSVGElement ? svgLeaves : textLeaves).push({ el, boxes, top, bottom });
+  }
+  const boxesMeet = (A, B) => A.boxes.some((a) => B.boxes.some((b) =>
+    Math.min(a.right, b.right) - Math.max(a.left, b.left) > 4 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 4));
+  const findOverlaps = (items, cap) => {
+    items.sort((a, b) => a.top - b.top);
+    const out = [];
+    for (let i = 0; i < items.length && out.length < cap; i++) {
+      const A = items[i];
+      for (let j = i + 1; j < items.length; j++) {
+        const B = items[j];
+        if (B.top >= A.bottom - 4) break;
+        if (A.el.contains(B.el) || B.el.contains(A.el)) continue;
+        if (boxesMeet(A, B)) { out.push(`${label(A.el)} x ${label(B.el)}`); if (out.length >= cap) break; }
+      }
+    }
+    return out;
+  };
+  const overlaps = findOverlaps(textLeaves, 40);
+  const svgOverlaps = findOverlaps(svgLeaves, 40);
   // Tap targets (mobile): interactive elements under 44x44 CSS px (Apple HIG) / 24x24 (WCAG 2.2 minimum).
   const interactive = all.filter((el) => el.matches("button, a[href], [role=button], [role=tab], input, select, textarea, [role=switch], [role=checkbox]"));
   const smallTargets = [], tinyTargets = [];
@@ -92,6 +156,8 @@ function measure(isMobile) {
     docOverflowX, scrollHeight: document.documentElement.scrollHeight,
     offscreenCount: offscreen.length, offscreen: offscreen.slice(0, 10),
     clippedCount: clipped.length, clipped: clipped.slice(0, 10),
+    overlapCount: overlaps.length, overlaps: overlaps.slice(0, 10),
+    svgOverlapCount: svgOverlaps.length, svgOverlaps: svgOverlaps.slice(0, 6),
     interactiveCount: interactive.length,
     smallTargetCount: smallTargets.length, smallTargets: smallTargets.slice(0, 10),
     tinyTargetCount: tinyTargets.length, tinyTargets: tinyTargets.slice(0, 10),
@@ -108,13 +174,40 @@ for (const vp of viewports) {
   mkdirSync(`${OUT}/${vp.name}`, { recursive: true });
   const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, isMobile: vp.mobile, hasTouch: vp.mobile, deviceScaleFactor: 1 });
   const p = await ctx.newPage();
+  if (vp.mobile) {
+    // Real iPhones and iPads report (pointer: coarse) and (hover: none); the
+    // CSS touch rules key on them, so force them whatever Playwright's version does.
+    const cdp = await ctx.newCDPSession(p);
+    await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "pointer", value: "coarse" }, { name: "hover", value: "none" }, { name: "any-pointer", value: "coarse" }] });
+  }
   const errors = [];
   p.on("pageerror", (e) => errors.push(e.message));
   p.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text().slice(0, 160)); });
   await p.addInitScript(() => {
-    window.__cls = 0; window.__longTasks = 0;
+    window.__cls = 0; window.__longTasks = 0; window.__shifts = [];
     try {
-      new PerformanceObserver((l) => { for (const e of l.getEntries()) if (!e.hadRecentInput) window.__cls += e.value; }).observe({ type: "layout-shift", buffered: true });
+      new PerformanceObserver((l) => {
+        for (const e of l.getEntries()) {
+          if (e.hadRecentInput) continue;
+          window.__cls += e.value;
+          // Which elements moved (largest shifts first in the report).
+          for (const s of e.sources || []) {
+            const n = s.node;
+            if (!n || n.nodeType !== 1) continue;
+            const tid = n.getAttribute("data-testid");
+            const txt = (n.innerText || "").trim().replace(/\s+/g, " ").slice(0, 40);
+            const card = n.closest("[data-testid]");
+            window.__shifts.push({
+              v: Math.round(e.value * 1000) / 1000,
+              t: Math.round(e.startTime - (window.__clsT0 ?? 0)),
+              el: `${n.tagName.toLowerCase()}${tid ? `[${tid}]` : ""} "${txt}"`,
+              in: card && card !== n ? card.getAttribute("data-testid") : null,
+              dy: Math.round((s.currentRect?.y ?? 0) - (s.previousRect?.y ?? 0)),
+              prevH: Math.round(s.previousRect?.height ?? 0), curH: Math.round(s.currentRect?.height ?? 0),
+            });
+          }
+        }
+      }).observe({ type: "layout-shift", buffered: true });
       new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__longTasks += e.duration; }).observe({ type: "longtask", buffered: true });
     } catch {}
   });
@@ -138,7 +231,7 @@ for (const vp of viewports) {
     const entry = { viewport: vp.name, width: vp.width, tab: t };
     if (!(await btn.count())) { entry.missing = true; report.push(entry); continue; }
     entry.tabButtonVisible = await btn.first().isVisible();
-    await p.evaluate(() => { window.__cls = 0; window.__longTasks = 0; window.scrollTo(0, 0); });
+    await p.evaluate(() => { window.__cls = 0; window.__longTasks = 0; window.__shifts = []; window.__clsT0 = performance.now(); window.scrollTo(0, 0); });
     const c0 = Date.now();
     if (!entry.tabButtonVisible && btn === bottom && (await p.locator('[data-testid="bottomnav-more"]').count())) {
       // Phone: secondary tabs live in the "More" sheet.
@@ -151,8 +244,15 @@ for (const vp of viewports) {
     }
     await p.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
     entry.switchMs = Date.now() - c0;
+    // Layout shift in two windows: while the tab loads (skeleton -> content,
+    // expected in a data app, kept under a loose ceiling) and after its data
+    // has arrived (shifts while the user is reading: the strict budget).
+    entry.clsLoad = await p.evaluate(() => Math.round(window.__cls * 1000) / 1000);
+    if (entry.clsLoad > 0.05) entry.shiftsLoad = await p.evaluate(() => window.__shifts.sort((a, b) => b.v - a.v).slice(0, 6));
+    await p.evaluate(() => { window.__cls = 0; window.__shifts = []; window.__clsT0 = performance.now(); });
     await p.waitForTimeout(2500);
     entry.cls = await p.evaluate(() => Math.round(window.__cls * 1000) / 1000);
+    if (entry.cls > 0.05) entry.shifts = await p.evaluate(() => window.__shifts.sort((a, b) => b.v - a.v).slice(0, 6));
     entry.longTaskMs = await p.evaluate(() => Math.round(window.__longTasks));
     Object.assign(entry, await p.evaluate(measure, vp.mobile));
     await p.screenshot({ path: `${OUT}/${vp.name}/${String(i + 1).padStart(2, "0")}-${t}.png` });
@@ -184,12 +284,15 @@ console.log("ux audit done", report.length);
       docOverflowX: Math.max(0, ...tabsHere.map((e) => e.docOverflowX ?? 0)),
       clippedText: sum("clippedCount"),
       offscreen: sum("offscreenCount"),
+      overlappingText: sum("overlapCount"),
+      overlappingSvgText: sum("svgOverlapCount"),
       tapTargetsUnder24: sum("tinyTargetCount"),
       pageErrorsExcluding503: (meta.pageErrors ?? []).filter((x) => !/\b503\b/.test(x)).length,
       worstTab: {
         textUnder10px: Math.max(0, ...tabsHere.map((e) => e.tinyText ?? 0)),
         contrastFailures: Math.max(0, ...tabsHere.map((e) => e.lowContrast ?? 0)),
         cls: Math.max(0, ...tabsHere.map((e) => e.cls ?? 0)),
+        clsLoad: Math.max(0, ...tabsHere.map((e) => e.clsLoad ?? 0)),
         tabSwitchMs: Math.max(0, ...tabsHere.map((e) => e.switchMs ?? 0)),
       },
       tabsMeasured: tabsHere.length,
@@ -197,7 +300,7 @@ console.log("ux audit done", report.length);
     scorecard[vp] = s;
     const pv = budget.perViewport;
     for (const k of ["docOverflowX", "clippedText", "pageErrorsExcluding503"]) if (s[k] > pv[k]) failures.push(`${vp}: ${k} ${s[k]} > ${pv[k]}`);
-    for (const k of ["offscreen", "tapTargetsUnder24"]) if (s[k] > pick(pv[k], vp)) failures.push(`${vp}: ${k} ${s[k]} > ${pick(pv[k], vp)}`);
+    for (const k of ["offscreen", "tapTargetsUnder24", "overlappingText"]) if (pv[k] != null && s[k] > pick(pv[k], vp)) failures.push(`${vp}: ${k} ${s[k]} > ${pick(pv[k], vp)}`);
     for (const [k, lim] of Object.entries(budget.perTab)) if (s.worstTab[k] > lim) failures.push(`${vp}: worst tab ${k} ${s.worstTab[k]} > ${lim}`);
     if (s.tabsMeasured < tabs.length) failures.push(`${vp}: only ${s.tabsMeasured} of ${tabs.length} tabs measured`);
   }

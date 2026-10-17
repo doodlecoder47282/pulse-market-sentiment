@@ -49,9 +49,11 @@ import {
   CRYPTO_SIGNAL_COUNTS_SQL, type SocialStatus, type SocialSourceStatus,
   observedNumber, gradeSignal, cryptoCoinCountsSql, summarizeDeskStats, type CryptoDeskStats,
   CRYPTO_GRADER_BATCH, CRYPTO_PEAK_SAMPLE_SQL, CRYPTO_GRADER_MARK_SQL, CRYPTO_GRADER_NO_DATA_SQL, peakSamplingNote,
+  peakSampleParams, graderMarkParams, graderNoDataParams,
   holderConcentration, countMentions, socialCoverage, type HolderAccount, type DexPool,
   momentumPoints, honeypotRead, jupiterAllowsEnter,
 } from "./cryptoStats";
+import { classifyMeme, linePosition, tradeCost, type LinePosition, type MemeClass, type TradeCost } from "../shared/memeStructure";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -139,6 +141,16 @@ export interface Candidate {
   verdict: "ENTER" | "WATCH" | "PASS" | null;
   verdictReasons: string[];
   risk: RiskParams | null;
+
+  // structural read (shared/memeStructure.ts): launch order, category, cost of a round trip
+  structure: CandidateStructure | null;
+}
+
+export interface CandidateStructure {
+  line: LinePosition;
+  category: MemeClass;
+  /** Round trip of the risk-sized position (or $100 when there is none) against the pool's depth. */
+  cost: TradeCost;
 }
 
 export interface RiskParams {
@@ -390,6 +402,7 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
     ageMinutes: null, volAccel: null, netBuyRatio5m: null,
     fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
     hardKill: false, score: null, verdict: null, verdictReasons: [], risk: null,
+    structure: null,
   };
   // GT gives a coarse first look — momentum engine refines with DexScreener.
   c.marketCap = effMcap ?? c.marketCap;
@@ -562,7 +575,7 @@ function recordPeakSample(c: Candidate): void {
   if (c.marketCap == null || !Number.isFinite(c.marketCap)) return;
   try {
     _peakStmt = _peakStmt ?? sqlite.prepare(CRYPTO_PEAK_SAMPLE_SQL);
-    _peakStmt.run(c.marketCap, c.lastRefreshAt ?? Date.now(), c.liquidityUsd, c.chain, c.pairAddress);
+    _peakStmt.run(peakSampleParams(c.marketCap, c.lastRefreshAt ?? Date.now(), c.liquidityUsd, c.chain, c.pairAddress));
   } catch (e: any) {
     console.warn(`[crypto:peak] ${e?.message ?? e}`);
   }
@@ -1023,16 +1036,23 @@ function scoreCandidate(c: Candidate): void {
   // risk params — sized off exit liquidity, never conviction
   if (verdict === "ENTER" || verdict === "WATCH") {
     const maxPos = Math.floor(Math.min(liq * 0.005, 400)); // 0.5% of pool, hard cap
+    // Execution cost from the pool's depth (constant product, shared/memeStructure.ts),
+    // replacing the old (size / liquidity) x 200 guess: the round trip of the
+    // sized position when the quote is back at the entry.
+    const rt = tradeCost({ liquidityUsd: c.liquidityUsd, sizeUsd: Math.max(1, maxPos) });
     c.risk = {
       maxPositionUsd: Math.max(0, maxPos),
       suggestedStopPct: -35,
       liquidityExitStopPct: -30,
       targetMcap: TARGET_MCAP,
       targetMultiple: mcap > 0 ? Number((TARGET_MCAP / mcap).toFixed(1)) : null,
-      estSlippagePct: liq > 0 ? Number(Math.min(15, (maxPos / liq) * 200).toFixed(1)) : 15,
+      estSlippagePct: rt.roundTripPct ?? 15,
       holdHorizonHours: 24,
       notes: [
         "size = 0.5% of pool liquidity — the exit is the constraint, not the entry",
+        rt.roundTripPct != null
+          ? `round trip ${rt.roundTripPct}% of size at this depth (fees ${rt.feesRoundTripPct}% + impact ${rt.impactBuyPct}% / ${rt.impactSellPct}%); break-even move ${rt.breakEvenMovePct ?? "none"}%`
+          : "round-trip cost unknown: pool liquidity not reported",
         "most signals here still lose; the math needs the 4-5x winners",
         "UNCALIBRATED: tracking mode until at least 50 first-ENTER coins are graded with a no-data share of 20% or less (a minimum sample, not a calibration)",
       ],
@@ -1040,6 +1060,18 @@ function scoreCandidate(c: Candidate): void {
   } else {
     c.risk = null;
   }
+
+  // Structural read: where a public buyer stands in the launch order, which of
+  // the three categories the coin is in, and what a round trip costs here.
+  c.structure = {
+    line: linePosition(c.ageMinutes, c.pumpfunGraduate),
+    category: classifyMeme({
+      name: c.name, symbol: c.symbol, ageDays: c.ageMinutes == null ? null : c.ageMinutes / 1440,
+      liquidityUsd: c.liquidityUsd, top10Pct: c.top10Pct, mintAuthorityActive: c.mintAuthorityActive,
+      narrativeHits: c.narrativeHits, history: null,
+    }),
+    cost: tradeCost({ liquidityUsd: c.liquidityUsd, sizeUsd: c.risk ? Math.max(1, c.risk.maxPositionUsd) : 100 }),
+  };
 }
 
 // ─── 4. NARRATIVES — RSS keyword heat ───────────────────────────────────
@@ -1115,7 +1147,7 @@ async function graderTick(): Promise<void> {
         liq = observedNumber(p?.liquidity?.usd);
       } catch {
         // transient fetch error: retry next tick, unless it has failed for a week
-        if (age > NO_DATA_AFTER_ERRORS_MS) markNoData.run(now, row.id, TARGET_MCAP);
+        if (age > NO_DATA_AFTER_ERRORS_MS) markNoData.run(graderNoDataParams(now, row.id, TARGET_MCAP));
         continue;
       }
     }
@@ -1133,9 +1165,9 @@ async function graderTick(): Promise<void> {
       prevPeak, mcap, liq, ageMs: age,
       targetMcap: TARGET_MCAP, horizonMs: GRADE_HORIZON_MS,
     });
-    if (g.outcome === "NO_DATA") { markNoData.run(now, row.id, TARGET_MCAP); continue; }
+    if (g.outcome === "NO_DATA") { markNoData.run(graderNoDataParams(now, row.id, TARGET_MCAP)); continue; }
     if (g.outcome === "OPEN" && mcap == null) continue; // nothing new to record
-    mark.run(g.peak, now, mcap, liq, g.outcome, TARGET_MCAP, row.id);
+    mark.run(graderMarkParams(g.peak, now, mcap, liq, g.outcome, TARGET_MCAP, row.id));
   }
 }
 

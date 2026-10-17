@@ -344,7 +344,7 @@ export function CandlestickChart({
                 <text
                   x={chartLeft + 6}
                   y={priceToY(gamma.zeroGamma) - 3}
-                  fontSize={9}
+                  fontSize={10}
                   fill="#eab308"
                   fontFamily="var(--font-mono)"
                 >
@@ -369,7 +369,7 @@ export function CandlestickChart({
                 <text
                   x={chartLeft + 6}
                   y={priceToY(gamma.maxPain) + 10}
-                  fontSize={9}
+                  fontSize={10}
                   fill="#a855f7"
                   fontFamily="var(--font-mono)"
                 >

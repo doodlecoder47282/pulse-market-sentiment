@@ -248,8 +248,12 @@ export interface VRPEntry {
   dte: number;
   marketIV: number | null;
   theoreticalIV: number | null;
-  vrp: number | null;       // theoreticalIV - marketIV
-  signal: "sell_vol" | "buy_vol" | "neutral" | "n/a";
+  /** marketIV - theoreticalIV: positive = implied vol above the vendor's model vol (rich). */
+  vrp: number | null;
+  /** Descriptive, never an instruction. no_model: the vendor's theoretical
+   *  vol equals the market IV, so it is not an independent estimate and the
+   *  premium is not measurable from this chain. */
+  signal: "iv_rich" | "iv_cheap" | "fair" | "no_model" | "n/a";
 }
 
 export interface ChainAuditResult {
@@ -1044,12 +1048,19 @@ function computeVRP(contracts: Contract[], spot: number): VRPEntry[] {
     let signal: VRPEntry["signal"] = "n/a";
 
     if (marketIV != null && theoreticalIV != null) {
-      vrp = theoreticalIV - marketIV;
-      if (vrp < -0.01) signal = "sell_vol";       // mkt IV > theoretical → expensive
-      else if (vrp > 0.01) signal = "buy_vol";    // theoretical > mkt → cheap
-      else signal = "neutral";
-    } else if (marketIV != null) {
-      signal = "n/a";
+      // A vendor "theoretical" vol that is the market IV to the digit is not
+      // a model estimate (Schwab's theoreticalVolatility usually mirrors
+      // volatility): no premium can be read from it, and "fair" would be a
+      // false reading of healthy agreement.
+      const independent = atmContracts.some((c) => c.theoreticalIV != null && Math.abs(c.theoreticalIV - c.iv) > 1e-6);
+      if (!independent) {
+        signal = "no_model";
+      } else {
+        vrp = marketIV - theoreticalIV;
+        if (vrp > 0.02) signal = "iv_rich";        // implied above the model vol
+        else if (vrp < -0.02) signal = "iv_cheap"; // implied below the model vol
+        else signal = "fair";
+      }
     }
 
     entries.push({ expiry, dte, marketIV, theoreticalIV, vrp, signal });

@@ -1,8 +1,16 @@
 import EdgeInfo from "@/components/EdgeInfo";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Flame, Activity, AlertTriangle } from "lucide-react";
+
+import DataStateChip from "@/components/DataStateChip";
+import ThermalSurface from "@/components/ThermalSurface";
+// three.js is fetched only when the 3D view opens.
+const ThermalSurface3D = lazy(() => import("@/components/ThermalSurface3D"));
+function canWebGL(): boolean {
+  try { const c = document.createElement("canvas"); return !!(c.getContext("webgl2") || c.getContext("webgl")); } catch { return false; }
+}
 
 type Cell = {
   expIdx: number; strikeIdx: number;
@@ -10,6 +18,10 @@ type Cell = {
   exposure: number;
   gex: number; vanna: number; charm: number; vomma: number; zomma: number;
   callOI: number; putOI: number;
+  callVolume?: number; putVolume?: number;
+  /** Per-side split of the selected greek (newer servers). exposure = callExposure + putExposure
+   *  when both priced; null = that side had open interest but no usable IV (unknown, not zero). */
+  callExposure?: number | null; putExposure?: number | null; callUnpricedOI?: number; putUnpricedOI?: number;
 };
 type ThermalResp = {
   symbol: string;
@@ -18,21 +30,37 @@ type ThermalResp = {
   greek: "gex" | "vanna" | "charm" | "vomma" | "zomma";
   weightMode: string;
   strikes: number[];
-  expiries: Array<{ label: string; dte: number }>;
+  expiries: Array<{ label: string; dte: number; maxAbs?: number }>;
   cells: Cell[];
   maxAbs: number;
   strikeTotals: Array<{ strike: number; total: number; totalAbs: number }>;
   levels: { callWall: number | null; putWall: number | null; gammaFlip: number | null };
+  /** Method and assumptions (server/thermalHeatmap.ts). Older servers omit it. */
+  method?: {
+    position: string;
+    positionAsOf: string;
+    dealerSignNote: string;
+    r: number;
+    q: number;
+    units: Record<string, string>;
+    contractsUsed: number;
+    contractsWithoutOI: number;
+    contractsSettled: number;
+    contractsNoSigma: number;
+  };
+  dataState?: "ok" | "no_iv" | "empty";
+  reason?: string | null;
+  chain?: { asOfMs: number | null; ageMs: number | null; servedFromCache: boolean; stale: boolean; staleReason: string | null };
   source: string;
 };
 
 type Greek = "gex" | "vanna" | "charm" | "vomma" | "zomma";
-const GREEKS: Array<{ key: Greek; label: string; desc: string }> = [
-  { key: "gex", label: "GEX", desc: "Gamma exposure — dealer hedging flow" },
-  { key: "vanna", label: "Vanna", desc: "Delta sensitivity to IV" },
-  { key: "charm", label: "Charm", desc: "Delta decay over time" },
-  { key: "vomma", label: "Vomma", desc: "Vega convexity" },
-  { key: "zomma", label: "Zomma", desc: "Gamma sensitivity to IV" },
+const GREEKS: Array<{ key: Greek; label: string; desc: string; unit: string }> = [
+  { key: "gex", label: "GEX", desc: "Dealer gamma: $ of delta hedge per 1% move", unit: "$ delta hedge per 1% spot move" },
+  { key: "vanna", label: "Vanna", desc: "Dealer delta change per +1 vol point", unit: "$ delta hedge per +1 vol point" },
+  { key: "charm", label: "Charm", desc: "Dealer delta change over one day", unit: "$ delta hedge over 1 day" },
+  { key: "vomma", label: "Vomma", desc: "Dealer vega change per +1 vol point", unit: "$ vega per +1 vol point" },
+  { key: "zomma", label: "Zomma", desc: "GEX change per +1 vol point", unit: "$ GEX per +1 vol point" },
 ];
 
 // Diverging color: positive = emerald (long gamma / support), negative = rose (short gamma / risk)
@@ -75,7 +103,12 @@ export default function ThermalHeatmap() {
   // up green at its hottest strike and shades out from there. global: one scale
   // across the whole grid (near-dated OI dominates and far dates look dead).
   const [scaleMode, setScaleMode] = useState<"per-date" | "global">("per-date");
+  // grid: the strike x expiry table with the dollar in every cell; surface: the
+  // same numbers as a 3D height field on one scale (ThermalSurface.tsx).
+  const [viewMode, setViewMode] = useState<"grid" | "3d" | "surface">("grid");
+  const webgl = useMemo(() => canWebGL(), []);
   const [hover, setHover] = useState<Cell | null>(null);
+  const [showTable, setShowTable] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const { data: raw, isLoading, error } = useQuery<ThermalResp>({
@@ -91,8 +124,9 @@ export default function ThermalHeatmap() {
 
   // Layout constants — cells sized to carry their dollar value (hover-free
   // reading on mobile; the reference grid puts the number in the cell)
-  const rowH = 18;
-  const marginTop = 30;
+  // 10 px in-cell text is the floor the UX audit holds every screen to.
+  const rowH = 20;
+  const marginTop = 44;
   const marginLeft = 56;
   const marginRight = 90;
   const marginBottom = 26;
@@ -124,6 +158,8 @@ export default function ThermalHeatmap() {
     };
   }, [raw]);
   const data = view;
+  const canPlot = !!data && !error && data.dataState === "ok" && data.cells.length > 0;
+  useEffect(() => { setHover(null); }, [raw, greek]);
 
   // Max |exposure| per expiry column — drives per-date shading
   const colMax = useMemo(() => {
@@ -142,13 +178,13 @@ export default function ThermalHeatmap() {
     const nExps = data.expiries.length;
     if (!nStrikes || !nExps) return null;
     const height = marginTop + nStrikes * rowH + marginBottom;
-    const cellW = 64;
+    const cellW = 72;
     const width = marginLeft + nExps * cellW + marginRight;
     return { height, width, cellW, nStrikes, nExps };
   }, [data]);
 
   useEffect(() => {
-    if (!data || !grid) return;
+    if (!data || !grid || viewMode !== "grid") return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const dpr = window.devicePixelRatio || 1;
@@ -192,7 +228,7 @@ export default function ThermalHeatmap() {
       if (Math.abs(c.exposure) >= 1e-9) {
         const t = Math.min(1, Math.abs(c.exposure) / (norm || 1));
         const hot = Math.pow(t, 0.55) > 0.45;
-        ctx.font = isExtreme ? "bold 8.5px ui-monospace, monospace" : "8.5px ui-monospace, monospace";
+        ctx.font = isExtreme ? "bold 10px ui-monospace, monospace" : "10px ui-monospace, monospace";
         ctx.fillStyle = isExtreme
           ? "rgba(255,255,255,0.98)"
           : hot
@@ -203,11 +239,22 @@ export default function ThermalHeatmap() {
     }
     ctx.textBaseline = "alphabetic";
 
+    // Rows run high strike (top) to low strike (bottom); a level between two
+    // strikes is drawn between their rows, not snapped to the next strike.
+    const yOfLevel = (level: number): number | null => {
+      const ks = data.strikes;
+      if (!ks.length || level < ks[0] || level > ks[ks.length - 1]) return null;
+      let i = 0;
+      while (i < ks.length - 1 && ks[i + 1] < level) i++;
+      const lo = ks[i], hi = ks[Math.min(i + 1, ks.length - 1)];
+      const f = hi > lo ? (level - lo) / (hi - lo) : 0;
+      const rowCenter = (idx: number) => marginTop + (grid.nStrikes - 1 - idx) * rowH + rowH / 2;
+      return rowCenter(i) + f * (rowCenter(Math.min(i + 1, ks.length - 1)) - rowCenter(i));
+    };
     // Spot line
-    const spotIdx = data.strikes.findIndex(s => s >= data.spot);
-    if (spotIdx >= 0) {
-      const yIdx = grid.nStrikes - 1 - spotIdx;
-      const y = marginTop + yIdx * rowH + rowH / 2;
+    const spotY = yOfLevel(data.spot);
+    if (spotY != null) {
+      const y = spotY;
       ctx.strokeStyle = "rgba(250, 204, 21, 0.9)";
       ctx.lineWidth = 1.5;
       ctx.setLineDash([4, 4]);
@@ -225,10 +272,9 @@ export default function ThermalHeatmap() {
     // Gamma flip line (only for gex)
     if (greek === "gex" && data.levels.gammaFlip != null) {
       const flip = data.levels.gammaFlip;
-      const flipIdx = data.strikes.findIndex(s => s >= flip);
-      if (flipIdx >= 0) {
-        const yIdx = grid.nStrikes - 1 - flipIdx;
-        const y = marginTop + yIdx * rowH + rowH / 2;
+      const flipY = yOfLevel(flip);
+      if (flipY != null) {
+        const y = flipY;
         ctx.strokeStyle = "rgba(139, 92, 246, 0.8)";
         ctx.lineWidth = 1;
         ctx.setLineDash([2, 3]);
@@ -238,7 +284,7 @@ export default function ThermalHeatmap() {
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.fillStyle = "rgba(139, 92, 246, 0.9)";
-        ctx.font = "9px ui-monospace, monospace";
+        ctx.font = "10px ui-monospace, monospace";
         ctx.fillText(`flip ${flip.toFixed(0)}`, marginLeft + grid.nExps * grid.cellW + 4, y + 3);
       }
     }
@@ -246,7 +292,7 @@ export default function ThermalHeatmap() {
     // Strike labels (Y axis — every row at 18px pitch; every 2nd beyond 40 strikes)
     const strikeStep = grid.nStrikes > 40 ? 2 : 1;
     ctx.fillStyle = "rgba(203,213,225,0.85)";
-    ctx.font = "9px ui-monospace, monospace";
+    ctx.font = "10px ui-monospace, monospace";
     ctx.textAlign = "right";
     for (let i = 0; i < grid.nStrikes; i++) {
       if (i % strikeStep !== 0) continue;
@@ -256,21 +302,29 @@ export default function ThermalHeatmap() {
       ctx.fillText(String(strike), marginLeft - 6, y);
     }
 
-    // Expiry labels (X axis, DTE)
+    // Expiry labels (X axis): DTE, and under it the column's own max when each
+    // date is shaded to its own scale (so a dim far date is not read as heavy).
     ctx.fillStyle = "rgba(148,163,184,0.75)";
     ctx.textAlign = "center";
+    ctx.font = "10px ui-monospace, monospace";
     for (let j = 0; j < grid.nExps; j++) {
       const exp = data.expiries[j];
       const x = marginLeft + j * grid.cellW + grid.cellW / 2;
-      ctx.fillText(`${exp.dte}d`, x, marginTop - 8);
+      ctx.fillText(`${exp.dte}d`, x, marginTop - 20);
+      const cm = colMax[j];
+      if (scaleMode === "per-date" && cm > 0) {
+        ctx.fillStyle = "rgba(148,163,184,0.6)";
+        ctx.fillText(`max ${fmtCell(cm).replace(/^[+-]/, "")}`, x, marginTop - 8);
+        ctx.fillStyle = "rgba(148,163,184,0.75)";
+      }
     }
 
     // Title band
     ctx.fillStyle = "rgba(226,232,240,0.85)";
     ctx.font = "10px ui-monospace, monospace";
     ctx.textAlign = "left";
-    ctx.fillText(`${greek.toUpperCase()} notional · strike × expiry · ${scaleMode} scale · weight ${data.weightMode}`, marginLeft, marginTop - 18);
-  }, [data, grid, greek, scaleMode, colMax]);
+    ctx.fillText(`${greek.toUpperCase()} · strike × expiry · ${scaleMode === "per-date" ? "each date to its own max" : "one scale"} · open interest only`, marginLeft, marginTop - 32);
+  }, [data, grid, greek, scaleMode, colMax, viewMode]);
 
   // Hover handler
   function onMove(ev: React.MouseEvent<HTMLCanvasElement>) {
@@ -289,23 +343,43 @@ export default function ThermalHeatmap() {
   }
 
   return (
-    <div data-testid="thermal-heatmap" className="relative rounded-xl border border-slate-700/60 bg-slate-900/40 p-4">
+    <div data-testid="thermal-heatmap" className="relative rounded-xl border border-border bg-card p-4">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
         <div className="flex items-center gap-2">
           <Flame className="w-4 h-4 text-amber-400" />
-          <div className="text-slate-100 font-semibold text-sm tracking-wide">Thermal · dealer gamma map</div>
+          <div className="text-foreground font-semibold text-sm tracking-wide">Thermal · dealer exposure map</div>
           <EdgeInfo id="thermal-heatmap" />
         </div>
         <div className="flex flex-wrap items-center gap-1" data-testid="thermal-greek-selector">
+          {(["grid", "3d", "surface"] as const).map(m => (
+            <button
+              key={m}
+              data-testid={`thermal-view-${m}`}
+              aria-pressed={viewMode === m}
+              onClick={() => setViewMode(m)}
+              className={`min-h-[44px] px-2 py-0.5 text-xs rounded font-mono uppercase tracking-wider transition text-foreground ${
+                viewMode === m
+                  ? "bg-primary/15 border border-primary"
+                  : "border border-border"
+              }`}
+              disabled={m === "3d" && !webgl}
+              title={m === "grid" ? "Strike x expiry table with the dollar value in every cell" : m === "3d" ? (webgl ? "Interactive 3D: drag to rotate, pinch to zoom, call/put/net layers" : "WebGL is not available on this device; use 2.5D") : "Projected surface with rotate/tilt sliders (works without WebGL)"}
+            >
+              {m === "grid" ? "grid" : m === "3d" ? "3D" : "2.5D"}
+            </button>
+          ))}
+          <span className="mx-1 h-3 w-px bg-slate-700" />
           {(["per-date", "global"] as const).map(m => (
             <button
               key={m}
               data-testid={`thermal-scale-${m}`}
+              aria-pressed={scaleMode === m}
+              disabled={viewMode !== "grid"}
               onClick={() => setScaleMode(m)}
-              className={`px-2 py-0.5 text-[11px] rounded font-mono uppercase tracking-wider transition ${
+              className={`min-h-[44px] px-2 py-0.5 text-xs rounded font-mono uppercase tracking-wider transition text-foreground disabled:opacity-50 ${
                 scaleMode === m
-                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
-                  : "text-slate-400 hover:text-slate-200 border border-transparent"
+                  ? "bg-primary/15 border border-primary"
+                  : "border border-border"
               }`}
               title={m === "per-date" ? "Each expiry date normalizes to its own max — hottest strike lights up green, shading out within that date" : "One scale across the whole grid"}
             >
@@ -317,11 +391,12 @@ export default function ThermalHeatmap() {
             <button
               key={g.key}
               data-testid={`thermal-greek-${g.key}`}
+              aria-pressed={greek === g.key}
               onClick={() => setGreek(g.key)}
-              className={`px-2 py-0.5 text-[11px] rounded font-mono uppercase tracking-wider transition ${
+              className={`min-h-[44px] px-2 py-0.5 text-xs rounded font-mono uppercase tracking-wider transition text-foreground ${
                 greek === g.key
-                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
-                  : "text-slate-400 hover:text-slate-200 border border-transparent"
+                  ? "bg-primary/15 border border-primary"
+                  : "border border-border"
               }`}
               title={g.desc}
             >
@@ -339,14 +414,30 @@ export default function ThermalHeatmap() {
           <AlertTriangle className="w-3.5 h-3.5" /> heatmap unavailable — {String((error as Error).message)}
         </div>
       )}
-      {data && grid && (
-        <div className="relative hscroll-contain">
+      {data?.method && data.method.contractsNoSigma > 0 && canPlot && (
+        <p role="status" className="mb-3 text-sm text-foreground" data-testid="thermal-partial-coverage">
+          Partial exposure: {data.method.contractsNoSigma} contracts have no usable implied volatility and are excluded.
+          Missing-only cells are omitted, not priced at zero. Totals cover priced contracts only.
+        </p>
+      )}
+      {canPlot && data && grid && viewMode === "surface" && (
+        <ThermalSurface data={data} greek={greek} />
+      )}
+      {canPlot && data && grid && viewMode === "3d" && (
+        <Suspense fallback={<div className="py-8 text-center text-xs text-slate-400" data-testid="thermal-surface3d-loading">loading 3D view…</div>}>
+          <ThermalSurface3D data={data} greek={greek} unit={GREEKS.find(g => g.key === greek)?.unit} />
+        </Suspense>
+      )}
+      {canPlot && data && grid && viewMode === "grid" && (
+        <div className="relative hscroll-contain rounded-md bg-slate-950">
           <canvas
             ref={canvasRef}
             onMouseMove={onMove}
             onClick={onMove}
             onMouseLeave={() => setHover(null)}
             data-testid="thermal-heatmap-canvas"
+            role="img"
+            aria-label={`${greek.toUpperCase()} exposure grid. Exact values are available in the data table below.`}
             className="cursor-crosshair"
           />
           {hover && (
@@ -365,21 +456,62 @@ export default function ThermalHeatmap() {
                 </div>
               )}
               <div className="text-[11px] text-slate-500 mt-1">OI c/{hover.callOI} p/{hover.putOI}</div>
+              {(hover.callVolume != null || hover.putVolume != null) && (
+                <div className="text-[11px] text-slate-500">traded today c/{hover.callVolume ?? 0} p/{hover.putVolume ?? 0} (not in exposure)</div>
+              )}
             </div>
           )}
         </div>
       )}
 
+      {data && data.dataState && data.dataState !== "ok" && (
+        <div role="status" className="mt-2 flex items-center gap-2 text-sm text-foreground" data-testid="thermal-heatmap-state">
+          <AlertTriangle className="w-3.5 h-3.5" />
+          {data.dataState === "no_iv" ? "Exposure cannot be priced: " : "Nothing to show: "}{data.reason ?? data.dataState}
+        </div>
+      )}
+
+      {canPlot && data && (
+        <details className="mt-3 text-xs text-foreground" onToggle={e => setShowTable(e.currentTarget.open)} data-testid="thermal-data-table">
+          <summary className="cursor-pointer min-h-[44px] py-3">Read exact {greek.toUpperCase()} values</summary>
+          {showTable && <div className="max-h-80 overflow-auto">
+            <table className="w-full text-left tabular-nums">
+              <caption className="text-left pb-2">{GREEKS.find(g => g.key === greek)?.unit}. Signed model exposure, not observed dealer inventory.</caption>
+              <thead><tr><th scope="col">Expiry</th><th scope="col">Strike</th><th scope="col">Exposure ($)</th><th scope="col">Call OI</th><th scope="col">Put OI</th></tr></thead>
+              <tbody>{data.cells.map(c => <tr key={`${c.expIdx}-${c.strikeIdx}`} className="border-t border-border">
+                <td className="py-2 pr-2">{c.expiry}</td><td className="pr-2">{c.strike}</td>
+                <td className="pr-2">{c.exposure.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td><td className="pr-2">{c.callOI}</td><td>{c.putOI}</td>
+              </tr>)}</tbody>
+            </table>
+          </div>}
+        </details>
+      )}
+
       {data && (
-        <div className="mt-3 flex items-center justify-between text-[11px] font-mono text-slate-500">
-          <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-emerald-500/70" /> long gamma / support</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-rose-500/70" /> short gamma / risk</span>
-            {greek === "gex" && data.levels.callWall && <span className="text-emerald-400">call wall {data.levels.callWall}</span>}
-            {greek === "gex" && data.levels.putWall && <span className="text-rose-400">put wall {data.levels.putWall}</span>}
+        <div className="mt-3 space-y-1.5 text-xs leading-relaxed font-mono text-muted-foreground" data-testid="thermal-heatmap-legend">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-emerald-500/70" /> positive {greek.toUpperCase()} exposure (model)</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-rose-500/70" /> negative {greek.toUpperCase()} exposure (model)</span>
+              {greek === "gex" && data.levels.callWall && <span className="text-emerald-400">call wall {data.levels.callWall}</span>}
+              {greek === "gex" && data.levels.putWall && <span className="text-rose-400">put wall {data.levels.putWall}</span>}
+              {greek === "gex" && data.levels.gammaFlip != null && <span className="text-violet-300">flip {data.levels.gammaFlip.toFixed(0)}</span>}
+            </div>
+            <div className="flex items-center gap-2">
+              {data.chain && data.chain.asOfMs != null ? (
+                <DataStateChip state={data.chain.stale ? "stale" : "ok"} reason={data.chain.staleReason} asOf={data.chain.asOfMs} source="Schwab" showAge testId="thermal-chain-age" />
+              ) : (
+                <span className="flex items-center gap-1"><Activity className="w-3 h-3" /> {new Date(data.asOf).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-1">
-            <Activity className="w-3 h-3" /> {new Date(data.asOf).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          <div data-testid="thermal-heatmap-method">
+            {GREEKS.find((g) => g.key === greek)?.unit} · reported open interest, not intraday inventory, marked with the supplied spot and volatility
+            {data.method ? ` · assumed r ${(data.method.r * 100).toFixed(1)}% q ${(data.method.q * 100).toFixed(1)}% · ${data.method.contractsUsed} contracts priced` : ""}
+            {data.method && data.method.contractsNoSigma > 0 ? `, ${data.method.contractsNoSigma} without an implied vol` : ""}
+          </div>
+          <div>
+            Dealer side is assumed (long every call, short every put), not observed. A heuristic read of positioning, not a forecast or advice.
           </div>
         </div>
       )}

@@ -509,7 +509,7 @@ export function generateAnalysisText(
       ? " Too few years for a held-out check, so it is significant in-sample only, not validated."
       : opt.verdict === "held_up_not_significant"
         ? ` It ranked in the top half of same-length windows on the held-out years but not significantly (held-out p=${opt.significance?.outOfSample?.pValue.toFixed(2)} > ${SEASONAL_OOS_ALPHA}), so it is not validated.`
-      : "") + (opt.verdict === "validated_window_differs" ? "" : twNote);
+      : "") + twNote; // the tested-window note only outside the window-differs branch (which already names it)
   const lead = opt.verdict === "validated" ? "Analysis" : "In-sample analysis";
   return `${lead} of the ${symbol} seasonal pattern above shows that a Buy Date of ${opt.buyDate} and a Sell Date of ${opt.sellDate} has resulted in a geometric average return of ${opt.geometricAvgReturn >= 0 ? "+" : ""}${opt.geometricAvgReturn.toFixed(1)}% over the past ${lookback} years. This seasonal timeframe has shown positive results in ${positiveYears} of those ${opt.yearsTested} periods (${winPct}%), rated ${opt.confidenceLabel}.${verdictNote}${sigNote}${cycleNote}`;
 }

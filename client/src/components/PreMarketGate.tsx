@@ -36,6 +36,10 @@ export default function PreMarketGate({ onAcknowledge }: PreMarketGateProps) {
       <div
         ref={scrollRef}
         className="h-full w-full overflow-y-auto px-6 sm:px-10 md:px-16 py-10 sm:py-14"
+        style={{
+          paddingTop: "calc(2.5rem + env(safe-area-inset-top))",
+          paddingBottom: "calc(2.5rem + env(safe-area-inset-bottom))",
+        }}
       >
         <div className="max-w-3xl mx-auto text-neutral-300">
           <div className="mb-6 flex justify-end">

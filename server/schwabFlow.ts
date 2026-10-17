@@ -21,6 +21,9 @@ export interface SchwabFlowContract extends UnusualFlowContract {
   vega: number;
   iv: number;             // already on UnusualFlowContract but Schwab fills it
   mark: number;           // theo mid from Schwab
+  /** Schwab tradeTimeInLong / quoteTimeInLong (epoch ms); null when absent. Needed to attribute volume to prints (flowAttribution.ts). */
+  tradeTimeMs: number | null;
+  quoteTimeMs: number | null;
 }
 
 export interface SchwabFlowResponse {
@@ -140,6 +143,8 @@ export async function buildSchwabFlow(
           if (!isFinite(vega)) vega = 0;
           let iv = Number(c.volatility ?? 0);
           if (!isFinite(iv) || iv < 0) iv = 0;
+          const tradeTimeMs = typeof c.tradeTimeInLong === "number" && c.tradeTimeInLong > 0 ? c.tradeTimeInLong : null;
+          const quoteTimeMs = typeof c.quoteTimeInLong === "number" && c.quoteTimeInLong > 0 ? c.quoteTimeInLong : null;
 
           contracts.push({
             occ: String(c.symbol ?? `${symbol}_${expDate}_${type}_${strike}`),
@@ -165,6 +170,8 @@ export async function buildSchwabFlow(
             theta,
             vega,
             mark,
+            tradeTimeMs,
+            quoteTimeMs,
           });
         }
       }

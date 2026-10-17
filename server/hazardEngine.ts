@@ -24,6 +24,7 @@
 import { sqlite } from "./storage";
 import { schwabFetch } from "./schwab";
 import { ensureSpxMinuteBarsTable, etDayMod } from "./spxMinuteBars";
+import { editionFromEnv } from "../shared/edition";
 
 // ─── Minute bar store ─────────────────────────────────────────────────
 // One schema for spx_minute_bars (server/spxMinuteBars.ts): t/open/high/low/
@@ -41,6 +42,7 @@ const insertBar = sqlite.prepare(
 );
 
 function storeCandles(candles: any[]): number {
+  if (editionFromEnv() === "demo") return 0;
   let added = 0;
   const txn = sqlite.transaction((rows: any[]) => {
     for (const cd of rows) {
@@ -65,6 +67,7 @@ let lastBackfill: { at: number; added: number; chunksOk: number; chunksEmpty: nu
 /** Chunked backfill: walks back ~185 days in 10-day windows. Schwab minute
  *  history reaches ~6 months back; empty chunks past the horizon are normal. */
 export async function backfillSpxMinuteBars(maxDaysBack = 185): Promise<typeof lastBackfill> {
+  if (editionFromEnv() === "demo") return null;
   if (backfillRunning) return lastBackfill;
   backfillRunning = true;
   let added = 0, chunksOk = 0, chunksEmpty = 0;
@@ -116,7 +119,7 @@ export async function backfillSpxMinuteBars(maxDaysBack = 185): Promise<typeof l
 
 let refresherStarted = false;
 export function startHazardBackfill(): void {
-  if (refresherStarted) return;
+  if (refresherStarted || editionFromEnv() === "demo") return;
   refresherStarted = true;
   // Full backfill once at boot (idempotent — INSERT OR IGNORE), then keep the
   // last few days fresh every 6h.
@@ -133,6 +136,7 @@ function coverageDays(): number {
 /** RTH rows with derived ET date and minute-of-session (cached with the day cache). */
 let rthCache: { rows: Array<{ date: string; mod: number; h: number; l: number; c: number }>; dates: number } | null = null;
 function loadRthRows(): { rows: Array<{ date: string; mod: number; h: number; l: number; c: number }>; dates: number } {
+  if (editionFromEnv() === "demo") return { rows: [], dates: 0 };
   if (rthCache) return rthCache;
   const raw = sqlite
     .prepare("SELECT t, high AS h, low AS l, close AS c FROM spx_minute_bars ORDER BY t")

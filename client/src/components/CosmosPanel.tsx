@@ -423,7 +423,7 @@ function SolarSystemDiagram({
               {p.retrograde && (
                 <text
                   x={pt.x + ring.size + 5} y={pt.y - ring.size - 2}
-                  fontSize="9" fill={ACCENT_DANGER} fontFamily="monospace" fontWeight="bold"
+                  fontSize="10" fill={ACCENT_DANGER} fontFamily="monospace" fontWeight="bold"
                   style={{ pointerEvents: "none" }}
                 >℞</text>
               )}
@@ -500,7 +500,7 @@ function SolarSystemDiagram({
               {labels[hoverPlanet.id].toUpperCase()}
             </span>
             {hoverPlanet.retrograde && (
-              <span style={{ fontSize: 9, color: ACCENT_DANGER, border: `1px solid ${ACCENT_DANGER}`, padding: "1px 5px", borderRadius: 2 }}>℞ RETRO</span>
+              <span style={{ fontSize: 10, color: ACCENT_DANGER, border: `1px solid ${ACCENT_DANGER}`, padding: "1px 5px", borderRadius: 2 }}>℞ RETRO</span>
             )}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "2px 10px", fontSize: 10.5 }}>
@@ -521,7 +521,7 @@ function SolarSystemDiagram({
           </div>
           {hoverAspects.length > 0 && (
             <div style={{ marginTop: 8, paddingTop: 6, borderTop: `1px solid ${BORDER_COL}` }}>
-              <div style={{ fontSize: 9, color: MUTED, letterSpacing: "0.08em", marginBottom: 3 }}>ACTIVE ASPECTS</div>
+              <div style={{ fontSize: 10, color: MUTED, letterSpacing: "0.08em", marginBottom: 3 }}>ACTIVE ASPECTS</div>
               {hoverAspects.map((a, i) => {
                 const other = a.a === hoverPlanet.id ? a.b : a.a;
                 const color = a.quality === "hard" ? ACCENT_DANGER : a.quality === "soft" ? ACCENT_GREEN : ACCENT_GOLD;
@@ -750,7 +750,7 @@ function OutlookPanel() {
           <div className="flex items-center gap-3 flex-wrap">
             <div style={{ fontFamily: "monospace", fontSize: 11, color: ACCENT_GOLD, letterSpacing: "0.08em" }}>SKY CALENDAR</div>
             <div style={{ fontFamily: "monospace", fontSize: 10, color: MUTED }}>{startFmt} → {endFmt}</div>
-            <div style={{ fontFamily: "monospace", fontSize: 9, color: MUTED, letterSpacing: "0.06em" }}>
+            <div style={{ fontFamily: "monospace", fontSize: 10, color: MUTED, letterSpacing: "0.06em" }}>
               UPDATED {new Date(data.meta.generatedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
             </div>
           </div>
@@ -788,17 +788,17 @@ function OutlookPanel() {
         <div className="flex items-center justify-between gap-4 px-5 py-3 border-b flex-wrap" style={{ borderColor: BORDER_COL }}>
           <div className="flex items-center gap-6 flex-wrap">
             <div>
-              <div style={{ fontFamily: "monospace", fontSize: 9, color: MUTED, letterSpacing: "0.08em" }}>DIRECTION CALL</div>
+              <div style={{ fontFamily: "monospace", fontSize: 10, color: MUTED, letterSpacing: "0.08em" }}>DIRECTION CALL</div>
               <div style={{ fontFamily: "monospace", fontSize: 15, color: MUTED, fontWeight: "bold", letterSpacing: "0.04em" }} title="Cosmos makes no direction calls">
                 NONE
               </div>
             </div>
             <div>
-              <div style={{ fontFamily: "monospace", fontSize: 9, color: MUTED, letterSpacing: "0.08em" }}>MAJOR EVENTS</div>
+              <div style={{ fontFamily: "monospace", fontSize: 10, color: MUTED, letterSpacing: "0.08em" }}>MAJOR EVENTS</div>
               <div style={{ fontFamily: "monospace", fontSize: 15, color: ACCENT_GOLD, fontWeight: "bold" }}>{highCount}</div>
             </div>
             <div>
-              <div style={{ fontFamily: "monospace", fontSize: 9, color: MUTED, letterSpacing: "0.08em" }}>OTHER EVENTS</div>
+              <div style={{ fontFamily: "monospace", fontSize: 10, color: MUTED, letterSpacing: "0.08em" }}>OTHER EVENTS</div>
               <div style={{ fontFamily: "monospace", fontSize: 15, color: ACCENT_BLUE, fontWeight: "bold" }}>{medCount}</div>
             </div>
           </div>
@@ -809,7 +809,7 @@ function OutlookPanel() {
               onClick={() => setSource("deterministic")}
               title="Deterministic sky calendar"
               style={{
-                padding: "3px 10px", fontSize: 9, fontFamily: "monospace", letterSpacing: "0.06em",
+                padding: "3px 10px", fontSize: 10, fontFamily: "monospace", letterSpacing: "0.06em",
                 background: source === "deterministic" ? `${ACCENT_GOLD}22` : "transparent",
                 color: source === "deterministic" ? ACCENT_GOLD : MUTED,
                 border: `1px solid ${source === "deterministic" ? ACCENT_GOLD : BORDER_COL}`,
@@ -824,7 +824,7 @@ function OutlookPanel() {
                 onClick={() => setSource("claude")}
                 title="Claude Sonnet narrative"
                 style={{
-                  padding: "3px 10px", fontSize: 9, fontFamily: "monospace", letterSpacing: "0.06em",
+                  padding: "3px 10px", fontSize: 10, fontFamily: "monospace", letterSpacing: "0.06em",
                   background: source === "claude" ? `${ACCENT_GREEN}22` : "transparent",
                   color: source === "claude" ? ACCENT_GREEN : MUTED,
                   border: `1px solid ${source === "claude" ? ACCENT_GREEN : BORDER_COL}`,
@@ -840,7 +840,7 @@ function OutlookPanel() {
                 onClick={() => setSource("gpt")}
                 title="GPT-5 narrative"
                 style={{
-                  padding: "3px 10px", fontSize: 9, fontFamily: "monospace", letterSpacing: "0.06em",
+                  padding: "3px 10px", fontSize: 10, fontFamily: "monospace", letterSpacing: "0.06em",
                   background: source === "gpt" ? `${ACCENT_BLUE}22` : "transparent",
                   color: source === "gpt" ? ACCENT_BLUE : MUTED,
                   border: `1px solid ${source === "gpt" ? ACCENT_BLUE : BORDER_COL}`,
@@ -856,7 +856,7 @@ function OutlookPanel() {
         {/* Body */}
         <div className="px-5 py-4" style={{ fontFamily: "Georgia, serif", fontSize: 13, lineHeight: 1.65, color: TEXT, maxHeight: 380, overflowY: "auto" }}>
           {source !== "deterministic" && (
-            <div style={{ fontFamily: "monospace", fontSize: 9, color: MUTED, letterSpacing: "0.06em", marginBottom: 6 }}>
+            <div style={{ fontFamily: "monospace", fontSize: 10, color: MUTED, letterSpacing: "0.06em", marginBottom: 6 }}>
               AI-WRITTEN NARRATIVE · CONTEXT ONLY, NOT A TRADING SIGNAL · MAY CONTAIN ERRORS
               {active.filteredSentences && (source === "claude" || source === "gpt") && active.filteredSentences[source] > 0
                 ? ` · ${active.filteredSentences[source]} SENTENCE(S) WITH TRADE OR DIRECTION LANGUAGE REMOVED`
@@ -868,7 +868,7 @@ function OutlookPanel() {
 
         {/* Footer note if LLM unavailable */}
         {!claudeAvailable && !gptAvailable && (
-          <div className="px-5 py-2 border-t text-center" style={{ borderColor: BORDER_COL, fontSize: 9, fontFamily: "monospace", color: MUTED, letterSpacing: "0.06em" }}>
+          <div className="px-5 py-2 border-t text-center" style={{ borderColor: BORDER_COL, fontSize: 10, fontFamily: "monospace", color: MUTED, letterSpacing: "0.06em" }}>
             LLM NARRATIVE LOCKED — SET ANTHROPIC_API_KEY OR OPENAI_API_KEY TO ENABLE CLAUDE/GPT TABS
           </div>
         )}
@@ -1067,7 +1067,7 @@ function KpStrip({ recent, forecast }: { recent: Array<{ time: string; kp: numbe
       <svg viewBox={`0 0 ${chartW} ${chartH + 20}`} className="w-full h-auto">
         {/* G1 threshold line at kp=5 */}
         <line x1="0" y1={chartH * (1 - 5 / max)} x2={chartW} y2={chartH * (1 - 5 / max)} stroke={ACCENT_DANGER} strokeDasharray="3 3" strokeWidth="0.5" opacity="0.5" />
-        <text x="2" y={chartH * (1 - 5 / max) - 2} fontSize="8" fill={ACCENT_DANGER} fontFamily="monospace">G1 storm threshold</text>
+        <text x="2" y={chartH * (1 - 5 / max) - 2} fontSize="10" fill={ACCENT_DANGER} fontFamily="monospace">G1 storm threshold</text>
         {combined.map((p, i) => {
           const x = i * (chartW / combined.length);
           const h = (p.kp / max) * chartH;
@@ -1079,9 +1079,9 @@ function KpStrip({ recent, forecast }: { recent: Array<{ time: string; kp: numbe
           const x = (recent.length / combined.length) * chartW;
           return <line x1={x} y1="0" x2={x} y2={chartH} stroke={MUTED} strokeDasharray="2 2" strokeWidth="0.5" />;
         })()}
-        <text x="2" y={chartH + 14} fontSize="9" fill={MUTED} fontFamily="monospace">24h ago</text>
-        <text x={chartW / 2 - 10} y={chartH + 14} fontSize="9" fill={MUTED} fontFamily="monospace">now</text>
-        <text x={chartW - 35} y={chartH + 14} fontSize="9" fill={MUTED} fontFamily="monospace">+3 days</text>
+        <text x="2" y={chartH + 14} fontSize="10" fill={MUTED} fontFamily="monospace">24h ago</text>
+        <text x={chartW / 2 - 10} y={chartH + 14} fontSize="10" fill={MUTED} fontFamily="monospace">now</text>
+        <text x={chartW - 35} y={chartH + 14} fontSize="10" fill={MUTED} fontFamily="monospace">+3 days</text>
       </svg>
       <div className="flex gap-4 text-[11px]" style={{ color: MUTED, fontFamily: "monospace", marginTop: 4 }}>
         <span><span style={{ color: ACCENT_BLUE }}>■</span> observed</span>
