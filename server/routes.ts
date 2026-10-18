@@ -3236,6 +3236,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     }
   });
 
+  const _optionChainLastGood = new Map<string, { at: number; data: any }>();
   app.get("/api/market/option-chain/:symbol", async (req, res) => {
     try {
       const rawParam = String(req.params.symbol).toUpperCase();
@@ -3245,13 +3246,26 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
           ? "$SPX"
           : rawParam;
       const dte = req.query.dte !== undefined ? parseInt(String(req.query.dte)) : undefined;
-      const chain = await schwabGetOptionChain(symbol, dte);
+      // A multi-day $SPX chain in one request is too large and Schwab answers 502
+      // (shown as "not connected" downstream). The ladder splits it by expiry.
+      const { getOptionChainLadder } = await import("./schwab");
+      let chain = dte !== undefined && dte > 2 && symbol.startsWith("$")
+        ? await getOptionChainLadder(symbol, dte)
+        : await schwabGetOptionChain(symbol, dte);
+      if ("error" in chain && dte !== undefined && dte > 2) chain = await schwabGetOptionChain(symbol, 2);
+      const key = `${symbol}:${dte ?? "all"}`;
       if ("error" in chain) {
+        const last = _optionChainLastGood.get(key);
+        if (last) {
+          return res.json({ ...last.data, stale: true, staleReason: `${chain.reason ?? chain.error}; last good chain ${Math.round((Date.now() - last.at) / 60000)} min old` });
+        }
         return res.status(503).json({ ...chain, dataState: chain.dataState ?? "unavailable", reason: chain.reason ?? chain.error });
       }
       // Augment with computed GEX levels
       const gex = computeGEXFromChain(chain);
-      res.json({ ...chain, gex });
+      const body = { ...chain, gex };
+      _optionChainLastGood.set(key, { at: Date.now(), data: body });
+      res.json(body);
     } catch (e: any) {
       if (sendIfUnavailable(res, e)) return;
       res.status(500).json({ message: e?.message ?? "Option chain fetch failed" });
