@@ -5232,6 +5232,18 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     console.warn(`[canary] failed to start: ${e?.message ?? e}`);
   }
 
+  // Last-session option-chain capture: keeps the weekend/holiday OI hold full (server/oiCapture.ts).
+  try {
+    const { startOiCapture } = await import("./oiCapture");
+    startOiCapture();
+  } catch (e: any) {
+    console.warn(`[oiCapture] failed to start: ${e?.message ?? e}`);
+  }
+  app.get("/api/oi-hold/status", async (_req, res) => {
+    const { oiCaptureStatus } = await import("./oiCapture");
+    res.json(oiCaptureStatus());
+  });
+
   // FRED macro refresher (6h cadence)
   try {
     const { startFredRefresher } = await import("./fredClient");
