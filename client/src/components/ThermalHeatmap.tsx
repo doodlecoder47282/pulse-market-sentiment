@@ -101,6 +101,11 @@ function fmtNum(n: number): string {
 export default function ThermalHeatmap() {
   const [greek, setGreek] = useState<Greek>("gex");
   const [symbol, setSymbol] = useState("$SPX");
+  // Weekend/holiday: Schwab posts 0 $SPX open interest, so every SPX cell is $0
+  // and the map draws flat. Show SPY (its OI is posted) and say so; once the
+  // user taps back to $SPX, stay there.
+  const [spxPinned, setSpxPinned] = useState(false);
+  const [autoSwitched, setAutoSwitched] = useState(false);
   // per-date: each expiry column normalizes to its own max, so every date lights
   // up green at its hottest strike and shades out from there. global: one scale
   // across the whole grid (near-dated OI dominates and far dates look dead).
@@ -160,7 +165,15 @@ export default function ThermalHeatmap() {
     };
   }, [raw]);
   const data = view;
-  const canPlot = !!data && !error && data.dataState === "ok" && data.cells.length > 0;
+  const canPlot = !!data && !error && data.dataState === "ok" && data.cells.length > 0 && data.maxAbs > 0;
+  // All-$0 map: an "ok" chain with no exposure, or the server's "empty" (no OI) state.
+  const allZero = !!data && !error && (data.dataState === "ok" || data.dataState === "empty" || !data.dataState) && !(data.maxAbs > 0);
+  useEffect(() => {
+    if (symbol === "$SPX" && !spxPinned && raw?.oiState?.source === "none") {
+      setSymbol("SPY");
+      setAutoSwitched(true);
+    }
+  }, [raw, symbol, spxPinned]);
   useEffect(() => { setHover(null); }, [raw, greek]);
 
   // Max |exposure| per expiry column — drives per-date shading
@@ -416,6 +429,28 @@ export default function ThermalHeatmap() {
           <AlertTriangle className="w-3.5 h-3.5" /> heatmap unavailable — {String((error as Error).message)}
         </div>
       )}
+      {symbol !== "$SPX" ? (
+        <div role="status" data-testid="thermal-symbol-note" className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
+          <span className="font-semibold">Showing {symbol}</span>
+          <span>{autoSwitched ? "Schwab has no $SPX open interest until the next session posts it, so the $SPX map would be flat." : "Chosen by you."}</span>
+          <button type="button" onClick={() => { setSpxPinned(true); setAutoSwitched(false); setSymbol("$SPX"); }} className="min-h-[36px] rounded-md border border-slate-500 px-3 text-slate-100 hover:bg-slate-700/40" data-testid="thermal-back-spx">Back to $SPX</button>
+        </div>
+      ) : null}
+      {data?.oiState && data.oiState.source === "held" ? (
+        <div role="status" data-testid="thermal-oi-state" className="mb-3 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
+          <span className="font-semibold">Open interest held from {data.oiState.sessionDate}</span>
+          {data.oiState.note ? <span> · {data.oiState.note}</span> : null}
+        </div>
+      ) : null}
+      {allZero ? (
+        <div role="status" data-testid="thermal-oi-state" className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-slate-600/60 px-3 py-3 text-xs text-slate-300">
+          <span className="font-semibold">Every {symbol} cell is $0: no open interest from Schwab.</span>
+          <span>{data?.oiState?.note ?? "Exposure is open-interest weighted; with zero open interest there is nothing to draw."}</span>
+          {symbol === "$SPX" ? (
+            <button type="button" onClick={() => setSymbol("SPY")} className="min-h-[36px] rounded-md border border-slate-500 px-3 text-slate-100 hover:bg-slate-700/40" data-testid="thermal-switch-spy">View SPY (OI posted)</button>
+          ) : null}
+        </div>
+      ) : null}
       {data?.method && data.method.contractsNoSigma > 0 && canPlot && (
         <p role="status" className="mb-3 text-sm text-foreground" data-testid="thermal-partial-coverage">
           Partial exposure: {data.method.contractsNoSigma} contracts have no usable implied volatility and are excluded.
@@ -466,7 +501,7 @@ export default function ThermalHeatmap() {
         </div>
       )}
 
-      {data && data.dataState && data.dataState !== "ok" && (
+      {data && data.dataState && data.dataState !== "ok" && !allZero && (
         <div role="status" className="mt-2 flex items-center gap-2 text-sm text-foreground" data-testid="thermal-heatmap-state">
           <AlertTriangle className="w-3.5 h-3.5" />
           {data.dataState === "no_iv" ? "Exposure cannot be priced: " : "Nothing to show: "}{data.reason ?? data.dataState}
@@ -507,21 +542,6 @@ export default function ThermalHeatmap() {
               )}
             </div>
           </div>
-          {data.oiState && data.oiState.source !== "live" ? (
-            <div role="status" data-testid="thermal-oi-state" className={`mt-2 rounded-md border px-3 py-2 text-xs ${data.oiState.source === "held" ? "border-amber-500/40 bg-amber-500/5 text-amber-200" : "border-slate-600/60 text-slate-300"}`}>
-              <span className="font-semibold">{data.oiState.source === "held" ? `Open interest held from ${data.oiState.sessionDate}` : "No open interest from Schwab"}</span>
-              {data.oiState.note ? <span> · {data.oiState.note}</span> : null}
-              {data.oiState.source === "none" && symbol === "$SPX" ? (
-                <button type="button" onClick={() => setSymbol("SPY")} className="ml-2 min-h-[36px] rounded-md border border-slate-500 px-3 text-slate-100 hover:bg-slate-700/40" data-testid="thermal-switch-spy">View SPY (OI posted)</button>
-              ) : null}
-            </div>
-          ) : null}
-          {symbol !== "$SPX" ? (
-            <div className="mt-2 text-xs text-slate-300" data-testid="thermal-symbol-note">
-              Showing {symbol}.{" "}
-              <button type="button" onClick={() => setSymbol("$SPX")} className="min-h-[36px] rounded-md border border-slate-500 px-3 text-slate-100 hover:bg-slate-700/40" data-testid="thermal-back-spx">Back to $SPX</button>
-            </div>
-          ) : null}
           <div data-testid="thermal-heatmap-method">
             {GREEKS.find((g) => g.key === greek)?.unit} · reported open interest, not intraday inventory, marked with the supplied spot and volatility
             {data.method ? ` · assumed r ${(data.method.r * 100).toFixed(1)}% q ${(data.method.q * 100).toFixed(1)}% · ${data.method.contractsUsed} contracts priced` : ""}
