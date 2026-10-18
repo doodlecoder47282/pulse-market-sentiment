@@ -564,6 +564,13 @@ the fit must be reported with its interval, not as a probability.
 Wording stays descriptive: returns are "what happened", the peak rule is
 labelled a ceiling, and the gate text says no claim of edge.
 
+Evidence: independent reviewer pass (must-fix hold-rule mislabel and all
+should-fixes applied in 32b3f04); CI run 39125508361 on d54628f green
+(demo smoke: community watch and crypto expectancy PASS). PR #10 into main.
+
+Next step: owner reviews PR #10 (and PR #9, 3D polish) and merges; live
+on-chain reads on the personal edition are the part CI cannot see.
+
 ## Current objective
 
 Save the credit-conserving resume framework and assess reuse of the existing
