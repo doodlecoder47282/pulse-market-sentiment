@@ -51,6 +51,7 @@ import SchwabRequiredNotice from "@/components/SchwabRequiredNotice";
 import DemoStrip from "@/components/DemoStrip";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import WhaleFlowPanel from "@/components/WhaleFlowPanel";
+import TodayCard from "@/components/TodayCard";
 import TrackedSignalsPanel from "@/components/signals/TrackedSignalsPanel";
 import { useEffect, useState, useRef, lazy, Suspense } from "react";
 
@@ -697,6 +698,9 @@ export default function Dashboard() {
           <TabsContent value="signals" className="space-y-6">
             <Suspense fallback={null}><TabHeadline tab="signals" /></Suspense>
             <SchwabRequiredNotice onConnect={() => setSettingsOpen(true)} what="option flow data" />
+
+            {/* Answer first: spot, wall above / flip / magnet below from the 0DTE map, before any flow */}
+            <TodayCard onOpenDesk={() => setActiveTab("tradedesk")} />
 
             {/* Regime conditioning chip — pulled from /api/regime, shared across tabs */}
             <div className="flex items-center gap-2">

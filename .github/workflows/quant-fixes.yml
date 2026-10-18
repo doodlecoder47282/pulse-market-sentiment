@@ -338,6 +338,32 @@ jobs:
             await p.screenshot({ path: `rep/demo/${String(i + 1).padStart(2, "0")}-${t}.png`, fullPage: true });
           }
           console.log("desktop page errors:", errors.length, errors.slice(0, 5));
+          // Today card (Signals, answer first) and the chart-levels rail (Trade Desk): both read the sample 0DTE map.
+          try {
+            await p.locator('[data-testid="tab-signals"]').first().click({ timeout: 5000 });
+            await p.locator('[data-testid="today-card"], [data-testid="today-card-unavailable"]').first().waitFor({ timeout: 30000 });
+            const todayOk = await p.locator('[data-testid="today-card"]').count();
+            const lv = todayOk ? await p.locator('[data-testid="today-levels"]').innerText().catch(() => "") : "";
+            const nums = (lv.match(/\d{1,2},\d{3}/g) || []).length;
+            const noGex = await p.locator('[data-testid="today-no-gex"]').count();
+            // The sample chain is priced in-session and after the close; between Friday's close and Monday's open the map is unavailable (no expiry) and the card says so.
+            const unavailable = await p.locator('[data-testid="today-card-unavailable"]').count();
+            const ok = (todayOk && (nums >= 3 || noGex)) || unavailable;
+            console.log((ok ? "PASS" : "FAIL") + " today card: " + (todayOk ? "rendered, " + nums + " levels" + (noGex ? " (no gex state)" : "") : unavailable ? "unavailable state shown (no map)" : "missing"));
+            await p.locator('[data-testid="tab-tradedesk"]').first().click({ timeout: 5000 });
+            await p.locator('[data-testid="chart-levels-card"]').waitFor({ timeout: 30000 });
+            await p.locator('[data-testid="chart-levels-input"]').fill("7686, 7643 7600");
+            await p.locator('[data-testid="chart-levels-add"]').click();
+            await p.locator('[data-testid="chart-levels-list"]').waitFor({ timeout: 10000 });
+            const rows = await p.locator('[data-testid="chart-levels-list"] li').count();
+            const tags = await p.locator('[data-testid^="chart-level-tag-"]').allInnerTexts();
+            const tagOk = tags.length === 3 && tags.every((t) => /landmark|OI confluence|weak|chart only|unavailable/.test(t));
+            // Without a map every level is "unavailable", never "chart only" (a missing map is not evidence of absence).
+            const stateTxt = await p.locator('[data-testid="chart-levels-state"]').innerText().catch(() => "");
+            const consistent = /ok|stale|no data/i.test(stateTxt) ? !tags.includes("unavailable") : tags.every((t) => t === "unavailable");
+            console.log(((rows === 3 && tagOk && consistent) ? "PASS" : "FAIL") + " chart levels: " + rows + " rows, tags " + tags.join("/") + ", map state " + stateTxt.replace(/\s+/g, " ").slice(0, 40));
+            await p.locator('[data-testid="chart-levels-card"]').screenshot({ path: "rep/demo/16-chart-levels.png" });
+          } catch (e) { console.log("FAIL today/chart levels: " + String(e && e.message || e).split("\n")[0]); }
           // 3D exposure surface (Regime -> Thermal Gamma Map -> 3D): WebGL via SwiftShader.
           let g = null;
           try {
