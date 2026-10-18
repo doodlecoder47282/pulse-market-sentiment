@@ -12,6 +12,8 @@
 //   - mainnet-beta serves indexed methods but 429s on bursts, so holder
 //     concentration is one gentle call per caller tick with a shared cooldown
 //     after any 429, and it is non-fatal: authorities alone complete a read.
+//     The scanner (45 s tick) and the community watch (60 s tick) each make
+//     at most one indexed call per tick, so about two a minute in all.
 // A fact that could not be read is null with a state, never a value.
 
 import { holderConcentration, observedNumber, type DexPool, type HolderAccount } from "./cryptoStats";

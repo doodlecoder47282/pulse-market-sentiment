@@ -509,9 +509,14 @@ on the tab showed what a follower of the desk would have been paid. This
 branch adds the bookkeeping; it does not claim an edge.
 
 1. shared/cryptoExpectancy.ts (pure, tested): what a $100 position returned
-   under a stated exit rule, net of both legs. `hold` = buy at the signal,
-   sell at the grading horizon (last_mcap / last_liquidity, the values the
-   grader saw); `peak` = the sampled peak, shown only as the ceiling.
+   under a stated exit rule, net of both legs. `graded` = buy at the signal,
+   sell when the grader closed the row (HIT_5M at the first sample at or
+   above the target, a limit-sell-at-target and NOT a hold to the horizon;
+   RUGGED at rug detection; DOUBLED/DEAD at the 72 h horizon; last_mcap /
+   last_liquidity are the values the grader saw then); `peak` = the sampled
+   peak, shown only as the ceiling. Reviewer finding: the first draft called
+   this "hold to the grading horizon", which the grader does not record;
+   renamed everywhere and said in the basis text.
    Constant-product cost on both legs at the liquidity that existed at each
    (entry pool at liquidity_at_signal, exit pool at last_liquidity; the peak
    rule prices the exit at the entry depth because peak liquidity is not
@@ -533,15 +538,21 @@ branch adds the bookkeeping; it does not claim an edge.
    cooling-down RPC keeps the last read and a failed read clears it with
    the reason; it never becomes a value.
 4. Community watch: entries carry mintAuthorityActive, freezeAuthorityActive,
-   top10Pct, top10Method, onChainState (pending | ok | unavailable),
-   onChainAt, onChainError; `refreshOnChain` reads one token per minute tick,
-   re-reads every 6 h (30 min after a failure); deriveEntry now feeds the
+   top10Pct, top10Method, top10At, onChainState (pending | ok |
+   unavailable), onChainAt, onChainError; `refreshOnChain` reads one token
+   per minute tick, re-reads a complete read every 6 h and retries after 30
+   min when the mint read failed or the concentration was skipped or
+   unavailable; a skipped concentration keeps the last value and its own
+   timestamp (shown in the tooltip) or is labelled "skipped" when there is
+   none; tokens whose pool was not found still get their authorities; deriveEntry now feeds the
    facts to classifyMeme, so a watch token with both read and nothing else
    missing gets a firm (not tentative) structural read. MemeStructure.tsx
    shows "mint authority: revoked / ACTIVE / unread", the same for freeze,
    and "top-10 holders: N% / unavailable / unread". Demo seeds: PLAZA 18.4%,
    QUILL 31.2%, GRIT mint ACTIVE with concentration unavailable.
-5. Tests: tests/quant/crypto-expectancy.test.ts (4), crypto-community
+5. Below the sample minimum the expectancy card has no colour: the
+   numbers are counts, and green/red reads as a verdict.
+6. Tests: tests/quant/crypto-expectancy.test.ts (5), crypto-community
    applyOnChain case (skipped keeps, unavailable clears, failure stays
    unread). CI demo smoke now checks the on-chain fields on the sample rows
    and the expectancy block (both rules, gate text, netHold on every row).

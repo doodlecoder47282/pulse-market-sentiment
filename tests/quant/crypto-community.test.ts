@@ -108,9 +108,11 @@ test("applyOnChain: facts feed the classifier; a skipped concentration keeps the
   assert.ok(!e.structure!.missing.includes("top10Pct") && !e.structure!.missing.includes("mintAuthority"), "both inputs now read");
   assert.equal(e.structure?.confidence, "firm", "nothing missing: the community read is no longer tentative");
 
-  // Indexed RPC cooling down: authorities refreshed, concentration kept from the last read.
+  // Indexed RPC cooling down: authorities refreshed, concentration and its own timestamp kept from the last read.
   applyOnChain(e, { mintAuthorityActive: false, freezeAuthorityActive: false, top10Pct: null, top10Method: null, concentration: "skipped", concentrationError: null }, T + 2);
   assert.equal(e.top10Pct, 22.5);
+  assert.equal(e.top10At, T + 1, "a skipped read does not advance the concentration timestamp");
+  assert.equal(e.onChainAt, T + 2);
   // Indexed read failed: the value is cleared with the reason, not left stale.
   applyOnChain(e, { mintAuthorityActive: false, freezeAuthorityActive: false, top10Pct: null, top10Method: null, concentration: "unavailable", concentrationError: "rpc 429 @ api.mainnet-beta.solana.com" }, T + 3);
   assert.equal(e.top10Pct, null);
@@ -121,6 +123,13 @@ test("applyOnChain: facts feed the classifier; a skipped concentration keeps the
   applyOnChain(e, { mintAuthorityActive: true, freezeAuthorityActive: true, top10Pct: 61, top10Method: "owners", concentration: "ok", concentrationError: null }, T + 4);
   assert.equal(e.mintAuthorityActive, true);
   assert.ok(e.structure!.reasons.some((r) => /mint authority active/.test(r)));
+
+  // First read skipped: labelled skipped, not unavailable and not a value.
+  const g = blankEntry(MINT, null, T);
+  applyOnChain(g, { mintAuthorityActive: false, freezeAuthorityActive: false, top10Pct: null, top10Method: null, concentration: "skipped", concentrationError: null }, T + 6);
+  assert.equal(g.top10Pct, null);
+  assert.match(g.top10Method!, /^skipped:/);
+  assert.equal(g.top10At, null);
 
   const f = blankEntry(MINT, null, T);
   applyPool(f, pair(), T);

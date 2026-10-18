@@ -1210,32 +1210,36 @@ function gradedLike(s: any): GradedSignalLike {
 export const EXPECTANCY_SIZE_USD = 100;
 
 /**
- * Net expectancy of the desk's first ENTER signal per coin under the hold
- * rule (buy at the signal, sell at the grading horizon) and, as the ceiling,
- * the sampled peak. Same coin-identity rule as the sample gate: one row per
- * coin, its first ENTER, so a coin re-signalled on several days counts once.
+ * Net expectancy of the desk's first ENTER signal per coin under the graded
+ * rule (buy at the signal, sell when the grader closed the row) and, as the
+ * ceiling, the sampled peak. Same coin-identity window as the sample gate
+ * (cryptoStats.cryptoCoinCountsSql): one row per coin, its first ENTER by
+ * detected_at then id, so a coin re-signalled on several days, or on two
+ * pairs in one tick, counts once.
  */
-export function getCryptoExpectancy(): { hold: ExpectancySummary; peak: ExpectancySummary; basis: string } {
+export function getCryptoExpectancy(): { graded: ExpectancySummary; peak: ExpectancySummary; basis: string } {
   const rows = sqlite.prepare(`
+    WITH firsts AS (
+      SELECT outcome, mcap_at_signal, liquidity_at_signal, peak_mcap, last_mcap, last_liquidity,
+             ROW_NUMBER() OVER (PARTITION BY COALESCE(NULLIF(token_address, ''), pair_address) ORDER BY detected_at ASC, id ASC) AS rn
+      FROM crypto_signals WHERE verdict = 'ENTER'
+    )
     SELECT outcome, mcap_at_signal, liquidity_at_signal, peak_mcap, last_mcap, last_liquidity
-    FROM crypto_signals s
-    WHERE verdict = 'ENTER' AND outcome IS NOT NULL AND outcome <> 'OPEN'
-      AND detected_at = (SELECT MIN(detected_at) FROM crypto_signals t
-                         WHERE t.verdict = 'ENTER' AND COALESCE(NULLIF(t.token_address, ''), t.pair_address) = COALESCE(NULLIF(s.token_address, ''), s.pair_address))
+    FROM firsts WHERE rn = 1 AND outcome IS NOT NULL AND outcome <> 'OPEN'
   `).all() as any[];
   const like = rows.map(gradedLike);
   const opts = { sizeUsd: EXPECTANCY_SIZE_USD, minSample: CRYPTO_SAMPLE_READY_MIN_GRADED };
   return {
-    hold: summarizeExpectancy(like, "hold", opts),
+    graded: summarizeExpectancy(like, "graded", opts),
     peak: summarizeExpectancy(like, "peak", opts),
-    basis: "first ENTER signal per coin, graded rows only; entry at the signal's liquidity, exit at the liquidity the grader saw; pool fees and impact on both legs; peak rule prices the exit at the entry depth (peak liquidity is not recorded)",
+    basis: "first ENTER signal per coin, graded rows only; entry at the signal's liquidity, exit at the liquidity the grader saw when it closed the row (HIT_5M rows at the target sample, a limit-sell-at-target, not a hold to the horizon); pool fees and impact on both legs; the peak rule prices the exit at the entry depth (peak liquidity is not recorded); market-cap multiples stand in for price multiples, which overstates the move when supply grew",
   };
 }
 
 export function getCryptoSignals(): {
   signals: any[];
   stats: CryptoDeskStats & { listLimit: number };
-  expectancy: { hold: ExpectancySummary; peak: ExpectancySummary; basis: string };
+  expectancy: { graded: ExpectancySummary; peak: ExpectancySummary; basis: string };
 } {
   // The list is the latest 100 for display; the stats come from aggregate
   // queries over every logged signal, so total/open/graded share one window.
@@ -1258,8 +1262,9 @@ export function getCryptoSignals(): {
       ...s,
       features: safeParse(s.features_json),
       risk: safeParse(s.risk_json),
-      // What this row returned to a $100 hold-to-horizon position, net of both legs (null while open or unpriced).
-      netHold: signalReturn(gradedLike(s), "hold", EXPECTANCY_SIZE_USD),
+      // What a $100 position opened at this row and sold when the row was graded returned, net of both legs
+      // (null while open or unpriced). ENTER rows only: the desk never signalled the others.
+      netGraded: s.verdict === "ENTER" ? signalReturn(gradedLike(s), "graded", EXPECTANCY_SIZE_USD) : null,
     })),
     stats: { ...stats, listLimit: LIST_LIMIT },
     expectancy: getCryptoExpectancy(),

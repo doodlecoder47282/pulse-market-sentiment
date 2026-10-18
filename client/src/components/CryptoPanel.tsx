@@ -124,11 +124,11 @@ interface SignalsResp {
   };
   // Net return of a $100 position per first-ENTER coin under a stated exit
   // rule (shared/cryptoExpectancy.ts): bookkeeping on what happened, not a forecast.
-  expectancy?: { hold: Expectancy; peak: Expectancy; basis: string };
+  expectancy?: { graded: Expectancy; peak: Expectancy; basis: string };
 }
 
 interface Expectancy {
-  rule: "hold" | "peak";
+  rule: "graded" | "peak";
   sizeUsd: number;
   n: number;
   skipped: number;
@@ -720,9 +720,9 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
             <span className="text-muted-foreground">@{fmtUsd(s.mcap_at_signal)}</span>
             <TrendingUp className="h-3 w-3 text-muted-foreground" />
             <span className="font-mono tabular-nums text-muted-foreground">peak {fmtUsd(s.peak_mcap)}</span>
-            {s.netHold?.netPct != null && (
-              <span className={`font-mono tabular-nums ${s.netHold.netPct > 0 ? "text-emerald-300" : "text-rose-300"}`} title="net return of a $100 position bought at the signal and sold at the grading horizon, after both legs' fees and impact" data-testid="crypto-signal-net">
-                {s.netHold.netPct > 0 ? "+" : ""}{s.netHold.netPct.toFixed(0)}% net
+            {s.netGraded?.netPct != null && (
+              <span className={`font-mono tabular-nums ${s.netGraded.netPct > 0 ? "text-emerald-300" : "text-rose-300"}`} title={`net return of a $100 position opened at this ENTER row and sold when the row was graded (${s.outcome === "HIT_5M" ? "at the first sample at or above the target" : s.outcome === "RUGGED" ? "at rug detection" : "at the horizon"}), after both legs' fees and impact`} data-testid="crypto-signal-net">
+                {s.netGraded.netPct > 0 ? "+" : ""}{s.netGraded.netPct.toFixed(0)}% net
               </span>
             )}
             <span className={`ml-auto font-semibold ${
@@ -744,17 +744,19 @@ const fmtNet = (v: number | null | undefined): string => (v == null ? "—" : `$
 
 /**
  * Net expectancy of the desk's first ENTER signals: what a $100 position
- * returned under the hold rule (buy at the signal, sell at the grading
- * horizon), net of both legs, with the sampled peak as the ceiling it is
- * measured against. Counts until the sample minimum; never a forecast.
+ * returned under the graded rule (buy at the signal, sell when the grader
+ * closed the row: target sample, rug detection, or the horizon), net of both
+ * legs, with the sampled peak as the ceiling it is measured against. Counts
+ * until the sample minimum (no colour until then); never a forecast.
  */
 function ExpectancyCard({ x }: { x: NonNullable<SignalsResp["expectancy"]> }) {
-  const h = x.hold, p = x.peak;
+  const h = x.graded, p = x.peak;
   const share = h.positiveShare;
+  const tone = (v: number | null) => (!h.sampleReady || v == null ? "text-muted-foreground" : v > 0 ? "text-emerald-300" : "text-rose-300");
   return (
     <div className="rounded-lg border border-border/50 bg-card/40 p-3 space-y-2" data-testid="crypto-expectancy">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">net expectancy · ${h.sizeUsd} per first-ENTER coin, hold to the grading horizon</span>
+        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">net expectancy · ${h.sizeUsd} per first-ENTER coin, sold when graded</span>
         <span className={`text-[11px] ${h.sampleReady ? "text-muted-foreground" : "text-amber-300/90"}`} data-testid="crypto-expectancy-gate">
           {h.sampleReady ? `${h.n} graded signals` : `${h.n} of ${h.minSample} needed: counts only`}
         </span>
@@ -764,9 +766,9 @@ function ExpectancyCard({ x }: { x: NonNullable<SignalsResp["expectancy"]> }) {
       ) : (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {([
-            ["median net", fmtNet(h.medianNetPct), h.medianNetPct != null && h.medianNetPct > 0 ? "text-emerald-300" : "text-rose-300"],
-            ["mean net", fmtNet(h.meanNetPct), h.meanNetPct != null && h.meanNetPct > 0 ? "text-emerald-300" : "text-rose-300"],
-            ["positive", `${share.yes}/${share.of}${share.lo != null ? ` (${share.lo.toFixed(0)}–${share.hi!.toFixed(0)}%)` : ""}`, "text-foreground"],
+            ["median net", fmtNet(h.medianNetPct), tone(h.medianNetPct)],
+            ["mean net", fmtNet(h.meanNetPct), tone(h.meanNetPct)],
+            ["positive", `${share.yes}/${share.of}${share.lo != null ? ` (${share.lo.toFixed(0)}–${share.hi!.toFixed(0)}%)` : ""}`, h.sampleReady ? "text-foreground" : "text-muted-foreground"],
             ["worst / best", `${fmtNet(h.worstNetPct)} / ${fmtNet(h.bestNetPct)}`, "text-muted-foreground"],
           ] as const).map(([k, v, cls]) => (
             <div key={k} className="rounded border border-border/40 bg-background/40 px-2 py-1.5">

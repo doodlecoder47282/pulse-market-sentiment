@@ -125,16 +125,25 @@ async function refreshHistory(now: number): Promise<void> {
   }
 }
 
-/** One token per tick (≤ 1 indexed RPC call), oldest read first; failures back off and are shown, never hidden. */
+/**
+ * One token per tick (≤ 1 indexed RPC call), oldest read first; failures back
+ * off and are shown, never hidden. A full read is good for 6 h; a failed
+ * mint read, or a read whose concentration was skipped or unavailable, is
+ * retried after 30 min. The mint read needs no pool, so a token whose pool
+ * was not found still gets its authorities; concentration then has no
+ * identified vault to exclude and is skipped.
+ */
 async function refreshOnChain(now: number): Promise<void> {
+  const complete = (e: CommunityEntry) => e.onChainState === "ok" && e.top10Pct != null;
   const due = Array.from(entries.values())
-    .filter((e) => e.quoteState === "ok" && e.pairAddress)
-    .filter((e) => e.onChainAt == null || now - e.onChainAt > (e.onChainState === "ok" ? ONCHAIN_REFRESH_MS : ONCHAIN_RETRY_MS))
+    .filter((e) => e.quoteState === "ok" || e.quoteState === "not_found")
+    .filter((e) => e.onChainAt == null || now - e.onChainAt > (complete(e) ? ONCHAIN_REFRESH_MS : ONCHAIN_RETRY_MS))
     .sort((a, b) => (a.onChainAt ?? 0) - (b.onChainAt ?? 0))
     .slice(0, 1);
   for (const e of due) {
     try {
-      const facts = await readTokenFacts(e.tokenAddress, [{ pairAddress: e.pairAddress!, baseAmount: null }], { withConcentration: true });
+      const pools = e.pairAddress ? [{ pairAddress: e.pairAddress, baseAmount: null }] : [];
+      const facts = await readTokenFacts(e.tokenAddress, pools, { withConcentration: pools.length > 0 });
       applyOnChain(e, facts, now);
     } catch (err: any) {
       applyOnChainFailure(e, `solana rpc: ${String(err?.message ?? err)}`, now);

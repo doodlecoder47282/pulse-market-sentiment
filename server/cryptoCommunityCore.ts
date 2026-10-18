@@ -53,7 +53,10 @@ export interface CommunityEntry {
   mintAuthorityActive: boolean | null;
   freezeAuthorityActive: boolean | null;
   top10Pct: number | null;
+  /** How top10Pct was derived; "skipped: ..." or "unavailable: ..." when it is null and a read was attempted. */
   top10Method: string | null;
+  /** When top10Pct / top10Method were last decided by an attempted indexed read (not advanced by a skipped one). */
+  top10At: number | null;
   onChainState: OnChainState;
   onChainAt: number | null;
   onChainError: string | null;
@@ -79,7 +82,7 @@ export function blankEntry(tokenAddress: string, label: string | null, addedAt: 
     quoteState: "pending", quoteAt: null, quoteError: null,
     range: null, historyState: "pending", historyAt: null, historyError: null,
     cost1k: null, maxSizeAt1Pct: null,
-    mintAuthorityActive: null, freezeAuthorityActive: null, top10Pct: null, top10Method: null,
+    mintAuthorityActive: null, freezeAuthorityActive: null, top10Pct: null, top10Method: null, top10At: null,
     onChainState: "pending", onChainAt: null, onChainError: null,
     structure: null,
     line: linePosition(null, false),
@@ -168,12 +171,18 @@ export interface TokenFactsLike {
   concentrationError: string | null;
 }
 
-/** Record an on-chain read. A skipped concentration keeps the previous value; a failed one clears it. */
+/**
+ * Record an on-chain read. A skipped concentration (indexed RPC cooling down
+ * or no supply) keeps the previous value and its own timestamp; with no
+ * previous value it is labelled skipped. A failed one clears the value with
+ * the reason. Neither becomes a number.
+ */
 export function applyOnChain(e: CommunityEntry, f: TokenFactsLike, now = Date.now()): void {
   e.mintAuthorityActive = f.mintAuthorityActive;
   e.freezeAuthorityActive = f.freezeAuthorityActive;
-  if (f.concentration === "ok") { e.top10Pct = f.top10Pct; e.top10Method = f.top10Method; }
-  else if (f.concentration === "unavailable") { e.top10Pct = null; e.top10Method = f.concentrationError ? `unavailable: ${f.concentrationError}` : "unavailable"; }
+  if (f.concentration === "ok") { e.top10Pct = f.top10Pct; e.top10Method = f.top10Method; e.top10At = now; }
+  else if (f.concentration === "unavailable") { e.top10Pct = null; e.top10Method = f.concentrationError ? `unavailable: ${f.concentrationError}` : "unavailable"; e.top10At = now; }
+  else if (e.top10Pct == null) { e.top10Method = "skipped: indexed RPC not attempted (cooldown or no supply)"; }
   e.onChainState = "ok";
   e.onChainAt = now;
   e.onChainError = null;
