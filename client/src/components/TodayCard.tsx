@@ -116,10 +116,10 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk }: { symbol?: st
                 {pos(spot) && <div className="absolute -top-0.5 h-3.5 w-0.5 bg-foreground" style={{ left: pos(spot)! }} title={`spot ${lvl(spot)}`} />}
               </div>
               <div className="flex justify-between font-mono text-[10px] text-muted-foreground">
-                <span>{lvl(below)}</span>
+                <span title="bar extent: the lower of the magnet, flip and straddle low">{lvl(lo + 5)}</span>
                 <span className="text-amber-300">flip {lvl(flip)}</span>
                 <span className="text-foreground">spot {lvl(spot)}</span>
-                <span>{lvl(above)}</span>
+                <span title="bar extent: the higher of the wall, flip and straddle high">{lvl(hi - 5)}</span>
               </div>
             </div>
 
