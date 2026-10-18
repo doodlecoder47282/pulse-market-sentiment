@@ -252,3 +252,17 @@ export function ribbonHeights(model: SurfaceModel, x: number): Array<number | nu
   }
   return out;
 }
+
+/**
+ * How much one strike dominates the layer: largest |value| over the median
+ * |value| of the observed, non-zero cells. Above ~12 the linear height makes
+ * most of the surface unreadable and the compressed scale is the better read.
+ */
+export function spikeRatio(model: SurfaceModel): number | null {
+  const mags: number[] = [];
+  for (let k = 0; k < model.values.length; k++) if (model.present[k] && model.values[k] !== 0) mags.push(Math.abs(model.values[k]));
+  if (mags.length < 8) return null;
+  mags.sort((a, b) => a - b);
+  const med = mags[Math.floor(mags.length / 2)];
+  return med > 0 ? mags[mags.length - 1] / med : null;
+}
