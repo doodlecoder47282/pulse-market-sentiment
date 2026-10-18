@@ -16,6 +16,8 @@ export const COST_SIZE_USD = 1_000;
 
 export type QuoteState = "pending" | "ok" | "not_found" | "unavailable";
 export type HistoryState = "pending" | "ok" | "partial" | "no_data" | "unavailable";
+/** pending: not read yet; ok: authorities read (concentration may still be null); unavailable: the mint read failed. */
+export type OnChainState = "pending" | "ok" | "unavailable";
 
 export interface CommunityEntry {
   tokenAddress: string;
@@ -47,6 +49,14 @@ export interface CommunityEntry {
   cost1k: TradeCost | null;
   /** Largest buy at 1% price impact. */
   maxSizeAt1Pct: number | null;
+  /** On-chain facts from public Solana RPC (server/solanaToken.ts). Null means not read, never "fine". */
+  mintAuthorityActive: boolean | null;
+  freezeAuthorityActive: boolean | null;
+  top10Pct: number | null;
+  top10Method: string | null;
+  onChainState: OnChainState;
+  onChainAt: number | null;
+  onChainError: string | null;
   structure: MemeClass | null;
   line: LinePosition;
 }
@@ -68,7 +78,10 @@ export function blankEntry(tokenAddress: string, label: string | null, addedAt: 
     priceUsd: null, marketCap: null, fdv: null, liquidityUsd: null, vol24h: null, chg24h: null, buys24h: null, sells24h: null,
     quoteState: "pending", quoteAt: null, quoteError: null,
     range: null, historyState: "pending", historyAt: null, historyError: null,
-    cost1k: null, maxSizeAt1Pct: null, structure: null,
+    cost1k: null, maxSizeAt1Pct: null,
+    mintAuthorityActive: null, freezeAuthorityActive: null, top10Pct: null, top10Method: null,
+    onChainState: "pending", onChainAt: null, onChainError: null,
+    structure: null,
     line: linePosition(null, false),
   };
 }
@@ -87,9 +100,9 @@ export function deriveEntry(e: CommunityEntry, now = Date.now()): void {
   e.maxSizeAt1Pct = maxSizeAtImpact(e.liquidityUsd, 1);
   e.structure = classifyMeme({
     name: e.name ?? "", symbol: e.symbol ?? "", ageDays: e.ageDays, liquidityUsd: e.liquidityUsd,
-    // Holder concentration and mint authority are not read for watch tokens yet;
-    // the classifier reports them as missing, so the read stays tentative.
-    top10Pct: null, mintAuthorityActive: null,
+    // On-chain facts arrive from refreshOnChain; until then the classifier
+    // reports them as missing and the read stays tentative.
+    top10Pct: e.top10Pct, mintAuthorityActive: e.mintAuthorityActive,
     narrativeHits: [], history: e.range,
   });
 }
@@ -144,6 +157,34 @@ export function parseOhlcv(payload: any): DailyBar[] {
     out.push({ t: t * 1000, o: o ?? c, h: h ?? c, l: l ?? c, c, v: v ?? 0 });
   }
   return out.sort((a, b) => a.t - b.t);
+}
+
+export interface TokenFactsLike {
+  mintAuthorityActive: boolean;
+  freezeAuthorityActive: boolean;
+  top10Pct: number | null;
+  top10Method: string | null;
+  concentration: "ok" | "skipped" | "unavailable";
+  concentrationError: string | null;
+}
+
+/** Record an on-chain read. A skipped concentration keeps the previous value; a failed one clears it. */
+export function applyOnChain(e: CommunityEntry, f: TokenFactsLike, now = Date.now()): void {
+  e.mintAuthorityActive = f.mintAuthorityActive;
+  e.freezeAuthorityActive = f.freezeAuthorityActive;
+  if (f.concentration === "ok") { e.top10Pct = f.top10Pct; e.top10Method = f.top10Method; }
+  else if (f.concentration === "unavailable") { e.top10Pct = null; e.top10Method = f.concentrationError ? `unavailable: ${f.concentrationError}` : "unavailable"; }
+  e.onChainState = "ok";
+  e.onChainAt = now;
+  e.onChainError = null;
+  deriveEntry(e, now);
+}
+
+export function applyOnChainFailure(e: CommunityEntry, err: string, now = Date.now()): void {
+  e.onChainState = "unavailable";
+  e.onChainAt = now;
+  e.onChainError = err.slice(0, 120);
+  deriveEntry(e, now);
 }
 
 export function applyHistory(e: CommunityEntry, bars: DailyBar[], now = Date.now()): void {

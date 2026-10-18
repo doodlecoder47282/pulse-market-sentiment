@@ -54,9 +54,9 @@ export interface TradeCost {
   assumptions: string[];
 }
 
-const DEFAULT_DEX_FEE_PCT = 0.25;
-const DEFAULT_PLATFORM_FEE_PCT = 1.0;
-const DEFAULT_PRIORITY_USD = 0.25;
+export const DEFAULT_DEX_FEE_PCT = 0.25;
+export const DEFAULT_PLATFORM_FEE_PCT = 1.0;
+export const DEFAULT_PRIORITY_USD = 0.25;
 
 function finite(n: unknown): number | null {
   return typeof n === "number" && Number.isFinite(n) ? n : null;

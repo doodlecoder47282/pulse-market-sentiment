@@ -40,6 +40,7 @@
 // for pairs, 60 rpm for boosts). Both budgets respected by design (batching).
 
 import { sqlite } from "./storage";
+import { signalReturn, summarizeExpectancy, type ExpectancySummary, type GradedSignalLike } from "../shared/cryptoExpectancy";
 import { parseFeed } from "./sources/parse";
 import { sourceTable, TIER_LABEL } from "./sources/registry";
 import { readMajors, type MajorsSnapshot } from "./sources/cryptoMajors";
@@ -47,13 +48,14 @@ import { parseJupiterPrices, jupiterCheck, narrativeCounts, JUP_MAX_IDS, type Ju
 import {
   computeSocialScore, resolveSocialCollection, expireSocial,
   CRYPTO_SIGNAL_COUNTS_SQL, type SocialStatus, type SocialSourceStatus,
-  observedNumber, gradeSignal, cryptoCoinCountsSql, summarizeDeskStats, type CryptoDeskStats,
+  observedNumber, gradeSignal, cryptoCoinCountsSql, summarizeDeskStats, type CryptoDeskStats, CRYPTO_SAMPLE_READY_MIN_GRADED,
   CRYPTO_GRADER_BATCH, CRYPTO_PEAK_SAMPLE_SQL, CRYPTO_GRADER_MARK_SQL, CRYPTO_GRADER_NO_DATA_SQL, peakSamplingNote,
   peakSampleParams, graderMarkParams, graderNoDataParams,
-  holderConcentration, countMentions, socialCoverage, type HolderAccount, type DexPool,
+  countMentions, socialCoverage, type DexPool,
   momentumPoints, honeypotRead, jupiterAllowsEnter,
 } from "./cryptoStats";
 import { classifyMeme, linePosition, tradeCost, type LinePosition, type MemeClass, type TradeCost } from "../shared/memeStructure";
+import { readTokenFacts, indexedRpcAvailable } from "./solanaToken";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -598,44 +600,7 @@ function recordPeakSample(c: Candidate): void {
 // while an authority remains active (revocations happen post-launch).
 
 const SECURITY_MS = 45_000;
-// Method-aware routing, verified live:
-//   - publicnode serves getAccountInfo keylessly (authorities + supply via
-//     parsed mint data) but gates "indexed" methods (getTokenLargestAccounts)
-//     behind a personal token.
-//   - mainnet-beta serves indexed methods but 429s on bursts — so holder
-//     concentration is ONE gentle call per tick with a cooldown after any 429,
-//     and it is non-fatal: authorities alone still complete the check.
-const RPC_ACCOUNT = ["https://solana-rpc.publicnode.com", "https://api.mainnet-beta.solana.com"];
-const RPC_INDEXED = ["https://api.mainnet-beta.solana.com"];
-let rpcId = 1;
-let indexedCooldownUntil = 0; // set after a 429 — back off 5 min
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
-async function solRpc(method: string, params: any[], urls: string[]): Promise<any> {
-  let lastErr: any = null;
-  for (const url of urls) {
-    const ctl = new AbortController();
-    const t = setTimeout(() => ctl.abort(), 12_000);
-    try {
-      const r = await fetch(url, {
-        method: "POST", signal: ctl.signal,
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: rpcId++, method, params }),
-      });
-      if (!r.ok) throw new Error(`rpc ${r.status} @ ${new URL(url).hostname}`);
-      const j = await r.json();
-      if (j.error) throw new Error(`rpc: ${j.error?.message ?? "unknown"}`);
-      return j.result;
-    } catch (e: any) {
-      lastErr = e;
-      await sleep(400);
-      continue;
-    } finally {
-      clearTimeout(t);
-    }
-  }
-  throw lastErr ?? new Error("all solana rpcs failed");
-}
 
 async function securityTick(): Promise<void> {
   // oldest-unchecked first; re-check active-authority tokens every 30 min
@@ -654,50 +619,20 @@ async function securityTick(): Promise<void> {
   let concentrationDone = false; // max ONE indexed call per tick
   for (const c of due) {
     try {
-      // CRITICAL PATH: authorities + supply from one parsed account read
-      const acct = await solRpc("getAccountInfo", [c.tokenAddress, { encoding: "jsonParsed" }], RPC_ACCOUNT);
-      const info = acct?.value?.data?.parsed?.info;
-      if (!info) throw new Error("mint account not parseable");
-      c.mintAuthorityActive = info.mintAuthority != null;
-      c.freezeAuthorityActive = info.freezeAuthority != null;
-      const total = Number(info.supply ?? 0);
-      const decimals = Number(info.decimals ?? 0);
-      const supplyUi = Number.isFinite(decimals) ? total / Math.pow(10, decimals) : NaN;
-
-      // BEST-EFFORT: holder concentration (indexed — mainnet-beta only, gentle)
-      if (!concentrationDone && total > 0 && Date.now() > indexedCooldownUntil) {
-        concentrationDone = true;
-        try {
-          await sleep(800);
-          const largest = await solRpc("getTokenLargestAccounts", [c.tokenAddress], RPC_INDEXED);
-          const accts: any[] = largest?.value ?? [];
-          if (accts.length > 0 && supplyUi > 0) {
-            // Exclude only IDENTIFIED pool vaults and burned supply, never
-            // "the largest account" by rank (a whale or the deployer at the
-            // top is what this flag exists to catch). Owners come from one
-            // non-indexed getMultipleAccounts read; reserve matching against
-            // DexScreener liquidity.base works even without owners.
-            const holders: HolderAccount[] = accts.map((a: any) => ({
-              address: String(a?.address ?? ""),
-              uiAmount: observedNumber(a?.uiAmountString ?? a?.uiAmount),
-            }));
-            try {
-              const multi = await solRpc("getMultipleAccounts", [holders.map((h) => h.address), { encoding: "jsonParsed" }], RPC_ACCOUNT);
-              const vals: any[] = multi?.value ?? [];
-              holders.forEach((h, i) => { h.owner = vals[i]?.data?.parsed?.info?.owner ?? null; });
-            } catch { /* owners optional */ }
-            const known = tokenPools.get(c.tokenAddress)?.pools ?? [];
-            const pools = known.some((p) => p.pairAddress === c.pairAddress)
-              ? known
-              : [...known, { pairAddress: c.pairAddress, baseAmount: null }];
-            const conc = holderConcentration(holders, pools, supplyUi);
-            c.top10Pct = conc.top10Pct;
-            c.top10Method = conc.method;
-          }
-        } catch (e: any) {
-          if (/429/.test(String(e?.message))) indexedCooldownUntil = Date.now() + 5 * 60_000;
-          // non-fatal — authorities are the gate, concentration is a bonus flag
-        }
+      // CRITICAL PATH: authorities + supply; BEST-EFFORT: holder concentration
+      // (indexed, mainnet-beta only, one per tick). Shared with the community
+      // watch via server/solanaToken.ts.
+      const known = tokenPools.get(c.tokenAddress)?.pools ?? [];
+      const pools = known.some((p) => p.pairAddress === c.pairAddress)
+        ? known
+        : [...known, { pairAddress: c.pairAddress, baseAmount: null }];
+      const facts = await readTokenFacts(c.tokenAddress, pools, { withConcentration: !concentrationDone && indexedRpcAvailable() });
+      c.mintAuthorityActive = facts.mintAuthorityActive;
+      c.freezeAuthorityActive = facts.freezeAuthorityActive;
+      if (facts.concentration !== "skipped") concentrationDone = true;
+      if (facts.concentration === "ok") {
+        c.top10Pct = facts.top10Pct;
+        c.top10Method = facts.top10Method;
       }
 
       // ── rugcheck.xyz cached summary (keyless, verified) — LP lock + named risks ──
@@ -1264,9 +1199,43 @@ export function getCryptoHealth(): { engines: EngineHealth[]; trackedCount: numb
   return { engines: [...health.values()], trackedCount: tracked.size, asOf: Date.now() };
 }
 
+/** crypto_signals row -> the shape shared/cryptoExpectancy reads. */
+function gradedLike(s: any): GradedSignalLike {
+  return {
+    outcome: s.outcome, mcapAtSignal: s.mcap_at_signal, liquidityAtSignal: s.liquidity_at_signal,
+    peakMcap: s.peak_mcap, lastMcap: s.last_mcap, lastLiquidity: s.last_liquidity,
+  };
+}
+
+export const EXPECTANCY_SIZE_USD = 100;
+
+/**
+ * Net expectancy of the desk's first ENTER signal per coin under the hold
+ * rule (buy at the signal, sell at the grading horizon) and, as the ceiling,
+ * the sampled peak. Same coin-identity rule as the sample gate: one row per
+ * coin, its first ENTER, so a coin re-signalled on several days counts once.
+ */
+export function getCryptoExpectancy(): { hold: ExpectancySummary; peak: ExpectancySummary; basis: string } {
+  const rows = sqlite.prepare(`
+    SELECT outcome, mcap_at_signal, liquidity_at_signal, peak_mcap, last_mcap, last_liquidity
+    FROM crypto_signals s
+    WHERE verdict = 'ENTER' AND outcome IS NOT NULL AND outcome <> 'OPEN'
+      AND detected_at = (SELECT MIN(detected_at) FROM crypto_signals t
+                         WHERE t.verdict = 'ENTER' AND COALESCE(NULLIF(t.token_address, ''), t.pair_address) = COALESCE(NULLIF(s.token_address, ''), s.pair_address))
+  `).all() as any[];
+  const like = rows.map(gradedLike);
+  const opts = { sizeUsd: EXPECTANCY_SIZE_USD, minSample: CRYPTO_SAMPLE_READY_MIN_GRADED };
+  return {
+    hold: summarizeExpectancy(like, "hold", opts),
+    peak: summarizeExpectancy(like, "peak", opts),
+    basis: "first ENTER signal per coin, graded rows only; entry at the signal's liquidity, exit at the liquidity the grader saw; pool fees and impact on both legs; peak rule prices the exit at the entry depth (peak liquidity is not recorded)",
+  };
+}
+
 export function getCryptoSignals(): {
   signals: any[];
   stats: CryptoDeskStats & { listLimit: number };
+  expectancy: { hold: ExpectancySummary; peak: ExpectancySummary; basis: string };
 } {
   // The list is the latest 100 for display; the stats come from aggregate
   // queries over every logged signal, so total/open/graded share one window.
@@ -1289,8 +1258,11 @@ export function getCryptoSignals(): {
       ...s,
       features: safeParse(s.features_json),
       risk: safeParse(s.risk_json),
+      // What this row returned to a $100 hold-to-horizon position, net of both legs (null while open or unpriced).
+      netHold: signalReturn(gradedLike(s), "hold", EXPECTANCY_SIZE_USD),
     })),
     stats: { ...stats, listLimit: LIST_LIMIT },
+    expectancy: getCryptoExpectancy(),
   };
 }
 

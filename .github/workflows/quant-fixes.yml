@@ -258,8 +258,24 @@ jobs:
               const e = j.entries || [];
               const ok = j.edition === "demo" && j.writable === false && e.length >= 3
                 && e.every((x) => x.quoteState === "ok" && x.range && x.range.rangePosition != null && x.cost1k && x.cost1k.roundTripPct != null && x.structure && x.line)
-                && e.some((x) => x.range.deepDipsReclaimed >= 1);
-              console.log((ok ? "PASS" : "FAIL") + " community watch: " + e.length + " sample rows, reclaimed dips " + e.map((x) => x.range && x.range.deepDipsReclaimed).join("/") + ", $1k trips " + e.map((x) => x.cost1k && x.cost1k.roundTripPct).join("/") + "%");
+                && e.some((x) => x.range.deepDipsReclaimed >= 1)
+                // On-chain facts: every sample row carries a read state; an unread concentration stays null (never a value), and the sample with an active mint authority names it.
+                && e.every((x) => x.onChainState === "ok" && typeof x.mintAuthorityActive === "boolean" && typeof x.freezeAuthorityActive === "boolean")
+                && e.some((x) => x.top10Pct != null) && e.some((x) => x.top10Pct == null && /unavailable/.test(x.top10Method || ""))
+                && e.some((x) => x.mintAuthorityActive === true && (x.structure.reasons || []).some((r) => /mint authority active/.test(r)));
+              console.log((ok ? "PASS" : "FAIL") + " community watch: " + e.length + " sample rows, reclaimed dips " + e.map((x) => x.range && x.range.deepDipsReclaimed).join("/") + ", $1k trips " + e.map((x) => x.cost1k && x.cost1k.roundTripPct).join("/") + "%, top-10 " + e.map((x) => x.top10Pct).join("/") + ", mint active " + e.map((x) => x.mintAuthorityActive).join("/"));
+            '
+            # Signals desk: the net-expectancy block is present under both exit rules, gated at the sample minimum, and every row carries a netHold return or the reason it has none.
+            curl -s -m 30 "$B/api/crypto/signals" > rep/demo/crypto-signals.json
+            node -e '
+              const j = JSON.parse(require("fs").readFileSync("rep/demo/crypto-signals.json", "utf8"));
+              const x = j.expectancy || {};
+              const sum = (s) => s && s.rule && Number.isFinite(s.n) && Number.isFinite(s.skipped) && s.positiveShare && s.sampleReady === (s.n >= s.minSample) && /net of pool fees/.test(s.note);
+              const rows = j.signals || [];
+              const rowsOk = rows.every((r) => r.netHold && r.netHold.rule === "hold" && (r.netHold.netPct == null) === (typeof r.netHold.missing === "string"));
+              const gated = !x.hold || x.hold.sampleReady || /counts only, no claim of edge/.test(x.hold.note);
+              const ok = sum(x.hold) && sum(x.peak) && x.hold.rule === "hold" && x.peak.rule === "peak" && x.hold.sizeUsd === 100 && typeof x.basis === "string" && rowsOk && gated;
+              console.log((ok ? "PASS" : "FAIL") + " crypto expectancy: hold n=" + (x.hold && x.hold.n) + " skipped=" + (x.hold && x.hold.skipped) + " ready=" + (x.hold && x.hold.sampleReady) + ", peak n=" + (x.peak && x.peak.n) + ", " + rows.length + " rows" + (ok ? "" : " body " + JSON.stringify(x).slice(0, 300)));
             '
             # 0DTE map on the sample chain: priced, labelled, no zones in the demo (investor limits), text free of instructions.
             curl -s -m 60 "$B/api/odte/map?symbol=%24SPX" > rep/demo/odte-map.json

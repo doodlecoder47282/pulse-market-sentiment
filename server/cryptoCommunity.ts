@@ -8,6 +8,8 @@
 //   - range position, drawdown, deep dips reclaimed, realized vol
 //   - execution cost of a $1,000 round trip against the pool's depth
 //   - the three-category structural read (community / meta / speculative)
+// and reads, from public Solana RPC (server/solanaToken.ts, shared with the
+// scanner), mint and freeze authority and top-10 holder concentration.
 //
 // Every figure is descriptive. Nothing here is a verdict, a target or a size.
 // Data states are kept apart: a token that did not resolve, a history call
@@ -21,10 +23,11 @@ import { sqlite } from "./storage";
 import { editionFromEnv } from "../shared/edition";
 
 import {
-  applyHistory, applyPool, blankEntry, deriveEntry, parseOhlcv, pickPool, sampleBars,
+  applyHistory, applyOnChain, applyOnChainFailure, applyPool, blankEntry, deriveEntry, parseOhlcv, pickPool, sampleBars,
   type CommunityEntry, type CommunityWatch,
 } from "./cryptoCommunityCore";
-export type { CommunityEntry, CommunityWatch, QuoteState, HistoryState } from "./cryptoCommunityCore";
+import { readTokenFacts } from "./solanaToken";
+export type { CommunityEntry, CommunityWatch, QuoteState, HistoryState, OnChainState } from "./cryptoCommunityCore";
 
 // ─── Config ─────────────────────────────────────────────────────────────
 
@@ -34,6 +37,8 @@ const HISTORY_REFRESH_MS = 6 * 3600_000;
 const HISTORY_PER_TICK = 4;            // GeckoTerminal budget: 30 rpm shared with the scanner
 const HISTORY_SPACING_MS = 2_500;
 const HISTORY_BARS = 120;              // 90-day window plus slack for missing days
+const ONCHAIN_REFRESH_MS = 6 * 3600_000; // authorities and holders move slowly on settled tokens
+const ONCHAIN_RETRY_MS = 30 * 60_000;    // after a failed read
 const TICK_MS = 60_000;
 const DS_BASE = "https://api.dexscreener.com";
 const GT_BASE = "https://api.geckoterminal.com/api/v2";
@@ -120,6 +125,23 @@ async function refreshHistory(now: number): Promise<void> {
   }
 }
 
+/** One token per tick (≤ 1 indexed RPC call), oldest read first; failures back off and are shown, never hidden. */
+async function refreshOnChain(now: number): Promise<void> {
+  const due = Array.from(entries.values())
+    .filter((e) => e.quoteState === "ok" && e.pairAddress)
+    .filter((e) => e.onChainAt == null || now - e.onChainAt > (e.onChainState === "ok" ? ONCHAIN_REFRESH_MS : ONCHAIN_RETRY_MS))
+    .sort((a, b) => (a.onChainAt ?? 0) - (b.onChainAt ?? 0))
+    .slice(0, 1);
+  for (const e of due) {
+    try {
+      const facts = await readTokenFacts(e.tokenAddress, [{ pairAddress: e.pairAddress!, baseAmount: null }], { withConcentration: true });
+      applyOnChain(e, facts, now);
+    } catch (err: any) {
+      applyOnChainFailure(e, `solana rpc: ${String(err?.message ?? err)}`, now);
+    }
+  }
+}
+
 let ticking = false;
 async function tick(): Promise<void> {
   if (ticking || entries.size === 0) return;
@@ -131,6 +153,7 @@ async function tick(): Promise<void> {
       await refreshQuotes(now);
     }
     await refreshHistory(now);
+    await refreshOnChain(now);
   } catch (err: any) {
     console.warn(`[community] tick failed: ${err?.message ?? err}`);
   } finally {
@@ -186,11 +209,11 @@ export function getCommunityWatch(): CommunityWatch {
   return {
     entries: list,
     asOf: Date.now(),
-    source: edition === "demo" ? "Sample (simulated history and pools)" : "DexScreener (deepest Solana pool), GeckoTerminal daily candles; keyless public APIs",
+    source: edition === "demo" ? "Sample (simulated history, pools and on-chain facts)" : "DexScreener (deepest Solana pool), GeckoTerminal daily candles, public Solana RPC (authorities, top-10 holders); keyless",
     edition,
     writable: edition === "personal",
     limits: { maxTokens: MAX_TOKENS, historyRefreshMs: HISTORY_REFRESH_MS, quoteRefreshMs: QUOTE_REFRESH_MS },
-    note: "Descriptive only: range position, survival counts and execution cost against the pool's depth. Holder concentration and mint authority are not read for watch tokens, so the structural read stays tentative.",
+    note: "Descriptive only: range position, survival counts, execution cost against the pool's depth, and on-chain facts (mint and freeze authority, top-10 holder share) read from public RPC. A fact that could not be read is shown as unread, not as fine.",
   };
 }
 
@@ -199,9 +222,9 @@ export function getCommunityWatch(): CommunityWatch {
 function seedDemo(): void {
   const now = Date.now();
   const samples = [
-    { addr: "SampLe1111111111111111111111111111111111111", symbol: "PLAZA", name: "Plaza (sample)", liq: 2_400_000, mcap: 48_000_000, age: 410 },
-    { addr: "SampLe2222222222222222222222222222222222222", symbol: "QUILL", name: "Quill (sample)", liq: 650_000, mcap: 9_500_000, age: 96 },
-    { addr: "SampLe3333333333333333333333333333333333333", symbol: "GRIT", name: "Grit 2.0 (sample)", liq: 140_000, mcap: 1_900_000, age: 21 },
+    { addr: "SampLe1111111111111111111111111111111111111", symbol: "PLAZA", name: "Plaza (sample)", liq: 2_400_000, mcap: 48_000_000, age: 410, mint: false, freeze: false, top10: 18.4 as number | null },
+    { addr: "SampLe2222222222222222222222222222222222222", symbol: "QUILL", name: "Quill (sample)", liq: 650_000, mcap: 9_500_000, age: 96, mint: false, freeze: false, top10: 31.2 as number | null },
+    { addr: "SampLe3333333333333333333333333333333333333", symbol: "GRIT", name: "Grit 2.0 (sample)", liq: 140_000, mcap: 1_900_000, age: 21, mint: true, freeze: false, top10: null as number | null },
   ];
   for (const s of samples) {
     const e = blankEntry(s.addr, "sample", now - s.age * 86_400_000);
@@ -215,6 +238,11 @@ function seedDemo(): void {
     e.buys24h = 1400; e.sells24h = 1250;
     e.quoteState = "ok"; e.quoteAt = now;
     applyHistory(e, bars, now);
+    applyOnChain(e, {
+      mintAuthorityActive: s.mint, freezeAuthorityActive: s.freeze,
+      top10Pct: s.top10, top10Method: s.top10 == null ? null : "sample",
+      concentration: s.top10 == null ? "unavailable" : "ok", concentrationError: s.top10 == null ? "sample: indexed RPC not read" : null,
+    }, now);
     entries.set(s.addr, e);
   }
 }
