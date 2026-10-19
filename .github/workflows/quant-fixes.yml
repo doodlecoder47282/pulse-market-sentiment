@@ -359,13 +359,16 @@ jobs:
             await p.locator('[data-testid="tab-signals"]').first().click({ timeout: 5000 });
             await p.locator('[data-testid="today-card"], [data-testid="today-card-unavailable"]').first().waitFor({ timeout: 30000 });
             const todayOk = await p.locator('[data-testid="today-card"]').count();
-            const lv = todayOk ? await p.locator('[data-testid="today-levels"]').innerText().catch(() => "") : "";
-            const nums = (lv.match(/\d{1,2},\d{3}/g) || []).length;
+            // Each of the three cells shows a thousand-separated level or an explicit "n/a" with its reason (pre-open the map can name
+            // fewer than three landmarks: a missing one is said, never invented).
+            const cells = todayOk ? await p.locator('[data-testid="today-wall-above"], [data-testid="today-flip"], [data-testid="today-magnet-below"]').allInnerTexts() : [];
+            const nums = cells.filter((t) => /\d{1,2},\d{3}/.test(t)).length;
+            const cellsOk = cells.length === 3 && cells.every((t) => /\d{1,2},\d{3}|n\/a/.test(t)) && nums >= 1;
             const noGex = await p.locator('[data-testid="today-no-gex"]').count();
             // The sample chain is priced in-session and after the close; between Friday's close and Monday's open the map is unavailable (no expiry) and the card says so.
             const unavailable = await p.locator('[data-testid="today-card-unavailable"]').count();
-            const ok = (todayOk && (nums >= 3 || noGex)) || unavailable;
-            console.log((ok ? "PASS" : "FAIL") + " today card: " + (todayOk ? "rendered, " + nums + " levels" + (noGex ? " (no gex state)" : "") : unavailable ? "unavailable state shown (no map)" : "missing"));
+            const ok = (todayOk && (cellsOk || noGex)) || unavailable;
+            console.log((ok ? "PASS" : "FAIL") + " today card: " + (todayOk ? "rendered, " + nums + " of 3 levels named, cells " + JSON.stringify(cells) + (noGex ? " (no gex state)" : "") : unavailable ? "unavailable state shown (no map)" : "missing"));
             await p.locator('[data-testid="tab-tradedesk"]').first().click({ timeout: 5000 });
             await p.locator('[data-testid="chart-levels-card"]').waitFor({ timeout: 30000 });
             await p.locator('[data-testid="chart-levels-input"]').fill("7686, 7643 7600");
