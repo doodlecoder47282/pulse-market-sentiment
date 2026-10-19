@@ -501,6 +501,77 @@ empty; `routes.ts` 5896 `ch.source !== "schwab"` is a type-only `never`
 comparison; TS7006/TS2339 in older files.
 Updated: 2026-10-02. This is a compact handoff, not a live-health certificate.
 
+## 2026-10-18: crypto desk, achievable-exit grading and on-chain facts (feat/crypto-net-expectancy)
+
+Honest assessment that led here: the signal score is hand-set (not fitted),
+HIT_5M/DOUBLED graded on the sampled peak (an exit nobody can take), and the
+sub-$1M new-pool universe is a negative-expectancy pool before costs. Nothing
+on the tab showed what a follower of the desk would have been paid. This
+branch adds the bookkeeping; it does not claim an edge.
+
+1. shared/cryptoExpectancy.ts (pure, tested): what a $100 position returned
+   under a stated exit rule, net of both legs. `graded` = buy at the signal,
+   sell when the grader closed the row (HIT_5M at the first sample at or
+   above the target, a limit-sell-at-target and NOT a hold to the horizon;
+   RUGGED at rug detection; DOUBLED/DEAD at the 72 h horizon; last_mcap /
+   last_liquidity are the values the grader saw then); `peak` = the sampled
+   peak, shown only as the ceiling. Reviewer finding: the first draft called
+   this "hold to the grading horizon", which the grader does not record;
+   renamed everywhere and said in the basis text.
+   Constant-product cost on both legs at the liquidity that existed at each
+   (entry pool at liquidity_at_signal, exit pool at last_liquidity; the peak
+   rule prices the exit at the entry depth because peak liquidity is not
+   recorded). A pulled pool or a RUGGED row with no exit liquidity is -100,
+   never "unknown". `summarizeExpectancy` gives median, mean, share positive
+   with a 95% Wilson interval, worst/best, skipped rows with reasons, and a
+   gate: below CRYPTO_SAMPLE_READY_MIN_GRADED (50) the note reads "counts
+   only, no claim of edge". shared/memeStructure fee constants exported.
+2. server/cryptoEngine.ts getCryptoExpectancy(): first ENTER per coin (same
+   identity rule as the sample gate: COALESCE(token_address, pair_address)),
+   graded rows only; /api/crypto/signals now carries `expectancy {hold, peak,
+   basis}` and each row `netHold`. CryptoPanel shows the ExpectancyCard above
+   the sample note and "+N% net" per graded row.
+3. server/solanaToken.ts: one on-chain reader (mint/freeze authority, supply,
+   top-10 holder share excluding identified pool vaults and burns) shared by
+   the scanner's securityTick (behaviour unchanged: one indexed call per
+   tick, 5-min cooldown after a 429, concentration non-fatal) and the
+   community watch. `concentration` is ok | skipped | unavailable, so a
+   cooling-down RPC keeps the last read and a failed read clears it with
+   the reason; it never becomes a value.
+4. Community watch: entries carry mintAuthorityActive, freezeAuthorityActive,
+   top10Pct, top10Method, top10At, onChainState (pending | ok |
+   unavailable), onChainAt, onChainError; `refreshOnChain` reads one token
+   per minute tick, re-reads a complete read every 6 h and retries after 30
+   min when the mint read failed or the concentration was skipped or
+   unavailable; a skipped concentration keeps the last value and its own
+   timestamp (shown in the tooltip) or is labelled "skipped" when there is
+   none; tokens whose pool was not found still get their authorities; deriveEntry now feeds the
+   facts to classifyMeme, so a watch token with both read and nothing else
+   missing gets a firm (not tentative) structural read. MemeStructure.tsx
+   shows "mint authority: revoked / ACTIVE / unread", the same for freeze,
+   and "top-10 holders: N% / unavailable / unread". Demo seeds: PLAZA 18.4%,
+   QUILL 31.2%, GRIT mint ACTIVE with concentration unavailable.
+5. Below the sample minimum the expectancy card has no colour: the
+   numbers are counts, and green/red reads as a verdict.
+6. Tests: tests/quant/crypto-expectancy.test.ts (5), crypto-community
+   applyOnChain case (skipped keeps, unavailable clears, failure stays
+   unread). CI demo smoke now checks the on-chain fields on the sample rows
+   and the expectancy block (both rules, gate text, netHold on every row).
+
+Not done (deliberately): fitting the score. The 50-coin sample is not
+reached; when it is, the expectancy block is the thing to fit against, and
+the fit must be reported with its interval, not as a probability.
+
+Wording stays descriptive: returns are "what happened", the peak rule is
+labelled a ceiling, and the gate text says no claim of edge.
+
+Evidence: independent reviewer pass (must-fix hold-rule mislabel and all
+should-fixes applied in 32b3f04); CI run 39125508361 on d54628f green
+(demo smoke: community watch and crypto expectancy PASS). PR #10 into main.
+
+Next step: owner reviews PR #10 (and PR #9, 3D polish) and merges; live
+on-chain reads on the personal edition are the part CI cannot see.
+
 ## Current objective
 
 Latest continuation (Oct2 user screenshots: Crypto inaccessible / stock research
