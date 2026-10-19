@@ -54,9 +54,9 @@ export interface TradeCost {
   assumptions: string[];
 }
 
-const DEFAULT_DEX_FEE_PCT = 0.25;
-const DEFAULT_PLATFORM_FEE_PCT = 1.0;
-const DEFAULT_PRIORITY_USD = 0.25;
+export const DEFAULT_DEX_FEE_PCT = 0.25;
+export const DEFAULT_PLATFORM_FEE_PCT = 1.0;
+export const DEFAULT_PRIORITY_USD = 0.25;
 
 function finite(n: unknown): number | null {
   return typeof n === "number" && Number.isFinite(n) ? n : null;
@@ -254,6 +254,9 @@ export function classifyMeme(f: MemeClassInput): MemeClass {
   const text = `${f.name} ${f.symbol}`;
   const metaTags = META_PATTERNS.filter((p) => p.re.test(text)).map((p) => p.tag);
   const newsHits = (f.narrativeHits || []).filter(Boolean);
+  // An active mint authority (the issuer can still print supply) is named
+  // whatever the age; it only decides the category in the community test.
+  if (f.mintAuthorityActive === true) reasons.push("mint authority active");
 
   if (age < COMMUNITY_MIN_AGE_DAYS) {
     if (newsHits.length) {
@@ -283,7 +286,6 @@ export function classifyMeme(f: MemeClassInput): MemeClass {
   reasons.push(`${Math.floor(age)}d old`);
   if (liq != null) reasons.push(`liquidity $${Math.round(liq).toLocaleString("en-US")}${deepEnough ? "" : ` (under $${COMMUNITY_MIN_LIQUIDITY_USD.toLocaleString("en-US")})`}`);
   if (top10 != null) reasons.push(`top-10 holders ${top10}%${spread ? "" : ` (over ${COMMUNITY_MAX_TOP10_PCT}%)`}`);
-  if (f.mintAuthorityActive === true) reasons.push("mint authority active");
   // Confidence: firm only when every input the rule needs was present.
   const conf = (): MemeClass["confidence"] => (missing.length ? "tentative" : "firm");
   if (!deepEnough || !spread || !mintOk) {

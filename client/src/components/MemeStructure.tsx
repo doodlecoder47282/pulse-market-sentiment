@@ -26,6 +26,8 @@ interface CommunityEntry {
   quoteState: "pending" | "ok" | "not_found" | "unavailable"; quoteAt: number | null; quoteError: string | null;
   range: RangeStats | null; historyState: "pending" | "ok" | "partial" | "no_data" | "unavailable"; historyAt: number | null; historyError: string | null;
   cost1k: TradeCost | null; maxSizeAt1Pct: number | null; structure: MemeClass | null; line: LinePosition;
+  mintAuthorityActive: boolean | null; freezeAuthorityActive: boolean | null; top10Pct: number | null; top10Method: string | null; top10At: number | null;
+  onChainState: "pending" | "ok" | "unavailable"; onChainAt: number | null; onChainError: string | null;
 }
 
 interface CommunityWatch {
@@ -56,6 +58,29 @@ export const CATEGORY_STYLE: Record<MemeClass["category"], { label: string; cls:
 };
 
 const COST_STATE: Record<TradeCost["dataState"], string> = { ok: "", unavailable: "not reported", observed_zero: "$0 pool", below_fees: "under fees", invalid: "—" };
+
+export /** Mint / freeze authority and top-10 holder share from public RPC. Unread is shown as unread, never as revoked or low. */
+function OnChainRow({ e }: { e: CommunityEntry }) {
+  const authority = (v: boolean | null, what: string) =>
+    v == null ? { text: `${what}: unread`, cls: "text-muted-foreground" }
+      : v ? { text: `${what}: ACTIVE`, cls: "text-rose-300 font-semibold" }
+      : { text: `${what}: revoked`, cls: "text-emerald-300" };
+  const mint = authority(e.mintAuthorityActive, "mint authority");
+  const freeze = authority(e.freezeAuthorityActive, "freeze authority");
+  const readAt = e.top10At ? `; read ${new Date(e.top10At).toLocaleString()}` : "";
+  const top10 = e.top10Pct == null
+    ? { text: `top-10 holders: ${e.top10Method?.startsWith("unavailable") ? "unavailable" : "unread"}`, cls: "text-muted-foreground", title: (e.top10Method ?? "indexed RPC not read yet") + readAt }
+    : { text: `top-10 holders: ${e.top10Pct.toFixed(1)}%`, cls: e.top10Pct > 45 ? "text-rose-300 font-semibold" : e.top10Pct > 30 ? "text-amber-300" : "text-emerald-300", title: `excluding identified pool vaults and burns; method: ${e.top10Method ?? "—"}${readAt}` };
+  const stateTitle = e.onChainState === "unavailable" ? (e.onChainError ?? "on-chain read failed") : e.onChainState === "pending" ? "on-chain read not attempted yet" : e.onChainAt ? `authorities read ${new Date(e.onChainAt).toLocaleString()}` : undefined;
+  return (
+    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]" data-testid={`community-onchain-${e.tokenAddress.slice(0, 8)}`} title={stateTitle}>
+      <span className={mint.cls}>{mint.text}</span>
+      <span className={freeze.cls}>{freeze.text}</span>
+      <span className={top10.cls} title={top10.title}>{top10.text}</span>
+      {e.onChainState === "unavailable" && <span className="text-amber-300">on-chain unavailable</span>}
+    </div>
+  );
+}
 
 export function CategoryChip({ k }: { k: MemeClass | null | undefined }) {
   if (!k) return null;
@@ -208,6 +233,7 @@ function CommunityWatchCard({ watch, loading, error, picked, onPick }: {
                 <Stat label="$1k trip" value={e.cost1k?.roundTripPct != null ? fmtPct(e.cost1k.roundTripPct) : e.cost1k ? COST_STATE[e.cost1k.dataState] || "—" : "—"} title="cost of a $1,000 buy and zero-edge sell at this depth: pool fee 0.25% and app fee 1% per swap, constant-product impact" />
                 <Stat label="age" value={fmtDays(e.ageDays)} title={e.structure?.reasons.join("; ")} />
               </div>
+              <OnChainRow e={e} />
             </div>
           );
         })}
