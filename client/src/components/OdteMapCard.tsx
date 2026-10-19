@@ -113,7 +113,12 @@ export default function OdteMapCard({ symbol = "$SPX" }: { symbol?: string }) {
       </CardHeader>
       <CardContent className="space-y-3">
         {q.isLoading && <div className="min-h-[220px] text-[11px] text-muted-foreground">composing the map…</div>}
-        {q.isError && (
+        {q.isError && !m && (
+          <div className="min-h-[220px]">
+            <UnavailablePanel title="0DTE map" error={q.error} testId="odte-map-unavailable" compact />
+          </div>
+        )}
+        {q.isError && m && (
           <UnavailablePanel title="0DTE map" error={q.error} testId="odte-map-unavailable" compact />
         )}
         {stale && m && (

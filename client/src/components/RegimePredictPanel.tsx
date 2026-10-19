@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import UnavailablePanel from "@/components/UnavailablePanel";
 import { Activity, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Minus } from "lucide-react";
 
 type RegimeBucket =
@@ -139,7 +140,7 @@ function CandidateRow({ c, max, rank }: { c: RegimeCandidate; max: number; rank:
 export default function RegimePredictPanel() {
   const [showWhy, setShowWhy] = useState(false);
 
-  const { data, isLoading, isError } = useQuery<RegimePredictPayload>({
+  const { data, isLoading, isError, error } = useQuery<RegimePredictPayload>({
     queryKey: ["/api/regime/predict", "^GSPC", 20],
     queryFn: async () => {
       const r = await apiRequest("GET", "/api/regime/predict?symbol=^GSPC&horizonMinutes=20");
@@ -164,8 +165,21 @@ export default function RegimePredictPanel() {
     );
   }
 
+  // A failed or empty answer keeps a card of the skeleton's height and says
+  // what happened: returning nothing hid the state and shifted everything
+  // below it up by a card (CI UX audit, tablet-portrait CLS 0.16).
   if (isError || !data) {
-    return null;
+    return (
+      <Card className="border-border" data-testid="card-regime-predict-unavailable">
+        <CardContent className="p-4 space-y-3 min-h-[196px]">
+          <div className="flex items-center gap-2">
+            <Activity className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-semibold text-foreground">What&apos;s Next</span>
+          </div>
+          <UnavailablePanel title="Regime transition forecast" error={isError ? error : undefined} state={isError ? undefined : "unavailable"} reason={isError ? undefined : "the server sent no forecast"} compact />
+        </CardContent>
+      </Card>
+    );
   }
 
   // Gamma unknown (or no candidates at all): its own state, never "Neutral".
