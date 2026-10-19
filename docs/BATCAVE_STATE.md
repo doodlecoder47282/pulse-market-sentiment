@@ -572,6 +572,45 @@ should-fixes applied in 32b3f04); CI run 39125508361 on d54628f green
 Next step: owner reviews PR #10 (and PR #9, 3D polish) and merges; live
 on-chain reads on the personal edition are the part CI cannot see.
 
+## 2026-10-18 (evening): design pass for the end user (feat/ux-design)
+
+Reviewed the CI screenshots of every tab (desktop 1440 and iPhone 15) and
+mocked three changes on a Design canvas ("Batcave UX Improvements"):
+
+1. Answer first. The phone first screen showed header, truncated regime
+   strip, two status pills, ticker, a collapsed description and the Connect
+   Schwab card; the levels were a tab and two scrolls away. New
+   client/src/components/TodayCard.tsx at the top of Signals: spot, wall
+   above / gamma flip / magnet below from the 0DTE map (same react-query key
+   as the Trade Desk card, no second fetch), spot's position between them,
+   the straddle range, one sentence on the gamma sign, a link to the Trade
+   Desk ladder. Loading, unavailable and no-gex states keep the same height
+   (224 px) so the UX audit's CLS budget holds.
+2. Chart-level confluence. shared/levelConfluence.ts (pure, 5 tests): a
+   reader's chart levels tagged landmark / OI confluence / weak / chart only
+   / unavailable against the map, tolerance 0.1% of spot (floor 2 pts),
+   "chain" at >= 3% of the map's gross exposure. A missing map tags
+   everything unavailable, never chart only. client/src/components/
+   ChartLevelsCard.tsx under the 0DTE map on the Trade Desk: levels typed
+   once, kept per symbol in localStorage (try/catch, per-viewer convenience),
+   each row shows side, distance to the nearest mapped strike, share, and
+   whether it is inside the straddle range. Descriptive only.
+3. One data-state chip. client/src/components/DataStateChip.tsx already
+   exists (11 panels); both new cards use it. Not done: the header strip's
+   PARTIAL / DEGRADED / NEUTRAL / SAMPLE / LIVE / CLOSED badges still use
+   three styles; converting them touches the header's layout and the UX
+   audit, so it is its own objective.
+
+CI: demo smoke now opens Signals and checks the Today card (three
+thousand-separated levels, or the no-gex / unavailable state between
+Friday's close and Monday's open), then the Trade Desk chart-levels rail
+(types three levels, expects three tagged rows, and that tags agree with the
+map's state), screenshot demo/16-chart-levels.png.
+
+Not changed: phone bottom nav still Signals / Chart / Models / Desk / More
+(seven tabs under More); regrouping into Today / Levels / Flow / Context /
+Crypto is a routing change for a later objective.
+
 ## Current objective
 
 Latest continuation (Oct2 user screenshots: Crypto inaccessible / stock research
