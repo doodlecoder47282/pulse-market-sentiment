@@ -47,7 +47,7 @@ test("crypto SQL binds under better-sqlite3 (the server's driver) when it is ins
   }
   const db = new Database(":memory:");
   db.exec(`CREATE TABLE crypto_signals (id TEXT PRIMARY KEY, chain TEXT, pair_address TEXT, outcome TEXT, mcap_at_signal REAL,
-    peak_mcap REAL, peak_at INTEGER, last_mcap REAL, last_liquidity REAL, graded_at INTEGER)`);
+    peak_mcap REAL, peak_at INTEGER, last_mcap REAL, last_liquidity REAL, peak_liquidity REAL, graded_at INTEGER)`);
   db.prepare(`INSERT INTO crypto_signals (id, chain, pair_address, outcome, mcap_at_signal) VALUES ('a','solana','P1','OPEN',100000)`).run();
   db.prepare(`INSERT INTO crypto_signals (id, chain, pair_address, outcome, mcap_at_signal) VALUES ('b','solana','P2','OPEN',100000)`).run();
   db.prepare(CRYPTO_PEAK_SAMPLE_SQL).run(peakSampleParams(400_000, 10, 50_000, "solana", "P1"));
