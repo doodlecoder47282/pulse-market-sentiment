@@ -610,6 +610,72 @@ Not changed: phone bottom nav still Signals / Chart / Models / Desk / More
 (seven tabs under More); regrouping into Today / Levels / Flow / Context /
 Crypto is a routing change for a later objective.
 
+## 2026-10-20: setup event log, phase 1 (feat/setups)
+
+Direction agreed with the owner: an "A+ setup" is a stated condition met,
+logged and graded, never a hand-set score. Phase 1 logs and grades; nothing
+a reader sees changes except the log card and the Method panel.
+
+1. shared/setupRules.ts: the versioned rule book (SETUP_RULES_VERSION
+   2026.10.20-1). Structure (at-landmark 0.1% of spot, wall share >= 3%),
+   flow (>= $2.5M at observed prices, vol/OI >= 15 or new strike, 1-3 DTE,
+   at the ask, under 45 min old), vol (one-day implied move <= 2%), regime
+   (fade needs long gamma, breakout needs short), events (90 min clear of a
+   tier-1 release), session (15 min after the open, 45 before the close),
+   outcome (120 min horizon, flip or 0.4% target, 0.2% past the wall
+   invalidates, target >= 3x the modelled round-trip cost). describeRules()
+   feeds the Method panel. SETUP_GRADE_MIN_SAMPLE = 100 per version.
+2. shared/setupDetect.ts (pure, 6 tests): detectSetups returns the kinds
+   that fired with every feature, and for the rest the blockers in words;
+   gradeSetup replays minute bars with the achievable-exit test (target
+   before invalidation = hit; invalidation first or both in one bar = loss;
+   neither = expiry at the horizon close; too few bars = ungraded); returns
+   are signed by direction and net of the spread modelled at detection.
+3. shared/macroCalendar.ts: tier-1 dates (FOMC, CPI, NFP, PCE) through
+   2026-12-31 from the agencies' calendars; after that the calendar reports
+   itself unknown and the detector records it as a feature, not a gate.
+4. server/setupEngine.ts: table setup_events; every minute in the regular
+   session, for the flow universe, structure from
+   tickerAlpha.gatherPositioningForTicker (per-name dealer gamma, cached 5
+   min), the underlying spread as the cost model, the flow engine's pending
+   whale prints, the session clock and the calendar -> detector; one open
+   row per symbol and kind. Grader every 5 min replays regular-session
+   minute bars (getPriceHistory day/2/minute); rows with no bars two days
+   on are marked ungraded with the reason. GET /api/setups serves the rule
+   book, calendar, counts, per-version summary (Wilson interval, counts
+   only below the gate), recent rows and "why not now" per symbol. Demo
+   edition stores nothing and serves the rule book.
+5. client SetupLogCard on the Trade Desk under the chart-levels rail.
+
+Honest limits recorded in the card and here: the cost model is the
+underlying's spread, not an option's; flow confirmation reads the flow
+engine's pending prints of the current cycle; structure for SPX comes from
+the per-ticker chain read, not the 0DTE map. No grade letter exists in the
+code; the first one can appear only after 100 graded setups of one version.
+
+Dark-pool request: Schwab's feed carries no venue code and no time-and-sales
+(streamStore L1 fields have no exchange id; no TIMESALE service), so the
+next objective is a relative-volume and block-print read, named by what it
+measures. daily_bars stores closes only; volume needs a column.
+
+6. Any-ticker scan (server/tickerScan.ts, GET /api/scan?symbol=): five
+   reads per symbol, each with its own state: Schwab instrument lookup
+   (marketdata/v1/instruments symbol-search, so an unknown symbol says so),
+   quote with the spread as the cost model, volume against the 20-session
+   average paced to the session, per-name dealer gamma, and the chain's most
+   active contracts by volume/OI. Cached 60 s per symbol; at most five
+   Schwab calls per scan. TickerScanCard under the Today card on Signals.
+7. Volume read (shared/volumeRead.ts, 3 tests): relative volume raw and
+   paced; "quiet volume" (>= 1.8x pace with the day's move inside 0.4%);
+   block prints from Level-1 updates for the streamed symbols (>= 8x the
+   median print and >= 2,000 shares). Named by what it measures: Schwab's
+   feed carries no venue code and no time-and-sales, so nothing in the app
+   says "dark pool"; the notes say so on the card.
+
+Next step: CI on feat/setups, PR into main after #9/#10/#11; then crypto
+items 1-3 (horizon marks, ENTER waits for on-chain facts, social failure
+handling) and the volume column on daily_bars.
+
 ## Current objective
 
 Save the credit-conserving resume framework and assess reuse of the existing
