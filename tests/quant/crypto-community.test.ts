@@ -6,7 +6,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyHistory, applyPool, blankEntry, deriveEntry, parseOhlcv, pickPool, sampleBars } from "../../server/cryptoCommunityCore";
+import { applyHistory, applyOnChain, applyOnChainFailure, applyPool, blankEntry, deriveEntry, parseOhlcv, pickPool, sampleBars } from "../../server/cryptoCommunityCore";
 import { rangeStats } from "../../shared/memeStructure";
 
 const MINT = "So11111111111111111111111111111111111111112";
@@ -91,6 +91,52 @@ test("applyHistory: range state follows the bar count; a reclaimed deep dip make
   applyHistory(short, bars.slice(-3), T);
   assert.equal(short.historyState, "no_data");
   assert.equal(short.range?.rangePosition, null);
+});
+
+test("applyOnChain: facts feed the classifier; a skipped concentration keeps the last value, a failed one clears it, a failed mint read is unavailable, never fine", () => {
+  const e = blankEntry(MINT, null, T);
+  applyPool(e, pair(), T);
+  applyHistory(e, sampleBars("ABC", 120, 0.01, T - 86_400_000), T);
+  assert.equal(e.onChainState, "pending");
+  assert.equal(e.mintAuthorityActive, null);
+  assert.ok(e.structure!.missing.includes("top10Pct") && e.structure!.missing.includes("mintAuthority"));
+
+  applyOnChain(e, { mintAuthorityActive: false, freezeAuthorityActive: false, top10Pct: 22.5, top10Method: "owners", concentration: "ok", concentrationError: null }, T + 1);
+  assert.equal(e.onChainState, "ok");
+  assert.equal(e.top10Pct, 22.5);
+  assert.equal(e.mintAuthorityActive, false);
+  assert.ok(!e.structure!.missing.includes("top10Pct") && !e.structure!.missing.includes("mintAuthority"), "both inputs now read");
+  assert.equal(e.structure?.confidence, "firm", "nothing missing: the community read is no longer tentative");
+
+  // Indexed RPC cooling down: authorities refreshed, concentration and its own timestamp kept from the last read.
+  applyOnChain(e, { mintAuthorityActive: false, freezeAuthorityActive: false, top10Pct: null, top10Method: null, concentration: "skipped", concentrationError: null }, T + 2);
+  assert.equal(e.top10Pct, 22.5);
+  assert.equal(e.top10At, T + 1, "a skipped read does not advance the concentration timestamp");
+  assert.equal(e.onChainAt, T + 2);
+  // Indexed read failed: the value is cleared with the reason, not left stale.
+  applyOnChain(e, { mintAuthorityActive: false, freezeAuthorityActive: false, top10Pct: null, top10Method: null, concentration: "unavailable", concentrationError: "rpc 429 @ api.mainnet-beta.solana.com" }, T + 3);
+  assert.equal(e.top10Pct, null);
+  assert.match(e.top10Method!, /^unavailable: rpc 429/);
+  assert.ok(e.structure!.missing.includes("top10Pct"));
+
+  // Mint authority active is a named reason in the structural read.
+  applyOnChain(e, { mintAuthorityActive: true, freezeAuthorityActive: true, top10Pct: 61, top10Method: "owners", concentration: "ok", concentrationError: null }, T + 4);
+  assert.equal(e.mintAuthorityActive, true);
+  assert.ok(e.structure!.reasons.some((r) => /mint authority active/.test(r)));
+
+  // First read skipped: labelled skipped, not unavailable and not a value.
+  const g = blankEntry(MINT, null, T);
+  applyOnChain(g, { mintAuthorityActive: false, freezeAuthorityActive: false, top10Pct: null, top10Method: null, concentration: "skipped", concentrationError: null }, T + 6);
+  assert.equal(g.top10Pct, null);
+  assert.match(g.top10Method!, /^skipped:/);
+  assert.equal(g.top10At, null);
+
+  const f = blankEntry(MINT, null, T);
+  applyPool(f, pair(), T);
+  applyOnChainFailure(f, "solana rpc: all solana rpcs failed", T + 5);
+  assert.equal(f.onChainState, "unavailable");
+  assert.equal(f.mintAuthorityActive, null, "a failed read leaves the authority unread, not revoked");
+  assert.equal(f.onChainError, "solana rpc: all solana rpcs failed");
 });
 
 test("deriveEntry never turns a missing liquidity into a zero cost", () => {

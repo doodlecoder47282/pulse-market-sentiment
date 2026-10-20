@@ -122,6 +122,25 @@ interface SignalsResp {
     sampleReason?: string;
     peakSampling?: string;
   };
+  // Net return of a $100 position per first-ENTER coin under a stated exit
+  // rule (shared/cryptoExpectancy.ts): bookkeeping on what happened, not a forecast.
+  expectancy?: { graded: Expectancy; peak: Expectancy; basis: string };
+}
+
+interface Expectancy {
+  rule: "graded" | "peak";
+  sizeUsd: number;
+  n: number;
+  skipped: number;
+  skippedReasons: Record<string, number>;
+  medianNetPct: number | null;
+  meanNetPct: number | null;
+  positiveShare: { yes: number; of: number; lo: number | null; hi: number | null };
+  worstNetPct: number | null;
+  bestNetPct: number | null;
+  sampleReady: boolean;
+  minSample: number;
+  note: string;
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────
@@ -682,6 +701,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
       {stats.peakSampling && (
         <p className="text-[11px] text-muted-foreground" data-testid="crypto-peak-sampling">{stats.peakSampling}</p>
       )}
+      {sig.expectancy && <ExpectancyCard x={sig.expectancy} />}
       {!stats.sampleReady && (
         <p className="text-[11px] text-muted-foreground">
           not sample-ready{stats.sampleReason ? ` (${stats.sampleReason})` : ` at ${stats.minGradedForSample ?? 50} graded coins (${stats.graded ?? 0} so far)`} — a minimum sample, not a calibration. until then these stats are the whole product: proving or killing the edge.
@@ -700,6 +720,11 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
             <span className="text-muted-foreground">@{fmtUsd(s.mcap_at_signal)}</span>
             <TrendingUp className="h-3 w-3 text-muted-foreground" />
             <span className="font-mono tabular-nums text-muted-foreground">peak {fmtUsd(s.peak_mcap)}</span>
+            {s.netGraded?.netPct != null && (
+              <span className={`font-mono tabular-nums ${s.netGraded.netPct > 0 ? "text-emerald-300" : "text-rose-300"}`} title={`net return of a $100 position opened at this ENTER row and sold when the row was graded (${s.outcome === "HIT_5M" ? "at the first sample at or above the target" : s.outcome === "RUGGED" ? "at rug detection" : "at the horizon"}), after both legs' fees and impact`} data-testid="crypto-signal-net">
+                {s.netGraded.netPct > 0 ? "+" : ""}{s.netGraded.netPct.toFixed(0)}% net
+              </span>
+            )}
             <span className={`ml-auto font-semibold ${
               s.outcome === "HIT_5M" ? "text-lime-300" : s.outcome === "DOUBLED" ? "text-emerald-300"
               : s.outcome === "RUGGED" ? "text-rose-300" : s.outcome === "DEAD" ? "text-muted-foreground"
@@ -711,6 +736,55 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+const fmtNet = (v: number | null | undefined): string => (v == null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(1)}%`);
+
+/**
+ * Net expectancy of the desk's first ENTER signals: what a $100 position
+ * returned under the graded rule (buy at the signal, sell when the grader
+ * closed the row: target sample, rug detection, or the horizon), net of both
+ * legs, with the sampled peak as the ceiling it is measured against. Counts
+ * until the sample minimum (no colour until then); never a forecast.
+ */
+function ExpectancyCard({ x }: { x: NonNullable<SignalsResp["expectancy"]> }) {
+  const h = x.graded, p = x.peak;
+  const share = h.positiveShare;
+  const tone = (v: number | null) => (!h.sampleReady || v == null ? "text-muted-foreground" : v > 0 ? "text-emerald-300" : "text-rose-300");
+  return (
+    <div className="rounded-lg border border-border/50 bg-card/40 p-3 space-y-2" data-testid="crypto-expectancy">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">net expectancy · ${h.sizeUsd} per first-ENTER coin, sold when graded</span>
+        <span className={`text-[11px] ${h.sampleReady ? "text-muted-foreground" : "text-amber-300/90"}`} data-testid="crypto-expectancy-gate">
+          {h.sampleReady ? `${h.n} graded signals` : `${h.n} of ${h.minSample} needed: counts only`}
+        </span>
+      </div>
+      {h.n === 0 ? (
+        <p className="text-xs text-muted-foreground">no graded first-ENTER signal has a computable return yet{h.skipped ? ` (${h.skipped} skipped: ${Object.entries(h.skippedReasons).map(([k, v]) => `${k} ${v}`).join(", ")})` : ""}.</p>
+      ) : (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {([
+            ["median net", fmtNet(h.medianNetPct), tone(h.medianNetPct)],
+            ["mean net", fmtNet(h.meanNetPct), tone(h.meanNetPct)],
+            ["positive", `${share.yes}/${share.of}${share.lo != null ? ` (${share.lo.toFixed(0)}–${share.hi!.toFixed(0)}%)` : ""}`, h.sampleReady ? "text-foreground" : "text-muted-foreground"],
+            ["worst / best", `${fmtNet(h.worstNetPct)} / ${fmtNet(h.bestNetPct)}`, "text-muted-foreground"],
+          ] as const).map(([k, v, cls]) => (
+            <div key={k} className="rounded border border-border/40 bg-background/40 px-2 py-1.5">
+              <div className="text-[11px] text-muted-foreground">{k}</div>
+              <div className={`font-mono text-sm font-semibold tabular-nums ${cls}`}>{v}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {p.n > 0 && (
+        <p className="text-[11px] text-muted-foreground" data-testid="crypto-expectancy-peak">
+          ceiling, selling at the sampled peak (not achievable: the peak is known only afterwards): median {fmtNet(p.medianNetPct)}, mean {fmtNet(p.meanNetPct)}, {p.positiveShare.yes}/{p.positiveShare.of} positive. The gap between the two rows is what timing the top would have been worth.
+        </p>
+      )}
+      <p className="text-[11px] text-muted-foreground">{h.note}{h.skipped ? ` · ${h.skipped} graded without a computable return (${Object.entries(h.skippedReasons).map(([k, v]) => `${k} ${v}`).join(", ")})` : ""}</p>
+      <p className="text-[11px] text-muted-foreground/80">{x.basis}</p>
     </div>
   );
 }

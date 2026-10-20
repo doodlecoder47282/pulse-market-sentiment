@@ -257,3 +257,11 @@ test("rotation: the published example (10k: holder 27k, rotator 270k) needs perf
   }
   assert.ok(perfect.assumptions.some((a) => /not a forecast/.test(a)));
 });
+
+test("classifyMeme names an active mint authority at any age, not only in the community test", () => {
+  const young = classifyMeme({ name: "Grit 2.0", symbol: "GRIT", ageDays: 21, liquidityUsd: 140_000, top10Pct: null, mintAuthorityActive: true, narrativeHits: [], history: null });
+  assert.equal(young.category, "meta");
+  assert.ok(young.reasons.includes("mint authority active"));
+  const unread = classifyMeme({ name: "Grit 2.0", symbol: "GRIT", ageDays: 21, liquidityUsd: 140_000, top10Pct: null, mintAuthorityActive: null, narrativeHits: [], history: null });
+  assert.ok(!unread.reasons.includes("mint authority active"), "unread is not active");
+});
