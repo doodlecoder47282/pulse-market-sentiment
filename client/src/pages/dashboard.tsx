@@ -440,7 +440,7 @@ export default function Dashboard() {
               href="#/method"
               title="Method & disclosures"
               aria-label="Method and disclosures"
-              className="flex items-center justify-center rounded-md border border-border/60 h-11 w-11 sm:w-auto sm:px-2 lg:h-auto lg:p-1.5 font-mono text-[11px] text-muted-foreground transition hover:border-border"
+              className="flex items-center justify-center rounded-md border border-border/60 h-11 w-11 sm:w-auto sm:min-w-[2rem] sm:px-2 lg:h-auto lg:min-h-[1.75rem] lg:p-1.5 font-mono text-[11px] text-muted-foreground transition hover:border-border"
               data-testid="link-method"
             >
               ?

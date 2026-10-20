@@ -17,7 +17,7 @@ export default function DemoStrip() {
       <span className="font-semibold">Test preview</span>
       <span> · stocks/options simulated · Schwab off</span>
       <span className="hidden sm:inline"> · crypto/news use separate public feeds · not investment advice</span>
-      <a href="#/method" className="ml-2 underline underline-offset-2" data-testid="demo-strip-method">method &amp; disclosures</a>
+      <a href="#/method" className="ml-2 inline-flex min-h-[24px] items-center underline underline-offset-2" data-testid="demo-strip-method">method &amp; disclosures</a>
     </div>
   );
 }

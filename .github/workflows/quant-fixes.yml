@@ -385,7 +385,8 @@ jobs:
             codes=""; for i in $(seq 1 34); do codes="$codes $(curl -s -o /dev/null -m 10 -w '%{http_code}' "$B/api/scan?symbol=bad%20symbol")"; done
             n429=$(echo "$codes" | tr ' ' '\n' | grep -c '^429$'); n400=$(echo "$codes" | tr ' ' '\n' | grep -c '^400$')
             ra=$(curl -s -i -m 10 "$B/api/scan?symbol=bad%20symbol" | tr -d '\r' | grep -i '^retry-after:' | head -1)
-            [ "$n429" -ge 1 ] && [ "$n400" -ge 25 ] && echo "PASS rate limit: $n400 x 400 then $n429 x 429 in a 34-call burst ($ra)" || echo "FAIL rate limit: codes$codes"
+            # Earlier checks in this block already spent some of the bucket, so the burst only needs to show the turn from 400 to 429.
+            [ "$n429" -ge 1 ] && [ "$n400" -ge 5 ] && [ $((n400 + n429)) -eq 34 ] && echo "PASS rate limit: $n400 x 400 then $n429 x 429 in a 34-call burst ($ra)" || echo "FAIL rate limit: codes$codes"
             [ "$wcode" = "405" ] || [ "$wcode" = "403" ] && echo "PASS community write refused ($wcode)" || { echo "FAIL community write returned $wcode"; fail=1; }
 
             grep -ciE "api\.schwabapi\.com|\[schwab\] (401|403|fetch)" rep/server-demo.log | xargs -I{} echo "schwab network lines in log: {}"
