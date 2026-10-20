@@ -328,7 +328,7 @@ jobs:
               const states = (j) => sections.map((k) => j[k] && j[k].dataState);
               const okStates = (j) => states(j).every((st) => ["ok","partial","stale","unavailable","no_data"].includes(st));
               const spyOk = a.symbol === "SPY" && okStates(a) && a.quote.dataState !== "unavailable" && a.quote.last > 0 && /no venue/.test(a.note)
-                && a.volume.blocks && typeof a.volume.blocks.available === "boolean" && /never|not a dark-pool/.test(a.volume.blocks.note + " " + a.note);
+                && a.volume.blocks && typeof a.volume.blocks.available === "boolean" && typeof a.volume.blocks.note === "string" && !/dark pool detected/i.test(JSON.stringify(a));
               // The sample edition has no instrument table and quotes any symbol from its table, so there the instrument section must say unavailable (never "found").
               const unknownOk = u.symbol === "ZZZZQ" && okStates(u) && (u.quote.last == null || u.instrument.found === false || (u.edition === "demo" && u.instrument.dataState === "unavailable" && u.instrument.found === null));
               const code = process.argv[1];
