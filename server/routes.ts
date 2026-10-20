@@ -94,6 +94,7 @@ import { runBackfill, getBacktestSummary } from "./backtest";
 import { deriveTargets, deriveBothSides, type CandidateLevel } from "./targetDerivation";
 import { startCryptoEngines, getCryptoFeed, getCryptoHealth, getCryptoSignals } from "./cryptoEngine";
 import { startCommunityEngine, getCommunityWatch, addCommunityToken, removeCommunityToken } from "./cryptoCommunity";
+import { startSetupEngine, getSetupLog } from "./setupEngine";
 import { buildChainAudit } from "./chainAudit";
 import { buildHeatseeker } from "./heatseeker";
 import {
@@ -3678,6 +3679,11 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       res.status(500).json({ error: "internal", message: e?.message });
     }
   });
+  // SETUP EVENT LOG (server/setupEngine.ts): the rule book, why nothing fires now, the log and its graded summary. Descriptive; no grade below the sample gate.
+  app.get("/api/setups", (_req, res) => {
+    try { res.json(getSetupLog()); }
+    catch (e: any) { res.status(500).json({ error: "setups_failed", message: e?.message ?? String(e) }); }
+  });
   app.get("/api/odte/map/ledger", async (req, res) => {
     try {
       const symbol = String(req.query.symbol || "$SPX").trim().toUpperCase() || "$SPX";
@@ -5081,6 +5087,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   // Free public APIs, no keys, independent of the Schwab data path.
   try { startCryptoEngines(); } catch (e: any) { console.warn(`[crypto] failed to start: ${e?.message ?? e}`); }
   try { startCommunityEngine(); } catch (e: any) { console.warn(`[community] failed to start: ${e?.message ?? e}`); }
+  try { startSetupEngine(); } catch (e: any) { console.warn(`[setups] failed to start: ${e?.message ?? e}`); }
   try { import("./odteMapLedger").then((m) => m.startOdteMapLedger()).catch((e: any) => console.warn(`[odte-map] failed to start: ${e?.message ?? e}`)); } catch (e: any) { console.warn(`[odte-map] failed to start: ${e?.message ?? e}`); }
 
   // Kick off MM-matrix scheduler (10/13/15:30 ET snapshots, 16:30 grading)

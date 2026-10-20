@@ -13,6 +13,7 @@ import OfiHistogram from "@/components/OfiHistogram";
 import { RegimeChip } from "@/components/RegimeChip";
 import OdteMapCard from "@/components/OdteMapCard";
 import ChartLevelsCard from "@/components/ChartLevelsCard";
+import SetupLogCard from "@/components/SetupLogCard";
 import type { GammaStructure } from "@shared/schema";
 import { vixToAtmPct } from "@shared/vol";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -195,6 +196,9 @@ export default function TradeDesk() {
 
       {/* The reader's own chart levels tagged against the map above (shared/levelConfluence.ts) */}
       <ChartLevelsCard />
+
+      {/* Setup event log: the rule book, why nothing fires now, the log and its graded summary (server/setupEngine.ts) */}
+      <SetupLogCard />
 
       <RegimePredictPanel />
 
