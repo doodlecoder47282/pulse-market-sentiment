@@ -784,14 +784,16 @@ public is per-user Schwab login, which needs multi-user accounts and
 Schwab's commercial approval (unchanged from the iOS note).
 
 Added, all tested:
-1. server/publicGuard.ts rate limits: two token buckets per client IP, a
-   general one (600/min public editions, 1,200 personal) and a tight one
-   for routes that read upstream on demand (/api/scan, research events,
-   0DTE map, gamma levels, flow preview, community: 30/min public, 60
-   personal). The engines' self-calls are exempt. A limited call gets 429
-   with Retry-After in the app's error shape (dataState unavailable).
-   Sized for a dashboard that polls dozens of endpoints and for readers
-   behind one office NAT.
+1. server/publicGuard.ts rate limits: three token buckets per client IP.
+   General (3,000/min public editions, 6,000 personal) is an abuse ceiling
+   only: the first sizing (600) was hit by the CI audit driving seven
+   browsers from one address, which degraded the layout and failed the UX
+   budget, and an office NAT would do the same. Upstream (120/min public,
+   240 personal) covers routes cached per symbol (0DTE map, gamma levels,
+   flow preview, event replay, community). Scan (10/min public, 30
+   personal) is the tight one: any symbol, up to five Schwab calls per
+   uncached scan. The engines' self-calls are exempt. A limited call gets
+   429 with Retry-After in the app's error shape (dataState unavailable).
 2. Security headers on every response: nosniff, X-Frame-Options DENY,
    strict-origin-when-cross-origin, a permissions policy that turns off
    sensors the app never uses, COOP same-origin, and HSTS only when the

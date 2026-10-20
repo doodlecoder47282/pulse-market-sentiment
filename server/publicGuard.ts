@@ -21,23 +21,34 @@
 import type { Edition } from "../shared/edition";
 
 export interface RateLimitPolicy {
-  /** Requests per minute per client for every /api route. */
+  /** Requests per minute per client for every /api route: an abuse ceiling, not a pacing device. */
   generalPerMin: number;
-  /** Requests per minute per client for routes that read upstream on demand. */
+  /** Requests per minute per client for routes that read upstream on demand (mostly cached per symbol). */
   upstreamPerMin: number;
+  /** Requests per minute per client for the any-ticker scan, the one route whose upstream cost is unbounded by the universe. */
+  scanPerMin: number;
 }
 
 export function rateLimitPolicy(edition: Edition): RateLimitPolicy {
-  // The dashboard polls a few dozen endpoints per tab; readers behind one office NAT share an IP. General limits are
-  // sized for that; the upstream bucket is the one that protects the Schwab and DexScreener budgets.
-  return edition === "personal" ? { generalPerMin: 1_200, upstreamPerMin: 60 } : { generalPerMin: 600, upstreamPerMin: 30 };
+  // One dashboard load fires a few dozen requests and keeps polling; an office NAT puts many readers on one IP, and the
+  // CI audit drives seven browsers from one address. The general ceiling only catches floods. The upstream bucket covers
+  // routes that are cached per symbol (0DTE map, gamma levels, flow preview, event replay). The scan bucket is the tight
+  // one: any symbol, up to five Schwab calls per uncached scan.
+  return edition === "personal"
+    ? { generalPerMin: 6_000, upstreamPerMin: 240, scanPerMin: 30 }
+    : { generalPerMin: 3_000, upstreamPerMin: 120, scanPerMin: 10 };
 }
 
-/** Routes whose handler makes an upstream call on demand (prefix match). */
-export const UPSTREAM_ROUTE_PREFIXES = ["/api/scan", "/api/research/events", "/api/odte/map", "/api/gamma-levels", "/api/gamma-curve", "/api/heatseeker/levels", "/api/flow/preview", "/api/crypto/community"];
+/** Routes whose handler makes an upstream call on demand (prefix match), cached per symbol. */
+export const UPSTREAM_ROUTE_PREFIXES = ["/api/research/events", "/api/odte/map", "/api/gamma-levels", "/api/gamma-curve", "/api/heatseeker/levels", "/api/flow/preview", "/api/crypto/community"];
+export const SCAN_ROUTE_PREFIX = "/api/scan";
 
+const matches = (path: string, p: string) => path === p || path.startsWith(p + "?") || path.startsWith(p + "/");
 export function isUpstreamRoute(path: string): boolean {
-  return UPSTREAM_ROUTE_PREFIXES.some((p) => path === p || path.startsWith(p + "?") || path.startsWith(p + "/"));
+  return UPSTREAM_ROUTE_PREFIXES.some((p) => matches(path, p));
+}
+export function isScanRoute(path: string): boolean {
+  return matches(path, SCAN_ROUTE_PREFIX);
 }
 
 interface Bucket { tokens: number; refilledAt: number }
@@ -95,6 +106,7 @@ export function makeRateLimit(opts: GuardOptions) {
   const policy = rateLimitPolicy(opts.edition);
   const general = new RateLimiter(policy.generalPerMin);
   const upstream = new RateLimiter(policy.upstreamPerMin);
+  const scan = new RateLimiter(policy.scanPerMin);
   const header = (opts.keyHeader ?? "x-batcave-key").toLowerCase();
   return function rateLimit(req: ReqLike, res: ResLike, next: () => void): void {
     const given = req.headers[header];
@@ -104,7 +116,11 @@ export function makeRateLimit(opts: GuardOptions) {
     const path = (req.originalUrl ?? req.path ?? "").split("?")[0];
     const g = general.take(ip, now);
     if (!g.allowed) return reject(res, g.retryAfterSec, "general", policy.generalPerMin);
-    if (isUpstreamRoute(path)) {
+    if (isScanRoute(path)) {
+      const sc = scan.take(ip, now);
+      if (!sc.allowed) return reject(res, sc.retryAfterSec, "scan", policy.scanPerMin);
+      res.setHeader("X-RateLimit-Remaining", String(sc.remaining));
+    } else if (isUpstreamRoute(path)) {
       const u = upstream.take(ip, now);
       if (!u.allowed) return reject(res, u.retryAfterSec, "upstream", policy.upstreamPerMin);
       res.setHeader("X-RateLimit-Remaining", String(u.remaining));
@@ -115,14 +131,16 @@ export function makeRateLimit(opts: GuardOptions) {
   };
 }
 
-function reject(res: ResLike, retryAfterSec: number, bucket: "general" | "upstream", perMin: number): void {
+function reject(res: ResLike, retryAfterSec: number, bucket: "general" | "upstream" | "scan", perMin: number): void {
   res.setHeader("Retry-After", String(retryAfterSec));
   res.status(429).json({
     error: "rate_limited",
     dataState: "unavailable",
-    message: bucket === "upstream"
-      ? `this route reads live data on demand and is limited to ${perMin} calls a minute per client; retry in ${retryAfterSec}s`
-      : `limited to ${perMin} calls a minute per client; retry in ${retryAfterSec}s`,
+    message: bucket === "scan"
+      ? `the scan reads a fresh chain for any symbol and is limited to ${perMin} a minute per client; retry in ${retryAfterSec}s`
+      : bucket === "upstream"
+        ? `this route reads live data on demand and is limited to ${perMin} calls a minute per client; retry in ${retryAfterSec}s`
+        : `limited to ${perMin} calls a minute per client; retry in ${retryAfterSec}s`,
     retryAfterSec,
   });
 }

@@ -6,7 +6,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { RateLimiter, makeRateLimit, makeSecurityHeaders, rateLimitPolicy, isUpstreamRoute, securityHeaders } from "../../server/publicGuard";
+import { RateLimiter, makeRateLimit, makeSecurityHeaders, rateLimitPolicy, isUpstreamRoute, isScanRoute, securityHeaders } from "../../server/publicGuard";
 
 function fakeRes() {
   const headers: Record<string, string> = {};
@@ -31,11 +31,13 @@ test("RateLimiter: burst of perMin, then empty with a retry time, refills with t
 });
 
 test("policy: personal edition generous, public editions tight; upstream routes matched by prefix", () => {
-  assert.equal(rateLimitPolicy("personal").upstreamPerMin, 60);
-  assert.equal(rateLimitPolicy("demo").upstreamPerMin, 30);
-  assert.equal(rateLimitPolicy("investor").generalPerMin, 600);
-  assert.equal(isUpstreamRoute("/api/scan"), true);
-  assert.equal(isUpstreamRoute("/api/scan?symbol=SPY"), true);
+  assert.equal(rateLimitPolicy("personal").scanPerMin, 30);
+  assert.equal(rateLimitPolicy("demo").scanPerMin, 10);
+  assert.equal(rateLimitPolicy("investor").generalPerMin, 3_000);
+  assert.equal(isScanRoute("/api/scan"), true);
+  assert.equal(isScanRoute("/api/scan?symbol=SPY"), true);
+  assert.equal(isScanRoute("/api/scanner"), false);
+  assert.equal(isUpstreamRoute("/api/scan"), false, "the scan has its own bucket");
   assert.equal(isUpstreamRoute("/api/odte/map/ledger"), true);
   assert.equal(isUpstreamRoute("/api/setups"), false);
   assert.equal(isUpstreamRoute("/api/scanner"), false, "prefix match stops at the segment");
@@ -49,18 +51,23 @@ test("makeRateLimit: 429 with Retry-After in the app's error shape; self-calls e
     mw({ ip: "1.2.3.4", originalUrl: path, headers: key ? { "x-batcave-key": key } : {} } as any, f.res, () => { passed = true; });
     return { passed, ...f };
   };
-  for (let i = 0; i < 30; i++) assert.equal(call("/api/scan?symbol=SPY").passed, true, `upstream call ${i + 1} of 30 passes`);
+  for (let i = 0; i < 10; i++) assert.equal(call("/api/scan?symbol=SPY").passed, true, `scan call ${i + 1} of 10 passes`);
   const limited = call("/api/scan?symbol=QQQ");
   assert.equal(limited.passed, false);
   assert.equal(limited.code, 429);
   assert.equal(limited.body.error, "rate_limited");
   assert.equal(limited.body.dataState, "unavailable");
-  assert.match(limited.body.message, /reads live data on demand/);
+  assert.match(limited.body.message, /reads a fresh chain for any symbol/);
+  assert.equal(call("/api/odte/map?symbol=%24SPX").passed, true, "the upstream bucket is separate from the scan bucket");
   assert.ok(Number(limited.headers["Retry-After"]) >= 1);
   assert.equal(call("/api/setups").passed, true, "the general bucket is separate and not exhausted");
   assert.equal(call("/api/scan?symbol=IWM", "secret-internal").passed, true, "the engines' self-calls are never limited");
   now += 60_000;
   assert.equal(call("/api/scan?symbol=DIA").passed, true, "a minute later the bucket refilled");
+  const tight = makeRateLimit({ edition: "demo", now: () => now });
+  let upstreamOk = 0;
+  for (let i = 0; i < 121; i++) { const f = fakeRes(); tight({ ip: "9.9.9.9", originalUrl: "/api/gamma-levels?symbol=NVDA", headers: {} } as any, f.res, () => { upstreamOk++; }); }
+  assert.equal(upstreamOk, 120, "upstream bucket is 120 a minute in the public editions");
   const ok = call("/api/setups");
   assert.ok(ok.headers["X-RateLimit-Remaining"] != null);
 });
