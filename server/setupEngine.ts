@@ -27,7 +27,8 @@ import { getFlowConfig } from "./flowConfig";
 import { isRegularSessionOpen } from "./exchangeCalendar";
 import { etParts, etWallToUtcMs } from "./validationMath";
 import { DEFAULT_SETUP_RULES, SETUP_GRADE_MIN_SAMPLE, describeRules, type SetupRules } from "../shared/setupRules";
-import { detectSetups, gradeSetup, summarizeOutcomes, type SetupCandidate, type Blocked, type FlowInput, type MinuteBar } from "../shared/setupDetect";
+import { detectSetups, gradeSetup, summarizeOutcomes, rankSetups, marginScore, type SetupCandidate, type Blocked, type FlowInput, type MinuteBar, type SetupMargins } from "../shared/setupDetect";
+import { sectorOf } from "../shared/sectors";
 import { minutesToNextTier1, MACRO_CALENDAR_VALID_THROUGH } from "../shared/macroCalendar";
 
 const TICK_MS = 60_000;
@@ -96,7 +97,7 @@ function insert(sym: string, c: SetupCandidate, nowMs: number): void {
   sqlite.prepare(`INSERT INTO setup_events (rule_version, symbol, kind, direction, detected_at, spot, target, invalidation, horizon_min, cost_pct, target_pct, features_json)
     VALUES (@v, @s, @k, @d, @t, @spot, @target, @inv, @h, @cost, @tp, @f)`).run({
     v: c.ruleVersion, s: sym, k: c.kind, d: c.direction, t: nowMs, spot: c.spot, target: c.target, inv: c.invalidation,
-    h: c.horizonMin, cost: c.costPct, tp: c.targetPct, f: JSON.stringify(c.features),
+    h: c.horizonMin, cost: c.costPct, tp: c.targetPct, f: JSON.stringify({ ...c.features, rMultiple: c.rMultiple, margins: c.margins }),
   });
 }
 
@@ -209,6 +210,8 @@ export interface SetupLog {
   /** Per rule version and kind: counts only until the sample clears the gate; the interval is shown either way, labelled. */
   summary: Array<{ ruleVersion: string; kind: string; n: number; positive: number; lo: number | null; hi: number | null; meanNetPct: number | null; sampleReady: boolean }>;
   recent: Array<{ id: number; symbol: string; kind: string; direction: string; detectedAt: number; spot: number; target: number; invalidation: number; status: string; netPct: number | null; exitPrice: number | null; ruleVersion: string; features: any }>;
+  /** Open setups inside their horizon, ranked by margin over the rules (never by predicted edge), capped per sector. Margins shown so the order is auditable. */
+  ranked: Array<{ id: number; symbol: string; sector: string | null; kind: string; direction: string; detectedAt: number; spot: number; target: number; invalidation: number; rMultiple: number | null; score: number; margins: Array<{ name: string; margin: number }> }>;
   whyNotNow: Array<{ symbol: string; at: number; spot: number | null; structureState: string; blocked: Blocked[] }>;
   note: string;
 }
@@ -229,13 +232,21 @@ export function getSetupLog(): SetupLog {
     status: r.status, netPct: r.net_pct, exitPrice: r.exit_price, ruleVersion: r.rule_version, features: safeParse(r.features_json),
   }));
   const whyNotNow = Array.from(lastBlocked.entries()).map(([symbol, v]) => ({ symbol, ...v }));
+  const openRows = (sqlite.prepare(`SELECT * FROM setup_events WHERE status = 'open' AND detected_at + horizon_min * 60000 > ? ORDER BY detected_at DESC LIMIT 200`).all(now) as any[])
+    .map((r) => { const f = safeParse(r.features_json) ?? {}; return { row: r, margins: (f.margins ?? null) as SetupMargins | null, rMultiple: (f.rMultiple ?? null) as number | null }; })
+    .filter((x) => x.margins != null)
+    .map((x) => ({ symbol: x.row.symbol as string, sector: sectorOf(x.row.symbol), margins: x.margins!, row: x.row, rMultiple: x.rMultiple }));
+  const ranked = rankSetups(openRows, rules.rank.topN, rules.rank.maxPerSector).map((x) => ({
+    id: x.row.id, symbol: x.symbol, sector: x.sector, kind: x.row.kind, direction: x.row.direction, detectedAt: x.row.detected_at, spot: x.row.spot, target: x.row.target, invalidation: x.row.invalidation,
+    rMultiple: x.rMultiple, score: x.score, margins: marginScore(x.margins).parts,
+  }));
   const running = timer != null;
   return {
     dataState: edition === "demo" ? "no_data" : lastTickError ? "unavailable" : running && lastTickAt === 0 ? "loading" : c.total === 0 ? "no_data" : "ok",
     edition, running, lastTickAt: lastTickAt || null, lastTickError,
     rules: { version: rules.version, minSample: SETUP_GRADE_MIN_SAMPLE, items: describeRules(rules) },
     calendar: { validThrough: MACRO_CALENDAR_VALID_THROUGH, known: cal.known, minutesToNext: cal.minutes, next: cal.next ? `${cal.next.name} ${cal.next.date} ${cal.next.time} ET` : null },
-    counts: c, summary, recent, whyNotNow,
+    counts: c, summary, recent, ranked, whyNotNow,
     note: edition === "demo"
       ? "Sample edition: the log is not kept; the rule book is shown as it would run."
       : `A setup is a stated condition met at an instant, logged with the rule version that fired; the outcome is the achievable-exit test replayed on minute bars. Below ${SETUP_GRADE_MIN_SAMPLE} graded setups per rule version the summary is counts only: no claim of edge, no grade.`,

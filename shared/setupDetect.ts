@@ -74,6 +74,17 @@ export interface SetupFeatures {
   spreadPct: number | null;
 }
 
+/** How far each condition cleared its rule, as a multiple of the threshold (1 = exactly at the rule). */
+export interface SetupMargins {
+  premium: number | null;
+  volOi: number | null;
+  wallShare: number | null;
+  costMultiple: number;
+  rMultiple: number;
+  calendarQuiet: number | null;
+  impliedMoveRoom: number | null;
+}
+
 export interface SetupCandidate {
   kind: SetupKind;
   direction: Direction;
@@ -85,6 +96,9 @@ export interface SetupCandidate {
   /** Modelled round-trip cost as a fraction of spot (the underlying's spread). */
   costPct: number;
   targetPct: number;
+  /** Target distance over invalidation distance. */
+  rMultiple: number;
+  margins: SetupMargins;
   features: SetupFeatures;
 }
 
@@ -173,15 +187,27 @@ export function detectSetups(s: StructureInput, flow: FlowInput[], ctx: ContextI
       }
     }
     const targetPct = target == null ? null : Math.abs(target - spot) / spot;
+    const invalPct = invalidation == null ? null : Math.abs(invalidation - spot) / spot;
+    const rMultiple = targetPct != null && invalPct != null && invalPct > 0 ? targetPct / invalPct : null;
     const cost = fin(ctx.spreadPct);
     if (cost == null) blockers.push("no spread quote: cost not modelled");
     else if (targetPct != null && targetPct < cost * rules.outcome.minTargetToCostMultiple) blockers.push(`target ${(targetPct * 100).toFixed(2)}% does not clear ${rules.outcome.minTargetToCostMultiple}x the ${(cost * 100).toFixed(3)}% round-trip cost`);
+    if (rMultiple != null && rMultiple < rules.outcome.minRMultiple) blockers.push(`reward to risk ${rMultiple.toFixed(2)}, rule needs ${rules.outcome.minRMultiple}`);
 
     if (blockers.length) { blocked.push({ kind, blockers }); continue; }
+    const margins: SetupMargins = {
+      premium: print ? print.premium / rules.flow.minPremiumUsd : null,
+      volOi: print ? (print.isNewStrike ? null : print.volOiRatio / rules.flow.minVolOi) : null,
+      wallShare: share != null ? share / rules.structure.minWallShare : null,
+      costMultiple: (targetPct! / cost!) / rules.outcome.minTargetToCostMultiple,
+      rMultiple: rMultiple! / rules.outcome.minRMultiple,
+      calendarQuiet: ctx.calendarKnown && ctx.minutesToTier1 != null ? ctx.minutesToTier1 / rules.events.tier1QuietMin : null,
+      impliedMoveRoom: im != null ? rules.vol.maxImpliedMovePct / im : null,
+    };
     fired.push({
       kind, direction, ruleVersion: rules.version, spot,
       target: r4(target!), invalidation: r4(invalidation!), horizonMin: rules.outcome.horizonMin,
-      costPct: cost!, targetPct: targetPct!,
+      costPct: cost!, targetPct: targetPct!, rMultiple: r4(rMultiple!), margins,
       features: {
         spot, landmark: landmark!, landmarkKind, landmarkShare: share, distToLandmarkPct: dist!, regime: s.regime, gammaFlip: fin(s.gammaFlip),
         impliedMove1dPct: im,
@@ -191,6 +217,41 @@ export function detectSetups(s: StructureInput, flow: FlowInput[], ctx: ContextI
     });
   }
   return { fired, blocked };
+}
+
+// ─── Ranking ────────────────────────────────────────────────────────────
+
+export interface Rankable { symbol: string; margins: SetupMargins; sector?: string | null }
+
+/**
+ * Margin score: the mean of log2(margin) over the margins that exist, each
+ * capped at 3 (8x a rule earns no more than 8x). 0 = exactly at every rule.
+ * Ranking before outcomes exist is by how comfortably the rules were met,
+ * never by predicted edge; the score is shown so the order is auditable.
+ */
+export function marginScore(m: SetupMargins): { score: number; parts: Array<{ name: string; margin: number }> } {
+  const parts = (Object.entries(m) as Array<[string, number | null]>)
+    .filter(([, v]) => v != null && Number.isFinite(v) && v > 0)
+    .map(([name, v]) => ({ name, margin: v as number }));
+  if (!parts.length) return { score: 0, parts };
+  const score = parts.reduce((a, p) => a + Math.min(3, Math.log2(p.margin)), 0) / parts.length;
+  return { score: Math.round(score * 1000) / 1000, parts };
+}
+
+/** Top N by margin score with at most `maxPerSector` from one sector (unknown sectors count as their own). */
+export function rankSetups<T extends Rankable>(items: T[], topN: number, maxPerSector: number): Array<T & { score: number }> {
+  const scored = items.map((it) => ({ ...it, score: marginScore(it.margins).score })).sort((a, b) => b.score - a.score || a.symbol.localeCompare(b.symbol));
+  const perSector = new Map<string, number>();
+  const out: Array<T & { score: number }> = [];
+  for (const it of scored) {
+    const sec = it.sector ?? `unknown:${it.symbol}`;
+    const n = perSector.get(sec) ?? 0;
+    if (n >= maxPerSector) continue;
+    perSector.set(sec, n + 1);
+    out.push(it);
+    if (out.length >= topN) break;
+  }
+  return out;
 }
 
 // ─── Grading ────────────────────────────────────────────────────────────

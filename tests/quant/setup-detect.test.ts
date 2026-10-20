@@ -6,13 +6,14 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { detectSetups, gradeSetup, impliedMove1dPct, summarizeOutcomes, type StructureInput, type FlowInput, type ContextInput } from "../../shared/setupDetect";
+import { detectSetups, gradeSetup, impliedMove1dPct, summarizeOutcomes, marginScore, rankSetups, type StructureInput, type FlowInput, type ContextInput } from "../../shared/setupDetect";
+import { sectorOf } from "../../shared/sectors";
 import { DEFAULT_SETUP_RULES } from "../../shared/setupRules";
 import { minutesToNextTier1, MACRO_EVENTS } from "../../shared/macroCalendar";
 
 const R = DEFAULT_SETUP_RULES;
 const NOW = Date.UTC(2026, 9, 20, 15, 30); // 11:30 ET
-const atWall: StructureInput = { spot: 7_695, callWall: 7_700, putWall: 7_630, gammaFlip: 7_655, regime: "positive", callWallShare: 0.22, putWallShare: 0.13, atmIv: 0.14 };
+const atWall: StructureInput = { spot: 7_697, callWall: 7_700, putWall: 7_630, gammaFlip: 7_655, regime: "positive", callWallShare: 0.22, putWallShare: 0.13, atmIv: 0.14 };
 const putPrint: FlowInput = { type: "P", strike: 7_650, dte: 2, premium: 4_000_000, volOiRatio: 22, isNewStrike: false, tag: "AT_ASK", detectedAt: NOW - 10 * 60_000 };
 const ctx: ContextInput = { nowMs: NOW, minutesSinceOpen: 120, minutesToClose: 270, minutesToTier1: 60 * 24 * 8, calendarKnown: true, spreadPct: 0.0002 };
 
@@ -26,6 +27,14 @@ test("fade at the call wall fires when structure, regime, flow, calendar, sessio
   assert.equal(c.invalidation, Math.round(7_700 * 1.002 * 1e4) / 1e4);
   assert.equal(c.features.flow?.premium, 4_000_000);
   assert.equal(c.ruleVersion, R.version);
+  assert.ok(c.rMultiple >= 2, `reward to risk ${c.rMultiple}`);
+  assert.equal(Math.round(c.margins.premium! * 100) / 100, 1.6, "print is 1.6x the premium floor");
+  assert.ok(c.margins.rMultiple! >= 1 && c.margins.costMultiple > 1);
+
+  // 7,695 against the same wall: R = 1.96, under the rule, so it is a named blocker.
+  const tight = detectSetups({ ...atWall, spot: 7_695 }, [putPrint], ctx, R);
+  assert.equal(tight.fired.length, 0);
+  assert.ok(tight.blocked.find((b) => b.kind === "fade_call_wall")!.blockers.some((x) => /reward to risk 1\.9\d, rule needs 2/.test(x)));
   assert.ok(blocked.find((b) => b.kind === "breakout_above")!.blockers.some((x) => /dealer gamma long, a breakout needs short/.test(x)));
 });
 
@@ -124,4 +133,20 @@ test("macro calendar: next tier-1 event from a fixed instant, unknown after vali
   const after = minutesToNextTier1(toMs("2027-01-05", 12, 0), toMs, MACRO_EVENTS);
   assert.equal(after.known, false);
   assert.equal(after.minutes, null);
+});
+
+test("ranking: margin score is auditable, sector cap keeps one bet from filling the list", () => {
+  const m = { premium: 2, volOi: 4, wallShare: 8, costMultiple: 1, rMultiple: 1, calendarQuiet: 100, impliedMoveRoom: 2 };
+  const sc = marginScore(m);
+  // log2: 1, 2, 3 (capped), 0, 0, 3 (capped from 6.64), 1 -> mean 10/7
+  assert.equal(sc.score, Math.round((10 / 7) * 1000) / 1000);
+  assert.equal(sc.parts.length, 7);
+  assert.equal(marginScore({ premium: null, volOi: null, wallShare: null, costMultiple: 1, rMultiple: 1, calendarQuiet: null, impliedMoveRoom: null }).score, 0, "exactly at every rule scores 0");
+
+  const mk = (symbol: string, premium: number) => ({ symbol, sector: sectorOf(symbol), margins: { ...m, premium } });
+  const items = [mk("NVDA", 6), mk("AMD", 5), mk("AVGO", 4), mk("SPY", 3), mk("TSLA", 1.1), mk("PLTR", 1.05), mk("ZZZ", 1)];
+  const top = rankSetups(items, 10, 2);
+  assert.deepEqual(top.map((t) => t.symbol), ["NVDA", "AMD", "SPY", "TSLA", "PLTR", "ZZZ"], "AVGO is the third semiconductor and is capped out; ZZZ is its own sector");
+  assert.ok(top[0].score > top[1].score);
+  assert.equal(rankSetups(items, 2, 3).length, 2);
 });

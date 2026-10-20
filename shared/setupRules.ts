@@ -11,7 +11,7 @@
 // what it has paid is measured afterwards, per version, and shown with an
 // interval only once the sample clears the gate.
 
-export const SETUP_RULES_VERSION = "2026.10.20-1";
+export const SETUP_RULES_VERSION = "2026.10.20-2";
 
 /** Minimum graded setups per rule version before any letter grade is shown. */
 export const SETUP_GRADE_MIN_SAMPLE = 100;
@@ -67,6 +67,14 @@ export interface SetupRules {
     invalidationPct: number;
     /** Cost the target must clear, as a multiple of the modelled round-trip cost. */
     minTargetToCostMultiple: number;
+    /** Reward to risk: target distance over invalidation distance must be at least this. */
+    minRMultiple: number;
+  };
+  rank: {
+    /** How many open setups the ranked list shows. */
+    topN: number;
+    /** At most this many from one sector, so the list is not one bet ten times. */
+    maxPerSector: number;
   };
   crypto: {
     /** ENTER-grade setups need these on-chain facts read (not null). */
@@ -88,7 +96,8 @@ export const DEFAULT_SETUP_RULES: SetupRules = {
   regime: { fadeRequires: "long", breakoutRequires: "short" },
   events: { tier1QuietMin: 90 },
   session: { notBeforeMin: 15, notAfterMin: 45 },
-  outcome: { horizonMin: 120, fallbackTargetPct: 0.004, invalidationPct: 0.002, minTargetToCostMultiple: 3 },
+  outcome: { horizonMin: 120, fallbackTargetPct: 0.004, invalidationPct: 0.002, minTargetToCostMultiple: 3, minRMultiple: 2 },
+  rank: { topN: 10, maxPerSector: 3 },
   crypto: { requireMintAuthorityRead: true, requireTop10Read: true, maxTop10Pct: 30, maxRoundTripCostPct: 4, sizeUsd: 1_000, horizonMin: 72 * 60 },
 };
 
@@ -113,6 +122,9 @@ export function describeRules(r: SetupRules = DEFAULT_SETUP_RULES): Array<{ path
     { path: "outcome.fallbackTargetPct", value: r.outcome.fallbackTargetPct, meaning: "target distance when no landmark sits on the trade's side" },
     { path: "outcome.invalidationPct", value: r.outcome.invalidationPct, meaning: "beyond the landmark by this fraction of spot, the setup failed" },
     { path: "outcome.minTargetToCostMultiple", value: r.outcome.minTargetToCostMultiple, meaning: "the target must clear the modelled round-trip cost by this multiple" },
+    { path: "outcome.minRMultiple", value: r.outcome.minRMultiple, meaning: "reward to risk: target distance over invalidation distance, at least this" },
+    { path: "rank.topN", value: r.rank.topN, meaning: "open setups shown in the ranked list, by margin over the rules" },
+    { path: "rank.maxPerSector", value: r.rank.maxPerSector, meaning: "at most this many ranked setups from one sector" },
     { path: "crypto.requireMintAuthorityRead", value: r.crypto.requireMintAuthorityRead, meaning: "a crypto setup needs the mint authority read, not assumed" },
     { path: "crypto.requireTop10Read", value: r.crypto.requireTop10Read, meaning: "a crypto setup needs the top-10 holder share read" },
     { path: "crypto.maxTop10Pct", value: r.crypto.maxTop10Pct, meaning: "top-10 holders above this share: no setup" },
