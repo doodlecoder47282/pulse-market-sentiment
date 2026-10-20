@@ -65,7 +65,7 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
-app.use(makeSecurityHeaders());
+// BISECT: app.use(makeSecurityHeaders());
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
