@@ -339,6 +339,22 @@ jobs:
               const ok = spyOk && unknownOk && code === "400";
               console.log((ok ? "PASS" : "FAIL") + " ticker scan: SPY states " + states(a).join("/") + " last " + a.quote.last + " rel " + (a.volume.relative && a.volume.relative.rel) + " contracts " + (a.chain.contracts || []).length + "; ZZZZQ states " + states(u).join("/") + " last " + u.quote.last + "; bad symbol " + code);
             ' "$bcode"
+            # Research foundation: the event replay prices past tier-1 sessions from the sample bars and states coverage; the demo stores no chains.
+            curl -s -m 60 "$B/api/research/events?symbol=%24SPX" > rep/demo/events.json
+            curl -s -m 30 "$B/api/research/snapshots" > rep/demo/snapshots.json
+            node -e '
+              const fs = require("fs");
+              const e = JSON.parse(fs.readFileSync("rep/demo/events.json", "utf8"));
+              const s = JSON.parse(fs.readFileSync("rep/demo/snapshots.json", "utf8"));
+              const rows = e.rows || [];
+              const past = rows.filter((r) => r.state !== "future");
+              const priced = past.filter((r) => r.state === "ok" || r.state === "partial");
+              const nfp = rows.filter((r) => r.name === "NFP").length;
+              const eOk = ["ok","partial","unavailable","no_data"].includes(e.dataState) && nfp === 12 && e.coverage && /October 2026/.test(e.coverage.CPI) && /does not forecast/.test(e.note)
+                && (e.dataState === "unavailable" || e.dataState === "no_data" || (e.bars > 0 && priced.length > 0 && priced.every((r) => r.closeMovePct == null || Math.abs(r.closeMovePct) < 0.2)));
+              const sOk = s.edition === "demo" && s.dataState === "no_data" && s.days === 0 && /Sample edition/.test(s.note);
+              console.log(((eOk && sOk) ? "PASS" : "FAIL") + " research: events state " + e.dataState + ", " + e.bars + " bars, " + priced.length + "/" + past.length + " past sessions priced, " + (e.summary || []).map((x) => x.name + " n=" + x.n).join(" ") + "; snapshots " + s.dataState);
+            '
             # Setup event log: the demo keeps no log but serves the rule book; every rule has a meaning; the gate text is present.
             curl -s -m 30 "$B/api/setups" > rep/demo/setups.json
             node -e '
@@ -428,6 +444,9 @@ jobs:
             const setupCounts = await p.locator('[data-testid="setup-log-counts"]').count();
             const setupMethod = await p.locator('[data-testid="setup-log-method"]').count();
             const setupRanked = await p.locator('[data-testid="setup-log-ranked"]').count();
+            await p.locator('[data-testid="event-replay-card"]').waitFor({ timeout: 30000 });
+            const replayRows = await p.locator('[data-testid="event-replay-rows"] tbody tr').count();
+            console.log((replayRows >= 1 ? "PASS" : "FAIL") + " event replay card: " + replayRows + " past sessions shown");
             console.log(((setupCounts === 1 && setupMethod === 1 && setupRanked === 1) ? "PASS" : "FAIL") + " setup log card: counts " + setupCounts + ", method panel " + setupMethod + ", ranked list " + setupRanked);
           } catch (e) { console.log("FAIL today/chart levels: " + String(e && e.message || e).split("\n")[0]); }
           // 3D exposure surface (Regime -> Thermal Gamma Map -> 3D): WebGL via SwiftShader.

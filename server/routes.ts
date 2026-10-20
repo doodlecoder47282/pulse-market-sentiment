@@ -96,6 +96,7 @@ import { startCryptoEngines, getCryptoFeed, getCryptoHealth, getCryptoSignals } 
 import { startCommunityEngine, getCommunityWatch, addCommunityToken, removeCommunityToken } from "./cryptoCommunity";
 import { startSetupEngine, getSetupLog } from "./setupEngine";
 import { scanTicker, validScanSymbol } from "./tickerScan";
+import { startResearchStore, getSnapshotIndex, getEventReplay } from "./researchStore";
 import { buildChainAudit } from "./chainAudit";
 import { buildHeatseeker } from "./heatseeker";
 import {
@@ -3688,6 +3689,15 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     try { res.json(await scanTicker(symbol)); }
     catch (e: any) { res.status(500).json({ error: "scan_failed", message: e?.message ?? String(e) }); }
   });
+  // RESEARCH FOUNDATION (server/researchStore.ts): stored chains and the event replay.
+  app.get("/api/research/snapshots", (_req, res) => {
+    try { res.json(getSnapshotIndex()); }
+    catch (e: any) { res.status(500).json({ error: "snapshots_failed", message: e?.message ?? String(e) }); }
+  });
+  app.get("/api/research/events", async (req, res) => {
+    try { res.json(await getEventReplay(String(req.query.symbol || "$SPX").trim().toUpperCase() || "$SPX")); }
+    catch (e: any) { res.status(500).json({ error: "event_replay_failed", message: e?.message ?? String(e) }); }
+  });
   app.get("/api/setups", (_req, res) => {
     try { res.json(getSetupLog()); }
     catch (e: any) { res.status(500).json({ error: "setups_failed", message: e?.message ?? String(e) }); }
@@ -5096,6 +5106,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   try { startCryptoEngines(); } catch (e: any) { console.warn(`[crypto] failed to start: ${e?.message ?? e}`); }
   try { startCommunityEngine(); } catch (e: any) { console.warn(`[community] failed to start: ${e?.message ?? e}`); }
   try { startSetupEngine(); } catch (e: any) { console.warn(`[setups] failed to start: ${e?.message ?? e}`); }
+  try { startResearchStore(); } catch (e: any) { console.warn(`[research] failed to start: ${e?.message ?? e}`); }
   try { import("./odteMapLedger").then((m) => m.startOdteMapLedger()).catch((e: any) => console.warn(`[odte-map] failed to start: ${e?.message ?? e}`)); } catch (e: any) { console.warn(`[odte-map] failed to start: ${e?.message ?? e}`); }
 
   // Kick off MM-matrix scheduler (10/13/15:30 ET snapshots, 16:30 grading)
