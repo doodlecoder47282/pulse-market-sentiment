@@ -658,8 +658,23 @@ Dark-pool request: Schwab's feed carries no venue code and no time-and-sales
 next objective is a relative-volume and block-print read, named by what it
 measures. daily_bars stores closes only; volume needs a column.
 
-Next step: CI on feat/setups, PR into main after #9/#10/#11; then the
-any-ticker scan and the relative-volume read.
+6. Any-ticker scan (server/tickerScan.ts, GET /api/scan?symbol=): five
+   reads per symbol, each with its own state: Schwab instrument lookup
+   (marketdata/v1/instruments symbol-search, so an unknown symbol says so),
+   quote with the spread as the cost model, volume against the 20-session
+   average paced to the session, per-name dealer gamma, and the chain's most
+   active contracts by volume/OI. Cached 60 s per symbol; at most five
+   Schwab calls per scan. TickerScanCard under the Today card on Signals.
+7. Volume read (shared/volumeRead.ts, 3 tests): relative volume raw and
+   paced; "quiet volume" (>= 1.8x pace with the day's move inside 0.4%);
+   block prints from Level-1 updates for the streamed symbols (>= 8x the
+   median print and >= 2,000 shares). Named by what it measures: Schwab's
+   feed carries no venue code and no time-and-sales, so nothing in the app
+   says "dark pool"; the notes say so on the card.
+
+Next step: CI on feat/setups, PR into main after #9/#10/#11; then crypto
+items 1-3 (horizon marks, ENTER waits for on-chain facts, social failure
+handling) and the volume column on daily_bars.
 
 ## Current objective
 

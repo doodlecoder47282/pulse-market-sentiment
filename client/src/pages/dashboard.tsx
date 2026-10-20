@@ -52,6 +52,7 @@ import DemoStrip from "@/components/DemoStrip";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import WhaleFlowPanel from "@/components/WhaleFlowPanel";
 import TodayCard from "@/components/TodayCard";
+import TickerScanCard from "@/components/TickerScanCard";
 import TrackedSignalsPanel from "@/components/signals/TrackedSignalsPanel";
 import { useEffect, useState, useRef, lazy, Suspense } from "react";
 
@@ -701,6 +702,9 @@ export default function Dashboard() {
 
             {/* Answer first: spot, wall above / flip / magnet below from the 0DTE map, before any flow */}
             <TodayCard onOpenDesk={() => setActiveTab("tradedesk")} />
+
+            {/* Scan any ticker Schwab serves: instrument, quote, volume read, per-name gamma, most active contracts */}
+            <TickerScanCard />
 
             {/* Regime conditioning chip — pulled from /api/regime, shared across tabs */}
             <div className="flex items-center gap-2">

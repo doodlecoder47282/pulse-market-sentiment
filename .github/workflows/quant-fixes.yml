@@ -316,6 +316,24 @@ jobs:
               const ok = j.dataState === "ok" && j.tickersScanned >= 10 && reasonsOk && (quiet ? true : whales.length >= 1);
               console.log((ok ? "PASS" : "FAIL") + " whale flow preview: state " + j.dataState + ", " + j.tickersScanned + " tickers, " + j.totalScanned + " contracts, " + whales.length + " whales" + (quiet ? " (pre-open: none expected)" : "") + (whales[0] ? ", e.g. " + whales[0].symbol + " " + whales[0].occ.trim() + " " + whales[0].reason : ""));
             '
+            # Scan any ticker: every section carries a state; an unknown symbol never comes back as zeros; a bad symbol is 400.
+            curl -s -m 60 "$B/api/scan?symbol=SPY" > rep/demo/scan-spy.json
+            curl -s -m 60 "$B/api/scan?symbol=ZZZZQ" > rep/demo/scan-unknown.json
+            bcode=$(curl -s -o /dev/null -m 30 -w '%{http_code}' "$B/api/scan?symbol=bad%20symbol")
+            node -e '
+              const fs = require("fs");
+              const a = JSON.parse(fs.readFileSync("rep/demo/scan-spy.json", "utf8"));
+              const u = JSON.parse(fs.readFileSync("rep/demo/scan-unknown.json", "utf8"));
+              const sections = ["instrument", "quote", "volume", "structure", "chain"];
+              const states = (j) => sections.map((k) => j[k] && j[k].dataState);
+              const okStates = (j) => states(j).every((st) => ["ok","partial","stale","unavailable","no_data"].includes(st));
+              const spyOk = a.symbol === "SPY" && okStates(a) && a.quote.dataState !== "unavailable" && a.quote.last > 0 && /no venue/.test(a.note)
+                && a.volume.blocks && typeof a.volume.blocks.available === "boolean" && /never|not a dark-pool/.test(a.volume.blocks.note + " " + a.note);
+              const unknownOk = u.symbol === "ZZZZQ" && okStates(u) && (u.quote.last == null || u.instrument.found === false);
+              const code = process.argv[1];
+              const ok = spyOk && unknownOk && code === "400";
+              console.log((ok ? "PASS" : "FAIL") + " ticker scan: SPY states " + states(a).join("/") + " last " + a.quote.last + " rel " + (a.volume.relative && a.volume.relative.rel) + " contracts " + (a.chain.contracts || []).length + "; ZZZZQ states " + states(u).join("/") + " last " + u.quote.last + "; bad symbol " + code);
+            ' "$bcode"
             # Setup event log: the demo keeps no log but serves the rule book; every rule has a meaning; the gate text is present.
             curl -s -m 30 "$B/api/setups" > rep/demo/setups.json
             node -e '
@@ -392,6 +410,14 @@ jobs:
             const consistent = /ok|stale|no data/i.test(stateTxt) ? !tags.includes("unavailable") : tags.every((t) => t === "unavailable");
             console.log(((rows === 3 && tagOk && consistent) ? "PASS" : "FAIL") + " chart levels: " + rows + " rows, tags " + tags.join("/") + ", map state " + stateTxt.replace(/\s+/g, " ").slice(0, 40));
             await p.locator('[data-testid="chart-levels-card"]').screenshot({ path: "rep/demo/16-chart-levels.png" });
+            await p.locator('[data-testid="tab-signals"]').first().click({ timeout: 5000 });
+            await p.locator('[data-testid="ticker-scan-input"]').fill("QQQ");
+            await p.locator('[data-testid="ticker-scan-go"]').click();
+            await p.locator('[data-testid="ticker-scan-quote"]').waitFor({ timeout: 60000 });
+            const scanSections = await p.locator('[data-testid^="ticker-scan-"][data-testid$="-state"]').count();
+            await p.locator('[data-testid="ticker-scan-card"]').screenshot({ path: "rep/demo/17-ticker-scan.png" });
+            console.log((scanSections === 4 ? "PASS" : "FAIL") + " ticker scan card: " + scanSections + " section states for QQQ");
+            await p.locator('[data-testid="tab-tradedesk"]').first().click({ timeout: 5000 });
             await p.locator('[data-testid="setup-log-card"]').waitFor({ timeout: 30000 });
             const setupCounts = await p.locator('[data-testid="setup-log-counts"]').count();
             const setupMethod = await p.locator('[data-testid="setup-log-method"]').count();

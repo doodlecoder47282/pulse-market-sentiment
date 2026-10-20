@@ -95,6 +95,7 @@ import { deriveTargets, deriveBothSides, type CandidateLevel } from "./targetDer
 import { startCryptoEngines, getCryptoFeed, getCryptoHealth, getCryptoSignals } from "./cryptoEngine";
 import { startCommunityEngine, getCommunityWatch, addCommunityToken, removeCommunityToken } from "./cryptoCommunity";
 import { startSetupEngine, getSetupLog } from "./setupEngine";
+import { scanTicker, validScanSymbol } from "./tickerScan";
 import { buildChainAudit } from "./chainAudit";
 import { buildHeatseeker } from "./heatseeker";
 import {
@@ -3680,6 +3681,13 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     }
   });
   // SETUP EVENT LOG (server/setupEngine.ts): the rule book, why nothing fires now, the log and its graded summary. Descriptive; no grade below the sample gate.
+  // SCAN ANY TICKER (server/tickerScan.ts): instrument, quote, volume read, per-name structure, most active contracts; each section with its own state.
+  app.get("/api/scan", async (req, res) => {
+    const symbol = validScanSymbol(req.query.symbol);
+    if (!symbol) return res.status(400).json({ error: "bad_symbol", message: "symbol must be 1-10 characters: letters, digits, dot or dash" });
+    try { res.json(await scanTicker(symbol)); }
+    catch (e: any) { res.status(500).json({ error: "scan_failed", message: e?.message ?? String(e) }); }
+  });
   app.get("/api/setups", (_req, res) => {
     try { res.json(getSetupLog()); }
     catch (e: any) { res.status(500).json({ error: "setups_failed", message: e?.message ?? String(e) }); }
