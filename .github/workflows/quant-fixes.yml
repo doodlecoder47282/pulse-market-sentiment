@@ -329,7 +329,8 @@ jobs:
               const okStates = (j) => states(j).every((st) => ["ok","partial","stale","unavailable","no_data"].includes(st));
               const spyOk = a.symbol === "SPY" && okStates(a) && a.quote.dataState !== "unavailable" && a.quote.last > 0 && /no venue/.test(a.note)
                 && a.volume.blocks && typeof a.volume.blocks.available === "boolean" && /never|not a dark-pool/.test(a.volume.blocks.note + " " + a.note);
-              const unknownOk = u.symbol === "ZZZZQ" && okStates(u) && (u.quote.last == null || u.instrument.found === false);
+              // The sample edition has no instrument table and quotes any symbol from its table, so there the instrument section must say unavailable (never "found").
+              const unknownOk = u.symbol === "ZZZZQ" && okStates(u) && (u.quote.last == null || u.instrument.found === false || (u.edition === "demo" && u.instrument.dataState === "unavailable" && u.instrument.found === null));
               const code = process.argv[1];
               const ok = spyOk && unknownOk && code === "400";
               console.log((ok ? "PASS" : "FAIL") + " ticker scan: SPY states " + states(a).join("/") + " last " + a.quote.last + " rel " + (a.volume.relative && a.volume.relative.rel) + " contracts " + (a.chain.contracts || []).length + "; ZZZZQ states " + states(u).join("/") + " last " + u.quote.last + "; bad symbol " + code);
