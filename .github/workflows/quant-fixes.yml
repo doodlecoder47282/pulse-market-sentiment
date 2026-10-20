@@ -368,6 +368,38 @@ jobs:
               await gp.locator('[data-testid="thermal-heatmap"]').screenshot({ path: "rep/demo/14-regime-3d-readout.png" });
               const ok = canvases >= 1 && signs && gerr.length === 0;
               console.log((ok ? "PASS" : "FAIL") + " 3D surface: " + canvases + " canvas, sign labels " + signs + ", readout after a blind centre tap " + read + " (informational: the tap can miss the mesh), page errors " + gerr.length + (gerr[0] ? " " + gerr[0].slice(0, 160) : ""));
+              // Rotated camera on three screen sizes: no two visible labels may touch (the expiry
+              // ticks piled up into "13d11d10d" after a rotation on a 2000 px window), the canvas
+              // must keep a readable aspect, and nothing may overflow the page.
+              const collisions = async () => gp.evaluate(() => {
+                const els = Array.from(document.querySelectorAll('[data-testid="thermal-surface3d-host"] .s3d-tick, [data-testid="thermal-surface3d-host"] .s3d-axis, [data-testid="thermal-surface3d-host"] .s3d-level'))
+                  .filter((e) => e.style.visibility !== "hidden" && e.style.display !== "none");
+                const rects = els.map((e) => ({ t: e.textContent.trim(), r: e.getBoundingClientRect() })).filter((x) => x.r.width > 0 && x.r.height > 0);
+                const bad = [];
+                for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) {
+                  const a = rects[i].r, b = rects[j].r;
+                  if (a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top) bad.push(rects[i].t + " x " + rects[j].t);
+                }
+                const cv = document.querySelector('[data-testid="thermal-surface3d-host"] canvas').getBoundingClientRect();
+                return { labels: rects.length, bad, aspect: cv.width / cv.height, overflow: document.documentElement.scrollWidth > innerWidth };
+              });
+              let rotOk = true;
+              for (const [name, vp] of [["desktop", { width: 1440, height: 900 }], ["ultrawide", { width: 2000, height: 1000 }], ["phone", { width: 390, height: 844 }]]) {
+                await gp.setViewportSize(vp);
+                await gp.waitForTimeout(800);
+                if (name === "phone") await gp.locator('[data-testid="thermal-surface3d-host"]').scrollIntoViewIfNeeded();
+                for (let k = 0; k < 3; k++) { await gp.locator('[data-testid="surface3d-rotate-right"]').click(); await gp.waitForTimeout(150); }
+                const r1 = await collisions();
+                await gp.locator('[data-testid="surface3d-view-side"]').click(); await gp.waitForTimeout(400);
+                const r2 = await collisions();
+                await gp.locator('[data-testid="thermal-surface3d-host"]').screenshot({ path: `rep/demo/15-regime-3d-rotated-${name}.png` });
+                await gp.locator('[data-testid="surface3d-view-reset"]').click(); await gp.waitForTimeout(300);
+                const bad = [...r1.bad, ...r2.bad];
+                const aspectOk = r1.aspect <= 2.6 && r1.aspect >= 0.8;
+                const okHere = bad.length === 0 && aspectOk && !r1.overflow;
+                rotOk = rotOk && okHere;
+                console.log((okHere ? "PASS" : "FAIL") + " 3D rotated " + name + ": " + r1.labels + " labels, " + bad.length + " touching" + (bad[0] ? " (" + bad.slice(0, 4).join("; ") + ")" : "") + ", canvas aspect " + r1.aspect.toFixed(2) + ", overflow " + r1.overflow);
+              }
             }
           } catch (e) { console.log("FAIL 3D surface: " + String(e && e.message || e).split("\n")[0]); }
           finally { if (g) await g.close().catch(() => {}); }

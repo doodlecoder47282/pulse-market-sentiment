@@ -207,3 +207,19 @@ test("a null side (open interest, no usable IV) is a hole in that layer and does
   const calls = buildSurfaceModel(data, { layer: "call", spacing: "even", heightScale: "linear" });
   assert.equal(calls.quadCount, 1);
 });
+
+test("spikeRatio: largest over median |value| of observed non-zero cells; null when too few", async () => {
+  const { buildSurfaceModel, spikeRatio } = await import("../../client/src/lib/surface3dModel");
+  const grid = (vals: number[][]): any => {
+    const strikes = vals[0].map((_, i) => 100 + i), expiries = vals.map((_, j) => ({ label: `e${j}`, dte: j + 1 }));
+    const cells: any[] = [];
+    vals.forEach((row, j) => row.forEach((v, i) => cells.push({ expIdx: j, strikeIdx: i, expiry: `e${j}`, dte: j + 1, strike: 100 + i, exposure: v, callOI: 1, putOI: 1 })));
+    return { spot: 102, greek: "charm", strikes, expiries, cells, maxAbs: 1, levels: { callWall: null, putWall: null, gammaFlip: null } };
+  };
+  const flat = buildSurfaceModel(grid([[1, 2, 3, 2, 1], [1, 2, 3, 2, 1]]), { layer: "net", spacing: "even", heightScale: "linear" });
+  assert.ok(Math.abs((spikeRatio(flat) ?? 0) - 1.5) < 1e-9, `flat ${spikeRatio(flat)}`);
+  const spiky = buildSurfaceModel(grid([[1, 1, 1, 1, 1], [1, 1, 50, 1, -1]]), { layer: "net", spacing: "even", heightScale: "linear" });
+  assert.equal(spikeRatio(spiky), 50);
+  const few = buildSurfaceModel(grid([[1, 2, 3]]), { layer: "net", spacing: "even", heightScale: "linear" });
+  assert.equal(spikeRatio(few), null);
+});
