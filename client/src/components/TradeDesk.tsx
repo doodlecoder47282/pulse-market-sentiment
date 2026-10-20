@@ -12,6 +12,7 @@ import { PositionSizer } from "@/components/PositionSizer";
 import OfiHistogram from "@/components/OfiHistogram";
 import { RegimeChip } from "@/components/RegimeChip";
 import OdteMapCard from "@/components/OdteMapCard";
+import ChartLevelsCard from "@/components/ChartLevelsCard";
 import type { GammaStructure } from "@shared/schema";
 import { vixToAtmPct } from "@shared/vol";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -191,6 +192,9 @@ export default function TradeDesk() {
       {/* Regime transition forecast — forward-looking probability scoring */}
       {/* 0DTE map: the day's dealer-gamma plan (shared/odteMap.ts); zones only in the personal edition */}
       <OdteMapCard />
+
+      {/* The reader's own chart levels tagged against the map above (shared/levelConfluence.ts) */}
+      <ChartLevelsCard />
 
       <RegimePredictPanel />
 
