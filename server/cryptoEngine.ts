@@ -56,6 +56,7 @@ import {
 } from "./cryptoStats";
 import { classifyMeme, linePosition, tradeCost, type LinePosition, type MemeClass, type TradeCost } from "../shared/memeStructure";
 import { readTokenFacts, indexedRpcAvailable } from "./solanaToken";
+import { deskRiskFromMajors, type DeskRisk, type VerdictCode } from "../shared/cryptoVerdict";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -141,6 +142,8 @@ export interface Candidate {
   hardKill: boolean;
   score: number | null;           // composite 0-100
   verdict: "ENTER" | "WATCH" | "PASS" | null;
+  /** Machine-readable reason for the verdict (shared/cryptoVerdict.ts VerdictCode). */
+  verdictCode: VerdictCode | null;
   verdictReasons: string[];
   risk: RiskParams | null;
 
@@ -273,7 +276,21 @@ sqlite.exec(`
     graded_at INTEGER
   );
   CREATE INDEX IF NOT EXISTS idx_crypto_signals_outcome ON crypto_signals(outcome);
+  CREATE TABLE IF NOT EXISTS crypto_desk_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    reason TEXT,
+    updated_at INTEGER NOT NULL
+  );
 `);
+// Columns added after the table first shipped (SQLite has no ADD COLUMN IF NOT EXISTS):
+//   peak_liquidity      liquidity at the sampled peak, so the peak rule prices its exit at the depth that existed
+//   horizon_*           the mark at the 72 h horizon regardless of outcome, so a true hold-to-horizon return exists
+//   verdict_code        machine-readable reason for the verdict (rejection reasons are coded, not only prose)
+for (const [col, type] of [["peak_liquidity", "REAL"], ["horizon_mcap", "REAL"], ["horizon_liquidity", "REAL"], ["horizon_at", "INTEGER"], ["verdict_code", "TEXT"]] as const) {
+  const have = (sqlite.prepare(`PRAGMA table_info(crypto_signals)`).all() as Array<{ name: string }>).some((r) => r.name === col);
+  if (!have) sqlite.exec(`ALTER TABLE crypto_signals ADD COLUMN ${col} ${type}`);
+}
 // MIGRATION: the original per-day dedupe ignored verdict, which silently
 // BLOCKED same-day WATCH → ENTER upgrades — the most important signal we
 // have. Uniqueness is now (pair, verdict, day) so an upgrade writes its row.
@@ -288,14 +305,14 @@ function persistSignal(c: Candidate): void {
   try {
     sqlite.prepare(`
       INSERT OR IGNORE INTO crypto_signals
-        (id, detected_at, chain, pair_address, token_address, symbol, name, verdict,
+        (id, detected_at, chain, pair_address, token_address, symbol, name, verdict, verdict_code,
          score, mcap_at_signal, price_at_signal, liquidity_at_signal,
          features_json, risk_json, outcome)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
     `).run(
       `${c.chain}:${c.pairAddress}:${Date.now()}`,
       Date.now(), c.chain, c.pairAddress, c.tokenAddress, c.symbol, c.name,
-      c.verdict, c.score, c.marketCap, c.priceUsd, c.liquidityUsd,
+      c.verdict, c.verdictCode, c.score, c.marketCap, c.priceUsd, c.liquidityUsd,
       JSON.stringify({
         volAccel: c.volAccel, netBuyRatio5m: c.netBuyRatio5m, fomo: c.fomoScore,
         meme: c.memeScore, memeMethod: MEME_SCORE_METHOD, narrativeHits: c.narrativeHits, rugFlags: c.rugFlags,
@@ -403,7 +420,7 @@ function upsertFromGtPool(pool: any, via: Candidate["discoveredVia"]): void {
     hist: [],
     ageMinutes: null, volAccel: null, netBuyRatio5m: null,
     fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
-    hardKill: false, score: null, verdict: null, verdictReasons: [], risk: null,
+    hardKill: false, score: null, verdict: null, verdictCode: null, verdictReasons: [], risk: null,
     structure: null,
   };
   // GT gives a coarse first look — momentum engine refines with DexScreener.
@@ -917,15 +934,19 @@ function scoreCandidate(c: Candidate): void {
   const attnPts = mp.attentionPts;
   c.score = Math.round(Math.min(100, flow + structure + memePts + narrPts + attnPts));
 
-  // verdict
+  // verdict, with a machine-readable code for every branch (shared/cryptoVerdict.ts)
   const reasons: string[] = [];
   let verdict: Candidate["verdict"] = "PASS";
+  let code: VerdictCode = "score_low";
   if (hardKill) {
+    code = "hard_kill";
     reasons.push("hard kill: " + flags.filter((f) => /floor|honeypot pattern|mid-rug|exit door|liquidity not reported|liquidity \$0|AUTHORITY/.test(f)).join("; "));
   } else if (mcap <= 0 || c.priceUsd == null) {
+    code = "no_price";
     reasons.push("no reliable mcap/price yet");
   } else if (mcap > MCAP_ENTRY_MAX) {
     verdict = c.score >= 55 ? "WATCH" : "PASS";
+    code = "mcap_ceiling";
     reasons.push(`mcap $${(mcap / 1e6).toFixed(2)}M above 1M entry ceiling — watch for retrace only`);
   } else if (c.score >= 70 && (c.volAccel ?? 0) >= 1.5 && (c.netBuyRatio5m ?? 0) >= 0.58) {
     // WHALE-BLINK FILTER: one hot 5-min window is a single buyer, not a move.
@@ -934,37 +955,45 @@ function scoreCandidate(c: Candidate): void {
     const recent = c.hist.slice(-3);
     const sustained = recent.length >= 2 && recent.filter((h) => (h.volAccel ?? 0) >= 1.5).length >= 2;
     if (!sustained) {
-      verdict = "WATCH";
+      verdict = "WATCH"; code = "flow_not_sustained";
       reasons.push(`score ${c.score}, accel ${c.volAccel?.toFixed(1)}x but not sustained yet (need 2 of last 3 polls) — whale-blink filter`);
     } else if (c.securityCheckedAt == null) {
-      verdict = "WATCH";
+      verdict = "WATCH"; code = "security_unread";
       reasons.push(`score ${c.score}, flow sustained — held at WATCH pending on-chain security check (mint/freeze/holders)`);
     } else if (!jupiterAllowsEnter(c.jupState)) {
       // Fail-closed (round 3): a failed or skipped Jupiter check is not a
       // pass. Only "agree" or "watch" (<= 15% gap) lets ENTER stand.
-      verdict = "WATCH";
+      verdict = "WATCH"; code = "price_unconfirmed";
       reasons.push(`score ${c.score}, flow sustained — held at WATCH: DexScreener price not confirmed by Jupiter (${c.jupState}${c.jupGapPct != null ? ` ${c.jupGapPct}%` : ""}${c.jupState === "failed" || c.jupState === "unchecked" ? ", cross-check did not run" : ""})`);
     } else if (hp === "sells_missing") {
-      verdict = "WATCH";
+      verdict = "WATCH"; code = "sells_missing";
       reasons.push(`score ${c.score}, flow sustained — held at WATCH: 1h sell count missing, honeypot check not possible`);
     } else if (c.top10Pct == null) {
       // Fail-closed like Jupiter / sells (round 4): concentration not read
       // (owners unreadable, RPC cooldown, not yet checked) is not a pass.
-      verdict = "WATCH";
+      verdict = "WATCH"; code = "top10_unread";
       reasons.push(`score ${c.score}, flow sustained — held at WATCH: top-10 holder concentration unavailable${c.top10Method ? ` (${c.top10Method})` : " (not read yet)"}`);
+    } else if (deskRisk.state !== "on") {
+      // RISK-OFF (persistent desk state from the majors read): the scanner keeps
+      // logging and the candidate stays WATCH; nothing advances to ENTER until
+      // the state is on again. Unknown majors block the same way as risk-off.
+      verdict = "WATCH"; code = deskRisk.state === "off" ? "risk_off" : "risk_unknown";
+      reasons.push(`score ${c.score}, flow sustained, security checked — held at WATCH: desk risk ${deskRisk.state} (${deskRisk.reason})`);
     } else {
-      verdict = "ENTER";
+      verdict = "ENTER"; code = "enter";
       reasons.push(`score ${c.score}, flow sustained ${c.volAccel?.toFixed(1)}x, ${Math.round((c.netBuyRatio5m ?? 0) * 100)}% buys, security checked`);
       reasons.push(`pool price confirmed by Jupiter (${c.jupGapPct}% gap)`);
       reasons.push(`top-10 holders ${c.top10Pct}% (${c.top10Method ?? "method unknown"})`);
       if (c.narrativeHits.length) reasons.push(`narrative confirm: ${c.narrativeHits.join(", ")}`);
     }
   } else if (c.score >= 50) {
-    verdict = "WATCH";
+    verdict = "WATCH"; code = "forming";
     reasons.push(`score ${c.score} — setup forming, waiting on flow confirmation`);
   } else {
+    code = "score_low";
     reasons.push(`score ${c.score} below 50`);
   }
+  c.verdictCode = code;
   c.verdict = verdict;
   c.verdictReasons = reasons;
 
@@ -1106,13 +1135,76 @@ async function graderTick(): Promise<void> {
   }
 }
 
+// ─── HORIZON MARKS — the price at the 72 h horizon, whatever the outcome ──
+//
+// The grader closes HIT_5M rows at the target sample and RUGGED rows at
+// rug detection, so their last_mcap is not a horizon mark. This pass
+// prices every row that has crossed the horizon exactly once, regardless
+// of outcome, so a true hold-to-horizon return exists
+// (shared/cryptoExpectancy "hold" rule). A row that cannot be priced a
+// week after the horizon keeps horizon_mcap NULL with horizon_at set: tried
+// and unavailable, never zero.
+
+const HORIZON_BATCH = 20;
+
+async function horizonTick(): Promise<void> {
+  const now = Date.now();
+  const due = sqlite.prepare(
+    `SELECT id, pair_address, chain, detected_at FROM crypto_signals WHERE horizon_at IS NULL AND detected_at + ? <= ? ORDER BY detected_at ASC LIMIT ?`,
+  ).all(GRADE_HORIZON_MS, now, HORIZON_BATCH) as any[];
+  if (!due.length) return;
+  const mark = sqlite.prepare(`UPDATE crypto_signals SET horizon_mcap = @mcap, horizon_liquidity = @liq, horizon_at = @now WHERE id = @id AND horizon_at IS NULL`);
+  for (const row of due) {
+    const key = `${row.chain}:${row.pair_address}`;
+    const live = tracked.get(key);
+    let mcap: number | null = null, liq: number | null = null;
+    if (live?.lastRefreshAt && now - live.lastRefreshAt < 10 * 60_000) { mcap = live.marketCap; liq = live.liquidityUsd; }
+    else {
+      try {
+        const resp = await getJson(`${DS_BASE}/latest/dex/pairs/${row.chain}/${row.pair_address}`);
+        const p = resp?.pairs?.[0] ?? resp?.pair;
+        mcap = observedNumber(p?.marketCap) ?? observedNumber(p?.fdv);
+        liq = observedNumber(p?.liquidity?.usd);
+      } catch {
+        if (now - Number(row.detected_at) > GRADE_HORIZON_MS + NO_DATA_AFTER_ERRORS_MS) mark.run({ mcap: null, liq: null, now, id: row.id });
+        continue;
+      }
+    }
+    mark.run({ mcap, liq, now, id: row.id });
+  }
+}
+
 // ─── MAJORS — exchange-direct BTC/ETH/SOL ───────────────────────────────
 
 async function majorsTick(): Promise<void> {
   const snap = await readMajors();
   majors = snap;
+  setDeskRisk(deskRiskFromMajors(snap, Date.now()));
   if (snap.state === "unavailable") throw new Error("no live exchange quote for BTC/ETH/SOL");
 }
+
+// ─── DESK RISK STATE — persistent, read by the verdict ──────────────────
+//
+// From the majors read: BTC against its own 24 h VWAP (Kraken) is the one
+// number a keyless desk can trust for "is the tape falling out from under
+// memes". Off when BTC is 5% or more under its 24 h VWAP; unknown when the
+// majors could not be read (stale critical data blocks new exposure, it does
+// not pass it). Persisted so a restart does not reset it to "on".
+
+let deskRisk: DeskRisk = loadDeskRisk();
+
+function loadDeskRisk(): DeskRisk {
+  const row = sqlite.prepare(`SELECT value, reason, updated_at FROM crypto_desk_state WHERE key = 'risk'`).get() as any;
+  if (!row) return { state: "unknown", reason: "no majors read yet", asOf: null, btcVsVwap24hPct: null };
+  return { state: row.value, reason: row.reason ?? "", asOf: row.updated_at, btcVsVwap24hPct: null };
+}
+function setDeskRisk(r: DeskRisk): void {
+  if (r.state !== deskRisk.state) console.log(`[crypto] desk risk ${deskRisk.state} -> ${r.state}: ${r.reason}`);
+  deskRisk = r;
+  sqlite.prepare(`INSERT INTO crypto_desk_state (key, value, reason, updated_at) VALUES ('risk', @v, @r, @t) ON CONFLICT(key) DO UPDATE SET value = excluded.value, reason = excluded.reason, updated_at = excluded.updated_at`)
+    .run({ v: r.state, r: r.reason, t: r.asOf ?? Date.now() });
+}
+export function getDeskRisk(): DeskRisk { return deskRisk; }
 
 /** Crypto source labels for the UI (tier + terms), from the registry. */
 function cryptoSourceLabels() {
@@ -1157,6 +1249,7 @@ export function startCryptoEngines(): void {
   arm("momentum", MOMENTUM_MS, momentumTick, 8_000);
   arm("narratives", NARRATIVE_MS, narrativeTick, 3_000);
   arm("grader", GRADER_MS, graderTick, 45_000);
+  arm("horizon", GRADER_MS, horizonTick, 75_000);
   arm("security", SECURITY_MS, securityTick, 20_000);
   arm("social", SOCIAL_MS, socialTick, 30_000);
   arm("majors", MAJORS_MS, majorsTick, 2_500);
@@ -1204,6 +1297,7 @@ function gradedLike(s: any): GradedSignalLike {
   return {
     outcome: s.outcome, mcapAtSignal: s.mcap_at_signal, liquidityAtSignal: s.liquidity_at_signal,
     peakMcap: s.peak_mcap, lastMcap: s.last_mcap, lastLiquidity: s.last_liquidity,
+    peakLiquidity: s.peak_liquidity ?? null, horizonMcap: s.horizon_mcap ?? null, horizonLiquidity: s.horizon_liquidity ?? null, horizonAt: s.horizon_at ?? null,
   };
 }
 
@@ -1217,29 +1311,31 @@ export const EXPECTANCY_SIZE_USD = 100;
  * detected_at then id, so a coin re-signalled on several days, or on two
  * pairs in one tick, counts once.
  */
-export function getCryptoExpectancy(): { graded: ExpectancySummary; peak: ExpectancySummary; basis: string } {
+export function getCryptoExpectancy(): { graded: ExpectancySummary; hold: ExpectancySummary; peak: ExpectancySummary; basis: string } {
   const rows = sqlite.prepare(`
     WITH firsts AS (
-      SELECT outcome, mcap_at_signal, liquidity_at_signal, peak_mcap, last_mcap, last_liquidity,
+      SELECT outcome, mcap_at_signal, liquidity_at_signal, peak_mcap, last_mcap, last_liquidity, peak_liquidity, horizon_mcap, horizon_liquidity, horizon_at,
              ROW_NUMBER() OVER (PARTITION BY COALESCE(NULLIF(token_address, ''), pair_address) ORDER BY detected_at ASC, id ASC) AS rn
       FROM crypto_signals WHERE verdict = 'ENTER'
     )
-    SELECT outcome, mcap_at_signal, liquidity_at_signal, peak_mcap, last_mcap, last_liquidity
+    SELECT outcome, mcap_at_signal, liquidity_at_signal, peak_mcap, last_mcap, last_liquidity, peak_liquidity, horizon_mcap, horizon_liquidity, horizon_at
     FROM firsts WHERE rn = 1 AND outcome IS NOT NULL AND outcome <> 'OPEN'
   `).all() as any[];
   const like = rows.map(gradedLike);
   const opts = { sizeUsd: EXPECTANCY_SIZE_USD, minSample: CRYPTO_SAMPLE_READY_MIN_GRADED };
   return {
     graded: summarizeExpectancy(like, "graded", opts),
+    hold: summarizeExpectancy(like, "hold", opts),
     peak: summarizeExpectancy(like, "peak", opts),
-    basis: "first ENTER signal per coin, graded rows only; entry at the signal's liquidity, exit at the liquidity the grader saw when it closed the row (HIT_5M rows at the target sample, a limit-sell-at-target, not a hold to the horizon); pool fees and impact on both legs; the peak rule prices the exit at the entry depth (peak liquidity is not recorded); market-cap multiples stand in for price multiples, which overstates the move when supply grew",
+    basis: "first ENTER signal per coin, graded rows only; entry at the signal's liquidity; pool fees and impact on both legs. graded: exit at the liquidity the grader saw when it closed the row (HIT_5M rows at the target sample, a limit-sell-at-target, not a hold to the horizon). hold: exit at the 72 h horizon mark, recorded for every row since 2026-10-20 (older rows have none and are skipped). peak: the sampled peak at its own recorded liquidity, or the entry depth for rows older than the recording. Market-cap multiples stand in for price multiples, which overstates the move when supply grew",
   };
 }
 
 export function getCryptoSignals(): {
   signals: any[];
   stats: CryptoDeskStats & { listLimit: number };
-  expectancy: { graded: ExpectancySummary; peak: ExpectancySummary; basis: string };
+  expectancy: { graded: ExpectancySummary; hold: ExpectancySummary; peak: ExpectancySummary; basis: string };
+  desk: DeskRisk;
 } {
   // The list is the latest 100 for display; the stats come from aggregate
   // queries over every logged signal, so total/open/graded share one window.
@@ -1268,6 +1364,7 @@ export function getCryptoSignals(): {
     })),
     stats: { ...stats, listLimit: LIST_LIMIT },
     expectancy: getCryptoExpectancy(),
+    desk: deskRisk,
   };
 }
 

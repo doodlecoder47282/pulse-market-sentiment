@@ -274,8 +274,12 @@ jobs:
               const rows = j.signals || [];
               const rowsOk = rows.every((r) => r.verdict !== "ENTER" ? r.netGraded === null : (r.netGraded && r.netGraded.rule === "graded" && (r.netGraded.netPct == null) === (typeof r.netGraded.missing === "string")));
               const gated = !x.graded || x.graded.sampleReady || /counts only, no claim of edge/.test(x.graded.note);
-              const ok = sum(x.graded) && sum(x.peak) && x.graded.rule === "graded" && x.peak.rule === "peak" && x.graded.sizeUsd === 100 && typeof x.basis === "string" && /not a hold/.test(x.basis) && /entry pool/.test(x.peak.note) && rowsOk && gated;
-              console.log((ok ? "PASS" : "FAIL") + " crypto expectancy: graded n=" + (x.graded && x.graded.n) + " skipped=" + (x.graded && x.graded.skipped) + " ready=" + (x.graded && x.graded.sampleReady) + ", peak n=" + (x.peak && x.peak.n) + ", " + rows.length + " rows" + (ok ? "" : " body " + JSON.stringify(x).slice(0, 300)));
+              const labels = ["PASSES PREDEFINED TESTS", "MIXED RESULTS", "NO DEMONSTRATED EDGE", "INSUFFICIENT DATA"];
+              const desk = j.desk || {};
+              const deskOk = ["on", "off", "unknown"].includes(desk.state) && typeof desk.reason === "string";
+              const ok = sum(x.graded) && sum(x.hold) && sum(x.peak) && x.graded.rule === "graded" && x.hold.rule === "hold" && x.peak.rule === "peak" && x.graded.sizeUsd === 100 && typeof x.basis === "string" && /not a hold/.test(x.basis) && /horizon mark/.test(x.hold.note) && /recorded at the peak/.test(x.peak.note) && rowsOk && gated
+                && [x.graded, x.hold, x.peak].every((s) => labels.includes(s.validation)) && (x.graded.n >= 50 || x.graded.validation === "INSUFFICIENT DATA") && deskOk;
+              console.log((ok ? "PASS" : "FAIL") + " crypto expectancy: graded n=" + (x.graded && x.graded.n) + " " + (x.graded && x.graded.validation) + ", hold n=" + (x.hold && x.hold.n) + ", peak n=" + (x.peak && x.peak.n) + ", desk risk " + desk.state + " (" + desk.reason + "), " + rows.length + " rows" + (ok ? "" : " body " + JSON.stringify(x).slice(0, 300)));
             '
             # 0DTE map on the sample chain: priced, labelled, no zones in the demo (investor limits), text free of instructions.
             curl -s -m 60 "$B/api/odte/map?symbol=%24SPX" > rep/demo/odte-map.json

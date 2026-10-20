@@ -3,7 +3,7 @@
 // both legs' fees and impact, never a forecast.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { legReturnPct, signalReturn, summarizeExpectancy, wilson } from "../../shared/cryptoExpectancy";
+import { legReturnPct, signalReturn, summarizeExpectancy, wilson, validationLabel } from "../../shared/cryptoExpectancy";
 import { tradeCost } from "../../shared/memeStructure";
 
 const row = (o: Partial<{ outcome: string; mcapAtSignal: number | null; liquidityAtSignal: number | null; peakMcap: number | null; lastMcap: number | null; lastLiquidity: number | null }>) =>
@@ -82,4 +82,32 @@ test("wilson: textbook values and bounds", () => {
   const w = wilson(0, 10)!; assert.equal(w.lo, 0); assert.ok(w.hi > 0.27 && w.hi < 0.29);
   const h = wilson(5, 10)!; assert.ok(h.lo > 0.23 && h.lo < 0.24 && h.hi > 0.76 && h.hi < 0.77);
   assert.equal(wilson(0, 0), null);
+});
+
+test("hold rule: horizon mark or nothing; peak rule prices at the recorded peak liquidity; validation label is four-way and gated", () => {
+  const base = { outcome: "HIT_5M", mcapAtSignal: 100_000, liquidityAtSignal: 20_000, peakMcap: 600_000, lastMcap: 550_000, lastLiquidity: 40_000 };
+  const noMark = signalReturn({ ...base }, "hold");
+  assert.equal(noMark.netPct, null);
+  assert.match(noMark.missing!, /no horizon mark/);
+  const marked = signalReturn({ ...base, horizonAt: 1, horizonMcap: 150_000, horizonLiquidity: 30_000 }, "hold");
+  assert.equal(marked.grossMultiple, 1.5);
+  assert.ok(marked.netPct! > 0 && marked.netPct! < 50, `net ${marked.netPct}`);
+  const pulled = signalReturn({ ...base, horizonAt: 1, horizonMcap: null, horizonLiquidity: 0 }, "hold");
+  assert.equal(pulled.netPct, -100, "liquidity observed 0 at the horizon is a pulled pool");
+  const unpriced = signalReturn({ ...base, horizonAt: 1, horizonMcap: null, horizonLiquidity: null }, "hold");
+  assert.equal(unpriced.netPct, null);
+  assert.match(unpriced.missing!, /unavailable/);
+
+  const peakEntryDepth = signalReturn({ ...base }, "peak").netPct!;
+  const peakDeeper = signalReturn({ ...base, peakLiquidity: 200_000 }, "peak").netPct!;
+  assert.ok(peakDeeper > peakEntryDepth, "a deeper pool at the peak lets more of the multiple be realised");
+
+  assert.equal(validationLabel(10, 50, 20, 60, 80), "INSUFFICIENT DATA");
+  assert.equal(validationLabel(80, 50, 12, 55, 72), "PASSES PREDEFINED TESTS");
+  assert.equal(validationLabel(80, 50, -3, 40, 60), "NO DEMONSTRATED EDGE");
+  assert.equal(validationLabel(80, 50, 4, 30, 48), "NO DEMONSTRATED EDGE");
+  assert.equal(validationLabel(80, 50, 4, 45, 66), "MIXED RESULTS");
+  const sum = summarizeExpectancy([{ ...base, horizonAt: 1, horizonMcap: 150_000, horizonLiquidity: 30_000 }], "hold", { minSample: 50 });
+  assert.equal(sum.validation, "INSUFFICIENT DATA");
+  assert.match(sum.note, /horizon mark/);
 });

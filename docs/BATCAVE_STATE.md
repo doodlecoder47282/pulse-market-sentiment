@@ -698,6 +698,42 @@ are the next crypto objective.
 Next step: crypto refinements (risk-off state, coded rejection reasons,
 ENTER waits for on-chain facts, horizon marks, validation label).
 
+## 2026-10-20 (crypto): desk discipline (feat/crypto-discipline)
+
+Taken from the owner's attached trading-desk prompt, the pieces that hold
+up, built on the existing scanner (which already held ENTER until the mint,
+freeze and top-10 reads: an earlier note in this file saying otherwise was
+wrong and is corrected here):
+
+1. Persistent desk risk state (crypto_desk_state): BTC against its own 24 h
+   Kraken VWAP, off at -5% or worse, unknown when the majors cannot be read.
+   Off or unknown holds every candidate at WATCH with codes risk_off /
+   risk_unknown; the scanner keeps logging. Survives a restart.
+2. Coded verdict reasons (shared/cryptoVerdict.ts VerdictCode, 13 codes,
+   each with a meaning): stored in crypto_signals.verdict_code and shown
+   on the expanded candidate row. Rejections are countable, not only prose.
+3. Horizon marks: a horizon pass prices every row once it crosses the 72 h
+   horizon, whatever its outcome (horizon_mcap / horizon_liquidity /
+   horizon_at); peak_liquidity is recorded whenever the peak updates. A row
+   that cannot be priced a week past the horizon keeps horizon_mcap NULL
+   with horizon_at set: tried and unavailable, never zero.
+4. Expectancy "hold" rule: exit at the horizon mark, the replicable rule;
+   rows without a mark are skipped, never approximated. The peak rule now
+   prices the exit at the recorded peak liquidity (entry depth for older
+   rows, said in the note). /api/crypto/signals carries expectancy.hold and
+   desk; the card shows the hold line and the desk state.
+5. Four-way validation label on every summary (PASSES PREDEFINED TESTS /
+   MIXED RESULTS / NO DEMONSTRATED EDGE / INSUFFICIENT DATA): under the
+   sample gate always INSUFFICIENT DATA; passes needs mean net > 0 and a
+   Wilson lower bound over 50%. Passing a historical test does not
+   establish future profitability; the text says so.
+
+Not adopted from the prompt: paid or keyed services, live swap execution,
+an LLM judge in the decision path. Tests: crypto-expectancy 6,
+crypto-verdict 2, crypto-sql-binding, crypto-community, meme-structure.
+
+Next step: CI, PR; then daily chain snapshots for a later equities backtest.
+
 ## Current objective
 
 Save the credit-conserving resume framework and assess reuse of the existing
