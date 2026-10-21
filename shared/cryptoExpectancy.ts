@@ -16,10 +16,15 @@
 //            rule applied to sampled data, not a top somebody called; it
 //            is NOT a hold-to-horizon return, which would give part of a
 //            HIT_5M row's gain back and is not recorded.
+//   hold     buy at the signal, sell at the 72 h horizon mark (horizon_mcap /
+//            horizon_liquidity, recorded once for every row that crosses the
+//            horizon, whatever its outcome). The replicable rule; rows from
+//            before the mark existed are skipped, never approximated.
 //   peak     sell at the sampled peak. Not achievable (the peak is known
 //            only afterwards and spikes between samples are missed), shown
-//            as the ceiling the graded rule is measured against. Priced at
-//            the entry pool's depth because peak liquidity is not recorded.
+//            as the ceiling the other rules are measured against. Priced at
+//            the liquidity recorded at the peak, or the entry pool's depth
+//            for rows older than that recording.
 //
 // Costs: the same constant-product mechanics as shared/memeStructure
 // tradeCost, with the entry pool at the signal's liquidity and the exit
@@ -36,7 +41,7 @@
 
 import { DEFAULT_DEX_FEE_PCT, DEFAULT_PLATFORM_FEE_PCT, DEFAULT_PRIORITY_USD } from "./memeStructure";
 
-export type ExitRule = "graded" | "peak";
+export type ExitRule = "graded" | "hold" | "peak";
 
 export interface GradedSignalLike {
   outcome: string | null | undefined;
@@ -45,6 +50,11 @@ export interface GradedSignalLike {
   peakMcap: number | null | undefined;
   lastMcap: number | null | undefined;
   lastLiquidity: number | null | undefined;
+  peakLiquidity?: number | null;
+  horizonMcap?: number | null;
+  horizonLiquidity?: number | null;
+  /** Set once the horizon pass ran (mcap may still be null: tried and unavailable). */
+  horizonAt?: number | null;
 }
 
 export interface LegCosts {
@@ -97,10 +107,16 @@ export function signalReturn(row: GradedSignalLike, rule: ExitRule, sizeUsd = 10
   const entryMcap = fin(row.mcapAtSignal), entryLiq = fin(row.liquidityAtSignal);
   if (entryMcap == null || !(entryMcap > 0)) return { ...base, missing: "no market cap at the signal" };
   if (entryLiq == null || !(entryLiq > 0)) return { ...base, missing: "no liquidity at the signal" };
-  const exitMcap = rule === "peak" ? fin(row.peakMcap) : fin(row.lastMcap);
-  const exitLiq = rule === "peak" ? entryLiq : fin(row.lastLiquidity);
-  if (outcome === "RUGGED" && (exitLiq == null || exitLiq <= 0 || exitMcap == null)) {
+  if (rule === "hold" && row.horizonAt == null) return { ...base, missing: "no horizon mark (row predates the horizon pass or has not reached it)" };
+  const exitMcap = rule === "peak" ? fin(row.peakMcap) : rule === "hold" ? fin(row.horizonMcap) : fin(row.lastMcap);
+  const exitLiq = rule === "peak" ? (fin(row.peakLiquidity) ?? entryLiq) : rule === "hold" ? fin(row.horizonLiquidity) : fin(row.lastLiquidity);
+  if (outcome === "RUGGED" && rule !== "hold" && (exitLiq == null || exitLiq <= 0 || exitMcap == null)) {
     return { ...base, grossMultiple: exitMcap != null ? exitMcap / entryMcap : null, netPct: -100 };
+  }
+  if (rule === "hold" && exitMcap == null) {
+    // The horizon pass ran and could not price the pool: a pulled pool is -100 only when liquidity was observed 0; otherwise unknown.
+    if (exitLiq != null && exitLiq <= 0) return { ...base, grossMultiple: null, netPct: -100 };
+    return { ...base, missing: "horizon mark unavailable (pool not priced at the horizon)" };
   }
   if (exitMcap == null) return { ...base, missing: rule === "peak" ? "no sampled peak" : "no market cap at the horizon" };
   if (exitLiq == null) return { ...base, grossMultiple: exitMcap / entryMcap, missing: "no liquidity at the horizon" };
@@ -126,7 +142,24 @@ export interface ExpectancySummary {
   /** Below the desk's minimum sample the numbers are counts, not a claim. */
   sampleReady: boolean;
   minSample: number;
+  /** Four-way read of the sample against stated tests; never a forecast. */
+  validation: ValidationLabel;
   note: string;
+}
+
+export type ValidationLabel = "PASSES PREDEFINED TESTS" | "MIXED RESULTS" | "NO DEMONSTRATED EDGE" | "INSUFFICIENT DATA";
+
+/**
+ * The tests: at least minSample graded returns; mean net > 0 and the share
+ * positive's Wilson lower bound > 50% passes; mean net <= 0 or an upper
+ * bound under 50% shows no edge; anything else is mixed. Passing a
+ * historical test does not establish future profitability.
+ */
+export function validationLabel(n: number, minSample: number, meanNetPct: number | null, lo: number | null, hi: number | null): ValidationLabel {
+  if (n < minSample || meanNetPct == null || lo == null || hi == null) return "INSUFFICIENT DATA";
+  if (meanNetPct > 0 && lo > 50) return "PASSES PREDEFINED TESTS";
+  if (meanNetPct <= 0 || hi < 50) return "NO DEMONSTRATED EDGE";
+  return "MIXED RESULTS";
 }
 
 export function wilson(k: number, n: number, z = 1.96): { lo: number; hi: number } | null {
@@ -165,19 +198,24 @@ export function summarizeExpectancy(rows: GradedSignalLike[], rule: ExitRule, op
   const ready = n >= minSample;
   const ruleText = rule === "graded"
     ? "buy at the signal, sell when the row was graded (HIT_5M at the first sample at or above the target, RUGGED at rug detection, otherwise at the horizon)"
-    : "sell at the sampled peak (a ceiling, not an achievable exit)";
-  const costText = rule === "graded"
-    ? "net of pool fees and impact on both legs at the liquidity that existed at each"
-    : "net of pool fees and impact on both legs, the exit priced at the entry pool's depth (peak liquidity is not recorded; the ceiling is understated when depth grew with price)";
+    : rule === "hold"
+      ? "buy at the signal, sell at the 72 h horizon mark whatever happened in between (the replicable rule)"
+      : "sell at the sampled peak (a ceiling, not an achievable exit)";
+  const costText = rule === "peak"
+    ? "net of pool fees and impact on both legs, the exit priced at the liquidity recorded at the peak, or the entry pool's depth for rows older than that recording (the ceiling is understated when depth grew with price)"
+    : "net of pool fees and impact on both legs at the liquidity that existed at each";
+  const lo = w ? Math.round(w.lo * 1000) / 10 : null, hi = w ? Math.round(w.hi * 1000) / 10 : null;
+  const meanR = mean == null ? null : Math.round(mean * 10) / 10;
   return {
     rule, sizeUsd, n, skipped, skippedReasons,
     medianNetPct: median(nets) == null ? null : Math.round(median(nets)! * 10) / 10,
-    meanNetPct: mean == null ? null : Math.round(mean * 10) / 10,
-    positiveShare: { yes, of: n, lo: w ? Math.round(w.lo * 1000) / 10 : null, hi: w ? Math.round(w.hi * 1000) / 10 : null },
+    meanNetPct: meanR,
+    positiveShare: { yes, of: n, lo, hi },
     worstNetPct: n ? Math.min(...nets) : null,
     bestNetPct: n ? Math.max(...nets) : null,
     sampleReady: ready,
     minSample,
+    validation: validationLabel(n, minSample, meanR, lo, hi),
     note: `${ruleText}; $${sizeUsd} per signal, ${costText}; ` +
       (ready ? `${n} signals: what happened, not a forecast` : `${n} of a ${minSample}-signal minimum: counts only, no claim of edge`),
   };

@@ -17,6 +17,7 @@ import {
   Eye, XCircle, Zap, HeartPulse, TrendingUp, Clock,
 } from "lucide-react";
 import MemeStructureSection, { CategoryChip, LineChip } from "@/components/MemeStructure";
+import { VERDICT_CODE_TEXT } from "@shared/cryptoVerdict";
 import type { LinePosition, MemeClass, TradeCost } from "@shared/memeStructure";
 
 // ─── types (mirror server) ──────────────────────────────────────────────
@@ -48,7 +49,7 @@ interface Candidate {
   narrativeHits: string[]; rugFlags: string[]; hardKill: boolean;
   jupPriceUsd?: number | null; jupGapPct?: number | null; jupCheckedAt?: number | null;
   jupState?: "agree" | "watch" | "diverge" | "no-reliable-price" | "failed" | "unchecked";
-  score: number | null; verdict: Verdict; verdictReasons: string[];
+  score: number | null; verdict: Verdict; verdictCode?: string | null; verdictReasons: string[];
   risk: {
     maxPositionUsd: number; suggestedStopPct: number; liquidityExitStopPct: number;
     targetMcap: number; targetMultiple: number | null; estSlippagePct: number;
@@ -124,11 +125,13 @@ interface SignalsResp {
   };
   // Net return of a $100 position per first-ENTER coin under a stated exit
   // rule (shared/cryptoExpectancy.ts): bookkeeping on what happened, not a forecast.
-  expectancy?: { graded: Expectancy; peak: Expectancy; basis: string };
+  expectancy?: { graded: Expectancy; hold: Expectancy; peak: Expectancy; basis: string };
+  /** Persistent desk risk state from the majors read; off or unknown holds every candidate at WATCH. */
+  desk?: { state: "on" | "off" | "unknown"; reason: string; asOf: number | null; btcVsVwap24hPct: number | null };
 }
 
 interface Expectancy {
-  rule: "graded" | "peak";
+  rule: "graded" | "hold" | "peak";
   sizeUsd: number;
   n: number;
   skipped: number;
@@ -140,6 +143,7 @@ interface Expectancy {
   bestNetPct: number | null;
   sampleReady: boolean;
   minSample: number;
+  validation: "PASSES PREDEFINED TESTS" | "MIXED RESULTS" | "NO DEMONSTRATED EDGE" | "INSUFFICIENT DATA";
   note: string;
 }
 
@@ -533,6 +537,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
       {isOpen && (
         <div className="mt-3 space-y-2 border-t border-border/40 pt-2.5">
           <div className="text-[11px] leading-snug text-foreground/90">
+            {c.verdictCode && <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground" data-testid={`crypto-verdict-code-${c.verdictCode}`}>code {c.verdictCode}: {VERDICT_CODE_TEXT[c.verdictCode as keyof typeof VERDICT_CODE_TEXT] ?? "—"}</p>}
             {c.verdictReasons.map((r, i) => <p key={i}>· {r}</p>)}
           </div>
           {c.rugFlags.length > 0 && (
@@ -701,6 +706,11 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
       {stats.peakSampling && (
         <p className="text-[11px] text-muted-foreground" data-testid="crypto-peak-sampling">{stats.peakSampling}</p>
       )}
+      {sig.desk && (
+        <p className={`text-[11px] ${sig.desk.state === "on" ? "text-muted-foreground" : "text-amber-300"}`} data-testid="crypto-desk-risk">
+          desk risk {sig.desk.state}: {sig.desk.reason}. {sig.desk.state === "on" ? "ENTER is possible when every gate is met." : "Every candidate is held at WATCH; the scanner keeps logging."}
+        </p>
+      )}
       {sig.expectancy && <ExpectancyCard x={sig.expectancy} />}
       {!stats.sampleReady && (
         <p className="text-[11px] text-muted-foreground">
@@ -750,15 +760,16 @@ const fmtNet = (v: number | null | undefined): string => (v == null ? "—" : `$
  * until the sample minimum (no colour until then); never a forecast.
  */
 function ExpectancyCard({ x }: { x: NonNullable<SignalsResp["expectancy"]> }) {
-  const h = x.graded, p = x.peak;
+  const h = x.graded, p = x.peak, hold = x.hold;
   const share = h.positiveShare;
+  const VAL_CLS: Record<string, string> = { "PASSES PREDEFINED TESTS": "text-emerald-300", "MIXED RESULTS": "text-amber-300", "NO DEMONSTRATED EDGE": "text-rose-300", "INSUFFICIENT DATA": "text-muted-foreground" };
   const tone = (v: number | null) => (!h.sampleReady || v == null ? "text-muted-foreground" : v > 0 ? "text-emerald-300" : "text-rose-300");
   return (
     <div className="rounded-lg border border-border/50 bg-card/40 p-3 space-y-2" data-testid="crypto-expectancy">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <span className="text-[11px] uppercase tracking-wider text-muted-foreground">net expectancy · ${h.sizeUsd} per first-ENTER coin, sold when graded</span>
         <span className={`text-[11px] ${h.sampleReady ? "text-muted-foreground" : "text-amber-300/90"}`} data-testid="crypto-expectancy-gate">
-          {h.sampleReady ? `${h.n} graded signals` : `${h.n} of ${h.minSample} needed: counts only`}
+          {h.sampleReady ? `${h.n} graded signals` : `${h.n} of ${h.minSample} needed: counts only`} · <span className={`font-mono ${VAL_CLS[h.validation] ?? ""}`} data-testid="crypto-expectancy-validation">{h.validation}</span>
         </span>
       </div>
       {h.n === 0 ? (
@@ -777,6 +788,11 @@ function ExpectancyCard({ x }: { x: NonNullable<SignalsResp["expectancy"]> }) {
             </div>
           ))}
         </div>
+      )}
+      {hold.n > 0 && (
+        <p className="text-[11px] text-muted-foreground" data-testid="crypto-expectancy-hold">
+          hold to the 72 h horizon (the replicable rule): median {fmtNet(hold.medianNetPct)}, mean {fmtNet(hold.meanNetPct)}, {hold.positiveShare.yes}/{hold.positiveShare.of} positive · {hold.validation}{hold.skipped ? ` · ${hold.skipped} without a horizon mark` : ""}
+        </p>
       )}
       {p.n > 0 && (
         <p className="text-[11px] text-muted-foreground" data-testid="crypto-expectancy-peak">
