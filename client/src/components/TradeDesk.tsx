@@ -14,6 +14,7 @@ import { RegimeChip } from "@/components/RegimeChip";
 import OdteMapCard from "@/components/OdteMapCard";
 import ChartLevelsCard from "@/components/ChartLevelsCard";
 import SetupLogCard from "@/components/SetupLogCard";
+import EventReplayCard from "@/components/EventReplayCard";
 import type { GammaStructure } from "@shared/schema";
 import { vixToAtmPct } from "@shared/vol";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -199,6 +200,9 @@ export default function TradeDesk() {
 
       {/* Setup event log: the rule book, why nothing fires now, the log and its graded summary (server/setupEngine.ts) */}
       <SetupLogCard />
+
+      {/* Tier-1 releases against the record, and the desk's own chain store (server/researchStore.ts) */}
+      <EventReplayCard />
 
       <RegimePredictPanel />
 

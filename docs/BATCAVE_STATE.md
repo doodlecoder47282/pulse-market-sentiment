@@ -734,6 +734,44 @@ crypto-verdict 2, crypto-sql-binding, crypto-community, meme-structure.
 
 Next step: CI, PR; then daily chain snapshots for a later equities backtest.
 
+## 2026-10-20 (research): the desk's own history (feat/research-foundation)
+
+Review of the owner's second attachment (a QuantGPT promotion): the
+principles are standard and right (point-in-time data, out-of-sample
+splits, parameter sweeps, event replay, re-checking as data arrives); the
+200-day example compares price-only buy-and-hold against a rule earning
+T-bills while out and is gross of costs, so its "same growth" claim is
+tilted. The product is end-of-day daily prices with no chain, no gamma, no
+flow, no intraday: nothing in it touches this desk's tabs, and it is paid,
+keyed and ends in execution at Alpaca, all of which the standing rules
+exclude. The one gap it names that applies here is real: the desk had no
+history of its own. This branch closes it in-house, keyless:
+
+1. server/researchStore.ts chain_snapshots: once per session after 16:10
+   ET, every scanned name's 45-DTE chain ($SPX, the flow priority and
+   watchlist) flattened to compact rows and stored gzipped, point-in-time
+   as served. One chain call per name per day. GET /api/research/snapshots
+   reports days, names, contracts and bytes; readSnapshot() decodes a
+   stored chain for the replay engine that comes next. Demo stores none.
+2. Event replay: shared/eventReplay.ts (pure, 2 tests) prices each tier-1
+   release session from daily bars (close over prior close, opening gap,
+   session range, next session) with states ok / partial / no_bar /
+   future, and a per-release summary (median |close|, share up, median
+   range, largest). GET /api/research/events?symbol= from Schwab's
+   one-year daily history, cached 6 h. EventReplayCard on the Trade Desk.
+3. shared/macroCalendar.ts now carries all 2026 NFP releases (BLS) and
+   FOMC decision days (Federal Reserve) back to January, with a
+   MACRO_COVERAGE note: CPI and PCE are loaded from October only, and the
+   Nov 25 PCE date is flagged to verify against bea.gov (sources
+   disagreed). A release not loaded is absent, never zero.
+
+What this makes possible later, in order: replay the setup rules on stored
+chains; sweep thresholds for a plateau rather than a lucky number; a
+rolling decay flag per rule version. None of that is claimed yet.
+
+Next step: CI, PR (#15) after #13/#14; then the replay engine over
+chain_snapshots once a few weeks of sessions exist.
+
 ## Current objective
 
 Save the credit-conserving resume framework and assess reuse of the existing
