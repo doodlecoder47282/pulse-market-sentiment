@@ -14,6 +14,8 @@ import { DEFAULT_SETUP_RULES, SETUP_RULES_VERSION, describeRules } from "../../s
 const canonical = (v: unknown): string => JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort()) : x));
 const PINNED: Record<string, string> = {
   "2026.10.20-2": "ea71830478b9737f0afc1f70e438cc8a9758291a4fc15a1cd16a84fb82f70450",
+  // 2026.10.21-1: events.tier1QuietAfterMin added (60), after the first review of the merged log.
+  "2026.10.21-1": "9e3c770489fcd14c8888fa7c3d48c61cfb1bd6610848e2e2196f90cace3d4ea8",
 };
 
 test("rule book content is pinned to its version: a threshold change needs a version bump and a new pin", () => {

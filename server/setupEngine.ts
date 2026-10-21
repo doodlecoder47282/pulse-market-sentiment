@@ -23,8 +23,9 @@ import { editionFromEnv } from "../shared/edition";
 import { getQuotes, getPriceHistory } from "./schwab";
 import { gatherPositioningForTicker } from "./tickerAlpha";
 import { getFlowSnapshot } from "./flowAlertEngine";
+import { getWhaleAlertHistory } from "./whalePersistence";
 import { getFlowConfig } from "./flowConfig";
-import { isRegularSessionOpen } from "./exchangeCalendar";
+import { isRegularSessionOpen, sessionCloseMinutes, REGULAR_OPEN_MIN } from "./exchangeCalendar";
 import { etParts, etWallToUtcMs } from "./validationMath";
 import { DEFAULT_SETUP_RULES, SETUP_GRADE_MIN_SAMPLE, describeRules, type SetupRules } from "../shared/setupRules";
 import { detectSetups, gradeSetup, summarizeOutcomes, rankSetups, marginScore, type SetupCandidate, type Blocked, type FlowInput, type MinuteBar, type SetupMargins } from "../shared/setupDetect";
@@ -76,16 +77,38 @@ let lastTickAt = 0;
 let lastTickError: string | null = null;
 const lastBlocked = new Map<string, { at: number; spot: number | null; blocked: Blocked[]; structureState: string }>();
 
+/** Minutes since the open and to the close, from the exchange calendar (half days close at 13:00). */
 function sessionClock(nowMs: number): { minutesSinceOpen: number; minutesToClose: number } {
   const p = etParts(nowMs);
   const mins = p.h * 60 + p.mi + p.s / 60;
-  return { minutesSinceOpen: mins - (9 * 60 + 30), minutesToClose: 16 * 60 - mins };
+  const close = sessionCloseMinutes(p.ymd as any) ?? 16 * 60;
+  return { minutesSinceOpen: mins - REGULAR_OPEN_MIN, minutesToClose: close - mins };
 }
 
-function toFlowInputs(sym: string): FlowInput[] {
+/**
+ * Confirming prints: the flow engine's current pending hits plus the
+ * persisted whale alerts of the last maxAgeMin minutes, so a print that
+ * landed before spot reached the wall still counts for as long as the rule
+ * says (pending hits are flushed 60 s after they fire).
+ */
+function toFlowInputs(sym: string, nowMs: number): FlowInput[] {
   const pending = getFlowSnapshot().pendingByTicker[sym] ?? [];
-  return pending.map((h) => ({ type: h.type, strike: h.strike, dte: h.dte, premium: h.premium, volOiRatio: h.volOiRatio, isNewStrike: h.isNewStrike, tag: h.tag, detectedAt: h.detectedAt }));
+  const cutoff = nowMs - rules.flow.maxAgeMin * 60_000;
+  const seen = new Set<string>();
+  const out: FlowInput[] = [];
+  const push = (h: { occ: string; type: "C" | "P"; strike: number; dte: number; premium: number; volOiRatio: number; isNewStrike: boolean; tag: string; detectedAt: number }) => {
+    const k = `${h.occ}:${h.detectedAt}`;
+    if (h.detectedAt < cutoff || seen.has(k)) return;
+    seen.add(k);
+    out.push({ type: h.type, strike: h.strike, dte: h.dte, premium: h.premium, volOiRatio: h.volOiRatio, isNewStrike: h.isNewStrike, tag: h.tag, detectedAt: h.detectedAt });
+  };
+  for (const h of pending) push(h);
+  try { for (const h of getWhaleAlertHistory({ days: 1, symbol: sym, limit: 200 })) push(h); } catch { /* persisted history optional */ }
+  return out;
 }
+
+/** Index symbols carry no bid/ask; their cost is modelled from the ETF that trades them, and the features say so. */
+const COST_PROXY: Record<string, string> = { SPX: "SPY", $SPX: "SPY", NDX: "QQQ", $NDX: "QQQ", RUT: "IWM", $RUT: "IWM" };
 
 function hasOpenOrRecent(sym: string, kind: string, nowMs: number): boolean {
   const row = sqlite.prepare(`SELECT 1 FROM setup_events WHERE symbol = ? AND kind = ? AND (status = 'open' OR detected_at > ?) LIMIT 1`)
@@ -111,27 +134,33 @@ async function tick(): Promise<void> {
     const universe = Array.from(new Set([...cfg.priority, ...cfg.watchlist]));
     const clock = sessionClock(now);
     const cal = minutesToNextTier1(now, etWallToUtcMs);
+    // One quote call for the universe plus the index cost proxies, not one per symbol.
+    const quoteSyms = Array.from(new Set([...universe, ...universe.map((s) => COST_PROXY[s]).filter(Boolean)]));
+    const spreads = new Map<string, number>();
+    try {
+      for (const q of await getQuotes(quoteSyms)) {
+        const bid = q?.bid ?? null, ask = q?.ask ?? null;
+        if (q?.symbol && bid != null && ask != null && bid > 0 && ask >= bid) spreads.set(q.symbol.replace(/^\$/, ""), (ask - bid) / ((ask + bid) / 2));
+      }
+    } catch { /* cost stays unknown: the detector blocks on it */ }
     for (const sym of universe) {
       try {
         const pos = await gatherPositioningForTicker(sym);
-        let spreadPct: number | null = null;
-        try {
-          const q = (await getQuotes([sym]))[0];
-          const bid = q?.bid ?? null, ask = q?.ask ?? null;
-          if (bid != null && ask != null && bid > 0 && ask >= bid) spreadPct = (ask - bid) / ((ask + bid) / 2);
-        } catch { /* cost stays unknown: the detector blocks on it */ }
+        const proxy = COST_PROXY[sym];
+        const spreadPct = spreads.get(sym.replace(/^\$/, "")) ?? (proxy ? spreads.get(proxy) ?? null : null);
         const gross = pos.profile.reduce((a, p) => a + Math.abs(p.gex), 0);
         const share = (g: number | null) => (g != null && gross > 0 ? Math.abs(g) / gross : null);
         const structureState = pos.spot == null ? "no_spot" : pos.callWall == null && pos.putWall == null ? "no_walls" : "ok";
         const res = detectSetups(
           { spot: pos.spot, callWall: pos.callWall, putWall: pos.putWall, gammaFlip: pos.gammaFlip, regime: pos.regime, callWallShare: share(pos.callWallGex), putWallShare: share(pos.putWallGex), atmIv: pos.atmIv },
-          toFlowInputs(sym),
-          { nowMs: now, ...clock, minutesToTier1: cal.minutes, calendarKnown: cal.known, spreadPct },
+          toFlowInputs(sym, now),
+          { nowMs: now, ...clock, minutesToTier1: cal.minutes, minutesSinceTier1: cal.minutesSinceLast, calendarKnown: cal.known, spreadPct },
           rules,
         );
         lastBlocked.set(sym, { at: now, spot: pos.spot, blocked: res.blocked, structureState });
         for (const c of res.fired) {
           if (hasOpenOrRecent(sym, c.kind, now)) continue;
+          if (proxy) (c.features as any).costSource = `${proxy} spread (index proxy)`;
           insert(sym, c, now);
           console.log(`[setups] ${sym} ${c.kind} at ${c.spot} target ${c.target} inval ${c.invalidation} (${c.ruleVersion})`);
         }
@@ -161,10 +190,17 @@ async function gradeTick(): Promise<void> {
         let bars = barsBySymbol.get(r.symbol);
         if (!bars) {
           // Regular-session minute bars; Schwab serves the last session when closed. Two sessions if the horizon crossed a close.
+          // A stale or unavailable payload is not evidence: skip the symbol this tick rather than expire a row on partial bars.
           const ph = await getPriceHistory(r.symbol, "day", 2, "minute", 1, false);
+          if (ph.dataState !== "ok" || ph.stale) {
+            if (now - r.detected_at > UNGRADED_AFTER_MS) sqlite.prepare(`UPDATE setup_events SET status = 'ungraded', grade_reason = ?, graded_at = ? WHERE id = ?`).run(`minute bars ${ph.dataState}${ph.stale ? " (stale)" : ""}: ${ph.reason ?? "no reason given"}`, now, r.id);
+            barsBySymbol.set(r.symbol, []);
+            continue;
+          }
           bars = (ph.candles ?? []).map((c) => ({ t: c.datetime, open: c.open, high: c.high, low: c.low, close: c.close }));
           barsBySymbol.set(r.symbol, bars);
         }
+        if (!bars.length) continue;
         const out = gradeSetup({ direction: r.direction, spot: r.spot, target: r.target, invalidation: r.invalidation, horizonMin: r.horizon_min, costPct: r.cost_pct }, r.detected_at, bars, now);
         if (out.status === "ungraded") {
           if (now - r.detected_at > UNGRADED_AFTER_MS) {
@@ -241,9 +277,12 @@ export function getSetupLog(): SetupLog {
     rMultiple: x.rMultiple, score: x.score, margins: marginScore(x.margins).parts,
   }));
   const running = timer != null;
+  const latest = Array.from(lastBlocked.values());
+  const structureDown = latest.length > 0 && latest.every((v) => v.structureState === "no_spot" || v.structureState.startsWith("error"));
   return {
-    dataState: edition === "demo" ? "no_data" : lastTickError ? "unavailable" : running && lastTickAt === 0 ? "loading" : c.total === 0 ? "no_data" : "ok",
-    edition, running, lastTickAt: lastTickAt || null, lastTickError,
+    dataState: edition === "demo" ? "no_data" : lastTickError || structureDown ? "unavailable" : running && lastTickAt === 0 ? "loading" : c.total === 0 ? "no_data" : "ok",
+    lastTickError: lastTickError ?? (structureDown ? "no symbol has a structure read (Schwab chain unavailable)" : null),
+    edition, running, lastTickAt: lastTickAt || null,
     rules: { version: rules.version, minSample: SETUP_GRADE_MIN_SAMPLE, items: describeRules(rules) },
     calendar: { validThrough: MACRO_CALENDAR_VALID_THROUGH, known: cal.known, minutesToNext: cal.minutes, next: cal.next ? `${cal.next.name} ${cal.next.date} ${cal.next.time} ET` : null },
     counts: c, summary, recent, ranked, whyNotNow,

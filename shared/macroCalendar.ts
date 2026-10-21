@@ -29,7 +29,7 @@ export const MACRO_CALENDAR_VALID_THROUGH = "2026-12-31";
 export const MACRO_COVERAGE: Record<MacroEvent["name"], string> = {
   NFP: "all 2026 releases",
   FOMC: "all 2026 decision days",
-  CPI: "October 2026 onward",
+  CPI: "November 2026 onward",
   PCE: "October 2026 onward (Nov 25 to verify against bea.gov)",
 };
 
@@ -73,16 +73,22 @@ export function minutesToNextTier1(
   etWallToUtcMs: (ymd: string, hour: number, minute: number) => number,
   events: MacroEvent[] = MACRO_EVENTS,
   validThrough: string = MACRO_CALENDAR_VALID_THROUGH,
-): { minutes: number | null; next: MacroEvent | null; known: boolean } {
+): { minutes: number | null; next: MacroEvent | null; known: boolean; minutesSinceLast: number | null; last: MacroEvent | null } {
   const validUntilMs = etWallToUtcMs(validThrough, 23, 59);
-  if (nowMs > validUntilMs) return { minutes: null, next: null, known: false };
+  if (nowMs > validUntilMs) return { minutes: null, next: null, known: false, minutesSinceLast: null, last: null };
   let best: { minutes: number; ev: MacroEvent } | null = null;
+  let last: { minutes: number; ev: MacroEvent } | null = null;
   for (const ev of events) {
     const [h, m] = ev.time.split(":").map(Number);
     const at = etWallToUtcMs(ev.date, h, m);
     const minutes = (at - nowMs) / 60_000;
-    if (minutes < 0) continue;
+    if (minutes < 0) { if (!last || -minutes < last.minutes) last = { minutes: -minutes, ev }; continue; }
     if (!best || minutes < best.minutes) best = { minutes, ev };
   }
-  return { minutes: best ? Math.round(best.minutes) : null, next: best?.ev ?? null, known: true };
+  return { minutes: best ? Math.round(best.minutes) : null, next: best?.ev ?? null, known: true, minutesSinceLast: last ? Math.round(last.minutes) : null, last: last?.ev ?? null };
+}
+
+/** ET date of a DAILY bar whose timestamp may be the session's midnight UTC or 05:00 UTC start: noon of the bar is on the right day either way. */
+export function dailyBarEtDate(datetimeMs: number, etDate: (ms: number) => string): string {
+  return etDate(datetimeMs + 12 * 3600_000);
 }

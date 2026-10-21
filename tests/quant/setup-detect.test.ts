@@ -15,7 +15,7 @@ const R = DEFAULT_SETUP_RULES;
 const NOW = Date.UTC(2026, 9, 20, 15, 30); // 11:30 ET
 const atWall: StructureInput = { spot: 7_697, callWall: 7_700, putWall: 7_630, gammaFlip: 7_655, regime: "positive", callWallShare: 0.22, putWallShare: 0.13, atmIv: 0.14 };
 const putPrint: FlowInput = { type: "P", strike: 7_650, dte: 2, premium: 4_000_000, volOiRatio: 22, isNewStrike: false, tag: "AT_ASK", detectedAt: NOW - 10 * 60_000 };
-const ctx: ContextInput = { nowMs: NOW, minutesSinceOpen: 120, minutesToClose: 270, minutesToTier1: 60 * 24 * 8, calendarKnown: true, spreadPct: 0.0002 };
+const ctx: ContextInput = { nowMs: NOW, minutesSinceOpen: 120, minutesToClose: 270, minutesToTier1: 60 * 24 * 8, minutesSinceTier1: 60 * 24 * 12, calendarKnown: true, spreadPct: 0.0002 };
 
 test("fade at the call wall fires when structure, regime, flow, calendar, session and cost all agree", () => {
   const { fired, blocked } = detectSetups(atWall, [putPrint], ctx, R);
@@ -68,8 +68,14 @@ test("each missing condition is named as the blocker, and nothing fires", () => 
   assert.ok(hot.blocked.find((b) => b.kind === "fade_call_wall")!.blockers.some((x) => /news-priced tape/.test(x)));
 
   const unknownCal = detectSetups(atWall, [putPrint], { ...ctx, minutesToTier1: null, calendarKnown: false }, R);
-  assert.equal(unknownCal.fired.length, 1, "an unknown calendar is recorded as a feature, not a gate");
-  assert.equal(unknownCal.fired[0].features.calendarKnown, false);
+  assert.equal(unknownCal.fired.length, 0, "an unknown calendar blocks: the gate cannot be checked, so it never passes");
+  assert.ok(unknownCal.blocked.find((b) => b.kind === "fade_call_wall")!.blockers.some((x) => /calendar unknown/.test(x)));
+
+  const justAfter = detectSetups(atWall, [putPrint], { ...ctx, minutesSinceTier1: 20 }, R);
+  assert.ok(justAfter.blocked.find((b) => b.kind === "fade_call_wall")!.blockers.some((x) => /release 20 min ago, rule needs 60 after/.test(x)));
+
+  const locked = detectSetups(atWall, [putPrint], { ...ctx, spreadPct: 0 }, R);
+  assert.ok(locked.blocked.find((b) => b.kind === "fade_call_wall")!.blockers.some((x) => /zero spread/.test(x)));
 });
 
 test("breakout above fires in short gamma with a call print; implied move helper", () => {
@@ -118,10 +124,13 @@ test("summarizeOutcomes gates at the minimum sample and gives a Wilson interval"
   const few = summarizeOutcomes([0.01, -0.005, 0.002], 100);
   assert.equal(few.sampleReady, false);
   assert.equal(few.positive, 2);
-  assert.ok(few.lo! < 0.6667 && few.hi! > 0.6667);
+  assert.equal(few.lo, null, "no interval below the gate: counts only, no probability claim");
+  assert.equal(few.hi, null);
+  assert.ok(few.meanNetPct != null);
   const many = summarizeOutcomes(Array.from({ length: 120 }, (_, i) => (i % 3 ? 0.004 : -0.006)), 100);
   assert.equal(many.sampleReady, true);
   assert.equal(many.n, 120);
+  assert.ok(many.lo! < 0.6667 && many.hi! > 0.6667);
 });
 
 test("macro calendar: next tier-1 event from a fixed instant, unknown after validity", () => {
@@ -138,10 +147,11 @@ test("macro calendar: next tier-1 event from a fixed instant, unknown after vali
 test("ranking: margin score is auditable, sector cap keeps one bet from filling the list", () => {
   const m = { premium: 2, volOi: 4, wallShare: 8, costMultiple: 1, rMultiple: 1, calendarQuiet: 100, impliedMoveRoom: 2 };
   const sc = marginScore(m);
-  // log2: 1, 2, 3 (capped), 0, 0, 3 (capped from 6.64), 1 -> mean 10/7
-  assert.equal(sc.score, Math.round((10 / 7) * 1000) / 1000);
-  assert.equal(sc.parts.length, 7);
+  // Ranked margins only (calendar distance is a gate, not a merit): log2 1, 2, 3 (capped), 0, 0, 1 over a fixed six -> 7/6
+  assert.equal(sc.score, Math.round((7 / 6) * 1000) / 1000);
+  assert.equal(sc.parts.length, 7, "every margin is still shown");
   assert.equal(marginScore({ premium: null, volOi: null, wallShare: null, costMultiple: 1, rMultiple: 1, calendarQuiet: null, impliedMoveRoom: null }).score, 0, "exactly at every rule scores 0");
+  assert.equal(marginScore({ ...m, impliedMoveRoom: null }).score, Math.round((6 / 6) * 1000) / 1000, "a missing margin counts 0, never raises a rank by omission");
 
   const mk = (symbol: string, premium: number) => ({ symbol, sector: sectorOf(symbol), margins: { ...m, premium } });
   const items = [mk("NVDA", 6), mk("AMD", 5), mk("AVGO", 4), mk("SPY", 3), mk("TSLA", 1.1), mk("PLTR", 1.05), mk("ZZZ", 1)];

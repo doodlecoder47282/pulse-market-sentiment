@@ -352,6 +352,7 @@ jobs:
             ' "$bcode"
             # Research foundation: the event replay prices past tier-1 sessions from the sample bars and states coverage; the demo stores no chains.
             curl -s -m 60 "$B/api/research/events?symbol=%24SPX" > rep/demo/events.json
+            ecode=$(curl -s -o /dev/null -m 30 -w '%{http_code}' "$B/api/research/events?symbol=bad%20symbol"); [ "$ecode" = "400" ] && echo "PASS research events rejects a bad symbol (400)" || echo "FAIL research events bad symbol returned $ecode"
             curl -s -m 30 "$B/api/research/snapshots" > rep/demo/snapshots.json
             node -e '
               const fs = require("fs");
