@@ -12,7 +12,11 @@
 //   - Security headers: nosniff, no framing, a tight referrer policy, a
 //     permissions policy that turns off sensors the app never uses, and
 //     HSTS only when the request arrived over HTTPS (Railway terminates
-//     TLS; the loopback dev server must not pin HTTPS).
+//     TLS; the loopback dev server must not pin HTTPS). No
+//     Cross-Origin-Opener-Policy: the app opens no cross-origin windows,
+//     so it buys nothing, and in Chromium it forces a browsing-context
+//     swap on navigation that drops CDP media emulation, which made the
+//     UX audit measure touch targets at desktop size (bisected 2026-10-20).
 //
 // Limits are per edition: the personal edition (one owner) keeps generous
 // limits so a single reader never hits them; investor and demo editions,
@@ -152,7 +156,6 @@ export function securityHeaders(secure: boolean): Record<string, string> {
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
-    "Cross-Origin-Opener-Policy": "same-origin",
   };
   if (secure) h["Strict-Transport-Security"] = "max-age=15552000; includeSubDomains";
   return h;

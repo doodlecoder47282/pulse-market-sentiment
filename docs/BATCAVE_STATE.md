@@ -796,10 +796,15 @@ Added, all tested:
    429 with Retry-After in the app's error shape (dataState unavailable).
 2. Security headers on every response: nosniff, X-Frame-Options DENY,
    strict-origin-when-cross-origin, a permissions policy that turns off
-   sensors the app never uses, COOP same-origin, and HSTS only when the
-   request arrived over HTTPS (direct or x-forwarded-proto), so the
-   loopback dev server never pins HTTPS. No CSP yet: three.js, fonts and
-   inline styles need an audited policy, its own objective.
+   sensors the app never uses, and HSTS only when the request arrived over
+   HTTPS (direct or x-forwarded-proto), so the loopback dev server never
+   pins HTTPS. Cross-Origin-Opener-Policy was tried and removed: the UX
+   audit's tablet tap-target count went 0 -> 72 with it on (bisected with
+   headers off, 0 again) because COOP makes Chromium swap the browsing
+   context on navigation and the audit's CDP pointer:coarse emulation does
+   not survive the swap; the app opens no cross-origin windows, so the
+   header bought nothing. No CSP yet: three.js, fonts and inline styles
+   need an audited policy, its own objective.
 3. Method and disclosures page (#/method), linked from the header "?" and
    the demo strip: what each tab measures, where every number comes from,
    the data-state glossary, how dealer gamma, flow, setups, cost and

@@ -77,6 +77,7 @@ test("security headers: always nosniff/DENY/referrer/permissions; HSTS only over
   assert.equal(plain["X-Content-Type-Options"], "nosniff");
   assert.equal(plain["X-Frame-Options"], "DENY");
   assert.equal(plain["Strict-Transport-Security"], undefined);
+  assert.equal(plain["Cross-Origin-Opener-Policy"], undefined, "COOP forces a context swap that drops touch emulation in the audit and buys this app nothing");
   assert.match(securityHeaders(true)["Strict-Transport-Security"], /max-age=/);
   const mw = makeSecurityHeaders();
   const a = fakeRes(); mw({ secure: false, headers: {} }, a.res, () => {});
