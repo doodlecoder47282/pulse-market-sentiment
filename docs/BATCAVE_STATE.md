@@ -676,6 +676,28 @@ Next step: CI on feat/setups, PR into main after #9/#10/#11; then crypto
 items 1-3 (horizon marks, ENTER waits for on-chain facts, social failure
 handling) and the volume column on daily_bars.
 
+## 2026-10-20 (later): R-multiple rule and margin-ranked picks (feat/setups-rank)
+
+Rule book 2026.10.20-2: outcome.minRMultiple = 2 (target distance over
+invalidation distance; the 7,695-vs-7,700 fixture reads R 1.96 and is now a
+named blocker), rank.topN = 10, rank.maxPerSector = 3. Every fired setup
+carries its margins (premium, vol/OI, wall share, target/cost, R, calendar
+quiet, implied-move room as multiples of the rule) and the detector's
+marginScore (mean of log2(margin), each capped at 3) orders the open
+setups; rankSetups caps per sector (shared/sectors.ts, a static map for
+the scanned universe; unlisted names are their own sector). /api/setups
+gains `ranked`; the card shows the list with every margin so the order is
+auditable. Ranking is by how comfortably the rules were met, never by
+predicted edge; after the gate the per-version summary is what ranks.
+Tests: setup-detect 7. Reviewed the owner's attached "AI trading desk"
+prompt: principles kept (no invented candidates, logging through risk-off,
+coded rejection reasons, four-way validation label), stack not adopted
+(paid or keyed services, live swap execution, an LLM judge). Those pieces
+are the next crypto objective.
+
+Next step: crypto refinements (risk-off state, coded rejection reasons,
+ENTER waits for on-chain facts, horizon marks, validation label).
+
 ## Current objective
 
 Save the credit-conserving resume framework and assess reuse of the existing

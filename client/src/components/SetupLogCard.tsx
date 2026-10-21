@@ -25,9 +25,13 @@ interface SetupLog {
   counts: { open: number; hit: number; invalidated: number; expired: number; ungraded: number; total: number };
   summary: Array<{ ruleVersion: string; kind: string; n: number; positive: number; lo: number | null; hi: number | null; meanNetPct: number | null; sampleReady: boolean }>;
   recent: Array<{ id: number; symbol: string; kind: string; direction: string; detectedAt: number; spot: number; target: number; invalidation: number; status: string; netPct: number | null; exitPrice: number | null; ruleVersion: string }>;
+  ranked: Array<{ id: number; symbol: string; sector: string | null; kind: string; direction: string; detectedAt: number; spot: number; target: number; invalidation: number; rMultiple: number | null; score: number; margins: Array<{ name: string; margin: number }> }>;
   whyNotNow: Array<{ symbol: string; at: number; spot: number | null; structureState: string; blocked: Blocked[] }>;
   note: string;
 }
+const MARGIN_TEXT: Record<string, string> = {
+  premium: "premium vs floor", volOi: "vol/OI vs floor", wallShare: "wall share vs floor", costMultiple: "target/cost vs rule", rMultiple: "R vs rule", calendarQuiet: "calendar quiet vs rule", impliedMoveRoom: "implied-move room",
+};
 
 const KIND_TEXT: Record<string, string> = {
   fade_call_wall: "fade at the call wall", fade_put_wall: "fade at the put wall", breakout_above: "breakout above the call wall", breakout_below: "breakout below the put wall",
@@ -74,6 +78,23 @@ export default function SetupLogCard() {
                 <div key={k} className="rounded border border-border/40 bg-muted/10 px-2 py-1.5">
                   <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{k}</div>
                   <div className={`font-mono text-sm font-semibold tabular-nums ${STATUS_CLS[k] ?? "text-foreground"}`}>{d.counts[k]}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-1" data-testid="setup-log-ranked">
+              <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">open setups, ranked by margin over the rules (not by predicted edge) · top {d.rules.items.find((i) => i.path === "rank.topN")?.value ?? 10}, sector cap {d.rules.items.find((i) => i.path === "rank.maxPerSector")?.value ?? 3}</div>
+              {d.ranked.length === 0 ? (
+                <div className="text-[11px] text-muted-foreground" data-testid="setup-log-ranked-empty">no open setup inside its horizon right now</div>
+              ) : d.ranked.map((r, i) => (
+                <div key={r.id} className="rounded bg-muted/10 px-2 py-1.5 text-[11px]" data-testid={`setup-ranked-${r.symbol}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span><span className="font-mono text-muted-foreground">#{i + 1}</span> <span className="font-mono font-semibold">{r.symbol}</span> <span className="text-muted-foreground">{r.sector ?? "sector unknown"} · {KIND_TEXT[r.kind] ?? r.kind} · {fmtTime(r.detectedAt)}</span></span>
+                    <span className="font-mono tabular-nums">at {fmtPx(r.spot)} → {fmtPx(r.target)} · inval {fmtPx(r.invalidation)} · R {r.rMultiple == null ? "—" : r.rMultiple.toFixed(2)} · score {r.score.toFixed(2)}</span>
+                  </div>
+                  <div className="mt-0.5 flex flex-wrap gap-x-3 font-mono text-[10px] text-muted-foreground">
+                    {r.margins.map((m) => <span key={m.name} title={MARGIN_TEXT[m.name] ?? m.name}>{MARGIN_TEXT[m.name] ?? m.name} {m.margin.toFixed(1)}x</span>)}
+                  </div>
                 </div>
               ))}
             </div>

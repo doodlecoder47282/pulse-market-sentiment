@@ -342,7 +342,8 @@ jobs:
               const items = (j.rules && j.rules.items) || [];
               const ok = j.edition === "demo" && j.dataState === "no_data" && j.running === false && items.length >= 20
                 && items.every((it) => typeof it.path === "string" && it.value !== undefined && typeof it.meaning === "string" && it.meaning.length > 10)
-                && j.rules.minSample === 100 && j.counts && j.counts.total === 0 && j.calendar && typeof j.calendar.known === "boolean" && /Sample edition/.test(j.note);
+                && j.rules.minSample === 100 && j.counts && j.counts.total === 0 && j.calendar && typeof j.calendar.known === "boolean" && /Sample edition/.test(j.note)
+                && Array.isArray(j.ranked) && items.some((it) => it.path === "outcome.minRMultiple" && it.value === 2) && items.some((it) => it.path === "rank.maxPerSector");
               console.log((ok ? "PASS" : "FAIL") + " setup log: edition " + j.edition + ", state " + j.dataState + ", " + items.length + " rules v" + (j.rules && j.rules.version) + ", calendar " + (j.calendar && (j.calendar.known ? "known, next " + j.calendar.next : "unknown")));
             '
             wcode=$(curl -s -o /dev/null -m 30 -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{"tokenAddress":"So11111111111111111111111111111111111111112"}' "$B/api/crypto/community")
@@ -422,7 +423,8 @@ jobs:
             await p.locator('[data-testid="setup-log-card"]').waitFor({ timeout: 30000 });
             const setupCounts = await p.locator('[data-testid="setup-log-counts"]').count();
             const setupMethod = await p.locator('[data-testid="setup-log-method"]').count();
-            console.log(((setupCounts === 1 && setupMethod === 1) ? "PASS" : "FAIL") + " setup log card: counts " + setupCounts + ", method panel " + setupMethod);
+            const setupRanked = await p.locator('[data-testid="setup-log-ranked"]').count();
+            console.log(((setupCounts === 1 && setupMethod === 1 && setupRanked === 1) ? "PASS" : "FAIL") + " setup log card: counts " + setupCounts + ", method panel " + setupMethod + ", ranked list " + setupRanked);
           } catch (e) { console.log("FAIL today/chart levels: " + String(e && e.message || e).split("\n")[0]); }
           // 3D exposure surface (Regime -> Thermal Gamma Map -> 3D): WebGL via SwiftShader.
           let g = null;
