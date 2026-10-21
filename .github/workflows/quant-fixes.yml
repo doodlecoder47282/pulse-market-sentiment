@@ -203,6 +203,17 @@ jobs:
             console.log("shot", t);
           }
           console.log("desktop page errors:", errors.length, errors.slice(0, 5));
+          // Method & disclosures page (#/method): reachable, carries the public-preview note in the demo, and the back link.
+          try {
+            await p.goto(`${base}/#/method`, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+            await p.locator('[data-testid="method-page"]').waitFor({ timeout: 30000 });
+            const note = await p.locator('[data-testid="method-demo-note"]').count();
+            const back = await p.locator('[data-testid="method-back"]').count();
+            const txt = await p.locator('[data-testid="method-page"]').innerText();
+            const ok = note === 1 && back === 1 && /not investment advice/i.test(txt) && /observed zero/i.test(txt) && !/dark pool detected/i.test(txt);
+            await p.screenshot({ path: "rep/demo/18-method.png", fullPage: true });
+            console.log((ok ? "PASS" : "FAIL") + " method page: demo note " + note + ", back link " + back + ", " + txt.length + " chars");
+          } catch (e) { console.log("FAIL method page: " + String(e && e.message || e).split("\n")[0]); }
           const m = await open({ width: 393, height: 852 });
           await m.p.screenshot({ path: "rep/shots/12-signals-iphone.png", fullPage: false });
           console.log("mobile page errors:", m.errors.length, m.errors.slice(0, 5));
@@ -367,6 +378,15 @@ jobs:
               console.log((ok ? "PASS" : "FAIL") + " setup log: edition " + j.edition + ", state " + j.dataState + ", " + items.length + " rules v" + (j.rules && j.rules.version) + ", calendar " + (j.calendar && (j.calendar.known ? "known, next " + j.calendar.next : "unknown")));
             '
             wcode=$(curl -s -o /dev/null -m 30 -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{"tokenAddress":"So11111111111111111111111111111111111111112"}' "$B/api/crypto/community")
+            # Public hardening: security headers on every response; the scan bucket (10/min in the sample edition) returns 429 with Retry-After
+            # once a client bursts past it. Runs last in this block so the refill cannot starve the checks above.
+            hdrs=$(curl -s -i -m 30 "$B/api/health" | tr -d '\r')
+            echo "$hdrs" | grep -qi '^x-content-type-options: nosniff' && echo "$hdrs" | grep -qi '^x-frame-options: DENY' && echo "$hdrs" | grep -qi '^referrer-policy:' && echo "PASS security headers" || { echo "FAIL security headers: $(echo "$hdrs" | grep -i '^x-\|^referrer' | tr '\n' ' ')"; }
+            codes=""; for i in $(seq 1 14); do codes="$codes $(curl -s -o /dev/null -m 10 -w '%{http_code}' "$B/api/scan?symbol=bad%20symbol")"; done
+            n429=$(echo "$codes" | tr ' ' '\n' | grep -c '^429$'); n400=$(echo "$codes" | tr ' ' '\n' | grep -c '^400$')
+            ra=$(curl -s -i -m 10 "$B/api/scan?symbol=bad%20symbol" | tr -d '\r' | grep -i '^retry-after:' | head -1)
+            # Earlier checks in this block already spent some of the bucket, so the burst only needs to show the turn from 400 to 429.
+            [ "$n429" -ge 1 ] && [ "$n400" -ge 3 ] && [ $((n400 + n429)) -eq 14 ] && echo "PASS rate limit: $n400 x 400 then $n429 x 429 in a 14-call scan burst ($ra)" || echo "FAIL rate limit: codes$codes"
             [ "$wcode" = "405" ] || [ "$wcode" = "403" ] && echo "PASS community write refused ($wcode)" || { echo "FAIL community write returned $wcode"; fail=1; }
 
             grep -ciE "api\.schwabapi\.com|\[schwab\] (401|403|fetch)" rep/server-demo.log | xargs -I{} echo "schwab network lines in log: {}"

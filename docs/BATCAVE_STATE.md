@@ -772,6 +772,65 @@ rolling decay flag per rule version. None of that is claimed yet.
 Next step: CI, PR (#15) after #13/#14; then the replay engine over
 chain_snapshots once a few weeks of sessions exist.
 
+## 2026-10-20 (public): what a public app needs first (feat/public-hardening)
+
+Owner's direction: everything built must give the end user use and edge,
+and the app should be fit for real public use. The honest frame for a
+public deployment today: stocks and options are the owner's Schwab login
+and cannot be served to strangers (Schwab terms; the sample edition shows
+a simulated market and says so); crypto is real, keyless public data and
+is the side a public reader gets live. The path to live equities for the
+public is per-user Schwab login, which needs multi-user accounts and
+Schwab's commercial approval (unchanged from the iOS note).
+
+Added, all tested:
+1. server/publicGuard.ts rate limits: three token buckets per client IP.
+   General (3,000/min public editions, 6,000 personal) is an abuse ceiling
+   only: the first sizing (600) was hit by the CI audit driving seven
+   browsers from one address, which degraded the layout and failed the UX
+   budget, and an office NAT would do the same. Upstream (120/min public,
+   240 personal) covers routes cached per symbol (0DTE map, gamma levels,
+   flow preview, event replay, community). Scan (10/min public, 30
+   personal) is the tight one: any symbol, up to five Schwab calls per
+   uncached scan. The engines' self-calls are exempt. A limited call gets
+   429 with Retry-After in the app's error shape (dataState unavailable).
+2. Security headers on every response: nosniff, X-Frame-Options DENY,
+   strict-origin-when-cross-origin, a permissions policy that turns off
+   sensors the app never uses, and HSTS only when the request arrived over
+   HTTPS (direct or x-forwarded-proto), so the loopback dev server never
+   pins HTTPS. Cross-Origin-Opener-Policy was tried and removed: the UX
+   audit's tablet tap-target count went 0 -> 72 with it on (bisected with
+   headers off, 0 again) because COOP makes Chromium swap the browsing
+   context on navigation and the audit's CDP pointer:coarse emulation does
+   not survive the swap; the app opens no cross-origin windows, so the
+   header bought nothing. No CSP yet: three.js, fonts and inline styles
+   need an audited policy, its own objective.
+3. Method and disclosures page (#/method), linked from the header "?" and
+   the demo strip: what each tab measures, where every number comes from,
+   the data-state glossary, how dealer gamma, flow, setups, cost and
+   crypto grading are computed, what the app does not do, and the
+   disclosures. The sample edition carries its own note at the top.
+
+Already in place and relied on: the access gate (fail-closed off loopback,
+CORS allowlist, slowed repeated wrong keys), the demo read-only guard, the
+no-advice test, the UX audit, and the honest data states.
+
+Use and edge, piece by piece (the owner's standard): the Today card and
+the scan save the reader leaving the app for the chain; the chart-levels
+rail turns their own levels into a fact about open interest; the setup log
+and its grades are the only path to a measured edge and are deliberately
+empty of claims until measured; the crypto desk's cost, holder and risk
+reads keep a reader out of pools that cannot be exited; the chain store and
+event replay are infrastructure whose edge arrives when the history exists,
+and the state doc says so rather than pretending otherwise.
+
+Still owner actions before a public launch: rotate the credentials named
+in the Security blocker section; set BATCAVE_EDITION=demo and the access
+settings per docs/DEMO.md; decide whether the public crypto desk runs on
+its own host so its API budgets are not shared with the personal server.
+
+Next step: CI, PR (#16); then a CSP audit and the phone nav regrouping.
+
 ## Current objective
 
 Save the credit-conserving resume framework and assess reuse of the existing
