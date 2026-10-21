@@ -1146,15 +1146,31 @@ async function graderTick(): Promise<void> {
 // and unavailable, never zero.
 
 const HORIZON_BATCH = 20;
+/** The horizon pass shipped on this date; rows detected before it get no mark (their horizon passed before anyone sampled it). */
+const HORIZON_PASS_SINCE_MS = Date.UTC(2026, 9, 20, 0, 0, 0);
+/** A mark more than this late is not a horizon mark: the row is closed as tried-and-unavailable instead of priced days later. */
+const HORIZON_LATE_MAX_MS = 24 * 3600_000;
+const horizonRetryAfter = new Map<string, { at: number; attempts: number }>();
+
+// One-time repair: marks written before the lower bound existed (first hours of 2026-10-20) priced old rows days after
+// their horizon. They are cleared so the hold rule skips them as documented.
+sqlite.prepare(`UPDATE crypto_signals SET horizon_mcap = NULL, horizon_liquidity = NULL, horizon_at = NULL WHERE horizon_at IS NOT NULL AND detected_at < ?`).run(HORIZON_PASS_SINCE_MS);
 
 async function horizonTick(): Promise<void> {
   const now = Date.now();
   const due = sqlite.prepare(
-    `SELECT id, pair_address, chain, detected_at FROM crypto_signals WHERE horizon_at IS NULL AND detected_at + ? <= ? ORDER BY detected_at ASC LIMIT ?`,
-  ).all(GRADE_HORIZON_MS, now, HORIZON_BATCH) as any[];
+    `SELECT id, pair_address, chain, detected_at FROM crypto_signals WHERE horizon_at IS NULL AND detected_at >= ? AND detected_at + ? <= ? ORDER BY detected_at ASC LIMIT ?`,
+  ).all(HORIZON_PASS_SINCE_MS, GRADE_HORIZON_MS, now, HORIZON_BATCH * 3) as any[];
   if (!due.length) return;
   const mark = sqlite.prepare(`UPDATE crypto_signals SET horizon_mcap = @mcap, horizon_liquidity = @liq, horizon_at = @now WHERE id = @id AND horizon_at IS NULL`);
+  let budget = HORIZON_BATCH;
   for (const row of due) {
+    if (budget <= 0) break;
+    const horizonAt = Number(row.detected_at) + GRADE_HORIZON_MS;
+    if (now - horizonAt > HORIZON_LATE_MAX_MS) { mark.run({ mcap: null, liq: null, now, id: row.id }); continue; } // tried and unavailable, never priced late
+    const r = horizonRetryAfter.get(row.id);
+    if (r && now < r.at) continue;
+    budget--;
     const key = `${row.chain}:${row.pair_address}`;
     const live = tracked.get(key);
     let mcap: number | null = null, liq: number | null = null;
@@ -1166,10 +1182,12 @@ async function horizonTick(): Promise<void> {
         mcap = observedNumber(p?.marketCap) ?? observedNumber(p?.fdv);
         liq = observedNumber(p?.liquidity?.usd);
       } catch {
-        if (now - Number(row.detected_at) > GRADE_HORIZON_MS + NO_DATA_AFTER_ERRORS_MS) mark.run({ mcap: null, liq: null, now, id: row.id });
+        const attempts = (r?.attempts ?? 0) + 1;
+        horizonRetryAfter.set(row.id, { at: now + Math.min(6 * 3600_000, 10 * 60_000 * 2 ** (attempts - 1)), attempts });
         continue;
       }
     }
+    horizonRetryAfter.delete(row.id);
     mark.run({ mcap, liq, now, id: row.id });
   }
 }
@@ -1196,6 +1214,7 @@ let deskRisk: DeskRisk = loadDeskRisk();
 function loadDeskRisk(): DeskRisk {
   const row = sqlite.prepare(`SELECT value, reason, updated_at FROM crypto_desk_state WHERE key = 'risk'`).get() as any;
   if (!row) return { state: "unknown", reason: "no majors read yet", asOf: null, btcVsVwap24hPct: null };
+  if (Date.now() - Number(row.updated_at) > 10 * 60_000) return { state: "unknown", reason: `last majors read ${Math.round((Date.now() - Number(row.updated_at)) / 60_000)} min ago (restart)`, asOf: row.updated_at, btcVsVwap24hPct: null };
   return { state: row.value, reason: row.reason ?? "", asOf: row.updated_at, btcVsVwap24hPct: null };
 }
 function setDeskRisk(r: DeskRisk): void {
@@ -1327,7 +1346,7 @@ export function getCryptoExpectancy(): { graded: ExpectancySummary; hold: Expect
     graded: summarizeExpectancy(like, "graded", opts),
     hold: summarizeExpectancy(like, "hold", opts),
     peak: summarizeExpectancy(like, "peak", opts),
-    basis: "first ENTER signal per coin, graded rows only; entry at the signal's liquidity; pool fees and impact on both legs. graded: exit at the liquidity the grader saw when it closed the row (HIT_5M rows at the target sample, a limit-sell-at-target, not a hold to the horizon). hold: exit at the 72 h horizon mark, recorded for every row since 2026-10-20 (older rows have none and are skipped). peak: the sampled peak at its own recorded liquidity, or the entry depth for rows older than the recording. Market-cap multiples stand in for price multiples, which overstates the move when supply grew",
+    basis: "first ENTER signal per coin, graded rows only; entry at the signal's liquidity; pool fees and impact on both legs. graded: exit at the liquidity the grader saw when it closed the row (HIT_5M rows at the target sample, a limit-sell-at-target, not a hold to the horizon). hold: exit at the 72 h horizon mark, recorded for every row detected since 2026-10-20 within a day of its horizon (older or unpriced rows are skipped; a rugged pool is -100 under every rule). peak: the sampled peak at its own recorded liquidity, or the entry depth for rows older than the recording. Market-cap multiples stand in for price multiples, which overstates the move when supply grew",
   };
 }
 

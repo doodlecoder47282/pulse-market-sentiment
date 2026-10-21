@@ -832,6 +832,52 @@ its own host so its API budgets are not shared with the personal server.
 
 Next step: CI, PR (#16); then a CSP audit and the phone nav regrouping.
 
+## 2026-10-21: review pass on the merged log (feat/ci-main-gate)
+
+Independent review of PRs #12-#16 after merge (32 tests passing before,
+the reviewer found 25 items). Fixed here:
+
+Must-fix. (1) The horizon pass had no lower bound and priced every
+historical row days after its horizon, then called that a 72 h mark; the
+"hold" rule would have been built on non-replicable exits. Now:
+HORIZON_PASS_SINCE_MS = 2026-10-20, a mark more than 24 h late closes the
+row as tried-and-unavailable instead, per-row exponential backoff on fetch
+errors, and a one-time repair nulls marks written on rows detected before
+the bound. (2) A rugged pool with no horizon mark was dropped from the
+hold denominator (survivorship bias on the worst outcomes); RUGGED is -100
+under every rule now.
+
+Should-fix. Flow confirmation read only the flow engine's pending hits
+(flushed 60 s after firing), so flow.maxAgeMin never applied; confirming
+prints now come from the pending hits plus the persisted whale alerts of
+the last maxAgeMin minutes. An unknown calendar blocks instead of passing.
+A post-release quiet window (events.tier1QuietAfterMin = 60; rule book
+2026.10.21-1, pinned). The Wilson interval is withheld below the gate
+(counts only means counts only). Daily bars are dated by their noon so a
+midnight-UTC bar start cannot shift a release day to the prior session
+(shared dailyBarEtDate, used by the event replay and the scan's 20-day
+average; demo bars start 01:00 ET so tests could not catch it). The grader
+skips a symbol whose minute bars came back stale or unavailable instead of
+expiring rows on partial bars. The setup log reads unavailable when no
+symbol has a structure read. One quote call per tick for the universe.
+Index symbols carry no bid/ask: SPX/NDX/RUT cost is modelled from the
+SPY/QQQ/IWM spread and the row's features say so. A process-wide scan
+limiter (20 fresh symbols a minute across all readers) on top of the
+per-IP one. Research-events symbol validated; both caches evict. Zero
+spread blocks ("locked or stale quote"); invalidation breached at
+detection blocks. Rank score is a fixed six-margin mean with missing = 0
+and the calendar distance shown but not scored. Half-day close from the
+exchange calendar. A persisted desk-risk state older than 10 min reads
+unknown on restart. CPI coverage text corrected to November onward; a
+release dated today is future until 16:10 ET. Copy: puts bought at the ask
+confirm a down move (the code was right, the text was not).
+
+CI now also runs on main, and a test pins the rule book's content to its
+version string (a threshold change without a version bump fails).
+
+Not done from the review: CSP; a bound on the limiter's bucket map under
+sustained distinct-IP floods (sweep-only today); X-RateLimit-Limit header.
+
 ## Current objective
 
 Latest continuation (Oct2 user screenshots: Crypto inaccessible / stock research

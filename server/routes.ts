@@ -3736,7 +3736,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     const symbol = validScanSymbol(req.query.symbol);
     if (!symbol) return res.status(400).json({ error: "bad_symbol", message: "symbol must be 1-10 characters: letters, digits, dot or dash" });
     try { res.json(await scanTicker(symbol)); }
-    catch (e: any) { res.status(500).json({ error: "scan_failed", message: e?.message ?? String(e) }); }
+    catch (e: any) {
+      if (e?.status === 429) { res.setHeader("Retry-After", String(e.retryAfterSec ?? 3)); return res.status(429).json({ error: "rate_limited", dataState: "unavailable", message: e.message, retryAfterSec: e.retryAfterSec ?? 3 }); }
+      res.status(500).json({ error: "scan_failed", message: e?.message ?? String(e) });
+    }
   });
   // RESEARCH FOUNDATION (server/researchStore.ts): stored chains and the event replay.
   app.get("/api/research/snapshots", (_req, res) => {
@@ -3745,7 +3748,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   });
   app.get("/api/research/events", async (req, res) => {
     try { res.json(await getEventReplay(String(req.query.symbol || "$SPX").trim().toUpperCase() || "$SPX")); }
-    catch (e: any) { res.status(500).json({ error: "event_replay_failed", message: e?.message ?? String(e) }); }
+    catch (e: any) { res.status(/must be 1-10/.test(String(e?.message)) ? 400 : 500).json({ error: "event_replay_failed", message: e?.message ?? String(e) }); }
   });
   app.get("/api/setups", (_req, res) => {
     try { res.json(getSetupLog()); }

@@ -23,7 +23,8 @@ import { flattenSchwabChain } from "./schwabChainRows";
 import { getFlowConfig } from "./flowConfig";
 import { etParts } from "./validationMath";
 import { isRegularSessionOpen } from "./exchangeCalendar";
-import { MACRO_EVENTS, MACRO_COVERAGE, MACRO_CALENDAR_VALID_THROUGH } from "../shared/macroCalendar";
+import { MACRO_EVENTS, MACRO_COVERAGE, MACRO_CALENDAR_VALID_THROUGH, dailyBarEtDate } from "../shared/macroCalendar";
+import { validScanSymbol } from "./tickerScan";
 import { eventReactions, summarizeReactions, type EventReaction, type EventSummary } from "../shared/eventReplay";
 
 sqlite.exec(`
@@ -128,16 +129,21 @@ export interface EventReplay {
 }
 
 export async function getEventReplay(symbol = "$SPX"): Promise<EventReplay> {
-  const key = symbol.toUpperCase();
+  const bare = validScanSymbol(symbol);
+  if (!bare) throw new Error("symbol must be 1-10 characters: letters, digits, dot or dash");
+  const key = /^(SPX|NDX|RUT|VIX)$/.test(bare) ? `$${bare}` : bare;
   const hit = replayCache.get(key);
   if (hit && Date.now() - hit.at < REPLAY_CACHE_MS) return hit.data;
+  for (const [k, v] of replayCache) if (Date.now() - v.at >= REPLAY_CACHE_MS) replayCache.delete(k);
   const now = Date.now();
-  const today = etParts(now).ymd;
+  // A release dated today is priced on a partial bar until the close: treat it as future until 16:10 ET.
+  const p = etParts(now);
+  const today = p.h * 60 + p.mi >= 16 * 60 + 10 ? p.ymd : etParts(now - 86_400_000).ymd;
   let bars: Array<{ date: string; open: number; high: number; low: number; close: number }> = [];
   let state: EventReplay["dataState"] = "ok", reason: string | null = null;
   try {
     const ph = await getPriceHistory(key, "year", 1, "daily", 1, false);
-    bars = (ph.candles ?? []).map((c) => ({ date: etParts(c.datetime).ymd, open: c.open, high: c.high, low: c.low, close: c.close }));
+    bars = (ph.candles ?? []).map((c) => ({ date: dailyBarEtDate(c.datetime, (ms) => etParts(ms).ymd), open: c.open, high: c.high, low: c.low, close: c.close }));
     if (!bars.length) { state = ph.dataState === "unavailable" ? "unavailable" : "no_data"; reason = ph.reason ?? "no daily bars"; }
   } catch (e: any) { state = "unavailable"; reason = String(e?.message ?? e).slice(0, 120); }
   const rows = eventReactions(bars, MACRO_EVENTS, today);

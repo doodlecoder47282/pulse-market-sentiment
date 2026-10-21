@@ -107,6 +107,8 @@ export function signalReturn(row: GradedSignalLike, rule: ExitRule, sizeUsd = 10
   const entryMcap = fin(row.mcapAtSignal), entryLiq = fin(row.liquidityAtSignal);
   if (entryMcap == null || !(entryMcap > 0)) return { ...base, missing: "no market cap at the signal" };
   if (entryLiq == null || !(entryLiq > 0)) return { ...base, missing: "no liquidity at the signal" };
+  // A pool observed pulled at rug detection cannot be sold at the horizon either: -100 under every rule, mark or no mark.
+  if (rule === "hold" && outcome === "RUGGED") return { ...base, grossMultiple: fin(row.horizonMcap) != null ? fin(row.horizonMcap)! / entryMcap : null, netPct: -100 };
   if (rule === "hold" && row.horizonAt == null) return { ...base, missing: "no horizon mark (row predates the horizon pass or has not reached it)" };
   const exitMcap = rule === "peak" ? fin(row.peakMcap) : rule === "hold" ? fin(row.horizonMcap) : fin(row.lastMcap);
   const exitLiq = rule === "peak" ? (fin(row.peakLiquidity) ?? entryLiq) : rule === "hold" ? fin(row.horizonLiquidity) : fin(row.lastLiquidity);
@@ -199,7 +201,7 @@ export function summarizeExpectancy(rows: GradedSignalLike[], rule: ExitRule, op
   const ruleText = rule === "graded"
     ? "buy at the signal, sell when the row was graded (HIT_5M at the first sample at or above the target, RUGGED at rug detection, otherwise at the horizon)"
     : rule === "hold"
-      ? "buy at the signal, sell at the 72 h horizon mark whatever happened in between (the replicable rule)"
+      ? "buy at the signal, sell at the 72 h horizon mark whatever happened in between (the replicable rule; a rugged pool is -100)"
       : "sell at the sampled peak (a ceiling, not an achievable exit)";
   const costText = rule === "peak"
     ? "net of pool fees and impact on both legs, the exit priced at the liquidity recorded at the peak, or the entry pool's depth for rows older than that recording (the ceiling is understated when depth grew with price)"

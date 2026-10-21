@@ -50,8 +50,9 @@ export interface ContextInput {
   nowMs: number;
   minutesSinceOpen: number;
   minutesToClose: number;
-  /** Null when the calendar is unknown (reported as a feature, never treated as quiet). */
+  /** Null when the calendar is unknown; an unknown calendar blocks (the gate cannot be checked), it is never treated as quiet. */
   minutesToTier1: number | null;
+  minutesSinceTier1?: number | null;
   calendarKnown: boolean;
   /** Underlying bid-ask spread as a fraction of mid; the round-trip cost model. Null when unknown. */
   spreadPct: number | null;
@@ -70,6 +71,7 @@ export interface SetupFeatures {
   minutesSinceOpen: number;
   minutesToClose: number;
   minutesToTier1: number | null;
+  minutesSinceTier1: number | null;
   calendarKnown: boolean;
   spreadPct: number | null;
 }
@@ -163,8 +165,12 @@ export function detectSetups(s: StructureInput, flow: FlowInput[], ctx: ContextI
     if (have !== need) blockers.push(`dealer gamma ${have}, ${fade ? "a fade" : "a breakout"} needs ${need}`);
     // Vol
     if (im != null && im > rules.vol.maxImpliedMovePct) blockers.push(`implied one-day move ${(im * 100).toFixed(2)}% over the ${(rules.vol.maxImpliedMovePct * 100).toFixed(1)}% ceiling (news-priced tape)`);
-    // Calendar
-    if (ctx.calendarKnown && ctx.minutesToTier1 != null && ctx.minutesToTier1 < rules.events.tier1QuietMin) blockers.push(`tier-1 event in ${ctx.minutesToTier1} min, rule needs ${rules.events.tier1QuietMin}`);
+    // Calendar: unknown blocks (the gate cannot be checked), never passes.
+    if (!ctx.calendarKnown) blockers.push("calendar unknown: the tier-1 gate cannot be checked");
+    else {
+      if (ctx.minutesToTier1 != null && ctx.minutesToTier1 < rules.events.tier1QuietMin) blockers.push(`tier-1 event in ${ctx.minutesToTier1} min, rule needs ${rules.events.tier1QuietMin}`);
+      if (ctx.minutesSinceTier1 != null && ctx.minutesSinceTier1 < rules.events.tier1QuietAfterMin) blockers.push(`tier-1 release ${ctx.minutesSinceTier1} min ago, rule needs ${rules.events.tier1QuietAfterMin} after`);
+    }
     // Flow
     const print = confirmingPrint(flow, side, rules, ctx.nowMs);
     if (!print) blockers.push(`no confirming ${side === "C" ? "call" : "put"} print (>= $${(rules.flow.minPremiumUsd / 1e6).toFixed(1)}M, ${rules.flow.dteMin}-${rules.flow.dteMax} DTE, vol/OI >= ${rules.flow.minVolOi}${rules.flow.requireAggressor ? ", at the ask" : ""}, under ${rules.flow.maxAgeMin} min old)`);
@@ -190,9 +196,10 @@ export function detectSetups(s: StructureInput, flow: FlowInput[], ctx: ContextI
     const invalPct = invalidation == null ? null : Math.abs(invalidation - spot) / spot;
     const rMultiple = targetPct != null && invalPct != null && invalPct > 0 ? targetPct / invalPct : null;
     const cost = fin(ctx.spreadPct);
-    if (cost == null) blockers.push("no spread quote: cost not modelled");
+    if (cost == null || !(cost > 0)) blockers.push(cost == null ? "no spread quote: cost not modelled" : "zero spread (locked or stale quote): cost not modelled");
     else if (targetPct != null && targetPct < cost * rules.outcome.minTargetToCostMultiple) blockers.push(`target ${(targetPct * 100).toFixed(2)}% does not clear ${rules.outcome.minTargetToCostMultiple}x the ${(cost * 100).toFixed(3)}% round-trip cost`);
     if (rMultiple != null && rMultiple < rules.outcome.minRMultiple) blockers.push(`reward to risk ${rMultiple.toFixed(2)}, rule needs ${rules.outcome.minRMultiple}`);
+    if (invalidation != null && ((direction === "down" && spot >= invalidation) || (direction === "up" && spot <= invalidation))) blockers.push("invalidation already breached at detection");
 
     if (blockers.length) { blocked.push({ kind, blockers }); continue; }
     const margins: SetupMargins = {
@@ -201,7 +208,7 @@ export function detectSetups(s: StructureInput, flow: FlowInput[], ctx: ContextI
       wallShare: share != null ? share / rules.structure.minWallShare : null,
       costMultiple: (targetPct! / cost!) / rules.outcome.minTargetToCostMultiple,
       rMultiple: rMultiple! / rules.outcome.minRMultiple,
-      calendarQuiet: ctx.calendarKnown && ctx.minutesToTier1 != null ? ctx.minutesToTier1 / rules.events.tier1QuietMin : null,
+      calendarQuiet: ctx.minutesToTier1 != null ? ctx.minutesToTier1 / rules.events.tier1QuietMin : null,
       impliedMoveRoom: im != null ? rules.vol.maxImpliedMovePct / im : null,
     };
     fired.push({
@@ -212,7 +219,7 @@ export function detectSetups(s: StructureInput, flow: FlowInput[], ctx: ContextI
         spot, landmark: landmark!, landmarkKind, landmarkShare: share, distToLandmarkPct: dist!, regime: s.regime, gammaFlip: fin(s.gammaFlip),
         impliedMove1dPct: im,
         flow: print ? { type: print.type, strike: print.strike, dte: print.dte, premium: print.premium, volOiRatio: print.volOiRatio, tag: print.tag, ageMin: Math.round((ctx.nowMs - print.detectedAt) / 60_000) } : null,
-        minutesSinceOpen: ctx.minutesSinceOpen, minutesToClose: ctx.minutesToClose, minutesToTier1: ctx.minutesToTier1, calendarKnown: ctx.calendarKnown, spreadPct: cost,
+        minutesSinceOpen: ctx.minutesSinceOpen, minutesToClose: ctx.minutesToClose, minutesToTier1: ctx.minutesToTier1, minutesSinceTier1: ctx.minutesSinceTier1 ?? null, calendarKnown: ctx.calendarKnown, spreadPct: cost,
       },
     });
   }
@@ -223,18 +230,22 @@ export function detectSetups(s: StructureInput, flow: FlowInput[], ctx: ContextI
 
 export interface Rankable { symbol: string; margins: SetupMargins; sector?: string | null }
 
+/** Margins that rank. Calendar distance is a gate, not a merit, so it is shown but not scored. */
+export const RANKED_MARGINS: Array<keyof SetupMargins> = ["premium", "volOi", "wallShare", "costMultiple", "rMultiple", "impliedMoveRoom"];
+
 /**
- * Margin score: the mean of log2(margin) over the margins that exist, each
- * capped at 3 (8x a rule earns no more than 8x). 0 = exactly at every rule.
- * Ranking before outcomes exist is by how comfortably the rules were met,
- * never by predicted edge; the score is shown so the order is auditable.
+ * Margin score: the mean over a FIXED list of margins of log2(margin), each
+ * capped at 3 (8x a rule earns no more than 8x); a margin that could not be
+ * read counts 0 (exactly at the rule), so a missing input never raises or
+ * lowers a rank by omission. 0 = at every rule. Ranking before outcomes
+ * exist is by how comfortably the rules were met, never by predicted edge;
+ * every part is shown so the order is auditable.
  */
 export function marginScore(m: SetupMargins): { score: number; parts: Array<{ name: string; margin: number }> } {
   const parts = (Object.entries(m) as Array<[string, number | null]>)
     .filter(([, v]) => v != null && Number.isFinite(v) && v > 0)
     .map(([name, v]) => ({ name, margin: v as number }));
-  if (!parts.length) return { score: 0, parts };
-  const score = parts.reduce((a, p) => a + Math.min(3, Math.log2(p.margin)), 0) / parts.length;
+  const score = RANKED_MARGINS.reduce((a, k) => { const v = m[k]; return a + (v != null && Number.isFinite(v) && v > 0 ? Math.min(3, Math.log2(v)) : 0); }, 0) / RANKED_MARGINS.length;
   return { score: Math.round(score * 1000) / 1000, parts };
 }
 
@@ -304,12 +315,15 @@ export function gradeSetup(c: Pick<SetupCandidate, "direction" | "spot" | "targe
   return fin2(last.close, last.t, "expired", "neither target nor invalidation inside the horizon; exit at the horizon close");
 }
 
-/** Share positive with a 95% Wilson interval; counts only below the gate. */
+/** Share positive with a 95% Wilson interval once the sample clears the gate; below it, counts only (no interval, no probability claim). */
 export function summarizeOutcomes(nets: number[], minSample: number): { n: number; positive: number; lo: number | null; hi: number | null; meanNetPct: number | null; sampleReady: boolean } {
   const n = nets.length;
   const positive = nets.filter((x) => x > 0).length;
+  const sampleReady = n >= minSample;
   if (!n) return { n, positive, lo: null, hi: null, meanNetPct: null, sampleReady: false };
+  const mean = r4(nets.reduce((a, b) => a + b, 0) / n);
+  if (!sampleReady) return { n, positive, lo: null, hi: null, meanNetPct: mean, sampleReady };
   const p = positive / n, z = 1.96, z2 = z * z, d = 1 + z2 / n;
   const centre = (p + z2 / (2 * n)) / d, half = (z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n))) / d;
-  return { n, positive, lo: r4(Math.max(0, centre - half)), hi: r4(Math.min(1, centre + half)), meanNetPct: r4(nets.reduce((a, b) => a + b, 0) / n), sampleReady: n >= minSample };
+  return { n, positive, lo: r4(Math.max(0, centre - half)), hi: r4(Math.min(1, centre + half)), meanNetPct: mean, sampleReady };
 }
