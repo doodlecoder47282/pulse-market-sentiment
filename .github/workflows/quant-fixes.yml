@@ -203,6 +203,17 @@ jobs:
             console.log("shot", t);
           }
           console.log("desktop page errors:", errors.length, errors.slice(0, 5));
+          // Method & disclosures page (#/method): reachable, carries the public-preview note in the demo, and the back link.
+          try {
+            await p.goto(`${base}/#/method`, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+            await p.locator('[data-testid="method-page"]').waitFor({ timeout: 30000 });
+            const note = await p.locator('[data-testid="method-demo-note"]').count();
+            const back = await p.locator('[data-testid="method-back"]').count();
+            const txt = await p.locator('[data-testid="method-page"]').innerText();
+            const ok = note === 1 && back === 1 && /not investment advice/i.test(txt) && /observed zero/i.test(txt) && !/dark pool detected/i.test(txt);
+            await p.screenshot({ path: "rep/demo/18-method.png", fullPage: true });
+            console.log((ok ? "PASS" : "FAIL") + " method page: demo note " + note + ", back link " + back + ", " + txt.length + " chars");
+          } catch (e) { console.log("FAIL method page: " + String(e && e.message || e).split("\n")[0]); }
           const m = await open({ width: 393, height: 852 });
           await m.p.screenshot({ path: "rep/shots/12-signals-iphone.png", fullPage: false });
           console.log("mobile page errors:", m.errors.length, m.errors.slice(0, 5));
@@ -274,8 +285,12 @@ jobs:
               const rows = j.signals || [];
               const rowsOk = rows.every((r) => r.verdict !== "ENTER" ? r.netGraded === null : (r.netGraded && r.netGraded.rule === "graded" && (r.netGraded.netPct == null) === (typeof r.netGraded.missing === "string")));
               const gated = !x.graded || x.graded.sampleReady || /counts only, no claim of edge/.test(x.graded.note);
-              const ok = sum(x.graded) && sum(x.peak) && x.graded.rule === "graded" && x.peak.rule === "peak" && x.graded.sizeUsd === 100 && typeof x.basis === "string" && /not a hold/.test(x.basis) && /entry pool/.test(x.peak.note) && rowsOk && gated;
-              console.log((ok ? "PASS" : "FAIL") + " crypto expectancy: graded n=" + (x.graded && x.graded.n) + " skipped=" + (x.graded && x.graded.skipped) + " ready=" + (x.graded && x.graded.sampleReady) + ", peak n=" + (x.peak && x.peak.n) + ", " + rows.length + " rows" + (ok ? "" : " body " + JSON.stringify(x).slice(0, 300)));
+              const labels = ["PASSES PREDEFINED TESTS", "MIXED RESULTS", "NO DEMONSTRATED EDGE", "INSUFFICIENT DATA"];
+              const desk = j.desk || {};
+              const deskOk = ["on", "off", "unknown"].includes(desk.state) && typeof desk.reason === "string";
+              const ok = sum(x.graded) && sum(x.hold) && sum(x.peak) && x.graded.rule === "graded" && x.hold.rule === "hold" && x.peak.rule === "peak" && x.graded.sizeUsd === 100 && typeof x.basis === "string" && /not a hold/.test(x.basis) && /horizon mark/.test(x.hold.note) && /recorded at the peak/.test(x.peak.note) && rowsOk && gated
+                && [x.graded, x.hold, x.peak].every((s) => labels.includes(s.validation)) && (x.graded.n >= 50 || x.graded.validation === "INSUFFICIENT DATA") && deskOk;
+              console.log((ok ? "PASS" : "FAIL") + " crypto expectancy: graded n=" + (x.graded && x.graded.n) + " " + (x.graded && x.graded.validation) + ", hold n=" + (x.hold && x.hold.n) + ", peak n=" + (x.peak && x.peak.n) + ", desk risk " + desk.state + " (" + desk.reason + "), " + rows.length + " rows" + (ok ? "" : " body " + JSON.stringify(x).slice(0, 300)));
             '
             # 0DTE map on the sample chain: priced, labelled, no zones in the demo (investor limits), text free of instructions.
             curl -s -m 60 "$B/api/odte/map?symbol=%24SPX" > rep/demo/odte-map.json
@@ -316,7 +331,62 @@ jobs:
               const ok = j.dataState === "ok" && j.tickersScanned >= 10 && reasonsOk && (quiet ? true : whales.length >= 1);
               console.log((ok ? "PASS" : "FAIL") + " whale flow preview: state " + j.dataState + ", " + j.tickersScanned + " tickers, " + j.totalScanned + " contracts, " + whales.length + " whales" + (quiet ? " (pre-open: none expected)" : "") + (whales[0] ? ", e.g. " + whales[0].symbol + " " + whales[0].occ.trim() + " " + whales[0].reason : ""));
             '
+            # Scan any ticker: every section carries a state; an unknown symbol never comes back as zeros; a bad symbol is 400.
+            curl -s -m 60 "$B/api/scan?symbol=SPY" > rep/demo/scan-spy.json
+            curl -s -m 60 "$B/api/scan?symbol=ZZZZQ" > rep/demo/scan-unknown.json
+            bcode=$(curl -s -o /dev/null -m 30 -w '%{http_code}' "$B/api/scan?symbol=bad%20symbol")
+            node -e '
+              const fs = require("fs");
+              const a = JSON.parse(fs.readFileSync("rep/demo/scan-spy.json", "utf8"));
+              const u = JSON.parse(fs.readFileSync("rep/demo/scan-unknown.json", "utf8"));
+              const sections = ["instrument", "quote", "volume", "structure", "chain"];
+              const states = (j) => sections.map((k) => j[k] && j[k].dataState);
+              const okStates = (j) => states(j).every((st) => ["ok","partial","stale","unavailable","no_data"].includes(st));
+              const spyOk = a.symbol === "SPY" && okStates(a) && a.quote.dataState !== "unavailable" && a.quote.last > 0 && /no venue/.test(a.note)
+                && a.volume.blocks && typeof a.volume.blocks.available === "boolean" && typeof a.volume.blocks.note === "string" && !/dark pool detected/i.test(JSON.stringify(a));
+              // The sample edition has no instrument table and quotes any symbol from its table, so there the instrument section must say unavailable (never "found").
+              const unknownOk = u.symbol === "ZZZZQ" && okStates(u) && (u.quote.last == null || u.instrument.found === false || (u.edition === "demo" && u.instrument.dataState === "unavailable" && u.instrument.found === null));
+              const code = process.argv[1];
+              const ok = spyOk && unknownOk && code === "400";
+              console.log((ok ? "PASS" : "FAIL") + " ticker scan: SPY states " + states(a).join("/") + " last " + a.quote.last + " rel " + (a.volume.relative && a.volume.relative.rel) + " contracts " + (a.chain.contracts || []).length + "; ZZZZQ states " + states(u).join("/") + " last " + u.quote.last + "; bad symbol " + code);
+            ' "$bcode"
+            # Research foundation: the event replay prices past tier-1 sessions from the sample bars and states coverage; the demo stores no chains.
+            curl -s -m 60 "$B/api/research/events?symbol=%24SPX" > rep/demo/events.json
+            curl -s -m 30 "$B/api/research/snapshots" > rep/demo/snapshots.json
+            node -e '
+              const fs = require("fs");
+              const e = JSON.parse(fs.readFileSync("rep/demo/events.json", "utf8"));
+              const s = JSON.parse(fs.readFileSync("rep/demo/snapshots.json", "utf8"));
+              const rows = e.rows || [];
+              const past = rows.filter((r) => r.state !== "future");
+              const priced = past.filter((r) => r.state === "ok" || r.state === "partial");
+              const nfp = rows.filter((r) => r.name === "NFP").length;
+              const eOk = ["ok","partial","unavailable","no_data"].includes(e.dataState) && nfp === 12 && e.coverage && /October 2026/.test(e.coverage.CPI) && /does not forecast/.test(e.note)
+                && (e.dataState === "unavailable" || e.dataState === "no_data" || (e.bars > 0 && priced.length > 0 && priced.every((r) => r.closeMovePct == null || Math.abs(r.closeMovePct) < 0.2)));
+              const sOk = s.edition === "demo" && s.dataState === "no_data" && s.days === 0 && /Sample edition/.test(s.note);
+              console.log(((eOk && sOk) ? "PASS" : "FAIL") + " research: events state " + e.dataState + ", " + e.bars + " bars, " + priced.length + "/" + past.length + " past sessions priced, " + (e.summary || []).map((x) => x.name + " n=" + x.n).join(" ") + "; snapshots " + s.dataState);
+            '
+            # Setup event log: the demo keeps no log but serves the rule book; every rule has a meaning; the gate text is present.
+            curl -s -m 30 "$B/api/setups" > rep/demo/setups.json
+            node -e '
+              const j = JSON.parse(require("fs").readFileSync("rep/demo/setups.json", "utf8"));
+              const items = (j.rules && j.rules.items) || [];
+              const ok = j.edition === "demo" && j.dataState === "no_data" && j.running === false && items.length >= 20
+                && items.every((it) => typeof it.path === "string" && it.value !== undefined && typeof it.meaning === "string" && it.meaning.length > 10)
+                && j.rules.minSample === 100 && j.counts && j.counts.total === 0 && j.calendar && typeof j.calendar.known === "boolean" && /Sample edition/.test(j.note)
+                && Array.isArray(j.ranked) && items.some((it) => it.path === "outcome.minRMultiple" && it.value === 2) && items.some((it) => it.path === "rank.maxPerSector");
+              console.log((ok ? "PASS" : "FAIL") + " setup log: edition " + j.edition + ", state " + j.dataState + ", " + items.length + " rules v" + (j.rules && j.rules.version) + ", calendar " + (j.calendar && (j.calendar.known ? "known, next " + j.calendar.next : "unknown")));
+            '
             wcode=$(curl -s -o /dev/null -m 30 -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{"tokenAddress":"So11111111111111111111111111111111111111112"}' "$B/api/crypto/community")
+            # Public hardening: security headers on every response; the scan bucket (10/min in the sample edition) returns 429 with Retry-After
+            # once a client bursts past it. Runs last in this block so the refill cannot starve the checks above.
+            hdrs=$(curl -s -i -m 30 "$B/api/health" | tr -d '\r')
+            echo "$hdrs" | grep -qi '^x-content-type-options: nosniff' && echo "$hdrs" | grep -qi '^x-frame-options: DENY' && echo "$hdrs" | grep -qi '^referrer-policy:' && echo "PASS security headers" || { echo "FAIL security headers: $(echo "$hdrs" | grep -i '^x-\|^referrer' | tr '\n' ' ')"; }
+            codes=""; for i in $(seq 1 14); do codes="$codes $(curl -s -o /dev/null -m 10 -w '%{http_code}' "$B/api/scan?symbol=bad%20symbol")"; done
+            n429=$(echo "$codes" | tr ' ' '\n' | grep -c '^429$'); n400=$(echo "$codes" | tr ' ' '\n' | grep -c '^400$')
+            ra=$(curl -s -i -m 10 "$B/api/scan?symbol=bad%20symbol" | tr -d '\r' | grep -i '^retry-after:' | head -1)
+            # Earlier checks in this block already spent some of the bucket, so the burst only needs to show the turn from 400 to 429.
+            [ "$n429" -ge 1 ] && [ "$n400" -ge 3 ] && [ $((n400 + n429)) -eq 14 ] && echo "PASS rate limit: $n400 x 400 then $n429 x 429 in a 14-call scan burst ($ra)" || echo "FAIL rate limit: codes$codes"
             [ "$wcode" = "405" ] || [ "$wcode" = "403" ] && echo "PASS community write refused ($wcode)" || { echo "FAIL community write returned $wcode"; fail=1; }
 
             grep -ciE "api\.schwabapi\.com|\[schwab\] (401|403|fetch)" rep/server-demo.log | xargs -I{} echo "schwab network lines in log: {}"
@@ -382,6 +452,22 @@ jobs:
             const consistent = /ok|stale|no data/i.test(stateTxt) ? !tags.includes("unavailable") : tags.every((t) => t === "unavailable");
             console.log(((rows === 3 && tagOk && consistent) ? "PASS" : "FAIL") + " chart levels: " + rows + " rows, tags " + tags.join("/") + ", map state " + stateTxt.replace(/\s+/g, " ").slice(0, 40));
             await p.locator('[data-testid="chart-levels-card"]').screenshot({ path: "rep/demo/16-chart-levels.png" });
+            await p.locator('[data-testid="tab-signals"]').first().click({ timeout: 5000 });
+            await p.locator('[data-testid="ticker-scan-input"]').fill("QQQ");
+            await p.locator('[data-testid="ticker-scan-go"]').click();
+            await p.locator('[data-testid="ticker-scan-quote"]').waitFor({ timeout: 60000 });
+            const scanSections = await p.locator('[data-testid^="ticker-scan-"][data-testid$="-state"]').count();
+            await p.locator('[data-testid="ticker-scan-card"]').screenshot({ path: "rep/demo/17-ticker-scan.png" });
+            console.log((scanSections === 4 ? "PASS" : "FAIL") + " ticker scan card: " + scanSections + " section states for QQQ");
+            await p.locator('[data-testid="tab-tradedesk"]').first().click({ timeout: 5000 });
+            await p.locator('[data-testid="setup-log-card"]').waitFor({ timeout: 30000 });
+            const setupCounts = await p.locator('[data-testid="setup-log-counts"]').count();
+            const setupMethod = await p.locator('[data-testid="setup-log-method"]').count();
+            const setupRanked = await p.locator('[data-testid="setup-log-ranked"]').count();
+            await p.locator('[data-testid="event-replay-card"]').waitFor({ timeout: 30000 });
+            const replayRows = await p.locator('[data-testid="event-replay-rows"] tbody tr').count();
+            console.log((replayRows >= 1 ? "PASS" : "FAIL") + " event replay card: " + replayRows + " past sessions shown");
+            console.log(((setupCounts === 1 && setupMethod === 1 && setupRanked === 1) ? "PASS" : "FAIL") + " setup log card: counts " + setupCounts + ", method panel " + setupMethod + ", ranked list " + setupRanked);
           } catch (e) { console.log("FAIL today/chart levels: " + String(e && e.message || e).split("\n")[0]); }
           // 3D exposure surface (Regime -> Thermal Gamma Map -> 3D): WebGL via SwiftShader.
           let g = null;

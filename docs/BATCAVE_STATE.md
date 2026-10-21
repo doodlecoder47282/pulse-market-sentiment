@@ -611,6 +611,227 @@ Not changed: phone bottom nav still Signals / Chart / Models / Desk / More
 (seven tabs under More); regrouping into Today / Levels / Flow / Context /
 Crypto is a routing change for a later objective.
 
+## 2026-10-20: setup event log, phase 1 (feat/setups)
+
+Direction agreed with the owner: an "A+ setup" is a stated condition met,
+logged and graded, never a hand-set score. Phase 1 logs and grades; nothing
+a reader sees changes except the log card and the Method panel.
+
+1. shared/setupRules.ts: the versioned rule book (SETUP_RULES_VERSION
+   2026.10.20-1). Structure (at-landmark 0.1% of spot, wall share >= 3%),
+   flow (>= $2.5M at observed prices, vol/OI >= 15 or new strike, 1-3 DTE,
+   at the ask, under 45 min old), vol (one-day implied move <= 2%), regime
+   (fade needs long gamma, breakout needs short), events (90 min clear of a
+   tier-1 release), session (15 min after the open, 45 before the close),
+   outcome (120 min horizon, flip or 0.4% target, 0.2% past the wall
+   invalidates, target >= 3x the modelled round-trip cost). describeRules()
+   feeds the Method panel. SETUP_GRADE_MIN_SAMPLE = 100 per version.
+2. shared/setupDetect.ts (pure, 6 tests): detectSetups returns the kinds
+   that fired with every feature, and for the rest the blockers in words;
+   gradeSetup replays minute bars with the achievable-exit test (target
+   before invalidation = hit; invalidation first or both in one bar = loss;
+   neither = expiry at the horizon close; too few bars = ungraded); returns
+   are signed by direction and net of the spread modelled at detection.
+3. shared/macroCalendar.ts: tier-1 dates (FOMC, CPI, NFP, PCE) through
+   2026-12-31 from the agencies' calendars; after that the calendar reports
+   itself unknown and the detector records it as a feature, not a gate.
+4. server/setupEngine.ts: table setup_events; every minute in the regular
+   session, for the flow universe, structure from
+   tickerAlpha.gatherPositioningForTicker (per-name dealer gamma, cached 5
+   min), the underlying spread as the cost model, the flow engine's pending
+   whale prints, the session clock and the calendar -> detector; one open
+   row per symbol and kind. Grader every 5 min replays regular-session
+   minute bars (getPriceHistory day/2/minute); rows with no bars two days
+   on are marked ungraded with the reason. GET /api/setups serves the rule
+   book, calendar, counts, per-version summary (Wilson interval, counts
+   only below the gate), recent rows and "why not now" per symbol. Demo
+   edition stores nothing and serves the rule book.
+5. client SetupLogCard on the Trade Desk under the chart-levels rail.
+
+Honest limits recorded in the card and here: the cost model is the
+underlying's spread, not an option's; flow confirmation reads the flow
+engine's pending prints of the current cycle; structure for SPX comes from
+the per-ticker chain read, not the 0DTE map. No grade letter exists in the
+code; the first one can appear only after 100 graded setups of one version.
+
+Dark-pool request: Schwab's feed carries no venue code and no time-and-sales
+(streamStore L1 fields have no exchange id; no TIMESALE service), so the
+next objective is a relative-volume and block-print read, named by what it
+measures. daily_bars stores closes only; volume needs a column.
+
+6. Any-ticker scan (server/tickerScan.ts, GET /api/scan?symbol=): five
+   reads per symbol, each with its own state: Schwab instrument lookup
+   (marketdata/v1/instruments symbol-search, so an unknown symbol says so),
+   quote with the spread as the cost model, volume against the 20-session
+   average paced to the session, per-name dealer gamma, and the chain's most
+   active contracts by volume/OI. Cached 60 s per symbol; at most five
+   Schwab calls per scan. TickerScanCard under the Today card on Signals.
+7. Volume read (shared/volumeRead.ts, 3 tests): relative volume raw and
+   paced; "quiet volume" (>= 1.8x pace with the day's move inside 0.4%);
+   block prints from Level-1 updates for the streamed symbols (>= 8x the
+   median print and >= 2,000 shares). Named by what it measures: Schwab's
+   feed carries no venue code and no time-and-sales, so nothing in the app
+   says "dark pool"; the notes say so on the card.
+
+Next step: CI on feat/setups, PR into main after #9/#10/#11; then crypto
+items 1-3 (horizon marks, ENTER waits for on-chain facts, social failure
+handling) and the volume column on daily_bars.
+
+## 2026-10-20 (later): R-multiple rule and margin-ranked picks (feat/setups-rank)
+
+Rule book 2026.10.20-2: outcome.minRMultiple = 2 (target distance over
+invalidation distance; the 7,695-vs-7,700 fixture reads R 1.96 and is now a
+named blocker), rank.topN = 10, rank.maxPerSector = 3. Every fired setup
+carries its margins (premium, vol/OI, wall share, target/cost, R, calendar
+quiet, implied-move room as multiples of the rule) and the detector's
+marginScore (mean of log2(margin), each capped at 3) orders the open
+setups; rankSetups caps per sector (shared/sectors.ts, a static map for
+the scanned universe; unlisted names are their own sector). /api/setups
+gains `ranked`; the card shows the list with every margin so the order is
+auditable. Ranking is by how comfortably the rules were met, never by
+predicted edge; after the gate the per-version summary is what ranks.
+Tests: setup-detect 7. Reviewed the owner's attached "AI trading desk"
+prompt: principles kept (no invented candidates, logging through risk-off,
+coded rejection reasons, four-way validation label), stack not adopted
+(paid or keyed services, live swap execution, an LLM judge). Those pieces
+are the next crypto objective.
+
+Next step: crypto refinements (risk-off state, coded rejection reasons,
+ENTER waits for on-chain facts, horizon marks, validation label).
+
+## 2026-10-20 (crypto): desk discipline (feat/crypto-discipline)
+
+Taken from the owner's attached trading-desk prompt, the pieces that hold
+up, built on the existing scanner (which already held ENTER until the mint,
+freeze and top-10 reads: an earlier note in this file saying otherwise was
+wrong and is corrected here):
+
+1. Persistent desk risk state (crypto_desk_state): BTC against its own 24 h
+   Kraken VWAP, off at -5% or worse, unknown when the majors cannot be read.
+   Off or unknown holds every candidate at WATCH with codes risk_off /
+   risk_unknown; the scanner keeps logging. Survives a restart.
+2. Coded verdict reasons (shared/cryptoVerdict.ts VerdictCode, 13 codes,
+   each with a meaning): stored in crypto_signals.verdict_code and shown
+   on the expanded candidate row. Rejections are countable, not only prose.
+3. Horizon marks: a horizon pass prices every row once it crosses the 72 h
+   horizon, whatever its outcome (horizon_mcap / horizon_liquidity /
+   horizon_at); peak_liquidity is recorded whenever the peak updates. A row
+   that cannot be priced a week past the horizon keeps horizon_mcap NULL
+   with horizon_at set: tried and unavailable, never zero.
+4. Expectancy "hold" rule: exit at the horizon mark, the replicable rule;
+   rows without a mark are skipped, never approximated. The peak rule now
+   prices the exit at the recorded peak liquidity (entry depth for older
+   rows, said in the note). /api/crypto/signals carries expectancy.hold and
+   desk; the card shows the hold line and the desk state.
+5. Four-way validation label on every summary (PASSES PREDEFINED TESTS /
+   MIXED RESULTS / NO DEMONSTRATED EDGE / INSUFFICIENT DATA): under the
+   sample gate always INSUFFICIENT DATA; passes needs mean net > 0 and a
+   Wilson lower bound over 50%. Passing a historical test does not
+   establish future profitability; the text says so.
+
+Not adopted from the prompt: paid or keyed services, live swap execution,
+an LLM judge in the decision path. Tests: crypto-expectancy 6,
+crypto-verdict 2, crypto-sql-binding, crypto-community, meme-structure.
+
+Next step: CI, PR; then daily chain snapshots for a later equities backtest.
+
+## 2026-10-20 (research): the desk's own history (feat/research-foundation)
+
+Review of the owner's second attachment (a QuantGPT promotion): the
+principles are standard and right (point-in-time data, out-of-sample
+splits, parameter sweeps, event replay, re-checking as data arrives); the
+200-day example compares price-only buy-and-hold against a rule earning
+T-bills while out and is gross of costs, so its "same growth" claim is
+tilted. The product is end-of-day daily prices with no chain, no gamma, no
+flow, no intraday: nothing in it touches this desk's tabs, and it is paid,
+keyed and ends in execution at Alpaca, all of which the standing rules
+exclude. The one gap it names that applies here is real: the desk had no
+history of its own. This branch closes it in-house, keyless:
+
+1. server/researchStore.ts chain_snapshots: once per session after 16:10
+   ET, every scanned name's 45-DTE chain ($SPX, the flow priority and
+   watchlist) flattened to compact rows and stored gzipped, point-in-time
+   as served. One chain call per name per day. GET /api/research/snapshots
+   reports days, names, contracts and bytes; readSnapshot() decodes a
+   stored chain for the replay engine that comes next. Demo stores none.
+2. Event replay: shared/eventReplay.ts (pure, 2 tests) prices each tier-1
+   release session from daily bars (close over prior close, opening gap,
+   session range, next session) with states ok / partial / no_bar /
+   future, and a per-release summary (median |close|, share up, median
+   range, largest). GET /api/research/events?symbol= from Schwab's
+   one-year daily history, cached 6 h. EventReplayCard on the Trade Desk.
+3. shared/macroCalendar.ts now carries all 2026 NFP releases (BLS) and
+   FOMC decision days (Federal Reserve) back to January, with a
+   MACRO_COVERAGE note: CPI and PCE are loaded from October only, and the
+   Nov 25 PCE date is flagged to verify against bea.gov (sources
+   disagreed). A release not loaded is absent, never zero.
+
+What this makes possible later, in order: replay the setup rules on stored
+chains; sweep thresholds for a plateau rather than a lucky number; a
+rolling decay flag per rule version. None of that is claimed yet.
+
+Next step: CI, PR (#15) after #13/#14; then the replay engine over
+chain_snapshots once a few weeks of sessions exist.
+
+## 2026-10-20 (public): what a public app needs first (feat/public-hardening)
+
+Owner's direction: everything built must give the end user use and edge,
+and the app should be fit for real public use. The honest frame for a
+public deployment today: stocks and options are the owner's Schwab login
+and cannot be served to strangers (Schwab terms; the sample edition shows
+a simulated market and says so); crypto is real, keyless public data and
+is the side a public reader gets live. The path to live equities for the
+public is per-user Schwab login, which needs multi-user accounts and
+Schwab's commercial approval (unchanged from the iOS note).
+
+Added, all tested:
+1. server/publicGuard.ts rate limits: three token buckets per client IP.
+   General (3,000/min public editions, 6,000 personal) is an abuse ceiling
+   only: the first sizing (600) was hit by the CI audit driving seven
+   browsers from one address, which degraded the layout and failed the UX
+   budget, and an office NAT would do the same. Upstream (120/min public,
+   240 personal) covers routes cached per symbol (0DTE map, gamma levels,
+   flow preview, event replay, community). Scan (10/min public, 30
+   personal) is the tight one: any symbol, up to five Schwab calls per
+   uncached scan. The engines' self-calls are exempt. A limited call gets
+   429 with Retry-After in the app's error shape (dataState unavailable).
+2. Security headers on every response: nosniff, X-Frame-Options DENY,
+   strict-origin-when-cross-origin, a permissions policy that turns off
+   sensors the app never uses, and HSTS only when the request arrived over
+   HTTPS (direct or x-forwarded-proto), so the loopback dev server never
+   pins HTTPS. Cross-Origin-Opener-Policy was tried and removed: the UX
+   audit's tablet tap-target count went 0 -> 72 with it on (bisected with
+   headers off, 0 again) because COOP makes Chromium swap the browsing
+   context on navigation and the audit's CDP pointer:coarse emulation does
+   not survive the swap; the app opens no cross-origin windows, so the
+   header bought nothing. No CSP yet: three.js, fonts and inline styles
+   need an audited policy, its own objective.
+3. Method and disclosures page (#/method), linked from the header "?" and
+   the demo strip: what each tab measures, where every number comes from,
+   the data-state glossary, how dealer gamma, flow, setups, cost and
+   crypto grading are computed, what the app does not do, and the
+   disclosures. The sample edition carries its own note at the top.
+
+Already in place and relied on: the access gate (fail-closed off loopback,
+CORS allowlist, slowed repeated wrong keys), the demo read-only guard, the
+no-advice test, the UX audit, and the honest data states.
+
+Use and edge, piece by piece (the owner's standard): the Today card and
+the scan save the reader leaving the app for the chain; the chart-levels
+rail turns their own levels into a fact about open interest; the setup log
+and its grades are the only path to a measured edge and are deliberately
+empty of claims until measured; the crypto desk's cost, holder and risk
+reads keep a reader out of pools that cannot be exited; the chain store and
+event replay are infrastructure whose edge arrives when the history exists,
+and the state doc says so rather than pretending otherwise.
+
+Still owner actions before a public launch: rotate the credentials named
+in the Security blocker section; set BATCAVE_EDITION=demo and the access
+settings per docs/DEMO.md; decide whether the public crypto desk runs on
+its own host so its API budgets are not shared with the personal server.
+
+Next step: CI, PR (#16); then a CSP audit and the phone nav regrouping.
+
 ## Current objective
 
 Latest continuation (Oct2 user screenshots: Crypto inaccessible / stock research

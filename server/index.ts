@@ -10,6 +10,7 @@ import { createServer } from "node:http";
 import { startMlRetrainCron } from "./mlRetrainCron";
 import { bootSchwabStream, exchangeCodeForTokens } from "./schwab";
 import { OAUTH_CALLBACK_PATH, consumeOAuthState } from "./schwabOAuth";
+import { makeRateLimit, makeSecurityHeaders } from "./publicGuard";
 import { getStreamStatus } from "./schwabStream";
 import {
   parseAllowedOrigins,
@@ -68,6 +69,7 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+app.use(makeSecurityHeaders());
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -146,6 +148,8 @@ app.get(OAUTH_CALLBACK_PATH, async (req, res) => {
   }
 });
 app.use("/api", makeAccessGate(ACCESS_KEY, { failClosed: GATE_MODE === "closed", internalKey: INTERNAL_KEY || undefined }));
+// Public hardening (server/publicGuard.ts): per-client rate limits, tighter on routes that read upstream on demand; the engines' self-calls are exempt.
+app.use("/api", makeRateLimit({ edition: editionFromEnv(), internalKey: INTERNAL_KEY || SELF_CALL_KEY || undefined }));
 if (editionFromEnv() === "demo") app.use("/api", makeDemoReadOnly(INTERNAL_KEY));
 app.get("/api/health/auth", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");

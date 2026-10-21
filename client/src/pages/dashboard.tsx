@@ -53,6 +53,7 @@ import DemoStrip from "@/components/DemoStrip";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import WhaleFlowPanel from "@/components/WhaleFlowPanel";
 import TodayCard from "@/components/TodayCard";
+import TickerScanCard from "@/components/TickerScanCard";
 import TrackedSignalsPanel from "@/components/signals/TrackedSignalsPanel";
 import { useEffect, useState, useRef, lazy, Suspense } from "react";
 
@@ -435,6 +436,17 @@ export default function Dashboard() {
 
             <TakeFiveFab onClick={() => setTake5Open(true)} />
 
+            {/* Method & disclosures: what every number is and is not (#/method) */}
+            <a
+              href="#/method"
+              title="Method & disclosures"
+              aria-label="Method and disclosures"
+              className="flex items-center justify-center rounded-md border border-border/60 h-11 w-11 sm:w-auto sm:min-w-[2rem] sm:px-2 lg:h-auto lg:min-h-[1.75rem] lg:p-1.5 font-mono text-[11px] text-muted-foreground transition hover:border-border"
+              data-testid="link-method"
+            >
+              ?
+            </a>
+
             {/* Settings gear — always visible (44px tap target on mobile) */}
             <button
               type="button"
@@ -706,6 +718,9 @@ export default function Dashboard() {
 
             {/* Answer first: spot, wall above / flip / magnet below from the 0DTE map, before any flow */}
             <TodayCard onOpenDesk={() => setActiveTab("tradedesk")} />
+
+            {/* Scan any ticker Schwab serves: instrument, quote, volume read, per-name gamma, most active contracts */}
+            <TickerScanCard />
 
             {/* Regime conditioning chip — pulled from /api/regime, shared across tabs */}
             <div className="flex items-center gap-2">

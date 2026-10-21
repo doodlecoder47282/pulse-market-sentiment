@@ -343,6 +343,7 @@ export function peakSamplingNote(tracked: number | null | undefined, tickMs: num
  */
 export const CRYPTO_PEAK_SAMPLE_SQL = `UPDATE crypto_signals SET
   peak_at = CASE WHEN peak_mcap IS NULL OR @mcap > peak_mcap THEN @now ELSE peak_at END,
+  peak_liquidity = CASE WHEN peak_mcap IS NULL OR @mcap > peak_mcap THEN @liq ELSE peak_liquidity END,
   peak_mcap = CASE WHEN peak_mcap IS NULL OR @mcap > peak_mcap THEN @mcap ELSE peak_mcap END,
   last_mcap = @mcap, last_liquidity = @liq
 WHERE outcome = 'OPEN' AND chain = @chain AND pair_address = @pair`;
@@ -375,6 +376,7 @@ export function graderNoDataParams(now: number, id: string | number, target: num
  */
 export const CRYPTO_GRADER_MARK_SQL = `UPDATE crypto_signals SET
   peak_at = CASE WHEN @peak IS NOT NULL AND (peak_mcap IS NULL OR @peak > peak_mcap) THEN @now ELSE peak_at END,
+  peak_liquidity = CASE WHEN @peak IS NOT NULL AND (peak_mcap IS NULL OR @peak > peak_mcap) THEN @liq ELSE peak_liquidity END,
   peak_mcap = MAX(COALESCE(peak_mcap, @peak), COALESCE(@peak, peak_mcap)),
   last_mcap = @mcap, last_liquidity = @liq,
   outcome = CASE

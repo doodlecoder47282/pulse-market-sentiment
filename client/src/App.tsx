@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
+import MethodPage from "@/pages/method";
 import { TickerProvider } from "@/components/TickerContext";
 import { ThemeProvider } from "@/components/ThemeContext";
 import PreMarketGate from "@/components/PreMarketGate";
@@ -23,6 +24,7 @@ function AppRouter() {
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
+      <Route path="/method" component={MethodPage} />
       <Route component={NotFound} />
     </Switch>
   );

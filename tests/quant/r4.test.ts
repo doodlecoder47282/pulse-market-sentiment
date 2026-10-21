@@ -366,7 +366,7 @@ import { CRYPTO_PEAK_SAMPLE_SQL, CRYPTO_GRADER_MARK_SQL, CRYPTO_GRADER_NO_DATA_S
 test("crypto peak sample SQL: raises peak only upward, peak_at moves with it, only OPEN rows of that pair", () => {
   const db = new DatabaseSync(":memory:");
   db.exec(`CREATE TABLE crypto_signals (id TEXT PRIMARY KEY, chain TEXT, pair_address TEXT, outcome TEXT,
-    peak_mcap REAL, peak_at INTEGER, last_mcap REAL, last_liquidity REAL)`);
+    peak_mcap REAL, peak_at INTEGER, last_mcap REAL, last_liquidity REAL, peak_liquidity REAL)`);
   const ins = db.prepare(`INSERT INTO crypto_signals (id, chain, pair_address, outcome, peak_mcap, peak_at) VALUES (?, ?, ?, ?, ?, ?)`);
   ins.run("a", "solana", "P1", "OPEN", null, null);
   ins.run("b", "solana", "P1", "OPEN", 500_000, 100);
@@ -535,7 +535,7 @@ test("edge brief verdict: strict allow-list of descriptive labels", () => {
 test("crypto grader mark SQL: never lowers a peak raised meanwhile; HIT/DOUBLED from the max", () => {
   const db = new DatabaseSync(":memory:");
   db.exec(`CREATE TABLE crypto_signals (id TEXT PRIMARY KEY, chain TEXT, pair_address TEXT, outcome TEXT, mcap_at_signal REAL,
-    peak_mcap REAL, peak_at INTEGER, last_mcap REAL, last_liquidity REAL, graded_at INTEGER)`);
+    peak_mcap REAL, peak_at INTEGER, last_mcap REAL, last_liquidity REAL, peak_liquidity REAL, graded_at INTEGER)`);
   const ins = db.prepare(`INSERT INTO crypto_signals (id, chain, pair_address, outcome, mcap_at_signal, peak_mcap, peak_at) VALUES (?, 'solana', ?, 'OPEN', ?, ?, ?)`);
   const T = 5_000_000;
   const get = (id: string) => db.prepare(`SELECT * FROM crypto_signals WHERE id = ?`).get(id) as any;
