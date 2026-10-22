@@ -1,1 +1,1 @@
-rebuild 10: networkMode always
+rebuild 11: 2026-10-22, this week's UI (Today card, scan, setup log, chart levels, event replay, method page)
