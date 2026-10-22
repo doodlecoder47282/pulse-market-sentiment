@@ -1,1 +1,1 @@
-install -D @capacitor/cli@8.5.2 @capacitor/core@8.5.2 @capacitor/ios@8.5.2
+install @capacitor/app@^8.0.0 @capacitor/browser@^8.0.0
