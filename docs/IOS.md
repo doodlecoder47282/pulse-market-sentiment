@@ -52,6 +52,18 @@ What keeps it private and what it does not do:
   the `npm-add` workflow). No Schwab token, client ID or secret is ever on
   the phone: Schwab login happens in Safari and the tokens stay on the
   server.
+- **Schwab sign-in from the app.** Settings → Open Schwab Login opens the
+  Schwab page in the in-app Safari sheet (`@capacitor/browser`; it shares
+  Safari's saved logins). The app asks the server for a link with
+  `?return=app`, so after approval the server's automatic callback
+  (`/api/schwab/oauth/callback`) redirects to `batcave://schwab?schwab=connected`
+  (scheme registered in `ios/App/App/Info.plist`); iOS hands that to the app
+  (`@capacitor/app` appUrlOpen), the sheet closes and the connection status
+  refreshes. Requirements on the server: `SCHWAB_REDIRECT_URI` set to the
+  server's own callback URL and the same URL registered as the app's
+  Callback URL at developer.schwab.com. If the sheet is dismissed by hand, the
+  dialog still re-checks the connection. The code exchange never happens on
+  the phone.
 - **Rate limits** apply per client; one phone never reaches them.
 - **The Xcode zip** is built by CI on the `ci-reports-ios` branch and as a
   run artifact; it contains the web bundle of the commit that triggered
@@ -89,7 +101,8 @@ Never put Schwab or API keys there; the app must not carry server secrets.
 ## Not done yet
 
 - Not signed, not on TestFlight, not tested on a physical device.
-- Schwab "Connect" opens the Schwab login in Safari; the server receives the
-  callback and stores the tokens. Tap Refresh in the app afterwards.
+- The in-app Schwab sign-in (Safari sheet + `batcave://` return) is coded and
+  unit-tested, but has not been exercised on a physical iPhone from here; the
+  first real sign-in is the test.
 - App Store release needs app-specific value beyond a wrapped website
   (Apple guideline 4.2) and an Apple Developer Program membership.

@@ -1,7 +1,7 @@
 // Schwab sign-in: config check, automatic-callback detection, one-time state.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { schwabConfigProblem, isAutomaticCallback, newOAuthState, consumeOAuthState } from "../../server/schwabOAuth";
+import { schwabConfigProblem, isAutomaticCallback, newOAuthState, consumeOAuthState, consumeOAuthStateFor, parseReturnTo, oauthReturnUrl, APP_RETURN_URL } from "../../server/schwabOAuth";
 
 test("config problem names every missing variable, null when complete", () => {
   assert.match(schwabConfigProblem({})!, /SCHWAB_CLIENT_ID.*SCHWAB_CLIENT_SECRET.*SCHWAB_REDIRECT_URI/);
@@ -25,6 +25,40 @@ test("state is single-use and expires after 15 minutes", () => {
   assert.equal(consumeOAuthState(s2, t0 + 16 * 60_000), false);
   assert.equal(consumeOAuthState(null, t0), false);
   assert.equal(consumeOAuthState("forged", t0), false);
+});
+
+// The iOS app starts its sign-in with ?return=app; the callback must send
+// that sign-in, and only that one, back to the app's URL scheme. A forged or
+// reused state has no owner and goes to the website with the error.
+test("sign-in started from the app returns to the app scheme; everything else to the website", () => {
+  const t0 = 1_700_000_000_000;
+  assert.equal(parseReturnTo("app"), "app");
+  assert.equal(parseReturnTo("web"), "web");
+  assert.equal(parseReturnTo(undefined), "web");
+  assert.equal(parseReturnTo(["app"]), "web");
+  const app = newOAuthState(t0, "app");
+  const web = newOAuthState(t0);
+  assert.deepEqual(consumeOAuthStateFor(app, t0 + 1), { ok: true, returnTo: "app" });
+  assert.deepEqual(consumeOAuthStateFor(app, t0 + 2), { ok: false, returnTo: "web" });
+  assert.deepEqual(consumeOAuthStateFor(web, t0 + 1), { ok: true, returnTo: "web" });
+  assert.deepEqual(consumeOAuthStateFor("forged", t0), { ok: false, returnTo: "web" });
+  assert.equal(oauthReturnUrl("web", "connected"), "/?schwab=connected#/");
+  assert.equal(oauthReturnUrl("web", "error", "no_code"), "/?schwab=error&reason=no_code#/");
+  assert.equal(oauthReturnUrl("app", "connected"), `${APP_RETURN_URL}?schwab=connected`);
+  assert.equal(oauthReturnUrl("app", "error", "token_exchange_failed"), `${APP_RETURN_URL}?schwab=error&reason=token_exchange_failed`);
+  assert.match(APP_RETURN_URL, /^batcave:\/\//);
+});
+
+// The scheme the server redirects to must be the one the iOS app registers,
+// and the callback must consume the state before any exchange.
+import { readFileSync as readSrc } from "node:fs";
+test("iOS app registers the return scheme and the callback consumes state first", () => {
+  const plist = readSrc(new URL("../../ios/App/App/Info.plist", import.meta.url), "utf8");
+  assert.match(plist, /<key>CFBundleURLSchemes<\/key>\s*<array>\s*<string>batcave<\/string>/);
+  const idx = readSrc(new URL("../../server/index.ts", import.meta.url), "utf8");
+  const cb = idx.slice(idx.indexOf("app.get(OAUTH_CALLBACK_PATH"));
+  assert.ok(cb.indexOf("consumeOAuthStateFor(state)") < cb.indexOf("exchangeCodeForTokens(code)"));
+  assert.match(cb, /oauthReturnUrl\(returnTo, result, reason\)/);
 });
 
 import { lastSessionDate } from "../../server/exchangeCalendar";

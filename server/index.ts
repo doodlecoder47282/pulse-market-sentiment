@@ -9,7 +9,7 @@ import { serveStatic } from "./static";
 import { createServer } from "node:http";
 import { startMlRetrainCron } from "./mlRetrainCron";
 import { bootSchwabStream, exchangeCodeForTokens } from "./schwab";
-import { OAUTH_CALLBACK_PATH, consumeOAuthState } from "./schwabOAuth";
+import { OAUTH_CALLBACK_PATH, consumeOAuthStateFor, oauthReturnUrl, type OAuthReturnTo } from "./schwabOAuth";
 import { makeRateLimit, makeSecurityHeaders } from "./publicGuard";
 import { getStreamStatus } from "./schwabStream";
 import {
@@ -127,20 +127,28 @@ app.get("/api/health", (_req, res) => {
 // access-key header, so this route sits before the gate; the one-time `state`
 // issued with the login link (schwabOAuth.ts) is required instead, so a code
 // can only finish a sign-in this server started in the last 15 minutes.
+// Where the result goes depends on who started the sign-in: the website
+// gets /?schwab=...; the iOS app gets its batcave:// scheme so the in-app
+// Safari sheet closes and the app shows the result (oauthReturnUrl).
 app.get(OAUTH_CALLBACK_PATH, async (req, res) => {
-  const back = (q: string) => res.redirect(302, `/?schwab=${q}#/`);
-  if (editionFromEnv() === "demo") return back("error&reason=demo_edition");
+  let returnTo: OAuthReturnTo = "web";
+  const back = (result: "connected" | "error", reason?: string) => res.redirect(302, oauthReturnUrl(returnTo, result, reason));
+  if (editionFromEnv() === "demo") return back("error", "demo_edition");
   const err = typeof req.query.error === "string" ? req.query.error : "";
-  if (err) return back("error&reason=authorization_not_completed");
-  const code = typeof req.query.code === "string" ? req.query.code : "";
   const state = typeof req.query.state === "string" ? req.query.state : "";
-  if (!code) return back("error&reason=no_code");
-  if (!consumeOAuthState(state)) return back("error&reason=expired_or_unknown_sign_in");
+  // The state is consumed first on every path so a code can never be replayed
+  // and an error from Schwab still returns to the right place.
+  const consumed = consumeOAuthStateFor(state);
+  returnTo = consumed.returnTo;
+  if (err) return back("error", "authorization_not_completed");
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  if (!code) return back("error", "no_code");
+  if (!consumed.ok) return back("error", "expired_or_unknown_sign_in");
   try {
     const r = await exchangeCodeForTokens(code);
-    return r.ok ? back("connected") : back("error&reason=token_exchange_failed");
+    return r.ok ? back("connected") : back("error", "token_exchange_failed");
   } catch {
-    return back("error&reason=token_exchange_failed");
+    return back("error", "token_exchange_failed");
   }
 });
 app.use("/api", makeAccessGate(ACCESS_KEY, { failClosed: GATE_MODE === "closed", internalKey: INTERNAL_KEY || undefined }));

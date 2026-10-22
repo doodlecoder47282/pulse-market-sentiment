@@ -3117,21 +3117,24 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     }
   });
 
-  app.get("/api/schwab/auth-url", async (_req, res) => {
+  // ?return=app: the iOS app asked; the automatic callback then returns to
+  // the app's URL scheme (server/index.ts) instead of the website.
+  app.get("/api/schwab/auth-url", async (req, res) => {
     if (editionFromEnv() === "demo") {
       return res.status(403).json({ dataState: "unavailable", reason: "This demo runs on simulated sample data; Schwab sign-in is turned off." });
     }
     try {
-      const { schwabConfigProblem, isAutomaticCallback } = await import("./schwabOAuth");
+      const { schwabConfigProblem, isAutomaticCallback, parseReturnTo } = await import("./schwabOAuth");
       const problem = schwabConfigProblem();
       if (problem) return res.status(503).json({ dataState: "unavailable", reason: problem });
       const { tokenStoreStatus } = await import("./schwabTokenStore");
       if (tokenStoreStatus().mode === "locked") {
         return res.status(503).json({ dataState: "unavailable", reason: "Token storage is locked. Configure protected token encryption before starting Schwab sign-in." });
       }
-      const url = getAuthUrl();
+      const returnTo = parseReturnTo(req.query.return);
+      const url = getAuthUrl(returnTo);
       res.setHeader("Cache-Control", "no-store");
-      res.json({ url, automatic: isAutomaticCallback(process.env.SCHWAB_REDIRECT_URI ?? "") });
+      res.json({ url, automatic: isAutomaticCallback(process.env.SCHWAB_REDIRECT_URI ?? ""), returnTo });
     } catch (e: any) {
       res.status(500).json({ message: e?.message ?? "Failed to build auth URL" });
     }
