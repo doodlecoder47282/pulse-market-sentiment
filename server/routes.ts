@@ -3708,6 +3708,16 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
     try { res.json(getSetupLog()); }
     catch (e: any) { res.status(500).json({ error: "setups_failed", message: e?.message ?? String(e) }); }
   });
+  // LIVE VERIFICATION (server/liveVerify.ts): with Schwab connected, reach every panel route and recompute the key numbers from the raw inputs. Reports states; never counts stale or unavailable as a pass.
+  app.get("/api/verify/live", async (_req, res) => {
+    try {
+      const { runLiveVerify } = await import("./liveVerify");
+      res.setHeader("Cache-Control", "no-store");
+      res.json(await runLiveVerify());
+    } catch (e: any) {
+      res.status(500).json({ error: "verify_failed", message: e?.message ?? String(e) });
+    }
+  });
   app.get("/api/odte/map/ledger", async (req, res) => {
     try {
       const symbol = String(req.query.symbol || "$SPX").trim().toUpperCase() || "$SPX";
