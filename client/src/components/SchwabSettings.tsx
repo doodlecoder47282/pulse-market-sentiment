@@ -8,6 +8,7 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiJson, queryClient, AUTH_REQUIRED_EVENT, API_BASE_STORAGE_KEY, isNativeApp } from "@/lib/queryClient";
 import PersonalServerHandoff from "./PersonalServerHandoff";
+import LiveVerifyCard from "./LiveVerifyCard";
 import { openInAppBrowser, closeInAppBrowser, listenForAppReturn } from "@/lib/nativeAuth";
 import type { MarketDataValidation } from "@shared/marketDataValidation";
 import {
@@ -569,6 +570,7 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                   </div>
                 </div>
                 <SchwabSelfTest />
+                <LiveVerifyCard />
                 <div className="flex gap-2 pt-1">
                   {authUrlData?.url ? (
                     <a

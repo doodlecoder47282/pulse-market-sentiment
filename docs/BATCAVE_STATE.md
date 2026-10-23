@@ -959,3 +959,22 @@ reused state always returns to the website). Nothing new reaches the phone:
 no token, no client id, no secret. Deps added via the npm-add workflow;
 ios-build.yml's `npx cap sync ios` regenerates CapApp-SPM/Package.swift
 (hand-updated to match). Not yet exercised on a physical iPhone from here.
+
+2026-10-23: live verification (PR #19, feat/live-verify). GET /api/verify/live
+(server/liveVerify.ts; pure checks in shared/liveVerify.ts) runs with Schwab
+connected: (1) reach: 24 panel routes called as the UI calls them, each
+classified from HTTP status + dataState (pass / stale / unavailable /
+skipped on 429 or no_data / fail); (2) arithmetic: quotes fresh in session,
+raw $SPX chain sanity (priced share, IV plausibility, age), 0DTE forward
+spot vs quote, walls/pin/net exposure re-derived from the served strikes,
+Today map landmarks and $/pt and shares re-derived from its rows, SPY
+unusual-flow premium = volume x mid x 100 and vol/OI, put/call per ticker
+and index aggregate (VIX excluded), snapshot term ratios and inputs vs
+quotes (2% tolerance), scan spread and relative volume vs the same daily
+bars, setup engine tick state. Single-flight, 60 s cache, on the upstream
+rate-limit bucket. Demo: blocked with zero checks (CI asserts). Client:
+LiveVerifyCard in Settings (counts, problems first, show-all toggle);
+Method page paragraph. Scope stated on the card: plumbing and arithmetic of
+the live run, not predictive edge. Cannot be exercised from the workspace
+(no Schwab credentials here, by design); the owner's first run after
+connecting is the live test.

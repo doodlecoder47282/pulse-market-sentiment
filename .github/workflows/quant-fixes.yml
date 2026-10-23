@@ -245,6 +245,8 @@ jobs:
             check "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"redirectedUrl":"https://x/?code=a"}' "$B/api/schwab/callback")" 403 "token paste refused"
             check "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH -H 'Content-Type: application/json' -d '{}' "$B/api/flow/config")" 403 "config change refused"
             curl -s -o /dev/null -D - "$B/api/schwab/oauth/callback?code=a&state=b" | grep -qi 'location: .*demo_edition' && echo "PASS oauth callback refused" || { echo "FAIL oauth callback"; fail=1; }
+            # Live verification (server/liveVerify.ts): on sample data it is blocked and reads nothing; the report says so and reports zero checks.
+            curl -s "$B/api/verify/live" > rep/demo/verify.json; grep -q '"dataState":"blocked"' rep/demo/verify.json && grep -q '"verdict":"not_connected"' rep/demo/verify.json && grep -q '"checks":\[\]' rep/demo/verify.json && echo "PASS live verify blocked on sample data" || { echo "FAIL live verify: $(head -c 300 rep/demo/verify.json)"; fail=1; }
             sleep 45
             echo "--- data endpoints on sample data (status, first 300 bytes) ---"
             for pth in /api/schwab/selftest /api/snapshot /api/trade-environment /api/regime /api/gamma-levels /api/models /api/heatseeker /api/iv-rv /api/chain-audit /api/edgelab/briefing "/api/heatmap/thermal?symbol=%24SPX&greek=gex" "/api/heatmap/thermal?symbol=%24SPX&greek=charm"; do
