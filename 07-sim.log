@@ -1,0 +1,16 @@
+    iPhone 17 (22970779-4A47-463E-8B6D-CC012359B320) (Shutdown) 
+	Finished
+
+com.batcave.terminal: 21481
+Detected file type 'PNG' from extension
+Wrote screenshot to: reports/ios-launch.png
+Detected file type 'PNG' from extension
+Wrote screenshot to: reports/ios-sim.png
+/api/snapshot -> 200 in 0.009031s
+/api/regime -> 200 in 0.002724s
+/api/macro -> 200 in 0.002027s
+Detected file type 'PNG' from extension
+Wrote screenshot to: reports/ios-sim-later.png
+Detected file type 'PNG' from extension
+Wrote screenshot to: reports/ios-safari.png
+demo server API requests: 108

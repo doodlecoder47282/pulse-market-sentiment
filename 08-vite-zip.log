@@ -1,0 +1,9 @@
+[2m../dist/public/[22m[2massets/[22m[36mvendor-charts-Bq-f2qQQ.js        [39m[1m[2m272.93 kB[22m[1m[22m[2m │ gzip:  62.77 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mindex-CgwnFnxK.js                [39m[1m[2m327.49 kB[22m[1m[22m[2m │ gzip:  88.54 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-three-D3dLVpBC.js         [39m[1m[2m493.34 kB[22m[1m[22m[2m │ gzip: 123.93 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-OrF7nvqo.js               [39m[1m[2m598.32 kB[22m[1m[22m[2m │ gzip: 198.38 kB[22m
+[32m✓ built in 9.00s[39m
+✔ Copying web assets from public to ios/App/App/public in 13.73ms
+✔ Creating capacitor.config.json in ios/App/App in 1.35ms
+✔ copy ios in 112.48ms
+zip bundle clean

@@ -1,0 +1,7 @@
+bundled @capacitor/app
+bundled @capacitor/browser
+total 1792
+drwxr-xr-x   4 runner  staff     128 Oct 23 23:04 .
+drwxr-xr-x  48 runner  staff    1536 Oct 23 23:04 ..
+drwxr-xr-x   6 runner  staff     192 Oct 23 23:04 Batcave-iOS
+-rw-r--r--   1 runner  staff  914534 Oct 23 23:04 Batcave-iOS-Xcode.zip
