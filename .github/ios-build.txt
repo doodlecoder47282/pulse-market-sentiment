@@ -1,1 +1,2 @@
 rebuild 11: 2026-10-22, this week's UI (Today card, scan, setup log, chart levels, event replay, method page)
+rebuild 13: 2026-10-23 bake the server address in; open straight to the terminal
