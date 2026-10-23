@@ -11,7 +11,7 @@
 // what it has paid is measured afterwards, per version, and shown with an
 // interval only once the sample clears the gate.
 
-export const SETUP_RULES_VERSION = "2026.10.20-2";
+export const SETUP_RULES_VERSION = "2026.10.21-1";
 
 /** Minimum graded setups per rule version before any letter grade is shown. */
 export const SETUP_GRADE_MIN_SAMPLE = 100;
@@ -33,7 +33,7 @@ export interface SetupRules {
     /** DTE window the confirming print must sit in. */
     dteMin: number;
     dteMax: number;
-    /** Print must have lifted the ask (call side) or hit the bid (put side). */
+    /** Print must have been bought at the ask: calls for an up move, puts for a down move. */
     requireAggressor: boolean;
     /** How old a print can be and still confirm, minutes. */
     maxAgeMin: number;
@@ -51,6 +51,8 @@ export interface SetupRules {
   events: {
     /** No tier-1 event (CPI, FOMC, NFP, PCE) inside this many minutes ahead. */
     tier1QuietMin: number;
+    /** No setup inside this many minutes after a tier-1 release (the print is still being traded). */
+    tier1QuietAfterMin: number;
   };
   session: {
     /** Minutes after the open before a setup can fire (opening rotation). */
@@ -94,7 +96,7 @@ export const DEFAULT_SETUP_RULES: SetupRules = {
   flow: { minPremiumUsd: 2_500_000, minVolOi: 15, dteMin: 1, dteMax: 3, requireAggressor: true, maxAgeMin: 45 },
   vol: { maxImpliedMovePct: 0.02 },
   regime: { fadeRequires: "long", breakoutRequires: "short" },
-  events: { tier1QuietMin: 90 },
+  events: { tier1QuietMin: 90, tier1QuietAfterMin: 60 },
   session: { notBeforeMin: 15, notAfterMin: 45 },
   outcome: { horizonMin: 120, fallbackTargetPct: 0.004, invalidationPct: 0.002, minTargetToCostMultiple: 3, minRMultiple: 2 },
   rank: { topN: 10, maxPerSector: 3 },
@@ -110,12 +112,13 @@ export function describeRules(r: SetupRules = DEFAULT_SETUP_RULES): Array<{ path
     { path: "flow.minVolOi", value: r.flow.minVolOi, meaning: "lowest volume / open interest at the print's strike" },
     { path: "flow.dteMin", value: r.flow.dteMin, meaning: "earliest expiry the print may sit in (days)" },
     { path: "flow.dteMax", value: r.flow.dteMax, meaning: "latest expiry the print may sit in (days)" },
-    { path: "flow.requireAggressor", value: r.flow.requireAggressor, meaning: "the print must have lifted the ask or hit the bid" },
+    { path: "flow.requireAggressor", value: r.flow.requireAggressor, meaning: "the print must have been bought at the ask (calls for up, puts for down)" },
     { path: "flow.maxAgeMin", value: r.flow.maxAgeMin, meaning: "a print older than this no longer confirms" },
     { path: "vol.maxImpliedMovePct", value: r.vol.maxImpliedMovePct, meaning: "no setup when the straddle prices a move wider than this (news-priced tape)" },
     { path: "regime.fadeRequires", value: r.regime.fadeRequires, meaning: "dealer gamma sign at spot a fade needs" },
     { path: "regime.breakoutRequires", value: r.regime.breakoutRequires, meaning: "dealer gamma sign at spot a breakout needs" },
     { path: "events.tier1QuietMin", value: r.events.tier1QuietMin, meaning: "minutes of clear air before a tier-1 event" },
+    { path: "events.tier1QuietAfterMin", value: r.events.tier1QuietAfterMin, meaning: "minutes after a tier-1 release before a setup can fire" },
     { path: "session.notBeforeMin", value: r.session.notBeforeMin, meaning: "minutes after the open before a setup can fire" },
     { path: "session.notAfterMin", value: r.session.notAfterMin, meaning: "minutes before the close after which none fires" },
     { path: "outcome.horizonMin", value: r.outcome.horizonMin, meaning: "minutes the achievable-exit test runs" },

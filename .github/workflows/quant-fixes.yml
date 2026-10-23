@@ -6,7 +6,7 @@ name: Batcave quant fixes check
 
 on:
   push:
-    branches: [quant-fixes, "feat/**"]
+    branches: [main, quant-fixes, "feat/**"]
   workflow_dispatch:
 
 permissions:
@@ -352,6 +352,7 @@ jobs:
             ' "$bcode"
             # Research foundation: the event replay prices past tier-1 sessions from the sample bars and states coverage; the demo stores no chains.
             curl -s -m 60 "$B/api/research/events?symbol=%24SPX" > rep/demo/events.json
+            ecode=$(curl -s -o /dev/null -m 30 -w '%{http_code}' "$B/api/research/events?symbol=bad%20symbol"); [ "$ecode" = "400" ] && echo "PASS research events rejects a bad symbol (400)" || echo "FAIL research events bad symbol returned $ecode"
             curl -s -m 30 "$B/api/research/snapshots" > rep/demo/snapshots.json
             node -e '
               const fs = require("fs");
@@ -361,7 +362,7 @@ jobs:
               const past = rows.filter((r) => r.state !== "future");
               const priced = past.filter((r) => r.state === "ok" || r.state === "partial");
               const nfp = rows.filter((r) => r.name === "NFP").length;
-              const eOk = ["ok","partial","unavailable","no_data"].includes(e.dataState) && nfp === 12 && e.coverage && /October 2026/.test(e.coverage.CPI) && /does not forecast/.test(e.note)
+              const eOk = ["ok","partial","unavailable","no_data"].includes(e.dataState) && nfp === 12 && e.coverage && /November 2026/.test(e.coverage.CPI) && /does not forecast/.test(e.note)
                 && (e.dataState === "unavailable" || e.dataState === "no_data" || (e.bars > 0 && priced.length > 0 && priced.every((r) => r.closeMovePct == null || Math.abs(r.closeMovePct) < 0.2)));
               const sOk = s.edition === "demo" && s.dataState === "no_data" && s.days === 0 && /Sample edition/.test(s.note);
               console.log(((eOk && sOk) ? "PASS" : "FAIL") + " research: events state " + e.dataState + ", " + e.bars + " bars, " + priced.length + "/" + past.length + " past sessions priced, " + (e.summary || []).map((x) => x.name + " n=" + x.n).join(" ") + "; snapshots " + s.dataState);

@@ -31,6 +31,32 @@ way expire after 7 days and are reinstalled from Xcode).
    (e.g. `https://xxxx.up.railway.app`) and the access key if the server sets
    `BATCAVE_ACCESS_KEY`. Both are saved on the device only.
 
+## Private use only (no store, no TestFlight)
+
+The app is for the owner's own phone, talking to the owner's own server.
+What keeps it private and what it does not do:
+
+- **Signing.** Sign the App target with your own Apple account (free
+  Personal Team: the install expires after 7 days and is re-run from Xcode;
+  a paid Developer Program membership gives one-year profiles). Nothing is
+  uploaded to Apple; there is no TestFlight build and no App Store listing.
+- **Server side.** The hosted server must run with `BATCAVE_ACCESS_KEY` set
+  (it fails closed off loopback unless `BATCAVE_ALLOW_OPEN=1`, which a
+  personal server must not set) and behind HTTPS (Railway terminates TLS;
+  HSTS is sent on HTTPS responses). The app sends the key as
+  `x-batcave-key` on every call; wrong keys are slowed down server-side.
+- **What the phone stores.** The server URL and the access key, in the
+  app's own WKWebView storage: sandboxed to the app and encrypted at rest
+  by iOS when the device is locked. It is not the Keychain; for a shared
+  or managed device, move it to a Keychain plugin first (an npm add via
+  the `npm-add` workflow). No Schwab token, client ID or secret is ever on
+  the phone: Schwab login happens in Safari and the tokens stay on the
+  server.
+- **Rate limits** apply per client; one phone never reaches them.
+- **The Xcode zip** is built by CI on the `ci-reports-ios` branch and as a
+  run artifact; it contains the web bundle of the commit that triggered
+  it. Rebuild by editing `.github/ios-build.txt` on `main`.
+
 ## After code changes
 
 ```bash

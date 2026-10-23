@@ -23,10 +23,15 @@ import { isRegularSessionOpen } from "./exchangeCalendar";
 import { etParts } from "./validationMath";
 import { editionFromEnv } from "../shared/edition";
 import { relativeVolume, quietVolume, blockPrints, type RelativeVolume, type QuietVolume, type BlockPrintRead } from "../shared/volumeRead";
+import { dailyBarEtDate } from "../shared/macroCalendar";
+import { RateLimiter } from "./publicGuard";
 
 const SYMBOL_RE = /^[A-Z][A-Z0-9.\-]{0,9}$/;
 const CACHE_MS = 60_000;
 const cache = new Map<string, { at: number; data: TickerScan }>();
+/** Process-wide: uncached scans across every client, so N readers on distinct symbols cannot starve the flow engine's chain budget. */
+const globalScans = new RateLimiter(20);
+const INDEX_SYMBOLS: Record<string, string> = { SPX: "$SPX", NDX: "$NDX", RUT: "$RUT", VIX: "$VIX" };
 
 export interface SectionState { dataState: "ok" | "partial" | "stale" | "unavailable" | "no_data"; reason: string | null }
 
@@ -59,10 +64,14 @@ export function validScanSymbol(raw: unknown): string | null {
 }
 
 export async function scanTicker(symbolRaw: string): Promise<TickerScan> {
-  const symbol = validScanSymbol(symbolRaw);
-  if (!symbol) throw new Error("symbol must be 1-10 characters: letters, digits, dot or dash");
+  const bare = validScanSymbol(symbolRaw);
+  if (!bare) throw new Error("symbol must be 1-10 characters: letters, digits, dot or dash");
+  const symbol = INDEX_SYMBOLS[bare] ?? bare;
   const hit = cache.get(symbol);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
+  for (const [k, v] of cache) if (Date.now() - v.at >= CACHE_MS) cache.delete(k);
+  const g = globalScans.take("global");
+  if (!g.allowed) { const e: any = new Error(`the desk is scanning at its limit (20 fresh symbols a minute across all readers); retry in ${g.retryAfterSec}s`); e.status = 429; e.retryAfterSec = g.retryAfterSec; throw e; }
 
   const now = Date.now();
   const edition = editionFromEnv();
@@ -101,7 +110,7 @@ export async function scanTicker(symbolRaw: string): Promise<TickerScan> {
   // 3. Volume: 20 sessions of daily bars (one call), today's volume from the quote, blocks from the stream.
   try {
     const ph = await getPriceHistory(symbol, "month", 2, "daily", 1, false);
-    const bars = (ph.candles ?? []).map((c) => ({ date: etParts(c.datetime).ymd, t: c.datetime, close: c.close, volume: c.volume }));
+    const bars = (ph.candles ?? []).map((c) => ({ date: dailyBarEtDate(c.datetime, (ms) => etParts(ms).ymd), t: c.datetime, close: c.close, volume: c.volume }));
     const today = etParts(now).ymd;
     const rel = relativeVolume(out.quote.volume, bars, today, sessionFraction(now));
     const quiet = quietVolume(rel, out.quote.changePct);
