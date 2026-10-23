@@ -1,1 +1,2 @@
 rebuild 11: 2026-10-22, this week's UI (Today card, scan, setup log, chart levels, event replay, method page)
+rebuild 12: 2026-10-23 include Verify live data (PR #19) in the Xcode zip

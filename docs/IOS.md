@@ -67,7 +67,10 @@ What keeps it private and what it does not do:
 - **Rate limits** apply per client; one phone never reaches them.
 - **The Xcode zip** is built by CI on the `ci-reports-ios` branch and as a
   run artifact; it contains the web bundle of the commit that triggered
-  it. Rebuild by editing `.github/ios-build.txt` on `main`.
+  it, plus `node_modules/@capacitor/<plugin>` for each Capacitor plugin
+  Swift package that `ios/App/CapApp-SPM/Package.swift` links by relative
+  path (without them Xcode says "Missing package product 'CapApp-SPM'").
+  Rebuild by editing `.github/ios-build.txt` on `main`.
 
 ## After code changes
 

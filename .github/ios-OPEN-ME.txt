@@ -36,3 +36,6 @@ What the app is
 - Connect Schwab from the website or from Settings in the app; the login
   opens in Safari and the server stores the tokens.
 
+The node_modules folder inside this zip holds only the two Capacitor plugin
+Swift packages the project links (app, browser). Keep it next to the ios
+folder; Xcode reads them by relative path.
