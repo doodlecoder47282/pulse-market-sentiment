@@ -943,3 +943,19 @@ native value for App Review 4.2 (push alerts, Face ID lock, haptics).
 Owner: deploy the demo service (docs/DEMO.md), then set repo variable
 BATCAVE_DEMO_URL so the app shows Try the demo. Agent, after approval: merge
 quant-fixes to main (Railway redeploys the personal server).
+
+2026-10-22: in-app Schwab sign-in for the iOS build (PR #18, feat/ios-schwab-signin).
+The phone's Settings → Open Schwab Login now opens Schwab in the in-app
+Safari sheet (@capacitor/browser; shares Safari's saved logins) instead of a
+WKWebView tab. The app asks /api/schwab/auth-url?return=app, so the state
+issued for that link remembers "app"; the automatic callback
+(server/index.ts OAUTH_CALLBACK_PATH) consumes the state first, exchanges
+the code on the server, and redirects to batcave://schwab?schwab=connected
+(or error&reason=...). iOS hands that URL to the app (@capacitor/app
+appUrlOpen; scheme in ios/App/App/Info.plist), the sheet closes and the
+dialog refreshes status; a sheet dismissed by hand still triggers a status
+check. Website behaviour unchanged (returnTo defaults to web; a forged or
+reused state always returns to the website). Nothing new reaches the phone:
+no token, no client id, no secret. Deps added via the npm-add workflow;
+ios-build.yml's `npx cap sync ios` regenerates CapApp-SPM/Package.swift
+(hand-updated to match). Not yet exercised on a physical iPhone from here.

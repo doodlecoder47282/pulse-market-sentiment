@@ -1,11 +1,18 @@
 // Schwab sign-in helpers: config check, one-time `state` values for the
-// automatic callback, and the callback URL shape. Pure, so it is unit-tested.
+// automatic callback, where each sign-in returns to (website or the iOS
+// app), and the callback URL shape. Pure, so it is unit-tested.
 import { randomBytes } from "node:crypto";
 
 export const OAUTH_CALLBACK_PATH = "/api/schwab/oauth/callback";
+/** Custom URL scheme the iOS app registers (ios/App/App/Info.plist). The
+ *  callback redirects here when the sign-in was started from the app, so
+ *  the in-app Safari sheet closes and the app itself shows the result. */
+export const APP_RETURN_URL = "batcave://schwab";
 const STATE_TTL_MS = 15 * 60_000;
 const MAX_PENDING = 50;
-const pending = new Map<string, number>(); // state -> expiresAt
+
+export type OAuthReturnTo = "web" | "app";
+const pending = new Map<string, { expiresAt: number; returnTo: OAuthReturnTo }>();
 
 type Env = Record<string, string | undefined>;
 
@@ -29,23 +36,46 @@ export function isAutomaticCallback(redirectUri: string): boolean {
   }
 }
 
+/** "app" only when the client said so explicitly; anything else is the website. */
+export function parseReturnTo(v: unknown): OAuthReturnTo {
+  return v === "app" ? "app" : "web";
+}
+
+/** Where the callback sends the browser after a sign-in result. The website
+ *  gets its own dashboard with the result in the query; the app gets its
+ *  custom scheme, which iOS hands to the app (Browser sheet closes). */
+export function oauthReturnUrl(returnTo: OAuthReturnTo, result: "connected" | "error", reason?: string): string {
+  const q = result === "error" && reason ? `schwab=error&reason=${encodeURIComponent(reason)}` : `schwab=${result}`;
+  return returnTo === "app" ? `${APP_RETURN_URL}?${q}` : `/?${q}#/`;
+}
+
 function prune(now: number) {
-  pending.forEach((exp, s) => { if (exp <= now) pending.delete(s); });
+  pending.forEach((v, s) => { if (v.expiresAt <= now) pending.delete(s); });
   while (pending.size > MAX_PENDING) pending.delete(pending.keys().next().value as string);
 }
 
-/** A fresh one-time state value, valid for 15 minutes. */
-export function newOAuthState(now: number = Date.now()): string {
+/** A fresh one-time state value, valid for 15 minutes, remembering where
+ *  the sign-in should return to. */
+export function newOAuthState(now: number = Date.now(), returnTo: OAuthReturnTo = "web"): string {
   prune(now);
   const s = randomBytes(16).toString("hex");
-  pending.set(s, now + STATE_TTL_MS);
+  pending.set(s, { expiresAt: now + STATE_TTL_MS, returnTo });
   return s;
+}
+
+/** Accepts each issued state once, before it expires, and says where that
+ *  sign-in returns to. An unknown or reused state is refused and returns to
+ *  the website (there is no app to return to for a state nobody issued). */
+export function consumeOAuthStateFor(state: string | null | undefined, now: number = Date.now()): { ok: boolean; returnTo: OAuthReturnTo } {
+  prune(now);
+  if (!state) return { ok: false, returnTo: "web" };
+  const entry = pending.get(state);
+  if (!entry) return { ok: false, returnTo: "web" };
+  pending.delete(state);
+  return { ok: true, returnTo: entry.returnTo };
 }
 
 /** Accepts each issued state once, before it expires. */
 export function consumeOAuthState(state: string | null | undefined, now: number = Date.now()): boolean {
-  prune(now);
-  if (!state || !pending.has(state)) return false;
-  pending.delete(state);
-  return true;
+  return consumeOAuthStateFor(state, now).ok;
 }

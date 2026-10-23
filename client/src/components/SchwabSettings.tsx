@@ -8,6 +8,7 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiJson, queryClient, AUTH_REQUIRED_EVENT, API_BASE_STORAGE_KEY, isNativeApp } from "@/lib/queryClient";
 import PersonalServerHandoff from "./PersonalServerHandoff";
+import { openInAppBrowser, closeInAppBrowser, listenForAppReturn } from "@/lib/nativeAuth";
 import type { MarketDataValidation } from "@shared/marketDataValidation";
 import {
   Dialog,
@@ -293,10 +294,13 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
   // refused as belonging to a different sign-in. A new link is minted only
   // after that, or on the explicit "fresh link" buttons.
   const AUTH_URL_KEEP_MS = 14 * 60_000;
-  const { data: authUrlData, error: authUrlError, refetch: refetchAuthUrl } = useQuery<{ url: string; automatic?: boolean }>({
-    queryKey: ["/api/schwab/auth-url"],
+  // The iOS app asks for a link whose callback returns to the app's URL
+  // scheme (client/src/lib/nativeAuth.ts); the website gets the plain link.
+  const native = isNativeApp();
+  const { data: authUrlData, error: authUrlError, refetch: refetchAuthUrl } = useQuery<{ url: string; automatic?: boolean; returnTo?: "web" | "app" }>({
+    queryKey: ["/api/schwab/auth-url", native ? "app" : "web"],
     queryFn: async () => {
-      return apiJson<{ url: string; automatic?: boolean }>("GET", "/api/schwab/auth-url");
+      return apiJson<{ url: string; automatic?: boolean; returnTo?: "web" | "app" }>("GET", native ? "/api/schwab/auth-url?return=app" : "/api/schwab/auth-url");
     },
     enabled: open,
     staleTime: AUTH_URL_KEEP_MS,
@@ -311,6 +315,38 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
   useEffect(() => {
     if (!open) { setRedirectedUrl(""); setConnectionError(""); setStep("idle"); }
   }, [open]);
+
+  // iOS app: the server's callback returns to batcave://schwab?schwab=...;
+  // close the Safari sheet, show the result, refresh status. A sheet the user
+  // dismissed by hand still triggers a status check.
+  const [sheetOpen, setSheetOpen] = useState(false);
+  useEffect(() => {
+    if (!open || !native) return;
+    return listenForAppReturn({
+      onReturn: (r) => {
+        setSheetOpen(false);
+        void closeInAppBrowser();
+        if (r.result === "connected") {
+          toast({ title: "Schwab authorization saved", description: "Checking connection and data availability." });
+          void queryClient.invalidateQueries({ predicate: q => q.queryKey[0] !== "/api/schwab/auth-url" });
+        } else {
+          const reasons: Record<string, string> = {
+            authorization_not_completed: "Schwab did not complete the authorization.",
+            no_code: "Schwab returned without a code.",
+            expired_or_unknown_sign_in: "This sign-in expired or was already used (links last 15 minutes). Start a new one.",
+            token_exchange_failed: "Schwab did not complete the token exchange. Start a new sign-in; if it repeats, check the server configuration.",
+            demo_edition: "Schwab sign-in is disabled in the sample-data preview.",
+          };
+          const message = reasons[r.reason ?? ""] ?? "Schwab sign-in did not complete.";
+          setConnectionError(message);
+          toast({ title: "Connection not confirmed", description: message, variant: "destructive" });
+          void refetchAuthUrl();
+        }
+        void refetchStatus();
+      },
+      onSheetClosed: () => { setSheetOpen(false); void refetchStatus(); },
+    });
+  }, [open, native]);
 
   useEffect(() => {
     if (status?.connected && !wasConnected.current) {
@@ -539,7 +575,18 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                       href={authUrlData.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      onClick={() => setStep("waiting_for_paste")}
+                      onClick={(e) => {
+                        if (native) {
+                          // In the app: the in-app Safari sheet, not a WKWebView tab.
+                          e.preventDefault();
+                          setSheetOpen(true);
+                          void openInAppBrowser(authUrlData.url).then(ok => {
+                            if (!ok) { setSheetOpen(false); setAuthBlockedFallback(true); }
+                          });
+                          return;
+                        }
+                        setStep("waiting_for_paste");
+                      }}
                       className="inline-flex min-h-[36px] items-center rounded-md border border-amber-500/40 px-3 text-xs text-amber-300 hover:bg-amber-500/10"
                       data-testid="reauth-schwab-btn"
                     >
@@ -673,8 +720,8 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                       className="flex min-h-[44px] w-full items-center justify-center rounded-md bg-amber-500 px-3 text-sm font-semibold text-black hover:bg-amber-400"
                       data-testid="open-schwab-auth-btn"
                     >
-                      <ExternalLink className="mr-1.5 h-4 w-4" />
-                      Open Schwab Login
+                      {sheetOpen ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <ExternalLink className="mr-1.5 h-4 w-4" />}
+                      {sheetOpen ? "Waiting for Schwab..." : "Open Schwab Login"}
                     </a>
                     <button
                       type="button"
@@ -685,7 +732,9 @@ export default function SchwabSettings({ open, onOpenChange }: SchwabSettingsPro
                       Didn't open? Copy the link instead
                     </button>
                     <div className="text-xs leading-snug text-muted-foreground">
-                      {authUrlData.automatic
+                      {native && authUrlData.automatic
+                        ? "Schwab opens in a secure sheet inside the app. After you approve, the sheet closes and the connection finishes by itself."
+                        : authUrlData.automatic
                         ? "After you approve, Schwab sends you straight back to Batcave and the connection finishes by itself."
                         : "After you approve, Schwab sends you to your callback address (the page may not load; that is expected). Copy that full address and paste it in step 2."}
                     </div>
