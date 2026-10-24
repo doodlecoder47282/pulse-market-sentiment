@@ -39,6 +39,7 @@ import { watchdogStatus } from "./cusumWatchdog";
 import { shieldStatus } from "./quoteShield";
 import { computeRND, type CallStrike } from "./breedenLitzenberger";
 import { dollarGexPerPct, flipInputs, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain, type FlipWeight } from "./gammaProfile";
+import { schwabNum } from "./schwabChainRows";
 
 /** Flip weight label for the killbox / thermal weight modes. */
 function flipWeightOf(mode: string): FlipWeight {
@@ -3815,6 +3816,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
       // Second pass: per-strike across all expiries.
       const nowMs = Date.now();
+      let contractsPriced = 0, contractsUnpriced = 0;
       for (const { side, map } of passes) {
         for (const ek of Object.keys(map || {})) {
           const dteStr = ek.split(":")[1] || "30";
@@ -3825,25 +3827,34 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
             if (!isFinite(strike)) continue;
             const row = getRow(strike);
             for (const c of map[ek][sk] || []) {
-              const oi = c.openInterest || 0;
-              const vol = c.totalVolume || 0;
+              // schwabNum drops Schwab's -999 sentinels; missing is 0 weight here.
+              const oi = Math.max(0, schwabNum(c.openInterest) ?? 0);
+              const vol = Math.max(0, schwabNum(c.totalVolume) ?? 0);
               if (oi === 0 && vol === 0) continue;
               // One clock: calendar minutes to the real settlement instant
               // (AM SPX vs PM SPXW, half days) / 525,600; settled -> skip.
               const T = contractYears(ek, c);
               if (!(T > 0)) continue;
               const sqrtT = Math.sqrt(T);
-              const ivPct = c.volatility || 0;
+              const ivPct = schwabNum(c.volatility) ?? 0;
               // sigma valid for our T (re-solved from the mid inside 3 days)
               const sigma = ivForClock({
                 vendorIv: ivPct > 0 && ivPct < 500 ? ivPct / 100 : 0,
                 bid: Number(c.bid), ask: Number(c.ask), spot, strike, T, type: side,
               });
-              // Gamma on the same basis as the flip (Black-Scholes, our T);
-              // vendor gamma only when no usable sigma.
-              const gamma = sigma > 0 ? bsGammaOurClock(spot, strike, sigma, T, FLIP_RATE, FLIP_DIV_YIELD) : (c.gamma ?? 0);
+              // Gamma on the same basis as the flip (Black-Scholes, our T).
+              // Without a usable sigma the contract is counted as unpriced and
+              // skipped: the old fallback `c.gamma ?? 0` accepted Schwab's -999
+              // sentinel (finite, non-zero) after the close and put ~-4e13 of
+              // exposure on one strike, which set the walls, stability and
+              // regime. A vendor gamma is used only when it is in (0, 1].
+              const rawGamma = schwabNum(c.gamma);
+              const gamma = sigma > 0 ? bsGammaOurClock(spot, strike, sigma, T, FLIP_RATE, FLIP_DIV_YIELD)
+                : rawGamma != null && rawGamma > 0 && rawGamma <= 1 ? rawGamma : 0;
               if (side === "C") { row.callOI += oi; row.callVol += vol; }
               else { row.putOI += oi; row.putVol += vol; }
+              if (!(gamma > 0)) { contractsUnpriced++; continue; }
+              contractsPriced++;
 
               let weight = 0;
               if (weightMode === "oi") weight = oi;
@@ -3916,11 +3927,15 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       }
 
       const totalNetGex = gexProfile.reduce((s, p) => s + p.exposure, 0);
-      const regime = totalNetGex > 0 ? "long_gamma" : "short_gamma";
+      // No priced contract: nothing to call a regime; the client says "cannot be priced".
+      const regime: "long_gamma" | "short_gamma" | "indeterminate" = contractsPriced === 0 || gexProfile.length === 0 ? "indeterminate" : totalNetGex > 0 ? "long_gamma" : "short_gamma";
 
       res.json({
         symbol,
         asOf: nowMs,
+        dataState: contractsPriced > 0 ? "ok" : "no_iv",
+        reason: contractsPriced > 0 ? null : "no contract could be priced (no usable implied volatility or vendor gamma; typical after the close)",
+        contracts: { priced: contractsPriced, unpriced: contractsUnpriced },
         // When Schwab produced the chain (asOf above is the computation time).
         chainAsOfMs: chain.asOfMs,
         chainStale: chain.stale,

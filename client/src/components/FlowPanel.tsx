@@ -395,19 +395,37 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
       const callDelta = prev ? Math.max(0, s.callVolume - prev.callVolume) : 0;
       const putDelta = prev ? Math.max(0, s.putVolume - prev.putVolume) : 0;
       const netDelta = callDelta - putDelta;
-      // Last-print-side deltas (day volume tagged by latest print, not Lee-Ready)
-      const boughtCallDelta = prev ? Math.max(0, s.boughtCallVol - prev.boughtCallVol) : 0;
-      const soldCallDelta   = prev ? Math.max(0, s.soldCallVol   - prev.soldCallVol)   : 0;
-      const boughtPutDelta  = prev ? Math.max(0, s.boughtPutVol  - prev.boughtPutVol)  : 0;
-      const soldPutDelta    = prev ? Math.max(0, s.soldPutVol    - prev.soldPutVol)    : 0;
+      // Last-print-side deltas (day volume tagged by latest print, not Lee-Ready).
+      // The server tags each contract's WHOLE day volume by its latest print, so
+      // when a 10k line flips from bid-side to ask-side between samples the raw
+      // ask-side delta is +10k of volume that traded hours ago. New flow in a
+      // bucket cannot exceed the bucket's total new volume: the side deltas are
+      // scaled down to callDelta / putDelta when their sum overshoots, and the
+      // bucket is marked re-tagged so the bar can say so.
+      const sideSplit = (bought: number, sold: number, total: number) => {
+        const b = Math.max(0, bought), so = Math.max(0, sold), sum = b + so;
+        if (sum <= total || sum === 0) return { bought: b, sold: so, scale: 1, retagged: false };
+        const k = total / sum;
+        return { bought: b * k, sold: so * k, scale: k, retagged: true };
+      };
+      const callSide = sideSplit(prev ? s.boughtCallVol - prev.boughtCallVol : 0, prev ? s.soldCallVol - prev.soldCallVol : 0, callDelta);
+      const putSide = sideSplit(prev ? s.boughtPutVol - prev.boughtPutVol : 0, prev ? s.soldPutVol - prev.soldPutVol : 0, putDelta);
+      const boughtCallDelta = callSide.bought;
+      const soldCallDelta   = callSide.sold;
+      const boughtPutDelta  = putSide.bought;
+      const soldPutDelta    = putSide.sold;
+      const retagged = callSide.retagged || putSide.retagged;
       // Mirror-sign versions for stacked bars (calls above zero, puts below zero)
       const boughtPutDeltaNeg = -boughtPutDelta;
       const soldPutDeltaNeg   = -soldPutDelta;
-      // Bullish-bearish premium net per bucket
-      const bullPrem = (s.boughtCallPrem - (prev?.boughtCallPrem ?? 0))
-                     + (s.soldPutPrem    - (prev?.soldPutPrem    ?? 0));
-      const bearPrem = (s.soldCallPrem   - (prev?.soldCallPrem   ?? 0))
-                     + (s.boughtPutPrem  - (prev?.boughtPutPrem  ?? 0));
+      // Bullish-bearish premium net per bucket: premium deltas clamped at 0 (a
+      // re-tag moves premium between sides without new trading) and scaled by
+      // the same factor as the side volumes.
+      const d = (a: number, b: number | undefined) => Math.max(0, a - (b ?? 0));
+      const bullPrem = d(s.boughtCallPrem, prev?.boughtCallPrem) * callSide.scale
+                     + d(s.soldPutPrem, prev?.soldPutPrem) * putSide.scale;
+      const bearPrem = d(s.soldCallPrem, prev?.soldCallPrem) * callSide.scale
+                     + d(s.boughtPutPrem, prev?.boughtPutPrem) * putSide.scale;
       const netBias = bullPrem - bearPrem;
       const totalVol = s.callVolume + s.putVolume;
       return {
@@ -417,6 +435,7 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
         putDeltaNeg: -putDelta,
         netDelta,
         absNet: Math.abs(netDelta),
+        retagged,
         boughtCallDelta,
         soldCallDelta,
         boughtPutDelta,
@@ -489,6 +508,11 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
             {s.netDelta >= 0 ? "+" : ""}{fmtVol(s.netDelta)}
           </span>
         </div>
+        {s.retagged && (
+          <div className="mt-1 text-[11px] text-amber-300" data-testid="flow-retagged">
+            side split scaled: a line changed its last-print side this bucket, so the ask/bid split cannot exceed the new volume
+          </div>
+        )}
         {s.pcRatio != null && (
           <div className="flex justify-between gap-4">
             <span className="text-muted-foreground">P/C</span>

@@ -40,7 +40,11 @@ interface ForwardResponse {
   };
   stability: number;
   weightMode?: "oi" | "volume" | "hybrid";
-  regime?: "long_gamma" | "short_gamma";
+  regime?: "long_gamma" | "short_gamma" | "indeterminate";
+  /** "ok" when at least one contract was priced; "no_iv" when none could be (typical after the close). */
+  dataState?: "ok" | "no_iv";
+  reason?: string | null;
+  contracts?: { priced: number; unpriced: number };
   totalOI?: number;
   totalVolume?: number;
   strikeCount?: number;
@@ -226,6 +230,7 @@ export default function Killbox({ symbol = "$SPX" }: { symbol?: string }) {
         hoverStrike={hoverStrike}
         onHover={setHoverStrike}
         isLoading={isLoading}
+        emptyReason={data?.dataState === "no_iv" ? (data.reason ?? "no contract could be priced") : null}
       />
 
       {/* Ranked top strikes */}
@@ -328,7 +333,7 @@ function StabilityGauge({
 }
 
 function ForwardChart({
-  visible, spot, levels, absMax, greek, hoverStrike, onHover, isLoading,
+  visible, spot, levels, absMax, greek, hoverStrike, onHover, isLoading, emptyReason,
 }: {
   visible: ProfilePoint[];
   spot: number | null;
@@ -338,6 +343,8 @@ function ForwardChart({
   hoverStrike: number | null;
   onHover: (s: number | null) => void;
   isLoading: boolean;
+  /** Server reason when nothing could be priced (dataState no_iv). */
+  emptyReason?: string | null;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [wrapW, setWrapW] = useState(360);
@@ -368,9 +375,9 @@ function ForwardChart({
         ref={wrapRef}
         className="flex h-[440px] flex-col items-center justify-center gap-2 rounded border border-border bg-[#04060c] px-4 text-center"
       >
-        <div className="text-sm font-semibold text-foreground">no dealer book yet</div>
+        <div className="text-sm font-semibold text-foreground" data-testid="killbox-empty">{emptyReason ? "dealer book cannot be priced" : "no strikes to show"}</div>
         <div className="text-[11px] text-muted-foreground max-w-[280px] leading-snug">
-          fills after the first chain-audit snap of the day · auto-seeder runs every 5min during 9:30–16:00 ET
+          {emptyReason ?? (!spot ? "the chain carried no spot price" : "no strike within ±2.5% of spot has exposure in this lens")}
         </div>
       </div>
     );
@@ -572,13 +579,15 @@ function StrikeReadout({
   activeGreek: Greek;
 }) {
   const greeks: Greek[] = ["gex", "vanna", "charm", "vomma", "zomma"];
-  const values: { greek: Greek; value: number }[] = greeks.map(g => {
+  // null = this greek was not priced at this strike (no sigma); not zero.
+  const values: { greek: Greek; value: number | null }[] = greeks.map(g => {
     const p = (data.profiles[g] ?? []).find(x => x.strike === strike);
-    return { greek: g, value: p?.exposure ?? 0 };
+    return { greek: g, value: p ? p.exposure : null };
   });
 
   const dist = data.spot ? strike - data.spot : 0;
-  const dealerSign = (g: Greek, v: number): string => {
+  const dealerSign = (g: Greek, v: number | null): string => {
+    if (v == null) return "not priced";
     if (v === 0) return "neutral";
     return v > 0 ? "long" : "short";
   };
@@ -601,7 +610,7 @@ function StrikeReadout({
       <div className="grid grid-cols-5 gap-2">
         {values.map(v => {
           const isActive = v.greek === activeGreek;
-          const color = v.value > 0 ? LONG_COLOR : v.value < 0 ? SHORT_COLOR : "#888";
+          const color = v.value != null && v.value > 0 ? LONG_COLOR : v.value != null && v.value < 0 ? SHORT_COLOR : "#888";
           return (
             <div
               key={v.greek}
@@ -611,7 +620,7 @@ function StrikeReadout({
                 {v.greek === "gex" ? "gamma" : v.greek}
               </div>
               <div className="font-mono text-[11px] font-semibold tabular-nums" style={{ color }}>
-                {fmtMoney(v.value)}
+                {v.value == null ? "—" : fmtMoney(v.value)}
               </div>
               <div className="text-[11px] text-muted-foreground">
                 {dealerSign(v.greek, v.value)}

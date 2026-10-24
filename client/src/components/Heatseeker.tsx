@@ -1007,7 +1007,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                         </span>
                       )}
                     </div>
-                    <GexCell callGex={s.callGex} putGex={s.putGex} max={maxAbsGex} symbol={symbol} strike={s.strike} />
+                    <GexCell callGex={s.callGex} putGex={s.putGex} max={maxAbsGex} symbol={symbol} strike={s.strike} expiry={expiry} />
                     {s.netDex != null ? <HeatCell value={s.netDex} max={maxAbsDex} /> : <div className="flex items-center justify-center font-mono text-[11px] text-muted-foreground" title="no usable delta at this strike">—</div>}
                     <HeatCell value={s.netVanna} max={maxAbsVanna} />
                     <HeatCell value={s.netCharm} max={maxAbsCharm} />
@@ -1308,8 +1308,9 @@ function HeatCell({ value, max }: { value: number; max: number }) {
 // a tiny arrow + magnitude readout next to the GEX cell. Module-level so it
 // persists across re-renders without needing localStorage (sandbox rule).
 // ────────────────────────────────────────────────────────────────────────────
-type BaselineKey = string; // `${dateKey}|${symbol}|${strike}`
-const gexBaselines = new Map<BaselineKey, number>();
+type BaselineKey = string; // `${dateKey}|${symbol}|${expiry}|${strike}`
+const gexBaselines = new Map<BaselineKey, { net: number; atMs: number }>();
+const BASELINE_MAX = 4000;
 
 function sessionDateKey(): string {
   // ET session date — New York time, YYYY-MM-DD
@@ -1318,42 +1319,49 @@ function sessionDateKey(): string {
   return d.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 }
 
-function getOrSeedBaseline(symbol: string, strike: number, currentNet: number): number {
-  const k = `${sessionDateKey()}|${symbol}|${strike}`;
+/** First net GEX this browser saw for (session date, symbol, expiry, strike), with
+ *  when it saw it. Per expiry: the same strike on two expiries is two books. The
+ *  anchor is "since first view", not the open, unless the app was open at 09:30. */
+export function getOrSeedBaseline(symbol: string, strike: number, currentNet: number, expiry: string | null | undefined, nowMs: number = Date.now()): { net: number; atMs: number } {
+  const k = `${sessionDateKey()}|${symbol}|${expiry ?? "nearest"}|${strike}`;
   const existing = gexBaselines.get(k);
-  if (existing != null) return existing;
-  gexBaselines.set(k, currentNet);
-  return currentNet;
+  if (existing) return existing;
+  if (gexBaselines.size >= BASELINE_MAX) gexBaselines.delete(gexBaselines.keys().next().value as string);
+  const seeded = { net: currentNet, atMs: nowMs };
+  gexBaselines.set(k, seeded);
+  return seeded;
 }
 
 // GEX cell — GEXbot style split bar: call GEX (green) left of center,
 // put GEX (red) right of center, both scaled to the global max absolute GEX.
 // Net value printed in the middle so the numeric readout stays glanceable.
 // Delta arrow on the right shows session change (TIER A #4).
-function GexCell({ callGex, putGex, max, symbol, strike }: { callGex: number; putGex: number; max: number; symbol?: string; strike?: number }) {
+function GexCell({ callGex, putGex, max, symbol, strike, expiry }: { callGex: number; putGex: number; max: number; symbol?: string; strike?: number; expiry?: string | null }) {
   const net = callGex - putGex;
   const callPct = max > 0 ? Math.min((callGex / max) * 100, 100) : 0;
   const putPct = max > 0 ? Math.min((putGex / max) * 100, 100) : 0;
   const labelColor = net >= 0 ? "text-emerald-300" : "text-rose-300";
 
   // Session baseline (only when we have symbol + strike context)
-  let arrow: { dir: "up" | "down" | "flat"; pct: number } | null = null;
+  let arrow: { dir: "up" | "down" | "flat"; pct: number; since: string } | null = null;
   if (symbol && strike != null) {
-    const baseline = getOrSeedBaseline(symbol, strike, net);
+    const base = getOrSeedBaseline(symbol, strike, net, expiry);
+    const baseline = base.net;
+    const since = new Date(base.atMs).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" });
     const delta = net - baseline;
     const refMag = Math.max(Math.abs(baseline), Math.abs(net), 1);
     const pct = (Math.abs(delta) / refMag) * 100;
     if (pct >= 5) {
-      arrow = { dir: delta > 0 ? "up" : "down", pct };
+      arrow = { dir: delta > 0 ? "up" : "down", pct, since };
     } else {
-      arrow = { dir: "flat", pct };
+      arrow = { dir: "flat", pct, since };
     }
   }
 
   return (
     <div
       className="relative flex h-7 items-center justify-center overflow-hidden rounded-sm bg-slate-500/5 font-mono text-[11px] tabular-nums"
-      title={`calls +${fmtM(callGex)} · puts -${fmtM(putGex)} · net ${fmtM(net)}${arrow && arrow.dir !== "flat" ? ` · Δ ${arrow.dir === "up" ? "+" : "-"}${arrow.pct.toFixed(0)}% from open` : ""}`}
+      title={`calls +${fmtM(callGex)} · puts -${fmtM(putGex)} · net ${fmtM(net)}${arrow && arrow.dir !== "flat" ? ` · Δ ${arrow.dir === "up" ? "+" : "-"}${arrow.pct.toFixed(0)}% since first view ${arrow.since} ET` : ""}`}
       data-testid={symbol && strike != null ? `gex-cell-${strike}` : undefined}
     >
       <div
@@ -1371,7 +1379,7 @@ function GexCell({ callGex, putGex, max, symbol, strike }: { callGex: number; pu
           className={`absolute right-1 top-1/2 z-10 -translate-y-1/2 text-[11px] font-semibold ${
             arrow.dir === "up" ? "text-emerald-400" : "text-rose-400"
           }`}
-          aria-label={`gex ${arrow.dir} ${arrow.pct.toFixed(0)} percent since open`}
+          aria-label={`gex ${arrow.dir} ${arrow.pct.toFixed(0)} percent since first view ${arrow.since}`}
         >
           {arrow.dir === "up" ? "▲" : "▼"}{arrow.pct.toFixed(0)}
         </span>

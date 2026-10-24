@@ -1988,10 +1988,9 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
         </div>
       </div>
 
-      <div className="mt-2 text-[11px] text-muted-foreground font-mono">
-        Drift-tilted GBM cone with magnet pull toward dealer levels. σ segmented across VIX9D/VIX/VIX3M, scaled by
-        VRP (RV÷IV clamped 0.7-1.3), bumped +12% on OPEX/FOMC weeks. Drift = composite + GEX + VIX term + SKEW.
-        Walls/flip pull primary, max pain + JPM secondary, capped ±4%/wk per anchor. NOT a forecast — a probability cone.
+      <div className="mt-2 text-[11px] text-muted-foreground font-mono" data-testid="quarterly-methodology">
+        {/* The server states its own method (quarterlyTrajectory.ts); the old hand-written text described a VRP scale and an event bump the server no longer applies. */}
+        {traj.methodology ?? "Method statement unavailable from the server."} NOT a forecast — a probability cone.
       </div>
     </div>
   );
