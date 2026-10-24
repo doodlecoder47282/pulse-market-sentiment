@@ -979,6 +979,17 @@ the live run, not predictive edge. Cannot be exercised from the workspace
 (no Schwab credentials here, by design); the owner's first run after
 connecting is the live test.
 
+2026-10-24: live UI on the phone (PR #27, feat/ios-live-ui). capacitor.config
+server.url = the owner's Railway server: the native shell loads the terminal
+from the server on every launch, so a merge updates the app when Railway
+redeploys, with no Xcode step; the bundled webDir is the fallback only.
+queryClient.getApiBase prefers the page's own https origin on native
+(liveOriginBase) so the connection screen does not appear. ios-build.yml
+removes `server` for the simulator check (never reaches the live server from
+CI) and restores it for the zip, failing the build if the url is missing.
+Xcode is needed only for native changes and the 7-day Personal Team expiry
+(Wi-Fi run after the first cable pairing). docs/IOS.md "Live UI" section.
+
 2026-10-23: Trade Desk + Signals audit, pass 1 (PR #22, fix/trade-desk-signals-audit).
 Independent formula-by-formula review against Schwab payload semantics.
 Fixed (each with a regression test in tests/quant/schwab-semantics.test.ts):
