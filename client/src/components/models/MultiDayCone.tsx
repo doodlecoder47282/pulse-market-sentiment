@@ -153,14 +153,18 @@ export default function MultiDayCone({ defaultSymbol = "^GSPC" }: { defaultSymbo
         {/* Stats strip */}
         <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
           <div className="rounded border border-border/40 bg-black/30 p-2">
-            <div className="text-[11px] uppercase text-muted-foreground">spot</div>
+            <div className="text-[11px] uppercase text-muted-foreground">spot (daily bar)</div>
             <div className="font-mono text-sm text-foreground">{data.spot.toFixed(2)}</div>
+            <div className="font-mono text-[10px] text-muted-foreground" data-testid="cone-spot-asof">
+              bar as of {new Date(data.asOfTs).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" })}
+            </div>
           </div>
           <div className="rounded border border-border/40 bg-black/30 p-2">
             <div className="text-[11px] uppercase text-muted-foreground">σ daily / annual</div>
             <div className="font-mono text-sm text-foreground">
               {(data.sigmaDaily * 100).toFixed(2)}% / {data.sigmaAnnualizedPct.toFixed(1)}%
             </div>
+            <div className="font-mono text-[10px] text-muted-foreground">bands use σ×{data.volBlowupFactor.toFixed(2)}</div>
           </div>
           <div className="rounded border border-border/40 bg-black/30 p-2">
             <div className="text-[11px] uppercase text-muted-foreground">drift / day</div>
@@ -191,7 +195,7 @@ export default function MultiDayCone({ defaultSymbol = "^GSPC" }: { defaultSymbo
               return (
                 <g key={t}>
                   <line x1={PAD_L} y1={y} x2={PAD_L + PLOT_W} y2={y} stroke="#1f2937" strokeWidth={0.3} />
-                  <text x={PAD_L - 6} y={y + 3} textAnchor="end" fontSize={10} fill="#64748b" fontFamily="monospace">
+                  <text x={PAD_L - 6} y={y + 3} textAnchor="end" fontSize={11} fill="#64748b" fontFamily="monospace">
                     {price.toFixed(price > 100 ? 0 : 2)}
                   </text>
                 </g>
@@ -204,7 +208,7 @@ export default function MultiDayCone({ defaultSymbol = "^GSPC" }: { defaultSymbo
               return (
                 <g key={d}>
                   <line x1={x} y1={PAD_T} x2={x} y2={PAD_T + PLOT_H} stroke="#1f2937" strokeWidth={0.2} />
-                  <text x={x} y={PAD_T + PLOT_H + 14} textAnchor="middle" fontSize={10} fill="#64748b" fontFamily="monospace">
+                  <text x={x} y={PAD_T + PLOT_H + 14} textAnchor="middle" fontSize={11} fill="#64748b" fontFamily="monospace">
                     {d === 0 ? "now" : `+${d}d`}
                   </text>
                 </g>
@@ -237,7 +241,7 @@ export default function MultiDayCone({ defaultSymbol = "^GSPC" }: { defaultSymbo
 
             {/* Spot anchor dot */}
             <circle cx={geom.xOf(0)} cy={geom.yOf(data.spot)} r={3} fill="#22d3ee" />
-            <text x={geom.xOf(0) + 6} y={geom.yOf(data.spot) - 6} fontSize={10} fill="#22d3ee" fontFamily="monospace">
+            <text x={geom.xOf(0) + 6} y={geom.yOf(data.spot) - 6} fontSize={11} fill="#22d3ee" fontFamily="monospace">
               spot {data.spot.toFixed(2)}
             </text>
 
@@ -245,7 +249,7 @@ export default function MultiDayCone({ defaultSymbol = "^GSPC" }: { defaultSymbo
             <text
               x={geom.xOf(10) + 4}
               y={geom.yOf(lastBand.q90) + 3}
-              fontSize={10}
+              fontSize={11}
               fill="#86efac"
               fontFamily="monospace"
             >
@@ -254,7 +258,7 @@ export default function MultiDayCone({ defaultSymbol = "^GSPC" }: { defaultSymbo
             <text
               x={geom.xOf(10) + 4}
               y={geom.yOf(lastBand.q50) + 3}
-              fontSize={10}
+              fontSize={11}
               fill="#a5b4fc"
               fontFamily="monospace"
             >
@@ -263,7 +267,7 @@ export default function MultiDayCone({ defaultSymbol = "^GSPC" }: { defaultSymbo
             <text
               x={geom.xOf(10) + 4}
               y={geom.yOf(lastBand.q10) + 3}
-              fontSize={10}
+              fontSize={11}
               fill="#fca5a5"
               fontFamily="monospace"
             >

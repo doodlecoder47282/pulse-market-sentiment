@@ -1068,3 +1068,32 @@ community quoteAt on failure, parseOhlcv zero volume, hold rule for RUGGED
 with a priced horizon mark, CryptoPanel zeros for missing values and
 hover-only notes (pass 3 covers the phone items), horizon late-window
 label, advice-flavoured copy on the expectancy card.
+
+2026-10-23: audit pass 3, phone + copy sweep (PR #26, feat/audit-pass-3,
+stacked on pass 2; 36 files, UI strings and layout only, no calculation
+changes). Tap targets >= 44 px on phone (compact above sm/lg) on every
+control the reviews listed; truncation removed (ChartLevelsCard, OdteForward,
+SetupLogCard, RegimeHeadline wraps and shows VIX/NET GEX meta on phone);
+9 px type -> 10 px; swipe hints on the two horizontal tables; canvas/SVG
+text 10 -> 11 px. Hover-only method notes became visible footnotes
+(ModelsPanel, DailyPlaybookChart, TickerScanCard, OfiHistogram, CanaryStrip).
+Units and labels: Net GEX/Vanna/Charm units and scope; "1σ to close"; Trade
+Desk gamma tiles in SPY $ vs the $SPX-point map stated; abbreviations
+expanded (ORB, EM, R, pp, HVL, RES/SUP/EXT legend); "γ at spot:
+large/medium/small" instead of CONF; term ratio formulas named (VIX3M/VIX,
+VIX9D/VIX); BEAR/BASE/BULL tagged (RN)/(heur.); MultiDayCone bar date and
+σ×blowup; Mag7 N/7 and "difference vs SPY"; scan IV/skew definitions; "95%
+CI"; TodayCard band sentence uses band.low/high and labels pin fallbacks;
+DepthSkewFlow follows the parent's symbol/expiry and derives DTE; Heatseeker
+tracker-window note only for $SPX nearest; Heatseeker and BreadthCard render
+the server reason instead of an empty chart; RegimeChip partial state; OFI
+"ACCELERATING" only with a non-neutral trend and material slope. Copy:
+"Daily Playbook (model)", weight badges, descriptive level boxes; playbook
+narrative, regime headlines, canary lines, RegimePanel, heatseeker sticky/
+pivot reads, pivotProjection, PositionSizer ("cost model: inputs clear /
+do not clear", "modelled outcome, net of cost"), Killbox wording and
+dealer-sign line, OdteForward "path end (model shape)" and "model touch
+frequency", Flow footnotes, TrackedSignals basis + mark age, FlowAlerts
+"fixed thresholds" footer. Still forecast-flavoured (next): EdgeInfo.tsx
+dialog copy, TradeDesk tooltip maps and legend row, OdteForward header
+chip.

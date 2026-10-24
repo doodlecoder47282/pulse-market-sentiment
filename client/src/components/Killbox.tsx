@@ -1,5 +1,5 @@
 /**
- * Killbox.tsx — FORWARD-LOOKING dealer positioning map.
+ * Killbox.tsx — dealer positioning map (model).
  *
  * Institutional model (matches VS3D / SpotGamma TRACE / MenthorQ):
  *   Y-axis: strike (labeled, numbered)
@@ -133,7 +133,7 @@ export default function Killbox({ symbol = "$SPX" }: { symbol?: string }) {
         <div className="flex items-baseline gap-2">
           <div className="font-mono text-sm font-bold tracking-wide text-foreground">KILLBOX</div>
           <div className="hidden sm:block text-[11px] uppercase tracking-wider text-muted-foreground">
-            {symbol} · forward dealer positioning
+            {symbol} · dealer positioning (model)
           </div>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -284,7 +284,7 @@ function StabilityGauge({
   // 0 = vol expansion / dealer short gamma below spot, 1 = pinning / dealer long
   const pct = stability * 100;
   const regime =
-    stability > 0.65 ? "PINNING" : stability < 0.35 ? "VOL EXPANSION" : "NEUTRAL";
+    stability > 0.65 ? "long-γ near spot" : stability < 0.35 ? "short-γ near spot" : "mixed";
   const regimeColor =
     stability > 0.65 ? LONG_COLOR : stability < 0.35 ? SHORT_COLOR : SPOT_LINE;
 
@@ -307,7 +307,7 @@ function StabilityGauge({
           </span>
         </div>
         <div className="font-mono text-xs tabular-nums text-muted-foreground">
-          expected range: <span className="text-foreground">{range}</span>
+          wall-to-wall range: <span className="text-foreground">{range}</span>
         </div>
       </div>
       <div className="relative h-2 w-full overflow-hidden rounded bg-background">
@@ -325,8 +325,11 @@ function StabilityGauge({
         />
       </div>
       <div className="flex justify-between text-[11px] text-muted-foreground mt-0.5">
-        <span>vol expansion</span>
-        <span>pinning</span>
+        <span>short-γ near spot</span>
+        <span>long-γ near spot</span>
+      </div>
+      <div className="mt-1 text-[11px] text-muted-foreground" data-testid="killbox-dealer-assumption">
+        Dealer side is assumed (long every call, short every put), not observed. A heuristic read of positioning, not a forecast or advice.
       </div>
     </div>
   );
@@ -425,7 +428,7 @@ function ForwardChart({
           return (
             <g>
               <line x1={labelW} y1={y} x2={wrapW - 12} y2={y} stroke={SPOT_LINE} strokeWidth="1" strokeDasharray="3,3" />
-              <text x={labelW + 4} y={y - 3} fill={SPOT_LINE} fontSize="10" fontFamily="ui-monospace, monospace">
+              <text x={labelW + 4} y={y - 3} fill={SPOT_LINE} fontSize="11" fontFamily="ui-monospace, monospace">
                 spot {spot.toFixed(0)}
               </text>
             </g>
@@ -440,7 +443,7 @@ function ForwardChart({
           return (
             <g>
               <line x1={labelW} y1={y} x2={wrapW - 12} y2={y} stroke={CALL_WALL} strokeWidth="1" strokeDasharray="2,4" opacity="0.55" />
-              <text x={wrapW - 14} y={y - 2} fill={CALL_WALL} fontSize="10" fontFamily="ui-monospace, monospace" textAnchor="end">
+              <text x={wrapW - 14} y={y - 2} fill={CALL_WALL} fontSize="11" fontFamily="ui-monospace, monospace" textAnchor="end">
                 call wall
               </text>
             </g>
@@ -455,7 +458,7 @@ function ForwardChart({
           return (
             <g>
               <line x1={labelW} y1={y} x2={wrapW - 12} y2={y} stroke={PUT_WALL} strokeWidth="1" strokeDasharray="2,4" opacity="0.55" />
-              <text x={wrapW - 14} y={y - 2} fill={PUT_WALL} fontSize="10" fontFamily="ui-monospace, monospace" textAnchor="end">
+              <text x={wrapW - 14} y={y - 2} fill={PUT_WALL} fontSize="11" fontFamily="ui-monospace, monospace" textAnchor="end">
                 put wall
               </text>
             </g>
@@ -493,7 +496,7 @@ function ForwardChart({
                 x={labelW - 6}
                 y={y + rowH / 2 + 3}
                 fill={isHover ? "#fff" : "rgba(200,210,225,0.9)"}
-                fontSize="10"
+                fontSize="11"
                 fontFamily="ui-monospace, monospace"
                 textAnchor="end"
                 fontWeight={isHover ? "bold" : "normal"}
@@ -506,7 +509,7 @@ function ForwardChart({
                   x={isPos ? x + 4 : x + w - 4}
                   y={y + rowH / 2 + 3}
                   fill="rgba(0,0,0,0.7)"
-                  fontSize="10"
+                  fontSize="11"
                   fontFamily="ui-monospace, monospace"
                   fontWeight="bold"
                   textAnchor={isPos ? "start" : "end"}

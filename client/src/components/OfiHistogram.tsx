@@ -140,9 +140,15 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
     : data.trend === "BEARISH" ? "border-rose-500/40 bg-rose-500/10 text-rose-300"
     : "border-border/40 text-muted-foreground";
 
+  // "ACCELERATING" compares the 5m sum with a third of the 15m sum, so with a
+  // NEUTRAL trend (15m sum near zero) it fires on noise. Only show it when the
+  // trend has a sign and the 15m sum clears a small absolute floor (shares).
+  const ACCEL_FLOOR_SHARES = 10_000;
+  const accelShown: "ACCELERATING" | "DECELERATING" | "steady" =
+    data.trend !== "NEUTRAL" && Math.abs(data.slope15m) > ACCEL_FLOOR_SHARES ? data.acceleration === "FLAT" ? "steady" : data.acceleration : "steady";
   const accelColor =
-    data.acceleration === "ACCELERATING" ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-300"
-    : data.acceleration === "DECELERATING" ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
+    accelShown === "ACCELERATING" ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-300"
+    : accelShown === "DECELERATING" ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
     : "border-border/40 text-muted-foreground";
 
   const TrendIcon = data.trend === "BULLISH" ? TrendingUp
@@ -161,7 +167,7 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
   return (
     <div className="rounded-md border border-border/60 bg-card/40 p-2.5" data-testid="ofi-histogram">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground" title={data.methodNote ?? SIGNED_TICK_VOLUME_NOTE} data-testid="ofi-method-label">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground" data-testid="ofi-method-label">
           {data.methodLabel ?? "Signed tick volume · 1m (SPY proxy)"}
         </span>
         <EdgeInfo id="order-flow" className="h-6 w-6" />
@@ -177,8 +183,8 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
             <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] font-mono uppercase tracking-wider ${trendColor}`}>
               <TrendIcon className="h-2.5 w-2.5" /> {data.trend}
             </span>
-            <span className={`rounded-full border px-1.5 py-0.5 text-[11px] font-mono uppercase tracking-wider ${accelColor}`}>
-              {data.acceleration}
+            <span className={`rounded-full border px-1.5 py-0.5 text-[11px] font-mono uppercase tracking-wider ${accelColor}`} data-testid="ofi-acceleration">
+              {accelShown}
             </span>
             <span className="ml-auto font-mono text-[11px] text-muted-foreground">
               15m {fmtVol(data.slope15m)} · 5m {fmtVol(data.slope5m)}
@@ -195,6 +201,9 @@ export default function OfiHistogram({ compact = false }: { compact?: boolean } 
                 : `trend after 15 bars (${data.bars.length} so far)`}
           </span>
         )}
+      </div>
+      <div className="mb-1.5 text-[10px] leading-snug text-muted-foreground/80" data-testid="ofi-method-note">
+        {data.methodNote ?? SIGNED_TICK_VOLUME_NOTE}
       </div>
       <ResponsiveContainer width="100%" height={height}>
         <ComposedChart data={chartData} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>

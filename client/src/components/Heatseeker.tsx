@@ -41,6 +41,7 @@ import {
 import { Activity, AlertTriangle, Crosshair, Flame, Target, TrendingDown, TrendingUp } from "lucide-react";
 import LiveOdteTracker from "./LiveOdteTracker";
 import DepthSkewFlow from "./DepthSkewFlow";
+import UnavailablePanel from "./UnavailablePanel";
 import OdteContractChart from "./OdteContractChart";
 import { friendlyError } from "@/lib/friendlyError";
 
@@ -271,7 +272,7 @@ export default function Heatseeker() {
             key={p}
             variant={symbol === p ? "default" : "ghost"}
             size="sm"
-            className="h-6 px-2 text-[11px] font-mono"
+            className="h-11 px-3 text-[11px] font-mono lg:h-6 lg:px-2"
             onClick={() => setSymbol(p)}
             data-testid={`btn-heatseeker-symbol-${p}`}
           >
@@ -287,7 +288,7 @@ export default function Heatseeker() {
         }}
         onBlur={commitDraft}
         placeholder="custom…"
-        className="h-6 w-24 px-2 font-mono text-[11px] uppercase placeholder:normal-case"
+        className="h-11 w-24 px-2 font-mono text-[11px] uppercase placeholder:normal-case lg:h-6"
         data-testid="input-heatseeker-symbol"
       />
       {!PRESETS.includes(symbol as any) && (
@@ -311,7 +312,7 @@ export default function Heatseeker() {
         <Button
           variant={pickedExpiry === null ? "default" : "ghost"}
           size="sm"
-          className="h-6 px-2 text-[11px] font-mono"
+          className="h-11 px-3 text-[11px] font-mono lg:h-6 lg:px-2"
           onClick={() => setPickedExpiry(null)}
           data-testid="btn-expiry-auto"
           title="Nearest expiry (0DTE if available today)"
@@ -323,7 +324,7 @@ export default function Heatseeker() {
             key={q.date}
             variant={pickedExpiry === q.date ? "default" : "ghost"}
             size="sm"
-            className="h-6 px-2 text-[11px] font-mono"
+            className="h-11 px-3 text-[11px] font-mono lg:h-6 lg:px-2"
             onClick={() => setPickedExpiry(q.date)}
             data-testid={`btn-expiry-${q.date}`}
             title={q.date}
@@ -340,7 +341,7 @@ export default function Heatseeker() {
           value={pickedExpiry ?? ""}
           onChange={(e) => setPickedExpiry(e.target.value || null)}
           data-testid="select-expiry-custom"
-          className="h-6 rounded-md border border-border/60 bg-background px-2 font-mono text-[11px] text-foreground"
+          className="h-11 rounded-md border border-border/60 bg-background px-2 font-mono text-[11px] text-foreground lg:h-6"
           title="Pick any expiry from the chain"
         >
           <option value="">custom…</option>
@@ -419,6 +420,23 @@ export default function Heatseeker() {
             </div>
           </CardContent>
         </Card>
+      </div>
+    );
+  }
+
+  // Server heatseeker.ts: dataState "unavailable" (no chain / no expiry) ships
+  // empty strikes and null totals with a reason. Say why instead of drawing an
+  // empty grid.
+  if (data.dataState === "unavailable" || (data.strikes?.length ?? 0) === 0) {
+    return (
+      <div className="space-y-4">
+        {header}
+        <UnavailablePanel
+          title={`Heatseeker · ${symbol}`}
+          state={data.dataState ?? "no_data"}
+          reason={data.reason ?? `no strikes returned for ${symbol}${data.expiry ? ` ${data.expiry}` : ""}`}
+          testId="heatseeker-unavailable"
+        />
       </div>
     );
   }
@@ -690,6 +708,9 @@ function PivotBandsLadder({ bands, spot, expiry, dte, degraded }: { bands: Pivot
 function HeatseekerView({ data }: { data: HeatseekerData }) {
   const { strikes, stickyZones, totals, spot, expiry, dte, symbol, asOf } = data;
   const pivotBands = data.pivotBands ?? [];
+  // The live 0DTE tracker covers $SPX's nearest expiry only (ATM ±20 strikes).
+  const isNearestExpiry = (data.availableExpiries?.[0]?.date ?? expiry) === expiry;
+  const trackerCovers = symbol === "$SPX" && isNearestExpiry;
 
   // Dead-chain guard: overnight (or feed-down) the fresh 0DTE expiry has zero
   // OI and zero volume everywhere, so every exposure and sticky score is 0.
@@ -815,7 +836,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
             </div>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
               <Stat
-                label={totals.gexSignAtSpot === null && totals.netGex != null ? "Net GEX (expiry, $/1%) · no material γ at spot" : "Net GEX (expiry, $/1%)"}
+                label={totals.gexSignAtSpot === null && totals.netGex != null ? "Net GEX (full expiry, $ per 1%) · no material γ at spot" : "Net GEX (full expiry, $ per 1%)"}
                 value={totals.netGex != null ? fmtM(totals.netGex) : "—"}
                 positive={totals.netGex != null ? totals.netGex >= 0 : null}
               />
@@ -824,8 +845,8 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                 value={totals.netDex != null && totals.dexState !== "unavailable" ? fmtM(totals.netDex) : "—"}
                 positive={totals.netDex != null && totals.dexState !== "unavailable" ? totals.netDex >= 0 : null}
               />
-              <Stat label="Net Vanna" value={totals.netVanna != null ? fmtM(totals.netVanna) : "—"} positive={totals.netVanna != null ? totals.netVanna >= 0 : null} />
-              <Stat label="Net Charm" value={totals.netCharm != null ? fmtM(totals.netCharm) : "—"} positive={totals.netCharm != null ? totals.netCharm >= 0 : null} />
+              <Stat label="Net Vanna ($ per vol pt, ±window)" value={totals.netVanna != null ? fmtM(totals.netVanna) : "—"} positive={totals.netVanna != null ? totals.netVanna >= 0 : null} />
+              <Stat label="Net Charm ($ per day, ±window)" value={totals.netCharm != null ? fmtM(totals.netCharm) : "—"} positive={totals.netCharm != null ? totals.netCharm >= 0 : null} />
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs">
               {totals.callWall !== null && (
@@ -1091,8 +1112,10 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
             />
             {!c && (
               <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-400">
-                Strike {selected.strike.toFixed(0)} is outside the tracker’s ATM ±20 window — live tick history
-                will begin collecting once price drifts into range. Quote snapshot still reflects the current chain.
+                {trackerCovers
+                  ? <>Strike {selected.strike.toFixed(0)} is outside the tracker’s ATM ±20 window — live tick history
+                    will begin collecting once price drifts into range. Quote snapshot still reflects the current chain.</>
+                  : <>Strike {selected.strike.toFixed(0)} is not in the 0DTE tracker (it covers $SPX nearest expiry only). Quote snapshot still reflects the current chain.</>}
               </div>
             )}
           </div>
@@ -1100,7 +1123,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
       })()}
 
       {/* ── Depth · Skew · Flow — 3 synchronized real-time views ─────── */}
-      <DepthSkewFlow />
+      <DepthSkewFlow symbol={symbol} expiry={isNearestExpiry ? null : expiry} />
 
       {/* ── Live 0DTE tracker — directly under the Greek heatmap ───────── */}
       <LiveOdteTracker />
@@ -1234,7 +1257,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
           </CardTitle>
           <div className="text-xs text-muted-foreground">
             Score = 50% |GEX| + 30% OI density + 20% charm acceleration.
-            Higher rank = stronger price magnet for today's action.
+            Higher rank = largest exposure concentration.
           </div>
         </CardHeader>
         <CardContent>

@@ -150,7 +150,7 @@ export default function RegimePanel() {
       {/* Reactive sector web — the new "market constellation" view */}
       <SectorWeb />
 
-      {/* Prime Underperformer Watcher — today's bounce candidates */}
+      {/* Prime Underperformer Watcher — largest relative drawdowns */}
       <ErrorBoundary label="Prime Underperformer Watcher">
         <UnderperformerWatcher />
       </ErrorBoundary>
@@ -234,7 +234,7 @@ export default function RegimePanel() {
           <div>
             <h3 className="text-sm font-semibold">The four axes</h3>
             <p className="text-xs text-muted-foreground">
-              Click any axis to expand. Leaders show where money is flowing · laggards flag catch-up buy candidates.
+              Click any axis to expand. Leaders show where money is flowing · laggards (relative) show where it is not.
             </p>
           </div>
         </div>
@@ -598,11 +598,11 @@ function CatchupStrip({
           <div>
             <CardTitle className="flex items-center gap-2 text-sm font-semibold text-amber-400">
               <Zap className="h-4 w-4" />
-              Catch-up candidates
+              Largest relative drawdowns
             </CardTitle>
             <p className="mt-0.5 text-[11px] text-muted-foreground">
               Laggard ETFs with oversold RSI, below 20DMA, and a wide return gap vs their cohort leader.
-              Higher score = better mean-reversion setup.
+              Higher score = wider gap and deeper oversold read (hand-set score, not fit to outcomes).
             </p>
           </div>
           <Badge variant="outline" className="font-mono text-[11px] text-amber-400">
@@ -613,7 +613,7 @@ function CatchupStrip({
       <CardContent>
         {top.length === 0 ? (
           <div className="rounded-md border border-dashed border-border p-5 text-center text-xs text-muted-foreground">
-            No qualifying catch-up setups right now. All laggards are either too trend-weak or not oversold enough.
+            No laggard currently meets the gap and oversold rules.
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-3">
