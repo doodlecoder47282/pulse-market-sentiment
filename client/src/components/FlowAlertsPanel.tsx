@@ -16,20 +16,8 @@ import TrackButton from "@/components/signals/TrackButton";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type FlowAlertType = "UNUSUAL_VOL" | "BLOCK" | "MAGNET" | "PC_SHIFT" | "WALL";
-export type AlertSeverity = "low" | "med" | "high";
-
-export interface FlowAlert {
-  id: string;
-  ts: number;
-  type: FlowAlertType;
-  symbol: string;
-  strike?: number;
-  expiry?: string;
-  side?: "C" | "P";
-  message: string;
-  severity: AlertSeverity;
-}
+export type { FlowAlert, FlowAlertType, AlertSeverity } from "@shared/flowAlerts";
+import type { FlowAlert, FlowAlertType, AlertSeverity } from "@shared/flowAlerts";
 
 interface SchwabStatus {
   connected: boolean;
@@ -54,10 +42,8 @@ interface OptionContract {
 }
 
 // ─── Alert computation ────────────────────────────────────────────────────────
-
-function generateAlertId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
+// Pure helpers (deterministic ids, merge-on-poll) live in shared/flowAlerts.ts so they are unit-tested.
+import { alertKey, mergeAlerts } from "@shared/flowAlerts";
 
 function computeAlerts(
   prevChainRef: Record<string, Record<string, OptionContract[]>> | null,
@@ -94,7 +80,7 @@ function computeAlerts(
     const oi = callStats.strikeOI[strikeStr] ?? 0;
     if (oi > 0 && vol >= 3 * oi && vol >= 500) {
       alerts.push({
-        id: generateAlertId(),
+        id: alertKey("UNUSUAL_VOL", symbol, parseFloat(strikeStr), "C"),
         ts: now,
         type: "UNUSUAL_VOL",
         symbol,
@@ -109,7 +95,7 @@ function computeAlerts(
     const oi = putStats.strikeOI[strikeStr] ?? 0;
     if (oi > 0 && vol >= 3 * oi && vol >= 500) {
       alerts.push({
-        id: generateAlertId(),
+        id: alertKey("UNUSUAL_VOL", symbol, parseFloat(strikeStr), "P"),
         ts: now,
         type: "UNUSUAL_VOL",
         symbol,
@@ -132,7 +118,7 @@ function computeAlerts(
     if (totalVol >= 2000) {
       const dominant: "C" | "P" = callVol >= putVol ? "C" : "P";
       alerts.push({
-        id: generateAlertId(),
+        id: alertKey("BLOCK", symbol, parseFloat(strikeStr), dominant),
         ts: now,
         type: "BLOCK",
         symbol,
@@ -150,7 +136,7 @@ function computeAlerts(
     if (shift > 0.2) {
       const direction = currentPcr > prevPcr ? "increasing (bearish shift)" : "decreasing (bullish shift)";
       alerts.push({
-        id: generateAlertId(),
+        id: alertKey("PC_SHIFT", symbol, undefined, undefined),
         ts: now,
         type: "PC_SHIFT",
         symbol,
@@ -165,13 +151,13 @@ function computeAlerts(
   for (const [strikeStr, oi] of Object.entries(callStats.strikeOI)) {
     if (oi >= 10000) {
       alerts.push({
-        id: generateAlertId(),
+        id: alertKey("WALL", symbol, parseFloat(strikeStr), "C"),
         ts: now,
         type: "WALL",
         symbol,
         strike: parseFloat(strikeStr),
         side: "C",
-        message: `Call wall building at ${strikeStr} — ${oi.toLocaleString()} open interest`,
+        message: `Call open interest wall at ${strikeStr} — ${oi.toLocaleString()} contracts (OI is the prior close; it does not change intraday)`,
         severity: oi >= 50000 ? "high" : oi >= 25000 ? "med" : "low",
       });
     }
@@ -179,13 +165,13 @@ function computeAlerts(
   for (const [strikeStr, oi] of Object.entries(putStats.strikeOI)) {
     if (oi >= 10000) {
       alerts.push({
-        id: generateAlertId(),
+        id: alertKey("WALL", symbol, parseFloat(strikeStr), "P"),
         ts: now,
         type: "WALL",
         symbol,
         strike: parseFloat(strikeStr),
         side: "P",
-        message: `Put wall building at ${strikeStr} — ${oi.toLocaleString()} open interest`,
+        message: `Put open interest wall at ${strikeStr} — ${oi.toLocaleString()} contracts (OI is the prior close; it does not change intraday)`,
         severity: oi >= 50000 ? "high" : oi >= 25000 ? "med" : "low",
       });
     }
@@ -379,12 +365,8 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
       currentPcr,
     );
     if (newAlerts.length > 0) {
-      setAlerts((prev) => {
-        // Prepend new, keep max 30, avoid exact duplicates
-        const existingIds = new Set(prev.map((a) => a.id));
-        const fresh = newAlerts.filter((a) => !existingIds.has(a.id));
-        return [...fresh, ...prev].slice(0, 30);
-      });
+      // Same condition -> same row, updated in place; only a new condition is a new row.
+      setAlerts((prev) => mergeAlerts(prev, newAlerts));
     }
     prevPcrRef.current = currentPcr;
     prevChainRef.current = chainData;

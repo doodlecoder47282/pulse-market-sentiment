@@ -68,7 +68,7 @@ export type AccuracySummary = {
   gradedPredictions: number; // had realized data
   abstained: number;
   // Directional
-  directionalHitRate: number; // 0..1 over non-abstain
+  directionalHitRate: number | null; // 0..1 over non-abstain; null when nothing was called (not 0%)
   directionalNCalls: number;
   bullHitRate: number | null;
   bullN: number;
@@ -96,7 +96,8 @@ export type AccuracySummary = {
     last30: { hitRate: number | null; brier: number | null; n: number };
   };
   // Sparkline-friendly: per-prediction trail (newest last) of running hitRate
-  trail: { ts: number; rollingHitRate: number; brier: number | null }[];
+  /** Running hit rate over the last 7 graded ROWS (not days); null where the window has no call. */
+  trail: { ts: number; rollingHitRate: number | null; brier: number | null }[];
   // Meta
   oldestPrediction: string | null;
   newestPrediction: string | null;
@@ -247,8 +248,14 @@ export function independentDailyRows<T extends { horizon: string; sessionDate: s
   return Array.from(first.values()).sort((a, b) => a.ts - b.ts);
 }
 
-function rollingWindow(graded: GradedEntry[], n: number): { hitRate: number | null; brier: number | null; n: number } {
-  const window = graded.slice(-n);
+/** The last `n` SESSION DATES of graded rows (several snapshots can share a
+ *  session, so counting rows would make "7" less than a trading week). `n` in
+ *  the result is the number of called rows inside those sessions; `sessions`
+ *  is how many session dates the window actually covered. */
+export function rollingWindow(graded: GradedEntry[], n: number): { hitRate: number | null; brier: number | null; n: number; sessions: number } {
+  const dates = Array.from(new Set(graded.map((g) => g.sessionDate))).sort();
+  const keep = new Set(dates.slice(-n));
+  const window = graded.filter((g) => keep.has(g.sessionDate));
   const calls = window.filter((g) => g.callCorrect !== null);
   const hits = calls.filter((g) => g.callCorrect === true).length;
   const briers = window.filter((g) => g.brier !== null).map((g) => g.brier as number);
@@ -256,6 +263,7 @@ function rollingWindow(graded: GradedEntry[], n: number): { hitRate: number | nu
     hitRate: calls.length ? hits / calls.length : null,
     brier: briers.length ? briers.reduce((a, b) => a + b, 0) / briers.length : null,
     n: calls.length,
+    sessions: keep.size,
   };
 }
 
@@ -266,7 +274,7 @@ export async function buildAccuracySummary(symbol = "^GSPC"): Promise<AccuracySu
       totalPredictions: 0,
       gradedPredictions: 0,
       abstained: 0,
-      directionalHitRate: 0,
+      directionalHitRate: null,
       directionalNCalls: 0,
       bullHitRate: null,
       bullN: 0,
@@ -344,7 +352,7 @@ export async function buildAccuracySummary(symbol = "^GSPC"): Promise<AccuracySu
   const reliability = reliabilityCurve(relPreds, relOutcomes, { event: "SPX next-session close > +0.05% vs the snapshot spot (pUp); one daily call per session" });
 
   // Rolling trail: running hit rate at each point (smoothed over last 7)
-  const trail: { ts: number; rollingHitRate: number; brier: number | null }[] = [];
+  const trail: { ts: number; rollingHitRate: number | null; brier: number | null }[] = [];
   for (let i = 0; i < graded.length; i++) {
     const window = graded.slice(Math.max(0, i - 6), i + 1);
     const w = window.filter((g) => g.callCorrect !== null);
@@ -352,7 +360,7 @@ export async function buildAccuracySummary(symbol = "^GSPC"): Promise<AccuracySu
     const bs = window.filter((g) => g.brier !== null).map((g) => g.brier as number);
     trail.push({
       ts: graded[i].ts,
-      rollingHitRate: w.length ? wHits / w.length : 0,
+      rollingHitRate: w.length ? wHits / w.length : null,
       brier: bs.length ? bs.reduce((a, b) => a + b, 0) / bs.length : null,
     });
   }
@@ -361,7 +369,7 @@ export async function buildAccuracySummary(symbol = "^GSPC"): Promise<AccuracySu
     totalPredictions: preds.length,
     gradedPredictions: gradedWithRealized.length,
     abstained,
-    directionalHitRate: calls.length ? hits / calls.length : 0,
+    directionalHitRate: calls.length ? hits / calls.length : null,
     directionalNCalls: calls.length,
     bullHitRate: bull.length ? bull.filter((g) => g.callCorrect === true).length / bull.length : null,
     bullN: bull.length,

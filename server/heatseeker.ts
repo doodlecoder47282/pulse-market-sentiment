@@ -374,8 +374,12 @@ export function buildHeatseeker(
   // 4. Totals, walls, zero gamma
   let callWall: number | null = null;
   let putWall: number | null = null;
-  let callWallVal = -Infinity;
-  let putWallVal = Infinity;
+  // Walls are signed: the call wall is the largest POSITIVE net exposure at
+  // or above spot, the put wall the most NEGATIVE at or below. Starting at
+  // -Infinity / +Infinity let a put-heavy expiry name its least-negative
+  // strike above spot a "call wall"; starting at 0 leaves it null.
+  let callWallVal = 0;
+  let putWallVal = 0;
 
   for (const s of strikes) {
     if (s.strike >= spot && s.netGex > callWallVal) {
