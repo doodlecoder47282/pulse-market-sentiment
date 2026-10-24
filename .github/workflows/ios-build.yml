@@ -166,6 +166,19 @@ jobs:
         run: |
           mkdir -p out/Batcave-iOS
           rsync -a --exclude 'build' --exclude 'DerivedData' --exclude 'xcuserdata' ios/ out/Batcave-iOS/ios/
+          # CapApp-SPM/Package.swift points at ../../../node_modules/@capacitor/<plugin> for the
+          # Capacitor plugins (local Swift packages). node_modules is not shipped, so copy just
+          # those packages to the same relative place; without them Xcode reports
+          # "Missing package product 'CapApp-SPM'".
+          for plugin in $(node -e 'const p=require("./package.json");for(const d of Object.keys({...p.dependencies,...p.devDependencies}))if(/^@capacitor\//.test(d)&&!["@capacitor/core","@capacitor/cli","@capacitor/ios"].includes(d))console.log(d)'); do
+            test -f "node_modules/$plugin/Package.swift" || { echo "no Package.swift in $plugin"; exit 1; }
+            mkdir -p "out/Batcave-iOS/node_modules/$plugin"
+            rsync -a --exclude 'android' --exclude 'dist' --exclude 'src' "node_modules/$plugin/" "out/Batcave-iOS/node_modules/$plugin/"
+            echo "bundled $plugin" | tee -a reports/05-package.log
+          done
+          grep -o 'path: "[^"]*"' ios/App/CapApp-SPM/Package.swift | sed 's/path: "\(.*\)"/\1/' | while read -r rel; do
+            test -f "out/Batcave-iOS/ios/App/CapApp-SPM/$rel/Package.swift" || { echo "Package.swift dependency $rel is not in the zip"; exit 1; }
+          done
           cp capacitor.config.json out/Batcave-iOS/
           cp .github/ios-OPEN-ME.txt out/Batcave-iOS/OPEN-ME.txt
           echo "Built from ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7} on $(date -u +%Y-%m-%dT%H:%MZ) with $(xcodebuild -version | head -1)" >> out/Batcave-iOS/OPEN-ME.txt
