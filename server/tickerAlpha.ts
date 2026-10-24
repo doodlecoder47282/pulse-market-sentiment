@@ -292,9 +292,9 @@ interface PerTickerGamma {
   spot: number | null;
   totalGex: number;
   callWall: number | null;
-  callWallGex: number;
+  callWallGex: number | null;
   putWall: number | null;
-  putWallGex: number;
+  putWallGex: number | null;
   zeroGamma: number | null;
   maxPain: number | null;
   pcrOi: number | null;
