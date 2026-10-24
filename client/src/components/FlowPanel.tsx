@@ -340,7 +340,7 @@ function FlowTile({ tick }: { tick: FlowTicker }) {
         <span className="text-[11px] font-semibold tracking-wider">{tick.label}</span>
         {priceChange != null && (
           <span className={`font-mono text-[11px] tabular-nums ${priceChange > 0 ? "text-emerald-400" : priceChange < 0 ? "text-rose-400" : "text-muted-foreground"}`}>
-            {priceChange > 0 ? "+" : ""}{priceChange.toFixed(2)}%
+            <span className="text-muted-foreground">day </span>{priceChange > 0 ? "+" : ""}{priceChange.toFixed(2)}%
           </span>
         )}
       </div>
@@ -586,10 +586,13 @@ function IntradayVolChart({ ticker, estimated, pcrRead }: { ticker: IntradayFlow
           tone="warn"
         />
         <StatBox
-          label="Skew momentum"
+          label="Net-Δ momentum"
           value={`${stats.skewMomentum >= 0 ? "+" : ""}${fmtVol(stats.skewMomentum)}`}
           tone={stats.skewMomentum >= 0 ? "up" : "down"}
         />
+      </div>
+      <div className="text-[10px] leading-snug text-muted-foreground/80" data-testid="flow-stats-note">
+        Dominance = |net Δ| as a share of call + put delta volume this session. Net-Δ momentum = mean net Δ of the last 5 buckets minus the 5 before; volume units, not IV skew.
       </div>
       <div className="grid grid-cols-3 gap-2">
         <StatBox label={`Total Calls${volNote}`} value={ticker.currentCallVol == null ? "—" : fmtVol(ticker.currentCallVol)} tone="up" />

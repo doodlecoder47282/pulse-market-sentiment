@@ -99,13 +99,18 @@ function fmtDollars(n: number): string {
 }
 
 // ─── Main component ─────────────────────────────────────────────────────────
-export default function DepthSkewFlow() {
+export default function DepthSkewFlow({ symbol, expiry }: { symbol?: string; expiry?: string | null } = {}) {
   const [mode, setMode] = useState<Mode>("depth");
 
+  // Follow the parent's ticker/expiry when given (same query key shape as
+  // Heatseeker.tsx so the chain is fetched once); default stays the legacy call.
   const heat = useQuery<HeatseekerPayload>({
-    queryKey: ["/api/heatseeker"],
+    queryKey: symbol ? ["/api/heatseeker", symbol, expiry ?? "nearest"] : ["/api/heatseeker"],
     queryFn: async () => {
-      const r = await apiRequest("GET", "/api/heatseeker");
+      const qs = new URLSearchParams();
+      if (symbol) qs.set("symbol", symbol);
+      if (symbol && expiry) qs.set("expiry", expiry);
+      const r = await apiRequest("GET", `/api/heatseeker${qs.toString() ? `?${qs.toString()}` : ""}`);
       return r.json();
     },
     refetchInterval: 5_000,
@@ -125,6 +130,8 @@ export default function DepthSkewFlow() {
 
   const spot = heat.data?.spot ?? null;
   const strikes = heat.data?.strikes ?? [];
+  // "0DTE" only when the payload says so; otherwise print the real DTE.
+  const dteLabel = heat.data?.dte == null ? "" : heat.data.dte === 0 ? "0DTE" : `${heat.data.dte}DTE`;
 
   // ─── Depth data: bipolar OI per strike (calls positive, puts negative) ──
   const depthData = useMemo(() => {
@@ -261,7 +268,7 @@ export default function DepthSkewFlow() {
           <div>
             <CardTitle className="flex items-center gap-2 text-base">
               {modeMeta[mode].icon}
-              {modeMeta[mode].label} · {heat.data?.symbol} 0DTE
+              {modeMeta[mode].label} · {heat.data?.symbol} {mode === "flow" ? "0DTE tracker ($SPX nearest expiry)" : dteLabel}
               <EdgeInfo id="depth-skew-flow" />
             </CardTitle>
             <p className="mt-0.5 text-xs text-muted-foreground">
@@ -320,7 +327,7 @@ export default function DepthSkewFlow() {
                 tone="emerald"
               />
               <Stat
-                label="ATM smirk (P−C)"
+                label="ATM smirk (P−C, pp = percentage points)"
                 value={atmSkew != null ? `${atmSkew.toFixed(2)}pp` : "—"}
                 tone={
                   atmSkew == null
@@ -535,7 +542,7 @@ export default function DepthSkewFlow() {
                 <div className="text-center">
                   <Waves className="mx-auto mb-2 h-8 w-8 opacity-40" />
                   <p>
-                    Monitoring 0DTE flow — no classified tick prints yet.
+                    Monitoring the 0DTE tracker ($SPX nearest expiry) — no classified tick prints yet.
                     <br />
                     <span className="text-xs opacity-70">
                       Buys fire near ask, sells near bid; mid prints are

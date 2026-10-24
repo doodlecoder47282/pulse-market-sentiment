@@ -90,7 +90,7 @@ export default function SetupLogCard() {
                 <div key={r.id} className="rounded bg-muted/10 px-2 py-1.5 text-[11px]" data-testid={`setup-ranked-${r.symbol}`}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span><span className="font-mono text-muted-foreground">#{i + 1}</span> <span className="font-mono font-semibold">{r.symbol}</span> <span className="text-muted-foreground">{r.sector ?? "sector unknown"} · {KIND_TEXT[r.kind] ?? r.kind} · {fmtTime(r.detectedAt)}</span></span>
-                    <span className="font-mono tabular-nums">at {fmtPx(r.spot)} → {fmtPx(r.target)} · inval {fmtPx(r.invalidation)} · R {r.rMultiple == null ? "—" : r.rMultiple.toFixed(2)} · score {r.score.toFixed(2)}</span>
+                    <span className="font-mono tabular-nums">at {fmtPx(r.spot)} → {fmtPx(r.target)} · inval {fmtPx(r.invalidation)} · R (reward/risk) {r.rMultiple == null ? "—" : r.rMultiple.toFixed(2)} · score {r.score.toFixed(2)}</span>
                   </div>
                   <div className="mt-0.5 flex flex-wrap gap-x-3 font-mono text-[10px] text-muted-foreground">
                     {r.margins.map((m) => <span key={m.name} title={MARGIN_TEXT[m.name] ?? m.name}>{MARGIN_TEXT[m.name] ?? m.name} {m.margin.toFixed(1)}x</span>)}
@@ -106,7 +106,7 @@ export default function SetupLogCard() {
                   <div key={`${s.ruleVersion}|${s.kind}`} className="flex flex-wrap items-center justify-between gap-2 rounded bg-muted/10 px-2 py-1 text-[11px]">
                     <span>{KIND_TEXT[s.kind] ?? s.kind} <span className="font-mono text-muted-foreground">{s.ruleVersion}</span></span>
                     <span className="font-mono tabular-nums text-muted-foreground">
-                      {s.positive}/{s.n} positive{s.lo != null ? ` (${(s.lo * 100).toFixed(0)}–${(s.hi! * 100).toFixed(0)}%)` : ""} · mean net {fmtPct(s.meanNetPct)}
+                      {s.positive}/{s.n} positive{s.lo != null ? ` · 95% CI (${(s.lo * 100).toFixed(0)}–${(s.hi! * 100).toFixed(0)}%)` : ""} · mean net {fmtPct(s.meanNetPct)}
                       {!s.sampleReady && <span className="ml-1 text-amber-300">· {s.n} of {d.rules.minSample}: counts only</span>}
                     </span>
                   </div>
@@ -136,7 +136,7 @@ export default function SetupLogCard() {
                 {d.recent.map((r) => (
                   <div key={r.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded bg-muted/10 px-2 py-1 text-[11px]">
                     <span className="font-mono font-semibold">{r.symbol}</span>
-                    <span className="truncate text-muted-foreground">{KIND_TEXT[r.kind] ?? r.kind} at {fmtPx(r.spot)} · target {fmtPx(r.target)} · invalidation {fmtPx(r.invalidation)} · {fmtTime(r.detectedAt)}</span>
+                    <span className="whitespace-normal break-words text-muted-foreground">{KIND_TEXT[r.kind] ?? r.kind} at {fmtPx(r.spot)} · target {fmtPx(r.target)} · invalidation {fmtPx(r.invalidation)} · {fmtTime(r.detectedAt)}</span>
                     <span className={`font-mono tabular-nums ${STATUS_CLS[r.status] ?? ""}`}>{r.status}{r.netPct != null ? ` ${fmtPct(r.netPct)}` : ""}</span>
                   </div>
                 ))}

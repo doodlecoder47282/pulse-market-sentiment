@@ -89,11 +89,13 @@ function fmtCell(n: number): string {
 }
 
 function fmtNum(n: number): string {
+  // Dollar-prefixed like the cells (fmtCell) so the tooltip reads in the same unit.
+  const sign = n < 0 ? "-" : "";
   const abs = Math.abs(n);
-  if (abs >= 1e9) return (n / 1e9).toFixed(2) + "B";
-  if (abs >= 1e6) return (n / 1e6).toFixed(2) + "M";
-  if (abs >= 1e3) return (n / 1e3).toFixed(1) + "k";
-  return n.toFixed(1);
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1)}k`;
+  return `${sign}$${abs.toFixed(1)}`;
 }
 
 export default function ThermalHeatmap() {
@@ -228,7 +230,7 @@ export default function ThermalHeatmap() {
       if (Math.abs(c.exposure) >= 1e-9) {
         const t = Math.min(1, Math.abs(c.exposure) / (norm || 1));
         const hot = Math.pow(t, 0.55) > 0.45;
-        ctx.font = isExtreme ? "bold 10px ui-monospace, monospace" : "10px ui-monospace, monospace";
+        ctx.font = isExtreme ? "bold 11px ui-monospace, monospace" : "11px ui-monospace, monospace";
         ctx.fillStyle = isExtreme
           ? "rgba(255,255,255,0.98)"
           : hot
@@ -264,7 +266,7 @@ export default function ThermalHeatmap() {
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.fillStyle = "rgba(250, 204, 21, 0.95)";
-      ctx.font = "10px ui-monospace, monospace";
+      ctx.font = "11px ui-monospace, monospace";
       ctx.textAlign = "left";
       ctx.fillText(`spot ${data.spot.toFixed(0)}`, marginLeft + grid.nExps * grid.cellW + 4, y + 3);
     }
@@ -284,7 +286,7 @@ export default function ThermalHeatmap() {
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.fillStyle = "rgba(139, 92, 246, 0.9)";
-        ctx.font = "10px ui-monospace, monospace";
+        ctx.font = "11px ui-monospace, monospace";
         ctx.fillText(`flip ${flip.toFixed(0)}`, marginLeft + grid.nExps * grid.cellW + 4, y + 3);
       }
     }
@@ -292,7 +294,7 @@ export default function ThermalHeatmap() {
     // Strike labels (Y axis — every row at 18px pitch; every 2nd beyond 40 strikes)
     const strikeStep = grid.nStrikes > 40 ? 2 : 1;
     ctx.fillStyle = "rgba(203,213,225,0.85)";
-    ctx.font = "10px ui-monospace, monospace";
+    ctx.font = "11px ui-monospace, monospace";
     ctx.textAlign = "right";
     for (let i = 0; i < grid.nStrikes; i++) {
       if (i % strikeStep !== 0) continue;
@@ -306,7 +308,7 @@ export default function ThermalHeatmap() {
     // date is shaded to its own scale (so a dim far date is not read as heavy).
     ctx.fillStyle = "rgba(148,163,184,0.75)";
     ctx.textAlign = "center";
-    ctx.font = "10px ui-monospace, monospace";
+    ctx.font = "11px ui-monospace, monospace";
     for (let j = 0; j < grid.nExps; j++) {
       const exp = data.expiries[j];
       const x = marginLeft + j * grid.cellW + grid.cellW / 2;
@@ -321,7 +323,7 @@ export default function ThermalHeatmap() {
 
     // Title band
     ctx.fillStyle = "rgba(226,232,240,0.85)";
-    ctx.font = "10px ui-monospace, monospace";
+    ctx.font = "11px ui-monospace, monospace";
     ctx.textAlign = "left";
     ctx.fillText(`${greek.toUpperCase()} · strike × expiry · ${scaleMode === "per-date" ? "each date to its own max" : "one scale"} · open interest only`, marginLeft, marginTop - 32);
   }, [data, grid, greek, scaleMode, colMax, viewMode]);

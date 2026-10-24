@@ -3531,8 +3531,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         | "unavailable";
 
       let regime: RegimeKey = "neutral";
+      // "confidence" is the rule tier that matched (how specific the rule was),
+      // not a calibrated probability; the UI labels it "rule tier".
       let confidence: "high" | "medium" | "low" = "low";
-      let headline = "Neutral — no decisive regime signal.";
+      let headline = "Neutral — no regime rule matched.";
       let tier: "bullish" | "bearish" | "neutral" | "warning" = "neutral";
 
       // Missing VIX change is missing, not 0%: NaN fails every rule that needs it.
@@ -3544,35 +3546,35 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         regime = "vol_expansion";
         confidence = "high";
         tier = "warning";
-        headline = `Volatility expansion — VIX backwardation (${vix9d?.toFixed(1)}/${vix?.toFixed(1)}/${vix3m?.toFixed(1)}) + dealers short gamma, expect wider ranges and gap risk.`;
+        headline = `Volatility expansion — VIX backwardation (${vix9d?.toFixed(1)}/${vix?.toFixed(1)}/${vix3m?.toFixed(1)}) + dealers short gamma: dealer hedging adds to moves.`;
       }
       // Gamma squeeze — strong long gamma + GEX rising + VIX falling
       else if (gexRegime === "long_gamma" && absShare > 0.25 && gexTrend === "rising" && vixPct < -1) {
         regime = "gamma_squeeze";
         confidence = "high";
         tier = "bullish";
-        headline = `Gamma squeeze — net GEX rising, dealers deep long gamma (${(gexShare * 100).toFixed(0)}% share), VIX bleeding, drift up into call walls.`;
+        headline = `Gamma squeeze — net GEX rising, dealers deep long gamma (${(gexShare * 100).toFixed(0)}% share), VIX falling: dealer hedging dampens moves.`;
       }
       // Pinning — strong long gamma + contango + low VIX move
       else if (gexRegime === "long_gamma" && absShare > 0.15 && termState === "contango" && Math.abs(vixPct) < 2) {
         regime = "pinning";
         confidence = "medium";
         tier = "neutral";
-        headline = `Pinning mode — dealers long gamma (${(gexShare * 100).toFixed(0)}% share) damping moves, VIX contango steady, expect range trade.`;
+        headline = `Pinning mode — dealers long gamma (${(gexShare * 100).toFixed(0)}% share) VIX contango steady: dealer hedging dampens moves.`;
       }
       // Mean reversion — short gamma + flat term + VIX cooling
       else if (gexRegime === "short_gamma" && termState !== "backwardation" && vixPct < -1) {
         regime = "mean_reversion";
         confidence = "medium";
         tier = "neutral";
-        headline = `Mean reversion — dealers short gamma but VIX cooling, expect chop and fade extremes.`;
+        headline = `Mean reversion — dealers short gamma with VIX cooling: hedging adds to moves while vol is falling.`;
       }
       // Trend continuation — short gamma + GEX trending + VIX bid but not panicking
       else if (gexRegime === "short_gamma" && gexTrend !== "flat" && Math.abs(vixPct) > 1) {
         regime = "trend_continuation";
         confidence = "medium";
         tier = vixPct > 0 ? "bearish" : "bullish";
-        headline = `Trend continuation — dealers short gamma amplifying ${vixPct > 0 ? "downside" : "upside"}, follow the tape until vol structure flips.`;
+        headline = `Trend continuation — dealers short gamma with VIX ${vixPct > 0 ? "rising" : "falling"}: dealer hedging adds to moves.`;
       }
       // Default neutral with detail
       else if (gexRegime !== "unknown" && termState !== "unknown") {
@@ -3581,7 +3583,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         tier = "neutral";
         const gexLabel = gexRegime === "long_gamma" ? "long gamma" : "short gamma";
         const termLabel = termState === "contango" ? "contango" : termState === "backwardation" ? "backwardation" : "flat term";
-        headline = `Neutral — ${gexLabel} (${(gexShare * 100).toFixed(0)}%), VIX ${termLabel}, no decisive edge.`;
+        headline = `Neutral — ${gexLabel} (${(gexShare * 100).toFixed(0)}%), VIX ${termLabel}: ${gexRegime === "long_gamma" ? "dealer hedging dampens moves" : "dealer hedging adds to moves"}, mixed inputs.`;
       }
       // Inputs missing (e.g. Schwab not answering): say so, never default to a neutral read.
       else {

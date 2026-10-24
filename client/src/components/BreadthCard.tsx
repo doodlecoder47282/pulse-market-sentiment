@@ -6,6 +6,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import UnavailablePanel from "./UnavailablePanel";
 import { Badge } from "@/components/ui/badge";
 import { Layers } from "lucide-react";
 
@@ -82,6 +83,9 @@ export default function BreadthCard() {
       </CardHeader>
       <CardContent className="pt-0 space-y-3">
         {q.isLoading && <p className="text-xs text-muted-foreground">loading…</p>}
+        {q.isError && !b && (
+          <UnavailablePanel title="participation breadth" error={q.error} testId="breadth-unavailable" compact />
+        )}
         {b && (
           <>
             <div className="text-xs leading-snug" data-testid="text-breadth-internals">

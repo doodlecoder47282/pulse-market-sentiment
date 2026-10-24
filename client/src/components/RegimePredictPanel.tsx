@@ -315,7 +315,7 @@ export default function RegimePredictPanel() {
               />
               <DriverChip
                 label="γ-flip dist"
-                value={`${data.drivers.gammaFlipProxFrac.toFixed(2)}× EM`}
+                value={`${data.drivers.gammaFlipProxFrac.toFixed(2)}× EM (expected move)`}
               />
               {data.drivers.charmZeroProxFrac != null && (
                 <DriverChip

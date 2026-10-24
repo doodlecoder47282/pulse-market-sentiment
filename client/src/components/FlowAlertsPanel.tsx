@@ -493,6 +493,11 @@ export function FlowAlertsPanel({ symbol, onOpenSettings }: FlowAlertsPanelProps
                 ))}
               </div>
             )}
+            {isConnected && (
+              <div className="text-[10px] leading-snug text-muted-foreground/80" data-testid="flow-alerts-thresholds">
+                fixed thresholds (hand-set, not fit to outcomes): unusual vol = volume at least 3x OI and at least 500 contracts; heavy strike = 2,000+ contracts on one strike; P/C shift = ratio moved more than 0.2 since the last poll; wall = 10,000+ OI on one strike.
+              </div>
+            )}
           </div>
         </CollapsibleContent>
       </div>
