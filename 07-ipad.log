@@ -1,0 +1,644 @@
+++ find build/dd/Build/Products -name App.app -maxdepth 3
+++ head -1
++ APP=build/dd/Build/Products/Debug-iphonesimulator/App.app
++ t 60 xcrun simctl shutdown all
++ perl -e 'alarm shift; exec @ARGV' 60 xcrun simctl shutdown all
++ for want in '"iPad Pro 13-inch"' '"iPad Air 11-inch"' '"iPad mini"'
+++ xcrun simctl list devices available -j
+++ python3 -c '
+import json,sys
+w=sys.argv[1]
+d=json.load(sys.stdin)['\''devices'\'']
+c=[x for k,v in d.items() if '\''iOS'\'' in k for x in v if x['\''name'\''].startswith(w)]
+print(c[-1]['\''udid'\''] if c else '\'''\'')' 'iPad Pro 13-inch'
++ UDID=5A602664-A209-462C-9B02-6E51FACDFED6
++ '[' -z 5A602664-A209-462C-9B02-6E51FACDFED6 ']'
+++ echo 'iPad Pro 13-inch'
+++ tr -c A-Za-z0-9 -
+++ sed 's/-*$//'
++ tag=iPad-Pro-13-inch
++ echo '--- iPad Pro 13-inch (5A602664-A209-462C-9B02-6E51FACDFED6)'
+--- iPad Pro 13-inch (5A602664-A209-462C-9B02-6E51FACDFED6)
++ t 180 xcrun simctl boot 5A602664-A209-462C-9B02-6E51FACDFED6
++ perl -e 'alarm shift; exec @ARGV' 180 xcrun simctl boot 5A602664-A209-462C-9B02-6E51FACDFED6
++ t 180 xcrun simctl bootstatus 5A602664-A209-462C-9B02-6E51FACDFED6 -b
++ perl -e 'alarm shift; exec @ARGV' 180 xcrun simctl bootstatus 5A602664-A209-462C-9B02-6E51FACDFED6 -b
+Monitoring boot status for iPad Pro 13-inch (M4) (5A602664-A209-462C-9B02-6E51FACDFED6).
+[2026-10-24 23:29:57 +0000] Status=2, isTerminal=NO, Elapsed=00:50.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:45 seconds
+
+[2026-10-24 23:29:58 +0000] Status=2, isTerminal=NO, Elapsed=00:51.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:46 seconds
+
+[2026-10-24 23:29:59 +0000] Status=2, isTerminal=NO, Elapsed=00:52.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:47 seconds
+
+[2026-10-24 23:30:00 +0000] Status=2, isTerminal=NO, Elapsed=00:53.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:48 seconds
+
+[2026-10-24 23:30:01 +0000] Status=2, isTerminal=NO, Elapsed=00:54.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:49 seconds
+
+[2026-10-24 23:30:02 +0000] Status=2, isTerminal=NO, Elapsed=00:55.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:50 seconds
+
+[2026-10-24 23:30:03 +0000] Status=2, isTerminal=NO, Elapsed=00:56.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:51 seconds
+
+[2026-10-24 23:30:04 +0000] Status=2, isTerminal=NO, Elapsed=00:57.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:52 seconds
+
+[2026-10-24 23:30:05 +0000] Status=2, isTerminal=NO, Elapsed=00:58.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:53 seconds
+
+[2026-10-24 23:30:06 +0000] Status=2, isTerminal=NO, Elapsed=00:59.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:54 seconds
+
+[2026-10-24 23:30:07 +0000] Status=2, isTerminal=NO, Elapsed=01:00.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:55 seconds
+
+[2026-10-24 23:30:08 +0000] Status=2, isTerminal=NO, Elapsed=01:01.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:56 seconds
+
+[2026-10-24 23:30:09 +0000] Status=2, isTerminal=NO, Elapsed=01:02.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:57 seconds
+
+[2026-10-24 23:30:10 +0000] Status=2, isTerminal=NO, Elapsed=01:03.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:58 seconds
+
+[2026-10-24 23:30:11 +0000] Status=2, isTerminal=NO, Elapsed=01:04.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:59 seconds
+
+[2026-10-24 23:30:12 +0000] Status=2, isTerminal=NO, Elapsed=01:05.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:00 seconds
+
+[2026-10-24 23:30:13 +0000] Status=2, isTerminal=NO, Elapsed=01:06.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:01 seconds
+
+[2026-10-24 23:30:19 +0000] Status=2, isTerminal=NO, Elapsed=01:11.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.securityd.KeychainMigrator (KeychainMigrator.migrator, user-agnostic)
+		Migration Elapsed:01:02 seconds
+
+[2026-10-24 23:30:21 +0000] Status=2, isTerminal=NO, Elapsed=01:14.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.appleaccount.mergebuddyprovisioningresponse.migrator (MergeBuddyProvisioningResponse.migrator)
+		Migration Elapsed:01:07 seconds
+
+[2026-10-24 23:30:23 +0000] Status=4, isTerminal=NO, Elapsed=01:15.
+	Waiting on System App
+
+[2026-10-24 23:30:25 +0000] Status=4, isTerminal=NO, Elapsed=01:18.
+	Waiting on System App
+
+[2026-10-24 23:30:25 +0000] Status=4, isTerminal=NO, Elapsed=01:18.
+	Waiting on System App
+
+[2026-10-24 23:30:26 +0000] Status=4, isTerminal=NO, Elapsed=01:18.
+	Waiting on System App
+
+[2026-10-24 23:30:27 +0000] Status=4, isTerminal=NO, Elapsed=01:19.
+	Waiting on System App
+
+[2026-10-24 23:30:28 +0000] Status=4, isTerminal=NO, Elapsed=01:20.
+	Waiting on System App
+
+[2026-10-24 23:30:29 +0000] Status=4, isTerminal=NO, Elapsed=01:21.
+	Waiting on System App
+
+[2026-10-24 23:30:37 +0000] Status=4294967295, isTerminal=YES, Elapsed=01:30.
+	Finished
+
++ t 30 xcrun simctl status_bar 5A602664-A209-462C-9B02-6E51FACDFED6 override --time 9:41 --batteryState charged --batteryLevel 100
++ perl -e 'alarm shift; exec @ARGV' 30 xcrun simctl status_bar 5A602664-A209-462C-9B02-6E51FACDFED6 override --time 9:41 --batteryState charged --batteryLevel 100
++ t 30 xcrun simctl ui 5A602664-A209-462C-9B02-6E51FACDFED6 appearance dark
++ perl -e 'alarm shift; exec @ARGV' 30 xcrun simctl ui 5A602664-A209-462C-9B02-6E51FACDFED6 appearance dark
++ t 180 xcrun simctl install 5A602664-A209-462C-9B02-6E51FACDFED6 build/dd/Build/Products/Debug-iphonesimulator/App.app
++ perl -e 'alarm shift; exec @ARGV' 180 xcrun simctl install 5A602664-A209-462C-9B02-6E51FACDFED6 build/dd/Build/Products/Debug-iphonesimulator/App.app
++ t 60 xcrun simctl launch 5A602664-A209-462C-9B02-6E51FACDFED6 com.batcave.terminal
++ perl -e 'alarm shift; exec @ARGV' 60 xcrun simctl launch 5A602664-A209-462C-9B02-6E51FACDFED6 com.batcave.terminal
+com.batcave.terminal: 22117
++ sleep 45
++ t 60 xcrun simctl io 5A602664-A209-462C-9B02-6E51FACDFED6 screenshot reports/ipad-iPad-Pro-13-inch.png
++ perl -e 'alarm shift; exec @ARGV' 60 xcrun simctl io 5A602664-A209-462C-9B02-6E51FACDFED6 screenshot reports/ipad-iPad-Pro-13-inch.png
+Detected file type 'PNG' from extension
+Wrote screenshot to: reports/ipad-iPad-Pro-13-inch.png
++ t 60 xcrun simctl shutdown 5A602664-A209-462C-9B02-6E51FACDFED6
++ perl -e 'alarm shift; exec @ARGV' 60 xcrun simctl shutdown 5A602664-A209-462C-9B02-6E51FACDFED6
++ for want in '"iPad Pro 13-inch"' '"iPad Air 11-inch"' '"iPad mini"'
+++ xcrun simctl list devices available -j
+++ python3 -c '
+import json,sys
+w=sys.argv[1]
+d=json.load(sys.stdin)['\''devices'\'']
+c=[x for k,v in d.items() if '\''iOS'\'' in k for x in v if x['\''name'\''].startswith(w)]
+print(c[-1]['\''udid'\''] if c else '\'''\'')' 'iPad Air 11-inch'
++ UDID=28EB6DDD-01F7-42F7-B1FF-56CC398818EB
++ '[' -z 28EB6DDD-01F7-42F7-B1FF-56CC398818EB ']'
+++ echo 'iPad Air 11-inch'
+++ tr -c A-Za-z0-9 -
+++ sed 's/-*$//'
++ tag=iPad-Air-11-inch
++ echo '--- iPad Air 11-inch (28EB6DDD-01F7-42F7-B1FF-56CC398818EB)'
+--- iPad Air 11-inch (28EB6DDD-01F7-42F7-B1FF-56CC398818EB)
++ t 180 xcrun simctl boot 28EB6DDD-01F7-42F7-B1FF-56CC398818EB
++ perl -e 'alarm shift; exec @ARGV' 180 xcrun simctl boot 28EB6DDD-01F7-42F7-B1FF-56CC398818EB
++ t 180 xcrun simctl bootstatus 28EB6DDD-01F7-42F7-B1FF-56CC398818EB -b
++ perl -e 'alarm shift; exec @ARGV' 180 xcrun simctl bootstatus 28EB6DDD-01F7-42F7-B1FF-56CC398818EB -b
+Monitoring boot status for iPad Air 11-inch (M2) (28EB6DDD-01F7-42F7-B1FF-56CC398818EB).
+[2026-10-24 23:33:29 +0000] Status=2, isTerminal=NO, Elapsed=00:18.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:11 seconds
+
+[2026-10-24 23:33:30 +0000] Status=2, isTerminal=NO, Elapsed=00:19.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:12 seconds
+
+[2026-10-24 23:33:31 +0000] Status=2, isTerminal=NO, Elapsed=00:20.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:13 seconds
+
+[2026-10-24 23:33:32 +0000] Status=2, isTerminal=NO, Elapsed=00:21.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:14 seconds
+
+[2026-10-24 23:33:33 +0000] Status=2, isTerminal=NO, Elapsed=00:22.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:15 seconds
+
+[2026-10-24 23:33:34 +0000] Status=2, isTerminal=NO, Elapsed=00:23.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:16 seconds
+
+[2026-10-24 23:33:35 +0000] Status=2, isTerminal=NO, Elapsed=00:24.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:17 seconds
+
+[2026-10-24 23:33:36 +0000] Status=2, isTerminal=NO, Elapsed=00:25.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:18 seconds
+
+[2026-10-24 23:33:37 +0000] Status=2, isTerminal=NO, Elapsed=00:26.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:19 seconds
+
+[2026-10-24 23:33:38 +0000] Status=2, isTerminal=NO, Elapsed=00:27.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:20 seconds
+
+[2026-10-24 23:33:39 +0000] Status=2, isTerminal=NO, Elapsed=00:28.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:21 seconds
+
+[2026-10-24 23:33:40 +0000] Status=2, isTerminal=NO, Elapsed=00:29.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:22 seconds
+
+[2026-10-24 23:33:41 +0000] Status=2, isTerminal=NO, Elapsed=00:30.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:23 seconds
+
+[2026-10-24 23:33:42 +0000] Status=2, isTerminal=NO, Elapsed=00:31.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:24 seconds
+
+[2026-10-24 23:33:43 +0000] Status=2, isTerminal=NO, Elapsed=00:32.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:25 seconds
+
+[2026-10-24 23:33:44 +0000] Status=2, isTerminal=NO, Elapsed=00:33.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:26 seconds
+
+[2026-10-24 23:33:45 +0000] Status=2, isTerminal=NO, Elapsed=00:34.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:27 seconds
+
+[2026-10-24 23:33:46 +0000] Status=2, isTerminal=NO, Elapsed=00:35.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:28 seconds
+
+[2026-10-24 23:33:47 +0000] Status=2, isTerminal=NO, Elapsed=00:36.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:29 seconds
+
+[2026-10-24 23:33:48 +0000] Status=2, isTerminal=NO, Elapsed=00:37.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:30 seconds
+
+[2026-10-24 23:33:49 +0000] Status=2, isTerminal=NO, Elapsed=00:38.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:31 seconds
+
+[2026-10-24 23:33:50 +0000] Status=2, isTerminal=NO, Elapsed=00:39.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:32 seconds
+
+[2026-10-24 23:33:54 +0000] Status=2, isTerminal=NO, Elapsed=00:43.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.securityd.KeychainMigrator (KeychainMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:33 seconds
+
+[2026-10-24 23:33:57 +0000] Status=2, isTerminal=NO, Elapsed=00:46.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.MobileSafari.migrator (MobileSafari.migrator)
+		Migration Elapsed:00:37 seconds
+
+[2026-10-24 23:33:57 +0000] Status=4, isTerminal=NO, Elapsed=00:46.
+	Waiting on System App
+
+[2026-10-24 23:33:59 +0000] Status=4, isTerminal=NO, Elapsed=00:48.
+	Waiting on System App
+
+[2026-10-24 23:34:00 +0000] Status=4, isTerminal=NO, Elapsed=00:49.
+	Waiting on System App
+
+[2026-10-24 23:34:00 +0000] Status=4, isTerminal=NO, Elapsed=00:49.
+	Waiting on System App
+
+[2026-10-24 23:34:02 +0000] Status=4, isTerminal=NO, Elapsed=00:50.
+	Waiting on System App
+
+[2026-10-24 23:34:03 +0000] Status=4, isTerminal=NO, Elapsed=00:51.
+	Waiting on System App
+
+[2026-10-24 23:34:03 +0000] Status=4, isTerminal=NO, Elapsed=00:52.
+	Waiting on System App
+
+[2026-10-24 23:34:04 +0000] Status=4, isTerminal=NO, Elapsed=00:53.
+	Waiting on System App
+
+[2026-10-24 23:34:05 +0000] Status=4, isTerminal=NO, Elapsed=00:54.
+	Waiting on System App
+
+[2026-10-24 23:34:06 +0000] Status=4, isTerminal=NO, Elapsed=00:55.
+	Waiting on System App
+
+[2026-10-24 23:34:07 +0000] Status=4, isTerminal=NO, Elapsed=00:56.
+	Waiting on System App
+
+[2026-10-24 23:34:08 +0000] Status=4, isTerminal=NO, Elapsed=00:57.
+	Waiting on System App
+
+[2026-10-24 23:34:09 +0000] Status=4, isTerminal=NO, Elapsed=00:58.
+	Waiting on System App
+
+[2026-10-24 23:34:10 +0000] Status=4, isTerminal=NO, Elapsed=00:59.
+	Waiting on System App
+
+[2026-10-24 23:34:11 +0000] Status=4, isTerminal=NO, Elapsed=01:00.
+	Waiting on System App
+
+[2026-10-24 23:34:12 +0000] Status=4, isTerminal=NO, Elapsed=01:01.
+	Waiting on System App
+
+[2026-10-24 23:34:13 +0000] Status=4, isTerminal=NO, Elapsed=01:02.
+	Waiting on System App
+
+[2026-10-24 23:34:14 +0000] Status=4, isTerminal=NO, Elapsed=01:03.
+	Waiting on System App
+
+[2026-10-24 23:34:15 +0000] Status=4, isTerminal=NO, Elapsed=01:04.
+	Waiting on System App
+
+[2026-10-24 23:34:18 +0000] Status=4, isTerminal=NO, Elapsed=01:07.
+	Waiting on System App
+
+[2026-10-24 23:34:19 +0000] Status=4, isTerminal=NO, Elapsed=01:08.
+	Waiting on System App
+
+[2026-10-24 23:34:20 +0000] Status=4, isTerminal=NO, Elapsed=01:09.
+	Waiting on System App
+
+[2026-10-24 23:34:20 +0000] Status=4, isTerminal=NO, Elapsed=01:09.
+	Waiting on System App
+
+[2026-10-24 23:34:22 +0000] Status=4, isTerminal=NO, Elapsed=01:11.
+	Waiting on System App
+
+[2026-10-24 23:34:22 +0000] Status=4, isTerminal=NO, Elapsed=01:11.
+	Waiting on System App
+
+[2026-10-24 23:34:23 +0000] Status=4, isTerminal=NO, Elapsed=01:12.
+	Waiting on System App
+
+[2026-10-24 23:34:24 +0000] Status=4, isTerminal=NO, Elapsed=01:13.
+	Waiting on System App
+
+[2026-10-24 23:34:25 +0000] Status=4, isTerminal=NO, Elapsed=01:14.
+	Waiting on System App
+
+[2026-10-24 23:34:26 +0000] Status=4, isTerminal=NO, Elapsed=01:15.
+	Waiting on System App
+
+[2026-10-24 23:34:27 +0000] Status=4, isTerminal=NO, Elapsed=01:16.
+	Waiting on System App
+
+[2026-10-24 23:34:28 +0000] Status=4, isTerminal=NO, Elapsed=01:17.
+	Waiting on System App
+
+[2026-10-24 23:34:30 +0000] Status=4, isTerminal=NO, Elapsed=01:19.
+	Waiting on System App
+
+[2026-10-24 23:34:30 +0000] Status=4, isTerminal=NO, Elapsed=01:19.
+	Waiting on System App
+
+[2026-10-24 23:34:31 +0000] Status=4, isTerminal=NO, Elapsed=01:20.
+	Waiting on System App
+
+[2026-10-24 23:34:32 +0000] Status=4, isTerminal=NO, Elapsed=01:21.
+	Waiting on System App
+
+[2026-10-24 23:34:34 +0000] Status=4, isTerminal=NO, Elapsed=01:23.
+	Waiting on System App
+
+[2026-10-24 23:34:35 +0000] Status=4, isTerminal=NO, Elapsed=01:23.
+	Waiting on System App
+
+[2026-10-24 23:34:35 +0000] Status=4, isTerminal=NO, Elapsed=01:24.
+	Waiting on System App
+
+[2026-10-24 23:34:36 +0000] Status=4, isTerminal=NO, Elapsed=01:25.
+	Waiting on System App
+
+[2026-10-24 23:34:38 +0000] Status=4, isTerminal=NO, Elapsed=01:27.
+	Waiting on System App
+
+[2026-10-24 23:34:38 +0000] Status=4, isTerminal=NO, Elapsed=01:27.
+	Waiting on System App
+
+[2026-10-24 23:34:40 +0000] Status=4, isTerminal=NO, Elapsed=01:29.
+	Waiting on System App
+
+[2026-10-24 23:34:44 +0000] Status=4, isTerminal=NO, Elapsed=01:33.
+	Waiting on System App
+
+[2026-10-24 23:34:48 +0000] Status=4, isTerminal=NO, Elapsed=01:37.
+	Waiting on System App
+
+[2026-10-24 23:34:50 +0000] Status=4, isTerminal=NO, Elapsed=01:39.
+	Waiting on System App
+
+[2026-10-24 23:34:52 +0000] Status=4, isTerminal=NO, Elapsed=01:41.
+	Waiting on System App
+
+[2026-10-24 23:34:56 +0000] Status=4, isTerminal=NO, Elapsed=01:45.
+	Waiting on System App
+
+[2026-10-24 23:34:56 +0000] Status=4, isTerminal=NO, Elapsed=01:45.
+	Waiting on System App
+
+[2026-10-24 23:35:08 +0000] Status=4294967295, isTerminal=YES, Elapsed=01:57.
+	Finished
+
++ t 30 xcrun simctl status_bar 28EB6DDD-01F7-42F7-B1FF-56CC398818EB override --time 9:41 --batteryState charged --batteryLevel 100
++ perl -e 'alarm shift; exec @ARGV' 30 xcrun simctl status_bar 28EB6DDD-01F7-42F7-B1FF-56CC398818EB override --time 9:41 --batteryState charged --batteryLevel 100
++ t 30 xcrun simctl ui 28EB6DDD-01F7-42F7-B1FF-56CC398818EB appearance dark
++ perl -e 'alarm shift; exec @ARGV' 30 xcrun simctl ui 28EB6DDD-01F7-42F7-B1FF-56CC398818EB appearance dark
++ t 180 xcrun simctl install 28EB6DDD-01F7-42F7-B1FF-56CC398818EB build/dd/Build/Products/Debug-iphonesimulator/App.app
++ perl -e 'alarm shift; exec @ARGV' 180 xcrun simctl install 28EB6DDD-01F7-42F7-B1FF-56CC398818EB build/dd/Build/Products/Debug-iphonesimulator/App.app
++ t 60 xcrun simctl launch 28EB6DDD-01F7-42F7-B1FF-56CC398818EB com.batcave.terminal
++ perl -e 'alarm shift; exec @ARGV' 60 xcrun simctl launch 28EB6DDD-01F7-42F7-B1FF-56CC398818EB com.batcave.terminal
+com.batcave.terminal: 28396
++ sleep 45
++ t 60 xcrun simctl io 28EB6DDD-01F7-42F7-B1FF-56CC398818EB screenshot reports/ipad-iPad-Air-11-inch.png
++ perl -e 'alarm shift; exec @ARGV' 60 xcrun simctl io 28EB6DDD-01F7-42F7-B1FF-56CC398818EB screenshot reports/ipad-iPad-Air-11-inch.png
+Detected file type 'PNG' from extension
+Wrote screenshot to: reports/ipad-iPad-Air-11-inch.png
++ t 60 xcrun simctl shutdown 28EB6DDD-01F7-42F7-B1FF-56CC398818EB
++ perl -e 'alarm shift; exec @ARGV' 60 xcrun simctl shutdown 28EB6DDD-01F7-42F7-B1FF-56CC398818EB
++ for want in '"iPad Pro 13-inch"' '"iPad Air 11-inch"' '"iPad mini"'
+++ xcrun simctl list devices available -j
+++ python3 -c '
+import json,sys
+w=sys.argv[1]
+d=json.load(sys.stdin)['\''devices'\'']
+c=[x for k,v in d.items() if '\''iOS'\'' in k for x in v if x['\''name'\''].startswith(w)]
+print(c[-1]['\''udid'\''] if c else '\'''\'')' 'iPad mini'
++ UDID=9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF
++ '[' -z 9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF ']'
+++ echo 'iPad mini'
+++ tr -c A-Za-z0-9 -
+++ sed 's/-*$//'
++ tag=iPad-mini
++ echo '--- iPad mini (9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF)'
+--- iPad mini (9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF)
++ t 180 xcrun simctl boot 9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF
++ perl -e 'alarm shift; exec @ARGV' 180 xcrun simctl boot 9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF
++ t 180 xcrun simctl bootstatus 9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF -b
++ perl -e 'alarm shift; exec @ARGV' 180 xcrun simctl bootstatus 9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF -b
+Monitoring boot status for iPad mini (A17 Pro) (9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF).
+[2026-10-24 23:38:07 +0000] Status=2, isTerminal=NO, Elapsed=00:32.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:28 seconds
+
+[2026-10-24 23:38:08 +0000] Status=2, isTerminal=NO, Elapsed=00:33.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:29 seconds
+
+[2026-10-24 23:38:09 +0000] Status=2, isTerminal=NO, Elapsed=00:34.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:30 seconds
+
+[2026-10-24 23:38:10 +0000] Status=2, isTerminal=NO, Elapsed=00:35.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:31 seconds
+
+[2026-10-24 23:38:11 +0000] Status=2, isTerminal=NO, Elapsed=00:36.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:32 seconds
+
+[2026-10-24 23:38:12 +0000] Status=2, isTerminal=NO, Elapsed=00:37.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:33 seconds
+
+[2026-10-24 23:38:13 +0000] Status=2, isTerminal=NO, Elapsed=00:38.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:34 seconds
+
+[2026-10-24 23:38:14 +0000] Status=2, isTerminal=NO, Elapsed=00:39.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:35 seconds
+
+[2026-10-24 23:38:15 +0000] Status=2, isTerminal=NO, Elapsed=00:40.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:36 seconds
+
+[2026-10-24 23:38:16 +0000] Status=2, isTerminal=NO, Elapsed=00:41.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:37 seconds
+
+[2026-10-24 23:38:17 +0000] Status=2, isTerminal=NO, Elapsed=00:42.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:38 seconds
+
+[2026-10-24 23:38:18 +0000] Status=2, isTerminal=NO, Elapsed=00:43.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:39 seconds
+
+[2026-10-24 23:38:19 +0000] Status=2, isTerminal=NO, Elapsed=00:44.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:40 seconds
+
+[2026-10-24 23:38:20 +0000] Status=2, isTerminal=NO, Elapsed=00:45.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:41 seconds
+
+[2026-10-24 23:38:21 +0000] Status=2, isTerminal=NO, Elapsed=00:46.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:42 seconds
+
+[2026-10-24 23:38:22 +0000] Status=2, isTerminal=NO, Elapsed=00:47.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:43 seconds
+
+[2026-10-24 23:38:23 +0000] Status=2, isTerminal=NO, Elapsed=00:48.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:44 seconds
+
+[2026-10-24 23:38:24 +0000] Status=2, isTerminal=NO, Elapsed=00:49.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:45 seconds
+
+[2026-10-24 23:38:25 +0000] Status=2, isTerminal=NO, Elapsed=00:50.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:46 seconds
+
+[2026-10-24 23:38:26 +0000] Status=2, isTerminal=NO, Elapsed=00:51.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.-0LaunchServicesMigrator (00LaunchServicesMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:47 seconds
+
+[2026-10-24 23:38:30 +0000] Status=2, isTerminal=NO, Elapsed=00:55.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.securityd.KeychainMigrator (KeychainMigrator.migrator, user-agnostic)
+		Migration Elapsed:00:48 seconds
+
+[2026-10-24 23:38:31 +0000] Status=2, isTerminal=NO, Elapsed=00:57.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.MobileSafari.migrator (MobileSafari.migrator)
+		Migration Elapsed:00:52 seconds
+
+[2026-10-24 23:38:34 +0000] Status=2, isTerminal=NO, Elapsed=00:59.
+	Waiting on Data Migration
+		Reason:Running plugin com.apple.PreferencesMigrator (PreferencesMigrator.migrator)
+		Migration Elapsed:00:53 seconds
+
+[2026-10-24 23:38:36 +0000] Status=4, isTerminal=NO, Elapsed=01:01.
+	Waiting on System App
+
+[2026-10-24 23:38:37 +0000] Status=4, isTerminal=NO, Elapsed=01:02.
+	Waiting on System App
+
+[2026-10-24 23:38:39 +0000] Status=4, isTerminal=NO, Elapsed=01:04.
+	Waiting on System App
+
+[2026-10-24 23:38:40 +0000] Status=4, isTerminal=NO, Elapsed=01:05.
+	Waiting on System App
+
+[2026-10-24 23:38:40 +0000] Status=4, isTerminal=NO, Elapsed=01:05.
+	Waiting on System App
+
+[2026-10-24 23:38:41 +0000] Status=4, isTerminal=NO, Elapsed=01:06.
+	Waiting on System App
+
+[2026-10-24 23:38:42 +0000] Status=4, isTerminal=NO, Elapsed=01:07.
+	Waiting on System App
+
+[2026-10-24 23:38:43 +0000] Status=4, isTerminal=NO, Elapsed=01:08.
+	Waiting on System App
+
+[2026-10-24 23:38:44 +0000] Status=4, isTerminal=NO, Elapsed=01:09.
+	Waiting on System App
+
+[2026-10-24 23:38:51 +0000] Status=4294967295, isTerminal=YES, Elapsed=01:16.
+	Finished
+
++ t 30 xcrun simctl status_bar 9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF override --time 9:41 --batteryState charged --batteryLevel 100
++ perl -e 'alarm shift; exec @ARGV' 30 xcrun simctl status_bar 9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF override --time 9:41 --batteryState charged --batteryLevel 100
++ t 30 xcrun simctl ui 9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF appearance dark
++ perl -e 'alarm shift; exec @ARGV' 30 xcrun simctl ui 9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF appearance dark
++ t 180 xcrun simctl install 9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF build/dd/Build/Products/Debug-iphonesimulator/App.app
++ perl -e 'alarm shift; exec @ARGV' 180 xcrun simctl install 9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF build/dd/Build/Products/Debug-iphonesimulator/App.app
++ t 60 xcrun simctl launch 9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF com.batcave.terminal
++ perl -e 'alarm shift; exec @ARGV' 60 xcrun simctl launch 9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF com.batcave.terminal
+/Users/runner/work/_temp/26828983-b6d4-4dfd-ae83-5e1a200e3ad4.sh: line 6: 32831 Alarm clock: 14         perl -e 'alarm shift; exec @ARGV' "$@"
++ t 60 xcrun simctl shutdown 9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF
++ perl -e 'alarm shift; exec @ARGV' 60 xcrun simctl shutdown 9D9BF050-F6F5-4D32-84C0-4B7AC57F63EF
++ continue
++ pkill -f dist/index.cjs

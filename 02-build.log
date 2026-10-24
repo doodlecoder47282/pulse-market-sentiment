@@ -1,0 +1,30 @@
+[2m../dist/public/[22m[2massets/[22m[36mDepthSkewFlow-Da6n6B8y.js        [39m[1m[2m 10.21 kB[22m[1m[22m[2m │ gzip:   3.36 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mOdteForward-C6jjxeoj.js          [39m[1m[2m 11.59 kB[22m[1m[22m[2m │ gzip:   4.16 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mDailyPlaybookChart-CUEhZpd-.js   [39m[1m[2m 13.24 kB[22m[1m[22m[2m │ gzip:   4.76 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mMLAccuracyCard-B3g1udym.js       [39m[1m[2m 14.79 kB[22m[1m[22m[2m │ gzip:   4.19 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-icons-DzI4rFXD.js         [39m[1m[2m 22.89 kB[22m[1m[22m[2m │ gzip:   7.24 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mThermalHeatmap-KBFrYKkG.js       [39m[1m[2m 27.02 kB[22m[1m[22m[2m │ gzip:   9.59 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mThermalSurface3D-DOpUz9yc.js     [39m[1m[2m 29.32 kB[22m[1m[22m[2m │ gzip:  10.84 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mCosmosPanel-l_2hXsoG.js          [39m[1m[2m 29.64 kB[22m[1m[22m[2m │ gzip:   7.79 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mMLProjectionPanel-C_6DR73a.js    [39m[1m[2m 30.07 kB[22m[1m[22m[2m │ gzip:   9.78 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mLiveOdteTracker-se4HiG45.js      [39m[1m[2m 31.93 kB[22m[1m[22m[2m │ gzip:   8.52 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mWhaleFlowPanel-CSgazDMM.js       [39m[1m[2m 34.80 kB[22m[1m[22m[2m │ gzip:   7.13 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mHeatseeker-BGfMAsdK.js           [39m[1m[2m 46.54 kB[22m[1m[22m[2m │ gzip:  13.74 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mFlowPanel-QtH6klBQ.js            [39m[1m[2m 47.12 kB[22m[1m[22m[2m │ gzip:  12.00 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mCryptoPanel-CTHbTC2s.js          [39m[1m[2m 54.86 kB[22m[1m[22m[2m │ gzip:  15.86 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-radix-BaIUy6Fz.js         [39m[1m[2m 99.97 kB[22m[1m[22m[2m │ gzip:  29.40 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mChartPanel-BfNUvxK5.js           [39m[1m[2m103.66 kB[22m[1m[22m[2m │ gzip:  26.72 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mModelsPanel-Br6oxlwi.js          [39m[1m[2m121.47 kB[22m[1m[22m[2m │ gzip:  29.21 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mRegimePanel-BmcA4ANw.js          [39m[1m[2m124.20 kB[22m[1m[22m[2m │ gzip:  29.63 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mTradeDesk-B7Ayf0aD.js            [39m[1m[2m127.45 kB[22m[1m[22m[2m │ gzip:  32.45 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-markdown-CObcIFuK.js      [39m[1m[2m141.60 kB[22m[1m[22m[2m │ gzip:  41.66 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-charts-Bq-f2qQQ.js        [39m[1m[2m272.93 kB[22m[1m[22m[2m │ gzip:  62.77 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mindex-C4pm3fdI.js                [39m[1m[2m328.79 kB[22m[1m[22m[2m │ gzip:  88.91 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-three-D3dLVpBC.js         [39m[1m[2m493.34 kB[22m[1m[22m[2m │ gzip: 123.93 kB[22m
+[2m../dist/public/[22m[2massets/[22m[36mvendor-OrF7nvqo.js               [39m[1m[2m598.32 kB[22m[1m[22m[2m │ gzip: 198.38 kB[22m
+[32m✓ built in 10.32s[39m
+building server...
+
+  dist/index.cjs  2.4mb ⚠️
+
+⚡ Done in 519ms
