@@ -146,7 +146,7 @@ export default function SetupLogCard() {
             <details className="text-[11px]">
               <summary className="flex min-h-[44px] cursor-pointer select-none list-none items-center gap-1.5 text-muted-foreground lg:min-h-0"><ChevronRight className="h-3 w-3" /> method: the rule book ({d.rules.items.length} rules, version {d.rules.version})</summary>
               <div className="mt-1 space-y-0.5" data-testid="setup-log-method">
-                <div className="text-muted-foreground">calendar: {d.calendar.known ? `next tier-1 ${d.calendar.next ?? "none listed"}${d.calendar.minutesToNext != null ? ` (${d.calendar.minutesToNext} min)` : ""}` : `unknown past ${d.calendar.validThrough}: recorded, not a gate`}</div>
+                <div className="text-muted-foreground">calendar: {d.calendar.known ? `next tier-1 ${d.calendar.next ?? "none listed"}${d.calendar.minutesToNext != null ? ` (${d.calendar.minutesToNext} min)` : ""}` : `unknown past ${d.calendar.validThrough}: the tier-1 gate cannot be checked, so setups are blocked until the calendar is extended`}</div>
                 {d.rules.items.map((it) => (
                   <div key={it.path} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
                     <span className="text-muted-foreground"><span className="font-mono text-foreground">{it.path}</span> — {it.meaning}</span>

@@ -59,7 +59,7 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk }: { symbol?: st
   const below = m.landmarks.magnetBelow ?? (m.landmarks.pin != null && m.landmarks.pin < spot ? m.landmarks.pin : null);
   const flip = m.landmarks.flip;
   const priced = m.dataState !== "no_gex";
-  const state = m.dataState === "no_gex" ? "no_data" : m.dataState === "stale_session" ? "stale" : "ok";
+  const state = m.dataState === "no_gex" ? "no_data" : m.dataState === "stale_session" || m.dataState === "stale" ? "stale" : "ok";
   const aboveOi = m.strikes.find((s) => s.strike === above);
   const belowOi = m.strikes.find((s) => s.strike === below);
   const share = (s?: { share: number }) => (s ? `${(s.share * 100).toFixed(0)}% of map` : "");
@@ -83,7 +83,7 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk }: { symbol?: st
             {m.gap.pct != null && <span className={`font-mono text-xs ${m.gap.pct >= 0 ? "text-emerald-300" : "text-rose-300"}`}>gap {m.gap.pct >= 0 ? "+" : ""}{m.gap.pct.toFixed(2)}%</span>}
             <span className="font-mono text-[11px] text-muted-foreground">{m.session.state} · {m.expiry} chain</span>
           </div>
-          <DataStateChip state={state} reason={m.reason} asOf={m.asOf} source="Schwab" testId="today-state" />
+          <DataStateChip state={state} reason={m.reason} asOf={m.chainAsOfMs ?? m.asOf} stale={m.chainStale} source="Schwab" testId="today-state" />
         </div>
 
         {!priced ? (

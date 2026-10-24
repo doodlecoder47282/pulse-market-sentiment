@@ -978,3 +978,34 @@ Method page paragraph. Scope stated on the card: plumbing and arithmetic of
 the live run, not predictive edge. Cannot be exercised from the workspace
 (no Schwab credentials here, by design); the owner's first run after
 connecting is the live test.
+
+2026-10-23: Trade Desk + Signals audit, pass 1 (PR #22, fix/trade-desk-signals-audit).
+Independent formula-by-formula review against Schwab payload semantics.
+Fixed (each with a regression test in tests/quant/schwab-semantics.test.ts):
+per-ticker gamma (tickerAlpha) rebuilt on the shared re-priced basis
+(gexByStrikeFromChain) so Schwab's -999 vendor gamma can never price a
+contract; walls/flip/regime now the same basis as the snapshot and 0DTE
+forward; regime via gexRegime (noise floor, never "positive" at 0); all
+contracts in a strike cell read; pcrOi/pcrVol null without a denominator.
+Index symbols reach Schwab as $SPX/$NDX/$RUT/$VIX from the positioning path
+(the bare name was sent before: SPX scan structure and SPX setups were
+silently unavailable). 0DTE forward carries chainAsOfMs/chainAgeMs/
+chainStale/servedFromCache; the map gets dataState "stale" and the Today,
+chart-levels and map cards show the chain's age, not compute time (the
+ledger does not keep stale maps). Forward totals skip settled AM contracts
+and sentinels; pin = largest POSITIVE exposure within 1.5% (same as the
+map); straddle needs both legs; mid needs a real bid. Setup engine uses
+this tick's fresh quote as spot (positioning snapshot is cached 5 min);
+stale/missing quote -> "no_fresh_spot", blocked. Unusual flow: missing
+volume/OI skipped and counted (skippedMissingFields), never a "new strike";
+greeks via schwabNum; IV stays in percent and the Chart-tab panel no longer
+shows it x100; /api/flow/unusual reports dataState "stale" when the chain
+was re-served. Snapshot max pain is null (not spot) when no strike has OI;
+playbook/composite/daily playbook/trajectory guard it. Scan column
+"notional" -> "premium"; setup-log calendar copy matches the detector
+(unknown calendar blocks). Not yet done from the review: phone tap targets
+and truncation, abbreviations, prediction-flavoured copy (S16/S17), term
+sigma label when closed (S4), gamma curve vs flip IV basis (S8), TodayCard
+band wording (S5), scan IV/skew labels (S6), client FlowAlertsPanel dedup
+(S13), monthly-opex pre-open AM OI (S15). Next tabs: Models, Heatseeker,
+Regime, Flow, Crypto.

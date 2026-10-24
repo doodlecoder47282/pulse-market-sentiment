@@ -137,12 +137,19 @@ async function tick(): Promise<void> {
     // One quote call for the universe plus the index cost proxies, not one per symbol.
     const quoteSyms = Array.from(new Set([...universe, ...universe.map((s) => COST_PROXY[s]).filter(Boolean)]));
     const spreads = new Map<string, number>();
+    // Fresh spot per symbol from this tick's quote. The positioning snapshot
+    // is cached for five minutes, so its spot is not the entry reference; a
+    // stale or missing quote leaves spot null and the detector blocks.
+    const lasts = new Map<string, number>();
     try {
       for (const q of await getQuotes(quoteSyms)) {
+        const key = q?.symbol ? q.symbol.replace(/^\$/, "") : null;
+        if (!key) continue;
         const bid = q?.bid ?? null, ask = q?.ask ?? null;
-        if (q?.symbol && bid != null && ask != null && bid > 0 && ask >= bid) spreads.set(q.symbol.replace(/^\$/, ""), (ask - bid) / ((ask + bid) / 2));
+        if (bid != null && ask != null && bid > 0 && ask >= bid) spreads.set(key, (ask - bid) / ((ask + bid) / 2));
+        if (q.last != null && Number.isFinite(q.last) && q.last > 0 && q.stale !== true) lasts.set(key, q.last);
       }
-    } catch { /* cost stays unknown: the detector blocks on it */ }
+    } catch { /* cost and spot stay unknown: the detector blocks on them */ }
     for (const sym of universe) {
       try {
         const pos = await gatherPositioningForTicker(sym);
@@ -150,14 +157,15 @@ async function tick(): Promise<void> {
         const spreadPct = spreads.get(sym.replace(/^\$/, "")) ?? (proxy ? spreads.get(proxy) ?? null : null);
         const gross = pos.profile.reduce((a, p) => a + Math.abs(p.gex), 0);
         const share = (g: number | null) => (g != null && gross > 0 ? Math.abs(g) / gross : null);
-        const structureState = pos.spot == null ? "no_spot" : pos.callWall == null && pos.putWall == null ? "no_walls" : "ok";
+        const spot = lasts.get(sym.replace(/^\$/, "")) ?? null;
+        const structureState = spot == null ? "no_fresh_spot" : pos.callWall == null && pos.putWall == null ? "no_walls" : "ok";
         const res = detectSetups(
-          { spot: pos.spot, callWall: pos.callWall, putWall: pos.putWall, gammaFlip: pos.gammaFlip, regime: pos.regime, callWallShare: share(pos.callWallGex), putWallShare: share(pos.putWallGex), atmIv: pos.atmIv },
+          { spot, callWall: pos.callWall, putWall: pos.putWall, gammaFlip: pos.gammaFlip, regime: pos.regime, callWallShare: share(pos.callWallGex), putWallShare: share(pos.putWallGex), atmIv: pos.atmIv },
           toFlowInputs(sym, now),
           { nowMs: now, ...clock, minutesToTier1: cal.minutes, minutesSinceTier1: cal.minutesSinceLast, calendarKnown: cal.known, spreadPct },
           rules,
         );
-        lastBlocked.set(sym, { at: now, spot: pos.spot, blocked: res.blocked, structureState });
+        lastBlocked.set(sym, { at: now, spot, blocked: res.blocked, structureState });
         for (const c of res.fired) {
           if (hasOpenOrRecent(sym, c.kind, now)) continue;
           if (proxy) (c.features as any).costSource = `${proxy} spread (index proxy)`;
@@ -278,7 +286,7 @@ export function getSetupLog(): SetupLog {
   }));
   const running = timer != null;
   const latest = Array.from(lastBlocked.values());
-  const structureDown = latest.length > 0 && latest.every((v) => v.structureState === "no_spot" || v.structureState.startsWith("error"));
+  const structureDown = latest.length > 0 && latest.every((v) => v.structureState === "no_spot" || v.structureState === "no_fresh_spot" || v.structureState.startsWith("error"));
   return {
     dataState: edition === "demo" ? "no_data" : lastTickError || structureDown ? "unavailable" : running && lastTickAt === 0 ? "loading" : c.total === 0 ? "no_data" : "ok",
     lastTickError: lastTickError ?? (structureDown ? "no symbol has a structure read (Schwab chain unavailable)" : null),

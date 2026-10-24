@@ -137,7 +137,7 @@ export default function TickerScanCard() {
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[560px] text-[11px]">
                     <thead className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                      <tr><th className="text-left">contract</th><th className="text-right">vol</th><th className="text-right">OI</th><th className="text-right">vol/OI</th><th className="text-right">mid</th><th className="text-right">notional</th><th className="text-right">Δ</th><th className="text-right">tag</th></tr>
+                      <tr><th className="text-left">contract</th><th className="text-right">vol</th><th className="text-right">OI</th><th className="text-right">vol/OI</th><th className="text-right">mid</th><th className="text-right">premium</th><th className="text-right">Δ</th><th className="text-right">tag</th></tr>
                     </thead>
                     <tbody className="font-mono tabular-nums">
                       {d.chain.contracts.slice(0, 12).map((c) => (

@@ -61,7 +61,7 @@ export default function ChartLevelsCard({ symbol = "$SPX" }: { symbol?: string }
     [m, levels],
   );
   const tol = m?.spot ? defaultTolerancePts(m.spot) : null;
-  const mapState = q.isError ? "unavailable" : !m ? "loading" : m.dataState === "no_gex" ? "no_data" : m.dataState === "stale_session" ? "stale" : "ok";
+  const mapState = q.isError ? "unavailable" : !m ? "loading" : m.dataState === "no_gex" ? "no_data" : m.dataState === "stale_session" || m.dataState === "stale" ? "stale" : "ok";
 
   const add = () => {
     const parsed = parseLevels(draft);
@@ -80,7 +80,7 @@ export default function ChartLevelsCard({ symbol = "$SPX" }: { symbol?: string }
             <CardTitle className="text-sm font-semibold tracking-tight">Your chart levels</CardTitle>
             <span className="font-mono text-[11px] text-muted-foreground">{symbol.replace(/^\$/, "")} · against the 0DTE map{tol != null ? ` · ±${tol} pts` : ""}</span>
           </div>
-          <DataStateChip state={mapState} reason={m?.reason ?? null} asOf={m?.asOf ?? null} source="0DTE map" testId="chart-levels-state" />
+          <DataStateChip state={mapState} reason={m?.reason ?? null} asOf={m?.chainAsOfMs ?? m?.asOf ?? null} stale={m?.chainStale ?? null} source="0DTE map" testId="chart-levels-state" />
         </div>
       </CardHeader>
       <CardContent className="space-y-3">

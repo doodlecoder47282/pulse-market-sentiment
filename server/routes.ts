@@ -866,7 +866,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             callWall: snap.gamma.callWall * gammaScale,
             putWall: snap.gamma.putWall * gammaScale,
             gammaFlip: (snap.gamma.zeroGamma as number) * gammaScale,
-            maxPain: snap.gamma.maxPain * gammaScale,
+            maxPain: snap.gamma.maxPain == null ? null : snap.gamma.maxPain * gammaScale,
             totalGex: snap.gamma.totalGex,
             composite: composite as number,
             jpmStrikes,
@@ -1095,8 +1095,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       },
       // Epoch seconds of the Schwab chain time (schwabFlow returns ms).
       asOf: schwab.asOf ? Math.floor(schwab.asOf / 1000) : Math.floor(Date.now() / 1000),
-      dataState: "ok",
+      dataState: schwab.stale ? "stale" : "ok",
       ...(schwab.stale ? { note: "Schwab chain re-served after a failed refresh (within its max age)." } : {}),
+      ...(schwab.skippedMissingFields ? { skippedMissingFields: schwab.skippedMissingFields } : {}),
     };
   }
 

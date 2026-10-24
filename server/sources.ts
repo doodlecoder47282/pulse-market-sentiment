@@ -174,7 +174,9 @@ export function buildGammaStructure(chain: SchwabChainLike, nowMs: number = Date
   const nearestDte = rows.reduce((a, r) => Math.min(a, r.dte), 45);
   const nearRows = rows.filter((r) => r.dte === nearestDte);
   const candidateStrikes = Array.from(new Set(nearRows.map((r) => r.strike))).sort((a, b) => a - b);
-  let maxPain = S;
+  // null when the nearest expiry has no strikes with open interest: spot is
+  // not a max-pain strike, and the playbook must not say "pinning toward" it.
+  let maxPain: number | null = null;
   let minPain = Infinity;
   for (const K of candidateStrikes) {
     let tot = 0;
