@@ -48,7 +48,7 @@ import { parseJupiterPrices, jupiterCheck, narrativeCounts, JUP_MAX_IDS, type Ju
 import {
   computeSocialScore, resolveSocialCollection, expireSocial,
   CRYPTO_SIGNAL_COUNTS_SQL, type SocialStatus, type SocialSourceStatus,
-  observedNumber, gradeSignal, cryptoCoinCountsSql, summarizeDeskStats, type CryptoDeskStats, CRYPTO_SAMPLE_READY_MIN_GRADED,
+  observedNumber, gradeSignal, cryptoCoinCountsSql, summarizeDeskStats, type CryptoDeskStats, CRYPTO_SAMPLE_READY_MIN_GRADED, CRYPTO_NO_DATA_MAX_SHARE,
   CRYPTO_GRADER_BATCH, CRYPTO_PEAK_SAMPLE_SQL, CRYPTO_GRADER_MARK_SQL, CRYPTO_GRADER_NO_DATA_SQL, peakSamplingNote,
   peakSampleParams, graderMarkParams, graderNoDataParams,
   countMentions, socialCoverage, type DexPool,
@@ -312,8 +312,12 @@ function persistSignal(c: Candidate): void {
     `).run(
       `${c.chain}:${c.pairAddress}:${Date.now()}`,
       Date.now(), c.chain, c.pairAddress, c.tokenAddress, c.symbol, c.name,
-      c.verdict, c.verdictCode, c.score, c.marketCap, c.priceUsd, c.liquidityUsd,
+      // The same market-cap basis the verdict and the grader use (marketCap,
+      // else FDV): a pair with marketCap null and FDV present used to be
+      // ENTER-able with mcap_at_signal NULL, which the grader read as 0.
+      c.verdict, c.verdictCode, c.score, c.marketCap ?? c.fdv ?? null, c.priceUsd, c.liquidityUsd,
       JSON.stringify({
+        mcapBasis: c.marketCap != null ? "marketCap" : c.fdv != null ? "fdv" : "none",
         volAccel: c.volAccel, netBuyRatio5m: c.netBuyRatio5m, fomo: c.fomoScore,
         meme: c.memeScore, memeMethod: MEME_SCORE_METHOD, narrativeHits: c.narrativeHits, rugFlags: c.rugFlags,
         boosted: c.boosted, pumpfunGraduate: c.pumpfunGraduate,
@@ -626,7 +630,12 @@ async function securityTick(): Promise<void> {
     .filter((c) => c.chain === "solana" && c.tokenAddress && (c.liquidityUsd ?? 0) >= LIQ_FLOOR_USD)
     .filter((c) =>
       c.securityCheckedAt == null ||
-      ((c.mintAuthorityActive || c.freezeAuthorityActive) && now - c.securityCheckedAt > 30 * 60_000))
+      ((c.mintAuthorityActive || c.freezeAuthorityActive) && now - c.securityCheckedAt > 30 * 60_000) ||
+      // Top-10 share still unread (the indexed call was skipped or unavailable
+      // on the last pass): retry every 30 min, as the community watch does.
+      // Without this the second candidate of every tick stayed "top10 unread"
+      // for good and could never ENTER.
+      (c.top10Pct == null && now - c.securityCheckedAt > 30 * 60_000))
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0)) // best candidates first — they gate ENTER
     .slice(0, 2); // gentle pace — public RPCs throttle bursts hard
   if (due.length === 0) return;
@@ -650,6 +659,12 @@ async function securityTick(): Promise<void> {
       if (facts.concentration === "ok") {
         c.top10Pct = facts.top10Pct;
         c.top10Method = facts.top10Method;
+      } else if (c.top10Pct == null) {
+        // Say why it is unread so the card and the verdict show it, instead of
+        // showing mint and freeze ticks with no top-10 line at all.
+        c.top10Method = facts.concentration === "unavailable"
+          ? `unavailable: ${facts.concentrationError ?? "indexed RPC did not answer"}`
+          : "skipped: one indexed read per tick; retried within 30 min";
       }
 
       // ── rugcheck.xyz cached summary (keyless, verified) — LP lock + named risks ──
@@ -908,7 +923,9 @@ function scoreCandidate(c: Candidate): void {
   if ((c.chg1h ?? 0) < -55) { flags.push(`price ${c.chg1h?.toFixed(0)}% in 1h — mid-rug or post-dump`); hardKill = true; }
   if ((c.ageMinutes ?? 1e9) < 10) flags.push("under 10 min old — sniper zone, spreads brutal");
   if (c.boosted) flags.push("paid DexScreener boost — manufactured attention, discount the FOMO");
-  if ((c.vol24h ?? 0) < 1000 && (c.ageMinutes ?? 0) > 720) flags.push("aged with no volume — dead pool");
+  // Observed low volume only: a missing 24 h volume is not "no volume".
+  if (c.vol24h != null && c.vol24h < 1000 && (c.ageMinutes ?? 0) > 720) flags.push("aged with no volume — dead pool");
+  else if (c.vol24h == null && (c.ageMinutes ?? 0) > 720) flags.push("aged; 24 h volume not reported by the source");
   // on-chain security facts (public RPC)
   if (c.mintAuthorityActive === true) { flags.push("MINT AUTHORITY ACTIVE — dev can print supply into your bid"); hardKill = true; }
   if (c.freezeAuthorityActive === true) { flags.push("FREEZE AUTHORITY ACTIVE — dev can lock your tokens"); hardKill = true; }
@@ -973,12 +990,13 @@ function scoreCandidate(c: Candidate): void {
       // (owners unreadable, RPC cooldown, not yet checked) is not a pass.
       verdict = "WATCH"; code = "top10_unread";
       reasons.push(`score ${c.score}, flow sustained — held at WATCH: top-10 holder concentration unavailable${c.top10Method ? ` (${c.top10Method})` : " (not read yet)"}`);
-    } else if (deskRisk.state !== "on") {
+    } else if (currentDeskRisk().state !== "on") {
+      const risk = currentDeskRisk();
       // RISK-OFF (persistent desk state from the majors read): the scanner keeps
       // logging and the candidate stays WATCH; nothing advances to ENTER until
       // the state is on again. Unknown majors block the same way as risk-off.
-      verdict = "WATCH"; code = deskRisk.state === "off" ? "risk_off" : "risk_unknown";
-      reasons.push(`score ${c.score}, flow sustained, security checked — held at WATCH: desk risk ${deskRisk.state} (${deskRisk.reason})`);
+      verdict = "WATCH"; code = risk.state === "off" ? "risk_off" : "risk_unknown";
+      reasons.push(`score ${c.score}, flow sustained, security checked — held at WATCH: desk risk ${risk.state} (${risk.reason})`);
     } else {
       verdict = "ENTER"; code = "enter";
       reasons.push(`score ${c.score}, flow sustained ${c.volAccel?.toFixed(1)}x, ${Math.round((c.netBuyRatio5m ?? 0) * 100)}% buys, security checked`);
@@ -1223,7 +1241,15 @@ function setDeskRisk(r: DeskRisk): void {
   sqlite.prepare(`INSERT INTO crypto_desk_state (key, value, reason, updated_at) VALUES ('risk', @v, @r, @t) ON CONFLICT(key) DO UPDATE SET value = excluded.value, reason = excluded.reason, updated_at = excluded.updated_at`)
     .run({ v: r.state, r: r.reason, t: r.asOf ?? Date.now() });
 }
-export function getDeskRisk(): DeskRisk { return deskRisk; }
+/** The 10-minute rule applies live, not only at restart: a majors read older
+ *  than that is unknown for the verdict and for the UI. */
+export function currentDeskRisk(now: number = Date.now()): DeskRisk {
+  if (deskRisk.asOf != null && now - deskRisk.asOf > 10 * 60_000) {
+    return { ...deskRisk, state: "unknown", reason: `last majors read ${Math.round((now - deskRisk.asOf) / 60_000)} min ago` };
+  }
+  return deskRisk;
+}
+export function getDeskRisk(): DeskRisk { return currentDeskRisk(); }
 
 /** Crypto source labels for the UI (tier + terms), from the registry. */
 function cryptoSourceLabels() {
@@ -1341,12 +1367,12 @@ export function getCryptoExpectancy(): { graded: ExpectancySummary; hold: Expect
     FROM firsts WHERE rn = 1 AND outcome IS NOT NULL AND outcome <> 'OPEN'
   `).all() as any[];
   const like = rows.map(gradedLike);
-  const opts = { sizeUsd: EXPECTANCY_SIZE_USD, minSample: CRYPTO_SAMPLE_READY_MIN_GRADED };
+  const opts = { sizeUsd: EXPECTANCY_SIZE_USD, minSample: CRYPTO_SAMPLE_READY_MIN_GRADED, targetMcap: TARGET_MCAP, maxNoDataShare: CRYPTO_NO_DATA_MAX_SHARE };
   return {
     graded: summarizeExpectancy(like, "graded", opts),
     hold: summarizeExpectancy(like, "hold", opts),
     peak: summarizeExpectancy(like, "peak", opts),
-    basis: "first ENTER signal per coin, graded rows only; entry at the signal's liquidity; pool fees and impact on both legs. graded: exit at the liquidity the grader saw when it closed the row (HIT_5M rows at the target sample, a limit-sell-at-target, not a hold to the horizon). hold: exit at the 72 h horizon mark, recorded for every row detected since 2026-10-20 within a day of its horizon (older or unpriced rows are skipped; a rugged pool is -100 under every rule). peak: the sampled peak at its own recorded liquidity, or the entry depth for rows older than the recording. Market-cap multiples stand in for price multiples, which overstates the move when supply grew",
+    basis: "first ENTER signal per coin, graded rows only; entry at the signal's liquidity; pool fees and impact on both legs. graded: HIT_5M rows as a limit sell at the target, filled at min(peak, target) with the depth recorded at the peak sample (not a hold to the horizon); other rows at the liquidity the grader saw when it closed them (RUGGED at rug detection). hold: exit at the 72 h horizon mark, recorded for every row detected since 2026-10-20 within a day of its horizon (older or unpriced rows are skipped); a pool classified rugged is -100 under hold only; graded prices it at the rug-detection depth and peak keeps the pre-rug peak as a ceiling. peak: the sampled peak at its own recorded liquidity, or the entry depth for rows older than the recording. Rows the horizon pass could not price (pair gone from the feeds) are counted and shown; above a 20% share the validation label is INSUFFICIENT DATA. Market-cap multiples stand in for price multiples, which overstates the move when supply grew",
   };
 }
 
@@ -1383,7 +1409,7 @@ export function getCryptoSignals(): {
     })),
     stats: { ...stats, listLimit: LIST_LIMIT },
     expectancy: getCryptoExpectancy(),
-    desk: deskRisk,
+    desk: currentDeskRisk(),
   };
 }
 

@@ -1042,3 +1042,29 @@ convention named on each screen (three conventions), prediction-flavoured
 copy (headline/canary/pivot/playbook), OFI "ACCELERATING" at zero slope,
 Mag7 N/7, BreadthCard error branch, RegimeHeadline truncation. Next:
 pass 3 = phone UI + copy sweep across all tabs; Crypto tab audit.
+
+2026-10-23: Crypto tab audit (PR #25, feat/audit-crypto, stacked on pass 2).
+Fixed, each pinned (tests/quant/crypto-expectancy.test.ts, crypto-verdict
+.test.ts, regime-crypto-r2.test.ts): grader labelled a row DOUBLED when the
+market cap at signal was missing (peak >= 0 x 2) -> NO_DATA past the
+horizon, never DOUBLED/DEAD; persistSignal writes the same marketCap ?? fdv
+basis the verdict uses (+ mcapBasis in features). Graded HIT_5M exit was
+the grader's later sample (last_mcap) while labelled a limit sell at the
+target -> min(peak, target) at the peak-sample depth (targetMcap passed to
+summarizeExpectancy). Basis text claimed RUGGED is -100 under every rule;
+only hold is -> text now states the three rules (hold -100; graded at rug-
+detection depth; peak keeps the pre-rug ceiling). Validation label ignored
+survivorship -> summary carries noData / noDataShare / maxNoDataShare
+(20%, the desk's sampleGate share) and reads INSUFFICIENT DATA with a
+reason when exceeded. Desk risk used a stale venue mid -> venue state read;
+stale/failed -> unknown; reason names the venue. Top-10 concentration was
+never re-read after a skipped/unavailable indexed call (second candidate
+per tick stuck "unread", could never ENTER) -> retried every 30 min while
+null; top10Method says "skipped: ..." / "unavailable: ..." so the chip
+shows. Desk-risk 10-minute rule applied live (currentDeskRisk) in the
+verdict and payload, not only at restart. Missing 24 h volume is no longer
+a "dead pool" flag. Deferred: GT/DS field interleave (valueSource),
+community quoteAt on failure, parseOhlcv zero volume, hold rule for RUGGED
+with a priced horizon mark, CryptoPanel zeros for missing values and
+hover-only notes (pass 3 covers the phone items), horizon late-window
+label, advice-flavoured copy on the expectancy card.

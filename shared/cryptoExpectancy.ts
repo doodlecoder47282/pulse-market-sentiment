@@ -63,6 +63,11 @@ export interface LegCosts {
   priorityFeeUsd?: number;
 }
 
+/** Options for the graded rule's HIT_5M exit: the desk's target market cap (a limit-sell-at-target). */
+export interface RuleOptions {
+  targetMcap?: number | null;
+}
+
 export interface SignalReturn {
   rule: ExitRule;
   sizeUsd: number;
@@ -99,7 +104,7 @@ export function legReturnPct(sizeUsd: number, entryLiqUsd: number, exitLiqUsd: n
 }
 
 /** One graded signal under one exit rule. OPEN rows are not returns yet. */
-export function signalReturn(row: GradedSignalLike, rule: ExitRule, sizeUsd = 100, costs: LegCosts = {}): SignalReturn {
+export function signalReturn(row: GradedSignalLike, rule: ExitRule, sizeUsd = 100, costs: LegCosts = {}, ruleOpts: RuleOptions = {}): SignalReturn {
   const base: SignalReturn = { rule, sizeUsd, grossMultiple: null, netPct: null, missing: null };
   const outcome = String(row.outcome ?? "");
   if (outcome === "OPEN" || outcome === "") return { ...base, missing: "still open" };
@@ -107,11 +112,26 @@ export function signalReturn(row: GradedSignalLike, rule: ExitRule, sizeUsd = 10
   const entryMcap = fin(row.mcapAtSignal), entryLiq = fin(row.liquidityAtSignal);
   if (entryMcap == null || !(entryMcap > 0)) return { ...base, missing: "no market cap at the signal" };
   if (entryLiq == null || !(entryLiq > 0)) return { ...base, missing: "no liquidity at the signal" };
-  // A pool observed pulled at rug detection cannot be sold at the horizon either: -100 under every rule, mark or no mark.
+  // RUGGED under hold: the rule holds to the horizon, and a pool classified
+  // rugged (liquidity under 15% of entry or cap under 10%) is -100 under it.
+  // Under graded the exit is priced at the depth seen at rug detection; under
+  // peak the pre-rug peak stands as the ceiling. The three differ by design and
+  // the basis text says so.
   if (rule === "hold" && outcome === "RUGGED") return { ...base, grossMultiple: fin(row.horizonMcap) != null ? fin(row.horizonMcap)! / entryMcap : null, netPct: -100 };
   if (rule === "hold" && row.horizonAt == null) return { ...base, missing: "no horizon mark (row predates the horizon pass or has not reached it)" };
-  const exitMcap = rule === "peak" ? fin(row.peakMcap) : rule === "hold" ? fin(row.horizonMcap) : fin(row.lastMcap);
-  const exitLiq = rule === "peak" ? (fin(row.peakLiquidity) ?? entryLiq) : rule === "hold" ? fin(row.horizonLiquidity) : fin(row.lastLiquidity);
+  // graded + HIT_5M is a limit sell at the target: the fill is min(peak, target)
+  // at the depth recorded with the peak sample, not whatever the grader saw
+  // minutes later when it closed the row (last_mcap).
+  const target = fin(ruleOpts.targetMcap);
+  const hitAtTarget = rule === "graded" && outcome === "HIT_5M" && target != null && fin(row.peakMcap) != null;
+  const exitMcap = rule === "peak" ? fin(row.peakMcap)
+    : rule === "hold" ? fin(row.horizonMcap)
+    : hitAtTarget ? Math.min(fin(row.peakMcap)!, target!)
+    : fin(row.lastMcap);
+  const exitLiq = rule === "peak" ? (fin(row.peakLiquidity) ?? entryLiq)
+    : rule === "hold" ? fin(row.horizonLiquidity)
+    : hitAtTarget ? (fin(row.peakLiquidity) ?? fin(row.lastLiquidity))
+    : fin(row.lastLiquidity);
   if (outcome === "RUGGED" && rule !== "hold" && (exitLiq == null || exitLiq <= 0 || exitMcap == null)) {
     return { ...base, grossMultiple: exitMcap != null ? exitMcap / entryMcap : null, netPct: -100 };
   }
@@ -146,6 +166,13 @@ export interface ExpectancySummary {
   minSample: number;
   /** Four-way read of the sample against stated tests; never a forecast. */
   validation: ValidationLabel;
+  /** Why the label is what it is when the sample itself is the problem. */
+  validationReason: string | null;
+  /** Graded rows the horizon pass could not price (pair gone from the feeds): likely rugs, outside the denominator. */
+  noData: number;
+  /** noData / (n + noData); above maxNoDataShare the sample is too selected to read. */
+  noDataShare: number | null;
+  maxNoDataShare: number;
   note: string;
 }
 
@@ -180,16 +207,20 @@ const median = (xs: number[]): number | null => {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 };
 
-export function summarizeExpectancy(rows: GradedSignalLike[], rule: ExitRule, opts: { sizeUsd?: number; minSample?: number; costs?: LegCosts } = {}): ExpectancySummary {
+export const DEFAULT_MAX_NO_DATA_SHARE = 0.2;
+
+export function summarizeExpectancy(rows: GradedSignalLike[], rule: ExitRule, opts: { sizeUsd?: number; minSample?: number; costs?: LegCosts; targetMcap?: number | null; maxNoDataShare?: number } = {}): ExpectancySummary {
   const sizeUsd = opts.sizeUsd ?? 100;
   const minSample = opts.minSample ?? 50;
+  const maxNoDataShare = opts.maxNoDataShare ?? DEFAULT_MAX_NO_DATA_SHARE;
   const nets: number[] = [];
   const skippedReasons: Record<string, number> = {};
-  let skipped = 0;
+  let skipped = 0, noData = 0;
   for (const r of rows) {
     const out = String(r.outcome ?? "");
     if (out === "OPEN" || out === "") continue; // not graded: not in the denominator
-    const s = signalReturn(r, rule, sizeUsd, opts.costs);
+    if (out === "NO_DATA") noData++;
+    const s = signalReturn(r, rule, sizeUsd, opts.costs, { targetMcap: opts.targetMcap });
     if (s.netPct == null) { skipped++; const k = s.missing ?? "unknown"; skippedReasons[k] = (skippedReasons[k] ?? 0) + 1; continue; }
     nets.push(s.netPct);
   }
@@ -198,11 +229,17 @@ export function summarizeExpectancy(rows: GradedSignalLike[], rule: ExitRule, op
   const w = wilson(yes, n);
   const mean = n ? nets.reduce((a, b) => a + b, 0) / n : null;
   const ready = n >= minSample;
+  // Survivorship: pairs that vanished from the feeds before the horizon are
+  // likely rugs and cannot be priced. When they are more than maxNoDataShare
+  // of the graded set, the computable returns are the survivors' returns, and
+  // no test on them can pass: the label is INSUFFICIENT DATA with the reason.
+  const noDataShare = n + noData > 0 ? noData / (n + noData) : null;
+  const tooSelected = noDataShare != null && noDataShare > maxNoDataShare;
   const ruleText = rule === "graded"
-    ? "buy at the signal, sell when the row was graded (HIT_5M at the first sample at or above the target, RUGGED at rug detection, otherwise at the horizon)"
+    ? "buy at the signal, sell when the row was graded (HIT_5M as a limit sell at the target, filled at min(peak, target) with the depth recorded at the peak sample; RUGGED at the depth seen at rug detection; otherwise at the horizon)"
     : rule === "hold"
-      ? "buy at the signal, sell at the 72 h horizon mark whatever happened in between (the replicable rule; a rugged pool is -100)"
-      : "sell at the sampled peak (a ceiling, not an achievable exit)";
+      ? "buy at the signal, sell at the 72 h horizon mark whatever happened in between (the replicable rule; a pool classified rugged is -100 under this rule)"
+      : "sell at the sampled peak (a ceiling, not an achievable exit; a rug after the peak does not lower it)";
   const costText = rule === "peak"
     ? "net of pool fees and impact on both legs, the exit priced at the liquidity recorded at the peak, or the entry pool's depth for rows older than that recording (the ceiling is understated when depth grew with price)"
     : "net of pool fees and impact on both legs at the liquidity that existed at each";
@@ -217,8 +254,13 @@ export function summarizeExpectancy(rows: GradedSignalLike[], rule: ExitRule, op
     bestNetPct: n ? Math.max(...nets) : null,
     sampleReady: ready,
     minSample,
-    validation: validationLabel(n, minSample, meanR, lo, hi),
+    validation: tooSelected ? "INSUFFICIENT DATA" : validationLabel(n, minSample, meanR, lo, hi),
+    validationReason: tooSelected
+      ? `${noData} of ${n + noData} graded signals (${Math.round(noDataShare! * 100)}%) could not be priced past the horizon (pair gone from the feeds, likely rugs): the computable returns are the survivors', so no test can pass`
+      : n < minSample ? `${n} of a ${minSample}-signal minimum` : null,
+    noData, noDataShare: noDataShare == null ? null : Math.round(noDataShare * 1000) / 1000, maxNoDataShare,
     note: `${ruleText}; $${sizeUsd} per signal, ${costText}; ` +
-      (ready ? `${n} signals: what happened, not a forecast` : `${n} of a ${minSample}-signal minimum: counts only, no claim of edge`),
+      (ready ? `${n} signals: what happened, not a forecast` : `${n} of a ${minSample}-signal minimum: counts only, no claim of edge`) +
+      (noData ? `; ${noData} unpriced past the horizon (not in the denominator)` : ""),
   };
 }
