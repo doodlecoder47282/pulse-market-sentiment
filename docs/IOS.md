@@ -31,6 +31,18 @@ way expire after 7 days and are reinstalled from Xcode).
    (e.g. `https://xxxx.up.railway.app`) and the access key if the server sets
    `BATCAVE_ACCESS_KEY`. Both are saved on the device only.
 
+## Live UI: no rebuild for app changes
+
+`capacitor.config.json` sets `server.url` to the owner's server, so the native
+shell loads the terminal from Railway on every launch: a merge to `main`
+updates the phone the moment Railway redeploys, with no Xcode step. The
+Capacitor bridge (Schwab sign-in sheet, `batcave://` return) still runs; the
+page's origin is the server's, so API calls are same-origin. The bundled
+`ios/App/App/public` is only the fallback the shell ships with. An Xcode run
+is needed only for native changes (plugins, Info.plist) and for the 7-day
+Personal Team expiry; after the first cable pairing Xcode can run to the phone
+over Wi-Fi (Window → Devices and Simulators → Connect via network).
+
 ## Private use only (no store, no TestFlight)
 
 The app is for the owner's own phone, talking to the owner's own server.
