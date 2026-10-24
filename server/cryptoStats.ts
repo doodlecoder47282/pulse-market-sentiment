@@ -235,7 +235,13 @@ export function gradeSignal(input: {
   if (entryLiq > 0 && liq != null && liq < entryLiq * 0.15) return { outcome: "RUGGED", peak };
   if (mcap == null) return { outcome: ageMs > horizonMs ? "NO_DATA" : "OPEN", peak };
   if (entryMcap > 0 && mcap < entryMcap * 0.1) return { outcome: "RUGGED", peak };
-  if (ageMs > horizonMs) return { outcome: (peak ?? 0) >= entryMcap * 2 ? "DOUBLED" : "DEAD", peak };
+  if (ageMs > horizonMs) {
+    // Without a market cap at the signal there is no entry to compare with:
+    // the row is unpriced at entry (NO_DATA), never DOUBLED (the old test
+    // `peak >= 0 * 2` was always true) and never DEAD.
+    if (!(entryMcap > 0)) return { outcome: "NO_DATA", peak };
+    return { outcome: (peak ?? 0) >= entryMcap * 2 ? "DOUBLED" : "DEAD", peak };
+  }
   return { outcome: "OPEN", peak };
 }
 
