@@ -82,6 +82,10 @@ function statusBadgeClass(status: string): string {
 function TrackedRow({ sig }: { sig: TrackedSignal }) {
   const liveMark = sig.live?.mark ?? null;
   const entryMark = sig.entry?.mark ?? null;
+  const markAsOf = sig.live?.asOf ?? null;
+  const markAge = markAsOf != null && Number.isFinite(markAsOf)
+    ? (() => { const sec = Math.max(0, Math.round((Date.now() - markAsOf) / 1000)); return sec < 90 ? `${sec}s` : sec < 5400 ? `${Math.round(sec / 60)}m` : `${(sec / 3600).toFixed(1)}h`; })()
+    : null;
   const pct = sig.live?.pctChange ?? null;
   const peakPct = sig.live?.peakPctChange ?? null;
   const isOpen = sig.status === "OPEN";
@@ -137,6 +141,11 @@ function TrackedRow({ sig }: { sig: TrackedSignal }) {
           <span className="text-muted-foreground italic">· {sig.entry.note}</span>
         )}
       </div>
+      {(entryMark != null || liveMark != null) && (
+        <div className="text-[10px] text-muted-foreground/80" data-testid={`tracked-basis-${sig.id}`}>
+          basis: mark to mark (Schwab mark, about mid; falls back to last), no fees · {markAge != null ? `mark age ${markAge}` : "mark age unknown"}
+        </div>
+      )}
     </div>
   );
 }

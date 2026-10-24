@@ -55,7 +55,7 @@ export interface UnusualFlowResponse {
   /** Epoch seconds: when Schwab produced the chain behind this result. */
   asOf: number;
   /** "ok" = Schwab chain scanned (an empty list is an observed empty result); "unavailable" = Schwab did not answer. */
-  dataState?: "ok" | "unavailable" | "delayed";
+  dataState?: "ok" | "stale" | "unavailable" | "delayed";
   /** Human-readable note (e.g. why the result is unavailable). */
   note?: string;
 }

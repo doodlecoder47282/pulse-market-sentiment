@@ -377,7 +377,7 @@ export default function ThermalSurface3D({ data: full, greek, unit }: { data: Da
       const cg = new THREE.BufferGeometry(); cg.setAttribute("position", new THREE.Float32BufferAttribute(seg, 3));
       content.add(new THREE.LineSegments(cg, new THREE.LineBasicMaterial({ color: v > 0 ? 0xa7f3d0 : 0xfecdd3, transparent: true, opacity: 0.75 })));
     }
-    const ax = label("strike", "s3d-axis"); ax.position.set(0, 0, D / 2 + 1.05); content.add(ax);
+    const ax = label("strikes, even spacing", "s3d-axis"); ax.position.set(0, 0, D / 2 + 1.05); content.add(ax);
     const az = label(spacing === "dte" ? "days to expiry (to scale)" : "expiry (even spacing)", "s3d-axis"); az.position.set(W / 2 + 0.6, 0, -D / 2 - 0.75); content.add(az);
 
     // Level markers: thin ribbons from the zero plane up (or down) to the

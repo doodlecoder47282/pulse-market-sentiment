@@ -465,7 +465,7 @@ export function computeComposite(
 
   const tradingRegime =
     snap.gamma.regime === "positive"
-      ? `Positive gamma — mean-reversion favored. Expect pinning toward ${snap.gamma.maxPain}, resistance at ${snap.gamma.callWall}, support at ${snap.gamma.putWall}.`
+      ? `Positive gamma — mean-reversion favored. ${snap.gamma.maxPain != null ? `Max pain ${snap.gamma.maxPain}, ` : ""}resistance at ${snap.gamma.callWall}, support at ${snap.gamma.putWall}.`
       : snap.gamma.regime === "negative"
       ? `Negative gamma — trend / breakout regime. Range-expansion likely. Key support ${snap.gamma.putWall}, key resistance ${snap.gamma.callWall}.`
       : `Near gamma flip (${snap.gamma.zeroGamma?.toFixed(1) ?? "n/a"}) — unstable; directional risk elevated.`;

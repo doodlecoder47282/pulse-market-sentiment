@@ -31,7 +31,7 @@ type SnapshotLike = {
   spxSpot?: number | null;
   gamma: {
     spot: number; totalGex: number; callWall: number; putWall: number;
-    zeroGamma: number | null; maxPain: number;
+    zeroGamma: number | null; maxPain: number | null;
   };
   /** When Schwab produced the chain behind `gamma` (epoch s). */
   gammaAsOf?: number | null;
@@ -159,7 +159,8 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
   const callWall = g.callWall * scale;
   const putWall = g.putWall * scale;
   const gammaFlip = g.zeroGamma * scale;
-  const maxPain = g.maxPain * scale;
+  // null when no strike carried open interest: no fake level, no "pinning toward".
+  const maxPain: number | null = g.maxPain == null ? null : g.maxPain * scale;
   const totalGex = g.totalGex; // sign only matters
   const vix = vixIn;
   const chainAsOf = snap.gammaAsOf ?? snap.capturedAt;
@@ -219,7 +220,7 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
   // Targets are anchored to walls (callWall/putWall), with sigma-extension on breaks.
   const above = callWall > spot ? callWall : spot + 0.5 * sigma;
   const below = putWall  < spot ? putWall  : spot - 0.5 * sigma;
-  const pinAnchor = isPositiveGamma ? gammaFlip : maxPain;
+  const pinAnchor = isPositiveGamma ? gammaFlip : (maxPain ?? gammaFlip);
 
   const bull: PathScenario = {
     key: "bull",
@@ -265,7 +266,7 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
     drivers: [
       isPositiveGamma ? "Positive total GEX (pin regime)" : "Negative GEX, no catalyst",
       `1σ range ±$${sigma.toFixed(2)}`,
-      `Max pain ${maxPain.toFixed(2)}`,
+      maxPain != null ? `Max pain ${maxPain.toFixed(2)}` : "Max pain unavailable (no open interest on the nearest expiry)",
     ],
   };
 
@@ -297,7 +298,7 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
     { level: callWall,  label: "Call Wall",  kind: "callWall",  strength: "primary"   },
     { level: putWall,   label: "Put Wall",   kind: "putWall",   strength: "primary"   },
     { level: gammaFlip, label: "Gamma Flip", kind: "gammaFlip", strength: "primary"   },
-    { level: maxPain,   label: "Max Pain",   kind: "maxPain",   strength: "secondary" },
+    ...(maxPain != null ? [{ level: maxPain,   label: "Max Pain",   kind: "maxPain",   strength: "secondary" }] : []),
     { level: spot,      label: "Spot",       kind: "spot",      strength: "secondary" },
   ] as LevelMagnet[]).sort((a, b) => a.level - b.level);
 
@@ -322,7 +323,7 @@ export async function buildDailyPlaybook(symbol: "SPY" | "SPX" = "SPY"): Promise
     { key: "callWall",  label: "Call Wall",       value: callWall,            source: "Schwab",        asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf, calibration: `Top call OI strike` },
     { key: "putWall",   label: "Put Wall",        value: putWall,             source: "Schwab",        asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf, calibration: `Top put OI strike` },
     { key: "gammaFlip", label: "Gamma Flip",      value: gammaFlip,           source: "Computed",     asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf, calibration: `Zero-gamma level (Perfiliev)` },
-    { key: "maxPain",   label: "Max Pain",        value: maxPain,             source: "Computed",     asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf },
+    { key: "maxPain",   label: "Max Pain",        value: maxPain ?? "unavailable", source: "Computed",     asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf },
     { key: "totalGex",  label: "Total GEX",       value: `${(totalGex / 1e9).toFixed(2)}B`, source: "Computed", asOf: chainAsOf, freshSeconds: nowSec() - chainAsOf, calibration: isPositiveGamma ? "Positive (pin)" : "Negative (momentum)" },
     { key: "composite", label: "Composite (market blocks)", value: compScore ?? "unavailable", source: "Computed", asOf: snap.capturedAt, freshSeconds: nowSec() - snap.capturedAt, calibration: compScore != null ? (composite?.label ?? "") : "unavailable: no implied-vol / positioning gauge; scenario tilt skipped" },
   ];

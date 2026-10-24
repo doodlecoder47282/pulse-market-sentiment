@@ -27,9 +27,9 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Brain, AlertTriangle, TrendingUp, TrendingDown, Target } from "lucide-react";
 
-type WindowStat = { hitRate: number | null; brier: number | null; n: number };
+type WindowStat = { hitRate: number | null; brier: number | null; n: number; sessions?: number };
 type CalibBucket = { bucket: number; pUpAvg: number; actualUpRate: number; n: number };
-type TrailPoint = { ts: number; rollingHitRate: number; brier: number | null };
+type TrailPoint = { ts: number; rollingHitRate: number | null; brier: number | null };
 type RelBin = {
   lo: number; hi: number; n: number;
   meanPred: number | null; observed: number | null;
@@ -64,7 +64,7 @@ type AccuracyResp = {
   totalPredictions: number;
   gradedPredictions: number;
   abstained: number;
-  directionalHitRate: number;
+  directionalHitRate: number | null;
   directionalNCalls: number;
   bullHitRate: number | null;
   bullN: number;
@@ -150,11 +150,12 @@ function ReliabilityDiagram({ rel }: { rel: Reliability }) {
 
 function trendDelta(trail: TrailPoint[]): { delta: number; arrow: "up" | "down" | "flat" } {
   if (trail.length < 8) return { delta: 0, arrow: "flat" };
-  const recent = trail.slice(-7);
-  const earlier = trail.slice(-14, -7);
-  if (!earlier.length) return { delta: 0, arrow: "flat" };
-  const recentAvg = recent.reduce((a, b) => a + b.rollingHitRate, 0) / recent.length;
-  const earlierAvg = earlier.reduce((a, b) => a + b.rollingHitRate, 0) / earlier.length;
+  // Windows without a call are null, not 0%: they are left out of both averages.
+  const recent = trail.slice(-7).filter((t) => t.rollingHitRate != null);
+  const earlier = trail.slice(-14, -7).filter((t) => t.rollingHitRate != null);
+  if (!earlier.length || !recent.length) return { delta: 0, arrow: "flat" };
+  const recentAvg = recent.reduce((a, b) => a + (b.rollingHitRate as number), 0) / recent.length;
+  const earlierAvg = earlier.reduce((a, b) => a + (b.rollingHitRate as number), 0) / earlier.length;
   const delta = recentAvg - earlierAvg;
   if (delta > 0.05) return { delta, arrow: "up" };
   if (delta < -0.05) return { delta, arrow: "down" };
@@ -230,10 +231,12 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
   const trailPoints = data.trail.length
     ? data.trail
         .map((t, i) => {
+          if (t.rollingHitRate == null) return null; // no call in the window: no point, not a dip to 0
           const x = (i / Math.max(1, data.trail.length - 1)) * SPARK_W;
           const y = SPARK_H - t.rollingHitRate * SPARK_H;
           return `${x.toFixed(1)},${y.toFixed(1)}`;
         })
+        .filter((p): p is string => p != null)
         .join(" ")
     : "";
 
@@ -309,7 +312,7 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
               {pct(data.directionalHitRate)}
             </div>
             <div className="text-[11px] text-muted-foreground">
-              over {data.directionalNCalls} called predictions
+              {data.directionalNCalls > 0 ? `over ${data.directionalNCalls} called predictions` : "no called predictions yet (abstains are not counted)"}
             </div>
           </div>
           <div className="rounded border border-border/40 bg-black/30 p-2">
@@ -381,16 +384,16 @@ export default function MLAccuracyCard({ defaultSymbol = "^GSPC" }: { defaultSym
 
         {/* Rolling windows + sparkline */}
         <div className="mt-3 flex flex-wrap items-center gap-3 rounded border border-border/40 bg-black/30 p-2">
-          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">rolling</div>
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">rolling (sessions)</div>
           {([
-            ["7d", data.windows.last7],
-            ["14d", data.windows.last14],
-            ["30d", data.windows.last30],
+            ["7", data.windows.last7],
+            ["14", data.windows.last14],
+            ["30", data.windows.last30],
           ] as const).map(([label, w]) => (
-            <div key={label} className="text-[11px] font-mono">
-              <span className="text-muted-foreground/80">{label}</span>{" "}
+            <div key={label} className="text-[11px] font-mono" data-testid={`ml-window-${label}`}>
+              <span className="text-muted-foreground/80">{label}s</span>{" "}
               <span className="text-foreground">{pct(w.hitRate)}</span>
-              <span className="text-muted-foreground"> · b{w.brier != null ? w.brier.toFixed(2) : "—"}</span>
+              <span className="text-muted-foreground"> n={w.n}{w.sessions != null && w.sessions < Number(label) ? ` (${w.sessions} sessions so far)` : ""} · b{w.brier != null ? w.brier.toFixed(2) : "—"}</span>
             </div>
           ))}
           <div className="ml-auto flex items-center gap-1">

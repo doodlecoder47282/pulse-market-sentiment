@@ -338,7 +338,7 @@ export function PositionSizer() {
           <div className={`rounded-md border p-3 space-y-2 ${verdictStyle(s.verdict)}`} data-testid="card-edge-survival">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="text-sm font-semibold" data-testid="text-survival-verdict">
-                edge survival: {s.verdict.replace(/_/g, " ")}
+                cost model: {s.verdict === "EXPRESS" ? "inputs clear" : s.verdict === "MARGINAL" ? "inputs barely clear" : s.verdict === "STAND_DOWN" ? "inputs do not clear" : "insufficient evidence"}
               </div>
               <div className="text-xs opacity-90">
                 {s.evidence && s.evidence.n > 0
@@ -348,7 +348,7 @@ export function PositionSizer() {
             </div>
             <div className="space-y-1">
               <div className="flex justify-between text-xs font-mono tabular-nums">
-                <span className="text-foreground">realized EV (ledger mean)</span>
+                <span className="text-foreground">modelled outcome (ledger mean, before cost)</span>
                 <span>{s.grossEvPct >= 0 ? "+" : ""}{s.grossEvPct.toFixed(1)}%</span>
               </div>
               {s.rows.map((row, i) => (
@@ -358,7 +358,7 @@ export function PositionSizer() {
                 </div>
               ))}
               <div className="flex justify-between text-xs font-mono tabular-nums font-semibold border-t border-current/20 pt-1 text-foreground">
-                <span>net EV</span>
+                <span>modelled outcome, net of cost</span>
                 <span data-testid="text-net-ev">{s.netEvPct >= 0 ? "+" : ""}{s.netEvPct.toFixed(1)}%</span>
               </div>
               <div className="flex justify-between text-xs font-mono tabular-nums text-muted-foreground">
@@ -387,7 +387,7 @@ export function PositionSizer() {
 
         {!r && !sizeMut.isPending && (
           <p className="text-xs text-muted-foreground" data-testid="text-sizer-empty">
-            risk-floor + Kelly cap + conviction tier — most conservative wins. now also runs the net-EV waterfall: does the edge survive spread, slippage, and theta?
+            risk-floor + Kelly cap + conviction tier — most conservative wins. also runs the cost waterfall: do the inputs clear the spread, slippage and theta model?
           </p>
         )}
       </CardContent>

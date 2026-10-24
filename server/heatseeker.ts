@@ -374,8 +374,12 @@ export function buildHeatseeker(
   // 4. Totals, walls, zero gamma
   let callWall: number | null = null;
   let putWall: number | null = null;
-  let callWallVal = -Infinity;
-  let putWallVal = Infinity;
+  // Walls are signed: the call wall is the largest POSITIVE net exposure at
+  // or above spot, the put wall the most NEGATIVE at or below. Starting at
+  // -Infinity / +Infinity let a put-heavy expiry name its least-negative
+  // strike above spot a "call wall"; starting at 0 leaves it null.
+  let callWallVal = 0;
+  let putWallVal = 0;
 
   for (const s of strikes) {
     if (s.strike >= spot && s.netGex > callWallVal) {
@@ -452,13 +456,13 @@ export function buildHeatseeker(
 
     let interpretation = "";
     if (s.netGex > 0 && s.totalOI > maxOI * 0.5) {
-      interpretation = "Dealer long-gamma pin — suppresses moves through this strike";
+      interpretation = "Long-gamma concentration with heavy OI at this strike (model)";
     } else if (s.netGex < 0 && s.totalOI > maxOI * 0.5) {
-      interpretation = "Negative gamma — accelerant strike, breakouts amplify here";
+      interpretation = "Short-gamma concentration with heavy OI at this strike (model)";
     } else if (charmContribution > 70) {
-      interpretation = "Charm magnet — delta drift pulls price toward this level late in day";
+      interpretation = "Largest charm (delta decay) concentration at this strike (model)";
     } else if (oiContribution > 70) {
-      interpretation = "Heavy OI cluster — potential magnet or battleground";
+      interpretation = "Heavy OI cluster at this strike";
     } else {
       interpretation = "Moderate sticky factor";
     }
@@ -536,11 +540,11 @@ export function buildHeatseeker(
 
     const c = center.toFixed(1);
     const read =
-      role === "flip" ? `gamma flips sign near ${c} — crossing it changes the whole tape from damped to amplified` :
-      role === "accelerant" ? `dealers are short gamma at ${c} — a push through this band tends to speed up` :
-      role === "pin" ? `heavy long-gamma directly ${side === "at" ? "at spot" : "nearby"} — price gets pulled back to ${c}, moves away stall` :
-      role === "exhaust-high" ? `rallies have tended to run out of fuel into ${c} — dealer hedging sells here` :
-      `flushes have tended to find a floor near ${c} — dealer hedging buys here, unless volume keeps expanding`;
+      role === "flip" ? `net dealer gamma changes sign near ${c} (model): hedging dampens on one side, adds to moves on the other` :
+      role === "accelerant" ? `short-gamma band at ${c} (model): dealer hedging goes with the move here` :
+      role === "pin" ? `largest long-gamma concentration ${side === "at" ? "at spot" : "near spot"}, centered ${c} (model)` :
+      role === "exhaust-high" ? `largest long-gamma concentration above spot, centered ${c} (model)` :
+      `largest long-gamma concentration below spot, centered ${c} (model)`;
 
     rawBands.push({
       center: Math.round(center * 10) / 10,

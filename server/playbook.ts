@@ -289,9 +289,9 @@ export function buildGammaMap(gamma: GammaStructure, spot: number): GammaMap {
 
   const narrative =
     gamma.regime === "positive"
-      ? `Dealers are NET LONG gamma ($${(gamma.totalGex / 1e9).toFixed(2)}B/1%). They buy weakness and sell strength — mean-reversion regime. Expect pinning toward ${gamma.maxPain.toFixed(0)}, resistance at the ${gamma.callWall.toFixed(0)} call wall, support at the ${gamma.putWall.toFixed(0)} put wall.`
+      ? `Dealers are NET LONG gamma ($${(gamma.totalGex / 1e9).toFixed(2)}B/1%). Hedging goes against the move (model). ${gamma.maxPain != null ? `Max pain ${gamma.maxPain.toFixed(0)}, ` : ""}largest positive exposure at ${gamma.callWall.toFixed(0)} (call wall); largest negative at ${gamma.putWall.toFixed(0)} (put wall).`
       : gamma.regime === "negative"
-      ? `Dealers are NET SHORT gamma ($${(gamma.totalGex / 1e9).toFixed(2)}B/1%). They sell weakness and buy strength — trend-amplification regime. Breakouts above ${gamma.callWall.toFixed(0)} can extend; breaks below ${gamma.putWall.toFixed(0)} can cascade.`
+      ? `Dealers are NET SHORT gamma ($${(gamma.totalGex / 1e9).toFixed(2)}B/1%). Hedging goes with the move (model). Largest positive exposure at ${gamma.callWall.toFixed(0)} (call wall); largest negative at ${gamma.putWall.toFixed(0)} (put wall).`
       : `Dealer gamma is near zero (${(gamma.totalGex / 1e9).toFixed(2)}B/1%). Unstable regime — a small spot move in either direction flips dealer hedging behavior. Key flip level: ${gamma.zeroGamma?.toFixed(1) ?? "n/a"}.`;
 
   return {
@@ -491,7 +491,7 @@ export function buildDailyPlaybook(inp: PlaybookInputs): DailyPlaybook {
     scenarios.push({
       name: "Base Case — Pin & Fade",
       trigger: `If price opens between ${fmtPrice(pw, tk)} and ${fmtPrice(cw, tk)} and accepts above ${fmtPrice(mid, tk)}`,
-      target: `Drift toward max pain ${fmtPrice(gamma.maxPain, tk)}; fade ${fmtPrice(cw, tk)} top, fade ${fmtPrice(pw, tk)} bottom`,
+      target: `${gamma.maxPain != null ? `Max pain ${fmtPrice(gamma.maxPain, tk)}; ` : ""}fade ${fmtPrice(cw, tk)} top, fade ${fmtPrice(pw, tk)} bottom`,
       invalidation: `15-min close above ${fmtPrice(cw, tk)} or below ${fmtPrice(pw, tk)}`,
       odds: "primary",
       levels: buildLevels(

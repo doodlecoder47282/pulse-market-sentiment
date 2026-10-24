@@ -27,9 +27,12 @@ way expire after 7 days and are reinstalled from Xcode).
    Account. If the bundle ID is unavailable, change `com.batcave.terminal` to
    something unique. Plug in the phone, choose it, press **Run**, then trust
    the developer certificate on the phone and enable Developer Mode if asked.
-5. First launch shows **Connect to your Batcave server**. Enter the hosted URL
-   (e.g. `https://xxxx.up.railway.app`) and the access key if the server sets
-   `BATCAVE_ACCESS_KEY`. Both are saved on the device only.
+5. First launch opens straight into the terminal: the owner's server address
+   is baked into the build (`VITE_API_BASE` in `ios-build.yml`, overridable by
+   the repo variable `BATCAVE_API_BASE`). The **Connect to your Batcave
+   server** screen appears only if that server is unreachable, or asks for the
+   access key only if the server sets `BATCAVE_ACCESS_KEY`; both are saved on
+   the device only. Then Settings → **Open Schwab Login**.
 
 ## Live UI: no rebuild for app changes
 

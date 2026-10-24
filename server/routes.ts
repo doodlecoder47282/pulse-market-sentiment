@@ -39,6 +39,7 @@ import { watchdogStatus } from "./cusumWatchdog";
 import { shieldStatus } from "./quoteShield";
 import { computeRND, type CallStrike } from "./breedenLitzenberger";
 import { dollarGexPerPct, flipInputs, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain, type FlipWeight } from "./gammaProfile";
+import { schwabNum } from "./schwabChainRows";
 
 /** Flip weight label for the killbox / thermal weight modes. */
 function flipWeightOf(mode: string): FlipWeight {
@@ -866,7 +867,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             callWall: snap.gamma.callWall * gammaScale,
             putWall: snap.gamma.putWall * gammaScale,
             gammaFlip: (snap.gamma.zeroGamma as number) * gammaScale,
-            maxPain: snap.gamma.maxPain * gammaScale,
+            maxPain: snap.gamma.maxPain == null ? null : snap.gamma.maxPain * gammaScale,
             totalGex: snap.gamma.totalGex,
             composite: composite as number,
             jpmStrikes,
@@ -1095,8 +1096,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       },
       // Epoch seconds of the Schwab chain time (schwabFlow returns ms).
       asOf: schwab.asOf ? Math.floor(schwab.asOf / 1000) : Math.floor(Date.now() / 1000),
-      dataState: "ok",
+      dataState: schwab.stale ? "stale" : "ok",
       ...(schwab.stale ? { note: "Schwab chain re-served after a failed refresh (within its max age)." } : {}),
+      ...(schwab.skippedMissingFields ? { skippedMissingFields: schwab.skippedMissingFields } : {}),
     };
   }
 
@@ -3529,8 +3531,10 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         | "unavailable";
 
       let regime: RegimeKey = "neutral";
+      // "confidence" is the rule tier that matched (how specific the rule was),
+      // not a calibrated probability; the UI labels it "rule tier".
       let confidence: "high" | "medium" | "low" = "low";
-      let headline = "Neutral — no decisive regime signal.";
+      let headline = "Neutral — no regime rule matched.";
       let tier: "bullish" | "bearish" | "neutral" | "warning" = "neutral";
 
       // Missing VIX change is missing, not 0%: NaN fails every rule that needs it.
@@ -3542,35 +3546,35 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         regime = "vol_expansion";
         confidence = "high";
         tier = "warning";
-        headline = `Volatility expansion — VIX backwardation (${vix9d?.toFixed(1)}/${vix?.toFixed(1)}/${vix3m?.toFixed(1)}) + dealers short gamma, expect wider ranges and gap risk.`;
+        headline = `Volatility expansion — VIX backwardation (${vix9d?.toFixed(1)}/${vix?.toFixed(1)}/${vix3m?.toFixed(1)}) + dealers short gamma: dealer hedging adds to moves.`;
       }
       // Gamma squeeze — strong long gamma + GEX rising + VIX falling
       else if (gexRegime === "long_gamma" && absShare > 0.25 && gexTrend === "rising" && vixPct < -1) {
         regime = "gamma_squeeze";
         confidence = "high";
         tier = "bullish";
-        headline = `Gamma squeeze — net GEX rising, dealers deep long gamma (${(gexShare * 100).toFixed(0)}% share), VIX bleeding, drift up into call walls.`;
+        headline = `Gamma squeeze — net GEX rising, dealers deep long gamma (${(gexShare * 100).toFixed(0)}% share), VIX falling: dealer hedging dampens moves.`;
       }
       // Pinning — strong long gamma + contango + low VIX move
       else if (gexRegime === "long_gamma" && absShare > 0.15 && termState === "contango" && Math.abs(vixPct) < 2) {
         regime = "pinning";
         confidence = "medium";
         tier = "neutral";
-        headline = `Pinning mode — dealers long gamma (${(gexShare * 100).toFixed(0)}% share) damping moves, VIX contango steady, expect range trade.`;
+        headline = `Pinning mode — dealers long gamma (${(gexShare * 100).toFixed(0)}% share) VIX contango steady: dealer hedging dampens moves.`;
       }
       // Mean reversion — short gamma + flat term + VIX cooling
       else if (gexRegime === "short_gamma" && termState !== "backwardation" && vixPct < -1) {
         regime = "mean_reversion";
         confidence = "medium";
         tier = "neutral";
-        headline = `Mean reversion — dealers short gamma but VIX cooling, expect chop and fade extremes.`;
+        headline = `Mean reversion — dealers short gamma with VIX cooling: hedging adds to moves while vol is falling.`;
       }
       // Trend continuation — short gamma + GEX trending + VIX bid but not panicking
       else if (gexRegime === "short_gamma" && gexTrend !== "flat" && Math.abs(vixPct) > 1) {
         regime = "trend_continuation";
         confidence = "medium";
         tier = vixPct > 0 ? "bearish" : "bullish";
-        headline = `Trend continuation — dealers short gamma amplifying ${vixPct > 0 ? "downside" : "upside"}, follow the tape until vol structure flips.`;
+        headline = `Trend continuation — dealers short gamma with VIX ${vixPct > 0 ? "rising" : "falling"}: dealer hedging adds to moves.`;
       }
       // Default neutral with detail
       else if (gexRegime !== "unknown" && termState !== "unknown") {
@@ -3579,7 +3583,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
         tier = "neutral";
         const gexLabel = gexRegime === "long_gamma" ? "long gamma" : "short gamma";
         const termLabel = termState === "contango" ? "contango" : termState === "backwardation" ? "backwardation" : "flat term";
-        headline = `Neutral — ${gexLabel} (${(gexShare * 100).toFixed(0)}%), VIX ${termLabel}, no decisive edge.`;
+        headline = `Neutral — ${gexLabel} (${(gexShare * 100).toFixed(0)}%), VIX ${termLabel}: ${gexRegime === "long_gamma" ? "dealer hedging dampens moves" : "dealer hedging adds to moves"}, mixed inputs.`;
       }
       // Inputs missing (e.g. Schwab not answering): say so, never default to a neutral read.
       else {
@@ -3814,6 +3818,7 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
 
       // Second pass: per-strike across all expiries.
       const nowMs = Date.now();
+      let contractsPriced = 0, contractsUnpriced = 0;
       for (const { side, map } of passes) {
         for (const ek of Object.keys(map || {})) {
           const dteStr = ek.split(":")[1] || "30";
@@ -3824,25 +3829,34 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
             if (!isFinite(strike)) continue;
             const row = getRow(strike);
             for (const c of map[ek][sk] || []) {
-              const oi = c.openInterest || 0;
-              const vol = c.totalVolume || 0;
+              // schwabNum drops Schwab's -999 sentinels; missing is 0 weight here.
+              const oi = Math.max(0, schwabNum(c.openInterest) ?? 0);
+              const vol = Math.max(0, schwabNum(c.totalVolume) ?? 0);
               if (oi === 0 && vol === 0) continue;
               // One clock: calendar minutes to the real settlement instant
               // (AM SPX vs PM SPXW, half days) / 525,600; settled -> skip.
               const T = contractYears(ek, c);
               if (!(T > 0)) continue;
               const sqrtT = Math.sqrt(T);
-              const ivPct = c.volatility || 0;
+              const ivPct = schwabNum(c.volatility) ?? 0;
               // sigma valid for our T (re-solved from the mid inside 3 days)
               const sigma = ivForClock({
                 vendorIv: ivPct > 0 && ivPct < 500 ? ivPct / 100 : 0,
                 bid: Number(c.bid), ask: Number(c.ask), spot, strike, T, type: side,
               });
-              // Gamma on the same basis as the flip (Black-Scholes, our T);
-              // vendor gamma only when no usable sigma.
-              const gamma = sigma > 0 ? bsGammaOurClock(spot, strike, sigma, T, FLIP_RATE, FLIP_DIV_YIELD) : (c.gamma ?? 0);
+              // Gamma on the same basis as the flip (Black-Scholes, our T).
+              // Without a usable sigma the contract is counted as unpriced and
+              // skipped: the old fallback `c.gamma ?? 0` accepted Schwab's -999
+              // sentinel (finite, non-zero) after the close and put ~-4e13 of
+              // exposure on one strike, which set the walls, stability and
+              // regime. A vendor gamma is used only when it is in (0, 1].
+              const rawGamma = schwabNum(c.gamma);
+              const gamma = sigma > 0 ? bsGammaOurClock(spot, strike, sigma, T, FLIP_RATE, FLIP_DIV_YIELD)
+                : rawGamma != null && rawGamma > 0 && rawGamma <= 1 ? rawGamma : 0;
               if (side === "C") { row.callOI += oi; row.callVol += vol; }
               else { row.putOI += oi; row.putVol += vol; }
+              if (!(gamma > 0)) { contractsUnpriced++; continue; }
+              contractsPriced++;
 
               let weight = 0;
               if (weightMode === "oi") weight = oi;
@@ -3915,11 +3929,15 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
       }
 
       const totalNetGex = gexProfile.reduce((s, p) => s + p.exposure, 0);
-      const regime = totalNetGex > 0 ? "long_gamma" : "short_gamma";
+      // No priced contract: nothing to call a regime; the client says "cannot be priced".
+      const regime: "long_gamma" | "short_gamma" | "indeterminate" = contractsPriced === 0 || gexProfile.length === 0 ? "indeterminate" : totalNetGex > 0 ? "long_gamma" : "short_gamma";
 
       res.json({
         symbol,
         asOf: nowMs,
+        dataState: contractsPriced > 0 ? "ok" : "no_iv",
+        reason: contractsPriced > 0 ? null : "no contract could be priced (no usable implied volatility or vendor gamma; typical after the close)",
+        contracts: { priced: contractsPriced, unpriced: contractsUnpriced },
         // When Schwab produced the chain (asOf above is the computation time).
         chainAsOfMs: chain.asOfMs,
         chainStale: chain.stale,

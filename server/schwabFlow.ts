@@ -13,13 +13,14 @@
 
 import { getOptionChain } from "./schwab";
 import type { UnusualFlowContract, FlowTag, FlowSentiment } from "./unusualFlow";
+import { schwabNum } from "./schwabChainRows";
 
 export interface SchwabFlowContract extends UnusualFlowContract {
   delta: number;          // signed: calls 0..1, puts -1..0
   gamma: number;
   theta: number;
   vega: number;
-  iv: number;             // already on UnusualFlowContract but Schwab fills it
+  iv: number;             // Schwab `volatility`, in PERCENT (23.4 = 23.4%); 0 when not computed
   mark: number;           // theo mid from Schwab
   /** Schwab tradeTimeInLong / quoteTimeInLong (epoch ms); null when absent. Needed to attribute volume to prints (flowAttribution.ts). */
   tradeTimeMs: number | null;
@@ -31,6 +32,8 @@ export interface SchwabFlowResponse {
   symbol: string;
   spot: number | null;
   contracts: SchwabFlowContract[];
+  /** Contracts Schwab listed without volume or open interest (or with -999): not scanned, not "new strikes". */
+  skippedMissingFields: number;
   /** Epoch ms: when Schwab produced the chain (was the time of this call). */
   asOf: number;
   /** true = a refresh failed and an older chain (within its max age) was scanned. */
@@ -79,7 +82,7 @@ function deriveSentiment(type: "C" | "P", tag: FlowTag): FlowSentiment {
 // ─── Main builder ────────────────────────────────────────────────────────────
 export async function buildSchwabFlow(
   symbol: string,
-  opts?: { minVolOi?: number; minVolume?: number; maxDte?: number; limit?: number },
+  opts?: { minVolOi?: number; minVolume?: number; maxDte?: number; limit?: number; /** Tests: scan this chain instead of reading Schwab. */ chain?: any },
 ): Promise<SchwabFlowResponse | { error: string; symbol: string }> {
   const minVolOi = opts?.minVolOi ?? 2.0;
   const minVolume = opts?.minVolume ?? 100;
@@ -90,13 +93,14 @@ export async function buildSchwabFlow(
   // User passes 'SPX' — normalize here so the rest of the system stays clean.
   // Schwab cash indexes use "$" prefix WITHOUT ".X" suffix.
   const schwabSymbol = symbol === "SPX" ? "$SPX" : symbol;
-  const chain = await getOptionChain(schwabSymbol, maxDte);
+  const chain = opts?.chain ?? await getOptionChain(schwabSymbol, maxDte);
   if ("error" in chain) {
     return { error: chain.error, symbol };
   }
 
   const spot = chain.underlying?.last ?? null;
   const contracts: SchwabFlowContract[] = [];
+  let skippedMissingFields = 0;
 
   function processSide(map: Record<string, Record<string, any[]>>, type: "C" | "P") {
     for (const expKey of Object.keys(map)) {
@@ -113,10 +117,16 @@ export async function buildSchwabFlow(
           const dte = Number(c.daysToExpiration ?? 0);
           if (dte < 0 || dte > maxDte) continue;
 
-          const volume = Number(c.totalVolume ?? 0);
+          // Missing is not zero: a contract Schwab reports without volume or
+          // open interest (or with its -999 sentinel) is skipped and counted,
+          // never read as a new strike with infinite volume/OI.
+          const volumeN = schwabNum(c.totalVolume);
+          const oiN = schwabNum(c.openInterest);
+          if (volumeN == null || oiN == null) { skippedMissingFields++; continue; }
+          const volume = volumeN;
           if (volume < minVolume) continue;
 
-          const openInterest = Number(c.openInterest ?? 0);
+          const openInterest = oiN;
           const isNewStrike = openInterest === 0;
           const volOiRatio = isNewStrike ? Number.POSITIVE_INFINITY : volume / openInterest;
           if (!isNewStrike && volOiRatio < minVolOi) continue;
@@ -133,16 +143,15 @@ export async function buildSchwabFlow(
           const sentiment = deriveSentiment(type, tag);
 
           // Schwab returns -999 / -0 sometimes when greeks aren't computed; clamp
-          let delta = Number(c.delta ?? 0);
-          if (!isFinite(delta) || Math.abs(delta) > 1.5) delta = 0;
-          let gamma = Number(c.gamma ?? 0);
-          if (!isFinite(gamma)) gamma = 0;
-          let theta = Number(c.theta ?? 0);
-          if (!isFinite(theta)) theta = 0;
-          let vega = Number(c.vega ?? 0);
-          if (!isFinite(vega)) vega = 0;
-          let iv = Number(c.volatility ?? 0);
-          if (!isFinite(iv) || iv < 0) iv = 0;
+          // Greeks: schwabNum drops -999 sentinels; 0 means "not computed" here.
+          let delta = schwabNum(c.delta) ?? 0;
+          if (Math.abs(delta) > 1.5) delta = 0;
+          const gamma = schwabNum(c.gamma) ?? 0;
+          const theta = schwabNum(c.theta) ?? 0;
+          const vega = schwabNum(c.vega) ?? 0;
+          // iv is Schwab's `volatility`: PERCENT (23.4 = 23.4%), never multiplied again on display.
+          let iv = schwabNum(c.volatility) ?? 0;
+          if (iv < 0 || iv >= 500) iv = 0;
           const tradeTimeMs = typeof c.tradeTimeInLong === "number" && c.tradeTimeInLong > 0 ? c.tradeTimeInLong : null;
           const quoteTimeMs = typeof c.quoteTimeInLong === "number" && c.quoteTimeInLong > 0 ? c.quoteTimeInLong : null;
 
@@ -194,6 +203,7 @@ export async function buildSchwabFlow(
     symbol,
     spot,
     contracts: trimmed,
+    skippedMissingFields,
     asOf: chain.asOfMs,
     stale: chain.stale,
   };

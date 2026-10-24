@@ -49,16 +49,27 @@ export const DESK_RISK_OFF_PCT = -5;
 
 interface MajorsLike {
   state: "ok" | "partial" | "unavailable";
-  rows: Array<{ asset: string; kraken: { mid: number | null; vwap24h: number | null }; coinbase: { mid: number | null } }>;
+  /** Venue `state` is the venue's own read state; a stale or failed venue's mid is not used (stale -> unknown, never on/off). */
+  rows: Array<{ asset: string; kraken: { state?: string; mid: number | null; vwap24h: number | null }; coinbase: { state?: string; mid: number | null } }>;
 }
+
+const liveMid = (v: { state?: string; mid: number | null } | undefined): number | null =>
+  v && (v.state == null || v.state === "ok") && v.mid != null && Number.isFinite(v.mid) ? v.mid : null;
 
 export function deskRiskFromMajors(snap: MajorsLike | null, now: number): DeskRisk {
   if (!snap || snap.state === "unavailable") return { state: "unknown", reason: "majors unavailable", asOf: now, btcVsVwap24hPct: null };
   const btc = snap.rows.find((r) => String(r.asset).toUpperCase() === "BTC");
-  const mid = btc?.kraken.mid ?? btc?.coinbase.mid ?? null;
-  const vwap = btc?.kraken.vwap24h ?? null;
-  if (mid == null || vwap == null || !(vwap > 0)) return { state: "unknown", reason: "BTC mid or 24 h VWAP not read", asOf: now, btcVsVwap24hPct: null };
+  const krMid = liveMid(btc?.kraken);
+  const cbMid = liveMid(btc?.coinbase);
+  const mid = krMid ?? cbMid;
+  // The VWAP is Kraken's; it is only as fresh as Kraken's read.
+  const vwap = btc && (btc.kraken.state == null || btc.kraken.state === "ok") ? btc.kraken.vwap24h : null;
+  if (mid == null || vwap == null || !(vwap > 0)) {
+    const why = btc?.kraken.state && btc.kraken.state !== "ok" ? `Kraken BTC read ${btc.kraken.state}` : "BTC mid or 24 h VWAP not read";
+    return { state: "unknown", reason: why, asOf: now, btcVsVwap24hPct: null };
+  }
+  const venue = krMid != null ? "Kraken mid" : "Coinbase mid";
   const pct = Math.round(((mid - vwap) / vwap) * 10000) / 100;
-  if (pct <= DESK_RISK_OFF_PCT) return { state: "off", reason: `BTC ${pct.toFixed(2)}% vs its 24 h VWAP`, asOf: now, btcVsVwap24hPct: pct };
-  return { state: "on", reason: `BTC ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% vs its 24 h VWAP`, asOf: now, btcVsVwap24hPct: pct };
+  if (pct <= DESK_RISK_OFF_PCT) return { state: "off", reason: `BTC ${pct.toFixed(2)}% vs its Kraken 24 h VWAP (${venue})`, asOf: now, btcVsVwap24hPct: pct };
+  return { state: "on", reason: `BTC ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% vs its Kraken 24 h VWAP (${venue})`, asOf: now, btcVsVwap24hPct: pct };
 }

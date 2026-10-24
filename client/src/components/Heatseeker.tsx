@@ -41,6 +41,7 @@ import {
 import { Activity, AlertTriangle, Crosshair, Flame, Target, TrendingDown, TrendingUp } from "lucide-react";
 import LiveOdteTracker from "./LiveOdteTracker";
 import DepthSkewFlow from "./DepthSkewFlow";
+import UnavailablePanel from "./UnavailablePanel";
 import OdteContractChart from "./OdteContractChart";
 import { friendlyError } from "@/lib/friendlyError";
 
@@ -271,7 +272,7 @@ export default function Heatseeker() {
             key={p}
             variant={symbol === p ? "default" : "ghost"}
             size="sm"
-            className="h-6 px-2 text-[11px] font-mono"
+            className="h-11 px-3 text-[11px] font-mono lg:h-6 lg:px-2"
             onClick={() => setSymbol(p)}
             data-testid={`btn-heatseeker-symbol-${p}`}
           >
@@ -287,7 +288,7 @@ export default function Heatseeker() {
         }}
         onBlur={commitDraft}
         placeholder="custom…"
-        className="h-6 w-24 px-2 font-mono text-[11px] uppercase placeholder:normal-case"
+        className="h-11 w-24 px-2 font-mono text-[11px] uppercase placeholder:normal-case lg:h-6"
         data-testid="input-heatseeker-symbol"
       />
       {!PRESETS.includes(symbol as any) && (
@@ -311,7 +312,7 @@ export default function Heatseeker() {
         <Button
           variant={pickedExpiry === null ? "default" : "ghost"}
           size="sm"
-          className="h-6 px-2 text-[11px] font-mono"
+          className="h-11 px-3 text-[11px] font-mono lg:h-6 lg:px-2"
           onClick={() => setPickedExpiry(null)}
           data-testid="btn-expiry-auto"
           title="Nearest expiry (0DTE if available today)"
@@ -323,7 +324,7 @@ export default function Heatseeker() {
             key={q.date}
             variant={pickedExpiry === q.date ? "default" : "ghost"}
             size="sm"
-            className="h-6 px-2 text-[11px] font-mono"
+            className="h-11 px-3 text-[11px] font-mono lg:h-6 lg:px-2"
             onClick={() => setPickedExpiry(q.date)}
             data-testid={`btn-expiry-${q.date}`}
             title={q.date}
@@ -340,7 +341,7 @@ export default function Heatseeker() {
           value={pickedExpiry ?? ""}
           onChange={(e) => setPickedExpiry(e.target.value || null)}
           data-testid="select-expiry-custom"
-          className="h-6 rounded-md border border-border/60 bg-background px-2 font-mono text-[11px] text-foreground"
+          className="h-11 rounded-md border border-border/60 bg-background px-2 font-mono text-[11px] text-foreground lg:h-6"
           title="Pick any expiry from the chain"
         >
           <option value="">custom…</option>
@@ -419,6 +420,23 @@ export default function Heatseeker() {
             </div>
           </CardContent>
         </Card>
+      </div>
+    );
+  }
+
+  // Server heatseeker.ts: dataState "unavailable" (no chain / no expiry) ships
+  // empty strikes and null totals with a reason. Say why instead of drawing an
+  // empty grid.
+  if (data.dataState === "unavailable" || (data.strikes?.length ?? 0) === 0) {
+    return (
+      <div className="space-y-4">
+        {header}
+        <UnavailablePanel
+          title={`Heatseeker · ${symbol}`}
+          state={data.dataState ?? "no_data"}
+          reason={data.reason ?? `no strikes returned for ${symbol}${data.expiry ? ` ${data.expiry}` : ""}`}
+          testId="heatseeker-unavailable"
+        />
       </div>
     );
   }
@@ -690,6 +708,9 @@ function PivotBandsLadder({ bands, spot, expiry, dte, degraded }: { bands: Pivot
 function HeatseekerView({ data }: { data: HeatseekerData }) {
   const { strikes, stickyZones, totals, spot, expiry, dte, symbol, asOf } = data;
   const pivotBands = data.pivotBands ?? [];
+  // The live 0DTE tracker covers $SPX's nearest expiry only (ATM ±20 strikes).
+  const isNearestExpiry = (data.availableExpiries?.[0]?.date ?? expiry) === expiry;
+  const trackerCovers = symbol === "$SPX" && isNearestExpiry;
 
   // Dead-chain guard: overnight (or feed-down) the fresh 0DTE expiry has zero
   // OI and zero volume everywhere, so every exposure and sticky score is 0.
@@ -815,7 +836,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
             </div>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
               <Stat
-                label={totals.gexSignAtSpot === null && totals.netGex != null ? "Net GEX (expiry, $/1%) · no material γ at spot" : "Net GEX (expiry, $/1%)"}
+                label={totals.gexSignAtSpot === null && totals.netGex != null ? "Net GEX (full expiry, $ per 1%) · no material γ at spot" : "Net GEX (full expiry, $ per 1%)"}
                 value={totals.netGex != null ? fmtM(totals.netGex) : "—"}
                 positive={totals.netGex != null ? totals.netGex >= 0 : null}
               />
@@ -824,8 +845,8 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                 value={totals.netDex != null && totals.dexState !== "unavailable" ? fmtM(totals.netDex) : "—"}
                 positive={totals.netDex != null && totals.dexState !== "unavailable" ? totals.netDex >= 0 : null}
               />
-              <Stat label="Net Vanna" value={totals.netVanna != null ? fmtM(totals.netVanna) : "—"} positive={totals.netVanna != null ? totals.netVanna >= 0 : null} />
-              <Stat label="Net Charm" value={totals.netCharm != null ? fmtM(totals.netCharm) : "—"} positive={totals.netCharm != null ? totals.netCharm >= 0 : null} />
+              <Stat label="Net Vanna ($ per vol pt, ±window)" value={totals.netVanna != null ? fmtM(totals.netVanna) : "—"} positive={totals.netVanna != null ? totals.netVanna >= 0 : null} />
+              <Stat label="Net Charm ($ per day, ±window)" value={totals.netCharm != null ? fmtM(totals.netCharm) : "—"} positive={totals.netCharm != null ? totals.netCharm >= 0 : null} />
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs">
               {totals.callWall !== null && (
@@ -1007,7 +1028,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
                         </span>
                       )}
                     </div>
-                    <GexCell callGex={s.callGex} putGex={s.putGex} max={maxAbsGex} symbol={symbol} strike={s.strike} />
+                    <GexCell callGex={s.callGex} putGex={s.putGex} max={maxAbsGex} symbol={symbol} strike={s.strike} expiry={expiry} />
                     {s.netDex != null ? <HeatCell value={s.netDex} max={maxAbsDex} /> : <div className="flex items-center justify-center font-mono text-[11px] text-muted-foreground" title="no usable delta at this strike">—</div>}
                     <HeatCell value={s.netVanna} max={maxAbsVanna} />
                     <HeatCell value={s.netCharm} max={maxAbsCharm} />
@@ -1091,8 +1112,10 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
             />
             {!c && (
               <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-400">
-                Strike {selected.strike.toFixed(0)} is outside the tracker’s ATM ±20 window — live tick history
-                will begin collecting once price drifts into range. Quote snapshot still reflects the current chain.
+                {trackerCovers
+                  ? <>Strike {selected.strike.toFixed(0)} is outside the tracker’s ATM ±20 window — live tick history
+                    will begin collecting once price drifts into range. Quote snapshot still reflects the current chain.</>
+                  : <>Strike {selected.strike.toFixed(0)} is not in the 0DTE tracker (it covers $SPX nearest expiry only). Quote snapshot still reflects the current chain.</>}
               </div>
             )}
           </div>
@@ -1100,7 +1123,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
       })()}
 
       {/* ── Depth · Skew · Flow — 3 synchronized real-time views ─────── */}
-      <DepthSkewFlow />
+      <DepthSkewFlow symbol={symbol} expiry={isNearestExpiry ? null : expiry} />
 
       {/* ── Live 0DTE tracker — directly under the Greek heatmap ───────── */}
       <LiveOdteTracker />
@@ -1234,7 +1257,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
           </CardTitle>
           <div className="text-xs text-muted-foreground">
             Score = 50% |GEX| + 30% OI density + 20% charm acceleration.
-            Higher rank = stronger price magnet for today's action.
+            Higher rank = largest exposure concentration.
           </div>
         </CardHeader>
         <CardContent>
@@ -1308,8 +1331,9 @@ function HeatCell({ value, max }: { value: number; max: number }) {
 // a tiny arrow + magnitude readout next to the GEX cell. Module-level so it
 // persists across re-renders without needing localStorage (sandbox rule).
 // ────────────────────────────────────────────────────────────────────────────
-type BaselineKey = string; // `${dateKey}|${symbol}|${strike}`
-const gexBaselines = new Map<BaselineKey, number>();
+type BaselineKey = string; // `${dateKey}|${symbol}|${expiry}|${strike}`
+const gexBaselines = new Map<BaselineKey, { net: number; atMs: number }>();
+const BASELINE_MAX = 4000;
 
 function sessionDateKey(): string {
   // ET session date — New York time, YYYY-MM-DD
@@ -1318,42 +1342,49 @@ function sessionDateKey(): string {
   return d.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 }
 
-function getOrSeedBaseline(symbol: string, strike: number, currentNet: number): number {
-  const k = `${sessionDateKey()}|${symbol}|${strike}`;
+/** First net GEX this browser saw for (session date, symbol, expiry, strike), with
+ *  when it saw it. Per expiry: the same strike on two expiries is two books. The
+ *  anchor is "since first view", not the open, unless the app was open at 09:30. */
+export function getOrSeedBaseline(symbol: string, strike: number, currentNet: number, expiry: string | null | undefined, nowMs: number = Date.now()): { net: number; atMs: number } {
+  const k = `${sessionDateKey()}|${symbol}|${expiry ?? "nearest"}|${strike}`;
   const existing = gexBaselines.get(k);
-  if (existing != null) return existing;
-  gexBaselines.set(k, currentNet);
-  return currentNet;
+  if (existing) return existing;
+  if (gexBaselines.size >= BASELINE_MAX) gexBaselines.delete(gexBaselines.keys().next().value as string);
+  const seeded = { net: currentNet, atMs: nowMs };
+  gexBaselines.set(k, seeded);
+  return seeded;
 }
 
 // GEX cell — GEXbot style split bar: call GEX (green) left of center,
 // put GEX (red) right of center, both scaled to the global max absolute GEX.
 // Net value printed in the middle so the numeric readout stays glanceable.
 // Delta arrow on the right shows session change (TIER A #4).
-function GexCell({ callGex, putGex, max, symbol, strike }: { callGex: number; putGex: number; max: number; symbol?: string; strike?: number }) {
+function GexCell({ callGex, putGex, max, symbol, strike, expiry }: { callGex: number; putGex: number; max: number; symbol?: string; strike?: number; expiry?: string | null }) {
   const net = callGex - putGex;
   const callPct = max > 0 ? Math.min((callGex / max) * 100, 100) : 0;
   const putPct = max > 0 ? Math.min((putGex / max) * 100, 100) : 0;
   const labelColor = net >= 0 ? "text-emerald-300" : "text-rose-300";
 
   // Session baseline (only when we have symbol + strike context)
-  let arrow: { dir: "up" | "down" | "flat"; pct: number } | null = null;
+  let arrow: { dir: "up" | "down" | "flat"; pct: number; since: string } | null = null;
   if (symbol && strike != null) {
-    const baseline = getOrSeedBaseline(symbol, strike, net);
+    const base = getOrSeedBaseline(symbol, strike, net, expiry);
+    const baseline = base.net;
+    const since = new Date(base.atMs).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" });
     const delta = net - baseline;
     const refMag = Math.max(Math.abs(baseline), Math.abs(net), 1);
     const pct = (Math.abs(delta) / refMag) * 100;
     if (pct >= 5) {
-      arrow = { dir: delta > 0 ? "up" : "down", pct };
+      arrow = { dir: delta > 0 ? "up" : "down", pct, since };
     } else {
-      arrow = { dir: "flat", pct };
+      arrow = { dir: "flat", pct, since };
     }
   }
 
   return (
     <div
       className="relative flex h-7 items-center justify-center overflow-hidden rounded-sm bg-slate-500/5 font-mono text-[11px] tabular-nums"
-      title={`calls +${fmtM(callGex)} · puts -${fmtM(putGex)} · net ${fmtM(net)}${arrow && arrow.dir !== "flat" ? ` · Δ ${arrow.dir === "up" ? "+" : "-"}${arrow.pct.toFixed(0)}% from open` : ""}`}
+      title={`calls +${fmtM(callGex)} · puts -${fmtM(putGex)} · net ${fmtM(net)}${arrow && arrow.dir !== "flat" ? ` · Δ ${arrow.dir === "up" ? "+" : "-"}${arrow.pct.toFixed(0)}% since first view ${arrow.since} ET` : ""}`}
       data-testid={symbol && strike != null ? `gex-cell-${strike}` : undefined}
     >
       <div
@@ -1371,7 +1402,7 @@ function GexCell({ callGex, putGex, max, symbol, strike }: { callGex: number; pu
           className={`absolute right-1 top-1/2 z-10 -translate-y-1/2 text-[11px] font-semibold ${
             arrow.dir === "up" ? "text-emerald-400" : "text-rose-400"
           }`}
-          aria-label={`gex ${arrow.dir} ${arrow.pct.toFixed(0)} percent since open`}
+          aria-label={`gex ${arrow.dir} ${arrow.pct.toFixed(0)} percent since first view ${arrow.since}`}
         >
           {arrow.dir === "up" ? "▲" : "▼"}{arrow.pct.toFixed(0)}
         </span>
