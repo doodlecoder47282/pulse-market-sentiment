@@ -440,7 +440,9 @@ export function regimeConvictionMultiplier(
   symbol: string,
   currentRegime: string,
   windowDays: number = 30,
-): { multiplier: number; n: number; baseHitRate: number; regimeHitRate: number } {
+): { multiplier: number; n: number; inRegimeN: number; baseHitRate: number; regimeHitRate: number } {
+  // n = all graded rows in the window; inRegimeN = the rows that fired in the
+  // current regime, which is the sample the multiplier is actually about.
   try {
     const now = Date.now();
     const from = now - windowDays * 24 * 60 * 60 * 1000;
@@ -457,13 +459,13 @@ export function regimeConvictionMultiplier(
       )
       .all()
       .filter((r) => r.hit30 != null && isOutcomeOnOptionMarks(r)); // ungraded or proxy-graded rows are not misses
-    if (rows.length < 5) return { multiplier: 1.0, n: rows.length, baseHitRate: 0, regimeHitRate: 0 };
+    if (rows.length < 5) return { multiplier: 1.0, n: rows.length, inRegimeN: 0, baseHitRate: 0, regimeHitRate: 0 };
     const baseHit = rows.filter((r) => r.hit30 === 1).length / rows.length;
     const inRegime = rows.filter((r) => {
       const inputs = JSON.parse(r.inputsJson || "{}");
       return inputs.regimeAtFire === currentRegime;
     });
-    if (inRegime.length < 3) return { multiplier: 1.0, n: rows.length, baseHitRate: baseHit, regimeHitRate: 0 };
+    if (inRegime.length < 3) return { multiplier: 1.0, n: rows.length, inRegimeN: inRegime.length, baseHitRate: baseHit, regimeHitRate: 0 };
     // Shrink toward the base rate (pseudo-count of 10) so a 3-for-3 streak
     // can't swing live conviction 1.5x on noise.
     const regHit =
@@ -471,8 +473,8 @@ export function regimeConvictionMultiplier(
     // Multiplier in [0.5, 1.5]; 1.0 = neutral
     const ratio = baseHit > 0 ? regHit / baseHit : 1.0;
     const multiplier = Math.max(0.5, Math.min(1.5, ratio));
-    return { multiplier, n: rows.length, baseHitRate: baseHit, regimeHitRate: regHit };
+    return { multiplier, n: rows.length, inRegimeN: inRegime.length, baseHitRate: baseHit, regimeHitRate: regHit };
   } catch {
-    return { multiplier: 1.0, n: 0, baseHitRate: 0, regimeHitRate: 0 };
+    return { multiplier: 1.0, n: 0, inRegimeN: 0, baseHitRate: 0, regimeHitRate: 0 };
   }
 }

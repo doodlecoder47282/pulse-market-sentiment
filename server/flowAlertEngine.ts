@@ -467,12 +467,16 @@ function queueHit(hit: WhaleHit): void {
         if (typeof mult === "number" && isFinite(mult)) {
           hit.convictionMultiplier = mult;
           hit.regimeAtFire = regimeAtFire;
+          // A heuristic multiplier shrunk toward the base rate; the sample it
+          // rests on is the in-regime count, stated with the total. No claim
+          // that the past lifts anything.
+          const sample = `n=${result.inRegimeN} in regime of ${result.n} graded, 45 d`;
           if (mult >= 1.2) {
-            hit.convictionRationale = `${regimeAtFire} historically lifts ${hit.symbol} hit-rate by ${((mult - 1) * 100).toFixed(0)}% (n=${result.n})`;
+            hit.convictionRationale = `heuristic weight x${mult.toFixed(2)}: ${hit.symbol} hit-rate in ${regimeAtFire} ran above its base rate (${sample}; shrunk, not a forecast)`;
           } else if (mult <= 0.8) {
-            hit.convictionRationale = `${regimeAtFire} historically reduces ${hit.symbol} hit-rate by ${((1 - mult) * 100).toFixed(0)}% (n=${result.n})`;
+            hit.convictionRationale = `heuristic weight x${mult.toFixed(2)}: ${hit.symbol} hit-rate in ${regimeAtFire} ran below its base rate (${sample}; shrunk, not a forecast)`;
           } else {
-            hit.convictionRationale = `${regimeAtFire} hit-rate near baseline for ${hit.symbol} (n=${result.n})`;
+            hit.convictionRationale = `heuristic weight x${mult.toFixed(2)}: ${hit.symbol} hit-rate in ${regimeAtFire} near its base rate (${sample})`;
           }
         }
       }

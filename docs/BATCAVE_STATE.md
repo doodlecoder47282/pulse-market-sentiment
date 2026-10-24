@@ -1009,3 +1009,36 @@ sigma label when closed (S4), gamma curve vs flip IV basis (S8), TodayCard
 band wording (S5), scan IV/skew labels (S6), client FlowAlertsPanel dedup
 (S13), monthly-opex pre-open AM OI (S15). Next tabs: Models, Heatseeker,
 Regime, Flow, Crypto.
+
+2026-10-23: audit pass 2 (Models, Heatseeker, Regime, Flow; PR #24,
+feat/audit-pass-2, stacked on pass 1). MUST-FIX items fixed, each pinned in
+tests/quant/audit-pass-2.test.ts: Killbox used Schwab's vendor gamma
+(incl. the -999 sentinel) when no sigma could be solved, poisoning bars,
+walls, stability and regime after the close -> vendor gamma only in (0, 1],
+unpriced contracts counted, dataState "no_iv" + reason, regime
+"indeterminate", client empty state says "cannot be priced", strike readout
+shows "not priced" instead of "$0 neutral". Heatseeker call/put wall could
+land on a wrong-signed strike (init at +-Infinity) -> init 0, null when no
+qualifying strike. Depth-Skew-Flow never counted sells (checked
+"sell_inferred"; server emits "sell") and labelled a per-poll increment as
+net flow -> "sell", label "(last poll)". GEX cell "from open" arrow was per
+browser session and ignored expiry -> keyed by expiry, labelled "since first
+view HH:MM ET", bounded map. 13-week cone footer stated a VRP scale and
+event bump the server no longer applies -> renders the server's own
+methodology string. ML accuracy "7d/14d/30d" were graded ROWS (several per
+session) and 0% was shown with zero calls -> windows by session date with
+n and sessions, null hit rates, sparkline/trend skip empty windows. Flow
+Alerts re-fired WALL/HEAVY/UNUSUAL every 30 s with random ids -> deterministic
+ids (shared/flowAlerts.ts), merge-on-poll, "OI is the prior close" copy.
+Flow side bars attributed re-tagged whole-day volume as new ask/bid flow ->
+side deltas capped at the bucket's new volume, premium deltas clamped and
+scaled, bucket marked "re-tagged" in the tooltip. Whale conviction text
+claimed "historically lifts hit-rate" with the total n -> "heuristic weight
+x1.23 ... n=<in regime> of <total>", shrunk, not a forecast. SHOULD-FIX
+items deferred (see the audit report in the PR): unit labels on Net
+Vanna/Charm and mixed Y axis, Killbox r/q basis on the IV solve and
+contractExposure, 24 px controls, title-only method notes, term-structure
+convention named on each screen (three conventions), prediction-flavoured
+copy (headline/canary/pivot/playbook), OFI "ACCELERATING" at zero slope,
+Mag7 N/7, BreadthCard error branch, RegimeHeadline truncation. Next:
+pass 3 = phone UI + copy sweep across all tabs; Crypto tab audit.

@@ -66,7 +66,7 @@ interface TrackerContract {
   side: "call" | "put";
   notional: number;
   volume: number;
-  classification: "buy" | "sell_inferred" | "neutral";
+  classification: "buy" | "sell" | "neutral";
   last: number | null;
 }
 
@@ -171,7 +171,7 @@ export default function DepthSkewFlow() {
       if (c.classification === "buy") {
         cur.buyNotional += c.notional;
         cur.netNotional += c.notional;
-      } else if (c.classification === "sell_inferred") {
+      } else if (c.classification === "sell") {
         cur.sellNotional += c.notional;
         cur.netNotional -= c.notional;
       }
@@ -337,7 +337,7 @@ export default function DepthSkewFlow() {
           {mode === "flow" && (
             <>
               <Stat
-                label="Net flow ($)"
+                label="Net flow ($, last poll)"
                 value={fmtDollars(flowNet)}
                 tone={flowNet > 0 ? "emerald" : flowNet < 0 ? "rose" : "muted"}
               />
