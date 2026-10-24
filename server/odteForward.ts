@@ -7,6 +7,7 @@
 // an HTTP round trip. The route is a thin wrapper. Returns { status, body }:
 // 503 bodies carry dataState and reason (chain or spot unavailable).
 
+import { schwabNum } from "./schwabChainRows";
 import { dollarGexPerPct, flipInputs, FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
 import { contractYears, expiryOfKey, ivForClock } from "./chainClock";
 import { timeToExpiry } from "./timeToExpiry";
@@ -111,14 +112,17 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
       if (!isFinite(strike)) continue;
       const row = getRow(strike);
       for (const c of strikes[sk] || []) {
-        const oi = c.openInterest || 0;
-        const vol = c.totalVolume || 0;
-        totalOI += oi; totalVol += vol;
-        const mid = c.bid != null && c.ask != null && c.ask > 0 ? (c.bid + c.ask) / 2 : (c.last || 0);
-        // Schwab returns -999 sentinels for greeks/IV when market is closed — sanitize hard
-        const rawIV = c.volatility || 0;
+        // schwabNum drops Schwab's -999 sentinels and non-numbers; a missing
+        // field is 0 weight here (nothing to hedge), never a negative total.
+        const oi = Math.max(0, schwabNum(c.openInterest) ?? 0);
+        const vol = Math.max(0, schwabNum(c.totalVolume) ?? 0);
+        const bid = schwabNum(c.bid), ask = schwabNum(c.ask), last = schwabNum(c.last);
+        // Mid needs a two-sided quote; a no-bid contract is priced at last, not ask/2.
+        const mid = bid != null && ask != null && bid > 0 && ask >= bid ? (bid + ask) / 2 : (last ?? 0);
+        const rawIV = schwabNum(c.volatility) ?? 0;
         const T = contractYears(nearestKey, c, nowMs);
-        if (!(T > 0)) continue; // settled (e.g. AM SPX after the open)
+        if (!(T > 0)) continue; // settled (e.g. AM SPX after the open): not in the totals either
+        totalOI += oi; totalVol += vol;
         const sqrtT = Math.sqrt(T);
         const sigmaClock = ivForClock({
           vendorIv: rawIV > 0 && rawIV < 500 ? rawIV / 100 : 0,
@@ -179,10 +183,11 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     nowMs,
   });
   const gammaFlip: number | null = flipObj.zeroGamma;
-  // pin candidate: max |gex| strike within ±1.5% of spot
+  // pin candidate: largest POSITIVE exposure within ±1.5% of spot (the same
+  // definition as the 0DTE map; a short-gamma pocket is not a pin).
   let pin: number | null = null, pinMag = 0;
   for (const r of rows) {
-    if (Math.abs(r.strike - spot) / spot <= 0.015 && Math.abs(r.gex) > pinMag) { pinMag = Math.abs(r.gex); pin = r.strike; }
+    if (r.gex > 0 && Math.abs(r.strike - spot) / spot <= 0.015 && r.gex > pinMag) { pinMag = r.gex; pin = r.strike; }
   }
 
   // ── ATM IV + straddle expected move ──
@@ -191,7 +196,8 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
   // atmIVPct: calendar-clock IV (comparable with the chain's IV column).
   let atmIVPct = (atmRow.callIV > 0 && atmRow.putIV > 0) ? (atmRow.callIV + atmRow.putIV) / 2 : (atmRow.callIV || atmRow.putIV || 0);
   if (atmIVPct > 0 && atmRow.T != null && atmRow.T > 0) atmTotalVar = (atmIVPct / 100) ** 2 * atmRow.T;
-  const straddle = (atmRow.callMid || 0) + (atmRow.putMid || 0);
+  // Both legs or nothing: one leg's mid is not a straddle.
+  const straddle = atmRow.callMid > 0 && atmRow.putMid > 0 ? atmRow.callMid + atmRow.putMid : 0;
   const MIN_PER_YEAR = 252 * 390;
   let atmIVSource: "chain" | "straddle" = "chain";
   if (atmIVPct <= 0 && straddle > 0) {
@@ -256,8 +262,16 @@ export async function buildOdteForward(symbolIn: string, nowMs: number = Date.no
     pinPullMax, charmNorm, seed: proj.sessionSeed(),
   });
 
+  // The chain's own provenance travels with the forward so every card shows
+  // the data's age, not this computation's time (asOf). A chain re-served from
+  // cache after a failed refresh is stale here and on the map.
+  const chainAsOfMs: number | null = Number.isFinite(Number((chain as any).asOfMs)) ? Number((chain as any).asOfMs) : null;
+  const chainStale = (chain as any).stale === true;
   return { status: 200, body: {
     symbol, asOf: new Date(nowMs).toISOString(), spot, source: (chain as any).source || "schwab",
+    chainAsOfMs, chainAgeMs: chainAsOfMs != null ? Math.max(0, nowMs - chainAsOfMs) : null, chainStale,
+    chainStaleReason: chainStale ? ((chain as any).staleReason ?? "re-served from cache after a failed refresh") : null,
+    servedFromCache: (chain as any).servedFromCache === true, asOfBasis: (chain as any).asOfBasis ?? null,
     expiry: expiryDate, dte: nearestDte,
     bars, levelMap, candles,
     session: { state: sessionState, minutesToClose, projMinutes },
