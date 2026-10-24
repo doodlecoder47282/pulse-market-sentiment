@@ -152,7 +152,10 @@ jobs:
       - name: Rebuild the bundled UI for the zip (no test server baked in)
         env:
           VITE_DEMO_URL: ${{ vars.BATCAVE_DEMO_URL }}
-          VITE_API_BASE: ${{ vars.BATCAVE_API_BASE }}
+          # The owner's own server is baked into the phone build, so the app opens
+          # straight into the terminal (no server-URL screen). The address is not a
+          # secret (it is in docs/); the Schwab secret never leaves that server.
+          VITE_API_BASE: ${{ vars.BATCAVE_API_BASE || 'https://pulse-market-sentiment-production.up.railway.app' }}
         run: |
           set -o pipefail
           git checkout -- ios/App/App/Info.plist
