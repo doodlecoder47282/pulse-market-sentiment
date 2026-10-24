@@ -423,7 +423,7 @@ export function buildPivotProjection(
   if (brokenUp) {
     patterns.push({
       setup: "stack-break",
-      message: `Broke above stacked level ${brokenUp.label} (${brokenUp.price.toFixed(2)}, ${brokenUp.stackedWith.length} sources) · trail stops below`,
+      message: `Broke above stacked level ${brokenUp.label} (${brokenUp.price.toFixed(2)}, ${brokenUp.stackedWith.length} sources)`,
       confidence: 0.7,
     });
   }
@@ -440,13 +440,13 @@ export function buildPivotProjection(
     if (r14 >= 70) {
       patterns.push({
         setup: "magnet-drift",
-        message: `RSI(14) ${r14.toFixed(1)} overbought — bias mean reversion toward nearest support magnet`,
+        message: `RSI(14) ${r14.toFixed(1)} above 70; nearest support level below is the next stacked magnet`,
         confidence: 0.5,
       });
     } else if (r14 <= 30) {
       patterns.push({
         setup: "magnet-drift",
-        message: `RSI(14) ${r14.toFixed(1)} oversold — bias bounce toward nearest resistance magnet`,
+        message: `RSI(14) ${r14.toFixed(1)} below 30; nearest resistance level above is the next stacked magnet`,
         confidence: 0.5,
       });
     }

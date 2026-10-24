@@ -342,10 +342,10 @@ export async function buildCanarySnapshot(): Promise<CanarySnapshot> {
   if (composite != null) {
     if (composite >= thresholds.alarm && offs.length >= 2 && spyZ != null && spyZ >= SPY_FLAT_FLOOR) {
       read = "alarm";
-      headline = `ALARM — ${offs.length} canaries risk-off (${offs.map(r => r.id).join(", ")}) while SPX holds. Equity tape is the last to know.`;
+      headline = `ALARM — ${offs.length} canaries risk-off (${offs.map(r => r.id).join(", ")}) while SPX holds: cross-asset canaries ahead of equities.`;
     } else if (divergers.length >= 1) {
       read = "divergence";
-      headline = `divergence — ${divergers.map(r => r.label).join(" + ")} signaling risk-off against a flat/up SPX. Watch, don't chase.`;
+      headline = `divergence — ${divergers.map(r => r.label).join(" + ")} risk-off against a flat/up SPX: cross-asset divergence.`;
     } else if (offs.length >= 1 || composite >= thresholds.watch) {
       read = "canaries_chirping";
       headline = `chirping — risk-off pressure building (composite z ${composite}) but SPX confirming lower too. Aligned, not divergent.`;
@@ -354,7 +354,7 @@ export async function buildCanarySnapshot(): Promise<CanarySnapshot> {
       headline = `risk-on confirmed — canaries tailwind (composite z ${composite}). Cross-asset agrees with the equity tape.`;
     } else {
       read = "quiet";
-      headline = `quiet — composite ${composite}, inside its ${thresholds.method} 5% lines (${thresholds.riskOn} / +${thresholds.watch}). No cross-asset edge today.`;
+      headline = `quiet — composite ${composite}, inside its ${thresholds.method} 5% lines (${thresholds.riskOn} / +${thresholds.watch}). No cross-asset divergence.`;
     }
   }
 

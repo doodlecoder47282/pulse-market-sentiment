@@ -83,7 +83,7 @@ export default function CanaryStrip() {
         <span className={`text-[11px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border ${rs.cls}`} data-testid="canary-read">
           {rs.label}
         </span>
-        <span className="ml-auto text-[11px] font-mono text-muted-foreground" data-testid="canary-composite" title={data.compositeMethod ?? ""}>
+        <span className="ml-auto text-[11px] font-mono text-muted-foreground" data-testid="canary-composite">
           composite {data.composite != null ? (data.composite > 0 ? "+" : "") + data.composite : "—"}
           {data.compositeEffectiveN != null ? ` (≈${data.compositeEffectiveN} independent)` : ""}
           {data.thresholds ? ` · lines ${data.thresholds.method} ${data.thresholds.watch}/${data.thresholds.alarm} (normal ${data.thresholds.normalWatch}/${data.thresholds.normalAlarm}${data.thresholds.realizedSd != null ? `, realized sd ${data.thresholds.realizedSd}` : ""})` : ""}
@@ -95,6 +95,11 @@ export default function CanaryStrip() {
       <div className="text-[11px] font-mono text-foreground/90 mb-2" data-testid="canary-headline">
         {data.headline}
       </div>
+      {data.compositeMethod && (
+        <div className="mb-2 text-[10px] leading-snug text-muted-foreground/80" data-testid="canary-composite-method">
+          {data.compositeMethod}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-4 gap-y-1">
         {data.canaries.map((c) => {

@@ -305,7 +305,7 @@ export default function OdteForward() {
         </span>
         <button
           onClick={() => setShowMap((v) => !v)}
-          className="ml-auto text-[11px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-border text-muted-foreground hover:text-foreground hover:border-cyan-500/40"
+          className="ml-auto min-h-[44px] text-[11px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-border text-muted-foreground hover:text-foreground hover:border-cyan-500/40 sm:min-h-0"
           data-testid="button-toggle-levelmap"
         >
           {showMap ? "hide levels" : "show levels"}
@@ -315,11 +315,11 @@ export default function OdteForward() {
       {/* chips */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 mb-2">
         <div className="rounded border border-border bg-card/40 px-2 py-1.5">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">EM to close (1σ)</div>
+          <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">EM (expected move) to close (1σ)</div>
           <div className="text-xs font-mono text-amber-400" data-testid="odte-em-sigma">{expectedMove.sigma != null ? `±${expectedMove.sigma}` : "—"}</div>
         </div>
         <div className="rounded border border-border bg-card/40 px-2 py-1.5">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Proj. close</div>
+          <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">path end (model shape)</div>
           <div className="text-xs font-mono text-cyan-300" data-testid="odte-proj-close">{projClose ?? "—"}</div>
         </div>
         <div className="rounded border border-border bg-card/40 px-2 py-1.5">
@@ -361,7 +361,7 @@ export default function OdteForward() {
       {showMap && (
         <div className="mt-2" data-testid="odte-level-map">
           <div className="text-[11px] font-mono uppercase tracking-widest text-muted-foreground mb-1">
-            Level map · P(touch) before close · {untouched.length} untouched
+            Level map · model touch frequency (driftless, σ from chain) · {untouched.length} untouched
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-0.5">
             {levelMap.slice(0, 14).map((L) => (
@@ -373,7 +373,7 @@ export default function OdteForward() {
               >
                 <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: KIND_COLOR[L.kind] || "#94a3b8" }} />
                 <span className="w-14 shrink-0 tabular-nums text-foreground">{L.price}</span>
-                <span className="w-24 shrink-0 truncate text-muted-foreground">{L.label}</span>
+                <span className="w-24 shrink-0 whitespace-normal break-words text-muted-foreground">{L.label}</span>
                 <span className={`w-12 shrink-0 tabular-nums ${L.side === "above" ? "text-red-400" : L.side === "below" ? "text-lime-400" : "text-amber-400"}`}>
                   {L.distance > 0 ? "+" : ""}{L.distance.toFixed(0)}
                 </span>
@@ -398,7 +398,7 @@ export default function OdteForward() {
 
       {/* method */}
       <div className="mt-1.5 text-[11px] font-mono text-muted-foreground leading-relaxed">
-        projected shape, not a bar forecast · candles routed on median path (pin gravity + charm tilt + wall clamp), wicks scaled by bucket σ, seeded per session so it doesn't flicker · P(touch) = 2·Φ(−|L−S|/σ√t), reflection principle · ATM IV {data.atmIV}%{data.atmIVSource === "straddle" ? " straddle-derived" : ""} · prior close {data.bars.priorClose ?? "—"} · ORB {data.bars.orbLow ?? "—"}–{data.bars.orbHigh ?? "—"}
+        projected shape, not a bar forecast · candles routed on median path (pin gravity + charm tilt + wall clamp), wicks scaled by bucket σ, seeded per session so it doesn't flicker · P(touch) = 2·Φ(−|L−S|/σ√t), reflection principle · ATM IV {data.atmIV}%{data.atmIVSource === "straddle" ? " straddle-derived" : ""} · prior close {data.bars.priorClose ?? "—"} · ORB (opening range) {data.bars.orbLow ?? "—"}–{data.bars.orbHigh ?? "—"}
       </div>
     </div>
   );

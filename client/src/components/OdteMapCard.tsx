@@ -100,12 +100,12 @@ export default function OdteMapCard({ symbol = "$SPX" }: { symbol?: string }) {
           <div className="flex flex-wrap items-center gap-1">
             {(["pct", "pt"] as const).map((u) => (
               <button key={u} onClick={() => setUnits(u)} data-testid={`odte-map-units-${u}`}
-                className={`rounded border px-2 py-0.5 font-mono text-[11px] uppercase tracking-wider ${units === u ? "border-amber-500/40 bg-amber-500/20 text-amber-300" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                className={`min-h-[44px] rounded border px-2 py-0.5 font-mono text-[11px] uppercase tracking-wider sm:min-h-0 ${units === u ? "border-amber-500/40 bg-amber-500/20 text-amber-300" : "border-transparent text-muted-foreground hover:text-foreground"}`}
                 title={u === "pct" ? "$ change in dealer delta notional per 1% move" : "$ per 1 index point = per 1% / (S / 100)"}>
                 {u === "pct" ? "$ / 1%" : "$ / pt"}
               </button>
             ))}
-            <button onClick={copy} disabled={!m || stale} className="ml-1 flex items-center gap-1 rounded border border-border/60 px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-50" data-testid="odte-map-copy" title="copy the plan as text">
+            <button onClick={copy} disabled={!m || stale} className="ml-1 flex min-h-[44px] items-center gap-1 rounded border border-border/60 px-2 py-0.5 text-[11px] sm:min-h-0 text-muted-foreground hover:text-foreground disabled:opacity-50" data-testid="odte-map-copy" title="copy the plan as text">
               {copied === "yes" ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />} {copied === "yes" ? "copied" : copied === "unavailable" ? "no clipboard: select the text below" : "copy"}
             </button>
           </div>
@@ -135,7 +135,7 @@ export default function OdteMapCard({ symbol = "$SPX" }: { symbol?: string }) {
             )}
             <div className="grid grid-cols-1 gap-x-4 gap-y-1 font-mono text-[11px] sm:grid-cols-3">
               <div><span className="text-muted-foreground">gap </span>{m.gap.points != null ? `${m.gap.read} ${m.gap.points >= 0 ? "+" : ""}${m.gap.points.toFixed(1)} (open ${lvl(m.gap.open)} vs ${lvl(m.gap.priorClose)})` : "open or prior close not available"}</div>
-              <div><span className="text-muted-foreground">straddle </span>{m.range.straddle != null ? `${m.range.straddle.toFixed(1)} → ${lvl(m.range.low)}–${lvl(m.range.high)}` : "n/a"}{m.range.sigma != null ? <span className="text-muted-foreground"> · 1σ {lvl(m.range.sigmaLow)}–{lvl(m.range.sigmaHigh)}</span> : null}</div>
+              <div><span className="text-muted-foreground">straddle </span>{m.range.straddle != null ? `${m.range.straddle.toFixed(1)} → ${lvl(m.range.low)}–${lvl(m.range.high)}` : "n/a"}{m.range.sigma != null ? <span className="text-muted-foreground"> · 1σ to close {lvl(m.range.sigmaLow)}–{lvl(m.range.sigmaHigh)}</span> : null}</div>
               <div><span className="text-muted-foreground">gamma at spot </span><span className={m.band.atSpot === "long" ? "text-emerald-300" : m.band.atSpot === "short" ? "text-rose-300" : ""}>{m.band.atSpot}</span>{bandLine(m.band)}{m.landmarks.flip != null ? ` · flip ${lvl(m.landmarks.flip)}` : ""}</div>
             </div>
 

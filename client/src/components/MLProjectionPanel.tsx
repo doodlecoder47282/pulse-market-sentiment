@@ -884,7 +884,7 @@ export default function MLProjectionPanel() {
       const volz = fp.morn_opening_vol_z;
       const driveDir = drive != null ? (drive > 0.3 ? "strong up drive" : drive < -0.3 ? "strong down drive" : "flat open") : "unknown drive";
       const volTag = volz != null && volz > 0.8 ? "hot opening volume" : volz != null && volz < -0.5 ? "cold opening volume" : "normal opening volume";
-      const orbTag = orb != null ? `ORB ${orb.toFixed(2)} ATR` : "ORB n/a";
+      const orbTag = orb != null ? `opening range (ORB) ${orb.toFixed(2)} ATR` : "opening range (ORB) n/a";
       interpretations.push(`morning anchor: ${driveDir}, ${volTag}, ${orbTag}.`);
     }
   }

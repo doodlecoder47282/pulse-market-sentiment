@@ -366,7 +366,7 @@ function ToggleGroup({
             onClick={() => onChange(o.v)}
             data-testid={`toggle-${label.toLowerCase()}-${o.v}`}
             className={
-              "px-2 py-0.5 font-mono text-[11px] uppercase tracking-wider transition-colors " +
+              "min-h-[44px] px-2 py-0.5 font-mono text-[11px] uppercase tracking-wider transition-colors sm:min-h-0 " +
               (value === o.v
                 ? "rounded-sm bg-amber-500/20 text-amber-500"
                 : "text-muted-foreground hover:text-foreground")
@@ -395,7 +395,7 @@ function PlaybookCard({ playbook }: { playbook: Playbook }) {
           <div className="flex-1 min-w-[260px]">
             <div className="mb-1 flex items-center gap-2">
               <Zap className="h-3.5 w-3.5 text-amber-500" />
-              <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-500">AI Daily Playbook</span>
+              <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-500">Daily Playbook (model)</span>
             </div>
             <h2 className="font-mono text-lg font-semibold leading-tight text-foreground" data-testid="text-playbook-headline">
               {playbook.headline}
@@ -439,7 +439,7 @@ function PlaybookCard({ playbook }: { playbook: Playbook }) {
                 <div className="mb-1 flex items-center justify-between">
                   <div className="font-mono font-semibold text-foreground">{s.name}</div>
                   <Badge variant="outline" className="border-border bg-card font-mono text-[11px] uppercase">
-                    {s.odds}
+                    {s.odds === "primary" ? "largest weight" : s.odds === "secondary" ? "second weight" : "smallest weight"}
                   </Badge>
                 </div>
                 <Row k="trigger" v={s.trigger} />
@@ -457,7 +457,24 @@ function PlaybookCard({ playbook }: { playbook: Playbook }) {
                     }
                     data-testid={`scenario-levels-${i}`}
                   >
-                    {s.levels.instruction}
+                    <div className="mb-0.5 text-[10px] font-normal uppercase tracking-wider opacity-80">
+                      {s.levels.entry == null
+                        ? "conditional: no reference level yet"
+                        : s.levels.side === "long"
+                        ? `if above ${s.levels.entry} (upside levels)`
+                        : s.levels.side === "short"
+                        ? `if below ${s.levels.entry} (downside levels)`
+                        : `around ${s.levels.entry} (either side)`}
+                    </div>
+                    {s.levels.entry == null
+                      ? "levels fill in once the trigger condition is met"
+                      : [
+                          `ref ${s.levels.entry}`,
+                          s.levels.stop != null ? `invalidation ${s.levels.stop}` : null,
+                          s.levels.target1 != null ? `L1 ${s.levels.target1}` : null,
+                          s.levels.target2 != null ? `L2 ${s.levels.target2}` : null,
+                          s.levels.rr1 != null ? `R:R ${s.levels.rr1} (reward/risk multiple)` : null,
+                        ].filter(Boolean).join(" · ")}
                   </div>
                 )}
               </div>
@@ -1137,17 +1154,17 @@ function GammaMapCard({ gammaMap, spot }: { gammaMap: GammaMap; spot: number | n
               {gammaMap.regime === "positive" ? "Positive γ" : gammaMap.regime === "negative" ? "Negative γ" : "Near Flip"}
             </span>
           }/>
-          <GammaTile label="Net GEX" value={
+          <GammaTile label="Net GEX" unit="$ per 1%" value={
             <span className={`font-mono text-sm ${gammaMap.netGex >= 0 ? "text-emerald-500" : "text-red-500"}`}>
               {fmt.bn(gammaMap.netGex)}
             </span>
           }/>
-          <GammaTile label="Zero-γ Flip" value={
+          <GammaTile label="Zero-γ Flip" unit="SPY $" value={
             <span className="font-mono text-sm text-amber-500">
               {gammaMap.zeroGamma != null ? gammaMap.zeroGamma.toFixed(2) : "—"}
             </span>
           }/>
-          <GammaTile label="Spot Δ to Flip" value={
+          <GammaTile label="Spot Δ to Flip" unit="% of spot" value={
             <span className={`font-mono text-sm ${
               gammaMap.distanceToFlip == null ? "text-muted-foreground"
               : gammaMap.distanceToFlip >= 0 ? "text-emerald-500" : "text-red-500"
@@ -1156,6 +1173,9 @@ function GammaMapCard({ gammaMap, spot }: { gammaMap: GammaMap; spot: number | n
             </span>
           }/>
         </div>
+        <p className="mb-2 font-mono text-[11px] text-muted-foreground" data-testid="text-gamma-tile-units">
+          Tiles are in SPY dollars ($ per 1% move); the 0DTE map above is in $SPX points.
+        </p>
 
         {gammaMap.flipInputs?.label && (
           <p className="mb-2 font-mono text-[11px] text-muted-foreground" data-testid="text-gamma-flip-inputs">
@@ -1190,6 +1210,9 @@ function GammaMapCard({ gammaMap, spot }: { gammaMap: GammaMap; spot: number | n
 
         {/* Ladder */}
         <div className="rounded-sm border border-border hscroll-contain">
+          <div className="border-b border-border/40 px-3 py-1 text-[11px] text-muted-foreground sm:hidden" data-testid="gamma-ladder-swipe-hint">
+            swipe sideways for more columns
+          </div>
           <div className="min-w-[420px]">
           <div className="grid grid-cols-[70px_1fr_90px_80px] gap-2 border-b border-border bg-card/30 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             <span>Strike</span>
@@ -1260,6 +1283,7 @@ function GammaMapCard({ gammaMap, spot }: { gammaMap: GammaMap; spot: number | n
         <div className="mt-2 text-[11px] leading-snug text-muted-foreground">
           Red bars (right) = call-side hedging pressure (resistance — dealers sell shares as spot rises).
           Green bars (left) = put-side (support — dealers buy as spot falls). Zero-γ flip is where net dealer hedging sign changes.
+          Zone codes: RES = secondary resistance, SUP = secondary support, EXT = local extreme (largest exposure between the walls).
         </div>
       </CardContent>
     </Card>
@@ -1267,18 +1291,19 @@ function GammaMapCard({ gammaMap, spot }: { gammaMap: GammaMap; spot: number | n
 }
 
 const GAMMA_TILE_TOOLTIPS: Record<string, string> = {
-  "Net GEX": "Net Gamma Exposure: total dealer gamma in dollars per 1% SPX move. Positive = mean-reversion regime; negative = trend/breakout regime.",
+  "Net GEX": "Net Gamma Exposure: total dealer gamma in dollars per 1% move (SPY chain). Positive = mean-reversion regime; negative = trend/breakout regime.",
   "Zero-γ Flip": "Zero Gamma level: price where dealer net gamma crosses zero. Below this = negative gamma (moves amplify); above = positive gamma (moves dampen).",
   "Spot Δ to Flip": "Distance in points from current SPX spot to the Zero Gamma flip level. Smaller = closer to regime change.",
   "Regime": "Gamma regime based on current dealer positioning. Positive γ = stabilizing, mean-reversion. Negative γ = amplifying, trend-following.",
 };
 
-function GammaTile({ label, value, valueClass }: { label: string; value: React.ReactNode; valueClass?: string }) {
+function GammaTile({ label, value, valueClass, unit }: { label: string; value: React.ReactNode; valueClass?: string; unit?: string }) {
   const tip = GAMMA_TILE_TOOLTIPS[label];
   return (
     <div className="rounded-sm border border-border bg-card/30 px-3 py-2">
       <div className="flex items-center gap-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         {label}
+        {unit && <span className="ml-1 font-normal normal-case tracking-normal text-muted-foreground/80">({unit})</span>}
         {tip && (
           <UITooltip>
             <TooltipTrigger asChild>
@@ -1538,11 +1563,17 @@ const FIELD_TOOLTIPS: Record<string, string> = {
 };
 
 // ─── EOD Play Maker form field helper ─────────────────────────────────────
+const FIELD_LABEL_EXPANSION: Record<string, string> = {
+  "HVL": "high-vol level",
+};
+
 function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
   const tip = FIELD_TOOLTIPS[label];
+  const expansion = FIELD_LABEL_EXPANSION[label];
   const labelEl = (
     <span className="flex items-center gap-0.5 w-28 shrink-0 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
       {label}
+      {expansion && <span className="font-normal normal-case tracking-normal text-muted-foreground/80">({expansion})</span>}
       {tip && (
         <UITooltip>
           <TooltipTrigger asChild>

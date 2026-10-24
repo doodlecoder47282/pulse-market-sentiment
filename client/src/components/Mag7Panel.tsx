@@ -126,6 +126,9 @@ export default function Mag7Panel() {
 
   const eqWtUp = (data.eqWtChange ?? 0) > 0;
   const alphaUp = (data.alphaVsSpy ?? 0) > 0;
+  // Members with a known day change; the equal-weight stats average only these.
+  const eqN = data.breadthN ?? data.members.length;
+  const membersNote = `${eqN}/${data.members.length} members`;
   const handleClick = (sym: string) => {
     if (!watchlist.find((w) => w.symbol === sym)) addTicker(sym, sym);
     else setActiveChart(sym);
@@ -143,7 +146,7 @@ export default function Mag7Panel() {
           <div className="text-sm font-semibold uppercase tracking-wider">Mag 7</div>
           <EdgeInfo id="mag7" />
           <Badge variant="outline" className="border-cyan-500/40 text-[11px] text-cyan-300">
-            Equal-weight basket
+            Equal-weight basket · {membersNote}
           </Badge>
         </div>
 
@@ -155,7 +158,7 @@ export default function Mag7Panel() {
             </span>
           </div>
           <div className="flex items-baseline gap-1">
-            <span className="text-[11px] uppercase text-muted-foreground">vs SPY</span>
+            <span className="text-[11px] uppercase text-muted-foreground">difference vs SPY</span>
             <span className={`flex items-center gap-0.5 font-mono text-sm font-semibold tabular-nums ${alphaUp ? "text-emerald-400" : "text-rose-400"}`}>
               {alphaUp ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
               {formatPct(data.alphaVsSpy)}
@@ -259,10 +262,11 @@ export function Mag7Strip() {
       <span className={`font-mono tabular-nums ${eqWtUp ? "text-emerald-400" : "text-rose-400"}`}>
         {formatPct(data.eqWtChange)}
       </span>
-      <span className="text-muted-foreground">vs SPY</span>
+      <span className="text-muted-foreground">difference vs SPY</span>
       <span className={`font-mono tabular-nums ${alphaUp ? "text-emerald-400" : "text-rose-400"}`}>
         {formatPct(data.alphaVsSpy)}
       </span>
+      <span className="font-mono text-[11px] text-muted-foreground">{data.breadthN ?? data.members.length}/{data.members.length} members</span>
       <BreadthBar breadth={data.breadth} count={data.breadthN ?? data.members.length} />
       <div className="ml-auto flex items-center gap-1.5">
         {data.members.map((m) => {
