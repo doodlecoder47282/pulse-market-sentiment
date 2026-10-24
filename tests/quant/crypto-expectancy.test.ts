@@ -111,3 +111,46 @@ test("hold rule: horizon mark or nothing; peak rule prices at the recorded peak 
   assert.equal(sum.validation, "INSUFFICIENT DATA");
   assert.match(sum.note, /horizon mark/);
 });
+
+// ── Audit 2026-10-23 (Crypto tab) ────────────────────────────────────────
+
+test("graded + HIT_5M is a limit sell at the target: filled at min(peak, target) with the peak-sample depth, not the grader's later sample", () => {
+  const r = { ...row({ outcome: "HIT_5M", mcapAtSignal: 100_000, liquidityAtSignal: 20_000, peakMcap: 5_200_000, lastMcap: 1_500_000, lastLiquidity: 30_000 }), peakLiquidity: 400_000 };
+  const s = signalReturn(r, "graded", 100, {}, { targetMcap: 5_000_000 });
+  assert.equal(s.grossMultiple, 50, "target / entry, not last / entry");
+  const old = signalReturn(r, "graded", 100, {}); // no target: the old behaviour, documented
+  assert.equal(old.grossMultiple, 15);
+  assert.ok((s.netPct ?? 0) > (old.netPct ?? 0));
+  // Peak under the target with HIT_5M (grader closed on a later sample): fill at the peak.
+  const r2 = { ...r, peakMcap: 4_000_000 };
+  assert.equal(signalReturn(r2, "graded", 100, {}, { targetMcap: 5_000_000 }).grossMultiple, 40);
+});
+
+test("RUGGED: -100 under hold; graded prices the rug-detection depth; peak keeps the pre-rug peak, and the basis text says so", () => {
+  const r = { ...row({ outcome: "RUGGED", mcapAtSignal: 100_000, liquidityAtSignal: 20_000, peakMcap: 300_000, lastMcap: 8_000, lastLiquidity: 2_500 }), peakLiquidity: 40_000, horizonAt: 1, horizonMcap: 8_000, horizonLiquidity: 2_500 };
+  assert.equal(signalReturn(r, "hold").netPct, -100);
+  const g = signalReturn(r, "graded");
+  assert.ok(g.netPct != null && g.netPct < -80 && g.netPct > -100, `graded at rug depth: ${g.netPct}`);
+  const p = signalReturn(r, "peak");
+  assert.ok(p.netPct != null && p.netPct > 0, `peak before the rug is the ceiling: ${p.netPct}`);
+  const sum = summarizeExpectancy([r], "peak", { minSample: 1 });
+  assert.doesNotMatch(sum.note, /under every rule/);
+  assert.match(sum.note, /rug after the peak does not lower it/);
+});
+
+test("survivorship: a graded set with more than 20% unpriced past the horizon cannot pass, whatever the survivors did", () => {
+  const winners = Array.from({ length: 50 }, () => row({ outcome: "DOUBLED", mcapAtSignal: 100_000, liquidityAtSignal: 50_000, peakMcap: 300_000, lastMcap: 250_000, lastLiquidity: 60_000 }));
+  const gone = Array.from({ length: 40 }, () => row({ outcome: "NO_DATA", mcapAtSignal: 100_000, liquidityAtSignal: 50_000, peakMcap: null, lastMcap: null, lastLiquidity: null }));
+  const clean = summarizeExpectancy(winners, "graded", { minSample: 50 });
+  assert.equal(clean.validation, "PASSES PREDEFINED TESTS");
+  assert.equal(clean.noData, 0);
+  const selected = summarizeExpectancy([...winners, ...gone], "graded", { minSample: 50 });
+  assert.equal(selected.n, 50);
+  assert.equal(selected.noData, 40);
+  assert.ok(Math.abs((selected.noDataShare ?? 0) - 40 / 90) < 1e-3);
+  assert.equal(selected.validation, "INSUFFICIENT DATA");
+  assert.match(selected.validationReason ?? "", /could not be priced past the horizon/);
+  // Under the share the label is the tests' own.
+  const few = summarizeExpectancy([...winners, ...gone.slice(0, 5)], "graded", { minSample: 50 });
+  assert.equal(few.validation, "PASSES PREDEFINED TESTS");
+});
