@@ -29,8 +29,9 @@ async function fetchJson(url: string, headers: Record<string, string> = {}): Pro
 }
 import { getAlphaEventsForTicker, type AlphaEvent } from "./alphaNews";
 import { getOptionChain, getQuotes } from "./schwab";
-import { FLIP_DIV_YIELD, FLIP_RATE, repricedFlipFromChain } from "./gammaProfile";
-import { contractYears, ivForClock } from "./chainClock";
+import { gexByStrikeFromChain, gexRegime } from "./gammaProfile";
+import { contractYears } from "./chainClock";
+import { schwabNum } from "./schwabChainRows";
 
 // ---- Types ----
 
@@ -291,32 +292,38 @@ interface PerTickerGamma {
   spot: number | null;
   totalGex: number;
   callWall: number | null;
-  callWallGex: number;
+  callWallGex: number | null;
   putWall: number | null;
-  putWallGex: number;
+  putWallGex: number | null;
   zeroGamma: number | null;
   maxPain: number | null;
-  pcrOi: number;
-  pcrVol: number;
+  pcrOi: number | null;
+  pcrVol: number | null;
   atmIv: number | null;
   ivSkew25d: number | null;
   profile: GammaProfileRow[];
-}
-
-function approxGamma(K: number, S: number, T: number, iv: number): number {
-  // Black-Scholes gamma approximation (r=0, q=0). T in years, iv as decimal.
-  if (T <= 0 || iv <= 0 || S <= 0) return 0;
-  const d1 = (Math.log(S / K) + 0.5 * iv * iv * T) / (iv * Math.sqrt(T));
-  const phi = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
-  return phi / (S * iv * Math.sqrt(T));
+  /** Largest |net exposure| on one strike; the regime's materiality floor. */
+  peakAbsGex: number;
+  /** Priced contracts behind the profile. */
+  contracts: number;
 }
 
 /**
  * Build a per-ticker gamma structure from a Schwab chain response.
- * Aggregates 0-45 DTE strikes, computes GEX with sign convention
- * (calls positive, puts negative for dealer-perspective dealer-long-vol view).
+ *
+ * Exposure, walls and flip come from the app-wide re-priced basis
+ * (gammaProfile.gexByStrikeFromChain: Black-Scholes gamma from the chain's
+ * implied volatility on the shared settlement clock, open-interest weight,
+ * 0-45 DTE, calls positive / puts negative). The vendor `gamma` field is not
+ * used: Schwab emits -999 when it has not computed greeks (closed market,
+ * illiquid names), and -999 is finite and non-zero, so the old branch priced
+ * those contracts at -999 gamma and put walls on sentinel strikes. Every
+ * contract in a strike cell is read (an adjusted deliverable or the SPX/SPXW
+ * pair on a monthly opex share a cell); the clock drops settled ones.
+ * Open interest, volume and IV totals use schwabNum: a missing field is
+ * missing, never zero, and a ratio with no denominator is null, never 0.
  */
-function buildPerTickerGamma(chain: any, ticker: string): PerTickerGamma | null {
+export function buildPerTickerGamma(chain: any, ticker: string, nowMs: number = Date.now()): PerTickerGamma | null {
   if (!chain || chain.error) return null;
   const spotRaw =
     Number(chain?.underlying?.last) ||
@@ -325,28 +332,19 @@ function buildPerTickerGamma(chain: any, ticker: string): PerTickerGamma | null 
   if (!spotRaw || !isFinite(spotRaw)) return null;
   const S: number = spotRaw;
 
+  const gex = gexByStrikeFromChain({ ...chain, symbol: chain.symbol ?? ticker }, nowMs);
+  if (gex.dataState !== "ok") return null;
+
   const callMap = chain.callExpDateMap || {};
   const putMap = chain.putExpDateMap || {};
-
-  const gexByStrike = new Map<number, number>();
   const callOiByStrike = new Map<number, number>();
   const putOiByStrike = new Map<number, number>();
-  let totalCallOi = 0,
-    totalPutOi = 0,
-    callVol = 0,
-    putVol = 0;
-
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-
+  let totalCallOi = 0, totalPutOi = 0, callVol = 0, putVol = 0;
+  let sawCallVol = false, sawPutVol = false;
   const ivSamples: { K: number; iv: number; type: "C" | "P" }[] = [];
 
-  function ingest(
-    map: any,
-    type: "C" | "P"
-  ) {
+  function ingest(map: any, type: "C" | "P") {
     for (const expKey of Object.keys(map)) {
-      // expKey format e.g. "2026-05-30:12" (date:dteDays)
       const dteMatch = /:(\d+)/.exec(expKey);
       const dteDays = dteMatch ? parseInt(dteMatch[1]) : NaN;
       if (!isFinite(dteDays) || dteDays < 0 || dteDays > 45) continue;
@@ -355,39 +353,24 @@ function buildPerTickerGamma(chain: any, ticker: string): PerTickerGamma | null 
         const K = parseFloat(strikeKey);
         if (!isFinite(K)) continue;
         const arr = strikes[strikeKey];
-        if (!Array.isArray(arr) || arr.length === 0) continue;
-        const c = arr[0];
-        // One clock (timeToExpiry): calendar minutes to settlement / 525,600;
-        // settled contracts are dropped. (Was max(dte, 1)/365: a full day at 0DTE.)
-        const T = contractYears(expKey, c);
-        if (!(T > 0)) continue;
-        const oi = Number(c.openInterest) || 0;
-        const vol = Number(c.totalVolume) || 0;
-        if (oi <= 0) continue;
-        let g = Number(c.gamma);
-        const iv = Number(c.volatility);
-        if (!isFinite(g) || g === 0) {
-          // Compute from IV if Schwab gamma is missing
-          if (isFinite(iv) && iv > 0) {
-            g = approxGamma(K, S, T, ivForClock({ vendorIv: iv / 100, bid: Number(c.bid), ask: Number(c.ask), spot: S, strike: K, T, type }));
+        if (!Array.isArray(arr)) continue;
+        for (const c of arr) {
+          const T = contractYears(expKey, c, nowMs);
+          if (!(T > 0)) continue;
+          const oi = schwabNum(c?.openInterest);
+          const vol = schwabNum(c?.totalVolume);
+          if (oi == null || oi <= 0) continue;
+          if (type === "C") {
+            callOiByStrike.set(K, (callOiByStrike.get(K) || 0) + oi);
+            totalCallOi += oi;
+            if (vol != null) { callVol += vol; sawCallVol = true; }
           } else {
-            continue;
+            putOiByStrike.set(K, (putOiByStrike.get(K) || 0) + oi);
+            totalPutOi += oi;
+            if (vol != null) { putVol += vol; sawPutVol = true; }
           }
-        }
-        const sign = type === "C" ? 1 : -1;
-        const gex = sign * g * oi * 100 * S * S * 0.01;
-        gexByStrike.set(K, (gexByStrike.get(K) || 0) + gex);
-        if (type === "C") {
-          callOiByStrike.set(K, (callOiByStrike.get(K) || 0) + oi);
-          totalCallOi += oi;
-          callVol += vol;
-        } else {
-          putOiByStrike.set(K, (putOiByStrike.get(K) || 0) + oi);
-          totalPutOi += oi;
-          putVol += vol;
-        }
-        if (isFinite(iv) && iv > 0) {
-          ivSamples.push({ K, iv: iv / 100, type });
+          const ivPct = schwabNum(c?.volatility);
+          if (ivPct != null && ivPct > 0 && ivPct < 500) ivSamples.push({ K, iv: ivPct / 100, type });
         }
       }
     }
@@ -395,82 +378,58 @@ function buildPerTickerGamma(chain: any, ticker: string): PerTickerGamma | null 
   ingest(callMap, "C");
   ingest(putMap, "P");
 
-  const strikes = Array.from(gexByStrike.keys()).sort((a, b) => a - b);
+  const byStrike = new Map(gex.profile.map((p) => [p.strike, p.netGex] as const));
+  const strikes = gex.profile.map((p) => p.strike);
   if (strikes.length === 0) return null;
-  const totalGex = strikes.reduce((a, k) => a + (gexByStrike.get(k) || 0), 0);
+  const totalGex = gex.profile.reduce((a, p) => a + p.netGex, 0);
+  const peakAbs = gex.profile.reduce((a, p) => Math.max(a, Math.abs(p.netGex)), 0);
 
-  // Walls — strike with most positive GEX (call wall) and most negative (put wall)
-  let callWall: number | null = null,
-    callWallGex = -Infinity;
-  let putWall: number | null = null,
-    putWallGex = Infinity;
-  for (const k of strikes) {
-    const g = gexByStrike.get(k) || 0;
-    if (g > callWallGex) {
-      callWallGex = g;
-      callWall = k;
-    }
-    if (g < putWallGex) {
-      putWallGex = g;
-      putWall = k;
-    }
-  }
+  const callWall = gex.callWall;
+  const putWall = gex.putWall;
+  const callWallGex = callWall != null ? (gex.profile.find((p) => p.strike === callWall)?.callGex ?? null) : null;
+  const putWallGex = putWall != null ? (gex.profile.find((p) => p.strike === putWall)?.putGex ?? null) : null;
+  const zeroGamma = gex.zeroGamma;
 
-  // Zero gamma: app-wide re-priced definition (gammaProfile.ts) over the same
-  // 0-45 DTE contracts. null when net dealer gamma never changes sign: the old
-  // fallback reported the strike with the smallest running sum as a "flip",
-  // which showed a level that does not exist.
-  const zeroGamma: number | null = repricedFlipFromChain(chain, S, { maxDte: 45, r: FLIP_RATE, q: FLIP_DIV_YIELD }).zeroGamma;
-
-  // Max pain — strike that minimizes total option pain (open interest × distance)
+  // Max pain over the same 0-45 DTE open interest (strike minimising OI x distance).
+  const painStrikes = Array.from(new Set([...callOiByStrike.keys(), ...putOiByStrike.keys()])).sort((a, b) => a - b);
   let maxPain: number | null = null;
   let minPain = Infinity;
-  for (const k of strikes) {
+  for (const k of painStrikes) {
     let pain = 0;
-    for (const k2 of strikes) {
+    for (const k2 of painStrikes) {
       const co = callOiByStrike.get(k2) || 0;
       const po = putOiByStrike.get(k2) || 0;
       if (k > k2) pain += co * (k - k2);
       if (k < k2) pain += po * (k2 - k);
     }
-    if (pain < minPain) {
-      minPain = pain;
-      maxPain = k;
-    }
+    if (pain < minPain) { minPain = pain; maxPain = k; }
   }
 
-  // ATM IV — average call+put IV nearest to spot
+  // Nearest-strike IV (mean of the 4 samples nearest spot, 0-45 DTE, all expiries).
   const atmSamples = ivSamples
     .slice()
     .sort((a, b) => Math.abs(a.K - S) - Math.abs(b.K - S))
     .slice(0, 4)
     .map((s) => s.iv);
-  const atmIv =
-    atmSamples.length > 0
-      ? atmSamples.reduce((a, b) => a + b, 0) / atmSamples.length
-      : null;
+  const atmIv = atmSamples.length > 0 ? atmSamples.reduce((a, b) => a + b, 0) / atmSamples.length : null;
 
-  // 25-delta-ish skew proxy: IV at ~0.92S puts minus IV at ~1.08S calls
+  // Skew proxy: IV at the put strike nearest 0.92 S minus the call strike nearest 1.08 S (all 0-45 DTE expiries).
   function nearestIv(target: number, type: "C" | "P"): number | null {
-    const s = ivSamples
-      .filter((x) => x.type === type)
-      .sort((a, b) => Math.abs(a.K - target) - Math.abs(b.K - target));
+    const s = ivSamples.filter((x) => x.type === type).sort((a, b) => Math.abs(a.K - target) - Math.abs(b.K - target));
     return s.length > 0 ? s[0].iv : null;
   }
   const otmPutIv = nearestIv(S * 0.92, "P");
   const otmCallIv = nearestIv(S * 1.08, "C");
-  const ivSkew25d =
-    otmPutIv != null && otmCallIv != null ? otmPutIv - otmCallIv : null;
+  const ivSkew25d = otmPutIv != null && otmCallIv != null ? otmPutIv - otmCallIv : null;
 
-  const pcrOi = totalCallOi > 0 ? totalPutOi / totalCallOi : 0;
-  const pcrVol = callVol > 0 ? putVol / callVol : 0;
+  const pcrOi = totalCallOi > 0 ? totalPutOi / totalCallOi : null;
+  const pcrVol = sawCallVol && sawPutVol && callVol > 0 ? putVol / callVol : null;
 
-  // Build the strike profile within ±15% of spot
   const profile: GammaProfileRow[] = strikes
     .filter((k) => k >= S * 0.85 && k <= S * 1.15)
     .map((k) => ({
       strike: k,
-      gex: gexByStrike.get(k) || 0,
+      gex: byStrike.get(k) || 0,
       callOi: callOiByStrike.get(k) || 0,
       putOi: putOiByStrike.get(k) || 0,
     }));
@@ -478,6 +437,8 @@ function buildPerTickerGamma(chain: any, ticker: string): PerTickerGamma | null 
   return {
     spot: S,
     totalGex,
+    peakAbsGex: peakAbs,
+    contracts: gex.profile.length,
     callWall,
     callWallGex,
     putWall,
@@ -492,11 +453,15 @@ function buildPerTickerGamma(chain: any, ticker: string): PerTickerGamma | null 
   };
 }
 
+const INDEX_WIRE_SYMBOLS = new Set(["SPX", "NDX", "RUT", "VIX", "DJX", "OEX", "XSP"]);
 const _posCache = new Map<string, { ts: number; data: PositioningSnapshot }>();
 const POS_TTL_MS = 5 * 60 * 1000;
 
 export async function gatherPositioningForTicker(ticker: string): Promise<PositioningSnapshot> {
   const t = ticker.toUpperCase().replace(/^[$^]/, "");
+  // Schwab wants cash indexes as $SPX / $NDX / $RUT / $VIX; the bare name is
+  // the cache key and the display name only.
+  const wire = INDEX_WIRE_SYMBOLS.has(t) ? `$${t}` : t;
   const cached = _posCache.get(t);
   if (cached && Date.now() - cached.ts < POS_TTL_MS) return cached.data;
 
@@ -505,7 +470,7 @@ export async function gatherPositioningForTicker(ticker: string): Promise<Positi
   let gamma: PerTickerGamma | null = null;
 
   try {
-    const quotes = await getQuotes([t]);
+    const quotes = await getQuotes([wire]);
     const q = quotes && quotes[0];
     spot = (q && (q.last ?? (q as any).mark)) ?? null;
   } catch (e: any) {
@@ -513,9 +478,9 @@ export async function gatherPositioningForTicker(ticker: string): Promise<Positi
   }
 
   try {
-    const chain = await getOptionChain(t, 45);
+    const chain = await getOptionChain(wire, 45);
     if (chain && !("error" in chain)) {
-      gamma = buildPerTickerGamma(chain, t);
+      gamma = buildPerTickerGamma(chain, wire);
       if (!gamma) warnings.push("Chain returned but gamma build failed");
     } else {
       warnings.push("Schwab chain unavailable");
@@ -528,12 +493,9 @@ export async function gatherPositioningForTicker(ticker: string): Promise<Positi
   const data: PositioningSnapshot = {
     spot: s,
     totalGex: gamma?.totalGex ?? null,
-    regime:
-      gamma?.totalGex == null
-        ? "unknown"
-        : gamma.totalGex >= 0
-        ? "positive"
-        : "negative",
+    // Sign only when it clears the materiality floor; an exact 0 or sub-noise
+    // total is "unknown", never "positive".
+    regime: gexRegime(gamma?.totalGex, gamma?.peakAbsGex, gamma?.contracts ?? 0),
     callWall: gamma?.callWall ?? null,
     callWallGex: gamma?.callWallGex ?? null,
     putWall: gamma?.putWall ?? null,
