@@ -1,0 +1,12 @@
+demo strip visible: true
+desktop page errors: 0 []
+PASS today card: unavailable state shown (no map)
+PASS chart levels: 3 rows, tags unavailable/unavailable/unavailable, map state LOADING
+PASS ticker scan card: 4 section states for QQQ
+PASS event replay card: 14 past sessions shown
+PASS setup log card: counts 1, method panel 1, ranked list 1
+PASS 3D surface: 1 canvas, sign labels true, readout after a blind centre tap true (informational: the tap can miss the mesh), page errors 0
+PASS 3D rotated desktop: 29 labels, 0 touching, canvas aspect 1.92, overflow false
+PASS 3D rotated ultrawide: 29 labels, 0 touching, canvas aspect 1.92, overflow false
+PASS 3D rotated phone: 20 labels, 0 touching, canvas aspect 0.97, overflow false
+mobile page errors: 0 []

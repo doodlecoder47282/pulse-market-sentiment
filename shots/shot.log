@@ -1,0 +1,22 @@
+ack: locator.click: Timeout 8000ms exceeded.
+Call log:
+  - waiting for locator('[data-testid="button-premarket-acknowledge"]')
+
+shot signals
+shot chart
+shot models
+shot heatseeker
+shot tradedesk
+shot regime
+shot cosmos
+shot news
+shot takefive
+shot edgelab
+shot crypto
+desktop page errors: 0 []
+FAIL method page: base is not defined
+ack: locator.click: Timeout 8000ms exceeded.
+Call log:
+  - waiting for locator('[data-testid="button-premarket-acknowledge"]')
+
+mobile page errors: 0 []
