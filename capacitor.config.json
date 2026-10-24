@@ -6,5 +6,9 @@
   "ios": {
     "contentInset": "never",
     "backgroundColor": "#000000"
+  },
+  "server": {
+    "url": "https://pulse-market-sentiment-production.up.railway.app",
+    "cleartext": false
   }
 }

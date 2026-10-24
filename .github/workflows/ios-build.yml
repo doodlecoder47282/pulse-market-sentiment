@@ -69,6 +69,9 @@ jobs:
           # CI-only: allow plain http to the runner's demo server. Reverted before packaging.
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" ios/App/App/Info.plist
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" ios/App/App/Info.plist
+          # CI-only: the simulator check runs against the runner's demo server from the
+          # bundled UI, never the owner's live server. `server.url` is restored for the zip.
+          node -e 'const f="capacitor.config.json";const c=JSON.parse(require("fs").readFileSync(f,"utf8"));delete c.server;require("fs").writeFileSync(f,JSON.stringify(c,null,2)+"\n")'
           npx cap sync ios 2>&1 | tee reports/03-cap.log
           find ios -maxdepth 3 -not -path '*/public/*' | sort | tee -a reports/03-cap.log
       - name: Compile for iOS Simulator (no signing)
@@ -155,9 +158,10 @@ jobs:
           VITE_API_BASE: ${{ vars.BATCAVE_API_BASE }}
         run: |
           set -o pipefail
-          git checkout -- ios/App/App/Info.plist
+          git checkout -- ios/App/App/Info.plist capacitor.config.json
           npx vite build 2>&1 | tail -5 | tee reports/08-vite-zip.log
           npx cap copy ios 2>&1 | tail -5 | tee -a reports/08-vite-zip.log
+          grep -q '"url": "https://' ios/App/App/capacitor.config.json && echo "live UI server.url present in the zip" | tee -a reports/08-vite-zip.log || { echo "server.url missing from the packaged config"; exit 1; }
           grep -rl "127.0.0.1:5080" ios/App/App/public && { echo "test server URL leaked into the zip"; exit 1; } || echo "zip bundle clean" | tee -a reports/08-vite-zip.log
       - name: Package Xcode project zip
         run: |
