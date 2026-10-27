@@ -1144,6 +1144,24 @@ desk-risk check rounds like the engine and uses the desk's clock; the
 not-connected verdict is scoped to what ran. Rule-version test now greps
 every listed literal and asserts every numeric leaf is read by a module.
 
+2026-10-27: design pass 2 (PR #31, feat/design-pass-2; client/src only, 20
+files, no data flow or copy with numbers touched). Card padding scales with
+a CSS variable (16 px phone / 24 px from 640); mono numbers tabular
+everywhere; horizontal scrollers show edge shadows and a sticky swipe hint
+on phones; desktop tab bar scrolls with the active tab in view at
+1024-1279; KeyStat definitions tap-to-reveal (hover never opened on touch);
+Suspense fallbacks use PanelSkeleton (CLS). Today card tiles stack one per
+row on phones in price order; scan stat grids 2/3/6 columns; Composite and
+Mag-7 tiles collapse; Chart watchlist becomes a grid under lg; Models rail
+is full-width under xl with a two-column flow; Heatseeker/Killbox/
+OdteContractChart grids collapse on phones; EventReplay and 0DTE tracker
+tables get the shared scroller; Method page rows stack. Reviewed and left
+unchanged as already responsive: Regime, News, Cosmos, Take Five, Edge
+Lab, Settings, ConnectionGate. Crypto layout utilities touched only
+(TokenCard stats, counts grid, MemeStructure zero-edge grid). Noted, not
+changed: Heatseeker "Hover GEX cells" copy; chip title-only detail;
+ModelsPanel skeleton shorter than content.
+
 2026-10-27: crypto replay (PR #30, feat/crypto-replay; roadmap item 1).
 shared/cryptoReplay.ts (pure) + /api/crypto/replay + ReplayCard on the
 Crypto tab: the logged record re-read under the current rule book. Four

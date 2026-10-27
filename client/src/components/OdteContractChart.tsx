@@ -277,7 +277,7 @@ export default function OdteContractChart({
           <div className="space-y-2">
             {/* Session mini-stats row above chart */}
             {stats && (
-              <div className="grid grid-cols-4 gap-2 rounded-md border border-border/40 bg-muted/20 px-3 py-2 text-[11px]">
+              <div className="grid grid-cols-2 gap-2 rounded-md border border-border/40 bg-muted/20 px-3 py-2 text-[11px] sm:grid-cols-4">
                 <div>
                   <div className="text-[11px] uppercase tracking-wider text-muted-foreground">High</div>
                   <div className="font-mono text-[12px] font-semibold text-emerald-400 tabular-nums">${stats.high.toFixed(2)}</div>

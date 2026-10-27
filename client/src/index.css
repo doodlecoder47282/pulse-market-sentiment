@@ -57,6 +57,9 @@
   --shadow-2xl: 0px 2px 0px 0px hsl(0 0% 0% / 0);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
+  /* Card chrome padding (ui/card.tsx): 16 px on phones, 24 px from 640 px.
+     A card that passes its own p-* keeps it (tailwind-merge drops this one). */
+  --card-pad: 1rem;
 
   /* Fallback for older browsers */
   --sidebar-primary-border: hsl(var(--sidebar-primary));
@@ -198,6 +201,18 @@
     @apply border-border;
   }
 
+  @media (min-width: 640px) {
+    :root {
+      --card-pad: 1.5rem;
+    }
+  }
+
+  /* Every number set in the mono face lines up in columns: tabular figures
+     for the fallback faces too (JetBrains Mono is tabular by design). */
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+  }
+
   /* Touch screens (pointer: coarse: every iPhone and iPad, any width) and
      every window below 1024 px: each control is at least 44 x 44 CSS px
      (Apple HIG; WCAG 2.2 asks for 24). !important on purpose: a utility
@@ -293,6 +308,35 @@
     touch-action: pan-x pan-y pinch-zoom;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-x: contain;
+    /* Scroll shadows: a soft edge appears only on the side that still has
+       content hidden, so a wide ladder reads as swipeable on a phone without
+       hover. The covers scroll with the content (local) and hide the shadow
+       at either end; the shadows stay put (scroll). Elements that set their
+       own bg-* utility keep it and simply lose the edge. */
+    background:
+      linear-gradient(to right, hsl(var(--card)) 40%, transparent) 0 0 / 28px 100% no-repeat local,
+      linear-gradient(to left, hsl(var(--card)) 40%, transparent) 100% 0 / 28px 100% no-repeat local,
+      radial-gradient(farthest-side at 0 50%, rgba(255, 255, 255, 0.14), transparent) 0 0 / 14px 100% no-repeat scroll,
+      radial-gradient(farthest-side at 100% 50%, rgba(255, 255, 255, 0.14), transparent) 100% 0 / 14px 100% no-repeat scroll;
+  }
+
+  /* Phone-only text hint for a scroller whose content is known to be wider
+     than the screen (tables with a min-width). Sticks to the left edge so it
+     stays readable while the table scrolls under it. */
+  .hscroll-hint::before {
+    content: "swipe sideways for more columns";
+    display: block;
+    position: sticky;
+    left: 0;
+    padding-bottom: 0.25rem;
+    font-size: 11px;
+    line-height: 1.25;
+    color: hsl(var(--muted-foreground));
+  }
+  @media (min-width: 640px) {
+    .hscroll-hint::before {
+      display: none;
+    }
   }
 }
 

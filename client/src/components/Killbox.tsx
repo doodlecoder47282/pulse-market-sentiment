@@ -610,7 +610,7 @@ function StrikeReadout({
           dealer book at this strike
         </div>
       </div>
-      <div className="grid grid-cols-5 gap-2">
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
         {values.map(v => {
           const isActive = v.greek === activeGreek;
           const color = v.value != null && v.value > 0 ? LONG_COLOR : v.value != null && v.value < 0 ? SHORT_COLOR : "#888";

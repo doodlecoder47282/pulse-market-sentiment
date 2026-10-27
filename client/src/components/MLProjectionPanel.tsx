@@ -1474,8 +1474,8 @@ function CoverageTable({ report, servedLabel }: { report: CoverageReportPayload 
       {!report ? (
         <div className="text-xs text-muted-foreground">coverage unavailable (not logged yet or the server could not read it).</div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+        <div className="hscroll-contain hscroll-hint">
+          <table className="w-full min-w-[640px] text-xs tabular-nums">
             <thead>
               <tr className="text-muted-foreground">
                 <th className="px-2 py-1 text-left font-medium">horizon</th>
