@@ -83,7 +83,13 @@ export interface AlphaVerdict {
   base: AlphaScenario;
   bear: AlphaScenario;
   counterargument: string;
+  /** Always null. The AI write-up used to carry a "historical analog" (sample size, hit rate) that the model estimated
+   *  without any dataset behind it; that is invented statistics, so it is neither requested nor kept. The field stays so cached
+   *  payloads and clients keep their shape. */
   analog: HistoricalAnalog | null;
+  /** Where the figures come from: the AI write-up's own estimates, or fixed per-category defaults (no model available).
+   *  Neither is a measured probability or a historical statistic. */
+  basis: "ai_write_up" | "category_default";
   provider: "anthropic" | "openai" | "deterministic";
   asOf: number;
 }
@@ -355,7 +361,7 @@ export async function getAlphaEventsForTicker(ticker: string): Promise<AlphaNews
 
 // ---- AI verdict generation ----
 
-const VERDICT_SYSTEM_PROMPT = `You are a senior quant and risk manager generating a tradeable positioning read on a single news event for one ticker.
+export const VERDICT_SYSTEM_PROMPT = `You are an analyst writing a descriptive read on how a single news event may relate to price action in one ticker. This is context for a reader, not advice and not a forecast.
 
 Output strict JSON only — no prose outside the JSON. Schema:
 {
@@ -369,24 +375,18 @@ Output strict JSON only — no prose outside the JSON. Schema:
   "bull": { "thesis": "<one sentence>", "prob": <0-100>, "targetMovePct": <signed number> },
   "base": { "thesis": "<one sentence>", "prob": <0-100>, "targetMovePct": <signed number> },
   "bear": { "thesis": "<one sentence>", "prob": <0-100>, "targetMovePct": <signed number> },
-  "counterargument": "<strongest argument AGAINST your direction call>",
-  "analog": {
-    "description": "<brief historical analog: similar setups for this ticker/category>",
-    "sampleSize": <integer estimate>,
-    "avgMovePct": <signed number>,
-    "hitRate": <0-100 integer>
-  }
+  "counterargument": "<strongest argument AGAINST your direction call>"
 }
 
 Rules:
-- bull.prob + base.prob + bear.prob MUST equal exactly 100.
-- Direction is the side with the highest probability AND favorable R:R.
-- If no edge exists, return direction "NEUTRAL", confidence < 35, edgeType "none".
+- The "prob" fields are your qualitative weighting of the three readings, not measured probabilities; they MUST sum to exactly 100.
+- Direction is the reading your weighting favors.
+- If the event gives no clear lean, return direction "NEUTRAL", confidence < 35, edgeType "none".
+- Do not cite historical statistics, sample sizes or hit rates; you have no dataset. Only describe what the event itself says.
 - Be honest about uncertainty. Single-source rumor != hard catalyst.
 - event.sourceTier "official" is the issuer's own record (Fed, SEC filing); "publisher" is a newsroom's report; "aggregator" or "unofficial" needs confirmation and caps confidence below 50. distinctSources counts independent outlets.
 - For sentiment-cluster events (no single hard catalyst), treat as a behavioral/timing edge with lower confidence.
-- Never recommend oversized positioning. Right direction + wrong size is still a loss.
-- If you don't know real historical stats, return a plausible estimate based on the catalyst type with sampleSize <= 20.`;
+- Describe; do not instruct. No recommendations about buying, selling or position size.`;
 
 function buildVerdictPayload(event: AlphaEvent, context?: { spot?: number; vix?: number; regime?: string }): string {
   return JSON.stringify({
@@ -456,7 +456,7 @@ function safeJsonParse(text: string): any | null {
 // Deterministic fallback when no LLM keys present. Uses tier + category +
 // initialBias to produce a sensible baseline read. This is the documented
 // behavior — engine works without LLM keys, but the verdicts are coarser.
-function deterministicVerdict(event: AlphaEvent): AlphaVerdict {
+export function deterministicVerdict(event: AlphaEvent): AlphaVerdict {
   const dir = event.initialBias;
   const conf =
     event.tier === "TIER_1" ? 60 :
@@ -490,19 +490,20 @@ function deterministicVerdict(event: AlphaEvent): AlphaVerdict {
         ? "Break and close above the pre-news high invalidates the bear case."
         : "Outside the pre-news range either way forces a re-evaluation.",
     edgeType: event.tier === "TIER_1" ? "informational" : event.tier === "TIER_2" ? "analytical" : "behavioral",
-    summary: `${event.category} catalyst — baseline read, no LLM available. Initial bias ${dir}, expected move ${signedMove >= 0 ? "+" : ""}${signedMove.toFixed(1)}%.`,
+    summary: `${event.category} catalyst. No AI write-up available: lean ${dir} from the headline wording, with the fixed default move size for this category (${signedMove >= 0 ? "+" : ""}${signedMove.toFixed(1)}%), not a measurement of this event.`,
     bull: { thesis: `Catalyst confirms bull case for ${event.ticker}.`, prob: bullProb, targetMovePct: Math.abs(baseMove) },
     base: { thesis: `Market digests but no sustained move.`, prob: baseProb, targetMovePct: 0 },
     bear: { thesis: `Catalyst confirms bear case for ${event.ticker}.`, prob: bearProb, targetMovePct: -Math.abs(baseMove) },
     counterargument: "Deterministic baseline — full counterargument requires LLM verdict (set ANTHROPIC_API_KEY or OPENAI_API_KEY).",
     analog: null,
+    basis: "category_default",
     provider: "deterministic",
     asOf: Math.floor(Date.now() / 1000),
   };
 }
 
 // Validate + normalize an LLM response into AlphaVerdict shape
-function normalizeVerdict(event: AlphaEvent, raw: any, provider: "anthropic" | "openai"): AlphaVerdict | null {
+export function normalizeVerdict(event: AlphaEvent, raw: any, provider: "anthropic" | "openai"): AlphaVerdict | null {
   if (!raw || typeof raw !== "object") return null;
   const direction = ["BULL", "BEAR", "NEUTRAL"].includes(raw.direction) ? raw.direction : "NEUTRAL";
   const num = (v: any, d = 0) => (typeof v === "number" && isFinite(v) ? v : d);
@@ -519,13 +520,6 @@ function normalizeVerdict(event: AlphaEvent, raw: any, provider: "anthropic" | "
     baseP = 100 - bullP - bearP;
   }
 
-  const analog = raw.analog && typeof raw.analog === "object" ? {
-    description: str(raw.analog.description, "No historical analog data available."),
-    sampleSize: Math.max(0, Math.floor(num(raw.analog.sampleSize, 0))),
-    avgMovePct: num(raw.analog.avgMovePct, 0),
-    hitRate: Math.max(0, Math.min(100, num(raw.analog.hitRate, 50))),
-  } : null;
-
   return {
     eventId: event.id,
     ticker: event.ticker,
@@ -541,7 +535,8 @@ function normalizeVerdict(event: AlphaEvent, raw: any, provider: "anthropic" | "
     base: { thesis: str(raw.base?.thesis, ""), prob: baseP, targetMovePct: num(raw.base?.targetMovePct, 0) },
     bear: { thesis: str(raw.bear?.thesis, ""), prob: bearP, targetMovePct: num(raw.bear?.targetMovePct, 0) },
     counterargument: str(raw.counterargument, ""),
-    analog,
+    analog: null, // never kept: the model has no dataset to compute one from
+    basis: "ai_write_up",
     provider,
     asOf: Math.floor(Date.now() / 1000),
   };

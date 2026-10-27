@@ -37,6 +37,7 @@ interface AlphaEvent {
 
 interface AlphaScenario { thesis: string; prob: number; targetMovePct: number; }
 interface HistoricalAnalog { description: string; sampleSize: number; avgMovePct: number; hitRate: number; }
+type Basis = "ai_write_up" | "category_default";
 
 interface AlphaVerdict {
   eventId: string; ticker: string;
@@ -50,6 +51,8 @@ interface AlphaVerdict {
   bull: AlphaScenario; base: AlphaScenario; bear: AlphaScenario;
   counterargument: string;
   analog: HistoricalAnalog | null;
+  /** older cached payloads carry no basis; treat as the AI write-up */
+  basis?: Basis;
   provider: "anthropic" | "openai" | "deterministic";
   asOf: number;
 }
@@ -246,22 +249,24 @@ export function AlphaNewsPanel({
                 </div>
                 <div className="flex items-center gap-3 text-[11px] tabular-nums">
                   <span><span className="text-zinc-500" title="Heuristic score 0-100 from the AI write-up, not a calibrated probability.">Score</span> <span className="font-semibold text-zinc-200">{verdict.confidence}/100</span></span>
-                  <span><span className="text-zinc-500">R:R</span> <span className="font-semibold text-zinc-200">{verdict.rrRatio.toFixed(1)}</span></span>
+                  <span>{verdict.basis === "category_default"
+                    ? <span><span className="text-zinc-500" title="No AI write-up was available, so no reward-to-risk figure is shown.">R:R</span> <span className="font-semibold text-zinc-400">n/a</span></span>
+                    : <span><span className="text-zinc-500" title="The AI write-up's own estimate for this event, not a measured figure.">R:R (AI est.)</span> <span className="font-semibold text-zinc-200">{verdict.rrRatio.toFixed(1)}</span></span>}</span>
                 </div>
               </div>
               <div className="mt-2 flex items-center justify-between gap-3 text-[11px]">
                 <div>
-                  <div className="text-[11px] uppercase tracking-wider text-zinc-500">Exp. move</div>
+                  <div className="text-[11px] uppercase tracking-wider text-zinc-500" title={verdict.basis === "category_default" ? "A fixed default size for this kind of catalyst. Not measured from this event." : "The AI write-up's estimate, not a measured or historical figure."}>{verdict.basis === "category_default" ? "Default move" : "Move (AI est.)"}</div>
                   <div className={`font-semibold tabular-nums ${dirColor(verdict.direction)}`}>{fmtMove(verdict.expectedMovePct)}</div>
                 </div>
                 <div className="flex-1">
-                  <div className="text-[11px] uppercase tracking-wider text-zinc-500">Edge</div>
+                  <div className="text-[11px] uppercase tracking-wider text-zinc-500">Catalyst kind</div>
                   <div className="text-zinc-200">{verdict.edgeType}</div>
                 </div>
                 <div>
                   <div className="text-[11px] uppercase tracking-wider text-zinc-500">Engine</div>
                   <div className="text-[11px] text-zinc-400">
-                    {verdict.provider === "deterministic" ? "baseline" : verdict.provider}
+                    {verdict.provider === "deterministic" ? "no AI (defaults)" : verdict.provider}
                   </div>
                 </div>
               </div>
@@ -270,14 +275,16 @@ export function AlphaNewsPanel({
 
             {/* 3-path scenarios */}
             <div className="mt-3 space-y-2 rounded-md border border-border/40 bg-black/30 p-2.5">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Scenarios</div>
-              <ProbBar bull={verdict.bull.prob} base={verdict.base.prob} bear={verdict.bear.prob} />
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Scenarios{verdict.basis === "category_default" ? "" : " · AI weighting, not measured probabilities"}</div>
+              {verdict.basis === "category_default"
+                ? <p className="text-[11px] leading-snug text-zinc-500">No AI write-up was available, so no scenario weights are shown. The readings below are generic for the catalyst type.</p>
+                : <ProbBar bull={verdict.bull.prob} base={verdict.base.prob} bear={verdict.bear.prob} />}
               <div className="mt-2 space-y-1.5 text-[11px] leading-snug">
                 <div className="flex gap-2">
                   <span className="mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
                   <div className="flex-1">
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">Bull · {verdict.bull.prob}% wt</span>
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">Bull{verdict.basis === "category_default" ? "" : ` · ${verdict.bull.prob}% wt`}</span>
                       <span className="font-mono text-[11px] text-emerald-400">{fmtMove(verdict.bull.targetMovePct)}</span>
                     </div>
                     <p className="text-zinc-300">{verdict.bull.thesis}</p>
@@ -287,7 +294,7 @@ export function AlphaNewsPanel({
                   <span className="mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full bg-amber-500" />
                   <div className="flex-1">
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-400">Base · {verdict.base.prob}% wt</span>
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-400">Base{verdict.basis === "category_default" ? "" : ` · ${verdict.base.prob}% wt`}</span>
                       <span className="font-mono text-[11px] text-amber-400">{fmtMove(verdict.base.targetMovePct)}</span>
                     </div>
                     <p className="text-zinc-300">{verdict.base.thesis}</p>
@@ -297,7 +304,7 @@ export function AlphaNewsPanel({
                   <span className="mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full bg-rose-500" />
                   <div className="flex-1">
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-rose-400">Bear · {verdict.bear.prob}% wt</span>
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-rose-400">Bear{verdict.basis === "category_default" ? "" : ` · ${verdict.bear.prob}% wt`}</span>
                       <span className="font-mono text-[11px] text-rose-400">{fmtMove(verdict.bear.targetMovePct)}</span>
                     </div>
                     <p className="text-zinc-300">{verdict.bear.thesis}</p>
@@ -305,30 +312,6 @@ export function AlphaNewsPanel({
                 </div>
               </div>
             </div>
-
-            {/* Historical analog */}
-            {verdict.analog && (
-              <div className="mt-3 rounded-md border border-border/40 bg-black/30 p-2.5">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Historical Analog</div>
-                <p className="mt-1 text-[11px] leading-snug text-zinc-300">{verdict.analog.description}</p>
-                <div className="mt-2 grid grid-cols-3 gap-2 text-center text-[11px]">
-                  <div className="rounded bg-zinc-900/60 px-1 py-1.5">
-                    <div className="text-[11px] uppercase tracking-wider text-zinc-500">N</div>
-                    <div className="font-semibold tabular-nums text-zinc-200">{verdict.analog.sampleSize}</div>
-                  </div>
-                  <div className="rounded bg-zinc-900/60 px-1 py-1.5">
-                    <div className="text-[11px] uppercase tracking-wider text-zinc-500">Avg Move</div>
-                    <div className={`font-semibold tabular-nums ${verdict.analog.avgMovePct >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                      {fmtMove(verdict.analog.avgMovePct)}
-                    </div>
-                  </div>
-                  <div className="rounded bg-zinc-900/60 px-1 py-1.5">
-                    <div className="text-[11px] uppercase tracking-wider text-zinc-500">Hit Rate</div>
-                    <div className="font-semibold tabular-nums text-zinc-200">{verdict.analog.hitRate}%</div>
-                  </div>
-                </div>
-              </div>
-            )}
 
             {/* Risk params */}
             <div className="mt-3 space-y-2 rounded-md border border-rose-500/20 bg-rose-500/5 p-2.5 text-[11px]">
@@ -341,6 +324,11 @@ export function AlphaNewsPanel({
                 <p className="mt-0.5 leading-snug text-zinc-300">{verdict.counterargument}</p>
               </div>
             </div>
+            <p className="mt-2 text-[11px] leading-snug text-zinc-500" data-testid="text-alpha-basis">
+              {verdict.basis === "category_default"
+                ? "Descriptive only. With no AI write-up available, the lean comes from the headline wording and the move size is a fixed default for the catalyst type."
+                : "Descriptive only. The AI write-up's weights, move and reward-to-risk are its own estimates for this event: not measured probabilities, not historical statistics, not advice."}
+            </p>
 
             {event.clusterIds && event.clusterIds.length > 1 && (
               <div className="mt-3 rounded-md border border-amber-500/20 bg-amber-500/5 p-2 text-[11px] leading-snug text-amber-200">
