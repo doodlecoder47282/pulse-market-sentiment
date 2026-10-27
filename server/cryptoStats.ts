@@ -26,6 +26,7 @@
 //   6. (round 2) Holder concentration excludes only identified pool vaults
 //      and burn accounts, never "the largest holder" blindly.
 
+import { CRYPTO_RULES } from "../shared/cryptoRules";
 export type SocialSourceStatus = "ok" | "failed" | "skipped";
 export type SocialStatus = "ok" | "partial" | "failed" | "stale" | "unavailable";
 
@@ -149,7 +150,7 @@ export function expireSocial(s: SocialState, now: number): SocialState {
 
 // ─── Signal stats ───────────────────────────────────────────────────────
 
-export const CRYPTO_SAMPLE_READY_MIN_GRADED = 50;
+export const CRYPTO_SAMPLE_READY_MIN_GRADED = CRYPTO_RULES.grading.minSample;
 
 export interface CryptoSignalCounts {
   total: number;
@@ -232,15 +233,15 @@ export function gradeSignal(input: {
   const { entryMcap, entryLiq, prevPeak, mcap, liq, ageMs, targetMcap, horizonMs } = input;
   const peak = mcap != null ? Math.max(prevPeak ?? 0, mcap) : prevPeak;
   if ((peak ?? 0) >= targetMcap) return { outcome: "HIT_5M", peak };
-  if (entryLiq > 0 && liq != null && liq < entryLiq * 0.15) return { outcome: "RUGGED", peak };
+  if (entryLiq > 0 && liq != null && liq < entryLiq * CRYPTO_RULES.grading.ruggedLiquidityShare) return { outcome: "RUGGED", peak };
   if (mcap == null) return { outcome: ageMs > horizonMs ? "NO_DATA" : "OPEN", peak };
-  if (entryMcap > 0 && mcap < entryMcap * 0.1) return { outcome: "RUGGED", peak };
+  if (entryMcap > 0 && mcap < entryMcap * CRYPTO_RULES.grading.ruggedMcapShare) return { outcome: "RUGGED", peak };
   if (ageMs > horizonMs) {
     // Without a market cap at the signal there is no entry to compare with:
     // the row is unpriced at entry (NO_DATA), never DOUBLED (the old test
     // `peak >= 0 * 2` was always true) and never DEAD.
     if (!(entryMcap > 0)) return { outcome: "NO_DATA", peak };
-    return { outcome: (peak ?? 0) >= entryMcap * 2 ? "DOUBLED" : "DEAD", peak };
+    return { outcome: (peak ?? 0) >= entryMcap * CRYPTO_RULES.grading.doubledMultiple ? "DOUBLED" : "DEAD", peak };
   }
   return { outcome: "OPEN", peak };
 }
@@ -286,7 +287,7 @@ export function cryptoCoinCountsSql(verdict?: "ENTER" | "WATCH"): string {
  * CRYPTO_NO_DATA_MAX_SHARE (heuristic, stated): beyond it the graded sample
  * is too selected to read.
  */
-export const CRYPTO_NO_DATA_MAX_SHARE = 0.2;
+export const CRYPTO_NO_DATA_MAX_SHARE = CRYPTO_RULES.grading.maxNoDataShare;
 
 export interface Survivorship {
   noDataShare: number | null;
@@ -590,7 +591,7 @@ export function momentumPoints(i: { volAccel: number | null; netBuyRatio5m: numb
  */
 export function honeypotRead(buys1h: number | null, sells1h: number | null): "honeypot" | "sells_missing" | "ok" {
   if (sells1h == null) return "sells_missing";
-  if ((buys1h ?? 0) >= 25 && sells1h === 0) return "honeypot";
+  if ((buys1h ?? 0) >= CRYPTO_RULES.hardKills.honeypotMinBuys1h && sells1h === 0) return "honeypot";
   return "ok";
 }
 

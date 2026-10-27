@@ -32,6 +32,8 @@ import { isRegularSessionOpen } from "./exchangeCalendar";
 import { etParts } from "./validationMath";
 import { editionFromEnv } from "../shared/edition";
 import { dailyBarEtDate } from "../shared/macroCalendar";
+import { getCryptoFeed, getCryptoSignals } from "./cryptoEngine";
+import { candidateChecks, deskRiskCheck, expectancyChecks } from "../shared/cryptoVerify";
 import {
   type Check, type VerifySummary, quoteCheck, spotAgreement, spreadCheck, forwardLevelsChecks, mapLandmarkChecks,
   flowContractChecks, pcrChecks, termChecks, relativeVolumeCheck, chainSanityChecks, summarize, unavailable, skipped, classifyReach,
@@ -55,7 +57,7 @@ export interface LiveVerifyReport {
   note: string | null;
 }
 
-const SCOPE = "Reach and arithmetic of the live run: every Schwab-fed route answered, and the displayed numbers equal their stated formulas on the raw inputs. Not a calibration, execution or prediction-accuracy certificate.";
+const SCOPE = "Reach and arithmetic of the live run: every Schwab-fed route and the keyless crypto desk answered, and the displayed numbers equal their stated formulas on the raw inputs and the rule book. Not a calibration, execution or prediction-accuracy certificate.";
 const CACHE_MS = 60_000;
 const ROUTE_TIMEOUT_MS = 20_000;
 const PORT = process.env.PORT || "5000";
@@ -86,6 +88,11 @@ export const REACH_ROUTES: Array<{ id: string; panel: string; path: string }> = 
   { id: "route.setups", panel: "Setup log", path: "/api/setups" },
   { id: "route.scan", panel: "Scan", path: "/api/scan?symbol=SPY" },
   { id: "route.researchEvents", panel: "Event replay", path: "/api/research/events?symbol=$SPX" },
+  // Crypto desk (public keyless feeds; reached whether or not Schwab is connected).
+  { id: "route.cryptoFeed", panel: "Crypto", path: "/api/crypto/feed" },
+  { id: "route.cryptoSignals", panel: "Crypto", path: "/api/crypto/signals" },
+  { id: "route.cryptoCommunity", panel: "Crypto", path: "/api/crypto/community" },
+  { id: "route.cryptoHealth", panel: "Crypto", path: "/api/crypto/health" },
 ];
 
 async function reachOne(r: { id: string; panel: string; path: string }): Promise<Check> {
@@ -181,6 +188,21 @@ async function arithmeticChecks(now: number, sessionOpen: boolean): Promise<Chec
   return checks;
 }
 
+/** Crypto desk: the served feed and signals recomputed against the rule book (shared/cryptoVerify.ts). */
+function cryptoChecks(now: number): Check[] {
+  const out: Check[] = [];
+  let feed: ReturnType<typeof getCryptoFeed> | null = null;
+  let sig: ReturnType<typeof getCryptoSignals> | null = null;
+  try { feed = getCryptoFeed(); } catch (e: any) { out.push({ id: "crypto.feed", panel: "Crypto", name: "feed", state: "unavailable", observed: "threw", expected: null, detail: String(e?.message ?? e).slice(0, 120) }); }
+  try { sig = getCryptoSignals(); } catch (e: any) { out.push({ id: "crypto.signals", panel: "Crypto", name: "signals", state: "unavailable", observed: "threw", expected: null, detail: String(e?.message ?? e).slice(0, 120) }); }
+  const desk = sig?.desk ?? null;
+  out.push(...candidateChecks(feed ? (feed.candidates as any) : null, desk));
+  out.push(deskRiskCheck(desk, feed?.majors ? (feed.majors as any) : null, now));
+  out.push(...expectancyChecks(sig ? (sig.expectancy as any) : null));
+  if (sig) out.push({ id: "crypto.rules", panel: "Crypto", name: "rule book version", state: sig.rules?.version ? "pass" : "fail", observed: sig.rules?.version ?? "missing", expected: "present on the payload", detail: null });
+  return out;
+}
+
 let last: { at: number; report: LiveVerifyReport } | null = null;
 let inflight: Promise<LiveVerifyReport> | null = null;
 
@@ -196,10 +218,16 @@ export async function runLiveVerify(now: number = Date.now()): Promise<LiveVerif
     }
     const status = getSchwabStatus();
     if (!status.connected) {
-      const report: LiveVerifyReport = { ...base, dataState: "not_connected", connected: false, finishedAt: Date.now(), durationMs: 0, summary: summarize([], false), reach: [], checks: [], note: "Schwab is not connected. Sign in from Settings, then run the verification." };
+      // Schwab-fed checks need the connection; the crypto desk is keyless and is verified anyway.
+      const cryptoReach = await pool(REACH_ROUTES.filter((r) => r.panel === "Crypto"), 2, reachOne);
+      const crypto = cryptoChecks(Date.now());
+      const finishedAt = Date.now();
+      // The verdict is scoped to what ran (the crypto desk); `connected: false` carries the Schwab fact.
+      const report: LiveVerifyReport = { ...base, dataState: "not_connected", connected: false, finishedAt, durationMs: finishedAt - now, summary: summarize([...cryptoReach, ...crypto], true), reach: cryptoReach, checks: crypto, note: "Schwab is not connected: only the crypto desk was verified. Sign in from Settings to verify the Schwab-fed panels." };
       return report;
     }
     const [reach, checks] = await Promise.all([pool(REACH_ROUTES, 3, reachOne), arithmeticChecks(now, sessionOpen)]);
+    checks.push(...cryptoChecks(Date.now())); // the desk's clock, not the run's start
     const finishedAt = Date.now();
     const report: LiveVerifyReport = {
       ...base, dataState: "ok", connected: true, finishedAt, durationMs: finishedAt - now,

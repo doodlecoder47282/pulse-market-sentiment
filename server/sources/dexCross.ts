@@ -14,8 +14,9 @@
 // Jupiter agrees; 5-15% is "watch"; beyond 15% the pool price is not
 // trusted for an entry (thin or manipulated pool, or a stale pair).
 
-export const JUP_AGREE_PCT = 5;
-export const JUP_DIVERGE_PCT = 15;
+import { CRYPTO_RULES } from "../../shared/cryptoRules";
+export const JUP_AGREE_PCT = CRYPTO_RULES.jupiter.agreePct;
+export const JUP_DIVERGE_PCT = CRYPTO_RULES.jupiter.divergePct;
 export const JUP_MAX_IDS = 50;
 
 export type JupState = "agree" | "watch" | "diverge" | "no-reliable-price" | "failed" | "unchecked";
