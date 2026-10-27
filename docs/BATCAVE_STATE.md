@@ -1180,3 +1180,22 @@ now also stores score. CI demo smoke asserts the shape. Reach row added to
 Verify live data. The owner's observation ("picks a lot, barely any
 doubled") maps to readouts 1 and 2; the record decides which hypothesis
 holds (late entry vs wrong cap zone vs sampler floor).
+
+2026-10-27: alignment fixes from the Perplexity review (PR #33, feat/news-verdict-honesty).
+1) AI news verdict (server/alphaNews.ts, AlphaNewsOverlay.tsx): the prompt told
+the model to "return a plausible estimate" of historical stats, shown as a
+Historical Analog (N, avg move, hit rate). Removed: analog is never requested
+or kept. Scenario prob is a labelled qualitative weighting. The no-LLM
+fallback carries basis category_default; its hard-coded weights (55/18/30),
+per-category move sizes and R:R 1.8 are hidden or labelled as defaults.
+2) Field manual (EdgeInfo.tsx): "The edge" heading and 15 promissory lines
+replaced with "What it does and doesn't show"; guard test added.
+Not changed, flagged: server/tickerOutlook.ts also asks a model for scenario
+prob and target moves (bull/base/bear) and has a deterministic fallback of the
+same kind; same treatment is a follow-up. Perplexity's merge/main-plus-local
+(602e6b7, Models/Schwab request budget) does not apply cleanly: it sits on two
+earlier local commits that conflict with main's removal of the Cboe OI files;
+it needs a rebase onto main by its owner (conflicts: oiCapture.ts, oiHold.ts,
+schwabFlow.ts, flowAlertEngine.ts, index.ts, schwab.ts). Bybit returns 403 from
+a US server (Perplexity's test); OKX answered. PR #32 degrades to partial with
+the reason shown and OKX carrying the readout.
