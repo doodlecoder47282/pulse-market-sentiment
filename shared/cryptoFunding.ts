@@ -182,7 +182,8 @@ export function buildDerivsSnapshot(
     }
   }
   const okAssets = PERP_ASSETS.filter((a) => rows.some((r) => r.asset === a && r.state === "ok")).length;
-  const state: DerivsSnapshot["state"] = okAssets === 0 ? "unavailable" : okAssets === PERP_ASSETS.length ? "ok" : "partial";
+  // "ok" only when every venue answered for every asset: a dark venue is "partial", not hidden behind the other one.
+  const state: DerivsSnapshot["state"] = okAssets === 0 ? "unavailable" : rows.every((r) => r.state === "ok") ? "ok" : "partial";
   return {
     asOf: nowMs, state, rows,
     note: "perpetual funding and open-interest change from public exchange feeds; descriptive context, not a rule input",
@@ -202,5 +203,7 @@ export function derivsRecord(snap: DerivsSnapshot | null): DerivsRecord | null {
     const row = snap.rows.find((r) => r.asset === asset && r.state === "ok");
     if (row) assets[asset] = { venue: row.venue, funding8hPct: row.funding8hPct, fundingPct: row.fundingPct, oi1hChangePct: row.oi1hChangePct };
   }
-  return Object.keys(assets).length ? { asOf: snap.asOf, assets } : null;
+  // asOf is the oldest read behind the record, not the serve time.
+  const reads = snap.rows.filter((r) => r.state === "ok" && r.asOf != null).map((r) => r.asOf as number);
+  return Object.keys(assets).length && reads.length ? { asOf: Math.min(...reads), assets } : null;
 }

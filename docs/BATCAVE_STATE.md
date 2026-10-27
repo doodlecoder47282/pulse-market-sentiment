@@ -1196,3 +1196,10 @@ Verify live data gained crypto.derivs (sign, per-8h arithmetic, unit band,
 freshness). Not verified live: the build sandbox cannot reach Bybit or OKX and
 OKX's response shape is from its public docs; a venue that blocks the server's
 region (Bybit blocks some) shows as unavailable with its reason. Tests: 8 new.
+Review of PR #32 (independent, REVIEWER_BRIEF): 1 MUST-FIX fixed (verifier
+double-rounded and falsely failed correct per-8h figures on 1h/4h intervals;
+pinned with 1,600 random rates), SHOULD-FIX taken: tiny-rate direction, badge
+is partial whenever a venue is dark, record asOf = oldest read, unit-band claim
+reworded (it catches gross errors only; a percent-for-fraction slip is covered
+by the parser tests and the live check). Left: OKX open-interest call failure
+reads "not reported"; derivs tick throws only when both venues are down.

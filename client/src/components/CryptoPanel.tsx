@@ -199,7 +199,7 @@ function DerivsStrip({ derivs, loaded }: { derivs: DerivsSnapshot | null; loaded
               <div className="mt-1 space-y-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
                 <div>funding {fmtSigned(row.fundingPct, 4, "%")}{row.fundingIntervalHours != null ? ` / ${row.fundingIntervalHours}h` : " / interval not stated"}</div>
                 <div>{row.direction ?? "n/a"}{row.funding8hPct != null && row.fundingIntervalHours !== 8 ? ` · ${fmtSigned(row.funding8hPct, 4, "%")} per 8h` : ""}</div>
-                <div>open interest 1h {row.oiState === "ok" ? fmtSigned(row.oi1hChangePct, 2, "%") : row.oiState === "building" ? "building (needs about 1 h of reads)" : "not reported"}</div>
+                <div>open interest 1h {row.oiState === "ok" ? fmtSigned(row.oi1hChangePct, 2, "%") : row.oiState === "building" ? "building (first hour after a restart)" : "not reported"}</div>
               </div>
             ) : <div className="mt-1 text-[11px] text-muted-foreground">unavailable</div>}
           </div>

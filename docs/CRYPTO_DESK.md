@@ -138,7 +138,7 @@ Settings -> Verify live data runs `/api/verify/live`. The crypto section
   payload of the same run;
 - expectancy bookkeeping: shares, gate and label consistent with the book;
 - funding and open interest: signs, per-8h arithmetic, units (a plausibility
-  band that catches a percent read as a fraction) and freshness agree with the
+  band that catches gross unit errors only) and freshness agree with the
   row's own fields;
 - the rule version is on the payload.
 

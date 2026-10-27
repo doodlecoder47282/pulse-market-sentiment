@@ -103,7 +103,7 @@ const byb = (a: PerpAsset, over: Record<string, unknown> = {}, now = NOW): Venue
 test("snapshot: normalises to 8h only with a stated interval, labels building vs ok, and reports a blocked venue honestly", () => {
   const hist = histories({ bybit: { BTC: [{ t: NOW - 3_600_000, v: 100 }, { t: NOW, v: 102 }] } });
   const snap = buildDerivsSnapshot(results({ bybit: { BTC: byb("BTC", { fundingIntervalHour: "4", fundingRate: "0.00005" }), ETH: byb("ETH"), SOL: byb("SOL", { fundingIntervalHour: "" }) } }), hist, NOW);
-  assert.equal(snap.state, "ok");
+  assert.equal(snap.state, "partial", "a fully dark venue keeps the badge at partial even when the other venue covers every asset");
   const btc = snap.rows.find((r) => r.venue === "bybit" && r.asset === "BTC")!;
   assert.equal(btc.fundingPct, 0.005);
   assert.equal(btc.funding8hPct, 0.01, "4 h interval doubles to 8 h");
@@ -141,6 +141,25 @@ test("signal record: only fresh rows, null when nothing fresh, no thresholds or 
 });
 
 const full = () => buildDerivsSnapshot(results({ bybit: { BTC: byb("BTC"), ETH: byb("ETH"), SOL: byb("SOL") } }), histories(), NOW);
+
+test("verifier does not false-fail correct per-8h figures: many-decimal rates on 1h and 4h intervals, tiny rates", () => {
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  for (const h of ["1", "2", "4", "8"]) {
+    for (let i = 0; i < 400; i++) {
+      const rate = ((rnd() - 0.5) * 0.002).toFixed(13);
+      const snap = buildDerivsSnapshot(results({ bybit: { BTC: byb("BTC", { fundingRate: rate, fundingIntervalHour: h }), ETH: byb("ETH"), SOL: byb("SOL") } }), histories(), NOW);
+      assert.equal(derivsChecks(snap, NOW)[0].state, "pass", `interval ${h}h rate ${rate}`);
+    }
+  }
+  // A rate that rounds to 0.000000% keeps its raw-sign direction and still verifies.
+  const tiny = buildDerivsSnapshot(results({ bybit: { BTC: byb("BTC", { fundingRate: "0.000000002" }), ETH: byb("ETH"), SOL: byb("SOL") } }), histories(), NOW);
+  assert.equal(tiny.rows.find((r) => r.asset === "BTC" && r.venue === "bybit")!.direction, "longs pay shorts");
+  assert.equal(derivsChecks(tiny, NOW)[0].state, "pass");
+  // The record is stamped with the oldest read behind it.
+  const older = buildDerivsSnapshot(results({ bybit: { BTC: byb("BTC", {}, NOW - 90_000), ETH: byb("ETH"), SOL: byb("SOL") } }), histories(), NOW);
+  assert.equal(derivsRecord(older)!.asOf, NOW - 90_000);
+});
 const clone = (s: DerivsSnapshot): DerivsSnapshot => JSON.parse(JSON.stringify(s));
 
 test("verifier: a consistent snapshot passes; planted sign, arithmetic, unit and staleness errors fail; absent is unavailable", () => {
