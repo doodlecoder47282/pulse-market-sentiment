@@ -99,7 +99,7 @@ export default function LiveVerifyCard() {
             {report.dataState === "blocked" || report.dataState === "not_connected" ? report.note : VERDICT_TEXT[s.verdict as VerifySummary["verdict"]]}
           </p>
           {(report.dataState === "ok" || all.length > 0) && (
-            <div className="grid grid-cols-5 gap-1 text-center font-mono text-[11px]" data-testid="live-verify-counts">
+            <div className="grid grid-cols-5 gap-1 text-center font-mono text-[11px] tabular-nums" data-testid="live-verify-counts">
               <div><div className="text-emerald-300">{s.pass}</div><div className="text-muted-foreground">pass</div></div>
               <div><div className="text-red-300">{s.fail}</div><div className="text-muted-foreground">fail</div></div>
               <div><div className="text-amber-300">{s.stale}</div><div className="text-muted-foreground">stale</div></div>

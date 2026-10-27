@@ -14,7 +14,7 @@ import { ArrowLeft } from "lucide-react";
 const H = ({ children }: { children: React.ReactNode }) => <h2 className="mt-8 text-base font-semibold tracking-tight">{children}</h2>;
 const P = ({ children }: { children: React.ReactNode }) => <p className="mt-2 text-sm leading-6 text-muted-foreground">{children}</p>;
 const Row = ({ k, v }: { k: string; v: string }) => (
-  <div className="grid grid-cols-[minmax(0,160px)_minmax(0,1fr)] gap-3 border-t border-border/40 py-2 text-sm">
+  <div className="grid grid-cols-1 gap-1 border-t border-border/40 py-2 text-sm sm:grid-cols-[minmax(0,160px)_minmax(0,1fr)] sm:gap-3">
     <span className="font-mono text-xs uppercase tracking-wider text-foreground">{k}</span>
     <span className="text-muted-foreground">{v}</span>
   </div>

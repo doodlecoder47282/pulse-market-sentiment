@@ -528,7 +528,7 @@ function TokenCard({ c, accent, isOpen, toggle }: { c: Candidate; accent: string
       </div>
 
       {/* stat row */}
-      <div className="mt-2 grid grid-cols-4 gap-1.5 font-mono text-[11px] tabular-nums">
+      <div className="mt-2 grid grid-cols-2 gap-1.5 font-mono text-[11px] tabular-nums xs:grid-cols-4">
         <Stat label="liq" value={fmtUsd(c.liquidityUsd)} />
         <Stat label="vol 1h" value={fmtUsd(c.vol1h, 0)} />
         <Stat label="accel" value={c.volAccel != null ? `${c.volAccel.toFixed(1)}x` : "—"} hot={(c.volAccel ?? 0) >= 2} />
@@ -678,7 +678,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
   const { stats } = sig;
   return (
     <div className="space-y-3" data-testid="crypto-signal-log">
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-7">
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-7">
         {[
           ["coins", stats.total, "text-foreground"],
           ["open", stats.open, "text-sky-300"],

@@ -34,7 +34,7 @@ export function PanelSkeleton({ variant = "card", className = "" }: PanelSkeleto
           <Skeleton className="h-5 w-32" />
           <Skeleton className="h-5 w-20" />
         </div>
-        <Skeleton className="h-[320px] w-full" />
+        <Skeleton className="h-[240px] w-full sm:h-[320px]" />
         <div className="mt-3 flex gap-3">
           <Skeleton className="h-4 w-16" />
           <Skeleton className="h-4 w-16" />

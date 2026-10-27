@@ -972,7 +972,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="relative hscroll-contain">
+          <div className="relative hscroll-contain hscroll-hint">
             <div className="min-w-[640px]">
               {/* Header row */}
               <div className="grid grid-cols-[92px_repeat(4,1fr)_96px] gap-px border-b pb-1 text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
@@ -1148,7 +1148,7 @@ function HeatseekerView({ data }: { data: HeatseekerData }) {
               <div>exposures populate once today's session prints · nothing to read overnight</div>
             </div>
           ) : (
-          <div className="h-[380px] w-full">
+          <div className="h-[300px] w-full sm:h-[380px]">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" opacity={0.15} />

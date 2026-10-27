@@ -66,7 +66,7 @@ export default function EventReplayCard({ symbol = "$SPX" }: { symbol?: string }
               {d.summary.length === 0 && <div className="col-span-full text-[11px] text-muted-foreground">no priced release session yet in the loaded history</div>}
             </div>
 
-            <div className="overflow-x-auto" data-testid="event-replay-rows">
+            <div className="hscroll-contain hscroll-hint" data-testid="event-replay-rows">
               <table className="w-full min-w-[560px] text-[11px]">
                 <thead className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
                   <tr><th className="text-left">session</th><th className="text-left">release</th><th className="text-right">gap</th><th className="text-right">close</th><th className="text-right">range</th><th className="text-right">next day</th><th className="text-right">state</th></tr>

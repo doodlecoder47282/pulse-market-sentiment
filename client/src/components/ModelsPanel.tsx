@@ -383,7 +383,7 @@ function RailRow({
 }) {
   return (
     <div
-      className={`flex items-baseline justify-between gap-2 border-b border-border/20 py-0.5 text-[11px] font-mono ${
+      className={`flex items-baseline justify-between gap-2 border-b border-border/20 py-1 text-[11px] font-mono [break-inside:avoid] xl:py-0.5 ${
         highlight ? "bg-yellow-400/10" : ""
       }`}
     >
@@ -401,7 +401,7 @@ function RailRow({
 
 function RailDivider({ label }: { label?: string }) {
   return (
-    <div className="my-0.5 border-t border-border/40 py-0.5 text-[11px] uppercase tracking-widest text-muted-foreground">
+    <div className="my-0.5 border-t border-border/40 py-0.5 text-[11px] uppercase tracking-widest text-muted-foreground [break-after:avoid]">
       {label}
     </div>
   );
@@ -460,7 +460,7 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
     : a.charmZero != null ? fmtK(a.charmZero) : "—";
 
   return (
-    <div className="w-52 flex-shrink-0 overflow-y-auto border-l border-border/40 bg-black/30 px-2.5 py-2 font-mono text-[11px]">
+    <div className="w-full border-t border-border/40 bg-black/30 px-3 py-2 font-mono text-[11px] sm:columns-2 sm:gap-6 xl:w-56 xl:flex-shrink-0 xl:columns-1 xl:overflow-y-auto xl:border-l xl:border-t-0 xl:px-2.5" data-testid="models-levels-rail">
       <div className="mb-1 text-[11px] uppercase tracking-widest text-muted-foreground">Levels</div>
 
       {/* Upside */}
@@ -498,7 +498,7 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
       {zomma    && <RailRow label="ZOMMA BRIDGE" value={pFmt(zomma.price)} sub={distPct(zomma.price)} color={COLORS.dz} />}
       {byKind("mopexMaxPain") && <RailRow label="MAX PAIN" value={pFmt(byKind("mopexMaxPain")?.price)} color={COLORS.amber} backtestKind="mopexMaxPain" backtestHorizon={horizon.horizon as BacktestHorizon} />}
 
-      <div className="mt-2 text-[11px] text-muted-foreground leading-tight">
+      <div className="mt-2 text-[11px] text-muted-foreground leading-tight [column-span:all]">
         Red = resistance · Green = support<br />
         Cyan = pivot/data · Yellow = flip zone<br />
         <span className="text-emerald-400/70">POS Γ</span>: hedging dampens · <span className="text-rose-400/70">NEG Γ</span>: hedging amplifies
@@ -1009,7 +1009,7 @@ function ModelChart({ horizon }: { horizon: ModelHorizon }) {
 
   return (
     <div className="flex-1 min-w-0">
-      <div className="h-[620px] xl:h-[700px] w-full" data-testid="batcave-chart">
+      <div className="h-[460px] w-full sm:h-[620px] xl:h-[700px]" data-testid="batcave-chart">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ top: 28, right: 24, left: 4, bottom: 20 }}>
             <XAxis
@@ -1301,7 +1301,7 @@ function EventBand({ horizon }: { horizon: ModelHorizon }) {
           {isLoading ? "loading…" : isError ? "feed error" : data ? data.source : ""}
         </div>
       </div>
-      <div className="grid grid-cols-5 divide-x divide-border/30">
+      <div className="grid grid-cols-1 divide-y divide-border/30 sm:grid-cols-5 sm:divide-x sm:divide-y-0">
         {dayLabels.map((label) => {
           const events = dayMap.get(label) ?? [];
           return (
@@ -1909,7 +1909,7 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
         {/* Drivers — v2 with 4 components */}
         <div className="rounded border border-cyan-500/20 bg-black/50 p-2 font-mono text-[11px]">
           <div className="mb-1 text-[11px] uppercase tracking-widest text-cyan-400/80">SCENARIO TILT DRIVERS (PER WEEK, HEURISTIC, NOT IN BASE)</div>
-          <div className="grid grid-cols-4 gap-2 text-[11px]">
+          <div className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
             <div>
               <div className="text-[11px] text-muted-foreground">COMPOSITE</div>
               <div className={traj.drivers.compositeTilt >= 0 ? "text-green-400" : "text-red-400"}>

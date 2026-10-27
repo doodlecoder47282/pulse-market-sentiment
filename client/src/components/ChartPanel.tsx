@@ -209,7 +209,7 @@ export default function ChartPanel() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[220px_1fr]" data-testid="chart-panel">
         {/* Watchlist sidebar */}
-        <aside className="space-y-2 rounded-xl border border-border/60 bg-card/40 p-3 backdrop-blur">
+        <aside className="min-w-0 space-y-2 rounded-xl border border-border/60 bg-card/40 p-3 backdrop-blur">
           <div className="mb-1 flex items-center justify-between">
             <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Watchlist</div>
             <Badge variant="outline" className="text-[11px]">{watchlist.length}</Badge>
@@ -229,20 +229,21 @@ export default function ChartPanel() {
             </Button>
           </div>
 
-          <div className="space-y-1 pt-1">
+          {/* Phone/tablet: a two- or three-up grid keeps the list short above the chart; desktop: the rail. */}
+          <div className="grid grid-cols-2 gap-1 pt-1 sm:grid-cols-3 lg:grid-cols-1">
             {watchlist.map((w) => {
               const isActive = w.symbol === activeChart;
               return (
                 <div
                   key={w.symbol}
                   className={[
-                    "group flex items-center gap-1 rounded-md border px-2 py-1.5 transition cursor-pointer",
+                    "group flex min-w-0 items-center gap-1 rounded-md border px-2 py-1.5 transition cursor-pointer",
                     isActive ? "border-cyan-500/50 bg-cyan-500/10" : "border-border/40 hover:border-border",
                   ].join(" ")}
                   onClick={() => setActiveChart(w.symbol)}
                   data-testid={`watchlist-${w.symbol}`}
                 >
-                  <span className={`text-xs font-semibold ${isActive ? "text-cyan-300" : ""}`}>{w.label}</span>
+                  <span className={`truncate text-xs font-semibold ${isActive ? "text-cyan-300" : ""}`}>{w.label}</span>
                   <div className="ml-auto flex items-center gap-1">
                     {w.symbol === "SPY" && (
                       <Zap className="h-2.5 w-2.5 text-amber-400" aria-label="Gamma available" />
@@ -264,7 +265,7 @@ export default function ChartPanel() {
         </aside>
 
         {/* Main chart area */}
-        <section className="space-y-3 rounded-xl border border-border/60 bg-card/40 p-4 backdrop-blur">
+        <section className="min-w-0 space-y-3 rounded-xl border border-border/60 bg-card/40 p-3 backdrop-blur sm:p-4">
           {/* Recents strip — quick-flip between tickers you clicked from elsewhere */}
           {recents.length > 0 && (
             <div className="flex items-center gap-1.5 hscroll-contain pb-1">
@@ -289,7 +290,7 @@ export default function ChartPanel() {
 
           {/* Chart header */}
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-baseline gap-3">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
               <div className="text-2xl font-bold tracking-tight" data-testid="text-chart-symbol">{activeChart}</div>
               {priceDisplay && engine !== "tv" && (
                 <>
