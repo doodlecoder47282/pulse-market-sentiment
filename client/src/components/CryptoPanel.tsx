@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import MemeStructureSection, { CategoryChip, LineChip } from "@/components/MemeStructure";
 import { VERDICT_CODE_TEXT } from "@shared/cryptoVerdict";
+import type { CryptoReplay } from "@shared/cryptoReplay";
 import type { LinePosition, MemeClass, TradeCost } from "@shared/memeStructure";
 
 // ─── types (mirror server) ──────────────────────────────────────────────
@@ -715,6 +716,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
       )}
       {sig.expectancy && <ExpectancyCard x={sig.expectancy} />}
       {sig.rules && <RuleBookCard r={sig.rules} />}
+      <ReplayCard />
       {!stats.sampleReady && (
         <p className="text-[11px] text-muted-foreground">
           not sample-ready{stats.sampleReason ? ` (${stats.sampleReason})` : ` at ${stats.minGradedForSample ?? 50} graded coins (${stats.graded ?? 0} so far)`} — a minimum sample, not a calibration. Until then these stats are the whole product: the record, net of cost, not a claim.
@@ -827,6 +829,99 @@ function RuleBookCard({ r }: { r: NonNullable<SignalsResp["rules"]> }) {
             </li>
           ))}
         </ul>
+      )}
+    </div>
+  );
+}
+
+const pct = (n: number | null | undefined, dp = 1) => (n == null ? "—" : `${n.toFixed(dp)}%`);
+const num = (n: number | null | undefined, dp = 1) => (n == null ? "—" : n.toFixed(dp));
+
+/** The logged record re-read under the current rule book: timing, cap bands, features vs outcome, in/out-of-sample. Descriptive. */
+function ReplayCard() {
+  const [open, setOpen] = useState(false);
+  const q = useQuery<CryptoReplay>({ queryKey: ["/api/crypto/replay"], refetchInterval: 5 * 60_000, enabled: open });
+  const r = q.data;
+  return (
+    <div className="rounded-lg border border-border/50 bg-card/40 p-3 space-y-2" data-testid="crypto-replay">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="flex min-h-[44px] w-full items-center justify-between gap-2 text-left sm:min-h-0" data-testid="crypto-replay-toggle">
+        <span className="text-sm font-semibold text-foreground">Replay: what the record says</span>
+        <span className="text-[11px] text-muted-foreground">{open ? "hide" : "show"}</span>
+      </button>
+      <p className="text-[11px] text-muted-foreground">Every logged signal re-read under the current rule book: when the peak came relative to the signal, outcomes by cap at entry, which signal-time features sat with winners, and the current rules' pass set split older/newer half, net of cost. Bookkeeping on one desk's record, not a forecast.</p>
+      {open && q.isLoading && <div className="text-[11px] text-muted-foreground">reading the record…</div>}
+      {open && q.isError && <div className="text-[11px] text-amber-300" data-testid="crypto-replay-error">replay unavailable: {String((q.error as any)?.message ?? "server error")}</div>}
+      {open && r && (
+        <div className="space-y-3 text-[11px]" data-testid="crypto-replay-body">
+          <div className="font-mono text-muted-foreground">rules v{r.rulesVersion} · {r.rows.firstSignals} first signals ({r.rows.graded} graded) of {r.rows.total} rows · versions {Object.entries(r.rows.versions).map(([v, n]) => `${v}: ${n}`).join(", ") || "none"}</div>
+
+          <section data-testid="crypto-replay-timing">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">1 · When did the peak come?</div>
+            <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono tabular-nums sm:grid-cols-5">
+              <span>at/before signal <span className="text-foreground">{r.timing.peakAtOrBeforeSignal}</span></span>
+              <span>≤ 15 min <span className="text-foreground">{r.timing.within15min}</span></span>
+              <span>≤ 60 min <span className="text-foreground">{r.timing.within60min}</span></span>
+              <span>later <span className="text-foreground">{r.timing.later}</span></span>
+              <span>no peak <span className="text-foreground">{r.timing.noPeak}</span></span>
+            </div>
+            <div className="mt-0.5 text-muted-foreground">median {num(r.timing.medianMinutesToPeak, 0)} min to the sampled peak over {r.timing.n} graded · {r.timing.note}</div>
+          </section>
+
+          <section data-testid="crypto-replay-bands">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">2 · Outcomes by cap at the signal</div>
+            <div className="mt-1 overflow-x-auto">
+              <table className="w-full min-w-[520px] font-mono tabular-nums">
+                <thead><tr className="text-muted-foreground"><th className="text-left">band</th><th className="text-right">n</th><th className="text-right">hit</th><th className="text-right">2x</th><th className="text-right">dead</th><th className="text-right">rug</th><th className="text-right">no data</th><th className="text-right">win %</th><th className="text-right">95% CI</th><th className="text-right">median net</th></tr></thead>
+                <tbody>
+                  {r.bands.map((b) => (
+                    <tr key={b.band} className="border-t border-border/30">
+                      <td>{b.band}</td><td className="text-right">{b.n}</td><td className="text-right">{b.hit}</td><td className="text-right">{b.doubled}</td><td className="text-right">{b.dead}</td><td className="text-right">{b.rugged}</td><td className="text-right">{b.noData}</td>
+                      <td className="text-right text-foreground">{pct(b.winShare)}</td><td className="text-right">{b.winLo == null ? "—" : `${b.winLo}–${b.winHi}`}</td><td className="text-right">{pct(b.medianNetGradedPct)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-0.5 text-muted-foreground sm:hidden">swipe for more columns</div>
+          </section>
+
+          <section data-testid="crypto-replay-features">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">3 · Signal-time features: winners vs losers (medians) and win % in the top vs bottom third</div>
+            <div className="mt-1 overflow-x-auto">
+              <table className="w-full min-w-[520px] font-mono tabular-nums">
+                <thead><tr className="text-muted-foreground"><th className="text-left">feature</th><th className="text-right">n win / loss</th><th className="text-right">median win</th><th className="text-right">median loss</th><th className="text-right">top ⅓ win %</th><th className="text-right">bottom ⅓ win %</th></tr></thead>
+                <tbody>
+                  {r.features.map((f) => (
+                    <tr key={f.feature} className="border-t border-border/30">
+                      <td>{f.feature}</td><td className="text-right">{f.nWin} / {f.nLoss}</td><td className="text-right">{num(f.medianWin, 2)}</td><td className="text-right">{num(f.medianLoss, 2)}</td>
+                      <td className="text-right text-foreground">{f.topThirdWinShare == null ? "—" : `${f.topThirdWinShare}% (n ${f.thirdN})`}</td><td className="text-right">{f.bottomThirdWinShare == null ? "—" : `${f.bottomThirdWinShare}%`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-0.5 text-muted-foreground">descriptive only; thirds need at least 3 rows each. A feature that separates here is a candidate for the next rule version, to be tested out of sample, not a rule.</div>
+          </section>
+
+          <section data-testid="crypto-replay-reeval">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">4 · Current rules over the record (first signal per coin)</div>
+            <div className="mt-1 font-mono tabular-nums text-muted-foreground">pass the current rules <span className="text-foreground">{r.reeval.wouldEnter}</span> of {r.reeval.consideredFirstSignals} · originally ENTER {r.reeval.originallyEnter} · agree {r.reeval.agreeEnter} · blockers: {Object.entries(r.reeval.blockerCounts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}</div>
+            <div className="mt-1 grid grid-cols-1 gap-1 sm:grid-cols-3">
+              {[r.reeval.inSample, r.reeval.outOfSample, r.reeval.all].map((s) => (
+                <div key={s.label} className="rounded border border-border/40 p-2 font-mono tabular-nums">
+                  <div className="text-foreground">{s.label}</div>
+                  <div>n {s.n} · wins {s.wins} ({pct(s.winShare)}{s.winLo != null ? `, CI ${s.winLo}–${s.winHi}` : ""})</div>
+                  <div>mean net {pct(s.meanNetGradedPct)} · median {pct(s.medianNetGradedPct)}</div>
+                  <div>max drawdown {pct(s.maxDrawdownPct)} of $100-per-signal equity</div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-0.5 text-muted-foreground">unchecked at re-evaluation (not stored at the time): {r.reeval.unchecked.join("; ")}. {r.reeval.lookAhead}</div>
+          </section>
+
+          <p className="text-muted-foreground">{r.samplingLimit}</p>
+          <p className="text-muted-foreground/80">{r.scope}</p>
+        </div>
       )}
     </div>
   );

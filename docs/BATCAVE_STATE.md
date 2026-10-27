@@ -1161,3 +1161,22 @@ Lab, Settings, ConnectionGate. Crypto layout utilities touched only
 (TokenCard stats, counts grid, MemeStructure zero-edge grid). Noted, not
 changed: Heatseeker "Hover GEX cells" copy; chip title-only detail;
 ModelsPanel skeleton shorter than content.
+
+2026-10-27: crypto replay (PR #30, feat/crypto-replay; roadmap item 1).
+shared/cryptoReplay.ts (pure) + /api/crypto/replay + ReplayCard on the
+Crypto tab: the logged record re-read under the current rule book. Four
+readouts, first signal per coin: (1) timing, where the sampled peak fell
+relative to the signal (at/before = entered after the move); (2) outcomes
+by cap at the signal in four bands with Wilson intervals and median net
+(graded rule, limit-sell at target); (3) signal-time features, medians for
+winners vs losers and win share in top vs bottom third (descriptive, n
+shown); (4) re-evaluation: the current rules applied to signal-time fields
+only (test pins that outcome/peak/horizon cannot change the answer), gates
+not stored at the time listed as unchecked (upper bound), split in-sample /
+out-of-sample by detection date, mean/median net, max drawdown of a
+$100-per-signal path. Stated limit: no per-coin price series exists, so
+peaks are what the ~4-min sampler saw and DOUBLED is a floor. features_json
+now also stores score. CI demo smoke asserts the shape. Reach row added to
+Verify live data. The owner's observation ("picks a lot, barely any
+doubled") maps to readouts 1 and 2; the record decides which hypothesis
+holds (late entry vs wrong cap zone vs sampler floor).
