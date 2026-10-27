@@ -9,6 +9,7 @@
 //
 // Companion to MLProjectionPanel (intraday). Same Models tab.
 
+import { refetchUntilReady } from "@/lib/retryUntilReady";
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -57,7 +58,7 @@ export default function MultiDayCone({ defaultSymbol = "^GSPC" }: { defaultSymbo
       const r = await apiRequest("GET", `/api/projection/multiday?symbol=${encodeURIComponent(defaultSymbol)}`);
       return r.json();
     },
-    refetchInterval: 15 * 60_000,
+    refetchInterval: refetchUntilReady(15 * 60_000),
     staleTime: 10 * 60_000,
     // Transparent retry on Schwab throttle 503
     retry: (failureCount, error: any) => {

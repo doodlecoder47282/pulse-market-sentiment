@@ -19,6 +19,7 @@
 //
 // Data source: GET /api/models?symbol=^GSPC|SPY
 
+import { refetchUntilReady } from "@/lib/retryUntilReady";
 import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { RegimeChip } from "@/components/RegimeChip";
@@ -2185,7 +2186,8 @@ export default function ModelsPanel() {
     },
     // 30-min refresh — BULL / BASE / BEAR scenarios re-roll every half hour so the
     // user sees current price, current dealer levels, and live scenario targets.
-    refetchInterval: 30 * 60_000,
+    // Not built for any horizon (e.g. Schwab refused the chain): retry every 30 s.
+    refetchInterval: refetchUntilReady<ModelsResponse>(30 * 60_000, (d) => !d?.horizons || Object.values(d.horizons).every((h) => !h)),
     staleTime: 25 * 60_000,
     refetchIntervalInBackground: true,
     refetchOnWindowFocus: true,

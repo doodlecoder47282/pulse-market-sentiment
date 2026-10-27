@@ -755,6 +755,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // options chain (Schwab is rate-limited).
   const MODELS_CACHE_MS = 30 * 60_000;
 
+  const MODELS_EMPTY_RETRY_MS = 20_000;
+  const modelsBuildEmpty = (d: ModelsResponse | null | undefined): boolean =>
+    !d?.horizons || Object.values(d.horizons as Record<string, unknown>).every((h) => !h);
   async function buildModelsForKey(symbol: "SPY" | "^GSPC", experimental: boolean): Promise<ModelsResponse> {
     const cacheKey = `${symbol}${experimental ? ":exp" : ""}`;
     // Cache hit
@@ -762,7 +765,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // The 30-min rebuild cadence never serves chain-derived numbers past the
     // chain max age (3 min in the session): an older build is a miss.
     const cachedChainAsOf = cached ? oldestChainAsOf(cached.data.horizons as any) : null;
-    if (cached && Date.now() - cached.at < MODELS_CACHE_MS
+    // A build with no horizon (Schwab refused the chain) is held only
+    // MODELS_EMPTY_RETRY_MS, so the next read retries instead of serving
+    // "not built" for the full 30-minute cadence.
+    const cachedEmpty = cached ? modelsBuildEmpty(cached.data) : false;
+    if (cached && Date.now() - cached.at < (cachedEmpty ? MODELS_EMPTY_RETRY_MS : MODELS_CACHE_MS)
         && (cachedChainAsOf == null || Date.now() - cachedChainAsOf <= maxServeAgeMs("chains"))) {
       return cached.data;
     }
@@ -779,7 +786,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         symbols: [symbol],
         experimental,
       });
-      await writeCache(`models-${symbol}${experimental ? "-exp" : ""}-${rthSessionKey()}`, data);
+      // Never overwrite the last good session snapshot with an empty build.
+      if (!modelsBuildEmpty(data)) await writeCache(`models-${symbol}${experimental ? "-exp" : ""}-${rthSessionKey()}`, data);
       modelsCache.set(cacheKey, { at: Date.now(), data });
       return data;
     })().finally(() => {

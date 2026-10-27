@@ -30,7 +30,7 @@ import { tokenKeyWarnings } from "./tokenCrypto";
 import { resolveTokenKeyPolicy } from "./tokenKeyFile";
 import { editionFromEnv } from "../shared/edition";
 import { createMobileGateway } from "./mobileGateway";
-import { getSchwabStatus } from "./schwab";
+import { getSchwabStatus, schwabRequestContext } from "./schwab";
 
 // Global safety nets — do NOT let a stray promise reject or exception kill the
 // long-running server process. Crashes here previously took down /api/* during
@@ -46,6 +46,9 @@ const app = express();
 const httpServer = createServer(app);
 // Must run before JSON parsing, request logging, and existing routes.
 app.use(createMobileGateway(undefined, getSchwabStatus));
+// Schwab reads made while serving an /api request take the interactive share
+// of the per-minute budget; engines and timers stay on the background share.
+app.use("/api", (req, _res, next) => schwabRequestContext.run({ interactive: true, route: req.path.slice(0, 60) }, next));
 
 // Client IP behind a platform proxy (Railway/Render/Fly): trust exactly the
 // configured hop count so req.ip, and with it the wrong-key slowdown bucket in

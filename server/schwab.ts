@@ -6,6 +6,7 @@
  */
 
 // Token row access goes through the encrypted store (AES-256-GCM, BATCAVE_TOKEN_KEY).
+import { AsyncLocalStorage } from "node:async_hooks";
 import { applyOiHold, type ChainOiState } from "./oiHold";
 import type { ChainSegmentLike } from "./schwabDataPolicy";
 import { readSchwabTokens, writeSchwabTokens, deleteSchwabTokens, tokenStoreStatus, type TokenStoreStatus } from "./schwabTokenStore";
@@ -321,6 +322,17 @@ const MAX_REQ_PER_MIN = 100;
 // Keep manual, bounded stock research usable during collector startup bursts.
 // This is a reservation inside the existing limit, never extra provider capacity.
 const BACKGROUND_REQ_PER_MIN = 85;
+/** Background cap for the first BOOT_RAMP_MS after start: the engines all warm
+ *  their caches at once and would otherwise take the whole budget before the
+ *  first screen asks for anything. */
+const BOOT_BACKGROUND_REQ_PER_MIN = 60;
+const BOOT_RAMP_MS = 180_000;
+const _bootAt = Date.now();
+/** Set for the life of an /api request: Schwab reads made while serving a
+ *  screen are interactive; timers and engines run outside it (background). */
+export const schwabRequestContext = new AsyncLocalStorage<{ interactive: boolean; route?: string }>();
+/** Longest a request waits for a free slot before it reads unavailable. */
+const SLOT_WAIT_MS = 15_000;
 
 function _trimReqLog() {
   const cutoff = Date.now() - 60_000;
@@ -378,7 +390,32 @@ export async function schwabFetch(
   return (await schwabFetchMeta(path, params, opts)).data;
 }
 
+// Identical requests already on the wire share one Schwab call: a cold cache
+// (startup, a tab opening) otherwise sends the same chain several times and
+// spends the per-minute budget on duplicates.
+const _inflight = new Map<string, Promise<SchwabFetchResult>>();
+export function schwabInflightKey(path: string, params?: Record<string, string | number>): string {
+  const p = params ? { ...params } : {};
+  if (path.startsWith("marketdata/v1/pricehistory") && String(p.frequencyType ?? "").toLowerCase() === "minute") delete p.endDate;
+  return `${path}|${Object.entries(p).sort().map(([k, v]) => `${k}=${v}`).join("&")}`;
+}
+
 export async function schwabFetchMeta(
+  path: string,
+  params?: Record<string, string | number>,
+  opts?: SchwabFetchOpts,
+): Promise<SchwabFetchResult> {
+  // Receipt observers and forced refreshes keep their own call.
+  if (opts?.onAcquisition || opts?.skipCache || isDemoEdition()) return schwabFetchMetaOnce(path, params, opts);
+  const key = schwabInflightKey(path, params);
+  const running = _inflight.get(key);
+  if (running) return running;
+  const p = schwabFetchMetaOnce(path, params, opts).finally(() => { _inflight.delete(key); });
+  _inflight.set(key, p);
+  return p;
+}
+
+async function schwabFetchMetaOnce(
   path: string,
   params?: Record<string, string | number>,
   opts?: SchwabFetchOpts,
@@ -445,9 +482,23 @@ export async function schwabFetchMeta(
   }
 
   // Self-throttle
-  const requestLimit = opts?.priority === "interactive" ? MAX_REQ_PER_MIN : BACKGROUND_REQ_PER_MIN;
+  const interactive = opts?.priority === "interactive" || schwabRequestContext.getStore()?.interactive === true;
+  const requestLimit = interactive ? MAX_REQ_PER_MIN
+    : Date.now() - _bootAt < BOOT_RAMP_MS ? BOOT_BACKGROUND_REQ_PER_MIN : BACKGROUND_REQ_PER_MIN;
   const budgetBlocked = () => {
     try { opts?.onBudgetBlocked?.(); } catch { /* diagnostic observers do not control transport */ }
+  };
+  // Budget full: a still-servable cached copy is returned (labelled stale);
+  // otherwise wait for a slot up to SLOT_WAIT_MS, then give up as unavailable.
+  const slotDeadline = Date.now() + SLOT_WAIT_MS;
+  const waitForSlot = async (): Promise<boolean> => {
+    for (;;) {
+      _trimReqLog();
+      if (_reqLog.length < requestLimit) return true;
+      const waitMs = Math.max(0, _reqLog[0] + 60_000 - Date.now()) + 50 + Math.floor(Math.random() * 250);
+      if (Date.now() + waitMs > slotDeadline) return false;
+      await sleep(waitMs);
+    }
   };
   _trimReqLog();
   if (_reqLog.length >= requestLimit) {
@@ -455,13 +506,8 @@ export async function schwabFetchMeta(
     if (entry && staleServeDecision(entry.fetchedAt, kind, "self-throttle").serve) {
       return serveStale("self-throttle (100 requests/min)");
     }
-    // Wait until oldest request ages out
-    const waitMs = Math.max(0, _reqLog[0] + 60_000 - Date.now()) + 50;
-    if (waitMs < 5000) {
-      await sleep(waitMs);
-      _trimReqLog();
-    } else {
-      console.warn("[schwab] self-throttle hit, skipping:", path);
+    if (!(await waitForSlot())) {
+      console.warn("[schwab] self-throttle hit, skipping:", path, interactive ? `(interactive ${schwabRequestContext.getStore()?.route ?? ""})` : "(background)");
       budgetBlocked();
       return serveStale("self-throttle (100 requests/min)");
     }
@@ -478,17 +524,18 @@ export async function schwabFetchMeta(
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     // Recheck after waits and before EVERY retry; concurrent callers cannot
     // spend the reserved slots or exceed the cap through the retry path.
-    _trimReqLog();
-    if (_reqLog.length >= requestLimit) {
+    if (!(await waitForSlot())) {
       budgetBlocked();
-      return serveStale("request budget reserved for interactive reads");
+      return serveStale(requestLimit < MAX_REQ_PER_MIN ? "request budget reserved for interactive reads" : "self-throttle (100 requests/min)");
     }
-    _reqLog.push(Date.now());
+    _reqLog.push(Date.now()); // synchronous after the check: no other caller can take this slot
     {
       const frame = (new Error().stack ?? "").split("\n").slice(2).map((l) => l.trim())
         .find((l) => !/schwab\.(ts|js)|schwabFetch|node:internal|processTicksAndRejections/.test(l)) ?? "?";
       const sym = params ? String((params as any).symbol ?? (params as any).symbols ?? "").slice(0, 24) : "";
-      _reqWho.push({ t: Date.now(), k: `${path.replace("marketdata/v1/", "")}${sym ? " " + sym : ""} <- ${frame.replace(/^at /, "").slice(0, 90)}` });
+      const ctx = schwabRequestContext.getStore();
+      const who = ctx?.route ? `api ${ctx.route}` : frame.replace(/^at /, "").slice(0, 90);
+      _reqWho.push({ t: Date.now(), k: `${interactive ? "I" : "B"} ${path.replace("marketdata/v1/", "")}${sym ? " " + sym : ""} <- ${who}` });
     }
     try {
       const res = await fetch(url.toString(), {
@@ -577,7 +624,7 @@ export function getSchwabDiagnostics() {
     cacheEntries: _cache.size,
     requestsLastMinute: _reqLog.length,
     requestsByCaller: Object.entries(_reqWho.reduce((m, r) => { m[r.k] = (m[r.k] ?? 0) + 1; return m; }, {} as Record<string, number>))
-      .sort((a, b) => b[1] - a[1]).slice(0, 25).map(([k, n]) => ({ n, k })),
+      .sort((a, b) => b[1] - a[1]).slice(0, 60).map(([k, n]) => ({ n, k })),
     maxPerMinute: MAX_REQ_PER_MIN,
     cooldowns: Array.from(_cooldown.entries())
       .filter(([_, exp]) => exp > now)

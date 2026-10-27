@@ -160,6 +160,8 @@ export interface FlowSnapshot {
   evalCount: number;
   errorCount: number;
   lastCycleErrors: number;
+  /** Tickers the last cycle scanned (priority every 30 s, full list every 60 s). */
+  lastCycleScanned: number;
   pendingByTicker: Record<string, WhaleHit[]>;
   recentFired: Array<{ ticker: string; hits: number; firedAt: number }>;
   config: {
@@ -177,6 +179,8 @@ export interface FlowSnapshot {
 // ─── State (in-memory only — no localStorage per project rules) ─────────────
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 let watchlistTick = 0;
+/** Tickers scanned in the last cycle (all of them every other cycle). */
+let lastCycleScanned = 0;
 let lastEvalAt = 0;
 let lastEvalDurationMs = 0;
 let evalCount = 0;
@@ -354,7 +358,9 @@ async function scanTicker(symbol: string): Promise<{ hits: WhaleHit[]; error: st
     const flow = await buildSchwabFlow(symbol, {
       minVolOi: 2.0,
       minVolume: 100,
-      maxDte: 90,
+      // Whale rule gates on cfg.minDte..cfg.maxDte (default 1-3); pulling 90
+      // days for 15 tickers was mostly discarded. Range = the rule's window.
+      maxDte: Math.max(1, getFlowConfig().maxDte),
       limit: 200,
     });
     if ("error" in flow) {
@@ -576,9 +582,11 @@ async function evalCycle(): Promise<void> {
     // Priority every 30 s; watchlist every other cycle (60 s) so the scanner
     // stays well inside the shared 100 requests/min Schwab budget.
     watchlistTick++;
-    const universe = Array.from(new Set([...cfg.priority, ...(watchlistTick % 2 === 1 ? cfg.watchlist : [])])); // deduped: priority/watchlist overlap scanned and counted once
+    const universe = Array.from(new Set([...cfg.priority, ...cfg.watchlist])); // deduped: priority/watchlist overlap scanned and counted once
+    const scanNow = watchlistTick % 2 === 1 ? universe : universe.filter((s) => cfg.priority.includes(s));
     let cycleErrors = 0;
-    for (const sym of universe) {
+    lastCycleScanned = scanNow.length;
+    for (const sym of scanNow) {
       const { hits, error } = await scanTicker(sym);
       if (error) cycleErrors++;
       for (const h of hits) queueHit(h);
@@ -653,6 +661,7 @@ export function getFlowSnapshot(): FlowSnapshot {
     evalCount,
     errorCount,
     lastCycleErrors,
+    lastCycleScanned,
     pendingByTicker: pending,
     recentFired: [...recentFired],
     config: ((): FlowSnapshot["config"] => {
@@ -672,7 +681,20 @@ export function getFlowSnapshot(): FlowSnapshot {
 }
 
 // ─── Single-shot preview for /api/flow/preview ───────────────────────────────
-export async function previewFlow(): Promise<{
+// The preview re-scans every ticker; screens poll it. One scan serves every
+// caller for PREVIEW_TTL_MS, and concurrent callers share the scan in flight.
+const PREVIEW_TTL_MS = 30_000;
+let _previewMemo: { at: number; p: Promise<Awaited<ReturnType<typeof previewFlowScan>>> } | null = null;
+export function previewFlow(): ReturnType<typeof previewFlowScan> {
+  const now = Date.now();
+  if (_previewMemo && now - _previewMemo.at < PREVIEW_TTL_MS) return _previewMemo.p;
+  const p = previewFlowScan();
+  _previewMemo = { at: now, p };
+  p.catch(() => { if (_previewMemo?.p === p) _previewMemo = null; });
+  return p;
+}
+
+async function previewFlowScan(): Promise<{
   source: FlowSnapshot["source"];
   config: FlowSnapshot["config"];
   byTicker: Record<string, { whales: WhaleHit[]; rejected: Array<{ occ: string; reason: string }> }>;
@@ -692,7 +714,7 @@ export async function previewFlow(): Promise<{
   for (const sym of universe) {
     try {
       const flow = await buildSchwabFlow(sym, {
-        minVolOi: 2.0, minVolume: 100, maxDte: 90, limit: 200,
+        minVolOi: 2.0, minVolume: 100, maxDte: Math.max(1, getFlowConfig().maxDte), limit: 200,
       });
       if ("error" in flow) {
         byTicker[sym] = { whales: [], rejected: [{ occ: "ERROR", reason: flow.error }] };

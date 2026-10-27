@@ -17,6 +17,7 @@
 // Touch/UI-friendly: tap any level to see what's stacked there + how many
 // historical reactions it has triggered in the last 90 days.
 
+import { refetchUntilReady } from "@/lib/retryUntilReady";
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -135,7 +136,7 @@ export default function PivotProjection({
       const r = await apiRequest("GET", `/api/pivot-projection?symbol=${encodeURIComponent(symbol)}`);
       return r.json();
     },
-    refetchInterval: 30 * 60_000,
+    refetchInterval: refetchUntilReady(30 * 60_000),
     staleTime: 25 * 60_000,
     // Transparent retry on 503 (Schwab throttle race when Models tab loads).
     // 3 retries with exponential backoff. Keeps previous data visible meanwhile.

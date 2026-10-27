@@ -366,6 +366,9 @@ export default function ChainAudit() {
   });
 
   const audit = data?.audit;
+  // Not connected is a different state from connected-but-refused (throttle, 502).
+  const isSchwabNotConnected = (data as any)?.error === "schwab_required"
+    || /schwab_required|not connected/i.test(String((error as any)?.message ?? ""));
   const isSchwabError = (error as any)?.status === 503
     || (data as any)?.error === "schwab_required"
     || (data as any)?.error === "schwab_unavailable"
@@ -441,11 +444,13 @@ export default function ChainAudit() {
 
       {isError && !isLoading && (
         <AuditError
-          isSchwabRequired={isSchwabError}
+          isSchwabRequired={isSchwabNotConnected}
           message={
-            isSchwabError
+            isSchwabNotConnected
               ? "Schwab connection required for chain audit. Connect Schwab in Settings to enable live option chain data."
-              : `Chain audit unavailable: ${(error as any)?.message ?? "unknown error"}`
+              : isSchwabError
+                ? `Schwab chain unavailable (connected; the read was refused or timed out): ${String((error as any)?.message ?? "no reason given").slice(0, 160)}. Retrying every 30 s.`
+                : `Chain audit unavailable: ${(error as any)?.message ?? "unknown error"}`
           }
         />
       )}

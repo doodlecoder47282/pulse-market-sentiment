@@ -24,6 +24,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { WhaleHit } from "./flowAlertEngine";
+import { followMaxDte } from "../shared/whaleFollowDte";
 import { buildSchwabFlow, type SchwabFlowContract } from "./schwabFlow";
 // Static import instead of bare require(): the package is ESM and under `tsx` dev every
 // require() threw inside its try/catch, so nothing persisted and hydrateFromDb loaded 0
@@ -229,11 +230,13 @@ export async function updateAll(): Promise<{
 
   for (const [symbol, group] of bySymbol) {
     try {
-      // Pull a wider net — we don't want to filter by volume here
+      // Pull a wider net — we don't want to filter by volume here. The range
+      // stops at the latest tracked expiry: a 365-day pull every 30 s for a
+      // few 1-3 DTE contracts spent most of the Schwab request budget.
       const flow = await buildSchwabFlow(symbol, {
         minVolume: 0,
         minVolOi: 0,
-        maxDte: 365,
+        maxDte: followMaxDte(group.map((p) => p.expiration), now),
         limit: 5000,
       });
       if ("error" in flow) {
@@ -653,3 +656,4 @@ export function hydrateFromDb(): { loaded: number } {
     return { loaded: 0 };
   }
 }
+
