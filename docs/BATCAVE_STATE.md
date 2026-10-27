@@ -1460,3 +1460,20 @@ frequency", Flow footnotes, TrackedSignals basis + mark age, FlowAlerts
 "fixed thresholds" footer. Still forecast-flavoured (next): EdgeInfo.tsx
 dialog copy, TradeDesk tooltip maps and legend row, OdteForward header
 chip.
+
+2026-10-27: crypto desk charter (PR #28, feat/crypto-desk-charter). Owner's
+standing directive recorded in AGENTS.md and docs/CRYPTO_DESK.md (goal,
+sources and retention, rule book, calibration policy, exact math,
+verification, review process, roadmap, what is not claimed).
+shared/cryptoRules.ts: versioned rule book (CRYPTO_RULES_VERSION
+2026.10.27-1) holding every threshold the engine, grader and verdict used;
+engine/stats/verdict now import it (tests grep for literals); every signal
+row stores rulesVersion; /api/crypto/signals carries rules {version, items};
+RuleBookCard on the Crypto tab. shared/cryptoVerify.ts + liveVerify: crypto
+section of Verify live data (reach of the four crypto routes; ENTER gates
+recomputed per row; sizing and round-trip cost; desk risk vs majors;
+expectancy bookkeeping; rule version present), run even when Schwab is not
+connected. docs/REVIEWER_BRIEF.md: standing brief for independent review
+agents (product, rules, known traps, deliverable shape). Method page updated.
+Next (roadmap item 1): replay/backtest of the logged history under the
+current rule version, in-sample / out-of-sample, net of cost.

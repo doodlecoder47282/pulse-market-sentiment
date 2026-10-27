@@ -128,6 +128,8 @@ interface SignalsResp {
   expectancy?: { graded: Expectancy; hold: Expectancy; peak: Expectancy; basis: string };
   /** Persistent desk risk state from the majors read; off or unknown holds every candidate at WATCH. */
   desk?: { state: "on" | "off" | "unknown"; reason: string; asOf: number | null; btcVsVwap24hPct: number | null };
+  /** The versioned rule book every verdict and grade on this tab comes from (shared/cryptoRules.ts). */
+  rules?: { version: string; items: Array<{ path: string; value: string; text: string }> };
 }
 
 interface Expectancy {
@@ -712,6 +714,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
         </p>
       )}
       {sig.expectancy && <ExpectancyCard x={sig.expectancy} />}
+      {sig.rules && <RuleBookCard r={sig.rules} />}
       {!stats.sampleReady && (
         <p className="text-[11px] text-muted-foreground">
           not sample-ready{stats.sampleReason ? ` (${stats.sampleReason})` : ` at ${stats.minGradedForSample ?? 50} graded coins (${stats.graded ?? 0} so far)`} — a minimum sample, not a calibration. until then these stats are the whole product: proving or killing the edge.
@@ -801,6 +804,30 @@ function ExpectancyCard({ x }: { x: NonNullable<SignalsResp["expectancy"]> }) {
       )}
       <p className="text-[11px] text-muted-foreground">{h.note}{h.skipped ? ` · ${h.skipped} graded without a computable return (${Object.entries(h.skippedReasons).map(([k, v]) => `${k} ${v}`).join(", ")})` : ""}</p>
       <p className="text-[11px] text-muted-foreground/80">{x.basis}</p>
+    </div>
+  );
+}
+
+/** The rule book, in words, with its version: what every verdict and grade on this tab was produced by. */
+function RuleBookCard({ r }: { r: NonNullable<SignalsResp["rules"]> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-lg border border-border/50 bg-card/40 p-3 space-y-2" data-testid="crypto-rules">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="flex min-h-[44px] w-full items-center justify-between gap-2 text-left sm:min-h-0" data-testid="crypto-rules-toggle">
+        <span className="text-sm font-semibold text-foreground">Rule book <span className="font-mono text-[11px] text-muted-foreground">v{r.version}</span></span>
+        <span className="text-[11px] text-muted-foreground">{open ? "hide" : `${r.items.length} rules`}</span>
+      </button>
+      <p className="text-[11px] text-muted-foreground">Every verdict and grade on this tab comes from these rules. A changed number is a new version, so grades from different versions are never mixed. The desk reads and grades; it places no orders.</p>
+      {open && (
+        <ul className="space-y-1" data-testid="crypto-rules-list">
+          {r.items.map((it) => (
+            <li key={it.path} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-t border-border/30 pt-1 text-[11px]">
+              <span className="text-muted-foreground"><span className="font-mono text-foreground">{it.path}</span> · {it.text}</span>
+              <span className="font-mono text-foreground">{it.value}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

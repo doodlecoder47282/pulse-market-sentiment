@@ -41,6 +41,7 @@
 
 import { sqlite } from "./storage";
 import { signalReturn, summarizeExpectancy, type ExpectancySummary, type GradedSignalLike } from "../shared/cryptoExpectancy";
+import { CRYPTO_RULES, CRYPTO_RULES_VERSION, describeCryptoRules } from "../shared/cryptoRules";
 import { parseFeed } from "./sources/parse";
 import { sourceTable, TIER_LABEL } from "./sources/registry";
 import { readMajors, type MajorsSnapshot } from "./sources/cryptoMajors";
@@ -182,12 +183,14 @@ interface EngineHealth {
 
 // ─── Config ─────────────────────────────────────────────────────────────
 
-const MCAP_CEILING = 1_500_000;    // track a little above 1M so we see the cross
-const MCAP_ENTRY_MAX = 1_000_000;  // ENTER only below this
-const TARGET_MCAP = 5_000_000;
-const LIQ_FLOOR_USD = 8_000;       // below this you cannot exit — hard kill
-const MAX_TRACKED = 220;           // memory + rate-budget cap
-const CANDIDATE_TTL_MS = 48 * 3600_000; // drop after 48h without a signal
+// Thresholds come from the versioned rule book (shared/cryptoRules.ts); a
+// change there is a new rule version, pinned by tests/quant.
+const MCAP_CEILING = CRYPTO_RULES.universe.trackMcapMaxUsd;    // track a little above the entry ceiling so we see the cross
+const MCAP_ENTRY_MAX = CRYPTO_RULES.universe.enterMcapMaxUsd;  // ENTER only below this
+const TARGET_MCAP = CRYPTO_RULES.universe.targetMcapUsd;
+const LIQ_FLOOR_USD = CRYPTO_RULES.universe.liquidityFloorUsd; // below this you cannot exit — hard kill
+const MAX_TRACKED = CRYPTO_RULES.universe.maxTracked;          // memory + rate-budget cap
+const CANDIDATE_TTL_MS = CRYPTO_RULES.universe.candidateTtlHours * 3600_000; // drop after this long without a signal
 const SCANNER_MS = 60_000;
 const MOMENTUM_MS = 75_000;
 const MOMENTUM_BATCH = 90; // tracked coins refreshed per momentum tick (3 DexScreener calls)
@@ -317,6 +320,7 @@ function persistSignal(c: Candidate): void {
       // ENTER-able with mcap_at_signal NULL, which the grader read as 0.
       c.verdict, c.verdictCode, c.score, c.marketCap ?? c.fdv ?? null, c.priceUsd, c.liquidityUsd,
       JSON.stringify({
+        rulesVersion: CRYPTO_RULES_VERSION,
         mcapBasis: c.marketCap != null ? "marketCap" : c.fdv != null ? "fdv" : "none",
         volAccel: c.volAccel, netBuyRatio5m: c.netBuyRatio5m, fomo: c.fomoScore,
         meme: c.memeScore, memeMethod: MEME_SCORE_METHOD, narrativeHits: c.narrativeHits, rugFlags: c.rugFlags,
@@ -921,11 +925,11 @@ function scoreCandidate(c: Candidate): void {
   if (hp === "honeypot") { flags.push("buys but ZERO sells in 1h (observed) — honeypot pattern"); hardKill = true; }
   else if (hp === "sells_missing") flags.push("1h sell count not reported (missing) — honeypot check not possible");
   if ((c.chg1h ?? 0) < -55) { flags.push(`price ${c.chg1h?.toFixed(0)}% in 1h — mid-rug or post-dump`); hardKill = true; }
-  if ((c.ageMinutes ?? 1e9) < 10) flags.push("under 10 min old — sniper zone, spreads brutal");
+  if ((c.ageMinutes ?? 1e9) < CRYPTO_RULES.flags.sniperZoneMinutes) flags.push(`under ${CRYPTO_RULES.flags.sniperZoneMinutes} min old — sniper zone, spreads brutal`);
   if (c.boosted) flags.push("paid DexScreener boost — manufactured attention, discount the FOMO");
   // Observed low volume only: a missing 24 h volume is not "no volume".
-  if (c.vol24h != null && c.vol24h < 1000 && (c.ageMinutes ?? 0) > 720) flags.push("aged with no volume — dead pool");
-  else if (c.vol24h == null && (c.ageMinutes ?? 0) > 720) flags.push("aged; 24 h volume not reported by the source");
+  if (c.vol24h != null && c.vol24h < CRYPTO_RULES.flags.deadPoolMinVolume24hUsd && (c.ageMinutes ?? 0) > CRYPTO_RULES.flags.deadPoolMinAgeMinutes) flags.push("aged with no volume — dead pool");
+  else if (c.vol24h == null && (c.ageMinutes ?? 0) > CRYPTO_RULES.flags.deadPoolMinAgeMinutes) flags.push("aged; 24 h volume not reported by the source");
   // on-chain security facts (public RPC)
   if (c.mintAuthorityActive === true) { flags.push("MINT AUTHORITY ACTIVE — dev can print supply into your bid"); hardKill = true; }
   if (c.freezeAuthorityActive === true) { flags.push("FREEZE AUTHORITY ACTIVE — dev can lock your tokens"); hardKill = true; }
@@ -962,10 +966,10 @@ function scoreCandidate(c: Candidate): void {
     code = "no_price";
     reasons.push("no reliable mcap/price yet");
   } else if (mcap > MCAP_ENTRY_MAX) {
-    verdict = c.score >= 55 ? "WATCH" : "PASS";
+    verdict = c.score >= CRYPTO_RULES.watch.minScoreWithKill ? "WATCH" : "PASS";
     code = "mcap_ceiling";
     reasons.push(`mcap $${(mcap / 1e6).toFixed(2)}M above 1M entry ceiling — watch for retrace only`);
-  } else if (c.score >= 70 && (c.volAccel ?? 0) >= 1.5 && (c.netBuyRatio5m ?? 0) >= 0.58) {
+  } else if (c.score >= CRYPTO_RULES.enter.minScore && (c.volAccel ?? 0) >= CRYPTO_RULES.enter.minVolAccel && (c.netBuyRatio5m ?? 0) >= CRYPTO_RULES.enter.minNetBuyRatio5m) {
     // WHALE-BLINK FILTER: one hot 5-min window is a single buyer, not a move.
     // ENTER requires sustained flow — at least 2 of the last 3 refreshes with
     // accel >= 1.5 — plus a completed on-chain security check.
@@ -1004,12 +1008,12 @@ function scoreCandidate(c: Candidate): void {
       reasons.push(`top-10 holders ${c.top10Pct}% (${c.top10Method ?? "method unknown"})`);
       if (c.narrativeHits.length) reasons.push(`narrative confirm: ${c.narrativeHits.join(", ")}`);
     }
-  } else if (c.score >= 50) {
+  } else if (c.score >= CRYPTO_RULES.watch.minScore) {
     verdict = "WATCH"; code = "forming";
     reasons.push(`score ${c.score} — setup forming, waiting on flow confirmation`);
   } else {
     code = "score_low";
-    reasons.push(`score ${c.score} below 50`);
+    reasons.push(`score ${c.score} below ${CRYPTO_RULES.watch.minScore}`);
   }
   c.verdictCode = code;
   c.verdict = verdict;
@@ -1017,19 +1021,19 @@ function scoreCandidate(c: Candidate): void {
 
   // risk params — sized off exit liquidity, never conviction
   if (verdict === "ENTER" || verdict === "WATCH") {
-    const maxPos = Math.floor(Math.min(liq * 0.005, 400)); // 0.5% of pool, hard cap
+    const maxPos = Math.floor(Math.min(liq * CRYPTO_RULES.sizing.poolShare, CRYPTO_RULES.sizing.maxPositionUsd)); // share of pool, hard cap
     // Execution cost from the pool's depth (constant product, shared/memeStructure.ts),
     // replacing the old (size / liquidity) x 200 guess: the round trip of the
     // sized position when the quote is back at the entry.
     const rt = tradeCost({ liquidityUsd: c.liquidityUsd, sizeUsd: Math.max(1, maxPos) });
     c.risk = {
       maxPositionUsd: Math.max(0, maxPos),
-      suggestedStopPct: -35,
-      liquidityExitStopPct: -30,
+      suggestedStopPct: CRYPTO_RULES.sizing.suggestedStopPct,
+      liquidityExitStopPct: CRYPTO_RULES.sizing.liquidityExitStopPct,
       targetMcap: TARGET_MCAP,
       targetMultiple: mcap > 0 ? Number((TARGET_MCAP / mcap).toFixed(1)) : null,
       estSlippagePct: rt.roundTripPct ?? 15,
-      holdHorizonHours: 24,
+      holdHorizonHours: CRYPTO_RULES.sizing.holdHorizonHours,
       notes: [
         "size = 0.5% of pool liquidity — the exit is the constraint, not the entry",
         rt.roundTripPct != null
@@ -1098,7 +1102,7 @@ async function narrativeTick(): Promise<void> {
 // with LIMIT 60 starved older rows once more than 60 were open, so they stayed
 // OPEN forever and the stats overstated `open`.) A signal past the 72h horizon
 // that cannot be priced is NO_DATA: missing, never scored as DEAD or RUGGED.
-const GRADE_HORIZON_MS = 72 * 3600_000;
+const GRADE_HORIZON_MS = CRYPTO_RULES.grading.horizonHours * 3600_000;
 const NO_DATA_AFTER_ERRORS_MS = 7 * 24 * 3600_000; // fetch errors this long after detection → stop retrying
 
 async function graderTick(): Promise<void> {
@@ -1346,7 +1350,7 @@ function gradedLike(s: any): GradedSignalLike {
   };
 }
 
-export const EXPECTANCY_SIZE_USD = 100;
+export const EXPECTANCY_SIZE_USD = CRYPTO_RULES.grading.sizeUsd;
 
 /**
  * Net expectancy of the desk's first ENTER signal per coin under the graded
@@ -1381,6 +1385,7 @@ export function getCryptoSignals(): {
   stats: CryptoDeskStats & { listLimit: number };
   expectancy: { graded: ExpectancySummary; hold: ExpectancySummary; peak: ExpectancySummary; basis: string };
   desk: DeskRisk;
+  rules: { version: string; items: ReturnType<typeof describeCryptoRules> };
 } {
   // The list is the latest 100 for display; the stats come from aggregate
   // queries over every logged signal, so total/open/graded share one window.
@@ -1410,6 +1415,7 @@ export function getCryptoSignals(): {
     stats: { ...stats, listLimit: LIST_LIMIT },
     expectancy: getCryptoExpectancy(),
     desk: currentDeskRisk(),
+    rules: { version: CRYPTO_RULES_VERSION, items: describeCryptoRules() },
   };
 }
 

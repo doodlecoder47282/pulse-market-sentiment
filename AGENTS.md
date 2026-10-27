@@ -26,6 +26,7 @@ User default: conserve Computer credits without skipping necessary correctness o
 - Preserve tabs: Signals, Chart, Models, Heatseeker, Trade Desk, Regime, Cosmos, News, Take Five, Edge Lab, Crypto.
 - Equities and options: Schwab only (user decision 2026-10-08); no CBOE, no Yahoo; unavailable when Schwab cannot answer.
 - Crypto: public keyless data unless the user separately approves a keyed service.
+- Crypto desk (standing directive 2026-10-27): the goal is a professional-grade, profitable meme-coin system where "profitable" is a measured label on the graded record, never a claim. Read `docs/CRYPTO_DESK.md` before any change under the Crypto tab; thresholds live only in `shared/cryptoRules.ts` (versioned, pinned); every crypto change gets an independent review briefed with `docs/REVIEWER_BRIEF.md`; the desk never executes.
 - Missing, stale, blocked, partial, and observed-zero data are different states. Never label failed collection as zero activity or healthy coverage.
 - Scores are heuristics, not calibrated probabilities. Fifty graded observations alone do not prove tradable edge.
 - Never embed brokerage secrets in browser or iOS code. Never request that the user paste keys into chat; use a secure credential workflow.
