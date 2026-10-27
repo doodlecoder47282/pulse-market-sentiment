@@ -625,6 +625,7 @@ function recordPeakSample(c: Candidate): void {
 // while an authority remains active (revocations happen post-launch).
 
 const SECURITY_MS = 45_000;
+const SECURITY_RETRY_MS = CRYPTO_RULES.security.retryMinutes * 60_000;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 async function securityTick(): Promise<void> {
@@ -634,12 +635,12 @@ async function securityTick(): Promise<void> {
     .filter((c) => c.chain === "solana" && c.tokenAddress && (c.liquidityUsd ?? 0) >= LIQ_FLOOR_USD)
     .filter((c) =>
       c.securityCheckedAt == null ||
-      ((c.mintAuthorityActive || c.freezeAuthorityActive) && now - c.securityCheckedAt > 30 * 60_000) ||
+      ((c.mintAuthorityActive || c.freezeAuthorityActive) && now - c.securityCheckedAt > SECURITY_RETRY_MS) ||
       // Top-10 share still unread (the indexed call was skipped or unavailable
       // on the last pass): retry every 30 min, as the community watch does.
       // Without this the second candidate of every tick stayed "top10 unread"
       // for good and could never ENTER.
-      (c.top10Pct == null && now - c.securityCheckedAt > 30 * 60_000))
+      (c.top10Pct == null && now - c.securityCheckedAt > SECURITY_RETRY_MS))
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0)) // best candidates first — they gate ENTER
     .slice(0, 2); // gentle pace — public RPCs throttle bursts hard
   if (due.length === 0) return;
@@ -917,14 +918,14 @@ function scoreCandidate(c: Candidate): void {
   if (liqObs == null) { flags.push("liquidity not reported by the source (missing) — exit cannot be verified"); hardKill = true; }
   else if (liqObs === 0) { flags.push("liquidity $0 observed — pool drained / liquidity pulled"); hardKill = true; }
   else if (liq < LIQ_FLOOR_USD) { flags.push(`liquidity $${(liq / 1000).toFixed(1)}k < $${LIQ_FLOOR_USD / 1000}k floor — cannot exit`); hardKill = true; }
-  if (mcap > 0 && liq > 0 && liq / mcap < 0.03) { flags.push(`liq/mcap ${(100 * liq / mcap).toFixed(1)}% < 3% — exit door too small`); hardKill = true; }
-  if (mcap > 0 && liq > mcap * 2) flags.push("liquidity >> mcap — weird pool, likely mispriced data");
+  if (mcap > 0 && liq > 0 && liq / mcap < CRYPTO_RULES.hardKills.exitDoorMinLiqToMcap) { flags.push(`liq/mcap ${(100 * liq / mcap).toFixed(1)}% < ${Math.round(CRYPTO_RULES.hardKills.exitDoorMinLiqToMcap * 100)}% — exit door too small`); hardKill = true; }
+  if (mcap > 0 && liq > mcap * CRYPTO_RULES.flags.liqOverMcapMultiple) flags.push("liquidity >> mcap — weird pool, likely mispriced data");
   // Honeypot: an OBSERVED 0 sells is the pattern; a MISSING sell count is
   // an unverifiable sell side (holds ENTER at WATCH below), never "zero".
   const hp = honeypotRead(c.buys1h, c.sells1h);
   if (hp === "honeypot") { flags.push("buys but ZERO sells in 1h (observed) — honeypot pattern"); hardKill = true; }
   else if (hp === "sells_missing") flags.push("1h sell count not reported (missing) — honeypot check not possible");
-  if ((c.chg1h ?? 0) < -55) { flags.push(`price ${c.chg1h?.toFixed(0)}% in 1h — mid-rug or post-dump`); hardKill = true; }
+  if (c.chg1h != null && c.chg1h <= CRYPTO_RULES.hardKills.midRugChg1hPct) { flags.push(`price ${c.chg1h.toFixed(0)}% in 1h — mid-rug or post-dump`); hardKill = true; }
   if ((c.ageMinutes ?? 1e9) < CRYPTO_RULES.flags.sniperZoneMinutes) flags.push(`under ${CRYPTO_RULES.flags.sniperZoneMinutes} min old — sniper zone, spreads brutal`);
   if (c.boosted) flags.push("paid DexScreener boost — manufactured attention, discount the FOMO");
   // Observed low volume only: a missing 24 h volume is not "no volume".
@@ -934,9 +935,9 @@ function scoreCandidate(c: Candidate): void {
   if (c.mintAuthorityActive === true) { flags.push("MINT AUTHORITY ACTIVE — dev can print supply into your bid"); hardKill = true; }
   if (c.freezeAuthorityActive === true) { flags.push("FREEZE AUTHORITY ACTIVE — dev can lock your tokens"); hardKill = true; }
   if (c.top10Pct == null && c.top10Method?.startsWith("unavailable")) flags.push("holder concentration unavailable (token-account owners unreadable)");
-  if ((c.top10Pct ?? 0) > 45) flags.push(`top-10 holders ${c.top10Pct}% of supply (${c.top10Method?.startsWith("top-10 holders INCLUDING") ? "pool vault not identified, may include pool" : "ex-pool"}) — coordinated dump risk`);
+  if ((c.top10Pct ?? 0) > CRYPTO_RULES.flags.top10MaxPct) flags.push(`top-10 holders ${c.top10Pct}% of supply (${c.top10Method?.startsWith("top-10 holders INCLUDING") ? "pool vault not identified, may include pool" : "ex-pool"}) — coordinated dump risk`);
   // rugcheck cached report — LP lock + named risks (non-fatal: cached data)
-  if (c.rcLpLockedPct != null && c.rcLpLockedPct < 50) flags.push(`LP only ${c.rcLpLockedPct}% locked (rugcheck) — pull risk`);
+  if (c.rcLpLockedPct != null && c.rcLpLockedPct < CRYPTO_RULES.flags.lpLockMinPct) flags.push(`LP only ${c.rcLpLockedPct}% locked (rugcheck) — pull risk`);
   for (const r of c.rcRisks) flags.push(`rugcheck: ${r}`);
   // Jupiter cross-check of the pool price (aggregator; flags, not hard kills)
   if (c.jupState === "diverge") flags.push(`pool price ${c.jupGapPct}% off Jupiter — price unverified, no entry`);
@@ -966,18 +967,19 @@ function scoreCandidate(c: Candidate): void {
     code = "no_price";
     reasons.push("no reliable mcap/price yet");
   } else if (mcap > MCAP_ENTRY_MAX) {
-    verdict = c.score >= CRYPTO_RULES.watch.minScoreWithKill ? "WATCH" : "PASS";
+    verdict = c.score >= CRYPTO_RULES.mcapCeiling.watchMinScore ? "WATCH" : "PASS";
     code = "mcap_ceiling";
-    reasons.push(`mcap $${(mcap / 1e6).toFixed(2)}M above 1M entry ceiling — watch for retrace only`);
+    reasons.push(`mcap $${(mcap / 1e6).toFixed(2)}M above the $${(MCAP_ENTRY_MAX / 1e6).toFixed(0)}M entry ceiling — watch for retrace only`);
   } else if (c.score >= CRYPTO_RULES.enter.minScore && (c.volAccel ?? 0) >= CRYPTO_RULES.enter.minVolAccel && (c.netBuyRatio5m ?? 0) >= CRYPTO_RULES.enter.minNetBuyRatio5m) {
     // WHALE-BLINK FILTER: one hot 5-min window is a single buyer, not a move.
     // ENTER requires sustained flow — at least 2 of the last 3 refreshes with
     // accel >= 1.5 — plus a completed on-chain security check.
-    const recent = c.hist.slice(-3);
-    const sustained = recent.length >= 2 && recent.filter((h) => (h.volAccel ?? 0) >= 1.5).length >= 2;
+    const { window: sWin, need: sNeed } = CRYPTO_RULES.enter.sustainedPolls;
+    const recent = c.hist.slice(-sWin);
+    const sustained = recent.length >= sNeed && recent.filter((h) => (h.volAccel ?? 0) >= CRYPTO_RULES.enter.minVolAccel).length >= sNeed;
     if (!sustained) {
       verdict = "WATCH"; code = "flow_not_sustained";
-      reasons.push(`score ${c.score}, accel ${c.volAccel?.toFixed(1)}x but not sustained yet (need 2 of last 3 polls) — whale-blink filter`);
+      reasons.push(`score ${c.score}, accel ${c.volAccel?.toFixed(1)}x but not sustained yet (need ${sNeed} of last ${sWin} polls) — whale-blink filter`);
     } else if (c.securityCheckedAt == null) {
       verdict = "WATCH"; code = "security_unread";
       reasons.push(`score ${c.score}, flow sustained — held at WATCH pending on-chain security check (mint/freeze/holders)`);
@@ -1035,12 +1037,12 @@ function scoreCandidate(c: Candidate): void {
       estSlippagePct: rt.roundTripPct ?? 15,
       holdHorizonHours: CRYPTO_RULES.sizing.holdHorizonHours,
       notes: [
-        "size = 0.5% of pool liquidity — the exit is the constraint, not the entry",
+        `size = ${CRYPTO_RULES.sizing.poolShare * 100}% of pool liquidity (max $${CRYPTO_RULES.sizing.maxPositionUsd}) — the exit is the constraint, not the entry`,
         rt.roundTripPct != null
           ? `round trip ${rt.roundTripPct}% of size at this depth (fees ${rt.feesRoundTripPct}% + impact ${rt.impactBuyPct}% / ${rt.impactSellPct}%); break-even move ${rt.breakEvenMovePct ?? "none"}%`
           : "round-trip cost unknown: pool liquidity not reported",
-        "most signals here still lose; the math needs the 4-5x winners",
-        "UNCALIBRATED: tracking mode until at least 50 first-ENTER coins are graded with a no-data share of 20% or less (a minimum sample, not a calibration)",
+        "a minimum sample, not evidence of edge: the record decides, net of cost",
+        `UNCALIBRATED: tracking mode until at least ${CRYPTO_RULES.grading.minSample} first-ENTER coins are graded with a no-data share of ${Math.round(CRYPTO_RULES.grading.maxNoDataShare * 100)}% or less (a minimum sample, not a calibration)`,
       ],
     };
   } else {
@@ -1231,12 +1233,13 @@ async function majorsTick(): Promise<void> {
 // majors could not be read (stale critical data blocks new exposure, it does
 // not pass it). Persisted so a restart does not reset it to "on".
 
+const DESK_RISK_MAX_AGE_MS = CRYPTO_RULES.deskRisk.maxAgeMinutes * 60_000;
 let deskRisk: DeskRisk = loadDeskRisk();
 
 function loadDeskRisk(): DeskRisk {
   const row = sqlite.prepare(`SELECT value, reason, updated_at FROM crypto_desk_state WHERE key = 'risk'`).get() as any;
   if (!row) return { state: "unknown", reason: "no majors read yet", asOf: null, btcVsVwap24hPct: null };
-  if (Date.now() - Number(row.updated_at) > 10 * 60_000) return { state: "unknown", reason: `last majors read ${Math.round((Date.now() - Number(row.updated_at)) / 60_000)} min ago (restart)`, asOf: row.updated_at, btcVsVwap24hPct: null };
+  if (Date.now() - Number(row.updated_at) > DESK_RISK_MAX_AGE_MS) return { state: "unknown", reason: `last majors read ${Math.round((Date.now() - Number(row.updated_at)) / 60_000)} min ago (restart)`, asOf: row.updated_at, btcVsVwap24hPct: null };
   return { state: row.value, reason: row.reason ?? "", asOf: row.updated_at, btcVsVwap24hPct: null };
 }
 function setDeskRisk(r: DeskRisk): void {
@@ -1248,7 +1251,7 @@ function setDeskRisk(r: DeskRisk): void {
 /** The 10-minute rule applies live, not only at restart: a majors read older
  *  than that is unknown for the verdict and for the UI. */
 export function currentDeskRisk(now: number = Date.now()): DeskRisk {
-  if (deskRisk.asOf != null && now - deskRisk.asOf > 10 * 60_000) {
+  if (deskRisk.asOf != null && now - deskRisk.asOf > DESK_RISK_MAX_AGE_MS) {
     return { ...deskRisk, state: "unknown", reason: `last majors read ${Math.round((now - deskRisk.asOf) / 60_000)} min ago` };
   }
   return deskRisk;
@@ -1317,8 +1320,14 @@ export function getCryptoFeed(): {
   majors: MajorsSnapshot | null;
   sourceLabels: ReturnType<typeof cryptoSourceLabels>;
 } {
+  // The verdict is re-scored on the momentum tick (up to ~4 min per name); a
+  // desk that went off or unknown since then must not serve a stale ENTER.
+  const risk = currentDeskRisk();
   const list = [...tracked.values()]
     .filter((c) => c.lastRefreshAt != null)
+    .map((c) => c.verdict === "ENTER" && risk.state !== "on"
+      ? { ...c, verdict: "WATCH" as const, verdictCode: (risk.state === "off" ? "risk_off" : "risk_unknown") as Candidate["verdictCode"], verdictReasons: [...c.verdictReasons, `held at WATCH at read time: desk risk ${risk.state} (${risk.reason})`] }
+      : c)
     .sort((a, b) => {
       const rank = (v: Candidate["verdict"]) => (v === "ENTER" ? 0 : v === "WATCH" ? 1 : 2);
       return rank(a.verdict) - rank(b.verdict) || (b.score ?? 0) - (a.score ?? 0);
@@ -1360,30 +1369,37 @@ export const EXPECTANCY_SIZE_USD = CRYPTO_RULES.grading.sizeUsd;
  * detected_at then id, so a coin re-signalled on several days, or on two
  * pairs in one tick, counts once.
  */
-export function getCryptoExpectancy(): { graded: ExpectancySummary; hold: ExpectancySummary; peak: ExpectancySummary; basis: string } {
+export function getCryptoExpectancy(): { graded: ExpectancySummary; hold: ExpectancySummary; peak: ExpectancySummary; basis: string; versions: Record<string, number>; currentVersion: string } {
   const rows = sqlite.prepare(`
     WITH firsts AS (
       SELECT outcome, mcap_at_signal, liquidity_at_signal, peak_mcap, last_mcap, last_liquidity, peak_liquidity, horizon_mcap, horizon_liquidity, horizon_at,
+             COALESCE(json_extract(features_json, '$.rulesVersion'), 'unversioned') AS rules_version,
              ROW_NUMBER() OVER (PARTITION BY COALESCE(NULLIF(token_address, ''), pair_address) ORDER BY detected_at ASC, id ASC) AS rn
       FROM crypto_signals WHERE verdict = 'ENTER'
     )
-    SELECT outcome, mcap_at_signal, liquidity_at_signal, peak_mcap, last_mcap, last_liquidity, peak_liquidity, horizon_mcap, horizon_liquidity, horizon_at
+    SELECT outcome, mcap_at_signal, liquidity_at_signal, peak_mcap, last_mcap, last_liquidity, peak_liquidity, horizon_mcap, horizon_liquidity, horizon_at, rules_version
     FROM firsts WHERE rn = 1 AND outcome IS NOT NULL AND outcome <> 'OPEN'
   `).all() as any[];
   const like = rows.map(gradedLike);
+  // Rows logged before 2026-10-27 carry no rule version; they are pooled
+  // with the current version and SAID so, until a replay re-labels them.
+  const versions: Record<string, number> = {};
+  for (const r of rows) versions[String(r.rules_version)] = (versions[String(r.rules_version)] ?? 0) + 1;
+  const versionText = Object.entries(versions).map(([v, n]) => `${v}: ${n}`).join(", ") || "none";
   const opts = { sizeUsd: EXPECTANCY_SIZE_USD, minSample: CRYPTO_SAMPLE_READY_MIN_GRADED, targetMcap: TARGET_MCAP, maxNoDataShare: CRYPTO_NO_DATA_MAX_SHARE };
   return {
     graded: summarizeExpectancy(like, "graded", opts),
     hold: summarizeExpectancy(like, "hold", opts),
     peak: summarizeExpectancy(like, "peak", opts),
-    basis: "first ENTER signal per coin, graded rows only; entry at the signal's liquidity; pool fees and impact on both legs. graded: HIT_5M rows as a limit sell at the target, filled at min(peak, target) with the depth recorded at the peak sample (not a hold to the horizon); other rows at the liquidity the grader saw when it closed them (RUGGED at rug detection). hold: exit at the 72 h horizon mark, recorded for every row detected since 2026-10-20 within a day of its horizon (older or unpriced rows are skipped); a pool classified rugged is -100 under hold only; graded prices it at the rug-detection depth and peak keeps the pre-rug peak as a ceiling. peak: the sampled peak at its own recorded liquidity, or the entry depth for rows older than the recording. Rows the horizon pass could not price (pair gone from the feeds) are counted and shown; above a 20% share the validation label is INSUFFICIENT DATA. Market-cap multiples stand in for price multiples, which overstates the move when supply grew",
+    versions, currentVersion: CRYPTO_RULES_VERSION,
+    basis: `graded first-ENTER rows by rule version: ${versionText} (unversioned rows predate the rule book and are pooled with the current version until a replay re-labels them). ` + "first ENTER signal per coin, graded rows only; entry at the signal's liquidity; pool fees and impact on both legs. graded: HIT_5M rows as a limit sell at the target, filled at min(peak, target) with the depth recorded at the peak sample (not a hold to the horizon); other rows at the liquidity the grader saw when it closed them (RUGGED at rug detection). hold: exit at the 72 h horizon mark, recorded for every row detected since 2026-10-20 within a day of its horizon (older or unpriced rows are skipped); a pool classified rugged is -100 under hold only; graded prices it at the rug-detection depth and peak keeps the pre-rug peak as a ceiling. peak: the sampled peak at its own recorded liquidity, or the entry depth for rows older than the recording. Rows the horizon pass could not price (pair gone from the feeds) are counted and shown; above a 20% share the validation label is INSUFFICIENT DATA. Market-cap multiples stand in for price multiples, which overstates the move when supply grew",
   };
 }
 
 export function getCryptoSignals(): {
   signals: any[];
   stats: CryptoDeskStats & { listLimit: number };
-  expectancy: { graded: ExpectancySummary; hold: ExpectancySummary; peak: ExpectancySummary; basis: string };
+  expectancy: { graded: ExpectancySummary; hold: ExpectancySummary; peak: ExpectancySummary; basis: string; versions: Record<string, number>; currentVersion: string };
   desk: DeskRisk;
   rules: { version: string; items: ReturnType<typeof describeCryptoRules> };
 } {

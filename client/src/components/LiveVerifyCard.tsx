@@ -40,7 +40,7 @@ const STATE_CLS: Record<Check["state"], string> = {
 const VERDICT_TEXT: Record<VerifySummary["verdict"], string> = {
   all_pass: "Every reachable data point answered live and every recomputed number matched.",
   issues: "Some data points did not answer, were stale, or did not match their recomputation. Review the rows below.",
-  not_connected: "Schwab is not connected; only the keyless crypto desk was verified.",
+  not_connected: "Schwab is not connected; nothing Schwab-fed was verified.",
   nothing_checked: "Nothing was checked.",
 };
 
@@ -91,7 +91,7 @@ export default function LiveVerifyCard() {
       <Button size="sm" variant="outline" className="h-auto min-h-[44px] w-full whitespace-normal py-2 text-sm leading-snug" onClick={run} disabled={busy} data-testid="live-verify-btn">
         {busy ? "Reaching every panel and recomputing..." : "Verify live data"}
       </Button>
-      <p className="text-xs text-muted-foreground">Reaches every Schwab-fed panel the way the app does and recomputes the key numbers from the raw chain, quotes and bars. Takes up to a minute.</p>
+      <p className="text-xs text-muted-foreground">Reaches every Schwab-fed panel and the crypto desk the way the app does and recomputes the key numbers from the raw chain, quotes, bars and the rule book. Takes up to a minute.</p>
       {err && <div role="status" className="text-sm text-foreground" data-testid="live-verify-error">{err}</div>}
       {report && s && (
         <>

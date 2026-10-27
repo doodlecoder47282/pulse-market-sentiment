@@ -57,7 +57,7 @@ export interface LiveVerifyReport {
   note: string | null;
 }
 
-const SCOPE = "Reach and arithmetic of the live run: every Schwab-fed route answered, and the displayed numbers equal their stated formulas on the raw inputs. Not a calibration, execution or prediction-accuracy certificate.";
+const SCOPE = "Reach and arithmetic of the live run: every Schwab-fed route and the keyless crypto desk answered, and the displayed numbers equal their stated formulas on the raw inputs and the rule book. Not a calibration, execution or prediction-accuracy certificate.";
 const CACHE_MS = 60_000;
 const ROUTE_TIMEOUT_MS = 20_000;
 const PORT = process.env.PORT || "5000";
@@ -220,13 +220,14 @@ export async function runLiveVerify(now: number = Date.now()): Promise<LiveVerif
     if (!status.connected) {
       // Schwab-fed checks need the connection; the crypto desk is keyless and is verified anyway.
       const cryptoReach = await pool(REACH_ROUTES.filter((r) => r.panel === "Crypto"), 2, reachOne);
-      const crypto = cryptoChecks(now);
+      const crypto = cryptoChecks(Date.now());
       const finishedAt = Date.now();
-      const report: LiveVerifyReport = { ...base, dataState: "not_connected", connected: false, finishedAt, durationMs: finishedAt - now, summary: summarize([...cryptoReach, ...crypto], false), reach: cryptoReach, checks: crypto, note: "Schwab is not connected: only the crypto desk was verified. Sign in from Settings to verify the Schwab-fed panels." };
+      // The verdict is scoped to what ran (the crypto desk); `connected: false` carries the Schwab fact.
+      const report: LiveVerifyReport = { ...base, dataState: "not_connected", connected: false, finishedAt, durationMs: finishedAt - now, summary: summarize([...cryptoReach, ...crypto], true), reach: cryptoReach, checks: crypto, note: "Schwab is not connected: only the crypto desk was verified. Sign in from Settings to verify the Schwab-fed panels." };
       return report;
     }
     const [reach, checks] = await Promise.all([pool(REACH_ROUTES, 3, reachOne), arithmeticChecks(now, sessionOpen)]);
-    checks.push(...cryptoChecks(now));
+    checks.push(...cryptoChecks(Date.now())); // the desk's clock, not the run's start
     const finishedAt = Date.now();
     const report: LiveVerifyReport = {
       ...base, dataState: "ok", connected: true, finishedAt, durationMs: finishedAt - now,

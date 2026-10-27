@@ -14,6 +14,7 @@ const enter = (over: Record<string, unknown> = {}) => {
   const size = Math.floor(Math.min(liq * CRYPTO_RULES.sizing.poolShare, CRYPTO_RULES.sizing.maxPositionUsd));
   return {
     symbol: "TEST", verdict: "ENTER", liquidityUsd: liq, marketCap: 400_000, mintAuthorityActive: false, freezeAuthorityActive: false,
+    securityCheckedAt: 1, buys1h: 40, sells1h: 12, chg1h: 8, priceUsd: 0.001,
     top10Pct: 22, jupState: "agree", score: 80, volAccel: 2.1, netBuyRatio5m: 0.66,
     risk: { maxPositionUsd: size, estSlippagePct: tradeCost({ liquidityUsd: liq, sizeUsd: size }).roundTripPct },
     ...over,
@@ -23,12 +24,16 @@ const enter = (over: Record<string, unknown> = {}) => {
 test("ENTER gates: a clean ENTER row passes; any breached gate fails and names it", () => {
   assert.deepEqual(byId(candidateChecks([enter()], { state: "on" })), { "crypto.gates": "pass", "crypto.sizing": "pass", "crypto.cost": "pass" });
   for (const bad of [
-    { mintAuthorityActive: true }, { top10Pct: null }, { jupState: "failed" }, { liquidityUsd: 5_000 }, { score: 60 }, { marketCap: 2_000_000 },
+    { mintAuthorityActive: true }, { mintAuthorityActive: null }, { freezeAuthorityActive: null }, { securityCheckedAt: null }, { top10Pct: null }, { jupState: "failed" },
+    { liquidityUsd: 5_000 }, { score: 60 }, { score: null }, { marketCap: 2_000_000 }, { sells1h: null }, { sells1h: 0 }, { chg1h: -60 }, { priceUsd: null },
+    { liquidityUsd: 9_000, marketCap: 400_000 }, // exit door 2.25% < 3%
   ]) {
     const r = candidateChecks([enter(bad)], { state: "on" });
     assert.equal(r[0].state, "fail", JSON.stringify(bad));
   }
   assert.equal(candidateChecks([enter()], { state: "off" })[0].state, "fail", "desk off cannot carry an ENTER");
+  // Exactly at the entry ceiling is allowed (engine: mcap > ceiling blocks).
+  assert.equal(candidateChecks([enter({ marketCap: 1_000_000 })], { state: "on" })[0].state, "pass");
   assert.equal(candidateChecks([enter({ verdict: "WATCH" })], { state: "off" })[0].state, "skipped");
   assert.equal(candidateChecks(null, null)[0].state, "unavailable");
 });
