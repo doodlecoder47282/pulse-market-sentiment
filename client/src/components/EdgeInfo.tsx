@@ -1,11 +1,13 @@
 /**
- * EdgeInfo — tap-friendly "how to use this" button for every data panel.
- * Renders a small info trigger; tapping opens a professional field-manual
- * dialog: what you're looking at, how to use it, and where the human edge is.
+ * EdgeInfo — tap-friendly "how to read this" button for every data panel.
+ * Renders a small info trigger; tapping opens a field-manual dialog: what
+ * you're looking at, how to read it, and what it does and does not show.
+ * Copy is descriptive. It never claims an edge, a hit rate or a forecast the
+ * app has not measured, and it says so where nothing has been measured.
  * Copy is written for a normal person — no quant jargon walls.
  */
 import { useState } from "react";
-import { Info, Eye, Crosshair, Zap, AlertTriangle } from "lucide-react";
+import { Info, Eye, Crosshair, Scale, AlertTriangle } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
 type InfoEntry = {
@@ -28,7 +30,7 @@ const INFO: Record<string, InfoEntry> = {
     title: "Tracked Signals",
     what: "Every signal you chose to track, grouped per ticker, with live progress against where it triggered.",
     how: "Track a whale or flow hit when it fires, then watch whether it follows through. Close what's done \u2014 keep the list honest.",
-    edge: "A written record of what actually worked beats memory. Your own hit-rate log is the fastest way to learn which signals deserve your money.",
+    edge: "A written record lets you compare outcomes with what you remember. Batcave shows each tracked signal's progress but has not measured whether any signal type pays; your own log is how you would find out.",
   },
   "pc-flow": {
     title: "Put / Call Flow Ratio",
@@ -41,13 +43,13 @@ const INFO: Record<string, InfoEntry> = {
     title: "MAG 7 Basket",
     what: "An equal-weight basket of the seven mega caps versus SPY, with a breadth count of how many are up or down.",
     how: "Use breadth to see if a move is broad or one name dragging the tape. Compare the basket line against SPY's move.",
-    edge: "The index is roughly a third these seven names. When the basket and SPX disagree, the index usually resolves toward the basket \u2014 that divergence is a tell.",
+    edge: "These seven names carry a large share of the index's weight, so their moves explain much of its day. A gap between the basket and SPX is a difference worth looking at; Batcave has not measured which way such gaps resolve.",
   },
   "spx-chart": {
     title: "SPX Chart + Dealer Levels",
     what: "Live SPX candles with the three dealer levels overlaid: call wall (resistance), put wall (support), gamma flip (the regime line).",
     how: "Above the flip, dealers dampen moves \u2014 fade pushes into the walls. Below the flip they amplify \u2014 respect momentum and don't fade.",
-    edge: "Knowing which side of the flip you're on decides whether fading or following is the right trade. Same chart, opposite playbooks.",
+    edge: "The flip marks where the model says dealer hedging changes from damping moves to amplifying them. That is how the model describes hedging; this chart does not measure whether either side of it changes any outcome.",
   },
   "order-flow": {
     title: "Signed Tick Volume (1m, SPY)",
@@ -67,38 +69,38 @@ const INFO: Record<string, InfoEntry> = {
     title: "0DTE Greek Heatmap",
     what: "Live per-strike exposures for today's expiry: gamma, delta, vanna, and charm, refreshed all session.",
     how: "Hide zero-volume strikes to focus. Tap any strike to drill into that contract's live tape and quotes.",
-    edge: "0DTE dealers hedge mechanically. The heaviest gamma strike acts like a magnet into the close \u2014 knowing the magnet beats guessing the direction.",
+    edge: "The model treats dealer hedging at the heaviest 0DTE gamma strike as pulling price toward it into the close. Closes clustering near heavy strikes on expiry days is documented for stock options (Ni, Pearson and Poteshman 2005), not for SPX 0DTE; how often it happens on a given day, and which way price travels, is not measured here.",
     risk: "Before the session prints, the chain is empty and every score reads zero \u2014 the panel says so instead of faking a rank.",
   },
   "greek-profile": {
     title: "Greek Profile",
     what: "Exposures across strikes drawn as curves: GEX bars, with delta, vanna, and charm overlaid. Dashed lines are your locked targets, solid is spot.",
-    how: "Find where GEX flips sign \u2014 that's the battle line. Vanna and charm tell you the drift direction when IV moves or time passes with nothing else happening.",
-    edge: "Flip point plus charm drift is the market's autopilot path. When no news hits, price tends to follow that path \u2014 you know the default route.",
+    how: "Find where GEX flips sign \u2014 that's the battle line. Vanna and charm show the modelled drift when IV moves or time passes with nothing else happening.",
+    edge: "The flip point and charm drift sketch where hedging flows would push if nothing else happened. Real days have news and other flows, so this is a model's default path, not a forecast.",
   },
   "sticky-zones": {
     title: "Sticky Zones",
     what: "The top five strikes ranked by magnet strength: 50% gamma size, 30% open-interest density, 20% charm acceleration.",
-    how: "Expect chop and pinning around ranks #1\u2013#2. Use them as targets and take-profit levels, not as entry signals.",
-    edge: "Pin strikes are where premium sellers park size. Fading a stretch away from a heavy pin into expiry is one of the most repeatable 0DTE trades there is.",
+    how: "The model expects hedging to concentrate around ranks #1\u2013#2. They are reference levels, not entry signals, and Batcave has not measured how often price respects them.",
+    edge: "Heavy open-interest strikes are where hedging concentrates into expiry. Whether price stays near them is something to watch; Batcave does not measure how reliably it does, and open interest does not show who holds the other side.",
   },
   "odte-tracker": {
     title: "Live 0DTE Tracker",
     what: "Live quotes, session volume, and buy/sell classification for strikes within \u00b120 of the money on today's SPX expiry.",
     how: "Tap a row to open that contract's full tape. \"Last trade\" shows exactly when real money last printed \u2014 not just a stale quote.",
-    edge: "Yesterday's open interest is old news. Watching where fresh 0DTE money enters intraday shows conviction as it forms, not after.",
+    edge: "Yesterday's open interest cannot show what was added today. This tracker shows where 0DTE volume and open interest are building intraday; it does not show who is on which side or why.",
   },
   "depth-skew-flow": {
     title: "Depth \u00b7 Skew \u00b7 Flow",
     what: "Three synchronized views: where size sits in the book, what downside protection costs versus upside, and which way net flow leans.",
     how: "Read them together, never alone. Depth = the walls, skew = the fear price, flow = the lean.",
-    edge: "When skew steepens while flow stays call-heavy, someone is buying protection on a rally they expect to continue \u2014 that combination rarely shows up in price yet.",
+    edge: "Steeper skew while flow stays call-heavy is a combination worth noticing: demand for protection and call buying at once. Both can be hedging, so it does not show what any trader expects.",
   },
   "ml-accuracy": {
     title: "MM Matrix Scorecard",
     what: "Grades every MM-matrix prediction it ever logged (hand-set priors, not a trained ML model) against what actually happened: hit rate, Brier score, skill vs the base rate, a reliability curve, and trend.",
     how: "Skill is measured against always forecasting the base rate (climatology), on one call per session. The red banner fires when that skill is significantly negative (Diebold-Mariano statistic of +2 or more); the amber one when skill is not demonstrated (DM above -2). Brier mixes calibration with sharpness, so \"calibrated\" appears only when the reliability curve passes its stated test (100+ graded forecasts, Spiegelhalter Z, every bin with 10+ forecasts inside its Wilson interval).",
-    edge: "Knowing when your model is broken is worth more than the model. Most people add risk exactly when their signal decays \u2014 this panel stops that.",
+    edge: "This panel reports when the model's graded results have worsened or never beat the base rate. It informs; it does not stop anyone acting on a weak signal.",
   },
   backtest: {
     title: "Volatility-Band Backtest \u00b7 5Y",
@@ -109,20 +111,20 @@ const INFO: Record<string, InfoEntry> = {
   regime: {
     title: "Regime Panel",
     what: "The current market state condensed into one read: gamma sign, VIX term structure, breadth, and what they add up to.",
-    how: "The regime describes how dealer hedging moves price. Long gamma: moves have tended to revert toward the middle. Short gamma: moves have tended to extend.",
-    edge: "Most losing trades are right ideas in the wrong regime. Check this before every entry \u2014 it's the cheapest edge on the site.",
+    how: "The regime describes how dealer hedging moves price. In the model, long gamma damps moves and short gamma amplifies them. Batcave has not measured how often price follows that.",
+    edge: "The regime summarises current conditions (gamma sign, VIX term structure, breadth). Signals were graded under particular conditions, so a different regime means less supporting record. It is context, not a guarantee.",
   },
   canary: {
     title: "Canary Strip",
     what: "An early-warning monitor that compares market internals against price and flags divergences before they resolve.",
-    how: "Treat an alarm as a caution flag on new risk \u2014 tighten stops, skip marginal entries. It is not an instant reversal call.",
-    edge: "Canaries chirp before the mine floods. This is cheap insurance on every open position \u2014 the cost of listening is zero.",
+    how: "An alarm means internals and price disagree right now. It is a flag to look closer, not a reversal call.",
+    edge: "Divergences between internals and price have sometimes preceded larger moves and often have not. Batcave logs the alarms but has not shown that they improve any outcome.",
   },
   "pivot-bands": {
     title: "Pivot Bands",
     what: "Tight, machine-computed pivot zones for the selected expiry \u2014 each band is a weighted center of gamma notional, today's option volume, open interest, and charm, with sub-strike precision instead of a wide strike-to-strike range.",
-    how: "Each band has a role. EXHAUST bands are where rallies or flushes have tended to run out of fuel. ACCELERANT bands are short-gamma zones \u2014 breaks through them have tended to speed up. PIN means price gets pulled back. FLIP is the line where the whole tape changes character. FRESH shows how much of the positioning is today's flow versus stale open interest.",
-    edge: "Everyone sees the same wide walls. The edge is precision: knowing the exact 3\u20135 point zone where dealer hedging actually kicks in lets you enter closer, stop tighter, and fade or follow with structure instead of vibes.",
+    how: "Each band carries a model label. EXHAUST marks where the model sees hedging absorbing a rally or flush. ACCELERANT marks short-gamma zones where the model sees hedging adding to a move through them. PIN marks where the model sees hedging pulling price back. FLIP is the line where the model switches between damping and amplifying. FRESH shows how much of the positioning is today's flow versus stale open interest. These are model labels; Batcave has not measured how often price behaves that way.",
+    edge: "The bands are narrower than strike-to-strike walls, which makes them easier to compare with price. They are model output from the current chain; Batcave has not measured whether narrower levels improve any entry or exit.",
     risk: "Bands move as flow updates \u2014 a band that was exhaust in the morning can flip to accelerant after a big print. Re-check before every entry, and volume expansion through a band overrides its label.",
   },
   "trade-environment": {
@@ -143,14 +145,14 @@ const INFO: Record<string, InfoEntry> = {
     title: "Trade Desk",
     what: "Position sizing, exit rules, and risk gates in one place, driven by the same data feeding every other panel.",
     how: "The 0DTE sizer only sizes grades of 72 (B-) or better, the same floor at which the alert engine fires (FIRE_GATE). Below 72 it returns no size. Grades 72\u201379 get 50% of the computed size, 80\u201384 70%, 85\u201394 85%, 95+ 100%. The computed size is the smallest of: the risk budget (default 1%, at most 5% of the account, loss at the stop incl. fees), the cash you have, the gap cap (full premium loss at most 5% of the account), and a fractional Kelly cap from the realized option win rate of that grade's bucket (its Wilson 95% lower bound until the bucket has 385 graded fires). Whole contracts, rounded down. Enter your all-in fee per contract for index options.",
-    edge: "One oversized loser erases ten winners. Sizing discipline is the edge that compounds \u2014 the desk exists to enforce it when you won't.",
+    edge: "The desk computes the size the stated risk rules allow; it does not enforce anything and does not show that the rules produce a profit. Grades are heuristic until the ledger has enough graded fires.",
     risk: "Grades are heuristic scores until the grade-to-win-rate fit has enough graded fires; the Kelly cap sizes zero when the ledger does not yet show an edge at the lower bound.",
   },
   "gex-chart": {
     title: "GEX by Strike",
     what: "Net gamma exposure at each strike \u2014 the same force field behind the thermal map, viewed as a single expiry cross-section.",
-    how: "Big positive bars = support shelves. Big negative bars = trapdoors. The zero crossing is the gamma flip.",
-    edge: "Dealers hedge these bars mechanically. Price respects the big ones far more often than it respects trendlines.",
+    how: "Big positive bars are strikes where modelled dealer hedging damps moves; big negative bars are strikes where it amplifies them. The zero crossing is the gamma flip.",
+    edge: "The bars are modelled dealer hedging at each strike, built from open interest and an assumption about which side dealers hold. Whether price respects them more than other levels is not measured here.",
   },
 };
 
@@ -162,7 +164,7 @@ const SECTIONS: Array<{
 }> = [
   { key: "what", label: "What you're looking at", icon: Eye, tone: "text-sky-400" },
   { key: "how", label: "How to use it", icon: Crosshair, tone: "text-amber-400" },
-  { key: "edge", label: "The edge", icon: Zap, tone: "text-emerald-400" },
+  { key: "edge", label: "What it does and doesn't show", icon: Scale, tone: "text-slate-300" },
 ];
 
 export default function EdgeInfo({ id, className = "" }: { id: string; className?: string }) {
@@ -173,7 +175,7 @@ export default function EdgeInfo({ id, className = "" }: { id: string; className
     <>
       <button
         type="button"
-        aria-label={`How to use ${info.title}`}
+        aria-label={`How to read ${info.title}`}
         data-testid={`edgeinfo-${id}`}
         onClick={(e) => {
           e.stopPropagation();
