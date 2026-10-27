@@ -93,7 +93,7 @@ import { classifyRouteError, isUpstreamUnavailable, UpstreamUnavailableError } f
 import { waitFor } from "@shared/waitFor";
 import { runBackfill, getBacktestSummary } from "./backtest";
 import { deriveTargets, deriveBothSides, type CandidateLevel } from "./targetDerivation";
-import { startCryptoEngines, getCryptoFeed, getCryptoHealth, getCryptoSignals } from "./cryptoEngine";
+import { startCryptoEngines, getCryptoFeed, getCryptoHealth, getCryptoSignals, getCryptoReplay } from "./cryptoEngine";
 import { startCommunityEngine, getCommunityWatch, addCommunityToken, removeCommunityToken } from "./cryptoCommunity";
 import { startSetupEngine, getSetupLog } from "./setupEngine";
 import { scanTicker, validScanSymbol } from "./tickerScan";
@@ -4759,6 +4759,11 @@ Fuse all of the above into the JSON schema specified in the system prompt. Use t
   app.get("/api/crypto/signals", (_req, res) => {
     try { res.json(getCryptoSignals()); }
     catch (e: any) { res.status(500).json({ error: "crypto_signals_failed", message: e?.message ?? String(e) }); }
+  });
+  // REPLAY (shared/cryptoReplay.ts): the logged record re-read under the current rule book; timing, cap bands, features vs outcome, in/out-of-sample. Descriptive.
+  app.get("/api/crypto/replay", (_req, res) => {
+    try { res.setHeader("Cache-Control", "no-store"); res.json(getCryptoReplay()); }
+    catch (e: any) { res.status(500).json({ error: "crypto_replay_failed", message: e?.message ?? String(e) }); }
   });
 
   // COMMUNITY WATCH — settled tokens: range position, survival counts and

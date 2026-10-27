@@ -93,6 +93,7 @@ export const REACH_ROUTES: Array<{ id: string; panel: string; path: string }> = 
   { id: "route.cryptoSignals", panel: "Crypto", path: "/api/crypto/signals" },
   { id: "route.cryptoCommunity", panel: "Crypto", path: "/api/crypto/community" },
   { id: "route.cryptoHealth", panel: "Crypto", path: "/api/crypto/health" },
+  { id: "route.cryptoReplay", panel: "Crypto", path: "/api/crypto/replay" },
 ];
 
 async function reachOne(r: { id: string; panel: string; path: string }): Promise<Check> {

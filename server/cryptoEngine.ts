@@ -42,6 +42,7 @@
 import { sqlite } from "./storage";
 import { signalReturn, summarizeExpectancy, type ExpectancySummary, type GradedSignalLike } from "../shared/cryptoExpectancy";
 import { CRYPTO_RULES, CRYPTO_RULES_VERSION, describeCryptoRules } from "../shared/cryptoRules";
+import { buildReplay, type ReplayRow, type CryptoReplay } from "../shared/cryptoReplay";
 import { parseFeed } from "./sources/parse";
 import { sourceTable, TIER_LABEL } from "./sources/registry";
 import { readMajors, type MajorsSnapshot } from "./sources/cryptoMajors";
@@ -321,6 +322,7 @@ function persistSignal(c: Candidate): void {
       c.verdict, c.verdictCode, c.score, c.marketCap ?? c.fdv ?? null, c.priceUsd, c.liquidityUsd,
       JSON.stringify({
         rulesVersion: CRYPTO_RULES_VERSION,
+        score: c.score,
         mcapBasis: c.marketCap != null ? "marketCap" : c.fdv != null ? "fdv" : "none",
         volAccel: c.volAccel, netBuyRatio5m: c.netBuyRatio5m, fomo: c.fomoScore,
         meme: c.memeScore, memeMethod: MEME_SCORE_METHOD, narrativeHits: c.narrativeHits, rugFlags: c.rugFlags,
@@ -1433,6 +1435,35 @@ export function getCryptoSignals(): {
     desk: currentDeskRisk(),
     rules: { version: CRYPTO_RULES_VERSION, items: describeCryptoRules() },
   };
+}
+
+/** Replay / diagnostics over every logged signal (shared/cryptoReplay.ts). Cached 5 min: it reads the whole table. */
+let replayCache: { at: number; data: CryptoReplay } | null = null;
+export function getCryptoReplay(now: number = Date.now()): CryptoReplay {
+  if (replayCache && now - replayCache.at < 5 * 60_000) return replayCache.data;
+  const rows = sqlite.prepare(`SELECT id, detected_at, pair_address, token_address, symbol, verdict, verdict_code, outcome, mcap_at_signal, liquidity_at_signal, peak_mcap, peak_at, peak_liquidity, last_mcap, last_liquidity, horizon_mcap, horizon_liquidity, horizon_at, features_json FROM crypto_signals`).all() as any[];
+  const like: ReplayRow[] = rows.map((s) => {
+    const f = safeParse(s.features_json) ?? {};
+    return {
+      id: String(s.id), detectedAt: Number(s.detected_at), verdict: String(s.verdict ?? ""), verdictCode: s.verdict_code ?? null, symbol: s.symbol ?? null,
+      coinKey: (s.token_address && String(s.token_address).trim()) || String(s.pair_address),
+      outcome: s.outcome, mcapAtSignal: s.mcap_at_signal, liquidityAtSignal: s.liquidity_at_signal,
+      peakMcap: s.peak_mcap, peakAt: s.peak_at ?? null, peakLiquidity: s.peak_liquidity ?? null,
+      lastMcap: s.last_mcap, lastLiquidity: s.last_liquidity,
+      horizonMcap: s.horizon_mcap ?? null, horizonLiquidity: s.horizon_liquidity ?? null, horizonAt: s.horizon_at ?? null,
+      rulesVersion: f.rulesVersion ?? null, mcapBasis: f.mcapBasis ?? null,
+      features: {
+        score: f.score ?? s.score ?? null, volAccel: f.volAccel ?? null, netBuyRatio5m: f.netBuyRatio5m ?? null, ageMinutes: f.ageMinutes ?? null,
+        top10Pct: f.top10Pct ?? null, mintAuthorityActive: f.mintAuthorityActive ?? null, freezeAuthorityActive: f.freezeAuthorityActive ?? null,
+        securityCheckedAt: f.securityCheckedAt ?? null, rcLpLockedPct: f.rcLpLockedPct ?? null, socialScore: f.socialScore ?? null,
+        fomo: f.fomo ?? null, meme: f.meme ?? null, narrativeHits: Array.isArray(f.narrativeHits) ? f.narrativeHits : null,
+        boosted: f.boosted ?? null, pumpfunGraduate: f.pumpfunGraduate ?? null, bskyMentions1h: f.bskyMentions1h ?? null,
+      },
+    };
+  });
+  const data = buildReplay(like, now);
+  replayCache = { at: now, data };
+  return data;
 }
 
 function safeParse(s: any): any {
