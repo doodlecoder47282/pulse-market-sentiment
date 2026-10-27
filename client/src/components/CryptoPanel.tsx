@@ -9,6 +9,7 @@
 // a Jupiter price check; Bluesky and pump.fun (unofficial API) are labeled
 // low-grade attention proxies and are not in the score or verdict.
 
+import type { DerivsSnapshot, DerivsRow } from "@shared/cryptoFunding";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -86,6 +87,7 @@ interface FeedResp {
   narrativeUpdatedAt: number | null;
   narrativeSources?: Array<{ name: string; state: "ok" | "empty" | "failed"; titles: number; undated: number }>;
   majors?: MajorsSnapshot | null;
+  derivs?: DerivsSnapshot | null;
   sourceLabels?: SourceLabel[];
 }
 
@@ -170,6 +172,48 @@ const fmtAge = (min: number | null): string => {
 
 const pctCls = (v: number | null) =>
   v == null ? "text-muted-foreground" : v >= 0 ? "text-lime-400" : "text-rose-400";
+
+// ─── perpetual funding and open interest strip ──────────────────────────
+const fmtSigned = (v: number | null, dp: number, suffix = ""): string => (v == null ? "n/a" : `${v >= 0 ? "+" : ""}${v.toFixed(dp)}${suffix}`);
+
+function DerivsStrip({ derivs, loaded }: { derivs: DerivsSnapshot | null; loaded: boolean }) {
+  if (!derivs) {
+    return <div className="rounded-lg border border-border/50 p-2 text-[11px] text-muted-foreground" data-testid="crypto-derivs">{loaded ? "funding and open interest: no exchange read yet" : "funding and open interest: loading"}</div>;
+  }
+  const tiles = (["BTC", "ETH", "SOL"] as const).map((a) => ({ a, row: derivs.rows.find((r) => r.asset === a && r.state === "ok") as DerivsRow | undefined }));
+  const down = derivs.rows.filter((r) => r.state !== "ok");
+  return (
+    <div className="rounded-lg border border-border/50 bg-card/40 p-2.5" data-testid="crypto-derivs">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+        <span className="font-semibold uppercase tracking-[0.15em]">funding and open interest · perpetuals</span>
+        <span className={derivs.state === "ok" ? "text-emerald-300" : derivs.state === "partial" ? "text-amber-300" : "text-rose-300"}>{derivs.state}</span>
+      </div>
+      <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+        {tiles.map(({ a, row }) => (
+          <div key={a} className="rounded border border-border/40 p-2 text-xs" data-testid={`derivs-${a}`}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-semibold text-foreground">{a}</span>
+              <span className="text-[10px] uppercase text-muted-foreground">{row ? row.venue : "no read"}</span>
+            </div>
+            {row ? (
+              <div className="mt-1 space-y-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
+                <div>funding {fmtSigned(row.fundingPct, 4, "%")}{row.fundingIntervalHours != null ? ` / ${row.fundingIntervalHours}h` : " / interval not stated"}</div>
+                <div>{row.direction ?? "n/a"}{row.funding8hPct != null && row.fundingIntervalHours !== 8 ? ` · ${fmtSigned(row.funding8hPct, 4, "%")} per 8h` : ""}</div>
+                <div>open interest 1h {row.oiState === "ok" ? fmtSigned(row.oi1hChangePct, 2, "%") : row.oiState === "building" ? "building (needs about 1 h of reads)" : "not reported"}</div>
+              </div>
+            ) : <div className="mt-1 text-[11px] text-muted-foreground">unavailable</div>}
+          </div>
+        ))}
+      </div>
+      {down.length > 0 && (
+        <div className="mt-1 text-[11px] text-muted-foreground" data-testid="derivs-down">
+          not reading: {down.map((r) => `${r.venue} ${r.asset} (${r.reason ?? r.state})`).join("; ")}
+        </div>
+      )}
+      <div className="mt-1 text-[11px] text-muted-foreground">{derivs.note}. Stored on each signal so the replay can test it; the desk applies no rule to it yet.</div>
+    </div>
+  );
+}
 
 // ─── majors strip ───────────────────────────────────────────────────────
 
@@ -281,6 +325,9 @@ export default function CryptoPanel() {
 
       {/* BTC / ETH / SOL exchange-direct, cross-checked */}
       <MajorsStrip majors={feed?.majors ?? null} loaded={!!feed} />
+
+      {/* perpetual funding + open interest: recorded context, not a rule input */}
+      <DerivsStrip derivs={feed?.derivs ?? null} loaded={!!feed} />
 
       {/* tracking-mode banner until the graded sample is large enough */}
       <TrackingBanner sig={sigQ.data} view={view} />

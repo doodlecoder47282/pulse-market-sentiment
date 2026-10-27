@@ -37,6 +37,7 @@ Public, keyless feeds only unless the owner approves a keyed service.
 | On-chain facts | public Solana RPC (`getAccountInfo`, token largest accounts via indexed RPC when available) | once per candidate, retry 30 min while unread | mint/freeze authority, top-10 share + method |
 | Named risks, LP lock | rugcheck summary | once per candidate | `rcRisks`, `rcLpLockedPct` |
 | Majors | Coinbase and Kraken tickers (direct) | 60 s | majors snapshot; desk risk |
+| Perpetual funding and open interest (BTC, ETH, SOL) | Bybit V5 tickers and OKX v5 public funding-rate / open-interest (keyless) | 120 s | memory only (open-interest history ~3 h); compact copy in every signal's `features_json.derivs` |
 | Social | Bluesky search, pump.fun replies | 90 s | social score with coverage state |
 | Narrative | RSS feeds + term list | 5 min | narrative heat |
 | Signals | SQLite `crypto_signals` | on verdict change | one row per WATCH/ENTER with features and risk JSON and `rulesVersion` (rows before 2026-10-27 are unversioned; the expectancy basis states the version mix) |
@@ -73,6 +74,17 @@ the last hour, top-10 share read, desk risk on. Only then ENTER. Every
 rejection carries a verdict code the card shows. The served feed re-applies
 the desk-risk gate at read time, so a desk that went off between refreshes
 never serves a stale ENTER.
+
+Funding and open interest are a recorded, descriptive regime readout, not a
+rule. Funding is the exchange's decimal rate per funding interval (positive:
+longs pay shorts); a per-8-hour figure is shown only when the venue states its
+interval; open interest is shown only as the change between the desk's own
+successive reads about an hour apart (unit-free; "building" for the first hour
+after a restart). A blocked or malformed venue is "unavailable" with its
+reason, never zero. The replay can bucket `features_json.derivs` once rows
+carry it; a gate on it would be a new pinned rule version chosen from that
+record. OKX response shape follows its public docs and was not reachable from
+the build sandbox: Settings -> Verify live data is the first live check.
 
 ## 4. Calibration: how a rule may change
 
@@ -125,6 +137,9 @@ Settings -> Verify live data runs `/api/verify/live`. The crypto section
 - desk risk on the signals payload equals the arithmetic on the majors
   payload of the same run;
 - expectancy bookkeeping: shares, gate and label consistent with the book;
+- funding and open interest: signs, per-8h arithmetic, units (a plausibility
+  band that catches a percent read as a fraction) and freshness agree with the
+  row's own fields;
 - the rule version is on the payload.
 
 Stale, unavailable and skipped are their own states, never pass.
@@ -141,6 +156,9 @@ docs/BATCAVE_STATE.md with the PR number.
 
 ## 8. Roadmap (in order, each a bounded PR with tests)
 
+0. DONE 2026-10-27 (PR #32): funding and open interest recorded on every
+   signal (descriptive; next step is bucketing it in the replay once rows
+   carry it).
 1. Replay / backtest: run the current rule version over the logged history,
    split by date, report hit rate, average win, average loss, max drawdown,
    net of cost; fills the sample from history. (Fastest path to an answer.)
