@@ -251,11 +251,11 @@ export default function PivotProjection({
                   <Badge
                     key={i}
                     variant="outline"
-                    className={`px-2 py-1 text-[11px] ${patternColor(p.setup)}`}
+                    className={`max-w-full flex-wrap whitespace-normal break-words px-2 py-1 text-left text-[11px] ${patternColor(p.setup)}`}
                     data-testid={`badge-pattern-${p.setup}`}
                   >
                     <span className="font-bold uppercase tracking-wider">{patternLabel(p.setup)}</span>
-                    <span className="ml-2 text-muted-foreground/80">{p.message}</span>
+                    <span className="ml-2 min-w-0 text-muted-foreground/80">{p.message}</span>
                     <span className="ml-2 font-mono text-[11px] opacity-70">
                       score {(p.confidence * 100).toFixed(0)}/100 hand-set
                     </span>

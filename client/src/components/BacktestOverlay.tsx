@@ -211,7 +211,7 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
     >
       <button
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 border-b border-violet-500/20 px-3 py-2 text-left font-mono text-[11px] uppercase tracking-widest text-violet-300/80 hover:bg-violet-500/5"
+        className="flex w-full flex-wrap items-center gap-2 border-b border-violet-500/20 px-3 py-2 text-left font-mono text-[11px] uppercase tracking-widest text-violet-300/80 hover:bg-violet-500/5"
         data-testid="btn-backtest-toggle"
       >
         {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
@@ -238,7 +238,7 @@ export function BacktestPanel({ defaultHorizon = "daily" as BacktestHorizon }: {
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
-        <span className="ml-auto text-muted-foreground">
+        <span className="ml-auto flex flex-wrap items-center justify-end gap-y-1 text-muted-foreground">
           {data?.computedAt != null && Date.now() - data.computedAt * 1000 > 7 * 24 * 60 * 60 * 1000 && (
             <Badge variant="outline" className="mr-1.5 border-rose-500/40 font-mono text-[11px] text-rose-300" data-testid="badge-backtest-stale">
               STALE · REBUILDING

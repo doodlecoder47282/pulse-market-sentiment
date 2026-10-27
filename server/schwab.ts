@@ -548,7 +548,9 @@ export async function schwabFetchMeta(
         await sleep(500 * attempt);
         continue;
       }
-      console.warn("[schwab] fetch failed:", res.status, path);
+      // Name the request (no secrets in these params) so a failing caller is findable.
+      const q = params ? ["symbol", "strikeCount", "fromDate", "toDate", "contractType"].map((k) => (params as any)[k] != null ? `${k}=${(params as any)[k]}` : "").filter(Boolean).join(" ") : "";
+      console.warn("[schwab] fetch failed:", res.status, path, q);
       return serveStale(`Schwab HTTP ${res.status}`);
     } catch (e: any) {
       const why = fetchErrorText(e, SCHWAB_FETCH_TIMEOUT_MS);

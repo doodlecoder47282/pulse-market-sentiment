@@ -282,6 +282,17 @@
     min-height: 100dvh;
   }
 
+  /* Phone width guard: one over-wide badge or table must never widen the
+     page (iOS then zooms the whole app out to half size). Wide content
+     scrolls inside its own .hscroll-contain box instead. clip keeps
+     position: sticky working; hidden is the fallback for old WebKit. */
+  html, body, #root {
+    max-width: 100%;
+    overflow-x: hidden;
+    overflow-x: clip;
+  }
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
   /* Contained horizontal scroller for wide data tables (heatmap, ladders).
      pan-x/pan-y = finger drags scroll this element, not the page. */
   .hscroll-contain {
