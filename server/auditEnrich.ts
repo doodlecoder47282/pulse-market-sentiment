@@ -26,6 +26,7 @@
 //
 // Pure function. try/catch guard returns original on any failure.
 
+import { mainDbPath } from "./dbPath";
 import type { ModelsResponse } from "./models";
 import Database from "better-sqlite3";
 import { getOdteSnapshot } from "./odteTracker";
@@ -162,7 +163,7 @@ const INTRADAY_CACHE_MS = 2 * 60_000;
 function getReadOnlyDb(): Database.Database {
   if (roDb) return roDb;
   // Open read-only handle to avoid lock contention with the main writer
-  roDb = new Database("data.db", { readonly: true, fileMustExist: true });
+  roDb = new Database(mainDbPath(), { readonly: true, fileMustExist: true });
   return roDb;
 }
 
