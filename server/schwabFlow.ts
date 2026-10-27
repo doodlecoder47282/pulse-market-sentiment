@@ -93,9 +93,11 @@ export async function buildSchwabFlow(
   // User passes 'SPX' — normalize here so the rest of the system stays clean.
   // Schwab cash indexes use "$" prefix WITHOUT ".X" suffix.
   const schwabSymbol = symbol === "SPX" ? "$SPX" : symbol;
-  // One 0-90 DTE $SPX request at 300 strikes is ~70 expiries and Schwab
-  // answers 502. Past 14 DTE read it as dated segments (same as /api/option-chain).
-  const chain = opts?.chain ?? (maxDte > 14 ? await getOptionChainLadder(schwabSymbol, maxDte) : await getOptionChain(schwabSymbol, maxDte));
+  // One 0-90 DTE $SPX request (~70 expiries at 300 strikes) gets Schwab 502.
+  // Only index chains are split into dated segments: splitting every
+  // single-stock scan multiplied the background whale scanner's requests
+  // past the 100/min budget and starved the Models tab.
+  const chain = opts?.chain ?? (maxDte > 14 && schwabSymbol.startsWith("$") ? await getOptionChainLadder(schwabSymbol, maxDte) : await getOptionChain(schwabSymbol, maxDte));
   if ("error" in chain) {
     return { error: chain.error, symbol };
   }

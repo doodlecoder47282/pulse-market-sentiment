@@ -71,7 +71,7 @@ export function startOiCapture(): void {
   _timer = setInterval(tick, EVERY_MS);
   (_timer as any).unref?.();
   // Startup: capture in the window; off-window with nothing held, warm the hold
-  // (each pull falls back to the Cboe seed when Schwab has no OI).
+  // (a pull with no Schwab OI leaves the hold as it is).
   setTimeout(() => {
     const held = new Set(oiHoldStatus().map((h) => h.symbol));
     if (inCaptureWindow() || CAPTURE_SYMBOLS.some((s) => !held.has(s))) void captureNow();

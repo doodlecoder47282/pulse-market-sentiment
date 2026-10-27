@@ -6,7 +6,8 @@ import path from "node:path";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oi-hold-"));
 process.env.BATCAVE_OI_HOLD_DIR = dir;
-const { applyOiHold, occKey, parseCboeOi } = await import("../../server/oiHold");
+const oiHoldMod: any = await import("../../server/oiHold");
+const { applyOiHold, occKey } = oiHoldMod;
 
 const FRI = Date.parse("2026-10-16T15:00:00Z"); // trading day
 const SAT = Date.parse("2026-10-17T15:00:00Z"); // weekend
@@ -70,14 +71,15 @@ test("no saved OI stays zero and says why", () => {
   assert.equal(wk.calls["2026-10-19:3"]["7650.0"][0].openInterest, 0);
 });
 
-test("Cboe delayed-quotes payload parses to an OI map with its session date", () => {
-  const p = parseCboeOi({ data: { last_trade_time: "2026-10-16T16:14:59", options: [
-    { option: "SPXW261019C07650000", open_interest: 1234 },
-    { option: "SPX261120P04000000", open_interest: 0 },
-    { option: "bad", open_interest: 5 },
-  ] } });
-  assert.equal(p.sessionDate, "2026-10-16");
-  assert.deepEqual(p.oi, { "SPXW|261019|C|7650": 1234 });
+test("Schwab only: no Cboe seed, a non-Schwab store is ignored, the gap stays unavailable", () => {
+  assert.equal(oiHoldMod.parseCboeOi, undefined, "Cboe parser removed (AGENTS.md: Schwab only)");
+  fs.writeFileSync(path.join(dir, "_MIX.json"), JSON.stringify({ v: 2, symbol: "$MIX", sessionDate: "2026-10-16", savedAtMs: FRI, source: "schwab+cboe", oi: { "SPXW|261019|C|7650": 999 } }));
+  const wk = chain(0);
+  const st = applyOiHold("$MIX", wk.calls, wk.puts, SAT);
+  assert.equal(st.source, "none");
+  assert.equal(wk.calls["2026-10-19:3"]["7650.0"][0].openInterest, 0, "a failed read is never filled from another feed");
+  assert.doesNotMatch(st.note ?? "", /cboe/i);
+  assert.match(st.note ?? "", /unavailable/);
 });
 
 test("weekend partial OI (Schwab keeps a few contracts) still fills the rest from the store", () => {

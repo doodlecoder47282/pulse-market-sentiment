@@ -16,9 +16,9 @@
  *     trading day before that day's OI has posted, the saved OI is copied back
  *     onto the same contracts (matched by OCC symbol: root, expiry, side,
  *     strike) and the chain is labeled "held" with the posting date.
- *   - With nothing saved, the last session's OI is seeded from Cboe's public
- *     delayed quotes (cdn.cboe.com delayed_quotes/options), the exchange's own
- *     end-of-session file, and labeled with that source.
+ *   - With nothing saved, OI is unavailable ("none"): Schwab is the only
+ *     options source (AGENTS.md, user decision 2026-10-08), so no other feed
+ *     fills the gap. Stores written by the removed Cboe seed are discarded.
  * Held OI is never presented as live: oiState says where it came from.
  */
 import fs from "node:fs";
@@ -26,7 +26,7 @@ import path from "node:path";
 import { etDate, isTradingDay, prevTradingDay } from "./exchangeCalendar";
 
 type ExpMap = Record<string, Record<string, any[]>>;
-type HoldSource = "schwab" | "cboe" | "schwab+cboe";
+type HoldSource = "schwab";
 type Stored = { v: 2; symbol: string; sessionDate: string; savedAtMs: number; source: HoldSource; oi: Record<string, number> };
 
 export type ChainOiState = {
@@ -63,7 +63,8 @@ function load(symbol: string): Stored | null {
   if (hit) return hit;
   try {
     const s = JSON.parse(fs.readFileSync(fileOf(symbol), "utf8")) as Stored;
-    if (s && s.v === 2 && s.oi && typeof s.sessionDate === "string") { _mem.set(symbol, s); return s; }
+    // Schwab-only: a store that ever mixed in another feed is not used.
+    if (s && s.v === 2 && s.oi && typeof s.sessionDate === "string" && s.source === "schwab") { _mem.set(symbol, s); return s; }
   } catch { /* none saved yet */ }
   return null;
 }
@@ -101,68 +102,6 @@ function postedSession(today: string): string {
   return isTradingDay(today) ? today : prevTradingDay(today);
 }
 
-// ── Cboe seed ────────────────────────────────────────────────────────────────
-const _seedInFlight = new Map<string, Promise<void>>();
-const _seedFailedAt = new Map<string, number>();
-const SEED_RETRY_MS = 30 * 60_000;
-const _seededAt = new Map<string, number>();
-const SEED_EVERY_MS = 6 * 3600_000;
-
-function cboeUrl(symbol: string): string {
-  const s = symbol.replace(/^\$/, "").toUpperCase();
-  const isIndex = symbol.startsWith("$");
-  return `https://cdn.cboe.com/api/global/delayed_quotes/options/${isIndex ? "_" : ""}${s}.json`;
-}
-
-/** Parse Cboe's delayed-quotes payload into an OI map. Pure, tested. */
-export function parseCboeOi(payload: any): { sessionDate: string | null; oi: Record<string, number> } {
-  const oi: Record<string, number> = {};
-  const opts = payload?.data?.options;
-  if (Array.isArray(opts)) {
-    for (const o of opts) {
-      const k = occKey(o?.option);
-      const v = Number(o?.open_interest);
-      if (k && Number.isFinite(v) && v > 0) oi[k] = Math.round(v);
-    }
-  }
-  const lt = String(payload?.data?.last_trade_time ?? "");
-  const sessionDate = /^\d{4}-\d{2}-\d{2}/.test(lt) ? lt.slice(0, 10) : null;
-  return { sessionDate, oi };
-}
-
-function seedFromCboe(symbol: string, nowMs: number): void {
-  if (_seedInFlight.has(symbol)) return;
-  if (nowMs - (_seedFailedAt.get(symbol) ?? 0) < SEED_RETRY_MS) return;
-  if (nowMs - (_seededAt.get(symbol) ?? 0) < SEED_EVERY_MS) return;
-  const p = (async () => {
-    try {
-      const r = await fetch(cboeUrl(symbol), { headers: { "User-Agent": "Mozilla/5.0 Batcave" }, signal: AbortSignal.timeout(45_000) });
-      if (!r.ok) throw new Error(`Cboe HTTP ${r.status}`);
-      const { sessionDate, oi } = parseCboeOi(await r.json());
-      const n = Object.keys(oi).length;
-      if (!sessionDate || n === 0) throw new Error("Cboe payload had no open interest");
-      // Merge: Schwab values from the same session win over Cboe's.
-      const prev = load(symbol);
-      const same = prev && prev.sessionDate === sessionDate;
-      const merged = same ? { ...oi, ...prev!.oi } : oi;
-      if (prev && !same && prev.sessionDate > sessionDate) return; // newer Schwab session already saved
-      _mem.set(symbol, { v: 2, symbol, sessionDate, savedAtMs: Date.now(), source: same ? "schwab+cboe" : "cboe", oi: merged });
-      scheduleFlush(symbol);
-      _seededAt.set(symbol, Date.now());
-      console.log(`[oiHold] seeded ${symbol} from Cboe delayed quotes: ${n} contracts, session ${sessionDate}`);
-    } catch (e: any) {
-      _seedFailedAt.set(symbol, Date.now());
-      console.warn(`[oiHold] Cboe seed failed for ${symbol}: ${e?.message ?? e}`);
-    } finally {
-      _seedInFlight.delete(symbol);
-    }
-  })();
-  _seedInFlight.set(symbol, p);
-}
-
-/** Test/ops hook: wait for any in-flight Cboe seed. */
-export async function awaitSeeds(): Promise<void> { await Promise.all(Array.from(_seedInFlight.values())); }
-
 export function oiHoldStatus(): Array<{ symbol: string; sessionDate: string; source: HoldSource; contracts: number; savedAtMs: number }> {
   try { fs.mkdirSync(DIR, { recursive: true }); } catch { /* ignore */ }
   let files: string[] = [];
@@ -173,7 +112,7 @@ export function oiHoldStatus(): Array<{ symbol: string; sessionDate: string; sou
   for (const f of files) {
     try {
       const s = JSON.parse(fs.readFileSync(path.join(DIR, f), "utf8")) as Stored;
-      if (s?.v === 2 && !seen.has(s.symbol)) out.push({ symbol: s.symbol, sessionDate: s.sessionDate, source: s.source, contracts: Object.keys(s.oi).length, savedAtMs: s.savedAtMs });
+      if (s?.v === 2 && s.source === "schwab" && !seen.has(s.symbol)) out.push({ symbol: s.symbol, sessionDate: s.sessionDate, source: s.source, contracts: Object.keys(s.oi).length, savedAtMs: s.savedAtMs });
     } catch { /* skip */ }
   }
   return out.sort((a, b) => a.symbol.localeCompare(b.symbol));
@@ -190,7 +129,7 @@ const POSTED_MIN_SHARE = 0.2;
  *   trading day: filled only while today's OI has not posted (< 20% of
  *     contracts carry OI); after it posts, zeros are real and stay zero.
  */
-export function applyOiHold(symbol: string, calls: ExpMap, puts: ExpMap, nowMs: number = Date.now(), opts: { seed?: boolean } = {}): ChainOiState {
+export function applyOiHold(symbol: string, calls: ExpMap, puts: ExpMap, nowMs: number = Date.now(), _opts: { seed?: boolean } = {}): ChainOiState {
   // Filled contracts are tagged (_oiHeldFrom): Schwab's response cache hands the
   // same objects back, and a held value must never be re-read as Schwab's own.
   let total = 0;
@@ -212,8 +151,7 @@ export function applyOiHold(symbol: string, calls: ExpMap, puts: ExpMap, nowMs: 
     forEachContract(calls, puts, (keys, c) => {
       if (typeof c?.openInterest === "number" && c.openInterest > 0 && !c._oiHeldFrom) for (const k of keys) oi[k] = c.openInterest;
     });
-    const source: HoldSource = same && prev!.source !== "schwab" ? "schwab+cboe" : "schwab";
-    _mem.set(symbol, { v: 2, symbol, sessionDate, savedAtMs: nowMs, source, oi });
+    _mem.set(symbol, { v: 2, symbol, sessionDate, savedAtMs: nowMs, source: "schwab", oi });
     scheduleFlush(symbol);
   }
 
@@ -234,22 +172,17 @@ export function applyOiHold(symbol: string, calls: ExpMap, puts: ExpMap, nowMs: 
       if (v) { c.openInterest = v; c._oiHeldFrom = saved.sessionDate; filled++; }
     });
   }
-  // Thin store (e.g. only Schwab's weekend leftovers): top it up from Cboe once.
-  const thin = !saved || Object.keys(saved.oi).length < Math.max(50, total * 0.5);
-  if (thin && opts.seed !== false) seedFromCboe(symbol, nowMs);
-
   if (filled > 0) {
-    const from = saved!.source === "cboe" ? "Cboe delayed quotes" : saved!.source === "schwab+cboe" ? "Schwab and Cboe delayed quotes" : "Schwab";
     return {
       source: "held", sessionDate: saved!.sessionDate, contractsWithOi: withOi + filled, heldFrom: saved!.source,
-      note: `${trading ? "Today's open interest has not posted yet" : "No new open interest until the next session posts it"}; ${filled} contracts use the open interest ${from} carried on ${saved!.sessionDate} (last session), held until new figures post.`,
+      note: `${trading ? "Today's open interest has not posted yet" : "No new open interest until the next session posts it"}; ${filled} contracts use the open interest Schwab carried on ${saved!.sessionDate} (last session), held until new figures post.`,
     };
   }
   if (withOi > 0) return { source: "live", sessionDate: null, contractsWithOi: withOi, note: null };
   return {
     source: "none", sessionDate: null, contractsWithOi: 0,
     note: trading
-      ? "Schwab returned 0 open interest for every contract and no prior-session open interest is saved; fetching the last session's from Cboe."
-      : "Schwab reports 0 open interest on non-trading days and no prior-session open interest was saved; fetching the last session's from Cboe (refresh in a minute).",
+      ? "Schwab returned 0 open interest for every contract and no prior-session Schwab open interest is saved; open interest is unavailable until it posts."
+      : "Schwab reports 0 open interest on non-trading days and no prior-session Schwab open interest was saved; open interest is unavailable until the next session posts it.",
   };
 }

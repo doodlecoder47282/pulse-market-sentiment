@@ -176,6 +176,7 @@ export interface FlowSnapshot {
 
 // ─── State (in-memory only — no localStorage per project rules) ─────────────
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
+let watchlistTick = 0;
 let lastEvalAt = 0;
 let lastEvalDurationMs = 0;
 let evalCount = 0;
@@ -572,7 +573,10 @@ async function evalCycle(): Promise<void> {
   try {
     // Priority first, then watchlist — sequential is fine on Schwab (no 429 risk)
     const cfg = getFlowConfig();
-    const universe = Array.from(new Set([...cfg.priority, ...cfg.watchlist])); // deduped: priority/watchlist overlap scanned and counted once
+    // Priority every 30 s; watchlist every other cycle (60 s) so the scanner
+    // stays well inside the shared 100 requests/min Schwab budget.
+    watchlistTick++;
+    const universe = Array.from(new Set([...cfg.priority, ...(watchlistTick % 2 === 1 ? cfg.watchlist : [])])); // deduped: priority/watchlist overlap scanned and counted once
     let cycleErrors = 0;
     for (const sym of universe) {
       const { hits, error } = await scanTicker(sym);
