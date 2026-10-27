@@ -18,6 +18,7 @@
 
 // ─── Execution cost ─────────────────────────────────────────────────────
 
+import { CRYPTO_RULES } from "./cryptoRules";
 export interface TradeCostInput {
   /** DexScreener liquidity.usd: both sides of the pool, in USD. null = not reported. */
   liquidityUsd: number | null;
@@ -54,9 +55,9 @@ export interface TradeCost {
   assumptions: string[];
 }
 
-export const DEFAULT_DEX_FEE_PCT = 0.25;
-export const DEFAULT_PLATFORM_FEE_PCT = 1.0;
-export const DEFAULT_PRIORITY_USD = 0.25;
+export const DEFAULT_DEX_FEE_PCT = CRYPTO_RULES.cost.dexFeePct;
+export const DEFAULT_PLATFORM_FEE_PCT = CRYPTO_RULES.cost.platformFeePct;
+export const DEFAULT_PRIORITY_USD = CRYPTO_RULES.cost.priorityFeeUsd;
 
 function finite(n: unknown): number | null {
   return typeof n === "number" && Number.isFinite(n) ? n : null;

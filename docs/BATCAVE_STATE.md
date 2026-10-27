@@ -1125,3 +1125,21 @@ connected. docs/REVIEWER_BRIEF.md: standing brief for independent review
 agents (product, rules, known traps, deliverable shape). Method page updated.
 Next (roadmap item 1): replay/backtest of the logged history under the
 current rule version, in-sample / out-of-sample, net of cost.
+Review of PR #28 (independent agent, docs/REVIEWER_BRIEF.md): 3 MUST-FIX,
+6 SHOULD-FIX, all addressed in the same PR under rule version 2026.10.27-2
+(no number changed): the book now owns the sustained-flow window (2 of 3),
+Jupiter agree/watch bands (5/15), exit-door (3%), mid-rug (-55%) and
+honeypot (25 buys / 0 sells) kills, top-10 (45%), LP-lock (50%) and
+liq-over-mcap (2x) flags, security retry (30 min), desk-risk age (10 min,
+now wired in the engine), and the cost constants (0.25% + 1.0% per leg,
+$0.25 priority); dexCross and memeStructure import them. watch.
+minScoreWithKill renamed mcapCeiling.watchMinScore (a hard kill is PASS,
+never WATCH; charter corrected). Expectancy reports graded rows per rule
+version (unversioned rows predate the book and are pooled with the current
+version, stated in the basis). Served feed re-applies the desk-risk gate at
+read time (no stale ENTER after a desk flip). Verifier gates fail closed on
+unread authorities, missing sells, honeypot pattern, exit door, mid-rug,
+null score/price; cap ceiling boundary matches the engine (> blocks);
+desk-risk check rounds like the engine and uses the desk's clock; the
+not-connected verdict is scoped to what ran. Rule-version test now greps
+every listed literal and asserts every numeric leaf is read by a module.

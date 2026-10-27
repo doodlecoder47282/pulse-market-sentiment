@@ -591,7 +591,7 @@ export function momentumPoints(i: { volAccel: number | null; netBuyRatio5m: numb
  */
 export function honeypotRead(buys1h: number | null, sells1h: number | null): "honeypot" | "sells_missing" | "ok" {
   if (sells1h == null) return "sells_missing";
-  if ((buys1h ?? 0) >= 25 && sells1h === 0) return "honeypot";
+  if ((buys1h ?? 0) >= CRYPTO_RULES.hardKills.honeypotMinBuys1h && sells1h === 0) return "honeypot";
   return "ok";
 }
 

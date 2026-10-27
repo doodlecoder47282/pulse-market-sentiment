@@ -125,7 +125,7 @@ interface SignalsResp {
   };
   // Net return of a $100 position per first-ENTER coin under a stated exit
   // rule (shared/cryptoExpectancy.ts): bookkeeping on what happened, not a forecast.
-  expectancy?: { graded: Expectancy; hold: Expectancy; peak: Expectancy; basis: string };
+  expectancy?: { graded: Expectancy; hold: Expectancy; peak: Expectancy; basis: string; versions?: Record<string, number>; currentVersion?: string };
   /** Persistent desk risk state from the majors read; off or unknown holds every candidate at WATCH. */
   desk?: { state: "on" | "off" | "unknown"; reason: string; asOf: number | null; btcVsVwap24hPct: number | null };
   /** The versioned rule book every verdict and grade on this tab comes from (shared/cryptoRules.ts). */
@@ -717,7 +717,7 @@ function SignalLog({ sig, loading }: { sig?: SignalsResp; loading: boolean }) {
       {sig.rules && <RuleBookCard r={sig.rules} />}
       {!stats.sampleReady && (
         <p className="text-[11px] text-muted-foreground">
-          not sample-ready{stats.sampleReason ? ` (${stats.sampleReason})` : ` at ${stats.minGradedForSample ?? 50} graded coins (${stats.graded ?? 0} so far)`} — a minimum sample, not a calibration. until then these stats are the whole product: proving or killing the edge.
+          not sample-ready{stats.sampleReason ? ` (${stats.sampleReason})` : ` at ${stats.minGradedForSample ?? 50} graded coins (${stats.graded ?? 0} so far)`} — a minimum sample, not a calibration. Until then these stats are the whole product: the record, net of cost, not a claim.
         </p>
       )}
       <div className="space-y-1.5">
@@ -817,7 +817,7 @@ function RuleBookCard({ r }: { r: NonNullable<SignalsResp["rules"]> }) {
         <span className="text-sm font-semibold text-foreground">Rule book <span className="font-mono text-[11px] text-muted-foreground">v{r.version}</span></span>
         <span className="text-[11px] text-muted-foreground">{open ? "hide" : `${r.items.length} rules`}</span>
       </button>
-      <p className="text-[11px] text-muted-foreground">Every verdict and grade on this tab comes from these rules. A changed number is a new version, so grades from different versions are never mixed. The desk reads and grades; it places no orders.</p>
+      <p className="text-[11px] text-muted-foreground">Every verdict and grade on this tab comes from these rules. A changed number is a new version; each signal row stores the version it was produced under (rows before 2026-10-27 are unversioned and the expectancy card says how many). The desk reads and grades; it places no orders.</p>
       {open && (
         <ul className="space-y-1" data-testid="crypto-rules-list">
           {r.items.map((it) => (

@@ -39,7 +39,7 @@ Public, keyless feeds only unless the owner approves a keyed service.
 | Majors | Coinbase and Kraken tickers (direct) | 60 s | majors snapshot; desk risk |
 | Social | Bluesky search, pump.fun replies | 90 s | social score with coverage state |
 | Narrative | RSS feeds + term list | 5 min | narrative heat |
-| Signals | SQLite `crypto_signals` | on verdict change | one row per WATCH/ENTER with features and risk JSON and `rulesVersion` |
+| Signals | SQLite `crypto_signals` | on verdict change | one row per WATCH/ENTER with features and risk JSON and `rulesVersion` (rows before 2026-10-27 are unversioned; the expectancy basis states the version mix) |
 | Grades | grader 10 min; horizon pass; momentum peak sampling | continuous | outcome, peak + depth, horizon mark + depth |
 
 Retention: signals and grades are kept indefinitely (they are the sample).
@@ -62,11 +62,17 @@ version and greps the engine for literals). Every signal row stores the
 version it was produced under. A changed number is a new version; grades
 from different versions are never pooled without saying so.
 
-Verdict path, in order: hard kills (mint or freeze authority active,
-liquidity missing / $0 / under the floor) -> WATCH or PASS whatever the
-score. Then score and flow floors, then the fail-closed gates: Jupiter
-agrees, sells observed in the last hour, top-10 share read, desk risk on.
-Only then ENTER. Every rejection carries a verdict code the card shows.
+Verdict path, in order: hard kills (mint or freeze authority active;
+liquidity missing, $0 or under the floor; exit door liq/mcap < 3%; 1 h
+change <= -55%; honeypot pattern of >= 25 buys with zero sells observed) ->
+PASS (code hard_kill) whatever the score. Above the entry cap ceiling ->
+retrace WATCH from score 55, else PASS. Then the score and flow floors, then
+the fail-closed gates in this order: flow sustained (accel floor on 2 of the
+last 3 refreshes), security read, Jupiter agree or watch, sells observed in
+the last hour, top-10 share read, desk risk on. Only then ENTER. Every
+rejection carries a verdict code the card shows. The served feed re-applies
+the desk-risk gate at read time, so a desk that went off between refreshes
+never serves a stale ENTER.
 
 ## 4. Calibration: how a rule may change
 
@@ -90,8 +96,9 @@ Only then ENTER. Every rejection carries a verdict code the card shows.
 ## 5. Math that must stay exact
 
 - Cost: Q = liquidityUsd / 2 (quote side); buy value `Q·x/(Q+x)`, sell
-  proceeds `Q₂·v/(Q₂+v)`; dex + platform fee once per leg; priority fee once
-  per leg; net = proceeds − size. Break-even by bisection.
+  proceeds `Q₂·v/(Q₂+v)`; dex 0.25% + platform 1.0% once per leg; $0.25
+  priority once per leg (all from the rule book's `cost`); net = proceeds −
+  size. Break-even by bisection.
 - Sizing: floor(min(liquidity × 0.5%, $400)). The exit is the constraint.
 - Desk risk: (BTC mid − Kraken 24 h VWAP) / VWAP; off at ≤ −5%; a stale or
   failed venue read, or a majors read older than 10 min, is unknown (fails
@@ -108,8 +115,9 @@ Only then ENTER. Every rejection carries a verdict code the card shows.
 Settings -> Verify live data runs `/api/verify/live`. The crypto section
 (shared/cryptoVerify.ts) runs whether or not Schwab is connected:
 
-- reach: /api/crypto/feed, /signals, /community, /health answered and in
-  what state;
+- reach: /api/crypto/feed, /signals, /community, /health answered (these
+  payloads carry per-section states, not a top-level dataState; the
+  arithmetic checks below read the states that matter);
 - gates: no ENTER row with an active authority, an unread top-10, a missing
   Jupiter check, a desk that is off or unknown, liquidity under the floor,
   a cap above the ceiling, or flow under the floors;

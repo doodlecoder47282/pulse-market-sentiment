@@ -38,6 +38,11 @@ export interface CandidateLike {
   score?: number | null;
   volAccel?: number | null;
   netBuyRatio5m?: number | null;
+  securityCheckedAt?: number | null;
+  buys1h?: number | null;
+  sells1h?: number | null;
+  chg1h?: number | null;
+  priceUsd?: number | null;
   risk?: { maxPositionUsd?: number | null; estSlippagePct?: number | null } | null;
 }
 
@@ -52,16 +57,25 @@ export function candidateChecks(cands: CandidateLike[] | null, desk: { state: st
     const broken: string[] = [];
     for (const c of enters) {
       const why: string[] = [];
-      if (c.mintAuthorityActive === true) why.push("mint authority active");
-      if (c.freezeAuthorityActive === true) why.push("freeze authority active");
+      // Fail closed: an authority that was not read (null) is as blocking as an active one.
+      if (c.mintAuthorityActive !== false) why.push(c.mintAuthorityActive === true ? "mint authority active" : "mint authority unread");
+      if (c.freezeAuthorityActive !== false) why.push(c.freezeAuthorityActive === true ? "freeze authority active" : "freeze authority unread");
+      if (c.securityCheckedAt == null) why.push("security never checked");
       if (!fin(c.liquidityUsd) || c.liquidityUsd < rules.universe.liquidityFloorUsd) why.push("liquidity missing or under the floor");
+      const cap = c.marketCap ?? c.fdv;
+      if (!fin(cap) || cap > rules.universe.enterMcapMaxUsd) why.push("market cap missing or above the entry ceiling");
+      if (fin(cap) && fin(c.liquidityUsd) && cap > 0 && c.liquidityUsd > 0 && c.liquidityUsd / cap < rules.hardKills.exitDoorMinLiqToMcap) why.push("exit door: liq/mcap under the kill");
+      if (fin(c.chg1h) && c.chg1h <= rules.hardKills.midRugChg1hPct) why.push("mid-rug: 1 h change at or under the kill");
+      if (!fin(c.priceUsd) || c.priceUsd <= 0) why.push("no price");
+      if (rules.enter.requireSellsObserved) {
+        if (!fin(c.sells1h)) why.push("1 h sells missing");
+        else if (c.sells1h === 0 && (c.buys1h ?? 0) >= rules.hardKills.honeypotMinBuys1h) why.push("honeypot pattern (buys, zero sells)");
+      }
       if (rules.enter.requireTop10Read && !fin(c.top10Pct)) why.push("top-10 unread");
       if (c.jupState !== "agree" && c.jupState !== "watch") why.push(`Jupiter ${c.jupState ?? "unchecked"}`);
-      if (fin(c.score) && c.score < rules.enter.minScore) why.push(`score ${c.score} < ${rules.enter.minScore}`);
+      if (!fin(c.score) || c.score < rules.enter.minScore) why.push(`score ${c.score ?? "missing"} < ${rules.enter.minScore}`);
       if (!fin(c.volAccel) || c.volAccel < rules.enter.minVolAccel) why.push("vol accel under floor");
       if (!fin(c.netBuyRatio5m) || c.netBuyRatio5m < rules.enter.minNetBuyRatio5m) why.push("net buy ratio under floor");
-      const cap = c.marketCap ?? c.fdv;
-      if (!fin(cap) || cap >= rules.universe.enterMcapMaxUsd) why.push("market cap missing or above the entry ceiling");
       if (rules.enter.requireDeskRiskOn && desk?.state !== "on") why.push(`desk risk ${desk?.state ?? "unknown"}`);
       if (why.length) broken.push(`${c.symbol ?? "?"}: ${why.join(", ")}`);
     }
@@ -100,7 +114,8 @@ export function deskRiskCheck(desk: { state: string; btcVsVwap24hPct: number | n
   const mid = live(btc?.kraken) ?? live(btc?.coinbase);
   const vwap = btc && (btc.kraken.state == null || btc.kraken.state === "ok") && fin(btc.kraken.vwap24h) && btc.kraken.vwap24h > 0 ? btc.kraken.vwap24h : null;
   if (mid == null || vwap == null) return mk(id, "desk risk", desk.state === "unknown" ? "pass" : "fail", desk.state, "unknown (no live BTC mid or VWAP)");
-  const pct = ((mid - vwap) / vwap) * 100;
+  // Same rounding as deskRiskFromMajors (2 dp) before the threshold test.
+  const pct = Math.round(((mid - vwap) / vwap) * 10000) / 100;
   const exp = pct <= rules.deskRisk.offBelowPct ? "off" : "on";
   // The signals payload may have been computed a minute before the feed: tolerate the band edge.
   const nearEdge = Math.abs(pct - rules.deskRisk.offBelowPct) < 0.5;
