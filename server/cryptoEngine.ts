@@ -46,6 +46,8 @@ import { buildReplay, type ReplayRow, type CryptoReplay } from "../shared/crypto
 import { parseFeed } from "./sources/parse";
 import { sourceTable, TIER_LABEL } from "./sources/registry";
 import { readMajors, type MajorsSnapshot } from "./sources/cryptoMajors";
+import { readDerivs, lastDerivs } from "./sources/cryptoDerivs";
+import { derivsRecord, type DerivsSnapshot } from "../shared/cryptoFunding";
 import { parseJupiterPrices, jupiterCheck, narrativeCounts, JUP_MAX_IDS, type JupState } from "./sources/dexCross";
 import {
   computeSocialScore, resolveSocialCollection, expireSocial,
@@ -197,6 +199,7 @@ const MOMENTUM_MS = 75_000;
 const MOMENTUM_BATCH = 90; // tracked coins refreshed per momentum tick (3 DexScreener calls)
 const NARRATIVE_MS = 5 * 60_000;
 const MAJORS_MS = 60_000;
+const DERIVS_MS = 120_000;
 const WATCHDOG_MS = 30_000;
 const GRADER_MS = 10 * 60_000;
 
@@ -334,6 +337,8 @@ function persistSignal(c: Candidate): void {
         socialScore: c.socialScore, socialStatus: c.socialStatus, socialCoverage: c.socialCoverage,
         bskyMentions1h: c.bskyMentions1h, bskyMentionsByAddress1h: c.bskyMentionsByAddress1h, bskyCapped: c.bskyCapped,
         pumpReplyPerHr: c.pumpReplyPerHr, pumpLive: c.pumpLive,
+        // Funding / open-interest regime at signal time: recorded for the replay to test, never a gate.
+        derivs: derivsRecord(lastDerivs()),
       }),
       JSON.stringify(c.risk),
     );
@@ -1227,6 +1232,13 @@ async function majorsTick(): Promise<void> {
   if (snap.state === "unavailable") throw new Error("no live exchange quote for BTC/ETH/SOL");
 }
 
+// ─── DERIVATIVES REGIME — funding and open interest (descriptive) ───────
+
+async function derivsTick(): Promise<void> {
+  const snap = await readDerivs();
+  if (snap.state === "unavailable") throw new Error("no perpetual-futures read from Bybit or OKX");
+}
+
 // ─── DESK RISK STATE — persistent, read by the verdict ──────────────────
 //
 // From the majors read: BTC against its own 24 h VWAP (Kraken) is the one
@@ -1307,6 +1319,7 @@ export function startCryptoEngines(): void {
   arm("security", SECURITY_MS, securityTick, 20_000);
   arm("social", SOCIAL_MS, socialTick, 30_000);
   arm("majors", MAJORS_MS, majorsTick, 2_500);
+  arm("derivs", DERIVS_MS, derivsTick, 6_000);
   timers.push(setInterval(watchdogTick, WATCHDOG_MS));
   watchdogTick();
   console.log("[crypto] engines started — scanner/momentum/narratives/security/social/grader + watchdog");
@@ -1320,6 +1333,7 @@ export function getCryptoFeed(): {
   narrativeUpdatedAt: number | null;
   narrativeSources: typeof narrativeSources;
   majors: MajorsSnapshot | null;
+  derivs: DerivsSnapshot | null;
   sourceLabels: ReturnType<typeof cryptoSourceLabels>;
 } {
   // The verdict is re-scored on the momentum tick (up to ~4 min per name); a
@@ -1344,6 +1358,7 @@ export function getCryptoFeed(): {
     narrativeSources,
     // null until the first majors read completes (not "no data")
     majors,
+    derivs: lastDerivs(),
     sourceLabels: cryptoSourceLabels(),
   };
 }
