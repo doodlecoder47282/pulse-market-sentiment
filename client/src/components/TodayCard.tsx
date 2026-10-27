@@ -57,9 +57,12 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk }: { symbol?: st
   const spot = m.spot;
   const above = m.landmarks.wallAbove ?? (m.landmarks.pin != null && m.landmarks.pin > spot ? m.landmarks.pin : null);
   const below = m.landmarks.magnetBelow ?? (m.landmarks.pin != null && m.landmarks.pin < spot ? m.landmarks.pin : null);
+  // When the wall/magnet is missing and the pin fills the slot, label it as the pin.
+  const aboveIsPin = m.landmarks.wallAbove == null && above != null;
+  const belowIsPin = m.landmarks.magnetBelow == null && below != null;
   const flip = m.landmarks.flip;
   const priced = m.dataState !== "no_gex";
-  const state = m.dataState === "no_gex" ? "no_data" : m.dataState === "stale_session" ? "stale" : "ok";
+  const state = m.dataState === "no_gex" ? "no_data" : m.dataState === "stale_session" || m.dataState === "stale" ? "stale" : "ok";
   const aboveOi = m.strikes.find((s) => s.strike === above);
   const belowOi = m.strikes.find((s) => s.strike === below);
   const share = (s?: { share: number }) => (s ? `${(s.share * 100).toFixed(0)}% of map` : "");
@@ -69,9 +72,9 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk }: { symbol?: st
   const hi = Math.max(...[above, flip, spot, m.range.high ?? spot].filter((x): x is number => x != null)) + 5;
   const pos = (x: number | null) => (x == null ? null : `${Math.max(0, Math.min(100, ((x - lo) / (hi - lo)) * 100)).toFixed(1)}%`);
   const gammaLine = m.band.atSpot === "long"
-    ? `Long gamma at spot: dealers fade moves${above != null && below != null ? ` between ${lvl(below)} and ${lvl(above)}` : ""}.`
+    ? `Long gamma at spot: dealer hedging dampens moves${m.band.low != null || m.band.high != null ? ` between ${m.band.low == null ? "<-5%" : lvl(m.band.low)} and ${m.band.high == null ? ">+5%" : lvl(m.band.high)}` : ""}.`
     : m.band.atSpot === "short"
-      ? "Short gamma at spot: dealers chase moves; ranges stretch."
+      ? "Short gamma at spot: dealer hedging adds to moves."
       : "Gamma sign at spot not determined.";
 
   return (
@@ -83,7 +86,7 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk }: { symbol?: st
             {m.gap.pct != null && <span className={`font-mono text-xs ${m.gap.pct >= 0 ? "text-emerald-300" : "text-rose-300"}`}>gap {m.gap.pct >= 0 ? "+" : ""}{m.gap.pct.toFixed(2)}%</span>}
             <span className="font-mono text-[11px] text-muted-foreground">{m.session.state} · {m.expiry} chain</span>
           </div>
-          <DataStateChip state={state} reason={m.reason} asOf={m.asOf} source="Schwab" testId="today-state" />
+          <DataStateChip state={state} reason={m.reason} asOf={m.chainAsOfMs ?? m.asOf} stale={m.chainStale} source="Schwab" testId="today-state" />
         </div>
 
         {!priced ? (
@@ -94,17 +97,17 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk }: { symbol?: st
           <>
             <div className="grid grid-cols-3 gap-2" data-testid="today-levels">
               <div className="rounded-md border border-border/60 bg-muted/10 p-2.5">
-                <div className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground">wall above</div>
+                <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{aboveIsPin ? "pin (above)" : "wall above"}</div>
                 <div className="font-mono text-xl font-semibold tabular-nums text-rose-300" data-testid="today-wall-above">{lvl(above)}</div>
                 <div className="font-mono text-[10px] text-muted-foreground">{above != null ? `${pct(above, spot)} · ${share(aboveOi)}` : "none in band"}</div>
               </div>
               <div className="rounded-md border border-amber-500/50 bg-muted/10 p-2.5">
-                <div className="font-mono text-[9px] uppercase tracking-widest text-amber-300">gamma flip</div>
+                <div className="font-mono text-[10px] uppercase tracking-widest text-amber-300">gamma flip</div>
                 <div className="font-mono text-xl font-semibold tabular-nums text-amber-200" data-testid="today-flip">{lvl(flip)}</div>
                 <div className="font-mono text-[10px] text-muted-foreground">{flip != null ? `spot ${spot >= flip ? "above" : "below"} · ${m.band.atSpot} γ` : "no crossing in band"}</div>
               </div>
               <div className="rounded-md border border-border/60 bg-muted/10 p-2.5">
-                <div className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground">magnet below</div>
+                <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{belowIsPin ? "pin (below)" : "magnet below"}</div>
                 <div className="font-mono text-xl font-semibold tabular-nums text-emerald-300" data-testid="today-magnet-below">{lvl(below)}</div>
                 <div className="font-mono text-[10px] text-muted-foreground">{below != null ? `${pct(below, spot)} · ${share(belowOi)}` : "none in band"}</div>
               </div>
@@ -125,7 +128,7 @@ export default function TodayCard({ symbol = "$SPX", onOpenDesk }: { symbol?: st
 
             <p className="text-xs text-muted-foreground">
               {gammaLine}{m.range.straddle != null ? ` Straddle prices ±${Math.round(m.range.straddle)} (${lvl(m.range.low)}–${lvl(m.range.high)}).` : ""}
-              {onOpenDesk && <> <button type="button" onClick={onOpenDesk} className="text-amber-300 underline-offset-2 hover:underline" data-testid="today-open-desk">full ladder on the Trade Desk</button></>}
+              {onOpenDesk && <> <button type="button" onClick={onOpenDesk} className="inline-flex min-h-[44px] items-center text-amber-300 underline-offset-2 hover:underline sm:min-h-0" data-testid="today-open-desk">full ladder on the Trade Desk</button></>}
             </p>
           </>
         )}

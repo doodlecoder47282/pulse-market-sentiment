@@ -801,8 +801,8 @@ function PerformanceCard() {
         </div>
       ) : (
         <div className="rounded-md border border-border/40 overflow-hidden" data-testid="performance-table">
-          <div className="grid grid-cols-[1.4fr_0.5fr_0.9fr_0.7fr_0.8fr_0.5fr] gap-2 px-3 py-1.5 bg-muted/20 text-[11px] uppercase tracking-wider text-muted-foreground font-mono">
-            <div>source</div>
+          <div className="grid grid-cols-5 sm:grid-cols-[1.4fr_0.5fr_0.9fr_0.7fr_0.8fr_0.5fr] gap-2 px-3 py-1.5 bg-muted/20 text-[11px] uppercase tracking-wider text-muted-foreground font-mono">
+            <div className="col-span-5 sm:col-span-1">source</div>
             <div className="text-right">n</div>
             <div className="text-right">W / L</div>
             <div className="text-right">win%</div>
@@ -812,10 +812,10 @@ function PerformanceCard() {
           {showRows.map((r) => (
             <div
               key={r.source}
-              className="grid grid-cols-[1.4fr_0.5fr_0.9fr_0.7fr_0.8fr_0.5fr] gap-2 px-3 py-1.5 text-xs border-t border-border/30 items-center"
+              className="grid grid-cols-5 sm:grid-cols-[1.4fr_0.5fr_0.9fr_0.7fr_0.8fr_0.5fr] gap-2 px-3 py-1.5 text-xs border-t border-border/30 items-center"
               data-testid={`row-perf-${r.source}`}
             >
-              <div className="font-medium">
+              <div className="col-span-5 font-medium sm:col-span-1">
                 {sourceLabel(r.source)}
                 {r.priceBasis === "mid_to_mid" && <span className="ml-1 text-[11px] text-amber-400/80" title={snap?.midToMidNote}>mid to mid, no fees</span>}
                 {!!r.excludedNoQuote && <span className="ml-1 text-[11px] text-muted-foreground" title="no logged entry ask or exit bid">+{r.excludedNoQuote} unscored</span>}
@@ -840,10 +840,10 @@ function PerformanceCard() {
           ))}
           {snap && snap.overall.count > 0 && showRows.length > 1 && snap.overallBasis == null && (
             <div
-              className="grid grid-cols-[1.4fr_0.5fr_0.9fr_0.7fr_0.8fr_0.5fr] gap-2 px-3 py-1.5 text-xs border-t-2 border-border/60 bg-muted/10 items-center"
+              className="grid grid-cols-5 sm:grid-cols-[1.4fr_0.5fr_0.9fr_0.7fr_0.8fr_0.5fr] gap-2 px-3 py-1.5 text-xs border-t-2 border-border/60 bg-muted/10 items-center"
               data-testid="row-perf-overall"
             >
-              <div className="font-semibold text-foreground">Overall</div>
+              <div className="col-span-5 font-semibold text-foreground sm:col-span-1">Overall</div>
               <div className="text-right font-mono text-muted-foreground">{snap.overall.count}</div>
               <div className="text-right font-mono">
                 <span className="text-emerald-400">{snap.overall.wins}</span>

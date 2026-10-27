@@ -1295,3 +1295,168 @@ native value for App Review 4.2 (push alerts, Face ID lock, haptics).
 Owner: deploy the demo service (docs/DEMO.md), then set repo variable
 BATCAVE_DEMO_URL so the app shows Try the demo. Agent, after approval: merge
 quant-fixes to main (Railway redeploys the personal server).
+
+2026-10-22: in-app Schwab sign-in for the iOS build (PR #18, feat/ios-schwab-signin).
+The phone's Settings → Open Schwab Login now opens Schwab in the in-app
+Safari sheet (@capacitor/browser; shares Safari's saved logins) instead of a
+WKWebView tab. The app asks /api/schwab/auth-url?return=app, so the state
+issued for that link remembers "app"; the automatic callback
+(server/index.ts OAUTH_CALLBACK_PATH) consumes the state first, exchanges
+the code on the server, and redirects to batcave://schwab?schwab=connected
+(or error&reason=...). iOS hands that URL to the app (@capacitor/app
+appUrlOpen; scheme in ios/App/App/Info.plist), the sheet closes and the
+dialog refreshes status; a sheet dismissed by hand still triggers a status
+check. Website behaviour unchanged (returnTo defaults to web; a forged or
+reused state always returns to the website). Nothing new reaches the phone:
+no token, no client id, no secret. Deps added via the npm-add workflow;
+ios-build.yml's `npx cap sync ios` regenerates CapApp-SPM/Package.swift
+(hand-updated to match). Not yet exercised on a physical iPhone from here.
+
+2026-10-23: live verification (PR #19, feat/live-verify). GET /api/verify/live
+(server/liveVerify.ts; pure checks in shared/liveVerify.ts) runs with Schwab
+connected: (1) reach: 24 panel routes called as the UI calls them, each
+classified from HTTP status + dataState (pass / stale / unavailable /
+skipped on 429 or no_data / fail); (2) arithmetic: quotes fresh in session,
+raw $SPX chain sanity (priced share, IV plausibility, age), 0DTE forward
+spot vs quote, walls/pin/net exposure re-derived from the served strikes,
+Today map landmarks and $/pt and shares re-derived from its rows, SPY
+unusual-flow premium = volume x mid x 100 and vol/OI, put/call per ticker
+and index aggregate (VIX excluded), snapshot term ratios and inputs vs
+quotes (2% tolerance), scan spread and relative volume vs the same daily
+bars, setup engine tick state. Single-flight, 60 s cache, on the upstream
+rate-limit bucket. Demo: blocked with zero checks (CI asserts). Client:
+LiveVerifyCard in Settings (counts, problems first, show-all toggle);
+Method page paragraph. Scope stated on the card: plumbing and arithmetic of
+the live run, not predictive edge. Cannot be exercised from the workspace
+(no Schwab credentials here, by design); the owner's first run after
+connecting is the live test.
+
+2026-10-24: live UI on the phone (PR #27, feat/ios-live-ui). capacitor.config
+server.url = the owner's Railway server: the native shell loads the terminal
+from the server on every launch, so a merge updates the app when Railway
+redeploys, with no Xcode step; the bundled webDir is the fallback only.
+queryClient.getApiBase prefers the page's own https origin on native
+(liveOriginBase) so the connection screen does not appear. ios-build.yml
+removes `server` for the simulator check (never reaches the live server from
+CI) and restores it for the zip, failing the build if the url is missing.
+Xcode is needed only for native changes and the 7-day Personal Team expiry
+(Wi-Fi run after the first cable pairing). docs/IOS.md "Live UI" section.
+
+2026-10-23: Trade Desk + Signals audit, pass 1 (PR #22, fix/trade-desk-signals-audit).
+Independent formula-by-formula review against Schwab payload semantics.
+Fixed (each with a regression test in tests/quant/schwab-semantics.test.ts):
+per-ticker gamma (tickerAlpha) rebuilt on the shared re-priced basis
+(gexByStrikeFromChain) so Schwab's -999 vendor gamma can never price a
+contract; walls/flip/regime now the same basis as the snapshot and 0DTE
+forward; regime via gexRegime (noise floor, never "positive" at 0); all
+contracts in a strike cell read; pcrOi/pcrVol null without a denominator.
+Index symbols reach Schwab as $SPX/$NDX/$RUT/$VIX from the positioning path
+(the bare name was sent before: SPX scan structure and SPX setups were
+silently unavailable). 0DTE forward carries chainAsOfMs/chainAgeMs/
+chainStale/servedFromCache; the map gets dataState "stale" and the Today,
+chart-levels and map cards show the chain's age, not compute time (the
+ledger does not keep stale maps). Forward totals skip settled AM contracts
+and sentinels; pin = largest POSITIVE exposure within 1.5% (same as the
+map); straddle needs both legs; mid needs a real bid. Setup engine uses
+this tick's fresh quote as spot (positioning snapshot is cached 5 min);
+stale/missing quote -> "no_fresh_spot", blocked. Unusual flow: missing
+volume/OI skipped and counted (skippedMissingFields), never a "new strike";
+greeks via schwabNum; IV stays in percent and the Chart-tab panel no longer
+shows it x100; /api/flow/unusual reports dataState "stale" when the chain
+was re-served. Snapshot max pain is null (not spot) when no strike has OI;
+playbook/composite/daily playbook/trajectory guard it. Scan column
+"notional" -> "premium"; setup-log calendar copy matches the detector
+(unknown calendar blocks). Not yet done from the review: phone tap targets
+and truncation, abbreviations, prediction-flavoured copy (S16/S17), term
+sigma label when closed (S4), gamma curve vs flip IV basis (S8), TodayCard
+band wording (S5), scan IV/skew labels (S6), client FlowAlertsPanel dedup
+(S13), monthly-opex pre-open AM OI (S15). Next tabs: Models, Heatseeker,
+Regime, Flow, Crypto.
+
+2026-10-23: audit pass 2 (Models, Heatseeker, Regime, Flow; PR #24,
+feat/audit-pass-2, stacked on pass 1). MUST-FIX items fixed, each pinned in
+tests/quant/audit-pass-2.test.ts: Killbox used Schwab's vendor gamma
+(incl. the -999 sentinel) when no sigma could be solved, poisoning bars,
+walls, stability and regime after the close -> vendor gamma only in (0, 1],
+unpriced contracts counted, dataState "no_iv" + reason, regime
+"indeterminate", client empty state says "cannot be priced", strike readout
+shows "not priced" instead of "$0 neutral". Heatseeker call/put wall could
+land on a wrong-signed strike (init at +-Infinity) -> init 0, null when no
+qualifying strike. Depth-Skew-Flow never counted sells (checked
+"sell_inferred"; server emits "sell") and labelled a per-poll increment as
+net flow -> "sell", label "(last poll)". GEX cell "from open" arrow was per
+browser session and ignored expiry -> keyed by expiry, labelled "since first
+view HH:MM ET", bounded map. 13-week cone footer stated a VRP scale and
+event bump the server no longer applies -> renders the server's own
+methodology string. ML accuracy "7d/14d/30d" were graded ROWS (several per
+session) and 0% was shown with zero calls -> windows by session date with
+n and sessions, null hit rates, sparkline/trend skip empty windows. Flow
+Alerts re-fired WALL/HEAVY/UNUSUAL every 30 s with random ids -> deterministic
+ids (shared/flowAlerts.ts), merge-on-poll, "OI is the prior close" copy.
+Flow side bars attributed re-tagged whole-day volume as new ask/bid flow ->
+side deltas capped at the bucket's new volume, premium deltas clamped and
+scaled, bucket marked "re-tagged" in the tooltip. Whale conviction text
+claimed "historically lifts hit-rate" with the total n -> "heuristic weight
+x1.23 ... n=<in regime> of <total>", shrunk, not a forecast. SHOULD-FIX
+items deferred (see the audit report in the PR): unit labels on Net
+Vanna/Charm and mixed Y axis, Killbox r/q basis on the IV solve and
+contractExposure, 24 px controls, title-only method notes, term-structure
+convention named on each screen (three conventions), prediction-flavoured
+copy (headline/canary/pivot/playbook), OFI "ACCELERATING" at zero slope,
+Mag7 N/7, BreadthCard error branch, RegimeHeadline truncation. Next:
+pass 3 = phone UI + copy sweep across all tabs; Crypto tab audit.
+
+2026-10-23: Crypto tab audit (PR #25, feat/audit-crypto, stacked on pass 2).
+Fixed, each pinned (tests/quant/crypto-expectancy.test.ts, crypto-verdict
+.test.ts, regime-crypto-r2.test.ts): grader labelled a row DOUBLED when the
+market cap at signal was missing (peak >= 0 x 2) -> NO_DATA past the
+horizon, never DOUBLED/DEAD; persistSignal writes the same marketCap ?? fdv
+basis the verdict uses (+ mcapBasis in features). Graded HIT_5M exit was
+the grader's later sample (last_mcap) while labelled a limit sell at the
+target -> min(peak, target) at the peak-sample depth (targetMcap passed to
+summarizeExpectancy). Basis text claimed RUGGED is -100 under every rule;
+only hold is -> text now states the three rules (hold -100; graded at rug-
+detection depth; peak keeps the pre-rug ceiling). Validation label ignored
+survivorship -> summary carries noData / noDataShare / maxNoDataShare
+(20%, the desk's sampleGate share) and reads INSUFFICIENT DATA with a
+reason when exceeded. Desk risk used a stale venue mid -> venue state read;
+stale/failed -> unknown; reason names the venue. Top-10 concentration was
+never re-read after a skipped/unavailable indexed call (second candidate
+per tick stuck "unread", could never ENTER) -> retried every 30 min while
+null; top10Method says "skipped: ..." / "unavailable: ..." so the chip
+shows. Desk-risk 10-minute rule applied live (currentDeskRisk) in the
+verdict and payload, not only at restart. Missing 24 h volume is no longer
+a "dead pool" flag. Deferred: GT/DS field interleave (valueSource),
+community quoteAt on failure, parseOhlcv zero volume, hold rule for RUGGED
+with a priced horizon mark, CryptoPanel zeros for missing values and
+hover-only notes (pass 3 covers the phone items), horizon late-window
+label, advice-flavoured copy on the expectancy card.
+
+2026-10-23: audit pass 3, phone + copy sweep (PR #26, feat/audit-pass-3,
+stacked on pass 2; 36 files, UI strings and layout only, no calculation
+changes). Tap targets >= 44 px on phone (compact above sm/lg) on every
+control the reviews listed; truncation removed (ChartLevelsCard, OdteForward,
+SetupLogCard, RegimeHeadline wraps and shows VIX/NET GEX meta on phone);
+9 px type -> 10 px; swipe hints on the two horizontal tables; canvas/SVG
+text 10 -> 11 px. Hover-only method notes became visible footnotes
+(ModelsPanel, DailyPlaybookChart, TickerScanCard, OfiHistogram, CanaryStrip).
+Units and labels: Net GEX/Vanna/Charm units and scope; "1σ to close"; Trade
+Desk gamma tiles in SPY $ vs the $SPX-point map stated; abbreviations
+expanded (ORB, EM, R, pp, HVL, RES/SUP/EXT legend); "γ at spot:
+large/medium/small" instead of CONF; term ratio formulas named (VIX3M/VIX,
+VIX9D/VIX); BEAR/BASE/BULL tagged (RN)/(heur.); MultiDayCone bar date and
+σ×blowup; Mag7 N/7 and "difference vs SPY"; scan IV/skew definitions; "95%
+CI"; TodayCard band sentence uses band.low/high and labels pin fallbacks;
+DepthSkewFlow follows the parent's symbol/expiry and derives DTE; Heatseeker
+tracker-window note only for $SPX nearest; Heatseeker and BreadthCard render
+the server reason instead of an empty chart; RegimeChip partial state; OFI
+"ACCELERATING" only with a non-neutral trend and material slope. Copy:
+"Daily Playbook (model)", weight badges, descriptive level boxes; playbook
+narrative, regime headlines, canary lines, RegimePanel, heatseeker sticky/
+pivot reads, pivotProjection, PositionSizer ("cost model: inputs clear /
+do not clear", "modelled outcome, net of cost"), Killbox wording and
+dealer-sign line, OdteForward "path end (model shape)" and "model touch
+frequency", Flow footnotes, TrackedSignals basis + mark age, FlowAlerts
+"fixed thresholds" footer. Still forecast-flavoured (next): EdgeInfo.tsx
+dialog copy, TradeDesk tooltip maps and legend row, OdteForward header
+chip.

@@ -202,7 +202,7 @@ export default function PivotProjection({
               Pivot Point Projection
             </div>
             <div className="text-[11px] text-muted-foreground">
-              1-2 month directional outlook · monthly classic + quarterly fib +
+              1-2 month pattern read (hand-set score) · monthly classic + quarterly fib +
               gamma walls + SMAs + volume nodes
             </div>
           </div>
@@ -213,7 +213,7 @@ export default function PivotProjection({
                 key={s}
                 variant={symbol === s ? "secondary" : "ghost"}
                 size="sm"
-                className="h-6 px-2 text-[11px]"
+                className="h-11 px-3 text-[11px] sm:h-6 sm:px-2"
                 onClick={() => setSymbol(s)}
                 data-testid={`btn-pivot-${s}`}
               >
@@ -223,7 +223,7 @@ export default function PivotProjection({
             <Button
               variant="ghost"
               size="sm"
-              className="h-6 px-1.5"
+              className="h-11 w-11 px-1.5 sm:h-6 sm:w-auto"
               onClick={() => refetch()}
               disabled={isFetching}
               data-testid="btn-pivot-refresh"
@@ -257,7 +257,7 @@ export default function PivotProjection({
                     <span className="font-bold uppercase tracking-wider">{patternLabel(p.setup)}</span>
                     <span className="ml-2 text-muted-foreground/80">{p.message}</span>
                     <span className="ml-2 font-mono text-[11px] opacity-70">
-                      score {(p.confidence * 100).toFixed(0)}/100
+                      score {(p.confidence * 100).toFixed(0)}/100 hand-set
                     </span>
                   </Badge>
                 ))}
@@ -310,7 +310,7 @@ export default function PivotProjection({
                         x={PAD_L - 6}
                         y={y + 3}
                         textAnchor="end"
-                        fontSize={10}
+                        fontSize={11}
                         fill="#64748b"
                         fontFamily="monospace"
                       >
@@ -382,7 +382,7 @@ export default function PivotProjection({
                       <text
                         x={PAD_L + PLOT_W + 7}
                         y={ly + 3}
-                        fontSize={10}
+                        fontSize={11}
                         fill={isSelected ? "#000" : tierColor(lv.tier)}
                         fontFamily="monospace"
                         fontWeight={lv.tier === "magnet" ? 700 : 400}
@@ -409,7 +409,7 @@ export default function PivotProjection({
                 <text
                   x={PAD_L + 4}
                   y={lineY(data.spot) - 4}
-                  fontSize={10}
+                  fontSize={11}
                   fill="#22d3ee"
                   fontFamily="monospace"
                 >
@@ -429,7 +429,7 @@ export default function PivotProjection({
                 <text
                   x={projectionX + 3}
                   y={PAD_T + 9}
-                  fontSize={10}
+                  fontSize={11}
                   fill="#94a3b8"
                   fontFamily="monospace"
                 >
@@ -438,7 +438,7 @@ export default function PivotProjection({
                 <text
                   x={projectionX + 3}
                   y={PAD_T + PLOT_H - 4}
-                  fontSize={10}
+                  fontSize={11}
                   fill="#94a3b8"
                   fontFamily="monospace"
                 >

@@ -501,7 +501,7 @@ function RightRail({ horizon }: { horizon: ModelHorizon }) {
       <div className="mt-2 text-[11px] text-muted-foreground leading-tight">
         Red = resistance · Green = support<br />
         Cyan = pivot/data · Yellow = flip zone<br />
-        <span className="text-emerald-400/70">POS Γ</span> = fade moves · <span className="text-rose-400/70">NEG Γ</span> = follow moves
+        <span className="text-emerald-400/70">POS Γ</span>: hedging dampens · <span className="text-rose-400/70">NEG Γ</span>: hedging amplifies
       </div>
     </div>
   );
@@ -672,14 +672,14 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
         <span className="text-cyan-400">BASE {probs.base}%</span>
         <span>·</span>
         <span className="text-red-400">BEAR {probs.bear}%</span>
-        <span className="text-muted-foreground" title={a.scenarioProbNote}>
+        <span className="text-muted-foreground">
           ({scenarioSourceLabel(a.scenarioProbSource)})
         </span>
         {a.expectedMove && (
           <>
             <span>|</span>
-            <span title={a.expectedMove.note}>
-              EM ±{a.expectedMove.oneSigma.toFixed(1)} ({a.expectedMove.source === "0dte-straddle" ? "0DTE straddle" : "VIX fallback"})
+            <span>
+              EM (expected move, model) ±{a.expectedMove.oneSigma.toFixed(1)} ({a.expectedMove.source === "0dte-straddle" ? "0DTE straddle" : "VIX fallback"})
             </span>
           </>
         )}
@@ -688,6 +688,11 @@ function AuditBox({ horizon }: { horizon: ModelHorizon }) {
         <span>|</span>
         <span>γ {a.gammaZone} {a.gammaZoneLabel}</span>
       </div>
+      {(a.scenarioProbNote || a.expectedMove?.note) && (
+        <div className="mt-0.5 text-[10px] leading-snug text-muted-foreground/80" data-testid="models-scenario-footnote">
+          {a.scenarioProbNote}{a.scenarioProbNote && a.expectedMove?.note ? " · " : ""}{a.expectedMove?.note}
+        </div>
+      )}
     </div>
   );
 }
@@ -715,6 +720,11 @@ function targetOddsText(h: ModelHorizon, kind: "bull" | "bear"): string | undefi
 
 function scenarioSourceLabel(src: ModelAudit["scenarioProbSource"]): string {
   return src === "risk-neutral-implied" ? "risk-neutral, options-implied" : "heuristic, hand-set";
+}
+
+/** Short tag after BEAR/BASE/BULL odds: "(RN)" when options-implied, "(heur.)" when hand-set. */
+function probSourceTag(src: ModelAudit["scenarioProbSource"]): string {
+  return src === "risk-neutral-implied" ? "(RN)" : "(heur.)";
 }
 
 function ScenarioLegend({ horizon }: { horizon: ModelHorizon }) {
@@ -815,11 +825,11 @@ function MMMatrixHeatmap({ horizon }: { horizon: ModelHorizon }) {
   return (
     <div className="mt-3 border-t border-border/40 pt-2">
       <div className="flex items-baseline justify-between mb-1.5">
-        <div
-          className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono"
-          title={mm.probabilityNote ?? "Hand-set priors tilted by live context; not fit to logged outcomes."}
-        >
+        <div className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono">
           Market-maker matrix · hand-set priors (not fit to outcomes)
+          <div className="mt-0.5 normal-case tracking-normal text-[10px] text-muted-foreground/80" data-testid="mm-matrix-note">
+            {mm.probabilityNote ?? "Hand-set priors tilted by live context; not fit to logged outcomes."}
+          </div>
         </div>
         <div className="font-mono text-[11px] text-muted-foreground">
           <span className="text-amber-400">YOU ARE HERE:</span> {REGIME_LABEL[mm.currentRegime]} · {ZONE_LABEL[mm.currentZone]}
@@ -873,7 +883,7 @@ function MMMatrixHeatmap({ horizon }: { horizon: ModelHorizon }) {
                           <div className="font-semibold mb-1">{REGIME_LABEL[r]} · {ZONE_LABEL[z]}</div>
                           <div>Action: <span style={{ color: ACTION_COLOR[c.action] }}>{ACTION_LABEL[c.action]}</span></div>
                           <div>P(up): {c.pUp}% · P(pin): {c.pPin}% · P(down): {c.pDown}%</div>
-                          <div>Expected move: ±{c.magnitude}pt</div>
+                          <div>Expected move (model): ±{c.magnitude}pt</div>
                         </TooltipContent>
                       </UITooltip>
                     </td>
@@ -941,6 +951,7 @@ function StatusStrip({ horizon }: { horizon: ModelHorizon }) {
       <span className="text-cyan-400">BASE {probs.base}%</span>
       <span>/</span>
       <span className="text-green-400">BULL {probs.bull}%</span>
+      <span className="text-muted-foreground">{probSourceTag(a.scenarioProbSource)}</span>
       <span>|</span>
       <span>{dateStr}</span>
     </div>
@@ -1307,10 +1318,9 @@ function EventBand({ horizon }: { horizon: ModelHorizon }) {
                   return (
                     <div
                       key={e.id}
-                      title={e.longTitle ?? e.title}
                       className={`inline-flex items-center gap-1 rounded border ${tone.border} ${tone.bg} px-1.5 py-0.5 font-mono text-[11px] leading-tight ${tone.fg}`}
                     >
-                      <span className="truncate">{e.title}</span>
+                      <span className="whitespace-normal break-words">{e.longTitle ?? e.title}</span>
                     </div>
                   );
                 })}
@@ -1988,10 +1998,9 @@ function WeeklyTrajectoryPanel({ traj, symbol }: { traj: WeeklyTrajectory; symbo
         </div>
       </div>
 
-      <div className="mt-2 text-[11px] text-muted-foreground font-mono">
-        Drift-tilted GBM cone with magnet pull toward dealer levels. σ segmented across VIX9D/VIX/VIX3M, scaled by
-        VRP (RV÷IV clamped 0.7-1.3), bumped +12% on OPEX/FOMC weeks. Drift = composite + GEX + VIX term + SKEW.
-        Walls/flip pull primary, max pain + JPM secondary, capped ±4%/wk per anchor. NOT a forecast — a probability cone.
+      <div className="mt-2 text-[11px] text-muted-foreground font-mono" data-testid="quarterly-methodology">
+        {/* The server states its own method (quarterlyTrajectory.ts); the old hand-written text described a VRP scale and an event bump the server no longer applies. */}
+        {traj.methodology ?? "Method statement unavailable from the server."} NOT a forecast — a probability cone.
       </div>
     </div>
   );
@@ -2041,17 +2050,17 @@ function ModelView({ horizon, session, symbol }: { horizon: ModelHorizon; sessio
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border/30 bg-black/40 px-3 py-1 font-mono text-[11px] text-muted-foreground">
         <span>VIX {horizon.vol.vix?.toFixed(2) ?? "—"} {fmtPct(horizon.vol.vixChangePct)}</span>
         <span>·</span>
-        <span>TERM {horizon.vol.termRatio?.toFixed(3) ?? "—"} ({horizon.vol.termLabel})</span>
+        <span>TERM VIX3M/VIX {horizon.vol.termRatio?.toFixed(3) ?? "—"} ({horizon.vol.termLabel})</span>
         {horizon.vomma === "elevated" && (
           <><span>·</span><span className="text-amber-400">⚠ VOL ELEVATED</span></>
         )}
         <span>·</span>
-        <span>CONF: <span className={
+        <span>γ at spot: <span className={
           horizon.confidence === "HIGH" ? "text-green-400" :
           horizon.confidence === "MODERATE" ? "text-amber-400" : "text-red-400"
-        }>{horizon.confidence}</span></span>
+        }>{horizon.confidence === "HIGH" ? "large" : horizon.confidence === "MODERATE" ? "medium" : "small"}</span></span>
         <span>·</span>
-        <span>BEAR {probs.bear}% / BASE {probs.base}% / BULL {probs.bull}%</span>
+        <span>BEAR {probs.bear}% / BASE {probs.base}% / BULL {probs.bull}% {probSourceTag(a.scenarioProbSource)}</span>
       </div>
 
       {/* Batcave #3 + #4 — recal tracking + DoD term structure strip */}
@@ -2223,7 +2232,7 @@ export default function ModelsPanel() {
               key={h}
               variant={horizon === h ? "default" : "ghost"}
               size="sm"
-              className="h-6 px-2.5 text-[11px] uppercase tracking-wider"
+              className="h-11 px-3 text-[11px] uppercase tracking-wider sm:h-6 sm:px-2.5"
               onClick={() => setHorizon(h)}
               data-testid={`btn-horizon-${h}`}
             >
@@ -2242,7 +2251,7 @@ export default function ModelsPanel() {
               key={k}
               variant={symbol === k ? "default" : "ghost"}
               size="sm"
-              className="h-6 px-2.5 text-[11px]"
+              className="h-11 px-3 text-[11px] sm:h-6 sm:px-2.5"
               onClick={() => setSymbol(k)}
               data-testid={`btn-symbol-${label}`}
             >
@@ -2293,7 +2302,7 @@ export default function ModelsPanel() {
           size="sm"
           onClick={() => refetch()}
           disabled={isFetching}
-          className="ml-auto h-6 gap-1 font-mono text-[11px]"
+          className="ml-auto h-11 gap-1 font-mono text-[11px] sm:h-6"
           data-testid="btn-models-refresh"
         >
           <RefreshCw className={`h-3 w-3 ${isFetching ? "animate-spin" : ""}`} />

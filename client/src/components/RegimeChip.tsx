@@ -95,21 +95,26 @@ export function RegimeChip({ origin }: { origin?: string }) {
 
   const dirCopy = top.direction === 1 ? POS_COPY[top.axis] : top.direction === -1 ? NEG_COPY[top.axis] : "neutral";
   const sign = top.compositeZ > 0 ? "+" : "";
+  // "partial": some axes lack readings, so the top axis is a partial read, not
+  // a confident one. Muted styling and say so.
+  const partial = data.dataState === "partial";
   const tone =
-    top.direction === 1
-      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-      : top.direction === -1
-        ? "border-rose-500/40 bg-rose-500/10 text-rose-300"
-        : "border-border/40 bg-muted/30 text-muted-foreground";
+    partial
+      ? "border-border/40 bg-muted/30 text-muted-foreground"
+      : top.direction === 1
+        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+        : top.direction === -1
+          ? "border-rose-500/40 bg-rose-500/10 text-rose-300"
+          : "border-border/40 bg-muted/30 text-muted-foreground";
 
   return (
     <span
       className={`${chipBase} ${tone}`}
       data-testid={testId}
-      title={`${top.label} ${dirCopy} · z=${sign}${top.compositeZ.toFixed(2)} · ${data.headline}`}
+      title={`${top.label} ${dirCopy} · z=${sign}${top.compositeZ.toFixed(2)}${partial ? " · partial: some axes have no readings" : ""} · ${data.headline}`}
     >
       <Activity className="h-2.5 w-2.5" />
-      Rotation: {dirCopy} {sign}{top.compositeZ.toFixed(1)}σ
+      Rotation: {dirCopy} {sign}{top.compositeZ.toFixed(1)}σ{partial ? " (partial)" : ""}
     </span>
   );
 }

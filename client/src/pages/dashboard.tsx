@@ -916,16 +916,16 @@ export default function Dashboard() {
                     <TermBar label="VIX 3M"  value={term.vix3m}  max={40} />
                     <Separator />
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-muted-foreground">9D / 30D Ratio</span>
+                      <span className="text-muted-foreground">9D / 30D ratio (VIX9D/VIX)</span>
                       <span className={`font-mono ${term.ratio9dOver30d && term.ratio9dOver30d > 1 ? "text-red-500" : "text-emerald-500"}`}>
                         {term.ratio9dOver30d ? term.ratio9dOver30d.toFixed(3) : "—"}
                       </span>
                     </div>
                     <div className="text-[11px] text-muted-foreground">
                       {term.ratio9dOver30d != null && (
-                        term.ratio9dOver30d < 0.95 ? "Contango — front-end calm, trend-friendly environment."
-                        : term.ratio9dOver30d < 1.05 ? "Flat curve — transitional."
-                        : "Backwardation — near-term stress priced in."
+                        term.ratio9dOver30d < 0.95 ? "Contango: 9-day vol below 30-day (front end calm)."
+                        : term.ratio9dOver30d < 1.05 ? "Flat curve: 9-day and 30-day vol about equal."
+                        : "Backwardation: 9-day vol above 30-day (near-term stress priced)."
                       )}
                     </div>
                   </div>

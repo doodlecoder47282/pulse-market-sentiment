@@ -65,7 +65,7 @@ interface UnusualContract {
 interface UnusualResponse {
   provider: "schwab";
   /** "unavailable" = Schwab did not answer: summary figures are null, not zero. */
-  dataState?: "ok" | "unavailable" | "delayed";
+  dataState?: "ok" | "stale" | "unavailable" | "delayed";
   symbol: string;
   spot: number | null;
   contracts: UnusualContract[];
@@ -523,7 +523,7 @@ function ContractRow({ c, onClick, symbol, trackedIds }: { c: UnusualContract; o
       </td>
       <td className="px-2 py-1.5 text-right font-mono tabular-nums">{c.last > 0 ? c.last.toFixed(2) : "—"}</td>
       <td className="px-2 py-1.5 text-right text-muted-foreground font-mono tabular-nums">
-        {c.iv > 0 ? `${(c.iv * 100).toFixed(0)}%` : "—"}
+        {c.iv > 0 ? `${c.iv.toFixed(0)}%` : "—"}
       </td>
       <td className="px-2 py-1.5 text-right font-semibold text-foreground font-mono tabular-nums">
         {fmtMoney(c.notional)}

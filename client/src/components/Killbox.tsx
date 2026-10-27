@@ -1,5 +1,5 @@
 /**
- * Killbox.tsx — FORWARD-LOOKING dealer positioning map.
+ * Killbox.tsx — dealer positioning map (model).
  *
  * Institutional model (matches VS3D / SpotGamma TRACE / MenthorQ):
  *   Y-axis: strike (labeled, numbered)
@@ -40,7 +40,11 @@ interface ForwardResponse {
   };
   stability: number;
   weightMode?: "oi" | "volume" | "hybrid";
-  regime?: "long_gamma" | "short_gamma";
+  regime?: "long_gamma" | "short_gamma" | "indeterminate";
+  /** "ok" when at least one contract was priced; "no_iv" when none could be (typical after the close). */
+  dataState?: "ok" | "no_iv";
+  reason?: string | null;
+  contracts?: { priced: number; unpriced: number };
   totalOI?: number;
   totalVolume?: number;
   strikeCount?: number;
@@ -129,7 +133,7 @@ export default function Killbox({ symbol = "$SPX" }: { symbol?: string }) {
         <div className="flex items-baseline gap-2">
           <div className="font-mono text-sm font-bold tracking-wide text-foreground">KILLBOX</div>
           <div className="hidden sm:block text-[11px] uppercase tracking-wider text-muted-foreground">
-            {symbol} · forward dealer positioning
+            {symbol} · dealer positioning (model)
           </div>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -226,6 +230,7 @@ export default function Killbox({ symbol = "$SPX" }: { symbol?: string }) {
         hoverStrike={hoverStrike}
         onHover={setHoverStrike}
         isLoading={isLoading}
+        emptyReason={data?.dataState === "no_iv" ? (data.reason ?? "no contract could be priced") : null}
       />
 
       {/* Ranked top strikes */}
@@ -279,7 +284,7 @@ function StabilityGauge({
   // 0 = vol expansion / dealer short gamma below spot, 1 = pinning / dealer long
   const pct = stability * 100;
   const regime =
-    stability > 0.65 ? "PINNING" : stability < 0.35 ? "VOL EXPANSION" : "NEUTRAL";
+    stability > 0.65 ? "long-γ near spot" : stability < 0.35 ? "short-γ near spot" : "mixed";
   const regimeColor =
     stability > 0.65 ? LONG_COLOR : stability < 0.35 ? SHORT_COLOR : SPOT_LINE;
 
@@ -302,7 +307,7 @@ function StabilityGauge({
           </span>
         </div>
         <div className="font-mono text-xs tabular-nums text-muted-foreground">
-          expected range: <span className="text-foreground">{range}</span>
+          wall-to-wall range: <span className="text-foreground">{range}</span>
         </div>
       </div>
       <div className="relative h-2 w-full overflow-hidden rounded bg-background">
@@ -320,15 +325,18 @@ function StabilityGauge({
         />
       </div>
       <div className="flex justify-between text-[11px] text-muted-foreground mt-0.5">
-        <span>vol expansion</span>
-        <span>pinning</span>
+        <span>short-γ near spot</span>
+        <span>long-γ near spot</span>
+      </div>
+      <div className="mt-1 text-[11px] text-muted-foreground" data-testid="killbox-dealer-assumption">
+        Dealer side is assumed (long every call, short every put), not observed. A heuristic read of positioning, not a forecast or advice.
       </div>
     </div>
   );
 }
 
 function ForwardChart({
-  visible, spot, levels, absMax, greek, hoverStrike, onHover, isLoading,
+  visible, spot, levels, absMax, greek, hoverStrike, onHover, isLoading, emptyReason,
 }: {
   visible: ProfilePoint[];
   spot: number | null;
@@ -338,6 +346,8 @@ function ForwardChart({
   hoverStrike: number | null;
   onHover: (s: number | null) => void;
   isLoading: boolean;
+  /** Server reason when nothing could be priced (dataState no_iv). */
+  emptyReason?: string | null;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [wrapW, setWrapW] = useState(360);
@@ -368,9 +378,9 @@ function ForwardChart({
         ref={wrapRef}
         className="flex h-[440px] flex-col items-center justify-center gap-2 rounded border border-border bg-[#04060c] px-4 text-center"
       >
-        <div className="text-sm font-semibold text-foreground">no dealer book yet</div>
+        <div className="text-sm font-semibold text-foreground" data-testid="killbox-empty">{emptyReason ? "dealer book cannot be priced" : "no strikes to show"}</div>
         <div className="text-[11px] text-muted-foreground max-w-[280px] leading-snug">
-          fills after the first chain-audit snap of the day · auto-seeder runs every 5min during 9:30–16:00 ET
+          {emptyReason ?? (!spot ? "the chain carried no spot price" : "no strike within ±2.5% of spot has exposure in this lens")}
         </div>
       </div>
     );
@@ -418,7 +428,7 @@ function ForwardChart({
           return (
             <g>
               <line x1={labelW} y1={y} x2={wrapW - 12} y2={y} stroke={SPOT_LINE} strokeWidth="1" strokeDasharray="3,3" />
-              <text x={labelW + 4} y={y - 3} fill={SPOT_LINE} fontSize="10" fontFamily="ui-monospace, monospace">
+              <text x={labelW + 4} y={y - 3} fill={SPOT_LINE} fontSize="11" fontFamily="ui-monospace, monospace">
                 spot {spot.toFixed(0)}
               </text>
             </g>
@@ -433,7 +443,7 @@ function ForwardChart({
           return (
             <g>
               <line x1={labelW} y1={y} x2={wrapW - 12} y2={y} stroke={CALL_WALL} strokeWidth="1" strokeDasharray="2,4" opacity="0.55" />
-              <text x={wrapW - 14} y={y - 2} fill={CALL_WALL} fontSize="10" fontFamily="ui-monospace, monospace" textAnchor="end">
+              <text x={wrapW - 14} y={y - 2} fill={CALL_WALL} fontSize="11" fontFamily="ui-monospace, monospace" textAnchor="end">
                 call wall
               </text>
             </g>
@@ -448,7 +458,7 @@ function ForwardChart({
           return (
             <g>
               <line x1={labelW} y1={y} x2={wrapW - 12} y2={y} stroke={PUT_WALL} strokeWidth="1" strokeDasharray="2,4" opacity="0.55" />
-              <text x={wrapW - 14} y={y - 2} fill={PUT_WALL} fontSize="10" fontFamily="ui-monospace, monospace" textAnchor="end">
+              <text x={wrapW - 14} y={y - 2} fill={PUT_WALL} fontSize="11" fontFamily="ui-monospace, monospace" textAnchor="end">
                 put wall
               </text>
             </g>
@@ -486,7 +496,7 @@ function ForwardChart({
                 x={labelW - 6}
                 y={y + rowH / 2 + 3}
                 fill={isHover ? "#fff" : "rgba(200,210,225,0.9)"}
-                fontSize="10"
+                fontSize="11"
                 fontFamily="ui-monospace, monospace"
                 textAnchor="end"
                 fontWeight={isHover ? "bold" : "normal"}
@@ -499,7 +509,7 @@ function ForwardChart({
                   x={isPos ? x + 4 : x + w - 4}
                   y={y + rowH / 2 + 3}
                   fill="rgba(0,0,0,0.7)"
-                  fontSize="10"
+                  fontSize="11"
                   fontFamily="ui-monospace, monospace"
                   fontWeight="bold"
                   textAnchor={isPos ? "start" : "end"}
@@ -572,13 +582,15 @@ function StrikeReadout({
   activeGreek: Greek;
 }) {
   const greeks: Greek[] = ["gex", "vanna", "charm", "vomma", "zomma"];
-  const values: { greek: Greek; value: number }[] = greeks.map(g => {
+  // null = this greek was not priced at this strike (no sigma); not zero.
+  const values: { greek: Greek; value: number | null }[] = greeks.map(g => {
     const p = (data.profiles[g] ?? []).find(x => x.strike === strike);
-    return { greek: g, value: p?.exposure ?? 0 };
+    return { greek: g, value: p ? p.exposure : null };
   });
 
   const dist = data.spot ? strike - data.spot : 0;
-  const dealerSign = (g: Greek, v: number): string => {
+  const dealerSign = (g: Greek, v: number | null): string => {
+    if (v == null) return "not priced";
     if (v === 0) return "neutral";
     return v > 0 ? "long" : "short";
   };
@@ -601,7 +613,7 @@ function StrikeReadout({
       <div className="grid grid-cols-5 gap-2">
         {values.map(v => {
           const isActive = v.greek === activeGreek;
-          const color = v.value > 0 ? LONG_COLOR : v.value < 0 ? SHORT_COLOR : "#888";
+          const color = v.value != null && v.value > 0 ? LONG_COLOR : v.value != null && v.value < 0 ? SHORT_COLOR : "#888";
           return (
             <div
               key={v.greek}
@@ -611,7 +623,7 @@ function StrikeReadout({
                 {v.greek === "gex" ? "gamma" : v.greek}
               </div>
               <div className="font-mono text-[11px] font-semibold tabular-nums" style={{ color }}>
-                {fmtMoney(v.value)}
+                {v.value == null ? "—" : fmtMoney(v.value)}
               </div>
               <div className="text-[11px] text-muted-foreground">
                 {dealerSign(v.greek, v.value)}

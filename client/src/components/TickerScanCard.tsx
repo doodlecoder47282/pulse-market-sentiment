@@ -35,11 +35,12 @@ const pct = (f: number | null | undefined, d = 2) => (f == null ? "—" : `${f >
 const big = (n: number | null | undefined) => (n == null ? "—" : n >= 1e9 ? `${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : String(Math.round(n)));
 const x = (n: number | null | undefined) => (n == null ? "—" : `${n.toFixed(1)}x`);
 
-function Stat({ label, value, title, cls }: { label: string; value: string; title?: string; cls?: string }) {
+function Stat({ label, value, title, cls, sub }: { label: string; value: string; title?: string; cls?: string; sub?: string }) {
   return (
     <div className="rounded border border-border/40 bg-muted/10 px-2 py-1.5" title={title}>
-      <div className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground">{label}</div>
+      <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{label}</div>
       <div className={`font-mono text-sm font-semibold tabular-nums ${cls ?? ""}`}>{value}</div>
+      {sub && <div className="font-mono text-[10px] text-muted-foreground">{sub}</div>}
     </div>
   );
 }
@@ -121,13 +122,14 @@ export default function TickerScanCard() {
             <div className="space-y-1.5" data-testid="ticker-scan-structure">
               <SectionHead label="dealer gamma (45 DTE chain)" s={d.structure} testId="ticker-scan-structure-state" />
               <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-                <Stat label="call wall" value={px(d.structure.callWall)} title={d.structure.distToCallWallPct != null ? `${d.structure.distToCallWallPct.toFixed(2)}% from spot` : undefined} cls="text-rose-300" />
+                <Stat label="call wall" value={px(d.structure.callWall)} sub={d.structure.distToCallWallPct != null ? `${d.structure.distToCallWallPct.toFixed(2)}% from spot` : undefined} cls="text-rose-300" />
                 <Stat label="gamma flip" value={px(d.structure.gammaFlip)} cls="text-amber-200" />
-                <Stat label="put wall" value={px(d.structure.putWall)} title={d.structure.distToPutWallPct != null ? `${d.structure.distToPutWallPct.toFixed(2)}% from spot` : undefined} cls="text-emerald-300" />
-                <Stat label="regime" value={d.structure.regime === "positive" ? "long γ" : d.structure.regime === "negative" ? "short γ" : "unknown"} title="positive = dealers fade moves; negative = dealers chase" />
+                <Stat label="put wall" value={px(d.structure.putWall)} sub={d.structure.distToPutWallPct != null ? `${d.structure.distToPutWallPct.toFixed(2)}% from spot` : undefined} cls="text-emerald-300" />
+                <Stat label="regime" value={d.structure.regime === "positive" ? "long γ" : d.structure.regime === "negative" ? "short γ" : "unknown"} title="positive = dealer hedging dampens moves; negative = dealer hedging adds to moves" />
                 <Stat label="P/C OI · vol" value={`${px(d.structure.pcrOi)} · ${px(d.structure.pcrVol)}`} />
-                <Stat label="ATM IV · skew" value={`${d.structure.atmIv == null ? "—" : (d.structure.atmIv * 100).toFixed(0) + "%"} · ${d.structure.ivSkew25d == null ? "—" : (d.structure.ivSkew25d * 100).toFixed(1) + "pp"}`} title="front-month ATM IV; 25-delta put IV minus call IV" />
+                <Stat label="ATM IV · skew" value={`${d.structure.atmIv == null ? "—" : (d.structure.atmIv * 100).toFixed(0) + "%"} · ${d.structure.ivSkew25d == null ? "—" : (d.structure.ivSkew25d * 100).toFixed(1) + "pp"}`} title="nearest-strike IV (4 samples, 0-45 DTE); 8% OTM put IV minus 8% OTM call IV, all expiries" />
               </div>
+              <p className="text-[11px] text-muted-foreground/80" data-testid="ticker-scan-structure-note">ATM IV = nearest-strike IV (4 samples, 0-45 DTE). Skew = 8% OTM put IV minus 8% OTM call IV, all expiries, in pp (percentage points).</p>
               {d.structure.warnings.length > 0 && <p className="text-[11px] text-amber-300/90">{d.structure.warnings.join("; ")}</p>}
             </div>
 
@@ -135,9 +137,10 @@ export default function TickerScanCard() {
               <SectionHead label="most active contracts (volume / OI, 45 DTE)" s={d.chain} testId="ticker-scan-chain-state" />
               {d.chain.contracts.length > 0 && (
                 <div className="overflow-x-auto">
+                  <div className="pb-1 text-[11px] text-muted-foreground sm:hidden" data-testid="ticker-scan-swipe-hint">swipe sideways for more columns</div>
                   <table className="w-full min-w-[560px] text-[11px]">
                     <thead className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                      <tr><th className="text-left">contract</th><th className="text-right">vol</th><th className="text-right">OI</th><th className="text-right">vol/OI</th><th className="text-right">mid</th><th className="text-right">notional</th><th className="text-right">Δ</th><th className="text-right">tag</th></tr>
+                      <tr><th className="text-left">contract</th><th className="text-right">vol</th><th className="text-right">OI</th><th className="text-right">vol/OI</th><th className="text-right">mid</th><th className="text-right">premium</th><th className="text-right">Δ</th><th className="text-right">tag</th></tr>
                     </thead>
                     <tbody className="font-mono tabular-nums">
                       {d.chain.contracts.slice(0, 12).map((c) => (

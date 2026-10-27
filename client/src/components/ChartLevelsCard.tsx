@@ -61,7 +61,7 @@ export default function ChartLevelsCard({ symbol = "$SPX" }: { symbol?: string }
     [m, levels],
   );
   const tol = m?.spot ? defaultTolerancePts(m.spot) : null;
-  const mapState = q.isError ? "unavailable" : !m ? "loading" : m.dataState === "no_gex" ? "no_data" : m.dataState === "stale_session" ? "stale" : "ok";
+  const mapState = q.isError ? "unavailable" : !m ? "loading" : m.dataState === "no_gex" ? "no_data" : m.dataState === "stale_session" || m.dataState === "stale" ? "stale" : "ok";
 
   const add = () => {
     const parsed = parseLevels(draft);
@@ -80,7 +80,7 @@ export default function ChartLevelsCard({ symbol = "$SPX" }: { symbol?: string }
             <CardTitle className="text-sm font-semibold tracking-tight">Your chart levels</CardTitle>
             <span className="font-mono text-[11px] text-muted-foreground">{symbol.replace(/^\$/, "")} · against the 0DTE map{tol != null ? ` · ±${tol} pts` : ""}</span>
           </div>
-          <DataStateChip state={mapState} reason={m?.reason ?? null} asOf={m?.asOf ?? null} source="0DTE map" testId="chart-levels-state" />
+          <DataStateChip state={mapState} reason={m?.reason ?? null} asOf={m?.chainAsOfMs ?? m?.asOf ?? null} stale={m?.chainStale ?? null} source="0DTE map" testId="chart-levels-state" />
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -105,14 +105,14 @@ export default function ChartLevelsCard({ symbol = "$SPX" }: { symbol?: string }
             {checks.map((c) => {
               const t = TAG[c.tag];
               return (
-                <li key={c.level} className="grid grid-cols-[64px_minmax(0,1fr)_auto_28px] items-center gap-2 rounded-md bg-muted/10 px-2 py-1.5" data-testid={`chart-level-${c.level}`}>
+                <li key={c.level} className="grid grid-cols-[64px_minmax(0,1fr)_auto_44px] items-center sm:grid-cols-[64px_minmax(0,1fr)_auto_28px] gap-2 rounded-md bg-muted/10 px-2 py-1.5" data-testid={`chart-level-${c.level}`}>
                   <span className="font-mono text-sm font-semibold tabular-nums">{fmt(c.level)}</span>
-                  <span className="truncate text-[11px] text-muted-foreground" title={c.note}>
+                  <span className="whitespace-normal break-words text-[11px] text-muted-foreground">
                     {c.side !== "unknown" && <span className="mr-1 font-mono uppercase">{c.side === "at" ? "ATM" : c.side}</span>}
                     {c.note}{c.insideStraddle === false ? " · outside the straddle range" : ""}
                   </span>
                   <span className={`whitespace-nowrap rounded border px-1.5 py-px font-mono text-[10px] ${t.cls}`} title={t.title} data-testid={`chart-level-tag-${c.level}`}>{t.text}</span>
-                  <button type="button" onClick={() => remove(c.level)} aria-label={`remove ${fmt(c.level)}`} className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:text-rose-300">
+                  <button type="button" onClick={() => remove(c.level)} aria-label={`remove ${fmt(c.level)}`} className="flex h-11 w-11 items-center justify-center rounded text-muted-foreground hover:text-rose-300 sm:h-7 sm:w-7">
                     <X className="h-3.5 w-3.5" />
                   </button>
                 </li>

@@ -127,7 +127,7 @@ export interface GammaStructure {
   putWall: number;              // strike below spot with the largest |re-priced put GEX|
   putWallGex: number;           // that strike's put GEX ($ per 1%, negative)
   zeroGamma: number | null;     // canonical zero-gamma spot level (Perfiliev-style) — where total γ flips as spot moves
-  maxPain: number;              // nearest expiry max-pain strike
+  maxPain: number | null;       // nearest expiry max-pain strike; null when no strike carries open interest
   nearestDte: number;
   pcrOi: number;                // put/call open-interest ratio, 0-45 DTE
   pcrVol: number;               // put/call volume ratio, 0-45 DTE

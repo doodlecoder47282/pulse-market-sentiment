@@ -23,7 +23,7 @@ import {
 import { streamEquityQuote } from "./streamStore";
 import { parseStreamerInfo, startSchwabStream, streamConfigFromEnv, type StreamerInfo, type WebSocketLike } from "./schwabStream";
 import { oauthErrorCode } from "./oauthError";
-import { newOAuthState } from "./schwabOAuth";
+import { newOAuthState, type OAuthReturnTo } from "./schwabOAuth";
 import { editionFromEnv } from "../shared/edition";
 import { demoSchwabPayload } from "./demoMarket";
 import { createSchwabInputValidator } from "./schwabInputValidation";
@@ -271,8 +271,10 @@ export function getSchwabStatus(): {
   };
 }
 
-/** Returns the OAuth authorize URL to open in a new tab. */
-export function getAuthUrl(): string {
+/** Returns the OAuth authorize URL to open in a new tab (website) or in the
+ *  iOS app's Safari sheet (returnTo "app": the callback redirects to the
+ *  app's URL scheme instead of the website). */
+export function getAuthUrl(returnTo: OAuthReturnTo = "web"): string {
   if (isDemoEdition()) throw new Error(DEMO_SIGN_IN_OFF);
   const params = new URLSearchParams({
     response_type: "code",
@@ -280,7 +282,7 @@ export function getAuthUrl(): string {
     redirect_uri: getRedirectUri(),
     // One-time value checked by the automatic callback (login-CSRF guard);
     // harmless for the paste-back flow.
-    state: newOAuthState(),
+    state: newOAuthState(Date.now(), returnTo),
   });
   return `${SCHWAB_BASE}/v1/oauth/authorize?${params.toString()}`;
 }

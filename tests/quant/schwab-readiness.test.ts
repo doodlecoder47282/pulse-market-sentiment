@@ -113,7 +113,7 @@ test("every calibration write entry point excludes demo before reading or writin
 test("auth link checks storage before issuing state; Settings uses bounded JSON and no token-as-live claim", () => {
   const routes = readFileSync(new URL("../../server/routes.ts", import.meta.url), "utf8");
   const handler = routes.slice(routes.indexOf('app.get("/api/schwab/auth-url"'), routes.indexOf('app.post("/api/schwab/callback"'));
-  assert.ok(handler.indexOf('tokenStoreStatus().mode === "locked"') < handler.indexOf("const url = getAuthUrl()"));
+  assert.ok(handler.indexOf('tokenStoreStatus().mode === "locked"') < handler.indexOf("const url = getAuthUrl(returnTo)"));
   const settings = readFileSync(new URL("../../client/src/components/SchwabSettings.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(settings, /apiRequest\(/);
   assert.doesNotMatch(settings, /isConnected \? "SCHWAB LIVE"/);

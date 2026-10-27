@@ -44,7 +44,7 @@ export function rateLimitPolicy(edition: Edition): RateLimitPolicy {
 }
 
 /** Routes whose handler makes an upstream call on demand (prefix match), cached per symbol. */
-export const UPSTREAM_ROUTE_PREFIXES = ["/api/research/events", "/api/odte/map", "/api/gamma-levels", "/api/gamma-curve", "/api/heatseeker/levels", "/api/flow/preview", "/api/crypto/community"];
+export const UPSTREAM_ROUTE_PREFIXES = ["/api/verify/live", "/api/research/events", "/api/odte/map", "/api/gamma-levels", "/api/gamma-curve", "/api/heatseeker/levels", "/api/flow/preview", "/api/crypto/community"];
 export const SCAN_ROUTE_PREFIX = "/api/scan";
 
 const matches = (path: string, p: string) => path === p || path.startsWith(p + "?") || path.startsWith(p + "/");

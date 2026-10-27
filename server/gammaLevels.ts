@@ -86,7 +86,7 @@ export function buildGammaLevelsEnhanced(
     putWall: number;
     putWallGex: number;
     zeroGamma: number | null;
-    maxPain: number;
+    maxPain: number | null;
     profile: Array<{ strike: number; gex: number }>;
     gexCrossoverStrike: number | null;
   },

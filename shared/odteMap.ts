@@ -35,6 +35,10 @@ export interface ForwardLike {
   gexContracts?: { priced: number; unpriced: number };
   flipInputs?: { label: string };
   source?: string;
+  /** Chain provenance (server/odteForward.ts): when Schwab produced the chain and whether it was re-served after a failed refresh. */
+  chainAsOfMs?: number | null;
+  chainStale?: boolean;
+  chainStaleReason?: string | null;
 }
 
 export type MapLabel = "pin" | "wall above" | "magnet below" | "pocket above" | "pocket below" | "shelf" | "pocket";
@@ -109,9 +113,12 @@ export interface OdteMap {
   /** Personal edition only; null with the reason otherwise. */
   zones: MapZone[] | null;
   zonesNote: string;
-  dataState: "ok" | "no_gex" | "stale_session";
+  dataState: "ok" | "no_gex" | "stale_session" | "stale";
   reason: string | null;
   method: string[];
+  /** When Schwab produced the chain behind this map (epoch ms); null when the forward did not say. The cards show this age, not asOf (compute time). */
+  chainAsOfMs: number | null;
+  chainStale: boolean;
 }
 
 export interface ComposeOptions {
@@ -298,7 +305,8 @@ export function composeOdteMap(f: ForwardLike, opts: ComposeOptions): OdteMap {
     zonesNote = "personal edition, rule-derived from the map above; a heuristic, not a forecast";
   }
 
-  const dataState: OdteMap["dataState"] = !gexOk ? "no_gex" : f.session?.state === "closed" ? "stale_session" : "ok";
+  const chainStale = f.chainStale === true;
+  const dataState: OdteMap["dataState"] = !gexOk ? "no_gex" : chainStale ? "stale" : f.session?.state === "closed" ? "stale_session" : "ok";
   return {
     symbol: f.symbol, asOf: f.asOf, dateEt: etDateOf(f.asOf), spot, expiry: f.expiry, session: f.session,
     gap: { open, priorClose: prior, points: gapPts == null ? null : r2(gapPts), pct: gapPct == null ? null : r2(gapPct), read: gapRead },
@@ -313,8 +321,12 @@ export function composeOdteMap(f: ForwardLike, opts: ComposeOptions): OdteMap {
     },
     ladders: { above: aboveL, below: belowL },
     zones, zonesNote, dataState,
-    reason: !gexOk ? "the 0DTE gamma map is not priced (closed market or no implied vols)" : f.session?.state === "closed" ? "session closed: this is the last map of the day" : null,
+    reason: !gexOk ? "the 0DTE gamma map is not priced (closed market or no implied vols)"
+      : chainStale ? `chain re-served after a failed refresh${f.chainStaleReason ? `: ${f.chainStaleReason}` : ""}`
+      : f.session?.state === "closed" ? "session closed: this is the last map of the day" : null,
     method,
+    chainAsOfMs: Number.isFinite(Number(f.chainAsOfMs)) ? Number(f.chainAsOfMs) : null,
+    chainStale,
   };
 }
 

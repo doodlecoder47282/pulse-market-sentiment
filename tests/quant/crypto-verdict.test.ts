@@ -30,3 +30,15 @@ test("every verdict code has a meaning and none says buy, sell or enter a trade"
   }
   assert.equal(Object.keys(VERDICT_CODE_TEXT).length, 13);
 });
+
+test("desk risk: a stale or failed venue read is unknown, never on or off; the reason names the venue", () => {
+  const stale = { state: "partial" as const, rows: [{ asset: "BTC", kraken: { state: "stale", mid: 90_000, vwap24h: 100_000 }, coinbase: { state: "ok", mid: null } }] };
+  assert.equal(deskRiskFromMajors(stale, 1).state, "unknown");
+  assert.match(deskRiskFromMajors(stale, 1).reason, /Kraken BTC read stale/);
+  const cbOnly = { state: "partial" as const, rows: [{ asset: "BTC", kraken: { state: "ok", mid: null, vwap24h: 100_000 }, coinbase: { state: "ok", mid: 94_000 } }] };
+  const r = deskRiskFromMajors(cbOnly, 1);
+  assert.equal(r.state, "off");
+  assert.match(r.reason, /Coinbase mid/);
+  const cbStale = { state: "partial" as const, rows: [{ asset: "BTC", kraken: { state: "ok", mid: null, vwap24h: 100_000 }, coinbase: { state: "stale", mid: 94_000 } }] };
+  assert.equal(deskRiskFromMajors(cbStale, 1).state, "unknown");
+});

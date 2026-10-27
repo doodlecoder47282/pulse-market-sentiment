@@ -47,8 +47,16 @@ export function isNativeApp(): boolean {
   return !!(cap && typeof cap.isNativePlatform === "function" && cap.isNativePlatform());
 }
 
+/** When the native shell loads the UI live from the server (capacitor.config
+ *  server.url), the page's own https origin is the API: no setup screen. */
+function liveOriginBase(): string {
+  if (typeof window === "undefined" || !isNativeApp()) return "";
+  const { protocol, origin } = window.location;
+  return protocol === "https:" || protocol === "http:" ? origin : "";
+}
+
 export function getApiBase(): string {
-  const base = readConnectionSetting(API_BASE_STORAGE_KEY) || BUILD_API_BASE || PREVIEW_API_BASE;
+  const base = readConnectionSetting(API_BASE_STORAGE_KEY) || liveOriginBase() || BUILD_API_BASE || PREVIEW_API_BASE;
   if (base.startsWith("__PORT_")) throw new Error("Preview backend was not connected. Reopen the deployed Batcave preview.");
   return base.replace(/\/+$/, "");
 }

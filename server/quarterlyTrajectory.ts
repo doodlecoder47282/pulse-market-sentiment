@@ -126,7 +126,7 @@ export interface QuarterlyTrajectory {
     callWall: number;
     putWall: number;
     gammaFlip: number;
-    maxPain: number;
+    maxPain: number | null;
     totalGex: number;
     composite: number;
     skew: number | null;            // Cboe SKEW index 100-150 via Schwab $SKEW; null = unavailable  [NEW v2]
@@ -151,7 +151,7 @@ interface BuildInputs {
   callWall: number;
   putWall: number;
   gammaFlip: number;
-  maxPain: number;
+  maxPain: number | null;
   totalGex: number;              // sign drives regime
   composite: number;             // 0..100
   jpmStrikes?: { shortPut: number; longPut: number; shortCall: number } | null;
@@ -350,7 +350,7 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
     { level: callWall, weight: 1.0 },
     { level: putWall,  weight: 1.0 },
     { level: gammaFlip, weight: 0.7 },
-    { level: maxPain,  weight: 0.5 },
+    ...(maxPain != null ? [{ level: maxPain, weight: 0.5 }] : []),
   ];
   if (jpmStrikes) {
     if (jpmStrikes.shortPut)  anchorList.push({ level: jpmStrikes.shortPut,  weight: 0.6 });
@@ -447,7 +447,7 @@ export function buildQuarterlyTrajectory(input: BuildInputs): QuarterlyTrajector
     { level: callWall, label: "Call Wall", kind: "callWall", strength: "primary" },
     { level: putWall,  label: "Put Wall",  kind: "putWall",  strength: "primary" },
     { level: gammaFlip, label: "Gamma Flip", kind: "gammaFlip", strength: "primary" },
-    { level: maxPain,  label: "Max Pain",  kind: "maxPain",  strength: "secondary" },
+    ...(maxPain != null ? [{ level: maxPain, label: "Max Pain", kind: "maxPain" as const, strength: "secondary" as const }] : []),
   ];
   if (jpmStrikes) {
     if (jpmStrikes.shortPut && Math.abs(jpmStrikes.shortPut - spot) <= jpmRangeLimit) {

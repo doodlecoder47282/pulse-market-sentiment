@@ -69,6 +69,9 @@ jobs:
           # CI-only: allow plain http to the runner's demo server. Reverted before packaging.
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" ios/App/App/Info.plist
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" ios/App/App/Info.plist
+          # CI-only: the simulator check runs against the runner's demo server from the
+          # bundled UI, never the owner's live server. `server.url` is restored for the zip.
+          node -e 'const f="capacitor.config.json";const c=JSON.parse(require("fs").readFileSync(f,"utf8"));delete c.server;require("fs").writeFileSync(f,JSON.stringify(c,null,2)+"\n")'
           npx cap sync ios 2>&1 | tee reports/03-cap.log
           find ios -maxdepth 3 -not -path '*/public/*' | sort | tee -a reports/03-cap.log
       - name: Compile for iOS Simulator (no signing)
@@ -152,17 +155,34 @@ jobs:
       - name: Rebuild the bundled UI for the zip (no test server baked in)
         env:
           VITE_DEMO_URL: ${{ vars.BATCAVE_DEMO_URL }}
-          VITE_API_BASE: ${{ vars.BATCAVE_API_BASE }}
+          # The owner's own server is baked into the phone build, so the app opens
+          # straight into the terminal (no server-URL screen). The address is not a
+          # secret (it is in docs/); the Schwab secret never leaves that server.
+          VITE_API_BASE: ${{ vars.BATCAVE_API_BASE || 'https://pulse-market-sentiment-production.up.railway.app' }}
         run: |
           set -o pipefail
-          git checkout -- ios/App/App/Info.plist
+          git checkout -- ios/App/App/Info.plist capacitor.config.json
           npx vite build 2>&1 | tail -5 | tee reports/08-vite-zip.log
           npx cap copy ios 2>&1 | tail -5 | tee -a reports/08-vite-zip.log
+          grep -q '"url": "https://' ios/App/App/capacitor.config.json && echo "live UI server.url present in the zip" | tee -a reports/08-vite-zip.log || { echo "server.url missing from the packaged config"; exit 1; }
           grep -rl "127.0.0.1:5080" ios/App/App/public && { echo "test server URL leaked into the zip"; exit 1; } || echo "zip bundle clean" | tee -a reports/08-vite-zip.log
       - name: Package Xcode project zip
         run: |
           mkdir -p out/Batcave-iOS
           rsync -a --exclude 'build' --exclude 'DerivedData' --exclude 'xcuserdata' ios/ out/Batcave-iOS/ios/
+          # CapApp-SPM/Package.swift points at ../../../node_modules/@capacitor/<plugin> for the
+          # Capacitor plugins (local Swift packages). node_modules is not shipped, so copy just
+          # those packages to the same relative place; without them Xcode reports
+          # "Missing package product 'CapApp-SPM'".
+          for plugin in $(node -e 'const p=require("./package.json");for(const d of Object.keys({...p.dependencies,...p.devDependencies}))if(/^@capacitor\//.test(d)&&!["@capacitor/core","@capacitor/cli","@capacitor/ios"].includes(d))console.log(d)'); do
+            test -f "node_modules/$plugin/Package.swift" || { echo "no Package.swift in $plugin"; exit 1; }
+            mkdir -p "out/Batcave-iOS/node_modules/$plugin"
+            rsync -a --exclude 'android' --exclude 'dist' --exclude 'src' "node_modules/$plugin/" "out/Batcave-iOS/node_modules/$plugin/"
+            echo "bundled $plugin" | tee -a reports/05-package.log
+          done
+          grep -o 'path: "[^"]*"' ios/App/CapApp-SPM/Package.swift | sed 's/path: "\(.*\)"/\1/' | while read -r rel; do
+            test -f "out/Batcave-iOS/ios/App/CapApp-SPM/$rel/Package.swift" || { echo "Package.swift dependency $rel is not in the zip"; exit 1; }
+          done
           cp capacitor.config.json out/Batcave-iOS/
           cp .github/ios-OPEN-ME.txt out/Batcave-iOS/OPEN-ME.txt
           echo "Built from ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7} on $(date -u +%Y-%m-%dT%H:%MZ) with $(xcodebuild -version | head -1)" >> out/Batcave-iOS/OPEN-ME.txt

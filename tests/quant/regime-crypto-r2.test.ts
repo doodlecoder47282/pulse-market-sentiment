@@ -403,6 +403,11 @@ test("crypto: observed $0 liquidity is a pull (RUGGED), absent liquidity is miss
   assert.equal(gradeSignal({ ...base, mcap: null, liq: null, ageMs: 80 * 3600_000 }).outcome, "NO_DATA");
   // observed mcap 0 -> RUGGED (below 10% of entry), not missing
   assert.equal(gradeSignal({ ...base, mcap: 0, liq: 30_000, ageMs: 3600_000 }).outcome, "RUGGED");
+  // Audit 2026-10-23: no market cap at the signal -> past the horizon the row is NO_DATA
+  // (unpriced entry), never DOUBLED (peak >= 0 * 2 was always true) and never DEAD.
+  const noEntry = gradeSignal({ ...base, entryMcap: 0, prevPeak: null, mcap: 50_000, liq: 15_000, ageMs: 80 * 3600_000 });
+  assert.equal(noEntry.outcome, "NO_DATA");
+  assert.equal(gradeSignal({ ...base, entryMcap: 0, prevPeak: null, mcap: 50_000, liq: 15_000, ageMs: 3600_000 }).outcome, "OPEN");
   // ordinary paths unchanged
   assert.equal(gradeSignal({ ...base, mcap: 5_100_000, liq: 300_000, ageMs: 3600_000 }).outcome, "HIT_5M");
   assert.equal(gradeSignal({ ...base, mcap: 300_000, liq: 30_000, ageMs: 80 * 3600_000 }).outcome, "DEAD");
