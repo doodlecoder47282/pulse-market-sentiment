@@ -50,5 +50,9 @@ test("the overlay shows no analog block and labels weights, move and R:R as AI e
   assert.match(src, /Move \(AI est\.\)/);
   assert.match(src, /R:R \(AI est\.\)/);
   assert.match(src, /category_default/);
+  assert.match(src, /v\.provider === "deterministic"/, "an older payload with no basis still reads as the fallback");
+  assert.doesNotMatch(src, /\{verdict\.confidence\}\/100<\/span><\/span>\}?\s*\n?\s*<span><span className="text-zinc-500" title="The AI/);
+  assert.match(src, /Score \(AI\)/);
+  assert.match(src, /isDefaultRead\(verdict\) \? "default" : fmtMove\(verdict\.bull\.targetMovePct\)/);
   assert.doesNotMatch(src, />Edge</, "the catalyst kind is not labelled as an edge");
 });

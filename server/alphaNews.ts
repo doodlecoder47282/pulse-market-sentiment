@@ -3,7 +3,7 @@
 // Alpha-only news indicator for the Chart tab. Filters the general news flow
 // down to events that matter for one ticker, scores them by alpha tier, and
 // generates an AI positioning verdict per event (verdict + bull/base/bear
-// scenarios + historical analog).
+// scenarios; no analog statistics are produced, see AlphaVerdict.analog).
 //
 // Alpha definition (widest setting per user):
 //   Tier-1: earnings, guidance, M&A, FDA, Fed, downgrades/upgrades from top

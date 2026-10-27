@@ -69,19 +69,19 @@ const INFO: Record<string, InfoEntry> = {
     title: "0DTE Greek Heatmap",
     what: "Live per-strike exposures for today's expiry: gamma, delta, vanna, and charm, refreshed all session.",
     how: "Hide zero-volume strikes to focus. Tap any strike to drill into that contract's live tape and quotes.",
-    edge: "The model treats dealer hedging at the heaviest 0DTE gamma strike as pulling price toward it into the close. Closes clustering near heavy strikes on expiry days is documented (Ni, Pearson and Poteshman 2005); how often it happens on a given day, and which way price travels, is not measured here.",
+    edge: "The model treats dealer hedging at the heaviest 0DTE gamma strike as pulling price toward it into the close. Closes clustering near heavy strikes on expiry days is documented for stock options (Ni, Pearson and Poteshman 2005), not for SPX 0DTE; how often it happens on a given day, and which way price travels, is not measured here.",
     risk: "Before the session prints, the chain is empty and every score reads zero \u2014 the panel says so instead of faking a rank.",
   },
   "greek-profile": {
     title: "Greek Profile",
     what: "Exposures across strikes drawn as curves: GEX bars, with delta, vanna, and charm overlaid. Dashed lines are your locked targets, solid is spot.",
-    how: "Find where GEX flips sign \u2014 that's the battle line. Vanna and charm tell you the drift direction when IV moves or time passes with nothing else happening.",
+    how: "Find where GEX flips sign \u2014 that's the battle line. Vanna and charm show the modelled drift when IV moves or time passes with nothing else happening.",
     edge: "The flip point and charm drift sketch where hedging flows would push if nothing else happened. Real days have news and other flows, so this is a model's default path, not a forecast.",
   },
   "sticky-zones": {
     title: "Sticky Zones",
     what: "The top five strikes ranked by magnet strength: 50% gamma size, 30% open-interest density, 20% charm acceleration.",
-    how: "Expect chop and pinning around ranks #1\u2013#2. Use them as targets and take-profit levels, not as entry signals.",
+    how: "The model expects hedging to concentrate around ranks #1\u2013#2. They are reference levels, not entry signals, and Batcave has not measured how often price respects them.",
     edge: "Heavy open-interest strikes are where hedging concentrates into expiry. Whether price stays near them is something to watch; Batcave does not measure how reliably it does, and open interest does not show who holds the other side.",
   },
   "odte-tracker": {
@@ -111,7 +111,7 @@ const INFO: Record<string, InfoEntry> = {
   regime: {
     title: "Regime Panel",
     what: "The current market state condensed into one read: gamma sign, VIX term structure, breadth, and what they add up to.",
-    how: "The regime describes how dealer hedging moves price. Long gamma: moves have tended to revert toward the middle. Short gamma: moves have tended to extend.",
+    how: "The regime describes how dealer hedging moves price. In the model, long gamma damps moves and short gamma amplifies them. Batcave has not measured how often price follows that.",
     edge: "The regime summarises current conditions (gamma sign, VIX term structure, breadth). Signals were graded under particular conditions, so a different regime means less supporting record. It is context, not a guarantee.",
   },
   canary: {

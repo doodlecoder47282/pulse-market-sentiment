@@ -36,8 +36,9 @@ interface AlphaEvent {
 }
 
 interface AlphaScenario { thesis: string; prob: number; targetMovePct: number; }
-interface HistoricalAnalog { description: string; sampleSize: number; avgMovePct: number; hitRate: number; }
 type Basis = "ai_write_up" | "category_default";
+/** The no-model fallback, including an older payload that carries no basis field. */
+const isDefaultRead = (v: { basis?: Basis; provider?: string }): boolean => v.basis === "category_default" || v.provider === "deterministic";
 
 interface AlphaVerdict {
   eventId: string; ticker: string;
@@ -50,7 +51,6 @@ interface AlphaVerdict {
   summary: string;
   bull: AlphaScenario; base: AlphaScenario; bear: AlphaScenario;
   counterargument: string;
-  analog: HistoricalAnalog | null;
   /** older cached payloads carry no basis; treat as the AI write-up */
   basis?: Basis;
   provider: "anthropic" | "openai" | "deterministic";
@@ -248,20 +248,22 @@ export function AlphaNewsPanel({
                   </span>
                 </div>
                 <div className="flex items-center gap-3 text-[11px] tabular-nums">
-                  <span><span className="text-zinc-500" title="Heuristic score 0-100 from the AI write-up, not a calibrated probability.">Score</span> <span className="font-semibold text-zinc-200">{verdict.confidence}/100</span></span>
-                  <span>{verdict.basis === "category_default"
+                  {isDefaultRead(verdict)
+                    ? <span><span className="text-zinc-500" title="No AI write-up was available. The fallback has only a fixed tier default, so no score is shown.">Score</span> <span className="font-semibold text-zinc-400">n/a</span></span>
+                    : <span><span className="text-zinc-500" title="Heuristic score 0-100 from the AI write-up, not a calibrated probability.">Score (AI)</span> <span className="font-semibold text-zinc-200">{verdict.confidence}/100</span></span>}
+                  <span>{isDefaultRead(verdict)
                     ? <span><span className="text-zinc-500" title="No AI write-up was available, so no reward-to-risk figure is shown.">R:R</span> <span className="font-semibold text-zinc-400">n/a</span></span>
                     : <span><span className="text-zinc-500" title="The AI write-up's own estimate for this event, not a measured figure.">R:R (AI est.)</span> <span className="font-semibold text-zinc-200">{verdict.rrRatio.toFixed(1)}</span></span>}</span>
                 </div>
               </div>
               <div className="mt-2 flex items-center justify-between gap-3 text-[11px]">
                 <div>
-                  <div className="text-[11px] uppercase tracking-wider text-zinc-500" title={verdict.basis === "category_default" ? "A fixed default size for this kind of catalyst. Not measured from this event." : "The AI write-up's estimate, not a measured or historical figure."}>{verdict.basis === "category_default" ? "Default move" : "Move (AI est.)"}</div>
+                  <div className="text-[11px] uppercase tracking-wider text-zinc-500" title={isDefaultRead(verdict) ? "A fixed default size for this kind of catalyst. Not measured from this event." : "The AI write-up's estimate, not a measured or historical figure."}>{isDefaultRead(verdict) ? "Default move" : "Move (AI est.)"}</div>
                   <div className={`font-semibold tabular-nums ${dirColor(verdict.direction)}`}>{fmtMove(verdict.expectedMovePct)}</div>
                 </div>
                 <div className="flex-1">
-                  <div className="text-[11px] uppercase tracking-wider text-zinc-500">Catalyst kind</div>
-                  <div className="text-zinc-200">{verdict.edgeType}</div>
+                  <div className="text-[11px] uppercase tracking-wider text-zinc-500">Information type</div>
+                  <div className={isDefaultRead(verdict) ? "text-zinc-500" : "text-zinc-200"}>{isDefaultRead(verdict) ? "n/a" : verdict.edgeType}</div>
                 </div>
                 <div>
                   <div className="text-[11px] uppercase tracking-wider text-zinc-500">Engine</div>
@@ -275,8 +277,8 @@ export function AlphaNewsPanel({
 
             {/* 3-path scenarios */}
             <div className="mt-3 space-y-2 rounded-md border border-border/40 bg-black/30 p-2.5">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Scenarios{verdict.basis === "category_default" ? "" : " · AI weighting, not measured probabilities"}</div>
-              {verdict.basis === "category_default"
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Scenarios{isDefaultRead(verdict) ? "" : " · AI weighting, not measured probabilities"}</div>
+              {isDefaultRead(verdict)
                 ? <p className="text-[11px] leading-snug text-zinc-500">No AI write-up was available, so no scenario weights are shown. The readings below are generic for the catalyst type.</p>
                 : <ProbBar bull={verdict.bull.prob} base={verdict.base.prob} bear={verdict.bear.prob} />}
               <div className="mt-2 space-y-1.5 text-[11px] leading-snug">
@@ -284,8 +286,8 @@ export function AlphaNewsPanel({
                   <span className="mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
                   <div className="flex-1">
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">Bull{verdict.basis === "category_default" ? "" : ` · ${verdict.bull.prob}% wt`}</span>
-                      <span className="font-mono text-[11px] text-emerald-400">{fmtMove(verdict.bull.targetMovePct)}</span>
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">Bull{isDefaultRead(verdict) ? "" : ` · ${verdict.bull.prob}% wt`}</span>
+                      <span className="font-mono text-[11px] text-emerald-400">{isDefaultRead(verdict) ? "default" : fmtMove(verdict.bull.targetMovePct)}</span>
                     </div>
                     <p className="text-zinc-300">{verdict.bull.thesis}</p>
                   </div>
@@ -294,8 +296,8 @@ export function AlphaNewsPanel({
                   <span className="mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full bg-amber-500" />
                   <div className="flex-1">
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-400">Base{verdict.basis === "category_default" ? "" : ` · ${verdict.base.prob}% wt`}</span>
-                      <span className="font-mono text-[11px] text-amber-400">{fmtMove(verdict.base.targetMovePct)}</span>
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-400">Base{isDefaultRead(verdict) ? "" : ` · ${verdict.base.prob}% wt`}</span>
+                      <span className="font-mono text-[11px] text-amber-400">{isDefaultRead(verdict) ? "default" : fmtMove(verdict.base.targetMovePct)}</span>
                     </div>
                     <p className="text-zinc-300">{verdict.base.thesis}</p>
                   </div>
@@ -304,8 +306,8 @@ export function AlphaNewsPanel({
                   <span className="mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full bg-rose-500" />
                   <div className="flex-1">
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-rose-400">Bear{verdict.basis === "category_default" ? "" : ` · ${verdict.bear.prob}% wt`}</span>
-                      <span className="font-mono text-[11px] text-rose-400">{fmtMove(verdict.bear.targetMovePct)}</span>
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-rose-400">Bear{isDefaultRead(verdict) ? "" : ` · ${verdict.bear.prob}% wt`}</span>
+                      <span className="font-mono text-[11px] text-rose-400">{isDefaultRead(verdict) ? "default" : fmtMove(verdict.bear.targetMovePct)}</span>
                     </div>
                     <p className="text-zinc-300">{verdict.bear.thesis}</p>
                   </div>
@@ -325,7 +327,7 @@ export function AlphaNewsPanel({
               </div>
             </div>
             <p className="mt-2 text-[11px] leading-snug text-zinc-500" data-testid="text-alpha-basis">
-              {verdict.basis === "category_default"
+              {isDefaultRead(verdict)
                 ? "Descriptive only. With no AI write-up available, the lean comes from the headline wording and the move size is a fixed default for the catalyst type."
                 : "Descriptive only. The AI write-up's weights, move and reward-to-risk are its own estimates for this event: not measured probabilities, not historical statistics, not advice."}
             </p>
