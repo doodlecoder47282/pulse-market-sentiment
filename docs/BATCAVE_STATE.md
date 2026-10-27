@@ -1180,3 +1180,26 @@ now also stores score. CI demo smoke asserts the shape. Reach row added to
 Verify live data. The owner's observation ("picks a lot, barely any
 doubled") maps to readouts 1 and 2; the record decides which hypothesis
 holds (late entry vs wrong cap zone vs sampler floor).
+
+2026-10-27: crypto desk funding and open interest (PR #32, feat/crypto-funding).
+shared/cryptoFunding.ts + server/sources/cryptoDerivs.ts: Bybit and OKX public
+perpetual funding and open interest for BTC/ETH/SOL every 2 min. Descriptive
+only: no threshold, no gate, rule book version unchanged (2026.10.27-2). Shown
+on the Crypto tab (DerivsStrip), served as feed.derivs, stored compactly in
+each new signal's features_json.derivs for the replay to test later. Funding
+= exchange decimal rate per interval; per-8h only when the venue states its
+interval; open interest only as change between the desk's own reads ~1 h
+apart (Bybit docs state no unit for the field); building for the first hour
+after a restart. Row states are rebuilt from stored reads at serve time so a
+stopped tick ages to stale instead of staying ok (found by the verifier test).
+Verify live data gained crypto.derivs (sign, per-8h arithmetic, unit band,
+freshness). Not verified live: the build sandbox cannot reach Bybit or OKX and
+OKX's response shape is from its public docs; a venue that blocks the server's
+region (Bybit blocks some) shows as unavailable with its reason. Tests: 8 new.
+Review of PR #32 (independent, REVIEWER_BRIEF): 1 MUST-FIX fixed (verifier
+double-rounded and falsely failed correct per-8h figures on 1h/4h intervals;
+pinned with 1,600 random rates), SHOULD-FIX taken: tiny-rate direction, badge
+is partial whenever a venue is dark, record asOf = oldest read, unit-band claim
+reworded (it catches gross errors only; a percent-for-fraction slip is covered
+by the parser tests and the live check). Left: OKX open-interest call failure
+reads "not reported"; derivs tick throws only when both venues are down.

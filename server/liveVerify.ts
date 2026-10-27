@@ -33,7 +33,7 @@ import { etParts } from "./validationMath";
 import { editionFromEnv } from "../shared/edition";
 import { dailyBarEtDate } from "../shared/macroCalendar";
 import { getCryptoFeed, getCryptoSignals } from "./cryptoEngine";
-import { candidateChecks, deskRiskCheck, expectancyChecks } from "../shared/cryptoVerify";
+import { candidateChecks, deskRiskCheck, derivsChecks, expectancyChecks } from "../shared/cryptoVerify";
 import {
   type Check, type VerifySummary, quoteCheck, spotAgreement, spreadCheck, forwardLevelsChecks, mapLandmarkChecks,
   flowContractChecks, pcrChecks, termChecks, relativeVolumeCheck, chainSanityChecks, summarize, unavailable, skipped, classifyReach,
@@ -199,6 +199,7 @@ function cryptoChecks(now: number): Check[] {
   const desk = sig?.desk ?? null;
   out.push(...candidateChecks(feed ? (feed.candidates as any) : null, desk));
   out.push(deskRiskCheck(desk, feed?.majors ? (feed.majors as any) : null, now));
+  out.push(...derivsChecks(feed ? (feed.derivs ?? null) : null, now));
   out.push(...expectancyChecks(sig ? (sig.expectancy as any) : null));
   if (sig) out.push({ id: "crypto.rules", panel: "Crypto", name: "rule book version", state: sig.rules?.version ? "pass" : "fail", observed: sig.rules?.version ?? "missing", expected: "present on the payload", detail: null });
   return out;
