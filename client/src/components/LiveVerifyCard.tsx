@@ -40,7 +40,7 @@ const STATE_CLS: Record<Check["state"], string> = {
 const VERDICT_TEXT: Record<VerifySummary["verdict"], string> = {
   all_pass: "Every reachable data point answered live and every recomputed number matched.",
   issues: "Some data points did not answer, were stale, or did not match their recomputation. Review the rows below.",
-  not_connected: "Schwab is not connected; nothing was verified.",
+  not_connected: "Schwab is not connected; only the keyless crypto desk was verified.",
   nothing_checked: "Nothing was checked.",
 };
 
@@ -98,7 +98,7 @@ export default function LiveVerifyCard() {
           <p role="status" className="text-sm text-foreground" data-testid="live-verify-summary">
             {report.dataState === "blocked" || report.dataState === "not_connected" ? report.note : VERDICT_TEXT[s.verdict as VerifySummary["verdict"]]}
           </p>
-          {report.dataState === "ok" && (
+          {(report.dataState === "ok" || all.length > 0) && (
             <div className="grid grid-cols-5 gap-1 text-center font-mono text-[11px]" data-testid="live-verify-counts">
               <div><div className="text-emerald-300">{s.pass}</div><div className="text-muted-foreground">pass</div></div>
               <div><div className="text-red-300">{s.fail}</div><div className="text-muted-foreground">fail</div></div>
@@ -107,12 +107,12 @@ export default function LiveVerifyCard() {
               <div><div className="text-muted-foreground">{s.skipped}</div><div className="text-muted-foreground">skipped</div></div>
             </div>
           )}
-          {report.dataState === "ok" && (
+          {(report.dataState === "ok" || all.length > 0) && (
             <p className="text-xs text-muted-foreground">
               {report.cached ? "Recent run" : "Ran"} at {new Date(report.finishedAt).toLocaleTimeString()} in {Math.round(report.durationMs / 1000)}s, session {report.session}. {report.note ? `${report.note} ` : ""}{report.scope}
             </p>
           )}
-          {report.dataState === "ok" && (
+          {(report.dataState === "ok" || all.length > 0) && (
             <>
               {problems.length > 0 && !showAll && (
                 <ul className="space-y-1.5" data-testid="live-verify-problems">{problems.map((c) => <Row key={c.id} c={c} />)}</ul>

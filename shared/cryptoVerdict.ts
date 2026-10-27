@@ -1,3 +1,4 @@
+import { CRYPTO_RULES } from "./cryptoRules";
 // shared/cryptoVerdict.ts
 //
 // Coded verdict reasons for the crypto scanner and the desk's persistent
@@ -45,7 +46,7 @@ export interface DeskRisk {
 }
 
 /** BTC this far under its 24 h VWAP turns the desk off. */
-export const DESK_RISK_OFF_PCT = -5;
+export const DESK_RISK_OFF_PCT = CRYPTO_RULES.deskRisk.offBelowPct;
 
 interface MajorsLike {
   state: "ok" | "partial" | "unavailable";

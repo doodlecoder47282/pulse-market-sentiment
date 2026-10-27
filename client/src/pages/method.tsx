@@ -40,7 +40,7 @@ export default function MethodPage() {
         <Row k="Trade Desk" v="The 0DTE map (dealer gamma per strike, $ per 1% or per point), your own chart levels tagged against it, the setup log and its rule book, releases against the record, and a position sizer that caps size by displayed liquidity." />
         <Row k="Models" v="A composite path projection from option-implied odds. Probabilities shown are risk-neutral and options-implied, labelled as such; they are not the app's forecast." />
         <Row k="Heatseeker / Regime" v="Gamma exposure across strikes and expiries as a heat map and a 3D surface; the regime read (long or short gamma, VIX term, canaries) with the inputs it had and the ones it did not." />
-        <Row k="Crypto" v="A launch scanner with coded verdicts and a persistent desk risk state, a community watch of settled tokens with on-chain facts (mint and freeze authority, top-10 holder share), majors from exchange-direct quotes, and an expectancy card that grades the desk's own signals net of pool cost." />
+        <Row k="Crypto" v="A launch scanner with coded verdicts from a versioned rule book (shown on the tab), a persistent desk risk state, a community watch of settled tokens with on-chain facts (mint and freeze authority, top-10 holder share), majors from exchange-direct quotes, and an expectancy card that grades the desk's own signals net of pool cost with a survivorship check. Verify live data recomputes the gates, sizing, cost and desk risk against the rule book." />
         <Row k="News / Cosmos / Take Five / Edge Lab" v="Context: headlines and feeds, cross-asset reads, a daily brief, and the graded edge loop over past calls." />
 
         <H>Where the data comes from</H>
