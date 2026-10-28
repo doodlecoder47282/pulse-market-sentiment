@@ -64,7 +64,10 @@ test("stale serve: past the max age the answer is unavailable, never older data"
 test("stale serve: outside the session the limits are longer but still finite", () => {
   assert.equal(maxServeAgeMs("chains", CLOSED), MAX_SERVE_AGE_MS.closed.chains);
   assert.equal(staleServeDecision(CLOSED - 20 * 60_000, "chains", "x", CLOSED).serve, true);
-  assert.equal(staleServeDecision(CLOSED - 31 * 60_000, "chains", "x", CLOSED).serve, false);
+  // 18:29 ET is after the 16:15 settled close: the last-session copy is served, labelled stale.
+  assert.equal(staleServeDecision(CLOSED - 31 * 60_000, "chains", "x", CLOSED).serve, true);
+  // 15:00 ET is mid-session, not the close: the age cap applies.
+  assert.equal(staleServeDecision(CLOSED - 4 * 3600_000, "chains", "x", CLOSED).serve, false);
   assert.equal(staleServeDecision(CLOSED - 5 * 3600_000, "daily_bars", "x", CLOSED).serve, true);
   assert.equal(staleServeDecision(CLOSED - 7 * 3600_000, "daily_bars", "x", CLOSED).serve, false);
 });

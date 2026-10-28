@@ -64,3 +64,20 @@ test("Models: an empty build is retried after 20 s and never overwrites the save
   const c = src("client/src/lib/retryUntilReady.ts");
   assert.match(c, /export const NOT_READY_RETRY_MS = 30_000;/);
 });
+
+test("market closed: a chain read after the last settled close is served (labelled stale), an older one is not", async () => {
+  const { staleServeDecision, lastSettledCloseMs } = await import("../../server/schwabDataPolicy");
+  const night = Date.parse("2026-10-28T03:28:00Z"); // Tue 23:28 ET
+  const settled = lastSettledCloseMs(night)!;
+  assert.equal(new Date(settled).toISOString(), "2026-10-27T20:15:00.000Z"); // 16:15 ET
+  const afterClose = Date.parse("2026-10-27T21:00:00Z");
+  const ok = staleServeDecision(afterClose, "chains", "self-throttle", night);
+  assert.equal(ok.serve, true);
+  assert.equal((ok as any).freshness.stale, true);
+  assert.match((ok as any).freshness.reason, /market closed, last-session copy/);
+  const midSession = Date.parse("2026-10-27T17:00:00Z");
+  assert.equal(staleServeDecision(midSession, "chains", "self-throttle", night).serve, false, "a mid-session copy is not the close");
+  assert.equal(staleServeDecision(afterClose, "quotes", "self-throttle", night).serve, false, "quotes move after hours");
+  const rth = Date.parse("2026-10-28T15:00:00Z");
+  assert.equal(staleServeDecision(afterClose, "chains", "self-throttle", rth).serve, false, "in session the age cap applies");
+});

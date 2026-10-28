@@ -16,7 +16,7 @@
 // User decision 2026-10-08: Schwab is the only market-data source. No CBOE,
 // no delayed or cached fallback presented as current.
 
-import { isRegularSessionOpen, isTradingDay, etDate } from "./exchangeCalendar";
+import { isRegularSessionOpen, isTradingDay, etDate, sessionCloseMs, prevTradingDay } from "./exchangeCalendar";
 
 export type SchwabDataKind = "quotes" | "chains" | "minute_bars" | "daily_bars" | "markets" | "other";
 
@@ -148,6 +148,15 @@ export function staleServeDecision(
     return { serve: false, ageMs: null, maxAgeMs, reason: `${reason}; no cached Schwab response` };
   }
   const ageMs = Math.max(0, nowMs - fetchedAtMs);
+  // Market closed: a chain or daily bar read after the last session settled
+  // is still the latest Schwab data (nothing trades until the next open), so
+  // it is served, labelled stale with its real age, whatever that age is.
+  // Quotes and minute bars move after hours and keep the age cap.
+  const settled = lastSettledCloseMs(nowMs);
+  if ((kind === "chains" || kind === "daily_bars") && !isRegularSessionOpen(nowMs) && settled != null && fetchedAtMs >= settled) {
+    const why = `${reason}; market closed, last-session copy`;
+    return { serve: true, freshness: { asOfMs: fetchedAtMs, ageMs, servedFromCache: true, stale: true, maxAgeMs, reason: why } };
+  }
   if (maxAgeMs <= 0 || ageMs > maxAgeMs) {
     return {
       serve: false, ageMs, maxAgeMs,
@@ -158,6 +167,18 @@ export function staleServeDecision(
     serve: true,
     freshness: { asOfMs: fetchedAtMs, ageMs, servedFromCache: true, stale: true, maxAgeMs, reason },
   };
+}
+
+/** Close of the most recent finished session + 15 min (index options settle
+ *  their last prints by 16:15 ET), or null when the calendar cannot say. */
+export function lastSettledCloseMs(nowMs: number = Date.now()): number | null {
+  let d = etDate(nowMs);
+  for (let i = 0; i < 10; i++) {
+    const c = isTradingDay(d) ? sessionCloseMs(d) : null;
+    if (c != null && c + 15 * 60_000 <= nowMs) return c + 15 * 60_000;
+    d = prevTradingDay(d);
+  }
+  return null;
 }
 
 /** Freshness of a payload served fresh (new request) or from a TTL cache hit. */
