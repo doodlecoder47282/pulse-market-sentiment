@@ -10,6 +10,10 @@
 // low-grade attention proxies and are not in the score or verdict.
 
 import type { DerivsSnapshot, DerivsRow } from "@shared/cryptoFunding";
+import type { Gate, GateSummary, HolderStress } from "@shared/cryptoAutopsy";
+import { apiJson } from "@/lib/queryClient";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
@@ -173,6 +177,137 @@ const fmtAge = (min: number | null): string => {
 const pctCls = (v: number | null) =>
   v == null ? "text-muted-foreground" : v >= 0 ? "text-lime-400" : "text-rose-400";
 
+// ─── contract autopsy ───────────────────────────────────────────────────
+
+interface AutopsyResp {
+  dataState: "ok" | "invalid_input" | "not_found" | "rate_limited" | "source_failed";
+  reason: string | null; retryAfterSec: number | null; asOf: number; cached: boolean; mint: string | null;
+  pair: { pairAddress: string; dexId: string; poolsFound: number; selectedBy: string; ageMinutes: number | null } | null;
+  snapshot: { symbol: string; name: string; priceUsd: number | null; marketCap: number | null; fdv: number | null; liquidityUsd: number | null; vol24h: number | null; chg1h: number | null } | null;
+  gates: Gate[]; summary: GateSummary | null;
+  desk: { verdict: Verdict; verdictCode: string | null; verdictText: string | null; score: number | null; hardKill: boolean; reasons: string[]; flags: string[] } | null;
+  parity: { agrees: boolean; detail: string | null } | null;
+  tracked: { verdict: Verdict; verdictCode: string | null; firstSeenAt: number } | null;
+  stress: HolderStress | null;
+  sourceNotes: string[]; notes: string[];
+}
+
+const GATE_WORD: Record<Gate["severity"], Record<Gate["state"], string>> = {
+  kill: { pass: "pass", fail: "KILL", unread: "unread" },
+  flag: { pass: "pass", fail: "flagged", unread: "unread" },
+  entry: { pass: "met", fail: "not met", unread: "unread" },
+};
+const GATE_CLS: Record<Gate["state"], string> = { pass: "text-emerald-300", fail: "text-red-300", unread: "text-amber-300" };
+const GATE_GROUPS: Array<{ sev: Gate["severity"]; title: string; note: string }> = [
+  { sev: "kill", title: "Hard kills", note: "any one of these and the desk rejects the coin whatever its score" },
+  { sev: "flag", title: "Flags", note: "they lower the structure score; none is a kill on its own" },
+  { sev: "entry", title: "Entry conditions", note: "what an ENTER needs on top of a clean read" },
+];
+
+function AutopsyCard() {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<AutopsyResp | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const run = async () => {
+    if (busy || !text.trim()) return;
+    setBusy(true); setErr(null); setRes(null);
+    try { setRes(await apiJson<AutopsyResp>("GET", `/api/crypto/autopsy?mint=${encodeURIComponent(text.trim())}`)); }
+    catch { setErr("No result. The server may be unavailable or running an older build."); }
+    finally { setBusy(false); }
+  };
+  const ok = res?.dataState === "ok" ? res : null;
+  return (
+    <div className="rounded-lg border border-border/50 bg-card/40 p-3 space-y-2" data-testid="crypto-autopsy">
+      <div className="text-sm font-semibold text-foreground">Contract autopsy</div>
+      <p className="text-[11px] text-muted-foreground">Paste a Solana token's contract address. The desk reads it once, from the same sources it uses for its own list, and shows each rule with the value read and whether it was read at all. A single read: not a signal, not logged, not graded.</p>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void run(); }} placeholder="token contract address" className="min-h-[44px] flex-1 font-mono text-xs" spellCheck={false} autoCapitalize="off" autoCorrect="off" data-testid="crypto-autopsy-input" />
+        <Button size="sm" variant="outline" className="min-h-[44px] sm:min-w-[120px]" onClick={run} disabled={busy || !text.trim()} data-testid="crypto-autopsy-run">{busy ? "Reading…" : "Run autopsy"}</Button>
+      </div>
+      {err && <div role="status" className="text-[11px] text-amber-300" data-testid="crypto-autopsy-error">{err}</div>}
+      {res && !ok && (
+        <div role="status" className="text-[11px] text-amber-300" data-testid="crypto-autopsy-state">
+          {res.dataState === "rate_limited" ? `Wait about ${res.retryAfterSec ?? 6} s and run it again. ` : ""}{res.reason}
+        </div>
+      )}
+      {ok && ok.snapshot && ok.summary && ok.desk && (
+        <div className="space-y-3 text-[11px]" data-testid="crypto-autopsy-body">
+          <div className="rounded border border-border/40 p-2">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+              <span className="text-sm font-semibold text-foreground">{ok.snapshot.symbol || "?"} <span className="font-normal text-muted-foreground">{ok.snapshot.name}</span></span>
+              <span className="font-mono text-muted-foreground">{ok.cached ? "recent read" : "read"} {new Date(ok.asOf).toLocaleTimeString()}</span>
+            </div>
+            <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono tabular-nums text-muted-foreground sm:grid-cols-4">
+              <span>cap <span className="text-foreground">{ok.snapshot.marketCap != null ? fmtUsd(ok.snapshot.marketCap) : "n/a"}</span></span>
+              <span>liquidity <span className="text-foreground">{ok.snapshot.liquidityUsd != null ? fmtUsd(ok.snapshot.liquidityUsd) : "n/a"}</span></span>
+              <span>24h vol <span className="text-foreground">{ok.snapshot.vol24h != null ? fmtUsd(ok.snapshot.vol24h) : "n/a"}</span></span>
+              <span>1h <span className="text-foreground">{ok.snapshot.chg1h != null ? `${ok.snapshot.chg1h >= 0 ? "+" : ""}${ok.snapshot.chg1h.toFixed(0)}%` : "n/a"}</span></span>
+            </div>
+            <div className="mt-1 text-muted-foreground">
+              On this one read the desk's rules say <span className="font-semibold text-foreground" data-testid="crypto-autopsy-verdict">{ok.desk.verdict ?? "none"}</span>
+              {ok.desk.verdictText ? `: ${ok.desk.verdictText}` : ""}{ok.desk.score != null ? ` · heuristic score ${ok.desk.score}` : ""}.
+              {ok.tracked ? ` The desk has also been tracking it since ${new Date(ok.tracked.firstSeenAt).toLocaleString()} (currently ${ok.tracked.verdict ?? "unscored"}).` : ""}
+            </div>
+            <div className="mt-1 font-mono text-muted-foreground" data-testid="crypto-autopsy-counts">
+              {ok.summary.pass} pass · {ok.summary.fail} not met ({ok.summary.killFails} kill, {ok.summary.flagFails} flag) · {ok.summary.unread} unread
+            </div>
+          </div>
+          {ok.parity && !ok.parity.agrees && <div role="status" className="text-red-300" data-testid="crypto-autopsy-parity">The gate table and the desk's own hard-kill result disagree: {ok.parity.detail}. This is a defect; report it.</div>}
+          {GATE_GROUPS.map((grp) => {
+            const rows = ok.gates.filter((g) => g.severity === grp.sev);
+            return (
+              <section key={grp.sev} data-testid={`crypto-autopsy-${grp.sev}`}>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{grp.title} · {grp.note}</div>
+                <ul className="mt-1 space-y-1">
+                  {rows.map((g) => (
+                    <li key={g.id} className="rounded border border-border/40 p-2 leading-snug" data-testid={`crypto-autopsy-gate-${g.id}`}>
+                      <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+                        <span className="font-medium text-foreground">{g.label} <span className="font-normal text-muted-foreground">· rule: {g.rule}</span></span>
+                        <span className={`font-semibold uppercase ${GATE_CLS[g.state]}`}>{GATE_WORD[g.severity][g.state]}</span>
+                      </div>
+                      <div className="font-mono text-muted-foreground">read: {g.value}</div>
+                      {g.detail && <div className="text-muted-foreground">{g.detail}</div>}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            );
+          })}
+          {ok.stress && (
+            <section data-testid="crypto-autopsy-stress">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Holder-dump stress test · if the top-10 holders sold part of their position into the pool</div>
+              {ok.stress.dataState !== "ok" ? (
+                <div className="mt-1 text-amber-300">unavailable: {ok.stress.reason}</div>
+              ) : (
+                <>
+                  <div className="mt-1 font-mono tabular-nums text-muted-foreground">top-10 hold {ok.stress.top10Pct}% of supply, about {fmtUsd(ok.stress.top10ValueUsd ?? 0)} at the current price ({ok.stress.basis === "fdv" ? "FDV basis" : "market-cap basis"}); pool quote side about {fmtUsd(ok.stress.quoteReserveUsd ?? 0)}</div>
+                  <div className="mt-1 overflow-x-auto">
+                    <table className="w-full min-w-[420px] font-mono tabular-nums">
+                      <thead><tr className="text-muted-foreground"><th className="text-left">sold</th><th className="text-right">value</th><th className="text-right">x pool quote</th><th className="text-right">price falls</th><th className="text-right">sellers receive</th></tr></thead>
+                      <tbody>
+                        {ok.stress.scenarios.map((sc) => (
+                          <tr key={sc.soldFraction} className="border-t border-border/30">
+                            <td>{Math.round(sc.soldFraction * 100)}% of their holding</td><td className="text-right">{fmtUsd(sc.soldValueUsd)}</td><td className="text-right">{sc.soldVsQuoteReserve.toFixed(2)}x</td>
+                            <td className="text-right text-foreground">-{sc.priceImpactPct.toFixed(1)}%</td><td className="text-right">{fmtUsd(sc.proceedsUsd)} ({sc.proceedsPctOfValue.toFixed(0)}%)</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">{ok.stress.caveats.map((c) => <li key={c}>{c}</li>)}</ul>
+                </>
+              )}
+            </section>
+          )}
+          {ok.sourceNotes.length > 0 && <div className="text-amber-300" data-testid="crypto-autopsy-sources">Not read on this pass: {ok.sourceNotes.join("; ")}.</div>}
+          <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">{ok.notes.map((n) => <li key={n}>{n}</li>)}</ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── perpetual funding and open interest strip ──────────────────────────
 const fmtSigned = (v: number | null, dp: number, suffix = ""): string => (v == null ? "n/a" : `${v >= 0 ? "+" : ""}${v.toFixed(dp)}${suffix}`);
 
@@ -328,6 +463,9 @@ export default function CryptoPanel() {
 
       {/* perpetual funding + open interest: recorded context, not a rule input */}
       <DerivsStrip derivs={feed?.derivs ?? null} loaded={!!feed} />
+
+      {/* paste any Solana token address: every desk rule, gate by gate, plus a holder-dump stress test */}
+      <AutopsyCard />
 
       {/* tracking-mode banner until the graded sample is large enough */}
       <TrackingBanner sig={sigQ.data} view={view} />

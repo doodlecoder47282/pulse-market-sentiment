@@ -60,7 +60,8 @@ import {
 } from "./cryptoStats";
 import { classifyMeme, linePosition, tradeCost, type LinePosition, type MemeClass, type TradeCost } from "../shared/memeStructure";
 import { readTokenFacts, indexedRpcAvailable } from "./solanaToken";
-import { deskRiskFromMajors, type DeskRisk, type VerdictCode } from "../shared/cryptoVerdict";
+import { deskRiskFromMajors, VERDICT_CODE_TEXT, type DeskRisk, type VerdictCode } from "../shared/cryptoVerdict";
+import { parseMintInput, autopsyGates, summarizeGates, holderDumpStress, type Gate, type GateSummary, type HolderStress } from "../shared/cryptoAutopsy";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -485,6 +486,37 @@ let lastBoostFetch = 0;
 /** token mint -> its DEX pools with base reserves (from the latest DexScreener read) */
 const tokenPools = new Map<string, { at: number; pools: DexPool[] }>();
 
+/**
+ * DexScreener Pair -> Candidate market fields. One mapping shared by the
+ * momentum refresh and the contract autopsy so they can never read a pair two
+ * different ways.
+ */
+function applyDexPair(c: Candidate, p: any): void {
+  c.symbol = String(p?.baseToken?.symbol ?? c.symbol);
+  c.name = String(p?.baseToken?.name ?? c.name);
+  // DexScreener Pair: liquidity (object) and liquidity.usd, marketCap,
+  // fdv, priceUsd are nullable. Absent = null (missing); observed 0 = 0
+  // (a full liquidity pull must read as $0, not as "unknown").
+  c.priceUsd = observedNumber(p?.priceUsd);
+  c.marketCap = observedNumber(p?.marketCap);
+  c.fdv = observedNumber(p?.fdv);
+  c.liquidityUsd = observedNumber(p?.liquidity?.usd);
+  c.vol5m = observedNumber(p?.volume?.m5);
+  c.vol1h = observedNumber(p?.volume?.h1);
+  c.vol24h = observedNumber(p?.volume?.h24);
+  c.buys5m = observedNumber(p?.txns?.m5?.buys);
+  c.sells5m = observedNumber(p?.txns?.m5?.sells);
+  c.buys1h = observedNumber(p?.txns?.h1?.buys);
+  c.sells1h = observedNumber(p?.txns?.h1?.sells);
+  c.chg5m = Number(p?.priceChange?.m5 ?? NaN);
+  c.chg1h = Number(p?.priceChange?.h1 ?? NaN);
+  c.chg24h = Number(p?.priceChange?.h24 ?? NaN);
+  if (Number.isNaN(c.chg5m)) c.chg5m = null;
+  if (Number.isNaN(c.chg1h)) c.chg1h = null;
+  if (Number.isNaN(c.chg24h)) c.chg24h = null;
+  if (p?.pairCreatedAt) c.pairCreatedAt = Number(p.pairCreatedAt);
+}
+
 async function momentumTick(): Promise<void> {
   // Refresh boosts at most every 5 min (60 rpm budget, this uses ~0.2 rpm)
   if (Date.now() - lastBoostFetch > 5 * 60_000) {
@@ -551,29 +583,7 @@ async function momentumTick(): Promise<void> {
       const key = `${String(p?.chainId ?? "solana")}:${String(p?.pairAddress ?? "")}`;
       const c = tracked.get(key);
       if (!c) continue;
-      c.symbol = String(p?.baseToken?.symbol ?? c.symbol);
-      c.name = String(p?.baseToken?.name ?? c.name);
-      // DexScreener Pair: liquidity (object) and liquidity.usd, marketCap,
-      // fdv, priceUsd are nullable. Absent = null (missing); observed 0 = 0
-      // (a full liquidity pull must read as $0, not as "unknown").
-      c.priceUsd = observedNumber(p?.priceUsd);
-      c.marketCap = observedNumber(p?.marketCap);
-      c.fdv = observedNumber(p?.fdv);
-      c.liquidityUsd = observedNumber(p?.liquidity?.usd);
-      c.vol5m = observedNumber(p?.volume?.m5);
-      c.vol1h = observedNumber(p?.volume?.h1);
-      c.vol24h = observedNumber(p?.volume?.h24);
-      c.buys5m = observedNumber(p?.txns?.m5?.buys);
-      c.sells5m = observedNumber(p?.txns?.m5?.sells);
-      c.buys1h = observedNumber(p?.txns?.h1?.buys);
-      c.sells1h = observedNumber(p?.txns?.h1?.sells);
-      c.chg5m = Number(p?.priceChange?.m5 ?? NaN);
-      c.chg1h = Number(p?.priceChange?.h1 ?? NaN);
-      c.chg24h = Number(p?.priceChange?.h24 ?? NaN);
-      if (Number.isNaN(c.chg5m)) c.chg5m = null;
-      if (Number.isNaN(c.chg1h)) c.chg1h = null;
-      if (Number.isNaN(c.chg24h)) c.chg24h = null;
-      if (p?.pairCreatedAt) c.pairCreatedAt = Number(p.pairCreatedAt);
+      applyDexPair(c, p);
       c.boosted = boostedTokens.has(c.tokenAddress.toLowerCase());
       if (jup && jupMints.includes(c.tokenAddress)) {
         const jp = jup.prices.get(c.tokenAddress) ?? null;
@@ -1479,6 +1489,173 @@ export function getCryptoReplay(now: number = Date.now()): CryptoReplay {
   const data = buildReplay(like, now);
   replayCache = { at: now, data };
   return data;
+}
+
+// ─── CONTRACT AUTOPSY — one fresh snapshot of any Solana token ───────────
+//
+// Reads the same sources the desk reads (DexScreener, Jupiter, the public
+// Solana RPC, rugcheck) for ONE address the owner pastes, applies the desk's own
+// scoreCandidate() to a transient candidate, and lays the rules out gate by
+// gate (shared/cryptoAutopsy.ts). It never enters `tracked`, never calls
+// persistSignal, and is never graded: it is a read, not a signal. A single
+// snapshot has no flow history, so the sustained-flow gate is unread and the
+// desk verdict can never be ENTER.
+
+export interface CryptoAutopsy {
+  dataState: "ok" | "invalid_input" | "not_found" | "rate_limited" | "source_failed";
+  reason: string | null;
+  retryAfterSec: number | null;
+  asOf: number;
+  cached: boolean;
+  mint: string | null;
+  pair: { pairAddress: string; dexId: string; poolsFound: number; selectedBy: string; ageMinutes: number | null } | null;
+  snapshot: { symbol: string; name: string; priceUsd: number | null; marketCap: number | null; fdv: number | null; liquidityUsd: number | null; vol24h: number | null; chg1h: number | null } | null;
+  gates: Gate[];
+  summary: GateSummary | null;
+  desk: { verdict: Candidate["verdict"]; verdictCode: VerdictCode | null; verdictText: string | null; score: number | null; hardKill: boolean; reasons: string[]; flags: string[] } | null;
+  /** The gate table and the desk's own hard-kill result must agree; false means a defect to report. */
+  parity: { agrees: boolean; detail: string | null } | null;
+  tracked: { verdict: Candidate["verdict"]; verdictCode: VerdictCode | null; firstSeenAt: number } | null;
+  stress: HolderStress | null;
+  /** Sources that did not answer on this read; their gates read "unread", never pass. */
+  sourceNotes: string[];
+  notes: string[];
+}
+
+const AUTOPSY_MIN_GAP_MS = 6_000;
+const AUTOPSY_CACHE_MS = 60_000;
+const autopsyCache = new Map<string, { at: number; value: CryptoAutopsy }>();
+let autopsyLastStart = 0;
+let autopsyBusy = false;
+
+function emptyAutopsy(now: number, dataState: CryptoAutopsy["dataState"], reason: string, mint: string | null = null, retryAfterSec: number | null = null): CryptoAutopsy {
+  return { dataState, reason, retryAfterSec, asOf: now, cached: false, mint, pair: null, snapshot: null, gates: [], summary: null, desk: null, parity: null, tracked: null, stress: null, sourceNotes: [], notes: [] };
+}
+
+export async function runCryptoAutopsy(input: unknown, now: number = Date.now()): Promise<CryptoAutopsy> {
+  const parsed = parseMintInput(input);
+  if (!parsed.ok) return emptyAutopsy(now, "invalid_input", parsed.reason);
+  const mint = parsed.mint;
+
+  const hit = autopsyCache.get(mint);
+  if (hit && now - hit.at < AUTOPSY_CACHE_MS) return { ...hit.value, cached: true };
+  // Public RPCs and DexScreener throttle bursts: one autopsy at a time, spaced.
+  if (autopsyBusy || now - autopsyLastStart < AUTOPSY_MIN_GAP_MS) {
+    const wait = autopsyBusy ? 6 : Math.ceil((AUTOPSY_MIN_GAP_MS - (now - autopsyLastStart)) / 1000);
+    return emptyAutopsy(now, "rate_limited", "another autopsy is running or just ran; public data sources throttle bursts", mint, Math.max(1, wait));
+  }
+  autopsyBusy = true;
+  autopsyLastStart = now;
+  try {
+    const sourceNotes: string[] = [];
+    // 1) DexScreener: every pool of this token
+    let pairs: any[] = [];
+    try {
+      const resp = await getJson(`${DS_BASE}/latest/dex/tokens/${mint}`);
+      pairs = (Array.isArray(resp?.pairs) ? resp.pairs : []).filter((p: any) => String(p?.chainId ?? "") === "solana" && String(p?.baseToken?.address ?? "") === mint && p?.pairAddress);
+    } catch (e: any) {
+      return emptyAutopsy(now, "source_failed", `DexScreener did not answer (${String(e?.message ?? e).slice(0, 80)})`, mint);
+    }
+    if (pairs.length === 0) {
+      return emptyAutopsy(now, "not_found", "no Solana pool found for this address on DexScreener. Paste the token's contract address (mint), not a pair or wallet address. A token still on the pump.fun curve may not be listed yet.", mint);
+    }
+    const best = pairs.slice().sort((a, b) => (observedNumber(b?.liquidity?.usd) ?? -1) - (observedNumber(a?.liquidity?.usd) ?? -1))[0];
+
+    // 2) transient candidate filled by the same mapping the live refresh uses
+    const c: Candidate = {
+      chain: "solana", pairAddress: String(best.pairAddress), tokenAddress: mint,
+      symbol: String(best?.baseToken?.symbol ?? ""), name: String(best?.baseToken?.name ?? ""), dexId: String(best?.dexId ?? ""),
+      pumpfunGraduate: isPumpDex(String(best?.dexId ?? "")), discoveredVia: "new_pools", firstSeenAt: now, pairCreatedAt: null,
+      priceUsd: null, marketCap: null, fdv: null, liquidityUsd: null, vol5m: null, vol1h: null, vol24h: null,
+      buys5m: null, sells5m: null, buys1h: null, sells1h: null, chg5m: null, chg1h: null, chg24h: null,
+      boosted: false, lastRefreshAt: now,
+      jupPriceUsd: null, jupState: "unchecked", jupGapPct: null, jupCheckedAt: null,
+      mintAuthorityActive: null, freezeAuthorityActive: null, top10Pct: null, top10Method: null, securityCheckedAt: null,
+      rcRisks: [], rcLpLockedPct: null, rcCheckedAt: null,
+      bskyMentions1h: null, bskyMentions10m: null, bskyMentionsByAddress1h: null, bskyMentionsByAddress10m: null, bskyCapped: false,
+      pumpReplies: null, pumpCheckedAt: null, pumpReplyPerHr: null, pumpLive: false, hasSocialLinks: null,
+      socialScore: null, socialCheckedAt: null, prevPumpReplies: null, socialAttemptAt: null, socialStatus: null, socialSources: null, socialCoverage: null,
+      hist: [], ageMinutes: null, volAccel: null, netBuyRatio5m: null, fomoScore: null, memeScore: null, narrativeHits: [], rugFlags: [],
+      hardKill: false, score: null, verdict: null, verdictCode: null, verdictReasons: [], risk: null, structure: null,
+    };
+    applyDexPair(c, best);
+    c.boosted = boostedTokens.has(mint.toLowerCase());
+
+    // 3) Jupiter price cross-check (one mint)
+    try {
+      const j = await getJson(`${JUP_BASE}?ids=${mint}`);
+      const r = parseJupiterPrices(j, [mint]);
+      const jp = r.prices.get(mint) ?? null;
+      const chk = jupiterCheck(c.priceUsd, { price: jp, omitted: r.omitted.includes(mint), failed: false });
+      c.jupPriceUsd = jp; c.jupState = chk.state; c.jupGapPct = chk.gapPct != null ? Number(chk.gapPct.toFixed(1)) : null; c.jupCheckedAt = Date.now();
+    } catch (e: any) {
+      c.jupState = "failed";
+      sourceNotes.push(`Jupiter did not answer (${String(e?.message ?? e).slice(0, 60)})`);
+    }
+
+    // 4) on-chain facts via the public Solana RPC (authorities, holder concentration)
+    try {
+      const pools = pairs.map((p: any) => ({ pairAddress: String(p.pairAddress), baseAmount: observedNumber(p?.liquidity?.base) }));
+      const facts = await readTokenFacts(mint, pools, { withConcentration: indexedRpcAvailable() });
+      c.mintAuthorityActive = facts.mintAuthorityActive;
+      c.freezeAuthorityActive = facts.freezeAuthorityActive;
+      if (facts.concentration === "ok") { c.top10Pct = facts.top10Pct; c.top10Method = facts.top10Method; }
+      else {
+        c.top10Method = facts.concentration === "unavailable"
+          ? `unavailable: ${facts.concentrationError ?? "indexed RPC did not answer"}`
+          : "skipped: the public indexed RPC is cooling down; try again in a few minutes";
+        sourceNotes.push("holder concentration was not read on this pass");
+      }
+      c.securityCheckedAt = Date.now();
+    } catch (e: any) {
+      sourceNotes.push(`Solana RPC did not answer (${String(e?.message ?? e).slice(0, 60)}): authorities and holders unread`);
+    }
+
+    // 5) rugcheck cached summary (keyless): LP lock and named risks
+    try {
+      const rc = await getJson(`https://api.rugcheck.xyz/v1/tokens/${mint}/report/summary`);
+      c.rcRisks = (Array.isArray(rc?.risks) ? rc.risks : []).map((r: any) => String(r?.name ?? r)).filter(Boolean).slice(0, 6);
+      const lp = Number(rc?.lpLockedPct ?? NaN);
+      c.rcLpLockedPct = Number.isFinite(lp) ? Number(lp.toFixed(1)) : null;
+      c.rcCheckedAt = Date.now();
+    } catch { sourceNotes.push("rugcheck had no report for this token"); }
+
+    // 6) the desk's own scoring on the transient candidate; nothing is stored
+    scoreCandidate(c);
+
+    const gates = autopsyGates({
+      liquidityUsd: c.liquidityUsd, marketCap: c.marketCap, fdv: c.fdv, priceUsd: c.priceUsd, buys1h: c.buys1h, sells1h: c.sells1h, chg1h: c.chg1h,
+      vol24h: c.vol24h, ageMinutes: c.ageMinutes, mintAuthorityActive: c.mintAuthorityActive, freezeAuthorityActive: c.freezeAuthorityActive,
+      top10Pct: c.top10Pct, top10Method: c.top10Method, rcLpLockedPct: c.rcLpLockedPct, jupState: c.jupState, jupGapPct: c.jupGapPct,
+      volAccel: c.volAccel, netBuyRatio5m: c.netBuyRatio5m, score: c.score,
+    });
+    const summary = summarizeGates(gates);
+    const agrees = summary.killed === c.hardKill;
+    if (!agrees) console.warn(`[crypto:autopsy] gate table and desk hard kill disagree for ${mint}: gates ${summary.killed} desk ${c.hardKill}`);
+    const trackedHit = [...tracked.values()].find((t) => t.tokenAddress === mint) ?? null;
+
+    const out: CryptoAutopsy = {
+      dataState: "ok", reason: null, retryAfterSec: null, asOf: Date.now(), cached: false, mint,
+      pair: { pairAddress: c.pairAddress, dexId: c.dexId, poolsFound: pairs.length, selectedBy: "deepest liquidity among this token's Solana pools", ageMinutes: c.ageMinutes == null ? null : Math.round(c.ageMinutes) },
+      snapshot: { symbol: c.symbol, name: c.name, priceUsd: c.priceUsd, marketCap: c.marketCap, fdv: c.fdv, liquidityUsd: c.liquidityUsd, vol24h: c.vol24h, chg1h: c.chg1h },
+      gates, summary,
+      desk: { verdict: c.verdict, verdictCode: c.verdictCode, verdictText: c.verdictCode ? VERDICT_CODE_TEXT[c.verdictCode] ?? null : null, score: c.score, hardKill: c.hardKill, reasons: c.verdictReasons, flags: c.rugFlags },
+      parity: { agrees, detail: agrees ? null : `gate table says killed=${summary.killed}, desk says hardKill=${c.hardKill}` },
+      tracked: trackedHit ? { verdict: trackedHit.verdict, verdictCode: trackedHit.verdictCode, firstSeenAt: trackedHit.firstSeenAt } : null,
+      stress: holderDumpStress({ top10Pct: c.top10Pct, top10Method: c.top10Method, fdv: c.fdv, marketCap: c.marketCap, liquidityUsd: c.liquidityUsd }),
+      sourceNotes,
+      notes: [
+        "a single read: not a signal, not logged, not graded",
+        "one snapshot has no flow history, so the sustained-flow gate is unread and the desk verdict cannot be ENTER",
+        "a pass means a rule is met on this read, not that the token is safe",
+      ],
+    };
+    autopsyCache.set(mint, { at: Date.now(), value: out });
+    if (autopsyCache.size > 50) { const oldest = [...autopsyCache.entries()].sort((a, b) => a[1].at - b[1].at)[0]; if (oldest) autopsyCache.delete(oldest[0]); }
+    return out;
+  } finally {
+    autopsyBusy = false;
+  }
 }
 
 function safeParse(s: any): any {
