@@ -18,7 +18,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import {
-  Flame, Radar, Newspaper, Activity, ShieldAlert, Rocket, Skull,
+  Flame, Radar, Newspaper, Activity, ShieldAlert, Skull,
   Eye, XCircle, Zap, HeartPulse, TrendingUp, Clock,
 } from "lucide-react";
 import MemeStructureSection, { CategoryChip, LineChip } from "@/components/MemeStructure";
@@ -422,6 +422,60 @@ function MajorsStrip({ majors, loaded }: { majors: MajorsSnapshot | null; loaded
   );
 }
 
+// ─── desk brief: the one-glance read for someone with no time ────────────
+
+function DeskBrief({ feed, health, sig, enters, watches, onPick }: {
+  feed?: FeedResp; health?: HealthResp; sig?: SignalsResp;
+  enters: Candidate[]; watches: Candidate[]; onPick: (c: Candidate) => void;
+}) {
+  const engines = (health?.engines ?? []).filter((e) => e.name !== "watchdog");
+  const notOk = engines.filter((e) => e.status !== "ok");
+  const picks = [...enters, ...[...watches].sort((a, b) => (b.score ?? -1) - (a.score ?? -1))].slice(0, 3);
+  const rec = sig?.stats.enterCoins;
+  const headline = !feed ? "Reading the desk…"
+    : enters.length > 0 ? `${enters.length} coin${enters.length === 1 ? "" : "s"} clear${enters.length === 1 ? "s" : ""} every ENTER rule right now`
+    : watches.length > 0 ? `Nothing clears every ENTER rule. ${watches.length} forming`
+    : "Nothing clears the bar right now";
+  return (
+    <div className="rounded-xl border border-border/60 bg-card/60 p-4" data-testid="crypto-brief">
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0">
+          <div className="text-xs text-muted-foreground">Digital assets · new Solana launches, scored by fixed rules</div>
+          <h2 className="mt-0.5 break-words text-lg font-semibold tracking-tight" data-testid="crypto-brief-headline">{headline}</h2>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            {feed ? `${feed.trackedCount} pools tracked · updated ${new Date(feed.asOf ?? Date.now()).toLocaleTimeString()}` : "warming up"}
+            {notOk.length > 0 ? ` · ${notOk.map((e) => `${e.name} ${e.status}`).join(", ")}` : engines.length > 0 ? " · all agents running" : ""}
+          </p>
+        </div>
+        <AgentStrip health={health} />
+      </div>
+      {picks.length > 0 && (
+        <ul className="mt-3 grid gap-2 sm:grid-cols-3" data-testid="crypto-brief-picks">
+          {picks.map((c) => (
+            <li key={`${c.chain}:${c.pairAddress}`} className="min-w-0">
+              <button type="button" onClick={() => onPick(c)} className="min-h-[44px] w-full rounded-lg border border-border/60 p-2 text-left transition hover:border-foreground/30">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="truncate font-mono text-sm font-bold">{c.symbol}</span>
+                  <span className={`text-[11px] font-semibold ${c.verdict === "ENTER" ? "text-lime-300" : "text-amber-300"}`}>{c.verdict === "ENTER" ? "Enter" : "Watch"}{c.score != null ? ` · ${c.score}` : ""}</span>
+                </div>
+                <div className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                  cap {c.marketCap != null ? fmtUsd(c.marketCap) : "n/a"} · liq {c.liquidityUsd != null ? fmtUsd(c.liquidityUsd) : "n/a"}
+                </div>
+                {c.verdictReasons[0] && <div className="mt-0.5 line-clamp-2 break-words text-[11px] text-muted-foreground">{c.verdictReasons[0]}</div>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-3 border-t border-border/40 pt-2 text-[11px] text-muted-foreground" data-testid="crypto-brief-record">
+        {rec
+          ? `Record so far: ${rec.graded} of ${rec.minGradedForSample} graded first-ENTER coins needed${rec.sampleReady ? " (sample reached)" : ""}; ${rec.hit5m} hit the 5-minute target, ${rec.doubled} doubled, ${rec.rugged} rugged, ${rec.dead} dead. Heuristic scores, not calibrated odds. The desk never places orders.`
+          : "Record so far: loading. Heuristic scores, not calibrated odds. The desk never places orders."}
+      </div>
+    </div>
+  );
+}
+
 // ─── main panel ─────────────────────────────────────────────────────────
 
 export default function CryptoPanel() {
@@ -430,7 +484,7 @@ export default function CryptoPanel() {
 
   const feedQ = useQuery<FeedResp>({ queryKey: ["/api/crypto/feed"], refetchInterval: 45_000 });
   const healthQ = useQuery<HealthResp>({ queryKey: ["/api/crypto/health"], refetchInterval: 30_000 });
-  const sigQ = useQuery<SignalsResp>({ queryKey: ["/api/crypto/signals"], refetchInterval: 120_000, enabled: view === "signals" });
+  const sigQ = useQuery<SignalsResp>({ queryKey: ["/api/crypto/signals"], refetchInterval: 120_000 });
 
   const feed = feedQ.data;
   const enters = feed?.candidates.filter((c) => c.verdict === "ENTER") ?? [];
@@ -439,39 +493,20 @@ export default function CryptoPanel() {
 
   return (
     <div className="space-y-4" data-testid="crypto-panel">
-      {/* hero strip */}
-      <div className="relative overflow-hidden rounded-xl border border-fuchsia-500/25 bg-gradient-to-br from-fuchsia-600/15 via-violet-600/10 to-lime-500/10 p-4">
-        <div className="pointer-events-none absolute -right-8 -top-10 h-36 w-36 rounded-full bg-fuchsia-500/20 blur-3xl" />
-        <div className="pointer-events-none absolute -left-6 bottom-0 h-24 w-24 rounded-full bg-lime-400/15 blur-2xl" />
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <Rocket className="h-5 w-5 text-fuchsia-400" />
-              <h2 className="text-base font-bold tracking-tight">Digital assets</h2>
-              <Badge variant="outline" className="border-lime-400/40 bg-lime-400/10 text-[11px] text-lime-300">
-                small-cap launch scanner
-              </Badge>
-            </div>
-            <p className="mt-1 max-w-xl text-xs leading-snug text-muted-foreground">
-              Exchange-direct prices for majors, plus a tracker for new Solana launches scored on flow
-              acceleration, narrative confirmation and rug filters (hand-set heuristics, not fitted to outcomes). PASS is the default verdict.
-            </p>
-          </div>
-          <AgentStrip health={healthQ.data} />
-        </div>
-      </div>
-
-      {/* BTC / ETH / SOL exchange-direct, cross-checked */}
-      <MajorsStrip majors={feed?.majors ?? null} loaded={!!feed} />
-
-      {/* perpetual funding + open interest: recorded context, not a rule input */}
-      <DerivsStrip derivs={feed?.derivs ?? null} loaded={!!feed} />
+      <DeskBrief feed={feed} health={healthQ.data} sig={sigQ.data} enters={enters} watches={watches}
+        onPick={(c) => { setView("feed"); setExpanded(`${c.chain}:${c.pairAddress}`); }} />
 
       {/* paste any Solana token address: every desk rule, gate by gate, plus a holder-dump stress test */}
       <AutopsyCard />
 
       {/* tracking-mode banner until the graded sample is large enough */}
       <TrackingBanner sig={sigQ.data} view={view} />
+
+      {/* BTC / ETH / SOL exchange-direct, cross-checked */}
+      <MajorsStrip majors={feed?.majors ?? null} loaded={!!feed} />
+
+      {/* perpetual funding + open interest: recorded context, not a rule input */}
+      <DerivsStrip derivs={feed?.derivs ?? null} loaded={!!feed} />
 
       {/* narrative heat */}
       <div className="flex flex-wrap items-center gap-1.5" data-testid="crypto-narratives">
