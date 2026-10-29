@@ -43,7 +43,7 @@ export async function runConnectionGateQA(browser, base, out) {
     await page.getByTestId("gate-connect").waitFor({ state: "visible" });
     assert.equal(state.reads.length, 0);
     assert.doesNotMatch(await page.locator("body").innerText(), /rejected|Couldn't refresh|batcave_auth_required/);
-    assert.equal(await page.getByTestId("bottomnav-more").count(), 0);
+    assert.equal(await page.getByTestId("mobile-bottom-nav").count(), 0);
     results.push("fresh visit: no protected requests, dashboard, or false rejection");
     for (const [width, height, enlarged] of [[375, 667, false], [390, 844, false], [820, 1180, false], [1440, 900, false], [390, 400, true]]) {
       await page.setViewportSize({ width, height });
@@ -72,13 +72,13 @@ export async function runConnectionGateQA(browser, base, out) {
     state.auth = "valid";
     await page.getByTestId("gate-access-key").fill(fixtureKey);
     await page.getByTestId("gate-connect").click();
-    await page.getByTestId("bottomnav-more").waitFor({ state: "visible", timeout: 30_000 });
+    await page.getByTestId("mobile-bottom-nav").waitFor({ state: "visible", timeout: 30_000 });
     assert.ok(state.reads.length > 0 && state.reads.every(r => r.authorized));
     results.push("valid fixture access: dashboard mounts; subsequent API requests carry fixture key");
     await page.route("**/api/snapshot/refresh", route => route.fulfill({ status: 401, json: { error: "batcave_auth_required" } }));
     await page.getByTestId("button-refresh").click();
     await page.getByTestId("gate-status").filter({ hasText: "server rejected the access key" }).waitFor();
-    assert.equal(await page.getByTestId("bottomnav-more").count(), 0);
+    assert.equal(await page.getByTestId("mobile-bottom-nav").count(), 0);
     results.push("authorization expiry during use: real refresh returns to gate and unmounts dashboard");
   } finally { await fresh.ctx.close(); }
   const blocked = await make({ blocked: true });
@@ -87,7 +87,7 @@ export async function runConnectionGateQA(browser, base, out) {
     await blocked.page.goto(base, { waitUntil: "domcontentloaded" });
     await blocked.page.getByTestId("gate-access-key").fill(fixtureKey);
     await blocked.page.getByTestId("gate-connect").click();
-    await blocked.page.getByTestId("bottomnav-more").waitFor({ state: "visible", timeout: 30_000 });
+    await blocked.page.getByTestId("mobile-bottom-nav").waitFor({ state: "visible", timeout: 30_000 });
     assert.ok(blocked.state.reads.length > 0 && blocked.state.reads.every(r => r.authorized));
     results.push("blocked browser storage: authenticated session works without reload");
   } finally { await blocked.ctx.close(); }
@@ -112,7 +112,7 @@ export async function runConnectionGateQA(browser, base, out) {
     unavailable.state.auth = "valid";
     await unavailable.page.getByTestId("gate-access-key").fill(fixtureKey);
     await unavailable.page.getByTestId("gate-connect").click();
-    await unavailable.page.getByTestId("bottomnav-more").waitFor({ state: "visible", timeout: 30_000 });
+    await unavailable.page.getByTestId("mobile-bottom-nav").waitFor({ state: "visible", timeout: 30_000 });
     results.push("offline retry: recovers through visible controls");
   } finally { await unavailable.ctx.close(); }
   const timeout = await make();
