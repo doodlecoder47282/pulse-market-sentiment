@@ -437,7 +437,7 @@ function DeskBrief({ feed, health, sig, enters, watches, onPick }: {
     : watches.length > 0 ? `Nothing clears every ENTER rule. ${watches.length} forming`
     : "Nothing clears the bar right now";
   return (
-    <div className="rounded-xl border border-border/60 bg-card/60 p-4" data-testid="crypto-brief">
+    <div className="min-h-[15rem] rounded-xl border border-border/60 bg-card/60 p-4 sm:min-h-[11rem]" data-testid="crypto-brief">
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
           <div className="text-xs text-muted-foreground">Digital assets · new Solana launches, scored by fixed rules</div>
@@ -609,7 +609,7 @@ function AgentStrip({ health }: { health?: HealthResp }) {
     : s === "starting" ? "bg-sky-400 animate-pulse"
     : "bg-rose-500";
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border/50 bg-background/50 px-3 py-2 backdrop-blur" data-testid="crypto-agent-strip">
+    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border/50 bg-background/50 px-3 py-2 backdrop-blur" data-testid="crypto-agent-strip">
       <HeartPulse className="h-3.5 w-3.5 text-muted-foreground" />
       {(health?.engines ?? []).filter((e) => e.name !== "watchdog").map((e) => (
         <div key={e.name} className="flex items-center gap-1.5" title={`${e.name}: ${e.status} · ${e.runs} runs · ${e.errors} errors${e.lastError ? ` · ${e.lastError}` : ""}`}>
